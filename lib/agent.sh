@@ -204,8 +204,8 @@ agent_run() {
     # Notify on phone if available
     tools_phone_toast "Lodge: Task complete ($completed/$total steps)"
     
-    # Unload model after task to free RAM on mobile
-    llm_unload
+    # Model stays loaded during active session for fast response times.
+    # It will be unloaded on session exit (lodge main) or by keep_alive timeout.
     
     return 0
 }
@@ -219,7 +219,7 @@ agent_ask() {
     _LODGE_CANCELLED=0
     
     local system_prompt
-    system_prompt=$(memory_build_system_prompt "$workdir")
+    system_prompt=$(memory_build_system_prompt "$workdir" "$question")
     
     ui_spinner_start "Thinking"
     local response
@@ -235,7 +235,6 @@ agent_ask() {
     
     if [[ "$response" == ERROR* ]]; then
         ui_err "$response"
-        llm_unload
         return 1
     fi
     
@@ -243,8 +242,7 @@ agent_ask() {
     ui_render_response "$response"
     echo ""
     
-    # Unload model after answering to free RAM
-    llm_unload
+    # Model stays loaded during active session for fast response times.
 }
 
 # ── Interactive step-by-step mode ──────────────────────────────

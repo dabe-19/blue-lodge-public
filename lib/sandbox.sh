@@ -113,6 +113,13 @@ sandbox_exec() {
         return 1
     fi
     
+    # Apply per-sandbox permissions if security.sh is loaded
+    if declare -f security_sandbox_get_permission &>/dev/null; then
+        local sandbox_perm
+        sandbox_perm=$(security_sandbox_get_permission "$name")
+        export LODGE_PERMISSION="$sandbox_perm"
+    fi
+    
     local method
     method=$(sandbox_detect)
     

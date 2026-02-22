@@ -84,14 +84,89 @@ Blue Lodge executes LLM-generated code on a user's device. The primary threat ve
 3. **Don't run Blue Lodge as root** — Always run in a normal user context
 4. **Use sandboxes for untrusted repos** — `lodge /sandbox clone <repo>` isolates the project
 
-### For Future Development
+### Implemented Security Features (v0.2.0)
 
-1. **Command allowlist** — Instead of blocklisting dangerous patterns, consider an allowlist of safe command prefixes (cargo, uv, git, python, etc.)
-2. **File write diff preview** — Show a diff before overwriting existing files, not just a preview of the new content
-3. **Network audit mode** — Optional flag to block all network-accessing commands from LLM output
-4. **Signed CLAUDE.md** — Hash-based verification that CLAUDE.md hasn't been tampered with outside of Blue Lodge
-5. **Per-sandbox permissions** — Allow different permission levels for different sandboxes
+All five items from the original roadmap have been implemented in `lib/security.sh`:
+
+#### 1. Command Allowlist ✅
+
+Instead of relying solely on blocklist detection, `tools_exec_bash` now checks commands against a curated allowlist of 100+ safe command prefixes (cargo, git, python, grep, ls, cat, etc.). At `LODGE_PERMISSION=1`:
+- Commands matching the allowlist are auto-approved
+- Commands matching the dangerous blocklist require confirmation (default: deny)
+- All other commands require confirmation (default: approve)
+
+Users can extend the allowlist by adding commands to `~/.george/allowlist.conf` (one per line).
+
+**Commands:** `/security help` shows available subcommands.
+
+#### 2. File Write Diff Preview ✅
+
+When overwriting an existing file, `tools_write_file` now displays a unified diff with color-coded output:
+- **Green (+)** lines show additions
+- **Red (-)** lines show deletions
+- **Cyan (@@)** hunk headers for context
+- Limited to 40 lines of diff output for readability
+
+New files still show a 10-line content preview.
+
+#### 3. Network Audit Mode ✅
+
+An optional mode that blocks all network-accessing commands from LLM-generated output. When enabled, commands matching `curl`, `wget`, `nc`, `ncat`, `ssh`, `scp`, `rsync`, `/dev/tcp`, and `telnet` are rejected.
+
+**Toggle:** `/security network on|off` or set `LODGE_NETWORK_AUDIT=1`.
+
+#### 4. Signed & Encrypted Memory (Bodily Autonomy) ✅
+
+George's memory files (`soul.md`, `journal.md`) are protected by a multi-layered integrity system:
+
+- **HMAC-SHA256 Signing** — Every write to journal.md and soul.md generates a `.sig` companion file. Signatures are verified at startup to detect external tampering.
+- **AES-256-CBC Encryption** — Files can be encrypted with PBKDF2 key derivation (100,000 iterations). George can encrypt his own memory files so only he can read them.
+- **Keyring** — A per-user signing key is auto-generated at `~/.george/.keyring/signing.key` (mode 600, directory mode 700). The keyring initializes automatically on first run.
+- **Share Tokens** — George can generate SHA-256 share tokens that prove file authenticity without revealing the signing key.
+
+**Commands:**
+- `/security sign <file>` — Sign a file
+- `/security verify <file>` — Verify file integrity
+- `/security encrypt <file>` — Encrypt a file (AES-256-CBC)
+- `/security decrypt <file>` — Decrypt a file
+- `/security share <file>` — Generate a share token
+- `/security verify-token <file> <token>` — Verify a share token
+- `/security check` — Check integrity of all identity files
+
+#### 5. Per-Sandbox Permissions ✅
+
+Each sandbox can have its own permission level, independent of the global `LODGE_PERMISSION` setting. When `sandbox_exec()` runs a command, it looks up the sandbox-specific permission first and falls back to the global level.
+
+**Commands:**
+- `/security sandbox set <name> <level>` — Set permission level (0/1/2) for a sandbox
+- `/security sandbox get <name>` — Get a sandbox's permission level
+- `/security sandbox list` — List all sandbox permission overrides
+
+Permissions are stored in `~/.george/sandbox_permissions.conf`.
+
+#### 6. Encrypted Secrets Vault (v0.3.0) ✅
+
+A dedicated encrypted key-value store for sensitive credentials (API keys, OAuth tokens, cryptocurrency private keys). Built on top of the existing signing keyring.
+
+- **AES-256-CBC encryption** with PBKDF2 (100,000 iterations) for each secret
+- **Per-secret files** — each secret stored as `~/.george/.vault/<name>.enc` (mode 700 on vault directory)
+- **No plaintext on disk** — values decrypted to memory only when needed
+- **Scoped access** — `secrets_with` runs commands in subshells with secrets as env vars; vars are gone when command exits
+- **Key rotation** — `secrets_rotate_key` re-encrypts all secrets with a freshly generated key
+- **Secure deletion** — `shred -u` used where available, fallback to overwrite + `rm`
+- **Name validation** — secret names restricted to `[a-zA-Z_][a-zA-Z0-9_.-]*` to prevent path traversal
+
+**Commands:** `/secret set|get|delete|list|import|rotate|status`
+
+### Security Status
+
+Run `/security status` to see an overview of all active security features, including:
+- Permission level and allowlist status
+- Network audit mode
+- Keyring and signing status
+- Identity file integrity
+- Sandbox permission overrides
 
 ---
 
-*This audit covers the codebase as of v0.1.0. Re-audit recommended after significant changes.*
+*This audit covers the codebase as of v0.2.0. Re-audit recommended after significant changes.*

@@ -227,4 +227,25 @@ describe "Phone integration functions"
     assert_ok $?
   }
 
+# ── Diff preview for file writes ──────────────────────────────
+describe "File write diff preview"
+
+  it "shows diff when overwriting a file" && {
+    _setup_tools
+    echo "original content" > "$TMPDIR_TOOLS/difftest.txt"
+    export LODGE_PERMISSION=2  # auto-approve
+    out=$(tools_write_file "difftest.txt" "modified content" "$TMPDIR_TOOLS" 2>&1)
+    # Should contain diff markers or "Changes" section
+    assert_contains "$out" "Overwriting"
+    _teardown_tools
+  }
+
+  it "shows preview for new files (no diff)" && {
+    _setup_tools
+    export LODGE_PERMISSION=2
+    out=$(tools_write_file "newfile.txt" "brand new content" "$TMPDIR_TOOLS" 2>&1)
+    assert_contains "$out" "Creating"
+    _teardown_tools
+  }
+
 test_end

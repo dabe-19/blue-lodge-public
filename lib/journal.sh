@@ -72,6 +72,11 @@ $content
 "
     # Insert before the last line (or append)
     echo "$entry" >> "$JOURNAL_FILE"
+    
+    # Sign the journal after writing (if security.sh is loaded)
+    if declare -f security_sign_file &>/dev/null; then
+        security_sign_file "$JOURNAL_FILE" 2>/dev/null
+    fi
 }
 
 # ── Read Journal with Decay Applied ──────────────────────────

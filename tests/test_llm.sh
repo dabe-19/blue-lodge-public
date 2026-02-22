@@ -19,16 +19,16 @@ describe "Configuration defaults"
     assert_eq "$LODGE_MODEL" "blue-lodge"
   }
 
-  it "LLM_MAX_TOKENS defaults to 8192" && {
-    assert_eq "$LLM_MAX_TOKENS" "8192"
+  it "LLM_MAX_TOKENS defaults to 4096" && {
+    assert_eq "$LLM_MAX_TOKENS" "4096"
   }
 
   it "LLM_TIMEOUT defaults to 0 (no timeout)" && {
     assert_eq "$LLM_TIMEOUT" "0"
   }
 
-  it "LLM_KEEP_ALIVE defaults to 5m" && {
-    assert_eq "$LLM_KEEP_ALIVE" "5m"
+  it "LLM_KEEP_ALIVE defaults to 30m" && {
+    assert_eq "$LLM_KEEP_ALIVE" "30m"
   }
 
 # ── Function existence ─────────────────────────────────────────

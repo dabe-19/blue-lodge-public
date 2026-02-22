@@ -31,6 +31,11 @@ source "$LODGE_DIR/lib/providers.sh"
 source "$LODGE_DIR/lib/web.sh"
 source "$LODGE_DIR/lib/backup.sh"
 source "$LODGE_DIR/lib/journal.sh"
+source "$LODGE_DIR/lib/security.sh"
+source "$LODGE_DIR/lib/recall.sh"
+source "$LODGE_DIR/lib/secrets.sh"
+source "$LODGE_DIR/lib/gsuite.sh"
+source "$LODGE_DIR/lib/wallet.sh"
 
 # ── Graceful Cancellation ─────────────────────────────────────
 # Tracks whether we're in task execution so Ctrl+C behaves smartly:
@@ -596,6 +601,518 @@ _cmd_backup() {
     esac
 }
 
+_cmd_security() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+
+    case "$action" in
+        status|"")  security_status ;;
+        check)      security_startup_check ;;
+        sign)
+            security_sign_identity_files
+            ui_ok "All identity files signed"
+            ;;
+        verify)
+            if [ -n "$rest" ] && [ -f "$rest" ]; then
+                security_check_integrity "$rest"
+            else
+                security_check_integrity "$LODGE_DIR/soul.md" "soul.md"
+                security_check_integrity "$LODGE_DIR/journal.md" "journal.md"
+            fi
+            ;;
+        encrypt)
+            if [ -n "$rest" ] && [ -f "$rest" ]; then
+                if security_encrypt_file "$rest"; then
+                    ui_ok "Encrypted: $rest"
+                else
+                    ui_err "Encryption failed"
+                fi
+            else
+                ui_info "Usage: /security encrypt <filepath>"
+            fi
+            ;;
+        decrypt)
+            if [ -n "$rest" ] && [ -f "$rest" ]; then
+                if security_decrypt_file "$rest"; then
+                    ui_ok "Decrypted: $rest"
+                else
+                    ui_err "Decryption failed"
+                fi
+            else
+                ui_info "Usage: /security decrypt <filepath>"
+            fi
+            ;;
+        share)
+            if [ -n "$rest" ] && [ -f "$rest" ]; then
+                local token
+                token=$(security_generate_share_token "$rest")
+                if [ -n "$token" ]; then
+                    ui_ok "Share token for $(basename "$rest"):"
+                    ui_dim "  $token"
+                    ui_dim "  Share this token with someone you trust."
+                    ui_dim "  They can verify with: /security verify-token <file> <token>"
+                else
+                    ui_err "Could not generate share token"
+                fi
+            else
+                ui_info "Usage: /security share <filepath>"
+            fi
+            ;;
+        verify-token)
+            local file token
+            file=$(echo "$rest" | awk '{print $1}')
+            token=$(echo "$rest" | awk '{print $2}')
+            if [ -n "$file" ] && [ -n "$token" ]; then
+                if security_verify_share_token "$file" "$token"; then
+                    ui_ok "Token valid — file is authentic ✓"
+                else
+                    ui_err "Token invalid — file may have been tampered with"
+                fi
+            else
+                ui_info "Usage: /security verify-token <filepath> <token>"
+            fi
+            ;;
+        sandbox)
+            local sname slevel
+            sname=$(echo "$rest" | awk '{print $1}')
+            slevel=$(echo "$rest" | awk '{print $2}')
+            if [ -n "$sname" ] && [ -n "$slevel" ]; then
+                security_sandbox_set_permission "$sname" "$slevel"
+            elif [ -n "$sname" ]; then
+                local perm
+                perm=$(security_sandbox_get_permission "$sname")
+                ui_info "Sandbox '$sname' permission level: $perm"
+            else
+                security_sandbox_list_permissions
+            fi
+            ;;
+        network)
+            if [ "$LODGE_NETWORK_AUDIT" -eq 1 ]; then
+                export LODGE_NETWORK_AUDIT=0
+                ui_ok "Network audit mode: DISABLED"
+            else
+                export LODGE_NETWORK_AUDIT=1
+                ui_ok "Network audit mode: ENABLED"
+            fi
+            ;;
+        *)
+            ui_info "Usage: /security <status|check|sign|verify|encrypt|decrypt|share|sandbox|network>"
+            ui_dim "  status                — Security overview"
+            ui_dim "  check                 — Verify identity file integrity"
+            ui_dim "  sign                  — Sign all identity files"
+            ui_dim "  verify [file]         — Verify a specific file"
+            ui_dim "  encrypt <file>        — Encrypt a memory file"
+            ui_dim "  decrypt <file>        — Decrypt a memory file"
+            ui_dim "  share <file>          — Generate a share token"
+            ui_dim "  verify-token <f> <t>  — Verify a share token"
+            ui_dim "  sandbox [name] [0-2]  — Get/set sandbox permissions"
+            ui_dim "  network               — Toggle network audit mode"
+            ;;
+    esac
+}
+
+# ── Secrets Vault ──────────────────────────────────────────────
+_cmd_secret() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+
+    case "$action" in
+        set)
+            local name val
+            name=$(echo "$rest" | awk '{print $1}')
+            val=$(echo "$rest" | sed 's/^[^ ]* *//')
+            if [ -n "$name" ] && [ -n "$val" ]; then
+                secrets_set "$name" "$val"
+            else
+                ui_info "Usage: /secret set <name> <value>"
+            fi
+            ;;
+        get)
+            local name
+            name=$(echo "$rest" | awk '{print $1}')
+            if [ -n "$name" ]; then
+                local val
+                val=$(secrets_get "$name") && echo "$val" || ui_err "Secret '$name' not found"
+            else
+                ui_info "Usage: /secret get <name>"
+            fi
+            ;;
+        delete|rm)
+            local name
+            name=$(echo "$rest" | awk '{print $1}')
+            if [ -n "$name" ]; then
+                secrets_delete "$name"
+            else
+                ui_info "Usage: /secret delete <name>"
+            fi
+            ;;
+        list|ls)    secrets_list_pretty ;;
+        import)
+            local filepath
+            filepath=$(echo "$rest" | awk '{print $1}')
+            local name
+            name=$(echo "$rest" | awk '{print $2}')
+            if [ -n "$filepath" ]; then
+                [ -z "$name" ] && name=$(basename "$filepath")
+                secrets_import_file "$name" "$filepath"
+            else
+                ui_info "Usage: /secret import <filepath> [name]"
+            fi
+            ;;
+        rotate)     secrets_rotate_key ;;
+        status|"")  secrets_status ;;
+        *)
+            ui_info "Usage: /secret <set|get|delete|list|import|rotate|status>"
+            ui_dim "  set <name> <value>     — Store an encrypted secret"
+            ui_dim "  get <name>             — Retrieve a secret"
+            ui_dim "  delete <name>          — Destroy a secret"
+            ui_dim "  list                   — Show all secret names"
+            ui_dim "  import <file> [name]   — Import a file as a secret"
+            ui_dim "  rotate                 — Re-encrypt all with new key"
+            ui_dim "  status                 — Vault overview"
+            ;;
+    esac
+}
+
+# ── Document Ingestion ─────────────────────────────────────────
+_cmd_ingest() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+
+    case "$action" in
+        add)
+            local filepath label
+            filepath=$(echo "$rest" | awk '{print $1}')
+            label=$(echo "$rest" | awk '{print $2}')
+            if [ -n "$filepath" ]; then
+                recall_ingest "$filepath" "$label"
+            else
+                ui_info "Usage: /ingest add <filepath> [label]"
+            fi
+            ;;
+        summarize)
+            local filepath label
+            filepath=$(echo "$rest" | awk '{print $1}')
+            label=$(echo "$rest" | awk '{print $2}')
+            if [ -n "$filepath" ]; then
+                recall_ingest_with_summary "$filepath" "$label"
+            else
+                ui_info "Usage: /ingest summarize <filepath> [label]"
+            fi
+            ;;
+        list|ls) recall_list_documents ;;
+        remove|rm)
+            local label
+            label=$(echo "$rest" | awk '{print $1}')
+            if [ -n "$label" ]; then
+                recall_remove_document "$label"
+            else
+                ui_info "Usage: /ingest remove <label>"
+            fi
+            ;;
+        ""|help)
+            ui_info "Usage: /ingest <add|summarize|list|remove>"
+            ui_dim "  add <file> [label]       — Index a file into knowledge base"
+            ui_dim "  summarize <file> [label]  — Index + AI summarize"
+            ui_dim "  list                      — Show ingested documents"
+            ui_dim "  remove <label>            — Remove a document"
+            ui_dim "  Supported: txt, md, pdf, html, docx, py, sh, js..."
+            ;;
+        *)
+            # Treat bare filepath as 'add'
+            if [ -f "$action" ]; then
+                recall_ingest "$action" "$rest"
+            else
+                ui_err "Unknown subcommand: $action"
+            fi
+            ;;
+    esac
+}
+
+# ── G-Suite ────────────────────────────────────────────────────
+_cmd_gsuite() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+
+    case "$action" in
+        setup)
+            local cid csecret
+            cid=$(echo "$rest" | awk '{print $1}')
+            csecret=$(echo "$rest" | awk '{print $2}')
+            gsuite_setup "$cid" "$csecret"
+            ;;
+        auth)    gsuite_auth ;;
+        status|"") gsuite_status ;;
+        gmail)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            local gargs
+            gargs=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$sub" in
+                list)   gmail_list "$gargs" ;;
+                read)   gmail_read "$gargs" ;;
+                send)
+                    local to subj body
+                    to=$(echo "$gargs" | awk '{print $1}')
+                    subj=$(echo "$gargs" | awk '{print $2}')
+                    body=$(echo "$gargs" | sed 's/^[^ ]* *[^ ]* *//')
+                    gmail_send "$to" "$subj" "$body"
+                    ;;
+                search) gmail_search "$gargs" ;;
+                *)      ui_info "Usage: /gsuite gmail <list|read|send|search>" ;;
+            esac
+            ;;
+        drive)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            local dargs
+            dargs=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$sub" in
+                list|ls)    drive_list "$dargs" ;;
+                search)     drive_search "$dargs" ;;
+                download)   drive_download "$dargs" ;;
+                upload)     drive_upload "$dargs" ;;
+                *)          ui_info "Usage: /gsuite drive <list|search|download|upload>" ;;
+            esac
+            ;;
+        docs)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            local doargs
+            doargs=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$sub" in
+                read)   docs_read "$doargs" ;;
+                create)
+                    local title content
+                    title=$(echo "$doargs" | awk '{print $1}')
+                    content=$(echo "$doargs" | sed 's/^[^ ]* *//')
+                    docs_create "$title" "$content"
+                    ;;
+                *)      ui_info "Usage: /gsuite docs <read|create>" ;;
+            esac
+            ;;
+        *)
+            ui_info "Usage: /gsuite <setup|auth|status|gmail|drive|docs>"
+            ui_dim "  setup <id> <secret>     — Store OAuth2 credentials"
+            ui_dim "  auth                    — Authenticate (device flow)"
+            ui_dim "  status                  — Show G-Suite status"
+            ui_dim "  gmail list [query]      — List emails"
+            ui_dim "  gmail read <id>         — Read an email"
+            ui_dim "  gmail send <to> <subj> <body> — Send email"
+            ui_dim "  gmail search <query>    — Search emails"
+            ui_dim "  drive list [query]      — List Drive files"
+            ui_dim "  drive search <query>    — Search Drive"
+            ui_dim "  drive download <id>     — Download from Drive"
+            ui_dim "  drive upload <path>     — Upload to Drive"
+            ui_dim "  docs read <id>          — Read a Google Doc"
+            ui_dim "  docs create <title>     — Create a new Doc"
+            ;;
+    esac
+}
+
+# ── Cryptocurrency Wallets ─────────────────────────────────────
+_cmd_wallet() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+
+    case "$action" in
+        btc|bitcoin)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            local wargs
+            wargs=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$sub" in
+                address)  btc_set_address "$wargs" ;;
+                key)      btc_set_key "$wargs" ;;
+                balance)  btc_balance ;;
+                send)
+                    local to amt
+                    to=$(echo "$wargs" | awk '{print $1}')
+                    amt=$(echo "$wargs" | awk '{print $2}')
+                    btc_send "$to" "$amt"
+                    ;;
+                tx|transactions) btc_transactions ;;
+                *)        ui_info "Usage: /wallet btc <address|key|balance|send|tx>" ;;
+            esac
+            ;;
+        ada|cardano)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            local wargs
+            wargs=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$sub" in
+                address)  ada_set_address "$wargs" ;;
+                apikey)   ada_set_api_key "$wargs" ;;
+                key)      ada_set_signing_key "$wargs" ;;
+                balance)  ada_balance ;;
+                send)
+                    local to amt
+                    to=$(echo "$wargs" | awk '{print $1}')
+                    amt=$(echo "$wargs" | awk '{print $2}')
+                    ada_send "$to" "$amt"
+                    ;;
+                tx|transactions) ada_transactions ;;
+                *)        ui_info "Usage: /wallet ada <address|apikey|key|balance|send|tx>" ;;
+            esac
+            ;;
+        sol|solana)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            local wargs
+            wargs=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$sub" in
+                address)  sol_set_address "$wargs" ;;
+                key)      sol_set_key "$wargs" ;;
+                balance)  sol_balance ;;
+                send)
+                    local to amt
+                    to=$(echo "$wargs" | awk '{print $1}')
+                    amt=$(echo "$wargs" | awk '{print $2}')
+                    sol_send "$to" "$amt"
+                    ;;
+                tx|transactions) sol_transactions ;;
+                airdrop)  sol_airdrop "$wargs" ;;
+                *)        ui_info "Usage: /wallet sol <address|key|balance|send|tx|airdrop>" ;;
+            esac
+            ;;
+        balance|balances)  wallet_balances ;;
+        check)  wallet_check ;;
+        test)
+            local chain amt
+            chain=$(echo "$rest" | awk '{print $1}')
+            amt=$(echo "$rest" | awk '{print $2}')
+            wallet_test_transaction "$chain" "$amt"
+            ;;
+        network)
+            wallet_set_network "$rest"
+            ;;
+        status|"")  wallet_status ;;
+        *)
+            ui_info "Usage: /wallet <btc|ada|sol|balance|check|test|network|status>"
+            ui_dim "  btc address <addr>     — Set Bitcoin address"
+            ui_dim "  btc key <wif>          — Store Bitcoin private key"
+            ui_dim "  btc balance            — Check BTC balance"
+            ui_dim "  btc send <to> <amount> — Send BTC"
+            ui_dim "  ada address <addr>     — Set Cardano address"
+            ui_dim "  ada apikey <key>       — Set Blockfrost API key"
+            ui_dim "  ada balance            — Check ADA balance"
+            ui_dim "  ada send <to> <amount> — Send ADA"
+            ui_dim "  sol address <addr>     — Set Solana address"
+            ui_dim "  sol key <keypair>      — Store Solana keypair"
+            ui_dim "  sol balance            — Check SOL balance"
+            ui_dim "  sol send <to> <amount> — Send SOL"
+            ui_dim "  sol airdrop [amount]   — Request devnet airdrop"
+            ui_dim "  balance                — Show all wallet balances"
+            ui_dim "  check                  — Full wallet health check"
+            ui_dim "  test <chain> [amount]  — Test transaction (testnet)"
+            ui_dim "  network <main|test>    — Switch network"
+            ui_dim "  status                 — Wallet overview"
+            ;;
+    esac
+}
+
+# ── README self-review ─────────────────────────────────────────
+_cmd_readme() {
+    local args="$1"
+    local section="${args#* }"
+
+    if [[ "$section" == "$args" ]] || [ -z "$section" ]; then
+        # No argument — show capabilities overview
+        ui_section "George's README"
+        if recall_available 2>/dev/null; then
+            recall_ensure_indexed
+            recall_self_review
+        elif [ -f "$LODGE_DIR/README.md" ]; then
+            head -120 "$LODGE_DIR/README.md"
+        else
+            ui_err "README.md not found"
+        fi
+    else
+        # Search for a specific topic in the README
+        ui_section "README: $section"
+        if recall_available 2>/dev/null; then
+            recall_ensure_indexed
+            local result
+            result=$(sqlite3 -separator '|' "$RECALL_DB" \
+                "SELECT section, content FROM chunks WHERE source='readme' AND section LIKE '%${section//\'/\'\'}%' ORDER BY id;")
+            if [ -n "$result" ]; then
+                while IFS='|' read -r sec content; do
+                    [ -z "$sec" ] && continue
+                    printf "\n%b## %s%b\n" "$C_WHITE" "$sec" "$C_RESET"
+                    echo "$content" | head -40
+                done <<< "$result"
+            else
+                # Try search
+                recall_search_pretty "$section" 5
+            fi
+        else
+            grep -A 30 -i "$section" "$LODGE_DIR/README.md" | head -40
+        fi
+    fi
+}
+
+# ── Recall (knowledge base search) ────────────────────────────
+_cmd_recall() {
+    local args="$1"
+    local subcmd="${args#* }"
+
+    if [[ "$subcmd" == "$args" ]] || [ -z "$subcmd" ]; then
+        ui_section "Recall — FTS5 Knowledge Base"
+        if ! recall_available 2>/dev/null; then
+            ui_warn "sqlite3 with FTS5 not available"
+            ui_dim "Install: apt install sqlite3"
+            return 1
+        fi
+        recall_ensure_indexed
+        ui_dim "Usage:"
+        ui_dim "  /recall <query>     — Search all knowledge sources"
+        ui_dim "  /recall stats       — Show index statistics"
+        ui_dim "  /recall reindex     — Force reindex all sources"
+        ui_dim "  /recall clear       — Clear the index"
+        echo ""
+        recall_stats
+        return
+    fi
+
+    case "$subcmd" in
+        stats)
+            ui_section "Recall Index Stats"
+            recall_stats
+            ;;
+        reindex)
+            ui_step "Reindexing knowledge base..."
+            recall_clear
+            recall_reindex
+            ui_ok "Reindexed"
+            recall_stats
+            ;;
+        clear)
+            recall_clear
+            ui_ok "Recall index cleared"
+            ;;
+        *)
+            # It's a search query
+            ui_section "Recall: $subcmd"
+            recall_search_pretty "$subcmd" 8
+            ;;
+    esac
+}
+
 # ── Register all commands ──────────────────────────────────────
 _register_commands() {
     commands_register "init"     "Scaffold a new project" "_cmd_init"
@@ -616,6 +1133,13 @@ _register_commands() {
     commands_register "provider" "Cloud AI providers (OpenAI/Anthropic/Google...)" "_cmd_provider"
     commands_register "web"      "Browse the web" "_cmd_web"
     commands_register "backup"   "Backup & restore George's identity" "_cmd_backup"
+    commands_register "security" "Security, signing & integrity" "_cmd_security"
+    commands_register "readme"   "Review George's own README" "_cmd_readme"
+    commands_register "recall"   "Search George's knowledge base" "_cmd_recall"
+    commands_register "secret"   "Encrypted secrets vault" "_cmd_secret"
+    commands_register "ingest"   "Upload docs to knowledge base" "_cmd_ingest"
+    commands_register "gsuite"   "Google Workspace (Gmail/Drive/Docs)" "_cmd_gsuite"
+    commands_register "wallet"   "Cryptocurrency wallets (BTC/ADA/SOL)" "_cmd_wallet"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"
     commands_register "files"    "List workspace files" "_cmd_files"
@@ -700,6 +1224,15 @@ main() {
     
     # Initialize API config dir
     api_init 2>/dev/null
+    
+    # Security: initialize keyring and verify identity file integrity
+    security_startup_check 2>/dev/null
+
+    # Initialize secrets vault
+    secrets_init 2>/dev/null
+
+    # Index knowledge base for recall (if sqlite3 available)
+    recall_ensure_indexed 2>/dev/null
     
     # Check LLM
     if ! llm_ensure; then

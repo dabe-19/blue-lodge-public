@@ -137,6 +137,21 @@ describe "Command registration"
     assert_ok $?
   }
 
+  it "registers security command" && {
+    commands_is_command "/security"
+    assert_ok $?
+  }
+
+  it "registers readme command" && {
+    commands_is_command "/readme"
+    assert_ok $?
+  }
+
+  it "registers recall command" && {
+    commands_is_command "/recall"
+    assert_ok $?
+  }
+
   it "registers clear command" && {
     commands_is_command "/clear"
     assert_ok $?
@@ -154,6 +169,26 @@ describe "Command registration"
 
   it "registers read command" && {
     commands_is_command "/read"
+    assert_ok $?
+  }
+
+  it "registers secret command" && {
+    commands_is_command "/secret"
+    assert_ok $?
+  }
+
+  it "registers ingest command" && {
+    commands_is_command "/ingest"
+    assert_ok $?
+  }
+
+  it "registers gsuite command" && {
+    commands_is_command "/gsuite"
+    assert_ok $?
+  }
+
+  it "registers wallet command" && {
+    commands_is_command "/wallet"
     assert_ok $?
   }
 

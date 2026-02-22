@@ -8,9 +8,9 @@ source "$LODGE_DIR/lib/ui.sh"
 # ── Config ─────────────────────────────────────────────────────
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
 LODGE_MODEL="${LODGE_MODEL:-blue-lodge}"
-LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-8192}"
+LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-4096}"
 LLM_TIMEOUT="${LLM_TIMEOUT:-0}"          # 0 = no timeout (user cancels via Ctrl+C)
-LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-5m}"   # How long model stays loaded after last request
+LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"   # How long model stays loaded after last request
 
 # ── Active request tracking (for cancellation) ─────────────────
 _LLM_CURL_PID=""

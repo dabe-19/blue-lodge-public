@@ -143,6 +143,7 @@ memory_get_section() {
 # ── Build system prompt from soul + CLAUDE.md ──────────────────
 memory_build_system_prompt() {
     local dir="${1:-.}"
+    local task_hint="${2:-}"  # optional: current task/question for recall augmentation
     local soul
     soul=$(memory_read_soul)
     local project_mem
@@ -161,11 +162,23 @@ $project_mem"
     if [ -f "$LODGE_DIR/journal.md" ]; then
         source "$LODGE_DIR/lib/journal.sh" 2>/dev/null
         local journal_context
-        journal_context=$(journal_read 600)
+        journal_context=$(journal_read 300)
         if [ -n "$journal_context" ]; then
             prompt="$prompt
 
 $journal_context"
+        fi
+    fi
+
+    # Add recall context (FTS5 search) if a task hint is provided
+    if [ -n "$task_hint" ] && declare -f recall_search_context &>/dev/null; then
+        local recall_ctx
+        recall_ctx=$(recall_search_context "$task_hint" 3 2>/dev/null)
+        if [ -n "$recall_ctx" ]; then
+            prompt="$prompt
+
+--- RECALLED KNOWLEDGE ---
+$recall_ctx"
         fi
     fi
     
@@ -174,7 +187,7 @@ $journal_context"
     files=$(find "$dir" -maxdepth 3 -type f \
         ! -path '*/.git/*' ! -path '*/target/*' ! -path '*/__pycache__/*' \
         ! -path '*/.venv/*' ! -path '*/node_modules/*' ! -path '*/.mypy_cache/*' \
-        2>/dev/null | head -40 | sed "s|^$dir/||")
+        2>/dev/null | head -25 | sed "s|^$dir/||")
     
     if [ -n "$files" ]; then
         prompt="$prompt

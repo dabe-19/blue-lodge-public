@@ -68,8 +68,10 @@ commands_help() {
     printf "  %b/quit%b       Exit George\n" "$C_CYAN" "$C_RESET"
     echo ""
     
-    # Registered
-    for name in $(echo "${!CMD_REGISTRY[@]:-}" | tr ' ' '\n' | sort); do
+    # Registered — iterate safely over associative array keys
+    local _cmd_names
+    _cmd_names=$(for _k in "${!CMD_REGISTRY[@]}"; do echo "$_k"; done | sort)
+    for name in $_cmd_names; do
         [ -z "$name" ] && continue
         printf "  %b/%-10s%b %s\n" "$C_CYAN" "$name" "$C_RESET" "${CMD_DESC[$name]:-}"
     done

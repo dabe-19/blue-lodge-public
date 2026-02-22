@@ -65,6 +65,15 @@ tools_exec_bash() {
     ui_section "Shell Commands"
     ui_code_block "bash" "$commands"
     
+    # Network audit mode: block network-accessing commands from LLM
+    if [ "${LODGE_NETWORK_AUDIT:-0}" -eq 1 ]; then
+        if ! security_check_network "$commands"; then
+            ui_err "Blocked: command accesses the network (network audit mode is ON)"
+            ui_dim "Disable with: LODGE_NETWORK_AUDIT=0"
+            return 1
+        fi
+    fi
+    
     # Permission check
     if [ "$LODGE_PERMISSION" -eq 0 ]; then
         if ! ui_confirm "Execute these commands?"; then
@@ -72,10 +81,18 @@ tools_exec_bash() {
             return 1
         fi
     elif [ "$LODGE_PERMISSION" -eq 1 ]; then
-        # Check for destructive or dangerous patterns
-        if echo "$commands" | grep -qE '(rm -rf|sudo|chmod 777|dd if=|mkfs|>\s*/dev/|curl.*\|\s*(ba)?sh|wget.*\|\s*(ba)?sh|nc\s+-|ncat|/dev/tcp|mkfifo|eval\s|\bexec\s|>\s*/etc/)'; then
+        # First check: is the command on the safe allowlist?
+        if security_check_allowlist "$commands" 2>/dev/null; then
+            : # Allowlisted — proceed without asking
+        elif echo "$commands" | grep -qE '(rm -rf|sudo|chmod 777|dd if=|mkfs|>\s*/dev/|curl.*\|\s*(ba)?sh|wget.*\|\s*(ba)?sh|nc\s+-|ncat|/dev/tcp|mkfifo|eval\s|\bexec\s|>\s*/etc/)'; then
             ui_warn "Potentially dangerous command detected!"
             if ! ui_confirm "Execute anyway?" "n"; then
+                ui_warn "Skipped by user"
+                return 1
+            fi
+        else
+            # Not allowlisted, not blocklisted — ask for confirmation
+            if ! ui_confirm "Execute?"; then
                 ui_warn "Skipped by user"
                 return 1
             fi
@@ -143,18 +160,46 @@ tools_write_file() {
     
     if [ "$exists" -eq 1 ]; then
         ui_step "Overwriting: $filepath"
+        
+        # Show diff preview for existing files
+        local tmpfile
+        tmpfile=$(mktemp /tmp/lodge-diff-XXXXXX)
+        printf "%s" "$content" > "$tmpfile"
+        if command -v diff &>/dev/null; then
+            local diff_output
+            diff_output=$(diff -u "$fullpath" "$tmpfile" 2>/dev/null | head -40) || true
+            if [ -n "$diff_output" ]; then
+                ui_section "Changes"
+                echo "$diff_output" | while IFS= read -r dline; do
+                    case "$dline" in
+                        +*) printf "${C_GREEN}%s${C_RESET}\n" "$dline" ;;
+                        -*) printf "${C_RED}%s${C_RESET}\n" "$dline" ;;
+                        @*) printf "${C_CYAN}%s${C_RESET}\n" "$dline" ;;
+                        *)  echo "$dline" ;;
+                    esac
+                done
+                local diff_lines
+                diff_lines=$(diff -u "$fullpath" "$tmpfile" 2>/dev/null | wc -l) || true
+                if [ "$diff_lines" -gt 40 ]; then
+                    ui_dim "(... $((diff_lines - 40)) more diff lines)"
+                fi
+            fi
+        fi
+        rm -f "$tmpfile"
     else
         ui_step "Creating: $filepath"
     fi
     
-    # Show preview (first 10 lines)
-    local preview
-    preview=$(echo "$content" | head -10)
-    local total_lines
-    total_lines=$(echo "$content" | wc -l)
-    ui_code_block "" "$preview"
-    if [ "$total_lines" -gt 10 ]; then
-        ui_dim "(... $((total_lines - 10)) more lines)"
+    # Show preview (first 10 lines) for new files only
+    if [ "$exists" -eq 0 ]; then
+        local preview
+        preview=$(echo "$content" | head -10)
+        local total_lines
+        total_lines=$(echo "$content" | wc -l)
+        ui_code_block "" "$preview"
+        if [ "$total_lines" -gt 10 ]; then
+            ui_dim "(... $((total_lines - 10)) more lines)"
+        fi
     fi
     
     # Permission for overwrites
@@ -169,6 +214,8 @@ tools_write_file() {
     mkdir -p "$(dirname "$fullpath")"
     
     # Write
+    local total_lines
+    total_lines=$(echo "$content" | wc -l)
     printf "%s" "$content" > "$fullpath"
     ui_ok "Wrote $filepath ($total_lines lines)"
 }

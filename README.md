@@ -48,6 +48,11 @@ lodge /ask "what is a monad?"      # Quick question
 │   ├── sandbox.sh     # Project isolation (proot/directory)
 │   ├── container.sh   # Linux containers via proot-distro
 │   ├── journal.sh     # Temporal memory with decay
+│   ├── security.sh    # Signing, encryption & integrity engine
+│   ├── recall.sh      # FTS5 knowledge base (self-review, search & ingestion)
+│   ├── secrets.sh     # Encrypted secrets vault (AES-256-CBC)
+│   ├── gsuite.sh      # Google Workspace (Gmail, Drive, Docs)
+│   ├── wallet.sh      # Cryptocurrency wallets (BTC, ADA, SOL)
 │   ├── api.sh         # REST API client (curl, auth, retry, rate-limit)
 │   ├── social.sh      # Social media (X, Mastodon, Bluesky, Discord, Telegram)
 │   ├── providers.sh   # Cloud AI providers (OpenAI, Anthropic, Google, etc.)
@@ -66,7 +71,12 @@ lodge /ask "what is a monad?"      # Quick question
 │   ├── cache/         # Web page cache (1h TTL)
 │   ├── cookies/       # Session cookies
 │   ├── backups/       # Local identity snapshots
-│   └── backup-repo/   # Git-based backup repository
+│   ├── backup-repo/   # Git-based backup repository
+│   ├── .keyring/      # HMAC signing key (auto-generated)
+│   ├── .vault/        # Encrypted secrets (per-secret .enc files)
+│   ├── allowlist.conf # User command allowlist extensions
+│   ├── sandbox_permissions.conf # Per-sandbox permission overrides
+│   └── recall.db      # FTS5 knowledge index (auto-built)
 └── docs/
     ├── PHONE_SETUP.md           # Android setup guide
     └── examples/
@@ -99,6 +109,13 @@ lodge /ask "what is a monad?"      # Quick question
 | `/provider <cmd>` | — | Cloud AI (OpenAI/Anthropic/Google/Groq/Mistral...) |
 | `/web <cmd>` | — | Browse the web (fetch/search/summary/download) |
 | `/backup <cmd>` | — | Backup & restore George's identity |
+| `/security <cmd>` | — | Security, signing & integrity (status/sign/verify/encrypt/decrypt) |
+| `/readme [topic]` | — | Review George's own README (capabilities self-knowledge) |
+| `/recall <query>` | — | Search George's knowledge base (BM25 full-text search) |
+| `/secret <cmd>` | — | Encrypted secrets vault (set/get/delete/list/import/rotate) |
+| `/ingest <cmd>` | — | Upload docs to knowledge base (add/summarize/list/remove) |
+| `/gsuite <cmd>` | — | Google Workspace (Gmail/Drive/Docs) |
+| `/wallet <cmd>` | — | Cryptocurrency wallets (BTC/ADA/SOL) |
 | `/phone <cmd>` | — | Termux integration (battery/clip/notify/open/share/toast) |
 | `/ask <question>` | — | Quick question (no file changes) |
 | `/read <file>` | — | Read a file |
@@ -108,6 +125,48 @@ lodge /ask "what is a monad?"      # Quick question
 | `/cd <dir>` | — | Change directory |
 | `/clear` | — | Clear screen |
 | `/quit` | — | Exit |
+
+## Recall (FTS5 Knowledge Base)
+
+George can search his own documentation and memory using SQLite FTS5 (BM25-ranked full-text search). This gives him self-awareness of his own capabilities without loading the full README into context every time.
+
+### How It Works
+
+On startup, George chunks his knowledge sources by `##` headers and indexes them into an FTS5 database:
+
+| Source | File | Content |
+|--------|------|---------|
+| `readme` | `README.md` | George's architecture, commands, features |
+| `soul` | `soul.md` | Personality, ethics, identity |
+| `journal` | `journal.md` | Living memory (reflections, learnings) |
+| `claude` | `CLAUDE.md` | Current project memory |
+
+The index auto-rebuilds when any source file changes (mtime tracking). Total overhead: **~100-200KB on disk, <1ms per query, 0 RAM**.
+
+### Commands
+
+```bash
+lodge /readme              # George reviews his own capabilities
+lodge /readme sandboxes    # Review a specific topic from README
+lodge /recall sandboxes    # Search all knowledge sources for "sandboxes"
+lodge /recall stats        # Show index statistics
+lodge /recall reindex      # Force rebuild the index
+lodge /recall clear        # Clear the index
+```
+
+### Agent Integration
+
+When George answers a question via `/ask`, the recall system automatically searches for relevant knowledge and injects matching snippets into the system prompt. This means George can accurately describe his own features without hallucinating.
+
+### Why FTS5, Not Vector Embeddings?
+
+George's total corpus is ~40KB (README + soul + journal). At this scale:
+- **BM25 keyword search matches or beats vector similarity** for structured docs with clear headers
+- **Zero RAM overhead** vs 300MB–1.5GB for an embedding model
+- **Sub-millisecond queries** vs ~200ms per vector embed + similarity scan
+- **No Python/numpy dependency** — just sqlite3 (usually pre-installed)
+
+If the corpus grows past ~500KB or semantic matching becomes critical, Ollama's `/api/embed` endpoint can be added as an upgrade path.
 
 ## Examples
 
@@ -211,15 +270,72 @@ All persistence (CLAUDE.md, journal) lives in files, not model state. Unloading 
 
 ## Sandboxes
 
-Lightweight project isolation without Docker:
+Lightweight project isolation without Docker. Sandboxes give each project its own directory, environment, and optionally its own permission level — keeping untrusted or experimental code away from your main files.
+
+### How It Works
+
+Blue Lodge sandboxes use a **tiered isolation model** that adapts to what's available on the host:
+
+| Method | Detection | Isolation Level | How |
+|--------|-----------|-----------------|-----|
+| **proot** | `command -v proot` | Medium | Simulates root, rebinds `/proc` and `/dev` into the sandbox directory. No real root needed. |
+| **unshare** | `unshare --user true` | Medium-High | Linux user namespaces — maps the user to UID 0 inside a restricted namespace. |
+| **directory** | Always available | Basic | Falls back to plain directory isolation: overrides `$HOME` and `$TMPDIR`, runs in a subshell. |
+
+Detection is automatic (`sandbox_detect()`). On Termux/Android, `proot` is the standard path. On desktop Linux, `unshare` is preferred when available. The directory fallback works everywhere.
+
+### Sandbox Lifecycle
+
+```
+~/.lodge-sandboxes/
+├── my_app/              # Rust sandbox
+│   ├── Cargo.toml
+│   ├── src/main.rs
+│   ├── tmp/
+│   └── .git/
+├── scraper/             # Python sandbox (uv or venv)
+│   ├── pyproject.toml
+│   ├── main.py
+│   ├── .venv/
+│   └── tmp/
+└── experiment/          # Shell sandbox
+    ├── run.sh
+    └── tmp/
+```
+
+Each sandbox is scaffolded by type:
+
+| Type | Scaffolding |
+|------|-------------|
+| `rust` | `cargo init` + optimized `Cargo.toml` profiles (incremental dev, thin LTO release) |
+| `python` | `uv init --app` (preferred) or `python3 -m venv` + `main.py` entrypoint |
+| `shell` | `run.sh` with `set -euo pipefail` |
+
+Every sandbox gets a `git init` + initial commit automatically.
+
+### Per-Sandbox Permissions
+
+Each sandbox can override the global `LODGE_PERMISSION` level:
+
+```bash
+lodge /security sandbox set untrusted_repo 0   # Ask before everything
+lodge /security sandbox set my_app 2            # Auto-approve (trusted)
+lodge /security sandbox get my_app              # Check current level
+lodge /security sandbox list                    # Show all overrides
+```
+
+When `sandbox_exec()` runs a command, it checks `~/.george/sandbox_permissions.conf` for a sandbox-specific level and falls back to the global setting if none is found.
+
+### Commands
 
 ```bash
 lodge /sandbox new my_app rust    # Create Rust sandbox
 lodge /sandbox new scraper python # Create Python sandbox
-lodge /sandbox list               # List all sandboxes
-lodge /sandbox cd my_app          # Switch to sandbox
-lodge /sandbox build my_app       # Build in sandbox
-lodge /sandbox clone owner/repo   # Clone + setup repo
+lodge /sandbox list               # List all sandboxes (name, type, size)
+lodge /sandbox cd my_app          # Switch to sandbox directory
+lodge /sandbox build my_app       # Build in sandbox (auto-detects toolchain)
+lodge /sandbox clone owner/repo   # Clone + setup repo as sandbox
+lodge /sandbox rm my_app          # Remove sandbox (confirmation required)
 ```
 
 ## Phone Integration (Termux)
@@ -238,7 +354,49 @@ lodge /phone toast msg  # Show toast message
 
 ## Containers (proot-distro)
 
-George can spin up full Linux environments using `proot-distro` — no Docker, no root required. These are real distro rootfs running under proot: lightweight, fast to install, and they share the host kernel.
+George can spin up full Linux environments using [`proot-distro`](https://github.com/termux/proot-distro) — no Docker, no root, no kernel modules required. These are real distro rootfs images running under **proot**: a userspace implementation of `chroot` that intercepts syscalls via `ptrace` to translate paths and fake root privileges.
+
+### How It Works
+
+| Layer | Technology | Role |
+|-------|-----------|------|
+| **Host** | Termux (Android) or native Linux | Provides the kernel and base environment |
+| **Syscall interception** | `proot` (via `ptrace`) | Translates file paths, fakes UID 0, rebinds `/proc`, `/dev`, `/sys` |
+| **Rootfs** | `proot-distro` managed tarballs | Full distro filesystem (Ubuntu, Kali, Alpine, etc.) installed to `$PREFIX/var/lib/proot-distro/installed-rootfs/` |
+| **Bind mounts** | `--bind $PWD:/workspace` | Shares your current project directory into the container at `/workspace` |
+
+Key characteristics:
+- **No real root** — proot fakes it via ptrace. You appear as root inside the container but have only your normal user privileges on the host.
+- **Shares the host kernel** — unlike VMs, no separate kernel boots. Containers start instantly.
+- **Full package managers** — `apt`, `apk`, `dnf`, `pacman` all work normally inside the container.
+- **Filesystem overhead** — each container uses 200MB–4GB depending on distro and installed packages.
+
+### Supported Distros
+
+| Name | Alias(es) | proot-distro ID | Use Case |
+|------|-----------|-----------------|----------|
+| Ubuntu | `ubuntu`, `ubuntu-lts` | `ubuntu` | General development (default) |
+| Alpine | `alpine` | `alpine` | Minimal, fast (~50MB base) |
+| Debian | `debian` | `debian` | Stable, broad package support |
+| Fedora | `fedora` | `fedora` | Red Hat / RPM ecosystem |
+| Kali | `kali`, `nethunter` | `kali-nethunter` | Penetration testing |
+| Arch | `arch`, `archlinux` | `archlinux` | Rolling release, AUR |
+| Void | `void` | `void` | Lightweight, runit init |
+| openSUSE | `opensuse` | `opensuse` | Enterprise Linux |
+
+Aliases are resolved by `_container_resolve_distro()` — you can also pass raw proot-distro IDs for unlisted distros.
+
+### Auto-Setup
+
+When a container is installed, George automatically bootstraps dev tools:
+
+| Distro | Auto-installed |
+|--------|----------------|
+| Ubuntu/Debian | `build-essential`, `git`, `curl` |
+| Kali | `kali-tools-top10`, `git`, `curl` |
+| Alpine | `build-base`, `git`, `curl`, `bash` |
+
+### Commands
 
 ```bash
 lodge /container install ubuntu    # Install Ubuntu container
@@ -249,9 +407,25 @@ lodge /container login ubuntu      # Interactive shell
 lodge /container exec kali nmap -sV target.com  # Run a command
 lodge /container here ubuntu make  # Run with current dir at /workspace
 lodge /container info ubuntu       # Show container size/details
+lodge /container reset ubuntu      # Remove and reinstall from scratch
 lodge /container pentest           # One-command Kali + top tools setup
 lodge /container rm ubuntu         # Remove a container
 ```
+
+### Sandboxes vs Containers
+
+| Feature | Sandboxes (`/sandbox`) | Containers (`/container`) |
+|---------|----------------------|--------------------------|
+| **Purpose** | Project isolation | Full OS environment |
+| **Technology** | proot / unshare / directory | proot-distro (full rootfs) |
+| **Startup** | Instant | Instant (after install) |
+| **Disk usage** | Project files only | 200MB–4GB per distro |
+| **Package manager** | Host's (Termux/apt) | Container's own (apt/apk/dnf) |
+| **Root simulation** | Optional (proot mode) | Always (appears as root inside) |
+| **Security permissions** | Per-sandbox overrides | Host permission system |
+| **Best for** | Isolating coding projects | Running tools that need a full Linux distro |
+
+Sandboxes are lightweight wrappers for isolating project directories. Containers are full Linux distributions. Use sandboxes for everyday coding projects; use containers when you need a different distro, system packages, or pentesting tools.
 
 ### Pentest Quick-Start
 
@@ -266,12 +440,151 @@ lodge /container login kali # Drop into Kali shell
 George executes LLM-generated code. Security measures include:
 
 - **Permission system** — asks before running destructive commands (default)
+- **Command allowlist** — 100+ safe command prefixes auto-approved; user-extensible via `~/.george/allowlist.conf`
+- **File write diff preview** — color-coded unified diffs shown before overwriting existing files
 - **Workspace sandboxing** — refuses to write files outside the project directory
 - **Dangerous command detection** — blocks `rm -rf`, `curl|bash`, reverse shells, `sudo`, etc.
+- **Network audit mode** — optional flag to block all network commands from LLM output (`/security network on`)
+- **Signed memory files** — HMAC-SHA256 signatures on `soul.md` and `journal.md`, verified at startup
+- **Encryption** — AES-256-CBC encryption for George's identity files (bodily autonomy)
+- **Per-sandbox permissions** — each sandbox can have its own permission level
 - **No network dependency** — everything runs locally, no data leaves the device
 - **Graceful cancellation** — Ctrl+C cleanly kills requests and frees resources
 
-See [SECURITY.md](SECURITY.md) for the full audit, threat model, and recommendations.
+Manage security features via `/security status`, `/security check`, `/security sign`, `/security encrypt`, etc.
+
+See [SECURITY.md](SECURITY.md) for the full audit, threat model, and implementation details.
+
+## Secrets Vault
+
+George includes an encrypted key-value store for sensitive credentials — API keys, crypto wallet private keys, OAuth tokens, and anything else that should never exist in plaintext on disk.
+
+```bash
+lodge /secret set OPENAI_KEY sk-abc123...     # Store encrypted
+lodge /secret get OPENAI_KEY                  # Decrypt to stdout
+lodge /secret list                            # Show names only (never values)
+lodge /secret delete OPENAI_KEY               # Shred + remove
+lodge /secret import ~/.ssh/id_ed25519        # Import a file as a secret
+lodge /secret rotate                          # Re-encrypt all with new key
+lodge /secret status                          # Vault overview
+```
+
+**Under the hood:**
+- AES-256-CBC encryption with PBKDF2 (100k iterations)
+- Each secret stored as a separate `.enc` file in `~/.george/.vault/`
+- Key derived from the security keyring (`~/.george/.keyring/signing.key`)
+- `secrets_with` runs commands in a subshell with the secret as an env var — var is gone when the command exits
+- `secrets_export_env` outputs shell `export` statements (eval-safe)
+- `secrets_rotate_key` re-encrypts all secrets with a freshly generated key
+- Plaintext never touches disk; `shred` used where available
+
+## Document Ingestion
+
+Upload any text file, PDF, or document into George's FTS5 knowledge base for semantic search. George can then recall the content when answering questions.
+
+```bash
+lodge /ingest add ~/papers/attention.pdf              # Index a PDF
+lodge /ingest add ~/notes/meeting.md meeting-notes    # Index with custom label
+lodge /ingest summarize ~/papers/long-paper.pdf       # Index + AI summarize
+lodge /ingest list                                    # Show ingested documents
+lodge /ingest remove meeting-notes                    # Remove a document
+```
+
+**Supported formats:**
+| Extension | Method |
+|-----------|--------|
+| `.md`, `.txt`, `.sh`, `.py`, `.rs`, `.js`, `.ts` | Direct read |
+| `.pdf` | `pdftotext` (install: `apt install poppler-utils`) |
+| `.html` | HTML tag stripping via sed |
+| `.doc`, `.docx` | `pandoc` (install: `apt install pandoc`) |
+
+Documents are chunked into ~500-character paragraphs, indexed in SQLite FTS5, and searchable via `/recall <query>`. The `summarize` subcommand also generates an LLM summary as an additional searchable chunk.
+
+## Google Workspace (G-Suite)
+
+Gmail, Google Drive, and Google Docs integration via OAuth2 device authorization flow — no browser redirect needed on mobile.
+
+### Setup
+
+1. Create OAuth2 credentials at [Google Cloud Console](https://console.cloud.google.com/apis/credentials) (type: TV/Limited Input)
+2. Enable Gmail, Drive, and Docs APIs
+3. Configure George:
+
+```bash
+lodge /gsuite setup <client_id> <client_secret>
+lodge /gsuite auth                               # Opens device auth flow
+```
+
+### Gmail
+
+```bash
+lodge /gsuite gmail list                          # List unread emails
+lodge /gsuite gmail list "from:alice"             # Search emails
+lodge /gsuite gmail read <message_id>             # Read an email
+lodge /gsuite gmail send user@example.com "Subject" "Body text"
+```
+
+### Google Drive
+
+```bash
+lodge /gsuite drive list                          # List recent files
+lodge /gsuite drive search "quarterly report"     # Search files
+lodge /gsuite drive download <file_id>            # Download a file
+lodge /gsuite drive upload ./report.pdf           # Upload a file
+```
+
+### Google Docs
+
+```bash
+lodge /gsuite docs read <doc_id>                  # Read doc as text
+lodge /gsuite docs create "My Document" "Initial content here"
+```
+
+Tokens are stored in the secrets vault — no plaintext credentials on disk.
+
+## Cryptocurrency Wallets
+
+George can hold and spend Bitcoin, Cardano, and Solana. Private keys are stored in the encrypted secrets vault. Balance queries use public REST APIs (no local node needed).
+
+### Setup
+
+```bash
+# Bitcoin
+lodge /wallet btc address bc1q...                 # Set your Bitcoin address
+lodge /wallet btc key <WIF_private_key>           # Store private key in vault
+
+# Cardano (requires Blockfrost API key — free at blockfrost.io)
+lodge /wallet ada address addr1q...
+lodge /wallet ada apikey <blockfrost_project_id>
+lodge /wallet ada key <signing_key>
+
+# Solana
+lodge /wallet sol address 7xKXtg...
+lodge /wallet sol key <keypair_json>
+```
+
+### Usage
+
+```bash
+lodge /wallet balance                             # Show all wallet balances
+lodge /wallet btc balance                         # Bitcoin balance
+lodge /wallet ada balance                         # Cardano balance (+ native tokens)
+lodge /wallet sol balance                         # Solana balance
+lodge /wallet btc send <address> <amount_btc>     # Send BTC (needs bitcoin-cli)
+lodge /wallet ada send <address> <amount_ada>     # Send ADA (needs cardano-cli)
+lodge /wallet sol send <address> <amount_sol>     # Send SOL (needs solana CLI)
+lodge /wallet sol airdrop 1                       # Devnet airdrop (testnet only)
+lodge /wallet network testnet                     # Switch to testnet
+lodge /wallet status                              # Wallet overview
+```
+
+**Architecture:**
+| Operation | Method |
+|-----------|--------|
+| Balance queries | Public REST APIs (mempool.space, Blockfrost, Solana RPC) |
+| Transaction history | Public REST APIs |
+| Sending | CLI tools (bitcoin-cli/electrum, cardano-cli, solana) |
+| Key storage | Encrypted vault (`~/.george/.vault/`) |
 
 ## Hardware Targets
 
@@ -481,7 +794,7 @@ bash ~/blue-lodge/uninstall.sh
 
 ## Testing
 
-George includes a comprehensive pure-bash test suite with **400+ assertions** across 15 test modules. No external test dependencies required.
+George includes a comprehensive pure-bash test suite with **~630 assertions** across 20 test modules. No external test dependencies required.
 
 ### Run All Tests
 
@@ -514,6 +827,11 @@ bash tests/test_api.sh                     # Run a single file directly
 | `test_sandbox.sh` | 15 | Sandbox lifecycle, build, remove |
 | `test_social.sh` | 31 | 5 platforms, missing key handling |
 | `test_tools.sh` | 28 | Code extraction, file ops, safety checks |
+| `test_security.sh` | 55 | Allowlist, signing, encryption, sandboxes |
+| `test_recall.sh` | 30 | FTS5 indexing, search, self-review |
+| `test_secrets.sh` | 30 | Vault encrypt/decrypt, rotate, import, export |
+| `test_gsuite.sh` | 28 | OAuth2, Gmail/Drive/Docs, input validation |
+| `test_wallet.sh` | 35 | BTC/ADA/SOL wallets, network toggle, send validation |
 | `test_ui.sh` | 39 | Colors, print functions, markdown rendering |
 | `test_web.sh` | 27 | Web fetch, HTML parsing, cache |
 
