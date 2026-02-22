@@ -8,6 +8,7 @@ source "$LODGE_DIR/lib/ui.sh"
 source "$LODGE_DIR/lib/llm.sh"
 source "$LODGE_DIR/lib/memory.sh"
 source "$LODGE_DIR/lib/tools.sh"
+source "$LODGE_DIR/lib/journal.sh"
 
 # ── Config ─────────────────────────────────────────────────────
 AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-12}"
@@ -174,6 +175,9 @@ agent_run() {
     echo ""
     ui_divider
     ui_ok "Task complete: $completed/$total steps succeeded"
+    
+    # Phase 4: Reflect in journal
+    journal_reflect "$task ($completed/$total steps in $(basename "$workdir"))" "$workdir"
     
     # Notify on phone if available
     tools_phone_toast "Lodge: Task complete ($completed/$total steps)"

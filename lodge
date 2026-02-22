@@ -24,6 +24,7 @@ source "$LODGE_DIR/lib/tools.sh"
 source "$LODGE_DIR/lib/agent.sh"
 source "$LODGE_DIR/lib/commands.sh"
 source "$LODGE_DIR/lib/sandbox.sh"
+source "$LODGE_DIR/lib/journal.sh"
 
 # ── Register Built-in Slash Commands ──────────────────────────
 _cmd_init() {
@@ -62,6 +63,48 @@ _cmd_soul() {
     cat "$LODGE_DIR/soul.md"
     echo ""
 }
+_cmd_journal() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+    
+    case "$action" in
+        show|"")
+            journal_show "${rest:-all}" ;;
+        vivid)
+            journal_show vivid ;;
+        fading)
+            journal_show fading ;;
+        sediment)
+            journal_show sediment ;;
+        write)
+            if [ -z "$rest" ]; then
+                printf " %bWrite a journal entry:%b " "$C_WHITE" "$C_RESET"
+                read -r rest
+            fi
+            journal_write "reflection" "$rest"
+            ui_ok "Entry recorded" ;;
+        decay)
+            journal_apply_decay ;;
+        count)
+            local c
+            c=$(journal_count)
+            ui_info "$c entries in journal" ;;
+        *)
+            ui_info "Usage: /journal <show|vivid|fading|sediment|write|decay|count>" ;;
+    esac
+}
+_cmd_reflect() {
+    local context="$1"
+    if [ -z "$context" ]; then
+        context="General session work in $(basename "$PWD")"
+    fi
+    ui_think "Reflecting..."
+    journal_reflect "$context" "$PWD"
+    ui_ok "Reflection recorded"
+}
 _cmd_status() {
     ui_section "Status"
     printf "  %bModel:%b     %s\n" "$C_CYAN" "$C_RESET" "$LODGE_MODEL"
@@ -71,6 +114,9 @@ _cmd_status() {
     local mem_exists="no"
     [ -f "./CLAUDE.md" ] && mem_exists="yes"
     printf "  %bCLAUDE.md:%b %s\n" "$C_CYAN" "$C_RESET" "$mem_exists"
+    local j_count
+    j_count=$(journal_count)
+    printf "  %bJournal:%b   %s entries\n" "$C_CYAN" "$C_RESET" "$j_count"
     
     # Battery if available
     local batt
@@ -183,6 +229,8 @@ _register_commands() {
     commands_register "memory"   "Show CLAUDE.md contents" "_cmd_memory"
     commands_register "soul"     "Show soul.md" "_cmd_soul"
     commands_register "status"   "Show agent status" "_cmd_status"
+    commands_register "journal"  "View/write journal" "_cmd_journal"
+    commands_register "reflect"  "Record a reflection" "_cmd_reflect"
     commands_register "sandbox"  "Manage sandboxes" "_cmd_sandbox"
     commands_register "phone"    "Phone features (Termux)" "_cmd_phone"
     commands_register "clear"    "Clear screen" "_cmd_clear"
@@ -280,12 +328,25 @@ main() {
     fi
     
     # Handle arguments
+    # Apply journal decay on startup (cleans old entries)
+    journal_init
+    journal_apply_decay 2>/dev/null
+    
     if [ $# -eq 0 ]; then
         # Interactive mode
         ui_header "Blue Lodge v${LODGE_VERSION}" "Model: $LODGE_MODEL | $(basename "$PWD")"
+        
+        # Journal-aware greeting
+        journal_init
+        local greeting
+        greeting=$(journal_greeting)
+        ui_dim "$greeting"
         ui_dim "Type /help for commands, or describe a task."
         echo ""
         _repl
+        
+        # End-of-session reflection
+        journal_reflect "Interactive session in $(basename "$PWD")" "$PWD"
     elif [[ "$1" == /* ]]; then
         # Slash command mode
         commands_dispatch "$*" "$PWD"

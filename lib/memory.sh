@@ -157,6 +157,18 @@ memory_build_system_prompt() {
 $project_mem"
     fi
     
+    # Add journal (living memory with decay)
+    if [ -f "$LODGE_DIR/journal.md" ]; then
+        source "$LODGE_DIR/lib/journal.sh" 2>/dev/null
+        local journal_context
+        journal_context=$(journal_read 600)
+        if [ -n "$journal_context" ]; then
+            prompt="$prompt
+
+$journal_context"
+        fi
+    fi
+    
     # Add workspace file listing (lightweight)
     local files
     files=$(find "$dir" -maxdepth 3 -type f \
