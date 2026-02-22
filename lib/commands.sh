@@ -35,7 +35,7 @@ commands_dispatch() {
     esac
     
     # Check registry
-    if [ -n "${CMD_REGISTRY[$cmd]}" ]; then
+    if [ -n "${CMD_REGISTRY[$cmd]:-}" ]; then
         "${CMD_REGISTRY[$cmd]}" "$args" "$workdir"
         return $?
     fi
@@ -69,8 +69,9 @@ commands_help() {
     echo ""
     
     # Registered
-    for name in $(echo "${!CMD_REGISTRY[@]}" | tr ' ' '\n' | sort); do
-        printf "  %b/%-10s%b %s\n" "$C_CYAN" "$name" "$C_RESET" "${CMD_DESC[$name]}"
+    for name in $(echo "${!CMD_REGISTRY[@]:-}" | tr ' ' '\n' | sort); do
+        [ -z "$name" ] && continue
+        printf "  %b/%-10s%b %s\n" "$C_CYAN" "$name" "$C_RESET" "${CMD_DESC[$name]:-}"
     done
     
     # Script-based
@@ -79,7 +80,7 @@ commands_help() {
             [ -f "$script" ] || continue
             local name
             name=$(basename "$script" .sh)
-            if [ -z "${CMD_REGISTRY[$name]}" ]; then
+            if [ -z "${CMD_REGISTRY[$name]:-}" ]; then
                 local desc
                 desc=$(head -3 "$script" | grep '# DESC:' | sed 's/.*DESC: *//')
                 printf "  %b/%-10s%b %s\n" "$C_CYAN" "$name" "$C_RESET" "${desc:-Custom command}"
