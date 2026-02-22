@@ -1150,9 +1150,10 @@ _register_commands() {
 _repl() {
     local workdir="$PWD"
     
-    # History
+    # History — load previous session commands into readline buffer
     local history_file="$HOME/.lodge_history"
     touch "$history_file"
+    history -r "$history_file" 2>/dev/null
     
     while true; do
         # Update project name on each prompt
@@ -1166,8 +1167,9 @@ _repl() {
         # Empty input
         [ -z "$input" ] && continue
         
-        # Save to history
+        # Save to file history and push to live readline buffer
         echo "$input" >> "$history_file"
+        history -s "$input"
         
         # Trim
         input=$(echo "$input" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')

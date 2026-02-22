@@ -63,12 +63,21 @@ llm_cancel() {
 
 # ── Ensure Ollama is running ───────────────────────────────────
 llm_ensure() {
-    if ! llm_check; then
+    # Capture llm_check return code immediately — $? gets overwritten
+    # by subsequent commands (echo, if, ui_warn, etc.)
+    llm_check
+    local status=$?
+
+    if [ "$status" -eq 1 ]; then
         ui_warn "Ollama not running. Attempting to start..."
         if command -v ollama &>/dev/null; then
             ollama serve > /tmp/lodge-ollama.log 2>&1 &
             sleep 3
-            if ! llm_check; then
+
+            llm_check
+            status=$?
+
+            if [ "$status" -eq 1 ]; then
                 ui_err "Failed to start Ollama. Check /tmp/lodge-ollama.log"
                 return 1
             fi
@@ -77,11 +86,13 @@ llm_ensure() {
             return 1
         fi
     fi
-    local status=$?
+
+    # Check if model is missing (status 2 = Ollama running, model absent)
     if [ "$status" -eq 2 ]; then
         ui_warn "Model '$LODGE_MODEL' not found. Creating..."
         llm_create_model
     fi
+
     return 0
 }
 

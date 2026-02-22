@@ -25,11 +25,12 @@ agent_plan() {
     local prompt="TASK: $task
 
 Create a step-by-step plan. Rules:
-- Max 8 steps
-- Each step must be completable in ONE LLM call
-- Each step should be a single action (write one file, run one command, etc.)
-- Output ONLY a numbered list. No explanations.
-- If the task is simple (1-2 steps), use fewer steps."
+- Use the FEWEST steps necessary. Most tasks need 1-4 steps.
+- Never add filler steps. If the task needs 1 step, output 1 step.
+- Absolute maximum: 8 steps. Only complex multi-file tasks should approach this.
+- Each step must be completable in ONE LLM call.
+- Each step must be a single action (write one file, run one command, etc.)
+- Output ONLY a numbered list. No explanations."
     
     ui_think "Planning..."
     local plan
@@ -183,8 +184,8 @@ agent_run() {
         # Delay between steps
         sleep "$AGENT_STEP_DELAY"
         
-        # Compact memory if it's getting long
-        if [ "$step_num" -gt 8 ]; then
+        # Compact memory if steps are accumulating (earlier = safer for 8K context)
+        if [ "$step_num" -ge 4 ] && [ $(( step_num % 2 )) -eq 0 ]; then
             memory_compact "$workdir"
         fi
     done

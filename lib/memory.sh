@@ -200,25 +200,51 @@ $files"
 }
 
 # ── Compact memory (summarize completed steps) ────────────────
+# Prevents context window saturation by trimming completed steps
+# and capping total CLAUDE.md size.
 memory_compact() {
     local dir="${1:-.}"
     local file="$dir/CLAUDE.md"
     
     if [ ! -f "$file" ]; then return; fi
     
+    # 1. Compact completed steps: keep last 5, summarize older
     local completed
     completed=$(memory_get_section "Completed Steps" "$dir")
     local line_count
     line_count=$(echo "$completed" | wc -l)
     
     if [ "$line_count" -gt 10 ]; then
-        # Keep last 5 steps, summarize the rest
         local keep
         keep=$(echo "$completed" | tail -5)
         local old_count=$(( line_count - 5 ))
         memory_update_section "Completed Steps" "(...$old_count earlier steps compacted...)
 $keep" "$dir"
         ui_ok "Compacted memory: kept last 5 of $line_count steps"
+    fi
+
+    # 2. Compact Key Files: deduplicate and keep last 20
+    local key_files
+    key_files=$(memory_get_section "Key Files" "$dir")
+    local kf_count
+    kf_count=$(echo "$key_files" | wc -l)
+    if [ "$kf_count" -gt 20 ]; then
+        local deduped
+        deduped=$(echo "$key_files" | sort -u | tail -20)
+        memory_update_section "Key Files" "$deduped" "$dir"
+    fi
+
+    # 3. Hard cap: if CLAUDE.md exceeds ~3KB (roughly 1/3 of usable context
+    #    after soul.md + journal + recall), truncate aggressively
+    local file_size
+    file_size=$(wc -c < "$file")
+    if [ "$file_size" -gt 3072 ]; then
+        # Keep header + current task + plan, compact everything else
+        memory_update_section "Errors" "(compacted)" "$dir"
+        local notes
+        notes=$(memory_get_section "Notes" "$dir" | head -3)
+        memory_update_section "Notes" "$notes" "$dir"
+        ui_warn "CLAUDE.md exceeded 3KB — aggressively compacted to protect context window"
     fi
 }
 

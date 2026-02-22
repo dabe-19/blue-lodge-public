@@ -11,10 +11,21 @@ source "$LODGE_DIR/lib/ui.sh"
 LODGE_PERMISSION="${LODGE_PERMISSION:-1}"
 
 # ── Extract bash code blocks ──────────────────────────────────
+# Resilient to common LLM formatting errors:
+#   - Missing closing ``` (unterminated block)
+#   - Extra whitespace around backticks
+#   - ``bash (2 backticks) or ````bash (4 backticks)
 tools_extract_bash() {
     local response="$1"
-    # Extract content between ```bash and ```
-    echo "$response" | sed -n '/^```bash/,/^```$/p' | sed '/^```/d'
+    # Normalize: strip leading whitespace on fence lines, tolerate 2-4 backticks
+    local normalized
+    normalized=$(echo "$response" | sed 's/^[[:space:]]*//' | sed 's/^`\{2,4\}bash/```bash/' | sed 's/^`\{2,4\}$/```/')
+    # Extract between ```bash and ``` (or EOF if block is unterminated)
+    echo "$normalized" | awk '
+        /^```bash/ { capture=1; next }
+        /^```$/    { if (capture) capture=0; next }
+        capture    { print }
+    '
 }
 
 # ── Extract file writes from response ─────────────────────────
@@ -24,7 +35,8 @@ tools_extract_files() {
     local temp_dir
     temp_dir=$(mktemp -d)
     
-    echo "$response" | awk -v outdir="$temp_dir" '
+    # Normalize backtick fences (2-4 backticks → 3) before parsing
+    echo "$response" | sed 's/^[[:space:]]*//' | sed 's/^`\{2,4\}\([a-zA-Z]\)/```\1/' | sed 's/^`\{2,4\}$/```/' | awk -v outdir="$temp_dir" '
     /^```[a-zA-Z]/ { 
         in_block=1
         lang=substr($0, 4)
@@ -36,19 +48,27 @@ tools_extract_files() {
     /^```$/ { 
         if (in_block && filepath != "") {
             outfile = outdir "/" NR
-            printf "%s\n%s" filepath, content > outfile
+            printf "%s\n%s", filepath, content > outfile
         }
         in_block=0
         next 
     }
-    in_block && /^[[:space:]]*(\/\/|#) filepath:/ {
+    # Tolerate common LLM misspellings: filepath, file_path, file path, Filepath
+    in_block && /^[[:space:]]*((\/\/|#) *(file_?path|file path|File_?[Pp]ath)):/ {
         f = $0
-        sub(/.*filepath:[[:space:]]*/, "", f)
+        sub(/.*[Ff]ile[_ ]?[Pp]?ath:[[:space:]]*/, "", f)
         gsub(/[[:space:]]*$/, "", f)
         filepath = f
         next
     }
     in_block { content = content $0 "\n" }
+    END {
+        # Flush unterminated block if it had a filepath
+        if (in_block && filepath != "") {
+            outfile = outdir "/" NR
+            printf "%s\n%s", filepath, content > outfile
+        }
+    }
     '
     
     echo "$temp_dir"
