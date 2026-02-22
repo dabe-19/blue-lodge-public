@@ -1,5 +1,5 @@
 #!/bin/bash
-# ── Blue Lodge: Slash Command Dispatcher ───────────────────────
+# ── George: Slash Command Dispatcher ───────────────────────
 # Registers and dispatches /commands similar to Claude Code.
 
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
@@ -65,7 +65,7 @@ commands_help() {
     
     # Built-in
     printf "  %b/help%b       Show this help\n" "$C_CYAN" "$C_RESET"
-    printf "  %b/quit%b       Exit Blue Lodge\n" "$C_CYAN" "$C_RESET"
+    printf "  %b/quit%b       Exit George\n" "$C_CYAN" "$C_RESET"
     echo ""
     
     # Registered

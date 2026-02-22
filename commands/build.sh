@@ -35,7 +35,7 @@ cmd_build() {
     
     ui_step "Running: $build_cmd"
     echo ""
-    eval "$build_cmd" 2>&1
+    bash -c "$build_cmd" 2>&1
     local exit_code=$?
     
     echo ""

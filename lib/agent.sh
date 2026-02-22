@@ -1,5 +1,5 @@
 #!/bin/bash
-# ── Blue Lodge: Agent Loop ─────────────────────────────────────
+# ── George: Agent Loop ─────────────────────────────────────
 # The core plan→execute→memory cycle.
 # Each step is a small LLM call with full memory context.
 
@@ -109,13 +109,20 @@ agent_run() {
         return 1
     fi
     
+    # Signal that we're in a task (for cancellation handling)
+    _LODGE_IN_TASK=1
+    _LODGE_CANCELLED=0
+    
     ui_section "Task"
     ui_info "$task"
     
     # Phase 1: Plan
     local plan
     plan=$(agent_plan "$task" "$workdir")
-    if [ $? -ne 0 ]; then return 1; fi
+    if [ $? -ne 0 ] || [ "${_LODGE_CANCELLED:-0}" -eq 1 ]; then
+        _LODGE_IN_TASK=0
+        return 1
+    fi
     
     ui_section "Plan"
     echo "$plan" | while IFS= read -r line; do
@@ -147,6 +154,12 @@ agent_run() {
     # Phase 2: Execute
     local completed=0
     for i in "${!steps[@]}"; do
+        # Check for cancellation between steps
+        if [ "${_LODGE_CANCELLED:-0}" -eq 1 ]; then
+            ui_warn "Task cancelled at step $((i + 1))/$total"
+            break
+        fi
+        
         local step_num=$((i + 1))
         
         ui_progress "$step_num" "$total" "${steps[$i]:0:30}"
@@ -154,6 +167,11 @@ agent_run() {
         if agent_execute_step "$step_num" "${steps[$i]}" "$workdir"; then
             completed=$((completed + 1))
         else
+            # Check if failure was due to cancellation
+            if [ "${_LODGE_CANCELLED:-0}" -eq 1 ]; then
+                ui_warn "Step $step_num cancelled"
+                break
+            fi
             ui_warn "Step $step_num failed. Continue? [Y/n]"
             read -r cont
             if [[ "${cont,,}" == "n" ]]; then
@@ -171,6 +189,10 @@ agent_run() {
         fi
     done
     
+    # Task done — signal no longer in task
+    _LODGE_IN_TASK=0
+    _LODGE_CANCELLED=0
+    
     # Phase 3: Summary
     echo ""
     ui_divider
@@ -182,6 +204,9 @@ agent_run() {
     # Notify on phone if available
     tools_phone_toast "Lodge: Task complete ($completed/$total steps)"
     
+    # Unload model after task to free RAM on mobile
+    llm_unload
+    
     return 0
 }
 
@@ -189,6 +214,9 @@ agent_run() {
 agent_ask() {
     local question="$1"
     local workdir="${2:-.}"
+    
+    _LODGE_IN_TASK=1
+    _LODGE_CANCELLED=0
     
     local system_prompt
     system_prompt=$(memory_build_system_prompt "$workdir")
@@ -198,14 +226,25 @@ agent_ask() {
     response=$(llm_generate "$question" "$system_prompt")
     ui_spinner_stop
     
+    _LODGE_IN_TASK=0
+    
+    if [ "${_LODGE_CANCELLED:-0}" -eq 1 ]; then
+        _LODGE_CANCELLED=0
+        return 1
+    fi
+    
     if [[ "$response" == ERROR* ]]; then
         ui_err "$response"
+        llm_unload
         return 1
     fi
     
     echo ""
     ui_render_response "$response"
     echo ""
+    
+    # Unload model after answering to free RAM
+    llm_unload
 }
 
 # ── Interactive step-by-step mode ──────────────────────────────

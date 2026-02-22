@@ -1,5 +1,5 @@
 #!/bin/bash
-# ── Blue Lodge: LLM Interface ─────────────────────────────────
+# ── George: LLM Interface ─────────────────────────────────
 # Direct Ollama API wrapper. No proxy needed.
 
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
@@ -8,8 +8,13 @@ source "$LODGE_DIR/lib/ui.sh"
 # ── Config ─────────────────────────────────────────────────────
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
 LODGE_MODEL="${LODGE_MODEL:-blue-lodge}"
-LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-2048}"
-LLM_TIMEOUT="${LLM_TIMEOUT:-120}"
+LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-8192}"
+LLM_TIMEOUT="${LLM_TIMEOUT:-0}"          # 0 = no timeout (user cancels via Ctrl+C)
+LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-5m}"   # How long model stays loaded after last request
+
+# ── Active request tracking (for cancellation) ─────────────────
+_LLM_CURL_PID=""
+_LLM_ACTIVE=0
 
 # ── Health Check ───────────────────────────────────────────────
 llm_check() {
@@ -24,6 +29,36 @@ llm_check() {
     else
         return 2  # Ollama running but model not found
     fi
+}
+
+# ── Check if model is currently loaded in memory ───────────────
+llm_is_loaded() {
+    local resp
+    resp=$(curl -sf --max-time 5 "$OLLAMA_URL/api/ps" 2>/dev/null)
+    [ $? -ne 0 ] && return 1
+    echo "$resp" | jq -e ".models[] | select(.name == \"$LODGE_MODEL\")" &>/dev/null
+}
+
+# ── Unload model from memory ───────────────────────────────────
+# Sends a request with keep_alive=0 to immediately free RAM.
+# Safe to call — does not affect CLAUDE.md or journal persistence.
+llm_unload() {
+    if llm_is_loaded; then
+        curl -sf --max-time 10 "$OLLAMA_URL/api/generate" \
+            -H "Content-Type: application/json" \
+            -d "{\"model\": \"$LODGE_MODEL\", \"prompt\": \"\", \"keep_alive\": 0}" &>/dev/null
+        ui_dim "Model unloaded from memory"
+    fi
+}
+
+# ── Cancel active LLM request ──────────────────────────────────
+llm_cancel() {
+    if [ -n "$_LLM_CURL_PID" ] && kill -0 "$_LLM_CURL_PID" 2>/dev/null; then
+        kill "$_LLM_CURL_PID" 2>/dev/null
+        wait "$_LLM_CURL_PID" 2>/dev/null
+        _LLM_CURL_PID=""
+    fi
+    _LLM_ACTIVE=0
 }
 
 # ── Ensure Ollama is running ───────────────────────────────────
@@ -66,30 +101,65 @@ llm_generate() {
     local prompt="$1"
     local system="${2:-}"
     local payload
+    local timeout_args=()
 
     if [ -n "$system" ]; then
         payload=$(jq -n \
             --arg model "$LODGE_MODEL" \
             --arg prompt "$prompt" \
             --arg system "$system" \
+            --arg keep_alive "$LLM_KEEP_ALIVE" \
             --argjson num_predict "$LLM_MAX_TOKENS" \
-            '{model: $model, prompt: $prompt, system: $system, stream: false, options: {num_predict: $num_predict}}')
+            '{model: $model, prompt: $prompt, system: $system, stream: false, keep_alive: $keep_alive, options: {num_predict: $num_predict}}')
     else
         payload=$(jq -n \
             --arg model "$LODGE_MODEL" \
             --arg prompt "$prompt" \
+            --arg keep_alive "$LLM_KEEP_ALIVE" \
             --argjson num_predict "$LLM_MAX_TOKENS" \
-            '{model: $model, prompt: $prompt, stream: false, options: {num_predict: $num_predict}}')
+            '{model: $model, prompt: $prompt, stream: false, keep_alive: $keep_alive, options: {num_predict: $num_predict}}')
+    fi
+
+    # Build timeout args: 0 means no timeout (user cancels via Ctrl+C)
+    if [ "$LLM_TIMEOUT" -gt 0 ] 2>/dev/null; then
+        timeout_args=(--max-time "$LLM_TIMEOUT")
+    fi
+
+    _LLM_ACTIVE=1
+    local tmpfile
+    tmpfile=$(mktemp /tmp/lodge-llm-XXXXXX)
+    # Ensure tmpfile is cleaned up even on unexpected exit
+    trap 'rm -f "$tmpfile" 2>/dev/null' RETURN
+
+    # Run curl in background so we can track and cancel it
+    curl -sf "${timeout_args[@]}" \
+        "$OLLAMA_URL/api/generate" \
+        -H "Content-Type: application/json" \
+        -d "$payload" > "$tmpfile" 2>/dev/null &
+    _LLM_CURL_PID=$!
+
+    # Wait for curl — if interrupted, the trap handler cleans up
+    wait "$_LLM_CURL_PID"
+    local curl_exit=$?
+    _LLM_CURL_PID=""
+    _LLM_ACTIVE=0
+
+    if [ $curl_exit -ne 0 ]; then
+        rm -f "$tmpfile"
+        if [ $curl_exit -eq 143 ] || [ $curl_exit -eq 130 ]; then
+            echo "ERROR: Request cancelled"
+        else
+            echo "ERROR: LLM request failed (exit $curl_exit)"
+        fi
+        return 1
     fi
 
     local response
-    response=$(curl -sf --max-time "$LLM_TIMEOUT" \
-        "$OLLAMA_URL/api/generate" \
-        -H "Content-Type: application/json" \
-        -d "$payload" 2>/dev/null)
+    response=$(cat "$tmpfile")
+    rm -f "$tmpfile"
 
-    if [ $? -ne 0 ]; then
-        echo "ERROR: LLM request failed or timed out after ${LLM_TIMEOUT}s"
+    if [ -z "$response" ]; then
+        echo "ERROR: Empty response from LLM"
         return 1
     fi
 
@@ -119,8 +189,15 @@ llm_stream() {
             '{model: $model, prompt: $prompt, stream: true, options: {num_predict: $num_predict}}')
     fi
 
+    # Build timeout args
+    local timeout_args=()
+    if [ "$LLM_TIMEOUT" -gt 0 ] 2>/dev/null; then
+        timeout_args=(--max-time "$LLM_TIMEOUT")
+    fi
+
     # Stream tokens to stdout, collect full response
-    curl -sf --max-time "$LLM_TIMEOUT" \
+    _LLM_ACTIVE=1
+    curl -sf "${timeout_args[@]}" \
         "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
         -d "$payload" 2>/dev/null | while IFS= read -r line; do
@@ -137,6 +214,7 @@ llm_stream() {
             break
         fi
     done
+    _LLM_ACTIVE=0
 }
 
 # ── Chat format (multi-turn via /api/chat) ─────────────────────
@@ -162,13 +240,22 @@ llm_chat() {
             '{model: $model, messages: $messages, stream: false, options: {num_predict: $num_predict}}')
     fi
 
+    # Build timeout args
+    local timeout_args=()
+    if [ "$LLM_TIMEOUT" -gt 0 ] 2>/dev/null; then
+        timeout_args=(--max-time "$LLM_TIMEOUT")
+    fi
+
+    _LLM_ACTIVE=1
     local response
-    response=$(curl -sf --max-time "$LLM_TIMEOUT" \
+    response=$(curl -sf "${timeout_args[@]}" \
         "$OLLAMA_URL/api/chat" \
         -H "Content-Type: application/json" \
         -d "$payload" 2>/dev/null)
+    local chat_exit=$?
+    _LLM_ACTIVE=0
 
-    if [ $? -ne 0 ]; then
+    if [ $chat_exit -ne 0 ]; then
         echo "ERROR: Chat request failed"
         return 1
     fi

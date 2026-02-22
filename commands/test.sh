@@ -39,7 +39,7 @@ cmd_test() {
     
     ui_step "Running: $test_cmd"
     echo ""
-    eval "$test_cmd" 2>&1
+    bash -c "$test_cmd" 2>&1
     local exit_code=$?
     
     echo ""

@@ -1,5 +1,5 @@
 #!/bin/bash
-# ── Blue Lodge: Journal System ─────────────────────────────────
+# ── George: Journal System ─────────────────────────────────
 # A recursive memory with temporal decay.
 # Recent entries are vivid. Old entries fade into impressions.
 # The oldest dissolve into character — felt but not cited.
@@ -29,7 +29,7 @@ DECAY_SEDIMENT_DAYS=60
 journal_init() {
     if [ ! -f "$JOURNAL_FILE" ]; then
         cat > "$JOURNAL_FILE" << 'JEOF'
-# Journal of Blue Lodge
+# Journal of George
 
 > *"The unexamined life is not worth living."* — Socrates
 > *"We can never survey our own sentiments and motives... unless we remove ourselves, as it were, from our own natural station."* — Adam Smith
@@ -215,7 +215,7 @@ journal_apply_decay() {
                 local new_sediment
                 new_sediment=$(llm_generate "You are compressing old journal entries into a single paragraph of impressions — things half-remembered, feelings that remain even when details have faded. Write in first person. Be poetic but brief (3-5 sentences). These are the old entries:
 
-$old_entries" "You are Blue Lodge reflecting on faded memories.")
+$old_entries" "You are George reflecting on faded memories.")
                 
                 # Update sediment section
                 journal_update_sediment "$new_sediment"
@@ -323,7 +323,7 @@ journal_reflect() {
     local soul
     soul=$(cat "$LODGE_DIR/soul.md" | head -40)
     
-    local prompt="You are Blue Lodge. You just completed some work. Reflect briefly in your journal.
+    local prompt="You are George. You just completed some work. Reflect briefly in your journal.
 
 What you did: $task_summary
 Working directory: $workdir
@@ -359,7 +359,8 @@ Do NOT use headers or formatting. Just the raw reflection."
 # ── Session greeting based on journal state ───────────────────
 journal_greeting() {
     local entry_count
-    entry_count=$(grep -c '^## [0-9]' "$JOURNAL_FILE" 2>/dev/null || echo 0)
+    entry_count=$(grep -c '^## [0-9]' "$JOURNAL_FILE" 2>/dev/null) || true
+    entry_count="${entry_count:-0}"
     local last_date
     last_date=$(grep '^## [0-9]' "$JOURNAL_FILE" 2>/dev/null | tail -1 | grep -oP '^## \K[0-9-]+' || echo "")
     local today
@@ -416,5 +417,7 @@ journal_show() {
 
 # ── Count entries ──────────────────────────────────────────────
 journal_count() {
-    grep -c '^## [0-9]' "$JOURNAL_FILE" 2>/dev/null || echo 0
+    local count
+    count=$(grep -c '^## [0-9]' "$JOURNAL_FILE" 2>/dev/null) || true
+    echo "${count:-0}"
 }

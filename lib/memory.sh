@@ -1,5 +1,5 @@
 #!/bin/bash
-# ── Blue Lodge: Memory System ─────────────────────────────────
+# ── George: Memory System ───────────────────────────────────────
 # CLAUDE.md-compatible memory file management.
 # The agent reads this before every action, writes after every step.
 
@@ -16,7 +16,7 @@ memory_read_soul() {
     if [ -f "$soul_file" ]; then
         cat "$soul_file"
     else
-        echo "You are Blue Lodge, a concise coding agent for mobile devices."
+        echo "You are George, a concise coding agent for mobile devices."
     fi
 }
 
@@ -115,7 +115,7 @@ memory_append_section() {
     current=$(memory_get_section "$section" "$dir")
     
     # Remove (none) or (auto-populated) placeholders
-    current=$(echo "$current" | grep -v '^\(none\)$' | grep -v '^\(auto-populated' || true)
+    current=$(echo "$current" | grep -v '^(none)$' | grep -v '^(auto-populated' || true)
     
     if [ -n "$current" ]; then
         memory_update_section "$section" "$current

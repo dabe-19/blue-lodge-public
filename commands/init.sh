@@ -231,7 +231,7 @@ SHEOF
     # Git init
     git init -q 2>/dev/null
     echo -e "target/\n.venv/\n__pycache__/\n*.pyc\n.lodge-snapshots/" > .gitignore 2>/dev/null
-    git add -A 2>/dev/null && git commit -q -m "Initial scaffold via Blue Lodge" 2>/dev/null
+    git add -A 2>/dev/null && git commit -q -m "Initial scaffold via George" 2>/dev/null
     
     echo ""
     ui_ok "Project '$name' ($env_label) created at $PWD"

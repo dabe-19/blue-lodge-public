@@ -1,9 +1,9 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# Blue Lodge — Installation Script
+# George (Blue Lodge) — Installation Script
 # ═══════════════════════════════════════════════════════════════
 # Run: bash install.sh
-# Installs Blue Lodge, configures Ollama model, sets up shell.
+# Installs George, configures Ollama model, sets up shell.
 set -euo pipefail
 
 LODGE_DIR="$HOME/blue-lodge"
@@ -21,7 +21,7 @@ warn()  { printf " ${YELLOW}⚠${RESET} %s\n" "$1"; }
 err()   { printf " ${RED}✗${RESET} %s\n" "$1"; }
 
 echo ""
-printf " ${BOLD}⌂ Blue Lodge Installer${RESET}\n"
+printf " ${BOLD}⌂ George Installer${RESET}\n"
 echo ""
 
 # ── 1. Check dependencies ────────────────────────────────────

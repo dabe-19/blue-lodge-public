@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ⌂ Blue Lodge — Mobile-First Coding Agent
+# ⌂ George — Mobile-First Coding Agent (Blue Lodge)
 # ═══════════════════════════════════════════════════════════════
 # A lightweight agentic shell powered by local LLMs via Ollama.
 # Designed for Galaxy Fold 7 / Termux / Ubuntu on ARM.
@@ -24,7 +24,52 @@ source "$LODGE_DIR/lib/tools.sh"
 source "$LODGE_DIR/lib/agent.sh"
 source "$LODGE_DIR/lib/commands.sh"
 source "$LODGE_DIR/lib/sandbox.sh"
+source "$LODGE_DIR/lib/container.sh"
+source "$LODGE_DIR/lib/api.sh"
+source "$LODGE_DIR/lib/social.sh"
+source "$LODGE_DIR/lib/providers.sh"
+source "$LODGE_DIR/lib/web.sh"
+source "$LODGE_DIR/lib/backup.sh"
 source "$LODGE_DIR/lib/journal.sh"
+
+# ── Graceful Cancellation ─────────────────────────────────────
+# Tracks whether we're in task execution so Ctrl+C behaves smartly:
+# - During LLM generation → kill the request, unload model, return to prompt
+# - During REPL idle → exit cleanly
+_LODGE_IN_TASK=0
+_LODGE_CANCELLED=0
+
+_lodge_cleanup() {
+    # Stop spinner if running
+    ui_spinner_stop 2>/dev/null
+
+    # Cancel active LLM request
+    llm_cancel 2>/dev/null
+
+    if [ "$_LODGE_IN_TASK" -eq 1 ]; then
+        _LODGE_CANCELLED=1
+        echo ""
+        ui_warn "Cancelled by user"
+
+        # Unload model to free RAM — safe because persistence
+        # lives in CLAUDE.md and journal.md, not in model state
+        llm_unload 2>/dev/null
+
+        # Don't exit — return to REPL
+        return 0
+    else
+        # Not in a task: clean exit
+        echo ""
+        ui_info "Interrupted. Unloading model..."
+        llm_unload 2>/dev/null
+        if command -v termux-wake-unlock &>/dev/null; then
+            termux-wake-unlock 2>/dev/null
+        fi
+        exit 0
+    fi
+}
+
+trap '_lodge_cleanup' INT
 
 # ── Register Built-in Slash Commands ──────────────────────────
 _cmd_init() {
@@ -180,7 +225,7 @@ _cmd_phone() {
             else
                 tools_phone_clipboard_get
             fi ;;
-        notify)   tools_phone_notify "Blue Lodge" "$rest" ;;
+        notify)   tools_phone_notify "George" "$rest" ;;
         open)     tools_phone_open_url "$rest" ;;
         share)    tools_phone_share "$rest" ;;
         toast)    tools_phone_toast "$rest" ;;
@@ -218,6 +263,338 @@ _cmd_read() {
         ui_err "File not found: $filepath"
     fi
 }
+_cmd_container() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+    
+    case "$action" in
+        list|ls)       container_list ;;
+        available)     container_list_available ;;
+        install|add)
+            local distro
+            distro=$(echo "$rest" | awk '{print $1}')
+            container_install "$distro" ;;
+        login|enter)
+            local distro
+            distro=$(echo "$rest" | awk '{print $1}')
+            container_login "$distro" ;;
+        exec|run)
+            local distro
+            distro=$(echo "$rest" | awk '{print $1}')
+            local cmd
+            cmd=$(echo "$rest" | sed 's/^[^ ]* *//')
+            container_exec "$distro" "$cmd" ;;
+        here)
+            local distro
+            distro=$(echo "$rest" | awk '{print $1}')
+            local cmd
+            cmd=$(echo "$rest" | sed 's/^[^ ]* *//')
+            container_exec_here "$distro" "$cmd" ;;
+        rm|remove)
+            local distro
+            distro=$(echo "$rest" | awk '{print $1}')
+            container_remove "$distro" ;;
+        reset)
+            local distro
+            distro=$(echo "$rest" | awk '{print $1}')
+            container_reset "$distro" ;;
+        info)
+            local distro
+            distro=$(echo "$rest" | awk '{print $1}')
+            container_info "$distro" ;;
+        pentest)   container_pentest_setup ;;
+        *)
+            ui_info "Usage: /container <list|available|install|login|exec|here|rm|reset|info|pentest>"
+            ui_dim "  list       — Show installed containers"
+            ui_dim "  available  — Show all available distros"
+            ui_dim "  install    — Install a distro (ubuntu, kali, alpine...)"
+            ui_dim "  login      — Interactive shell in a container"
+            ui_dim "  exec       — Run a command in a container"
+            ui_dim "  here       — Run command with current dir mounted at /workspace"
+            ui_dim "  rm         — Remove a container"
+            ui_dim "  reset      — Reinstall a container from scratch"
+            ui_dim "  info       — Show container details"
+            ui_dim "  pentest    — One-command Kali + tools setup"
+            ;;
+    esac
+}
+_cmd_api() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+    
+    case "$action" in
+        keys)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            local keyargs
+            keyargs=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$sub" in
+                list|ls|"") api_list_keys ;;
+                set)
+                    local kname kval
+                    kname=$(echo "$keyargs" | awk '{print $1}')
+                    kval=$(echo "$keyargs" | awk '{print $2}')
+                    if [ -z "$kname" ] || [ -z "$kval" ]; then
+                        ui_err "Usage: /api keys set KEY_NAME value"
+                        return 1
+                    fi
+                    api_init
+                    api_set_key "$kname" "$kval"
+                    ui_ok "Key $kname saved" ;;
+                rm|remove)
+                    local kname
+                    kname=$(echo "$keyargs" | awk '{print $1}')
+                    if [ -n "$kname" ] && [ -f "$GEORGE_KEYS_FILE" ]; then
+                        local tmpfile; tmpfile=$(mktemp)
+                        grep -v "^${kname}=" "$GEORGE_KEYS_FILE" > "$tmpfile"
+                        mv "$tmpfile" "$GEORGE_KEYS_FILE"
+                        ui_ok "Key $kname removed"
+                    fi ;;
+                *) ui_info "Usage: /api keys <list|set|rm>" ;;
+            esac ;;
+        status)
+            api_init
+            social_status
+            echo ""
+            provider_status ;;
+        *)
+            ui_info "Usage: /api <keys|status>"
+            ui_dim "  keys list     — Show configured API keys"
+            ui_dim "  keys set K V  — Set an API key"
+            ui_dim "  keys rm K     — Remove an API key"
+            ui_dim "  status        — Show integration status"
+            ;;
+    esac
+}
+_cmd_social() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+
+    case "$action" in
+        post)
+            local platform text
+            platform=$(echo "$rest" | awk '{print $1}')
+            text=$(echo "$rest" | sed 's/^[^ ]* *//')
+            if [ -z "$text" ]; then
+                # No platform specified — text is everything
+                text="$platform"
+                social_post "$text"
+            else
+                social_post "$text" "$platform"
+            fi ;;
+        x|twitter)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            local xargs
+            xargs=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$sub" in
+                post)    x_post "$xargs" ;;
+                search)  x_search "$xargs" ;;
+                timeline) x_timeline ;;
+                reply)
+                    local tid txt
+                    tid=$(echo "$xargs" | awk '{print $1}')
+                    txt=$(echo "$xargs" | sed 's/^[^ ]* *//')
+                    x_reply "$tid" "$txt" ;;
+                delete)  x_delete "$xargs" ;;
+                *)       ui_info "Usage: /social x <post|search|timeline|reply|delete>" ;;
+            esac ;;
+        mastodon|masto)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            local margs
+            margs=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$sub" in
+                post)       mastodon_post "$margs" ;;
+                timeline)   mastodon_timeline ;;
+                search)     mastodon_search "$margs" ;;
+                notify)     mastodon_notifications ;;
+                *)          ui_info "Usage: /social mastodon <post|timeline|search|notify>" ;;
+            esac ;;
+        bluesky|bsky)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            local bargs
+            bargs=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$sub" in
+                post)     bluesky_post "$bargs" ;;
+                timeline) bluesky_timeline ;;
+                search)   bluesky_search "$bargs" ;;
+                *)        ui_info "Usage: /social bluesky <post|timeline|search>" ;;
+            esac ;;
+        discord)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            local dargs
+            dargs=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$sub" in
+                send|post) discord_webhook "$dargs" ;;
+                read)
+                    local cid
+                    cid=$(echo "$dargs" | awk '{print $1}')
+                    discord_read "$cid" ;;
+                *)        ui_info "Usage: /social discord <send|read>" ;;
+            esac ;;
+        telegram|tg)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            local targs
+            targs=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$sub" in
+                send|post) telegram_send "$targs" ;;
+                updates)   telegram_get_updates ;;
+                me)        telegram_get_me ;;
+                *)         ui_info "Usage: /social telegram <send|updates|me>" ;;
+            esac ;;
+        status) social_status ;;
+        *)
+            ui_info "Usage: /social <post|x|mastodon|bluesky|discord|telegram|status>"
+            ui_dim "  post <text>          — Post to all configured platforms"
+            ui_dim "  post <platform> text — Post to a specific platform"
+            ui_dim "  x <action>           — X/Twitter commands"
+            ui_dim "  mastodon <action>    — Mastodon commands"
+            ui_dim "  bluesky <action>     — Bluesky commands"
+            ui_dim "  discord <action>     — Discord commands"
+            ui_dim "  telegram <action>    — Telegram commands"
+            ui_dim "  status               — Show configured platforms"
+            ;;
+    esac
+}
+_cmd_provider() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+
+    case "$action" in
+        chat|ask)
+            local provider
+            provider=$(echo "$rest" | awk '{print $1}')
+            local message
+            message=$(echo "$rest" | sed 's/^[^ ]* *//')
+            if [ -z "$provider" ] || [ -z "$message" ]; then
+                ui_err "Usage: /provider chat <provider> <message>"
+                return 1
+            fi
+            local response
+            response=$(provider_chat "$provider" "$message")
+            if [ $? -eq 0 ]; then
+                echo ""
+                ui_render_response "$response"
+            fi ;;
+        models)
+            local provider
+            provider=$(echo "$rest" | awk '{print $1}')
+            case "$provider" in
+                openai)    openai_models ;;
+                google)    google_models ;;
+                anthropic) anthropic_models ;;
+                *)         ui_err "Usage: /provider models <openai|google|anthropic>" ;;
+            esac ;;
+        status) provider_status ;;
+        *)
+            ui_info "Usage: /provider <chat|models|status>"
+            ui_dim "  chat <provider> <msg> — Send a message to a cloud AI"
+            ui_dim "  models <provider>     — List available models"
+            ui_dim "  status                — Show configured providers"
+            ui_dim ""
+            ui_dim "  Providers: openai, anthropic, google, groq, mistral,"
+            ui_dim "             together, perplexity, cohere, deepseek, xai"
+            ;;
+    esac
+}
+_cmd_web() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+
+    case "$action" in
+        fetch|read)  web_fetch "$rest" ;;
+        search)      web_search "$rest" ;;
+        summary)     web_summary "$rest" ;;
+        links)       web_links "$rest" ;;
+        title)       web_title "$rest" ;;
+        download)
+            local url fname
+            url=$(echo "$rest" | awk '{print $1}')
+            fname=$(echo "$rest" | awk '{print $2}')
+            web_download "$url" "$fname" ;;
+        ping)        web_ping "$rest" ;;
+        cache)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            case "$sub" in
+                clear) web_cache_clear ;;
+                *)     ui_info "Usage: /web cache clear" ;;
+            esac ;;
+        *)
+            ui_info "Usage: /web <fetch|search|summary|links|title|download|ping|cache>"
+            ui_dim "  fetch <url>       — Read a web page as text"
+            ui_dim "  search <query>    — Search the web"
+            ui_dim "  summary <url>     — AI-summarize a page"
+            ui_dim "  links <url>       — Extract all links"
+            ui_dim "  title <url>       — Get page title"
+            ui_dim "  download <url>    — Download a file"
+            ui_dim "  ping <url>        — Check if URL is reachable"
+            ui_dim "  cache clear       — Clear web cache"
+            ;;
+    esac
+}
+_cmd_backup() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+
+    case "$action" in
+        local)    backup_local ;;
+        restore)  backup_restore "$rest" ;;
+        list|ls)  backup_list ;;
+        status)   backup_status ;;
+        prune)    backup_prune "$rest" ;;
+        git)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            local gargs
+            gargs=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$sub" in
+                init)  backup_git_init ;;
+                save)  backup_git_save "$gargs" ;;
+                push)  backup_git_push ;;
+                pull)  backup_git_pull ;;
+                clone) backup_git_clone "$gargs" ;;
+                *)     ui_info "Usage: /backup git <init|save|push|pull|clone>" ;;
+            esac ;;
+        github)   backup_git_push ;;
+        *)
+            ui_info "Usage: /backup <local|restore|list|status|prune|git|github>"
+            ui_dim "  local           — Quick file backup of identity & memory"
+            ui_dim "  restore [name]  — Restore from a backup"
+            ui_dim "  list            — Show all backups"
+            ui_dim "  status          — Show backup system status"
+            ui_dim "  prune [keep=5]  — Remove old backups"
+            ui_dim "  git init        — Create local git backup repo"
+            ui_dim "  git save        — Commit current state"
+            ui_dim "  git push        — Push to GitHub (interactive setup)"
+            ui_dim "  git pull        — Pull from GitHub backup"
+            ui_dim "  git clone <url> — Clone backup on a new machine"
+            ui_dim "  github          — Shortcut: save + push to GitHub"
+            ;;
+    esac
+}
 
 # ── Register all commands ──────────────────────────────────────
 _register_commands() {
@@ -233,6 +610,12 @@ _register_commands() {
     commands_register "reflect"  "Record a reflection" "_cmd_reflect"
     commands_register "sandbox"  "Manage sandboxes" "_cmd_sandbox"
     commands_register "phone"    "Phone features (Termux)" "_cmd_phone"
+    commands_register "container" "Manage Linux containers" "_cmd_container"
+    commands_register "api"      "API keys & integration status" "_cmd_api"
+    commands_register "social"   "Social media (X/Mastodon/Bluesky/Discord/Telegram)" "_cmd_social"
+    commands_register "provider" "Cloud AI providers (OpenAI/Anthropic/Google...)" "_cmd_provider"
+    commands_register "web"      "Browse the web" "_cmd_web"
+    commands_register "backup"   "Backup & restore George's identity" "_cmd_backup"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"
     commands_register "files"    "List workspace files" "_cmd_files"
@@ -315,6 +698,9 @@ main() {
     _register_commands
     commands_load_all
     
+    # Initialize API config dir
+    api_init 2>/dev/null
+    
     # Check LLM
     if ! llm_ensure; then
         ui_err "Cannot connect to Ollama. Is it running?"
@@ -334,7 +720,7 @@ main() {
     
     if [ $# -eq 0 ]; then
         # Interactive mode
-        ui_header "Blue Lodge v${LODGE_VERSION}" "Model: $LODGE_MODEL | $(basename "$PWD")"
+        ui_header "George v${LODGE_VERSION}" "Model: $LODGE_MODEL | $(basename "$PWD")"
         
         # Journal-aware greeting
         journal_init
@@ -359,6 +745,9 @@ main() {
     if command -v termux-wake-unlock &>/dev/null; then
         termux-wake-unlock 2>/dev/null
     fi
+    
+    # Unload model on exit to free RAM
+    llm_unload 2>/dev/null
 }
 
 main "$@"

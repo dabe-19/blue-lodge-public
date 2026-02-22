@@ -1,5 +1,5 @@
 #!/bin/bash
-# ── Blue Lodge: UI Rendering ──────────────────────────────────
+# ── George: UI Rendering ──────────────────────────────────
 # Lightweight TUI components using ANSI escape codes.
 # No ncurses, no Python — pure bash for mobile.
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# ── Blue Lodge: Tool Execution Engine ──────────────────────────
+# ── George: Tool Execution Engine ──────────────────────────
 # Parses LLM responses and applies file/shell operations.
 # Permissioned: asks before destructive actions.
 
@@ -72,9 +72,9 @@ tools_exec_bash() {
             return 1
         fi
     elif [ "$LODGE_PERMISSION" -eq 1 ]; then
-        # Check for destructive patterns
-        if echo "$commands" | grep -qE '(rm -rf|sudo|chmod 777|dd if=|mkfs|>\s*/dev/)'; then
-            ui_warn "Potentially destructive command detected!"
+        # Check for destructive or dangerous patterns
+        if echo "$commands" | grep -qE '(rm -rf|sudo|chmod 777|dd if=|mkfs|>\s*/dev/|curl.*\|\s*(ba)?sh|wget.*\|\s*(ba)?sh|nc\s+-|ncat|/dev/tcp|mkfifo|eval\s|\bexec\s|>\s*/etc/)'; then
+            ui_warn "Potentially dangerous command detected!"
             if ! ui_confirm "Execute anyway?" "n"; then
                 ui_warn "Skipped by user"
                 return 1

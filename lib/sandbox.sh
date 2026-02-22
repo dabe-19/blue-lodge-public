@@ -1,5 +1,5 @@
 #!/bin/bash
-# ── Blue Lodge: Sandbox / Container System ─────────────────────
+# ── George: Sandbox / Project Isolation ─────────────────────────
 # Lightweight project isolation for Termux/Ubuntu.
 # Uses proot or directory isolation — no Docker needed.
 

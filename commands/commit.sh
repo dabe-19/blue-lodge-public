@@ -25,7 +25,7 @@ cmd_commit() {
     
     # Stage files
     if [ -n "$args" ]; then
-        git add $args 2>&1
+        git add -- $args 2>&1
     else
         ui_info "Staging all changes..."
         git add -A 2>&1
