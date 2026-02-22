@@ -1,0 +1,303 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════════
+# ⌂ Blue Lodge — Mobile-First Coding Agent
+# ═══════════════════════════════════════════════════════════════
+# A lightweight agentic shell powered by local LLMs via Ollama.
+# Designed for Galaxy Fold 7 / Termux / Ubuntu on ARM.
+#
+# Usage:
+#   lodge                    # Interactive mode
+#   lodge "task description"  # One-shot task
+#   lodge /init myapp rust   # Run a slash command
+# ═══════════════════════════════════════════════════════════════
+set -uo pipefail
+
+export LODGE_VERSION="0.1.0"
+export LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
+export LODGE_PROJECT="${LODGE_PROJECT:-$(basename "$PWD")}"
+
+# ── Source Libraries ───────────────────────────────────────────
+source "$LODGE_DIR/lib/ui.sh"
+source "$LODGE_DIR/lib/llm.sh"
+source "$LODGE_DIR/lib/memory.sh"
+source "$LODGE_DIR/lib/tools.sh"
+source "$LODGE_DIR/lib/agent.sh"
+source "$LODGE_DIR/lib/commands.sh"
+source "$LODGE_DIR/lib/sandbox.sh"
+
+# ── Register Built-in Slash Commands ──────────────────────────
+_cmd_init() {
+    source "$LODGE_DIR/commands/init.sh"
+    cmd_init "$@"
+}
+_cmd_plan() {
+    local task="$1"
+    local workdir="${2:-.}"
+    local plan
+    plan=$(agent_plan "$task" "$workdir")
+    echo ""
+    ui_render_response "$plan"
+}
+_cmd_ask() {
+    agent_ask "$1" "${2:-.}"
+}
+_cmd_compact() {
+    memory_compact "${2:-.}"
+}
+_cmd_snapshot() {
+    memory_snapshot "${2:-.}"
+}
+_cmd_memory() {
+    local dir="${2:-.}"
+    if [ -f "$dir/CLAUDE.md" ]; then
+        ui_section "CLAUDE.md"
+        cat "$dir/CLAUDE.md"
+    else
+        ui_warn "No CLAUDE.md in current directory"
+    fi
+    echo ""
+}
+_cmd_soul() {
+    ui_section "soul.md"
+    cat "$LODGE_DIR/soul.md"
+    echo ""
+}
+_cmd_status() {
+    ui_section "Status"
+    printf "  %bModel:%b     %s\n" "$C_CYAN" "$C_RESET" "$LODGE_MODEL"
+    printf "  %bProject:%b   %s\n" "$C_CYAN" "$C_RESET" "$LODGE_PROJECT"
+    printf "  %bWorkdir:%b   %s\n" "$C_CYAN" "$C_RESET" "$PWD"
+    printf "  %bPermission:%b %s\n" "$C_CYAN" "$C_RESET" "$([ "$LODGE_PERMISSION" -eq 0 ] && echo 'ask-all' || ([ "$LODGE_PERMISSION" -eq 1 ] && echo 'ask-destructive' || echo 'auto'))"
+    local mem_exists="no"
+    [ -f "./CLAUDE.md" ] && mem_exists="yes"
+    printf "  %bCLAUDE.md:%b %s\n" "$C_CYAN" "$C_RESET" "$mem_exists"
+    
+    # Battery if available
+    local batt
+    batt=$(tools_phone_battery 2>/dev/null)
+    if [ -n "$batt" ] && [ "$batt" != '{"percentage": "unknown"}' ]; then
+        local pct
+        pct=$(echo "$batt" | jq -r '.percentage' 2>/dev/null)
+        printf "  %bBattery:%b   %s%%\n" "$C_CYAN" "$C_RESET" "$pct"
+    fi
+    echo ""
+}
+_cmd_sandbox() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+    
+    case "$action" in
+        list|ls)   sandbox_list ;;
+        new|create)
+            local name type
+            name=$(echo "$rest" | awk '{print $1}')
+            type=$(echo "$rest" | awk '{print $2}')
+            sandbox_create "$name" "${type:-shell}" ;;
+        build)     sandbox_build "$rest" ;;
+        test)      sandbox_test "$rest" ;;
+        rm|remove) sandbox_remove "$rest" ;;
+        clone)
+            local url name
+            url=$(echo "$rest" | awk '{print $1}')
+            name=$(echo "$rest" | awk '{print $2}')
+            sandbox_clone "$url" "$name" ;;
+        cd)
+            local name="$rest"
+            local dir="$LODGE_SANDBOXES/$name"
+            if [ -d "$dir" ]; then
+                cd "$dir"
+                export LODGE_PROJECT="$name"
+                ui_ok "Switched to sandbox: $name"
+            else
+                ui_err "Sandbox '$name' not found"
+            fi ;;
+        *)
+            ui_info "Usage: /sandbox <list|new|build|test|rm|clone|cd> [args]"
+            sandbox_list ;;
+    esac
+}
+_cmd_phone() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+    
+    case "$action" in
+        battery)  tools_phone_battery ;;
+        clip|clipboard)
+            if [ -n "$rest" ]; then
+                tools_phone_clipboard_set "$rest"
+            else
+                tools_phone_clipboard_get
+            fi ;;
+        notify)   tools_phone_notify "Blue Lodge" "$rest" ;;
+        open)     tools_phone_open_url "$rest" ;;
+        share)    tools_phone_share "$rest" ;;
+        toast)    tools_phone_toast "$rest" ;;
+        vibrate)  tools_phone_vibrate ;;
+        *)        ui_info "Usage: /phone <battery|clip|notify|open|share|toast|vibrate>" ;;
+    esac
+}
+_cmd_clear() {
+    clear
+}
+_cmd_cd() {
+    local target="$1"
+    if [ -d "$target" ]; then
+        cd "$target" || return 1
+        export LODGE_PROJECT="$(basename "$PWD")"
+        ui_ok "Changed to: $PWD"
+    else
+        ui_err "Directory not found: $target"
+    fi
+}
+_cmd_files() {
+    local dir="${2:-.}"
+    find "$dir" -maxdepth 3 -type f \
+        ! -path '*/.git/*' ! -path '*/target/*' ! -path '*/__pycache__/*' \
+        ! -path '*/.venv/*' ! -path '*/node_modules/*' \
+        2>/dev/null | head -50 | sed "s|^$dir/||" | while read -r f; do
+        printf "  %s\n" "$f"
+    done
+}
+_cmd_read() {
+    local filepath="$1"
+    if [ -f "$filepath" ]; then
+        tools_read_file "$filepath" 100
+    else
+        ui_err "File not found: $filepath"
+    fi
+}
+
+# ── Register all commands ──────────────────────────────────────
+_register_commands() {
+    commands_register "init"     "Scaffold a new project" "_cmd_init"
+    commands_register "plan"     "Plan a task (no execution)" "_cmd_plan"
+    commands_register "ask"      "Quick question (no actions)" "_cmd_ask"
+    commands_register "compact"  "Compress memory file" "_cmd_compact"
+    commands_register "snapshot" "Save memory checkpoint" "_cmd_snapshot"
+    commands_register "memory"   "Show CLAUDE.md contents" "_cmd_memory"
+    commands_register "soul"     "Show soul.md" "_cmd_soul"
+    commands_register "status"   "Show agent status" "_cmd_status"
+    commands_register "sandbox"  "Manage sandboxes" "_cmd_sandbox"
+    commands_register "phone"    "Phone features (Termux)" "_cmd_phone"
+    commands_register "clear"    "Clear screen" "_cmd_clear"
+    commands_register "cd"       "Change directory" "_cmd_cd"
+    commands_register "files"    "List workspace files" "_cmd_files"
+    commands_register "read"     "Read a file" "_cmd_read"
+}
+
+# ── REPL ───────────────────────────────────────────────────────
+_repl() {
+    local workdir="$PWD"
+    
+    # History
+    local history_file="$HOME/.lodge_history"
+    touch "$history_file"
+    
+    while true; do
+        # Update project name on each prompt
+        LODGE_PROJECT="$(basename "$PWD")"
+        
+        # Prompt
+        local input
+        ui_prompt
+        IFS= read -r -e input
+        
+        # Empty input
+        [ -z "$input" ] && continue
+        
+        # Save to history
+        echo "$input" >> "$history_file"
+        
+        # Trim
+        input=$(echo "$input" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        
+        # Slash command?
+        if commands_is_command "$input"; then
+            local result
+            commands_dispatch "$input" "$PWD"
+            result=$?
+            if [ "$result" -eq 99 ]; then
+                ui_info "Goodbye."
+                break
+            elif [ "$result" -ne 0 ] && [ "$result" -ne 1 ]; then
+                : # command handled its own errors
+            elif [ "$result" -eq 1 ]; then
+                # Not found — try as agent task
+                ui_warn "Unknown command. Treating as task..."
+                agent_run "${input#/}" "$PWD"
+            fi
+            continue
+        fi
+        
+        # Natural language → agent
+        # Short inputs = ask, long inputs = task
+        local word_count
+        word_count=$(echo "$input" | wc -w)
+        
+        if [ "$word_count" -le 6 ] && [[ "$input" == *"?"* ]]; then
+            # Looks like a question
+            agent_ask "$input" "$PWD"
+        else
+            # Looks like a task
+            agent_run "$input" "$PWD"
+        fi
+    done
+}
+
+# ── Entry Point ────────────────────────────────────────────────
+main() {
+    # Verify dependencies
+    local missing=()
+    command -v curl  &>/dev/null || missing+=("curl")
+    command -v jq    &>/dev/null || missing+=("jq")
+    
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo "Missing dependencies: ${missing[*]}"
+        echo "Install: sudo apt install ${missing[*]}"
+        exit 1
+    fi
+    
+    # Register slash commands
+    _register_commands
+    commands_load_all
+    
+    # Check LLM
+    if ! llm_ensure; then
+        ui_err "Cannot connect to Ollama. Is it running?"
+        ui_dim "Start with: ollama serve"
+        exit 1
+    fi
+    
+    # Termux wake lock
+    if command -v termux-wake-lock &>/dev/null; then
+        termux-wake-lock 2>/dev/null
+    fi
+    
+    # Handle arguments
+    if [ $# -eq 0 ]; then
+        # Interactive mode
+        ui_header "Blue Lodge v${LODGE_VERSION}" "Model: $LODGE_MODEL | $(basename "$PWD")"
+        ui_dim "Type /help for commands, or describe a task."
+        echo ""
+        _repl
+    elif [[ "$1" == /* ]]; then
+        # Slash command mode
+        commands_dispatch "$*" "$PWD"
+    else
+        # One-shot task mode
+        agent_run "$*" "$PWD"
+    fi
+    
+    # Release wake lock
+    if command -v termux-wake-unlock &>/dev/null; then
+        termux-wake-unlock 2>/dev/null
+    fi
+}
+
+main "$@"

@@ -1,0 +1,4 @@
+*.log
+/tmp/
+.lodge-snapshots/
+.lodge-sandboxes/

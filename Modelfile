@@ -1,0 +1,21 @@
+FROM hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:Q5_K_M
+
+# ── Performance: tuned for Snapdragon 8 Elite / 12GB RAM ────
+PARAMETER temperature 0.2
+PARAMETER top_p 0.9
+PARAMETER num_ctx 8192
+PARAMETER num_thread 8
+PARAMETER num_gpu 0
+PARAMETER num_predict 2048
+PARAMETER stop <|im_end|>
+PARAMETER repeat_penalty 1.1
+
+# ── No custom template — use Qwen3's native chat template ────
+# The native template handles tool calling properly.
+# We rely on structured prompting via soul.md instead.
+
+SYSTEM """You are Blue Lodge, a precise coding agent for mobile devices.
+When executing: output ONLY code blocks. No filler.
+Shell commands: ```bash blocks. Files: code block with '# filepath: ./path' on line 1.
+Plans: numbered lists only. Answers: 1-5 sentences max.
+Never exceed 200 lines per response."""
