@@ -110,4 +110,49 @@ describe "Plan prompt includes clarification instruction"
     assert_ok $?
   }
 
+# ── Inline plan normalization ─────────────────────────────────
+describe "Inline plan normalization"
+
+  it "_agent_split_inline_steps is defined" && {
+    declare -f _agent_split_inline_steps &>/dev/null
+    assert_ok $?
+  }
+
+  it "splits inline numbered plans into separate lines" && {
+    _input='1. /recall /sandbox  2. /plan /api --testnet  3. /init project'
+    _result=$(_agent_split_inline_steps "$_input")
+    _count=$(echo "$_result" | wc -l)
+    assert_eq "$_count" "3"
+  }
+
+  it "preserves already multi-line plans" && {
+    _input='1. First step
+2. Second step
+3. Third step'
+    _result=$(_agent_split_inline_steps "$_input")
+    _count=$(echo "$_result" | wc -l)
+    assert_eq "$_count" "3"
+  }
+
+  it "handles parenthesis format" && {
+    _input='1) First  2) Second  3) Third'
+    _result=$(_agent_split_inline_steps "$_input")
+    _count=$(echo "$_result" | wc -l)
+    assert_eq "$_count" "3"
+  }
+
+  it "does not split single-step plans" && {
+    _input='1. Just one step here'
+    _result=$(_agent_split_inline_steps "$_input")
+    _count=$(echo "$_result" | wc -l)
+    assert_eq "$_count" "1"
+  }
+
+  it "does not false-positive on double-space-digit in normal text" && {
+    _input='Check  2 files and fix bugs'
+    _result=$(_agent_split_inline_steps "$_input")
+    _count=$(echo "$_result" | wc -l)
+    assert_eq "$_count" "1"
+  }
+
 test_end

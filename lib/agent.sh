@@ -15,6 +15,17 @@ AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-12}"
 AGENT_STEP_DELAY="${AGENT_STEP_DELAY:-1}"
 AGENT_MAX_CLARIFY="${AGENT_MAX_CLARIFY:-2}"
 
+# ── Normalize inline plans ─────────────────────────────────────
+# LLMs sometimes output all steps on one line:
+#   "1. step one  2. step two  3. step three"
+# This splits them into separate lines for the parser.
+_agent_split_inline_steps() {
+    local plan="$1"
+    # Insert newline before step numbers preceded by 2+ spaces
+    # Handles both "N." and "N)" formats
+    echo "$plan" | sed 's/  \+\([0-9]\+[.)]\) /\n\1 /g'
+}
+
 # ── Plan a task ────────────────────────────────────────────────
 agent_plan() {
     local task="$1"
@@ -204,6 +215,9 @@ agent_run() {
     fi
     echo ""
     
+    # Normalize inline plans: "1. foo  2. bar" → separate lines
+    plan=$(_agent_split_inline_steps "$plan")
+
     # Parse steps — numbered lines like "1. Do something" or "1) Do something"
     # Also accept slash command lines as steps (model sometimes outputs those)
     local -a steps=()
@@ -349,6 +363,8 @@ agent_step_mode() {
     echo "$plan"
     echo ""
     
+    # Normalize inline plans before parsing
+    plan=$(_agent_split_inline_steps "$plan")
     local -a steps=()
     while IFS= read -r line; do
         if [[ "$line" =~ ^[0-9]+[\.\)] ]]; then

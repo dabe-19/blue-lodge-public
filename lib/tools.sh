@@ -275,8 +275,24 @@ tools_process_response() {
     local bash_cmds
     bash_cmds=$(tools_extract_bash "$response")
     if [ -n "$bash_cmds" ]; then
-        tools_exec_bash "$bash_cmds" "$workdir"
-        results="Commands: exit $LAST_CMD_EXIT"
+        # Separate real bash commands from slash commands the LLM
+        # mistakenly placed inside ```bash blocks
+        local real_bash=""
+        local extra_slash=""
+        while IFS= read -r _line; do
+            if [[ "$_line" =~ ^/[a-z] ]]; then
+                extra_slash="${extra_slash:+${extra_slash}
+}${_line}"
+            else
+                real_bash="${real_bash:+${real_bash}
+}${_line}"
+            fi
+        done <<< "$bash_cmds"
+
+        if [ -n "$real_bash" ]; then
+            tools_exec_bash "$real_bash" "$workdir"
+            results="Commands: exit $LAST_CMD_EXIT"
+        fi
     fi
     
     # 2. Extract and write files
@@ -299,9 +315,14 @@ tools_process_response() {
 
     # 3. Extract and execute slash commands from the response
     # George can invoke his own tools by outputting /command lines.
-    # We scan lines outside of code blocks for registered commands.
+    # We scan lines outside of code blocks for registered commands,
+    # plus any slash commands found inside bash blocks above.
     local slash_cmds
     slash_cmds=$(tools_extract_slash_commands "$response")
+    if [ -n "${extra_slash:-}" ]; then
+        slash_cmds="${slash_cmds:+${slash_cmds}
+}${extra_slash}"
+    fi
     if [ -n "$slash_cmds" ]; then
         while IFS= read -r scmd; do
             [ -z "$scmd" ] && continue
