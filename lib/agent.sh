@@ -500,6 +500,7 @@ agent_run() {
     local completed=0
     local failed_steps=""
     local _cascade_halt=0
+    local _exec_log=""   # Accumulated execution log for journal
     for i in "${!steps[@]}"; do
         # Check for cancellation between steps (file + variable)
         if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
@@ -517,13 +518,17 @@ agent_run() {
             subtask_desc="${subtask_desc# }"
             if _agent_run_subtask "$subtask_desc" "$workdir" 1; then
                 completed=$((completed + 1))
+                _exec_log="${_exec_log}Step $step_num: ${steps[$i]:0:60} — OK\n"
             else
                 failed_steps="${failed_steps:+${failed_steps}, }step $step_num: ${steps[$i]}"
+                _exec_log="${_exec_log}Step $step_num: ${steps[$i]:0:60} — FAILED\n"
             fi
         elif agent_execute_step "$step_num" "${steps[$i]}" "$workdir" "$task"; then
             completed=$((completed + 1))
+            _exec_log="${_exec_log}Step $step_num: ${steps[$i]:0:60} — OK\n"
         else
             failed_steps="${failed_steps:+${failed_steps}, }step $step_num: ${steps[$i]}"
+            _exec_log="${_exec_log}Step $step_num: ${steps[$i]:0:60} — FAILED${_AGENT_LAST_ERROR:+ (${_AGENT_LAST_ERROR:0:80})}\n"
             # Check if failure was due to cancellation
             if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
                 ui_warn "Step $step_num cancelled"
@@ -613,7 +618,7 @@ agent_run() {
     if [ -n "$failed_steps" ]; then
         reflect_summary="${reflect_summary}. Failed: ${failed_steps}"
     fi
-    journal_reflect "$reflect_summary" "$workdir" &
+    journal_reflect "$reflect_summary" "$workdir" "$_exec_log" &
     
     # Notify on phone if available
     tools_phone_toast "Lodge: Task complete ($completed/$total steps)"

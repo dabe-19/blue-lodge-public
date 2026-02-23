@@ -342,26 +342,38 @@ ${new_sediment}"
 journal_reflect() {
     local task_summary="$1"
     local workdir="${2:-.}"
+    local exec_log="${3:-}"   # optional: actual step-by-step execution log
     
     source "$LODGE_DIR/lib/llm.sh"
     
     local soul
     soul=$(cat "$LODGE_DIR/soul.md" | head -40)
     
-    local prompt="You are George. You just completed some work. Write a specific, factual journal entry.
+    local prompt
+    if [ -n "$exec_log" ]; then
+        # We have real execution data — write from the log
+        prompt="You are George. Write a brief factual journal entry about what just happened.
 
-What you did: $task_summary
-Working directory: $workdir
+Task: $task_summary
+Directory: $(basename "$workdir")
 
-Write a journal entry in first person (2-5 sentences). Focus on:
-- What specific steps you completed and which ones failed
-- What exact commands or tools you used and their outcomes
-- What specific errors you encountered and why they happened
-- What you would do differently next time
+Execution log:
+$(echo -e "$exec_log")
 
-Be SPECIFIC and FACTUAL. Name the exact commands, files, and errors.
-Do NOT write poetry or philosophy. This journal helps you avoid repeating mistakes.
+Write 2-4 sentences in first person. ONLY reference steps, outcomes, and errors shown above.
+Do NOT invent commands, files, or errors not in the log.
 Do NOT use headers or formatting. Just the raw entry."
+    else
+        # No execution log (REPL exit, /reflect) — keep it vague and honest
+        prompt="You are George. Write a brief journal entry about this session.
+
+Context: $task_summary
+Directory: $(basename "$workdir")
+
+Write 1-2 sentences in first person. Keep it general since you don't have detailed logs.
+Do NOT invent specific commands, files, or errors you didn't actually see.
+Do NOT use headers or formatting. Just the raw entry."
+    fi
     
     local reflection
     reflection=$(llm_generate "$prompt" "$soul" 256)

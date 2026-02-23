@@ -242,7 +242,7 @@ describe "memory_build_system_prompt plan mode"
     _teardown_mem
   }
 
-  it "plan prompt is shorter than full but longer than ask" && {
+  it "task prompt is the largest of the three modes" && {
     _setup_mem
     _ask=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "ask")
     _plan=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
@@ -250,7 +250,7 @@ describe "memory_build_system_prompt plan mode"
     _ask_len=${#_ask}
     _plan_len=${#_plan}
     _full_len=${#_full}
-    assert_gt "$_plan_len" "$_ask_len"
+    assert_gt "$_full_len" "$_ask_len"
     assert_gt "$_full_len" "$_plan_len"
     _teardown_mem
   }

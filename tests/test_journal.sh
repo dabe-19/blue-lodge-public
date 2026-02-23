@@ -230,7 +230,7 @@ describe "journal_reflect prompt"
   it "journal_reflect asks for specific factual entries" && {
     _setup_journal
     body=$(declare -f journal_reflect)
-    echo "$body" | grep -q "SPECIFIC and FACTUAL"
+    echo "$body" | grep -q "ONLY reference steps"
     assert_ok $?
     _teardown_journal
   }
