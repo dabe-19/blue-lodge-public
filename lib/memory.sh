@@ -246,6 +246,13 @@ If unsure: /recall <cmd> to check syntax. If missing: /slash create <name> <desc
 $files"
         fi
 
+        # Sandbox inventory — George must know existing sandboxes
+        if declare -f sandbox_journal_summary &>/dev/null; then
+            local sandbox_inv
+            sandbox_inv=$(sandbox_journal_summary 2>/dev/null)
+            [ -n "$sandbox_inv" ] && prompt="$prompt\n\n$sandbox_inv"
+        fi
+
         echo "$prompt"
         return
     fi
@@ -279,6 +286,13 @@ $project_mem"
 
 $journal_context"
         fi
+    fi
+
+    # Sandbox inventory — George must know existing sandboxes
+    if declare -f sandbox_journal_summary &>/dev/null; then
+        local sandbox_inv
+        sandbox_inv=$(sandbox_journal_summary 2>/dev/null)
+        [ -n "$sandbox_inv" ] && prompt="$prompt\n\n$sandbox_inv"
     fi
 
     # Add recall context (FTS5 search) if a task hint is provided

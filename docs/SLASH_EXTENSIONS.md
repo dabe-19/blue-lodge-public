@@ -52,6 +52,8 @@ GPS location`, the system:
    - All available lodge library functions
    - Output formatting rules (ui_info, ui_ok, etc.)
    - Error handling requirements
+   - **The real current date/time** (injected via `date`) for the
+     `Created:` header — George never hallucinates the date
 4. Sends the description as the user prompt to the LLM
 5. Extracts the bash code from the LLM response
 6. Writes it to `~/.george/slash/weather.sh`
@@ -73,7 +75,7 @@ Custom commands are stored as executable bash scripts:
 └── morning-briefing.sh
 ```
 
-Each file has a standard header:
+Each file has a standard header (date from real-time clock, never hallucinated):
 
 ```bash
 #!/bin/bash

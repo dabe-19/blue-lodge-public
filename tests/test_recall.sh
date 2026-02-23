@@ -8,6 +8,16 @@ source "$LODGE_DIR/lib/recall.sh"
 
 test_start "lib/recall.sh — FTS5 Recall System"
 
+# ── Pre-check: sqlite3 + FTS5 availability ────────────────────
+_HAS_SQLITE=0
+if command -v sqlite3 &>/dev/null; then
+    _tdb="/tmp/.recall_fts5_check_$$.db"
+    if sqlite3 "$_tdb" "CREATE VIRTUAL TABLE _t USING fts5(c); DROP TABLE _t;" 2>/dev/null; then
+        _HAS_SQLITE=1
+    fi
+    rm -f "$_tdb"
+fi
+
 # ── Setup / Teardown ──────────────────────────────────────────
 _setup_recall() {
     export TMPDIR_RECALL
@@ -23,7 +33,6 @@ _teardown_recall() {
     rm -rf "$TMPDIR_RECALL"
 }
 
-# Create a sample README for testing
 _create_sample_readme() {
     cat > "$LODGE_DIR/README.md" << 'EOF'
 # George — Blue Lodge
@@ -104,36 +113,44 @@ describe "recall_available"
 describe "recall_init"
 
   it "creates the database file" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     recall_init
     assert_file_exists "$RECALL_DB"
     _teardown_recall
+    fi
   }
 
   it "creates chunks table" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     recall_init
     local tables
     tables=$(sqlite3 "$RECALL_DB" ".tables" 2>/dev/null)
     assert_contains "$tables" "chunks"
     _teardown_recall
+    fi
   }
 
   it "creates FTS virtual table" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     recall_init
     local tables
     tables=$(sqlite3 "$RECALL_DB" ".tables" 2>/dev/null)
     assert_contains "$tables" "chunks_fts"
     _teardown_recall
+    fi
   }
 
   it "is idempotent" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     recall_init
-    recall_init  # second call should not error
+    recall_init
     assert_ok $?
     _teardown_recall
+    fi
   }
 
 # ── Markdown Chunking ─────────────────────────────────────────
@@ -144,7 +161,6 @@ describe "_recall_chunk_markdown"
     _create_sample_readme
     local count
     count=$(_recall_chunk_markdown "$LODGE_DIR/README.md" | tr '\0' '\n' | grep -c $'\t')
-    # Should have: preamble + Quick Start + Architecture + Slash Commands + Sandboxes + Security + Containers
     assert_gt "$count" 4
     _teardown_recall
   }
@@ -172,6 +188,7 @@ describe "_recall_chunk_markdown"
 describe "recall_index_file"
 
   it "indexes chunks into the database" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     recall_init
@@ -180,9 +197,11 @@ describe "recall_index_file"
     count=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='readme';" 2>/dev/null)
     assert_gt "$count" 0
     _teardown_recall
+    fi
   }
 
   it "replaces old entries on re-index" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     recall_init
@@ -194,9 +213,11 @@ describe "recall_index_file"
     count2=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='readme';" 2>/dev/null)
     assert_eq "$count1" "$count2"
     _teardown_recall
+    fi
   }
 
   it "stores the correct source label" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_soul
     recall_init
@@ -205,12 +226,14 @@ describe "recall_index_file"
     sources=$(sqlite3 "$RECALL_DB" "SELECT DISTINCT source FROM chunks;" 2>/dev/null)
     assert_contains "$sources" "soul"
     _teardown_recall
+    fi
   }
 
 # ── Full Reindex ──────────────────────────────────────────────
 describe "recall_reindex"
 
   it "indexes all available sources" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     _create_sample_soul
@@ -222,9 +245,11 @@ describe "recall_reindex"
     assert_contains "$sources" "soul"
     assert_contains "$sources" "journal"
     _teardown_recall
+    fi
   }
 
   it "indexes crypto wallet guide when present" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     mkdir -p "$LODGE_DIR/docs"
@@ -241,14 +266,17 @@ CRYPTOEOF
     _sources=$(sqlite3 "$RECALL_DB" "SELECT DISTINCT source FROM chunks ORDER BY source;" 2>/dev/null)
     assert_contains "$_sources" "crypto"
     _teardown_recall
+    fi
   }
 
   it "creates mtime tracking file" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     recall_reindex
     assert_file_exists "$RECALL_MTIME_FILE"
     _teardown_recall
+    fi
   }
 
 # ── Needs Reindex Detection ──────────────────────────────────
@@ -263,15 +291,18 @@ describe "recall_needs_reindex"
   }
 
   it "returns false after fresh index" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     recall_reindex
     recall_needs_reindex
     assert_fail $?
     _teardown_recall
+    fi
   }
 
   it "returns true after file modification" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     recall_reindex
@@ -280,12 +311,14 @@ describe "recall_needs_reindex"
     recall_needs_reindex
     assert_ok $?
     _teardown_recall
+    fi
   }
 
 # ── FTS5 Search ──────────────────────────────────────────────
 describe "recall_search"
 
   it "finds matching sections by keyword" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     _create_sample_soul
@@ -295,9 +328,11 @@ describe "recall_search"
     assert_not_empty "$results"
     assert_contains "$results" "Sandboxes"
     _teardown_recall
+    fi
   }
 
   it "finds content across different sources" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     _create_sample_soul
@@ -307,9 +342,11 @@ describe "recall_search"
     results=$(recall_search "George Washington" 5)
     assert_not_empty "$results"
     _teardown_recall
+    fi
   }
 
   it "returns empty for unmatched query" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     recall_reindex
@@ -317,9 +354,11 @@ describe "recall_search"
     results=$(recall_search "xyzzynonexistentterm" 5)
     assert_empty "$results"
     _teardown_recall
+    fi
   }
 
   it "respects the limit parameter" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     recall_reindex
@@ -327,28 +366,30 @@ describe "recall_search"
     results=$(recall_search "George" 2)
     local count
     count=$(echo "$results" | grep -c '|' || echo "0")
-    # Should be at most 2 results
     [[ "$count" -le 2 ]]
     assert_ok $?
     _teardown_recall
+    fi
   }
 
 # ── Search for LLM Context ───────────────────────────────────
 describe "recall_search_context"
 
   it "returns plain text suitable for prompts" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     recall_reindex
     local ctx
     ctx=$(recall_search_context "architecture Ollama" 3)
     assert_not_empty "$ctx"
-    # Should contain source labels in brackets
     assert_contains "$ctx" "[readme:"
     _teardown_recall
+    fi
   }
 
   it "returns empty for no matches" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     recall_reindex
@@ -356,12 +397,14 @@ describe "recall_search_context"
     ctx=$(recall_search_context "xyzzynonexistent" 3)
     assert_empty "$ctx"
     _teardown_recall
+    fi
   }
 
 # ── Self Review ───────────────────────────────────────────────
 describe "recall_self_review"
 
   it "returns README capability sections" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     recall_reindex
@@ -370,9 +413,11 @@ describe "recall_self_review"
     assert_not_empty "$review"
     assert_contains "$review" "CAPABILITIES"
     _teardown_recall
+    fi
   }
 
   it "includes slash commands section" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     recall_reindex
@@ -380,12 +425,14 @@ describe "recall_self_review"
     review=$(recall_self_review)
     assert_contains "$review" "Slash Commands"
     _teardown_recall
+    fi
   }
 
 # ── Statistics ────────────────────────────────────────────────
 describe "recall_stats"
 
   it "shows chunk counts" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     _create_sample_soul
@@ -395,12 +442,14 @@ describe "recall_stats"
     assert_contains "$stats" "Total chunks"
     assert_contains "$stats" "readme"
     _teardown_recall
+    fi
   }
 
 # ── Clear ─────────────────────────────────────────────────────
 describe "recall_clear"
 
   it "removes the database" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     recall_reindex
@@ -408,21 +457,25 @@ describe "recall_clear"
     recall_clear
     assert_file_not_exists "$RECALL_DB"
     _teardown_recall
+    fi
   }
 
   it "removes the mtime file" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     recall_reindex
     recall_clear
     assert_file_not_exists "$RECALL_MTIME_FILE"
     _teardown_recall
+    fi
   }
 
 # ── ensure_indexed ────────────────────────────────────────────
 describe "recall_ensure_indexed"
 
   it "indexes when DB missing" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     recall_ensure_indexed
@@ -431,16 +484,18 @@ describe "recall_ensure_indexed"
     count=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks;" 2>/dev/null)
     assert_gt "$count" 0
     _teardown_recall
+    fi
   }
 
   it "skips when already indexed and unchanged" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_readme
     recall_reindex
-    # Second call should be fast (no-op)
     recall_ensure_indexed
     assert_ok $?
     _teardown_recall
+    fi
   }
 
 test_end

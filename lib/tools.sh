@@ -301,7 +301,13 @@ tools_process_response() {
 
         if [ -n "$real_bash" ]; then
             tools_exec_bash "$real_bash" "$workdir"
-            results="Commands: exit $LAST_CMD_EXIT"
+            local _bash_ts
+            _bash_ts=$(date '+%Y-%m-%d %H:%M:%S')
+            if [ "${LAST_CMD_EXIT:-0}" -eq 0 ]; then
+                results="[$_bash_ts] OK: shell commands (exit 0)"
+            else
+                results="[$_bash_ts] FAIL: shell commands (exit $LAST_CMD_EXIT)"
+            fi
         fi
     fi
     
@@ -317,7 +323,9 @@ tools_process_response() {
             fcontent=$(tail -n +2 "$entry")
             if [ -n "$fpath" ] && [ -n "$fcontent" ]; then
                 tools_write_file "$fpath" "$fcontent" "$workdir"
-                results="${results:+$results; }Wrote: $fpath"
+                local _write_ts
+                _write_ts=$(date '+%Y-%m-%d %H:%M:%S')
+                results="${results:+$results; }[$_write_ts] Wrote: $fpath"
             fi
         done
         rm -rf "$files_dir"
@@ -336,11 +344,20 @@ tools_process_response() {
     if [ -n "$slash_cmds" ]; then
         while IFS= read -r scmd; do
             [ -z "$scmd" ] && continue
+            local _cmd_start_ts
+            _cmd_start_ts=$(date '+%Y-%m-%d %H:%M:%S')
             ui_section "Tool Invocation"
-            ui_step "$scmd"
+            ui_step "[$_cmd_start_ts] $scmd"
             if declare -f commands_dispatch &>/dev/null; then
                 commands_dispatch "$scmd" "$workdir"
-                results="${results:+$results; }Command: $scmd"
+                local _cmd_rc=$?
+                local _cmd_end_ts
+                _cmd_end_ts=$(date '+%Y-%m-%d %H:%M:%S')
+                if [ $_cmd_rc -eq 0 ]; then
+                    results="${results:+$results; }[$_cmd_end_ts] OK: $scmd"
+                else
+                    results="${results:+$results; }[$_cmd_end_ts] FAIL(exit $_cmd_rc): $scmd"
+                fi
             fi
         done <<< "$slash_cmds"
     fi

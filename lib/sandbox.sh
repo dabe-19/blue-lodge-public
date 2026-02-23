@@ -8,6 +8,8 @@ source "$LODGE_DIR/lib/ui.sh"
 
 # ── Config ─────────────────────────────────────────────────────
 LODGE_SANDBOXES="${LODGE_SANDBOXES:-$HOME/.lodge-sandboxes}"
+GEORGE_DIR="${GEORGE_DIR:-$HOME/.george}"
+SANDBOX_JOURNAL="${SANDBOX_JOURNAL:-$GEORGE_DIR/sandbox_journal.jsonl}"
 
 # ── Detect available isolation ─────────────────────────────────
 sandbox_detect() {
@@ -97,6 +99,11 @@ SHEOF
     # Git init
     (cd "$sandbox_dir" && git init -q && git add -A && git commit -q -m "Initial scaffold" 2>/dev/null) || true
     
+    # Log to sandbox journal
+    if declare -f sandbox_journal_log &>/dev/null; then
+        sandbox_journal_log "create" "$name" "$type" "0"
+    fi
+
     ui_ok "Sandbox: $sandbox_dir"
     echo "$sandbox_dir"
 }
@@ -126,11 +133,14 @@ sandbox_exec() {
     case "$method" in
         proot)
             # Lightweight root simulation
-            proot -w "$sandbox_dir" -b /proc -b /dev /bin/bash -c "$cmd"
+            proot -w "$sandbox_dir" -b /proc -b /dev \
+                env HOME="$sandbox_dir" TMPDIR="$sandbox_dir/tmp" \
+                /bin/bash -c "$cmd"
             ;;
         unshare)
             # User namespace isolation
-            unshare --user --map-root-user bash -c "cd '$sandbox_dir' && $cmd"
+            unshare --user --map-root-user bash -c \
+                "export HOME='$sandbox_dir' TMPDIR='$sandbox_dir/tmp'; cd '$sandbox_dir' && $cmd"
             ;;
         directory)
             # Simple directory isolation (restricted PATH)
@@ -142,6 +152,13 @@ sandbox_exec() {
             )
             ;;
     esac
+
+    local _exec_rc=$?
+    # Log to sandbox journal
+    if declare -f sandbox_journal_log &>/dev/null; then
+        sandbox_journal_log "exec" "$name" "$cmd" "$_exec_rc"
+    fi
+    return $_exec_rc
 }
 
 # ── Build inside sandbox ──────────────────────────────────────
@@ -169,17 +186,36 @@ sandbox_build() {
     else
         ui_warn "Don't know how to build this project"
     fi
+
+    local _build_rc=$?
+    if declare -f sandbox_journal_log &>/dev/null; then
+        sandbox_journal_log "build" "$name" "build" "$_build_rc"
+    fi
+    return $_build_rc
 }
 
 # ── Test inside sandbox ───────────────────────────────────────
 sandbox_test() {
     local name="$1"
     local sandbox_dir="$LODGE_SANDBOXES/$name"
-    
+
+    if [ ! -d "$sandbox_dir" ]; then
+        ui_err "Sandbox '$name' not found"
+        return 1
+    fi
+
     if [ -f "$sandbox_dir/Cargo.toml" ]; then
+        ui_step "Running Rust tests..."
         sandbox_exec "$name" "cargo test 2>&1"
     elif [ -f "$sandbox_dir/pyproject.toml" ]; then
+        ui_step "Running Python tests..."
         sandbox_exec "$name" "uv run pytest 2>&1" || sandbox_exec "$name" "uv run python -m pytest 2>&1"
+    elif [ -f "$sandbox_dir/run.sh" ]; then
+        ui_step "Running shell sandbox..."
+        sandbox_exec "$name" "bash run.sh 2>&1"
+    else
+        ui_warn "No recognized test runner for sandbox '$name'"
+        return 1
     fi
 }
 
@@ -189,8 +225,11 @@ sandbox_list() {
         ui_info "No sandboxes created yet"
         return
     fi
-    
+
+    local count=0
     ui_section "Sandboxes"
+    printf "  %b%-18s %-8s %-7s %-12s %s%b\n" "$C_DIM" "NAME" "TYPE" "SIZE" "LAST USED" "EVENTS" "$C_RESET"
+
     for d in "$LODGE_SANDBOXES"/*/; do
         [ -d "$d" ] || continue
         local name
@@ -200,8 +239,28 @@ sandbox_list() {
         [ -f "$d/pyproject.toml" ] && type="python"
         local size
         size=$(du -sh "$d" 2>/dev/null | cut -f1)
-        printf "  %b%-20s%b %b%-8s%b %s\n" "$C_WHITE" "$name" "$C_RESET" "$C_CYAN" "$type" "$C_RESET" "$size"
+
+        # Journal info
+        local last_used="never" exec_count=0
+        if [ -f "$SANDBOX_JOURNAL" ]; then
+            exec_count=$(grep -c "\"name\":\"$name\"" "$SANDBOX_JOURNAL" 2>/dev/null || echo 0)
+            local last_line
+            last_line=$(grep "\"name\":\"$name\"" "$SANDBOX_JOURNAL" | tail -1)
+            if [ -n "$last_line" ]; then
+                last_used=$(echo "$last_line" | sed -n 's/.*"ts":"\([^"]*\)".*/\1/p' | cut -dT -f1)
+            fi
+        fi
+
+        printf "  %b%-18s%b %b%-8s%b %-7s %-12s %s\n" \
+            "$C_WHITE" "$name" "$C_RESET" \
+            "$C_CYAN" "$type" "$C_RESET" \
+            "$size" "$last_used" "$exec_count"
+        (( count++ ))
     done
+
+    if [ "$count" -eq 0 ]; then
+        ui_info "No sandboxes created yet"
+    fi
 }
 
 # ── Remove sandbox ────────────────────────────────────────────
@@ -216,6 +275,9 @@ sandbox_remove() {
     
     if ui_confirm "Remove sandbox '$name' and all its contents?" "n"; then
         rm -rf "$sandbox_dir"
+        if declare -f sandbox_journal_log &>/dev/null; then
+            sandbox_journal_log "remove" "$name" "removed" "0"
+        fi
         ui_ok "Sandbox '$name' removed"
     fi
 }
@@ -235,11 +297,152 @@ sandbox_clone() {
     mkdir -p "$LODGE_SANDBOXES"
     ui_step "Cloning $repo_url..."
     git clone "$repo_url" "$sandbox_dir" 2>&1
-    
-    if [ $? -eq 0 ]; then
+    local _clone_rc=$?
+
+    if [ $_clone_rc -eq 0 ]; then
+        if declare -f sandbox_journal_log &>/dev/null; then
+            sandbox_journal_log "clone" "$name" "$repo_url" "0"
+        fi
         ui_ok "Cloned to $sandbox_dir"
     else
         ui_err "Clone failed"
         return 1
+    fi
+}
+
+# ── Sandbox Journal ───────────────────────────────────────────
+# Persistent log of all sandbox events — lets George know what
+# sandboxes exist, which ones he's used, and what happened in them.
+# Stored as JSONL: one JSON object per line.
+#
+# Format: {"ts":"ISO8601","ev":"EVENT","name":"NAME","detail":"...","rc":0}
+# Events: create, exec, build, test, remove, clone
+
+# Log a sandbox event to the journal.
+# Usage: sandbox_journal_log "event" "name" "detail" "exit_code"
+sandbox_journal_log() {
+    local event="$1" name="$2" detail="$3" rc="${4:-0}"
+    local ts
+    ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+    mkdir -p "$(dirname "$SANDBOX_JOURNAL")"
+    # Escape double quotes and newlines in detail
+    detail="${detail//\"/\\\"}"
+    detail="${detail//$'\n'/\\n}"
+    printf '{"ts":"%s","ev":"%s","name":"%s","detail":"%s","rc":%s}\n' \
+        "$ts" "$event" "$name" "$detail" "$rc" >> "$SANDBOX_JOURNAL"
+}
+
+# Read last N journal entries (raw JSONL).
+# Usage: sandbox_journal_read [n]
+sandbox_journal_read() {
+    local n="${1:-20}"
+    [ -f "$SANDBOX_JOURNAL" ] || return 0
+    tail -n "$n" "$SANDBOX_JOURNAL"
+}
+
+# Generate a compact sandbox inventory for LLM context injection.
+# Returns nothing (rc=0) if no sandboxes exist.
+sandbox_journal_summary() {
+    if [ ! -d "$LODGE_SANDBOXES" ]; then
+        return 0
+    fi
+
+    local sandbox_count=0
+    local lines=""
+
+    for d in "$LODGE_SANDBOXES"/*/; do
+        [ -d "$d" ] || continue
+        local name
+        name=$(basename "$d")
+        local type="shell"
+        [ -f "$d/Cargo.toml" ] && type="rust"
+        [ -f "$d/pyproject.toml" ] && type="python"
+
+        # Creation date from filesystem
+        local created
+        created=$(stat -c '%W' "$d" 2>/dev/null)
+        if [ "$created" = "0" ] || [ -z "$created" ]; then
+            created=$(stat -c '%Y' "$d" 2>/dev/null)
+        fi
+        created=$(date -d "@$created" '+%Y-%m-%d' 2>/dev/null || echo "unknown")
+
+        # Last-used and event count from journal
+        local last_used="never" exec_count=0 last_rc=0
+        if [ -f "$SANDBOX_JOURNAL" ]; then
+            exec_count=$(grep -c "\"name\":\"$name\"" "$SANDBOX_JOURNAL" 2>/dev/null || echo 0)
+            local last_line
+            last_line=$(grep "\"name\":\"$name\"" "$SANDBOX_JOURNAL" | tail -1)
+            if [ -n "$last_line" ]; then
+                last_used=$(echo "$last_line" | sed -n 's/.*"ts":"\([^"]*\)".*/\1/p' | cut -dT -f1)
+                last_rc=$(echo "$last_line" | sed -n 's/.*"rc":\([0-9]*\).*/\1/p')
+            fi
+        fi
+
+        lines="${lines}  ${name}  ${type}  created:${created}  last:${last_used}  (${exec_count} events, last rc=${last_rc:-0})\n"
+        (( sandbox_count++ ))
+    done
+
+    if [ "$sandbox_count" -eq 0 ]; then
+        return 0
+    fi
+
+    printf -- "--- SANDBOX INVENTORY (%d) ---\n" "$sandbox_count"
+    printf "%b" "$lines"
+    printf "Reuse existing sandboxes when possible. /sandbox list for details.\n"
+}
+
+# Detailed status of a single sandbox.
+# Usage: sandbox_status "name"
+sandbox_status() {
+    local name="$1"
+    local sandbox_dir="$LODGE_SANDBOXES/$name"
+
+    if [ ! -d "$sandbox_dir" ]; then
+        ui_err "Sandbox '$name' not found"
+        return 1
+    fi
+
+    local type="shell"
+    [ -f "$sandbox_dir/Cargo.toml" ] && type="rust"
+    [ -f "$sandbox_dir/pyproject.toml" ] && type="python"
+
+    local size
+    size=$(du -sh "$sandbox_dir" 2>/dev/null | cut -f1)
+
+    local method
+    method=$(sandbox_detect)
+
+    local file_count
+    file_count=$(find "$sandbox_dir" -type f ! -path '*/.git/*' 2>/dev/null | wc -l)
+
+    local git_status=""
+    if [ -d "$sandbox_dir/.git" ]; then
+        git_status=$(cd "$sandbox_dir" && git log --oneline -1 2>/dev/null || echo "(no commits)")
+    fi
+
+    ui_section "Sandbox: $name"
+    printf "  Type:       %b%s%b\n" "$C_CYAN" "$type" "$C_RESET"
+    printf "  Isolation:  %s\n" "$method"
+    printf "  Path:       %s\n" "$sandbox_dir"
+    printf "  Size:       %s  (%d files)\n" "$size" "$file_count"
+    [ -n "$git_status" ] && printf "  Last commit: %s\n" "$git_status"
+
+    # Recent journal activity for this sandbox
+    if [ -f "$SANDBOX_JOURNAL" ]; then
+        local events
+        events=$(grep "\"name\":\"$name\"" "$SANDBOX_JOURNAL" | tail -5)
+        if [ -n "$events" ]; then
+            printf "\n  %bRecent activity:%b\n" "$C_DIM" "$C_RESET"
+            while IFS= read -r line; do
+                local ev ts detail rc
+                ev=$(echo "$line" | sed -n 's/.*"ev":"\([^"]*\)".*/\1/p')
+                ts=$(echo "$line" | sed -n 's/.*"ts":"\([^"]*\)".*/\1/p' | sed 's/T/ /;s/Z//')
+                detail=$(echo "$line" | sed -n 's/.*"detail":"\([^"]*\)".*/\1/p')
+                rc=$(echo "$line" | sed -n 's/.*"rc":\([0-9]*\).*/\1/p')
+                local rc_color="$C_GREEN"
+                [ "$rc" != "0" ] && rc_color="$C_RED"
+                printf "    %s  %b%-6s%b  %s  %brc=%s%b\n" "$ts" "$C_CYAN" "$ev" "$C_RESET" "${detail:0:40}" "$rc_color" "$rc" "$C_RESET"
+            done <<< "$events"
+        fi
     fi
 }

@@ -252,6 +252,132 @@ describe "Command handler functions"
     assert_ok $?
   }
 
+# ── Sandbox fuzzy action resolver ──────────────────────────────
+describe "Sandbox fuzzy action resolver — _sandbox_fuzzy_action"
+
+  it "resolves exact 'list'" && {
+    _sandbox_fuzzy_action "list"
+    assert_eq "$_SANDBOX_ACTION" "list"
+  }
+
+  it "resolves 'show' → list" && {
+    _sandbox_fuzzy_action "show"
+    assert_eq "$_SANDBOX_ACTION" "list"
+  }
+
+  it "resolves 'make' → new" && {
+    _sandbox_fuzzy_action "make"
+    assert_eq "$_SANDBOX_ACTION" "new"
+  }
+
+  it "resolves 'create' → new" && {
+    _sandbox_fuzzy_action "create"
+    assert_eq "$_SANDBOX_ACTION" "new"
+  }
+
+  it "resolves 'delete' → rm" && {
+    _sandbox_fuzzy_action "delete"
+    assert_eq "$_SANDBOX_ACTION" "rm"
+  }
+
+  it "resolves 'destroy' → rm" && {
+    _sandbox_fuzzy_action "destroy"
+    assert_eq "$_SANDBOX_ACTION" "rm"
+  }
+
+  it "resolves 'enter' → cd" && {
+    _sandbox_fuzzy_action "enter"
+    assert_eq "$_SANDBOX_ACTION" "cd"
+  }
+
+  it "resolves 'execute' → run" && {
+    _sandbox_fuzzy_action "execute"
+    assert_eq "$_SANDBOX_ACTION" "run"
+  }
+
+  it "resolves 'compile' → build" && {
+    _sandbox_fuzzy_action "compile"
+    assert_eq "$_SANDBOX_ACTION" "build"
+  }
+
+  it "resolves 'verify' → test" && {
+    _sandbox_fuzzy_action "verify"
+    assert_eq "$_SANDBOX_ACTION" "test"
+  }
+
+  it "resolves 'info' → status" && {
+    _sandbox_fuzzy_action "info"
+    assert_eq "$_SANDBOX_ACTION" "status"
+  }
+
+  it "resolves 'history' → journal" && {
+    _sandbox_fuzzy_action "history"
+    assert_eq "$_SANDBOX_ACTION" "journal"
+  }
+
+  it "is case-insensitive" && {
+    _sandbox_fuzzy_action "CREATE"
+    assert_eq "$_SANDBOX_ACTION" "new"
+  }
+
+  it "fails on gibberish" && {
+    _sandbox_fuzzy_action "xyzzy"
+    assert_fail $?
+  }
+
+# ── Sandbox fuzzy type resolver ───────────────────────────────
+describe "Sandbox fuzzy type resolver — _sandbox_fuzzy_type"
+
+  it "resolves exact 'rust'" && {
+    _sandbox_fuzzy_type "rust"
+    assert_eq "$_SANDBOX_TYPE" "rust"
+  }
+
+  it "resolves 'rs' → rust" && {
+    _sandbox_fuzzy_type "rs"
+    assert_eq "$_SANDBOX_TYPE" "rust"
+  }
+
+  it "resolves 'cargo' → rust" && {
+    _sandbox_fuzzy_type "cargo"
+    assert_eq "$_SANDBOX_TYPE" "rust"
+  }
+
+  it "resolves 'py' → python" && {
+    _sandbox_fuzzy_type "py"
+    assert_eq "$_SANDBOX_TYPE" "python"
+  }
+
+  it "resolves 'python3' → python" && {
+    _sandbox_fuzzy_type "python3"
+    assert_eq "$_SANDBOX_TYPE" "python"
+  }
+
+  it "resolves 'bash' → shell" && {
+    _sandbox_fuzzy_type "bash"
+    assert_eq "$_SANDBOX_TYPE" "shell"
+  }
+
+  it "resolves 'cli' → shell" && {
+    _sandbox_fuzzy_type "cli"
+    assert_eq "$_SANDBOX_TYPE" "shell"
+  }
+
+  it "resolves 'rustlang' → rust via substring" && {
+    _sandbox_fuzzy_type "rustlang"
+    assert_eq "$_SANDBOX_TYPE" "rust"
+  }
+
+  it "is case-insensitive" && {
+    _sandbox_fuzzy_type "PYTHON"
+    assert_eq "$_SANDBOX_TYPE" "python"
+  }
+
+  it "fails on gibberish" && {
+    _sandbox_fuzzy_type "xyzzy"
+    assert_fail $?
+  }
+
 # ── Cancellation infrastructure ───────────────────────────────
 describe "Cancellation infrastructure"
 

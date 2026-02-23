@@ -21,6 +21,8 @@ commands_register() {
 commands_dispatch() {
     local input="$1"
     local workdir="${2:-.}"
+    local _dispatch_ts
+    _dispatch_ts=$(date '+%Y-%m-%d %H:%M:%S')
     
     # Parse: /command [args...]
     local cmd
@@ -43,7 +45,13 @@ commands_dispatch() {
     # Check registry
     if [ -n "${CMD_REGISTRY[$cmd]:-}" ]; then
         "${CMD_REGISTRY[$cmd]}" "$args" "$workdir"
-        return $?
+        local _rc=$?
+        local _done_ts
+        _done_ts=$(date '+%Y-%m-%d %H:%M:%S')
+        if [ $_rc -ne 0 ]; then
+            ui_err "[$_done_ts] /$cmd failed (exit $_rc)" 2>/dev/null
+        fi
+        return $_rc
     fi
     
     # Check commands directory for scripts
@@ -51,9 +59,18 @@ commands_dispatch() {
     if [ -f "$script" ]; then
         source "$script"
         "cmd_${cmd}" "$args" "$workdir"
-        return $?
+        local _rc=$?
+        local _done_ts
+        _done_ts=$(date '+%Y-%m-%d %H:%M:%S')
+        if [ $_rc -ne 0 ]; then
+            ui_err "[$_done_ts] /$cmd failed (exit $_rc)" 2>/dev/null
+        fi
+        return $_rc
     fi
     
+    local _fail_ts
+    _fail_ts=$(date '+%Y-%m-%d %H:%M:%S')
+    ui_err "[$_fail_ts] Unknown command: /$cmd" 2>/dev/null
     return 1  # Not a command
 }
 
@@ -133,10 +150,15 @@ commands_help_topic() {
 # available slash commands that George can use as working tools.
 # This is injected into system prompts so George knows his tools.
 commands_catalog() {
-    cat << 'CATALOG'
+    local _catalog_ts
+    _catalog_ts=$(date '+%Y-%m-%d %H:%M:%S %Z')
+    cat << CATALOG
 --- YOUR WORKING COMMANDS ---
 You have these slash commands as tools. USE THEM in your plans and steps.
 To invoke: output a line starting with / (e.g., /recall docker setup).
+
+CURRENT DATE/TIME (from real-time clock): $_catalog_ts
+ALWAYS use this timestamp for any date references. NEVER make up a date.
 
 RULES — read these EVERY time:
 1. ONLY use commands listed below. Do NOT invent commands that are not in this list.
@@ -156,8 +178,23 @@ RULES — read these EVERY time:
 /pgp sign <msg>      — PGP-sign a message for authenticity
 /pgp signpost <msg>  — Sign and post to social media
 /pgp export          — Export your public key
-/sandbox create <n>  — Create isolated sandbox
-/sandbox run <n> <cmd> — Run command in sandbox
+/sandbox list               — List all sandboxes (type, size, last-used, events)
+/sandbox new <name> [type]  — Create sandbox (types: rust, python, shell)
+/sandbox build <name>       — Build project in sandbox
+/sandbox test <name>        — Run tests in sandbox
+/sandbox run <name> <cmd>   — Run arbitrary command in sandbox
+/sandbox status <name>      — Detailed sandbox info + recent activity
+/sandbox journal [n]        — Show last N sandbox journal entries
+/sandbox rm <name>          — Delete a sandbox
+/sandbox clone <url> [name] — Clone repo into a new sandbox
+/sandbox cd <name>          — Switch working directory into sandbox
+Examples:
+  /sandbox new my-api rust       ← create a Rust sandbox
+  /sandbox run my-api cargo test  ← run cargo test inside it
+  /sandbox build my-api           ← build using detected toolchain
+  /sandbox test my-api            ← test using detected toolchain
+  /sandbox list                   ← see what sandboxes exist
+  /sandbox status my-api          ← detailed info + journal
 /container create <distro> — Create proot-distro container
 /container enter <name>    — Enter a container
 /api keys set <K> <V> — Set an API key

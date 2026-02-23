@@ -185,6 +185,27 @@ else
     err "$ERRORS issue(s) found"
 fi
 
+# ── Step 6: Reindex knowledge base ───────────────────────────
+info "Step 6: Reindexing knowledge base..."
+
+if command -v sqlite3 &>/dev/null; then
+    export LODGE_DIR
+    export GEORGE_DIR="${GEORGE_DIR:-$HOME/.george}"
+    mkdir -p "$GEORGE_DIR"
+    source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
+    source "$LODGE_DIR/lib/recall.sh" 2>/dev/null
+    if recall_available 2>/dev/null; then
+        recall_reindex 2>/dev/null
+        local_chunks=$(sqlite3 "$GEORGE_DIR/recall.db" "SELECT COUNT(*) FROM chunks;" 2>/dev/null || echo "0")
+        ok "Knowledge base reindexed ($local_chunks chunks)"
+    else
+        warn "sqlite3 FTS5 not available — skipping reindex"
+    fi
+else
+    warn "sqlite3 not found — knowledge base not reindexed"
+    warn "George will auto-index on first run if sqlite3 is installed"
+fi
+
 # ── Done ──────────────────────────────────────────────────────
 echo ""
 ok "George updated successfully!"

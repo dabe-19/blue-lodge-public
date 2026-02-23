@@ -8,15 +8,24 @@ test_start "lib/sandbox.sh — Project Isolation"
 
 TMPDIR_SANDBOX=""
 ORIG_SANDBOXES=""
+ORIG_GEORGE_DIR=""
+ORIG_SANDBOX_JOURNAL=""
 
 _setup_sandbox() {
     TMPDIR_SANDBOX=$(test_tmpdir)
     ORIG_SANDBOXES="$LODGE_SANDBOXES"
+    ORIG_GEORGE_DIR="$GEORGE_DIR"
+    ORIG_SANDBOX_JOURNAL="$SANDBOX_JOURNAL"
     export LODGE_SANDBOXES="$TMPDIR_SANDBOX/sandboxes"
+    export GEORGE_DIR="$TMPDIR_SANDBOX/george"
+    export SANDBOX_JOURNAL="$TMPDIR_SANDBOX/george/sandbox_journal.jsonl"
+    mkdir -p "$GEORGE_DIR"
 }
 
 _teardown_sandbox() {
     export LODGE_SANDBOXES="$ORIG_SANDBOXES"
+    export GEORGE_DIR="$ORIG_GEORGE_DIR"
+    export SANDBOX_JOURNAL="$ORIG_SANDBOX_JOURNAL"
     rm -rf "$TMPDIR_SANDBOX"
 }
 
@@ -125,6 +134,192 @@ describe "sandbox_remove"
     _setup_sandbox
     sandbox_remove "nope" 2>/dev/null <<< "n"
     assert_fail $?
+    _teardown_sandbox
+  }
+
+# ── sandbox_test ───────────────────────────────────────────────
+describe "sandbox_test"
+
+  it "runs shell sandbox via run.sh" && {
+    _setup_sandbox
+    sandbox_create "test_shell_run" "shell" >/dev/null 2>&1
+    out=$(sandbox_test "test_shell_run" 2>&1)
+    assert_contains "$out" "Shell sandbox ready"
+    _teardown_sandbox
+  }
+
+  it "fails for nonexistent sandbox" && {
+    _setup_sandbox
+    sandbox_test "nope" 2>/dev/null
+    assert_fail $?
+    _teardown_sandbox
+  }
+
+# ── sandbox_journal_log ───────────────────────────────────────
+describe "sandbox_journal_log"
+
+  it "creates journal file on first write" && {
+    _setup_sandbox
+    sandbox_journal_log "create" "testbox" "shell" "0"
+    assert_file_exists "$SANDBOX_JOURNAL"
+    _teardown_sandbox
+  }
+
+  it "writes valid JSONL entries" && {
+    _setup_sandbox
+    sandbox_journal_log "create" "mybox" "rust" "0"
+    sandbox_journal_log "exec" "mybox" "cargo build" "0"
+    lines=$(wc -l < "$SANDBOX_JOURNAL")
+    assert_eq "$lines" "2"
+    assert_contains "$(cat "$SANDBOX_JOURNAL")" '"ev":"create"'
+    assert_contains "$(cat "$SANDBOX_JOURNAL")" '"ev":"exec"'
+    _teardown_sandbox
+  }
+
+  it "escapes double quotes in detail" && {
+    _setup_sandbox
+    sandbox_journal_log "exec" "mybox" 'echo "hello"' "0"
+    # Should not break JSON structure — quotes become \"
+    line=$(cat "$SANDBOX_JOURNAL")
+    assert_contains "$line" 'echo \"hello\"'
+    _teardown_sandbox
+  }
+
+# ── sandbox_journal_read ──────────────────────────────────────
+describe "sandbox_journal_read"
+
+  it "reads last N entries" && {
+    _setup_sandbox
+    sandbox_journal_log "create" "a" "shell" "0"
+    sandbox_journal_log "exec" "a" "echo 1" "0"
+    sandbox_journal_log "exec" "a" "echo 2" "0"
+    out=$(sandbox_journal_read 2)
+    lines=$(echo "$out" | wc -l)
+    assert_eq "$lines" "2"
+    _teardown_sandbox
+  }
+
+  it "returns nothing if no journal exists" && {
+    _setup_sandbox
+    out=$(sandbox_journal_read 10)
+    assert_eq "$out" ""
+    _teardown_sandbox
+  }
+
+# ── sandbox_journal_summary ──────────────────────────────────
+describe "sandbox_journal_summary"
+
+  it "returns nothing when no sandboxes exist" && {
+    _setup_sandbox
+    out=$(sandbox_journal_summary 2>&1)
+    assert_eq "$out" ""
+    _teardown_sandbox
+  }
+
+  it "lists existing sandboxes with metadata" && {
+    _setup_sandbox
+    sandbox_create "sum_test" "shell" >/dev/null 2>&1
+    out=$(sandbox_journal_summary 2>&1)
+    assert_contains "$out" "SANDBOX INVENTORY"
+    assert_contains "$out" "sum_test"
+    assert_contains "$out" "shell"
+    _teardown_sandbox
+  }
+
+  it "includes event count from journal" && {
+    _setup_sandbox
+    sandbox_create "counted" "shell" >/dev/null 2>&1
+    sandbox_journal_log "exec" "counted" "echo hi" "0"
+    sandbox_journal_log "exec" "counted" "echo bye" "0"
+    out=$(sandbox_journal_summary 2>&1)
+    # 1 create + 2 execs = 3 events
+    assert_contains "$out" "3 events"
+    _teardown_sandbox
+  }
+
+# ── sandbox_status ────────────────────────────────────────────
+describe "sandbox_status"
+
+  it "shows status for an existing sandbox" && {
+    _setup_sandbox
+    sandbox_create "stat_test" "shell" >/dev/null 2>&1
+    out=$(sandbox_status "stat_test" 2>&1)
+    assert_contains "$out" "stat_test"
+    assert_contains "$out" "shell"
+    assert_contains "$out" "Path:"
+    _teardown_sandbox
+  }
+
+  it "fails for nonexistent sandbox" && {
+    _setup_sandbox
+    sandbox_status "nope" 2>/dev/null
+    assert_fail $?
+    _teardown_sandbox
+  }
+
+  it "shows recent journal activity" && {
+    _setup_sandbox
+    sandbox_create "active_box" "shell" >/dev/null 2>&1
+    sandbox_journal_log "exec" "active_box" "echo test" "0"
+    out=$(sandbox_status "active_box" 2>&1)
+    assert_contains "$out" "Recent activity"
+    assert_contains "$out" "exec"
+    _teardown_sandbox
+  }
+
+# ── sandbox_create journals events ────────────────────────────
+describe "sandbox_create (journal integration)"
+
+  it "logs a create event to the journal" && {
+    _setup_sandbox
+    sandbox_create "journaled" "shell" >/dev/null 2>&1
+    assert_file_exists "$SANDBOX_JOURNAL"
+    assert_contains "$(cat "$SANDBOX_JOURNAL")" '"ev":"create"'
+    assert_contains "$(cat "$SANDBOX_JOURNAL")" '"name":"journaled"'
+    _teardown_sandbox
+  }
+
+# ── sandbox_exec journals events ──────────────────────────────
+describe "sandbox_exec (journal integration)"
+
+  it "logs an exec event to the journal" && {
+    _setup_sandbox
+    sandbox_create "exec_jrnl" "shell" >/dev/null 2>&1
+    sandbox_exec "exec_jrnl" "echo hello" >/dev/null 2>&1
+    journal=$(cat "$SANDBOX_JOURNAL")
+    assert_contains "$journal" '"ev":"exec"'
+    assert_contains "$journal" '"name":"exec_jrnl"'
+    _teardown_sandbox
+  }
+
+# ── sandbox_exec sets HOME and TMPDIR ─────────────────────────
+describe "sandbox_exec (isolation)"
+
+  it "sets HOME to sandbox directory" && {
+    _setup_sandbox
+    sandbox_create "home_test" "shell" >/dev/null 2>&1
+    home_out=$(sandbox_exec "home_test" 'echo $HOME' 2>&1)
+    assert_contains "$home_out" "home_test"
+    _teardown_sandbox
+  }
+
+  it "sets TMPDIR to sandbox tmp directory" && {
+    _setup_sandbox
+    sandbox_create "tmp_test" "shell" >/dev/null 2>&1
+    tmp_out=$(sandbox_exec "tmp_test" 'echo $TMPDIR' 2>&1)
+    assert_contains "$tmp_out" "tmp_test/tmp"
+    _teardown_sandbox
+  }
+
+# ── sandbox_list shows journal metadata ───────────────────────
+describe "sandbox_list (enriched)"
+
+  it "shows column headers" && {
+    _setup_sandbox
+    sandbox_create "hdr_test" "shell" >/dev/null 2>&1
+    out=$(sandbox_list 2>&1)
+    assert_contains "$out" "NAME"
+    assert_contains "$out" "TYPE"
     _teardown_sandbox
   }
 

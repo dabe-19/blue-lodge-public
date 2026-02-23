@@ -544,14 +544,20 @@ _slash_extract_code() {
 _slash_system_prompt() {
     local name="$1"
     local description="$2"
+    local real_date
+    real_date=$(date '+%Y-%m-%d %H:%M')
 
     cat << SYSPROMPT
 You are George, writing a new bash slash command for your lodge system.
 Write a complete, working bash script that defines the function slash_${name}().
 
+IMPORTANT — REAL TIME CLOCK:
+The current date and time is: $real_date
+Use this EXACT date in any Created header. Do NOT make up a date.
+
 REQUIREMENTS:
 1. Start with #!/bin/bash
-2. Include a header comment with: Description, Created date, Author (George), Version
+2. Include a header comment with: Description, Created date (use $real_date), Author (George), Version
 3. Define exactly one function: slash_${name}()
 4. The function signature: slash_${name}() { local args="\$1"; local workdir="\${2:-.}"; ... }
 5. CRITICAL: Bash function names can ONLY contain letters, digits, and underscores.

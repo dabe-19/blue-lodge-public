@@ -163,21 +163,33 @@ line2")
 describe "api_json_get"
 
   it "extracts a field from JSON" && {
-    json='{"name":"George","version":"0.1"}'
-    result=$(api_json_get "$json" '.name')
-    assert_eq "$result" "George"
+    if ! command -v jq &>/dev/null; then
+      skip "jq not installed"
+    else
+      json='{"name":"George","version":"0.1"}'
+      result=$(api_json_get "$json" '.name')
+      assert_eq "$result" "George"
+    fi
   }
 
   it "extracts nested field" && {
-    json='{"data":{"id":"123"}}'
-    result=$(api_json_get "$json" '.data.id')
-    assert_eq "$result" "123"
+    if ! command -v jq &>/dev/null; then
+      skip "jq not installed"
+    else
+      json='{"data":{"id":"123"}}'
+      result=$(api_json_get "$json" '.data.id')
+      assert_eq "$result" "123"
+    fi
   }
 
   it "returns null for missing field" && {
-    json='{"name":"George"}'
-    result=$(api_json_get "$json" '.missing')
-    assert_eq "$result" "null"
+    if ! command -v jq &>/dev/null; then
+      skip "jq not installed"
+    else
+      json='{"name":"George"}'
+      result=$(api_json_get "$json" '.missing')
+      assert_eq "$result" "null"
+    fi
   }
 
 # ── api_request (mocked) ──────────────────────────────────────

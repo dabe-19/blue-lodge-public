@@ -51,24 +51,41 @@ tools_extract_slash_commands() {
 }
 ```
 
-Each extracted command is dispatched through `commands_dispatch()`:
+Each extracted command is dispatched through `commands_dispatch()` with
+full timestamp logging:
 
 ```bash
-# lib/tools.sh — tools_process_response() phase 3
+# lib/tools.sh — tools_process_response() phase 3 (timestamped)
 local slash_cmds
 slash_cmds=$(tools_extract_slash_commands "$response")
 if [ -n "$slash_cmds" ]; then
     while IFS= read -r scmd; do
         [ -z "$scmd" ] && continue
+        local _cmd_start_ts
+        _cmd_start_ts=$(date '+%Y-%m-%d %H:%M:%S')
         ui_section "Tool Invocation"
-        ui_step "$scmd"
+        ui_step "[$_cmd_start_ts] $scmd"
         if declare -f commands_dispatch &>/dev/null; then
             commands_dispatch "$scmd" "$workdir"
-            results="${results:+$results; }Command: $scmd"
+            local _cmd_rc=$?
+            local _cmd_end_ts
+            _cmd_end_ts=$(date '+%Y-%m-%d %H:%M:%S')
+            local _cmd_status="OK"
+            [ "$_cmd_rc" -ne 0 ] && _cmd_status="FAIL(exit $_cmd_rc)"
+            results="${results:+$results; }[$_cmd_end_ts] $_cmd_status: $scmd"
         fi
     done <<< "$slash_cmds"
 fi
 ```
+
+All three phases of `tools_process_response()` now produce timestamped
+results:
+
+| Phase | Timestamp Format | Example |
+|-------|------------------|---------|
+| 1 — bash | `[$ts] OK/FAIL: shell commands (exit N)` | `[2026-03-01 14:32:10] OK: shell commands (exit 0)` |
+| 2 — files | `[$ts] Wrote: <path>` | `[2026-03-01 14:32:11] Wrote: src/main.rs` |
+| 3 — slash | `[$ts] OK/FAIL: /command` | `[2026-03-01 14:32:12] OK: /recall docker setup` |
 
 ### Layer 2 — Prompt Injection (`lib/memory.sh`)
 
@@ -100,23 +117,31 @@ $(commands_catalog)"
 fi
 ```
 
-This means every time George plans or executes, his system prompt contains:
+This means every time George plans or executes, his system prompt contains
+the catalog **with a real-time clock timestamp**:
 
 ```
 --- YOUR WORKING COMMANDS ---
 You have these slash commands as tools. USE THEM in your plans and steps.
 To invoke: output a line starting with / (e.g., /recall docker setup).
 
+CURRENT DATE/TIME (from real-time clock): 2026-03-01 14:32:10 UTC
+ALWAYS use this timestamp for any date references. NEVER make up a date.
+
 /plan <task>         — Plan a task (no execution)
 /ask <question>      — Quick question
+/init <name> <lang>  — Scaffold a new project (types: rust, python, rl, data, automation, notebook, shell)
 /recall <query>      — Search your knowledge base
 /social post <text>  — Post to all configured social platforms
 /pgp sign <msg>      — PGP-sign a message for authenticity
 /sandbox create <n>  — Create isolated sandbox
 /web search <query>  — Search the web
 /journal write <text> — Write to your journal
-... (19 commands total)
+... (40+ commands total)
 ```
+
+The real-time clock injection ensures George **never hallucinates dates**
+in file headers, journal entries, or commit messages.
 
 ### Layer 3 — Identity: Modelfile SYSTEM Prompt
 
@@ -251,13 +276,13 @@ source lib/memory.sh
 commands_catalog | head -5
 ```
 
-Expected output:
+Expected output (timestamp will reflect current time):
 ```
 --- YOUR WORKING COMMANDS ---
 You have these slash commands as tools. USE THEM in your plans and steps.
 To invoke: output a line starting with / (e.g., /recall docker setup).
 
-/plan <task>         — Plan a task (no execution)
+CURRENT DATE/TIME (from real-time clock): 2026-03-01 14:32:10 UTC
 ```
 
 ### Proof 2: The Catalog is Injected into System Prompts
@@ -331,9 +356,92 @@ Expected output: `1` (the "My Working Commands" section header)
 bash tests/run_all.sh 2>&1 | tail -10
 ```
 
-All 21 test files pass, including:
-- `test_commands.sh` — tests `commands_catalog()` (non-empty, header, lists key commands) and `commands_help_topic()` (registered, unknown, slash-stripping)
+All test files pass, including:
+- `test_commands.sh` — tests `commands_catalog()` (non-empty, header, lists key commands, real-time clock) and `commands_help_topic()` (registered, unknown, slash-stripping)
 - `test_tools.sh` — tests `tools_extract_slash_commands()` (plain text extraction, code block skipping, multiple commands, empty responses)
+- `test_init.sh` — tests fuzzy type resolution, prerequisite guards, existing-project detection, swapped-argument handling, and end-to-end project scaffolding
+
+## Real-Time Clock & Timestamps
+
+Two mechanisms prevent George from ever hallucinating dates or producing
+untracked results:
+
+### Real-Time Clock Injection
+
+Both `commands_catalog()` and `_slash_system_prompt()` inject the actual
+output of `date` into the LLM prompt at generation time. This ensures
+George always has access to the **real** current date/time, rather than
+inventing one based on training data.
+
+- **Command catalog**: `CURRENT DATE/TIME (from real-time clock): <ts>`
+  followed by `ALWAYS use this timestamp for any date references. NEVER
+  make up a date.`
+- **Slash creation prompt**: `The current date and time is: <ts>` with
+  an instruction to use it in the `Created:` header of generated commands.
+
+### Dispatch & Execution Timestamps
+
+All slash command dispatch and tool execution events now carry timestamps
+from the system clock:
+
+| Event | Format |
+|-------|--------|
+| Dispatch entry | `[$ts] Dispatching: /$cmd` |
+| Dispatch failure | `[$ts] /$cmd failed (exit $rc)` |
+| Unknown command | `[$ts] Unknown command: /$cmd` |
+| Bash execution | `[$ts] OK/FAIL: shell commands (exit N)` |
+| File write | `[$ts] Wrote: <path>` |
+| Slash invocation | `[$ts] OK/FAIL: /command` |
+
+## /init Guardrails & Fuzzy Type Resolution
+
+The `/init` command now includes several safety layers:
+
+### Directory-First Creation
+
+`/init myapp rust` creates directory `myapp/` inside the CWD **first**,
+then scaffolds inside it. On failure, the directory is cleaned up
+automatically.
+
+### Prerequisite Checks
+
+Before scaffolding, `/init` verifies that the required toolchain is
+installed:
+
+| Type | Required | Check |
+|------|----------|-------|
+| `rust` | `cargo` | `command -v cargo` |
+| `data`, `rl`, `automation`, `notebook` | `python3` + (`uv` or `pip3`) | `command -v python3 && (command -v uv \|\| command -v pip3)` |
+
+Missing tools produce a clear error with install instructions.
+
+### Existing Project Guard
+
+If the CWD already contains `CLAUDE.md`, `Cargo.toml`, or
+`pyproject.toml`, `/init` refuses to run (prevents nesting projects).
+
+### Fuzzy Type Resolver
+
+`_init_resolve_type()` maps hallucinated or abbreviated type strings
+to canonical types using a three-tier strategy:
+
+1. **Exact match**: `rust`, `data`, `rl`, `automation`, `notebook`, `shell`
+   (plus numeric aliases from the interactive menu)
+2. **Heuristic match**: strip noise suffixes (`lang`, `project`, `app`),
+   then match variants (`rs`→rust, `py`→data, `gymnasium`→rl,
+   `bs4`→automation, `ipynb`→notebook, `bash`→shell)
+3. **Substring fallback**: check if the input contains a canonical type
+   name as a substring (`"rustproject"` → `rust`)
+
+Guessed types produce a visible warning:
+```
+⚠ Interpreted 'rs' as type 'rust' (best guess)
+```
+
+### Swapped Argument Detection
+
+If the user types `/init rust myapp` (type first, name second), George
+detects the swap and corrects silently.
 
 ## Token Budget Impact
 
@@ -365,7 +473,7 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 |---------|---------|---------|
 | `/plan <task>` | Plan without executing | `/plan refactor the API` |
 | `/ask <question>` | Quick question | `/ask what is our test coverage?` |
-| `/init <name> <lang>` | Scaffold project | `/init myapp rust` |
+| `/init <name> <lang>` | Scaffold project (fuzzy type matching, guardrails) | `/init myapp rust` |
 | `/recall <query>` | Search knowledge base | `/recall docker setup` |
 | `/save <file> <content>` | Save content to a file | `/save notes.md My summary` |
 | `/write <file> <content>` | Write/overwrite a file | `/write src/main.rs fn main() {}` |

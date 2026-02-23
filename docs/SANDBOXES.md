@@ -13,11 +13,12 @@ host system. Every cloned repo, every `lodge /init`, and every manual
 3. [Commands Reference](#commands-reference)
 4. [Isolation Methods](#isolation-methods)
 5. [Project Types](#project-types)
-6. [Per-Sandbox Permissions](#per-sandbox-permissions)
-7. [Example: Clone & Build a Rust Project](#example-clone--build-a-rust-project)
-8. [Example: Kali Linux Penetration Testing on Mobile](#example-kali-linux-penetration-testing-on-mobile)
-9. [Example: Python Web Scraper in a Sandbox](#example-python-web-scraper-in-a-sandbox)
-10. [Tips & Troubleshooting](#tips--troubleshooting)
+6. [Sandbox Journal](#sandbox-journal)
+7. [Per-Sandbox Permissions](#per-sandbox-permissions)
+8. [Example: Clone & Build a Rust Project](#example-clone--build-a-rust-project)
+9. [Example: Kali Linux Penetration Testing on Mobile](#example-kali-linux-penetration-testing-on-mobile)
+10. [Example: Python Web Scraper in a Sandbox](#example-python-web-scraper-in-a-sandbox)
+11. [Tips & Troubleshooting](#tips--troubleshooting)
 
 ---
 
@@ -30,7 +31,7 @@ lodge /sandbox new myapp rust
 # Clone a GitHub repo into a sandbox
 lodge /clone owner/repo
 
-# List all sandboxes
+# List all sandboxes (with type, size, last-used, event count)
 lodge /sandbox list
 
 # Switch into an existing sandbox
@@ -39,6 +40,15 @@ lodge /sandbox cd myapp
 # Build and test inside the sandbox
 lodge /sandbox build myapp
 lodge /sandbox test myapp
+
+# Run an arbitrary command inside a sandbox
+lodge /sandbox run myapp "ls -la"
+
+# View detailed sandbox status
+lodge /sandbox status myapp
+
+# View recent sandbox journal entries
+lodge /sandbox journal
 ```
 
 ---
@@ -80,10 +90,13 @@ history, key files, errors) never bleeds between projects.
 
 | Command | Alias | Description |
 |---------|-------|-------------|
-| `/sandbox list` | `/sandbox ls` | Show all sandboxes with type and size |
+| `/sandbox list` | `/sandbox ls` | Show all sandboxes with type, size, last-used, event count |
 | `/sandbox new <name> [type]` | `/sandbox create` | Create a new sandbox (rust/python/shell) |
 | `/sandbox build <name>` | — | Build the project using detected toolchain |
 | `/sandbox test <name>` | — | Run tests using detected toolchain |
+| `/sandbox run <name> <cmd>` | `/sandbox exec` | Run an arbitrary command inside a sandbox |
+| `/sandbox status <name>` | — | Show detailed sandbox info + recent journal activity |
+| `/sandbox journal [n]` | — | Show last N sandbox journal entries (default: 20) |
 | `/sandbox rm <name>` | `/sandbox remove` | Delete a sandbox (with confirmation) |
 | `/sandbox clone <url> [name]` | — | Clone a git repo into a new sandbox |
 | `/sandbox cd <name>` | — | Switch your working directory into the sandbox |
@@ -99,7 +112,9 @@ system and uses it transparently:
 ### 1. proot (Recommended for Termux/Mobile)
 
 ```
-proot -w /sandbox/dir -b /proc -b /dev /bin/bash -c "command"
+proot -w /sandbox/dir -b /proc -b /dev \
+    env HOME=/sandbox/dir TMPDIR=/sandbox/dir/tmp \
+    /bin/bash -c "command"
 ```
 
 **proot** simulates root access without requiring actual root. It intercepts
@@ -115,7 +130,8 @@ root filesystem. This is the default on Termux and proot-distro Ubuntu.
 ### 2. unshare (Linux desktop/server)
 
 ```
-unshare --user --map-root-user bash -c "cd /sandbox/dir && command"
+unshare --user --map-root-user bash -c \
+    "export HOME=/sandbox/dir TMPDIR=/sandbox/dir/tmp; cd /sandbox/dir && command"
 ```
 
 Uses Linux user namespaces to create an isolated environment with a separate
@@ -171,6 +187,79 @@ lodge /sandbox new toolkit
 ```
 - Creates `run.sh` with `set -euo pipefail`
 - Build: `bash run.sh`
+
+---
+
+## Sandbox Journal
+
+George maintains a **sandbox journal** — a persistent JSONL log of all
+sandbox events. This gives George awareness of which sandboxes exist, what
+he's done in them, and whether they succeeded or failed. The journal is
+automatically injected into George's context when planning tasks, so he
+reuses existing sandboxes instead of creating duplicates.
+
+### Journal Location
+
+```
+~/.george/sandbox_journal.jsonl
+```
+
+### Events Tracked
+
+| Event | Trigger | Detail | 
+|-------|---------|--------|
+| `create` | `/sandbox new` | Project type (rust/python/shell) |
+| `exec` | `/sandbox run`, builds, tests | The command executed |
+| `build` | `/sandbox build` | Build command |
+| `remove` | `/sandbox rm` | Sandbox removed |
+| `clone` | `/sandbox clone` | Source URL |
+
+### Journal Entry Format (JSONL)
+
+```json
+{"ts":"2025-01-15T10:30:00Z","ev":"create","name":"myapp","detail":"rust","rc":0}
+{"ts":"2025-01-15T10:31:05Z","ev":"exec","name":"myapp","detail":"cargo build","rc":0}
+{"ts":"2025-01-15T10:32:12Z","ev":"exec","name":"myapp","detail":"cargo test","rc":1}
+```
+
+### How George Uses the Journal
+
+When George plans a task that involves code (e.g., "build me a URL
+shortener"), his system prompt includes a **SANDBOX INVENTORY** block
+generated from the journal:
+
+```
+--- SANDBOX INVENTORY (2) ---
+  myapp       rust    created:2025-01-15  last:2025-01-15  (3 events, last rc=1)
+  scraper     python  created:2025-01-14  last:2025-01-14  (1 events, last rc=0)
+Reuse existing sandboxes when possible. /sandbox list for details.
+```
+
+This means George will:
+- **Not** create a duplicate sandbox if one with the same name exists
+- Know which sandboxes had recent failures (and potentially fix them)
+- Reuse an existing sandbox of the right type when appropriate
+
+### Viewing the Journal
+
+```bash
+# Last 20 events (default)
+lodge /sandbox journal
+
+# Last 5 events
+lodge /sandbox journal 5
+```
+
+### Sandbox Status
+
+For detailed info about a single sandbox including recent activity:
+
+```bash
+lodge /sandbox status myapp
+```
+
+Shows type, isolation method, path, size, file count, last commit, and
+the 5 most recent journal events for that sandbox.
 
 ---
 

@@ -187,23 +187,123 @@ _cmd_status() {
     fi
     echo ""
 }
+# ── Sandbox fuzzy heuristics ──────────────────────────────────
+# George sometimes hallucinates subcommand names or swaps arg order.
+# These resolvers silently correct common mistakes.
+
+# Fuzzy-resolve a sandbox action/subcommand to a canonical one.
+# Sets _SANDBOX_ACTION to the canonical action, returns 0 on match.
+_sandbox_fuzzy_action() {
+    local raw="${1,,}"  # lowercase
+    _SANDBOX_ACTION=""
+    case "$raw" in
+        # Exact matches + known aliases
+        list|ls|show|all)         _SANDBOX_ACTION="list"    ;;
+        new|create|make|add|init) _SANDBOX_ACTION="new"     ;;
+        build|compile|make)       _SANDBOX_ACTION="build"   ;;
+        test|check|verify)        _SANDBOX_ACTION="test"    ;;
+        rm|remove|delete|del|destroy) _SANDBOX_ACTION="rm"  ;;
+        clone|git-clone)          _SANDBOX_ACTION="clone"   ;;
+        cd|enter|switch|goto|open) _SANDBOX_ACTION="cd"     ;;
+        status|info|detail|details) _SANDBOX_ACTION="status" ;;
+        journal|log|history|events) _SANDBOX_ACTION="journal" ;;
+        run|exec|execute|do|cmd)  _SANDBOX_ACTION="run"     ;;
+        *)                        return 1 ;;
+    esac
+    return 0
+}
+
+# Fuzzy-resolve a project type for sandboxes.
+# Sandbox types are: rust, python, shell (simpler than /init types).
+# Sets _SANDBOX_TYPE to the canonical type, returns 0 on match.
+_sandbox_fuzzy_type() {
+    local raw="${1,,}"
+    _SANDBOX_TYPE=""
+    case "$raw" in
+        rust|rs|cargo|crate|rusty|rustlang) _SANDBOX_TYPE="rust"   ;;
+        python|py|python3|pip|uv|pyth)      _SANDBOX_TYPE="python" ;;
+        shell|sh|bash|zsh|cli|script)       _SANDBOX_TYPE="shell"  ;;
+        *)  # Substring fallback
+            if [[ "$raw" == rust* ]] || [[ "$raw" == *cargo* ]]; then
+                _SANDBOX_TYPE="rust"
+            elif [[ "$raw" == py* ]] || [[ "$raw" == *python* ]]; then
+                _SANDBOX_TYPE="python"
+            elif [[ "$raw" == *bash* ]] || [[ "$raw" == *shell* ]] || [[ "$raw" == *cli* ]]; then
+                _SANDBOX_TYPE="shell"
+            else
+                return 1
+            fi ;;
+    esac
+    return 0
+}
+
+# Check if a string matches an existing sandbox name.
+_sandbox_name_exists() {
+    [ -d "$LODGE_SANDBOXES/${1}" ]
+}
+
 _cmd_sandbox() {
     local args="$1"
     local action
     action=$(echo "$args" | awk '{print $1}')
     local rest
     rest=$(echo "$args" | sed 's/^[^ ]* *//')
-    
+
+    # ── Fuzzy-resolve the action ──────────────────────────────
+    if ! _sandbox_fuzzy_action "$action"; then
+        # If the first word is actually a sandbox name (e.g. "/sandbox myapp build"),
+        # try swapping: treat word1 as name and word2 as action.
+        local maybe_name="$action"
+        local maybe_action
+        maybe_action=$(echo "$rest" | awk '{print $1}')
+        if _sandbox_name_exists "$maybe_name" && _sandbox_fuzzy_action "$maybe_action"; then
+            action="$_SANDBOX_ACTION"
+            rest="$maybe_name $(echo "$rest" | sed 's/^[^ ]* *//')"
+            ui_dim "Reinterpreted: /sandbox $action $rest"
+        else
+            ui_info "Usage: /sandbox <list|new|build|test|run|status|journal|rm|clone|cd> [args]"
+            sandbox_list
+            return
+        fi
+    else
+        action="$_SANDBOX_ACTION"
+    fi
+
     case "$action" in
-        list|ls)   sandbox_list ;;
-        new|create)
+        list)   sandbox_list ;;
+        new)
             local name type
             name=$(echo "$rest" | awk '{print $1}')
             type=$(echo "$rest" | awk '{print $2}')
-            sandbox_create "$name" "${type:-shell}" ;;
+
+            # ── Arg-swap detection: "/sandbox new rust myapp" ──
+            if _sandbox_fuzzy_type "$name" && ! _sandbox_fuzzy_type "${type:-}"; then
+                # First arg looks like a type, second doesn't — swap them
+                local swap_type="$_SANDBOX_TYPE"
+                local swap_name="$type"
+                if [ -n "$swap_name" ]; then
+                    ui_dim "Reinterpreted: /sandbox new $swap_name $swap_type"
+                    name="$swap_name"
+                    type="$swap_type"
+                fi
+            fi
+
+            # ── Fuzzy-resolve the type ────────────────────────
+            if [ -n "$type" ]; then
+                if _sandbox_fuzzy_type "$type"; then
+                    type="$_SANDBOX_TYPE"
+                else
+                    ui_warn "Unknown type '$type' — defaulting to shell"
+                    type="shell"
+                fi
+            else
+                type="shell"
+            fi
+
+            sandbox_create "$name" "$type" ;;
         build)     sandbox_build "$rest" ;;
         test)      sandbox_test "$rest" ;;
-        rm|remove) sandbox_remove "$rest" ;;
+        rm)        sandbox_remove "$rest" ;;
         clone)
             local url name
             url=$(echo "$rest" | awk '{print $1}')
@@ -219,9 +319,15 @@ _cmd_sandbox() {
             else
                 ui_err "Sandbox '$name' not found"
             fi ;;
-        *)
-            ui_info "Usage: /sandbox <list|new|build|test|rm|clone|cd> [args]"
-            sandbox_list ;;
+        status)    sandbox_status "$rest" ;;
+        journal)
+            local n="${rest:-20}"
+            sandbox_journal_read "$n" ;;
+        run)
+            local name cmd
+            name=$(echo "$rest" | awk '{print $1}')
+            cmd=$(echo "$rest" | sed 's/^[^ ]* *//')
+            sandbox_exec "$name" "$cmd" ;;
     esac
 }
 _cmd_phone() {

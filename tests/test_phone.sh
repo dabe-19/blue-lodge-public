@@ -5,6 +5,11 @@ source "$(dirname "$0")/framework.sh"
 source "$LODGE_DIR/lib/ui.sh"
 source "$LODGE_DIR/lib/phone.sh"
 
+# Enable the Termux API gate for testing.
+# Tests that check graceful fallback expect phone_api_call to reach
+# the "command not found" check rather than stopping at the opt-in gate.
+export LODGE_TERMUX_API=1
+
 _test_out=""
 
 test_start "lib/phone.sh — Phone Integration (Termux API)"
@@ -294,6 +299,7 @@ describe "phone_api_call safe wrapper"
   it "phone_api_call fails inside proot" && {
     (
       export PROOT_TMP_DIR="/tmp/proot"
+      export LODGE_TERMUX_API=1
       _test_out=$(phone_api_call termux-battery-status 2>/dev/null)
       echo "$_test_out"
     ) | grep -q "proot"
