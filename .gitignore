@@ -2,3 +2,6 @@
 /tmp/
 .lodge-snapshots/
 .lodge-sandboxes/
+.george/
+.sandboxes/
+.lodge_history

@@ -19,7 +19,7 @@ LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 
 # ── Config ─────────────────────────────────────────────────────
-GEORGE_DIR="${GEORGE_DIR:-$HOME/.george}"
+GEORGE_DIR="${GEORGE_DIR:-${LODGE_DIR:-.}/.george}"
 RECALL_DB="${RECALL_DB:-$GEORGE_DIR/recall.db}"
 RECALL_MTIME_FILE="${RECALL_MTIME_FILE:-$GEORGE_DIR/.recall_mtimes}"
 

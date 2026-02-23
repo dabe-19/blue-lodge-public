@@ -14,7 +14,7 @@ LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 
 # ── Config ─────────────────────────────────────────────────────
-GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-$HOME/.george}"
+GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}"
 GEORGE_KEYRING_DIR="${GEORGE_KEYRING_DIR:-$GEORGE_CONFIG_DIR/.keyring}"
 LODGE_NETWORK_AUDIT="${LODGE_NETWORK_AUDIT:-0}"  # 0=off, 1=block network commands from LLM
 
@@ -23,7 +23,7 @@ LODGE_NETWORK_AUDIT="${LODGE_NETWORK_AUDIT:-0}"  # 0=off, 1=block network comman
 # command prefixes. Commands matching these are auto-approved at
 # LODGE_PERMISSION=1. Everything else requires confirmation.
 #
-# Users can extend this via ~/.george/allowlist.conf (one prefix per line)
+# Users can extend this via $LODGE_DIR/.george/allowlist.conf (one prefix per line)
 
 LODGE_COMMAND_ALLOWLIST=(
     # Build tools
@@ -199,7 +199,7 @@ security_check_network() {
 #
 # How it works:
 #   1. On first run, George generates a random 256-bit signing key
-#   2. The key is stored in ~/.george/.keyring/signing.key (mode 600)
+#   2. The key is stored in $LODGE_DIR/.george/.keyring/signing.key (mode 600)
 #   3. Every time CLAUDE.md or journal.md is written, George
 #      computes an HMAC-SHA256 signature and stores it in a .sig file
 #   4. Before reading, George verifies the signature matches

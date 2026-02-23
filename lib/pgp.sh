@@ -5,7 +5,7 @@
 #
 # Architecture:
 #   - Uses GnuPG (gpg) for all crypto operations
-#   - Dedicated GNUPGHOME at ~/.george/.gnupg (isolated keyring)
+#   - Dedicated GNUPGHOME at $LODGE_DIR/.george/.gnupg (isolated keyring)
 #   - Cleartext signatures (human-readable + verifiable)
 #   - ASCII-armored public key export
 #
@@ -19,7 +19,7 @@ LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 
 # ── Config ─────────────────────────────────────────────────────
-GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-$HOME/.george}"
+GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}"
 GEORGE_GNUPG_DIR="${GEORGE_GNUPG_DIR:-$GEORGE_CONFIG_DIR/.gnupg}"
 GEORGE_PGP_PUBKEY_FILE="${GEORGE_PGP_PUBKEY_FILE:-$GEORGE_CONFIG_DIR/george_public.asc}"
 

@@ -6,9 +6,15 @@ source "$(dirname "$0")/framework.sh"
 source "$LODGE_DIR/lib/ui.sh"
 
 TMPDIR_GIT=""
+_SAVED_HOME=""
 
 _setup_git() {
     TMPDIR_GIT=$(test_tmpdir)
+    # Redirect HOME so 'git config --global' writes to temp dir,
+    # not the real ~/.gitconfig
+    _SAVED_HOME="$HOME"
+    export HOME="$TMPDIR_GIT"
+    export GIT_CONFIG_NOSYSTEM=1
     export GEORGE_CONFIG_DIR="$TMPDIR_GIT/.george"
     export GEORGE_SSH_DIR="$GEORGE_CONFIG_DIR/.ssh"
     export GEORGE_SSH_KEY="$GEORGE_SSH_DIR/id_ed25519"
@@ -45,6 +51,11 @@ _setup_git_repo() {
 
 _teardown_git() {
     cd /tmp 2>/dev/null
+    # Restore real HOME so subsequent tests/processes are unaffected
+    if [[ -n "$_SAVED_HOME" ]]; then
+        export HOME="$_SAVED_HOME"
+    fi
+    unset GIT_CONFIG_NOSYSTEM
     rm -rf "$TMPDIR_GIT"
 }
 

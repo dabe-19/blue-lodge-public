@@ -14,7 +14,7 @@
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 
-GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-$HOME/.george}"
+GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}"
 GEORGE_SSH_DIR="${GEORGE_SSH_DIR:-$GEORGE_CONFIG_DIR/.ssh}"
 GEORGE_SSH_KEY="${GEORGE_SSH_KEY:-$GEORGE_SSH_DIR/id_ed25519}"
 GEORGE_GIT_CONFIG="${GEORGE_GIT_CONFIG:-$GEORGE_CONFIG_DIR/gitconfig}"
@@ -59,7 +59,7 @@ git_show_identity() {
 # ═══════════════════════════════════════════════════════════════
 
 # ── Write SSH config entry for GitHub ──────────────────────────
-# Creates ~/.george/.ssh/config so the key is used automatically
+# Creates $LODGE_DIR/.george/.ssh/config so the key is used automatically
 # for any git@github.com connection — persists across sessions.
 git_write_ssh_config() {
     if ! declare -f ssh_has_key &>/dev/null || ! ssh_has_key; then

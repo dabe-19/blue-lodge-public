@@ -10,14 +10,14 @@
 #   - List secrets: shows names only, never values
 #   - Delete a secret: securely removed
 #
-# Storage: ~/.george/.vault/<name>.enc  (each secret is a separate file)
+# Storage: $LODGE_DIR/.george/.vault/<name>.enc  (each secret is a separate file)
 # Key derivation: Uses the signing key from security.sh keyring
 
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 
 # ── Config ─────────────────────────────────────────────────────
-GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-$HOME/.george}"
+GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}"
 VAULT_DIR="${VAULT_DIR:-$GEORGE_CONFIG_DIR/.vault}"
 
 # ── Initialize vault ──────────────────────────────────────────

@@ -7,8 +7,8 @@ LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 
 # ── Config ─────────────────────────────────────────────────────
-LODGE_SANDBOXES="${LODGE_SANDBOXES:-$HOME/.lodge-sandboxes}"
-GEORGE_DIR="${GEORGE_DIR:-$HOME/.george}"
+LODGE_SANDBOXES="${LODGE_SANDBOXES:-${LODGE_DIR:-.}/.sandboxes}"
+GEORGE_DIR="${GEORGE_DIR:-${LODGE_DIR:-.}/.george}"
 SANDBOX_JOURNAL="${SANDBOX_JOURNAL:-$GEORGE_DIR/sandbox_journal.jsonl}"
 
 # ── Detect available isolation ─────────────────────────────────

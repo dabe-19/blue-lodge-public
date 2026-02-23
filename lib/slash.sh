@@ -5,7 +5,7 @@
 # including sandboxes, containers, phone, recall, LLM, and even
 # other /slash commands (recursive composition).
 #
-# Storage: ~/.george/slash/<name>.sh
+# Storage: $LODGE_DIR/.george/slash/<name>.sh
 # Template: each file defines slash_<name>() { ... }
 # Execution: sourced into lodge context — full library access.
 #
@@ -14,7 +14,7 @@
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 
-GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-$HOME/.george}"
+GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}"
 SLASH_DIR="${SLASH_DIR:-$GEORGE_CONFIG_DIR/slash}"
 
 # ═══════════════════════════════════════════════════════════════

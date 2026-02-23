@@ -17,7 +17,7 @@ source "$LODGE_DIR/lib/ui.sh"
 source "$LODGE_DIR/lib/web.sh"
 
 # ── Config ─────────────────────────────────────────────────────
-GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-$HOME/.george}"
+GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}"
 EMAIL_CONFIG="${EMAIL_CONFIG:-$GEORGE_CONFIG_DIR/email.conf}"
 
 # ── Provider definitions ───────────────────────────────────────

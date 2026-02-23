@@ -38,7 +38,7 @@ fi
 # ── Step 1: Backup identity ──────────────────────────────────
 info "Step 1: Backing up George's identity..."
 
-GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-$HOME/.george}"
+GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-$LODGE_DIR/.george}"
 BACKUP_DIR="$GEORGE_CONFIG_DIR/backups"
 BACKUP_REPO="$GEORGE_CONFIG_DIR/backup-repo"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -192,7 +192,7 @@ info "Step 6: Reindexing knowledge base..."
 
 if command -v sqlite3 &>/dev/null; then
     export LODGE_DIR
-    export GEORGE_DIR="${GEORGE_DIR:-$HOME/.george}"
+    export GEORGE_DIR="${GEORGE_DIR:-$LODGE_DIR/.george}"
     mkdir -p "$GEORGE_DIR"
     source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
     source "$LODGE_DIR/lib/recall.sh" 2>/dev/null

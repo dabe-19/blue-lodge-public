@@ -152,7 +152,7 @@ info "Indexing knowledge base (FTS5)..."
 if command -v sqlite3 &>/dev/null; then
     # Source the recall system and index all docs
     export LODGE_DIR
-    export GEORGE_DIR="${GEORGE_DIR:-$HOME/.george}"
+    export GEORGE_DIR=\"${GEORGE_DIR:-$LODGE_DIR/.george}\"
     mkdir -p "$GEORGE_DIR"
     source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
     source "$LODGE_DIR/lib/recall.sh" 2>/dev/null

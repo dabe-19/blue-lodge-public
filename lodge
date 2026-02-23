@@ -20,6 +20,11 @@ if [ -z "${LODGE_DIR:-}" ]; then
 fi
 export LODGE_PROJECT="${LODGE_PROJECT:-$(basename "$PWD")}"
 
+# ── George's isolated environment (everything lives inside LODGE_DIR) ──
+export GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-$LODGE_DIR/.george}"
+export LODGE_SANDBOXES="${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}"
+export LODGE_HISTORY_FILE="${LODGE_HISTORY_FILE:-$LODGE_DIR/.lodge_history}"
+
 # ── Source Libraries ───────────────────────────────────────────
 source "$LODGE_DIR/lib/ui.sh"
 source "$LODGE_DIR/lib/llm.sh"
@@ -446,9 +451,9 @@ _cmd_clear() {
 }
 _cmd_cleanup() {
     local args="$1"
-    local george_dir="${GEORGE_CONFIG_DIR:-$HOME/.george}"
-    local sandbox_dir="${LODGE_SANDBOXES:-$HOME/.lodge-sandboxes}"
-    local history_file="$HOME/.lodge_history"
+    local george_dir="${GEORGE_CONFIG_DIR:-$LODGE_DIR/.george}"
+    local sandbox_dir="${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}"
+    local history_file="${LODGE_HISTORY_FILE:-$LODGE_DIR/.lodge_history}"
 
     case "${args%% *}" in
         status|"")
@@ -457,7 +462,7 @@ _cmd_cleanup() {
             if [ -d "$george_dir" ]; then
                 local total_size
                 total_size=$(du -sh "$george_dir" 2>/dev/null | awk '{print $1}')
-                printf "  %b~/.george/%b  %s\n" "$C_CYAN" "$C_RESET" "$total_size"
+                printf "  %b.george/%b  %s\n" "$C_CYAN" "$C_RESET" "$total_size"
                 # Itemize major contents
                 [ -f "$george_dir/email.conf" ] && printf "    ├── email.conf         (email credentials)\n"
                 [ -d "$george_dir/.ssh" ]       && printf "    ├── .ssh/              (SSH keys)\n"
@@ -473,7 +478,7 @@ _cmd_cleanup() {
                 [ -d "$george_dir/cookies" ]    && printf "    ├── cookies/           (web cookies)\n"
                 [ -d "$george_dir/cache" ]      && printf "    └── cache/             (API cache)\n"
             else
-                ui_dim "  ~/.george/ does not exist (nothing to clean)"
+                ui_dim "  .george/ does not exist (nothing to clean)"
             fi
 
             if [ -d "$sandbox_dir" ]; then
@@ -481,12 +486,12 @@ _cmd_cleanup() {
                 sandbox_size=$(du -sh "$sandbox_dir" 2>/dev/null | awk '{print $1}')
                 sandbox_count=$(find "$sandbox_dir" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
                 echo ""
-                printf "  %b~/.lodge-sandboxes/%b  %s  (%d sandboxes)\n" "$C_CYAN" "$C_RESET" "$sandbox_size" "$sandbox_count"
+                printf "  %b.sandboxes/%b  %s  (%d sandboxes)\n" "$C_CYAN" "$C_RESET" "$sandbox_size" "$sandbox_count"
             fi
 
             [ -f "$history_file" ] && {
                 echo ""
-                printf "  %b~/.lodge_history%b  (command history)\n" "$C_CYAN" "$C_RESET"
+                printf "  %b.lodge_history%b  (command history)\n" "$C_CYAN" "$C_RESET"
             }
 
             echo ""
@@ -501,7 +506,7 @@ _cmd_cleanup() {
 
             # SSH keys
             if [ -d "$george_dir/.ssh" ]; then
-                printf "  Remove SSH keys (~/.george/.ssh)? [y/N] "
+                printf "  Remove SSH keys (.george/.ssh)? [y/N] "
                 read -r ans
                 if [[ "${ans,,}" == "y"* ]]; then
                     rm -rf "$george_dir/.ssh"
@@ -513,7 +518,7 @@ _cmd_cleanup() {
 
             # GPG keyring
             if [ -d "$george_dir/.gnupg" ]; then
-                printf "  Remove GPG keyring (~/.george/.gnupg)? [y/N] "
+                printf "  Remove GPG keyring (.george/.gnupg)? [y/N] "
                 read -r ans
                 if [[ "${ans,,}" == "y"* ]]; then
                     rm -rf "$george_dir/.gnupg"
@@ -530,7 +535,7 @@ _cmd_cleanup() {
 
             # Email config
             if [ -f "$george_dir/email.conf" ]; then
-                printf "  Remove email config (~/.george/email.conf)? [y/N] "
+                printf "  Remove email config (.george/email.conf)? [y/N] "
                 read -r ans
                 if [[ "${ans,,}" == "y"* ]]; then
                     rm -f "$george_dir/email.conf"
@@ -541,7 +546,7 @@ _cmd_cleanup() {
 
             # API keys
             if [ -f "$george_dir/keys.conf" ]; then
-                printf "  Remove API keys (~/.george/keys.conf)? [y/N] "
+                printf "  Remove API keys (.george/keys.conf)? [y/N] "
                 read -r ans
                 if [[ "${ans,,}" == "y"* ]]; then
                     rm -f "$george_dir/keys.conf"
@@ -552,7 +557,7 @@ _cmd_cleanup() {
 
             # Knowledge base
             if [ -f "$george_dir/recall.db" ]; then
-                printf "  Remove knowledge base (~/.george/recall.db)? [y/N] "
+                printf "  Remove knowledge base (.george/recall.db)? [y/N] "
                 read -r ans
                 if [[ "${ans,,}" == "y"* ]]; then
                     rm -f "$george_dir/recall.db"
@@ -564,7 +569,7 @@ _cmd_cleanup() {
 
             # Secrets vault
             if [ -d "$george_dir/secrets" ]; then
-                printf "  Remove secrets vault (~/.george/secrets)? [y/N] "
+                printf "  Remove secrets vault (.george/secrets)? [y/N] "
                 read -r ans
                 if [[ "${ans,,}" == "y"* ]]; then
                     rm -rf "$george_dir/secrets"
@@ -588,7 +593,7 @@ _cmd_cleanup() {
 
             # Backups
             if [ -d "$george_dir/backups" ]; then
-                printf "  Remove identity backups (~/.george/backups)? [y/N] "
+                printf "  Remove identity backups (.george/backups)? [y/N] "
                 read -r ans
                 if [[ "${ans,,}" == "y"* ]]; then
                     rm -rf "$george_dir/backups"
@@ -611,7 +616,7 @@ _cmd_cleanup() {
 
             # History
             if [ -f "$history_file" ]; then
-                printf "  Remove command history (~/.lodge_history)? [y/N] "
+                printf "  Remove command history (.lodge_history)? [y/N] "
                 read -r ans
                 if [[ "${ans,,}" == "y"* ]]; then
                     rm -f "$history_file"
@@ -626,7 +631,7 @@ _cmd_cleanup() {
                 # Remove empty .george dir if everything was deleted
                 if [ -d "$george_dir" ] && [ -z "$(ls -A "$george_dir" 2>/dev/null)" ]; then
                     rmdir "$george_dir" 2>/dev/null
-                    ui_ok "Removed empty ~/.george/ directory"
+                    ui_ok "Removed empty .george/ directory"
                 fi
             else
                 ui_info "Nothing removed"
@@ -2005,7 +2010,7 @@ _repl() {
     local workdir="$PWD"
     
     # History — load previous session commands into readline buffer
-    local history_file="$HOME/.lodge_history"
+    local history_file="${LODGE_HISTORY_FILE:-$LODGE_DIR/.lodge_history}"
     touch "$history_file"
     history -r "$history_file" 2>/dev/null
     

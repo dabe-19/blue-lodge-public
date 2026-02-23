@@ -11,7 +11,7 @@ LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 
 # ── Config ─────────────────────────────────────────────────────
-GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-$HOME/.george}"
+GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}"
 GEORGE_BACKUP_DIR="$GEORGE_CONFIG_DIR/backups"
 GEORGE_BACKUP_REPO="$GEORGE_CONFIG_DIR/backup-repo"
 
@@ -63,10 +63,10 @@ backup_local() {
     # Current directory
     [ -f "$PWD/CLAUDE.md" ] && claude_files+=("$PWD/CLAUDE.md")
     # Sandboxes
-    if [ -d "$HOME/.lodge-sandboxes" ]; then
+    if [ -d "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" ]; then
         while IFS= read -r -d '' cf; do
             claude_files+=("$cf")
-        done < <(find "$HOME/.lodge-sandboxes" -name "CLAUDE.md" -print0 2>/dev/null)
+        done < <(find "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" -name "CLAUDE.md" -print0 2>/dev/null)
     fi
     # Home directory projects (1 level deep)
     while IFS= read -r -d '' cf; do
@@ -241,8 +241,8 @@ backup_git_save() {
 
     # Copy CLAUDE.md files
     mkdir -p "$GEORGE_BACKUP_REPO/projects"
-    if [ -d "$HOME/.lodge-sandboxes" ]; then
-        find "$HOME/.lodge-sandboxes" -name "CLAUDE.md" -print0 2>/dev/null | \
+    if [ -d "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" ]; then
+        find "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" -name "CLAUDE.md" -print0 2>/dev/null | \
             while IFS= read -r -d '' cf; do
                 local pname
                 pname=$(basename "$(dirname "$cf")")

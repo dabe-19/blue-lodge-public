@@ -7,7 +7,7 @@ LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 
 # ── Config ─────────────────────────────────────────────────────
-GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-$HOME/.george}"
+GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}"
 GEORGE_KEYS_FILE="$GEORGE_CONFIG_DIR/keys.conf"
 GEORGE_COOKIES_DIR="$GEORGE_CONFIG_DIR/cookies"
 GEORGE_CACHE_DIR="$GEORGE_CONFIG_DIR/cache"

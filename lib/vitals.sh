@@ -271,7 +271,7 @@ vitals_guard_disk() {
     status=$(vitals_disk_status)
     if [ "$status" = "critical" ]; then
         ui_err "DISK CRITICAL: Only ${_VITALS_CACHE_DISK_FREE_MB}MB free — aborting to prevent data loss"
-        ui_dim "Free up space: du -sh ~/.lodge-sandboxes/* ~/.george/slash/*"
+        ui_dim "Free up space: du -sh $LODGE_DIR/.sandboxes/* $LODGE_DIR/.george/slash/*"
         return 1
     elif [ "$status" = "warn" ]; then
         ui_warn "Disk low: ${_VITALS_CACHE_DISK_FREE_MB}MB free (threshold: ${VITALS_DISK_WARN_MB}MB)"
