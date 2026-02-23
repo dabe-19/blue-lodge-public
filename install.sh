@@ -7,8 +7,9 @@
 set -euo pipefail
 
 # Detect where this script lives — install relative to clone location
+# Always use the script's actual directory (ignore stale LODGE_DIR from prior installs)
 _SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LODGE_DIR="${LODGE_DIR:-$_SCRIPT_DIR}"
+LODGE_DIR="$_SCRIPT_DIR"
 BLUE='\033[38;5;33m'
 GREEN='\033[38;5;114m'
 YELLOW='\033[38;5;221m'
@@ -186,16 +187,22 @@ elif [ -f "$HOME/.bashrc" ]; then
 fi
 
 if [ -n "$SHELL_RC" ]; then
-    # Check if already configured
-    if ! grep -q "LODGE_DIR" "$SHELL_RC" 2>/dev/null; then
-        # Detect if running in native Termux (not proot) — safe to enable Termux-API
-        local_termux_api_line=""
-        if [ "$IS_TERMUX" -eq 1 ] && [ -z "${PROOT_TMP_DIR:-}" ] && [ ! -d /host-rootfs ]; then
-            local_termux_api_line='export LODGE_TERMUX_API=1        # Termux-API enabled (native Termux)'
-        else
-            local_termux_api_line='# export LODGE_TERMUX_API=1      # Uncomment in native Termux for phone features'
-        fi
-        cat >> "$SHELL_RC" << SHELLEOF
+    # Remove any old Blue Lodge config block (from prior installs to a different dir)
+    if grep -q '# ── Blue Lodge' "$SHELL_RC" 2>/dev/null; then
+        sed -i '/# ── Blue Lodge/,/alias lghelp/d' "$SHELL_RC" 2>/dev/null
+        # Clean up blank lines left behind
+        sed -i '/^$/N;/^\n$/d' "$SHELL_RC" 2>/dev/null
+    fi
+
+    # Write fresh config
+    # Detect if running in native Termux (not proot) — safe to enable Termux-API
+    local_termux_api_line=""
+    if [ "$IS_TERMUX" -eq 1 ] && [ -z "${PROOT_TMP_DIR:-}" ] && [ ! -d /host-rootfs ]; then
+        local_termux_api_line='export LODGE_TERMUX_API=1        # Termux-API enabled (native Termux)'
+    else
+        local_termux_api_line='# export LODGE_TERMUX_API=1      # Uncomment in native Termux for phone features'
+    fi
+    cat >> "$SHELL_RC" << SHELLEOF
 
 # ── Blue Lodge ─────────────────────────────────────────────
 export LODGE_DIR="$LODGE_DIR"
@@ -218,10 +225,7 @@ alias lgx="lodge /sandbox"          # Sandbox management
 alias lgcl="lodge /clone"           # Clone repo
 alias lghelp="lodge /help"          # Show help
 SHELLEOF
-        ok "Added Blue Lodge config to $SHELL_RC"
-    else
-        ok "Shell already configured"
-    fi
+    ok "Added Blue Lodge config to $SHELL_RC"
 else
     warn "No .zshrc or .bashrc found. Add manually:"
     echo "  export LODGE_DIR=\"$LODGE_DIR\""
