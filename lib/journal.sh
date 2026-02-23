@@ -220,7 +220,7 @@ journal_apply_decay() {
                 local new_sediment
                 new_sediment=$(llm_generate "You are compressing old journal entries into a single paragraph of impressions — things half-remembered, feelings that remain even when details have faded. Write in first person. Be poetic but brief (3-5 sentences). These are the old entries:
 
-$old_entries" "You are George reflecting on faded memories.")
+$old_entries" "You are George reflecting on faded memories." 256)
                 
                 # Update sediment section
                 journal_update_sediment "$new_sediment"
@@ -343,7 +343,7 @@ Be genuine. Be brief. Speak as a craftsman reflecting at the end of the day.
 Do NOT use headers or formatting. Just the raw reflection."
     
     local reflection
-    reflection=$(llm_generate "$prompt" "$soul")
+    reflection=$(llm_generate "$prompt" "$soul" 256)
     
     if [ $? -eq 0 ] && [[ "$reflection" != ERROR* ]]; then
         # Determine entry type based on content

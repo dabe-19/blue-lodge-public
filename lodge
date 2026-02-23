@@ -87,7 +87,6 @@ _cmd_plan() {
     local plan
     plan=$(agent_plan "$task" "$workdir")
     echo ""
-    ui_render_response "$plan"
 }
 _cmd_ask() {
     agent_ask "$1" "${2:-.}"
@@ -151,8 +150,9 @@ _cmd_reflect() {
     if [ -z "$context" ]; then
         context="General session work in $(basename "$PWD")"
     fi
-    ui_think "Reflecting..."
+    ui_spinner_start "Reflecting"
     journal_reflect "$context" "$PWD"
+    ui_spinner_stop
     ui_ok "Reflection recorded"
 }
 _cmd_status() {
@@ -1242,6 +1242,11 @@ main() {
         ui_dim "Start with: ollama serve"
         exit 1
     fi
+    
+    # Pre-load model weights (avoids cold-start delay on first query)
+    ui_spinner_start "Loading model"
+    llm_warmup 2>/dev/null
+    ui_spinner_stop
     
     # Termux wake lock
     if command -v termux-wake-lock &>/dev/null; then

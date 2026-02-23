@@ -181,6 +181,7 @@ recall_needs_reindex() {
 
     local sources=("readme:$LODGE_DIR/README.md" "soul:$LODGE_DIR/soul.md")
     [ -f "$LODGE_DIR/docs/CRYPTO_WALLETS.md" ] && sources+=("crypto:$LODGE_DIR/docs/CRYPTO_WALLETS.md")
+    [ -f "$LODGE_DIR/docs/TUNING.md" ] && sources+=("tuning:$LODGE_DIR/docs/TUNING.md")
     [ -f "$LODGE_DIR/journal.md" ] && sources+=("journal:$LODGE_DIR/journal.md")
     [ -f "./CLAUDE.md" ] && sources+=("claude:$PWD/CLAUDE.md")
 
@@ -209,6 +210,7 @@ recall_needs_reindex() {
 _recall_save_mtimes() {
     local sources=("readme:$LODGE_DIR/README.md" "soul:$LODGE_DIR/soul.md")
     [ -f "$LODGE_DIR/docs/CRYPTO_WALLETS.md" ] && sources+=("crypto:$LODGE_DIR/docs/CRYPTO_WALLETS.md")
+    [ -f "$LODGE_DIR/docs/TUNING.md" ] && sources+=("tuning:$LODGE_DIR/docs/TUNING.md")
     [ -f "$LODGE_DIR/journal.md" ] && sources+=("journal:$LODGE_DIR/journal.md")
     [ -f "./CLAUDE.md" ] && sources+=("claude:$PWD/CLAUDE.md")
 
@@ -242,6 +244,12 @@ recall_reindex() {
     # Crypto wallet guide
     if [ -f "$LODGE_DIR/docs/CRYPTO_WALLETS.md" ]; then
         recall_index_file "crypto" "$LODGE_DIR/docs/CRYPTO_WALLETS.md"
+        (( total++ ))
+    fi
+
+    # Token tuning guide
+    if [ -f "$LODGE_DIR/docs/TUNING.md" ]; then
+        recall_index_file "tuning" "$LODGE_DIR/docs/TUNING.md"
         (( total++ ))
     fi
 
@@ -734,9 +742,11 @@ recall_ingest_with_summary() {
         text=$(echo "$text" | head -c 2000)
 
         local summary
+        ui_spinner_start "Summarizing"
         summary=$(llm_generate "Summarize this document in 3-5 bullet points. Be concise:
 
-$text" "You are a concise summarizer. Output only bullet points." 2>/dev/null)
+$text" "You are a concise summarizer. Output only bullet points." 256 2>/dev/null)
+        ui_spinner_stop
 
         if [ -n "$summary" ] && [[ "$summary" != ERROR* ]]; then
             # Store the summary as an additional chunk

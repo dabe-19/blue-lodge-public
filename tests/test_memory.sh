@@ -202,4 +202,64 @@ describe "memory_build_system_prompt"
     _teardown_mem
   }
 
+# ── Lean prompt mode (ask) ───────────────────────────────────
+describe "memory_build_system_prompt lean mode"
+
+  it "returns lean prompt for ask mode" && {
+    _setup_mem
+    prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "ask")
+    assert_contains "$prompt" "George"
+    assert_contains "$prompt" "concisely"
+    _teardown_mem
+  }
+
+  it "lean prompt does NOT include full soul.md" && {
+    _setup_mem
+    prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "ask")
+    # Full soul.md has Impartial Spectator — lean should not
+    assert_not_contains "$prompt" "Impartial Spectator"
+    _teardown_mem
+  }
+
+  it "lean prompt is much shorter than full prompt" && {
+    _setup_mem
+    _lean=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "ask")
+    _full=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "task")
+    _lean_len=${#_lean}
+    _full_len=${#_full}
+    # Lean should be less than half the size of full
+    assert_gt "$_full_len" "$_lean_len"
+    _teardown_mem
+  }
+
+# ── Plan prompt mode ─────────────────────────────────────────
+describe "memory_build_system_prompt plan mode"
+
+  it "returns plan prompt with George identity" && {
+    _setup_mem
+    prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
+    assert_contains "$prompt" "George"
+    _teardown_mem
+  }
+
+  it "plan prompt is shorter than full but longer than ask" && {
+    _setup_mem
+    _ask=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "ask")
+    _plan=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
+    _full=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "task")
+    _ask_len=${#_ask}
+    _plan_len=${#_plan}
+    _full_len=${#_full}
+    assert_gt "$_plan_len" "$_ask_len"
+    assert_gt "$_full_len" "$_plan_len"
+    _teardown_mem
+  }
+
+  it "plan prompt does NOT include journal" && {
+    _setup_mem
+    prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
+    assert_not_contains "$prompt" "JOURNAL"
+    _teardown_mem
+  }
+
 test_end

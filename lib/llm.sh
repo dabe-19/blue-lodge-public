@@ -8,9 +8,10 @@ source "$LODGE_DIR/lib/ui.sh"
 # ── Config ─────────────────────────────────────────────────────
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
 LODGE_MODEL="${LODGE_MODEL:-blue-lodge}"
-LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-4096}"
-LLM_TIMEOUT="${LLM_TIMEOUT:-0}"          # 0 = no timeout (user cancels via Ctrl+C)
-LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"   # How long model stays loaded after last request
+LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-1024}"    # Default max output tokens (task mode)
+LLM_ASK_TOKENS="${LLM_ASK_TOKENS:-300}"     # Max output tokens for /ask (quick answers)
+LLM_TIMEOUT="${LLM_TIMEOUT:-180}"           # Safety net: 180s max per request (Ctrl+C also works)
+LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
 
 # ── Active request tracking (for cancellation) ─────────────────
 _LLM_CURL_PID=""
@@ -61,6 +62,24 @@ llm_cancel() {
     _LLM_ACTIVE=0
 }
 
+# ── Warm up model (pre-load weights into memory) ──────────────
+# Sends a trivial prompt with num_predict=1 so the model loads
+# but doesn't burn through the context window. This makes the
+# first real request much faster on mobile hardware.
+llm_warmup() {
+    if llm_is_loaded; then
+        return 0  # already hot
+    fi
+    local payload
+    payload=$(jq -n \
+        --arg model "$LODGE_MODEL" \
+        --arg keep_alive "$LLM_KEEP_ALIVE" \
+        '{model: $model, prompt: "Hello", stream: false, keep_alive: $keep_alive, options: {num_predict: 1}}')
+    curl -sf "$OLLAMA_URL/api/generate" \
+        -H "Content-Type: application/json" \
+        -d "$payload" > /dev/null 2>&1
+}
+
 # ── Ensure Ollama is running ───────────────────────────────────
 llm_ensure() {
     # Capture llm_check return code immediately — $? gets overwritten
@@ -107,10 +126,11 @@ llm_create_model() {
 }
 
 # ── Generate (blocking, no stream) ────────────────────────────
-# Usage: llm_generate "prompt" [system_prompt]
+# Usage: llm_generate "prompt" [system_prompt] [max_tokens]
 llm_generate() {
     local prompt="$1"
     local system="${2:-}"
+    local max_tokens="${3:-$LLM_MAX_TOKENS}"
     local payload
     local timeout_args=()
 
@@ -120,14 +140,14 @@ llm_generate() {
             --arg prompt "$prompt" \
             --arg system "$system" \
             --arg keep_alive "$LLM_KEEP_ALIVE" \
-            --argjson num_predict "$LLM_MAX_TOKENS" \
+            --argjson num_predict "$max_tokens" \
             '{model: $model, prompt: $prompt, system: $system, stream: false, keep_alive: $keep_alive, options: {num_predict: $num_predict}}')
     else
         payload=$(jq -n \
             --arg model "$LODGE_MODEL" \
             --arg prompt "$prompt" \
             --arg keep_alive "$LLM_KEEP_ALIVE" \
-            --argjson num_predict "$LLM_MAX_TOKENS" \
+            --argjson num_predict "$max_tokens" \
             '{model: $model, prompt: $prompt, stream: false, keep_alive: $keep_alive, options: {num_predict: $num_predict}}')
     fi
 
@@ -178,10 +198,11 @@ llm_generate() {
 }
 
 # ── Generate with streaming (live output) ──────────────────────
-# Usage: llm_stream "prompt" [system_prompt]
+# Usage: llm_stream "prompt" [system_prompt] [max_tokens]
 llm_stream() {
     local prompt="$1"
     local system="${2:-}"
+    local max_tokens="${3:-$LLM_MAX_TOKENS}"
     local payload
     local full_response=""
 
@@ -190,14 +211,16 @@ llm_stream() {
             --arg model "$LODGE_MODEL" \
             --arg prompt "$prompt" \
             --arg system "$system" \
-            --argjson num_predict "$LLM_MAX_TOKENS" \
-            '{model: $model, prompt: $prompt, system: $system, stream: true, options: {num_predict: $num_predict}}')
+            --arg keep_alive "$LLM_KEEP_ALIVE" \
+            --argjson num_predict "$max_tokens" \
+            '{model: $model, prompt: $prompt, system: $system, stream: true, keep_alive: $keep_alive, options: {num_predict: $num_predict}}')
     else
         payload=$(jq -n \
             --arg model "$LODGE_MODEL" \
             --arg prompt "$prompt" \
-            --argjson num_predict "$LLM_MAX_TOKENS" \
-            '{model: $model, prompt: $prompt, stream: true, options: {num_predict: $num_predict}}')
+            --arg keep_alive "$LLM_KEEP_ALIVE" \
+            --argjson num_predict "$max_tokens" \
+            '{model: $model, prompt: $prompt, stream: true, keep_alive: $keep_alive, options: {num_predict: $num_predict}}')
     fi
 
     # Build timeout args
@@ -206,7 +229,7 @@ llm_stream() {
         timeout_args=(--max-time "$LLM_TIMEOUT")
     fi
 
-    # Stream tokens to stdout, collect full response
+    # Stream tokens to stdout AND /dev/tty (so user sees output even inside $())
     _LLM_ACTIVE=1
     curl -sf "${timeout_args[@]}" \
         "$OLLAMA_URL/api/generate" \
@@ -216,12 +239,14 @@ llm_stream() {
         token=$(echo "$line" | jq -r '.response // empty' 2>/dev/null)
         if [ -n "$token" ]; then
             printf "%s" "$token"
+            printf "%s" "$token" > /dev/tty 2>/dev/null
         fi
         # Check if done
         local done_flag
         done_flag=$(echo "$line" | jq -r '.done // empty' 2>/dev/null)
         if [ "$done_flag" = "true" ]; then
-            echo ""  # final newline
+            echo ""  # final newline for captured output
+            echo "" > /dev/tty 2>/dev/null
             break
         fi
     done
@@ -241,14 +266,16 @@ llm_chat() {
             --arg model "$LODGE_MODEL" \
             --argjson messages "$messages" \
             --arg system "$system" \
+            --arg keep_alive "$LLM_KEEP_ALIVE" \
             --argjson num_predict "$LLM_MAX_TOKENS" \
-            '{model: $model, messages: ([{role:"system",content:$system}] + $messages), stream: false, options: {num_predict: $num_predict}}')
+            '{model: $model, messages: ([{role:"system",content:$system}] + $messages), stream: false, keep_alive: $keep_alive, options: {num_predict: $num_predict}}')
     else
         payload=$(jq -n \
             --arg model "$LODGE_MODEL" \
             --argjson messages "$messages" \
+            --arg keep_alive "$LLM_KEEP_ALIVE" \
             --argjson num_predict "$LLM_MAX_TOKENS" \
-            '{model: $model, messages: $messages, stream: false, options: {num_predict: $num_predict}}')
+            '{model: $model, messages: $messages, stream: false, keep_alive: $keep_alive, options: {num_predict: $num_predict}}')
     fi
 
     # Build timeout args

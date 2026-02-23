@@ -250,7 +250,11 @@ URL: $url
 Content:
 $truncated"
 
-    llm_generate "$prompt" "You are George, summarizing web content for your user."
+    ui_spinner_start "Summarizing"
+    local result
+    result=$(llm_generate "$prompt" "You are George, summarizing web content for your user." 256)
+    ui_spinner_stop
+    echo "$result"
 }
 
 # ── Read a specific page section (by heading) ─────────────────

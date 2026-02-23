@@ -19,12 +19,16 @@ describe "Configuration defaults"
     assert_eq "$LODGE_MODEL" "blue-lodge"
   }
 
-  it "LLM_MAX_TOKENS defaults to 4096" && {
-    assert_eq "$LLM_MAX_TOKENS" "4096"
+  it "LLM_MAX_TOKENS defaults to 1024" && {
+    assert_eq "$LLM_MAX_TOKENS" "1024"
   }
 
-  it "LLM_TIMEOUT defaults to 0 (no timeout)" && {
-    assert_eq "$LLM_TIMEOUT" "0"
+  it "LLM_ASK_TOKENS defaults to 300" && {
+    assert_eq "$LLM_ASK_TOKENS" "300"
+  }
+
+  it "LLM_TIMEOUT defaults to 180 (safety net)" && {
+    assert_eq "$LLM_TIMEOUT" "180"
   }
 
   it "LLM_KEEP_ALIVE defaults to 30m" && {
@@ -130,6 +134,21 @@ describe "Cancellation tracking"
     _LLM_CURL_PID=""
     llm_cancel
     assert_empty "$_LLM_CURL_PID"
+  }
+
+# ── Warmup function ───────────────────────────────────────────
+describe "Model warmup"
+
+  it "llm_warmup function exists" && {
+    declare -f llm_warmup &>/dev/null
+    assert_eq "$?" "0"
+  }
+
+  it "llm_warmup returns 0 when model already loaded" && {
+    # Stub llm_is_loaded to return 0 (loaded)
+    llm_is_loaded() { return 0; }
+    llm_warmup
+    assert_eq "$?" "0"
   }
 
 test_end

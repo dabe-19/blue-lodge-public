@@ -141,15 +141,89 @@ memory_get_section() {
 }
 
 # ── Build system prompt from soul + CLAUDE.md ──────────────────
+# Mode controls prompt size:
+#   "ask"  — Lean prompt (~150 tokens): just personality + question context
+#   "plan" — Mid prompt (~1,500 tokens): truncated soul + CLAUDE.md + workspace files
+#   "task" — Full prompt: soul + CLAUDE.md + journal + recall + workspace
 memory_build_system_prompt() {
     local dir="${1:-.}"
     local task_hint="${2:-}"  # optional: current task/question for recall augmentation
+    local mode="${3:-task}"   # "ask" | "plan" | "task"
+    local prompt=""
+
+    if [ "$mode" = "ask" ]; then
+        # ── Lean mode for /ask: ~150 tokens ──────────────────────
+        # The Modelfile SYSTEM prompt already has George's core personality.
+        # Only add the essentials the model doesn't already know.
+        prompt="You are George — a local coding agent running on mobile (Galaxy Fold 7, 12GB RAM).
+Answer concisely in 1-5 sentences. Be helpful and — when appropriate — witty."
+
+        # Add minimal project context if CLAUDE.md exists
+        local project_task
+        project_task=$(memory_get_section "Current Task" "$dir" 2>/dev/null)
+        if [ -n "$project_task" ] && [ "$project_task" != "(none)" ]; then
+            prompt="$prompt
+
+Current project: $(basename "$dir") — $project_task"
+        fi
+
+        # Add 1 recall chunk if available (not 3)
+        if [ -n "$task_hint" ] && declare -f recall_search_context &>/dev/null; then
+            local recall_ctx
+            recall_ctx=$(recall_search_context "$task_hint" 1 2>/dev/null)
+            if [ -n "$recall_ctx" ]; then
+                # Cap recall to ~200 chars
+                prompt="$prompt
+
+${recall_ctx:0:200}"
+            fi
+        fi
+
+        echo "$prompt"
+        return
+    fi
+
+    if [ "$mode" = "plan" ]; then
+        # ── Plan mode: ~1,500 tokens ─────────────────────────────
+        # Planning only needs identity + project state + file list.
+        # No journal, no recall, truncated soul.
+        local soul
+        soul=$(cat "$LODGE_DIR/soul.md" 2>/dev/null | head -40)
+        prompt="$soul"
+
+        local project_mem
+        project_mem=$(memory_read_project "$dir")
+        if [ -n "$project_mem" ]; then
+            prompt="$prompt
+
+--- PROJECT MEMORY ---
+$project_mem"
+        fi
+
+        # Workspace files (needed for planning)
+        local files
+        files=$(find "$dir" -maxdepth 2 -type f \
+            ! -path '*/.git/*' ! -path '*/target/*' ! -path '*/__pycache__/*' \
+            ! -path '*/.venv/*' ! -path '*/node_modules/*' ! -path '*/.mypy_cache/*' \
+            2>/dev/null | head -15 | sed "s|^$dir/||")
+        if [ -n "$files" ]; then
+            prompt="$prompt
+
+--- WORKSPACE FILES ---
+$files"
+        fi
+
+        echo "$prompt"
+        return
+    fi
+
+    # ── Full mode for tasks: budget-conscious ───────────────────
     local soul
     soul=$(memory_read_soul)
+    prompt="$soul"
+    
     local project_mem
     project_mem=$(memory_read_project "$dir")
-    
-    local prompt="$soul"
     
     if [ -n "$project_mem" ]; then
         prompt="$prompt
@@ -158,11 +232,11 @@ memory_build_system_prompt() {
 $project_mem"
     fi
     
-    # Add journal (living memory with decay)
+    # Add journal (living memory with decay) — cap at 200 tokens for tasks
     if [ -f "$LODGE_DIR/journal.md" ]; then
         source "$LODGE_DIR/lib/journal.sh" 2>/dev/null
         local journal_context
-        journal_context=$(journal_read 300)
+        journal_context=$(journal_read 200)
         if [ -n "$journal_context" ]; then
             prompt="$prompt
 
@@ -173,7 +247,7 @@ $journal_context"
     # Add recall context (FTS5 search) if a task hint is provided
     if [ -n "$task_hint" ] && declare -f recall_search_context &>/dev/null; then
         local recall_ctx
-        recall_ctx=$(recall_search_context "$task_hint" 3 2>/dev/null)
+        recall_ctx=$(recall_search_context "$task_hint" 2 2>/dev/null)
         if [ -n "$recall_ctx" ]; then
             prompt="$prompt
 
@@ -184,10 +258,10 @@ $recall_ctx"
     
     # Add workspace file listing (lightweight)
     local files
-    files=$(find "$dir" -maxdepth 3 -type f \
+    files=$(find "$dir" -maxdepth 2 -type f \
         ! -path '*/.git/*' ! -path '*/target/*' ! -path '*/__pycache__/*' \
         ! -path '*/.venv/*' ! -path '*/node_modules/*' ! -path '*/.mypy_cache/*' \
-        2>/dev/null | head -25 | sed "s|^$dir/||")
+        2>/dev/null | head -15 | sed "s|^$dir/||")
     
     if [ -n "$files" ]; then
         prompt="$prompt

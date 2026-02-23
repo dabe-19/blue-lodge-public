@@ -50,7 +50,7 @@ Changes:
 $changes
 
 Diff (truncated):
-$detailed_diff")
+$detailed_diff" "" 128)
     ui_spinner_stop
     
     # Clean up the message

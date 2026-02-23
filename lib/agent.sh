@@ -19,8 +19,9 @@ agent_plan() {
     local task="$1"
     local workdir="${2:-.}"
     
+    # Use lean "plan" mode — ~1,500 tokens instead of ~3,100
     local system_prompt
-    system_prompt=$(memory_build_system_prompt "$workdir")
+    system_prompt=$(memory_build_system_prompt "$workdir" "" "plan")
     
     local prompt="TASK: $task
 
@@ -32,12 +33,15 @@ Create a step-by-step plan. Rules:
 - Each step must be a single action (write one file, run one command, etc.)
 - Output ONLY a numbered list. No explanations."
     
-    ui_think "Planning..."
+    # Stream the plan so user sees progress in real-time
+    echo ""
+    ui_dim "  Plan:"
     local plan
-    plan=$(llm_generate "$prompt" "$system_prompt")
+    plan=$(llm_stream "$prompt" "$system_prompt" 512)
+    echo ""
     
-    if [ $? -ne 0 ] || [[ "$plan" == ERROR* ]]; then
-        ui_err "Planning failed: $plan"
+    if [ -z "$plan" ] || [[ "$plan" == ERROR* ]]; then
+        ui_err "Planning failed: ${plan:-empty response}"
         return 1
     fi
     
@@ -68,20 +72,17 @@ Execute this step. Output rules:
     ui_section "Step $step_num"
     ui_step "$step_desc"
     
-    ui_spinner_start "Generating"
+    # Stream the step response so user sees it being generated
+    echo ""
     local response
-    response=$(llm_generate "$prompt" "$system_prompt")
-    local llm_exit=$?
-    ui_spinner_stop
+    response=$(llm_stream "$prompt" "$system_prompt" "$LLM_MAX_TOKENS")
+    echo ""
     
-    if [ $llm_exit -ne 0 ] || [[ "$response" == ERROR* ]]; then
-        ui_err "Step failed: $response"
-        memory_append_section "Errors" "Step $step_num failed: $response" "$workdir"
+    if [ -z "$response" ] || [[ "$response" == ERROR* ]]; then
+        ui_err "Step failed: ${response:-empty response}"
+        memory_append_section "Errors" "Step $step_num failed: ${response:-empty}" "$workdir"
         return 1
     fi
-    
-    # Show the response
-    ui_render_response "$response"
     
     # Execute operations
     local results
@@ -117,18 +118,13 @@ agent_run() {
     ui_section "Task"
     ui_info "$task"
     
-    # Phase 1: Plan
+    # Phase 1: Plan (user sees it streamed in real-time via /dev/tty)
     local plan
     plan=$(agent_plan "$task" "$workdir")
     if [ $? -ne 0 ] || [ "${_LODGE_CANCELLED:-0}" -eq 1 ]; then
         _LODGE_IN_TASK=0
         return 1
     fi
-    
-    ui_section "Plan"
-    echo "$plan" | while IFS= read -r line; do
-        [ -n "$line" ] && ui_dim "$line"
-    done
     echo ""
     
     # Parse steps
@@ -199,8 +195,8 @@ agent_run() {
     ui_divider
     ui_ok "Task complete: $completed/$total steps succeeded"
     
-    # Phase 4: Reflect in journal
-    journal_reflect "$task ($completed/$total steps in $(basename "$workdir"))" "$workdir"
+    # Phase 4: Reflect in journal (background — don't block user)
+    journal_reflect "$task ($completed/$total steps in $(basename "$workdir"))" "$workdir" &
     
     # Notify on phone if available
     tools_phone_toast "Lodge: Task complete ($completed/$total steps)"
@@ -219,13 +215,15 @@ agent_ask() {
     _LODGE_IN_TASK=1
     _LODGE_CANCELLED=0
     
+    # Use lean prompt — keeps system context under ~800 tokens
     local system_prompt
-    system_prompt=$(memory_build_system_prompt "$workdir" "$question")
+    system_prompt=$(memory_build_system_prompt "$workdir" "$question" "ask")
     
-    ui_spinner_start "Thinking"
+    # Stream the response so user sees tokens arrive in real-time
+    echo ""
     local response
-    response=$(llm_generate "$question" "$system_prompt")
-    ui_spinner_stop
+    response=$(llm_stream "$question" "$system_prompt" "$LLM_ASK_TOKENS")
+    echo ""
     
     _LODGE_IN_TASK=0
     
@@ -238,10 +236,6 @@ agent_ask() {
         ui_err "$response"
         return 1
     fi
-    
-    echo ""
-    ui_render_response "$response"
-    echo ""
     
     # Model stays loaded during active session for fast response times.
 }
