@@ -132,6 +132,7 @@ agent_execute_step() {
     local step_num="$1"
     local step_desc="$2"
     local workdir="${3:-.}"
+    local task_context="${4:-}"
     
     ui_section "Step $step_num"
     ui_step "$step_desc"
@@ -143,8 +144,10 @@ agent_execute_step() {
             memory_append_section "Completed Steps" "Step $step_num: $step_desc" "$workdir"
             return 0
         else
-            ui_err "Slash command failed: $step_desc"
+            local err_msg="Slash command failed: $step_desc"
+            ui_err "$err_msg"
             memory_append_section "Errors" "Step $step_num failed: $step_desc" "$workdir"
+            journal_write_failure "$step_desc" "$err_msg" "$task_context"
             return 1
         fi
     fi
@@ -168,8 +171,10 @@ Execute this step. Output rules:
     echo ""
     
     if [ -z "$response" ] || [[ "$response" == ERROR* ]]; then
-        ui_err "Step failed: ${response:-empty response}"
+        local err_msg="Step failed: ${response:-empty response}"
+        ui_err "$err_msg"
         memory_append_section "Errors" "Step $step_num failed: ${response:-empty}" "$workdir"
+        journal_write_failure "Step $step_num: $step_desc" "$err_msg" "$task_context"
         return 1
     fi
     
@@ -265,6 +270,7 @@ agent_run() {
     
     # Phase 2: Execute
     local completed=0
+    local failed_steps=""
     for i in "${!steps[@]}"; do
         # Check for cancellation between steps (file + variable)
         if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
@@ -276,9 +282,10 @@ agent_run() {
         
         ui_progress "$step_num" "$total" "${steps[$i]:0:30}"
         
-        if agent_execute_step "$step_num" "${steps[$i]}" "$workdir"; then
+        if agent_execute_step "$step_num" "${steps[$i]}" "$workdir" "$task"; then
             completed=$((completed + 1))
         else
+            failed_steps="${failed_steps:+${failed_steps}, }step $step_num: ${steps[$i]}"
             # Check if failure was due to cancellation
             if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
                 ui_warn "Step $step_num cancelled"
@@ -320,7 +327,11 @@ agent_run() {
     ui_ok "Task complete: $completed/$total steps succeeded"
     
     # Phase 4: Reflect in journal (background — don't block user)
-    journal_reflect "$task ($completed/$total steps in $(basename "$workdir"))" "$workdir" &
+    local reflect_summary="$task ($completed/$total steps in $(basename "$workdir"))"
+    if [ -n "$failed_steps" ]; then
+        reflect_summary="${reflect_summary}. Failed: ${failed_steps}"
+    fi
+    journal_reflect "$reflect_summary" "$workdir" &
     
     # Notify on phone if available
     tools_phone_toast "Lodge: Task complete ($completed/$total steps)"

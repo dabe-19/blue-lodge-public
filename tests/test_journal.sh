@@ -70,6 +70,48 @@ describe "journal_write"
     _teardown_journal
   }
 
+# ── journal_write_failure ──────────────────────────────────────
+describe "journal_write_failure"
+
+  it "journal_write_failure is defined" && {
+    _setup_journal
+    declare -f journal_write_failure &>/dev/null
+    assert_ok $?
+    _teardown_journal
+  }
+
+  it "writes a structured failure entry" && {
+    _setup_journal
+    journal_init 2>/dev/null
+    journal_write_failure "/slash create broken-cmd" "Function not found" "build a game"
+    content=$(cat "$JOURNAL_FILE")
+    assert_contains "$content" "task_failure"
+    assert_contains "$content" "FAILED: /slash create broken-cmd"
+    assert_contains "$content" "Error: Function not found"
+    assert_contains "$content" "Task: build a game"
+    _teardown_journal
+  }
+
+  it "works without task context" && {
+    _setup_journal
+    journal_init 2>/dev/null
+    journal_write_failure "/build" "No build command found"
+    content=$(cat "$JOURNAL_FILE")
+    assert_contains "$content" "FAILED: /build"
+    assert_contains "$content" "Error: No build command found"
+    assert_not_contains "$content" "Task:"
+    _teardown_journal
+  }
+
+  it "counts as a journal entry" && {
+    _setup_journal
+    journal_init 2>/dev/null
+    journal_write_failure "/test" "test failed"
+    count=$(journal_count)
+    assert_eq "$count" "1"
+    _teardown_journal
+  }
+
 # ── journal_count ──────────────────────────────────────────────
 describe "journal_count"
 
@@ -179,6 +221,26 @@ describe "journal_get_old_entries"
     result=$(journal_get_old_entries "$cutoff")
     # Recent entry should NOT be "old" (its epoch is after the cutoff)
     assert_not_contains "$result" "brand new entry"
+    _teardown_journal
+  }
+
+# ── journal_reflect prompt ─────────────────────────────────────
+describe "journal_reflect prompt"
+
+  it "journal_reflect asks for specific factual entries" && {
+    _setup_journal
+    body=$(declare -f journal_reflect)
+    echo "$body" | grep -q "SPECIFIC and FACTUAL"
+    assert_ok $?
+    _teardown_journal
+  }
+
+  it "journal_reflect does not ask for poetry" && {
+    _setup_journal
+    body=$(declare -f journal_reflect)
+    # Old prompt asked to "Speak as a craftsman reflecting at the end of the day"
+    echo "$body" | grep -q "craftsman reflecting"
+    assert_fail $?
     _teardown_journal
   }
 
