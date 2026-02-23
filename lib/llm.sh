@@ -12,7 +12,7 @@ LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-1024}"    # Default max output tokens (task mo
 LLM_ASK_TOKENS="${LLM_ASK_TOKENS:-300}"     # Max output tokens for /ask (quick answers)
 LLM_TIMEOUT="${LLM_TIMEOUT:-300}"           # Safety net: 300s max per request (Ctrl+C also works)
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
-LODGE_THINK="${LODGE_THINK:-1}"               # 1=enable Qwen3 thinking (visible, deeper reasoning), 0=disable (fast)
+LODGE_THINK="${LODGE_THINK:-0}"               # 0=disable thinking (fast, default), 1=enable Qwen3 thinking (visible, deeper reasoning)
 
 # ── Active request tracking (for cancellation) ─────────────────
 _LLM_CURL_PID=""
@@ -75,7 +75,7 @@ llm_warmup() {
     payload=$(jq -n \
         --arg model "$LODGE_MODEL" \
         --arg keep_alive "$LLM_KEEP_ALIVE" \
-        '{model: $model, prompt: "Hello", stream: false, keep_alive: $keep_alive, options: {num_predict: 1}}')
+        '{model: $model, prompt: "Hello /nothink", stream: false, keep_alive: $keep_alive, options: {num_predict: 1}}')
     curl -sf "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
         -d "$payload" > /dev/null 2>&1

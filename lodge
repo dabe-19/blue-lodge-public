@@ -122,15 +122,15 @@ _cmd_think() {
             ui_ok "Thinking mode OFF — faster responses, no reasoning" ;;
         "")
             # Toggle
-            if [ "${LODGE_THINK:-1}" -eq 1 ]; then
-                LODGE_THINK=0
-                ui_ok "Thinking mode OFF — faster responses, no reasoning"
-            else
+            if [ "${LODGE_THINK:-0}" -eq 0 ]; then
                 LODGE_THINK=1
                 ui_ok "Thinking mode ON — reasoning tokens will stream (dimmed)"
+            else
+                LODGE_THINK=0
+                ui_ok "Thinking mode OFF — faster responses, no reasoning"
             fi ;;
         *)
-            ui_info "Usage: /think [on|off]  (current: $([ "${LODGE_THINK:-1}" -eq 1 ] && echo ON || echo OFF))" ;;
+            ui_info "Usage: /think [on|off]  (current: $([ "${LODGE_THINK:-0}" -eq 1 ] && echo ON || echo OFF))" ;;
     esac
 }
 _cmd_compact() {
@@ -2070,8 +2070,9 @@ _repl() {
             if [ "$result" -eq 99 ]; then
                 ui_info "Goodbye."
                 break
-            elif [ "$result" -ne 0 ] && [ "$result" -ne 1 ]; then
-                : # command handled its own errors
+            elif [ "${_LODGE_CANCELLED:-0}" -eq 1 ]; then
+                # Command was cancelled by Ctrl+C — don't fall through
+                _LODGE_CANCELLED=0
             elif [ "$result" -eq 1 ]; then
                 # Not found — try as agent task
                 ui_warn "Unknown command. Treating as task..."
