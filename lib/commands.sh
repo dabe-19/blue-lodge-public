@@ -30,7 +30,13 @@ commands_dispatch() {
     
     # Check built-in commands first
     case "$cmd" in
-        help)     commands_help; return 0 ;;
+        help)
+            if [ -n "$args" ] && [ "$args" != "$input" ]; then
+                commands_help_topic "$args"
+            else
+                commands_help
+            fi
+            return 0 ;;
         quit|exit|q) return 99 ;;
     esac
     
@@ -100,4 +106,65 @@ commands_load_all() {
         [ -f "$script" ] || continue
         source "$script"
     done
+}
+
+# ── Per-command detailed help ──────────────────────────────────
+# Delegates to the command's own handler with no args (which shows help)
+# or shows the description if that's all we have.
+commands_help_topic() {
+    local topic="$1"
+    # Strip leading / if present
+    topic="${topic#/}"
+
+    if [ -n "${CMD_REGISTRY[$topic]:-}" ]; then
+        # Dispatch with empty args — most handlers show help on empty args
+        "${CMD_REGISTRY[$topic]}" "" "."
+    elif [ -f "$LODGE_COMMANDS_DIR/${topic}.sh" ]; then
+        source "$LODGE_COMMANDS_DIR/${topic}.sh"
+        "cmd_${topic}" "" "."
+    else
+        ui_err "Unknown command: /$topic"
+        ui_dim "Run /help to see all commands"
+    fi
+}
+
+# ── Compact command catalog for LLM injection ─────────────────
+# Returns a token-efficient summary (~150-200 tokens) of all
+# available slash commands that George can use as working tools.
+# This is injected into system prompts so George knows his tools.
+commands_catalog() {
+    cat << 'CATALOG'
+--- YOUR WORKING COMMANDS ---
+You have these slash commands as tools. USE THEM in your plans and steps.
+To invoke: output a line starting with / (e.g., /recall docker setup).
+
+/plan <task>         — Plan a task (no execution)
+/ask <question>      — Quick question
+/init <name> <lang>  — Scaffold a new project
+/recall <query>      — Search your knowledge base (docs, soul, journal)
+/social post <text>  — Post to all configured social platforms
+/social <platform> <action> — X/Mastodon/Bluesky/Discord/Telegram
+/pgp sign <msg>      — PGP-sign a message for authenticity
+/pgp signpost <msg>  — Sign and post to social media
+/pgp export          — Export your public key
+/sandbox create <n>  — Create isolated sandbox
+/sandbox run <n> <cmd> — Run command in sandbox
+/container create <distro> — Create proot-distro container
+/container enter <name>    — Enter a container
+/api keys set <K> <V> — Set an API key
+/api keys list        — Show configured keys
+/secret set <k> <v>   — Store encrypted secret
+/secret get <k>       — Retrieve a secret
+/web search <query>   — Search the web
+/web fetch <url>      — Fetch a URL
+/journal write <text> — Write to your journal
+/journal read         — Read recent journal entries
+/wallet <coin> <action> — Crypto wallet operations
+/gsuite gmail|drive|docs — Google Workspace
+/backup save          — Backup your identity
+/files                — List workspace files
+/read <file>          — Read a file
+/status               — Show agent status
+/memory               — Show CLAUDE.md
+CATALOG
 }

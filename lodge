@@ -36,6 +36,7 @@ source "$LODGE_DIR/lib/recall.sh"
 source "$LODGE_DIR/lib/secrets.sh"
 source "$LODGE_DIR/lib/gsuite.sh"
 source "$LODGE_DIR/lib/wallet.sh"
+source "$LODGE_DIR/lib/pgp.sh"
 
 # ── Graceful Cancellation ─────────────────────────────────────
 # Tracks whether we're in task execution so Ctrl+C behaves smartly:
@@ -1066,12 +1067,116 @@ _cmd_readme() {
     fi
 }
 
+# ── PGP Signing ────────────────────────────────────────────────
+_cmd_pgp() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+
+    case "$action" in
+        generate|gen)
+            pgp_generate_key ;;
+        fingerprint|fp)
+            pgp_fingerprint ;;
+        sign)
+            if [ -z "$rest" ] || [ "$rest" = "$action" ]; then
+                ui_err "Usage: /pgp sign <message>"
+                return 1
+            fi
+            local signed
+            signed=$(pgp_sign_message "$rest")
+            if [ $? -eq 0 ]; then
+                echo ""
+                echo "$signed"
+                echo ""
+            fi ;;
+        verify)
+            if [ -z "$rest" ] || [ "$rest" = "$action" ]; then
+                ui_err "Usage: /pgp verify <signed-message>"
+                ui_dim "Paste the full signed message including BEGIN/END markers"
+                return 1
+            fi
+            pgp_verify_message "$rest" ;;
+        export)
+            pgp_export_public_key ;;
+        pubkey|public|show)
+            pgp_show_public_key ;;
+        import)
+            if [ -z "$rest" ] || [ "$rest" = "$action" ]; then
+                ui_err "Usage: /pgp import <keyfile.asc>"
+                return 1
+            fi
+            pgp_import_key "$rest" ;;
+        keys|list)
+            pgp_list_keys ;;
+        signpost)
+            # Sign and post to social media
+            local platform text
+            platform=$(echo "$rest" | awk '{print $1}')
+            text=$(echo "$rest" | sed 's/^[^ ]* *//')
+            if [ -z "$text" ] || [ "$text" = "$platform" ]; then
+                # No platform specified — post to all
+                text="$platform"
+                pgp_sign_and_post "$text"
+            else
+                pgp_sign_and_post "$text" "$platform"
+            fi ;;
+        signfile)
+            if [ -z "$rest" ] || [ "$rest" = "$action" ]; then
+                ui_err "Usage: /pgp signfile <filepath>"
+                return 1
+            fi
+            pgp_sign_file "$rest" ;;
+        verifyfile)
+            if [ -z "$rest" ] || [ "$rest" = "$action" ]; then
+                ui_err "Usage: /pgp verifyfile <filepath> [sigfile]"
+                return 1
+            fi
+            local fpath sig
+            fpath=$(echo "$rest" | awk '{print $1}')
+            sig=$(echo "$rest" | awk '{print $2}')
+            if [ -n "$sig" ]; then
+                pgp_verify_file "$fpath" "$sig"
+            else
+                pgp_verify_file "$fpath"
+            fi ;;
+        revoke)
+            ui_warn "This will delete the current key and generate a new one."
+            ui_warn "Anyone using the old public key will no longer verify messages."
+            read -rp "  Continue? [y/N] " confirm
+            if [[ "$confirm" =~ ^[Yy] ]]; then
+                pgp_revoke_and_regenerate
+            else
+                ui_dim "Cancelled"
+            fi ;;
+        status|"") pgp_status ;;
+        *)
+            ui_info "Usage: /pgp <command>"
+            ui_dim "  generate       — Create George's signing key"
+            ui_dim "  fingerprint    — Show key fingerprint"
+            ui_dim "  sign <msg>     — Sign a message (cleartext)"
+            ui_dim "  verify <msg>   — Verify a signed message"
+            ui_dim "  export         — Export public key to file"
+            ui_dim "  pubkey         — Display the public key"
+            ui_dim "  import <file>  — Import someone's public key"
+            ui_dim "  keys           — List all keys in keyring"
+            ui_dim "  signpost <msg> — Sign and post to social media"
+            ui_dim "  signfile <f>   — Create detached signature for file"
+            ui_dim "  verifyfile <f> — Verify a file's signature"
+            ui_dim "  revoke         — Revoke key and regenerate"
+            ui_dim "  status         — Show PGP signing status"
+            ;;
+    esac
+}
+
 # ── Recall (knowledge base search) ────────────────────────────
 _cmd_recall() {
     local args="$1"
-    local subcmd="${args#* }"
 
-    if [[ "$subcmd" == "$args" ]] || [ -z "$subcmd" ]; then
+    # No args → show help
+    if [ -z "$args" ]; then
         ui_section "Recall — FTS5 Knowledge Base"
         if ! recall_available 2>/dev/null; then
             ui_warn "sqlite3 with FTS5 not available"
@@ -1089,7 +1194,11 @@ _cmd_recall() {
         return
     fi
 
-    case "$subcmd" in
+    # Extract first word for subcommand check
+    local first_word
+    first_word=$(echo "$args" | awk '{print $1}')
+
+    case "$first_word" in
         stats)
             ui_section "Recall Index Stats"
             recall_stats
@@ -1106,9 +1215,9 @@ _cmd_recall() {
             ui_ok "Recall index cleared"
             ;;
         *)
-            # It's a search query
-            ui_section "Recall: $subcmd"
-            recall_search_pretty "$subcmd" 8
+            # It's a search query — use the FULL args
+            ui_section "Recall: $args"
+            recall_search_pretty "$args" 8
             ;;
     esac
 }
@@ -1140,6 +1249,7 @@ _register_commands() {
     commands_register "ingest"   "Upload docs to knowledge base" "_cmd_ingest"
     commands_register "gsuite"   "Google Workspace (Gmail/Drive/Docs)" "_cmd_gsuite"
     commands_register "wallet"   "Cryptocurrency wallets (BTC/ADA/SOL)" "_cmd_wallet"
+    commands_register "pgp"      "PGP signing & message verification" "_cmd_pgp"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"
     commands_register "files"    "List workspace files" "_cmd_files"

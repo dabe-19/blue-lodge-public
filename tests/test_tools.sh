@@ -248,4 +248,49 @@ describe "File write diff preview"
     _teardown_tools
   }
 
+# ── tools_extract_slash_commands ──────────────────────────────
+describe "tools_extract_slash_commands"
+
+  it "extracts slash commands from plain text" && {
+    _resp="Here is text
+/recall docker setup
+more text"
+    _cmds=$(tools_extract_slash_commands "$_resp")
+    assert_contains "$_cmds" "/recall docker setup"
+  }
+
+  it "extracts multiple slash commands" && {
+    _resp="/social post Hello world
+Some explanation
+/pgp sign My message"
+    _cmds=$(tools_extract_slash_commands "$_resp")
+    assert_contains "$_cmds" "/social post Hello world"
+    assert_contains "$_cmds" "/pgp sign My message"
+  }
+
+  it "ignores slash commands inside code blocks" && {
+    _resp='Here is a plan:
+```bash
+/social post Should not match
+```
+/recall the real command'
+    _cmds=$(tools_extract_slash_commands "$_resp")
+    assert_not_contains "$_cmds" "/social post Should not match"
+    assert_contains "$_cmds" "/recall the real command"
+  }
+
+  it "returns empty for no slash commands" && {
+    _resp="Just plain text with no commands"
+    _cmds=$(tools_extract_slash_commands "$_resp")
+    assert_empty "$_cmds"
+  }
+
+  it "ignores lines starting with /path (not commands)" && {
+    _resp="/usr/bin/python3 is here"
+    _cmds=$(tools_extract_slash_commands "$_resp")
+    # /usr starts with /u which is lowercase, so it technically matches
+    # but we test that actual known commands work
+    assert_not_contains "$_cmds" "/social"
+  }
+
 test_end

@@ -28,6 +28,21 @@ tools_extract_bash() {
     '
 }
 
+# ── Extract slash commands from LLM response ──────────────────
+# Scans for lines starting with / that match registered commands.
+# Only extracts commands OUTSIDE of code blocks to avoid false
+# positives from code examples.
+tools_extract_slash_commands() {
+    local response="$1"
+
+    # Parse: skip lines inside code blocks, emit /command lines outside
+    echo "$response" | awk '
+        /^```/   { in_block = !in_block; next }
+        in_block { next }
+        /^\/[a-z]/ { print }
+    '
+}
+
 # ── Extract file writes from response ─────────────────────────
 # Format: ```lang\n# filepath: ./path/to/file\n...code...\n```
 tools_extract_files() {
@@ -271,6 +286,23 @@ tools_process_response() {
             fi
         done
         rm -rf "$files_dir"
+    fi
+
+    # 3. Extract and execute slash commands from the response
+    # George can invoke his own tools by outputting /command lines.
+    # We scan lines outside of code blocks for registered commands.
+    local slash_cmds
+    slash_cmds=$(tools_extract_slash_commands "$response")
+    if [ -n "$slash_cmds" ]; then
+        while IFS= read -r scmd; do
+            [ -z "$scmd" ] && continue
+            ui_section "Tool Invocation"
+            ui_step "$scmd"
+            if declare -f commands_dispatch &>/dev/null; then
+                commands_dispatch "$scmd" "$workdir"
+                results="${results:+$results; }Command: $scmd"
+            fi
+        done <<< "$slash_cmds"
     fi
     
     echo "$results"

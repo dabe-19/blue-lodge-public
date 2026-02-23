@@ -111,4 +111,68 @@ describe "commands_load_all"
     assert_ok $?
   }
 
+# ── commands_catalog ──────────────────────────────────────────
+describe "commands_catalog"
+
+  it "returns a non-empty catalog" && {
+    _cat_out=$(commands_catalog)
+    assert_not_empty "$_cat_out"
+  }
+
+  it "catalog contains YOUR WORKING COMMANDS header" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "YOUR WORKING COMMANDS"
+  }
+
+  it "catalog lists /recall" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "/recall"
+  }
+
+  it "catalog lists /social" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "/social"
+  }
+
+  it "catalog lists /pgp" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "/pgp"
+  }
+
+  it "catalog lists /sandbox" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "/sandbox"
+  }
+
+  it "catalog lists /web" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "/web"
+  }
+
+# ── commands_help_topic ────────────────────────────────────────
+describe "commands_help_topic"
+
+  it "shows help for a registered command" && {
+    _topic_handler() {
+        if [ -z "$1" ]; then echo "TOPIC_HELP_SHOWN"; fi
+    }
+    commands_register "topictest" "topic test" "_topic_handler"
+    _topic_out=$(commands_help_topic "topictest" 2>&1)
+    assert_contains "$_topic_out" "TOPIC_HELP_SHOWN"
+  }
+
+  it "handles /help for unknown command" && {
+    _topic_out=$(commands_help_topic "nonexistent_zzz" 2>&1)
+    assert_contains "$_topic_out" "Unknown command"
+  }
+
+  it "strips leading slash from topic" && {
+    _slash_handler() {
+        if [ -z "$1" ]; then echo "SLASH_STRIPPED_OK"; fi
+    }
+    commands_register "slashtest" "slash test" "_slash_handler"
+    _topic_out=$(commands_help_topic "/slashtest" 2>&1)
+    assert_contains "$_topic_out" "SLASH_STRIPPED_OK"
+  }
+
 test_end

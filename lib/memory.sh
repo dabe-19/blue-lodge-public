@@ -205,6 +205,13 @@ ${recall_ctx:0:200}"
 $project_mem"
         fi
 
+        # Command catalog — George must know his tools to plan with them
+        if declare -f commands_catalog &>/dev/null; then
+            prompt="$prompt
+
+$(commands_catalog)"
+        fi
+
         # Workspace files (needed for planning)
         local files
         files=$(find "$dir" -maxdepth 2 -type f \
@@ -259,6 +266,13 @@ $journal_context"
 --- RECALLED KNOWLEDGE ---
 $recall_ctx"
         fi
+    fi
+
+    # Command catalog — George must know his tools to use them in tasks
+    if declare -f commands_catalog &>/dev/null; then
+        prompt="$prompt
+
+$(commands_catalog)"
     fi
     
     # Add workspace file listing (lightweight)

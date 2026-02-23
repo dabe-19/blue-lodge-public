@@ -4,14 +4,17 @@
 # Uses SQLite FTS5 for BM25-ranked full-text search.
 #
 # Indexed sources:
-#   readme     — README.md (George's capabilities & architecture)
-#   soul       — soul.md (personality & ethics)
-#   crypto     — docs/CRYPTO_WALLETS.md (cryptocurrency guide)
-#   tuning     — docs/TUNING.md (token & performance tuning)
-#   sandboxes  — docs/SANDBOXES.md (sandbox & isolation guide)
-#   vault      — docs/SECRETS_VAULT.md (encrypted secrets vault)
-#   journal    — journal.md (living memory)
-#   claude     — CLAUDE.md (current project memory)
+#   readme       — README.md (George's capabilities & architecture)
+#   soul         — soul.md (personality & ethics)
+#   crypto       — docs/CRYPTO_WALLETS.md (cryptocurrency guide)
+#   tuning       — docs/TUNING.md (token & performance tuning)
+#   sandboxes    — docs/SANDBOXES.md (sandbox & isolation guide)
+#   vault        — docs/SECRETS_VAULT.md (encrypted secrets vault)
+#   recall_guide — docs/RECALL.md (recall system documentation)
+#   social_bots  — docs/SOCIAL_BOTS.md (social media API setup)
+#   pgp_signing  — docs/PGP_SIGNING.md (PGP message signing)
+#   journal      — journal.md (living memory)
+#   claude       — CLAUDE.md (current project memory)
 #
 # Overhead: ~100-200KB on disk, <1ms per query, 0 RAM.
 # No network, no embedding model, no Python required.
@@ -188,6 +191,9 @@ recall_needs_reindex() {
     [ -f "$LODGE_DIR/docs/TUNING.md" ] && sources+=("tuning:$LODGE_DIR/docs/TUNING.md")
     [ -f "$LODGE_DIR/docs/SANDBOXES.md" ] && sources+=("sandboxes:$LODGE_DIR/docs/SANDBOXES.md")
     [ -f "$LODGE_DIR/docs/SECRETS_VAULT.md" ] && sources+=("vault:$LODGE_DIR/docs/SECRETS_VAULT.md")
+    [ -f "$LODGE_DIR/docs/RECALL.md" ] && sources+=("recall_guide:$LODGE_DIR/docs/RECALL.md")
+    [ -f "$LODGE_DIR/docs/SOCIAL_BOTS.md" ] && sources+=("social_bots:$LODGE_DIR/docs/SOCIAL_BOTS.md")
+    [ -f "$LODGE_DIR/docs/PGP_SIGNING.md" ] && sources+=("pgp_signing:$LODGE_DIR/docs/PGP_SIGNING.md")
     [ -f "$LODGE_DIR/journal.md" ] && sources+=("journal:$LODGE_DIR/journal.md")
     [ -f "./CLAUDE.md" ] && sources+=("claude:$PWD/CLAUDE.md")
 
@@ -219,6 +225,9 @@ _recall_save_mtimes() {
     [ -f "$LODGE_DIR/docs/TUNING.md" ] && sources+=("tuning:$LODGE_DIR/docs/TUNING.md")
     [ -f "$LODGE_DIR/docs/SANDBOXES.md" ] && sources+=("sandboxes:$LODGE_DIR/docs/SANDBOXES.md")
     [ -f "$LODGE_DIR/docs/SECRETS_VAULT.md" ] && sources+=("vault:$LODGE_DIR/docs/SECRETS_VAULT.md")
+    [ -f "$LODGE_DIR/docs/RECALL.md" ] && sources+=("recall_guide:$LODGE_DIR/docs/RECALL.md")
+    [ -f "$LODGE_DIR/docs/SOCIAL_BOTS.md" ] && sources+=("social_bots:$LODGE_DIR/docs/SOCIAL_BOTS.md")
+    [ -f "$LODGE_DIR/docs/PGP_SIGNING.md" ] && sources+=("pgp_signing:$LODGE_DIR/docs/PGP_SIGNING.md")
     [ -f "$LODGE_DIR/journal.md" ] && sources+=("journal:$LODGE_DIR/journal.md")
     [ -f "./CLAUDE.md" ] && sources+=("claude:$PWD/CLAUDE.md")
 
@@ -273,6 +282,24 @@ recall_reindex() {
         (( total++ ))
     fi
 
+    # Recall guide
+    if [ -f "$LODGE_DIR/docs/RECALL.md" ]; then
+        recall_index_file "recall_guide" "$LODGE_DIR/docs/RECALL.md"
+        (( total++ ))
+    fi
+
+    # Social bots guide
+    if [ -f "$LODGE_DIR/docs/SOCIAL_BOTS.md" ]; then
+        recall_index_file "social_bots" "$LODGE_DIR/docs/SOCIAL_BOTS.md"
+        (( total++ ))
+    fi
+
+    # PGP signing guide
+    if [ -f "$LODGE_DIR/docs/PGP_SIGNING.md" ]; then
+        recall_index_file "pgp_signing" "$LODGE_DIR/docs/PGP_SIGNING.md"
+        (( total++ ))
+    fi
+
     # Living memory
     if [ -f "$LODGE_DIR/journal.md" ]; then
         recall_index_file "journal" "$LODGE_DIR/journal.md"
@@ -313,11 +340,25 @@ recall_search() {
     # Escape the query for FTS5
     local safe_query
     safe_query="${query//\"/\"\"}"
-    # Replace special FTS characters
+    # Strip ALL FTS5 special characters that cause syntax errors
     safe_query="${safe_query//\*/}"
     safe_query="${safe_query//\(/}"
     safe_query="${safe_query//\)/}"
     safe_query="${safe_query//:/}"
+    safe_query="${safe_query//\?/}"
+    safe_query="${safe_query//!/}"
+    safe_query="${safe_query//+/}"
+    safe_query="${safe_query//^/}"
+    safe_query="${safe_query//~/}"
+    safe_query="${safe_query//\{/}"
+    safe_query="${safe_query//\}/}"
+    safe_query="${safe_query//\[/}"
+    safe_query="${safe_query//\]/}"
+    safe_query="${safe_query//\;/}"
+    # Collapse multiple spaces and trim
+    safe_query=$(echo "$safe_query" | sed 's/  */ /g; s/^ *//; s/ *$//')
+    # Bail on empty query after sanitization
+    [ -z "$safe_query" ] && return 0
 
     # BM25 search with snippet extraction
     sqlite3 -separator '|' "$RECALL_DB" <<SQL
@@ -349,7 +390,7 @@ recall_search_pretty() {
     if [ -z "$results" ]; then
         # Try with OR between words for broader matching
         local or_query
-        or_query=$(echo "$query" | tr ' ' ' OR ')
+        or_query=$(echo "$query" | sed 's/ / OR /g')
         results=$(recall_search "$or_query" "$limit")
     fi
 
@@ -366,11 +407,18 @@ recall_search_pretty() {
         # Source label
         local label
         case "$source" in
-            readme)  label="README" ;;
-            soul)    label="Soul" ;;
-            journal) label="Journal" ;;
-            claude)  label="Project" ;;
-            *)       label="$source" ;;
+            readme)     label="README" ;;
+            soul)       label="Soul" ;;
+            journal)    label="Journal" ;;
+            claude)     label="Project" ;;
+            crypto)     label="Crypto" ;;
+            tuning)     label="Tuning" ;;
+            sandboxes)  label="Sandboxes" ;;
+            vault)       label="Vault" ;;
+            recall_guide) label="Recall" ;;
+            social_bots)  label="Social Bots" ;;
+            pgp_signing)  label="PGP" ;;
+            *)           label="$source" ;;
         esac
 
         printf "  %b[%s]%b %b%s%b\n" "$C_CYAN" "$label" "$C_RESET" "$C_WHITE" "$section" "$C_RESET"
@@ -400,7 +448,7 @@ recall_search_context() {
 
     if [ -z "$results" ]; then
         local or_query
-        or_query=$(echo "$query" | tr ' ' ' OR ')
+        or_query=$(echo "$query" | sed 's/ / OR /g')
         results=$(recall_search "$or_query" "$limit")
     fi
 
