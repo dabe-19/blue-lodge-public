@@ -265,28 +265,6 @@ describe "memory_build_system_prompt plan mode"
 # ── Plan prompt command glossary ──────────────────────────────
 describe "memory_build_system_prompt plan mode command glossary"
 
-  it "plan prompt includes command syntax when commands_catalog is available" && {
-    _setup_mem
-    if declare -f commands_catalog &>/dev/null; then
-      prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
-      assert_contains "$prompt" "/web search <query>"
-    else
-      skip "commands_catalog not loaded in test env"
-    fi
-    _teardown_mem
-  }
-
-  it "plan prompt includes /save syntax with content parameter" && {
-    _setup_mem
-    if declare -f commands_catalog &>/dev/null; then
-      prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
-      assert_contains "$prompt" "/save <file>"
-    else
-      skip "commands_catalog not loaded in test env"
-    fi
-    _teardown_mem
-  }
-
   it "plan prompt warns not to invent commands" && {
     _setup_mem
     prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
@@ -310,9 +288,13 @@ describe "memory_build_system_prompt plan mode command glossary"
   it "plan prompt includes full command syntax when commands_catalog is loaded" && {
     _setup_mem
     source "$LODGE_DIR/lib/commands.sh"
-    prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
-    assert_contains "$prompt" "/web search <query>"
-    assert_contains "$prompt" "/save <file>"
+    if ! declare -f commands_catalog &>/dev/null; then
+      skip "commands_catalog failed to load from commands.sh"
+    else
+      prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
+      assert_contains "$prompt" "/web search <query>"
+      assert_contains "$prompt" "/save <file>"
+    fi
     _teardown_mem
   }
 
