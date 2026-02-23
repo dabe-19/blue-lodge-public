@@ -470,7 +470,7 @@ tools_phone_share() {
 
 tools_phone_battery() {
     if _lodge_termux_api_ok && command -v termux-battery-status &>/dev/null; then
-        termux-battery-status | jq '{percentage, status, temperature}' 2>/dev/null
+        timeout 3 termux-battery-status 2>/dev/null | jq '{percentage, status, temperature}' 2>/dev/null
     else
         echo '{"percentage": "unknown"}'
     fi

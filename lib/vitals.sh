@@ -73,7 +73,7 @@ vitals_ram_used_mb() {
 # ── Battery percentage (0-100) ────────────────────────────────
 vitals_battery_pct() {
     if _lodge_termux_api_ok && command -v termux-battery-status &>/dev/null; then
-        termux-battery-status 2>/dev/null | jq -r '.percentage // empty' 2>/dev/null
+        timeout 3 termux-battery-status 2>/dev/null | jq -r '.percentage // empty' 2>/dev/null
     elif [ -f /sys/class/power_supply/BAT0/capacity ]; then
         cat /sys/class/power_supply/BAT0/capacity 2>/dev/null
     else
@@ -84,7 +84,7 @@ vitals_battery_pct() {
 # ── Battery charging status ───────────────────────────────────
 vitals_battery_status() {
     if _lodge_termux_api_ok && command -v termux-battery-status &>/dev/null; then
-        termux-battery-status 2>/dev/null | jq -r '.status // empty' 2>/dev/null
+        timeout 3 termux-battery-status 2>/dev/null | jq -r '.status // empty' 2>/dev/null
     elif [ -f /sys/class/power_supply/BAT0/status ]; then
         cat /sys/class/power_supply/BAT0/status 2>/dev/null
     else
@@ -95,7 +95,7 @@ vitals_battery_status() {
 # ── WiFi signal strength (RSSI in dBm, e.g. -45) ─────────────
 vitals_wifi_rssi() {
     if _lodge_termux_api_ok && command -v termux-wifi-connectioninfo &>/dev/null; then
-        termux-wifi-connectioninfo 2>/dev/null | jq -r '.rssi // empty' 2>/dev/null
+        timeout 3 termux-wifi-connectioninfo 2>/dev/null | jq -r '.rssi // empty' 2>/dev/null
     else
         # Fallback: iwconfig or /proc/net/wireless
         cat /proc/net/wireless 2>/dev/null | awk 'NR==3{gsub(/\./,""); print -$4}' || echo ""
@@ -106,7 +106,7 @@ vitals_wifi_rssi() {
 vitals_wifi_ssid() {
     if _lodge_termux_api_ok && command -v termux-wifi-connectioninfo &>/dev/null; then
         local ssid
-        ssid=$(termux-wifi-connectioninfo 2>/dev/null | jq -r '.ssid // empty' 2>/dev/null)
+        ssid=$(timeout 3 termux-wifi-connectioninfo 2>/dev/null | jq -r '.ssid // empty' 2>/dev/null)
         # Filter out "unknown" values
         if [ "$ssid" = "<unknown ssid>" ] || [ "$ssid" = "null" ]; then
             echo ""
@@ -121,7 +121,7 @@ vitals_wifi_ssid() {
 # ── WiFi link speed (Mbps) ────────────────────────────────────
 vitals_wifi_speed() {
     if _lodge_termux_api_ok && command -v termux-wifi-connectioninfo &>/dev/null; then
-        termux-wifi-connectioninfo 2>/dev/null | jq -r '.link_speed_mbps // empty' 2>/dev/null
+        timeout 3 termux-wifi-connectioninfo 2>/dev/null | jq -r '.link_speed_mbps // empty' 2>/dev/null
     else
         echo ""
     fi
@@ -131,7 +131,7 @@ vitals_wifi_speed() {
 vitals_cell_signal() {
     if _lodge_termux_api_ok && command -v termux-telephony-cellinfo &>/dev/null; then
         # Extract the first registered cell's signal strength
-        termux-telephony-cellinfo 2>/dev/null | jq -r '
+        timeout 3 termux-telephony-cellinfo 2>/dev/null | jq -r '
             [.[] | select(.registered == true)] | .[0] |
             (.dbm // .rssi // .signal_strength // .asu // empty)
         ' 2>/dev/null
@@ -143,7 +143,7 @@ vitals_cell_signal() {
 # ── Cell network type (LTE, NR, etc.) ─────────────────────────
 vitals_cell_type() {
     if _lodge_termux_api_ok && command -v termux-telephony-deviceinfo &>/dev/null; then
-        termux-telephony-deviceinfo 2>/dev/null | jq -r '.network_type // empty' 2>/dev/null
+        timeout 3 termux-telephony-deviceinfo 2>/dev/null | jq -r '.network_type // empty' 2>/dev/null
     else
         echo ""
     fi
