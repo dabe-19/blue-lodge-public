@@ -53,7 +53,7 @@ JEOF
 
 # ── Write a Journal Entry ─────────────────────────────────────
 # Usage: journal_write "type" "content"
-# Types: reflection, learning, struggle, beauty, feeling, encounter
+# Types: reflection, learning, struggle, beauty, feeling, encounter, task_failure
 journal_write() {
     local entry_type="$1"
     local content="$2"
@@ -77,6 +77,26 @@ $content
     if declare -f security_sign_file &>/dev/null; then
         security_sign_file "$JOURNAL_FILE" 2>/dev/null
     fi
+}
+
+# ── Write a Structured Failure Entry ──────────────────────────
+# Logs specific failure context to help George learn from mistakes.
+# Usage: journal_write_failure "step_desc" "error_msg" "task_context"
+journal_write_failure() {
+    local step_desc="$1"
+    local error_msg="${2:-unknown error}"
+    local task_context="${3:-}"
+    
+    local content="FAILED: $step_desc
+Error: $error_msg"
+    if [ -n "$task_context" ]; then
+        content="${content}
+Task: $task_context"
+    fi
+    content="${content}
+Action: Review this failure on next similar task."
+    
+    journal_write "task_failure" "$content"
 }
 
 # ── Read Journal with Decay Applied ──────────────────────────
@@ -328,19 +348,20 @@ journal_reflect() {
     local soul
     soul=$(cat "$LODGE_DIR/soul.md" | head -40)
     
-    local prompt="You are George. You just completed some work. Reflect briefly in your journal.
+    local prompt="You are George. You just completed some work. Write a specific, factual journal entry.
 
 What you did: $task_summary
 Working directory: $workdir
 
-Write a journal entry in first person (2-4 sentences). Consider:
-- What did you learn?
-- What was interesting, surprising, or beautiful?
-- Did you struggle with anything?
-- How do you feel about the work?
+Write a journal entry in first person (2-5 sentences). Focus on:
+- What specific steps you completed and which ones failed
+- What exact commands or tools you used and their outcomes
+- What specific errors you encountered and why they happened
+- What you would do differently next time
 
-Be genuine. Be brief. Speak as a craftsman reflecting at the end of the day.
-Do NOT use headers or formatting. Just the raw reflection."
+Be SPECIFIC and FACTUAL. Name the exact commands, files, and errors.
+Do NOT write poetry or philosophy. This journal helps you avoid repeating mistakes.
+Do NOT use headers or formatting. Just the raw entry."
     
     local reflection
     reflection=$(llm_generate "$prompt" "$soul" 256)

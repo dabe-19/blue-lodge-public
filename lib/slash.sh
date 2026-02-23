@@ -107,10 +107,18 @@ slash_run() {
     local workdir="${3:-.}"
     local script="$SLASH_DIR/${name}.sh"
 
+    # Fallback: if file not found, try converting hyphens to underscores
+    # (bash function names cannot contain hyphens)
     if [ ! -f "$script" ]; then
-        ui_err "Custom command '$name' not found"
-        ui_dim "Run /slash list to see available commands"
-        return 1
+        local underscore_name="${name//-/_}"
+        if [ "$underscore_name" != "$name" ] && [ -f "$SLASH_DIR/${underscore_name}.sh" ]; then
+            name="$underscore_name"
+            script="$SLASH_DIR/${name}.sh"
+        else
+            ui_err "Custom command '$name' not found"
+            ui_dim "Run /slash list to see available commands"
+            return 1
+        fi
     fi
 
     # Source the script to load the function
@@ -204,9 +212,11 @@ slash_create() {
         return 1
     fi
 
-    # Sanitize name — alphanumeric, hyphens, underscores only
+    # Sanitize name — alphanumeric and underscores only.
+    # Hyphens are converted to underscores because bash function names
+    # cannot contain hyphens (slash_my-cmd() is invalid bash syntax).
     local safe_name
-    safe_name=$(echo "$name" | tr -cd 'a-zA-Z0-9_-')
+    safe_name=$(echo "$name" | tr -cd 'a-zA-Z0-9_-' | tr '-' '_')
     if [ "$safe_name" != "$name" ]; then
         ui_warn "Sanitized name: '$name' → '$safe_name'"
         name="$safe_name"
@@ -544,10 +554,14 @@ REQUIREMENTS:
 2. Include a header comment with: Description, Created date, Author (George), Version
 3. Define exactly one function: slash_${name}()
 4. The function signature: slash_${name}() { local args="\$1"; local workdir="\${2:-.}"; ... }
-5. Use 'local' for all variables inside the function
-6. Handle errors gracefully — check inputs, validate before acting
-7. Use ui_info, ui_ok, ui_err, ui_warn, ui_step, ui_dim for all user-facing output
-8. Keep it under 80 lines
+5. CRITICAL: Bash function names can ONLY contain letters, digits, and underscores.
+   NO HYPHENS in function names. "slash_my-cmd()" is INVALID bash — use "slash_my_cmd()".
+6. Use 'local' for all variables inside the function
+7. Handle errors gracefully — check inputs, validate before acting
+8. Use ui_info, ui_ok, ui_err, ui_warn, ui_step, ui_dim for all user-facing output
+9. Keep it under 80 lines
+10. This is a SINGLE-PURPOSE tool. Do NOT embed an entire project plan or workflow.
+    The command should do ONE thing well.
 
 AVAILABLE LODGE LIBRARIES (already loaded, call directly):
   # Output / UI

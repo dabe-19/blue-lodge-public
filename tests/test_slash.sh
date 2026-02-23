@@ -205,6 +205,24 @@ describe "slash_create (template mode)"
     _teardown_slash
   }
 
+  it "converts hyphens to underscores in name" && {
+    _setup_slash
+    _test_out=$(slash_create "my-cool-tool" "" 2>&1)
+    assert_contains "$_test_out" "Sanitized"
+    assert_file_exists "$SLASH_DIR/my_cool_tool.sh"
+    _teardown_slash
+  }
+
+  it "template with hyphens has valid bash function name" && {
+    _setup_slash
+    slash_create "bullet-hell-game" "" 2>/dev/null
+    _test_out=$(cat "$SLASH_DIR/bullet_hell_game.sh")
+    assert_contains "$_test_out" "slash_bullet_hell_game()"
+    bash -n "$SLASH_DIR/bullet_hell_game.sh"
+    assert_ok $?
+    _teardown_slash
+  }
+
 # ═══════════════════════════════════════════════════════════════
 # Run (execute) custom commands
 # ═══════════════════════════════════════════════════════════════
@@ -232,6 +250,14 @@ describe "slash_run"
     echo 'echo "no function here"' >> "$SLASH_DIR/broken.sh"
     slash_run "broken" "" "." 2>/dev/null
     assert_fail $?
+    _teardown_slash
+  }
+
+  it "resolves hyphenated name to underscored file" && {
+    _setup_slash
+    _create_test_command "my_cool_cmd"
+    _test_out=$(slash_run "my-cool-cmd" "fallback test" "." 2>/dev/null)
+    assert_contains "$_test_out" "my_cool_cmd ran with args: fallback test"
     _teardown_slash
   }
 
