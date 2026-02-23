@@ -168,6 +168,13 @@ describe "Missing API key handling"
     _teardown_social
   }
 
+  it "discord_send fails without bot token" && {
+    _setup_social
+    discord_send "235541481920659458" "test" 2>/dev/null
+    assert_fail $?
+    _teardown_social
+  }
+
 # ── social_post dispatcher ────────────────────────────────────
 describe "social_post (unified dispatcher)"
 

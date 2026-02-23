@@ -288,10 +288,22 @@ Open this URL in a browser, select your server, and authorize.
 | Command | Description |
 |---------|-------------|
 | `/social discord send <text>` | Send via webhook |
+| `/social discord send <channel_id> <text>` | Send to a specific channel via bot |
 | `/social discord read <channel_id>` | Read recent messages from a channel |
 
-> For `discord_send` (bot-mode channel posting), call the function directly
-> with a channel ID: `discord_send "CHANNEL_ID" "message"`
+> **Webhook vs Bot**: When you provide a numeric channel ID (17+ digits) as
+> the first argument to `send`, George uses the **Bot API** (`discord_send`)
+> to post directly to that channel. Without a channel ID, George uses the
+> **Webhook** (`discord_webhook`) to post to the webhook's pre-configured channel.
+>
+> Examples:
+> ```bash
+> # Webhook send (no channel ID — posts to webhook channel)
+> /social discord send Hello from George!
+>
+> # Bot send (with channel ID — posts to the specified channel)
+> /social discord send 235541481920659458 Hello from George!
+> ```
 
 ---
 

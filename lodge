@@ -924,12 +924,24 @@ _cmd_social() {
             local dargs
             dargs=$(echo "$rest" | sed 's/^[^ ]* *//')
             case "$sub" in
-                send|post) discord_webhook "$dargs" ;;
+                send|post)
+                    local _first_arg
+                    _first_arg=$(echo "$dargs" | awk '{print $1}')
+                    if [[ "$_first_arg" =~ ^[0-9]+$ ]] && [ ${#_first_arg} -ge 17 ]; then
+                        # Channel ID detected — use bot API
+                        local _chan_id="$_first_arg"
+                        local _chan_msg
+                        _chan_msg=$(echo "$dargs" | sed 's/^[^ ]* *//')
+                        discord_send "$_chan_id" "$_chan_msg"
+                    else
+                        # No channel ID — use webhook
+                        discord_webhook "$dargs"
+                    fi ;;
                 read)
                     local cid
                     cid=$(echo "$dargs" | awk '{print $1}')
                     discord_read "$cid" ;;
-                *)        ui_info "Usage: /social discord <send|read>" ;;
+                *)        ui_info "Usage: /social discord <send [channel_id] <text>|read <channel_id>>" ;;
             esac ;;
         telegram|tg)
             local sub

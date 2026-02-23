@@ -149,6 +149,16 @@ describe "commands_catalog"
     assert_contains "$_cat_out" "/web"
   }
 
+  it "catalog documents discord send with channel_id" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "/social discord send <channel_id>"
+  }
+
+  it "catalog documents discord read with channel_id" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "/social discord read <channel_id>"
+  }
+
 # ── commands_help_topic ────────────────────────────────────────
 describe "commands_help_topic"
 
