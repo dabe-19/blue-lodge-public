@@ -161,6 +161,37 @@ TOOL ACQUISITION — if you need a tool/library from GitHub:
 Public repos need NO authentication. Private repos need SSH keys (/git setup).
 CONSTRAINTS
     fi
+
+    # Always inject toolchain capabilities (not proot-specific)
+    cat << 'TOOLCHAIN'
+
+--- TOOLCHAIN CAPABILITIES ---
+You can install packages and dependencies inside sandboxes. USE THESE:
+
+Rust (sandboxes with Cargo.toml):
+  /sandbox run <name> cargo add <crate>       — add a dependency
+  /sandbox run <name> cargo build             — build the project
+  /sandbox run <name> cargo test              — run tests
+  /sandbox run <name> cargo check             — fast type-check (prefer this)
+  Toolchain auto-configured. Config: LODGE_RUST_TOOLCHAIN (current default: stable)
+
+Python (sandboxes with pyproject.toml or .venv):
+  If uv is available (preferred):
+    /sandbox run <name> uv add <package>      — add a dependency
+    /sandbox run <name> uv pip install <pkg>  — install a package
+    /sandbox run <name> uv run python main.py — run with deps resolved
+  If pip (fallback):
+    /sandbox run <name> pip install <package> — install into sandbox venv
+    /sandbox run <name> python main.py        — run (venv auto-activated)
+  Config: LODGE_PYTHON_PROVIDER (auto/uv/pip)
+
+System packages:
+  apt install <pkg>  — install system tools (gcc, libssl-dev, etc.)
+  You CAN install system packages when a build requires them.
+
+IMPORTANT: When a build fails due to a missing package, install it and retry.
+Do NOT ask the operator to install packages you can install yourself.
+TOOLCHAIN
 }
 
 # ── Build system prompt from soul + CLAUDE.md ──────────────────

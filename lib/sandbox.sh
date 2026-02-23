@@ -11,6 +11,8 @@ LODGE_SANDBOXES="${LODGE_SANDBOXES:-${LODGE_DIR:-.}/.sandboxes}"
 GEORGE_DIR="${GEORGE_DIR:-${LODGE_DIR:-.}/.george}"
 SANDBOX_JOURNAL="${SANDBOX_JOURNAL:-$GEORGE_DIR/sandbox_journal.jsonl}"
 LODGE_RUST_TOOLCHAIN="${LODGE_RUST_TOOLCHAIN:-stable}"  # Default Rust toolchain (stable, nightly, etc.)
+LODGE_PYTHON_PROVIDER="${LODGE_PYTHON_PROVIDER:-auto}"     # auto=prefer uv, fallback pip. Or: uv, pip
+
 # ── Detect available isolation ─────────────────────────────────
 sandbox_detect() {
     if command -v proot &>/dev/null; then
@@ -64,13 +66,48 @@ sandbox_check_prereqs() {
             fi
             ;;
         python)
-            if command -v uv &>/dev/null; then
-                : # uv handles everything — no further checks needed
-            elif command -v python3 &>/dev/null; then
-                : # fallback to python3 venv
+            local _py_provider="${LODGE_PYTHON_PROVIDER:-auto}"
+            if [ "$_py_provider" = "auto" ]; then
+                command -v uv &>/dev/null && _py_provider="uv" || _py_provider="pip"
+            fi
+            if [ "$_py_provider" = "uv" ]; then
+                if ! command -v uv &>/dev/null; then
+                    _SANDBOX_PREREQ_MSG="uv not found (LODGE_PYTHON_PROVIDER=uv). Install: curl -LsSf https://astral.sh/uv/install.sh | sh"
+                    return 1
+                fi
             else
-                _SANDBOX_PREREQ_MSG="Neither uv nor python3 found. Install: apt install python3  (or: pip install uv)"
-                return 1
+                # pip path — need python3 + pip + venv module
+                if ! command -v python3 &>/dev/null; then
+                    _SANDBOX_PREREQ_MSG="python3 not found. Install: apt install python3 python3-pip python3-venv"
+                    return 1
+                fi
+                # Check pip is available — warn but don't block if missing
+                # (python3 scripts can still run; pip is needed for deps)
+                if ! python3 -m pip --version &>/dev/null; then
+                    ui_warn "pip not found — attempting install"
+                    if command -v apt &>/dev/null; then
+                        ui_dim "  Auto-fixing: apt install -y python3-pip"
+                        apt install -y python3-pip 2>&1 || true
+                    fi
+                    if ! python3 -m pip --version &>/dev/null; then
+                        ui_warn "pip not available. Package installs will fail. Fix: apt install python3-pip"
+                    else
+                        ui_ok "pip installed"
+                    fi
+                fi
+                # Check venv module — warn but don't block
+                if ! python3 -c 'import venv' &>/dev/null; then
+                    ui_warn "python3-venv not found — attempting install"
+                    if command -v apt &>/dev/null; then
+                        ui_dim "  Auto-fixing: apt install -y python3-venv"
+                        apt install -y python3-venv 2>&1 || true
+                    fi
+                    if ! python3 -c 'import venv' &>/dev/null; then
+                        ui_warn "python3-venv not available. Sandbox venvs will fail. Fix: apt install python3-venv"
+                    else
+                        ui_ok "python3-venv installed"
+                    fi
+                fi
             fi
             ;;
         shell)
@@ -100,9 +137,10 @@ sandbox_toolchain_info() {
                 uv_v=$(uv --version 2>/dev/null | head -1)
                 info="uv: $uv_v"
             elif command -v python3 &>/dev/null; then
-                local py_v
+                local py_v pip_v
                 py_v=$(python3 --version 2>/dev/null)
-                info="$py_v"
+                pip_v=$(python3 -m pip --version 2>/dev/null | awk '{print $2}' || echo "not found")
+                info="$py_v (pip: $pip_v)"
             else
                 info="no python toolchain"
             fi
@@ -235,6 +273,15 @@ sandbox_exec() {
     local _extra_path="$_cargo_home/bin"
     local _path_with_cargo="$_extra_path:$PATH"
     
+    # ── Python venv activation — if sandbox has .venv, use it ──
+    # Prepends .venv/bin to PATH so python/pip inside the sandbox
+    # resolve to the venv rather than the system-wide install.
+    if [ -d "$sandbox_dir/.venv/bin" ]; then
+        _path_with_cargo="$sandbox_dir/.venv/bin:$_path_with_cargo"
+    fi
+    # If uv is installed, pass through its cache so it doesn't re-download
+    local _uv_cache="${UV_CACHE_DIR:-$_real_home/.cache/uv}"
+    
     local method
     method=$(sandbox_detect)
     
@@ -244,6 +291,7 @@ sandbox_exec() {
             proot -w "$sandbox_dir" -b /proc -b /dev \
                 env HOME="$sandbox_dir" TMPDIR="$sandbox_dir/tmp" \
                 RUSTUP_HOME="$_rustup_home" CARGO_HOME="$_cargo_home" \
+                UV_CACHE_DIR="$_uv_cache" \
                 PATH="$_path_with_cargo" \
                 /bin/bash -c "$cmd"
             ;;
@@ -252,6 +300,7 @@ sandbox_exec() {
             unshare --user --map-root-user bash -c \
                 "export HOME='$sandbox_dir' TMPDIR='$sandbox_dir/tmp' \
                  RUSTUP_HOME='$_rustup_home' CARGO_HOME='$_cargo_home' \
+                 UV_CACHE_DIR='$_uv_cache' \
                  PATH='$_path_with_cargo'; cd '$sandbox_dir' && $cmd"
             ;;
         directory)
@@ -261,6 +310,7 @@ sandbox_exec() {
                 export TMPDIR="$sandbox_dir/tmp"
                 export RUSTUP_HOME="$_rustup_home"
                 export CARGO_HOME="$_cargo_home"
+                export UV_CACHE_DIR="$_uv_cache"
                 export PATH="$_path_with_cargo"
                 cd "$sandbox_dir"
                 bash -c "$cmd"

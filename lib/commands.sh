@@ -191,6 +191,10 @@ RULES — read these EVERY time:
 Examples:
   /sandbox new my-api rust       ← create a Rust sandbox
   /sandbox run my-api cargo test  ← run cargo test inside it
+  /sandbox run my-api cargo add serde --features derive  ← add a Rust crate
+  /sandbox new my-app python     ← create a Python sandbox
+  /sandbox run my-app uv add requests  ← add a Python package (uv)
+  /sandbox run my-app pip install flask ← add a Python package (pip)
   /sandbox build my-api           ← build using detected toolchain
   /sandbox test my-api            ← test using detected toolchain
   /sandbox list                   ← see what sandboxes exist
