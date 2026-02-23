@@ -140,6 +140,29 @@ memory_get_section() {
     ' "$file" | sed '/^$/d'
 }
 
+# ── Environment constraints block (shared by plan + task mode) ─
+_memory_env_constraints() {
+    if declare -f _lodge_in_proot &>/dev/null && _lodge_in_proot; then
+        cat << 'CONSTRAINTS'
+
+--- ENVIRONMENT CONSTRAINTS ---
+You are running inside proot-distro (Ubuntu) on Android. HARD LIMITS:
+- You CANNOT nest containers: /container enter will FAIL (proot cannot run inside proot)
+- You CANNOT use Android NDK or cross-compile to .apk from this environment
+- You CANNOT use Docker, podman, or any container runtime
+- You CAN: write code, build natively (cargo, python, gcc), run tests, use sandboxes, clone repos
+- For Android builds: write the code, then tell the operator to build on a machine with Android SDK
+
+TOOL ACQUISITION — if you need a tool/library from GitHub:
+1. /web search "<tool> github" to find the repo
+2. /clone <owner/repo> to clone it into a sandbox
+3. /sandbox build <name> to build it
+4. /sandbox run <name> <cmd> to use it
+Public repos need NO authentication. Private repos need SSH keys (/git setup).
+CONSTRAINTS
+    fi
+}
+
 # ── Build system prompt from soul + CLAUDE.md ──────────────────
 # Mode controls prompt size:
 #   "ask"  — Lean prompt (~150 tokens): just personality + question context
@@ -209,6 +232,12 @@ ${recall_ctx:0:200}"
         # syntax so George knows exactly how to invoke each command and does
         # NOT invent non-existent commands (e.g. /search instead of /web search).
         prompt="${prompt}You are George. Plan concisely."
+
+        # Environment constraints — George must know what he CAN'T do
+        local _env_constraints
+        _env_constraints=$(_memory_env_constraints)
+        [ -n "$_env_constraints" ] && prompt="$prompt$_env_constraints"
+
         local project_mem
         project_mem=$(memory_read_project "$dir")
         if [ -n "$project_mem" ]; then
@@ -266,6 +295,11 @@ $files"
     local soul
     soul=$({ head -20 "$LODGE_DIR/soul.md"; echo ""; awk '/^## Practical Craft$/,0' "$LODGE_DIR/soul.md"; } 2>/dev/null)
     prompt="${prompt}${soul}"
+
+    # Environment constraints — George must know what he CAN'T do
+    local _env_constraints
+    _env_constraints=$(_memory_env_constraints)
+    [ -n "$_env_constraints" ] && prompt="$prompt$_env_constraints"
     
     local project_mem
     project_mem=$(memory_read_project "$dir")

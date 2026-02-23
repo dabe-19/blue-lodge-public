@@ -113,22 +113,44 @@ _agent_validate_plan() {
         local step="${steps[$i]}"
         local num=$((i + 1))
 
+        # ── Hallucinated commands: /foo where foo isn't registered ──
+        if [[ "$step" =~ ^/([a-zA-Z_][a-zA-Z0-9_-]*) ]]; then
+            local _step_cmd="${BASH_REMATCH[1]}"
+            local _cmd_found=0
+            # Check registry (if populated)
+            if declare -p CMD_REGISTRY &>/dev/null && [[ -n "${CMD_REGISTRY[$_step_cmd]+x}" ]]; then
+                _cmd_found=1
+            fi
+            # Check commands dir scripts
+            if [ -f "${LODGE_COMMANDS_DIR:-$LODGE_DIR/commands}/${_step_cmd}.sh" ]; then
+                _cmd_found=1
+            fi
+            # Built-in commands
+            if [[ "$_step_cmd" == "help" || "$_step_cmd" == "quit" || "$_step_cmd" == "exit" ]]; then
+                _cmd_found=1
+            fi
+            if [ "$_cmd_found" -eq 0 ]; then
+                _AGENT_PLAN_WARNINGS="${_AGENT_PLAN_WARNINGS}\n  Step $num: /$_step_cmd is not a registered command — will fail"
+                warn_count=$(( warn_count + 1 ))
+            fi
+        fi
+
         # Hallucinated URLs: placeholder domains like your-repo, your-link, example.com
         if [[ "$step" =~ (your-repo|your-link|your-url|example\.com|placeholder|your-name|your-user) ]]; then
             _AGENT_PLAN_WARNINGS="${_AGENT_PLAN_WARNINGS}\n  Step $num: Contains placeholder URL/name — will fail"
-            (( warn_count++ ))
+            warn_count=$(( warn_count + 1 ))
         fi
 
         # /download from a URL that was clearly invented (not from a prior step)
         if [[ "$step" =~ ^/download ]] && [[ "$step" =~ github\.com/[^/]+/[^/]+ ]] && [[ "$step" =~ (your-|example|placeholder) ]]; then
             _AGENT_PLAN_WARNINGS="${_AGENT_PLAN_WARNINGS}\n  Step $num: Downloading from hallucinated URL"
-            (( warn_count++ ))
+            warn_count=$(( warn_count + 1 ))
         fi
 
         # /save with a shell command as content (literal $(find ...) etc)
         if [[ "$step" =~ ^/save ]] && [[ "$step" =~ \$\( ]]; then
             _AGENT_PLAN_WARNINGS="${_AGENT_PLAN_WARNINGS}\n  Step $num: /save with \$(command) — will save literal text, not output"
-            (( warn_count++ ))
+            warn_count=$(( warn_count + 1 ))
         fi
 
         # /social post with unquoted multi-word text (first word gets parsed as platform)
@@ -136,7 +158,7 @@ _agent_validate_plan() {
             : # properly quoted — OK
         elif [[ "$step" =~ ^/social\ +post\ +[^\"] ]]; then
             _AGENT_PLAN_WARNINGS="${_AGENT_PLAN_WARNINGS}\n  Step $num: /social post needs quoted text (first word may be parsed as platform)"
-            (( warn_count++ ))
+            warn_count=$(( warn_count + 1 ))
         fi
     done
 

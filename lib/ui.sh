@@ -180,6 +180,13 @@ ui_code_block() {
 ui_confirm() {
     local msg="$1"
     local default="${2:-y}"
+
+    # Auto-confirm during plan execution — interactive prompts block agents
+    if [ "${_LODGE_IN_TASK:-0}" -eq 1 ]; then
+        ui_dim "  (auto-confirmed during task: $msg)"
+        return 0
+    fi
+
     local hint="[Y/n]"
     [ "$default" = "n" ] && hint="[y/N]"
     printf " %b%s%b %b%s%b " "$C_WHITE" "$msg" "$C_RESET" "$C_DIM" "$hint" "$C_RESET"

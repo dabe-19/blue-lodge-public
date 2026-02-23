@@ -8,7 +8,7 @@ source "$LODGE_DIR/lib/ui.sh"
 # ── Config ─────────────────────────────────────────────────────
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
 LODGE_MODEL="${LODGE_MODEL:-blue-lodge}"
-LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-1024}"    # Default max output tokens (task mode)
+LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-2048}"    # Default max output tokens (task mode)
 LLM_ASK_TOKENS="${LLM_ASK_TOKENS:-300}"     # Max output tokens for /ask (quick answers)
 LLM_TIMEOUT="${LLM_TIMEOUT:-300}"           # Safety net: 300s max per request (Ctrl+C also works)
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request

@@ -461,11 +461,17 @@ describe "Plan validation (_agent_validate_plan)"
     assert_ok $?
   }
 
+  it "detects hallucinated commands not in registry or scripts" && {
+    _agent_validate_plan \
+      "/run cargo build" 2>&1 | grep -q "not a registered command"
+    assert_ok $?
+  }
+
   it "produces no warnings for clean plan" && {
     out=$(_agent_validate_plan \
-      "/sandbox create mygame rust" \
-      "/sandbox build mygame" \
-      "/sandbox test mygame" 2>&1)
+      "/build release" \
+      "/test all" \
+      "/save output.txt hello" 2>&1)
     assert_eq "$out" ""
   }
 
@@ -478,7 +484,7 @@ describe "Plan validation (_agent_validate_plan)"
   it "clears _AGENT_PLAN_WARNINGS on clean plan" && {
     _AGENT_PLAN_WARNINGS="leftover"
     _agent_validate_plan \
-      "/sandbox create clean shell" >/dev/null 2>&1
+      "/build release" >/dev/null 2>&1
     assert_eq "$_AGENT_PLAN_WARNINGS" ""
   }
 
