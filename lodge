@@ -43,34 +43,39 @@ source "$LODGE_DIR/lib/vitals.sh"
 
 # ── Graceful Cancellation ─────────────────────────────────────
 # Tracks whether we're in task execution so Ctrl+C behaves smartly:
-# - During LLM generation → kill the request, unload model, return to prompt
+# - During LLM generation → kill curl + spinner, return to prompt
 # - During REPL idle → exit cleanly
 _LODGE_IN_TASK=0
 _LODGE_CANCELLED=0
+_LODGE_CANCEL_FILE="${TMPDIR:-/tmp}/.lodge-cancel-$$"
 
 _lodge_cleanup() {
-    # Stop spinner if running
+    # Write cancel file (visible to all subshells, unlike variables)
+    touch "$_LODGE_CANCEL_FILE" 2>/dev/null
+
+    # Stop spinner if running (fast — just kill + clear line)
     ui_spinner_stop 2>/dev/null
 
-    # Cancel active LLM request
-    llm_cancel 2>/dev/null
+    # Kill any curl processes talking to Ollama (works through subshells)
+    # This is the ONLY reliable way to kill curl inside nested $() captures.
+    # MUST be non-blocking — no waiting, no curl calls to Ollama.
+    pkill -f "curl.*api/generate" 2>/dev/null
+    pkill -f "curl.*api/chat" 2>/dev/null
 
     if [ "$_LODGE_IN_TASK" -eq 1 ]; then
         _LODGE_CANCELLED=1
         echo ""
         ui_warn "Cancelled by user"
-
-        # Unload model to free RAM — safe because persistence
-        # lives in CLAUDE.md and journal.md, not in model state
-        llm_unload 2>/dev/null
-
-        # Don't exit — return to REPL
+        # Do NOT call llm_unload here — it sends HTTP requests to a busy
+        # Ollama, blocking up to 15s and creating an inescapable Ctrl+C loop.
+        # Model will be unloaded on session exit or by keep_alive timeout.
         return 0
     else
         # Not in a task: clean exit
         echo ""
-        ui_info "Interrupted. Unloading model..."
+        ui_info "Interrupted. Exiting..."
         llm_unload 2>/dev/null
+        rm -f "$_LODGE_CANCEL_FILE"
         if command -v termux-wake-unlock &>/dev/null; then
             termux-wake-unlock 2>/dev/null
         fi
@@ -1525,6 +1530,12 @@ _repl() {
         
         # Prompt
         local input
+        
+        # Clear any cancellation state from previous iteration
+        _LODGE_CANCELLED=0
+        _LODGE_IN_TASK=0
+        rm -f "$_LODGE_CANCEL_FILE" 2>/dev/null
+        
         ui_prompt
         IFS= read -r -e input
         
@@ -1557,12 +1568,13 @@ _repl() {
         fi
         
         # Natural language → agent
-        # Short inputs = ask, long inputs = task
+        # Questions → lightweight ask path (lean prompt, fast on phone)
+        # Tasks → full plan→execute path (larger prompt, slower)
         local word_count
         word_count=$(echo "$input" | wc -w)
         
-        if [ "$word_count" -le 6 ] && [[ "$input" == *"?"* ]]; then
-            # Looks like a question
+        if [[ "$input" == *"?" ]] || [[ "$input" == *"?)" ]] || { [ "$word_count" -le 3 ] && ! [[ "$input" == *"/"* ]]; }; then
+            # Ends with ? → question. ≤3 words without / → greeting/short question.
             agent_ask "$input" "$PWD"
         else
             # Looks like a task

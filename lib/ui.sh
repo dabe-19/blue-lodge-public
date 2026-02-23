@@ -103,15 +103,20 @@ ui_progress() {
 
 # ── Spinner ────────────────────────────────────────────────────
 _SPINNER_PID=""
+# Detect best output target: /dev/tty if available, else stderr
+_SPINNER_TTY="/dev/tty"
+[ -w /dev/tty ] 2>/dev/null || _SPINNER_TTY="/dev/stderr"
+
 ui_spinner_start() {
     local msg="${1:-Thinking}"
+    local _tty="$_SPINNER_TTY"
     (
         local frames=('◐' '◓' '◑' '◒')
         local i=0
         while true; do
-            printf "\r %b%s %b%s...%b " "$C_PURPLE" "${frames[$i]}" "$C_GRAY" "$msg" "$C_RESET" > /dev/tty 2>/dev/null
+            printf "\r %b%s %b%s...%b " "$C_PURPLE" "${frames[$i]}" "$C_GRAY" "$msg" "$C_RESET" > "$_tty" 2>/dev/null
             i=$(( (i + 1) % 4 ))
-            sleep 0.2
+            sleep 0.3
         done
     ) &
     _SPINNER_PID=$!
@@ -123,7 +128,7 @@ ui_spinner_stop() {
         kill "$_SPINNER_PID" 2>/dev/null
         wait "$_SPINNER_PID" 2>/dev/null
         _SPINNER_PID=""
-        printf "\r%*s\r" 60 "" > /dev/tty 2>/dev/null  # clear line on tty
+        printf "\r%*s\r" 60 "" > "$_SPINNER_TTY" 2>/dev/null  # clear line
     fi
 }
 

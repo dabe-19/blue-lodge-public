@@ -178,9 +178,13 @@ agent_run() {
     # Signal that we're in a task (for cancellation handling)
     _LODGE_IN_TASK=1
     _LODGE_CANCELLED=0
+    local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
     
     ui_section "Task"
     ui_info "$task"
+
+    # Check for cancellation (file-based — visible in subshells unlike variables)
+    if [ -f "$_cancel_file" ]; then _LODGE_IN_TASK=0; return 1; fi
 
     # Pre-flight vitals check — abort if critically low on resources
     if declare -f vitals_preflight &>/dev/null; then
@@ -194,7 +198,7 @@ agent_run() {
     # Phase 1: Plan (user sees it streamed in real-time via /dev/tty)
     local plan
     plan=$(agent_plan "$task" "$workdir")
-    if [ $? -ne 0 ] || [ "${_LODGE_CANCELLED:-0}" -eq 1 ]; then
+    if [ $? -ne 0 ] || [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
         _LODGE_IN_TASK=0
         return 1
     fi
@@ -234,8 +238,8 @@ agent_run() {
     # Phase 2: Execute
     local completed=0
     for i in "${!steps[@]}"; do
-        # Check for cancellation between steps
-        if [ "${_LODGE_CANCELLED:-0}" -eq 1 ]; then
+        # Check for cancellation between steps (file + variable)
+        if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
             ui_warn "Task cancelled at step $((i + 1))/$total"
             break
         fi
@@ -248,7 +252,7 @@ agent_run() {
             completed=$((completed + 1))
         else
             # Check if failure was due to cancellation
-            if [ "${_LODGE_CANCELLED:-0}" -eq 1 ]; then
+            if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
                 ui_warn "Step $step_num cancelled"
                 break
             fi

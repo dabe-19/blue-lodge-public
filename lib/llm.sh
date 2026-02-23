@@ -158,7 +158,7 @@ llm_generate() {
 
     _LLM_ACTIVE=1
     local tmpfile
-    tmpfile=$(mktemp /tmp/lodge-llm-XXXXXX)
+    tmpfile=$(mktemp "${TMPDIR:-/tmp}/lodge-llm-XXXXXX")
     # Ensure tmpfile is cleaned up even on unexpected exit
     trap 'rm -f "$tmpfile" 2>/dev/null' RETURN
 
@@ -223,25 +223,39 @@ llm_stream() {
             '{model: $model, prompt: $prompt, stream: true, keep_alive: $keep_alive, options: {num_predict: $num_predict}}')
     fi
 
-    # Build timeout args
-    local timeout_args=()
-    if [ "$LLM_TIMEOUT" -gt 0 ] 2>/dev/null; then
-        timeout_args=(--max-time "$LLM_TIMEOUT")
+    # Build timeout args — belt-and-suspenders: both `timeout` command and curl's --max-time
+    local curl_timeout="${LLM_TIMEOUT:-300}"
+    local timeout_cmd=""
+    if [ "$curl_timeout" -gt 0 ] 2>/dev/null; then
+        # Use external `timeout` for hard kill (catches cases --max-time misses in streaming)
+        if command -v timeout &>/dev/null; then
+            timeout_cmd="timeout $curl_timeout"
+        fi
     fi
+
+    # Temp dir: use $TMPDIR (Termux) or /tmp
+    local _tmpdir="${TMPDIR:-/tmp}"
+    local _cancel_file="$_tmpdir/.lodge-cancel-$$"
 
     # Stream tokens to stdout AND /dev/tty (so user sees output even inside $())
     # Start a spinner that shows during prefill (killed on first token)
     _LLM_ACTIVE=1
     local _llm_spinner_pid=""
-    local _llm_ft_file="/tmp/.lodge-ft-$$"
+    local _llm_ft_file="$_tmpdir/.lodge-ft-$$"
     rm -f "$_llm_ft_file"
     ui_spinner_start "Thinking"
     _llm_spinner_pid="$_SPINNER_PID"
 
-    curl -sf "${timeout_args[@]}" \
+    # Determine TTY for visible output (even inside $() captures)
+    local _tty="/dev/tty"
+    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+
+    $timeout_cmd curl -sf --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
         -d "$payload" 2>/dev/null | while IFS= read -r line; do
+        # Check for cancellation
+        [ -f "$_cancel_file" ] && break
         local token
         token=$(echo "$line" | jq -r '.response // empty' 2>/dev/null)
         if [ -n "$token" ]; then
@@ -249,17 +263,17 @@ llm_stream() {
             if [ ! -f "$_llm_ft_file" ]; then
                 touch "$_llm_ft_file"
                 kill "$_llm_spinner_pid" 2>/dev/null
-                printf "\r%*s\r" 60 "" > /dev/tty 2>/dev/null
+                printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
             fi
             printf "%s" "$token"
-            printf "%s" "$token" > /dev/tty 2>/dev/null
+            printf "%s" "$token" > "$_tty" 2>/dev/null
         fi
         # Check if done
         local done_flag
         done_flag=$(echo "$line" | jq -r '.done // empty' 2>/dev/null)
         if [ "$done_flag" = "true" ]; then
             echo ""  # final newline for captured output
-            echo "" > /dev/tty 2>/dev/null
+            echo "" > "$_tty" 2>/dev/null
             break
         fi
     done

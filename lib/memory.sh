@@ -204,13 +204,10 @@ ${recall_ctx:0:200}"
     fi
 
     if [ "$mode" = "plan" ]; then
-        # ── Plan mode: ~1,500 tokens ─────────────────────────────
-        # Planning only needs identity + project state + file list.
-        # No journal, no recall, truncated soul.
-        local soul
-        soul=$(cat "$LODGE_DIR/soul.md" 2>/dev/null | head -40)
-        prompt="${prompt}${soul}"
-
+        # ── Plan mode: lean — the Modelfile SYSTEM already has full personality
+        # and slash command awareness (~573 tokens). Only add project state +
+        # compact tool list. This keeps plan prefill under ~800 tokens.
+        prompt="${prompt}You are George. Plan concisely."
         local project_mem
         project_mem=$(memory_read_project "$dir")
         if [ -n "$project_mem" ]; then
@@ -220,12 +217,13 @@ ${recall_ctx:0:200}"
 $project_mem"
         fi
 
-        # Command catalog — George must know his tools to plan with them
-        if declare -f commands_catalog &>/dev/null; then
-            prompt="$prompt
+        # Compact command list — just names, not full descriptions
+        prompt="$prompt
 
-$(commands_catalog)"
-        fi
+--- COMMANDS ---
+/plan /ask /init /recall /social /pgp /sandbox /container
+/api /secret /web /journal /wallet /gsuite /phone /vitals
+/backup /slash (create custom commands)"
 
         # Workspace files (needed for planning)
         local files
