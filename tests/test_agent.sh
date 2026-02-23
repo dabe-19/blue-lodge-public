@@ -358,4 +358,154 @@ describe "Plan prompt uses configurable step limit"
     assert_ok $?
   }
 
+# ── Cascade detection ─────────────────────────────────────────
+describe "Cascade detection (_agent_detect_cascade)"
+
+  it "is defined" && {
+    declare -f _agent_detect_cascade &>/dev/null
+    assert_ok $?
+  }
+
+  it "detects cascade when 50%+ remaining steps share resource" && {
+    _agent_detect_cascade \
+      "/sandbox build mygame" \
+      "/sandbox run mygame echo test" \
+      "/sandbox test mygame" \
+      "/save notes.md"
+    assert_ok $?
+  }
+
+  it "does not cascade when steps are independent" && {
+    _agent_detect_cascade \
+      "/sandbox build mygame" \
+      "/recall query hello" \
+      "/save notes.md" \
+      "/email send test@x.com Hi Hello"
+    assert_fail $?
+  }
+
+  it "returns 1 if failed step has no resource name" && {
+    _agent_detect_cascade \
+      "Think about the problem" \
+      "/sandbox build game"
+    assert_fail $?
+  }
+
+  it "returns 1 with no remaining steps" && {
+    _agent_detect_cascade "/sandbox build game"
+    assert_fail $?
+  }
+
+  it "detects cascade at exactly 50% threshold" && {
+    _agent_detect_cascade \
+      "/sandbox build app" \
+      "/sandbox run app make" \
+      "/recall query something"
+    assert_ok $?
+  }
+
+  it "does not cascade below 50%" && {
+    _agent_detect_cascade \
+      "/sandbox build app" \
+      "/sandbox run app make" \
+      "/recall query a" \
+      "/save file.txt" \
+      "/email send x@y.com a b"
+    assert_fail $?
+  }
+
+# ── Plan validation ────────────────────────────────────────────
+describe "Plan validation (_agent_validate_plan)"
+
+  it "is defined" && {
+    declare -f _agent_validate_plan &>/dev/null
+    assert_ok $?
+  }
+
+  it "detects placeholder URLs (your-repo)" && {
+    _agent_validate_plan \
+      "/download https://github.com/your-repo/game" 2>&1 | grep -q "issue"
+    assert_ok $?
+  }
+
+  it "detects placeholder (example.com)" && {
+    _agent_validate_plan \
+      "/download https://example.com/thing" 2>&1 | grep -q "issue"
+    assert_ok $?
+  }
+
+  it "detects /save with \$(command)" && {
+    _agent_validate_plan \
+      '/save listing.txt $(find . -name "*.rs")' 2>&1 | grep -q "issue"
+    assert_ok $?
+  }
+
+  it "detects /social post with unquoted text" && {
+    _agent_validate_plan \
+      "/social post Just shipped a new game" 2>&1 | grep -q "issue"
+    assert_ok $?
+  }
+
+  it "accepts properly quoted /social post" && {
+    out=$(_agent_validate_plan \
+      '/social post "Just shipped a new game"' 2>&1)
+    # Should produce no warnings
+    echo "$out" | grep -qv "issue"
+    assert_ok $?
+  }
+
+  it "returns 0 even with warnings (advisory only)" && {
+    _agent_validate_plan \
+      "/download https://github.com/your-repo/x" \
+      '/save f.txt $(echo hi)' 2>/dev/null
+    assert_ok $?
+  }
+
+  it "produces no warnings for clean plan" && {
+    out=$(_agent_validate_plan \
+      "/sandbox create mygame rust" \
+      "/sandbox build mygame" \
+      "/sandbox test mygame" 2>&1)
+    assert_eq "$out" ""
+  }
+
+  it "sets _AGENT_PLAN_WARNINGS" && {
+    _agent_validate_plan \
+      "/download https://github.com/your-repo/x" >/dev/null 2>&1
+    assert_not_empty "$_AGENT_PLAN_WARNINGS"
+  }
+
+  it "clears _AGENT_PLAN_WARNINGS on clean plan" && {
+    _AGENT_PLAN_WARNINGS="leftover"
+    _agent_validate_plan \
+      "/sandbox create clean shell" >/dev/null 2>&1
+    assert_eq "$_AGENT_PLAN_WARNINGS" ""
+  }
+
+# ── Error propagation ─────────────────────────────────────────
+describe "Error propagation in agent_execute_step"
+
+  it "captures stderr detail when slash command fails" && {
+    local body
+    body=$(declare -f agent_execute_step)
+    # Should reference _cmd_stderr_file for capturing error detail
+    echo "$body" | grep -q "_cmd_stderr_file\|_cmd_detail\|_SANDBOX_PREREQ_MSG"
+    assert_ok $?
+  }
+
+  it "includes prereq message in _AGENT_LAST_ERROR" && {
+    local body
+    body=$(declare -f agent_execute_step)
+    echo "$body" | grep -q "_SANDBOX_PREREQ_MSG"
+    assert_ok $?
+  }
+
+  it "captures specific error not just generic 'Slash command failed'" && {
+    local body
+    body=$(declare -f agent_execute_step)
+    # Should append detail to err_msg (the " — " separator)
+    echo "$body" | grep -q '_cmd_detail'
+    assert_ok $?
+  }
+
 test_end

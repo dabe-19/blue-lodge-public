@@ -275,6 +275,14 @@ backup_git_push() {
     local remote
     remote=$(git remote get-url origin 2>/dev/null)
 
+    # ── GitHub push guard: require email + SSH key ─────────
+    if [ -n "$remote" ] && declare -f github_push_guard &>/dev/null; then
+        if ! github_push_guard "$remote"; then
+            cd - > /dev/null
+            return 1
+        fi
+    fi
+
     if [ -z "$remote" ]; then
         ui_section "GitHub Backup Setup"
         ui_info "Let's set up a GitHub repo to store George's backups."

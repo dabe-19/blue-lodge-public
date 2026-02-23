@@ -323,4 +323,92 @@ describe "sandbox_list (enriched)"
     _teardown_sandbox
   }
 
+# ── sandbox_check_prereqs ─────────────────────────────────────
+describe "sandbox_check_prereqs"
+
+  it "is defined" && {
+    declare -f sandbox_check_prereqs &>/dev/null
+    assert_ok $?
+  }
+
+  it "passes for shell type (always available)" && {
+    sandbox_check_prereqs "shell"
+    assert_ok $?
+  }
+
+  it "passes for shell by default (no arg)" && {
+    sandbox_check_prereqs
+    assert_ok $?
+  }
+
+  it "sets _SANDBOX_PREREQ_MSG to empty on success" && {
+    sandbox_check_prereqs "shell"
+    assert_eq "$_SANDBOX_PREREQ_MSG" ""
+  }
+
+  it "checks rust toolchain (rustup must exist)" && {
+    if command -v rustup &>/dev/null; then
+      sandbox_check_prereqs "rust"
+      assert_ok $?
+    else
+      sandbox_check_prereqs "rust" 2>/dev/null
+      assert_fail $?
+      assert_not_empty "$_SANDBOX_PREREQ_MSG"
+    fi
+  }
+
+  it "checks python toolchain" && {
+    if command -v uv &>/dev/null || command -v python3 &>/dev/null; then
+      sandbox_check_prereqs "python"
+      assert_ok $?
+    else
+      sandbox_check_prereqs "python" 2>/dev/null
+      assert_fail $?
+      assert_not_empty "$_SANDBOX_PREREQ_MSG"
+    fi
+  }
+
+# ── sandbox_toolchain_info ─────────────────────────────────────
+describe "sandbox_toolchain_info"
+
+  it "is defined" && {
+    declare -f sandbox_toolchain_info &>/dev/null
+    assert_ok $?
+  }
+
+  it "returns bash version for shell type" && {
+    info=$(sandbox_toolchain_info "shell")
+    assert_contains "$info" "bash"
+  }
+
+  it "returns version info for python if available" && {
+    if command -v uv &>/dev/null || command -v python3 &>/dev/null; then
+      info=$(sandbox_toolchain_info "python")
+      assert_not_empty "$info"
+    else
+      info=$(sandbox_toolchain_info "python")
+      assert_contains "$info" "no python"
+    fi
+  }
+
+  it "returns version info for rust if available" && {
+    if command -v cargo &>/dev/null; then
+      info=$(sandbox_toolchain_info "rust")
+      assert_contains "$info" "cargo"
+    else
+      info=$(sandbox_toolchain_info "rust")
+      assert_contains "$info" "not found"
+    fi
+  }
+
+# ── sandbox_create prereq gate ─────────────────────────────────
+describe "sandbox_create (prereq gate)"
+
+  it "creates shell sandbox without prereq failure" && {
+    _setup_sandbox
+    sandbox_create "prereq_shell" "shell" >/dev/null 2>&1
+    assert_dir_exists "$LODGE_SANDBOXES/prereq_shell"
+    _teardown_sandbox
+  }
+
 test_end

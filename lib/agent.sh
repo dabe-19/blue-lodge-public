@@ -65,6 +65,90 @@ _agent_is_critical_error() {
 # Track the last error from agent_execute_step for critical error detection
 _AGENT_LAST_ERROR=""
 
+# ── Cascading failure detection ────────────────────────────────
+# Given a failed step and the remaining steps, determines if the
+# remaining steps depend on the same resource and should be skipped.
+# Returns 0 if remaining steps share the resource (cascade likely).
+_agent_detect_cascade() {
+    local failed_step="$1"
+    shift
+    local -a remaining=("$@")
+
+    # Extract the sandbox/resource name from the failed step
+    # Matches: /sandbox build NAME, /sandbox run NAME ..., etc.
+    local resource=""
+    if [[ "$failed_step" =~ ^/sandbox\ +[a-z]+\ +([^ ]+) ]]; then
+        resource="${BASH_REMATCH[1]}"
+    fi
+
+    [ -z "$resource" ] && return 1
+
+    # Count how many remaining steps reference the same resource
+    local dependent=0
+    for step in "${remaining[@]}"; do
+        if [[ "$step" == *"$resource"* ]]; then
+            (( dependent++ ))
+        fi
+    done
+
+    # If majority of remaining steps reference the same resource, cascade
+    if [ "$dependent" -gt 0 ] && [ "${#remaining[@]}" -gt 0 ]; then
+        local pct=$(( dependent * 100 / ${#remaining[@]} ))
+        [ "$pct" -ge 50 ] && return 0
+    fi
+
+    return 1
+}
+
+# ── Plan validation ────────────────────────────────────────────
+# Scans a list of steps for common hallucination patterns and
+# warns about them before execution begins. Returns 0 always
+# (advisory only), but sets _AGENT_PLAN_WARNINGS with messages.
+_agent_validate_plan() {
+    local -a steps=("$@")
+    _AGENT_PLAN_WARNINGS=""
+    local warn_count=0
+
+    for i in "${!steps[@]}"; do
+        local step="${steps[$i]}"
+        local num=$((i + 1))
+
+        # Hallucinated URLs: placeholder domains like your-repo, your-link, example.com
+        if [[ "$step" =~ (your-repo|your-link|your-url|example\.com|placeholder|your-name|your-user) ]]; then
+            _AGENT_PLAN_WARNINGS="${_AGENT_PLAN_WARNINGS}\n  Step $num: Contains placeholder URL/name — will fail"
+            (( warn_count++ ))
+        fi
+
+        # /download from a URL that was clearly invented (not from a prior step)
+        if [[ "$step" =~ ^/download ]] && [[ "$step" =~ github\.com/[^/]+/[^/]+ ]] && [[ "$step" =~ (your-|example|placeholder) ]]; then
+            _AGENT_PLAN_WARNINGS="${_AGENT_PLAN_WARNINGS}\n  Step $num: Downloading from hallucinated URL"
+            (( warn_count++ ))
+        fi
+
+        # /save with a shell command as content (literal $(find ...) etc)
+        if [[ "$step" =~ ^/save ]] && [[ "$step" =~ \$\( ]]; then
+            _AGENT_PLAN_WARNINGS="${_AGENT_PLAN_WARNINGS}\n  Step $num: /save with \$(command) — will save literal text, not output"
+            (( warn_count++ ))
+        fi
+
+        # /social post with unquoted multi-word text (first word gets parsed as platform)
+        if [[ "$step" =~ ^/social\ +post\ +\" ]]; then
+            : # properly quoted — OK
+        elif [[ "$step" =~ ^/social\ +post\ +[^\"] ]]; then
+            _AGENT_PLAN_WARNINGS="${_AGENT_PLAN_WARNINGS}\n  Step $num: /social post needs quoted text (first word may be parsed as platform)"
+            (( warn_count++ ))
+        fi
+    done
+
+    if [ "$warn_count" -gt 0 ]; then
+        echo ""
+        ui_warn "Plan validation found $warn_count issue(s):$(printf '%b' "$_AGENT_PLAN_WARNINGS")"
+        echo ""
+    fi
+
+    return 0
+}
+
 # ── Parse plan text into steps array ───────────────────────────
 # Shared parser used by agent_run and _agent_run_subtask.
 # Writes step strings to stdout, one per line.
@@ -287,14 +371,23 @@ agent_execute_step() {
     # If the step is already a slash command, dispatch it directly
     # instead of asking the LLM (which wraps it in a broken ```bash block)
     if [[ "$step_desc" =~ ^/ ]] && declare -f commands_dispatch &>/dev/null; then
-        if commands_dispatch "$step_desc" "$workdir"; then
+        local _cmd_stderr_file="${TMPDIR:-/tmp}/.lodge-cmd-stderr-$$"
+        if commands_dispatch "$step_desc" "$workdir" 2> >(tee "$_cmd_stderr_file" >&2); then
+            rm -f "$_cmd_stderr_file"
             memory_append_section "Completed Steps" "Step $step_num: $step_desc" "$workdir"
             return 0
         else
+            # Capture the specific error output so George knows WHY it failed
+            local _cmd_detail=""
+            [ -f "$_cmd_stderr_file" ] && _cmd_detail=$(tail -5 "$_cmd_stderr_file" 2>/dev/null)
+            rm -f "$_cmd_stderr_file"
+            # Also include prereq messages from sandbox if available
+            [ -n "${_SANDBOX_PREREQ_MSG:-}" ] && _cmd_detail="${_cmd_detail:+$_cmd_detail\n}Prereq: $_SANDBOX_PREREQ_MSG"
             local err_msg="Slash command failed: $step_desc"
+            [ -n "$_cmd_detail" ] && err_msg="$err_msg — $_cmd_detail"
             _AGENT_LAST_ERROR="$err_msg"
             ui_err "$err_msg"
-            memory_append_section "Errors" "Step $step_num failed: $step_desc" "$workdir"
+            memory_append_section "Errors" "Step $step_num failed: $err_msg" "$workdir"
             journal_write_failure "$step_desc" "$err_msg" "$task_context"
             return 1
         fi
@@ -399,10 +492,14 @@ agent_run() {
     
     ui_info "Executing $total steps..."
     echo ""
+
+    # Pre-execution plan validation — warn about hallucinated URLs, bad patterns
+    _agent_validate_plan "${steps[@]}"
     
     # Phase 2: Execute
     local completed=0
     local failed_steps=""
+    local _cascade_halt=0
     for i in "${!steps[@]}"; do
         # Check for cancellation between steps (file + variable)
         if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
@@ -432,6 +529,37 @@ agent_run() {
                 ui_warn "Step $step_num cancelled"
                 break
             fi
+
+            # ── Cascading failure detection ────────────────────
+            # If the failed step and most remaining steps share a resource,
+            # halt the chain rather than accumulating N identical failures.
+            local -a _remaining_steps=()
+            for _ri in $(seq $((i + 1)) $((total - 1))); do
+                _remaining_steps+=("${steps[$_ri]}")
+            done
+            if [ ${#_remaining_steps[@]} -gt 0 ] && _agent_detect_cascade "${steps[$i]}" "${_remaining_steps[@]}"; then
+                echo ""
+                ui_err "Cascading failure detected — ${#_remaining_steps[@]} remaining steps depend on the same resource"
+                ui_info "Halting to avoid ${#_remaining_steps[@]} more identical failures."
+                echo ""
+                ui_info "George needs help with step $step_num:"
+                printf "  %b%s%b\n" "$C_CYAN" "$_AGENT_LAST_ERROR" "$C_RESET"
+                printf "  %bFix the issue and retry, or press Enter to abort: %b" "$C_BOLD" "$C_RESET"
+                local guidance
+                read -r guidance < /dev/tty
+                if [ -n "$guidance" ]; then
+                    memory_append_section "User Guidance" "Step $step_num: $guidance" "$workdir"
+                    # User gave guidance — retry this step once
+                    ui_info "Retrying step $step_num with guidance..."
+                    if agent_execute_step "$step_num" "${steps[$i]}" "$workdir" "$task"; then
+                        completed=$((completed + 1))
+                        continue
+                    fi
+                fi
+                ui_warn "Stopped at step $step_num (cascade halt)"
+                break
+            fi
+
             # Critical errors (missing API key, package, auth, slash failures)
             # prompt the user for guidance with no timeout
             if _agent_is_critical_error "$_AGENT_LAST_ERROR"; then

@@ -40,6 +40,7 @@ source "$LODGE_DIR/lib/pgp.sh"
 source "$LODGE_DIR/lib/phone.sh"
 source "$LODGE_DIR/lib/slash.sh"
 source "$LODGE_DIR/lib/vitals.sh"
+source "$LODGE_DIR/lib/email.sh"
 
 # ── Graceful Cancellation ─────────────────────────────────────
 # Tracks whether we're in task execution so Ctrl+C behaves smartly:
@@ -751,6 +752,60 @@ _cmd_web() {
             ui_dim "  download <url>    — Download a file"
             ui_dim "  ping <url>        — Check if URL is reachable"
             ui_dim "  cache clear       — Clear web cache"
+            ;;
+    esac
+}
+_cmd_email() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+
+    case "$action" in
+        setup|configure)
+            email_setup "$rest" ;;
+        status|info)
+            email_status
+            ssh_status ;;
+        send)
+            local to subject body
+            to=$(echo "$rest" | awk '{print $1}')
+            subject=$(echo "$rest" | awk '{print $2}')
+            body=$(echo "$rest" | sed 's/^[^ ]* *[^ ]* *//')
+            if [ -z "$to" ] || [ -z "$subject" ]; then
+                ui_info "Usage: /email send <to> <subject> <body>"
+                return 1
+            fi
+            email_send "$to" "$subject" "$body" ;;
+        inbox|check)
+            email_inbox "$rest" ;;
+        address)
+            local addr
+            addr=$(email_get_address)
+            if [ -n "$addr" ]; then
+                echo "$addr"
+            else
+                ui_info "No email configured. Run: /email setup"
+            fi ;;
+        ssh-keygen|sshkeygen|keygen)
+            ssh_generate_key ;;
+        ssh-test|sshtest|ssh-status)
+            ssh_status ;;
+        github-setup|ghsetup|github)
+            github_setup ;;
+        github-test|ghtest)
+            ssh_test_github ;;
+        *)
+            ui_info "Usage: /email <setup|status|send|inbox|address|ssh-keygen|github-setup>"
+            ui_dim "  setup [provider]      — Configure email (protonmail/zoho/tuta/disposable)"
+            ui_dim "  status                — Show email + SSH configuration"
+            ui_dim "  send <to> <subj> <body> — Send an email"
+            ui_dim "  inbox [count]         — Check inbox"
+            ui_dim "  address               — Show configured email address"
+            ui_dim "  ssh-keygen            — Generate SSH key for George"
+            ui_dim "  github-setup          — Full GitHub setup (email + SSH + git identity)"
+            ui_dim "  github-test           — Test SSH connection to GitHub"
             ;;
     esac
 }
@@ -1615,6 +1670,7 @@ _register_commands() {
     commands_register "pgp"      "PGP signing & message verification" "_cmd_pgp"
     commands_register "slash"    "George's custom commands (Magnum Opus)" "_cmd_slash"
     commands_register "vitals"   "System vitals (disk, RAM, battery, WiFi)" "_cmd_vitals"
+    commands_register "email"    "Email (ProtonMail/Zoho/Tuta/disposable)" "_cmd_email"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"
     commands_register "files"    "List workspace files" "_cmd_files"

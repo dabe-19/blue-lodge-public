@@ -192,6 +192,11 @@ describe "Command registration"
     assert_ok $?
   }
 
+  it "registers email command" && {
+    commands_is_command "/email"
+    assert_ok $?
+  }
+
 # ── REPL heuristic ────────────────────────────────────────────
 describe "REPL question vs task heuristic"
 
@@ -249,6 +254,11 @@ describe "Command handler functions"
 
   it "_cmd_read is defined" && {
     declare -f _cmd_read &>/dev/null
+    assert_ok $?
+  }
+
+  it "_cmd_email is defined" && {
+    declare -f _cmd_email &>/dev/null
     assert_ok $?
   }
 

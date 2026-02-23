@@ -22,6 +22,92 @@ sandbox_detect() {
     fi
 }
 
+# ── Prerequisite checks per sandbox type ───────────────────────
+# Verifies tools are installed AND configured before creating or
+# building. Returns 0 on success, 1+ on missing prereqs.
+# Sets _SANDBOX_PREREQ_MSG with a human-readable diagnosis.
+sandbox_check_prereqs() {
+    local type="${1:-shell}"
+    _SANDBOX_PREREQ_MSG=""
+    local errors=0
+
+    case "$type" in
+        rust)
+            if ! command -v rustup &>/dev/null; then
+                _SANDBOX_PREREQ_MSG="rustup not found. Install: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+                return 1
+            fi
+            # Check that a default toolchain is set (the exact failure from the log)
+            local default_tc
+            default_tc=$(rustup default 2>&1)
+            if [[ "$default_tc" == *"no default"* ]] || [[ "$default_tc" == *"is not installed"* ]] || [[ "$default_tc" == *"could not"* ]]; then
+                _SANDBOX_PREREQ_MSG="No default Rust toolchain set. Fix: rustup default stable"
+                ui_err "$_SANDBOX_PREREQ_MSG"
+                ui_dim "  Attempting auto-fix: rustup default stable"
+                if rustup default stable 2>&1; then
+                    ui_ok "Rust toolchain set to stable"
+                    _SANDBOX_PREREQ_MSG=""
+                    return 0
+                fi
+                return 1
+            fi
+            if ! command -v cargo &>/dev/null; then
+                _SANDBOX_PREREQ_MSG="cargo not found despite rustup being installed. Run: rustup default stable"
+                return 1
+            fi
+            ;;
+        python)
+            if command -v uv &>/dev/null; then
+                : # uv handles everything — no further checks needed
+            elif command -v python3 &>/dev/null; then
+                : # fallback to python3 venv
+            else
+                _SANDBOX_PREREQ_MSG="Neither uv nor python3 found. Install: apt install python3  (or: pip install uv)"
+                return 1
+            fi
+            ;;
+        shell)
+            : # bash is always available
+            ;;
+    esac
+
+    return $errors
+}
+
+# ── Toolchain version summary (for LLM context) ───────────────
+# Returns a compact one-liner with detected tool versions.
+sandbox_toolchain_info() {
+    local type="${1:-}"
+    local info=""
+
+    case "$type" in
+        rust)
+            local cargo_v rustup_v
+            cargo_v=$(cargo --version 2>/dev/null | head -1 || echo "not found")
+            rustup_v=$(rustup default 2>/dev/null | awk '{print $1}' || echo "none")
+            info="cargo: $cargo_v (toolchain: $rustup_v)"
+            ;;
+        python)
+            if command -v uv &>/dev/null; then
+                local uv_v
+                uv_v=$(uv --version 2>/dev/null | head -1)
+                info="uv: $uv_v"
+            elif command -v python3 &>/dev/null; then
+                local py_v
+                py_v=$(python3 --version 2>/dev/null)
+                info="$py_v"
+            else
+                info="no python toolchain"
+            fi
+            ;;
+        shell)
+            info="bash ${BASH_VERSION:-unknown}"
+            ;;
+    esac
+
+    [ -n "$info" ] && echo "$info"
+}
+
 # ── Create a new sandbox ──────────────────────────────────────
 # Usage: sandbox_create "my_project" "rust|python|shell"
 sandbox_create() {
@@ -32,6 +118,12 @@ sandbox_create() {
     if [ -d "$sandbox_dir" ]; then
         ui_warn "Sandbox '$name' already exists at $sandbox_dir"
         return 0
+    fi
+
+    # ── Prerequisite gate — abort before creating dirs ─────────
+    if ! sandbox_check_prereqs "$type"; then
+        ui_err "Cannot create $type sandbox: $_SANDBOX_PREREQ_MSG"
+        return 1
     fi
     
     mkdir -p "$sandbox_dir"/{src,tmp}

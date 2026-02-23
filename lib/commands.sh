@@ -215,6 +215,14 @@ Examples:
 /phone calls           — Recent call log
 /phone telephony       — Carrier, SIM, data state
 /phone wifi            — WiFi connection info
+/email setup [provider] — Configure email (protonmail/zoho/tuta/disposable)
+/email send <to> <subj> <body> — Send an email
+/email inbox [count]   — Check inbox
+/email status          — Show email + SSH configuration
+/email address         — Show George's email address
+/email ssh-keygen      — Generate SSH key for George
+/email github-setup    — Full GitHub setup (email + SSH + git identity)
+/email github-test     — Test SSH connection to GitHub
 /backup local          — Quick file backup of identity & memory
 /backup restore [name] — Restore from a backup
 /backup list           — Show all backups
