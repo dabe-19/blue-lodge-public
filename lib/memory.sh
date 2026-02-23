@@ -149,13 +149,18 @@ memory_build_system_prompt() {
     local dir="${1:-.}"
     local task_hint="${2:-}"  # optional: current task/question for recall augmentation
     local mode="${3:-task}"   # "ask" | "plan" | "task"
-    local prompt=""
+
+    # ── System clock: ~10 tokens, always injected ────────────────
+    local now
+    now=$(date '+%A, %B %d, %Y %H:%M %Z')
+    local prompt="[Current time: $now]
+"
 
     if [ "$mode" = "ask" ]; then
         # ── Lean mode for /ask: ~150 tokens ──────────────────────
         # The Modelfile SYSTEM prompt already has George's core personality.
         # Only add the essentials the model doesn't already know.
-        prompt="You are George — a local coding agent running on mobile (Galaxy Fold 7, 12GB RAM).
+        prompt="${prompt}You are George — a local coding agent running on mobile (Galaxy Fold 7, 12GB RAM).
 Answer concisely in 1-5 sentences. Be helpful and — when appropriate — witty."
 
         # Add minimal project context if CLAUDE.md exists
@@ -189,7 +194,7 @@ ${recall_ctx:0:200}"
         # No journal, no recall, truncated soul.
         local soul
         soul=$(cat "$LODGE_DIR/soul.md" 2>/dev/null | head -40)
-        prompt="$soul"
+        prompt="${prompt}${soul}"
 
         local project_mem
         project_mem=$(memory_read_project "$dir")
@@ -220,7 +225,7 @@ $files"
     # ── Full mode for tasks: budget-conscious ───────────────────
     local soul
     soul=$(memory_read_soul)
-    prompt="$soul"
+    prompt="${prompt}${soul}"
     
     local project_mem
     project_mem=$(memory_read_project "$dir")

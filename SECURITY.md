@@ -63,7 +63,7 @@ Blue Lodge executes LLM-generated code on a user's device. The primary threat ve
 | Issue | Location | Fix |
 |-------|----------|-----|
 | No tempfile cleanup on crash | `lib/llm.sh` | Added `trap 'rm -f "$tmpfile"' RETURN` |
-| 120s timeout causing failures | `lib/llm.sh` | Default changed to `0` (no timeout); user cancels via Ctrl+C |
+| 120s timeout causing failures | `lib/llm.sh` | Default changed to `180` (safety net); user cancels via Ctrl+C |
 | No model memory management | `lib/llm.sh` | Added `llm_unload()`, `llm_cancel()`, `llm_is_loaded()` |
 
 ### Low / Accepted Risks

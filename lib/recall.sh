@@ -4,10 +4,14 @@
 # Uses SQLite FTS5 for BM25-ranked full-text search.
 #
 # Indexed sources:
-#   readme   — README.md (George's capabilities & architecture)
-#   soul     — soul.md (personality & ethics)
-#   journal  — journal.md (living memory)
-#   claude   — CLAUDE.md (current project memory)
+#   readme     — README.md (George's capabilities & architecture)
+#   soul       — soul.md (personality & ethics)
+#   crypto     — docs/CRYPTO_WALLETS.md (cryptocurrency guide)
+#   tuning     — docs/TUNING.md (token & performance tuning)
+#   sandboxes  — docs/SANDBOXES.md (sandbox & isolation guide)
+#   vault      — docs/SECRETS_VAULT.md (encrypted secrets vault)
+#   journal    — journal.md (living memory)
+#   claude     — CLAUDE.md (current project memory)
 #
 # Overhead: ~100-200KB on disk, <1ms per query, 0 RAM.
 # No network, no embedding model, no Python required.
@@ -182,6 +186,8 @@ recall_needs_reindex() {
     local sources=("readme:$LODGE_DIR/README.md" "soul:$LODGE_DIR/soul.md")
     [ -f "$LODGE_DIR/docs/CRYPTO_WALLETS.md" ] && sources+=("crypto:$LODGE_DIR/docs/CRYPTO_WALLETS.md")
     [ -f "$LODGE_DIR/docs/TUNING.md" ] && sources+=("tuning:$LODGE_DIR/docs/TUNING.md")
+    [ -f "$LODGE_DIR/docs/SANDBOXES.md" ] && sources+=("sandboxes:$LODGE_DIR/docs/SANDBOXES.md")
+    [ -f "$LODGE_DIR/docs/SECRETS_VAULT.md" ] && sources+=("vault:$LODGE_DIR/docs/SECRETS_VAULT.md")
     [ -f "$LODGE_DIR/journal.md" ] && sources+=("journal:$LODGE_DIR/journal.md")
     [ -f "./CLAUDE.md" ] && sources+=("claude:$PWD/CLAUDE.md")
 
@@ -211,6 +217,8 @@ _recall_save_mtimes() {
     local sources=("readme:$LODGE_DIR/README.md" "soul:$LODGE_DIR/soul.md")
     [ -f "$LODGE_DIR/docs/CRYPTO_WALLETS.md" ] && sources+=("crypto:$LODGE_DIR/docs/CRYPTO_WALLETS.md")
     [ -f "$LODGE_DIR/docs/TUNING.md" ] && sources+=("tuning:$LODGE_DIR/docs/TUNING.md")
+    [ -f "$LODGE_DIR/docs/SANDBOXES.md" ] && sources+=("sandboxes:$LODGE_DIR/docs/SANDBOXES.md")
+    [ -f "$LODGE_DIR/docs/SECRETS_VAULT.md" ] && sources+=("vault:$LODGE_DIR/docs/SECRETS_VAULT.md")
     [ -f "$LODGE_DIR/journal.md" ] && sources+=("journal:$LODGE_DIR/journal.md")
     [ -f "./CLAUDE.md" ] && sources+=("claude:$PWD/CLAUDE.md")
 
@@ -250,6 +258,18 @@ recall_reindex() {
     # Token tuning guide
     if [ -f "$LODGE_DIR/docs/TUNING.md" ]; then
         recall_index_file "tuning" "$LODGE_DIR/docs/TUNING.md"
+        (( total++ ))
+    fi
+
+    # Sandboxes guide
+    if [ -f "$LODGE_DIR/docs/SANDBOXES.md" ]; then
+        recall_index_file "sandboxes" "$LODGE_DIR/docs/SANDBOXES.md"
+        (( total++ ))
+    fi
+
+    # Secrets vault guide
+    if [ -f "$LODGE_DIR/docs/SECRETS_VAULT.md" ]; then
+        recall_index_file "vault" "$LODGE_DIR/docs/SECRETS_VAULT.md"
         (( total++ ))
     fi
 

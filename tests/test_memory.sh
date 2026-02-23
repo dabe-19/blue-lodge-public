@@ -262,4 +262,23 @@ describe "memory_build_system_prompt plan mode"
     _teardown_mem
   }
 
+describe "memory_build_system_prompt system clock"
+
+  it "all modes include current time" && {
+    _setup_mem
+    for mode in ask plan task; do
+      prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "test" "$mode")
+      assert_contains "$prompt" "[Current time:"
+    done
+    _teardown_mem
+  }
+
+  it "timestamp includes day of week and year" && {
+    _setup_mem
+    prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "ask")
+    # Should contain the current year
+    assert_contains "$prompt" "$(date +%Y)"
+    _teardown_mem
+  }
+
 test_end
