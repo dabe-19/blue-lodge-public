@@ -87,14 +87,14 @@ journal_write_failure() {
     local error_msg="${2:-unknown error}"
     local task_context="${3:-}"
     
-    local content="FAILED: $step_desc
-Error: $error_msg"
+    local content
     if [ -n "$task_context" ]; then
-        content="${content}
-Task: $task_context"
+        printf -v content "FAILED: %s\nError: %s\nTask: %s\nAction: Review this failure on next similar task." \
+            "$step_desc" "$error_msg" "$task_context"
+    else
+        printf -v content "FAILED: %s\nError: %s\nAction: Review this failure on next similar task." \
+            "$step_desc" "$error_msg"
     fi
-    content="${content}
-Action: Review this failure on next similar task."
     
     journal_write "task_failure" "$content"
 }

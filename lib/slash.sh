@@ -216,7 +216,7 @@ slash_create() {
     # Hyphens are converted to underscores because bash function names
     # cannot contain hyphens (slash_my-cmd() is invalid bash syntax).
     local safe_name
-    safe_name=$(echo "$name" | tr -cd 'a-zA-Z0-9_-' | tr '-' '_')
+    safe_name=$(echo "$name" | sed 's/[^a-zA-Z0-9_-]//g; s/-/_/g')
     if [ "$safe_name" != "$name" ]; then
         ui_warn "Sanitized name: '$name' → '$safe_name'"
         name="$safe_name"
