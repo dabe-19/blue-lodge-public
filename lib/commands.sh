@@ -175,6 +175,9 @@ RULES — read these EVERY time:
 /download <url|path> [dest] — Download a URL or copy a local file
 /social post <text>  — Post to all configured social platforms
 /social <platform> <action> — X/Mastodon/Bluesky/Discord/Telegram
+/social discord send <text> — Send to Discord via webhook
+/social discord send <channel_id> <text> — Send to a specific Discord channel via bot
+/social discord read <channel_id> — Read recent messages from a Discord channel
 /pgp sign <msg>      — PGP-sign a message for authenticity
 /pgp signpost <msg>  — Sign and post to social media
 /pgp export          — Export your public key
