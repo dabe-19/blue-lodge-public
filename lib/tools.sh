@@ -22,6 +22,16 @@ tools_extract_bash() {
     normalized=$(echo "$response" | sed 's/^[[:space:]]*//' | sed 's/^`\{2,4\}bash/```bash/' | sed 's/^`\{2,4\}$/```/')
     # Extract between ```bash and ``` (or EOF if block is unterminated)
     echo "$normalized" | awk '
+        /^```bash.+/ {
+            # Inline block: ```bash<cmd>``` or ```bash<cmd> (no newline)
+            line = $0
+            sub(/^```bash/, "", line)
+            sub(/```$/, "", line)
+            if (line != "") print line
+            # If closing ``` was on same line, done; otherwise start capture
+            if ($0 ~ /```$/) next
+            capture=1; next
+        }
         /^```bash/ { capture=1; next }
         /^```$/    { if (capture) capture=0; next }
         capture    { print }

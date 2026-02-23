@@ -321,4 +321,39 @@ echo "hello from bash"
     _teardown_tools
   }
 
+# ── Malformed inline bash blocks ──────────────────────────────
+describe "Malformed inline bash blocks"
+
+  it "extracts command from inline bash block (no newlines)" && {
+    _resp='```bash/recall adam smith lessons```'
+    result=$(tools_extract_bash "$_resp")
+    assert_contains "$result" "/recall adam smith lessons"
+  }
+
+  it "extracts command from inline bash block with content after fence" && {
+    _resp='```bashecho "hello"```'
+    result=$(tools_extract_bash "$_resp")
+    assert_contains "$result" 'echo "hello"'
+  }
+
+  it "still extracts normal multi-line bash blocks" && {
+    _resp='```bash
+echo "hello"
+ls -la
+```'
+    result=$(tools_extract_bash "$_resp")
+    assert_contains "$result" 'echo "hello"'
+    assert_contains "$result" "ls -la"
+  }
+
+  it "routes inline bash slash commands via process_response" && {
+    _setup_tools
+    export LODGE_PERMISSION=2
+    _resp='```bash/recall adam smith lessons```'
+    result=$(tools_process_response "$_resp" "$TMPDIR_TOOLS" 2>&1)
+    # Should not contain "Command failed" — slash commands are dispatched, not run as bash
+    assert_not_contains "$result" "Command failed"
+    _teardown_tools
+  }
+
 test_end
