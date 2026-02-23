@@ -6,6 +6,19 @@
 # Installs George, configures Ollama model, sets up shell.
 set -euo pipefail
 
+# ── Error trap: print what failed so the user can troubleshoot ──
+_install_error() {
+    local exit_code=$?
+    local line_no=$1
+    echo ""
+    printf " \033[38;5;203m✗ Install failed at line %s (exit code %s)\033[0m\n" "$line_no" "$exit_code"
+    printf " \033[2mCommand: %s\033[0m\n" "$BASH_COMMAND"
+    printf " \033[2mLODGE_DIR=%s\033[0m\n" "${LODGE_DIR:-unset}"
+    printf " \033[2mRe-run with: bash -x install.sh  (for full trace)\033[0m\n"
+    echo ""
+}
+trap '_install_error $LINENO' ERR
+
 # Detect where this script lives — install relative to clone location
 # Always use the script's actual directory (ignore stale LODGE_DIR from prior installs)
 _SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -40,6 +53,49 @@ IS_TERMUX=0
 if [ -n "${TERMUX_VERSION:-}" ] || [ -d "/data/data/com.termux" ]; then
     IS_TERMUX=1
 fi
+
+# ── Write shell config IMMEDIATELY after cleanup ─────────────
+# This MUST happen before any fallible step (Ollama, model, etc.)
+# so the config is never left in a stripped-but-not-rewritten state.
+_lodge_shell_block() {
+    local termux_line
+    if [ "$IS_TERMUX" -eq 1 ] && [ -z "${PROOT_TMP_DIR:-}" ] && [ ! -d /host-rootfs ]; then
+        termux_line='export LODGE_TERMUX_API=1        # Termux-API enabled (native Termux)'
+    else
+        termux_line='# export LODGE_TERMUX_API=1      # Uncomment in native Termux for phone features'
+    fi
+    cat << SHELLEOF
+
+# ── Blue Lodge ─────────────────────────────────────────────
+export LODGE_DIR="$LODGE_DIR"
+export LODGE_MODEL="blue-lodge"
+export PATH="\$HOME/.local/bin:\$PATH"
+$termux_line
+
+# Aliases
+alias lodge="\$LODGE_DIR/lodge"
+alias lg="lodge"                    # Quick alias
+alias lgi="lodge /init"             # Scaffold project
+alias lgf="lodge /fix"              # Fix errors
+alias lgt="lodge /test"             # Run tests
+alias lgb="lodge /build"            # Build project
+alias lgc="lodge /commit"           # Smart commit
+alias lgp="lodge /push"             # Push to GitHub
+alias lgs="lodge /status"           # Agent status
+alias lgm="lodge /memory"           # Show memory
+alias lgx="lodge /sandbox"          # Sandbox management
+alias lgcl="lodge /clone"           # Clone repo
+alias lghelp="lodge /help"          # Show help
+SHELLEOF
+}
+
+_rc_written=0
+for _rc_file in "$HOME/.zshrc" "$HOME/.bashrc"; do
+    if [ -f "$_rc_file" ]; then
+        _lodge_shell_block >> "$_rc_file"
+        _rc_written=1
+    fi
+done
 
 echo ""
 printf " ${BOLD}⌂ George Installer${RESET}\n"
@@ -191,50 +247,10 @@ ln -sf "$LODGE_DIR/lodge" "$HOME/.local/bin/lodge"
 ok "Symlinked: lodge → ~/.local/bin/lodge"
 
 # ── 9. Shell config ─────────────────────────────────────────
-# Old config was already removed at top of script.
-# Write fresh config to all existing RC files so both bash and zsh work.
-_lodge_shell_block() {
-    # Detect if running in native Termux (not proot) — safe to enable Termux-API
-    local termux_line
-    if [ "$IS_TERMUX" -eq 1 ] && [ -z "${PROOT_TMP_DIR:-}" ] && [ ! -d /host-rootfs ]; then
-        termux_line='export LODGE_TERMUX_API=1        # Termux-API enabled (native Termux)'
-    else
-        termux_line='# export LODGE_TERMUX_API=1      # Uncomment in native Termux for phone features'
-    fi
-    cat << SHELLEOF
-
-# ── Blue Lodge ─────────────────────────────────────────────
-export LODGE_DIR="$LODGE_DIR"
-export LODGE_MODEL="blue-lodge"
-export PATH="\$HOME/.local/bin:\$PATH"
-$termux_line
-
-# Aliases
-alias lodge="\$LODGE_DIR/lodge"
-alias lg="lodge"                    # Quick alias
-alias lgi="lodge /init"             # Scaffold project
-alias lgf="lodge /fix"              # Fix errors
-alias lgt="lodge /test"             # Run tests
-alias lgb="lodge /build"            # Build project
-alias lgc="lodge /commit"           # Smart commit
-alias lgp="lodge /push"             # Push to GitHub
-alias lgs="lodge /status"           # Agent status
-alias lgm="lodge /memory"           # Show memory
-alias lgx="lodge /sandbox"          # Sandbox management
-alias lgcl="lodge /clone"           # Clone repo
-alias lghelp="lodge /help"          # Show help
-SHELLEOF
-}
-
-_rc_written=0
-for _rc_file in "$HOME/.zshrc" "$HOME/.bashrc"; do
-    if [ -f "$_rc_file" ]; then
-        _lodge_shell_block >> "$_rc_file"
-        ok "Added Blue Lodge config to $_rc_file"
-        _rc_written=1
-    fi
-done
-if [ "$_rc_written" -eq 0 ]; then
+# Already written at top of script (before any fallible step).
+if [ "$_rc_written" -eq 1 ]; then
+    ok "Shell config written (exports + aliases)"
+else
     warn "No .zshrc or .bashrc found. Add manually:"
     echo "  export LODGE_DIR=\"$LODGE_DIR\""
     echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
@@ -285,6 +301,7 @@ fi
 # ── Done ─────────────────────────────────────────────────────
 echo ""
 printf " ${GREEN}${BOLD}⌂ Blue Lodge installed!${RESET}\n"
+printf " ${DIM}LODGE_DIR=$LODGE_DIR${RESET}\n"
 echo ""
 printf " ${DIM}Reload your shell, then:${RESET}\n"
 echo ""
@@ -295,5 +312,13 @@ printf "   ${BLUE}lodge /help${RESET}              # All commands\n"
 echo ""
 printf " ${DIM}Or use short aliases: lg, lgi, lgf, lgt, lgb, lgc${RESET}\n"
 echo ""
-printf " ${DIM}Reload shell: source $SHELL_RC${RESET}\n"
+# Pick the best RC file to suggest for source command
+if [ -f "$HOME/.zshrc" ]; then
+    _suggest_rc="$HOME/.zshrc"
+elif [ -f "$HOME/.bashrc" ]; then
+    _suggest_rc="$HOME/.bashrc"
+else
+    _suggest_rc="~/.bashrc"
+fi
+printf " ${YELLOW}→ Run now:  source $_suggest_rc${RESET}\n"
 echo ""
