@@ -155,4 +155,21 @@ describe "Inline plan normalization"
     assert_eq "$_count" "1"
   }
 
+# ── Direct slash command dispatch ─────────────────────────────
+describe "Direct slash command dispatch in execute_step"
+
+  it "agent_execute_step detects slash commands (starts with /)" && {
+    local body
+    body=$(declare -f agent_execute_step)
+    echo "$body" | grep -q 'commands_dispatch'
+    assert_ok $?
+  }
+
+  it "agent_execute_step prompt mentions slash commands" && {
+    local body
+    body=$(declare -f agent_execute_step)
+    echo "$body" | grep -q 'Slash commands'
+    assert_ok $?
+  }
+
 test_end

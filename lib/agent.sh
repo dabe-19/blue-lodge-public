@@ -133,6 +133,22 @@ agent_execute_step() {
     local step_desc="$2"
     local workdir="${3:-.}"
     
+    ui_section "Step $step_num"
+    ui_step "$step_desc"
+    
+    # If the step is already a slash command, dispatch it directly
+    # instead of asking the LLM (which wraps it in a broken ```bash block)
+    if [[ "$step_desc" =~ ^/ ]] && declare -f commands_dispatch &>/dev/null; then
+        if commands_dispatch "$step_desc" "$workdir"; then
+            memory_append_section "Completed Steps" "Step $step_num: $step_desc" "$workdir"
+            return 0
+        else
+            ui_err "Slash command failed: $step_desc"
+            memory_append_section "Errors" "Step $step_num failed: $step_desc" "$workdir"
+            return 1
+        fi
+    fi
+    
     local system_prompt
     system_prompt=$(memory_build_system_prompt "$workdir")
     
@@ -140,12 +156,10 @@ agent_execute_step() {
 
 Execute this step. Output rules:
 - Shell commands: wrap in \`\`\`bash block
+- Slash commands: output on their own line starting with / (do NOT wrap in a bash block)
 - File contents: wrap in a code block with '# filepath: ./path' on line 1
 - Keep output minimal
 - One action per response"
-    
-    ui_section "Step $step_num"
-    ui_step "$step_desc"
     
     # Stream the step response so user sees it being generated
     echo ""
