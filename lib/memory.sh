@@ -220,10 +220,12 @@ $project_mem"
         # Compact command list — just names, not full descriptions
         prompt="$prompt
 
---- COMMANDS ---
-/plan /ask /init /recall /social /pgp /sandbox /container
+--- COMMANDS (use ONLY these — do NOT invent commands) ---
+/plan /ask /init /recall /save /write /download /build /test /fix
+/commit /push /clone /social /pgp /sandbox /container
 /api /secret /web /journal /wallet /gsuite /phone /vitals
-/backup /slash (create custom commands)"
+/backup /slash (create custom commands) /files /read /status /memory /help
+If unsure: /recall <cmd> to check syntax. If missing: /slash create <name> <desc>"
 
         # Workspace files (needed for planning)
         local files
