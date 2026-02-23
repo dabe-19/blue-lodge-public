@@ -262,6 +262,42 @@ describe "memory_build_system_prompt plan mode"
     _teardown_mem
   }
 
+# ── Plan prompt command glossary ──────────────────────────────
+describe "memory_build_system_prompt plan mode command glossary"
+
+  it "plan prompt warns not to invent commands" && {
+    _setup_mem
+    prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
+    assert_contains "$prompt" "NOT invent commands"
+    _teardown_mem
+  }
+
+  it "plan prompt falls back to compact list when commands_catalog is unavailable" && {
+    _setup_mem
+    if declare -f commands_catalog &>/dev/null; then
+      test_mock commands_catalog 'return 1'
+      prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
+      test_unmock commands_catalog
+    else
+      prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
+    fi
+    assert_contains "$prompt" "COMMANDS"
+    _teardown_mem
+  }
+
+  it "plan prompt includes full command syntax when commands_catalog is loaded" && {
+    _setup_mem
+    source "$LODGE_DIR/lib/commands.sh"
+    if ! declare -f commands_catalog &>/dev/null; then
+      skip "commands_catalog failed to load from commands.sh"
+    else
+      prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
+      assert_contains "$prompt" "/web search <query>"
+      assert_contains "$prompt" "/save <file>"
+    fi
+    _teardown_mem
+  }
+
 describe "memory_build_system_prompt system clock"
 
   it "all modes include current time" && {
