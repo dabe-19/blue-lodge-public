@@ -10,6 +10,18 @@ set -euo pipefail
 # Always use the script's actual directory (ignore stale LODGE_DIR from prior installs)
 _SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LODGE_DIR="$_SCRIPT_DIR"
+
+# ── Early cleanup: remove stale Blue Lodge config from ALL shell RC files ────
+# This MUST run before anything else — a stale LODGE_DIR in .bashrc/.zshrc
+# from a prior install to a different directory will break git, SSH, and aliases.
+# We clean both files unconditionally so moving the install dir always works.
+for _rc_file in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    if [ -f "$_rc_file" ] && grep -q '# ── Blue Lodge' "$_rc_file" 2>/dev/null; then
+        sed -i '/# ── Blue Lodge/,/alias lghelp/d' "$_rc_file" 2>/dev/null
+        sed -i '/^$/N;/^\n$/d' "$_rc_file" 2>/dev/null
+    fi
+done
+
 BLUE='\033[38;5;33m'
 GREEN='\033[38;5;114m'
 YELLOW='\033[38;5;221m'
@@ -179,36 +191,23 @@ ln -sf "$LODGE_DIR/lodge" "$HOME/.local/bin/lodge"
 ok "Symlinked: lodge → ~/.local/bin/lodge"
 
 # ── 9. Shell config ─────────────────────────────────────────
-SHELL_RC=""
-if [ -f "$HOME/.zshrc" ]; then
-    SHELL_RC="$HOME/.zshrc"
-elif [ -f "$HOME/.bashrc" ]; then
-    SHELL_RC="$HOME/.bashrc"
-fi
-
-if [ -n "$SHELL_RC" ]; then
-    # Remove any old Blue Lodge config block (from prior installs to a different dir)
-    if grep -q '# ── Blue Lodge' "$SHELL_RC" 2>/dev/null; then
-        sed -i '/# ── Blue Lodge/,/alias lghelp/d' "$SHELL_RC" 2>/dev/null
-        # Clean up blank lines left behind
-        sed -i '/^$/N;/^\n$/d' "$SHELL_RC" 2>/dev/null
-    fi
-
-    # Write fresh config
+# Old config was already removed at top of script.
+# Write fresh config to all existing RC files so both bash and zsh work.
+_lodge_shell_block() {
     # Detect if running in native Termux (not proot) — safe to enable Termux-API
-    local_termux_api_line=""
+    local termux_line
     if [ "$IS_TERMUX" -eq 1 ] && [ -z "${PROOT_TMP_DIR:-}" ] && [ ! -d /host-rootfs ]; then
-        local_termux_api_line='export LODGE_TERMUX_API=1        # Termux-API enabled (native Termux)'
+        termux_line='export LODGE_TERMUX_API=1        # Termux-API enabled (native Termux)'
     else
-        local_termux_api_line='# export LODGE_TERMUX_API=1      # Uncomment in native Termux for phone features'
+        termux_line='# export LODGE_TERMUX_API=1      # Uncomment in native Termux for phone features'
     fi
-    cat >> "$SHELL_RC" << SHELLEOF
+    cat << SHELLEOF
 
 # ── Blue Lodge ─────────────────────────────────────────────
 export LODGE_DIR="$LODGE_DIR"
 export LODGE_MODEL="blue-lodge"
 export PATH="\$HOME/.local/bin:\$PATH"
-$local_termux_api_line
+$termux_line
 
 # Aliases
 alias lodge="\$LODGE_DIR/lodge"
@@ -225,8 +224,17 @@ alias lgx="lodge /sandbox"          # Sandbox management
 alias lgcl="lodge /clone"           # Clone repo
 alias lghelp="lodge /help"          # Show help
 SHELLEOF
-    ok "Added Blue Lodge config to $SHELL_RC"
-else
+}
+
+_rc_written=0
+for _rc_file in "$HOME/.zshrc" "$HOME/.bashrc"; do
+    if [ -f "$_rc_file" ]; then
+        _lodge_shell_block >> "$_rc_file"
+        ok "Added Blue Lodge config to $_rc_file"
+        _rc_written=1
+    fi
+done
+if [ "$_rc_written" -eq 0 ]; then
     warn "No .zshrc or .bashrc found. Add manually:"
     echo "  export LODGE_DIR=\"$LODGE_DIR\""
     echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
