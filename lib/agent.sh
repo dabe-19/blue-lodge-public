@@ -11,11 +11,12 @@ source "$LODGE_DIR/lib/tools.sh"
 source "$LODGE_DIR/lib/journal.sh"
 
 # ── Config ─────────────────────────────────────────────────────
-AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-12}"
+AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-20}"
 AGENT_STEP_DELAY="${AGENT_STEP_DELAY:-1}"
 AGENT_MAX_CLARIFY="${AGENT_MAX_CLARIFY:-2}"
 AGENT_INTERACTIVE_PLANNING="${AGENT_INTERACTIVE_PLANNING:-0}"
-AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-3}"
+AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-5}"
+AGENT_MAX_RETRIES="${AGENT_MAX_RETRIES:-1}"  # Auto-retry failed steps before asking human
 
 # ── Normalize inline plans ─────────────────────────────────────
 # LLMs sometimes output all steps on one line:
@@ -56,14 +57,107 @@ _agent_is_critical_error() {
     [[ "$lower" == *"permission denied"* ]] && return 0
     [[ "$lower" == *"access denied"* ]] && return 0
 
-    # Slash command errors
-    [[ "$lower" == *"slash command failed"* ]] && return 0
-
     return 1
 }
 
 # Track the last error from agent_execute_step for critical error detection
 _AGENT_LAST_ERROR=""
+
+# ── Auto-fix: infer sandbox type from step context ─────────────
+# Given a sandbox name and surrounding plan context, infers whether
+# it should be rust, python, or shell.
+_agent_infer_sandbox_type() {
+    local name="$1"
+    local context="$2"  # full plan text or step list
+    local lower
+    lower=$(echo "$context $name" | tr '[:upper:]' '[:lower:]')
+
+    # Strong signals from the commands being run
+    if [[ "$lower" == *"cargo "* ]] || [[ "$lower" == *"rustc"* ]] || [[ "$lower" == *".rs"* ]] || [[ "$lower" == *"Cargo.toml"* ]]; then
+        echo "rust"; return
+    fi
+    if [[ "$lower" == *"pip "* ]] || [[ "$lower" == *"uv "* ]] || [[ "$lower" == *"python"* ]] || [[ "$lower" == *".py"* ]] || [[ "$lower" == *"pytest"* ]]; then
+        echo "python"; return
+    fi
+    # Name-based heuristics
+    if [[ "$name" == *rust* ]] || [[ "$name" == *cargo* ]] || [[ "$name" == *crate* ]]; then
+        echo "rust"; return
+    fi
+    if [[ "$name" == *python* ]] || [[ "$name" == *py* ]] || [[ "$name" == *flask* ]] || [[ "$name" == *django* ]]; then
+        echo "python"; return
+    fi
+    echo "shell"
+}
+
+# ── Auto-fix: create a missing sandbox ─────────────────────────
+# If a /sandbox command fails because the sandbox doesn't exist,
+# infer the type and create it automatically.
+_agent_auto_create_sandbox() {
+    local step="$1"
+    local plan_context="$2"
+
+    # Extract sandbox name from the step
+    local sandbox_name=""
+    if [[ "$step" =~ ^/sandbox\ +[a-z]+\ +([^ ]+) ]]; then
+        sandbox_name="${BASH_REMATCH[1]}"
+    fi
+    [ -z "$sandbox_name" ] && return 1
+
+    # Only act if the sandbox doesn't exist
+    local sandbox_dir="${LODGE_SANDBOXES:-${LODGE_DIR:-.}/.sandboxes}/$sandbox_name"
+    [ -d "$sandbox_dir" ] && return 1
+
+    # Infer the type
+    local inferred_type
+    inferred_type=$(_agent_infer_sandbox_type "$sandbox_name" "$plan_context")
+
+    ui_warn "Sandbox '$sandbox_name' not found — auto-creating as $inferred_type"
+    if declare -f sandbox_create &>/dev/null; then
+        sandbox_create "$sandbox_name" "$inferred_type"
+        return $?
+    fi
+    return 1
+}
+
+# ── Auto-fix: install missing package ──────────────────────────
+# Detects common "not found" / "not installed" errors and attempts
+# to install the missing tool via apt.
+_agent_auto_install_package() {
+    local error_msg="$1"
+    local lower
+    lower=$(echo "$error_msg" | tr '[:upper:]' '[:lower:]')
+
+    local pkg=""
+    # "command not found: <cmd>"
+    if [[ "$lower" =~ command\ not\ found.*:?\ *([a-z0-9_-]+) ]]; then
+        pkg="${BASH_REMATCH[1]}"
+    # "<cmd>: not found" or "<cmd> not found"
+    elif [[ "$lower" =~ ([a-z0-9_-]+):\ not\ found ]]; then
+        pkg="${BASH_REMATCH[1]}"
+    # "No such file or directory" for common tools
+    elif [[ "$lower" =~ /usr/bin/([a-z0-9_-]+).*no\ such ]]; then
+        pkg="${BASH_REMATCH[1]}"
+    fi
+
+    [ -z "$pkg" ] && return 1
+    # Skip if it's a sandbox name or something obviously not a package
+    [[ "$pkg" =~ ^(sandbox|lodge|george)$ ]] && return 1
+
+    if command -v "$pkg" &>/dev/null; then
+        return 1  # already installed, error was something else
+    fi
+
+    ui_warn "'$pkg' not found — attempting: apt install -y $pkg"
+    if command -v apt &>/dev/null; then
+        apt install -y "$pkg" 2>&1 | tail -3
+        if command -v "$pkg" &>/dev/null; then
+            ui_ok "Installed $pkg"
+            return 0
+        fi
+    fi
+    ui_dim "  Could not auto-install '$pkg'"
+    return 1
+}
 
 # ── Cascading failure detection ────────────────────────────────
 # Given a failed step and the remaining steps, determines if the
@@ -109,9 +203,27 @@ _agent_validate_plan() {
     _AGENT_PLAN_WARNINGS=""
     local warn_count=0
 
+    # Track which sandbox names get created in the plan
+    local -A _sandbox_created=()
+
     for i in "${!steps[@]}"; do
         local step="${steps[$i]}"
         local num=$((i + 1))
+
+        # ── Track sandbox creations ────────────────────────────
+        if [[ "$step" =~ ^/sandbox\ +(new|create|init|make)\ +([^ ]+) ]]; then
+            _sandbox_created["${BASH_REMATCH[2]}"]=1
+        fi
+
+        # ── Sandbox use before creation ────────────────────────
+        if [[ "$step" =~ ^/sandbox\ +(run|build|test|exec|cd|status)\ +([^ ]+) ]]; then
+            local _sb_name="${BASH_REMATCH[2]}"
+            local _sb_dir="${LODGE_SANDBOXES:-${LODGE_DIR:-.}/.sandboxes}/$_sb_name"
+            if [ -z "${_sandbox_created[$_sb_name]+x}" ] && [ ! -d "$_sb_dir" ]; then
+                _AGENT_PLAN_WARNINGS="${_AGENT_PLAN_WARNINGS}\n  Step $num: /sandbox ${BASH_REMATCH[1]} '$_sb_name' — sandbox not created in plan (will auto-create)"
+                warn_count=$(( warn_count + 1 ))
+            fi
+        fi
 
         # ── Hallucinated commands: /foo where foo isn't registered ──
         if [[ "$step" =~ ^/([a-zA-Z_][a-zA-Z0-9_-]*) ]]; then
@@ -273,13 +385,15 @@ agent_plan() {
     fi
 
     local base_rules="Create a step-by-step plan. Rules:
-- Use the FEWEST steps necessary. Most tasks need 1-4 steps.
-- Never add filler steps. If the task needs 1 step, output 1 step.
-- Absolute maximum: $AGENT_MAX_STEPS steps. Only complex multi-file tasks should approach this.
+- Use the FEWEST steps necessary. Most tasks need 3-8 steps.
+- Never add filler steps or redundant downloads.
+- Maximum: $AGENT_MAX_STEPS steps. Complex multi-file tasks CAN use up to $AGENT_MAX_STEPS.
+- If the task genuinely needs more than $AGENT_MAX_STEPS steps, group related work into [SUBTASK] blocks that will get their own sub-plans.
 - Each step must be completable in ONE LLM call.
 - Each step must be a single action (write one file, run one command, etc.)
 - You can reference your slash commands (e.g. /recall, /sandbox) in steps.
-- If a step is too complex for a single action, prefix it with [SUBTASK] — it will be recursively expanded into its own sub-plan.
+- IMPORTANT: If you use /sandbox commands, you MUST create the sandbox FIRST with /sandbox new <name> <type> BEFORE running commands in it. /init creates a project directory, NOT a sandbox.
+- If a step is too complex for a single action, prefix it with [SUBTASK] — it will be recursively expanded into its own sub-plan. Use [SUBTASK] liberally for multi-file work.
 - Output ONLY a NUMBERED LIST (1. 2. 3. etc.) — no explanations, no code."
 
     if [ "$effective_max_clarify" -gt 0 ]; then
@@ -394,25 +508,66 @@ agent_execute_step() {
     # instead of asking the LLM (which wraps it in a broken ```bash block)
     if [[ "$step_desc" =~ ^/ ]] && declare -f commands_dispatch &>/dev/null; then
         local _cmd_stderr_file="${TMPDIR:-/tmp}/.lodge-cmd-stderr-$$"
-        if commands_dispatch "$step_desc" "$workdir" 2> >(tee "$_cmd_stderr_file" >&2); then
-            rm -f "$_cmd_stderr_file"
-            memory_append_section "Completed Steps" "Step $step_num: $step_desc" "$workdir"
-            return 0
-        else
-            # Capture the specific error output so George knows WHY it failed
+        local _retry_count=0
+        local _max_retries="${AGENT_MAX_RETRIES:-1}"
+
+        while true; do
+            if commands_dispatch "$step_desc" "$workdir" 2> >(tee "$_cmd_stderr_file" >&2); then
+                rm -f "$_cmd_stderr_file"
+                memory_append_section "Completed Steps" "Step $step_num: $step_desc" "$workdir"
+                return 0
+            fi
+
+            # ── Command failed — gather error context ──────────
             local _cmd_detail=""
             [ -f "$_cmd_stderr_file" ] && _cmd_detail=$(tail -5 "$_cmd_stderr_file" 2>/dev/null)
             rm -f "$_cmd_stderr_file"
-            # Also include prereq messages from sandbox if available
             [ -n "${_SANDBOX_PREREQ_MSG:-}" ] && _cmd_detail="${_cmd_detail:+$_cmd_detail\n}Prereq: $_SANDBOX_PREREQ_MSG"
             local err_msg="Slash command failed: $step_desc"
             [ -n "$_cmd_detail" ] && err_msg="$err_msg — $_cmd_detail"
+
+            # ── Auto-fix attempt before counting as retry ──────
+            if [ "$_retry_count" -le "$_max_retries" ]; then
+                local _auto_fixed=0
+
+                # Heuristic 1: Missing sandbox — auto-create it
+                if [[ "$err_msg" == *"not found"* ]] && [[ "$step_desc" == /sandbox\ * ]]; then
+                    local _plan_ctx="$task_context $step_desc"
+                    if _agent_auto_create_sandbox "$step_desc" "$_plan_ctx"; then
+                        _auto_fixed=1
+                    fi
+                fi
+
+                # Heuristic 2: Missing system package — auto-install
+                if [ "$_auto_fixed" -eq 0 ] && [[ "$err_msg" == *"not found"* || "$err_msg" == *"not installed"* || "$err_msg" == *"command not found"* ]]; then
+                    if _agent_auto_install_package "$err_msg"; then
+                        _auto_fixed=1
+                    fi
+                fi
+
+                if [ "$_auto_fixed" -eq 1 ]; then
+                    ui_info "Auto-fix applied — retrying step $step_num..."
+                    _retry_count=$(( _retry_count + 1 ))
+                    continue  # retry the command
+                fi
+
+                # No auto-fix applied — do a plain retry with error context
+                if [ "$_retry_count" -lt "$_max_retries" ]; then
+                    _retry_count=$(( _retry_count + 1 ))
+                    ui_warn "Step $step_num failed (attempt $_retry_count/$_max_retries): $err_msg"
+                    ui_info "Retrying..."
+                    sleep 1
+                    continue  # retry the command directly
+                fi
+            fi
+
+            # ── All retries exhausted — record failure ─────────
             _AGENT_LAST_ERROR="$err_msg"
             ui_err "$err_msg"
             memory_append_section "Errors" "Step $step_num failed: $err_msg" "$workdir"
             journal_write_failure "$step_desc" "$err_msg" "$task_context"
             return 1
-        fi
+        done
     fi
     
     local system_prompt

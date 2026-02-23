@@ -15,8 +15,8 @@ test_start "lib/agent.sh — Agent Loop"
 # ── Configuration ──────────────────────────────────────────────
 describe "Configuration defaults"
 
-  it "AGENT_MAX_STEPS defaults to 12" && {
-    assert_eq "$AGENT_MAX_STEPS" "12"
+  it "AGENT_MAX_STEPS defaults to 20" && {
+    assert_eq "$AGENT_MAX_STEPS" "20"
   }
 
   it "AGENT_STEP_DELAY defaults to 1" && {
@@ -148,9 +148,9 @@ describe "Critical error detection"
     assert_ok $?
   }
 
-  it "detects slash command failures" && {
+  it "does not treat slash command failures as critical (handled by auto-retry)" && {
     _agent_is_critical_error "Slash command failed: /deploy"
-    assert_ok $?
+    assert_fail $?
   }
 
   it "detects not installed errors" && {
@@ -261,8 +261,8 @@ describe "Direct slash command dispatch in execute_step"
 # ── Recursive planning config ─────────────────────────────────
 describe "Recursive planning config"
 
-  it "AGENT_MAX_DEPTH defaults to 3" && {
-    assert_eq "$AGENT_MAX_DEPTH" "3"
+  it "AGENT_MAX_DEPTH defaults to 5" && {
+    assert_eq "$AGENT_MAX_DEPTH" "5"
   }
 
   it "AGENT_MAX_DEPTH is overridable" && {
