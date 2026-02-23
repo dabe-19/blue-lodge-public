@@ -80,7 +80,7 @@ if [ "$IS_TERMUX" -eq 1 ]; then
         pkg install -y "${TERMUX_EXTRAS[@]}"
     fi
     # Install termux-api if Termux:API app is present
-    if [ ! -f "$PREFIX/bin/termux-battery-status" ]; then
+    if [ ! -f "${PREFIX:-/data/data/com.termux/files/usr}/bin/termux-battery-status" ]; then
         info "Installing termux-api (phone integration)..."
         pkg install -y termux-api 2>/dev/null || warn "termux-api install failed — install manually: pkg install termux-api"
     fi
