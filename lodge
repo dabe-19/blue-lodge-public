@@ -116,21 +116,43 @@ _cmd_think() {
     case "$arg" in
         on|1)
             LODGE_THINK=1
-            ui_ok "Thinking mode ON — reasoning tokens will stream (dimmed)" ;;
+            ui_ok "Thinking mode ON — stream: $([ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && echo bright || ([ "${LODGE_THINK_STREAM:-1}" -eq 1 ] && echo dimmed || echo hidden))" ;;
         off|0)
             LODGE_THINK=0
             ui_ok "Thinking mode OFF — faster responses, no reasoning" ;;
+        bright|loud|2)
+            LODGE_THINK=1
+            LODGE_THINK_STREAM=2
+            ui_ok "Thinking mode ON — bright stream (cyan)" ;;
+        dim|dimmed|quiet|1)
+            LODGE_THINK=1
+            LODGE_THINK_STREAM=1
+            ui_ok "Thinking mode ON — dimmed stream" ;;
+        hide|hidden|silent)
+            LODGE_THINK=1
+            LODGE_THINK_STREAM=0
+            ui_ok "Thinking mode ON — hidden (reasoning happens, not shown)" ;;
         "")
-            # Toggle
+            # Toggle through: off → dim → bright → off
             if [ "${LODGE_THINK:-0}" -eq 0 ]; then
                 LODGE_THINK=1
-                ui_ok "Thinking mode ON — reasoning tokens will stream (dimmed)"
+                LODGE_THINK_STREAM=1
+                ui_ok "Thinking mode ON — dimmed stream"
+            elif [ "${LODGE_THINK_STREAM:-1}" -eq 1 ]; then
+                LODGE_THINK_STREAM=2
+                ui_ok "Thinking mode ON — bright stream (cyan)"
             else
                 LODGE_THINK=0
-                ui_ok "Thinking mode OFF — faster responses, no reasoning"
+                LODGE_THINK_STREAM=1
+                ui_ok "Thinking mode OFF — faster responses"
             fi ;;
         *)
-            ui_info "Usage: /think [on|off]  (current: $([ "${LODGE_THINK:-0}" -eq 1 ] && echo ON || echo OFF))" ;;
+            ui_info "Usage: /think [on|off|bright|dim|hide]"
+            ui_dim "  on/off   — toggle thinking (current: $([ "${LODGE_THINK:-0}" -eq 1 ] && echo ON || echo OFF))"
+            ui_dim "  bright   — show thinking in cyan with borders"
+            ui_dim "  dim      — show thinking in faint text"
+            ui_dim "  hide     — think but don't stream to screen"
+            ui_dim "  (no arg) — cycle: off → dim → bright → off" ;;
     esac
 }
 _cmd_compact() {

@@ -12,7 +12,8 @@ LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-2048}"    # Default max output tokens (task mo
 LLM_ASK_TOKENS="${LLM_ASK_TOKENS:-300}"     # Max output tokens for /ask (quick answers)
 LLM_TIMEOUT="${LLM_TIMEOUT:-300}"           # Safety net: 300s max per request (Ctrl+C also works)
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
-LODGE_THINK="${LODGE_THINK:-0}"               # 0=disable thinking (fast, default), 1=enable Qwen3 thinking (visible, deeper reasoning)
+LODGE_THINK="${LODGE_THINK:-0}"               # 0=disable thinking (fast, default), 1=enable Qwen3 thinking
+LODGE_THINK_STREAM="${LODGE_THINK_STREAM:-1}"  # When LODGE_THINK=1: 0=hide thinking, 1=show dimmed, 2=show bright (cyan)
 
 # ── Active request tracking (for cancellation) ─────────────────
 _LLM_CURL_PID=""
@@ -280,23 +281,35 @@ llm_stream() {
                 printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
             fi
 
-            # Track <think>...</think> blocks — stream them dimmed
+            # Track <think>...</think> blocks — stream based on LODGE_THINK_STREAM
             if [[ "$token" == *'<think>'* ]]; then
                 _in_think_block=1
-                # Print dim marker + start dim on tty only
-                printf "\033[2m" > "$_tty" 2>/dev/null
-                # Don't include the <think> tag itself in captured output
+                if [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                    # Show thinking header + start style on tty
+                    if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
+                        printf "\n\033[36m┌─ thinking ─\033[0m\n\033[36m" > "$_tty" 2>/dev/null
+                    else
+                        printf "\033[2m" > "$_tty" 2>/dev/null
+                    fi
+                fi
                 continue
             fi
             if [[ "$token" == *'</think>'* ]]; then
                 _in_think_block=0
-                # End dim, newline, then resume normal on tty
-                printf "\033[0m\n" > "$_tty" 2>/dev/null
+                if [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                    if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
+                        printf "\033[0m\n\033[36m└────────────\033[0m\n" > "$_tty" 2>/dev/null
+                    else
+                        printf "\033[0m\n" > "$_tty" 2>/dev/null
+                    fi
+                fi
                 continue
             fi
             if [ "${_in_think_block:-0}" -eq 1 ]; then
-                # Stream thinking tokens to tty only (dimmed) — don't capture
-                printf "%s" "$token" > "$_tty" 2>/dev/null
+                # Stream thinking tokens to tty only — don't capture in response
+                if [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                    printf "%s" "$token" > "$_tty" 2>/dev/null
+                fi
                 continue
             fi
 

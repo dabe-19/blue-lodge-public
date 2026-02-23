@@ -10,7 +10,7 @@ source "$LODGE_DIR/lib/ui.sh"
 LODGE_SANDBOXES="${LODGE_SANDBOXES:-${LODGE_DIR:-.}/.sandboxes}"
 GEORGE_DIR="${GEORGE_DIR:-${LODGE_DIR:-.}/.george}"
 SANDBOX_JOURNAL="${SANDBOX_JOURNAL:-$GEORGE_DIR/sandbox_journal.jsonl}"
-
+LODGE_RUST_TOOLCHAIN="${LODGE_RUST_TOOLCHAIN:-stable}"  # Default Rust toolchain (stable, nightly, etc.)
 # ── Detect available isolation ─────────────────────────────────
 sandbox_detect() {
     if command -v proot &>/dev/null; then
@@ -41,18 +41,25 @@ sandbox_check_prereqs() {
             local default_tc
             default_tc=$(rustup default 2>&1)
             if [[ "$default_tc" == *"no default"* ]] || [[ "$default_tc" == *"is not installed"* ]] || [[ "$default_tc" == *"could not"* ]]; then
-                _SANDBOX_PREREQ_MSG="No default Rust toolchain set. Fix: rustup default stable"
-                ui_err "$_SANDBOX_PREREQ_MSG"
-                ui_dim "  Attempting auto-fix: rustup default stable"
-                if rustup default stable 2>&1; then
-                    ui_ok "Rust toolchain set to stable"
+                ui_warn "No default Rust toolchain set"
+                ui_dim "  Auto-fixing: rustup default $LODGE_RUST_TOOLCHAIN"
+                if rustup default "$LODGE_RUST_TOOLCHAIN" 2>&1; then
+                    ui_ok "Rust toolchain set to $LODGE_RUST_TOOLCHAIN"
                     _SANDBOX_PREREQ_MSG=""
-                    return 0
+                else
+                    # Toolchain not installed — download it
+                    ui_dim "  Toolchain '$LODGE_RUST_TOOLCHAIN' not installed. Installing..."
+                    if rustup install "$LODGE_RUST_TOOLCHAIN" 2>&1 && rustup default "$LODGE_RUST_TOOLCHAIN" 2>&1; then
+                        ui_ok "Installed and set Rust toolchain: $LODGE_RUST_TOOLCHAIN"
+                        _SANDBOX_PREREQ_MSG=""
+                        return 0
+                    fi
+                    _SANDBOX_PREREQ_MSG="Failed to install Rust toolchain '$LODGE_RUST_TOOLCHAIN'. Run manually: rustup install $LODGE_RUST_TOOLCHAIN && rustup default $LODGE_RUST_TOOLCHAIN"
+                    return 1
                 fi
-                return 1
             fi
             if ! command -v cargo &>/dev/null; then
-                _SANDBOX_PREREQ_MSG="cargo not found despite rustup being installed. Run: rustup default stable"
+                _SANDBOX_PREREQ_MSG="cargo not found despite rustup being installed. Run: rustup default $LODGE_RUST_TOOLCHAIN"
                 return 1
             fi
             ;;
@@ -219,26 +226,42 @@ sandbox_exec() {
         export LODGE_PERMISSION="$sandbox_perm"
     fi
     
+    # ── Preserve toolchain environments across HOME override ───
+    # Sandbox sets HOME=$sandbox_dir, which breaks tools like rustup/cargo
+    # that look for ~/.rustup and ~/.cargo. Pin the real paths explicitly.
+    local _real_home="${HOME:-/root}"
+    local _rustup_home="${RUSTUP_HOME:-$_real_home/.rustup}"
+    local _cargo_home="${CARGO_HOME:-$_real_home/.cargo}"
+    local _extra_path="$_cargo_home/bin"
+    local _path_with_cargo="$_extra_path:$PATH"
+    
     local method
     method=$(sandbox_detect)
     
     case "$method" in
         proot)
-            # Lightweight root simulation
+            # Lightweight root simulation — pass toolchain env through
             proot -w "$sandbox_dir" -b /proc -b /dev \
                 env HOME="$sandbox_dir" TMPDIR="$sandbox_dir/tmp" \
+                RUSTUP_HOME="$_rustup_home" CARGO_HOME="$_cargo_home" \
+                PATH="$_path_with_cargo" \
                 /bin/bash -c "$cmd"
             ;;
         unshare)
-            # User namespace isolation
+            # User namespace isolation — pass toolchain env through
             unshare --user --map-root-user bash -c \
-                "export HOME='$sandbox_dir' TMPDIR='$sandbox_dir/tmp'; cd '$sandbox_dir' && $cmd"
+                "export HOME='$sandbox_dir' TMPDIR='$sandbox_dir/tmp' \
+                 RUSTUP_HOME='$_rustup_home' CARGO_HOME='$_cargo_home' \
+                 PATH='$_path_with_cargo'; cd '$sandbox_dir' && $cmd"
             ;;
         directory)
-            # Simple directory isolation (restricted PATH)
+            # Simple directory isolation — pass toolchain env through
             (
                 export HOME="$sandbox_dir"
                 export TMPDIR="$sandbox_dir/tmp"
+                export RUSTUP_HOME="$_rustup_home"
+                export CARGO_HOME="$_cargo_home"
+                export PATH="$_path_with_cargo"
                 cd "$sandbox_dir"
                 bash -c "$cmd"
             )
