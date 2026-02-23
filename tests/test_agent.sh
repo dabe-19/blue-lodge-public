@@ -86,6 +86,92 @@ describe "Clarification rounds"
     assert_ok $?
   }
 
+# ── Interactive planning flag ─────────────────────────────────
+describe "Interactive planning flag"
+
+  it "AGENT_INTERACTIVE_PLANNING defaults to 0" && {
+    assert_eq "$AGENT_INTERACTIVE_PLANNING" "0"
+  }
+
+  it "AGENT_INTERACTIVE_PLANNING is overridable" && {
+    (
+      AGENT_INTERACTIVE_PLANNING=1
+      assert_eq "$AGENT_INTERACTIVE_PLANNING" "1"
+    )
+    assert_ok $?
+  }
+
+  it "agent_plan uses AGENT_INTERACTIVE_PLANNING to gate clarification" && {
+    local body
+    body=$(declare -f agent_plan)
+    echo "$body" | grep -q "AGENT_INTERACTIVE_PLANNING"
+    assert_ok $?
+  }
+
+  it "agent_plan includes 'Do NOT ask questions' instruction when non-interactive" && {
+    local body
+    body=$(declare -f agent_plan)
+    echo "$body" | grep -q "Do NOT ask questions"
+    assert_ok $?
+  }
+
+# ── Critical error detection ──────────────────────────────────
+describe "Critical error detection"
+
+  it "_agent_is_critical_error is defined" && {
+    declare -f _agent_is_critical_error &>/dev/null
+    assert_ok $?
+  }
+
+  it "detects missing API key errors" && {
+    _agent_is_critical_error "Error: missing API key for service"
+    assert_ok $?
+  }
+
+  it "detects missing package errors" && {
+    _agent_is_critical_error "bash: jq: command not found"
+    assert_ok $?
+  }
+
+  it "detects authentication errors" && {
+    _agent_is_critical_error "Error: authentication failed"
+    assert_ok $?
+  }
+
+  it "detects credentials errors" && {
+    _agent_is_critical_error "No credentials provided"
+    assert_ok $?
+  }
+
+  it "detects permission denied errors" && {
+    _agent_is_critical_error "Permission denied (publickey)"
+    assert_ok $?
+  }
+
+  it "detects slash command failures" && {
+    _agent_is_critical_error "Slash command failed: /deploy"
+    assert_ok $?
+  }
+
+  it "detects not installed errors" && {
+    _agent_is_critical_error "Error: node is not installed"
+    assert_ok $?
+  }
+
+  it "returns false for generic errors" && {
+    _agent_is_critical_error "Something went wrong"
+    assert_fail $?
+  }
+
+  it "returns false for empty input" && {
+    _agent_is_critical_error ""
+    assert_fail $?
+  }
+
+  it "_AGENT_LAST_ERROR is initialized" && {
+    assert_eq "$_AGENT_LAST_ERROR" ""
+  }
+
 # ── Plan prompt structure ──────────────────────────────────────
 describe "Plan prompt includes clarification instruction"
 
