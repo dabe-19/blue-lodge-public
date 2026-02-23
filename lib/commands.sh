@@ -138,10 +138,19 @@ commands_catalog() {
 You have these slash commands as tools. USE THEM in your plans and steps.
 To invoke: output a line starting with / (e.g., /recall docker setup).
 
+RULES — read these EVERY time:
+1. ONLY use commands listed below. Do NOT invent commands that are not in this list.
+2. Before using a command, use /recall <command name> to check its exact syntax.
+3. If you need a command that is NOT listed, use /slash create <name> <description> to create it first.
+4. Never guess at command syntax — look it up with /recall first.
+
 /plan <task>         — Plan a task (no execution)
 /ask <question>      — Quick question
-/init <name> <lang>  — Scaffold a new project
+/init <name> <lang>  — Scaffold a new project (types: rust, python, rl, data, automation, notebook, shell)
 /recall <query>      — Search your knowledge base (docs, soul, journal)
+/save <file> <content> — Save content to a file (creates parent dirs)
+/write <file> <content> — Write content to a file (create or overwrite)
+/download <url|path> [dest] — Download a URL or copy a local file
 /social post <text>  — Post to all configured social platforms
 /social <platform> <action> — X/Mastodon/Bluesky/Discord/Telegram
 /pgp sign <msg>      — PGP-sign a message for authenticity
@@ -169,7 +178,18 @@ To invoke: output a line starting with / (e.g., /recall docker setup).
 /phone calls           — Recent call log
 /phone telephony       — Carrier, SIM, data state
 /phone wifi            — WiFi connection info
-/backup save          — Backup your identity
+/backup local          — Quick file backup of identity & memory
+/backup restore [name] — Restore from a backup
+/backup list           — Show all backups
+/backup status         — Show backup system status
+/backup git save       — Commit current state to backup repo
+/backup github         — Save + push to GitHub
+/build [release]       — Build the project (reads CLAUDE.md ## Build)
+/test [args]           — Run tests (reads CLAUDE.md ## Test)
+/commit [msg]          — Generate AI commit message and commit
+/fix [error]           — Diagnose and fix errors
+/clone <url>           — Clone and setup a repository
+/push                  — Push to GitHub
 /slash                 — List your custom commands
 /slash create <name> <desc> — Create a new custom command (LLM-assisted)
 /slash <name> [args]   — Run a custom command you created
@@ -180,9 +200,11 @@ To invoke: output a line starting with / (e.g., /recall docker setup).
 /read <file>          — Read a file
 /status               — Show agent status
 /memory               — Show CLAUDE.md
+/help [command]       — Show help for a command
 
-TIP: If unsure how a command works, use /recall <command name> to look it up.
-All command docs are indexed in your knowledge base.
+If a command you need is NOT listed above, create it:
+  /slash create <name> <description>
+Then use it: /slash <name> [args]
 CATALOG
 
     # Append custom slash commands if any exist
