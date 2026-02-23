@@ -459,9 +459,27 @@ sandbox_clone() {
         return $?
     fi
     
+    # Validate the repo exists before attempting a full clone.
+    # This prevents git from hanging on a credential prompt for
+    # non-existent or private repos.
+    if declare -f web_github_repo_exists &>/dev/null; then
+        local _check_repo="$repo_url"
+        _check_repo="${_check_repo%.git}"
+        _check_repo="${_check_repo#https://github.com/}"
+        _check_repo="${_check_repo#http://github.com/}"
+        if [[ "$_check_repo" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]]; then
+            if ! web_github_repo_exists "$_check_repo"; then
+                ui_err "Repository not found: $repo_url"
+                ui_dim "Verify the repo exists at https://github.com/$_check_repo"
+                ui_dim "Use /github search <query> to find real repositories"
+                return 1
+            fi
+        fi
+    fi
+
     mkdir -p "$LODGE_SANDBOXES"
     ui_step "Cloning $repo_url..."
-    git clone "$repo_url" "$sandbox_dir" 2>&1
+    GIT_TERMINAL_PROMPT=0 git clone "$repo_url" "$sandbox_dir" 2>&1
     local _clone_rc=$?
 
     if [ $_clone_rc -eq 0 ]; then

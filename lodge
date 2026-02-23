@@ -1039,6 +1039,45 @@ _cmd_web() {
             ;;
     esac
 }
+_cmd_github() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+
+    case "$action" in
+        search|find)
+            if [ -z "$rest" ] || [ "$rest" = "$args" ]; then
+                ui_err "Usage: /github search <query>"
+                ui_dim "  Example: /github search \"TI-84 calculator rust\""
+                return 1
+            fi
+            web_search_github "$rest"
+            ;;
+        check|exists|verify)
+            if [ -z "$rest" ] || [ "$rest" = "$args" ]; then
+                ui_err "Usage: /github check <owner/repo>"
+                return 1
+            fi
+            if web_github_repo_exists "$rest"; then
+                ui_ok "Repository exists: $rest"
+            else
+                ui_err "Repository not found: $rest"
+            fi
+            ;;
+        *)
+            ui_info "Usage: /github <search|check>"
+            ui_dim "  search <query>       — Find real GitHub repos by keyword"
+            ui_dim "  check <owner/repo>   — Verify a repo exists before cloning"
+            ui_dim ""
+            ui_dim "Examples:"
+            ui_dim "  /github search \"TI-84 calculator rust\""
+            ui_dim "  /github check nicklockwood/Expression"
+            ui_dim "  /github search \"markdown parser python\" 3"
+            ;;
+    esac
+}
 _cmd_email() {
     local args="$1"
     local action
@@ -2029,6 +2068,7 @@ _register_commands() {
     commands_register "social"   "Social media (X/Mastodon/Bluesky/Discord/Telegram)" "_cmd_social"
     commands_register "provider" "Cloud AI providers (OpenAI/Anthropic/Google...)" "_cmd_provider"
     commands_register "web"      "Browse the web" "_cmd_web"
+    commands_register "github"   "Search GitHub repositories" "_cmd_github"
     commands_register "backup"   "Backup & restore George's identity" "_cmd_backup"
     commands_register "security" "Security, signing & integrity" "_cmd_security"
     commands_register "readme"   "Review George's own README" "_cmd_readme"

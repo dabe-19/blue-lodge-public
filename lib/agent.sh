@@ -395,7 +395,7 @@ agent_plan() {
 - IMPORTANT: If you use /sandbox commands, you MUST create the sandbox FIRST with /sandbox new <name> <type> BEFORE running commands in it. /init creates a project directory, NOT a sandbox.
 - IMPORTANT: When the task involves writing a program or application, you MUST use [SUBTASK] for the actual code implementation. Do NOT write all code in a single step or dump boilerplate. The [SUBTASK] should describe what the code must do (architecture, modules, behavior, game logic, etc.) so it gets its own detailed sub-plan. Code steps must produce REAL implementation code, not Hello World or empty scaffolds.
 - If a step is too complex for a single action, prefix it with [SUBTASK] — it will be recursively expanded into its own sub-plan. Use [SUBTASK] for any multi-file or design-heavy work.
-- NEVER invent or guess URLs, repo names, or resources. Only use URLs the user provided or that you found via /web search.
+- NEVER invent or guess URLs, repo names, or resources. Only use URLs the user provided or that you found via /web search or /github search. To find a GitHub repo, ALWAYS use /github search <query> first — it returns verified owner/repo names you can then /clone.
 - Output ONLY a NUMBERED LIST (1. 2. 3. etc.) — no explanations, no code."
 
     if [ "$effective_max_clarify" -gt 0 ]; then

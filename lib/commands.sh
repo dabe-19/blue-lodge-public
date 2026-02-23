@@ -207,6 +207,8 @@ Examples:
 /secret get <k>       — Retrieve a secret
 /web search <query>   — Search the web
 /web fetch <url>      — Fetch a URL
+/github search <query> — Find real GitHub repos by keyword (returns owner/repo, stars, description)
+/github check <owner/repo> — Verify a GitHub repo exists before cloning
 /journal write <text> — Write to your journal
 /journal read         — Read recent journal entries
 /wallet <coin> <action> — Crypto wallet operations

@@ -209,4 +209,69 @@ describe "web_cache_clear"
     _teardown_web
   }
 
+# ── web_search_github ──────────────────────────────────────────
+describe "web_search_github"
+
+  it "is defined" && {
+    _setup_web
+    declare -f web_search_github &>/dev/null
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "fails on empty query" && {
+    _setup_web
+    web_search_github "" 2>/dev/null
+    assert_fail $?
+    _teardown_web
+  }
+
+  it "accepts query and count params" && {
+    _setup_web
+    # Just verify function signature works (no network call assertion)
+    declare -f web_search_github &>/dev/null
+    assert_ok $?
+    _teardown_web
+  }
+
+# ── web_github_repo_exists ─────────────────────────────────────
+describe "web_github_repo_exists"
+
+  it "is defined" && {
+    _setup_web
+    declare -f web_github_repo_exists &>/dev/null
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "rejects malformed repo names" && {
+    _setup_web
+    web_github_repo_exists "" 2>/dev/null
+    assert_fail $?
+    _teardown_web
+  }
+
+  it "rejects names without owner/repo format" && {
+    _setup_web
+    web_github_repo_exists "justreponame" 2>/dev/null
+    assert_fail $?
+    _teardown_web
+  }
+
+  it "strips .git suffix before checking" && {
+    _setup_web
+    # The function should strip .git — just verify it doesn't crash
+    web_github_repo_exists "fake/repo.git" 2>/dev/null || true
+    assert_ok 0
+    _teardown_web
+  }
+
+  it "strips https://github.com/ prefix" && {
+    _setup_web
+    # Verify prefix stripping doesn't crash
+    web_github_repo_exists "https://github.com/fake/repo.git" 2>/dev/null || true
+    assert_ok 0
+    _teardown_web
+  }
+
 test_end

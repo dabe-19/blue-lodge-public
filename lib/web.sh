@@ -316,6 +316,84 @@ web_ping() {
     fi
 }
 
+# ── GitHub Repository Search ───────────────────────────────────
+# Uses the GitHub REST API (no auth required for public repos) to
+# find real, verified repositories. Returns owner/name, description,
+# stars, and language. This prevents George from hallucinating repo URLs.
+#
+# Usage: web_search_github "TI-84 calculator rust" 5
+web_search_github() {
+    local query="$1"
+    local count="${2:-5}"
+
+    if [ -z "$query" ]; then
+        ui_err "Usage: web_search_github <query> [count]"
+        return 1
+    fi
+
+    local encoded
+    encoded=$(printf '%s' "$query" | jq -sRr @uri)
+
+    local resp
+    resp=$(curl -sL \
+        --max-time "$WEB_TIMEOUT" \
+        -H "Accept: application/vnd.github.v3+json" \
+        -H "User-Agent: Blue-Lodge-George/0.1" \
+        "https://api.github.com/search/repositories?q=${encoded}&sort=stars&order=desc&per_page=${count}" 2>/dev/null)
+
+    if [ -z "$resp" ]; then
+        ui_err "GitHub API request failed"
+        return 1
+    fi
+
+    # Check for API errors
+    local msg
+    msg=$(echo "$resp" | jq -r '.message // empty' 2>/dev/null)
+    if [ -n "$msg" ]; then
+        ui_err "GitHub API: $msg"
+        return 1
+    fi
+
+    local total
+    total=$(echo "$resp" | jq -r '.total_count // 0' 2>/dev/null)
+    if [ "$total" -eq 0 ] 2>/dev/null; then
+        ui_dim "No repositories found for: $query"
+        return 0
+    fi
+
+    # Format results: [n] owner/repo ★stars (language)
+    #     description
+    #     https://github.com/owner/repo
+    echo "$resp" | jq -r '.items[]? | "[\(.full_name)] ★\(.stargazers_count) (\(.language // "unknown"))\n    \(.description // "No description")\n    https://github.com/\(.full_name)\n"' 2>/dev/null
+}
+
+# ── Verify a GitHub repo exists ────────────────────────────────
+# Quick HEAD check against the GitHub API. Returns 0 if the repo
+# exists and is accessible, 1 otherwise. No auth needed for public repos.
+#
+# Usage: web_github_repo_exists "owner/repo"
+web_github_repo_exists() {
+    local repo="$1"
+
+    # Strip .git suffix and https://github.com/ prefix if present
+    repo="${repo%.git}"
+    repo="${repo#https://github.com/}"
+    repo="${repo#http://github.com/}"
+
+    if [[ ! "$repo" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]]; then
+        return 1
+    fi
+
+    local status
+    status=$(curl -sI --max-time 5 \
+        -o /dev/null -w "%{http_code}" \
+        -H "Accept: application/vnd.github.v3+json" \
+        -H "User-Agent: Blue-Lodge-George/0.1" \
+        "https://api.github.com/repos/$repo" 2>/dev/null)
+
+    [ "$status" = "200" ]
+}
+
 # ── Clear web cache ───────────────────────────────────────────
 web_cache_clear() {
     if [ -d "$GEORGE_CACHE_DIR" ]; then

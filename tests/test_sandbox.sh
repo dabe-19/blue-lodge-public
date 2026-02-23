@@ -411,4 +411,23 @@ describe "sandbox_create (prereq gate)"
     _teardown_sandbox
   }
 
+# ── sandbox_clone guardrails ───────────────────────────────────
+describe "sandbox_clone (guardrails)"
+
+  it "is defined" && {
+    declare -f sandbox_clone &>/dev/null
+    assert_ok $?
+  }
+
+  it "uses GIT_TERMINAL_PROMPT=0 (no credential hang)" && {
+    _setup_sandbox
+    # Clone a definitively non-existent repo — should fail fast,
+    # NOT hang on a credential prompt
+    output=$(sandbox_clone "https://github.com/zzz-nonexistent-owner-999/zzz-no-repo-999.git" "norepo" 2>&1) || true
+    # If web_github_repo_exists is loaded, it should catch it with a clean error
+    # If not, GIT_TERMINAL_PROMPT=0 ensures git fails without hanging
+    assert_match "$output" "not found|failed|fatal"
+    _teardown_sandbox
+  }
+
 test_end
