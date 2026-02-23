@@ -14,6 +14,7 @@ source "$LODGE_DIR/lib/journal.sh"
 AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-12}"
 AGENT_STEP_DELAY="${AGENT_STEP_DELAY:-1}"
 AGENT_MAX_CLARIFY="${AGENT_MAX_CLARIFY:-2}"
+AGENT_INTERACTIVE_PLANNING="${AGENT_INTERACTIVE_PLANNING:-0}"
 
 # ── Normalize inline plans ─────────────────────────────────────
 # LLMs sometimes output all steps on one line:
@@ -26,6 +27,43 @@ _agent_split_inline_steps() {
     echo "$plan" | sed 's/  \+\([0-9]\+[.)]\) /\n\1 /g'
 }
 
+# ── Check for critical errors needing user assistance ──────────
+# Returns 0 (true) if the error message indicates a problem that
+# requires user intervention: missing API keys, missing packages,
+# missing authentication credentials, or slash command failures.
+_agent_is_critical_error() {
+    local error_msg="$1"
+    [ -z "$error_msg" ] && return 1
+    local lower
+    lower=$(echo "$error_msg" | tr '[:upper:]' '[:lower:]')
+
+    # Missing API key
+    [[ "$lower" == *"api key"* ]] && return 0
+    [[ "$lower" == *"api_key"* ]] && return 0
+    [[ "$lower" == *"apikey"* ]] && return 0
+
+    # Missing package / dependency
+    [[ "$lower" == *"not installed"* ]] && return 0
+    [[ "$lower" == *"command not found"* ]] && return 0
+    [[ "$lower" == *"module not found"* ]] && return 0
+    [[ "$lower" == *"package"*"missing"* ]] && return 0
+
+    # Authentication / credentials
+    [[ "$lower" == *"authentication"* ]] && return 0
+    [[ "$lower" == *"credentials"* ]] && return 0
+    [[ "$lower" == *"unauthorized"* ]] && return 0
+    [[ "$lower" == *"permission denied"* ]] && return 0
+    [[ "$lower" == *"access denied"* ]] && return 0
+
+    # Slash command errors
+    [[ "$lower" == *"slash command failed"* ]] && return 0
+
+    return 1
+}
+
+# Track the last error from agent_execute_step for critical error detection
+_AGENT_LAST_ERROR=""
+
 # ── Plan a task ────────────────────────────────────────────────
 agent_plan() {
     local task="$1"
@@ -35,6 +73,12 @@ agent_plan() {
     local system_prompt
     system_prompt=$(memory_build_system_prompt "$workdir" "" "plan")
     
+    # Determine effective clarification limit based on interactive planning mode
+    local effective_max_clarify=0
+    if [ "${AGENT_INTERACTIVE_PLANNING:-0}" -eq 1 ]; then
+        effective_max_clarify="$AGENT_MAX_CLARIFY"
+    fi
+
     local base_rules="Create a step-by-step plan. Rules:
 - Use the FEWEST steps necessary. Most tasks need 1-4 steps.
 - Never add filler steps. If the task needs 1 step, output 1 step.
@@ -42,10 +86,19 @@ agent_plan() {
 - Each step must be completable in ONE LLM call.
 - Each step must be a single action (write one file, run one command, etc.)
 - You can reference your slash commands (e.g. /recall, /sandbox) in steps.
-- Output ONLY a NUMBERED LIST (1. 2. 3. etc.) — no explanations, no code.
+- Output ONLY a NUMBERED LIST (1. 2. 3. etc.) — no explanations, no code."
+
+    if [ "$effective_max_clarify" -gt 0 ]; then
+        base_rules="${base_rules}
 - If the task is too vague or you need key details to make a good plan,
   start your response with CLARIFY: followed by ONE short question.
-  You may ask for clarification at most ${AGENT_MAX_CLARIFY} times.
+  You may ask for clarification at most ${effective_max_clarify} times."
+    else
+        base_rules="${base_rules}
+- Do NOT ask questions. Produce a plan with the information available."
+    fi
+
+    base_rules="${base_rules}
 
 Example plan format:
 1. Do the first thing
@@ -56,7 +109,7 @@ Example plan format:
     local clarify_round=0
     local plan=""
 
-    while [ "$clarify_round" -le "$AGENT_MAX_CLARIFY" ]; do
+    while [ "$clarify_round" -le "$effective_max_clarify" ]; do
         local prompt="TASK: $task"
         if [ -n "$context" ]; then
             prompt="${prompt}
@@ -65,7 +118,7 @@ ADDITIONAL CONTEXT FROM USER:
 ${context}"
         fi
 
-        if [ "$clarify_round" -eq "$AGENT_MAX_CLARIFY" ]; then
+        if [ "$clarify_round" -eq "$effective_max_clarify" ] && [ "$effective_max_clarify" -gt 0 ]; then
             prompt="${prompt}
 
 ${base_rules}
@@ -93,29 +146,34 @@ ${base_rules}"
             return 1
         fi
 
-        # Check if the model is asking for clarification
-        local trimmed
-        trimmed=$(echo "$plan" | sed 's/^[[:space:]]*//')
-        if [[ "$trimmed" == CLARIFY:* ]] && [ "$clarify_round" -lt "$AGENT_MAX_CLARIFY" ]; then
-            clarify_round=$((clarify_round + 1))
-            local question
-            question=$(echo "$trimmed" | sed 's/^CLARIFY:[[:space:]]*//')
-            echo ""
-            ui_info "George needs more info ($clarify_round/$AGENT_MAX_CLARIFY):"
-            printf "  %b%s%b\n" "$C_CYAN" "$question" "$C_RESET"
-            echo ""
-            printf "  %b> %b" "$C_BOLD" "$C_RESET"
-            local answer
-            read -r answer < /dev/tty
-            if [ -z "$answer" ]; then
-                ui_dim "  No answer — proceeding with available info."
-                # Force plan on next round
-                clarify_round=$AGENT_MAX_CLARIFY
+        # Check if the model is asking for clarification (only in interactive mode)
+        if [ "$effective_max_clarify" -gt 0 ]; then
+            local trimmed
+            trimmed=$(echo "$plan" | sed 's/^[[:space:]]*//')
+            if [[ "$trimmed" == CLARIFY:* ]] && [ "$clarify_round" -lt "$effective_max_clarify" ]; then
+                clarify_round=$((clarify_round + 1))
+                local question
+                question=$(echo "$trimmed" | sed 's/^CLARIFY:[[:space:]]*//')
+                echo ""
+                ui_info "George needs more info ($clarify_round/$effective_max_clarify):"
+                printf "  %b%s%b\n" "$C_CYAN" "$question" "$C_RESET"
+                echo ""
+                printf "  %b> %b" "$C_BOLD" "$C_RESET"
+                local answer
+                read -r answer < /dev/tty
+                if [ -z "$answer" ]; then
+                    ui_dim "  No answer — proceeding with available info."
+                    # Force plan on next round
+                    clarify_round=$effective_max_clarify
+                else
+                    context="${context:+$context\n}$question → $answer"
+                fi
             else
-                context="${context:+$context\n}$question → $answer"
+                # Got a plan (not a clarification request)
+                break
             fi
         else
-            # Got a plan (not a clarification request)
+            # Non-interactive mode — accept whatever plan was generated
             break
         fi
     done
@@ -136,6 +194,7 @@ agent_execute_step() {
     
     ui_section "Step $step_num"
     ui_step "$step_desc"
+    _AGENT_LAST_ERROR=""
     
     # If the step is already a slash command, dispatch it directly
     # instead of asking the LLM (which wraps it in a broken ```bash block)
@@ -145,6 +204,7 @@ agent_execute_step() {
             return 0
         else
             local err_msg="Slash command failed: $step_desc"
+            _AGENT_LAST_ERROR="$err_msg"
             ui_err "$err_msg"
             memory_append_section "Errors" "Step $step_num failed: $step_desc" "$workdir"
             journal_write_failure "$step_desc" "$err_msg" "$task_context"
@@ -172,6 +232,7 @@ Execute this step. Output rules:
     
     if [ -z "$response" ] || [[ "$response" == ERROR* ]]; then
         local err_msg="Step failed: ${response:-empty response}"
+        _AGENT_LAST_ERROR="$err_msg"
         ui_err "$err_msg"
         memory_append_section "Errors" "Step $step_num failed: ${response:-empty}" "$workdir"
         journal_write_failure "Step $step_num: $step_desc" "$err_msg" "$task_context"
@@ -290,6 +351,19 @@ agent_run() {
             if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
                 ui_warn "Step $step_num cancelled"
                 break
+            fi
+            # Critical errors (missing API key, package, auth, slash failures)
+            # prompt the user for guidance with no timeout
+            if _agent_is_critical_error "$_AGENT_LAST_ERROR"; then
+                echo ""
+                ui_info "George needs help with step $step_num:"
+                printf "  %b%s%b\n" "$C_CYAN" "$_AGENT_LAST_ERROR" "$C_RESET"
+                printf "  %bHow should I proceed? (or press Enter to skip): %b" "$C_BOLD" "$C_RESET"
+                local guidance
+                read -r guidance < /dev/tty
+                if [ -n "$guidance" ]; then
+                    memory_append_section "User Guidance" "Step $step_num: $guidance" "$workdir"
+                fi
             fi
             ui_warn "Step $step_num failed. Continue? [Y/n]"
             read -r cont
