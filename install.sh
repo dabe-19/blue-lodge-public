@@ -50,8 +50,14 @@ err()   { printf " ${RED}✗${RESET} %s\n" "$1"; }
 
 # ── Detect environment ────────────────────────────────────────
 IS_TERMUX=0
+IS_PROOT=0
 if [ -n "${TERMUX_VERSION:-}" ] || [ -d "/data/data/com.termux" ]; then
     IS_TERMUX=1
+fi
+# Detect proot-distro: uid 0 (proot fakes root), /host-rootfs, or PROOT_TMP_DIR.
+# Inside proot, termux-api commands hang forever — must NOT enable LODGE_TERMUX_API.
+if [ "$(id -u)" = "0" ] || [ -d /host-rootfs ] || [ -n "${PROOT_TMP_DIR:-}" ]; then
+    IS_PROOT=1
 fi
 
 # ── Write shell config IMMEDIATELY after cleanup ─────────────
@@ -59,7 +65,7 @@ fi
 # so the config is never left in a stripped-but-not-rewritten state.
 _lodge_shell_block() {
     local termux_line
-    if [ "$IS_TERMUX" -eq 1 ] && [ -z "${PROOT_TMP_DIR:-}" ] && [ ! -d /host-rootfs ]; then
+    if [ "$IS_TERMUX" -eq 1 ] && [ "$IS_PROOT" -eq 0 ]; then
         termux_line='export LODGE_TERMUX_API=1        # Termux-API enabled (native Termux)'
     else
         termux_line='# export LODGE_TERMUX_API=1      # Uncomment in native Termux for phone features'

@@ -37,13 +37,13 @@ export LODGE_TERMUX_API="${LODGE_TERMUX_API:-0}"
 # Runtime proot detection: force-disable even if env says enabled.
 # The shell RC may have LODGE_TERMUX_API=1 from a native Termux install,
 # but inside proot-distro ALL termux-api commands hang forever.
-# Detect proot via: /host-rootfs (proot bind), PROOT_TMP_DIR env, or
-# running as root inside Debian while TERMUX_VERSION is set (proot-distro).
+# Detection: /host-rootfs (proot bind), PROOT_TMP_DIR env, or
+# uid 0 (proot always runs as fake root). Native Termux never runs as uid 0.
 _lodge_in_proot() {
     [ -d /host-rootfs ] && return 0
     [ -n "${PROOT_TMP_DIR:-}" ] && return 0
-    # proot-distro runs as uid 0 inside a distro with TERMUX_VERSION leaked
-    [[ "$(id -u)" == "0" ]] && [ -f /etc/debian_version ] && [ -n "${TERMUX_VERSION:-}" ] && return 0
+    # proot-distro always emulates uid 0; native Termux never does
+    [[ "$(id -u)" == "0" ]] && return 0
     return 1
 }
 if [[ "$LODGE_TERMUX_API" == "1" ]] && _lodge_in_proot; then
