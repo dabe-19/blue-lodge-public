@@ -1,6 +1,9 @@
 #!/bin/bash
 # DESC: Scaffold a new project with CLAUDE.md
-# Usage: /init <name> <type>
+# Usage:
+#   /init              — interactive wizard (choose type and name)
+#   /init <type>       — specify type, prompt for name
+#   /init <name> <type> — specify both name and type directly
 #   Types: rust, python, rl, data, automation, notebook, shell
 
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
@@ -14,8 +17,20 @@ cmd_init() {
     name=$(echo "$args" | awk '{print $1}')
     type=$(echo "$args" | awk '{print $2}')
     
+    # If only one arg and it's a type keyword, treat as type and prompt for name
+    if [ -n "$name" ] && [ -z "$type" ]; then
+        case "${name,,}" in
+            rust|python|rl|data|automation|auto|notebook|jupyter|shell|sh)
+                type="${name,,}"
+                name=""
+                printf " Project name: "
+                read -r name
+                ;;
+        esac
+    fi
+
     # Interactive if no args
-    if [ -z "$name" ]; then
+    if [ -z "$name" ] && [ -z "$type" ]; then
         echo ""
         ui_section "New Project"
         printf " %b[1]%b RL Project         %b(Python: Gymnasium + Polars)%b\n" "$C_CYAN" "$C_RESET" "$C_DIM" "$C_RESET"
