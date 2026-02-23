@@ -12,6 +12,7 @@ LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-1024}"    # Default max output tokens (task mo
 LLM_ASK_TOKENS="${LLM_ASK_TOKENS:-300}"     # Max output tokens for /ask (quick answers)
 LLM_TIMEOUT="${LLM_TIMEOUT:-300}"           # Safety net: 300s max per request (Ctrl+C also works)
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
+LODGE_THINK="${LODGE_THINK:-1}"               # 1=enable Qwen3 thinking (visible, deeper reasoning), 0=disable (fast)
 
 # ── Active request tracking (for cancellation) ─────────────────
 _LLM_CURL_PID=""
@@ -134,6 +135,11 @@ llm_generate() {
     local payload
     local timeout_args=()
 
+    # Qwen3 thinking mode control
+    if [ "${LODGE_THINK:-0}" -eq 0 ]; then
+        prompt="${prompt} /nothink"
+    fi
+
     if [ -n "$system" ]; then
         payload=$(jq -n \
             --arg model "$LODGE_MODEL" \
@@ -194,7 +200,8 @@ llm_generate() {
         return 1
     fi
 
-    echo "$response" | jq -r '.response // "ERROR: Empty response"'
+    # Strip any <think>...</think> blocks from Qwen3 thinking mode
+    echo "$response" | jq -r '.response // "ERROR: Empty response"' | sed 's/<think>.*<\/think>//g; s/<think>[^<]*$//g'
 }
 
 # ── Generate with streaming (live output) ──────────────────────
@@ -205,6 +212,13 @@ llm_stream() {
     local max_tokens="${3:-$LLM_MAX_TOKENS}"
     local payload
     local full_response=""
+
+    # Qwen3 thinking mode control: append /nothink or /think to user prompt
+    # Thinking on a 4B CPU model burns tokens on internal reasoning (slow + noisy).
+    # Default off (LODGE_THINK=0). Users can export LODGE_THINK=1 for complex tasks.
+    if [ "${LODGE_THINK:-0}" -eq 0 ]; then
+        prompt="${prompt} /nothink"
+    fi
 
     if [ -n "$system" ]; then
         payload=$(jq -n \
@@ -259,12 +273,34 @@ llm_stream() {
         local token
         token=$(echo "$line" | jq -r '.response // empty' 2>/dev/null)
         if [ -n "$token" ]; then
-            # Kill spinner on first real token
+            # Kill spinner on first real token (thinking or otherwise)
             if [ ! -f "$_llm_ft_file" ]; then
                 touch "$_llm_ft_file"
                 kill "$_llm_spinner_pid" 2>/dev/null
                 printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
             fi
+
+            # Track <think>...</think> blocks — stream them dimmed
+            if [[ "$token" == *'<think>'* ]]; then
+                _in_think_block=1
+                # Print dim marker + start dim on tty only
+                printf "\033[2m" > "$_tty" 2>/dev/null
+                # Don't include the <think> tag itself in captured output
+                continue
+            fi
+            if [[ "$token" == *'</think>'* ]]; then
+                _in_think_block=0
+                # End dim, newline, then resume normal on tty
+                printf "\033[0m\n" > "$_tty" 2>/dev/null
+                continue
+            fi
+            if [ "${_in_think_block:-0}" -eq 1 ]; then
+                # Stream thinking tokens to tty only (dimmed) — don't capture
+                printf "%s" "$token" > "$_tty" 2>/dev/null
+                continue
+            fi
+
+            # Normal token — capture AND display
             printf "%s" "$token"
             printf "%s" "$token" > "$_tty" 2>/dev/null
         fi
@@ -291,6 +327,14 @@ llm_chat() {
     local messages="$1"
     local system="${2:-}"
     local payload
+
+    # Qwen3 thinking mode control: append /nothink to last user message
+    if [ "${LODGE_THINK:-0}" -eq 0 ]; then
+        messages=$(echo "$messages" | jq '
+            if (. | length) > 0 then
+                .[-1].content += " /nothink"
+            else . end')
+    fi
 
     if [ -n "$system" ]; then
         payload=$(jq -n \
@@ -329,7 +373,8 @@ llm_chat() {
         return 1
     fi
 
-    echo "$response" | jq -r '.message.content // "ERROR: Empty response"'
+    # Strip <think>...</think> from Qwen3 thinking mode
+    echo "$response" | jq -r '.message.content // "ERROR: Empty response"' | sed 's/<think>.*<\/think>//g; s/<think>[^<]*$//g'
 }
 
 # ── Quick one-shot with role ────────────────────────────────────

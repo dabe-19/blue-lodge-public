@@ -6,8 +6,8 @@ PARAMETER top_p 0.85
 PARAMETER num_ctx 8192
 PARAMETER num_thread 8
 PARAMETER num_gpu 0
-PARAMETER num_predict 2048
-PARAMETER num_keep 256
+PARAMETER num_predict 1024
+PARAMETER num_keep 128
 PARAMETER stop <|im_end|>
 PARAMETER repeat_penalty 1.1
 

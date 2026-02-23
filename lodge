@@ -111,6 +111,28 @@ _cmd_plan() {
 _cmd_ask() {
     agent_ask "$1" "${2:-.}"
 }
+_cmd_think() {
+    local arg="$1"
+    case "$arg" in
+        on|1)
+            LODGE_THINK=1
+            ui_ok "Thinking mode ON — reasoning tokens will stream (dimmed)" ;;
+        off|0)
+            LODGE_THINK=0
+            ui_ok "Thinking mode OFF — faster responses, no reasoning" ;;
+        "")
+            # Toggle
+            if [ "${LODGE_THINK:-1}" -eq 1 ]; then
+                LODGE_THINK=0
+                ui_ok "Thinking mode OFF — faster responses, no reasoning"
+            else
+                LODGE_THINK=1
+                ui_ok "Thinking mode ON — reasoning tokens will stream (dimmed)"
+            fi ;;
+        *)
+            ui_info "Usage: /think [on|off]  (current: $([ "${LODGE_THINK:-1}" -eq 1 ] && echo ON || echo OFF))" ;;
+    esac
+}
 _cmd_compact() {
     memory_compact "${2:-.}"
 }
@@ -1999,6 +2021,7 @@ _register_commands() {
     commands_register "email"    "Email (ProtonMail/Zoho/Tuta/disposable)" "_cmd_email"
     commands_register "git"      "Git & GitHub configuration" "_cmd_git"
     commands_register "cleanup"  "Remove George's created files" "_cmd_cleanup"
+    commands_register "think"    "Toggle thinking mode on/off" "_cmd_think"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"
     commands_register "files"    "List workspace files" "_cmd_files"
