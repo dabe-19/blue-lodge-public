@@ -258,4 +258,104 @@ describe "Direct slash command dispatch in execute_step"
     assert_ok $?
   }
 
+# ── Recursive planning config ─────────────────────────────────
+describe "Recursive planning config"
+
+  it "AGENT_MAX_DEPTH defaults to 3" && {
+    assert_eq "$AGENT_MAX_DEPTH" "3"
+  }
+
+  it "AGENT_MAX_DEPTH is overridable" && {
+    (
+      AGENT_MAX_DEPTH=5
+      assert_eq "$AGENT_MAX_DEPTH" "5"
+    )
+    assert_ok $?
+  }
+
+# ── Shared step parser ────────────────────────────────────────
+describe "Shared step parser (_agent_parse_steps)"
+
+  it "_agent_parse_steps is defined" && {
+    declare -f _agent_parse_steps &>/dev/null
+    assert_ok $?
+  }
+
+  it "parses numbered steps" && {
+    _input='1. First step
+2. Second step
+3. Third step'
+    _count=$(_agent_parse_steps "$_input" | wc -l)
+    assert_eq "$_count" "3"
+  }
+
+  it "parses slash command lines" && {
+    _input='1. Do something
+/recall query
+2. Do another thing'
+    _count=$(_agent_parse_steps "$_input" | wc -l)
+    assert_eq "$_count" "3"
+  }
+
+  it "parses dash/bullet list items" && {
+    _input='- First item
+- Second item'
+    _count=$(_agent_parse_steps "$_input" | wc -l)
+    assert_eq "$_count" "2"
+  }
+
+  it "preserves [SUBTASK] prefix in parsed steps" && {
+    _input='1. Simple step
+2. [SUBTASK] Build the frontend module
+3. Another step'
+    _result=$(_agent_parse_steps "$_input" | sed -n '2p')
+    assert_contains "$_result" "[SUBTASK]"
+  }
+
+# ── Recursive subtask function ─────────────────────────────────
+describe "Recursive subtask execution"
+
+  it "_agent_run_subtask is defined" && {
+    declare -f _agent_run_subtask &>/dev/null
+    assert_ok $?
+  }
+
+  it "agent_run function body detects [SUBTASK] markers" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'SUBTASK'
+    assert_ok $?
+  }
+
+  it "_agent_run_subtask function body checks AGENT_MAX_DEPTH" && {
+    local body
+    body=$(declare -f _agent_run_subtask)
+    echo "$body" | grep -q 'AGENT_MAX_DEPTH'
+    assert_ok $?
+  }
+
+  it "_agent_run_subtask function body calls agent_plan" && {
+    local body
+    body=$(declare -f _agent_run_subtask)
+    echo "$body" | grep -q 'agent_plan'
+    assert_ok $?
+  }
+
+# ── Plan prompt references configurable step limit ─────────────
+describe "Plan prompt uses configurable step limit"
+
+  it "agent_plan prompt references AGENT_MAX_STEPS variable" && {
+    local body
+    body=$(declare -f agent_plan)
+    echo "$body" | grep -q 'AGENT_MAX_STEPS'
+    assert_ok $?
+  }
+
+  it "agent_plan prompt mentions [SUBTASK] syntax" && {
+    local body
+    body=$(declare -f agent_plan)
+    echo "$body" | grep -q '\[SUBTASK\]'
+    assert_ok $?
+  }
+
 test_end

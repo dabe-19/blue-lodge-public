@@ -15,6 +15,7 @@ AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-12}"
 AGENT_STEP_DELAY="${AGENT_STEP_DELAY:-1}"
 AGENT_MAX_CLARIFY="${AGENT_MAX_CLARIFY:-2}"
 AGENT_INTERACTIVE_PLANNING="${AGENT_INTERACTIVE_PLANNING:-0}"
+AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-3}"
 
 # ── Normalize inline plans ─────────────────────────────────────
 # LLMs sometimes output all steps on one line:
@@ -64,6 +65,92 @@ _agent_is_critical_error() {
 # Track the last error from agent_execute_step for critical error detection
 _AGENT_LAST_ERROR=""
 
+# ── Parse plan text into steps array ───────────────────────────
+# Shared parser used by agent_run and _agent_run_subtask.
+# Writes step strings to stdout, one per line.
+_agent_parse_steps() {
+    local plan="$1"
+    plan=$(_agent_split_inline_steps "$plan")
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[0-9]+[\.\)\ ] ]]; then
+            local step_text
+            step_text=$(echo "$line" | sed 's/^[0-9]*[.)[:space:]]*//')
+            [ -n "$step_text" ] && echo "$step_text"
+        elif [[ "$line" =~ ^/ ]] && [ -n "$line" ]; then
+            echo "$line"
+        elif [[ "$line" =~ ^[-\*]\ + ]]; then
+            local step_text
+            step_text=$(echo "$line" | sed 's/^[-*][[:space:]]*//')
+            [ -n "$step_text" ] && echo "$step_text"
+        fi
+    done <<< "$plan"
+}
+
+# ── Recursively plan and execute a subtask ─────────────────────
+# Called when a step is prefixed with [SUBTASK]. Plans the subtask
+# as a new mini-task and executes each sub-step, respecting depth.
+_agent_run_subtask() {
+    local task="$1"
+    local workdir="${2:-.}"
+    local depth="${3:-1}"
+
+    if [ "$depth" -gt "$AGENT_MAX_DEPTH" ]; then
+        ui_warn "Max planning depth ($AGENT_MAX_DEPTH) reached. Executing as single step."
+        agent_execute_step "sub" "$task" "$workdir" "$task"
+        return $?
+    fi
+
+    ui_section "Subtask (depth $depth)"
+    ui_info "$task"
+
+    local plan
+    plan=$(agent_plan "$task" "$workdir")
+    if [ $? -ne 0 ]; then return 1; fi
+
+    local -a steps=()
+    while IFS= read -r s; do
+        [ -n "$s" ] && steps+=("$s")
+    done < <(_agent_parse_steps "$plan")
+
+    local total=${#steps[@]}
+    if [ "$total" -eq 0 ]; then
+        steps=("$task")
+        total=1
+    fi
+
+    ui_info "Sub-plan: $total steps (depth $depth)"
+    echo ""
+
+    local completed=0
+    for i in "${!steps[@]}"; do
+        local step_num=$((i + 1))
+        local step_text="${steps[$i]}"
+
+        # Nested subtask detection
+        if [[ "$step_text" == \[SUBTASK\]* ]]; then
+            local sub_desc="${step_text#\[SUBTASK\]}"
+            sub_desc="${sub_desc# }"
+            if _agent_run_subtask "$sub_desc" "$workdir" "$((depth + 1))"; then
+                completed=$((completed + 1))
+            fi
+        else
+            ui_progress "$step_num" "$total" "${step_text:0:30}"
+            if agent_execute_step "$step_num" "$step_text" "$workdir" "$task"; then
+                completed=$((completed + 1))
+            fi
+        fi
+
+        sleep "$AGENT_STEP_DELAY"
+
+        if [ "$step_num" -ge 4 ] && [ $(( step_num % 2 )) -eq 0 ]; then
+            memory_compact "$workdir"
+        fi
+    done
+
+    ui_ok "Subtask complete: $completed/$total sub-steps succeeded"
+    return 0
+}
+
 # ── Plan a task ────────────────────────────────────────────────
 agent_plan() {
     local task="$1"
@@ -82,10 +169,11 @@ agent_plan() {
     local base_rules="Create a step-by-step plan. Rules:
 - Use the FEWEST steps necessary. Most tasks need 1-4 steps.
 - Never add filler steps. If the task needs 1 step, output 1 step.
-- Absolute maximum: 8 steps. Only complex multi-file tasks should approach this.
+- Absolute maximum: $AGENT_MAX_STEPS steps. Only complex multi-file tasks should approach this.
 - Each step must be completable in ONE LLM call.
 - Each step must be a single action (write one file, run one command, etc.)
 - You can reference your slash commands (e.g. /recall, /sandbox) in steps.
+- If a step is too complex for a single action, prefix it with [SUBTASK] — it will be recursively expanded into its own sub-plan.
 - Output ONLY a NUMBERED LIST (1. 2. 3. etc.) — no explanations, no code."
 
     if [ "$effective_max_clarify" -gt 0 ]; then
@@ -295,28 +383,11 @@ agent_run() {
     fi
     echo ""
     
-    # Normalize inline plans: "1. foo  2. bar" → separate lines
-    plan=$(_agent_split_inline_steps "$plan")
-
-    # Parse steps — numbered lines like "1. Do something" or "1) Do something"
-    # Also accept slash command lines as steps (model sometimes outputs those)
+    # Parse steps using shared parser
     local -a steps=()
-    while IFS= read -r line; do
-        # Numbered list item: "1. thing" or "1) thing" or "1 thing"
-        if [[ "$line" =~ ^[0-9]+[\.\)\ ] ]]; then
-            local step_text
-            step_text=$(echo "$line" | sed 's/^[0-9]*[.)[:space:]]*//')
-            [ -n "$step_text" ] && steps+=("$step_text")
-        # Slash command line (e.g., "/recall query" or "/sandbox create 1")
-        elif [[ "$line" =~ ^/ ]] && [ -n "$line" ]; then
-            steps+=("$line")
-        # Dash/bullet list item: "- Do something" or "* Do something"
-        elif [[ "$line" =~ ^[-\*]\ + ]]; then
-            local step_text
-            step_text=$(echo "$line" | sed 's/^[-*][[:space:]]*//')
-            [ -n "$step_text" ] && steps+=("$step_text")
-        fi
-    done <<< "$plan"
+    while IFS= read -r s; do
+        [ -n "$s" ] && steps+=("$s")
+    done < <(_agent_parse_steps "$plan")
     
     local total=${#steps[@]}
     if [ "$total" -eq 0 ]; then
@@ -343,7 +414,16 @@ agent_run() {
         
         ui_progress "$step_num" "$total" "${steps[$i]:0:30}"
         
-        if agent_execute_step "$step_num" "${steps[$i]}" "$workdir" "$task"; then
+        # Detect [SUBTASK] markers — recursively plan and execute
+        if [[ "${steps[$i]}" == \[SUBTASK\]* ]]; then
+            local subtask_desc="${steps[$i]#\[SUBTASK\]}"
+            subtask_desc="${subtask_desc# }"
+            if _agent_run_subtask "$subtask_desc" "$workdir" 1; then
+                completed=$((completed + 1))
+            else
+                failed_steps="${failed_steps:+${failed_steps}, }step $step_num: ${steps[$i]}"
+            fi
+        elif agent_execute_step "$step_num" "${steps[$i]}" "$workdir" "$task"; then
             completed=$((completed + 1))
         else
             failed_steps="${failed_steps:+${failed_steps}, }step $step_num: ${steps[$i]}"
