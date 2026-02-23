@@ -941,7 +941,7 @@ _cmd_social() {
                     local cid
                     cid=$(echo "$dargs" | awk '{print $1}')
                     discord_read "$cid" ;;
-                *)        ui_info "Usage: /social discord <send [channel_id] <text>|read <channel_id>>" ;;
+                *)        ui_info "Usage: /social discord <send <text>|send <channel_id> <text>|read <channel_id>>" ;;
             esac ;;
         telegram|tg)
             local sub
