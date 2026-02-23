@@ -58,7 +58,8 @@ cmd_write() {
     # Write the file
     printf '%s\n' "$content" > "$fullpath"
     local lines
-    lines=$(echo "$content" | wc -l)
+    lines=$(printf '%s' "$content" | wc -l)
+    lines=$((lines + 1))
 
     if [ "$existed" -eq 1 ]; then
         ui_ok "Overwrote: $filepath ($lines lines)"

@@ -367,6 +367,15 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 | `/ask <question>` | Quick question | `/ask what is our test coverage?` |
 | `/init <name> <lang>` | Scaffold project | `/init myapp rust` |
 | `/recall <query>` | Search knowledge base | `/recall docker setup` |
+| `/save <file> <content>` | Save content to a file | `/save notes.md My summary` |
+| `/write <file> <content>` | Write/overwrite a file | `/write src/main.rs fn main() {}` |
+| `/download <url\|path> [dest]` | Download URL or copy file | `/download https://example.com/data.json` |
+| `/build [release]` | Build the project | `/build release` |
+| `/test [args]` | Run tests | `/test` |
+| `/fix [error]` | Diagnose and fix errors | `/fix compile error in main.rs` |
+| `/commit [msg]` | AI commit message | `/commit` |
+| `/push` | Push to GitHub | `/push` |
+| `/clone <url>` | Clone and setup repo | `/clone https://github.com/user/repo` |
 | `/social post <text>` | Post to all platforms | `/social post New release!` |
 | `/social <platform> <action>` | Platform-specific | `/social x post Hello X` |
 | `/pgp sign <msg>` | Sign a message | `/pgp sign I approve this` |
@@ -385,7 +394,14 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 | `/journal read` | Read recent entries | `/journal read` |
 | `/wallet <coin> <action>` | Crypto wallet | `/wallet btc balance` |
 | `/gsuite gmail\|drive\|docs` | Google Workspace | `/gsuite gmail inbox` |
-| `/backup save` | Backup identity | `/backup save` |
+| `/backup local` | Quick file backup | `/backup local` |
+| `/backup restore [name]` | Restore from backup | `/backup restore` |
+| `/backup git save` | Commit to backup repo | `/backup git save` |
+| `/backup github` | Save + push to GitHub | `/backup github` |
+| `/slash` | List custom commands | `/slash` |
+| `/slash create <name> <desc>` | Create custom command | `/slash create greet Say hello` |
+| `/slash <name> [args]` | Run custom command | `/slash greet world` |
+| `/slash test <name>` | Test custom command | `/slash test greet` |
 | `/files` | List workspace files | `/files` |
 | `/read <file>` | Read a file | `/read src/main.rs` |
 | `/status` | Agent status | `/status` |

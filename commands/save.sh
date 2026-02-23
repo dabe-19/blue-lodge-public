@@ -55,7 +55,8 @@ cmd_save() {
     # Write the file
     printf '%s\n' "$content" > "$fullpath"
     local lines
-    lines=$(echo "$content" | wc -l)
+    lines=$(printf '%s' "$content" | wc -l)
+    lines=$((lines + 1))
 
     ui_ok "Saved: $filepath ($lines lines)"
 }
