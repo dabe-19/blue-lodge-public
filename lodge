@@ -299,9 +299,12 @@ _cmd_phone() {
         share)    tools_phone_share "$rest" ;;
         toast)    tools_phone_toast "$rest" ;;
         vibrate)  tools_phone_vibrate ;;
+        permissions|perms|setup)
+            phone_fix_permissions ;;
         *)
             ui_section "Phone Commands"
             ui_dim "  /phone                — Full phone dashboard (battery, carrier, WiFi, location)"
+            ui_dim "  /phone permissions    — Permission setup guide + connectivity test"
             ui_dim "  /phone location [gps] — Current location (network or GPS)"
             ui_dim "  /phone where           — One-line location for context"
             ui_dim "  /phone sms [inbox|sent|all] [limit] — Read text messages"

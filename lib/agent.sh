@@ -13,6 +13,7 @@ source "$LODGE_DIR/lib/journal.sh"
 # ── Config ─────────────────────────────────────────────────────
 AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-12}"
 AGENT_STEP_DELAY="${AGENT_STEP_DELAY:-1}"
+AGENT_MAX_CLARIFY="${AGENT_MAX_CLARIFY:-2}"
 
 # ── Plan a task ────────────────────────────────────────────────
 agent_plan() {
@@ -23,9 +24,7 @@ agent_plan() {
     local system_prompt
     system_prompt=$(memory_build_system_prompt "$workdir" "" "plan")
     
-    local prompt="TASK: $task
-
-Create a step-by-step plan. Rules:
+    local base_rules="Create a step-by-step plan. Rules:
 - Use the FEWEST steps necessary. Most tasks need 1-4 steps.
 - Never add filler steps. If the task needs 1 step, output 1 step.
 - Absolute maximum: 8 steps. Only complex multi-file tasks should approach this.
@@ -33,23 +32,82 @@ Create a step-by-step plan. Rules:
 - Each step must be a single action (write one file, run one command, etc.)
 - You can reference your slash commands (e.g. /recall, /sandbox) in steps.
 - Output ONLY a NUMBERED LIST (1. 2. 3. etc.) — no explanations, no code.
+- If the task is too vague or you need key details to make a good plan,
+  start your response with CLARIFY: followed by ONE short question.
+  You may ask for clarification at most ${AGENT_MAX_CLARIFY} times.
 
-Example format:
+Example plan format:
 1. Do the first thing
 2. Do the second thing
 3. Do the third thing"
-    
-    # Stream the plan so user sees progress in real-time
-    echo ""
-    ui_dim "  Plan:"
-    local plan
-    plan=$(llm_stream "$prompt" "$system_prompt" 512)
-    echo ""
-    
-    if [ -z "$plan" ] || [[ "$plan" == ERROR* ]]; then
-        ui_err "Planning failed: ${plan:-empty response}"
-        return 1
-    fi
+
+    local context=""
+    local clarify_round=0
+    local plan=""
+
+    while [ "$clarify_round" -le "$AGENT_MAX_CLARIFY" ]; do
+        local prompt="TASK: $task"
+        if [ -n "$context" ]; then
+            prompt="${prompt}
+
+ADDITIONAL CONTEXT FROM USER:
+${context}"
+        fi
+
+        if [ "$clarify_round" -eq "$AGENT_MAX_CLARIFY" ]; then
+            prompt="${prompt}
+
+${base_rules}
+
+You have already asked ${clarify_round} question(s). No more questions — produce a plan NOW."
+        else
+            prompt="${prompt}
+
+${base_rules}"
+        fi
+
+        # Stream the plan so user sees progress in real-time
+        echo ""
+        if [ "$clarify_round" -eq 0 ]; then
+            ui_dim "  Plan:"
+        else
+            ui_dim "  Plan (round $((clarify_round + 1))):"
+        fi
+
+        plan=$(llm_stream "$prompt" "$system_prompt" 512)
+        echo ""
+
+        if [ -z "$plan" ] || [[ "$plan" == ERROR* ]]; then
+            ui_err "Planning failed: ${plan:-empty response}"
+            return 1
+        fi
+
+        # Check if the model is asking for clarification
+        local trimmed
+        trimmed=$(echo "$plan" | sed 's/^[[:space:]]*//')
+        if [[ "$trimmed" == CLARIFY:* ]] && [ "$clarify_round" -lt "$AGENT_MAX_CLARIFY" ]; then
+            clarify_round=$((clarify_round + 1))
+            local question
+            question=$(echo "$trimmed" | sed 's/^CLARIFY:[[:space:]]*//')
+            echo ""
+            ui_info "George needs more info ($clarify_round/$AGENT_MAX_CLARIFY):"
+            printf "  %b%s%b\n" "$C_CYAN" "$question" "$C_RESET"
+            echo ""
+            printf "  %b> %b" "$C_BOLD" "$C_RESET"
+            local answer
+            read -r answer < /dev/tty
+            if [ -z "$answer" ]; then
+                ui_dim "  No answer — proceeding with available info."
+                # Force plan on next round
+                clarify_round=$AGENT_MAX_CLARIFY
+            else
+                context="${context:+$context\n}$question → $answer"
+            fi
+        else
+            # Got a plan (not a clarification request)
+            break
+        fi
+    done
     
     # Update memory
     memory_update_section "Current Task" "$task" "$workdir"

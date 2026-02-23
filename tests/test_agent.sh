@@ -71,4 +71,43 @@ describe "agent_run input validation"
     assert_fail $?
   }
 
+# ── Clarification config ──────────────────────────────────────
+describe "Clarification rounds"
+
+  it "AGENT_MAX_CLARIFY defaults to 2" && {
+    assert_eq "$AGENT_MAX_CLARIFY" "2"
+  }
+
+  it "AGENT_MAX_CLARIFY is overridable" && {
+    (
+      AGENT_MAX_CLARIFY=0
+      assert_eq "$AGENT_MAX_CLARIFY" "0"
+    )
+    assert_ok $?
+  }
+
+# ── Plan prompt structure ──────────────────────────────────────
+describe "Plan prompt includes clarification instruction"
+
+  it "agent_plan function body mentions CLARIFY:" && {
+    local body
+    body=$(declare -f agent_plan)
+    echo "$body" | grep -q "CLARIFY:"
+    assert_ok $?
+  }
+
+  it "agent_plan function body mentions AGENT_MAX_CLARIFY" && {
+    local body
+    body=$(declare -f agent_plan)
+    echo "$body" | grep -q "AGENT_MAX_CLARIFY"
+    assert_ok $?
+  }
+
+  it "agent_plan function body reads from /dev/tty for user input" && {
+    local body
+    body=$(declare -f agent_plan)
+    echo "$body" | grep -q "/dev/tty"
+    assert_ok $?
+  }
+
 test_end

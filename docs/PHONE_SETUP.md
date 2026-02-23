@@ -178,9 +178,20 @@ For phone integration features (`/phone` commands):
 pkg install termux-api
 ```
 
-Then grant permissions when prompted (notifications, clipboard, etc.).
+**Important: Grant permissions manually.** Android 12+ usually does NOT
+auto-prompt for Termux:API permissions. Commands will hang if permissions
+aren't granted.
 
-> **Note:** Termux:API commands (`termux-notification`, `termux-clipboard-set`, etc.) must be run from Termux itself, not from inside the proot Ubuntu environment. Blue Lodge detects availability automatically.
+1. Go to **Settings → Apps → Termux:API → Permissions**
+2. Enable: **Location**, **Phone**, **SMS**, **Call logs**, **Notifications**
+3. Go to **Settings → Apps → Termux → Permissions**
+4. Enable the same permissions there
+
+> Run `/phone permissions` inside Lodge for a guided setup + live test.
+
+> **Note:** Termux:API commands do NOT work inside proot-distro Ubuntu.
+> Lodge detects this automatically and shows a helpful error instead of
+> hanging. Run Lodge from native Termux for phone features.
 
 ### Keyboard shortcuts (Samsung DeX / Bluetooth keyboard)
 
@@ -258,9 +269,21 @@ Android killed Termux due to memory pressure. Solutions:
 
 Run `termux-wake-lock` before starting Lodge, or add it to your `.bashrc`.
 
-### Can't access Termux:API from Ubuntu
+### Can't access Termux:API from Ubuntu / Commands hang
 
-Termux:API commands don't work inside proot. Blue Lodge's phone features (`/phone battery`, etc.) require running Lodge from Termux directly, or setting up a wrapper script.
+Termux:API commands **do not work inside proot-distro** and will hang
+indefinitely. Lodge now detects proot and fails fast with a clear message.
+
+**Fix:** Exit proot (`exit`) and run `lodge` from native Termux.
+
+### Termux:API commands return no data / permission prompt never appears
+
+Android 12+ often does not auto-prompt for Termux:API permissions.
+
+**Fix:** Grant permissions manually:
+1. **Settings → Apps → Termux:API → Permissions** — enable Location, Phone, SMS, Call logs
+2. **Settings → Apps → Termux → Permissions** — enable the same
+3. Run `/phone permissions` in Lodge to verify
 
 ---
 

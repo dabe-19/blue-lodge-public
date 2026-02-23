@@ -3,7 +3,7 @@
 # Location awareness, SMS access, telephony status, and more.
 # Requires: Termux:API app + termux-api package
 #
-# Permissions needed (Android will prompt on first use):
+# Permissions needed (grant manually in Android Settings):
 #   - ACCESS_FINE_LOCATION   (GPS/WiFi location)
 #   - READ_PHONE_STATE       (call status, SIM info)
 #   - READ_SMS               (text messages)
@@ -13,13 +13,40 @@
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 
+# ── Timeout for Termux API calls (seconds) ─────────────────────
+PHONE_API_TIMEOUT="${PHONE_API_TIMEOUT:-10}"
+
+# ── Detect proot environment ───────────────────────────────────
+# Termux-API commands hang indefinitely inside proot-distro because
+# the companion app can't communicate through the proot boundary.
+phone_is_proot() {
+    # Method 1: proot sets this env var
+    [ -n "${PROOT_TMP_DIR:-}" ] && return 0
+    # Method 2: check for proot marker in /proc
+    [ -f /proc/self/status ] && grep -qi 'TracerPid:[[:space:]]*[1-9]' /proc/self/status 2>/dev/null && return 0
+    # Method 3: common proot-distro install path
+    [ -f /etc/proot-distro ] && return 0
+    # Method 4: /host-rootfs exists (proot bind mount)
+    [ -d /host-rootfs ] && return 0
+    return 1
+}
+
 # ── Check Termux API availability ──────────────────────────────
 phone_available() {
+    # Fail fast if inside proot — commands will hang
+    phone_is_proot && return 1
     # termux-battery-status is the most basic API command
     command -v termux-battery-status &>/dev/null
 }
 
 phone_check() {
+    if phone_is_proot; then
+        ui_warn "Termux:API commands do not work inside proot-distro"
+        ui_dim "Phone features require running Lodge from native Termux."
+        ui_dim "Exit proot first:  exit"
+        ui_dim "Then run lodge from the Termux shell directly."
+        return 1
+    fi
     if ! phone_available; then
         ui_warn "Termux:API not available"
         ui_dim "Install: pkg install termux-api"
@@ -27,6 +54,84 @@ phone_check() {
         return 1
     fi
     return 0
+}
+
+# ── Safe wrapper: run a termux-* command with timeout ──────────
+# Prevents indefinite hangs if permissions aren't granted or the
+# Termux:API companion app is missing/broken.
+phone_api_call() {
+    local cmd="$1"; shift
+    if phone_is_proot; then
+        echo '{"error": "termux-api unavailable inside proot"}'
+        return 1
+    fi
+    if ! command -v "$cmd" &>/dev/null; then
+        echo "{\"error\": \"$cmd not installed\"}"
+        return 1
+    fi
+    local result
+    result=$(timeout "${PHONE_API_TIMEOUT}" "$cmd" "$@" 2>/dev/null)
+    local rc=$?
+    if [ $rc -eq 124 ]; then
+        ui_warn "$cmd timed out after ${PHONE_API_TIMEOUT}s"
+        ui_dim "Permissions may not be granted. Run: /phone permissions"
+        echo '{"error": "timeout — check permissions"}'
+        return 1
+    fi
+    echo "$result"
+    return $rc
+}
+
+# ── Permission troubleshooter ──────────────────────────────────
+phone_fix_permissions() {
+    ui_section "Termux:API Permission Setup"
+    echo ""
+    ui_info "Termux:API needs TWO things installed:"
+    echo ""
+    printf "  %b1.%b The %btermux-api%b package:\n" "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET"
+    printf "     pkg install termux-api\n"
+    echo ""
+    printf "  %b2.%b The %bTermux:API%b Android app (separate from Termux):\n" "$C_CYAN" "$C_RESET" "$C_BOLD" "$C_RESET"
+    printf "     Install from F-Droid: https://f-droid.org\n"
+    printf "     Search for \"Termux:API\" and install it\n"
+    echo ""
+    ui_info "Then grant permissions manually in Android Settings:"
+    echo ""
+    printf "  %bSettings → Apps → Termux:API → Permissions%b\n" "$C_BOLD" "$C_RESET"
+    echo ""
+    printf "  Enable these permissions:\n"
+    printf "    • %bLocation%b        (for /phone location, /phone where)\n" "$C_CYAN" "$C_RESET"
+    printf "    • %bPhone%b           (for /phone telephony, /phone cell)\n" "$C_CYAN" "$C_RESET"
+    printf "    • %bSMS%b             (for /phone sms)\n" "$C_CYAN" "$C_RESET"
+    printf "    • %bCall logs%b       (for /phone calls)\n" "$C_CYAN" "$C_RESET"
+    printf "    • %bNotifications%b   (for /phone notify)\n" "$C_CYAN" "$C_RESET"
+    echo ""
+    printf "  Also grant the same permissions for the %bTermux%b app itself:\n" "$C_BOLD" "$C_RESET"
+    printf "  %bSettings → Apps → Termux → Permissions%b\n" "$C_BOLD" "$C_RESET"
+    echo ""
+    ui_warn "IMPORTANT: Android 12+ often does NOT auto-prompt for permissions."
+    ui_dim "You MUST grant them manually through Settings as described above."
+    echo ""
+    ui_warn "proot limitation: /phone commands must run from native Termux."
+    ui_dim "If you're inside proot-distro Ubuntu, exit first, then run lodge."
+    echo ""
+
+    # Quick connectivity test
+    if phone_is_proot; then
+        ui_err "⚠  You are currently inside proot. Exit first to use phone features."
+    elif command -v termux-battery-status &>/dev/null; then
+        ui_step "Testing termux-battery-status..."
+        local test_out
+        test_out=$(timeout 8 termux-battery-status 2>/dev/null)
+        if [ -n "$test_out" ] && echo "$test_out" | jq -e '.percentage' &>/dev/null 2>&1; then
+            ui_ok "Termux:API is working! Battery: $(echo "$test_out" | jq -r '.percentage')%"
+        else
+            ui_err "termux-battery-status returned no data."
+            ui_dim "The Termux:API app may not be installed, or permissions are missing."
+        fi
+    else
+        ui_err "termux-api package not installed. Run: pkg install termux-api"
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -40,6 +145,11 @@ phone_location() {
     local provider="${1:-network}"
     local timeout="${2:-30}"
 
+    if phone_is_proot; then
+        ui_warn "Location not available inside proot"
+        echo '{"error": "termux-api unavailable inside proot"}'
+        return 1
+    fi
     if ! command -v termux-location &>/dev/null; then
         ui_warn "termux-location not available"
         echo '{"error": "termux-location not installed"}'
@@ -131,13 +241,9 @@ phone_sms_list() {
     local limit="${2:-10}"
     local offset="${3:-0}"
 
-    if ! command -v termux-sms-list &>/dev/null; then
-        ui_warn "termux-sms-list not available"
-        return 1
-    fi
-
     local msgs
-    msgs=$(termux-sms-list -t "$type" -l "$limit" -o "$offset" 2>/dev/null)
+    msgs=$(phone_api_call termux-sms-list -t "$type" -l "$limit" -o "$offset")
+    [ $? -ne 0 ] && return 1
 
     if [ -z "$msgs" ] || [ "$msgs" = "[]" ]; then
         ui_dim "  No messages found (type: $type)"
@@ -192,12 +298,7 @@ phone_sms_send() {
 
 # ── Get telephony info (SIM, network, call state) ─────────────
 phone_telephony_info() {
-    if ! command -v termux-telephony-deviceinfo &>/dev/null; then
-        ui_warn "termux-telephony-deviceinfo not available"
-        return 1
-    fi
-
-    termux-telephony-deviceinfo 2>/dev/null
+    phone_api_call termux-telephony-deviceinfo
 }
 
 # ── Get current call state ────────────────────────────────────
@@ -223,12 +324,7 @@ phone_call_state() {
 
 # ── Get signal strength / cell info ───────────────────────────
 phone_cell_info() {
-    if ! command -v termux-telephony-cellinfo &>/dev/null; then
-        ui_warn "termux-telephony-cellinfo not available"
-        return 1
-    fi
-
-    termux-telephony-cellinfo 2>/dev/null
+    phone_api_call termux-telephony-cellinfo
 }
 
 # ── Get call log ──────────────────────────────────────────────
@@ -236,12 +332,7 @@ phone_call_log() {
     local limit="${1:-10}"
     local offset="${2:-0}"
 
-    if ! command -v termux-call-log &>/dev/null; then
-        ui_warn "termux-call-log not available"
-        return 1
-    fi
-
-    termux-call-log -l "$limit" -o "$offset" 2>/dev/null
+    phone_api_call termux-call-log -l "$limit" -o "$offset"
 }
 
 # ── Display call log in human-readable format ─────────────────
@@ -261,22 +352,12 @@ phone_call_log_pretty() {
 
 # ── Get WiFi connection info ──────────────────────────────────
 phone_wifi_info() {
-    if ! command -v termux-wifi-connectioninfo &>/dev/null; then
-        ui_warn "termux-wifi-connectioninfo not available"
-        return 1
-    fi
-
-    termux-wifi-connectioninfo 2>/dev/null
+    phone_api_call termux-wifi-connectioninfo
 }
 
 # ── Scan nearby WiFi networks ─────────────────────────────────
 phone_wifi_scan() {
-    if ! command -v termux-wifi-scaninfo &>/dev/null; then
-        ui_warn "termux-wifi-scaninfo not available"
-        return 1
-    fi
-
-    termux-wifi-scaninfo 2>/dev/null
+    phone_api_call termux-wifi-scaninfo
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -286,12 +367,13 @@ phone_wifi_scan() {
 # ── Comprehensive phone status for LLM context ────────────────
 # Gathers battery + location + connectivity into a compact summary.
 phone_status_context() {
+    if phone_is_proot; then echo ""; return 0; fi
     local ctx=""
 
     # Battery
-    if command -v termux-battery-status &>/dev/null; then
-        local batt
-        batt=$(termux-battery-status 2>/dev/null)
+    local batt
+    batt=$(phone_api_call termux-battery-status 2>/dev/null)
+    if [ -n "$batt" ] && echo "$batt" | jq -e '.percentage' &>/dev/null 2>&1; then
         local pct status
         pct=$(echo "$batt" | jq -r '.percentage // "?"' 2>/dev/null)
         status=$(echo "$batt" | jq -r '.status // "?"' 2>/dev/null)
@@ -299,9 +381,9 @@ phone_status_context() {
     fi
 
     # WiFi
-    if command -v termux-wifi-connectioninfo &>/dev/null; then
-        local wifi
-        wifi=$(termux-wifi-connectioninfo 2>/dev/null)
+    local wifi
+    wifi=$(phone_api_call termux-wifi-connectioninfo 2>/dev/null)
+    if [ -n "$wifi" ] && echo "$wifi" | jq -e '.ssid' &>/dev/null 2>&1; then
         local ssid
         ssid=$(echo "$wifi" | jq -r '.ssid // "disconnected"' 2>/dev/null)
         if [ "$ssid" != "null" ] && [ "$ssid" != "<unknown ssid>" ]; then
@@ -321,47 +403,42 @@ phone_status_context() {
 
 # ── Full phone dashboard ──────────────────────────────────────
 phone_dashboard() {
+    if ! phone_check; then return 1; fi
     ui_section "Phone Status"
 
     # Battery
-    if command -v termux-battery-status &>/dev/null; then
-        local batt
-        batt=$(termux-battery-status 2>/dev/null)
-        if [ -n "$batt" ]; then
-            local pct status temp
-            pct=$(echo "$batt" | jq -r '.percentage' 2>/dev/null)
-            status=$(echo "$batt" | jq -r '.status' 2>/dev/null)
-            temp=$(echo "$batt" | jq -r '.temperature' 2>/dev/null)
-            printf "  %bBattery:%b    %s%% (%s, %s°C)\n" "$C_CYAN" "$C_RESET" "$pct" "$status" "$temp"
-        fi
+    local batt
+    batt=$(phone_api_call termux-battery-status 2>/dev/null)
+    if [ -n "$batt" ] && echo "$batt" | jq -e '.percentage' &>/dev/null 2>&1; then
+        local pct status temp
+        pct=$(echo "$batt" | jq -r '.percentage' 2>/dev/null)
+        status=$(echo "$batt" | jq -r '.status' 2>/dev/null)
+        temp=$(echo "$batt" | jq -r '.temperature' 2>/dev/null)
+        printf "  %bBattery:%b    %s%% (%s, %s°C)\n" "$C_CYAN" "$C_RESET" "$pct" "$status" "$temp"
     fi
 
     # Telephony
-    if command -v termux-telephony-deviceinfo &>/dev/null; then
-        local tel
-        tel=$(termux-telephony-deviceinfo 2>/dev/null)
-        if [ -n "$tel" ]; then
-            local carrier sim_state data
-            carrier=$(echo "$tel" | jq -r '.network_operator_name // "unknown"' 2>/dev/null)
-            sim_state=$(echo "$tel" | jq -r '.sim_state // "unknown"' 2>/dev/null)
-            data=$(echo "$tel" | jq -r '.data_state // "unknown"' 2>/dev/null)
-            printf "  %bCarrier:%b    %s (SIM: %s, Data: %s)\n" "$C_CYAN" "$C_RESET" "$carrier" "$sim_state" "$data"
-        fi
+    local tel
+    tel=$(phone_api_call termux-telephony-deviceinfo 2>/dev/null)
+    if [ -n "$tel" ] && echo "$tel" | jq -e '.network_operator_name' &>/dev/null 2>&1; then
+        local carrier sim_state data
+        carrier=$(echo "$tel" | jq -r '.network_operator_name // "unknown"' 2>/dev/null)
+        sim_state=$(echo "$tel" | jq -r '.sim_state // "unknown"' 2>/dev/null)
+        data=$(echo "$tel" | jq -r '.data_state // "unknown"' 2>/dev/null)
+        printf "  %bCarrier:%b    %s (SIM: %s, Data: %s)\n" "$C_CYAN" "$C_RESET" "$carrier" "$sim_state" "$data"
     fi
 
     # WiFi
-    if command -v termux-wifi-connectioninfo &>/dev/null; then
-        local wifi
-        wifi=$(termux-wifi-connectioninfo 2>/dev/null)
-        if [ -n "$wifi" ]; then
-            local ssid freq rssi ip
-            ssid=$(echo "$wifi" | jq -r '.ssid // "disconnected"' 2>/dev/null)
-            freq=$(echo "$wifi" | jq -r '.frequency_mhz // "?"' 2>/dev/null)
-            rssi=$(echo "$wifi" | jq -r '.rssi // "?"' 2>/dev/null)
-            ip=$(echo "$wifi" | jq -r '.ip // "?"' 2>/dev/null)
-            printf "  %bWiFi:%b       %s (%s MHz, %s dBm)\n" "$C_CYAN" "$C_RESET" "$ssid" "$freq" "$rssi"
-            printf "  %bIP:%b         %s\n" "$C_CYAN" "$C_RESET" "$ip"
-        fi
+    local wifi
+    wifi=$(phone_api_call termux-wifi-connectioninfo 2>/dev/null)
+    if [ -n "$wifi" ] && echo "$wifi" | jq -e '.ssid' &>/dev/null 2>&1; then
+        local ssid freq rssi ip
+        ssid=$(echo "$wifi" | jq -r '.ssid // "disconnected"' 2>/dev/null)
+        freq=$(echo "$wifi" | jq -r '.frequency_mhz // "?"' 2>/dev/null)
+        rssi=$(echo "$wifi" | jq -r '.rssi // "?"' 2>/dev/null)
+        ip=$(echo "$wifi" | jq -r '.ip // "?"' 2>/dev/null)
+        printf "  %bWiFi:%b       %s (%s MHz, %s dBm)\n" "$C_CYAN" "$C_RESET" "$ssid" "$freq" "$rssi"
+        printf "  %bIP:%b         %s\n" "$C_CYAN" "$C_RESET" "$ip"
     fi
 
     # Location

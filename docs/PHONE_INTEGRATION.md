@@ -8,7 +8,37 @@ status — the same sensor data that any Android app can access.
 
 1. **Termux:API app** — Install from F-Droid (not Google Play)
 2. **termux-api package** — `pkg install termux-api` (inside Termux)
-3. Android will prompt for permissions on first use of each feature
+3. **Grant permissions manually** — Android 12+ usually does NOT auto-prompt
+
+### Granting Permissions
+
+Android's auto-prompt for Termux:API permissions is unreliable — on
+many devices (especially Android 12+), the prompt never appears and
+commands just **hang forever**. Grant permissions manually instead:
+
+1. Open **Android Settings → Apps → Termux:API → Permissions**
+2. Enable: **Location**, **Phone**, **SMS**, **Call logs**, **Notifications**
+3. Also open **Settings → Apps → Termux → Permissions**
+4. Enable the same permissions there
+
+> **Quick check:** Run `/phone permissions` inside Lodge for a guided
+> setup walkthrough with a live connectivity test.
+
+### proot Limitation
+
+**Termux:API commands do NOT work inside proot-distro** (e.g., the
+Ubuntu environment). They hang indefinitely because the Termux:API
+companion app cannot communicate across the proot boundary.
+
+If you're running Lodge inside proot Ubuntu, you have two options:
+
+1. **Run Lodge from native Termux** — exit proot (`exit`) and run
+   `lodge` directly from the Termux shell.
+2. **Use proot with `--bind`** — this is experimental and not all
+   API commands work reliably through binds.
+
+Lodge now detects proot automatically and fails fast with a helpful
+message instead of hanging.
 
 ### Required Permissions
 
@@ -119,14 +149,14 @@ If GPS times out, the location functions automatically fall back to
 the network provider. If no provider returns data, George reports
 "Location unavailable" rather than guessing.
 
-### proot Limitation
+### proot Detection
 
 **Important:** Termux API commands must run from the Termux shell,
-not from inside proot-distro Ubuntu. If Blue Lodge is running under
-proot, phone commands will not work and will display a helpful error.
+not from inside proot-distro Ubuntu. Lodge detects proot automatically
+and shows a clear error message instead of hanging. Run `/phone permissions`
+for a complete setup guide.
 
-See [PHONE_SETUP.md](PHONE_SETUP.md) for the full installation guide
-including the proot workaround.
+See [PHONE_SETUP.md](PHONE_SETUP.md) for the full installation guide.
 
 ## Location-Based Advice
 
