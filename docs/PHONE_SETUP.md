@@ -1,197 +1,209 @@
 # Phone Setup Guide — From Android to Blue Lodge
 
-This guide walks you through setting up Blue Lodge on an Android phone (Galaxy Fold, Galaxy S-series, or similar high-end device with 8GB+ RAM). The stack is:
+Two installation paths. **Option A (Termux-native)** is simpler, faster,
+and gives you full phone integration. **Option B (proot Ubuntu)** gives
+you a full Linux userland if you need `apt`, `build-essential`, etc.
 
-**F-Droid → Termux → Ubuntu (via Andronix/proot-distro) → Ollama → Blue Lodge**
+| | Option A: Termux-Native | Option B: proot Ubuntu |
+|---|---|---|
+| **Complexity** | Simple — 4 steps | More steps — proot layer |
+| **Phone integration** | Works natively (`/phone`, SMS, GPS) | Does NOT work (API can't cross proot) |
+| **Linux tools** | Termux `pkg` packages | Full `apt` ecosystem |
+| **Performance** | Native (no overhead) | ~5-10% proot overhead |
+| **Storage** | ~4GB (Ollama + model) | ~5-6GB (+Ubuntu image) |
+| **Recommended for** | Most users | Heavy Linux/build-essential needs |
 
 ---
 
-## Prerequisites
+## Prerequisites (both paths)
 
 - Android phone with **8GB+ RAM** (12GB recommended)
 - **Snapdragon 8 Gen 2** or newer (for reasonable LLM inference speed)
-- ~8GB free storage (for Ubuntu + Ollama + model)
-- A keyboard is highly recommended (Bluetooth or Samsung DeX)
+- ~5-8GB free storage (Ollama + model + optional Ubuntu)
+- A keyboard is recommended (Bluetooth or Samsung DeX)
 
-## Step 1: Install F-Droid
+## Step 1: Install F-Droid + Termux (both paths)
 
-The Play Store version of Termux is **outdated and broken**. You need the F-Droid version.
+The Play Store version of Termux is **outdated and broken**. Use F-Droid.
 
-1. Open your phone's browser and go to: **https://f-droid.org**
-2. Tap **"Download F-Droid"** and install the APK
-3. You may need to enable **"Install from unknown sources"** in Settings → Apps → Special access
-4. Open F-Droid and let it update its repository index (takes 1-2 minutes)
+1. Open browser → **https://f-droid.org** → Download F-Droid
+2. Enable "Install from unknown sources" if prompted
+3. Open F-Droid → Search **"Termux"** → Install
+4. Also install **Termux:API** (for phone integration — SMS, GPS, battery, etc.)
 
-> **Why F-Droid?** Google removed Termux's ability to update on the Play Store due to policy changes around executing downloaded code. The F-Droid version is maintained by the Termux developers and is the only version that works correctly.
-
-## Step 2: Install Termux from F-Droid
-
-1. Open F-Droid
-2. Search for **"Termux"**
-3. Install **Termux** (by Fredrik Fornwall)
-4. Also install **Termux:API** — this enables phone integration (clipboard, notifications, battery, etc.)
-
-After installing, open Termux and run:
+Open Termux and update:
 
 ```bash
-# Update packages
 pkg update && pkg upgrade -y
-
-# Install essential tools
-pkg install -y git curl jq proot-distro
 ```
 
-## Step 3: Install Ubuntu via proot-distro
+---
 
-Termux includes `proot-distro`, which lets you run full Linux distributions without root access.
+## Option A: Termux-Native Install (Recommended)
+
+This is the simplest path. Blue Lodge runs directly in Termux with
+zero overhead and full phone integration.
+
+### A1. Install dependencies
 
 ```bash
-# Install Ubuntu
-proot-distro install ubuntu
-
-# Log into Ubuntu
-proot-distro login ubuntu
+pkg install -y git curl jq sqlite gawk procps bc termux-api
 ```
 
-You're now running Ubuntu inside Termux. Your home directory is isolated.
+> `gawk` replaces mawk (which has compatibility issues). `procps`
+> provides `free` for system vitals. `termux-api` enables `/phone` commands.
 
-### Make it easy to launch
-
-Back in **Termux** (exit Ubuntu first with `exit`), create an alias:
+### A2. Install Ollama
 
 ```bash
-echo 'alias ubuntu="proot-distro login ubuntu"' >> ~/.bashrc
+# Download the ARM64 binary directly
+curl -fSL https://github.com/ollama/ollama/releases/latest/download/ollama-linux-arm64.tgz \
+    | tar xz -C $PREFIX/bin/ 2>/dev/null \
+    || {
+        curl -fSL https://github.com/ollama/ollama/releases/latest/download/ollama-linux-arm64 \
+            -o $PREFIX/bin/ollama
+        chmod +x $PREFIX/bin/ollama
+    }
+
+# Start Ollama
+ollama serve &
+sleep 3
+
+# Verify
+curl -s http://127.0.0.1:11434/api/tags | jq .
+```
+
+> **Note:** The `ollama.com/install.sh` script expects systemd, which
+> Termux doesn't have. Use the direct binary download above instead.
+
+### A3. Auto-start Ollama
+
+Add to your `~/.bashrc`:
+
+```bash
+# Start Ollama if not running
+if ! curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
+    ollama serve > $TMPDIR/ollama.log 2>&1 &
+    sleep 2
+fi
+```
+
+### A4. Install Blue Lodge
+
+```bash
+git clone https://github.com/dabe-19/blue-lodge.git ~/blue-lodge
+bash ~/blue-lodge/install.sh
 source ~/.bashrc
 ```
 
-Now you can type `ubuntu` to drop into your Ubuntu environment.
+### A5. Grant phone permissions
 
-### Alternative: Andronix
+Android 12+ usually does **NOT** auto-prompt for permissions:
 
-If you prefer a GUI or a more guided setup, **Andronix** (available on the Play Store) provides one-tap installation of Ubuntu and other distros on Termux. It uses the same proot technology under the hood.
+1. **Settings → Apps → Termux:API → Permissions** — enable Location, Phone, SMS, Call logs, Notifications
+2. **Settings → Apps → Termux → Permissions** — enable the same
 
-1. Install Andronix from the Play Store
-2. Select **Ubuntu** → **CLI Only** (no desktop needed)
-3. Copy the generated command and paste it into Termux
-4. Follow the prompts
+Then verify inside Lodge:
 
-Both methods give you a working Ubuntu environment. The `proot-distro` method is lighter.
+```
+lodge
+/phone permissions    # Guided setup + live test
+```
 
-## Step 4: Set Up Ubuntu Environment
-
-Inside Ubuntu (`proot-distro login ubuntu`):
+### A6. First Run
 
 ```bash
-# Update
+lodge
+/status              # Check everything is connected
+/phone               # Full phone dashboard
+/help                # All commands
+```
+
+---
+
+## Option B: proot Ubuntu Install
+
+Use this if you need a full Linux environment with `apt`, `build-essential`,
+GCC, Python dev headers, etc. Note: `/phone` commands will NOT work inside
+proot — exit to native Termux for phone features.
+
+### B1. Install proot-distro
+
+```bash
+pkg install -y git curl jq proot-distro
+```
+
+### B2. Set up Ubuntu
+
+```bash
+proot-distro install ubuntu
+proot-distro login ubuntu
+```
+
+You're now in Ubuntu. Set up the environment:
+
+```bash
 apt update && apt upgrade -y
+apt install -y curl git jq sqlite3 gawk bc build-essential
 
-# Install dependencies
-apt install -y curl git jq build-essential
-
-# Install uv (fast Python package manager — optional, for Python projects)
+# Optional: Python tooling
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source ~/.bashrc
 ```
 
-## Step 5: Install Ollama
-
-Ollama provides local LLM inference. Install it inside your Ubuntu environment:
+### B3. Install Ollama (inside Ubuntu)
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
-```
-
-Start the Ollama server:
-
-```bash
 ollama serve &
-```
-
-Verify it's running:
-
-```bash
+sleep 3
 curl -s http://127.0.0.1:11434/api/tags | jq .
 ```
 
-### Auto-start Ollama
-
-Add to your `~/.bashrc` inside Ubuntu:
+Add to `~/.bashrc` inside Ubuntu:
 
 ```bash
-# Start Ollama if not running
 if ! curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
     ollama serve > /tmp/ollama.log 2>&1 &
     sleep 2
 fi
 ```
 
-## Step 6: Install Blue Lodge
+### B4. Install Blue Lodge (inside Ubuntu)
 
 ```bash
-# Clone
-git clone https://github.com/YOUR_USERNAME/blue-lodge.git ~/blue-lodge
-
-# Install (creates model, sets up aliases)
+git clone https://github.com/dabe-19/blue-lodge.git ~/blue-lodge
 bash ~/blue-lodge/install.sh
-
-# Reload shell
 source ~/.bashrc
 ```
 
-The installer will:
-- Check dependencies (curl, jq, git)
-- Verify Ollama is running
-- Download the Qwen3-4B model (~3GB, one-time)
-- Create the `blue-lodge` Ollama model
-- Set up shell aliases
+### B5. Easy launch alias
 
-## Step 7: First Run
+Back in **Termux** (exit Ubuntu with `exit`):
 
 ```bash
-lodge
+echo 'alias ubuntu="proot-distro login ubuntu"' >> ~/.bashrc
+source ~/.bashrc
 ```
 
-You should see the Blue Lodge header and a prompt. Try:
+### B6. Phone integration with proot
 
-```
-/status          # Check everything is connected
-/help            # See all commands
-What is a linked list?   # Quick question
-```
+Phone commands don't work inside proot. For phone features, either:
+
+- **Exit proot** and run `lodge` from native Termux
+- **Use Option A** entirely (recommended)
+
+---
 
 ## Recommended Termux Configuration
 
 ### Keep Termux alive in background
 
-Android aggressively kills background apps. To prevent Termux from being killed:
+Android aggressively kills background apps:
 
-1. **Acquire wake lock**: In Termux, run `termux-wake-lock`
-2. **Battery optimization**: Go to Settings → Apps → Termux → Battery → Unrestricted
-3. **Lock in recents**: In the recent apps view, tap the Termux icon and select "Lock"
-
-### Termux:API setup
-
-For phone integration features (`/phone` commands):
-
-```bash
-# In Termux (not Ubuntu)
-pkg install termux-api
-```
-
-**Important: Grant permissions manually.** Android 12+ usually does NOT
-auto-prompt for Termux:API permissions. Commands will hang if permissions
-aren't granted.
-
-1. Go to **Settings → Apps → Termux:API → Permissions**
-2. Enable: **Location**, **Phone**, **SMS**, **Call logs**, **Notifications**
-3. Go to **Settings → Apps → Termux → Permissions**
-4. Enable the same permissions there
-
-> Run `/phone permissions` inside Lodge for a guided setup + live test.
-
-> **Note:** Termux:API commands do NOT work inside proot-distro Ubuntu.
-> Lodge detects this automatically and shows a helpful error instead of
-> hanging. Run Lodge from native Termux for phone features.
+1. **Acquire wake lock**: `termux-wake-lock`
+2. **Battery optimization**: Settings → Apps → Termux → Battery → Unrestricted
+3. **Lock in recents**: In recent apps view, tap Termux icon → "Lock"
 
 ### Keyboard shortcuts (Samsung DeX / Bluetooth keyboard)
 
@@ -204,52 +216,49 @@ aren't granted.
 
 ## Storage Layout
 
-After setup, your storage looks like:
-
 ```
 ~/
 ├── blue-lodge/           # Blue Lodge installation (~1MB)
 │   ├── lodge             # Main script
 │   ├── journal.md        # Agent's living memory
 │   └── ...
+├── .george/              # George's config + recall DB
 ├── .lodge-sandboxes/     # Project sandboxes (varies)
-│   ├── my_app/
-│   └── scraper/
 └── .ollama/              # Ollama models (~3-4GB)
     └── models/
 ```
 
-## Memory Management Tips
+## Memory Management
 
 On a 12GB device, RAM is precious:
 
 | Component | RAM Usage |
 |-----------|-----------|
 | Android OS | ~4GB |
-| Termux + Ubuntu | ~200MB |
+| Termux (native) | ~50MB |
+| Termux + Ubuntu (proot) | ~200MB |
 | Ollama (idle) | ~50MB |
 | Ollama (model loaded) | ~3-4GB |
 | **Available for builds** | **~4-6GB** |
 
-Blue Lodge automatically:
-- Unloads the model after each task completes
-- Unloads on Ctrl+C cancellation
-- Unloads on session exit
-- Uses `keep_alive: 5m` so the model auto-unloads after 5 minutes of inactivity
+Blue Lodge automatically manages model memory:
+- Unloads model on task completion, Ctrl+C, and session exit
+- Uses `keep_alive: 5m` (auto-unload after 5 min idle)
 
-You can tune `LLM_KEEP_ALIVE` in your `.bashrc`:
+Tune in `.bashrc`:
 
 ```bash
-export LLM_KEEP_ALIVE="2m"   # Unload after 2 minutes (aggressive)
-export LLM_KEEP_ALIVE="30m"  # Keep loaded for 30 minutes (if you have RAM)
+export LLM_KEEP_ALIVE="2m"   # Aggressive (saves RAM faster)
+export LLM_KEEP_ALIVE="30m"  # Relaxed (faster subsequent responses)
 export LLM_KEEP_ALIVE="0"    # Unload immediately after each request
 ```
 
 ## Troubleshooting
 
-### "Ollama not found" after entering Ubuntu
+### "Ollama not found"
 
-Ollama needs to be installed **inside** the proot Ubuntu environment, not in Termux directly.
+- **Option A (Termux):** Download the binary directly — see step A2
+- **Option B (proot):** Install Ollama inside the Ubuntu environment, not in native Termux
 
 ### Model is very slow
 
@@ -259,7 +268,7 @@ Ollama needs to be installed **inside** the proot Ubuntu environment, not in Ter
 
 ### "Process killed" during model loading
 
-Android killed Termux due to memory pressure. Solutions:
+Android killed Termux due to memory pressure:
 - Close background apps
 - Use `termux-wake-lock`
 - Disable battery optimization for Termux
@@ -267,40 +276,29 @@ Android killed Termux due to memory pressure. Solutions:
 
 ### Termux closes when phone screen turns off
 
-Run `termux-wake-lock` before starting Lodge, or add it to your `.bashrc`.
+Run `termux-wake-lock` before starting Lodge, or add it to `.bashrc`.
 
-### Can't access Termux:API from Ubuntu / Commands hang
+### /phone commands hang or return no data
 
-Termux:API commands **do not work inside proot-distro** and will hang
-indefinitely. Lodge now detects proot and fails fast with a clear message.
-
-**Fix:** Exit proot (`exit`) and run `lodge` from native Termux.
-
-### Termux:API commands return no data / permission prompt never appears
-
-Android 12+ often does not auto-prompt for Termux:API permissions.
-
-**Fix:** Grant permissions manually:
-1. **Settings → Apps → Termux:API → Permissions** — enable Location, Phone, SMS, Call logs
-2. **Settings → Apps → Termux → Permissions** — enable the same
-3. Run `/phone permissions` in Lodge to verify
+1. **Inside proot?** Exit proot (`exit`) and run Lodge from native Termux
+2. **Permissions missing?** Grant manually: Settings → Apps → Termux:API → Permissions
+3. Run `/phone permissions` in Lodge for a guided diagnostic
 
 ---
 
-## Quick Reference: Daily Workflow
+## Quick Reference
 
 ```bash
-# Open Termux
-# Enter Ubuntu
-ubuntu
-
-# Start working
-cd ~/my-project
+# Option A: Just open Termux and go
 lodge
 
-# Or one-shot
+# Option B: Enter Ubuntu first
+ubuntu
+lodge
+
+# One-shot task
 lodge "add input validation to the signup form"
 
 # When done, Ctrl+C or /quit
-# Model automatically unloads, freeing ~4GB RAM
+# Model auto-unloads, freeing ~4GB RAM
 ```

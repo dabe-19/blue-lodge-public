@@ -26,7 +26,7 @@ lodge "add error handling"         # Give it a coding task
 lodge /ask "what is a monad?"      # Quick question
 ```
 
-> **On Android?** See the [Phone Setup Guide](docs/PHONE_SETUP.md) for F-Droid → Termux → Ubuntu → Ollama instructions.
+> **On Android?** See the [Phone Setup Guide](docs/PHONE_SETUP.md) — works directly in Termux (no Ubuntu needed) or optionally with proot-distro Ubuntu.
 
 ## Architecture
 

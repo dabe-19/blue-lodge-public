@@ -3,7 +3,7 @@
 # ⌂ George — Mobile-First Coding Agent (Blue Lodge)
 # ═══════════════════════════════════════════════════════════════
 # A lightweight agentic shell powered by local LLMs via Ollama.
-# Designed for Galaxy Fold 7 / Termux / Ubuntu on ARM.
+# Designed for Galaxy Fold 7 / Termux (native or proot) on ARM.
 #
 # Usage:
 #   lodge                    # Interactive mode

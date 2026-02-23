@@ -20,8 +20,17 @@ ok()    { printf " ${GREEN}✓${RESET} %s\n" "$1"; }
 warn()  { printf " ${YELLOW}⚠${RESET} %s\n" "$1"; }
 err()   { printf " ${RED}✗${RESET} %s\n" "$1"; }
 
+# ── Detect environment ────────────────────────────────────────
+IS_TERMUX=0
+if [ -n "${TERMUX_VERSION:-}" ] || [ -d "/data/data/com.termux" ]; then
+    IS_TERMUX=1
+fi
+
 echo ""
 printf " ${BOLD}⌂ George Installer${RESET}\n"
+if [ "$IS_TERMUX" -eq 1 ]; then
+    printf " ${DIM}Detected: Termux (native Android)${RESET}\n"
+fi
 echo ""
 
 # ── 1. Check dependencies ────────────────────────────────────
@@ -36,7 +45,18 @@ command -v sqlite3 &>/dev/null || MISSING+=("sqlite3")
 if [ ${#MISSING[@]} -gt 0 ]; then
     warn "Missing: ${MISSING[*]}"
     info "Installing..."
-    if command -v apt &>/dev/null; then
+    if [ "$IS_TERMUX" -eq 1 ]; then
+        # Termux uses 'sqlite' not 'sqlite3' as the package name
+        local_pkgs=()
+        for dep in "${MISSING[@]}"; do
+            if [ "$dep" = "sqlite3" ]; then
+                local_pkgs+=("sqlite")
+            else
+                local_pkgs+=("$dep")
+            fi
+        done
+        pkg install -y "${local_pkgs[@]}"
+    elif command -v apt &>/dev/null; then
         sudo apt update -qq && sudo apt install -y -qq "${MISSING[@]}"
     elif command -v pkg &>/dev/null; then
         pkg install -y "${MISSING[@]}"
@@ -47,21 +67,53 @@ if [ ${#MISSING[@]} -gt 0 ]; then
 fi
 ok "Dependencies ready"
 
+# ── 1b. Termux extras (gawk, procps, bc) ─────────────────────
+# Termux ships mawk by default which has NUL byte issues.
+# procps provides 'free' for vitals. bc for location math.
+if [ "$IS_TERMUX" -eq 1 ]; then
+    TERMUX_EXTRAS=()
+    command -v gawk &>/dev/null || TERMUX_EXTRAS+=("gawk")
+    command -v free &>/dev/null || TERMUX_EXTRAS+=("procps")
+    command -v bc   &>/dev/null || TERMUX_EXTRAS+=("bc")
+    if [ ${#TERMUX_EXTRAS[@]} -gt 0 ]; then
+        info "Installing Termux extras: ${TERMUX_EXTRAS[*]}"
+        pkg install -y "${TERMUX_EXTRAS[@]}"
+    fi
+    # Install termux-api if Termux:API app is present
+    if [ ! -f "$PREFIX/bin/termux-battery-status" ]; then
+        info "Installing termux-api (phone integration)..."
+        pkg install -y termux-api 2>/dev/null || warn "termux-api install failed — install manually: pkg install termux-api"
+    fi
+fi
+
 # ── 2. Check Ollama ──────────────────────────────────────────
 info "Checking Ollama..."
 if ! command -v ollama &>/dev/null; then
     warn "Ollama not found. Installing..."
-    curl -fsSL https://ollama.com/install.sh | sh
+    if [ "$IS_TERMUX" -eq 1 ]; then
+        info "Downloading Ollama for Termux (ARM64)..."
+        # The install.sh from ollama.com expects systemd — use direct binary instead
+        OLLAMA_VER=$(curl -sf https://api.github.com/repos/ollama/ollama/releases/latest | jq -r '.tag_name' 2>/dev/null || echo "v0.6.2")
+        OLLAMA_URL="https://github.com/ollama/ollama/releases/download/${OLLAMA_VER}/ollama-linux-arm64.tgz"
+        mkdir -p "$HOME/.local/bin"
+        curl -fSL "$OLLAMA_URL" | tar xz -C "$HOME/.local/bin/" 2>/dev/null \
+            || curl -fSL "https://github.com/ollama/ollama/releases/download/${OLLAMA_VER}/ollama-linux-arm64" -o "$HOME/.local/bin/ollama"
+        chmod +x "$HOME/.local/bin/ollama"
+        export PATH="$HOME/.local/bin:$PATH"
+    else
+        curl -fsSL https://ollama.com/install.sh | sh
+    fi
 fi
 ok "Ollama installed"
 
 # ── 3. Ensure Ollama is running ──────────────────────────────
 if ! curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
     info "Starting Ollama..."
-    ollama serve > /tmp/lodge-ollama.log 2>&1 &
+    local_tmpdir="${TMPDIR:-/tmp}"
+    ollama serve > "$local_tmpdir/lodge-ollama.log" 2>&1 &
     sleep 3
     if ! curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
-        err "Ollama failed to start. Check /tmp/lodge-ollama.log"
+        err "Ollama failed to start. Check $local_tmpdir/lodge-ollama.log"
         exit 1
     fi
 fi
