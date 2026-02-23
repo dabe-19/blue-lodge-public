@@ -161,10 +161,30 @@ To invoke: output a line starting with / (e.g., /recall docker setup).
 /journal read         — Read recent journal entries
 /wallet <coin> <action> — Crypto wallet operations
 /gsuite gmail|drive|docs — Google Workspace
+/phone                 — Full phone dashboard (battery, carrier, WiFi, GPS)
+/phone location        — Get current GPS/network location
+/phone where           — One-line location context
+/phone sms [inbox|sent] — Read text messages
+/phone sms send <num> <msg> — Send a text message
+/phone calls           — Recent call log
+/phone telephony       — Carrier, SIM, data state
+/phone wifi            — WiFi connection info
 /backup save          — Backup your identity
+/slash                 — List your custom commands
+/slash create <name> <desc> — Create a new custom command (LLM-assisted)
+/slash <name> [args]   — Run a custom command you created
+/slash test <name>     — Test a custom command
 /files                — List workspace files
 /read <file>          — Read a file
 /status               — Show agent status
 /memory               — Show CLAUDE.md
+
+TIP: If unsure how a command works, use /recall <command name> to look it up.
+All command docs are indexed in your knowledge base.
 CATALOG
+
+    # Append custom slash commands if any exist
+    if declare -f slash_catalog &>/dev/null; then
+        slash_catalog
+    fi
 }

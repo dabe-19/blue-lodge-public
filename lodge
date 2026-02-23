@@ -37,6 +37,8 @@ source "$LODGE_DIR/lib/secrets.sh"
 source "$LODGE_DIR/lib/gsuite.sh"
 source "$LODGE_DIR/lib/wallet.sh"
 source "$LODGE_DIR/lib/pgp.sh"
+source "$LODGE_DIR/lib/phone.sh"
+source "$LODGE_DIR/lib/slash.sh"
 
 # ── Graceful Cancellation ─────────────────────────────────────
 # Tracks whether we're in task execution so Ctrl+C behaves smartly:
@@ -224,9 +226,69 @@ _cmd_phone() {
     rest=$(echo "$args" | sed 's/^[^ ]* *//')
     
     case "$action" in
+        # ── Location ────────────────────────────────
+        location|loc|gps)
+            ui_section "Location"
+            local provider="network"
+            [[ "$rest" == "gps" ]] && provider="gps"
+            phone_location_summary "$provider" 30
+            ;;
+        where)
+            # Compact one-liner for LLM context
+            phone_location_context
+            ;;
+        # ── SMS / Text Messages ─────────────────────
+        sms|texts|messages)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            local sms_rest
+            sms_rest=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$sub" in
+                inbox|"")
+                    ui_section "SMS Inbox"
+                    phone_sms_pretty "inbox" "${sms_rest:-10}" ;;
+                sent)
+                    ui_section "SMS Sent"
+                    phone_sms_pretty "sent" "${sms_rest:-10}" ;;
+                send)
+                    local sms_num
+                    sms_num=$(echo "$sms_rest" | awk '{print $1}')
+                    local sms_body
+                    sms_body=$(echo "$sms_rest" | sed 's/^[^ ]* *//')
+                    phone_sms_send "$sms_num" "$sms_body" ;;
+                all)
+                    ui_section "All SMS"
+                    phone_sms_pretty "all" "${sms_rest:-10}" ;;
+                *)
+                    ui_section "SMS Inbox"
+                    phone_sms_pretty "inbox" 10 ;;
+            esac ;;
+        # ── Telephony ───────────────────────────────
+        telephony|tel|carrier)
+            ui_section "Telephony"
+            phone_call_state ;;
+        calls|calllog|call-log)
+            ui_section "Call Log"
+            phone_call_log_pretty "${rest:-10}" ;;
+        cell|signal)
+            ui_section "Cell Info"
+            phone_cell_info ;;
+        # ── WiFi ────────────────────────────────────
+        wifi)
+            ui_section "WiFi"
+            local wifi_sub
+            wifi_sub=$(echo "$rest" | awk '{print $1}')
+            case "$wifi_sub" in
+                scan)   phone_wifi_scan ;;
+                *)      phone_wifi_info ;;
+            esac ;;
+        # ── Status / Dashboard ──────────────────────
+        status|dashboard|"")
+            phone_dashboard ;;
+        # ── Original tools (preserved) ──────────────
         battery)  tools_phone_battery ;;
         clip|clipboard)
-            if [ -n "$rest" ]; then
+            if [ -n "$rest" ] && [ "$rest" != "$args" ]; then
                 tools_phone_clipboard_set "$rest"
             else
                 tools_phone_clipboard_get
@@ -236,7 +298,26 @@ _cmd_phone() {
         share)    tools_phone_share "$rest" ;;
         toast)    tools_phone_toast "$rest" ;;
         vibrate)  tools_phone_vibrate ;;
-        *)        ui_info "Usage: /phone <battery|clip|notify|open|share|toast|vibrate>" ;;
+        *)
+            ui_section "Phone Commands"
+            ui_dim "  /phone                — Full phone dashboard (battery, carrier, WiFi, location)"
+            ui_dim "  /phone location [gps] — Current location (network or GPS)"
+            ui_dim "  /phone where           — One-line location for context"
+            ui_dim "  /phone sms [inbox|sent|all] [limit] — Read text messages"
+            ui_dim "  /phone sms send <number> <message>  — Send a text message"
+            ui_dim "  /phone calls [limit]  — Recent call log"
+            ui_dim "  /phone telephony      — Carrier, SIM, data state"
+            ui_dim "  /phone cell           — Cell tower / signal info"
+            ui_dim "  /phone wifi           — WiFi connection info"
+            ui_dim "  /phone wifi scan      — Scan nearby WiFi networks"
+            ui_dim "  /phone battery        — Battery status"
+            ui_dim "  /phone clip [text]    — Clipboard get/set"
+            ui_dim "  /phone notify <msg>   — Send notification"
+            ui_dim "  /phone open <url>     — Open URL"
+            ui_dim "  /phone share <file>   — Share a file"
+            ui_dim "  /phone toast <msg>    — Show toast message"
+            ui_dim "  /phone vibrate        — Vibrate"
+            echo "" ;;
     esac
 }
 _cmd_clear() {
@@ -1222,6 +1303,83 @@ _cmd_recall() {
     esac
 }
 
+# ── /slash — George's Custom Commands (The Magnum Opus) ────────
+_cmd_slash() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+
+    case "$action" in
+        # ── Management ─────────────────────────────────────────
+        create|new)
+            local name desc
+            name=$(echo "$rest" | awk '{print $1}')
+            desc=$(echo "$rest" | sed 's/^[^ ]* *//')
+            [ "$desc" = "$name" ] && desc=""
+            slash_create "$name" "$desc" ;;
+        edit)
+            local name new_desc
+            name=$(echo "$rest" | awk '{print $1}')
+            new_desc=$(echo "$rest" | sed 's/^[^ ]* *//')
+            [ "$new_desc" = "$name" ] && new_desc=""
+            slash_edit "$name" "$new_desc" ;;
+        delete|rm|remove)
+            slash_delete "$rest" ;;
+        rename|mv)
+            local old_name new_name
+            old_name=$(echo "$rest" | awk '{print $1}')
+            new_name=$(echo "$rest" | awk '{print $2}')
+            slash_rename "$old_name" "$new_name" ;;
+        list|ls|"")
+            slash_list ;;
+        # ── Inspection ─────────────────────────────────────────
+        show|view|cat)
+            slash_show "$rest" ;;
+        test)
+            local name test_args
+            name=$(echo "$rest" | awk '{print $1}')
+            test_args=$(echo "$rest" | sed 's/^[^ ]* *//')
+            [ "$test_args" = "$name" ] && test_args=""
+            slash_test "$name" "$test_args" ;;
+        export)
+            local name dest
+            name=$(echo "$rest" | awk '{print $1}')
+            dest=$(echo "$rest" | awk '{print $2}')
+            slash_export "$name" "$dest" ;;
+        # ── Help ───────────────────────────────────────────────
+        help)
+            ui_section "Slash Extensions (Magnum Opus)"
+            ui_dim "  /slash                        — List all custom commands"
+            ui_dim "  /slash create <name> <desc>   — Create a new command (LLM-assisted)"
+            ui_dim "  /slash <name> [args]          — Run a custom command"
+            ui_dim "  /slash test <name> [args]     — Test a custom command"
+            ui_dim "  /slash show <name>            — View source code"
+            ui_dim "  /slash edit <name> [new desc] — Edit / re-generate"
+            ui_dim "  /slash delete <name>          — Delete a custom command"
+            ui_dim "  /slash rename <old> <new>     — Rename a command"
+            ui_dim "  /slash export <name> [path]   — Export as standalone script"
+            echo ""
+            ui_dim "Custom commands have full access to all lodge libraries,"
+            ui_dim "base commands, sandboxes, containers, and other /slash commands."
+            echo "" ;;
+        # ── Default: execute a custom command ──────────────────
+        *)
+            # action IS the command name
+            local cmd_name="$action"
+            local cmd_args="$rest"
+            [ "$cmd_args" = "$action" ] && cmd_args=""
+            if [ -f "$SLASH_DIR/${cmd_name}.sh" ] 2>/dev/null; then
+                slash_run "$cmd_name" "$cmd_args" "${2:-.}"
+            else
+                ui_err "Unknown slash command or subcommand: '$cmd_name'"
+                ui_dim "Run /slash list to see custom commands"
+                ui_dim "Run /slash help for usage"
+            fi ;;
+    esac
+}
+
 # ── Register all commands ──────────────────────────────────────
 _register_commands() {
     commands_register "init"     "Scaffold a new project" "_cmd_init"
@@ -1250,6 +1408,7 @@ _register_commands() {
     commands_register "gsuite"   "Google Workspace (Gmail/Drive/Docs)" "_cmd_gsuite"
     commands_register "wallet"   "Cryptocurrency wallets (BTC/ADA/SOL)" "_cmd_wallet"
     commands_register "pgp"      "PGP signing & message verification" "_cmd_pgp"
+    commands_register "slash"    "George's custom commands (Magnum Opus)" "_cmd_slash"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"
     commands_register "files"    "List workspace files" "_cmd_files"

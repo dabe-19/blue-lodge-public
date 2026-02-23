@@ -31,6 +31,7 @@ MISSING=()
 command -v curl &>/dev/null  || MISSING+=("curl")
 command -v jq   &>/dev/null  || MISSING+=("jq")
 command -v git  &>/dev/null  || MISSING+=("git")
+command -v sqlite3 &>/dev/null || MISSING+=("sqlite3")
 
 if [ ${#MISSING[@]} -gt 0 ]; then
     warn "Missing: ${MISSING[*]}"
@@ -92,7 +93,29 @@ chmod +x "$LODGE_DIR/lodge"
 chmod +x "$LODGE_DIR/commands/"*.sh 2>/dev/null || true
 ok "Scripts are executable"
 
-# ── 7. Add to PATH ──────────────────────────────────────────
+# ── 7. Bootstrap knowledge base ──────────────────────────────
+info "Indexing knowledge base (FTS5)..."
+if command -v sqlite3 &>/dev/null; then
+    # Source the recall system and index all docs
+    export LODGE_DIR
+    export GEORGE_DIR="${GEORGE_DIR:-$HOME/.george}"
+    mkdir -p "$GEORGE_DIR"
+    source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
+    source "$LODGE_DIR/lib/recall.sh" 2>/dev/null
+    if recall_available 2>/dev/null; then
+        recall_reindex 2>/dev/null
+        local_chunks=$(sqlite3 "$GEORGE_DIR/recall.db" "SELECT COUNT(*) FROM chunks;" 2>/dev/null || echo "0")
+        ok "Knowledge base ready ($local_chunks chunks indexed)"
+    else
+        warn "sqlite3 FTS5 not available — recall will be disabled"
+        warn "Install with: apt install sqlite3 (or: pkg install sqlite)"
+    fi
+else
+    warn "sqlite3 not found — knowledge base not indexed"
+    warn "George will auto-index on first run if sqlite3 is installed"
+fi
+
+# ── 8. Add to PATH ──────────────────────────────────────────
 info "Setting up shell integration..."
 
 # Create a bin symlink
@@ -100,7 +123,7 @@ mkdir -p "$HOME/.local/bin"
 ln -sf "$LODGE_DIR/lodge" "$HOME/.local/bin/lodge"
 ok "Symlinked: lodge → ~/.local/bin/lodge"
 
-# ── 8. Shell config ─────────────────────────────────────────
+# ── 9. Shell config ─────────────────────────────────────────
 SHELL_RC=""
 if [ -f "$HOME/.zshrc" ]; then
     SHELL_RC="$HOME/.zshrc"
@@ -143,7 +166,7 @@ else
     echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi
 
-# ── 9. Remove Claude Code (if present) ──────────────────────
+# ── 10. Remove Claude Code (if present) ──────────────────────
 echo ""
 if command -v claude &>/dev/null; then
     warn "Claude Code CLI detected."
@@ -172,7 +195,7 @@ if command -v claude &>/dev/null; then
     fi
 fi
 
-# ── 10. Remove old qwen-lab setup ────────────────────────────
+# ── 11. Remove old qwen-lab setup ────────────────────────────
 if [ -f "$HOME/qwen-lab.sh" ]; then
     info "Found old qwen-lab.sh"
     printf " Remove it? [y/N] "

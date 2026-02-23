@@ -3,19 +3,14 @@
 # Lightweight search over George's own documentation and memory.
 # Uses SQLite FTS5 for BM25-ranked full-text search.
 #
-# Indexed sources:
+# Indexed sources (auto-discovered):
 #   readme       — README.md (George's capabilities & architecture)
 #   soul         — soul.md (personality & ethics)
-#   crypto       — docs/CRYPTO_WALLETS.md (cryptocurrency guide)
-#   tuning       — docs/TUNING.md (token & performance tuning)
-#   sandboxes    — docs/SANDBOXES.md (sandbox & isolation guide)
-#   vault        — docs/SECRETS_VAULT.md (encrypted secrets vault)
-#   recall_guide — docs/RECALL.md (recall system documentation)
-#   social_bots  — docs/SOCIAL_BOTS.md (social media API setup)
-#   pgp_signing  — docs/PGP_SIGNING.md (PGP message signing)
-#   slash_cmds   — docs/SLASH_COMMANDS.md (slash command self-awareness)
+#   docs/*       — All .md files in docs/ and docs/examples/
 #   journal      — journal.md (living memory)
 #   claude       — CLAUDE.md (current project memory)
+#
+# New docs added to docs/ are automatically indexed on next reindex.
 #
 # Overhead: ~100-200KB on disk, <1ms per query, 0 RAM.
 # No network, no embedding model, no Python required.
@@ -182,26 +177,60 @@ _recall_file_mtime() {
     stat -c %Y "$filepath" 2>/dev/null || stat -f %m "$filepath" 2>/dev/null || echo "0"
 }
 
+# ── Build the full source list dynamically ─────────────────────
+# Returns "source_name:filepath" lines, one per source.
+# Scans docs/ and docs/examples/ for any .md files automatically.
+# Known files get friendly source names; unknown files derive names
+# from their filename (lowercase, .md stripped, spaces→underscores).
+_recall_all_sources() {
+    # Core files (always present)
+    echo "readme:$LODGE_DIR/README.md"
+    echo "soul:$LODGE_DIR/soul.md"
+
+    # Auto-scan docs/*.md and docs/examples/*.md
+    # Known filename → friendly source name mapping
+    local _file _basename _source
+    for _file in "$LODGE_DIR/docs/"*.md "$LODGE_DIR/docs/examples/"*.md; do
+        [ -f "$_file" ] || continue
+        _basename=$(basename "$_file" .md)
+        # Map known filenames to short source names
+        case "$_basename" in
+            CRYPTO_WALLETS)    _source="crypto" ;;
+            TUNING)            _source="tuning" ;;
+            SANDBOXES)         _source="sandboxes" ;;
+            SECRETS_VAULT)     _source="vault" ;;
+            RECALL)            _source="recall_guide" ;;
+            SOCIAL_BOTS)       _source="social_bots" ;;
+            PGP_SIGNING)       _source="pgp_signing" ;;
+            SLASH_COMMANDS)    _source="slash_cmds" ;;
+            MORAL_SENTIMENTS)  _source="tms" ;;
+            PHONE_SETUP)       _source="phone_setup" ;;
+            *)
+                # Derive: lowercase, replace spaces/hyphens with underscores
+                _source=$(echo "$_basename" | tr '[:upper:]' '[:lower:]' | tr ' -' '__')
+                ;;
+        esac
+        echo "${_source}:${_file}"
+    done
+
+    # Living memory
+    [ -f "$LODGE_DIR/journal.md" ] && echo "journal:$LODGE_DIR/journal.md"
+
+    # Current project memory
+    [ -f "./CLAUDE.md" ] && echo "claude:$PWD/CLAUDE.md"
+}
+
 recall_needs_reindex() {
     [ ! -f "$RECALL_DB" ] && return 0  # no DB yet → needs index
 
+    # If the DB exists but is empty (schema only, 0 chunks), force reindex
+    local chunk_count
+    chunk_count=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks;" 2>/dev/null || echo "0")
+    [ "$chunk_count" -eq 0 ] 2>/dev/null && return 0
+
     local needs=1  # 1 = false (doesn't need)
 
-    local sources=("readme:$LODGE_DIR/README.md" "soul:$LODGE_DIR/soul.md")
-    [ -f "$LODGE_DIR/docs/CRYPTO_WALLETS.md" ] && sources+=("crypto:$LODGE_DIR/docs/CRYPTO_WALLETS.md")
-    [ -f "$LODGE_DIR/docs/TUNING.md" ] && sources+=("tuning:$LODGE_DIR/docs/TUNING.md")
-    [ -f "$LODGE_DIR/docs/SANDBOXES.md" ] && sources+=("sandboxes:$LODGE_DIR/docs/SANDBOXES.md")
-    [ -f "$LODGE_DIR/docs/SECRETS_VAULT.md" ] && sources+=("vault:$LODGE_DIR/docs/SECRETS_VAULT.md")
-    [ -f "$LODGE_DIR/docs/RECALL.md" ] && sources+=("recall_guide:$LODGE_DIR/docs/RECALL.md")
-    [ -f "$LODGE_DIR/docs/SOCIAL_BOTS.md" ] && sources+=("social_bots:$LODGE_DIR/docs/SOCIAL_BOTS.md")
-    [ -f "$LODGE_DIR/docs/PGP_SIGNING.md" ] && sources+=("pgp_signing:$LODGE_DIR/docs/PGP_SIGNING.md")
-    [ -f "$LODGE_DIR/docs/SLASH_COMMANDS.md" ] && sources+=("slash_cmds:$LODGE_DIR/docs/SLASH_COMMANDS.md")
-    [ -f "$LODGE_DIR/journal.md" ] && sources+=("journal:$LODGE_DIR/journal.md")
-    [ -f "./CLAUDE.md" ] && sources+=("claude:$PWD/CLAUDE.md")
-
-    for entry in "${sources[@]}"; do
-        local source="${entry%%:*}"
-        local filepath="${entry#*:}"
+    while IFS=: read -r source filepath; do
         [ -f "$filepath" ] || continue
 
         local current_mtime
@@ -215,34 +244,20 @@ recall_needs_reindex() {
             needs=0  # true — at least one file changed
             break
         fi
-    done
+    done < <(_recall_all_sources)
 
     return $needs
 }
 
 # ── Save mtimes after indexing ─────────────────────────────────
 _recall_save_mtimes() {
-    local sources=("readme:$LODGE_DIR/README.md" "soul:$LODGE_DIR/soul.md")
-    [ -f "$LODGE_DIR/docs/CRYPTO_WALLETS.md" ] && sources+=("crypto:$LODGE_DIR/docs/CRYPTO_WALLETS.md")
-    [ -f "$LODGE_DIR/docs/TUNING.md" ] && sources+=("tuning:$LODGE_DIR/docs/TUNING.md")
-    [ -f "$LODGE_DIR/docs/SANDBOXES.md" ] && sources+=("sandboxes:$LODGE_DIR/docs/SANDBOXES.md")
-    [ -f "$LODGE_DIR/docs/SECRETS_VAULT.md" ] && sources+=("vault:$LODGE_DIR/docs/SECRETS_VAULT.md")
-    [ -f "$LODGE_DIR/docs/RECALL.md" ] && sources+=("recall_guide:$LODGE_DIR/docs/RECALL.md")
-    [ -f "$LODGE_DIR/docs/SOCIAL_BOTS.md" ] && sources+=("social_bots:$LODGE_DIR/docs/SOCIAL_BOTS.md")
-    [ -f "$LODGE_DIR/docs/PGP_SIGNING.md" ] && sources+=("pgp_signing:$LODGE_DIR/docs/PGP_SIGNING.md")
-    [ -f "$LODGE_DIR/docs/SLASH_COMMANDS.md" ] && sources+=("slash_cmds:$LODGE_DIR/docs/SLASH_COMMANDS.md")
-    [ -f "$LODGE_DIR/journal.md" ] && sources+=("journal:$LODGE_DIR/journal.md")
-    [ -f "./CLAUDE.md" ] && sources+=("claude:$PWD/CLAUDE.md")
-
     > "$RECALL_MTIME_FILE"
-    for entry in "${sources[@]}"; do
-        local source="${entry%%:*}"
-        local filepath="${entry#*:}"
+    while IFS=: read -r source filepath; do
         [ -f "$filepath" ] || continue
         local mtime
         mtime=$(_recall_file_mtime "$filepath")
         echo "${source}=${mtime}" >> "$RECALL_MTIME_FILE"
-    done
+    done < <(_recall_all_sources)
 }
 
 # ── Full reindex of all knowledge sources ─────────────────────
@@ -251,78 +266,16 @@ recall_reindex() {
 
     local total=0
 
-    # Core docs
-    if [ -f "$LODGE_DIR/README.md" ]; then
-        recall_index_file "readme" "$LODGE_DIR/README.md"
+    # Index all sources (core docs + all docs/*.md + journal + CLAUDE.md)
+    while IFS=: read -r source filepath; do
+        [ -f "$filepath" ] || continue
+        recall_index_file "$source" "$filepath"
         (( total++ ))
-    fi
-    if [ -f "$LODGE_DIR/soul.md" ]; then
-        recall_index_file "soul" "$LODGE_DIR/soul.md"
-        (( total++ ))
-    fi
-
-    # Crypto wallet guide
-    if [ -f "$LODGE_DIR/docs/CRYPTO_WALLETS.md" ]; then
-        recall_index_file "crypto" "$LODGE_DIR/docs/CRYPTO_WALLETS.md"
-        (( total++ ))
-    fi
-
-    # Token tuning guide
-    if [ -f "$LODGE_DIR/docs/TUNING.md" ]; then
-        recall_index_file "tuning" "$LODGE_DIR/docs/TUNING.md"
-        (( total++ ))
-    fi
-
-    # Sandboxes guide
-    if [ -f "$LODGE_DIR/docs/SANDBOXES.md" ]; then
-        recall_index_file "sandboxes" "$LODGE_DIR/docs/SANDBOXES.md"
-        (( total++ ))
-    fi
-
-    # Secrets vault guide
-    if [ -f "$LODGE_DIR/docs/SECRETS_VAULT.md" ]; then
-        recall_index_file "vault" "$LODGE_DIR/docs/SECRETS_VAULT.md"
-        (( total++ ))
-    fi
-
-    # Recall guide
-    if [ -f "$LODGE_DIR/docs/RECALL.md" ]; then
-        recall_index_file "recall_guide" "$LODGE_DIR/docs/RECALL.md"
-        (( total++ ))
-    fi
-
-    # Social bots guide
-    if [ -f "$LODGE_DIR/docs/SOCIAL_BOTS.md" ]; then
-        recall_index_file "social_bots" "$LODGE_DIR/docs/SOCIAL_BOTS.md"
-        (( total++ ))
-    fi
-
-    # PGP signing guide
-    if [ -f "$LODGE_DIR/docs/PGP_SIGNING.md" ]; then
-        recall_index_file "pgp_signing" "$LODGE_DIR/docs/PGP_SIGNING.md"
-        (( total++ ))
-    fi
-
-    # Slash command self-awareness guide
-    if [ -f "$LODGE_DIR/docs/SLASH_COMMANDS.md" ]; then
-        recall_index_file "slash_cmds" "$LODGE_DIR/docs/SLASH_COMMANDS.md"
-        (( total++ ))
-    fi
-
-    # Living memory
-    if [ -f "$LODGE_DIR/journal.md" ]; then
-        recall_index_file "journal" "$LODGE_DIR/journal.md"
-        (( total++ ))
-    fi
-
-    # Current project memory
-    if [ -f "./CLAUDE.md" ]; then
-        recall_index_file "claude" "$PWD/CLAUDE.md"
-        (( total++ ))
-    fi
+    done < <(_recall_all_sources)
 
     _recall_save_mtimes
 
+    ui_ok "Indexed $total sources" 2>/dev/null
     return 0
 }
 
@@ -364,6 +317,8 @@ recall_search() {
     safe_query="${safe_query//\[/}"
     safe_query="${safe_query//\]/}"
     safe_query="${safe_query//\;/}"
+    # Hyphens: FTS5 treats - as column subtraction; replace with space
+    safe_query="${safe_query//-/ }"
     # Collapse multiple spaces and trim
     safe_query=$(echo "$safe_query" | sed 's/  */ /g; s/^ *//; s/ *$//')
     # Bail on empty query after sanitization
@@ -428,6 +383,11 @@ recall_search_pretty() {
             social_bots)  label="Social Bots" ;;
             pgp_signing)  label="PGP" ;;
             slash_cmds)   label="Commands" ;;
+            tms)          label="Moral Sentiments" ;;
+            phone_setup)  label="Phone Setup" ;;
+            personal_assistant) label="Example" ;;
+            rust_task_manager)  label="Example" ;;
+            url_shortener)      label="Example" ;;
             *)           label="$source" ;;
         esac
 
