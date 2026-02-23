@@ -99,6 +99,51 @@ journal_write_failure() {
     journal_write "task_failure" "$content"
 }
 
+# ── Write a Witty /ask Summary ────────────────────────────────
+# After each /ask exchange, George distills the Q&A into a pithy
+# one-liner that carries his Franklin/Dogood personality forward.
+# Runs in background — user never waits for this.
+# Usage: journal_write_quip "question" "response"
+journal_write_quip() {
+    local question="$1"
+    local response="$2"
+
+    [ -z "$question" ] || [ -z "$response" ] && return 0
+
+    source "$LODGE_DIR/lib/llm.sh"
+
+    # Truncate long responses so the summary prompt stays small
+    local short_q="${question:0:200}"
+    local short_a="${response:0:400}"
+
+    local prompt="You are George — a coding agent with the wit of Benjamin Franklin and the irreverence of Silence Dogood.
+
+Someone asked you:
+\"$short_q\"
+
+You answered:
+\"$short_a\"
+
+Write a ONE-LINE journal quip (max 120 chars) that captures this exchange with personality.
+It should be memorable, clever, and true to the exchange — not generic.
+Examples of tone:
+- \"Explained monads to a mortal. He survived.\"
+- \"The Brother asked about recursion. I told him to ask me again.\"
+- \"Settled the tabs-vs-spaces debate. (Spaces. Obviously.)\"
+- \"Counseled patience with async Rust. The borrow checker teaches humility.\"
+
+Output ONLY the quip — no quotes, no preamble, no commentary."
+
+    local quip
+    quip=$(llm_generate "$prompt" "" 64)
+
+    if [ $? -eq 0 ] && [[ "$quip" != ERROR* ]] && [ -n "$quip" ]; then
+        # Clean up: strip quotes, trim whitespace, take first line only
+        quip=$(echo "$quip" | head -1 | sed 's/^["'"'"']*//;s/["'"'"']*$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        [ -n "$quip" ] && journal_write "quip" "$quip"
+    fi
+}
+
 # ── Read Journal with Decay Applied ──────────────────────────
 # Returns a filtered view: recent entries in full, older ones compressed
 journal_read() {

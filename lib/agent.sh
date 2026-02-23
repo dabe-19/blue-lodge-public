@@ -385,15 +385,17 @@ agent_plan() {
     fi
 
     local base_rules="Create a step-by-step plan. Rules:
-- Use the FEWEST steps necessary. Most tasks need 3-8 steps.
-- Never add filler steps or redundant downloads.
-- Maximum: $AGENT_MAX_STEPS steps. Complex multi-file tasks CAN use up to $AGENT_MAX_STEPS.
-- If the task genuinely needs more than $AGENT_MAX_STEPS steps, group related work into [SUBTASK] blocks that will get their own sub-plans.
+- Target 3-8 steps. Only exceed 8 for genuinely multi-component projects.
+- Hard maximum: $AGENT_MAX_STEPS steps. You will almost never need this many.
+- NEVER pad plans with filler. Do NOT add steps for: reading documentation, reviewing files, writing READMEs, backup, status checks, recall searches, web searches, cloning repos, writing install/uninstall scripts, or anything the user did not ask for.
+- Every step must directly advance the user's stated goal. If a step is not essential, cut it.
 - Each step must be completable in ONE LLM call.
 - Each step must be a single action (write one file, run one command, etc.)
 - You can reference your slash commands (e.g. /recall, /sandbox) in steps.
 - IMPORTANT: If you use /sandbox commands, you MUST create the sandbox FIRST with /sandbox new <name> <type> BEFORE running commands in it. /init creates a project directory, NOT a sandbox.
-- If a step is too complex for a single action, prefix it with [SUBTASK] — it will be recursively expanded into its own sub-plan. Use [SUBTASK] liberally for multi-file work.
+- IMPORTANT: When the task involves writing a program or application, you MUST use [SUBTASK] for the actual code implementation. Do NOT write all code in a single step or dump boilerplate. The [SUBTASK] should describe what the code must do (architecture, modules, behavior, game logic, etc.) so it gets its own detailed sub-plan. Code steps must produce REAL implementation code, not Hello World or empty scaffolds.
+- If a step is too complex for a single action, prefix it with [SUBTASK] — it will be recursively expanded into its own sub-plan. Use [SUBTASK] for any multi-file or design-heavy work.
+- NEVER invent or guess URLs, repo names, or resources. Only use URLs the user provided or that you found via /web search.
 - Output ONLY a NUMBERED LIST (1. 2. 3. etc.) — no explanations, no code."
 
     if [ "$effective_max_clarify" -gt 0 ]; then
@@ -573,12 +575,32 @@ agent_execute_step() {
     local system_prompt
     system_prompt=$(memory_build_system_prompt "$workdir")
     
-    local prompt="CURRENT STEP ($step_num): $step_desc
+    # Inject prior accomplishments so the model knows what was already done
+    local prior_context=""
+    local completed_steps
+    completed_steps=$(memory_get_section "Completed Steps" "$workdir" 2>/dev/null | tail -5)
+    if [ -n "$completed_steps" ]; then
+        prior_context="
+ALREADY COMPLETED:
+${completed_steps}
+"
+    fi
+    local key_files
+    key_files=$(memory_get_section "Key Files" "$workdir" 2>/dev/null | tail -8)
+    if [ -n "$key_files" ]; then
+        prior_context="${prior_context}
+FILES CREATED/MODIFIED SO FAR:
+${key_files}
+"
+    fi
+
+    local prompt="${prior_context}CURRENT STEP ($step_num): $step_desc
 
 Execute this step. Output rules:
 - Shell commands: wrap in \`\`\`bash block
 - Slash commands: output on their own line starting with / (do NOT wrap in a bash block)
 - File contents: wrap in a code block with '# filepath: ./path' on line 1
+- When writing code files: write REAL, COMPLETE implementation code. Do NOT write placeholder code, Hello World, TODO stubs, or empty scaffolds. Implement the actual logic, algorithms, data structures, and behavior described in the step.
 - Keep output minimal
 - One action per response"
     
@@ -834,6 +856,12 @@ agent_ask() {
     if [[ "$response" == ERROR* ]]; then
         ui_err "$response"
         return 1
+    fi
+    
+    # Journal the exchange — George writes a witty one-liner for posterity
+    # Runs in background so user isn't blocked
+    if declare -f journal_write_quip &>/dev/null; then
+        journal_write_quip "$question" "$response" &
     fi
     
     # Model stays loaded during active session for fast response times.

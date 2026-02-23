@@ -317,6 +317,8 @@ recall_search() {
     safe_query="${safe_query//\[/}"
     safe_query="${safe_query//\]/}"
     safe_query="${safe_query//\;/}"
+    # Forward slashes: FTS5 treats / as a syntax element; strip them
+    safe_query="${safe_query///}"
     # Hyphens: FTS5 treats - as column subtraction; replace with space
     safe_query="${safe_query//-/ }"
     # Collapse multiple spaces and trim
