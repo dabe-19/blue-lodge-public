@@ -204,9 +204,9 @@ ${recall_ctx:0:200}"
     fi
 
     if [ "$mode" = "plan" ]; then
-        # ── Plan mode: lean — the Modelfile SYSTEM already has full personality
-        # and slash command awareness (~573 tokens). Only add project state +
-        # compact tool list. This keeps plan prefill under ~800 tokens.
+        # ── Plan mode: includes project state + full command glossary with
+        # syntax so George knows exactly how to invoke each command and does
+        # NOT invent non-existent commands (e.g. /search instead of /web search).
         prompt="${prompt}You are George. Plan concisely."
         local project_mem
         project_mem=$(memory_read_project "$dir")
@@ -217,8 +217,13 @@ ${recall_ctx:0:200}"
 $project_mem"
         fi
 
-        # Compact command list — just names, not full descriptions
-        prompt="$prompt
+        # Full command glossary — George must see exact syntax to plan correctly
+        if declare -f commands_catalog &>/dev/null; then
+            prompt="$prompt
+
+$(commands_catalog)"
+        else
+            prompt="$prompt
 
 --- COMMANDS (use ONLY these — do NOT invent commands) ---
 /plan /ask /init /recall /save /write /download /build /test /fix
@@ -226,6 +231,7 @@ $project_mem"
 /api /secret /web /journal /wallet /gsuite /phone /vitals
 /backup /slash (create custom commands) /files /read /status /memory /help
 If unsure: /recall <cmd> to check syntax. If missing: /slash create <name> <desc>"
+        fi
 
         # Workspace files (needed for planning)
         local files
