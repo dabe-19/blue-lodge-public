@@ -13,6 +13,7 @@
 #   recall_guide — docs/RECALL.md (recall system documentation)
 #   social_bots  — docs/SOCIAL_BOTS.md (social media API setup)
 #   pgp_signing  — docs/PGP_SIGNING.md (PGP message signing)
+#   slash_cmds   — docs/SLASH_COMMANDS.md (slash command self-awareness)
 #   journal      — journal.md (living memory)
 #   claude       — CLAUDE.md (current project memory)
 #
@@ -194,6 +195,7 @@ recall_needs_reindex() {
     [ -f "$LODGE_DIR/docs/RECALL.md" ] && sources+=("recall_guide:$LODGE_DIR/docs/RECALL.md")
     [ -f "$LODGE_DIR/docs/SOCIAL_BOTS.md" ] && sources+=("social_bots:$LODGE_DIR/docs/SOCIAL_BOTS.md")
     [ -f "$LODGE_DIR/docs/PGP_SIGNING.md" ] && sources+=("pgp_signing:$LODGE_DIR/docs/PGP_SIGNING.md")
+    [ -f "$LODGE_DIR/docs/SLASH_COMMANDS.md" ] && sources+=("slash_cmds:$LODGE_DIR/docs/SLASH_COMMANDS.md")
     [ -f "$LODGE_DIR/journal.md" ] && sources+=("journal:$LODGE_DIR/journal.md")
     [ -f "./CLAUDE.md" ] && sources+=("claude:$PWD/CLAUDE.md")
 
@@ -228,6 +230,7 @@ _recall_save_mtimes() {
     [ -f "$LODGE_DIR/docs/RECALL.md" ] && sources+=("recall_guide:$LODGE_DIR/docs/RECALL.md")
     [ -f "$LODGE_DIR/docs/SOCIAL_BOTS.md" ] && sources+=("social_bots:$LODGE_DIR/docs/SOCIAL_BOTS.md")
     [ -f "$LODGE_DIR/docs/PGP_SIGNING.md" ] && sources+=("pgp_signing:$LODGE_DIR/docs/PGP_SIGNING.md")
+    [ -f "$LODGE_DIR/docs/SLASH_COMMANDS.md" ] && sources+=("slash_cmds:$LODGE_DIR/docs/SLASH_COMMANDS.md")
     [ -f "$LODGE_DIR/journal.md" ] && sources+=("journal:$LODGE_DIR/journal.md")
     [ -f "./CLAUDE.md" ] && sources+=("claude:$PWD/CLAUDE.md")
 
@@ -297,6 +300,12 @@ recall_reindex() {
     # PGP signing guide
     if [ -f "$LODGE_DIR/docs/PGP_SIGNING.md" ]; then
         recall_index_file "pgp_signing" "$LODGE_DIR/docs/PGP_SIGNING.md"
+        (( total++ ))
+    fi
+
+    # Slash command self-awareness guide
+    if [ -f "$LODGE_DIR/docs/SLASH_COMMANDS.md" ]; then
+        recall_index_file "slash_cmds" "$LODGE_DIR/docs/SLASH_COMMANDS.md"
         (( total++ ))
     fi
 
@@ -418,6 +427,7 @@ recall_search_pretty() {
             recall_guide) label="Recall" ;;
             social_bots)  label="Social Bots" ;;
             pgp_signing)  label="PGP" ;;
+            slash_cmds)   label="Commands" ;;
             *)           label="$source" ;;
         esac
 
