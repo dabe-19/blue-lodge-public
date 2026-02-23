@@ -96,9 +96,17 @@ bash ~/blue-lodge/install.sh
 source ~/.bashrc
 ```
 
-### A5. Grant phone permissions
+### A5. Enable phone integration
 
-Android 12+ usually does **NOT** auto-prompt for permissions:
+Termux-API features are **disabled by default** (they hang inside proot).
+Since Option A runs in native Termux, enable them:
+
+```bash
+echo 'export LODGE_TERMUX_API=1' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Then grant Android permissions — Android 12+ usually does **NOT** auto-prompt:
 
 1. **Settings → Apps → Termux:API → Permissions** — enable Location, Phone, SMS, Call logs, Notifications
 2. **Settings → Apps → Termux → Permissions** — enable the same
@@ -188,9 +196,14 @@ source ~/.bashrc
 
 ### B6. Phone integration with proot
 
-Phone commands don't work inside proot. For phone features, either:
+Phone commands don't work inside proot (Termux-API commands hang
+indefinitely because the companion app can't cross the proot boundary).
+`LODGE_TERMUX_API` defaults to `0` (disabled), so this is safe — George
+won't attempt any Termux-API calls and won't hang.
 
-- **Exit proot** and run `lodge` from native Termux
+For phone features, either:
+
+- **Exit proot** and run `lodge` from native Termux (with `LODGE_TERMUX_API=1`)
 - **Use Option A** entirely (recommended)
 
 ---
@@ -280,9 +293,10 @@ Run `termux-wake-lock` before starting Lodge, or add it to `.bashrc`.
 
 ### /phone commands hang or return no data
 
-1. **Inside proot?** Exit proot (`exit`) and run Lodge from native Termux
-2. **Permissions missing?** Grant manually: Settings → Apps → Termux:API → Permissions
-3. Run `/phone permissions` in Lodge for a guided diagnostic
+1. **LODGE_TERMUX_API not set?** Run `export LODGE_TERMUX_API=1` (native Termux only)
+2. **Inside proot?** Exit proot (`exit`) and run Lodge from native Termux
+3. **Permissions missing?** Grant manually: Settings → Apps → Termux:API → Permissions
+4. Run `/phone permissions` in Lodge for a guided diagnostic
 
 ---
 

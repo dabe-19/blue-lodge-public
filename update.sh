@@ -84,7 +84,7 @@ if [ "$CLEAN_MODE" -eq 1 ]; then
     fi
 
     if [ -z "$REMOTE_URL" ]; then
-        REMOTE_URL="https://github.com/anthropic-research/blue-lodge.git"
+        REMOTE_URL="https://github.com/dabe-19/blue-lodge.git"
         warn "No git remote found. Using default: $REMOTE_URL"
     fi
 

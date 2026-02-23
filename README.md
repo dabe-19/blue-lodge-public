@@ -256,6 +256,8 @@ export LLM_KEEP_ALIVE="30m"   # 30 minutes (if you have plenty of RAM)
 export LLM_TIMEOUT="0"        # No timeout (default — cancel with Ctrl+C)
 export LLM_TIMEOUT="1200"     # 20-minute hard timeout
 export LLM_MAX_TOKENS="8192"  # Max output tokens (default)
+export LODGE_TERMUX_API=1     # Enable Termux-API features (battery, WiFi, GPS, SMS, etc.)
+                              # Default: 0 (disabled — safe for proot & non-Android)
 ```
 
 ## Cancellation
@@ -340,7 +342,15 @@ lodge /sandbox rm my_app          # Remove sandbox (confirmation required)
 
 ## Phone Integration (Termux)
 
-When running in Termux, George integrates with your phone:
+When running in **native Termux** (not proot), George can integrate with your phone.
+Termux-API features are **disabled by default** to prevent hangs inside proot or
+non-Termux environments. Enable them explicitly:
+
+```bash
+export LODGE_TERMUX_API=1    # Add to ~/.bashrc for persistence
+```
+
+Then use the phone commands:
 
 ```bash
 lodge /phone battery    # Check battery level & temperature

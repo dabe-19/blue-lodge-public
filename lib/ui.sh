@@ -28,6 +28,17 @@ export SYM_THINK="◆"
 export SYM_WARN="⚠"
 export SYM_LODGE="⌂"
 
+# ── Termux API opt-in gate ──────────────────────────────────────
+# Termux-API commands hang inside proot-distro (the companion app
+# cannot communicate through the proot boundary). Default: DISABLED.
+# Enable with:  export LODGE_TERMUX_API=1  (native Termux only)
+export LODGE_TERMUX_API="${LODGE_TERMUX_API:-0}"
+
+# Quick predicate — returns 0 (true) only when explicitly opted in.
+_lodge_termux_api_ok() {
+    [[ "$LODGE_TERMUX_API" == "1" ]]
+}
+
 # ── Core Print Functions ───────────────────────────────────────
 ui_print() { printf "%b\n" "$1"; }
 ui_info()  { printf " %b%s %b%s%b\n" "$C_BLUE" "$SYM_DOT" "$C_WHITE" "$1" "$C_RESET"; }

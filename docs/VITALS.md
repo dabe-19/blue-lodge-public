@@ -152,10 +152,23 @@ George runs on a Galaxy Fold 7 with Snapdragon 8 Elite and 12GB RAM:
 - **WiFi vs Cell** — George tracks both and uses whichever is available;
   the guard function checks actual TCP reachability as the final word
 
+> **Important:** Termux-API sensors (battery, WiFi, cell) are **disabled by
+> default** because they hang inside proot environments. To enable them,
+> set `export LODGE_TERMUX_API=1` in your shell. Only do this from
+> **native Termux** — never from proot-distro.
+>
+> When disabled, disk and RAM vitals still work normally via standard
+> Linux tools (`df`, `free`). Battery/WiFi/cell will simply report empty.
+
 ## Troubleshooting
 
 **Battery/WiFi/Cell show "(not available)":**
-Install Termux:API from F-Droid and run `pkg install termux-api`.
+Termux-API sensors are disabled by default. Enable with:
+```bash
+export LODGE_TERMUX_API=1
+```
+Also install Termux:API from F-Droid and run `pkg install termux-api`.
+Only enable this from **native Termux** — these commands hang inside proot.
 
 **Thresholds too sensitive:**
 Raise them: `export VITALS_DISK_WARN_MB=200 VITALS_RAM_WARN_MB=100`

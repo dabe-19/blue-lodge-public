@@ -345,29 +345,24 @@ tools_read_file() {
 tools_phone_notify() {
     local title="$1"
     local msg="$2"
-    if command -v termux-notification &>/dev/null; then
+    if _lodge_termux_api_ok && command -v termux-notification &>/dev/null; then
         termux-notification --title "$title" --content "$msg"
         ui_ok "Notification sent"
-    else
-        ui_warn "termux-notification not available"
     fi
 }
 
 tools_phone_clipboard_set() {
     local text="$1"
-    if command -v termux-clipboard-set &>/dev/null; then
+    if _lodge_termux_api_ok && command -v termux-clipboard-set &>/dev/null; then
         echo "$text" | termux-clipboard-set
         ui_ok "Copied to clipboard"
-    else
-        ui_warn "termux-clipboard-set not available"
     fi
 }
 
 tools_phone_clipboard_get() {
-    if command -v termux-clipboard-get &>/dev/null; then
+    if _lodge_termux_api_ok && command -v termux-clipboard-get &>/dev/null; then
         termux-clipboard-get
     else
-        ui_warn "termux-clipboard-get not available"
         echo ""
     fi
 }
@@ -379,7 +374,7 @@ tools_phone_open_url() {
             return 1
         fi
     fi
-    if command -v termux-open-url &>/dev/null; then
+    if _lodge_termux_api_ok && command -v termux-open-url &>/dev/null; then
         termux-open-url "$url"
     elif command -v xdg-open &>/dev/null; then
         xdg-open "$url"
@@ -388,13 +383,13 @@ tools_phone_open_url() {
 
 tools_phone_share() {
     local filepath="$1"
-    if command -v termux-share &>/dev/null; then
+    if _lodge_termux_api_ok && command -v termux-share &>/dev/null; then
         termux-share "$filepath"
     fi
 }
 
 tools_phone_battery() {
-    if command -v termux-battery-status &>/dev/null; then
+    if _lodge_termux_api_ok && command -v termux-battery-status &>/dev/null; then
         termux-battery-status | jq '{percentage, status, temperature}' 2>/dev/null
     else
         echo '{"percentage": "unknown"}'
@@ -402,14 +397,14 @@ tools_phone_battery() {
 }
 
 tools_phone_vibrate() {
-    if command -v termux-vibrate &>/dev/null; then
+    if _lodge_termux_api_ok && command -v termux-vibrate &>/dev/null; then
         termux-vibrate -d 100
     fi
 }
 
 tools_phone_toast() {
     local msg="$1"
-    if command -v termux-toast &>/dev/null; then
+    if _lodge_termux_api_ok && command -v termux-toast &>/dev/null; then
         termux-toast "$msg"
     fi
 }

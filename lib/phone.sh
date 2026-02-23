@@ -33,6 +33,8 @@ phone_is_proot() {
 
 # ── Check Termux API availability ──────────────────────────────
 phone_available() {
+    # Termux-API is opt-in (LODGE_TERMUX_API=1)
+    _lodge_termux_api_ok || return 1
     # Fail fast if inside proot — commands will hang
     phone_is_proot && return 1
     # termux-battery-status is the most basic API command
@@ -61,6 +63,10 @@ phone_check() {
 # Termux:API companion app is missing/broken.
 phone_api_call() {
     local cmd="$1"; shift
+    if ! _lodge_termux_api_ok; then
+        echo '{"error": "termux-api disabled (set LODGE_TERMUX_API=1 to enable)"}'
+        return 1
+    fi
     if phone_is_proot; then
         echo '{"error": "termux-api unavailable inside proot"}'
         return 1
@@ -145,6 +151,10 @@ phone_location() {
     local provider="${1:-network}"
     local timeout="${2:-30}"
 
+    if ! _lodge_termux_api_ok; then
+        echo '{"error": "termux-api disabled (set LODGE_TERMUX_API=1 to enable)"}'
+        return 1
+    fi
     if phone_is_proot; then
         ui_warn "Location not available inside proot"
         echo '{"error": "termux-api unavailable inside proot"}'

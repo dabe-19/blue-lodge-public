@@ -76,7 +76,7 @@ _lodge_cleanup() {
         ui_info "Interrupted. Exiting..."
         llm_unload 2>/dev/null
         rm -f "$_LODGE_CANCEL_FILE"
-        if command -v termux-wake-unlock &>/dev/null; then
+        if _lodge_termux_api_ok && command -v termux-wake-unlock &>/dev/null; then
             termux-wake-unlock 2>/dev/null
         fi
         exit 0
@@ -1625,7 +1625,7 @@ main() {
     ui_spinner_stop
     
     # Termux wake lock
-    if command -v termux-wake-lock &>/dev/null; then
+    if _lodge_termux_api_ok && command -v termux-wake-lock &>/dev/null; then
         termux-wake-lock 2>/dev/null
     fi
     
@@ -1658,7 +1658,7 @@ main() {
     fi
     
     # Release wake lock
-    if command -v termux-wake-unlock &>/dev/null; then
+    if _lodge_termux_api_ok && command -v termux-wake-unlock &>/dev/null; then
         termux-wake-unlock 2>/dev/null
     fi
     

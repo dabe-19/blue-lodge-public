@@ -186,15 +186,23 @@ fi
 if [ -n "$SHELL_RC" ]; then
     # Check if already configured
     if ! grep -q "LODGE_DIR" "$SHELL_RC" 2>/dev/null; then
-        cat >> "$SHELL_RC" << 'SHELLEOF'
+        # Detect if running in native Termux (not proot) — safe to enable Termux-API
+        local_termux_api_line=""
+        if [ "$IS_TERMUX" -eq 1 ] && [ -z "${PROOT_TMP_DIR:-}" ] && [ ! -d /host-rootfs ]; then
+            local_termux_api_line='export LODGE_TERMUX_API=1        # Termux-API enabled (native Termux)'
+        else
+            local_termux_api_line='# export LODGE_TERMUX_API=1      # Uncomment in native Termux for phone features'
+        fi
+        cat >> "$SHELL_RC" << SHELLEOF
 
 # ── Blue Lodge ─────────────────────────────────────────────
-export LODGE_DIR="$HOME/blue-lodge"
+export LODGE_DIR="\$HOME/blue-lodge"
 export LODGE_MODEL="blue-lodge"
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="\$HOME/.local/bin:\$PATH"
+$local_termux_api_line
 
 # Aliases
-alias lodge="$LODGE_DIR/lodge"
+alias lodge="\$LODGE_DIR/lodge"
 alias lg="lodge"                    # Quick alias
 alias lgi="lodge /init"             # Scaffold project
 alias lgf="lodge /fix"              # Fix errors
