@@ -77,4 +77,22 @@ describe "dispatch integration"
     rm -rf "$_tmpdir"
   }
 
+# ── Filename sanitization ───────────────────────────────────
+describe "filename sanitization in cmd_save"
+
+  it "strips double quotes from filepath" && {
+    _tmpdir=$(test_tmpdir)
+    cmd_save '"quoted.txt" Content here' "$_tmpdir" 2>/dev/null
+    assert_file_exists "$_tmpdir/quoted.txt"
+    assert_file_not_exists "$_tmpdir/\"quoted.txt\""
+    rm -rf "$_tmpdir"
+  }
+
+  it "strips single quotes from filepath" && {
+    _tmpdir=$(test_tmpdir)
+    cmd_save "'singleq.txt' Some content" "$_tmpdir" 2>/dev/null
+    assert_file_exists "$_tmpdir/singleq.txt"
+    rm -rf "$_tmpdir"
+  }
+
 test_end

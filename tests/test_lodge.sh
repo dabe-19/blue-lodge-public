@@ -262,6 +262,16 @@ describe "Command handler functions"
     assert_ok $?
   }
 
+  it "_cmd_git is defined" && {
+    declare -f _cmd_git &>/dev/null
+    assert_ok $?
+  }
+
+  it "_cmd_cleanup is defined" && {
+    declare -f _cmd_cleanup &>/dev/null
+    assert_ok $?
+  }
+
 # ── Sandbox fuzzy action resolver ──────────────────────────────
 describe "Sandbox fuzzy action resolver — _sandbox_fuzzy_action"
 

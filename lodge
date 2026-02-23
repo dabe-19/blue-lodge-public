@@ -13,7 +13,11 @@
 set -uo pipefail
 
 export LODGE_VERSION="0.1.0"
-export LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
+# Auto-detect LODGE_DIR from script location if not set
+if [ -z "${LODGE_DIR:-}" ]; then
+    _LODGE_SELF="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")"
+    export LODGE_DIR="$(cd "$(dirname "$_LODGE_SELF")" && pwd)"
+fi
 export LODGE_PROJECT="${LODGE_PROJECT:-$(basename "$PWD")}"
 
 # ── Source Libraries ───────────────────────────────────────────
@@ -41,6 +45,7 @@ source "$LODGE_DIR/lib/phone.sh"
 source "$LODGE_DIR/lib/slash.sh"
 source "$LODGE_DIR/lib/vitals.sh"
 source "$LODGE_DIR/lib/email.sh"
+source "$LODGE_DIR/lib/git.sh"
 
 # ── Graceful Cancellation ─────────────────────────────────────
 # Tracks whether we're in task execution so Ctrl+C behaves smartly:
@@ -439,6 +444,236 @@ _cmd_phone() {
 _cmd_clear() {
     clear
 }
+_cmd_cleanup() {
+    local args="$1"
+    local george_dir="${GEORGE_CONFIG_DIR:-$HOME/.george}"
+    local sandbox_dir="${LODGE_SANDBOXES:-$HOME/.lodge-sandboxes}"
+    local history_file="$HOME/.lodge_history"
+
+    case "${args%% *}" in
+        status|"")
+            ui_section "George File Inventory"
+            echo ""
+            if [ -d "$george_dir" ]; then
+                local total_size
+                total_size=$(du -sh "$george_dir" 2>/dev/null | awk '{print $1}')
+                printf "  %b~/.george/%b  %s\n" "$C_CYAN" "$C_RESET" "$total_size"
+                # Itemize major contents
+                [ -f "$george_dir/email.conf" ] && printf "    ├── email.conf         (email credentials)\n"
+                [ -d "$george_dir/.ssh" ]       && printf "    ├── .ssh/              (SSH keys)\n"
+                [ -d "$george_dir/.gnupg" ]     && printf "    ├── .gnupg/            (GPG keyring)\n"
+                [ -f "$george_dir/recall.db" ]  && printf "    ├── recall.db          (knowledge base)\n"
+                [ -f "$george_dir/keys.conf" ]  && printf "    ├── keys.conf          (API keys)\n"
+                [ -d "$george_dir/secrets" ]    && printf "    ├── secrets/           (encrypted vault)\n"
+                [ -d "$george_dir/backups" ]    && printf "    ├── backups/           (identity backups)\n"
+                [ -f "$george_dir/sandbox_journal.jsonl" ] && printf "    ├── sandbox_journal    (sandbox history)\n"
+                [ -f "$george_dir/gpg-george.sh" ] && printf "    ├── gpg-george.sh      (GPG wrapper)\n"
+                [ -f "$george_dir/george_public.asc" ] && printf "    ├── george_public.asc  (GPG public key)\n"
+                [ -d "$george_dir/slash" ]      && printf "    ├── slash/             (custom commands)\n"
+                [ -d "$george_dir/cookies" ]    && printf "    ├── cookies/           (web cookies)\n"
+                [ -d "$george_dir/cache" ]      && printf "    └── cache/             (API cache)\n"
+            else
+                ui_dim "  ~/.george/ does not exist (nothing to clean)"
+            fi
+
+            if [ -d "$sandbox_dir" ]; then
+                local sandbox_size sandbox_count
+                sandbox_size=$(du -sh "$sandbox_dir" 2>/dev/null | awk '{print $1}')
+                sandbox_count=$(find "$sandbox_dir" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
+                echo ""
+                printf "  %b~/.lodge-sandboxes/%b  %s  (%d sandboxes)\n" "$C_CYAN" "$C_RESET" "$sandbox_size" "$sandbox_count"
+            fi
+
+            [ -f "$history_file" ] && {
+                echo ""
+                printf "  %b~/.lodge_history%b  (command history)\n" "$C_CYAN" "$C_RESET"
+            }
+
+            echo ""
+            ui_info "Run /cleanup all to remove everything"
+            ui_info "Run /cleanup selective to choose what to remove"
+            ;;
+
+        selective)
+            ui_section "Selective Cleanup"
+            echo ""
+            local cleaned=0
+
+            # SSH keys
+            if [ -d "$george_dir/.ssh" ]; then
+                printf "  Remove SSH keys (~/.george/.ssh)? [y/N] "
+                read -r ans
+                if [[ "${ans,,}" == "y"* ]]; then
+                    rm -rf "$george_dir/.ssh"
+                    git config --global --unset core.sshCommand 2>/dev/null
+                    ui_ok "SSH keys removed"
+                    (( cleaned++ ))
+                fi
+            fi
+
+            # GPG keyring
+            if [ -d "$george_dir/.gnupg" ]; then
+                printf "  Remove GPG keyring (~/.george/.gnupg)? [y/N] "
+                read -r ans
+                if [[ "${ans,,}" == "y"* ]]; then
+                    rm -rf "$george_dir/.gnupg"
+                    rm -f "$george_dir/gpg-george.sh"
+                    rm -f "$george_dir/george_public.asc"
+                    git config --global --unset user.signingkey 2>/dev/null
+                    git config --global --unset commit.gpgsign 2>/dev/null
+                    git config --global --unset tag.gpgsign 2>/dev/null
+                    git config --global --unset gpg.program 2>/dev/null
+                    ui_ok "GPG keyring and signing config removed"
+                    (( cleaned++ ))
+                fi
+            fi
+
+            # Email config
+            if [ -f "$george_dir/email.conf" ]; then
+                printf "  Remove email config (~/.george/email.conf)? [y/N] "
+                read -r ans
+                if [[ "${ans,,}" == "y"* ]]; then
+                    rm -f "$george_dir/email.conf"
+                    ui_ok "Email config removed"
+                    (( cleaned++ ))
+                fi
+            fi
+
+            # API keys
+            if [ -f "$george_dir/keys.conf" ]; then
+                printf "  Remove API keys (~/.george/keys.conf)? [y/N] "
+                read -r ans
+                if [[ "${ans,,}" == "y"* ]]; then
+                    rm -f "$george_dir/keys.conf"
+                    ui_ok "API keys removed"
+                    (( cleaned++ ))
+                fi
+            fi
+
+            # Knowledge base
+            if [ -f "$george_dir/recall.db" ]; then
+                printf "  Remove knowledge base (~/.george/recall.db)? [y/N] "
+                read -r ans
+                if [[ "${ans,,}" == "y"* ]]; then
+                    rm -f "$george_dir/recall.db"
+                    rm -f "$george_dir/.recall_mtimes"
+                    ui_ok "Knowledge base removed"
+                    (( cleaned++ ))
+                fi
+            fi
+
+            # Secrets vault
+            if [ -d "$george_dir/secrets" ]; then
+                printf "  Remove secrets vault (~/.george/secrets)? [y/N] "
+                read -r ans
+                if [[ "${ans,,}" == "y"* ]]; then
+                    rm -rf "$george_dir/secrets"
+                    ui_ok "Secrets vault removed"
+                    (( cleaned++ ))
+                fi
+            fi
+
+            # Sandboxes
+            if [ -d "$sandbox_dir" ]; then
+                local sc
+                sc=$(find "$sandbox_dir" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
+                printf "  Remove all sandboxes (%d sandboxes)? [y/N] " "$sc"
+                read -r ans
+                if [[ "${ans,,}" == "y"* ]]; then
+                    rm -rf "$sandbox_dir"
+                    ui_ok "Sandboxes removed"
+                    (( cleaned++ ))
+                fi
+            fi
+
+            # Backups
+            if [ -d "$george_dir/backups" ]; then
+                printf "  Remove identity backups (~/.george/backups)? [y/N] "
+                read -r ans
+                if [[ "${ans,,}" == "y"* ]]; then
+                    rm -rf "$george_dir/backups"
+                    rm -rf "$george_dir/backup-repo"
+                    ui_ok "Backups removed"
+                    (( cleaned++ ))
+                fi
+            fi
+
+            # Cache and cookies
+            if [ -d "$george_dir/cache" ] || [ -d "$george_dir/cookies" ]; then
+                printf "  Remove cache and cookies? [y/N] "
+                read -r ans
+                if [[ "${ans,,}" == "y"* ]]; then
+                    rm -rf "$george_dir/cache" "$george_dir/cookies"
+                    ui_ok "Cache and cookies removed"
+                    (( cleaned++ ))
+                fi
+            fi
+
+            # History
+            if [ -f "$history_file" ]; then
+                printf "  Remove command history (~/.lodge_history)? [y/N] "
+                read -r ans
+                if [[ "${ans,,}" == "y"* ]]; then
+                    rm -f "$history_file"
+                    ui_ok "History removed"
+                    (( cleaned++ ))
+                fi
+            fi
+
+            echo ""
+            if [ "$cleaned" -gt 0 ]; then
+                ui_ok "Cleaned $cleaned item(s)"
+                # Remove empty .george dir if everything was deleted
+                if [ -d "$george_dir" ] && [ -z "$(ls -A "$george_dir" 2>/dev/null)" ]; then
+                    rmdir "$george_dir" 2>/dev/null
+                    ui_ok "Removed empty ~/.george/ directory"
+                fi
+            else
+                ui_info "Nothing removed"
+            fi
+            ;;
+
+        all)
+            ui_section "Full Cleanup"
+            echo ""
+            ui_warn "This will remove ALL of George's data:"
+            echo "  - SSH keys, GPG keyring"
+            echo "  - Email config, API keys"
+            echo "  - Knowledge base, secrets vault"
+            echo "  - Sandboxes, backups, cache"
+            echo "  - Command history"
+            echo "  - All git signing/SSH configuration"
+            echo ""
+            printf "  %bAre you sure? Type YES to confirm:%b " "$C_RED" "$C_RESET"
+            read -r confirm
+            if [ "$confirm" = "YES" ]; then
+                # Clean git config entries
+                git config --global --unset core.sshCommand 2>/dev/null
+                git config --global --unset user.signingkey 2>/dev/null
+                git config --global --unset commit.gpgsign 2>/dev/null
+                git config --global --unset tag.gpgsign 2>/dev/null
+                git config --global --unset gpg.program 2>/dev/null
+
+                rm -rf "$george_dir"
+                rm -rf "$sandbox_dir"
+                rm -f "$history_file"
+
+                ui_ok "All George data removed"
+                ui_dim "Blue Lodge source code is untouched at: $LODGE_DIR"
+                ui_dim "To fully uninstall: bash $LODGE_DIR/uninstall.sh"
+            else
+                ui_warn "Cancelled — nothing removed"
+            fi
+            ;;
+
+        *)
+            ui_err "Usage: /cleanup [status|selective|all]"
+            ui_dim "  /cleanup            Show what George has created"
+            ui_dim "  /cleanup selective  Choose what to remove"
+            ui_dim "  /cleanup all        Remove everything (requires YES confirmation)"
+            ;;
+    esac
+}
 _cmd_cd() {
     local target="$1"
     if [ -d "$target" ]; then
@@ -806,6 +1041,92 @@ _cmd_email() {
             ui_dim "  ssh-keygen            — Generate SSH key for George"
             ui_dim "  github-setup          — Full GitHub setup (email + SSH + git identity)"
             ui_dim "  github-test           — Test SSH connection to GitHub"
+            ;;
+    esac
+}
+_cmd_git() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+
+    case "$action" in
+        setup|init)
+            git_full_setup ;;
+        status|info)
+            git_status_overview ;;
+        identity|id)
+            if [ -n "$rest" ] && [ "$rest" != "$action" ]; then
+                local name email
+                email=$(echo "$rest" | grep -oP '[^ ]+@[^ ]+' || echo "")
+                name=$(echo "$rest" | sed 's/[^ ]*@[^ ]*//g' | xargs)
+                git_set_identity "${name:-George (Blue Lodge)}" "$email"
+            else
+                git_show_identity
+            fi ;;
+        ssh-keygen|sshkeygen|keygen)
+            if declare -f ssh_generate_key &>/dev/null; then
+                ssh_generate_key
+                git_write_ssh_config
+            else
+                ui_err "SSH functions not available"
+            fi ;;
+        ssh-config|sshconfig)
+            git_configure_ssh ;;
+        sign|signing)
+            if [ "$rest" = "off" ] || [ "$rest" = "disable" ]; then
+                git_disable_signing
+            else
+                git_configure_signing
+            fi ;;
+        remote|remotes)
+            if [ -n "$rest" ] && [ "$rest" != "$action" ]; then
+                local rname rurl
+                rname=$(echo "$rest" | awk '{print $1}')
+                rurl=$(echo "$rest" | awk '{print $2}')
+                if [ -n "$rurl" ]; then
+                    git_add_remote "$rname" "$rurl"
+                else
+                    git_add_remote "origin" "$rname"
+                fi
+            else
+                git_list_remotes
+            fi ;;
+        test|verify)
+            if declare -f ssh_test_github &>/dev/null; then
+                ssh_test_github
+            else
+                ui_err "SSH test functions not available"
+            fi ;;
+        pubkey|pub|ssh-pub)
+            if declare -f ssh_get_pubkey &>/dev/null; then
+                local pk
+                pk=$(ssh_get_pubkey)
+                if [ -n "$pk" ]; then
+                    echo "$pk"
+                else
+                    ui_info "No SSH key. Run: /git ssh-keygen"
+                fi
+            fi ;;
+        gpg-pub|gpg-pubkey|gpg-export)
+            if declare -f pgp_show_public_key &>/dev/null; then
+                pgp_show_public_key
+            else
+                ui_err "PGP functions not available"
+            fi ;;
+        *)
+            ui_info "Usage: /git <setup|status|identity|ssh-keygen|sign|remote|test>"
+            ui_dim "  setup               — Full auto-setup (identity + SSH + GPG + GitHub test)"
+            ui_dim "  status              — Show git configuration overview"
+            ui_dim "  identity [name] [email] — Set/show git user identity"
+            ui_dim "  ssh-keygen          — Generate SSH key for George"
+            ui_dim "  ssh-config          — Write persistent SSH config"
+            ui_dim "  sign [off]          — Enable/disable GPG commit signing"
+            ui_dim "  remote [name] <url> — Add/update a git remote"
+            ui_dim "  test                — Test SSH connection to GitHub"
+            ui_dim "  pubkey              — Show SSH public key"
+            ui_dim "  gpg-pub             — Show GPG public key"
             ;;
     esac
 }
@@ -1671,6 +1992,8 @@ _register_commands() {
     commands_register "slash"    "George's custom commands (Magnum Opus)" "_cmd_slash"
     commands_register "vitals"   "System vitals (disk, RAM, battery, WiFi)" "_cmd_vitals"
     commands_register "email"    "Email (ProtonMail/Zoho/Tuta/disposable)" "_cmd_email"
+    commands_register "git"      "Git & GitHub configuration" "_cmd_git"
+    commands_register "cleanup"  "Remove George's created files" "_cmd_cleanup"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"
     commands_register "files"    "List workspace files" "_cmd_files"

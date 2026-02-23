@@ -356,4 +356,67 @@ ls -la
     _teardown_tools
   }
 
+# ── tools_sanitize_filename ─────────────────────────────────
+describe "tools_sanitize_filename"
+
+  it "strips double quotes from filename" && {
+    result=$(tools_sanitize_filename '"README.md"')
+    assert_eq "$result" "README.md"
+  }
+
+  it "strips single quotes from filename" && {
+    result=$(tools_sanitize_filename "'main.rs'")
+    assert_eq "$result" "main.rs"
+  }
+
+  it "strips mixed quotes" && {
+    result=$(tools_sanitize_filename "'\"README.md\"'")
+    assert_eq "$result" "README.md"
+  }
+
+  it "replaces spaces with hyphens" && {
+    result=$(tools_sanitize_filename "my file name.txt")
+    assert_eq "$result" "my-file-name.txt"
+  }
+
+  it "removes special characters" && {
+    result=$(tools_sanitize_filename 'file@name!#$.txt')
+    assert_eq "$result" "filename.txt"
+  }
+
+  it "preserves path separators" && {
+    result=$(tools_sanitize_filename 'src/main.rs')
+    assert_eq "$result" "src/main.rs"
+  }
+
+  it "preserves dotfiles" && {
+    result=$(tools_sanitize_filename '.gitignore')
+    assert_eq "$result" ".gitignore"
+  }
+
+  it "handles complex quoted path" && {
+    result=$(tools_sanitize_filename '"./src/game/main.rs"')
+    assert_eq "$result" "./src/game/main.rs"
+  }
+
+  it "strips backticks" && {
+    result=$(tools_sanitize_filename '\`config.toml\`')
+    assert_eq "$result" "config.toml"
+  }
+
+  it "collapses multiple dashes" && {
+    result=$(tools_sanitize_filename 'my---file.txt')
+    assert_eq "$result" "my-file.txt"
+  }
+
+  it "returns unnamed_file for empty input" && {
+    result=$(tools_sanitize_filename '')
+    assert_eq "$result" "unnamed_file"
+  }
+
+  it "handles rogue-lite-bullet-hell.zip correctly" && {
+    result=$(tools_sanitize_filename '"rogue-lite-bullet-hell.zip"')
+    assert_eq "$result" "rogue-lite-bullet-hell.zip"
+  }
+
 test_end

@@ -6,7 +6,9 @@
 # Installs George, configures Ollama model, sets up shell.
 set -euo pipefail
 
-LODGE_DIR="$HOME/blue-lodge"
+# Detect where this script lives — install relative to clone location
+_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LODGE_DIR="${LODGE_DIR:-$_SCRIPT_DIR}"
 BLUE='\033[38;5;33m'
 GREEN='\033[38;5;114m'
 YELLOW='\033[38;5;221m'
@@ -196,7 +198,7 @@ if [ -n "$SHELL_RC" ]; then
         cat >> "$SHELL_RC" << SHELLEOF
 
 # ── Blue Lodge ─────────────────────────────────────────────
-export LODGE_DIR="\$HOME/blue-lodge"
+export LODGE_DIR="$LODGE_DIR"
 export LODGE_MODEL="blue-lodge"
 export PATH="\$HOME/.local/bin:\$PATH"
 $local_termux_api_line
@@ -222,7 +224,7 @@ SHELLEOF
     fi
 else
     warn "No .zshrc or .bashrc found. Add manually:"
-    echo "  export LODGE_DIR=\"\$HOME/blue-lodge\""
+    echo "  export LODGE_DIR=\"$LODGE_DIR\""
     echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi
 

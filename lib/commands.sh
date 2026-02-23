@@ -223,6 +223,19 @@ Examples:
 /email ssh-keygen      — Generate SSH key for George
 /email github-setup    — Full GitHub setup (email + SSH + git identity)
 /email github-test     — Test SSH connection to GitHub
+/git setup             — Full auto-setup (identity + SSH + GPG + GitHub)
+/git status            — Show git configuration overview
+/git identity [name] [email] — Set/show git user identity
+/git ssh-keygen        — Generate SSH key + write persistent config
+/git ssh-config        — Write persistent SSH config for GitHub
+/git sign [off]        — Enable/disable GPG commit signing
+/git remote [name] <url> — Add/update a git remote (auto HTTPS→SSH)
+/git test              — Test SSH connection to GitHub
+/git pubkey            — Show SSH public key
+/git gpg-pub           — Show GPG public key for GitHub
+/cleanup               — Show what George has created (file inventory)
+/cleanup selective     — Interactively choose what to remove
+/cleanup all           — Remove ALL George data (requires YES)
 /backup local          — Quick file backup of identity & memory
 /backup restore [name] — Restore from a backup
 /backup list           — Show all backups

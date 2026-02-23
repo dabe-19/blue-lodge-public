@@ -10,6 +10,29 @@ source "$LODGE_DIR/lib/ui.sh"
 # 0 = ask always, 1 = ask for destructive, 2 = auto-approve all
 LODGE_PERMISSION="${LODGE_PERMISSION:-1}"
 
+# ── Filename sanitization ──────────────────────────────────────
+# Strips quotes, replaces spaces, removes special characters.
+# Used everywhere a filename comes in from LLM output or user input.
+tools_sanitize_filename() {
+    local f="$1"
+    # Strip leading/trailing whitespace
+    f=$(echo "$f" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    # Strip all quote characters (single, double, backtick)
+    f=$(echo "$f" | sed 's/["'"'"'`]//g')
+    # Replace spaces with hyphens
+    f=$(echo "$f" | tr ' ' '-')
+    # Remove characters that are problematic in filenames
+    # Keep: alphanumeric, dash, underscore, dot, slash (for paths)
+    f=$(echo "$f" | sed 's/[^a-zA-Z0-9_./-]//g')
+    # Collapse multiple dashes/dots
+    f=$(echo "$f" | sed 's/--\+/-/g; s/\.\.\+/./g')
+    # Remove leading dash from the whole thing if no path
+    f=$(echo "$f" | sed 's/^-//')
+    # Never return empty
+    [ -z "$f" ] && f="unnamed_file"
+    echo "$f"
+}
+
 # ── Extract bash code blocks ──────────────────────────────────
 # Resilient to common LLM formatting errors:
 #   - Missing closing ``` (unterminated block)
@@ -79,10 +102,16 @@ tools_extract_files() {
         next 
     }
     # Tolerate common LLM misspellings: filepath, file_path, file path, Filepath
-    in_block && /^[[:space:]]*((\/\/|#) *(file_?path|file path|File_?[Pp]ath)):/ {
+    in_block && /^[[:space:]]*(\/\/|#) *(file_?path|file path|File_?[Pp]ath):/ {
         f = $0
         sub(/.*[Ff]ile[_ ]?[Pp]?ath:[[:space:]]*/, "", f)
         gsub(/[[:space:]]*$/, "", f)
+        # Strip quotes from value (double, single, backtick)
+        gsub(/["\047`]/, "", f)
+        # Replace spaces with hyphens
+        gsub(/ /, "-", f)
+        # Remove problematic special characters (keep alnum . - _ /)
+        gsub(/[^a-zA-Z0-9_./-]/, "", f)
         filepath = f
         next
     }
@@ -189,6 +218,9 @@ tools_write_file() {
     local filepath="$1"
     local content="$2"
     local workdir="${3:-.}"
+    
+    # Sanitize the filename — strip quotes, spaces, special chars
+    filepath=$(tools_sanitize_filename "$filepath")
     
     # Resolve path
     local fullpath

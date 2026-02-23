@@ -32,6 +32,13 @@ cmd_download() {
         [ -z "$dest" ] || [ "$dest" = "/" ] && dest="downloaded_file"
     fi
 
+    # Sanitize destination filename — strip quotes, spaces, special chars
+    if declare -f tools_sanitize_filename &>/dev/null; then
+        dest=$(tools_sanitize_filename "$dest")
+    else
+        dest=$(echo "$dest" | sed 's/["'"'"'`]//g' | tr ' ' '-' | sed 's/[^a-zA-Z0-9_./-]//g')
+    fi
+
     # Resolve destination relative to workdir
     local fullpath
     if [[ "$dest" == /* ]]; then

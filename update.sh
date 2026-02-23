@@ -9,7 +9,9 @@
 #   bash ~/blue-lodge/update.sh --clean   # Fresh clone (backs up first)
 set -euo pipefail
 
-LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
+# Detect where this script lives — update in-place
+_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LODGE_DIR="${LODGE_DIR:-$_SCRIPT_DIR}"
 BLUE='\033[38;5;33m'
 GREEN='\033[38;5;114m'
 YELLOW='\033[38;5;221m'

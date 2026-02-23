@@ -25,6 +25,14 @@ cmd_write() {
     filepath=$(echo "$args" | awk '{print $1}')
     content=$(echo "$args" | sed 's/^[^ ]* *//')
 
+    # Sanitize filename — strip quotes, spaces, special chars
+    if declare -f tools_sanitize_filename &>/dev/null; then
+        filepath=$(tools_sanitize_filename "$filepath")
+    else
+        # Inline fallback: strip quotes and spaces
+        filepath=$(echo "$filepath" | sed 's/["'"'"'`]//g' | tr ' ' '-' | sed 's/[^a-zA-Z0-9_./-]//g')
+    fi
+
     # If content equals filepath (no content provided), clear it
     if [ "$content" = "$filepath" ]; then
         content=""
