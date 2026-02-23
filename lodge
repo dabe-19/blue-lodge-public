@@ -39,6 +39,7 @@ source "$LODGE_DIR/lib/wallet.sh"
 source "$LODGE_DIR/lib/pgp.sh"
 source "$LODGE_DIR/lib/phone.sh"
 source "$LODGE_DIR/lib/slash.sh"
+source "$LODGE_DIR/lib/vitals.sh"
 
 # ── Graceful Cancellation ─────────────────────────────────────
 # Tracks whether we're in task execution so Ctrl+C behaves smartly:
@@ -1303,6 +1304,96 @@ _cmd_recall() {
     esac
 }
 
+# ── /vitals — System Vitals Dashboard ──────────────────────────
+_cmd_vitals() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+
+    case "$action" in
+        context|ctx)
+            vitals_context ;;
+        disk)
+            ui_section "Disk"
+            local df_free df_total df_pct
+            df_free=$(vitals_disk_free_mb)
+            df_total=$(vitals_disk_total_mb)
+            df_pct=$(vitals_disk_pct)
+            printf "  Free:  %s MB\n  Total: %s MB\n  Used:  %s%%\n" "$df_free" "$df_total" "$df_pct"
+            echo "  Status: $(vitals_disk_status)" ;;
+        ram|memory)
+            ui_section "RAM"
+            local rf rt ru
+            rf=$(vitals_ram_free_mb)
+            rt=$(vitals_ram_total_mb)
+            ru=$(vitals_ram_used_mb)
+            printf "  Available: %s MB\n  Total:     %s MB\n  Used:      %s MB\n" "$rf" "$rt" "$ru"
+            echo "  Status: $(vitals_ram_status)" ;;
+        battery|bat)
+            ui_section "Battery"
+            local bp bs
+            bp=$(vitals_battery_pct)
+            bs=$(vitals_battery_status)
+            if [ -n "$bp" ]; then
+                printf "  Level:  %s%%\n  Status: %s\n" "$bp" "$bs"
+                echo "  Health: $(vitals_battery_status_level)"
+            else
+                ui_dim "  Battery info not available"
+            fi ;;
+        wifi)
+            ui_section "WiFi"
+            local ws wr wsp
+            ws=$(vitals_wifi_ssid)
+            wr=$(vitals_wifi_rssi)
+            wsp=$(vitals_wifi_speed)
+            if [ -n "$ws" ]; then
+                printf "  SSID:   %s\n  RSSI:   %s dBm\n  Speed:  %s Mbps\n" "$ws" "${wr:-?}" "${wsp:-?}"
+                echo "  Status: $(vitals_wifi_status)"
+            else
+                ui_dim "  WiFi disconnected"
+            fi ;;
+        cell|signal)
+            ui_section "Cell"
+            local cs ct
+            cs=$(vitals_cell_signal)
+            ct=$(vitals_cell_type)
+            if [ -n "$cs" ]; then
+                printf "  Type:   %s\n  Signal: %s dBm\n" "${ct:-?}" "$cs"
+            else
+                ui_dim "  Cell info not available"
+            fi ;;
+        net|network)
+            printf "  Network: "
+            if vitals_net_reachable; then
+                echo "reachable"
+            else
+                echo "unreachable"
+            fi ;;
+        refresh)
+            vitals_refresh
+            ui_ok "Vitals cache refreshed"
+            vitals_dashboard ;;
+        check|preflight)
+            vitals_preflight "warn"
+            ui_ok "Pre-flight check complete" ;;
+        help)
+            ui_section "System Vitals"
+            ui_dim "  /vitals              — Full system dashboard"
+            ui_dim "  /vitals context      — One-line vitals for LLM context"
+            ui_dim "  /vitals disk         — Disk space details"
+            ui_dim "  /vitals ram          — RAM / memory details"
+            ui_dim "  /vitals battery      — Battery status"
+            ui_dim "  /vitals wifi         — WiFi connection details"
+            ui_dim "  /vitals cell         — Cell tower / signal"
+            ui_dim "  /vitals network      — Quick reachability check"
+            ui_dim "  /vitals refresh      — Force refresh + show dashboard"
+            ui_dim "  /vitals check        — Pre-flight resource check"
+            echo "" ;;
+        *)
+            vitals_dashboard ;;
+    esac
+}
+
 # ── /slash — George's Custom Commands (The Magnum Opus) ────────
 _cmd_slash() {
     local args="$1"
@@ -1409,6 +1500,7 @@ _register_commands() {
     commands_register "wallet"   "Cryptocurrency wallets (BTC/ADA/SOL)" "_cmd_wallet"
     commands_register "pgp"      "PGP signing & message verification" "_cmd_pgp"
     commands_register "slash"    "George's custom commands (Magnum Opus)" "_cmd_slash"
+    commands_register "vitals"   "System vitals (disk, RAM, battery, WiFi)" "_cmd_vitals"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"
     commands_register "files"    "List workspace files" "_cmd_files"

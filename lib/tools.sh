@@ -134,6 +134,15 @@ tools_exec_bash() {
         fi
     fi
     
+    # Pre-exec resource check — prevent writes when disk is critically low
+    if declare -f vitals_guard_disk &>/dev/null; then
+        if ! vitals_guard_disk 2>/dev/null; then
+            ui_err "Blocked: disk critically low — refusing to execute"
+            LAST_CMD_EXIT=1
+            return 1
+        fi
+    fi
+
     # Execute and capture output
     local output
     local exit_code

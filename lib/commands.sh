@@ -174,6 +174,8 @@ To invoke: output a line starting with / (e.g., /recall docker setup).
 /slash create <name> <desc> — Create a new custom command (LLM-assisted)
 /slash <name> [args]   — Run a custom command you created
 /slash test <name>     — Test a custom command
+/vitals                — System vitals dashboard (disk, RAM, battery, WiFi, cell)
+/vitals context        — One-line vitals for LLM context injection
 /files                — List workspace files
 /read <file>          — Read a file
 /status               — Show agent status

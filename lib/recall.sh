@@ -113,7 +113,7 @@ _recall_chunk_markdown() {
             if (length(content) > 0) {
                 # Replace newlines with spaces for single-line output
                 gsub(/\n/, " ", content)
-                printf "%s\t%s\000", section, content
+                printf "%s\t%s\n", section, content
             }
         }
         section = $0
@@ -130,7 +130,7 @@ _recall_chunk_markdown() {
             sub(/\n+$/, "", content)
             if (length(content) > 0) {
                 gsub(/\n/, " ", content)
-                printf "%s\t%s\000", section, content
+                printf "%s\t%s\n", section, content
             }
         }
     }
@@ -153,7 +153,7 @@ recall_index_file() {
 
     # Chunk and index
     local count=0
-    while IFS=$'\t' read -r -d '' section content; do
+    while IFS=$'\t' read -r section content; do
         [ -z "$content" ] && continue
         # Escape single quotes for SQL
         section="${section//\'/\'\'}"
@@ -605,7 +605,7 @@ _recall_chunk_text() {
             gsub(/\n/, " ", chunk)
             sub(/^ +/, "", chunk)
             if (length(chunk) > 0) {
-                printf "%s\t%s\000", section_label, chunk
+                printf "%s\t%s\n", section_label, chunk
             }
             chunk = ""
         } else {
@@ -623,7 +623,7 @@ _recall_chunk_text() {
                 gsub(/\n/, " ", chunk)
                 sub(/^ +/, "", chunk)
                 if (length(chunk) > 0) {
-                    printf "%s\t%s\000", section_label, chunk
+                    printf "%s\t%s\n", section_label, chunk
                 }
                 chunk = ""
             }
@@ -641,7 +641,7 @@ _recall_chunk_text() {
             gsub(/\n/, " ", chunk)
             sub(/^ +/, "", chunk)
             if (length(chunk) > 0) {
-                printf "%s\t%s\000", section_label, chunk
+                printf "%s\t%s\n", section_label, chunk
             }
         }
     }
@@ -680,7 +680,7 @@ recall_ingest() {
 
     if [[ "$ext" == "md" ]]; then
         # Use markdown chunker
-        while IFS=$'\t' read -r -d '' section content; do
+        while IFS=$'\t' read -r section content; do
             [ -z "$content" ] && continue
             section="${section//\'/\'\'}"
             content="${content//\'/\'\'}"
@@ -692,7 +692,7 @@ recall_ingest() {
         done < <(_recall_chunk_markdown "$filepath")
     else
         # Use generic text chunker
-        while IFS=$'\t' read -r -d '' section content; do
+        while IFS=$'\t' read -r section content; do
             [ -z "$content" ] && continue
             section="${section//\'/\'\'}"
             content="${content//\'/\'\'}"

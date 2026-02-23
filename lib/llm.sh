@@ -10,7 +10,7 @@ OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
 LODGE_MODEL="${LODGE_MODEL:-blue-lodge}"
 LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-1024}"    # Default max output tokens (task mode)
 LLM_ASK_TOKENS="${LLM_ASK_TOKENS:-300}"     # Max output tokens for /ask (quick answers)
-LLM_TIMEOUT="${LLM_TIMEOUT:-180}"           # Safety net: 180s max per request (Ctrl+C also works)
+LLM_TIMEOUT="${LLM_TIMEOUT:-300}"           # Safety net: 300s max per request (Ctrl+C also works)
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
 
 # ── Active request tracking (for cancellation) ─────────────────
@@ -230,7 +230,14 @@ llm_stream() {
     fi
 
     # Stream tokens to stdout AND /dev/tty (so user sees output even inside $())
+    # Start a spinner that shows during prefill (killed on first token)
     _LLM_ACTIVE=1
+    local _llm_spinner_pid=""
+    local _llm_ft_file="/tmp/.lodge-ft-$$"
+    rm -f "$_llm_ft_file"
+    ui_spinner_start "Thinking"
+    _llm_spinner_pid="$_SPINNER_PID"
+
     curl -sf "${timeout_args[@]}" \
         "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
@@ -238,6 +245,12 @@ llm_stream() {
         local token
         token=$(echo "$line" | jq -r '.response // empty' 2>/dev/null)
         if [ -n "$token" ]; then
+            # Kill spinner on first real token
+            if [ ! -f "$_llm_ft_file" ]; then
+                touch "$_llm_ft_file"
+                kill "$_llm_spinner_pid" 2>/dev/null
+                printf "\r%*s\r" 60 "" > /dev/tty 2>/dev/null
+            fi
             printf "%s" "$token"
             printf "%s" "$token" > /dev/tty 2>/dev/null
         fi
@@ -250,6 +263,10 @@ llm_stream() {
             break
         fi
     done
+
+    # Safety: ensure spinner is stopped even if no tokens arrived (timeout/error)
+    ui_spinner_stop
+    rm -f "$_llm_ft_file"
     _LLM_ACTIVE=0
 }
 

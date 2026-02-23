@@ -31,7 +31,13 @@ Create a step-by-step plan. Rules:
 - Absolute maximum: 8 steps. Only complex multi-file tasks should approach this.
 - Each step must be completable in ONE LLM call.
 - Each step must be a single action (write one file, run one command, etc.)
-- Output ONLY a numbered list. No explanations."
+- You can reference your slash commands (e.g. /recall, /sandbox) in steps.
+- Output ONLY a NUMBERED LIST (1. 2. 3. etc.) — no explanations, no code.
+
+Example format:
+1. Do the first thing
+2. Do the second thing
+3. Do the third thing"
     
     # Stream the plan so user sees progress in real-time
     echo ""
@@ -117,6 +123,15 @@ agent_run() {
     
     ui_section "Task"
     ui_info "$task"
+
+    # Pre-flight vitals check — abort if critically low on resources
+    if declare -f vitals_preflight &>/dev/null; then
+        if ! vitals_preflight "strict" 2>/dev/null; then
+            ui_err "Task aborted — resolve resource issues above first"
+            _LODGE_IN_TASK=0
+            return 1
+        fi
+    fi
     
     # Phase 1: Plan (user sees it streamed in real-time via /dev/tty)
     local plan
@@ -127,12 +142,22 @@ agent_run() {
     fi
     echo ""
     
-    # Parse steps
+    # Parse steps — numbered lines like "1. Do something" or "1) Do something"
+    # Also accept slash command lines as steps (model sometimes outputs those)
     local -a steps=()
     while IFS= read -r line; do
+        # Numbered list item: "1. thing" or "1) thing" or "1 thing"
         if [[ "$line" =~ ^[0-9]+[\.\)\ ] ]]; then
             local step_text
             step_text=$(echo "$line" | sed 's/^[0-9]*[.)[:space:]]*//')
+            [ -n "$step_text" ] && steps+=("$step_text")
+        # Slash command line (e.g., "/recall query" or "/sandbox create 1")
+        elif [[ "$line" =~ ^/ ]] && [ -n "$line" ]; then
+            steps+=("$line")
+        # Dash/bullet list item: "- Do something" or "* Do something"
+        elif [[ "$line" =~ ^[-\*]\ + ]]; then
+            local step_text
+            step_text=$(echo "$line" | sed 's/^[-*][[:space:]]*//')
             [ -n "$step_text" ] && steps+=("$step_text")
         fi
     done <<< "$plan"
@@ -180,6 +205,15 @@ agent_run() {
         # Delay between steps
         sleep "$AGENT_STEP_DELAY"
         
+        # Inter-step vitals check — warn on degrading conditions
+        if declare -f vitals_guard_disk &>/dev/null; then
+            if ! vitals_guard_disk 2>/dev/null; then
+                ui_warn "Stopping task — disk critically low"
+                break
+            fi
+            vitals_guard_ram 2>/dev/null || true  # warn but don't abort
+        fi
+
         # Compact memory if steps are accumulating (earlier = safer for 8K context)
         if [ "$step_num" -ge 4 ] && [ $(( step_num % 2 )) -eq 0 ]; then
             memory_compact "$workdir"

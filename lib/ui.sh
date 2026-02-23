@@ -109,7 +109,7 @@ ui_spinner_start() {
         local frames=('◐' '◓' '◑' '◒')
         local i=0
         while true; do
-            printf "\r %b%s %b%s...%b " "$C_PURPLE" "${frames[$i]}" "$C_GRAY" "$msg" "$C_RESET"
+            printf "\r %b%s %b%s...%b " "$C_PURPLE" "${frames[$i]}" "$C_GRAY" "$msg" "$C_RESET" > /dev/tty 2>/dev/null
             i=$(( (i + 1) % 4 ))
             sleep 0.2
         done
@@ -123,7 +123,7 @@ ui_spinner_stop() {
         kill "$_SPINNER_PID" 2>/dev/null
         wait "$_SPINNER_PID" 2>/dev/null
         _SPINNER_PID=""
-        printf "\r%*s\r" 60 ""  # clear line
+        printf "\r%*s\r" 60 "" > /dev/tty 2>/dev/null  # clear line on tty
     fi
 }
 

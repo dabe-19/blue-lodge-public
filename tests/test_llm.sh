@@ -27,8 +27,8 @@ describe "Configuration defaults"
     assert_eq "$LLM_ASK_TOKENS" "300"
   }
 
-  it "LLM_TIMEOUT defaults to 180 (safety net)" && {
-    assert_eq "$LLM_TIMEOUT" "180"
+  it "LLM_TIMEOUT defaults to 300 (safety net)" && {
+    assert_eq "$LLM_TIMEOUT" "300"
   }
 
   it "LLM_KEEP_ALIVE defaults to 30m" && {

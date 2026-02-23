@@ -156,6 +156,21 @@ memory_build_system_prompt() {
     local prompt="[Current time: $now]
 "
 
+    # ── System vitals: ~30-50 tokens, always injected ────────────
+    if declare -f vitals_context &>/dev/null; then
+        if [ "$mode" = "ask" ]; then
+            # Ask mode: only inject warnings (0 tokens if healthy)
+            local _vitals_warn
+            _vitals_warn=$(vitals_context_warnings 2>/dev/null)
+            [ -n "$_vitals_warn" ] && prompt="${prompt}${_vitals_warn}\n"
+        else
+            # Plan/task mode: always inject full vitals line
+            local _vitals_ctx
+            _vitals_ctx=$(vitals_context 2>/dev/null)
+            [ -n "$_vitals_ctx" ] && prompt="${prompt}${_vitals_ctx}\n"
+        fi
+    fi
+
     if [ "$mode" = "ask" ]; then
         # ── Lean mode for /ask: ~150 tokens ──────────────────────
         # The Modelfile SYSTEM prompt already has George's core personality.
@@ -230,8 +245,12 @@ $files"
     fi
 
     # ── Full mode for tasks: budget-conscious ───────────────────
+    # Compact soul: identity preamble + practical craft rules
+    # Full soul.md is ~15K chars (~4500 tokens) — too large for 8K context.
+    # The Modelfile SYSTEM already has core personality. Task mode only adds
+    # the identity intro and practical rules (output format, hardware, laws).
     local soul
-    soul=$(memory_read_soul)
+    soul=$({ head -20 "$LODGE_DIR/soul.md"; echo ""; awk '/^## Practical Craft$/,0' "$LODGE_DIR/soul.md"; } 2>/dev/null)
     prompt="${prompt}${soul}"
     
     local project_mem
