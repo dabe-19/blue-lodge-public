@@ -293,4 +293,32 @@ Some explanation
     assert_not_contains "$_cmds" "/social"
   }
 
+# ── Slash commands in bash blocks ──────────────────────────────
+describe "Slash commands routed from bash blocks"
+
+  it "separates slash commands from real bash in process_response" && {
+    _setup_tools
+    export LODGE_PERMISSION=2
+    # Simulate LLM wrapping a slash command in a bash block
+    _resp='```bash
+/recall docker setup
+```'
+    # tools_process_response should NOT try to execute /recall as bash
+    result=$(tools_process_response "$_resp" "$TMPDIR_TOOLS" 2>&1)
+    # Should not contain bash execution failure for /recall
+    assert_not_contains "$result" "Command failed"
+    _teardown_tools
+  }
+
+  it "still executes real bash commands normally" && {
+    _setup_tools
+    export LODGE_PERMISSION=2
+    _resp='```bash
+echo "hello from bash"
+```'
+    result=$(tools_process_response "$_resp" "$TMPDIR_TOOLS" 2>&1)
+    assert_contains "$result" "hello from bash"
+    _teardown_tools
+  }
+
 test_end
