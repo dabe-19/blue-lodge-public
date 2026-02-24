@@ -133,9 +133,12 @@ _cmd_think() {
             LODGE_THINK_STREAM=0
             ui_ok "Thinking mode ON — hidden (reasoning happens, not shown)" ;;
         "")
-            # Toggle through: off → dim → bright → off
+            # Toggle through: off → hidden → dim → bright → off
             if [ "${LODGE_THINK:-0}" -eq 0 ]; then
                 LODGE_THINK=1
+                LODGE_THINK_STREAM=0
+                ui_ok "Thinking mode ON — hidden (reasoning happens, not shown)"
+            elif [ "${LODGE_THINK_STREAM:-1}" -eq 0 ]; then
                 LODGE_THINK_STREAM=1
                 ui_ok "Thinking mode ON — dimmed stream"
             elif [ "${LODGE_THINK_STREAM:-1}" -eq 1 ]; then
@@ -152,7 +155,7 @@ _cmd_think() {
             ui_dim "  bright   — show thinking in cyan with borders"
             ui_dim "  dim      — show thinking in faint text"
             ui_dim "  hide     — think but don't stream to screen"
-            ui_dim "  (no arg) — cycle: off → dim → bright → off" ;;
+            ui_dim "  (no arg) — cycle: off → hidden → dim → bright → off" ;;
     esac
 }
 _cmd_debug() {
@@ -1097,11 +1100,13 @@ _cmd_social() {
                 post)
                     local _first_arg
                     _first_arg=$(echo "$dargs" | awk '{print $1}')
+                    # Strip surrounding quotes — LLM wraps args in "..." or '...'
+                    _first_arg=$(echo "$_first_arg" | sed "s/^[\"']//; s/[\"']$//")
                     if [[ "$_first_arg" =~ ^[0-9]+$ ]] && [ ${#_first_arg} -ge 17 ]; then
                         # Channel ID detected — use bot API
                         local _chan_id="$_first_arg"
                         local _chan_msg
-                        _chan_msg=$(echo "$dargs" | sed 's/^[^ ]* *//')
+                        _chan_msg=$(echo "$dargs" | sed 's/^[^ ]* *//' | sed "s/^[\"']//; s/[\"']$//")
                         discord_send "$_chan_id" "$_chan_msg"
                     else
                         # Could be a #channel-name — try resolve, else use webhook→bot fallback
@@ -1109,7 +1114,7 @@ _cmd_social() {
                         _resolved=$(discord_channel_resolve "$_first_arg" 2>/dev/null)
                         if [ -n "$_resolved" ]; then
                             local _chan_msg
-                            _chan_msg=$(echo "$dargs" | sed 's/^[^ ]* *//')
+                            _chan_msg=$(echo "$dargs" | sed 's/^[^ ]* *//' | sed "s/^[\"']//; s/[\"']$//")
                             discord_send "$_resolved" "$_chan_msg"
                         elif api_get_key "DISCORD_WEBHOOK_URL" &>/dev/null; then
                             discord_webhook "$dargs"
@@ -1129,13 +1134,15 @@ _cmd_social() {
                     # /social discord send — for DMs or targeted channel messages
                     local _first_arg
                     _first_arg=$(echo "$dargs" | awk '{print $1}')
-                    if [ -z "$_first_arg" ] || [ -z "$(echo "$dargs" | sed 's/^[^ ]* *//')" ] || [ "$(echo "$dargs" | sed 's/^[^ ]* *//')" = "$_first_arg" ]; then
+                    # Strip surrounding quotes — LLM wraps args in "..." or '...'
+                    _first_arg=$(echo "$_first_arg" | sed "s/^[\"']//; s/[\"']$//")
+                    if [ -z "$_first_arg" ] || [ -z "$(echo "$dargs" | sed 's/^[^ ]* *//')" ] || [ "$(echo "$dargs" | sed 's/^[^ ]* *//')" = "$(echo "$dargs" | awk '{print $1}')" ]; then
                         ui_info "Usage: /social discord send <channel> <message>"
                         ui_dim "  Use 'post' for public posting, 'send' for targeted/DM messages."
                         return 1
                     fi
                     local _chan_msg
-                    _chan_msg=$(echo "$dargs" | sed 's/^[^ ]* *//')
+                    _chan_msg=$(echo "$dargs" | sed 's/^[^ ]* *//' | sed "s/^[\"']//; s/[\"']$//")
                     if [[ "$_first_arg" =~ ^[0-9]+$ ]] && [ ${#_first_arg} -ge 17 ]; then
                         discord_send "$_first_arg" "$_chan_msg"
                     else

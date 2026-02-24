@@ -323,6 +323,10 @@ discord_send() {
     local channel_id="$1"
     local message="$2"
 
+    # Strip surrounding quotes — LLM wraps args in "..." or '...'
+    channel_id=$(echo "$channel_id" | sed "s/^[\"']//; s/[\"']$//")
+    message=$(echo "$message" | sed "s/^[\"']//; s/[\"']$//")
+
     # Resolve channel name → ID if not numeric
     if ! [[ "$channel_id" =~ ^[0-9]+$ ]]; then
         local resolved
@@ -463,6 +467,10 @@ SQL
 discord_channel_resolve() {
     local name="$1"
     # Strip leading # if present
+    name="${name#\#}"
+    # Strip surrounding quotes (LLM often wraps channel names in quotes)
+    name=$(echo "$name" | sed 's/^["'\''"'\'']*//; s/["'\''"'\'']*$//')
+    # Strip # again in case it was inside quotes like "#lunkers"
     name="${name#\#}"
     _discord_channels_init 2>/dev/null || return 1
     sqlite3 "$DISCORD_CHANNELS_DB" \

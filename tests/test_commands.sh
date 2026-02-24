@@ -185,6 +185,25 @@ describe "commands_catalog"
     assert_contains "$_plan_out" "/social post discord"
   }
 
+  it "plan catalog tells LLM not to quote arguments" && {
+    _plan_out=$(commands_catalog_plan)
+    assert_contains "$_plan_out" "Do NOT quote arguments"
+  }
+
+  it "dispatch strips outer wrapping double-quotes from args" && {
+    _quote_handler() {
+        echo "ARGS:$1"
+    }
+    commands_register "quotetest" "test" "_quote_handler"
+    _qt_out=$(commands_dispatch '/quotetest "hello world"' 2>&1)
+    assert_contains "$_qt_out" "ARGS:hello world"
+  }
+
+  it "dispatch strips outer wrapping single-quotes from args" && {
+    _qt_out=$(commands_dispatch "/quotetest 'hello world'" 2>&1)
+    assert_contains "$_qt_out" "ARGS:hello world"
+  }
+
   it "plan catalog marks /email as not for social" && {
     _plan_out=$(commands_catalog_plan)
     assert_contains "$_plan_out" "ONLY for actual email"

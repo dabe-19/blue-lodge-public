@@ -398,6 +398,41 @@ describe "Dynamic dual-loop architecture"
     assert_ok $?
   }
 
+  it "specialist prompt tells LLM not to quote arguments" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'NOT quote arguments'
+    assert_ok $?
+  }
+
+  it "specialist prompt tells LLM one command per line" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'ONE command per line'
+    assert_ok $?
+  }
+
+  it "inner loop has sandbox programmatic interlock" && {
+    body=$(declare -f agent_inner_loop)
+    # _obj_lower is used to check if objective is code-related before allowing sandbox
+    echo "$body" | grep -q '_obj_lower'
+    assert_ok $?
+    echo "$body" | grep -q 'build\|compile\|code\|project'
+    assert_ok $?
+  }
+
+  it "inner loop has multi-command splitter" && {
+    body=$(declare -f agent_inner_loop)
+    # _first_cmd is used to extract just the first command from multi-command lines
+    echo "$body" | grep -q '_first_cmd'
+    assert_ok $?
+  }
+
+  it "inner loop has quote normalization" && {
+    body=$(declare -f agent_inner_loop)
+    # Strips double quotes from slash commands
+    echo "$body" | grep -q 'sed.*s/\"//g'
+    assert_ok $?
+  }
+
   it "agent_run resets debug counters" && {
     local body
     body=$(declare -f agent_run)

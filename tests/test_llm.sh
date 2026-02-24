@@ -241,11 +241,23 @@ describe "Thinking mode configuration"
     assert_ok $?
   }
 
+  it "llm_generate appends /think when LODGE_THINK=1" && {
+    body=$(declare -f llm_generate)
+    echo "$body" | grep -q 'prompt=.*\/think'
+    assert_ok $?
+  }
+
   it "llm_stream appends /nothink when LODGE_THINK=0" && {
     body=$(declare -f llm_stream)
     echo "$body" | grep -q 'LODGE_THINK.*-eq 0'
     assert_ok $?
     echo "$body" | grep -q '/nothink'
+    assert_ok $?
+  }
+
+  it "llm_stream appends /think when LODGE_THINK=1" && {
+    body=$(declare -f llm_stream)
+    echo "$body" | grep -q 'prompt=.*\/think'
     assert_ok $?
   }
 

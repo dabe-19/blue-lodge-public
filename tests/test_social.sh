@@ -110,6 +110,30 @@ describe "Discord functions"
     assert_ok $?
   }
 
+  it "discord_channel_resolve strips quotes from name" && {
+    _setup_social
+    body=$(declare -f discord_channel_resolve)
+    # Verify it strips # and quotes via sed
+    echo "$body" | grep -q 'sed'
+    assert_ok $?
+    # Verify double-# strip (once before quotes, once after)
+    echo "$body" | grep -c 'name#' | grep -q '2'
+    assert_ok $?
+    _teardown_social
+  }
+
+  it "discord_send strips quotes from channel and message" && {
+    _setup_social
+    body=$(declare -f discord_send)
+    # Verify channel_id quote stripping
+    echo "$body" | grep -q 'channel_id=.*sed'
+    assert_ok $?
+    # Verify message quote stripping
+    echo "$body" | grep -q 'message=.*sed'
+    assert_ok $?
+    _teardown_social
+  }
+
   it "discord_read is defined" && {
     declare -f discord_read &>/dev/null
     assert_ok $?

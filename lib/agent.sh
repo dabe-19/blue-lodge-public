@@ -522,8 +522,9 @@ _build_router_prompt() {
     else
         cat << 'ROUTER_CATALOG'
 --- COMMANDS (use ONLY these) ---
+NOTE: Do NOT quote arguments. Slash commands parse by spaces, not shell quoting.
 /ask <question>          — Quick answer (no planning)
-/init <name> <lang>      — Scaffold project
+/init <name> <lang>      — Scaffold project (name=no_spaces)
 /recall <query>          — Search knowledge base
 /save <file> <text>      — Save content to file
 /write <file> <text>     — Write/overwrite a file
@@ -541,9 +542,9 @@ _build_router_prompt() {
 /web fetch <url>         — Fetch a URL
 /github search <q>       — Find GitHub repos
 /journal write <text>    — Write to journal
-/social post discord <channel> "text" — Post to Discord channel
-/social post telegram "text"  — Post to Telegram
-/social post x "text"        — Post to X/Twitter
+/social post discord <channel> <text> — Post to Discord channel (no quotes needed)
+/social post telegram <text>  — Post to Telegram
+/social post x <text>        — Post to X/Twitter
 /social post <text>      — Post to all configured platforms
 /social <platform> <act> — Platform-specific action
 /pgp sign|signpost|export — PGP operations
@@ -582,6 +583,8 @@ _build_specialist_prompt() {
         echo "You are George's execution engine. Output exactly ONE slash command."
         echo "Output the FULL command on its own line starting with / — do NOT wrap in a code block."
         echo "Do NOT use /sandbox to run slash commands. Slash commands execute directly."
+        echo "Do NOT quote arguments with \" or '. Slash commands parse by whitespace, not shell quoting."
+        echo "Output only ONE command per line — never chain multiple /commands together."
         echo ""
 
         # Extract docs for the specific command.
@@ -719,6 +722,36 @@ agent_inner_loop() {
             selected_tool="ask"
         fi
 
+        # ── SANDBOX INTERLOCK: Programmatic gate ──────────────
+        # The 4B model obsessively routes through /sandbox even for
+        # non-code tasks (social posts, web searches, etc.).
+        # Programmatically reject /sandbox unless the micro objective
+        # explicitly involves code, building, or project creation.
+        if [ "$selected_tool" = "sandbox" ]; then
+            local _obj_lower
+            _obj_lower=$(echo "$micro_objective" | tr '[:upper:]' '[:lower:]')
+            if ! [[ "$_obj_lower" =~ (build|compile|code|project|scaffold|init|clone|test|debug|deploy|create.*app|create.*project|write.*program|develop) ]]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Sandbox rejected for non-code objective — extracting real command"
+                # Try to extract the real slash command from the micro objective
+                local _real_cmd
+                _real_cmd=$(echo "$micro_objective" | grep -oP '/[a-z]+' | head -1 | sed 's|^/||')
+                if [ -n "$_real_cmd" ] && { declare -p CMD_REGISTRY &>/dev/null && [[ -n "${CMD_REGISTRY[$_real_cmd]+x}" ]]; }; then
+                    selected_tool="$_real_cmd"
+                else
+                    # Fallback: scan objective for common command keywords
+                    case "$_obj_lower" in
+                        *social*|*discord*|*telegram*|*post*|*tweet*) selected_tool="social" ;;
+                        *search*|*web*|*fetch*|*url*)                selected_tool="web" ;;
+                        *write*|*save*|*file*)                      selected_tool="write" ;;
+                        *email*|*send*mail*)                        selected_tool="email" ;;
+                        *journal*|*log*|*note*)                     selected_tool="journal" ;;
+                        *recall*|*remember*|*knowledge*)            selected_tool="recall" ;;
+                        *)                                          selected_tool="ask" ;;
+                    esac
+                fi
+            fi
+        fi
+
         # Re-prefix for specialist lookup
         [ "$selected_tool" != "bash" ] && selected_tool="/$selected_tool"
 
@@ -758,6 +791,33 @@ agent_inner_loop() {
         else
             # awk: /```bash/ sets flag, /```/ clears flag, flag prints lines between.
             cmd=$(echo "$action_plan" | awk '/```bash/{flag=1; next} /```/{flag=0} flag')
+        fi
+
+        # ── MULTI-COMMAND SPLITTER ────────────────────────────
+        # The LLM sometimes concatenates multiple slash commands on one line:
+        #   /sandbox new x  /write file.md "text"  /social post discord "msg"
+        # Extract only the FIRST slash command and discard the rest.
+        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" =~ ^(/[a-z]+[[:space:]]) ]]; then
+            # Check for a second embedded slash command (space-/cmd pattern)
+            local _first_cmd
+            _first_cmd=$(echo "$cmd" | sed 's|  */|\n/|g' | head -1)
+            if [ "$_first_cmd" != "$cmd" ]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Split multi-command: extracted '${_first_cmd:0:60}...'"
+                cmd="$_first_cmd"
+            fi
+        fi
+
+        # ── QUOTE NORMALIZATION ────────────────────────────────
+        # The LLM wraps slash command arguments in shell-style quotes:
+        #   /init python "pid loop tuning assistant"
+        #   /social post discord "#lunkers" "hello world"
+        # Slash commands don't use shell parsing — quotes are literal.
+        # Strip matching outer quotes from the args portion.
+        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" == *'"'* ]]; then
+            cmd=$(echo "$cmd" | sed 's/"//g')
+        fi
+        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" == *"'"* ]]; then
+            cmd=$(echo "$cmd" | sed "s/'//g")
         fi
 
         # ── PROGRAMMATIC INTERLOCK: Identicality Lockout ──────

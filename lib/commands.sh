@@ -29,6 +29,16 @@ commands_dispatch() {
     cmd=$(echo "$input" | awk '{print $1}' | sed 's|^/||')
     local args
     args=$(echo "$input" | sed 's|^/[^ ]* *||')
+
+    # Strip surrounding quotes from args — LLM wraps arguments in shell-style
+    # quotes like /init python "pid loop tuning assistant" but slash commands
+    # don't use shell parsing so the quotes come through literally.
+    # Only strip outer wrapping quotes when entire args is quoted.
+    if [[ "$args" =~ ^\"(.*)\"$ ]]; then
+        args="${BASH_REMATCH[1]}"
+    elif [[ "$args" =~ ^\'(.*)\'$ ]]; then
+        args="${BASH_REMATCH[1]}"
+    fi
     
     # Check built-in commands first
     case "$cmd" in
@@ -178,8 +188,9 @@ commands_services_status() {
 commands_catalog_plan() {
     cat << 'PLANCAT'
 --- COMMANDS (use ONLY these — /recall <cmd> for syntax) ---
+NOTE: Do NOT quote arguments. Slash commands parse by spaces, not shell quoting.
 /ask <question>      — Quick answer (no plan needed)
-/init <name> <lang>  — Scaffold project (rust, python, shell, etc.)
+/init <name> <lang>  — Scaffold project (name=no_spaces, lang: rust, python, shell, etc.)
 /recall <query>      — Search knowledge base
 /save <file> <text>  — Save content to file
 /write <file> <text> — Write/overwrite a file
@@ -196,9 +207,9 @@ commands_catalog_plan() {
 /web search <query>  — Web search
 /github search <q>   — Find GitHub repos
 /journal write <text> — Write to journal
-/social post discord <channel> \"text\" — Post to Discord channel
-/social post telegram \"text\"  — Post to Telegram
-/social post x \"text\"        — Post to X/Twitter
+/social post discord <channel> <text> — Post to Discord channel (no quotes needed)
+/social post telegram <text>  — Post to Telegram
+/social post x <text>        — Post to X/Twitter
 /social post <text>            — Post to all configured platforms
 /pgp sign <msg>      — PGP-sign a message
 /email send <to> <subj> <body> — Send email (ONLY for actual email, not social posts)

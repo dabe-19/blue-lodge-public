@@ -219,9 +219,11 @@ llm_generate() {
 
     _llm_debug_start_timer
 
-    # Qwen3 thinking mode control
+    # Qwen3 thinking mode control: /nothink disables, /think enables explicitly
     if [ "${LODGE_THINK:-0}" -eq 0 ]; then
         prompt="${prompt} /nothink"
+    else
+        prompt="${prompt} /think"
     fi
 
     if [ -n "$system" ]; then
@@ -323,11 +325,13 @@ llm_stream() {
 
     _llm_debug_start_timer
 
-    # Qwen3 thinking mode control: append /nothink or /think to user prompt
+    # Qwen3 thinking mode control: /nothink disables, /think enables explicitly
     # Thinking on a 4B CPU model burns tokens on internal reasoning (slow + noisy).
     # Default off (LODGE_THINK=0). Users can export LODGE_THINK=1 for complex tasks.
     if [ "${LODGE_THINK:-0}" -eq 0 ]; then
         prompt="${prompt} /nothink"
+    else
+        prompt="${prompt} /think"
     fi
 
     if [ -n "$system" ]; then
