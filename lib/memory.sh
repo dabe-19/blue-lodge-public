@@ -270,7 +270,9 @@ memory_build_system_prompt() {
         # canonical excerpt that stays in sync with soul.md.
         local condensed
         condensed=$(_memory_soul_condensed)
-        prompt="${prompt}${condensed}"
+        prompt="${prompt}${condensed}
+
+OUTPUT FORMAT: You are answering a direct question. Respond in plain conversational text (1-5 sentences). Do NOT wrap your answer in code blocks, bash blocks, or markdown formatting. Do NOT output commands unless the user specifically asked for a command. Just answer naturally."
 
         # Add minimal project context if CLAUDE.md exists
         local project_task

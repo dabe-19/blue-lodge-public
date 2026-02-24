@@ -145,6 +145,32 @@ commands_help_topic() {
     fi
 }
 
+# ── Service availability check (~50 tokens) ───────────────────
+# Quick status of which external services are actually configured.
+# Injected into strategist/router prompts so the model avoids
+# choosing unconfigured services (e.g. /email when email isn't set up).
+commands_services_status() {
+    local _configured="" _unconfigured=""
+    if declare -f api_get_key &>/dev/null; then
+        api_get_key "DISCORD_BOT_TOKEN" &>/dev/null && _configured="${_configured}discord," || _unconfigured="${_unconfigured}discord,"
+        api_get_key "DISCORD_WEBHOOK_URL" &>/dev/null && _configured="${_configured}discord-webhook,"
+        api_get_key "TELEGRAM_BOT_TOKEN" &>/dev/null && _configured="${_configured}telegram," || _unconfigured="${_unconfigured}telegram,"
+        api_get_key "X_BEARER_TOKEN" &>/dev/null && _configured="${_configured}x/twitter," || _unconfigured="${_unconfigured}x/twitter,"
+        api_get_key "MASTODON_ACCESS_TOKEN" &>/dev/null && _configured="${_configured}mastodon," || _unconfigured="${_unconfigured}mastodon,"
+        api_get_key "BLUESKY_APP_PASSWORD" &>/dev/null && _configured="${_configured}bluesky," || _unconfigured="${_unconfigured}bluesky,"
+        api_get_key "SERPER_API_KEY" &>/dev/null && _configured="${_configured}web-search," || _unconfigured="${_unconfigured}serper,"
+        # Email check: look for provider config
+        local _email_provider
+        _email_provider=$(api_get_key "EMAIL_PROVIDER" 2>/dev/null)
+        [ -n "$_email_provider" ] && _configured="${_configured}email," || _unconfigured="${_unconfigured}email,"
+    fi
+    # Strip trailing commas
+    _configured="${_configured%,}"
+    _unconfigured="${_unconfigured%,}"
+    echo "CONFIGURED: ${_configured:-none}"
+    echo "NOT CONFIGURED: ${_unconfigured:-unknown}"
+}
+
 # ── Lean plan catalog (~400 tokens) ────────────────────────────
 # Minimal command reference for planning. One line per command,
 # no examples, no sub-variants. George uses /recall to look up
@@ -158,7 +184,7 @@ commands_catalog_plan() {
 /save <file> <text>  — Save content to file
 /write <file> <text> — Write/overwrite a file
 /download <url> [dest] — Download a URL
-/sandbox new <name> [type] — Create sandbox (rust/python/shell)
+/sandbox new <name> [type] — Create sandbox (ONLY for building code projects)
 /sandbox build|test|run|cd|rm <name> — Sandbox operations
 /sandbox clone <url> [name] — Clone repo into sandbox
 /clone <url>         — Clone and setup a repo
@@ -170,14 +196,23 @@ commands_catalog_plan() {
 /web search <query>  — Web search
 /github search <q>   — Find GitHub repos
 /journal write <text> — Write to journal
-/social post <text>  — Post to social platforms
+/social post discord <channel> \"text\" — Post to Discord channel
+/social post telegram \"text\"  — Post to Telegram
+/social post x \"text\"        — Post to X/Twitter
+/social post <text>            — Post to all configured platforms
 /pgp sign <msg>      — PGP-sign a message
-/email send <to> <subj> <body> — Send email
+/email send <to> <subj> <body> — Send email (ONLY for actual email, not social posts)
 /phone               — Phone dashboard
 /secret set|get <k>  — Encrypted secrets
 /slash create <name> <desc> — Create custom command
 /vitals              — System dashboard
 /soul [on|off]       — Toggle full personality injection
+
+RULES:
+- Slash commands run directly — do NOT use /sandbox to run slash commands
+- To post to Discord/Telegram/X, use /social (not /email)
+- /email is ONLY for actual email addresses, NEVER for social platforms
+- Check SERVICES section below for what is actually configured
 
 MEMORY LOOP — How to read, remember, and respond:
   1. /social discord read <channel>  ← read messages
@@ -186,6 +221,12 @@ MEMORY LOOP — How to read, remember, and respond:
   Use this loop for ANY external input: socials, web, conversations.
   Never web-search for info that came from a social channel — read it.
 PLANCAT
+
+    # Inject live service configuration status
+    if declare -f commands_services_status &>/dev/null; then
+        echo ""
+        commands_services_status
+    fi
 
     # Append custom slash commands if any exist
     if declare -f slash_catalog &>/dev/null; then

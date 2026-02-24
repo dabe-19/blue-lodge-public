@@ -175,6 +175,55 @@ describe "commands_catalog"
     assert_contains "$_plan_out" "MEMORY LOOP"
   }
 
+  it "plan catalog has anti-sandbox rule" && {
+    _plan_out=$(commands_catalog_plan)
+    assert_contains "$_plan_out" "do NOT use /sandbox to run slash commands"
+  }
+
+  it "plan catalog has discord-specific social syntax" && {
+    _plan_out=$(commands_catalog_plan)
+    assert_contains "$_plan_out" "/social post discord"
+  }
+
+  it "plan catalog marks /email as not for social" && {
+    _plan_out=$(commands_catalog_plan)
+    assert_contains "$_plan_out" "ONLY for actual email"
+  }
+
+# ── commands_services_status ───────────────────────────────────
+describe "commands_services_status"
+
+  it "commands_services_status is defined" && {
+    declare -f commands_services_status &>/dev/null
+    assert_ok $?
+  }
+
+  it "outputs CONFIGURED and NOT CONFIGURED lines" && {
+    # Stub api_get_key to always fail (nothing configured)
+    api_get_key() { return 1; }
+    _svc_out=$(commands_services_status)
+    assert_contains "$_svc_out" "CONFIGURED:"
+    assert_contains "$_svc_out" "NOT CONFIGURED:"
+    unset -f api_get_key
+  }
+
+  it "reports configured service when api_get_key succeeds" && {
+    api_get_key() {
+      [[ "$1" == "DISCORD_BOT_TOKEN" ]] && echo "fake" && return 0
+      return 1
+    }
+    _svc_out=$(commands_services_status)
+    assert_contains "$_svc_out" "discord"
+    unset -f api_get_key
+  }
+
+  it "plan catalog injects service status" && {
+    api_get_key() { return 1; }
+    _plan_out=$(commands_catalog_plan)
+    assert_contains "$_plan_out" "CONFIGURED:"
+    unset -f api_get_key
+  }
+
   it "catalog contains /soul command" && {
     _cat_out=$(commands_catalog)
     assert_contains "$_cat_out" "/soul"

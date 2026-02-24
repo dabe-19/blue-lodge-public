@@ -266,6 +266,20 @@ describe "memory_build_system_prompt lean mode"
     _teardown_mem
   }
 
+  it "ask mode includes plain text output instruction" && {
+    _setup_mem
+    prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "ask")
+    assert_contains "$prompt" "plain conversational text"
+    _teardown_mem
+  }
+
+  it "ask mode tells model not to use code blocks" && {
+    _setup_mem
+    prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "ask")
+    assert_contains "$prompt" "Do NOT wrap your answer in code blocks"
+    _teardown_mem
+  }
+
   it "lean prompt is much shorter than full prompt" && {
     _setup_mem
     _lean=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "ask")

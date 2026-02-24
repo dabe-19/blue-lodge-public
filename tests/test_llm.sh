@@ -181,14 +181,33 @@ describe "Debug instrumentation"
     assert_ok $?
   }
 
-  it "llm_debug_reset zeroes counters" && {
-    _LLM_DEBUG_CALL_COUNT=5
-    _LLM_DEBUG_TOTAL_INPUT=100
-    _LLM_DEBUG_TOTAL_OUTPUT=50
+  it "llm_debug_reset creates debug directory" && {
     llm_debug_reset
-    assert_eq "$_LLM_DEBUG_CALL_COUNT" "0"
-    assert_eq "$_LLM_DEBUG_TOTAL_INPUT" "0"
-    assert_eq "$_LLM_DEBUG_TOTAL_OUTPUT" "0"
+    [ -d "$_LLM_DEBUG_DIR" ]
+    assert_ok $?
+    rm -rf "$_LLM_DEBUG_DIR"
+  }
+
+  it "llm_debug_reset clears previous call log" && {
+    mkdir -p "$_LLM_DEBUG_DIR"
+    echo "100 50" > "$_LLM_DEBUG_DIR/calls.log"
+    llm_debug_reset
+    [ ! -s "$_LLM_DEBUG_DIR/calls.log" ] || [ ! -f "$_LLM_DEBUG_DIR/calls.log" ]
+    assert_ok $?
+    rm -rf "$_LLM_DEBUG_DIR"
+  }
+
+  it "_llm_debug_end_timer writes to calls.log file" && {
+    LODGE_DEBUG=1
+    llm_debug_reset
+    _LLM_DEBUG_CALL_START=$(date +%s%N 2>/dev/null || date +%s)
+    _llm_debug_end_timer "test" "100" "50" 2>/dev/null
+    [ -f "$_LLM_DEBUG_DIR/calls.log" ]
+    assert_ok $?
+    head -1 "$_LLM_DEBUG_DIR/calls.log" | grep -q "100 50"
+    assert_ok $?
+    LODGE_DEBUG=0
+    rm -rf "$_LLM_DEBUG_DIR"
   }
 
   it "_llm_debug_print is silent when LODGE_DEBUG=0" && {
@@ -201,6 +220,59 @@ describe "Debug instrumentation"
   it "_LLM_DEBUG_TASK_START is set by llm_debug_reset" && {
     llm_debug_reset
     assert_match "$_LLM_DEBUG_TASK_START" "^[0-9]+$"
+  }
+
+# ── Thinking mode ─────────────────────────────────────────────
+describe "Thinking mode configuration"
+
+  it "LODGE_THINK defaults to 0" && {
+    assert_eq "$LODGE_THINK" "0"
+  }
+
+  it "LODGE_THINK_STREAM defaults to 1" && {
+    assert_eq "$LODGE_THINK_STREAM" "1"
+  }
+
+  it "llm_generate appends /nothink when LODGE_THINK=0" && {
+    body=$(declare -f llm_generate)
+    echo "$body" | grep -q 'LODGE_THINK.*-eq 0'
+    assert_ok $?
+    echo "$body" | grep -q '/nothink'
+    assert_ok $?
+  }
+
+  it "llm_stream appends /nothink when LODGE_THINK=0" && {
+    body=$(declare -f llm_stream)
+    echo "$body" | grep -q 'LODGE_THINK.*-eq 0'
+    assert_ok $?
+    echo "$body" | grep -q '/nothink'
+    assert_ok $?
+  }
+
+  it "llm_generate displays think blocks when LODGE_THINK=1" && {
+    body=$(declare -f llm_generate)
+    echo "$body" | grep -q 'LODGE_THINK.*LODGE_THINK_STREAM'
+    assert_ok $?
+    echo "$body" | grep -q '_think_content'
+    assert_ok $?
+  }
+
+  it "llm_stream tracks _in_think_block for think tokens" && {
+    body=$(declare -f llm_stream)
+    echo "$body" | grep -q '_in_think_block'
+    assert_ok $?
+    echo "$body" | grep -q '<think>'
+    assert_ok $?
+    echo "$body" | grep -q '</think>'
+    assert_ok $?
+  }
+
+  it "llm_stream shows bright thinking header when LODGE_THINK_STREAM=2" && {
+    body=$(declare -f llm_stream)
+    echo "$body" | grep -q 'LODGE_THINK_STREAM.*-eq 2'
+    assert_ok $?
+    echo "$body" | grep -q 'thinking'
+    assert_ok $?
   }
 
 test_end

@@ -19,9 +19,8 @@ LODGE_THINK_STREAM="${LODGE_THINK_STREAM:-1}"  # When LODGE_THINK=1: 0=hide thin
 LODGE_DEBUG="${LODGE_DEBUG:-0}"                 # 0=normal, 1=show timers + token counts per LLM call
 
 # ── Debug tracking state ───────────────────────────────────────
-_LLM_DEBUG_CALL_COUNT=0
-_LLM_DEBUG_TOTAL_INPUT=0
-_LLM_DEBUG_TOTAL_OUTPUT=0
+# File-based counters survive $() subshells (shell vars don't).
+_LLM_DEBUG_DIR="${TMPDIR:-/tmp}/.lodge-debug-$$"
 _LLM_DEBUG_TASK_START=""
 
 # ── Active request tracking (for cancellation) ─────────────────
@@ -148,7 +147,6 @@ _llm_debug_print() {
 _llm_debug_start_timer() {
     [ "${LODGE_DEBUG:-0}" -eq 0 ] && return
     _LLM_DEBUG_CALL_START=$(date +%s%N 2>/dev/null || date +%s)
-    _LLM_DEBUG_CALL_COUNT=$((_LLM_DEBUG_CALL_COUNT + 1))
 }
 
 _llm_debug_end_timer() {
@@ -167,34 +165,47 @@ _llm_debug_end_timer() {
     fi
     local elapsed_s
     elapsed_s=$(awk "BEGIN{printf \"%.1f\", $elapsed_ms/1000}")
-    # Accumulate totals
-    [[ "$input_tok" =~ ^[0-9]+$ ]] && _LLM_DEBUG_TOTAL_INPUT=$((_LLM_DEBUG_TOTAL_INPUT + input_tok))
-    [[ "$output_tok" =~ ^[0-9]+$ ]] && _LLM_DEBUG_TOTAL_OUTPUT=$((_LLM_DEBUG_TOTAL_OUTPUT + output_tok))
+    # Write per-call record to file — survives $() subshells
+    mkdir -p "$_LLM_DEBUG_DIR" 2>/dev/null
+    local _in_n=0 _out_n=0
+    [[ "$input_tok" =~ ^[0-9]+$ ]] && _in_n="$input_tok"
+    [[ "$output_tok" =~ ^[0-9]+$ ]] && _out_n="$output_tok"
+    echo "$_in_n $_out_n" >> "$_LLM_DEBUG_DIR/calls.log" 2>/dev/null
     _llm_debug_print "${label}: ${elapsed_s}s | in:${input_tok} out:${output_tok} tok"
 }
 
 # Reset debug counters at task start
 llm_debug_reset() {
-    _LLM_DEBUG_CALL_COUNT=0
-    _LLM_DEBUG_TOTAL_INPUT=0
-    _LLM_DEBUG_TOTAL_OUTPUT=0
+    rm -rf "$_LLM_DEBUG_DIR" 2>/dev/null
+    mkdir -p "$_LLM_DEBUG_DIR" 2>/dev/null
     _LLM_DEBUG_TASK_START=$(date +%s)
 }
 
-# Print task-level debug summary
+# Print task-level debug summary (reads file-based counters)
 llm_debug_summary() {
     [ "${LODGE_DEBUG:-0}" -eq 0 ] && return
-    local now
+    local now _calls _total_in _total_out
     now=$(date +%s)
     local total_s=$(( now - ${_LLM_DEBUG_TASK_START:-$now} ))
+    # Sum from the file-based log
+    _calls=0; _total_in=0; _total_out=0
+    if [ -f "$_LLM_DEBUG_DIR/calls.log" ]; then
+        while read -r _in _out; do
+            _calls=$((_calls + 1))
+            _total_in=$((_total_in + _in))
+            _total_out=$((_total_out + _out))
+        done < "$_LLM_DEBUG_DIR/calls.log"
+    fi
     local _tty="/dev/tty"
     [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
     printf "\n %b── Debug Summary ──────────────────────────────%b\n" "$C_DIM" "$C_RESET" > "$_tty" 2>/dev/null
-    printf " %b  LLM calls:     %d%b\n" "$C_DIM" "$_LLM_DEBUG_CALL_COUNT" "$C_RESET" > "$_tty" 2>/dev/null
-    printf " %b  Total input:   %d tokens%b\n" "$C_DIM" "$_LLM_DEBUG_TOTAL_INPUT" "$C_RESET" > "$_tty" 2>/dev/null
-    printf " %b  Total output:  %d tokens%b\n" "$C_DIM" "$_LLM_DEBUG_TOTAL_OUTPUT" "$C_RESET" > "$_tty" 2>/dev/null
+    printf " %b  LLM calls:     %d%b\n" "$C_DIM" "$_calls" "$C_RESET" > "$_tty" 2>/dev/null
+    printf " %b  Total input:   %d tokens%b\n" "$C_DIM" "$_total_in" "$C_RESET" > "$_tty" 2>/dev/null
+    printf " %b  Total output:  %d tokens%b\n" "$C_DIM" "$_total_out" "$C_RESET" > "$_tty" 2>/dev/null
     printf " %b  Wall time:     %ds%b\n" "$C_DIM" "$total_s" "$C_RESET" > "$_tty" 2>/dev/null
     printf " %b──────────────────────────────────────────────%b\n" "$C_DIM" "$C_RESET" > "$_tty" 2>/dev/null
+    # Cleanup
+    rm -rf "$_LLM_DEBUG_DIR" 2>/dev/null
 }
 
 # ── Generate (blocking, no stream) ────────────────────────────
@@ -279,6 +290,22 @@ llm_generate() {
         _dbg_in=$(echo "$response" | jq -r '.prompt_eval_count // 0' 2>/dev/null)
         _dbg_out=$(echo "$response" | jq -r '.eval_count // 0' 2>/dev/null)
         _llm_debug_end_timer "generate" "$_dbg_in" "$_dbg_out"
+    fi
+
+    # Display thinking tokens to tty when thinking mode is enabled
+    # (llm_generate is non-streaming, so the block is shown all at once)
+    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+        local _think_content
+        _think_content=$(echo "$response" | jq -r '.response // ""' | sed -n 's/.*<think>\(.*\)<\/think>.*/\1/p')
+        if [ -n "$_think_content" ]; then
+            local _gentty="/dev/tty"
+            [ -w /dev/tty ] 2>/dev/null || _gentty="/dev/stderr"
+            if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
+                printf "\n\033[36m┌─ thinking ─\033[0m\n\033[36m%s\033[0m\n\033[36m└────────────\033[0m\n" "$_think_content" > "$_gentty" 2>/dev/null
+            else
+                printf "\033[2m%s\033[0m\n" "$_think_content" > "$_gentty" 2>/dev/null
+            fi
+        fi
     fi
 
     # Strip any <think>...</think> blocks from Qwen3 thinking mode

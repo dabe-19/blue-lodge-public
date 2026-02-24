@@ -353,6 +353,51 @@ describe "Dynamic dual-loop architecture"
     assert_ok $?
   }
 
+  it "macro strategist uses llm_stream for thinking visibility" && {
+    local body
+    body=$(declare -f agent_run)
+    # The strategist milestone call should use llm_stream (not llm_generate)
+    # so that thinking tokens stream live when /think is enabled.
+    echo "$body" | grep -q 'llm_stream.*macro_prompt.*macro_sys'
+    assert_ok $?
+  }
+
+  it "macro strategist has anti-email-for-social rule" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'NOT.*email'
+    assert_ok $?
+  }
+
+  it "macro strategist has anti-sandbox rule" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'NOT use /sandbox to run slash'
+    assert_ok $?
+  }
+
+  it "macro strategist injects service status" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'commands_services_status'
+    assert_ok $?
+  }
+
+  it "router prompt has social routing rules" && {
+    body=$(declare -f _build_router_prompt)
+    echo "$body" | grep -q 'NOT.*email'
+    assert_ok $?
+  }
+
+  it "router prompt has anti-sandbox rule" && {
+    body=$(declare -f _build_router_prompt)
+    echo "$body" | grep -q 'NOT route to /sandbox'
+    assert_ok $?
+  }
+
+  it "specialist prompt has anti-sandbox instruction" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'NOT use /sandbox to run slash'
+    assert_ok $?
+  }
+
   it "agent_run resets debug counters" && {
     local body
     body=$(declare -f agent_run)

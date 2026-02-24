@@ -528,7 +528,7 @@ _build_router_prompt() {
 /save <file> <text>      — Save content to file
 /write <file> <text>     — Write/overwrite a file
 /download <url> [dest]   — Download a URL
-/sandbox new <name> [type] — Create sandbox (rust/python/shell)
+/sandbox new <name> [type] — Create sandbox (ONLY for building code projects)
 /sandbox build|test|run|cd|rm <name> — Sandbox operations
 /sandbox clone <url> [name] — Clone repo into sandbox
 /clone <url>             — Clone and setup a repo
@@ -541,10 +541,13 @@ _build_router_prompt() {
 /web fetch <url>         — Fetch a URL
 /github search <q>       — Find GitHub repos
 /journal write <text>    — Write to journal
-/social post <text>      — Post to social platforms
+/social post discord <channel> "text" — Post to Discord channel
+/social post telegram "text"  — Post to Telegram
+/social post x "text"        — Post to X/Twitter
+/social post <text>      — Post to all configured platforms
 /social <platform> <act> — Platform-specific action
 /pgp sign|signpost|export — PGP operations
-/email send|inbox|status — Email operations
+/email send|inbox|status — Email operations (actual email only, NOT social)
 /phone                   — Phone dashboard
 /secret set|get <k>      — Encrypted secrets
 /slash create <name> <desc> — Create custom command
@@ -557,7 +560,11 @@ ROUTER_CATALOG
     echo ""
     echo "Output ONLY the tool name. For slash commands output the base command"
     echo "(e.g., '/web', '/sandbox', '/write', '/social', '/git', 'bash')."
-    echo "If unsure which tool, output 'bash'."
+    echo "ROUTING RULES:"
+    echo "- To post to Discord/Telegram/X, route to /social (NOT /email)"
+    echo "- Do NOT route to /sandbox to run other slash commands"
+    echo "- /email is ONLY for actual email addresses"
+    echo "If unsure which tool, output '/ask'."
 }
 
 _build_specialist_prompt() {
@@ -574,6 +581,7 @@ _build_specialist_prompt() {
     if [ "$cmd_name" != "bash" ]; then
         echo "You are George's execution engine. Output exactly ONE slash command."
         echo "Output the FULL command on its own line starting with / — do NOT wrap in a code block."
+        echo "Do NOT use /sandbox to run slash commands. Slash commands execute directly."
         echo ""
 
         # Extract docs for the specific command.
@@ -1076,18 +1084,27 @@ agent_run() {
             _tool_summary=$(commands_catalog_plan 2>/dev/null | grep '^/' | awk -F' — ' '{print $1}' | tr '\n' ', ' | sed 's/, $//')
         fi
 
+        # Service status: let strategist know what's configured vs not
+        local _svc_status=""
+        if declare -f commands_services_status &>/dev/null; then
+            _svc_status=$(commands_services_status 2>/dev/null)
+        fi
+
         local macro_sys="You are a strategic planning engine. Given a task memory with completed milestones, determine the single next milestone needed.
 
 Rules:
 - If the objective is a QUESTION, conversation, or request for information (not coding/building/deploying), output: Use /ask to answer the user's question about <topic>
 - Every milestone MUST be achievable using one of these tools: ${_tool_summary:-/ask, /sandbox, /write, /build, /test, /web, /recall, /save, bash}
+- To post to Discord/Telegram/X, use /social (NOT /email). /email is for actual email addresses only.
+- Do NOT use /sandbox to run slash commands. Slash commands run directly.
+- ONLY use services that are CONFIGURED: ${_svc_status:-unknown}
 - Frame milestones as tool-executable actions, not abstract goals
 - Output either DONE or a concise milestone description (one sentence, imperative mood)
 - Output NOTHING else"
 
         ui_think "Strategist: determining next milestone..."
         local milestone
-        milestone=$(llm_generate "$macro_prompt" "$macro_sys" "${LLM_AGENT_TOKENS:-512}")
+        milestone=$(llm_stream "$macro_prompt" "$macro_sys" "${LLM_AGENT_TOKENS:-512}")
 
         # Strip whitespace for clean comparison
         milestone=$(echo "$milestone" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
