@@ -934,14 +934,65 @@ _cmd_social() {
                         _chan_msg=$(echo "$dargs" | sed 's/^[^ ]* *//')
                         discord_send "$_chan_id" "$_chan_msg"
                     else
-                        # No channel ID — use webhook
-                        discord_webhook "$dargs"
+                        # Could be a #channel-name — try resolve, else webhook
+                        local _resolved
+                        _resolved=$(discord_channel_resolve "$_first_arg" 2>/dev/null)
+                        if [ -n "$_resolved" ]; then
+                            local _chan_msg
+                            _chan_msg=$(echo "$dargs" | sed 's/^[^ ]* *//')
+                            discord_send "$_resolved" "$_chan_msg"
+                        else
+                            discord_webhook "$dargs"
+                        fi
                     fi ;;
                 read)
                     local cid
                     cid=$(echo "$dargs" | awk '{print $1}')
                     discord_read "$cid" ;;
-                *)        ui_info "Usage: /social discord <send <text>|send <channel_id> <text>|read <channel_id>>" ;;
+                validate|test)
+                    discord_validate ;;
+                channels|ch)
+                    local ch_sub
+                    ch_sub=$(echo "$dargs" | awk '{print $1}')
+                    local ch_args
+                    ch_args=$(echo "$dargs" | sed 's/^[^ ]* *//')
+                    case "$ch_sub" in
+                        list|ls|"")
+                            discord_channel_list ;;
+                        add)
+                            local ch_name ch_id
+                            ch_name=$(echo "$ch_args" | awk '{print $1}')
+                            ch_id=$(echo "$ch_args" | awk '{print $2}')
+                            if [ -z "$ch_name" ] || [ -z "$ch_id" ]; then
+                                ui_info "Usage: /social discord channels add <name> <channel_id>"
+                            else
+                                discord_channel_add "$ch_name" "$ch_id"
+                            fi ;;
+                        remove|rm)
+                            local ch_name
+                            ch_name=$(echo "$ch_args" | awk '{print $1}')
+                            if [ -z "$ch_name" ]; then
+                                ui_info "Usage: /social discord channels remove <name>"
+                            else
+                                discord_channel_remove "$ch_name"
+                            fi ;;
+                        sync)
+                            discord_channels_sync ;;
+                        *)
+                            ui_info "Usage: /social discord channels <list|add|remove|sync>" ;;
+                    esac ;;
+                *)
+                    ui_info "Usage: /social discord <send|read|validate|channels>"
+                    ui_dim "  send <text>               — Send via webhook"
+                    ui_dim "  send <channel_id> <text>   — Send via bot API"
+                    ui_dim "  send <#channel> <text>     — Send via bot API (name lookup)"
+                    ui_dim "  read <channel_id>          — Read recent messages"
+                    ui_dim "  validate                   — Test bot token"
+                    ui_dim "  channels list              — Show registered channels"
+                    ui_dim "  channels add <name> <id>   — Register a channel"
+                    ui_dim "  channels remove <name>     — Remove a channel"
+                    ui_dim "  channels sync              — Sync from Discord API"
+                    ;;
             esac ;;
         telegram|tg)
             local sub

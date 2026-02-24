@@ -294,6 +294,9 @@ bluesky_search() {
 # Setup (Webhook): Server Settings → Integrations → Webhooks
 # Setup (Bot): discord.com/developers → Applications → Bot
 # Keys: DISCORD_BOT_TOKEN, DISCORD_WEBHOOK_URL
+# Channel DB: .george/discord_channels.db (name → ID registry)
+
+DISCORD_CHANNELS_DB="${DISCORD_CHANNELS_DB:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/discord_channels.db}"
 
 discord_webhook() {
     local message="$1"
@@ -319,6 +322,20 @@ discord_webhook() {
 discord_send() {
     local channel_id="$1"
     local message="$2"
+
+    # Resolve channel name → ID if not numeric
+    if ! [[ "$channel_id" =~ ^[0-9]+$ ]]; then
+        local resolved
+        resolved=$(discord_channel_resolve "$channel_id")
+        if [ -z "$resolved" ]; then
+            ui_err "Unknown channel: $channel_id"
+            ui_dim "Register it: /social discord channels add <name> <channel_id>"
+            ui_dim "Or sync from Discord: /social discord channels sync"
+            return 1
+        fi
+        channel_id="$resolved"
+    fi
+
     local token
     token=$(api_require_key "DISCORD_BOT_TOKEN" "Discord Bot") || return 1
 
@@ -345,12 +362,230 @@ discord_send() {
 discord_read() {
     local channel_id="$1"
     local count="${2:-10}"
+
+    # Resolve channel name → ID if not numeric
+    if ! [[ "$channel_id" =~ ^[0-9]+$ ]]; then
+        local resolved
+        resolved=$(discord_channel_resolve "$channel_id")
+        if [ -z "$resolved" ]; then
+            ui_err "Unknown channel: $channel_id"
+            return 1
+        fi
+        channel_id="$resolved"
+    fi
+
     local token
     token=$(api_require_key "DISCORD_BOT_TOKEN" "Discord Bot") || return 1
 
     api_get "https://discord.com/api/v10/channels/$channel_id/messages?limit=$count" \
         -H "Authorization: Bot $token" | \
         jq -r '.[]? | "[\(.author.username)] \(.content)"' 2>/dev/null
+}
+
+# ── Discord: Validate bot token ───────────────────────────────
+# Calls GET /users/@me to verify the token is valid, then shows
+# the bot's username, ID, and connected guilds.
+discord_validate() {
+    local token
+    token=$(api_require_key "DISCORD_BOT_TOKEN" "Discord Bot") || return 1
+
+    ui_info "Validating Discord bot token..."
+
+    # Test the token against /users/@me
+    local resp
+    resp=$(api_get "https://discord.com/api/v10/users/@me" \
+        -H "Authorization: Bot $token")
+    local status=$?
+
+    if [ $status -ne 0 ]; then
+        local err_msg
+        err_msg=$(api_json_get "${_API_LAST_BODY:-}" '.message // "unknown error"')
+        local err_code
+        err_code=$(api_json_get "${_API_LAST_BODY:-}" '.code // empty')
+        ui_err "Token validation FAILED (HTTP ${_API_LAST_STATUS:-unknown}): $err_msg${err_code:+ (code: $err_code)}"
+        case "${_API_LAST_STATUS:-}" in
+            401) ui_dim "Token is invalid or revoked. Regenerate at discord.com/developers" ;;
+            403) ui_dim "Token lacks required scopes. Check bot permissions." ;;
+        esac
+        return 1
+    fi
+
+    local bot_name bot_id bot_disc
+    bot_name=$(api_json_get "$resp" '.username')
+    bot_id=$(api_json_get "$resp" '.id')
+    bot_disc=$(api_json_get "$resp" '.discriminator')
+
+    ui_ok "Token valid — Bot: ${bot_name}#${bot_disc} (ID: ${bot_id})"
+
+    # List connected guilds
+    local guilds
+    guilds=$(api_get "https://discord.com/api/v10/users/@me/guilds" \
+        -H "Authorization: Bot $token")
+
+    if [ $? -eq 0 ]; then
+        local guild_count
+        guild_count=$(echo "$guilds" | jq 'length' 2>/dev/null)
+        if [ "${guild_count:-0}" -gt 0 ]; then
+            ui_section "Connected Servers ($guild_count)"
+            echo "$guilds" | jq -r '.[]? | "  \(.name) (ID: \(.id))"' 2>/dev/null
+        else
+            ui_warn "Bot is not in any servers"
+            ui_dim "Invite it: https://discord.com/oauth2/authorize?client_id=${bot_id}&scope=bot&permissions=2048"
+        fi
+    fi
+}
+
+# ── Discord: Channel name→ID registry (SQLite) ───────────────
+# Stores channel_name → channel_id mappings so George can
+# reference channels by human-readable names instead of IDs.
+
+_discord_channels_init() {
+    if ! command -v sqlite3 &>/dev/null; then
+        ui_err "sqlite3 required for channel registry"
+        return 1
+    fi
+    mkdir -p "$(dirname "$DISCORD_CHANNELS_DB")"
+    sqlite3 "$DISCORD_CHANNELS_DB" <<'SQL'
+CREATE TABLE IF NOT EXISTS channels (
+    name TEXT NOT NULL COLLATE NOCASE,
+    channel_id TEXT NOT NULL UNIQUE,
+    guild_name TEXT DEFAULT '',
+    guild_id TEXT DEFAULT '',
+    type TEXT DEFAULT 'text',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_name_guild
+    ON channels(name, guild_id);
+SQL
+}
+
+# Resolve a channel name to its ID (returns first match)
+discord_channel_resolve() {
+    local name="$1"
+    # Strip leading # if present
+    name="${name#\#}"
+    _discord_channels_init 2>/dev/null || return 1
+    sqlite3 "$DISCORD_CHANNELS_DB" \
+        "SELECT channel_id FROM channels WHERE name = '$name' COLLATE NOCASE LIMIT 1;" 2>/dev/null
+}
+
+# Add a channel mapping manually
+discord_channel_add() {
+    local name="$1"
+    local channel_id="$2"
+    local guild_name="${3:-}"
+    local guild_id="${4:-}"
+    name="${name#\#}"
+    _discord_channels_init || return 1
+    sqlite3 "$DISCORD_CHANNELS_DB" \
+        "INSERT OR REPLACE INTO channels(name, channel_id, guild_name, guild_id)
+         VALUES ('$name', '$channel_id', '$guild_name', '$guild_id');"
+    ui_ok "Registered channel #${name} → ${channel_id}${guild_name:+ (${guild_name})}"
+}
+
+# Remove a channel mapping
+discord_channel_remove() {
+    local name="$1"
+    name="${name#\#}"
+    _discord_channels_init || return 1
+    sqlite3 "$DISCORD_CHANNELS_DB" \
+        "DELETE FROM channels WHERE name = '$name' COLLATE NOCASE;"
+    ui_ok "Removed channel #${name}"
+}
+
+# List all registered channels
+discord_channel_list() {
+    _discord_channels_init || return 1
+    local count
+    count=$(sqlite3 "$DISCORD_CHANNELS_DB" "SELECT COUNT(*) FROM channels;" 2>/dev/null)
+    if [ "${count:-0}" -eq 0 ]; then
+        ui_dim "No channels registered"
+        ui_dim "Add one: /social discord channels add <name> <channel_id>"
+        ui_dim "Or sync from Discord: /social discord channels sync"
+        return
+    fi
+    ui_section "Discord Channels ($count)"
+    sqlite3 -separator ' | ' "$DISCORD_CHANNELS_DB" \
+        "SELECT '#' || name, channel_id, COALESCE(NULLIF(guild_name,''), '(no guild)') FROM channels ORDER BY guild_name, name;" 2>/dev/null | \
+        while IFS= read -r line; do
+            printf "  %s\n" "$line"
+        done
+}
+
+# Sync channels from all connected guilds via the Discord API
+discord_channels_sync() {
+    local token
+    token=$(api_require_key "DISCORD_BOT_TOKEN" "Discord Bot") || return 1
+
+    _discord_channels_init || return 1
+
+    ui_info "Fetching guilds..."
+    local guilds
+    guilds=$(api_get "https://discord.com/api/v10/users/@me/guilds" \
+        -H "Authorization: Bot $token")
+    if [ $? -ne 0 ]; then
+        ui_err "Failed to fetch guilds"
+        return 1
+    fi
+
+    local guild_count
+    guild_count=$(echo "$guilds" | jq 'length' 2>/dev/null)
+    if [ "${guild_count:-0}" -eq 0 ]; then
+        ui_warn "Bot is not in any servers"
+        return 1
+    fi
+
+    local total_added=0
+
+    echo "$guilds" | jq -r '.[]? | "\(.id) \(.name)"' 2>/dev/null | while IFS=' ' read -r gid gname; do
+        ui_dim "  Syncing: $gname ($gid)..."
+        local channels
+        channels=$(api_get "https://discord.com/api/v10/guilds/$gid/channels" \
+            -H "Authorization: Bot $token")
+        if [ $? -ne 0 ]; then
+            ui_warn "  Failed to list channels for $gname"
+            continue
+        fi
+
+        # Insert text channels (type 0) and announcement channels (type 5)
+        echo "$channels" | jq -r '.[]? | select(.type == 0 or .type == 5) | "\(.id) \(.name)"' 2>/dev/null | while IFS=' ' read -r cid cname; do
+            sqlite3 "$DISCORD_CHANNELS_DB" \
+                "INSERT OR REPLACE INTO channels(name, channel_id, guild_name, guild_id, type)
+                 VALUES ('$cname', '$cid', '$gname', '$gid', 'text');" 2>/dev/null
+            total_added=$((total_added + 1))
+        done
+    done
+
+    local final_count
+    final_count=$(sqlite3 "$DISCORD_CHANNELS_DB" "SELECT COUNT(*) FROM channels;" 2>/dev/null)
+    ui_ok "Channel registry synced — $final_count channels total"
+}
+
+# Get the default channel ID (first registered, or from DISCORD_DEFAULT_CHANNEL key)
+discord_default_channel() {
+    # Check for explicit default
+    local explicit
+    explicit=$(api_get_key "DISCORD_DEFAULT_CHANNEL" 2>/dev/null)
+    if [ -n "$explicit" ]; then
+        # Could be a name or an ID
+        if [[ "$explicit" =~ ^[0-9]+$ ]]; then
+            echo "$explicit"
+        else
+            discord_channel_resolve "$explicit"
+        fi
+        return
+    fi
+    # Fall back to first "general" channel, then any first channel
+    _discord_channels_init 2>/dev/null || return 1
+    local cid
+    cid=$(sqlite3 "$DISCORD_CHANNELS_DB" \
+        "SELECT channel_id FROM channels WHERE name = 'general' LIMIT 1;" 2>/dev/null)
+    if [ -n "$cid" ]; then
+        echo "$cid"
+        return
+    fi
+    sqlite3 "$DISCORD_CHANNELS_DB" \
+        "SELECT channel_id FROM channels LIMIT 1;" 2>/dev/null
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -446,7 +681,24 @@ social_post() {
             bluesky|bsky)
                 bluesky_post "$text" && results+=("Bluesky: ✓") || results+=("Bluesky: ✗") ;;
             discord)
-                discord_webhook "$text" && results+=("Discord: ✓") || results+=("Discord: ✗") ;;
+                # Try webhook first, fall back to bot API with default channel
+                if api_get_key "DISCORD_WEBHOOK_URL" &>/dev/null; then
+                    discord_webhook "$text" && results+=("Discord: ✓") || results+=("Discord: ✗")
+                elif api_get_key "DISCORD_BOT_TOKEN" &>/dev/null; then
+                    local _def_chan
+                    _def_chan=$(discord_default_channel)
+                    if [ -n "$_def_chan" ]; then
+                        discord_send "$_def_chan" "$text" && results+=("Discord: ✓") || results+=("Discord: ✗")
+                    else
+                        ui_err "Discord bot token configured but no default channel set"
+                        ui_dim "Set one: /api keys set DISCORD_DEFAULT_CHANNEL <channel_id_or_name>"
+                        ui_dim "Or sync: /social discord channels sync"
+                        results+=("Discord: ✗ (no default channel)")
+                    fi
+                else
+                    ui_err "Discord not configured (need DISCORD_WEBHOOK_URL or DISCORD_BOT_TOKEN)"
+                    results+=("Discord: ✗")
+                fi ;;
             telegram|tg)
                 telegram_send "$text" && results+=("Telegram: ✓") || results+=("Telegram: ✗") ;;
             all)
@@ -454,7 +706,18 @@ social_post() {
                 api_get_key "X_BEARER_TOKEN" &>/dev/null && { x_post "$text" && results+=("X: ✓") || results+=("X: ✗"); }
                 api_get_key "MASTODON_ACCESS_TOKEN" &>/dev/null && { mastodon_post "$text" && results+=("Mastodon: ✓") || results+=("Mastodon: ✗"); }
                 api_get_key "BLUESKY_APP_PASSWORD" &>/dev/null && { bluesky_post "$text" && results+=("Bluesky: ✓") || results+=("Bluesky: ✗"); }
-                api_get_key "DISCORD_WEBHOOK_URL" &>/dev/null && { discord_webhook "$text" && results+=("Discord: ✓") || results+=("Discord: ✗"); }
+                # Discord: webhook preferred, bot API fallback
+                if api_get_key "DISCORD_WEBHOOK_URL" &>/dev/null; then
+                    discord_webhook "$text" && results+=("Discord: ✓") || results+=("Discord: ✗")
+                elif api_get_key "DISCORD_BOT_TOKEN" &>/dev/null; then
+                    local _def_chan
+                    _def_chan=$(discord_default_channel)
+                    if [ -n "$_def_chan" ]; then
+                        discord_send "$_def_chan" "$text" && results+=("Discord: ✓") || results+=("Discord: ✗")
+                    else
+                        results+=("Discord: ✗ (no default channel)")
+                    fi
+                fi
                 api_get_key "TELEGRAM_BOT_TOKEN" &>/dev/null && { telegram_send "$text" && results+=("Telegram: ✓") || results+=("Telegram: ✗"); }
                 ;;
             *)

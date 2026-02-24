@@ -222,6 +222,192 @@ describe "Discord verbose error reporting"
     _teardown_social
   }
 
+# ── discord_validate ──────────────────────────────────────────
+describe "discord_validate"
+
+  it "discord_validate is defined" && {
+    declare -f discord_validate &>/dev/null
+    assert_ok $?
+  }
+
+  it "fails without bot token" && {
+    _setup_social
+    discord_validate 2>/dev/null
+    assert_fail $?
+    _teardown_social
+  }
+
+  it "shows error on invalid token" && {
+    _setup_social
+    api_set_key "DISCORD_BOT_TOKEN" "fake_token"
+    test_mock "api_get" 'export _API_LAST_STATUS="401"; export _API_LAST_BODY="{\"message\": \"401: Unauthorized\", \"code\": 0}"; echo "$_API_LAST_BODY"; return 1'
+    out=$(discord_validate 2>&1)
+    assert_contains "$out" "FAILED"
+    test_unmock "api_get"
+    _teardown_social
+  }
+
+  it "shows bot info on valid token" && {
+    _setup_social
+    api_set_key "DISCORD_BOT_TOKEN" "fake_token"
+    local call_count=0
+    test_mock "api_get" '
+      call_count=$((${call_count:-0} + 1))
+      if [[ "$1" == *"/users/@me/guilds"* ]]; then
+        export _API_LAST_STATUS="200"
+        export _API_LAST_BODY="[]"
+        echo "[]"
+        return 0
+      else
+        export _API_LAST_STATUS="200"
+        export _API_LAST_BODY="{\"username\":\"TestBot\",\"id\":\"123\",\"discriminator\":\"0001\"}"
+        echo "{\"username\":\"TestBot\",\"id\":\"123\",\"discriminator\":\"0001\"}"
+        return 0
+      fi'
+    out=$(discord_validate 2>&1)
+    assert_contains "$out" "TestBot"
+    test_unmock "api_get"
+    _teardown_social
+  }
+
+# ── Discord channel registry ─────────────────────────────────
+describe "Discord channel registry"
+
+  it "discord_channel_add is defined" && {
+    declare -f discord_channel_add &>/dev/null
+    assert_ok $?
+  }
+
+  it "discord_channel_list is defined" && {
+    declare -f discord_channel_list &>/dev/null
+    assert_ok $?
+  }
+
+  it "discord_channel_resolve is defined" && {
+    declare -f discord_channel_resolve &>/dev/null
+    assert_ok $?
+  }
+
+  it "discord_channels_sync is defined" && {
+    declare -f discord_channels_sync &>/dev/null
+    assert_ok $?
+  }
+
+  it "discord_default_channel is defined" && {
+    declare -f discord_default_channel &>/dev/null
+    assert_ok $?
+  }
+
+  it "registers and resolves a channel" && {
+    _setup_social
+    export DISCORD_CHANNELS_DB="$TMPDIR_SOCIAL/discord_channels.db"
+    discord_channel_add "general" "123456789012345678" 2>/dev/null
+    local resolved
+    resolved=$(discord_channel_resolve "general")
+    assert_eq "$resolved" "123456789012345678"
+    _teardown_social
+  }
+
+  it "resolves with leading # stripped" && {
+    _setup_social
+    export DISCORD_CHANNELS_DB="$TMPDIR_SOCIAL/discord_channels.db"
+    discord_channel_add "dev" "987654321098765432" 2>/dev/null
+    local resolved
+    resolved=$(discord_channel_resolve "#dev")
+    assert_eq "$resolved" "987654321098765432"
+    _teardown_social
+  }
+
+  it "lists registered channels" && {
+    _setup_social
+    export DISCORD_CHANNELS_DB="$TMPDIR_SOCIAL/discord_channels.db"
+    discord_channel_add "general" "111111111111111111" 2>/dev/null
+    discord_channel_add "dev" "222222222222222222" 2>/dev/null
+    out=$(discord_channel_list 2>&1)
+    assert_contains "$out" "general"
+    assert_contains "$out" "dev"
+    _teardown_social
+  }
+
+  it "removes a channel" && {
+    _setup_social
+    export DISCORD_CHANNELS_DB="$TMPDIR_SOCIAL/discord_channels.db"
+    discord_channel_add "temp" "333333333333333333" 2>/dev/null
+    discord_channel_remove "temp" 2>/dev/null
+    local resolved
+    resolved=$(discord_channel_resolve "temp")
+    assert_eq "$resolved" ""
+    _teardown_social
+  }
+
+  it "default_channel returns general when registered" && {
+    _setup_social
+    export DISCORD_CHANNELS_DB="$TMPDIR_SOCIAL/discord_channels.db"
+    discord_channel_add "general" "444444444444444444" 2>/dev/null
+    discord_channel_add "random" "555555555555555555" 2>/dev/null
+    local def
+    def=$(discord_default_channel)
+    assert_eq "$def" "444444444444444444"
+    _teardown_social
+  }
+
+  it "default_channel respects DISCORD_DEFAULT_CHANNEL key" && {
+    _setup_social
+    export DISCORD_CHANNELS_DB="$TMPDIR_SOCIAL/discord_channels.db"
+    api_set_key "DISCORD_DEFAULT_CHANNEL" "666666666666666666"
+    local def
+    def=$(discord_default_channel)
+    assert_eq "$def" "666666666666666666"
+    _teardown_social
+  }
+
+  it "discord_send resolves channel names" && {
+    _setup_social
+    export DISCORD_CHANNELS_DB="$TMPDIR_SOCIAL/discord_channels.db"
+    discord_channel_add "general" "777777777777777777" 2>/dev/null
+    api_set_key "DISCORD_BOT_TOKEN" "fake_token"
+    test_mock "api_post" 'export _API_LAST_STATUS="200"; export _API_LAST_BODY="{}"; return 0'
+    out=$(discord_send "general" "hello" 2>&1)
+    assert_contains "$out" "Sent to Discord"
+    assert_contains "$out" "777777777777777777"
+    test_unmock "api_post"
+    _teardown_social
+  }
+
+  it "discord_send errors on unknown channel name" && {
+    _setup_social
+    export DISCORD_CHANNELS_DB="$TMPDIR_SOCIAL/discord_channels.db"
+    api_set_key "DISCORD_BOT_TOKEN" "fake_token"
+    out=$(discord_send "nonexistent" "hello" 2>&1)
+    assert_fail $?
+    assert_contains "$out" "Unknown channel"
+    _teardown_social
+  }
+
+# ── social_post Discord bot fallback ─────────────────────────
+describe "social_post Discord bot token fallback"
+
+  it "social_post 'discord' uses bot API with default channel" && {
+    _setup_social
+    export DISCORD_CHANNELS_DB="$TMPDIR_SOCIAL/discord_channels.db"
+    discord_channel_add "general" "888888888888888888" 2>/dev/null
+    api_set_key "DISCORD_BOT_TOKEN" "fake_token"
+    test_mock "api_post" 'export _API_LAST_STATUS="200"; export _API_LAST_BODY="{}"; return 0'
+    out=$(social_post "test message" "discord" 2>&1)
+    assert_contains "$out" "Discord: ✓"
+    test_unmock "api_post"
+    _teardown_social
+  }
+
+  it "social_post 'discord' errors without webhook or default channel" && {
+    _setup_social
+    export DISCORD_CHANNELS_DB="$TMPDIR_SOCIAL/discord_channels.db"
+    api_set_key "DISCORD_BOT_TOKEN" "fake_token"
+    out=$(social_post "test message" "discord" 2>&1)
+    assert_contains "$out" "no default channel"
+    _teardown_social
+  }
+
 # ── social_post dispatcher ────────────────────────────────────
 describe "social_post (unified dispatcher)"
 
