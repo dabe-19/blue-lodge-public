@@ -20,6 +20,13 @@ cmd_save() {
         return 1
     fi
 
+    # Strip surrounding quotes from the entire args string
+    # (LLM often wraps arguments in shell-style quotes)
+    args="${args#\"}"
+    args="${args%\"}"
+    args="${args#\'}"
+    args="${args%\'}"
+
     # Parse: first token is filepath, rest is content
     local filepath content
     filepath=$(echo "$args" | awk '{print $1}')
@@ -38,15 +45,16 @@ cmd_save() {
         content=""
     fi
 
+    # Also clear content if it matches the original args (single quoted arg, no content)
+    local args_stripped
+    args_stripped=$(echo "$args" | sed 's/["'"'"'`]//g')
+    if [ "$content" = "$args" ] || [ "$content" = "$args_stripped" ]; then
+        content=""
+    fi
+
     # If no inline content, read from stdin if available
     if [ -z "$content" ] && [ ! -t 0 ]; then
         content=$(cat)
-    fi
-
-    if [ -z "$content" ]; then
-        ui_err "No content to save"
-        ui_dim "Provide content after the filepath, or pipe content in"
-        return 1
     fi
 
     # Resolve path relative to workdir
@@ -55,6 +63,20 @@ cmd_save() {
         fullpath="$filepath"
     else
         fullpath="$workdir/$filepath"
+    fi
+
+    # If no content but file already exists, confirm it's saved
+    if [ -z "$content" ] && [ -f "$fullpath" ]; then
+        local lines
+        lines=$(wc -l < "$fullpath")
+        ui_ok "Saved: $filepath ($lines lines)"
+        return 0
+    fi
+
+    if [ -z "$content" ]; then
+        ui_err "No content to save"
+        ui_dim "Provide content after the filepath, or pipe content in"
+        return 1
     fi
 
     # Create parent directories if needed

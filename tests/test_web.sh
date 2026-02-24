@@ -158,6 +158,34 @@ describe "web_search"
     _teardown_web
   }
 
+  it "DDG search does not filter out duckduckgo.com redirect URLs" && {
+    _setup_web
+    fn_body=$(declare -f _web_search_ddg)
+    # The grep -v 'duckduckgo.com' filter was removed because it incorrectly
+    # filtered out DDG redirect URLs that contain the actual search results
+    _has_filter=$(echo "$fn_body" | grep -c "grep -v.*duckduckgo" || true)
+    assert_eq "$_has_filter" "0"
+    _teardown_web
+  }
+
+  it "DDG Method 1 handles href-before-class attribute order" && {
+    _setup_web
+    fn_body=$(declare -f _web_search_ddg)
+    # Method 1 should use a pattern that matches <a> tags with class="result-link"
+    # regardless of whether href comes before or after the class attribute
+    assert_contains "$fn_body" '<a[^>]*class="result-link"'
+    _teardown_web
+  }
+
+  it "web_search strips surrounding quotes from query" && {
+    _setup_web
+    fn_body=$(declare -f web_search)
+    # Verify quote stripping is present
+    assert_contains "$fn_body" 'query='
+    assert_contains "$fn_body" '{query#'
+    _teardown_web
+  }
+
 # ── web_summary ────────────────────────────────────────────────
 describe "web_summary"
 

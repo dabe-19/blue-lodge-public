@@ -136,6 +136,12 @@ web_search() {
     local query="$1"
     local count="${2:-5}"
 
+    # Strip surrounding quotes (LLM often wraps queries in shell-style quotes)
+    query="${query#\"}"
+    query="${query%\"}"
+    query="${query#\'}"
+    query="${query%\'}"
+
     # Try Serper first (better results)
     local serper_key
     serper_key=$(api_get_key "SERPER_API_KEY" 2>/dev/null)
@@ -224,8 +230,9 @@ _web_search_ddg() {
     local n=0
 
     # Method 1: Parse result-link class (DDG Lite format)
-    results=$(echo "$html" | grep -oP 'class="result-link"[^>]*href="[^"]*"[^>]*>[^<]*' 2>/dev/null | \
-        sed 's/.*href="//;s/"[^>]*>/|/' | head -"$count")
+    # Handle both attribute orders: class before href AND href before class
+    results=$(echo "$html" | grep -oP '<a[^>]*class="result-link"[^>]*>[^<]*' 2>/dev/null | \
+        sed -n 's/.*href="\([^"]*\)".*>\([^<]*\)/\1|\2/p' | head -"$count")
 
     # Method 2: If no result-link, try result__a (standard DDG HTML)
     if [ -z "$results" ]; then
@@ -237,7 +244,6 @@ _web_search_ddg() {
     if [ -z "$results" ]; then
         results=$(echo "$html" | \
             grep -oP '<a[^>]+rel="nofollow"[^>]+href="[^"]+"[^>]*>[^<]+' 2>/dev/null | \
-            grep -v 'duckduckgo.com' | \
             sed 's/<a[^>]*href="//;s/"[^>]*>/|/' | head -"$count")
     fi
 
