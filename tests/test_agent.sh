@@ -261,8 +261,8 @@ describe "Direct slash command dispatch in execute_step"
 # ── Recursive planning config ─────────────────────────────────
 describe "Recursive planning config"
 
-  it "AGENT_MAX_DEPTH defaults to 5" && {
-    assert_eq "$AGENT_MAX_DEPTH" "5"
+  it "AGENT_MAX_DEPTH defaults to 2" && {
+    assert_eq "$AGENT_MAX_DEPTH" "2"
   }
 
   it "AGENT_MAX_DEPTH is overridable" && {
@@ -344,10 +344,10 @@ describe "Recursive subtask execution"
 # ── Plan prompt references configurable step limit ─────────────
 describe "Plan prompt uses configurable step limit"
 
-  it "agent_plan prompt references AGENT_MAX_STEPS variable" && {
+  it "agent_plan prompt enforces max 4 steps" && {
     local body
     body=$(declare -f agent_plan)
-    echo "$body" | grep -q 'AGENT_MAX_STEPS'
+    echo "$body" | grep -q 'Maximum: 4 steps'
     assert_ok $?
   }
 

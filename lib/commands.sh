@@ -145,10 +145,49 @@ commands_help_topic() {
     fi
 }
 
-# ── Compact command catalog for LLM injection ─────────────────
-# Returns a token-efficient summary (~150-200 tokens) of all
-# available slash commands that George can use as working tools.
-# This is injected into system prompts so George knows his tools.
+# ── Lean plan catalog (~400 tokens) ────────────────────────────
+# Minimal command reference for planning. One line per command,
+# no examples, no sub-variants. George uses /recall to look up
+# exact syntax during step execution.
+commands_catalog_plan() {
+    cat << 'PLANCAT'
+--- COMMANDS (use ONLY these — /recall <cmd> for syntax) ---
+/ask <question>      — Quick answer (no plan needed)
+/init <name> <lang>  — Scaffold project (rust, python, shell, etc.)
+/recall <query>      — Search knowledge base
+/save <file> <text>  — Save content to file
+/write <file> <text> — Write/overwrite a file
+/download <url> [dest] — Download a URL
+/sandbox new <name> [type] — Create sandbox (rust/python/shell)
+/sandbox build|test|run|cd|rm <name> — Sandbox operations
+/sandbox clone <url> [name] — Clone repo into sandbox
+/clone <url>         — Clone and setup a repo
+/build [release]     — Build project
+/test [args]         — Run tests
+/fix [error]         — Diagnose and fix
+/commit [msg]        — AI commit message + commit
+/push                — Push to GitHub
+/web search <query>  — Web search
+/github search <q>   — Find GitHub repos
+/journal write <text> — Write to journal
+/social post <text>  — Post to social platforms
+/pgp sign <msg>      — PGP-sign a message
+/email send <to> <subj> <body> — Send email
+/phone               — Phone dashboard
+/secret set|get <k>  — Encrypted secrets
+/slash create <name> <desc> — Create custom command
+/vitals              — System dashboard
+PLANCAT
+
+    # Append custom slash commands if any exist
+    if declare -f slash_catalog &>/dev/null; then
+        slash_catalog
+    fi
+}
+
+# ── Full command catalog for LLM injection ─────────────────────
+# Returns the detailed command reference with syntax and examples.
+# Used in task/step execution mode where George needs exact syntax.
 commands_catalog() {
     local _catalog_ts
     _catalog_ts=$(date '+%Y-%m-%d %H:%M:%S %Z')

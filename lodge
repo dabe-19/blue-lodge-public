@@ -2156,13 +2156,29 @@ _repl() {
         fi
         
         # Natural language → agent
-        # Questions → lightweight ask path (lean prompt, fast on phone)
+        # Questions/conversation → lightweight ask path (lean prompt, fast on phone)
         # Tasks → full plan→execute path (larger prompt, slower)
         local word_count
         word_count=$(echo "$input" | wc -w)
+        local lower_input
+        lower_input=$(echo "$input" | tr '[:upper:]' '[:lower:]')
         
-        if [[ "$input" == *"?" ]] || [[ "$input" == *"?)" ]] || { [ "$word_count" -le 3 ] && ! [[ "$input" == *"/"* ]]; }; then
-            # Ends with ? → question. ≤3 words without / → greeting/short question.
+        # Route to /ask for:
+        # - Ends with ? → question
+        # - ≤3 words without / → greeting/short question
+        # - Starts with conversational words (tell me, what, who, how, why, explain, describe, etc.)
+        #   AND has no action verbs (build, create, write, make, implement, fix, deploy, setup, install, run)
+        local _is_conversational=0
+        if [[ "$input" == *"?" ]] || [[ "$input" == *"?)" ]]; then
+            _is_conversational=1
+        elif [ "$word_count" -le 3 ] && ! [[ "$input" == *"/"* ]]; then
+            _is_conversational=1
+        elif [[ "$lower_input" =~ ^(tell|explain|describe|what|who|how|why|when|where|show\ me|talk|speak|say|remind|remember|do\ you|can\ you|are\ you|have\ you|should|could|would|is\ there|list) ]] \
+          && ! [[ "$lower_input" =~ (build|create|write|make|implement|fix|deploy|setup|install|scaffold|refactor|code|program|develop|compile|test|run|execute|clone|download) ]]; then
+            _is_conversational=1
+        fi
+
+        if [ "$_is_conversational" -eq 1 ]; then
             agent_ask "$input" "$PWD"
         else
             # Looks like a task

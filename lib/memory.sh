@@ -278,8 +278,12 @@ ${recall_ctx:0:200}"
 $project_mem"
         fi
 
-        # Full command glossary — George must see exact syntax to plan correctly
-        if declare -f commands_catalog &>/dev/null; then
+        # Lean command glossary for planning — ~400 tokens instead of ~1443
+        if declare -f commands_catalog_plan &>/dev/null; then
+            prompt="$prompt
+
+$(commands_catalog_plan)"
+        elif declare -f commands_catalog &>/dev/null; then
             prompt="$prompt
 
 $(commands_catalog)"
@@ -342,11 +346,11 @@ $files"
 $project_mem"
     fi
     
-    # Add journal (living memory with decay) — cap at 200 tokens for tasks
+    # Add journal (living memory with decay) — 16K context allows richer recall
     if [ -f "$LODGE_DIR/journal.md" ]; then
         source "$LODGE_DIR/lib/journal.sh" 2>/dev/null
         local journal_context
-        journal_context=$(journal_read 200)
+        journal_context=$(journal_read 500)
         if [ -n "$journal_context" ]; then
             prompt="$prompt
 
@@ -364,7 +368,7 @@ $journal_context"
     # Add recall context (FTS5 search) if a task hint is provided
     if [ -n "$task_hint" ] && declare -f recall_search_context &>/dev/null; then
         local recall_ctx
-        recall_ctx=$(recall_search_context "$task_hint" 2 2>/dev/null)
+        recall_ctx=$(recall_search_context "$task_hint" 4 2>/dev/null)
         if [ -n "$recall_ctx" ]; then
             prompt="$prompt
 
@@ -432,17 +436,17 @@ $keep" "$dir"
         memory_update_section "Key Files" "$deduped" "$dir"
     fi
 
-    # 3. Hard cap: if CLAUDE.md exceeds ~3KB (roughly 1/3 of usable context
-    #    after soul.md + journal + recall), truncate aggressively
+    # 3. Hard cap: if CLAUDE.md exceeds ~6KB (with 16K context we have room,
+    #    but still compact to keep prompt responsive)
     local file_size
     file_size=$(wc -c < "$file")
-    if [ "$file_size" -gt 3072 ]; then
+    if [ "$file_size" -gt 6144 ]; then
         # Keep header + current task + plan, compact everything else
         memory_update_section "Errors" "(compacted)" "$dir"
         local notes
-        notes=$(memory_get_section "Notes" "$dir" | head -3)
+        notes=$(memory_get_section "Notes" "$dir" | head -5)
         memory_update_section "Notes" "$notes" "$dir"
-        ui_warn "CLAUDE.md exceeded 3KB — aggressively compacted to protect context window"
+        ui_warn "CLAUDE.md exceeded 6KB — compacted to protect context window"
     fi
 }
 

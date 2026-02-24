@@ -15,7 +15,7 @@ AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-20}"
 AGENT_STEP_DELAY="${AGENT_STEP_DELAY:-1}"
 AGENT_MAX_CLARIFY="${AGENT_MAX_CLARIFY:-2}"
 AGENT_INTERACTIVE_PLANNING="${AGENT_INTERACTIVE_PLANNING:-0}"
-AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-5}"
+AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-2}"
 AGENT_MAX_RETRIES="${AGENT_MAX_RETRIES:-1}"  # Auto-retry failed steps before asking human
 
 # ── Normalize inline plans ─────────────────────────────────────
@@ -307,15 +307,23 @@ _agent_parse_steps() {
 # ── Recursively plan and execute a subtask ─────────────────────
 # Called when a step is prefixed with [SUBTASK]. Plans the subtask
 # as a new mini-task and executes each sub-step, respecting depth.
+# Parent context is injected into CLAUDE.md so the subtask knows
+# what the overall task is and what has been completed so far.
 _agent_run_subtask() {
     local task="$1"
     local workdir="${2:-.}"
     local depth="${3:-1}"
+    local parent_task="${4:-}"
 
     if [ "$depth" -gt "$AGENT_MAX_DEPTH" ]; then
         ui_warn "Max planning depth ($AGENT_MAX_DEPTH) reached. Executing as single step."
         agent_execute_step "sub" "$task" "$workdir" "$task"
         return $?
+    fi
+
+    # Inject parent context so subtask plan is aware of the bigger picture
+    if [ -n "$parent_task" ]; then
+        memory_update_section "Current Task" "SUBTASK of: $parent_task\nSubtask: $task" "$workdir"
     fi
 
     ui_section "Subtask (depth $depth)"
@@ -348,7 +356,7 @@ _agent_run_subtask() {
         if [[ "$step_text" == \[SUBTASK\]* ]]; then
             local sub_desc="${step_text#\[SUBTASK\]}"
             sub_desc="${sub_desc# }"
-            if _agent_run_subtask "$sub_desc" "$workdir" "$((depth + 1))"; then
+            if _agent_run_subtask "$sub_desc" "$workdir" "$((depth + 1))" "$task"; then
                 completed=$((completed + 1))
             fi
         else
@@ -384,18 +392,17 @@ agent_plan() {
         effective_max_clarify="$AGENT_MAX_CLARIFY"
     fi
 
-    local base_rules="Create a step-by-step plan. Rules:
-- Target 3-8 steps. Only exceed 8 for genuinely multi-component projects.
-- Hard maximum: $AGENT_MAX_STEPS steps. You will almost never need this many.
-- NEVER pad plans with filler. Do NOT add steps for: reading documentation, reviewing files, writing READMEs, backup, status checks, recall searches, web searches, cloning repos, writing install/uninstall scripts, or anything the user did not ask for.
-- Every step must directly advance the user's stated goal. If a step is not essential, cut it.
-- Each step must be completable in ONE LLM call.
-- Each step must be a single action (write one file, run one command, etc.)
-- You can reference your slash commands (e.g. /recall, /sandbox) in steps.
-- IMPORTANT: If you use /sandbox commands, you MUST create the sandbox FIRST with /sandbox new <name> <type> BEFORE running commands in it. /init creates a project directory, NOT a sandbox.
-- IMPORTANT: When the task involves writing a program or application, you MUST use [SUBTASK] for the actual code implementation. Do NOT write all code in a single step or dump boilerplate. The [SUBTASK] should describe what the code must do (architecture, modules, behavior, game logic, etc.) so it gets its own detailed sub-plan. Code steps must produce REAL implementation code, not Hello World or empty scaffolds.
-- If a step is too complex for a single action, prefix it with [SUBTASK] — it will be recursively expanded into its own sub-plan. Use [SUBTASK] for any multi-file or design-heavy work.
-- NEVER invent or guess URLs, repo names, or resources. Only use URLs the user provided or that you found via /web search or /github search. To find a GitHub repo, ALWAYS use /github search <query> first — it returns verified owner/repo names you can then /clone.
+    local base_rules="Plan this task. Rules:
+- THINK FIRST: Is this a question or conversation? If so, output ONLY: 1. /ask <the user's question>. Done. No sandbox, no coding.
+- Use the MINIMUM steps needed. Most tasks need 1-3 steps. Maximum: 4 steps.
+- NEVER pad plans. No filler steps (no READMEs, no backup, no status checks, no recall searches, no reviews).
+- Every step must directly advance the user's stated goal.
+- Each step = ONE action (one file, one command, one operation).
+- Use your slash commands (e.g. /sandbox, /write, /build) in steps.
+- If using /sandbox: create it FIRST with /sandbox new <name> <type>.
+- For complex multi-file or design-heavy work, prefix a step with [SUBTASK] — describe WHAT the code must do (architecture, modules, behavior). The subtask gets its own recursive sub-plan. Use [SUBTASK] for the heavy lifting; keep your top-level plan lean.
+- Code steps must produce REAL implementation — no Hello World, no stubs.
+- NEVER invent URLs or repo names. Use /web search or /github search first.
 - Output ONLY a NUMBERED LIST (1. 2. 3. etc.) — no explanations, no code."
 
     if [ "$effective_max_clarify" -gt 0 ]; then
@@ -715,7 +722,7 @@ agent_run() {
         if [[ "${steps[$i]}" == \[SUBTASK\]* ]]; then
             local subtask_desc="${steps[$i]#\[SUBTASK\]}"
             subtask_desc="${subtask_desc# }"
-            if _agent_run_subtask "$subtask_desc" "$workdir" 1; then
+            if _agent_run_subtask "$subtask_desc" "$workdir" 1 "$task"; then
                 completed=$((completed + 1))
                 _exec_log="${_exec_log}Step $step_num: ${steps[$i]:0:60} — OK\n"
             else
@@ -828,6 +835,39 @@ agent_run() {
     return 0
 }
 
+# ── Conversation history (ring buffer for /ask continuity) ─────
+# Stores last N exchanges so George remembers recent conversation.
+# Each entry: "USER: ...\nGEORGE: ..."
+_AGENT_CONV_HISTORY=()
+AGENT_CONV_MAX="${AGENT_CONV_MAX:-3}"  # Keep last 3 exchanges (~300-600 tokens)
+
+_agent_conv_push() {
+    local user_msg="$1"
+    local george_msg="$2"
+    # Truncate long responses to ~150 chars to stay token-lean
+    local trunc_response="${george_msg:0:150}"
+    [ ${#george_msg} -gt 150 ] && trunc_response="${trunc_response}..."
+    _AGENT_CONV_HISTORY+=("USER: $user_msg
+GEORGE: $trunc_response")
+    # Trim to max size
+    while [ ${#_AGENT_CONV_HISTORY[@]} -gt "$AGENT_CONV_MAX" ]; do
+        _AGENT_CONV_HISTORY=("${_AGENT_CONV_HISTORY[@]:1}")
+    done
+}
+
+_agent_conv_context() {
+    if [ ${#_AGENT_CONV_HISTORY[@]} -eq 0 ]; then
+        echo ""
+        return
+    fi
+    local ctx="--- RECENT CONVERSATION ---"
+    for entry in "${_AGENT_CONV_HISTORY[@]}"; do
+        ctx="$ctx
+$entry"
+    done
+    echo "$ctx"
+}
+
 # ── Single-shot ask (no planning, just answer) ────────────────
 agent_ask() {
     local question="$1"
@@ -840,11 +880,25 @@ agent_ask() {
     local system_prompt
     system_prompt=$(memory_build_system_prompt "$workdir" "$question" "ask")
     
+    # Inject conversation history for continuity
+    local conv_ctx
+    conv_ctx=$(_agent_conv_context)
+    
+    local full_question="$question"
+    if [ -n "$conv_ctx" ]; then
+        full_question="$conv_ctx
+
+$question"
+    fi
+    
     # Stream the response so user sees tokens arrive in real-time
     echo ""
     local response
-    response=$(llm_stream "$question" "$system_prompt" "$LLM_ASK_TOKENS")
+    response=$(llm_stream "$full_question" "$system_prompt" "$LLM_ASK_TOKENS")
     echo ""
+    
+    # Track this exchange for future context
+    [ -n "$response" ] && [[ "$response" != ERROR* ]] && _agent_conv_push "$question" "$response"
     
     _LODGE_IN_TASK=0
     
