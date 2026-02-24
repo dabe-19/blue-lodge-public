@@ -91,11 +91,12 @@ results:
 
 George's system prompt is built by `memory_build_system_prompt()` using a three-tier strategy:
 
-| Mode | Token Budget | Catalog Injected? | When Used |
-|------|-------------|-------------------|-----------|
-| `ask` | ~150 tokens | **No** — stays lean | `/ask` quick questions |
-| `plan` | ~700 tokens | **Yes** (lean catalog, ~400 tokens) | `agent_plan()` — creating step lists |
-| `task` | ~3,500 tokens | **Yes** (full catalog, ~1,443 tokens) | `agent_execute_step()` — executing work |
+| Mode | Token Budget | Catalog Injected? | Soul Injected? | When Used |
+|------|-------------|-------------------|----------------|-----------|
+| `ask` | ~250 tokens | **No** — stays lean | Condensed (~250 tok) | `/ask` quick questions |
+| `plan` (light) | ~700 tokens | **Yes** (lean catalog, ~400 tokens) | Condensed (~250 tok) | `agent_plan()` (LODGE_SOUL=0) |
+| `plan` (dense) | ~5,000 tokens | **Yes** (lean catalog, ~400 tokens) | Full (~4,500 tok) | `agent_plan()` (LODGE_SOUL=1) |
+| `task` | ~3,500 tokens | **Yes** (full catalog, ~1,443 tokens) | Full or condensed (LODGE_SOUL) | `memory_build_system_prompt` task mode |
 
 The catalog is injected conditionally. **Plan mode uses a lean catalog** (`commands_catalog_plan()`) with compressed syntax to keep the prompt under ~700 tokens total, while task mode uses the full catalog with detailed descriptions:
 
@@ -163,7 +164,7 @@ built-in commands over raw shell when available.
 The output rules also specify planning format:
 
 ```
-Plans as numbered lists (1-4 steps, use [SUBTASK] for complex work)
+Plans as short numbered lists (use [SUBTASK] for complex work)
 ```
 
 ### Conversation History (Ask Mode)
@@ -199,6 +200,34 @@ The `soul.md` "My Working Commands" section establishes the *philosophy* of comm
 > **I must use my commands when they fit.** If a task involves posting to social media, I use `/social`, not a raw `curl` call. If I need to look something up in my own documentation, I use `/recall`, not `grep`. If I need to sign a message, I use `/pgp`.
 
 The principle: **check my tools first, write raw code second.**
+
+#### Soul Injection in the Dual-Loop Architecture
+
+The refactored agent uses a dual-loop architecture (macro loop + inner loop). Soul injection is tiered:
+
+| Phase | Soul Content | Purpose |
+|-------|-------------|--------|
+| `agent_plan()` (LODGE_SOUL=0) | Condensed soul (~250 tokens) | Identity + philosophy digest for plan generation |
+| `agent_plan()` (LODGE_SOUL=1) | Full soul.md (~4,500 tokens) | Complete ethics propagate into plan milestones |
+| `agent_run()` macro seed | Identity section (~90 tokens) | Persona context in macro_memory.md file |
+| `agent_inner_loop()` | **None** | Speed-optimized; soul propagates passively via plan |
+| `agent_ask()` | Condensed soul (~250 tokens) | Consistent identity in conversational mode |
+
+The `/soul` command toggles `LODGE_SOUL` between 0 (light/condensed) and 1 (dense/full). This controls only the planning prompt — the inner loop stays soul-free by design.
+
+### Agent Limits (`/limits`)
+
+The `/limits` command provides runtime control over George's planning and execution bounds:
+
+| Limit | Variable | Default | What it controls |
+|-------|----------|---------|------------------|
+| `steps` | `AGENT_PLAN_STEPS` | 5 | Max steps per plan/subtask |
+| `depth` | `AGENT_MAX_DEPTH` | 2 | Subtask recursion ceiling |
+| `milestones` | `AGENT_MAX_STEPS` | 20 | Macro loop milestone ceiling |
+| `inner` | `AGENT_INNER_LOOPS` | 6 | Inner loop escalation retries |
+| `delay` | `AGENT_STEP_DELAY` | 1 | Seconds between milestones |
+
+Usage: `/limits` (show all), `/limits steps 8` (set), `/limits reset` (restore defaults). These are session-scoped — they reset when George restarts unless set via environment variables.
 
 ## Sequence Diagram: End-to-End Flow
 
@@ -477,13 +506,16 @@ detects the swap and corrects silently.
 |-----------|-------------|-------|
 | `commands_catalog_plan()` | ~400 | plan system prompts (lean syntax) |
 | `commands_catalog()` | ~1,443 | task system prompts (full descriptions) |
-| Modelfile SYSTEM block | ~150 | SYSTEM prompt (baked into model) |
-| soul.md "My Working Commands" | ~150 | Loaded once into task mode via `memory_read_soul()` |
+| Modelfile SYSTEM block | ~300 | SYSTEM prompt (overridden when system param passed) |
+| Condensed soul | ~250 | `/ask` mode, plan mode (LODGE_SOUL=0) |
+| Full soul.md | ~4,500 | Plan mode (LODGE_SOUL=1), task mode |
+| Identity section | ~90 | `agent_run()` macro memory seed |
 | Conversation history (ask) | ~300-600 | ask mode only (3 exchanges × ~150 chars each) |
 
-Total additional tokens per plan call: **~400** (lean catalog only — soul.md not loaded in plan mode).
+Total additional tokens per plan call (light): **~650** (condensed soul + lean catalog).
+Total additional tokens per plan call (dense): **~4,900** (full soul + lean catalog).
 Total additional tokens per task call: **~1,443** (full catalog — soul.md already present).
-Ask mode: **0 catalog tokens** (conversation history adds ~300-600 if exchanges exist).
+Ask mode: **~250 tokens** (condensed soul + conversation history ~300-600 if exchanges exist).
 
 With `num_ctx=16384`, the full task prompt budget is ~3,500 tokens for the system prompt, leaving ~10,400+ tokens for conversation history and generation. Even plan mode has ~14,700 tokens of headroom.
 
@@ -560,6 +592,7 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 | `/pgp verify <msg>` | Verify a signed message | `/pgp verify <signed text>` |
 | `/pgp export` | Export public key | `/pgp export` |
 | `/vitals` | System vitals (CPU, RAM, disk, battery) | `/vitals` |
+| `/limits` | View/adjust agent planning limits | `/limits steps 8` |
 | `/think` | Toggle thinking mode on/off | `/think` |
 | `/cleanup` | Remove George's created files | `/cleanup` |
 

@@ -286,6 +286,47 @@ recall_ensure_indexed() {
     fi
 }
 
+# ── Sanitize query for FTS5 MATCH ────────────────────────────
+# FTS5 has a rich query syntax where many punctuation characters are
+# operators (*, +, ^, ~, :, AND, OR, NOT, etc.) and others (., @, #,
+# /, <, >, |, &, etc.) cause parse errors when they appear inside
+# unquoted tokens.
+#
+# Strategy:
+#   1. Strip ALL non-alphanumeric, non-space, non-underscore chars.
+#      This is a whitelist approach — safer than chasing individual
+#      blacklist entries as new edge cases surface.
+#   2. Collapse whitespace and trim.
+#   3. Wrap each surviving word in FTS5 double-quotes.
+#      This prevents bare AND/OR/NOT from being parsed as operators
+#      and protects against any future tokenizer surprises.
+#
+# The tradeoff: we lose the ability to use FTS5 operators in queries.
+# That's fine — George's users type natural language, not FTS5 syntax.
+#
+# Args:
+#   $1 — raw query string
+#   $2 — join operator: "" (implicit AND, default) or "OR"
+# Output: quoted FTS5 query string, or empty if nothing survives.
+_recall_sanitize_query() {
+    local raw="$1"
+    local join="${2:-}"
+    # Step 1: Keep only alphanumeric, spaces, and underscores
+    local clean
+    clean=$(printf '%s' "$raw" | tr -c 'A-Za-z0-9_ \n' ' ')
+    # Step 2: Collapse multiple spaces and trim
+    clean=$(printf '%s' "$clean" | sed 's/  */ /g; s/^ *//; s/ *$//')
+    [ -z "$clean" ] && return 0
+    # Step 3: Wrap each word in double-quotes for FTS5
+    if [ "$join" = "OR" ]; then
+        # "recall" OR "db" — explicit OR between quoted terms
+        printf '%s' "$clean" | sed 's/[^ ][^ ]*/\"&\"/g; s/" "/\" OR \"/g'
+    else
+        # "recall" "db" — implicit AND (FTS5 default)
+        printf '%s' "$clean" | sed 's/[^ ][^ ]*/\"&\"/g'
+    fi
+}
+
 # ── Search the knowledge base ─────────────────────────────────
 # Returns BM25-ranked results. Each result: source | section | snippet
 # Usage: recall_search "sandboxes proot isolation" 5
@@ -299,30 +340,8 @@ recall_search() {
 
     recall_ensure_indexed
 
-    # Escape the query for FTS5
     local safe_query
-    safe_query="${query//\"/\"\"}"
-    # Strip ALL FTS5 special characters that cause syntax errors
-    safe_query="${safe_query//\*/}"
-    safe_query="${safe_query//\(/}"
-    safe_query="${safe_query//\)/}"
-    safe_query="${safe_query//:/}"
-    safe_query="${safe_query//\?/}"
-    safe_query="${safe_query//!/}"
-    safe_query="${safe_query//+/}"
-    safe_query="${safe_query//^/}"
-    safe_query="${safe_query//~/}"
-    safe_query="${safe_query//\{/}"
-    safe_query="${safe_query//\}/}"
-    safe_query="${safe_query//\[/}"
-    safe_query="${safe_query//\]/}"
-    safe_query="${safe_query//\;/}"
-    # Forward slashes: FTS5 treats / as a syntax element; strip them
-    safe_query="${safe_query///}"
-    # Hyphens: FTS5 treats - as column subtraction; replace with space
-    safe_query="${safe_query//-/ }"
-    # Collapse multiple spaces and trim
-    safe_query=$(echo "$safe_query" | sed 's/  */ /g; s/^ *//; s/ *$//')
+    safe_query=$(_recall_sanitize_query "$query")
     # Bail on empty query after sanitization
     [ -z "$safe_query" ] && return 0
 
@@ -354,15 +373,26 @@ recall_search_pretty() {
     results=$(recall_search "$query" "$limit")
 
     if [ -z "$results" ]; then
-        # Try with OR between words for broader matching
+        # Try with OR between words for broader matching.
+        # Uses _recall_sanitize_query directly to inject proper FTS5 OR
+        # between quoted terms instead of passing raw "OR" through recall_search
+        # (which would quote "OR" as a literal word).
         local or_query
-        or_query=$(echo "$query" | sed 's/ / OR /g')
-        results=$(recall_search "$or_query" "$limit")
-    fi
-
-    if [ -z "$results" ]; then
-        ui_dim "  No results for: $query"
-        return 0
+        or_query=$(_recall_sanitize_query "$query" "OR")
+        if [ -n "$or_query" ]; then
+            results=$(recall_ensure_indexed; sqlite3 -separator '|' "$RECALL_DB" <<SQL
+SELECT
+    c.source,
+    c.section,
+    snippet(chunks_fts, 2, '>>>', '<<<', '...', 48) AS snippet
+FROM chunks_fts
+JOIN chunks c ON chunks_fts.rowid = c.id
+WHERE chunks_fts MATCH '$or_query'
+ORDER BY bm25(chunks_fts, 5.0, 10.0, 1.0)
+LIMIT $limit;
+SQL
+            )
+        fi
     fi
 
     local count=0
@@ -420,8 +450,21 @@ recall_search_context() {
 
     if [ -z "$results" ]; then
         local or_query
-        or_query=$(echo "$query" | sed 's/ / OR /g')
-        results=$(recall_search "$or_query" "$limit")
+        or_query=$(_recall_sanitize_query "$query" "OR")
+        if [ -n "$or_query" ]; then
+            results=$(recall_ensure_indexed; sqlite3 -separator '|' "$RECALL_DB" <<SQL
+SELECT
+    c.source,
+    c.section,
+    snippet(chunks_fts, 2, '>>>', '<<<', '...', 48) AS snippet
+FROM chunks_fts
+JOIN chunks c ON chunks_fts.rowid = c.id
+WHERE chunks_fts MATCH '$or_query'
+ORDER BY bm25(chunks_fts, 5.0, 10.0, 1.0)
+LIMIT $limit;
+SQL
+            )
+        fi
     fi
 
     [ -z "$results" ] && return 0

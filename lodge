@@ -176,29 +176,111 @@ _cmd_soul() {
     case "$arg" in
         on|1|full)
             LODGE_SOUL=1
-            ui_ok "Soul mode ON — full soul.md injected into every prompt (~4500 tokens)" ;;
-        off|0|lean)
+            ui_ok "Soul mode ON — full soul.md injected into planning (~4500 tokens)" ;;
+        off|0|lean|light)
             LODGE_SOUL=0
-            ui_ok "Soul mode OFF — only Practical Craft section injected (default)" ;;
+            ui_ok "Soul mode OFF — condensed soul injected into planning (~250 tokens)" ;;
         show)
             ui_section "soul.md"
             cat "$LODGE_DIR/soul.md"
+            echo "" ;;
+        condensed)
+            ui_section "Condensed Soul (~250 tokens)"
+            _memory_soul_condensed
             echo "" ;;
         "")
             # Toggle
             if [ "${LODGE_SOUL:-0}" -eq 0 ]; then
                 LODGE_SOUL=1
-                ui_ok "Soul mode ON — full soul.md injected into every prompt (~4500 tokens)"
+                ui_ok "Soul mode ON — full soul.md injected into planning (~4500 tokens)"
             else
                 LODGE_SOUL=0
-                ui_ok "Soul mode OFF — only Practical Craft section injected (default)"
+                ui_ok "Soul mode OFF — condensed soul injected into planning (~250 tokens)"
             fi ;;
         *)
-            ui_info "Usage: /soul [on|off|show]"
-            ui_dim "  on    — inject full soul.md into prompts (ethics + philosophy + craft)"
-            ui_dim "  off   — inject only Practical Craft section (lean, default)"
-            ui_dim "  show  — display soul.md contents"
-            ui_dim "  (no arg) — toggle on/off (current: $([ "${LODGE_SOUL:-0}" -eq 1 ] && echo ON || echo OFF))" ;;
+            ui_info "Usage: /soul [on|off|show|condensed]"
+            ui_dim "  on        — inject full soul.md into planning (ethics + philosophy + craft)"
+            ui_dim "  off       — inject condensed soul into planning (~250 tokens, default)"
+            ui_dim "  show      — display full soul.md"
+            ui_dim "  condensed — display the condensed ~250 token soul digest"
+            ui_dim "  (no arg)  — toggle on/off (current: $([ "${LODGE_SOUL:-0}" -eq 1 ] && echo ON || echo OFF))" ;;
+    esac
+}
+_cmd_limits() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local value
+    value=$(echo "$args" | awk '{print $2}')
+
+    # Validate numeric input helper
+    _limits_set() {
+        local var_name="$1" label="$2" val="$3" min="${4:-1}" max="${5:-100}"
+        if ! [[ "$val" =~ ^[0-9]+$ ]] || [ "$val" -lt "$min" ] || [ "$val" -gt "$max" ]; then
+            ui_err "$label must be a number between $min and $max"
+            return 1
+        fi
+        eval "$var_name=$val"
+        ui_ok "$label set to $val"
+    }
+
+    case "$action" in
+        steps)
+            if [ -z "$value" ]; then
+                ui_info "Plan steps per subtask: $AGENT_PLAN_STEPS (default: 5)"
+            else
+                _limits_set AGENT_PLAN_STEPS "Plan steps" "$value" 1 20
+            fi ;;
+        depth)
+            if [ -z "$value" ]; then
+                ui_info "Subtask recursion depth: $AGENT_MAX_DEPTH (default: 2)"
+            else
+                _limits_set AGENT_MAX_DEPTH "Recursion depth" "$value" 1 10
+            fi ;;
+        milestones)
+            if [ -z "$value" ]; then
+                ui_info "Macro loop milestones: $AGENT_MAX_STEPS (default: 20)"
+            else
+                _limits_set AGENT_MAX_STEPS "Milestones" "$value" 1 100
+            fi ;;
+        inner)
+            if [ -z "$value" ]; then
+                ui_info "Inner loop retries: $AGENT_INNER_LOOPS (default: 6)"
+            else
+                _limits_set AGENT_INNER_LOOPS "Inner loops" "$value" 1 20
+            fi ;;
+        delay)
+            if [ -z "$value" ]; then
+                ui_info "Step delay: ${AGENT_STEP_DELAY}s (default: 1)"
+            else
+                _limits_set AGENT_STEP_DELAY "Step delay" "$value" 0 30
+            fi ;;
+        reset)
+            AGENT_PLAN_STEPS=5
+            AGENT_INNER_LOOPS=6
+            AGENT_MAX_STEPS=20
+            AGENT_MAX_DEPTH=2
+            AGENT_STEP_DELAY=1
+            ui_ok "All limits reset to defaults" ;;
+        "")
+            ui_section "Agent Limits"
+            printf "  %-22s %s\n" "Plan steps/subtask:" "$AGENT_PLAN_STEPS  (AGENT_PLAN_STEPS, default: 5)"
+            printf "  %-22s %s\n" "Subtask depth:" "$AGENT_MAX_DEPTH  (AGENT_MAX_DEPTH, default: 2)"
+            printf "  %-22s %s\n" "Macro milestones:" "$AGENT_MAX_STEPS  (AGENT_MAX_STEPS, default: 20)"
+            printf "  %-22s %s\n" "Inner loop retries:" "$AGENT_INNER_LOOPS  (AGENT_INNER_LOOPS, default: 6)"
+            printf "  %-22s %s\n" "Step delay:" "${AGENT_STEP_DELAY}s  (AGENT_STEP_DELAY, default: 1)"
+            echo ""
+            ui_dim "  Usage: /limits <steps|depth|milestones|inner|delay> [value]"
+            ui_dim "  Reset: /limits reset" ;;
+        *)
+            ui_info "Usage: /limits [steps|depth|milestones|inner|delay|reset] [value]"
+            ui_dim "  steps N      — Max steps per plan/subtask (current: $AGENT_PLAN_STEPS)"
+            ui_dim "  depth N      — Subtask recursion depth (current: $AGENT_MAX_DEPTH)"
+            ui_dim "  milestones N — Macro loop milestone ceiling (current: $AGENT_MAX_STEPS)"
+            ui_dim "  inner N      — Inner loop escalation retries (current: $AGENT_INNER_LOOPS)"
+            ui_dim "  delay N      — Seconds between milestones (current: $AGENT_STEP_DELAY)"
+            ui_dim "  reset        — Reset all to defaults"
+            ui_dim "  (no arg)     — Show all current limits" ;;
     esac
 }
 _cmd_journal() {
@@ -2221,6 +2303,7 @@ _register_commands() {
     commands_register "snapshot" "Save memory checkpoint" "_cmd_snapshot"
     commands_register "memory"   "Show CLAUDE.md contents" "_cmd_memory"
     commands_register "soul"     "Toggle soul mode on/off (full personality)" "_cmd_soul"
+    commands_register "limits"   "View/adjust agent planning limits" "_cmd_limits"
     commands_register "status"   "Show agent status" "_cmd_status"
     commands_register "journal"  "View/write journal" "_cmd_journal"
     commands_register "reflect"  "Record a reflection" "_cmd_reflect"

@@ -471,6 +471,167 @@ describe "recall_clear"
     fi
   }
 
+# ── FTS5 special character handling ───────────────────────────
+describe "FTS5 special character escaping"
+
+  it "handles dots in query (recall.db)" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    _create_sample_readme
+    recall_reindex
+    # Should not produce a runtime error — may return empty but must not crash
+    local results
+    results=$(recall_search "recall.db" 5 2>&1)
+    [[ "$results" != *"syntax error"* ]]
+    assert_ok $?
+    _teardown_recall
+    fi
+  }
+
+  it "handles leading dots (.george)" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    _create_sample_readme
+    recall_reindex
+    local results
+    results=$(recall_search ".george" 5 2>&1)
+    [[ "$results" != *"syntax error"* ]]
+    assert_ok $?
+    _teardown_recall
+    fi
+  }
+
+  it "handles forward slashes (/recall)" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    _create_sample_readme
+    recall_reindex
+    local results
+    results=$(recall_search "/recall" 5 2>&1)
+    [[ "$results" != *"syntax error"* ]]
+    assert_ok $?
+    _teardown_recall
+    fi
+  }
+
+  it "handles at-signs (test@email.com)" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    _create_sample_readme
+    recall_reindex
+    local results
+    results=$(recall_search "test@email.com" 5 2>&1)
+    [[ "$results" != *"syntax error"* ]]
+    assert_ok $?
+    _teardown_recall
+    fi
+  }
+
+  it "handles hashes and dollar signs (#heading \$var)" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    _create_sample_readme
+    recall_reindex
+    local results
+    results=$(recall_search '#heading $variable' 5 2>&1)
+    [[ "$results" != *"syntax error"* ]]
+    assert_ok $?
+    _teardown_recall
+    fi
+  }
+
+  it "handles commas, ampersands, and angle brackets" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    _create_sample_readme
+    recall_reindex
+    local results
+    results=$(recall_search "a,b & c<d>e" 5 2>&1)
+    [[ "$results" != *"syntax error"* ]]
+    assert_ok $?
+    _teardown_recall
+    fi
+  }
+
+  it "handles FTS5 operators as literal words (AND OR NOT)" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    _create_sample_readme
+    recall_reindex
+    local results
+    results=$(recall_search "AND OR NOT" 5 2>&1)
+    [[ "$results" != *"syntax error"* ]]
+    assert_ok $?
+    _teardown_recall
+    fi
+  }
+
+  it "handles all FTS5 operators (*+^~:(){}[])" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    _create_sample_readme
+    recall_reindex
+    local results
+    results=$(recall_search 'test*+^~:(){}[]!' 5 2>&1)
+    [[ "$results" != *"syntax error"* ]]
+    assert_ok $?
+    _teardown_recall
+    fi
+  }
+
+  it "handles pipe and backslash (a|b a\\b)" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    _create_sample_readme
+    recall_reindex
+    local results
+    results=$(recall_search 'a|b a\b' 5 2>&1)
+    [[ "$results" != *"syntax error"* ]]
+    assert_ok $?
+    _teardown_recall
+    fi
+  }
+
+  it "handles pure punctuation query gracefully" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    _create_sample_readme
+    recall_reindex
+    # Pure punctuation should sanitize to empty and return 0, not crash
+    local results
+    results=$(recall_search "...///###" 5 2>&1)
+    [[ "$results" != *"syntax error"* ]]
+    assert_ok $?
+    _teardown_recall
+    fi
+  }
+
+  it "_recall_sanitize_query is defined" && {
+    declare -f _recall_sanitize_query &>/dev/null
+    assert_ok $?
+  }
+
+  it "_recall_sanitize_query strips dots and slashes" && {
+    local result
+    result=$(_recall_sanitize_query "recall.db")
+    assert_not_contains "$result" "."
+    assert_contains "$result" "recall"
+    assert_contains "$result" "db"
+  }
+
+  it "_recall_sanitize_query wraps words in quotes" && {
+    local result
+    result=$(_recall_sanitize_query "hello world")
+    assert_contains "$result" '"hello"'
+    assert_contains "$result" '"world"'
+  }
+
+  it "_recall_sanitize_query OR mode joins terms with OR" && {
+    local result
+    result=$(_recall_sanitize_query "hello world" "OR")
+    assert_contains "$result" "OR"
+  }
+
 # ── ensure_indexed ────────────────────────────────────────────
 describe "recall_ensure_indexed"
 

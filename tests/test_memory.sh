@@ -201,7 +201,46 @@ describe "memory_build_system_prompt"
     assert_contains "$prompt" "PromptTest"
     _teardown_mem
   }
+# ── Soul extraction helpers ─────────────────────────────────────────
+describe "soul extraction helpers"
 
+  it "_memory_soul_identity is defined" && {
+    declare -f _memory_soul_identity &>/dev/null
+    assert_ok $?
+  }
+
+  it "_memory_soul_condensed is defined" && {
+    declare -f _memory_soul_condensed &>/dev/null
+    assert_ok $?
+  }
+
+  it "_memory_soul_identity returns George identity" && {
+    result=$(_memory_soul_identity)
+    assert_contains "$result" "George"
+  }
+
+  it "_memory_soul_identity does NOT include TMS section" && {
+    result=$(_memory_soul_identity)
+    assert_not_contains "$result" "Theory of Moral Sentiments"
+  }
+
+  it "_memory_soul_condensed includes Impartial Spectator" && {
+    result=$(_memory_soul_condensed)
+    assert_contains "$result" "Impartial Spectator"
+  }
+
+  it "_memory_soul_condensed includes Masonic Tenets" && {
+    result=$(_memory_soul_condensed)
+    assert_contains "$result" "Brotherly Love"
+  }
+
+  it "_memory_soul_condensed is shorter than full soul.md" && {
+    condensed=$(_memory_soul_condensed)
+    full=$(cat "$LODGE_DIR/soul.md")
+    condensed_len=${#condensed}
+    full_len=${#full}
+    assert_gt "$full_len" "$condensed_len"
+  }
 # ── Lean prompt mode (ask) ───────────────────────────────────
 describe "memory_build_system_prompt lean mode"
 
@@ -209,15 +248,21 @@ describe "memory_build_system_prompt lean mode"
     _setup_mem
     prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "ask")
     assert_contains "$prompt" "George"
-    assert_contains "$prompt" "concisely"
     _teardown_mem
   }
 
-  it "lean prompt does NOT include full soul.md" && {
+  it "ask mode uses condensed soul (includes Impartial Spectator)" && {
     _setup_mem
     prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "ask")
-    # Full soul.md has Impartial Spectator — lean should not
-    assert_not_contains "$prompt" "Impartial Spectator"
+    assert_contains "$prompt" "Impartial Spectator"
+    _teardown_mem
+  }
+
+  it "ask mode does NOT include full soul.md sections" && {
+    _setup_mem
+    prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "ask")
+    # Full soul.md has named sections like Cardinal Virtues with headers
+    assert_not_contains "$prompt" "## The Cardinal Virtues"
     _teardown_mem
   }
 
@@ -258,7 +303,7 @@ describe "memory_build_system_prompt plan mode"
 # ── Soul mode toggle ─────────────────────────────────────────
 describe "memory_build_system_prompt soul mode"
 
-  it "LODGE_SOUL=1 includes full soul.md (Impartial Spectator)" && {
+  it "LODGE_SOUL=1 includes full soul.md (Impartial Spectator) in task mode" && {
     _setup_mem
     LODGE_SOUL=1
     prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "task")
@@ -267,7 +312,7 @@ describe "memory_build_system_prompt soul mode"
     _teardown_mem
   }
 
-  it "LODGE_SOUL=0 excludes philosophy sections" && {
+  it "LODGE_SOUL=0 excludes philosophy sections in task mode" && {
     _setup_mem
     LODGE_SOUL=0
     prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "task")
@@ -276,7 +321,7 @@ describe "memory_build_system_prompt soul mode"
     _teardown_mem
   }
 
-  it "soul mode ON produces larger prompt than OFF" && {
+  it "soul mode ON produces larger task prompt than OFF" && {
     _setup_mem
     LODGE_SOUL=1
     _on=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "task")
@@ -289,10 +334,50 @@ describe "memory_build_system_prompt soul mode"
     _teardown_mem
   }
 
+  it "LODGE_SOUL=1 plan prompt includes full soul.md" && {
+    _setup_mem
+    LODGE_SOUL=1
+    prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
+    # Full soul.md has the Cardinal Virtues section header
+    assert_contains "$prompt" "Cardinal Virtues"
+    LODGE_SOUL=0
+    _teardown_mem
+  }
+
+  it "LODGE_SOUL=0 plan prompt uses condensed soul" && {
+    _setup_mem
+    LODGE_SOUL=0
+    prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
+    assert_contains "$prompt" "Impartial Spectator"
+    # Should NOT have full soul section headers
+    assert_not_contains "$prompt" "## The Cardinal Virtues"
+    _teardown_mem
+  }
+
+  it "LODGE_SOUL=1 plan prompt is larger than LODGE_SOUL=0 plan prompt" && {
+    _setup_mem
+    LODGE_SOUL=1
+    _on=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
+    LODGE_SOUL=0
+    _off=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
+    _on_len=${#_on}
+    _off_len=${#_off}
+    assert_gt "$_on_len" "$_off_len"
+    LODGE_SOUL=0
+    _teardown_mem
+  }
+
   it "plan prompt does NOT include journal" && {
     _setup_mem
     prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
     assert_not_contains "$prompt" "JOURNAL"
+    _teardown_mem
+  }
+
+  it "plan prompt includes Plan concisely instruction" && {
+    _setup_mem
+    prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
+    assert_contains "$prompt" "Plan concisely"
     _teardown_mem
   }
 

@@ -99,7 +99,7 @@ lodge /ask "what is a monad?"      # Quick question
 | `/clone <repo>` | `lgcl` | Clone + auto-setup a repo |
 | `/status` | `lgs` | Show agent + device status |
 | `/memory` | `lgm` | Show current CLAUDE.md |
-| `/soul` | — | Show agent personality |
+| `/soul` | — | Toggle soul intensity (condensed/full) |
 | `/journal <cmd>` | — | View/write journal (show/vivid/fading/sediment/write/decay) |
 | `/reflect` | — | Record a reflection in journal |
 | `/sandbox <cmd>` | `lgx` | Manage sandboxes (list/new/build/rm/cd/clone) |
@@ -124,7 +124,8 @@ lodge /ask "what is a monad?"      # Quick question
 | `/slash <cmd>` | — | Custom commands (list/create/edit/delete/test) |
 | `/vitals` | — | System vitals (CPU, RAM, disk, battery, WiFi) |
 | `/think` | — | Toggle thinking mode on/off |
-| `/soul` | — | Toggle soul mode (full personality injection) |
+| `/soul` | — | Toggle soul mode (condensed ~250 tok / full ~4500 tok) |
+| `/limits` | — | View/adjust agent planning limits (steps/depth/milestones) |
 | `/cleanup` | — | Remove George's created files |
 | `/ask <question>` | — | Quick question (no file changes) |
 | `/read <file>` | — | Read a file |

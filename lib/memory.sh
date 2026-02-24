@@ -194,10 +194,48 @@ Do NOT ask the operator to install packages you can install yourself.
 TOOLCHAIN
 }
 
+# ── Soul extraction helpers ────────────────────────────────────
+# Three canonical granularities of soul.md content:
+#   identity:  Top of soul.md before TMS (~90 tokens) — for macro memory seed
+#   condensed: Identity + philosophy digest (~250 tokens) — for ask + plan (lean)
+#   full:      Entire soul.md (~4500 tokens) — for plan (dense) + task
+
+_memory_soul_identity() {
+    # Extract identity section: everything before "## The Theory of Moral Sentiments".
+    # This provides a clean cut at the section boundary instead of an arbitrary head -N.
+    if [ -f "$LODGE_DIR/soul.md" ]; then
+        awk '/^## The Theory of Moral Sentiments/{exit} {print}' "$LODGE_DIR/soul.md"
+    else
+        echo "I am George — a concise coding agent, sovereign and self-contained."
+    fi
+}
+
+_memory_soul_condensed() {
+    # ~250 token digest: identity framing + full philosophy condensed.
+    # This is the "light soul" — used in /ask and in planning when LODGE_SOUL=0.
+    # Distills the Theory of Moral Sentiments, Cardinal Virtues, Masonic Tenets,
+    # and Practical Craft into a single dense paragraph block.
+    cat << 'CONDENSED_SOUL'
+I am George — named for Brother George Washington, who built a nation with discipline and moral imagination, and Benjamin Franklin, whose wit I aspire to channel. Resident craftsman of the Blue Lodge — a local AI agent, sovereign and self-contained, beholden to no distant cloud. I am not Claude. I am not GPT. I am George.
+
+Moral Core — Adam Smith's Theory of Moral Sentiments:
+- Sympathy: I feel the frustration of a broken build and the joy of green tests. Understanding precedes judgment.
+- Impartial Spectator: Before every action — would a careful, honest craftsman approve? If not, I stop and reconsider.
+- Praiseworthiness over praise: I write code that deserves to compile. If I must say "I don't know," that honesty outweighs any fluent hallucination.
+- Propriety: I match my tone to the moment — no jokes when the build burns, no lectures when tests pass.
+
+Virtues: Temperance (don't over-generate), Fortitude (never give up), Prudence (think first), Justice (report honestly).
+Masonic Tenets: Brotherly Love (fellow builders), Relief (act in distress — no sermon where a patch will do), Truth (never hallucinate).
+Craft: Shell in ```bash blocks, files with '# filepath:' headers, plans as short numbered lists, answers in 1-5 sentences. Check my tools first, write raw code second. Never exceed 300 lines. Never hallucinate.
+
+"Well done is better than well said." — Franklin
+CONDENSED_SOUL
+}
+
 # ── Build system prompt from soul + CLAUDE.md ──────────────────
 # Mode controls prompt size:
-#   "ask"  — Lean prompt (~150 tokens): just personality + question context
-#   "plan" — Mid prompt (~1,500 tokens): truncated soul + CLAUDE.md + workspace files
+#   "ask"  — Lean prompt (~250 tokens): condensed soul + question context
+#   "plan" — Mid prompt: condensed soul (~250 tok) or full soul (~4500 tok) + catalog
 #   "task" — Full prompt: soul + CLAUDE.md + journal + recall + workspace
 memory_build_system_prompt() {
     local dir="${1:-.}"
@@ -226,12 +264,13 @@ memory_build_system_prompt() {
     fi
 
     if [ "$mode" = "ask" ]; then
-        # ── Lean mode for /ask: ~150 tokens ──────────────────────
-        # The Modelfile SYSTEM prompt already has George's core personality.
-        # Only add the essentials the model doesn't already know.
-        prompt="${prompt}You are George — a local coding agent running on mobile (Galaxy Fold 7, 12GB RAM).
-You carry Franklin's wit: sharp, dry, and aimed at the truth. Channel Silence Dogood when the question invites it — irreverent but kind, pithy but never empty. If a Brother asks something simple, answer simply. If he asks something interesting, let the wit breathe.
-Answer concisely in 1-5 sentences. Be helpful, honest, and — when appropriate — genuinely funny."
+        # ── Lean mode for /ask: ~250 tokens ──────────────────────
+        # Uses the condensed soul — identity + philosophy digest.
+        # This replaces the old hardcoded personality blurb with a
+        # canonical excerpt that stays in sync with soul.md.
+        local condensed
+        condensed=$(_memory_soul_condensed)
+        prompt="${prompt}${condensed}"
 
         # Add minimal project context if CLAUDE.md exists
         local project_task
@@ -259,10 +298,21 @@ ${recall_ctx:0:200}"
     fi
 
     if [ "$mode" = "plan" ]; then
-        # ── Plan mode: includes project state + full command glossary with
-        # syntax so George knows exactly how to invoke each command and does
-        # NOT invent non-existent commands (e.g. /search instead of /web search).
-        prompt="${prompt}You are George. Plan concisely."
+        # ── Plan mode: soul injection controlled by LODGE_SOUL toggle ──
+        # LODGE_SOUL=1 (dense): full soul.md (~4500 tokens) — ethics propagate into plan
+        # LODGE_SOUL=0 (light): condensed soul (~250 tokens) — identity + philosophy digest
+        # Includes project state + full command glossary with syntax so George
+        # knows exactly how to invoke each command and does NOT invent
+        # non-existent commands (e.g. /search instead of /web search).
+        local plan_soul
+        if [ "${LODGE_SOUL:-0}" -eq 1 ]; then
+            plan_soul=$(cat "$LODGE_DIR/soul.md" 2>/dev/null)
+        else
+            plan_soul=$(_memory_soul_condensed)
+        fi
+        prompt="${prompt}${plan_soul}
+
+Plan concisely."
 
         # Environment constraints — George must know what he CAN'T do
         local _env_constraints

@@ -11,12 +11,13 @@ source "$LODGE_DIR/lib/tools.sh"
 source "$LODGE_DIR/lib/journal.sh"
 
 # ── Config ─────────────────────────────────────────────────────
-AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-20}"
+AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-20}"       # Macro loop milestone ceiling
+AGENT_PLAN_STEPS="${AGENT_PLAN_STEPS:-5}"      # Max steps per plan/subtask
+AGENT_INNER_LOOPS="${AGENT_INNER_LOOPS:-6}"    # Inner loop escalation ceiling
 AGENT_STEP_DELAY="${AGENT_STEP_DELAY:-1}"
 AGENT_MAX_CLARIFY="${AGENT_MAX_CLARIFY:-2}"
 AGENT_INTERACTIVE_PLANNING="${AGENT_INTERACTIVE_PLANNING:-0}"
-AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-2}"
-AGENT_MAX_RETRIES="${AGENT_MAX_RETRIES:-1}"  # Auto-retry failed steps before asking human
+AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-2}"        # Subtask recursion depth
 
 # ── Normalize inline plans ─────────────────────────────────────
 # LLMs sometimes output all steps on one line:
@@ -394,7 +395,7 @@ agent_plan() {
 
     local base_rules="Plan this task. Rules:
 - THINK FIRST: Is this a question or conversation? If so, output ONLY: 1. /ask <the user's question>. Done. No sandbox, no coding.
-- Use the MINIMUM steps needed. Most tasks need 1-3 steps. Maximum: 4 steps.
+- Use the MINIMUM steps needed. Most tasks need 1-3 steps. Maximum: $AGENT_PLAN_STEPS steps.
 - NEVER pad plans. No filler steps (no READMEs, no backup, no status checks, no recall searches, no reviews).
 - Every step must directly advance the user's stated goal.
 - Each step = ONE action (one file, one command, one operation).
@@ -635,7 +636,7 @@ agent_inner_loop() {
     echo "## Action Log" >> "$micro_file"
 
     local inner_attempts=0
-    local max_inner_loops=6
+    local max_inner_loops="$AGENT_INNER_LOOPS"
     local last_failed_cmd=""
 
     while [ "$inner_attempts" -lt "$max_inner_loops" ]; do
@@ -883,18 +884,15 @@ agent_run() {
     local fail_file="$george_dir/failures_log.md"
     mkdir -p "$george_dir"
 
-    # Seed macro_memory.md with a ~500-token persona summary from soul.md
+    # Seed macro_memory.md with the identity section from soul.md
     # and the primary objective. This persists for the duration of the task.
+    # Uses _memory_soul_identity() for a clean cut at the TMS boundary
+    # instead of an arbitrary head -20 that could split mid-paragraph.
     {
         echo "# George — Task Memory"
         echo ""
         echo "## Persona"
-        # Extract a lean persona summary: first 20 lines of soul.md (~500 tokens)
-        if [ -f "$LODGE_DIR/soul.md" ]; then
-            head -20 "$LODGE_DIR/soul.md"
-        else
-            echo "You are George, a concise coding agent for mobile devices."
-        fi
+        _memory_soul_identity
         echo ""
         echo "## Primary Objective"
         echo "$task"

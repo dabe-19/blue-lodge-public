@@ -262,6 +262,81 @@ describe "Command handler functions"
     assert_eq "${LODGE_SOUL}" "0"
   }
 
+# ── /limits command ────────────────────────────────────────────
+describe "Limits command"
+
+  it "registers limits command" && {
+    commands_is_command "/limits"
+    assert_ok $?
+  }
+
+  it "_cmd_limits is defined" && {
+    declare -f _cmd_limits &>/dev/null
+    assert_ok $?
+  }
+
+  it "_cmd_limits show displays all limits" && {
+    output=$(_cmd_limits "" 2>&1)
+    echo "$output" | grep -q "Plan steps"
+    assert_ok $?
+  }
+
+  it "_cmd_limits steps sets AGENT_PLAN_STEPS" && {
+    _cmd_limits "steps 8" >/dev/null 2>&1
+    assert_eq "$AGENT_PLAN_STEPS" "8"
+    AGENT_PLAN_STEPS=5  # restore
+  }
+
+  it "_cmd_limits depth sets AGENT_MAX_DEPTH" && {
+    _cmd_limits "depth 4" >/dev/null 2>&1
+    assert_eq "$AGENT_MAX_DEPTH" "4"
+    AGENT_MAX_DEPTH=2  # restore
+  }
+
+  it "_cmd_limits milestones sets AGENT_MAX_STEPS" && {
+    _cmd_limits "milestones 30" >/dev/null 2>&1
+    assert_eq "$AGENT_MAX_STEPS" "30"
+    AGENT_MAX_STEPS=20  # restore
+  }
+
+  it "_cmd_limits inner sets AGENT_INNER_LOOPS" && {
+    _cmd_limits "inner 10" >/dev/null 2>&1
+    assert_eq "$AGENT_INNER_LOOPS" "10"
+    AGENT_INNER_LOOPS=6  # restore
+  }
+
+  it "_cmd_limits delay sets AGENT_STEP_DELAY" && {
+    _cmd_limits "delay 3" >/dev/null 2>&1
+    assert_eq "$AGENT_STEP_DELAY" "3"
+    AGENT_STEP_DELAY=1  # restore
+  }
+
+  it "_cmd_limits rejects invalid numbers" && {
+    _cmd_limits "steps 0" >/dev/null 2>&1
+    # Should remain at default since 0 is below min of 1
+    assert_eq "$AGENT_PLAN_STEPS" "5"
+  }
+
+  it "_cmd_limits rejects out-of-range values" && {
+    _cmd_limits "steps 999" >/dev/null 2>&1
+    # Should remain at default since 999 exceeds max of 20
+    assert_eq "$AGENT_PLAN_STEPS" "5"
+  }
+
+  it "_cmd_limits reset restores all defaults" && {
+    AGENT_PLAN_STEPS=10
+    AGENT_INNER_LOOPS=12
+    AGENT_MAX_STEPS=50
+    AGENT_MAX_DEPTH=5
+    AGENT_STEP_DELAY=5
+    _cmd_limits "reset" >/dev/null 2>&1
+    assert_eq "$AGENT_PLAN_STEPS" "5"
+    assert_eq "$AGENT_INNER_LOOPS" "6"
+    assert_eq "$AGENT_MAX_STEPS" "20"
+    assert_eq "$AGENT_MAX_DEPTH" "2"
+    assert_eq "$AGENT_STEP_DELAY" "1"
+  }
+
   it "_cmd_clear is defined" && {
     declare -f _cmd_clear &>/dev/null
     assert_ok $?

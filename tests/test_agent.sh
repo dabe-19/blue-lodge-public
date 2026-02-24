@@ -67,7 +67,7 @@ describe "Cancellation tracking"
 describe "agent_run input validation"
 
   it "fails with empty task" && {
-    agent_run "" "." 2>/dev/null
+    agent_run "" "." >/dev/null 2>&1
     assert_fail $?
   }
 
@@ -330,9 +330,9 @@ describe "Recursive subtask execution"
     assert_ok $?
   }
 
-  it "agent_run function body detects [SUBTASK] markers" && {
+  it "_agent_run_subtask detects [SUBTASK] markers" && {
     local body
-    body=$(declare -f agent_run)
+    body=$(declare -f _agent_run_subtask)
     echo "$body" | grep -q 'SUBTASK'
     assert_ok $?
   }
@@ -354,10 +354,48 @@ describe "Recursive subtask execution"
 # ── Plan prompt references configurable step limit ─────────────
 describe "Plan prompt uses configurable step limit"
 
-  it "agent_plan prompt enforces max 4 steps" && {
+  it "agent_plan prompt uses AGENT_PLAN_STEPS variable" && {
     local body
     body=$(declare -f agent_plan)
-    echo "$body" | grep -q 'Maximum: 4 steps'
+    echo "$body" | grep -q 'AGENT_PLAN_STEPS'
+    assert_ok $?
+  }
+
+  it "AGENT_PLAN_STEPS defaults to 5" && {
+    assert_eq "$AGENT_PLAN_STEPS" "5"
+  }
+
+  it "AGENT_PLAN_STEPS is overridable" && {
+    (
+      AGENT_PLAN_STEPS=8
+      assert_eq "$AGENT_PLAN_STEPS" "8"
+    )
+    assert_ok $?
+  }
+
+  it "AGENT_INNER_LOOPS defaults to 6" && {
+    assert_eq "$AGENT_INNER_LOOPS" "6"
+  }
+
+  it "AGENT_INNER_LOOPS is overridable" && {
+    (
+      AGENT_INNER_LOOPS=10
+      assert_eq "$AGENT_INNER_LOOPS" "10"
+    )
+    assert_ok $?
+  }
+
+  it "agent_inner_loop body uses AGENT_INNER_LOOPS" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'AGENT_INNER_LOOPS'
+    assert_ok $?
+  }
+
+  it "AGENT_MAX_RETRIES is removed (dead code)" && {
+    local body
+    body=$(cat "$LODGE_DIR/lib/agent.sh")
+    ! echo "$body" | grep -q 'AGENT_MAX_RETRIES'
     assert_ok $?
   }
 
@@ -519,6 +557,31 @@ describe "Escalation matrix in agent_inner_loop"
     local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'read -r guidance'
+    assert_ok $?
+  }
+
+# ── Soul injection in agent_run ───────────────────────────────
+describe "Soul injection in dual-loop architecture"
+
+  it "agent_run uses _memory_soul_identity for macro memory seed" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_memory_soul_identity'
+    assert_ok $?
+  }
+
+  it "agent_run does NOT use head -20 for soul extraction" && {
+    local body
+    body=$(declare -f agent_run)
+    # Old pattern was 'head -20' — should be replaced
+    ! echo "$body" | grep -q 'head -20'
+    assert_ok $?
+  }
+
+  it "agent_plan calls memory_build_system_prompt with plan mode" && {
+    local body
+    body=$(declare -f agent_plan)
+    echo "$body" | grep -q '"plan"'
     assert_ok $?
   }
 

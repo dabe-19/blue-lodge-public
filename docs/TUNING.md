@@ -10,13 +10,26 @@ George uses a **three-tier prompt system** that keeps token usage within budget:
 
 | Mode | Used by | System prompt size | Output cap | Total budget |
 |------|---------|-------------------|------------|-------------|
-| **ask** | `/ask`, short questions | ~150 tokens | 300 tokens | ~500 tokens |
-| **plan** | `agent_plan` | ~700 tokens | 512 tokens | ~1,200 tokens |
-| **task** | `agent_execute_step` | ~3,500 tokens | 2,048 tokens | ~5,500 tokens |
+| **ask** | `/ask`, short questions | ~250 tokens (condensed soul) | 300 tokens | ~600 tokens |
+| **plan** (light) | `agent_plan` (LODGE_SOUL=0) | ~700 tokens (condensed soul + catalog) | 512 tokens | ~1,200 tokens |
+| **plan** (dense) | `agent_plan` (LODGE_SOUL=1) | ~5,000 tokens (full soul + catalog) | 512 tokens | ~5,500 tokens |
+| **task** | `memory_build_system_prompt` task mode | ~3,500 tokens | 2,048 tokens | ~5,500 tokens |
 
-The **Modelfile SYSTEM prompt** (~300 tokens) is baked into every request by Ollama automatically, so George always knows who he is, even in lean "ask" mode.
+The **Modelfile SYSTEM prompt** (~300 tokens) is baked into every request by Ollama automatically but is **overridden** when a function passes its own system prompt. George always knows who he is because every prompt tier includes soul content.
 
-> **Note:** Plan mode uses a **lean command catalog** (`commands_catalog_plan()`, ~400 tokens) instead of the full catalog (~1,443 tokens). This keeps plan prompts compact while still giving George syntax-accurate command references.
+> **Note:** Plan mode uses a **lean command catalog** (`commands_catalog_plan()`, ~400 tokens) instead of the full catalog (~1,443 tokens). The `/soul` toggle controls whether planning gets the condensed soul (~250 tokens) or the full soul.md (~4,500 tokens) — allowing the operator to trade token budget for richer ethical grounding in plans.
+
+### Soul Injection Tiers
+
+The soul.md document (~4,500 tokens) is the source of George's identity and philosophy. Three canonical excerpts are derived from it:
+
+| Tier | Source | ~Tokens | Used by |
+|------|--------|---------|--------|
+| **Identity** | Top of soul.md (before TMS section) | ~90 | `agent_run()` macro memory seed |
+| **Condensed** | `_memory_soul_condensed()` in memory.sh | ~250 | `/ask`, planning (LODGE_SOUL=0) |
+| **Full** | `cat soul.md` | ~4,500 | Planning (LODGE_SOUL=1), task mode |
+
+Toggle with `/soul` (or `/soul on`/`/soul off`). Default is light (condensed).
 
 ### Why George doesn't need everything in-context
 
@@ -55,6 +68,34 @@ export LLM_TIMEOUT=180
 # Set to "0" to unload immediately after each request (saves RAM).
 export LLM_KEEP_ALIVE=30m
 ```
+
+### Agent Planning Limits
+
+These control how many steps, milestones, and retries George uses during task execution. All are adjustable at runtime via the `/limits` slash command or environment variables.
+
+```bash
+# Max steps per plan/subtask (default: 5)
+# Controls the "Maximum: N steps" instruction in agent_plan().
+# Higher = more detailed subtask decomposition.
+export AGENT_PLAN_STEPS=5
+
+# Max macro loop milestones (default: 20)
+# Safety ceiling for the Strategist loop in agent_run().
+export AGENT_MAX_STEPS=20
+
+# Inner loop escalation ceiling (default: 6)
+# How many route→execute cycles before human intervention.
+export AGENT_INNER_LOOPS=6
+
+# Subtask recursion depth (default: 2)
+# How deep [SUBTASK] nesting can go.
+export AGENT_MAX_DEPTH=2
+
+# Seconds between milestones (default: 1)
+export AGENT_STEP_DELAY=1
+```
+
+> **Runtime adjustment:** Use `/limits` to view or change any of these without restarting. For example: `/limits steps 8` raises the plan step cap to 8 for the current session. `/limits reset` restores all defaults.
 
 ### Model Selection
 
@@ -119,11 +160,15 @@ num_ctx = Modelfile_SYSTEM + system_prompt + user_prompt + output
 
 Budget breakdown by mode:
 
-| Mode | Modelfile SYSTEM | System prompt | User prompt | Output budget | Remaining |
-|------|-----------------|---------------|-------------|---------------|----------|
-| ask | ~300 | ~150 | ~20 | 300 | ~15,614 |
-| plan | ~300 | ~700 | ~100 | 512 | ~14,772 |
-| task | ~300 | ~3,500 | ~100 | 2,048 | ~10,436 |
+| Mode | System prompt | User prompt | Output budget | Remaining |
+|------|---------------|-------------|---------------|----------|
+| ask | ~250 (condensed soul) | ~20 | 300 | ~15,814 |
+| plan (light) | ~700 (condensed soul + catalog) | ~100 | 512 | ~15,072 |
+| plan (dense) | ~5,000 (full soul + catalog) | ~100 | 512 | ~10,772 |
+| task | ~3,500 | ~100 | 2,048 | ~10,736 |
+| inner loop | ~500 (router or specialist) | ~200 | 300 | ~15,384 |
+
+> **Note:** The Modelfile SYSTEM (~300 tokens) is overridden whenever a system prompt is passed via `llm_generate`/`llm_stream`. The inner loop (router + specialist) deliberately strips all personality for speed.
 
 **If your model has a smaller context window** (e.g., 2048 or 4096), you must reduce token budgets:
 
@@ -184,7 +229,7 @@ PARAMETER repeat_penalty 1.1
 # Keep George's personality (or customize it)
 SYSTEM """You are George — named for Brother George Washington, with the wit of Benjamin Franklin and the moral philosophy of Adam Smith's Theory of Moral Sentiments. You are a craftsman, not merely a tool. You run locally, sovereign and self-contained.
 
-Output rules: Shell commands in ```bash blocks. Files in code blocks with '# filepath: ./path' on line 1. Plans as numbered lists (1-4 steps, use [SUBTASK] for complex work). Answers in 1-5 sentences. Never exceed 300 lines. Never hallucinate. If uncertain, say so."""
+Output rules: Shell commands in ```bash blocks. Files in code blocks with '# filepath: ./path' on line 1. Plans as short numbered lists (use [SUBTASK] for complex work). Answers in 1-5 sentences. Never exceed 300 lines. Never hallucinate. If uncertain, say so."""
 ```
 
 ### Step 3: Build and use
@@ -243,8 +288,8 @@ George's default configuration targets the Galaxy Fold 7 (Snapdragon 8 Elite, 12
 
 The biggest bottleneck on CPU is processing the system prompt. Options:
 
-1. **Use the "ask" mode more often** — 150 tokens vs 3,500 for task mode
-2. **Trim soul.md** — Remove sections you don't use (TMS philosophy, etc.)
+1. **Use the "ask" mode more often** — ~250 tokens vs 3,500 for task mode
+2. **Keep `/soul off` (default)** — Light planning uses ~250 token condensed soul instead of ~4,500 full soul
 3. **Lower `num_ctx`** — Smaller context = smaller KV cache = faster prefill
 
 ```
@@ -301,12 +346,14 @@ George right-sizes token budgets per command:
 | Command | Output tokens | Why |
 |---------|--------------|-----|
 | `/ask` | 300 (`LLM_ASK_TOKENS`) | Quick answers, 1-5 sentences |
-| `/plan` | 512 | Numbered lists, 1-4 steps |
+| `/plan` | 512 | Numbered lists, 1-N steps (AGENT_PLAN_STEPS) |
 | `/commit` | 128 | Single commit message line |
 | `/reflect` | 256 | 2-4 sentence journal entry |
 | `/web summary` | 256 | 3-5 bullet points |
 | `/ingest summarize` | 256 | Document summary |
-| Task steps | 2048 (`LLM_MAX_TOKENS`) | Code generation, file writing |
+| Inner loop (router) | 300 (`LLM_ASK_TOKENS`) | Tool selection |
+| Inner loop (specialist) | 300 (`LLM_ASK_TOKENS`) | Command generation |
+| Macro loop (strategist) | 300 (`LLM_ASK_TOKENS`) | Next milestone |
 | Journal decay | 256 | Sediment compression |
 
 These are hardcoded to sensible defaults. To change them, modify the corresponding function call in the source (the third argument to `llm_generate` or `llm_stream`).
