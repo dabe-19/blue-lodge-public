@@ -18,6 +18,8 @@ AGENT_STEP_DELAY="${AGENT_STEP_DELAY:-1}"
 AGENT_MAX_CLARIFY="${AGENT_MAX_CLARIFY:-2}"
 AGENT_INTERACTIVE_PLANNING="${AGENT_INTERACTIVE_PLANNING:-0}"
 AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-2}"        # Subtask recursion depth
+AGENT_WEB_SUFFICIENCY="${AGENT_WEB_SUFFICIENCY:-3}"  # Web actions before sufficiency signal
+AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-2}"  # Max times to retry same milestone
 
 # ── Normalize inline plans ─────────────────────────────────────
 # LLMs sometimes output all steps on one line:
@@ -542,10 +544,14 @@ NOTE: Do NOT quote arguments. Slash commands parse by spaces, not shell quoting.
 /web fetch <url>         — Fetch a URL
 /github search <q>       — Find GitHub repos
 /journal write <text>    — Write to journal
-/social post discord <channel> <text> — Post to Discord channel (no quotes needed)
+/social post discord <channel> <text> — Post to Discord channel (resolves names)
 /social post telegram <text>  — Post to Telegram
 /social post x <text>        — Post to X/Twitter
-/social post <text>      — Post to all configured platforms
+/social post mastodon <text> — Post to Mastodon
+/social discord dm <user> <text> — DM a Discord user
+/social discord users sync   — Sync Discord user list
+/social discord channels sync — Sync Discord channels
+/social mastodon instances list — List Mastodon instances
 /social <platform> <act> — Platform-specific action
 /pgp sign|signpost|export — PGP operations
 /email send|inbox|status — Email operations (actual email only, NOT social)
@@ -657,6 +663,22 @@ agent_inner_loop() {
     # This is not appended — it is destroyed and recreated on every
     # handoff from the Macro loop.
     echo "# Micro Objective: $micro_objective" > "$micro_file"
+
+    # ── PRIMARY OBJECTIVE INJECTION ────────────────────────────
+    # Inject the overarching task goal so the inner loop's router and
+    # specialist never lose sight of the bigger picture. Without this,
+    # the LLM optimizes locally (e.g. fetching every URL) instead of
+    # progressing toward the user's actual request.
+    if [ -f "$george_dir/macro_memory.md" ]; then
+        local _primary_obj
+        _primary_obj=$(awk '/^## Primary Objective/{getline; if(NF) print; exit}' "$george_dir/macro_memory.md" 2>/dev/null)
+        if [ -n "$_primary_obj" ] && [ "$_primary_obj" != "$micro_objective" ]; then
+            echo "## Primary Objective (overall task — stay focused)" >> "$micro_file"
+            echo "$_primary_obj" >> "$micro_file"
+            echo "" >> "$micro_file"
+        fi
+    fi
+
     echo "## Action Log" >> "$micro_file"
 
     local inner_attempts=0
@@ -676,7 +698,19 @@ agent_inner_loop() {
 
         # ── PHASE 1: Fast Tool Routing ────────────────────────
         local router_sys=$(_build_router_prompt)
-        local route_prompt="Review the Action Log. If objective complete, output SUCCESS: <summary>. Otherwise, output the tool name needed.\n\n$inner_context"
+        local route_prompt="Review the Action Log. If objective complete, output SUCCESS: <summary>. Otherwise, output the tool name needed."
+
+        # ── RESEARCH SUFFICIENCY GUIDANCE ──────────────────────
+        # For objectives involving web research, tell the router to
+        # output SUCCESS once there's enough gathered data instead
+        # of exhaustively scraping every URL from search results.
+        local _obj_lower_rt
+        _obj_lower_rt=$(echo "$micro_objective" | tr '[:upper:]' '[:lower:]')
+        if [[ "$_obj_lower_rt" == *search* ]] || [[ "$_obj_lower_rt" == *web* ]] || [[ "$_obj_lower_rt" == *fetch* ]] || [[ "$_obj_lower_rt" == *find* ]] || [[ "$_obj_lower_rt" == *look*up* ]]; then
+            route_prompt="${route_prompt}\nWEB RESEARCH RULE: You have ENOUGH data after 1 search + 1-2 page fetches. Do NOT fetch every URL. Once you have substantive content, output SUCCESS with a summary of findings."
+        fi
+
+        route_prompt="${route_prompt}\n\n$inner_context"
 
         # llm_generate is used here for maximum speed — no streaming,
         # no personality, just returns the raw string.
@@ -850,6 +884,22 @@ agent_inner_loop() {
 
             if [ $exit_code -eq 0 ]; then
                 echo -e "\n**Action:** \`$cmd\`\n**Result:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
+
+                # ── WEB SUFFICIENCY GATE ───────────────────────
+                # Prevent George from exhaustively scraping every
+                # URL returned by a search. After N successful web
+                # actions, inject a strong "stop fetching" signal
+                # into micro_memory so the router outputs SUCCESS
+                # on the next iteration instead of routing to /web.
+                if [[ "$cmd" == /web* ]]; then
+                    local _web_ok_count
+                    _web_ok_count=$(grep -c '^\*\*Action:\*\* `/web' "$micro_file" 2>/dev/null || echo 0)
+                    if [ "$_web_ok_count" -ge "${AGENT_WEB_SUFFICIENCY:-3}" ]; then
+                        echo -e "\n**SUFFICIENCY REACHED:** $_web_ok_count web actions completed. You have gathered enough data to fulfill the objective. Do NOT fetch more URLs. Summarize your findings and output SUCCESS: <summary>." >> "$micro_file"
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Web sufficiency gate: $_web_ok_count actions reached threshold"
+                    fi
+                fi
+
                 inner_attempts=$((inner_attempts + 1))
                 continue
             fi
@@ -952,6 +1002,19 @@ agent_inner_loop() {
     printf "  %bGeorge needs help. Provide a command, explanation, or 'abort': %b" "$C_BOLD" "$C_RESET"
     local guidance
     read -r guidance < /dev/tty
+
+    # ── ABORT PROPAGATION ─────────────────────────────────────
+    # When the operator types 'abort', propagate cancellation to the
+    # macro loop so the entire task stops — not just this milestone.
+    # Previously, abort only terminated the inner loop and the macro
+    # loop would immediately generate the same failed milestone again.
+    if [ "$guidance" = "abort" ]; then
+        _LODGE_CANCELLED=1
+        touch "$_cancel_file" 2>/dev/null
+        echo "- Step: $micro_objective -> ABORTED by operator" >> "$george_dir/macro_memory.md"
+        return 1
+    fi
+
     if [ -n "$guidance" ] && [ "$guidance" != "abort" ]; then
         echo -e "\n**Operator Guidance:** $guidance" >> "$micro_file"
 
@@ -1106,6 +1169,10 @@ agent_run() {
     local completed_milestones=0
     local failed_milestones=""
     local _exec_log=""
+    # Milestone deduplication: track attempted milestones so the
+    # strategist doesn't regenerate the same failed milestone in a
+    # loop. Each entry is "status|milestone_text".
+    local -a _attempted_milestones=()
 
     while [ "$macro_iterations" -lt "$max_macro_loops" ]; do
         # Check for cancellation between milestones
@@ -1150,6 +1217,16 @@ agent_run() {
             _svc_status=$(commands_services_status 2>/dev/null)
         fi
 
+        # ── Inject milestone history into strategist prompt ─────
+        # Prevents the strategist from regenerating failed milestones.
+        local _milestone_history=""
+        if [ ${#_attempted_milestones[@]} -gt 0 ]; then
+            _milestone_history="\n\nPREVIOUSLY ATTEMPTED MILESTONES (do NOT repeat failed ones):"
+            for _am in "${_attempted_milestones[@]}"; do
+                _milestone_history="${_milestone_history}\n- ${_am}"
+            done
+        fi
+
         local macro_sys="You are a strategic planning engine. Given a task memory with completed milestones, determine the single next milestone needed.
 
 Rules:
@@ -1159,8 +1236,10 @@ Rules:
 - Do NOT use /sandbox to run slash commands. Slash commands run directly.
 - ONLY use services that are CONFIGURED: ${_svc_status:-unknown}
 - Frame milestones as tool-executable actions, not abstract goals
+- Do NOT regenerate a milestone that previously FAILED — try a different approach or skip it
+- For multi-part tasks, advance to the NEXT part even if a previous part partially failed
 - Output either DONE or a concise milestone description (one sentence, imperative mood)
-- Output NOTHING else"
+- Output NOTHING else${_milestone_history}"
 
         ui_think "Strategist: determining next milestone..."
         local milestone
@@ -1180,6 +1259,33 @@ Rules:
             break
         fi
 
+        # ── MILESTONE DEDUPLICATION CHECK ─────────────────────
+        # If the strategist generated a milestone substantially similar
+        # to one that already failed, detect it and either force the
+        # strategist to try a different approach or skip ahead.
+        local _milestone_lower
+        _milestone_lower=$(echo "$milestone" | tr '[:upper:]' '[:lower:]')
+        local _dup_count=0
+        for _prev in "${_attempted_milestones[@]}"; do
+            local _prev_text _prev_lower
+            _prev_text="${_prev#*|}"  # strip "FAILED|" or "OK|" prefix
+            _prev_lower=$(echo "$_prev_text" | tr '[:upper:]' '[:lower:]')
+            # Check for substantial similarity (first 40 chars match or
+            # both contain the same primary slash command + keyword)
+            if [ "${_milestone_lower:0:40}" = "${_prev_lower:0:40}" ]; then
+                _dup_count=$((_dup_count + 1))
+            fi
+        done
+        if [ "$_dup_count" -ge "${AGENT_MAX_MILESTONE_RETRIES:-2}" ]; then
+            ui_warn "Milestone '$milestone' already attempted $_dup_count times — forcing progression"
+            echo "- Milestone: $milestone -> SKIPPED (duplicate of failed milestone)" >> "$macro_file"
+            _attempted_milestones+=("SKIPPED|$milestone")
+            macro_iterations=$((macro_iterations + 1))
+            _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — SKIPPED (dup)\n"
+            sleep "${AGENT_STEP_DELAY:-1}"
+            continue
+        fi
+
         # ── Execute milestone via Micro Loop ──────────────────
         macro_iterations=$((macro_iterations + 1))
         echo ""
@@ -1189,11 +1295,13 @@ Rules:
         if agent_inner_loop "$milestone" "$workdir"; then
             completed_milestones=$((completed_milestones + 1))
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — OK\n"
+            _attempted_milestones+=("OK|$milestone")
         else
             failed_milestones="${failed_milestones:+${failed_milestones}, }milestone $macro_iterations: $milestone"
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — FAILED\n"
+            _attempted_milestones+=("FAILED|$milestone")
 
-            # Check if failure was due to cancellation
+            # Check if failure was due to cancellation or operator abort
             if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
                 ui_warn "Milestone $macro_iterations cancelled"
                 break

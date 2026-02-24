@@ -94,7 +94,129 @@ x_delete() {
 # Mastodon — ActivityPub-compatible instances
 # ═══════════════════════════════════════════════════════════════
 # Setup: Settings → Development → New Application → Access Token
-# Keys: MASTODON_INSTANCE, MASTODON_ACCESS_TOKEN
+# Keys: MASTODON_ACCESS_TOKEN (legacy single-instance)
+# Multi-instance: mastodon_instances.db (instance_url → access_token registry)
+# Users can configure multiple Mastodon instances and tokens.
+
+MASTODON_INSTANCES_DB="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/mastodon_instances.db"
+
+_mastodon_instances_init() {
+    if ! command -v sqlite3 &>/dev/null; then
+        ui_err "sqlite3 required for Mastodon instance registry"
+        return 1
+    fi
+    mkdir -p "$(dirname "$MASTODON_INSTANCES_DB")"
+    sqlite3 "$MASTODON_INSTANCES_DB" <<'SQL'
+CREATE TABLE IF NOT EXISTS instances (
+    instance_url TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    access_token TEXT NOT NULL,
+    display_name TEXT DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+SQL
+}
+
+# Add a Mastodon instance + token
+mastodon_instance_add() {
+    local instance_url="$1"
+    local access_token="$2"
+    local display_name="${3:-}"
+    # Normalize: ensure https://
+    [[ "$instance_url" != https://* ]] && [[ "$instance_url" != http://* ]] && instance_url="https://$instance_url"
+    # Strip trailing slash
+    instance_url="${instance_url%/}"
+    _mastodon_instances_init || return 1
+    sqlite3 "$MASTODON_INSTANCES_DB" \
+        "INSERT OR REPLACE INTO instances(instance_url, access_token, display_name)
+         VALUES ('$instance_url', '$access_token', '$display_name');"
+    ui_ok "Registered Mastodon instance: $instance_url${display_name:+ ($display_name)}"
+}
+
+# Remove a Mastodon instance
+mastodon_instance_remove() {
+    local instance_url="$1"
+    [[ "$instance_url" != https://* ]] && [[ "$instance_url" != http://* ]] && instance_url="https://$instance_url"
+    instance_url="${instance_url%/}"
+    _mastodon_instances_init || return 1
+    sqlite3 "$MASTODON_INSTANCES_DB" \
+        "DELETE FROM instances WHERE instance_url = '$instance_url' COLLATE NOCASE;"
+    ui_ok "Removed Mastodon instance: $instance_url"
+}
+
+# List all Mastodon instances
+mastodon_instance_list() {
+    _mastodon_instances_init || return 1
+    local count
+    count=$(sqlite3 "$MASTODON_INSTANCES_DB" "SELECT COUNT(*) FROM instances;" 2>/dev/null)
+    if [ "${count:-0}" -eq 0 ]; then
+        # Check for legacy single-instance config
+        if api_get_key "MASTODON_ACCESS_TOKEN" &>/dev/null; then
+            local _inst
+            _inst=$(_mastodon_base)
+            printf "  %b●%b %s (legacy key)\n" "$C_GREEN" "$C_RESET" "$_inst"
+        else
+            ui_dim "No Mastodon instances registered"
+            ui_dim "Add one: /social mastodon instances add <url> <token>"
+        fi
+        return
+    fi
+    ui_section "Mastodon Instances ($count)"
+    sqlite3 -separator ' | ' "$MASTODON_INSTANCES_DB" \
+        "SELECT instance_url, COALESCE(NULLIF(display_name,''), '(unnamed)') FROM instances ORDER BY instance_url;" 2>/dev/null | \
+        while IFS= read -r line; do
+            printf "  %b●%b %s\n" "$C_GREEN" "$C_RESET" "$line"
+        done
+}
+
+# Get token for a specific instance (or default)
+_mastodon_instance_token() {
+    local instance_url="${1:-}"
+    # Try instance registry first
+    if [ -n "$instance_url" ]; then
+        [[ "$instance_url" != https://* ]] && [[ "$instance_url" != http://* ]] && instance_url="https://$instance_url"
+        instance_url="${instance_url%/}"
+        _mastodon_instances_init 2>/dev/null
+        local token
+        token=$(sqlite3 "$MASTODON_INSTANCES_DB" \
+            "SELECT access_token FROM instances WHERE instance_url = '$instance_url' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
+        if [ -n "$token" ]; then
+            echo "$token"
+            return 0
+        fi
+    fi
+    # Try first registered instance
+    _mastodon_instances_init 2>/dev/null
+    local first_token
+    first_token=$(sqlite3 "$MASTODON_INSTANCES_DB" \
+        "SELECT access_token FROM instances LIMIT 1;" 2>/dev/null)
+    if [ -n "$first_token" ]; then
+        echo "$first_token"
+        return 0
+    fi
+    # Fall back to legacy single key
+    api_get_key "MASTODON_ACCESS_TOKEN"
+}
+
+# Get base URL for a specific or default instance
+_mastodon_instance_url() {
+    local instance_url="${1:-}"
+    if [ -n "$instance_url" ]; then
+        [[ "$instance_url" != https://* ]] && [[ "$instance_url" != http://* ]] && instance_url="https://$instance_url"
+        echo "${instance_url%/}"
+        return
+    fi
+    # Try first registered instance
+    _mastodon_instances_init 2>/dev/null
+    local first_url
+    first_url=$(sqlite3 "$MASTODON_INSTANCES_DB" \
+        "SELECT instance_url FROM instances LIMIT 1;" 2>/dev/null)
+    if [ -n "$first_url" ]; then
+        echo "$first_url"
+        return
+    fi
+    # Legacy fallback
+    _mastodon_base
+}
 
 _mastodon_base() {
     local instance
@@ -105,10 +227,17 @@ _mastodon_base() {
 mastodon_post() {
     local text="$1"
     local visibility="${2:-public}"  # public, unlisted, private, direct
+    local instance="${3:-}"          # optional: specific instance URL
     local token
-    token=$(api_require_key "MASTODON_ACCESS_TOKEN" "Mastodon") || return 1
+    token=$(_mastodon_instance_token "$instance")
+    if [ -z "$token" ]; then
+        ui_err "Mastodon: No access token configured"
+        ui_dim "Add one: /social mastodon instances add <url> <token>"
+        ui_dim "Or set: /api keys set MASTODON_ACCESS_TOKEN <token>"
+        return 1
+    fi
     local base
-    base=$(_mastodon_base)
+    base=$(_mastodon_instance_url "$instance")
 
     local data
     data=$(jq -n --arg s "$text" --arg v "$visibility" \
@@ -338,6 +467,11 @@ discord_send() {
             return 1
         fi
         channel_id="$resolved"
+    fi
+
+    # Auto-resolve @mentions in the message to Discord <@user_id> format
+    if [[ "$message" == *"@"* ]] && declare -f discord_resolve_mentions &>/dev/null; then
+        message=$(discord_resolve_mentions "$message")
     fi
 
     local token
@@ -596,6 +730,233 @@ discord_default_channel() {
         "SELECT channel_id FROM channels LIMIT 1;" 2>/dev/null
 }
 
+# ── Discord: User name→ID registry (SQLite) ──────────────────
+# Stores username → user_id mappings so George can @mention users
+# by name in Discord posts and send DMs.
+
+DISCORD_USERS_DB="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/discord_users.db"
+
+_discord_users_init() {
+    if ! command -v sqlite3 &>/dev/null; then
+        ui_err "sqlite3 required for user registry"
+        return 1
+    fi
+    mkdir -p "$(dirname "$DISCORD_USERS_DB")"
+    sqlite3 "$DISCORD_USERS_DB" <<'SQL'
+CREATE TABLE IF NOT EXISTS users (
+    username TEXT NOT NULL COLLATE NOCASE,
+    display_name TEXT DEFAULT '',
+    user_id TEXT NOT NULL UNIQUE,
+    guild_name TEXT DEFAULT '',
+    guild_id TEXT DEFAULT '',
+    is_bot INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username COLLATE NOCASE);
+SQL
+}
+
+# Resolve a username to a Discord user ID
+discord_user_resolve() {
+    local name="$1"
+    # Strip leading @ if present
+    name="${name#@}"
+    # Strip surrounding quotes
+    name=$(echo "$name" | sed 's/^["'\'']*//; s/["'\'']*$//')
+    name="${name#@}"  # double-strip in case quotes wrapped the @
+    _discord_users_init 2>/dev/null || return 1
+    sqlite3 "$DISCORD_USERS_DB" \
+        "SELECT user_id FROM users WHERE username = '$name' COLLATE NOCASE LIMIT 1;" 2>/dev/null
+}
+
+# Add a user mapping manually
+discord_user_add() {
+    local username="$1"
+    local user_id="$2"
+    local display_name="${3:-}"
+    local guild_name="${4:-}"
+    local guild_id="${5:-}"
+    username="${username#@}"
+    _discord_users_init || return 1
+    sqlite3 "$DISCORD_USERS_DB" \
+        "INSERT OR REPLACE INTO users(username, user_id, display_name, guild_name, guild_id)
+         VALUES ('$username', '$user_id', '$display_name', '$guild_name', '$guild_id');"
+    ui_ok "Registered user @${username} → ${user_id}${display_name:+ (${display_name})}"
+}
+
+# Remove a user mapping
+discord_user_remove() {
+    local username="$1"
+    username="${username#@}"
+    _discord_users_init || return 1
+    sqlite3 "$DISCORD_USERS_DB" \
+        "DELETE FROM users WHERE username = '$username' COLLATE NOCASE;"
+    ui_ok "Removed user @${username}"
+}
+
+# List all registered users
+discord_user_list() {
+    _discord_users_init || return 1
+    local count
+    count=$(sqlite3 "$DISCORD_USERS_DB" "SELECT COUNT(*) FROM users;" 2>/dev/null)
+    if [ "${count:-0}" -eq 0 ]; then
+        ui_dim "No users registered"
+        ui_dim "Sync from Discord: /social discord users sync"
+        ui_dim "Or add manually: /social discord users add <username> <user_id>"
+        return
+    fi
+    ui_section "Discord Users ($count)"
+    sqlite3 -separator ' | ' "$DISCORD_USERS_DB" \
+        "SELECT '@' || username, user_id, COALESCE(NULLIF(display_name,''), '(no display name)'), COALESCE(NULLIF(guild_name,''), '(no guild)') FROM users WHERE is_bot = 0 ORDER BY guild_name, username;" 2>/dev/null | \
+        while IFS= read -r line; do
+            printf "  %s\n" "$line"
+        done
+}
+
+# Sync users from all connected guilds via the Discord API
+discord_users_sync() {
+    local token
+    token=$(api_require_key "DISCORD_BOT_TOKEN" "Discord Bot") || return 1
+
+    _discord_users_init || return 1
+
+    ui_info "Fetching guilds..."
+    local guilds
+    guilds=$(api_get "https://discord.com/api/v10/users/@me/guilds" \
+        -H "Authorization: Bot $token")
+    if [ $? -ne 0 ]; then
+        ui_err "Failed to fetch guilds"
+        return 1
+    fi
+
+    local guild_count
+    guild_count=$(echo "$guilds" | jq 'length' 2>/dev/null)
+    if [ "${guild_count:-0}" -eq 0 ]; then
+        ui_warn "Bot is not in any servers"
+        return 1
+    fi
+
+    local total_added=0
+
+    echo "$guilds" | jq -r '.[]? | "\(.id) \(.name)"' 2>/dev/null | while IFS=' ' read -r gid gname; do
+        ui_dim "  Syncing members: $gname ($gid)..."
+        local members=""
+        local after=""
+        local batch_size=1000
+
+        # Paginate through guild members (max 1000 per request)
+        while true; do
+            local url="https://discord.com/api/v10/guilds/$gid/members?limit=$batch_size"
+            [ -n "$after" ] && url="${url}&after=${after}"
+
+            local batch
+            batch=$(api_get "$url" -H "Authorization: Bot $token")
+            if [ $? -ne 0 ]; then
+                ui_warn "  Failed to list members for $gname (may need SERVER MEMBERS intent)"
+                break
+            fi
+
+            local batch_count
+            batch_count=$(echo "$batch" | jq 'length' 2>/dev/null)
+            [ "${batch_count:-0}" -eq 0 ] && break
+
+            # Insert each member
+            echo "$batch" | jq -r '.[]? | "\(.user.id) \(.user.username) \(.user.global_name // "") \(.user.bot // false)"' 2>/dev/null | while IFS=' ' read -r uid uname dname is_bot; do
+                local bot_flag=0
+                [ "$is_bot" = "true" ] && bot_flag=1
+                sqlite3 "$DISCORD_USERS_DB" \
+                    "INSERT OR REPLACE INTO users(username, user_id, display_name, guild_name, guild_id, is_bot)
+                     VALUES ('$uname', '$uid', '$dname', '$gname', '$gid', $bot_flag);" 2>/dev/null
+                total_added=$((total_added + 1))
+            done
+
+            # Check if there are more pages
+            [ "$batch_count" -lt "$batch_size" ] && break
+            after=$(echo "$batch" | jq -r '.[-1].user.id' 2>/dev/null)
+            [ -z "$after" ] && break
+        done
+    done
+
+    local final_count
+    final_count=$(sqlite3 "$DISCORD_USERS_DB" "SELECT COUNT(*) FROM users WHERE is_bot = 0;" 2>/dev/null)
+    ui_ok "User registry synced — $final_count users total (excluding bots)"
+}
+
+# ── Discord: @mention resolution ──────────────────────────────
+# Replaces @username patterns in text with Discord <@user_id>
+# format for proper @ mentions in Discord messages.
+discord_resolve_mentions() {
+    local text="$1"
+    _discord_users_init 2>/dev/null || { echo "$text"; return; }
+
+    # Find all @word patterns and try to resolve each
+    local result="$text"
+    local mentions
+    mentions=$(echo "$text" | grep -oP '@[a-zA-Z0-9_.-]+' | sort -u)
+
+    while IFS= read -r mention; do
+        [ -z "$mention" ] && continue
+        local username="${mention#@}"
+        local user_id
+        user_id=$(discord_user_resolve "$username")
+        if [ -n "$user_id" ]; then
+            # Replace @username with <@user_id> for Discord mention format
+            result=$(echo "$result" | sed "s|@${username}|<@${user_id}>|g")
+        fi
+    done <<< "$mentions"
+
+    echo "$result"
+}
+
+# ── Discord: DM (Direct Message) ─────────────────────────────
+# Creates a DM channel with a user and sends a message.
+# Requires the bot to share a server with the user.
+discord_dm() {
+    local user_id="$1"
+    local message="$2"
+
+    # Resolve username to ID if not numeric
+    if ! [[ "$user_id" =~ ^[0-9]+$ ]]; then
+        local resolved
+        resolved=$(discord_user_resolve "$user_id")
+        if [ -z "$resolved" ]; then
+            ui_err "Unknown user: $user_id"
+            ui_dim "Sync users: /social discord users sync"
+            return 1
+        fi
+        user_id="$resolved"
+    fi
+
+    local token
+    token=$(api_require_key "DISCORD_BOT_TOKEN" "Discord Bot") || return 1
+
+    # Step 1: Create DM channel
+    local dm_data
+    dm_data=$(jq -n --arg r "$user_id" '{"recipient_id": $r}')
+
+    local dm_resp
+    dm_resp=$(api_post "https://discord.com/api/v10/users/@me/channels" "$dm_data" \
+        -H "Authorization: Bot $token")
+
+    if [ $? -ne 0 ]; then
+        local err_msg
+        err_msg=$(api_json_get "${_API_LAST_BODY:-}" '.message // "unknown error"')
+        ui_err "Failed to create DM channel: $err_msg"
+        ui_dim "The bot may lack permission to DM this user"
+        return 1
+    fi
+
+    local dm_channel_id
+    dm_channel_id=$(api_json_get "$dm_resp" '.id')
+    if [ -z "$dm_channel_id" ]; then
+        ui_err "Failed to get DM channel ID"
+        return 1
+    fi
+
+    # Step 2: Send message to the DM channel
+    discord_send "$dm_channel_id" "$message"
+}
+
 # ═══════════════════════════════════════════════════════════════
 # Telegram — Bot API
 # ═══════════════════════════════════════════════════════════════
@@ -667,7 +1028,13 @@ telegram_get_me() {
 # ═══════════════════════════════════════════════════════════════
 # Unified social dispatcher
 # ═══════════════════════════════════════════════════════════════
-# Post to one or more platforms at once
+# Post to one or all platforms.
+#
+# Canonical form: social_post <platform> <channel_or_empty> <text>
+# Toggle: SOCIAL_UNIFIED_POST=1 → /social post <text> broadcasts to ALL
+#         SOCIAL_UNIFIED_POST=0 (default) → requires explicit platform
+
+SOCIAL_UNIFIED_POST="${SOCIAL_UNIFIED_POST:-0}"
 
 social_post() {
     local text="$1"
@@ -675,7 +1042,13 @@ social_post() {
     local platforms=("$@")
 
     if [ ${#platforms[@]} -eq 0 ]; then
-        platforms=("all")
+        if [ "${SOCIAL_UNIFIED_POST:-0}" -eq 1 ]; then
+            platforms=("all")
+        else
+            ui_err "No platform specified. Use: /social post <platform> [channel] <text>"
+            ui_dim "Or enable unified posting: /api keys set SOCIAL_UNIFIED_POST 1"
+            return 1
+        fi
     fi
 
     local results=()
@@ -712,7 +1085,9 @@ social_post() {
             all)
                 # Try all configured platforms
                 api_get_key "X_BEARER_TOKEN" &>/dev/null && { x_post "$text" && results+=("X: ✓") || results+=("X: ✗"); }
-                api_get_key "MASTODON_ACCESS_TOKEN" &>/dev/null && { mastodon_post "$text" && results+=("Mastodon: ✓") || results+=("Mastodon: ✗"); }
+                local _masto_token
+                _masto_token=$(_mastodon_instance_token "" 2>/dev/null)
+                [ -n "$_masto_token" ] && { mastodon_post "$text" && results+=("Mastodon: ✓") || results+=("Mastodon: ✗"); }
                 api_get_key "BLUESKY_APP_PASSWORD" &>/dev/null && { bluesky_post "$text" && results+=("Bluesky: ✓") || results+=("Bluesky: ✗"); }
                 # Discord: webhook preferred, bot API fallback
                 if api_get_key "DISCORD_WEBHOOK_URL" &>/dev/null; then
@@ -747,16 +1122,67 @@ social_status() {
     ui_section "Social Integrations"
     local configured=0
 
-    for platform in X_BEARER_TOKEN MASTODON_ACCESS_TOKEN BLUESKY_APP_PASSWORD DISCORD_BOT_TOKEN DISCORD_WEBHOOK_URL TELEGRAM_BOT_TOKEN; do
-        local name
-        name=$(echo "$platform" | sed 's/_BEARER_TOKEN//;s/_ACCESS_TOKEN//;s/_APP_PASSWORD//;s/_BOT_TOKEN//;s/_WEBHOOK_URL//')
-        if api_get_key "$platform" &>/dev/null; then
-            printf "  %b●%b %-15s configured\n" "$C_GREEN" "$C_RESET" "$name"
-            configured=$((configured + 1))
-        else
-            printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "$name"
-        fi
-    done
+    # X / Twitter
+    if api_get_key "X_BEARER_TOKEN" &>/dev/null; then
+        printf "  %b●%b %-15s configured\n" "$C_GREEN" "$C_RESET" "X"
+        configured=$((configured + 1))
+    else
+        printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "X"
+    fi
+
+    # Mastodon — check multi-instance registry first, then legacy key
+    local _masto_instances
+    _masto_instances=$(mastodon_instance_list 2>/dev/null | grep -c "^" || true)
+    if [ "${_masto_instances:-0}" -gt 0 ]; then
+        printf "  %b●%b %-15s configured (%s instance%s)\n" "$C_GREEN" "$C_RESET" "MASTODON" "$_masto_instances" "$([ "$_masto_instances" -ne 1 ] && echo 's')"
+        configured=$((configured + 1))
+    elif api_get_key "MASTODON_ACCESS_TOKEN" &>/dev/null; then
+        printf "  %b●%b %-15s configured (legacy key)\n" "$C_GREEN" "$C_RESET" "MASTODON"
+        configured=$((configured + 1))
+    else
+        printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "MASTODON"
+    fi
+
+    # Bluesky
+    if api_get_key "BLUESKY_APP_PASSWORD" &>/dev/null; then
+        printf "  %b●%b %-15s configured\n" "$C_GREEN" "$C_RESET" "BLUESKY"
+        configured=$((configured + 1))
+    else
+        printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "BLUESKY"
+    fi
+
+    # Discord
+    if api_get_key "DISCORD_BOT_TOKEN" &>/dev/null; then
+        local _chan_count _user_count
+        _chan_count=$(discord_channels_list 2>/dev/null | grep -c "^" || true)
+        _user_count=$(discord_user_list 2>/dev/null | grep -c "^" || true)
+        printf "  %b●%b %-15s configured (bot" "$C_GREEN" "$C_RESET" "DISCORD"
+        [ "${_chan_count:-0}" -gt 0 ] && printf ", %s channels" "$_chan_count"
+        [ "${_user_count:-0}" -gt 0 ] && printf ", %s users" "$_user_count"
+        printf ")\n"
+        configured=$((configured + 1))
+    elif api_get_key "DISCORD_WEBHOOK_URL" &>/dev/null; then
+        printf "  %b●%b %-15s configured (webhook)\n" "$C_GREEN" "$C_RESET" "DISCORD"
+        configured=$((configured + 1))
+    else
+        printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "DISCORD"
+    fi
+
+    # Telegram
+    if api_get_key "TELEGRAM_BOT_TOKEN" &>/dev/null; then
+        printf "  %b●%b %-15s configured\n" "$C_GREEN" "$C_RESET" "TELEGRAM"
+        configured=$((configured + 1))
+    else
+        printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "TELEGRAM"
+    fi
+
+    # Unified post toggle
+    echo ""
+    if [ "${SOCIAL_UNIFIED_POST:-0}" -eq 1 ]; then
+        ui_dim "  Unified posting: ON (posts broadcast to all platforms)"
+    else
+        ui_dim "  Unified posting: OFF (posts require explicit platform)"
+    fi
 
     if [ "$configured" -eq 0 ]; then
         echo ""

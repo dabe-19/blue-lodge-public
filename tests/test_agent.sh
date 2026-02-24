@@ -842,4 +842,164 @@ describe "Soul injection in dual-loop architecture"
     assert_ok $?
   }
 
+# ── Web Sufficiency Gate ───────────────────────────────────────
+describe "Web sufficiency gate in agent_inner_loop"
+
+  it "AGENT_WEB_SUFFICIENCY defaults to 3" && {
+    assert_eq "$AGENT_WEB_SUFFICIENCY" "3"
+  }
+
+  it "inner loop body contains SUFFICIENCY REACHED injection" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'SUFFICIENCY REACHED'
+    assert_ok $?
+  }
+
+  it "sufficiency gate checks _web_ok_count against threshold" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'AGENT_WEB_SUFFICIENCY'
+    assert_ok $?
+  }
+
+  it "sufficiency gate only fires for /web commands" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    # Must contain the conditional: cmd == /web*
+    echo "$body" | grep -q '/web\*'
+    assert_ok $?
+  }
+
+# ── Primary Objective Injection ────────────────────────────────
+describe "Primary objective injection in inner loop"
+
+  it "inner loop injects primary objective from macro_memory.md" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'Primary Objective'
+    assert_ok $?
+  }
+
+  it "injection reads from macro_memory.md" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'macro_memory.md'
+    assert_ok $?
+  }
+
+  it "injection only adds objective when different from micro objective" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    # Must compare _primary_obj != micro_objective
+    echo "$body" | grep -q '_primary_obj.*!=.*micro_objective'
+    assert_ok $?
+  }
+
+# ── Router Research Guidance ────────────────────────────────────
+describe "Router web research sufficiency guidance"
+
+  it "route_prompt includes WEB RESEARCH RULE for search objectives" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'WEB RESEARCH RULE'
+    assert_ok $?
+  }
+
+  it "research guidance triggers for search-related objectives" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    # Must check for web/search/fetch/find keywords
+    echo "$body" | grep -q '_obj_lower_rt.*search'
+    assert_ok $?
+  }
+
+# ── Abort Propagation ─────────────────────────────────────────
+describe "Abort propagation from inner loop to macro loop"
+
+  it "abort sets _LODGE_CANCELLED flag" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    # Must contain: guidance = abort -> _LODGE_CANCELLED=1
+    echo "$body" | grep -q 'guidance.*abort'
+    assert_ok $?
+    echo "$body" | grep -q '_LODGE_CANCELLED=1'
+    assert_ok $?
+  }
+
+  it "abort touches cancel file for subshell visibility" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'touch.*_cancel_file'
+    assert_ok $?
+  }
+
+  it "abort writes ABORTED to macro_memory" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'ABORTED by operator'
+    assert_ok $?
+  }
+
+  it "abort returns 1 immediately without guided retry" && {
+    # Verify abort block (with return 1) appears before guided retry block
+    # in the source file. declare -f strips comments so we read the file.
+    local abort_line guided_line
+    abort_line=$(grep -n 'ABORTED by operator' "$LODGE_DIR/lib/agent.sh" | head -1 | cut -d: -f1)
+    guided_line=$(grep -n 'Catalog-Aware Guided Retry' "$LODGE_DIR/lib/agent.sh" | head -1 | cut -d: -f1)
+    [ -n "$abort_line" ] && [ -n "$guided_line" ] && [ "$abort_line" -lt "$guided_line" ]
+    assert_ok $?
+  }
+
+# ── Milestone Deduplication ────────────────────────────────────
+describe "Milestone deduplication in macro loop"
+
+  it "AGENT_MAX_MILESTONE_RETRIES defaults to 2" && {
+    assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "2"
+  }
+
+  it "agent_run initializes _attempted_milestones array" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_attempted_milestones'
+    assert_ok $?
+  }
+
+  it "agent_run tracks milestone outcomes (OK/FAILED) in array" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'OK|'
+    assert_ok $?
+    echo "$body" | grep -q 'FAILED|'
+    assert_ok $?
+  }
+
+  it "strategist prompt includes 'do NOT repeat failed milestones' rule" && {
+    # Check the source file directly since declare -f may mangle multi-byte
+    # characters (em dashes) in string literals.
+    grep -q 'Do NOT regenerate a milestone that previously FAILED' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $?
+  }
+
+  it "milestone history injected into strategist system prompt" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'PREVIOUSLY ATTEMPTED MILESTONES'
+    assert_ok $?
+  }
+
+  it "duplicate milestones are skipped after max retries" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'SKIPPED (duplicate of failed milestone)'
+    assert_ok $?
+  }
+
+  it "deduplication checks first 40 chars for similarity" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_milestone_lower:0:40'
+    assert_ok $?
+  }
+
 test_end

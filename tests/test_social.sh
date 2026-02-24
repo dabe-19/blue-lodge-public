@@ -488,9 +488,19 @@ describe "_mastodon_base"
 # ── /social post dispatch (lodge _cmd_social) ──────────────────
 describe "social_post dispatch parsing"
 
-  it "social_post accepts message-only (no platform)" && {
+  it "social_post requires platform when unified toggle off" && {
     _setup_social
-    # With no platforms configured, social_post should still succeed
+    export SOCIAL_UNIFIED_POST=0
+    out=$(social_post "Hello world this is a test message" 2>&1)
+    rc=$?
+    assert_eq "$rc" "1"
+    assert_contains "$out" "No platform specified"
+    _teardown_social
+  }
+
+  it "social_post broadcasts when unified toggle on" && {
+    _setup_social
+    export SOCIAL_UNIFIED_POST=1
     out=$(social_post "Hello world this is a test message" 2>&1)
     assert_ok $?
     _teardown_social
@@ -506,7 +516,179 @@ describe "social_post dispatch parsing"
 
   it "social_post handles quoted message with spaces" && {
     _setup_social
+    export SOCIAL_UNIFIED_POST=1
     out=$(social_post "Brothers and sisters in the great Discord of thought" 2>&1)
+    assert_ok $?
+    _teardown_social
+  }
+
+# ── Mastodon multi-instance registry ──────────────────────────
+describe "Mastodon multi-instance registry"
+
+  it "_mastodon_instances_init creates DB" && {
+    _setup_social
+    _mastodon_instances_init
+    [ -f "$MASTODON_INSTANCES_DB" ]
+    assert_ok $?
+    _teardown_social
+  }
+
+  it "mastodon_instance_add registers an instance" && {
+    _setup_social
+    out=$(mastodon_instance_add "mastodon.social" "tok123" 2>&1)
+    assert_ok $?
+    assert_contains "$out" "mastodon.social"
+    _teardown_social
+  }
+
+  it "mastodon_instance_list shows registered instances" && {
+    _setup_social
+    mastodon_instance_add "mastodon.social" "tok123" &>/dev/null
+    mastodon_instance_add "fosstodon.org" "tok456" &>/dev/null
+    out=$(mastodon_instance_list 2>&1)
+    assert_contains "$out" "mastodon.social"
+    assert_contains "$out" "fosstodon.org"
+    _teardown_social
+  }
+
+  it "mastodon_instance_remove removes an instance" && {
+    _setup_social
+    mastodon_instance_add "mastodon.social" "tok123" &>/dev/null
+    mastodon_instance_remove "mastodon.social" &>/dev/null
+    out=$(mastodon_instance_list 2>&1)
+    [[ "$out" != *"mastodon.social"* ]]
+    assert_ok $?
+    _teardown_social
+  }
+
+  it "_mastodon_instance_token resolves specific instance" && {
+    _setup_social
+    mastodon_instance_add "mastodon.social" "tok123" &>/dev/null
+    mastodon_instance_add "fosstodon.org" "tok456" &>/dev/null
+    token=$(_mastodon_instance_token "fosstodon.org")
+    assert_eq "$token" "tok456"
+    _teardown_social
+  }
+
+  it "_mastodon_instance_token falls back to first registered" && {
+    _setup_social
+    mastodon_instance_add "mastodon.social" "tok_first" &>/dev/null
+    token=$(_mastodon_instance_token "")
+    assert_eq "$token" "tok_first"
+    _teardown_social
+  }
+
+  it "_mastodon_instance_token falls back to legacy key" && {
+    _setup_social
+    api_set_key "MASTODON_ACCESS_TOKEN" "legacy_tok"
+    token=$(_mastodon_instance_token "")
+    assert_eq "$token" "legacy_tok"
+    _teardown_social
+  }
+
+  it "_mastodon_instance_url returns full URL for registered instance" && {
+    _setup_social
+    mastodon_instance_add "fosstodon.org" "tok456" &>/dev/null
+    url=$(_mastodon_instance_url "fosstodon.org")
+    assert_eq "$url" "https://fosstodon.org"
+    _teardown_social
+  }
+
+# ── Discord user registry ─────────────────────────────────────
+describe "Discord user registry"
+
+  it "_discord_users_init creates DB" && {
+    _setup_social
+    _discord_users_init
+    [ -f "$DISCORD_USERS_DB" ]
+    assert_ok $?
+    _teardown_social
+  }
+
+  it "discord_user_add registers a user" && {
+    _setup_social
+    out=$(discord_user_add "pompler" "123456789012345678" 2>&1)
+    assert_ok $?
+    assert_contains "$out" "pompler"
+    _teardown_social
+  }
+
+  it "discord_user_list shows registered users" && {
+    _setup_social
+    discord_user_add "pompler" "123456789012345678" &>/dev/null
+    discord_user_add "testuser" "987654321098765432" &>/dev/null
+    out=$(discord_user_list 2>&1)
+    assert_contains "$out" "pompler"
+    assert_contains "$out" "testuser"
+    _teardown_social
+  }
+
+  it "discord_user_remove removes a user" && {
+    _setup_social
+    discord_user_add "pompler" "123456789012345678" &>/dev/null
+    discord_user_remove "pompler" &>/dev/null
+    out=$(discord_user_list 2>&1)
+    [[ "$out" != *"pompler"* ]] || [ -z "$out" ]
+    assert_ok $?
+    _teardown_social
+  }
+
+  it "discord_user_resolve returns user ID by name" && {
+    _setup_social
+    discord_user_add "pompler" "123456789012345678" &>/dev/null
+    uid=$(discord_user_resolve "pompler")
+    assert_eq "$uid" "123456789012345678"
+    _teardown_social
+  }
+
+  it "discord_user_resolve returns empty for unknown" && {
+    _setup_social
+    uid=$(discord_user_resolve "nobody_here" 2>/dev/null)
+    assert_eq "$uid" ""
+    _teardown_social
+  }
+
+  it "discord_users_sync function is defined" && {
+    _setup_social
+    declare -f discord_users_sync &>/dev/null
+    assert_ok $?
+    _teardown_social
+  }
+
+# ── Discord @mention resolution ───────────────────────────────
+describe "Discord @mention resolution"
+
+  it "discord_resolve_mentions replaces @username with <@id>" && {
+    _setup_social
+    discord_user_add "pompler" "123456789012345678" &>/dev/null
+    result=$(discord_resolve_mentions "Hey @pompler check this out")
+    assert_eq "$result" "Hey <@123456789012345678> check this out"
+    _teardown_social
+  }
+
+  it "discord_resolve_mentions handles multiple @mentions" && {
+    _setup_social
+    discord_user_add "pompler" "111111111111111111" &>/dev/null
+    discord_user_add "dabe" "222222222222222222" &>/dev/null
+    result=$(discord_resolve_mentions "Hey @pompler and @dabe!")
+    assert_contains "$result" "<@111111111111111111>"
+    assert_contains "$result" "<@222222222222222222>"
+    _teardown_social
+  }
+
+  it "discord_resolve_mentions leaves unknown @mentions alone" && {
+    _setup_social
+    result=$(discord_resolve_mentions "Hey @nobody here")
+    assert_eq "$result" "Hey @nobody here"
+    _teardown_social
+  }
+
+# ── Discord DM ────────────────────────────────────────────────
+describe "Discord DM support"
+
+  it "discord_dm function is defined" && {
+    _setup_social
+    declare -f discord_dm &>/dev/null
     assert_ok $?
     _teardown_social
   }

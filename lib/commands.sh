@@ -166,7 +166,17 @@ commands_services_status() {
         api_get_key "DISCORD_WEBHOOK_URL" &>/dev/null && _configured="${_configured}discord-webhook,"
         api_get_key "TELEGRAM_BOT_TOKEN" &>/dev/null && _configured="${_configured}telegram," || _unconfigured="${_unconfigured}telegram,"
         api_get_key "X_BEARER_TOKEN" &>/dev/null && _configured="${_configured}x/twitter," || _unconfigured="${_unconfigured}x/twitter,"
-        api_get_key "MASTODON_ACCESS_TOKEN" &>/dev/null && _configured="${_configured}mastodon," || _unconfigured="${_unconfigured}mastodon,"
+        # Mastodon: check multi-instance registry first, then legacy key
+        local _masto_ok=0
+        if declare -f mastodon_instance_list &>/dev/null; then
+            local _inst_count
+            _inst_count=$(mastodon_instance_list 2>/dev/null | grep -c "^" || true)
+            [ "${_inst_count:-0}" -gt 0 ] && _masto_ok=1
+        fi
+        if [ "$_masto_ok" -eq 0 ]; then
+            api_get_key "MASTODON_ACCESS_TOKEN" &>/dev/null && _masto_ok=1
+        fi
+        [ "$_masto_ok" -eq 1 ] && _configured="${_configured}mastodon," || _unconfigured="${_unconfigured}mastodon,"
         api_get_key "BLUESKY_APP_PASSWORD" &>/dev/null && _configured="${_configured}bluesky," || _unconfigured="${_unconfigured}bluesky,"
         api_get_key "SERPER_API_KEY" &>/dev/null && _configured="${_configured}web-search," || _unconfigured="${_unconfigured}serper,"
         # Email check: look for provider config
@@ -207,10 +217,14 @@ NOTE: Do NOT quote arguments. Slash commands parse by spaces, not shell quoting.
 /web search <query>  — Web search
 /github search <q>   — Find GitHub repos
 /journal write <text> — Write to journal
-/social post discord <channel> <text> — Post to Discord channel (no quotes needed)
+/social post discord <channel> <text> — Post to Discord channel (resolves names)
 /social post telegram <text>  — Post to Telegram
 /social post x <text>        — Post to X/Twitter
-/social post <text>            — Post to all configured platforms
+/social post mastodon <text> — Post to Mastodon
+/social discord dm <user> <text> — DM a Discord user
+/social discord users sync   — Sync Discord user list
+/social discord channels sync — Sync Discord channels
+/social mastodon instances add <url> <token> — Register Mastodon instance
 /pgp sign <msg>      — PGP-sign a message
 /email send <to> <subj> <body> — Send email (ONLY for actual email, not social posts)
 /phone               — Phone dashboard
