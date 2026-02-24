@@ -1308,13 +1308,17 @@ _cmd_backup() {
                 *)     ui_info "Usage: /backup git <init|save|push|pull|clone>" ;;
             esac ;;
         github)   backup_git_push ;;
+        export)   backup_export "$rest" ;;
+        import)   backup_import "$rest" ;;
         *)
-            ui_info "Usage: /backup <local|restore|list|status|prune|git|github>"
+            ui_info "Usage: /backup <local|restore|list|status|prune|export|import|git|github>"
             ui_dim "  local           — Quick file backup of identity & memory"
             ui_dim "  restore [name]  — Restore from a backup"
             ui_dim "  list            — Show all backups"
             ui_dim "  status          — Show backup system status"
             ui_dim "  prune [keep=5]  — Remove old backups"
+            ui_dim "  export [dir]    — Copy .george to a directory (default: parent)"
+            ui_dim "  import <dir>    — Restore .george from a directory"
             ui_dim "  git init        — Create local git backup repo"
             ui_dim "  git save        — Commit current state"
             ui_dim "  git push        — Push to GitHub (interactive setup)"
@@ -2198,8 +2202,9 @@ _repl() {
             elif [ "${_LODGE_CANCELLED:-0}" -eq 1 ]; then
                 # Command was cancelled by Ctrl+C — don't fall through
                 _LODGE_CANCELLED=0
-            elif [ "$result" -eq 1 ]; then
-                # Not found — try as agent task
+            elif [ "$result" -eq 127 ]; then
+                # Not found (127) — try as agent task
+                # Note: 1 = command found but failed (don't leak to agent)
                 ui_warn "Unknown command. Treating as task..."
                 agent_run "${input#/}" "$PWD"
             fi

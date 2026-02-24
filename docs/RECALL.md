@@ -202,7 +202,7 @@ searches the knowledge base when working on tasks.
 ### During Task Execution (Full Mode)
 
 When you give George a task, `memory_build_system_prompt` includes a
-`--- RECALLED KNOWLEDGE ---` section with the top 2 FTS5 results relevant
+`--- RECALLED KNOWLEDGE ---` section with the top **4** FTS5 results relevant
 to your task description:
 
 ```
@@ -219,7 +219,7 @@ his core personality (soul.md) or project memory (CLAUDE.md).
 
 ### During /ask (Lean Mode)
 
-Quick questions get 1 recall chunk (capped at 200 characters) to keep the
+Quick questions get **1** recall chunk (capped at **200 characters**) to keep the
 prompt small (~150 tokens total):
 
 ```
@@ -231,7 +231,7 @@ You: /ask what's my vault encryption?
 ### During Planning (Plan Mode)
 
 Planning does **not** use recall — it only needs identity + project state +
-file listing. This keeps the plan prompt lean (~1,500 tokens).
+file listing + lean command catalog. This keeps the plan prompt under ~700 tokens.
 
 ---
 

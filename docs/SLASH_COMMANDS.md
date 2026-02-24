@@ -94,14 +94,18 @@ George's system prompt is built by `memory_build_system_prompt()` using a three-
 | Mode | Token Budget | Catalog Injected? | When Used |
 |------|-------------|-------------------|-----------|
 | `ask` | ~150 tokens | **No** — stays lean | `/ask` quick questions |
-| `plan` | ~1,500 tokens | **Yes** | `agent_plan()` — creating step lists |
-| `task` | ~3,500 tokens | **Yes** | `agent_execute_step()` — executing work |
+| `plan` | ~700 tokens | **Yes** (lean catalog, ~400 tokens) | `agent_plan()` — creating step lists |
+| `task` | ~3,500 tokens | **Yes** (full catalog, ~1,443 tokens) | `agent_execute_step()` — executing work |
 
-The catalog is injected conditionally:
+The catalog is injected conditionally. **Plan mode uses a lean catalog** (`commands_catalog_plan()`) with compressed syntax to keep the prompt under ~700 tokens total, while task mode uses the full catalog with detailed descriptions:
 
 ```bash
-# lib/memory.sh — plan mode
-if declare -f commands_catalog &>/dev/null; then
+# lib/memory.sh — plan mode (lean catalog)
+if declare -f commands_catalog_plan &>/dev/null; then
+    prompt="$prompt
+
+$(commands_catalog_plan)"
+elif declare -f commands_catalog &>/dev/null; then
     prompt="$prompt
 
 $(commands_catalog)"
@@ -109,7 +113,7 @@ fi
 ```
 
 ```bash
-# lib/memory.sh — task mode (after RECALLED KNOWLEDGE)
+# lib/memory.sh — task mode (full catalog, after RECALLED KNOWLEDGE)
 if declare -f commands_catalog &>/dev/null; then
     prompt="$prompt
 
@@ -156,11 +160,35 @@ commands. Examples: /recall to search your knowledge, /social to post,
 built-in commands over raw shell when available.
 ```
 
-The output rules also specify the format:
+The output rules also specify planning format:
 
 ```
-Slash commands on their own line starting with /
+Plans as numbered lists (1-4 steps, use [SUBTASK] for complex work)
 ```
+
+### Conversation History (Ask Mode)
+
+For `/ask` continuity, George maintains a **ring buffer** of the last 3 exchanges (configurable via `AGENT_CONV_MAX`). Each exchange stores the user's question and George's response (truncated to ~150 characters). This lets George remember recent conversation without bloating the prompt:
+
+```
+--- RECENT CONVERSATION ---
+USER: what encryption does the vault use?
+GEORGE: AES-256-CBC with PBKDF2 (100k iterations). Each secret is stored as a separate .enc file in ~/.george/.vault/...
+USER: how do I rotate the key?
+GEORGE: /secret rotate — this re-encrypts all secrets with a freshly generated key...
+```
+
+The conversation context is only injected into **ask mode** prompts. Plan and task modes don't include it.
+
+### Subtask Parent Context
+
+When George creates a recursive sub-plan via `[SUBTASK]`, the parent task description is injected into the subtask's planning prompt. This prevents the subtask from losing context about what it's building:
+
+```
+PARENT TASK CONTEXT: Build a URL shortener API with POST /shorten and GET /<id>
+```
+
+The recursion depth is limited to **2** levels (`AGENT_MAX_DEPTH=2`) to prevent runaway nesting.
 
 ### Layer 4 — Identity: soul.md Personality
 
@@ -447,15 +475,17 @@ detects the swap and corrects silently.
 
 | Component | Tokens Added | Where |
 |-----------|-------------|-------|
-| `commands_catalog()` | ~200 | plan + task system prompts |
-| Modelfile CRITICAL block | ~50 | SYSTEM prompt (baked into model) |
+| `commands_catalog_plan()` | ~400 | plan system prompts (lean syntax) |
+| `commands_catalog()` | ~1,443 | task system prompts (full descriptions) |
+| Modelfile SYSTEM block | ~150 | SYSTEM prompt (baked into model) |
 | soul.md "My Working Commands" | ~150 | Loaded once into task mode via `memory_read_soul()` |
+| Conversation history (ask) | ~300-600 | ask mode only (3 exchanges × ~150 chars each) |
 
-Total additional tokens per plan call: **~200** (catalog only — soul.md is already loaded).
-Total additional tokens per task call: **~200** (catalog — soul.md already present).
-Ask mode: **0 additional tokens**.
+Total additional tokens per plan call: **~400** (lean catalog only — soul.md not loaded in plan mode).
+Total additional tokens per task call: **~1,443** (full catalog — soul.md already present).
+Ask mode: **0 catalog tokens** (conversation history adds ~300-600 if exchanges exist).
 
-With `num_ctx=8192`, the full task prompt budget is ~3,500 tokens for the system prompt, leaving ~4,500 tokens for conversation history and generation. The ~200-token catalog is well within budget.
+With `num_ctx=16384`, the full task prompt budget is ~3,500 tokens for the system prompt, leaving ~10,400+ tokens for conversation history and generation. Even plan mode has ~14,700 tokens of headroom.
 
 ## The Design Principle
 
@@ -486,6 +516,10 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 | `/clone <url>` | Clone and setup repo | `/clone https://github.com/user/repo` |
 | `/social post <text>` | Post to all platforms | `/social post New release!` |
 | `/social <platform> <action>` | Platform-specific | `/social x post Hello X` |
+| `/social discord validate` | Test Discord bot token | `/social discord validate` |
+| `/social discord channels sync` | Auto-sync channel names from Discord | `/social discord channels sync` |
+| `/social discord channels add <name> <id>` | Register a channel name | `/social discord channels add general 123...` |
+| `/social discord channels list` | List registered channels | `/social discord channels list` |
 | `/pgp sign <msg>` | Sign a message | `/pgp sign I approve this` |
 | `/pgp signpost <msg>` | Sign and post | `/pgp signpost Release v2.0` |
 | `/pgp export` | Export public key | `/pgp export` |
@@ -504,6 +538,8 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 | `/gsuite gmail\|drive\|docs` | Google Workspace | `/gsuite gmail inbox` |
 | `/backup local` | Quick file backup | `/backup local` |
 | `/backup restore [name]` | Restore from backup | `/backup restore` |
+| `/backup export [dir]` | Export .george directory (portable) | `/backup export` |
+| `/backup import <dir>` | Import from exported .george | `/backup import /path/to/.george` |
 | `/backup git save` | Commit to backup repo | `/backup git save` |
 | `/backup github` | Save + push to GitHub | `/backup github` |
 | `/slash` | List custom commands | `/slash` |
@@ -515,6 +551,15 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 | `/status` | Agent status | `/status` |
 | `/memory` | Show CLAUDE.md | `/memory` |
 | `/help [command]` | Show help | `/help pgp` |
+| `/email <cmd>` | Email (ProtonMail/Zoho/Tuta/disposable) | `/email send user@ex.com "Subject" "Body"` |
+| `/git <cmd>` | Git & GitHub configuration | `/git config` |
+| `/github <query>` | Search GitHub repositories | `/github search rust async` |
+| `/pgp sign <msg>` | PGP-sign a message | `/pgp sign I approve this` |
+| `/pgp verify <msg>` | Verify a signed message | `/pgp verify <signed text>` |
+| `/pgp export` | Export public key | `/pgp export` |
+| `/vitals` | System vitals (CPU, RAM, disk, battery) | `/vitals` |
+| `/think` | Toggle thinking mode on/off | `/think` |
+| `/cleanup` | Remove George's created files | `/cleanup` |
 
 ---
 

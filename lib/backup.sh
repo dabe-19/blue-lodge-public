@@ -550,3 +550,116 @@ backup_prune() {
 
     ui_ok "Pruned to $keep backups"
 }
+
+# ── Export .george to a directory ──────────────────────────────
+# Copies the entire .george directory to target (default: parent of LODGE_DIR)
+backup_export() {
+    local target="${1:-$(dirname "$LODGE_DIR")}"
+
+    if [ ! -d "$GEORGE_CONFIG_DIR" ]; then
+        ui_err "No .george directory found at $GEORGE_CONFIG_DIR"
+        return 1
+    fi
+
+    # Resolve to absolute path
+    target=$(cd "$target" 2>/dev/null && pwd || echo "$target")
+    local dest="$target/.george"
+
+    if [ "$dest" = "$GEORGE_CONFIG_DIR" ]; then
+        ui_err "Source and destination are the same: $dest"
+        return 1
+    fi
+
+    ui_step "Exporting .george to $target"
+
+    # If destination exists, confirm overwrite
+    if [ -d "$dest" ]; then
+        if ! ui_confirm "$dest already exists. Overwrite?" "n"; then
+            return 0
+        fi
+        rm -rf "$dest"
+    fi
+
+    cp -a "$GEORGE_CONFIG_DIR" "$dest"
+    local status=$?
+
+    if [ $status -eq 0 ]; then
+        local size
+        size=$(du -sh "$dest" 2>/dev/null | cut -f1)
+        local file_count
+        file_count=$(find "$dest" -type f | wc -l)
+        ui_ok "Exported .george → $dest ($file_count files, $size)"
+    else
+        ui_err "Export failed (cp exit $status)"
+        return 1
+    fi
+}
+
+# ── Import .george from a directory ───────────────────────────
+# Restores the .george directory from a specified path
+backup_import() {
+    local source_path="$1"
+
+    if [ -z "$source_path" ]; then
+        ui_err "Usage: /backup import <directory>"
+        ui_dim "  Specify the directory containing a .george folder"
+        ui_dim "  Example: /backup import /home/user"
+        ui_dim "  Example: /backup import /sdcard/george-backup"
+        return 1
+    fi
+
+    # Check if they pointed directly at .george or the parent
+    if [ -d "$source_path/.george" ]; then
+        source_path="$source_path/.george"
+    elif [ "$(basename "$source_path")" = ".george" ] && [ -d "$source_path" ]; then
+        : # Already pointing at .george directly
+    else
+        ui_err "No .george directory found at $source_path"
+        ui_dim "  Expected: $source_path/.george/ or $source_path/ (if it IS the .george dir)"
+        return 1
+    fi
+
+    # Resolve to absolute path
+    source_path=$(cd "$source_path" 2>/dev/null && pwd || echo "$source_path")
+
+    if [ "$source_path" = "$GEORGE_CONFIG_DIR" ]; then
+        ui_err "Source and destination are the same: $source_path"
+        return 1
+    fi
+
+    local file_count
+    file_count=$(find "$source_path" -type f | wc -l)
+    local size
+    size=$(du -sh "$source_path" 2>/dev/null | cut -f1)
+
+    ui_section "Import from $source_path"
+    printf "  Files: %d  Size: %s\n" "$file_count" "$size"
+    echo ""
+
+    # Show what's in there
+    ui_dim "  Contents:"
+    ls -la "$source_path" 2>/dev/null | tail -n +2 | while read -r line; do
+        ui_dim "    $line"
+    done
+    echo ""
+
+    if [ -d "$GEORGE_CONFIG_DIR" ]; then
+        ui_warn "This will REPLACE your current .george directory."
+        if ! ui_confirm "Continue with import?" "n"; then
+            return 0
+        fi
+        # Back up current before overwriting
+        local timestamp
+        timestamp=$(date +%Y%m%d_%H%M%S)
+        local stash="${GEORGE_CONFIG_DIR}.pre-import.$timestamp"
+        mv "$GEORGE_CONFIG_DIR" "$stash"
+        ui_dim "  Current .george stashed at: $stash"
+    fi
+
+    cp -a "$source_path" "$GEORGE_CONFIG_DIR"
+    chmod 700 "$GEORGE_CONFIG_DIR"
+    [ -f "$GEORGE_CONFIG_DIR/keys.conf" ] && chmod 600 "$GEORGE_CONFIG_DIR/keys.conf"
+
+    ui_ok "Imported .george from $source_path ($file_count files)"
+    ui_dim "  Restart George to pick up changes: /quit then relaunch"
+}

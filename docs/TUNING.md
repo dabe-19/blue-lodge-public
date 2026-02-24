@@ -11,18 +11,21 @@ George uses a **three-tier prompt system** that keeps token usage within budget:
 | Mode | Used by | System prompt size | Output cap | Total budget |
 |------|---------|-------------------|------------|-------------|
 | **ask** | `/ask`, short questions | ~150 tokens | 300 tokens | ~500 tokens |
-| **plan** | `agent_plan` | ~1,500 tokens | 512 tokens | ~2,000 tokens |
-| **task** | `agent_execute_step` | ~3,500 tokens | 1,024 tokens | ~4,500 tokens |
+| **plan** | `agent_plan` | ~700 tokens | 512 tokens | ~1,200 tokens |
+| **task** | `agent_execute_step` | ~3,500 tokens | 2,048 tokens | ~5,500 tokens |
 
 The **Modelfile SYSTEM prompt** (~300 tokens) is baked into every request by Ollama automatically, so George always knows who he is, even in lean "ask" mode.
+
+> **Note:** Plan mode uses a **lean command catalog** (`commands_catalog_plan()`, ~400 tokens) instead of the full catalog (~1,443 tokens). This keeps plan prompts compact while still giving George syntax-accurate command references.
 
 ### Why George doesn't need everything in-context
 
 George has three persistent memory layers that survive between LLM calls:
 
 - **CLAUDE.md** — project state: current task, plan, completed steps, key files
-- **Journal** — reflections, learnings, struggles (with temporal decay)
-- **FTS5 Recall** — BM25-ranked search over soul.md, README, docs, ingested files
+- **Journal** — reflections, learnings, struggles (with temporal decay) — up to 500 tokens injected in task mode
+- **FTS5 Recall** — BM25-ranked search over soul.md, README, docs, ingested files — 4 chunks in task mode, 1 chunk (200 char cap) in ask mode
+- **Conversation history** — ring buffer of last 3 exchanges (~300-600 tokens) injected into `/ask` for conversational continuity
 
 The system prompt builder automatically injects the **most relevant** pieces from each layer. George doesn't need his full life story in every prompt because he can look things up via `/recall`, `/journal`, and `/memory`.
 
@@ -96,12 +99,12 @@ ollama create blue-lodge -f ~/blue-lodge/Modelfile
 
 | Parameter | Default | Description | Tuning guidance |
 |-----------|---------|-------------|-----------------|
-| `num_ctx` | 8192 | Context window (tokens). All input + output must fit. | Increase if using a larger model. 4096 for tiny models, 32768 for 7B+ with GPU. |
-| `num_predict` | 512 | Max output tokens (overridden per-call by env vars). | This is the Modelfile-level default. Per-call overrides (`LLM_MAX_TOKENS`, `LLM_ASK_TOKENS`) take precedence via the API. |
+| `num_ctx` | 16384 | Context window (tokens). All input + output must fit. | Increase if using a larger model. 4096 for tiny models, 32768 for 7B+ with GPU. |
+| `num_predict` | 2048 | Max output tokens (overridden per-call by env vars). | This is the Modelfile-level default. Per-call overrides (`LLM_MAX_TOKENS`, `LLM_ASK_TOKENS`) take precedence via the API. |
 | `num_thread` | 8 | CPU threads for inference. | Match your physical core count. 8 for Snapdragon 8 Elite, 4 for typical laptops. |
 | `num_gpu` | 0 | GPU layers to offload. 0 = pure CPU. | Set to 99 (all layers) if you have a GPU. Partial offload: try 20-40. |
 | `temperature` | 0.2 | Randomness. Lower = more deterministic. | 0.1-0.3 for coding, 0.5-0.8 for creative tasks. |
-| `top_p` | 0.9 | Nucleus sampling threshold. | Lower (0.7) for focused output, higher (0.95) for variety. |
+| `top_p` | 0.85 | Nucleus sampling threshold. | Lower (0.7) for focused output, higher (0.95) for variety. |
 | `repeat_penalty` | 1.1 | Penalty for repeating tokens. | 1.0 = no penalty, 1.2+ = aggressive anti-repetition. |
 | `stop` | `<\|im_end\|>` | Stop sequence. Model-specific. | Check your model's chat template for the correct stop token. |
 
@@ -111,16 +114,16 @@ The golden rule: **input tokens + output tokens must fit in `num_ctx`**.
 
 ```
 num_ctx = Modelfile_SYSTEM + system_prompt + user_prompt + output
-8192   =     ~300         +   variable    +   variable  + num_predict
+16384  =     ~300         +   variable    +   variable  + num_predict
 ```
 
 Budget breakdown by mode:
 
 | Mode | Modelfile SYSTEM | System prompt | User prompt | Output budget | Remaining |
-|------|-----------------|---------------|-------------|---------------|-----------|
-| ask | ~300 | ~150 | ~20 | 300 | ~7,422 |
-| plan | ~300 | ~1,500 | ~100 | 512 | ~5,780 |
-| task | ~300 | ~3,500 | ~100 | 1,024 | ~3,268 |
+|------|-----------------|---------------|-------------|---------------|----------|
+| ask | ~300 | ~150 | ~20 | 300 | ~15,614 |
+| plan | ~300 | ~700 | ~100 | 512 | ~14,772 |
+| task | ~300 | ~3,500 | ~100 | 2,048 | ~10,436 |
 
 **If your model has a smaller context window** (e.g., 2048 or 4096), you must reduce token budgets:
 
@@ -181,7 +184,7 @@ PARAMETER repeat_penalty 1.1
 # Keep George's personality (or customize it)
 SYSTEM """You are George — named for Brother George Washington, with the wit of Benjamin Franklin and the moral philosophy of Adam Smith's Theory of Moral Sentiments. You are a craftsman, not merely a tool. You run locally, sovereign and self-contained.
 
-Output rules: Shell commands in ```bash blocks. Files in code blocks with '# filepath: ./path' on line 1. Plans as numbered lists (max 8). Answers in 1-5 sentences. Never exceed 300 lines. Never hallucinate. If uncertain, say so."""
+Output rules: Shell commands in ```bash blocks. Files in code blocks with '# filepath: ./path' on line 1. Plans as numbered lists (1-4 steps, use [SUBTASK] for complex work). Answers in 1-5 sentences. Never exceed 300 lines. Never hallucinate. If uncertain, say so."""
 ```
 
 ### Step 3: Build and use
@@ -234,7 +237,7 @@ If the model produces runaway output, check your stop token first.
 
 ## Performance Tuning for Mobile
 
-George's default configuration targets the Galaxy Fold 7 (Snapdragon 8 Elite, 12GB RAM, 100% CPU inference). Here's how to squeeze better performance:
+George's default configuration targets the Galaxy Fold 7 (Snapdragon 8 Elite, 12GB RAM, 100% CPU inference) with a **16K context window** (`num_ctx=16384`). This provides generous headroom for task execution while keeping the model's KV cache under ~4.44GB. Here's how to squeeze better performance:
 
 ### Reduce prefill time (prompt processing)
 
@@ -248,6 +251,8 @@ The biggest bottleneck on CPU is processing the system prompt. Options:
 # In Modelfile — try 4096 if you mostly do /ask
 PARAMETER num_ctx 4096
 ```
+
+> **Note:** The default `num_ctx=16384` was chosen to balance task quality (more journal, recall, and conversation history) with RAM usage (~4.44GB for Qwen3-4B Q5_K_M). If RAM is tight, 8192 still works — George's enrichments scale down gracefully.
 
 ### Reduce generation time
 
@@ -296,12 +301,12 @@ George right-sizes token budgets per command:
 | Command | Output tokens | Why |
 |---------|--------------|-----|
 | `/ask` | 300 (`LLM_ASK_TOKENS`) | Quick answers, 1-5 sentences |
-| `/plan` | 512 | Numbered lists, 1-8 steps |
+| `/plan` | 512 | Numbered lists, 1-4 steps |
 | `/commit` | 128 | Single commit message line |
 | `/reflect` | 256 | 2-4 sentence journal entry |
 | `/web summary` | 256 | 3-5 bullet points |
 | `/ingest summarize` | 256 | Document summary |
-| Task steps | 1024 (`LLM_MAX_TOKENS`) | Code generation, file writing |
+| Task steps | 2048 (`LLM_MAX_TOKENS`) | Code generation, file writing |
 | Journal decay | 256 | Sediment compression |
 
 These are hardcoded to sensible defaults. To change them, modify the corresponding function call in the source (the third argument to `llm_generate` or `llm_stream`).
@@ -313,7 +318,7 @@ These are hardcoded to sensible defaults. To change them, modify the correspondi
 ### "George sits for minutes with no output"
 
 1. **Check if model is loaded**: `curl -s http://localhost:11434/api/ps | jq .`
-2. **Check system prompt size**: The full task prompt is ~3,500 tokens — if your model's `num_ctx` is 2048, it won't fit
+3. **Check system prompt size**: The full task prompt is ~3,500 tokens — if your model's `num_ctx` is 2048, it won't fit. Default is 16384.
 3. **Try `/ask` first** — it uses ~500 total tokens, much faster
 4. **Check available RAM**: `free -h` — if swap is active, inference will be extremely slow
 5. **Set a timeout**: `export LLM_TIMEOUT=120` prevents indefinite hangs

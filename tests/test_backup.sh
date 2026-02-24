@@ -300,4 +300,102 @@ describe "backup_post_update"
     _teardown_backup
   }
 
+# ── backup_export ──────────────────────────────────────────────
+describe "backup_export"
+
+  it "backup_export is defined" && {
+    declare -f backup_export &>/dev/null
+    assert_ok $?
+  }
+
+  it "exports .george to a target directory" && {
+    _setup_backup
+    backup_init
+    echo "test_key=test_value" > "$GEORGE_CONFIG_DIR/keys.conf"
+    mkdir -p "$GEORGE_CONFIG_DIR/vault"
+    echo "secret" > "$GEORGE_CONFIG_DIR/vault/test.enc"
+    _export_target="$TMPDIR_BACKUP/export-target"
+    mkdir -p "$_export_target"
+    backup_export "$_export_target" 2>/dev/null
+    assert_dir_exists "$_export_target/.george"
+    assert_file_exists "$_export_target/.george/keys.conf"
+    assert_file_exists "$_export_target/.george/vault/test.enc"
+    _teardown_backup
+  }
+
+  it "exports to parent of LODGE_DIR by default" && {
+    _setup_backup
+    backup_init
+    echo "data" > "$GEORGE_CONFIG_DIR/keys.conf"
+    _orig_lodge="$LODGE_DIR"
+    export LODGE_DIR="$TMPDIR_BACKUP/fake-lodge"
+    mkdir -p "$LODGE_DIR"
+    backup_export 2>/dev/null
+    assert_dir_exists "$TMPDIR_BACKUP/.george"
+    export LODGE_DIR="$_orig_lodge"
+    _teardown_backup
+  }
+
+  it "fails when no .george exists" && {
+    _setup_backup
+    export GEORGE_CONFIG_DIR="$TMPDIR_BACKUP/nonexistent"
+    backup_export "$TMPDIR_BACKUP" 2>/dev/null
+    assert_fail $?
+    _teardown_backup
+  }
+
+# ── backup_import ──────────────────────────────────────────────
+describe "backup_import"
+
+  it "backup_import is defined" && {
+    declare -f backup_import &>/dev/null
+    assert_ok $?
+  }
+
+  it "fails with no argument" && {
+    _setup_backup
+    backup_import "" 2>/dev/null
+    assert_fail $?
+    _teardown_backup
+  }
+
+  it "fails when source has no .george" && {
+    _setup_backup
+    _bad_source="$TMPDIR_BACKUP/empty-source"
+    mkdir -p "$_bad_source"
+    backup_import "$_bad_source" 2>/dev/null
+    assert_fail $?
+    _teardown_backup
+  }
+
+  it "imports from a directory containing .george" && {
+    _setup_backup
+    # Create a source .george to import from
+    _import_source="$TMPDIR_BACKUP/import-source"
+    mkdir -p "$_import_source/.george"
+    echo "imported_key=imported_val" > "$_import_source/.george/keys.conf"
+    echo "imported_data" > "$_import_source/.george/recall.db"
+    # Ensure destination doesn't exist yet
+    rm -rf "$GEORGE_CONFIG_DIR"
+    backup_import "$_import_source" 2>/dev/null
+    assert_file_exists "$GEORGE_CONFIG_DIR/keys.conf"
+    assert_file_exists "$GEORGE_CONFIG_DIR/recall.db"
+    _content=$(cat "$GEORGE_CONFIG_DIR/keys.conf")
+    assert_eq "$_content" "imported_key=imported_val"
+    _teardown_backup
+  }
+
+  it "imports when pointed directly at .george dir" && {
+    _setup_backup
+    _import_source="$TMPDIR_BACKUP/direct-source"
+    mkdir -p "$_import_source/.george"
+    echo "direct" > "$_import_source/.george/keys.conf"
+    rm -rf "$GEORGE_CONFIG_DIR"
+    backup_import "$_import_source/.george" 2>/dev/null
+    assert_file_exists "$GEORGE_CONFIG_DIR/keys.conf"
+    _content=$(cat "$GEORGE_CONFIG_DIR/keys.conf")
+    assert_eq "$_content" "direct"
+    _teardown_backup
+  }
+
 test_end

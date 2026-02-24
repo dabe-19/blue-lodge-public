@@ -288,13 +288,22 @@ Open this URL in a browser, select your server, and authorize.
 | Command | Description |
 |---------|-------------|
 | `/social discord send <text>` | Send via webhook |
-| `/social discord send <channel_id> <text>` | Send to a specific channel via bot |
-| `/social discord read <channel_id>` | Read recent messages from a channel |
+| `/social discord send <channel_id_or_name> <text>` | Send to a specific channel via bot |
+| `/social discord read <channel_id_or_name>` | Read recent messages from a channel |
+| `/social discord validate` | Test your bot token against the Discord API |
+| `/social discord channels list` | List all registered channels |
+| `/social discord channels add <name> <id>` | Manually register a channel name→ID mapping |
+| `/social discord channels remove <name>` | Remove a channel mapping |
+| `/social discord channels sync` | Auto-sync all channels from all servers the bot is in |
 
 > **Webhook vs Bot**: When you provide a numeric channel ID (17+ digits) as
 > the first argument to `send`, George uses the **Bot API** (`discord_send`)
 > to post directly to that channel. Without a channel ID, George uses the
 > **Webhook** (`discord_webhook`) to post to the webhook's pre-configured channel.
+>
+> **Channel names**: You can use human-readable channel names (e.g., `general`,
+> `deployments`) instead of numeric IDs. George resolves names via his channel
+> registry (SQLite at `~/.george/discord_channels.db`).
 >
 > Examples:
 > ```bash
@@ -303,7 +312,91 @@ Open this URL in a browser, select your server, and authorize.
 >
 > # Bot send (with channel ID — posts to the specified channel)
 > /social discord send 235541481920659458 Hello from George!
+>
+> # Bot send (with channel name — resolved from registry)
+> /social discord send general Hello from George!
+>
+> # Read messages by name
+> /social discord read deployments
 > ```
+
+### Validating Your Bot Token
+
+Before debugging permissions or channels, verify the token itself:
+
+```bash
+/social discord validate
+```
+
+This calls `GET /users/@me` with your bot token. On success you'll see:
+
+```
+✓ Discord bot token valid — logged in as George#1234 (id: 1234567890)
+  Guilds (servers): 2
+```
+
+If it fails, regenerate the token in the Discord Developer Portal.
+
+### Channel Registry
+
+George maintains a local SQLite database (`~/.george/discord_channels.db`) that maps human-readable channel names to Discord channel IDs. This lets you use `#general` or `general` instead of a 17-digit number.
+
+#### Auto-Sync (Recommended)
+
+Fetch all channels from all servers the bot has joined:
+
+```bash
+/social discord channels sync
+```
+
+This queries the Discord API for every guild (server) the bot is in, retrieves all text and announcement channels, and stores them:
+
+```
+  Syncing: My Server (123456789012345678)...
+✓ Channel registry synced — 15 channels total
+```
+
+#### Manual Registration
+
+If auto-sync isn't possible (e.g., bot doesn't have the guilds intent), add channels manually:
+
+```bash
+/social discord channels add general 1234567890123456789
+/social discord channels add deployments 9876543210987654321
+```
+
+#### Listing & Removing
+
+```bash
+/social discord channels list     # Show all name→ID mappings
+/social discord channels remove general  # Remove a mapping
+```
+
+### Default Channel
+
+When using `/social post` (unified posting), George needs a channel to post to. It resolves the default channel in this order:
+
+1. **Explicit key** — `DISCORD_DEFAULT_CHANNEL` in `keys.conf` (can be an ID or a channel name)
+2. **"general" channel** — if a channel named `general` is in the registry
+3. **First registered channel** — falls back to whatever was registered first
+
+Set an explicit default:
+
+```bash
+/api keys set DISCORD_DEFAULT_CHANNEL general
+# or by ID:
+/api keys set DISCORD_DEFAULT_CHANNEL 1234567890123456789
+```
+
+### Unified Posting Fallback
+
+`/social post` supports both webhook and bot token for Discord:
+
+- **Webhook URL configured** → posts via webhook (simplest)
+- **Bot token configured** (no webhook) → posts via bot API to the default channel
+- **Neither configured** → Discord is skipped
+
+This means you can use `/social post` with just a bot token — no webhook needed — as long as you have a default channel set.
 
 ---
 

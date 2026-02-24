@@ -95,14 +95,21 @@ api_set_key() {
 api_list_keys() {
     if [ ! -f "$GEORGE_KEYS_FILE" ]; then
         ui_dim "No keys configured yet"
-        return
+        return 0
     fi
     ui_section "Configured API Keys"
-    grep "^[A-Z].*=" "$GEORGE_KEYS_FILE" 2>/dev/null | while IFS='=' read -r name _value; do
+    local _found=0
+    while IFS='=' read -r name _value; do
         local masked
         masked=$(echo "$_value" | sed 's/./*/g' | head -c 20)
         printf "  %b%-30s%b %s...\n" "$C_WHITE" "$name" "$C_RESET" "${masked:0:8}"
-    done
+        _found=1
+    done < <(grep "^[A-Z].*=" "$GEORGE_KEYS_FILE" 2>/dev/null)
+    if [ "$_found" -eq 0 ]; then
+        ui_dim "  No keys configured yet"
+        ui_dim "  Set keys with: /api keys set KEY_NAME value"
+    fi
+    return 0
 }
 
 # ── Generic HTTP request ──────────────────────────────────────

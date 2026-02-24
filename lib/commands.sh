@@ -71,7 +71,7 @@ commands_dispatch() {
     local _fail_ts
     _fail_ts=$(date '+%Y-%m-%d %H:%M:%S')
     ui_err "[$_fail_ts] Unknown command: /$cmd" 2>/dev/null
-    return 1  # Not a command
+    return 127  # Not found — distinct from command-failed (1)
 }
 
 # ── Is this a slash command? ───────────────────────────────────

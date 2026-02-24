@@ -78,9 +78,9 @@ describe "commands_dispatch"
     assert_contains "$out" "Slash Commands"
   }
 
-  it "returns 1 for unknown command" && {
-    commands_dispatch "/nonexistent_xyz" "."
-    assert_fail $?
+  it "returns 127 for unknown command" && {
+    commands_dispatch "/nonexistent_xyz" "." 2>/dev/null
+    assert_eq $? 127
   }
 
 # ── commands_help ──────────────────────────────────────────────

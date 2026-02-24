@@ -7,7 +7,7 @@ A lightweight, mobile-first coding agent and personal AI assistant powered by lo
 Cloud-based coding agents like Claude Code don't work with small local models. The massive system prompts, streaming protocol mismatches, and token-hungry architectures cause them to hang on 4B parameter models. George replaces all of that with a purpose-built agent that:
 
 - **Calls Ollama directly** — no proxy, no API keys, no internet needed
-- **Uses small, focused prompts** — ~1-2K tokens per step, fits in 8K context
+- **Uses small, focused prompts** — ~1-2K tokens per step, fits in 16K context
 - **Persists memory to files** — `CLAUDE.md` for projects, `journal.md` for the agent's living memory
 - **Runs entirely in bash** — no Node.js, no Python runtime, no Docker
 - **Manages model memory** — automatically loads/unloads the LLM to share 12GB RAM with your builds
@@ -76,7 +76,8 @@ lodge /ask "what is a monad?"      # Quick question
 │   ├── .vault/        # Encrypted secrets (per-secret .enc files)
 │   ├── allowlist.conf # User command allowlist extensions
 │   ├── sandbox_permissions.conf # Per-sandbox permission overrides
-│   └── recall.db      # FTS5 knowledge index (auto-built)
+│   ├── recall.db      # FTS5 knowledge index (auto-built)
+│   └── discord_channels.db  # Discord channel name→ID registry
 └── docs/
     ├── PHONE_SETUP.md           # Android setup guide
     └── examples/
@@ -108,6 +109,9 @@ lodge /ask "what is a monad?"      # Quick question
 | `/social <cmd>` | — | Social media (X/Mastodon/Bluesky/Discord/Telegram) |
 | `/provider <cmd>` | — | Cloud AI (OpenAI/Anthropic/Google/Groq/Mistral...) |
 | `/web <cmd>` | — | Browse the web (fetch/search/summary/download) |
+| `/github <query>` | — | Search GitHub repositories |
+| `/email <cmd>` | — | Email (ProtonMail/Zoho/Tuta/disposable) |
+| `/git <cmd>` | — | Git & GitHub configuration |
 | `/backup <cmd>` | — | Backup & restore George's identity |
 | `/security <cmd>` | — | Security, signing & integrity (status/sign/verify/encrypt/decrypt) |
 | `/readme [topic]` | — | Review George's own README (capabilities self-knowledge) |
@@ -117,6 +121,11 @@ lodge /ask "what is a monad?"      # Quick question
 | `/gsuite <cmd>` | — | Google Workspace (Gmail/Drive/Docs) |
 | `/wallet <cmd>` | — | Cryptocurrency wallets (BTC/ADA/SOL) |
 | `/phone <cmd>` | — | Termux integration (battery/clip/notify/open/share/toast) |
+| `/pgp <cmd>` | — | PGP signing & verification (sign/verify/export/signpost) |
+| `/slash <cmd>` | — | Custom commands (list/create/edit/delete/test) |
+| `/vitals` | — | System vitals (CPU, RAM, disk, battery, WiFi) |
+| `/think` | — | Toggle thinking mode on/off |
+| `/cleanup` | — | Remove George's created files |
 | `/ask <question>` | — | Quick question (no file changes) |
 | `/read <file>` | — | Read a file |
 | `/files` | — | List workspace files |
@@ -255,7 +264,7 @@ export LLM_KEEP_ALIVE="2m"    # 2 minutes (balanced)
 export LLM_KEEP_ALIVE="30m"   # 30 minutes (if you have plenty of RAM)
 export LLM_TIMEOUT="0"        # No timeout (default — cancel with Ctrl+C)
 export LLM_TIMEOUT="1200"     # 20-minute hard timeout
-export LLM_MAX_TOKENS="8192"  # Max output tokens (default)
+export LLM_MAX_TOKENS="1024"   # Max output tokens per task step (default: 1024)
 export LODGE_TERMUX_API=1     # Enable Termux-API features (battery, WiFi, GPS, SMS, etc.)
                               # Default: 0 (disabled — safe for proot & non-Android)
 ```
@@ -608,7 +617,7 @@ lodge /wallet status                              # Wallet overview
 
 ## Model
 
-Ships with **Qwen3-4B-Instruct** (Q5_K_M quantization) via Ollama. ~3GB download, ~4GB loaded RAM.
+Ships with **Qwen3-4B-Instruct** (Q5_K_M quantization) via Ollama. ~3GB download, ~4.44GB loaded RAM at the default 16K context window (`num_ctx=16384`).
 
 Swap the model by editing `Modelfile`:
 
@@ -645,6 +654,9 @@ lodge /social mastodon post "Hello fediverse!"        # Post to Mastodon
 lodge /social mastodon timeline                       # Read Mastodon home feed
 lodge /social bluesky post "Building in public"       # Post to Bluesky
 lodge /social discord send "Deploy complete"          # Send to Discord webhook
+lodge /social discord send general "Deploy complete"  # Send to a channel by name
+lodge /social discord validate                         # Test your bot token
+lodge /social discord channels sync                    # Sync channel names from Discord
 lodge /social telegram send "Build passed ✓"          # Send to Telegram
 lodge /social status                                  # Show which platforms are configured
 ```
@@ -691,6 +703,8 @@ George's code can be updated, but his memories and personality are irreplaceable
 lodge /backup local              # Snapshot identity files to ~/.george/backups/
 lodge /backup list               # Show all backups
 lodge /backup restore            # Restore from most recent backup
+lodge /backup export             # Copy .george directory to parent directory (portable)
+lodge /backup import <dir>       # Restore from a previously exported .george directory
 lodge /backup status             # Show backup system health
 ```
 
@@ -804,7 +818,7 @@ bash ~/blue-lodge/uninstall.sh
 
 ## Testing
 
-George includes a comprehensive pure-bash test suite with **~630 assertions** across 20 test modules. No external test dependencies required.
+George includes a comprehensive pure-bash test suite with **~700+ assertions** across 30 test modules. No external test dependencies required.
 
 ### Run All Tests
 
@@ -826,8 +840,8 @@ bash tests/test_api.sh                     # Run a single file directly
 |--------|-------|--------|
 | `test_agent.sh` | 10 | Agent loop, config, cancellation |
 | `test_api.sh` | 33 | REST client, keys, JSON, auth headers |
-| `test_backup.sh` | 32 | Local/git backup, restore, pruning |
-| `test_commands.sh` | 19 | Slash command registration & dispatch |
+| `test_backup.sh` | 46 | Local/git backup, restore, pruning, export/import |
+| `test_commands.sh` | 31 | Slash command registration & dispatch |
 | `test_container.sh` | 28 | Container management, distro resolution |
 | `test_journal.sh` | 21 | Temporal memory, decay, greetings |
 | `test_llm.sh` | 23 | LLM config, token estimation, cancellation |
@@ -835,7 +849,7 @@ bash tests/test_api.sh                     # Run a single file directly
 | `test_memory.sh` | 27 | CLAUDE.md sections, compaction, snapshots |
 | `test_providers.sh` | 32 | 10 AI providers, dispatcher, aliases |
 | `test_sandbox.sh` | 15 | Sandbox lifecycle, build, remove |
-| `test_social.sh` | 31 | 5 platforms, missing key handling |
+| `test_social.sh` | 62 | 5 platforms, Discord channels, validate, missing key handling |
 | `test_tools.sh` | 28 | Code extraction, file ops, safety checks |
 | `test_security.sh` | 55 | Allowlist, signing, encryption, sandboxes |
 | `test_recall.sh` | 30 | FTS5 indexing, search, self-review |
