@@ -205,6 +205,7 @@ _recall_all_sources() {
             SLASH_COMMANDS)    _source="slash_cmds" ;;
             MORAL_SENTIMENTS)  _source="tms" ;;
             PHONE_SETUP)       _source="phone_setup" ;;
+            GEORGE_REFERENCE)  _source="ref" ;;
             *)
                 # Derive: lowercase, replace spaces/hyphens with underscores
                 _source=$(echo "$_basename" | tr '[:upper:]' '[:lower:]' | tr ' -' '__')
@@ -417,6 +418,7 @@ SQL
             slash_cmds)   label="Commands" ;;
             tms)          label="Moral Sentiments" ;;
             phone_setup)  label="Phone Setup" ;;
+            ref)          label="Reference" ;;
             personal_assistant) label="Example" ;;
             rust_task_manager)  label="Example" ;;
             url_shortener)      label="Example" ;;
@@ -437,26 +439,55 @@ SQL
 
 # ── Search and format for LLM context ─────────────────────────
 # Returns plain text suitable for including in a system prompt.
+# Uses full section content (capped at 300 chars) instead of
+# snippet() to avoid noisy >>> <<< markers and truncation.
 recall_search_context() {
     local query="$1"
     local limit="${2:-3}"
+    local max_chars="${3:-300}"
 
     if ! recall_available; then
         return 1
     fi
 
-    local results
-    results=$(recall_search "$query" "$limit")
+    recall_ensure_indexed
 
+    local safe_query
+    safe_query=$(_recall_sanitize_query "$query")
+    [ -z "$safe_query" ] && return 0
+
+    # Full content retrieval (capped) instead of snippet extraction.
+    # Short sections (like ref doc cards) return complete; long ones truncate.
+    local results
+    results=$(sqlite3 -separator '|' "$RECALL_DB" <<SQL
+SELECT
+    c.source,
+    c.section,
+    CASE WHEN length(c.content) <= $max_chars
+         THEN c.content
+         ELSE substr(c.content, 1, $max_chars) || '...'
+    END AS body
+FROM chunks_fts
+JOIN chunks c ON chunks_fts.rowid = c.id
+WHERE chunks_fts MATCH '$safe_query'
+ORDER BY bm25(chunks_fts, 5.0, 10.0, 1.0)
+LIMIT $limit;
+SQL
+    )
+
+    # OR fallback if AND produced no results
     if [ -z "$results" ]; then
         local or_query
         or_query=$(_recall_sanitize_query "$query" "OR")
         if [ -n "$or_query" ]; then
-            results=$(recall_ensure_indexed; sqlite3 -separator '|' "$RECALL_DB" <<SQL
+            results=$(sqlite3 -separator '|' "$RECALL_DB" <<SQL
 SELECT
     c.source,
     c.section,
-    snippet(chunks_fts, 2, '>>>', '<<<', '...', 48) AS snippet
+    CASE WHEN length(c.content) <= $max_chars
+         THEN c.content
+         ELSE substr(c.content, 1, $max_chars) || '...'
+    END AS body
 FROM chunks_fts
 JOIN chunks c ON chunks_fts.rowid = c.id
 WHERE chunks_fts MATCH '$or_query'
@@ -470,9 +501,9 @@ SQL
     [ -z "$results" ] && return 0
 
     local output=""
-    while IFS='|' read -r source section snippet; do
+    while IFS='|' read -r source section body; do
         [ -z "$source" ] && continue
-        output+="[$source: $section] $snippet
+        output+="[$source: $section] $body
 "
     done <<< "$results"
 

@@ -659,4 +659,208 @@ describe "recall_ensure_indexed"
     fi
   }
 
+# ── GEORGE_REFERENCE.md quality tests ─────────────────────────
+# Verify that the FTS5-optimized ref doc produces clean, actionable
+# recall output and that ref cards rank above verbose prose docs.
+
+_setup_recall_with_ref() {
+    _setup_recall
+    _create_sample_readme
+    _create_sample_soul
+    mkdir -p "$LODGE_DIR/docs"
+    # Copy the real GEORGE_REFERENCE.md from the repo
+    local _real_ref
+    _real_ref="$(cd "$(dirname "$0")/.." && pwd)/docs/GEORGE_REFERENCE.md"
+    if [ -f "$_real_ref" ]; then
+        cp "$_real_ref" "$LODGE_DIR/docs/GEORGE_REFERENCE.md"
+    fi
+    # Create a competing verbose doc (simulates SOCIAL_BOTS.md style)
+    cat > "$LODGE_DIR/docs/SOCIAL_BOTS.md" << 'BOTEOF'
+# Social Bots & API Setup Guide
+
+George can post, read, search, and interact on five social platforms.
+
+## Discord Bot Setup
+
+George supports Discord through **two mechanisms**:
+1. **Webhooks** — simplest, just post messages to a channel (no bot account)
+2. **Bot Account** — full API access, read messages, manage channels
+
+### Option A: Webhook (Easiest)
+
+Perfect for one-way notifications (George → Discord).
+
+#### Step 1: Create a Webhook
+
+1. Open Discord → go to the channel you want
+2. Click the gear icon → Integrations → Webhooks
+3. Click "New Webhook", copy the URL
+4. Set it in George: /api keys set DISCORD_WEBHOOK_URL https://discord.com/api/webhooks/...
+
+### Option B: Bot Account
+
+You need a bot token from the Discord Developer Portal.
+Create an application, add a bot, copy the token, invite the bot to your server.
+
+## Unified Posting
+
+The most powerful feature — post to multiple platforms simultaneously.
+You can post to all configured platforms at once with /social post text.
+For Discord specifically, /social discord post uses a fallback chain:
+1. Try to resolve channel name → send via bot API
+2. If no channel match → use webhook
+BOTEOF
+    recall_reindex 2>/dev/null
+}
+
+describe "GEORGE_REFERENCE.md recall quality"
+
+  it "ref doc indexes with 'ref' source name" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall_with_ref
+    local sources
+    sources=$(sqlite3 "$RECALL_DB" "SELECT DISTINCT source FROM chunks ORDER BY source;" 2>/dev/null)
+    assert_contains "$sources" "ref"
+    _teardown_recall
+    fi
+  }
+
+  it "ref produces 40+ short knowledge cards" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall_with_ref
+    local count
+    count=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='ref';" 2>/dev/null)
+    assert_gt "$count" 39
+    _teardown_recall
+    fi
+  }
+
+  it "ref cards are concise (avg under 250 chars)" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall_with_ref
+    local avg_len
+    avg_len=$(sqlite3 "$RECALL_DB" "SELECT CAST(AVG(length(content)) AS INTEGER) FROM chunks WHERE source='ref';" 2>/dev/null)
+    [[ "$avg_len" -lt 250 ]]
+    assert_ok $?
+    _teardown_recall
+    fi
+  }
+
+  it "discord post query returns ref card first" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall_with_ref
+    local ctx
+    ctx=$(recall_search_context "discord post channel" 4)
+    local first_line
+    first_line=$(echo "$ctx" | head -1)
+    assert_contains "$first_line" "[ref:"
+    _teardown_recall
+    fi
+  }
+
+  it "discord post context includes exact syntax" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall_with_ref
+    local ctx
+    ctx=$(recall_search_context "discord post channel" 2)
+    assert_contains "$ctx" "/social post discord"
+    _teardown_recall
+    fi
+  }
+
+  it "context output has no snippet markers" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall_with_ref
+    local ctx
+    ctx=$(recall_search_context "discord post channel" 4)
+    [[ "$ctx" != *">>>"* ]] && [[ "$ctx" != *"<<<"* ]]
+    assert_ok $?
+    _teardown_recall
+    fi
+  }
+
+  it "sandbox query returns actionable ref card" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall_with_ref
+    local ctx
+    ctx=$(recall_search_context "sandbox build test run" 3)
+    assert_contains "$ctx" "/sandbox"
+    _teardown_recall
+    fi
+  }
+
+  it "crypto wallet query returns concise ref card" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall_with_ref
+    local ctx
+    ctx=$(recall_search_context "crypto wallet bitcoin" 2)
+    assert_contains "$ctx" "/wallet btc"
+    _teardown_recall
+    fi
+  }
+
+  it "discord dm query returns DM syntax" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall_with_ref
+    local ctx
+    ctx=$(recall_search_context "discord dm user" 2)
+    assert_contains "$ctx" "/social discord dm"
+    _teardown_recall
+    fi
+  }
+
+  it "mastodon instance query returns multi-instance syntax" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall_with_ref
+    local ctx
+    ctx=$(recall_search_context "mastodon instance token" 2)
+    assert_contains "$ctx" "instances"
+    _teardown_recall
+    fi
+  }
+
+  it "email query clearly says not for social" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall_with_ref
+    local ctx
+    ctx=$(recall_search_context "email send" 2)
+    assert_contains "$ctx" "email ONLY"
+    _teardown_recall
+    fi
+  }
+
+  it "git ssh query returns setup commands" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall_with_ref
+    local ctx
+    ctx=$(recall_search_context "git setup ssh" 2)
+    assert_contains "$ctx" "/git setup"
+    _teardown_recall
+    fi
+  }
+
+  it "ref card is shorter than verbose doc for same topic" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall_with_ref
+    local ref_len verbose_len
+    ref_len=$(sqlite3 "$RECALL_DB" \
+        "SELECT length(content) FROM chunks WHERE source='ref' AND section LIKE '%Discord Post%' LIMIT 1;" 2>/dev/null)
+    verbose_len=$(sqlite3 "$RECALL_DB" \
+        "SELECT length(content) FROM chunks WHERE source='social_bots' AND section LIKE '%Discord Bot%' LIMIT 1;" 2>/dev/null)
+    [[ "${ref_len:-0}" -lt "${verbose_len:-0}" ]]
+    assert_ok $?
+    _teardown_recall
+    fi
+  }
+
+  it "memory loop pattern is searchable" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall_with_ref
+    local ctx
+    ctx=$(recall_search_context "memory loop read remember respond" 2)
+    assert_contains "$ctx" "journal write"
+    _teardown_recall
+    fi
+  }
+
 test_end
