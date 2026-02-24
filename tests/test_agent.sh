@@ -268,6 +268,41 @@ describe "Dynamic dual-loop architecture"
     assert_ok $?
   }
 
+  it "agent_inner_loop validates router tool output" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_tool_valid'
+    assert_ok $?
+  }
+
+  it "macro strategist injects tool summary" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'commands_catalog_plan'
+    assert_ok $?
+  }
+
+  it "macro strategist has question detection rule" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'QUESTION.*conversation.*request for information'
+    assert_ok $?
+  }
+
+  it "agent_run resets debug counters" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'llm_debug_reset'
+    assert_ok $?
+  }
+
+  it "agent_run prints debug summary" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'llm_debug_summary'
+    assert_ok $?
+  }
+
 # ── Recursive planning config ─────────────────────────────────
 describe "Recursive planning config"
 
@@ -557,6 +592,84 @@ describe "Escalation matrix in agent_inner_loop"
     local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'read -r guidance'
+    assert_ok $?
+  }
+
+# ── L3 failure history recall ─────────────────────────────────
+describe "L3 failure history recall"
+
+  it "L3 reads failure log for past recovery instructions" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'Past Recovery Instructions'
+    assert_ok $?
+  }
+
+  it "L3 triggers at inner_attempts >= 2" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'inner_attempts.*-ge 2.*fail_file'
+    assert_ok $?
+  }
+
+  it "L3 greps RECOVERY and OPERATOR GUIDANCE from failure log" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'RECOVERY.*OPERATOR GUIDANCE'
+    assert_ok $?
+  }
+
+# ── Catalog-aware operator guided retry ───────────────────────
+describe "Catalog-aware operator guided retry"
+
+  it "guided retry injects command catalog" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'commands_catalog_plan'
+    assert_ok $?
+  }
+
+  it "guided retry extracts slash commands (not just bash)" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    # Must handle both /command lines and ```bash blocks
+    echo "$body" | grep -q 'final_is_slash'
+    assert_ok $?
+  }
+
+  it "guided retry logs RECOVERY entry on success" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'RECOVERY:.*final_cmd'
+    assert_ok $?
+  }
+
+  it "guided retry logs OPERATOR GUIDANCE in recovery entry" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'OPERATOR GUIDANCE:.*guidance'
+    assert_ok $?
+  }
+
+  it "guided retry logs ORIGINAL FAILURE in recovery entry" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'ORIGINAL FAILURE:.*last_failed_cmd'
+    assert_ok $?
+  }
+
+  it "guided retry logs failure when guided attempt also fails" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'FAILED COMMAND (guided)'
+    assert_ok $?
+  }
+
+  it "guided retry uses commands_dispatch for slash commands" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    # The guided retry section should dispatch slash commands properly
+    echo "$body" | grep -q 'final_is_slash.*commands_dispatch'
     assert_ok $?
   }
 

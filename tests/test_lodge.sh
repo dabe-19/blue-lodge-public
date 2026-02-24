@@ -337,6 +337,39 @@ describe "Limits command"
     assert_eq "$AGENT_STEP_DELAY" "1"
   }
 
+# ── /debug command ─────────────────────────────────────────────
+describe "Debug command"
+
+  it "registers debug command" && {
+    commands_is_command "/debug"
+    assert_ok $?
+  }
+
+  it "_cmd_debug is defined" && {
+    declare -f _cmd_debug &>/dev/null
+    assert_ok $?
+  }
+
+  it "_cmd_debug toggles on" && {
+    LODGE_DEBUG=0
+    _cmd_debug "on" >/dev/null 2>&1
+    assert_eq "$LODGE_DEBUG" "1"
+  }
+
+  it "_cmd_debug toggles off" && {
+    LODGE_DEBUG=1
+    _cmd_debug "off" >/dev/null 2>&1
+    assert_eq "$LODGE_DEBUG" "0"
+  }
+
+  it "_cmd_debug toggles with no arg" && {
+    LODGE_DEBUG=0
+    _cmd_debug "" >/dev/null 2>&1
+    assert_eq "$LODGE_DEBUG" "1"
+    _cmd_debug "" >/dev/null 2>&1
+    assert_eq "$LODGE_DEBUG" "0"
+  }
+
   it "_cmd_clear is defined" && {
     declare -f _cmd_clear &>/dev/null
     assert_ok $?

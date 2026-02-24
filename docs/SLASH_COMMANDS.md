@@ -593,6 +593,7 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 | `/pgp export` | Export public key | `/pgp export` |
 | `/vitals` | System vitals (CPU, RAM, disk, battery) | `/vitals` |
 | `/limits` | View/adjust agent planning limits | `/limits steps 8` |
+| `/debug` | Toggle debug mode (timers + token counts) | `/debug on` |
 | `/think` | Toggle thinking mode on/off | `/think` |
 | `/cleanup` | Remove George's created files | `/cleanup` |
 

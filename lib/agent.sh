@@ -663,6 +663,31 @@ agent_inner_loop() {
         # sed -e 's/[[:space:]]*$//' : Strips trailing whitespace.
         selected_tool=$(echo "$selected_tool" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
+        # Extract just the base command name (first word, strip leading /)
+        # Router sometimes outputs "/ask" or "/web search" or noise.
+        selected_tool=$(echo "$selected_tool" | awk '{print $1}' | sed 's|^/||; s|^/||')
+
+        # ── TOOL VALIDATION: Reject hallucinated commands ─────
+        # If the router outputs a tool name that doesn't exist in the
+        # command registry or commands directory, fall back to /ask.
+        # This prevents the inner loop from wasting escalation rounds
+        # on imaginary commands like "/execute" or "/research".
+        local _tool_valid=0
+        if [ "$selected_tool" = "bash" ]; then
+            _tool_valid=1
+        elif declare -p CMD_REGISTRY &>/dev/null && [[ -n "${CMD_REGISTRY[$selected_tool]+x}" ]]; then
+            _tool_valid=1
+        elif [ -f "${LODGE_COMMANDS_DIR:-$LODGE_DIR/commands}/${selected_tool}.sh" ]; then
+            _tool_valid=1
+        fi
+        if [ "$_tool_valid" -eq 0 ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router hallucinated '/$selected_tool' — falling back to /ask"
+            selected_tool="ask"
+        fi
+
+        # Re-prefix for specialist lookup
+        [ "$selected_tool" != "bash" ] && selected_tool="/$selected_tool"
+
         local specialist_sys=$(_build_specialist_prompt "$selected_tool" "$workdir")
 
         # Inject micro_memory (action log) so the specialist sees
@@ -772,11 +797,19 @@ agent_inner_loop() {
                 fi
             fi
 
-            # ── Levels 3-4: Syntax Permutation ────────────────
-            # (Handled by the identicality lockout at the top of the loop.
-            #  The LLM will see the failure context in micro_memory and
-            #  generate a new command. If it's identical, the interlock
-            #  rejects it and forces another generation.)
+            # ── Levels 3-4: Syntax Permutation + History Recall ─
+            # Identicality lockout (top of loop) prevents identical reruns.
+            # Additionally, read the failure log for past RECOVERY entries.
+            # If the operator has previously solved a similar failure,
+            # inject those instructions so the LLM can self-correct.
+            if [ "$inner_attempts" -ge 2 ] && [ -f "$fail_file" ]; then
+                local past_recoveries
+                past_recoveries=$(grep -B1 -A2 "^RECOVERY:\|^OPERATOR GUIDANCE:" "$fail_file" 2>/dev/null | tail -20)
+                if [ -n "$past_recoveries" ]; then
+                    ui_warn "Escalation L3: Injecting past recovery instructions..."
+                    echo -e "\n**Past Recovery Instructions (from failure log):**\n\`\`\`\n$past_recoveries\n\`\`\`" >> "$micro_file"
+                fi
+            fi
 
             # ── Level 5: Forced Web Fallback ──────────────────
             # LLM is bypassed again. Extract the last 5 lines of stderr
@@ -816,21 +849,75 @@ agent_inner_loop() {
     read -r guidance < /dev/tty
     if [ -n "$guidance" ] && [ "$guidance" != "abort" ]; then
         echo -e "\n**Operator Guidance:** $guidance" >> "$micro_file"
-        # One final attempt with human guidance injected into context
-        local inner_context=$(cat "$micro_file")
-        local specialist_sys=$(_build_specialist_prompt "bash" "$workdir")
+
+        # ── Catalog-Aware Guided Retry ────────────────────────
+        # Combine operator input with the full command catalog so
+        # the LLM maps natural language ("use /web search") to a
+        # real command instead of hallucinating.
+        local catalog=""
+        if declare -f commands_catalog_plan &>/dev/null; then
+            catalog=$(commands_catalog_plan)
+        fi
+
+        local guided_prompt="MICRO OBJECTIVE: $micro_objective
+
+OPERATOR GUIDANCE: $guidance
+
+AVAILABLE COMMANDS:
+$catalog
+
+The operator provided guidance after previous failures. Using the operator's instructions and the command catalog above, write the exact command to execute.
+The command MUST be one listed in AVAILABLE COMMANDS or a valid bash command.
+Output a slash command line starting with / OR a bash code block."
+
+        local guided_sys=$(_build_specialist_prompt "" "$workdir")
         local final_plan
-        final_plan=$(llm_stream "The operator said: $guidance. Write the exact command." "$specialist_sys" "${LLM_ASK_TOKENS:-300}")
-        local final_cmd
-        final_cmd=$(echo "$final_plan" | awk '/```bash/{flag=1; next} /```/{flag=0} flag')
+        final_plan=$(llm_stream "$guided_prompt" "$guided_sys" "${LLM_ASK_TOKENS:-300}")
+
+        # Extract slash command or bash command (same logic as main loop)
+        local final_cmd=""
+        local final_is_slash=0
+        final_cmd=$(echo "$final_plan" | awk '
+            /^```/ { in_block = !in_block; next }
+            in_block { next }
+            /^\/[a-z]/ { print; exit }
+        ')
+        if [ -n "$final_cmd" ]; then
+            final_is_slash=1
+        else
+            final_cmd=$(echo "$final_plan" | awk '/```bash/{flag=1; next} /```/{flag=0} flag')
+        fi
+
         if [ -n "$final_cmd" ]; then
             ui_step "Running (guided): $final_cmd"
             local final_output
-            final_output=$(eval "$final_cmd" 2>&1 | head -c 2000)
-            if [ ${PIPESTATUS[0]} -eq 0 ]; then
+            local final_exit
+            if [ "$final_is_slash" -eq 1 ] && declare -f commands_dispatch &>/dev/null; then
+                final_output=$(commands_dispatch "$final_cmd" "$workdir" 2>&1 | head -c 2000)
+                final_exit=${PIPESTATUS[0]}
+            else
+                final_output=$(eval "$final_cmd" 2>&1 | head -c 2000)
+                final_exit=${PIPESTATUS[0]}
+            fi
+
+            if [ "$final_exit" -eq 0 ]; then
+                # ── Recovery Logging ───────────────────────────
+                # Write a RECOVERY entry to the failure log so that
+                # future L3 escalations can find what the operator
+                # told us to do for similar failures.
+                {
+                    echo ""
+                    echo "RECOVERY: \`$final_cmd\`"
+                    echo "OPERATOR GUIDANCE: $guidance"
+                    echo "ORIGINAL FAILURE: \`$last_failed_cmd\`"
+                    echo "---"
+                } >> "$fail_file"
                 local summary="Completed with operator guidance"
                 echo "- Step: $micro_objective -> $summary" >> "$george_dir/macro_memory.md"
                 return 0
+            else
+                # Log guided failure for the record
+                echo -e "\nFAILED COMMAND (guided): \`$final_cmd\`\nEXIT CODE: $final_exit\nOPERATOR GUIDANCE: $guidance\nOUTPUT:\n$final_output\n---" >> "$fail_file"
             fi
         fi
     fi
@@ -862,6 +949,9 @@ agent_run() {
     _LODGE_IN_TASK=1
     _LODGE_CANCELLED=0
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
+
+    # Reset debug counters at task start
+    declare -f llm_debug_reset &>/dev/null && llm_debug_reset
 
     ui_section "Task"
     ui_info "$task"
@@ -939,7 +1029,24 @@ agent_run() {
         # execution, we drastically reduce prefill time. Ollama flushes the
         # context window (not the 4GB model) so a 150-token prompt reasons
         # almost instantly.
-        local macro_sys="You are a strategic planning engine. Given a task memory with completed milestones, determine the single next milestone needed. Output either DONE or a concise milestone description (one sentence, imperative mood). Output NOTHING else."
+        #
+        # CRITICAL: The strategist MUST know what tools exist so milestones
+        # align with real slash commands. Without this, the 4B model invents
+        # actions like "Research evidence-based..." that the inner loop can't
+        # execute. The compact tool summary adds ~80 tokens.
+        local _tool_summary=""
+        if declare -f commands_catalog_plan &>/dev/null; then
+            _tool_summary=$(commands_catalog_plan 2>/dev/null | grep '^/' | awk -F' — ' '{print $1}' | tr '\n' ', ' | sed 's/, $//')
+        fi
+
+        local macro_sys="You are a strategic planning engine. Given a task memory with completed milestones, determine the single next milestone needed.
+
+Rules:
+- If the objective is a QUESTION, conversation, or request for information (not coding/building/deploying), output: Use /ask to answer the user's question about <topic>
+- Every milestone MUST be achievable using one of these tools: ${_tool_summary:-/ask, /sandbox, /write, /build, /test, /web, /recall, /save, bash}
+- Frame milestones as tool-executable actions, not abstract goals
+- Output either DONE or a concise milestone description (one sentence, imperative mood)
+- Output NOTHING else"
 
         ui_think "Strategist: determining next milestone..."
         local milestone
@@ -993,6 +1100,9 @@ agent_run() {
     else
         ui_ok "Task complete: $completed_milestones/$macro_iterations milestones succeeded"
     fi
+
+    # Print debug summary (timers + token totals) if enabled
+    declare -f llm_debug_summary &>/dev/null && llm_debug_summary
 
     # Reflect in journal (background — don't block user)
     local reflect_summary="$task ($completed_milestones/$macro_iterations milestones in $(basename "$workdir"))"

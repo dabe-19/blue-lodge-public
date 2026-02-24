@@ -155,6 +155,33 @@ _cmd_think() {
             ui_dim "  (no arg) — cycle: off → dim → bright → off" ;;
     esac
 }
+_cmd_debug() {
+    local arg="$1"
+    case "$arg" in
+        on|1)
+            LODGE_DEBUG=1
+            ui_ok "Debug mode ON — timers + token counts per LLM call" ;;
+        off|0)
+            LODGE_DEBUG=0
+            ui_ok "Debug mode OFF" ;;
+        "")
+            # Toggle
+            if [ "${LODGE_DEBUG:-0}" -eq 0 ]; then
+                LODGE_DEBUG=1
+                ui_ok "Debug mode ON — timers + token counts per LLM call"
+            else
+                LODGE_DEBUG=0
+                ui_ok "Debug mode OFF"
+            fi ;;
+        *)
+            ui_info "Usage: /debug [on|off]"
+            ui_dim "  on/off   — toggle debug output (current: $([ "${LODGE_DEBUG:-0}" -eq 1 ] && echo ON || echo OFF))"
+            ui_dim "  (no arg) — toggle"
+            ui_dim ""
+            ui_dim "  When ON, each LLM call prints elapsed time and token counts"
+            ui_dim "  (input/output). A summary is printed after each task completes." ;;
+    esac
+}
 _cmd_compact() {
     memory_compact "${2:-.}"
 }
@@ -2330,6 +2357,7 @@ _register_commands() {
     commands_register "git"      "Git & GitHub configuration" "_cmd_git"
     commands_register "cleanup"  "Remove George's created files" "_cmd_cleanup"
     commands_register "think"    "Toggle thinking mode on/off" "_cmd_think"
+    commands_register "debug"    "Toggle debug mode (timers + token counts)" "_cmd_debug"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"
     commands_register "files"    "List workspace files" "_cmd_files"

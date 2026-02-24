@@ -124,6 +124,7 @@ lodge /ask "what is a monad?"      # Quick question
 | `/slash <cmd>` | — | Custom commands (list/create/edit/delete/test) |
 | `/vitals` | — | System vitals (CPU, RAM, disk, battery, WiFi) |
 | `/think` | — | Toggle thinking mode on/off |
+| `/debug` | — | Toggle debug mode (timers + token counts) |
 | `/soul` | — | Toggle soul mode (condensed ~250 tok / full ~4500 tok) |
 | `/limits` | — | View/adjust agent planning limits (steps/depth/milestones) |
 | `/cleanup` | — | Remove George's created files |

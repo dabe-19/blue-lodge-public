@@ -35,6 +35,10 @@ describe "Configuration defaults"
     assert_eq "$LLM_KEEP_ALIVE" "30m"
   }
 
+  it "LODGE_DEBUG defaults to 0" && {
+    assert_eq "$LODGE_DEBUG" "0"
+  }
+
 # ── Function existence ─────────────────────────────────────────
 describe "Core LLM functions"
 
@@ -149,6 +153,46 @@ describe "Model warmup"
     llm_is_loaded() { return 0; }
     llm_warmup
     assert_eq "$?" "0"
+  }
+
+# ── Debug instrumentation ─────────────────────────────────────
+describe "Debug instrumentation"
+
+  it "llm_debug_reset is defined" && {
+    declare -f llm_debug_reset &>/dev/null
+    assert_ok $?
+  }
+
+  it "llm_debug_summary is defined" && {
+    declare -f llm_debug_summary &>/dev/null
+    assert_ok $?
+  }
+
+  it "_llm_debug_print is defined" && {
+    declare -f _llm_debug_print &>/dev/null
+    assert_ok $?
+  }
+
+  it "llm_debug_reset zeroes counters" && {
+    _LLM_DEBUG_CALL_COUNT=5
+    _LLM_DEBUG_TOTAL_INPUT=100
+    _LLM_DEBUG_TOTAL_OUTPUT=50
+    llm_debug_reset
+    assert_eq "$_LLM_DEBUG_CALL_COUNT" "0"
+    assert_eq "$_LLM_DEBUG_TOTAL_INPUT" "0"
+    assert_eq "$_LLM_DEBUG_TOTAL_OUTPUT" "0"
+  }
+
+  it "_llm_debug_print is silent when LODGE_DEBUG=0" && {
+    LODGE_DEBUG=0
+    output=$(_llm_debug_print "test" 2>&1)
+    assert_empty "$output"
+    LODGE_DEBUG=0  # restore
+  }
+
+  it "_LLM_DEBUG_TASK_START is set by llm_debug_reset" && {
+    llm_debug_reset
+    assert_match "$_LLM_DEBUG_TASK_START" "^[0-9]+$"
   }
 
 test_end

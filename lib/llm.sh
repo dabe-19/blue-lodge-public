@@ -14,6 +14,13 @@ LLM_TIMEOUT="${LLM_TIMEOUT:-300}"           # Safety net: 300s max per request (
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
 LODGE_THINK="${LODGE_THINK:-0}"               # 0=disable thinking (fast, default), 1=enable Qwen3 thinking
 LODGE_THINK_STREAM="${LODGE_THINK_STREAM:-1}"  # When LODGE_THINK=1: 0=hide thinking, 1=show dimmed, 2=show bright (cyan)
+LODGE_DEBUG="${LODGE_DEBUG:-0}"                 # 0=normal, 1=show timers + token counts per LLM call
+
+# ── Debug tracking state ───────────────────────────────────────
+_LLM_DEBUG_CALL_COUNT=0
+_LLM_DEBUG_TOTAL_INPUT=0
+_LLM_DEBUG_TOTAL_OUTPUT=0
+_LLM_DEBUG_TASK_START=""
 
 # ── Active request tracking (for cancellation) ─────────────────
 _LLM_CURL_PID=""
@@ -127,6 +134,67 @@ llm_create_model() {
     fi
 }
 
+# ── Debug output helpers ───────────────────────────────────────
+# Print debug info to /dev/tty so it's visible even inside $() captures.
+_llm_debug_print() {
+    [ "${LODGE_DEBUG:-0}" -eq 0 ] && return
+    local _tty="/dev/tty"
+    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    printf " %b  [debug] %s%b\n" "$C_DIM" "$1" "$C_RESET" > "$_tty" 2>/dev/null
+}
+
+_llm_debug_start_timer() {
+    [ "${LODGE_DEBUG:-0}" -eq 0 ] && return
+    _LLM_DEBUG_CALL_START=$(date +%s%N 2>/dev/null || date +%s)
+    _LLM_DEBUG_CALL_COUNT=$((_LLM_DEBUG_CALL_COUNT + 1))
+}
+
+_llm_debug_end_timer() {
+    [ "${LODGE_DEBUG:-0}" -eq 0 ] && return
+    local label="${1:-LLM call}"
+    local input_tok="${2:-?}"
+    local output_tok="${3:-?}"
+    local end_ns
+    end_ns=$(date +%s%N 2>/dev/null || date +%s)
+    local elapsed_ms=0
+    if [[ "$_LLM_DEBUG_CALL_START" =~ [0-9]{10,} ]] && [[ "$end_ns" =~ [0-9]{10,} ]]; then
+        elapsed_ms=$(( (end_ns - _LLM_DEBUG_CALL_START) / 1000000 ))
+    else
+        elapsed_ms=$(( end_ns - _LLM_DEBUG_CALL_START ))
+        elapsed_ms=$((elapsed_ms * 1000))
+    fi
+    local elapsed_s
+    elapsed_s=$(awk "BEGIN{printf \"%.1f\", $elapsed_ms/1000}")
+    # Accumulate totals
+    [[ "$input_tok" =~ ^[0-9]+$ ]] && _LLM_DEBUG_TOTAL_INPUT=$((_LLM_DEBUG_TOTAL_INPUT + input_tok))
+    [[ "$output_tok" =~ ^[0-9]+$ ]] && _LLM_DEBUG_TOTAL_OUTPUT=$((_LLM_DEBUG_TOTAL_OUTPUT + output_tok))
+    _llm_debug_print "${label}: ${elapsed_s}s | in:${input_tok} out:${output_tok} tok"
+}
+
+# Reset debug counters at task start
+llm_debug_reset() {
+    _LLM_DEBUG_CALL_COUNT=0
+    _LLM_DEBUG_TOTAL_INPUT=0
+    _LLM_DEBUG_TOTAL_OUTPUT=0
+    _LLM_DEBUG_TASK_START=$(date +%s)
+}
+
+# Print task-level debug summary
+llm_debug_summary() {
+    [ "${LODGE_DEBUG:-0}" -eq 0 ] && return
+    local now
+    now=$(date +%s)
+    local total_s=$(( now - ${_LLM_DEBUG_TASK_START:-$now} ))
+    local _tty="/dev/tty"
+    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    printf "\n %b── Debug Summary ──────────────────────────────%b\n" "$C_DIM" "$C_RESET" > "$_tty" 2>/dev/null
+    printf " %b  LLM calls:     %d%b\n" "$C_DIM" "$_LLM_DEBUG_CALL_COUNT" "$C_RESET" > "$_tty" 2>/dev/null
+    printf " %b  Total input:   %d tokens%b\n" "$C_DIM" "$_LLM_DEBUG_TOTAL_INPUT" "$C_RESET" > "$_tty" 2>/dev/null
+    printf " %b  Total output:  %d tokens%b\n" "$C_DIM" "$_LLM_DEBUG_TOTAL_OUTPUT" "$C_RESET" > "$_tty" 2>/dev/null
+    printf " %b  Wall time:     %ds%b\n" "$C_DIM" "$total_s" "$C_RESET" > "$_tty" 2>/dev/null
+    printf " %b──────────────────────────────────────────────%b\n" "$C_DIM" "$C_RESET" > "$_tty" 2>/dev/null
+}
+
 # ── Generate (blocking, no stream) ────────────────────────────
 # Usage: llm_generate "prompt" [system_prompt] [max_tokens]
 llm_generate() {
@@ -135,6 +203,8 @@ llm_generate() {
     local max_tokens="${3:-$LLM_MAX_TOKENS}"
     local payload
     local timeout_args=()
+
+    _llm_debug_start_timer
 
     # Qwen3 thinking mode control
     if [ "${LODGE_THINK:-0}" -eq 0 ]; then
@@ -201,6 +271,14 @@ llm_generate() {
         return 1
     fi
 
+    # Extract token counts for debug (Ollama includes these in non-streaming response)
+    if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
+        local _dbg_in _dbg_out
+        _dbg_in=$(echo "$response" | jq -r '.prompt_eval_count // 0' 2>/dev/null)
+        _dbg_out=$(echo "$response" | jq -r '.eval_count // 0' 2>/dev/null)
+        _llm_debug_end_timer "generate" "$_dbg_in" "$_dbg_out"
+    fi
+
     # Strip any <think>...</think> blocks from Qwen3 thinking mode
     echo "$response" | jq -r '.response // "ERROR: Empty response"' | sed 's/<think>.*<\/think>//g; s/<think>[^<]*$//g'
 }
@@ -213,6 +291,8 @@ llm_stream() {
     local max_tokens="${3:-$LLM_MAX_TOKENS}"
     local payload
     local full_response=""
+
+    _llm_debug_start_timer
 
     # Qwen3 thinking mode control: append /nothink or /think to user prompt
     # Thinking on a 4B CPU model burns tokens on internal reasoning (slow + noisy).
@@ -321,6 +401,13 @@ llm_stream() {
         local done_flag
         done_flag=$(echo "$line" | jq -r '.done // empty' 2>/dev/null)
         if [ "$done_flag" = "true" ]; then
+            # Extract token counts from the final streaming response
+            if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
+                local _dbg_in _dbg_out
+                _dbg_in=$(echo "$line" | jq -r '.prompt_eval_count // 0' 2>/dev/null)
+                _dbg_out=$(echo "$line" | jq -r '.eval_count // 0' 2>/dev/null)
+                _llm_debug_end_timer "stream" "$_dbg_in" "$_dbg_out"
+            fi
             echo ""  # final newline for captured output
             echo "" > "$_tty" 2>/dev/null
             break
