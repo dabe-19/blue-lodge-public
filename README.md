@@ -124,6 +124,7 @@ lodge /ask "what is a monad?"      # Quick question
 | `/slash <cmd>` | — | Custom commands (list/create/edit/delete/test) |
 | `/vitals` | — | System vitals (CPU, RAM, disk, battery, WiFi) |
 | `/think` | — | Toggle thinking mode on/off |
+| `/soul` | — | Toggle soul mode (full personality injection) |
 | `/cleanup` | — | Remove George's created files |
 | `/ask <question>` | — | Quick question (no file changes) |
 | `/read <file>` | — | Read a file |
@@ -840,12 +841,12 @@ bash tests/test_api.sh                     # Run a single file directly
 | `test_agent.sh` | 10 | Agent loop, config, cancellation |
 | `test_api.sh` | 33 | REST client, keys, JSON, auth headers |
 | `test_backup.sh` | 46 | Local/git backup, restore, pruning, export/import |
-| `test_commands.sh` | 31 | Slash command registration & dispatch |
+| `test_commands.sh` | 36 | Slash command registration, dispatch, memory loop catalog |
 | `test_container.sh` | 28 | Container management, distro resolution |
 | `test_journal.sh` | 21 | Temporal memory, decay, greetings |
 | `test_llm.sh` | 23 | LLM config, token estimation, cancellation |
-| `test_lodge.sh` | 35 | Main script, command wiring, REPL heuristic |
-| `test_memory.sh` | 27 | CLAUDE.md sections, compaction, snapshots |
+| `test_lodge.sh` | 38 | Main script, command wiring, soul toggle, REPL heuristic |
+| `test_memory.sh` | 30 | CLAUDE.md sections, compaction, snapshots, soul toggle |
 | `test_providers.sh` | 32 | 10 AI providers, dispatcher, aliases |
 | `test_sandbox.sh` | 15 | Sandbox lifecycle, build, remove |
 | `test_email.sh` | 65 | Gmail/ProtonMail/Zoho/Tuta providers, SMTP/IMAP, bridge |

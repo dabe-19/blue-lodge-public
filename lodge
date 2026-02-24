@@ -172,9 +172,34 @@ _cmd_memory() {
     echo ""
 }
 _cmd_soul() {
-    ui_section "soul.md"
-    cat "$LODGE_DIR/soul.md"
-    echo ""
+    local arg="$1"
+    case "$arg" in
+        on|1|full)
+            LODGE_SOUL=1
+            ui_ok "Soul mode ON — full soul.md injected into every prompt (~4500 tokens)" ;;
+        off|0|lean)
+            LODGE_SOUL=0
+            ui_ok "Soul mode OFF — only Practical Craft section injected (default)" ;;
+        show)
+            ui_section "soul.md"
+            cat "$LODGE_DIR/soul.md"
+            echo "" ;;
+        "")
+            # Toggle
+            if [ "${LODGE_SOUL:-0}" -eq 0 ]; then
+                LODGE_SOUL=1
+                ui_ok "Soul mode ON — full soul.md injected into every prompt (~4500 tokens)"
+            else
+                LODGE_SOUL=0
+                ui_ok "Soul mode OFF — only Practical Craft section injected (default)"
+            fi ;;
+        *)
+            ui_info "Usage: /soul [on|off|show]"
+            ui_dim "  on    — inject full soul.md into prompts (ethics + philosophy + craft)"
+            ui_dim "  off   — inject only Practical Craft section (lean, default)"
+            ui_dim "  show  — display soul.md contents"
+            ui_dim "  (no arg) — toggle on/off (current: $([ "${LODGE_SOUL:-0}" -eq 1 ] && echo ON || echo OFF))" ;;
+    esac
 }
 _cmd_journal() {
     local args="$1"
@@ -2195,7 +2220,7 @@ _register_commands() {
     commands_register "compact"  "Compress memory file" "_cmd_compact"
     commands_register "snapshot" "Save memory checkpoint" "_cmd_snapshot"
     commands_register "memory"   "Show CLAUDE.md contents" "_cmd_memory"
-    commands_register "soul"     "Show soul.md" "_cmd_soul"
+    commands_register "soul"     "Toggle soul mode on/off (full personality)" "_cmd_soul"
     commands_register "status"   "Show agent status" "_cmd_status"
     commands_register "journal"  "View/write journal" "_cmd_journal"
     commands_register "reflect"  "Record a reflection" "_cmd_reflect"

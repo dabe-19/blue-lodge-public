@@ -159,6 +159,27 @@ describe "commands_catalog"
     assert_contains "$_cat_out" "/social discord read <channel_id>"
   }
 
+  it "catalog contains MEMORY LOOP section" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "MEMORY LOOP"
+  }
+
+  it "catalog memory loop shows read-remember-respond pattern" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "/journal write"
+    assert_contains "$_cat_out" "/social discord read"
+  }
+
+  it "plan catalog contains memory loop" && {
+    _plan_out=$(commands_catalog_plan)
+    assert_contains "$_plan_out" "MEMORY LOOP"
+  }
+
+  it "catalog contains /soul command" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "/soul"
+  }
+
 # ── commands_help_topic ────────────────────────────────────────
 describe "commands_help_topic"
 

@@ -322,13 +322,16 @@ $files"
         return
     fi
 
-    # ── Full mode for tasks: budget-conscious ───────────────────
-    # Compact soul: identity preamble + practical craft rules
-    # Full soul.md is ~15K chars (~4500 tokens) — too large for 8K context.
-    # The Modelfile SYSTEM already has core personality. Task mode only adds
-    # the identity intro and practical rules (output format, hardware, laws).
+    # ── Soul injection: controlled by LODGE_SOUL toggle ─────────
+    # LODGE_SOUL=1 (soul mode ON):  full soul.md (~4500 tokens)
+    # LODGE_SOUL=0 (soul mode OFF): identity preamble + Practical Craft only
+    # Toggle with /soul command. 16K context can handle full soul.
     local soul
-    soul=$({ head -20 "$LODGE_DIR/soul.md"; echo ""; awk '/^## Practical Craft$/,0' "$LODGE_DIR/soul.md"; } 2>/dev/null)
+    if [ "${LODGE_SOUL:-0}" -eq 1 ]; then
+        soul=$(cat "$LODGE_DIR/soul.md" 2>/dev/null)
+    else
+        soul=$({ head -20 "$LODGE_DIR/soul.md"; echo ""; awk '/^## Practical Craft$/,0' "$LODGE_DIR/soul.md"; } 2>/dev/null)
+    fi
     prompt="${prompt}${soul}"
 
     # Environment constraints — George must know what he CAN'T do

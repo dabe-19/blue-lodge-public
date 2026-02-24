@@ -177,6 +177,14 @@ commands_catalog_plan() {
 /secret set|get <k>  — Encrypted secrets
 /slash create <name> <desc> — Create custom command
 /vitals              — System dashboard
+/soul [on|off]       — Toggle full personality injection
+
+MEMORY LOOP — How to read, remember, and respond:
+  1. /social discord read <channel>  ← read messages
+  2. /journal write "<summary>"      ← save to living memory
+  3. /recall <topic>                 ← retrieve when needed
+  Use this loop for ANY external input: socials, web, conversations.
+  Never web-search for info that came from a social channel — read it.
 PLANCAT
 
     # Append custom slash commands if any exist
@@ -306,7 +314,35 @@ Examples:
 /read <file>          — Read a file
 /status               — Show agent status
 /memory               — Show CLAUDE.md
+/soul [on|off]        — Toggle full personality injection (on=full soul.md, off=Practical Craft only)
+/think [on|off|bright|dim|hide] — Toggle thinking mode
 /help [command]       — Show help for a command
+
+── MEMORY LOOP (Read → Remember → Respond) ──────────────────
+When information comes from an external source (social media, web, email),
+you MUST capture it into persistent memory before responding. Do NOT rely
+on the context window alone — it will be lost next session.
+
+Pattern:
+  1. READ    — /social discord read general     ← read the source
+  2. INGEST  — /journal write "Key fact: ..."   ← save to journal (living memory)
+             — /ingest add /tmp/data.txt label  ← or index a file into recall
+  3. RECALL  — /recall <topic>                  ← retrieve later when needed
+  4. RESPOND — /social discord post general "reply"  ← respond with knowledge
+
+Examples:
+  Brother asks "what did they say on Discord?":
+    1. /social discord read general
+    2. /journal write "Discord update: <summary of messages>"
+    3. Answer the Brother using what you just read and saved
+
+  Brother asks you to monitor and reply:
+    1. /social discord read general
+    2. /journal write "Conversation context: <key points>"
+    3. /social discord post general "<your reply based on what you read>"
+
+  WRONG: /web search "what did discord say" ← NEVER do this. Read the source.
+──────────────────────────────────────────────────────────────
 
 If a command you need is NOT listed above, create it:
   /slash create <name> <description>

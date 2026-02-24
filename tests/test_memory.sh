@@ -255,6 +255,40 @@ describe "memory_build_system_prompt plan mode"
     _teardown_mem
   }
 
+# ── Soul mode toggle ─────────────────────────────────────────
+describe "memory_build_system_prompt soul mode"
+
+  it "LODGE_SOUL=1 includes full soul.md (Impartial Spectator)" && {
+    _setup_mem
+    LODGE_SOUL=1
+    prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "task")
+    assert_contains "$prompt" "Impartial Spectator"
+    LODGE_SOUL=0
+    _teardown_mem
+  }
+
+  it "LODGE_SOUL=0 excludes philosophy sections" && {
+    _setup_mem
+    LODGE_SOUL=0
+    prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "task")
+    # Practical Craft should be present, but not the deep philosophy
+    assert_contains "$prompt" "Practical Craft"
+    _teardown_mem
+  }
+
+  it "soul mode ON produces larger prompt than OFF" && {
+    _setup_mem
+    LODGE_SOUL=1
+    _on=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "task")
+    LODGE_SOUL=0
+    _off=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "task")
+    _on_len=${#_on}
+    _off_len=${#_off}
+    assert_gt "$_on_len" "$_off_len"
+    LODGE_SOUL=0
+    _teardown_mem
+  }
+
   it "plan prompt does NOT include journal" && {
     _setup_mem
     prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")

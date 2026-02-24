@@ -237,9 +237,29 @@ describe "Command handler functions"
     assert_contains "$output" "Test Project"
   }
 
-  it "_cmd_soul shows soul.md" && {
-    output=$(_cmd_soul 2>&1)
+  it "_cmd_soul shows soul.md with show arg" && {
+    output=$(_cmd_soul "show" 2>&1)
     assert_not_empty "$output"
+  }
+
+  it "_cmd_soul toggles on" && {
+    LODGE_SOUL=0
+    _cmd_soul "on" >/dev/null 2>&1
+    assert_eq "${LODGE_SOUL}" "1"
+  }
+
+  it "_cmd_soul toggles off" && {
+    LODGE_SOUL=1
+    _cmd_soul "off" >/dev/null 2>&1
+    assert_eq "${LODGE_SOUL}" "0"
+  }
+
+  it "_cmd_soul toggles with no arg" && {
+    LODGE_SOUL=0
+    _cmd_soul "" >/dev/null 2>&1
+    assert_eq "${LODGE_SOUL}" "1"
+    _cmd_soul "" >/dev/null 2>&1
+    assert_eq "${LODGE_SOUL}" "0"
   }
 
   it "_cmd_clear is defined" && {
