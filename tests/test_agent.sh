@@ -63,6 +63,63 @@ describe "Cancellation tracking"
     assert_match "${_LODGE_CANCELLED:-0}" "^[01]$"
   }
 
+# ── Inner loop cancellation ───────────────────────────────────
+describe "Inner loop cancellation"
+
+  it "agent_inner_loop checks cancel file at top of while loop" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    # Must check cancel file BEFORE making any LLM calls
+    echo "$body" | grep -q '_LODGE_CANCELLED.*-eq 1.*_cancel_file'
+    assert_ok $?
+  }
+
+  it "agent_inner_loop checks cancel after router LLM call" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    # After llm_generate there should be a cancel check (3+ cancel checks total)
+    local count
+    count=$(echo "$body" | grep -c '_LODGE_CANCELLED.*_cancel_file')
+    [ "$count" -ge 3 ]
+    assert_ok $?
+  }
+
+  it "agent_inner_loop checks cancel after specialist LLM call" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    # The cancel check pattern appears at loop top + after router + after specialist = 3+
+    local count
+    count=$(echo "$body" | grep -c '_cancel_file')
+    [ "$count" -ge 4 ]
+    assert_ok $?
+  }
+
+  it "agent_inner_loop skips terminal escalation when cancelled" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    # After the while loop ends, should check cancel before operator prompt
+    echo "$body" | grep -q 'CANCELLED.*macro_memory'
+    assert_ok $?
+  }
+
+  it "agent_inner_loop writes CANCELLED to macro_memory on cancel" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'CANCELLED.*macro_memory'
+    assert_ok $?
+  }
+
+# ── llm_stream cancellation propagation ───────────────────────
+describe "llm_stream cancellation propagation"
+
+  it "llm_stream checks cancel file after pipe completes" && {
+    local body
+    body=$(declare -f llm_stream)
+    # After the done block, should check cancel file and return 1
+    echo "$body" | grep -A1 '_cancel_file' | grep -q 'return 1'
+    assert_ok $?
+  }
+
 # ── agent_run input validation ─────────────────────────────────
 describe "agent_run input validation"
 
@@ -251,6 +308,13 @@ describe "Dynamic dual-loop architecture"
 
   it "_build_specialist_prompt is defined" && {
     declare -f _build_specialist_prompt &>/dev/null
+    assert_ok $?
+  }
+
+  it "specialist injects search_results.md for /web tool" && {
+    local body
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'search_results.md'
     assert_ok $?
   }
 

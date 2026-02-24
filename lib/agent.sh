@@ -600,6 +600,19 @@ _build_specialist_prompt() {
             echo "COMMAND DOCUMENTATION:"
             echo "$docs"
         fi
+
+        # Inject previous search results for /web commands so the
+        # specialist can reference URLs from prior searches in
+        # follow-up fetch/summary/title commands.
+        if [[ "$cmd_name" == "/web" ]] && [ -f "$workdir/.george/search_results.md" ]; then
+            local _search_ctx
+            _search_ctx=$(tail -30 "$workdir/.george/search_results.md" 2>/dev/null)
+            if [ -n "$_search_ctx" ]; then
+                echo ""
+                echo "PREVIOUS SEARCH RESULTS (use these URLs for /web fetch, /web summary, etc.):"
+                echo "$_search_ctx"
+            fi
+        fi
     else
         echo "You are George's execution engine. Output exactly ONE command inside a \`\`\`bash block."
         echo "Use standard bash. Do not use interactive commands (like nano or vim)."
@@ -638,8 +651,16 @@ agent_inner_loop() {
     local inner_attempts=0
     local max_inner_loops="$AGENT_INNER_LOOPS"
     local last_failed_cmd=""
+    local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
 
     while [ "$inner_attempts" -lt "$max_inner_loops" ]; do
+        # ── CANCELLATION CHECK: Break immediately on Ctrl+C ─────
+        # Without this, the loop continues making LLM calls after
+        # the user presses Ctrl+C, creating a cancel→think→cancel loop.
+        if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
+            return 1
+        fi
+
         local inner_context=$(cat "$micro_file")
 
         # ── PHASE 1: Fast Tool Routing ────────────────────────
@@ -650,6 +671,11 @@ agent_inner_loop() {
         # no personality, just returns the raw string.
         local selected_tool
         selected_tool=$(llm_generate "$route_prompt" "$router_sys" "${LLM_ASK_TOKENS:-300}")
+
+        # Cancel check after router LLM call — curl may have been killed
+        if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
+            return 1
+        fi
 
         if [[ "$selected_tool" == *"SUCCESS:"* ]]; then
             local summary
@@ -697,6 +723,11 @@ agent_inner_loop() {
 
         local action_plan
         action_plan=$(llm_stream "$specialist_prompt" "$specialist_sys" "${LLM_ASK_TOKENS:-300}")
+
+        # Cancel check after specialist LLM call
+        if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
+            return 1
+        fi
 
         # Extract command based on routing: slash commands vs bash.
         # Slash commands: extracted as lines starting with /
@@ -837,6 +868,12 @@ agent_inner_loop() {
     # ── Terminal Escalation: Human Operator Intervention ───────
     # All 5 levels exhausted. Drop to a safe holding state.
     # Present failures_log.md to the operator for guidance.
+    # Skip entirely if cancelled — user wants to return to REPL, not be
+    # prompted for guidance on an operation they already abandoned.
+    if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
+        echo "- Step: $micro_objective -> CANCELLED" >> "$george_dir/macro_memory.md"
+        return 1
+    fi
     ui_err "Inner loop exhausted all escalation levels."
     if [ -f "$fail_file" ]; then
         echo ""

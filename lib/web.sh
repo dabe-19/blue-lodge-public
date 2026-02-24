@@ -12,6 +12,102 @@ WEB_TIMEOUT="${WEB_TIMEOUT:-15}"
 WEB_MAX_SIZE="${WEB_MAX_SIZE:-500000}"  # 500KB max download
 WEB_CACHE_TTL="${WEB_CACHE_TTL:-3600}" # Cache pages for 1 hour
 
+# ── URL Sanitization ──────────────────────────────────────────
+# Whitelist-based URL cleaner. Strips control characters, validates
+# the scheme, and truncates to a safe length. This prevents injection
+# attacks when URLs from search results are stored in journal entries
+# or injected into LLM prompts / shell commands.
+#
+# Rules:
+#   1. Only http:// and https:// schemes allowed
+#   2. Strip control chars (\x00-\x1f, \x7f), backticks, $, semicolons
+#   3. Truncate to 2048 chars (browser practical limit)
+#   4. Must contain a dot in the host portion
+_web_sanitize_url() {
+    local url="$1"
+
+    # Strip leading/trailing whitespace
+    url=$(echo "$url" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+    # Remove control characters, backticks, $, semicolons, pipes, and newlines
+    url=$(printf '%s' "$url" | tr -d '\000-\037\177\`$;|')
+
+    # Must start with http:// or https://
+    if [[ ! "$url" =~ ^https?:// ]]; then
+        return 1
+    fi
+
+    # Must have a dot in the host portion (reject http://localhost-style injections)
+    local host
+    host=$(echo "$url" | sed 's|^https\?://||' | cut -d'/' -f1 | cut -d'?' -f1)
+    if [[ ! "$host" == *.* ]]; then
+        return 1
+    fi
+
+    # Truncate to 2048 characters
+    url="${url:0:2048}"
+
+    printf '%s' "$url"
+}
+
+# ── Ad URL Detection ─────────────────────────────────────────
+# Returns 0 (true) if the URL looks like a search engine ad/tracking
+# redirect. Currently covers:
+#   - DuckDuckGo:  duckduckgo.com/y.js (ad redirect), ad_domain=, ad_provider=
+#   - Bing:        bing.com/aclick (ad click-through)
+#   - Google:      googleadservices.com, google.com/aclk
+#   - Generic:     doubleclick.net, ad.doubleclick.net
+_web_is_ad_url() {
+    local url="$1"
+    case "$url" in
+        *duckduckgo.com/y.js*)       return 0 ;;
+        *ad_domain=*|*ad_provider=*) return 0 ;;
+        *bing.com/aclick*)           return 0 ;;
+        *googleadservices.com*)      return 0 ;;
+        *google.com/aclk*)           return 0 ;;
+        *doubleclick.net*)           return 0 ;;
+        *googlesyndication.com*)     return 0 ;;
+        *)                           return 1 ;;
+    esac
+}
+
+# ── Journal Search Results ───────────────────────────────────
+# Write a structured journal entry so George can reference URLs
+# from a previous search in follow-up /web fetch|summary|title
+# commands. Each entry records the query and numbered results
+# with clean titles and sanitized URLs.
+#
+# Also writes to .george/search_results.md (if .george/ exists)
+# for the current task's micro/macro memory to consume.
+_web_journal_results() {
+    local query="$1"
+    local results_text="$2"  # The formatted [n] title\n    url\n output
+    local provider="$3"      # ddg, serper, perplexity, github
+
+    [ -z "$results_text" ] && return 0
+
+    # Write to journal (persistent cross-task memory)
+    if declare -f journal_write &>/dev/null; then
+        local entry="Web search ($provider): $query\n\n$results_text"
+        journal_write "web_search" "$entry" 2>/dev/null
+    fi
+
+    # Write to .george/search_results.md (current task memory)
+    # This file is read by the agent inner loop when it needs to
+    # reference search results for follow-up web commands.
+    local george_dir=".george"
+    if [ -d "$george_dir" ]; then
+        {
+            echo "## Web Search: $query"
+            echo "Provider: $provider"
+            echo "Time: $(date '+%Y-%m-%d %H:%M')"
+            echo ""
+            echo "$results_text"
+            echo "---"
+        } >> "$george_dir/search_results.md"
+    fi
+}
+
 # ── Detect best text renderer ──────────────────────────────────
 _web_renderer() {
     if command -v w3m &>/dev/null; then
@@ -177,7 +273,32 @@ _web_search_serper() {
         -H "X-API-KEY: $key")
 
     if [ $? -eq 0 ]; then
-        echo "$resp" | jq -r '.organic[]? | "[\(.position)] \(.title)\n    \(.link)\n    \(.snippet)\n"' 2>/dev/null
+        # Serper .organic[] already excludes ads (ads are in .ads[]).
+        # Sanitize URLs before output.
+        local raw_results
+        raw_results=$(echo "$resp" | jq -r '.organic[]? | "\(.position)|\(.link)|\(.title)|\(.snippet)"' 2>/dev/null)
+
+        if [ -z "$raw_results" ]; then
+            ui_warn "Serper returned no organic results, falling back to DuckDuckGo"
+            _web_search_ddg "$query" "$count"
+            return $?
+        fi
+
+        local output=""
+        local i=1
+        while IFS='|' read -r _pos url title snippet; do
+            local clean_url
+            clean_url=$(_web_sanitize_url "$url")
+            [ -z "$clean_url" ] && continue
+
+            local entry
+            entry=$(printf '[%d] %s\n    %s\n    %s\n' "$i" "$title" "$clean_url" "$snippet")
+            output="${output}${entry}\n"
+            printf '[%d] %s\n    %s\n    %s\n\n' "$i" "$title" "$clean_url" "$snippet"
+            i=$((i + 1))
+        done <<< "$raw_results"
+
+        _web_journal_results "$query" "$output" "serper"
     else
         ui_warn "Serper search failed, falling back to DuckDuckGo"
         _web_search_ddg "$query" "$count"
@@ -248,15 +369,38 @@ _web_search_ddg() {
     fi
 
     if [ -n "$results" ]; then
+        # Filter ads and sanitize URLs, then output + journal
+        local clean_results=""
+        local output=""
         local i=1
-        echo "$results" | while IFS='|' read -r url title; do
-            # Decode DDG redirect URLs
+
+        while IFS='|' read -r url title; do
+            # Decode DDG redirect URLs (uddg= parameter)
             if [[ "$url" == *"uddg="* ]]; then
                 url=$(echo "$url" | grep -oP 'uddg=\K[^&]+' | python3 -c 'import sys,urllib.parse;print(urllib.parse.unquote(sys.stdin.read().strip()))' 2>/dev/null || echo "$url")
             fi
-            printf '[%d] %s\n    %s\n\n' "$i" "${title:-$url}" "$url"
+
+            # Skip ad/tracking URLs
+            if _web_is_ad_url "$url"; then
+                continue
+            fi
+
+            # Sanitize URL
+            local clean_url
+            clean_url=$(_web_sanitize_url "$url")
+            [ -z "$clean_url" ] && continue
+
+            local entry
+            entry=$(printf '[%d] %s\n    %s' "$i" "${title:-$clean_url}" "$clean_url")
+            output="${output}${entry}\n\n"
+            printf '[%d] %s\n    %s\n\n' "$i" "${title:-$clean_url}" "$clean_url"
             i=$((i + 1))
-        done
+        done <<< "$results"
+
+        # Journal the clean results for agent memory
+        if [ -n "$output" ]; then
+            _web_journal_results "$query" "$output" "ddg"
+        fi
         return 0
     fi
 
@@ -409,7 +553,12 @@ web_search_github() {
     # Format results: [n] owner/repo ★stars (language)
     #     description
     #     https://github.com/owner/repo
-    echo "$resp" | jq -r '.items[]? | "[\(.full_name)] ★\(.stargazers_count) (\(.language // "unknown"))\n    \(.description // "No description")\n    https://github.com/\(.full_name)\n"' 2>/dev/null
+    local gh_output
+    gh_output=$(echo "$resp" | jq -r '.items[]? | "[\(.full_name)] ★\(.stargazers_count) (\(.language // "unknown"))\n    \(.description // "No description")\n    https://github.com/\(.full_name)\n"' 2>/dev/null)
+    echo "$gh_output"
+
+    # Journal GitHub results for agent memory
+    _web_journal_results "$query" "$gh_output" "github"
 }
 
 # ── Verify a GitHub repo exists ────────────────────────────────

@@ -158,11 +158,12 @@ describe "web_search"
     _teardown_web
   }
 
-  it "DDG search does not filter out duckduckgo.com redirect URLs" && {
+  it "DDG search does not blanket-filter duckduckgo.com URLs" && {
     _setup_web
     fn_body=$(declare -f _web_search_ddg)
     # The grep -v 'duckduckgo.com' filter was removed because it incorrectly
-    # filtered out DDG redirect URLs that contain the actual search results
+    # filtered out DDG redirect URLs that contain the actual search results.
+    # Ad filtering now uses _web_is_ad_url which only targets y.js ad redirects.
     _has_filter=$(echo "$fn_body" | grep -c "grep -v.*duckduckgo" || true)
     assert_eq "$_has_filter" "0"
     _teardown_web
@@ -183,6 +184,243 @@ describe "web_search"
     # Verify quote stripping is present
     assert_contains "$fn_body" 'query='
     assert_contains "$fn_body" '{query#'
+    _teardown_web
+  }
+
+# ── URL Sanitization ──────────────────────────────────────────
+describe "_web_sanitize_url"
+
+  it "is defined" && {
+    _setup_web
+    declare -f _web_sanitize_url &>/dev/null
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "passes clean https URLs" && {
+    _setup_web
+    _test_result=$(_web_sanitize_url "https://www.reddit.com/r/judo/comments/123")
+    assert_eq "$_test_result" "https://www.reddit.com/r/judo/comments/123"
+    _teardown_web
+  }
+
+  it "passes clean http URLs" && {
+    _setup_web
+    _test_result=$(_web_sanitize_url "http://example.com/page")
+    assert_eq "$_test_result" "http://example.com/page"
+    _teardown_web
+  }
+
+  it "rejects non-http schemes" && {
+    _setup_web
+    _web_sanitize_url "ftp://evil.com/data" 2>/dev/null
+    assert_fail $?
+    _teardown_web
+  }
+
+  it "rejects javascript: scheme" && {
+    _setup_web
+    _web_sanitize_url "javascript:alert(1)" 2>/dev/null
+    assert_fail $?
+    _teardown_web
+  }
+
+  it "strips backticks from URLs" && {
+    _setup_web
+    _test_result=$(_web_sanitize_url 'https://example.com/`whoami`')
+    [[ "$_test_result" != *'`'* ]]
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "strips dollar signs from URLs" && {
+    _setup_web
+    _test_result=$(_web_sanitize_url 'https://example.com/$HOME')
+    [[ "$_test_result" != *'$'* ]]
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "strips semicolons from URLs" && {
+    _setup_web
+    _test_result=$(_web_sanitize_url 'https://example.com/;rm -rf /')
+    [[ "$_test_result" != *';'* ]]
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "rejects URLs without a dot in host" && {
+    _setup_web
+    _web_sanitize_url "https://localhost/admin" 2>/dev/null
+    assert_fail $?
+    _teardown_web
+  }
+
+  it "truncates URLs longer than 2048 chars" && {
+    _setup_web
+    _test_long_url="https://example.com/"
+    _test_long_url="${_test_long_url}$(printf 'a%.0s' $(seq 1 2100))"
+    _test_result=$(_web_sanitize_url "$_test_long_url")
+    [ "${#_test_result}" -le 2048 ]
+    assert_ok $?
+    _teardown_web
+  }
+
+# ── Ad URL Detection ──────────────────────────────────────────
+describe "_web_is_ad_url"
+
+  it "is defined" && {
+    _setup_web
+    declare -f _web_is_ad_url &>/dev/null
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "detects DDG ad redirect (y.js)" && {
+    _setup_web
+    _web_is_ad_url "https://duckduckgo.com/y.js?ad_domain=amazon.com&ad_provider=bingv7aa"
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "detects ad_domain parameter" && {
+    _setup_web
+    _web_is_ad_url "https://example.com/redirect?ad_domain=amazon.com"
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "detects Bing ad click-through" && {
+    _setup_web
+    _web_is_ad_url "https://www.bing.com/aclick?ld=abc123"
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "detects Google ad services" && {
+    _setup_web
+    _web_is_ad_url "https://www.googleadservices.com/pagead/aclk?sa=L"
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "detects Google aclk" && {
+    _setup_web
+    _web_is_ad_url "https://www.google.com/aclk?sa=L&ai=abc"
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "detects doubleclick" && {
+    _setup_web
+    _web_is_ad_url "https://ad.doubleclick.net/tracking/123"
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "passes organic Reddit URL" && {
+    _setup_web
+    ! _web_is_ad_url "https://www.reddit.com/r/judo/comments/5amt6e/"
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "passes organic YouTube URL" && {
+    _setup_web
+    ! _web_is_ad_url "https://www.youtube.com/watch?v=FVgqiZ8syBs"
+    assert_ok $?
+    _teardown_web
+  }
+
+# ── Search Result Journaling ──────────────────────────────────
+describe "_web_journal_results"
+
+  it "is defined" && {
+    _setup_web
+    declare -f _web_journal_results &>/dev/null
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "writes search_results.md to .george dir" && {
+    _setup_web
+    _test_tmpdir=$(mktemp -d)
+    mkdir -p "$_test_tmpdir/.george"
+    pushd "$_test_tmpdir" >/dev/null
+    _web_journal_results "judo workouts" "test result" "ddg"
+    [ -f "$_test_tmpdir/.george/search_results.md" ]
+    _test_rc=$?
+    popd >/dev/null
+    rm -rf "$_test_tmpdir"
+    assert_ok $_test_rc
+    _teardown_web
+  }
+
+  it "includes query and provider in search_results.md" && {
+    _setup_web
+    _test_tmpdir=$(mktemp -d)
+    mkdir -p "$_test_tmpdir/.george"
+    pushd "$_test_tmpdir" >/dev/null
+    _web_journal_results "test query" "[1] Title\n    https://example.com" "serper"
+    _test_content=$(cat "$_test_tmpdir/.george/search_results.md")
+    popd >/dev/null
+    rm -rf "$_test_tmpdir"
+    echo "$_test_content" | grep -q "test query"
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "handles missing .george dir gracefully" && {
+    _setup_web
+    _test_tmpdir=$(mktemp -d)
+    pushd "$_test_tmpdir" >/dev/null
+    # No .george dir — should not crash
+    _web_journal_results "query" "results" "ddg" 2>/dev/null
+    _test_rc=$?
+    popd >/dev/null
+    rm -rf "$_test_tmpdir"
+    assert_ok $_test_rc
+    _teardown_web
+  }
+
+# ── DDG ad filtering integration ──────────────────────────────
+describe "DDG search ad filtering"
+
+  it "DDG search calls _web_is_ad_url" && {
+    _setup_web
+    fn_body=$(declare -f _web_search_ddg)
+    assert_contains "$fn_body" "_web_is_ad_url"
+    _teardown_web
+  }
+
+  it "DDG search calls _web_sanitize_url" && {
+    _setup_web
+    fn_body=$(declare -f _web_search_ddg)
+    assert_contains "$fn_body" "_web_sanitize_url"
+    _teardown_web
+  }
+
+  it "DDG search calls _web_journal_results" && {
+    _setup_web
+    fn_body=$(declare -f _web_search_ddg)
+    assert_contains "$fn_body" "_web_journal_results"
+    _teardown_web
+  }
+
+# ── Serper sanitization integration ───────────────────────────
+describe "Serper search sanitization"
+
+  it "Serper search calls _web_sanitize_url" && {
+    _setup_web
+    fn_body=$(declare -f _web_search_serper)
+    assert_contains "$fn_body" "_web_sanitize_url"
+    _teardown_web
+  }
+
+  it "Serper search calls _web_journal_results" && {
+    _setup_web
+    fn_body=$(declare -f _web_search_serper)
+    assert_contains "$fn_body" "_web_journal_results"
     _teardown_web
   }
 

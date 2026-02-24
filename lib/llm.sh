@@ -418,6 +418,13 @@ llm_stream() {
     ui_spinner_stop
     rm -f "$_llm_ft_file"
     _LLM_ACTIVE=0
+
+    # Propagate cancellation: if the cancel file exists, return error so
+    # the calling loop (agent_inner_loop) can detect and break immediately
+    # instead of treating truncated output as a valid LLM response.
+    if [ -f "$_cancel_file" ]; then
+        return 1
+    fi
 }
 
 # ── Chat format (multi-turn via /api/chat) ─────────────────────
