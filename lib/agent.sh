@@ -60,7 +60,7 @@ _agent_is_critical_error() {
     return 1
 }
 
-# Track the last error from agent_execute_step for critical error detection
+# Track the last error from agent loops for critical error detection
 _AGENT_LAST_ERROR=""
 
 # ── Auto-fix: infer sandbox type from step context ─────────────
@@ -317,7 +317,7 @@ _agent_run_subtask() {
 
     if [ "$depth" -gt "$AGENT_MAX_DEPTH" ]; then
         ui_warn "Max planning depth ($AGENT_MAX_DEPTH) reached. Executing as single step."
-        agent_execute_step "sub" "$task" "$workdir" "$task"
+        agent_inner_loop "$task" "$workdir"
         return $?
     fi
 
@@ -361,7 +361,7 @@ _agent_run_subtask() {
             fi
         else
             ui_progress "$step_num" "$total" "${step_text:0:30}"
-            if agent_execute_step "$step_num" "$step_text" "$workdir" "$task"; then
+            if agent_inner_loop "$step_text" "$workdir"; then
                 completed=$((completed + 1))
             fi
         fi
@@ -502,162 +502,366 @@ ${base_rules}"
     echo "$plan"
 }
 
-# ── Execute a single step ──────────────────────────────────────
-agent_execute_step() {
-    local step_num="$1"
-    local step_desc="$2"
-    local workdir="${3:-.}"
-    local task_context="${4:-}"
-    
-    ui_section "Step $step_num"
-    ui_step "$step_desc"
-    _AGENT_LAST_ERROR=""
-    
-    # If the step is already a slash command, dispatch it directly
-    # instead of asking the LLM (which wraps it in a broken ```bash block)
-    if [[ "$step_desc" =~ ^/ ]] && declare -f commands_dispatch &>/dev/null; then
-        local _cmd_stderr_file="${TMPDIR:-/tmp}/.lodge-cmd-stderr-$$"
-        local _retry_count=0
-        local _max_retries="${AGENT_MAX_RETRIES:-1}"
+# ── Dynamic Inner Loop Prompts ─────────────────────────────────
+# Replaces the monolithic memory_build_system_prompt for inner loops.
+# These prompts contain ZERO personality, vitals, or history.
+# This drastically reduces prefill time — Ollama flushes the KV cache
+# but does NOT reload the 4GB model from disk.
 
-        while true; do
-            if commands_dispatch "$step_desc" "$workdir" 2> >(tee "$_cmd_stderr_file" >&2); then
-                rm -f "$_cmd_stderr_file"
-                memory_append_section "Completed Steps" "Step $step_num: $step_desc" "$workdir"
-                return 0
-            fi
-
-            # ── Command failed — gather error context ──────────
-            local _cmd_detail=""
-            [ -f "$_cmd_stderr_file" ] && _cmd_detail=$(tail -5 "$_cmd_stderr_file" 2>/dev/null)
-            rm -f "$_cmd_stderr_file"
-            [ -n "${_SANDBOX_PREREQ_MSG:-}" ] && _cmd_detail="${_cmd_detail:+$_cmd_detail\n}Prereq: $_SANDBOX_PREREQ_MSG"
-            local err_msg="Slash command failed: $step_desc"
-            [ -n "$_cmd_detail" ] && err_msg="$err_msg — $_cmd_detail"
-
-            # ── Auto-fix attempt before counting as retry ──────
-            if [ "$_retry_count" -le "$_max_retries" ]; then
-                local _auto_fixed=0
-
-                # Heuristic 1: Missing sandbox — auto-create it
-                if [[ "$err_msg" == *"not found"* ]] && [[ "$step_desc" == /sandbox\ * ]]; then
-                    local _plan_ctx="$task_context $step_desc"
-                    if _agent_auto_create_sandbox "$step_desc" "$_plan_ctx"; then
-                        _auto_fixed=1
-                    fi
-                fi
-
-                # Heuristic 2: Missing system package — auto-install
-                if [ "$_auto_fixed" -eq 0 ] && [[ "$err_msg" == *"not found"* || "$err_msg" == *"not installed"* || "$err_msg" == *"command not found"* ]]; then
-                    if _agent_auto_install_package "$err_msg"; then
-                        _auto_fixed=1
-                    fi
-                fi
-
-                if [ "$_auto_fixed" -eq 1 ]; then
-                    ui_info "Auto-fix applied — retrying step $step_num..."
-                    _retry_count=$(( _retry_count + 1 ))
-                    continue  # retry the command
-                fi
-
-                # No auto-fix applied — do a plain retry with error context
-                if [ "$_retry_count" -lt "$_max_retries" ]; then
-                    _retry_count=$(( _retry_count + 1 ))
-                    ui_warn "Step $step_num failed (attempt $_retry_count/$_max_retries): $err_msg"
-                    ui_info "Retrying..."
-                    sleep 1
-                    continue  # retry the command directly
-                fi
-            fi
-
-            # ── All retries exhausted — record failure ─────────
-            _AGENT_LAST_ERROR="$err_msg"
-            ui_err "$err_msg"
-            memory_append_section "Errors" "Step $step_num failed: $err_msg" "$workdir"
-            journal_write_failure "$step_desc" "$err_msg" "$task_context"
-            return 1
-        done
-    fi
-    
-    local system_prompt
-    system_prompt=$(memory_build_system_prompt "$workdir")
-    
-    # Inject prior accomplishments so the model knows what was already done
-    local prior_context=""
-    local completed_steps
-    completed_steps=$(memory_get_section "Completed Steps" "$workdir" 2>/dev/null | tail -5)
-    if [ -n "$completed_steps" ]; then
-        prior_context="
-ALREADY COMPLETED:
-${completed_steps}
-"
-    fi
-    local key_files
-    key_files=$(memory_get_section "Key Files" "$workdir" 2>/dev/null | tail -8)
-    if [ -n "$key_files" ]; then
-        prior_context="${prior_context}
-FILES CREATED/MODIFIED SO FAR:
-${key_files}
-"
-    fi
-
-    local prompt="${prior_context}CURRENT STEP ($step_num): $step_desc
-
-Execute this step. Output rules:
-- Shell commands: wrap in \`\`\`bash block
-- Slash commands: output on their own line starting with / (do NOT wrap in a bash block)
-- File contents: wrap in a code block with '# filepath: ./path' on line 1
-- When writing code files: write REAL, COMPLETE implementation code. Do NOT write placeholder code, Hello World, TODO stubs, or empty scaffolds. Implement the actual logic, algorithms, data structures, and behavior described in the step.
-- Keep output minimal
-- One action per response"
-    
-    # Stream the step response so user sees it being generated
+_build_router_prompt() {
+    # Phase 1 Prompt: The Command Catalog Router
+    # Provides the full lean command index so George routes to his
+    # purpose-built slash commands instead of defaulting to raw bash.
+    # Uses commands_catalog_plan() when available (dynamic, includes
+    # custom /slash commands), otherwise falls back to a static index.
+    echo "You are George's tactical routing engine. Pick the best tool."
     echo ""
-    local response
-    response=$(llm_stream "$prompt" "$system_prompt" "$LLM_MAX_TOKENS")
+    if declare -f commands_catalog_plan &>/dev/null; then
+        commands_catalog_plan
+    else
+        cat << 'ROUTER_CATALOG'
+--- COMMANDS (use ONLY these) ---
+/ask <question>          — Quick answer (no planning)
+/init <name> <lang>      — Scaffold project
+/recall <query>          — Search knowledge base
+/save <file> <text>      — Save content to file
+/write <file> <text>     — Write/overwrite a file
+/download <url> [dest]   — Download a URL
+/sandbox new <name> [type] — Create sandbox (rust/python/shell)
+/sandbox build|test|run|cd|rm <name> — Sandbox operations
+/sandbox clone <url> [name] — Clone repo into sandbox
+/clone <url>             — Clone and setup a repo
+/build [release]         — Build project
+/test [args]             — Run tests
+/fix [error]             — Diagnose and fix
+/commit [msg]            — AI commit message + commit
+/push                    — Push to GitHub
+/web search <query>      — Web search
+/web fetch <url>         — Fetch a URL
+/github search <q>       — Find GitHub repos
+/journal write <text>    — Write to journal
+/social post <text>      — Post to social platforms
+/social <platform> <act> — Platform-specific action
+/pgp sign|signpost|export — PGP operations
+/email send|inbox|status — Email operations
+/phone                   — Phone dashboard
+/secret set|get <k>      — Encrypted secrets
+/slash create <name> <desc> — Create custom command
+/vitals                  — System dashboard
+/git setup|status|ssh-keygen — Git configuration
+/backup local|restore|github — Backup operations
+bash                     — Standard Linux shell (fallback)
+ROUTER_CATALOG
+    fi
     echo ""
-    
-    if [ -z "$response" ] || [[ "$response" == ERROR* ]]; then
-        local err_msg="Step failed: ${response:-empty response}"
-        _AGENT_LAST_ERROR="$err_msg"
-        ui_err "$err_msg"
-        memory_append_section "Errors" "Step $step_num failed: ${response:-empty}" "$workdir"
-        journal_write_failure "Step $step_num: $step_desc" "$err_msg" "$task_context"
-        return 1
-    fi
-    
-    # Execute operations
-    local results
-    results=$(tools_process_response "$response" "$workdir")
-    
-    # Update memory
-    memory_append_section "Completed Steps" "Step $step_num: $step_desc" "$workdir"
-    
-    if [ -n "$results" ]; then
-        # Track modified files
-        echo "$results" | grep -oP 'Wrote: \K[^ ;]+' | while read -r f; do
-            memory_append_section "Key Files" "$f" "$workdir"
-        done
-    fi
-    
-    return 0
+    echo "Output ONLY the tool name. For slash commands output the base command"
+    echo "(e.g., '/web', '/sandbox', '/write', '/social', '/git', 'bash')."
+    echo "If unsure which tool, output 'bash'."
 }
 
-# ── Run full task (plan + execute all steps) ───────────────────
+_build_specialist_prompt() {
+    local cmd_name="$1"
+    local workdir="$2"
+    # Phase 2 Prompt: The Action Specialist
+    # Injects deep-dive docs for ONE specific command.
+    #
+    # Slash commands: output on their own line starting with /
+    #   (commands_dispatch handles execution)
+    # Bash commands: output inside a ```bash block
+    #   (eval handles execution)
+
+    if [ "$cmd_name" != "bash" ]; then
+        echo "You are George's execution engine. Output exactly ONE slash command."
+        echo "Output the FULL command on its own line starting with / — do NOT wrap in a code block."
+        echo ""
+
+        # Extract docs for the specific command.
+        # Strategy: grep the command reference table from SLASH_COMMANDS.md,
+        # then fall back to recall, then to commands_catalog_plan.
+        local docs=""
+
+        # 1. Try table rows matching the command from the Command Reference
+        if [ -f "$LODGE_DIR/docs/SLASH_COMMANDS.md" ]; then
+            docs=$(grep -E "^\| \`$cmd_name" "$LODGE_DIR/docs/SLASH_COMMANDS.md" 2>/dev/null | head -8)
+        fi
+
+        # 2. Fall back to recall FTS5 search for richer docs
+        if [ -z "$docs" ] && declare -f recall_search_context &>/dev/null; then
+            docs=$(recall_search_context "$cmd_name" 2 2>/dev/null)
+        fi
+
+        # 3. Last resort: extract from the plan catalog
+        if [ -z "$docs" ] && declare -f commands_catalog_plan &>/dev/null; then
+            docs=$(commands_catalog_plan 2>/dev/null | grep -i "${cmd_name#/}" | head -5)
+        fi
+
+        if [ -n "$docs" ]; then
+            echo "COMMAND DOCUMENTATION:"
+            echo "$docs"
+        fi
+    else
+        echo "You are George's execution engine. Output exactly ONE command inside a \`\`\`bash block."
+        echo "Use standard bash. Do not use interactive commands (like nano or vim)."
+        echo "Do not output slash commands — use only shell builtins and system utilities."
+    fi
+}
+
+# ── Execute a single micro-objective (The Tactician) ──────────
+# Replaces the legacy agent_execute_step with a two-phase
+# route→execute inner loop governed by the Constrained Escalation Matrix.
+#
+# Phase 1 (Router):  Fast tool selection — zero personality, just a catalog.
+# Phase 2 (Specialist): Deep-dive execution — one command's docs injected.
+#
+# Failure Escalation Matrix (5 levels + terminal):
+#   L1: Naive retry (LLM bypassed — programmatic re-exec after sleep)
+#   L2: Forced knowledge retrieval (/recall on base command)
+#   L3-L4: Syntax permutation with identicality lockout
+#   L5: Forced web fallback (search stderr + command name)
+#   Terminal: Human operator intervention (read -r from /dev/tty)
+agent_inner_loop() {
+    local micro_objective="$1"
+    local workdir="${2:-.}"
+    local george_dir="$workdir/.george"
+    local micro_file="$george_dir/micro_memory.md"
+    local fail_file="$george_dir/failures_log.md"
+
+    mkdir -p "$george_dir"
+
+    # STRICT OVERWRITE: Wipe micro memory clean for the new objective.
+    # This is not appended — it is destroyed and recreated on every
+    # handoff from the Macro loop.
+    echo "# Micro Objective: $micro_objective" > "$micro_file"
+    echo "## Action Log" >> "$micro_file"
+
+    local inner_attempts=0
+    local max_inner_loops=6
+    local last_failed_cmd=""
+
+    while [ "$inner_attempts" -lt "$max_inner_loops" ]; do
+        local inner_context=$(cat "$micro_file")
+
+        # ── PHASE 1: Fast Tool Routing ────────────────────────
+        local router_sys=$(_build_router_prompt)
+        local route_prompt="Review the Action Log. If objective complete, output SUCCESS: <summary>. Otherwise, output the tool name needed.\n\n$inner_context"
+
+        # llm_generate is used here for maximum speed — no streaming,
+        # no personality, just returns the raw string.
+        local selected_tool
+        selected_tool=$(llm_generate "$route_prompt" "$router_sys" "${LLM_ASK_TOKENS:-300}")
+
+        if [[ "$selected_tool" == *"SUCCESS:"* ]]; then
+            local summary
+            summary=$(echo "$selected_tool" | sed 's/.*SUCCESS: //')
+            echo "- Step: $micro_objective -> $summary" >> "$george_dir/macro_memory.md"
+            return 0
+        fi
+
+        # ── PHASE 2: Specialist Execution ─────────────────────
+        # sed -e 's/^[[:space:]]*//' : Strips leading whitespace.
+        # sed -e 's/[[:space:]]*$//' : Strips trailing whitespace.
+        selected_tool=$(echo "$selected_tool" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+        local specialist_sys=$(_build_specialist_prompt "$selected_tool" "$workdir")
+
+        # Inject micro_memory (action log) so the specialist sees
+        # prior outputs, created files, and error history. Without this,
+        # multi-step objectives fail because the specialist can't adapt.
+        local specialist_prompt="MICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\nWrite the exact command to execute next."
+
+        local action_plan
+        action_plan=$(llm_stream "$specialist_prompt" "$specialist_sys" "${LLM_ASK_TOKENS:-300}")
+
+        # Extract command based on routing: slash commands vs bash.
+        # Slash commands: extracted as lines starting with /
+        # Bash commands: extracted from ```bash blocks
+        local cmd=""
+        local cmd_is_slash=0
+        if [ "$selected_tool" != "bash" ]; then
+            # Extract slash command line (first /command line outside code blocks)
+            cmd=$(echo "$action_plan" | awk '
+                /^```/ { in_block = !in_block; next }
+                in_block { next }
+                /^\/[a-z]/ { print; exit }
+            ')
+            if [ -n "$cmd" ]; then
+                cmd_is_slash=1
+            else
+                # Fallback: LLM may have wrapped it in a bash block anyway
+                cmd=$(echo "$action_plan" | awk '/```bash/{flag=1; next} /```/{flag=0} flag')
+            fi
+        else
+            # awk: /```bash/ sets flag, /```/ clears flag, flag prints lines between.
+            cmd=$(echo "$action_plan" | awk '/```bash/{flag=1; next} /```/{flag=0} flag')
+        fi
+
+        # ── PROGRAMMATIC INTERLOCK: Identicality Lockout ──────
+        # Levels 3-4: Prevents the LLM from re-running the exact same
+        # broken command. If identical, reject and force regeneration.
+        if [ "$inner_attempts" -ge 2 ] && [ -n "$cmd" ] && [ "$cmd" == "$last_failed_cmd" ]; then
+            ui_warn "Interlock Triggered: Identical failed command. Forcing regeneration."
+            echo "**System Interlock:** Command \`$cmd\` rejected (identical to previous failure)." >> "$micro_file"
+            inner_attempts=$((inner_attempts + 1))
+            continue
+        fi
+
+        if [ -n "$cmd" ]; then
+            ui_step "Running: $cmd"
+
+            # Execute based on command type:
+            #   Slash commands → commands_dispatch (proper command registry)
+            #   Bash commands  → eval (direct shell execution)
+            # head -c 2000 : Reads only the first 2000 bytes to prevent
+            # context window overflow from massive stack traces.
+            local output
+            local exit_code
+            if [ "$cmd_is_slash" -eq 1 ] && declare -f commands_dispatch &>/dev/null; then
+                output=$(commands_dispatch "$cmd" "$workdir" 2>&1 | head -c 2000)
+                exit_code=${PIPESTATUS[0]}
+            else
+                output=$(eval "$cmd" 2>&1 | head -c 2000)
+                exit_code=${PIPESTATUS[0]}
+            fi
+
+            if [ $exit_code -eq 0 ]; then
+                echo -e "\n**Action:** \`$cmd\`\n**Result:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
+                inner_attempts=$((inner_attempts + 1))
+                continue
+            fi
+
+            # ═══════════════════════════════════════════════════
+            # FAILURE ESCALATION MATRIX
+            # ═══════════════════════════════════════════════════
+            last_failed_cmd="$cmd"
+            echo -e "\nFAILED COMMAND: \`$cmd\`\nEXIT CODE: $exit_code\nOUTPUT:\n$output\n---" >> "$fail_file"
+
+            # ── Level 1: Naive Retry (Programmatic Bypass) ────
+            # LLM is completely bypassed. Re-run the exact command
+            # after a brief sleep. Catches transient network errors,
+            # file locks, or race conditions without wasting tokens.
+            if [ "$inner_attempts" -eq 0 ]; then
+                ui_warn "Escalation L1: Naive retry..."
+                sleep 1
+                if [ "$cmd_is_slash" -eq 1 ] && declare -f commands_dispatch &>/dev/null; then
+                    output=$(commands_dispatch "$cmd" "$workdir" 2>&1 | head -c 2000)
+                else
+                    output=$(eval "$cmd" 2>&1 | head -c 2000)
+                fi
+                if [ ${PIPESTATUS[0]} -eq 0 ]; then
+                    echo -e "\n**Action:** \`$cmd\` (Retry OK)\n**Result:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
+                    inner_attempts=$((inner_attempts + 1))
+                    continue
+                fi
+                ui_warn "L1 failed. Escalating..."
+            fi
+
+            # ── Level 2: Forced Knowledge Retrieval ───────────
+            # Parse the base command from the failed string and
+            # programmatically execute /recall <base_command>.
+            # Inject the recall stdout into micro_memory so the
+            # LLM reads its own documentation BEFORE retrying.
+            if [ "$inner_attempts" -le 1 ] && declare -f recall_search_context &>/dev/null; then
+                local base_cmd
+                base_cmd=$(echo "$cmd" | awk '{print $1}')
+                ui_warn "Escalation L2: Forced recall for '$base_cmd'..."
+                local recall_result
+                recall_result=$(recall_search_context "$base_cmd" 3 2>/dev/null)
+                if [ -n "$recall_result" ]; then
+                    echo -e "\n**Recall ($base_cmd):**\n\`\`\`\n$recall_result\n\`\`\`" >> "$micro_file"
+                fi
+            fi
+
+            # ── Levels 3-4: Syntax Permutation ────────────────
+            # (Handled by the identicality lockout at the top of the loop.
+            #  The LLM will see the failure context in micro_memory and
+            #  generate a new command. If it's identical, the interlock
+            #  rejects it and forces another generation.)
+
+            # ── Level 5: Forced Web Fallback ──────────────────
+            # LLM is bypassed again. Extract the last 5 lines of stderr
+            # and automatically search the web for the error.
+            if [ "$inner_attempts" -ge 4 ] && declare -f web_search &>/dev/null; then
+                local stderr_tail
+                stderr_tail=$(echo "$output" | tail -n 5)
+                local base_cmd
+                base_cmd=$(echo "$cmd" | awk '{print $1}')
+                ui_warn "Escalation L5: Web search for error..."
+                local web_result
+                web_result=$(web_search "error: $stderr_tail $base_cmd" 3 2>/dev/null)
+                if [ -n "$web_result" ]; then
+                    echo -e "\n**Web Search Results:**\n\`\`\`\n${web_result:0:1500}\n\`\`\`" >> "$micro_file"
+                fi
+            fi
+
+            # Append failure to micro memory so the LLM sees it on the next loop
+            echo -e "\n**Failed Action:** \`$cmd\`\n**Error:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
+        fi
+
+        inner_attempts=$((inner_attempts + 1))
+    done
+
+    # ── Terminal Escalation: Human Operator Intervention ───────
+    # All 5 levels exhausted. Drop to a safe holding state.
+    # Present failures_log.md to the operator for guidance.
+    ui_err "Inner loop exhausted all escalation levels."
+    if [ -f "$fail_file" ]; then
+        echo ""
+        ui_warn "Failures log:"
+        tail -30 "$fail_file"
+        echo ""
+    fi
+    printf "  %bGeorge needs help. Provide a command, explanation, or 'abort': %b" "$C_BOLD" "$C_RESET"
+    local guidance
+    read -r guidance < /dev/tty
+    if [ -n "$guidance" ] && [ "$guidance" != "abort" ]; then
+        echo -e "\n**Operator Guidance:** $guidance" >> "$micro_file"
+        # One final attempt with human guidance injected into context
+        local inner_context=$(cat "$micro_file")
+        local specialist_sys=$(_build_specialist_prompt "bash" "$workdir")
+        local final_plan
+        final_plan=$(llm_stream "The operator said: $guidance. Write the exact command." "$specialist_sys" "${LLM_ASK_TOKENS:-300}")
+        local final_cmd
+        final_cmd=$(echo "$final_plan" | awk '/```bash/{flag=1; next} /```/{flag=0} flag')
+        if [ -n "$final_cmd" ]; then
+            ui_step "Running (guided): $final_cmd"
+            local final_output
+            final_output=$(eval "$final_cmd" 2>&1 | head -c 2000)
+            if [ ${PIPESTATUS[0]} -eq 0 ]; then
+                local summary="Completed with operator guidance"
+                echo "- Step: $micro_objective -> $summary" >> "$george_dir/macro_memory.md"
+                return 0
+            fi
+        fi
+    fi
+
+    echo "- Step: $micro_objective -> FAILED" >> "$george_dir/macro_memory.md"
+    return 1
+}
+
+# ── Run full task: Macro Loop (The Strategist) ────────────────
+# Governs the overall trajectory of the task using a dynamic
+# dual-loop ReAct architecture:
+#   Macro Loop: Determines the next high-level milestone.
+#   Micro Loop: Executes via agent_inner_loop.
+#
+# Memory Architecture (all legacy CLAUDE.md references eradicated):
+#   macro_memory.md — Persona seed + objective + completed milestones.
+#   micro_memory.md — Overwritten per micro-objective (managed by inner loop).
+#   failures_log.md — Isolated stderr graveyard (managed by inner loop).
 agent_run() {
     local task="$1"
     local workdir="${2:-.}"
-    
+
     if [ -z "$task" ]; then
         ui_err "No task provided"
         return 1
     fi
-    
+
     # Signal that we're in a task (for cancellation handling)
     _LODGE_IN_TASK=1
     _LODGE_CANCELLED=0
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
-    
+
     ui_section "Task"
     ui_info "$task"
 
@@ -672,166 +876,139 @@ agent_run() {
             return 1
         fi
     fi
-    
-    # Phase 1: Plan (user sees it streamed in real-time via /dev/tty)
-    local plan
-    plan=$(agent_plan "$task" "$workdir")
-    if [ $? -ne 0 ] || [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
-        _LODGE_IN_TASK=0
-        return 1
-    fi
-    echo ""
-    
-    # Parse steps using shared parser
-    local -a steps=()
-    while IFS= read -r s; do
-        [ -n "$s" ] && steps+=("$s")
-    done < <(_agent_parse_steps "$plan")
-    
-    local total=${#steps[@]}
-    if [ "$total" -eq 0 ]; then
-        # If plan parsing fails, treat the whole thing as one step
-        ui_warn "Could not parse plan. Executing as single step."
-        steps=("$task")
-        total=1
-    fi
-    
-    ui_info "Executing $total steps..."
-    echo ""
 
-    # Pre-execution plan validation — warn about hallucinated URLs, bad patterns
-    _agent_validate_plan "${steps[@]}"
-    
-    # Phase 2: Execute
-    local completed=0
-    local failed_steps=""
-    local _cascade_halt=0
-    local _exec_log=""   # Accumulated execution log for journal
-    for i in "${!steps[@]}"; do
-        # Check for cancellation between steps (file + variable)
+    # ── Initialize Memory Architecture ────────────────────────
+    local george_dir="$workdir/.george"
+    local macro_file="$george_dir/macro_memory.md"
+    local fail_file="$george_dir/failures_log.md"
+    mkdir -p "$george_dir"
+
+    # Seed macro_memory.md with a ~500-token persona summary from soul.md
+    # and the primary objective. This persists for the duration of the task.
+    {
+        echo "# George — Task Memory"
+        echo ""
+        echo "## Persona"
+        # Extract a lean persona summary: first 20 lines of soul.md (~500 tokens)
+        if [ -f "$LODGE_DIR/soul.md" ]; then
+            head -20 "$LODGE_DIR/soul.md"
+        else
+            echo "You are George, a concise coding agent for mobile devices."
+        fi
+        echo ""
+        echo "## Primary Objective"
+        echo "$task"
+        echo ""
+        echo "## Completed Milestones"
+        echo "(none yet)"
+    } > "$macro_file"
+
+    # Create failures log alongside macro memory
+    echo "# Failures Log" > "$fail_file"
+    echo "---" >> "$fail_file"
+
+    # ── Macro Loop: Milestone-by-milestone execution ──────────
+    local macro_iterations=0
+    local max_macro_loops="${AGENT_MAX_STEPS:-20}"
+    local completed_milestones=0
+    local failed_milestones=""
+    local _exec_log=""
+
+    while [ "$macro_iterations" -lt "$max_macro_loops" ]; do
+        # Check for cancellation between milestones
         if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
-            ui_warn "Task cancelled at step $((i + 1))/$total"
+            ui_warn "Task cancelled at milestone $((macro_iterations + 1))"
             break
         fi
-        
-        local step_num=$((i + 1))
-        
-        ui_progress "$step_num" "$total" "${steps[$i]:0:30}"
-        
-        # Detect [SUBTASK] markers — recursively plan and execute
-        if [[ "${steps[$i]}" == \[SUBTASK\]* ]]; then
-            local subtask_desc="${steps[$i]#\[SUBTASK\]}"
-            subtask_desc="${subtask_desc# }"
-            if _agent_run_subtask "$subtask_desc" "$workdir" 1 "$task"; then
-                completed=$((completed + 1))
-                _exec_log="${_exec_log}Step $step_num: ${steps[$i]:0:60} — OK\n"
-            else
-                failed_steps="${failed_steps:+${failed_steps}, }step $step_num: ${steps[$i]}"
-                _exec_log="${_exec_log}Step $step_num: ${steps[$i]:0:60} — FAILED\n"
-            fi
-        elif agent_execute_step "$step_num" "${steps[$i]}" "$workdir" "$task"; then
-            completed=$((completed + 1))
-            _exec_log="${_exec_log}Step $step_num: ${steps[$i]:0:60} — OK\n"
-        else
-            failed_steps="${failed_steps:+${failed_steps}, }step $step_num: ${steps[$i]}"
-            _exec_log="${_exec_log}Step $step_num: ${steps[$i]:0:60} — FAILED${_AGENT_LAST_ERROR:+ (${_AGENT_LAST_ERROR:0:80})}\n"
-            # Check if failure was due to cancellation
-            if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
-                ui_warn "Step $step_num cancelled"
-                break
-            fi
 
-            # ── Cascading failure detection ────────────────────
-            # If the failed step and most remaining steps share a resource,
-            # halt the chain rather than accumulating N identical failures.
-            local -a _remaining_steps=()
-            for _ri in $(seq $((i + 1)) $((total - 1))); do
-                _remaining_steps+=("${steps[$_ri]}")
-            done
-            if [ ${#_remaining_steps[@]} -gt 0 ] && _agent_detect_cascade "${steps[$i]}" "${_remaining_steps[@]}"; then
-                echo ""
-                ui_err "Cascading failure detected — ${#_remaining_steps[@]} remaining steps depend on the same resource"
-                ui_info "Halting to avoid ${#_remaining_steps[@]} more identical failures."
-                echo ""
-                ui_info "George needs help with step $step_num:"
-                printf "  %b%s%b\n" "$C_CYAN" "$_AGENT_LAST_ERROR" "$C_RESET"
-                printf "  %bFix the issue and retry, or press Enter to abort: %b" "$C_BOLD" "$C_RESET"
-                local guidance
-                read -r guidance < /dev/tty
-                if [ -n "$guidance" ]; then
-                    memory_append_section "User Guidance" "Step $step_num: $guidance" "$workdir"
-                    # User gave guidance — retry this step once
-                    ui_info "Retrying step $step_num with guidance..."
-                    if agent_execute_step "$step_num" "${steps[$i]}" "$workdir" "$task"; then
-                        completed=$((completed + 1))
-                        continue
-                    fi
-                fi
-                ui_warn "Stopped at step $step_num (cascade halt)"
-                break
-            fi
-
-            # Critical errors (missing API key, package, auth, slash failures)
-            # prompt the user for guidance with no timeout
-            if _agent_is_critical_error "$_AGENT_LAST_ERROR"; then
-                echo ""
-                ui_info "George needs help with step $step_num:"
-                printf "  %b%s%b\n" "$C_CYAN" "$_AGENT_LAST_ERROR" "$C_RESET"
-                printf "  %bHow should I proceed? (or press Enter to skip): %b" "$C_BOLD" "$C_RESET"
-                local guidance
-                read -r guidance < /dev/tty
-                if [ -n "$guidance" ]; then
-                    memory_append_section "User Guidance" "Step $step_num: $guidance" "$workdir"
-                fi
-            fi
-            ui_warn "Step $step_num failed. Continue? [Y/n]"
-            read -r cont
-            if [[ "${cont,,}" == "n" ]]; then
-                ui_warn "Stopped at step $step_num"
-                break
-            fi
-        fi
-        
-        # Delay between steps
-        sleep "$AGENT_STEP_DELAY"
-        
-        # Inter-step vitals check — warn on degrading conditions
+        # Inter-milestone vitals check
         if declare -f vitals_guard_disk &>/dev/null; then
             if ! vitals_guard_disk 2>/dev/null; then
                 ui_warn "Stopping task — disk critically low"
                 break
             fi
-            vitals_guard_ram 2>/dev/null || true  # warn but don't abort
+            vitals_guard_ram 2>/dev/null || true
         fi
 
-        # Compact memory if steps are accumulating (earlier = safer for 8K context)
-        if [ "$step_num" -ge 4 ] && [ $(( step_num % 2 )) -eq 0 ]; then
-            memory_compact "$workdir"
+        # Read macro_memory.md and ask for the SINGLE next milestone
+        local macro_context
+        macro_context=$(cat "$macro_file")
+
+        local macro_prompt="Read the following task memory. What is the SINGLE next logical milestone to advance the Primary Objective? If the objective is fully complete, reply DONE.\n\n$macro_context"
+
+        # Use a lean system prompt — no personality, just strategic reasoning.
+        # By stripping the ~500-token soul and ~200-token vitals during
+        # execution, we drastically reduce prefill time. Ollama flushes the
+        # context window (not the 4GB model) so a 150-token prompt reasons
+        # almost instantly.
+        local macro_sys="You are a strategic planning engine. Given a task memory with completed milestones, determine the single next milestone needed. Output either DONE or a concise milestone description (one sentence, imperative mood). Output NOTHING else."
+
+        ui_think "Strategist: determining next milestone..."
+        local milestone
+        milestone=$(llm_generate "$macro_prompt" "$macro_sys" "${LLM_ASK_TOKENS:-300}")
+
+        # Strip whitespace for clean comparison
+        milestone=$(echo "$milestone" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+        # ── Check for completion ──────────────────────────────
+        if [ -z "$milestone" ] || [[ "$milestone" == ERROR* ]]; then
+            ui_err "Macro loop failed: ${milestone:-empty response}"
+            break
         fi
+
+        if [[ "$milestone" == "DONE" ]] || [[ "$milestone" == "DONE." ]] || [[ "$milestone" == *"DONE"* && ${#milestone} -lt 10 ]]; then
+            ui_ok "Strategist: Objective complete."
+            break
+        fi
+
+        # ── Execute milestone via Micro Loop ──────────────────
+        macro_iterations=$((macro_iterations + 1))
+        echo ""
+        ui_section "Milestone $macro_iterations"
+        ui_info "$milestone"
+
+        if agent_inner_loop "$milestone" "$workdir"; then
+            completed_milestones=$((completed_milestones + 1))
+            _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — OK\n"
+        else
+            failed_milestones="${failed_milestones:+${failed_milestones}, }milestone $macro_iterations: $milestone"
+            _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — FAILED\n"
+
+            # Check if failure was due to cancellation
+            if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
+                ui_warn "Milestone $macro_iterations cancelled"
+                break
+            fi
+        fi
+
+        sleep "${AGENT_STEP_DELAY:-1}"
     done
-    
-    # Task done — signal no longer in task
+
+    # ── Task complete ─────────────────────────────────────────
     _LODGE_IN_TASK=0
     _LODGE_CANCELLED=0
-    
-    # Phase 3: Summary
+
     echo ""
     ui_divider
-    ui_ok "Task complete: $completed/$total steps succeeded"
-    
-    # Phase 4: Reflect in journal (background — don't block user)
-    local reflect_summary="$task ($completed/$total steps in $(basename "$workdir"))"
-    if [ -n "$failed_steps" ]; then
-        reflect_summary="${reflect_summary}. Failed: ${failed_steps}"
+    if [ "$macro_iterations" -eq 0 ]; then
+        ui_ok "Task complete: objective resolved without milestones"
+    else
+        ui_ok "Task complete: $completed_milestones/$macro_iterations milestones succeeded"
+    fi
+
+    # Reflect in journal (background — don't block user)
+    local reflect_summary="$task ($completed_milestones/$macro_iterations milestones in $(basename "$workdir"))"
+    if [ -n "$failed_milestones" ]; then
+        reflect_summary="${reflect_summary}. Failed: ${failed_milestones}"
     fi
     journal_reflect "$reflect_summary" "$workdir" "$_exec_log" &
-    
+
     # Notify on phone if available
-    tools_phone_toast "Lodge: Task complete ($completed/$total steps)"
-    
+    tools_phone_toast "Lodge: Task complete ($completed_milestones/$macro_iterations milestones)"
+
     # Model stays loaded during active session for fast response times.
     # It will be unloaded on session exit (lodge main) or by keep_alive timeout.
-    
+
     return 0
 }
 
@@ -948,7 +1125,7 @@ agent_step_mode() {
         echo ""
         ui_info "Next: Step $step_num — ${steps[$i]}"
         if ui_confirm "Execute this step?"; then
-            agent_execute_step "$step_num" "${steps[$i]}" "$workdir"
+            agent_inner_loop "${steps[$i]}" "$workdir"
         else
             ui_warn "Skipped step $step_num"
             memory_append_section "Completed Steps" "Step $step_num: SKIPPED — ${steps[$i]}" "$workdir"

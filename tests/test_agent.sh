@@ -31,8 +31,8 @@ describe "Core agent functions"
     assert_ok $?
   }
 
-  it "agent_execute_step is defined" && {
-    declare -f agent_execute_step &>/dev/null
+  it "agent_inner_loop is defined" && {
+    declare -f agent_inner_loop &>/dev/null
     assert_ok $?
   }
 
@@ -241,20 +241,30 @@ describe "Inline plan normalization"
     assert_eq "$_count" "1"
   }
 
-# ── Direct slash command dispatch ─────────────────────────────
-describe "Direct slash command dispatch in execute_step"
+# ── Dynamic prompt builders & inner loop architecture ──────────
+describe "Dynamic dual-loop architecture"
 
-  it "agent_execute_step detects slash commands (starts with /)" && {
-    local body
-    body=$(declare -f agent_execute_step)
-    echo "$body" | grep -q 'commands_dispatch'
+  it "_build_router_prompt is defined" && {
+    declare -f _build_router_prompt &>/dev/null
     assert_ok $?
   }
 
-  it "agent_execute_step prompt mentions slash commands" && {
+  it "_build_specialist_prompt is defined" && {
+    declare -f _build_specialist_prompt &>/dev/null
+    assert_ok $?
+  }
+
+  it "agent_inner_loop uses escalation matrix" && {
     local body
-    body=$(declare -f agent_execute_step)
-    echo "$body" | grep -q 'Slash commands'
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'Escalation L1\|Naive retry'
+    assert_ok $?
+  }
+
+  it "agent_inner_loop implements identicality lockout" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'Identical failed command'
     assert_ok $?
   }
 
@@ -488,29 +498,27 @@ describe "Plan validation (_agent_validate_plan)"
     assert_eq "$_AGENT_PLAN_WARNINGS" ""
   }
 
-# ── Error propagation ─────────────────────────────────────────
-describe "Error propagation in agent_execute_step"
+# ── Escalation matrix in agent_inner_loop ─────────────────────
+describe "Escalation matrix in agent_inner_loop"
 
-  it "captures stderr detail when slash command fails" && {
+  it "implements Level 2 forced knowledge retrieval" && {
     local body
-    body=$(declare -f agent_execute_step)
-    # Should reference _cmd_stderr_file for capturing error detail
-    echo "$body" | grep -q "_cmd_stderr_file\|_cmd_detail\|_SANDBOX_PREREQ_MSG"
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'recall_search_context\|Escalation L2'
     assert_ok $?
   }
 
-  it "includes prereq message in _AGENT_LAST_ERROR" && {
+  it "implements Level 5 forced web fallback" && {
     local body
-    body=$(declare -f agent_execute_step)
-    echo "$body" | grep -q "_SANDBOX_PREREQ_MSG"
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'web_search\|Escalation L5'
     assert_ok $?
   }
 
-  it "captures specific error not just generic 'Slash command failed'" && {
+  it "implements terminal escalation with operator input" && {
     local body
-    body=$(declare -f agent_execute_step)
-    # Should append detail to err_msg (the " — " separator)
-    echo "$body" | grep -q '_cmd_detail'
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'read -r guidance'
     assert_ok $?
   }
 
