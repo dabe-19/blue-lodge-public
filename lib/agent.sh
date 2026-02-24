@@ -670,7 +670,7 @@ agent_inner_loop() {
         # llm_generate is used here for maximum speed — no streaming,
         # no personality, just returns the raw string.
         local selected_tool
-        selected_tool=$(llm_generate "$route_prompt" "$router_sys" "${LLM_ASK_TOKENS:-300}")
+        selected_tool=$(llm_generate "$route_prompt" "$router_sys" "${LLM_ROUTER_TOKENS:-50}")
 
         # Cancel check after router LLM call — curl may have been killed
         if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
@@ -722,7 +722,7 @@ agent_inner_loop() {
         local specialist_prompt="MICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\nWrite the exact command to execute next."
 
         local action_plan
-        action_plan=$(llm_stream "$specialist_prompt" "$specialist_sys" "${LLM_ASK_TOKENS:-300}")
+        action_plan=$(llm_stream "$specialist_prompt" "$specialist_sys" "${LLM_AGENT_TOKENS:-512}")
 
         # Cancel check after specialist LLM call
         if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
@@ -909,7 +909,7 @@ Output a slash command line starting with / OR a bash code block."
 
         local guided_sys=$(_build_specialist_prompt "" "$workdir")
         local final_plan
-        final_plan=$(llm_stream "$guided_prompt" "$guided_sys" "${LLM_ASK_TOKENS:-300}")
+        final_plan=$(llm_stream "$guided_prompt" "$guided_sys" "${LLM_AGENT_TOKENS:-512}")
 
         # Extract slash command or bash command (same logic as main loop)
         local final_cmd=""
@@ -1087,7 +1087,7 @@ Rules:
 
         ui_think "Strategist: determining next milestone..."
         local milestone
-        milestone=$(llm_generate "$macro_prompt" "$macro_sys" "${LLM_ASK_TOKENS:-300}")
+        milestone=$(llm_generate "$macro_prompt" "$macro_sys" "${LLM_AGENT_TOKENS:-512}")
 
         # Strip whitespace for clean comparison
         milestone=$(echo "$milestone" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')

@@ -276,6 +276,24 @@ _cmd_limits() {
             else
                 _limits_set AGENT_INNER_LOOPS "Inner loops" "$value" 1 20
             fi ;;
+        tokens)
+            if [ -z "$value" ]; then
+                ui_info "Agent output tokens: $LLM_AGENT_TOKENS (default: 512)"
+            else
+                _limits_set LLM_AGENT_TOKENS "Agent tokens" "$value" 64 4096
+            fi ;;
+        ask-tokens)
+            if [ -z "$value" ]; then
+                ui_info "Ask output tokens: $LLM_ASK_TOKENS (default: 300)"
+            else
+                _limits_set LLM_ASK_TOKENS "Ask tokens" "$value" 64 4096
+            fi ;;
+        router-tokens)
+            if [ -z "$value" ]; then
+                ui_info "Router output tokens: $LLM_ROUTER_TOKENS (default: 50)"
+            else
+                _limits_set LLM_ROUTER_TOKENS "Router tokens" "$value" 10 256
+            fi ;;
         delay)
             if [ -z "$value" ]; then
                 ui_info "Step delay: ${AGENT_STEP_DELAY}s (default: 1)"
@@ -288,6 +306,9 @@ _cmd_limits() {
             AGENT_MAX_STEPS=20
             AGENT_MAX_DEPTH=2
             AGENT_STEP_DELAY=1
+            LLM_AGENT_TOKENS=512
+            LLM_ASK_TOKENS=300
+            LLM_ROUTER_TOKENS=50
             ui_ok "All limits reset to defaults" ;;
         "")
             ui_section "Agent Limits"
@@ -296,16 +317,22 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Macro milestones:" "$AGENT_MAX_STEPS  (AGENT_MAX_STEPS, default: 20)"
             printf "  %-22s %s\n" "Inner loop retries:" "$AGENT_INNER_LOOPS  (AGENT_INNER_LOOPS, default: 6)"
             printf "  %-22s %s\n" "Step delay:" "${AGENT_STEP_DELAY}s  (AGENT_STEP_DELAY, default: 1)"
+            printf "  %-22s %s\n" "Agent tokens:" "$LLM_AGENT_TOKENS  (LLM_AGENT_TOKENS, default: 512)"
+            printf "  %-22s %s\n" "Ask tokens:" "$LLM_ASK_TOKENS  (LLM_ASK_TOKENS, default: 300)"
+            printf "  %-22s %s\n" "Router tokens:" "$LLM_ROUTER_TOKENS  (LLM_ROUTER_TOKENS, default: 50)"
             echo ""
-            ui_dim "  Usage: /limits <steps|depth|milestones|inner|delay> [value]"
+            ui_dim "  Usage: /limits <steps|depth|milestones|inner|delay|tokens|ask-tokens|router-tokens> [value]"
             ui_dim "  Reset: /limits reset" ;;
         *)
-            ui_info "Usage: /limits [steps|depth|milestones|inner|delay|reset] [value]"
+            ui_info "Usage: /limits [steps|depth|milestones|inner|delay|tokens|ask-tokens|router-tokens|reset] [value]"
             ui_dim "  steps N      — Max steps per plan/subtask (current: $AGENT_PLAN_STEPS)"
             ui_dim "  depth N      — Subtask recursion depth (current: $AGENT_MAX_DEPTH)"
             ui_dim "  milestones N — Macro loop milestone ceiling (current: $AGENT_MAX_STEPS)"
             ui_dim "  inner N      — Inner loop escalation retries (current: $AGENT_INNER_LOOPS)"
             ui_dim "  delay N      — Seconds between milestones (current: $AGENT_STEP_DELAY)"
+            ui_dim "  tokens N     — Agent specialist/strategist output tokens (current: $LLM_AGENT_TOKENS)"
+            ui_dim "  ask-tokens N — /ask quick-answer output tokens (current: $LLM_ASK_TOKENS)"
+            ui_dim "  router-tokens N — Router tool-selection tokens (current: $LLM_ROUTER_TOKENS)"
             ui_dim "  reset        — Reset all to defaults"
             ui_dim "  (no arg)     — Show all current limits" ;;
     esac

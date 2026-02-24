@@ -323,18 +323,58 @@ describe "Limits command"
     assert_eq "$AGENT_PLAN_STEPS" "5"
   }
 
+  it "_cmd_limits tokens sets LLM_AGENT_TOKENS" && {
+    _cmd_limits "tokens 768" >/dev/null 2>&1
+    assert_eq "$LLM_AGENT_TOKENS" "768"
+    LLM_AGENT_TOKENS=512  # restore
+  }
+
+  it "_cmd_limits ask-tokens sets LLM_ASK_TOKENS" && {
+    _cmd_limits "ask-tokens 400" >/dev/null 2>&1
+    assert_eq "$LLM_ASK_TOKENS" "400"
+    LLM_ASK_TOKENS=300  # restore
+  }
+
+  it "_cmd_limits router-tokens sets LLM_ROUTER_TOKENS" && {
+    _cmd_limits "router-tokens 80" >/dev/null 2>&1
+    assert_eq "$LLM_ROUTER_TOKENS" "80"
+    LLM_ROUTER_TOKENS=50  # restore
+  }
+
+  it "_cmd_limits tokens rejects out-of-range" && {
+    _cmd_limits "tokens 5000" >/dev/null 2>&1
+    assert_eq "$LLM_AGENT_TOKENS" "512"
+  }
+
+  it "_cmd_limits router-tokens rejects below min" && {
+    _cmd_limits "router-tokens 5" >/dev/null 2>&1
+    assert_eq "$LLM_ROUTER_TOKENS" "50"
+  }
+
+  it "_cmd_limits show includes token lines" && {
+    output=$(_cmd_limits "" 2>&1)
+    echo "$output" | grep -q "Agent tokens"
+    assert_ok $?
+  }
+
   it "_cmd_limits reset restores all defaults" && {
     AGENT_PLAN_STEPS=10
     AGENT_INNER_LOOPS=12
     AGENT_MAX_STEPS=50
     AGENT_MAX_DEPTH=5
     AGENT_STEP_DELAY=5
+    LLM_AGENT_TOKENS=1024
+    LLM_ASK_TOKENS=500
+    LLM_ROUTER_TOKENS=100
     _cmd_limits "reset" >/dev/null 2>&1
     assert_eq "$AGENT_PLAN_STEPS" "5"
     assert_eq "$AGENT_INNER_LOOPS" "6"
     assert_eq "$AGENT_MAX_STEPS" "20"
     assert_eq "$AGENT_MAX_DEPTH" "2"
     assert_eq "$AGENT_STEP_DELAY" "1"
+    assert_eq "$LLM_AGENT_TOKENS" "512"
+    assert_eq "$LLM_ASK_TOKENS" "300"
+    assert_eq "$LLM_ROUTER_TOKENS" "50"
   }
 
 # ── /debug command ─────────────────────────────────────────────

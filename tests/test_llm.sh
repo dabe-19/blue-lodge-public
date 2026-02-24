@@ -27,6 +27,14 @@ describe "Configuration defaults"
     assert_eq "$LLM_ASK_TOKENS" "300"
   }
 
+  it "LLM_AGENT_TOKENS defaults to 512" && {
+    assert_eq "$LLM_AGENT_TOKENS" "512"
+  }
+
+  it "LLM_ROUTER_TOKENS defaults to 50" && {
+    assert_eq "$LLM_ROUTER_TOKENS" "50"
+  }
+
   it "LLM_TIMEOUT defaults to 300 (safety net)" && {
     assert_eq "$LLM_TIMEOUT" "300"
   }
