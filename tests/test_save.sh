@@ -95,4 +95,33 @@ describe "filename sanitization in cmd_save"
     rm -rf "$_tmpdir"
   }
 
+# ── Existing file without content ─────────────────────────────
+describe "save existing file without content"
+
+  it "succeeds when file already exists and no content given" && {
+    _tmpdir=$(test_tmpdir)
+    echo "existing content" > "$_tmpdir/existing.md"
+    _out=$(cmd_save "existing.md" "$_tmpdir" 2>&1)
+    assert_ok $?
+    assert_contains "$_out" "Saved"
+    rm -rf "$_tmpdir"
+  }
+
+  it "succeeds with quoted filename for existing file" && {
+    _tmpdir=$(test_tmpdir)
+    echo "workout plan" > "$_tmpdir/workout.md"
+    _out=$(cmd_save '"workout.md"' "$_tmpdir" 2>&1)
+    assert_ok $?
+    assert_contains "$_out" "Saved"
+    rm -rf "$_tmpdir"
+  }
+
+  it "still fails when file does not exist and no content" && {
+    _tmpdir=$(test_tmpdir)
+    _out=$(cmd_save "nonexistent.md" "$_tmpdir" 2>&1)
+    assert_fail $?
+    assert_contains "$_out" "No content"
+    rm -rf "$_tmpdir"
+  }
+
 test_end
