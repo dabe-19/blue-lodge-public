@@ -867,17 +867,26 @@ _cmd_social() {
     rest=$(echo "$args" | sed 's/^[^ ]* *//')
 
     case "$action" in
-        post)
+        post|send)
             local platform text
+            # Check if the first word is a known platform name
             platform=$(echo "$rest" | awk '{print $1}')
             text=$(echo "$rest" | sed 's/^[^ ]* *//')
-            if [ -z "$text" ]; then
-                # No platform specified — text is everything
-                text="$platform"
-                social_post "$text"
-            else
-                social_post "$text" "$platform"
-            fi ;;
+            case "$platform" in
+                x|twitter|mastodon|masto|bluesky|bsky|discord|telegram|tg|all)
+                    # Known platform — rest is the message
+                    if [ -z "$text" ] || [ "$text" = "$platform" ]; then
+                        ui_info "Usage: /social post <platform> <message>"
+                        return 1
+                    fi
+                    social_post "$text" "$platform" ;;
+                "")
+                    ui_info "Usage: /social post <message>  OR  /social post <platform> <message>"
+                    return 1 ;;
+                *)
+                    # Not a known platform — entire rest is the message (unified broadcast)
+                    social_post "$rest" ;;
+            esac ;;
         x|twitter)
             local sub
             sub=$(echo "$rest" | awk '{print $1}')
@@ -924,7 +933,7 @@ _cmd_social() {
             local dargs
             dargs=$(echo "$rest" | sed 's/^[^ ]* *//')
             case "$sub" in
-                send|post)
+                post)
                     local _first_arg
                     _first_arg=$(echo "$dargs" | awk '{print $1}')
                     if [[ "$_first_arg" =~ ^[0-9]+$ ]] && [ ${#_first_arg} -ge 17 ]; then
@@ -934,15 +943,48 @@ _cmd_social() {
                         _chan_msg=$(echo "$dargs" | sed 's/^[^ ]* *//')
                         discord_send "$_chan_id" "$_chan_msg"
                     else
-                        # Could be a #channel-name — try resolve, else webhook
+                        # Could be a #channel-name — try resolve, else use webhook→bot fallback
                         local _resolved
                         _resolved=$(discord_channel_resolve "$_first_arg" 2>/dev/null)
                         if [ -n "$_resolved" ]; then
                             local _chan_msg
                             _chan_msg=$(echo "$dargs" | sed 's/^[^ ]* *//')
                             discord_send "$_resolved" "$_chan_msg"
-                        else
+                        elif api_get_key "DISCORD_WEBHOOK_URL" &>/dev/null; then
                             discord_webhook "$dargs"
+                        elif api_get_key "DISCORD_BOT_TOKEN" &>/dev/null; then
+                            local _def_chan
+                            _def_chan=$(discord_default_channel)
+                            if [ -n "$_def_chan" ]; then
+                                discord_send "$_def_chan" "$dargs"
+                            else
+                                ui_err "No default channel set. Run: /social discord channels sync"
+                            fi
+                        else
+                            ui_err "Discord not configured (need DISCORD_WEBHOOK_URL or DISCORD_BOT_TOKEN)"
+                        fi
+                    fi ;;
+                send)
+                    # /social discord send — for DMs or targeted channel messages
+                    local _first_arg
+                    _first_arg=$(echo "$dargs" | awk '{print $1}')
+                    if [ -z "$_first_arg" ] || [ -z "$(echo "$dargs" | sed 's/^[^ ]* *//')" ] || [ "$(echo "$dargs" | sed 's/^[^ ]* *//')" = "$_first_arg" ]; then
+                        ui_info "Usage: /social discord send <channel> <message>"
+                        ui_dim "  Use 'post' for public posting, 'send' for targeted/DM messages."
+                        return 1
+                    fi
+                    local _chan_msg
+                    _chan_msg=$(echo "$dargs" | sed 's/^[^ ]* *//')
+                    if [[ "$_first_arg" =~ ^[0-9]+$ ]] && [ ${#_first_arg} -ge 17 ]; then
+                        discord_send "$_first_arg" "$_chan_msg"
+                    else
+                        local _resolved
+                        _resolved=$(discord_channel_resolve "$_first_arg" 2>/dev/null)
+                        if [ -n "$_resolved" ]; then
+                            discord_send "$_resolved" "$_chan_msg"
+                        else
+                            ui_err "Unknown channel: $_first_arg"
+                            ui_dim "Register it: /social discord channels add <name> <channel_id>"
                         fi
                     fi ;;
                 read)
@@ -982,11 +1024,11 @@ _cmd_social() {
                             ui_info "Usage: /social discord channels <list|add|remove|sync>" ;;
                     esac ;;
                 *)
-                    ui_info "Usage: /social discord <send|read|validate|channels>"
-                    ui_dim "  send <text>               — Send via webhook"
-                    ui_dim "  send <channel_id> <text>   — Send via bot API"
-                    ui_dim "  send <#channel> <text>     — Send via bot API (name lookup)"
-                    ui_dim "  read <channel_id>          — Read recent messages"
+                    ui_info "Usage: /social discord <post|send|read|validate|channels>"
+                    ui_dim "  post <text>                — Post publicly (webhook → bot fallback)"
+                    ui_dim "  post <channel> <text>      — Post to specific channel"
+                    ui_dim "  send <channel> <text>      — Send to channel (targeted/DM)"
+                    ui_dim "  read <channel>             — Read recent messages"
                     ui_dim "  validate                   — Test bot token"
                     ui_dim "  channels list              — Show registered channels"
                     ui_dim "  channels add <name> <id>   — Register a channel"
@@ -1000,7 +1042,7 @@ _cmd_social() {
             local targs
             targs=$(echo "$rest" | sed 's/^[^ ]* *//')
             case "$sub" in
-                send|post) telegram_send "$targs" ;;
+                post|send) telegram_send "$targs" ;;
                 updates)   telegram_get_updates ;;
                 me)        telegram_get_me ;;
                 *)         ui_info "Usage: /social telegram <send|updates|me>" ;;
@@ -1008,14 +1050,14 @@ _cmd_social() {
         status) social_status ;;
         *)
             ui_info "Usage: /social <post|x|mastodon|bluesky|discord|telegram|status>"
-            ui_dim "  post <text>          — Post to all configured platforms"
-            ui_dim "  post <platform> text — Post to a specific platform"
-            ui_dim "  x <action>           — X/Twitter commands"
-            ui_dim "  mastodon <action>    — Mastodon commands"
-            ui_dim "  bluesky <action>     — Bluesky commands"
-            ui_dim "  discord <action>     — Discord commands"
-            ui_dim "  telegram <action>    — Telegram commands"
-            ui_dim "  status               — Show configured platforms"
+            ui_dim "  post <text>            — Post to all configured platforms"
+            ui_dim "  post <platform> <text> — Post to a specific platform"
+            ui_dim "  x <action>             — X/Twitter commands"
+            ui_dim "  mastodon <action>      — Mastodon commands"
+            ui_dim "  bluesky <action>       — Bluesky commands"
+            ui_dim "  discord <action>       — Discord commands"
+            ui_dim "  telegram <action>      — Telegram commands"
+            ui_dim "  status                 — Show configured platforms"
             ;;
     esac
 }

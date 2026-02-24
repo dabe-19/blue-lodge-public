@@ -5,6 +5,7 @@
 #
 # Supported providers:
 #   protonmail  — ProtonMail (ProtonMail Bridge for SMTP/IMAP)
+#   gmail       — Gmail (App Password for SMTP/IMAP)
 #   tutanota    — Tuta (formerly Tutanota) — desktop client API
 #   zoho        — Zoho Mail (free tier, standard IMAP/SMTP)
 #   disposable  — Guerrilla Mail (temp/one-time addresses via API)
@@ -33,6 +34,11 @@ EMAIL_PROVIDERS=(
     [tutanota_imap]=""                         # Tuta has no standard IMAP
     [tutanota_auth]="api"                      # uses Tuta desktop client / REST
     [tutanota_setup]="Tuta does not support SMTP/IMAP. Use Tuta desktop app or REST API."
+
+    [gmail_smtp]="smtp.gmail.com:587"
+    [gmail_imap]="imap.gmail.com:993"
+    [gmail_auth]="password"                      # Google App Password required
+    [gmail_setup]="Use an App Password: Google Account → Security → 2-Step Verification → App Passwords"
 
     [zoho_smtp]="smtp.zoho.com:587"
     [zoho_imap]="imap.zoho.com:993"
@@ -74,18 +80,20 @@ email_setup() {
         ui_section "Email Setup"
         echo ""
         printf "  %b1%b  ProtonMail  — encrypted, private, requires Bridge app\n" "$C_CYAN" "$C_RESET"
-        printf "  %b2%b  Zoho Mail   — free tier, standard IMAP/SMTP\n" "$C_CYAN" "$C_RESET"
-        printf "  %b3%b  Tuta        — encrypted, no SMTP/IMAP (limited)\n" "$C_CYAN" "$C_RESET"
-        printf "  %b4%b  Disposable  — temporary address via Guerrilla Mail\n" "$C_CYAN" "$C_RESET"
+        printf "  %b2%b  Gmail       — Google App Password, standard IMAP/SMTP\n" "$C_CYAN" "$C_RESET"
+        printf "  %b3%b  Zoho Mail   — free tier, standard IMAP/SMTP\n" "$C_CYAN" "$C_RESET"
+        printf "  %b4%b  Tuta        — encrypted, no SMTP/IMAP (limited)\n" "$C_CYAN" "$C_RESET"
+        printf "  %b5%b  Disposable  — temporary address via Guerrilla Mail\n" "$C_CYAN" "$C_RESET"
         echo ""
-        printf "  Choose provider [1-4]: "
+        printf "  Choose provider [1-5]: "
         local choice
         read -r choice < /dev/tty
         case "$choice" in
             1) provider="protonmail" ;;
-            2) provider="zoho"       ;;
-            3) provider="tutanota"   ;;
-            4) provider="disposable" ;;
+            2) provider="gmail"      ;;
+            3) provider="zoho"       ;;
+            4) provider="tutanota"   ;;
+            5) provider="disposable" ;;
             *) ui_err "Invalid choice"; return 1 ;;
         esac
     fi
@@ -94,6 +102,7 @@ email_setup() {
     provider="${provider,,}"
     case "$provider" in
         proton|protonmail|pm) provider="protonmail" ;;
+        gmail|google)         provider="gmail"      ;;
         zoho|zohomail)        provider="zoho"       ;;
         tuta|tutanota)        provider="tutanota"   ;;
         disposable|temp|guerrilla|throwaway) provider="disposable" ;;
@@ -132,6 +141,17 @@ email_setup() {
         # Manual path — operator already has bridge running
         ui_info "Skipping bridge setup. Collecting credentials manually..."
         auth_method="bridge"
+    fi
+
+    if [ "$provider" = "gmail" ]; then
+        ui_info "Gmail requires a Google App Password (not your regular password)."
+        ui_info "Steps to create one:"
+        ui_dim "  1. Go to https://myaccount.google.com/security"
+        ui_dim "  2. Enable 2-Step Verification (if not already enabled)"
+        ui_dim "  3. Go to https://myaccount.google.com/apppasswords"
+        ui_dim "  4. Generate an App Password for 'Mail'"
+        ui_dim "  5. Use that 16-character password below"
+        echo ""
     fi
 
     printf "  Password (or app password): "
@@ -235,6 +255,7 @@ email_send() {
 
     case "$EMAIL_PROVIDER" in
         protonmail) _email_send_smtp "$to" "$subject" "$body" "127.0.0.1" "1025" ;;
+        gmail)      _email_send_smtp "$to" "$subject" "$body" "smtp.gmail.com" "587" ;;
         zoho)       _email_send_smtp "$to" "$subject" "$body" "smtp.zoho.com" "587" ;;
         tutanota)
             ui_err "Tuta does not support SMTP. Use the Tuta app to send email."
@@ -314,6 +335,7 @@ email_inbox() {
 
     case "$EMAIL_PROVIDER" in
         protonmail) _email_inbox_imap "127.0.0.1" "1143" "$count" ;;
+        gmail)      _email_inbox_imap "imap.gmail.com" "993" "$count" ;;
         zoho)       _email_inbox_imap "imap.zoho.com" "993" "$count" ;;
         tutanota)
             ui_err "Tuta does not support IMAP. Use the Tuta app."
@@ -409,6 +431,12 @@ email_status() {
                 printf "  Bridge:   %b%s%b\n" "$C_GREEN" "reachable" "$C_RESET"
             else
                 printf "  Bridge:   %b%s%b\n" "$C_RED" "not reachable" "$C_RESET"
+            fi ;;
+        gmail)
+            if curl -s --connect-timeout 3 "imaps://imap.gmail.com:993" --ssl-reqd &>/dev/null; then
+                printf "  IMAP:     %b%s%b\n" "$C_GREEN" "reachable" "$C_RESET"
+            else
+                printf "  IMAP:     %b%s%b (imap.gmail.com:993)\n" "$C_DIM" "not tested" "$C_RESET"
             fi ;;
         disposable)
             if [ -n "${GUERRILLA_SID:-}" ]; then

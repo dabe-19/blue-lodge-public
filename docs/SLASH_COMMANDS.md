@@ -514,8 +514,10 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 | `/commit [msg]` | AI commit message | `/commit` |
 | `/push` | Push to GitHub | `/push` |
 | `/clone <url>` | Clone and setup repo | `/clone https://github.com/user/repo` |
-| `/social post <text>` | Post to all platforms | `/social post New release!` |
-| `/social <platform> <action>` | Platform-specific | `/social x post Hello X` |
+| `/social post <text>` | Broadcast to all platforms | `/social post New release!` |
+| `/social post <platform> <text>` | Post to one platform | `/social post x Hello X` |
+| `/social send <platform> <text>` | Targeted/DM message | `/social send telegram Check this out` |
+| `/social <platform> <action>` | Platform-specific action | `/social discord validate` |
 | `/social discord validate` | Test Discord bot token | `/social discord validate` |
 | `/social discord channels sync` | Auto-sync channel names from Discord | `/social discord channels sync` |
 | `/social discord channels add <name> <id>` | Register a channel name | `/social discord channels add general 123...` |

@@ -490,6 +490,7 @@ The most powerful feature — post to multiple platforms simultaneously:
 /social post x New release v0.2 is live!
 /social post mastodon Latest update from the lodge
 /social post telegram Build passed ✓
+/social post discord Hello from the Lodge!
 ```
 
 George checks which platforms have API keys configured and only attempts
@@ -502,6 +503,29 @@ those. The results show success/failure for each:
   Discord: ✓
   Telegram: ✗
 ```
+
+### Post vs Send
+
+George uses **post** for public messages and **send** for targeted/private
+messages:
+
+| Action | Usage | Purpose |
+|--------|-------|---------|
+| `post` | `/social post <message>` | Broadcast to all configured platforms |
+| `post` | `/social post <platform> <message>` | Post to one platform publicly |
+| `post` | `/social discord post <channel> <message>` | Post to a specific Discord channel |
+| `send` | `/social discord send <channel> <message>` | Send to a specific channel (targeted) |
+| `send` | `/social telegram send <message>` | Send via Telegram bot |
+
+**Key rule:** If George says `/social post "some message"`, the entire quoted
+text is treated as the message and broadcast to all configured platforms.
+The first word is only treated as a platform name if it matches a known
+platform (x, mastodon, bluesky, discord, telegram).
+
+For Discord specifically, `/social discord post` uses this fallback chain:
+1. Try to resolve channel name → send via bot API
+2. If no channel match → use webhook (if configured)
+3. If no webhook → use bot API with default channel
 
 ---
 

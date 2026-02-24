@@ -48,6 +48,22 @@ describe "Provider definitions"
     assert_not_empty "${EMAIL_PROVIDERS[protonmail_smtp]}"
   }
 
+  it "has Gmail SMTP defined" && {
+    assert_not_empty "${EMAIL_PROVIDERS[gmail_smtp]}"
+  }
+
+  it "has Gmail IMAP defined" && {
+    assert_not_empty "${EMAIL_PROVIDERS[gmail_imap]}"
+  }
+
+  it "has Gmail auth as password" && {
+    assert_eq "${EMAIL_PROVIDERS[gmail_auth]}" "password"
+  }
+
+  it "has Gmail setup instructions" && {
+    assert_not_empty "${EMAIL_PROVIDERS[gmail_setup]}"
+  }
+
   it "has Zoho SMTP defined" && {
     assert_not_empty "${EMAIL_PROVIDERS[zoho_smtp]}"
   }
@@ -66,6 +82,7 @@ describe "Provider definitions"
 
   it "has setup instructions for all providers" && {
     assert_not_empty "${EMAIL_PROVIDERS[protonmail_setup]}"
+    assert_not_empty "${EMAIL_PROVIDERS[gmail_setup]}"
     assert_not_empty "${EMAIL_PROVIDERS[tutanota_setup]}"
     assert_not_empty "${EMAIL_PROVIDERS[zoho_setup]}"
     assert_not_empty "${EMAIL_PROVIDERS[disposable_setup]}"

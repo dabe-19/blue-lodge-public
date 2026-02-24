@@ -461,4 +461,30 @@ describe "_mastodon_base"
     _teardown_social
   }
 
+# ── /social post dispatch (lodge _cmd_social) ──────────────────
+describe "social_post dispatch parsing"
+
+  it "social_post accepts message-only (no platform)" && {
+    _setup_social
+    # With no platforms configured, social_post should still succeed
+    out=$(social_post "Hello world this is a test message" 2>&1)
+    assert_ok $?
+    _teardown_social
+  }
+
+  it "social_post accepts platform + message" && {
+    _setup_social
+    out=$(social_post "Hello world" "discord" 2>&1)
+    # Discord not configured, but should still parse correctly
+    assert_contains "$out" "Discord"
+    _teardown_social
+  }
+
+  it "social_post handles quoted message with spaces" && {
+    _setup_social
+    out=$(social_post "Brothers and sisters in the great Discord of thought" 2>&1)
+    assert_ok $?
+    _teardown_social
+  }
+
 test_end

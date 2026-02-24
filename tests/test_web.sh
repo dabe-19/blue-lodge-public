@@ -150,6 +150,14 @@ describe "web_search"
     _teardown_web
   }
 
+  it "DDG search uses lite.duckduckgo.com" && {
+    _setup_web
+    # Verify the DDG function source references lite.duckduckgo.com
+    fn_body=$(declare -f _web_search_ddg)
+    assert_contains "$fn_body" "lite.duckduckgo.com"
+    _teardown_web
+  }
+
 # ── web_summary ────────────────────────────────────────────────
 describe "web_summary"
 

@@ -204,27 +204,66 @@ _web_search_ddg() {
     local encoded
     encoded=$(printf '%s' "$query" | jq -sRr @uri)
 
+    # Use DuckDuckGo Lite — simpler HTML, more reliable parsing
     local html
     html=$(curl -sL \
         --max-time 10 \
-        -H "User-Agent: Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36" \
-        "https://html.duckduckgo.com/html/?q=$encoded" 2>/dev/null)
+        -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0" \
+        -H "Accept: text/html" \
+        -H "Accept-Language: en-US,en;q=0.5" \
+        "https://lite.duckduckgo.com/lite/?q=$encoded" 2>/dev/null)
 
     if [ -z "$html" ]; then
         ui_err "DuckDuckGo search failed"
         return 1
     fi
 
-    # Parse results from DDG HTML
-    echo "$html" | grep -oP 'class="result__a"[^>]*href="[^"]*"[^>]*>[^<]*' | \
-        sed 's/.*href="//;s/"[^>]*>/\n    /' | \
-        head -$((count * 2)) | \
-        awk 'NR % 2 == 0 {title=$0} NR % 2 == 1 {print "[" int(NR/2)+1 "] " title; print "    " $0; print ""}'
+    # DDG Lite returns results in <a class="result-link"> or plain <a> tags
+    # inside <td> elements. Extract result links and snippets.
+    local results=""
+    local n=0
 
-    # Sometimes DDG HTML format varies, try alternate parse
-    if [ $? -ne 0 ] || [ -z "$(echo "$html" | grep 'result__a')" ]; then
-        echo "$html" | _html_to_text_sed | head -40
+    # Method 1: Parse result-link class (DDG Lite format)
+    results=$(echo "$html" | grep -oP 'class="result-link"[^>]*href="[^"]*"[^>]*>[^<]*' 2>/dev/null | \
+        sed 's/.*href="//;s/"[^>]*>/|/' | head -"$count")
+
+    # Method 2: If no result-link, try result__a (standard DDG HTML)
+    if [ -z "$results" ]; then
+        results=$(echo "$html" | grep -oP 'class="result__a"[^>]*href="[^"]*"[^>]*>[^<]*' 2>/dev/null | \
+            sed 's/.*href="//;s/"[^>]*>/|/' | head -"$count")
     fi
+
+    # Method 3: Extract from DDG Lite table rows (most reliable)
+    if [ -z "$results" ]; then
+        results=$(echo "$html" | \
+            grep -oP '<a[^>]+rel="nofollow"[^>]+href="[^"]+"[^>]*>[^<]+' 2>/dev/null | \
+            grep -v 'duckduckgo.com' | \
+            sed 's/<a[^>]*href="//;s/"[^>]*>/|/' | head -"$count")
+    fi
+
+    if [ -n "$results" ]; then
+        local i=1
+        echo "$results" | while IFS='|' read -r url title; do
+            # Decode DDG redirect URLs
+            if [[ "$url" == *"uddg="* ]]; then
+                url=$(echo "$url" | grep -oP 'uddg=\K[^&]+' | python3 -c 'import sys,urllib.parse;print(urllib.parse.unquote(sys.stdin.read().strip()))' 2>/dev/null || echo "$url")
+            fi
+            printf '[%d] %s\n    %s\n\n' "$i" "${title:-$url}" "$url"
+            i=$((i + 1))
+        done
+        return 0
+    fi
+
+    # Final fallback: extract any meaningful text
+    local text_results
+    text_results=$(echo "$html" | _html_to_text_sed | grep -v '^$' | head -40)
+    if [ -n "$text_results" ]; then
+        echo "$text_results"
+        return 0
+    fi
+
+    ui_err "No results found for: $query"
+    return 1
 }
 
 # ── Summarize a web page via local LLM ────────────────────────

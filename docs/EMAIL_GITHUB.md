@@ -84,14 +84,16 @@ Interactive prompt — choose a provider:
 | # | Provider     | Best For                           | Persistence |
 |---|-------------|------------------------------------|-------------|
 | 1 | ProtonMail  | Privacy-first, encrypted           | Permanent   |
-| 2 | Zoho Mail   | Free tier, standard SMTP/IMAP      | Permanent   |
-| 3 | Tuta        | Encrypted, no SMTP/IMAP            | Permanent   |
-| 4 | Disposable  | Guerrilla Mail, ~60 min expiry     | Temporary   |
+| 2 | Gmail       | Easiest setup, Google App Password | Permanent   |
+| 3 | Zoho Mail   | Free tier, standard SMTP/IMAP      | Permanent   |
+| 4 | Tuta        | Encrypted, no SMTP/IMAP            | Permanent   |
+| 5 | Disposable  | Guerrilla Mail, ~60 min expiry     | Temporary   |
 
 Or pass the provider directly:
 
 ```
 /email setup protonmail
+/email setup gmail
 /email setup zoho
 /email setup disposable
 ```
@@ -103,10 +105,34 @@ Or pass the provider directly:
 
 **What the operator provides:**
 - Email address and password (or app password)
+- For Gmail: a Google App Password (requires 2-Step Verification)
 - For ProtonMail: Proton credentials for Bridge login (interactive, with optional 2FA)
 
-> **Recommendation**: Use **ProtonMail** or **Zoho** for a persistent
-> identity. Use **Disposable** only for throwaway service signups.
+> **Recommendation**: Use **Gmail** for the easiest setup, **ProtonMail**
+> for maximum privacy, or **Zoho** for a free alternative.
+> Use **Disposable** only for throwaway service signups.
+
+### Gmail Setup
+
+Gmail uses standard IMAP/SMTP with Google App Passwords. No extra
+software or bridge required — just an email address and app password.
+
+> **Requirement**: 2-Step Verification must be enabled on the Google
+> account before you can create an App Password.
+
+#### Steps
+
+1. Enable 2-Step Verification: https://myaccount.google.com/security
+2. Create an App Password: https://myaccount.google.com/apppasswords
+3. Select "Mail" as the app type and generate a 16-character password
+4. Run `/email setup gmail` and enter the address + app password
+
+Gmail SMTP/IMAP settings (auto-configured by George):
+
+| Service | Host             | Port | Security |
+|---------|-----------------|------|----------|
+| SMTP    | smtp.gmail.com  | 587  | STARTTLS |
+| IMAP    | imap.gmail.com  | 993  | SSL/TLS  |
 
 ### ProtonMail Bridge Setup
 

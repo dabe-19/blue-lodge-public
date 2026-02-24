@@ -53,8 +53,7 @@ lodge /ask "what is a monad?"      # Quick question
 │   ├── secrets.sh     # Encrypted secrets vault (AES-256-CBC)
 │   ├── gsuite.sh      # Google Workspace (Gmail, Drive, Docs)
 │   ├── wallet.sh      # Cryptocurrency wallets (BTC, ADA, SOL)
-│   ├── api.sh         # REST API client (curl, auth, retry, rate-limit)
-│   ├── social.sh      # Social media (X, Mastodon, Bluesky, Discord, Telegram)
+│   ├── api.sh         # REST API client (curl, auth, retry, rate-limit)│   ├── email.sh       # Email providers (Gmail, ProtonMail, Zoho, Tuta, disposable)│   ├── social.sh      # Social media (X, Mastodon, Bluesky, Discord, Telegram)
 │   ├── providers.sh   # Cloud AI providers (OpenAI, Anthropic, Google, etc.)
 │   ├── web.sh         # Web browsing (fetch, search, summarize, download)
 │   └── backup.sh      # Backup/restore identity files
@@ -110,7 +109,7 @@ lodge /ask "what is a monad?"      # Quick question
 | `/provider <cmd>` | — | Cloud AI (OpenAI/Anthropic/Google/Groq/Mistral...) |
 | `/web <cmd>` | — | Browse the web (fetch/search/summary/download) |
 | `/github <query>` | — | Search GitHub repositories |
-| `/email <cmd>` | — | Email (ProtonMail/Zoho/Tuta/disposable) |
+| `/email <cmd>` | — | Email (Gmail/ProtonMail/Zoho/Tuta/disposable) |
 | `/git <cmd>` | — | Git & GitHub configuration |
 | `/backup <cmd>` | — | Backup & restore George's identity |
 | `/security <cmd>` | — | Security, signing & integrity (status/sign/verify/encrypt/decrypt) |
@@ -849,7 +848,8 @@ bash tests/test_api.sh                     # Run a single file directly
 | `test_memory.sh` | 27 | CLAUDE.md sections, compaction, snapshots |
 | `test_providers.sh` | 32 | 10 AI providers, dispatcher, aliases |
 | `test_sandbox.sh` | 15 | Sandbox lifecycle, build, remove |
-| `test_social.sh` | 62 | 5 platforms, Discord channels, validate, missing key handling |
+| `test_email.sh` | 65 | Gmail/ProtonMail/Zoho/Tuta providers, SMTP/IMAP, bridge |
+| `test_social.sh` | 57 | 5 platforms, Discord channels, post/send dispatch |
 | `test_tools.sh` | 28 | Code extraction, file ops, safety checks |
 | `test_security.sh` | 55 | Allowlist, signing, encryption, sandboxes |
 | `test_recall.sh` | 30 | FTS5 indexing, search, self-review |
@@ -857,7 +857,7 @@ bash tests/test_api.sh                     # Run a single file directly
 | `test_gsuite.sh` | 28 | OAuth2, Gmail/Drive/Docs, input validation |
 | `test_wallet.sh` | 35 | BTC/ADA/SOL wallets, network toggle, send validation |
 | `test_ui.sh` | 39 | Colors, print functions, markdown rendering |
-| `test_web.sh` | 27 | Web fetch, HTML parsing, cache |
+| `test_web.sh` | 29 | Web fetch, HTML parsing, DDG search, cache |
 
 ### Writing Tests
 
