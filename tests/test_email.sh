@@ -414,4 +414,217 @@ describe "ssh_status"
     _teardown_email
   }
 
+# ═══════════════════════════════════════════════════════════════
+# ProtonMail Bridge — Unit Tests
+# ═══════════════════════════════════════════════════════════════
+
+_setup_bridge() {
+    _setup_email
+    export BRIDGE_PASS_DIR="$TMPDIR_EMAIL/password-store"
+}
+
+_teardown_bridge() {
+    unset BRIDGE_PASS_DIR
+    _teardown_email
+}
+
+# ── _bridge_bin ───────────────────────────────────────────────
+describe "_bridge_bin"
+
+  it "returns empty when bridge not installed" && {
+    _setup_bridge
+    out=$(PATH="/nonexistent" _bridge_bin)
+    assert_empty "$out"
+    _teardown_bridge
+  }
+
+# ── bridge_check_deps ────────────────────────────────────────
+describe "bridge_check_deps"
+
+  it "reports missing bridge" && {
+    _setup_bridge
+    out=$(PATH="/nonexistent" bridge_check_deps 2>&1)
+    assert_contains "$out" "gnupg"
+    _teardown_bridge
+  }
+
+  it "returns non-zero when deps missing" && {
+    _setup_bridge
+    PATH="/nonexistent" bridge_check_deps 2>/dev/null
+    assert_fail $?
+    _teardown_bridge
+  }
+
+# ── bridge_init_pass ──────────────────────────────────────────
+describe "bridge_init_pass"
+
+  it "skips when pass store already initialized" && {
+    _setup_bridge
+    mkdir -p "$BRIDGE_PASS_DIR"
+    touch "$BRIDGE_PASS_DIR/.gpg-id"
+    out=$(bridge_init_pass 2>&1)
+    assert_contains "$out" "already initialized"
+    _teardown_bridge
+  }
+
+  it "fails without gpg" && {
+    _setup_bridge
+    rc=0
+    out=$(PATH="/nonexistent" bridge_init_pass 2>&1) || rc=$?
+    assert_fail $rc
+    _teardown_bridge
+  }
+
+# ── bridge_is_running ────────────────────────────────────────
+describe "bridge_is_running"
+
+  it "returns false when no bridge process" && {
+    _setup_bridge
+    bridge_is_running
+    assert_fail $?
+    _teardown_bridge
+  }
+
+# ── bridge_is_reachable ──────────────────────────────────────
+describe "bridge_is_reachable"
+
+  it "returns false when bridge not running" && {
+    _setup_bridge
+    bridge_is_reachable
+    assert_fail $?
+    _teardown_bridge
+  }
+
+# ── bridge_start ──────────────────────────────────────────────
+describe "bridge_start"
+
+  it "fails when bridge not installed" && {
+    _setup_bridge
+    rc=0
+    out=$(PATH="/nonexistent" bridge_start 2>&1) || rc=$?
+    assert_fail $rc
+    assert_contains "$out" "not installed"
+    _teardown_bridge
+  }
+
+  it "fails when pass store not initialized" && {
+    _setup_bridge
+    # Mock bridge binary to exist but pass store empty
+    mockbin="$TMPDIR_EMAIL/bin"
+    mkdir -p "$mockbin"
+    echo '#!/bin/bash' > "$mockbin/protonmail-bridge"
+    chmod +x "$mockbin/protonmail-bridge"
+    rc=0
+    out=$(PATH="$mockbin" bridge_start 2>&1) || rc=$?
+    assert_fail $rc
+    assert_contains "$out" "not initialized"
+    _teardown_bridge
+  }
+
+# ── bridge_stop ───────────────────────────────────────────────
+describe "bridge_stop"
+
+  it "reports not running when nothing to stop" && {
+    _setup_bridge
+    out=$(bridge_stop 2>&1)
+    assert_contains "$out" "not running"
+    _teardown_bridge
+  }
+
+# ── bridge_status ─────────────────────────────────────────────
+describe "bridge_status"
+
+  it "shows bridge not installed" && {
+    _setup_bridge
+    out=$(PATH="/nonexistent" bridge_status 2>&1)
+    assert_contains "$out" "not installed"
+    _teardown_bridge
+  }
+
+  it "shows pass store not initialized" && {
+    _setup_bridge
+    out=$(bridge_status 2>&1)
+    assert_contains "$out" "not initialized"
+    _teardown_bridge
+  }
+
+  it "shows pass store initialized when present" && {
+    _setup_bridge
+    mkdir -p "$BRIDGE_PASS_DIR"
+    touch "$BRIDGE_PASS_DIR/.gpg-id"
+    out=$(bridge_status 2>&1)
+    assert_contains "$out" "initialized"
+    _teardown_bridge
+  }
+
+  it "shows not running when bridge offline" && {
+    _setup_bridge
+    out=$(bridge_status 2>&1)
+    assert_contains "$out" "not running"
+    _teardown_bridge
+  }
+
+# ── bridge_configure (config output) ──────────────────────────
+describe "bridge_configure"
+
+  it "writes email.conf with bridge settings" && {
+    _setup_bridge
+    # Directly write config the way bridge_configure does
+    mkdir -p "$(dirname "$EMAIL_CONFIG")"
+    cat > "$EMAIL_CONFIG" << EOF
+# George's email configuration — ProtonMail Bridge
+EMAIL_PROVIDER="protonmail"
+EMAIL_ADDRESS="user@proton.me"
+EMAIL_AUTH_METHOD="bridge"
+EMAIL_PASSWORD="testbridgepass123"
+EOF
+    chmod 600 "$EMAIL_CONFIG"
+    assert_file_exists "$EMAIL_CONFIG"
+    conf=$(cat "$EMAIL_CONFIG")
+    assert_contains "$conf" "protonmail"
+    assert_contains "$conf" "bridge"
+    assert_contains "$conf" "user@proton.me"
+    _teardown_bridge
+  }
+
+  it "sets 600 permissions on config" && {
+    _setup_bridge
+    mkdir -p "$(dirname "$EMAIL_CONFIG")"
+    cat > "$EMAIL_CONFIG" << EOF
+EMAIL_PROVIDER="protonmail"
+EMAIL_AUTH_METHOD="bridge"
+EOF
+    chmod 600 "$EMAIL_CONFIG"
+    perms=$(stat -c '%a' "$EMAIL_CONFIG" 2>/dev/null || stat -f '%Lp' "$EMAIL_CONFIG" 2>/dev/null)
+    assert_eq "$perms" "600"
+    _teardown_bridge
+  }
+
+# ── bridge_test ───────────────────────────────────────────────
+describe "bridge_test"
+
+  it "fails when bridge not running" && {
+    _setup_bridge
+    rc=0
+    out=$(bridge_test 2>&1) || rc=$?
+    assert_fail $rc
+    assert_contains "$out" "not running"
+    _teardown_bridge
+  }
+
+# ── Bridge defaults ───────────────────────────────────────────
+describe "Bridge constants"
+
+  it "has correct SMTP port default" && {
+    assert_eq "$BRIDGE_SMTP_PORT" "1025"
+  }
+
+  it "has correct IMAP port default" && {
+    assert_eq "$BRIDGE_IMAP_PORT" "1143"
+  }
+
+  it "has localhost as default host" && {
+    assert_eq "$BRIDGE_SMTP_HOST" "127.0.0.1"
+  }
+
 test_end

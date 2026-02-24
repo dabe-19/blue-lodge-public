@@ -1182,12 +1182,41 @@ _cmd_email() {
             github_setup ;;
         github-test|ghtest)
             ssh_test_github ;;
+        bridge)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            local sub_rest
+            sub_rest=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$sub" in
+                setup)     bridge_setup ;;
+                install)   bridge_install_deps ;;
+                init-pass|initpass|init) bridge_init_pass ;;
+                start)     bridge_start ;;
+                stop)      bridge_stop ;;
+                status)    bridge_status ;;
+                login)     bridge_login ;;
+                configure) bridge_configure ;;
+                test)      bridge_test ;;
+                *)
+                    ui_info "Usage: /email bridge <setup|start|stop|status|login|configure|test>"
+                    ui_dim "  setup     — Full guided setup (deps → login → configure → start)"
+                    ui_dim "  install   — Install dependencies (gnupg, pass)"
+                    ui_dim "  init-pass — Initialize pass store (GPG key + keychain)"
+                    ui_dim "  start     — Start bridge daemon in background"
+                    ui_dim "  stop      — Stop bridge daemon"
+                    ui_dim "  status    — Show bridge health (process, ports, config)"
+                    ui_dim "  login     — Interactive bridge CLI login (enter Proton credentials)"
+                    ui_dim "  configure — Set George's email to use bridge SMTP/IMAP"
+                    ui_dim "  test      — Test SMTP connection through bridge"
+                    ;;
+            esac ;;
         *)
-            ui_info "Usage: /email <setup|status|send|inbox|address|ssh-keygen|github-setup>"
+            ui_info "Usage: /email <setup|status|send|inbox|bridge|address|ssh-keygen|github-setup>"
             ui_dim "  setup [provider]      — Configure email (protonmail/zoho/tuta/disposable)"
             ui_dim "  status                — Show email + SSH configuration"
             ui_dim "  send <to> <subj> <body> — Send an email"
             ui_dim "  inbox [count]         — Check inbox"
+            ui_dim "  bridge <action>       — ProtonMail Bridge management"
             ui_dim "  address               — Show configured email address"
             ui_dim "  ssh-keygen            — Generate SSH key for George"
             ui_dim "  github-setup          — Full GitHub setup (email + SSH + git identity)"
