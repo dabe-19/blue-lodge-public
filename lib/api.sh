@@ -147,8 +147,9 @@ api_request() {
     local body
     body=$(echo "$response" | sed '$d')
 
-    # Store status for caller to check
+    # Store status and body for caller to check
     export _API_LAST_STATUS="$http_code"
+    export _API_LAST_BODY="$body"
 
     echo "$body"
 
@@ -159,6 +160,7 @@ api_request() {
             ui_warn "Rate limited (429). Wait and retry."
             return 2 ;;
         4[0-9][0-9])
+            ui_err "Client error ($http_code)"
             return 1 ;;
         5[0-9][0-9])
             ui_err "Server error ($http_code)"

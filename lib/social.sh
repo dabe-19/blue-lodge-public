@@ -305,12 +305,13 @@ discord_webhook() {
     data=$(jq -n --arg c "$message" --arg u "$username" \
         '{"content": $c, "username": $u}')
 
-    local resp
-    resp=$(api_post "$webhook_url" "$data")
-    if [ $? -eq 0 ] || [ "$_API_LAST_STATUS" = "204" ]; then
+    api_post "$webhook_url" "$data" > /dev/null
+    if [ $? -eq 0 ] || [ "${_API_LAST_STATUS:-}" = "204" ]; then
         ui_ok "Sent to Discord"
     else
-        ui_err "Discord webhook failed"
+        local err_msg
+        err_msg=$(api_json_get "${_API_LAST_BODY:-}" '.message // .error // "unknown error"')
+        ui_err "Discord webhook failed (HTTP ${_API_LAST_STATUS:-unknown}): $err_msg"
         return 1
     fi
 }
@@ -325,7 +326,20 @@ discord_send() {
     data=$(jq -n --arg c "$message" '{"content": $c}')
 
     api_post "https://discord.com/api/v10/channels/$channel_id/messages" "$data" \
-        -H "Authorization: Bot $token"
+        -H "Authorization: Bot $token" > /dev/null
+    local status=$?
+
+    if [ $status -eq 0 ]; then
+        ui_ok "Sent to Discord (channel: $channel_id)"
+    else
+        local err_msg
+        err_msg=$(api_json_get "${_API_LAST_BODY:-}" '.message // .error // "unknown error"')
+        local err_code
+        err_code=$(api_json_get "${_API_LAST_BODY:-}" '.code // empty')
+        ui_err "Discord send failed (HTTP ${_API_LAST_STATUS:-unknown}): $err_msg${err_code:+ (code: $err_code)}"
+        ui_dim "Channel: $channel_id"
+        return 1
+    fi
 }
 
 discord_read() {

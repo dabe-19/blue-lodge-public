@@ -175,6 +175,53 @@ describe "Missing API key handling"
     _teardown_social
   }
 
+# ── Discord verbose error reporting ───────────────────────────
+describe "Discord verbose error reporting"
+
+  it "discord_send shows HTTP status and error message on failure" && {
+    _setup_social
+    api_set_key "DISCORD_BOT_TOKEN" "fake_token"
+    test_mock "api_post" 'export _API_LAST_STATUS="403"; export _API_LAST_BODY="{\"message\": \"Missing Permissions\", \"code\": 50013}"; return 1'
+    out=$(discord_send "235541481920659458" "test" 2>&1)
+    assert_contains "$out" "403"
+    assert_contains "$out" "Missing Permissions"
+    assert_contains "$out" "50013"
+    test_unmock "api_post"
+    _teardown_social
+  }
+
+  it "discord_send shows channel ID on failure" && {
+    _setup_social
+    api_set_key "DISCORD_BOT_TOKEN" "fake_token"
+    test_mock "api_post" 'export _API_LAST_STATUS="404"; export _API_LAST_BODY="{\"message\": \"Unknown Channel\", \"code\": 10003}"; return 1'
+    out=$(discord_send "235541481920659458" "test" 2>&1)
+    assert_contains "$out" "235541481920659458"
+    test_unmock "api_post"
+    _teardown_social
+  }
+
+  it "discord_webhook shows HTTP status on failure" && {
+    _setup_social
+    api_set_key "DISCORD_WEBHOOK_URL" "https://discord.com/api/webhooks/fake"
+    test_mock "api_post" 'export _API_LAST_STATUS="401"; export _API_LAST_BODY="{\"message\": \"401: Unauthorized\"}"; return 1'
+    out=$(discord_webhook "test" 2>&1)
+    assert_contains "$out" "401"
+    assert_contains "$out" "Unauthorized"
+    test_unmock "api_post"
+    _teardown_social
+  }
+
+  it "discord_send prints success with channel ID on success" && {
+    _setup_social
+    api_set_key "DISCORD_BOT_TOKEN" "fake_token"
+    test_mock "api_post" 'export _API_LAST_STATUS="200"; export _API_LAST_BODY="{\"id\": \"123456\"}"; return 0'
+    out=$(discord_send "235541481920659458" "test" 2>&1)
+    assert_contains "$out" "Sent to Discord"
+    assert_contains "$out" "235541481920659458"
+    test_unmock "api_post"
+    _teardown_social
+  }
+
 # ── social_post dispatcher ────────────────────────────────────
 describe "social_post (unified dispatcher)"
 
