@@ -55,6 +55,7 @@ LLM_TIMEOUT="${LLM_TIMEOUT:-600}"           # Safety net: 600s max per request (
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
 LODGE_THINK="${LODGE_THINK:-1}"               # 1=show thinking tokens dimmed (default), 0=hide thinking tokens (model always thinks)
 LODGE_THINK_STREAM="${LODGE_THINK_STREAM:-1}"  # When LODGE_THINK=1: 0=hide thinking, 1=show dimmed, 2=show bright (cyan)
+LODGE_NOTHINK="${LODGE_NOTHINK:-0}"             # 0=model thinks normally, 1=inject /no_think to disable reasoning (Qwen3 soft switch)
 LODGE_DEBUG="${LODGE_DEBUG:-0}"                 # 0=normal, 1=show timers + token counts per LLM call
 
 # ── Sampling parameter resolver ────────────────────────────────
@@ -295,6 +296,11 @@ llm_generate() {
 
     _llm_debug_start_timer
 
+    # Qwen3 /no_think soft switch: append to prompt to disable reasoning
+    if [ "${LODGE_NOTHINK:-0}" -eq 1 ]; then
+        prompt="${prompt} /no_think"
+    fi
+
     # Build options with per-scenario sampling parameters
     local _opts
     _opts=$(_llm_build_opts "$max_tokens")
@@ -494,6 +500,12 @@ llm_stream() {
 
     # Thinking-only model: no /nothink or /think suffixes needed.
     # The model always thinks — LODGE_THINK controls display only.
+    # Exception: LODGE_NOTHINK=1 injects /no_think to suppress reasoning.
+
+    # Qwen3 /no_think soft switch: append to prompt to disable reasoning
+    if [ "${LODGE_NOTHINK:-0}" -eq 1 ]; then
+        prompt="${prompt} /no_think"
+    fi
 
     # Build options with per-scenario sampling parameters
     local _opts
@@ -725,6 +737,18 @@ llm_chat() {
     local system="${2:-}"
     local budget="${3:-$LLM_BUDGET_TOKENS}"
     local payload
+
+    # Qwen3 /no_think soft switch: append to last user message
+    if [ "${LODGE_NOTHINK:-0}" -eq 1 ]; then
+        messages=$(echo "$messages" | jq '
+            (map(select(.role == "user")) | length) as $n |
+            if $n > 0 then
+                reduce range(length) as $i (.; 
+                    if .[$i].role == "user" and ([.[$i+1:][] | select(.role == "user")] | length) == 0
+                    then .[$i].content += " /no_think"
+                    else . end)
+            else . end')
+    fi
 
     # Build options with per-scenario sampling parameters
     local _opts

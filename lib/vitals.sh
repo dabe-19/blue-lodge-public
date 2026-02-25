@@ -442,8 +442,6 @@ vitals_context() {
         wifi_st=$(vitals_wifi_status)
         [ "$wifi_st" = "critical" ] && wifi_tag="WiFi WEAK ${rssi}dBm"
         parts+=("$wifi_tag")
-    elif [ -z "$ssid" ] && [ -z "${_VITALS_CACHE_CELL_SIGNAL:-}" ]; then
-        parts+=("NO NET")
     fi
 
     # Cell — include if no WiFi or if signal available
@@ -452,6 +450,15 @@ vitals_context() {
         local cell_type
         cell_type=$(vitals_cell_type)
         parts+=("Cell ${cell_type:-?} ${cell}dBm")
+    fi
+
+    # If no WiFi and no cell, check actual reachability before saying NO NET
+    if [ -z "$ssid" ] && [ -z "$cell" ] && [ ${#parts[@]} -gt 0 ]; then
+        if vitals_net_reachable 2>/dev/null; then
+            parts+=("Net ok")
+        else
+            parts+=("NO NET")
+        fi
     fi
 
     # Build the line
@@ -480,8 +487,15 @@ vitals_context_warnings() {
 
     local wifi_st
     wifi_st=$(vitals_wifi_status)
-    [ "$wifi_st" = "none" ] && warnings+=("No WiFi")
-    [ "$wifi_st" = "critical" ] && warnings+=("WiFi weak")
+    if [ "$wifi_st" = "none" ]; then
+        # No WiFi detected — but network may work via ethernet/WSL/other.
+        # Only warn if the network is actually unreachable.
+        if ! vitals_net_reachable 2>/dev/null; then
+            warnings+=("No network")
+        fi
+    elif [ "$wifi_st" = "critical" ]; then
+        warnings+=("WiFi weak")
+    fi
 
     if [ ${#warnings[@]} -gt 0 ]; then
         local joined

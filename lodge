@@ -116,28 +116,44 @@ _cmd_think() {
     case "$arg" in
         on|1)
             LODGE_THINK=1
+            LODGE_NOTHINK=0
             ui_ok "Think display ON — stream: $([ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && echo bright || ([ "${LODGE_THINK_STREAM:-1}" -eq 1 ] && echo dimmed || echo hidden))" ;;
         off|0)
             LODGE_THINK=0
             ui_ok "Think display OFF — reasoning still happens, just hidden" ;;
         bright|loud|2)
             LODGE_THINK=1
+            LODGE_NOTHINK=0
             LODGE_THINK_STREAM=2
             ui_ok "Think display ON — bright stream (cyan)" ;;
         dim|dimmed|quiet|1)
             LODGE_THINK=1
+            LODGE_NOTHINK=0
             LODGE_THINK_STREAM=1
             ui_ok "Think display ON — dimmed stream" ;;
         hide|hidden|silent)
             LODGE_THINK=1
             LODGE_THINK_STREAM=0
             ui_ok "Think display ON — hidden (reasoning happens, not shown)" ;;
+        nothink|disable|skip)
+            LODGE_NOTHINK=1
+            LODGE_THINK=0
+            ui_ok "Thinking DISABLED — /no_think injected (model responds directly, no reasoning)" ;;
+        enable|think)
+            LODGE_NOTHINK=0
+            LODGE_THINK=1
+            LODGE_THINK_STREAM=1
+            ui_ok "Thinking ENABLED — model reasons before responding (dimmed stream)" ;;
         "")
-            # Toggle through: dim → bright → hidden → off → dim
-            if [ "${LODGE_THINK:-1}" -eq 0 ]; then
+            # Toggle through: dim → bright → hidden → off → nothink → dim
+            if [ "${LODGE_NOTHINK:-0}" -eq 1 ]; then
+                LODGE_NOTHINK=0
                 LODGE_THINK=1
                 LODGE_THINK_STREAM=1
                 ui_ok "Think display ON — dimmed stream"
+            elif [ "${LODGE_THINK:-1}" -eq 0 ]; then
+                LODGE_NOTHINK=1
+                ui_ok "Thinking DISABLED — /no_think injected (model responds directly)"
             elif [ "${LODGE_THINK_STREAM:-1}" -eq 1 ]; then
                 LODGE_THINK_STREAM=2
                 ui_ok "Think display ON — bright stream (cyan)"
@@ -150,12 +166,17 @@ _cmd_think() {
                 ui_ok "Think display OFF — reasoning still happens, just hidden"
             fi ;;
         *)
-            ui_info "Usage: /think [on|off|bright|dim|hide]"
-            ui_dim "  on/off   — toggle think display (current: $([ "${LODGE_THINK:-0}" -eq 1 ] && echo ON || echo OFF))"
-            ui_dim "  bright   — show thinking in cyan with borders"
-            ui_dim "  dim      — show thinking in faint text"
-            ui_dim "  hide     — think but don't stream to screen"
-            ui_dim "  (no arg) — cycle: off → hidden → dim → bright → off" ;;
+            ui_info "Usage: /think [on|off|bright|dim|hide|nothink|enable]"
+            ui_dim "  on/off     — toggle think display (current: $([ "${LODGE_THINK:-0}" -eq 1 ] && echo ON || echo OFF))"
+            ui_dim "  bright     — show thinking in cyan with borders"
+            ui_dim "  dim        — show thinking in faint text"
+            ui_dim "  hide       — think but don't stream to screen"
+            ui_dim "  nothink    — disable reasoning entirely (/no_think injection)"
+            ui_dim "  enable     — re-enable reasoning (thinking ON, dimmed)"
+            ui_dim "  (no arg)   — cycle: dim → bright → hidden → off → nothink → dim"
+            if [ "${LODGE_NOTHINK:-0}" -eq 1 ]; then
+                ui_dim "  Status: NOTHINK (reasoning disabled)"
+            fi ;;
     esac
 }
 _cmd_debug() {
@@ -2802,7 +2823,7 @@ _register_commands() {
     commands_register "email"    "Email (ProtonMail/Zoho/Tuta/disposable)" "_cmd_email"
     commands_register "git"      "Git & GitHub configuration" "_cmd_git"
     commands_register "cleanup"  "Remove George's created files" "_cmd_cleanup"
-    commands_register "think"    "Toggle thinking mode on/off" "_cmd_think"
+    commands_register "think"    "Toggle thinking display or disable reasoning (/no_think)" "_cmd_think"
     commands_register "debug"    "Toggle debug mode (timers + token counts)" "_cmd_debug"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"
