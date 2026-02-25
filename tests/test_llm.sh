@@ -476,11 +476,36 @@ describe "Model family system"
     entry=$(_models_family_lookup "granite")
     keys=$(_models_family_keys "$entry")
     assert_contains "$keys" "granite4"
+    assert_contains "$keys" "granite4-h"
   }
 
   it "models_create_family rejects unknown family" && {
     models_create_family "bogus" 2>/dev/null
     assert_fail $?
+  }
+
+  it "stop tokens with pipe chars parse correctly (delimiter fix)" && {
+    # This was the root cause of 'invalid float value [im_end]' —
+    # IFS='|' split <|im_end|> into 3 fields, corrupting everything.
+    models_info "qwen3-think"
+    assert_eq "$_ME_STOP" '<|im_end|>' "qwen3-think stop token"
+    assert_eq "$_ME_TEMP" "0.6" "qwen3-think temp (not 'im_end')"
+
+    models_info "granite4"
+    assert_eq "$_ME_STOP" '<|end_of_text|>' "granite4 stop token"
+    assert_eq "$_ME_TEMP" "0.6" "granite4 temp"
+
+    models_info "llama32"
+    assert_eq "$_ME_STOP" '<|eot_id|>' "llama32 stop token"
+
+    models_info "minist-think"
+    assert_eq "$_ME_STOP" '</s>' "ministral stop token"
+  }
+
+  it "granite4-h registry entry exists and uses 3b-h base" && {
+    models_info "granite4-h"
+    assert_ok $?
+    assert_eq "$_ME_BASE" "granite4:3b-h"
   }
 
   it "each family key maps to a valid registry entry" && {

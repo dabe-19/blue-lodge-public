@@ -28,7 +28,8 @@ _MODELS_ACTIVE=""
 # ═══════════════════════════════════════════════════════════════
 # Model Registry
 # ═══════════════════════════════════════════════════════════════
-# Each entry: key|friendly_name|base_image|role|has_thinking|nothink_method|stop_token|temperature|repeat_penalty|presence_penalty|num_ctx|num_predict|top_p|top_k|min_p|notes
+# Each entry uses ^ as delimiter (NOT | — stop tokens like <|im_end|> contain pipes).
+# Format: key^friendly_name^base_image^role^has_thinking^nothink_method^stop_token^temperature^repeat_penalty^presence_penalty^num_ctx^num_predict^top_p^top_k^min_p^notes
 #
 # role: "thinking" or "instruct"
 # has_thinking: 1 = generates <think> blocks, 0 = no thinking
@@ -40,23 +41,25 @@ _MODELS_REGISTRY=(
     # Qwen3-Think: HF recommends temp=0.6, top_p=0.95, top_k=20, min_p=0,
     #   presence_penalty 0-2 (warns high values cause language mixing),
     #   num_predict 32768 (81920 for complex reasoning).
-    "qwen3-think|blue-lodge-qwen3-think:4b|hf.co/unsloth/Qwen3-4B-Thinking-2507-GGUF:UD-Q5_K_XL|thinking|1|qwen|<|im_end|>|0.6|1.3|0.8|32768|32768|0.95|20|0.0|Default primary. Extended thinking with /no_think soft switch."
+    "qwen3-think^blue-lodge-qwen3-think:4b^hf.co/unsloth/Qwen3-4B-Thinking-2507-GGUF:UD-Q5_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.3^0.8^32768^32768^0.95^20^0.0^Default primary. Extended thinking with /no_think soft switch."
     # Qwen3-Inst: HF recommends temp=0.7, top_p=0.8, top_k=20, min_p=0,
     #   num_predict 16384 for instruct.
-    "qwen3-inst|blue-lodge-qwen3-inst:4b|hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:UD-Q5_K_XL|instruct|0|none|<|im_end|>|0.7|1.0|0.0|32768|16384|0.8|20|0.0|Default secondary. Fast instruct — no thinking phase."
+    "qwen3-inst^blue-lodge-qwen3-inst:4b^hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:UD-Q5_K_XL^instruct^0^none^<|im_end|>^0.7^1.0^0.0^32768^16384^0.8^20^0.0^Default secondary. Fast instruct — no thinking phase."
 
     # ── Llama 3.2 family ──────────────────────────────────────
     # Llama 3.2: 128K native context, but 12GB ARM can only handle 32K safely.
     # Meta publishes no specific sampling recommendations.
-    "llama32|blue-lodge-llama32:3b|llama3.2:3b|thinking|0|none|<|eot_id|>|0.6|1.1|0.0|32768|8192|0.9|40|0.0|Meta Llama 3.2 3B. Strong general reasoning."
-    "llama32-inst|blue-lodge-llama32-inst:3b|hf.co/unsloth/Llama-3.2-3B-Instruct-GGUF:UD-Q5_K_XL|instruct|0|none|<|eot_id|>|0.6|1.1|0.0|32768|8192|0.9|40|0.0|Llama 3.2 3B Instruct (Unsloth quant). Fast responses."
+    "llama32^blue-lodge-llama32:3b^llama3.2:3b^thinking^0^none^<|eot_id|>^0.6^1.1^0.0^32768^8192^0.9^40^0.0^Meta Llama 3.2 3B. Strong general reasoning."
+    "llama32-inst^blue-lodge-llama32-inst:3b^hf.co/unsloth/Llama-3.2-3B-Instruct-GGUF:UD-Q5_K_XL^instruct^0^none^<|eot_id|>^0.6^1.1^0.0^32768^8192^0.9^40^0.0^Llama 3.2 3B Instruct (Unsloth quant). Fast responses."
 
     # ── Granite 4 family ──────────────────────────────────────
-    "granite4|blue-lodge-granite4:3b|granite4:3b|thinking|1|system|<|end_of_text|>|0.6|1.0|0.0|32768|8192|0.85|50|0.0|IBM Granite 4. Strong reasoning and instruction following."
+    # granite4:3b = standard Q4_K_M (2.1GB), granite4:3b-h = hybrid quant (1.9GB)
+    "granite4^blue-lodge-granite4:3b^granite4:3b^thinking^1^system^<|end_of_text|>^0.6^1.0^0.0^32768^8192^0.85^50^0.0^IBM Granite 4 standard. Strong reasoning and instruction following."
+    "granite4-h^blue-lodge-granite4-h:3b^granite4:3b-h^thinking^1^system^<|end_of_text|>^0.6^1.0^0.0^32768^8192^0.85^50^0.0^IBM Granite 4 hybrid quant. Smaller footprint (1.9GB vs 2.1GB)."
 
     # ── Ministral family ──────────────────────────────────────
-    "minist-think|blue-lodge-minist-think:4b|hf.co/unsloth/Ministral-3-3B-Reasoning-2512-GGUF:UD-Q5_K_XL|thinking|1|none|</s>|0.6|1.0|0.0|32768|8192|0.9|40|0.0|Mistral reasoning model. Chain-of-thought with compact output."
-    "minist-inst|blue-lodge-minist-inst:4b|hf.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF:UD-Q5_K_XL|instruct|0|none|</s>|0.7|1.0|0.0|32768|8192|0.9|40|0.0|Mistral instruct model. Fast structured output."
+    "minist-think^blue-lodge-minist-think:4b^hf.co/unsloth/Ministral-3-3B-Reasoning-2512-GGUF:UD-Q5_K_XL^thinking^1^none^</s>^0.6^1.0^0.0^32768^8192^0.9^40^0.0^Mistral reasoning model. Chain-of-thought with compact output."
+    "minist-inst^blue-lodge-minist-inst:4b^hf.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF:UD-Q5_K_XL^instruct^0^none^</s>^0.7^1.0^0.0^32768^8192^0.9^40^0.0^Mistral instruct model. Fast structured output."
 )
 
 # ── Parse a registry entry into variables ──────────────────────
@@ -66,7 +69,7 @@ _MODELS_REGISTRY=(
 #       _ME_TOP_P, _ME_TOP_K, _ME_MIN_P, _ME_NOTES
 _models_parse_entry() {
     local entry="$1"
-    IFS='|' read -r _ME_KEY _ME_NAME _ME_BASE _ME_ROLE _ME_THINKS _ME_NOTHINK \
+    IFS='^' read -r _ME_KEY _ME_NAME _ME_BASE _ME_ROLE _ME_THINKS _ME_NOTHINK \
         _ME_STOP _ME_TEMP _ME_REPEAT _ME_PRESENCE _ME_CTX _ME_PREDICT \
         _ME_TOP_P _ME_TOP_K _ME_MIN_P _ME_NOTES <<< "$entry"
 }
@@ -649,7 +652,7 @@ models_clear_all_params() {
 _MODELS_FAMILIES=(
     "qwen|Qwen 3 (4B) — default thinking + instruct pair|qwen3-think qwen3-inst"
     "llama|Llama 3.2 (3B) — Meta general reasoning + instruct|llama32 llama32-inst"
-    "granite|Granite 4.0 Micro (3B) — IBM reasoning + code|granite4"
+    "granite|Granite 4.0 Micro (3B) — IBM reasoning + code|granite4 granite4-h"
     "ministral|Ministral 3 (3B) — Mistral reasoning + instruct|minist-think minist-inst"
 )
 
