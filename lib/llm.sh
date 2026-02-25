@@ -389,9 +389,15 @@ llm_generate() {
     # Thinking display state (same auto-detection as llm_stream)
     local _saw_thinking_field=0
     local _think_banner_open=0
-    local _in_think_block=1
-    models_current_has_thinking || _in_think_block=0
+    # Start outside think block — detect <think> dynamically.
+    # Previously assumed has_thinking models always start with <think>,
+    # but Granite4 (and others) may skip thinking on simple queries,
+    # causing the entire response to be buffered as "thinking".
+    local _in_think_block=0
+    local _can_think=0
+    models_current_has_thinking && _can_think=1
     local _think_pending=""
+    local _response_pending=""    # buffer to detect <think> at start of response
 
     $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/generate" \
@@ -446,12 +452,30 @@ llm_generate() {
                 printf "%s" "$token"
             else
                 # ── Inline-tag fallback mode ──
-                if [ "$_think_banner_open" -eq 0 ] && [ "$_in_think_block" -eq 1 ]; then
-                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                        _think_banner_open=1
-                        local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
-                        printf "\n%b┌─ thinking ─\033[0m\n%b" "$_c" "$_c" > "$_tty" 2>/dev/null
+                # Detect <think> at start of response to enter think mode.
+                # Buffer initial tokens until we know if model is thinking.
+                if [ "$_can_think" -eq 1 ] && [ "$_in_think_block" -eq 0 ] && [ ${#_response_pending} -lt 8 ]; then
+                    _response_pending+="$token"
+                    # Once we have enough chars, check for <think>
+                    if [ ${#_response_pending} -ge 7 ]; then
+                        if [[ "$_response_pending" == "<think>"* ]]; then
+                            _in_think_block=1
+                            # Move everything after <think> into think_pending
+                            _think_pending="${_response_pending#<think>}"
+                            _response_pending=""
+                            if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                                _think_banner_open=1
+                                local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
+                                printf "\n%b┌─ thinking ─\033[0m\n%b" "$_c" "$_c" > "$_tty" 2>/dev/null
+                            fi
+                        else
+                            # No <think> prefix — flush buffered tokens as response
+                            printf "%s" "$_response_pending"
+                            _response_pending=""
+                            _can_think=0  # stop buffering for this response
+                        fi
                     fi
+                    continue
                 fi
 
                 if [ "$_in_think_block" -eq 1 ]; then
@@ -498,6 +522,8 @@ llm_generate() {
                     printf "\033[0m\n%b└────────────\033[0m\n" "$_c" > "$_tty" 2>/dev/null
                 fi
             fi
+            # Flush any response_pending buffer (very short response, never reached 7 chars)
+            [ -n "$_response_pending" ] && printf "%s" "$_response_pending"
             # Flush pending think text as response if </think> never arrived
             if [ "$_in_think_block" -eq 1 ] && [ -n "$_think_pending" ]; then
                 printf "%s" "$_think_pending"
@@ -627,9 +653,15 @@ llm_stream() {
     #   _saw_thinking_field=0 → inline-tag fallback mode
     local _saw_thinking_field=0
     local _think_banner_open=0
-    local _in_think_block=1       # fallback mode: assume starts in think
-    models_current_has_thinking || _in_think_block=0
+    # Start outside think block — detect <think> dynamically.
+    # Previously assumed has_thinking models always start with <think>,
+    # but Granite4 (and others) may skip thinking on simple queries,
+    # causing the entire response to be buffered as "thinking".
+    local _in_think_block=0
+    local _can_think=0
+    models_current_has_thinking && _can_think=1
     local _think_pending=""       # fallback mode: buffer for split </think>
+    local _response_pending=""    # buffer to detect <think> at start of response
 
     $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/generate" \
@@ -682,11 +714,26 @@ llm_stream() {
                 printf "%s" "$token" > "$_tty" 2>/dev/null
             else
                 # ── Inline-tag fallback mode ──
-                # Thinking tokens are embedded in .response with </think> separator.
-                # Open thinking banner on first token if not yet open
-                if [ "$_think_banner_open" -eq 0 ] && [ "$_in_think_block" -eq 1 ]; then
-                    _think_banner_open=1
-                    _think_open
+                # Detect <think> at start of response to enter think mode.
+                # Buffer initial tokens until we know if model is thinking.
+                if [ "$_can_think" -eq 1 ] && [ "$_in_think_block" -eq 0 ] && [ ${#_response_pending} -lt 8 ]; then
+                    _response_pending+="$token"
+                    if [ ${#_response_pending} -ge 7 ]; then
+                        if [[ "$_response_pending" == "<think>"* ]]; then
+                            _in_think_block=1
+                            _think_pending="${_response_pending#<think>}"
+                            _response_pending=""
+                            _think_banner_open=1
+                            _think_open
+                        else
+                            # No <think> — flush buffered tokens as response
+                            printf "%s" "$_response_pending"
+                            printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
+                            _response_pending=""
+                            _can_think=0
+                        fi
+                    fi
+                    continue
                 fi
 
                 if [ "$_in_think_block" -eq 1 ]; then
@@ -732,6 +779,11 @@ llm_stream() {
             # Close thinking banner if still open at end of stream
             if [ "$_think_banner_open" -eq 1 ]; then
                 _think_close
+            fi
+            # Flush any response_pending buffer (very short response, never reached 7 chars)
+            if [ -n "$_response_pending" ]; then
+                printf "%s" "$_response_pending"
+                printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
             fi
             # Fallback mode: flush any buffered text as response if </think> never arrived
             if [ "$_in_think_block" -eq 1 ] && [ -n "$_think_pending" ]; then

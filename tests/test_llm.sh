@@ -404,9 +404,13 @@ describe "Thinking mode configuration (thinking-only model)"
     assert_ok $?
   }
 
-  it "llm_stream starts in think mode (_in_think_block=1)" && {
+  it "llm_stream detects <think> dynamically (_in_think_block starts at 0)" && {
     body=$(declare -f llm_stream)
-    echo "$body" | grep -q '_in_think_block=1'
+    echo "$body" | grep -q '_in_think_block=0'
+    assert_ok $?
+    echo "$body" | grep -q '_can_think=0'
+    assert_ok $?
+    echo "$body" | grep -q '<think>'
     assert_ok $?
   }
 

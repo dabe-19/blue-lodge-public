@@ -397,7 +397,7 @@ agent_plan() {
 
     local base_rules="Plan this task. Rules:
 - THINK FIRST: Is this a simple question George can answer from his own knowledge (no web search, no tools, no external actions)? If so, output ONLY: 1. /ask <the user's question>. Done. No sandbox, no coding.
-- If the user explicitly names a tool or action (e.g., "search the web", "post to discord"), route to that tool — do NOT use /ask.
+- If the user explicitly names a tool or action (e.g., 'search the web', 'post to discord'), route to that tool — do NOT use /ask.
 - Use the MINIMUM steps needed. Most tasks need 1-3 steps. Maximum: $AGENT_PLAN_STEPS steps.
 - NEVER pad plans. No filler steps (no READMEs, no backup, no status checks, no recall searches, no reviews).
 - Every step must directly advance the user's stated goal.
@@ -1294,8 +1294,8 @@ agent_run() {
         local macro_sys="You are a strategic planning engine. Given a task memory with completed milestones, determine the single next milestone needed.
 
 Rules:
-- If the user explicitly names a tool or action (e.g., "search the web", "post to discord", "send email", "download"), route to that tool — NEVER override with /ask
-- ONLY use /ask for simple questions George can answer from his own knowledge with NO tools (e.g., "what is a monad?", "explain recursion")
+- If the user explicitly names a tool or action (e.g., 'search the web', 'post to discord', 'send email', 'download'), route to that tool — NEVER override with /ask
+- ONLY use /ask for simple questions George can answer from his own knowledge with NO tools (e.g., 'what is a monad?', 'explain recursion')
 - Every milestone MUST be achievable using one of these tools: ${_tool_summary:-/ask, /sandbox, /write, /build, /test, /web, /recall, /save, bash}
 - To post to Discord/Telegram/X, use /social (NOT /email). /email is for actual email addresses only.
 - Do NOT use /sandbox to run slash commands. Slash commands run directly.
