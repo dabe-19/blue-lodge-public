@@ -85,7 +85,7 @@ searches return focused, relevant snippets rather than entire files.
 | Engine | SQLite FTS5 |
 | Ranking | BM25 (weighted: section 10x, source 5x, content 1x) |
 | Tokenizer | Porter stemmer + unicode61 |
-| Storage | `~/.george/recall.db` (~100-300KB) |
+| Storage | `~/.george/recall.db` (~50-100KB) |
 | Query speed | <1ms typically |
 | Network | None — entirely local |
 | Dependencies | `sqlite3` with FTS5 support |
@@ -94,21 +94,16 @@ searches return focused, relevant snippets rather than entire files.
 
 ## Indexed Sources
 
-George automatically indexes these files on startup:
+George automatically indexes these sources on startup:
 
 | Source | File | Description |
 |--------|------|-------------|
-| `readme` | `README.md` | George's capabilities and architecture |
-| `soul` | `soul.md` | Personality, ethics, Theory of Moral Sentiments |
-| `crypto` | `docs/CRYPTO_WALLETS.md` | Cryptocurrency wallet guide |
-| `tuning` | `docs/TUNING.md` | Token and performance tuning |
-| `sandboxes` | `docs/SANDBOXES.md` | Sandbox and isolation guide |
-| `vault` | `docs/SECRETS_VAULT.md` | Encrypted secrets vault |
+| `ref` | `docs/RECALL_INDEX.md` | FTS5-optimized master reference (~75 keyword-rich sections distilled from all docs) |
 | `journal` | `journal.md` | George's living memory (with decay) |
 | `george` | `./GEORGE.md` | Current project memory |
+| `doc:<label>` | User-ingested files | Added via `/ingest` (e.g., `doc:research-paper`) |
 
-**User-ingested documents** are stored with a `doc:` prefix (e.g.,
-`doc:research-paper`).
+> **Design note:** Raw human-readable docs (README.md, soul.md, docs/*.md) are **not** indexed directly. Their actionable content is distilled into `RECALL_INDEX.md` — a single file with ~75 dense, keyword-rich sections optimized for FTS5 retrieval. This keeps the index small (~20-40 chunks from built-in sources) while covering all of George's documentation.
 
 ### Automatic Reindexing
 
@@ -304,7 +299,7 @@ george> /recall attention mechanism
 -- Main storage table
 CREATE TABLE chunks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source TEXT NOT NULL,       -- readme, soul, journal, claude, doc:label
+    source TEXT NOT NULL,       -- ref, journal, george, doc:label
     section TEXT NOT NULL,      -- section heading from the document
     content TEXT NOT NULL,      -- section body text
     filepath TEXT NOT NULL,     -- original file path
@@ -338,12 +333,9 @@ Each chunk gets a sequential label like "Part 1", "Part 2", etc.
 File modification times are stored in `~/.george/.recall_mtimes`:
 
 ```
-readme=1740268421
-soul=1740268421
-crypto=1740268300
-tuning=1740268350
+ref=1740268421
 journal=1740268400
-claude=1740268410
+george=1740268410
 ```
 
 Before every search, George compares current mtimes against stored mtimes.
@@ -380,14 +372,11 @@ If the index seems stale or you've made manual edits to docs:
 george> /recall reindex
   ● Reindexing knowledge base...
   ✓ Reindexed
-  Total chunks: 86
-    crypto     13 sections
-    readme     27 sections
-    sandboxes  12 sections
-    soul       9 sections
-    tuning     9 sections
-    vault      16 sections
-  DB size:     252K
+  Total chunks: 30
+    ref        24 sections
+    journal     4 sections
+    george      2 sections
+  DB size:     64K
 ```
 
 ### Clear and Rebuild
@@ -403,7 +392,7 @@ george> /recall reindex
 
 The recall database is lightweight:
 
-- ~80-100 chunks from built-in docs = ~200-300KB
+- ~20-40 chunks from built-in sources (ref + journal + george) = ~50-100KB
 - Each ingested document adds proportionally
 - The FTS5 index is highly compressed
 

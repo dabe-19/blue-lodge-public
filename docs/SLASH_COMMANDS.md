@@ -517,7 +517,7 @@ Total additional tokens per plan call (dense): **~4,900** (full soul + lean cata
 Total additional tokens per task call: **~1,443** (full catalog — soul.md already present).
 Ask mode: **~250 tokens** (condensed soul + conversation history ~300-600 if exchanges exist).
 
-With `num_ctx=16384`, the full task prompt budget is ~3,500 tokens for the system prompt, leaving ~10,400+ tokens for conversation history and generation. Even plan mode has ~14,700 tokens of headroom.
+With `num_ctx=32768`, the full task prompt budget is ~3,500 tokens for the system prompt, leaving ~26,700+ tokens for conversation history and generation. Even plan mode has ~31,000 tokens of headroom.
 
 ## The Design Principle
 
@@ -593,6 +593,7 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 | `/pgp export` | Export public key | `/pgp export` |
 | `/vitals` | System vitals (CPU, RAM, disk, battery) | `/vitals` |
 | `/limits` | View/adjust agent planning limits | `/limits steps 8` |
+| `/model` | View/adjust sampling parameters (temp, penalties) | `/model temp 0.3` |
 | `/debug` | Toggle debug mode (timers + token counts) | `/debug on` |
 | `/think` | Toggle thinking mode on/off | `/think` |
 | `/cleanup` | Remove George's created files | `/cleanup` |

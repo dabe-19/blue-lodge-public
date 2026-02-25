@@ -39,7 +39,7 @@ George has three persistent memory layers that survive between LLM calls:
 
 - **GEORGE.md** — project state: current task, plan, completed steps, key files
 - **Journal** — reflections, learnings, struggles (with temporal decay) — up to 500 tokens injected in task mode
-- **FTS5 Recall** — BM25-ranked search over soul.md, README, docs, ingested files — 4 chunks in task mode, 1 chunk (200 char cap) in ask mode
+- **FTS5 Recall** — BM25-ranked search over RECALL_INDEX.md, journal, GEORGE.md, and ingested files — 4 chunks in task mode, 1 chunk (200 char cap) in ask mode
 - **Conversation history** — ring buffer of last 3 exchanges (~300-600 tokens) injected into `/ask` for conversational continuity
 
 The system prompt builder automatically injects the **most relevant** pieces from each layer. George doesn't need his full life story in every prompt because he can look things up via `/recall`, `/journal`, and `/memory`.
@@ -62,8 +62,8 @@ export LLM_MAX_TOKENS=1024
 export LLM_ASK_TOKENS=2048
 
 # Safety timeout per LLM request (seconds)
-# Default: 180. Set to 0 to disable (Ctrl+C only).
-export LLM_TIMEOUT=180
+# Default: 600. Set to 0 to disable (Ctrl+C only).
+export LLM_TIMEOUT=120
 
 # How long the model stays loaded in RAM after last request
 # Default: 30m. Increase if you take long breaks between commands.
@@ -146,12 +146,60 @@ ollama create blue-lodge -f ~/blue-lodge/Modelfile
 | `num_predict` | 20480 | Max output tokens (overridden per-call by env vars). | Modelfile-level ceiling. Per-call overrides (`LLM_MAX_TOKENS`, `LLM_ASK_TOKENS`) take precedence. Thinking model needs generous budget (think tokens + response). |
 | `num_thread` | 8 | CPU threads for inference. | Match your physical core count. 8 for Snapdragon 8 Elite, 4 for typical laptops. |
 | `num_gpu` | 0 | GPU layers to offload. 0 = pure CPU. | Set to 99 (all layers) if you have a GPU. Partial offload: try 20-40. |
-| `temperature` | 0.6 | Randomness. HuggingFace-recommended for Qwen3-4B-Thinking. | 0.6 balances exploration during thinking with convergent answers. top_k=20 constrains further. |
+| `temperature` | 0.4 | Randomness. Lower than HuggingFace default (0.6) for more focused output. | Per-scenario overrides via `_llm_build_opts()` adjust temperature per use case (0.1 for router, 0.6 for journal). See Per-Scenario Sampling below. |
 | `top_p` | 0.95 | Nucleus sampling threshold. | Lower (0.7) for focused output, higher (0.95) for variety. |
-| `top_k` | 20 | Top-K sampling. Limits token candidates per step. | Unsloth-recommended. Keeps generation focused despite high temperature. |
-| `repeat_penalty` | 1.0 | Penalty for repeating tokens. | 1.0 = no penalty. The presence_penalty handles anti-repetition instead. |
-| `presence_penalty` | 1.5 | Penalty for tokens already in context. | Unsloth-recommended. Encourages diverse output and reduces loops. |
+| `top_k` | 20 | Top-K sampling. Limits token candidates per step. | Unsloth-recommended. Keeps generation focused despite moderate temperature. |
+| `repeat_penalty` | 1.3 | Penalty for repeating tokens. | Mild penalty to discourage token-level loops. Works alongside presence_penalty. |
+| `presence_penalty` | 1.8 | Penalty for tokens already in context. | Strong anti-repetition. Encourages diverse output and prevents spiral loops. |
 | `stop` | `<\|im_end\|>` | Stop sequence. Model-specific. | Check your model's chat template for the correct stop token. |
+
+### Per-Scenario Sampling
+
+George doesn't use a single temperature for everything. The `_llm_build_opts()` function in `lib/llm.sh` resolves sampling parameters based on `LLM_SCENARIO` — a variable set by each caller before invoking the LLM. This allows different tasks to use different creativity/focus levels.
+
+**Five scenarios** with independent `temperature`, `repeat_penalty`, and `presence_penalty`:
+
+| Scenario | Used by | Temp | Repeat | Presence | Rationale |
+|----------|---------|------|--------|----------|-----------|
+| `ask` | `/ask`, quick questions | 0.5 | 1.3 | 1.8 | Conversational, moderate creativity |
+| `agent` | `agent_plan`, `agent_execute_step` | 0.3 | 1.3 | 1.8 | Focused execution, low creativity |
+| `router` | Inner loop tool selection | 0.1 | 1.1 | 2.0 | Near-deterministic routing, strong anti-loop |
+| `journal` | Background reflections | 0.6 | 1.3 | 2.0 | Slightly creative, strong anti-repetition |
+| `tool` | `/commit`, `/web summary`, `/recall`, `/slash` | 0.3 | 1.3 | 1.8 | Structured output, focused |
+
+**Global defaults** (used when no scenario is set or as fallback):
+- `LLM_TEMPERATURE=0.4`, `LLM_REPEAT_PENALTY=1.3`, `LLM_PRESENCE_PENALTY=1.8`
+
+**Override individual scenarios** via environment variables:
+
+```bash
+# Make /ask more creative
+export LLM_TEMP_ASK=0.8
+
+# Make the router completely deterministic
+export LLM_TEMP_ROUTER=0.0
+
+# Reduce journal anti-repetition
+export LLM_PRESENCE_JOURNAL=1.5
+
+# Per-scenario vars follow the pattern:
+#   LLM_TEMP_<SCENARIO>      (temperature)
+#   LLM_REPEAT_<SCENARIO>    (repeat_penalty)
+#   LLM_PRESENCE_<SCENARIO>  (presence_penalty)
+# Where <SCENARIO> is ASK, AGENT, ROUTER, JOURNAL, or TOOL
+```
+
+**Runtime adjustment:** Use `/model` to view or change any sampling parameter without restarting. For example:
+
+```bash
+george> /model                    # Show all current values
+george> /model temp 0.3           # Set global temperature
+george> /model temp-ask 0.7       # Set ask-specific temperature
+george> /model presence-router 2.5 # Set router presence penalty
+george> /model reset              # Reset all to defaults
+```
+
+The `/model` command supports all global (`temp`, `repeat`, `presence`) and per-scenario variants (`temp-ask`, `repeat-agent`, `presence-router`, etc.).
 
 ### Context Window Math
 
@@ -347,20 +395,21 @@ This shows tokens/second for prompt processing and generation.
 
 George right-sizes token budgets per command:
 
-| Command | Output tokens | Why |
-|---------|--------------|-----|
-| `/ask` | 300 (`LLM_ASK_TOKENS`) | Quick answers, 1-5 sentences |
-| `/plan` | 512 | Numbered lists, 1-N steps (AGENT_PLAN_STEPS) |
-| `/commit` | 128 | Single commit message line |
-| `/reflect` | 256 | 2-4 sentence journal entry |
-| `/web summary` | 256 | 3-5 bullet points |
-| `/ingest summarize` | 256 | Document summary |
-| Inner loop (router) | 300 (`LLM_ASK_TOKENS`) | Tool selection |
-| Inner loop (specialist) | 300 (`LLM_ASK_TOKENS`) | Command generation |
-| Macro loop (strategist) | 300 (`LLM_ASK_TOKENS`) | Next milestone |
-| Journal decay | 256 | Sediment compression |
+| Command | Output tokens | Think budget | Why |
+|---------|--------------|-------------|-----|
+| `/ask` | 20,480 (`LLM_ASK_TOKENS`) | 1,024 (`LLM_BUDGET_ASK`) | Safety cap; model stops at `<\|im_end\|>` naturally |
+| `/plan` | 512 | 512 (`LLM_BUDGET_AGENT`) | Numbered lists, 1-N steps (AGENT_PLAN_STEPS) |
+| `/commit` | 128 | 256 (`LLM_BUDGET_TOOL`) | Single commit message line |
+| `/reflect` | 1,024 | 64 (`LLM_BUDGET_JOURNAL`) | Journal reflection entry |
+| `/web summary` | 256 | 256 (`LLM_BUDGET_TOOL`) | 3-5 bullet points |
+| `/ingest summarize` | 256 | 256 (`LLM_BUDGET_TOOL`) | Document summary |
+| Inner loop (router) | 256 (`LLM_ROUTER_TOKENS`) | 128 (`LLM_BUDGET_ROUTER`) | Tool selection (just pick a name) |
+| Inner loop (specialist) | 20,480 (`LLM_AGENT_TOKENS`) | 512 (`LLM_BUDGET_AGENT`) | Command generation |
+| Macro loop (strategist) | 20,480 (`LLM_AGENT_TOKENS`) | 512 (`LLM_BUDGET_AGENT`) | Next milestone |
+| Journal quip | 512 | 64 (`LLM_BUDGET_JOURNAL`) | Background quip |
+| Journal decay | 512 | 64 (`LLM_BUDGET_JOURNAL`) | Sediment compression |
 
-These are hardcoded to sensible defaults. To change them, modify the corresponding function call in the source (the third argument to `llm_generate` or `llm_stream`).
+Output tokens and think budgets are hardcoded per call. To change output tokens, modify the third argument to `llm_generate` or `llm_stream` in the source. Think budgets can be overridden via environment variables (`LLM_BUDGET_ASK`, `LLM_BUDGET_AGENT`, `LLM_BUDGET_ROUTER`, `LLM_BUDGET_JOURNAL`, `LLM_BUDGET_TOOL`).
 
 ---
 
@@ -369,7 +418,7 @@ These are hardcoded to sensible defaults. To change them, modify the correspondi
 ### "George sits for minutes with no output"
 
 1. **Check if model is loaded**: `curl -s http://localhost:11434/api/ps | jq .`
-3. **Check system prompt size**: The full task prompt is ~3,500 tokens — if your model's `num_ctx` is 2048, it won't fit. Default is 16384.
+3. **Check system prompt size**: The full task prompt is ~3,500 tokens — if your model's `num_ctx` is 2048, it won't fit. Default is 32768.
 3. **Try `/ask` first** — it uses ~500 total tokens, much faster
 4. **Check available RAM**: `free -h` — if swap is active, inference will be extremely slow
 5. **Set a timeout**: `export LLM_TIMEOUT=120` prevents indefinite hangs

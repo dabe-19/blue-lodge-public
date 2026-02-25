@@ -127,6 +127,7 @@ lodge /ask "what is a monad?"      # Quick question
 | `/debug` | — | Toggle debug mode (timers + token counts) |
 | `/soul` | — | Toggle soul mode (condensed ~250 tok / full ~4500 tok) |
 | `/limits` | — | View/adjust agent planning limits (steps/depth/milestones) |
+| `/model` | — | View/adjust sampling parameters (temperature, penalties) |
 | `/cleanup` | — | Remove George's created files |
 | `/ask <question>` | — | Quick question (no file changes) |
 | `/read <file>` | — | Read a file |
@@ -147,18 +148,20 @@ On startup, George chunks his knowledge sources by `##` headers and indexes them
 
 | Source | File | Content |
 |--------|------|---------|
-| `readme` | `README.md` | George's architecture, commands, features |
-| `soul` | `soul.md` | Personality, ethics, identity |
+| `ref` | `docs/RECALL_INDEX.md` | FTS5-optimized master reference (all capabilities) |
 | `journal` | `journal.md` | Living memory (reflections, learnings) |
 | `george` | `GEORGE.md` | Current project memory |
+| `doc:<label>` | User-ingested | Documents uploaded via `/ingest` |
 
-The index auto-rebuilds when any source file changes (mtime tracking). Total overhead: **~100-200KB on disk, <1ms per query, 0 RAM**.
+Raw human-readable docs (README, soul.md, docs/*.md) are **not** indexed directly. Their actionable content is distilled into `docs/RECALL_INDEX.md` — a single FTS5-optimized document with keyword-rich headers designed for BM25 ranking. This eliminates noise from philosophical prose, tutorials, and redundant explanations.
+
+The index auto-rebuilds when any source file changes (mtime tracking). Total overhead: **~50-100KB on disk, <1ms per query, 0 RAM**.
 
 ### Commands
 
 ```bash
 lodge /readme              # George reviews his own capabilities
-lodge /readme sandboxes    # Review a specific topic from README
+lodge /readme sandboxes    # Review a specific topic
 lodge /recall sandboxes    # Search all knowledge sources for "sandboxes"
 lodge /recall stats        # Show index statistics
 lodge /recall reindex      # Force rebuild the index
@@ -167,11 +170,11 @@ lodge /recall clear        # Clear the index
 
 ### Agent Integration
 
-When George answers a question via `/ask`, the recall system automatically searches for relevant knowledge and injects matching snippets into the system prompt. This means George can accurately describe his own features without hallucinating.
+When George answers a question via `/ask`, the recall system automatically searches for relevant knowledge and injects matching snippets into the system prompt. In task mode, up to 4 chunks (300 chars each) are injected. In ask mode, 1 chunk (200 char cap) is used to keep prompts lean.
 
 ### Why FTS5, Not Vector Embeddings?
 
-George's total corpus is ~40KB (README + soul + journal). At this scale:
+George's indexed corpus is small (~15KB reference + journal + project memory). At this scale:
 - **BM25 keyword search matches or beats vector similarity** for structured docs with clear headers
 - **Zero RAM overhead** vs 300MB–1.5GB for an embedding model
 - **Sub-millisecond queries** vs ~200ms per vector embed + similarity scan
@@ -266,7 +269,7 @@ export LLM_KEEP_ALIVE="2m"    # 2 minutes (balanced)
 export LLM_KEEP_ALIVE="30m"   # 30 minutes (if you have plenty of RAM)
 export LLM_TIMEOUT="0"        # No timeout (default — cancel with Ctrl+C)
 export LLM_TIMEOUT="1200"     # 20-minute hard timeout
-export LLM_MAX_TOKENS="1024"   # Max output tokens per task step (default: 1024)
+export LLM_MAX_TOKENS="2048"   # Max output tokens per task step (default: 20480)
 export LODGE_TERMUX_API=1     # Enable Termux-API features (battery, WiFi, GPS, SMS, etc.)
                               # Default: 0 (disabled — safe for proot & non-Android)
 ```
@@ -619,7 +622,7 @@ lodge /wallet status                              # Wallet overview
 
 ## Model
 
-Ships with **Qwen3-4B-Thinking-2507** (UD-Q5_K_XL quantization by Unsloth) via Ollama. ~3.5GB download, ~6.3GB loaded RAM at the default 20K context window (`num_ctx=20480`). Built-in thinking/reasoning chain.
+Ships with **Qwen3-4B-Thinking-2507** (UD-Q5_K_XL quantization by Unsloth) via Ollama. ~3.5GB download, ~8GB loaded RAM at the default 32K context window (`num_ctx=32768`). Built-in thinking/reasoning chain.
 
 Swap the model by editing `Modelfile`:
 
@@ -855,7 +858,7 @@ bash tests/test_api.sh                     # Run a single file directly
 | `test_social.sh` | 57 | 5 platforms, Discord channels, post/send dispatch |
 | `test_tools.sh` | 28 | Code extraction, file ops, safety checks |
 | `test_security.sh` | 55 | Allowlist, signing, encryption, sandboxes |
-| `test_recall.sh` | 30 | FTS5 indexing, search, self-review |
+| `test_recall.sh` | 71 | FTS5 indexing, search, self-review, quality checks |
 | `test_secrets.sh` | 30 | Vault encrypt/decrypt, rotate, import, export |
 | `test_gsuite.sh` | 28 | OAuth2, Gmail/Drive/Docs, input validation |
 | `test_wallet.sh` | 35 | BTC/ADA/SOL wallets, network toggle, send validation |
