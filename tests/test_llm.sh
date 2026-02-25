@@ -19,20 +19,20 @@ describe "Configuration defaults"
     assert_eq "$LODGE_MODEL" "blue-lodge"
   }
 
-  it "LLM_MAX_TOKENS defaults to 4096" && {
-    assert_eq "$LLM_MAX_TOKENS" "4096"
+  it "LLM_MAX_TOKENS defaults to 20480" && {
+    assert_eq "$LLM_MAX_TOKENS" "20480"
   }
 
-  it "LLM_ASK_TOKENS defaults to 512" && {
-    assert_eq "$LLM_ASK_TOKENS" "512"
+  it "LLM_ASK_TOKENS defaults to 20480" && {
+    assert_eq "$LLM_ASK_TOKENS" "20480"
   }
 
-  it "LLM_AGENT_TOKENS defaults to 2048" && {
-    assert_eq "$LLM_AGENT_TOKENS" "2048"
+  it "LLM_AGENT_TOKENS defaults to 20480" && {
+    assert_eq "$LLM_AGENT_TOKENS" "20480"
   }
 
-  it "LLM_ROUTER_TOKENS defaults to 50" && {
-    assert_eq "$LLM_ROUTER_TOKENS" "50"
+  it "LLM_ROUTER_TOKENS defaults to 256" && {
+    assert_eq "$LLM_ROUTER_TOKENS" "256"
   }
 
   it "LLM_TIMEOUT defaults to 300 (safety net)" && {

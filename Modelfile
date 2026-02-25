@@ -2,7 +2,7 @@
 FROM hf.co/unsloth/Qwen3-4B-Thinking-2507-GGUF:UD-Q5_K_XL
 
 # ── Performance: tuned for Snapdragon 8 Elite / 12GB RAM ────
-# Model weights: ~3.5GB | KV cache at 20K ctx: ~2.81GB | Total: ~6.3GB
+# Model weights: ~3.5GB | KV cache at 32K ctx: ~4.5GB | Total: ~8.0GB
 # KV math: 2 x 36 layers x 8 KV heads x 128 dim x 2 bytes = 144KB/token
 
 # 2. Randomness and Sampling (HuggingFace recommended for Qwen3-4B-Thinking)
