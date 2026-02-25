@@ -140,7 +140,7 @@ ollama create blue-lodge -f ~/blue-lodge/Modelfile
 
 | Parameter | Default | Description | Tuning guidance |
 |-----------|---------|-------------|-----------------|
-| `num_ctx` | 24576 | Context window (tokens). All input + output must fit. | KV cache ≈ 90KB/token for Qwen3-VL-4B. 24576 uses ~2.15GB. Can push to 32768 (~2.87GB) if builds don't OOM. |
+| `num_ctx` | 20480 | Context window (tokens). All input + output must fit. | KV cache ≈ 144KB/token for Qwen3-VL-4B. 20480 uses ~2.81GB. Can push to 24576 (~3.38GB) if RAM allows. |
 | `num_predict` | 8192 | Max output tokens (overridden per-call by env vars). | Modelfile-level default. Per-call overrides (`LLM_MAX_TOKENS`, `LLM_ASK_TOKENS`) take precedence. Thinking model needs generous budget (think tokens + response). |
 | `num_thread` | 8 | CPU threads for inference. | Match your physical core count. 8 for Snapdragon 8 Elite, 4 for typical laptops. |
 | `num_gpu` | 0 | GPU layers to offload. 0 = pure CPU. | Set to 99 (all layers) if you have a GPU. Partial offload: try 20-40. |
@@ -157,18 +157,18 @@ The golden rule: **input tokens + output tokens must fit in `num_ctx`**.
 
 ```
 num_ctx = Modelfile_SYSTEM + system_prompt + user_prompt + output
-24576  =     ~300         +   variable    +   variable  + num_predict
+20480  =     ~300         +   variable    +   variable  + num_predict
 ```
 
 Budget breakdown by mode (thinking model — think tokens included in output budget):
 
 | Mode | System prompt | User prompt | Output budget | Remaining |
 |------|---------------|-------------|---------------|---------|
-| ask | ~250 (condensed soul) | ~20 | 512 | ~23,794 |
-| plan (light) | ~700 (condensed soul + catalog) | ~100 | 1,024 | ~22,752 |
-| plan (dense) | ~5,000 (full soul + catalog) | ~100 | 1,024 | ~18,452 |
-| task | ~3,500 | ~100 | 4,096 | ~16,880 |
-| inner loop | ~500 (router or specialist) | ~200 | 2,048 | ~21,828 |
+| ask | ~250 (condensed soul) | ~20 | 512 | ~19,698 |
+| plan (light) | ~700 (condensed soul + catalog) | ~100 | 1,024 | ~18,656 |
+| plan (dense) | ~5,000 (full soul + catalog) | ~100 | 1,024 | ~14,356 |
+| task | ~3,500 | ~100 | 4,096 | ~12,784 |
+| inner loop | ~500 (router or specialist) | ~200 | 2,048 | ~17,732 |
 
 > **Note:** The Modelfile SYSTEM (~300 tokens) is overridden whenever a system prompt is passed via `llm_generate`/`llm_stream`. The inner loop (router + specialist) deliberately strips all personality for speed.
 
@@ -196,8 +196,8 @@ George works with any Ollama-compatible model. Tested recommendations:
 
 | Model | Size | RAM needed | Context | Notes |
 |-------|------|-----------|---------|-------|
-| Qwen3-VL-4B-Thinking UD-Q6_K_XL | ~4.5GB | 8-12GB | 24K | Default. Vision + thinking. Optimized for mobile. |
-| Qwen3-4B Q5_K_M | ~4.5GB | 6-8GB | 8K-32K | Text-only fallback. |
+| Qwen3-VL-4B-Thinking Q5_K_M | ~3.7GB | 8-12GB | 20K | Default. Vision + thinking. Optimized for mobile. |
+| Qwen3-VL-4B-Thinking UD-Q6_K_XL | ~4.5GB | 10-12GB | 16K | Higher quality. Tighter RAM. |
 | Qwen3-8B Q5_K_M | ~6GB | 10-12GB | 32K | More capable. Needs more RAM. |
 | Llama 3.1 8B Q4_K_M | ~5GB | 8-10GB | 8K-128K | Excellent code reasoning. |
 | DeepSeek-Coder-V2-Lite Q4 | ~2.5GB | 4-6GB | 16K | Coding specialist. |
@@ -284,7 +284,7 @@ If the model produces runaway output, check your stop token first.
 
 ## Performance Tuning for Mobile
 
-George's default configuration targets the Galaxy Fold 7 (Snapdragon 8 Elite, 12GB RAM, 100% CPU inference) with a **24K context window** (`num_ctx=24576`). The thinking model (Qwen3-VL-4B UD-Q6_K_XL) weighs 4.5GB with ~2.15GB KV cache, totaling ~6.65GB loaded — leaving ~2.25GB free for builds. Here's how to squeeze better performance:
+George's default configuration targets the Galaxy Fold 7 (Snapdragon 8 Elite, 12GB RAM, 100% CPU inference) with a **20K context window** (`num_ctx=20480`). The thinking model (Qwen3-VL-4B Q5_K_M) weighs 3.7GB with ~2.81GB KV cache (144KB/token), totaling ~6.51GB loaded — leaving ~1.5GB free for multitasking. Here's how to squeeze better performance:
 
 ### Reduce prefill time (prompt processing)
 
@@ -299,7 +299,7 @@ The biggest bottleneck on CPU is processing the system prompt. Options:
 PARAMETER num_ctx 4096
 ```
 
-> **Note:** The default `num_ctx=24576` balances thinking model capability with RAM headroom on 12GB devices (4.5GB weights + 2.15GB KV = 6.65GB). Can push to `num_ctx=32768` (~2.87GB KV, ~7.37GB total) if builds don't OOM. George's enrichments scale down gracefully.
+> **Note:** The default `num_ctx=20480` balances thinking model capability with RAM headroom on 12GB devices (3.7GB weights + 2.81GB KV = 6.51GB). Can push to `num_ctx=24576` (~3.38GB KV, ~7.08GB total) if RAM allows. George's enrichments scale down gracefully.
 
 ### Reduce generation time
 
@@ -309,7 +309,7 @@ PARAMETER num_ctx 4096
 
 ### RAM management
 
-On a 12GB device, the model (~4.5GB) + Ollama overhead (~1GB) + OS + apps leaves ~4-5GB free.
+On a 12GB device, the model (~3.7GB) + KV cache (~2.81GB) + Ollama overhead (~0.5GB) + OS leaves ~1.5GB free.
 
 ```bash
 # Unload model when not actively using George
