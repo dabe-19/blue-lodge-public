@@ -158,4 +158,4 @@ $ lodge /push
 - **No dependencies installed** — the URL shortener uses only Python stdlib
 - **Lodge remembered context** — when adding rate limiting, it already knew the project structure from GEORGE.md
 - **7 steps completed** — each step was one LLM call, keeping token usage low
-- **Total time** — ~5 minutes on Snapdragon 8 Elite with Qwen3-VL-4B-Thinking
+- **Total time** — ~5 minutes on Snapdragon 8 Elite with Qwen3-4B-Thinking

@@ -34,7 +34,7 @@ lodge /ask "what is a monad?"      # Quick question
 ~/blue-lodge/
 ├── lodge              # Main TUI shell (entry point)
 ├── update.sh          # Safe update with identity preservation
-├── Modelfile          # Ollama model definition (Qwen3-VL-4B-Thinking Q5_K_M)
+├── Modelfile          # Ollama model definition (Qwen3-4B-Thinking-2507 UD-Q5_K_XL)
 ├── soul.md            # George's personality & ethical framework
 ├── journal.md         # George's living memory (auto-managed)
 ├── SECURITY.md        # Security audit & threat model
@@ -619,7 +619,7 @@ lodge /wallet status                              # Wallet overview
 
 ## Model
 
-Ships with **Qwen3-VL-4B-Thinking** (Q5_K_M quantization by Unsloth) via Ollama. ~3.7GB download, ~6.51GB loaded RAM at the default 20K context window (`num_ctx=20480`). Vision-capable with built-in thinking/reasoning.
+Ships with **Qwen3-4B-Thinking-2507** (UD-Q5_K_XL quantization by Unsloth) via Ollama. ~3.5GB download, ~6.3GB loaded RAM at the default 20K context window (`num_ctx=20480`). Built-in thinking/reasoning chain.
 
 Swap the model by editing `Modelfile`:
 

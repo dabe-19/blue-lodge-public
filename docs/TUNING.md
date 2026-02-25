@@ -140,7 +140,7 @@ ollama create blue-lodge -f ~/blue-lodge/Modelfile
 
 | Parameter | Default | Description | Tuning guidance |
 |-----------|---------|-------------|-----------------|
-| `num_ctx` | 20480 | Context window (tokens). All input + output must fit. | KV cache ≈ 144KB/token for Qwen3-VL-4B. 20480 uses ~2.81GB. Can push to 24576 (~3.38GB) if RAM allows. |
+| `num_ctx` | 20480 | Context window (tokens). All input + output must fit. | KV cache ≈ 144KB/token for Qwen3-4B. 20480 uses ~2.81GB. Can push to 24576 (~3.38GB) if RAM allows. |
 | `num_predict` | 8192 | Max output tokens (overridden per-call by env vars). | Modelfile-level default. Per-call overrides (`LLM_MAX_TOKENS`, `LLM_ASK_TOKENS`) take precedence. Thinking model needs generous budget (think tokens + response). |
 | `num_thread` | 8 | CPU threads for inference. | Match your physical core count. 8 for Snapdragon 8 Elite, 4 for typical laptops. |
 | `num_gpu` | 0 | GPU layers to offload. 0 = pure CPU. | Set to 99 (all layers) if you have a GPU. Partial offload: try 20-40. |
@@ -196,8 +196,8 @@ George works with any Ollama-compatible model. Tested recommendations:
 
 | Model | Size | RAM needed | Context | Notes |
 |-------|------|-----------|---------|-------|
-| Qwen3-VL-4B-Thinking Q5_K_M | ~3.7GB | 8-12GB | 20K | Default. Vision + thinking. Optimized for mobile. |
-| Qwen3-VL-4B-Thinking UD-Q6_K_XL | ~4.5GB | 10-12GB | 16K | Higher quality. Tighter RAM. |
+| Qwen3-4B-Thinking-2507 UD-Q5_K_XL | ~3.5GB | 8-12GB | 20K | Default. Thinking/reasoning. Optimized for mobile. |
+| Qwen3-4B-Instruct-2507 Q5_K_M | ~3GB | 6-10GB | 16K | Non-thinking fallback. Faster inference. |
 | Qwen3-8B Q5_K_M | ~6GB | 10-12GB | 32K | More capable. Needs more RAM. |
 | Llama 3.1 8B Q4_K_M | ~5GB | 8-10GB | 8K-128K | Excellent code reasoning. |
 | DeepSeek-Coder-V2-Lite Q4 | ~2.5GB | 4-6GB | 16K | Coding specialist. |
@@ -284,7 +284,7 @@ If the model produces runaway output, check your stop token first.
 
 ## Performance Tuning for Mobile
 
-George's default configuration targets the Galaxy Fold 7 (Snapdragon 8 Elite, 12GB RAM, 100% CPU inference) with a **20K context window** (`num_ctx=20480`). The thinking model (Qwen3-VL-4B Q5_K_M) weighs 3.7GB with ~2.81GB KV cache (144KB/token), totaling ~6.51GB loaded — leaving ~1.5GB free for multitasking. Here's how to squeeze better performance:
+George's default configuration targets the Galaxy Fold 7 (Snapdragon 8 Elite, 12GB RAM, 100% CPU inference) with a **20K context window** (`num_ctx=20480`). The thinking model (Qwen3-4B-Thinking-2507 UD-Q5_K_XL) weighs ~3.5GB with ~2.81GB KV cache (144KB/token), totaling ~6.3GB loaded — leaving ~1.7GB free for multitasking. Here's how to squeeze better performance:
 
 ### Reduce prefill time (prompt processing)
 
