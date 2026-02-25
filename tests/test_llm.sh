@@ -434,4 +434,63 @@ describe "Thinking mode configuration (thinking-only model)"
     assert_ok $?
   }
 
+# ── Model Families ─────────────────────────────────────────────
+describe "Model family system"
+
+  it "_MODELS_FAMILIES has 4 families" && {
+    assert_eq "${#_MODELS_FAMILIES[@]}" "4"
+  }
+
+  it "models_family_list returns all family names" && {
+    local fams
+    fams=$(models_family_list)
+    assert_contains "$fams" "qwen"
+    assert_contains "$fams" "llama"
+    assert_contains "$fams" "granite"
+    assert_contains "$fams" "ministral"
+  }
+
+  it "_models_family_lookup finds qwen family" && {
+    local entry
+    entry=$(_models_family_lookup "qwen")
+    assert_ok $?
+    assert_contains "$entry" "qwen3-think"
+    assert_contains "$entry" "qwen3-inst"
+  }
+
+  it "_models_family_lookup fails for unknown family" && {
+    _models_family_lookup "unknown" 2>/dev/null
+    assert_fail $?
+  }
+
+  it "_models_family_keys returns correct keys for qwen" && {
+    local entry keys
+    entry=$(_models_family_lookup "qwen")
+    keys=$(_models_family_keys "$entry")
+    assert_contains "$keys" "qwen3-think"
+    assert_contains "$keys" "qwen3-inst"
+  }
+
+  it "_models_family_keys returns correct keys for granite" && {
+    local entry keys
+    entry=$(_models_family_lookup "granite")
+    keys=$(_models_family_keys "$entry")
+    assert_contains "$keys" "granite4"
+  }
+
+  it "models_create_family rejects unknown family" && {
+    models_create_family "bogus" 2>/dev/null
+    assert_fail $?
+  }
+
+  it "each family key maps to a valid registry entry" && {
+    for fam in "${_MODELS_FAMILIES[@]}"; do
+      local keys="${fam##*|}"
+      for key in $keys; do
+        _models_lookup "$key" >/dev/null
+        assert_ok $? "registry lookup failed for $key"
+      done
+    done
+  }
+
 test_end

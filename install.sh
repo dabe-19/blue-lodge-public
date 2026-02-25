@@ -202,19 +202,105 @@ source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/models.sh" 2>/dev/null || true
 
 # ── 4. Create models ────────────────────────────────────────
-info "Creating models (first run may download ~3GB per model)..."
+# Check which model families are already created, then offer to
+# download any that are missing. Pressing Enter with no input
+# installs only the default Qwen family.
+info "Checking model families..."
 
-# Primary model (thinking/planning)
+# Collect family status
+_install_missing_families=()
+_install_ready_families=()
+_install_partial_families=()
+
+for _fam_entry in "${_MODELS_FAMILIES[@]}"; do
+    _fam_name="${_fam_entry%%|*}"
+    IFS='|' read -r _ _fam_desc _fam_keys <<< "$_fam_entry"
+    _fam_status=$(models_family_status "$_fam_name")
+    case "$_fam_status" in
+        all)
+            _install_ready_families+=("$_fam_name")
+            ok "$_fam_desc — ready" ;;
+        some)
+            _install_partial_families+=("$_fam_name")
+            warn "$_fam_desc — incomplete" ;;
+        none)
+            _install_missing_families+=("$_fam_name") ;;
+    esac
+done
+
+# Always ensure the default Qwen family exists
+_need_qwen=0
+if printf '%s\n' "${_install_missing_families[@]}" "${_install_partial_families[@]}" | grep -qx "qwen" 2>/dev/null; then
+    _need_qwen=1
+fi
+
+# If there are non-Qwen families missing, offer to download them
+_extra_missing=()
+for _fm in "${_install_missing_families[@]}"; do
+    [ "$_fm" = "qwen" ] && continue
+    _extra_missing+=("$_fm")
+done
+for _fm in "${_install_partial_families[@]}"; do
+    [ "$_fm" = "qwen" ] && continue
+    _extra_missing+=("$_fm")
+done
+
+if [ ${#_extra_missing[@]} -gt 0 ]; then
+    echo ""
+    printf " ${BOLD}Available model families (not yet installed):${RESET}\n"
+    for _fm in "${_extra_missing[@]}"; do
+        _fam_entry=$(_models_family_lookup "$_fm")
+        IFS='|' read -r _ _desc _keys <<< "$_fam_entry"
+        _model_count=$(echo "$_keys" | wc -w)
+        printf "   ${BLUE}%-12s${RESET} %s (%d model%s)\n" "$_fm" "$_desc" "$_model_count" "$([ "$_model_count" -gt 1 ] && echo "s")"
+    done
+    echo ""
+    printf " Would you like to download additional model families?\n"
+    printf " ${DIM}Enter family names separated by spaces, or press Enter for Qwen only.${RESET}\n"
+    printf " ${DIM}Enter 'all' to download everything (~3GB per family).${RESET}\n"
+    printf " ${YELLOW}→${RESET} "
+    read -r _user_families
+
+    if [ -n "$_user_families" ]; then
+        if [ "$_user_families" = "all" ]; then
+            _families_to_create=("${_extra_missing[@]}")
+        else
+            _families_to_create=()
+            for _uf in $_user_families; do
+                # Validate the name
+                if _models_family_lookup "$_uf" &>/dev/null; then
+                    _families_to_create+=("$_uf")
+                else
+                    warn "Unknown family '$_uf' — skipping (available: ${_extra_missing[*]})"
+                fi
+            done
+        fi
+
+        for _fam in "${_families_to_create[@]}"; do
+            echo ""
+            info "Downloading & creating $_fam family (this may take several minutes)..."
+            if models_create_family "$_fam"; then
+                ok "$_fam family ready"
+            else
+                warn "$_fam family had errors — some models may be missing"
+            fi
+        done
+    fi
+fi
+
+# Always ensure Qwen default models exist (required for George to start)
+echo ""
+info "Ensuring default Qwen models are ready..."
+
 if ollama list 2>/dev/null | grep -q "$LODGE_MODEL_PRIMARY"; then
     ok "Primary model '$LODGE_MODEL_PRIMARY' already exists"
 else
-    info "Creating primary model: $LODGE_MODEL_PRIMARY"
+    info "Creating primary model: $LODGE_MODEL_PRIMARY (first run downloads ~3GB)..."
     _mf=$(models_generate_modelfile "qwen3-think")
     ollama create "$LODGE_MODEL_PRIMARY" -f "$_mf"
     ok "Primary model created"
 fi
 
-# Secondary model (fast/instruct)
 if ollama list 2>/dev/null | grep -q "$LODGE_MODEL_SECONDARY"; then
     ok "Secondary model '$LODGE_MODEL_SECONDARY' already exists"
 else

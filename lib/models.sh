@@ -640,6 +640,119 @@ models_clear_all_params() {
     done
 }
 
+# ═══════════════════════════════════════════════════════════════
+# Model Families
+# ═══════════════════════════════════════════════════════════════
+# Families group related models for batch download/creation.
+# Each family: label|description|registry_keys (space-separated)
+
+_MODELS_FAMILIES=(
+    "qwen|Qwen 3 (4B) — default thinking + instruct pair|qwen3-think qwen3-inst"
+    "llama|Llama 3.2 (3B) — Meta general reasoning + instruct|llama32 llama32-inst"
+    "granite|Granite 4.0 Micro (3B) — IBM reasoning + code|granite4"
+    "ministral|Ministral 3 (3B) — Mistral reasoning + instruct|minist-think minist-inst"
+)
+
+# ── List all family names ──────────────────────────────────────
+models_family_list() {
+    for fam in "${_MODELS_FAMILIES[@]}"; do
+        echo "${fam%%|*}"
+    done
+}
+
+# ── Look up a family by name ──────────────────────────────────
+# Returns the full family entry string.
+_models_family_lookup() {
+    local query="$1"
+    for fam in "${_MODELS_FAMILIES[@]}"; do
+        local fname="${fam%%|*}"
+        if [ "$fname" = "$query" ]; then
+            echo "$fam"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# ── Get the registry keys for a family ────────────────────────
+_models_family_keys() {
+    local fam_entry="$1"
+    local keys_part="${fam_entry##*|}"
+    echo "$keys_part"
+}
+
+# ── Check which models in a family exist in Ollama ────────────
+# Returns: "all", "some", or "none"
+models_family_status() {
+    local family="$1"
+    local fam_entry
+    fam_entry=$(_models_family_lookup "$family") || return 1
+    local keys
+    keys=$(_models_family_keys "$fam_entry")
+
+    local total=0 found=0
+    local ollama_models
+    ollama_models=$(ollama list 2>/dev/null || echo "")
+
+    for key in $keys; do
+        total=$((total + 1))
+        local entry
+        entry=$(_models_lookup "$key") || continue
+        _models_parse_entry "$entry"
+        if echo "$ollama_models" | grep -q "$_ME_NAME"; then
+            found=$((found + 1))
+        fi
+    done
+
+    if [ "$found" -eq "$total" ]; then
+        echo "all"
+    elif [ "$found" -gt 0 ]; then
+        echo "some"
+    else
+        echo "none"
+    fi
+}
+
+# ── Create all models in a family ─────────────────────────────
+# Downloads base weights (if needed) and creates lodge-specific models.
+# Returns 0 on success, 1 if any model fails.
+models_create_family() {
+    local family="$1"
+    local fam_entry
+    fam_entry=$(_models_family_lookup "$family") || {
+        echo "Unknown family: $family" >&2
+        echo "Available: $(models_family_list | tr '\n' ' ')" >&2
+        return 1
+    }
+    local keys label
+    keys=$(_models_family_keys "$fam_entry")
+    IFS='|' read -r label desc _ <<< "$fam_entry"
+
+    local failed=0
+    for key in $keys; do
+        local entry
+        entry=$(_models_lookup "$key") || { failed=1; continue; }
+        _models_parse_entry "$entry"
+
+        if ollama list 2>/dev/null | grep -q "$_ME_NAME"; then
+            echo "  ✓ $_ME_NAME already exists"
+            continue
+        fi
+
+        echo "  ● Creating $_ME_NAME (base: $_ME_BASE)..."
+        local mf
+        mf=$(models_generate_modelfile "$key") || { failed=1; continue; }
+        if ollama create "$_ME_NAME" -f "$mf" 2>&1; then
+            echo "  ✓ $_ME_NAME created"
+        else
+            echo "  ✗ Failed to create $_ME_NAME" >&2
+            failed=1
+        fi
+    done
+
+    return $failed
+}
+
 # ── Initialize models on startup ──────────────────────────────
 models_init() {
     # Set LODGE_MODEL to primary for backward compatibility
