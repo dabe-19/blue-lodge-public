@@ -269,7 +269,7 @@ Output ONLY the complete bash script as a single code block. No explanation befo
 
     ui_step "George is writing the command..."
     local response
-    response=$(llm_stream "$user_prompt" "$sys_prompt" 1024)
+    response=$(llm_stream "$user_prompt" "$sys_prompt" 1024 "$LLM_BUDGET_TOOL")
     echo ""
 
     # Extract bash code from the response

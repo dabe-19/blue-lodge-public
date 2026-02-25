@@ -284,27 +284,63 @@ _cmd_limits() {
             fi ;;
         tokens)
             if [ -z "$value" ]; then
-                ui_info "Agent output tokens: $LLM_AGENT_TOKENS (default: 512)"
+                ui_info "Agent output tokens: $LLM_AGENT_TOKENS (default: 20480)"
             else
-                _limits_set LLM_AGENT_TOKENS "Agent tokens" "$value" 64 4096
+                _limits_set LLM_AGENT_TOKENS "Agent tokens" "$value" 64 20480
             fi ;;
         ask-tokens)
             if [ -z "$value" ]; then
-                ui_info "Ask output tokens: $LLM_ASK_TOKENS (default: 300)"
+                ui_info "Ask output tokens: $LLM_ASK_TOKENS (default: 20480)"
             else
-                _limits_set LLM_ASK_TOKENS "Ask tokens" "$value" 64 4096
+                _limits_set LLM_ASK_TOKENS "Ask tokens" "$value" 64 20480
             fi ;;
         router-tokens)
             if [ -z "$value" ]; then
-                ui_info "Router output tokens: $LLM_ROUTER_TOKENS (default: 50)"
+                ui_info "Router output tokens: $LLM_ROUTER_TOKENS (default: 256)"
             else
-                _limits_set LLM_ROUTER_TOKENS "Router tokens" "$value" 10 256
+                _limits_set LLM_ROUTER_TOKENS "Router tokens" "$value" 10 20480
             fi ;;
-        budget-tokens|budget|think-tokens)
+        max-tokens)
             if [ -z "$value" ]; then
-                ui_info "Think budget tokens: $LLM_BUDGET_TOKENS (default: 1024, 0=unlimited)"
+                ui_info "Global max output tokens: $LLM_MAX_TOKENS (default: 20480)"
+            else
+                _limits_set LLM_MAX_TOKENS "Max tokens" "$value" 64 32768
+            fi ;;
+        budget|budget-tokens|think-tokens)
+            if [ -z "$value" ]; then
+                ui_info "Think budget (global default): $LLM_BUDGET_TOKENS (default: 1024, 0=unlimited)"
             else
                 _limits_set LLM_BUDGET_TOKENS "Think budget" "$value" 0 16384
+            fi ;;
+        budget-ask)
+            if [ -z "$value" ]; then
+                ui_info "Think budget for /ask: $LLM_BUDGET_ASK (default: 1024, 0=unlimited)"
+            else
+                _limits_set LLM_BUDGET_ASK "Ask think budget" "$value" 0 16384
+            fi ;;
+        budget-agent)
+            if [ -z "$value" ]; then
+                ui_info "Think budget for strategist/specialist: $LLM_BUDGET_AGENT (default: 512, 0=unlimited)"
+            else
+                _limits_set LLM_BUDGET_AGENT "Agent think budget" "$value" 0 16384
+            fi ;;
+        budget-router)
+            if [ -z "$value" ]; then
+                ui_info "Think budget for router: $LLM_BUDGET_ROUTER (default: 128, 0=unlimited)"
+            else
+                _limits_set LLM_BUDGET_ROUTER "Router think budget" "$value" 0 16384
+            fi ;;
+        budget-journal)
+            if [ -z "$value" ]; then
+                ui_info "Think budget for journal: $LLM_BUDGET_JOURNAL (default: 64, 0=unlimited)"
+            else
+                _limits_set LLM_BUDGET_JOURNAL "Journal think budget" "$value" 0 16384
+            fi ;;
+        budget-tool)
+            if [ -z "$value" ]; then
+                ui_info "Think budget for tools (commit, web, recall, slash): $LLM_BUDGET_TOOL (default: 256, 0=unlimited)"
+            else
+                _limits_set LLM_BUDGET_TOOL "Tool think budget" "$value" 0 16384
             fi ;;
         delay)
             if [ -z "$value" ]; then
@@ -318,38 +354,66 @@ _cmd_limits() {
             AGENT_MAX_STEPS=20
             AGENT_MAX_DEPTH=2
             AGENT_STEP_DELAY=1
-            LLM_AGENT_TOKENS=512
-            LLM_ASK_TOKENS=300
-            LLM_ROUTER_TOKENS=50
+            LLM_MAX_TOKENS=20480
+            LLM_AGENT_TOKENS=20480
+            LLM_ASK_TOKENS=20480
+            LLM_ROUTER_TOKENS=256
             LLM_BUDGET_TOKENS=1024
+            LLM_BUDGET_ASK=1024
+            LLM_BUDGET_AGENT=512
+            LLM_BUDGET_ROUTER=128
+            LLM_BUDGET_JOURNAL=64
+            LLM_BUDGET_TOOL=256
             ui_ok "All limits reset to defaults" ;;
         "")
             ui_section "Agent Limits"
-            printf "  %-22s %s\n" "Plan steps/subtask:" "$AGENT_PLAN_STEPS  (AGENT_PLAN_STEPS, default: 5)"
-            printf "  %-22s %s\n" "Subtask depth:" "$AGENT_MAX_DEPTH  (AGENT_MAX_DEPTH, default: 2)"
-            printf "  %-22s %s\n" "Macro milestones:" "$AGENT_MAX_STEPS  (AGENT_MAX_STEPS, default: 20)"
-            printf "  %-22s %s\n" "Inner loop retries:" "$AGENT_INNER_LOOPS  (AGENT_INNER_LOOPS, default: 6)"
-            printf "  %-22s %s\n" "Step delay:" "${AGENT_STEP_DELAY}s  (AGENT_STEP_DELAY, default: 1)"
-            printf "  %-22s %s\n" "Agent tokens:" "$LLM_AGENT_TOKENS  (LLM_AGENT_TOKENS, default: 512)"
-            printf "  %-22s %s\n" "Ask tokens:" "$LLM_ASK_TOKENS  (LLM_ASK_TOKENS, default: 300)"
-            printf "  %-22s %s\n" "Router tokens:" "$LLM_ROUTER_TOKENS  (LLM_ROUTER_TOKENS, default: 50)"
-            printf "  %-22s %s\n" "Think budget:" "$LLM_BUDGET_TOKENS  (LLM_BUDGET_TOKENS, default: 1024, 0=unlimited)"
+            printf "  %-22s %s\n" "Plan steps/subtask:" "$AGENT_PLAN_STEPS  (default: 5)"
+            printf "  %-22s %s\n" "Subtask depth:" "$AGENT_MAX_DEPTH  (default: 2)"
+            printf "  %-22s %s\n" "Macro milestones:" "$AGENT_MAX_STEPS  (default: 20)"
+            printf "  %-22s %s\n" "Inner loop retries:" "$AGENT_INNER_LOOPS  (default: 6)"
+            printf "  %-22s %s\n" "Step delay:" "${AGENT_STEP_DELAY}s  (default: 1)"
             echo ""
-            ui_dim "  Usage: /limits <steps|depth|milestones|inner|delay|tokens|ask-tokens|router-tokens|budget-tokens> [value]"
+            ui_section "Output Tokens (num_predict)"
+            printf "  %-22s %s\n" "Max tokens:" "$LLM_MAX_TOKENS  (default: 20480)"
+            printf "  %-22s %s\n" "Agent tokens:" "$LLM_AGENT_TOKENS  (default: 20480)"
+            printf "  %-22s %s\n" "Ask tokens:" "$LLM_ASK_TOKENS  (default: 20480)"
+            printf "  %-22s %s\n" "Router tokens:" "$LLM_ROUTER_TOKENS  (default: 256)"
+            echo ""
+            ui_section "Think Budgets (budget_tokens, 0=unlimited)"
+            printf "  %-22s %s\n" "Global default:" "$LLM_BUDGET_TOKENS  (default: 1024)"
+            printf "  %-22s %s\n" "Ask (/ask):" "$LLM_BUDGET_ASK  (default: 1024)"
+            printf "  %-22s %s\n" "Agent (strat/spec):" "$LLM_BUDGET_AGENT  (default: 512)"
+            printf "  %-22s %s\n" "Router:" "$LLM_BUDGET_ROUTER  (default: 128)"
+            printf "  %-22s %s\n" "Journal:" "$LLM_BUDGET_JOURNAL  (default: 64)"
+            printf "  %-22s %s\n" "Tools:" "$LLM_BUDGET_TOOL  (default: 256)"
+            echo ""
+            ui_dim "  Usage: /limits <param> [value]"
             ui_dim "  Reset: /limits reset" ;;
         *)
-            ui_info "Usage: /limits [steps|depth|milestones|inner|delay|tokens|ask-tokens|router-tokens|budget-tokens|reset] [value]"
-            ui_dim "  steps N      — Max steps per plan/subtask (current: $AGENT_PLAN_STEPS)"
-            ui_dim "  depth N      — Subtask recursion depth (current: $AGENT_MAX_DEPTH)"
-            ui_dim "  milestones N — Macro loop milestone ceiling (current: $AGENT_MAX_STEPS)"
-            ui_dim "  inner N      — Inner loop escalation retries (current: $AGENT_INNER_LOOPS)"
-            ui_dim "  delay N      — Seconds between milestones (current: $AGENT_STEP_DELAY)"
-            ui_dim "  tokens N     — Agent specialist/strategist output tokens (current: $LLM_AGENT_TOKENS)"
-            ui_dim "  ask-tokens N — /ask quick-answer output tokens (current: $LLM_ASK_TOKENS)"
-            ui_dim "  router-tokens N — Router tool-selection tokens (current: $LLM_ROUTER_TOKENS)"
-            ui_dim "  budget-tokens N — Max thinking tokens before answering, 0=unlimited (current: $LLM_BUDGET_TOKENS)"
-            ui_dim "  reset        — Reset all to defaults"
-            ui_dim "  (no arg)     — Show all current limits" ;;
+            ui_info "Usage: /limits [param] [value]"
+            echo ""
+            ui_dim "  Agent loop:"
+            ui_dim "    steps N         — Max steps per plan/subtask (current: $AGENT_PLAN_STEPS)"
+            ui_dim "    depth N         — Subtask recursion depth (current: $AGENT_MAX_DEPTH)"
+            ui_dim "    milestones N    — Macro loop milestone ceiling (current: $AGENT_MAX_STEPS)"
+            ui_dim "    inner N         — Inner loop escalation retries (current: $AGENT_INNER_LOOPS)"
+            ui_dim "    delay N         — Seconds between milestones (current: $AGENT_STEP_DELAY)"
+            echo ""
+            ui_dim "  Output tokens (num_predict):"
+            ui_dim "    max-tokens N    — Global max output cap (current: $LLM_MAX_TOKENS)"
+            ui_dim "    tokens N        — Agent specialist/strategist (current: $LLM_AGENT_TOKENS)"
+            ui_dim "    ask-tokens N    — /ask conversation (current: $LLM_ASK_TOKENS)"
+            ui_dim "    router-tokens N — Router tool selection (current: $LLM_ROUTER_TOKENS)"
+            echo ""
+            ui_dim "  Think budgets (budget_tokens, 0=unlimited):"
+            ui_dim "    budget N        — Global default fallback (current: $LLM_BUDGET_TOKENS)"
+            ui_dim "    budget-ask N    — /ask conversations (current: $LLM_BUDGET_ASK)"
+            ui_dim "    budget-agent N  — Strategist/specialist (current: $LLM_BUDGET_AGENT)"
+            ui_dim "    budget-router N — Router tool selection (current: $LLM_BUDGET_ROUTER)"
+            ui_dim "    budget-journal N — Journal reflect/quip (current: $LLM_BUDGET_JOURNAL)"
+            ui_dim "    budget-tool N   — Commit, web, recall, slash (current: $LLM_BUDGET_TOOL)"
+            echo ""
+            ui_dim "    reset           — Reset all to defaults" ;;
     esac
 }
 _cmd_journal() {

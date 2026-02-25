@@ -13,6 +13,11 @@ LLM_ASK_TOKENS="${LLM_ASK_TOKENS:-20480}"   # Max output tokens for /ask (model 
 LLM_AGENT_TOKENS="${LLM_AGENT_TOKENS:-20480}" # Max output tokens for agent specialist/strategist
 LLM_ROUTER_TOKENS="${LLM_ROUTER_TOKENS:-256}" # Max output tokens for agent router (think ~100-200 + tool name)
 LLM_BUDGET_TOKENS="${LLM_BUDGET_TOKENS:-1024}" # Max thinking tokens before responding (0=unlimited)
+LLM_BUDGET_ASK="${LLM_BUDGET_ASK:-1024}"     # Think budget for /ask conversations (extended thinking useful)
+LLM_BUDGET_AGENT="${LLM_BUDGET_AGENT:-512}"  # Think budget for strategist/specialist (focused output)
+LLM_BUDGET_ROUTER="${LLM_BUDGET_ROUTER:-128}" # Think budget for router (just pick a tool name)
+LLM_BUDGET_JOURNAL="${LLM_BUDGET_JOURNAL:-64}" # Think budget for journal (background utility, fast)
+LLM_BUDGET_TOOL="${LLM_BUDGET_TOOL:-256}"    # Think budget for tools (commit, web, recall, slash)
 LLM_TIMEOUT="${LLM_TIMEOUT:-600}"           # Safety net: 600s max per request (thinking models on ARM need headroom; Ctrl+C also works)
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
 LODGE_THINK="${LODGE_THINK:-1}"               # 1=show thinking tokens dimmed (default), 0=hide thinking tokens (model always thinks)
@@ -219,18 +224,20 @@ llm_debug_summary() {
 # With stream:true, tokens arrive continuously keeping the
 # connection alive. Response tokens go to stdout (captured by
 # the caller's $()). Thinking tokens go to /dev/tty when enabled.
+# Usage: llm_generate "prompt" [system_prompt] [max_tokens] [budget_tokens]
 llm_generate() {
     local prompt="$1"
     local system="${2:-}"
     local max_tokens="${3:-$LLM_MAX_TOKENS}"
+    local budget="${4:-$LLM_BUDGET_TOKENS}"
     local payload
 
     _llm_debug_start_timer
 
     # Build options with optional budget_tokens
     local _opts
-    if [ "${LLM_BUDGET_TOKENS:-0}" -gt 0 ] 2>/dev/null; then
-        _opts=$(jq -n --argjson np "$max_tokens" --argjson bt "$LLM_BUDGET_TOKENS" '{num_predict:$np, budget_tokens:$bt}')
+    if [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
+        _opts=$(jq -n --argjson np "$max_tokens" --argjson bt "$budget" '{num_predict:$np, budget_tokens:$bt}')
     else
         _opts=$(jq -n --argjson np "$max_tokens" '{num_predict:$np}')
     fi
@@ -412,11 +419,12 @@ llm_generate() {
 }
 
 # ── Generate with streaming (live output) ──────────────────────
-# Usage: llm_stream "prompt" [system_prompt] [max_tokens]
+# Usage: llm_stream "prompt" [system_prompt] [max_tokens] [budget_tokens]
 llm_stream() {
     local prompt="$1"
     local system="${2:-}"
     local max_tokens="${3:-$LLM_MAX_TOKENS}"
+    local budget="${4:-$LLM_BUDGET_TOKENS}"
     local payload
     local full_response=""
 
@@ -427,8 +435,8 @@ llm_stream() {
 
     # Build options with optional budget_tokens
     local _opts
-    if [ "${LLM_BUDGET_TOKENS:-0}" -gt 0 ] 2>/dev/null; then
-        _opts=$(jq -n --argjson np "$max_tokens" --argjson bt "$LLM_BUDGET_TOKENS" '{num_predict:$np, budget_tokens:$bt}')
+    if [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
+        _opts=$(jq -n --argjson np "$max_tokens" --argjson bt "$budget" '{num_predict:$np, budget_tokens:$bt}')
     else
         _opts=$(jq -n --argjson np "$max_tokens" '{num_predict:$np}')
     fi
@@ -644,7 +652,7 @@ llm_stream() {
 }
 
 # ── Chat format (multi-turn via /api/chat) ─────────────────────
-# Usage: llm_chat "messages_json" [system_prompt]
+# Usage: llm_chat "messages_json" [system_prompt] [budget_tokens]
 # messages_json: [{"role":"user","content":"..."},...]
 #
 # Internally streamed (same rationale as llm_generate) to avoid
@@ -652,12 +660,13 @@ llm_stream() {
 llm_chat() {
     local messages="$1"
     local system="${2:-}"
+    local budget="${3:-$LLM_BUDGET_TOKENS}"
     local payload
 
     # Build options with optional budget_tokens
     local _opts
-    if [ "${LLM_BUDGET_TOKENS:-0}" -gt 0 ] 2>/dev/null; then
-        _opts=$(jq -n --argjson np "$LLM_MAX_TOKENS" --argjson bt "$LLM_BUDGET_TOKENS" '{num_predict:$np, budget_tokens:$bt}')
+    if [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
+        _opts=$(jq -n --argjson np "$LLM_MAX_TOKENS" --argjson bt "$budget" '{num_predict:$np, budget_tokens:$bt}')
     else
         _opts=$(jq -n --argjson np "$LLM_MAX_TOKENS" '{num_predict:$np}')
     fi

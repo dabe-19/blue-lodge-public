@@ -441,7 +441,7 @@ $truncated"
 
     ui_spinner_start "Summarizing"
     local result
-    result=$(llm_generate "$prompt" "You are George, summarizing web content for your user." 256)
+    result=$(llm_generate "$prompt" "You are George, summarizing web content for your user." 256 "$LLM_BUDGET_TOOL")
     ui_spinner_stop
     echo "$result"
 }

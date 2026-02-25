@@ -863,7 +863,7 @@ recall_ingest_with_summary() {
         ui_spinner_start "Summarizing"
         summary=$(llm_generate "Summarize this document in 3-5 bullet points. Be concise:
 
-$text" "You are a concise summarizer. Output only bullet points." 256 2>/dev/null)
+$text" "You are a concise summarizer. Output only bullet points." 256 "$LLM_BUDGET_TOOL" 2>/dev/null)
         ui_spinner_stop
 
         if [ -n "$summary" ] && [[ "$summary" != ERROR* ]]; then

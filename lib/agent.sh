@@ -458,7 +458,7 @@ ${base_rules}"
             ui_dim "  Plan (round $((clarify_round + 1))):"
         fi
 
-        plan=$(llm_stream "$prompt" "$system_prompt" 512)
+        plan=$(llm_stream "$prompt" "$system_prompt" 512 "$LLM_BUDGET_AGENT")
         echo ""
 
         if [ -z "$plan" ] || [[ "$plan" == ERROR* ]]; then
@@ -766,7 +766,7 @@ agent_inner_loop() {
         # llm_generate is used here for maximum speed — no streaming,
         # no personality, just returns the raw string.
         local selected_tool
-        selected_tool=$(llm_generate "$route_prompt" "$router_sys" "${LLM_ROUTER_TOKENS:-50}")
+        selected_tool=$(llm_generate "$route_prompt" "$router_sys" "${LLM_ROUTER_TOKENS:-50}" "$LLM_BUDGET_ROUTER")
 
         # Cancel check after router LLM call — curl may have been killed
         if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
@@ -856,7 +856,7 @@ agent_inner_loop() {
         # below. Streaming it first wastes time showing the same text twice
         # and confuses the user with redundant output.
         local action_plan
-        action_plan=$(llm_generate "$specialist_prompt" "$specialist_sys" "${LLM_AGENT_TOKENS:-512}")
+        action_plan=$(llm_generate "$specialist_prompt" "$specialist_sys" "${LLM_AGENT_TOKENS:-512}" "$LLM_BUDGET_AGENT")
 
         # Cancel check after specialist LLM call
         if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
@@ -1099,7 +1099,7 @@ Output a slash command line starting with / OR a bash code block."
 
         local guided_sys=$(_build_specialist_prompt "" "$workdir")
         local final_plan
-        final_plan=$(llm_stream "$guided_prompt" "$guided_sys" "${LLM_AGENT_TOKENS:-512}")
+        final_plan=$(llm_stream "$guided_prompt" "$guided_sys" "${LLM_AGENT_TOKENS:-512}" "$LLM_BUDGET_AGENT")
 
         # Extract slash command or bash command (same logic as main loop)
         local final_cmd=""
@@ -1306,7 +1306,7 @@ Rules:
         # is a brief milestone description displayed once by ui_info below.
         # Previously llm_stream showed it live, then ui_info showed it again,
         # then the specialist streamed it a third time — tripling the output.
-        milestone=$(llm_generate "$macro_prompt" "$macro_sys" "${LLM_AGENT_TOKENS:-512}")
+        milestone=$(llm_generate "$macro_prompt" "$macro_sys" "${LLM_AGENT_TOKENS:-512}" "$LLM_BUDGET_AGENT")
 
         # Strip whitespace for clean comparison
         milestone=$(echo "$milestone" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
@@ -1464,7 +1464,7 @@ $question"
     # Stream the response so user sees tokens arrive in real-time
     echo ""
     local response
-    response=$(llm_stream "$full_question" "$system_prompt" "$LLM_ASK_TOKENS")
+    response=$(llm_stream "$full_question" "$system_prompt" "$LLM_ASK_TOKENS" "$LLM_BUDGET_ASK")
     echo ""
     
     # Track this exchange for future context

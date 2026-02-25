@@ -35,6 +35,30 @@ describe "Configuration defaults"
     assert_eq "$LLM_ROUTER_TOKENS" "256"
   }
 
+  it "LLM_BUDGET_TOKENS defaults to 1024" && {
+    assert_eq "$LLM_BUDGET_TOKENS" "1024"
+  }
+
+  it "LLM_BUDGET_ASK defaults to 1024" && {
+    assert_eq "$LLM_BUDGET_ASK" "1024"
+  }
+
+  it "LLM_BUDGET_AGENT defaults to 512" && {
+    assert_eq "$LLM_BUDGET_AGENT" "512"
+  }
+
+  it "LLM_BUDGET_ROUTER defaults to 128" && {
+    assert_eq "$LLM_BUDGET_ROUTER" "128"
+  }
+
+  it "LLM_BUDGET_JOURNAL defaults to 64" && {
+    assert_eq "$LLM_BUDGET_JOURNAL" "64"
+  }
+
+  it "LLM_BUDGET_TOOL defaults to 256" && {
+    assert_eq "$LLM_BUDGET_TOOL" "256"
+  }
+
   it "LLM_TIMEOUT defaults to 600 (safety net)" && {
     assert_eq "$LLM_TIMEOUT" "600"
   }

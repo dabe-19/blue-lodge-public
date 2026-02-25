@@ -50,7 +50,7 @@ Changes:
 $changes
 
 Diff (truncated):
-$detailed_diff" "" 128)
+$detailed_diff" "" 128 "$LLM_BUDGET_TOOL")
     ui_spinner_stop
     
     # Clean up the message

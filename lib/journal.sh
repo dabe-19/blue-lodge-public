@@ -57,6 +57,12 @@ JEOF
 journal_write() {
     local entry_type="$1"
     local content="$2"
+
+    # Guard: never write entries with empty content
+    local _trimmed
+    _trimmed=$(echo "$content" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [ -z "$_trimmed" ] && return 0
+
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M')
     local date_stamp
@@ -112,6 +118,12 @@ journal_write_quip() {
 
     source "$LODGE_DIR/lib/llm.sh"
 
+    # Background utility call: suppress tty output and limit thinking.
+    # This runs with & — must not print thinking banners to tty (races
+    # with foreground output) or kill foreground spinners.
+    local LODGE_THINK=0
+    local _SPINNER_PID=""
+
     # Truncate long responses so the summary prompt stays small
     local short_q="${question:0:200}"
     local short_a="${response:0:400}"
@@ -135,7 +147,7 @@ Examples of tone:
 Output ONLY the quip — no quotes, no preamble, no commentary."
 
     local quip
-    quip=$(llm_generate "$prompt" "" 64)
+    quip=$(llm_generate "$prompt" "" 128 "$LLM_BUDGET_JOURNAL")
 
     if [ $? -eq 0 ] && [[ "$quip" != ERROR* ]] && [ -n "$quip" ]; then
         # Clean up: strip quotes, trim whitespace, take first line only
@@ -285,7 +297,7 @@ journal_apply_decay() {
                 local new_sediment
                 new_sediment=$(llm_generate "You are compressing old journal entries into a single paragraph of impressions — things half-remembered, feelings that remain even when details have faded. Write in first person. Be poetic but brief (3-5 sentences). These are the old entries:
 
-$old_entries" "You are George reflecting on faded memories." 256)
+$old_entries" "You are George reflecting on faded memories." 256 "$LLM_BUDGET_JOURNAL")
                 
                 # Update sediment section
                 journal_update_sediment "$new_sediment"
@@ -390,6 +402,16 @@ journal_reflect() {
     local exec_log="${3:-}"   # optional: actual step-by-step execution log
     
     source "$LODGE_DIR/lib/llm.sh"
+
+    # Background utility call: suppress tty output and limit thinking.
+    # This function is called with & from agent_run — must not print
+    # thinking banners to tty (races with foreground output), must not
+    # kill foreground spinners, and must keep thinking brief so the
+    # background Ollama request finishes quickly (Ollama serializes
+    # same-model requests, so a slow journal call blocks the next
+    # foreground strategist/specialist call).
+    local LODGE_THINK=0
+    local _SPINNER_PID=""
     
     local soul
     soul=$(cat "$LODGE_DIR/soul.md" | head -40)
@@ -421,9 +443,9 @@ Do NOT use headers or formatting. Just the raw entry."
     fi
     
     local reflection
-    reflection=$(llm_generate "$prompt" "$soul" 256)
+    reflection=$(llm_generate "$prompt" "$soul" 384 "$LLM_BUDGET_JOURNAL")
     
-    if [ $? -eq 0 ] && [[ "$reflection" != ERROR* ]]; then
+    if [ $? -eq 0 ] && [[ "$reflection" != ERROR* ]] && [ -n "$reflection" ]; then
         # Determine entry type based on content
         local entry_type="reflection"
         if echo "$reflection" | grep -qiE 'learn|discover|realiz'; then

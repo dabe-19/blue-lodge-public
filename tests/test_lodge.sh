@@ -326,34 +326,88 @@ describe "Limits command"
   it "_cmd_limits tokens sets LLM_AGENT_TOKENS" && {
     _cmd_limits "tokens 768" >/dev/null 2>&1
     assert_eq "$LLM_AGENT_TOKENS" "768"
-    LLM_AGENT_TOKENS=512  # restore
+    LLM_AGENT_TOKENS=20480  # restore
   }
 
   it "_cmd_limits ask-tokens sets LLM_ASK_TOKENS" && {
     _cmd_limits "ask-tokens 400" >/dev/null 2>&1
     assert_eq "$LLM_ASK_TOKENS" "400"
-    LLM_ASK_TOKENS=300  # restore
+    LLM_ASK_TOKENS=20480  # restore
   }
 
   it "_cmd_limits router-tokens sets LLM_ROUTER_TOKENS" && {
     _cmd_limits "router-tokens 80" >/dev/null 2>&1
     assert_eq "$LLM_ROUTER_TOKENS" "80"
-    LLM_ROUTER_TOKENS=50  # restore
+    LLM_ROUTER_TOKENS=256  # restore
+  }
+
+  it "_cmd_limits max-tokens sets LLM_MAX_TOKENS" && {
+    _cmd_limits "max-tokens 8192" >/dev/null 2>&1
+    assert_eq "$LLM_MAX_TOKENS" "8192"
+    LLM_MAX_TOKENS=20480  # restore
   }
 
   it "_cmd_limits tokens rejects out-of-range" && {
-    _cmd_limits "tokens 5000" >/dev/null 2>&1
-    assert_eq "$LLM_AGENT_TOKENS" "512"
+    _cmd_limits "tokens 25000" >/dev/null 2>&1
+    assert_eq "$LLM_AGENT_TOKENS" "20480"
   }
 
   it "_cmd_limits router-tokens rejects below min" && {
     _cmd_limits "router-tokens 5" >/dev/null 2>&1
-    assert_eq "$LLM_ROUTER_TOKENS" "50"
+    assert_eq "$LLM_ROUTER_TOKENS" "256"
+  }
+
+  it "_cmd_limits budget sets LLM_BUDGET_TOKENS" && {
+    _cmd_limits "budget 2048" >/dev/null 2>&1
+    assert_eq "$LLM_BUDGET_TOKENS" "2048"
+    LLM_BUDGET_TOKENS=1024  # restore
+  }
+
+  it "_cmd_limits budget-ask sets LLM_BUDGET_ASK" && {
+    _cmd_limits "budget-ask 2048" >/dev/null 2>&1
+    assert_eq "$LLM_BUDGET_ASK" "2048"
+    LLM_BUDGET_ASK=1024  # restore
+  }
+
+  it "_cmd_limits budget-agent sets LLM_BUDGET_AGENT" && {
+    _cmd_limits "budget-agent 1024" >/dev/null 2>&1
+    assert_eq "$LLM_BUDGET_AGENT" "1024"
+    LLM_BUDGET_AGENT=512  # restore
+  }
+
+  it "_cmd_limits budget-router sets LLM_BUDGET_ROUTER" && {
+    _cmd_limits "budget-router 256" >/dev/null 2>&1
+    assert_eq "$LLM_BUDGET_ROUTER" "256"
+    LLM_BUDGET_ROUTER=128  # restore
+  }
+
+  it "_cmd_limits budget-journal sets LLM_BUDGET_JOURNAL" && {
+    _cmd_limits "budget-journal 128" >/dev/null 2>&1
+    assert_eq "$LLM_BUDGET_JOURNAL" "128"
+    LLM_BUDGET_JOURNAL=64  # restore
+  }
+
+  it "_cmd_limits budget-tool sets LLM_BUDGET_TOOL" && {
+    _cmd_limits "budget-tool 512" >/dev/null 2>&1
+    assert_eq "$LLM_BUDGET_TOOL" "512"
+    LLM_BUDGET_TOOL=256  # restore
+  }
+
+  it "_cmd_limits budget-tool allows zero (unlimited)" && {
+    _cmd_limits "budget-tool 0" >/dev/null 2>&1
+    assert_eq "$LLM_BUDGET_TOOL" "0"
+    LLM_BUDGET_TOOL=256  # restore
   }
 
   it "_cmd_limits show includes token lines" && {
     output=$(_cmd_limits "" 2>&1)
     echo "$output" | grep -q "Agent tokens"
+    assert_ok $?
+  }
+
+  it "_cmd_limits show includes budget lines" && {
+    output=$(_cmd_limits "" 2>&1)
+    echo "$output" | grep -q "Think Budgets"
     assert_ok $?
   }
 
@@ -363,18 +417,32 @@ describe "Limits command"
     AGENT_MAX_STEPS=50
     AGENT_MAX_DEPTH=5
     AGENT_STEP_DELAY=5
+    LLM_MAX_TOKENS=4096
     LLM_AGENT_TOKENS=1024
     LLM_ASK_TOKENS=500
     LLM_ROUTER_TOKENS=100
+    LLM_BUDGET_TOKENS=4096
+    LLM_BUDGET_ASK=4096
+    LLM_BUDGET_AGENT=4096
+    LLM_BUDGET_ROUTER=4096
+    LLM_BUDGET_JOURNAL=4096
+    LLM_BUDGET_TOOL=4096
     _cmd_limits "reset" >/dev/null 2>&1
     assert_eq "$AGENT_PLAN_STEPS" "5"
     assert_eq "$AGENT_INNER_LOOPS" "6"
     assert_eq "$AGENT_MAX_STEPS" "20"
     assert_eq "$AGENT_MAX_DEPTH" "2"
     assert_eq "$AGENT_STEP_DELAY" "1"
-    assert_eq "$LLM_AGENT_TOKENS" "512"
-    assert_eq "$LLM_ASK_TOKENS" "300"
-    assert_eq "$LLM_ROUTER_TOKENS" "50"
+    assert_eq "$LLM_MAX_TOKENS" "20480"
+    assert_eq "$LLM_AGENT_TOKENS" "20480"
+    assert_eq "$LLM_ASK_TOKENS" "20480"
+    assert_eq "$LLM_ROUTER_TOKENS" "256"
+    assert_eq "$LLM_BUDGET_TOKENS" "1024"
+    assert_eq "$LLM_BUDGET_ASK" "1024"
+    assert_eq "$LLM_BUDGET_AGENT" "512"
+    assert_eq "$LLM_BUDGET_ROUTER" "128"
+    assert_eq "$LLM_BUDGET_JOURNAL" "64"
+    assert_eq "$LLM_BUDGET_TOOL" "256"
   }
 
 # ── /debug command ─────────────────────────────────────────────
