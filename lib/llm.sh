@@ -410,6 +410,10 @@ llm_generate() {
         think_token=$(echo "$line" | jq -r '.thinking // empty' 2>/dev/null)
         token=$(echo "$line" | jq -r '.response // empty' 2>/dev/null)
 
+        # Strip <response>...</response> wrapper tags (Granite preview emits these)
+        token="${token//<response>/}"
+        token="${token//<\/response>/}"
+
         # ── Handle .thinking field (Ollama separate-field mode) ──
         if [ -n "$think_token" ]; then
             _saw_thinking_field=1
@@ -673,6 +677,10 @@ llm_stream() {
         local think_token token
         think_token=$(echo "$line" | jq -r '.thinking // empty' 2>/dev/null)
         token=$(echo "$line" | jq -r '.response // empty' 2>/dev/null)
+
+        # Strip <response>...</response> wrapper tags (Granite preview emits these)
+        token="${token//<response>/}"
+        token="${token//<\/response>/}"
 
         # ── Handle .thinking field (Ollama separate-field mode) ──
         if [ -n "$think_token" ]; then

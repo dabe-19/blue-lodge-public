@@ -481,6 +481,7 @@ describe "Model family system"
     keys=$(_models_family_keys "$entry")
     assert_contains "$keys" "granite4"
     assert_contains "$keys" "granite4-h"
+    assert_contains "$keys" "granite4-preview"
   }
 
   it "models_create_family rejects unknown family" && {
@@ -506,10 +507,41 @@ describe "Model family system"
     assert_eq "$_ME_STOP" '</s>' "ministral stop token"
   }
 
+  it "granite4 is instruct (not thinking)" && {
+    models_info "granite4"
+    assert_eq "$_ME_ROLE" "instruct" "granite4 role"
+    assert_eq "$_ME_THINKS" "0" "granite4 has_thinking"
+  }
+
+  it "granite4-preview is the thinking variant" && {
+    models_info "granite4-preview"
+    assert_ok $?
+    assert_eq "$_ME_BASE" "ibm/granite4.0-preview:tiny" "granite4-preview base"
+    assert_eq "$_ME_ROLE" "thinking" "granite4-preview role"
+    assert_eq "$_ME_THINKS" "1" "granite4-preview has_thinking"
+  }
+
   it "granite4-h registry entry exists and uses 3b-h base" && {
     models_info "granite4-h"
     assert_ok $?
     assert_eq "$_ME_BASE" "granite4:3b-h"
+    assert_eq "$_ME_ROLE" "instruct" "granite4-h role"
+  }
+
+  it "response tag stripping is in llm_generate" && {
+    body=$(declare -f llm_generate)
+    echo "$body" | grep -q '<response>'
+    assert_ok $?
+    echo "$body" | grep -q 'response>/}'
+    assert_ok $?
+  }
+
+  it "response tag stripping is in llm_stream" && {
+    body=$(declare -f llm_stream)
+    echo "$body" | grep -q '<response>'
+    assert_ok $?
+    echo "$body" | grep -q 'response>/}'
+    assert_ok $?
   }
 
   it "each family key maps to a valid registry entry" && {
