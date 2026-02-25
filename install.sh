@@ -74,7 +74,8 @@ _lodge_shell_block() {
 
 # ── Blue Lodge ─────────────────────────────────────────────
 export LODGE_DIR="$LODGE_DIR"
-export LODGE_MODEL="blue-lodge"
+export LODGE_MODEL_PRIMARY="blue-lodge-qwen3-think:4b"
+export LODGE_MODEL_SECONDARY="blue-lodge-qwen3-inst:4b"
 export PATH="\$HOME/.local/bin:\$PATH"
 $termux_line
 
@@ -196,13 +197,31 @@ if ! curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
 fi
 ok "Ollama running"
 
-# ── 4. Create the model ─────────────────────────────────────
-info "Creating blue-lodge model (this may download ~3GB on first run)..."
-if ollama list 2>/dev/null | grep -q "blue-lodge"; then
-    ok "Model 'blue-lodge' already exists"
+# Source model library for model creation
+source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/models.sh" 2>/dev/null || true
+
+# ── 4. Create models ────────────────────────────────────────
+info "Creating models (first run may download ~3GB per model)..."
+
+# Primary model (thinking/planning)
+if ollama list 2>/dev/null | grep -q "$LODGE_MODEL_PRIMARY"; then
+    ok "Primary model '$LODGE_MODEL_PRIMARY' already exists"
 else
-    ollama create blue-lodge -f "$LODGE_DIR/Modelfile"
-    ok "Model created"
+    info "Creating primary model: $LODGE_MODEL_PRIMARY"
+    _mf=$(models_generate_modelfile "qwen3-think")
+    ollama create "$LODGE_MODEL_PRIMARY" -f "$_mf"
+    ok "Primary model created"
+fi
+
+# Secondary model (fast/instruct)
+if ollama list 2>/dev/null | grep -q "$LODGE_MODEL_SECONDARY"; then
+    ok "Secondary model '$LODGE_MODEL_SECONDARY' already exists"
+else
+    info "Creating secondary model: $LODGE_MODEL_SECONDARY"
+    _mf=$(models_generate_modelfile "qwen3-inst")
+    ollama create "$LODGE_MODEL_SECONDARY" -f "$_mf"
+    ok "Secondary model created"
 fi
 
 # ── 5. Quick model test ─────────────────────────────────────
@@ -214,7 +233,7 @@ info "Loading model into memory (first time may take 30-60s)..."
 # Phase 1: Preload weights. The /api/generate endpoint with an empty prompt
 # and keep_alive loads the model without generating anything.
 if curl -sf --connect-timeout 10 --max-time 180 http://127.0.0.1:11434/api/generate \
-    -d '{"model":"blue-lodge","prompt":"","keep_alive":"30m"}' \
+    -d "{\"model\":\"$LODGE_MODEL_PRIMARY\",\"prompt\":\"\",\"keep_alive\":\"30m\"}" \
     >/dev/null 2>&1; then
     ok "Model loaded"
 else
@@ -226,7 +245,7 @@ _MODEL_OK=0
 # Phase 2: With weights already in memory, a trivial prompt should respond
 # in seconds. budget_tokens:2 = near-zero thinking, num_predict:4 = tiny output.
 if curl -sfN --connect-timeout 5 --max-time 30 http://127.0.0.1:11434/api/generate \
-    -d '{"model":"blue-lodge","prompt":"Say OK","stream":true,"budget_tokens":2,"options":{"num_predict":4}}' \
+    -d "{\"model\":\"$LODGE_MODEL_PRIMARY\",\"prompt\":\"Say OK\",\"stream\":true,\"budget_tokens\":2,\"options\":{\"num_predict\":4}}" \
     2>/dev/null | while IFS= read -r _line; do
         _tok=$(echo "$_line" | jq -r '.response // empty' 2>/dev/null)
         _think=$(echo "$_line" | jq -r '.thinking // empty' 2>/dev/null)

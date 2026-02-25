@@ -437,6 +437,50 @@ _cmd_limits() {
             ui_dim "    reset           — Reset all to defaults" ;;
     esac
 }
+_cmd_models() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local arg2
+    arg2=$(echo "$args" | awk '{print $2}')
+    local arg3
+    arg3=$(echo "$args" | awk '{print $3}')
+
+    case "$action" in
+        list|ls)
+            models_list ;;
+        status|info)
+            models_status ;;
+        select|set)
+            models_select "$arg2" "$arg3" ;;
+        single)
+            models_select single "$arg2" ;;
+        dual)
+            if [ "${LODGE_SINGLE_MODEL:-0}" -eq 1 ]; then
+                LODGE_SINGLE_MODEL=0
+                _MODELS_ACTIVE=""
+                LODGE_MODEL="$LODGE_MODEL_PRIMARY"
+                ui_ok "Dual-model mode enabled"
+                ui_dim "  Primary:   $LODGE_MODEL_PRIMARY (ask, agent)"
+                ui_dim "  Secondary: $LODGE_MODEL_SECONDARY (router, tool, journal)"
+            else
+                ui_info "Already in dual-model mode"
+            fi ;;
+        "")
+            models_status
+            echo ""
+            models_list ;;
+        *)
+            ui_info "Usage: /models [list|status|select|single|dual]"
+            ui_dim "  list               — show available models"
+            ui_dim "  status             — show current configuration"
+            ui_dim "  select primary <key>  — set primary model"
+            ui_dim "  select secondary <key> — set secondary model"
+            ui_dim "  single <key>       — single-model mode (no switching)"
+            ui_dim "  dual               — enable dual-model mode"
+            ui_dim "  (no arg)           — show status + model list" ;;
+    esac
+}
 _cmd_model() {
     local args="$1"
     local action
@@ -2823,6 +2867,7 @@ _register_commands() {
     commands_register "email"    "Email (ProtonMail/Zoho/Tuta/disposable)" "_cmd_email"
     commands_register "git"      "Git & GitHub configuration" "_cmd_git"
     commands_register "cleanup"  "Remove George's created files" "_cmd_cleanup"
+    commands_register "models"   "Model library — list, select, switch" "_cmd_models"
     commands_register "think"    "Toggle thinking display or disable reasoning (/no_think)" "_cmd_think"
     commands_register "debug"    "Toggle debug mode (timers + token counts)" "_cmd_debug"
     commands_register "clear"    "Clear screen" "_cmd_clear"
@@ -2946,6 +2991,9 @@ main() {
     # Index knowledge base for recall (if sqlite3 available)
     recall_ensure_indexed 2>/dev/null
     
+    # Initialize model library (sets LODGE_MODEL from model slots)
+    models_init
+
     # Check LLM
     if ! llm_ensure; then
         ui_err "Cannot connect to Ollama. Is it running?"
@@ -2970,7 +3018,9 @@ main() {
     
     if [ $# -eq 0 ]; then
         # Interactive mode
-        ui_header "George v${LODGE_VERSION}" "Model: $LODGE_MODEL | $(basename "$PWD")"
+        local _model_info="Model: $LODGE_MODEL"
+        [ "${LODGE_SINGLE_MODEL:-0}" -eq 0 ] && _model_info="Primary: $(models_info "$LODGE_MODEL_PRIMARY" 2>/dev/null && echo "$_ME_KEY" || echo "$LODGE_MODEL_PRIMARY")"
+        ui_header "George v${LODGE_VERSION}" "$_model_info | $(basename "$PWD")"
         
         # Journal-aware greeting
         journal_init

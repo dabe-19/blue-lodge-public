@@ -4,6 +4,7 @@
 
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
+source "$LODGE_DIR/lib/models.sh"
 
 # ── Config ─────────────────────────────────────────────────────
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
@@ -55,7 +56,7 @@ LLM_TIMEOUT="${LLM_TIMEOUT:-600}"           # Safety net: 600s max per request (
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
 LODGE_THINK="${LODGE_THINK:-1}"               # 1=show thinking tokens dimmed (default), 0=hide thinking tokens (model always thinks)
 LODGE_THINK_STREAM="${LODGE_THINK_STREAM:-1}"  # When LODGE_THINK=1: 0=hide thinking, 1=show dimmed, 2=show bright (cyan)
-LODGE_NOTHINK="${LODGE_NOTHINK:-0}"             # 0=model thinks normally, 1=inject /no_think to disable reasoning (Qwen3 soft switch)
+LODGE_NOTHINK="${LODGE_NOTHINK:-0}"             # 0=model thinks normally, 1=suppress reasoning (model-specific: /no_think for Qwen, system prompt for Granite)
 LODGE_DEBUG="${LODGE_DEBUG:-0}"                 # 0=normal, 1=show timers + token counts per LLM call
 
 # ── Sampling parameter resolver ────────────────────────────────
@@ -148,11 +149,18 @@ llm_warmup() {
     if llm_is_loaded; then
         return 0  # already hot
     fi
+    # Model-aware warmup: use nothink suffix to skip reasoning if supported.
+    # For Qwen: "Hello /no_think". For others: just "Hello" with num_predict=1.
+    local _warmup_prompt="Hello"
+    local _method
+    _method=$(models_nothink_method)
+    [ "$_method" = "qwen" ] && _warmup_prompt="Hello /no_think"
     local payload
     payload=$(jq -n \
         --arg model "$LODGE_MODEL" \
+        --arg prompt "$_warmup_prompt" \
         --arg keep_alive "$LLM_KEEP_ALIVE" \
-        '{model: $model, prompt: "Hello", stream: false, keep_alive: $keep_alive, options: {num_predict: 1}}')
+        '{model: $model, prompt: $prompt, stream: false, keep_alive: $keep_alive, options: {num_predict: 1}}')
     curl -sf "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
         -d "$payload" > /dev/null 2>&1
@@ -296,10 +304,13 @@ llm_generate() {
 
     _llm_debug_start_timer
 
-    # Qwen3 /no_think soft switch: append to prompt to disable reasoning
-    if [ "${LODGE_NOTHINK:-0}" -eq 1 ]; then
-        prompt="${prompt} /no_think"
-    fi
+    # Ensure correct model is loaded for this scenario
+    models_ensure_for_scenario "${LLM_SCENARIO:-}"
+
+    # Model-aware nothink: append model-specific suffix (e.g., /no_think for Qwen3)
+    local _nt
+    _nt=$(models_nothink_suffix)
+    [ -n "$_nt" ] && prompt="${prompt}${_nt}"
 
     # Build options with per-scenario sampling parameters
     local _opts
@@ -353,6 +364,7 @@ llm_generate() {
     local _saw_thinking_field=0
     local _think_banner_open=0
     local _in_think_block=1
+    models_current_has_thinking || _in_think_block=0
     local _think_pending=""
 
     $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
@@ -498,14 +510,13 @@ llm_stream() {
 
     _llm_debug_start_timer
 
-    # Thinking-only model: no /nothink or /think suffixes needed.
-    # The model always thinks — LODGE_THINK controls display only.
-    # Exception: LODGE_NOTHINK=1 injects /no_think to suppress reasoning.
+    # Ensure correct model is loaded for this scenario
+    models_ensure_for_scenario "${LLM_SCENARIO:-}"
 
-    # Qwen3 /no_think soft switch: append to prompt to disable reasoning
-    if [ "${LODGE_NOTHINK:-0}" -eq 1 ]; then
-        prompt="${prompt} /no_think"
-    fi
+    # Model-aware nothink: append model-specific suffix (e.g., /no_think for Qwen3)
+    local _nt
+    _nt=$(models_nothink_suffix)
+    [ -n "$_nt" ] && prompt="${prompt}${_nt}"
 
     # Build options with per-scenario sampling parameters
     local _opts
@@ -591,6 +602,7 @@ llm_stream() {
     local _saw_thinking_field=0
     local _think_banner_open=0
     local _in_think_block=1       # fallback mode: assume starts in think
+    models_current_has_thinking || _in_think_block=0
     local _think_pending=""       # fallback mode: buffer for split </think>
 
     $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
@@ -738,14 +750,19 @@ llm_chat() {
     local budget="${3:-$LLM_BUDGET_TOKENS}"
     local payload
 
-    # Qwen3 /no_think soft switch: append to last user message
-    if [ "${LODGE_NOTHINK:-0}" -eq 1 ]; then
-        messages=$(echo "$messages" | jq '
+    # Ensure correct model is loaded for this scenario
+    models_ensure_for_scenario "${LLM_SCENARIO:-}"
+
+    # Model-aware nothink: append model-specific suffix to last user message
+    local _nt
+    _nt=$(models_nothink_suffix)
+    if [ -n "$_nt" ]; then
+        messages=$(echo "$messages" | jq --arg nt "$_nt" '
             (map(select(.role == "user")) | length) as $n |
             if $n > 0 then
                 reduce range(length) as $i (.; 
                     if .[$i].role == "user" and ([.[$i+1:][] | select(.role == "user")] | length) == 0
-                    then .[$i].content += " /no_think"
+                    then .[$i].content += $nt
                     else . end)
             else . end')
     fi
@@ -793,6 +810,7 @@ llm_chat() {
     # Chat API uses .message.thinking and .message.content
     local _saw_thinking_field=0
     local _in_think_block=1
+    models_current_has_thinking || _in_think_block=0
     local _think_pending=""
 
     $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
