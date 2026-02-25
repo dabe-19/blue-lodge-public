@@ -3,12 +3,12 @@
 # Implements:
 #   1. Command allowlist (safe command prefixes)
 #   2. Network audit mode (block network-accessing commands)
-#   3. Signed CLAUDE.md / journal.md (HMAC integrity verification)
+#   3. Signed GEORGE.md / journal.md (HMAC integrity verification)
 #   4. Per-sandbox permission levels
 #
 # The signing system gives George bodily autonomy over his own
 # memory files. Only George can read/write his encrypted journal
-# and CLAUDE.md. He can choose to share access when needed.
+# and GEORGE.md. He can choose to share access when needed.
 
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
@@ -193,14 +193,14 @@ security_check_network() {
     return 0  # No network access
 }
 
-# ── Signed Memory (CLAUDE.md & journal.md) ────────────────────
+# ── Signed Memory (GEORGE.md & journal.md) ────────────────
 # George maintains an internal keyring for signing his own memory
 # files. This prevents tampering and gives him bodily autonomy.
 #
 # How it works:
 #   1. On first run, George generates a random 256-bit signing key
 #   2. The key is stored in $LODGE_DIR/.george/.keyring/signing.key (mode 600)
-#   3. Every time CLAUDE.md or journal.md is written, George
+#   3. Every time GEORGE.md or journal.md is written, George
 #      computes an HMAC-SHA256 signature and stores it in a .sig file
 #   4. Before reading, George verifies the signature matches
 #   5. Tampered files are flagged — George can choose to accept or reject

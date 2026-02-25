@@ -1,13 +1,13 @@
 #!/bin/bash
 # ── George: Memory System ───────────────────────────────────────
-# CLAUDE.md-compatible memory file management.
+# GEORGE.md project memory file management.
 # The agent reads this before every action, writes after every step.
 
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 
 # ── File Locations ─────────────────────────────────────────────
-# CLAUDE.md lives in the PROJECT directory (per-project memory)
+# GEORGE.md lives in the PROJECT directory (per-project memory)
 # soul.md lives in LODGE_DIR (global personality)
 
 # ── Read soul.md ───────────────────────────────────────────────
@@ -20,18 +20,21 @@ memory_read_soul() {
     fi
 }
 
-# ── Read CLAUDE.md from current project ────────────────────────
+# ── Read GEORGE.md from current project ────────────────────────
 memory_read_project() {
     local dir="${1:-.}"
-    local claude_file="$dir/CLAUDE.md"
-    if [ -f "$claude_file" ]; then
-        cat "$claude_file"
+    local mem_file="$dir/GEORGE.md"
+    # Backwards-compatible: fall back to CLAUDE.md if GEORGE.md doesn't exist
+    if [ -f "$mem_file" ]; then
+        cat "$mem_file"
+    elif [ -f "$dir/CLAUDE.md" ]; then
+        cat "$dir/CLAUDE.md"
     else
         echo ""
     fi
 }
 
-# ── Initialize CLAUDE.md for a new project ─────────────────────
+# ── Initialize GEORGE.md for a new project ────────────────────
 memory_init() {
     local dir="${1:-.}"
     local project_name="${2:-$(basename "$dir")}"
@@ -39,7 +42,7 @@ memory_init() {
     local build_cmd="${4:-make}"
     local test_cmd="${5:-make test}"
     
-    cat > "$dir/CLAUDE.md" << MEMEOF
+    cat > "$dir/GEORGE.md" << MEMEOF
 # $project_name
 
 ## Type
@@ -71,19 +74,21 @@ $project_type
 - Keep context lean. Small functions. Structured logging.
 MEMEOF
     
-    ui_ok "CLAUDE.md initialized in $dir"
+    ui_ok "GEORGE.md initialized in $dir"
 }
 
-# ── Update a section in CLAUDE.md ──────────────────────────────
+# ── Update a section in GEORGE.md ──────────────────────────────
 # Usage: memory_update_section "Current Task" "new content"
 memory_update_section() {
     local section="$1"
     local content="$2"
     local dir="${3:-.}"
-    local file="$dir/CLAUDE.md"
+    local file="$dir/GEORGE.md"
+    # Backwards-compatible: fall back to CLAUDE.md
+    [ ! -f "$file" ] && [ -f "$dir/CLAUDE.md" ] && file="$dir/CLAUDE.md"
     
     if [ ! -f "$file" ]; then
-        ui_warn "No CLAUDE.md found in $dir"
+        ui_warn "No GEORGE.md found in $dir"
         return 1
     fi
     
@@ -107,7 +112,9 @@ memory_append_section() {
     local section="$1"
     local line="$2"
     local dir="${3:-.}"
-    local file="$dir/CLAUDE.md"
+    local file="$dir/GEORGE.md"
+    # Backwards-compatible: fall back to CLAUDE.md
+    [ ! -f "$file" ] && [ -f "$dir/CLAUDE.md" ] && file="$dir/CLAUDE.md"
     
     if [ ! -f "$file" ]; then return 1; fi
     
@@ -129,7 +136,9 @@ memory_append_section() {
 memory_get_section() {
     local section="$1"
     local dir="${2:-.}"
-    local file="$dir/CLAUDE.md"
+    local file="$dir/GEORGE.md"
+    # Backwards-compatible: fall back to CLAUDE.md
+    [ ! -f "$file" ] && [ -f "$dir/CLAUDE.md" ] && file="$dir/CLAUDE.md"
     
     if [ ! -f "$file" ]; then echo ""; return; fi
     
@@ -232,11 +241,11 @@ Craft: Shell in ```bash blocks, files with '# filepath:' headers, plans as short
 CONDENSED_SOUL
 }
 
-# ── Build system prompt from soul + CLAUDE.md ──────────────────
+# ── Build system prompt from soul + GEORGE.md ─────────────────
 # Mode controls prompt size:
 #   "ask"  — Lean prompt (~250 tokens): condensed soul + question context
 #   "plan" — Mid prompt: condensed soul (~250 tok) or full soul (~4500 tok) + catalog
-#   "task" — Full prompt: soul + CLAUDE.md + journal + recall + workspace
+#   "task" — Full prompt: soul + GEORGE.md + journal + recall + workspace
 memory_build_system_prompt() {
     local dir="${1:-.}"
     local task_hint="${2:-}"  # optional: current task/question for recall augmentation
@@ -274,7 +283,7 @@ memory_build_system_prompt() {
 
 OUTPUT FORMAT: You are answering a direct question. Respond in plain conversational text (1-5 sentences). Do NOT wrap your answer in code blocks, bash blocks, or markdown formatting. Do NOT output commands unless the user specifically asked for a command. Just answer naturally."
 
-        # Add minimal project context if CLAUDE.md exists
+        # Add minimal project context if GEORGE.md exists
         local project_task
         project_task=$(memory_get_section "Current Task" "$dir" 2>/dev/null)
         if [ -n "$project_task" ] && [ "$project_task" != "(none)" ]; then
@@ -397,7 +406,7 @@ $files"
     if [ -n "$project_mem" ]; then
         prompt="$prompt
 
---- PROJECT MEMORY (CLAUDE.md) ---
+--- PROJECT MEMORY (GEORGE.md) ---
 $project_mem"
     fi
     
@@ -458,10 +467,12 @@ $files"
 
 # ── Compact memory (summarize completed steps) ────────────────
 # Prevents context window saturation by trimming completed steps
-# and capping total CLAUDE.md size.
+# and capping total GEORGE.md size.
 memory_compact() {
     local dir="${1:-.}"
-    local file="$dir/CLAUDE.md"
+    local file="$dir/GEORGE.md"
+    # Backwards-compatible: fall back to CLAUDE.md
+    [ ! -f "$file" ] && [ -f "$dir/CLAUDE.md" ] && file="$dir/CLAUDE.md"
     
     if [ ! -f "$file" ]; then return; fi
     
@@ -491,7 +502,7 @@ $keep" "$dir"
         memory_update_section "Key Files" "$deduped" "$dir"
     fi
 
-    # 3. Hard cap: if CLAUDE.md exceeds ~6KB (with 16K context we have room,
+    # 3. Hard cap: if GEORGE.md exceeds ~6KB (with 16K context we have room,
     #    but still compact to keep prompt responsive)
     local file_size
     file_size=$(wc -c < "$file")
@@ -501,14 +512,16 @@ $keep" "$dir"
         local notes
         notes=$(memory_get_section "Notes" "$dir" | head -5)
         memory_update_section "Notes" "$notes" "$dir"
-        ui_warn "CLAUDE.md exceeded 6KB — compacted to protect context window"
+        ui_warn "GEORGE.md exceeded 6KB — compacted to protect context window"
     fi
 }
 
 # ── Snapshot memory to archive ─────────────────────────────────
 memory_snapshot() {
     local dir="${1:-.}"
-    local file="$dir/CLAUDE.md"
+    local file="$dir/GEORGE.md"
+    # Backwards-compatible: fall back to CLAUDE.md
+    [ ! -f "$file" ] && [ -f "$dir/CLAUDE.md" ] && file="$dir/CLAUDE.md"
     local archive_dir="$dir/.lodge-snapshots"
     
     if [ ! -f "$file" ]; then return; fi
@@ -516,6 +529,6 @@ memory_snapshot() {
     mkdir -p "$archive_dir"
     local timestamp
     timestamp=$(date +%Y%m%d_%H%M%S)
-    cp "$file" "$archive_dir/CLAUDE_${timestamp}.md"
+    cp "$file" "$archive_dir/GEORGE_${timestamp}.md"
     ui_ok "Memory snapshot saved"
 }

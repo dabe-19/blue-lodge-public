@@ -12,7 +12,7 @@ cmd_test() {
     
     cd "$workdir"
     
-    # Get test command from CLAUDE.md or detect
+    # Get test command from GEORGE.md or detect
     local test_cmd
     test_cmd=$(memory_get_section "Test" "$workdir" | head -1 | sed 's/^`//;s/`$//')
     
@@ -27,7 +27,7 @@ cmd_test() {
         elif [ -f "Makefile" ]; then
             test_cmd="make test"
         else
-            ui_err "Can't detect test command. Add it to CLAUDE.md under ## Test"
+            ui_err "Can't detect test command. Add it to GEORGE.md under ## Test"
             return 1
         fi
     fi

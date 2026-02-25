@@ -1,7 +1,7 @@
 #!/bin/bash
 # ── George: Backup & Persistence System ────────────────────────
 # Preserves George's identity across repo updates. Backs up
-# journal.md, soul.md, CLAUDE.md, and keys.conf to local files
+# journal.md, soul.md, GEORGE.md, and keys.conf to local files
 # or a private git repo that the user controls.
 #
 # Philosophy: George's code can be rewritten, but his memories
@@ -29,7 +29,7 @@ backup_init() {
 }
 
 # ── Local file backup ─────────────────────────────────────────
-# Copies identity files + all CLAUDE.md files to a timestamped dir
+# Copies identity files + all GEORGE.md files to a timestamped dir
 backup_local() {
     backup_init
 
@@ -57,27 +57,31 @@ backup_local() {
         count=$((count + 1))
     fi
 
-    # Collect all CLAUDE.md files from known project locations
-    # Check common locations: home, sandboxes, current dir
+    # Collect all GEORGE.md files from known project locations
+    # (backwards-compatible: also collects legacy CLAUDE.md)
     local claude_files=()
     # Current directory
-    [ -f "$PWD/CLAUDE.md" ] && claude_files+=("$PWD/CLAUDE.md")
+    if [ -f "$PWD/GEORGE.md" ]; then
+        claude_files+=("$PWD/GEORGE.md")
+    elif [ -f "$PWD/CLAUDE.md" ]; then
+        claude_files+=("$PWD/CLAUDE.md")
+    fi
     # Sandboxes
     if [ -d "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" ]; then
         while IFS= read -r -d '' cf; do
             claude_files+=("$cf")
-        done < <(find "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" -name "CLAUDE.md" -print0 2>/dev/null)
+        done < <(find "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" \( -name "GEORGE.md" -o -name "CLAUDE.md" \) -print0 2>/dev/null)
     fi
     # Home directory projects (1 level deep)
     while IFS= read -r -d '' cf; do
         claude_files+=("$cf")
-    done < <(find "$HOME" -maxdepth 2 -name "CLAUDE.md" -not -path "*/.george/*" -not -path "*/blue-lodge/*" -print0 2>/dev/null)
+    done < <(find "$HOME" -maxdepth 2 \( -name "GEORGE.md" -o -name "CLAUDE.md" \) -not -path "*/.george/*" -not -path "*/blue-lodge/*" -print0 2>/dev/null)
 
     for cf in "${claude_files[@]}"; do
         local project_name
         project_name=$(basename "$(dirname "$cf")")
         mkdir -p "$backup_path/projects/$project_name"
-        cp "$cf" "$backup_path/projects/$project_name/CLAUDE.md"
+        cp "$cf" "$backup_path/projects/$project_name/GEORGE.md"
         count=$((count + 1))
     done
 
@@ -168,7 +172,7 @@ backup_restore() {
     fi
 
     ui_ok "Restored $count files from backup $backup_name"
-    ui_dim "Project CLAUDE.md files are in: $backup_path/projects/"
+    ui_dim "Project GEORGE.md files are in: $backup_path/projects/"
     ui_dim "Restore those manually to your project directories if needed."
 }
 
@@ -199,7 +203,7 @@ This repository preserves George's identity across updates:
 - **journal.md** — Living memory with temporal decay
 - **Modelfile** — LLM configuration
 - **keys.conf** — API keys (encrypted or private repo only!)
-- **projects/** — Per-project CLAUDE.md memory files
+- **projects/** — Per-project GEORGE.md memory files
 
 ## Restoring George
 
@@ -239,15 +243,15 @@ backup_git_save() {
         cp "$GEORGE_CONFIG_DIR/keys.conf" "$GEORGE_BACKUP_REPO/keys.conf"
     fi
 
-    # Copy CLAUDE.md files
+    # Copy GEORGE.md files (backwards-compatible: also finds CLAUDE.md)
     mkdir -p "$GEORGE_BACKUP_REPO/projects"
     if [ -d "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" ]; then
-        find "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" -name "CLAUDE.md" -print0 2>/dev/null | \
+        find "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" \( -name "GEORGE.md" -o -name "CLAUDE.md" \) -print0 2>/dev/null | \
             while IFS= read -r -d '' cf; do
                 local pname
                 pname=$(basename "$(dirname "$cf")")
                 mkdir -p "$GEORGE_BACKUP_REPO/projects/$pname"
-                cp "$cf" "$GEORGE_BACKUP_REPO/projects/$pname/CLAUDE.md"
+                cp "$cf" "$GEORGE_BACKUP_REPO/projects/$pname/GEORGE.md"
             done
     fi
 

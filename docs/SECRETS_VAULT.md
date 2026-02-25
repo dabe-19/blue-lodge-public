@@ -300,7 +300,7 @@ george> Use my AWS credentials to list S3 buckets
   Step 2: aws s3 ls
 ```
 
-You can also mention secrets in your project's `CLAUDE.md`:
+You can also mention secrets in your project's `GEORGE.md`:
 
 ```markdown
 ## Credentials
@@ -308,7 +308,7 @@ You can also mention secrets in your project's `CLAUDE.md`:
 - Deployment uses `VERCEL_TOKEN` from the vault
 ```
 
-George reads `CLAUDE.md` before every task, so he'll know which secrets are
+George reads `GEORGE.md` before every task, so he'll know which secrets are
 available for the project.
 
 ---
@@ -581,7 +581,7 @@ george> Check my Solana wallet balance
 Only when actively using them for a task. The decrypted value exists in
 bash's process memory for the duration of the command, then it's gone.
 George never stores plaintext to disk or includes secrets in his journal,
-CLAUDE.md, or any log.
+GEORGE.md, or any log.
 
 ### What if I forget what secrets I have?
 

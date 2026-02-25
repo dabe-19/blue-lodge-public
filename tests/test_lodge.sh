@@ -224,15 +224,15 @@ describe "REPL question vs task heuristic"
 # ── Command handler functions ─────────────────────────────────
 describe "Command handler functions"
 
-  it "_cmd_memory handles missing CLAUDE.md" && {
+  it "_cmd_memory handles missing GEORGE.md" && {
     dir=$(test_tmpdir)
     output=$(_cmd_memory "" "$dir" 2>&1)
-    assert_contains "$output" "No CLAUDE.md"
+    assert_contains "$output" "No GEORGE.md"
   }
 
-  it "_cmd_memory shows existing CLAUDE.md" && {
+  it "_cmd_memory shows existing GEORGE.md" && {
     dir=$(test_tmpdir)
-    echo "# Test Project" > "$dir/CLAUDE.md"
+    echo "# Test Project" > "$dir/GEORGE.md"
     output=$(_cmd_memory "" "$dir" 2>&1)
     assert_contains "$output" "Test Project"
   }

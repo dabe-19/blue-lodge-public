@@ -1,5 +1,5 @@
 #!/bin/bash
-# DESC: Scaffold a new project with CLAUDE.md
+# DESC: Scaffold a new project with GEORGE.md
 # Usage:
 #   /init              — interactive wizard (choose type and name)
 #   /init <type>       — specify type, prompt for name
@@ -135,8 +135,8 @@ _init_guard_existing_project() {
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 
-    if [ -f "$PWD/CLAUDE.md" ]; then
-        ui_err "[$timestamp] Already inside a project (CLAUDE.md exists in $PWD)"
+    if [ -f "$PWD/GEORGE.md" ] || [ -f "$PWD/CLAUDE.md" ]; then
+        ui_err "[$timestamp] Already inside a project (GEORGE.md exists in $PWD)"
         ui_dim "  cd to a parent directory first, or use a different location"
         return 1
     fi
@@ -452,7 +452,7 @@ SHEOF
             ;;
     esac
     
-    # Generate CLAUDE.md
+    # Generate GEORGE.md
     memory_init "." "$name" "$env_label" "$build_cmd" "$test_cmd"
     
     # Git init
@@ -464,7 +464,7 @@ SHEOF
     done_timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo ""
     ui_ok "[$done_timestamp] Project '$name' ($env_label) created at $PWD"
-    ui_ok "CLAUDE.md ready — agent will use it for memory"
+    ui_ok "GEORGE.md ready — agent will use it for memory"
     ui_dim "Start working: lodge \"your task here\""
     echo ""
     

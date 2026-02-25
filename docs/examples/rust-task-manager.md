@@ -10,7 +10,7 @@ This walkthrough shows Blue Lodge building a Rust project — a terminal task ma
 $ lodge /init tasks rust
  ▸ Creating Rust project...
  ✓ Rust sandbox ready
- ✓ CLAUDE.md initialized in .
+ ✓ GEORGE.md initialized in .
  ✓ Project 'tasks' (Rust) created at /home/user/tasks
 ```
 
@@ -40,7 +40,7 @@ $ lodge "Build a CLI task manager. Commands: add <title>, list, done <id>, remov
 
 ```
 tasks/
-├── CLAUDE.md
+├── GEORGE.md
 ├── Cargo.toml
 ├── src/
 │   └── main.rs
@@ -220,7 +220,7 @@ Lodge reads the compiler error, figures out the fix, and applies it — one step
 $ lodge "add a 'search' subcommand that filters tasks by title substring"
 ```
 
-Lodge checks CLAUDE.md, sees the existing structure, and adds just the new subcommand without rewriting the whole file.
+Lodge checks GEORGE.md, sees the existing structure, and adds just the new subcommand without rewriting the whole file.
 
 ## 9. Release build (optimized for mobile)
 
@@ -242,6 +242,6 @@ The `Cargo.toml` includes mobile-optimized release settings: `lto = "thin"`, `st
 
 - **Builds on ARM** — Rust cross-compiles cleanly; `cargo build` works in proot Ubuntu
 - **Incremental builds** — After the initial compile, changes are fast (~5s)
-- **Lodge remembers state** — CLAUDE.md tracks which files exist, what the build command is, and what errors were encountered
+- **Lodge remembers state** — GEORGE.md tracks which files exist, what the build command is, and what errors were encountered
 - **`/fix` is powerful** — It runs `cargo check`, feeds errors to the LLM, and applies patches automatically
 - **Release binary is small** — `strip = true` keeps the binary under 2MB

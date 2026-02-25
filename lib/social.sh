@@ -757,6 +757,9 @@ SQL
 }
 
 # Resolve a username to a Discord user ID
+# Searches: username (exact) → display_name (exact) → username (prefix)
+# This allows @Pompler to resolve even when the actual username is pomps5246
+# (Pompler is the display_name).
 discord_user_resolve() {
     local name="$1"
     # Strip leading @ if present
@@ -765,8 +768,27 @@ discord_user_resolve() {
     name=$(echo "$name" | sed 's/^["'\'']*//; s/["'\'']*$//')
     name="${name#@}"  # double-strip in case quotes wrapped the @
     _discord_users_init 2>/dev/null || return 1
-    sqlite3 "$DISCORD_USERS_DB" \
-        "SELECT user_id FROM users WHERE username = '$name' COLLATE NOCASE LIMIT 1;" 2>/dev/null
+
+    # 1. Exact username match (primary)
+    local uid
+    uid=$(sqlite3 "$DISCORD_USERS_DB" \
+        "SELECT user_id FROM users WHERE username = '$name' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
+    if [ -n "$uid" ]; then echo "$uid"; return 0; fi
+
+    # 2. Exact display_name match (allows @Pompler → pomps5246's user_id)
+    uid=$(sqlite3 "$DISCORD_USERS_DB" \
+        "SELECT user_id FROM users WHERE display_name = '$name' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
+    if [ -n "$uid" ]; then echo "$uid"; return 0; fi
+
+    # 3. Prefix match on username (allows @pomps → pomps5246)
+    uid=$(sqlite3 "$DISCORD_USERS_DB" \
+        "SELECT user_id FROM users WHERE username LIKE '${name}%' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
+    if [ -n "$uid" ]; then echo "$uid"; return 0; fi
+
+    # 4. Prefix match on display_name
+    uid=$(sqlite3 "$DISCORD_USERS_DB" \
+        "SELECT user_id FROM users WHERE display_name LIKE '${name}%' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
+    [ -n "$uid" ] && echo "$uid"
 }
 
 # Add a user mapping manually

@@ -23,7 +23,7 @@ cmd_build() {
         elif [ -f "Makefile" ]; then
             build_cmd="make"
         else
-            ui_err "Can't detect build command. Add it to CLAUDE.md under ## Build"
+            ui_err "Can't detect build command. Add it to GEORGE.md under ## Build"
             return 1
         fi
     fi

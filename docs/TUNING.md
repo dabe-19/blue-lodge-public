@@ -35,7 +35,7 @@ Toggle with `/soul` (or `/soul on`/`/soul off`). Default is light (condensed).
 
 George has three persistent memory layers that survive between LLM calls:
 
-- **CLAUDE.md** — project state: current task, plan, completed steps, key files
+- **GEORGE.md** — project state: current task, plan, completed steps, key files
 - **Journal** — reflections, learnings, struggles (with temporal decay) — up to 500 tokens injected in task mode
 - **FTS5 Recall** — BM25-ranked search over soul.md, README, docs, ingested files — 4 chunks in task mode, 1 chunk (200 char cap) in ask mode
 - **Conversation history** — ring buffer of last 3 exchanges (~300-600 tokens) injected into `/ask` for conversational continuity
@@ -140,13 +140,15 @@ ollama create blue-lodge -f ~/blue-lodge/Modelfile
 
 | Parameter | Default | Description | Tuning guidance |
 |-----------|---------|-------------|-----------------|
-| `num_ctx` | 16384 | Context window (tokens). All input + output must fit. | Increase if using a larger model. 4096 for tiny models, 32768 for 7B+ with GPU. |
-| `num_predict` | 2048 | Max output tokens (overridden per-call by env vars). | This is the Modelfile-level default. Per-call overrides (`LLM_MAX_TOKENS`, `LLM_ASK_TOKENS`) take precedence via the API. |
+| `num_ctx` | 24576 | Context window (tokens). All input + output must fit. | KV cache ≈ 90KB/token for Qwen3-VL-4B. 24576 uses ~2.15GB. Can push to 32768 (~2.87GB) if builds don't OOM. |
+| `num_predict` | 8192 | Max output tokens (overridden per-call by env vars). | Modelfile-level default. Per-call overrides (`LLM_MAX_TOKENS`, `LLM_ASK_TOKENS`) take precedence. Thinking model needs generous budget (think tokens + response). |
 | `num_thread` | 8 | CPU threads for inference. | Match your physical core count. 8 for Snapdragon 8 Elite, 4 for typical laptops. |
 | `num_gpu` | 0 | GPU layers to offload. 0 = pure CPU. | Set to 99 (all layers) if you have a GPU. Partial offload: try 20-40. |
-| `temperature` | 0.2 | Randomness. Lower = more deterministic. | 0.1-0.3 for coding, 0.5-0.8 for creative tasks. |
-| `top_p` | 0.85 | Nucleus sampling threshold. | Lower (0.7) for focused output, higher (0.95) for variety. |
-| `repeat_penalty` | 1.1 | Penalty for repeating tokens. | 1.0 = no penalty, 1.2+ = aggressive anti-repetition. |
+| `temperature` | 1.0 | Randomness. Unsloth-recommended for thinking models. | 1.0 with top_k=20 lets the model explore during thinking, then converge on the answer. |
+| `top_p` | 0.95 | Nucleus sampling threshold. | Lower (0.7) for focused output, higher (0.95) for variety. |
+| `top_k` | 20 | Top-K sampling. Limits token candidates per step. | Unsloth-recommended. Keeps generation focused despite high temperature. |
+| `repeat_penalty` | 1.0 | Penalty for repeating tokens. | 1.0 = no penalty. The presence_penalty handles anti-repetition instead. |
+| `presence_penalty` | 1.5 | Penalty for tokens already in context. | Unsloth-recommended. Encourages diverse output and reduces loops. |
 | `stop` | `<\|im_end\|>` | Stop sequence. Model-specific. | Check your model's chat template for the correct stop token. |
 
 ### Context Window Math
@@ -155,18 +157,18 @@ The golden rule: **input tokens + output tokens must fit in `num_ctx`**.
 
 ```
 num_ctx = Modelfile_SYSTEM + system_prompt + user_prompt + output
-16384  =     ~300         +   variable    +   variable  + num_predict
+24576  =     ~300         +   variable    +   variable  + num_predict
 ```
 
-Budget breakdown by mode:
+Budget breakdown by mode (thinking model — think tokens included in output budget):
 
 | Mode | System prompt | User prompt | Output budget | Remaining |
-|------|---------------|-------------|---------------|----------|
-| ask | ~250 (condensed soul) | ~20 | 300 | ~15,814 |
-| plan (light) | ~700 (condensed soul + catalog) | ~100 | 512 | ~15,072 |
-| plan (dense) | ~5,000 (full soul + catalog) | ~100 | 512 | ~10,772 |
-| task | ~3,500 | ~100 | 2,048 | ~10,736 |
-| inner loop | ~500 (router or specialist) | ~200 | 300 | ~15,384 |
+|------|---------------|-------------|---------------|---------|
+| ask | ~250 (condensed soul) | ~20 | 512 | ~23,794 |
+| plan (light) | ~700 (condensed soul + catalog) | ~100 | 1,024 | ~22,752 |
+| plan (dense) | ~5,000 (full soul + catalog) | ~100 | 1,024 | ~18,452 |
+| task | ~3,500 | ~100 | 4,096 | ~16,880 |
+| inner loop | ~500 (router or specialist) | ~200 | 2,048 | ~21,828 |
 
 > **Note:** The Modelfile SYSTEM (~300 tokens) is overridden whenever a system prompt is passed via `llm_generate`/`llm_stream`. The inner loop (router + specialist) deliberately strips all personality for speed.
 
@@ -194,8 +196,8 @@ George works with any Ollama-compatible model. Tested recommendations:
 
 | Model | Size | RAM needed | Context | Notes |
 |-------|------|-----------|---------|-------|
-| Qwen3-4B Q5_K_M | ~4.5GB | 6-8GB | 8K-32K | Default. Great for mobile. |
-| Qwen3-1.7B Q5_K_M | ~1.5GB | 3-4GB | 8K | Very fast. Less capable. |
+| Qwen3-VL-4B-Thinking UD-Q6_K_XL | ~4.5GB | 8-12GB | 24K | Default. Vision + thinking. Optimized for mobile. |
+| Qwen3-4B Q5_K_M | ~4.5GB | 6-8GB | 8K-32K | Text-only fallback. |
 | Qwen3-8B Q5_K_M | ~6GB | 10-12GB | 32K | More capable. Needs more RAM. |
 | Llama 3.1 8B Q4_K_M | ~5GB | 8-10GB | 8K-128K | Excellent code reasoning. |
 | DeepSeek-Coder-V2-Lite Q4 | ~2.5GB | 4-6GB | 16K | Coding specialist. |
@@ -282,7 +284,7 @@ If the model produces runaway output, check your stop token first.
 
 ## Performance Tuning for Mobile
 
-George's default configuration targets the Galaxy Fold 7 (Snapdragon 8 Elite, 12GB RAM, 100% CPU inference) with a **16K context window** (`num_ctx=16384`). This provides generous headroom for task execution while keeping the model's KV cache under ~4.44GB. Here's how to squeeze better performance:
+George's default configuration targets the Galaxy Fold 7 (Snapdragon 8 Elite, 12GB RAM, 100% CPU inference) with a **24K context window** (`num_ctx=24576`). The thinking model (Qwen3-VL-4B UD-Q6_K_XL) weighs 4.5GB with ~2.15GB KV cache, totaling ~6.65GB loaded — leaving ~2.25GB free for builds. Here's how to squeeze better performance:
 
 ### Reduce prefill time (prompt processing)
 
@@ -297,7 +299,7 @@ The biggest bottleneck on CPU is processing the system prompt. Options:
 PARAMETER num_ctx 4096
 ```
 
-> **Note:** The default `num_ctx=16384` was chosen to balance task quality (more journal, recall, and conversation history) with RAM usage (~4.44GB for Qwen3-4B Q5_K_M). If RAM is tight, 8192 still works — George's enrichments scale down gracefully.
+> **Note:** The default `num_ctx=24576` balances thinking model capability with RAM headroom on 12GB devices (4.5GB weights + 2.15GB KV = 6.65GB). Can push to `num_ctx=32768` (~2.87GB KV, ~7.37GB total) if builds don't OOM. George's enrichments scale down gracefully.
 
 ### Reduce generation time
 
@@ -380,7 +382,7 @@ These are hardcoded to sensible defaults. To change them, modify the correspondi
 
 - Your total input + output exceeds `num_ctx`
 - Reduce `LLM_MAX_TOKENS` or increase `num_ctx` in the Modelfile
-- Run `/compact` to compress CLAUDE.md
+- Run `/compact` to compress GEORGE.md
 
 ### "Model unloads between commands"
 

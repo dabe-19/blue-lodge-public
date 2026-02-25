@@ -38,11 +38,11 @@ describe "memory_read_soul"
 # ── memory_init ────────────────────────────────────────────────
 describe "memory_init"
 
-  it "creates CLAUDE.md with project name" && {
+  it "creates GEORGE.md with project name" && {
     _setup_mem
     memory_init "$TMPDIR_MEM" "TestProject" "Rust" "cargo build" "cargo test" >/dev/null 2>&1
-    assert_file_exists "$TMPDIR_MEM/CLAUDE.md"
-    content=$(cat "$TMPDIR_MEM/CLAUDE.md")
+    assert_file_exists "$TMPDIR_MEM/GEORGE.md"
+    content=$(cat "$TMPDIR_MEM/GEORGE.md")
     assert_contains "$content" "TestProject"
     assert_contains "$content" "Rust"
     assert_contains "$content" "cargo build"
@@ -50,25 +50,25 @@ describe "memory_init"
     _teardown_mem
   }
 
-  it "creates CLAUDE.md with defaults" && {
+  it "creates GEORGE.md with defaults" && {
     _setup_mem
     memory_init "$TMPDIR_MEM" >/dev/null 2>&1
-    assert_file_exists "$TMPDIR_MEM/CLAUDE.md"
+    assert_file_exists "$TMPDIR_MEM/GEORGE.md"
     _teardown_mem
   }
 
 # ── memory_read_project ───────────────────────────────────────
 describe "memory_read_project"
 
-  it "reads CLAUDE.md from a directory" && {
+  it "reads GEORGE.md from a directory" && {
     _setup_mem
-    echo "# Test Project" > "$TMPDIR_MEM/CLAUDE.md"
+    echo "# Test Project" > "$TMPDIR_MEM/GEORGE.md"
     result=$(memory_read_project "$TMPDIR_MEM")
     assert_contains "$result" "Test Project"
     _teardown_mem
   }
 
-  it "returns empty for missing CLAUDE.md" && {
+  it "returns empty for missing GEORGE.md" && {
     _setup_mem
     result=$(memory_read_project "$TMPDIR_MEM")
     assert_empty "$result"
@@ -78,7 +78,7 @@ describe "memory_read_project"
 # ── memory_get_section ─────────────────────────────────────────
 describe "memory_get_section"
 
-  it "extracts a section from CLAUDE.md" && {
+  it "extracts a section from GEORGE.md" && {
     _setup_mem
     memory_init "$TMPDIR_MEM" "Test" "Shell" "bash run.sh" "bash test.sh" >/dev/null 2>&1
     result=$(memory_get_section "Type" "$TMPDIR_MEM")
@@ -194,7 +194,7 @@ describe "memory_build_system_prompt"
     _teardown_mem
   }
 
-  it "includes CLAUDE.md when present" && {
+  it "includes GEORGE.md when present" && {
     _setup_mem
     memory_init "$TMPDIR_MEM" "PromptTest" >/dev/null 2>&1
     prompt=$(memory_build_system_prompt "$TMPDIR_MEM")

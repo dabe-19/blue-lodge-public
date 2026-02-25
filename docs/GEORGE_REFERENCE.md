@@ -133,7 +133,7 @@ Shell: plain directory with bin/.
 
 /init <name> <lang> — scaffold a new project.
 Types: rust, python, rl, data, automation, notebook, shell.
-Creates sandbox + CLAUDE.md + starter code.
+Creates project dir + GEORGE.md + starter code.
 Name must have no spaces. Language is fuzzy-matched.
 
 ## Write Save Files
@@ -150,8 +150,8 @@ Default dest: current directory with original filename.
 
 ## Build Test Fix Commit Push
 
-/build [release] — build project (reads CLAUDE.md ## Build).
-/test [args] — run tests (reads CLAUDE.md ## Test).
+/build [release] — build project (reads GEORGE.md ## Build).
+/test [args] — run tests (reads GEORGE.md ## Test).
 /fix [error] — diagnose and fix errors.
 /commit [msg] — generate AI commit message and commit.
 /push — push to GitHub (requires SSH key setup).
@@ -160,7 +160,7 @@ Default dest: current directory with original filename.
 
 /clone <url> — clone and setup a repository.
 Auto-converts HTTPS to SSH URLs.
-Creates sandbox, clones, writes CLAUDE.md.
+Creates sandbox, clones, writes GEORGE.md.
 
 ## Git Setup Configuration
 
@@ -336,7 +336,7 @@ Each milestone is one actionable step with a slash command.
 /files — list workspace files (max 2 levels deep).
 /read <file> — read a file's contents.
 /status — show agent status and current project.
-/memory — show CLAUDE.md project memory.
+/memory — show GEORGE.md project memory.
 
 ## Cleanup Operations
 

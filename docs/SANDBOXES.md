@@ -60,7 +60,7 @@ lodge /sandbox journal
 ├── myapp/              ← Rust sandbox
 │   ├── Cargo.toml
 │   ├── src/
-│   ├── CLAUDE.md       ← George's project memory
+│   ├── GEORGE.md       ← George's project memory
 │   └── tmp/
 ├── scraper/            ← Python sandbox
 │   ├── pyproject.toml
@@ -71,7 +71,7 @@ lodge /sandbox journal
 ```
 
 Each sandbox is a fully self-contained project directory. George maintains a
-separate `CLAUDE.md` for every sandbox, so project-specific context (task
+separate `GEORGE.md` for every sandbox, so project-specific context (task
 history, key files, errors) never bleeds between projects.
 
 **Key properties:**
@@ -80,7 +80,7 @@ history, key files, errors) never bleeds between projects.
 |----------|----------|
 | Location | `~/.lodge-sandboxes/<name>/` |
 | Git | Auto-initialized on creation |
-| Memory | Per-project `CLAUDE.md` generated on init/clone |
+| Memory | Per-project `GEORGE.md` generated on init/clone |
 | Temp | Each sandbox has its own `tmp/` directory |
 | Permissions | Configurable per-sandbox (0/1/2) |
 
@@ -460,7 +460,7 @@ george> Run this through Kali: msfconsole -q -x "search eternalblue; exit"
 - **Always** review every command before approving
 - **Network audit mode** (`/security network on`) will block network tools —
   disable it for pentest work: `/security network off`
-- Keep pentest notes in the sandbox: George maintains `CLAUDE.md` with
+- Keep pentest notes in the sandbox: George maintains `GEORGE.md` with
   findings per-sandbox
 
 ### Useful Pentest Workflow Commands
@@ -538,7 +538,7 @@ lodge /sandbox cd project-a
 # ... work on project-a ...
 
 lodge /sandbox cd project-b
-# George now reads project-b's CLAUDE.md
+# George now reads project-b's GEORGE.md
 ```
 
 ### Using Shell Aliases

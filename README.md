@@ -8,7 +8,7 @@ Cloud-based coding agents like Claude Code don't work with small local models. T
 
 - **Calls Ollama directly** — no proxy, no API keys, no internet needed
 - **Uses small, focused prompts** — ~1-2K tokens per step, fits in 16K context
-- **Persists memory to files** — `CLAUDE.md` for projects, `journal.md` for the agent's living memory
+- **Persists memory to files** — `GEORGE.md` for projects, `journal.md` for the agent's living memory
 - **Runs entirely in bash** — no Node.js, no Python runtime, no Docker
 - **Manages model memory** — automatically loads/unloads the LLM to share 12GB RAM with your builds
 - **Handles cancellation gracefully** — Ctrl+C kills the request, unloads the model, returns to the prompt
@@ -34,14 +34,14 @@ lodge /ask "what is a monad?"      # Quick question
 ~/blue-lodge/
 ├── lodge              # Main TUI shell (entry point)
 ├── update.sh          # Safe update with identity preservation
-├── Modelfile          # Ollama model definition (Qwen3-4B Q5_K_M)
+├── Modelfile          # Ollama model definition (Qwen3-VL-4B-Thinking UD-Q6_K_XL)
 ├── soul.md            # George's personality & ethical framework
 ├── journal.md         # George's living memory (auto-managed)
 ├── SECURITY.md        # Security audit & threat model
 ├── lib/
 │   ├── ui.sh          # TUI rendering (ANSI colors, spinners, prompts)
 │   ├── llm.sh         # Ollama API: generate, stream, chat, cancel, unload
-│   ├── memory.sh      # CLAUDE.md read/write/compact
+│   ├── memory.sh      # GEORGE.md read/write/compact
 │   ├── agent.sh       # Plan → Execute → Memory loop with cancellation
 │   ├── tools.sh       # File/shell operations + phone integration
 │   ├── commands.sh    # Slash command dispatcher
@@ -98,7 +98,7 @@ lodge /ask "what is a monad?"      # Quick question
 | `/push [branch]` | `lgp` | Push to GitHub |
 | `/clone <repo>` | `lgcl` | Clone + auto-setup a repo |
 | `/status` | `lgs` | Show agent + device status |
-| `/memory` | `lgm` | Show current CLAUDE.md |
+| `/memory` | `lgm` | Show current GEORGE.md |
 | `/soul` | — | Toggle soul intensity (condensed/full) |
 | `/journal <cmd>` | — | View/write journal (show/vivid/fading/sediment/write/decay) |
 | `/reflect` | — | Record a reflection in journal |
@@ -150,7 +150,7 @@ On startup, George chunks his knowledge sources by `##` headers and indexes them
 | `readme` | `README.md` | George's architecture, commands, features |
 | `soul` | `soul.md` | Personality, ethics, identity |
 | `journal` | `journal.md` | Living memory (reflections, learnings) |
-| `claude` | `CLAUDE.md` | Current project memory |
+| `george` | `GEORGE.md` | Current project memory |
 
 The index auto-rebuilds when any source file changes (mtime tracking). Total overhead: **~100-200KB on disk, <1ms per query, 0 RAM**.
 
@@ -238,9 +238,9 @@ $ lodge /fix
 
 ## Memory System
 
-George uses `CLAUDE.md` files (compatible with the Claude Code convention) as persistent project memory:
+George uses `GEORGE.md` files as persistent project memory:
 
-- **Per-project**: Each project gets its own `CLAUDE.md` tracking tasks, plans, errors, and key files
+- **Per-project**: Each project gets its own `GEORGE.md` tracking tasks, plans, errors, and key files
 - **Global personality**: `soul.md` defines the agent's behavior, ethics, and working style
 - **Living journal**: `journal.md` stores the agent's reflections with temporal decay — recent memories are vivid, old ones fade into impressions, the oldest dissolve into character
 - **Auto-compact**: Old completed steps are compressed to keep token count low
@@ -276,10 +276,10 @@ export LODGE_TERMUX_API=1     # Enable Termux-API features (battery, WiFi, GPS, 
 Ctrl+C is always safe:
 
 - **During generation** → kills the HTTP request to Ollama, unloads the model, returns to the REPL
-- **Between steps** → stops the task, records progress in CLAUDE.md, returns to the REPL
+- **Between steps** → stops the task, records progress in GEORGE.md, returns to the REPL
 - **At the prompt** → exits cleanly, unloads the model
 
-All persistence (CLAUDE.md, journal) lives in files, not model state. Unloading the model never loses progress.
+All persistence (GEORGE.md, journal) lives in files, not model state. Unloading the model never loses progress.
 
 ## Sandboxes
 
@@ -619,7 +619,7 @@ lodge /wallet status                              # Wallet overview
 
 ## Model
 
-Ships with **Qwen3-4B-Instruct** (Q5_K_M quantization) via Ollama. ~3GB download, ~4.44GB loaded RAM at the default 16K context window (`num_ctx=16384`).
+Ships with **Qwen3-VL-4B-Thinking** (UD-Q6_K_XL quantization by Unsloth) via Ollama. ~4.5GB download, ~6.65GB loaded RAM at the default 24K context window (`num_ctx=24576`). Vision-capable with built-in thinking/reasoning.
 
 Swap the model by editing `Modelfile`:
 
@@ -729,7 +729,7 @@ lodge /backup git clone <url>    # Set up George from a backup on a new machine
 | `journal.md` | Living memory with temporal decay |
 | `Modelfile` | LLM configuration |
 | `keys.conf` | API keys (~/.george/keys.conf) |
-| `CLAUDE.md` | Per-project memory (collected from all projects) |
+| `GEORGE.md` | Per-project memory (collected from all projects) |
 
 ## Updating George
 
@@ -848,7 +848,7 @@ bash tests/test_api.sh                     # Run a single file directly
 | `test_journal.sh` | 21 | Temporal memory, decay, greetings |
 | `test_llm.sh` | 23 | LLM config, token estimation, cancellation |
 | `test_lodge.sh` | 38 | Main script, command wiring, soul toggle, REPL heuristic |
-| `test_memory.sh` | 30 | CLAUDE.md sections, compaction, snapshots, soul toggle |
+| `test_memory.sh` | 30 | GEORGE.md sections, compaction, snapshots, soul toggle |
 | `test_providers.sh` | 32 | 10 AI providers, dispatcher, aliases |
 | `test_sandbox.sh` | 15 | Sandbox lifecycle, build, remove |
 | `test_email.sh` | 65 | Gmail/ProtonMail/Zoho/Tuta providers, SMTP/IMAP, bridge |

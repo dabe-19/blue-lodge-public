@@ -193,11 +193,14 @@ _cmd_snapshot() {
 }
 _cmd_memory() {
     local dir="${2:-.}"
-    if [ -f "$dir/CLAUDE.md" ]; then
-        ui_section "CLAUDE.md"
+    if [ -f "$dir/GEORGE.md" ]; then
+        ui_section "GEORGE.md"
+        cat "$dir/GEORGE.md"
+    elif [ -f "$dir/CLAUDE.md" ]; then
+        ui_section "GEORGE.md (legacy)"
         cat "$dir/CLAUDE.md"
     else
-        ui_warn "No CLAUDE.md in current directory"
+        ui_warn "No GEORGE.md in current directory"
     fi
     echo ""
 }
@@ -390,8 +393,9 @@ _cmd_status() {
     printf "  %bWorkdir:%b   %s\n" "$C_CYAN" "$C_RESET" "$PWD"
     printf "  %bPermission:%b %s\n" "$C_CYAN" "$C_RESET" "$([ "$LODGE_PERMISSION" -eq 0 ] && echo 'ask-all' || ([ "$LODGE_PERMISSION" -eq 1 ] && echo 'ask-destructive' || echo 'auto'))"
     local mem_exists="no"
-    [ -f "./CLAUDE.md" ] && mem_exists="yes"
-    printf "  %bCLAUDE.md:%b %s\n" "$C_CYAN" "$C_RESET" "$mem_exists"
+    [ -f "./GEORGE.md" ] && mem_exists="yes"
+    [ "$mem_exists" = "no" ] && [ -f "./CLAUDE.md" ] && mem_exists="yes (legacy)"
+    printf "  %bGEORGE.md:%b %s\n" "$C_CYAN" "$C_RESET" "$mem_exists"
     local j_count
     j_count=$(journal_count)
     printf "  %bJournal:%b   %s entries\n" "$C_CYAN" "$C_RESET" "$j_count"
@@ -2514,7 +2518,7 @@ _register_commands() {
     commands_register "ask"      "Quick question (no actions)" "_cmd_ask"
     commands_register "compact"  "Compress memory file" "_cmd_compact"
     commands_register "snapshot" "Save memory checkpoint" "_cmd_snapshot"
-    commands_register "memory"   "Show CLAUDE.md contents" "_cmd_memory"
+    commands_register "memory"   "Show GEORGE.md contents" "_cmd_memory"
     commands_register "soul"     "Toggle soul mode on/off (full personality)" "_cmd_soul"
     commands_register "limits"   "View/adjust agent planning limits" "_cmd_limits"
     commands_register "status"   "Show agent status" "_cmd_status"

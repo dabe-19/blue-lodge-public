@@ -353,12 +353,12 @@ describe "Dynamic dual-loop architecture"
     assert_ok $?
   }
 
-  it "macro strategist uses llm_stream for thinking visibility" && {
+  it "macro strategist uses llm_generate for clean output" && {
     local body
     body=$(declare -f agent_run)
-    # The strategist milestone call should use llm_stream (not llm_generate)
-    # so that thinking tokens stream live when /think is enabled.
-    echo "$body" | grep -q 'llm_stream.*macro_prompt.*macro_sys'
+    # The strategist milestone call should use llm_generate (not llm_stream)
+    # so that milestone text doesn't appear twice (once streamed, once via ui_info).
+    echo "$body" | grep -q 'llm_generate.*macro_prompt.*macro_sys'
     assert_ok $?
   }
 

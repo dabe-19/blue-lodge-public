@@ -310,7 +310,7 @@ _agent_parse_steps() {
 # ── Recursively plan and execute a subtask ─────────────────────
 # Called when a step is prefixed with [SUBTASK]. Plans the subtask
 # as a new mini-task and executes each sub-step, respecting depth.
-# Parent context is injected into CLAUDE.md so the subtask knows
+# Parent context is injected into GEORGE.md so the subtask knows
 # what the overall task is and what has been completed so far.
 _agent_run_subtask() {
     local task="$1"
@@ -594,29 +594,80 @@ _build_specialist_prompt() {
         echo ""
 
         # Extract docs for the specific command.
-        # Strategy: grep the command reference table from SLASH_COMMANDS.md,
-        # then fall back to recall, then to commands_catalog_plan.
+        # Strategy: 1) GEORGE_REFERENCE.md section, 2) SLASH_COMMANDS.md table,
+        # 3) recall FTS5, 4) plan catalog. Each layer adds detail.
         local docs=""
+        local base_cmd="${cmd_name#/}"
 
-        # 1. Try table rows matching the command from the Command Reference
+        # 1. Try to extract the full reference card from GEORGE_REFERENCE.md
+        #    These are self-contained FTS5-optimized knowledge cards.
+        if [ -f "$LODGE_DIR/docs/GEORGE_REFERENCE.md" ]; then
+            # Extract the section that matches the command (case-insensitive)
+            local _ref_section
+            _ref_section=$(awk -v cmd="$base_cmd" '
+                BEGIN { IGNORECASE=1; found=0 }
+                /^## / {
+                    if (found) exit
+                    if (tolower($0) ~ tolower(cmd)) { found=1 }
+                }
+                found { print }
+            ' "$LODGE_DIR/docs/GEORGE_REFERENCE.md" 2>/dev/null | head -20)
+            [ -n "$_ref_section" ] && docs="$_ref_section"
+        fi
+
+        # 2. Try table rows from SLASH_COMMANDS.md for additional syntax
         if [ -f "$LODGE_DIR/docs/SLASH_COMMANDS.md" ]; then
-            docs=$(grep -E "^\| \`$cmd_name" "$LODGE_DIR/docs/SLASH_COMMANDS.md" 2>/dev/null | head -8)
+            local _table_docs
+            _table_docs=$(grep -E "^\| \`$cmd_name" "$LODGE_DIR/docs/SLASH_COMMANDS.md" 2>/dev/null | head -8)
+            [ -n "$_table_docs" ] && docs="${docs:+$docs\n\n}$_table_docs"
         fi
 
-        # 2. Fall back to recall FTS5 search for richer docs
+        # 3. Fall back to recall FTS5 search for richer docs
         if [ -z "$docs" ] && declare -f recall_search_context &>/dev/null; then
-            docs=$(recall_search_context "$cmd_name" 2 2>/dev/null)
+            docs=$(recall_search_context "$base_cmd" 3 2>/dev/null)
         fi
 
-        # 3. Last resort: extract from the plan catalog
+        # 4. Last resort: extract from the plan catalog
         if [ -z "$docs" ] && declare -f commands_catalog_plan &>/dev/null; then
-            docs=$(commands_catalog_plan 2>/dev/null | grep -i "${cmd_name#/}" | head -5)
+            docs=$(commands_catalog_plan 2>/dev/null | grep -i "$base_cmd" | head -8)
         fi
 
         if [ -n "$docs" ]; then
-            echo "COMMAND DOCUMENTATION:"
-            echo "$docs"
+            echo "COMMAND DOCUMENTATION (read carefully before generating command):"
+            echo -e "$docs"
         fi
+
+        # ── Command-specific behavioral hints ────────────────
+        # These address recurring failure patterns observed in real usage.
+        case "$base_cmd" in
+            social)
+                echo ""
+                echo "SOCIAL COMMAND RULES:"
+                echo "- Discord posting: /social post discord <channel_name> <text>"
+                echo "  ALWAYS include the channel name (e.g. lunkers, general). Never omit it."
+                echo "- @mentions: Write @DisplayName naturally in the text. Auto-resolved to <@user_id>."
+                echo "  Example: Hey @Pompler check this out → resolves Pompler by display_name."
+                echo "- Do NOT use hashtags like #channel in the text. Channel goes BEFORE the text."
+                echo "- Do NOT wrap any arguments in quotes."
+                ;;
+            init)
+                echo ""
+                echo "INIT COMMAND RULES:"
+                echo "- /init <name> <type> — name MUST have no spaces (use underscores)."
+                echo "- Creates a project directory, cd's into it, generates GEORGE.md, starter code, git init."
+                echo "- After /init, you are INSIDE the project. Use /write to add files, /build to build."
+                echo "- Types: rust, python, rl, data, automation, notebook, shell"
+                echo "- The project gets GEORGE.md with ## Build and ## Test sections for /build and /test."
+                ;;
+            write)
+                echo ""
+                echo "WRITE COMMAND RULES:"
+                echo "- /write <filepath> <content> — filepath relative to current project dir."
+                echo "- Creates parent directories automatically."
+                echo "- Content is everything after the filepath (no quoting needed)."
+                echo "- For multi-line content, use \\n for newlines."
+                ;;
+        esac
 
         # Inject previous search results for /web commands so the
         # specialist can reference URLs from prior searches in
@@ -734,9 +785,13 @@ agent_inner_loop() {
         # sed -e 's/[[:space:]]*$//' : Strips trailing whitespace.
         selected_tool=$(echo "$selected_tool" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
-        # Extract just the base command name (first word, strip leading /)
+        # Extract just the base command name (first word of FIRST line, strip leading /)
         # Router sometimes outputs "/ask" or "/web search" or noise.
-        selected_tool=$(echo "$selected_tool" | awk '{print $1}' | sed 's|^/||; s|^/||')
+        # CRITICAL: head -1 ensures multi-line router output (the router
+        # sometimes regurgitates the entire command) only yields the first
+        # line. Without this, awk emits one word per line and the tool
+        # name becomes a multi-line string that fails file existence checks.
+        selected_tool=$(echo "$selected_tool" | head -1 | awk '{print $1}' | sed 's|^/||; s|^/||')
 
         # ── TOOL VALIDATION: Reject hallucinated commands ─────
         # If the router outputs a tool name that doesn't exist in the
@@ -796,8 +851,12 @@ agent_inner_loop() {
         # multi-step objectives fail because the specialist can't adapt.
         local specialist_prompt="MICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\nWrite the exact command to execute next."
 
+        # Use llm_generate (non-streaming) for the specialist. The output
+        # is a single command line that will be displayed by "Running: ..."
+        # below. Streaming it first wastes time showing the same text twice
+        # and confuses the user with redundant output.
         local action_plan
-        action_plan=$(llm_stream "$specialist_prompt" "$specialist_sys" "${LLM_AGENT_TOKENS:-512}")
+        action_plan=$(llm_generate "$specialist_prompt" "$specialist_sys" "${LLM_AGENT_TOKENS:-512}")
 
         # Cancel check after specialist LLM call
         if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
@@ -1100,7 +1159,7 @@ Output a slash command line starting with / OR a bash code block."
 #   Macro Loop: Determines the next high-level milestone.
 #   Micro Loop: Executes via agent_inner_loop.
 #
-# Memory Architecture (all legacy CLAUDE.md references eradicated):
+# Memory Architecture (all legacy CLAUDE.md references migrated to GEORGE.md):
 #   macro_memory.md — Persona seed + objective + completed milestones.
 #   micro_memory.md — Overwritten per micro-objective (managed by inner loop).
 #   failures_log.md — Isolated stderr graveyard (managed by inner loop).
@@ -1243,7 +1302,11 @@ Rules:
 
         ui_think "Strategist: determining next milestone..."
         local milestone
-        milestone=$(llm_stream "$macro_prompt" "$macro_sys" "${LLM_AGENT_TOKENS:-512}")
+        # Use llm_generate (non-streaming) for the strategist. The output
+        # is a brief milestone description displayed once by ui_info below.
+        # Previously llm_stream showed it live, then ui_info showed it again,
+        # then the specialist streamed it a third time — tripling the output.
+        milestone=$(llm_generate "$macro_prompt" "$macro_sys" "${LLM_AGENT_TOKENS:-512}")
 
         # Strip whitespace for clean comparison
         milestone=$(echo "$milestone" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')

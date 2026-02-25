@@ -105,7 +105,7 @@ George automatically indexes these files on startup:
 | `sandboxes` | `docs/SANDBOXES.md` | Sandbox and isolation guide |
 | `vault` | `docs/SECRETS_VAULT.md` | Encrypted secrets vault |
 | `journal` | `journal.md` | George's living memory (with decay) |
-| `claude` | `./CLAUDE.md` | Current project memory |
+| `george` | `./GEORGE.md` | Current project memory |
 
 **User-ingested documents** are stored with a `doc:` prefix (e.g.,
 `doc:research-paper`).
@@ -215,7 +215,7 @@ George's system prompt includes:
 ```
 
 This gives George contextual knowledge even when the information isn't in
-his core personality (soul.md) or project memory (CLAUDE.md).
+his core personality (soul.md) or project memory (GEORGE.md).
 
 ### During /ask (Lean Mode)
 

@@ -199,34 +199,53 @@ commands_catalog_plan() {
     cat << 'PLANCAT'
 --- COMMANDS (use ONLY these — /recall <cmd> for syntax) ---
 NOTE: Do NOT quote arguments. Slash commands parse by spaces, not shell quoting.
-/ask <question>      — Quick answer (no plan needed)
-/init <name> <lang>  — Scaffold project (name=no_spaces, lang: rust, python, shell, etc.)
-/recall <query>      — Search knowledge base
-/save <file> <text>  — Save content to file
-/write <file> <text> — Write/overwrite a file
-/download <url> [dest] — Download a URL
+
+CODING & PROJECT COMMANDS:
+/init <name> <lang>  — Scaffold a new project directory with GEORGE.md, starter code, git init.
+                       Creates: <name>/GEORGE.md, <name>/src/ or <name>/main.py, <name>/.gitignore
+                       After /init, George is cd'd INTO the project and can use /write, /build, /test.
+                       Types: rust, python, rl, data, automation, notebook, shell
+                       Example: /init pid_tuner python → creates pid_tuner/ with Python project
+/write <file> <text> — Write/overwrite a file (creates parent dirs). Use for adding code to a project.
+/save <file> <text>  — Save content to file (alias for /write)
+/build [release]     — Build project (reads GEORGE.md ## Build for the build command)
+/test [args]         — Run tests (reads GEORGE.md ## Test for the test command)
+/fix [error]         — Diagnose and fix errors
+/commit [msg]        — AI commit message + commit
+/push                — Push to GitHub
 /sandbox new <name> [type] — Create sandbox (ONLY for building code projects)
 /sandbox build|test|run|cd|rm <name> — Sandbox operations
 /sandbox clone <url> [name] — Clone repo into sandbox
 /clone <url>         — Clone and setup a repo
-/build [release]     — Build project
-/test [args]         — Run tests
-/fix [error]         — Diagnose and fix
-/commit [msg]        — AI commit message + commit
-/push                — Push to GitHub
+
+RESEARCH & KNOWLEDGE:
+/ask <question>      — Quick answer (no plan needed)
+/recall <query>      — Search knowledge base
 /web search <query>  — Web search
+/web fetch <url>     — Fetch and extract content from a URL
 /github search <q>   — Find GitHub repos
-/journal write <text> — Write to journal
-/social post discord <channel> <text> — Post to Discord channel (resolves names)
+/download <url> [dest] — Download a URL
+
+SOCIAL & COMMUNICATION:
+/social post discord <channel> <text> — Post to a specific Discord channel.
+    Channel resolves by name (e.g. lunkers, general). Use the CHANNEL NAME, not ID.
+    @mentions auto-resolve: write @Pompler in text and it becomes <@275067416239669260>.
+    Resolves by display_name AND username, so @Pompler works even though username is pomps5246.
+    ALWAYS specify the channel name. Do NOT omit it.
+/social discord read <channel> — Read recent messages from a channel.
+/social discord dm <user> <text> — DM a Discord user
+/social discord users sync   — Sync Discord user list (run this if @mentions don't resolve)
+/social discord channels sync — Sync Discord channels
 /social post telegram <text>  — Post to Telegram
 /social post x <text>        — Post to X/Twitter
 /social post mastodon <text> — Post to Mastodon
-/social discord dm <user> <text> — DM a Discord user
-/social discord users sync   — Sync Discord user list
-/social discord channels sync — Sync Discord channels
-/social mastodon instances add <url> <token> — Register Mastodon instance
-/pgp sign <msg>      — PGP-sign a message
 /email send <to> <subj> <body> — Send email (ONLY for actual email, not social posts)
+
+MEMORY & JOURNAL:
+/journal write <text> — Write to journal (living memory)
+
+UTILITIES:
+/pgp sign <msg>      — PGP-sign a message
 /phone               — Phone dashboard
 /secret set|get <k>  — Encrypted secrets
 /slash create <name> <desc> — Create custom command
@@ -237,6 +256,9 @@ RULES:
 - Slash commands run directly — do NOT use /sandbox to run slash commands
 - To post to Discord/Telegram/X, use /social (not /email)
 - /email is ONLY for actual email addresses, NEVER for social platforms
+- For Discord: ALWAYS include the channel name. Format: /social post discord <channel> <text>
+- @mentions in Discord text auto-resolve to Discord format — just write @Username naturally
+- After /init: you are INSIDE the project dir. Use /write to create files, /build to build.
 - Check SERVICES section below for what is actually configured
 
 MEMORY LOOP — How to read, remember, and respond:
@@ -364,8 +386,8 @@ Examples:
 /backup status         — Show backup system status
 /backup git save       — Commit current state to backup repo
 /backup github         — Save + push to GitHub
-/build [release]       — Build the project (reads CLAUDE.md ## Build)
-/test [args]           — Run tests (reads CLAUDE.md ## Test)
+/build [release]       — Build the project (reads GEORGE.md ## Build)
+/test [args]           — Run tests (reads GEORGE.md ## Test)
 /commit [msg]          — Generate AI commit message and commit
 /fix [error]           — Diagnose and fix errors
 /clone <url>           — Clone and setup a repository
@@ -379,7 +401,7 @@ Examples:
 /files                — List workspace files
 /read <file>          — Read a file
 /status               — Show agent status
-/memory               — Show CLAUDE.md
+/memory               — Show GEORGE.md
 /soul [on|off]        — Toggle full personality injection (on=full soul.md, off=Practical Craft only)
 /think [on|off|bright|dim|hide] — Toggle thinking mode
 /help [command]       — Show help for a command

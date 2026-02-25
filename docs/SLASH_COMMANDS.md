@@ -256,7 +256,7 @@ sequenceDiagram
     P->>M: memory_build_system_prompt(workdir, "", "plan")
     M->>C: commands_catalog()
     C-->>M: "--- YOUR WORKING COMMANDS ---<br/>/recall, /social, /pgp, /sandbox..."
-    M-->>P: system_prompt with soul.md + CLAUDE.md + catalog
+    M-->>P: system_prompt with soul.md + GEORGE.md + catalog
     P->>LLM: llm_stream(task, system_prompt)
     Note over LLM: George sees his command catalog<br/>in the system prompt and plans<br/>with slash commands
     LLM-->>P: "1. /recall docker setup<br/>2. Summarize the results<br/>3. /pgp sign <summary><br/>4. /social post <signed summary>"
@@ -474,7 +474,7 @@ Missing tools produce a clear error with install instructions.
 
 ### Existing Project Guard
 
-If the CWD already contains `CLAUDE.md`, `Cargo.toml`, or
+If the CWD already contains `GEORGE.md`, `Cargo.toml`, or
 `pyproject.toml`, `/init` refuses to run (prevents nesting projects).
 
 ### Fuzzy Type Resolver
@@ -583,7 +583,7 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 | `/files` | List workspace files | `/files` |
 | `/read <file>` | Read a file | `/read src/main.rs` |
 | `/status` | Agent status | `/status` |
-| `/memory` | Show CLAUDE.md | `/memory` |
+| `/memory` | Show GEORGE.md | `/memory` |
 | `/help [command]` | Show help | `/help pgp` |
 | `/email <cmd>` | Email (ProtonMail/Zoho/Tuta/disposable) | `/email send user@ex.com "Subject" "Body"` |
 | `/git <cmd>` | Git & GitHub configuration | `/git config` |

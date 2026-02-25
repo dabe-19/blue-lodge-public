@@ -8,7 +8,7 @@
 #   soul         — soul.md (personality & ethics)
 #   docs/*       — All .md files in docs/ and docs/examples/
 #   journal      — journal.md (living memory)
-#   claude       — CLAUDE.md (current project memory)
+#   george       — GEORGE.md (current project memory)
 #
 # New docs added to docs/ are automatically indexed on next reindex.
 #
@@ -217,8 +217,12 @@ _recall_all_sources() {
     # Living memory
     [ -f "$LODGE_DIR/journal.md" ] && echo "journal:$LODGE_DIR/journal.md"
 
-    # Current project memory
-    [ -f "./CLAUDE.md" ] && echo "claude:$PWD/CLAUDE.md"
+    # Current project memory (GEORGE.md preferred, CLAUDE.md fallback)
+    if [ -f "./GEORGE.md" ]; then
+        echo "george:$PWD/GEORGE.md"
+    elif [ -f "./CLAUDE.md" ]; then
+        echo "george:$PWD/CLAUDE.md"
+    fi
 }
 
 recall_needs_reindex() {
@@ -267,7 +271,7 @@ recall_reindex() {
 
     local total=0
 
-    # Index all sources (core docs + all docs/*.md + journal + CLAUDE.md)
+    # Index all sources (core docs + all docs/*.md + journal + GEORGE.md)
     while IFS=: read -r source filepath; do
         [ -f "$filepath" ] || continue
         recall_index_file "$source" "$filepath"

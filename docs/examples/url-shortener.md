@@ -10,7 +10,7 @@ This walkthrough shows Blue Lodge building a complete Python project — a URL s
 $ lodge /init shortener python
  ▸ Creating Python project with uv...
  ✓ Python sandbox ready
- ✓ CLAUDE.md initialized in .
+ ✓ GEORGE.md initialized in .
  ✓ Project 'shortener' (Data Project) created at /home/user/shortener
 ```
 
@@ -43,7 +43,7 @@ It generates and writes each file, runs commands, and verifies. Here's what the 
 
 ```
 shortener/
-├── CLAUDE.md        # Lodge's memory of the project
+├── GEORGE.md        # Lodge's memory of the project
 ├── main.py          # HTTP server (stdlib only)
 ├── urls.json        # URL mappings (auto-created)
 ├── test_api.sh      # Shell-based API tests
@@ -130,7 +130,7 @@ $ lodge /test
 $ lodge "add rate limiting — max 10 requests per minute per IP"
 ```
 
-Lodge reads CLAUDE.md (knows the project structure), plans a 3-step change, and applies it.
+Lodge reads GEORGE.md (knows the project structure), plans a 3-step change, and applies it.
 
 ## 7. Commit and push
 
@@ -156,6 +156,6 @@ $ lodge /push
 ## Key Observations
 
 - **No dependencies installed** — the URL shortener uses only Python stdlib
-- **Lodge remembered context** — when adding rate limiting, it already knew the project structure from CLAUDE.md
+- **Lodge remembered context** — when adding rate limiting, it already knew the project structure from GEORGE.md
 - **7 steps completed** — each step was one LLM call, keeping token usage low
-- **Total time** — ~5 minutes on Snapdragon 8 Elite with Qwen3-4B
+- **Total time** — ~5 minutes on Snapdragon 8 Elite with Qwen3-VL-4B-Thinking

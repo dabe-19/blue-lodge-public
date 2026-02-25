@@ -28,7 +28,7 @@ cmd_clone() {
     
     sandbox_clone "$url" "$name"
     
-    # Auto-detect project type and init CLAUDE.md
+    # Auto-detect project type and init GEORGE.md
     local dir="$LODGE_SANDBOXES/$name"
     if [ -d "$dir" ]; then
         cd "$dir"
@@ -42,7 +42,7 @@ cmd_clone() {
             type="Node.js"; build="npm run build"; test="npm test"
         fi
         
-        if [ ! -f "CLAUDE.md" ]; then
+        if [ ! -f "GEORGE.md" ] && [ ! -f "CLAUDE.md" ]; then
             source "$LODGE_DIR/lib/memory.sh"
             memory_init "." "$name" "$type" "$build" "$test"
         fi

@@ -10,7 +10,7 @@
 
 Blue Lodge executes LLM-generated code on a user's device. The primary threat vectors are:
 
-1. **Prompt injection** — A malicious task or CLAUDE.md file tricks the LLM into generating harmful commands
+1. **Prompt injection** — A malicious task or GEORGE.md file tricks the LLM into generating harmful commands
 2. **LLM hallucination** — The model generates destructive operations that weren't requested
 3. **Input injection** — Unsanitized user inputs reach shell evaluation
 4. **Data exfiltration** — LLM-generated commands send local files to external servers
@@ -80,7 +80,7 @@ Blue Lodge executes LLM-generated code on a user's device. The primary threat ve
 ### For Users
 
 1. **Keep `LODGE_PERMISSION` at `1`** (default) — Review destructive commands before execution
-2. **Review CLAUDE.md** periodically — A compromised CLAUDE.md could influence the LLM's decisions
+2. **Review GEORGE.md** periodically — A compromised GEORGE.md could influence the LLM's decisions
 3. **Don't run Blue Lodge as root** — Always run in a normal user context
 4. **Use sandboxes for untrusted repos** — `lodge /sandbox clone <repo>` isolates the project
 

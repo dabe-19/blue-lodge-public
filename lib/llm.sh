@@ -8,9 +8,9 @@ source "$LODGE_DIR/lib/ui.sh"
 # ── Config ─────────────────────────────────────────────────────
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
 LODGE_MODEL="${LODGE_MODEL:-blue-lodge}"
-LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-2048}"    # Default max output tokens (task mode)
-LLM_ASK_TOKENS="${LLM_ASK_TOKENS:-300}"     # Max output tokens for /ask (quick answers)
-LLM_AGENT_TOKENS="${LLM_AGENT_TOKENS:-1024}" # Max output tokens for agent specialist/strategist
+LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-4096}"    # Default max output tokens (task mode; thinking model needs headroom)
+LLM_ASK_TOKENS="${LLM_ASK_TOKENS:-512}"     # Max output tokens for /ask (quick answers + think tokens)
+LLM_AGENT_TOKENS="${LLM_AGENT_TOKENS:-2048}" # Max output tokens for agent specialist/strategist (think + response)
 LLM_ROUTER_TOKENS="${LLM_ROUTER_TOKENS:-50}" # Max output tokens for agent router (just a tool name)
 LLM_TIMEOUT="${LLM_TIMEOUT:-300}"           # Safety net: 300s max per request (Ctrl+C also works)
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
@@ -52,7 +52,7 @@ llm_is_loaded() {
 
 # ── Unload model from memory ───────────────────────────────────
 # Sends a request with keep_alive=0 to immediately free RAM.
-# Safe to call — does not affect CLAUDE.md or journal persistence.
+# Safe to call — does not affect GEORGE.md or journal persistence.
 llm_unload() {
     if llm_is_loaded; then
         curl -sf --max-time 10 "$OLLAMA_URL/api/generate" \
