@@ -290,19 +290,29 @@ llm_generate() {
         _llm_debug_end_timer "generate" "$_dbg_in" "$_dbg_out"
     fi
 
-    # Thinking-only model: response is always "think_content</think>response_content"
-    # (no opening <think> — the template injects it before generation)
-    local full_text
+    # Thinking-only model: modern Ollama returns .thinking and .response
+    # as separate fields. Older versions embed <think>...</think> inline.
+    local full_text think_text
     full_text=$(echo "$response" | jq -r '.response // "ERROR: Empty response"')
+    think_text=$(echo "$response" | jq -r '.thinking // empty' 2>/dev/null)
 
     # Display thinking tokens to tty when enabled
     # (llm_generate is non-streaming, so the block is shown all at once)
     if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-        if [[ "$full_text" == *"</think>"* ]]; then
+        local _gentty="/dev/tty"
+        [ -w /dev/tty ] 2>/dev/null || _gentty="/dev/stderr"
+
+        if [ -n "$think_text" ]; then
+            # Separate-field mode: .thinking contains thinking content
+            if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
+                printf "\n\033[36m┌─ thinking ─\033[0m\n\033[36m%s\033[0m\n\033[36m└────────────\033[0m\n" "$think_text" > "$_gentty" 2>/dev/null
+            else
+                printf "\033[2m%s\033[0m\n" "$think_text" > "$_gentty" 2>/dev/null
+            fi
+        elif [[ "$full_text" == *"</think>"* ]]; then
+            # Inline-tag fallback: thinking embedded in .response
             local _think_content="${full_text%%</think>*}"
             if [ -n "$_think_content" ]; then
-                local _gentty="/dev/tty"
-                [ -w /dev/tty ] 2>/dev/null || _gentty="/dev/stderr"
                 if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
                     printf "\n\033[36m┌─ thinking ─\033[0m\n\033[36m%s\033[0m\n\033[36m└────────────\033[0m\n" "$_think_content" > "$_gentty" 2>/dev/null
                 else
@@ -312,10 +322,13 @@ llm_generate() {
         fi
     fi
 
-    # Strip thinking tokens: output only the response after </think>
-    if [[ "$full_text" == *"</think>"* ]]; then
+    # Extract response text (strip thinking if inline)
+    if [ -n "$think_text" ]; then
+        # Separate-field mode: .response is already clean
+        echo "$full_text"
+    elif [[ "$full_text" == *"</think>"* ]]; then
+        # Inline-tag fallback: strip everything before and including </think>
         local clean="${full_text#*</think>}"
-        # Trim leading newline
         echo "${clean#$'\n'}"
     else
         echo "$full_text"
@@ -380,14 +393,16 @@ llm_stream() {
     local _tty="/dev/tty"
     [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
 
-    # Thinking-only model: output starts in think mode.
-    # Important: many templates inject opening <think> automatically,
-    # so stream may contain only </think> (and it may be split across tokens
-    # or combined with response text in one token).
-    local _in_think_block=1
-    local _think_end_tag="</think>"
-    local _think_end_tail_len=7  # len("</think>") - 1
-    local _think_pending=""
+    # ── Thinking detection modes ──────────────────────────────────
+    # Modern Ollama (0.9+) sends thinking tokens in a separate .thinking
+    # JSON field. Older versions / some models embed <think>...</think>
+    # tags inline in .response. We auto-detect which mode we're in:
+    #   _saw_thinking_field=1 → separate-field mode (preferred)
+    #   _saw_thinking_field=0 → inline-tag fallback mode
+    local _saw_thinking_field=0
+    local _think_banner_open=0
+    local _in_think_block=1       # fallback mode: assume starts in think
+    local _think_pending=""       # fallback mode: buffer for split </think>
 
     $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/generate" \
@@ -395,38 +410,50 @@ llm_stream() {
         -d "$payload" 2>/dev/null | while IFS= read -r line; do
         # Check for cancellation
         [ -f "$_cancel_file" ] && break
-        local token
+
+        local think_token token
+        think_token=$(echo "$line" | jq -r '.thinking // empty' 2>/dev/null)
         token=$(echo "$line" | jq -r '.response // empty' 2>/dev/null)
-        if [ -n "$token" ]; then
-            # Kill spinner on first real token and start think styling
+
+        # ── Handle .thinking field (Ollama separate-field mode) ──
+        if [ -n "$think_token" ]; then
+            _saw_thinking_field=1
+            # Kill spinner on first token of any kind
             if [ ! -f "$_llm_ft_file" ]; then
                 touch "$_llm_ft_file"
                 kill "$_llm_spinner_pid" 2>/dev/null
                 printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
-                # First token is always a think token — start think display
-                if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                    if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
-                        printf "\n\033[36m┌─ thinking ─\033[0m\n\033[36m" > "$_tty" 2>/dev/null
-                    else
-                        printf "\033[2m" > "$_tty" 2>/dev/null
-                    fi
+            fi
+            # Open thinking banner/styling on first think token
+            if [ "$_think_banner_open" -eq 0 ] && [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                _think_banner_open=1
+                if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
+                    printf "\n\033[36m┌─ thinking ─\033[0m\n\033[36m" > "$_tty" 2>/dev/null
+                else
+                    printf "\033[2m" > "$_tty" 2>/dev/null
                 fi
             fi
+            # Stream thinking token to tty only (never captured to stdout)
+            if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                printf "%s" "$think_token" > "$_tty" 2>/dev/null
+            fi
+        fi
 
-            if [ "${_in_think_block:-0}" -eq 1 ]; then
-                _think_pending+="$token"
+        # ── Handle .response field ───────────────────────────────
+        if [ -n "$token" ]; then
+            # Kill spinner on first token of any kind
+            if [ ! -f "$_llm_ft_file" ]; then
+                touch "$_llm_ft_file"
+                kill "$_llm_spinner_pid" 2>/dev/null
+                printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
+            fi
 
-                # Handle end tag robustly even when split across token boundaries
-                if [[ "$_think_pending" == *"$_think_end_tag"* ]]; then
-                    local _think_before="${_think_pending%%$_think_end_tag*}"
-                    local _after_think="${_think_pending#*$_think_end_tag}"
-
-                    # Flush actual think text
-                    if [ -n "$_think_before" ] && [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                        printf "%s" "$_think_before" > "$_tty" 2>/dev/null
-                    fi
-
-                    # Close think styling/banner
+            if [ "$_saw_thinking_field" -eq 1 ]; then
+                # ── Separate-field mode ──
+                # .response tokens are always actual response content.
+                # Close thinking banner if it was open.
+                if [ "$_think_banner_open" -eq 1 ]; then
+                    _think_banner_open=0
                     if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
                         if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
                             printf "\033[0m\n\033[36m└────────────\033[0m\n" > "$_tty" 2>/dev/null
@@ -434,40 +461,89 @@ llm_stream() {
                             printf "\033[0m\n" > "$_tty" 2>/dev/null
                         fi
                     fi
+                fi
+                # Emit response token — capture to stdout AND display on tty
+                printf "%s" "$token"
+                printf "%s" "$token" > "$_tty" 2>/dev/null
+            else
+                # ── Inline-tag fallback mode ──
+                # Thinking tokens are embedded in .response with </think> separator.
+                # Open thinking banner on first token if not yet open
+                if [ "$_think_banner_open" -eq 0 ] && [ "$_in_think_block" -eq 1 ]; then
+                    _think_banner_open=1
+                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                        if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
+                            printf "\n\033[36m┌─ thinking ─\033[0m\n\033[36m" > "$_tty" 2>/dev/null
+                        else
+                            printf "\033[2m" > "$_tty" 2>/dev/null
+                        fi
+                    fi
+                fi
 
-                    _in_think_block=0
-                    _think_pending=""
-
-                    # Emit any response text that arrived in same token as </think>
-                    if [ -n "$_after_think" ]; then
-                        printf "%s" "$_after_think"
-                        printf "%s" "$_after_think" > "$_tty" 2>/dev/null
+                if [ "$_in_think_block" -eq 1 ]; then
+                    _think_pending+="$token"
+                    # Check for </think> end tag (handles split across token boundaries)
+                    if [[ "$_think_pending" == *"</think>"* ]]; then
+                        local _think_before="${_think_pending%%</think>*}"
+                        local _after_think="${_think_pending#*</think>}"
+                        # Flush remaining think text
+                        if [ -n "$_think_before" ] && [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                            printf "%s" "$_think_before" > "$_tty" 2>/dev/null
+                        fi
+                        # Close thinking banner
+                        _think_banner_open=0
+                        if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                            if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
+                                printf "\033[0m\n\033[36m└────────────\033[0m\n" > "$_tty" 2>/dev/null
+                            else
+                                printf "\033[0m\n" > "$_tty" 2>/dev/null
+                            fi
+                        fi
+                        _in_think_block=0
+                        _think_pending=""
+                        # Emit any response text bundled with the </think> token
+                        if [ -n "$_after_think" ]; then
+                            printf "%s" "$_after_think"
+                            printf "%s" "$_after_think" > "$_tty" 2>/dev/null
+                        fi
+                        continue
+                    fi
+                    # No end tag yet — flush safe prefix, keep tail for split-tag detection
+                    local _plen=${#_think_pending}
+                    if [ "$_plen" -gt 7 ]; then
+                        local _flen=$((_plen - 7))
+                        local _ftxt="${_think_pending:0:_flen}"
+                        _think_pending="${_think_pending:_flen}"
+                        if [ -n "$_ftxt" ] && [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                            printf "%s" "$_ftxt" > "$_tty" 2>/dev/null
+                        fi
                     fi
                     continue
                 fi
-
-                # No end tag yet: flush safe prefix, keep short tail for split-tag detection
-                local _pending_len=${#_think_pending}
-                if [ "$_pending_len" -gt "$_think_end_tail_len" ]; then
-                    local _flush_len=$(( _pending_len - _think_end_tail_len ))
-                    local _flush_text="${_think_pending:0:_flush_len}"
-                    _think_pending="${_think_pending:_flush_len}"
-                    if [ -n "$_flush_text" ] && [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                        printf "%s" "$_flush_text" > "$_tty" 2>/dev/null
-                    fi
-                fi
-                continue
+                # Normal token after </think> in fallback mode
+                printf "%s" "$token"
+                printf "%s" "$token" > "$_tty" 2>/dev/null
             fi
-
-            # Normal token (after </think>) — capture AND display
-            printf "%s" "$token"
-            printf "%s" "$token" > "$_tty" 2>/dev/null
         fi
-        # Check if done
+
+        # ── Check if stream is done ──────────────────────────────
         local done_flag
         done_flag=$(echo "$line" | jq -r '.done // empty' 2>/dev/null)
         if [ "$done_flag" = "true" ]; then
-            # Extract token counts from the final streaming response
+            # Close thinking banner if still open at end of stream
+            if [ "$_think_banner_open" -eq 1 ] && [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
+                    printf "\033[0m\n\033[36m└────────────\033[0m\n" > "$_tty" 2>/dev/null
+                else
+                    printf "\033[0m\n" > "$_tty" 2>/dev/null
+                fi
+            fi
+            # Fallback mode: flush any buffered text as response if </think> never arrived
+            if [ "$_in_think_block" -eq 1 ] && [ -n "$_think_pending" ]; then
+                printf "%s" "$_think_pending"
+                printf "%s" "$_think_pending" > "$_tty" 2>/dev/null
+            fi
+            # Debug: extract token counts from the final streaming JSON
             if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
                 local _dbg_in _dbg_out
                 _dbg_in=$(echo "$line" | jq -r '.prompt_eval_count // 0' 2>/dev/null)
@@ -479,15 +555,6 @@ llm_stream() {
             break
         fi
     done
-
-    # If stream ended before </think> was observed, flush any buffered text as response.
-    # This avoids losing output if provider behavior changes or omits the closing tag.
-    if [ "${_in_think_block:-0}" -eq 1 ] && [ -n "$_think_pending" ]; then
-        printf "%s" "$_think_pending"
-        printf "%s" "$_think_pending" > "$_tty" 2>/dev/null
-        _think_pending=""
-        _in_think_block=0
-    fi
 
     # Safety: ensure spinner is stopped even if no tokens arrived (timeout/error)
     ui_spinner_stop
@@ -550,10 +617,16 @@ llm_chat() {
         return 1
     fi
 
-    # Strip thinking tokens: output only the response after </think>
-    local full_text
+    # Strip thinking tokens: modern Ollama puts thinking in .message.thinking,
+    # older versions embed <think>...</think> inline in .message.content.
+    local full_text think_text
     full_text=$(echo "$response" | jq -r '.message.content // "ERROR: Empty response"')
-    if [[ "$full_text" == *"</think>"* ]]; then
+    think_text=$(echo "$response" | jq -r '.message.thinking // empty' 2>/dev/null)
+
+    if [ -n "$think_text" ]; then
+        # Separate-field mode: .message.content is already clean
+        echo "$full_text"
+    elif [[ "$full_text" == *"</think>"* ]]; then
         local clean="${full_text#*</think>}"
         echo "${clean#$'\n'}"
     else
