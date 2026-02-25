@@ -15,7 +15,7 @@ PARAMETER repeat_penalty 1.0
 PARAMETER presence_penalty 1.5
 
 # 4. Context and Output Limits
-PARAMETER num_ctx 32,768
+PARAMETER num_ctx 32768
 PARAMETER num_predict 20480
 
 # 5. Hardware
