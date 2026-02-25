@@ -62,16 +62,16 @@ describe "Configuration defaults"
 # ── Sampling parameters ───────────────────────────────────────
 describe "Sampling parameter defaults"
 
-  it "LLM_TEMPERATURE defaults to 0.4" && {
-    assert_eq "$LLM_TEMPERATURE" "0.4"
+  it "LLM_TEMPERATURE defaults to 0.6" && {
+    assert_eq "$LLM_TEMPERATURE" "0.6"
   }
 
   it "LLM_REPEAT_PENALTY defaults to 1.3" && {
     assert_eq "$LLM_REPEAT_PENALTY" "1.3"
   }
 
-  it "LLM_PRESENCE_PENALTY defaults to 1.8" && {
-    assert_eq "$LLM_PRESENCE_PENALTY" "1.8"
+  it "LLM_PRESENCE_PENALTY defaults to 0.8" && {
+    assert_eq "$LLM_PRESENCE_PENALTY" "0.8"
   }
 
   it "LLM_TEMP_ASK defaults to 0.5" && {
@@ -94,12 +94,12 @@ describe "Sampling parameter defaults"
     assert_eq "$LLM_TEMP_TOOL" "0.3"
   }
 
-  it "LLM_PRESENCE_ROUTER defaults to 2.0" && {
-    assert_eq "$LLM_PRESENCE_ROUTER" "2.0"
+  it "LLM_PRESENCE_ROUTER defaults to 1.0" && {
+    assert_eq "$LLM_PRESENCE_ROUTER" "1.0"
   }
 
-  it "LLM_PRESENCE_JOURNAL defaults to 2.0" && {
-    assert_eq "$LLM_PRESENCE_JOURNAL" "2.0"
+  it "LLM_PRESENCE_JOURNAL defaults to 1.0" && {
+    assert_eq "$LLM_PRESENCE_JOURNAL" "1.0"
   }
 
 describe "Sampling parameter resolver (_llm_build_opts)"
@@ -122,7 +122,7 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     result=$(_llm_build_opts 1024)
     local temp
     temp=$(echo "$result" | jq -r '.temperature')
-    assert_eq "$temp" "0.4"
+    assert_eq "$temp" "0.6"
   }
 
   it "_llm_build_opts uses ask scenario when LLM_SCENARIO=ask" && {
@@ -160,8 +160,8 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     unset LLM_SCENARIO
     local pp
     pp=$(echo "$result" | jq -r '.presence_penalty')
-    # jq normalizes 2.0 → 2; check either form
-    [[ "$pp" == "2" || "$pp" == "2.0" ]]
+    # jq normalizes 1.0 → 1; check either form
+    [[ "$pp" == "1" || "$pp" == "1.0" ]]
     assert_ok $?
   }
 

@@ -101,14 +101,30 @@ export AGENT_STEP_DELAY=1
 
 ### Model Selection
 
+George uses a **dual-model architecture** with a model library. See [MODELS.md](MODELS.md) for the full model library documentation.
+
 ```bash
-# Which Ollama model to use (default: blue-lodge)
-# Change this to use any Ollama model without modifying the Modelfile.
-export LODGE_MODEL=blue-lodge
+# Which models to use (set by install.sh, persisted in shell profile)
+export LODGE_MODEL_PRIMARY="blue-lodge-qwen3-think:4b"   # Reasoning/planning
+export LODGE_MODEL_SECONDARY="blue-lodge-qwen3-inst:4b"  # Fast utility tasks
+
+# Single-model mode (no switching)
+export LODGE_SINGLE_MODEL=1
 
 # Ollama API endpoint (default: local)
 export OLLAMA_URL=http://127.0.0.1:11434
 ```
+
+Runtime model switching via `/models`:
+
+```bash
+george> /models select primary granite4
+george> /models select secondary minist-inst
+george> /models single qwen3-think
+george> /models dual
+```
+
+> **Note:** The old `LODGE_MODEL` variable still exists for backward compatibility but is overwritten at startup by `models_init()`. Use `LODGE_MODEL_PRIMARY` and `LODGE_MODEL_SECONDARY` instead.
 
 ### Example: Low-RAM Device (4-8GB)
 
@@ -239,6 +255,8 @@ PARAMETER num_predict 256
 ---
 
 ## Using Custom Models
+
+> **Model Library:** George ships with 7 pre-configured models across 4 families. Before creating a custom model from scratch, check whether [MODELS.md](MODELS.md) already covers your use case. The model library handles stop tokens, sampling, nothink mechanisms, and dual-model routing automatically.
 
 ### Step 1: Choose a model
 
@@ -450,14 +468,15 @@ LODGE_DEBUG=1 lodge /ask "hello"
 
 # Warm up the model manually
 curl -s http://localhost:11434/api/generate \
-  -d '{"model":"blue-lodge","prompt":"hi","stream":false,"options":{"num_predict":1}}'
+  -d '{"model":"blue-lodge-qwen3-think:4b","prompt":"hi","stream":false,"options":{"num_predict":1}}'
 
 # Check model info
-curl -s http://localhost:11434/api/show -d '{"name":"blue-lodge"}' | jq .details
+curl -s http://localhost:11434/api/show -d '{"name":"blue-lodge-qwen3-think:4b"}' | jq .details
 
 # Recreate model after Modelfile changes
-ollama create blue-lodge -f ~/blue-lodge/Modelfile
+ollama create blue-lodge-qwen3-think:4b -f ~/blue-lodge/models/qwen3-think.Modelfile
 
-# Switch models on the fly
-export LODGE_MODEL=qwen3:1.7b
+# Switch models at runtime (see docs/MODELS.md for full reference)
+george> /models select primary granite4
+george> /models single qwen3-think
 ```

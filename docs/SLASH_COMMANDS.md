@@ -594,6 +594,7 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 | `/vitals` | System vitals (CPU, RAM, disk, battery) | `/vitals` |
 | `/limits` | View/adjust agent planning limits | `/limits steps 8` |
 | `/model` | View/adjust sampling parameters (temp, penalties) | `/model temp 0.3` |
+| `/models` | Model library — list, select, switch models | `/models select primary granite4` |
 | `/debug` | Toggle debug mode (timers + token counts) | `/debug on` |
 | `/think` | Toggle thinking mode on/off | `/think` |
 | `/cleanup` | Remove George's created files | `/cleanup` |

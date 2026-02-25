@@ -37,12 +37,19 @@ _MODELS_ACTIVE=""
 
 _MODELS_REGISTRY=(
     # ── Qwen3 family ──────────────────────────────────────────
-    "qwen3-think|blue-lodge-qwen3-think:4b|hf.co/unsloth/Qwen3-4B-Thinking-2507-GGUF:UD-Q5_K_XL|thinking|1|qwen|<|im_end|>|0.4|1.3|1.8|32768|20480|0.95|20|0.0|Default primary. Extended thinking with /no_think soft switch."
-    "qwen3-inst|blue-lodge-qwen3-inst:4b|hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:UD-Q5_K_XL|instruct|0|none|<|im_end|>|0.7|1.0|0.0|32768|8192|0.8|20|0.0|Default secondary. Fast instruct — no thinking phase."
+    # Qwen3-Think: HF recommends temp=0.6, top_p=0.95, top_k=20, min_p=0,
+    #   presence_penalty 0-2 (warns high values cause language mixing),
+    #   num_predict 32768 (81920 for complex reasoning).
+    "qwen3-think|blue-lodge-qwen3-think:4b|hf.co/unsloth/Qwen3-4B-Thinking-2507-GGUF:UD-Q5_K_XL|thinking|1|qwen|<|im_end|>|0.6|1.3|0.8|32768|32768|0.95|20|0.0|Default primary. Extended thinking with /no_think soft switch."
+    # Qwen3-Inst: HF recommends temp=0.7, top_p=0.8, top_k=20, min_p=0,
+    #   num_predict 16384 for instruct.
+    "qwen3-inst|blue-lodge-qwen3-inst:4b|hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:UD-Q5_K_XL|instruct|0|none|<|im_end|>|0.7|1.0|0.0|32768|16384|0.8|20|0.0|Default secondary. Fast instruct — no thinking phase."
 
     # ── Llama 3.2 family ──────────────────────────────────────
-    "llama32|blue-lodge-llama32:3b|llama3.2:3b|thinking|0|none|<|eot_id|>|0.6|1.1|0.0|131072|8192|0.9|40|0.0|Meta Llama 3.2 3B. Strong general reasoning, large native context."
-    "llama32-inst|blue-lodge-llama32-inst:3b|hf.co/unsloth/Llama-3.2-3B-Instruct-GGUF:UD-Q5_K_XL|instruct|0|none|<|eot_id|>|0.6|1.1|0.0|131072|8192|0.9|40|0.0|Llama 3.2 3B Instruct (Unsloth quant). Fast responses."
+    # Llama 3.2: 128K native context, but 12GB ARM can only handle 32K safely.
+    # Meta publishes no specific sampling recommendations.
+    "llama32|blue-lodge-llama32:3b|llama3.2:3b|thinking|0|none|<|eot_id|>|0.6|1.1|0.0|32768|8192|0.9|40|0.0|Meta Llama 3.2 3B. Strong general reasoning."
+    "llama32-inst|blue-lodge-llama32-inst:3b|hf.co/unsloth/Llama-3.2-3B-Instruct-GGUF:UD-Q5_K_XL|instruct|0|none|<|eot_id|>|0.6|1.1|0.0|32768|8192|0.9|40|0.0|Llama 3.2 3B Instruct (Unsloth quant). Fast responses."
 
     # ── Granite 4 family ──────────────────────────────────────
     "granite4|blue-lodge-granite4:3b|granite4:3b|thinking|1|system|<|end_of_text|>|0.6|1.0|0.0|32768|8192|0.85|50|0.0|IBM Granite 4. Strong reasoning and instruction following."
@@ -402,6 +409,235 @@ models_select() {
     # If this is the currently-loaded slot, force a switch
     _MODELS_ACTIVE=""
     LODGE_MODEL="$LODGE_MODEL_PRIMARY"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# Per-Model Parameter Overrides
+# ═══════════════════════════════════════════════════════════════
+# Each model's sampling parameters can be overridden at runtime
+# without regenerating Modelfiles. Overrides are injected via the
+# Ollama API options field (bypasses Modelfile defaults).
+#
+# Variable naming: _MODEL_PARAM_{KEY}_{PARAM}
+# where KEY is the registry key with hyphens replaced by underscores,
+# and PARAM is one of: TEMP, REPEAT, PRESENCE, TOP_P, TOP_K, MIN_P,
+# NUM_CTX, NUM_PREDICT.
+#
+# Priority chain (highest first):
+#   1. Per-scenario override (LLM_TEMP_ASK, etc.) — set in llm.sh
+#   2. Per-model override (_MODEL_PARAM_*) — set here or via /models param
+#   3. Registry default (baked into _MODELS_REGISTRY)
+#
+# The resolver models_get_param() returns the effective value for a
+# given model + parameter, checking overrides first, falling back
+# to registry. llm.sh's _llm_build_opts() calls this to get the
+# model-appropriate base, which scenario overrides then trump.
+
+# ── Sanitize a model key for variable naming ──────────────────
+# qwen3-think → qwen3_think, minist-inst → minist_inst
+_models_key_to_var() {
+    echo "${1//-/_}"
+}
+
+# ── Set a per-model parameter override ────────────────────────
+# Usage: models_set_param <model-key> <param> <value>
+# Example: models_set_param qwen3-think temp 0.5
+models_set_param() {
+    local key="$1" param="$2" value="$3"
+
+    # Validate model exists
+    _models_lookup "$key" >/dev/null || { echo "Unknown model: $key" >&2; return 1; }
+
+    # Validate param name
+    local param_upper
+    param_upper=$(echo "$param" | tr '[:lower:]' '[:upper:]')
+    case "$param_upper" in
+        TEMP|TEMPERATURE)    param_upper="TEMP" ;;
+        REPEAT|REPEAT_PENALTY) param_upper="REPEAT" ;;
+        PRESENCE|PRESENCE_PENALTY) param_upper="PRESENCE" ;;
+        TOP_P|TOPP)          param_upper="TOP_P" ;;
+        TOP_K|TOPK)          param_upper="TOP_K" ;;
+        MIN_P|MINP)          param_upper="MIN_P" ;;
+        NUM_CTX|CTX|CONTEXT) param_upper="NUM_CTX" ;;
+        NUM_PREDICT|PREDICT) param_upper="NUM_PREDICT" ;;
+        *)
+            echo "Unknown parameter: $param" >&2
+            echo "Valid: temp, repeat, presence, top_p, top_k, min_p, num_ctx, num_predict" >&2
+            return 1 ;;
+    esac
+
+    # Validate value is numeric
+    if ! [[ "$value" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+        echo "Value must be numeric: $value" >&2
+        return 1
+    fi
+
+    local var_key
+    var_key=$(_models_key_to_var "$key")
+    local var_name="_MODEL_PARAM_${var_key}_${param_upper}"
+    eval "$var_name=\"$value\""
+    return 0
+}
+
+# ── Get the effective value for a model parameter ─────────────
+# Checks: per-model override → registry default
+# Usage: models_get_param <model-key-or-name> <param>
+# Returns the value on stdout.
+models_get_param() {
+    local key="$1" param="$2"
+
+    # Resolve to registry key if given a friendly name
+    local entry
+    entry=$(_models_lookup "$key") || return 1
+    _models_parse_entry "$entry"
+    key="$_ME_KEY"
+
+    local param_upper
+    param_upper=$(echo "$param" | tr '[:lower:]' '[:upper:]')
+
+    # Check for per-model override first
+    local var_key var_name override_val
+    var_key=$(_models_key_to_var "$key")
+
+    case "$param_upper" in
+        TEMP|TEMPERATURE)
+            var_name="_MODEL_PARAM_${var_key}_TEMP"
+            eval "override_val=\"\${$var_name:-}\""
+            echo "${override_val:-$_ME_TEMP}" ;;
+        REPEAT|REPEAT_PENALTY)
+            var_name="_MODEL_PARAM_${var_key}_REPEAT"
+            eval "override_val=\"\${$var_name:-}\""
+            echo "${override_val:-$_ME_REPEAT}" ;;
+        PRESENCE|PRESENCE_PENALTY)
+            var_name="_MODEL_PARAM_${var_key}_PRESENCE"
+            eval "override_val=\"\${$var_name:-}\""
+            echo "${override_val:-$_ME_PRESENCE}" ;;
+        TOP_P)
+            var_name="_MODEL_PARAM_${var_key}_TOP_P"
+            eval "override_val=\"\${$var_name:-}\""
+            echo "${override_val:-$_ME_TOP_P}" ;;
+        TOP_K)
+            var_name="_MODEL_PARAM_${var_key}_TOP_K"
+            eval "override_val=\"\${$var_name:-}\""
+            echo "${override_val:-$_ME_TOP_K}" ;;
+        MIN_P)
+            var_name="_MODEL_PARAM_${var_key}_MIN_P"
+            eval "override_val=\"\${$var_name:-}\""
+            echo "${override_val:-$_ME_MIN_P}" ;;
+        NUM_CTX)
+            var_name="_MODEL_PARAM_${var_key}_NUM_CTX"
+            eval "override_val=\"\${$var_name:-}\""
+            echo "${override_val:-$_ME_CTX}" ;;
+        NUM_PREDICT)
+            var_name="_MODEL_PARAM_${var_key}_NUM_PREDICT"
+            eval "override_val=\"\${$var_name:-}\""
+            echo "${override_val:-$_ME_PREDICT}" ;;
+        *)  return 1 ;;
+    esac
+}
+
+# ── Get all sampling params for a model as JSON options ───────
+# Returns a JSON object suitable for Ollama API options field.
+# This is the bridge between models.sh and llm.sh.
+models_get_options() {
+    local name="${1:-$LODGE_MODEL}"
+    local entry
+    entry=$(_models_lookup "$name") || return 1
+    _models_parse_entry "$entry"
+    local key="$_ME_KEY"
+
+    local temp rep pres top_p top_k min_p
+    temp=$(models_get_param "$key" temp)
+    rep=$(models_get_param "$key" repeat)
+    pres=$(models_get_param "$key" presence)
+    top_p=$(models_get_param "$key" top_p)
+    top_k=$(models_get_param "$key" top_k)
+    min_p=$(models_get_param "$key" min_p)
+
+    jq -n \
+        --argjson temp "$temp" \
+        --argjson rep "$rep" \
+        --argjson pres "$pres" \
+        --argjson top_p "$top_p" \
+        --argjson top_k "${top_k:-20}" \
+        --argjson min_p "$min_p" \
+        '{temperature:$temp, repeat_penalty:$rep, presence_penalty:$pres, top_p:$top_p, top_k:$top_k, min_p:$min_p}'
+}
+
+# ── Show parameters for a model (with overrides highlighted) ──
+models_show_params() {
+    local key="${1:-}"
+    if [ -z "$key" ]; then
+        # Show params for both active models
+        models_show_params "$(models_for_scenario ask)"
+        if [ "${LODGE_SINGLE_MODEL:-0}" -eq 0 ]; then
+            echo ""
+            models_show_params "$(models_for_scenario router)"
+        fi
+        return
+    fi
+
+    local entry
+    entry=$(_models_lookup "$key") || { echo "Unknown model: $key" >&2; return 1; }
+    _models_parse_entry "$entry"
+    local rkey="$_ME_KEY"
+
+    printf "  Parameters for %s (%s):\n" "$_ME_NAME" "$_ME_KEY"
+    printf "  %-18s %-10s %-10s %s\n" "PARAMETER" "EFFECTIVE" "REGISTRY" "OVERRIDE"
+    printf "  %-18s %-10s %-10s %s\n" "─────────" "─────────" "────────" "────────"
+
+    local params=("temp|$_ME_TEMP" "repeat|$_ME_REPEAT" "presence|$_ME_PRESENCE" "top_p|$_ME_TOP_P" "top_k|$_ME_TOP_K" "min_p|$_ME_MIN_P" "num_ctx|$_ME_CTX" "num_predict|$_ME_PREDICT")
+    for p in "${params[@]}"; do
+        local pname="${p%%|*}"
+        local reg_val="${p#*|}"
+        local eff_val
+        eff_val=$(models_get_param "$rkey" "$pname")
+        local marker=""
+        if [ "$eff_val" != "$reg_val" ]; then
+            marker="*"
+        fi
+        printf "  %-18s %-10s %-10s %s\n" "$pname" "$eff_val" "$reg_val" "$marker"
+    done
+}
+
+# ── Clear a per-model parameter override ──────────────────────
+models_clear_param() {
+    local key="$1" param="$2"
+    _models_lookup "$key" >/dev/null || { echo "Unknown model: $key" >&2; return 1; }
+
+    local param_upper
+    param_upper=$(echo "$param" | tr '[:lower:]' '[:upper:]')
+    case "$param_upper" in
+        TEMP|TEMPERATURE)    param_upper="TEMP" ;;
+        REPEAT|REPEAT_PENALTY) param_upper="REPEAT" ;;
+        PRESENCE|PRESENCE_PENALTY) param_upper="PRESENCE" ;;
+        TOP_P|TOPP)          param_upper="TOP_P" ;;
+        TOP_K|TOPK)          param_upper="TOP_K" ;;
+        MIN_P|MINP)          param_upper="MIN_P" ;;
+        NUM_CTX|CTX|CONTEXT) param_upper="NUM_CTX" ;;
+        NUM_PREDICT|PREDICT) param_upper="NUM_PREDICT" ;;
+        *)  echo "Unknown parameter: $param" >&2; return 1 ;;
+    esac
+
+    local var_key
+    var_key=$(_models_key_to_var "$key")
+    unset "_MODEL_PARAM_${var_key}_${param_upper}"
+}
+
+# ── Clear all per-model overrides ─────────────────────────────
+models_clear_all_params() {
+    local key="${1:-}"
+    local vars
+    if [ -n "$key" ]; then
+        local var_key
+        var_key=$(_models_key_to_var "$key")
+        vars=$(compgen -v "_MODEL_PARAM_${var_key}_" 2>/dev/null || true)
+    else
+        vars=$(compgen -v "_MODEL_PARAM_" 2>/dev/null || true)
+    fi
+    for v in $vars; do
+        unset "$v"
+    done
 }
 
 # ── Initialize models on startup ──────────────────────────────

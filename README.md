@@ -34,13 +34,14 @@ lodge /ask "what is a monad?"      # Quick question
 ~/blue-lodge/
 ├── lodge              # Main TUI shell (entry point)
 ├── update.sh          # Safe update with identity preservation
-├── Modelfile          # Ollama model definition (Qwen3-4B-Thinking-2507 UD-Q5_K_XL)
+├── Modelfile          # Legacy single-model definition (see docs/MODELS.md for model library)
 ├── soul.md            # George's personality & ethical framework
 ├── journal.md         # George's living memory (auto-managed)
 ├── SECURITY.md        # Security audit & threat model
 ├── lib/
 │   ├── ui.sh          # TUI rendering (ANSI colors, spinners, prompts)
 │   ├── llm.sh         # Ollama API: generate, stream, chat, cancel, unload
+│   ├── models.sh      # Model library & dual-model switching
 │   ├── memory.sh      # GEORGE.md read/write/compact
 │   ├── agent.sh       # Plan → Execute → Memory loop with cancellation
 │   ├── tools.sh       # File/shell operations + phone integration
@@ -57,6 +58,7 @@ lodge /ask "what is a monad?"      # Quick question
 │   ├── providers.sh   # Cloud AI providers (OpenAI, Anthropic, Google, etc.)
 │   ├── web.sh         # Web browsing (fetch, search, summarize, download)
 │   └── backup.sh      # Backup/restore identity files
+├── models/            # Auto-generated per-model Modelfiles
 ├── commands/
 │   ├── init.sh        # /init — scaffold projects
 │   ├── fix.sh         # /fix — diagnose & fix errors
@@ -128,6 +130,7 @@ lodge /ask "what is a monad?"      # Quick question
 | `/soul` | — | Toggle soul mode (condensed ~250 tok / full ~4500 tok) |
 | `/limits` | — | View/adjust agent planning limits (steps/depth/milestones) |
 | `/model` | — | View/adjust sampling parameters (temperature, penalties) |
+| `/models` | — | Model library — list, select, switch models |
 | `/cleanup` | — | Remove George's created files |
 | `/ask <question>` | — | Quick question (no file changes) |
 | `/read <file>` | — | Read a file |
@@ -622,14 +625,22 @@ lodge /wallet status                              # Wallet overview
 
 ## Model
 
-Ships with **Qwen3-4B-Thinking-2507** (UD-Q5_K_XL quantization by Unsloth) via Ollama. ~3.5GB download, ~8GB loaded RAM at the default 32K context window (`num_ctx=32768`). Built-in thinking/reasoning chain.
+Ships with a **model library** of 7 pre-configured models across 4 families (Qwen3, Llama 3.2, Granite 4, Ministral). Default pair:
 
-Swap the model by editing `Modelfile`:
+- **Primary:** Qwen3-4B-Thinking-2507 (UD-Q5_K_XL) — reasoning and planning
+- **Secondary:** Qwen3-4B-Instruct-2507 (UD-Q5_K_XL) — fast utility tasks
+
+Only one model is loaded at a time (~8GB RAM at 32K context). George hot-swaps between them automatically based on the task.
+
+Switch models at runtime:
 
 ```bash
-vim ~/blue-lodge/Modelfile
-ollama create blue-lodge -f ~/blue-lodge/Modelfile
+george> /models select primary granite4
+george> /models select secondary minist-inst
+george> /models single qwen3-think    # single-model mode
 ```
+
+Full model library documentation: [docs/MODELS.md](docs/MODELS.md)
 
 ## REST API & Integrations
 

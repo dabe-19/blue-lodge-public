@@ -466,18 +466,53 @@ _cmd_models() {
             else
                 ui_info "Already in dual-model mode"
             fi ;;
+        param|params)
+            # /models param                    — show params for active models
+            # /models param <key>              — show params for a model
+            # /models param <key> <p> <val>    — set a param
+            # /models param <key> clear        — clear all overrides for model
+            # /models param <key> clear <p>    — clear one override
+            if [ -z "$arg2" ]; then
+                models_show_params
+            elif [ -z "$arg3" ]; then
+                models_show_params "$arg2"
+            else
+                local arg4
+                arg4=$(echo "$args" | awk '{print $4}')
+                if [ "$arg3" = "clear" ]; then
+                    if [ -n "$arg4" ]; then
+                        models_clear_param "$arg2" "$arg4"
+                        ui_ok "Cleared $arg4 override for $arg2"
+                    else
+                        models_clear_all_params "$arg2"
+                        ui_ok "Cleared all overrides for $arg2"
+                    fi
+                else
+                    if [ -z "$arg4" ]; then
+                        ui_err "Usage: /models param <model> <param> <value>"
+                    else
+                        if models_set_param "$arg2" "$arg3" "$arg4"; then
+                            ui_ok "Set $arg2 $arg3 = $arg4"
+                            ui_dim "  (Override active until session ends or cleared with /models param $arg2 clear $arg3)"
+                        fi
+                    fi
+                fi
+            fi ;;
         "")
             models_status
             echo ""
             models_list ;;
         *)
-            ui_info "Usage: /models [list|status|select|single|dual]"
+            ui_info "Usage: /models [list|status|select|single|dual|param]"
             ui_dim "  list               — show available models"
             ui_dim "  status             — show current configuration"
             ui_dim "  select primary <key>  — set primary model"
             ui_dim "  select secondary <key> — set secondary model"
             ui_dim "  single <key>       — single-model mode (no switching)"
             ui_dim "  dual               — enable dual-model mode"
+            ui_dim "  param [key]        — show model parameters"
+            ui_dim "  param <key> <p> <v> — set a parameter override"
+            ui_dim "  param <key> clear [p] — clear overrides"
             ui_dim "  (no arg)           — show status + model list" ;;
     esac
 }

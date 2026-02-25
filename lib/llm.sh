@@ -20,37 +20,40 @@ LLM_BUDGET_ROUTER="${LLM_BUDGET_ROUTER:-128}" # Think budget for router (just pi
 LLM_BUDGET_JOURNAL="${LLM_BUDGET_JOURNAL:-64}" # Think budget for journal (background utility, fast)
 LLM_BUDGET_TOOL="${LLM_BUDGET_TOOL:-256}"    # Think budget for tools (commit, web, recall, slash)
 
-# ── Sampling parameters (per-scenario, override Modelfile defaults) ──
-# Global defaults — applied when no scenario-specific value is set
-LLM_TEMPERATURE="${LLM_TEMPERATURE:-0.4}"
+# ── Sampling parameters (per-scenario, override model defaults) ──
+# Global defaults — applied when no scenario-specific AND no model-specific value is set.
+# These are calibrated for Qwen3-Think (the default primary model).
+# When non-Qwen models are active, the per-model registry values from
+# models.sh take precedence via models_get_param().
+LLM_TEMPERATURE="${LLM_TEMPERATURE:-0.6}"
 LLM_REPEAT_PENALTY="${LLM_REPEAT_PENALTY:-1.3}"
-LLM_PRESENCE_PENALTY="${LLM_PRESENCE_PENALTY:-1.8}"
+LLM_PRESENCE_PENALTY="${LLM_PRESENCE_PENALTY:-0.8}"
 
 # Per-scenario overrides (empty = use global default)
-# Ask: conversational, moderate creativity, strong anti-spiral
+# Ask: conversational, moderate creativity, moderate anti-spiral
 LLM_TEMP_ASK="${LLM_TEMP_ASK:-0.5}"
 LLM_REPEAT_ASK="${LLM_REPEAT_ASK:-1.3}"
-LLM_PRESENCE_ASK="${LLM_PRESENCE_ASK:-1.8}"
+LLM_PRESENCE_ASK="${LLM_PRESENCE_ASK:-0.8}"
 
-# Agent: focused execution, low creativity, strong anti-spiral
+# Agent: focused execution, low creativity, moderate anti-spiral
 LLM_TEMP_AGENT="${LLM_TEMP_AGENT:-0.3}"
 LLM_REPEAT_AGENT="${LLM_REPEAT_AGENT:-1.3}"
-LLM_PRESENCE_AGENT="${LLM_PRESENCE_AGENT:-1.8}"
+LLM_PRESENCE_AGENT="${LLM_PRESENCE_AGENT:-0.8}"
 
 # Router: deterministic tool selection, minimal creativity
 LLM_TEMP_ROUTER="${LLM_TEMP_ROUTER:-0.1}"
 LLM_REPEAT_ROUTER="${LLM_REPEAT_ROUTER:-1.1}"
-LLM_PRESENCE_ROUTER="${LLM_PRESENCE_ROUTER:-2.0}"
+LLM_PRESENCE_ROUTER="${LLM_PRESENCE_ROUTER:-1.0}"
 
-# Journal: brief background utility, very constrained
+# Journal: brief background utility, constrained
 LLM_TEMP_JOURNAL="${LLM_TEMP_JOURNAL:-0.6}"
 LLM_REPEAT_JOURNAL="${LLM_REPEAT_JOURNAL:-1.3}"
-LLM_PRESENCE_JOURNAL="${LLM_PRESENCE_JOURNAL:-2.0}"
+LLM_PRESENCE_JOURNAL="${LLM_PRESENCE_JOURNAL:-1.0}"
 
 # Tool: commit messages, web summary, recall, slash — focused
 LLM_TEMP_TOOL="${LLM_TEMP_TOOL:-0.3}"
 LLM_REPEAT_TOOL="${LLM_REPEAT_TOOL:-1.3}"
-LLM_PRESENCE_TOOL="${LLM_PRESENCE_TOOL:-1.8}"
+LLM_PRESENCE_TOOL="${LLM_PRESENCE_TOOL:-0.8}"
 
 LLM_TIMEOUT="${LLM_TIMEOUT:-600}"           # Safety net: 600s max per request (thinking models on ARM need headroom; Ctrl+C also works)
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
@@ -63,20 +66,43 @@ LODGE_DEBUG="${LODGE_DEBUG:-0}"                 # 0=normal, 1=show timers + toke
 # Resolves per-scenario sampling parameters based on LLM_SCENARIO.
 # Callers set `local LLM_SCENARIO=ask` before calling llm_generate/llm_stream/llm_chat.
 # Returns a jq-compatible JSON fragment for options injection.
-# Scenarios: ask, agent, router, journal, tool (empty = global defaults)
+#
+# Priority chain (highest → lowest):
+#   1. Per-scenario override (LLM_TEMP_ASK, etc.)
+#   2. Per-model override (set via /models param)
+#   3. Model registry default (from _MODELS_REGISTRY)
+#   4. Global default (LLM_TEMPERATURE, etc.)
+#
+# Scenarios: ask, agent, router, journal, tool (empty = model/global defaults)
 _llm_build_opts() {
     local np="$1"  # num_predict
     local scenario="${LLM_SCENARIO:-}"
 
-    # Resolve sampling params: scenario-specific → global default
+    # ── Step 1: Get model-specific base values ────────────────
+    # These come from the model registry + any per-model overrides,
+    # so Llama/Granite/Ministral get their own tuned defaults
+    # instead of Qwen3's values.
+    local model_temp model_rep model_pres
+    if declare -f models_get_param &>/dev/null && [ -n "$LODGE_MODEL" ]; then
+        model_temp=$(models_get_param "$LODGE_MODEL" temp 2>/dev/null) || model_temp=""
+        model_rep=$(models_get_param "$LODGE_MODEL" repeat 2>/dev/null) || model_rep=""
+        model_pres=$(models_get_param "$LODGE_MODEL" presence 2>/dev/null) || model_pres=""
+    fi
+    # Fall back to globals if model lookup fails
+    model_temp="${model_temp:-$LLM_TEMPERATURE}"
+    model_rep="${model_rep:-$LLM_REPEAT_PENALTY}"
+    model_pres="${model_pres:-$LLM_PRESENCE_PENALTY}"
+
+    # ── Step 2: Apply per-scenario overrides ──────────────────
+    # If a scenario-specific value is set, it wins over model defaults.
     local temp rep pres
     case "$scenario" in
-        ask)     temp="${LLM_TEMP_ASK:-$LLM_TEMPERATURE}"; rep="${LLM_REPEAT_ASK:-$LLM_REPEAT_PENALTY}"; pres="${LLM_PRESENCE_ASK:-$LLM_PRESENCE_PENALTY}" ;;
-        agent)   temp="${LLM_TEMP_AGENT:-$LLM_TEMPERATURE}"; rep="${LLM_REPEAT_AGENT:-$LLM_REPEAT_PENALTY}"; pres="${LLM_PRESENCE_AGENT:-$LLM_PRESENCE_PENALTY}" ;;
-        router)  temp="${LLM_TEMP_ROUTER:-$LLM_TEMPERATURE}"; rep="${LLM_REPEAT_ROUTER:-$LLM_REPEAT_PENALTY}"; pres="${LLM_PRESENCE_ROUTER:-$LLM_PRESENCE_PENALTY}" ;;
-        journal) temp="${LLM_TEMP_JOURNAL:-$LLM_TEMPERATURE}"; rep="${LLM_REPEAT_JOURNAL:-$LLM_REPEAT_PENALTY}"; pres="${LLM_PRESENCE_JOURNAL:-$LLM_PRESENCE_PENALTY}" ;;
-        tool)    temp="${LLM_TEMP_TOOL:-$LLM_TEMPERATURE}"; rep="${LLM_REPEAT_TOOL:-$LLM_REPEAT_PENALTY}"; pres="${LLM_PRESENCE_TOOL:-$LLM_PRESENCE_PENALTY}" ;;
-        *)       temp="$LLM_TEMPERATURE"; rep="$LLM_REPEAT_PENALTY"; pres="$LLM_PRESENCE_PENALTY" ;;
+        ask)     temp="${LLM_TEMP_ASK:-$model_temp}"; rep="${LLM_REPEAT_ASK:-$model_rep}"; pres="${LLM_PRESENCE_ASK:-$model_pres}" ;;
+        agent)   temp="${LLM_TEMP_AGENT:-$model_temp}"; rep="${LLM_REPEAT_AGENT:-$model_rep}"; pres="${LLM_PRESENCE_AGENT:-$model_pres}" ;;
+        router)  temp="${LLM_TEMP_ROUTER:-$model_temp}"; rep="${LLM_REPEAT_ROUTER:-$model_rep}"; pres="${LLM_PRESENCE_ROUTER:-$model_pres}" ;;
+        journal) temp="${LLM_TEMP_JOURNAL:-$model_temp}"; rep="${LLM_REPEAT_JOURNAL:-$model_rep}"; pres="${LLM_PRESENCE_JOURNAL:-$model_pres}" ;;
+        tool)    temp="${LLM_TEMP_TOOL:-$model_temp}"; rep="${LLM_REPEAT_TOOL:-$model_rep}"; pres="${LLM_PRESENCE_TOOL:-$model_pres}" ;;
+        *)       temp="$model_temp"; rep="$model_rep"; pres="$model_pres" ;;
     esac
 
     jq -n \

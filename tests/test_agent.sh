@@ -349,7 +349,7 @@ describe "Dynamic dual-loop architecture"
   it "macro strategist has question detection rule" && {
     local body
     body=$(declare -f agent_run)
-    echo "$body" | grep -q 'QUESTION.*conversation.*request for information'
+    echo "$body" | grep -q 'ONLY use /ask for simple questions'
     assert_ok $?
   }
 
