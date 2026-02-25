@@ -206,15 +206,27 @@ else
 fi
 
 # ── 5. Quick model test ─────────────────────────────────────
-# Use stream:true because the thinking model buffers all computation
-# before sending a byte when stream:false. With streaming, thinking
-# tokens arrive quickly even though the final response takes longer.
+# Two-phase approach: first, preload model weights into memory (this can
+# take 30-60s on ARM with a cold cache). Then test responsiveness with a
+# trivial prompt. Separating the two prevents the weight-load time from
+# eating into the response timeout.
+info "Loading model into memory (first time may take 30-60s)..."
+# Phase 1: Preload weights. The /api/generate endpoint with an empty prompt
+# and keep_alive loads the model without generating anything.
+if curl -sf --connect-timeout 10 --max-time 180 http://127.0.0.1:11434/api/generate \
+    -d '{"model":"blue-lodge","prompt":"","keep_alive":"30m"}' \
+    >/dev/null 2>&1; then
+    ok "Model loaded"
+else
+    warn "Model preload timed out — continuing anyway"
+fi
+
 info "Testing model responsiveness..."
 _MODEL_OK=0
-# Warm-up: load weights with a trivial 1-token prompt first. Streaming
-# ensures the connection stays alive during the ~20-30s weight load.
-if curl -sfN --connect-timeout 10 --max-time 120 http://127.0.0.1:11434/api/generate \
-    -d '{"model":"blue-lodge","prompt":"Say OK","stream":true,"options":{"num_predict":10,"budget_tokens":4}}' \
+# Phase 2: With weights already in memory, a trivial prompt should respond
+# in seconds. budget_tokens:2 = near-zero thinking, num_predict:4 = tiny output.
+if curl -sfN --connect-timeout 5 --max-time 30 http://127.0.0.1:11434/api/generate \
+    -d '{"model":"blue-lodge","prompt":"Say OK","stream":true,"budget_tokens":2,"options":{"num_predict":4}}' \
     2>/dev/null | while IFS= read -r _line; do
         _tok=$(echo "$_line" | jq -r '.response // empty' 2>/dev/null)
         _think=$(echo "$_line" | jq -r '.thinking // empty' 2>/dev/null)

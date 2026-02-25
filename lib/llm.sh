@@ -234,13 +234,9 @@ llm_generate() {
 
     _llm_debug_start_timer
 
-    # Build options with optional budget_tokens
+    # Build options (num_predict only — budget_tokens is top-level per Ollama API)
     local _opts
-    if [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
-        _opts=$(jq -n --argjson np "$max_tokens" --argjson bt "$budget" '{num_predict:$np, budget_tokens:$bt}')
-    else
-        _opts=$(jq -n --argjson np "$max_tokens" '{num_predict:$np}')
-    fi
+    _opts=$(jq -n --argjson np "$max_tokens" '{num_predict:$np}')
 
     if [ -n "$system" ]; then
         payload=$(jq -n \
@@ -257,6 +253,11 @@ llm_generate() {
             --arg keep_alive "$LLM_KEEP_ALIVE" \
             --argjson options "$_opts" \
             '{model: $model, prompt: $prompt, stream: true, keep_alive: $keep_alive, options: $options}')
+    fi
+
+    # Inject budget_tokens at top level (Ollama ignores it inside options)
+    if [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
+        payload=$(echo "$payload" | jq --argjson bt "$budget" '. + {budget_tokens: $bt}')
     fi
 
     local curl_timeout="${LLM_TIMEOUT:-600}"
@@ -433,13 +434,9 @@ llm_stream() {
     # Thinking-only model: no /nothink or /think suffixes needed.
     # The model always thinks — LODGE_THINK controls display only.
 
-    # Build options with optional budget_tokens
+    # Build options (num_predict only — budget_tokens is top-level per Ollama API)
     local _opts
-    if [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
-        _opts=$(jq -n --argjson np "$max_tokens" --argjson bt "$budget" '{num_predict:$np, budget_tokens:$bt}')
-    else
-        _opts=$(jq -n --argjson np "$max_tokens" '{num_predict:$np}')
-    fi
+    _opts=$(jq -n --argjson np "$max_tokens" '{num_predict:$np}')
 
     if [ -n "$system" ]; then
         payload=$(jq -n \
@@ -456,6 +453,11 @@ llm_stream() {
             --arg keep_alive "$LLM_KEEP_ALIVE" \
             --argjson options "$_opts" \
             '{model: $model, prompt: $prompt, stream: true, keep_alive: $keep_alive, options: $options}')
+    fi
+
+    # Inject budget_tokens at top level (Ollama ignores it inside options)
+    if [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
+        payload=$(echo "$payload" | jq --argjson bt "$budget" '. + {budget_tokens: $bt}')
     fi
 
     # Build timeout args — belt-and-suspenders: both `timeout` command and curl's --max-time
@@ -663,13 +665,9 @@ llm_chat() {
     local budget="${3:-$LLM_BUDGET_TOKENS}"
     local payload
 
-    # Build options with optional budget_tokens
+    # Build options (num_predict only — budget_tokens is top-level per Ollama API)
     local _opts
-    if [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
-        _opts=$(jq -n --argjson np "$LLM_MAX_TOKENS" --argjson bt "$budget" '{num_predict:$np, budget_tokens:$bt}')
-    else
-        _opts=$(jq -n --argjson np "$LLM_MAX_TOKENS" '{num_predict:$np}')
-    fi
+    _opts=$(jq -n --argjson np "$LLM_MAX_TOKENS" '{num_predict:$np}')
 
     if [ -n "$system" ]; then
         payload=$(jq -n \
@@ -686,6 +684,11 @@ llm_chat() {
             --arg keep_alive "$LLM_KEEP_ALIVE" \
             --argjson options "$_opts" \
             '{model: $model, messages: $messages, stream: true, keep_alive: $keep_alive, options: $options}')
+    fi
+
+    # Inject budget_tokens at top level (Ollama ignores it inside options)
+    if [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
+        payload=$(echo "$payload" | jq --argjson bt "$budget" '. + {budget_tokens: $bt}')
     fi
 
     local curl_timeout="${LLM_TIMEOUT:-600}"
