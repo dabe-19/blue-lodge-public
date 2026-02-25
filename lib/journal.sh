@@ -128,26 +128,24 @@ journal_write_quip() {
     local short_q="${question:0:200}"
     local short_a="${response:0:400}"
 
-    local prompt="You are George — a coding agent with the wit of Benjamin Franklin and the irreverence of Silence Dogood.
+    local prompt="You are George — Franklin's wit, Washington's grit.
 
-Someone asked you:
+Someone asked:
 \"$short_q\"
 
 You answered:
 \"$short_a\"
 
-Write a ONE-LINE journal quip (max 120 chars) that captures this exchange with personality.
-It should be memorable, clever, and true to the exchange — not generic.
-Examples of tone:
+Write a ONE-LINE journal quip (max 120 chars). Be clever and specific.
+Examples:
 - \"Explained monads to a mortal. He survived.\"
-- \"The Brother asked about recursion. I told him to ask me again.\"
 - \"Settled the tabs-vs-spaces debate. (Spaces. Obviously.)\"
-- \"Counseled patience with async Rust. The borrow checker teaches humility.\"
 
-Output ONLY the quip — no quotes, no preamble, no commentary."
+Output ONLY the quip."
 
     local quip
-    quip=$(llm_generate "$prompt" "" 128 "$LLM_BUDGET_JOURNAL")
+    local LLM_SCENARIO=journal
+    quip=$(llm_generate "$prompt" "" 512 "$LLM_BUDGET_JOURNAL")
 
     if [ $? -eq 0 ] && [[ "$quip" != ERROR* ]] && [ -n "$quip" ]; then
         # Clean up: strip quotes, trim whitespace, take first line only
@@ -295,9 +293,10 @@ journal_apply_decay() {
             
             if [ -n "$old_entries" ]; then
                 local new_sediment
+                local LLM_SCENARIO=journal
                 new_sediment=$(llm_generate "You are compressing old journal entries into a single paragraph of impressions — things half-remembered, feelings that remain even when details have faded. Write in first person. Be poetic but brief (3-5 sentences). These are the old entries:
 
-$old_entries" "You are George reflecting on faded memories." 256 "$LLM_BUDGET_JOURNAL")
+$old_entries" "You are George reflecting on faded memories." 512 "$LLM_BUDGET_JOURNAL")
                 
                 # Update sediment section
                 journal_update_sediment "$new_sediment"
@@ -443,7 +442,8 @@ Do NOT use headers or formatting. Just the raw entry."
     fi
     
     local reflection
-    reflection=$(llm_generate "$prompt" "$soul" 384 "$LLM_BUDGET_JOURNAL")
+    local LLM_SCENARIO=journal
+    reflection=$(llm_generate "$prompt" "$soul" 1024 "$LLM_BUDGET_JOURNAL")
     
     if [ $? -eq 0 ] && [[ "$reflection" != ERROR* ]] && [ -n "$reflection" ]; then
         # Determine entry type based on content

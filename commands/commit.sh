@@ -44,6 +44,7 @@ cmd_commit() {
     # Generate commit message
     ui_spinner_start "Generating commit message"
     local msg
+    local LLM_SCENARIO=tool
     msg=$(llm_generate "Generate a concise git commit message (conventional commits format) for these changes. Output ONLY the message, nothing else. Max 72 chars for first line.
 
 Changes:

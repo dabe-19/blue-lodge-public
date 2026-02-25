@@ -445,6 +445,81 @@ describe "Limits command"
     assert_eq "$LLM_BUDGET_TOOL" "256"
   }
 
+# ── /model command ─────────────────────────────────────────────
+describe "Model command (sampling parameters)"
+
+  it "registers model command" && {
+    commands_is_command "/model"
+    assert_ok $?
+  }
+
+  it "_cmd_model is defined" && {
+    declare -f _cmd_model &>/dev/null
+    assert_ok $?
+  }
+
+  it "_cmd_model show displays sampling parameters" && {
+    output=$(_cmd_model "" 2>&1)
+    echo "$output" | grep -q "Sampling Parameters"
+    assert_ok $?
+  }
+
+  it "_cmd_model temp sets LLM_TEMPERATURE" && {
+    _cmd_model "temp 0.7" >/dev/null 2>&1
+    assert_eq "$LLM_TEMPERATURE" "0.7"
+    LLM_TEMPERATURE=0.4  # restore
+  }
+
+  it "_cmd_model presence sets LLM_PRESENCE_PENALTY" && {
+    _cmd_model "presence 2.0" >/dev/null 2>&1
+    assert_eq "$LLM_PRESENCE_PENALTY" "2.0"
+    LLM_PRESENCE_PENALTY=1.8  # restore
+  }
+
+  it "_cmd_model repeat sets LLM_REPEAT_PENALTY" && {
+    _cmd_model "repeat 1.5" >/dev/null 2>&1
+    assert_eq "$LLM_REPEAT_PENALTY" "1.5"
+    LLM_REPEAT_PENALTY=1.3  # restore
+  }
+
+  it "_cmd_model temp-ask sets LLM_TEMP_ASK" && {
+    _cmd_model "temp-ask 0.8" >/dev/null 2>&1
+    assert_eq "$LLM_TEMP_ASK" "0.8"
+    LLM_TEMP_ASK=0.5  # restore
+  }
+
+  it "_cmd_model presence-router sets LLM_PRESENCE_ROUTER" && {
+    _cmd_model "presence-router 2.5" >/dev/null 2>&1
+    assert_eq "$LLM_PRESENCE_ROUTER" "2.5"
+    LLM_PRESENCE_ROUTER=2.0  # restore
+  }
+
+  it "_cmd_model rejects out-of-range temp" && {
+    _cmd_model "temp 5.0" >/dev/null 2>&1
+    assert_eq "$LLM_TEMPERATURE" "0.4"
+  }
+
+  it "_cmd_model rejects non-numeric input" && {
+    _cmd_model "temp abc" >/dev/null 2>&1
+    assert_eq "$LLM_TEMPERATURE" "0.4"
+  }
+
+  it "_cmd_model reset restores all defaults" && {
+    LLM_TEMPERATURE=0.9
+    LLM_REPEAT_PENALTY=2.0
+    LLM_PRESENCE_PENALTY=0.5
+    LLM_TEMP_ASK=0.9
+    LLM_TEMP_ROUTER=0.9
+    LLM_PRESENCE_JOURNAL=0.5
+    _cmd_model "reset" >/dev/null 2>&1
+    assert_eq "$LLM_TEMPERATURE" "0.4"
+    assert_eq "$LLM_REPEAT_PENALTY" "1.3"
+    assert_eq "$LLM_PRESENCE_PENALTY" "1.8"
+    assert_eq "$LLM_TEMP_ASK" "0.5"
+    assert_eq "$LLM_TEMP_ROUTER" "0.1"
+    assert_eq "$LLM_PRESENCE_JOURNAL" "2.0"
+  }
+
 # ── /debug command ─────────────────────────────────────────────
 describe "Debug command"
 

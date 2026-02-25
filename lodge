@@ -416,6 +416,188 @@ _cmd_limits() {
             ui_dim "    reset           — Reset all to defaults" ;;
     esac
 }
+_cmd_model() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local value
+    value=$(echo "$args" | awk '{print $2}')
+
+    # Float validator: _model_set VAR_NAME "Label" value min max
+    _model_set() {
+        local var_name="$1" label="$2" val="$3" min="$4" max="$5"
+        if ! [[ "$val" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+            ui_err "$label must be a number (e.g. 1.3)"
+            return 1
+        fi
+        # Compare floats via awk
+        if ! awk "BEGIN { exit ($val >= $min && $val <= $max) ? 0 : 1 }"; then
+            ui_err "$label must be between $min and $max"
+            return 1
+        fi
+        eval "$var_name=$val"
+        ui_ok "$label set to $val"
+    }
+
+    case "$action" in
+        # ── Global defaults ──────────────────────────────
+        temp|temperature)
+            if [ -z "$value" ]; then
+                ui_info "Global temperature: $LLM_TEMPERATURE (default: 0.4)"
+            else
+                _model_set LLM_TEMPERATURE "Temperature" "$value" 0.0 2.0
+            fi ;;
+        repeat|repeat-penalty)
+            if [ -z "$value" ]; then
+                ui_info "Global repeat_penalty: $LLM_REPEAT_PENALTY (default: 1.3)"
+            else
+                _model_set LLM_REPEAT_PENALTY "Repeat penalty" "$value" 0.0 3.0
+            fi ;;
+        presence|presence-penalty)
+            if [ -z "$value" ]; then
+                ui_info "Global presence_penalty: $LLM_PRESENCE_PENALTY (default: 1.8)"
+            else
+                _model_set LLM_PRESENCE_PENALTY "Presence penalty" "$value" 0.0 3.0
+            fi ;;
+        # ── Per-scenario: Ask ────────────────────────────
+        temp-ask)
+            if [ -z "$value" ]; then
+                ui_info "Ask temperature: $LLM_TEMP_ASK (default: 0.5)"
+            else
+                _model_set LLM_TEMP_ASK "Ask temperature" "$value" 0.0 2.0
+            fi ;;
+        repeat-ask)
+            if [ -z "$value" ]; then
+                ui_info "Ask repeat_penalty: $LLM_REPEAT_ASK (default: 1.3)"
+            else
+                _model_set LLM_REPEAT_ASK "Ask repeat penalty" "$value" 0.0 3.0
+            fi ;;
+        presence-ask)
+            if [ -z "$value" ]; then
+                ui_info "Ask presence_penalty: $LLM_PRESENCE_ASK (default: 1.8)"
+            else
+                _model_set LLM_PRESENCE_ASK "Ask presence penalty" "$value" 0.0 3.0
+            fi ;;
+        # ── Per-scenario: Agent ──────────────────────────
+        temp-agent)
+            if [ -z "$value" ]; then
+                ui_info "Agent temperature: $LLM_TEMP_AGENT (default: 0.3)"
+            else
+                _model_set LLM_TEMP_AGENT "Agent temperature" "$value" 0.0 2.0
+            fi ;;
+        repeat-agent)
+            if [ -z "$value" ]; then
+                ui_info "Agent repeat_penalty: $LLM_REPEAT_AGENT (default: 1.3)"
+            else
+                _model_set LLM_REPEAT_AGENT "Agent repeat penalty" "$value" 0.0 3.0
+            fi ;;
+        presence-agent)
+            if [ -z "$value" ]; then
+                ui_info "Agent presence_penalty: $LLM_PRESENCE_AGENT (default: 1.8)"
+            else
+                _model_set LLM_PRESENCE_AGENT "Agent presence penalty" "$value" 0.0 3.0
+            fi ;;
+        # ── Per-scenario: Router ─────────────────────────
+        temp-router)
+            if [ -z "$value" ]; then
+                ui_info "Router temperature: $LLM_TEMP_ROUTER (default: 0.1)"
+            else
+                _model_set LLM_TEMP_ROUTER "Router temperature" "$value" 0.0 2.0
+            fi ;;
+        repeat-router)
+            if [ -z "$value" ]; then
+                ui_info "Router repeat_penalty: $LLM_REPEAT_ROUTER (default: 1.1)"
+            else
+                _model_set LLM_REPEAT_ROUTER "Router repeat penalty" "$value" 0.0 3.0
+            fi ;;
+        presence-router)
+            if [ -z "$value" ]; then
+                ui_info "Router presence_penalty: $LLM_PRESENCE_ROUTER (default: 2.0)"
+            else
+                _model_set LLM_PRESENCE_ROUTER "Router presence penalty" "$value" 0.0 3.0
+            fi ;;
+        # ── Per-scenario: Journal ────────────────────────
+        temp-journal)
+            if [ -z "$value" ]; then
+                ui_info "Journal temperature: $LLM_TEMP_JOURNAL (default: 0.6)"
+            else
+                _model_set LLM_TEMP_JOURNAL "Journal temperature" "$value" 0.0 2.0
+            fi ;;
+        repeat-journal)
+            if [ -z "$value" ]; then
+                ui_info "Journal repeat_penalty: $LLM_REPEAT_JOURNAL (default: 1.3)"
+            else
+                _model_set LLM_REPEAT_JOURNAL "Journal repeat penalty" "$value" 0.0 3.0
+            fi ;;
+        presence-journal)
+            if [ -z "$value" ]; then
+                ui_info "Journal presence_penalty: $LLM_PRESENCE_JOURNAL (default: 2.0)"
+            else
+                _model_set LLM_PRESENCE_JOURNAL "Journal presence penalty" "$value" 0.0 3.0
+            fi ;;
+        # ── Per-scenario: Tool ───────────────────────────
+        temp-tool)
+            if [ -z "$value" ]; then
+                ui_info "Tool temperature: $LLM_TEMP_TOOL (default: 0.3)"
+            else
+                _model_set LLM_TEMP_TOOL "Tool temperature" "$value" 0.0 2.0
+            fi ;;
+        repeat-tool)
+            if [ -z "$value" ]; then
+                ui_info "Tool repeat_penalty: $LLM_REPEAT_TOOL (default: 1.3)"
+            else
+                _model_set LLM_REPEAT_TOOL "Tool repeat penalty" "$value" 0.0 3.0
+            fi ;;
+        presence-tool)
+            if [ -z "$value" ]; then
+                ui_info "Tool presence_penalty: $LLM_PRESENCE_TOOL (default: 1.8)"
+            else
+                _model_set LLM_PRESENCE_TOOL "Tool presence penalty" "$value" 0.0 3.0
+            fi ;;
+        # ── Reset ────────────────────────────────────────
+        reset)
+            LLM_TEMPERATURE=0.4
+            LLM_REPEAT_PENALTY=1.3
+            LLM_PRESENCE_PENALTY=1.8
+            LLM_TEMP_ASK=0.5;    LLM_REPEAT_ASK=1.3;    LLM_PRESENCE_ASK=1.8
+            LLM_TEMP_AGENT=0.3;  LLM_REPEAT_AGENT=1.3;  LLM_PRESENCE_AGENT=1.8
+            LLM_TEMP_ROUTER=0.1; LLM_REPEAT_ROUTER=1.1;  LLM_PRESENCE_ROUTER=2.0
+            LLM_TEMP_JOURNAL=0.6; LLM_REPEAT_JOURNAL=1.3; LLM_PRESENCE_JOURNAL=2.0
+            LLM_TEMP_TOOL=0.3;   LLM_REPEAT_TOOL=1.3;   LLM_PRESENCE_TOOL=1.8
+            ui_ok "All sampling parameters reset to defaults" ;;
+        # ── Dashboard (no args) ──────────────────────────
+        "")
+            ui_section "Sampling Parameters"
+            printf "  %-22s %-8s %-8s %-8s\n" "" "temp" "repeat" "presence"
+            printf "  %-22s %-8s %-8s %-8s\n" "Global defaults:" "$LLM_TEMPERATURE" "$LLM_REPEAT_PENALTY" "$LLM_PRESENCE_PENALTY"
+            echo ""
+            printf "  %-22s %-8s %-8s %-8s\n" "Ask (/ask):" "$LLM_TEMP_ASK" "$LLM_REPEAT_ASK" "$LLM_PRESENCE_ASK"
+            printf "  %-22s %-8s %-8s %-8s\n" "Agent (plan/spec):" "$LLM_TEMP_AGENT" "$LLM_REPEAT_AGENT" "$LLM_PRESENCE_AGENT"
+            printf "  %-22s %-8s %-8s %-8s\n" "Router:" "$LLM_TEMP_ROUTER" "$LLM_REPEAT_ROUTER" "$LLM_PRESENCE_ROUTER"
+            printf "  %-22s %-8s %-8s %-8s\n" "Journal:" "$LLM_TEMP_JOURNAL" "$LLM_REPEAT_JOURNAL" "$LLM_PRESENCE_JOURNAL"
+            printf "  %-22s %-8s %-8s %-8s\n" "Tool:" "$LLM_TEMP_TOOL" "$LLM_REPEAT_TOOL" "$LLM_PRESENCE_TOOL"
+            echo ""
+            ui_dim "  Usage: /model <param> [value]"
+            ui_dim "  Reset: /model reset" ;;
+        # ── Help ─────────────────────────────────────────
+        *)
+            ui_info "Usage: /model [param] [value]"
+            echo ""
+            ui_dim "  Global defaults:"
+            ui_dim "    temp N            — Temperature (current: $LLM_TEMPERATURE)"
+            ui_dim "    repeat N          — Repeat penalty (current: $LLM_REPEAT_PENALTY)"
+            ui_dim "    presence N        — Presence penalty (current: $LLM_PRESENCE_PENALTY)"
+            echo ""
+            ui_dim "  Per-scenario (temp-X, repeat-X, presence-X where X is ask|agent|router|journal|tool):"
+            ui_dim "    temp-ask N        — Ask temperature (current: $LLM_TEMP_ASK)"
+            ui_dim "    presence-ask N    — Ask presence penalty (current: $LLM_PRESENCE_ASK)"
+            ui_dim "    temp-router N     — Router temperature (current: $LLM_TEMP_ROUTER)"
+            ui_dim "    presence-journal N — Journal presence penalty (current: $LLM_PRESENCE_JOURNAL)"
+            ui_dim "    ...etc"
+            echo ""
+            ui_dim "    reset             — Reset all to defaults" ;;
+    esac
+}
 _cmd_journal() {
     local args="$1"
     local action
@@ -2594,6 +2776,7 @@ _register_commands() {
     commands_register "memory"   "Show GEORGE.md contents" "_cmd_memory"
     commands_register "soul"     "Toggle soul mode on/off (full personality)" "_cmd_soul"
     commands_register "limits"   "View/adjust agent planning limits" "_cmd_limits"
+    commands_register "model"    "View/adjust sampling parameters (temp, penalties)" "_cmd_model"
     commands_register "status"   "Show agent status" "_cmd_status"
     commands_register "journal"  "View/write journal" "_cmd_journal"
     commands_register "reflect"  "Record a reflection" "_cmd_reflect"

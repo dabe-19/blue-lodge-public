@@ -18,11 +18,72 @@ LLM_BUDGET_AGENT="${LLM_BUDGET_AGENT:-512}"  # Think budget for strategist/speci
 LLM_BUDGET_ROUTER="${LLM_BUDGET_ROUTER:-128}" # Think budget for router (just pick a tool name)
 LLM_BUDGET_JOURNAL="${LLM_BUDGET_JOURNAL:-64}" # Think budget for journal (background utility, fast)
 LLM_BUDGET_TOOL="${LLM_BUDGET_TOOL:-256}"    # Think budget for tools (commit, web, recall, slash)
+
+# ── Sampling parameters (per-scenario, override Modelfile defaults) ──
+# Global defaults — applied when no scenario-specific value is set
+LLM_TEMPERATURE="${LLM_TEMPERATURE:-0.4}"
+LLM_REPEAT_PENALTY="${LLM_REPEAT_PENALTY:-1.3}"
+LLM_PRESENCE_PENALTY="${LLM_PRESENCE_PENALTY:-1.8}"
+
+# Per-scenario overrides (empty = use global default)
+# Ask: conversational, moderate creativity, strong anti-spiral
+LLM_TEMP_ASK="${LLM_TEMP_ASK:-0.5}"
+LLM_REPEAT_ASK="${LLM_REPEAT_ASK:-1.3}"
+LLM_PRESENCE_ASK="${LLM_PRESENCE_ASK:-1.8}"
+
+# Agent: focused execution, low creativity, strong anti-spiral
+LLM_TEMP_AGENT="${LLM_TEMP_AGENT:-0.3}"
+LLM_REPEAT_AGENT="${LLM_REPEAT_AGENT:-1.3}"
+LLM_PRESENCE_AGENT="${LLM_PRESENCE_AGENT:-1.8}"
+
+# Router: deterministic tool selection, minimal creativity
+LLM_TEMP_ROUTER="${LLM_TEMP_ROUTER:-0.1}"
+LLM_REPEAT_ROUTER="${LLM_REPEAT_ROUTER:-1.1}"
+LLM_PRESENCE_ROUTER="${LLM_PRESENCE_ROUTER:-2.0}"
+
+# Journal: brief background utility, very constrained
+LLM_TEMP_JOURNAL="${LLM_TEMP_JOURNAL:-0.6}"
+LLM_REPEAT_JOURNAL="${LLM_REPEAT_JOURNAL:-1.3}"
+LLM_PRESENCE_JOURNAL="${LLM_PRESENCE_JOURNAL:-2.0}"
+
+# Tool: commit messages, web summary, recall, slash — focused
+LLM_TEMP_TOOL="${LLM_TEMP_TOOL:-0.3}"
+LLM_REPEAT_TOOL="${LLM_REPEAT_TOOL:-1.3}"
+LLM_PRESENCE_TOOL="${LLM_PRESENCE_TOOL:-1.8}"
+
 LLM_TIMEOUT="${LLM_TIMEOUT:-600}"           # Safety net: 600s max per request (thinking models on ARM need headroom; Ctrl+C also works)
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
 LODGE_THINK="${LODGE_THINK:-1}"               # 1=show thinking tokens dimmed (default), 0=hide thinking tokens (model always thinks)
 LODGE_THINK_STREAM="${LODGE_THINK_STREAM:-1}"  # When LODGE_THINK=1: 0=hide thinking, 1=show dimmed, 2=show bright (cyan)
 LODGE_DEBUG="${LODGE_DEBUG:-0}"                 # 0=normal, 1=show timers + token counts per LLM call
+
+# ── Sampling parameter resolver ────────────────────────────────
+# Resolves per-scenario sampling parameters based on LLM_SCENARIO.
+# Callers set `local LLM_SCENARIO=ask` before calling llm_generate/llm_stream/llm_chat.
+# Returns a jq-compatible JSON fragment for options injection.
+# Scenarios: ask, agent, router, journal, tool (empty = global defaults)
+_llm_build_opts() {
+    local np="$1"  # num_predict
+    local scenario="${LLM_SCENARIO:-}"
+
+    # Resolve sampling params: scenario-specific → global default
+    local temp rep pres
+    case "$scenario" in
+        ask)     temp="${LLM_TEMP_ASK:-$LLM_TEMPERATURE}"; rep="${LLM_REPEAT_ASK:-$LLM_REPEAT_PENALTY}"; pres="${LLM_PRESENCE_ASK:-$LLM_PRESENCE_PENALTY}" ;;
+        agent)   temp="${LLM_TEMP_AGENT:-$LLM_TEMPERATURE}"; rep="${LLM_REPEAT_AGENT:-$LLM_REPEAT_PENALTY}"; pres="${LLM_PRESENCE_AGENT:-$LLM_PRESENCE_PENALTY}" ;;
+        router)  temp="${LLM_TEMP_ROUTER:-$LLM_TEMPERATURE}"; rep="${LLM_REPEAT_ROUTER:-$LLM_REPEAT_PENALTY}"; pres="${LLM_PRESENCE_ROUTER:-$LLM_PRESENCE_PENALTY}" ;;
+        journal) temp="${LLM_TEMP_JOURNAL:-$LLM_TEMPERATURE}"; rep="${LLM_REPEAT_JOURNAL:-$LLM_REPEAT_PENALTY}"; pres="${LLM_PRESENCE_JOURNAL:-$LLM_PRESENCE_PENALTY}" ;;
+        tool)    temp="${LLM_TEMP_TOOL:-$LLM_TEMPERATURE}"; rep="${LLM_REPEAT_TOOL:-$LLM_REPEAT_PENALTY}"; pres="${LLM_PRESENCE_TOOL:-$LLM_PRESENCE_PENALTY}" ;;
+        *)       temp="$LLM_TEMPERATURE"; rep="$LLM_REPEAT_PENALTY"; pres="$LLM_PRESENCE_PENALTY" ;;
+    esac
+
+    jq -n \
+        --argjson np "$np" \
+        --argjson temp "$temp" \
+        --argjson rep "$rep" \
+        --argjson pres "$pres" \
+        '{num_predict:$np, temperature:$temp, repeat_penalty:$rep, presence_penalty:$pres}'
+}
 
 # ── Debug tracking state ───────────────────────────────────────
 # File-based counters survive $() subshells (shell vars don't).
@@ -234,9 +295,9 @@ llm_generate() {
 
     _llm_debug_start_timer
 
-    # Build options (num_predict only — budget_tokens is top-level per Ollama API)
+    # Build options with per-scenario sampling parameters
     local _opts
-    _opts=$(jq -n --argjson np "$max_tokens" '{num_predict:$np}')
+    _opts=$(_llm_build_opts "$max_tokens")
 
     if [ -n "$system" ]; then
         payload=$(jq -n \
@@ -434,9 +495,9 @@ llm_stream() {
     # Thinking-only model: no /nothink or /think suffixes needed.
     # The model always thinks — LODGE_THINK controls display only.
 
-    # Build options (num_predict only — budget_tokens is top-level per Ollama API)
+    # Build options with per-scenario sampling parameters
     local _opts
-    _opts=$(jq -n --argjson np "$max_tokens" '{num_predict:$np}')
+    _opts=$(_llm_build_opts "$max_tokens")
 
     if [ -n "$system" ]; then
         payload=$(jq -n \
@@ -665,9 +726,9 @@ llm_chat() {
     local budget="${3:-$LLM_BUDGET_TOKENS}"
     local payload
 
-    # Build options (num_predict only — budget_tokens is top-level per Ollama API)
+    # Build options with per-scenario sampling parameters
     local _opts
-    _opts=$(jq -n --argjson np "$LLM_MAX_TOKENS" '{num_predict:$np}')
+    _opts=$(_llm_build_opts "$LLM_MAX_TOKENS")
 
     if [ -n "$system" ]; then
         payload=$(jq -n \
@@ -787,6 +848,7 @@ QUESTION: $question
 Answer concisely."
     fi
     
+    local LLM_SCENARIO=ask
     llm_generate "$prompt"
 }
 

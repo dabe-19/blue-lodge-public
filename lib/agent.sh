@@ -458,6 +458,7 @@ ${base_rules}"
             ui_dim "  Plan (round $((clarify_round + 1))):"
         fi
 
+        local LLM_SCENARIO=agent
         plan=$(llm_stream "$prompt" "$system_prompt" 512 "$LLM_BUDGET_AGENT")
         echo ""
 
@@ -766,6 +767,7 @@ agent_inner_loop() {
         # llm_generate is used here for maximum speed — no streaming,
         # no personality, just returns the raw string.
         local selected_tool
+        local LLM_SCENARIO=router
         selected_tool=$(llm_generate "$route_prompt" "$router_sys" "${LLM_ROUTER_TOKENS:-50}" "$LLM_BUDGET_ROUTER")
 
         # Cancel check after router LLM call — curl may have been killed
@@ -856,6 +858,7 @@ agent_inner_loop() {
         # below. Streaming it first wastes time showing the same text twice
         # and confuses the user with redundant output.
         local action_plan
+        local LLM_SCENARIO=agent
         action_plan=$(llm_generate "$specialist_prompt" "$specialist_sys" "${LLM_AGENT_TOKENS:-512}" "$LLM_BUDGET_AGENT")
 
         # Cancel check after specialist LLM call
@@ -1099,6 +1102,7 @@ Output a slash command line starting with / OR a bash code block."
 
         local guided_sys=$(_build_specialist_prompt "" "$workdir")
         local final_plan
+        local LLM_SCENARIO=agent
         final_plan=$(llm_stream "$guided_prompt" "$guided_sys" "${LLM_AGENT_TOKENS:-512}" "$LLM_BUDGET_AGENT")
 
         # Extract slash command or bash command (same logic as main loop)
@@ -1306,6 +1310,7 @@ Rules:
         # is a brief milestone description displayed once by ui_info below.
         # Previously llm_stream showed it live, then ui_info showed it again,
         # then the specialist streamed it a third time — tripling the output.
+        local LLM_SCENARIO=agent
         milestone=$(llm_generate "$macro_prompt" "$macro_sys" "${LLM_AGENT_TOKENS:-512}" "$LLM_BUDGET_AGENT")
 
         # Strip whitespace for clean comparison
@@ -1464,6 +1469,7 @@ $question"
     # Stream the response so user sees tokens arrive in real-time
     echo ""
     local response
+    local LLM_SCENARIO=ask
     response=$(llm_stream "$full_question" "$system_prompt" "$LLM_ASK_TOKENS" "$LLM_BUDGET_ASK")
     echo ""
     

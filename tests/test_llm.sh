@@ -59,6 +59,112 @@ describe "Configuration defaults"
     assert_eq "$LLM_BUDGET_TOOL" "256"
   }
 
+# ── Sampling parameters ───────────────────────────────────────
+describe "Sampling parameter defaults"
+
+  it "LLM_TEMPERATURE defaults to 0.4" && {
+    assert_eq "$LLM_TEMPERATURE" "0.4"
+  }
+
+  it "LLM_REPEAT_PENALTY defaults to 1.3" && {
+    assert_eq "$LLM_REPEAT_PENALTY" "1.3"
+  }
+
+  it "LLM_PRESENCE_PENALTY defaults to 1.8" && {
+    assert_eq "$LLM_PRESENCE_PENALTY" "1.8"
+  }
+
+  it "LLM_TEMP_ASK defaults to 0.5" && {
+    assert_eq "$LLM_TEMP_ASK" "0.5"
+  }
+
+  it "LLM_TEMP_AGENT defaults to 0.3" && {
+    assert_eq "$LLM_TEMP_AGENT" "0.3"
+  }
+
+  it "LLM_TEMP_ROUTER defaults to 0.1" && {
+    assert_eq "$LLM_TEMP_ROUTER" "0.1"
+  }
+
+  it "LLM_TEMP_JOURNAL defaults to 0.6" && {
+    assert_eq "$LLM_TEMP_JOURNAL" "0.6"
+  }
+
+  it "LLM_TEMP_TOOL defaults to 0.3" && {
+    assert_eq "$LLM_TEMP_TOOL" "0.3"
+  }
+
+  it "LLM_PRESENCE_ROUTER defaults to 2.0" && {
+    assert_eq "$LLM_PRESENCE_ROUTER" "2.0"
+  }
+
+  it "LLM_PRESENCE_JOURNAL defaults to 2.0" && {
+    assert_eq "$LLM_PRESENCE_JOURNAL" "2.0"
+  }
+
+describe "Sampling parameter resolver (_llm_build_opts)"
+
+  it "_llm_build_opts is defined" && {
+    declare -f _llm_build_opts &>/dev/null
+    assert_ok $?
+  }
+
+  it "_llm_build_opts returns valid JSON" && {
+    local result
+    result=$(_llm_build_opts 512)
+    echo "$result" | jq . &>/dev/null
+    assert_ok $?
+  }
+
+  it "_llm_build_opts uses global defaults when no scenario set" && {
+    unset LLM_SCENARIO
+    local result
+    result=$(_llm_build_opts 1024)
+    local temp
+    temp=$(echo "$result" | jq -r '.temperature')
+    assert_eq "$temp" "0.4"
+  }
+
+  it "_llm_build_opts uses ask scenario when LLM_SCENARIO=ask" && {
+    LLM_SCENARIO=ask
+    local result
+    result=$(_llm_build_opts 512)
+    unset LLM_SCENARIO
+    local temp
+    temp=$(echo "$result" | jq -r '.temperature')
+    assert_eq "$temp" "0.5"
+  }
+
+  it "_llm_build_opts uses router scenario (low temp)" && {
+    LLM_SCENARIO=router
+    local result
+    result=$(_llm_build_opts 50)
+    unset LLM_SCENARIO
+    local temp
+    temp=$(echo "$result" | jq -r '.temperature')
+    assert_eq "$temp" "0.1"
+  }
+
+  it "_llm_build_opts includes num_predict in output" && {
+    local result
+    result=$(_llm_build_opts 256)
+    local np
+    np=$(echo "$result" | jq -r '.num_predict')
+    assert_eq "$np" "256"
+  }
+
+  it "_llm_build_opts includes presence_penalty" && {
+    LLM_SCENARIO=journal
+    local result
+    result=$(_llm_build_opts 512)
+    unset LLM_SCENARIO
+    local pp
+    pp=$(echo "$result" | jq -r '.presence_penalty')
+    # jq normalizes 2.0 → 2; check either form
+    [[ "$pp" == "2" || "$pp" == "2.0" ]]
+    assert_ok $?
+  }
+
   it "LLM_TIMEOUT defaults to 600 (safety net)" && {
     assert_eq "$LLM_TIMEOUT" "600"
   }

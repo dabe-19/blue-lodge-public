@@ -229,9 +229,9 @@ describe "soul extraction helpers"
     assert_contains "$result" "Impartial Spectator"
   }
 
-  it "_memory_soul_condensed includes Masonic Tenets" && {
+  it "_memory_soul_condensed includes moral core" && {
     result=$(_memory_soul_condensed)
-    assert_contains "$result" "Brotherly Love"
+    assert_contains "$result" "praiseworthy"
   }
 
   it "_memory_soul_condensed is shorter than full soul.md" && {

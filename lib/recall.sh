@@ -3,16 +3,17 @@
 # Lightweight search over George's own documentation and memory.
 # Uses SQLite FTS5 for BM25-ranked full-text search.
 #
-# Indexed sources (auto-discovered):
-#   readme       — README.md (George's capabilities & architecture)
-#   soul         — soul.md (personality & ethics)
-#   docs/*       — All .md files in docs/ and docs/examples/
+# Indexed sources:
+#   ref          — RECALL_INDEX.md (FTS5-optimized master reference)
 #   journal      — journal.md (living memory)
 #   george       — GEORGE.md (current project memory)
+#   doc:<label>  — user-ingested documents (/ingest)
 #
-# New docs added to docs/ are automatically indexed on next reindex.
+# Raw human-readable docs (README, soul.md, docs/*.md) are NOT indexed.
+# Their actionable content is distilled into docs/RECALL_INDEX.md for
+# efficient retrieval with minimal noise.
 #
-# Overhead: ~100-200KB on disk, <1ms per query, 0 RAM.
+# Overhead: ~50-100KB on disk, <1ms per query, 0 RAM.
 # No network, no embedding model, no Python required.
 
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
@@ -177,47 +178,25 @@ _recall_file_mtime() {
     stat -c %Y "$filepath" 2>/dev/null || stat -f %m "$filepath" 2>/dev/null || echo "0"
 }
 
-# ── Build the full source list dynamically ─────────────────────
+# ── Build the source list for indexing ─────────────────────────
 # Returns "source_name:filepath" lines, one per source.
-# Scans docs/ and docs/examples/ for any .md files automatically.
-# Known files get friendly source names; unknown files derive names
-# from their filename (lowercase, .md stripped, spaces→underscores).
+#
+# Only three sources are indexed:
+#   ref     — RECALL_INDEX.md (FTS5-optimized master reference)
+#   journal — journal.md (living memory with decay)
+#   george  — GEORGE.md (current project memory)
+#
+# Raw human-readable docs (README, soul.md, docs/*.md) are NOT indexed.
+# Their actionable content is distilled into RECALL_INDEX.md for
+# efficient FTS5 retrieval with minimal noise.
 _recall_all_sources() {
-    # Core files (always present)
-    echo "readme:$LODGE_DIR/README.md"
-    echo "soul:$LODGE_DIR/soul.md"
+    # FTS5-optimized knowledge index (the only static source)
+    echo "ref:$LODGE_DIR/docs/RECALL_INDEX.md"
 
-    # Auto-scan docs/*.md and docs/examples/*.md
-    # Known filename → friendly source name mapping
-    local _file _basename _source
-    for _file in "$LODGE_DIR/docs/"*.md "$LODGE_DIR/docs/examples/"*.md; do
-        [ -f "$_file" ] || continue
-        _basename=$(basename "$_file" .md)
-        # Map known filenames to short source names
-        case "$_basename" in
-            CRYPTO_WALLETS)    _source="crypto" ;;
-            TUNING)            _source="tuning" ;;
-            SANDBOXES)         _source="sandboxes" ;;
-            SECRETS_VAULT)     _source="vault" ;;
-            RECALL)            _source="recall_guide" ;;
-            SOCIAL_BOTS)       _source="social_bots" ;;
-            PGP_SIGNING)       _source="pgp_signing" ;;
-            SLASH_COMMANDS)    _source="slash_cmds" ;;
-            MORAL_SENTIMENTS)  _source="tms" ;;
-            PHONE_SETUP)       _source="phone_setup" ;;
-            GEORGE_REFERENCE)  _source="ref" ;;
-            *)
-                # Derive: lowercase, replace spaces/hyphens with underscores
-                _source=$(echo "$_basename" | tr '[:upper:]' '[:lower:]' | tr ' -' '__')
-                ;;
-        esac
-        echo "${_source}:${_file}"
-    done
-
-    # Living memory
+    # Living memory (dynamic)
     [ -f "$LODGE_DIR/journal.md" ] && echo "journal:$LODGE_DIR/journal.md"
 
-    # Current project memory (GEORGE.md preferred, CLAUDE.md fallback)
+    # Current project memory (dynamic)
     if [ -f "./GEORGE.md" ]; then
         echo "george:$PWD/GEORGE.md"
     elif [ -f "./CLAUDE.md" ]; then
@@ -271,7 +250,7 @@ recall_reindex() {
 
     local total=0
 
-    # Index all sources (core docs + all docs/*.md + journal + GEORGE.md)
+    # Index all sources (RECALL_INDEX.md + journal + GEORGE.md)
     while IFS=: read -r source filepath; do
         [ -f "$filepath" ] || continue
         recall_index_file "$source" "$filepath"
@@ -408,25 +387,11 @@ SQL
         # Source label
         local label
         case "$source" in
-            readme)     label="README" ;;
-            soul)       label="Soul" ;;
+            ref)        label="Reference" ;;
             journal)    label="Journal" ;;
-            claude)     label="Project" ;;
-            crypto)     label="Crypto" ;;
-            tuning)     label="Tuning" ;;
-            sandboxes)  label="Sandboxes" ;;
-            vault)       label="Vault" ;;
-            recall_guide) label="Recall" ;;
-            social_bots)  label="Social Bots" ;;
-            pgp_signing)  label="PGP" ;;
-            slash_cmds)   label="Commands" ;;
-            tms)          label="Moral Sentiments" ;;
-            phone_setup)  label="Phone Setup" ;;
-            ref)          label="Reference" ;;
-            personal_assistant) label="Example" ;;
-            rust_task_manager)  label="Example" ;;
-            url_shortener)      label="Example" ;;
-            *)           label="$source" ;;
+            george)     label="Project" ;;
+            doc:*)      label="${source#doc:}" ;;
+            *)          label="$source" ;;
         esac
 
         printf "  %b[%s]%b %b%s%b\n" "$C_CYAN" "$label" "$C_RESET" "$C_WHITE" "$section" "$C_RESET"
@@ -515,23 +480,23 @@ SQL
 }
 
 # ── Get George's own capabilities summary ─────────────────────
-# Reads and returns specific README sections relevant to self-knowledge.
+# Returns key capability sections from the FTS5-optimized reference index.
 recall_self_review() {
     if ! recall_available; then
-        # Fallback: just read the README directly
-        if [ -f "$LODGE_DIR/README.md" ]; then
-            head -120 "$LODGE_DIR/README.md"
+        # Fallback: read the reference index directly
+        if [ -f "$LODGE_DIR/docs/RECALL_INDEX.md" ]; then
+            head -120 "$LODGE_DIR/docs/RECALL_INDEX.md"
         fi
         return
     fi
 
     recall_ensure_indexed
 
-    # Pull key sections George would want to know about himself
+    # Pull key sections from the reference index
     local sections
     sections=$(sqlite3 -separator '|' "$RECALL_DB" <<'SQL'
 SELECT section, content FROM chunks
-WHERE source = 'readme'
+WHERE source = 'ref'
 AND (
     section LIKE '%Slash Command%'
     OR section LIKE '%Architecture%'
@@ -540,8 +505,8 @@ AND (
     OR section LIKE '%Container%'
     OR section LIKE '%Phone%'
     OR section LIKE '%Memory%'
-    OR section LIKE '%Quick Start%'
-    OR section LIKE '%Why%'
+    OR section LIKE '%Agent%'
+    OR section LIKE '%Init%'
 )
 ORDER BY id;
 SQL
@@ -549,11 +514,11 @@ SQL
 
     if [ -z "$sections" ]; then
         # Fallback
-        head -120 "$LODGE_DIR/README.md"
+        head -120 "$LODGE_DIR/docs/RECALL_INDEX.md"
         return
     fi
 
-    echo "=== GEORGE'S CAPABILITIES (from README.md) ==="
+    echo "=== GEORGE'S CAPABILITIES (from RECALL_INDEX) ==="
     echo ""
     while IFS='|' read -r section content; do
         [ -z "$section" ] && continue
@@ -861,6 +826,7 @@ recall_ingest_with_summary() {
 
         local summary
         ui_spinner_start "Summarizing"
+        local LLM_SCENARIO=tool
         summary=$(llm_generate "Summarize this document in 3-5 bullet points. Be concise:
 
 $text" "You are a concise summarizer. Output only bullet points." 256 "$LLM_BUDGET_TOOL" 2>/dev/null)
