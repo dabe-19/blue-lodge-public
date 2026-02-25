@@ -208,7 +208,7 @@ fi
 # ── 5. Quick model test ─────────────────────────────────────
 info "Testing model responsiveness..."
 RESPONSE=$(curl -sf --max-time 60 http://127.0.0.1:11434/api/generate \
-    -d '{"model":"blue-lodge","prompt":"Reply with only: OK /nothink","stream":false,"options":{"num_predict":5}}' \
+    -d '{"model":"blue-lodge","prompt":"Reply with only: OK","stream":false,"options":{"num_predict":50}}' \
     | jq -r '.response' 2>/dev/null || echo "TIMEOUT")
 
 if [[ "$RESPONSE" == *"OK"* ]] || [ -n "$RESPONSE" ] && [ "$RESPONSE" != "TIMEOUT" ]; then

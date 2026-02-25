@@ -5,8 +5,8 @@ FROM hf.co/unsloth/Qwen3-4B-Thinking-2507-GGUF:UD-Q5_K_XL
 # Model weights: ~3.5GB | KV cache at 20K ctx: ~2.81GB | Total: ~6.3GB
 # KV math: 2 x 36 layers x 8 KV heads x 128 dim x 2 bytes = 144KB/token
 
-# 2. Randomness and Sampling
-PARAMETER temperature 1.0
+# 2. Randomness and Sampling (HuggingFace recommended for Qwen3-4B-Thinking)
+PARAMETER temperature 0.6
 PARAMETER top_p 0.95
 PARAMETER top_k 20
 
@@ -15,8 +15,8 @@ PARAMETER repeat_penalty 1.0
 PARAMETER presence_penalty 1.5
 
 # 4. Context and Output Limits
-PARAMETER num_ctx 20480
-PARAMETER num_predict 8192
+PARAMETER num_ctx 32,768
+PARAMETER num_predict 20480
 
 # 5. Hardware
 PARAMETER num_thread 8

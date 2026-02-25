@@ -14,7 +14,7 @@ LLM_AGENT_TOKENS="${LLM_AGENT_TOKENS:-2048}" # Max output tokens for agent speci
 LLM_ROUTER_TOKENS="${LLM_ROUTER_TOKENS:-50}" # Max output tokens for agent router (just a tool name)
 LLM_TIMEOUT="${LLM_TIMEOUT:-300}"           # Safety net: 300s max per request (Ctrl+C also works)
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
-LODGE_THINK="${LODGE_THINK:-0}"               # 0=disable thinking (fast, default), 1=enable Qwen3 thinking
+LODGE_THINK="${LODGE_THINK:-0}"               # 0=hide thinking tokens (default), 1=show thinking tokens (model always thinks)
 LODGE_THINK_STREAM="${LODGE_THINK_STREAM:-1}"  # When LODGE_THINK=1: 0=hide thinking, 1=show dimmed, 2=show bright (cyan)
 LODGE_DEBUG="${LODGE_DEBUG:-0}"                 # 0=normal, 1=show timers + token counts per LLM call
 
@@ -84,7 +84,7 @@ llm_warmup() {
     payload=$(jq -n \
         --arg model "$LODGE_MODEL" \
         --arg keep_alive "$LLM_KEEP_ALIVE" \
-        '{model: $model, prompt: "Hello /nothink", stream: false, keep_alive: $keep_alive, options: {num_predict: 1}}')
+        '{model: $model, prompt: "Hello", stream: false, keep_alive: $keep_alive, options: {num_predict: 1}}')
     curl -sf "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
         -d "$payload" > /dev/null 2>&1
@@ -219,12 +219,8 @@ llm_generate() {
 
     _llm_debug_start_timer
 
-    # Qwen3 thinking mode control: /nothink disables, /think enables explicitly
-    if [ "${LODGE_THINK:-0}" -eq 0 ]; then
-        prompt="${prompt} /nothink"
-    else
-        prompt="${prompt} /think"
-    fi
+    # Thinking-only model: no /nothink or /think suffixes needed.
+    # The model always thinks — LODGE_THINK controls display only.
 
     if [ -n "$system" ]; then
         payload=$(jq -n \
@@ -294,24 +290,36 @@ llm_generate() {
         _llm_debug_end_timer "generate" "$_dbg_in" "$_dbg_out"
     fi
 
-    # Display thinking tokens to tty when thinking mode is enabled
+    # Thinking-only model: response is always "think_content</think>response_content"
+    # (no opening <think> — the template injects it before generation)
+    local full_text
+    full_text=$(echo "$response" | jq -r '.response // "ERROR: Empty response"')
+
+    # Display thinking tokens to tty when enabled
     # (llm_generate is non-streaming, so the block is shown all at once)
     if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-        local _think_content
-        _think_content=$(echo "$response" | jq -r '.response // ""' | sed -n 's/.*<think>\(.*\)<\/think>.*/\1/p')
-        if [ -n "$_think_content" ]; then
-            local _gentty="/dev/tty"
-            [ -w /dev/tty ] 2>/dev/null || _gentty="/dev/stderr"
-            if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
-                printf "\n\033[36m┌─ thinking ─\033[0m\n\033[36m%s\033[0m\n\033[36m└────────────\033[0m\n" "$_think_content" > "$_gentty" 2>/dev/null
-            else
-                printf "\033[2m%s\033[0m\n" "$_think_content" > "$_gentty" 2>/dev/null
+        if [[ "$full_text" == *"</think>"* ]]; then
+            local _think_content="${full_text%%</think>*}"
+            if [ -n "$_think_content" ]; then
+                local _gentty="/dev/tty"
+                [ -w /dev/tty ] 2>/dev/null || _gentty="/dev/stderr"
+                if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
+                    printf "\n\033[36m┌─ thinking ─\033[0m\n\033[36m%s\033[0m\n\033[36m└────────────\033[0m\n" "$_think_content" > "$_gentty" 2>/dev/null
+                else
+                    printf "\033[2m%s\033[0m\n" "$_think_content" > "$_gentty" 2>/dev/null
+                fi
             fi
         fi
     fi
 
-    # Strip any <think>...</think> blocks from Qwen3 thinking mode
-    echo "$response" | jq -r '.response // "ERROR: Empty response"' | sed 's/<think>.*<\/think>//g; s/<think>[^<]*$//g'
+    # Strip thinking tokens: output only the response after </think>
+    if [[ "$full_text" == *"</think>"* ]]; then
+        local clean="${full_text#*</think>}"
+        # Trim leading newline
+        echo "${clean#$'\n'}"
+    else
+        echo "$full_text"
+    fi
 }
 
 # ── Generate with streaming (live output) ──────────────────────
@@ -325,14 +333,8 @@ llm_stream() {
 
     _llm_debug_start_timer
 
-    # Qwen3 thinking mode control: /nothink disables, /think enables explicitly
-    # Thinking on a 4B CPU model burns tokens on internal reasoning (slow + noisy).
-    # Default off (LODGE_THINK=0). Users can export LODGE_THINK=1 for complex tasks.
-    if [ "${LODGE_THINK:-0}" -eq 0 ]; then
-        prompt="${prompt} /nothink"
-    else
-        prompt="${prompt} /think"
-    fi
+    # Thinking-only model: no /nothink or /think suffixes needed.
+    # The model always thinks — LODGE_THINK controls display only.
 
     if [ -n "$system" ]; then
         payload=$(jq -n \
@@ -378,6 +380,11 @@ llm_stream() {
     local _tty="/dev/tty"
     [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
 
+    # Thinking-only model: output ALWAYS starts inside <think> block.
+    # Template injects <think> — model outputs think tokens immediately,
+    # then </think>, then the actual response. We start in think mode.
+    local _in_think_block=1
+
     $timeout_cmd curl -sf --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
@@ -387,29 +394,25 @@ llm_stream() {
         local token
         token=$(echo "$line" | jq -r '.response // empty' 2>/dev/null)
         if [ -n "$token" ]; then
-            # Kill spinner on first real token (thinking or otherwise)
+            # Kill spinner on first real token and start think styling
             if [ ! -f "$_llm_ft_file" ]; then
                 touch "$_llm_ft_file"
                 kill "$_llm_spinner_pid" 2>/dev/null
                 printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
-            fi
-
-            # Track <think>...</think> blocks — stream based on LODGE_THINK_STREAM
-            if [[ "$token" == *'<think>'* ]]; then
-                _in_think_block=1
-                if [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                    # Show thinking header + start style on tty
+                # First token is always a think token — start think display
+                if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
                     if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
                         printf "\n\033[36m┌─ thinking ─\033[0m\n\033[36m" > "$_tty" 2>/dev/null
                     else
                         printf "\033[2m" > "$_tty" 2>/dev/null
                     fi
                 fi
-                continue
             fi
+
+            # Detect </think> — transition from thinking to response output
             if [[ "$token" == *'</think>'* ]]; then
                 _in_think_block=0
-                if [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
                     if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
                         printf "\033[0m\n\033[36m└────────────\033[0m\n" > "$_tty" 2>/dev/null
                     else
@@ -419,14 +422,14 @@ llm_stream() {
                 continue
             fi
             if [ "${_in_think_block:-0}" -eq 1 ]; then
-                # Stream thinking tokens to tty only — don't capture in response
-                if [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                # Think tokens: show to tty only (dimmed/styled), never capture
+                if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
                     printf "%s" "$token" > "$_tty" 2>/dev/null
                 fi
                 continue
             fi
 
-            # Normal token — capture AND display
+            # Normal token (after </think>) — capture AND display
             printf "%s" "$token"
             printf "%s" "$token" > "$_tty" 2>/dev/null
         fi
@@ -468,13 +471,8 @@ llm_chat() {
     local system="${2:-}"
     local payload
 
-    # Qwen3 thinking mode control: append /nothink to last user message
-    if [ "${LODGE_THINK:-0}" -eq 0 ]; then
-        messages=$(echo "$messages" | jq '
-            if (. | length) > 0 then
-                .[-1].content += " /nothink"
-            else . end')
-    fi
+    # Thinking-only model: no /nothink suffix needed.
+    # The model always thinks — LODGE_THINK controls display only.
 
     if [ -n "$system" ]; then
         payload=$(jq -n \
@@ -513,8 +511,15 @@ llm_chat() {
         return 1
     fi
 
-    # Strip <think>...</think> from Qwen3 thinking mode
-    echo "$response" | jq -r '.message.content // "ERROR: Empty response"' | sed 's/<think>.*<\/think>//g; s/<think>[^<]*$//g'
+    # Strip thinking tokens: output only the response after </think>
+    local full_text
+    full_text=$(echo "$response" | jq -r '.message.content // "ERROR: Empty response"')
+    if [[ "$full_text" == *"</think>"* ]]; then
+        local clean="${full_text#*</think>}"
+        echo "${clean#$'\n'}"
+    else
+        echo "$full_text"
+    fi
 }
 
 # ── Quick one-shot with role ────────────────────────────────────

@@ -223,7 +223,7 @@ describe "Debug instrumentation"
   }
 
 # ── Thinking mode ─────────────────────────────────────────────
-describe "Thinking mode configuration"
+describe "Thinking mode configuration (thinking-only model)"
 
   it "LODGE_THINK defaults to 0" && {
     assert_eq "$LODGE_THINK" "0"
@@ -233,35 +233,31 @@ describe "Thinking mode configuration"
     assert_eq "$LODGE_THINK_STREAM" "1"
   }
 
-  it "llm_generate appends /nothink when LODGE_THINK=0" && {
+  it "llm_generate does NOT append /nothink or /think (thinking-only model)" && {
     body=$(declare -f llm_generate)
-    echo "$body" | grep -q 'LODGE_THINK.*-eq 0'
-    assert_ok $?
     echo "$body" | grep -q '/nothink'
-    assert_ok $?
+    assert_eq $? 1
+    echo "$body" | grep -q 'prompt=.*\/think'
+    assert_eq $? 1
   }
 
-  it "llm_generate appends /think when LODGE_THINK=1" && {
+  it "llm_stream does NOT append /nothink or /think (thinking-only model)" && {
+    body=$(declare -f llm_stream)
+    echo "$body" | grep -q '/nothink'
+    assert_eq $? 1
+    echo "$body" | grep -q 'prompt=.*\/think'
+    assert_eq $? 1
+  }
+
+  it "llm_generate strips think tokens via </think> marker" && {
     body=$(declare -f llm_generate)
-    echo "$body" | grep -q 'prompt=.*\/think'
+    echo "$body" | grep -q '</think>'
+    assert_ok $?
+    echo "$body" | grep -q 'full_text'
     assert_ok $?
   }
 
-  it "llm_stream appends /nothink when LODGE_THINK=0" && {
-    body=$(declare -f llm_stream)
-    echo "$body" | grep -q 'LODGE_THINK.*-eq 0'
-    assert_ok $?
-    echo "$body" | grep -q '/nothink'
-    assert_ok $?
-  }
-
-  it "llm_stream appends /think when LODGE_THINK=1" && {
-    body=$(declare -f llm_stream)
-    echo "$body" | grep -q 'prompt=.*\/think'
-    assert_ok $?
-  }
-
-  it "llm_generate displays think blocks when LODGE_THINK=1" && {
+  it "llm_generate displays think content when LODGE_THINK=1" && {
     body=$(declare -f llm_generate)
     echo "$body" | grep -q 'LODGE_THINK.*LODGE_THINK_STREAM'
     assert_ok $?
@@ -269,11 +265,15 @@ describe "Thinking mode configuration"
     assert_ok $?
   }
 
-  it "llm_stream tracks _in_think_block for think tokens" && {
+  it "llm_stream starts in think mode (_in_think_block=1)" && {
     body=$(declare -f llm_stream)
-    echo "$body" | grep -q '_in_think_block'
+    echo "$body" | grep -q '_in_think_block=1'
     assert_ok $?
-    echo "$body" | grep -q '<think>'
+  }
+
+  it "llm_stream transitions at </think> marker" && {
+    body=$(declare -f llm_stream)
+    echo "$body" | grep -q '_in_think_block=0'
     assert_ok $?
     echo "$body" | grep -q '</think>'
     assert_ok $?

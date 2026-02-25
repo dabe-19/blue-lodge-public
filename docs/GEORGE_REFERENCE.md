@@ -317,9 +317,11 @@ Set via: /api keys set LLM_MODEL <model>
 /soul off — inject condensed identity + Practical Craft only.
 Full soul includes moral philosophy, humor, ethics.
 
-## Thinking Mode Toggle
+## Thinking Mode Display
 
-/think on — show LLM thinking process.
+The model always thinks internally. `/think` controls visibility:
+
+/think on — show LLM thinking process (dimmed).
 /think off — hide thinking (default).
 /think bright — show thinking prominently.
 /think dim — show thinking in dim text.

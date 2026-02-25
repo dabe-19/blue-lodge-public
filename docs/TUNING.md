@@ -144,7 +144,7 @@ ollama create blue-lodge -f ~/blue-lodge/Modelfile
 | `num_predict` | 8192 | Max output tokens (overridden per-call by env vars). | Modelfile-level default. Per-call overrides (`LLM_MAX_TOKENS`, `LLM_ASK_TOKENS`) take precedence. Thinking model needs generous budget (think tokens + response). |
 | `num_thread` | 8 | CPU threads for inference. | Match your physical core count. 8 for Snapdragon 8 Elite, 4 for typical laptops. |
 | `num_gpu` | 0 | GPU layers to offload. 0 = pure CPU. | Set to 99 (all layers) if you have a GPU. Partial offload: try 20-40. |
-| `temperature` | 1.0 | Randomness. Unsloth-recommended for thinking models. | 1.0 with top_k=20 lets the model explore during thinking, then converge on the answer. |
+| `temperature` | 0.6 | Randomness. HuggingFace-recommended for Qwen3-4B-Thinking. | 0.6 balances exploration during thinking with convergent answers. top_k=20 constrains further. |
 | `top_p` | 0.95 | Nucleus sampling threshold. | Lower (0.7) for focused output, higher (0.95) for variety. |
 | `top_k` | 20 | Top-K sampling. Limits token candidates per step. | Unsloth-recommended. Keeps generation focused despite high temperature. |
 | `repeat_penalty` | 1.0 | Penalty for repeating tokens. | 1.0 = no penalty. The presence_penalty handles anti-repetition instead. |
