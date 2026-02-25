@@ -380,10 +380,14 @@ llm_stream() {
     local _tty="/dev/tty"
     [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
 
-    # Thinking-only model: output ALWAYS starts inside <think> block.
-    # Template injects <think> — model outputs think tokens immediately,
-    # then </think>, then the actual response. We start in think mode.
+    # Thinking-only model: output starts in think mode.
+    # Important: many templates inject opening <think> automatically,
+    # so stream may contain only </think> (and it may be split across tokens
+    # or combined with response text in one token).
     local _in_think_block=1
+    local _think_end_tag="</think>"
+    local _think_end_tail_len=7  # len("</think>") - 1
+    local _think_pending=""
 
     $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/generate" \
@@ -409,22 +413,48 @@ llm_stream() {
                 fi
             fi
 
-            # Detect </think> — transition from thinking to response output
-            if [[ "$token" == *'</think>'* ]]; then
-                _in_think_block=0
-                if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                    if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
-                        printf "\033[0m\n\033[36m└────────────\033[0m\n" > "$_tty" 2>/dev/null
-                    else
-                        printf "\033[0m\n" > "$_tty" 2>/dev/null
-                    fi
-                fi
-                continue
-            fi
             if [ "${_in_think_block:-0}" -eq 1 ]; then
-                # Think tokens: show to tty only (dimmed/styled), never capture
-                if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                    printf "%s" "$token" > "$_tty" 2>/dev/null
+                _think_pending+="$token"
+
+                # Handle end tag robustly even when split across token boundaries
+                if [[ "$_think_pending" == *"$_think_end_tag"* ]]; then
+                    local _think_before="${_think_pending%%$_think_end_tag*}"
+                    local _after_think="${_think_pending#*$_think_end_tag}"
+
+                    # Flush actual think text
+                    if [ -n "$_think_before" ] && [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                        printf "%s" "$_think_before" > "$_tty" 2>/dev/null
+                    fi
+
+                    # Close think styling/banner
+                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                        if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
+                            printf "\033[0m\n\033[36m└────────────\033[0m\n" > "$_tty" 2>/dev/null
+                        else
+                            printf "\033[0m\n" > "$_tty" 2>/dev/null
+                        fi
+                    fi
+
+                    _in_think_block=0
+                    _think_pending=""
+
+                    # Emit any response text that arrived in same token as </think>
+                    if [ -n "$_after_think" ]; then
+                        printf "%s" "$_after_think"
+                        printf "%s" "$_after_think" > "$_tty" 2>/dev/null
+                    fi
+                    continue
+                fi
+
+                # No end tag yet: flush safe prefix, keep short tail for split-tag detection
+                local _pending_len=${#_think_pending}
+                if [ "$_pending_len" -gt "$_think_end_tail_len" ]; then
+                    local _flush_len=$(( _pending_len - _think_end_tail_len ))
+                    local _flush_text="${_think_pending:0:_flush_len}"
+                    _think_pending="${_think_pending:_flush_len}"
+                    if [ -n "$_flush_text" ] && [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                        printf "%s" "$_flush_text" > "$_tty" 2>/dev/null
+                    fi
                 fi
                 continue
             fi
@@ -449,6 +479,15 @@ llm_stream() {
             break
         fi
     done
+
+    # If stream ended before </think> was observed, flush any buffered text as response.
+    # This avoids losing output if provider behavior changes or omits the closing tag.
+    if [ "${_in_think_block:-0}" -eq 1 ] && [ -n "$_think_pending" ]; then
+        printf "%s" "$_think_pending"
+        printf "%s" "$_think_pending" > "$_tty" 2>/dev/null
+        _think_pending=""
+        _in_think_block=0
+    fi
 
     # Safety: ensure spinner is stopped even if no tokens arrived (timeout/error)
     ui_spinner_stop
