@@ -300,6 +300,12 @@ _cmd_limits() {
             else
                 _limits_set LLM_ROUTER_TOKENS "Router tokens" "$value" 10 256
             fi ;;
+        budget-tokens|budget|think-tokens)
+            if [ -z "$value" ]; then
+                ui_info "Think budget tokens: $LLM_BUDGET_TOKENS (default: 1024, 0=unlimited)"
+            else
+                _limits_set LLM_BUDGET_TOKENS "Think budget" "$value" 0 16384
+            fi ;;
         delay)
             if [ -z "$value" ]; then
                 ui_info "Step delay: ${AGENT_STEP_DELAY}s (default: 1)"
@@ -315,6 +321,7 @@ _cmd_limits() {
             LLM_AGENT_TOKENS=512
             LLM_ASK_TOKENS=300
             LLM_ROUTER_TOKENS=50
+            LLM_BUDGET_TOKENS=1024
             ui_ok "All limits reset to defaults" ;;
         "")
             ui_section "Agent Limits"
@@ -326,11 +333,12 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Agent tokens:" "$LLM_AGENT_TOKENS  (LLM_AGENT_TOKENS, default: 512)"
             printf "  %-22s %s\n" "Ask tokens:" "$LLM_ASK_TOKENS  (LLM_ASK_TOKENS, default: 300)"
             printf "  %-22s %s\n" "Router tokens:" "$LLM_ROUTER_TOKENS  (LLM_ROUTER_TOKENS, default: 50)"
+            printf "  %-22s %s\n" "Think budget:" "$LLM_BUDGET_TOKENS  (LLM_BUDGET_TOKENS, default: 1024, 0=unlimited)"
             echo ""
-            ui_dim "  Usage: /limits <steps|depth|milestones|inner|delay|tokens|ask-tokens|router-tokens> [value]"
+            ui_dim "  Usage: /limits <steps|depth|milestones|inner|delay|tokens|ask-tokens|router-tokens|budget-tokens> [value]"
             ui_dim "  Reset: /limits reset" ;;
         *)
-            ui_info "Usage: /limits [steps|depth|milestones|inner|delay|tokens|ask-tokens|router-tokens|reset] [value]"
+            ui_info "Usage: /limits [steps|depth|milestones|inner|delay|tokens|ask-tokens|router-tokens|budget-tokens|reset] [value]"
             ui_dim "  steps N      — Max steps per plan/subtask (current: $AGENT_PLAN_STEPS)"
             ui_dim "  depth N      — Subtask recursion depth (current: $AGENT_MAX_DEPTH)"
             ui_dim "  milestones N — Macro loop milestone ceiling (current: $AGENT_MAX_STEPS)"
@@ -339,6 +347,7 @@ _cmd_limits() {
             ui_dim "  tokens N     — Agent specialist/strategist output tokens (current: $LLM_AGENT_TOKENS)"
             ui_dim "  ask-tokens N — /ask quick-answer output tokens (current: $LLM_ASK_TOKENS)"
             ui_dim "  router-tokens N — Router tool-selection tokens (current: $LLM_ROUTER_TOKENS)"
+            ui_dim "  budget-tokens N — Max thinking tokens before answering, 0=unlimited (current: $LLM_BUDGET_TOKENS)"
             ui_dim "  reset        — Reset all to defaults"
             ui_dim "  (no arg)     — Show all current limits" ;;
     esac

@@ -261,7 +261,7 @@ describe "Thinking mode configuration (thinking-only model)"
     body=$(declare -f llm_generate)
     echo "$body" | grep -q 'LODGE_THINK.*LODGE_THINK_STREAM'
     assert_ok $?
-    echo "$body" | grep -q '_think_content'
+    echo "$body" | grep -q '_show_think'
     assert_ok $?
   }
 

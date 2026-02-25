@@ -12,6 +12,7 @@ LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-20480}"   # Default max output tokens (matches
 LLM_ASK_TOKENS="${LLM_ASK_TOKENS:-20480}"   # Max output tokens for /ask (model stops at <|im_end|>; this is just a safety cap)
 LLM_AGENT_TOKENS="${LLM_AGENT_TOKENS:-20480}" # Max output tokens for agent specialist/strategist
 LLM_ROUTER_TOKENS="${LLM_ROUTER_TOKENS:-256}" # Max output tokens for agent router (think ~100-200 + tool name)
+LLM_BUDGET_TOKENS="${LLM_BUDGET_TOKENS:-1024}" # Max thinking tokens before responding (0=unlimited)
 LLM_TIMEOUT="${LLM_TIMEOUT:-300}"           # Safety net: 300s max per request (Ctrl+C also works)
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
 LODGE_THINK="${LODGE_THINK:-1}"               # 1=show thinking tokens dimmed (default), 0=hide thinking tokens (model always thinks)
@@ -222,21 +223,29 @@ llm_generate() {
     # Thinking-only model: no /nothink or /think suffixes needed.
     # The model always thinks — LODGE_THINK controls display only.
 
+    # Build options with optional budget_tokens
+    local _opts
+    if [ "${LLM_BUDGET_TOKENS:-0}" -gt 0 ] 2>/dev/null; then
+        _opts=$(jq -n --argjson np "$max_tokens" --argjson bt "$LLM_BUDGET_TOKENS" '{num_predict:$np, budget_tokens:$bt}')
+    else
+        _opts=$(jq -n --argjson np "$max_tokens" '{num_predict:$np}')
+    fi
+
     if [ -n "$system" ]; then
         payload=$(jq -n \
             --arg model "$LODGE_MODEL" \
             --arg prompt "$prompt" \
             --arg system "$system" \
             --arg keep_alive "$LLM_KEEP_ALIVE" \
-            --argjson num_predict "$max_tokens" \
-            '{model: $model, prompt: $prompt, system: $system, stream: false, keep_alive: $keep_alive, options: {num_predict: $num_predict}}')
+            --argjson options "$_opts" \
+            '{model: $model, prompt: $prompt, system: $system, stream: false, keep_alive: $keep_alive, options: $options}')
     else
         payload=$(jq -n \
             --arg model "$LODGE_MODEL" \
             --arg prompt "$prompt" \
             --arg keep_alive "$LLM_KEEP_ALIVE" \
-            --argjson num_predict "$max_tokens" \
-            '{model: $model, prompt: $prompt, stream: false, keep_alive: $keep_alive, options: {num_predict: $num_predict}}')
+            --argjson options "$_opts" \
+            '{model: $model, prompt: $prompt, stream: false, keep_alive: $keep_alive, options: $options}')
     fi
 
     # Build timeout args: 0 means no timeout (user cancels via Ctrl+C)
@@ -301,24 +310,19 @@ llm_generate() {
     if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
         local _gentty="/dev/tty"
         [ -w /dev/tty ] 2>/dev/null || _gentty="/dev/stderr"
+        # Both modes get the same ┌─/└── structure; only color differs
+        local _tc; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _tc="\033[36m" || _tc="\033[90m"
+        local _show_think=""
 
         if [ -n "$think_text" ]; then
-            # Separate-field mode: .thinking contains thinking content
-            if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
-                printf "\n\033[36m┌─ thinking ─\033[0m\n\033[36m%s\033[0m\n\033[36m└────────────\033[0m\n" "$think_text" > "$_gentty" 2>/dev/null
-            else
-                printf "\033[2m%s\033[0m\n" "$think_text" > "$_gentty" 2>/dev/null
-            fi
+            _show_think="$think_text"
         elif [[ "$full_text" == *"</think>"* ]]; then
-            # Inline-tag fallback: thinking embedded in .response
-            local _think_content="${full_text%%</think>*}"
-            if [ -n "$_think_content" ]; then
-                if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
-                    printf "\n\033[36m┌─ thinking ─\033[0m\n\033[36m%s\033[0m\n\033[36m└────────────\033[0m\n" "$_think_content" > "$_gentty" 2>/dev/null
-                else
-                    printf "\033[2m%s\033[0m\n" "$_think_content" > "$_gentty" 2>/dev/null
-                fi
-            fi
+            _show_think="${full_text%%</think>*}"
+        fi
+
+        if [ -n "$_show_think" ]; then
+            printf "\n%b┌─ thinking ─\033[0m\n%b%s\033[0m\n%b└────────────\033[0m\n" \
+                "$_tc" "$_tc" "$_show_think" "$_tc" > "$_gentty" 2>/dev/null
         fi
     fi
 
@@ -349,21 +353,29 @@ llm_stream() {
     # Thinking-only model: no /nothink or /think suffixes needed.
     # The model always thinks — LODGE_THINK controls display only.
 
+    # Build options with optional budget_tokens
+    local _opts
+    if [ "${LLM_BUDGET_TOKENS:-0}" -gt 0 ] 2>/dev/null; then
+        _opts=$(jq -n --argjson np "$max_tokens" --argjson bt "$LLM_BUDGET_TOKENS" '{num_predict:$np, budget_tokens:$bt}')
+    else
+        _opts=$(jq -n --argjson np "$max_tokens" '{num_predict:$np}')
+    fi
+
     if [ -n "$system" ]; then
         payload=$(jq -n \
             --arg model "$LODGE_MODEL" \
             --arg prompt "$prompt" \
             --arg system "$system" \
             --arg keep_alive "$LLM_KEEP_ALIVE" \
-            --argjson num_predict "$max_tokens" \
-            '{model: $model, prompt: $prompt, system: $system, stream: true, keep_alive: $keep_alive, options: {num_predict: $num_predict}}')
+            --argjson options "$_opts" \
+            '{model: $model, prompt: $prompt, system: $system, stream: true, keep_alive: $keep_alive, options: $options}')
     else
         payload=$(jq -n \
             --arg model "$LODGE_MODEL" \
             --arg prompt "$prompt" \
             --arg keep_alive "$LLM_KEEP_ALIVE" \
-            --argjson num_predict "$max_tokens" \
-            '{model: $model, prompt: $prompt, stream: true, keep_alive: $keep_alive, options: {num_predict: $num_predict}}')
+            --argjson options "$_opts" \
+            '{model: $model, prompt: $prompt, stream: true, keep_alive: $keep_alive, options: $options}')
     fi
 
     # Build timeout args — belt-and-suspenders: both `timeout` command and curl's --max-time
@@ -392,6 +404,28 @@ llm_stream() {
     # Determine TTY for visible output (even inside $() captures)
     local _tty="/dev/tty"
     [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+
+    # ── Think display helpers ─────────────────────────────────────
+    # Both modes get the same ┌─ thinking ─ / └──────────── structure.
+    # Bright (2) = cyan, Dimmed (1) = gray (SGR 90, widely supported).
+    # Extracted so every open/close site is consistent.
+    _think_color() {
+        [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && printf "\033[36m" || printf "\033[90m"
+    }
+    _think_open() {
+        [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ] || return
+        local _c; _c=$(_think_color)
+        printf "\n%s┌─ thinking ─\033[0m\n%s" "$_c" "$_c" > "$_tty" 2>/dev/null
+    }
+    _think_close() {
+        [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ] || return
+        local _c; _c=$(_think_color)
+        printf "\033[0m\n%s└────────────\033[0m\n" "$_c" > "$_tty" 2>/dev/null
+    }
+    _think_show() {
+        [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ] || return
+        printf "%s" "$1" > "$_tty" 2>/dev/null
+    }
 
     # ── Thinking detection modes ──────────────────────────────────
     # Modern Ollama (0.9+) sends thinking tokens in a separate .thinking
@@ -424,19 +458,13 @@ llm_stream() {
                 kill "$_llm_spinner_pid" 2>/dev/null
                 printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
             fi
-            # Open thinking banner/styling on first think token
-            if [ "$_think_banner_open" -eq 0 ] && [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+            # Open thinking banner on first think token
+            if [ "$_think_banner_open" -eq 0 ]; then
                 _think_banner_open=1
-                if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
-                    printf "\n\033[36m┌─ thinking ─\033[0m\n\033[36m" > "$_tty" 2>/dev/null
-                else
-                    printf "\033[2m" > "$_tty" 2>/dev/null
-                fi
+                _think_open
             fi
             # Stream thinking token to tty only (never captured to stdout)
-            if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                printf "%s" "$think_token" > "$_tty" 2>/dev/null
-            fi
+            _think_show "$think_token"
         fi
 
         # ── Handle .response field ───────────────────────────────
@@ -454,13 +482,7 @@ llm_stream() {
                 # Close thinking banner if it was open.
                 if [ "$_think_banner_open" -eq 1 ]; then
                     _think_banner_open=0
-                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                        if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
-                            printf "\033[0m\n\033[36m└────────────\033[0m\n" > "$_tty" 2>/dev/null
-                        else
-                            printf "\033[0m\n" > "$_tty" 2>/dev/null
-                        fi
-                    fi
+                    _think_close
                 fi
                 # Emit response token — capture to stdout AND display on tty
                 printf "%s" "$token"
@@ -471,13 +493,7 @@ llm_stream() {
                 # Open thinking banner on first token if not yet open
                 if [ "$_think_banner_open" -eq 0 ] && [ "$_in_think_block" -eq 1 ]; then
                     _think_banner_open=1
-                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                        if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
-                            printf "\n\033[36m┌─ thinking ─\033[0m\n\033[36m" > "$_tty" 2>/dev/null
-                        else
-                            printf "\033[2m" > "$_tty" 2>/dev/null
-                        fi
-                    fi
+                    _think_open
                 fi
 
                 if [ "$_in_think_block" -eq 1 ]; then
@@ -487,18 +503,10 @@ llm_stream() {
                         local _think_before="${_think_pending%%</think>*}"
                         local _after_think="${_think_pending#*</think>}"
                         # Flush remaining think text
-                        if [ -n "$_think_before" ] && [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                            printf "%s" "$_think_before" > "$_tty" 2>/dev/null
-                        fi
+                        [ -n "$_think_before" ] && _think_show "$_think_before"
                         # Close thinking banner
                         _think_banner_open=0
-                        if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                            if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
-                                printf "\033[0m\n\033[36m└────────────\033[0m\n" > "$_tty" 2>/dev/null
-                            else
-                                printf "\033[0m\n" > "$_tty" 2>/dev/null
-                            fi
-                        fi
+                        _think_close
                         _in_think_block=0
                         _think_pending=""
                         # Emit any response text bundled with the </think> token
@@ -514,9 +522,7 @@ llm_stream() {
                         local _flen=$((_plen - 7))
                         local _ftxt="${_think_pending:0:_flen}"
                         _think_pending="${_think_pending:_flen}"
-                        if [ -n "$_ftxt" ] && [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                            printf "%s" "$_ftxt" > "$_tty" 2>/dev/null
-                        fi
+                        [ -n "$_ftxt" ] && _think_show "$_ftxt"
                     fi
                     continue
                 fi
@@ -531,12 +537,8 @@ llm_stream() {
         done_flag=$(echo "$line" | jq -r '.done // empty' 2>/dev/null)
         if [ "$done_flag" = "true" ]; then
             # Close thinking banner if still open at end of stream
-            if [ "$_think_banner_open" -eq 1 ] && [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                if [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
-                    printf "\033[0m\n\033[36m└────────────\033[0m\n" > "$_tty" 2>/dev/null
-                else
-                    printf "\033[0m\n" > "$_tty" 2>/dev/null
-                fi
+            if [ "$_think_banner_open" -eq 1 ]; then
+                _think_close
             fi
             # Fallback mode: flush any buffered text as response if </think> never arrived
             if [ "$_in_think_block" -eq 1 ] && [ -n "$_think_pending" ]; then
@@ -580,21 +582,29 @@ llm_chat() {
     # Thinking-only model: no /nothink suffix needed.
     # The model always thinks — LODGE_THINK controls display only.
 
+    # Build options with optional budget_tokens
+    local _opts
+    if [ "${LLM_BUDGET_TOKENS:-0}" -gt 0 ] 2>/dev/null; then
+        _opts=$(jq -n --argjson np "$LLM_MAX_TOKENS" --argjson bt "$LLM_BUDGET_TOKENS" '{num_predict:$np, budget_tokens:$bt}')
+    else
+        _opts=$(jq -n --argjson np "$LLM_MAX_TOKENS" '{num_predict:$np}')
+    fi
+
     if [ -n "$system" ]; then
         payload=$(jq -n \
             --arg model "$LODGE_MODEL" \
             --argjson messages "$messages" \
             --arg system "$system" \
             --arg keep_alive "$LLM_KEEP_ALIVE" \
-            --argjson num_predict "$LLM_MAX_TOKENS" \
-            '{model: $model, messages: ([{role:"system",content:$system}] + $messages), stream: false, keep_alive: $keep_alive, options: {num_predict: $num_predict}}')
+            --argjson options "$_opts" \
+            '{model: $model, messages: ([{role:"system",content:$system}] + $messages), stream: false, keep_alive: $keep_alive, options: $options}')
     else
         payload=$(jq -n \
             --arg model "$LODGE_MODEL" \
             --argjson messages "$messages" \
             --arg keep_alive "$LLM_KEEP_ALIVE" \
-            --argjson num_predict "$LLM_MAX_TOKENS" \
-            '{model: $model, messages: $messages, stream: false, keep_alive: $keep_alive, options: {num_predict: $num_predict}}')
+            --argjson options "$_opts" \
+            '{model: $model, messages: $messages, stream: false, keep_alive: $keep_alive, options: $options}')
     fi
 
     # Build timeout args
