@@ -385,7 +385,7 @@ llm_stream() {
     # then </think>, then the actual response. We start in think mode.
     local _in_think_block=1
 
-    $timeout_cmd curl -sf --connect-timeout 10 --max-time "$curl_timeout" \
+    $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
         -d "$payload" 2>/dev/null | while IFS= read -r line; do
