@@ -225,8 +225,8 @@ describe "Debug instrumentation"
 # ── Thinking mode ─────────────────────────────────────────────
 describe "Thinking mode configuration (thinking-only model)"
 
-  it "LODGE_THINK defaults to 0" && {
-    assert_eq "$LODGE_THINK" "0"
+  it "LODGE_THINK defaults to 1" && {
+    assert_eq "$LODGE_THINK" "1"
   }
 
   it "LODGE_THINK_STREAM defaults to 1" && {

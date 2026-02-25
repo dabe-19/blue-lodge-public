@@ -116,42 +116,42 @@ _cmd_think() {
     case "$arg" in
         on|1)
             LODGE_THINK=1
-            ui_ok "Thinking mode ON — stream: $([ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && echo bright || ([ "${LODGE_THINK_STREAM:-1}" -eq 1 ] && echo dimmed || echo hidden))" ;;
+            ui_ok "Think display ON — stream: $([ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && echo bright || ([ "${LODGE_THINK_STREAM:-1}" -eq 1 ] && echo dimmed || echo hidden))" ;;
         off|0)
             LODGE_THINK=0
-            ui_ok "Thinking mode OFF — faster responses, no reasoning" ;;
+            ui_ok "Think display OFF — reasoning still happens, just hidden" ;;
         bright|loud|2)
             LODGE_THINK=1
             LODGE_THINK_STREAM=2
-            ui_ok "Thinking mode ON — bright stream (cyan)" ;;
+            ui_ok "Think display ON — bright stream (cyan)" ;;
         dim|dimmed|quiet|1)
             LODGE_THINK=1
             LODGE_THINK_STREAM=1
-            ui_ok "Thinking mode ON — dimmed stream" ;;
+            ui_ok "Think display ON — dimmed stream" ;;
         hide|hidden|silent)
             LODGE_THINK=1
             LODGE_THINK_STREAM=0
-            ui_ok "Thinking mode ON — hidden (reasoning happens, not shown)" ;;
+            ui_ok "Think display ON — hidden (reasoning happens, not shown)" ;;
         "")
-            # Toggle through: off → hidden → dim → bright → off
-            if [ "${LODGE_THINK:-0}" -eq 0 ]; then
+            # Toggle through: dim → bright → hidden → off → dim
+            if [ "${LODGE_THINK:-1}" -eq 0 ]; then
                 LODGE_THINK=1
-                LODGE_THINK_STREAM=0
-                ui_ok "Thinking mode ON — hidden (reasoning happens, not shown)"
-            elif [ "${LODGE_THINK_STREAM:-1}" -eq 0 ]; then
                 LODGE_THINK_STREAM=1
-                ui_ok "Thinking mode ON — dimmed stream"
+                ui_ok "Think display ON — dimmed stream"
             elif [ "${LODGE_THINK_STREAM:-1}" -eq 1 ]; then
                 LODGE_THINK_STREAM=2
-                ui_ok "Thinking mode ON — bright stream (cyan)"
+                ui_ok "Think display ON — bright stream (cyan)"
+            elif [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
+                LODGE_THINK_STREAM=0
+                ui_ok "Think display ON — hidden (reasoning happens, not shown)"
             else
                 LODGE_THINK=0
                 LODGE_THINK_STREAM=1
-                ui_ok "Thinking mode OFF — faster responses"
+                ui_ok "Think display OFF — reasoning still happens, just hidden"
             fi ;;
         *)
             ui_info "Usage: /think [on|off|bright|dim|hide]"
-            ui_dim "  on/off   — toggle thinking (current: $([ "${LODGE_THINK:-0}" -eq 1 ] && echo ON || echo OFF))"
+            ui_dim "  on/off   — toggle think display (current: $([ "${LODGE_THINK:-0}" -eq 1 ] && echo ON || echo OFF))"
             ui_dim "  bright   — show thinking in cyan with borders"
             ui_dim "  dim      — show thinking in faint text"
             ui_dim "  hide     — think but don't stream to screen"
