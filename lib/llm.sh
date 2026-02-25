@@ -209,19 +209,23 @@ llm_debug_summary() {
     rm -rf "$_LLM_DEBUG_DIR" 2>/dev/null
 }
 
-# ── Generate (blocking, no stream) ────────────────────────────
+# ── Generate (internally streamed) ─────────────────────────────
 # Usage: llm_generate "prompt" [system_prompt] [max_tokens]
+#
+# Uses stream:true internally to avoid the thinking-model blocking
+# problem: with stream:false, Ollama buffers ALL computation
+# (thinking + response) before sending any bytes. On constrained
+# hardware this easily exceeds --max-time → exit 28, 0 tokens.
+# With stream:true, tokens arrive continuously keeping the
+# connection alive. Response tokens go to stdout (captured by
+# the caller's $()). Thinking tokens go to /dev/tty when enabled.
 llm_generate() {
     local prompt="$1"
     local system="${2:-}"
     local max_tokens="${3:-$LLM_MAX_TOKENS}"
     local payload
-    local timeout_args=()
 
     _llm_debug_start_timer
-
-    # Thinking-only model: no /nothink or /think suffixes needed.
-    # The model always thinks — LODGE_THINK controls display only.
 
     # Build options with optional budget_tokens
     local _opts
@@ -238,105 +242,173 @@ llm_generate() {
             --arg system "$system" \
             --arg keep_alive "$LLM_KEEP_ALIVE" \
             --argjson options "$_opts" \
-            '{model: $model, prompt: $prompt, system: $system, stream: false, keep_alive: $keep_alive, options: $options}')
+            '{model: $model, prompt: $prompt, system: $system, stream: true, keep_alive: $keep_alive, options: $options}')
     else
         payload=$(jq -n \
             --arg model "$LODGE_MODEL" \
             --arg prompt "$prompt" \
             --arg keep_alive "$LLM_KEEP_ALIVE" \
             --argjson options "$_opts" \
-            '{model: $model, prompt: $prompt, stream: false, keep_alive: $keep_alive, options: $options}')
+            '{model: $model, prompt: $prompt, stream: true, keep_alive: $keep_alive, options: $options}')
     fi
 
-    # Build timeout args: 0 means no timeout (user cancels via Ctrl+C)
-    if [ "$LLM_TIMEOUT" -gt 0 ] 2>/dev/null; then
-        timeout_args=(--max-time "$LLM_TIMEOUT")
+    local curl_timeout="${LLM_TIMEOUT:-600}"
+    local timeout_cmd=""
+    if [ "$curl_timeout" -gt 0 ] 2>/dev/null; then
+        if command -v timeout &>/dev/null; then
+            timeout_cmd="timeout $curl_timeout"
+        fi
     fi
 
     _LLM_ACTIVE=1
-    local tmpfile
-    tmpfile=$(mktemp "${TMPDIR:-/tmp}/lodge-llm-XXXXXX")
-    # Ensure tmpfile is cleaned up even on unexpected exit
-    trap 'rm -f "$tmpfile" 2>/dev/null' RETURN
 
-    # Run curl in background so we can track and cancel it
-    curl -sf "${timeout_args[@]}" \
+    local _tty="/dev/tty"
+    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+
+    # Marker file: touched inside the pipe subshell when first token
+    # arrives. If missing after the pipe, the request failed entirely.
+    local _tmpdir="${TMPDIR:-/tmp}"
+    local _got_tokens="$_tmpdir/.lodge-gen-tok-$$"
+    rm -f "$_got_tokens"
+
+    # Cancel file for cooperative cancellation from agent loops
+    local _cancel_file="$_tmpdir/.lodge-cancel-$$"
+
+    # Thinking display state (same auto-detection as llm_stream)
+    local _saw_thinking_field=0
+    local _think_banner_open=0
+    local _in_think_block=1
+    local _think_pending=""
+
+    $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
-        -d "$payload" > "$tmpfile" 2>/dev/null &
-    _LLM_CURL_PID=$!
+        -d "$payload" 2>/dev/null | while IFS= read -r line; do
+        # Cooperative cancellation check
+        [ -f "$_cancel_file" ] && break
 
-    # Wait for curl — if interrupted, the trap handler cleans up
-    wait "$_LLM_CURL_PID"
-    local curl_exit=$?
-    _LLM_CURL_PID=""
+        local think_token token
+        think_token=$(echo "$line" | jq -r '.thinking // empty' 2>/dev/null)
+        token=$(echo "$line" | jq -r '.response // empty' 2>/dev/null)
+
+        # ── Handle .thinking field (Ollama separate-field mode) ──
+        if [ -n "$think_token" ]; then
+            _saw_thinking_field=1
+            [ -f "$_got_tokens" ] || touch "$_got_tokens"
+            # Kill any external spinner on first think token
+            if [ -n "$_SPINNER_PID" ] && kill -0 "$_SPINNER_PID" 2>/dev/null; then
+                kill "$_SPINNER_PID" 2>/dev/null
+                printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
+            fi
+            # Show thinking to tty (never captured to stdout)
+            if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                if [ "$_think_banner_open" -eq 0 ]; then
+                    _think_banner_open=1
+                    local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
+                    printf "\n%b┌─ thinking ─\033[0m\n%b" "$_c" "$_c" > "$_tty" 2>/dev/null
+                fi
+                printf "%s" "$think_token" > "$_tty" 2>/dev/null
+            fi
+        fi
+
+        # ── Handle .response field ───────────────────────────────
+        if [ -n "$token" ]; then
+            [ -f "$_got_tokens" ] || touch "$_got_tokens"
+            # Kill any external spinner on first response token
+            if [ -n "$_SPINNER_PID" ] && kill -0 "$_SPINNER_PID" 2>/dev/null; then
+                kill "$_SPINNER_PID" 2>/dev/null
+                printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
+            fi
+
+            if [ "$_saw_thinking_field" -eq 1 ]; then
+                # ── Separate-field mode: .response is clean content ──
+                if [ "$_think_banner_open" -eq 1 ]; then
+                    _think_banner_open=0
+                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                        local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
+                        printf "\033[0m\n%b└────────────\033[0m\n" "$_c" > "$_tty" 2>/dev/null
+                    fi
+                fi
+                # Emit response to stdout only (captured by caller's $())
+                printf "%s" "$token"
+            else
+                # ── Inline-tag fallback mode ──
+                if [ "$_think_banner_open" -eq 0 ] && [ "$_in_think_block" -eq 1 ]; then
+                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                        _think_banner_open=1
+                        local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
+                        printf "\n%b┌─ thinking ─\033[0m\n%b" "$_c" "$_c" > "$_tty" 2>/dev/null
+                    fi
+                fi
+
+                if [ "$_in_think_block" -eq 1 ]; then
+                    _think_pending+="$token"
+                    if [[ "$_think_pending" == *"</think>"* ]]; then
+                        local _think_before="${_think_pending%%</think>*}"
+                        local _after_think="${_think_pending#*</think>}"
+                        if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                            [ -n "$_think_before" ] && printf "%s" "$_think_before" > "$_tty" 2>/dev/null
+                            _think_banner_open=0
+                            local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
+                            printf "\033[0m\n%b└────────────\033[0m\n" "$_c" > "$_tty" 2>/dev/null
+                        fi
+                        _in_think_block=0
+                        _think_pending=""
+                        [ -n "$_after_think" ] && printf "%s" "$_after_think"
+                        continue
+                    fi
+                    # Flush safe prefix, keep tail for split </think> detection
+                    local _plen=${#_think_pending}
+                    if [ "$_plen" -gt 7 ]; then
+                        local _flen=$((_plen - 7))
+                        local _ftxt="${_think_pending:0:_flen}"
+                        _think_pending="${_think_pending:_flen}"
+                        if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                            [ -n "$_ftxt" ] && printf "%s" "$_ftxt" > "$_tty" 2>/dev/null
+                        fi
+                    fi
+                    continue
+                fi
+                # Normal response token after </think>
+                printf "%s" "$token"
+            fi
+        fi
+
+        # ── Check if stream is done ──────────────────────────────
+        local done_flag
+        done_flag=$(echo "$line" | jq -r '.done // empty' 2>/dev/null)
+        if [ "$done_flag" = "true" ]; then
+            # Close thinking banner if still open
+            if [ "$_think_banner_open" -eq 1 ]; then
+                if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                    local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
+                    printf "\033[0m\n%b└────────────\033[0m\n" "$_c" > "$_tty" 2>/dev/null
+                fi
+            fi
+            # Flush pending think text as response if </think> never arrived
+            if [ "$_in_think_block" -eq 1 ] && [ -n "$_think_pending" ]; then
+                printf "%s" "$_think_pending"
+            fi
+            # Debug: extract token counts from the final streaming JSON
+            if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
+                local _dbg_in _dbg_out
+                _dbg_in=$(echo "$line" | jq -r '.prompt_eval_count // 0' 2>/dev/null)
+                _dbg_out=$(echo "$line" | jq -r '.eval_count // 0' 2>/dev/null)
+                _llm_debug_end_timer "generate" "$_dbg_in" "$_dbg_out"
+            fi
+            break
+        fi
+    done
+
     _LLM_ACTIVE=0
 
-    if [ $curl_exit -ne 0 ]; then
-        rm -f "$tmpfile"
-        if [ $curl_exit -eq 143 ] || [ $curl_exit -eq 130 ]; then
-            echo "ERROR: Request cancelled"
-        else
-            echo "ERROR: LLM request failed (exit $curl_exit)"
-        fi
+    # Check if we received any tokens at all
+    if [ ! -f "$_got_tokens" ]; then
+        rm -f "$_got_tokens"
+        echo "ERROR: LLM request failed or returned no tokens"
         return 1
     fi
-
-    local response
-    response=$(cat "$tmpfile")
-    rm -f "$tmpfile"
-
-    if [ -z "$response" ]; then
-        echo "ERROR: Empty response from LLM"
-        return 1
-    fi
-
-    # Extract token counts for debug (Ollama includes these in non-streaming response)
-    if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
-        local _dbg_in _dbg_out
-        _dbg_in=$(echo "$response" | jq -r '.prompt_eval_count // 0' 2>/dev/null)
-        _dbg_out=$(echo "$response" | jq -r '.eval_count // 0' 2>/dev/null)
-        _llm_debug_end_timer "generate" "$_dbg_in" "$_dbg_out"
-    fi
-
-    # Thinking-only model: modern Ollama returns .thinking and .response
-    # as separate fields. Older versions embed <think>...</think> inline.
-    local full_text think_text
-    full_text=$(echo "$response" | jq -r '.response // "ERROR: Empty response"')
-    think_text=$(echo "$response" | jq -r '.thinking // empty' 2>/dev/null)
-
-    # Display thinking tokens to tty when enabled
-    # (llm_generate is non-streaming, so the block is shown all at once)
-    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-        local _gentty="/dev/tty"
-        [ -w /dev/tty ] 2>/dev/null || _gentty="/dev/stderr"
-        # Both modes get the same ┌─/└── structure; only color differs
-        local _tc; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _tc="\033[36m" || _tc="\033[90m"
-        local _show_think=""
-
-        if [ -n "$think_text" ]; then
-            _show_think="$think_text"
-        elif [[ "$full_text" == *"</think>"* ]]; then
-            _show_think="${full_text%%</think>*}"
-        fi
-
-        if [ -n "$_show_think" ]; then
-            printf "\n%b┌─ thinking ─\033[0m\n%b%s\033[0m\n%b└────────────\033[0m\n" \
-                "$_tc" "$_tc" "$_show_think" "$_tc" > "$_gentty" 2>/dev/null
-        fi
-    fi
-
-    # Extract response text (strip thinking if inline)
-    if [ -n "$think_text" ]; then
-        # Separate-field mode: .response is already clean
-        echo "$full_text"
-    elif [[ "$full_text" == *"</think>"* ]]; then
-        # Inline-tag fallback: strip everything before and including </think>
-        local clean="${full_text#*</think>}"
-        echo "${clean#$'\n'}"
-    else
-        echo "$full_text"
-    fi
+    rm -f "$_got_tokens"
 }
 
 # ── Generate with streaming (live output) ──────────────────────
@@ -574,13 +646,13 @@ llm_stream() {
 # ── Chat format (multi-turn via /api/chat) ─────────────────────
 # Usage: llm_chat "messages_json" [system_prompt]
 # messages_json: [{"role":"user","content":"..."},...]
+#
+# Internally streamed (same rationale as llm_generate) to avoid
+# thinking-model timeout with stream:false.
 llm_chat() {
     local messages="$1"
     local system="${2:-}"
     local payload
-
-    # Thinking-only model: no /nothink suffix needed.
-    # The model always thinks — LODGE_THINK controls display only.
 
     # Build options with optional budget_tokens
     local _opts
@@ -597,51 +669,94 @@ llm_chat() {
             --arg system "$system" \
             --arg keep_alive "$LLM_KEEP_ALIVE" \
             --argjson options "$_opts" \
-            '{model: $model, messages: ([{role:"system",content:$system}] + $messages), stream: false, keep_alive: $keep_alive, options: $options}')
+            '{model: $model, messages: ([{role:"system",content:$system}] + $messages), stream: true, keep_alive: $keep_alive, options: $options}')
     else
         payload=$(jq -n \
             --arg model "$LODGE_MODEL" \
             --argjson messages "$messages" \
             --arg keep_alive "$LLM_KEEP_ALIVE" \
             --argjson options "$_opts" \
-            '{model: $model, messages: $messages, stream: false, keep_alive: $keep_alive, options: $options}')
+            '{model: $model, messages: $messages, stream: true, keep_alive: $keep_alive, options: $options}')
     fi
 
-    # Build timeout args
-    local timeout_args=()
-    if [ "$LLM_TIMEOUT" -gt 0 ] 2>/dev/null; then
-        timeout_args=(--max-time "$LLM_TIMEOUT")
+    local curl_timeout="${LLM_TIMEOUT:-600}"
+    local timeout_cmd=""
+    if [ "$curl_timeout" -gt 0 ] 2>/dev/null; then
+        if command -v timeout &>/dev/null; then
+            timeout_cmd="timeout $curl_timeout"
+        fi
     fi
 
     _LLM_ACTIVE=1
-    local response
-    response=$(curl -sf "${timeout_args[@]}" \
+
+    local _tmpdir="${TMPDIR:-/tmp}"
+    local _got_tokens="$_tmpdir/.lodge-chat-tok-$$"
+    rm -f "$_got_tokens"
+
+    # Chat API uses .message.thinking and .message.content
+    local _saw_thinking_field=0
+    local _in_think_block=1
+    local _think_pending=""
+
+    $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/chat" \
         -H "Content-Type: application/json" \
-        -d "$payload" 2>/dev/null)
-    local chat_exit=$?
+        -d "$payload" 2>/dev/null | while IFS= read -r line; do
+
+        local think_token token
+        think_token=$(echo "$line" | jq -r '.message.thinking // empty' 2>/dev/null)
+        token=$(echo "$line" | jq -r '.message.content // empty' 2>/dev/null)
+
+        if [ -n "$think_token" ]; then
+            _saw_thinking_field=1
+            [ -f "$_got_tokens" ] || touch "$_got_tokens"
+            # Thinking tokens are discarded (caller only gets response)
+        fi
+
+        if [ -n "$token" ]; then
+            [ -f "$_got_tokens" ] || touch "$_got_tokens"
+
+            if [ "$_saw_thinking_field" -eq 1 ]; then
+                printf "%s" "$token"
+            else
+                # Inline-tag fallback
+                if [ "$_in_think_block" -eq 1 ]; then
+                    _think_pending+="$token"
+                    if [[ "$_think_pending" == *"</think>"* ]]; then
+                        local _after_think="${_think_pending#*</think>}"
+                        _in_think_block=0
+                        _think_pending=""
+                        [ -n "$_after_think" ] && printf "%s" "$_after_think"
+                        continue
+                    fi
+                    local _plen=${#_think_pending}
+                    if [ "$_plen" -gt 7 ]; then
+                        _think_pending="${_think_pending:$((_plen - 7))}"
+                    fi
+                    continue
+                fi
+                printf "%s" "$token"
+            fi
+        fi
+
+        local done_flag
+        done_flag=$(echo "$line" | jq -r '.done // empty' 2>/dev/null)
+        if [ "$done_flag" = "true" ]; then
+            if [ "$_in_think_block" -eq 1 ] && [ -n "$_think_pending" ]; then
+                printf "%s" "$_think_pending"
+            fi
+            break
+        fi
+    done
+
     _LLM_ACTIVE=0
 
-    if [ $chat_exit -ne 0 ]; then
+    if [ ! -f "$_got_tokens" ]; then
+        rm -f "$_got_tokens"
         echo "ERROR: Chat request failed"
         return 1
     fi
-
-    # Strip thinking tokens: modern Ollama puts thinking in .message.thinking,
-    # older versions embed <think>...</think> inline in .message.content.
-    local full_text think_text
-    full_text=$(echo "$response" | jq -r '.message.content // "ERROR: Empty response"')
-    think_text=$(echo "$response" | jq -r '.message.thinking // empty' 2>/dev/null)
-
-    if [ -n "$think_text" ]; then
-        # Separate-field mode: .message.content is already clean
-        echo "$full_text"
-    elif [[ "$full_text" == *"</think>"* ]]; then
-        local clean="${full_text#*</think>}"
-        echo "${clean#$'\n'}"
-    else
-        echo "$full_text"
-    fi
+    rm -f "$_got_tokens"
 }
 
 # ── Quick one-shot with role ────────────────────────────────────

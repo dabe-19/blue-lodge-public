@@ -249,11 +249,20 @@ describe "Thinking mode configuration (thinking-only model)"
     assert_eq $? 1
   }
 
+  it "llm_generate uses stream:true internally (thinking-model fix)" && {
+    body=$(declare -f llm_generate)
+    echo "$body" | grep -q 'stream: true'
+    assert_ok $?
+    # Must NOT use stream: false (causes exit 28 with thinking models)
+    echo "$body" | grep -q 'stream: false'
+    assert_eq $? 1
+  }
+
   it "llm_generate strips think tokens via </think> marker" && {
     body=$(declare -f llm_generate)
     echo "$body" | grep -q '</think>'
     assert_ok $?
-    echo "$body" | grep -q 'full_text'
+    echo "$body" | grep -q '_think_pending'
     assert_ok $?
   }
 
@@ -261,7 +270,7 @@ describe "Thinking mode configuration (thinking-only model)"
     body=$(declare -f llm_generate)
     echo "$body" | grep -q 'LODGE_THINK.*LODGE_THINK_STREAM'
     assert_ok $?
-    echo "$body" | grep -q '_show_think'
+    echo "$body" | grep -q 'think_token'
     assert_ok $?
   }
 
@@ -277,6 +286,14 @@ describe "Thinking mode configuration (thinking-only model)"
     assert_ok $?
     echo "$body" | grep -q '</think>'
     assert_ok $?
+  }
+
+  it "llm_chat uses stream:true internally (thinking-model fix)" && {
+    body=$(declare -f llm_chat)
+    echo "$body" | grep -q 'stream: true'
+    assert_ok $?
+    echo "$body" | grep -q 'stream: false'
+    assert_eq $? 1
   }
 
   it "llm_stream shows bright thinking header when LODGE_THINK_STREAM=2" && {

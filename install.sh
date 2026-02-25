@@ -206,13 +206,30 @@ else
 fi
 
 # ── 5. Quick model test ─────────────────────────────────────
+# Use stream:true because the thinking model buffers all computation
+# before sending a byte when stream:false. With streaming, thinking
+# tokens arrive quickly even though the final response takes longer.
 info "Testing model responsiveness..."
-RESPONSE=$(curl -sf --max-time 60 http://127.0.0.1:11434/api/generate \
-    -d '{"model":"blue-lodge","prompt":"Reply with only: OK","stream":false,"options":{"num_predict":50}}' \
-    | jq -r '.response' 2>/dev/null || echo "TIMEOUT")
+_MODEL_OK=0
+# Warm-up: load weights with a trivial 1-token prompt first. Streaming
+# ensures the connection stays alive during the ~20-30s weight load.
+if curl -sfN --connect-timeout 10 --max-time 120 http://127.0.0.1:11434/api/generate \
+    -d '{"model":"blue-lodge","prompt":"Say OK","stream":true,"options":{"num_predict":10,"budget_tokens":4}}' \
+    2>/dev/null | while IFS= read -r _line; do
+        _tok=$(echo "$_line" | jq -r '.response // empty' 2>/dev/null)
+        _think=$(echo "$_line" | jq -r '.thinking // empty' 2>/dev/null)
+        if [ -n "$_tok" ] || [ -n "$_think" ]; then
+            # Got at least one token — model is alive
+            exit 0
+        fi
+        _done=$(echo "$_line" | jq -r '.done // empty' 2>/dev/null)
+        [ "$_done" = "true" ] && exit 0
+    done; then
+    _MODEL_OK=1
+fi
 
-if [[ "$RESPONSE" == *"OK"* ]] || [ -n "$RESPONSE" ] && [ "$RESPONSE" != "TIMEOUT" ]; then
-    ok "Model responds: $RESPONSE"
+if [ "$_MODEL_OK" -eq 1 ]; then
+    ok "Model responsive"
 else
     warn "Model slow or unresponsive. It may need a warm-up on first run."
 fi
