@@ -282,6 +282,7 @@ RESEARCH & KNOWLEDGE — Use these to GATHER INFORMATION
 /ingest add <file> [label] — Upload/index a document into your knowledge base for /recall
 /ingest list         — List all ingested documents
 /ingest remove <label> — Remove a document from the knowledge base
+/vision <photo.jpg | URL>  What text is in this image?" — Analyze an image with vision-capable models (e.g. blue-lodge-minist models). Supports local files and remote URLs. Supports: jpg, png, gif, webp, bmp. From URL: automatically downloads the image first
 
 RESEARCH WORKFLOW: When you don't know something, DO NOT GIVE UP. Instead:
   1. /recall <topic>       ← check if you already know it
