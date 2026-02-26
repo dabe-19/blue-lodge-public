@@ -205,9 +205,8 @@ commands_catalog_plan() {
 commands_catalog() {
     local _catalog_ts
     _catalog_ts=$(date '+%Y-%m-%d %H:%M:%S %Z')
-    cat << CATALOG
-# SYSTEM CAPABILITIES & TOOLS
-Time: $_catalog_ts. 
+    printf '# SYSTEM CAPABILITIES & TOOLS\nTime: %s.\n' "$_catalog_ts"
+    cat << 'CATALOG'
 Invoke tools using `/`. Do NOT quote arguments (parsed by whitespace). 
 Never guess syntax; use `/recall <cmd>`. If a tool is missing, use `/slash create <name> <desc>`.
 
