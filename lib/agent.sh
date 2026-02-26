@@ -570,6 +570,7 @@ ROUTER_CATALOG
     echo "Output ONLY the tool name. For slash commands output the base command"
     echo "(e.g., '/web', '/sandbox', '/write', '/social', '/git', 'bash')."
     echo "ROUTING RULES:"
+    echo "- CRITICAL: If the Action Log shows the current objective is already fulfilled (data gathered, question answered, command executed), you MUST output EXACTLY: SUCCESS: <brief summary>"
     echo "- To post to Discord/Telegram/X, route to /social (NOT /email)"
     echo "- Do NOT route to /sandbox to run other slash commands"
     echo "- /email is ONLY for actual email addresses"
@@ -778,7 +779,8 @@ agent_inner_loop() {
 
         if [[ "$selected_tool" == *"SUCCESS:"* ]]; then
             local summary
-            summary=$(echo "$selected_tool" | sed 's/.*SUCCESS: //')
+            summary=$(echo "$selected_tool" | sed -n 's/.*SUCCESS:[[:space:]]*//p' | head -1)
+            [ -z "$summary" ] && summary="Objective fulfilled"
             echo "- Step: $micro_objective -> $summary" >> "$george_dir/macro_memory.md"
             return 0
         fi
@@ -1327,10 +1329,12 @@ STRATEGIC RULES:
 - Use /recall to check your knowledge base before assuming you don't know something.
 - Do NOT regenerate a milestone that previously FAILED — try a different approach or skip it
 - For multi-part tasks, advance to the NEXT part even if a previous part partially failed
+- For multi-part tasks, advance to the NEXT part even if a previous part partially failed
 - COMPLETION: When the Primary Objective is fulfilled, output EXACTLY the word DONE (nothing else)
+- CONVERSATION RULE: If the user's objective is simply to chat or ask a question, and you have executed the /ask command to answer them, the objective is complete. Output DONE.
 - NEVER prefix a milestone with DONE, DONE:, COMPLETE, or any completion keyword — those are reserved signals
-- Milestone format: a concise imperative sentence describing the NEXT action (e.g., 'Search the web for X', 'Post findings to journal', 'Use /recall to look up API syntax')
-- Output NOTHING else${_milestone_history}"
+- MILESTONE FORMAT: Output ONLY a concise imperative sentence (e.g., 'Search the web for X', 'Use /recall to look up syntax').
+- NO INTRODUCTIONS. NO EXPLANATIONS. NEVER say 'The next milestone is...'. Output the action and NOTHING else.${_milestone_history}"
 
         ui_think "Strategist: determining next milestone..."
         local milestone

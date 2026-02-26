@@ -466,38 +466,28 @@ llm_generate() {
                 printf "%s" "$token"
             else
                 # ── Inline-tag fallback mode ──
-                # Detect <think> at start of response to enter think mode.
-                # Buffer initial tokens until we know if model is thinking.
-                # Buffer limit raised to 20 chars — some models emit
-                # whitespace (\n, spaces) before the <think> tag.
+                # Detect <think> anywhere in the early response buffer.
+                # Models may emit conversational preamble before <think>.
+                # Buffer up to 50 chars to catch late-arriving tags.
                 if [ "$_can_think" -eq 1 ] && [ "$_in_think_block" -eq 0 ]; then
                     _response_pending+="$token"
-                    # Strip leading whitespace for <think> detection
-                    # (Granite4-preview, Ministral emit \n before <think>)
-                    local _resp_trimmed="$_response_pending"
-                    _resp_trimmed="${_resp_trimmed#"${_resp_trimmed%%[![:space:]]*}"}"
-                    if [ ${#_resp_trimmed} -ge 7 ]; then
-                        if [[ "$_resp_trimmed" == "<think>"* ]]; then
-                            _in_think_block=1
-                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate: <think> detected inline\n" > "$_tty" 2>/dev/null
-                            # Move everything after <think> into think_pending
-                            _think_pending="${_resp_trimmed#<think>}"
-                            _response_pending=""
-                            if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                                _think_banner_open=1
-                                local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
-                                printf "\n%b┌─ thinking ─\033[0m\n%b" "$_c" "$_c" > "$_tty" 2>/dev/null
-                            fi
-                        else
-                            # No <think> prefix — flush buffered tokens as response
-                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate: no <think>, flushing buffer as response (trimmed=%s)\n" "${_resp_trimmed:0:20}" > "$_tty" 2>/dev/null
-                            _response_pending="${_response_pending//<\/think>/}"
-                            printf "%s" "$_response_pending"
-                            _response_pending=""
-                            _can_think=0  # stop buffering for this response
+                    if [[ "$_response_pending" == *"<think>"* ]]; then
+                        _in_think_block=1
+                        _think_pending="${_response_pending#*<think>}"
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate: <think> detected inline\n" > "$_tty" 2>/dev/null
+                        # Output anything before <think> as response (preamble)
+                        local _before="${_response_pending%%<think>*}"
+                        _before="${_before//<\/think>/}"
+                        [ -n "$_before" ] && printf "%s" "$_before"
+                        _response_pending=""
+                        if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                            _think_banner_open=1
+                            local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
+                            printf "\n%b┌─ thinking ─\033[0m\n%b" "$_c" "$_c" > "$_tty" 2>/dev/null
                         fi
-                    elif [ ${#_response_pending} -ge 20 ]; then
-                        # Buffer overflow guard — flush and give up
+                    elif [ ${#_response_pending} -ge 50 ]; then
+                        # Buffer overflow guard — no <think> found in first 50 chars
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate: no <think> in 50 chars, flushing buffer\n" > "$_tty" 2>/dev/null
                         _response_pending="${_response_pending//<\/think>/}"
                         printf "%s" "$_response_pending"
                         _response_pending=""
@@ -761,35 +751,28 @@ llm_stream() {
                 printf "%s" "$token" > "$_tty" 2>/dev/null
             else
                 # ── Inline-tag fallback mode ──
-                # Detect <think> at start of response to enter think mode.
-                # Buffer initial tokens until we know if model is thinking.
-                # Buffer limit raised to 20 chars — some models emit
-                # whitespace (\n, spaces) before the <think> tag.
+                # Detect <think> anywhere in the early response buffer.
+                # Models may emit conversational preamble before <think>.
+                # Buffer up to 50 chars to catch late-arriving tags.
                 if [ "$_can_think" -eq 1 ] && [ "$_in_think_block" -eq 0 ]; then
                     _response_pending+="$token"
-                    # Strip leading whitespace for <think> detection
-                    # (Granite4-preview, Ministral emit \n before <think>)
-                    local _resp_trimmed="$_response_pending"
-                    _resp_trimmed="${_resp_trimmed#"${_resp_trimmed%%[![:space:]]*}"}"
-                    if [ ${#_resp_trimmed} -ge 7 ]; then
-                        if [[ "$_resp_trimmed" == "<think>"* ]]; then
-                            _in_think_block=1
-                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream: <think> detected inline\n" > "$_tty" 2>/dev/null
-                            _think_pending="${_resp_trimmed#<think>}"
-                            _response_pending=""
-                            _think_banner_open=1
-                            _think_open
-                        else
-                            # No <think> — flush buffered tokens as response
-                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream: no <think>, flushing buffer (trimmed=%s)\n" "${_resp_trimmed:0:20}" > "$_tty" 2>/dev/null
-                            _response_pending="${_response_pending//<\/think>/}"
-                            printf "%s" "$_response_pending"
-                            printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
-                            _response_pending=""
-                            _can_think=0
+                    if [[ "$_response_pending" == *"<think>"* ]]; then
+                        _in_think_block=1
+                        _think_pending="${_response_pending#*<think>}"
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream: <think> detected inline\n" > "$_tty" 2>/dev/null
+                        # Output anything before <think> as response (preamble)
+                        local _before="${_response_pending%%<think>*}"
+                        _before="${_before//<\/think>/}"
+                        if [ -n "$_before" ]; then
+                            printf "%s" "$_before"
+                            printf "%s" "$_before" > "$_tty" 2>/dev/null
                         fi
-                    elif [ ${#_response_pending} -ge 20 ]; then
-                        # Buffer overflow guard — flush and give up
+                        _response_pending=""
+                        _think_banner_open=1
+                        _think_open
+                    elif [ ${#_response_pending} -ge 50 ]; then
+                        # Buffer overflow guard — no <think> found in first 50 chars
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream: no <think> in 50 chars, flushing buffer\n" > "$_tty" 2>/dev/null
                         _response_pending="${_response_pending//<\/think>/}"
                         printf "%s" "$_response_pending"
                         printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
