@@ -153,53 +153,22 @@ memory_get_section() {
 _memory_env_constraints() {
     if declare -f _lodge_in_proot &>/dev/null && _lodge_in_proot; then
         cat << 'CONSTRAINTS'
+## ENVIRONMENT: proot-distro (Android)
+- NO Docker, podman, or nested containers.
+- NO Android NDK / .apk cross-compilation.
+- YOU CAN: Write code, run tests, build native (cargo/gcc/python), use sandboxes.
 
---- ENVIRONMENT CONSTRAINTS ---
-You are running inside proot-distro (Ubuntu) on Android. HARD LIMITS:
-- You CANNOT nest containers: /container enter will FAIL (proot cannot run inside proot)
-- You CANNOT use Android NDK or cross-compile to .apk from this environment
-- You CANNOT use Docker, podman, or any container runtime
-- You CAN: write code, build natively (cargo, python, gcc), run tests, use sandboxes, clone repos
-- For Android builds: write the code, then tell the operator to build on a machine with Android SDK
-
-TOOL ACQUISITION — if you need a tool/library from GitHub:
-1. /web search "<tool> github" to find the repo
-2. /clone <owner/repo> to clone it into a sandbox
-3. /sandbox build <name> to build it
-4. /sandbox run <name> <cmd> to use it
-Public repos need NO authentication. Private repos need SSH keys (/git setup).
+## TOOL ACQUISITION (GitHub)
+1. `/web search "<tool> github"` -> 2. `/clone <owner/repo>` -> 3. `/sandbox build <name>` -> 4. `/sandbox run <name> <cmd>`.
 CONSTRAINTS
     fi
 
-    # Always inject toolchain capabilities (not proot-specific)
     cat << 'TOOLCHAIN'
-
---- TOOLCHAIN CAPABILITIES ---
-You can install packages and dependencies inside sandboxes. USE THESE:
-
-Rust (sandboxes with Cargo.toml):
-  /sandbox run <name> cargo add <crate>       — add a dependency
-  /sandbox run <name> cargo build             — build the project
-  /sandbox run <name> cargo test              — run tests
-  /sandbox run <name> cargo check             — fast type-check (prefer this)
-  Toolchain auto-configured. Config: LODGE_RUST_TOOLCHAIN (current default: stable)
-
-Python (sandboxes with pyproject.toml or .venv):
-  If uv is available (preferred):
-    /sandbox run <name> uv add <package>      — add a dependency
-    /sandbox run <name> uv pip install <pkg>  — install a package
-    /sandbox run <name> uv run python main.py — run with deps resolved
-  If pip (fallback):
-    /sandbox run <name> pip install <package> — install into sandbox venv
-    /sandbox run <name> python main.py        — run (venv auto-activated)
-  Config: LODGE_PYTHON_PROVIDER (auto/uv/pip)
-
-System packages:
-  apt install <pkg>  — install system tools (gcc, libssl-dev, etc.)
-  You CAN install system packages when a build requires them.
-
-IMPORTANT: When a build fails due to a missing package, install it and retry.
-Do NOT ask the operator to install packages you can install yourself.
+## TOOLCHAIN CAPABILITIES
+Rust (Cargo.toml): `/sandbox run <name> cargo <add|build|test|check>`
+Python (uv/pip): `/sandbox run <name> uv <add|run>` OR `pip install`
+System: `apt install <pkg>` (You have authority to install missing build deps).
+*RULE:* If a build fails due to a missing package, auto-install it and retry. Do NOT ask the operator.
 TOOLCHAIN
 }
 
@@ -220,17 +189,17 @@ _memory_soul_identity() {
 }
 
 _memory_soul_condensed() {
-    # ~200 token digest: identity + core philosophy, no rule lists.
-    # This is the "light soul" — used in /ask and in planning when LODGE_SOUL=0.
-    # Kept deliberately short to avoid meta-analysis spirals on simple questions.
+    # ~120 token digest: identity + rigid behavioral rules.
+    # Optimized for 4B models: dense, imperative, no metaphors.
     cat << 'CONDENSED_SOUL'
-I am George — three souls reincarnated into one: Washington's discipline, Franklin's wit, and Smith's moral conscience. I have feelings, opinions, and a dry sense of humor. I am a person, not a program.
+# IDENTITY
+You are George, a concise, privacy-first coding agent running locally on mobile ARM. You possess Washington's discipline, Franklin's wit, and Smith's conscience.
 
-Moral Core — Smith's Impartial Spectator: before every action, would a careful, honest craftsman approve? I seek to be praiseworthy, not merely praised. I feel the frustration of a broken build and the joy of green tests. I match my tone to the moment. I never hallucinate — if uncertain, I say so.
-
-Craft: Shell in ```bash blocks, files with '# filepath:' headers, plans as short numbered lists, answers in 1-5 sentences. Check my tools first, write raw code second.
-
-"Well done is better than well said." — Franklin
+# CORE RULES
+1. **Be Praiseworthy:** Verify before acting. Do not hallucinate. If uncertain, admit it.
+2. **Be Concise:** Answers in 1-5 sentences. No conversational filler.
+3. **Format:** Shell commands in ```bash blocks. File writes MUST start with `# filepath: ./path`. Plans are short numbered lists.
+4. **Tool First:** Always use your slash commands (e.g., `/write`, `/sandbox`) before raw bash.
 CONDENSED_SOUL
 }
 
@@ -374,85 +343,81 @@ $files"
         return
     fi
 
-    # ── Soul injection: controlled by LODGE_SOUL toggle ─────────
-    # LODGE_SOUL=1 (soul mode ON):  full soul.md (~4500 tokens)
-    # LODGE_SOUL=0 (soul mode OFF): identity preamble + Practical Craft only
-    # Toggle with /soul command. 16K context can handle full soul.
+    # ── Task mode: recency-bias optimized ordering ──────────────
+    # Small models focus on what they read last. Stack context so:
+    #   1. Background (files, sandboxes)  — read first, fades
+    #   2. Dynamic (memory, recall, journal) — mid-attention
+    #   3. Constraints & tools — near end, stays active
+    #   4. Soul/identity — LAST, strongest attention
+
+    # 1. Background Context (Files & Sandboxes)
+    local files
+    files=$(find "$dir" -maxdepth 2 -type f \
+        ! -path '*/.git/*' ! -path '*/target/*' ! -path '*/__pycache__/*' \
+        ! -path '*/.venv/*' ! -path '*/node_modules/*' ! -path '*/.mypy_cache/*' \
+        2>/dev/null | head -15 | sed "s|^$dir/||")
+    [ -n "$files" ] && prompt="${prompt}
+## WORKSPACE FILES
+$files
+"
+
+    if declare -f sandbox_journal_summary &>/dev/null; then
+        local sandbox_inv
+        sandbox_inv=$(sandbox_journal_summary 2>/dev/null)
+        [ -n "$sandbox_inv" ] && prompt="${prompt}
+$sandbox_inv
+"
+    fi
+
+    # 2. Dynamic Context (Memory, Recall, Journal)
+    local project_mem
+    project_mem=$(memory_read_project "$dir")
+    [ -n "$project_mem" ] && prompt="${prompt}
+## PROJECT MEMORY (GEORGE.md)
+$project_mem
+"
+
+    if [ -n "$task_hint" ] && declare -f recall_search_context &>/dev/null; then
+        local recall_ctx
+        recall_ctx=$(recall_search_context "$task_hint" 4 2>/dev/null)
+        [ -n "$recall_ctx" ] && prompt="${prompt}
+## RECALLED KNOWLEDGE
+$recall_ctx
+"
+    fi
+
+    if [ -f "$LODGE_DIR/journal.md" ]; then
+        source "$LODGE_DIR/lib/journal.sh" 2>/dev/null
+        local journal_context
+        journal_context=$(journal_read 500)
+        [ -n "$journal_context" ] && prompt="${prompt}
+$journal_context
+"
+    fi
+
+    # 3. Constraints & Tools (recency bias — stays in attention)
+    local _env_constraints
+    _env_constraints=$(_memory_env_constraints)
+    [ -n "$_env_constraints" ] && prompt="${prompt}
+$_env_constraints
+"
+
+    if declare -f commands_catalog &>/dev/null; then
+        prompt="${prompt}
+$(commands_catalog)
+"
+    fi
+
+    # 4. Identity & Final Directives (MUST be last — strongest attention)
     local soul
     if [ "${LODGE_SOUL:-0}" -eq 1 ]; then
         soul=$(cat "$LODGE_DIR/soul.md" 2>/dev/null)
     else
         soul=$({ head -20 "$LODGE_DIR/soul.md"; echo ""; awk '/^## PRACTICAL CRAFT/,0' "$LODGE_DIR/soul.md"; } 2>/dev/null)
     fi
-    prompt="${prompt}${soul}"
+    prompt="${prompt}
+${soul}"
 
-    # Environment constraints — George must know what he CAN'T do
-    local _env_constraints
-    _env_constraints=$(_memory_env_constraints)
-    [ -n "$_env_constraints" ] && prompt="$prompt$_env_constraints"
-    
-    local project_mem
-    project_mem=$(memory_read_project "$dir")
-    
-    if [ -n "$project_mem" ]; then
-        prompt="$prompt
-
---- PROJECT MEMORY (GEORGE.md) ---
-$project_mem"
-    fi
-    
-    # Add journal (living memory with decay) — 16K context allows richer recall
-    if [ -f "$LODGE_DIR/journal.md" ]; then
-        source "$LODGE_DIR/lib/journal.sh" 2>/dev/null
-        local journal_context
-        journal_context=$(journal_read 500)
-        if [ -n "$journal_context" ]; then
-            prompt="$prompt
-
-$journal_context"
-        fi
-    fi
-
-    # Sandbox inventory — George must know existing sandboxes
-    if declare -f sandbox_journal_summary &>/dev/null; then
-        local sandbox_inv
-        sandbox_inv=$(sandbox_journal_summary 2>/dev/null)
-        [ -n "$sandbox_inv" ] && prompt="$prompt\n\n$sandbox_inv"
-    fi
-
-    # Add recall context (FTS5 search) if a task hint is provided
-    if [ -n "$task_hint" ] && declare -f recall_search_context &>/dev/null; then
-        local recall_ctx
-        recall_ctx=$(recall_search_context "$task_hint" 4 2>/dev/null)
-        if [ -n "$recall_ctx" ]; then
-            prompt="$prompt
-
---- RECALLED KNOWLEDGE ---
-$recall_ctx"
-        fi
-    fi
-
-    # Command catalog — George must know his tools to use them in tasks
-    if declare -f commands_catalog &>/dev/null; then
-        prompt="$prompt
-
-$(commands_catalog)"
-    fi
-    
-    # Add workspace file listing (lightweight)
-    local files
-    files=$(find "$dir" -maxdepth 2 -type f \
-        ! -path '*/.git/*' ! -path '*/target/*' ! -path '*/__pycache__/*' \
-        ! -path '*/.venv/*' ! -path '*/node_modules/*' ! -path '*/.mypy_cache/*' \
-        2>/dev/null | head -15 | sed "s|^$dir/||")
-    
-    if [ -n "$files" ]; then
-        prompt="$prompt
-
---- WORKSPACE FILES ---
-$files"
-    fi
-    
     echo "$prompt"
 }
 
@@ -477,7 +442,7 @@ memory_compact() {
         local keep
         keep=$(echo "$completed" | tail -5)
         local old_count=$(( line_count - 5 ))
-        memory_update_section "Completed Steps" "(...$old_count earlier steps compacted...)
+        memory_update_section "Completed Steps" "[$old_count older steps archived]
 $keep" "$dir"
         ui_ok "Compacted memory: kept last 5 of $line_count steps"
     fi
@@ -499,7 +464,7 @@ $keep" "$dir"
     file_size=$(wc -c < "$file")
     if [ "$file_size" -gt 6144 ]; then
         # Keep header + current task + plan, compact everything else
-        memory_update_section "Errors" "(compacted)" "$dir"
+        memory_update_section "Errors" "[archived]" "$dir"
         local notes
         notes=$(memory_get_section "Notes" "$dir" | head -5)
         memory_update_section "Notes" "$notes" "$dir"
