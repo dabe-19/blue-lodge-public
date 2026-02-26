@@ -332,12 +332,10 @@ Plan concisely."
 $project_mem"
         fi
 
-        # Lean command glossary for planning — ~400 tokens instead of ~1443
-        if declare -f commands_catalog_plan &>/dev/null; then
-            prompt="$prompt
-
-$(commands_catalog_plan)"
-        elif declare -f commands_catalog &>/dev/null; then
+        # Full command catalog — George needs comprehensive tool knowledge
+        # to plan milestones that use real commands (not hallucinated ones).
+        # With increased context windows, the full catalog is affordable.
+        if declare -f commands_catalog &>/dev/null; then
             prompt="$prompt
 
 $(commands_catalog)"

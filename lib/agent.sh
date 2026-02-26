@@ -515,14 +515,14 @@ ${base_rules}"
 
 _build_router_prompt() {
     # Phase 1 Prompt: The Command Catalog Router
-    # Provides the full lean command index so George routes to his
+    # Provides the full command catalog so George routes to his
     # purpose-built slash commands instead of defaulting to raw bash.
-    # Uses commands_catalog_plan() when available (dynamic, includes
+    # Uses commands_catalog() when available (dynamic, includes
     # custom /slash commands), otherwise falls back to a static index.
     echo "You are George's tactical routing engine. Pick the best tool."
     echo ""
-    if declare -f commands_catalog_plan &>/dev/null; then
-        commands_catalog_plan
+    if declare -f commands_catalog &>/dev/null; then
+        commands_catalog
     else
         cat << 'ROUTER_CATALOG'
 --- COMMANDS (use ONLY these) ---
@@ -629,9 +629,9 @@ _build_specialist_prompt() {
             docs=$(recall_search_context "$base_cmd" 3 2>/dev/null)
         fi
 
-        # 4. Last resort: extract from the plan catalog
-        if [ -z "$docs" ] && declare -f commands_catalog_plan &>/dev/null; then
-            docs=$(commands_catalog_plan 2>/dev/null | grep -i "$base_cmd" | head -8)
+        # 4. Last resort: extract from the full command catalog
+        if [ -z "$docs" ] && declare -f commands_catalog &>/dev/null; then
+            docs=$(commands_catalog 2>/dev/null | grep -i "$base_cmd" | head -8)
         fi
 
         if [ -n "$docs" ]; then
@@ -1103,8 +1103,8 @@ agent_inner_loop() {
         # the LLM maps natural language ("use /web search") to a
         # real command instead of hallucinating.
         local catalog=""
-        if declare -f commands_catalog_plan &>/dev/null; then
-            catalog=$(commands_catalog_plan)
+        if declare -f commands_catalog &>/dev/null; then
+            catalog=$(commands_catalog)
         fi
 
         local guided_prompt="MICRO OBJECTIVE: $micro_objective
@@ -1288,8 +1288,8 @@ agent_run() {
         # actions like "Research evidence-based..." that the inner loop can't
         # execute. The compact tool summary adds ~80 tokens.
         local _tool_summary=""
-        if declare -f commands_catalog_plan &>/dev/null; then
-            _tool_summary=$(commands_catalog_plan 2>/dev/null | grep '^/' | awk -F' — ' '{print $1}' | tr '\n' ', ' | sed 's/, $//')
+        if declare -f commands_catalog &>/dev/null; then
+            _tool_summary=$(commands_catalog 2>/dev/null)
         fi
 
         # Service status: let strategist know what's configured vs not
@@ -1310,19 +1310,26 @@ agent_run() {
 
         local macro_sys="You are a strategic planning engine. Given a task memory with completed milestones, determine the single next milestone needed.
 
-Rules:
+${_tool_summary}
+
+SERVICES STATUS: ${_svc_status:-unknown}
+
+STRATEGIC RULES:
 - If the user explicitly names a tool or action (e.g., 'search the web', 'post to discord', 'send email', 'download'), route to that tool — NEVER override with /ask
 - ONLY use /ask for simple questions George can answer from his own knowledge with NO tools (e.g., 'what is a monad?', 'explain recursion')
-- Every milestone MUST be achievable using one of these tools: ${_tool_summary:-/ask, /sandbox, /write, /build, /test, /web, /recall, /save, bash}
+- Every milestone MUST use a command from YOUR WORKING COMMANDS above. Do NOT invent commands.
 - To post to Discord/Telegram/X, use /social (NOT /email). /email is for actual email addresses only.
 - Do NOT use /sandbox to run slash commands. Slash commands run directly.
-- ONLY use services that are CONFIGURED: ${_svc_status:-unknown}
+- ONLY use services that are CONFIGURED (see SERVICES STATUS above)
 - Frame milestones as tool-executable actions, not abstract goals
+- RESEARCH MILESTONES: If you lack information needed to proceed (API keys, URLs, package names, technical details), create a milestone to gather that information using /web search, /recall, /web fetch, or /social discord read. It is ALWAYS acceptable to create a milestone whose purpose is research or information gathering.
+- If a task requires credentials or keys you don't have, search for them (/secret get, /web search, /recall) before giving up.
+- Use /recall to check your knowledge base before assuming you don't know something.
 - Do NOT regenerate a milestone that previously FAILED — try a different approach or skip it
 - For multi-part tasks, advance to the NEXT part even if a previous part partially failed
 - COMPLETION: When the Primary Objective is fulfilled, output EXACTLY the word DONE (nothing else)
 - NEVER prefix a milestone with DONE, DONE:, COMPLETE, or any completion keyword — those are reserved signals
-- Milestone format: a concise imperative sentence describing the NEXT action (e.g., 'Search the web for X', 'Post findings to journal')
+- Milestone format: a concise imperative sentence describing the NEXT action (e.g., 'Search the web for X', 'Post findings to journal', 'Use /recall to look up API syntax')
 - Output NOTHING else${_milestone_history}"
 
         ui_think "Strategist: determining next milestone..."
@@ -1401,12 +1408,22 @@ Rules:
     done
 
     # ── Task complete ─────────────────────────────────────────
+    # Capture cancellation state BEFORE resetting — needed to skip
+    # post-task journal reflection (which triggers a model switch to
+    # the secondary model and can crash Termux if Ollama is still
+    # recovering from the killed curl requests).
+    local _was_cancelled=0
+    if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
+        _was_cancelled=1
+    fi
     _LODGE_IN_TASK=0
     _LODGE_CANCELLED=0
 
     echo ""
     ui_divider
-    if [ "$macro_iterations" -eq 0 ]; then
+    if [ "$_was_cancelled" -eq 1 ]; then
+        ui_warn "Task cancelled ($completed_milestones/$macro_iterations milestones completed before cancellation)"
+    elif [ "$macro_iterations" -eq 0 ]; then
         ui_ok "Task complete: objective resolved without milestones"
     else
         ui_ok "Task complete: $completed_milestones/$macro_iterations milestones succeeded"
@@ -1416,14 +1433,21 @@ Rules:
     declare -f llm_debug_summary &>/dev/null && llm_debug_summary
 
     # Reflect in journal (background — don't block user)
-    local reflect_summary="$task ($completed_milestones/$macro_iterations milestones in $(basename "$workdir"))"
-    if [ -n "$failed_milestones" ]; then
-        reflect_summary="${reflect_summary}. Failed: ${failed_milestones}"
-    fi
-    journal_reflect "$reflect_summary" "$workdir" "$_exec_log" &
+    # SKIP if task was cancelled — journal_reflect triggers a model switch
+    # to the secondary model (LLM_SCENARIO=journal → LODGE_MODEL_SECONDARY).
+    # After Ctrl+C, Ollama may still be cleaning up killed requests; issuing
+    # a model unload+load at that moment races with the cleanup and can crash
+    # Termux. The cancelled task will be visible in macro_memory.md anyway.
+    if [ "$_was_cancelled" -eq 0 ]; then
+        local reflect_summary="$task ($completed_milestones/$macro_iterations milestones in $(basename "$workdir"))"
+        if [ -n "$failed_milestones" ]; then
+            reflect_summary="${reflect_summary}. Failed: ${failed_milestones}"
+        fi
+        journal_reflect "$reflect_summary" "$workdir" "$_exec_log" &
 
-    # Notify on phone if available
-    tools_phone_toast "Lodge: Task complete ($completed_milestones/$macro_iterations milestones)"
+        # Notify on phone if available
+        tools_phone_toast "Lodge: Task complete ($completed_milestones/$macro_iterations milestones)"
+    fi
 
     # Model stays loaded during active session for fast response times.
     # It will be unloaded on session exit (lodge main) or by keep_alive timeout.

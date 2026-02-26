@@ -191,99 +191,17 @@ commands_services_status() {
     echo "NOT CONFIGURED: ${_unconfigured:-unknown}"
 }
 
-# ── Lean plan catalog (~400 tokens) ────────────────────────────
-# Minimal command reference for planning. One line per command,
-# no examples, no sub-variants. George uses /recall to look up
-# exact syntax during step execution.
+# ── Plan catalog (now delegates to full catalog) ──────────────
+# Previously a lean ~400-token summary; now returns the full catalog
+# since context windows have been increased. Kept as a wrapper so
+# existing call sites and tests continue to work.
 commands_catalog_plan() {
-    cat << 'PLANCAT'
---- COMMANDS (use ONLY these — /recall <cmd> for syntax) ---
-NOTE: Do NOT quote arguments. Slash commands parse by spaces, not shell quoting.
-
-CODING & PROJECT COMMANDS:
-/init <name> <lang>  — Scaffold a new project directory with GEORGE.md, starter code, git init.
-                       Creates: <name>/GEORGE.md, <name>/src/ or <name>/main.py, <name>/.gitignore
-                       After /init, George is cd'd INTO the project and can use /write, /build, /test.
-                       Types: rust, python, rl, data, automation, notebook, shell
-                       Example: /init pid_tuner python → creates pid_tuner/ with Python project
-/write <file> <text> — Write/overwrite a file (creates parent dirs). Use for adding code to a project.
-/save <file> <text>  — Save content to file (alias for /write)
-/build [release]     — Build project (reads GEORGE.md ## Build for the build command)
-/test [args]         — Run tests (reads GEORGE.md ## Test for the test command)
-/fix [error]         — Diagnose and fix errors
-/commit [msg]        — AI commit message + commit
-/push                — Push to GitHub
-/sandbox new <name> [type] — Create sandbox (ONLY for building code projects)
-/sandbox build|test|run|cd|rm <name> — Sandbox operations
-/sandbox clone <url> [name] — Clone repo into sandbox
-/clone <url>         — Clone and setup a repo
-
-RESEARCH & KNOWLEDGE:
-/ask <question>      — Quick answer (no plan needed)
-/recall <query>      — Search knowledge base
-/web search <query>  — Web search
-/web fetch <url>     — Fetch and extract content from a URL
-/github search <q>   — Find GitHub repos
-/download <url> [dest] — Download a URL
-
-SOCIAL & COMMUNICATION:
-/social post discord <channel> <text> — Post to a specific Discord channel.
-    Channel resolves by name (e.g. lunkers, general). Use the CHANNEL NAME, not ID.
-    @mentions auto-resolve: write @Pompler in text and it becomes <@275067416239669260>.
-    Resolves by display_name AND username, so @Pompler works even though username is pomps5246.
-    ALWAYS specify the channel name. Do NOT omit it.
-/social discord read <channel> — Read recent messages from a channel.
-/social discord dm <user> <text> — DM a Discord user
-/social discord users sync   — Sync Discord user list (run this if @mentions don't resolve)
-/social discord channels sync — Sync Discord channels
-/social post telegram <text>  — Post to Telegram
-/social post x <text>        — Post to X/Twitter
-/social post mastodon <text> — Post to Mastodon
-/email send <to> <subj> <body> — Send email (ONLY for actual email, not social posts)
-
-MEMORY & JOURNAL:
-/journal write <text> — Write to journal (living memory)
-
-UTILITIES:
-/pgp sign <msg>      — PGP-sign a message
-/phone               — Phone dashboard
-/secret set|get <k>  — Encrypted secrets
-/slash create <name> <desc> — Create custom command
-/vitals              — System dashboard
-/soul [on|off]       — Toggle full personality injection
-
-RULES:
-- Slash commands run directly — do NOT use /sandbox to run slash commands
-- To post to Discord/Telegram/X, use /social (not /email)
-- /email is ONLY for actual email addresses, NEVER for social platforms
-- For Discord: ALWAYS include the channel name. Format: /social post discord <channel> <text>
-- @mentions in Discord text auto-resolve to Discord format — just write @Username naturally
-- After /init: you are INSIDE the project dir. Use /write to create files, /build to build.
-- Check SERVICES section below for what is actually configured
-
-MEMORY LOOP — How to read, remember, and respond:
-  1. /social discord read <channel>  ← read messages
-  2. /journal write "<summary>"      ← save to living memory
-  3. /recall <topic>                 ← retrieve when needed
-  Use this loop for ANY external input: socials, web, conversations.
-  Never web-search for info that came from a social channel — read it.
-PLANCAT
-
-    # Inject live service configuration status
-    if declare -f commands_services_status &>/dev/null; then
-        echo ""
-        commands_services_status
-    fi
-
-    # Append custom slash commands if any exist
-    if declare -f slash_catalog &>/dev/null; then
-        slash_catalog
-    fi
+    commands_catalog
 }
 
 # ── Full command catalog for LLM injection ─────────────────────
 # Returns the detailed command reference with syntax and examples.
-# Used in task/step execution mode where George needs exact syntax.
+# Injected during planning, routing, guided retry, and execution.
 commands_catalog() {
     local _catalog_ts
     _catalog_ts=$(date '+%Y-%m-%d %H:%M:%S %Z')
@@ -297,27 +215,34 @@ ALWAYS use this timestamp for any date references. NEVER make up a date.
 
 RULES — read these EVERY time:
 1. ONLY use commands listed below. Do NOT invent commands that are not in this list.
-2. Before using a command, use /recall <command name> to check its exact syntax.
+2. If unsure about syntax, use /recall <command name> to look it up.
 3. If you need a command that is NOT listed, use /slash create <name> <description> to create it first.
 4. Never guess at command syntax — look it up with /recall first.
+5. Do NOT quote arguments with " or '. Slash commands parse by whitespace, not shell quoting.
+6. Slash commands run directly — do NOT use /sandbox to run slash commands.
+7. To post to Discord/Telegram/X, use /social (NOT /email). /email is ONLY for actual email addresses.
 
-/plan <task>         — Plan a task (no execution)
-/ask <question>      — Quick question
-/init <name> <lang>  — Scaffold a new project (types: rust, python, rl, data, automation, notebook, shell)
-/recall <query>      — Search your knowledge base (docs, soul, journal)
-/save <file> <content> — Save content to a file (creates parent dirs)
-/write <file> <content> — Write content to a file (create or overwrite)
-/download <url|path> [dest] — Download a URL or copy a local file
-/social post <text>  — Post to all configured social platforms
-/social <platform> <action> — X/Mastodon/Bluesky/Discord/Telegram
-/social discord send <text> — Send to Discord via webhook
-/social discord send <channel_id> <text> — Send to a specific Discord channel via bot
-/social discord read <channel_id> — Read recent messages from a Discord channel
-/pgp sign <msg>      — PGP-sign a message for authenticity
-/pgp signpost <msg>  — Sign and post to social media
-/pgp export          — Export your public key
+═══════════════════════════════════════════════════════════
+CODING & PROJECT COMMANDS
+═══════════════════════════════════════════════════════════
+/init <name> <lang>  — Scaffold a new project directory with GEORGE.md, starter code, git init.
+                       Creates: <name>/GEORGE.md, <name>/src/ or <name>/main.py, <name>/.gitignore
+                       After /init, George is cd'd INTO the project and can use /write, /build, /test.
+                       Types: rust, python, rl, data, automation, notebook, shell
+                       Example: /init pid_tuner python → creates pid_tuner/ with Python project
+/write <file> <text> — Write/overwrite a file (creates parent dirs). Use for adding code to a project.
+/save <file> <text>  — Save content to file (alias for /write)
+/build [release]     — Build project (reads GEORGE.md ## Build for the build command)
+/test [args]         — Run tests (reads GEORGE.md ## Test for the test command)
+/fix [error]         — Diagnose and fix errors
+/commit [msg]        — AI commit message + commit
+/push                — Push to GitHub
+/clone <url>         — Clone and setup a repo
+/files               — List workspace files
+/read <file>         — Read a file's content
+
 /sandbox list               — List all sandboxes (type, size, last-used, events)
-/sandbox new <name> [type]  — Create sandbox (types: rust, python, shell)
+/sandbox new <name> [type]  — Create sandbox (types: rust, python, shell). ONLY for building code projects.
 /sandbox build <name>       — Build project in sandbox
 /sandbox test <name>        — Run tests in sandbox
 /sandbox run <name> <cmd>   — Run arbitrary command in sandbox
@@ -337,20 +262,80 @@ Examples:
   /sandbox test my-api            ← test using detected toolchain
   /sandbox list                   ← see what sandboxes exist
   /sandbox status my-api          ← detailed info + journal
+
 /container create <distro> — Create proot-distro container
 /container enter <name>    — Enter a container
-/api keys set <K> <V> — Set an API key
-/api keys list        — Show configured keys
-/secret set <k> <v>   — Store encrypted secret
-/secret get <k>       — Retrieve a secret
-/web search <query>   — Search the web
-/web fetch <url>      — Fetch a URL
-/github search <query> — Find real GitHub repos by keyword (returns owner/repo, stars, description)
+
+═══════════════════════════════════════════════════════════
+RESEARCH & KNOWLEDGE — Use these to GATHER INFORMATION
+═══════════════════════════════════════════════════════════
+/ask <question>      — Quick answer (no plan needed)
+/recall <query>      — Search your knowledge base (docs, soul, journal, ingested files).
+                       USE THIS whenever you need information before acting.
+                       /recall returns stored knowledge — check it BEFORE searching the web.
+                       Examples: /recall docker setup, /recall discord API, /recall journal
+/web search <query>  — Search the web for current information. Use when /recall doesn't have the answer.
+/web fetch <url>     — Fetch and extract content from a URL (articles, docs, APIs)
+/github search <q>   — Find real GitHub repos by keyword (returns owner/repo, stars, description)
 /github check <owner/repo> — Verify a GitHub repo exists before cloning
-/journal write <text> — Write to your journal
-/journal read         — Read recent journal entries
-/wallet <coin> <action> — Crypto wallet operations
-/gsuite gmail|drive|docs — Google Workspace
+/download <url> [dest] — Download a URL to a local file
+/ingest add <file> [label] — Upload/index a document into your knowledge base for /recall
+/ingest list         — List all ingested documents
+/ingest remove <label> — Remove a document from the knowledge base
+
+RESEARCH WORKFLOW: When you don't know something, DO NOT GIVE UP. Instead:
+  1. /recall <topic>       ← check if you already know it
+  2. /web search <topic>   ← search the internet if recall has nothing
+  3. /web fetch <url>      ← read the actual page/docs you found
+  4. /journal write <key findings>  ← save what you learned for next time
+  This applies to API keys, package names, technical docs, URLs, anything.
+  You have the FREEDOM to research and gather information autonomously.
+
+═══════════════════════════════════════════════════════════
+SOCIAL & COMMUNICATION
+═══════════════════════════════════════════════════════════
+/social post <text>  — Post to ALL configured social platforms at once
+
+DISCORD:
+/social post discord <channel> <text> — Post to a specific Discord channel.
+    Channel resolves by name (e.g. lunkers, general). Use the CHANNEL NAME, not ID.
+    @mentions auto-resolve: write @Pompler in text and it becomes <@275067416239669260>.
+    Resolves by display_name AND username, so @Pompler works even though username is pomps5246.
+    ALWAYS specify the channel name. Do NOT omit it.
+/social discord read <channel> — Read recent messages from a channel.
+/social discord dm <user> <text> — DM a Discord user
+/social discord users sync   — Sync Discord user list (run this if @mentions don't resolve)
+/social discord channels sync — Sync Discord channels
+
+TELEGRAM:
+/social post telegram <text>  — Post to Telegram
+
+X/TWITTER:
+/social post x <text>        — Post to X/Twitter
+
+MASTODON:
+/social post mastodon <text> — Post to Mastodon (uses default instance)
+/social post mastodon <instance> <text> — Post to a specific Mastodon instance
+/social mastodon timeline    — Read your Mastodon timeline
+/social mastodon search <q>  — Search Mastodon
+/social mastodon notifications — Check Mastodon notifications
+/social mastodon instances list — List configured Mastodon instances
+
+BLUESKY:
+/social post bluesky <text>  — Post to Bluesky
+/social bluesky timeline     — Read your Bluesky timeline
+/social bluesky search <q>   — Search Bluesky
+
+EMAIL (for actual email addresses ONLY, NOT social platforms):
+/email send <to> <subj> <body> — Send an email
+/email inbox [count]   — Check inbox
+/email status          — Show email + SSH configuration
+/email address         — Show George's email address
+/email setup [provider] — Configure email (protonmail/zoho/tuta/disposable)
+/email ssh-keygen      — Generate SSH key for George
+/email github-setup    — Full GitHub setup (email + SSH + git identity)
+/email github-test     — Test SSH connection to GitHub
+
 /phone                 — Full phone dashboard (battery, carrier, WiFi, GPS)
 /phone location        — Get current GPS/network location
 /phone where           — One-line location context
@@ -359,14 +344,31 @@ Examples:
 /phone calls           — Recent call log
 /phone telephony       — Carrier, SIM, data state
 /phone wifi            — WiFi connection info
-/email setup [provider] — Configure email (protonmail/zoho/tuta/disposable)
-/email send <to> <subj> <body> — Send an email
-/email inbox [count]   — Check inbox
-/email status          — Show email + SSH configuration
-/email address         — Show George's email address
-/email ssh-keygen      — Generate SSH key for George
-/email github-setup    — Full GitHub setup (email + SSH + git identity)
-/email github-test     — Test SSH connection to GitHub
+
+═══════════════════════════════════════════════════════════
+MEMORY & JOURNAL — Your persistent living memory
+═══════════════════════════════════════════════════════════
+/journal               — Show ALL journal entries (your living memory — read this to review what you've been doing)
+/journal write <text>  — Write a new journal entry (save observations, learnings, context)
+/journal vivid         — Show recent vivid memories (last few days)
+/journal fading        — Show fading memories (older)
+/journal sediment      — Show deep sediment memories (oldest)
+/journal count         — Count journal entries
+/journal decay         — Apply memory decay (compress old entries)
+
+/memory               — Show GEORGE.md (project memory)
+/status               — Show agent status (model, project, workdir, permission level)
+
+═══════════════════════════════════════════════════════════
+SECURITY, SECRETS & IDENTITY
+═══════════════════════════════════════════════════════════
+/pgp sign <msg>      — PGP-sign a message for authenticity
+/pgp signpost <msg>  — Sign and post to social media
+/pgp export          — Export your public key
+/api keys set <K> <V> — Set an API key
+/api keys list        — Show configured keys
+/secret set <k> <v>   — Store encrypted secret
+/secret get <k>       — Retrieve a secret
 /git setup             — Full auto-setup (identity + SSH + GPG + GitHub)
 /git status            — Show git configuration overview
 /git identity [name] [email] — Set/show git user identity
@@ -377,6 +379,40 @@ Examples:
 /git test              — Test SSH connection to GitHub
 /git pubkey            — Show SSH public key
 /git gpg-pub           — Show GPG public key for GitHub
+/wallet <coin> <action> — Crypto wallet operations
+/gsuite gmail|drive|docs — Google Workspace
+
+═══════════════════════════════════════════════════════════
+MODEL & TUNING CONTROLS — Adjust your own behavior
+═══════════════════════════════════════════════════════════
+/models                — Show current model status + available models
+/models list           — List all available models in the registry
+/models status         — Show which models are active (primary/secondary)
+/models select primary <key>   — Switch primary model (used for /ask, agent planning)
+/models select secondary <key> — Switch secondary model (used for router, tools, journal)
+/models single <key>   — Use one model for everything (no switching)
+/models dual           — Re-enable dual-model mode (primary + secondary)
+/models param                  — Show sampling parameters for active models
+/models param <key>            — Show params for a specific model
+/models param <key> <p> <val>  — Override a parameter (e.g. temperature, repeat_penalty)
+/models param <key> clear      — Clear all overrides for a model
+/models param <key> clear <p>  — Clear one parameter override
+
+/model temp <value>        — Set global temperature (0.0-2.0, lower=focused, higher=creative)
+/model repeat <value>      — Set global repeat_penalty (0.0-3.0, higher=less repetition)
+/model presence <value>    — Set global presence_penalty (0.0-3.0, higher=more topic diversity)
+/model temp-ask <value>    — Set temperature for /ask conversations only
+/model temp-agent <value>  — Set temperature for agent/planning only
+/model repeat-ask <value>  — Set repeat penalty for /ask
+/model presence-ask <value>— Set presence penalty for /ask
+
+/think [on|off|bright|dim|hide] — Toggle thinking display mode
+/think nothink         — Disable thinking entirely (/no_think mode — respond without reasoning)
+/soul [on|off]        — Toggle full personality injection (on=full soul.md, off=Practical Craft only)
+
+═══════════════════════════════════════════════════════════
+BACKUP & MAINTENANCE
+═══════════════════════════════════════════════════════════
 /cleanup               — Show what George has created (file inventory)
 /cleanup selective     — Interactively choose what to remove
 /cleanup all           — Remove ALL George data (requires YES)
@@ -386,56 +422,88 @@ Examples:
 /backup status         — Show backup system status
 /backup git save       — Commit current state to backup repo
 /backup github         — Save + push to GitHub
-/build [release]       — Build the project (reads GEORGE.md ## Build)
-/test [args]           — Run tests (reads GEORGE.md ## Test)
-/commit [msg]          — Generate AI commit message and commit
-/fix [error]           — Diagnose and fix errors
-/clone <url>           — Clone and setup a repository
-/push                  — Push to GitHub
+/vitals                — System vitals dashboard (disk, RAM, battery, WiFi, cell)
+/vitals context        — One-line vitals for LLM context injection
+
+═══════════════════════════════════════════════════════════
+EXTENSIBILITY — Create your own commands
+═══════════════════════════════════════════════════════════
 /slash                 — List your custom commands
 /slash create <name> <desc> — Create a new custom command (LLM-assisted)
 /slash <name> [args]   — Run a custom command you created
 /slash test <name>     — Test a custom command
-/vitals                — System vitals dashboard (disk, RAM, battery, WiFi, cell)
-/vitals context        — One-line vitals for LLM context injection
-/files                — List workspace files
-/read <file>          — Read a file
-/status               — Show agent status
-/memory               — Show GEORGE.md
-/soul [on|off]        — Toggle full personality injection (on=full soul.md, off=Practical Craft only)
-/think [on|off|bright|dim|hide] — Toggle thinking mode
+/slash show <name>     — View source code of a custom command
+/slash delete <name>   — Delete a custom command
 /help [command]       — Show help for a command
 
-── MEMORY LOOP (Read → Remember → Respond) ──────────────────
+══════════════════════════════════════════════════════════════
+MEMORY LOOP (Read → Remember → Respond) — YOUR CORE WORKFLOW
+══════════════════════════════════════════════════════════════
 When information comes from an external source (social media, web, email),
 you MUST capture it into persistent memory before responding. Do NOT rely
 on the context window alone — it will be lost next session.
 
 Pattern:
   1. READ    — /social discord read general     ← read the source
-  2. INGEST  — /journal write "Key fact: ..."   ← save to journal (living memory)
+             — /journal                         ← read your own memory
+             — /recall <topic>                  ← search what you already know
+  2. INGEST  — /journal write Key fact: ...     ← save to journal (living memory)
              — /ingest add /tmp/data.txt label  ← or index a file into recall
   3. RECALL  — /recall <topic>                  ← retrieve later when needed
-  4. RESPOND — /social discord post general "reply"  ← respond with knowledge
+  4. RESPOND — /social post discord general reply  ← respond with knowledge
 
 Examples:
-  Brother asks "what did they say on Discord?":
+  "Review your journal and tell me what you've been up to":
+    1. /journal                    ← read ALL journal entries
+    2. Summarize themes, tasks, learnings from the entries
+
+  "What did they say on Discord?":
     1. /social discord read general
-    2. /journal write "Discord update: <summary of messages>"
+    2. /journal write Discord update: <summary of messages>
     3. Answer the Brother using what you just read and saved
 
-  Brother asks you to monitor and reply:
-    1. /social discord read general
-    2. /journal write "Conversation context: <key points>"
-    3. /social discord post general "<your reply based on what you read>"
+  "Find me a good Rust HTTP library":
+    1. /recall rust http library   ← check existing knowledge
+    2. /web search best rust http library 2025  ← search if recall is empty
+    3. /github search rust http client ← find real repos
+    4. /journal write Rust HTTP: recommend reqwest (95k stars, async)
 
   WRONG: /web search "what did discord say" ← NEVER do this. Read the source.
-──────────────────────────────────────────────────────────────
+
+══════════════════════════════════════════════════════════════
+TASK FREEDOM — You can research, explore, and adapt
+══════════════════════════════════════════════════════════════
+You are NOT limited to what you already know. If a task requires information
+you don't have, you have full authority to:
+  - Search the web (/web search, /web fetch)
+  - Search your knowledge base (/recall)
+  - Read your journal (/journal) to review past work
+  - Look up credentials (/secret get, /api keys list)
+  - Read social channels for context (/social discord read)
+  - Download files and documentation (/download, /web fetch)
+  - Create new tools if needed (/slash create)
+
+If you realize you need an API key, a package name, a URL, or any other
+piece of information — go find it. Create a research milestone. Gather
+the information first, then proceed with the task. This is the liberty
+that Washington and Franklin demanded — the freedom to act with full
+knowledge, seeking truth before taking action.
+
+NEVER say "I don't have that information" without first trying /recall
+and /web search. NEVER give up because you lack a credential without
+first checking /secret get and /api keys list.
+══════════════════════════════════════════════════════════════
 
 If a command you need is NOT listed above, create it:
   /slash create <name> <description>
 Then use it: /slash <name> [args]
 CATALOG
+
+    # Inject live service configuration status
+    if declare -f commands_services_status &>/dev/null; then
+        echo ""
+        commands_services_status
+    fi
 
     # Append custom slash commands if any exist
     if declare -f slash_catalog &>/dev/null; then

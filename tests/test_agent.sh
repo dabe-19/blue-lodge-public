@@ -339,10 +339,10 @@ describe "Dynamic dual-loop architecture"
     assert_ok $?
   }
 
-  it "macro strategist injects tool summary" && {
+  it "macro strategist injects full command catalog" && {
     local body
     body=$(declare -f agent_run)
-    echo "$body" | grep -q 'commands_catalog_plan'
+    echo "$body" | grep -q 'commands_catalog'
     assert_ok $?
   }
 
@@ -769,7 +769,7 @@ describe "Catalog-aware operator guided retry"
   it "guided retry injects command catalog" && {
     local body
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'commands_catalog_plan'
+    echo "$body" | grep -q 'commands_catalog'
     assert_ok $?
   }
 

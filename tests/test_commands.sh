@@ -149,14 +149,48 @@ describe "commands_catalog"
     assert_contains "$_cat_out" "/web"
   }
 
-  it "catalog documents discord send with channel_id" && {
+  it "catalog documents discord post with channel" && {
     _cat_out=$(commands_catalog)
-    assert_contains "$_cat_out" "/social discord send <channel_id>"
+    assert_contains "$_cat_out" "/social post discord"
   }
 
-  it "catalog documents discord read with channel_id" && {
+  it "catalog documents discord read with channel" && {
     _cat_out=$(commands_catalog)
-    assert_contains "$_cat_out" "/social discord read <channel_id>"
+    assert_contains "$_cat_out" "/social discord read"
+  }
+
+  it "catalog contains journal read (not just write)" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "/journal"
+    # Ensure the bare /journal command is documented (shows all entries)
+    echo "$_cat_out" | grep -q '/journal ' || true
+    assert_contains "$_cat_out" "Show ALL journal entries"
+  }
+
+  it "catalog contains model/tuning controls" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "/models"
+    assert_contains "$_cat_out" "/model temp"
+  }
+
+  it "catalog contains research workflow guidance" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "RESEARCH WORKFLOW"
+  }
+
+  it "catalog contains task freedom section" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "TASK FREEDOM"
+  }
+
+  it "catalog contains /recall guidance" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "USE THIS whenever you need information"
+  }
+
+  it "catalog contains /ingest" && {
+    _cat_out=$(commands_catalog)
+    assert_contains "$_cat_out" "/ingest add"
   }
 
   it "catalog contains MEMORY LOOP section" && {
