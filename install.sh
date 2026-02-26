@@ -329,9 +329,14 @@ fi
 info "Testing model responsiveness..."
 _MODEL_OK=0
 # Phase 2: With weights already in memory, a trivial prompt should respond
-# in seconds. budget_tokens:2 = near-zero thinking, num_predict:4 = tiny output.
+# in seconds. The system prompt overrides the Modelfile's SYSTEM (which
+# contains thinking instructions) — telling the model to skip reasoning.
+# num_predict:8 gives room for a few tokens even if the model emits a
+# short <think> stub before responding. budget_tokens:0 tells models
+# with native thinking support (Granite/Qwen3) to skip thinking entirely.
+# temperature:0 makes output deterministic and fast.
 if curl -sfN --connect-timeout 5 --max-time 30 http://127.0.0.1:11434/api/generate \
-    -d "{\"model\":\"$LODGE_MODEL_PRIMARY\",\"prompt\":\"Say OK\",\"stream\":true,\"budget_tokens\":2,\"options\":{\"num_predict\":4}}" \
+    -d "{\"model\":\"$LODGE_MODEL_PRIMARY\",\"prompt\":\"Say OK\",\"system\":\"Reply with exactly one word. No reasoning. No thinking.\",\"stream\":true,\"budget_tokens\":0,\"options\":{\"num_predict\":8,\"temperature\":0}}" \
     2>/dev/null | while IFS= read -r _line; do
         _tok=$(echo "$_line" | jq -r '.response // empty' 2>/dev/null)
         _think=$(echo "$_line" | jq -r '.thinking // empty' 2>/dev/null)
