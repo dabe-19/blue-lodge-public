@@ -17,9 +17,9 @@
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 
 # ── Model Slots ────────────────────────────────────────────────
-# These are the Ollama model names (e.g., "blue-lodge-qwen3-think:4b")
-LODGE_MODEL_PRIMARY="${LODGE_MODEL_PRIMARY:-blue-lodge-qwen3-think:4b}"
-LODGE_MODEL_SECONDARY="${LODGE_MODEL_SECONDARY:-blue-lodge-qwen3-inst:4b}"
+# These are the Ollama model names (e.g., "blue-lodge-minist-think:4b")
+LODGE_MODEL_PRIMARY="${LODGE_MODEL_PRIMARY:-blue-lodge-minist-think:4b}"
+LODGE_MODEL_SECONDARY="${LODGE_MODEL_SECONDARY:-blue-lodge-minist-inst:4b}"
 LODGE_SINGLE_MODEL="${LODGE_SINGLE_MODEL:-0}"   # 1=single model mode (primary only)
 
 # Track which model is currently loaded (set by _models_switch)
@@ -41,10 +41,10 @@ _MODELS_REGISTRY=(
     # Qwen3-Think: HF recommends temp=0.6, top_p=0.95, top_k=20, min_p=0,
     #   presence_penalty 0-2 (warns high values cause language mixing),
     #   num_predict 32768 (81920 for complex reasoning).
-    "qwen3-think^blue-lodge-qwen3-think:4b^hf.co/unsloth/Qwen3-4B-Thinking-2507-GGUF:UD-Q5_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.3^0.8^32768^32768^0.95^20^0.0^Default primary. Extended thinking with /no_think soft switch."
+    "qwen3-think^blue-lodge-qwen3-think:4b^hf.co/unsloth/Qwen3-4B-Thinking-2507-GGUF:UD-Q5_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.3^0.8^32768^32768^0.95^20^0.0^Qwen3 thinking. Extended reasoning with /no_think soft switch."
     # Qwen3-Inst: HF recommends temp=0.7, top_p=0.8, top_k=20, min_p=0,
     #   num_predict 16384 for instruct.
-    "qwen3-inst^blue-lodge-qwen3-inst:4b^hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:UD-Q5_K_XL^instruct^0^none^<|im_end|>^0.7^1.0^0.0^32768^16384^0.8^20^0.0^Default secondary. Fast instruct — no thinking phase."
+    "qwen3-inst^blue-lodge-qwen3-inst:4b^hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:UD-Q5_K_XL^instruct^0^none^<|im_end|>^0.7^1.0^0.0^32768^16384^0.8^20^0.0^Qwen3 instruct. Fast responses — no thinking phase."
 
     # ── Llama 3.2 family ──────────────────────────────────────
     # Llama 3.2: 128K native context, but 12GB ARM can only handle 32K safely.
@@ -63,9 +63,9 @@ _MODELS_REGISTRY=(
     # ── Ministral family ──────────────────────────────────────
     # Reasoning model needs system prompt instruction for <think> tags (no native thinking template).
     # Mistral recommends: reasoning temp=0.7 top_p=0.95.
-    "minist-think^blue-lodge-minist-think:4b^hf.co/unsloth/Ministral-3-3B-Reasoning-2512-GGUF:UD-Q5_K_XL^thinking^1^system^</s>^0.7^1.0^0.0^32768^8192^0.95^40^0.0^Mistral reasoning model. Thinking via system prompt instruction."
+    "minist-think^blue-lodge-minist-think:4b^hf.co/unsloth/Ministral-3-3B-Reasoning-2512-GGUF:UD-Q5_K_XL^thinking^1^system^</s>^0.7^1.0^0.0^32768^8192^0.95^40^0.0^Default primary. Mistral reasoning with thinking via system prompt."
     # Instruct model supports vision (multimodal). Mistral recommends: instruct temp=0.15.
-    "minist-inst^blue-lodge-minist-inst:4b^hf.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF:UD-Q5_K_XL^instruct^0^none^</s>^0.3^1.0^0.0^32768^8192^0.9^40^0.0^Mistral instruct model. Fast structured output with vision support."
+    "minist-inst^blue-lodge-minist-inst:4b^hf.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF:UD-Q5_K_XL^instruct^0^none^</s>^0.3^1.0^0.0^32768^8192^0.9^40^0.0^Default secondary. Mistral instruct with vision support."
 )
 
 # ── Parse a registry entry into variables ──────────────────────
@@ -686,10 +686,10 @@ models_clear_all_params() {
 # Each family: label|description|registry_keys (space-separated)
 
 _MODELS_FAMILIES=(
-    "qwen|Qwen 3 (4B) — default thinking + instruct pair|qwen3-think qwen3-inst"
+    "qwen|Qwen 3 (4B) — thinking + instruct pair|qwen3-think qwen3-inst"
     "llama|Llama 3.2 (3B) — Meta general reasoning + instruct|llama32 llama32-inst"
     "granite|Granite 4 (IBM) — instruct + hybrid + preview thinking|granite4 granite4-h granite4-preview"
-    "ministral|Ministral 3 (3B) — Mistral reasoning + instruct|minist-think minist-inst"
+    "ministral|Ministral 3 (3B) — default thinking + instruct pair|minist-think minist-inst"
 )
 
 # ── List all family names ──────────────────────────────────────

@@ -74,8 +74,8 @@ _lodge_shell_block() {
 
 # ── Blue Lodge ─────────────────────────────────────────────
 export LODGE_DIR="$LODGE_DIR"
-export LODGE_MODEL_PRIMARY="blue-lodge-qwen3-think:4b"
-export LODGE_MODEL_SECONDARY="blue-lodge-qwen3-inst:4b"
+export LODGE_MODEL_PRIMARY="blue-lodge-minist-think:4b"
+export LODGE_MODEL_SECONDARY="blue-lodge-minist-inst:4b"
 export PATH="\$HOME/.local/bin:\$PATH"
 $termux_line
 
@@ -288,15 +288,15 @@ if [ ${#_extra_missing[@]} -gt 0 ]; then
     fi
 fi
 
-# Always ensure Qwen default models exist (required for George to start)
+# Always ensure Ministral default models exist (required for George to start)
 echo ""
-info "Ensuring default Qwen models are ready..."
+info "Ensuring default Ministral models are ready..."
 
 if ollama list 2>/dev/null | grep -q "$LODGE_MODEL_PRIMARY"; then
     ok "Primary model '$LODGE_MODEL_PRIMARY' already exists"
 else
     info "Creating primary model: $LODGE_MODEL_PRIMARY (first run downloads ~3GB)..."
-    _mf=$(models_generate_modelfile "qwen3-think")
+    _mf=$(models_generate_modelfile "minist-think")
     ollama create "$LODGE_MODEL_PRIMARY" -f "$_mf"
     ok "Primary model created"
 fi
@@ -305,7 +305,7 @@ if ollama list 2>/dev/null | grep -q "$LODGE_MODEL_SECONDARY"; then
     ok "Secondary model '$LODGE_MODEL_SECONDARY' already exists"
 else
     info "Creating secondary model: $LODGE_MODEL_SECONDARY"
-    _mf=$(models_generate_modelfile "qwen3-inst")
+    _mf=$(models_generate_modelfile "minist-inst")
     ollama create "$LODGE_MODEL_SECONDARY" -f "$_mf"
     ok "Secondary model created"
 fi

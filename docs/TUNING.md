@@ -105,8 +105,8 @@ George uses a **dual-model architecture** with a model library. See [MODELS.md](
 
 ```bash
 # Which models to use (set by install.sh, persisted in shell profile)
-export LODGE_MODEL_PRIMARY="blue-lodge-qwen3-think:4b"   # Reasoning/planning
-export LODGE_MODEL_SECONDARY="blue-lodge-qwen3-inst:4b"  # Fast utility tasks
+export LODGE_MODEL_PRIMARY="blue-lodge-minist-think:4b"   # Reasoning/planning
+export LODGE_MODEL_SECONDARY="blue-lodge-minist-inst:4b"  # Fast utility tasks
 
 # Single-model mode (no switching)
 export LODGE_SINGLE_MODEL=1
@@ -264,7 +264,9 @@ George works with any Ollama-compatible model. Tested recommendations:
 
 | Model | Size | RAM needed | Context | Notes |
 |-------|------|-----------|---------|-------|
-| Qwen3-4B-Thinking-2507 UD-Q5_K_XL | ~3.5GB | 8-12GB | 20K | Default. Thinking/reasoning. Optimized for mobile. |
+| Ministral-3-3B-Reasoning-2512 UD-Q5_K_XL | ~2.5GB | 7-10GB | 32K | **Default primary.** Thinking/reasoning. Optimized for mobile. |
+| Ministral-3-3B-Instruct-2512 UD-Q5_K_XL | ~2.5GB | 7-10GB | 32K | **Default secondary.** Fast instruct with vision support. |
+| Qwen3-4B-Thinking-2507 UD-Q5_K_XL | ~3.5GB | 8-12GB | 20K | Thinking/reasoning. Strongest nothink support. |
 | Qwen3-4B-Instruct-2507 Q5_K_M | ~3GB | 6-10GB | 16K | Non-thinking fallback. Faster inference. |
 | Qwen3-8B Q5_K_M | ~6GB | 10-12GB | 32K | More capable. Needs more RAM. |
 | Llama 3.1 8B Q4_K_M | ~5GB | 8-10GB | 8K-128K | Excellent code reasoning. |
@@ -352,7 +354,7 @@ If the model produces runaway output, check your stop token first.
 
 ## Performance Tuning for Mobile
 
-George's default configuration targets the Galaxy Fold 7 (Snapdragon 8 Elite, 12GB RAM, 100% CPU inference) with a **32K context window** (`num_ctx=32768`). The thinking model (Qwen3-4B-Thinking-2507 UD-Q5_K_XL) weighs ~3.5GB with ~4.5GB KV cache (144KB/token), totaling ~8.0GB loaded — leaving ~4GB free for multitasking. Here's how to squeeze better performance:
+George's default configuration targets the Galaxy Fold 7 (Snapdragon 8 Elite, 12GB RAM, 100% CPU inference) with a **32K context window** (`num_ctx=32768`). The thinking model (Ministral-3-3B-Reasoning-2512 UD-Q5_K_XL) weighs ~2.5GB with ~4.5GB KV cache (144KB/token), totaling ~7.0GB loaded — leaving ~5GB free for multitasking. Here's how to squeeze better performance:
 
 ### Reduce prefill time (prompt processing)
 

@@ -22,8 +22,8 @@ LLM_BUDGET_TOOL="${LLM_BUDGET_TOOL:-256}"    # Think budget for tools (commit, w
 
 # ── Sampling parameters (per-scenario, override model defaults) ──
 # Global defaults — applied when no scenario-specific AND no model-specific value is set.
-# These are calibrated for Qwen3-Think (the default primary model).
-# When non-Qwen models are active, the per-model registry values from
+# These are calibrated for the default primary model (Ministral Reasoning).
+# When other models are active, the per-model registry values from
 # models.sh take precedence via models_get_param().
 LLM_TEMPERATURE="${LLM_TEMPERATURE:-0.6}"
 LLM_REPEAT_PENALTY="${LLM_REPEAT_PENALTY:-1.3}"

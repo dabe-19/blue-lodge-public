@@ -609,8 +609,8 @@ Stop token: <|im_end|>. LLM_KEEP_ALIVE: 30m (time model stays loaded).
 ## Model Environment Variables Configuration
 
 OLLAMA_URL=http://127.0.0.1:11434 (Ollama API endpoint).
-LODGE_MODEL_PRIMARY=blue-lodge-qwen3-think:4b (primary model).
-LODGE_MODEL_SECONDARY=blue-lodge-qwen3-inst:4b (secondary model).
+LODGE_MODEL_PRIMARY=blue-lodge-minist-think:4b (primary model).
+LODGE_MODEL_SECONDARY=blue-lodge-minist-inst:4b (secondary model).
 LODGE_SINGLE_MODEL=0 (dual-model mode by default).
 LLM_MAX_TOKENS=20480 (max output tokens per call).
 LLM_TIMEOUT=600 (safety net timeout seconds).

@@ -633,8 +633,8 @@ lodge /wallet status                              # Wallet overview
 
 Ships with a **model library** of 9 pre-configured models across 4 families (Qwen3, Llama 3.2, Granite 4, Ministral). Default pair:
 
-- **Primary:** Qwen3-4B-Thinking-2507 (UD-Q5_K_XL) — reasoning and planning
-- **Secondary:** Qwen3-4B-Instruct-2507 (UD-Q5_K_XL) — fast utility tasks
+- **Primary:** Ministral-3-3B-Reasoning-2512 (UD-Q5_K_XL) — reasoning and planning
+- **Secondary:** Ministral-3-3B-Instruct-2512 (UD-Q5_K_XL) — fast utility tasks with vision support
 
 Only one model is loaded at a time (~8GB RAM at 32K context). George hot-swaps between them automatically based on the task.
 
@@ -643,7 +643,7 @@ Switch models at runtime:
 ```bash
 george> /models select primary granite4
 george> /models select secondary minist-inst
-george> /models single qwen3-think    # single-model mode
+george> /models single minist-think    # single-model mode
 ```
 
 Full model library documentation: [docs/MODELS.md](docs/MODELS.md)

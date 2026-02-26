@@ -25,15 +25,15 @@ Dual-model mode gives you the best of both: deep reasoning where it matters, spe
 
 | Key | Base Image | Family | Role | Thinks | Context | Notes |
 |-----|-----------|--------|------|--------|---------|-------|
-| `qwen3-think` | Qwen3-4B-Thinking-2507 UD-Q5_K_XL | Qwen3 | thinking | Yes | 32K | **Default primary.** Extended thinking with `/no_think` soft switch. Best overall. |
-| `qwen3-inst` | Qwen3-4B-Instruct-2507 UD-Q5_K_XL | Qwen3 | instruct | No | 32K | **Default secondary.** Fast instruct, no thinking phase. |
+| `qwen3-think` | Qwen3-4B-Thinking-2507 UD-Q5_K_XL | Qwen3 | thinking | Yes | 32K | Qwen3 thinking. Extended reasoning with `/no_think` soft switch. |
+| `qwen3-inst` | Qwen3-4B-Instruct-2507 UD-Q5_K_XL | Qwen3 | instruct | No | 32K | Qwen3 instruct. Fast responses, no thinking phase. |
 | `llama32` | llama3.2:3b | Llama 3.2 | thinking | No | 32K | Meta base model. Strong general reasoning. Huge native context window (128K). |
 | `llama32-inst` | Llama-3.2-3B-Instruct UD-Q5_K_XL | Llama 3.2 | instruct | No | 32K | Llama Instruct (Unsloth quant). Fast responses. |
 | `granite4` | granite4:3b | Granite 4 | instruct | No | 32K | IBM Granite 4 Micro instruct. Fast structured output. |
 | `granite4-h` | granite4:3b-h | Granite 4 | instruct | No | 32K | IBM Granite 4 hybrid quant. Smaller footprint (1.9GB vs 2.1GB). |
 | `granite4-preview` | ibm/granite4.0-preview:tiny | Granite 4 | thinking | Yes | 32K | IBM Granite 4 Preview. Extended thinking via Ollama `.thinking` field. |
-| `minist-think` | Ministral-3-3B-Reasoning-2512 UD-Q5_K_XL | Ministral | thinking | Yes | 32K | Mistral reasoning model. Chain-of-thought with compact output. |
-| `minist-inst` | Ministral-3-3B-Instruct-2512 UD-Q5_K_XL | Ministral | instruct | No | 32K | Mistral instruct model. Fast structured output. |
+| `minist-think` | Ministral-3-3B-Reasoning-2512 UD-Q5_K_XL | Ministral | thinking | Yes | 32K | **Default primary.** Mistral reasoning with thinking via system prompt. |
+| `minist-inst` | Ministral-3-3B-Instruct-2512 UD-Q5_K_XL | Ministral | instruct | No | 32K | **Default secondary.** Mistral instruct with vision support. |
 
 ### Sizing
 
@@ -56,8 +56,8 @@ All models are 3B-4B parameters at Q5_K_XL or equivalent quantization. Approxima
 
 The installer (`bash install.sh`) automatically creates the default model pair:
 
-- Primary: `blue-lodge-qwen3-think:4b` (from `qwen3-think`)
-- Secondary: `blue-lodge-qwen3-inst:4b` (from `qwen3-inst`)
+- Primary: `blue-lodge-minist-think:4b` (from `minist-think`)
+- Secondary: `blue-lodge-minist-inst:4b` (from `minist-inst`)
 
 Each model downloads its base weights from HuggingFace/Ollama on first creation (~3 GB per model). On a fast connection this takes 2-5 minutes per model; on mobile data, plan for 10-20 minutes.
 
@@ -130,8 +130,8 @@ After install, George runs in dual-model mode with these defaults:
 
 ```bash
 # Set in your shell profile by install.sh:
-export LODGE_MODEL_PRIMARY="blue-lodge-qwen3-think:4b"
-export LODGE_MODEL_SECONDARY="blue-lodge-qwen3-inst:4b"
+export LODGE_MODEL_PRIMARY="blue-lodge-minist-think:4b"
+export LODGE_MODEL_SECONDARY="blue-lodge-minist-inst:4b"
 ```
 
 The routing rules are fixed:
@@ -150,7 +150,7 @@ The routing rules are fixed:
 If you don't want model switching (simpler, no 5-15s swap cost):
 
 ```bash
-george> /models single qwen3-think
+george> /models single minist-think
 ```
 
 Or via environment variable:
@@ -194,7 +194,7 @@ When George switches between primary and secondary:
 
 1. The current model is **unloaded** from memory (`keep_alive: 0`)
 2. The target model is **loaded** (weights + KV cache allocated)
-3. A status message appears: `Switching model: qwen3-think → qwen3-inst`
+3. A status message appears: `Switching model: minist-think → minist-inst`
 
 **Timing:** 5-15 seconds on ARM (Snapdragon 8 Elite), 1-3 seconds on desktop with SSD. The swap happens automatically before each LLM call — you never need to trigger it manually.
 
@@ -206,7 +206,7 @@ When George switches between primary and secondary:
 
 ### Qwen3 Family
 
-**qwen3-think** — The default primary. Best overall model in the library.
+**qwen3-think** — Qwen3 thinking model. Strong overall with native nothink support.
 
 - Produces `<think>...</think>` blocks before responding
 - Supports Qwen3's native `/no_think` soft switch: append `/no_think` to the prompt to skip reasoning entirely
@@ -214,7 +214,7 @@ When George switches between primary and secondary:
 - Stop token: `<|im_end|>`
 - Most battle-tested with George's harness
 
-**qwen3-inst** — The default secondary. Same architecture, no thinking phase.
+**qwen3-inst** — Qwen3 instruct model. Same architecture, no thinking phase.
 
 - Never produces thinking tokens — all output is response
 - No nothink mechanism needed (it never thinks)
@@ -263,16 +263,19 @@ When George switches between primary and secondary:
 
 ### Ministral Family
 
-**minist-think** — Mistral's reasoning 3B model.
+**minist-think** — The default primary. Mistral's reasoning 3B model.
 
-- Produces `<think>` blocks
-- No nothink mechanism (`none`) — reasoning cannot be suppressed. Using `/think nothink` will set the flag but have no effect on this model's behavior.
+- Produces `<think>` blocks via system prompt instruction (the GGUF has no native thinking template)
+- Nothink method: `system` — when `LODGE_NOTHINK=1`, the system prompt tells the model to skip reasoning
+- Mistral-recommended sampling: temp=0.7, top_p=0.95
 - Stop token: `</s>`
 - Compact chain-of-thought output
 
-**minist-inst** — Mistral's instruct 3B model.
+**minist-inst** — The default secondary. Mistral's instruct 3B model.
 
 - No thinking phase, designed for fast structured output
+- **Vision support** — can analyze images via the `/vision` command
+- Mistral-recommended sampling: temp=0.15 (set to 0.3 for slightly more variety)
 - Stop token: `</s>`
 
 ---
@@ -289,7 +292,7 @@ Each model downloads ~3 GB of weights on first creation. If you're on mobile dat
 
 Hot-swap takes 5-15 seconds on ARM hardware (loading weights into memory). During an agent task, if George alternates rapidly between primary (planning) and secondary (tool execution), you'll see multiple swap messages and delays.
 
-**Mitigation:** Use single-model mode (`/models single qwen3-think`) if swap latency is unacceptable. The tradeoff is that simple tasks like commit messages will use the thinking model (slower, wastes think tokens).
+**Mitigation:** Use single-model mode (`/models single minist-think`) if swap latency is unacceptable. The tradeoff is that simple tasks like commit messages will use the thinking model (slower, wastes think tokens).
 
 ### 3. Nothink Doesn't Work on All Models
 
@@ -299,12 +302,12 @@ The `/think nothink` command and `LODGE_NOTHINK=1` variable behave differently p
 |-------|---------------|---------------|
 | `qwen3-think` | `/no_think` prompt suffix | **Strong** — architecturally supported by Qwen3 |
 | `granite4-preview` | System prompt instruction | **Weak** — model may still reason despite instruction |
-| `minist-think` | None | **No effect** — model always reasons |
+| `minist-think` | System prompt instruction | **Moderate** — model respects system prompt instruction to skip reasoning |
 | `llama32` | None | **No effect** — model doesn't think to begin with |
 | `granite4`, `granite4-h` | N/A | **Not applicable** — instruct models, never reason |
 | All instruct models | N/A | **Not applicable** — they never reason |
 
-**Impact:** If you switch primary to `minist-think` and use `/think nothink`, the flag will be set but reasoning will still occur. George won't error — it just won't suppress thinking.
+**Impact:** Nothink works best with `qwen3-think` (architecturally enforced). For the defaults (`minist-think`), reasoning suppression uses a system prompt instruction — effective but not guaranteed.
 
 ### 4. Budget Tokens Are Qwen3-Specific
 
@@ -354,9 +357,10 @@ However, be aware that different families have different strengths:
 
 | Pairing | Notes |
 |---------|-------|
-| Qwen3 + Qwen3 (default) | Best tested. Same stop token family. Fastest swaps. |
+| Ministral + Ministral (default) | Best tested. Same stop token family. Fastest swaps. Vision on secondary. |
+| Qwen3 + Qwen3 | Same stop token family. Strongest nothink support. |
 | Qwen3 + Llama3.2 | Works well. Different stop tokens but handled automatically. |
-| Granite + Ministral | Works, but nothink is weak (system prompt) or absent (none). |
+| Granite + Ministral | Works, but nothink is system-prompt-based (weaker). |
 | Llama + Llama | No thinking on either side — fast but less capable for complex planning. |
 
 ### 8. LODGE_MODEL Is Now Managed — Don't Set It Directly
@@ -365,8 +369,8 @@ The old `export LODGE_MODEL=blue-lodge` approach still works for backward compat
 
 **Use instead:**
 ```bash
-export LODGE_MODEL_PRIMARY="blue-lodge-granite4:3b"
-export LODGE_MODEL_SECONDARY="blue-lodge-qwen3-inst:4b"
+export LODGE_MODEL_PRIMARY="blue-lodge-minist-think:4b"
+export LODGE_MODEL_SECONDARY="blue-lodge-minist-inst:4b"
 ```
 
 Setting `LODGE_MODEL` directly in your shell profile will have no effect — it gets overwritten when George starts.
@@ -391,16 +395,16 @@ The root Modelfile is kept for reference and backward compatibility with users w
 ### Default (Best Overall)
 
 ```bash
-export LODGE_MODEL_PRIMARY="blue-lodge-qwen3-think:4b"
-export LODGE_MODEL_SECONDARY="blue-lodge-qwen3-inst:4b"
+export LODGE_MODEL_PRIMARY="blue-lodge-minist-think:4b"
+export LODGE_MODEL_SECONDARY="blue-lodge-minist-inst:4b"
 ```
 
-Qwen3 Thinking for deep reasoning, Qwen3 Instruct for speed. Same family = same stop token = cleanest integration. This is what the installer sets up.
+Ministral Reasoning for deep thinking, Ministral Instruct for speed. Same family = same stop token = cleanest integration. Instruct model adds vision support via `/vision`. This is what the installer sets up.
 
 ### Maximum Speed (Single Model)
 
 ```bash
-export LODGE_MODEL_PRIMARY="blue-lodge-qwen3-inst:4b"
+export LODGE_MODEL_PRIMARY="blue-lodge-minist-inst:4b"
 export LODGE_SINGLE_MODEL=1
 ```
 
@@ -409,11 +413,20 @@ No model switching, no thinking overhead. Every request is fast instruct. Best f
 ### Maximum Reasoning
 
 ```bash
-export LODGE_MODEL_PRIMARY="blue-lodge-qwen3-think:4b"
+export LODGE_MODEL_PRIMARY="blue-lodge-minist-think:4b"
 export LODGE_SINGLE_MODEL=1
 ```
 
 Thinking model for everything, including tool routing and commit messages. Slower but more thoughtful across the board.
+
+### Qwen3 Pair (Strongest Nothink)
+
+```bash
+export LODGE_MODEL_PRIMARY="blue-lodge-qwen3-think:4b"
+export LODGE_MODEL_SECONDARY="blue-lodge-qwen3-inst:4b"
+```
+
+Qwen3 Thinking for deep reasoning, Qwen3 Instruct for speed. Best `/no_think` support (architecturally enforced). Same stop token family.
 
 ### Cross-Family Experiment
 
@@ -422,7 +435,7 @@ export LODGE_MODEL_PRIMARY="blue-lodge-granite4-preview:tiny"
 export LODGE_MODEL_SECONDARY="blue-lodge-minist-inst:4b"
 ```
 
-IBM Granite Preview for planning, Mistral Instruct for fast utility. Good for testing different reasoning styles. Be aware that Granite Preview's nothink is system-prompt-based (weaker than Qwen3's).
+IBM Granite Preview for planning, Mistral Instruct for fast utility. Good for testing different reasoning styles.
 
 ### Large Context (Llama)
 
@@ -472,8 +485,8 @@ The `/think` command interacts with the model library's nothink system:
 
 When you use `/think nothink`:
 - **Qwen3 thinking models:** Appends `/no_think` to prompts (strong suppression)
+- **Ministral thinking:** System prompt instruction to skip reasoning (moderate)
 - **Granite 4 Preview:** Relies on system prompt instruction (weak suppression)
-- **Ministral thinking:** No effect (model always reasons)
 - **Granite 4 / Granite 4-H:** No effect (instruct models, never reason)
 - **Instruct models:** No effect (they never reason anyway)
 
@@ -500,7 +513,7 @@ George is alternating between primary and secondary on every call. This happens 
 
 **Fix:** If the delay is unacceptable, switch to single-model mode:
 ```bash
-george> /models single qwen3-think
+george> /models single minist-think
 ```
 
 ### Model won't download / "manifest unknown"
