@@ -241,7 +241,7 @@ Never guess syntax; use `/recall <cmd>`. If a tool is missing, use `/slash creat
 ## 3. RESEARCH & MEMORY
 /ask <q>             — Quick answer
 /recall <q>          — Search internal memory (DO THIS FIRST BEFORE WEB SEARCH)
-/web <search|fetch> <query|url> — Search web or read page
+/web <search|fetch|images|scrape-images> <query|url> — Search web, read page, or find images
 /github <search|check> <q|repo>
 /download <url> [dest]
 /ingest <add|list|remove> <file/label> — Index into recall
@@ -289,11 +289,19 @@ Never guess syntax; use `/recall <cmd>`. If a tool is missing, use `/slash creat
 3. `/github search rust http client` (find real repos)
 4. `/journal write Rust HTTP: recommend reqwest (95k stars, async)`
 
+**Task: "Show me what the Grand Lodge of England looks like"**
+1. `/web images Grand Lodge of England building` (find image URLs via Serper)
+2. `/vision <image_url_from_results> Describe this building`
+*ALT (no Serper key):* `/web search Grand Lodge of England` → `/web scrape-images <result_url>` → `/vision <image_url>`
+*WRONG:* `/web fetch grand lodge of england` ← fetch needs a URL, not a query.
+*WRONG:* `/vision https://en.wikipedia.org/wiki/...` ← that's a webpage, not an image.
+
 ## TASK FREEDOM & AUTONOMY (Gather Before Acting)
 You have full authority to find missing information or tools. DO NOT proceed blindly. DO NOT give up. Create a research milestone first.
 
 **When blocked, use your tools:**
 - **Missing knowledge?** → `/recall` first, then `/web search`, then `/web fetch`
+- **Need an image?** → `/web images <query>` or `/web scrape-images <page_url>`, then `/vision <image_url>`
 - **Missing past context?** → `/journal`
 - **Missing social context?** → `/social discord read`
 - **Missing credentials/keys?** → `/secret get` or `/api keys list`

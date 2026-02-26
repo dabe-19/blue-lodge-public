@@ -452,6 +452,10 @@ llm_generate() {
         token="${token//<response>/}"
         token="${token//<\/response>/}"
 
+        # Normalize [THINK]/[/THINK] → <think>/</think> (Ministral uses both)
+        token="${token//\[THINK\]/<think>}"
+        token="${token//\[\/THINK\]/<\/think>}"
+
         # ── Handle .thinking field (Ollama separate-field mode) ──
         if [ -n "$think_token" ]; then
             # Late-arriving .thinking field: if we already flushed the
@@ -508,6 +512,9 @@ llm_generate() {
                 # Buffer up to 50 chars to catch late-arriving tags.
                 if [ "$_can_think" -eq 1 ] && [ "$_in_think_block" -eq 0 ]; then
                     _response_pending+="$token"
+                    # Normalize [THINK]/[/THINK] in buffer (may split across tokens)
+                    _response_pending="${_response_pending//\[THINK\]/<think>}"
+                    _response_pending="${_response_pending//\[\/THINK\]/<\/think>}"
                     if [[ "$_response_pending" == *"<think>"* ]]; then
                         _in_think_block=1
                         _think_pending="${_response_pending#*<think>}"
@@ -537,6 +544,9 @@ llm_generate() {
 
                 if [ "$_in_think_block" -eq 1 ]; then
                     _think_pending+="$token"
+                    # Normalize [/THINK] in buffer (may split across tokens)
+                    _think_pending="${_think_pending//\[\/THINK\]/<\/think>}"
+                    _think_pending="${_think_pending//\[THINK\]/<think>}"
                     if [[ "$_think_pending" == *"</think>"* ]]; then
                         local _think_before="${_think_pending%%</think>*}"
                         local _after_think="${_think_pending#*</think>}"
@@ -601,12 +611,17 @@ llm_generate() {
             fi
             # Flush any response_pending buffer (very short response, never reached 7 chars)
             if [ -n "$_response_pending" ]; then
+                _response_pending="${_response_pending//\[THINK\]/<think>}"
+                _response_pending="${_response_pending//\[\/THINK\]/<\/think>}"
                 _response_pending="${_response_pending//<\/think>/}"
+                _response_pending="${_response_pending//<think>/}"
                 [ -n "$_response_pending" ] && printf "%s" "$_response_pending"
                 [ -n "$_response_pending" ] && _gen_tty "$_response_pending"
             fi
             # Flush pending think text as response if </think> never arrived
             if [ "$_in_think_block" -eq 1 ] && [ -n "$_think_pending" ]; then
+                _think_pending="${_think_pending//\[\/THINK\]/<\/think>}"
+                _think_pending="${_think_pending//<\/think>/}"
                 printf "%s" "$_think_pending"
                 _gen_tty "$_think_pending"
             fi
@@ -783,6 +798,10 @@ llm_stream() {
         token="${token//<response>/}"
         token="${token//<\/response>/}"
 
+        # Normalize [THINK]/[/THINK] → <think>/</think> (Ministral uses both)
+        token="${token//\[THINK\]/<think>}"
+        token="${token//\[\/THINK\]/<\/think>}"
+
         # ── Handle .thinking field (Ollama separate-field mode) ──
         if [ -n "$think_token" ]; then
             # Late-arriving .thinking field: switch to separate-field mode
@@ -794,6 +813,8 @@ llm_stream() {
                 # If we buffered response text before .thinking arrived,
                 # flush it before switching modes (it was preamble)
                 if [ -n "$_response_pending" ]; then
+                    _response_pending="${_response_pending//\[THINK\]/<think>}"
+                    _response_pending="${_response_pending//\[\/THINK\]/<\/think>}"
                     _response_pending="${_response_pending//<\/think>/}"
                     [ -n "$_response_pending" ] && printf "%s" "$_response_pending"
                     [ -n "$_response_pending" ] && printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
@@ -842,6 +863,9 @@ llm_stream() {
                 # Buffer up to 50 chars to catch late-arriving tags.
                 if [ "$_can_think" -eq 1 ] && [ "$_in_think_block" -eq 0 ]; then
                     _response_pending+="$token"
+                    # Normalize [THINK]/[/THINK] in buffer (may split across tokens)
+                    _response_pending="${_response_pending//\[THINK\]/<think>}"
+                    _response_pending="${_response_pending//\[\/THINK\]/<\/think>}"
                     if [[ "$_response_pending" == *"<think>"* ]]; then
                         _in_think_block=1
                         _think_pending="${_response_pending#*<think>}"
@@ -870,6 +894,9 @@ llm_stream() {
 
                 if [ "$_in_think_block" -eq 1 ]; then
                     _think_pending+="$token"
+                    # Normalize [/THINK] in buffer (may split across tokens)
+                    _think_pending="${_think_pending//\[\/THINK\]/<\/think>}"
+                    _think_pending="${_think_pending//\[THINK\]/<think>}"
                     # Check for </think> end tag (handles split across token boundaries)
                     if [[ "$_think_pending" == *"</think>"* ]]; then
                         local _think_before="${_think_pending%%</think>*}"
@@ -931,12 +958,16 @@ llm_stream() {
             fi
             # Flush any response_pending buffer (very short response, never reached 7 chars)
             if [ -n "$_response_pending" ]; then
+                _response_pending="${_response_pending//\[THINK\]/<think>}"
+                _response_pending="${_response_pending//\[\/THINK\]/<\/think>}"
                 _response_pending="${_response_pending//<\/think>/}"
+                _response_pending="${_response_pending//<think>/}"
                 [ -n "$_response_pending" ] && printf "%s" "$_response_pending"
                 [ -n "$_response_pending" ] && printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
             fi
             # Fallback mode: flush any buffered text as response if </think> never arrived
             if [ "$_in_think_block" -eq 1 ] && [ -n "$_think_pending" ]; then
+                _think_pending="${_think_pending//\[\/THINK\]/<\/think>}"
                 _think_pending="${_think_pending//<\/think>/}"
                 [ -n "$_think_pending" ] && printf "%s" "$_think_pending"
                 [ -n "$_think_pending" ] && printf "%s" "$_think_pending" > "$_tty" 2>/dev/null
@@ -1070,6 +1101,10 @@ llm_chat() {
         think_token=$(echo "$line" | jq -r '.message.thinking // empty' 2>/dev/null)
         token=$(echo "$line" | jq -r '.message.content // empty' 2>/dev/null)
 
+        # Normalize [THINK]/[/THINK] → <think>/</think> (Ministral uses both)
+        token="${token//\[THINK\]/<think>}"
+        token="${token//\[\/THINK\]/<\/think>}"
+
         if [ -n "$think_token" ]; then
             _saw_thinking_field=1
             [ -f "$_got_tokens" ] || touch "$_got_tokens"
@@ -1085,6 +1120,9 @@ llm_chat() {
                 # Inline-tag fallback
                 if [ "$_in_think_block" -eq 1 ]; then
                     _think_pending+="$token"
+                    # Normalize [/THINK] in buffer (may split across tokens)
+                    _think_pending="${_think_pending//\[\/THINK\]/<\/think>}"
+                    _think_pending="${_think_pending//\[THINK\]/<think>}"
                     if [[ "$_think_pending" == *"</think>"* ]]; then
                         local _after_think="${_think_pending#*</think>}"
                         _in_think_block=0

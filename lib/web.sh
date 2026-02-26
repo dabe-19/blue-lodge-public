@@ -224,6 +224,110 @@ web_links() {
         grep -E '^https?://' | sort -u | head -50
 }
 
+# ── Extract image URLs from a page ─────────────────────────────
+# Scrapes <img src>, <img data-src>, and <source srcset> attributes
+# from the raw HTML of a page.  Returns only absolute image URLs
+# (http/https) filtered to common image extensions.  Relative URLs
+# are resolved against the page's base URL.
+#
+# Usage: web_scrape_images "https://en.wikipedia.org/wiki/Grand_Lodge"
+# Output:
+#   [1] https://upload.wikimedia.org/…/Grand_Lodge.jpg
+#   [2] https://upload.wikimedia.org/…/Coat_of_Arms.png
+web_scrape_images() {
+    local url="$1"
+
+    if [ -z "$url" ]; then
+        ui_err "Usage: web_scrape_images <url>"
+        return 1
+    fi
+
+    # Validate URL
+    local clean_url
+    clean_url=$(_web_sanitize_url "$url")
+    if [ -z "$clean_url" ]; then
+        ui_err "Invalid URL: $url"
+        return 1
+    fi
+
+    ui_dim "Scraping images from: $clean_url"
+    local html
+    html=$(web_fetch_raw "$clean_url")
+    if [ -z "$html" ]; then
+        ui_err "Failed to fetch: $clean_url"
+        return 1
+    fi
+
+    # Extract the base URL (scheme + host) for resolving relative paths
+    local base_url
+    base_url=$(echo "$clean_url" | sed 's|^\(https\?://[^/]*\).*|\1|')
+
+    # Extract image URLs from multiple HTML patterns:
+    #   1. <img src="...">
+    #   2. <img data-src="...">  (lazy-loaded images)
+    #   3. <source srcset="...">  (picture elements)
+    local raw_urls
+    raw_urls=$(
+        echo "$html" | grep -oP '(?:src|data-src|srcset)="[^"]+"' | \
+            sed 's/^[^"]*"//;s/"$//' | \
+            sed 's/ [0-9]*[wx].*$//' | \
+            sort -u
+    )
+
+    if [ -z "$raw_urls" ]; then
+        ui_warn "No images found on: $clean_url"
+        return 1
+    fi
+
+    # Resolve relative URLs and filter to image extensions
+    local output=""
+    local i=1
+    while IFS= read -r img_url; do
+        [ -z "$img_url" ] && continue
+
+        # Skip data: URIs, inline SVG, and tracking pixels
+        [[ "$img_url" == data:* ]] && continue
+        [[ "$img_url" == javascript:* ]] && continue
+
+        # Resolve protocol-relative URLs
+        if [[ "$img_url" == //* ]]; then
+            img_url="https:$img_url"
+        # Resolve absolute-path URLs
+        elif [[ "$img_url" == /* ]]; then
+            img_url="${base_url}${img_url}"
+        # Skip if not already a full URL
+        elif [[ "$img_url" != http* ]]; then
+            # Relative path — resolve against page URL (strip filename)
+            local page_dir
+            page_dir=$(echo "$clean_url" | sed 's|/[^/]*$|/|')
+            img_url="${page_dir}${img_url}"
+        fi
+
+        # Filter to common image extensions
+        if [[ "$img_url" =~ \.(jpg|jpeg|png|gif|webp|bmp|svg|avif|tiff)(\?|$) ]]; then
+            # Sanitize the resolved URL
+            local safe_url
+            safe_url=$(_web_sanitize_url "$img_url")
+            [ -z "$safe_url" ] && continue
+
+            printf '[%d] %s\n' "$i" "$safe_url"
+            output="${output}[$i] $safe_url\n"
+            i=$((i + 1))
+
+            # Cap at 30 results to avoid flooding
+            [ "$i" -gt 30 ] && break
+        fi
+    done <<< "$raw_urls"
+
+    if [ -z "$output" ]; then
+        ui_warn "No image URLs found (page may use JavaScript-loaded images)"
+        return 1
+    fi
+
+    # Journal the results for agent memory
+    _web_journal_results "images from $clean_url" "$output" "scrape"
+}
+
 # ── Search the web ────────────────────────────────────────────
 # Uses Serper.dev API (Google results) if key is set,
 # otherwise falls back to DuckDuckGo HTML scraping
@@ -414,6 +518,88 @@ _web_search_ddg() {
 
     ui_err "No results found for: $query"
     return 1
+}
+
+# ── Search for images ─────────────────────────────────────────
+# Returns direct image URLs suitable for /vision or /web download.
+# Uses Serper.dev /images endpoint (Google Image Search) if key is
+# set. No DDG fallback — DDG image search requires JavaScript.
+#
+# Usage: web_images "Grand Lodge of England" [count]
+# Output:
+#   [1] Title of image
+#       https://example.com/image.jpg (1200x800)
+#       Source: https://example.com/page
+web_images() {
+    local query="$1"
+    local count="${2:-5}"
+
+    # Strip surrounding quotes (LLM often wraps queries in shell-style quotes)
+    query="${query#\"}"
+    query="${query%\"}"
+    query="${query#\'}"
+    query="${query%\'}"
+
+    if [ -z "$query" ]; then
+        ui_err "Usage: web_images <query> [count]"
+        return 1
+    fi
+
+    # Try Serper image search
+    local serper_key
+    serper_key=$(api_get_key "SERPER_API_KEY" 2>/dev/null)
+
+    if [ -n "$serper_key" ]; then
+        _web_search_serper_images "$query" "$count" "$serper_key"
+        return $?
+    fi
+
+    ui_err "Image search requires SERPER_API_KEY. Set with: /secret set SERPER_API_KEY <key>"
+    return 1
+}
+
+_web_search_serper_images() {
+    local query="$1"
+    local count="$2"
+    local key="$3"
+
+    local data
+    data=$(jq -n --arg q "$query" --argjson n "$count" '{"q": $q, "num": $n}')
+
+    local resp
+    resp=$(api_post "https://google.serper.dev/images" "$data" \
+        -H "X-API-KEY: $key")
+
+    if [ $? -ne 0 ]; then
+        ui_err "Serper image search request failed"
+        return 1
+    fi
+
+    local raw_results
+    raw_results=$(echo "$resp" | jq -r '.images[]? | "\(.title)|\(.imageUrl)|\(.imageWidth)x\(.imageHeight)|\(.link)"' 2>/dev/null)
+
+    if [ -z "$raw_results" ]; then
+        ui_warn "No image results for: $query"
+        return 1
+    fi
+
+    local output=""
+    local i=1
+    while IFS='|' read -r title image_url dimensions source_url; do
+        # Sanitize the image URL
+        local clean_url
+        clean_url=$(_web_sanitize_url "$image_url")
+        [ -z "$clean_url" ] && continue
+
+        local entry
+        entry=$(printf '[%d] %s\n    %s (%s)\n    Source: %s\n' "$i" "$title" "$clean_url" "$dimensions" "$source_url")
+        output="${output}${entry}\n"
+        printf '[%d] %s\n    %s (%s)\n    Source: %s\n\n' "$i" "$title" "$clean_url" "$dimensions" "$source_url"
+        i=$((i + 1))
+    done <<< "$raw_results"
+
+    # Journal the image results for agent memory
+    _web_journal_results "$query" "$output" "serper-images"
 }
 
 # ── Summarize a web page via local LLM ────────────────────────

@@ -172,11 +172,14 @@ Creates sandbox, clones, writes GEORGE.md.
 /git remote [name] <url> — add/update remote (auto HTTPS→SSH).
 /git test — test SSH connection to GitHub.
 
-## Web Search Fetch
+## Web Search Fetch Images
 
 /web search <query> — search the web via Serper API.
+/web images <query> — image search via Serper (returns direct image URLs). Key: SERPER_API_KEY.
+/web scrape-images <url> — extract image URLs embedded in a page (no API key needed).
 /web fetch <url> — fetch and extract content from a URL.
 Key: /api keys set SERPER_API_KEY <key>
+Image workflow: /web images <query> OR /web search <topic> → /web scrape-images <result_url> → /vision <image_url>
 
 ## GitHub Search Check
 

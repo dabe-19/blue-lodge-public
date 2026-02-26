@@ -586,12 +586,71 @@ describe "Model family system"
 
   it "each family key maps to a valid registry entry" && {
     for fam in "${_MODELS_FAMILIES[@]}"; do
-      local keys="${fam##*|}"
-      for key in $keys; do
+      _fam_keys="${fam##*|}"
+      for key in $_fam_keys; do
         _models_lookup "$key" >/dev/null
         assert_ok $? "registry lookup failed for $key"
       done
     done
+  }
+
+# ── [THINK] bracket-format normalization ──────────────────────
+describe "[THINK]/[/THINK] bracket-format normalization"
+
+  it "token-level normalization converts [THINK] to <think>" && {
+    _tok='[THINK]hello[/THINK]'
+    _tok="${_tok//\[THINK\]/<think>}"
+    _tok="${_tok//\[\/THINK\]/<\/think>}"
+    assert_eq "$_tok" "<think>hello</think>"
+  }
+
+  it "buffer normalization handles split [THINK] across tokens" && {
+    _buf=""
+    _buf+="[THI"
+    _buf+="NK]reasoning"
+    _buf="${_buf//\[THINK\]/<think>}"
+    assert_eq "$_buf" "<think>reasoning"
+  }
+
+  it "buffer normalization handles split [/THINK] across tokens" && {
+    _buf=""
+    _buf+="done[/THI"
+    _buf+="NK]answer"
+    _buf="${_buf//\[\/THINK\]/<\/think>}"
+    assert_eq "$_buf" "done</think>answer"
+  }
+
+  it "mixed bracket/angle tags both normalize to angle format" && {
+    _tok='[THINK]internal</think>response'
+    _tok="${_tok//\[THINK\]/<think>}"
+    _tok="${_tok//\[\/THINK\]/<\/think>}"
+    assert_eq "$_tok" "<think>internal</think>response"
+  }
+
+  it "llm_generate function body contains bracket normalization" && {
+    body=$(declare -f llm_generate)
+    echo "$body" | grep -qF 'THINK'
+    assert_ok $?
+  }
+
+  it "llm_stream function body contains bracket normalization" && {
+    body=$(declare -f llm_stream)
+    echo "$body" | grep -qF 'THINK'
+    assert_ok $?
+  }
+
+  it "llm_chat function body contains bracket normalization" && {
+    body=$(declare -f llm_chat)
+    echo "$body" | grep -qF 'THINK'
+    assert_ok $?
+  }
+
+  it "milestone cleanup strips [THINK]...[/THINK] blocks" && {
+    _ms='[THINK]internal reasoning[/THINK]Do the task'
+    _ms=$(echo "$_ms" | sed 's/\[THINK\][^[]*\[\/THINK\]//g')
+    _ms=$(echo "$_ms" | sed 's/\[\/?THINK\]//g')
+    _ms=$(echo "$_ms" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    assert_eq "$_ms" "Do the task"
   }
 
 test_end

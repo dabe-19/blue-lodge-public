@@ -1810,6 +1810,9 @@ _cmd_web() {
     case "$action" in
         fetch|read)  web_fetch "$rest" ;;
         search)      web_search "$rest" ;;
+        images)      web_images "$rest" ;;
+        scrape-images|scrapeimages)
+                     web_scrape_images "$rest" ;;
         summary)     web_summary "$rest" ;;
         links)       web_links "$rest" ;;
         title)       web_title "$rest" ;;
@@ -1827,9 +1830,11 @@ _cmd_web() {
                 *)     ui_info "Usage: /web cache clear" ;;
             esac ;;
         *)
-            ui_info "Usage: /web <fetch|search|summary|links|title|download|ping|cache>"
+            ui_info "Usage: /web <fetch|search|images|scrape-images|summary|links|title|download|ping|cache>"
             ui_dim "  fetch <url>       — Read a web page as text"
             ui_dim "  search <query>    — Search the web"
+            ui_dim "  images <query>    — Search for images (Serper, returns image URLs)"
+            ui_dim "  scrape-images <url> — Extract image URLs embedded in a page"
             ui_dim "  summary <url>     — AI-summarize a page"
             ui_dim "  links <url>       — Extract all links"
             ui_dim "  title <url>       — Get page title"

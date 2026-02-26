@@ -540,6 +540,8 @@ _build_router_prompt() {
 /commit [msg]            — AI commit message + commit
 /push                    — Push to GitHub
 /web search <query>      — Web search
+/web images <query>      — Find images (Serper API)
+/web scrape-images <url> — Extract image URLs from a page (no API key)
 /web fetch <url>         — Fetch a URL
 /github search <q>       — Find GitHub repos
 /journal write <text>    — Write to journal
@@ -571,6 +573,51 @@ ROUTER_CATALOG
     echo "- Do NOT route to /sandbox to run other slash commands"
     echo "- /email is ONLY for actual email addresses"
     echo "If the user's request matches a specific tool above, USE THAT TOOL. Only fall back to '/ask' if no tool is relevant."
+}
+
+# ── Specialist: per-command API key status ─────────────────────
+# Returns a compact line listing which API keys/secrets are
+# configured for a given command.  Injected into the specialist
+# prompt so the model knows what services are available and can
+# avoid generating commands that will fail due to missing keys.
+#
+# Only emits output for commands that actually need keys.
+# Format:  KEYS: SERPER_API_KEY ✓, PERPLEXITY_API_KEY ✗
+_specialist_key_status() {
+    local cmd="$1"  # base command without /
+    declare -f api_get_key &>/dev/null || return 0
+
+    local -a keys=()
+    case "$cmd" in
+        web)      keys=(SERPER_API_KEY PERPLEXITY_API_KEY) ;;
+        social)   keys=(DISCORD_BOT_TOKEN DISCORD_WEBHOOK_URL TELEGRAM_BOT_TOKEN X_BEARER_TOKEN MASTODON_ACCESS_TOKEN BLUESKY_APP_PASSWORD) ;;
+        email)    keys=(EMAIL_PROVIDER) ;;
+        github)   keys=(GITHUB_TOKEN) ;;
+        wallet)   keys=(btc_address ada_address sol_address) ;;
+        pgp)      ;; # uses gpg keyring, not API keys
+        *)        return 0 ;;  # no keys needed
+    esac
+
+    [ ${#keys[@]} -eq 0 ] && return 0
+
+    local parts=""
+    local k
+    for k in "${keys[@]}"; do
+        if api_get_key "$k" &>/dev/null; then
+            parts="${parts:+$parts, }$k ✓"
+        else
+            # wallet keys live in the secrets vault, not api keys
+            if [[ "$cmd" == "wallet" ]] && declare -f secrets_get &>/dev/null; then
+                if secrets_get "$k" &>/dev/null 2>&1; then
+                    parts="${parts:+$parts, }$k ✓"
+                    continue
+                fi
+            fi
+            parts="${parts:+$parts, }$k ✗"
+        fi
+    done
+
+    [ -n "$parts" ] && echo "KEYS: $parts"
 }
 
 _build_specialist_prompt() {
@@ -678,6 +725,8 @@ _build_specialist_prompt() {
                 ;;
             web)
                 echo "- /web search <query>"
+                echo "- /web images <query>       — Image search via Serper (returns direct image URLs)"
+                echo "- /web scrape-images <url>  — Extract image URLs embedded in a page (no API key needed)"
                 echo "- /web fetch <url>"
                 echo "- /web summary <url>"
                 echo "- /web title <url>"
@@ -686,6 +735,9 @@ _build_specialist_prompt() {
                 echo "- /web ping <url>"
                 echo "  NOTE: /web fetch requires a URL, not a query."
                 echo "  To search, use /web search <query> first, then /web fetch <url> on results."
+                echo "  To find images: /web images <query> (needs SERPER_API_KEY), or"
+                echo "    /web scrape-images <page_url> to extract images from a specific page."
+                echo "  Then /vision <image_url> to analyze."
                 ;;
             download)
                 echo "- /download <url_or_path> [destination]"
@@ -784,6 +836,8 @@ _build_specialist_prompt() {
                 echo "- /vision <image_path_or_url> [prompt]"
                 echo "  Analyzes an image. Supports jpg/png/gif/webp/bmp."
                 echo "  Optional prompt for specific analysis."
+                echo "  Accepts direct image URLs (auto-downloads)."
+                echo "  To find images: /web images <query> or /web scrape-images <page_url>."
                 ;;
             container)
                 echo "- /container create <distro>  — Install (ubuntu/alpine/debian/fedora/kali)"
@@ -809,6 +863,16 @@ _build_specialist_prompt() {
                 echo "- /$base_cmd (no specific syntax card — check docs above)"
                 ;;
         esac
+
+        # Inject per-command API key availability so the specialist
+        # knows which services are configured and can avoid commands
+        # that will fail due to missing keys.
+        local _key_status
+        _key_status=$(_specialist_key_status "$base_cmd" 2>/dev/null)
+        if [ -n "$_key_status" ]; then
+            echo ""
+            echo "$_key_status"
+        fi
 
         # Inject previous search results for /web commands so the
         # specialist can reference URLs from prior searches in
@@ -1434,7 +1498,7 @@ agent_run() {
         local _tool_summary=""
         _tool_summary="YOUR WORKING COMMANDS:
 /ask /init /recall /save /write /download /build /test /fix /commit /push /clone
-/web search|fetch /github search /journal write /vision
+/web search|fetch|images|scrape-images /github search /journal write /vision
 /social post discord|telegram|x|mastodon <target> <text>
 /social discord dm|read <user|channel> /social <platform> <action>
 /email send|inbox /phone /secret set|get /pgp sign|export
@@ -1498,10 +1562,12 @@ STRATEGIC RULES:
         # small models sometimes emit <think> blocks, code fences,
         # explanatory preamble, or repetitive content. Strip all of
         # that so the milestone is a clean, single-line action.
-        # 1. Remove <think>...</think> blocks (including multi-line)
+        # 1. Remove <think>...</think> and [THINK]...[/THINK] blocks (including multi-line)
         milestone=$(echo "$milestone" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-        # 2. Remove stray opening/closing think tags
-        milestone=$(echo "$milestone" | sed 's/<\/?think>//g')
+        milestone=$(echo "$milestone" | sed 's/\[THINK\][^[]*\[\/THINK\]//g')
+        # 2. Remove stray opening/closing think tags (both formats)
+        milestone=$(echo "$milestone" | sed 's/<\/?think>//gI')
+        milestone=$(echo "$milestone" | sed 's/\[\/?THINK\]//g')
         # 3. Remove code fences and their content
         milestone=$(echo "$milestone" | sed '/^```/,/^```/d')
         # 4. Strip leading/trailing whitespace and blank lines

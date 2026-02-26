@@ -141,6 +141,7 @@ ALWAYS use this timestamp for any date references. NEVER make up a date.
 /pgp sign <msg>      — PGP-sign a message for authenticity
 /sandbox create <n>  — Create isolated sandbox
 /web search <query>  — Search the web
+/web images <query>  — Find images (Serper API or scrape a page)
 /journal write <text> — Write to your journal
 ... (40+ commands total)
 ```
@@ -565,6 +566,8 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 | `/secret set <k> <v>` | Store encrypted secret | `/secret set db_pass hunter2` |
 | `/secret get <k>` | Retrieve secret | `/secret get db_pass` |
 | `/web search <query>` | Web search | `/web search rust async patterns` |
+| `/web images <query>` | Image search (Serper) | `/web images Grand Lodge of England` |
+| `/web scrape-images <url>` | Extract image URLs from page | `/web scrape-images https://en.wikipedia.org/wiki/Example` |
 | `/web fetch <url>` | Fetch URL | `/web fetch https://example.com` |
 | `/journal write <text>` | Write journal entry | `/journal write learned about FTS5` |
 | `/journal read` | Read recent entries | `/journal read` |

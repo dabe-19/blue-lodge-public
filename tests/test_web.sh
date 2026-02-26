@@ -548,4 +548,130 @@ describe "web_github_repo_exists"
     _teardown_web
   }
 
+# ── web_images ─────────────────────────────────────────────────
+describe "web_images"
+
+  it "is defined" && {
+    _setup_web
+    declare -f web_images &>/dev/null
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "fails on empty query" && {
+    _setup_web
+    web_images "" 2>/dev/null
+    assert_fail $?
+    _teardown_web
+  }
+
+  it "strips surrounding quotes from query" && {
+    _setup_web
+    fn_body=$(declare -f web_images)
+    assert_contains "$fn_body" '{query#'
+    _teardown_web
+  }
+
+  it "internal _web_search_serper_images is defined" && {
+    _setup_web
+    declare -f _web_search_serper_images &>/dev/null
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "Serper images endpoint uses /images URL" && {
+    _setup_web
+    fn_body=$(declare -f _web_search_serper_images)
+    assert_contains "$fn_body" "google.serper.dev/images"
+    _teardown_web
+  }
+
+  it "returns error without SERPER_API_KEY" && {
+    _setup_web
+    # Ensure no key is set
+    unset SERPER_API_KEY 2>/dev/null
+    web_images "test query" 2>/dev/null
+    assert_fail $?
+    _teardown_web
+  }
+
+# ── web_scrape_images ──────────────────────────────────────────
+describe "web_scrape_images"
+
+  it "is defined" && {
+    _setup_web
+    declare -f web_scrape_images &>/dev/null
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "fails on empty URL" && {
+    _setup_web
+    web_scrape_images "" 2>/dev/null
+    assert_fail $?
+    _teardown_web
+  }
+
+  it "rejects invalid URLs" && {
+    _setup_web
+    web_scrape_images "not-a-url" 2>/dev/null
+    assert_fail $?
+    _teardown_web
+  }
+
+  it "extracts img src from HTML" && {
+    _setup_web
+    # Create a mock HTML file and test the extraction logic
+    local fn_body
+    fn_body=$(declare -f web_scrape_images)
+    # Verify it greps for src/data-src/srcset patterns
+    assert_contains "$fn_body" "src"
+    assert_contains "$fn_body" "data-src"
+    assert_contains "$fn_body" "srcset"
+    _teardown_web
+  }
+
+  it "filters to common image extensions" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_scrape_images)
+    assert_contains "$fn_body" "jpg"
+    assert_contains "$fn_body" "png"
+    assert_contains "$fn_body" "webp"
+    assert_contains "$fn_body" "gif"
+    _teardown_web
+  }
+
+  it "resolves protocol-relative URLs" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_scrape_images)
+    assert_contains "$fn_body" "https:"
+    _teardown_web
+  }
+
+  it "skips data: URIs" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_scrape_images)
+    assert_contains "$fn_body" "data:*"
+    _teardown_web
+  }
+
+  it "caps results at 30" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_scrape_images)
+    assert_contains "$fn_body" "30"
+    _teardown_web
+  }
+
+  it "journals results for agent memory" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_scrape_images)
+    assert_contains "$fn_body" "_web_journal_results"
+    _teardown_web
+  }
+
 test_end

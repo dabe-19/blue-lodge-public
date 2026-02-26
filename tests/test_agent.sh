@@ -383,6 +383,18 @@ describe "Dynamic dual-loop architecture"
     assert_ok $?
   }
 
+  it "macro strategist strips [THINK] blocks from milestone" && {
+    # Functional test: verify the sed patterns actually strip bracket think tags
+    _ms='[THINK]internal reasoning[/THINK]Do the task'
+    _ms=$(echo "$_ms" | sed 's/\[THINK\][^[]*\[\/THINK\]//g')
+    _ms=$(echo "$_ms" | sed 's/\[\/?THINK\]//g')
+    _ms=$(echo "$_ms" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    assert_eq "$_ms" "Do the task"
+    # Verify the code path exists in agent_run
+    grep -q 'THINK' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $?
+  }
+
   it "macro strategist has anti-email-for-social rule" && {
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'NOT.*email'
@@ -1020,6 +1032,58 @@ describe "Milestone deduplication in macro loop"
     local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q '_milestone_lower:0:40'
+    assert_ok $?
+  }
+
+# ── Specialist key injection ──────────────────────────────────
+describe "Specialist per-command key status"
+
+  it "_specialist_key_status is defined" && {
+    declare -f _specialist_key_status &>/dev/null
+    assert_ok $?
+  }
+
+  it "returns empty for commands with no keys (build)" && {
+    local out
+    out=$(_specialist_key_status "build" 2>/dev/null)
+    assert_empty "$out"
+  }
+
+  it "returns empty for commands with no keys (test)" && {
+    local out
+    out=$(_specialist_key_status "test" 2>/dev/null)
+    assert_empty "$out"
+  }
+
+  it "maps web command to SERPER and PERPLEXITY keys" && {
+    local body
+    body=$(declare -f _specialist_key_status)
+    echo "$body" | grep -q 'SERPER_API_KEY'
+    assert_ok $?
+    echo "$body" | grep -q 'PERPLEXITY_API_KEY'
+    assert_ok $?
+  }
+
+  it "maps social command to platform tokens" && {
+    local body
+    body=$(declare -f _specialist_key_status)
+    echo "$body" | grep -q 'DISCORD_BOT_TOKEN'
+    assert_ok $?
+    echo "$body" | grep -q 'TELEGRAM_BOT_TOKEN'
+    assert_ok $?
+  }
+
+  it "maps email command to EMAIL_PROVIDER" && {
+    local body
+    body=$(declare -f _specialist_key_status)
+    echo "$body" | grep -q 'EMAIL_PROVIDER'
+    assert_ok $?
+  }
+
+  it "specialist prompt calls _specialist_key_status" && {
+    local body
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q '_specialist_key_status'
     assert_ok $?
   }
 
