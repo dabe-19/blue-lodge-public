@@ -178,11 +178,16 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     assert_ok $?
   }
 
-  it "thinking directive skipped for strategist scenario" && {
-    # llm_generate should NOT inject thinking directive when LLM_SCENARIO=strategist
+  it "thinking directive injected for strategist scenario" && {
+    # Strategist gets thinking — safeguarded by LLM_STRATEGIST_TOKENS cap
+    # and milestone cleanup. Only router is excluded.
     local body
     body=$(declare -f llm_generate)
-    echo "$body" | grep -q 'LLM_SCENARIO.*strategist'
+    # The guard should NOT exclude strategist (only router)
+    echo "$body" | grep -q 'LLM_SCENARIO.*router'
+    assert_ok $?
+    # Verify strategist is NOT in the exclusion condition
+    ! echo "$body" | grep -q 'LLM_SCENARIO.*strategist'
     assert_ok $?
   }
 
@@ -190,6 +195,13 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     local body
     body=$(declare -f llm_generate)
     echo "$body" | grep -q 'LLM_SCENARIO.*router'
+    assert_ok $?
+  }
+
+  it "llm_generate has debug tty echo helper (_gen_tty)" && {
+    local body
+    body=$(declare -f llm_generate)
+    echo "$body" | grep -q '_gen_tty'
     assert_ok $?
   }
 

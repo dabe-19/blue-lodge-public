@@ -344,11 +344,11 @@ llm_generate() {
     # When a runtime system prompt is passed, it REPLACES the
     # Modelfile's SYSTEM block — silently losing the thinking
     # instruction. Prepend it so the model always sees it.
-    # SKIP for strategist/router: these need fast, focused output
-    # (one word or one sentence). The thinking directive encourages
-    # extended reasoning which causes spirals in these contexts.
+    # SKIP for router: it just picks a tool name (one word).
+    # Strategist gets thinking — safeguarded by LLM_STRATEGIST_TOKENS
+    # cap, repeat_penalty, and milestone cleanup in agent.sh.
     if [ -n "$system" ] && declare -f models_thinking_directive &>/dev/null \
-       && [ "${LLM_SCENARIO:-}" != "strategist" ] && [ "${LLM_SCENARIO:-}" != "router" ]; then
+       && [ "${LLM_SCENARIO:-}" != "router" ]; then
         local _think_dir
         _think_dir=$(models_thinking_directive)
         if [ -n "$_think_dir" ]; then
@@ -427,6 +427,14 @@ llm_generate() {
     # before starting <think> tags. 200 chars catches most cases.
     local _think_detect_limit=200
 
+    # ── Debug tty echo helper ─────────────────────────────────
+    # When LODGE_DEBUG=1, echo response tokens to tty (dimmed) so
+    # the user can watch generation in real time. Without this,
+    # llm_generate is completely silent during the $() capture.
+    _gen_tty() {
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$1" ] && printf "\033[90m%s\033[0m" "$1" > "$_tty" 2>/dev/null
+    }
+
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] generate think: _can_think=%s model=%s\n" "$_can_think" "$LODGE_MODEL" > "$_tty" 2>/dev/null
 
     $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
@@ -490,8 +498,9 @@ llm_generate() {
                         printf "\033[0m\n%b└────────────\033[0m\n" "$_c" > "$_tty" 2>/dev/null
                     fi
                 fi
-                # Emit response to stdout only (captured by caller's $())
+                # Emit response to stdout (captured by caller's $())
                 printf "%s" "$token"
+                _gen_tty "$token"
             else
                 # ── Inline-tag fallback mode ──
                 # Detect <think> anywhere in the early response buffer.
@@ -507,6 +516,7 @@ llm_generate() {
                         local _before="${_response_pending%%<think>*}"
                         _before="${_before//<\/think>/}"
                         [ -n "$_before" ] && printf "%s" "$_before"
+                        [ -n "$_before" ] && _gen_tty "$_before"
                         _response_pending=""
                         if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
                             _think_banner_open=1
@@ -518,6 +528,7 @@ llm_generate() {
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate: no <think> in %d chars, flushing buffer\n" "$_think_detect_limit" > "$_tty" 2>/dev/null
                         _response_pending="${_response_pending//<\/think>/}"
                         printf "%s" "$_response_pending"
+                        _gen_tty "$_response_pending"
                         _response_pending=""
                         _can_think=0
                     fi
@@ -539,6 +550,7 @@ llm_generate() {
                         _in_think_block=0
                         _think_pending=""
                         [ -n "$_after_think" ] && printf "%s" "$_after_think"
+                        [ -n "$_after_think" ] && _gen_tty "$_after_think"
                         continue
                     fi
                     # Flush safe prefix, keep tail for split </think> detection
@@ -560,6 +572,7 @@ llm_generate() {
                 if [[ "$token" == *"<think>"* ]]; then
                     local _before_late="${token%%<think>*}"
                     [ -n "$_before_late" ] && printf "%s" "$_before_late"
+                    [ -n "$_before_late" ] && _gen_tty "$_before_late"
                     _in_think_block=1
                     _can_think=1
                     _think_pending="${token#*<think>}"
@@ -571,6 +584,7 @@ llm_generate() {
                     continue
                 fi
                 [ -n "$token" ] && printf "%s" "$token"
+                [ -n "$token" ] && _gen_tty "$token"
             fi
         fi
 
@@ -589,10 +603,12 @@ llm_generate() {
             if [ -n "$_response_pending" ]; then
                 _response_pending="${_response_pending//<\/think>/}"
                 [ -n "$_response_pending" ] && printf "%s" "$_response_pending"
+                [ -n "$_response_pending" ] && _gen_tty "$_response_pending"
             fi
             # Flush pending think text as response if </think> never arrived
             if [ "$_in_think_block" -eq 1 ] && [ -n "$_think_pending" ]; then
                 printf "%s" "$_think_pending"
+                _gen_tty "$_think_pending"
             fi
             # Debug: extract token counts from the final streaming JSON
             if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
@@ -639,9 +655,9 @@ llm_stream() {
     # ── Thinking directive injection ───────────────────────────
     # Runtime system prompt REPLACES the Modelfile's SYSTEM block.
     # Prepend the thinking directive so it's never lost.
-    # Skip for strategist/router — fast scenarios don't need extended thinking.
+    # Skip for router — it just picks a tool name.
     if [ -n "$system" ] && declare -f models_thinking_directive &>/dev/null \
-       && [ "${LLM_SCENARIO:-}" != "strategist" ] && [ "${LLM_SCENARIO:-}" != "router" ]; then
+       && [ "${LLM_SCENARIO:-}" != "router" ]; then
         local _think_dir
         _think_dir=$(models_thinking_directive)
         if [ -n "$_think_dir" ]; then
@@ -983,9 +999,9 @@ llm_chat() {
     # ── Thinking directive injection ───────────────────────────
     # Runtime system prompt REPLACES the Modelfile's SYSTEM block.
     # Prepend the thinking directive so it's never lost.
-    # Skip for strategist/router — fast scenarios don't need extended thinking.
+    # Skip for router — it just picks a tool name.
     if [ -n "$system" ] && declare -f models_thinking_directive &>/dev/null \
-       && [ "${LLM_SCENARIO:-}" != "strategist" ] && [ "${LLM_SCENARIO:-}" != "router" ]; then
+       && [ "${LLM_SCENARIO:-}" != "router" ]; then
         local _think_dir
         _think_dir=$(models_thinking_directive)
         if [ -n "$_think_dir" ]; then
