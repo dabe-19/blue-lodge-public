@@ -265,7 +265,7 @@ Never guess syntax; use `/recall <cmd>`. If a tool is missing, use `/slash creat
 ## 6. SYSTEM CONTROLS
 /models <list|status|select|single|dual|param> [args]
 /model <temp|repeat|presence>[-ask|-agent] <val>
-/think [on|off|bright|dim|hide|nothink], /soul [on|off]
+/think [on|off|bright|dim|hide], /soul [on|off]
 /cleanup <selective|all>, /backup <local|restore|list|status|git|github>, /vitals [context]
 /slash <create|test|show|delete> <name> [args] — Create/manage custom LLM-assisted tools
 

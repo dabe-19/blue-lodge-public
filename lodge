@@ -114,57 +114,30 @@ _cmd_ask() {
 _cmd_think() {
     local arg="$1"
     case "$arg" in
-        on|1)
-            LODGE_THINK=1
+        on|1|enable)
             LODGE_NOTHINK=0
-            ui_ok "Think display ON — stream: $([ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && echo bright || ([ "${LODGE_THINK_STREAM:-1}" -eq 1 ] && echo dimmed || echo hidden))" ;;
-        off|0)
-            LODGE_THINK=0
-            ui_ok "Think display OFF — reasoning still happens, just hidden" ;;
-        bright|loud|2)
             LODGE_THINK=1
-            LODGE_NOTHINK=0
-            LODGE_THINK_STREAM=2
-            ui_ok "Think display ON — bright stream (cyan)" ;;
-        dim|dimmed|quiet|1)
-            LODGE_THINK=1
-            LODGE_NOTHINK=0
             LODGE_THINK_STREAM=1
-            ui_ok "Think display ON — dimmed stream" ;;
-        hide|hidden|silent)
-            LODGE_THINK=1
-            LODGE_THINK_STREAM=0
-            ui_ok "Think display ON — hidden (reasoning happens, not shown)" ;;
-        nothink|disable|skip)
+            ui_ok "Thinking ON — reasoning enabled, dimmed stream" ;;
+        off|0|disable|nothink|skip)
             LODGE_NOTHINK=1
             LODGE_THINK=0
-            ui_ok "Thinking DISABLED — /no_think injected (model responds directly, no reasoning)" ;;
-        enable|think)
+            ui_ok "Thinking OFF — reasoning disabled (/no_think injected)" ;;
+        bright|loud|2)
+            LODGE_NOTHINK=0
+            LODGE_THINK=1
+            LODGE_THINK_STREAM=2
+            ui_ok "Thinking ON — bright stream (cyan)" ;;
+        dim|dimmed|quiet)
             LODGE_NOTHINK=0
             LODGE_THINK=1
             LODGE_THINK_STREAM=1
-            ui_ok "Thinking ENABLED — model reasons before responding (dimmed stream)" ;;
-        "")
-            # Toggle through: dim → bright → hidden → off → nothink → dim
-            if [ "${LODGE_NOTHINK:-0}" -eq 1 ]; then
-                LODGE_NOTHINK=0
-                LODGE_THINK=1
-                LODGE_THINK_STREAM=1
-                ui_ok "Think display ON — dimmed stream"
-            elif [ "${LODGE_THINK:-1}" -eq 0 ]; then
-                LODGE_NOTHINK=1
-                ui_ok "Thinking DISABLED — /no_think injected (model responds directly)"
-            elif [ "${LODGE_THINK_STREAM:-1}" -eq 1 ]; then
-                LODGE_THINK_STREAM=2
-                ui_ok "Think display ON — bright stream (cyan)"
-            elif [ "${LODGE_THINK_STREAM:-1}" -eq 2 ]; then
-                LODGE_THINK_STREAM=0
-                ui_ok "Think display ON — hidden (reasoning happens, not shown)"
-            else
-                LODGE_THINK=0
-                LODGE_THINK_STREAM=1
-                ui_ok "Think display OFF — reasoning still happens, just hidden"
-            fi ;;
+            ui_ok "Thinking ON — dimmed stream" ;;
+        hide|hidden|silent)
+            LODGE_NOTHINK=0
+            LODGE_THINK=1
+            LODGE_THINK_STREAM=0
+            ui_ok "Thinking ON — hidden (reasoning happens, not shown)" ;;
         test|diag|diagnose|debug)
             ui_info "Think display diagnostics"
             ui_dim "  LODGE_THINK=$LODGE_THINK  LODGE_THINK_STREAM=$LODGE_THINK_STREAM  LODGE_NOTHINK=$LODGE_NOTHINK"
@@ -182,19 +155,35 @@ _cmd_think() {
             fi
             ui_dim "  Tip: /debug on to see parser events during generation"
             ui_dim "  Tip: /think bright for maximum visibility (cyan text)" ;;
-        *)
-            ui_info "Usage: /think [on|off|bright|dim|hide|nothink|enable|test]"
-            ui_dim "  on/off     — toggle think display (current: $([ "${LODGE_THINK:-0}" -eq 1 ] && echo ON || echo OFF))"
-            ui_dim "  bright     — show thinking in cyan with borders"
-            ui_dim "  dim        — show thinking in faint text"
-            ui_dim "  hide       — think but don't stream to screen"
-            ui_dim "  nothink    — disable reasoning entirely (/no_think injection)"
-            ui_dim "  enable     — re-enable reasoning (thinking ON, dimmed)"
-            ui_dim "  test       — show think parser diagnostics"
-            ui_dim "  (no arg)   — cycle: dim → bright → hidden → off → nothink → dim"
+        "")
+            # No arg: show current status
+            local _status="UNKNOWN"
             if [ "${LODGE_NOTHINK:-0}" -eq 1 ]; then
-                ui_dim "  Status: NOTHINK (reasoning disabled)"
-            fi ;;
+                _status="OFF (reasoning disabled)"
+            elif [ "${LODGE_THINK:-1}" -eq 1 ]; then
+                case "${LODGE_THINK_STREAM:-1}" in
+                    2) _status="ON — bright (cyan)" ;;
+                    1) _status="ON — dimmed" ;;
+                    0) _status="ON — hidden" ;;
+                esac
+            else
+                _status="ON — display hidden"
+            fi
+            ui_info "Think status: $_status"
+            ui_dim "  /think on     — enable reasoning (dimmed display)"
+            ui_dim "  /think off    — disable reasoning entirely"
+            ui_dim "  /think bright — show thinking in cyan"
+            ui_dim "  /think dim    — show thinking in faint text"
+            ui_dim "  /think hide   — reason but don't display"
+            ui_dim "  /think test   — diagnostics" ;;
+        *)
+            ui_info "Usage: /think [on|off|bright|dim|hide|test]"
+            ui_dim "  on     — enable reasoning + dimmed display"
+            ui_dim "  off    — disable reasoning entirely"
+            ui_dim "  bright — show thinking in cyan with borders"
+            ui_dim "  dim    — show thinking in faint text"
+            ui_dim "  hide   — reason but don't stream to screen"
+            ui_dim "  test   — show think parser diagnostics" ;;
     esac
 }
 _cmd_debug() {
@@ -2921,7 +2910,7 @@ _register_commands() {
     commands_register "git"      "Git & GitHub configuration" "_cmd_git"
     commands_register "cleanup"  "Remove George's created files" "_cmd_cleanup"
     commands_register "models"   "Model library — list, select, switch" "_cmd_models"
-    commands_register "think"    "Toggle thinking display or disable reasoning (/no_think)" "_cmd_think"
+    commands_register "think"    "Toggle thinking: on/off/bright/dim/hide/test" "_cmd_think"
     commands_register "debug"    "Toggle debug mode (timers + token counts)" "_cmd_debug"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"

@@ -301,23 +301,47 @@ Plan concisely."
 $project_mem"
         fi
 
-        # Full command catalog — George needs comprehensive tool knowledge
-        # to plan milestones that use real commands (not hallucinated ones).
-        # With increased context windows, the full catalog is affordable.
-        if declare -f commands_catalog &>/dev/null; then
-            prompt="$prompt
-
-$(commands_catalog)"
-        else
-            prompt="$prompt
+        # Command catalog — George needs to know what tools exist and their syntax
+        # so plans reference real commands. Use a lean catalog (~200 tokens)
+        # instead of the full catalog with examples (~800 tokens) to reduce
+        # prefill time on constrained hardware.
+        prompt="$prompt
 
 --- COMMANDS (use ONLY these — do NOT invent commands) ---
-/plan /ask /init /recall /save /write /download /build /test /fix
-/commit /push /clone /social /pgp /sandbox /container
-/api /secret /web /journal /wallet /gsuite /phone /vitals
-/backup /slash (create custom commands) /files /read /status /memory /help
+/ask <q> — Quick answer
+/init <name> <lang> — Scaffold project (rust, python, shell, etc.)
+/recall <query> — Search knowledge base (DO THIS FIRST)
+/save <file> <text> — Save content to file
+/write <file> <text> — Write/overwrite file (creates dirs)
+/download <url> [dest] — Download a URL
+/build [release] — Build project
+/test [args] — Run tests
+/fix [error] — Diagnose and fix
+/commit [msg] — AI commit + commit
+/push — Push to GitHub
+/clone <url> — Clone and setup repo
+/web search <query> — Web search
+/web fetch <url> — Fetch a URL
+/github search <q> — Find GitHub repos
+/journal write <text> — Write to journal
+/social post discord <channel> <text> — Post to Discord
+/social post telegram|x|mastodon <text> — Post to other platforms
+/social discord dm <user> <text> — DM a Discord user
+/social discord read <channel> — Read Discord messages
+/email send|inbox|status — Email operations
+/phone — Phone dashboard
+/secret set|get <k> — Encrypted secrets
+/sandbox new <name> [type] — Create sandbox (types: rust, python, shell)
+/sandbox build|test|run|cd|rm <name> — Sandbox operations
+/container create|enter <name> — Linux containers
+/pgp sign|signpost|export — PGP operations
+/slash create <name> <desc> — Create custom command
+/vitals — System dashboard
+/vision <image> — Analyze image
+/backup local|restore — Backup operations
+/git setup|status|ssh-keygen — Git configuration
+bash — Standard Linux shell (fallback)
 If unsure: /recall <cmd> to check syntax. If missing: /slash create <name> <desc>"
-        fi
 
         # Workspace files (needed for planning)
         local files

@@ -517,16 +517,13 @@ _build_router_prompt() {
     # Phase 1 Prompt: The Command Catalog Router
     # Provides the full command catalog so George routes to his
     # purpose-built slash commands instead of defaulting to raw bash.
-    # Uses commands_catalog() when available (dynamic, includes
-    # custom /slash commands), otherwise falls back to a static index.
+    # Uses a lean command list for minimal token overhead.
+    # The full commands_catalog() is too heavy for the router (~800 tokens).
+    # The router just needs to know command names to route correctly.
     echo "You are George's tactical routing engine. Pick the best tool."
     echo ""
-    if declare -f commands_catalog &>/dev/null; then
-        commands_catalog
-    else
-        cat << 'ROUTER_CATALOG'
+    cat << 'ROUTER_CATALOG'
 --- COMMANDS (use ONLY these) ---
-NOTE: Do NOT quote arguments. Slash commands parse by spaces, not shell quoting.
 /ask <question>          — Quick answer (no planning)
 /init <name> <lang>      — Scaffold project (name=no_spaces)
 /recall <query>          — Search knowledge base
@@ -551,9 +548,7 @@ NOTE: Do NOT quote arguments. Slash commands parse by spaces, not shell quoting.
 /social post x <text>        — Post to X/Twitter
 /social post mastodon <text> — Post to Mastodon
 /social discord dm <user> <text> — DM a Discord user
-/social discord users sync   — Sync Discord user list
-/social discord channels sync — Sync Discord channels
-/social mastodon instances list — List Mastodon instances
+/social discord read <channel> — Read Discord messages
 /social <platform> <act> — Platform-specific action
 /pgp sign|signpost|export — PGP operations
 /email send|inbox|status — Email operations (actual email only, NOT social)
@@ -563,14 +558,15 @@ NOTE: Do NOT quote arguments. Slash commands parse by spaces, not shell quoting.
 /vitals                  — System dashboard
 /git setup|status|ssh-keygen — Git configuration
 /backup local|restore|github — Backup operations
+/vision <image>          — Analyze an image
 bash                     — Standard Linux shell (fallback)
 ROUTER_CATALOG
-    fi
     echo ""
     echo "Output ONLY the tool name. For slash commands output the base command"
     echo "(e.g., '/web', '/sandbox', '/write', '/social', '/git', 'bash')."
     echo "ROUTING RULES:"
     echo "- CRITICAL: If the Action Log shows the current objective is already fulfilled (data gathered, question answered, command executed), you MUST output EXACTLY: SUCCESS: <brief summary>"
+    echo "- CRITICAL: If the Action Log contains **Status:** EXECUTED SUCCESSFULLY for the current objective, the objective IS DONE — output SUCCESS: <brief summary>"
     echo "- To post to Discord/Telegram/X, route to /social (NOT /email)"
     echo "- Do NOT route to /sandbox to run other slash commands"
     echo "- /email is ONLY for actual email addresses"
@@ -638,37 +634,177 @@ _build_specialist_prompt() {
         if [ -n "$docs" ]; then
             echo "COMMAND DOCUMENTATION (read carefully before generating command):"
             echo -e "$docs"
+        else
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Specialist: no docs found for /$base_cmd — using syntax card only" >&2
         fi
 
-        # ── Command-specific behavioral hints ────────────────
-        # These address recurring failure patterns observed in real usage.
+        # ── Command-specific syntax cards ─────────────────────
+        # Guaranteed inline reference per command. Prevents the
+        # specialist from hallucinating syntax when doc lookups
+        # return wrong or empty sections.
+        echo ""
+        echo "SYNTAX CARD:"
         case "$base_cmd" in
             social)
-                echo ""
-                echo "SOCIAL COMMAND RULES:"
-                echo "- Discord posting: /social post discord <channel_name> <text>"
-                echo "  ALWAYS include the channel name (e.g. lunkers, general). Never omit it."
-                echo "- @mentions: Write @DisplayName naturally in the text. Auto-resolved to <@user_id>."
-                echo "  Example: Hey @Pompler check this out → resolves Pompler by display_name."
-                echo "- Do NOT use hashtags like #channel in the text. Channel goes BEFORE the text."
+                echo "- /social post discord <channel_name> <text>"
+                echo "  ALWAYS include channel name (e.g. lunkers, general). Never omit it."
+                echo "- /social post telegram <text>"
+                echo "- /social post x <text>"
+                echo "- /social post mastodon <text>"
+                echo "- /social discord dm <user> <text>"
+                echo "- /social discord read <channel>"
+                echo "- @mentions: Write @DisplayName naturally. Auto-resolved to <@user_id>."
+                echo "- Do NOT use #channel in text. Channel goes BEFORE the text."
                 echo "- Do NOT wrap any arguments in quotes."
                 ;;
             init)
-                echo ""
-                echo "INIT COMMAND RULES:"
-                echo "- /init <name> <type> — name MUST have no spaces (use underscores)."
-                echo "- Creates a project directory, cd's into it, generates GEORGE.md, starter code, git init."
-                echo "- After /init, you are INSIDE the project. Use /write to add files, /build to build."
-                echo "- Types: rust, python, rl, data, automation, notebook, shell"
-                echo "- The project gets GEORGE.md with ## Build and ## Test sections for /build and /test."
+                echo "- /init <name> <type>"
+                echo "  name MUST have no spaces (use underscores)."
+                echo "  Types: rust, python, rl, data, automation, notebook, shell"
+                echo "- Creates project dir, GEORGE.md, starter code, git init."
+                echo "- After /init, use /write to add files, /build to build."
                 ;;
             write)
-                echo ""
-                echo "WRITE COMMAND RULES:"
-                echo "- /write <filepath> <content> — filepath relative to current project dir."
-                echo "- Creates parent directories automatically."
-                echo "- Content is everything after the filepath (no quoting needed)."
-                echo "- For multi-line content, use \\n for newlines."
+                echo "- /write <filepath> <content>"
+                echo "  filepath relative to current project dir."
+                echo "  Content is everything after filepath (no quoting)."
+                echo "  Creates parent directories automatically."
+                echo "  For multi-line, use \\n for newlines."
+                ;;
+            save)
+                echo "- /save <filepath> <content>"
+                echo "  First token = filepath, rest = content."
+                echo "  Reads stdin if no content provided."
+                ;;
+            web)
+                echo "- /web search <query>"
+                echo "- /web fetch <url>"
+                echo "- /web summary <url>"
+                echo "- /web title <url>"
+                echo "- /web links <url>"
+                echo "- /web download <url>"
+                echo "- /web ping <url>"
+                ;;
+            download)
+                echo "- /download <url_or_path> [destination]"
+                echo "  Downloads a file. Destination is optional."
+                ;;
+            sandbox)
+                echo "- /sandbox new <name> [type]  — Create (types: rust/python/shell)"
+                echo "- /sandbox build <name>       — Build project in sandbox"
+                echo "- /sandbox test <name>        — Run tests"
+                echo "- /sandbox run <name>         — Run project"
+                echo "- /sandbox cd <name>          — Change into sandbox dir"
+                echo "- /sandbox rm <name>          — Remove sandbox"
+                echo "- /sandbox clone <url> [name] — Clone repo into sandbox"
+                echo "- Do NOT use /sandbox to run other slash commands."
+                ;;
+            build)
+                echo "- /build [release]"
+                echo "  Auto-detects Cargo/pyproject/Makefile."
+                echo "  Reads GEORGE.md ## Build section for instructions."
+                ;;
+            test)
+                echo "- /test [specific_test]"
+                echo "  Auto-detects Cargo/pytest/npm/make."
+                echo "  Reads GEORGE.md ## Test section for instructions."
+                ;;
+            fix)
+                echo "- /fix [file_or_description]"
+                echo "  Auto-diagnoses and fixes errors."
+                echo "  Optional: specify file or error description."
+                ;;
+            commit)
+                echo "- /commit [files...]"
+                echo "  AI-generates commit message from staged changes."
+                echo "  Optional: specific files to stage."
+                ;;
+            push)
+                echo "- /push [branch]"
+                echo "  Pushes to remote. Defaults to current branch."
+                ;;
+            clone)
+                echo "- /clone <repo_url_or_owner/repo> [local_name]"
+                echo "  Supports full URL or owner/repo shorthand."
+                echo "  Optional local directory name."
+                ;;
+            git)
+                echo "- /git setup      — Configure git user/email"
+                echo "- /git status     — Show repo status"
+                echo "- /git ssh-keygen — Generate SSH key for GitHub"
+                ;;
+            github)
+                echo "- /github search <query>"
+                echo "  Searches GitHub repositories."
+                ;;
+            email)
+                echo "- /email send <to> <subject> <body>"
+                echo "- /email inbox"
+                echo "- /email status"
+                echo "  For actual email only — NOT for social platforms."
+                ;;
+            journal)
+                echo "- /journal write <entry_text>"
+                echo "  Types: reflection, learning, struggle, beauty, feeling, encounter."
+                echo "  Appends timestamped entry to journal.md."
+                ;;
+            recall)
+                echo "- /recall <query>"
+                echo "  BM25-ranked FTS5 search of knowledge base."
+                echo "  Returns source, section, and snippet."
+                ;;
+            pgp)
+                echo "- /pgp sign <message>   — Cleartext-sign a message"
+                echo "- /pgp signpost         — Sign + post to Discord"
+                echo "- /pgp export           — Export public key"
+                ;;
+            phone)
+                echo "- /phone"
+                echo "  Shows phone dashboard (battery, signal, location, SMS)."
+                echo "  No arguments needed."
+                ;;
+            secret)
+                echo "- /secret set <name> <value>"
+                echo "- /secret get <name>"
+                echo "  AES-256-CBC encrypted vault."
+                ;;
+            vitals)
+                echo "- /vitals"
+                echo "  System dashboard: disk, RAM, battery, network."
+                echo "  No arguments needed."
+                ;;
+            backup)
+                echo "- /backup local   — Timestamped local backup"
+                echo "- /backup restore — Restore from backup"
+                echo "- /backup github  — Push backup to GitHub"
+                ;;
+            vision)
+                echo "- /vision <image_path_or_url> [prompt]"
+                echo "  Analyzes an image. Supports jpg/png/gif/webp/bmp."
+                echo "  Optional prompt for specific analysis."
+                ;;
+            container)
+                echo "- /container create <distro>  — Install (ubuntu/alpine/debian/fedora/kali)"
+                echo "- /container enter <distro>   — Interactive shell"
+                echo "- /container exec <distro> <cmd> — Run command inside"
+                echo "- /container rm <distro>      — Remove container"
+                ;;
+            wallet)
+                echo "- /wallet status   — Show configured wallets"
+                echo "- /wallet balances — Show live balances"
+                echo "- /wallet check    — Health check"
+                ;;
+            slash)
+                echo "- /slash create <name> <description>"
+                echo "- /slash run <name> [args]"
+                echo "- /slash list"
+                ;;
+            ask)
+                echo "- /ask <question>"
+                echo "  Quick answer from LLM — no tools, no planning."
+                ;;
+            *)
+                echo "- /$base_cmd (no specific syntax card — check docs above)"
                 ;;
         esac
 
@@ -866,6 +1002,8 @@ agent_inner_loop() {
         # Re-prefix for specialist lookup
         [ "$selected_tool" != "bash" ] && selected_tool="/$selected_tool"
 
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Phase 2 specialist: loading docs for $selected_tool"
+
         local specialist_sys=$(_build_specialist_prompt "$selected_tool" "$workdir")
 
         # Inject micro_memory (action log) so the specialist sees
@@ -965,7 +1103,7 @@ agent_inner_loop() {
             fi
 
             if [ $exit_code -eq 0 ]; then
-                echo -e "\n**Action:** \`$cmd\`\n**Result:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
+                echo -e "\n**Action:** \`$cmd\`\n**Status:** EXECUTED SUCCESSFULLY (exit 0)\n**Output:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
 
                 # ── WEB SUFFICIENCY GATE ───────────────────────
                 # Prevent George from exhaustively scraping every
@@ -1005,7 +1143,7 @@ agent_inner_loop() {
                     output=$(eval "$cmd" 2>&1 | head -c 2000)
                 fi
                 if [ ${PIPESTATUS[0]} -eq 0 ]; then
-                    echo -e "\n**Action:** \`$cmd\` (Retry OK)\n**Result:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
+                    echo -e "\n**Action:** \`$cmd\` (Retry)\n**Status:** EXECUTED SUCCESSFULLY (exit 0)\n**Output:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
                     inner_attempts=$((inner_attempts + 1))
                     continue
                 fi
@@ -1059,7 +1197,7 @@ agent_inner_loop() {
             fi
 
             # Append failure to micro memory so the LLM sees it on the next loop
-            echo -e "\n**Failed Action:** \`$cmd\`\n**Error:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
+            echo -e "\n**Action:** \`$cmd\`\n**Status:** FAILED (exit $exit_code)\n**Error:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
         fi
 
         inner_attempts=$((inner_attempts + 1))
@@ -1288,11 +1426,19 @@ agent_run() {
         # CRITICAL: The strategist MUST know what tools exist so milestones
         # align with real slash commands. Without this, the 4B model invents
         # actions like "Research evidence-based..." that the inner loop can't
-        # execute. The compact tool summary adds ~80 tokens.
+        # execute. Use a lean command list (~200 tokens) instead of the full
+        # catalog (~800 tokens) — the strategist only needs to ROUTE, not
+        # generate exact syntax (the specialist handles that).
         local _tool_summary=""
-        if declare -f commands_catalog &>/dev/null; then
-            _tool_summary=$(commands_catalog 2>/dev/null)
-        fi
+        _tool_summary="YOUR WORKING COMMANDS:
+/ask /init /recall /save /write /download /build /test /fix /commit /push /clone
+/web search|fetch /github search /journal write /vision
+/social post discord|telegram|x|mastodon <target> <text>
+/social discord dm|read <user|channel> /social <platform> <action>
+/email send|inbox /phone /secret set|get /pgp sign|export
+/sandbox new|build|test|run|cd|rm /container create|enter
+/slash create|run /vitals /backup local|restore /git setup|status
+bash (shell fallback)"
 
         # Service status: let strategist know what's configured vs not
         local _svc_status=""

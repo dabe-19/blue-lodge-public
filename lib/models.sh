@@ -20,7 +20,7 @@ LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 # These are the Ollama model names (e.g., "blue-lodge-minist-think:4b")
 LODGE_MODEL_PRIMARY="${LODGE_MODEL_PRIMARY:-blue-lodge-minist-think:4b}"
 LODGE_MODEL_SECONDARY="${LODGE_MODEL_SECONDARY:-blue-lodge-minist-inst:4b}"
-LODGE_SINGLE_MODEL="${LODGE_SINGLE_MODEL:-0}"   # 1=single model mode (primary only)
+LODGE_SINGLE_MODEL="${LODGE_SINGLE_MODEL:-1}"   # 1=single model mode (primary only, default), 0=dual model hot-swap
 
 # Track which model is currently loaded (set by _models_switch)
 _MODELS_ACTIVE=""

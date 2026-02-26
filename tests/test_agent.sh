@@ -339,10 +339,10 @@ describe "Dynamic dual-loop architecture"
     assert_ok $?
   }
 
-  it "macro strategist injects full command catalog" && {
+  it "macro strategist injects lean command list" && {
     local body
     body=$(declare -f agent_run)
-    echo "$body" | grep -q 'commands_catalog'
+    echo "$body" | grep -q 'YOUR WORKING COMMANDS'
     assert_ok $?
   }
 

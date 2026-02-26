@@ -405,6 +405,9 @@ llm_generate() {
     models_current_has_thinking && _can_think=1
     local _think_pending=""
     local _response_pending=""    # buffer to detect <think> at start of response
+    # Ministral needs a larger buffer — it may emit a few words of preamble
+    # before starting <think> tags. 200 chars catches most cases.
+    local _think_detect_limit=200
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] generate think: _can_think=%s model=%s\n" "$_can_think" "$LODGE_MODEL" > "$_tty" 2>/dev/null
 
@@ -425,9 +428,16 @@ llm_generate() {
 
         # ── Handle .thinking field (Ollama separate-field mode) ──
         if [ -n "$think_token" ]; then
-            _saw_thinking_field=1
+            # Late-arriving .thinking field: if we already flushed the
+            # response buffer in inline-tag mode, switch to separate-field
+            # mode now. This handles models that emit a few .response
+            # tokens before .thinking (e.g., Granite4-preview).
+            if [ "$_saw_thinking_field" -eq 0 ]; then
+                _saw_thinking_field=1
+                _can_think=0  # disable inline-tag parsing
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate: .thinking field detected — switching to separate-field mode\n" > "$_tty" 2>/dev/null
+            fi
             [ -f "$_got_tokens" ] || touch "$_got_tokens"
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate: .thinking field detected\n" > "$_tty" 2>/dev/null
             # Kill any external spinner on first think token
             if [ -n "$_SPINNER_PID" ] && kill -0 "$_SPINNER_PID" 2>/dev/null; then
                 kill "$_SPINNER_PID" 2>/dev/null
@@ -474,7 +484,7 @@ llm_generate() {
                     if [[ "$_response_pending" == *"<think>"* ]]; then
                         _in_think_block=1
                         _think_pending="${_response_pending#*<think>}"
-                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate: <think> detected inline\n" > "$_tty" 2>/dev/null
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate: <think> detected inline (at %d chars)\n" "${#_response_pending}" > "$_tty" 2>/dev/null
                         # Output anything before <think> as response (preamble)
                         local _before="${_response_pending%%<think>*}"
                         _before="${_before//<\/think>/}"
@@ -485,9 +495,9 @@ llm_generate() {
                             local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
                             printf "\n%b┌─ thinking ─\033[0m\n%b" "$_c" "$_c" > "$_tty" 2>/dev/null
                         fi
-                    elif [ ${#_response_pending} -ge 50 ]; then
-                        # Buffer overflow guard — no <think> found in first 50 chars
-                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate: no <think> in 50 chars, flushing buffer\n" > "$_tty" 2>/dev/null
+                    elif [ ${#_response_pending} -ge $_think_detect_limit ]; then
+                        # Buffer overflow guard — no <think> found in buffer
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate: no <think> in %d chars, flushing buffer\n" "$_think_detect_limit" > "$_tty" 2>/dev/null
                         _response_pending="${_response_pending//<\/think>/}"
                         printf "%s" "$_response_pending"
                         _response_pending=""
@@ -528,6 +538,20 @@ llm_generate() {
                 # Normal response token after </think>
                 # Strip orphan </think> tags (some models emit duplicates)
                 token="${token//<\/think>/}"
+                # Check for late <think> tag (model re-entered thinking)
+                if [[ "$token" == *"<think>"* ]]; then
+                    local _before_late="${token%%<think>*}"
+                    [ -n "$_before_late" ] && printf "%s" "$_before_late"
+                    _in_think_block=1
+                    _can_think=1
+                    _think_pending="${token#*<think>}"
+                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                        _think_banner_open=1
+                        local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
+                        printf "\n%b┌─ thinking ─\033[0m\n%b" "$_c" "$_c" > "$_tty" 2>/dev/null
+                    fi
+                    continue
+                fi
                 [ -n "$token" ] && printf "%s" "$token"
             fi
         fi
@@ -692,6 +716,8 @@ llm_stream() {
     models_current_has_thinking && _can_think=1
     local _think_pending=""       # fallback mode: buffer for split </think>
     local _response_pending=""    # buffer to detect <think> at start of response
+    # Ministral needs a larger buffer — it may emit preamble before <think>.
+    local _think_detect_limit=200
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] stream think: _can_think=%s model=%s LODGE_THINK=%s\n" "$_can_think" "$LODGE_MODEL" "${LODGE_THINK:-0}" > "$_tty" 2>/dev/null
 
@@ -712,8 +738,21 @@ llm_stream() {
 
         # ── Handle .thinking field (Ollama separate-field mode) ──
         if [ -n "$think_token" ]; then
-            _saw_thinking_field=1
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ "$_think_banner_open" -eq 0 ] && printf " [debug] stream: .thinking field detected\n" > "$_tty" 2>/dev/null
+            # Late-arriving .thinking field: switch to separate-field mode
+            # even if we already started parsing inline tags.
+            if [ "$_saw_thinking_field" -eq 0 ]; then
+                _saw_thinking_field=1
+                _can_think=0  # disable inline-tag parsing
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream: .thinking field detected — switching to separate-field mode\n" > "$_tty" 2>/dev/null
+                # If we buffered response text before .thinking arrived,
+                # flush it before switching modes (it was preamble)
+                if [ -n "$_response_pending" ]; then
+                    _response_pending="${_response_pending//<\/think>/}"
+                    [ -n "$_response_pending" ] && printf "%s" "$_response_pending"
+                    [ -n "$_response_pending" ] && printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
+                    _response_pending=""
+                fi
+            fi
             # Kill spinner on first token of any kind
             if [ ! -f "$_llm_ft_file" ]; then
                 touch "$_llm_ft_file"
@@ -759,7 +798,7 @@ llm_stream() {
                     if [[ "$_response_pending" == *"<think>"* ]]; then
                         _in_think_block=1
                         _think_pending="${_response_pending#*<think>}"
-                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream: <think> detected inline\n" > "$_tty" 2>/dev/null
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream: <think> detected inline (at %d chars)\n" "${#_response_pending}" > "$_tty" 2>/dev/null
                         # Output anything before <think> as response (preamble)
                         local _before="${_response_pending%%<think>*}"
                         _before="${_before//<\/think>/}"
@@ -770,9 +809,9 @@ llm_stream() {
                         _response_pending=""
                         _think_banner_open=1
                         _think_open
-                    elif [ ${#_response_pending} -ge 50 ]; then
-                        # Buffer overflow guard — no <think> found in first 50 chars
-                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream: no <think> in 50 chars, flushing buffer\n" > "$_tty" 2>/dev/null
+                    elif [ ${#_response_pending} -ge $_think_detect_limit ]; then
+                        # Buffer overflow guard — no <think> found in buffer
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream: no <think> in %d chars, flushing buffer\n" "$_think_detect_limit" > "$_tty" 2>/dev/null
                         _response_pending="${_response_pending//<\/think>/}"
                         printf "%s" "$_response_pending"
                         printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
@@ -816,6 +855,20 @@ llm_stream() {
                 # Normal token after </think> in fallback mode
                 # Strip orphan </think> tags (some models emit duplicates)
                 token="${token//<\/think>/}"
+                # Check for late <think> tag (model re-entered thinking)
+                if [[ "$token" == *"<think>"* ]]; then
+                    local _before_late="${token%%<think>*}"
+                    if [ -n "$_before_late" ]; then
+                        printf "%s" "$_before_late"
+                        printf "%s" "$_before_late" > "$_tty" 2>/dev/null
+                    fi
+                    _in_think_block=1
+                    _can_think=1
+                    _think_pending="${token#*<think>}"
+                    _think_banner_open=1
+                    _think_open
+                    continue
+                fi
                 [ -n "$token" ] && printf "%s" "$token"
                 [ -n "$token" ] && printf "%s" "$token" > "$_tty" 2>/dev/null
             fi
