@@ -382,7 +382,7 @@ $files"
     if [ "${LODGE_SOUL:-0}" -eq 1 ]; then
         soul=$(cat "$LODGE_DIR/soul.md" 2>/dev/null)
     else
-        soul=$({ head -20 "$LODGE_DIR/soul.md"; echo ""; awk '/^## Practical Craft$/,0' "$LODGE_DIR/soul.md"; } 2>/dev/null)
+        soul=$({ head -20 "$LODGE_DIR/soul.md"; echo ""; awk '/^## PRACTICAL CRAFT/,0' "$LODGE_DIR/soul.md"; } 2>/dev/null)
     fi
     prompt="${prompt}${soul}"
 

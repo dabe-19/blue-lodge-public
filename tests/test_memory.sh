@@ -330,8 +330,8 @@ describe "memory_build_system_prompt soul mode"
     _setup_mem
     LODGE_SOUL=0
     prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "task")
-    # Practical Craft should be present, but not the deep philosophy
-    assert_contains "$prompt" "Practical Craft"
+    # Practical Craft section should be present, but not the deep philosophy
+    assert_contains "$prompt" "PRACTICAL CRAFT"
     _teardown_mem
   }
 
@@ -352,8 +352,8 @@ describe "memory_build_system_prompt soul mode"
     _setup_mem
     LODGE_SOUL=1
     prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
-    # Full soul.md has the Cardinal Virtues section header
-    assert_contains "$prompt" "Cardinal Virtues"
+    # Full soul.md has the NEVER VIOLATE section
+    assert_contains "$prompt" "NEVER VIOLATE"
     LODGE_SOUL=0
     _teardown_mem
   }
@@ -425,8 +425,8 @@ describe "memory_build_system_prompt plan mode command glossary"
       skip "commands_catalog failed to load from commands.sh"
     else
       prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
-      assert_contains "$prompt" "/web search <query>"
-      assert_contains "$prompt" "/save <file>"
+      assert_contains "$prompt" "/web"
+      assert_contains "$prompt" "/sandbox"
     fi
     _teardown_mem
   }

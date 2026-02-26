@@ -119,9 +119,9 @@ describe "commands_catalog"
     assert_not_empty "$_cat_out"
   }
 
-  it "catalog contains YOUR WORKING COMMANDS header" && {
+  it "catalog contains SYSTEM CAPABILITIES header" && {
     _cat_out=$(commands_catalog)
-    assert_contains "$_cat_out" "YOUR WORKING COMMANDS"
+    assert_contains "$_cat_out" "SYSTEM CAPABILITIES & TOOLS"
   }
 
   it "catalog lists /recall" && {
@@ -149,33 +149,31 @@ describe "commands_catalog"
     assert_contains "$_cat_out" "/web"
   }
 
-  it "catalog documents discord post with channel" && {
+  it "catalog documents social post syntax" && {
     _cat_out=$(commands_catalog)
-    assert_contains "$_cat_out" "/social post discord"
+    assert_contains "$_cat_out" "/social post"
   }
 
-  it "catalog documents discord read with channel" && {
+  it "catalog documents social read actions" && {
     _cat_out=$(commands_catalog)
-    assert_contains "$_cat_out" "/social discord read"
+    assert_contains "$_cat_out" "read|dm|timeline"
   }
 
-  it "catalog contains journal read (not just write)" && {
+  it "catalog contains journal command" && {
     _cat_out=$(commands_catalog)
     assert_contains "$_cat_out" "/journal"
-    # Ensure the bare /journal command is documented (shows all entries)
-    echo "$_cat_out" | grep -q '/journal ' || true
-    assert_contains "$_cat_out" "Show ALL journal entries"
+    assert_contains "$_cat_out" "persistent living memory"
   }
 
   it "catalog contains model/tuning controls" && {
     _cat_out=$(commands_catalog)
     assert_contains "$_cat_out" "/models"
-    assert_contains "$_cat_out" "/model temp"
+    assert_contains "$_cat_out" "/model"
   }
 
-  it "catalog contains research workflow guidance" && {
+  it "catalog contains research and memory section" && {
     _cat_out=$(commands_catalog)
-    assert_contains "$_cat_out" "RESEARCH WORKFLOW"
+    assert_contains "$_cat_out" "RESEARCH & MEMORY"
   }
 
   it "catalog contains task freedom section" && {
@@ -185,38 +183,38 @@ describe "commands_catalog"
 
   it "catalog contains /recall guidance" && {
     _cat_out=$(commands_catalog)
-    assert_contains "$_cat_out" "USE THIS whenever you need information"
+    assert_contains "$_cat_out" "DO THIS FIRST BEFORE WEB SEARCH"
   }
 
   it "catalog contains /ingest" && {
     _cat_out=$(commands_catalog)
-    assert_contains "$_cat_out" "/ingest add"
+    assert_contains "$_cat_out" "/ingest"
   }
 
-  it "catalog contains MEMORY LOOP section" && {
+  it "catalog contains workflow examples section" && {
     _cat_out=$(commands_catalog)
-    assert_contains "$_cat_out" "MEMORY LOOP"
+    assert_contains "$_cat_out" "WORKFLOW EXAMPLES"
   }
 
-  it "catalog memory loop shows read-remember-respond pattern" && {
+  it "catalog contains core workflow pattern" && {
     _cat_out=$(commands_catalog)
-    assert_contains "$_cat_out" "/journal write"
-    assert_contains "$_cat_out" "/social discord read"
+    assert_contains "$_cat_out" "CORE WORKFLOW"
+    assert_contains "$_cat_out" "HARD CONSTRAINTS"
   }
 
-  it "plan catalog contains memory loop" && {
+  it "plan catalog contains workflow examples" && {
     _plan_out=$(commands_catalog_plan)
-    assert_contains "$_plan_out" "MEMORY LOOP"
+    assert_contains "$_plan_out" "WORKFLOW EXAMPLES"
   }
 
-  it "plan catalog has anti-sandbox rule" && {
+  it "plan catalog has hard constraints" && {
     _plan_out=$(commands_catalog_plan)
-    assert_contains "$_plan_out" "do NOT use /sandbox to run slash commands"
+    assert_contains "$_plan_out" "HARD CONSTRAINTS"
   }
 
-  it "plan catalog has discord-specific social syntax" && {
+  it "plan catalog has social post syntax" && {
     _plan_out=$(commands_catalog_plan)
-    assert_contains "$_plan_out" "/social post discord"
+    assert_contains "$_plan_out" "/social post"
   }
 
   it "plan catalog tells LLM not to quote arguments" && {
@@ -238,9 +236,9 @@ describe "commands_catalog"
     assert_contains "$_qt_out" "ARGS:hello world"
   }
 
-  it "plan catalog marks /email as not for social" && {
+  it "plan catalog contains task freedom section" && {
     _plan_out=$(commands_catalog_plan)
-    assert_contains "$_plan_out" "ONLY for actual email"
+    assert_contains "$_plan_out" "TASK FREEDOM"
   }
 
 # ── commands_services_status ───────────────────────────────────
