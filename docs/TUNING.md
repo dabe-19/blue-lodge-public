@@ -425,7 +425,7 @@ George right-sizes token budgets per command:
 | `/ingest summarize` | 256 | 256 (`LLM_BUDGET_TOOL`) | Document summary |
 | Inner loop (router) | 256 (`LLM_ROUTER_TOKENS`) | 128 (`LLM_BUDGET_ROUTER`) | Tool selection (just pick a name) |
 | Inner loop (specialist) | 20,480 (`LLM_AGENT_TOKENS`) | 512 (`LLM_BUDGET_AGENT`) | Command generation |
-| Macro loop (strategist) | 20,480 (`LLM_AGENT_TOKENS`) | 512 (`LLM_BUDGET_AGENT`) | Next milestone |
+| Macro loop (strategist) | 512 (`LLM_STRATEGIST_TOKENS`) | 512 (`LLM_BUDGET_AGENT`) | Next milestone (one sentence) |
 | Journal quip | 512 | 64 (`LLM_BUDGET_JOURNAL`) | Background quip |
 | Journal decay | 512 | 64 (`LLM_BUDGET_JOURNAL`) | Sediment compression |
 

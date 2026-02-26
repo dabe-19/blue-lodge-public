@@ -31,6 +31,10 @@ describe "Configuration defaults"
     assert_eq "$LLM_AGENT_TOKENS" "20480"
   }
 
+  it "LLM_STRATEGIST_TOKENS defaults to 512" && {
+    assert_eq "$LLM_STRATEGIST_TOKENS" "512"
+  }
+
   it "LLM_ROUTER_TOKENS defaults to 256" && {
     assert_eq "$LLM_ROUTER_TOKENS" "256"
   }
@@ -145,6 +149,15 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     assert_eq "$temp" "0.1"
   }
 
+  it "_llm_build_opts handles strategist scenario" && {
+    LLM_SCENARIO=strategist
+    local result
+    result=$(_llm_build_opts 256)
+    unset LLM_SCENARIO
+    echo "$result" | jq . &>/dev/null
+    assert_ok $?
+  }
+
   it "_llm_build_opts includes num_predict in output" && {
     local result
     result=$(_llm_build_opts 256)
@@ -162,6 +175,21 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     pp=$(echo "$result" | jq -r '.presence_penalty')
     # jq normalizes 1.0 → 1; check either form
     [[ "$pp" == "1" || "$pp" == "1.0" ]]
+    assert_ok $?
+  }
+
+  it "thinking directive skipped for strategist scenario" && {
+    # llm_generate should NOT inject thinking directive when LLM_SCENARIO=strategist
+    local body
+    body=$(declare -f llm_generate)
+    echo "$body" | grep -q 'LLM_SCENARIO.*strategist'
+    assert_ok $?
+  }
+
+  it "thinking directive skipped for router scenario" && {
+    local body
+    body=$(declare -f llm_generate)
+    echo "$body" | grep -q 'LLM_SCENARIO.*router'
     assert_ok $?
   }
 

@@ -684,6 +684,8 @@ _build_specialist_prompt() {
                 echo "- /web links <url>"
                 echo "- /web download <url>"
                 echo "- /web ping <url>"
+                echo "  NOTE: /web fetch requires a URL, not a query."
+                echo "  To search, use /web search <query> first, then /web fetch <url> on results."
                 ;;
             download)
                 echo "- /download <url_or_path> [destination]"
@@ -1488,11 +1490,26 @@ STRATEGIC RULES:
         # is a brief milestone description displayed once by ui_info below.
         # Previously llm_stream showed it live, then ui_info showed it again,
         # then the specialist streamed it a third time — tripling the output.
-        local LLM_SCENARIO=agent
-        milestone=$(llm_generate "$macro_prompt" "$macro_sys" "${LLM_AGENT_TOKENS:-512}" "$LLM_BUDGET_AGENT")
+        local LLM_SCENARIO=strategist
+        milestone=$(llm_generate "$macro_prompt" "$macro_sys" "${LLM_STRATEGIST_TOKENS:-512}" "$LLM_BUDGET_AGENT")
 
-        # Strip whitespace for clean comparison
-        milestone=$(echo "$milestone" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        # ── MILESTONE CLEANUP ─────────────────────────────────
+        # The strategist should output one imperative sentence, but
+        # small models sometimes emit <think> blocks, code fences,
+        # explanatory preamble, or repetitive content. Strip all of
+        # that so the milestone is a clean, single-line action.
+        # 1. Remove <think>...</think> blocks (including multi-line)
+        milestone=$(echo "$milestone" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+        # 2. Remove stray opening/closing think tags
+        milestone=$(echo "$milestone" | sed 's/<\/?think>//g')
+        # 3. Remove code fences and their content
+        milestone=$(echo "$milestone" | sed '/^```/,/^```/d')
+        # 4. Strip leading/trailing whitespace and blank lines
+        milestone=$(echo "$milestone" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        # 5. Take ONLY the first non-empty line (milestone = one sentence)
+        milestone=$(echo "$milestone" | head -1)
+        # 6. Truncate to 200 chars max (prevents context bloat)
+        milestone="${milestone:0:200}"
 
         # ── Check for completion ──────────────────────────────
         if [ -z "$milestone" ] || [[ "$milestone" == ERROR* ]]; then

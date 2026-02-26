@@ -316,6 +316,12 @@ _cmd_limits() {
             else
                 _limits_set LLM_AGENT_TOKENS "Agent tokens" "$value" 64 20480
             fi ;;
+        strat-tokens)
+            if [ -z "$value" ]; then
+                ui_info "Strategist output tokens: $LLM_STRATEGIST_TOKENS (default: 512)"
+            else
+                _limits_set LLM_STRATEGIST_TOKENS "Strategist tokens" "$value" 32 1024
+            fi ;;
         ask-tokens)
             if [ -z "$value" ]; then
                 ui_info "Ask output tokens: $LLM_ASK_TOKENS (default: 20480)"
@@ -384,6 +390,7 @@ _cmd_limits() {
             AGENT_STEP_DELAY=1
             LLM_MAX_TOKENS=20480
             LLM_AGENT_TOKENS=20480
+            LLM_STRATEGIST_TOKENS=512
             LLM_ASK_TOKENS=20480
             LLM_ROUTER_TOKENS=256
             LLM_BUDGET_TOKENS=1024
@@ -404,6 +411,7 @@ _cmd_limits() {
             ui_section "Output Tokens (num_predict)"
             printf "  %-22s %s\n" "Max tokens:" "$LLM_MAX_TOKENS  (default: 20480)"
             printf "  %-22s %s\n" "Agent tokens:" "$LLM_AGENT_TOKENS  (default: 20480)"
+            printf "  %-22s %s\n" "Strategist tokens:" "$LLM_STRATEGIST_TOKENS  (default: 512)"
             printf "  %-22s %s\n" "Ask tokens:" "$LLM_ASK_TOKENS  (default: 20480)"
             printf "  %-22s %s\n" "Router tokens:" "$LLM_ROUTER_TOKENS  (default: 256)"
             echo ""
@@ -429,7 +437,8 @@ _cmd_limits() {
             echo ""
             ui_dim "  Output tokens (num_predict):"
             ui_dim "    max-tokens N    — Global max output cap (current: $LLM_MAX_TOKENS)"
-            ui_dim "    tokens N        — Agent specialist/strategist (current: $LLM_AGENT_TOKENS)"
+            ui_dim "    tokens N        — Agent specialist (current: $LLM_AGENT_TOKENS)"
+            ui_dim "    strat-tokens N  — Strategist milestone (current: $LLM_STRATEGIST_TOKENS)"
             ui_dim "    ask-tokens N    — /ask conversation (current: $LLM_ASK_TOKENS)"
             ui_dim "    router-tokens N — Router tool selection (current: $LLM_ROUTER_TOKENS)"
             echo ""

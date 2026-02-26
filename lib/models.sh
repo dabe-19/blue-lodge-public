@@ -63,7 +63,9 @@ _MODELS_REGISTRY=(
     # ── Ministral family ──────────────────────────────────────
     # Reasoning model needs system prompt instruction for <think> tags (no native thinking template).
     # Mistral recommends: reasoning temp=0.7 top_p=0.95.
-    "minist-think^blue-lodge-minist-think:4b^hf.co/unsloth/Ministral-3-3B-Reasoning-2512-GGUF:UD-Q5_K_XL^thinking^1^system^</s>^0.7^1.0^0.0^32768^8192^0.95^40^0.0^Default primary. Mistral reasoning with thinking via system prompt."
+    # repeat_penalty=1.2 prevents catastrophic repetition spirals (1.0 = no penalty → model loops).
+    # presence_penalty=0.3 adds light anti-repetition bias without degrading fluency.
+    "minist-think^blue-lodge-minist-think:4b^hf.co/unsloth/Ministral-3-3B-Reasoning-2512-GGUF:UD-Q5_K_XL^thinking^1^system^</s>^0.7^1.2^0.3^32768^8192^0.95^40^0.0^Default primary. Mistral reasoning with thinking via system prompt."
     # Instruct model supports vision (multimodal). Mistral recommends: instruct temp=0.15.
     "minist-inst^blue-lodge-minist-inst:4b^hf.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF:UD-Q5_K_XL^instruct^0^none^</s>^0.3^1.0^0.0^32768^8192^0.9^40^0.0^Default secondary. Mistral instruct with vision support."
 )

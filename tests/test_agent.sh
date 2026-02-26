@@ -362,6 +362,27 @@ describe "Dynamic dual-loop architecture"
     assert_ok $?
   }
 
+  it "macro strategist uses LLM_SCENARIO=strategist (not agent)" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'LLM_SCENARIO=strategist'
+    assert_ok $?
+  }
+
+  it "macro strategist uses LLM_STRATEGIST_TOKENS (not LLM_AGENT_TOKENS)" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'LLM_STRATEGIST_TOKENS'
+    assert_ok $?
+  }
+
+  it "macro strategist strips <think> blocks from milestone" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '<think>'
+    assert_ok $?
+  }
+
   it "macro strategist has anti-email-for-social rule" && {
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'NOT.*email'

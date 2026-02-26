@@ -419,6 +419,7 @@ describe "Limits command"
     AGENT_STEP_DELAY=5
     LLM_MAX_TOKENS=4096
     LLM_AGENT_TOKENS=1024
+    LLM_STRATEGIST_TOKENS=64
     LLM_ASK_TOKENS=500
     LLM_ROUTER_TOKENS=100
     LLM_BUDGET_TOKENS=4096
@@ -435,6 +436,7 @@ describe "Limits command"
     assert_eq "$AGENT_STEP_DELAY" "1"
     assert_eq "$LLM_MAX_TOKENS" "20480"
     assert_eq "$LLM_AGENT_TOKENS" "20480"
+    assert_eq "$LLM_STRATEGIST_TOKENS" "512"
     assert_eq "$LLM_ASK_TOKENS" "20480"
     assert_eq "$LLM_ROUTER_TOKENS" "256"
     assert_eq "$LLM_BUDGET_TOKENS" "1024"

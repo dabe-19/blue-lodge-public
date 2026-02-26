@@ -11,7 +11,8 @@ OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
 LODGE_MODEL="${LODGE_MODEL:-blue-lodge}"
 LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-20480}"   # Default max output tokens (matches Modelfile num_predict ceiling)
 LLM_ASK_TOKENS="${LLM_ASK_TOKENS:-20480}"   # Max output tokens for /ask (model stops at <|im_end|>; this is just a safety cap)
-LLM_AGENT_TOKENS="${LLM_AGENT_TOKENS:-20480}" # Max output tokens for agent specialist/strategist
+LLM_AGENT_TOKENS="${LLM_AGENT_TOKENS:-20480}" # Max output tokens for agent specialist
+LLM_STRATEGIST_TOKENS="${LLM_STRATEGIST_TOKENS:-512}" # Max output tokens for strategist (one sentence milestone + thinking)
 LLM_ROUTER_TOKENS="${LLM_ROUTER_TOKENS:-256}" # Max output tokens for agent router (think ~100-200 + tool name)
 LLM_BUDGET_TOKENS="${LLM_BUDGET_TOKENS:-1024}" # Max thinking tokens before responding (0=unlimited)
 LLM_BUDGET_ASK="${LLM_BUDGET_ASK:-1024}"     # Think budget for /ask conversations (extended thinking useful)
@@ -98,8 +99,9 @@ _llm_build_opts() {
     local temp rep pres
     case "$scenario" in
         ask)     temp="${LLM_TEMP_ASK:-$model_temp}"; rep="${LLM_REPEAT_ASK:-$model_rep}"; pres="${LLM_PRESENCE_ASK:-$model_pres}" ;;
-        agent)   temp="${LLM_TEMP_AGENT:-$model_temp}"; rep="${LLM_REPEAT_AGENT:-$model_rep}"; pres="${LLM_PRESENCE_AGENT:-$model_pres}" ;;
-        router)  temp="${LLM_TEMP_ROUTER:-$model_temp}"; rep="${LLM_REPEAT_ROUTER:-$model_rep}"; pres="${LLM_PRESENCE_ROUTER:-$model_pres}" ;;
+        agent)      temp="${LLM_TEMP_AGENT:-$model_temp}"; rep="${LLM_REPEAT_AGENT:-$model_rep}"; pres="${LLM_PRESENCE_AGENT:-$model_pres}" ;;
+        strategist) temp="${LLM_TEMP_AGENT:-$model_temp}"; rep="${LLM_REPEAT_AGENT:-$model_rep}"; pres="${LLM_PRESENCE_AGENT:-$model_pres}" ;;
+        router)     temp="${LLM_TEMP_ROUTER:-$model_temp}"; rep="${LLM_REPEAT_ROUTER:-$model_rep}"; pres="${LLM_PRESENCE_ROUTER:-$model_pres}" ;;
         journal) temp="${LLM_TEMP_JOURNAL:-$model_temp}"; rep="${LLM_REPEAT_JOURNAL:-$model_rep}"; pres="${LLM_PRESENCE_JOURNAL:-$model_pres}" ;;
         tool)    temp="${LLM_TEMP_TOOL:-$model_temp}"; rep="${LLM_REPEAT_TOOL:-$model_rep}"; pres="${LLM_PRESENCE_TOOL:-$model_pres}" ;;
         *)       temp="$model_temp"; rep="$model_rep"; pres="$model_pres" ;;
@@ -342,7 +344,11 @@ llm_generate() {
     # When a runtime system prompt is passed, it REPLACES the
     # Modelfile's SYSTEM block — silently losing the thinking
     # instruction. Prepend it so the model always sees it.
-    if [ -n "$system" ] && declare -f models_thinking_directive &>/dev/null; then
+    # SKIP for strategist/router: these need fast, focused output
+    # (one word or one sentence). The thinking directive encourages
+    # extended reasoning which causes spirals in these contexts.
+    if [ -n "$system" ] && declare -f models_thinking_directive &>/dev/null \
+       && [ "${LLM_SCENARIO:-}" != "strategist" ] && [ "${LLM_SCENARIO:-}" != "router" ]; then
         local _think_dir
         _think_dir=$(models_thinking_directive)
         if [ -n "$_think_dir" ]; then
@@ -633,7 +639,9 @@ llm_stream() {
     # ── Thinking directive injection ───────────────────────────
     # Runtime system prompt REPLACES the Modelfile's SYSTEM block.
     # Prepend the thinking directive so it's never lost.
-    if [ -n "$system" ] && declare -f models_thinking_directive &>/dev/null; then
+    # Skip for strategist/router — fast scenarios don't need extended thinking.
+    if [ -n "$system" ] && declare -f models_thinking_directive &>/dev/null \
+       && [ "${LLM_SCENARIO:-}" != "strategist" ] && [ "${LLM_SCENARIO:-}" != "router" ]; then
         local _think_dir
         _think_dir=$(models_thinking_directive)
         if [ -n "$_think_dir" ]; then
@@ -975,7 +983,9 @@ llm_chat() {
     # ── Thinking directive injection ───────────────────────────
     # Runtime system prompt REPLACES the Modelfile's SYSTEM block.
     # Prepend the thinking directive so it's never lost.
-    if [ -n "$system" ] && declare -f models_thinking_directive &>/dev/null; then
+    # Skip for strategist/router — fast scenarios don't need extended thinking.
+    if [ -n "$system" ] && declare -f models_thinking_directive &>/dev/null \
+       && [ "${LLM_SCENARIO:-}" != "strategist" ] && [ "${LLM_SCENARIO:-}" != "router" ]; then
         local _think_dir
         _think_dir=$(models_thinking_directive)
         if [ -n "$_think_dir" ]; then
