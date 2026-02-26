@@ -110,6 +110,20 @@ models_has_thinking() {
     models_info "$name" && [ "$_ME_THINKS" = "1" ]
 }
 
+# ── Check if model's Ollama template supports think:true flag ──
+# Returns true ONLY for models with native .Think/.IsThinkSet
+# template support (e.g., Qwen3, Granite4-preview).
+# Models with system-prompt-based thinking (e.g., Ministral) use
+# inline <think> tags parsed by George — sending think:true to them
+# causes Ollama to malform the response stream.
+models_supports_think_flag() {
+    local name="${1:-$LODGE_MODEL}"
+    case "$name" in
+        *qwen3-think*|*granite4-preview*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # ── Check if a model supports vision (image input) ────────────
 # Models with multimodal image support via Ollama "images" API field.
 models_has_vision() {
@@ -165,7 +179,10 @@ Never wrap your response in XML tags like <response></response>. Output your res
     if [ "$_ME_THINKS" = "1" ]; then
         case "$_ME_KEY" in
             minist-*)
-                think_directive="Before each response, reason step by step inside <think></think> tags. Be thorough — explore ideas, consider alternatives, verify your reasoning. After </think>, provide your final concise response. Never re-draft or second-guess — decide once, respond once."
+                think_directive="Before each response, reason step by step inside <think></think> tags. Be thorough — explore ideas, consider alternatives, verify your reasoning. After the closing </think> tag, provide your final concise response directly. Do not emit additional think tags after your response. Never re-draft or second-guess — decide once, respond once."
+                ;;
+            granite4-preview*)
+                think_directive="Respond to every user query in a comprehensive and detailed way. You can write down your thoughts and reasoning process before responding. In the thought process, engage in analysis, exploration, and reflection to develop well-considered thinking. Then present the final solution that you deem correct. Think briefly for simple questions. Never re-draft or second-guess — decide once, respond once."
                 ;;
         esac
     fi

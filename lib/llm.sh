@@ -364,9 +364,10 @@ llm_generate() {
         payload=$(echo "$payload" | jq --argjson bt "$budget" '. + {budget_tokens: $bt}')
     fi
 
-    # Inject think:true for models with structured thinking support
+    # Inject think:true for models with native thinking template support
     # Required for granite4-preview (Ollama .thinking field), improves Qwen3 (separate field vs inline tags)
-    if [ "${LODGE_NOTHINK:-0}" -eq 0 ] && models_has_thinking "$LODGE_MODEL" 2>/dev/null; then
+    # NOT sent to system-prompt thinkers (Ministral) — causes Ollama to malform response stream
+    if [ "${LODGE_NOTHINK:-0}" -eq 0 ] && models_supports_think_flag "$LODGE_MODEL" 2>/dev/null; then
         payload=$(echo "$payload" | jq '. + {think: true}')
     fi
 
@@ -485,12 +486,14 @@ llm_generate() {
                             fi
                         else
                             # No <think> prefix — flush buffered tokens as response
+                            _response_pending="${_response_pending//<\/think>/}"
                             printf "%s" "$_response_pending"
                             _response_pending=""
                             _can_think=0  # stop buffering for this response
                         fi
                     elif [ ${#_response_pending} -ge 20 ]; then
                         # Buffer overflow guard — flush and give up
+                        _response_pending="${_response_pending//<\/think>/}"
                         printf "%s" "$_response_pending"
                         _response_pending=""
                         _can_think=0
@@ -503,6 +506,7 @@ llm_generate() {
                     if [[ "$_think_pending" == *"</think>"* ]]; then
                         local _think_before="${_think_pending%%</think>*}"
                         local _after_think="${_think_pending#*</think>}"
+                        _after_think="${_after_think//<\/think>/}"
                         if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
                             [ -n "$_think_before" ] && printf "%s" "$_think_before" > "$_tty" 2>/dev/null
                             _think_banner_open=0
@@ -527,7 +531,9 @@ llm_generate() {
                     continue
                 fi
                 # Normal response token after </think>
-                printf "%s" "$token"
+                # Strip orphan </think> tags (some models emit duplicates)
+                token="${token//<\/think>/}"
+                [ -n "$token" ] && printf "%s" "$token"
             fi
         fi
 
@@ -543,7 +549,10 @@ llm_generate() {
                 fi
             fi
             # Flush any response_pending buffer (very short response, never reached 7 chars)
-            [ -n "$_response_pending" ] && printf "%s" "$_response_pending"
+            if [ -n "$_response_pending" ]; then
+                _response_pending="${_response_pending//<\/think>/}"
+                [ -n "$_response_pending" ] && printf "%s" "$_response_pending"
+            fi
             # Flush pending think text as response if </think> never arrived
             if [ "$_in_think_block" -eq 1 ] && [ -n "$_think_pending" ]; then
                 printf "%s" "$_think_pending"
@@ -616,8 +625,9 @@ llm_stream() {
         payload=$(echo "$payload" | jq --argjson bt "$budget" '. + {budget_tokens: $bt}')
     fi
 
-    # Inject think:true for models with structured thinking support
-    if [ "${LODGE_NOTHINK:-0}" -eq 0 ] && models_has_thinking "$LODGE_MODEL" 2>/dev/null; then
+    # Inject think:true for models with native thinking template support
+    # NOT sent to system-prompt thinkers (Ministral)
+    if [ "${LODGE_NOTHINK:-0}" -eq 0 ] && models_supports_think_flag "$LODGE_MODEL" 2>/dev/null; then
         payload=$(echo "$payload" | jq '. + {think: true}')
     fi
 
@@ -762,6 +772,7 @@ llm_stream() {
                             _think_open
                         else
                             # No <think> — flush buffered tokens as response
+                            _response_pending="${_response_pending//<\/think>/}"
                             printf "%s" "$_response_pending"
                             printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
                             _response_pending=""
@@ -769,6 +780,7 @@ llm_stream() {
                         fi
                     elif [ ${#_response_pending} -ge 20 ]; then
                         # Buffer overflow guard — flush and give up
+                        _response_pending="${_response_pending//<\/think>/}"
                         printf "%s" "$_response_pending"
                         printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
                         _response_pending=""
@@ -783,6 +795,7 @@ llm_stream() {
                     if [[ "$_think_pending" == *"</think>"* ]]; then
                         local _think_before="${_think_pending%%</think>*}"
                         local _after_think="${_think_pending#*</think>}"
+                        _after_think="${_after_think//<\/think>/}"
                         # Flush remaining think text
                         [ -n "$_think_before" ] && _think_show "$_think_before"
                         # Close thinking banner
@@ -808,8 +821,10 @@ llm_stream() {
                     continue
                 fi
                 # Normal token after </think> in fallback mode
-                printf "%s" "$token"
-                printf "%s" "$token" > "$_tty" 2>/dev/null
+                # Strip orphan </think> tags (some models emit duplicates)
+                token="${token//<\/think>/}"
+                [ -n "$token" ] && printf "%s" "$token"
+                [ -n "$token" ] && printf "%s" "$token" > "$_tty" 2>/dev/null
             fi
         fi
 
@@ -823,13 +838,15 @@ llm_stream() {
             fi
             # Flush any response_pending buffer (very short response, never reached 7 chars)
             if [ -n "$_response_pending" ]; then
-                printf "%s" "$_response_pending"
-                printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
+                _response_pending="${_response_pending//<\/think>/}"
+                [ -n "$_response_pending" ] && printf "%s" "$_response_pending"
+                [ -n "$_response_pending" ] && printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
             fi
             # Fallback mode: flush any buffered text as response if </think> never arrived
             if [ "$_in_think_block" -eq 1 ] && [ -n "$_think_pending" ]; then
-                printf "%s" "$_think_pending"
-                printf "%s" "$_think_pending" > "$_tty" 2>/dev/null
+                _think_pending="${_think_pending//<\/think>/}"
+                [ -n "$_think_pending" ] && printf "%s" "$_think_pending"
+                [ -n "$_think_pending" ] && printf "%s" "$_think_pending" > "$_tty" 2>/dev/null
             fi
             # Debug: extract token counts from the final streaming JSON
             if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
@@ -912,8 +929,9 @@ llm_chat() {
         payload=$(echo "$payload" | jq --argjson bt "$budget" '. + {budget_tokens: $bt}')
     fi
 
-    # Inject think:true for models with structured thinking support
-    if [ "${LODGE_NOTHINK:-0}" -eq 0 ] && models_has_thinking "$LODGE_MODEL" 2>/dev/null; then
+    # Inject think:true for models with native thinking template support
+    # NOT sent to system-prompt thinkers (Ministral)
+    if [ "${LODGE_NOTHINK:-0}" -eq 0 ] && models_supports_think_flag "$LODGE_MODEL" 2>/dev/null; then
         payload=$(echo "$payload" | jq '. + {think: true}')
     fi
 
