@@ -338,6 +338,18 @@ llm_generate() {
     _nt=$(models_nothink_suffix)
     [ -n "$_nt" ] && prompt="${prompt}${_nt}"
 
+    # ── Thinking directive injection ───────────────────────────
+    # When a runtime system prompt is passed, it REPLACES the
+    # Modelfile's SYSTEM block — silently losing the thinking
+    # instruction. Prepend it so the model always sees it.
+    if [ -n "$system" ] && declare -f models_thinking_directive &>/dev/null; then
+        local _think_dir
+        _think_dir=$(models_thinking_directive)
+        if [ -n "$_think_dir" ]; then
+            system="${_think_dir}\n\n${system}"
+        fi
+    fi
+
     # Build options with per-scenario sampling parameters
     local _opts
     _opts=$(_llm_build_opts "$max_tokens")
@@ -617,6 +629,17 @@ llm_stream() {
     local _nt
     _nt=$(models_nothink_suffix)
     [ -n "$_nt" ] && prompt="${prompt}${_nt}"
+
+    # ── Thinking directive injection ───────────────────────────
+    # Runtime system prompt REPLACES the Modelfile's SYSTEM block.
+    # Prepend the thinking directive so it's never lost.
+    if [ -n "$system" ] && declare -f models_thinking_directive &>/dev/null; then
+        local _think_dir
+        _think_dir=$(models_thinking_directive)
+        if [ -n "$_think_dir" ]; then
+            system="${_think_dir}\n\n${system}"
+        fi
+    fi
 
     # Build options with per-scenario sampling parameters
     local _opts
@@ -942,11 +965,22 @@ llm_chat() {
         messages=$(echo "$messages" | jq --arg nt "$_nt" '
             (map(select(.role == "user")) | length) as $n |
             if $n > 0 then
-                reduce range(length) as $i (.; 
+                reduce range(length) as $i (.;
                     if .[$i].role == "user" and ([.[$i+1:][] | select(.role == "user")] | length) == 0
                     then .[$i].content += $nt
                     else . end)
             else . end')
+    fi
+
+    # ── Thinking directive injection ───────────────────────────
+    # Runtime system prompt REPLACES the Modelfile's SYSTEM block.
+    # Prepend the thinking directive so it's never lost.
+    if [ -n "$system" ] && declare -f models_thinking_directive &>/dev/null; then
+        local _think_dir
+        _think_dir=$(models_thinking_directive)
+        if [ -n "$_think_dir" ]; then
+            system="${_think_dir}\n\n${system}"
+        fi
     fi
 
     # Build options with per-scenario sampling parameters

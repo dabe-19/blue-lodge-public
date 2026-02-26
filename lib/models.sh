@@ -345,6 +345,70 @@ models_nothink_suffix() {
     esac
 }
 
+# ── Return the thinking directive for the current model ────────
+# When a runtime system prompt is passed to the Ollama API, it
+# REPLACES the Modelfile's SYSTEM block entirely.  That means the
+# thinking instruction ("reason inside <think>...</think> tags")
+# is silently lost.  This function returns the directive so that
+# llm.sh can prepend it to every system prompt, ensuring the model
+# always sees its thinking instructions regardless of override.
+#
+# This is needed for ALL thinking models, not just system-prompt
+# thinkers.  Even Granite4-preview (which uses think:true for
+# Ollama's .thinking field routing) needs it because the template's
+# built-in thinking instruction only fires when NO system prompt
+# is provided ({{- if eq $system "" }}).  George always provides
+# a system prompt, so the template's instruction is silently skipped.
+#
+# Qwen3 is the exception — its template injects the thinking
+# instruction unconditionally when think:true is set.
+# Returns empty when LODGE_NOTHINK=1.
+models_thinking_directive() {
+    local model="${1:-$LODGE_MODEL}"
+
+    # If nothink is active, suppress the directive
+    [ "${LODGE_NOTHINK:-0}" -eq 1 ] && return
+
+    # All thinking models need the directive injected into the
+    # system prompt — the Modelfile SYSTEM gets replaced at runtime.
+    # Qwen3 is excluded because its template injects the instruction
+    # unconditionally (not gated by $system == "").
+    if ! models_has_thinking "$model"; then
+        return  # not a thinking model
+    fi
+
+    local key=""
+    if models_info "$model" 2>/dev/null; then
+        key="$_ME_KEY"
+    fi
+
+    # Qwen3: template handles thinking natively regardless of system prompt
+    case "$key" in
+        qwen3-*) return ;;
+    esac
+
+    case "$key" in
+        minist-*)
+            echo "Before each response, reason step by step inside <think></think> tags. Be thorough — explore ideas, consider alternatives, verify your reasoning. After the closing </think> tag, provide your final concise response directly. Do not emit additional think tags after your response."
+            ;;
+        granite4-preview*)
+            # Must match Granite's native training format exactly.
+            # The template normally injects this when $system=="" but George
+            # always provides a system prompt, so the template skips it.
+            # Granite expects <response></response> wrapping too — the parser
+            # in llm.sh strips those tags so they're transparent to callers.
+            echo "Respond to every user query in a comprehensive and detailed way. You can write down your thoughts and reasoning process before responding. In the thought process, engage in a comprehensive cycle of analysis, summarization, exploration, reassessment, reflection, backtracing, and iteration to develop well-considered thinking process. In the response section, based on various attempts, explorations, and reflections from the thoughts section, systematically present the final solution that you deem correct. The response should summarize the thought process. Write your thoughts between <think></think> and write your response between <response></response> for each user query."
+            ;;
+        *)  # Other thinking models with system-prompt method
+            local method
+            method=$(models_nothink_method "$model")
+            if [ "$method" = "system" ]; then
+                echo "Before each response, reason step by step inside <think></think> tags. After </think>, provide your final response."
+            fi
+            ;;
+    esac
+}
+
 # ── Check if current model produces thinking tokens ────────────
 # Used by llm.sh to decide whether to parse <think> tags
 models_current_has_thinking() {
