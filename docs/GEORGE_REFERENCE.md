@@ -268,9 +268,16 @@ Uses Blockfrost API: /api keys set BLOCKFROST_API_KEY <key>
 
 ## Container Proot Distro
 
-/container create <distro> — create a proot-distro container.
-/container enter <name> — enter a container shell.
-Distros: ubuntu, alpine, kali, fedora, void, arch.
+/container install <distro> — install a proot-distro container.
+/container login <name> — enter a container shell.
+/container exec <name> <cmd> — run a command in a container.
+/container list — list installed containers.
+/container here <name> <cmd> — run with current dir at /workspace.
+/container info <name> — show container size/details.
+/container reset <name> — remove and reinstall.
+/container pentest — one-command Kali + top tools.
+/container rm <name> — remove a container.
+Distros: ubuntu, alpine, kali, fedora, void, arch, debian, opensuse.
 Full Linux environment via proot-distro.
 
 ## Vitals System Dashboard
@@ -305,11 +312,14 @@ Never web-search for info from a social channel. Read the source.
 
 ## Tuning Model Parameters
 
-LLM_MODEL — model name (default: George, based on qwen3).
-LLM_MAX_TOKENS — max output tokens (default: 2048).
-LLM_TEMPERATURE — creativity 0.0-1.0 (default: 0.7).
-LLM_CONTEXT_LENGTH — context window size.
-Set via: /api keys set LLM_MODEL <model>
+George uses a dual-model architecture with 9 models across 4 families.
+Primary model handles /ask and agent tasks. Secondary handles routing, tools, journal.
+Use /models to switch. Use /model to adjust sampling.
+Global defaults: temperature 0.6, repeat_penalty 1.3, presence_penalty 0.8.
+Per-scenario overrides: ask (0.5), agent (0.3), router (0.1), journal (0.6), tool (0.3).
+Set via: /model temp 0.3, /model temp-ask 0.7, /model reset.
+Environment: LLM_TEMPERATURE, LLM_REPEAT_PENALTY, LLM_PRESENCE_PENALTY.
+Per-scenario env: LLM_TEMP_ASK, LLM_PRESENCE_ROUTER, etc.
 
 ## Soul Personality Toggle
 
@@ -317,14 +327,29 @@ Set via: /api keys set LLM_MODEL <model>
 /soul off — inject condensed identity + Practical Craft only.
 Full soul includes moral philosophy, humor, ethics.
 
+## Model Library Management
+
+/models — show status + full model list.
+/models list — list all 9 available models.
+/models status — show current mode, slots, details.
+/models select primary <key> — set primary model.
+/models select secondary <key> — set secondary model.
+/models single <key> — single-model mode.
+/models dual — back to dual-model mode.
+Families: qwen (think+inst), llama (base+inst), granite (inst+hybrid+preview), ministral (think+inst).
+Models: qwen3-think, qwen3-inst, llama32, llama32-inst, granite4, granite4-h, granite4-preview, minist-think, minist-inst.
+
 ## Thinking Mode Display
 
 The model always thinks internally. `/think` controls visibility:
 
+/think — cycle through modes (dim→bright→hidden→off→nothink).
 /think on — show LLM thinking process (dimmed).
 /think off — hide thinking (default).
 /think bright — show thinking prominently.
 /think dim — show thinking in dim text.
+/think hide — think but don't display.
+/think nothink — suppress reasoning entirely (Qwen3: /no_think suffix, Granite preview: system prompt, Ministral: no effect).
 
 ## Agent Task Execution
 

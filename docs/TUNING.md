@@ -15,7 +15,7 @@ George uses a **three-tier prompt system** that keeps token usage within budget:
 | **plan** (dense) | `agent_plan` (LODGE_SOUL=1) | ~5,000 tokens (full soul + catalog) | 20,480 tokens | ~25,480 tokens |
 | **task** | `memory_build_system_prompt` task mode | ~3,500 tokens | 20,480 tokens | ~24,000 tokens |
 
-> **Note:** The thinking model uses ~200-2000 think tokens per response. These count against the output cap. Per-call limits match the Modelfile `num_predict` ceiling (20480) — the model stops at its natural `<|im_end|>` stop token well before hitting the cap.
+> **Note:** The thinking model uses ~200-2000 think tokens per response. These count against the output cap. Per-call limits match the Modelfile `num_predict` ceiling (32768) — the model stops at its natural `<|im_end|>` stop token well before hitting the cap.
 
 The **Modelfile SYSTEM prompt** (~300 tokens) is baked into every request by Ollama automatically but is **overridden** when a function passes its own system prompt. George always knows who he is because every prompt tier includes soul content.
 
@@ -54,11 +54,11 @@ All token/context settings can be overridden via environment variables. Set them
 
 ```bash
 # Maximum output tokens for task execution (agent_execute_step)
-# Default: 20480. Matches Modelfile ceiling. Model stops at <|im_end|>.
+# Default: 20480. Model stops at <|im_end|>; this is a safety cap.
 export LLM_MAX_TOKENS=1024
 
 # Maximum output tokens for /ask (think + response)
-# Default: 20480. Matches Modelfile ceiling. Model stops at <|im_end|>.
+# Default: 20480. Model stops at <|im_end|>; this is a safety cap.
 export LLM_ASK_TOKENS=2048
 
 # Safety timeout per LLM request (seconds)
@@ -159,14 +159,14 @@ ollama create blue-lodge -f ~/blue-lodge/Modelfile
 | Parameter | Default | Description | Tuning guidance |
 |-----------|---------|-------------|-----------------|
 | `num_ctx` | 32768 | Context window (tokens). All input + output must fit. | KV cache ≈ 144KB/token for Qwen3-4B. 32768 uses ~4.5GB. Reduce to 20480 (~2.81GB) on tight RAM. |
-| `num_predict` | 20480 | Max output tokens (overridden per-call by env vars). | Modelfile-level ceiling. Per-call overrides (`LLM_MAX_TOKENS`, `LLM_ASK_TOKENS`) take precedence. Thinking model needs generous budget (think tokens + response). |
+| `num_predict` | 32768 | Max output tokens (overridden per-call by env vars). | Modelfile-level ceiling. Per-call overrides (`LLM_MAX_TOKENS`, `LLM_ASK_TOKENS`) take precedence. Thinking model needs generous budget (think tokens + response). |
 | `num_thread` | 8 | CPU threads for inference. | Match your physical core count. 8 for Snapdragon 8 Elite, 4 for typical laptops. |
 | `num_gpu` | 0 | GPU layers to offload. 0 = pure CPU. | Set to 99 (all layers) if you have a GPU. Partial offload: try 20-40. |
-| `temperature` | 0.4 | Randomness. Lower than HuggingFace default (0.6) for more focused output. | Per-scenario overrides via `_llm_build_opts()` adjust temperature per use case (0.1 for router, 0.6 for journal). See Per-Scenario Sampling below. |
+| `temperature` | 0.6 | Randomness. Default matches per-model registry. | Per-scenario overrides via `_llm_build_opts()` adjust temperature per use case (0.1 for router, 0.6 for journal). See Per-Scenario Sampling below. |
 | `top_p` | 0.95 | Nucleus sampling threshold. | Lower (0.7) for focused output, higher (0.95) for variety. |
 | `top_k` | 20 | Top-K sampling. Limits token candidates per step. | Unsloth-recommended. Keeps generation focused despite moderate temperature. |
 | `repeat_penalty` | 1.3 | Penalty for repeating tokens. | Mild penalty to discourage token-level loops. Works alongside presence_penalty. |
-| `presence_penalty` | 1.8 | Penalty for tokens already in context. | Strong anti-repetition. Encourages diverse output and prevents spiral loops. |
+| `presence_penalty` | 0.8 | Penalty for tokens already in context. | Moderate anti-repetition. Discourages re-treading the same ideas. Works alongside repeat_penalty. |
 | `stop` | `<\|im_end\|>` | Stop sequence. Model-specific. | Check your model's chat template for the correct stop token. |
 
 ### Per-Scenario Sampling
@@ -177,14 +177,14 @@ George doesn't use a single temperature for everything. The `_llm_build_opts()` 
 
 | Scenario | Used by | Temp | Repeat | Presence | Rationale |
 |----------|---------|------|--------|----------|-----------|
-| `ask` | `/ask`, quick questions | 0.5 | 1.3 | 1.8 | Conversational, moderate creativity |
-| `agent` | `agent_plan`, `agent_execute_step` | 0.3 | 1.3 | 1.8 | Focused execution, low creativity |
-| `router` | Inner loop tool selection | 0.1 | 1.1 | 2.0 | Near-deterministic routing, strong anti-loop |
-| `journal` | Background reflections | 0.6 | 1.3 | 2.0 | Slightly creative, strong anti-repetition |
-| `tool` | `/commit`, `/web summary`, `/recall`, `/slash` | 0.3 | 1.3 | 1.8 | Structured output, focused |
+| `ask` | `/ask`, quick questions | 0.5 | 1.3 | 0.8 | Conversational, moderate creativity |
+| `agent` | `agent_plan`, `agent_execute_step` | 0.3 | 1.3 | 0.8 | Focused execution, low creativity |
+| `router` | Inner loop tool selection | 0.1 | 1.1 | 1.0 | Near-deterministic routing, moderate anti-loop |
+| `journal` | Background reflections | 0.6 | 1.3 | 1.0 | Slightly creative, moderate anti-repetition |
+| `tool` | `/commit`, `/web summary`, `/recall`, `/slash` | 0.3 | 1.3 | 0.8 | Structured output, focused |
 
 **Global defaults** (used when no scenario is set or as fallback):
-- `LLM_TEMPERATURE=0.4`, `LLM_REPEAT_PENALTY=1.3`, `LLM_PRESENCE_PENALTY=1.8`
+- `LLM_TEMPERATURE=0.6`, `LLM_REPEAT_PENALTY=1.3`, `LLM_PRESENCE_PENALTY=0.8`
 
 **Override individual scenarios** via environment variables:
 
@@ -256,7 +256,7 @@ PARAMETER num_predict 256
 
 ## Using Custom Models
 
-> **Model Library:** George ships with 7 pre-configured models across 4 families. Before creating a custom model from scratch, check whether [MODELS.md](MODELS.md) already covers your use case. The model library handles stop tokens, sampling, nothink mechanisms, and dual-model routing automatically.
+> **Model Library:** George ships with 9 pre-configured models across 4 families. Before creating a custom model from scratch, check whether [MODELS.md](MODELS.md) already covers your use case. The model library handles stop tokens, sampling, nothink mechanisms, and dual-model routing automatically.
 
 ### Step 1: Choose a model
 

@@ -458,14 +458,19 @@ llm_generate() {
                 # ── Inline-tag fallback mode ──
                 # Detect <think> at start of response to enter think mode.
                 # Buffer initial tokens until we know if model is thinking.
-                if [ "$_can_think" -eq 1 ] && [ "$_in_think_block" -eq 0 ] && [ ${#_response_pending} -lt 8 ]; then
+                # Buffer limit raised to 20 chars — some models emit
+                # whitespace (\n, spaces) before the <think> tag.
+                if [ "$_can_think" -eq 1 ] && [ "$_in_think_block" -eq 0 ]; then
                     _response_pending+="$token"
-                    # Once we have enough chars, check for <think>
-                    if [ ${#_response_pending} -ge 7 ]; then
-                        if [[ "$_response_pending" == "<think>"* ]]; then
+                    # Strip leading whitespace for <think> detection
+                    # (Granite4-preview, Ministral emit \n before <think>)
+                    local _resp_trimmed="$_response_pending"
+                    _resp_trimmed="${_resp_trimmed#"${_resp_trimmed%%[![:space:]]*}"}"
+                    if [ ${#_resp_trimmed} -ge 7 ]; then
+                        if [[ "$_resp_trimmed" == "<think>"* ]]; then
                             _in_think_block=1
                             # Move everything after <think> into think_pending
-                            _think_pending="${_response_pending#<think>}"
+                            _think_pending="${_resp_trimmed#<think>}"
                             _response_pending=""
                             if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
                                 _think_banner_open=1
@@ -478,6 +483,11 @@ llm_generate() {
                             _response_pending=""
                             _can_think=0  # stop buffering for this response
                         fi
+                    elif [ ${#_response_pending} -ge 20 ]; then
+                        # Buffer overflow guard — flush and give up
+                        printf "%s" "$_response_pending"
+                        _response_pending=""
+                        _can_think=0
                     fi
                     continue
                 fi
@@ -724,12 +734,18 @@ llm_stream() {
                 # ── Inline-tag fallback mode ──
                 # Detect <think> at start of response to enter think mode.
                 # Buffer initial tokens until we know if model is thinking.
-                if [ "$_can_think" -eq 1 ] && [ "$_in_think_block" -eq 0 ] && [ ${#_response_pending} -lt 8 ]; then
+                # Buffer limit raised to 20 chars — some models emit
+                # whitespace (\n, spaces) before the <think> tag.
+                if [ "$_can_think" -eq 1 ] && [ "$_in_think_block" -eq 0 ]; then
                     _response_pending+="$token"
-                    if [ ${#_response_pending} -ge 7 ]; then
-                        if [[ "$_response_pending" == "<think>"* ]]; then
+                    # Strip leading whitespace for <think> detection
+                    # (Granite4-preview, Ministral emit \n before <think>)
+                    local _resp_trimmed="$_response_pending"
+                    _resp_trimmed="${_resp_trimmed#"${_resp_trimmed%%[![:space:]]*}"}"
+                    if [ ${#_resp_trimmed} -ge 7 ]; then
+                        if [[ "$_resp_trimmed" == "<think>"* ]]; then
                             _in_think_block=1
-                            _think_pending="${_response_pending#<think>}"
+                            _think_pending="${_resp_trimmed#<think>}"
                             _response_pending=""
                             _think_banner_open=1
                             _think_open
@@ -740,6 +756,12 @@ llm_stream() {
                             _response_pending=""
                             _can_think=0
                         fi
+                    elif [ ${#_response_pending} -ge 20 ]; then
+                        # Buffer overflow guard — flush and give up
+                        printf "%s" "$_response_pending"
+                        printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
+                        _response_pending=""
+                        _can_think=0
                     fi
                     continue
                 fi

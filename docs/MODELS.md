@@ -6,7 +6,7 @@
 
 ## Overview
 
-George ships with a **model library** of 7 pre-configured models across 4 families. Two models run in tandem:
+George ships with a **model library** of 9 pre-configured models across 4 families. Two models run in tandem:
 
 - **Primary model** — handles conversational queries (`/ask`) and agent planning/execution. Should be a strong reasoning model.
 - **Secondary model** — handles fast utility tasks: tool routing, commit messages, journal reflections, web summaries. Should be a fast instruct model.
@@ -27,9 +27,11 @@ Dual-model mode gives you the best of both: deep reasoning where it matters, spe
 |-----|-----------|--------|------|--------|---------|-------|
 | `qwen3-think` | Qwen3-4B-Thinking-2507 UD-Q5_K_XL | Qwen3 | thinking | Yes | 32K | **Default primary.** Extended thinking with `/no_think` soft switch. Best overall. |
 | `qwen3-inst` | Qwen3-4B-Instruct-2507 UD-Q5_K_XL | Qwen3 | instruct | No | 32K | **Default secondary.** Fast instruct, no thinking phase. |
-| `llama32` | llama3.2:3b | Llama 3.2 | thinking | No | 128K | Meta base model. Strong general reasoning. Huge native context window. |
-| `llama32-inst` | Llama-3.2-3B-Instruct UD-Q5_K_XL | Llama 3.2 | instruct | No | 128K | Llama Instruct (Unsloth quant). Fast responses. |
-| `granite4` | granite4:3b | Granite 4 | thinking | Yes | 32K | IBM Granite 4. Strong reasoning and instruction following. |
+| `llama32` | llama3.2:3b | Llama 3.2 | thinking | No | 32K | Meta base model. Strong general reasoning. Huge native context window (128K). |
+| `llama32-inst` | Llama-3.2-3B-Instruct UD-Q5_K_XL | Llama 3.2 | instruct | No | 32K | Llama Instruct (Unsloth quant). Fast responses. |
+| `granite4` | granite4:3b | Granite 4 | instruct | No | 32K | IBM Granite 4 Micro instruct. Fast structured output. |
+| `granite4-h` | granite4:3b-h | Granite 4 | instruct | No | 32K | IBM Granite 4 hybrid quant. Smaller footprint (1.9GB vs 2.1GB). |
+| `granite4-preview` | ibm/granite4.0-preview:tiny | Granite 4 | thinking | Yes | 32K | IBM Granite 4 Preview. Extended thinking via Ollama `.thinking` field. |
 | `minist-think` | Ministral-3-3B-Reasoning-2512 UD-Q5_K_XL | Ministral | thinking | Yes | 32K | Mistral reasoning model. Chain-of-thought with compact output. |
 | `minist-inst` | Ministral-3-3B-Instruct-2512 UD-Q5_K_XL | Ministral | instruct | No | 32K | Mistral instruct model. Fast structured output. |
 
@@ -88,17 +90,17 @@ ollama create blue-lodge-minist-think:4b -f ~/blue-lodge/models/minist-think.Mod
 
 ### Pre-Downloading All Models
 
-To download all 7 models upfront (useful before going offline):
+To download all 9 models upfront (useful before going offline):
 
 ```bash
 source ~/blue-lodge/lib/models.sh
-for key in qwen3-think qwen3-inst llama32 llama32-inst granite4 minist-think minist-inst; do
+for key in qwen3-think qwen3-inst llama32 llama32-inst granite4 granite4-h granite4-preview minist-think minist-inst; do
     echo "Creating $key..."
     models_create "$key"
 done
 ```
 
-> **Storage:** Each base image is ~2.5-3.5 GB. All 7 models share some base layers but expect ~15-20 GB total disk usage for the full library.
+> **Storage:** Each base image is ~2.5-3.5 GB. All 9 models share some base layers but expect ~20-25 GB total disk usage for the full library.
 
 ### Ollama Base Images
 
@@ -111,6 +113,8 @@ Some models use official Ollama library tags, others use HuggingFace GGUF files 
 | `llama32` | `llama3.2:3b` | Official Ollama library (`ollama pull llama3.2:3b`) |
 | `llama32-inst` | `hf.co/unsloth/Llama-3.2-3B-Instruct-GGUF:UD-Q5_K_XL` | Auto-downloaded by `ollama create` |
 | `granite4` | `granite4:3b` | Official Ollama library (`ollama pull granite4:3b`) |
+| `granite4-h` | `granite4:3b-h` | Official Ollama library (`ollama pull granite4:3b-h`) |
+| `granite4-preview` | `ibm/granite4.0-preview:tiny` | Official Ollama library (`ollama pull ibm/granite4.0-preview:tiny`) |
 | `minist-think` | `hf.co/unsloth/Ministral-3-3B-Reasoning-2512-GGUF:UD-Q5_K_XL` | Auto-downloaded by `ollama create` |
 | `minist-inst` | `hf.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF:UD-Q5_K_XL` | Auto-downloaded by `ollama create` |
 
@@ -232,14 +236,30 @@ When George switches between primary and secondary:
 - Same 128K context capability
 - Stop token: `<|eot_id|>`
 
-### Granite 4
+### Granite 4 Family
 
-**granite4** — IBM's Granite 4 3B model.
+**granite4** — IBM's Granite 4 3B Micro model.
 
-- Produces `<think>` blocks (thinking model)
-- Nothink method: `system` — when `LODGE_NOTHINK=1`, the Modelfile includes a system prompt instruction telling the model to skip reasoning. This is less reliable than Qwen3's `/no_think` token because it's a soft instruction, not an architectural feature.
+- Instruct model — does not produce `<think>` blocks
+- No nothink mechanism needed (it never thinks)
 - Stop token: `<|end_of_text|>`
 - Strong at structured reasoning and instruction following
+
+**granite4-h** — IBM's Granite 4 3B hybrid quantization.
+
+- Same architecture as `granite4` but uses hybrid quantization (1.9GB vs 2.1GB)
+- Instruct model — no thinking phase
+- Stop token: `<|end_of_text|>`
+- Good choice when disk/RAM is tighter
+
+**granite4-preview** — IBM's Granite 4 Preview (tiny) thinking model.
+
+- The actual IBM thinking model in the library — produces extended reasoning via Ollama's `.thinking` field
+- Nothink method: `system` — when `LODGE_NOTHINK=1`, the Modelfile includes a system prompt instruction telling the model to skip reasoning. This is less reliable than Qwen3's `/no_think` token because it's a soft instruction, not an architectural feature.
+- May emit `<response>...</response>` wrapper tags — George strips these automatically in both `llm_generate` and `llm_stream`
+- The generated Modelfile includes a SYSTEM prompt instruction to not emit response tags
+- Stop token: `<|end_of_text|>`
+- Base image: `ibm/granite4.0-preview:tiny`
 
 ### Ministral Family
 
@@ -278,9 +298,10 @@ The `/think nothink` command and `LODGE_NOTHINK=1` variable behave differently p
 | Model | Nothink Method | Effectiveness |
 |-------|---------------|---------------|
 | `qwen3-think` | `/no_think` prompt suffix | **Strong** — architecturally supported by Qwen3 |
-| `granite4` | System prompt instruction | **Weak** — model may still reason despite instruction |
+| `granite4-preview` | System prompt instruction | **Weak** — model may still reason despite instruction |
 | `minist-think` | None | **No effect** — model always reasons |
 | `llama32` | None | **No effect** — model doesn't think to begin with |
+| `granite4`, `granite4-h` | N/A | **Not applicable** — instruct models, never reason |
 | All instruct models | N/A | **Not applicable** — they never reason |
 
 **Impact:** If you switch primary to `minist-think` and use `/think nothink`, the flag will be set but reasoning will still occur. George won't error — it just won't suppress thinking.
@@ -397,11 +418,11 @@ Thinking model for everything, including tool routing and commit messages. Slowe
 ### Cross-Family Experiment
 
 ```bash
-export LODGE_MODEL_PRIMARY="blue-lodge-granite4:3b"
+export LODGE_MODEL_PRIMARY="blue-lodge-granite4-preview:tiny"
 export LODGE_MODEL_SECONDARY="blue-lodge-minist-inst:4b"
 ```
 
-IBM Granite for planning, Mistral Instruct for fast utility. Good for testing different reasoning styles. Be aware that Granite's nothink is system-prompt-based (weaker than Qwen3's).
+IBM Granite Preview for planning, Mistral Instruct for fast utility. Good for testing different reasoning styles. Be aware that Granite Preview's nothink is system-prompt-based (weaker than Qwen3's).
 
 ### Large Context (Llama)
 
@@ -451,8 +472,9 @@ The `/think` command interacts with the model library's nothink system:
 
 When you use `/think nothink`:
 - **Qwen3 thinking models:** Appends `/no_think` to prompts (strong suppression)
-- **Granite 4:** Relies on system prompt instruction (weak suppression)
+- **Granite 4 Preview:** Relies on system prompt instruction (weak suppression)
 - **Ministral thinking:** No effect (model always reasons)
+- **Granite 4 / Granite 4-H:** No effect (instruct models, never reason)
 - **Instruct models:** No effect (they never reason anyway)
 
 ### `/model` (Sampling Parameters)

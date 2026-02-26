@@ -66,7 +66,10 @@ lodge /ask "what is a monad?"      # Quick question
 │   ├── build.sh       # /build — build project
 │   ├── commit.sh      # /commit — AI commit messages
 │   ├── push.sh        # /push — push to GitHub
-│   └── clone.sh       # /clone — clone + setup repos
+│   ├── clone.sh       # /clone — clone + setup repos
+│   ├── write.sh       # /write — write/overwrite files
+│   ├── save.sh        # /save — save content to file (alias for /write)
+│   └── download.sh    # /download — download URLs
 ├── ~/.george/         # User config & data (created on first run)
 │   ├── keys.conf      # API keys (chmod 600)
 │   ├── cache/         # Web page cache (1h TTL)
@@ -99,6 +102,9 @@ lodge /ask "what is a monad?"      # Quick question
 | `/commit [files]` | `lgc` | AI-generated commit message |
 | `/push [branch]` | `lgp` | Push to GitHub |
 | `/clone <repo>` | `lgcl` | Clone + auto-setup a repo |
+| `/write <file> <text>` | — | Write/overwrite a file |
+| `/save <file> <text>` | — | Save content to file (alias for /write) |
+| `/download <url> [dest]` | — | Download a URL |
 | `/status` | `lgs` | Show agent + device status |
 | `/memory` | `lgm` | Show current GEORGE.md |
 | `/soul` | — | Toggle soul intensity (condensed/full) |
@@ -625,7 +631,7 @@ lodge /wallet status                              # Wallet overview
 
 ## Model
 
-Ships with a **model library** of 7 pre-configured models across 4 families (Qwen3, Llama 3.2, Granite 4, Ministral). Default pair:
+Ships with a **model library** of 9 pre-configured models across 4 families (Qwen3, Llama 3.2, Granite 4, Ministral). Default pair:
 
 - **Primary:** Qwen3-4B-Thinking-2507 (UD-Q5_K_XL) — reasoning and planning
 - **Secondary:** Qwen3-4B-Instruct-2507 (UD-Q5_K_XL) — fast utility tasks
@@ -834,7 +840,7 @@ bash ~/blue-lodge/uninstall.sh
 
 ## Testing
 
-George includes a comprehensive pure-bash test suite with **~700+ assertions** across 30 test modules. No external test dependencies required.
+George includes a comprehensive pure-bash test suite with **~1,600+ assertions** across 30 test modules. No external test dependencies required.
 
 ### Run All Tests
 
@@ -854,27 +860,36 @@ bash tests/test_api.sh                     # Run a single file directly
 
 | Module | Tests | Covers |
 |--------|-------|--------|
-| `test_agent.sh` | 10 | Agent loop, config, cancellation |
+| `test_agent.sh` | 140 | Agent loop, config, cancellation, auto-install, cascade |
 | `test_api.sh` | 33 | REST client, keys, JSON, auth headers |
 | `test_backup.sh` | 46 | Local/git backup, restore, pruning, export/import |
-| `test_commands.sh` | 36 | Slash command registration, dispatch, memory loop catalog |
+| `test_commands.sh` | 47 | Slash command registration, dispatch, memory loop catalog |
 | `test_container.sh` | 28 | Container management, distro resolution |
-| `test_journal.sh` | 21 | Temporal memory, decay, greetings |
-| `test_llm.sh` | 23 | LLM config, token estimation, cancellation |
-| `test_lodge.sh` | 38 | Main script, command wiring, soul toggle, REPL heuristic |
-| `test_memory.sh` | 30 | GEORGE.md sections, compaction, snapshots, soul toggle |
-| `test_providers.sh` | 32 | 10 AI providers, dispatcher, aliases |
-| `test_sandbox.sh` | 15 | Sandbox lifecycle, build, remove |
-| `test_email.sh` | 65 | Gmail/ProtonMail/Zoho/Tuta providers, SMTP/IMAP, bridge |
-| `test_social.sh` | 57 | 5 platforms, Discord channels, post/send dispatch |
-| `test_tools.sh` | 28 | Code extraction, file ops, safety checks |
-| `test_security.sh` | 55 | Allowlist, signing, encryption, sandboxes |
+| `test_download.sh` | 10 | URL download, local copy |
+| `test_email.sh` | 78 | Gmail/ProtonMail/Zoho/Tuta providers, SMTP/IMAP, bridge |
+| `test_git.sh` | 60 | Git identity, SSH, remote, push guard |
+| `test_gsuite.sh` | 35 | OAuth2, Gmail/Drive/Docs, input validation |
+| `test_init.sh` | 38 | Project scaffolding, type resolution, prereqs |
+| `test_journal.sh` | 32 | Temporal memory, decay, greetings |
+| `test_llm.sh` | 128 | LLM config, token estimation, model library, dual-model, sampling |
+| `test_lodge.sh` | 136 | Main script, command wiring, soul toggle, REPL heuristic |
+| `test_memory.sh` | 60 | GEORGE.md sections, compaction, snapshots, soul toggle |
+| `test_pgp.sh` | 34 | PGP signing, verification, key management |
+| `test_phone.sh` | 43 | Phone integration, Termux API, dashboard |
+| `test_providers.sh` | 32 | 11 AI providers, dispatcher, aliases |
 | `test_recall.sh` | 71 | FTS5 indexing, search, self-review, quality checks |
+| `test_sandbox.sh` | 57 | Sandbox lifecycle, build, remove, journal, permissions |
+| `test_save.sh` | 23 | File save, directory creation |
 | `test_secrets.sh` | 30 | Vault encrypt/decrypt, rotate, import, export |
-| `test_gsuite.sh` | 28 | OAuth2, Gmail/Drive/Docs, input validation |
-| `test_wallet.sh` | 35 | BTC/ADA/SOL wallets, network toggle, send validation |
+| `test_security.sh` | 56 | Allowlist, signing, encryption, sandboxes |
+| `test_slash.sh` | 53 | Custom commands, create, template, rename |
+| `test_social.sh` | 95 | 5 platforms, Discord channels/users, post/send dispatch |
+| `test_tools.sh` | 56 | Code extraction, file ops, safety checks |
 | `test_ui.sh` | 39 | Colors, print functions, markdown rendering |
-| `test_web.sh` | 29 | Web fetch, HTML parsing, DDG search, cache |
+| `test_vitals.sh` | 83 | System vitals, thresholds, guards, context |
+| `test_wallet.sh` | 51 | BTC/ADA/SOL wallets, network toggle, send validation |
+| `test_web.sh` | 68 | Web fetch, HTML parsing, DDG search, cache |
+| `test_write.sh` | 15 | File write, code extraction |
 
 ### Writing Tests
 

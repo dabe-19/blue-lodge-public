@@ -165,13 +165,16 @@ Format: {"ts":"...","ev":"create","name":"myapp","detail":"rust","rc":0}
 
 ## Container Proot Distro Linux
 
-/container create <distro> — create a proot-distro container.
-/container enter <name> — enter a container shell.
-/container list — show containers.
-/container remove <name> — remove container.
-Distros: ubuntu, alpine, kali, fedora, void, arch.
-Full Linux environment via proot-distro.
-Pentest: /container pentest for Kali.
+/container install <distro> — install a proot-distro container.
+/container login <name> — enter a container shell.
+/container exec <name> <cmd> — run a command in a container.
+/container list — show installed containers.
+/container here <name> <cmd> — run with current dir at /workspace.
+/container info <name> — show container size/details.
+/container reset <name> — remove and reinstall.
+/container pentest — one-command Kali + top tools.
+/container rm <name> — remove a container.
+Distros: ubuntu, alpine, kali, fedora, void, arch, debian, opensuse.
 
 ## Init Scaffold Project Types
 
@@ -561,36 +564,55 @@ Note: budget_tokens is advisory for Qwen3 — num_predict is the hard cap.
 ## Model Sampling Parameters Temperature Penalty
 
 /model — show all sampling parameters per scenario.
-/model temp N — global temperature (default: 0.4, range: 0.0-2.0).
+/model temp N — global temperature (default: 0.6, range: 0.0-2.0).
 /model repeat N — global repeat penalty (default: 1.3, range: 0.0-3.0).
-/model presence N — global presence penalty (default: 1.8, range: 0.0-3.0).
+/model presence N — global presence penalty (default: 0.8, range: 0.0-3.0).
 /model reset — reset all sampling parameters to defaults.
 
 ## Model Sampling Per Scenario Override
 
 Per-scenario: /model temp-X N, /model repeat-X N, /model presence-X N
 where X = ask, agent, router, journal, tool.
-Ask: temp 0.5, repeat 1.3, presence 1.8 (conversational).
-Agent: temp 0.3, repeat 1.3, presence 1.8 (focused execution).
-Router: temp 0.1, repeat 1.1, presence 2.0 (deterministic tool selection).
-Journal: temp 0.6, repeat 1.3, presence 2.0 (brief background utility).
-Tool: temp 0.3, repeat 1.3, presence 1.8 (commit, web, recall, slash).
+Ask: temp 0.5, repeat 1.3, presence 0.8 (conversational).
+Agent: temp 0.3, repeat 1.3, presence 0.8 (focused execution).
+Router: temp 0.1, repeat 1.1, presence 1.0 (deterministic tool selection).
+Journal: temp 0.6, repeat 1.3, presence 1.0 (brief background utility).
+Tool: temp 0.3, repeat 1.3, presence 0.8 (commit, web, recall, slash).
+
+## Model Library Dual-Model Architecture
+
+George ships with 9 models across 4 families. Dual-model mode: primary for reasoning, secondary for fast utility.
+/models — show status + full model list.
+/models list — list all available models.
+/models select primary <key> — set primary model (ask, agent).
+/models select secondary <key> — set secondary model (router, tool, journal).
+/models single <key> — single-model mode (no hot-swap overhead).
+/models dual — back to dual-model mode.
+Keys: qwen3-think, qwen3-inst, llama32, llama32-inst, granite4, granite4-h, granite4-preview, minist-think, minist-inst.
+Families: qwen (think+inst), llama (base+inst), granite (inst+hybrid+preview), ministral (think+inst).
+Thinking models: qwen3-think, granite4-preview, minist-think.
+Instruct models: qwen3-inst, llama32-inst, granite4, granite4-h, minist-inst.
+Hot-swap: only one model loaded at a time. Switch takes 5-15s on ARM.
+Per-model sampling: each model has registry defaults for temp, penalties, context.
+Per-model overrides: models_set_param, models_get_param, models_show_params.
 
 ## Model Tuning Modelfile Parameters
 
 Modelfile: ~/blue-lodge/Modelfile
 Model: Qwen3-4B-Thinking-2507 UD-Q5_K_XL (~3.5GB).
-Parameters: temperature 0.4, top_p 0.95, top_k 20, min_p 0.0.
-Penalties: repeat_penalty 1.3, presence_penalty 1.8.
-Context: num_ctx 32768, num_predict 20480, num_thread 8, num_gpu 0.
+Parameters: temperature 0.6, top_p 0.95, top_k 20, min_p 0.0.
+Penalties: repeat_penalty 1.3, presence_penalty 0.8.
+Context: num_ctx 32768, num_predict 32768, num_thread 8, num_gpu 0.
 KV cache: ~144KB/token. 32K ctx = ~4.5GB KV cache.
 Stop token: <|im_end|>. LLM_KEEP_ALIVE: 30m (time model stays loaded).
 
 ## Model Environment Variables Configuration
 
 OLLAMA_URL=http://127.0.0.1:11434 (Ollama API endpoint).
-LODGE_MODEL=blue-lodge (model name).
-LLM_MAX_TOKENS=20480 (max output tokens).
+LODGE_MODEL_PRIMARY=blue-lodge-qwen3-think:4b (primary model).
+LODGE_MODEL_SECONDARY=blue-lodge-qwen3-inst:4b (secondary model).
+LODGE_SINGLE_MODEL=0 (dual-model mode by default).
+LLM_MAX_TOKENS=20480 (max output tokens per call).
 LLM_TIMEOUT=600 (safety net timeout seconds).
 LLM_KEEP_ALIVE=30m (model stay-loaded duration).
 LODGE_THINK=1 (show thinking tokens). LODGE_DEBUG=0 (debug timers).
@@ -606,11 +628,14 @@ Condensed: identity + output format + practical craft only.
 
 ## Thinking Mode Display Toggle
 
+/think — cycle through modes (dim→bright→hidden→off→nothink).
 /think on — show LLM thinking process (dimmed text).
 /think off — hide thinking (model still thinks internally).
 /think bright — show thinking prominently (cyan).
 /think dim — show thinking in dim text (default when on).
-The model always thinks. /think only controls display visibility.
+/think hide — think but don't display.
+/think nothink — suppress reasoning entirely (Qwen3: /no_think, Granite preview: system prompt).
+The model always thinks unless /think nothink is set.
 
 ## Workspace Files Status Memory
 

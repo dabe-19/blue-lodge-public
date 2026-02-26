@@ -751,7 +751,7 @@ agent_inner_loop() {
 
         # ── PHASE 1: Fast Tool Routing ────────────────────────
         local router_sys=$(_build_router_prompt)
-        local route_prompt="Review the Action Log. If objective complete, output SUCCESS: <summary>. Otherwise, output the tool name needed."
+        local route_prompt="Review the Action Log. If the objective is ALREADY FULFILLED by the actions taken (data gathered, command executed, content created), output SUCCESS: <brief summary>. Otherwise, output the SINGLE tool name needed for the next action."
 
         # ── RESEARCH SUFFICIENCY GUIDANCE ──────────────────────
         # For objectives involving web research, tell the router to
@@ -780,6 +780,23 @@ agent_inner_loop() {
             local summary
             summary=$(echo "$selected_tool" | sed 's/.*SUCCESS: //')
             echo "- Step: $micro_objective -> $summary" >> "$george_dir/macro_memory.md"
+            return 0
+        fi
+
+        # ── WEB SUFFICIENCY ENFORCEMENT ───────────────────────
+        # The sufficiency gate (below) writes SUFFICIENCY REACHED to
+        # micro_memory after N successful web actions. If the router
+        # STILL doesn't output SUCCESS on the next iteration, we
+        # programmatically force completion instead of wasting more
+        # escalation rounds. This catches models (e.g., Ministral)
+        # that ignore prompt-based stop signals.
+        if grep -q "SUFFICIENCY REACHED" "$micro_file" 2>/dev/null; then
+            local _suff_summary="Web research data gathered"
+            # Extract the last web search result for a meaningful summary
+            local _last_web
+            _last_web=$(grep -oP '(?<=Web search.*: ).*' "$micro_file" 2>/dev/null | tail -1)
+            [ -n "$_last_web" ] && _suff_summary="${_last_web:0:120}"
+            echo "- Step: $micro_objective -> $_suff_summary" >> "$george_dir/macro_memory.md"
             return 0
         fi
 
@@ -1258,7 +1275,7 @@ agent_run() {
         local macro_context
         macro_context=$(cat "$macro_file")
 
-        local macro_prompt="Read the following task memory. What is the SINGLE next logical milestone to advance the Primary Objective? If the objective is fully complete, reply DONE.\n\n$macro_context"
+        local macro_prompt="Read the following task memory. What is the SINGLE next logical milestone to advance the Primary Objective? If the objective is fully complete, reply with EXACTLY the word DONE and nothing else.\n\n$macro_context"
 
         # Use a lean system prompt — no personality, just strategic reasoning.
         # By stripping the ~500-token soul and ~200-token vitals during
@@ -1303,7 +1320,9 @@ Rules:
 - Frame milestones as tool-executable actions, not abstract goals
 - Do NOT regenerate a milestone that previously FAILED — try a different approach or skip it
 - For multi-part tasks, advance to the NEXT part even if a previous part partially failed
-- Output either DONE or a concise milestone description (one sentence, imperative mood)
+- COMPLETION: When the Primary Objective is fulfilled, output EXACTLY the word DONE (nothing else)
+- NEVER prefix a milestone with DONE, DONE:, COMPLETE, or any completion keyword — those are reserved signals
+- Milestone format: a concise imperative sentence describing the NEXT action (e.g., 'Search the web for X', 'Post findings to journal')
 - Output NOTHING else${_milestone_history}"
 
         ui_think "Strategist: determining next milestone..."
@@ -1324,7 +1343,7 @@ Rules:
             break
         fi
 
-        if [[ "$milestone" == "DONE" ]] || [[ "$milestone" == "DONE." ]] || [[ "$milestone" == *"DONE"* && ${#milestone} -lt 10 ]]; then
+        if [[ "$milestone" == DONE* ]]; then
             ui_ok "Strategist: Objective complete."
             break
         fi
