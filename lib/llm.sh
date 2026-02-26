@@ -364,6 +364,12 @@ llm_generate() {
         payload=$(echo "$payload" | jq --argjson bt "$budget" '. + {budget_tokens: $bt}')
     fi
 
+    # Inject think:true for models with structured thinking support
+    # Required for granite4-preview (Ollama .thinking field), improves Qwen3 (separate field vs inline tags)
+    if [ "${LODGE_NOTHINK:-0}" -eq 0 ] && models_has_thinking "$LODGE_MODEL" 2>/dev/null; then
+        payload=$(echo "$payload" | jq '. + {think: true}')
+    fi
+
     local curl_timeout="${LLM_TIMEOUT:-600}"
     local timeout_cmd=""
     if [ "$curl_timeout" -gt 0 ] 2>/dev/null; then
@@ -608,6 +614,11 @@ llm_stream() {
     # Inject budget_tokens at top level (Ollama ignores it inside options)
     if [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
         payload=$(echo "$payload" | jq --argjson bt "$budget" '. + {budget_tokens: $bt}')
+    fi
+
+    # Inject think:true for models with structured thinking support
+    if [ "${LODGE_NOTHINK:-0}" -eq 0 ] && models_has_thinking "$LODGE_MODEL" 2>/dev/null; then
+        payload=$(echo "$payload" | jq '. + {think: true}')
     fi
 
     # Build timeout args — belt-and-suspenders: both `timeout` command and curl's --max-time
@@ -901,6 +912,11 @@ llm_chat() {
         payload=$(echo "$payload" | jq --argjson bt "$budget" '. + {budget_tokens: $bt}')
     fi
 
+    # Inject think:true for models with structured thinking support
+    if [ "${LODGE_NOTHINK:-0}" -eq 0 ] && models_has_thinking "$LODGE_MODEL" 2>/dev/null; then
+        payload=$(echo "$payload" | jq '. + {think: true}')
+    fi
+
     local curl_timeout="${LLM_TIMEOUT:-600}"
     local timeout_cmd=""
     if [ "$curl_timeout" -gt 0 ] 2>/dev/null; then
@@ -977,6 +993,136 @@ llm_chat() {
     if [ ! -f "$_got_tokens" ]; then
         rm -f "$_got_tokens"
         echo "ERROR: Chat request failed"
+        return 1
+    fi
+    rm -f "$_got_tokens"
+}
+
+# ── Vision: image analysis via Ollama images API ───────────────
+# Usage: llm_vision "image_path_or_url" ["prompt"] ["system"] [max_tokens]
+# Sends a base64-encoded image to the current model.
+# Streams response to stdout and /dev/tty.
+llm_vision() {
+    local image_path="$1"
+    local prompt="${2:-Describe this image in detail. Note any text, objects, people, and relevant details.}"
+    local system="${3:-}"
+    local max_tokens="${4:-${LLM_MAX_TOKENS:-4096}}"
+
+    if [ -z "$image_path" ]; then
+        echo "ERROR: No image path provided"
+        return 1
+    fi
+
+    # Download if URL
+    local _tmpdir="${TMPDIR:-/tmp}"
+    local _tmp_img=""
+    if [[ "$image_path" == http* ]]; then
+        _tmp_img="$_tmpdir/.lodge-vision-$$.img"
+        if ! curl -sfL --max-time 30 "$image_path" -o "$_tmp_img" 2>/dev/null; then
+            echo "ERROR: Failed to download image: $image_path"
+            rm -f "$_tmp_img"
+            return 1
+        fi
+        image_path="$_tmp_img"
+    fi
+
+    if [ ! -f "$image_path" ]; then
+        echo "ERROR: Image file not found: $image_path"
+        return 1
+    fi
+
+    # Base64 encode (Linux -w0 vs macOS no flag)
+    local img_base64
+    img_base64=$(base64 -w0 "$image_path" 2>/dev/null || base64 "$image_path" 2>/dev/null)
+
+    if [ -z "$img_base64" ]; then
+        echo "ERROR: Failed to encode image"
+        rm -f "$_tmp_img"
+        return 1
+    fi
+
+    models_ensure_for_scenario "${LLM_SCENARIO:-}"
+
+    # Build options
+    local _opts
+    _opts=$(_llm_build_opts "$max_tokens")
+
+    local payload
+    if [ -n "$system" ]; then
+        payload=$(jq -n \
+            --arg model "$LODGE_MODEL" \
+            --arg prompt "$prompt" \
+            --arg system "$system" \
+            --arg img "$img_base64" \
+            --arg keep_alive "$LLM_KEEP_ALIVE" \
+            --argjson options "$_opts" \
+            '{model: $model, prompt: $prompt, system: $system, images: [$img], stream: true, keep_alive: $keep_alive, options: $options}')
+    else
+        payload=$(jq -n \
+            --arg model "$LODGE_MODEL" \
+            --arg prompt "$prompt" \
+            --arg img "$img_base64" \
+            --arg keep_alive "$LLM_KEEP_ALIVE" \
+            --argjson options "$_opts" \
+            '{model: $model, prompt: $prompt, images: [$img], stream: true, keep_alive: $keep_alive, options: $options}')
+    fi
+
+    local curl_timeout="${LLM_TIMEOUT:-600}"
+    local timeout_cmd=""
+    if [ "$curl_timeout" -gt 0 ] 2>/dev/null; then
+        if command -v timeout &>/dev/null; then
+            timeout_cmd="timeout $curl_timeout"
+        fi
+    fi
+
+    _LLM_ACTIVE=1
+
+    local _tty="/dev/tty"
+    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+
+    local _got_tokens="$_tmpdir/.lodge-vision-tok-$$"
+    rm -f "$_got_tokens"
+
+    ui_spinner_start "Analyzing image"
+    local _spinner_pid="$_SPINNER_PID"
+    local _first_token=0
+
+    $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
+        "$OLLAMA_URL/api/generate" \
+        -H "Content-Type: application/json" \
+        -d "$payload" 2>/dev/null | while IFS= read -r line; do
+
+        local token
+        token=$(echo "$line" | jq -r '.response // empty' 2>/dev/null)
+        if [ -n "$token" ]; then
+            if [ "$_first_token" -eq 0 ]; then
+                _first_token=1
+                touch "$_got_tokens"
+                kill "$_spinner_pid" 2>/dev/null; wait "$_spinner_pid" 2>/dev/null
+                printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
+            fi
+            printf "%s" "$token"
+            printf "%s" "$token" > "$_tty" 2>/dev/null
+        fi
+
+        local done_flag
+        done_flag=$(echo "$line" | jq -r '.done // empty' 2>/dev/null)
+        if [ "$done_flag" = "true" ]; then
+            echo ""
+            echo "" > "$_tty" 2>/dev/null
+            break
+        fi
+    done
+
+    ui_spinner_stop
+    _LLM_ACTIVE=0
+
+    # Clean up temp files
+    rm -f "$_tmp_img" 2>/dev/null
+
+    if [ ! -f "$_got_tokens" ]; then
+        rm -f "$_got_tokens"
+        echo "ERROR: Vision request failed — model may not support images"
         return 1
     fi
     rm -f "$_got_tokens"
