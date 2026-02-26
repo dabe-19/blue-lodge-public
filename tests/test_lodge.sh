@@ -221,6 +221,24 @@ describe "REPL question vs task heuristic"
     assert_fail $?
   }
 
+# ── Unknown slash command: reject, don't run as task ──────────
+describe "Unknown slash command handling"
+
+  it "unknown slash command returns 127 not task fallthrough" && {
+    commands_dispatch "/nonexistent_xyz_9999" "." 2>/dev/null
+    assert_eq $? 127
+  }
+
+  it "REPL does not contain agent_run fallthrough for 127" && {
+    # The _repl function must NOT fall through to agent_run on exit 127
+    body=$(declare -f _repl)
+    if echo "$body" | grep -q 'agent_run.*input.*127\|127.*agent_run\|Treating as task'; then
+        assert_fail 1  # Bad — old fallthrough still present
+    else
+        assert_ok 0
+    fi
+  }
+
 # ── Command handler functions ─────────────────────────────────
 describe "Command handler functions"
 

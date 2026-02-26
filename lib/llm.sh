@@ -26,20 +26,20 @@ LLM_BUDGET_TOOL="${LLM_BUDGET_TOOL:-256}"    # Think budget for tools (commit, w
 # These are calibrated for the default primary model (Ministral Reasoning).
 # When other models are active, the per-model registry values from
 # models.sh take precedence via models_get_param().
-LLM_TEMPERATURE="${LLM_TEMPERATURE:-0.6}"
-LLM_REPEAT_PENALTY="${LLM_REPEAT_PENALTY:-1.3}"
-LLM_PRESENCE_PENALTY="${LLM_PRESENCE_PENALTY:-0.8}"
+LLM_TEMPERATURE="${LLM_TEMPERATURE:-0.7}"
+LLM_REPEAT_PENALTY="${LLM_REPEAT_PENALTY:-1.2}"
+LLM_PRESENCE_PENALTY="${LLM_PRESENCE_PENALTY:-0.3}"
 
 # Per-scenario overrides (empty = use global default)
 # Ask: conversational, moderate creativity, moderate anti-spiral
-LLM_TEMP_ASK="${LLM_TEMP_ASK:-0.5}"
-LLM_REPEAT_ASK="${LLM_REPEAT_ASK:-1.3}"
-LLM_PRESENCE_ASK="${LLM_PRESENCE_ASK:-0.8}"
+LLM_TEMP_ASK="${LLM_TEMP_ASK:-}"
+LLM_REPEAT_ASK="${LLM_REPEAT_ASK:-}"
+LLM_PRESENCE_ASK="${LLM_PRESENCE_ASK:-}"
 
 # Agent: focused execution, low creativity, moderate anti-spiral
-LLM_TEMP_AGENT="${LLM_TEMP_AGENT:-0.3}"
+LLM_TEMP_AGENT="${LLM_TEMP_AGENT:-0.4}"
 LLM_REPEAT_AGENT="${LLM_REPEAT_AGENT:-1.3}"
-LLM_PRESENCE_AGENT="${LLM_PRESENCE_AGENT:-0.8}"
+LLM_PRESENCE_AGENT="${LLM_PRESENCE_AGENT:-0.5}"
 
 # Router: deterministic tool selection, minimal creativity
 LLM_TEMP_ROUTER="${LLM_TEMP_ROUTER:-0.1}"
@@ -52,8 +52,8 @@ LLM_REPEAT_JOURNAL="${LLM_REPEAT_JOURNAL:-1.3}"
 LLM_PRESENCE_JOURNAL="${LLM_PRESENCE_JOURNAL:-1.0}"
 
 # Tool: commit messages, web summary, recall, slash — focused
-LLM_TEMP_TOOL="${LLM_TEMP_TOOL:-0.3}"
-LLM_REPEAT_TOOL="${LLM_REPEAT_TOOL:-1.3}"
+LLM_TEMP_TOOL="${LLM_TEMP_TOOL:-0.2}"
+LLM_REPEAT_TOOL="${LLM_REPEAT_TOOL:-1.4}"
 LLM_PRESENCE_TOOL="${LLM_PRESENCE_TOOL:-0.8}"
 
 LLM_TIMEOUT="${LLM_TIMEOUT:-600}"           # Safety net: 600s max per request (thinking models on ARM need headroom; Ctrl+C also works)
@@ -62,6 +62,23 @@ LODGE_THINK="${LODGE_THINK:-1}"               # 1=show thinking tokens dimmed (d
 LODGE_THINK_STREAM="${LODGE_THINK_STREAM:-1}"  # When LODGE_THINK=1: 0=hide thinking, 1=show dimmed, 2=show bright (cyan)
 LODGE_NOTHINK="${LODGE_NOTHINK:-0}"             # 0=model thinks normally, 1=suppress reasoning (model-specific: /no_think for Qwen, system prompt for Granite)
 LODGE_DEBUG="${LODGE_DEBUG:-0}"                 # 0=normal, 1=show timers + token counts per LLM call
+
+# ── Bracket think-tag normalizer ───────────────────────────────
+# Models hallucinate various bracket think tags: [THINK], [think],
+# [THOUGHT], [thought] and their closing counterparts.
+# This helper normalises them all to <think>/</ think> in-place
+# via a bash nameref — zero subshell overhead on the hot token path.
+_llm_normalize_think() {
+    local -n _ntref="$1"
+    _ntref="${_ntref//\[THINK\]/<think>}"
+    _ntref="${_ntref//\[\/THINK\]/<\/think>}"
+    _ntref="${_ntref//\[think\]/<think>}"
+    _ntref="${_ntref//\[\/think\]/<\/think>}"
+    _ntref="${_ntref//\[THOUGHT\]/<think>}"
+    _ntref="${_ntref//\[\/THOUGHT\]/<\/think>}"
+    _ntref="${_ntref//\[thought\]/<think>}"
+    _ntref="${_ntref//\[\/thought\]/<\/think>}"
+}
 
 # ── Sampling parameter resolver ────────────────────────────────
 # Resolves per-scenario sampling parameters based on LLM_SCENARIO.
@@ -452,9 +469,8 @@ llm_generate() {
         token="${token//<response>/}"
         token="${token//<\/response>/}"
 
-        # Normalize [THINK]/[/THINK] → <think>/</think> (Ministral uses both)
-        token="${token//\[THINK\]/<think>}"
-        token="${token//\[\/THINK\]/<\/think>}"
+        # Normalize bracket think tags → <think>/</think>
+        _llm_normalize_think token
 
         # ── Handle .thinking field (Ollama separate-field mode) ──
         if [ -n "$think_token" ]; then
@@ -512,9 +528,8 @@ llm_generate() {
                 # Buffer up to 50 chars to catch late-arriving tags.
                 if [ "$_can_think" -eq 1 ] && [ "$_in_think_block" -eq 0 ]; then
                     _response_pending+="$token"
-                    # Normalize [THINK]/[/THINK] in buffer (may split across tokens)
-                    _response_pending="${_response_pending//\[THINK\]/<think>}"
-                    _response_pending="${_response_pending//\[\/THINK\]/<\/think>}"
+                    # Normalize bracket think tags in buffer (may split across tokens)
+                    _llm_normalize_think _response_pending
                     if [[ "$_response_pending" == *"<think>"* ]]; then
                         _in_think_block=1
                         _think_pending="${_response_pending#*<think>}"
@@ -544,9 +559,8 @@ llm_generate() {
 
                 if [ "$_in_think_block" -eq 1 ]; then
                     _think_pending+="$token"
-                    # Normalize [/THINK] in buffer (may split across tokens)
-                    _think_pending="${_think_pending//\[\/THINK\]/<\/think>}"
-                    _think_pending="${_think_pending//\[THINK\]/<think>}"
+                    # Normalize bracket think tags in buffer (may split across tokens)
+                    _llm_normalize_think _think_pending
                     if [[ "$_think_pending" == *"</think>"* ]]; then
                         local _think_before="${_think_pending%%</think>*}"
                         local _after_think="${_think_pending#*</think>}"
@@ -798,9 +812,8 @@ llm_stream() {
         token="${token//<response>/}"
         token="${token//<\/response>/}"
 
-        # Normalize [THINK]/[/THINK] → <think>/</think> (Ministral uses both)
-        token="${token//\[THINK\]/<think>}"
-        token="${token//\[\/THINK\]/<\/think>}"
+        # Normalize bracket think tags → <think>/</think>
+        _llm_normalize_think token
 
         # ── Handle .thinking field (Ollama separate-field mode) ──
         if [ -n "$think_token" ]; then
@@ -813,8 +826,7 @@ llm_stream() {
                 # If we buffered response text before .thinking arrived,
                 # flush it before switching modes (it was preamble)
                 if [ -n "$_response_pending" ]; then
-                    _response_pending="${_response_pending//\[THINK\]/<think>}"
-                    _response_pending="${_response_pending//\[\/THINK\]/<\/think>}"
+                    _llm_normalize_think _response_pending
                     _response_pending="${_response_pending//<\/think>/}"
                     [ -n "$_response_pending" ] && printf "%s" "$_response_pending"
                     [ -n "$_response_pending" ] && printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
@@ -863,9 +875,8 @@ llm_stream() {
                 # Buffer up to 50 chars to catch late-arriving tags.
                 if [ "$_can_think" -eq 1 ] && [ "$_in_think_block" -eq 0 ]; then
                     _response_pending+="$token"
-                    # Normalize [THINK]/[/THINK] in buffer (may split across tokens)
-                    _response_pending="${_response_pending//\[THINK\]/<think>}"
-                    _response_pending="${_response_pending//\[\/THINK\]/<\/think>}"
+                    # Normalize bracket think tags in buffer (may split across tokens)
+                    _llm_normalize_think _response_pending
                     if [[ "$_response_pending" == *"<think>"* ]]; then
                         _in_think_block=1
                         _think_pending="${_response_pending#*<think>}"
@@ -894,9 +905,8 @@ llm_stream() {
 
                 if [ "$_in_think_block" -eq 1 ]; then
                     _think_pending+="$token"
-                    # Normalize [/THINK] in buffer (may split across tokens)
-                    _think_pending="${_think_pending//\[\/THINK\]/<\/think>}"
-                    _think_pending="${_think_pending//\[THINK\]/<think>}"
+                    # Normalize bracket think tags in buffer (may split across tokens)
+                    _llm_normalize_think _think_pending
                     # Check for </think> end tag (handles split across token boundaries)
                     if [[ "$_think_pending" == *"</think>"* ]]; then
                         local _think_before="${_think_pending%%</think>*}"
@@ -1101,9 +1111,8 @@ llm_chat() {
         think_token=$(echo "$line" | jq -r '.message.thinking // empty' 2>/dev/null)
         token=$(echo "$line" | jq -r '.message.content // empty' 2>/dev/null)
 
-        # Normalize [THINK]/[/THINK] → <think>/</think> (Ministral uses both)
-        token="${token//\[THINK\]/<think>}"
-        token="${token//\[\/THINK\]/<\/think>}"
+        # Normalize bracket think tags → <think>/</think>
+        _llm_normalize_think token
 
         if [ -n "$think_token" ]; then
             _saw_thinking_field=1
@@ -1120,9 +1129,8 @@ llm_chat() {
                 # Inline-tag fallback
                 if [ "$_in_think_block" -eq 1 ]; then
                     _think_pending+="$token"
-                    # Normalize [/THINK] in buffer (may split across tokens)
-                    _think_pending="${_think_pending//\[\/THINK\]/<\/think>}"
-                    _think_pending="${_think_pending//\[THINK\]/<think>}"
+                    # Normalize bracket think tags in buffer (may split across tokens)
+                    _llm_normalize_think _think_pending
                     if [[ "$_think_pending" == *"</think>"* ]]; then
                         local _after_think="${_think_pending#*</think>}"
                         _in_think_block=0

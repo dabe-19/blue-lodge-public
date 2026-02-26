@@ -1365,9 +1365,11 @@ _cmd_api() {
                 set)
                     local kname kval
                     kname=$(echo "$keyargs" | awk '{print $1}')
-                    kval=$(echo "$keyargs" | awk '{print $2}')
-                    if [ -z "$kname" ] || [ -z "$kval" ]; then
+                    kval=$(echo "$keyargs" | sed 's/^[^ ]* *//')
+                    if [ -z "$kname" ] || [ -z "$kval" ] || [ "$kval" = "$kname" ]; then
                         ui_err "Usage: /api keys set KEY_NAME value"
+                        ui_dim "  Value may contain spaces — no quotes needed"
+                        ui_dim "  Example: /api keys set EMAIL_PASSWORD abcd efgh ijkl mnop"
                         return 1
                     fi
                     api_init
@@ -1392,7 +1394,7 @@ _cmd_api() {
         *)
             ui_info "Usage: /api <keys|status>"
             ui_dim "  keys list     — Show configured API keys"
-            ui_dim "  keys set K V  — Set an API key"
+            ui_dim "  keys set K V  — Set an API key (value may contain spaces)"
             ui_dim "  keys rm K     — Remove an API key"
             ui_dim "  status        — Show integration status"
             ;;
@@ -1894,27 +1896,78 @@ _cmd_email() {
         setup|configure)
             email_setup "$rest" ;;
         status|info)
-            email_status
+            local _st_provider
+            _st_provider=$(echo "$rest" | awk '{print $1}')
+            [ "$_st_provider" = "$action" ] && _st_provider=""
+            email_status "$_st_provider"
             ssh_status ;;
         send)
-            local to subject body
-            to=$(echo "$rest" | awk '{print $1}')
-            subject=$(echo "$rest" | awk '{print $2}')
-            body=$(echo "$rest" | sed 's/^[^ ]* *[^ ]* *//')
-            if [ -z "$to" ] || [ -z "$subject" ]; then
-                ui_info "Usage: /email send <to> <subject> <body>"
+            # Syntax: /email send <provider> to=addr s=subject words b=body words
+            local provider _send_rest to subject body
+            provider=$(echo "$rest" | awk '{print $1}')
+            _send_rest=$(echo "$rest" | sed 's/^[^ ]* *//')
+            if [ -z "$provider" ] || [ -z "$_send_rest" ] || [ "$_send_rest" = "$provider" ]; then
+                ui_info "Usage: /email send <provider> to=addr s=subject b=body"
+                ui_dim "  provider: gmail, protonmail, zoho"
+                ui_dim "  Example: /email send gmail to=user@example.com s=Hello there b=How are you today?"
+                ui_dim "  s= and b= capture everything until the next key or end of input."
                 return 1
             fi
-            email_send "$to" "$subject" "$body" ;;
+            # Parse to= (email address, single token)
+            if [[ "$_send_rest" =~ to=([^[:space:]]+) ]]; then
+                to="${BASH_REMATCH[1]}"
+            else
+                ui_err "Missing to= parameter"
+                ui_dim "  Usage: /email send <provider> to=addr s=subject b=body"
+                return 1
+            fi
+            # Parse s= (everything from s= to b= or end)
+            if [[ "$_send_rest" == *"s="* ]]; then
+                local _after_s="${_send_rest#*s=}"
+                if [[ "$_after_s" == *" b="* ]]; then
+                    subject="${_after_s%% b=*}"
+                else
+                    subject="$_after_s"
+                fi
+                # Trim trailing whitespace
+                subject="${subject%"${subject##*[![:space:]]}"}"
+            else
+                subject=""
+            fi
+            # Parse b= (everything after b=)
+            if [[ "$_send_rest" == *" b="* ]]; then
+                body="${_send_rest#* b=}"
+            else
+                body=""
+            fi
+            if [ -z "$to" ] || [ -z "$subject" ]; then
+                ui_err "Missing required fields (to= and s= are required)"
+                ui_dim "  Usage: /email send <provider> to=addr s=subject b=body"
+                return 1
+            fi
+            email_send "$provider" "$to" "$subject" "$body" ;;
         inbox|check)
-            email_inbox "$rest" ;;
+            # Syntax: /email inbox <provider> [count]
+            local _inbox_provider _inbox_count
+            _inbox_provider=$(echo "$rest" | awk '{print $1}')
+            _inbox_count=$(echo "$rest" | awk '{print $2}')
+            if [ -z "$_inbox_provider" ] || [ "$_inbox_provider" = "$action" ]; then
+                ui_info "Usage: /email inbox <provider> [count]"
+                ui_dim "  provider: gmail, protonmail, zoho, disposable"
+                ui_dim "  Example: /email inbox gmail 10"
+                return 1
+            fi
+            email_inbox "$_inbox_provider" "${_inbox_count:-5}" ;;
         address)
+            local _addr_provider
+            _addr_provider=$(echo "$rest" | awk '{print $1}')
+            [ "$_addr_provider" = "$action" ] && _addr_provider=""
             local addr
-            addr=$(email_get_address)
+            addr=$(email_get_address "$_addr_provider")
             if [ -n "$addr" ]; then
                 echo "$addr"
             else
-                ui_info "No email configured. Run: /email setup"
+                ui_info "No email configured. Run: /email setup <provider>"
             fi ;;
         ssh-keygen|sshkeygen|keygen)
             ssh_generate_key ;;
@@ -1954,15 +2007,17 @@ _cmd_email() {
             esac ;;
         *)
             ui_info "Usage: /email <setup|status|send|inbox|bridge|address|ssh-keygen|github-setup>"
-            ui_dim "  setup [provider]      — Configure email (protonmail/zoho/tuta/disposable)"
-            ui_dim "  status                — Show email + SSH configuration"
-            ui_dim "  send <to> <subj> <body> — Send an email"
-            ui_dim "  inbox [count]         — Check inbox"
-            ui_dim "  bridge <action>       — ProtonMail Bridge management"
-            ui_dim "  address               — Show configured email address"
-            ui_dim "  ssh-keygen            — Generate SSH key for George"
-            ui_dim "  github-setup          — Full GitHub setup (email + SSH + git identity)"
-            ui_dim "  github-test           — Test SSH connection to GitHub"
+            ui_dim "  setup <provider>              — Configure email (gmail/protonmail/zoho/tuta/disposable)"
+            ui_dim "  status [provider]             — Show email + SSH configuration"
+            ui_dim "  send <provider> to= s= b=     — Send an email"
+            ui_dim "  inbox <provider> [count]      — Check inbox"
+            ui_dim "  bridge <action>               — ProtonMail Bridge management"
+            ui_dim "  address [provider]            — Show configured email address"
+            ui_dim "  ssh-keygen                    — Generate SSH key for George"
+            ui_dim "  github-setup                  — Full GitHub setup (email + SSH + git identity)"
+            ui_dim "  github-test                   — Test SSH connection to GitHub"
+            echo ""
+            ui_dim "  Send example: /email send gmail to=user@example.com s=Hello there b=How are you?"
             ;;
     esac
 }
@@ -2977,11 +3032,6 @@ _repl() {
             elif [ "${_LODGE_CANCELLED:-0}" -eq 1 ]; then
                 # Command was cancelled by Ctrl+C — don't fall through
                 _LODGE_CANCELLED=0
-            elif [ "$result" -eq 127 ]; then
-                # Not found (127) — try as agent task
-                # Note: 1 = command found but failed (don't leak to agent)
-                ui_warn "Unknown command. Treating as task..."
-                agent_run "${input#/}" "$PWD"
             fi
             continue
         fi

@@ -446,6 +446,35 @@ provider_chat() {
 
 # Show which providers are configured
 provider_status() {
+    # ── Web & Search Tools ──
+    echo ""
+    ui_section "Web & Search"
+    local web_configured=0
+
+    if api_get_key "SERPER_API_KEY" &>/dev/null; then
+        printf "  %b●%b %-15s configured\n" "$C_GREEN" "$C_RESET" "Serper"
+        web_configured=$((web_configured + 1))
+    else
+        printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "Serper"
+    fi
+
+    if api_get_key "PERPLEXITY_API_KEY" &>/dev/null; then
+        printf "  %b●%b %-15s configured\n" "$C_GREEN" "$C_RESET" "Perplexity"
+        web_configured=$((web_configured + 1))
+    else
+        printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "Perplexity"
+    fi
+
+    printf "  %b●%b %-15s always available (no key needed)\n" "$C_GREEN" "$C_RESET" "DuckDuckGo"
+
+    if [ "$web_configured" -eq 0 ]; then
+        echo ""
+        ui_dim "  DuckDuckGo works out of the box."
+        ui_dim "  For better results: /api keys set SERPER_API_KEY <key>"
+    fi
+
+    # ── AI Providers ──
+    echo ""
     ui_section "AI Providers"
     local configured=0
 

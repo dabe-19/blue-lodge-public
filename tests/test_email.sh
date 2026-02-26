@@ -28,6 +28,17 @@ _setup_email() {
     EMAIL_PROVIDER=""
     EMAIL_ADDRESS=""
     EMAIL_AUTH_METHOD=""
+    EMAIL_PASSWORD=""
+    GUERRILLA_SID=""
+}
+
+# Helper: write a per-provider config for tests
+_write_provider_conf() {
+    local provider="$1"
+    shift
+    local conf="$GEORGE_CONFIG_DIR/email_${provider}.conf"
+    cat > "$conf" "$@"
+    chmod 600 "$conf"
 }
 
 _teardown_email() {
@@ -39,6 +50,8 @@ _teardown_email() {
     EMAIL_PROVIDER=""
     EMAIL_ADDRESS=""
     EMAIL_AUTH_METHOD=""
+    EMAIL_PASSWORD=""
+    GUERRILLA_SID=""
 }
 
 # ── Provider definitions ──────────────────────────────────────
@@ -91,18 +104,48 @@ describe "Provider definitions"
 # ── email_init ────────────────────────────────────────────────
 describe "email_init"
 
-  it "creates config file on first run" && {
+  it "creates config directory on first run" && {
     _setup_email
+    rm -rf "$GEORGE_CONFIG_DIR"
     email_init
-    assert_file_exists "$EMAIL_CONFIG"
+    assert_dir_exists "$GEORGE_CONFIG_DIR"
     _teardown_email
   }
 
-  it "creates config with 600 permissions" && {
+  it "loads provider-specific config" && {
     _setup_email
+    cat > "$GEORGE_CONFIG_DIR/email_zoho.conf" << 'EOF'
+EMAIL_PROVIDER="zoho"
+EMAIL_ADDRESS="george@zohomail.com"
+EMAIL_AUTH_METHOD="secret"
+EOF
+    email_init "zoho"
+    assert_eq "$EMAIL_PROVIDER" "zoho"
+    assert_eq "$EMAIL_ADDRESS" "george@zohomail.com"
+    _teardown_email
+  }
+
+  it "auto-detects first configured provider" && {
+    _setup_email
+    cat > "$GEORGE_CONFIG_DIR/email_gmail.conf" << 'EOF'
+EMAIL_PROVIDER="gmail"
+EMAIL_ADDRESS="george@gmail.com"
+EMAIL_AUTH_METHOD="secret"
+EOF
     email_init
-    perms=$(stat -c '%a' "$EMAIL_CONFIG" 2>/dev/null || stat -f '%Lp' "$EMAIL_CONFIG" 2>/dev/null)
-    assert_eq "$perms" "600"
+    assert_eq "$EMAIL_PROVIDER" "gmail"
+    _teardown_email
+  }
+
+  it "falls back to old email.conf" && {
+    _setup_email
+    cat > "$GEORGE_CONFIG_DIR/email.conf" << 'EOF'
+EMAIL_PROVIDER="zoho"
+EMAIL_ADDRESS="george@zoho.com"
+EMAIL_AUTH_METHOD="secret"
+EOF
+    email_init
+    assert_eq "$EMAIL_PROVIDER" "zoho"
     _teardown_email
   }
 
@@ -110,7 +153,44 @@ describe "email_init"
     _setup_email
     email_init
     email_init  # second call should not fail
-    assert_file_exists "$EMAIL_CONFIG"
+    assert_dir_exists "$GEORGE_CONFIG_DIR"
+    _teardown_email
+  }
+
+# ── email_list_configured ─────────────────────────────────────
+describe "email_list_configured"
+
+  it "returns empty when no providers" && {
+    _setup_email
+    out=$(email_list_configured)
+    assert_eq "$out" ""
+    _teardown_email
+  }
+
+  it "lists configured providers" && {
+    _setup_email
+    cat > "$GEORGE_CONFIG_DIR/email_gmail.conf" << 'EOF'
+EMAIL_PROVIDER="gmail"
+EMAIL_ADDRESS="george@gmail.com"
+EOF
+    cat > "$GEORGE_CONFIG_DIR/email_zoho.conf" << 'EOF'
+EMAIL_PROVIDER="zoho"
+EMAIL_ADDRESS="george@zoho.com"
+EOF
+    out=$(email_list_configured)
+    assert_contains "$out" "gmail"
+    assert_contains "$out" "zoho"
+    _teardown_email
+  }
+
+  it "detects old email.conf as fallback" && {
+    _setup_email
+    cat > "$GEORGE_CONFIG_DIR/email.conf" << 'EOF'
+EMAIL_PROVIDER="protonmail"
+EMAIL_ADDRESS="george@proton.me"
+EOF
+    out=$(email_list_configured)
+    assert_contains "$out" "protonmail"
     _teardown_email
   }
 
@@ -119,7 +199,6 @@ describe "email_get_address"
 
   it "returns empty when not configured" && {
     _setup_email
-    email_init >/dev/null 2>&1
     addr=$(email_get_address 2>/dev/null)
     assert_eq "$addr" ""
     _teardown_email
@@ -127,12 +206,12 @@ describe "email_get_address"
 
   it "returns address when configured" && {
     _setup_email
-    cat > "$EMAIL_CONFIG" << 'EOF'
+    cat > "$GEORGE_CONFIG_DIR/email_zoho.conf" << 'EOF'
 EMAIL_PROVIDER="zoho"
 EMAIL_ADDRESS="george@zohomail.com"
 EMAIL_AUTH_METHOD="secret"
 EOF
-    addr=$(email_get_address)
+    addr=$(email_get_address "zoho")
     assert_eq "$addr" "george@zohomail.com"
     _teardown_email
   }
@@ -142,7 +221,6 @@ describe "email_get_provider"
 
   it "returns 'none' when not configured" && {
     _setup_email
-    email_init >/dev/null 2>&1
     prov=$(email_get_provider 2>/dev/null)
     assert_eq "$prov" "none"
     _teardown_email
@@ -150,12 +228,12 @@ describe "email_get_provider"
 
   it "returns provider when configured" && {
     _setup_email
-    cat > "$EMAIL_CONFIG" << 'EOF'
+    cat > "$GEORGE_CONFIG_DIR/email_protonmail.conf" << 'EOF'
 EMAIL_PROVIDER="protonmail"
 EMAIL_ADDRESS="george@proton.me"
 EMAIL_AUTH_METHOD="bridge"
 EOF
-    prov=$(email_get_provider)
+    prov=$(email_get_provider "protonmail")
     assert_eq "$prov" "protonmail"
     _teardown_email
   }
@@ -172,7 +250,7 @@ describe "email_status"
 
   it "shows provider and address when configured" && {
     _setup_email
-    cat > "$EMAIL_CONFIG" << 'EOF'
+    cat > "$GEORGE_CONFIG_DIR/email_zoho.conf" << 'EOF'
 EMAIL_PROVIDER="zoho"
 EMAIL_ADDRESS="george@zohomail.com"
 EMAIL_AUTH_METHOD="secret"
@@ -183,36 +261,56 @@ EOF
     _teardown_email
   }
 
+  it "shows specific provider status" && {
+    _setup_email
+    cat > "$GEORGE_CONFIG_DIR/email_gmail.conf" << 'EOF'
+EMAIL_PROVIDER="gmail"
+EMAIL_ADDRESS="george@gmail.com"
+EMAIL_AUTH_METHOD="secret"
+EOF
+    out=$(email_status "gmail" 2>&1)
+    assert_contains "$out" "gmail"
+    assert_contains "$out" "george@gmail.com"
+    _teardown_email
+  }
+
 # ── email_send guards ─────────────────────────────────────────
 describe "email_send"
 
-  it "fails when not configured" && {
+  it "fails when provider not given" && {
     _setup_email
-    email_send "test@example.com" "Hi" "Body" 2>/dev/null
+    email_send "" "test@example.com" "Hi" "Body" 2>/dev/null
+    assert_fail $?
+    _teardown_email
+  }
+
+  it "fails when provider not configured" && {
+    _setup_email
+    email_send "gmail" "test@example.com" "Hi" "Body" 2>/dev/null
     assert_fail $?
     _teardown_email
   }
 
   it "rejects tutanota send" && {
     _setup_email
-    cat > "$EMAIL_CONFIG" << 'EOF'
+    cat > "$GEORGE_CONFIG_DIR/email_tutanota.conf" << 'EOF'
 EMAIL_PROVIDER="tutanota"
 EMAIL_ADDRESS="george@tuta.io"
 EMAIL_AUTH_METHOD="api"
 EOF
-    out=$(email_send "test@example.com" "Hi" "Body" 2>&1)
+    out=$(email_send "tutanota" "test@example.com" "Hi" "Body" 2>&1)
     assert_contains "$out" "does not support SMTP"
     _teardown_email
   }
 
   it "rejects disposable send" && {
     _setup_email
-    cat > "$EMAIL_CONFIG" << 'EOF'
+    cat > "$GEORGE_CONFIG_DIR/email_disposable.conf" << 'EOF'
 EMAIL_PROVIDER="disposable"
 EMAIL_ADDRESS="temp@guerrillamail.com"
 EMAIL_AUTH_METHOD="none"
 EOF
-    out=$(email_send "test@example.com" "Hi" "Body" 2>&1)
+    out=$(email_send "disposable" "test@example.com" "Hi" "Body" 2>&1)
     assert_contains "$out" "receive-only"
     _teardown_email
   }
@@ -220,21 +318,28 @@ EOF
 # ── email_inbox guards ────────────────────────────────────────
 describe "email_inbox"
 
-  it "fails when not configured" && {
+  it "fails when provider not given" && {
     _setup_email
-    email_inbox 2>/dev/null
+    email_inbox "" 2>/dev/null
+    assert_fail $?
+    _teardown_email
+  }
+
+  it "fails when provider not configured" && {
+    _setup_email
+    email_inbox "gmail" 2>/dev/null
     assert_fail $?
     _teardown_email
   }
 
   it "rejects tutanota inbox" && {
     _setup_email
-    cat > "$EMAIL_CONFIG" << 'EOF'
+    cat > "$GEORGE_CONFIG_DIR/email_tutanota.conf" << 'EOF'
 EMAIL_PROVIDER="tutanota"
 EMAIL_ADDRESS="george@tuta.io"
 EMAIL_AUTH_METHOD="api"
 EOF
-    out=$(email_inbox 2>&1)
+    out=$(email_inbox "tutanota" 2>&1)
     assert_contains "$out" "does not support IMAP"
     _teardown_email
   }
@@ -322,7 +427,7 @@ describe "GitHub readiness"
 
   it "github_is_ready returns false without SSH key" && {
     _setup_email
-    cat > "$EMAIL_CONFIG" << 'EOF'
+    cat > "$GEORGE_CONFIG_DIR/email_zoho.conf" << 'EOF'
 EMAIL_PROVIDER="zoho"
 EMAIL_ADDRESS="george@zoho.com"
 EMAIL_AUTH_METHOD="secret"
@@ -335,7 +440,7 @@ EOF
 
   it "github_is_ready returns true with email + SSH key" && {
     _setup_email
-    cat > "$EMAIL_CONFIG" << 'EOF'
+    cat > "$GEORGE_CONFIG_DIR/email_zoho.conf" << 'EOF'
 EMAIL_PROVIDER="zoho"
 EMAIL_ADDRESS="george@zoho.com"
 EMAIL_AUTH_METHOD="secret"
@@ -380,7 +485,7 @@ describe "GitHub push guard"
 
   it "blocks GitHub push without SSH key" && {
     _setup_email
-    cat > "$EMAIL_CONFIG" << 'EOF'
+    cat > "$GEORGE_CONFIG_DIR/email_zoho.conf" << 'EOF'
 EMAIL_PROVIDER="zoho"
 EMAIL_ADDRESS="george@zoho.com"
 EMAIL_AUTH_METHOD="secret"
@@ -393,7 +498,7 @@ EOF
 
   it "allows GitHub push with email + SSH key" && {
     _setup_email
-    cat > "$EMAIL_CONFIG" << 'EOF'
+    cat > "$GEORGE_CONFIG_DIR/email_zoho.conf" << 'EOF'
 EMAIL_PROVIDER="zoho"
 EMAIL_ADDRESS="george@zoho.com"
 EMAIL_AUTH_METHOD="secret"
@@ -584,20 +689,20 @@ describe "bridge_status"
 # ── bridge_configure (config output) ──────────────────────────
 describe "bridge_configure"
 
-  it "writes email.conf with bridge settings" && {
+  it "writes per-provider config with bridge settings" && {
     _setup_bridge
+    _prov_conf="$GEORGE_CONFIG_DIR/email_protonmail.conf"
     # Directly write config the way bridge_configure does
-    mkdir -p "$(dirname "$EMAIL_CONFIG")"
-    cat > "$EMAIL_CONFIG" << EOF
+    cat > "$_prov_conf" << EOF
 # George's email configuration — ProtonMail Bridge
 EMAIL_PROVIDER="protonmail"
 EMAIL_ADDRESS="user@proton.me"
 EMAIL_AUTH_METHOD="bridge"
 EMAIL_PASSWORD="testbridgepass123"
 EOF
-    chmod 600 "$EMAIL_CONFIG"
-    assert_file_exists "$EMAIL_CONFIG"
-    conf=$(cat "$EMAIL_CONFIG")
+    chmod 600 "$_prov_conf"
+    assert_file_exists "$_prov_conf"
+    conf=$(cat "$_prov_conf")
     assert_contains "$conf" "protonmail"
     assert_contains "$conf" "bridge"
     assert_contains "$conf" "user@proton.me"
@@ -606,13 +711,13 @@ EOF
 
   it "sets 600 permissions on config" && {
     _setup_bridge
-    mkdir -p "$(dirname "$EMAIL_CONFIG")"
-    cat > "$EMAIL_CONFIG" << EOF
+    _prov_conf="$GEORGE_CONFIG_DIR/email_protonmail.conf"
+    cat > "$_prov_conf" << EOF
 EMAIL_PROVIDER="protonmail"
 EMAIL_AUTH_METHOD="bridge"
 EOF
-    chmod 600 "$EMAIL_CONFIG"
-    perms=$(stat -c '%a' "$EMAIL_CONFIG" 2>/dev/null || stat -f '%Lp' "$EMAIL_CONFIG" 2>/dev/null)
+    chmod 600 "$_prov_conf"
+    perms=$(stat -c '%a' "$_prov_conf" 2>/dev/null || stat -f '%Lp' "$_prov_conf" 2>/dev/null)
     assert_eq "$perms" "600"
     _teardown_bridge
   }

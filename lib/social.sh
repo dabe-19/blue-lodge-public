@@ -1152,9 +1152,11 @@ social_status() {
         printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "X"
     fi
 
-    # Mastodon — check multi-instance registry first, then legacy key
-    local _masto_instances
-    _masto_instances=$(mastodon_instance_list 2>/dev/null | grep -c "^" || true)
+    # Mastodon — check multi-instance registry directly via DB count
+    local _masto_instances=0
+    if command -v sqlite3 &>/dev/null && [ -f "${MASTODON_INSTANCES_DB:-}" ]; then
+        _masto_instances=$(sqlite3 "$MASTODON_INSTANCES_DB" "SELECT COUNT(*) FROM instances;" 2>/dev/null || echo 0)
+    fi
     if [ "${_masto_instances:-0}" -gt 0 ]; then
         printf "  %b●%b %-15s configured (%s instance%s)\n" "$C_GREEN" "$C_RESET" "MASTODON" "$_masto_instances" "$([ "$_masto_instances" -ne 1 ] && echo 's')"
         configured=$((configured + 1))
@@ -1173,13 +1175,13 @@ social_status() {
         printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "BLUESKY"
     fi
 
-    # Discord
+    # Discord — query DB directly to avoid counting help text
     if api_get_key "DISCORD_BOT_TOKEN" &>/dev/null; then
-        local _chan_count _user_count
-        _chan_count=$(discord_channels_list 2>/dev/null | grep -c "^" || true)
-        _user_count=$(discord_user_list 2>/dev/null | grep -c "^" || true)
+        local _user_count=0
+        if command -v sqlite3 &>/dev/null && [ -f "${DISCORD_USERS_DB:-}" ]; then
+            _user_count=$(sqlite3 "$DISCORD_USERS_DB" "SELECT COUNT(*) FROM users;" 2>/dev/null || echo 0)
+        fi
         printf "  %b●%b %-15s configured (bot" "$C_GREEN" "$C_RESET" "DISCORD"
-        [ "${_chan_count:-0}" -gt 0 ] && printf ", %s channels" "$_chan_count"
         [ "${_user_count:-0}" -gt 0 ] && printf ", %s users" "$_user_count"
         printf ")\n"
         configured=$((configured + 1))

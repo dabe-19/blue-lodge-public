@@ -66,24 +66,24 @@ describe "Configuration defaults"
 # ── Sampling parameters ───────────────────────────────────────
 describe "Sampling parameter defaults"
 
-  it "LLM_TEMPERATURE defaults to 0.6" && {
-    assert_eq "$LLM_TEMPERATURE" "0.6"
+  it "LLM_TEMPERATURE defaults to 0.7" && {
+    assert_eq "$LLM_TEMPERATURE" "0.7"
   }
 
-  it "LLM_REPEAT_PENALTY defaults to 1.3" && {
-    assert_eq "$LLM_REPEAT_PENALTY" "1.3"
+  it "LLM_REPEAT_PENALTY defaults to 1.2" && {
+    assert_eq "$LLM_REPEAT_PENALTY" "1.2"
   }
 
-  it "LLM_PRESENCE_PENALTY defaults to 0.8" && {
-    assert_eq "$LLM_PRESENCE_PENALTY" "0.8"
+  it "LLM_PRESENCE_PENALTY defaults to 0.3" && {
+    assert_eq "$LLM_PRESENCE_PENALTY" "0.3"
   }
 
-  it "LLM_TEMP_ASK defaults to 0.5" && {
-    assert_eq "$LLM_TEMP_ASK" "0.5"
+  it "LLM_TEMP_ASK defaults to empty (uses global)" && {
+    assert_eq "$LLM_TEMP_ASK" ""
   }
 
-  it "LLM_TEMP_AGENT defaults to 0.3" && {
-    assert_eq "$LLM_TEMP_AGENT" "0.3"
+  it "LLM_TEMP_AGENT defaults to 0.4" && {
+    assert_eq "$LLM_TEMP_AGENT" "0.4"
   }
 
   it "LLM_TEMP_ROUTER defaults to 0.1" && {
@@ -94,8 +94,8 @@ describe "Sampling parameter defaults"
     assert_eq "$LLM_TEMP_JOURNAL" "0.6"
   }
 
-  it "LLM_TEMP_TOOL defaults to 0.3" && {
-    assert_eq "$LLM_TEMP_TOOL" "0.3"
+  it "LLM_TEMP_TOOL defaults to 0.2" && {
+    assert_eq "$LLM_TEMP_TOOL" "0.2"
   }
 
   it "LLM_PRESENCE_ROUTER defaults to 1.0" && {
@@ -126,7 +126,7 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     result=$(_llm_build_opts 1024)
     local temp
     temp=$(echo "$result" | jq -r '.temperature')
-    assert_eq "$temp" "0.6"
+    assert_eq "$temp" "0.7"
   }
 
   it "_llm_build_opts uses ask scenario when LLM_SCENARIO=ask" && {
@@ -136,7 +136,8 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     unset LLM_SCENARIO
     local temp
     temp=$(echo "$result" | jq -r '.temperature')
-    assert_eq "$temp" "0.5"
+    # Ask has no override — falls through to global default 0.7
+    assert_eq "$temp" "0.7"
   }
 
   it "_llm_build_opts uses router scenario (low temp)" && {
@@ -594,21 +595,38 @@ describe "Model family system"
     done
   }
 
-# ── [THINK] bracket-format normalization ──────────────────────
-describe "[THINK]/[/THINK] bracket-format normalization"
+# ── Bracket think-tag normalization ───────────────────────────
+describe "Bracket think-tag normalization ([THINK], [THOUGHT], case variants)"
 
   it "token-level normalization converts [THINK] to <think>" && {
     _tok='[THINK]hello[/THINK]'
-    _tok="${_tok//\[THINK\]/<think>}"
-    _tok="${_tok//\[\/THINK\]/<\/think>}"
+    _llm_normalize_think _tok
     assert_eq "$_tok" "<think>hello</think>"
+  }
+
+  it "token-level normalization converts [THOUGHT] to <think>" && {
+    _tok='[THOUGHT]reasoning here[/THOUGHT]answer'
+    _llm_normalize_think _tok
+    assert_eq "$_tok" "<think>reasoning here</think>answer"
+  }
+
+  it "token-level normalization converts [thought] (lowercase) to <think>" && {
+    _tok='[thought]internal[/thought]response'
+    _llm_normalize_think _tok
+    assert_eq "$_tok" "<think>internal</think>response"
+  }
+
+  it "token-level normalization converts [think] (lowercase) to <think>" && {
+    _tok='[think]pondering[/think]answer'
+    _llm_normalize_think _tok
+    assert_eq "$_tok" "<think>pondering</think>answer"
   }
 
   it "buffer normalization handles split [THINK] across tokens" && {
     _buf=""
     _buf+="[THI"
     _buf+="NK]reasoning"
-    _buf="${_buf//\[THINK\]/<think>}"
+    _llm_normalize_think _buf
     assert_eq "$_buf" "<think>reasoning"
   }
 
@@ -616,39 +634,88 @@ describe "[THINK]/[/THINK] bracket-format normalization"
     _buf=""
     _buf+="done[/THI"
     _buf+="NK]answer"
-    _buf="${_buf//\[\/THINK\]/<\/think>}"
+    _llm_normalize_think _buf
+    assert_eq "$_buf" "done</think>answer"
+  }
+
+  it "buffer normalization handles split [THOUGHT] across tokens" && {
+    _buf=""
+    _buf+="[THOU"
+    _buf+="GHT]reasoning"
+    _llm_normalize_think _buf
+    assert_eq "$_buf" "<think>reasoning"
+  }
+
+  it "buffer normalization handles split [/THOUGHT] across tokens" && {
+    _buf=""
+    _buf+="done[/THOU"
+    _buf+="GHT]answer"
+    _llm_normalize_think _buf
     assert_eq "$_buf" "done</think>answer"
   }
 
   it "mixed bracket/angle tags both normalize to angle format" && {
     _tok='[THINK]internal</think>response'
-    _tok="${_tok//\[THINK\]/<think>}"
-    _tok="${_tok//\[\/THINK\]/<\/think>}"
+    _llm_normalize_think _tok
     assert_eq "$_tok" "<think>internal</think>response"
   }
 
-  it "llm_generate function body contains bracket normalization" && {
+  it "mixed [THOUGHT] and <think> tags normalize correctly" && {
+    _tok='[THOUGHT]internal</think>response'
+    _llm_normalize_think _tok
+    assert_eq "$_tok" "<think>internal</think>response"
+  }
+
+  it "_llm_normalize_think function exists and handles all variants" && {
+    body=$(declare -f _llm_normalize_think)
+    echo "$body" | grep -qF 'THINK'
+    assert_ok $?
+    echo "$body" | grep -qF 'THOUGHT'
+    assert_ok $?
+    echo "$body" | grep -qF 'thought'
+    assert_ok $?
+    echo "$body" | grep -qF 'think'
+    assert_ok $?
+  }
+
+  it "llm_generate function body contains normalize_think call" && {
     body=$(declare -f llm_generate)
-    echo "$body" | grep -qF 'THINK'
+    echo "$body" | grep -q '_llm_normalize_think'
     assert_ok $?
   }
 
-  it "llm_stream function body contains bracket normalization" && {
+  it "llm_stream function body contains normalize_think call" && {
     body=$(declare -f llm_stream)
-    echo "$body" | grep -qF 'THINK'
+    echo "$body" | grep -q '_llm_normalize_think'
     assert_ok $?
   }
 
-  it "llm_chat function body contains bracket normalization" && {
+  it "llm_chat function body contains normalize_think call" && {
     body=$(declare -f llm_chat)
-    echo "$body" | grep -qF 'THINK'
+    echo "$body" | grep -q '_llm_normalize_think'
     assert_ok $?
   }
 
   it "milestone cleanup strips [THINK]...[/THINK] blocks" && {
     _ms='[THINK]internal reasoning[/THINK]Do the task'
-    _ms=$(echo "$_ms" | sed 's/\[THINK\][^[]*\[\/THINK\]//g')
-    _ms=$(echo "$_ms" | sed 's/\[\/?THINK\]//g')
+    _ms=$(echo "$_ms" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
+    _ms=$(echo "$_ms" | sed 's/\[\/?THINK\]//gI')
+    _ms=$(echo "$_ms" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    assert_eq "$_ms" "Do the task"
+  }
+
+  it "milestone cleanup strips [THOUGHT]...[/THOUGHT] blocks" && {
+    _ms='[THOUGHT]internal reasoning[/THOUGHT]Do the task'
+    _ms=$(echo "$_ms" | sed 's/\[THOUGHT\][^[]*\[\/THOUGHT\]//gI')
+    _ms=$(echo "$_ms" | sed 's/\[\/?THOUGHT\]//gI')
+    _ms=$(echo "$_ms" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    assert_eq "$_ms" "Do the task"
+  }
+
+  it "milestone cleanup strips [thought]...[/thought] (lowercase)" && {
+    _ms='[thought]internal reasoning[/thought]Do the task'
+    _ms=$(echo "$_ms" | sed 's/\[THOUGHT\][^[]*\[\/THOUGHT\]//gI')
+    _ms=$(echo "$_ms" | sed 's/\[\/?THOUGHT\]//gI')
     _ms=$(echo "$_ms" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
     assert_eq "$_ms" "Do the task"
   }

@@ -19,6 +19,8 @@ source "$LODGE_DIR/lib/web.sh"
 
 # ── Config ─────────────────────────────────────────────────────
 GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}"
+# Per-provider config: email_<provider>.conf (replaces old single email.conf)
+# EMAIL_CONFIG is set dynamically by email_init based on provider.
 EMAIL_CONFIG="${EMAIL_CONFIG:-$GEORGE_CONFIG_DIR/email.conf}"
 
 # ── Provider definitions ───────────────────────────────────────
@@ -51,22 +53,68 @@ EMAIL_PROVIDERS=(
     [disposable_setup]="Guerrilla Mail — temporary address, no signup required"
 )
 
-# ── Initialize email config ───────────────────────────────────
-email_init() {
-    mkdir -p "$(dirname "$EMAIL_CONFIG")"
-    if [ ! -f "$EMAIL_CONFIG" ]; then
-        cat > "$EMAIL_CONFIG" << 'EOF'
-# George's email configuration
-# Provider: protonmail | tutanota | zoho | disposable
-EMAIL_PROVIDER=""
-EMAIL_ADDRESS=""
-# Auth: "secret" (uses /secret get email_password) or "bridge" (ProtonMail Bridge)
-EMAIL_AUTH_METHOD=""
-EOF
-        chmod 600 "$EMAIL_CONFIG"
-        ui_ok "Email config created at $EMAIL_CONFIG"
+# ── Per-provider config path helper ────────────────────────────
+_email_config_path() {
+    local provider="$1"
+    echo "${GEORGE_CONFIG_DIR}/email_${provider}.conf"
+}
+
+# ── List all configured email providers ────────────────────────
+email_list_configured() {
+    local providers="" conf
+    for conf in "$GEORGE_CONFIG_DIR"/email_*.conf; do
+        [ -f "$conf" ] || continue
+        local p
+        p=$(basename "$conf" | sed 's/^email_//;s/\.conf$//')
+        providers="${providers:+$providers }$p"
+    done
+    # Backward compat: check old email.conf if no per-provider configs
+    if [ -z "$providers" ] && [ -f "$GEORGE_CONFIG_DIR/email.conf" ]; then
+        local _old_prov=""
+        _old_prov=$(grep -oP 'EMAIL_PROVIDER="\K[^"]+' "$GEORGE_CONFIG_DIR/email.conf" 2>/dev/null)
+        [ -n "$_old_prov" ] && providers="$_old_prov"
     fi
-    source "$EMAIL_CONFIG" 2>/dev/null
+    echo "$providers"
+}
+
+# ── Initialize email config ───────────────────────────────────
+# Usage: email_init [provider]
+#   provider given  → load that provider's config
+#   provider empty  → auto-detect first configured provider
+email_init() {
+    local provider="${1:-}"
+    mkdir -p "$GEORGE_CONFIG_DIR"
+
+    # Reset globals
+    EMAIL_PROVIDER=""
+    EMAIL_ADDRESS=""
+    EMAIL_AUTH_METHOD=""
+    EMAIL_PASSWORD=""
+    GUERRILLA_SID=""
+
+    if [ -n "$provider" ]; then
+        # Load specific provider
+        EMAIL_CONFIG="$(_email_config_path "$provider")"
+        if [ -f "$EMAIL_CONFIG" ]; then
+            source "$EMAIL_CONFIG" 2>/dev/null
+        fi
+        return
+    fi
+
+    # Auto-detect: scan for any email_*.conf files
+    local conf
+    for conf in "$GEORGE_CONFIG_DIR"/email_*.conf; do
+        [ -f "$conf" ] || continue
+        EMAIL_CONFIG="$conf"
+        source "$conf" 2>/dev/null
+        return
+    done
+
+    # Backward compat: try old email.conf
+    EMAIL_CONFIG="$GEORGE_CONFIG_DIR/email.conf"
+    if [ -f "$EMAIL_CONFIG" ]; then
+        source "$EMAIL_CONFIG" 2>/dev/null
+    fi
 }
 
 # ── Setup an email account (interactive) ───────────────────────
@@ -150,7 +198,7 @@ email_setup() {
         ui_dim "  2. Enable 2-Step Verification (if not already enabled)"
         ui_dim "  3. Go to https://myaccount.google.com/apppasswords"
         ui_dim "  4. Generate an App Password for 'Mail'"
-        ui_dim "  5. Use that 16-character password below"
+        ui_dim "  5. Paste the 16-character password below (spaces are OK)"
         echo ""
     fi
 
@@ -163,9 +211,9 @@ email_setup() {
         return 1
     fi
 
-    # Store password in secrets vault
+    # Store password in secrets vault (provider-specific key)
     if declare -f secrets_set &>/dev/null; then
-        secrets_set "email_password" "$password"
+        secrets_set "email_password_${provider}" "$password"
         ui_ok "Password stored in secrets vault"
     else
         ui_warn "Secrets vault not available — password will be in config (less secure)"
@@ -173,9 +221,10 @@ email_setup() {
         auth_method="config"
     fi
 
-    # Write config
+    # Write per-provider config
+    EMAIL_CONFIG="$(_email_config_path "$provider")"
     cat > "$EMAIL_CONFIG" << EOF
-# George's email configuration
+# George's email configuration — $provider
 EMAIL_PROVIDER="$provider"
 EMAIL_ADDRESS="$address"
 EMAIL_AUTH_METHOD="$auth_method"
@@ -211,23 +260,24 @@ _email_setup_disposable() {
         return 1
     fi
 
-    cat > "$EMAIL_CONFIG" << EOF
+    cat > "$(_email_config_path "disposable")" << EOF
 # George's email configuration — DISPOSABLE
 EMAIL_PROVIDER="disposable"
 EMAIL_ADDRESS="$address"
 EMAIL_AUTH_METHOD="none"
 GUERRILLA_SID="$sid_token"
 EOF
-    chmod 600 "$EMAIL_CONFIG"
+    chmod 600 "$(_email_config_path "disposable")"
 
     ui_ok "Disposable email ready: $address"
     ui_warn "This address expires after ~60 minutes of inactivity"
     echo "$address"
 }
 
-# ── Get current email address ──────────────────────────────────
+# ── Get email address for a provider ────────────────────────────
+# Usage: email_get_address [provider]
 email_get_address() {
-    email_init
+    email_init "${1:-}"
     if [ -z "$EMAIL_ADDRESS" ]; then
         return 1
     fi
@@ -235,21 +285,28 @@ email_get_address() {
 }
 
 # ── Get current provider ──────────────────────────────────────
+# Usage: email_get_provider [provider] — returns configured name or 'none'
 email_get_provider() {
-    email_init
+    email_init "${1:-}"
     echo "${EMAIL_PROVIDER:-none}"
 }
 
 # ── Send an email ─────────────────────────────────────────────
-# Usage: email_send "to@example.com" "Subject" "Body"
+# Usage: email_send <provider> <to> <subject> <body>
 email_send() {
-    local to="$1"
-    local subject="$2"
-    local body="$3"
+    local provider="$1"
+    local to="$2"
+    local subject="$3"
+    local body="$4"
 
-    email_init
+    if [ -z "$provider" ]; then
+        ui_err "Provider required. Usage: /email send <provider> to=addr s=subject b=body"
+        return 1
+    fi
+
+    email_init "$provider"
     if [ -z "$EMAIL_PROVIDER" ]; then
-        ui_err "No email configured. Run: /email setup"
+        ui_err "Provider '$provider' not configured. Run: /email setup $provider"
         return 1
     fi
 
@@ -273,13 +330,18 @@ _email_send_smtp() {
 
     local password=""
     if [ "$EMAIL_AUTH_METHOD" = "secret" ] && declare -f secrets_get &>/dev/null; then
-        password=$(secrets_get "email_password" 2>/dev/null)
+        # Try provider-specific key first, fall back to generic
+        password=$(secrets_get "email_password_${EMAIL_PROVIDER}" 2>/dev/null)
+        [ -z "$password" ] && password=$(secrets_get "email_password" 2>/dev/null)
     elif [ "$EMAIL_AUTH_METHOD" = "bridge" ] || [ "$EMAIL_AUTH_METHOD" = "config" ]; then
         password="${EMAIL_PASSWORD:-}"
     fi
 
     if [ -z "$password" ] && [ "$EMAIL_AUTH_METHOD" != "bridge" ]; then
-        ui_err "Email password not found. Run: /secret set email_password <password>"
+        ui_err "Email password not found. Set it with:"
+        ui_dim "  /secret set email_password_${EMAIL_PROVIDER} <your-app-password>"
+        ui_dim "  Spaces are OK — the full value after the name is captured."
+        ui_dim "  Example: /secret set email_password_gmail abcd efgh ijkl mnop"
         return 1
     fi
 
@@ -297,18 +359,21 @@ Content-Type: text/plain; charset=UTF-8
 $body
 MSGEOF
 
-    local curl_auth=""
+    # Build curl args as an array to prevent word splitting on password
+    local curl_args=(
+        -sS
+        --url "smtp://${host}:${port}"
+        --ssl-reqd
+        --mail-from "$EMAIL_ADDRESS"
+        --mail-rcpt "$to"
+        --upload-file "$msg_file"
+    )
     if [ -n "$password" ]; then
-        curl_auth="--user ${EMAIL_ADDRESS}:${password}"
+        curl_args+=(--user "${EMAIL_ADDRESS}:${password}")
     fi
 
     local result
-    result=$(curl -sS --url "smtp://${host}:${port}" \
-        --ssl-reqd \
-        $curl_auth \
-        --mail-from "$EMAIL_ADDRESS" \
-        --mail-rcpt "$to" \
-        --upload-file "$msg_file" 2>&1)
+    result=$(curl "${curl_args[@]}" 2>&1)
     local rc=$?
 
     rm -f "$msg_file"
@@ -317,19 +382,29 @@ MSGEOF
         ui_ok "Email sent to $to"
         return 0
     else
-        ui_err "Send failed: $result"
+        # SECURITY: sanitize error output — never leak credentials
+        result=$(echo "$result" | sed 's/--user [^ ]*/--user ***:***/')
+        # Strip any hostname-like tokens that might be password fragments
+        result=$(echo "$result" | grep -v "Could not resolve host")
+        ui_err "Send failed (exit $rc): ${result:-authentication or connection error}"
         return 1
     fi
 }
 
 # ── Check inbox (IMAP via curl) ────────────────────────────────
-# Usage: email_inbox [count]
+# Usage: email_inbox <provider> [count]
 email_inbox() {
-    local count="${1:-5}"
+    local provider="$1"
+    local count="${2:-5}"
 
-    email_init
+    if [ -z "$provider" ]; then
+        ui_err "Provider required. Usage: /email inbox <provider> [count]"
+        return 1
+    fi
+
+    email_init "$provider"
     if [ -z "$EMAIL_PROVIDER" ]; then
-        ui_err "No email configured. Run: /email setup"
+        ui_err "Provider '$provider' not configured. Run: /email setup $provider"
         return 1
     fi
 
@@ -351,13 +426,16 @@ _email_inbox_imap() {
 
     local password=""
     if [ "$EMAIL_AUTH_METHOD" = "secret" ] && declare -f secrets_get &>/dev/null; then
-        password=$(secrets_get "email_password" 2>/dev/null)
+        # Try provider-specific key first, fall back to generic
+        password=$(secrets_get "email_password_${EMAIL_PROVIDER}" 2>/dev/null)
+        [ -z "$password" ] && password=$(secrets_get "email_password" 2>/dev/null)
     elif [ "$EMAIL_AUTH_METHOD" = "bridge" ] || [ "$EMAIL_AUTH_METHOD" = "config" ]; then
         password="${EMAIL_PASSWORD:-}"
     fi
 
     if [ -z "$password" ]; then
-        ui_err "Email password not found. Run: /secret set email_password <password>"
+        ui_err "Email password not found. Set it with:"
+        ui_dim "  /secret set email_password_${EMAIL_PROVIDER} <your-app-password>"
         return 1
     fi
 
@@ -368,7 +446,10 @@ _email_inbox_imap() {
         -X "SEARCH RECENT" 2>&1)
 
     if [ $? -ne 0 ]; then
-        ui_err "IMAP connection failed: $result"
+        # SECURITY: sanitize error output — never leak credentials
+        result=$(echo "$result" | sed 's/--user [^ ]*/--user ***:***/')
+        result=$(echo "$result" | grep -v "Could not resolve host")
+        ui_err "IMAP connection failed: ${result:-authentication or connection error}"
         return 1
     fi
 
@@ -410,16 +491,44 @@ _email_inbox_guerrilla() {
     fi
 }
 
-# ── Email status ──────────────────────────────────────────────
-email_status() {
-    email_init
+# ── IMAP connection test (authenticated) ──────────────────────
+# Attempts a real IMAP login to verify credentials work.
+_email_imap_test() {
+    local host="$1" port="$2"
 
-    ui_section "Email"
-    if [ -z "$EMAIL_PROVIDER" ]; then
-        ui_info "Not configured. Run: /email setup"
+    local password=""
+    if [ "$EMAIL_AUTH_METHOD" = "secret" ] && declare -f secrets_get &>/dev/null; then
+        # Try provider-specific key first, fall back to generic
+        password=$(secrets_get "email_password_${EMAIL_PROVIDER}" 2>/dev/null)
+        [ -z "$password" ] && password=$(secrets_get "email_password" 2>/dev/null)
+    elif [ "$EMAIL_AUTH_METHOD" = "bridge" ] || [ "$EMAIL_AUTH_METHOD" = "config" ]; then
+        password="${EMAIL_PASSWORD:-}"
+    fi
+
+    if [ -z "$password" ]; then
+        printf "  IMAP:     %b%s%b (%s:%s)\n" "$C_DIM" "no password set" "$C_RESET" "$host" "$port"
         return
     fi
 
+    # Try authenticated IMAP LIST — this verifies login without fetching mail
+    local result
+    result=$(curl -sS --connect-timeout 5 --max-time 10 \
+        --url "imaps://${host}:${port}" \
+        --user "${EMAIL_ADDRESS}:${password}" \
+        -X "LIST \"\" \"INBOX\"" 2>&1)
+    local rc=$?
+
+    if [ $rc -eq 0 ]; then
+        printf "  IMAP:     %b%s%b (%s:%s)\n" "$C_GREEN" "connected" "$C_RESET" "$host" "$port"
+    elif [ $rc -eq 67 ]; then
+        printf "  IMAP:     %b%s%b (%s:%s)\n" "$C_RED" "login denied" "$C_RESET" "$host" "$port"
+    else
+        printf "  IMAP:     %b%s%b (%s:%s)\n" "$C_RED" "unreachable" "$C_RESET" "$host" "$port"
+    fi
+}
+
+# ── Single provider status display (internal) ─────────────────
+_email_show_provider_status() {
     printf "  Provider: %b%s%b\n" "$C_CYAN" "$EMAIL_PROVIDER" "$C_RESET"
     printf "  Address:  %b%s%b\n" "$C_WHITE" "${EMAIL_ADDRESS:-none}" "$C_RESET"
     printf "  Auth:     %s\n" "${EMAIL_AUTH_METHOD:-none}"
@@ -433,11 +542,9 @@ email_status() {
                 printf "  Bridge:   %b%s%b\n" "$C_RED" "not reachable" "$C_RESET"
             fi ;;
         gmail)
-            if curl -s --connect-timeout 3 "imaps://imap.gmail.com:993" --ssl-reqd &>/dev/null; then
-                printf "  IMAP:     %b%s%b\n" "$C_GREEN" "reachable" "$C_RESET"
-            else
-                printf "  IMAP:     %b%s%b (imap.gmail.com:993)\n" "$C_DIM" "not tested" "$C_RESET"
-            fi ;;
+            _email_imap_test "imap.gmail.com" "993" ;;
+        zoho)
+            _email_imap_test "imap.zoho.com" "993" ;;
         disposable)
             if [ -n "${GUERRILLA_SID:-}" ]; then
                 printf "  Session:  %bactive%b\n" "$C_GREEN" "$C_RESET"
@@ -445,6 +552,51 @@ email_status() {
                 printf "  Session:  %bexpired%b\n" "$C_RED" "$C_RESET"
             fi ;;
     esac
+}
+
+# ── Email status ──────────────────────────────────────────────
+# Usage: email_status [provider]
+#   provider given  → show that provider's status
+#   provider empty  → show all configured providers
+email_status() {
+    local provider="${1:-}"
+
+    ui_section "Email"
+
+    if [ -n "$provider" ]; then
+        # Show specific provider
+        email_init "$provider"
+        if [ -z "$EMAIL_PROVIDER" ]; then
+            ui_info "Provider '$provider' not configured. Run: /email setup $provider"
+            return
+        fi
+        _email_show_provider_status
+        return
+    fi
+
+    # Show all configured providers
+    local found=0 conf
+    for conf in "$GEORGE_CONFIG_DIR"/email_*.conf; do
+        [ -f "$conf" ] || continue
+        source "$conf" 2>/dev/null
+        [ -n "$EMAIL_PROVIDER" ] || continue
+        [ $found -gt 0 ] && echo ""
+        found=$((found + 1))
+        _email_show_provider_status
+    done
+
+    # Backward compat: check old email.conf
+    if [ $found -eq 0 ] && [ -f "$GEORGE_CONFIG_DIR/email.conf" ]; then
+        source "$GEORGE_CONFIG_DIR/email.conf" 2>/dev/null
+        if [ -n "$EMAIL_PROVIDER" ]; then
+            found=1
+            _email_show_provider_status
+        fi
+    fi
+
+    if [ $found -eq 0 ]; then
+        ui_info "Not configured. Run: /email setup <provider>"
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -846,7 +998,7 @@ bridge_status() {
     fi
 
     # Email config
-    email_init 2>/dev/null
+    email_init "protonmail" 2>/dev/null
     if [ "${EMAIL_PROVIDER:-}" = "protonmail" ] && [ -n "${EMAIL_ADDRESS:-}" ]; then
         printf "  Account:    %b%s%b\n" "$C_CYAN" "$EMAIL_ADDRESS" "$C_RESET"
     else
@@ -861,7 +1013,7 @@ bridge_configure() {
     ui_section "Configure George's Email for ProtonMail Bridge"
     echo ""
 
-    email_init 2>/dev/null
+    email_init "protonmail" 2>/dev/null
 
     # Get email address
     local address="${EMAIL_ADDRESS:-}"
@@ -890,21 +1042,25 @@ bridge_configure() {
         return 1
     fi
 
-    # Store password in secrets vault
+    # Store password in secrets vault (provider-specific key)
     if declare -f secrets_set &>/dev/null; then
-        secrets_set "email_password" "$bridge_password"
+        secrets_set "email_password_protonmail" "$bridge_password"
         ui_ok "Bridge password stored in secrets vault"
 
-        cat > "$EMAIL_CONFIG" << EOF
+        local _bridge_conf
+        _bridge_conf="$(_email_config_path "protonmail")"
+        cat > "$_bridge_conf" << EOF
 # George's email configuration — ProtonMail Bridge
 EMAIL_PROVIDER="protonmail"
 EMAIL_ADDRESS="$address"
 EMAIL_AUTH_METHOD="bridge"
-# Password stored in secrets vault: /secret get email_password
+# Password stored in secrets vault: /secret get email_password_protonmail
 EOF
     else
         # Fall back to config file if vault unavailable
-        cat > "$EMAIL_CONFIG" << EOF
+        local _bridge_conf
+        _bridge_conf="$(_email_config_path "protonmail")"
+        cat > "$_bridge_conf" << EOF
 # George's email configuration — ProtonMail Bridge
 EMAIL_PROVIDER="protonmail"
 EMAIL_ADDRESS="$address"
@@ -912,7 +1068,7 @@ EMAIL_AUTH_METHOD="bridge"
 EMAIL_PASSWORD="$bridge_password"
 EOF
     fi
-    chmod 600 "$EMAIL_CONFIG"
+    chmod 600 "$(_email_config_path "protonmail")"
 
     # Clear password from memory
     bridge_password=""
@@ -920,8 +1076,8 @@ EOF
     ui_ok "Email configured: $address (ProtonMail Bridge)"
     echo ""
     ui_info "George can now send and receive email via Bridge."
-    ui_dim "  Send:  /email send recipient@example.com \"Subject\" \"Body\""
-    ui_dim "  Inbox: /email inbox"
+    ui_dim "  Send:  /email send protonmail to=user@proton.me s=Subject here b=Body here"
+    ui_dim "  Inbox: /email inbox protonmail"
     ui_dim "  Test:  /email bridge test"
     return 0
 }
@@ -939,11 +1095,12 @@ bridge_test() {
         return 1
     fi
 
-    email_init 2>/dev/null
+    email_init "protonmail" 2>/dev/null
     local password=""
     if [ "$EMAIL_AUTH_METHOD" = "bridge" ] || [ "$EMAIL_AUTH_METHOD" = "secret" ]; then
         if declare -f secrets_get &>/dev/null; then
-            password=$(secrets_get "email_password" 2>/dev/null)
+            password=$(secrets_get "email_password_protonmail" 2>/dev/null)
+            [ -z "$password" ] && password=$(secrets_get "email_password" 2>/dev/null)
         fi
         [ -z "$password" ] && password="${EMAIL_PASSWORD:-}"
     fi

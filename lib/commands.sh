@@ -179,10 +179,19 @@ commands_services_status() {
         [ "$_masto_ok" -eq 1 ] && _configured="${_configured}mastodon," || _unconfigured="${_unconfigured}mastodon,"
         api_get_key "BLUESKY_APP_PASSWORD" &>/dev/null && _configured="${_configured}bluesky," || _unconfigured="${_unconfigured}bluesky,"
         api_get_key "SERPER_API_KEY" &>/dev/null && _configured="${_configured}web-search," || _unconfigured="${_unconfigured}serper,"
-        # Email check: look for provider config
-        local _email_provider
-        _email_provider=$(api_get_key "EMAIL_PROVIDER" 2>/dev/null)
-        [ -n "$_email_provider" ] && _configured="${_configured}email," || _unconfigured="${_unconfigured}email,"
+        # Email check: look for per-provider configs or legacy config
+        local _email_found=0
+        if declare -f email_list_configured &>/dev/null; then
+            local _eprovs
+            _eprovs=$(email_list_configured 2>/dev/null)
+            [ -n "$_eprovs" ] && _email_found=1
+        fi
+        if [ "$_email_found" -eq 0 ]; then
+            local _email_provider
+            _email_provider=$(api_get_key "EMAIL_PROVIDER" 2>/dev/null)
+            [ -n "$_email_provider" ] && _email_found=1
+        fi
+        [ "$_email_found" -eq 1 ] && _configured="${_configured}email," || _unconfigured="${_unconfigured}email,"
     fi
     # Strip trailing commas
     _configured="${_configured%,}"
@@ -251,13 +260,17 @@ Never guess syntax; use `/recall <cmd>`. If a tool is missing, use `/slash creat
 ## 4. COMMS & SOCIAL
 /social post <discord|telegram|x|mastodon|bluesky> [target] <text> — target = channel or instance
 /social <platform> <read|dm|timeline|search|sync> [args]
-/email <send|inbox|status|address|setup|ssh-keygen|github-setup|github-test> [args]
+/email send <provider> to=addr s=subject b=body — Send email (provider required: gmail, protonmail, zoho)
+/email inbox <provider> [count] — Check inbox for a specific provider
+/email <status|address|setup|ssh-keygen|github-setup|github-test> [provider] [args]
 /phone <dashboard|location|where|sms|calls|telephony|wifi> [args]
 
 ## 5. SECURITY & CONFIG
 /pgp <sign|signpost|export> [msg]
-/api keys <set|list> [k] [v]
-/secret <set|get> <k> [v]
+/api keys set <KEY> <value>      — Value captures everything after key name (spaces OK)
+/api keys <list|rm> [k]
+/secret set <k> <value>         — Value captures everything after name (spaces OK)
+/secret get <k>
 /git <setup|status|identity|ssh-keygen|ssh-config|sign|remote|test|pubkey|gpg-pub> [args]
 /wallet <coin> <action>
 /gsuite <gmail|drive|docs>

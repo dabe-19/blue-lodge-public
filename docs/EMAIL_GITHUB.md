@@ -127,6 +127,50 @@ software or bridge required — just an email address and app password.
 3. Select "Mail" as the app type and generate a 16-character password
 4. Run `/email setup gmail` and enter the address + app password
 
+> **App Password Format**: Google shows app passwords with spaces every
+> 4 characters (e.g., `abcd efgh ijkl mnop`). When entering the password
+> during `/email setup gmail`, paste it exactly as shown — spaces and all.
+> The interactive prompt reads the entire line, preserving spaces.
+>
+> If you need to set the password manually:
+> ```
+> /secret set email_password_gmail abcd efgh ijkl mnop
+> ```
+> Everything after the secret name is captured as the value — spaces included.
+
+#### Sending Email
+
+Every send and inbox command requires the **provider name** so George
+knows which account to use when multiple providers are configured.
+
+```
+/email send gmail to=user@example.com s=Subject line here b=Body text goes here
+```
+
+- `to=` — recipient email address (required)
+- `s=` — subject line, can be multiple words (required)
+- `b=` — body text, can be multiple words (optional)
+
+Each field captures everything until the next key (`s=` or `b=`) or end of input.
+
+#### Checking Inbox
+
+```
+/email inbox gmail 10
+```
+
+#### Testing the Connection
+
+```
+/email status gmail
+```
+
+This performs an authenticated IMAP login to verify credentials work.
+You'll see one of:
+- **connected** — credentials are valid, mail is reachable
+- **login denied** — check your app password
+- **unreachable** — network issue or IMAP host is blocked
+
 Gmail SMTP/IMAP settings (auto-configured by George):
 
 | Service | Host             | Port | Security |
@@ -548,11 +592,11 @@ HTTPS (which would require a personal access token).
 
 | Command                     | Description                             |
 |-----------------------------|-----------------------------------------|
-| `/email setup [provider]`   | Configure email interactively           |
-| `/email status`             | Show email + SSH status                 |
-| `/email send <to> <s> <b>`  | Send an email                           |
-| `/email inbox [count]`      | Check inbox                             |
-| `/email address`            | Print George's email address            |
+| `/email setup <provider>`                    | Configure email interactively                    |
+| `/email status [provider]`                   | Show email + SSH status (all or specific)        |
+| `/email send <prov> to=addr s=subj b=body`   | Send an email (provider required)                |
+| `/email inbox <provider> [count]`            | Check inbox (provider required)                  |
+| `/email address [provider]`                  | Print George's email address                     |
 | `/email bridge <action>`    | ProtonMail Bridge management            |
 | `/email ssh-keygen`         | Generate SSH keypair (prefer /git)      |
 | `/email github-setup`       | Auto-setup (use /git setup instead)     |

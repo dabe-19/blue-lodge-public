@@ -1564,10 +1564,12 @@ STRATEGIC RULES:
         # that so the milestone is a clean, single-line action.
         # 1. Remove <think>...</think> and [THINK]...[/THINK] blocks (including multi-line)
         milestone=$(echo "$milestone" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-        milestone=$(echo "$milestone" | sed 's/\[THINK\][^[]*\[\/THINK\]//g')
-        # 2. Remove stray opening/closing think tags (both formats)
+        milestone=$(echo "$milestone" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
+        milestone=$(echo "$milestone" | sed 's/\[THOUGHT\][^[]*\[\/THOUGHT\]//gI')
+        # 2. Remove stray opening/closing think tags (both formats, all case variants)
         milestone=$(echo "$milestone" | sed 's/<\/?think>//gI')
-        milestone=$(echo "$milestone" | sed 's/\[\/?THINK\]//g')
+        milestone=$(echo "$milestone" | sed 's/\[\/?THINK\]//gI')
+        milestone=$(echo "$milestone" | sed 's/\[\/?THOUGHT\]//gI')
         # 3. Remove code fences and their content
         milestone=$(echo "$milestone" | sed '/^```/,/^```/d')
         # 4. Strip leading/trailing whitespace and blank lines

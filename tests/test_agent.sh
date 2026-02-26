@@ -386,12 +386,22 @@ describe "Dynamic dual-loop architecture"
   it "macro strategist strips [THINK] blocks from milestone" && {
     # Functional test: verify the sed patterns actually strip bracket think tags
     _ms='[THINK]internal reasoning[/THINK]Do the task'
-    _ms=$(echo "$_ms" | sed 's/\[THINK\][^[]*\[\/THINK\]//g')
-    _ms=$(echo "$_ms" | sed 's/\[\/?THINK\]//g')
+    _ms=$(echo "$_ms" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
+    _ms=$(echo "$_ms" | sed 's/\[\/?THINK\]//gI')
     _ms=$(echo "$_ms" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
     assert_eq "$_ms" "Do the task"
     # Verify the code path exists in agent_run
     grep -q 'THINK' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $?
+  }
+
+  it "macro strategist strips [THOUGHT] blocks from milestone" && {
+    _ms='[THOUGHT]internal reasoning[/THOUGHT]Do the task'
+    _ms=$(echo "$_ms" | sed 's/\[THOUGHT\][^[]*\[\/THOUGHT\]//gI')
+    _ms=$(echo "$_ms" | sed 's/\[\/?THOUGHT\]//gI')
+    _ms=$(echo "$_ms" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    assert_eq "$_ms" "Do the task"
+    grep -q 'THOUGHT' "$LODGE_DIR/lib/agent.sh"
     assert_ok $?
   }
 

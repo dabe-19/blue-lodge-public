@@ -562,8 +562,8 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 | `/sandbox run <name> <cmd>` | Run in sandbox | `/sandbox run test-env make` |
 | `/container create <distro>` | Create container | `/container create ubuntu` |
 | `/container enter <name>` | Enter container | `/container enter ubuntu` |
-| `/api keys set <K> <V>` | Set API key | `/api keys set GITHUB_TOKEN xxx` |
-| `/secret set <k> <v>` | Store encrypted secret | `/secret set db_pass hunter2` |
+| `/api keys set <K> <V>` | Set API key (value may contain spaces) | `/api keys set SERPER_API_KEY abc123` |
+| `/secret set <k> <v>` | Store encrypted secret (value may contain spaces) | `/secret set email_password_gmail abcd efgh ijkl mnop` |
 | `/secret get <k>` | Retrieve secret | `/secret get db_pass` |
 | `/web search <query>` | Web search | `/web search rust async patterns` |
 | `/web images <query>` | Image search (Serper) | `/web images Grand Lodge of England` |
@@ -588,7 +588,7 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 | `/status` | Agent status | `/status` |
 | `/memory` | Show GEORGE.md | `/memory` |
 | `/help [command]` | Show help | `/help pgp` |
-| `/email <cmd>` | Email (ProtonMail/Zoho/Tuta/disposable) | `/email send user@ex.com "Subject" "Body"` |
+| `/email send <prov> to= s= b=` | Email — provider required for send/inbox | `/email send gmail to=user@ex.com s=Hello b=How are you?` |
 | `/git <cmd>` | Git & GitHub configuration | `/git config` |
 | `/github <query>` | Search GitHub repositories | `/github search rust async` |
 | `/pgp sign <msg>` | PGP-sign a message | `/pgp sign I approve this` |
