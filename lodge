@@ -165,14 +165,32 @@ _cmd_think() {
                 LODGE_THINK_STREAM=1
                 ui_ok "Think display OFF — reasoning still happens, just hidden"
             fi ;;
+        test|diag|diagnose|debug)
+            ui_info "Think display diagnostics"
+            ui_dim "  LODGE_THINK=$LODGE_THINK  LODGE_THINK_STREAM=$LODGE_THINK_STREAM  LODGE_NOTHINK=$LODGE_NOTHINK"
+            ui_dim "  LODGE_MODEL=$LODGE_MODEL"
+            local _has_t=0 _flag_t=0
+            models_current_has_thinking && _has_t=1
+            models_supports_think_flag "$LODGE_MODEL" 2>/dev/null && _flag_t=1
+            ui_dim "  has_thinking=$_has_t  supports_think_flag=$_flag_t"
+            if [ "$_has_t" -eq 1 ] && [ "$_flag_t" -eq 1 ]; then
+                ui_dim "  Mode: native (.thinking JSON field, think:true sent)"
+            elif [ "$_has_t" -eq 1 ] && [ "$_flag_t" -eq 0 ]; then
+                ui_dim "  Mode: inline (<think> tags in .response, think:true NOT sent)"
+            else
+                ui_dim "  Mode: non-thinking model (no think parsing)"
+            fi
+            ui_dim "  Tip: /debug on to see parser events during generation"
+            ui_dim "  Tip: /think bright for maximum visibility (cyan text)" ;;
         *)
-            ui_info "Usage: /think [on|off|bright|dim|hide|nothink|enable]"
+            ui_info "Usage: /think [on|off|bright|dim|hide|nothink|enable|test]"
             ui_dim "  on/off     — toggle think display (current: $([ "${LODGE_THINK:-0}" -eq 1 ] && echo ON || echo OFF))"
             ui_dim "  bright     — show thinking in cyan with borders"
             ui_dim "  dim        — show thinking in faint text"
             ui_dim "  hide       — think but don't stream to screen"
             ui_dim "  nothink    — disable reasoning entirely (/no_think injection)"
             ui_dim "  enable     — re-enable reasoning (thinking ON, dimmed)"
+            ui_dim "  test       — show think parser diagnostics"
             ui_dim "  (no arg)   — cycle: dim → bright → hidden → off → nothink → dim"
             if [ "${LODGE_NOTHINK:-0}" -eq 1 ]; then
                 ui_dim "  Status: NOTHINK (reasoning disabled)"

@@ -406,6 +406,8 @@ llm_generate() {
     local _think_pending=""
     local _response_pending=""    # buffer to detect <think> at start of response
 
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] generate think: _can_think=%s model=%s\n" "$_can_think" "$LODGE_MODEL" > "$_tty" 2>/dev/null
+
     $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
@@ -425,6 +427,7 @@ llm_generate() {
         if [ -n "$think_token" ]; then
             _saw_thinking_field=1
             [ -f "$_got_tokens" ] || touch "$_got_tokens"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate: .thinking field detected\n" > "$_tty" 2>/dev/null
             # Kill any external spinner on first think token
             if [ -n "$_SPINNER_PID" ] && kill -0 "$_SPINNER_PID" 2>/dev/null; then
                 kill "$_SPINNER_PID" 2>/dev/null
@@ -476,6 +479,7 @@ llm_generate() {
                     if [ ${#_resp_trimmed} -ge 7 ]; then
                         if [[ "$_resp_trimmed" == "<think>"* ]]; then
                             _in_think_block=1
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate: <think> detected inline\n" > "$_tty" 2>/dev/null
                             # Move everything after <think> into think_pending
                             _think_pending="${_resp_trimmed#<think>}"
                             _response_pending=""
@@ -486,6 +490,7 @@ llm_generate() {
                             fi
                         else
                             # No <think> prefix — flush buffered tokens as response
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate: no <think>, flushing buffer as response (trimmed=%s)\n" "${_resp_trimmed:0:20}" > "$_tty" 2>/dev/null
                             _response_pending="${_response_pending//<\/think>/}"
                             printf "%s" "$_response_pending"
                             _response_pending=""
@@ -698,6 +703,8 @@ llm_stream() {
     local _think_pending=""       # fallback mode: buffer for split </think>
     local _response_pending=""    # buffer to detect <think> at start of response
 
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] stream think: _can_think=%s model=%s LODGE_THINK=%s\n" "$_can_think" "$LODGE_MODEL" "${LODGE_THINK:-0}" > "$_tty" 2>/dev/null
+
     $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
@@ -716,6 +723,7 @@ llm_stream() {
         # ── Handle .thinking field (Ollama separate-field mode) ──
         if [ -n "$think_token" ]; then
             _saw_thinking_field=1
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ "$_think_banner_open" -eq 0 ] && printf " [debug] stream: .thinking field detected\n" > "$_tty" 2>/dev/null
             # Kill spinner on first token of any kind
             if [ ! -f "$_llm_ft_file" ]; then
                 touch "$_llm_ft_file"
@@ -766,12 +774,14 @@ llm_stream() {
                     if [ ${#_resp_trimmed} -ge 7 ]; then
                         if [[ "$_resp_trimmed" == "<think>"* ]]; then
                             _in_think_block=1
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream: <think> detected inline\n" > "$_tty" 2>/dev/null
                             _think_pending="${_resp_trimmed#<think>}"
                             _response_pending=""
                             _think_banner_open=1
                             _think_open
                         else
                             # No <think> — flush buffered tokens as response
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream: no <think>, flushing buffer (trimmed=%s)\n" "${_resp_trimmed:0:20}" > "$_tty" 2>/dev/null
                             _response_pending="${_response_pending//<\/think>/}"
                             printf "%s" "$_response_pending"
                             printf "%s" "$_response_pending" > "$_tty" 2>/dev/null

@@ -182,7 +182,7 @@ Never wrap your response in XML tags like <response></response>. Output your res
                 think_directive="Before each response, reason step by step inside <think></think> tags. Be thorough — explore ideas, consider alternatives, verify your reasoning. After the closing </think> tag, provide your final concise response directly. Do not emit additional think tags after your response. Never re-draft or second-guess — decide once, respond once."
                 ;;
             granite4-preview*)
-                think_directive="Respond to every user query in a comprehensive and detailed way. You can write down your thoughts and reasoning process before responding. In the thought process, engage in analysis, exploration, and reflection to develop well-considered thinking. Then present the final solution that you deem correct. Think briefly for simple questions. Never re-draft or second-guess — decide once, respond once."
+                think_directive="Write your internal reasoning inside <think></think> tags before every response. Be thorough — explore ideas, consider alternatives, verify your reasoning. After the closing </think> tag, provide your final concise response directly. Think briefly for simple questions. Never re-draft or second-guess — decide once, respond once."
                 ;;
         esac
     fi
