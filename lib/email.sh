@@ -300,7 +300,7 @@ email_send() {
     local body="$4"
 
     if [ -z "$provider" ]; then
-        ui_err "Provider required. Usage: /email send <provider> to=addr s=subject b=body"
+        ui_err "Provider required. Usage: /email send <provider> <recipient> s=subject b=body"
         return 1
     fi
 

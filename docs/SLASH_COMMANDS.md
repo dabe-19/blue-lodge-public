@@ -588,7 +588,7 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 | `/status` | Agent status | `/status` |
 | `/memory` | Show GEORGE.md | `/memory` |
 | `/help [command]` | Show help | `/help pgp` |
-| `/email send <prov> to= s= b=` | Email — provider required for send/inbox | `/email send gmail to=user@ex.com s=Hello b=How are you?` |
+| `/email send <prov> <addr> s= b=` | Email — provider required for send/inbox | `/email send gmail user@ex.com s=Hello b=How are you?` |
 | `/git <cmd>` | Git & GitHub configuration | `/git config` |
 | `/github <query>` | Search GitHub repositories | `/github search rust async` |
 | `/pgp sign <msg>` | PGP-sign a message | `/pgp sign I approve this` |

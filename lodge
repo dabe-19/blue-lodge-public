@@ -1902,26 +1902,55 @@ _cmd_email() {
             email_status "$_st_provider"
             ssh_status ;;
         send)
-            # Syntax: /email send <provider> to=addr s=subject words b=body words
+            # ── Smart email send parser ────────────────────────────
+            # Accepted formats (all equivalent):
+            #   /email send <provider> <recipient> s=subject words b=body words
+            #   /email send <provider> to=addr s=subject b=body
+            #   /email send <provider> <recipient> subject=subject words body=body words
+            #   /email send <provider> to=addr subject=Hello body=World
+            # - Recipient can be positional (right after provider) OR via to=
+            # - s= / subject= are aliases; b= / body= are aliases
+            # - s= and b= are preferred for multi-line/multi-word input
             local provider _send_rest to subject body
             provider=$(echo "$rest" | awk '{print $1}')
             _send_rest=$(echo "$rest" | sed 's/^[^ ]* *//')
             if [ -z "$provider" ] || [ -z "$_send_rest" ] || [ "$_send_rest" = "$provider" ]; then
-                ui_info "Usage: /email send <provider> to=addr s=subject b=body"
+                ui_info "Usage: /email send <provider> <recipient> s=subject b=body"
                 ui_dim "  provider: gmail, protonmail, zoho"
-                ui_dim "  Example: /email send gmail to=user@example.com s=Hello there b=How are you today?"
+                ui_dim "  Recipient goes right after provider, or use to=addr"
+                ui_dim "  Example: /email send gmail user@example.com s=Hello there b=How are you today?"
+                ui_dim "  Also accepts: subject= and body= as aliases for s= and b="
                 ui_dim "  s= and b= capture everything until the next key or end of input."
                 return 1
             fi
-            # Parse to= (email address, single token)
+
+            # ── Normalize aliases: subject= → s=, body= → b= ─────
+            # Do this BEFORE any parsing so the rest of the logic
+            # only needs to handle s= and b=.
+            # Use longest-match to avoid partial replacements.
+            _send_rest="${_send_rest//subject=/s=}"
+            _send_rest="${_send_rest//body=/b=}"
+
+            # ── Parse to= (email address, single token) ───────────
+            to=""
             if [[ "$_send_rest" =~ to=([^[:space:]]+) ]]; then
                 to="${BASH_REMATCH[1]}"
-            else
-                ui_err "Missing to= parameter"
-                ui_dim "  Usage: /email send <provider> to=addr s=subject b=body"
-                return 1
+                # Strip to=addr from _send_rest so it doesn't interfere
+                _send_rest="${_send_rest/to=${to}/}"
+                _send_rest="${_send_rest## }"  # trim leading space
             fi
-            # Parse s= (everything from s= to b= or end)
+
+            # ── Positional recipient: first token if it looks like an email ──
+            if [ -z "$to" ]; then
+                local _first_token
+                _first_token=$(echo "$_send_rest" | awk '{print $1}')
+                if [[ "$_first_token" == *@*.* ]] && [[ "$_first_token" != s=* ]] && [[ "$_first_token" != b=* ]]; then
+                    to="$_first_token"
+                    _send_rest=$(echo "$_send_rest" | sed 's/^[^ ]* *//')
+                fi
+            fi
+
+            # ── Parse s= (everything from s= to b= or end) ───────
             if [[ "$_send_rest" == *"s="* ]]; then
                 local _after_s="${_send_rest#*s=}"
                 if [[ "$_after_s" == *" b="* ]]; then
@@ -1934,15 +1963,20 @@ _cmd_email() {
             else
                 subject=""
             fi
-            # Parse b= (everything after b=)
+
+            # ── Parse b= (everything after b=) ────────────────────
             if [[ "$_send_rest" == *" b="* ]]; then
                 body="${_send_rest#* b=}"
+            elif [[ "$_send_rest" == "b="* ]]; then
+                body="${_send_rest#b=}"
             else
                 body=""
             fi
+
             if [ -z "$to" ] || [ -z "$subject" ]; then
-                ui_err "Missing required fields (to= and s= are required)"
-                ui_dim "  Usage: /email send <provider> to=addr s=subject b=body"
+                ui_err "Missing required fields (recipient and subject are required)"
+                ui_dim "  Usage: /email send <provider> <recipient> s=subject b=body"
+                ui_dim "  Example: /email send gmail user@example.com s=Hello b=How are you?"
                 return 1
             fi
             email_send "$provider" "$to" "$subject" "$body" ;;

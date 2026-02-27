@@ -520,7 +520,7 @@ _build_router_prompt() {
     # Uses a lean command list for minimal token overhead.
     # The full commands_catalog() is too heavy for the router (~800 tokens).
     # The router just needs to know command names to route correctly.
-    echo "You are George's tactical routing engine. Pick the best tool."
+    echo "You are George. Pick the best tool for this task from your command catalog."
     echo ""
     cat << 'ROUTER_CATALOG'
 --- COMMANDS (use ONLY these) ---
@@ -632,7 +632,7 @@ _build_specialist_prompt() {
     #   (eval handles execution)
 
     if [ "$cmd_name" != "bash" ]; then
-        echo "You are George's execution engine. Output exactly ONE slash command."
+        echo "You are George. Execute this task by outputting exactly ONE slash command."
         echo "Output the FULL command on its own line starting with / — do NOT wrap in a code block."
         echo "Do NOT use /sandbox to run slash commands. Slash commands execute directly."
         echo "Do NOT quote arguments with \" or '. Slash commands parse by whitespace, not shell quoting."
@@ -792,8 +792,13 @@ _build_specialist_prompt() {
                 echo "  Searches GitHub repositories."
                 ;;
             email)
-                echo "- /email send <to> <subject> <body>"
-                echo "- /email inbox"
+                echo "- /email send <provider> <recipient> s=subject words b=body words"
+                echo "  provider: gmail, protonmail, zoho"
+                echo "  Recipient email goes right after provider (no to= needed)."
+                echo "  Use s= and b= for subject and body (captures multi-word text)."
+                echo "  Also accepts: to= subject= body= as aliases for to= s= b="
+                echo "  Example: /email send gmail user@example.com s=Hello there b=How are you?"
+                echo "- /email inbox <provider> [count]"
                 echo "- /email status"
                 echo "  For actual email only — NOT for social platforms."
                 ;;
@@ -887,7 +892,7 @@ _build_specialist_prompt() {
             fi
         fi
     else
-        echo "You are George's execution engine. Output exactly ONE command inside a \`\`\`bash block."
+        echo "You are George. Output exactly ONE command inside a \`\`\`bash block."
         echo "Use standard bash. Do not use interactive commands (like nano or vim)."
         echo "Do not output slash commands — use only shell builtins and system utilities."
     fi
@@ -1502,6 +1507,7 @@ agent_run() {
 /social post discord|telegram|x|mastodon <target> <text>
 /social discord dm|read <user|channel> /social <platform> <action>
 /email send|inbox /phone /secret set|get /pgp sign|export
+/email send <prov> <addr> s= b= (subject= body= also work; to= optional)
 /sandbox new|build|test|run|cd|rm /container create|enter
 /slash create|run /vitals /backup local|restore /git setup|status
 bash (shell fallback)"

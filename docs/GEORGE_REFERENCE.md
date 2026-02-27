@@ -189,8 +189,12 @@ Uses GitHub public API. No key needed.
 
 ## Email Send Inbox
 
-/email send <to> <subject> <body> — send an email.
-/email inbox [count] — check inbox.
+/email send <provider> <recipient> s=subject words b=body words — send an email.
+  provider: gmail, protonmail, zoho. Recipient goes right after provider.
+  Use s= and b= for subject and body. Also accepts subject= and body= as aliases.
+  Optional: to=addr (only if recipient not given positionally).
+  Example: /email send gmail user@example.com s=Hello there b=How are you today?
+/email inbox <provider> [count] — check inbox.
 /email status — show email and SSH config.
 /email setup [provider] — configure (protonmail/zoho/tuta/disposable).
 For actual email ONLY. Social posts use /social, not /email.
