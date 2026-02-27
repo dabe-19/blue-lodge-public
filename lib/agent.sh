@@ -515,53 +515,63 @@ ${base_rules}"
 
 _build_router_prompt() {
     # Phase 1 Prompt: The Command Catalog Router
-    # Provides the full command catalog so George routes to his
-    # purpose-built slash commands instead of defaulting to raw bash.
-    # Uses a lean command list for minimal token overhead.
-    # The full commands_catalog() is too heavy for the router (~800 tokens).
-    # The router just needs to know command names to route correctly.
+    # Category-grouped command list with few-shot routing examples.
+    # The router's only job is classification: task → base command.
+    # Specialist handles exact syntax. ~250 tokens.
     echo "You are George. Pick the best tool for this task from your command catalog."
     echo ""
     cat << 'ROUTER_CATALOG'
---- COMMANDS (use ONLY these) ---
-/ask <question>          — Quick answer (no planning)
-/init <name> <lang>      — Scaffold project (name=no_spaces)
-/recall <query>          — Search knowledge base
-/save <file> <text>      — Save content to file
-/write <file> <text>     — Write/overwrite a file
-/download <url> [dest]   — Download a URL
-/sandbox new <name> [type] — Create sandbox (ONLY for building code projects)
-/sandbox build|test|run|cd|rm <name> — Sandbox operations
-/sandbox clone <url> [name] — Clone repo into sandbox
-/clone <url>             — Clone and setup a repo
-/build [release]         — Build project
-/test [args]             — Run tests
-/fix [error]             — Diagnose and fix
-/commit [msg]            — AI commit message + commit
-/push                    — Push to GitHub
-/web search <query>      — Web search
-/web images <query>      — Find images (Serper API)
-/web scrape-images <url> — Extract image URLs from a page (no API key)
-/web fetch <url>         — Fetch a URL
-/github search <q>       — Find GitHub repos
-/journal write <text>    — Write to journal
-/social post discord <channel> <text> — Post to Discord channel (resolves names)
-/social post telegram <text>  — Post to Telegram
-/social post x <text>        — Post to X/Twitter
-/social post mastodon <text> — Post to Mastodon
-/social discord dm <user> <text> — DM a Discord user
-/social discord read <channel> — Read Discord messages
-/social <platform> <act> — Platform-specific action
-/pgp sign|signpost|export — PGP operations
-/email send|inbox|status — Email operations (actual email only, NOT social)
-/phone                   — Phone dashboard
-/secret set|get <k>      — Encrypted secrets
-/slash create <name> <desc> — Create custom command
-/vitals                  — System dashboard
-/git setup|status|ssh-keygen — Git configuration
-/backup local|restore|github — Backup operations
-/vision <image>          — Analyze an image
-bash                     — Standard Linux shell (fallback)
+--- COMMAND CATALOG (use ONLY these) ---
+
+KNOWLEDGE & REASONING:
+  /ask         — Answer a question from your own knowledge (no tools)
+  /recall      — Search your knowledge base (FTS5)
+  /journal     — Write to your living memory
+
+FILE & PROJECT:
+  /write       — Write or overwrite a file
+  /save        — Save content to a file
+  /download    — Download a URL or copy a file
+  /init        — Scaffold a new project
+  /clone       — Clone a git repo
+  /build       — Build project
+  /test        — Run tests
+  /fix         — Diagnose and fix errors
+  /commit      — AI commit message + commit
+  /push        — Push to GitHub
+
+WEB & SEARCH:
+  /web         — Search, fetch, or find images on the web
+  /github      — Search GitHub repos
+  /vision      — Analyze an image
+
+COMMUNICATION:
+  /social      — Post to Discord, Telegram, X, Mastodon, Bluesky (NOT email)
+  /email       — Send or check actual email (gmail, protonmail, zoho)
+  /phone       — Phone dashboard, SMS, calls
+
+SANDBOX & CONTAINERS:
+  /sandbox     — Create/build/test/run code sandboxes (NOT for running slash commands)
+  /container   — Linux containers via proot-distro
+
+SECURITY & CONFIG:
+  /pgp         — Sign, verify, export PGP keys
+  /secret      — Encrypted secrets vault
+  /git         — Git setup, SSH keys
+  /backup      — Backup and restore
+  /vitals      — System dashboard
+
+EXTENSION:
+  /slash       — Create or run custom commands
+  bash         — Standard Linux shell (fallback)
+
+--- FEW-SHOT ROUTING EXAMPLES ---
+Task: "what is a monad?"               → /ask
+Task: "post hello to the lunkers channel" → /social
+Task: "search the web for rust tutorials" → /web
+Task: "send an email to john@test.com"  → /email
+Task: "build a url shortener in rust"   → /sandbox
+Task: "download https://example.com/f"  → /download
 ROUTER_CATALOG
     echo ""
     echo "Output ONLY the tool name. For slash commands output the base command"
@@ -703,6 +713,7 @@ _build_specialist_prompt() {
                 echo "- @mentions: Write @DisplayName naturally. Auto-resolved to <@user_id>."
                 echo "- Do NOT use #channel in text. Channel goes BEFORE the text."
                 echo "- Do NOT wrap any arguments in quotes."
+                echo "Example: /social post discord lunkers @Pompler Just landed a 5lb bass at Cedar Lake"
                 ;;
             init)
                 echo "- /init <name> <type>"
@@ -710,6 +721,7 @@ _build_specialist_prompt() {
                 echo "  Types: rust, python, rl, data, automation, notebook, shell"
                 echo "- Creates project dir, GEORGE.md, starter code, git init."
                 echo "- After /init, use /write to add files, /build to build."
+                echo "Example: /init task-manager rust"
                 ;;
             write)
                 echo "- /write <filepath> <content>"
@@ -717,11 +729,13 @@ _build_specialist_prompt() {
                 echo "  Content is everything after filepath (no quoting)."
                 echo "  Creates parent directories automatically."
                 echo "  For multi-line, use \\n for newlines."
+                echo "Example: /write src/main.rs fn main() { println!(\"Hello\"); }"
                 ;;
             save)
                 echo "- /save <filepath> <content>"
                 echo "  First token = filepath, rest = content."
                 echo "  Reads stdin if no content provided."
+                echo "Example: /save notes.md Meeting moved to Thursday at 3pm"
                 ;;
             web)
                 echo "- /web search <query>"
@@ -738,10 +752,12 @@ _build_specialist_prompt() {
                 echo "  To find images: /web images <query> (needs SERPER_API_KEY), or"
                 echo "    /web scrape-images <page_url> to extract images from a specific page."
                 echo "  Then /vision <image_url> to analyze."
+                echo "Example: /web search rust async tutorial 2025"
                 ;;
             download)
                 echo "- /download <url_or_path> [destination]"
                 echo "  Downloads a file. Destination is optional."
+                echo "Example: /download https://example.com/data.csv ./data/"
                 ;;
             sandbox)
                 echo "- /sandbox new <name> [type]  — Create (types: rust/python/shell)"
@@ -752,90 +768,107 @@ _build_specialist_prompt() {
                 echo "- /sandbox rm <name>          — Remove sandbox"
                 echo "- /sandbox clone <url> [name] — Clone repo into sandbox"
                 echo "- Do NOT use /sandbox to run other slash commands."
+                echo "Example: /sandbox new url-shortener rust"
                 ;;
             build)
                 echo "- /build [release]"
                 echo "  Auto-detects Cargo/pyproject/Makefile."
                 echo "  Reads GEORGE.md ## Build section for instructions."
+                echo "Example: /build release"
                 ;;
             test)
                 echo "- /test [specific_test]"
                 echo "  Auto-detects Cargo/pytest/npm/make."
                 echo "  Reads GEORGE.md ## Test section for instructions."
+                echo "Example: /test"
                 ;;
             fix)
                 echo "- /fix [file_or_description]"
                 echo "  Auto-diagnoses and fixes errors."
                 echo "  Optional: specify file or error description."
+                echo "Example: /fix src/main.rs"
                 ;;
             commit)
                 echo "- /commit [files...]"
                 echo "  AI-generates commit message from staged changes."
                 echo "  Optional: specific files to stage."
+                echo "Example: /commit"
                 ;;
             push)
                 echo "- /push [branch]"
                 echo "  Pushes to remote. Defaults to current branch."
+                echo "Example: /push"
                 ;;
             clone)
                 echo "- /clone <repo_url_or_owner/repo> [local_name]"
                 echo "  Supports full URL or owner/repo shorthand."
                 echo "  Optional local directory name."
+                echo "Example: /clone tokio-rs/tokio"
                 ;;
             git)
                 echo "- /git setup      — Configure git user/email"
                 echo "- /git status     — Show repo status"
                 echo "- /git ssh-keygen — Generate SSH key for GitHub"
+                echo "Example: /git setup"
                 ;;
             github)
                 echo "- /github search <query>"
                 echo "  Searches GitHub repositories."
+                echo "Example: /github search rust web framework"
                 ;;
             email)
-                echo "- /email send <provider> <recipient> s=subject words b=body words"
+                echo "- /email send <provider> <recipient> subject=<subject> body=<body>"
                 echo "  provider: gmail, protonmail, zoho"
                 echo "  Recipient email goes right after provider (no to= needed)."
-                echo "  Use s= and b= for subject and body (captures multi-word text)."
-                echo "  Also accepts: to= subject= body= as aliases for to= s= b="
-                echo "  Example: /email send gmail user@example.com s=Hello there b=How are you?"
+                echo "  Use subject= and body= for subject and body (captures multi-word text)."
+                echo "  Also accepts: to= s= b= as aliases for to= subject= body="
+                echo "  Example: /email send gmail user@example.com subject=Hello there body=How are you?"
                 echo "- /email inbox <provider> [count]"
                 echo "- /email status"
                 echo "  For actual email only — NOT for social platforms."
+                echo "Example: /email send gmail user@example.com subject=Hello there body=How are you?"
                 ;;
             journal)
                 echo "- /journal write <entry_text>"
                 echo "  Types: reflection, learning, struggle, beauty, feeling, encounter."
                 echo "  Appends timestamped entry to journal.md."
+                echo "Example: /journal Because in every Animal that walks upright, the Deficiency of the Fluids that fill the Muscles appears first in the highest Part: The Face first grows lank and wrinkled; then the Neck; then the Breast and Arms; the lower Parts continuing to the last as plump as ever: So that covering all above with a Basket, and regarding2 only what is below the Girdle, it is impossible of two Women to know an old from a young one. And as in the dark all Cats are grey, the Pleasure of corporal Enjoyment with an old Woman is at least equal, and frequently superior, every Knack being by Practice capable of Improvement."
                 ;;
             recall)
                 echo "- /recall <query>"
                 echo "  BM25-ranked FTS5 search of knowledge base."
                 echo "  Returns source, section, and snippet."
+                echo "Example: /recall trout stocking schedule"
                 ;;
             pgp)
                 echo "- /pgp sign <message>   — Cleartext-sign a message"
                 echo "- /pgp signpost         — Sign + post to Discord"
                 echo "- /pgp export           — Export public key"
+                echo "Example: /pgp sign I attest this message is authentic"
                 ;;
             phone)
                 echo "- /phone"
                 echo "  Shows phone dashboard (battery, signal, location, SMS)."
                 echo "  No arguments needed."
+                echo "Example: /phone"
                 ;;
             secret)
                 echo "- /secret set <name> <value>"
                 echo "- /secret get <name>"
                 echo "  AES-256-CBC encrypted vault."
+                echo "Example: /secret set SERPER_API_KEY abc123xyz"
                 ;;
             vitals)
                 echo "- /vitals"
                 echo "  System dashboard: disk, RAM, battery, network."
                 echo "  No arguments needed."
+                echo "Example: /vitals"
                 ;;
             backup)
                 echo "- /backup local   — Timestamped local backup"
                 echo "- /backup restore — Restore from backup"
                 echo "- /backup github  — Push backup to GitHub"
+                echo "Example: /backup local"
                 ;;
             vision)
                 echo "- /vision <image_path_or_url> [prompt]"
@@ -843,26 +876,31 @@ _build_specialist_prompt() {
                 echo "  Optional prompt for specific analysis."
                 echo "  Accepts direct image URLs (auto-downloads)."
                 echo "  To find images: /web images <query> or /web scrape-images <page_url>."
+                echo "Example: /vision https://example.com/photo.jpg describe this scene"
                 ;;
             container)
                 echo "- /container create <distro>  — Install (ubuntu/alpine/debian/fedora/kali)"
                 echo "- /container enter <distro>   — Interactive shell"
                 echo "- /container exec <distro> <cmd> — Run command inside"
                 echo "- /container rm <distro>      — Remove container"
+                echo "Example: /container create ubuntu"
                 ;;
             wallet)
                 echo "- /wallet status   — Show configured wallets"
                 echo "- /wallet balances — Show live balances"
                 echo "- /wallet check    — Health check"
+                echo "Example: /wallet balances"
                 ;;
             slash)
                 echo "- /slash create <name> <description>"
                 echo "- /slash run <name> [args]"
                 echo "- /slash list"
+                echo "Example: /slash create morning-brief Show me weather, calendar, and unread messages"
                 ;;
             ask)
                 echo "- /ask <question>"
                 echo "  Quick answer from LLM — no tools, no planning."
+                echo "Example: /ask What is a monad in functional programming?"
                 ;;
             *)
                 echo "- /$base_cmd (no specific syntax card — check docs above)"
@@ -1501,16 +1539,16 @@ agent_run() {
         # catalog (~800 tokens) — the strategist only needs to ROUTE, not
         # generate exact syntax (the specialist handles that).
         local _tool_summary=""
-        _tool_summary="YOUR WORKING COMMANDS:
-/ask /init /recall /save /write /download /build /test /fix /commit /push /clone
-/web search|fetch|images|scrape-images /github search /journal write /vision
-/social post discord|telegram|x|mastodon <target> <text>
-/social discord dm|read <user|channel> /social <platform> <action>
-/email send|inbox /phone /secret set|get /pgp sign|export
-/email send <prov> <addr> s= b= (subject= body= also work; to= optional)
-/sandbox new|build|test|run|cd|rm /container create|enter
-/slash create|run /vitals /backup local|restore /git setup|status
-bash (shell fallback)"
+        _tool_summary="YOUR WORKING COMMANDS (by category):
+KNOWLEDGE: /ask /recall /journal write
+FILES: /write /save /download /init /clone /build /test /fix /commit /push
+WEB: /web search|fetch|images|scrape-images /github search /vision
+COMMUNICATION: /social post discord|telegram|x|mastodon <target> <text>
+  /social discord dm|read <user|channel> /email send|inbox /phone
+  /email send provider address subject= body=
+SANDBOX: /sandbox new|build|test|run|cd|rm /container create|enter
+CONFIG: /pgp sign|export /secret set|get /git setup|status /vitals /backup local|restore
+EXTENSION: /slash create|run"
 
         # Service status: let strategist know what's configured vs not
         local _svc_status=""

@@ -539,7 +539,7 @@ describe "Model family system"
 
     models_info "granite4"
     assert_eq "$_ME_STOP" '<|end_of_text|>' "granite4 stop token"
-    assert_eq "$_ME_TEMP" "0.6" "granite4 temp"
+    assert_eq "$_ME_TEMP" "0.15" "granite4 temp"
 
     models_info "llama32"
     assert_eq "$_ME_STOP" '<|eot_id|>' "llama32 stop token"

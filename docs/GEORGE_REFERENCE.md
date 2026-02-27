@@ -9,11 +9,19 @@ Channel names auto-resolve from registry. Strips quotes from args.
 If channel unknown, falls back to webhook or DISCORD_DEFAULT_CHANNEL.
 Sync channels first: /social discord channels sync
 
+Examples:
+  /social post discord general Good morning everyone
+  /social post discord lunkers Just caught a 5lb bass at Cedar Lake
+
 ## Discord Direct Message
 
 /social discord dm <user> <text> — send a DM to a Discord user.
 Resolves username to user ID from registry.
 Sync users first: /social discord users sync
+
+Examples:
+  /social discord dm pompler Hey, check out that repo I found
+  /social discord dm jake Meeting at 3pm today
 
 ## Discord At-Mention Users
 
@@ -114,6 +122,11 @@ Rust: runs cargo init with optimized profiles.
 Python: creates venv with uv or pip.
 Shell: plain directory with bin/.
 
+Examples:
+  /sandbox new url-shortener rust
+  /sandbox new data-pipeline python
+  /sandbox new backup-script shell
+
 ## Sandbox Build Test Run
 
 /sandbox build <name> — build using detected toolchain (cargo/uv/make).
@@ -135,6 +148,11 @@ Shell: plain directory with bin/.
 Types: rust, python, rl, data, automation, notebook, shell.
 Creates project dir + GEORGE.md + starter code.
 Name must have no spaces. Language is fuzzy-matched.
+
+Examples:
+  /init task-manager rust
+  /init sentiment-analyzer python
+  /init deploy-helper shell
 
 ## Write Save Files
 
@@ -181,6 +199,12 @@ Creates sandbox, clones, writes GEORGE.md.
 Key: /api keys set SERPER_API_KEY <key>
 Image workflow: /web images <query> OR /web search <topic> → /web scrape-images <result_url> → /vision <image_url>
 
+Examples:
+  /web search rust async tutorial 2025
+  /web fetch https://docs.rs/tokio/latest
+  /web images landscape wallpaper 4k
+  /web scrape-images https://unsplash.com/s/photos/mountain
+
 ## GitHub Search Check
 
 /github search <query> — find repos by keyword (name, stars, description).
@@ -193,7 +217,11 @@ Uses GitHub public API. No key needed.
   provider: gmail, protonmail, zoho. Recipient goes right after provider.
   Use s= and b= for subject and body. Also accepts subject= and body= as aliases.
   Optional: to=addr (only if recipient not given positionally).
-  Example: /email send gmail user@example.com s=Hello there b=How are you today?
+
+Examples:
+  /email send gmail user@example.com s=Hello there b=How are you today?
+  /email send protonmail boss@work.com s=Weekly Report b=All tasks completed this week
+  /email send zoho friend@mail.com s=Lunch tomorrow? b=Want to grab lunch at noon?
 /email inbox <provider> [count] — check inbox.
 /email status — show email and SSH config.
 /email setup [provider] — configure (protonmail/zoho/tuta/disposable).
@@ -241,6 +269,10 @@ Supports: .md .txt .pdf .html .py .sh .rs .js .ts .json .yaml
 /journal read — read recent journal entries.
 Use journal to persist facts from external sources.
 Pattern: read source → journal write summary → recall later.
+
+Examples:
+  /journal write Learned that Cedar Lake is stocked with trout every April
+  /journal write Discord user pompler prefers to be contacted after 5pm
 
 ## Phone Dashboard
 
