@@ -419,4 +419,356 @@ describe "tools_sanitize_filename"
     assert_eq "$result" "rogue-lite-bullet-hell.zip"
   }
 
+# ── Extension library ─────────────────────────────────────────
+describe "_TOOLS_EXTENSIONS library"
+
+  it "extension library is populated" && {
+    [ "${#_TOOLS_EXTENSIONS[@]}" -gt 50 ]
+    assert_ok $?
+  }
+
+  it "contains all George reference extensions" && {
+    (
+      found=0
+      for need in .sh .rs .py .js .ts .ipynb .md .txt .pdf .html \
+                  .jpg .jpeg .png .webp .gif .bmp .svg .avif .tiff \
+                  .toml .yaml .json .conf .enc .gitignore; do
+        for ext in "${_TOOLS_EXTENSIONS[@]}"; do
+          [ "$ext" = "$need" ] && found=$((found + 1)) && break
+        done
+      done
+      [ "$found" -eq 25 ]
+    )
+    assert_ok $?
+  }
+
+  it "longer extensions appear before shorter ones (.jsonl before .json)" && {
+    (
+      idx_jsonl=-1; idx_json=-1; i=0
+      for ext in "${_TOOLS_EXTENSIONS[@]}"; do
+        [ "$ext" = ".jsonl" ] && idx_jsonl=$i
+        [ "$ext" = ".json" ] && idx_json=$i
+        i=$((i + 1))
+      done
+      [ "$idx_jsonl" -lt "$idx_json" ]
+    )
+    assert_ok $?
+  }
+
+  it ".tsx appears before .ts" && {
+    (
+      idx_tsx=-1; idx_ts=-1; i=0
+      for ext in "${_TOOLS_EXTENSIONS[@]}"; do
+        [ "$ext" = ".tsx" ] && idx_tsx=$i
+        [ "$ext" = ".ts" ] && idx_ts=$i
+        i=$((i + 1))
+      done
+      [ "$idx_tsx" -lt "$idx_ts" ]
+    )
+    assert_ok $?
+  }
+
+  it ".jsx appears before .js" && {
+    (
+      idx_jsx=-1; idx_js=-1; i=0
+      for ext in "${_TOOLS_EXTENSIONS[@]}"; do
+        [ "$ext" = ".jsx" ] && idx_jsx=$i
+        [ "$ext" = ".js" ] && idx_js=$i
+        i=$((i + 1))
+      done
+      [ "$idx_jsx" -lt "$idx_js" ]
+    )
+    assert_ok $?
+  }
+
+  it ".gitignore appears before shorter extensions" && {
+    (
+      idx_gi=-1; i=0
+      for ext in "${_TOOLS_EXTENSIONS[@]}"; do
+        [ "$ext" = ".gitignore" ] && idx_gi=$i
+        i=$((i + 1))
+      done
+      [ "$idx_gi" -lt 5 ]
+    )
+    assert_ok $?
+  }
+
+# ── tools_fix_ext_spacing ─────────────────────────────────────
+describe "tools_fix_ext_spacing — programming extensions"
+
+  it "fixes .sh followed by text" && {
+    result=$(tools_fix_ext_spacing "script.shecho hello")
+    assert_eq "$result" "script.sh echo hello"
+  }
+
+  it "fixes .rs followed by code" && {
+    result=$(tools_fix_ext_spacing "src/main.rsuse std::io;")
+    assert_eq "$result" "src/main.rs use std::io;"
+  }
+
+  it "fixes .py followed by import" && {
+    result=$(tools_fix_ext_spacing "main.pyimport os")
+    assert_eq "$result" "main.py import os"
+  }
+
+  it "fixes .js followed by code" && {
+    result=$(tools_fix_ext_spacing "app.jsconst x = 1;")
+    assert_eq "$result" "app.js const x = 1;"
+  }
+
+  it "fixes .ts followed by code" && {
+    result=$(tools_fix_ext_spacing "index.tsinterface Foo {}")
+    assert_eq "$result" "index.ts interface Foo {}"
+  }
+
+  it "fixes .ipynb followed by text" && {
+    result=$(tools_fix_ext_spacing "notebook.ipynbThis is a notebook")
+    assert_eq "$result" "notebook.ipynb This is a notebook"
+  }
+
+describe "tools_fix_ext_spacing — documentation extensions"
+
+  it "fixes .md followed by #" && {
+    result=$(tools_fix_ext_spacing "README.md# My Project")
+    assert_eq "$result" "README.md # My Project"
+  }
+
+  it "fixes .txt followed by text" && {
+    result=$(tools_fix_ext_spacing "file.txtThis is the content")
+    assert_eq "$result" "file.txt This is the content"
+  }
+
+  it "fixes .pdf followed by text" && {
+    result=$(tools_fix_ext_spacing "doc.pdfExtracted text here")
+    assert_eq "$result" "doc.pdf Extracted text here"
+  }
+
+  it "fixes .html followed by <" && {
+    result=$(tools_fix_ext_spacing "page.html<div>hello</div>")
+    assert_eq "$result" "page.html <div>hello</div>"
+  }
+
+describe "tools_fix_ext_spacing — image extensions"
+
+  it "fixes .jpg followed by text" && {
+    result=$(tools_fix_ext_spacing "photo.jpgDescription of image")
+    assert_eq "$result" "photo.jpg Description of image"
+  }
+
+  it "fixes .jpeg followed by text" && {
+    result=$(tools_fix_ext_spacing "photo.jpegAnalysis complete")
+    assert_eq "$result" "photo.jpeg Analysis complete"
+  }
+
+  it "fixes .png followed by text" && {
+    result=$(tools_fix_ext_spacing "icon.pngThe icon shows")
+    assert_eq "$result" "icon.png The icon shows"
+  }
+
+  it "fixes .webp followed by text" && {
+    result=$(tools_fix_ext_spacing "banner.webpOptimized for web")
+    assert_eq "$result" "banner.webp Optimized for web"
+  }
+
+  it "fixes .gif followed by text" && {
+    result=$(tools_fix_ext_spacing "anim.gifAnimated content")
+    assert_eq "$result" "anim.gif Animated content"
+  }
+
+  it "fixes .bmp followed by text" && {
+    result=$(tools_fix_ext_spacing "image.bmpBitmap file")
+    assert_eq "$result" "image.bmp Bitmap file"
+  }
+
+  it "fixes .svg followed by text" && {
+    result=$(tools_fix_ext_spacing "logo.svgVector graphic")
+    assert_eq "$result" "logo.svg Vector graphic"
+  }
+
+  it "fixes .avif followed by text" && {
+    result=$(tools_fix_ext_spacing "photo.avifModern format")
+    assert_eq "$result" "photo.avif Modern format"
+  }
+
+  it "fixes .tiff followed by text" && {
+    result=$(tools_fix_ext_spacing "scan.tiffHigh resolution")
+    assert_eq "$result" "scan.tiff High resolution"
+  }
+
+describe "tools_fix_ext_spacing — config extensions"
+
+  it "fixes .toml followed by text" && {
+    result=$(tools_fix_ext_spacing "Cargo.toml[package]")
+    assert_eq "$result" "Cargo.toml [package]"
+  }
+
+  it "fixes .yaml followed by text" && {
+    result=$(tools_fix_ext_spacing "config.yamlkey: value")
+    assert_eq "$result" "config.yaml key: value"
+  }
+
+  it "fixes .json followed by {" && {
+    result=$(tools_fix_ext_spacing 'config.json{"key": "val"}')
+    assert_contains "$result" ".json {"
+  }
+
+  it "fixes .conf followed by text" && {
+    result=$(tools_fix_ext_spacing "keys.confAPI_KEY=abc123")
+    assert_eq "$result" "keys.conf API_KEY=abc123"
+  }
+
+describe "tools_fix_ext_spacing — system extensions"
+
+  it "fixes .enc followed by text" && {
+    result=$(tools_fix_ext_spacing "secret.encEncrypted data")
+    assert_eq "$result" "secret.enc Encrypted data"
+  }
+
+describe "tools_fix_ext_spacing — longer-over-shorter priority"
+
+  it "prefers .jsonl over .json" && {
+    result=$(tools_fix_ext_spacing "data.jsonlMore data")
+    assert_eq "$result" "data.jsonl More data"
+  }
+
+  it "prefers .tsx over .ts" && {
+    result=$(tools_fix_ext_spacing "app.tsxreturn null")
+    assert_eq "$result" "app.tsx return null"
+  }
+
+  it "prefers .jsx over .js" && {
+    result=$(tools_fix_ext_spacing "page.jsxfunction App()")
+    assert_eq "$result" "page.jsx function App()"
+  }
+
+  it "prefers .jpeg over .jpg" && {
+    result=$(tools_fix_ext_spacing "photo.jpegSome text")
+    assert_eq "$result" "photo.jpeg Some text"
+  }
+
+describe "tools_fix_ext_spacing — should NOT modify"
+
+  it "does NOT inject space when already present" && {
+    result=$(tools_fix_ext_spacing "file.txt already fine")
+    assert_eq "$result" "file.txt already fine"
+  }
+
+  it "does NOT inject space for standalone extension" && {
+    result=$(tools_fix_ext_spacing "notes.md")
+    assert_eq "$result" "notes.md"
+  }
+
+  it "handles empty input" && {
+    result=$(tools_fix_ext_spacing "")
+    assert_empty "$result"
+  }
+
+  it "handles input with no extension" && {
+    result=$(tools_fix_ext_spacing "Makefile some text")
+    assert_eq "$result" "Makefile some text"
+  }
+
+  it "does NOT split .json when followed by space" && {
+    result=$(tools_fix_ext_spacing "config.json already spaced")
+    assert_eq "$result" "config.json already spaced"
+  }
+
+# ── tools_fix_fence_spacing ───────────────────────────────────
+describe "tools_fix_fence_spacing"
+
+  _fence='```'
+
+  it "is defined" && {
+    declare -f tools_fix_fence_spacing &>/dev/null
+    assert_ok $?
+  }
+
+  it "injects space before opening fence when preceded by text" && {
+    result=$(tools_fix_fence_spacing "text${_fence}bash")
+    assert_eq "$result" "text ${_fence}bash"
+  }
+
+  it "injects space after closing fence when followed by uppercase" && {
+    result=$(tools_fix_fence_spacing "${_fence}The output is")
+    assert_eq "$result" "${_fence} The output is"
+  }
+
+  it "does NOT modify already-spaced fences" && {
+    result=$(tools_fix_fence_spacing "already ${_fence}bash fine")
+    assert_eq "$result" "already ${_fence}bash fine"
+  }
+
+  it "does NOT add space after opening fence with lang tag" && {
+    result=$(tools_fix_fence_spacing "${_fence}bash")
+    assert_eq "$result" "${_fence}bash"
+  }
+
+  it "handles both edges in one string" && {
+    result=$(tools_fix_fence_spacing "output${_fence}Next")
+    assert_eq "$result" "output ${_fence} Next"
+  }
+
+# ── tools_fix_asterisk_spacing ────────────────────────────────
+describe "tools_fix_asterisk_spacing"
+
+  it "is defined" && {
+    declare -f tools_fix_asterisk_spacing &>/dev/null
+    assert_ok $?
+  }
+
+  it "injects space at outer edges of **bold** glued to words" && {
+    result=$(tools_fix_asterisk_spacing 'word**bold**next')
+    assert_eq "$result" 'word **bold** next'
+  }
+
+  it "injects space at outer edges of ***emphasis*** glued to words" && {
+    result=$(tools_fix_asterisk_spacing 'text***emphasis***more')
+    assert_eq "$result" 'text ***emphasis*** more'
+  }
+
+  it "does NOT modify already-spaced bold" && {
+    result=$(tools_fix_asterisk_spacing 'already **bold** fine')
+    assert_eq "$result" 'already **bold** fine'
+  }
+
+  it "handles bold at start of line" && {
+    result=$(tools_fix_asterisk_spacing '**start of line')
+    assert_eq "$result" '**start of line'
+  }
+
+  it "handles multiple bold pairs" && {
+    result=$(tools_fix_asterisk_spacing 'a**b**c**d**e')
+    assert_eq "$result" 'a **b** c **d** e'
+  }
+
+  it "handles empty input" && {
+    result=$(tools_fix_asterisk_spacing "")
+    assert_empty "$result"
+  }
+
+# ── tools_fix_llm_spacing (combined) ──────────────────────────
+describe "tools_fix_llm_spacing — combined fixer"
+
+  it "is defined" && {
+    declare -f tools_fix_llm_spacing &>/dev/null
+    assert_ok $?
+  }
+
+  it "applies all three fixers in sequence" && {
+    _fence='```'
+    result=$(tools_fix_llm_spacing "file.txtContent${_fence}bash code${_fence}**bold**next")
+    assert_contains "$result" "file.txt Content"
+    assert_contains "$result" "**bold** next"
+  }
+
+  it "handles already-correct input" && {
+    result=$(tools_fix_llm_spacing "file.txt Content here")
+    assert_eq "$result" "file.txt Content here"
+  }
+
+  it "handles empty input" && {
+    result=$(tools_fix_llm_spacing "")
+    assert_empty "$result"
+  }
+
 test_end

@@ -322,6 +322,23 @@ _cmd_limits() {
             else
                 _limits_set LLM_STRATEGIST_TOKENS "Strategist tokens" "$value" 32 1024
             fi ;;
+        eval-tokens)
+            if [ -z "$value" ]; then
+                ui_info "Evaluator output tokens: $LLM_EVALUATOR_TOKENS (default: 512)"
+            else
+                _limits_set LLM_EVALUATOR_TOKENS "Evaluator tokens" "$value" 32 1024
+            fi ;;
+        eval-mode)
+            if [ -z "$value" ]; then
+                ui_info "Evaluator mode: $AGENT_EVAL_MODE (default: auto, options: auto|interactive)"
+            else
+                if [[ "$value" != "auto" && "$value" != "interactive" && "$value" != "disabled" ]]; then
+                    ui_err "Eval mode must be 'auto', 'interactive', or 'disabled'"
+                else
+                    AGENT_EVAL_MODE="$value"
+                    ui_ok "Evaluator mode set to $value"
+                fi
+            fi ;;
         ask-tokens)
             if [ -z "$value" ]; then
                 ui_info "Ask output tokens: $LLM_ASK_TOKENS (default: 20480)"
@@ -388,9 +405,11 @@ _cmd_limits() {
             AGENT_MAX_STEPS=20
             AGENT_MAX_DEPTH=2
             AGENT_STEP_DELAY=1
+            AGENT_EVAL_MODE=auto
             LLM_MAX_TOKENS=20480
             LLM_AGENT_TOKENS=20480
             LLM_STRATEGIST_TOKENS=512
+            LLM_EVALUATOR_TOKENS=512
             LLM_ASK_TOKENS=20480
             LLM_ROUTER_TOKENS=256
             LLM_BUDGET_TOKENS=1024
@@ -407,11 +426,13 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Macro milestones:" "$AGENT_MAX_STEPS  (default: 20)"
             printf "  %-22s %s\n" "Inner loop retries:" "$AGENT_INNER_LOOPS  (default: 6)"
             printf "  %-22s %s\n" "Step delay:" "${AGENT_STEP_DELAY}s  (default: 1)"
+            printf "  %-22s %s\n" "Eval mode:" "$AGENT_EVAL_MODE  (default: auto, options: auto|interactive|disabled)"
             echo ""
             ui_section "Output Tokens (num_predict)"
             printf "  %-22s %s\n" "Max tokens:" "$LLM_MAX_TOKENS  (default: 20480)"
             printf "  %-22s %s\n" "Agent tokens:" "$LLM_AGENT_TOKENS  (default: 20480)"
             printf "  %-22s %s\n" "Strategist tokens:" "$LLM_STRATEGIST_TOKENS  (default: 512)"
+            printf "  %-22s %s\n" "Evaluator tokens:" "$LLM_EVALUATOR_TOKENS  (default: 512)"
             printf "  %-22s %s\n" "Ask tokens:" "$LLM_ASK_TOKENS  (default: 20480)"
             printf "  %-22s %s\n" "Router tokens:" "$LLM_ROUTER_TOKENS  (default: 256)"
             echo ""
@@ -434,11 +455,13 @@ _cmd_limits() {
             ui_dim "    milestones N    — Macro loop milestone ceiling (current: $AGENT_MAX_STEPS)"
             ui_dim "    inner N         — Inner loop escalation retries (current: $AGENT_INNER_LOOPS)"
             ui_dim "    delay N         — Seconds between milestones (current: $AGENT_STEP_DELAY)"
+            ui_dim "    eval-mode M     — Evaluator mode: auto|interactive|disabled (current: $AGENT_EVAL_MODE)"
             echo ""
             ui_dim "  Output tokens (num_predict):"
             ui_dim "    max-tokens N    — Global max output cap (current: $LLM_MAX_TOKENS)"
             ui_dim "    tokens N        — Agent specialist (current: $LLM_AGENT_TOKENS)"
             ui_dim "    strat-tokens N  — Strategist milestone (current: $LLM_STRATEGIST_TOKENS)"
+            ui_dim "    eval-tokens N   — Evaluator completion judge (current: $LLM_EVALUATOR_TOKENS)"
             ui_dim "    ask-tokens N    — /ask conversation (current: $LLM_ASK_TOKENS)"
             ui_dim "    router-tokens N — Router tool selection (current: $LLM_ROUTER_TOKENS)"
             echo ""

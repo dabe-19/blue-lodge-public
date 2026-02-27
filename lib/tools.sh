@@ -33,6 +33,215 @@ tools_sanitize_filename() {
     echo "$f"
 }
 
+# ── File extension library ─────────────────────────────────────
+# Sorted longest-first so greedy extensions (e.g. .jsonl) match before
+# their shorter prefixes (.json). The awk pattern in tools_fix_ext_spacing()
+# relies on this ordering to avoid false positives where .ts would match
+# inside .tsx, or .js inside .json.
+#
+# Authoritative list derived from the George Agent File Extension Reference.
+# Categories: programming/scripting, documentation/knowledge, image/vision,
+# configuration/serialization, system/security, plus common extras.
+_TOOLS_EXTENSIONS=(
+    # 7+ char extensions (longest first)
+    .gitignore
+    # 5-6 char extensions
+    .ipynb .jsonl .xhtml .phtml .shtml .class .cmake
+    # 4-char extensions
+    .json .yaml .toml .lock .bash .fish .conf .diff .spec .avif
+    .html .scss .sass .less .wasm .http .jpeg .tiff .webp .webm
+    .java .rust .dart .perl .ruby .lisp .hurl
+    .make .flac .opus .epub .xlsx .docx .pptx
+    # 3-char extensions (longer variants like .tsx before .ts, .jsx before .js)
+    .tsx .jsx .cpp .hpp .cxx .hxx .zig .nim .lua .vim .sql .vue .svx
+    .py .rs .js .ts .go .rb .sh .md .cs .fs .hs .el .ex .kt .jl
+    .yml .ini .env .cfg .csv .xml .svg .tex .rst .org .txt .log .pid .enc
+    .css .htm .php .asp .jsp .erb .ejs .hbs .pug
+    .png .jpg .gif .bmp .ico .mp3 .mp4 .avi .mkv .mov .wav .ogg .pdf
+    .zip .tar .rpm .deb .dmg .img .iso .apk .jar .war .gem .whl
+    .bat .cmd .ps1 .psm .awk .sed .zsh .xsl .man .doc .ppt .xls .rtf
+    # 2-char extensions
+    .c .h .r .d .m .v .s .o .a
+)
+
+# ── Fix missing space after file extensions ────────────────────
+# LLMs frequently hallucinate merged text like:
+#   /write filename.txtThis is the file content
+#   /save src/main.rsuse std::io;
+# This function detects when a known file extension is immediately
+# followed by a non-space, non-punctuation character and injects a
+# space at the boundary.
+#
+# The extension list is sorted longest-first so that e.g. ".jsonl"
+# is tested before ".json", preventing a false split at ".json" + "l...".
+#
+# Usage: fixed=$(tools_fix_ext_spacing "filename.txtSome content")
+#        → "filename.txt Some content"
+tools_fix_ext_spacing() {
+    local input="$1"
+    [ -z "$input" ] && return 0
+
+    # Build an alternation pattern from the extension list, longest first.
+    # Escape dots for regex. The list is already sorted longest-first.
+    local ext_pattern=""
+    for ext in "${_TOOLS_EXTENSIONS[@]}"; do
+        local escaped="${ext//./\\.}"
+        ext_pattern="${ext_pattern:+${ext_pattern}|}${escaped}"
+    done
+
+    # Match: (extension)(immediately followed by a word character that is
+    # NOT another dot — a dot means it's a deeper extension like .tar.gz
+    # or a dotfile path component).
+    # We use perl-compatible lookahead via sed + capturing groups.
+    # Strategy: for each extension (longest first), check if input contains
+    # that extension followed immediately by [A-Za-z0-9_] and inject a space.
+    #
+    # We iterate extensions instead of one mega-regex because we need the
+    # longest-match guarantee: if ".jsonl" matches, we must NOT also split
+    # at ".json".
+    local result="$input"
+    for ext in "${_TOOLS_EXTENSIONS[@]}"; do
+        local escaped="${ext//./\\.}"
+        # Check: does the string contain this extension followed by a word char?
+        # The word char must NOT be preceded by a longer extension that already
+        # matched — but since we go longest-first the first match wins.
+        #
+        # Pattern: (escaped_ext)([A-Za-z0-9_])
+        # But we must NOT match if a longer extension starting with this one
+        # exists and matches. E.g., for .json, skip if .jsonl matches at
+        # the same position. The longest-first iteration handles this: once
+        # we inject a space for .jsonl, the .json pattern no longer sees a
+        # word char immediately after .json (it sees "l " — but wait, we
+        # already fixed it). Actually, after fixing .jsonl→".jsonl X", .json
+        # won't falsely trigger because the char after .json is now "l" which
+        # is part of the already-fixed extension. So we need a smarter check.
+        #
+        # Robust approach: only inject space if the char after the extension
+        # is an uppercase letter (LLM hallucination: .txtThis, .rsuse) OR
+        # if the token after extension doesn't form a longer known extension.
+        # Simplification: check if ext + next chars forms a longer known ext.
+        if echo "$result" | grep -qE "${escaped}[A-Za-z0-9_#<\"\`\(\[\{]"; then
+            # Extract what's after the extension
+            local after
+            after=$(echo "$result" | sed -n "s/.*${escaped}\([A-Za-z0-9_#<\"\`\(\[\{].*\)/\1/p" | head -1)
+            if [ -n "$after" ]; then
+                # Check if adding this char to the extension creates a longer
+                # known extension. E.g., ext=.json, after starts with "l" → .jsonl exists.
+                local next_char="${after:0:1}"
+                local extended="${ext}${next_char}"
+                local is_longer_ext=0
+                for longer in "${_TOOLS_EXTENSIONS[@]}"; do
+                    if [[ "$longer" == "${extended}"* ]]; then
+                        is_longer_ext=1
+                        break
+                    fi
+                done
+                if [ "$is_longer_ext" -eq 0 ]; then
+                    # Safe to inject space — this is the true extension boundary
+                    result=$(echo "$result" | sed "s/${escaped}\([A-Za-z0-9_#<\"\`\(\[\{]\)/${ext} \1/")
+                fi
+            fi
+        fi
+    done
+    echo "$result"
+}
+
+# ── Fix missing space around code fences ───────────────────────
+# LLMs sometimes emit code fences glued to surrounding text:
+#   "some text```bash\necho hi\n```more text"
+# This injects a space on BOTH edges:
+#   - Before opening ```: "text ```bash" (space before the backticks)
+#   - After closing ```:  "``` more"     (space after the backticks)
+# Only fires when there is NO existing space at the boundary.
+tools_fix_fence_spacing() {
+    local input="$1"
+    [ -z "$input" ] && return 0
+
+    local result="$input"
+    # Leading edge: inject space before ``` when preceded by non-space, non-newline
+    # Handles ```bash, ```python, ```rust, plain ``` etc.
+    result=$(echo "$result" | sed 's/\([^ \t\n`]\)\(```\)/\1 \2/g')
+    # Trailing edge: inject space after ``` when followed by non-space, non-newline
+    # Careful: don't match ```bash (opening fence with lang tag) — only bare ```
+    # followed by a non-backtick, non-space word character.
+    # Strategy: match ``` at end-of-fence (followed by a word char that isn't
+    # part of a language tag). We handle two cases:
+    #   1. Closing ``` followed by text: "```some text" → "``` some text"
+    #      But not "```bash" which is an opening fence.
+    #   2. Opening ```lang followed by text after a newline is fine (that's code).
+    # Heuristic: if ``` is followed by [A-Za-z], check if it looks like a
+    # known fence language tag. If not, inject space.
+    # Simple approach: inject space after ``` when followed by a character
+    # that is NOT a letter (fence tags always start with a letter) and is
+    # not a space/newline/backtick.
+    result=$(echo "$result" | sed 's/```\([^a-zA-Z` \t\n]\)/``` \1/g')
+    # Also handle: closing ``` immediately followed by a word (non-fence-tag)
+    # where the word doesn't look like a language identifier.
+    # This catches: "```Hello world" but not "```bash"
+    # We check: does the text after ``` NOT match a known code fence language?
+    # Pragmatic: inject space after ```<UPPERCASE> since lang tags are lowercase.
+    result=$(echo "$result" | sed 's/```\([A-Z]\)/``` \1/g')
+
+    echo "$result"
+}
+
+# ── Fix missing space around markdown asterisk sequences ───────
+# LLMs sometimes glue bold/italic markers to surrounding words:
+#   "some text**bold**more text"  → "some text **bold** more text"
+#   "word***emphasis***next"      → "word ***emphasis*** next"
+# Uses pair-counting (odd=opening, even=closing) to inject spaces
+# only at OUTER boundaries, preserving internal **content** intact.
+# Handles ** (bold) and *** (bold+italic). Single * is ignored
+# (too common in bullet points and multiplication).
+tools_fix_asterisk_spacing() {
+    local input="$1"
+    [ -z "$input" ] && return 0
+
+    echo "$input" | awk '{
+        line = $0
+        result = ""
+        pair_count = 0
+        while (match(line, /\*\*\*?/)) {
+            prefix = substr(line, 1, RSTART - 1)
+            marker = substr(line, RSTART, RLENGTH)
+            line   = substr(line, RSTART + RLENGTH)
+            pair_count++
+
+            if (pair_count % 2 == 1) {
+                # Opening marker: ensure space BEFORE it if preceded by wordchar
+                if (prefix != "" && match(prefix, /[a-zA-Z0-9)}\]]$/))
+                    result = result prefix " " marker
+                else
+                    result = result prefix marker
+            } else {
+                # Closing marker: just append (no space before closing **)
+                result = result prefix marker
+                # Ensure space AFTER closing marker if followed by wordchar
+                if (line != "" && match(line, /^[a-zA-Z0-9({[]/))
+                    result = result " "
+            }
+        }
+        result = result line
+        print result
+    }'
+}
+
+# ── Combined LLM output spacing fixer ─────────────────────────
+# Applies all heuristic spacing fixes in sequence:
+#   1. File extension spacing   (.txtContent → .txt Content)
+#   2. Code fence spacing       (text```bash → text ```bash)
+#   3. Asterisk spacing         (word**bold**next → word **bold** next)
+# Use this as the single entry point wherever LLM output needs cleanup.
+tools_fix_llm_spacing() {
+    local input="$1"
+    [ -z "$input" ] && return 0
+    local result
+    result=$(tools_fix_ext_spacing "$input")
+    result=$(tools_fix_fence_spacing "$result")
+    result=$(tools_fix_asterisk_spacing "$result")
+    echo "$result"
+}
+
 # ── Extract bash code blocks ──────────────────────────────────
 # Resilient to common LLM formatting errors:
 #   - Missing closing ``` (unterminated block)

@@ -39,6 +39,11 @@ commands_dispatch() {
     elif [[ "$args" =~ ^\'(.*)\'$ ]]; then
         args="${BASH_REMATCH[1]}"
     fi
+
+    # Fix missing spaces in LLM output — file extensions, code fences, asterisks.
+    if declare -f tools_fix_llm_spacing &>/dev/null; then
+        args=$(tools_fix_llm_spacing "$args")
+    fi
     
     # Check built-in commands first
     case "$cmd" in

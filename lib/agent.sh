@@ -20,6 +20,85 @@ AGENT_INTERACTIVE_PLANNING="${AGENT_INTERACTIVE_PLANNING:-0}"
 AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-2}"        # Subtask recursion depth
 AGENT_WEB_SUFFICIENCY="${AGENT_WEB_SUFFICIENCY:-3}"  # Web actions before sufficiency signal
 AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-2}"  # Max times to retry same milestone
+AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto | interactive | disabled
+
+LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-512}"     # Max output tokens for evaluator
+
+# ── Task Completion Evaluator ──────────────────────────────────
+# Impartial judge with no personality injection. Reads macro_memory.md
+# and determines whether completed milestones satisfy the original
+# request. Returns 0 if the task is complete, 1 if work remains.
+#
+# Modes (AGENT_EVAL_MODE):
+#   auto        — (default) Silently finish the task chain with a summary.
+#   interactive — Prompt the operator to confirm satisfaction or continue.
+_agent_evaluate_completion() {
+    local macro_file="$1"
+    local macro_context
+    macro_context=$(cat "$macro_file")
+
+    # Build a strict, personality-free evaluation prompt
+    local eval_prompt="Evaluate the following task memory. The PRIMARY OBJECTIVE is the original user request. The COMPLETED MILESTONES section lists all work done so far. Your SOLE job is to determine whether the completed milestones have FULLY satisfied the primary objective.\n\nTask Memory:\n${macro_context}\n\nRespond with EXACTLY one of:\n  COMPLETE — if the primary objective has been fully satisfied\n  INCOMPLETE — if meaningful work remains to fulfill the primary objective\n\nOutput ONLY that single word. No explanation. No qualification."
+
+    local eval_sys="You are a strict task-completion evaluator. You have no personality, no name, and no opinions beyond completion assessment. Evaluate ONLY whether the stated primary objective has been fulfilled by the completed milestones. Be conservative: if any essential part of the request remains unaddressed, respond INCOMPLETE. Do not speculate about quality — judge only whether the requested work has been performed."
+
+    ui_think "Evaluator: assessing task completion..."
+    local verdict
+    local LLM_SCENARIO=evaluator
+    verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-512}" "$LLM_BUDGET_AGENT")
+
+    # Clean up LLM output — strip think blocks, whitespace, take first word
+    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+    verdict=$(echo "$verdict" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
+    verdict=$(echo "$verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    verdict=$(echo "$verdict" | head -1 | awk '{print $1}')
+
+    if [[ "$verdict" != "COMPLETE" ]]; then
+        ui_info "Evaluator: objective not yet fulfilled — continuing"
+        return 1
+    fi
+
+    # ── Task is complete — handle by mode ──────────────────────
+    ui_ok "Evaluator: primary objective fulfilled"
+
+    if [[ "${AGENT_EVAL_MODE:-auto}" == "interactive" ]]; then
+        # Interactive mode: ask the operator
+        echo ""
+        ui_info "The evaluator believes the original request has been completed."
+        printf " %b%s%b %b%s%b " "\033[1;37m" "Are you satisfied with the result?" "\033[0m" "\033[2m" "[Y/n]" "\033[0m"
+        local answer
+        read -r answer < /dev/tty 2>/dev/null || answer="y"
+        answer="${answer:-y}"
+        if [[ "${answer,,}" == "y"* ]]; then
+            # Generate a brief summary of macro_memory for the user
+            local summary_prompt="Summarize the following task memory in 2-3 sentences. Focus on what was accomplished relative to the primary objective. Be factual and concise.\n\n${macro_context}"
+            local summary_sys="You are a concise summarizer. No personality. Output only the summary."
+            local task_summary
+            local LLM_SCENARIO=evaluator
+            task_summary=$(llm_generate "$summary_prompt" "$summary_sys" "${LLM_EVALUATOR_TOKENS:-512}" "$LLM_BUDGET_AGENT")
+            task_summary=$(echo "$task_summary" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+            task_summary=$(echo "$task_summary" | sed '/^[[:space:]]*$/d' | head -5)
+            echo ""
+            ui_ok "Summary: $task_summary"
+            return 0
+        else
+            ui_info "Continuing work — operator requested more progress"
+            return 1
+        fi
+    fi
+
+    # Auto mode (default): generate brief summary and signal completion
+    local summary_prompt="Summarize the following task memory in 2-3 sentences. Focus on what was accomplished relative to the primary objective. Be factual and concise.\n\n${macro_context}"
+    local summary_sys="You are a concise summarizer. No personality. Output only the summary."
+    local task_summary
+    local LLM_SCENARIO=evaluator
+    task_summary=$(llm_generate "$summary_prompt" "$summary_sys" "${LLM_EVALUATOR_TOKENS:-512}" "$LLM_BUDGET_AGENT")
+    task_summary=$(echo "$task_summary" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+    task_summary=$(echo "$task_summary" | sed '/^[[:space:]]*$/d' | head -5)
+    echo ""
+    ui_ok "Task complete — $task_summary"
+    return 0
+}
 
 # ── Normalize inline plans ─────────────────────────────────────
 # LLMs sometimes output all steps on one line:
@@ -1679,6 +1758,17 @@ STRATEGIC RULES:
             # Check if failure was due to cancellation or operator abort
             if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
                 ui_warn "Milestone $macro_iterations cancelled"
+                break
+            fi
+        fi
+
+        # ── Evaluator: check if objective is already fulfilled ─
+        # After each completed milestone, an impartial evaluator
+        # judges whether the primary objective has been satisfied.
+        # This prevents unnecessary extra milestones when the task
+        # is already done. Skipped when AGENT_EVAL_MODE=disabled.
+        if [ "${AGENT_EVAL_MODE:-auto}" != "disabled" ] && [ "$completed_milestones" -gt 0 ]; then
+            if _agent_evaluate_completion "$macro_file"; then
                 break
             fi
         fi

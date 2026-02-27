@@ -1097,4 +1097,99 @@ describe "Specialist per-command key status"
     assert_ok $?
   }
 
+# ── Task Completion Evaluator ──────────────────────────────────
+describe "Task completion evaluator"
+
+  it "AGENT_EVAL_MODE defaults to auto" && {
+    assert_eq "$AGENT_EVAL_MODE" "auto"
+  }
+
+  it "AGENT_EVAL_MODE is overridable" && {
+    (
+      AGENT_EVAL_MODE=interactive
+      assert_eq "$AGENT_EVAL_MODE" "interactive"
+    )
+    assert_ok $?
+  }
+
+  it "_agent_evaluate_completion is defined" && {
+    declare -f _agent_evaluate_completion &>/dev/null
+    assert_ok $?
+  }
+
+  it "evaluator uses personality-free system prompt" && {
+    local body
+    body=$(declare -f _agent_evaluate_completion)
+    echo "$body" | grep -q 'strict task-completion evaluator'
+    assert_ok $?
+    echo "$body" | grep -q 'no personality'
+    assert_ok $?
+  }
+
+  it "evaluator reads macro_memory file" && {
+    local body
+    body=$(declare -f _agent_evaluate_completion)
+    echo "$body" | grep -q 'macro_file'
+    assert_ok $?
+    echo "$body" | grep -q 'macro_context'
+    assert_ok $?
+  }
+
+  it "evaluator expects COMPLETE or INCOMPLETE verdict" && {
+    local body
+    body=$(declare -f _agent_evaluate_completion)
+    echo "$body" | grep -q 'COMPLETE'
+    assert_ok $?
+    echo "$body" | grep -q 'INCOMPLETE'
+    assert_ok $?
+  }
+
+  it "evaluator supports interactive mode via AGENT_EVAL_MODE" && {
+    local body
+    body=$(declare -f _agent_evaluate_completion)
+    echo "$body" | grep -q 'AGENT_EVAL_MODE'
+    assert_ok $?
+    echo "$body" | grep -q 'interactive'
+    assert_ok $?
+  }
+
+  it "evaluator generates summary in auto mode" && {
+    local body
+    body=$(declare -f _agent_evaluate_completion)
+    echo "$body" | grep -q 'summary_prompt'
+    assert_ok $?
+  }
+
+  it "evaluator uses LLM_SCENARIO=evaluator" && {
+    local body
+    body=$(declare -f _agent_evaluate_completion)
+    echo "$body" | grep -q 'LLM_SCENARIO=evaluator'
+    assert_ok $?
+  }
+
+  it "evaluator is called in agent_run after successful milestones" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_agent_evaluate_completion'
+    assert_ok $?
+  }
+
+  it "evaluator is skipped when AGENT_EVAL_MODE=disabled" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'AGENT_EVAL_MODE.*!=.*disabled'
+    assert_ok $?
+  }
+
+  it "evaluator only triggers when completed_milestones > 0" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'completed_milestones.*-gt 0'
+    assert_ok $?
+  }
+
+  it "LLM_EVALUATOR_TOKENS defaults to 512" && {
+    assert_eq "$LLM_EVALUATOR_TOKENS" "512"
+  }
+
 test_end

@@ -21,6 +21,12 @@ cmd_write() {
     fi
 
     # Parse: first token is filepath, rest is content
+    # Fix LLM hallucination: missing spaces in output
+    # e.g. "filename.txtThis is the content" → "filename.txt This is the content"
+    if declare -f tools_fix_llm_spacing &>/dev/null; then
+        args=$(tools_fix_llm_spacing "$args")
+    fi
+
     local filepath content
     filepath=$(echo "$args" | awk '{print $1}')
     content=$(echo "$args" | sed 's/^[^ ]* *//')

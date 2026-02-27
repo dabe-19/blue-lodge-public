@@ -13,6 +13,7 @@ LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-20480}"   # Default max output tokens (matches
 LLM_ASK_TOKENS="${LLM_ASK_TOKENS:-20480}"   # Max output tokens for /ask (model stops at <|im_end|>; this is just a safety cap)
 LLM_AGENT_TOKENS="${LLM_AGENT_TOKENS:-20480}" # Max output tokens for agent specialist
 LLM_STRATEGIST_TOKENS="${LLM_STRATEGIST_TOKENS:-512}" # Max output tokens for strategist (one sentence milestone + thinking)
+LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-512}"   # Max output tokens for evaluator (completion judge)
 LLM_ROUTER_TOKENS="${LLM_ROUTER_TOKENS:-256}" # Max output tokens for agent router (think ~100-200 + tool name)
 LLM_BUDGET_TOKENS="${LLM_BUDGET_TOKENS:-1024}" # Max thinking tokens before responding (0=unlimited)
 LLM_BUDGET_ASK="${LLM_BUDGET_ASK:-1024}"     # Think budget for /ask conversations (extended thinking useful)
