@@ -74,7 +74,7 @@ _lodge_shell_block() {
 
 # ── Blue Lodge ─────────────────────────────────────────────
 export LODGE_DIR="$LODGE_DIR"
-export LODGE_MODEL_PRIMARY="blue-lodge-minist-think:4b"
+export LODGE_MODEL_PRIMARY="blue-lodge-minist-inst:4b"
 export LODGE_MODEL_SECONDARY="blue-lodge-minist-inst:4b"
 export PATH="\$HOME/.local/bin:\$PATH"
 $termux_line

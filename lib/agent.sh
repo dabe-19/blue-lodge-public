@@ -25,22 +25,39 @@ AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto |
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-512}"     # Max output tokens for evaluator
 
 # ── Task Completion Evaluator ──────────────────────────────────
-# Impartial judge with no personality injection. Reads macro_memory.md
-# and determines whether completed milestones satisfy the original
-# request. Returns 0 if the task is complete, 1 if work remains.
+# Impartial judge with no personality injection. Reads micro_memory.md
+# (concise Action/Status/Output log) rather than the full macro_memory
+# (which carries persona bloat and stale placeholders). The primary
+# objective is extracted from macro_memory for reference.
+# Returns 0 if the task is complete, 1 if work remains.
 #
 # Modes (AGENT_EVAL_MODE):
 #   auto        — (default) Silently finish the task chain with a summary.
 #   interactive — Prompt the operator to confirm satisfaction or continue.
 _agent_evaluate_completion() {
     local macro_file="$1"
-    local macro_context
-    macro_context=$(cat "$macro_file")
+    local micro_file="$2"
 
-    # Build a strict, personality-free evaluation prompt
-    local eval_prompt="Evaluate the following task memory. The PRIMARY OBJECTIVE is the original user request. The COMPLETED MILESTONES section lists all work done so far. Your SOLE job is to determine whether the completed milestones have FULLY satisfied the primary objective.\n\nTask Memory:\n${macro_context}\n\nRespond with EXACTLY one of:\n  COMPLETE — if the primary objective has been fully satisfied\n  INCOMPLETE — if meaningful work remains to fulfill the primary objective\n\nOutput ONLY that single word. No explanation. No qualification."
+    # Extract ONLY the primary objective from macro_memory (skip persona bloat)
+    local primary_obj
+    primary_obj=$(awk '/^## Primary Objective/{getline; if(NF) print; exit}' "$macro_file" 2>/dev/null)
+    [ -z "$primary_obj" ] && { ui_info "Evaluator: no primary objective found"; return 1; }
 
-    local eval_sys="You are a strict task-completion evaluator. You have no personality, no name, and no opinions beyond completion assessment. Evaluate ONLY whether the stated primary objective has been fulfilled by the completed milestones. Be conservative: if any essential part of the request remains unaddressed, respond INCOMPLETE. Do not speculate about quality — judge only whether the requested work has been performed."
+    # Use micro_memory as evaluation context — it's concise with clear
+    # Action/Status/Output entries. Falls back to macro if micro unavailable.
+    local eval_context
+    if [ -n "$micro_file" ] && [ -f "$micro_file" ]; then
+        eval_context=$(cat "$micro_file")
+    else
+        eval_context=$(cat "$macro_file")
+    fi
+
+    # Build a strict, personality-free evaluation prompt.
+    # The evaluator must judge by the ACTUAL action and output, not merely
+    # the presence of keywords like SUCCESS or COMPLETE in the log.
+    local eval_prompt="PRIMARY OBJECTIVE (the original user request):\n${primary_obj}\n\nACTION LOG (from the most recent milestone):\n${eval_context}\n\nEvaluate the Action Log. For each Action entry, examine:\n  1. The Action performed (the command that was run)\n  2. The Status (EXECUTED SUCCESSFULLY or FAILED, with exit code)\n  3. The Output (ONLY if present — many successful commands produce no output)\n\nDetermine whether the actions taken have FULLY satisfied the primary objective.\n\nCRITICAL RULES:\n- Judge by the Action + Status. A relevant action with Status EXECUTED SUCCESSFULLY (exit 0) is strong evidence of completion even if Output is empty or contains only ANSI formatting.\n- Do NOT require Output to be present. Many tools (email, social, etc.) produce no meaningful output on success.\n- Do NOT treat the word SUCCESS in the log as automatic proof — verify the Action actually addresses the objective.\n- If the Action does not relate to the objective, or the Status shows FAILED, respond INCOMPLETE.\n\nRespond with EXACTLY one of:\n  COMPLETE — if the primary objective has been fully satisfied\n  INCOMPLETE — if meaningful work remains\n\nOutput ONLY that single word. No explanation."
+
+    local eval_sys="You are a strict task-completion evaluator. You have no personality, no name, and no opinions beyond completion assessment. Evaluate the Action Log: check that the Action performed actually addresses the primary objective and that the Status shows success (exit 0). Output may be empty for many successful commands — that is normal and does NOT indicate failure. Be conservative: if the action failed or does not match the objective, respond INCOMPLETE."
 
     ui_think "Evaluator: assessing task completion..."
     local verdict
@@ -70,9 +87,8 @@ _agent_evaluate_completion() {
         read -r answer < /dev/tty 2>/dev/null || answer="y"
         answer="${answer:-y}"
         if [[ "${answer,,}" == "y"* ]]; then
-            # Generate a brief summary of macro_memory for the user
-            local summary_prompt="Summarize the following task memory in 2-3 sentences. Focus on what was accomplished relative to the primary objective. Be factual and concise.\n\n${macro_context}"
-            local summary_sys="You are a concise summarizer. No personality. Output only the summary."
+            local summary_prompt="Summarize briefly: the user asked to '${primary_obj}'. Based on this action log, what was accomplished?\n\n${eval_context}"
+            local summary_sys="You are a concise summarizer. No personality. Output only the summary in 2-3 sentences."
             local task_summary
             local LLM_SCENARIO=evaluator
             task_summary=$(llm_generate "$summary_prompt" "$summary_sys" "${LLM_EVALUATOR_TOKENS:-512}" "$LLM_BUDGET_AGENT")
@@ -88,8 +104,8 @@ _agent_evaluate_completion() {
     fi
 
     # Auto mode (default): generate brief summary and signal completion
-    local summary_prompt="Summarize the following task memory in 2-3 sentences. Focus on what was accomplished relative to the primary objective. Be factual and concise.\n\n${macro_context}"
-    local summary_sys="You are a concise summarizer. No personality. Output only the summary."
+    local summary_prompt="Summarize briefly: the user asked to '${primary_obj}'. Based on this action log, what was accomplished?\n\n${eval_context}"
+    local summary_sys="You are a concise summarizer. No personality. Output only the summary in 2-3 sentences."
     local task_summary
     local LLM_SCENARIO=evaluator
     task_summary=$(llm_generate "$summary_prompt" "$summary_sys" "${LLM_EVALUATOR_TOKENS:-512}" "$LLM_BUDGET_AGENT")
@@ -712,6 +728,7 @@ _specialist_key_status() {
 _build_specialist_prompt() {
     local cmd_name="$1"
     local workdir="$2"
+    local micro_objective="$3"  # Optional: used to rerank docs by objective keywords
     # Phase 2 Prompt: The Action Specialist
     # Injects deep-dive docs for ONE specific command.
     #
@@ -734,19 +751,80 @@ _build_specialist_prompt() {
         local docs=""
         local base_cmd="${cmd_name#/}"
 
-        # 1. Try to extract the full reference card from GEORGE_REFERENCE.md
-        #    These are self-contained FTS5-optimized knowledge cards.
+        # 1. Extract ALL matching reference cards from GEORGE_REFERENCE.md
+        #    (not just the first). Commands like /social have multiple
+        #    sections (Post, DM, Read, At-Mention). Extract all, then
+        #    rerank by objective keywords so the most relevant section
+        #    appears first. Capped at 40 lines to stay within budget.
         if [ -f "$LODGE_DIR/docs/GEORGE_REFERENCE.md" ]; then
-            # Extract the section that matches the command (case-insensitive)
-            local _ref_section
-            _ref_section=$(awk -v cmd="$base_cmd" '
+            local _ref_all
+            _ref_all=$(awk -v cmd="$base_cmd" '
                 BEGIN { IGNORECASE=1; found=0 }
                 /^## / {
-                    if (found) exit
-                    if (tolower($0) ~ tolower(cmd)) { found=1 }
+                    found = (tolower($0) ~ tolower(cmd)) ? 1 : 0
                 }
                 found { print }
-            ' "$LODGE_DIR/docs/GEORGE_REFERENCE.md" 2>/dev/null | head -20)
+            ' "$LODGE_DIR/docs/GEORGE_REFERENCE.md" 2>/dev/null)
+
+            # Rerank: if the micro_objective contains sub-command keywords
+            # (dm, inbox, read, search, fetch, etc.), move matching sections
+            # to the front so the specialist sees the most relevant docs first.
+            if [ -n "$_ref_all" ] && [ -n "$micro_objective" ]; then
+                local _obj_lower
+                _obj_lower=$(echo "$micro_objective" | tr '[:upper:]' '[:lower:]')
+                local _priority_sections=""
+                local _other_sections=""
+                local _current_section=""
+                local _current_heading=""
+                while IFS= read -r _line; do
+                    if [[ "$_line" == "## "* ]]; then
+                        # Flush previous section
+                        if [ -n "$_current_section" ]; then
+                            local _heading_lower
+                            _heading_lower=$(echo "$_current_heading" | tr '[:upper:]' '[:lower:]')
+                            # Check if any objective keyword appears in the heading
+                            local _is_priority=0
+                            for _kw in dm direct.message inbox read search fetch images scrape send post channel mention; do
+                                if [[ "$_obj_lower" == *"$_kw"* ]] && [[ "$_heading_lower" == *"$_kw"* ]]; then
+                                    _is_priority=1
+                                    break
+                                fi
+                            done
+                            if [ "$_is_priority" -eq 1 ]; then
+                                _priority_sections="${_priority_sections}${_current_section}\n"
+                            else
+                                _other_sections="${_other_sections}${_current_section}\n"
+                            fi
+                        fi
+                        _current_section="$_line"
+                        _current_heading="$_line"
+                    else
+                        _current_section="${_current_section}\n${_line}"
+                    fi
+                done <<< "$_ref_all"
+                # Flush last section
+                if [ -n "$_current_section" ]; then
+                    local _heading_lower
+                    _heading_lower=$(echo "$_current_heading" | tr '[:upper:]' '[:lower:]')
+                    local _is_priority=0
+                    for _kw in dm direct.message inbox read search fetch images scrape send post channel mention; do
+                        if [[ "$_obj_lower" == *"$_kw"* ]] && [[ "$_heading_lower" == *"$_kw"* ]]; then
+                            _is_priority=1
+                            break
+                        fi
+                    done
+                    if [ "$_is_priority" -eq 1 ]; then
+                        _priority_sections="${_priority_sections}${_current_section}\n"
+                    else
+                        _other_sections="${_other_sections}${_current_section}\n"
+                    fi
+                fi
+                _ref_all=$(echo -e "${_priority_sections}${_other_sections}" | sed '/^[[:space:]]*$/d')
+            fi
+
+            # Cap at 40 lines (enough for 3-4 reference cards)
+            local _ref_section
+            _ref_section=$(echo "$_ref_all" | head -40)
             [ -n "$_ref_section" ] && docs="$_ref_section"
         fi
 
@@ -1202,7 +1280,7 @@ agent_inner_loop() {
 
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Phase 2 specialist: loading docs for $selected_tool"
 
-        local specialist_sys=$(_build_specialist_prompt "$selected_tool" "$workdir")
+        local specialist_sys=$(_build_specialist_prompt "$selected_tool" "$workdir" "$micro_objective")
 
         # Inject micro_memory (action log) so the specialist sees
         # prior outputs, created files, and error history. Without this,
@@ -1462,7 +1540,7 @@ The operator provided guidance after previous failures. Using the operator's ins
 The command MUST be one listed in AVAILABLE COMMANDS or a valid bash command.
 Output a slash command line starting with / OR a bash code block."
 
-        local guided_sys=$(_build_specialist_prompt "" "$workdir")
+        local guided_sys=$(_build_specialist_prompt "" "$workdir" "$micro_objective")
         local final_plan
         local LLM_SCENARIO=agent
         final_plan=$(llm_stream "$guided_prompt" "$guided_sys" "${LLM_AGENT_TOKENS:-512}" "$LLM_BUDGET_AGENT")
@@ -1770,6 +1848,14 @@ STRATEGIC RULES:
             completed_milestones=$((completed_milestones + 1))
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — OK\n"
             _attempted_milestones+=("OK|$milestone")
+
+            # Remove the seed placeholder after first successful milestone.
+            # Without this, "(none yet)" sits above real step entries in
+            # macro_memory and misleads the evaluator/strategist into
+            # thinking no milestones have been completed.
+            if [ "$completed_milestones" -eq 1 ]; then
+                sed -i '/^(none yet)$/d' "$macro_file"
+            fi
         else
             failed_milestones="${failed_milestones:+${failed_milestones}, }milestone $macro_iterations: $milestone"
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — FAILED\n"
@@ -1788,7 +1874,7 @@ STRATEGIC RULES:
         # This prevents unnecessary extra milestones when the task
         # is already done. Skipped when AGENT_EVAL_MODE=disabled.
         if [ "${AGENT_EVAL_MODE:-auto}" != "disabled" ] && [ "$completed_milestones" -gt 0 ]; then
-            if _agent_evaluate_completion "$macro_file"; then
+            if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.md"; then
                 break
             fi
         fi
