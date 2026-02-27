@@ -1192,4 +1192,71 @@ describe "Task completion evaluator"
     assert_eq "$LLM_EVALUATOR_TOKENS" "512"
   }
 
+# ── Macro memory enrichment: timestamps & command results ─────
+describe "Macro memory: timestamped command results"
+
+  it "inner loop tracks _last_success_cmd" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_last_success_cmd='
+    assert_ok $?
+  }
+
+  it "inner loop tracks _last_success_snippet" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_last_success_snippet='
+    assert_ok $?
+  }
+
+  it "inner loop updates _last_success_cmd on exit 0" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_last_success_cmd="\$cmd"'
+    assert_ok $?
+  }
+
+  it "SUCCESS macro_memory entry includes timestamp" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'Step \[\$_step_ts\]'
+    assert_ok $?
+  }
+
+  it "SUCCESS macro_memory entry includes ran: command" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'ran: \$_last_success_cmd'
+    assert_ok $?
+  }
+
+  it "FAILED macro_memory entry includes timestamp" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep 'FAILED' | grep -q '_step_ts'
+    assert_ok $?
+  }
+
+  it "CANCELLED macro_memory entry includes timestamp" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep 'CANCELLED' | grep -q '_step_ts'
+    assert_ok $?
+  }
+
+  it "ABORTED macro_memory entry includes timestamp" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep 'ABORTED' | grep -q '_step_ts'
+    assert_ok $?
+  }
+
+  it "guided recovery macro_memory entry includes ran: command" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    # The guided recovery writes: ran: $final_cmd (exit 0)
+    echo "$body" | grep -q 'ran: \$final_cmd'
+    assert_ok $?
+  }
+
 test_end

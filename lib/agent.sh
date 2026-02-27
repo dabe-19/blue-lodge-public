@@ -1062,6 +1062,8 @@ agent_inner_loop() {
     local inner_attempts=0
     local max_inner_loops="$AGENT_INNER_LOOPS"
     local last_failed_cmd=""
+    local _last_success_cmd=""      # Track last successful command for macro_memory
+    local _last_success_snippet=""  # First 200 chars of last successful output
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
 
     while [ "$inner_attempts" -lt "$max_inner_loops" ]; do
@@ -1105,7 +1107,13 @@ agent_inner_loop() {
             local summary
             summary=$(echo "$selected_tool" | sed -n 's/.*SUCCESS:[[:space:]]*//p' | head -1)
             [ -z "$summary" ] && summary="Objective fulfilled"
-            echo "- Step: $micro_objective -> $summary" >> "$george_dir/macro_memory.md"
+            local _step_ts
+            _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
+            if [ -n "$_last_success_cmd" ]; then
+                echo "- Step [$_step_ts]: $micro_objective -> $summary | ran: $_last_success_cmd (exit 0)" >> "$george_dir/macro_memory.md"
+            else
+                echo "- Step [$_step_ts]: $micro_objective -> $summary" >> "$george_dir/macro_memory.md"
+            fi
             return 0
         fi
 
@@ -1122,7 +1130,9 @@ agent_inner_loop() {
             local _last_web
             _last_web=$(grep -oP '(?<=Web search.*: ).*' "$micro_file" 2>/dev/null | tail -1)
             [ -n "$_last_web" ] && _suff_summary="${_last_web:0:120}"
-            echo "- Step: $micro_objective -> $_suff_summary" >> "$george_dir/macro_memory.md"
+            local _step_ts
+            _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
+            echo "- Step [$_step_ts]: $micro_objective -> $_suff_summary" >> "$george_dir/macro_memory.md"
             return 0
         fi
 
@@ -1291,6 +1301,8 @@ agent_inner_loop() {
             fi
 
             if [ $exit_code -eq 0 ]; then
+                _last_success_cmd="$cmd"
+                _last_success_snippet="${output:0:200}"
                 echo -e "\n**Action:** \`$cmd\`\n**Status:** EXECUTED SUCCESSFULLY (exit 0)\n**Output:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
 
                 # ── WEB SUFFICIENCY GATE ───────────────────────
@@ -1397,7 +1409,9 @@ agent_inner_loop() {
     # Skip entirely if cancelled — user wants to return to REPL, not be
     # prompted for guidance on an operation they already abandoned.
     if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
-        echo "- Step: $micro_objective -> CANCELLED" >> "$george_dir/macro_memory.md"
+        local _step_ts
+        _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
+        echo "- Step [$_step_ts]: $micro_objective -> CANCELLED" >> "$george_dir/macro_memory.md"
         return 1
     fi
     ui_err "Inner loop exhausted all escalation levels."
@@ -1419,7 +1433,9 @@ agent_inner_loop() {
     if [ "$guidance" = "abort" ]; then
         _LODGE_CANCELLED=1
         touch "$_cancel_file" 2>/dev/null
-        echo "- Step: $micro_objective -> ABORTED by operator" >> "$george_dir/macro_memory.md"
+        local _step_ts
+        _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
+        echo "- Step [$_step_ts]: $micro_objective -> ABORTED by operator" >> "$george_dir/macro_memory.md"
         return 1
     fi
 
@@ -1490,7 +1506,9 @@ Output a slash command line starting with / OR a bash code block."
                     echo "---"
                 } >> "$fail_file"
                 local summary="Completed with operator guidance"
-                echo "- Step: $micro_objective -> $summary" >> "$george_dir/macro_memory.md"
+                local _step_ts
+                _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
+                echo "- Step [$_step_ts]: $micro_objective -> $summary | ran: $final_cmd (exit 0)" >> "$george_dir/macro_memory.md"
                 return 0
             else
                 # Log guided failure for the record
@@ -1499,7 +1517,9 @@ Output a slash command line starting with / OR a bash code block."
         fi
     fi
 
-    echo "- Step: $micro_objective -> FAILED" >> "$george_dir/macro_memory.md"
+    local _step_ts
+    _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "- Step [$_step_ts]: $micro_objective -> FAILED" >> "$george_dir/macro_memory.md"
     return 1
 }
 

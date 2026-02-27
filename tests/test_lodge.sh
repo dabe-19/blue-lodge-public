@@ -742,4 +742,28 @@ describe "Cancellation infrastructure"
     assert_not_empty "$traps"
   }
 
+# ── Email send parser: address= alias ───────────────────────────────
+describe "Email send parser — address= alias"
+
+  it "_cmd_email normalizes address= to to=" && {
+    local body
+    body=$(declare -f _cmd_email)
+    echo "$body" | grep -q 'address=/to='
+    assert_ok $?
+  }
+
+  it "_cmd_email help mentions address=" && {
+    local body
+    body=$(declare -f _cmd_email)
+    echo "$body" | grep -q 'address='
+    assert_ok $?
+  }
+
+  it "_cmd_email accepted formats comment includes address=" && {
+    local body
+    body=$(declare -f _cmd_email)
+    echo "$body" | grep -q 'address=addr'
+    assert_ok $?
+  }
+
 test_end

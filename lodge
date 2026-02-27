@@ -1929,9 +1929,10 @@ _cmd_email() {
             # Accepted formats (all equivalent):
             #   /email send <provider> <recipient> s=subject words b=body words
             #   /email send <provider> to=addr s=subject b=body
+            #   /email send <provider> address=addr s=subject b=body
             #   /email send <provider> <recipient> subject=subject words body=body words
             #   /email send <provider> to=addr subject=Hello body=World
-            # - Recipient can be positional (right after provider) OR via to=
+            # - Recipient can be positional (right after provider) OR via to= / address=
             # - s= / subject= are aliases; b= / body= are aliases
             # - s= and b= are preferred for multi-line/multi-word input
             local provider _send_rest to subject body
@@ -1940,17 +1941,18 @@ _cmd_email() {
             if [ -z "$provider" ] || [ -z "$_send_rest" ] || [ "$_send_rest" = "$provider" ]; then
                 ui_info "Usage: /email send <provider> <recipient> s=subject b=body"
                 ui_dim "  provider: gmail, protonmail, zoho"
-                ui_dim "  Recipient goes right after provider, or use to=addr"
+                ui_dim "  Recipient goes right after provider, or use to=addr / address=addr"
                 ui_dim "  Example: /email send gmail user@example.com s=Hello there b=How are you today?"
                 ui_dim "  Also accepts: subject= and body= as aliases for s= and b="
                 ui_dim "  s= and b= capture everything until the next key or end of input."
                 return 1
             fi
 
-            # ── Normalize aliases: subject= → s=, body= → b= ─────
+            # ── Normalize aliases: address= → to=, subject= → s=, body= → b= ─
             # Do this BEFORE any parsing so the rest of the logic
-            # only needs to handle s= and b=.
+            # only needs to handle to=, s=, and b=.
             # Use longest-match to avoid partial replacements.
+            _send_rest="${_send_rest//address=/to=}"
             _send_rest="${_send_rest//subject=/s=}"
             _send_rest="${_send_rest//body=/b=}"
 
