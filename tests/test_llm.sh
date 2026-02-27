@@ -66,8 +66,8 @@ describe "Configuration defaults"
 # ── Sampling parameters ───────────────────────────────────────
 describe "Sampling parameter defaults"
 
-  it "LLM_TEMPERATURE defaults to empty (model registry controls temp)" && {
-    assert_eq "$LLM_TEMPERATURE" ""
+  it "LLM_TEMPERATURE defaults to 0.7" && {
+    assert_eq "$LLM_TEMPERATURE" "0.7"
   }
 
   it "LLM_REPEAT_PENALTY defaults to 1.2" && {

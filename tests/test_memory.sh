@@ -224,9 +224,9 @@ describe "soul extraction helpers"
     assert_not_contains "$result" "Theory of Moral Sentiments"
   }
 
-  it "_memory_soul_condensed includes identity" && {
+  it "_memory_soul_condensed includes personality" && {
     result=$(_memory_soul_condensed)
-    assert_contains "$result" "George"
+    assert_contains "$result" "PERSONALITY"
   }
 
   it "_memory_soul_condensed includes core rules" && {
@@ -247,7 +247,9 @@ describe "memory_build_system_prompt lean mode"
   it "returns lean prompt for ask mode" && {
     _setup_mem
     prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "ask")
-    assert_contains "$prompt" "George"
+    # Identity comes from models_thinking_directive(), not condensed soul.
+    # Condensed soul provides personality + rules only.
+    assert_contains "$prompt" "PERSONALITY"
     _teardown_mem
   }
 
@@ -294,10 +296,12 @@ describe "memory_build_system_prompt lean mode"
 # ── Plan prompt mode ─────────────────────────────────────────
 describe "memory_build_system_prompt plan mode"
 
-  it "returns plan prompt with George identity" && {
+  it "returns plan prompt with personality rules" && {
     _setup_mem
     prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
-    assert_contains "$prompt" "George"
+    # Identity comes from models_thinking_directive() at LLM call time.
+    # Plan prompt includes personality + core rules from condensed soul.
+    assert_contains "$prompt" "Praiseworthy"
     _teardown_mem
   }
 
