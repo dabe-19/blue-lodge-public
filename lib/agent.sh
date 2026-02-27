@@ -1187,6 +1187,15 @@ agent_inner_loop() {
             [ -z "$summary" ] && summary="Objective fulfilled"
             local _step_ts
             _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
+
+            # Write completion verdict to micro_memory BEFORE returning.
+            # The evaluator reads micro_memory after the inner loop returns.
+            # Without this, micro_memory has the raw Action/Status/Output but
+            # no explicit completion marker — which can cause a conservative
+            # evaluator (especially on a 4B model) to return INCOMPLETE when
+            # the output is empty or ANSI-garbled.
+            echo -e "\n**Milestone Result:** COMPLETE — $summary" >> "$micro_file"
+
             if [ -n "$_last_success_cmd" ]; then
                 echo "- Step [$_step_ts]: $micro_objective -> $summary | ran: $_last_success_cmd (exit 0)" >> "$george_dir/macro_memory.md"
             else
@@ -1210,6 +1219,7 @@ agent_inner_loop() {
             [ -n "$_last_web" ] && _suff_summary="${_last_web:0:120}"
             local _step_ts
             _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
+            echo -e "\n**Milestone Result:** COMPLETE — $_suff_summary" >> "$micro_file"
             echo "- Step [$_step_ts]: $micro_objective -> $_suff_summary" >> "$george_dir/macro_memory.md"
             return 0
         fi
@@ -1586,6 +1596,8 @@ Output a slash command line starting with / OR a bash code block."
                 local summary="Completed with operator guidance"
                 local _step_ts
                 _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
+                echo -e "\n**Action:** \`$final_cmd\`\n**Status:** EXECUTED SUCCESSFULLY (exit 0)\n**Output:**\n\`\`\`\n$final_output\n\`\`\`" >> "$micro_file"
+                echo -e "\n**Milestone Result:** COMPLETE — $summary" >> "$micro_file"
                 echo "- Step [$_step_ts]: $micro_objective -> $summary | ran: $final_cmd (exit 0)" >> "$george_dir/macro_memory.md"
                 return 0
             else

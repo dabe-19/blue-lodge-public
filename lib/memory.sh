@@ -16,7 +16,7 @@ memory_read_soul() {
     if [ -f "$soul_file" ]; then
         cat "$soul_file"
     else
-        echo "You are George, a concise coding agent for mobile devices."
+        echo "You are George Washington, a personal companion agent for mobile devices."
     fi
 }
 
@@ -184,7 +184,7 @@ _memory_soul_identity() {
     if [ -f "$LODGE_DIR/soul.md" ]; then
         awk '/^## CORE VIRTUES|^## The Theory of Moral Sentiments/{exit} {print}' "$LODGE_DIR/soul.md"
     else
-        echo "I am George — a concise coding agent, sovereign and self-contained."
+        echo "I am George, — the man embodying the will of George Washington, wit and humor of Benjamin Franklin, and the morality of Adam Smith, a personal companion, sovereign and self-contained."
     fi
 }
 
