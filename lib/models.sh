@@ -68,7 +68,7 @@ _MODELS_REGISTRY=(
     "minist-think^blue-lodge-minist-think:4b^hf.co/unsloth/Ministral-3-3B-Reasoning-2512-GGUF:UD-Q5_K_XL^thinking^1^system^</s>^0.7^1.2^0.3^32768^8192^0.95^40^0.0^Default primary. Mistral reasoning with thinking via system prompt."
     # Instruct model supports vision (multimodal). Mistral recommends: instruct temp=0.15.
     # All instruct models pinned to temp=0.15 — personality comes from prompt, not randomness.
-    "minist-inst^blue-lodge-minist-inst:4b^hf.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF:UD-Q5_K_XL^instruct^0^none^</s>^0.15^1.2^0.3^32768^8192^0.9^40^0.0^Default secondary. Mistral instruct with vision support."
+    "minist-inst^blue-lodge-minist-inst:4b^hf.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF:UD-Q5_K_XL^instruct^0^none^</s>^0.125^1.0^0.0^32768^16384^0.9^40^0.0^Default secondary. Mistral instruct with vision support."
 )
 
 # ── Parse a registry entry into variables ──────────────────────
