@@ -66,44 +66,46 @@ describe "Configuration defaults"
 # ── Sampling parameters ───────────────────────────────────────
 describe "Sampling parameter defaults"
 
-  it "LLM_TEMPERATURE defaults to 0.7" && {
-    assert_eq "$LLM_TEMPERATURE" "0.7"
+  it "LLM_TEMPERATURE defaults to model registry value" && {
+    # After models_init(), globals are set from the active model's registry.
+    # Default primary is minist-inst: temp=0.15
+    assert_eq "$LLM_TEMPERATURE" "0.15"
   }
 
-  it "LLM_REPEAT_PENALTY defaults to 1.2" && {
+  it "LLM_REPEAT_PENALTY defaults to model registry value" && {
     assert_eq "$LLM_REPEAT_PENALTY" "1.2"
   }
 
-  it "LLM_PRESENCE_PENALTY defaults to 0.3" && {
+  it "LLM_PRESENCE_PENALTY defaults to model registry value" && {
     assert_eq "$LLM_PRESENCE_PENALTY" "0.3"
   }
 
-  it "LLM_TEMP_ASK defaults to empty (uses global)" && {
+  it "LLM_TEMP_ASK defaults to empty (inherits model)" && {
     assert_eq "$LLM_TEMP_ASK" ""
   }
 
-  it "LLM_TEMP_AGENT defaults to empty (uses model registry)" && {
+  it "LLM_TEMP_AGENT defaults to empty (inherits model)" && {
     assert_eq "$LLM_TEMP_AGENT" ""
   }
 
-  it "LLM_TEMP_ROUTER defaults to 0.1" && {
-    assert_eq "$LLM_TEMP_ROUTER" "0.1"
+  it "LLM_TEMP_ROUTER defaults to empty (inherits model)" && {
+    assert_eq "$LLM_TEMP_ROUTER" ""
   }
 
-  it "LLM_TEMP_JOURNAL defaults to empty (uses model registry)" && {
+  it "LLM_TEMP_JOURNAL defaults to empty (inherits model)" && {
     assert_eq "$LLM_TEMP_JOURNAL" ""
   }
 
-  it "LLM_TEMP_TOOL defaults to empty (uses model registry)" && {
+  it "LLM_TEMP_TOOL defaults to empty (inherits model)" && {
     assert_eq "$LLM_TEMP_TOOL" ""
   }
 
-  it "LLM_PRESENCE_ROUTER defaults to 1.0" && {
-    assert_eq "$LLM_PRESENCE_ROUTER" "1.0"
+  it "LLM_PRESENCE_ROUTER defaults to empty (inherits model)" && {
+    assert_eq "$LLM_PRESENCE_ROUTER" ""
   }
 
-  it "LLM_PRESENCE_JOURNAL defaults to 1.0" && {
-    assert_eq "$LLM_PRESENCE_JOURNAL" "1.0"
+  it "LLM_PRESENCE_JOURNAL defaults to empty (inherits model)" && {
+    assert_eq "$LLM_PRESENCE_JOURNAL" ""
   }
 
 describe "Sampling parameter resolver (_llm_build_opts)"
@@ -120,34 +122,36 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     assert_ok $?
   }
 
-  it "_llm_build_opts uses global defaults when no scenario set" && {
+  it "_llm_build_opts uses model defaults when no scenario set" && {
     unset LLM_SCENARIO
     local result
     result=$(_llm_build_opts 1024)
     local temp
     temp=$(echo "$result" | jq -r '.temperature')
-    assert_eq "$temp" "0.7"
+    # No scenario → uses model registry temp (minist-inst: 0.15)
+    assert_eq "$temp" "0.15"
   }
 
-  it "_llm_build_opts uses ask scenario when LLM_SCENARIO=ask" && {
+  it "_llm_build_opts uses ask scenario (inherits model default)" && {
     LLM_SCENARIO=ask
     local result
     result=$(_llm_build_opts 512)
     unset LLM_SCENARIO
     local temp
     temp=$(echo "$result" | jq -r '.temperature')
-    # Ask has no override — falls through to global default 0.7
-    assert_eq "$temp" "0.7"
+    # Ask has no override — falls through to model default 0.15
+    assert_eq "$temp" "0.15"
   }
 
-  it "_llm_build_opts uses router scenario (low temp)" && {
+  it "_llm_build_opts uses router scenario (inherits model default)" && {
     LLM_SCENARIO=router
     local result
     result=$(_llm_build_opts 50)
     unset LLM_SCENARIO
     local temp
     temp=$(echo "$result" | jq -r '.temperature')
-    assert_eq "$temp" "0.1"
+    # Router has no override — inherits model default 0.15
+    assert_eq "$temp" "0.15"
   }
 
   it "_llm_build_opts handles strategist scenario" && {
@@ -174,8 +178,8 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     unset LLM_SCENARIO
     local pp
     pp=$(echo "$result" | jq -r '.presence_penalty')
-    # jq normalizes 1.0 → 1; check either form
-    [[ "$pp" == "1" || "$pp" == "1.0" ]]
+    # Journal has no override — inherits model default (minist-inst: 0.3)
+    [[ "$pp" == "0.3" ]]
     assert_ok $?
   }
 
@@ -190,6 +194,69 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     # Verify strategist is NOT in the exclusion condition
     ! echo "$body" | grep -q 'LLM_SCENARIO.*strategist'
     assert_ok $?
+  }
+
+# ── Per-scenario absolute override behavior ────────────────────
+describe "Per-scenario overrides are absolute (not additive)"
+
+  it "scenario override replaces model default (not added to it)" && {
+    # minist-inst model default temp is 0.15
+    # Setting LLM_TEMP_ASK=0.5 should yield temp=0.5, NOT 0.15+0.5
+    LLM_TEMP_ASK=0.5
+    LLM_SCENARIO=ask
+    local result
+    result=$(_llm_build_opts 512)
+    unset LLM_SCENARIO
+    LLM_TEMP_ASK=""  # restore
+    local temp
+    temp=$(echo "$result" | jq -r '.temperature')
+    assert_eq "$temp" "0.5"
+  }
+
+  it "empty scenario override inherits model default exactly" && {
+    LLM_TEMP_AGENT=""
+    LLM_SCENARIO=agent
+    local result
+    result=$(_llm_build_opts 512)
+    unset LLM_SCENARIO
+    local temp
+    temp=$(echo "$result" | jq -r '.temperature')
+    # Should be model default (0.15), not some other value
+    assert_eq "$temp" "0.15"
+  }
+
+# ── models_apply_defaults ─────────────────────────────────────
+describe "models_apply_defaults"
+
+  it "models_apply_defaults is defined" && {
+    declare -f models_apply_defaults &>/dev/null
+    assert_ok $?
+  }
+
+  it "models_apply_defaults sets globals from model registry" && {
+    models_apply_defaults "blue-lodge-minist-inst:4b" 2>/dev/null
+    assert_eq "$LLM_TEMPERATURE" "0.15"
+    assert_eq "$LLM_REPEAT_PENALTY" "1.2"
+    assert_eq "$LLM_PRESENCE_PENALTY" "0.3"
+  }
+
+  it "models_apply_defaults clears per-scenario overrides" && {
+    LLM_TEMP_ASK=0.9
+    LLM_REPEAT_ROUTER=2.0
+    LLM_PRESENCE_TOOL=1.5
+    models_apply_defaults "blue-lodge-minist-inst:4b" 2>/dev/null
+    assert_eq "$LLM_TEMP_ASK" ""
+    assert_eq "$LLM_REPEAT_ROUTER" ""
+    assert_eq "$LLM_PRESENCE_TOOL" ""
+  }
+
+  it "models_apply_defaults updates when switching to different model" && {
+    models_apply_defaults "blue-lodge-minist-think:4b" 2>/dev/null
+    assert_eq "$LLM_TEMPERATURE" "0.7"
+    assert_eq "$LLM_REPEAT_PENALTY" "1.2"
+    assert_eq "$LLM_PRESENCE_PENALTY" "0.3"
+    # Restore to default model
+    models_apply_defaults "blue-lodge-minist-inst:4b" 2>/dev/null
   }
 
   it "thinking directive skipped for router scenario" && {

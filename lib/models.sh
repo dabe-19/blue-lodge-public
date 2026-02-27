@@ -18,7 +18,7 @@ LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 
 # ── Model Slots ────────────────────────────────────────────────
 # These are the Ollama model names (e.g., "blue-lodge-minist-think:4b")
-LODGE_MODEL_PRIMARY="${LODGE_MODEL_PRIMARY:-blue-lodge-minist-think:4b}"
+LODGE_MODEL_PRIMARY="${LODGE_MODEL_PRIMARY:-blue-lodge-minist-inst:4b}"
 LODGE_MODEL_SECONDARY="${LODGE_MODEL_SECONDARY:-blue-lodge-minist-inst:4b}"
 LODGE_SINGLE_MODEL="${LODGE_SINGLE_MODEL:-1}"   # 1=single model mode (primary only, default), 0=dual model hot-swap
 
@@ -794,6 +794,9 @@ models_select() {
     # If this is the currently-loaded slot, force a switch
     _MODELS_ACTIVE=""
     LODGE_MODEL="$LODGE_MODEL_PRIMARY"
+
+    # Sync sampling parameters to the newly selected model's defaults
+    models_apply_defaults "$_ME_NAME"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -1139,8 +1142,55 @@ models_create_family() {
 }
 
 # ── Initialize models on startup ──────────────────────────────
+# ── Apply model defaults to all sampling parameters ───────────
+# Reads the active model's registry values and sets global + per-scenario
+# LLM sampling parameters to match. Called at init, on model switch,
+# and from /model reset so parameters always track the loaded model.
+#
+# Per-scenario overrides are cleared so they inherit from the model
+# base via _llm_build_opts(). Users can re-set them via /model after.
+models_apply_defaults() {
+    local target="${1:-$LODGE_MODEL_PRIMARY}"
+    local entry
+    entry=$(_models_lookup "$target") || return 1
+    _models_parse_entry "$entry"
+
+    # ── Global defaults = model registry values ─────────────
+    LLM_TEMPERATURE="$_ME_TEMP"
+    LLM_REPEAT_PENALTY="$_ME_REPEAT"
+    LLM_PRESENCE_PENALTY="$_ME_PRESENCE"
+
+    # ── Per-scenario: clear overrides so they inherit model base ──
+    # _llm_build_opts() pattern: temp="${LLM_TEMP_ASK:-$model_temp}"
+    # When empty, model_temp (from registry) is used.
+    LLM_TEMP_ASK=""
+    LLM_REPEAT_ASK=""
+    LLM_PRESENCE_ASK=""
+
+    LLM_TEMP_AGENT=""
+    LLM_REPEAT_AGENT=""
+    LLM_PRESENCE_AGENT=""
+
+    LLM_TEMP_ROUTER=""
+    LLM_REPEAT_ROUTER=""
+    LLM_PRESENCE_ROUTER=""
+
+    LLM_TEMP_JOURNAL=""
+    LLM_REPEAT_JOURNAL=""
+    LLM_PRESENCE_JOURNAL=""
+
+    LLM_TEMP_TOOL=""
+    LLM_REPEAT_TOOL=""
+    LLM_PRESENCE_TOOL=""
+
+    return 0
+}
+
 models_init() {
     # Set LODGE_MODEL to primary for backward compatibility
     LODGE_MODEL="$LODGE_MODEL_PRIMARY"
     _MODELS_ACTIVE=""
+
+    # Sync sampling parameters to the primary model's registry defaults
+    models_apply_defaults "$LODGE_MODEL_PRIMARY"
 }

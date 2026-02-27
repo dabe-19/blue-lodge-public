@@ -23,39 +23,42 @@ LLM_BUDGET_JOURNAL="${LLM_BUDGET_JOURNAL:-64}" # Think budget for journal (backg
 LLM_BUDGET_TOOL="${LLM_BUDGET_TOOL:-256}"    # Think budget for tools (commit, web, recall, slash)
 
 # ── Sampling parameters (per-scenario, override model defaults) ──
-# Global defaults — applied when no scenario-specific AND no model-specific value is set.
-# These are calibrated for the default primary model (Ministral Reasoning).
-# When other models are active, the per-model registry values from
-# models.sh take precedence via models_get_param().
-LLM_TEMPERATURE="${LLM_TEMPERATURE:-0.7}"
+# ── Sampling parameters ────────────────────────────────────────
+# Global defaults are set from the active model's registry at init
+# by models_apply_defaults(). When a model is switched, all params
+# are reset to the new model's values. Users can override any
+# param via /model and it persists until the next model switch or
+# /model reset.
+#
+# Safety-net defaults below cover the gap between llm.sh sourcing
+# and models_init() being called. Once models_init() runs, these
+# are overwritten with registry values from the active model.
+LLM_TEMPERATURE="${LLM_TEMPERATURE:-0.15}"
 LLM_REPEAT_PENALTY="${LLM_REPEAT_PENALTY:-1.2}"
 LLM_PRESENCE_PENALTY="${LLM_PRESENCE_PENALTY:-0.3}"
 
-# Per-scenario overrides (empty = use global default)
-# Ask: conversational, moderate creativity, moderate anti-spiral
+# Per-scenario overrides (empty = use model default from registry).
+# Set via /model temp-ask, /model repeat-agent, etc.
+# When empty, _llm_build_opts() falls through to the model base.
 LLM_TEMP_ASK="${LLM_TEMP_ASK:-}"
-LLM_REPEAT_ASK="${LLM_REPEAT_ASK:-1.2}"
-LLM_PRESENCE_ASK="${LLM_PRESENCE_ASK:-0.3}"
+LLM_REPEAT_ASK="${LLM_REPEAT_ASK:-}"
+LLM_PRESENCE_ASK="${LLM_PRESENCE_ASK:-}"
 
-# Agent: focused execution, low creativity, moderate anti-spiral
 LLM_TEMP_AGENT="${LLM_TEMP_AGENT:-}"
-LLM_REPEAT_AGENT="${LLM_REPEAT_AGENT:-1.3}"
-LLM_PRESENCE_AGENT="${LLM_PRESENCE_AGENT:-0.5}"
+LLM_REPEAT_AGENT="${LLM_REPEAT_AGENT:-}"
+LLM_PRESENCE_AGENT="${LLM_PRESENCE_AGENT:-}"
 
-# Router: deterministic tool selection, minimal creativity
-LLM_TEMP_ROUTER="${LLM_TEMP_ROUTER:-0.1}"
-LLM_REPEAT_ROUTER="${LLM_REPEAT_ROUTER:-1.1}"
-LLM_PRESENCE_ROUTER="${LLM_PRESENCE_ROUTER:-1.0}"
+LLM_TEMP_ROUTER="${LLM_TEMP_ROUTER:-}"
+LLM_REPEAT_ROUTER="${LLM_REPEAT_ROUTER:-}"
+LLM_PRESENCE_ROUTER="${LLM_PRESENCE_ROUTER:-}"
 
-# Journal: brief background utility, constrained
 LLM_TEMP_JOURNAL="${LLM_TEMP_JOURNAL:-}"
-LLM_REPEAT_JOURNAL="${LLM_REPEAT_JOURNAL:-1.3}"
-LLM_PRESENCE_JOURNAL="${LLM_PRESENCE_JOURNAL:-1.0}"
+LLM_REPEAT_JOURNAL="${LLM_REPEAT_JOURNAL:-}"
+LLM_PRESENCE_JOURNAL="${LLM_PRESENCE_JOURNAL:-}"
 
-# Tool: commit messages, web summary, recall, slash — focused
 LLM_TEMP_TOOL="${LLM_TEMP_TOOL:-}"
-LLM_REPEAT_TOOL="${LLM_REPEAT_TOOL:-1.4}"
-LLM_PRESENCE_TOOL="${LLM_PRESENCE_TOOL:-0.8}"
+LLM_REPEAT_TOOL="${LLM_REPEAT_TOOL:-}"
+LLM_PRESENCE_TOOL="${LLM_PRESENCE_TOOL:-}"
 
 LLM_TIMEOUT="${LLM_TIMEOUT:-600}"           # Safety net: 600s max per request (thinking models on ARM need headroom; Ctrl+C also works)
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
@@ -116,7 +119,8 @@ _llm_build_opts() {
     model_pres="${model_pres:-0.3}"
 
     # ── Step 2: Apply per-scenario overrides ──────────────────
-    # If a scenario-specific value is set, it wins over model defaults.
+    # If a scenario-specific value is set, it REPLACES the model
+    # default (absolute value, NOT additive). Empty = inherit model.
     local temp rep pres
     case "$scenario" in
         ask)     temp="${LLM_TEMP_ASK:-$model_temp}"; rep="${LLM_REPEAT_ASK:-$model_rep}"; pres="${LLM_PRESENCE_ASK:-$model_pres}" ;;
