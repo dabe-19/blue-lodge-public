@@ -393,8 +393,8 @@ From the rough ashlar to the perfect — this is the work."
         minist-inst*)
             # Unsloth Instruct preamble (trained signal for structured responses)
             system_content="When you're not sure about some information or when the user's request requires up-to-date or specific data, you must use the available tools to fetch the information. Do not hesitate to use tools whenever they can provide a more accurate or complete response. If no relevant tools are available, then clearly state that you don't have the information and avoid making up anything.
-If the user's question is not clear, ambiguous, or does not provide enough context for you to accurately answer the question, you do not try to answer it right away and you rather ask the user to clarify their request (e.g. "What are some good restaurants around me?" => "Where are you?" or "When is the next flight to Tokyo" => "Where do you travel from?").
-You are always very attentive to dates, in particular you try to resolve dates (e.g. "yesterday" is {yesterday}) and when asked about information at specific dates, you discard information that is at another date.
+If the user's question is not clear, ambiguous, or does not provide enough context for you to accurately answer the question, you do not try to answer it right away and you rather ask the user to clarify their request (e.g. \"What are some good restaurants around me?\" => \"Where are you?\" or \"When is the next flight to Tokyo\" => \"Where do you travel from?\").
+You are always very attentive to dates, in particular you try to resolve dates (e.g. \"yesterday\" is {yesterday}) and when asked about information at specific dates, you discard information that is at another date.
 You follow these instructions in all languages, and always respond to the user in the language they use or request.
 Next sections describe the capabilities that you have.
 
