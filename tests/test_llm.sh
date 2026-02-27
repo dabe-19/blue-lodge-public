@@ -66,8 +66,8 @@ describe "Configuration defaults"
 # ── Sampling parameters ───────────────────────────────────────
 describe "Sampling parameter defaults"
 
-  it "LLM_TEMPERATURE defaults to 0.7" && {
-    assert_eq "$LLM_TEMPERATURE" "0.7"
+  it "LLM_TEMPERATURE defaults to empty (model registry controls temp)" && {
+    assert_eq "$LLM_TEMPERATURE" ""
   }
 
   it "LLM_REPEAT_PENALTY defaults to 1.2" && {
@@ -82,20 +82,20 @@ describe "Sampling parameter defaults"
     assert_eq "$LLM_TEMP_ASK" ""
   }
 
-  it "LLM_TEMP_AGENT defaults to 0.4" && {
-    assert_eq "$LLM_TEMP_AGENT" "0.4"
+  it "LLM_TEMP_AGENT defaults to empty (uses model registry)" && {
+    assert_eq "$LLM_TEMP_AGENT" ""
   }
 
   it "LLM_TEMP_ROUTER defaults to 0.1" && {
     assert_eq "$LLM_TEMP_ROUTER" "0.1"
   }
 
-  it "LLM_TEMP_JOURNAL defaults to 0.6" && {
-    assert_eq "$LLM_TEMP_JOURNAL" "0.6"
+  it "LLM_TEMP_JOURNAL defaults to empty (uses model registry)" && {
+    assert_eq "$LLM_TEMP_JOURNAL" ""
   }
 
-  it "LLM_TEMP_TOOL defaults to 0.2" && {
-    assert_eq "$LLM_TEMP_TOOL" "0.2"
+  it "LLM_TEMP_TOOL defaults to empty (uses model registry)" && {
+    assert_eq "$LLM_TEMP_TOOL" ""
   }
 
   it "LLM_PRESENCE_ROUTER defaults to 1.0" && {

@@ -33,11 +33,11 @@ LLM_PRESENCE_PENALTY="${LLM_PRESENCE_PENALTY:-0.3}"
 # Per-scenario overrides (empty = use global default)
 # Ask: conversational, moderate creativity, moderate anti-spiral
 LLM_TEMP_ASK="${LLM_TEMP_ASK:-}"
-LLM_REPEAT_ASK="${LLM_REPEAT_ASK:-}"
-LLM_PRESENCE_ASK="${LLM_PRESENCE_ASK:-}"
+LLM_REPEAT_ASK="${LLM_REPEAT_ASK:-1.2}"
+LLM_PRESENCE_ASK="${LLM_PRESENCE_ASK:-0.3}"
 
 # Agent: focused execution, low creativity, moderate anti-spiral
-LLM_TEMP_AGENT="${LLM_TEMP_AGENT:-0.4}"
+LLM_TEMP_AGENT="${LLM_TEMP_AGENT:-}"
 LLM_REPEAT_AGENT="${LLM_REPEAT_AGENT:-1.3}"
 LLM_PRESENCE_AGENT="${LLM_PRESENCE_AGENT:-0.5}"
 
@@ -47,12 +47,12 @@ LLM_REPEAT_ROUTER="${LLM_REPEAT_ROUTER:-1.1}"
 LLM_PRESENCE_ROUTER="${LLM_PRESENCE_ROUTER:-1.0}"
 
 # Journal: brief background utility, constrained
-LLM_TEMP_JOURNAL="${LLM_TEMP_JOURNAL:-0.6}"
+LLM_TEMP_JOURNAL="${LLM_TEMP_JOURNAL:-}"
 LLM_REPEAT_JOURNAL="${LLM_REPEAT_JOURNAL:-1.3}"
 LLM_PRESENCE_JOURNAL="${LLM_PRESENCE_JOURNAL:-1.0}"
 
 # Tool: commit messages, web summary, recall, slash — focused
-LLM_TEMP_TOOL="${LLM_TEMP_TOOL:-0.2}"
+LLM_TEMP_TOOL="${LLM_TEMP_TOOL:-}"
 LLM_REPEAT_TOOL="${LLM_REPEAT_TOOL:-1.4}"
 LLM_PRESENCE_TOOL="${LLM_PRESENCE_TOOL:-0.8}"
 
@@ -108,8 +108,11 @@ _llm_build_opts() {
     fi
     # Fall back to globals if model lookup fails
     model_temp="${model_temp:-$LLM_TEMPERATURE}"
+    model_temp="${model_temp:-0.7}"  # safety net: jq --argjson crashes on empty string
     model_rep="${model_rep:-$LLM_REPEAT_PENALTY}"
+    model_rep="${model_rep:-1.2}"
     model_pres="${model_pres:-$LLM_PRESENCE_PENALTY}"
+    model_pres="${model_pres:-0.3}"
 
     # ── Step 2: Apply per-scenario overrides ──────────────────
     # If a scenario-specific value is set, it wins over model defaults.
