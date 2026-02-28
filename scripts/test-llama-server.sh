@@ -252,25 +252,31 @@ _response=$(curl -s --max-time 120 "http://127.0.0.1:$PORT/v1/chat/completions" 
     -H "Content-Type: application/json" \
     -d "$(jq -n \
         --arg prompt "$PROMPT" \
-        '{messages: [{role: "user", content: $prompt}], max_tokens: 200, temperature: 0.7}')" 2>/dev/null)
+        '{messages: [{role: "user", content: $prompt}], max_tokens: 200, temperature: 0.7}')" 2>&1) || {
+    _fail "curl request failed (exit code $?)"
+    _dim "Response: $_response"
+    _dim "Try manually: curl -s http://127.0.0.1:$PORT/v1/chat/completions -H 'Content-Type: application/json' -d '{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
+    exit 1
+}
 _end_time=$(date +%s)
 _elapsed=$((_end_time - _start_time))
 
-_content=$(echo "$_response" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
-_total_tokens=$(echo "$_response" | jq -r '.usage.total_tokens // empty' 2>/dev/null)
-_completion_tokens=$(echo "$_response" | jq -r '.usage.completion_tokens // empty' 2>/dev/null)
+_content=$(echo "$_response" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)
+_total_tokens=$(echo "$_response" | jq -r '.usage.total_tokens // empty' 2>/dev/null || true)
+_completion_tokens=$(echo "$_response" | jq -r '.usage.completion_tokens // empty' 2>/dev/null || true)
 
 if [ -n "$_content" ]; then
     printf "  ${C_GREEN}Response:${C_RESET} %s\n" "$_content"
     echo ""
     _ok "Completed in ${_elapsed}s"
     [ -n "$_total_tokens" ] && _dim "Tokens: $_total_tokens total ($_completion_tokens completion)"
-    [ "$_elapsed" -gt 0 ] && [ -n "$_completion_tokens" ] && \
+    if [ "${_elapsed:-0}" -gt 0 ] && [ -n "$_completion_tokens" ] && [ "$_completion_tokens" -gt 0 ] 2>/dev/null; then
         _dim "Speed: ~$((_completion_tokens / _elapsed)) tok/s"
+    fi
 else
     _fail "No response from server"
-    _dim "Raw response:"
-    echo "$_response" | head -5 | while IFS= read -r line; do _dim "$line"; done
+    _dim "Raw response (first 500 chars):"
+    echo "$_response" | head -c 500 | while IFS= read -r line; do _dim "$line"; done || true
 fi
 
 # ── Step 6: Summary ───────────────────────────────────────────
