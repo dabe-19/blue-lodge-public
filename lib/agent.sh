@@ -55,9 +55,9 @@ _agent_evaluate_completion() {
     # Build a strict, personality-free evaluation prompt.
     # The evaluator must judge by the ACTUAL action and output, not merely
     # the presence of keywords like SUCCESS or COMPLETE in the log.
-    local eval_prompt="PRIMARY OBJECTIVE (the original user request):\n${primary_obj}\n\nACTION LOG (from the most recent milestone):\n${eval_context}\n\nEvaluate the Action Log. For each Action entry, examine:\n  1. The Action performed (the command that was run)\n  2. The Status (EXECUTED SUCCESSFULLY or FAILED, with exit code)\n  3. The Output (ONLY if present — many successful commands produce no output)\n\nDetermine whether the actions taken have FULLY satisfied the primary objective.\n\nCRITICAL RULES:\n- Judge by the Action + Status. A relevant action with Status EXECUTED SUCCESSFULLY (exit 0) is strong evidence of completion even if Output is empty or contains only ANSI formatting.\n- Do NOT require Output to be present. Many tools (email, social, etc.) produce no meaningful output on success.\n- Do NOT treat the word SUCCESS in the log as automatic proof — verify the Action actually addresses the objective.\n- If the Action does not relate to the objective, or the Status shows FAILED, respond INCOMPLETE.\n\nRespond with EXACTLY one of:\n  COMPLETE — if the primary objective has been fully satisfied\n  INCOMPLETE — if meaningful work remains\n\nOutput ONLY that single word. No explanation."
+    local eval_prompt="PRIMARY OBJECTIVE (the original user request):\n${primary_obj}\n\nACTION LOG (from the most recent milestone):\n${eval_context}\n\nEvaluate whether ALL parts of the primary objective have been satisfied.\n\nSTEP 1: Decompose the objective into distinct required parts.\n  Example: 'research X, write a report, and email it to Y' has THREE parts:\n    a) research X  b) write a report  c) email it to Y\n\nSTEP 2: For each part, check the Action Log for an action that addresses it.\n  - A relevant action with Status EXECUTED SUCCESSFULLY (exit 0) satisfies that part.\n  - Output may be empty — many tools (email, social) produce no output on success. That is normal.\n  - Do NOT count research/search as satisfying a 'write report' or 'email' part.\n\nSTEP 3: If ANY required part has no corresponding successful action, respond INCOMPLETE.\n\nCRITICAL RULES:\n- Do NOT treat the word SUCCESS in the log as automatic proof — verify the Action actually addresses each part.\n- A web search only satisfies a 'research' or 'find information' part — NOT a 'write', 'email', 'post', or 'send' part.\n- ALL parts must be satisfied for COMPLETE. Even one missing part means INCOMPLETE.\n\nRespond with EXACTLY one of:\n  COMPLETE — if ALL parts of the primary objective have been satisfied\n  INCOMPLETE — if ANY part remains unaddressed\n\nOutput ONLY that single word. No explanation."
 
-    local eval_sys="You are a strict task-completion evaluator. You have no personality, no name, and no opinions beyond completion assessment. Evaluate the Action Log: check that the Action performed actually addresses the primary objective and that the Status shows success (exit 0). Output may be empty for many successful commands — that is normal and does NOT indicate failure. Be conservative: if the action failed or does not match the objective, respond INCOMPLETE."
+    local eval_sys="You are a strict task-completion evaluator. Decompose multi-part objectives into distinct required parts and verify each has a corresponding successful action. A web search satisfies research, but NOT writing, emailing, or posting. Output may be empty for successful commands — that is normal. Respond INCOMPLETE if ANY required part lacks a successful action."
 
     ui_think "Evaluator: assessing task completion..."
     local verdict
@@ -636,9 +636,9 @@ FILE & PROJECT:
   /push        — Push to GitHub
 
 WEB & SEARCH:
-  /web         — Search, fetch, or find images on the web
+  /web         — Search the web, fetch page content, or find image URLs
   /github      — Search GitHub repos
-  /vision      — Analyze an image
+  /vision      — Analyze/describe an image (pass URL or file path directly)
 
 COMMUNICATION:
   /social      — Post to Discord, Telegram, X, Mastodon, Bluesky (NOT email)
@@ -667,6 +667,8 @@ Task: "search the web for rust tutorials" → /web
 Task: "send an email to john@test.com"  → /email
 Task: "build a url shortener in rust"   → /sandbox
 Task: "download https://example.com/f"  → /download
+Task: "describe this image"              → /vision
+Task: "find and describe images of X"    → /web (search first, then /vision later)
 ROUTER_CATALOG
     echo ""
     echo "Output ONLY the tool name. For slash commands output the base command"
@@ -745,112 +747,14 @@ _build_specialist_prompt() {
         echo "Output only ONE command per line — never chain multiple /commands together."
         echo ""
 
-        # Extract docs for the specific command.
-        # Strategy: 1) GEORGE_REFERENCE.md section, 2) SLASH_COMMANDS.md table,
-        # 3) recall FTS5, 4) plan catalog. Each layer adds detail.
-        local docs=""
+        # Docs injection is SKIPPED for the specialist. The syntax card
+        # below provides all needed syntax in ~10 lines per command.
+        # Previously, GEORGE_REFERENCE.md (40 lines) + SLASH_COMMANDS.md
+        # table rows + recall FTS5 results were all injected, ballooning
+        # input to 1500-1800 tokens for only 3-17 output tokens. The 4B
+        # model doesn't need encyclopedic docs — it needs a crisp syntax
+        # card and the objective.
         local base_cmd="${cmd_name#/}"
-
-        # 1. Extract ALL matching reference cards from GEORGE_REFERENCE.md
-        #    (not just the first). Commands like /social have multiple
-        #    sections (Post, DM, Read, At-Mention). Extract all, then
-        #    rerank by objective keywords so the most relevant section
-        #    appears first. Capped at 40 lines to stay within budget.
-        if [ -f "$LODGE_DIR/docs/GEORGE_REFERENCE.md" ]; then
-            local _ref_all
-            _ref_all=$(awk -v cmd="$base_cmd" '
-                BEGIN { IGNORECASE=1; found=0 }
-                /^## / {
-                    found = (tolower($0) ~ tolower(cmd)) ? 1 : 0
-                }
-                found { print }
-            ' "$LODGE_DIR/docs/GEORGE_REFERENCE.md" 2>/dev/null)
-
-            # Rerank: if the micro_objective contains sub-command keywords
-            # (dm, inbox, read, search, fetch, etc.), move matching sections
-            # to the front so the specialist sees the most relevant docs first.
-            if [ -n "$_ref_all" ] && [ -n "$micro_objective" ]; then
-                local _obj_lower
-                _obj_lower=$(echo "$micro_objective" | tr '[:upper:]' '[:lower:]')
-                local _priority_sections=""
-                local _other_sections=""
-                local _current_section=""
-                local _current_heading=""
-                while IFS= read -r _line; do
-                    if [[ "$_line" == "## "* ]]; then
-                        # Flush previous section
-                        if [ -n "$_current_section" ]; then
-                            local _heading_lower
-                            _heading_lower=$(echo "$_current_heading" | tr '[:upper:]' '[:lower:]')
-                            # Check if any objective keyword appears in the heading
-                            local _is_priority=0
-                            for _kw in dm direct.message inbox read search fetch images scrape send post channel mention; do
-                                if [[ "$_obj_lower" == *"$_kw"* ]] && [[ "$_heading_lower" == *"$_kw"* ]]; then
-                                    _is_priority=1
-                                    break
-                                fi
-                            done
-                            if [ "$_is_priority" -eq 1 ]; then
-                                _priority_sections="${_priority_sections}${_current_section}\n"
-                            else
-                                _other_sections="${_other_sections}${_current_section}\n"
-                            fi
-                        fi
-                        _current_section="$_line"
-                        _current_heading="$_line"
-                    else
-                        _current_section="${_current_section}\n${_line}"
-                    fi
-                done <<< "$_ref_all"
-                # Flush last section
-                if [ -n "$_current_section" ]; then
-                    local _heading_lower
-                    _heading_lower=$(echo "$_current_heading" | tr '[:upper:]' '[:lower:]')
-                    local _is_priority=0
-                    for _kw in dm direct.message inbox read search fetch images scrape send post channel mention; do
-                        if [[ "$_obj_lower" == *"$_kw"* ]] && [[ "$_heading_lower" == *"$_kw"* ]]; then
-                            _is_priority=1
-                            break
-                        fi
-                    done
-                    if [ "$_is_priority" -eq 1 ]; then
-                        _priority_sections="${_priority_sections}${_current_section}\n"
-                    else
-                        _other_sections="${_other_sections}${_current_section}\n"
-                    fi
-                fi
-                _ref_all=$(echo -e "${_priority_sections}${_other_sections}" | sed '/^[[:space:]]*$/d')
-            fi
-
-            # Cap at 40 lines (enough for 3-4 reference cards)
-            local _ref_section
-            _ref_section=$(echo "$_ref_all" | head -40)
-            [ -n "$_ref_section" ] && docs="$_ref_section"
-        fi
-
-        # 2. Try table rows from SLASH_COMMANDS.md for additional syntax
-        if [ -f "$LODGE_DIR/docs/SLASH_COMMANDS.md" ]; then
-            local _table_docs
-            _table_docs=$(grep -E "^\| \`$cmd_name" "$LODGE_DIR/docs/SLASH_COMMANDS.md" 2>/dev/null | head -8)
-            [ -n "$_table_docs" ] && docs="${docs:+$docs\n\n}$_table_docs"
-        fi
-
-        # 3. Fall back to recall FTS5 search for richer docs
-        if [ -z "$docs" ] && declare -f recall_search_context &>/dev/null; then
-            docs=$(recall_search_context "$base_cmd" 3 2>/dev/null)
-        fi
-
-        # 4. Last resort: extract from the full command catalog
-        if [ -z "$docs" ] && declare -f commands_catalog &>/dev/null; then
-            docs=$(commands_catalog 2>/dev/null | grep -i "$base_cmd" | head -8)
-        fi
-
-        if [ -n "$docs" ]; then
-            echo "COMMAND DOCUMENTATION (read carefully before generating command):"
-            echo -e "$docs"
-        else
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Specialist: no docs found for /$base_cmd — using syntax card only" >&2
-        fi
 
         # ── Command-specific syntax cards ─────────────────────
         # Guaranteed inline reference per command. Prevents the
@@ -895,20 +799,16 @@ _build_specialist_prompt() {
                 echo "Example: /save notes.md Meeting moved to Thursday at 3pm"
                 ;;
             web)
-                echo "- /web search <query>"
-                echo "- /web images <query>       — Image search via Serper (returns direct image URLs)"
-                echo "- /web scrape-images <url>  — Extract image URLs embedded in a page (no API key needed)"
-                echo "- /web fetch <url>"
-                echo "- /web summary <url>"
-                echo "- /web title <url>"
-                echo "- /web links <url>"
-                echo "- /web download <url>"
-                echo "- /web ping <url>"
-                echo "  NOTE: /web fetch requires a URL, not a query."
-                echo "  To search, use /web search <query> first, then /web fetch <url> on results."
-                echo "  To find images: /web images <query> (needs SERPER_API_KEY), or"
-                echo "    /web scrape-images <page_url> to extract images from a specific page."
-                echo "  Then /vision <image_url> to analyze."
+                echo "- /web search <query>         — Search the web (returns URLs + snippets)"
+                echo "- /web fetch <url>            — Read a webpage's content"
+                echo "- /web images <query>         — Find image URLs via Serper API"
+                echo "- /web scrape-images <url>    — Extract image URLs from a webpage (no API key)"
+                echo "  RULES:"
+                echo "  - /web search takes a QUERY. /web fetch takes a URL. Never swap them."
+                echo "  - To DESCRIBE an image: use /vision <image_url> (NOT /web fetch on an image URL)."
+                echo "  - /vision accepts image URLs directly — no need to /download first."
+                echo "  IMAGE WORKFLOW: /web search <topic> → pick image URL → /vision <image_url> [prompt]"
+                echo "  ALT IMAGE WORKFLOW: /web scrape-images <page_url> → /vision <image_url> [prompt]"
                 echo "Example: /web search rust async tutorial 2025"
                 ;;
             download)
@@ -1029,11 +929,15 @@ _build_specialist_prompt() {
                 ;;
             vision)
                 echo "- /vision <image_path_or_url> [prompt]"
-                echo "  Analyzes an image. Supports jpg/png/gif/webp/bmp."
-                echo "  Optional prompt for specific analysis."
-                echo "  Accepts direct image URLs (auto-downloads)."
-                echo "  To find images: /web images <query> or /web scrape-images <page_url>."
+                echo "  Analyzes an image using AI vision. Supports jpg/png/gif/webp/bmp."
+                echo "  Accepts direct image URLs — auto-downloads and analyzes (no /download needed)."
+                echo "  Optional prompt to guide the analysis."
+                echo "  REQUIRES a vision-capable model. If current model lacks vision:"
+                echo "    Switch first: /models single minist-inst"
+                echo "    Then: /vision <url_or_path> [prompt]"
+                echo "  Vision-capable models: minist-inst"
                 echo "Example: /vision https://example.com/photo.jpg describe this scene"
+                echo "Example: /vision ./downloaded_image.jpg What text is visible?"
                 ;;
             container)
                 echo "- /container create <distro>  — Install (ubuntu/alpine/debian/fedora/kali)"
@@ -1074,18 +978,10 @@ _build_specialist_prompt() {
             echo "$_key_status"
         fi
 
-        # Inject previous search results for /web commands so the
-        # specialist can reference URLs from prior searches in
-        # follow-up fetch/summary/title commands.
-        if [[ "$cmd_name" == "/web" ]] && [ -f "$workdir/.george/search_results.md" ]; then
-            local _search_ctx
-            _search_ctx=$(tail -30 "$workdir/.george/search_results.md" 2>/dev/null)
-            if [ -n "$_search_ctx" ]; then
-                echo ""
-                echo "PREVIOUS SEARCH RESULTS (use these URLs for /web fetch, /web summary, etc.):"
-                echo "$_search_ctx"
-            fi
-        fi
+        # Previous search results are already visible in the micro_memory
+        # action log via MICRO OBJECTIVE + ACTION LOG injection in the
+        # specialist_prompt (user message). No need to inject them again
+        # into the system prompt — that was doubling the token count.
     else
         echo "You are George. Output exactly ONE command inside a \`\`\`bash block."
         echo "Use standard bash. Do not use interactive commands (like nano or vim)."

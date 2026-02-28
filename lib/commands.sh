@@ -95,6 +95,21 @@ commands_is_command() {
     [[ "$input" == /* ]]
 }
 
+# ── Is this a known command name (without slash)? ──────────────
+# Used by REPL to auto-detect slashless commands like "model temp-ask".
+commands_is_known_name() {
+    local name="$1"
+    # Built-ins
+    case "$name" in
+        help|quit|exit|q) return 0 ;;
+    esac
+    # Registry
+    [ -n "${CMD_REGISTRY[$name]:-}" ] && return 0
+    # Commands directory
+    [ -f "$LODGE_COMMANDS_DIR/${name}.sh" ] && return 0
+    return 1
+}
+
 # ── Show help ──────────────────────────────────────────────────
 commands_help() {
     source "$LODGE_DIR/lib/ui.sh"
@@ -255,11 +270,13 @@ Never guess syntax; use `/recall <cmd>`. If a tool is missing, use `/slash creat
 ## 3. RESEARCH & MEMORY
 /ask <q>             — Quick answer
 /recall <q>          — Search internal memory (DO THIS FIRST BEFORE WEB SEARCH)
-/web <search|fetch|images|scrape-images> <query|url> — Search web, read page, or find images
+/web search <query>  — Search the web (returns URLs + snippets)
+/web fetch <url>     — Read a webpage's content (needs a URL, NOT a query)
+/web images <query>  — Find image URLs via Serper API
+/web scrape-images <url> — Extract image URLs from a webpage (no API key)
 /github <search|check> <q|repo>
 /download <url> [dest]
-/ingest <add|list|remove> <file/label> — Index into recall
-/vision <image_url_or_path>            — Extract text from image
+/vision <image_url_or_path> [prompt]     — Analyze image with AI vision (accepts URLs directly — no /download needed)
 /journal <write|vivid|fading|sediment|count|decay> [text] — Access persistent living memory
 
 ## 4. COMMS & SOCIAL
@@ -302,16 +319,17 @@ Never guess syntax; use `/recall <cmd>`. If a tool is missing, use `/slash creat
 *WRONG:* `/web search "what did discord say"` ← NEVER do this. Read the source.
 
 **Task: "Find me a good Rust HTTP library"**
-1. `/recall rust http library` (check existing knowledge first)
+1. `/github search rust http client` (find real repos)
 2. `/web search best rust http library` (search if recall is empty)
-3. `/github search rust http client` (find real repos)
+3. `/recall rust http library` (check existing knowledge first)
 4. `/journal write Rust HTTP: recommend reqwest (95k stars, async)`
 
 **Task: "Show me what the Grand Lodge of England looks like"**
-1. `/web images Grand Lodge of England building` (find image URLs via Serper)
-2. `/vision <image_url_from_results> Describe this building`
-*ALT (no Serper key):* `/web search Grand Lodge of England` → `/web scrape-images <result_url>` → `/vision <image_url>`
-*WRONG:* `/web fetch grand lodge of england` ← fetch needs a URL, not a query.
+1. `/web search Grand Lodge of England building photos` (find pages with images)
+2. `/web scrape-images <result_url>` (extract image URLs from the page)
+3. `/vision <image_url> Describe this building` (analyze the image directly by URL)
+*NOTE:* /vision accepts image URLs directly — no /download step needed.
+*WRONG:* `/web fetch <image_url>` ← /web fetch is for webpages, not image files.
 *WRONG:* `/vision https://en.wikipedia.org/wiki/...` ← that's a webpage, not an image.
 
 ## TASK FREEDOM & AUTONOMY (Gather Before Acting)

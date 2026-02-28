@@ -192,18 +192,28 @@ Creates sandbox, clones, writes GEORGE.md.
 
 ## Web Search Fetch Images
 
-/web search <query> — search the web via Serper API.
+/web search <query> — search the web via Serper API. Returns URLs + snippets.
+/web fetch <url> — read a webpage's text content. Needs a URL (NOT a query).
 /web images <query> — image search via Serper (returns direct image URLs). Key: SERPER_API_KEY.
 /web scrape-images <url> — extract image URLs embedded in a page (no API key needed).
-/web fetch <url> — fetch and extract content from a URL.
 Key: /api keys set SERPER_API_KEY <key>
-Image workflow: /web images <query> OR /web search <topic> → /web scrape-images <result_url> → /vision <image_url>
+
+IMAGE WORKFLOW (finding + describing images):
+  Step 1: Find image URLs → /web search <topic> OR /web scrape-images <page_url>
+  Step 2: Analyze image   → /vision <image_url> [prompt]
+  /vision accepts image URLs directly — NO /download step needed.
+  Do NOT use /web fetch on image URLs (that's for webpages, not images).
+
+VISION NOTE: /vision requires a vision-capable model. If current model lacks vision:
+  Switch first: /models single minist-inst
+  Then: /vision <image_url> [prompt]
 
 Examples:
   /web search rust async tutorial 2025
   /web fetch https://docs.rs/tokio/latest
   /web images landscape wallpaper 4k
   /web scrape-images https://unsplash.com/s/photos/mountain
+  /vision https://example.com/photo.jpg describe this building
 
 ## GitHub Search Check
 
