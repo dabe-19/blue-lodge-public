@@ -14,6 +14,10 @@
 
 set -euo pipefail
 
+# ── Error trap ──────────────────────────────────────────────────
+# Show exactly where the script died instead of crashing silently
+trap 'printf "\n\033[31m✗ Script failed at line %s\033[0m\n" "$LINENO"; exit 1' ERR
+
 # ── Proot guard ────────────────────────────────────────────────
 # llama-server is a Termux-native binary (Bionic) and needs direct
 # GPU driver access — neither works inside proot's glibc environment.
@@ -76,6 +80,20 @@ trap cleanup EXIT INT TERM
 # ═══════════════════════════════════════════════════════════════
 printf "\n${C_BOLD}═══ llama-server Smoke Test ═══${C_RESET}\n\n"
 
+# ── Step 0: Check dependencies ────────────────────────────────
+_missing_deps=()
+command -v jq    &>/dev/null || _missing_deps+=(jq)
+command -v curl  &>/dev/null || _missing_deps+=(curl)
+if [ ${#_missing_deps[@]} -gt 0 ]; then
+    _fail "Missing required tools: ${_missing_deps[*]}"
+    if [ -d /data/data/com.termux ]; then
+        _dim "Install with: pkg install ${_missing_deps[*]}"
+    else
+        _dim "Install with your package manager (apt, brew, etc.)"
+    fi
+    exit 1
+fi
+
 # ── Step 1: Check binary ──────────────────────────────────────
 _step "1" "Checking llama-server binary"
 if [ ! -x "$LLAMA_BIN" ]; then
@@ -125,18 +143,25 @@ if [ -z "$MANIFEST" ]; then
     _fail "No manifest found for '$MODEL_REF'"
     _dim "Available models:"
     if [ -d "$OLLAMA_DIR/manifests" ]; then
-        find "$OLLAMA_DIR/manifests" -type f | while read -r mf; do
-            _dim "  $(echo "$mf" | sed "s|$OLLAMA_DIR/manifests/||; s|registry.ollama.ai/library/||; s|/|:|g")"
-        done
+        find "$OLLAMA_DIR/manifests" -type f 2>/dev/null | while read -r mf; do
+            _dim "  $(echo "$mf" | sed "s|$OLLAMA_DIR/manifests/||; s|registry.ollama.ai/library/||; s|/|:|g")" || true
+        done || true
     else
         _dim "  (no models found at $OLLAMA_DIR)"
     fi
     exit 1
 fi
 
-DIGEST=$(jq -r '.layers[] | select(.mediaType == "application/vnd.ollama.image.model") | .digest' "$MANIFEST" 2>/dev/null)
+DIGEST=$(jq -r '.layers[] | select(.mediaType == "application/vnd.ollama.image.model") | .digest' "$MANIFEST" 2>&1) || {
+    _fail "Failed to parse manifest with jq"
+    _dim "Manifest: $MANIFEST"
+    _dim "jq output: $DIGEST"
+    exit 1
+}
 if [ -z "$DIGEST" ]; then
     _fail "Could not extract GGUF digest from manifest"
+    _dim "Manifest: $MANIFEST"
+    _dim "Check: cat $MANIFEST | jq ."
     exit 1
 fi
 
@@ -171,38 +196,46 @@ _dim "PID: $SERVER_PID"
 _step "4a" "Waiting for server..."
 _tries=0
 _healthy=0
-while [ $_tries -lt 30 ]; do
+while [ $_tries -lt 60 ]; do
     sleep 1
+
+    # Check if server process is still alive
     if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-        _fail "Server died during startup"
         echo ""
-        _dim "Last 10 lines of log:"
-        tail -10 "$SERVER_LOG" | while IFS= read -r line; do _dim "$line"; done
+        _fail "Server died during startup"
+        _dim "Last 20 lines of log:"
+        tail -20 "$SERVER_LOG" | while IFS= read -r line; do _dim "$line"; done || true
         SERVER_PID=""
         exit 1
     fi
-    _status=$(curl -sf --max-time 2 "http://127.0.0.1:$PORT/health" 2>/dev/null | jq -r '.status // empty' 2>/dev/null)
+
+    # Probe health endpoint (must not let set -e kill us here)
+    _status=$(curl -sf --max-time 2 "http://127.0.0.1:$PORT/health" 2>/dev/null || true)
+    _status=$(echo "$_status" | jq -r '.status // empty' 2>/dev/null || true)
+
     if [ "$_status" = "ok" ]; then
         _healthy=1
         break
     elif [ "$_status" = "loading model" ]; then
         printf "\r${C_DIM}    Loading model... (%ds)${C_RESET}  " "$_tries"
+    else
+        printf "\r${C_DIM}    Waiting for server... (%ds)${C_RESET}  " "$_tries"
     fi
     _tries=$((_tries + 1))
 done
 echo ""
 
 if [ "$_healthy" -eq 0 ]; then
-    _fail "Server not healthy after 30s"
+    _fail "Server not healthy after 60s"
     _dim "Log tail:"
-    tail -10 "$SERVER_LOG" | while IFS= read -r line; do _dim "$line"; done
+    tail -20 "$SERVER_LOG" | while IFS= read -r line; do _dim "$line"; done || true
     exit 1
 fi
 _ok "Server healthy"
 
 # Check GPU offload
 _gpu_offloaded=$(grep -c "offloaded.*layers to GPU" "$SERVER_LOG" 2>/dev/null || echo "0")
-_gpu_layers=$(grep "offloaded" "$SERVER_LOG" 2>/dev/null | grep -oP '\d+(?=/\d+ layers)' || echo "0")
+_gpu_layers=$(grep "offloaded" "$SERVER_LOG" 2>/dev/null | grep -oP '\d+(?=/\d+ layers)' 2>/dev/null || echo "0")
 if [ "${_gpu_layers:-0}" -gt 0 ]; then
     _ok "GPU offload: $_gpu_layers layers"
 else
