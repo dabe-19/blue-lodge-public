@@ -518,6 +518,44 @@ llm_warmup() {
     if [ -n "$_warmup_err" ]; then
         local _tty="/dev/tty"
         [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+
+        # Detect stale Ollama binary from package-manager update (dpkg/apt).
+        # When Ollama is updated while running, the daemon caches the old
+        # binary path (e.g. ollama.dpkg-tmp) which no longer exists.
+        # Fix: kill the stale daemon and start a fresh one.
+        if [[ "$_warmup_err" == *"dpkg-tmp"* ]] || [[ "$_warmup_err" == *"dpkg-new"* ]]; then
+            printf "\033[33m⚠ Ollama has a stale binary (package update while running)\033[0m\n" > "$_tty" 2>/dev/null
+            if command -v ollama &>/dev/null; then
+                printf "\033[2m  Restarting Ollama...\033[0m\n" > "$_tty" 2>/dev/null
+                killall ollama 2>/dev/null || true
+                sleep 2
+                ollama serve > /tmp/lodge-ollama.log 2>&1 &
+                disown 2>/dev/null
+                # Wait for Ollama to become responsive
+                local _retries=0
+                while [ $_retries -lt 10 ]; do
+                    if curl -sf --max-time 2 "$OLLAMA_URL/api/tags" &>/dev/null; then
+                        break
+                    fi
+                    sleep 1
+                    _retries=$((_retries + 1))
+                done
+                # Retry warmup with fresh daemon
+                _warmup_resp=$(curl -s --max-time 30 "$OLLAMA_URL/api/generate" \
+                    -H "Content-Type: application/json" \
+                    -d "$payload" 2>/dev/null)
+                _warmup_err=$(echo "$_warmup_resp" | jq -r '.error // empty' 2>/dev/null)
+                if [ -z "$_warmup_err" ]; then
+                    printf "\033[32m  ✓ Ollama restarted — model loaded\033[0m\n" > "$_tty" 2>/dev/null
+                    return 0
+                fi
+                printf "\033[31m  ✗ Restart failed: %s\033[0m\n" "$_warmup_err" > "$_tty" 2>/dev/null
+            else
+                printf "\033[33m  Restart Ollama manually: killall ollama && ollama serve &\033[0m\n" > "$_tty" 2>/dev/null
+            fi
+            return 1
+        fi
+
         printf "\033[33m⚠ Warmup failed: %s\033[0m\n" "$_warmup_err" > "$_tty" 2>/dev/null
         return 1
     fi

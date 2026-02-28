@@ -192,7 +192,7 @@ else
         for entry in "${_MODELS_REGISTRY[@]}"; do
             _models_parse_entry "$entry"
             _gguf=""
-            _gguf=$(_models_resolve_gguf "$_ME_KEY" 2>/dev/null)
+            _gguf=$(_models_resolve_gguf "$_ME_KEY" 2>/dev/null) || true
             if [ -n "$_gguf" ] && [ -f "$_gguf" ]; then
                 _idx=$((_idx + 1))
                 _MODELS_AVAILABLE+=("$_gguf")

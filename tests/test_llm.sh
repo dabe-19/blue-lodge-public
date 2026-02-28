@@ -401,6 +401,19 @@ describe "Model warmup"
     assert_eq "$?" "0"
   }
 
+  it "llm_warmup detects dpkg-tmp stale binary pattern" && {
+    # The function body should contain dpkg-tmp detection logic
+    _body=$(declare -f llm_warmup)
+    assert_contains "$_body" "dpkg-tmp" "Should detect dpkg-tmp stale binary"
+    assert_contains "$_body" "dpkg-new" "Should also detect dpkg-new variant"
+  }
+
+  it "llm_warmup attempts restart on dpkg-tmp error" && {
+    _body=$(declare -f llm_warmup)
+    assert_contains "$_body" "killall ollama" "Should kill stale Ollama process"
+    assert_contains "$_body" "ollama serve" "Should restart Ollama"
+  }
+
 # ── Debug instrumentation ─────────────────────────────────────
 describe "Debug instrumentation"
 

@@ -282,6 +282,16 @@ describe "_resolve_termux_home()"
   }
 
 # ═══════════════════════════════════════════════════════════════
+# set -e safety
+# ═══════════════════════════════════════════════════════════════
+describe "set -e safety for model scanning"
+
+  it "GGUF resolution uses || true to survive set -e" && {
+    _resolve_line=$(grep '_models_resolve_gguf' "$_VALIDATE_SCRIPT")
+    assert_contains "$_resolve_line" "|| true" "_models_resolve_gguf must have || true guard"
+  }
+
+# ═══════════════════════════════════════════════════════════════
 # Script structure  
 # ═══════════════════════════════════════════════════════════════
 describe "Script structure"
