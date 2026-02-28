@@ -1,17 +1,23 @@
 # Phone Setup Guide — From Android to Blue Lodge
 
-Two installation paths. **Option A (Termux-native)** is simpler, faster,
-and gives you full phone integration. **Option B (proot Ubuntu)** gives
-you a full Linux userland if you need `apt`, `build-essential`, etc.
+Four installation paths depending on your needs and Termux source.
 
-| | Option A: Termux-Native | Option B: proot Ubuntu |
-|---|---|---|
-| **Complexity** | Simple — 4 steps | More steps — proot layer |
-| **Phone integration** | Works natively (`/phone`, SMS, GPS) | Does NOT work (API can't cross proot) |
-| **Linux tools** | Termux `pkg` packages | Full `apt` ecosystem |
-| **Performance** | Native (no overhead) | ~5-10% proot overhead |
-| **Storage** | ~4GB (Ollama + model) | ~5-6GB (+Ubuntu image) |
-| **Recommended for** | Most users | Heavy Linux/build-essential needs |
+| | A: Termux-Native (F-Droid) | B: proot Ubuntu | B+: Hybrid | C: Play Store Termux |
+|---|---|---|---|---|
+| **Termux source** | F-Droid | F-Droid | F-Droid | Google Play Store |
+| **Complexity** | Simple — 4 steps | More steps | Most steps | Simple — 4 steps |
+| **Phone integration** | Full (`/phone`, SMS, GPS) | None (proot blocks API) | Exit proot for `/phone` | Full (`/phone`, SMS, GPS) |
+| **Linux tools** | Termux `pkg` packages | Full `apt` ecosystem | Both (switch contexts) | Termux `pkg` packages |
+| **proot containers** | Not used | Required | Required | Not available |
+| **Performance** | Native | ~5-10% proot overhead | Mixed | Native |
+| **Storage** | ~4GB | ~5-6GB | ~5-6GB | ~4GB |
+| **Recommended for** | Most users | Heavy Linux needs | Power users | Fallback / F-Droid unavailable |
+
+> **Which should I pick?**
+> - **Option A** if you just want George working with full phone features.
+> - **Option B** if you need `apt`, `build-essential`, GCC, Python headers, etc.
+> - **Option B+** if you want both — Ollama + llama-server in native Termux, George in proot Ubuntu.
+> - **Option C** if F-Droid is unavailable and you can only get Termux from the Play Store.
 
 ---
 
@@ -22,9 +28,11 @@ you a full Linux userland if you need `apt`, `build-essential`, etc.
 - ~5-8GB free storage (Ollama + model + optional Ubuntu)
 - A keyboard is recommended (Bluetooth or Samsung DeX)
 
-## Step 1: Install F-Droid + Termux (both paths)
+## Step 1: Install Termux (Options A, B, B+)
 
-The Play Store version of Termux is **outdated and broken**. Use F-Droid.
+The **F-Droid** version of Termux is actively maintained and supports
+`proot-distro` for Linux containers. If you need proot (Options B/B+),
+you must use F-Droid. If F-Droid is unavailable, see [Option C](#option-c-play-store-termux-fallback) below.
 
 1. Open browser → **https://f-droid.org** → Download F-Droid
 2. Enable "Install from unknown sources" if prompted
@@ -205,6 +213,208 @@ For phone features, either:
 
 - **Exit proot** and run `lodge` from native Termux (with `LODGE_TERMUX_API=1`)
 - **Use Option A** entirely (recommended)
+- **Use Option B+** for a hybrid approach (see below)
+
+---
+
+## Option B+: Hybrid (Ollama in Termux, George in proot)
+
+This is the power-user setup. Ollama (and optionally llama-server) runs
+in **native Termux** where it has direct hardware access, while George
+runs in **proot Ubuntu** where you have the full Linux toolchain. Both
+share `127.0.0.1` so the LLM API calls cross the boundary seamlessly.
+
+### Why B+ instead of plain B?
+
+- Ollama in native Termux may get **GPU access** that proot can't provide
+- llama-server with Vulkan runs best from native Termux (direct driver access)
+- You keep the full `apt` ecosystem for development inside proot
+- George auto-resolves Termux paths from inside proot (`_lodge_termux_home()`)
+
+### B+1. Set up native Termux (Ollama + optional llama-server)
+
+From **Termux native** (not inside proot):
+
+```bash
+# Install Ollama
+curl -fSL https://github.com/ollama/ollama/releases/latest/download/ollama-linux-arm64.tgz \
+    | tar xz -C $PREFIX/bin/ 2>/dev/null \
+    || {
+        curl -fSL https://github.com/ollama/ollama/releases/latest/download/ollama-linux-arm64 \
+            -o $PREFIX/bin/ollama
+        chmod +x $PREFIX/bin/ollama
+    }
+
+# Start Ollama and auto-start on new sessions
+ollama serve &
+sleep 3
+echo '
+if ! curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
+    ollama serve > $TMPDIR/ollama.log 2>&1 &
+    sleep 2
+fi' >> ~/.bashrc
+```
+
+Optionally build llama-server for GPU acceleration — see
+[ADRENO_GPU_SETUP.md](ADRENO_GPU_SETUP.md).
+
+### B+2. Set up proot Ubuntu (George)
+
+Follow Option B steps B1–B4, **but skip B3** (don't install Ollama inside
+proot — it's already running in native Termux and accessible at
+`127.0.0.1:11434`).
+
+```bash
+# From Termux native:
+pkg install -y proot-distro
+proot-distro install ubuntu
+proot-distro login ubuntu
+
+# Inside Ubuntu:
+apt update && apt upgrade -y
+apt install -y curl git jq sqlite3 gawk bc build-essential
+git clone https://github.com/dabe-19/blue-lodge.git ~/blue-lodge
+bash ~/blue-lodge/install.sh
+source ~/.bashrc
+```
+
+### B+3. Verify cross-boundary connectivity
+
+The key insight: Ollama runs in native Termux, George calls it from proot,
+both share 127.0.0.1:
+
+```bash
+# Inside proot Ubuntu:
+curl -s http://127.0.0.1:11434/api/tags | jq .models[].name
+# Should list your models — if so, the bridge works
+
+lodge
+/backend status    # Should show Ollama: running
+```
+
+### B+4. Phone features
+
+Same as B6 — `/phone` doesn't work inside proot. Exit to native Termux
+for phone features. You could install a second copy of Blue Lodge in
+native Termux with `LODGE_TERMUX_API=1` for phone-only tasks.
+
+### B+5. llama-server from proot
+
+If you built llama-server in native Termux, George can start/manage it
+from inside proot because `_lodge_termux_home()` auto-resolves the binary
+path to `/data/data/com.termux/files/home/llama.cpp/build/bin/llama-server`:
+
+```bash
+# Inside proot Ubuntu:
+lodge
+/backend start qwen3:8b    # Starts llama-server using Termux's binary + Ollama's GGUF
+```
+
+See [BACKEND_VALIDATION.md](BACKEND_VALIDATION.md) for validation and
+[ADRENO_GPU_SETUP.md](ADRENO_GPU_SETUP.md) for building with Vulkan GPU.
+
+---
+
+## Option C: Play Store Termux (Fallback)
+
+If F-Droid is unavailable (shutdown, blocked, corporate policy), George
+still works in the **Play Store version of Termux** with some limitations.
+
+### What works
+
+- George core: all slash commands, agent loop, memory, journal, recall
+- Ollama: local LLM inference (CPU-only)
+- Phone integration: `/phone`, SMS, GPS, clipboard (with Termux:API from Play Store)
+- Git, SSH, all standard development commands
+- Everything Option A provides
+
+### What doesn't work
+
+- **`proot-distro`** — not available in Play Store Termux (no proot containers)
+- **`/container`** — depends on proot-distro
+- **`/sandbox proot`** — proot-based sandboxes unavailable (directory sandboxes still work)
+- **Package updates** — Play Store Termux may be behind on `pkg` repository versions
+- **llama-server with Vulkan** — may have issues with older `vulkan-*` packages;
+  build from source if needed (`cmake`, `ninja`, `clang` should still work)
+
+### C1. Install Termux from Play Store
+
+1. Google Play Store → Search **"Termux"** → Install
+2. Also install **Termux:API** from Play Store
+3. Open Termux:
+
+```bash
+pkg update && pkg upgrade -y
+```
+
+> **Note:** If `pkg update` fails with repository errors, the Play Store
+> version may be too old. Try switching sources:
+> ```bash
+> termux-change-repo
+> ```
+> Then pick a mirror and retry `pkg update`.
+
+### C2. Install dependencies
+
+```bash
+pkg install -y git curl jq sqlite gawk procps bc termux-api
+```
+
+### C3. Install Ollama
+
+Same as Option A step A2:
+
+```bash
+curl -fSL https://github.com/ollama/ollama/releases/latest/download/ollama-linux-arm64.tgz \
+    | tar xz -C $PREFIX/bin/ 2>/dev/null \
+    || {
+        curl -fSL https://github.com/ollama/ollama/releases/latest/download/ollama-linux-arm64 \
+            -o $PREFIX/bin/ollama
+        chmod +x $PREFIX/bin/ollama
+    }
+
+ollama serve &
+sleep 3
+curl -s http://127.0.0.1:11434/api/tags | jq .
+```
+
+### C4. Install Blue Lodge
+
+```bash
+git clone https://github.com/dabe-19/blue-lodge.git ~/blue-lodge
+bash ~/blue-lodge/install.sh
+source ~/.bashrc
+```
+
+`install.sh` detects native Termux and auto-enables `LODGE_TERMUX_API=1`.
+
+### C5. Grant permissions and verify
+
+Same as Option A steps A5–A6:
+
+1. **Settings → Apps → Termux:API → Permissions** — enable Location, Phone, SMS, etc.
+2. **Settings → Apps → Termux → Permissions** — enable the same
+
+```bash
+lodge
+/status              # Check health
+/phone permissions   # Guided diagnostic
+/help                # All commands
+```
+
+### C6. Working around missing proot
+
+Without proot-distro, the `/container` command and proot-based sandboxes
+are unavailable. George handles this gracefully:
+
+- `/sandbox new myproject` creates a **directory sandbox** (no isolation,
+  but fully functional for coding tasks)
+- `/container` will report that proot-distro is not available
+- All other commands work identically to Option A
+
+If you later gain access to F-Droid, you can uninstall the Play Store
+Termux, install the F-Droid version, and re-clone Blue Lodge — your
+Ollama models survive in `~/.ollama/` if you back them up first.
 
 ---
 
@@ -300,15 +510,40 @@ Run `termux-wake-lock` before starting Lodge, or add it to `.bashrc`.
 
 ---
 
+## Next Steps
+
+Once George is running:
+
+- **GPU acceleration:** Build llama-server with Vulkan for 2-4x faster
+  inference on Adreno GPUs → [ADRENO_GPU_SETUP.md](ADRENO_GPU_SETUP.md)
+- **Validate your backend:** Confirm GPU offloading and compare Ollama
+  vs llama-server performance → [BACKEND_VALIDATION.md](BACKEND_VALIDATION.md)
+- **Model library:** Switch between models, adjust sampling parameters
+  → [MODELS.md](MODELS.md)
+- **Knowledge base:** Ingest your own docs for George to reference
+  → [RECALL.md](RECALL.md)
+- **Phone features:** SMS, calls, clipboard, GPS, battery, notifications
+  → [PHONE_INTEGRATION.md](PHONE_INTEGRATION.md)
+- **Social bots:** Discord, Telegram, X, Mastodon, Bluesky
+  → [SOCIAL_BOTS.md](SOCIAL_BOTS.md)
+
+---
+
 ## Quick Reference
 
 ```bash
-# Option A: Just open Termux and go
+# Option A / C: Just open Termux and go
 lodge
 
 # Option B: Enter Ubuntu first
 ubuntu
 lodge
+
+# Option B+: Start Ollama in Termux, then enter Ubuntu
+# (Ollama auto-starts if you set up .bashrc per B+1)
+ubuntu
+lodge
+/backend status    # Verify Ollama reachable from proot
 
 # One-shot task
 lodge "add input validation to the signup form"
