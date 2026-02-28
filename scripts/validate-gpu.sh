@@ -31,10 +31,12 @@ set -euo pipefail
 # Inside proot-distro, $HOME=/root/ but Ollama+llama.cpp live in Termux's
 # native home. Detect and resolve the correct path.
 _resolve_termux_home() {
-    if [ -d "$HOME/.ollama/models" ]; then
-        echo "$HOME"
-    elif [ -d "/data/data/com.termux/files/home" ]; then
+    # proot-distro: $HOME=/root/ but Ollama+llama.cpp live in Termux native home.
+    # Detect proot first — /root/.ollama/models may exist (empty) inside proot.
+    if [ -d "/data/data/com.termux/files/home" ] && [ "$HOME" != "/data/data/com.termux/files/home" ]; then
         echo "/data/data/com.termux/files/home"
+    elif [ -d "$HOME/.ollama/models" ]; then
+        echo "$HOME"
     else
         echo "$HOME"
     fi

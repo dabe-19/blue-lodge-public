@@ -83,12 +83,14 @@ _LODGE_TERMUX_HOME=""  # cached result
 _lodge_termux_home() {
     [ -n "$_LODGE_TERMUX_HOME" ] && { echo "$_LODGE_TERMUX_HOME"; return 0; }
 
-    # 1. Native Termux: $HOME already points to the right place
-    if [ -d "$HOME/.ollama/models" ]; then
-        _LODGE_TERMUX_HOME="$HOME"
-    # 2. proot-distro: Termux filesystem is mounted at its real Android path
-    elif [ -d "/data/data/com.termux/files/home" ]; then
+    # 1. proot-distro: $HOME=/root/ but Ollama+llama.cpp live in Termux native home.
+    #    Detect proot first — /root/.ollama/models may exist (empty) inside proot,
+    #    which would cause a false positive on the $HOME check below.
+    if [ -d "/data/data/com.termux/files/home" ] && [ "$HOME" != "/data/data/com.termux/files/home" ]; then
         _LODGE_TERMUX_HOME="/data/data/com.termux/files/home"
+    # 2. Native Termux or desktop: $HOME already points to the right place
+    elif [ -d "$HOME/.ollama/models" ]; then
+        _LODGE_TERMUX_HOME="$HOME"
     # 3. Fallback: hope for the best
     else
         _LODGE_TERMUX_HOME="$HOME"

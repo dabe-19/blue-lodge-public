@@ -445,6 +445,16 @@ describe "OLLAMA_MODELS proot path"
     assert_not_empty "$_exports" "OLLAMA_MODELS should be exported"
   }
 
+  it "_lodge_termux_home checks proot before HOME/.ollama/models" && {
+    # Inside proot, /root/.ollama/models may exist but is wrong — must
+    # check /data/data/com.termux first to avoid false positive
+    _body=$(declare -f _lodge_termux_home)
+    _termux_line=$(echo "$_body" | grep -n 'data/data/com.termux' | head -1 | cut -d: -f1)
+    _home_line=$(echo "$_body" | grep -n 'HOME.*ollama' | head -1 | cut -d: -f1)
+    [ -n "$_termux_line" ] && [ -n "$_home_line" ] && [ "$_termux_line" -lt "$_home_line" ]
+    assert_ok $? "Termux path check must come before HOME check"
+  }
+
 # ── Debug instrumentation ─────────────────────────────────────
 describe "Debug instrumentation"
 

@@ -281,6 +281,17 @@ describe "_resolve_termux_home()"
     rm -rf "$_tmp"
   }
 
+  it "checks proot (Termux native path) before HOME/.ollama/models" && {
+    # The function must check /data/data/com.termux first, because inside
+    # proot $HOME=/root/ and /root/.ollama/models can exist but is wrong.
+    _func_body=$(sed -n '/_resolve_termux_home()/,/^}/p' "$_VALIDATE_SCRIPT")
+    # The Termux path check should come BEFORE the HOME check
+    _termux_line=$(echo "$_func_body" | grep -n 'data/data/com.termux' | head -1 | cut -d: -f1)
+    _home_line=$(echo "$_func_body" | grep -n 'HOME.*ollama' | head -1 | cut -d: -f1)
+    [ -n "$_termux_line" ] && [ -n "$_home_line" ] && [ "$_termux_line" -lt "$_home_line" ]
+    assert_ok $? "Termux path check must come before HOME check"
+  }
+
 # ═══════════════════════════════════════════════════════════════
 # set -e safety
 # ═══════════════════════════════════════════════════════════════
