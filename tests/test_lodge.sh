@@ -790,4 +790,50 @@ describe "Email send parser — address= alias"
     assert_ok $?
   }
 
+# ── GPU command ───────────────────────────────────────────────
+describe "GPU layers command (/gpu)"
+
+  it "_cmd_gpu is defined" && {
+    declare -f _cmd_gpu &>/dev/null
+    assert_ok $?
+  }
+
+  it "/gpu is registered" && {
+    assert_not_empty "${CMD_REGISTRY[gpu]:-}" "/gpu must be registered"
+  }
+
+  it "LLAMA_CPP_GPU_LAYERS defaults to 1 (minimal GPU validation)" && {
+    # Re-source to check default
+    _gpu_default=$(grep 'LLAMA_CPP_GPU_LAYERS=' "$LODGE_DIR/lib/llm.sh" | head -1)
+    echo "$_gpu_default" | grep -q ':-1}'
+    assert_ok $? "Default should be 1, got: $_gpu_default"
+  }
+
+  it "/gpu sets LLAMA_CPP_GPU_LAYERS" && {
+    _gpu_old="${LLAMA_CPP_GPU_LAYERS:-}"
+    _cmd_gpu "15" 2>/dev/null
+    assert_eq "$LLAMA_CPP_GPU_LAYERS" "15"
+    LLAMA_CPP_GPU_LAYERS="$_gpu_old"
+  }
+
+  it "/gpu rejects non-integer input" && {
+    _gpu_old="${LLAMA_CPP_GPU_LAYERS:-}"
+    _cmd_gpu "abc" 2>/dev/null || true
+    # Should remain unchanged
+    assert_eq "${LLAMA_CPP_GPU_LAYERS:-}" "$_gpu_old"
+  }
+
+  it "/gpu 0 is valid (CPU only)" && {
+    _gpu_old="${LLAMA_CPP_GPU_LAYERS:-}"
+    _cmd_gpu "0" 2>/dev/null
+    assert_eq "$LLAMA_CPP_GPU_LAYERS" "0"
+    LLAMA_CPP_GPU_LAYERS="$_gpu_old"
+  }
+
+  it "/backend start resolves chat template" && {
+    _gpu_body=$(declare -f _cmd_backend)
+    echo "$_gpu_body" | grep -q '_models_resolve_chat_template\|_models_chat_template_name'
+    assert_ok $? "/backend start must resolve chat template"
+  }
+
 test_end

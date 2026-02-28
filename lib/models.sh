@@ -199,7 +199,7 @@ _models_chat_template_name() {
     lower=$(echo "$base_image" | tr '[:upper:]' '[:lower:]')
 
     case "$lower" in
-        *ministral*|*mistral*)  echo "mistral-v7"  ;;
+        *minist*|*mistral*)     echo "mistral-v7"  ;;
         *qwen3*|*qwen2.5*)     echo "chatml"       ;;
         *llama*3*)              echo "llama3"       ;;
         *granite*)              echo "granite"      ;;

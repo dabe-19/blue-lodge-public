@@ -322,7 +322,13 @@ _cmd_backend() {
             ui_dim "  Model:   $_model_path"
             ui_dim "  GPU layers: $LLAMA_CPP_GPU_LAYERS"
             ui_dim "  Context: $LLAMA_CPP_CTX_SIZE"
-            if _llm_start_llamacpp_server "$_model_path"; then
+            # Resolve chat template for /v1/chat/completions
+            local _start_tmpl=""
+            if [ -n "$arg2" ]; then
+                _start_tmpl=$(_models_resolve_chat_template "$arg2" 2>/dev/null) || true
+                [ -z "$_start_tmpl" ] && _start_tmpl=$(_models_chat_template_name "$arg2" 2>/dev/null) || true
+            fi
+            if _llm_start_llamacpp_server "$_model_path" "" "$_start_tmpl"; then
                 local _health _status
                 _health=$(curl -sf "$LLAMA_CPP_URL/health" 2>/dev/null)
                 _status=$(echo "$_health" | jq -r '.status // "unknown"' 2>/dev/null)
@@ -394,6 +400,73 @@ _cmd_backend() {
             ui_dim "  url <b> <u>  — Set backend URL (b=ollama|llamacpp)"
             ui_dim "  reset        — Reset all to defaults" ;;
     esac
+}
+_cmd_gpu() {
+    local new_layers="${1:-}"
+
+    # No argument — show current setting
+    if [ -z "$new_layers" ]; then
+        ui_section "GPU Layers"
+        printf "  %-22s %s\n" "Current:" "$LLAMA_CPP_GPU_LAYERS"
+        printf "  %-22s %s\n" "Backend:" "$(_llm_detect_backend 2>/dev/null || echo "unknown")"
+        echo ""
+        ui_dim "  Usage: /gpu <layers>   — Set GPU offload layers and restart"
+        ui_dim ""
+        ui_dim "  /gpu 0        CPU only (safe, slower)"
+        ui_dim "  /gpu 10       Offload 10 layers (partial GPU)"
+        ui_dim "  /gpu 20       Offload 20 layers (most GPU)"
+        ui_dim "  /gpu 99       All layers GPU (may crash on some devices)"
+        ui_dim ""
+        ui_dim "  Tip: Start low and increase until you hit Vulkan crashes."
+        ui_dim "  If llama-server is running, it will be restarted automatically."
+        return 0
+    fi
+
+    # Validate: must be a non-negative integer
+    if ! [[ "$new_layers" =~ ^[0-9]+$ ]]; then
+        ui_err "GPU layers must be a non-negative integer (got: $new_layers)"
+        return 1
+    fi
+
+    local old_layers="$LLAMA_CPP_GPU_LAYERS"
+    LLAMA_CPP_GPU_LAYERS="$new_layers"
+    ui_ok "GPU layers: $old_layers → $new_layers"
+
+    # If llama-server is running, restart it with new setting
+    if [ -f "$_LLAMA_CPP_PID_FILE" ]; then
+        local _pid
+        _pid=$(cat "$_LLAMA_CPP_PID_FILE" 2>/dev/null)
+        if kill -0 "$_pid" 2>/dev/null; then
+            ui_info "Restarting llama-server with $new_layers GPU layers..."
+            local _current_model="$LLAMA_CPP_MODEL"
+            _llm_stop_llamacpp_server "--quiet"
+
+            # Resolve chat template for the current model
+            local _tmpl=""
+            for _entry in "${_MODELS_REGISTRY[@]}"; do
+                _models_parse_entry "$_entry"
+                local _gguf
+                _gguf=$(_models_resolve_gguf "$_ME_KEY" 2>/dev/null) || true
+                if [ "$_gguf" = "$_current_model" ]; then
+                    _tmpl=$(_models_resolve_chat_template "$_ME_KEY" 2>/dev/null) || true
+                    break
+                fi
+            done
+            # Fallback: try to infer template from the model path
+            if [ -z "$_tmpl" ] && [ -n "$_current_model" ]; then
+                _tmpl=$(_models_chat_template_name "$_current_model" 2>/dev/null) || true
+            fi
+
+            if _llm_start_llamacpp_server "$_current_model" "" "$_tmpl"; then
+                local _health _status
+                _health=$(curl -sf "$LLAMA_CPP_URL/health" 2>/dev/null)
+                _status=$(echo "$_health" | jq -r '.status // "unknown"' 2>/dev/null)
+                ui_dim "  Health: $_status"
+            fi
+        fi
+    else
+        ui_dim "  No llama-server running. Setting will apply on next /backend start."
+    fi
 }
 _cmd_compact() {
     memory_compact "${2:-.}"
@@ -3256,6 +3329,7 @@ _register_commands() {
     commands_register "think"    "Toggle thinking: on/off/bright/dim/hide/test" "_cmd_think"
     commands_register "debug"    "Toggle debug mode (timers + token counts)" "_cmd_debug"
     commands_register "backend"  "LLM backend — auto-detect, switch (ollama/llamacpp)" "_cmd_backend"
+    commands_register "gpu"      "GPU layers — set offload layers for llama-server" "_cmd_gpu"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"
     commands_register "files"    "List workspace files" "_cmd_files"

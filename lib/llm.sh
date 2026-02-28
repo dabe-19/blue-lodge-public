@@ -18,8 +18,8 @@ export OLLAMA_MODELS="${OLLAMA_MODELS:-$(_lodge_termux_home)/.ollama/models}"
 LLAMA_CPP_SERVER_BIN="${LLAMA_CPP_SERVER_BIN:-$(_lodge_termux_home)/llama.cpp/build/bin/llama-server}"
 # Path to GGUF model file for llama-server
 LLAMA_CPP_MODEL="${LLAMA_CPP_MODEL:-}"
-# GPU layers to offload (-1 = all, 0 = CPU only)
-LLAMA_CPP_GPU_LAYERS="${LLAMA_CPP_GPU_LAYERS:-99}"
+# GPU layers to offload (1 = minimal GPU validation, 0 = CPU only)
+LLAMA_CPP_GPU_LAYERS="${LLAMA_CPP_GPU_LAYERS:-1}"
 # Context size for llama-server
 LLAMA_CPP_CTX_SIZE="${LLAMA_CPP_CTX_SIZE:-8192}"
 # Backend preference: auto (detect llamacpp first, fallback ollama), llamacpp, ollama

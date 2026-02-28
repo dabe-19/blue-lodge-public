@@ -39,7 +39,7 @@ TERMUX_HOME="${TERMUX_HOME:-/data/data/com.termux/files/home}"
 OLLAMA_DIR="$TERMUX_HOME/.ollama/models"
 LLAMA_BIN="${LLAMA_BIN:-$TERMUX_HOME/llama.cpp/build/bin/llama-server}"
 PORT="${PORT:-8090}"
-GPU_LAYERS="${GPU_LAYERS:-99}"
+GPU_LAYERS="${GPU_LAYERS:-1}"
 CTX_SIZE="${CTX_SIZE:-4096}"
 THREADS="${THREADS:-$(nproc 2>/dev/null || echo 4)}"
 MODEL_REF="${1:-blue-lodge-minist-inst:4b}"
@@ -191,7 +191,7 @@ _dim "$GGUF"
 _chat_template=""
 _model_lower=$(echo "$MODEL_REF" | tr '[:upper:]' '[:lower:]')
 case "$_model_lower" in
-    *ministral*|*mistral*)  _chat_template="mistral-v7"  ;;
+    *minist*|*mistral*)     _chat_template="mistral-v7"  ;;
     *qwen3*|*qwen2.5*)     _chat_template="chatml"       ;;
     *llama*3*)              _chat_template="llama3"       ;;
     *granite*)              _chat_template="granite"      ;;
