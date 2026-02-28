@@ -233,7 +233,198 @@ dumpsys gpu 2>/dev/null | head -20
 
 ---
 
-## 4. Performance Benchmarking
+## 4. GPU Validation Script Walkthrough
+
+Blue Lodge ships `scripts/validate-gpu.sh` — a fully automated end-to-end
+test that starts a temporary llama-server, confirms Vulkan GPU offloading,
+streams a test prompt, and reports performance. It runs on a **dedicated
+port (8090)** so it won't interfere with your normal llama-server or Ollama
+instances.
+
+### Prerequisites
+
+- llama-server binary built with Vulkan (see [ADRENO_GPU_SETUP.md](ADRENO_GPU_SETUP.md))
+- At least one model pulled via Ollama (`ollama pull qwen3:8b`) or a direct GGUF file
+- `jq` installed (comes with Termux by default)
+
+### Quickstart — Using Ollama Model Names
+
+The simplest workflow: use `ollama ls` to see what you have, then pass
+the model name directly to the script.
+
+```bash
+# Step 1: See what models are available
+$ ollama ls
+NAME                  ID            SIZE     MODIFIED
+qwen3:8b              abc123...     4.9 GB   2 hours ago
+minist-think:latest   def456...     4.7 GB   1 day ago
+granite3.3:8b         789abc...     4.8 GB   3 days ago
+
+# Step 2: Run validation with any model name from that list
+$ ./scripts/validate-gpu.sh qwen3:8b
+```
+
+The script resolves the Ollama model name to its underlying GGUF blob
+automatically — no need to know the blob path.
+
+### All Input Methods
+
+| Method | Example | When to Use |
+|--------|---------|-------------|
+| Ollama model name | `./scripts/validate-gpu.sh qwen3:8b` | Most common — use names from `ollama ls` |
+| Registry key | `./scripts/validate-gpu.sh minist-inst` | Blue Lodge registry keys (shorter aliases) |
+| Direct GGUF path | `./scripts/validate-gpu.sh /path/to/model.gguf` | Testing a GGUF not managed by Ollama |
+| Interactive picker | `./scripts/validate-gpu.sh` | No argument — shows a numbered menu |
+
+### What Each Step Does
+
+The script runs 8 automated steps:
+
+**Step 1 — Resolve Model:**
+Takes your input (Ollama name, registry key, or path) and locates the
+actual GGUF file. For Ollama names, it reads the manifest at
+`~/.ollama/models/manifests/` to find the blob digest, then resolves to
+`~/.ollama/models/blobs/sha256-...`.
+
+**Step 2 — Validate Binary:**
+Confirms `llama-server` exists and is executable. Checks `--help` output
+for Vulkan/GPU flags. Also kills any existing process on port 8090.
+
+**Step 3 — Start Server:**
+Launches llama-server on port 8090 with `-ngl 99` (all layers to GPU).
+Waits up to 45 seconds for the `/health` endpoint to return `"ok"`.
+Server log is captured to a temp file for GPU offload analysis.
+
+**Step 4 — Check GPU Offloading:**
+Parses the server startup log for offload confirmation. Looks for:
+- `"offloaded N/N layers to GPU"` — confirms layer offloading
+- `"ggml_vulkan"` / `"VULKAN"` — confirms Vulkan backend active
+- Extracts layer count and GPU device name
+
+**Step 5 — Stream Test Prompt:**
+Sends a streaming request to `/v1/chat/completions` and prints tokens in
+real time. Default prompt: *"What is the capital of France? Answer in one
+sentence."* Override with `VALIDATE_PROMPT` env var.
+
+**Step 6 — Performance Analysis:**
+Calculates:
+- **TTFT** (Time to First Token) — how fast prompt evaluation completes
+- **tok/s** — generation speed after first token
+- Performance verdict: `≥15 → GPU confirmed`, `5-14 → partial/small model`, `<5 → likely CPU`
+
+**Step 7 — Server Metrics:**
+Pulls Prometheus metrics from `/metrics` (prompt/generation tok/s) and
+slot timing from `/slots` if available.
+
+**Step 8 — Summary:**
+Prints a results table and overall verdict:
+- **PASS** — GPU offloading active and model responding
+- **PARTIAL** — Model responding but GPU offload unconfirmed
+- **FAIL** — No response from model
+
+### Example Output
+
+```
+═══ llama.cpp GPU Offload Validation ═══
+
+[1] Resolving model
+  ✓ Resolved: qwen3:8b (ollama)
+    GGUF: /home/.ollama/models/blobs/sha256-abc123... (4.9G)
+
+[2] Checking llama-server binary
+  ✓ Binary: /home/llama.cpp/build/bin/llama-server
+  ✓ Vulkan/GPU flags detected in binary
+
+[3] Starting llama-server with GPU offloading
+    Port: 8090 | GPU layers: 99 | Context: 4096
+    PID: 12345
+[3a] Waiting for server to become healthy...
+    Loading model... (8s)
+  ✓ Server healthy (8s startup)
+
+[4] Checking GPU offloading
+  ✓ GPU offloading CONFIRMED
+    Layers offloaded: 33
+    Backend: Vulkan
+    Device: ggml_vulkan: 0 = Adreno (TM) 830 (Qualcomm)
+
+[5] Sending test prompt (streaming)
+    Prompt: "What is the capital of France? Answer in one sentence."
+
+  The capital of France is Paris.
+
+[6] Performance analysis
+  ✓ Response received: 9 tokens, 35 chars
+    Time to first token:  1200ms
+    Total generation:     1850ms
+    Generation speed:     12.3 tok/s
+
+  ✓ GPU acceleration CONFIRMED (12.3 tok/s — expected for GPU)
+
+[7] Server metrics
+    Prompt eval: 285.4 tok/s
+    Generation:  12.3 tok/s
+
+═══ Validation Summary ═══
+
+  Model:                qwen3:8b (ollama)
+  GGUF size:            4.9G
+  GPU offload:          YES (33 layers)
+  GPU backend:          Vulkan
+  Response tokens:      9
+  Speed:                12.3 tok/s
+  Time to first token:  1200ms
+
+  PASS — GPU offloading active, model responding
+
+  Log: /tmp/lodge-gpu-validate-20260228-103045.log
+  Server log: /tmp/lodge-gpu-validate-server.log
+```
+
+### Environment Overrides
+
+| Variable | Default | Purpose |
+|----------|---------|--------|
+| `LLAMA_CPP_SERVER_BIN` | `~/llama.cpp/build/bin/llama-server` | Path to llama-server binary |
+| `LLAMA_CPP_GPU_LAYERS` | `99` | GPU layers to offload (`-ngl`) |
+| `LLAMA_CPP_CTX_SIZE` | `4096` | Context window size (`-c`) |
+| `VALIDATE_PORT` | `8090` | Port for temporary test server |
+| `VALIDATE_PROMPT` | *"What is the capital of France?..."* | Custom test prompt |
+
+### Interactive Model Picker
+
+When run without arguments, the script lists all available models:
+
+```bash
+$ ./scripts/validate-gpu.sh
+
+[1] Resolving model
+[1a] Scanning available models...
+
+  #    MODEL                               SIZE
+  ---  -----------------------------------  ------
+  1    minist-inst (specialist)             4.7G
+  2    minist-think (thinking)              4.7G
+  3    qwen3:8b (ollama)                    4.9G
+  4    granite3.3:8b (ollama)               4.8G
+
+  Select model [1-4]: _
+```
+
+Models from the Blue Lodge registry appear first (with their role), then
+any additional Ollama models not already in the registry.
+
+### Log Files
+
+Every run produces two log files:
+- **Validation log:** `${TMPDIR}/lodge-gpu-validate-YYYYMMDD-HHMMSS.log` — full transcript including server log, response text, and timing data
+- **Server log:** `${TMPDIR}/lodge-gpu-validate-server.log` — raw llama-server stdout/stderr (overwritten each run)
+
+The validation log is timestamped so previous runs are preserved.
+
+---
+
+## 5. Performance Benchmarking
 
 ### Quick Benchmark Script
 
@@ -295,7 +486,90 @@ fi
 
 ---
 
-## 5. GPU Troubleshooting (llama.cpp)
+## 6. Modelfiles: Ollama vs llama.cpp
+
+Blue Lodge uses Ollama Modelfiles to customize model behavior (system
+prompt, chat template, sampling parameters). When running the same GGUF
+through llama-server instead, it's important to understand what
+transfers automatically and what doesn't.
+
+### The Three Layers
+
+Model behavior in Blue Lodge is controlled by three independent layers:
+
+| Layer | Ollama | llama-server | Action Needed |
+|-------|--------|-------------|---------------|
+| **Chat template** | `TEMPLATE` directive in Modelfile | Read from GGUF `tokenizer.chat_template` metadata | None — GGUF has it built in |
+| **System prompt** | `SYSTEM` directive in Modelfile | Injected via API messages array by `llm_stream()` | None — already handled |
+| **Sampling params** | `PARAMETER` directives in Modelfile | Sent as API fields by `_llm_build_llamacpp_payload()` | None — already handled |
+
+### Chat Templates: How They Work
+
+Every GGUF file contains a `tokenizer.chat_template` field in its
+metadata. This is a Jinja2 template that defines how messages are
+formatted into the raw token stream (e.g., `<|im_start|>user\n...` for
+ChatML, `[INST]...` for Mistral).
+
+- **Ollama:** Reads the GGUF template, but allows overriding it with a
+  `TEMPLATE` directive in the Modelfile (written in Go template syntax).
+- **llama-server:** Reads the same GGUF template directly. When you hit
+  `/v1/chat/completions`, the server applies the template automatically.
+
+Since both backends read the template from the GGUF, models format
+messages identically. No injection or translation is needed.
+
+### System Prompt Injection
+
+Ollama stores the system prompt via `SYSTEM` in the Modelfile. This is
+an Ollama-only concept — llama-server doesn't read Modelfiles at all.
+
+Blue Lodge handles this transparently: `llm_stream()` prepends the
+George persona system prompt as a `{"role":"system","content":"..."}`
+message in the API request. Both Ollama's `/api/chat` and llama-server's
+`/v1/chat/completions` accept messages in this format.
+
+### Sampling Parameters
+
+Ollama uses `PARAMETER` directives (`temperature`, `top_p`, `num_predict`,
+etc.). llama-server accepts the same parameters as JSON fields in the API
+payload.
+
+Blue Lodge's `_llm_build_opts()` reads the model registry and outputs
+sampling parameters. For llama-server, `_llm_build_llamacpp_payload()`
+merges these into the OpenAI-format request body. Both backends receive
+identical sampling configuration.
+
+### The Modelfile Edge Case: Custom TEMPLATE Overrides
+
+Some Blue Lodge Modelfiles override the GGUF's built-in chat template:
+
+- **Ministral models** (`minist-think.Modelfile`): Uses a custom Mistral
+  v7 template (`[SYSTEM_PROMPT]...[INST]...`) via the `TEMPLATE` directive.
+- **Granite4-preview**: Uses a custom IBM Go template.
+
+These `TEMPLATE` overrides only work in Ollama. When llama-server loads
+the same GGUF, it uses the template baked into the GGUF metadata instead.
+
+**In practice this is fine:**
+- Unsloth and official GGUFs ship with the correct `tokenizer.chat_template`
+  already embedded. The Modelfile overrides exist as a safety net for
+  Ollama, not because the GGUF templates are wrong.
+- If a model ever misbehaves on llama-server (garbled output, wrong
+  formatting), the fix is `--chat-template-file template.jinja` at server
+  startup. This hasn't been needed for any current models.
+
+### Summary
+
+Switching from Ollama to llama-server requires **no code changes** for
+template handling. Blue Lodge already sends system prompts and sampling
+params via the API. The GGUF carries its own chat template. The only
+Ollama-specific feature that doesn't transfer is the `TEMPLATE` override,
+which is a redundant safety net for models whose GGUFs already contain
+the correct template.
+
+---
+
+## 7. GPU Troubleshooting (llama.cpp)
 
 ### Problem: "offloading 0 layers to GPU"
 
@@ -404,7 +678,7 @@ export LLAMA_CPP_SERVER_BIN="$HOME/llama.cpp/build/bin/llama-server"
 
 ---
 
-## 6. GPU Troubleshooting (Ollama)
+## 8. GPU Troubleshooting (Ollama)
 
 ### Problem: `ollama ps` shows "CPU" instead of "GPU"
 
@@ -435,7 +709,7 @@ Vulkan GPU control that Ollama on Termux may not provide.
 
 ---
 
-## 7. Side-by-Side Comparison
+## 9. Side-by-Side Comparison
 
 ### What Each Backend Reports
 
