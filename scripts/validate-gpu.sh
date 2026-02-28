@@ -191,7 +191,7 @@ else
     if [ "$_HAS_REGISTRY" = "1" ]; then
         for entry in "${_MODELS_REGISTRY[@]}"; do
             _models_parse_entry "$entry"
-            local _gguf
+            _gguf=""
             _gguf=$(_models_resolve_gguf "$_ME_KEY" 2>/dev/null)
             if [ -n "$_gguf" ] && [ -f "$_gguf" ]; then
                 _idx=$((_idx + 1))
@@ -205,7 +205,7 @@ else
     # Also list raw Ollama models not in registry
     if [ -d "$OLLAMA_DIR/manifests" ]; then
         while IFS= read -r mf; do
-            local _name _digest _blob
+            _name="" _digest="" _blob=""
             # Derive human name from path
             _name=$(echo "$mf" | sed 's|.*/manifests/||; s|registry.ollama.ai/library/||; s|/|:|g')
             _digest=$(jq -r '.layers[] | select(.mediaType == "application/vnd.ollama.image.model") | .digest' "$mf" 2>/dev/null)
@@ -213,7 +213,7 @@ else
                 _blob="$OLLAMA_DIR/blobs/${_digest//:/-}"
                 if [ -f "$_blob" ]; then
                     # Check if already listed via registry
-                    local _dup=0
+                    _dup=0
                     for _existing in "${_MODELS_AVAILABLE[@]+"${_MODELS_AVAILABLE[@]}"}"; do
                         [ "$_existing" = "$_blob" ] && _dup=1 && break
                     done
@@ -241,7 +241,7 @@ else
     done
     echo ""
 
-    local _choice
+    _choice=""
     read -rp "  Select model [1-${#_MODELS_AVAILABLE[@]}]: " _choice
     if ! [[ "$_choice" =~ ^[0-9]+$ ]] || [ "$_choice" -lt 1 ] || [ "$_choice" -gt ${#_MODELS_AVAILABLE[@]} ]; then
         _fail "Invalid selection"
