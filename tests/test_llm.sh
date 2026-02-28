@@ -841,4 +841,51 @@ describe "Bracket think-tag normalization ([THINK], [THOUGHT], case variants)"
     assert_eq "$_ms" "Do the task"
   }
 
+# ── Chat template injection ───────────────────────────────────
+describe "Chat template injection for llama-server"
+
+  it "_models_find_ollama_template is defined" && {
+    declare -f _models_find_ollama_template &>/dev/null
+    assert_ok $? "_models_find_ollama_template must exist"
+  }
+
+  it "_models_resolve_template is defined" && {
+    declare -f _models_resolve_template &>/dev/null
+    assert_ok $? "_models_resolve_template must exist"
+  }
+
+  it "_llm_start_llamacpp_server accepts template_path as third arg" && {
+    _body=$(declare -f _llm_start_llamacpp_server)
+    echo "$_body" | grep -q 'template_path'
+    assert_ok $? "Must accept template_path parameter"
+  }
+
+  it "_llm_start_llamacpp_server passes --chat-template-file when template given" && {
+    _body=$(declare -f _llm_start_llamacpp_server)
+    echo "$_body" | grep -q '\-\-chat-template-file'
+    assert_ok $? "Must include --chat-template-file flag"
+  }
+
+  it "_models_find_ollama_template extracts template mediaType (not model)" && {
+    _body=$(declare -f _models_find_ollama_template)
+    echo "$_body" | grep -q 'application/vnd.ollama.image.template'
+    assert_ok $? "Must filter by template mediaType"
+    # Ensure it does NOT accidentally match model mediaType
+    ! echo "$_body" | grep -q 'application/vnd.ollama.image.model'
+    assert_ok $? "Must not match model mediaType"
+  }
+
+  it "auto-start path resolves template for llama-server" && {
+    # The llm_warmup auto-start section should resolve templates
+    _warmup_code=$(grep -A5 '_llm_start_llamacpp_server.*_gguf' "$LODGE_DIR/lib/llm.sh" | head -10)
+    echo "$_warmup_code" | grep -q '_models_resolve_template\|_tmpl'
+    assert_ok $? "Auto-start must pass template to llama-server"
+  }
+
+  it "model switch path resolves template for llama-server" && {
+    _switch_code=$(grep -B5 '_llm_start_llamacpp_server.*_gguf.*quiet' "$LODGE_DIR/lib/models.sh" | head -10)
+    echo "$_switch_code" | grep -q '_models_resolve_template\|_models_find_ollama_template\|_tmpl'
+    assert_ok $? "Model switch must pass template to llama-server"
+  }
+
 test_end

@@ -262,6 +262,7 @@ _llm_stop_llamacpp_server() {
 _llm_start_llamacpp_server() {
     local model_path="$1"
     local quiet="${2:-}"
+    local template_path="${3:-}"
 
     # Validate
     if [ ! -f "$model_path" ]; then
@@ -289,12 +290,24 @@ _llm_start_llamacpp_server() {
 
     [ "$quiet" != "--quiet" ] && ui_dim "Starting llama-server on port $_port..."
 
-    "$LLAMA_CPP_SERVER_BIN" \
-        -m "$model_path" \
-        --port "$_port" \
-        -ngl "$LLAMA_CPP_GPU_LAYERS" \
-        -c "$LLAMA_CPP_CTX_SIZE" \
-        --threads "$(nproc 2>/dev/null || echo 4)" \
+    # Build launch args
+    local _launch_args=(
+        -m "$model_path"
+        --port "$_port"
+        -ngl "$LLAMA_CPP_GPU_LAYERS"
+        -c "$LLAMA_CPP_CTX_SIZE"
+        --threads "$(nproc 2>/dev/null || echo 4)"
+    )
+
+    # Inject chat template if available (required for /v1/chat/completions)
+    if [ -n "$template_path" ] && [ -f "$template_path" ]; then
+        _launch_args+=(--chat-template-file "$template_path")
+        [ "$quiet" != "--quiet" ] && ui_dim "Chat template: $template_path"
+    else
+        [ "$quiet" != "--quiet" ] && ui_warn "No chat template — /v1/chat/completions may return empty"
+    fi
+
+    "$LLAMA_CPP_SERVER_BIN" "${_launch_args[@]}" \
         > "${TMPDIR:-/tmp}/lodge-llama-server.log" 2>&1 &
     local _pid=$!
     echo "$_pid" > "$_LLAMA_CPP_PID_FILE"
@@ -599,7 +612,12 @@ llm_ensure() {
                 fi
             fi
             if [ -n "$_gguf" ] && [ -f "$_gguf" ]; then
-                if _llm_start_llamacpp_server "$_gguf"; then
+                # Resolve chat template for /v1/chat/completions support
+                local _tmpl=""
+                if [ -n "$_key" ]; then
+                    _tmpl=$(_models_resolve_template "$_key" 2>/dev/null) || true
+                fi
+                if _llm_start_llamacpp_server "$_gguf" "" "$_tmpl"; then
                     _MODELS_ACTIVE="$LODGE_MODEL_PRIMARY"
                     LODGE_MODEL="$LODGE_MODEL_PRIMARY"
                     return 0

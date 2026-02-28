@@ -144,6 +144,70 @@ _models_find_ollama_gguf() {
     return 1
 }
 
+# ── Find Ollama chat template blob ─────────────────────────────
+# Ollama stores chat templates as separate blobs (mediaType
+# "application/vnd.ollama.image.template"), NOT inside the GGUF.
+# Without this template, llama-server can't format /v1/chat/completions
+# messages into the model's expected prompt format → empty replies.
+#
+# Usage: _models_find_ollama_template "model:tag" → /path/to/template/blob
+_models_find_ollama_template() {
+    local model_ref="$1"
+    local ollama_dir="$(_lodge_termux_home)/.ollama/models"
+    [ -d "$ollama_dir" ] || return 1
+
+    local _name _tag
+    _tag="${model_ref##*:}"
+    _name="${model_ref%:*}"
+    [ "$_tag" = "$_name" ] && _tag="latest"
+
+    local manifest
+    if [[ "$_name" == hf.co/* ]]; then
+        manifest="$ollama_dir/manifests/$_name/$_tag"
+    elif [[ "$_name" == */* ]]; then
+        manifest="$ollama_dir/manifests/registry.ollama.ai/$_name/$_tag"
+    else
+        manifest="$ollama_dir/manifests/registry.ollama.ai/library/$_name/$_tag"
+    fi
+
+    [ -f "$manifest" ] || return 1
+
+    local digest
+    digest=$(jq -r '.layers[] | select(.mediaType == "application/vnd.ollama.image.template") | .digest' "$manifest" 2>/dev/null)
+    [ -z "$digest" ] && return 1
+
+    local blob="$ollama_dir/blobs/${digest//:/-}"
+    [ -f "$blob" ] && echo "$blob" && return 0
+    return 1
+}
+
+# ── Resolve a registry key to a chat template blob path ────────
+# Tries the created model name first, then the base image.
+# Usage: _models_resolve_template "minist-inst" → /path/to/template/blob
+_models_resolve_template() {
+    local key="$1"
+    local entry
+    entry=$(_models_lookup "$key") || return 1
+    _models_parse_entry "$entry"
+
+    local tmpl
+    # Try the created model first (may have custom template from Modelfile)
+    tmpl=$(_models_find_ollama_template "$_ME_NAME" 2>/dev/null)
+    if [ -n "$tmpl" ] && [ -f "$tmpl" ]; then
+        echo "$tmpl"
+        return 0
+    fi
+
+    # Fall back to base image template
+    tmpl=$(_models_find_ollama_template "$_ME_BASE" 2>/dev/null)
+    if [ -n "$tmpl" ] && [ -f "$tmpl" ]; then
+        echo "$tmpl"
+        return 0
+    fi
+
+    return 1
+}
+
 # ── Resolve a registry key to a GGUF blob path ────────────────
 # Tries the base image first (raw download), then the friendly model name.
 # Usage: _models_resolve_gguf "minist-inst" → /path/to/gguf/blob
@@ -672,7 +736,15 @@ _models_switch() {
 
         # Stop current → start with new model
         _llm_stop_llamacpp_server "--quiet"
-        if _llm_start_llamacpp_server "$_gguf" "--quiet"; then
+        # Resolve chat template for /v1/chat/completions support
+        local _tmpl=""
+        if [ -n "$_key" ]; then
+            _tmpl=$(_models_resolve_template "$_key" 2>/dev/null) || true
+        else
+            # Direct model ref — try finding template from Ollama manifest
+            _tmpl=$(_models_find_ollama_template "$target" 2>/dev/null) || true
+        fi
+        if _llm_start_llamacpp_server "$_gguf" "--quiet" "$_tmpl"; then
             _MODELS_ACTIVE="$target"
             LODGE_MODEL="$target"
             return 0
