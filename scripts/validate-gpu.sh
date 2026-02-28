@@ -27,15 +27,29 @@
 
 set -euo pipefail
 
+# ── Termux home resolution ─────────────────────────────────────
+# Inside proot-distro, $HOME=/root/ but Ollama+llama.cpp live in Termux's
+# native home. Detect and resolve the correct path.
+_resolve_termux_home() {
+    if [ -d "$HOME/.ollama/models" ]; then
+        echo "$HOME"
+    elif [ -d "/data/data/com.termux/files/home" ]; then
+        echo "/data/data/com.termux/files/home"
+    else
+        echo "$HOME"
+    fi
+}
+_TERMUX_HOME="$(_resolve_termux_home)"
+
 # ── Config ─────────────────────────────────────────────────────
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
-LLAMA_CPP_SERVER_BIN="${LLAMA_CPP_SERVER_BIN:-$HOME/llama.cpp/build/bin/llama-server}"
+LLAMA_CPP_SERVER_BIN="${LLAMA_CPP_SERVER_BIN:-$_TERMUX_HOME/llama.cpp/build/bin/llama-server}"
 LLAMA_CPP_GPU_LAYERS="${LLAMA_CPP_GPU_LAYERS:-99}"
 LLAMA_CPP_CTX_SIZE="${LLAMA_CPP_CTX_SIZE:-4096}"
 VALIDATE_PORT="${VALIDATE_PORT:-8090}"
 VALIDATE_URL="http://127.0.0.1:$VALIDATE_PORT"
 VALIDATE_PROMPT="${VALIDATE_PROMPT:-What is the capital of France? Answer in one sentence.}"
-OLLAMA_DIR="$HOME/.ollama/models"
+OLLAMA_DIR="$_TERMUX_HOME/.ollama/models"
 LOGFILE="${TMPDIR:-/tmp}/lodge-gpu-validate-$(date +%Y%m%d-%H%M%S).log"
 SERVER_LOG="${TMPDIR:-/tmp}/lodge-gpu-validate-server.log"
 SERVER_PID=""

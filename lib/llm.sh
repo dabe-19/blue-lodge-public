@@ -10,8 +10,8 @@ source "$LODGE_DIR/lib/models.sh"
 # ── Config ─────────────────────────────────────────────────────
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
 LLAMA_CPP_URL="${LLAMA_CPP_URL:-http://127.0.0.1:8080}"
-# Path to llama-server binary (Termux native default)
-LLAMA_CPP_SERVER_BIN="${LLAMA_CPP_SERVER_BIN:-$HOME/llama.cpp/build/bin/llama-server}"
+# Path to llama-server binary (resolved via _lodge_termux_home for proot compat)
+LLAMA_CPP_SERVER_BIN="${LLAMA_CPP_SERVER_BIN:-$(_lodge_termux_home)/llama.cpp/build/bin/llama-server}"
 # Path to GGUF model file for llama-server
 LLAMA_CPP_MODEL="${LLAMA_CPP_MODEL:-}"
 # GPU layers to offload (-1 = all, 0 = CPU only)

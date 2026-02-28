@@ -72,6 +72,31 @@ _MODELS_REGISTRY=(
 )
 
 # ═══════════════════════════════════════════════════════════════
+# Termux Home Resolution
+# ═══════════════════════════════════════════════════════════════
+# Blue Lodge runs inside a proot-distro Ubuntu container where $HOME=/root/,
+# but Ollama models and llama.cpp binaries live in Termux's native home at
+# /data/data/com.termux/files/home/. This helper resolves the correct path.
+
+_LODGE_TERMUX_HOME=""  # cached result
+
+_lodge_termux_home() {
+    [ -n "$_LODGE_TERMUX_HOME" ] && { echo "$_LODGE_TERMUX_HOME"; return 0; }
+
+    # 1. Native Termux: $HOME already points to the right place
+    if [ -d "$HOME/.ollama/models" ]; then
+        _LODGE_TERMUX_HOME="$HOME"
+    # 2. proot-distro: Termux filesystem is mounted at its real Android path
+    elif [ -d "/data/data/com.termux/files/home" ]; then
+        _LODGE_TERMUX_HOME="/data/data/com.termux/files/home"
+    # 3. Fallback: hope for the best
+    else
+        _LODGE_TERMUX_HOME="$HOME"
+    fi
+    echo "$_LODGE_TERMUX_HOME"
+}
+
+# ═══════════════════════════════════════════════════════════════
 # GGUF Resolution (Ollama blob storage → llama-server)
 # ═══════════════════════════════════════════════════════════════
 # Resolves any Ollama model reference to the actual GGUF blob file.
@@ -83,7 +108,7 @@ _MODELS_REGISTRY=(
 
 _models_find_ollama_gguf() {
     local model_ref="$1"
-    local ollama_dir="$HOME/.ollama/models"
+    local ollama_dir="$(_lodge_termux_home)/.ollama/models"
     [ -d "$ollama_dir" ] || return 1
 
     # Split into name and tag on the LAST colon
