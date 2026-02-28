@@ -318,6 +318,18 @@ describe "Core LLM functions"
     assert_ok $?
   }
 
+  it "llm_create_model uses registry lookup, not root Modelfile" && {
+    _body=$(declare -f llm_create_model)
+    assert_contains "$_body" "_models_lookup" "Should look up model in registry"
+    assert_contains "$_body" "models_generate_modelfile" "Should generate per-model Modelfile"
+  }
+
+  it "llm_create_model falls back to root Modelfile for unknown models" && {
+    _body=$(declare -f llm_create_model)
+    assert_contains "$_body" "Modelfile" "Should have root Modelfile fallback"
+    assert_contains "$_body" "not in registry" "Should warn about fallback"
+  }
+
   it "llm_generate is defined" && {
     declare -f llm_generate &>/dev/null
     assert_ok $?

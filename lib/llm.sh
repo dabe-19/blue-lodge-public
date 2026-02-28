@@ -644,12 +644,35 @@ llm_ensure() {
     return 0
 }
 
-# ── Create the model from Modelfile ────────────────────────────
+# ── Create the model from registry Modelfile ───────────────────
+# Resolves LODGE_MODEL to a registry key, generates the correct
+# per-model Modelfile, and creates. Falls back to root Modelfile
+# only if the model isn't in the registry (legacy/custom models).
 llm_create_model() {
-    if [ -f "$LODGE_DIR/Modelfile" ]; then
-        ollama create "$LODGE_MODEL" -f "$LODGE_DIR/Modelfile" 2>&1
+    local _model="${LODGE_MODEL:-}"
+    [ -z "$_model" ] && { ui_err "LODGE_MODEL not set"; return 1; }
+
+    # Try registry lookup by model name → get key for Modelfile generation
+    local _entry _key=""
+    _entry=$(_models_lookup "$_model" 2>/dev/null) && {
+        _models_parse_entry "$_entry"
+        _key="$_ME_KEY"
+    }
+
+    if [ -n "$_key" ]; then
+        # Registry model — generate correct per-model Modelfile
+        local _mf
+        _mf=$(models_generate_modelfile "$_key") || {
+            ui_err "Failed to generate Modelfile for '$_key'"
+            return 1
+        }
+        ollama create "$_model" -f "$_mf" 2>&1
+    elif [ -f "$LODGE_DIR/Modelfile" ]; then
+        # Fallback: root Modelfile (legacy/custom models only)
+        ui_warn "Model '$_model' not in registry — using root Modelfile"
+        ollama create "$_model" -f "$LODGE_DIR/Modelfile" 2>&1
     else
-        ui_err "No Modelfile found at $LODGE_DIR/Modelfile"
+        ui_err "No Modelfile found for '$_model'"
         return 1
     fi
 }
