@@ -1,6 +1,7 @@
 #!/bin/bash
 # ── George: LLM Interface ─────────────────────────────────
-# Direct Ollama API wrapper. No proxy needed.
+# Multi-backend LLM wrapper. Supports Ollama and llama.cpp (llama-server).
+# Auto-detects which backend is available; falls back gracefully.
 
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
@@ -8,6 +9,21 @@ source "$LODGE_DIR/lib/models.sh"
 
 # ── Config ─────────────────────────────────────────────────────
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
+LLAMA_CPP_URL="${LLAMA_CPP_URL:-http://127.0.0.1:8080}"
+# Path to llama-server binary (Termux native default)
+LLAMA_CPP_SERVER_BIN="${LLAMA_CPP_SERVER_BIN:-$HOME/llama.cpp/build/bin/llama-server}"
+# Path to GGUF model file for llama-server
+LLAMA_CPP_MODEL="${LLAMA_CPP_MODEL:-}"
+# GPU layers to offload (-1 = all, 0 = CPU only)
+LLAMA_CPP_GPU_LAYERS="${LLAMA_CPP_GPU_LAYERS:-99}"
+# Context size for llama-server
+LLAMA_CPP_CTX_SIZE="${LLAMA_CPP_CTX_SIZE:-8192}"
+# Backend preference: auto (detect llamacpp first, fallback ollama), llamacpp, ollama
+LLM_BACKEND="${LLM_BACKEND:-auto}"
+# Cached backend result (set by _llm_detect_backend, cleared on /backend change)
+_LLM_BACKEND_CACHE=""
+# PID file for llama-server started by lodge
+_LLAMA_CPP_PID_FILE="${TMPDIR:-/tmp}/.lodge-llama-server.pid"
 LODGE_MODEL="${LODGE_MODEL:-blue-lodge}"
 LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-20480}"   # Default max output tokens (matches Modelfile num_predict ceiling)
 LLM_ASK_TOKENS="${LLM_ASK_TOKENS:-20480}"   # Max output tokens for /ask (model stops at <|im_end|>; this is just a safety cap)
@@ -149,8 +165,251 @@ _LLM_DEBUG_TASK_START=""
 _LLM_CURL_PID=""
 _LLM_ACTIVE=0
 
+# ── Backend detection ──────────────────────────────────────────
+# Returns "llamacpp" or "ollama". Caches result for the session
+# to avoid repeated network pings. Clear _LLM_BACKEND_CACHE to re-detect.
+#
+# Priority: LLM_BACKEND preference → auto-detect (llamacpp first, ollama fallback)
+_llm_detect_backend() {
+    # Return cache if available
+    if [ -n "$_LLM_BACKEND_CACHE" ]; then
+        echo "$_LLM_BACKEND_CACHE"
+        return 0
+    fi
+
+    # Manual override — skip detection
+    case "$LLM_BACKEND" in
+        llamacpp|llama-cpp|llama_cpp)
+            _LLM_BACKEND_CACHE="llamacpp"
+            echo "llamacpp"
+            return 0
+            ;;
+        ollama)
+            _LLM_BACKEND_CACHE="ollama"
+            echo "ollama"
+            return 0
+            ;;
+    esac
+
+    # Auto-detect: try llama-server health endpoint first (faster GPU path)
+    if curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null | grep -q '"status"'; then
+        _LLM_BACKEND_CACHE="llamacpp"
+        echo "llamacpp"
+        return 0
+    fi
+
+    # Fallback to Ollama
+    if curl -sf --max-time 2 "$OLLAMA_URL/api/tags" &>/dev/null; then
+        _LLM_BACKEND_CACHE="ollama"
+        echo "ollama"
+        return 0
+    fi
+
+    # Neither available — default to ollama (llm_ensure will handle startup)
+    _LLM_BACKEND_CACHE="ollama"
+    echo "ollama"
+    return 1
+}
+
+# ── llama-server lifecycle helpers ─────────────────────────────
+# Shared by _models_switch() (model hot-swap) and /backend command.
+
+# Stop the running llama-server (if any).
+# Returns 0 whether it stopped or wasn't running.
+_llm_stop_llamacpp_server() {
+    local quiet="${1:-}"
+    if [ -f "$_LLAMA_CPP_PID_FILE" ]; then
+        local _pid
+        _pid=$(cat "$_LLAMA_CPP_PID_FILE" 2>/dev/null)
+        if kill -0 "$_pid" 2>/dev/null; then
+            kill "$_pid" 2>/dev/null
+            # Wait up to 5s for graceful shutdown
+            local _tries=0
+            while [ $_tries -lt 10 ] && kill -0 "$_pid" 2>/dev/null; do
+                sleep 0.5
+                _tries=$((_tries + 1))
+            done
+            kill -9 "$_pid" 2>/dev/null  # force if still alive
+            [ "$quiet" != "--quiet" ] && ui_ok "llama-server stopped (was PID $_pid)"
+        else
+            [ "$quiet" != "--quiet" ] && ui_dim "llama-server was not running (stale PID file removed)"
+        fi
+        rm -f "$_LLAMA_CPP_PID_FILE"
+    else
+        # No PID file — try pgrep
+        local _pid
+        _pid=$(pgrep -f "llama-server.*--port" 2>/dev/null | head -1)
+        if [ -n "$_pid" ]; then
+            kill "$_pid" 2>/dev/null
+            sleep 1
+            kill -9 "$_pid" 2>/dev/null
+            [ "$quiet" != "--quiet" ] && ui_ok "llama-server stopped (PID $_pid)"
+        else
+            [ "$quiet" != "--quiet" ] && ui_dim "llama-server is not running"
+        fi
+    fi
+    _LLM_BACKEND_CACHE=""
+    return 0
+}
+
+# Start llama-server with the given GGUF model path.
+# Args: model_path [--quiet]
+# Returns 0 when server is healthy, 1 on failure.
+_llm_start_llamacpp_server() {
+    local model_path="$1"
+    local quiet="${2:-}"
+
+    # Validate
+    if [ ! -f "$model_path" ]; then
+        [ "$quiet" != "--quiet" ] && ui_err "Model file not found: $model_path"
+        return 1
+    fi
+    if [ ! -x "$LLAMA_CPP_SERVER_BIN" ]; then
+        [ "$quiet" != "--quiet" ] && ui_err "llama-server not found: $LLAMA_CPP_SERVER_BIN"
+        return 1
+    fi
+
+    # Check if already running
+    if [ -f "$_LLAMA_CPP_PID_FILE" ]; then
+        local _existing_pid
+        _existing_pid=$(cat "$_LLAMA_CPP_PID_FILE" 2>/dev/null)
+        if kill -0 "$_existing_pid" 2>/dev/null; then
+            [ "$quiet" != "--quiet" ] && ui_warn "llama-server already running (PID $_existing_pid). Stop it first."
+            return 1
+        fi
+        rm -f "$_LLAMA_CPP_PID_FILE"
+    fi
+
+    local _port
+    _port=$(echo "$LLAMA_CPP_URL" | grep -oP ':\K[0-9]+$' || echo "8080")
+
+    [ "$quiet" != "--quiet" ] && ui_dim "Starting llama-server on port $_port..."
+
+    "$LLAMA_CPP_SERVER_BIN" \
+        -m "$model_path" \
+        --port "$_port" \
+        -ngl "$LLAMA_CPP_GPU_LAYERS" \
+        -c "$LLAMA_CPP_CTX_SIZE" \
+        --threads "$(nproc 2>/dev/null || echo 4)" \
+        > "${TMPDIR:-/tmp}/lodge-llama-server.log" 2>&1 &
+    local _pid=$!
+    echo "$_pid" > "$_LLAMA_CPP_PID_FILE"
+
+    # Wait for healthy (up to 30s)
+    local _tries=0
+    while [ $_tries -lt 30 ]; do
+        sleep 1
+        if curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null | grep -q '"status"'; then
+            _LLM_BACKEND_CACHE=""
+            LLAMA_CPP_MODEL="$model_path"
+            [ "$quiet" != "--quiet" ] && ui_ok "llama-server started (PID $_pid)"
+            return 0
+        fi
+        # Check if process died
+        if ! kill -0 "$_pid" 2>/dev/null; then
+            [ "$quiet" != "--quiet" ] && ui_err "llama-server died during startup"
+            [ "$quiet" != "--quiet" ] && tail -5 "${TMPDIR:-/tmp}/lodge-llama-server.log" 2>/dev/null | while IFS= read -r _line; do ui_dim "  $_line"; done
+            rm -f "$_LLAMA_CPP_PID_FILE"
+            return 1
+        fi
+        _tries=$((_tries + 1))
+    done
+
+    # Timeout
+    [ "$quiet" != "--quiet" ] && ui_err "llama-server failed to start within 30s"
+    [ "$quiet" != "--quiet" ] && ui_dim "  Log: ${TMPDIR:-/tmp}/lodge-llama-server.log"
+    kill "$_pid" 2>/dev/null
+    rm -f "$_LLAMA_CPP_PID_FILE"
+    return 1
+}
+
+# ── Build llama.cpp payload ────────────────────────────────────
+# Translates Blue Lodge parameters into OpenAI-compatible payload
+# for llama-server's /v1/chat/completions endpoint.
+# Usage: _llm_build_llamacpp_payload "prompt" "system" "opts_json" "max_tokens" [stream]
+_llm_build_llamacpp_payload() {
+    local prompt="$1"
+    local system="${2:-}"
+    local opts_json="$3"
+    local max_tokens="$4"
+    local stream="${5:-true}"
+
+    # Extract sampling params from opts_json
+    local temp rep pres
+    temp=$(echo "$opts_json" | jq -r '.temperature // 0.7')
+    rep=$(echo "$opts_json" | jq -r '.repeat_penalty // 1.2')
+    pres=$(echo "$opts_json" | jq -r '.presence_penalty // 0.3')
+
+    # Build messages array (OpenAI format)
+    local messages
+    if [ -n "$system" ]; then
+        messages=$(jq -n \
+            --arg sys "$system" \
+            --arg usr "$prompt" \
+            '[{role:"system",content:$sys},{role:"user",content:$usr}]')
+    else
+        messages=$(jq -n \
+            --arg usr "$prompt" \
+            '[{role:"user",content:$usr}]')
+    fi
+
+    jq -n \
+        --argjson messages "$messages" \
+        --argjson max_tokens "$max_tokens" \
+        --argjson temperature "$temp" \
+        --argjson frequency_penalty "$rep" \
+        --argjson presence_penalty "$pres" \
+        --argjson stream "$stream" \
+        '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, stream:$stream}'
+}
+
+# ── Parse llama.cpp SSE stream line ────────────────────────────
+# Extracts content token from a single SSE line.
+# Returns the token text, or sets _LLAMACPP_DONE=1 on [DONE].
+# Usage: _llm_parse_llamacpp_sse "data: {...}" → token in stdout
+_LLAMACPP_DONE=0
+_llm_parse_llamacpp_sse() {
+    local line="$1"
+
+    # Skip empty lines and non-data lines (SSE format)
+    [[ "$line" == data:* ]] || return 0
+
+    # Strip "data: " prefix
+    local json="${line#data: }"
+
+    # Check for stream termination
+    if [ "$json" = "[DONE]" ]; then
+        _LLAMACPP_DONE=1
+        return 0
+    fi
+
+    # Extract content from OpenAI delta format
+    echo "$json" | jq -r '.choices[0].delta.content // empty' 2>/dev/null
+}
+
 # ── Health Check ───────────────────────────────────────────────
 llm_check() {
+    local backend
+    backend=$(_llm_detect_backend)
+
+    if [ "$backend" = "llamacpp" ]; then
+        # llama-server /health returns {"status":"ok"} when ready
+        local resp
+        resp=$(curl -sf --max-time 5 "$LLAMA_CPP_URL/health" 2>/dev/null)
+        if [ $? -ne 0 ]; then
+            return 1
+        fi
+        local status
+        status=$(echo "$resp" | jq -r '.status // empty' 2>/dev/null)
+        if [ "$status" = "ok" ]; then
+            return 0
+        elif [ "$status" = "loading model" ] || [ "$status" = "no slot available" ]; then
+            return 2  # Server running but not ready
+        fi
+        return 1
+    fi
+
+    # Ollama path (original)
     local resp
     resp=$(curl -sf --max-time 5 "$OLLAMA_URL/api/tags" 2>/dev/null)
     if [ $? -ne 0 ]; then
@@ -166,6 +425,18 @@ llm_check() {
 
 # ── Check if model is currently loaded in memory ───────────────
 llm_is_loaded() {
+    local backend
+    backend=$(_llm_detect_backend)
+
+    if [ "$backend" = "llamacpp" ]; then
+        # llama-server always has its model loaded if /health returns ok
+        local resp
+        resp=$(curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null)
+        [ $? -ne 0 ] && return 1
+        echo "$resp" | jq -e '.status == "ok"' &>/dev/null
+        return $?
+    fi
+
     local resp
     resp=$(curl -sf --max-time 5 "$OLLAMA_URL/api/ps" 2>/dev/null)
     [ $? -ne 0 ] && return 1
@@ -175,7 +446,16 @@ llm_is_loaded() {
 # ── Unload model from memory ───────────────────────────────────
 # Sends a request with keep_alive=0 to immediately free RAM.
 # Safe to call — does not affect GEORGE.md or journal persistence.
+# llama-server: no-op (model lifecycle managed by server process)
 llm_unload() {
+    local backend
+    backend=$(_llm_detect_backend)
+
+    if [ "$backend" = "llamacpp" ]; then
+        ui_dim "llama-server manages its own model lifecycle (no-op)"
+        return 0
+    fi
+
     if llm_is_loaded; then
         curl -sf --max-time 10 "$OLLAMA_URL/api/generate" \
             -H "Content-Type: application/json" \
@@ -198,10 +478,25 @@ llm_cancel() {
 # Sends a trivial prompt with num_predict=1 so the model loads
 # but doesn't burn through the context window. This makes the
 # first real request much faster on mobile hardware.
+# llama-server: model is always loaded; sends a minimal completion to verify.
 llm_warmup() {
     if llm_is_loaded; then
         return 0  # already hot
     fi
+
+    local backend
+    backend=$(_llm_detect_backend)
+
+    if [ "$backend" = "llamacpp" ]; then
+        # llama-server loads the model at startup. Send a trivial
+        # completion to verify it's responsive.
+        curl -sf --max-time 10 "$LLAMA_CPP_URL/v1/chat/completions" \
+            -H "Content-Type: application/json" \
+            -d '{"messages":[{"role":"user","content":"hi"}],"max_tokens":1}' > /dev/null 2>&1
+        return 0
+    fi
+
+    # Ollama warmup
     # Model-aware warmup: use nothink suffix to skip reasoning if supported.
     # For Qwen: "Hello /no_think". For others: just "Hello" with num_predict=1.
     local _warmup_prompt="Hello"
@@ -219,13 +514,57 @@ llm_warmup() {
         -d "$payload" > /dev/null 2>&1
 }
 
-# ── Ensure Ollama is running ───────────────────────────────────
+# ── Ensure LLM backend is running ─────────────────────────────
 llm_ensure() {
+    local backend
+    backend=$(_llm_detect_backend)
+
     # Capture llm_check return code immediately — $? gets overwritten
     # by subsequent commands (echo, if, ui_warn, etc.)
     llm_check
     local status=$?
 
+    if [ "$backend" = "llamacpp" ]; then
+        if [ "$status" -eq 0 ]; then
+            return 0
+        fi
+        # llama-server not responding — attempt auto-start
+        if [ -x "$LLAMA_CPP_SERVER_BIN" ]; then
+            ui_warn "llama-server not responding. Attempting to start..."
+            # Resolve model to start with
+            local _gguf="$LLAMA_CPP_MODEL"
+            if [ -z "$_gguf" ] || [ ! -f "$_gguf" ]; then
+                # Try to resolve from the current primary model
+                local _key=""
+                for entry in "${_MODELS_REGISTRY[@]}"; do
+                    _models_parse_entry "$entry"
+                    if [ "$_ME_NAME" = "$LODGE_MODEL_PRIMARY" ] || [ "$_ME_KEY" = "$LODGE_MODEL_PRIMARY" ]; then
+                        _key="$_ME_KEY"
+                        break
+                    fi
+                done
+                if [ -n "$_key" ]; then
+                    _gguf=$(_models_resolve_gguf "$_key" 2>/dev/null)
+                fi
+            fi
+            if [ -n "$_gguf" ] && [ -f "$_gguf" ]; then
+                if _llm_start_llamacpp_server "$_gguf"; then
+                    _MODELS_ACTIVE="$LODGE_MODEL_PRIMARY"
+                    LODGE_MODEL="$LODGE_MODEL_PRIMARY"
+                    return 0
+                fi
+            fi
+            ui_err "Could not auto-start llama-server (no GGUF found for $LODGE_MODEL_PRIMARY)"
+            ui_dim "  Pull a model first: ollama pull <model>"
+            ui_dim "  Then start manually: /backend start <model-key>"
+        else
+            ui_err "llama-server not found at: $LLAMA_CPP_SERVER_BIN"
+            ui_dim "  Build guide: docs/ADRENO_GPU_SETUP.md"
+        fi
+        return 1
+    fi
+
+    # Ollama path
     if [ "$status" -eq 1 ]; then
         ui_warn "Ollama not running. Attempting to start..."
         if command -v ollama &>/dev/null; then
@@ -357,6 +696,10 @@ llm_generate() {
 
     _llm_debug_start_timer
 
+    # Detect active backend
+    local _active_backend
+    _active_backend=$(_llm_detect_backend)
+
     # Ensure correct model is loaded for this scenario
     models_ensure_for_scenario "${LLM_SCENARIO:-}"
 
@@ -384,6 +727,71 @@ llm_generate() {
     # Build options with per-scenario sampling parameters
     local _opts
     _opts=$(_llm_build_opts "$max_tokens")
+
+    # ── llama.cpp path (OpenAI-compatible) ─────────────────────
+    # Early-return branch: avoids touching Ollama's thinking-token
+    # parsing. llama-server has no thinking API — all output is
+    # content tokens via SSE /v1/chat/completions.
+    if [ "$_active_backend" = "llamacpp" ]; then
+        payload=$(_llm_build_llamacpp_payload "$prompt" "$system" "$_opts" "$max_tokens" true)
+
+        local curl_timeout="${LLM_TIMEOUT:-600}"
+        local timeout_cmd=""
+        if [ "$curl_timeout" -gt 0 ] 2>/dev/null; then
+            command -v timeout &>/dev/null && timeout_cmd="timeout $curl_timeout"
+        fi
+
+        _LLM_ACTIVE=1
+        local _tty="/dev/tty"
+        [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+        local _tmpdir="${TMPDIR:-/tmp}"
+        local _got_tokens="$_tmpdir/.lodge-gen-tok-$$"
+        local _cancel_file="$_tmpdir/.lodge-cancel-$$"
+        rm -f "$_got_tokens"
+
+        local _dbg_out=0
+
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] generate (llamacpp): url=%s max_tokens=%s\n" "$LLAMA_CPP_URL" "$max_tokens" > "$_tty" 2>/dev/null
+
+        $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
+            "$LLAMA_CPP_URL/v1/chat/completions" \
+            -H "Content-Type: application/json" \
+            -d "$payload" 2>/dev/null | while IFS= read -r line; do
+            [ -f "$_cancel_file" ] && break
+
+            # SSE format: lines prefixed with "data: "
+            [[ "$line" == data:* ]] || continue
+            local json="${line#data: }"
+
+            # Stream termination
+            if [ "$json" = "[DONE]" ]; then
+                if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
+                    _llm_debug_end_timer "generate(llamacpp)" "?" "$_dbg_out"
+                fi
+                break
+            fi
+
+            local token
+            token=$(echo "$json" | jq -r '.choices[0].delta.content // empty' 2>/dev/null)
+            if [ -n "$token" ]; then
+                [ -f "$_got_tokens" ] || touch "$_got_tokens"
+                printf "%s" "$token"
+                _dbg_out=$((_dbg_out + 1))
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\033[90m%s\033[0m" "$token" > "$_tty" 2>/dev/null
+            fi
+        done
+
+        _LLM_ACTIVE=0
+        if [ ! -f "$_got_tokens" ]; then
+            rm -f "$_got_tokens"
+            echo "ERROR: LLM request failed or returned no tokens (llamacpp)"
+            return 1
+        fi
+        rm -f "$_got_tokens"
+        return 0
+    fi
+
+    # ── Ollama path (original) ─────────────────────────────────
 
     if [ -n "$system" ]; then
         payload=$(jq -n \
@@ -681,6 +1089,10 @@ llm_stream() {
 
     _llm_debug_start_timer
 
+    # Detect active backend
+    local _active_backend
+    _active_backend=$(_llm_detect_backend)
+
     # Ensure correct model is loaded for this scenario
     models_ensure_for_scenario "${LLM_SCENARIO:-}"
 
@@ -705,6 +1117,80 @@ llm_stream() {
     # Build options with per-scenario sampling parameters
     local _opts
     _opts=$(_llm_build_opts "$max_tokens")
+
+    # ── llama.cpp streaming path ───────────────────────────────
+    # SSE-based streaming to tty. No thinking API — all output is
+    # content tokens. Uses spinner for prefill wait.
+    if [ "$_active_backend" = "llamacpp" ]; then
+        payload=$(_llm_build_llamacpp_payload "$prompt" "$system" "$_opts" "$max_tokens" true)
+
+        local curl_timeout="${LLM_TIMEOUT:-300}"
+        local timeout_cmd=""
+        if [ "$curl_timeout" -gt 0 ] 2>/dev/null; then
+            command -v timeout &>/dev/null && timeout_cmd="timeout $curl_timeout"
+        fi
+
+        local _tmpdir="${TMPDIR:-/tmp}"
+        local _cancel_file="$_tmpdir/.lodge-cancel-$$"
+
+        _LLM_ACTIVE=1
+        local _llm_spinner_pid=""
+        local _llm_ft_file="$_tmpdir/.lodge-ft-$$"
+        rm -f "$_llm_ft_file"
+        ui_spinner_start "Thinking"
+        _llm_spinner_pid="$_SPINNER_PID"
+
+        local _tty="/dev/tty"
+        [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+
+        local _dbg_out=0
+
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] stream (llamacpp): url=%s max_tokens=%s\n" "$LLAMA_CPP_URL" "$max_tokens" > "$_tty" 2>/dev/null
+
+        $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
+            "$LLAMA_CPP_URL/v1/chat/completions" \
+            -H "Content-Type: application/json" \
+            -d "$payload" 2>/dev/null | while IFS= read -r line; do
+            [ -f "$_cancel_file" ] && break
+
+            [[ "$line" == data:* ]] || continue
+            local json="${line#data: }"
+
+            if [ "$json" = "[DONE]" ]; then
+                if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
+                    _llm_debug_end_timer "stream(llamacpp)" "?" "$_dbg_out"
+                fi
+                echo ""
+                echo "" > "$_tty" 2>/dev/null
+                break
+            fi
+
+            local token
+            token=$(echo "$json" | jq -r '.choices[0].delta.content // empty' 2>/dev/null)
+            if [ -n "$token" ]; then
+                # Kill spinner on first token
+                if [ ! -f "$_llm_ft_file" ]; then
+                    touch "$_llm_ft_file"
+                    kill "$_llm_spinner_pid" 2>/dev/null
+                    printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
+                fi
+                printf "%s" "$token"
+                printf "%s" "$token" > "$_tty" 2>/dev/null
+                _dbg_out=$((_dbg_out + 1))
+            fi
+        done
+
+        ui_spinner_stop
+        rm -f "$_llm_ft_file"
+        _LLM_ACTIVE=0
+
+        if [ -f "$_cancel_file" ]; then
+            return 1
+        fi
+        return 0
+    fi
+
+    # ── Ollama path (original) ─────────────────────────────────
 
     if [ -n "$system" ]; then
         payload=$(jq -n \
@@ -1028,6 +1514,10 @@ llm_chat() {
     local budget="${3:-$LLM_BUDGET_TOKENS}"
     local payload
 
+    # Detect active backend
+    local _active_backend
+    _active_backend=$(_llm_detect_backend)
+
     # Ensure correct model is loaded for this scenario
     models_ensure_for_scenario "${LLM_SCENARIO:-}"
 
@@ -1061,6 +1551,73 @@ llm_chat() {
     # Build options with per-scenario sampling parameters
     local _opts
     _opts=$(_llm_build_opts "$LLM_MAX_TOKENS")
+
+    # ── llama.cpp chat path ────────────────────────────────────
+    # Cleanest backend translation — llama-server natively uses
+    # OpenAI messages format. No payload wrapping needed.
+    if [ "$_active_backend" = "llamacpp" ]; then
+        local temp rep pres max_tok
+        temp=$(echo "$_opts" | jq -r '.temperature // 0.7')
+        rep=$(echo "$_opts" | jq -r '.repeat_penalty // 1.2')
+        pres=$(echo "$_opts" | jq -r '.presence_penalty // 0.3')
+        max_tok=$(echo "$_opts" | jq -r '.num_predict // 4096')
+
+        # Build messages with system prompt prepended
+        local full_messages
+        if [ -n "$system" ]; then
+            full_messages=$(echo "$messages" | jq --arg sys "$system" \
+                '[{role:"system",content:$sys}] + .')
+        else
+            full_messages="$messages"
+        fi
+
+        payload=$(jq -n \
+            --argjson messages "$full_messages" \
+            --argjson max_tokens "$max_tok" \
+            --argjson temperature "$temp" \
+            --argjson frequency_penalty "$rep" \
+            --argjson presence_penalty "$pres" \
+            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, stream:true}')
+
+        local curl_timeout="${LLM_TIMEOUT:-600}"
+        local timeout_cmd=""
+        if [ "$curl_timeout" -gt 0 ] 2>/dev/null; then
+            command -v timeout &>/dev/null && timeout_cmd="timeout $curl_timeout"
+        fi
+
+        _LLM_ACTIVE=1
+        local _tmpdir="${TMPDIR:-/tmp}"
+        local _got_tokens="$_tmpdir/.lodge-chat-tok-$$"
+        rm -f "$_got_tokens"
+
+        $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
+            "$LLAMA_CPP_URL/v1/chat/completions" \
+            -H "Content-Type: application/json" \
+            -d "$payload" 2>/dev/null | while IFS= read -r line; do
+
+            [[ "$line" == data:* ]] || continue
+            local json="${line#data: }"
+            [ "$json" = "[DONE]" ] && break
+
+            local token
+            token=$(echo "$json" | jq -r '.choices[0].delta.content // empty' 2>/dev/null)
+            if [ -n "$token" ]; then
+                [ -f "$_got_tokens" ] || touch "$_got_tokens"
+                printf "%s" "$token"
+            fi
+        done
+
+        _LLM_ACTIVE=0
+        if [ ! -f "$_got_tokens" ]; then
+            rm -f "$_got_tokens"
+            echo "ERROR: Chat request failed (llamacpp)"
+            return 1
+        fi
+        rm -f "$_got_tokens"
+        return 0
+    fi
+
+    # ── Ollama path (original) ─────────────────────────────────
 
     if [ -n "$system" ]; then
         payload=$(jq -n \
@@ -1221,9 +1778,107 @@ llm_vision() {
 
     models_ensure_for_scenario "${LLM_SCENARIO:-}"
 
+    # Detect active backend
+    local _active_backend
+    _active_backend=$(_llm_detect_backend)
+
     # Build options
     local _opts
     _opts=$(_llm_build_opts "$max_tokens")
+
+    # ── llama.cpp vision path ──────────────────────────────────
+    # Uses OpenAI multimodal format: image as base64 data URL in
+    # content array. Requires a multimodal model loaded in llama-server.
+    if [ "$_active_backend" = "llamacpp" ]; then
+        local temp max_tok
+        temp=$(echo "$_opts" | jq -r '.temperature // 0.7')
+        max_tok=$(echo "$_opts" | jq -r '.num_predict // 4096')
+
+        # Detect MIME type
+        local mime_type="image/jpeg"
+        case "$image_path" in
+            *.png)  mime_type="image/png" ;;
+            *.gif)  mime_type="image/gif" ;;
+            *.webp) mime_type="image/webp" ;;
+        esac
+
+        # Build multimodal messages payload
+        local messages
+        if [ -n "$system" ]; then
+            messages=$(jq -n \
+                --arg sys "$system" \
+                --arg prompt "$prompt" \
+                --arg img "data:${mime_type};base64,${img_base64}" \
+                '[{role:"system",content:$sys},{role:"user",content:[{type:"text",text:$prompt},{type:"image_url",image_url:{url:$img}}]}]')
+        else
+            messages=$(jq -n \
+                --arg prompt "$prompt" \
+                --arg img "data:${mime_type};base64,${img_base64}" \
+                '[{role:"user",content:[{type:"text",text:$prompt},{type:"image_url",image_url:{url:$img}}]}]')
+        fi
+
+        payload=$(jq -n \
+            --argjson messages "$messages" \
+            --argjson max_tokens "$max_tok" \
+            --argjson temperature "$temp" \
+            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, stream:true}')
+
+        local curl_timeout="${LLM_TIMEOUT:-600}"
+        local timeout_cmd=""
+        if [ "$curl_timeout" -gt 0 ] 2>/dev/null; then
+            command -v timeout &>/dev/null && timeout_cmd="timeout $curl_timeout"
+        fi
+
+        _LLM_ACTIVE=1
+        local _tty="/dev/tty"
+        [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+        local _got_tokens="$_tmpdir/.lodge-vision-tok-$$"
+        rm -f "$_got_tokens"
+
+        ui_spinner_start "Analyzing image"
+        local _spinner_pid="$_SPINNER_PID"
+        local _first_token=0
+
+        $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
+            "$LLAMA_CPP_URL/v1/chat/completions" \
+            -H "Content-Type: application/json" \
+            -d "$payload" 2>/dev/null | while IFS= read -r line; do
+
+            [[ "$line" == data:* ]] || continue
+            local json="${line#data: }"
+            if [ "$json" = "[DONE]" ]; then
+                echo ""
+                echo "" > "$_tty" 2>/dev/null
+                break
+            fi
+            local token
+            token=$(echo "$json" | jq -r '.choices[0].delta.content // empty' 2>/dev/null)
+            if [ -n "$token" ]; then
+                if [ "$_first_token" -eq 0 ]; then
+                    _first_token=1
+                    touch "$_got_tokens"
+                    kill "$_spinner_pid" 2>/dev/null; wait "$_spinner_pid" 2>/dev/null
+                    printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
+                fi
+                printf "%s" "$token"
+                printf "%s" "$token" > "$_tty" 2>/dev/null
+            fi
+        done
+
+        ui_spinner_stop
+        _LLM_ACTIVE=0
+        rm -f "$_tmp_img" 2>/dev/null
+
+        if [ ! -f "$_got_tokens" ]; then
+            rm -f "$_got_tokens"
+            echo "ERROR: Vision request failed (llamacpp) — model may not support images"
+            return 1
+        fi
+        rm -f "$_got_tokens"
+        return 0
+    fi
+
+    # ── Ollama path (original) ─────────────────────────────────
 
     local payload
     if [ -n "$system" ]; then
@@ -1336,6 +1991,21 @@ llm_estimate_tokens() {
 
 # ── Model info ─────────────────────────────────────────────────
 llm_info() {
+    local backend
+    backend=$(_llm_detect_backend)
+
+    if [ "$backend" = "llamacpp" ]; then
+        # llama-server doesn't have /api/show — report what we can from /props
+        local resp
+        resp=$(curl -sf --max-time 5 "$LLAMA_CPP_URL/props" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$resp" ]; then
+            echo "$resp" | jq '{backend:"llamacpp", url:"'"$LLAMA_CPP_URL"'"}' 2>/dev/null
+        else
+            echo '{"backend":"llamacpp","note":"server not responding"}'
+        fi
+        return 0
+    fi
+
     curl -sf "$OLLAMA_URL/api/show" \
         -d "{\"name\":\"$LODGE_MODEL\"}" 2>/dev/null | \
         jq '{model: .modelinfo.general_architecture, params: .details.parameter_size, quant: .details.quantization_level, family: .details.family}' 2>/dev/null

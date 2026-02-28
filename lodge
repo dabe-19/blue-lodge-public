@@ -219,6 +219,182 @@ _cmd_debug() {
             ui_dim "  (input/output). A summary is printed after each task completes." ;;
     esac
 }
+_cmd_backend() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local arg2
+    arg2=$(echo "$args" | awk '{print $2}')
+
+    case "$action" in
+        ""|status)
+            local detected
+            detected=$(_llm_detect_backend 2>/dev/null)
+            ui_section "LLM Backend"
+            printf "  %-22s %s\n" "Preference:" "$LLM_BACKEND  (default: auto)"
+            printf "  %-22s %s\n" "Active backend:" "$detected"
+            printf "  %-22s %s\n" "Ollama URL:" "$OLLAMA_URL"
+            printf "  %-22s %s\n" "llama-server URL:" "$LLAMA_CPP_URL"
+            echo ""
+            # Show health of both backends
+            local ollama_status="unreachable"
+            curl -sf --max-time 2 "$OLLAMA_URL/api/tags" &>/dev/null && ollama_status="running"
+            local llamacpp_status="unreachable"
+            local llamacpp_health
+            llamacpp_health=$(curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null)
+            if [ $? -eq 0 ]; then
+                llamacpp_status=$(echo "$llamacpp_health" | jq -r '.status // "unknown"' 2>/dev/null)
+            fi
+            ui_section "Health"
+            printf "  %-22s %s\n" "Ollama:" "$ollama_status"
+            printf "  %-22s %s\n" "llama-server:" "$llamacpp_status"
+            ;;
+        auto|ollama|llamacpp|llama-cpp)
+            LLM_BACKEND="$action"
+            _LLM_BACKEND_CACHE=""  # Clear cache to force re-detection
+            local new_backend
+            new_backend=$(_llm_detect_backend 2>/dev/null)
+            ui_ok "Backend preference set to '$action' → active: $new_backend" ;;
+        url)
+            if [ -z "$arg2" ]; then
+                ui_info "Current URLs:"
+                ui_dim "  Ollama:       $OLLAMA_URL"
+                ui_dim "  llama-server: $LLAMA_CPP_URL"
+                ui_dim ""
+                ui_dim "  Usage: /backend url ollama <url>"
+                ui_dim "         /backend url llamacpp <url>"
+            else
+                local arg3
+                arg3=$(echo "$args" | awk '{print $3}')
+                case "$arg2" in
+                    ollama)
+                        OLLAMA_URL="${arg3:-http://127.0.0.1:11434}"
+                        _LLM_BACKEND_CACHE=""
+                        ui_ok "Ollama URL set to: $OLLAMA_URL" ;;
+                    llamacpp|llama-cpp)
+                        LLAMA_CPP_URL="${arg3:-http://127.0.0.1:8080}"
+                        _LLM_BACKEND_CACHE=""
+                        ui_ok "llama-server URL set to: $LLAMA_CPP_URL" ;;
+                    *)
+                        ui_err "Unknown backend: $arg2 (use 'ollama' or 'llamacpp')" ;;
+                esac
+            fi ;;
+        start)
+            # Start llama-server with configured model
+            # Start llama-server with configured model
+            # Resolve model: registry key → Ollama model name → direct GGUF path
+            local _model_path="$LLAMA_CPP_MODEL"
+            if [ -z "$_model_path" ] && [ -n "$arg2" ]; then
+                if [ -f "$arg2" ]; then
+                    _model_path="$arg2"
+                else
+                    # Try as registry key first (e.g., "minist-inst")
+                    _model_path=$(_models_resolve_gguf "$arg2" 2>/dev/null)
+                    # Fallback to Ollama model name (e.g., "qwen3:8b")
+                    if [ -z "$_model_path" ] || [ ! -f "$_model_path" ]; then
+                        _model_path=$(_models_find_ollama_gguf "$arg2" 2>/dev/null)
+                    fi
+                fi
+            fi
+            if [ -z "$_model_path" ] || [ ! -f "$_model_path" ]; then
+                ui_err "No model file found."
+                ui_dim ""
+                ui_dim "  Provide a registry key, GGUF path, or Ollama model name:"
+                ui_dim "    /backend start minist-inst"
+                ui_dim "    /backend start /path/to/model.gguf"
+                ui_dim "    /backend start qwen3:8b"
+                ui_dim ""
+                ui_dim "  Or set LLAMA_CPP_MODEL in your environment:"
+                ui_dim "    export LLAMA_CPP_MODEL=~/models/qwen3-8b-q4_k_m.gguf"
+                ui_dim ""
+                # Show available registry models with GGUF status
+                ui_dim "  Registry models (use key names):"
+                for _entry in "${_MODELS_REGISTRY[@]}"; do
+                    _models_parse_entry "$_entry"
+                    local _gguf_avail="✗"
+                    _models_resolve_gguf "$_ME_KEY" &>/dev/null && _gguf_avail="✓"
+                    ui_dim "    $_ME_KEY  [$_gguf_avail GGUF]"
+                done
+                return 1
+            fi
+            ui_info "Starting llama-server..."
+            ui_dim "  Binary:  $LLAMA_CPP_SERVER_BIN"
+            ui_dim "  Model:   $_model_path"
+            ui_dim "  GPU layers: $LLAMA_CPP_GPU_LAYERS"
+            ui_dim "  Context: $LLAMA_CPP_CTX_SIZE"
+            if _llm_start_llamacpp_server "$_model_path"; then
+                local _health _status
+                _health=$(curl -sf "$LLAMA_CPP_URL/health" 2>/dev/null)
+                _status=$(echo "$_health" | jq -r '.status // "unknown"' 2>/dev/null)
+                ui_dim "  Health: $_status"
+                ui_dim "  Log: ${TMPDIR:-/tmp}/lodge-llama-server.log"
+            fi ;;
+        stop)
+            _llm_stop_llamacpp_server ;;
+        model)
+            # Show or set the GGUF model path
+            if [ -z "$arg2" ]; then
+                ui_section "llama-server Model"
+                printf "  %-22s %s\n" "Current GGUF:" "${LLAMA_CPP_MODEL:-<not set>}"
+                printf "  %-22s %s\n" "GPU layers:" "$LLAMA_CPP_GPU_LAYERS"
+                printf "  %-22s %s\n" "Context size:" "$LLAMA_CPP_CTX_SIZE"
+                echo ""
+                # Show registry models with GGUF availability
+                ui_dim "  Registry models:"
+                for _entry in "${_MODELS_REGISTRY[@]}"; do
+                    _models_parse_entry "$_entry"
+                    local _gguf _size _avail="✗"
+                    _gguf=$(_models_resolve_gguf "$_ME_KEY" 2>/dev/null)
+                    if [ -n "$_gguf" ] && [ -f "$_gguf" ]; then
+                        _size=$(du -h "$_gguf" 2>/dev/null | cut -f1)
+                        _avail="✓"
+                        ui_dim "    $_ME_KEY  [$_avail ${_size:-?}]  $_ME_ROLE"
+                    else
+                        ui_dim "    $_ME_KEY  [$_avail not pulled]  $_ME_ROLE"
+                    fi
+                done
+            else
+                local _path="$arg2"
+                # Try registry key first, then Ollama model name, then direct path
+                if [[ "$_path" != /* ]] && [[ "$_path" != ~* ]] && [[ "$_path" != *.gguf ]]; then
+                    local _resolved
+                    _resolved=$(_models_resolve_gguf "$_path" 2>/dev/null)
+                    if [ -z "$_resolved" ] || [ ! -f "$_resolved" ]; then
+                        _resolved=$(_models_find_ollama_gguf "$_path" 2>/dev/null)
+                    fi
+                    if [ -n "$_resolved" ] && [ -f "$_resolved" ]; then
+                        _path="$_resolved"
+                        ui_dim "  Resolved → $_path"
+                    fi
+                fi
+                if [ -f "$_path" ]; then
+                    LLAMA_CPP_MODEL="$_path"
+                    ui_ok "Model set to: $LLAMA_CPP_MODEL"
+                    ui_dim "  Restart llama-server for this to take effect: /backend stop && /backend start"
+                else
+                    ui_err "File not found: $_path"
+                fi
+            fi ;;
+        reset)
+            LLM_BACKEND="auto"
+            OLLAMA_URL="http://127.0.0.1:11434"
+            LLAMA_CPP_URL="http://127.0.0.1:8080"
+            _LLM_BACKEND_CACHE=""
+            ui_ok "Backend reset to defaults (auto-detect)" ;;
+        *)
+            ui_info "Usage: /backend [status|auto|ollama|llamacpp|start|stop|model|url|reset]"
+            echo ""
+            ui_dim "  status       — Show active backend and health"
+            ui_dim "  auto         — Auto-detect (llamacpp first, fallback ollama)"
+            ui_dim "  ollama       — Force Ollama backend"
+            ui_dim "  llamacpp     — Force llama-server backend"
+            ui_dim "  start [model]— Start llama-server (key, GGUF path, or Ollama model)"
+            ui_dim "  stop         — Stop llama-server started by lodge"
+            ui_dim "  model [name] — Show/set GGUF model (key, path, or Ollama name)"
+            ui_dim "  url <b> <u>  — Set backend URL (b=ollama|llamacpp)"
+            ui_dim "  reset        — Reset all to defaults" ;;
+    esac
+}
 _cmd_compact() {
     memory_compact "${2:-.}"
 }
@@ -3079,6 +3255,7 @@ _register_commands() {
     commands_register "models"   "Model library — list, select, switch" "_cmd_models"
     commands_register "think"    "Toggle thinking: on/off/bright/dim/hide/test" "_cmd_think"
     commands_register "debug"    "Toggle debug mode (timers + token counts)" "_cmd_debug"
+    commands_register "backend"  "LLM backend — auto-detect, switch (ollama/llamacpp)" "_cmd_backend"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"
     commands_register "files"    "List workspace files" "_cmd_files"

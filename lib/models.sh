@@ -71,6 +71,79 @@ _MODELS_REGISTRY=(
     "minist-inst^blue-lodge-minist-inst:4b^hf.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF:UD-Q5_K_XL^instruct^0^none^</s>^0.125^1.0^0.0^32768^16384^0.9^40^0.0^Default secondary. Mistral instruct with vision support."
 )
 
+# ═══════════════════════════════════════════════════════════════
+# GGUF Resolution (Ollama blob storage → llama-server)
+# ═══════════════════════════════════════════════════════════════
+# Resolves any Ollama model reference to the actual GGUF blob file.
+# Supports all Ollama naming conventions:
+#   library:    qwen3:8b          → manifests/registry.ollama.ai/library/qwen3/8b
+#   namespaced: ibm/model:tag     → manifests/registry.ollama.ai/ibm/model/tag
+#   hf.co:      hf.co/org/repo:q  → manifests/hf.co/org/repo/q
+#   created:    blue-lodge-x:4b   → manifests/registry.ollama.ai/library/blue-lodge-x/4b
+
+_models_find_ollama_gguf() {
+    local model_ref="$1"
+    local ollama_dir="$HOME/.ollama/models"
+    [ -d "$ollama_dir" ] || return 1
+
+    # Split into name and tag on the LAST colon
+    local _name _tag
+    _tag="${model_ref##*:}"
+    _name="${model_ref%:*}"
+    # If no colon was found, tag == name — use default
+    [ "$_tag" = "$_name" ] && _tag="latest"
+
+    # Determine manifest path based on naming convention
+    local manifest
+    if [[ "$_name" == hf.co/* ]]; then
+        # HuggingFace registry: hf.co/org/repo → manifests/hf.co/org/repo/tag
+        manifest="$ollama_dir/manifests/$_name/$_tag"
+    elif [[ "$_name" == */* ]]; then
+        # Namespaced: org/model → manifests/registry.ollama.ai/org/model/tag
+        manifest="$ollama_dir/manifests/registry.ollama.ai/$_name/$_tag"
+    else
+        # Library: model → manifests/registry.ollama.ai/library/model/tag
+        manifest="$ollama_dir/manifests/registry.ollama.ai/library/$_name/$_tag"
+    fi
+
+    [ -f "$manifest" ] || return 1
+
+    local digest
+    digest=$(jq -r '.layers[] | select(.mediaType == "application/vnd.ollama.image.model") | .digest' "$manifest" 2>/dev/null)
+    [ -z "$digest" ] && return 1
+
+    local blob="$ollama_dir/blobs/${digest//:/-}"
+    [ -f "$blob" ] && echo "$blob" && return 0
+    return 1
+}
+
+# ── Resolve a registry key to a GGUF blob path ────────────────
+# Tries the base image first (raw download), then the friendly model name.
+# Usage: _models_resolve_gguf "minist-inst" → /path/to/gguf/blob
+_models_resolve_gguf() {
+    local key="$1"
+    local entry
+    entry=$(_models_lookup "$key") || return 1
+    _models_parse_entry "$entry"
+
+    # Try base image first (always available if ollama pulled the original)
+    local gguf
+    gguf=$(_models_find_ollama_gguf "$_ME_BASE")
+    if [ -n "$gguf" ] && [ -f "$gguf" ]; then
+        echo "$gguf"
+        return 0
+    fi
+
+    # Try the created model name (available after ollama create)
+    gguf=$(_models_find_ollama_gguf "$_ME_NAME")
+    if [ -n "$gguf" ] && [ -f "$gguf" ]; then
+        echo "$gguf"
+        return 0
+    fi
+
+    return 1
+}
+
 # ── Parse a registry entry into variables ──────────────────────
 # Usage: _models_parse_entry "entry_string"
 # Sets: _ME_KEY, _ME_NAME, _ME_BASE, _ME_ROLE, _ME_THINKS, _ME_NOTHINK,
@@ -464,6 +537,15 @@ MODELFILE
 # ── Create an Ollama model from a registry entry ──────────────
 models_create() {
     local key="$1"
+
+    # Skip for llama-server (no Ollama model creation needed —
+    # llama-server loads GGUF directly, sampling params come from API)
+    local _backend
+    _backend=$(_llm_detect_backend 2>/dev/null || echo "ollama")
+    if [ "$_backend" = "llamacpp" ]; then
+        return 0
+    fi
+
     local entry
     entry=$(_models_lookup "$key") || { echo "Unknown model: $key" >&2; return 1; }
     _models_parse_entry "$entry"
@@ -513,6 +595,7 @@ models_for_scenario() {
 # ── Switch the active model (hot-swap) ─────────────────────────
 # Unloads current model and loads the target model.
 # No-op if target is already loaded.
+# Backend-aware: Ollama uses API hot-swap, llama-server restarts with new GGUF.
 # Returns 0 on success, 1 on failure.
 _models_switch() {
     local target="$1"
@@ -522,6 +605,56 @@ _models_switch() {
         return 0
     fi
 
+    # Detect backend (defined in llm.sh, available at call time)
+    local _backend
+    _backend=$(_llm_detect_backend 2>/dev/null || echo "ollama")
+
+    if [ "$_backend" = "llamacpp" ]; then
+        # ── llama-server path: restart with new GGUF ───────────
+        # Resolve target model name → registry key → GGUF blob
+        local _gguf="" _key=""
+        for entry in "${_MODELS_REGISTRY[@]}"; do
+            _models_parse_entry "$entry"
+            if [ "$_ME_NAME" = "$target" ] || [ "$_ME_KEY" = "$target" ]; then
+                _key="$_ME_KEY"
+                break
+            fi
+        done
+
+        if [ -n "$_key" ]; then
+            _gguf=$(_models_resolve_gguf "$_key")
+        fi
+
+        # Fallback: try the target as a direct Ollama model reference
+        if [ -z "$_gguf" ] || [ ! -f "$_gguf" ]; then
+            _gguf=$(_models_find_ollama_gguf "$target")
+        fi
+
+        if [ -z "$_gguf" ] || [ ! -f "$_gguf" ]; then
+            ui_err "Cannot find GGUF for model: $target"
+            ui_dim "  Pull the base model via Ollama first, then switch."
+            return 1
+        fi
+
+        # If same GGUF is already loaded, just update tracking
+        if [ "$LLAMA_CPP_MODEL" = "$_gguf" ]; then
+            _MODELS_ACTIVE="$target"
+            LODGE_MODEL="$target"
+            return 0
+        fi
+
+        # Stop current → start with new model
+        _llm_stop_llamacpp_server "--quiet"
+        if _llm_start_llamacpp_server "$_gguf" "--quiet"; then
+            _MODELS_ACTIVE="$target"
+            LODGE_MODEL="$target"
+            return 0
+        else
+            return 1
+        fi
+    fi
+
+    # ── Ollama path (original) ─────────────────────────────────
     # Unload current model if one is loaded
     if [ -n "$_MODELS_ACTIVE" ]; then
         curl -sf --max-time 10 "$OLLAMA_URL/api/generate" \
@@ -715,7 +848,11 @@ models_list() {
 
 # ── Show current model configuration ───────────────────────────
 models_status() {
+    local _backend
+    _backend=$(_llm_detect_backend 2>/dev/null || echo "ollama")
+
     ui_section "Model Configuration"
+    printf "  Backend:   %s\n" "$_backend"
     if [ "${LODGE_SINGLE_MODEL:-0}" -eq 1 ]; then
         printf "  Mode:      Single model\n"
         printf "  Active:    %s\n" "$LODGE_MODEL_PRIMARY"
@@ -724,6 +861,13 @@ models_status() {
         printf "  Primary:   %s  (ask, agent/plan)\n" "$LODGE_MODEL_PRIMARY"
         printf "  Secondary: %s  (router, tool, journal)\n" "$LODGE_MODEL_SECONDARY"
         printf "  Loaded:    %s\n" "${_MODELS_ACTIVE:-none}"
+    fi
+
+    # Show GGUF info when using llama-server
+    if [ "$_backend" = "llamacpp" ] && [ -n "$LLAMA_CPP_MODEL" ]; then
+        local _size
+        _size=$(du -h "$LLAMA_CPP_MODEL" 2>/dev/null | cut -f1)
+        printf "  GGUF:      %s (%s)\n" "$(basename "$LLAMA_CPP_MODEL")" "${_size:-?}"
     fi
     echo ""
 
@@ -785,10 +929,28 @@ models_select() {
             ;;
     esac
 
-    # Ensure the model exists in Ollama (create if needed)
-    if ! ollama list 2>/dev/null | grep -q "$_ME_NAME"; then
-        ui_info "Creating model $_ME_NAME..."
-        models_create "$key"
+    # Ensure the model is available (backend-specific)
+    local _backend
+    _backend=$(_llm_detect_backend 2>/dev/null || echo "ollama")
+
+    if [ "$_backend" = "llamacpp" ]; then
+        # For llama-server: verify GGUF exists in Ollama's blob storage
+        local _gguf
+        _gguf=$(_models_resolve_gguf "$key")
+        if [ -z "$_gguf" ] || [ ! -f "$_gguf" ]; then
+            ui_warn "GGUF not found for $key. Pull the base model first:"
+            ui_dim "  ollama pull $_ME_BASE"
+        else
+            local _size
+            _size=$(du -h "$_gguf" 2>/dev/null | cut -f1)
+            ui_dim "  GGUF: $_gguf (${_size:-?})"
+        fi
+    else
+        # For Ollama: create custom model if needed
+        if ! ollama list 2>/dev/null | grep -q "$_ME_NAME"; then
+            ui_info "Creating model $_ME_NAME..."
+            models_create "$key"
+        fi
     fi
 
     # If this is the currently-loaded slot, force a switch
