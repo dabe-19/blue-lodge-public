@@ -109,7 +109,37 @@ commands_is_known_name() {
     [ -f "$LODGE_COMMANDS_DIR/${name}.sh" ] && return 0
     return 1
 }
+# ── Is this safe to auto-route as a slash command? ─────────────
+# When a user types "read foo.txt" we want /read, but "read the docs
+# and summarize" is natural language. Guard against common verbs
+# that overlap with slash commands when the input looks like prose.
+# Single-word input always routes ("status" → /status).
+# Multi-word input blocks ambiguous first words that are common
+# English verbs, so "build a REST API" goes to agent_run instead
+# of /build. Explicit slash always works: /build a REST API.
+commands_is_safe_auto_route() {
+    local input="$1"
+    local first_word="${input%% *}"
 
+    # Must be a known command name first
+    commands_is_known_name "$first_word" || return 1
+
+    # Single word → always safe ("status", "help", "vitals")
+    [[ "$input" == *" "* ]] || return 0
+
+    # Multi-word: block ambiguous verbs that are common in natural language.
+    # These are command names that overlap with everyday English verbs —
+    # when followed by additional words, the user almost certainly means
+    # a natural-language instruction, not a slash command.
+    case "$first_word" in
+        read|write|test|build|fix|save|plan|ask|push|commit|clone|clear|compact|\
+        init|reflect|think|recall|debug|model|status|email|backup|web|cd|files|git)
+            return 1 ;;
+    esac
+
+    # Non-ambiguous command names (sandbox, container, phone, etc.) → safe
+    return 0
+}
 # ── Show help ──────────────────────────────────────────────────
 commands_help() {
     source "$LODGE_DIR/lib/ui.sh"

@@ -3297,11 +3297,12 @@ _repl() {
         input=$(echo "$input" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         
         # Auto-detect slashless commands: "model temp-ask" → "/model temp-ask"
-        # Only if input doesn't already start with / and first word is a known command.
+        # Only if input doesn't already start with / and first word is a known command
+        # that is NOT an ambiguous English verb ("write", "read", "test", etc.).
+        # Ambiguous verbs require the explicit slash prefix to avoid misrouting
+        # natural language like "read the docs and summarize" → /read.
         if ! [[ "$input" == /* ]]; then
-            local _first_word
-            _first_word="${input%% *}"
-            if commands_is_known_name "$_first_word"; then
+            if commands_is_safe_auto_route "$input"; then
                 ui_dim "(interpreting as /$input)"
                 input="/$input"
             fi
@@ -3323,34 +3324,11 @@ _repl() {
         fi
         
         # Natural language → agent
-        # Questions/conversation → lightweight ask path (lean prompt, fast on phone)
-        # Tasks → full plan→execute path (larger prompt, slower)
-        local word_count
-        word_count=$(echo "$input" | wc -w)
-        local lower_input
-        lower_input=$(echo "$input" | tr '[:upper:]' '[:lower:]')
-        
-        # Route to /ask for:
-        # - Ends with ? → question
-        # - ≤3 words without / → greeting/short question
-        # - Starts with conversational words (tell me, what, who, how, why, explain, describe, etc.)
-        #   AND has no action verbs (build, create, write, make, implement, fix, deploy, setup, install, run)
-        local _is_conversational=0
-        if [[ "$input" == *"?" ]] || [[ "$input" == *"?)" ]]; then
-            _is_conversational=1
-        elif [ "$word_count" -le 3 ] && ! [[ "$input" == *"/"* ]]; then
-            _is_conversational=1
-        elif [[ "$lower_input" =~ ^(tell|explain|describe|what|who|how|why|when|where|show\ me|talk|speak|say|remind|remember|do\ you|can\ you|are\ you|have\ you|should|could|would|is\ there|list) ]] \
-          && ! [[ "$lower_input" =~ (build|create|write|make|implement|fix|deploy|setup|install|scaffold|refactor|code|program|develop|compile|test|run|execute|clone|download) ]]; then
-            _is_conversational=1
-        fi
-
-        if [ "$_is_conversational" -eq 1 ]; then
-            agent_ask "$input" "$PWD"
-        else
-            # Looks like a task
-            agent_run "$input" "$PWD"
-        fi
+        # All free-form input goes to agent_run (full soul, planning, tools).
+        # For lightweight Q&A without actions, use /ask or /a explicitly.
+        # This ensures George always gets his full personality injected
+        # and can leverage journal, web search, and memory for answers.
+        agent_run "$input" "$PWD"
     done
 }
 

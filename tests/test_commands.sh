@@ -306,4 +306,125 @@ describe "commands_help_topic"
     assert_contains "$_topic_out" "SLASH_STRIPPED_OK"
   }
 
+# ── commands_is_safe_auto_route ──────────────────────────────
+describe "commands_is_safe_auto_route"
+
+  # Register test commands to exercise the logic
+  _safe_handler() { echo "safe"; }
+  commands_register "sandbox" "test sandbox" "_safe_handler"
+  commands_register "read" "test read" "_safe_handler"
+  commands_register "write" "test write" "_safe_handler"
+  commands_register "build" "test build" "_safe_handler"
+  commands_register "test" "test test" "_safe_handler"
+  commands_register "fix" "test fix" "_safe_handler"
+  commands_register "plan" "test plan" "_safe_handler"
+  commands_register "ask" "test ask" "_safe_handler"
+  commands_register "model" "test model" "_safe_handler"
+  commands_register "status" "test status" "_safe_handler"
+  commands_register "recall" "test recall" "_safe_handler"
+  commands_register "container" "test container" "_safe_handler"
+  commands_register "phone" "test phone" "_safe_handler"
+  commands_register "wallet" "test wallet" "_safe_handler"
+  commands_register "vitals" "test vitals" "_safe_handler"
+
+  it "allows single-word known commands (status)" && {
+    commands_is_safe_auto_route "status"
+    assert_ok $?
+  }
+
+  it "allows single-word known commands (sandbox)" && {
+    commands_is_safe_auto_route "sandbox"
+    assert_ok $?
+  }
+
+  it "allows single-word known commands (read)" && {
+    commands_is_safe_auto_route "read"
+    assert_ok $?
+  }
+
+  it "blocks multi-word 'read' (ambiguous verb)" && {
+    commands_is_safe_auto_route "read the docs and summarize"
+    assert_fail $?
+  }
+
+  it "blocks multi-word 'write' (ambiguous verb)" && {
+    commands_is_safe_auto_route "write a REST API"
+    assert_fail $?
+  }
+
+  it "blocks multi-word 'build' (ambiguous verb)" && {
+    commands_is_safe_auto_route "build a todo app"
+    assert_fail $?
+  }
+
+  it "blocks multi-word 'test' (ambiguous verb)" && {
+    commands_is_safe_auto_route "test the login flow"
+    assert_fail $?
+  }
+
+  it "blocks multi-word 'fix' (ambiguous verb)" && {
+    commands_is_safe_auto_route "fix the bug in main"
+    assert_fail $?
+  }
+
+  it "blocks multi-word 'plan' (ambiguous verb)" && {
+    commands_is_safe_auto_route "plan a migration strategy"
+    assert_fail $?
+  }
+
+  it "blocks multi-word 'ask' (ambiguous verb)" && {
+    commands_is_safe_auto_route "ask George about his soul"
+    assert_fail $?
+  }
+
+  it "blocks multi-word 'model' (ambiguous noun)" && {
+    commands_is_safe_auto_route "model the database schema"
+    assert_fail $?
+  }
+
+  it "blocks multi-word 'recall' (ambiguous verb)" && {
+    commands_is_safe_auto_route "recall what we discussed"
+    assert_fail $?
+  }
+
+  it "blocks multi-word 'status' (ambiguous noun)" && {
+    commands_is_safe_auto_route "status of the deployment"
+    assert_fail $?
+  }
+
+  it "allows multi-word 'sandbox new' (non-ambiguous)" && {
+    commands_is_safe_auto_route "sandbox new myproject"
+    assert_ok $?
+  }
+
+  it "allows multi-word 'container install' (non-ambiguous)" && {
+    commands_is_safe_auto_route "container install ubuntu"
+    assert_ok $?
+  }
+
+  it "allows multi-word 'phone call' (non-ambiguous)" && {
+    commands_is_safe_auto_route "phone call 555-1234"
+    assert_ok $?
+  }
+
+  it "allows multi-word 'wallet send' (non-ambiguous)" && {
+    commands_is_safe_auto_route "wallet send 0.1 BTC"
+    assert_ok $?
+  }
+
+  it "allows multi-word 'vitals show' (non-ambiguous)" && {
+    commands_is_safe_auto_route "vitals show"
+    assert_ok $?
+  }
+
+  it "rejects unknown first word entirely" && {
+    commands_is_safe_auto_route "frobnicate the widgets"
+    assert_fail $?
+  }
+
+  it "rejects unknown single word" && {
+    commands_is_safe_auto_route "frobnicate"
+    assert_fail $?
+  }
+
 test_end

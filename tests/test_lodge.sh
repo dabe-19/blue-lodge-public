@@ -243,6 +243,21 @@ describe "Unknown slash command handling"
     fi
   }
 
+  it "REPL does not contain _is_conversational auto-route to ask" && {
+    body=$(declare -f _repl)
+    if echo "$body" | grep -q '_is_conversational\|agent_ask'; then
+        assert_fail 1  # Bad — old /ask auto-routing still present
+    else
+        assert_ok 0
+    fi
+  }
+
+  it "REPL uses commands_is_safe_auto_route for slashless dispatch" && {
+    body=$(declare -f _repl)
+    echo "$body" | grep -q 'commands_is_safe_auto_route'
+    assert_ok $?
+  }
+
 # ── Command handler functions ─────────────────────────────────
 describe "Command handler functions"
 
