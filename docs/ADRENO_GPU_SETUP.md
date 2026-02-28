@@ -12,7 +12,24 @@ any Adreno 7xx/8xx device.
 - At least 8 GB RAM (16 GB recommended for 8B+ models)
 - Storage space for model files (4–10 GB per GGUF)
 
+## Termux vs proot-distro Paths
+
+Blue Lodge runs inside a **proot-distro Ubuntu** container, but Ollama
+and llama.cpp are installed in **native Termux**. Steps 1–5 below must
+be run from **Termux native** (before entering proot). The build tools,
+Vulkan driver, and `$PREFIX` are all Termux-only.
+
+| Context | `$HOME` | `$PREFIX` | llama-server path |
+|---------|---------|-----------|-------------------|
+| Termux native | `/data/data/com.termux/files/home` | `/data/data/com.termux/files/usr` | `~/llama.cpp/build/bin/llama-server` |
+| proot Ubuntu | `/root` | *(unset)* | `/data/data/com.termux/files/home/llama.cpp/build/bin/llama-server` |
+
+Blue Lodge auto-resolves this with `_lodge_termux_home()` — no manual
+path configuration needed when using `/backend` commands.
+
 ## 1. Install Termux Dependencies
+
+> **Run from Termux native** (not inside proot-distro Ubuntu).
 
 ```bash
 pkg update && pkg upgrade -y
@@ -21,6 +38,9 @@ pkg install -y git cmake ninja clang vulkan-headers \
 ```
 
 ## 2. Copy Vulkan Driver (Required)
+
+> **Run from Termux native.** `$PREFIX` is a Termux-only variable
+> (`/data/data/com.termux/files/usr`) — it does not exist in proot.
 
 Termux can't see the system Vulkan driver by default. Copy it:
 
@@ -31,13 +51,15 @@ ls /vendor/lib64/hw/vulkan.*.so
 # Copy to Termux's library path
 cp /vendor/lib64/hw/vulkan.adreno.so $PREFIX/lib/
 
-# Verify Vulkan works
+# Verify Vulkan works (this also works from inside proot)
 vulkaninfo --summary 2>/dev/null | head -20
 ```
 
 If `vulkaninfo` shows your GPU (e.g., "Adreno (TM) 830"), you're good.
 
 ## 3. Clone and Build llama.cpp
+
+> **Run from Termux native.** cmake/ninja/clang are Termux packages.
 
 ```bash
 cd ~
@@ -83,6 +105,7 @@ Common quantizations for mobile:
 
 ## 5. Start llama-server
 
+From **Termux native**:
 ```bash
 ~/llama.cpp/build/bin/llama-server \
     -m ~/models/qwen3-8b-q4_k_m.gguf \

@@ -385,7 +385,7 @@ Prints a results table and overall verdict:
 
 | Variable | Default | Purpose |
 |----------|---------|--------|
-| `LLAMA_CPP_SERVER_BIN` | `~/llama.cpp/build/bin/llama-server` | Path to llama-server binary |
+| `LLAMA_CPP_SERVER_BIN` | Auto-detected (Termux home or proot path) | Path to llama-server binary |
 | `LLAMA_CPP_GPU_LAYERS` | `99` | GPU layers to offload (`-ngl`) |
 | `LLAMA_CPP_CTX_SIZE` | `4096` | Context window size (`-c`) |
 | `VALIDATE_PORT` | `8090` | Port for temporary test server |
@@ -580,30 +580,37 @@ the correct template.
 1. **Was llama.cpp built with Vulkan?**
    ```bash
    # Re-check cmake config output
+   # From Termux native:
    grep -i vulkan ~/llama.cpp/build/CMakeCache.txt
+   # From proot Ubuntu (~ is /root/ there, llama.cpp lives in Termux home):
+   grep -i vulkan /data/data/com.termux/files/home/llama.cpp/build/CMakeCache.txt
    # Should show: GGML_VULKAN:BOOL=ON
    ```
 
 2. **Is the Vulkan driver accessible?**
    ```bash
-   # Test Vulkan directly
+   # Test Vulkan directly (works from both Termux and proot)
    vulkaninfo --summary 2>/dev/null | head -10
    
    # If "Cannot create Vulkan instance" → driver not found
    
-   # Copy the driver (Adreno)
+   # Copy the driver (Adreno) — run from TERMUX, not proot:
    cp /vendor/lib64/hw/vulkan.adreno.so $PREFIX/lib/
    # or for 32-bit:
    cp /vendor/lib/hw/vulkan.adreno.so $PREFIX/lib/
+   # ($PREFIX is Termux-only — /data/data/com.termux/files/usr)
    ```
 
 3. **Is the driver the right architecture?**
    ```bash
+   # From Termux native:
    file $PREFIX/lib/vulkan.adreno.so
+   # From proot Ubuntu:
+   file /data/data/com.termux/files/usr/lib/vulkan.adreno.so
    # Should say "ELF 64-bit" for aarch64 Termux
    ```
 
-4. **Rebuild after fixing Vulkan:**
+4. **Rebuild after fixing Vulkan (run from Termux native):**
    ```bash
    cd ~/llama.cpp
    rm -rf build
@@ -664,16 +671,20 @@ tail -50 ${TMPDIR:-/tmp}/lodge-llama-server.log
 ### Problem: "llama-server: command not found"
 
 ```bash
-# The binary is in the build directory, not in PATH
-# Either use the full path:
+# The binary is in Termux's build directory, not in PATH.
+#
+# From Termux native — use the full path:
 ~/llama.cpp/build/bin/llama-server -m ...
+#
+# From proot Ubuntu — use the Termux home path:
+/data/data/com.termux/files/home/llama.cpp/build/bin/llama-server -m ...
 
-# Or add to PATH in .bashrc / .zshrc:
-export PATH="$HOME/llama.cpp/build/bin:$PATH"
+# Or add to PATH (in proot .bashrc):
+export PATH="/data/data/com.termux/files/home/llama.cpp/build/bin:$PATH"
 
-# Or from Blue Lodge:
-export LLAMA_CPP_SERVER_BIN="$HOME/llama.cpp/build/bin/llama-server"
+# Or from Blue Lodge (auto-resolves Termux home):
 /backend start model.gguf
+# Blue Lodge's _lodge_termux_home() finds the binary automatically.
 ```
 
 ---
