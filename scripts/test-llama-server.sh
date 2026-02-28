@@ -185,19 +185,33 @@ GGUF_SIZE=$(du -h "$GGUF" 2>/dev/null | cut -f1)
 _ok "Resolved: $MODEL_REF → $GGUF_SIZE GGUF"
 _dim "$GGUF"
 
-# ── Step 3a: Extract chat template from Ollama ────────────────
-# Ollama stores the chat template as a separate blob, not in the GGUF.
-# Without it, /v1/chat/completions returns empty because llama-server
-# can't format the messages array into a prompt.
-_chat_template_file=""
-_tmpl_digest=$(jq -r '.layers[] | select(.mediaType == "application/vnd.ollama.image.template") | .digest' "$MANIFEST" 2>/dev/null || true)
-if [ -n "$_tmpl_digest" ]; then
-    _tmpl_blob="$OLLAMA_DIR/blobs/${_tmpl_digest//:/-}"
-    if [ -f "$_tmpl_blob" ]; then
-        _chat_template_file="$_tmpl_blob"
-        _ok "Found Ollama chat template"
-        _dim "$(head -c 80 "$_chat_template_file")..."
-    fi
+# ── Step 3a: Determine chat template ──────────────────────────
+# Ollama templates use Go syntax — NOT compatible with llama-server's Jinja2.
+# We map the model name to a llama.cpp built-in template instead.
+_chat_template=""
+_model_lower=$(echo "$MODEL_REF" | tr '[:upper:]' '[:lower:]')
+case "$_model_lower" in
+    *ministral*|*mistral*)  _chat_template="mistral-v7"  ;;
+    *qwen3*|*qwen2.5*)     _chat_template="chatml"       ;;
+    *llama*3*)              _chat_template="llama3"       ;;
+    *granite*)              _chat_template="granite"      ;;
+    *phi-4*|*phi4*)         _chat_template="phi4"         ;;
+    *phi-3*|*phi3*)         _chat_template="phi3"         ;;
+    *deepseek*v3*|*deepseek*r2*)  _chat_template="deepseek3" ;;
+    *deepseek*)             _chat_template="deepseek"     ;;
+    *gemma*)                _chat_template="gemma"        ;;
+    *command-r*)            _chat_template="command-r"    ;;
+esac
+
+# Allow override via env
+_chat_template="${CHAT_TEMPLATE:-$_chat_template}"
+
+if [ -n "$_chat_template" ]; then
+    _ok "Chat template: $_chat_template (llama.cpp built-in)"
+else
+    _warn "Unknown model family — no chat template mapped"
+    _dim "Set CHAT_TEMPLATE=<name> to override (e.g. chatml, mistral-v7, llama3)"
+    _dim "Will fall back to /completion endpoint"
 fi
 
 # ── Step 4: Start server ──────────────────────────────────────
@@ -216,13 +230,9 @@ _launch_args=(
     --threads "$THREADS"
 )
 
-# Pass chat template if we found one
-if [ -n "$_chat_template_file" ]; then
-    _launch_args+=(--chat-template-file "$_chat_template_file")
-    _dim "Chat template: from Ollama metadata"
-else
-    _warn "No chat template found — /v1/chat/completions may not work"
-    _dim "Will fall back to /completion endpoint"
+# Pass chat template if mapped
+if [ -n "$_chat_template" ]; then
+    _launch_args+=(--chat-template "$_chat_template")
 fi
 
 "$LLAMA_BIN" "${_launch_args[@]}" \

@@ -849,43 +849,84 @@ describe "Chat template injection for llama-server"
     assert_ok $? "_models_find_ollama_template must exist"
   }
 
-  it "_models_resolve_template is defined" && {
-    declare -f _models_resolve_template &>/dev/null
-    assert_ok $? "_models_resolve_template must exist"
+  it "_models_chat_template_name is defined" && {
+    declare -f _models_chat_template_name &>/dev/null
+    assert_ok $? "_models_chat_template_name must exist"
   }
 
-  it "_llm_start_llamacpp_server accepts template_path as third arg" && {
+  it "_models_resolve_chat_template is defined" && {
+    declare -f _models_resolve_chat_template &>/dev/null
+    assert_ok $? "_models_resolve_chat_template must exist"
+  }
+
+  it "_llm_start_llamacpp_server accepts chat_template as third arg" && {
     _body=$(declare -f _llm_start_llamacpp_server)
-    echo "$_body" | grep -q 'template_path'
-    assert_ok $? "Must accept template_path parameter"
+    echo "$_body" | grep -q 'chat_template'
+    assert_ok $? "Must accept chat_template parameter"
   }
 
-  it "_llm_start_llamacpp_server passes --chat-template-file when template given" && {
+  it "_llm_start_llamacpp_server passes --chat-template (not --chat-template-file)" && {
     _body=$(declare -f _llm_start_llamacpp_server)
-    echo "$_body" | grep -q '\-\-chat-template-file'
-    assert_ok $? "Must include --chat-template-file flag"
+    echo "$_body" | grep -q '\-\-chat-template'
+    assert_ok $? "Must include --chat-template flag"
+    # Should NOT use --chat-template-file (Go templates crash llama-server)
+    ! echo "$_body" | grep -q '\-\-chat-template-file'
+    assert_ok $? "Must NOT use --chat-template-file (Ollama Go templates are incompatible)"
   }
 
-  it "_models_find_ollama_template extracts template mediaType (not model)" && {
-    _body=$(declare -f _models_find_ollama_template)
-    echo "$_body" | grep -q 'application/vnd.ollama.image.template'
-    assert_ok $? "Must filter by template mediaType"
-    # Ensure it does NOT accidentally match model mediaType
-    ! echo "$_body" | grep -q 'application/vnd.ollama.image.model'
-    assert_ok $? "Must not match model mediaType"
+  it "_models_chat_template_name maps Ministral → mistral-v7" && {
+    _result=$(_models_chat_template_name "hf.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF:UD-Q5_K_XL")
+    assert_eq "$_result" "mistral-v7"
   }
 
-  it "auto-start path resolves template for llama-server" && {
-    # The llm_warmup auto-start section should resolve templates
+  it "_models_chat_template_name maps Qwen3 → chatml" && {
+    _result=$(_models_chat_template_name "hf.co/unsloth/Qwen3-4B-Thinking-2507-GGUF:UD-Q5_K_XL")
+    assert_eq "$_result" "chatml"
+  }
+
+  it "_models_chat_template_name maps Llama 3.2 → llama3" && {
+    _result=$(_models_chat_template_name "llama3.2:3b")
+    assert_eq "$_result" "llama3"
+  }
+
+  it "_models_chat_template_name maps Granite → granite" && {
+    _result=$(_models_chat_template_name "granite4:3b")
+    assert_eq "$_result" "granite"
+  }
+
+  it "_models_resolve_chat_template returns name for minist-inst" && {
+    _result=$(_models_resolve_chat_template "minist-inst" 2>/dev/null) || true
+    assert_eq "$_result" "mistral-v7"
+  }
+
+  it "_models_resolve_chat_template returns name for qwen3-think" && {
+    _result=$(_models_resolve_chat_template "qwen3-think" 2>/dev/null) || true
+    assert_eq "$_result" "chatml"
+  }
+
+  it "every registry model has a chat template mapping" && {
+    _unmapped=0
+    for entry in "${_MODELS_REGISTRY[@]}"; do
+      _models_parse_entry "$entry"
+      _tmpl=$(_models_chat_template_name "$_ME_BASE" 2>/dev/null) || true
+      if [ -z "$_tmpl" ]; then
+        echo "  UNMAPPED: $_ME_KEY (base: $_ME_BASE)"
+        _unmapped=$((_unmapped + 1))
+      fi
+    done
+    assert_eq "$_unmapped" "0" "All registry models must map to a chat template"
+  }
+
+  it "auto-start path resolves chat template name" && {
     _warmup_code=$(grep -A5 '_llm_start_llamacpp_server.*_gguf' "$LODGE_DIR/lib/llm.sh" | head -10)
-    echo "$_warmup_code" | grep -q '_models_resolve_template\|_tmpl'
-    assert_ok $? "Auto-start must pass template to llama-server"
+    echo "$_warmup_code" | grep -q '_models_resolve_chat_template\|_tmpl'
+    assert_ok $? "Auto-start must pass template name to llama-server"
   }
 
-  it "model switch path resolves template for llama-server" && {
+  it "model switch path resolves chat template name" && {
     _switch_code=$(grep -B5 '_llm_start_llamacpp_server.*_gguf.*quiet' "$LODGE_DIR/lib/models.sh" | head -10)
-    echo "$_switch_code" | grep -q '_models_resolve_template\|_models_find_ollama_template\|_tmpl'
-    assert_ok $? "Model switch must pass template to llama-server"
+    echo "$_switch_code" | grep -q '_models_resolve_chat_template\|_models_chat_template_name\|_tmpl'
+    assert_ok $? "Model switch must pass template name to llama-server"
   }
 
 test_end

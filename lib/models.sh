@@ -147,8 +147,8 @@ _models_find_ollama_gguf() {
 # ── Find Ollama chat template blob ─────────────────────────────
 # Ollama stores chat templates as separate blobs (mediaType
 # "application/vnd.ollama.image.template"), NOT inside the GGUF.
-# Without this template, llama-server can't format /v1/chat/completions
-# messages into the model's expected prompt format → empty replies.
+# NOTE: These are Go templates — NOT compatible with llama-server's Jinja2.
+# Use _models_resolve_chat_template() instead for llama-server integration.
 #
 # Usage: _models_find_ollama_template "model:tag" → /path/to/template/blob
 _models_find_ollama_template() {
@@ -181,9 +181,52 @@ _models_find_ollama_template() {
     return 1
 }
 
-# ── Resolve a registry key to a chat template blob path ────────
-# Tries the created model name first, then the base image.
-# Usage: _models_resolve_template "minist-inst" → /path/to/template/blob
+# ── Map model base image → llama.cpp built-in chat template ────
+# Ollama templates use Go syntax; llama-server needs Jinja2.
+# Rather than converting, we map to llama.cpp's built-in templates
+# via --chat-template <name>. These are maintained upstream and
+# handle all edge cases (BOS/EOS tokens, tool use, etc.).
+#
+# Supported names (llama.cpp b8000+): chatml, llama2, llama3,
+#   mistral-v1, mistral-v3, mistral-v3-tekken, mistral-v7,
+#   phi3, phi4, gemma, granite, deepseek, deepseek3, monarch,
+#   command-r, rwkv-world, megrez, etc.
+#
+# Usage: _models_chat_template_name "hf.co/unsloth/Ministral-..." → "mistral-v7"
+_models_chat_template_name() {
+    local base_image="$1"
+    local lower
+    lower=$(echo "$base_image" | tr '[:upper:]' '[:lower:]')
+
+    case "$lower" in
+        *ministral*|*mistral*)  echo "mistral-v7"  ;;
+        *qwen3*|*qwen2.5*)     echo "chatml"       ;;
+        *llama*3*)              echo "llama3"       ;;
+        *granite*)              echo "granite"      ;;
+        *phi-4*|*phi4*)         echo "phi4"         ;;
+        *phi-3*|*phi3*)         echo "phi3"         ;;
+        *deepseek*v3*|*deepseek*r2*)  echo "deepseek3" ;;
+        *deepseek*)             echo "deepseek"     ;;
+        *gemma*)                echo "gemma"        ;;
+        *command-r*)            echo "command-r"    ;;
+        *)                      return 1            ;;
+    esac
+}
+
+# ── Resolve a registry key to a llama.cpp chat template name ───
+# Returns a built-in template name suitable for --chat-template.
+# Usage: _models_resolve_chat_template "minist-inst" → "mistral-v7"
+_models_resolve_chat_template() {
+    local key="$1"
+    local entry
+    entry=$(_models_lookup "$key") || return 1
+    _models_parse_entry "$entry"
+
+    _models_chat_template_name "$_ME_BASE"
+}
+
+# ── Legacy wrapper (kept for test compat) ──────────────────────
+# Returns the Ollama Go-template blob path; prefer _models_resolve_chat_template.
 _models_resolve_template() {
     local key="$1"
     local entry
@@ -191,14 +234,12 @@ _models_resolve_template() {
     _models_parse_entry "$entry"
 
     local tmpl
-    # Try the created model first (may have custom template from Modelfile)
     tmpl=$(_models_find_ollama_template "$_ME_NAME" 2>/dev/null)
     if [ -n "$tmpl" ] && [ -f "$tmpl" ]; then
         echo "$tmpl"
         return 0
     fi
 
-    # Fall back to base image template
     tmpl=$(_models_find_ollama_template "$_ME_BASE" 2>/dev/null)
     if [ -n "$tmpl" ] && [ -f "$tmpl" ]; then
         echo "$tmpl"
@@ -736,13 +777,13 @@ _models_switch() {
 
         # Stop current → start with new model
         _llm_stop_llamacpp_server "--quiet"
-        # Resolve chat template for /v1/chat/completions support
+        # Resolve llama.cpp chat template name for /v1/chat/completions
         local _tmpl=""
         if [ -n "$_key" ]; then
-            _tmpl=$(_models_resolve_template "$_key" 2>/dev/null) || true
+            _tmpl=$(_models_resolve_chat_template "$_key" 2>/dev/null) || true
         else
-            # Direct model ref — try finding template from Ollama manifest
-            _tmpl=$(_models_find_ollama_template "$target" 2>/dev/null) || true
+            # Direct model ref — try mapping base image name
+            _tmpl=$(_models_chat_template_name "$target" 2>/dev/null) || true
         fi
         if _llm_start_llamacpp_server "$_gguf" "--quiet" "$_tmpl"; then
             _MODELS_ACTIVE="$target"

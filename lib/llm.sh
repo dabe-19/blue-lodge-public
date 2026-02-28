@@ -262,7 +262,7 @@ _llm_stop_llamacpp_server() {
 _llm_start_llamacpp_server() {
     local model_path="$1"
     local quiet="${2:-}"
-    local template_path="${3:-}"
+    local chat_template="${3:-}"   # llama.cpp built-in name (e.g. "mistral-v7", "chatml")
 
     # Validate
     if [ ! -f "$model_path" ]; then
@@ -299,10 +299,12 @@ _llm_start_llamacpp_server() {
         --threads "$(nproc 2>/dev/null || echo 4)"
     )
 
-    # Inject chat template if available (required for /v1/chat/completions)
-    if [ -n "$template_path" ] && [ -f "$template_path" ]; then
-        _launch_args+=(--chat-template-file "$template_path")
-        [ "$quiet" != "--quiet" ] && ui_dim "Chat template: $template_path"
+    # Inject chat template (required for /v1/chat/completions).
+    # Ollama templates use Go syntax — NOT compatible with llama-server's Jinja.
+    # We use --chat-template <name> to select a built-in template instead.
+    if [ -n "$chat_template" ]; then
+        _launch_args+=(--chat-template "$chat_template")
+        [ "$quiet" != "--quiet" ] && ui_dim "Chat template: $chat_template (built-in)"
     else
         [ "$quiet" != "--quiet" ] && ui_warn "No chat template — /v1/chat/completions may return empty"
     fi
@@ -612,10 +614,10 @@ llm_ensure() {
                 fi
             fi
             if [ -n "$_gguf" ] && [ -f "$_gguf" ]; then
-                # Resolve chat template for /v1/chat/completions support
+                # Resolve chat template name for /v1/chat/completions support
                 local _tmpl=""
                 if [ -n "$_key" ]; then
-                    _tmpl=$(_models_resolve_template "$_key" 2>/dev/null) || true
+                    _tmpl=$(_models_resolve_chat_template "$_key" 2>/dev/null) || true
                 fi
                 if _llm_start_llamacpp_server "$_gguf" "" "$_tmpl"; then
                     _MODELS_ACTIVE="$LODGE_MODEL_PRIMARY"
