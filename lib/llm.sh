@@ -10,6 +10,10 @@ source "$LODGE_DIR/lib/models.sh"
 # ── Config ─────────────────────────────────────────────────────
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
 LLAMA_CPP_URL="${LLAMA_CPP_URL:-http://127.0.0.1:8080}"
+# Tell Ollama where the model blobs actually live. Inside proot-distro
+# $HOME=/root/ but models were pulled in native Termux. Without this,
+# Ollama defaults to /root/.ollama/models (empty inside proot).
+export OLLAMA_MODELS="${OLLAMA_MODELS:-$(_lodge_termux_home)/.ollama/models}"
 # Path to llama-server binary (resolved via _lodge_termux_home for proot compat)
 LLAMA_CPP_SERVER_BIN="${LLAMA_CPP_SERVER_BIN:-$(_lodge_termux_home)/llama.cpp/build/bin/llama-server}"
 # Path to GGUF model file for llama-server

@@ -414,6 +414,25 @@ describe "Model warmup"
     assert_contains "$_body" "ollama serve" "Should restart Ollama"
   }
 
+# ── OLLAMA_MODELS proot resolution ────────────────────────────
+describe "OLLAMA_MODELS proot path"
+
+  it "OLLAMA_MODELS is exported after sourcing llm.sh" && {
+    # llm.sh was sourced at test start — OLLAMA_MODELS should be set
+    assert_not_empty "$OLLAMA_MODELS" "OLLAMA_MODELS must be set"
+  }
+
+  it "OLLAMA_MODELS ends with .ollama/models" && {
+    [[ "$OLLAMA_MODELS" == *".ollama/models" ]]
+    assert_ok $? "OLLAMA_MODELS should end with .ollama/models"
+  }
+
+  it "llm.sh exports OLLAMA_MODELS (not just sets it)" && {
+    # Check that it's exported, not just a shell variable
+    _exports=$(grep 'export OLLAMA_MODELS' "$LODGE_DIR/lib/llm.sh")
+    assert_not_empty "$_exports" "OLLAMA_MODELS should be exported"
+  }
+
 # ── Debug instrumentation ─────────────────────────────────────
 describe "Debug instrumentation"
 

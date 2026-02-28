@@ -65,10 +65,19 @@ fi
 # so the config is never left in a stripped-but-not-rewritten state.
 _lodge_shell_block() {
     local termux_line
+    local ollama_models_line
     if [ "$IS_TERMUX" -eq 1 ] && [ "$IS_PROOT" -eq 0 ]; then
         termux_line='export LODGE_TERMUX_API=1        # Termux-API enabled (native Termux)'
+        ollama_models_line='# export OLLAMA_MODELS="\$HOME/.ollama/models"  # Native Termux (default is correct)'
     else
         termux_line='# export LODGE_TERMUX_API=1      # Uncomment in native Termux for phone features'
+        # Inside proot, $HOME=/root/ but Ollama models live in Termux-native home.
+        # Without this, 'ollama serve' from proot sees zero models.
+        if [ -d "/data/data/com.termux/files/home/.ollama/models" ]; then
+            ollama_models_line='export OLLAMA_MODELS="/data/data/com.termux/files/home/.ollama/models"  # proot→Termux path'
+        else
+            ollama_models_line='# export OLLAMA_MODELS=          # Set if Ollama models are at a non-default path'
+        fi
     fi
     cat << SHELLEOF
 
@@ -78,6 +87,7 @@ export LODGE_MODEL_PRIMARY="blue-lodge-minist-inst:4b"
 export LODGE_MODEL_SECONDARY="blue-lodge-minist-inst:4b"
 export PATH="\$HOME/.local/bin:\$PATH"
 $termux_line
+$ollama_models_line
 
 # Aliases
 alias lodge="\$LODGE_DIR/lodge"
@@ -188,6 +198,10 @@ ok "Ollama installed"
 if ! curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
     info "Starting Ollama..."
     local_tmpdir="${TMPDIR:-/tmp}"
+    # Ensure Ollama can find models when started from proot-distro
+    if [ "$IS_PROOT" -eq 1 ] && [ -d "/data/data/com.termux/files/home/.ollama/models" ]; then
+        export OLLAMA_MODELS="/data/data/com.termux/files/home/.ollama/models"
+    fi
     ollama serve > "$local_tmpdir/lodge-ollama.log" 2>&1 &
     sleep 3
     if ! curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
