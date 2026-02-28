@@ -107,10 +107,20 @@ _ok "Binary: $LLAMA_BIN"
 # ── Step 2: Check Ollama isn't hogging RAM ────────────────────
 _step "2" "Checking for running Ollama"
 if pgrep -x ollama &>/dev/null; then
-    _warn "Ollama is running — it may compete for RAM"
-    _dim "Consider: killall ollama"
-    read -rp "    Continue anyway? [Y/n] " _ans
-    [[ "${_ans:-y}" =~ ^[Nn] ]] && exit 0
+    _warn "Ollama is running — loading the same model twice WILL cause OOM"
+    read -rp "    Kill Ollama before continuing? [Y/n] " _ans
+    if [[ ! "${_ans:-y}" =~ ^[Nn] ]]; then
+        killall ollama 2>/dev/null || true
+        sleep 2
+        if pgrep -x ollama &>/dev/null; then
+            _warn "Ollama still running — trying SIGKILL"
+            killall -9 ollama 2>/dev/null || true
+            sleep 1
+        fi
+        _ok "Ollama stopped"
+    else
+        _warn "Continuing with Ollama running — expect OOM on low-RAM devices"
+    fi
 fi
 
 # ── Step 3: Resolve GGUF blob ─────────────────────────────────
@@ -248,22 +258,55 @@ _dim "\"$PROMPT\""
 echo ""
 
 _start_time=$(date +%s)
+# Try OpenAI-compatible endpoint first, fall back to legacy /completion
+_request_body=$(jq -n \
+    --arg prompt "$PROMPT" \
+    '{messages: [{role: "user", content: $prompt}], max_tokens: 200, temperature: 0.7}')
+
 _response=$(curl -s --max-time 120 "http://127.0.0.1:$PORT/v1/chat/completions" \
     -H "Content-Type: application/json" \
-    -d "$(jq -n \
+    -d "$_request_body" 2>&1) || true
+
+# If empty reply (exit 52) or no response, check if server died
+if [ -z "$_response" ]; then
+    # Check if server process is still alive
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        _fail "Server crashed during inference (likely OOM)"
+        _dim "Server log (last 30 lines):"
+        tail -30 "$SERVER_LOG" | while IFS= read -r line; do _dim "$line"; done || true
+        _dim ""
+        _dim "Try: killall ollama first, or use -ngl 0 for CPU-only"
+        SERVER_PID=""
+        exit 1
+    fi
+
+    # Server alive but empty reply — try legacy /completion endpoint
+    _warn "Empty reply from /v1/chat/completions — trying /completion"
+    _legacy_body=$(jq -n \
         --arg prompt "$PROMPT" \
-        '{messages: [{role: "user", content: $prompt}], max_tokens: 200, temperature: 0.7}')" 2>&1) || {
-    _fail "curl request failed (exit code $?)"
-    _dim "Response: $_response"
-    _dim "Try manually: curl -s http://127.0.0.1:$PORT/v1/chat/completions -H 'Content-Type: application/json' -d '{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
+        '{prompt: $prompt, n_predict: 200, temperature: 0.7}')
+    _response=$(curl -s --max-time 120 "http://127.0.0.1:$PORT/completion" \
+        -H "Content-Type: application/json" \
+        -d "$_legacy_body" 2>&1) || true
+    _is_legacy=1
+fi
+
+if [ -z "$_response" ]; then
+    _fail "No response from either endpoint"
+    _dim "Server log (last 20 lines):"
+    tail -20 "$SERVER_LOG" | while IFS= read -r line; do _dim "$line"; done || true
     exit 1
-}
+fi
 _end_time=$(date +%s)
 _elapsed=$((_end_time - _start_time))
 
 _content=$(echo "$_response" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)
-_total_tokens=$(echo "$_response" | jq -r '.usage.total_tokens // empty' 2>/dev/null || true)
-_completion_tokens=$(echo "$_response" | jq -r '.usage.completion_tokens // empty' 2>/dev/null || true)
+# Legacy /completion endpoint uses .content directly
+if [ -z "$_content" ]; then
+    _content=$(echo "$_response" | jq -r '.content // empty' 2>/dev/null || true)
+fi
+_total_tokens=$(echo "$_response" | jq -r '.usage.total_tokens // .tokens_evaluated // empty' 2>/dev/null || true)
+_completion_tokens=$(echo "$_response" | jq -r '.usage.completion_tokens // .tokens_predicted // empty' 2>/dev/null || true)
 
 if [ -n "$_content" ]; then
     printf "  ${C_GREEN}Response:${C_RESET} %s\n" "$_content"
