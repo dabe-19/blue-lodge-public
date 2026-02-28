@@ -311,10 +311,12 @@ describe "Dynamic dual-loop architecture"
     assert_ok $?
   }
 
-  it "specialist injects search_results.md for /web tool" && {
+  it "specialist includes /web syntax card for web tool" && {
     local body
     body=$(declare -f _build_specialist_prompt)
-    echo "$body" | grep -q 'search_results.md'
+    echo "$body" | grep -q '/web search'
+    assert_ok $?
+    echo "$body" | grep -q '/web fetch'
     assert_ok $?
   }
 
@@ -1122,7 +1124,7 @@ describe "Task completion evaluator"
     body=$(declare -f _agent_evaluate_completion)
     echo "$body" | grep -q 'strict task-completion evaluator'
     assert_ok $?
-    echo "$body" | grep -q 'no personality'
+    echo "$body" | grep -qi 'no personality'
     assert_ok $?
   }
 
@@ -1131,7 +1133,7 @@ describe "Task completion evaluator"
     body=$(declare -f _agent_evaluate_completion)
     echo "$body" | grep -q 'macro_file'
     assert_ok $?
-    echo "$body" | grep -q 'macro_context'
+    echo "$body" | grep -q 'eval_context'
     assert_ok $?
   }
 

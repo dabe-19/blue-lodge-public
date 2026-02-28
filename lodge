@@ -345,6 +345,12 @@ _cmd_limits() {
                     ui_ok "Evaluator mode set to $value"
                 fi
             fi ;;
+        eval-context)
+            if [ -z "$value" ]; then
+                ui_info "Evaluator context lines: ${AGENT_EVAL_CONTEXT_LINES:-50} (default: 50)"
+            else
+                _limits_set AGENT_EVAL_CONTEXT_LINES "Eval context lines" "$value" 5 500
+            fi ;;
         ask-tokens)
             if [ -z "$value" ]; then
                 ui_info "Ask output tokens: $LLM_ASK_TOKENS (default: 20480)"
@@ -424,6 +430,7 @@ _cmd_limits() {
             LLM_BUDGET_ROUTER=128
             LLM_BUDGET_JOURNAL=64
             LLM_BUDGET_TOOL=256
+            AGENT_EVAL_CONTEXT_LINES=50
             ui_ok "All limits reset to defaults" ;;
         "")
             ui_section "Agent Limits"
@@ -433,6 +440,7 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Inner loop retries:" "$AGENT_INNER_LOOPS  (default: 6)"
             printf "  %-22s %s\n" "Step delay:" "${AGENT_STEP_DELAY}s  (default: 1)"
             printf "  %-22s %s\n" "Eval mode:" "$AGENT_EVAL_MODE  (default: auto, options: auto|interactive|disabled)"
+            printf "  %-22s %s\n" "Eval context lines:" "${AGENT_EVAL_CONTEXT_LINES:-50}  (default: 50)"
             echo ""
             ui_section "Output Tokens (num_predict)"
             printf "  %-22s %s\n" "Max tokens:" "$LLM_MAX_TOKENS  (default: 20480)"
@@ -462,6 +470,7 @@ _cmd_limits() {
             ui_dim "    inner N         — Inner loop escalation retries (current: $AGENT_INNER_LOOPS)"
             ui_dim "    delay N         — Seconds between milestones (current: $AGENT_STEP_DELAY)"
             ui_dim "    eval-mode M     — Evaluator mode: auto|interactive|disabled (current: $AGENT_EVAL_MODE)"
+            ui_dim "    eval-context N  — Max action log lines for evaluator (current: ${AGENT_EVAL_CONTEXT_LINES:-50})"
             echo ""
             ui_dim "  Output tokens (num_predict):"
             ui_dim "    max-tokens N    — Global max output cap (current: $LLM_MAX_TOKENS)"
@@ -699,6 +708,18 @@ _cmd_model() {
             else
                 _model_set LLM_PRESENCE_TOOL "Tool presence penalty" "$value" 0.0 3.0
             fi ;;
+        # ── Write mode ───────────────────────────────────
+        write-mode)
+            if [ -z "$value" ]; then
+                ui_info "Write mode: ${LODGE_WRITE_MODE:-confirm} (default: confirm, options: confirm|append|dangerous)"
+            else
+                if [[ "$value" != "confirm" && "$value" != "append" && "$value" != "dangerous" ]]; then
+                    ui_err "Write mode must be 'confirm', 'append', or 'dangerous'"
+                else
+                    LODGE_WRITE_MODE="$value"
+                    ui_ok "Write mode set to $value"
+                fi
+            fi ;;
         # ── Reset ────────────────────────────────────────
         reset)
             # Reset all sampling parameters to the active model's registry defaults.
@@ -706,6 +727,7 @@ _cmd_model() {
             # model and overwrites globals + clears per-scenario overrides.
             if declare -f models_apply_defaults &>/dev/null; then
                 models_apply_defaults "$LODGE_MODEL"
+                LODGE_WRITE_MODE=confirm
                 ui_ok "All sampling parameters reset to $LODGE_MODEL defaults"
             else
                 ui_err "Model library not loaded — cannot determine defaults"
@@ -722,6 +744,8 @@ _cmd_model() {
             printf "  %-22s %-8s %-8s %-8s\n" "Journal:" "${LLM_TEMP_JOURNAL:-(model)}" "${LLM_REPEAT_JOURNAL:-(model)}" "${LLM_PRESENCE_JOURNAL:-(model)}"
             printf "  %-22s %-8s %-8s %-8s\n" "Tool:" "${LLM_TEMP_TOOL:-(model)}" "${LLM_REPEAT_TOOL:-(model)}" "${LLM_PRESENCE_TOOL:-(model)}"
             echo ""
+            printf "  %-22s %s\n" "Write mode:" "${LODGE_WRITE_MODE:-confirm}  (confirm|append|dangerous)"
+            echo ""
             ui_dim "  (model) = using model defaults above. Overrides are absolute, not additive."
             ui_dim "  Example: /model temp-ask 0.3 sets ask temp to 0.3 (not model default + 0.3)"
             ui_dim "  Usage: /model <param> [value]"
@@ -734,6 +758,9 @@ _cmd_model() {
             ui_dim "    temp N            — Temperature (current: $LLM_TEMPERATURE)"
             ui_dim "    repeat N          — Repeat penalty (current: $LLM_REPEAT_PENALTY)"
             ui_dim "    presence N        — Presence penalty (current: $LLM_PRESENCE_PENALTY)"
+            echo ""
+            ui_dim "  File handling:"
+            ui_dim "    write-mode M      — Overwrite protection: confirm|append|dangerous (current: ${LODGE_WRITE_MODE:-confirm})"
             echo ""
             ui_dim "  Per-scenario overrides (ABSOLUTE values, not additive — replaces model default):"
             ui_dim "  (temp-X, repeat-X, presence-X where X is ask|agent|router|journal|tool)"

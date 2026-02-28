@@ -235,9 +235,9 @@ describe "models_apply_defaults"
 
   it "models_apply_defaults sets globals from model registry" && {
     models_apply_defaults "blue-lodge-minist-inst:4b" 2>/dev/null
-    assert_eq "$LLM_TEMPERATURE" "0.15"
-    assert_eq "$LLM_REPEAT_PENALTY" "1.2"
-    assert_eq "$LLM_PRESENCE_PENALTY" "0.3"
+    assert_eq "$LLM_TEMPERATURE" "0.125"
+    assert_eq "$LLM_REPEAT_PENALTY" "1.0"
+    assert_eq "$LLM_PRESENCE_PENALTY" "0.0"
   }
 
   it "models_apply_defaults clears per-scenario overrides" && {

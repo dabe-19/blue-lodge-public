@@ -237,8 +237,41 @@ tools_fix_llm_spacing() {
     [ -z "$input" ] && return 0
     local result
     result=$(tools_fix_ext_spacing "$input")
+    result=$(tools_fix_dash_separator "$result")
     result=$(tools_fix_fence_spacing "$result")
     result=$(tools_fix_asterisk_spacing "$result")
+    echo "$result"
+}
+
+# ── Fix dash separator glued to file extensions ────────────────
+# LLMs sometimes emit: /write tesla.md---# Tesla Data Report
+# where "---" (2+ dashes) is glued to the file extension.
+# This detects the pattern and injects a space at the boundary.
+# Result: "tesla.md ---# Tesla Data Report" → awk splits correctly.
+tools_fix_dash_separator() {
+    local input="$1"
+    [ -z "$input" ] && return 0
+    # Match: known extension followed by 2+ dashes
+    # Replace ext---content with "ext ---content" (space before dashes)
+    # The --- will then be treated as content by the filepath parser.
+    # Only fire if the input contains a dot (likely has an extension).
+    if [[ "$input" != *.* ]]; then
+        echo "$input"
+        return 0
+    fi
+    # Pattern: (.ext)(---+)(content)  →  (.ext) (content after dashes)
+    # Strip the dashes entirely — they're a formatting artifact, not content.
+    local result
+    result=$(echo "$input" | sed 's/\(\.[a-zA-Z0-9]\{1,10\}\)---*/ \1 /g')
+    # If sed changed nothing (no match), the above is harmless.
+    # However the above is aggressive. More precise: only match if
+    # dashes are followed by non-dash content (not just trailing dashes).
+    # Rewrite: use a targeted approach
+    result="$input"
+    if [[ "$input" =~ \.[a-zA-Z0-9]+--+ ]]; then
+        # Extract extension+dashes pattern and split it
+        result=$(echo "$input" | sed 's/\(\.[a-zA-Z0-9]\{1,10\}\)--\+\(.\)/\1 \2/g')
+    fi
     echo "$result"
 }
 

@@ -539,10 +539,10 @@ describe "Model command (sampling parameters)"
     LLM_TEMP_ROUTER=0.9
     LLM_PRESENCE_JOURNAL=0.5
     _cmd_model "reset" >/dev/null 2>&1
-    # After reset, globals match model registry (minist-inst: 0.15/1.2/0.3)
-    assert_eq "$LLM_TEMPERATURE" "0.15"
-    assert_eq "$LLM_REPEAT_PENALTY" "1.2"
-    assert_eq "$LLM_PRESENCE_PENALTY" "0.3"
+    # After reset, globals match model registry (minist-inst: 0.125/1.0/0.0)
+    assert_eq "$LLM_TEMPERATURE" "0.125"
+    assert_eq "$LLM_REPEAT_PENALTY" "1.0"
+    assert_eq "$LLM_PRESENCE_PENALTY" "0.0"
     # Per-scenario overrides are cleared (empty = inherit model default)
     assert_eq "$LLM_TEMP_ASK" ""
     assert_eq "$LLM_TEMP_ROUTER" ""

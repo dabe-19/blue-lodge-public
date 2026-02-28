@@ -31,6 +31,11 @@ cmd_write() {
     filepath=$(echo "$args" | awk '{print $1}')
     content=$(echo "$args" | sed 's/^[^ ]* *//')
 
+    # Strip trailing dashes from filepath — catches edge case where
+    # LLM emits "/write tesla.md---# content" and tools_fix_llm_spacing
+    # couldn't fully separate it (e.g., "tesla.md---#" as first token).
+    filepath=$(echo "$filepath" | sed 's/--*$//')
+
     # Sanitize filename — strip quotes, spaces, special chars
     if declare -f tools_sanitize_filename &>/dev/null; then
         filepath=$(tools_sanitize_filename "$filepath")
@@ -68,6 +73,72 @@ cmd_write() {
 
     local existed=0
     [ -f "$fullpath" ] && existed=1
+
+    # ── Overwrite protection ──────────────────────────────────
+    # LODGE_WRITE_MODE controls behavior when the target file exists:
+    #   confirm   — prompt the operator via /dev/tty (default)
+    #   append    — append content instead of overwriting
+    #   dangerous — silently overwrite (original behavior)
+    if [ "$existed" -eq 1 ]; then
+        local _wmode="${LODGE_WRITE_MODE:-confirm}"
+        case "$_wmode" in
+            confirm)
+                # Skip prompt in non-interactive environments (tests, pipes).
+                # /dev/tty may block even with || fallback in some contexts.
+                if [ ! -t 2 ] && [ -z "${LODGE_FORCE_CONFIRM:-}" ]; then
+                    # Non-interactive: fall through to overwrite silently
+                    :
+                else
+                    local _existing_lines
+                    _existing_lines=$(wc -l < "$fullpath")
+                    printf " %b%s%b already exists (%s lines). %b[O]%bverwrite / %b[A]%bppend / %b[R]%bename / %b[S]%bkip? " \
+                        "\033[1;33m" "$filepath" "\033[0m" "$_existing_lines" \
+                        "\033[1;37m" "\033[0m" "\033[1;37m" "\033[0m" \
+                        "\033[1;37m" "\033[0m" "\033[1;37m" "\033[0m"
+                    local _choice
+                    read -r _choice < /dev/tty 2>/dev/null || _choice="o"
+                    _choice="${_choice,,}"
+                    case "$_choice" in
+                        o|overwrite) ;; # fall through to write
+                        a|append)
+                            printf '\n%s\n' "$content" >> "$fullpath"
+                            local lines
+                            lines=$(wc -l < "$fullpath")
+                            ui_ok "Appended to: $filepath ($lines total lines)"
+                            return 0 ;;
+                        r|rename)
+                            # Auto-generate numbered variant
+                            local _base="${fullpath%.*}"
+                            local _ext="${fullpath##*.}"
+                            local _n=2
+                            local _newpath
+                            while true; do
+                                if [ "$_base" = "$fullpath" ]; then
+                                    _newpath="${fullpath}_${_n}"
+                                else
+                                    _newpath="${_base}_${_n}.${_ext}"
+                                fi
+                                [ ! -f "$_newpath" ] && break
+                                _n=$((_n + 1))
+                            done
+                            fullpath="$_newpath"
+                            filepath=$(basename "$_newpath")
+                            existed=0 ;;
+                        s|skip|*)
+                            ui_info "Skipped: $filepath (not overwritten)"
+                            return 0 ;;
+                    esac
+                fi
+                ;;
+            append)
+                printf '\n%s\n' "$content" >> "$fullpath"
+                local lines
+                lines=$(wc -l < "$fullpath")
+                ui_ok "Appended to: $filepath ($lines total lines)"
+                return 0 ;;
+            dangerous) ;; # fall through to write (original behavior)
+        esac
+    fi
 
     # Write the file
     printf '%s\n' "$content" > "$fullpath"

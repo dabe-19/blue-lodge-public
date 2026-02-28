@@ -48,30 +48,69 @@ _agent_evaluate_completion() {
     local eval_context
     if [ -n "$micro_file" ] && [ -f "$micro_file" ]; then
         eval_context=$(cat "$micro_file")
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: evaluator <- micro_memory ($(wc -l < "$micro_file") lines)"
     else
         eval_context=$(cat "$macro_file")
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: evaluator <- macro_memory fallback ($(wc -l < "$macro_file") lines)"
+    fi
+
+    # Truncate eval_context to the last N lines to prevent attention
+    # dilution. When micro_memory grows huge (50+ actions), the primary
+    # objective at the top of the prompt gets washed out by recency bias
+    # in small models. Keeping only the tail + reordering (below) ensures
+    # the objective gets maximum attention.
+    local _max_ctx_lines="${AGENT_EVAL_CONTEXT_LINES:-50}"
+    local _ctx_total
+    _ctx_total=$(echo "$eval_context" | wc -l)
+    if [ "$_ctx_total" -gt "$_max_ctx_lines" ]; then
+        eval_context=$(echo "$eval_context" | tail -n "$_max_ctx_lines")
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval context truncated: $_ctx_total -> $_max_ctx_lines lines"
     fi
 
     # Build a strict, personality-free evaluation prompt.
-    # The evaluator must judge by the ACTUAL action and output, not merely
-    # the presence of keywords like SUCCESS or COMPLETE in the log.
-    local eval_prompt="PRIMARY OBJECTIVE (the original user request):\n${primary_obj}\n\nACTION LOG (from the most recent milestone):\n${eval_context}\n\nEvaluate whether ALL parts of the primary objective have been satisfied.\n\nSTEP 1: Decompose the objective into distinct required parts.\n  Example: 'research X, write a report, and email it to Y' has THREE parts:\n    a) research X  b) write a report  c) email it to Y\n\nSTEP 2: For each part, check the Action Log for an action that addresses it.\n  - A relevant action with Status EXECUTED SUCCESSFULLY (exit 0) satisfies that part.\n  - Output may be empty — many tools (email, social) produce no output on success. That is normal.\n  - Do NOT count research/search as satisfying a 'write report' or 'email' part.\n\nSTEP 3: If ANY required part has no corresponding successful action, respond INCOMPLETE.\n\nCRITICAL RULES:\n- Do NOT treat the word SUCCESS in the log as automatic proof — verify the Action actually addresses each part.\n- A web search only satisfies a 'research' or 'find information' part — NOT a 'write', 'email', 'post', or 'send' part.\n- ALL parts must be satisfied for COMPLETE. Even one missing part means INCOMPLETE.\n\nRespond with EXACTLY one of:\n  COMPLETE — if ALL parts of the primary objective have been satisfied\n  INCOMPLETE — if ANY part remains unaddressed\n\nOutput ONLY that single word. No explanation."
+    # ATTENTION REORDER: Action log comes FIRST so that the primary
+    # objective and evaluation criteria sit at the END of the prompt
+    # where small models pay the most attention (recency bias). This
+    # prevents the objective from being buried under pages of action log.
+    local eval_prompt="ACTION LOG (from the most recent milestone — review for successful actions):\n${eval_context}\n\n---\n\nPRIMARY OBJECTIVE (the original user request):\n${primary_obj}\n\nEvaluate whether ALL parts of the primary objective above have been satisfied by the Action Log.\n\nSTEP 1: Decompose the objective into distinct required parts.\n  Example: 'research X, write a report, and email it to Y' has THREE parts:\n    a) research X  b) write a report  c) email it to Y\n\nSTEP 2: For each part, check the Action Log for an action that addresses it.\n  - A relevant action with Status EXECUTED SUCCESSFULLY (exit 0) satisfies that part.\n  - Output may be empty — many tools (email, social) produce no output on success. That is normal.\n  - Do NOT count research/search as satisfying a 'write report' or 'email' part.\n\nSTEP 3: If ANY required part has no corresponding successful action, respond INCOMPLETE.\n\nCRITICAL RULES:\n- Do NOT treat the word SUCCESS in the log as automatic proof — verify the Action actually addresses each part.\n- A web search only satisfies a 'research' or 'find information' part — NOT a 'write', 'email', 'post', or 'send' part.\n- ALL parts must be satisfied for COMPLETE. Even one missing part means INCOMPLETE.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence reason what is still missing>\n\nExamples:\n  COMPLETE\n  INCOMPLETE: the report has not been written yet\n  INCOMPLETE: email was never sent to the recipient"
 
-    local eval_sys="You are a strict task-completion evaluator. Decompose multi-part objectives into distinct required parts and verify each has a corresponding successful action. A web search satisfies research, but NOT writing, emailing, or posting. Output may be empty for successful commands — that is normal. Respond INCOMPLETE if ANY required part lacks a successful action."
+    local eval_sys="You are a strict task-completion evaluator. Decompose multi-part objectives into distinct required parts and verify each has a corresponding successful action. A web search satisfies research, but NOT writing, emailing, or posting. Output may be empty for successful commands — that is normal. Respond COMPLETE or INCOMPLETE: <reason>."
 
     ui_think "Evaluator: assessing task completion..."
     local verdict
     local LLM_SCENARIO=evaluator
     verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-512}" "$LLM_BUDGET_AGENT")
 
-    # Clean up LLM output — strip think blocks, whitespace, take first word
+    # Clean up LLM output — strip think blocks, whitespace
     verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
     verdict=$(echo "$verdict" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
     verdict=$(echo "$verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-    verdict=$(echo "$verdict" | head -1 | awk '{print $1}')
 
-    if [[ "$verdict" != "COMPLETE" ]]; then
-        ui_info "Evaluator: objective not yet fulfilled — continuing"
+    # Extract the first meaningful line
+    local first_line
+    first_line=$(echo "$verdict" | head -1)
+
+    # Parse verdict word and optional reason
+    local verdict_word
+    verdict_word=$(echo "$first_line" | awk '{print $1}')
+
+    # Extract INCOMPLETE reason: smart parse per user spec
+    # - If "INCOMPLETE: reason", take after colon
+    # - If "INCOMPLETE" with no colon but text follows, take full remaining text
+    # - If no text at all, reason stays empty (that's OK)
+    _EVAL_INCOMPLETE_REASON=""
+    if [[ "$verdict_word" != "COMPLETE" ]]; then
+        if [[ "$first_line" == *":"* ]]; then
+            _EVAL_INCOMPLETE_REASON=$(echo "$first_line" | sed 's/^[^:]*:[[:space:]]*//')
+        elif [ "$(echo "$first_line" | wc -w)" -gt 1 ]; then
+            _EVAL_INCOMPLETE_REASON=$(echo "$first_line" | sed 's/^[^ ]* *//')
+        fi
+        # If reason is still empty but there are more lines, use entire output
+        if [ -z "$_EVAL_INCOMPLETE_REASON" ] && [ "$(echo "$verdict" | wc -l)" -gt 1 ]; then
+            _EVAL_INCOMPLETE_REASON=$(echo "$verdict" | head -3)
+        fi
+        local _reason_display="${_EVAL_INCOMPLETE_REASON:+(${_EVAL_INCOMPLETE_REASON:0:80})}"
+        ui_info "Evaluator: objective not yet fulfilled ${_reason_display}— continuing"
         return 1
     fi
 
@@ -1028,6 +1067,7 @@ agent_inner_loop() {
             echo "## Primary Objective (overall task — stay focused)" >> "$micro_file"
             echo "$_primary_obj" >> "$micro_file"
             echo "" >> "$micro_file"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: primary objective -> micro_memory"
         fi
     fi
 
@@ -1187,11 +1227,13 @@ agent_inner_loop() {
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Phase 2 specialist: loading docs for $selected_tool"
 
         local specialist_sys=$(_build_specialist_prompt "$selected_tool" "$workdir" "$micro_objective")
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist prompt <- syntax card for $selected_tool"
 
         # Inject micro_memory (action log) so the specialist sees
         # prior outputs, created files, and error history. Without this,
         # multi-step objectives fail because the specialist can't adapt.
         local specialist_prompt="MICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\nWrite the exact command to execute next."
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist <- micro_memory action log ($(echo "$inner_context" | wc -l) lines)"
 
         # Use llm_generate (non-streaming) for the specialist. The output
         # is a single command line that will be displayed by "Running: ..."
@@ -1347,6 +1389,7 @@ agent_inner_loop() {
                 recall_result=$(recall_search_context "$base_cmd" 3 2>/dev/null)
                 if [ -n "$recall_result" ]; then
                     echo -e "\n**Recall ($base_cmd):**\n\`\`\`\n$recall_result\n\`\`\`" >> "$micro_file"
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: L2 recall for '$base_cmd' -> micro_memory"
                 fi
             fi
 
@@ -1361,6 +1404,7 @@ agent_inner_loop() {
                 if [ -n "$past_recoveries" ]; then
                     ui_warn "Escalation L3: Injecting past recovery instructions..."
                     echo -e "\n**Past Recovery Instructions (from failure log):**\n\`\`\`\n$past_recoveries\n\`\`\`" >> "$micro_file"
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: L3 past recoveries -> micro_memory"
                 fi
             fi
 
@@ -1377,6 +1421,7 @@ agent_inner_loop() {
                 web_result=$(web_search "error: $stderr_tail $base_cmd" 3 2>/dev/null)
                 if [ -n "$web_result" ]; then
                     echo -e "\n**Web Search Results:**\n\`\`\`\n${web_result:0:1500}\n\`\`\`" >> "$micro_file"
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: L5 web error search -> micro_memory"
                 fi
             fi
 
@@ -1430,9 +1475,13 @@ agent_inner_loop() {
         # Combine operator input with the full command catalog so
         # the LLM maps natural language ("use /web search") to a
         # real command instead of hallucinating.
+        # Inject micro_memory (action log) so the specialist sees
+        # prior inputs, created files, and error history. Without this,
+        # guided retries fail because the LLM can't see past attempts.
         local catalog=""
         if declare -f commands_catalog &>/dev/null; then
             catalog=$(commands_catalog)
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: guided retry <- command catalog"
         fi
 
         local guided_prompt="MICRO OBJECTIVE: $micro_objective
@@ -1608,6 +1657,7 @@ agent_run() {
         # Read macro_memory.md and ask for the SINGLE next milestone
         local macro_context
         macro_context=$(cat "$macro_file")
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- macro_memory ($(echo "$macro_context" | wc -l) lines)"
 
         local macro_prompt="Read the following task memory. What is the SINGLE next logical milestone to advance the Primary Objective? If the objective is fully complete, reply with EXACTLY the word DONE and nothing else.\n\n$macro_context"
 
@@ -1639,6 +1689,7 @@ EXTENSION: /slash create|run"
         local _svc_status=""
         if declare -f commands_services_status &>/dev/null; then
             _svc_status=$(commands_services_status 2>/dev/null)
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_svc_status" ] && ui_dim "  [debug] inject: strategist <- services status"
         fi
 
         # ── Inject milestone history into strategist prompt ─────
@@ -1649,6 +1700,7 @@ EXTENSION: /slash create|run"
             for _am in "${_attempted_milestones[@]}"; do
                 _milestone_history="${_milestone_history}\n- ${_am}"
             done
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- milestone history (${#_attempted_milestones[@]} entries)"
         fi
 
         local macro_sys="You are a strategic planning engine. Given a task memory with completed milestones, determine the single next milestone needed.
@@ -1784,6 +1836,12 @@ STRATEGIC RULES:
         if [ "${AGENT_EVAL_MODE:-auto}" != "disabled" ] && [ "$completed_milestones" -gt 0 ]; then
             if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.md"; then
                 break
+            else
+                # Inject evaluator's INCOMPLETE reason into milestone history
+                # so the strategist can use it when planning the next milestone.
+                if [ -n "${_EVAL_INCOMPLETE_REASON:-}" ]; then
+                    _attempted_milestones+=("EVAL|still missing: $_EVAL_INCOMPLETE_REASON")
+                fi
             fi
         fi
 

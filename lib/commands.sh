@@ -278,6 +278,7 @@ Never guess syntax; use `/recall <cmd>`. If a tool is missing, use `/slash creat
 /download <url> [dest]
 /vision <image_url_or_path> [prompt]     — Analyze image with AI vision (accepts URLs directly — no /download needed)
 /journal <write|vivid|fading|sediment|count|decay> [text] — Access persistent living memory
+/ingest <add|summarize|list|remove> [filepath] [label] — Upload docs to knowledge base
 
 ## 4. COMMS & SOCIAL
 /social post <discord|telegram|x|mastodon|bluesky> [target] <text> — target = channel or instance
