@@ -295,19 +295,32 @@ info "Ensuring default Ministral models are ready..."
 if ollama list 2>/dev/null | grep -q "$LODGE_MODEL_PRIMARY"; then
     ok "Primary model '$LODGE_MODEL_PRIMARY' already exists"
 else
-    info "Creating primary model: $LODGE_MODEL_PRIMARY (first run downloads ~3GB)..."
-    _mf=$(models_generate_modelfile "minist-think")
-    ollama create "$LODGE_MODEL_PRIMARY" -f "$_mf"
-    ok "Primary model created"
+    # When both slots point to the same model (single-model mode),
+    # create from instruct base only — instruct handles both roles.
+    if [ "$LODGE_MODEL_PRIMARY" = "$LODGE_MODEL_SECONDARY" ]; then
+        info "Creating model: $LODGE_MODEL_PRIMARY (first run downloads ~3GB)..."
+        _mf=$(models_generate_modelfile "minist-inst")
+        ollama create "$LODGE_MODEL_PRIMARY" -f "$_mf"
+        ok "Model created (single-model instruct mode)"
+    else
+        info "Creating primary model: $LODGE_MODEL_PRIMARY (first run downloads ~3GB)..."
+        _mf=$(models_generate_modelfile "minist-think")
+        ollama create "$LODGE_MODEL_PRIMARY" -f "$_mf"
+        ok "Primary model created"
+    fi
 fi
 
-if ollama list 2>/dev/null | grep -q "$LODGE_MODEL_SECONDARY"; then
-    ok "Secondary model '$LODGE_MODEL_SECONDARY' already exists"
+if [ "$LODGE_MODEL_PRIMARY" != "$LODGE_MODEL_SECONDARY" ]; then
+    if ollama list 2>/dev/null | grep -q "$LODGE_MODEL_SECONDARY"; then
+        ok "Secondary model '$LODGE_MODEL_SECONDARY' already exists"
+    else
+        info "Creating secondary model: $LODGE_MODEL_SECONDARY"
+        _mf=$(models_generate_modelfile "minist-inst")
+        ollama create "$LODGE_MODEL_SECONDARY" -f "$_mf"
+        ok "Secondary model created"
+    fi
 else
-    info "Creating secondary model: $LODGE_MODEL_SECONDARY"
-    _mf=$(models_generate_modelfile "minist-inst")
-    ollama create "$LODGE_MODEL_SECONDARY" -f "$_mf"
-    ok "Secondary model created"
+    ok "Secondary model matches primary (single-model mode)"
 fi
 
 # ── 5. Quick model test ─────────────────────────────────────

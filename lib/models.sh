@@ -694,13 +694,18 @@ _models_switch() {
         --arg keep_alive "$LLM_KEEP_ALIVE" \
         '{model: $model, prompt: "", keep_alive: $keep_alive}')
 
-    if curl -sf --max-time 120 "$OLLAMA_URL/api/generate" \
+    local _switch_resp
+    _switch_resp=$(curl -s --max-time 120 "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
-        -d "$payload" &>/dev/null; then
+        -d "$payload" 2>/dev/null)
+    local _switch_err
+    _switch_err=$(echo "$_switch_resp" | jq -r '.error // empty' 2>/dev/null)
+    if [ -z "$_switch_err" ]; then
         _MODELS_ACTIVE="$target"
         LODGE_MODEL="$target"
         return 0
     else
+        ui_err "Model switch failed: $_switch_err"
         return 1
     fi
 }
@@ -727,7 +732,10 @@ models_ensure_for_scenario() {
         ui_dim "Switching model: ${from_key:-$_MODELS_ACTIVE} → ${to_key:-$target}"
     fi
 
-    _models_switch "$target"
+    if ! _models_switch "$target"; then
+        ui_err "Failed to load model: $target"
+        return 1
+    fi
 }
 
 # ── Resolve nothink behavior for current model ─────────────────

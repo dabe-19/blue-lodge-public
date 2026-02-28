@@ -509,9 +509,18 @@ llm_warmup() {
         --arg prompt "$_warmup_prompt" \
         --arg keep_alive "$LLM_KEEP_ALIVE" \
         '{model: $model, prompt: $prompt, stream: false, keep_alive: $keep_alive, options: {num_predict: 1}}')
-    curl -sf "$OLLAMA_URL/api/generate" \
+    local _warmup_resp
+    _warmup_resp=$(curl -s --max-time 30 "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
-        -d "$payload" > /dev/null 2>&1
+        -d "$payload" 2>/dev/null)
+    local _warmup_err
+    _warmup_err=$(echo "$_warmup_resp" | jq -r '.error // empty' 2>/dev/null)
+    if [ -n "$_warmup_err" ]; then
+        local _tty="/dev/tty"
+        [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+        printf "\033[33m⚠ Warmup failed: %s\033[0m\n" "$_warmup_err" > "$_tty" 2>/dev/null
+        return 1
+    fi
 }
 
 # ── Ensure LLM backend is running ─────────────────────────────
@@ -753,7 +762,7 @@ llm_generate() {
 
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] generate (llamacpp): url=%s max_tokens=%s\n" "$LLAMA_CPP_URL" "$max_tokens" > "$_tty" 2>/dev/null
 
-        $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
+        $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
             "$LLAMA_CPP_URL/v1/chat/completions" \
             -H "Content-Type: application/json" \
             -d "$payload" 2>/dev/null | while IFS= read -r line; do
@@ -870,12 +879,25 @@ llm_generate() {
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] generate think: _can_think=%s model=%s\n" "$_can_think" "$LODGE_MODEL" > "$_tty" 2>/dev/null
 
-    $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
+    $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
         -d "$payload" 2>/dev/null | while IFS= read -r line; do
         # Cooperative cancellation check
         [ -f "$_cancel_file" ] && break
+
+        # Check for Ollama error response (e.g., model not found, OOM)
+        local _ollama_err
+        _ollama_err=$(echo "$line" | jq -r '.error // empty' 2>/dev/null)
+        if [ -n "$_ollama_err" ]; then
+            if [ -n "$_SPINNER_PID" ] && kill -0 "$_SPINNER_PID" 2>/dev/null; then
+                kill "$_SPINNER_PID" 2>/dev/null
+                printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
+            fi
+            printf "\033[31mOllama error: %s\033[0m\n" "$_ollama_err" > "$_tty" 2>/dev/null
+            echo "ERROR: $_ollama_err"
+            break
+        fi
 
         local think_token token
         think_token=$(echo "$line" | jq -r '.thinking // empty' 2>/dev/null)
@@ -1147,7 +1169,7 @@ llm_stream() {
 
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] stream (llamacpp): url=%s max_tokens=%s\n" "$LLAMA_CPP_URL" "$max_tokens" > "$_tty" 2>/dev/null
 
-        $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
+        $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
             "$LLAMA_CPP_URL/v1/chat/completions" \
             -H "Content-Type: application/json" \
             -d "$payload" 2>/dev/null | while IFS= read -r line; do
@@ -1291,12 +1313,23 @@ llm_stream() {
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] stream think: _can_think=%s model=%s LODGE_THINK=%s\n" "$_can_think" "$LODGE_MODEL" "${LODGE_THINK:-0}" > "$_tty" 2>/dev/null
 
-    $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
+    $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
         -d "$payload" 2>/dev/null | while IFS= read -r line; do
         # Check for cancellation
         [ -f "$_cancel_file" ] && break
+
+        # Check for Ollama error response (e.g., model not found, OOM)
+        local _ollama_err
+        _ollama_err=$(echo "$line" | jq -r '.error // empty' 2>/dev/null)
+        if [ -n "$_ollama_err" ]; then
+            kill "$_llm_spinner_pid" 2>/dev/null
+            printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
+            printf "\033[31mOllama error: %s\033[0m\n" "$_ollama_err" > "$_tty" 2>/dev/null
+            echo "ERROR: $_ollama_err"
+            break
+        fi
 
         local think_token token
         think_token=$(echo "$line" | jq -r '.thinking // empty' 2>/dev/null)
@@ -1491,6 +1524,16 @@ llm_stream() {
 
     # Safety: ensure spinner is stopped even if no tokens arrived (timeout/error)
     ui_spinner_stop
+
+    # Check if we received any tokens at all (matches llm_generate's pattern)
+    if [ ! -f "$_llm_ft_file" ]; then
+        rm -f "$_llm_ft_file"
+        _LLM_ACTIVE=0
+        printf "\033[33m⚠ No response from model — check Ollama status (ollama ps)\033[0m\n" > "$_tty" 2>/dev/null
+        echo "ERROR: LLM stream failed or returned no tokens"
+        return 1
+    fi
+
     rm -f "$_llm_ft_file"
     _LLM_ACTIVE=0
 
@@ -1590,7 +1633,7 @@ llm_chat() {
         local _got_tokens="$_tmpdir/.lodge-chat-tok-$$"
         rm -f "$_got_tokens"
 
-        $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
+        $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
             "$LLAMA_CPP_URL/v1/chat/completions" \
             -H "Content-Type: application/json" \
             -d "$payload" 2>/dev/null | while IFS= read -r line; do
@@ -1667,10 +1710,18 @@ llm_chat() {
     models_current_has_thinking || _in_think_block=0
     local _think_pending=""
 
-    $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
+    $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/chat" \
         -H "Content-Type: application/json" \
         -d "$payload" 2>/dev/null | while IFS= read -r line; do
+
+        # Check for Ollama error response
+        local _ollama_err
+        _ollama_err=$(echo "$line" | jq -r '.error // empty' 2>/dev/null)
+        if [ -n "$_ollama_err" ]; then
+            echo "ERROR: $_ollama_err"
+            break
+        fi
 
         local think_token token
         think_token=$(echo "$line" | jq -r '.message.thinking // empty' 2>/dev/null)
@@ -1839,7 +1890,7 @@ llm_vision() {
         local _spinner_pid="$_SPINNER_PID"
         local _first_token=0
 
-        $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
+        $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
             "$LLAMA_CPP_URL/v1/chat/completions" \
             -H "Content-Type: application/json" \
             -d "$payload" 2>/dev/null | while IFS= read -r line; do
@@ -1920,10 +1971,21 @@ llm_vision() {
     local _spinner_pid="$_SPINNER_PID"
     local _first_token=0
 
-    $timeout_cmd curl -sfN --connect-timeout 10 --max-time "$curl_timeout" \
+    $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
         -d "$payload" 2>/dev/null | while IFS= read -r line; do
+
+        # Check for Ollama error response
+        local _ollama_err
+        _ollama_err=$(echo "$line" | jq -r '.error // empty' 2>/dev/null)
+        if [ -n "$_ollama_err" ]; then
+            kill "$_spinner_pid" 2>/dev/null
+            printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
+            printf "\033[31mOllama error: %s\033[0m\n" "$_ollama_err" > "$_tty" 2>/dev/null
+            echo "ERROR: $_ollama_err"
+            break
+        fi
 
         local token
         token=$(echo "$line" | jq -r '.response // empty' 2>/dev/null)
