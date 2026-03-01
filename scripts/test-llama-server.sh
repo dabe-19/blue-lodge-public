@@ -18,17 +18,15 @@ set -euo pipefail
 # Show exactly where the script died instead of crashing silently
 trap 'printf "\n\033[31m✗ Script failed at line %s\033[0m\n" "$LINENO"; exit 1' ERR
 
-# ── Proot guard ────────────────────────────────────────────────
-# llama-server is a Termux-native binary (Bionic) and needs direct
-# GPU driver access — neither works inside proot's glibc environment.
+# ── Proot detection ────────────────────────────────────────────
+# Warn if running inside proot but don't block — Lodge starts
+# llama-server from proot and talks to it over HTTP.
+_IN_PROOT=0
 if [ -f /etc/os-release ] && [ -d /data/data/com.termux ] && [ "$HOME" = "/root" ]; then
-    printf '\033[31m✗ Running inside proot — this won'\''t work.\033[0m\n'
-    printf '  llama-server needs Termux native for Bionic libs + GPU access.\n'
-    printf '  Exit proot first, then run from Termux:\n\n'
-    printf '    exit\n'
-    _repo_path="$(cd "$(dirname "$0")/.." && pwd)"
-    printf '    %s/scripts/test-llama-server.sh\n\n' "$_repo_path"
-    exit 1
+    _IN_PROOT=1
+    printf '\033[33m⚠ Running inside proot\033[0m\n'
+    printf '  llama-server will be started from proot environment.\n'
+    printf '  If you get gibberish, try running from native Termux instead.\n\n'
 fi
 
 # ── Config ─────────────────────────────────────────────────────
