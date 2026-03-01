@@ -802,11 +802,11 @@ describe "GPU layers command (/gpu)"
     assert_not_empty "${CMD_REGISTRY[gpu]:-}" "/gpu must be registered"
   }
 
-  it "LLAMA_CPP_GPU_LAYERS defaults to 1 (minimal GPU validation)" && {
+  it "LLAMA_CPP_GPU_LAYERS defaults to 0 (CPU only — Adreno 830 Vulkan broken)" && {
     # Re-source to check default
     _gpu_default=$(grep 'LLAMA_CPP_GPU_LAYERS=' "$LODGE_DIR/lib/llm.sh" | head -1)
-    echo "$_gpu_default" | grep -q ':-1}'
-    assert_ok $? "Default should be 1, got: $_gpu_default"
+    echo "$_gpu_default" | grep -q ':-0}'
+    assert_ok $? "Default should be 0, got: $_gpu_default"
   }
 
   it "/gpu sets LLAMA_CPP_GPU_LAYERS" && {
