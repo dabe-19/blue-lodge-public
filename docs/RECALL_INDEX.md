@@ -673,7 +673,7 @@ Uses GitHub public API. No API key needed.
 ## Output Format Rules Response Style
 
 Bash code: wrap in ```bash blocks. First line: # filepath: <path>
-Plans: numbered lists. Answers: 1-5 sentences maximum.
+Plans: numbered lists. In no more than 5 sentences, write your answer.
 File limit: never write more than 500 lines per file.
 Never write outside the workspace directory.
 cargo check > cargo build (saves 6GB RAM on ARM).

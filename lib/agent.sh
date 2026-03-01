@@ -223,7 +223,7 @@ _agent_evaluate_completion() {
         answer="${answer:-y}"
         if [[ "${answer,,}" == "y"* ]]; then
             local summary_prompt="Summarize briefly: the user asked to '${primary_obj}'. Based on this task memory, what was accomplished?\n\n${macro_context}"
-            local summary_sys="You are a concise summarizer. No personality. Output only the summary in 2-3 sentences."
+            local summary_sys="In no more than 3 sentences, write a concise summary. No personality."
             local task_summary
             local LLM_SCENARIO=evaluator
             task_summary=$(llm_generate "$summary_prompt" "$summary_sys" "${LLM_EVALUATOR_TOKENS:-512}" "$LLM_BUDGET_AGENT")
@@ -241,7 +241,7 @@ _agent_evaluate_completion() {
 
     # Auto mode (default): generate brief summary and signal completion
     local summary_prompt="Summarize briefly: the user asked to '${primary_obj}'. Based on this task memory, what was accomplished?\n\n${macro_context}"
-    local summary_sys="You are a concise summarizer. No personality. Output only the summary in 2-3 sentences."
+    local summary_sys="In no more than 3 sentences, write a concise summary. No personality."
     local task_summary
     local LLM_SCENARIO=evaluator
     task_summary=$(llm_generate "$summary_prompt" "$summary_sys" "${LLM_EVALUATOR_TOKENS:-512}" "$LLM_BUDGET_AGENT")
@@ -927,6 +927,27 @@ _build_specialist_prompt() {
                 echo "  Content is everything after filepath (no quoting)."
                 echo "  Creates parent directories automatically."
                 echo "  For multi-line, use \\n for newlines."
+                echo ""
+                echo "FEW-SHOT FORMATTING EXAMPLES:"
+                echo ""
+                echo "Markdown:"
+                echo '  /write README.md # Project Title\n\n## Overview\n\nA brief description of the project.\n\n## Installation\n\n```bash\nnpm install\n```\n\n## Usage\n\n- Step 1: Configure settings\n- Step 2: Run the app'
+                echo ""
+                echo "JSON:"
+                echo '  /write config.json {\n  "name": "my-project",\n  "version": "1.0.0",\n  "settings": {\n    "debug": false,\n    "port": 8080\n  },\n  "dependencies": ["express", "dotenv"]\n}'
+                echo ""
+                echo "XML:"
+                echo '  /write config.xml <?xml version="1.0" encoding="UTF-8"?>\n<config>\n  <server>\n    <host>localhost</host>\n    <port>8080</port>\n  </server>\n  <logging level="info" />\n</config>'
+                echo ""
+                echo "CSV:"
+                echo '  /write data.csv name,age,role\nAlice,30,engineer\nBob,25,designer\nCharlie,35,manager'
+                echo ""
+                echo "RULES:"
+                echo "  - Use \\n for newlines (NEVER literal line breaks in the command)."
+                echo "  - JSON: ensure valid syntax — matching braces, quoted keys."
+                echo "  - Markdown: use ## for headers, - for lists, triple backtick for code blocks."
+                echo "  - XML: always close tags. Use self-closing for empty elements."
+                echo "  - CSV/TSV: first row is header. Use commas (CSV) or tabs (TSV) consistently."
                 echo "Example: /write src/main.rs fn main() { println!(\"Hello\"); }"
                 ;;
             save)
@@ -1249,10 +1270,29 @@ agent_inner_loop() {
             # the output is empty or ANSI-garbled.
             echo -e "\n**Milestone Result:** COMPLETE — $summary" >> "$micro_file"
 
+            # ── Summarize micro_memory into milestone_summary ──
+            # The raw micro_memory can be hundreds of lines of Action/
+            # Status/Output blocks. The evaluator and macro_memory both
+            # struggle when flooded with raw output. Condense into ≤4
+            # sentences that capture what was done and the outcome.
+            local _micro_content _milestone_summary
+            _micro_content=$(cat "$micro_file" 2>/dev/null)
+            if [ -n "$_micro_content" ]; then
+                local _ms_prompt="In no more than 4 sentences, summarize this milestone execution log. Include the command(s) run, their outcomes, and whether the objective was met. No headers, no formatting.\n\n${_micro_content}"
+                local _ms_sys="You are a concise summarizer. In no more than 4 factual sentences, write your output. No personality. No formatting."
+                local LLM_SCENARIO=evaluator
+                _milestone_summary=$(llm_generate "$_ms_prompt" "$_ms_sys" 256 "$LLM_BUDGET_AGENT" 2>/dev/null)
+                # Strip think blocks
+                _milestone_summary=$(echo "$_milestone_summary" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+                _milestone_summary=$(echo "$_milestone_summary" | sed ':a;N;$!ba;s/<think>.*$//g')
+                _milestone_summary=$(echo "$_milestone_summary" | sed '/^[[:space:]]*$/d' | head -4)
+            fi
+            [ -z "$_milestone_summary" ] && _milestone_summary="$summary"
+
             if [ -n "$_last_success_cmd" ]; then
-                echo "- Step [$_step_ts]: $micro_objective -> $summary | ran: $_last_success_cmd (exit 0)" >> "$george_dir/macro_memory.md"
+                echo "- Step [$_step_ts]: $micro_objective -> milestone_summary: $_milestone_summary | ran: $_last_success_cmd" >> "$george_dir/macro_memory.md"
             else
-                echo "- Step [$_step_ts]: $micro_objective -> $summary" >> "$george_dir/macro_memory.md"
+                echo "- Step [$_step_ts]: $micro_objective -> milestone_summary: $_milestone_summary" >> "$george_dir/macro_memory.md"
             fi
             return 0
         fi
@@ -1273,7 +1313,7 @@ agent_inner_loop() {
             local _step_ts
             _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
             echo -e "\n**Milestone Result:** COMPLETE — $_suff_summary" >> "$micro_file"
-            echo "- Step [$_step_ts]: $micro_objective -> $_suff_summary" >> "$george_dir/macro_memory.md"
+            echo "- Step [$_step_ts]: $micro_objective -> milestone_summary: $_suff_summary" >> "$george_dir/macro_memory.md"
             return 0
         fi
 
@@ -2103,8 +2143,8 @@ ${_last_eval_feedback}
             local _macro_content
             _macro_content=$(cat "$macro_file" 2>/dev/null)
             if [ -n "$_macro_content" ]; then
-                local _sum_prompt="Summarize this task memory in 1-4 factual sentences. Include what was done, key outcomes, and any failures. No headers, no formatting, just the summary.\n\n${_macro_content}"
-                local _sum_sys="You are a concise summarizer. Write 1-4 factual sentences. No personality. No formatting."
+                local _sum_prompt="In no more than 4 sentences, summarize this task memory. Include what was done, key outcomes, and any failures. No headers, no formatting, just the summary.\n\n${_macro_content}"
+                local _sum_sys="In no more than 4 factual sentences, write your summary. No personality. No formatting."
                 local _task_journal_summary
                 local LLM_SCENARIO=journal
                 _task_journal_summary=$(llm_generate "$_sum_prompt" "$_sum_sys" 256 "$LLM_BUDGET_JOURNAL" 2>/dev/null)

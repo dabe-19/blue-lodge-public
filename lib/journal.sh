@@ -294,7 +294,7 @@ journal_apply_decay() {
             if [ -n "$old_entries" ]; then
                 local new_sediment
                 local LLM_SCENARIO=journal
-                new_sediment=$(llm_generate "You are compressing old journal entries into a single paragraph of impressions — things half-remembered, feelings that remain even when details have faded. Write in first person. Be poetic but brief (3-5 sentences). These are the old entries:
+                new_sediment=$(llm_generate "You are compressing old journal entries into a single paragraph of impressions — things half-remembered, feelings that remain even when details have faded. In no more than 5 sentences, write in first person. Be poetic but brief. These are the old entries:
 
 $old_entries" "You are George reflecting on faded memories." 512 "$LLM_BUDGET_JOURNAL")
                 
@@ -427,7 +427,7 @@ Directory: $(basename "$workdir")
 Execution log:
 $(echo -e "$exec_log")
 
-Write 2-4 sentences in first person. ONLY reference steps, outcomes, and errors shown above.
+In no more than 4 sentences, write a factual entry in first person. ONLY reference steps, outcomes, and errors shown above.
 Do NOT invent commands, files, or errors not in the log.
 Do NOT use headers or formatting. Just the raw entry."
     else
@@ -438,7 +438,7 @@ Current date/time: $(date '+%Y-%m-%d %H:%M:%S %Z')
 Context: $task_summary
 Directory: $(basename "$workdir")
 
-Write 1-2 sentences in first person. Keep it general since you don't have detailed logs.
+In no more than 2 sentences, write an entry in first person. Keep it general since you don't have detailed logs.
 Do NOT invent specific commands, files, or errors you didn't actually see.
 Do NOT use headers or formatting. Just the raw entry."
     fi
