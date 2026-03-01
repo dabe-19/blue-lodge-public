@@ -297,6 +297,7 @@ _llm_start_llamacpp_server() {
         -ngl "$LLAMA_CPP_GPU_LAYERS"
         -c "$LLAMA_CPP_CTX_SIZE"
         --threads "$(nproc 2>/dev/null || echo 4)"
+        --parallel 1    # single slot — saves RAM on phones; lodge uses sequential calls
     )
 
     # Chat template: use the Jinja2 engine for the template embedded in the

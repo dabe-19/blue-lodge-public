@@ -41,6 +41,7 @@ LLAMA_BIN="${LLAMA_BIN:-$TERMUX_HOME/llama.cpp/build/bin/llama-server}"
 PORT="${PORT:-8090}"
 GPU_LAYERS="${GPU_LAYERS:-1}"
 CTX_SIZE="${CTX_SIZE:-4096}"
+PARALLEL="${PARALLEL:-1}"           # slots — 1 is plenty for smoke test, saves RAM
 THREADS="${THREADS:-$(nproc 2>/dev/null || echo 4)}"
 MODEL_REF="${1:-blue-lodge-minist-inst:4b}"
 PROMPT="${PROMPT:-Hello! Tell me a one-sentence fun fact.}"
@@ -68,7 +69,9 @@ _dim()   { printf "${C_DIM}    %s${C_RESET}\n" "$1"; }
 
 # ── Cleanup ────────────────────────────────────────────────────
 SERVER_PID=""
+_USER_INTERRUPTED=0
 cleanup() {
+    _USER_INTERRUPTED=1
     if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
         _step "CLEANUP" "Stopping llama-server (PID $SERVER_PID)"
         kill "$SERVER_PID" 2>/dev/null
@@ -211,7 +214,7 @@ fi
 
 # ── Step 4: Start server ──────────────────────────────────────
 _step "4" "Starting llama-server"
-_dim "Port: $PORT | GPU layers: $GPU_LAYERS | Context: $CTX_SIZE | Threads: $THREADS"
+_dim "Port: $PORT | GPU layers: $GPU_LAYERS | Context: $CTX_SIZE | Threads: $THREADS | Slots: $PARALLEL"
 
 SERVER_LOG="${TMPDIR:-/tmp}/test-llama-server.log"
 > "$SERVER_LOG"
@@ -223,6 +226,7 @@ _launch_args=(
     -ngl "$GPU_LAYERS"
     -c "$CTX_SIZE"
     --threads "$THREADS"
+    --parallel "$PARALLEL"
 )
 
 # Use Jinja2 engine for GGUF-embedded chat template, or explicit file override
@@ -293,10 +297,13 @@ _dim "\"$PROMPT\""
 echo ""
 
 _start_time=$(date +%s)
-# Try OpenAI-compatible endpoint first, fall back to legacy /completion
+# Send a short system message to override the template's default system prompt.
+# Many fine-tuned templates (e.g. Unsloth Ministral) inject a massive default
+# system prompt (~400+ tokens) when none is provided. For a smoke test we just
+# need something minimal.
 _request_body=$(jq -n \
     --arg prompt "$PROMPT" \
-    '{messages: [{role: "user", content: $prompt}], max_tokens: 200, temperature: 0.7}')
+    '{messages: [{role: "system", content: "Reply concisely."}, {role: "user", content: $prompt}], max_tokens: 200, temperature: 0.7}')
 
 _response=$(curl -s --max-time 120 "http://127.0.0.1:$PORT/v1/chat/completions" \
     -H "Content-Type: application/json" \
@@ -304,6 +311,13 @@ _response=$(curl -s --max-time 120 "http://127.0.0.1:$PORT/v1/chat/completions" 
 
 # If empty reply (exit 52) or no response, check if server died
 if [ -z "$_response" ]; then
+    # Ctrl+C during curl returns empty — distinguish from real crash
+    if [ "$_USER_INTERRUPTED" -eq 1 ]; then
+        echo ""
+        _warn "Interrupted by user (Ctrl+C)"
+        exit 130
+    fi
+
     # Check if server process is still alive
     if ! kill -0 "$SERVER_PID" 2>/dev/null; then
         _fail "Server crashed during inference (likely OOM)"
