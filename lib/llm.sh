@@ -298,15 +298,54 @@ _llm_start_llamacpp_server() {
         return 1
     fi
 
-    # Check if already running
+    # Check if already running — adopt the existing server instead of failing.
+    # This handles: another Lodge session started it, the smoke test left it
+    # running, or this session's own PID file is still valid.
+    local _port_check
+    _port_check=$(echo "$LLAMA_CPP_URL" | grep -oP ':\K[0-9]+$' || echo "8080")
+    if curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null | grep -q '"status"'; then
+        [ "$quiet" != "--quiet" ] && ui_ok "llama-server already running on port $_port_check (adopted)"
+        _LLM_BACKEND_CACHE=""
+        LLAMA_CPP_MODEL="$model_path"
+        return 0
+    fi
+    # Server may be loading a model — wait up to 30s for it
+    local _loading_resp
+    _loading_resp=$(curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null)
+    if echo "$_loading_resp" | grep -q '"loading model"'; then
+        [ "$quiet" != "--quiet" ] && ui_dim "llama-server loading model on port $_port_check — waiting..."
+        local _wait=0
+        while [ $_wait -lt 30 ]; do
+            sleep 1
+            if curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null | grep -q '"ok"'; then
+                [ "$quiet" != "--quiet" ] && ui_ok "llama-server ready (adopted after ${_wait}s)"
+                _LLM_BACKEND_CACHE=""
+                LLAMA_CPP_MODEL="$model_path"
+                return 0
+            fi
+            _wait=$((_wait + 1))
+        done
+        [ "$quiet" != "--quiet" ] && ui_warn "llama-server still loading after 30s — starting fresh"
+    fi
+    # Check PID file — kill stale process before starting new one
     if [ -f "$_LLAMA_CPP_PID_FILE" ]; then
         local _existing_pid
         _existing_pid=$(cat "$_LLAMA_CPP_PID_FILE" 2>/dev/null)
         if kill -0 "$_existing_pid" 2>/dev/null; then
-            [ "$quiet" != "--quiet" ] && ui_warn "llama-server already running (PID $_existing_pid). Stop it first."
-            return 1
+            [ "$quiet" != "--quiet" ] && ui_dim "Stopping stale llama-server (PID $_existing_pid)"
+            kill "$_existing_pid" 2>/dev/null
+            sleep 1
+            kill -9 "$_existing_pid" 2>/dev/null
         fi
         rm -f "$_LLAMA_CPP_PID_FILE"
+    fi
+    # Also kill any orphan llama-server (e.g. smoke test or crashed session)
+    local _orphan_pid
+    _orphan_pid=$(pgrep -f "llama-server.*--port" 2>/dev/null | head -1)
+    if [ -n "$_orphan_pid" ]; then
+        [ "$quiet" != "--quiet" ] && ui_dim "Killing orphan llama-server (PID $_orphan_pid)"
+        kill -9 "$_orphan_pid" 2>/dev/null
+        sleep 1
     fi
 
     local _port
@@ -627,20 +666,35 @@ llm_ensure() {
     local backend
     backend=$(_llm_detect_backend)
 
-    # ── llamacpp already running? ──────────────────────────────
+    # ── llamacpp already running and healthy? ─────────────────
     if [ "$backend" = "llamacpp" ]; then
         llm_check
         local status=$?
         if [ "$status" -eq 0 ]; then
-            # Kill Ollama if it happens to be running alongside
             _llm_kill_ollama --quiet
             return 0
+        fi
+        # Server exists but still loading — wait for it
+        if [ "$status" -eq 2 ]; then
+            ui_dim "llama-server loading model — waiting..."
+            local _wait=0
+            while [ $_wait -lt 30 ]; do
+                sleep 1
+                llm_check
+                status=$?
+                [ "$status" -eq 0 ] && { _llm_kill_ollama --quiet; return 0; }
+                [ "$status" -ne 2 ] && break  # died or errored
+                _wait=$((_wait + 1))
+            done
+            # If we timed out but it's still loading, don't start another
+            llm_check
+            [ $? -eq 0 ] && { _llm_kill_ollama --quiet; return 0; }
+            [ $? -eq 2 ] && { ui_warn "llama-server still loading after 30s"; return 0; }
         fi
     fi
 
     # ── Try to auto-start llama-server (preferred backend) ─────
     if [ -x "$LLAMA_CPP_SERVER_BIN" ]; then
-        # Only attempt if not already running but we just checked
         if [ "$backend" != "llamacpp" ] || ! curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null | grep -q '"status"'; then
             ui_dim "llama-server available — starting..."
             # Resolve GGUF model to load

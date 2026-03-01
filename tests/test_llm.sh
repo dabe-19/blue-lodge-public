@@ -333,6 +333,24 @@ describe "Core LLM functions"
     assert_ok $? "llm_ensure must call _llm_kill_ollama"
   }
 
+  it "llm_ensure waits for loading llama-server (status 2)" && {
+    _body=$(declare -f llm_ensure 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'loading model'
+    assert_ok $? "llm_ensure must handle 'loading model' status"
+  }
+
+  it "_llm_start_llamacpp_server adopts existing healthy server" && {
+    _body=$(declare -f _llm_start_llamacpp_server 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'adopted'
+    assert_ok $? "start function must adopt existing healthy server"
+  }
+
+  it "_llm_start_llamacpp_server kills orphan processes" && {
+    _body=$(declare -f _llm_start_llamacpp_server 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'orphan'
+    assert_ok $? "start function must clean up orphan llama-server processes"
+  }
+
   it "llm_create_model is defined" && {
     declare -f llm_create_model &>/dev/null
     assert_ok $?
