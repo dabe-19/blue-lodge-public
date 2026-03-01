@@ -23,9 +23,9 @@ GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}"
 GEORGE_GNUPG_DIR="${GEORGE_GNUPG_DIR:-$GEORGE_CONFIG_DIR/.gnupg}"
 GEORGE_PGP_PUBKEY_FILE="${GEORGE_PGP_PUBKEY_FILE:-$GEORGE_CONFIG_DIR/george_public.asc}"
 
-# Default identity for the key
+# Default identity for the key (name/comment used as defaults, email always prompted)
 PGP_KEY_NAME="${PGP_KEY_NAME:-George (Blue Lodge Agent)}"
-PGP_KEY_EMAIL="${PGP_KEY_EMAIL:-george@blue-lodge.local}"
+PGP_KEY_EMAIL="${PGP_KEY_EMAIL:-}"
 PGP_KEY_COMMENT="${PGP_KEY_COMMENT:-Mobile-First Coding Agent}"
 
 # ── GPG wrapper (isolated keyring) ─────────────────────────────
@@ -65,14 +65,39 @@ pgp_init() {
 }
 
 # ── Check if George has a signing key ──────────────────────────
+# If PGP_KEY_EMAIL is set, checks for that specific key.
+# If empty, checks if ANY secret key exists in the keyring and
+# auto-populates PGP_KEY_EMAIL from the first one found.
 pgp_has_key() {
     pgp_init || return 1
-    _pgp_gpg --list-secret-keys "$PGP_KEY_EMAIL" &>/dev/null
+    if [ -n "$PGP_KEY_EMAIL" ]; then
+        _pgp_gpg --list-secret-keys "$PGP_KEY_EMAIL" &>/dev/null
+    else
+        # No email configured — check if any key exists
+        local _uid_line
+        _uid_line=$(_pgp_gpg --list-secret-keys --with-colons 2>/dev/null | grep '^uid:' | head -1)
+        if [ -n "$_uid_line" ]; then
+            # Auto-populate email from existing key: uid field format is
+            # uid:u::::timestamp::hash::Name (Comment) <email>::
+            local _email
+            _email=$(echo "$_uid_line" | grep -oP '<\K[^>]+')
+            if [ -n "$_email" ]; then
+                PGP_KEY_EMAIL="$_email"
+                # Also extract name if available
+                local _name
+                _name=$(echo "$_uid_line" | awk -F: '{print $10}' | sed 's/ <.*//' | sed 's/ (.*)//')
+                [ -n "$_name" ] && PGP_KEY_NAME="$_name"
+            fi
+            return 0
+        fi
+        return 1
+    fi
 }
 
 # ── Generate a new signing key ─────────────────────────────────
 # Creates an Ed25519 key (modern, fast, small signatures).
 # No passphrase — George is an automated agent.
+# Prompts interactively for email (required), name, and comment.
 pgp_generate_key() {
     pgp_init || return 1
 
@@ -81,6 +106,46 @@ pgp_generate_key() {
         ui_dim "Use /pgp fingerprint to see it, or /pgp revoke to replace"
         return 1
     fi
+
+    # ── Identity fields ─────────────────────────────────────
+    local _key_email="$PGP_KEY_EMAIL"
+    local _key_name="$PGP_KEY_NAME"
+    local _key_comment="$PGP_KEY_COMMENT"
+
+    # Skip interactive prompts when all identity fields are
+    # already configured (batch / test / scripted usage).
+    if [ -z "$_key_email" ] || [ -z "$_key_name" ] || [ -z "$_key_comment" ]; then
+        # Email is required — keep asking until provided
+        while [ -z "$_key_email" ]; do
+            printf " %b%s%b " "\033[1;37m" "Email address for the key:" "\033[0m"
+            read -r _key_email < /dev/tty 2>/dev/null || read -r _key_email
+            _key_email=$(echo "$_key_email" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            if [ -z "$_key_email" ]; then
+                ui_warn "Email is required for PGP key generation"
+            elif [[ ! "$_key_email" =~ ^[^@]+@[^@]+\.[^@]+$ ]]; then
+                ui_warn "Invalid email format: $_key_email"
+                _key_email=""
+            fi
+        done
+
+        # Name has a default — press Enter to accept
+        printf " %b%s%b %b[%s]%b " "\033[1;37m" "Key name:" "\033[0m" "\033[2m" "$_key_name" "\033[0m"
+        local _input_name
+        read -r _input_name < /dev/tty 2>/dev/null || read -r _input_name
+        _input_name=$(echo "$_input_name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        [ -n "$_input_name" ] && _key_name="$_input_name"
+
+        # Comment has a default — press Enter to accept
+        printf " %b%s%b %b[%s]%b " "\033[1;37m" "Comment:" "\033[0m" "\033[2m" "$_key_comment" "\033[0m"
+        local _input_comment
+        read -r _input_comment < /dev/tty 2>/dev/null || read -r _input_comment
+        _input_comment=$(echo "$_input_comment" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        [ -n "$_input_comment" ] && _key_comment="$_input_comment"
+
+        echo ""
+    fi
+
+    ui_dim "Creating key: $_key_name ($_key_comment) <$_key_email>"
 
     ui_step "Generating Ed25519 signing key..."
 
@@ -93,12 +158,17 @@ Key-Usage: sign
 Subkey-Type: eddsa
 Subkey-Curve: Ed25519
 Subkey-Usage: sign
-Name-Real: $PGP_KEY_NAME
-Name-Comment: $PGP_KEY_COMMENT
-Name-Email: $PGP_KEY_EMAIL
+Name-Real: $_key_name
+Name-Comment: $_key_comment
+Name-Email: $_key_email
 Expire-Date: 0
 %commit
 EOF
+
+    # Update module-level email so pgp_has_key and other functions work
+    PGP_KEY_EMAIL="$_key_email"
+    PGP_KEY_NAME="$_key_name"
+    PGP_KEY_COMMENT="$_key_comment"
 
     if [ $? -eq 0 ] && pgp_has_key; then
         ui_ok "PGP key generated"
