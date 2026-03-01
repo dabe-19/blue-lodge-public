@@ -396,7 +396,17 @@ _llm_start_llamacpp_server() {
         [ "$quiet" != "--quiet" ] && ui_dim "Chat template: GGUF-embedded (--jinja)"
     fi
 
-    "$LLAMA_CPP_SERVER_BIN" "${_launch_args[@]}" \
+    # When GPU_LAYERS=0, prevent llama.cpp from even initializing the
+    # Vulkan backend.  On Adreno 830 (Snapdragon 8 Elite), Vulkan init
+    # alone can corrupt GPU state — especially through proot's syscall
+    # translation layer — causing gibberish output and phone lockup.
+    local _server_env=()
+    if [ "$LLAMA_CPP_GPU_LAYERS" = "0" ]; then
+        _server_env=(env GGML_VK_VISIBLE_DEVICES="" GGML_CUDA_VISIBLE_DEVICES="")
+        [ "$quiet" != "--quiet" ] && ui_dim "Vulkan disabled (GPU layers = 0)"
+    fi
+
+    "${_server_env[@]}" "$LLAMA_CPP_SERVER_BIN" "${_launch_args[@]}" \
         > "${TMPDIR:-/tmp}/lodge-llama-server.log" 2>&1 &
     local _pid=$!
     echo "$_pid" > "$_LLAMA_CPP_PID_FILE"
@@ -409,6 +419,14 @@ _llm_start_llamacpp_server() {
             _LLM_BACKEND_CACHE=""
             LLAMA_CPP_MODEL="$model_path"
             [ "$quiet" != "--quiet" ] && ui_ok "llama-server started (PID $_pid)"
+            # Verify no unexpected GPU offload
+            local _log_file="${TMPDIR:-/tmp}/lodge-llama-server.log"
+            if [ "$LLAMA_CPP_GPU_LAYERS" = "0" ] && grep -qi 'offloaded.*layers to GPU\|vulkan' "$_log_file" 2>/dev/null; then
+                local _gpu_msg
+                _gpu_msg=$(grep -i 'offloaded\|vulkan' "$_log_file" 2>/dev/null | head -3)
+                [ "$quiet" != "--quiet" ] && ui_warn "Unexpected GPU activity in server log:"
+                echo "$_gpu_msg" | while IFS= read -r _l; do [ "$quiet" != "--quiet" ] && ui_dim "  $_l"; done
+            fi
             return 0
         fi
         # Check if process died

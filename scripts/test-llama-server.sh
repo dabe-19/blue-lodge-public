@@ -239,7 +239,15 @@ elif [ "$_use_jinja" -eq 1 ]; then
     _launch_args+=(--jinja)
 fi
 
-"$LLAMA_BIN" "${_launch_args[@]}" \
+# When GPU layers = 0, prevent Vulkan from even initializing.
+# On Adreno 830, Vulkan init alone corrupts GPU state through proot.
+_server_env=()
+if [ "$GPU_LAYERS" = "0" ]; then
+    _server_env=(env GGML_VK_VISIBLE_DEVICES="" GGML_CUDA_VISIBLE_DEVICES="")
+    _dim "Vulkan disabled (GPU layers = 0)"
+fi
+
+"${_server_env[@]}" "$LLAMA_BIN" "${_launch_args[@]}" \
     > "$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 _dim "PID: $SERVER_PID"

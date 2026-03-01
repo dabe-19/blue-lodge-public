@@ -357,6 +357,18 @@ describe "Core LLM functions"
     assert_ok $? "start function must clean up orphan llama-server processes"
   }
 
+  it "_llm_start_llamacpp_server disables Vulkan when GPU_LAYERS=0" && {
+    _body=$(declare -f _llm_start_llamacpp_server 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'GGML_VK_VISIBLE_DEVICES'
+    assert_ok $? "must set GGML_VK_VISIBLE_DEVICES to disable Vulkan init"
+  }
+
+  it "_llm_start_llamacpp_server checks log for unexpected GPU offload" && {
+    _body=$(declare -f _llm_start_llamacpp_server 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'Unexpected GPU activity'
+    assert_ok $? "must warn if GPU activity detected when GPU_LAYERS=0"
+  }
+
   it "llm_create_model is defined" && {
     declare -f llm_create_model &>/dev/null
     assert_ok $?
