@@ -122,6 +122,37 @@ _llm_normalize_think() {
     _ntref="${_ntref//\[\/thought\]/<\/think>}"
 }
 
+# ── Think display helpers ──────────────────────────────────────
+# Shared by both llamacpp and Ollama streaming paths.
+# Show the ┌─ thinking ─ / └──────────── banner on tty
+# when LODGE_THINK is enabled.
+# Bright (2) = cyan, Dimmed (1) = gray (SGR 90, widely supported).
+_llm_think_tty() {
+    local _t="/dev/tty"
+    [ -w /dev/tty ] 2>/dev/null || _t="/dev/stderr"
+    echo "$_t"
+}
+_llm_think_color() {
+    [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && printf "\033[36m" || printf "\033[90m"
+}
+_llm_think_open() {
+    [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ] || return
+    local _t; _t=$(_llm_think_tty)
+    local _c; _c=$(_llm_think_color)
+    printf "\n%s┌─ thinking ─\033[0m\n%s" "$_c" "$_c" > "$_t" 2>/dev/null
+}
+_llm_think_close() {
+    [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ] || return
+    local _t; _t=$(_llm_think_tty)
+    local _c; _c=$(_llm_think_color)
+    printf "\033[0m\n%s└────────────\033[0m\n" "$_c" > "$_t" 2>/dev/null
+}
+_llm_think_show() {
+    [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ] || return
+    local _t; _t=$(_llm_think_tty)
+    printf "%s" "$1" > "$_t" 2>/dev/null
+}
+
 # ── Sampling parameter resolver ────────────────────────────────
 # Resolves per-scenario sampling parameters based on LLM_SCENARIO.
 # Callers set `local LLM_SCENARIO=ask` before calling llm_generate/llm_stream/llm_chat.
@@ -1129,12 +1160,24 @@ llm_generate() {
 
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] generate (llamacpp): url=%s max_tokens=%s\n" "$LLAMA_CPP_URL" "$max_tokens" > "$_tty" 2>/dev/null
 
-        # ── Think-tag handling for llamacpp ────────────────────
-        # llama-server has no thinking API — all output is content tokens.
-        # Buffer the full response and strip <think>...</think> blocks
-        # before emitting to stdout. Show thinking tokens on tty if enabled.
-        local _gen_buffer=""
-        local _gen_in_think=0
+        # ── Think-tag state machine for llamacpp ─────────────────
+        # Reuses the same per-token inline-tag parsing infrastructure
+        # developed for Ollama. llama-server has no .thinking field so
+        # we are always in inline-tag fallback mode.
+        local _in_think_block=0
+        local _think_banner_open=0
+        local _can_think=0
+        models_current_has_thinking && _can_think=1
+        local _think_pending=""
+        local _response_pending=""
+        local _think_detect_limit=200
+
+        # Debug tty echo helper (same as Ollama path)
+        _gen_tty() {
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$1" ] && printf "\033[90m%s\033[0m" "$1" > "$_tty" 2>/dev/null
+        }
+
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate(llamacpp) think: _can_think=%s model=%s\n" "$_can_think" "$LODGE_MODEL" > "$_tty" 2>/dev/null
 
         # Use a FIFO so we can track and kill the curl PID independently
         # of the read loop. Without this, curl survives `break` and keeps
@@ -1158,8 +1201,29 @@ llm_generate() {
             [[ "$line" == data:* ]] || continue
             local json="${line#data: }"
 
-            # Stream termination
+            # Stream termination — flush buffers and break
             if [ "$json" = "[DONE]" ]; then
+                # Close thinking banner if still open
+                if [ "$_think_banner_open" -eq 1 ]; then
+                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                        _llm_think_close "$_tty"
+                    fi
+                fi
+                # Flush response_pending buffer (short response, <think> never arrived)
+                if [ -n "$_response_pending" ]; then
+                    _llm_normalize_think _response_pending
+                    _response_pending="${_response_pending//<\/think>/}"
+                    _response_pending="${_response_pending//<think>/}"
+                    [ -n "$_response_pending" ] && printf "%s" "$_response_pending"
+                    [ -n "$_response_pending" ] && _gen_tty "$_response_pending"
+                fi
+                # Flush pending think text as response if </think> never arrived
+                if [ "$_in_think_block" -eq 1 ] && [ -n "$_think_pending" ]; then
+                    _llm_normalize_think _think_pending
+                    _think_pending="${_think_pending//<\/think>/}"
+                    printf "%s" "$_think_pending"
+                    _gen_tty "$_think_pending"
+                fi
                 if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
                     _llm_debug_end_timer "generate(llamacpp)" "?" "$_dbg_out"
                 fi
@@ -1168,12 +1232,99 @@ llm_generate() {
 
             local token
             token=$(echo "$json" | jq -r '.choices[0].delta.content // empty' 2>/dev/null)
-            if [ -n "$token" ]; then
-                [ -f "$_got_tokens" ] || touch "$_got_tokens"
-                _gen_buffer="${_gen_buffer}${token}"
-                _dbg_out=$((_dbg_out + 1))
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\033[90m%s\033[0m" "$token" > "$_tty" 2>/dev/null
+            [ -n "$token" ] || continue
+            [ -f "$_got_tokens" ] || touch "$_got_tokens"
+            _dbg_out=$((_dbg_out + 1))
+
+            # Strip <response>...</response> wrapper tags (Granite4 format)
+            token="${token//<response>/}"
+            token="${token//<\/response>/}"
+
+            # Normalize bracket think tags → <think>/</think>
+            _llm_normalize_think token
+
+            # ── Inline-tag state machine (mirrors Ollama path) ─────
+            # Phase 1: Preamble buffering — detect <think> in early tokens
+            if [ "$_can_think" -eq 1 ] && [ "$_in_think_block" -eq 0 ]; then
+                _response_pending+="$token"
+                _llm_normalize_think _response_pending
+                if [[ "$_response_pending" == *"<think>"* ]]; then
+                    _in_think_block=1
+                    _think_pending="${_response_pending#*<think>}"
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate(llamacpp): <think> detected inline (at %d chars)\n" "${#_response_pending}" > "$_tty" 2>/dev/null
+                    # Output anything before <think> as response (preamble)
+                    local _before="${_response_pending%%<think>*}"
+                    _before="${_before//<\/think>/}"
+                    [ -n "$_before" ] && printf "%s" "$_before"
+                    [ -n "$_before" ] && _gen_tty "$_before"
+                    _response_pending=""
+                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                        _think_banner_open=1
+                        _llm_think_open "$_tty"
+                    fi
+                elif [ ${#_response_pending} -ge $_think_detect_limit ]; then
+                    # No <think> found in preamble buffer — flush and disable
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate(llamacpp): no <think> in %d chars, flushing\n" "$_think_detect_limit" > "$_tty" 2>/dev/null
+                    _response_pending="${_response_pending//<\/think>/}"
+                    printf "%s" "$_response_pending"
+                    _gen_tty "$_response_pending"
+                    _response_pending=""
+                    _can_think=0
+                fi
+                continue
             fi
+
+            # Phase 2: Inside think block — look for </think>
+            if [ "$_in_think_block" -eq 1 ]; then
+                _think_pending+="$token"
+                _llm_normalize_think _think_pending
+                if [[ "$_think_pending" == *"</think>"* ]]; then
+                    local _think_before="${_think_pending%%</think>*}"
+                    local _after_think="${_think_pending#*</think>}"
+                    _after_think="${_after_think//<\/think>/}"
+                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                        _llm_think_show "$_think_before" "$_tty"
+                        _think_banner_open=0
+                        _llm_think_close "$_tty"
+                    fi
+                    _in_think_block=0
+                    _think_pending=""
+                    [ -n "$_after_think" ] && printf "%s" "$_after_think"
+                    [ -n "$_after_think" ] && _gen_tty "$_after_think"
+                    continue
+                fi
+                # Flush safe prefix, keep 7-char tail for split </think> detection
+                local _plen=${#_think_pending}
+                if [ "$_plen" -gt 7 ]; then
+                    local _flen=$((_plen - 7))
+                    local _ftxt="${_think_pending:0:_flen}"
+                    _think_pending="${_think_pending:_flen}"
+                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                        _llm_think_show "$_ftxt" "$_tty"
+                    fi
+                fi
+                continue
+            fi
+
+            # Phase 3: Normal response token (after </think> or non-thinking model)
+            # Strip orphan </think> tags
+            token="${token//<\/think>/}"
+            # Check for late <think> re-entry
+            if [[ "$token" == *"<think>"* ]]; then
+                local _before_late="${token%%<think>*}"
+                [ -n "$_before_late" ] && printf "%s" "$_before_late"
+                [ -n "$_before_late" ] && _gen_tty "$_before_late"
+                _in_think_block=1
+                _can_think=1
+                _think_pending="${token#*<think>}"
+                if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                    _think_banner_open=1
+                    _llm_think_open "$_tty"
+                fi
+                continue
+            fi
+            [ -n "$token" ] && printf "%s" "$token"
+            [ -n "$token" ] && _gen_tty "$token"
         done < "$_fifo"
 
         # Kill curl immediately — closes the TCP connection so llama-server
@@ -1190,20 +1341,6 @@ llm_generate() {
             return 1
         fi
         rm -f "$_got_tokens"
-
-        # Strip think blocks from buffered output before emitting.
-        # Normalize bracket variants first, then strip <think>...</think>.
-        _llm_normalize_think _gen_buffer
-        # Strip complete think blocks (multi-line)
-        _gen_buffer=$(echo "$_gen_buffer" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-        # Strip unclosed think blocks (token limit truncated before </think>)
-        _gen_buffer=$(echo "$_gen_buffer" | sed ':a;N;$!ba;s/<think>.*$//g')
-        # Strip <response>...</response> tags (Granite4 format)
-        _gen_buffer="${_gen_buffer//<response>/}"
-        _gen_buffer="${_gen_buffer//<\/response>/}"
-        # Trim leading/trailing whitespace
-        _gen_buffer=$(echo "$_gen_buffer" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        printf "%s" "$_gen_buffer"
         return 0
     fi
 
@@ -1582,14 +1719,19 @@ llm_stream() {
 
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] stream (llamacpp): url=%s max_tokens=%s\n" "$LLAMA_CPP_URL" "$max_tokens" > "$_tty" 2>/dev/null
 
-        # ── Think-tag state for llamacpp streaming ─────────────
-        # llama-server has no thinking API: thinking tokens arrive as
-        # regular content. We track <think>/</ think> (and bracket
-        # variants) in real-time and divert thinking tokens to tty
-        # (if enabled) instead of stdout/tty response output.
-        local _stream_in_think=0
-        local _stream_think_banner=0
-        local _stream_token_buf=""
+        # ── Think-tag state machine for llamacpp streaming ───────
+        # Reuses the same per-token inline-tag parsing infrastructure
+        # developed for Ollama. llama-server has no .thinking field so
+        # we are always in inline-tag fallback mode.
+        local _think_banner_open=0
+        local _in_think_block=0
+        local _can_think=0
+        models_current_has_thinking && _can_think=1
+        local _think_pending=""
+        local _response_pending=""
+        local _think_detect_limit=200
+
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream(llamacpp) think: _can_think=%s model=%s LODGE_THINK=%s\n" "$_can_think" "$LODGE_MODEL" "${LODGE_THINK:-0}" > "$_tty" 2>/dev/null
 
         # FIFO for curl → read loop decoupling (enables PID tracking)
         local _fifo="$_tmpdir/.lodge-fifo-stream-$$"
@@ -1609,10 +1751,26 @@ llm_stream() {
             [[ "$line" == data:* ]] || continue
             local json="${line#data: }"
 
+            # Stream termination — flush buffers and break
             if [ "$json" = "[DONE]" ]; then
-                # Close think banner if still open (unclosed think block)
-                if [ "$_stream_in_think" -eq 1 ] && [ "$_stream_think_banner" -eq 1 ]; then
-                    _think_close
+                # Close thinking banner if still open
+                if [ "$_think_banner_open" -eq 1 ]; then
+                    _llm_think_close "$_tty"
+                fi
+                # Flush response_pending buffer (short response, <think> never arrived)
+                if [ -n "$_response_pending" ]; then
+                    _llm_normalize_think _response_pending
+                    _response_pending="${_response_pending//<\/think>/}"
+                    _response_pending="${_response_pending//<think>/}"
+                    [ -n "$_response_pending" ] && printf "%s" "$_response_pending"
+                    [ -n "$_response_pending" ] && printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
+                fi
+                # Flush pending think text as response if </think> never arrived
+                if [ "$_in_think_block" -eq 1 ] && [ -n "$_think_pending" ]; then
+                    _llm_normalize_think _think_pending
+                    _think_pending="${_think_pending//<\/think>/}"
+                    [ -n "$_think_pending" ] && printf "%s" "$_think_pending"
+                    [ -n "$_think_pending" ] && printf "%s" "$_think_pending" > "$_tty" 2>/dev/null
                 fi
                 if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
                     _llm_debug_end_timer "stream(llamacpp)" "?" "$_dbg_out"
@@ -1624,77 +1782,104 @@ llm_stream() {
 
             local token
             token=$(echo "$json" | jq -r '.choices[0].delta.content // empty' 2>/dev/null)
-            if [ -n "$token" ]; then
-                # Kill spinner on first token
-                if [ ! -f "$_llm_ft_file" ]; then
-                    touch "$_llm_ft_file"
-                    kill "$_llm_spinner_pid" 2>/dev/null
-                    printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
-                fi
+            [ -n "$token" ] || continue
 
-                # Normalize bracket think tags inline
-                _llm_normalize_think token
-
-                # Accumulate into buffer for tag boundary detection
-                _stream_token_buf="${_stream_token_buf}${token}"
-
-                # Detect think open: <think> in buffer
-                while [[ "$_stream_token_buf" == *"<think>"* ]]; do
-                    # Emit everything before <think> as response
-                    local _pre="${_stream_token_buf%%<think>*}"
-                    if [ -n "$_pre" ] && [ "$_stream_in_think" -eq 0 ]; then
-                        printf "%s" "$_pre"
-                        printf "%s" "$_pre" > "$_tty" 2>/dev/null
-                    fi
-                    _stream_token_buf="${_stream_token_buf#*<think>}"
-                    _stream_in_think=1
-                    # Show think banner on tty
-                    if [ "$_stream_think_banner" -eq 0 ]; then
-                        _stream_think_banner=1
-                        _think_open
-                    fi
-                done
-
-                # Detect think close: </think> in buffer
-                while [[ "$_stream_token_buf" == *"</think>"* ]]; do
-                    # Show thinking content on tty if enabled
-                    local _think_content="${_stream_token_buf%%</think>*}"
-                    _think_show "$_think_content"
-                    _stream_token_buf="${_stream_token_buf#*</think>}"
-                    _stream_in_think=0
-                    if [ "$_stream_think_banner" -eq 1 ]; then
-                        _think_close
-                        _stream_think_banner=0
-                    fi
-                done
-
-                # Emit buffered non-think content (keep small tail for
-                # boundary detection in case <think> spans multiple tokens)
-                if [ "$_stream_in_think" -eq 0 ]; then
-                    # Safe to emit if buffer doesn't contain a partial tag
-                    if [[ "$_stream_token_buf" != *"<"* ]]; then
-                        if [ -n "$_stream_token_buf" ]; then
-                            printf "%s" "$_stream_token_buf"
-                            printf "%s" "$_stream_token_buf" > "$_tty" 2>/dev/null
-                        fi
-                        _stream_token_buf=""
-                    elif [ ${#_stream_token_buf} -gt 20 ]; then
-                        # Buffer growing — partial "<" is likely just content
-                        printf "%s" "$_stream_token_buf"
-                        printf "%s" "$_stream_token_buf" > "$_tty" 2>/dev/null
-                        _stream_token_buf=""
-                    fi
-                else
-                    # Inside think block — show tokens on tty
-                    _think_show "$_stream_token_buf"
-                    _stream_token_buf=""
-                fi
-
-                # Strip <response>/</ response> tags (Granite4)
-                # (handled in buffer above; residual tags cleaned here)
-
-                _dbg_out=$((_dbg_out + 1))
+            # Kill spinner on first token
+            if [ ! -f "$_llm_ft_file" ]; then
+                touch "$_llm_ft_file"
+                kill "$_llm_spinner_pid" 2>/dev/null
+                printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
             fi
+
+            _dbg_out=$((_dbg_out + 1))
+
+            # Strip <response>...</response> wrapper tags (Granite4 format)
+            token="${token//<response>/}"
+            token="${token//<\/response>/}"
+
+            # Normalize bracket think tags → <think>/</think>
+            _llm_normalize_think token
+
+            # ── Inline-tag state machine (mirrors Ollama path) ─────
+            # Phase 1: Preamble buffering — detect <think> in early tokens
+            if [ "$_can_think" -eq 1 ] && [ "$_in_think_block" -eq 0 ]; then
+                _response_pending+="$token"
+                _llm_normalize_think _response_pending
+                if [[ "$_response_pending" == *"<think>"* ]]; then
+                    _in_think_block=1
+                    _think_pending="${_response_pending#*<think>}"
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream(llamacpp): <think> detected inline (at %d chars)\n" "${#_response_pending}" > "$_tty" 2>/dev/null
+                    # Output anything before <think> as response (preamble)
+                    local _before="${_response_pending%%<think>*}"
+                    _before="${_before//<\/think>/}"
+                    if [ -n "$_before" ]; then
+                        printf "%s" "$_before"
+                        printf "%s" "$_before" > "$_tty" 2>/dev/null
+                    fi
+                    _response_pending=""
+                    _think_banner_open=1
+                    _llm_think_open "$_tty"
+                elif [ ${#_response_pending} -ge $_think_detect_limit ]; then
+                    # No <think> found in preamble buffer — flush and disable
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream(llamacpp): no <think> in %d chars, flushing\n" "$_think_detect_limit" > "$_tty" 2>/dev/null
+                    _response_pending="${_response_pending//<\/think>/}"
+                    printf "%s" "$_response_pending"
+                    printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
+                    _response_pending=""
+                    _can_think=0
+                fi
+                continue
+            fi
+
+            # Phase 2: Inside think block — look for </think>
+            if [ "$_in_think_block" -eq 1 ]; then
+                _think_pending+="$token"
+                _llm_normalize_think _think_pending
+                if [[ "$_think_pending" == *"</think>"* ]]; then
+                    local _think_before="${_think_pending%%</think>*}"
+                    local _after_think="${_think_pending#*</think>}"
+                    _after_think="${_after_think//<\/think>/}"
+                    _llm_think_show "$_think_before" "$_tty"
+                    _think_banner_open=0
+                    _llm_think_close "$_tty"
+                    _in_think_block=0
+                    _think_pending=""
+                    if [ -n "$_after_think" ]; then
+                        printf "%s" "$_after_think"
+                        printf "%s" "$_after_think" > "$_tty" 2>/dev/null
+                    fi
+                    continue
+                fi
+                # Flush safe prefix, keep 7-char tail for split </think> detection
+                local _plen=${#_think_pending}
+                if [ "$_plen" -gt 7 ]; then
+                    local _flen=$((_plen - 7))
+                    local _ftxt="${_think_pending:0:_flen}"
+                    _think_pending="${_think_pending:_flen}"
+                    _llm_think_show "$_ftxt" "$_tty"
+                fi
+                continue
+            fi
+
+            # Phase 3: Normal response token (after </think> or non-thinking model)
+            # Strip orphan </think> tags
+            token="${token//<\/think>/}"
+            # Check for late <think> re-entry
+            if [[ "$token" == *"<think>"* ]]; then
+                local _before_late="${token%%<think>*}"
+                if [ -n "$_before_late" ]; then
+                    printf "%s" "$_before_late"
+                    printf "%s" "$_before_late" > "$_tty" 2>/dev/null
+                fi
+                _in_think_block=1
+                _can_think=1
+                _think_pending="${token#*<think>}"
+                _think_banner_open=1
+                _llm_think_open "$_tty"
+                continue
+            fi
+            [ -n "$token" ] && printf "%s" "$token"
+            [ -n "$token" ] && printf "%s" "$token" > "$_tty" 2>/dev/null
         done < "$_fifo"
 
         # Kill curl → closes TCP → llama-server aborts inference slot
@@ -1773,24 +1958,11 @@ llm_stream() {
     # ── Think display helpers ─────────────────────────────────────
     # Both modes get the same ┌─ thinking ─ / └──────────── structure.
     # Bright (2) = cyan, Dimmed (1) = gray (SGR 90, widely supported).
-    # Extracted so every open/close site is consistent.
-    _think_color() {
-        [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && printf "\033[36m" || printf "\033[90m"
-    }
-    _think_open() {
-        [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ] || return
-        local _c; _c=$(_think_color)
-        printf "\n%s┌─ thinking ─\033[0m\n%s" "$_c" "$_c" > "$_tty" 2>/dev/null
-    }
-    _think_close() {
-        [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ] || return
-        local _c; _c=$(_think_color)
-        printf "\033[0m\n%s└────────────\033[0m\n" "$_c" > "$_tty" 2>/dev/null
-    }
-    _think_show() {
-        [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ] || return
-        printf "%s" "$1" > "$_tty" 2>/dev/null
-    }
+    # Delegate to top-level _llm_think_* functions (shared with llamacpp).
+    _think_color() { _llm_think_color; }
+    _think_open() { _llm_think_open; }
+    _think_close() { _llm_think_close; }
+    _think_show() { _llm_think_show "$@"; }
 
     # ── Thinking detection modes ──────────────────────────────────
     # Modern Ollama (0.9+) sends thinking tokens in a separate .thinking

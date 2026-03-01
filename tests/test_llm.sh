@@ -847,9 +847,10 @@ describe "Thinking mode configuration (thinking-only model)"
   }
 
   it "llm_stream shows bright thinking header when LODGE_THINK_STREAM=2" && {
-    body=$(declare -f llm_stream)
+    body=$(declare -f _llm_think_color)
     echo "$body" | grep -q 'LODGE_THINK_STREAM.*-eq 2'
     assert_ok $?
+    body=$(declare -f llm_stream)
     echo "$body" | grep -q 'thinking'
     assert_ok $?
   }
