@@ -204,6 +204,28 @@ _llm_detect_backend() {
         return 0
     fi
 
+    # Process-based port discovery: if configured port didn't respond, check
+    # for a running llama-server and try its actual --port value.
+    local _running_port
+    _running_port=$(ps aux 2>/dev/null | grep -oP 'llama-server.*--port\s+\K[0-9]+' | head -1)
+    if [ -z "$_running_port" ]; then
+        # pgrep + /proc/PID/cmdline fallback (Termux/proot may lack ps aux)
+        local _srv_pid
+        _srv_pid=$(pgrep -f "llama-server" 2>/dev/null | head -1)
+        if [ -n "$_srv_pid" ] && [ -f "/proc/$_srv_pid/cmdline" ]; then
+            _running_port=$(tr '\0' ' ' < "/proc/$_srv_pid/cmdline" 2>/dev/null | grep -oP '\-\-port\s+\K[0-9]+')
+        fi
+    fi
+    if [ -n "$_running_port" ] && [ "$_running_port" != "$(echo "$LLAMA_CPP_URL" | grep -oP ':\K[0-9]+$')" ]; then
+        local _alt_url="http://127.0.0.1:$_running_port"
+        if curl -sf --max-time 2 "$_alt_url/health" 2>/dev/null | grep -q '"status"'; then
+            LLAMA_CPP_URL="$_alt_url"
+            _LLM_BACKEND_CACHE="llamacpp"
+            echo "llamacpp"
+            return 0
+        fi
+    fi
+
     # Fallback to Ollama
     if curl -sf --max-time 2 "$OLLAMA_URL/api/tags" &>/dev/null; then
         _LLM_BACKEND_CACHE="ollama"

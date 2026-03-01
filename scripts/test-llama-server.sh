@@ -38,7 +38,7 @@ TERMUX_HOME="${TERMUX_HOME:-/data/data/com.termux/files/home}"
 
 OLLAMA_DIR="$TERMUX_HOME/.ollama/models"
 LLAMA_BIN="${LLAMA_BIN:-$TERMUX_HOME/llama.cpp/build/bin/llama-server}"
-PORT="${PORT:-8090}"
+PORT="${PORT:-8080}"        # 8080 = llama-server default & Lodge LLAMA_CPP_URL default
 GPU_LAYERS="${GPU_LAYERS:-0}"
 CTX_SIZE="${CTX_SIZE:-4096}"
 PARALLEL="${PARALLEL:-1}"           # slots — 1 is plenty for smoke test, saves RAM
