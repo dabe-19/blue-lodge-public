@@ -1463,6 +1463,9 @@ models_apply_defaults() {
     LLM_TEMPERATURE="$_ME_TEMP"
     LLM_REPEAT_PENALTY="$_ME_REPEAT"
     LLM_PRESENCE_PENALTY="$_ME_PRESENCE"
+    LLM_TOP_P="$_ME_TOP_P"
+    LLM_TOP_K="$_ME_TOP_K"
+    LLM_MIN_P="$_ME_MIN_P"
 
     # ── Per-scenario: clear overrides so they inherit model base ──
     # _llm_build_opts() pattern: temp="${LLM_TEMP_ASK:-$model_temp}"

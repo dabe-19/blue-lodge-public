@@ -183,6 +183,35 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     assert_ok $?
   }
 
+  it "_llm_build_opts includes top_p from model registry" && {
+    unset LLM_SCENARIO
+    # Switch to granite4 which has top_p=0.85
+    _saved_model="$LODGE_MODEL"
+    LODGE_MODEL="blue-lodge-granite4:3b"
+    _result=$(_llm_build_opts 512)
+    LODGE_MODEL="$_saved_model"
+    _tp=$(echo "$_result" | jq -r '.top_p')
+    assert_eq "$_tp" "0.85"
+  }
+
+  it "_llm_build_opts includes top_k from model registry" && {
+    unset LLM_SCENARIO
+    _saved_model="$LODGE_MODEL"
+    LODGE_MODEL="blue-lodge-granite4:3b"
+    _result=$(_llm_build_opts 512)
+    LODGE_MODEL="$_saved_model"
+    _tk=$(echo "$_result" | jq -r '.top_k')
+    assert_eq "$_tk" "50"
+  }
+
+  it "_llm_build_opts includes min_p from model registry" && {
+    unset LLM_SCENARIO
+    _result=$(_llm_build_opts 512)
+    _mp=$(echo "$_result" | jq -r '.min_p')
+    # All current models have min_p=0.0
+    assert_eq "$_mp" "0.0"
+  }
+
   it "thinking directive injected for strategist scenario" && {
     # Strategist gets thinking — safeguarded by LLM_STRATEGIST_TOKENS cap
     # and milestone cleanup. Only router is excluded.
@@ -238,6 +267,21 @@ describe "models_apply_defaults"
     assert_eq "$LLM_TEMPERATURE" "0.125"
     assert_eq "$LLM_REPEAT_PENALTY" "1.0"
     assert_eq "$LLM_PRESENCE_PENALTY" "0.0"
+  }
+
+  it "models_apply_defaults sets top_p/top_k/min_p globals" && {
+    models_apply_defaults "blue-lodge-minist-inst:4b" 2>/dev/null
+    assert_eq "$LLM_TOP_P" "0.9"
+    assert_eq "$LLM_TOP_K" "40"
+    assert_eq "$LLM_MIN_P" "0.0"
+  }
+
+  it "models_apply_defaults top_p/top_k track model switch" && {
+    models_apply_defaults "blue-lodge-granite4:3b" 2>/dev/null
+    assert_eq "$LLM_TOP_P" "0.85"
+    assert_eq "$LLM_TOP_K" "50"
+    # Restore
+    models_apply_defaults "blue-lodge-minist-inst:4b" 2>/dev/null
   }
 
   it "models_apply_defaults clears per-scenario overrides" && {
@@ -417,6 +461,30 @@ describe "Repeat penalty → frequency penalty conversion"
     _body=$(declare -f llm_chat 2>/dev/null || echo "")
     echo "$_body" | grep -q '_llm_repeat_to_freq'
     assert_ok $? "must call _llm_repeat_to_freq for penalty conversion"
+  }
+
+  it "_llm_build_llamacpp_payload forwards top_p" && {
+    _body=$(declare -f _llm_build_llamacpp_payload 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'top_p'
+    assert_ok $? "must include top_p in llamacpp payload"
+  }
+
+  it "_llm_build_llamacpp_payload forwards top_k" && {
+    _body=$(declare -f _llm_build_llamacpp_payload 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'top_k'
+    assert_ok $? "must include top_k in llamacpp payload"
+  }
+
+  it "_llm_build_llamacpp_payload forwards min_p" && {
+    _body=$(declare -f _llm_build_llamacpp_payload 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'min_p'
+    assert_ok $? "must include min_p in llamacpp payload"
+  }
+
+  it "llm_chat llamacpp path forwards top_p/top_k/min_p" && {
+    _body=$(declare -f llm_chat 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'top_p' && echo "$_body" | grep -q 'top_k' && echo "$_body" | grep -q 'min_p'
+    assert_ok $? "llm_chat llamacpp must forward top_p, top_k, min_p"
   }
 
 # ── Process lifecycle (curl PID tracking, FIFO cleanup) ────────

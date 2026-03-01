@@ -126,11 +126,14 @@ _llm_build_opts() {
     # These come from the model registry + any per-model overrides,
     # so Llama/Granite/Ministral get their own tuned defaults
     # instead of Qwen3's values.
-    local model_temp model_rep model_pres
+    local model_temp model_rep model_pres model_top_p model_top_k model_min_p
     if declare -f models_get_param &>/dev/null && [ -n "$LODGE_MODEL" ]; then
         model_temp=$(models_get_param "$LODGE_MODEL" temp 2>/dev/null) || model_temp=""
         model_rep=$(models_get_param "$LODGE_MODEL" repeat 2>/dev/null) || model_rep=""
         model_pres=$(models_get_param "$LODGE_MODEL" presence 2>/dev/null) || model_pres=""
+        model_top_p=$(models_get_param "$LODGE_MODEL" top_p 2>/dev/null) || model_top_p=""
+        model_top_k=$(models_get_param "$LODGE_MODEL" top_k 2>/dev/null) || model_top_k=""
+        model_min_p=$(models_get_param "$LODGE_MODEL" min_p 2>/dev/null) || model_min_p=""
     fi
     # Fall back to globals if model lookup fails
     model_temp="${model_temp:-$LLM_TEMPERATURE}"
@@ -139,11 +142,14 @@ _llm_build_opts() {
     model_rep="${model_rep:-1.2}"
     model_pres="${model_pres:-$LLM_PRESENCE_PENALTY}"
     model_pres="${model_pres:-0.3}"
+    model_top_p="${model_top_p:-${LLM_TOP_P:-1.0}}"
+    model_top_k="${model_top_k:-${LLM_TOP_K:-40}}"
+    model_min_p="${model_min_p:-${LLM_MIN_P:-0.0}}"
 
     # ── Step 2: Apply per-scenario overrides ──────────────────
     # If a scenario-specific value is set, it REPLACES the model
     # default (absolute value, NOT additive). Empty = inherit model.
-    local temp rep pres
+    local temp rep pres top_p top_k min_p
     case "$scenario" in
         ask)     temp="${LLM_TEMP_ASK:-$model_temp}"; rep="${LLM_REPEAT_ASK:-$model_rep}"; pres="${LLM_PRESENCE_ASK:-$model_pres}" ;;
         agent)      temp="${LLM_TEMP_AGENT:-$model_temp}"; rep="${LLM_REPEAT_AGENT:-$model_rep}"; pres="${LLM_PRESENCE_AGENT:-$model_pres}" ;;
@@ -153,13 +159,20 @@ _llm_build_opts() {
         tool)    temp="${LLM_TEMP_TOOL:-$model_temp}"; rep="${LLM_REPEAT_TOOL:-$model_rep}"; pres="${LLM_PRESENCE_TOOL:-$model_pres}" ;;
         *)       temp="$model_temp"; rep="$model_rep"; pres="$model_pres" ;;
     esac
+    # top_p / top_k / min_p are model-specific, not scenario-specific
+    top_p="$model_top_p"
+    top_k="$model_top_k"
+    min_p="$model_min_p"
 
     jq -n \
         --argjson np "$np" \
         --argjson temp "$temp" \
         --argjson rep "$rep" \
         --argjson pres "$pres" \
-        '{num_predict:$np, temperature:$temp, repeat_penalty:$rep, presence_penalty:$pres}'
+        --argjson top_p "$top_p" \
+        --argjson top_k "$top_k" \
+        --argjson min_p "$min_p" \
+        '{num_predict:$np, temperature:$temp, repeat_penalty:$rep, presence_penalty:$pres, top_p:$top_p, top_k:$top_k, min_p:$min_p}'
 }
 
 # ── Debug tracking state ───────────────────────────────────────
@@ -496,10 +509,13 @@ _llm_build_llamacpp_payload() {
     local stream="${5:-true}"
 
     # Extract sampling params from opts_json (Ollama-format keys)
-    local temp rep_raw pres
+    local temp rep_raw pres top_p top_k min_p
     temp=$(echo "$opts_json" | jq -r '.temperature // 0.7')
     rep_raw=$(echo "$opts_json" | jq -r '.repeat_penalty // 1.2')
     pres=$(echo "$opts_json" | jq -r '.presence_penalty // 0.3')
+    top_p=$(echo "$opts_json" | jq -r '.top_p // 1.0')
+    top_k=$(echo "$opts_json" | jq -r '.top_k // 40')
+    min_p=$(echo "$opts_json" | jq -r '.min_p // 0.0')
 
     # Convert Ollama repeat_penalty → OpenAI frequency_penalty
     local freq
@@ -518,14 +534,18 @@ _llm_build_llamacpp_payload() {
             '[{role:"user",content:$usr}]')
     fi
 
+    # top_p is standard OpenAI; top_k and min_p are llama-server extensions
     jq -n \
         --argjson messages "$messages" \
         --argjson max_tokens "$max_tokens" \
         --argjson temperature "$temp" \
         --argjson frequency_penalty "$freq" \
         --argjson presence_penalty "$pres" \
+        --argjson top_p "$top_p" \
+        --argjson top_k "$top_k" \
+        --argjson min_p "$min_p" \
         --argjson stream "$stream" \
-        '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, stream:$stream}'
+        '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream}'
 }
 
 # ── Parse llama.cpp SSE stream line ────────────────────────────
@@ -1902,11 +1922,14 @@ llm_chat() {
     # Cleanest backend translation — llama-server natively uses
     # OpenAI messages format. No payload wrapping needed.
     if [ "$_active_backend" = "llamacpp" ]; then
-        local temp rep_raw pres max_tok freq
+        local temp rep_raw pres max_tok freq top_p top_k min_p
         temp=$(echo "$_opts" | jq -r '.temperature // 0.7')
         rep_raw=$(echo "$_opts" | jq -r '.repeat_penalty // 1.2')
         pres=$(echo "$_opts" | jq -r '.presence_penalty // 0.3')
         max_tok=$(echo "$_opts" | jq -r '.num_predict // 4096')
+        top_p=$(echo "$_opts" | jq -r '.top_p // 1.0')
+        top_k=$(echo "$_opts" | jq -r '.top_k // 40')
+        min_p=$(echo "$_opts" | jq -r '.min_p // 0.0')
 
         # Convert Ollama repeat_penalty → OpenAI frequency_penalty
         freq=$(_llm_repeat_to_freq "$rep_raw")
@@ -1920,13 +1943,17 @@ llm_chat() {
             full_messages="$messages"
         fi
 
+        # top_p is standard OpenAI; top_k and min_p are llama-server extensions
         payload=$(jq -n \
             --argjson messages "$full_messages" \
             --argjson max_tokens "$max_tok" \
             --argjson temperature "$temp" \
             --argjson frequency_penalty "$freq" \
             --argjson presence_penalty "$pres" \
-            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, stream:true}')
+            --argjson top_p "$top_p" \
+            --argjson top_k "$top_k" \
+            --argjson min_p "$min_p" \
+            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:true}')
 
         local curl_timeout="${LLM_TIMEOUT:-600}"
         local timeout_cmd=""
@@ -2162,9 +2189,12 @@ llm_vision() {
     # Uses OpenAI multimodal format: image as base64 data URL in
     # content array. Requires a multimodal model loaded in llama-server.
     if [ "$_active_backend" = "llamacpp" ]; then
-        local temp max_tok
+        local temp max_tok top_p top_k min_p
         temp=$(echo "$_opts" | jq -r '.temperature // 0.7')
         max_tok=$(echo "$_opts" | jq -r '.num_predict // 4096')
+        top_p=$(echo "$_opts" | jq -r '.top_p // 1.0')
+        top_k=$(echo "$_opts" | jq -r '.top_k // 40')
+        min_p=$(echo "$_opts" | jq -r '.min_p // 0.0')
 
         # Detect MIME type
         local mime_type="image/jpeg"
@@ -2193,7 +2223,10 @@ llm_vision() {
             --argjson messages "$messages" \
             --argjson max_tokens "$max_tok" \
             --argjson temperature "$temp" \
-            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, stream:true}')
+            --argjson top_p "$top_p" \
+            --argjson top_k "$top_k" \
+            --argjson min_p "$min_p" \
+            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:true}')
 
         local curl_timeout="${LLM_TIMEOUT:-600}"
         local timeout_cmd=""
