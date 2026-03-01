@@ -369,6 +369,136 @@ describe "Core LLM functions"
     assert_ok $? "must warn if GPU activity detected when GPU_LAYERS=0"
   }
 
+# ── Ollama → OpenAI penalty conversion ─────────────────────────
+describe "Repeat penalty → frequency penalty conversion"
+
+  it "_llm_repeat_to_freq is defined" && {
+    declare -f _llm_repeat_to_freq &>/dev/null
+    assert_ok $?
+  }
+
+  it "repeat_penalty 1.0 → frequency_penalty 0.00" && {
+    result=$(_llm_repeat_to_freq 1.0)
+    assert_eq "$result" "0.00"
+  }
+
+  it "repeat_penalty 1.1 → frequency_penalty 0.20" && {
+    result=$(_llm_repeat_to_freq 1.1)
+    assert_eq "$result" "0.20"
+  }
+
+  it "repeat_penalty 1.2 → frequency_penalty 0.40" && {
+    result=$(_llm_repeat_to_freq 1.2)
+    assert_eq "$result" "0.40"
+  }
+
+  it "repeat_penalty 1.5 → frequency_penalty 1.00" && {
+    result=$(_llm_repeat_to_freq 1.5)
+    assert_eq "$result" "1.00"
+  }
+
+  it "repeat_penalty 2.0 clamped to 2.00" && {
+    result=$(_llm_repeat_to_freq 2.0)
+    assert_eq "$result" "2.00"
+  }
+
+  it "repeat_penalty 3.0 clamped to 2.00" && {
+    result=$(_llm_repeat_to_freq 3.0)
+    assert_eq "$result" "2.00"
+  }
+
+  it "_llm_build_llamacpp_payload uses converted frequency_penalty" && {
+    _body=$(declare -f _llm_build_llamacpp_payload 2>/dev/null || echo "")
+    echo "$_body" | grep -q '_llm_repeat_to_freq'
+    assert_ok $? "must call _llm_repeat_to_freq for penalty conversion"
+  }
+
+  it "llm_chat llamacpp path uses converted frequency_penalty" && {
+    _body=$(declare -f llm_chat 2>/dev/null || echo "")
+    echo "$_body" | grep -q '_llm_repeat_to_freq'
+    assert_ok $? "must call _llm_repeat_to_freq for penalty conversion"
+  }
+
+# ── Process lifecycle (curl PID tracking, FIFO cleanup) ────────
+describe "llamacpp curl process lifecycle"
+
+  it "_llm_kill_curl is defined" && {
+    declare -f _llm_kill_curl &>/dev/null
+    assert_ok $?
+  }
+
+  it "_llm_kill_curl kills orphan curls targeting v1/chat/completions" && {
+    _body=$(declare -f _llm_kill_curl 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'v1/chat/completions'
+    assert_ok $? "must pkill curls targeting llama-server endpoint"
+  }
+
+  it "llm_cancel delegates to _llm_kill_curl" && {
+    _body=$(declare -f llm_cancel 2>/dev/null || echo "")
+    echo "$_body" | grep -q '_llm_kill_curl'
+    assert_ok $? "llm_cancel must use _llm_kill_curl"
+  }
+
+  it "llm_generate llamacpp path uses FIFO (not pipe) for curl" && {
+    _body=$(declare -f llm_generate 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'mkfifo'
+    assert_ok $? "must use mkfifo for curl → read loop decoupling"
+  }
+
+  it "llm_stream llamacpp path uses FIFO (not pipe) for curl" && {
+    _body=$(declare -f llm_stream 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'mkfifo'
+    assert_ok $? "must use mkfifo for curl → read loop decoupling"
+  }
+
+  it "llm_chat llamacpp path uses FIFO (not pipe) for curl" && {
+    _body=$(declare -f llm_chat 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'mkfifo'
+    assert_ok $? "must use mkfifo for curl → read loop decoupling"
+  }
+
+  it "llm_generate llamacpp path kills curl after read loop" && {
+    _body=$(declare -f llm_generate 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'kill.*_bg_curl'
+    assert_ok $? "must kill curl PID to close TCP connection"
+  }
+
+  it "llm_stream llamacpp path kills curl after read loop" && {
+    _body=$(declare -f llm_stream 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'kill.*_bg_curl'
+    assert_ok $? "must kill curl PID to close TCP connection"
+  }
+
+  it "llm_chat llamacpp path kills curl after read loop" && {
+    _body=$(declare -f llm_chat 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'kill.*_bg_curl'
+    assert_ok $? "must kill curl PID to close TCP connection"
+  }
+
+  it "llm_generate llamacpp path tracks _LLM_CURL_PID" && {
+    _body=$(declare -f llm_generate 2>/dev/null || echo "")
+    echo "$_body" | grep -q '_LLM_CURL_PID='
+    assert_ok $? "must set _LLM_CURL_PID for signal handler cleanup"
+  }
+
+  it "llm_stream llamacpp path tracks _LLM_CURL_PID" && {
+    _body=$(declare -f llm_stream 2>/dev/null || echo "")
+    echo "$_body" | grep -q '_LLM_CURL_PID='
+    assert_ok $? "must set _LLM_CURL_PID for signal handler cleanup"
+  }
+
+  it "llm_chat llamacpp path tracks _LLM_CURL_PID" && {
+    _body=$(declare -f llm_chat 2>/dev/null || echo "")
+    echo "$_body" | grep -q '_LLM_CURL_PID='
+    assert_ok $? "must set _LLM_CURL_PID for signal handler cleanup"
+  }
+
+  it "llm_generate llamacpp path cleans up FIFO" && {
+    _body=$(declare -f llm_generate 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'rm.*_fifo'
+    assert_ok $? "must remove FIFO after use"
+  }
+
   it "llm_create_model is defined" && {
     declare -f llm_create_model &>/dev/null
     assert_ok $?

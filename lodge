@@ -67,31 +67,40 @@ _lodge_cleanup() {
     # Stop spinner if running (fast — just kill + clear line)
     ui_spinner_stop 2>/dev/null
 
-    # Kill any curl processes talking to Ollama (works through subshells)
+    # Kill any curl processes talking to LLM backends (works through subshells)
     # This is the ONLY reliable way to kill curl inside nested $() captures.
-    # MUST be non-blocking — no waiting, no curl calls to Ollama.
+    # MUST be non-blocking — no waiting, no HTTP calls.
+    #
+    # Ollama endpoints:
     pkill -f "curl.*api/generate" 2>/dev/null
     pkill -f "curl.*api/chat" 2>/dev/null
-    # Also kill timeout wrappers (they run curl in a separate process group,
-    # so killing curl alone may leave the timeout parent waiting).
     pkill -f "timeout.*curl.*api" 2>/dev/null
+    # llama-server endpoint — killing curl closes the TCP connection,
+    # which tells llama-server to abort the active inference slot.
+    # Without this, the server keeps computing tokens nobody is reading
+    # and the phone stays hot long after Ctrl+C.
+    pkill -f "curl.*v1/chat/completions" 2>/dev/null
+    pkill -f "timeout.*curl.*v1/chat" 2>/dev/null
+
+    # Also kill curl via tracked PID (set by FIFO-based streaming)
+    if [ -n "${_LLM_CURL_PID:-}" ] && kill -0 "$_LLM_CURL_PID" 2>/dev/null; then
+        kill "$_LLM_CURL_PID" 2>/dev/null
+    fi
+    _LLM_CURL_PID=""
+    _LLM_ACTIVE=0
+
+    # Clean up FIFO files left by interrupted streams
+    rm -f "${TMPDIR:-/tmp}"/.lodge-fifo-*-$$ 2>/dev/null
 
     if [ "$_LODGE_IN_TASK" -eq 1 ]; then
         _LODGE_CANCELLED=1
         echo ""
         ui_warn "Cancelled by user"
-        # Do NOT call llm_unload here — it sends HTTP requests to a busy
-        # Ollama, blocking up to 15s and creating an inescapable Ctrl+C loop.
-        # Model will be unloaded on session exit or by keep_alive timeout.
         return 0
     else
         # Not in a task: clean exit
         echo ""
         ui_info "Interrupted. Exiting..."
-        # Do NOT call llm_unload here — same reason as in-task path:
-        # Ollama may still be processing the killed request, and the
-        # unload HTTP call blocks behind it (up to 10s on mobile).
-        # keep_alive timeout will free RAM automatically.
         rm -f "$_LODGE_CANCEL_FILE"
         if _lodge_termux_api_ok && command -v termux-wake-unlock &>/dev/null; then
             termux-wake-unlock 2>/dev/null
@@ -100,7 +109,25 @@ _lodge_cleanup() {
     fi
 }
 
-trap '_lodge_cleanup' INT
+# ── Exit cleanup — always runs, even on normal exit ────────────
+# Kills orphan curl processes and cleans temp files so the phone
+# doesn't keep computing after Lodge exits (close Termux, /quit, etc.)
+_lodge_exit_cleanup() {
+    # Kill any leftover curl → LLM processes
+    pkill -f "curl.*v1/chat/completions" 2>/dev/null || true
+    pkill -f "curl.*api/generate" 2>/dev/null || true
+    pkill -f "curl.*api/chat" 2>/dev/null || true
+    # Clean temp files
+    rm -f "${TMPDIR:-/tmp}"/.lodge-fifo-*-$$ 2>/dev/null
+    rm -f "${TMPDIR:-/tmp}"/.lodge-cancel-$$ 2>/dev/null
+    rm -f "${TMPDIR:-/tmp}"/.lodge-ft-$$ 2>/dev/null
+    rm -f "${TMPDIR:-/tmp}"/.lodge-gen-tok-$$ 2>/dev/null
+    rm -f "${TMPDIR:-/tmp}"/.lodge-chat-tok-$$ 2>/dev/null
+    rm -f "${TMPDIR:-/tmp}"/.lodge-curl-pid-$$ 2>/dev/null
+}
+
+trap '_lodge_cleanup' INT TERM
+trap '_lodge_exit_cleanup' EXIT
 
 # ── Register Built-in Slash Commands ──────────────────────────
 _cmd_init() {

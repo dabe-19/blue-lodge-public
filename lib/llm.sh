@@ -171,6 +171,29 @@ _LLM_DEBUG_TASK_START=""
 _LLM_CURL_PID=""
 _LLM_ACTIVE=0
 
+# ── Kill active curl + cancel server-side inference ────────────
+# After breaking from a `curl | while read` pipe, the curl process
+# is still alive with the TCP connection open, keeping llama-server's
+# inference slot busy computing tokens nobody is reading.
+# This helper:
+#   1. Kills the curl process (closes TCP → server detects disconnect)
+#   2. Sends a lightweight /slots cancel if the server supports it
+#   3. Cleans up process tracking state
+_llm_kill_curl() {
+    # Kill tracked curl PID
+    if [ -n "$_LLM_CURL_PID" ] && kill -0 "$_LLM_CURL_PID" 2>/dev/null; then
+        kill "$_LLM_CURL_PID" 2>/dev/null
+        wait "$_LLM_CURL_PID" 2>/dev/null 2>&1 || true
+    fi
+    _LLM_CURL_PID=""
+
+    # Also kill any orphan curl processes targeting llama-server
+    # (covers $() captures where PID tracking is lost to subshells)
+    pkill -f "curl.*v1/chat/completions" 2>/dev/null || true
+
+    _LLM_ACTIVE=0
+}
+
 # ── Backend detection ──────────────────────────────────────────
 # Returns "llamacpp" or "ollama". Caches result for the session
 # to avoid repeated network pings. Clear _LLM_BACKEND_CACHE to re-detect.
@@ -447,6 +470,20 @@ _llm_start_llamacpp_server() {
     return 1
 }
 
+# ── Ollama → OpenAI penalty conversion ─────────────────────────
+# Ollama `repeat_penalty` is MULTIPLICATIVE: logit /= penalty for
+# each occurrence (1.0 = off, 1.2 = moderate, 1.5 = heavy).
+# OpenAI `frequency_penalty` is ADDITIVE: logit -= penalty * count
+# (0.0 = off, 0.5 = moderate, 2.0 = max).
+# Passing repeat_penalty (1.2) straight as frequency_penalty causes
+# catastrophic over-penalisation → gibberish on small models.
+#
+# Conversion: freq = (repeat - 1.0) * 2.0, clamped to [0.0, 2.0].
+#   1.0 → 0.0   1.1 → 0.2   1.2 → 0.4   1.5 → 1.0
+_llm_repeat_to_freq() {
+    awk "BEGIN { v = ($1 - 1.0) * 2.0; if (v < 0) v = 0; if (v > 2) v = 2; printf \"%.2f\", v }"
+}
+
 # ── Build llama.cpp payload ────────────────────────────────────
 # Translates Blue Lodge parameters into OpenAI-compatible payload
 # for llama-server's /v1/chat/completions endpoint.
@@ -458,11 +495,15 @@ _llm_build_llamacpp_payload() {
     local max_tokens="$4"
     local stream="${5:-true}"
 
-    # Extract sampling params from opts_json
-    local temp rep pres
+    # Extract sampling params from opts_json (Ollama-format keys)
+    local temp rep_raw pres
     temp=$(echo "$opts_json" | jq -r '.temperature // 0.7')
-    rep=$(echo "$opts_json" | jq -r '.repeat_penalty // 1.2')
+    rep_raw=$(echo "$opts_json" | jq -r '.repeat_penalty // 1.2')
     pres=$(echo "$opts_json" | jq -r '.presence_penalty // 0.3')
+
+    # Convert Ollama repeat_penalty → OpenAI frequency_penalty
+    local freq
+    freq=$(_llm_repeat_to_freq "$rep_raw")
 
     # Build messages array (OpenAI format)
     local messages
@@ -481,7 +522,7 @@ _llm_build_llamacpp_payload() {
         --argjson messages "$messages" \
         --argjson max_tokens "$max_tokens" \
         --argjson temperature "$temp" \
-        --argjson frequency_penalty "$rep" \
+        --argjson frequency_penalty "$freq" \
         --argjson presence_penalty "$pres" \
         --argjson stream "$stream" \
         '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, stream:$stream}'
@@ -590,12 +631,7 @@ llm_unload() {
 
 # ── Cancel active LLM request ──────────────────────────────────
 llm_cancel() {
-    if [ -n "$_LLM_CURL_PID" ] && kill -0 "$_LLM_CURL_PID" 2>/dev/null; then
-        kill "$_LLM_CURL_PID" 2>/dev/null
-        wait "$_LLM_CURL_PID" 2>/dev/null
-        _LLM_CURL_PID=""
-    fi
-    _LLM_ACTIVE=0
+    _llm_kill_curl
 }
 
 # ── Warm up model (pre-load weights into memory) ──────────────
@@ -985,16 +1021,29 @@ llm_generate() {
         local _tmpdir="${TMPDIR:-/tmp}"
         local _got_tokens="$_tmpdir/.lodge-gen-tok-$$"
         local _cancel_file="$_tmpdir/.lodge-cancel-$$"
-        rm -f "$_got_tokens"
+        local _curl_pid_file="$_tmpdir/.lodge-curl-pid-$$"
+        rm -f "$_got_tokens" "$_curl_pid_file"
 
         local _dbg_out=0
 
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] generate (llamacpp): url=%s max_tokens=%s\n" "$LLAMA_CPP_URL" "$max_tokens" > "$_tty" 2>/dev/null
 
+        # Use a FIFO so we can track and kill the curl PID independently
+        # of the read loop. Without this, curl survives `break` and keeps
+        # llama-server's slot busy (phone stays hot).
+        local _fifo="$_tmpdir/.lodge-fifo-gen-$$"
+        rm -f "$_fifo"
+        mkfifo "$_fifo"
+
         $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
             "$LLAMA_CPP_URL/v1/chat/completions" \
             -H "Content-Type: application/json" \
-            -d "$payload" 2>/dev/null | while IFS= read -r line; do
+            -d "$payload" > "$_fifo" 2>/dev/null &
+        local _bg_curl=$!
+        echo "$_bg_curl" > "$_curl_pid_file"
+        _LLM_CURL_PID="$_bg_curl"
+
+        while IFS= read -r line; do
             [ -f "$_cancel_file" ] && break
 
             # SSE format: lines prefixed with "data: "
@@ -1017,7 +1066,14 @@ llm_generate() {
                 _dbg_out=$((_dbg_out + 1))
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\033[90m%s\033[0m" "$token" > "$_tty" 2>/dev/null
             fi
-        done
+        done < "$_fifo"
+
+        # Kill curl immediately — closes the TCP connection so llama-server
+        # aborts the inference slot instead of computing tokens nobody reads.
+        kill "$_bg_curl" 2>/dev/null
+        wait "$_bg_curl" 2>/dev/null 2>&1 || true
+        _LLM_CURL_PID=""
+        rm -f "$_fifo" "$_curl_pid_file"
 
         _LLM_ACTIVE=0
         if [ ! -f "$_got_tokens" ]; then
@@ -1372,6 +1428,9 @@ llm_stream() {
     # ── llama.cpp streaming path ───────────────────────────────
     # SSE-based streaming to tty. No thinking API — all output is
     # content tokens. Uses spinner for prefill wait.
+    # curl runs in background writing to a FIFO so we can track its
+    # PID and kill it on break/cancel — otherwise the TCP connection
+    # stays open and llama-server keeps computing (phone stays hot).
     if [ "$_active_backend" = "llamacpp" ]; then
         payload=$(_llm_build_llamacpp_payload "$prompt" "$system" "$_opts" "$max_tokens" true)
 
@@ -1398,10 +1457,19 @@ llm_stream() {
 
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] stream (llamacpp): url=%s max_tokens=%s\n" "$LLAMA_CPP_URL" "$max_tokens" > "$_tty" 2>/dev/null
 
+        # FIFO for curl → read loop decoupling (enables PID tracking)
+        local _fifo="$_tmpdir/.lodge-fifo-stream-$$"
+        rm -f "$_fifo"
+        mkfifo "$_fifo"
+
         $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
             "$LLAMA_CPP_URL/v1/chat/completions" \
             -H "Content-Type: application/json" \
-            -d "$payload" 2>/dev/null | while IFS= read -r line; do
+            -d "$payload" > "$_fifo" 2>/dev/null &
+        local _bg_curl=$!
+        _LLM_CURL_PID="$_bg_curl"
+
+        while IFS= read -r line; do
             [ -f "$_cancel_file" ] && break
 
             [[ "$line" == data:* ]] || continue
@@ -1429,7 +1497,13 @@ llm_stream() {
                 printf "%s" "$token" > "$_tty" 2>/dev/null
                 _dbg_out=$((_dbg_out + 1))
             fi
-        done
+        done < "$_fifo"
+
+        # Kill curl → closes TCP → llama-server aborts inference slot
+        kill "$_bg_curl" 2>/dev/null
+        wait "$_bg_curl" 2>/dev/null 2>&1 || true
+        _LLM_CURL_PID=""
+        rm -f "$_fifo"
 
         ui_spinner_stop
         rm -f "$_llm_ft_file"
@@ -1828,11 +1902,14 @@ llm_chat() {
     # Cleanest backend translation — llama-server natively uses
     # OpenAI messages format. No payload wrapping needed.
     if [ "$_active_backend" = "llamacpp" ]; then
-        local temp rep pres max_tok
+        local temp rep_raw pres max_tok freq
         temp=$(echo "$_opts" | jq -r '.temperature // 0.7')
-        rep=$(echo "$_opts" | jq -r '.repeat_penalty // 1.2')
+        rep_raw=$(echo "$_opts" | jq -r '.repeat_penalty // 1.2')
         pres=$(echo "$_opts" | jq -r '.presence_penalty // 0.3')
         max_tok=$(echo "$_opts" | jq -r '.num_predict // 4096')
+
+        # Convert Ollama repeat_penalty → OpenAI frequency_penalty
+        freq=$(_llm_repeat_to_freq "$rep_raw")
 
         # Build messages with system prompt prepended
         local full_messages
@@ -1847,7 +1924,7 @@ llm_chat() {
             --argjson messages "$full_messages" \
             --argjson max_tokens "$max_tok" \
             --argjson temperature "$temp" \
-            --argjson frequency_penalty "$rep" \
+            --argjson frequency_penalty "$freq" \
             --argjson presence_penalty "$pres" \
             '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, stream:true}')
 
@@ -1862,10 +1939,19 @@ llm_chat() {
         local _got_tokens="$_tmpdir/.lodge-chat-tok-$$"
         rm -f "$_got_tokens"
 
+        # FIFO for curl → read loop decoupling (enables PID tracking)
+        local _fifo="$_tmpdir/.lodge-fifo-chat-$$"
+        rm -f "$_fifo"
+        mkfifo "$_fifo"
+
         $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
             "$LLAMA_CPP_URL/v1/chat/completions" \
             -H "Content-Type: application/json" \
-            -d "$payload" 2>/dev/null | while IFS= read -r line; do
+            -d "$payload" > "$_fifo" 2>/dev/null &
+        local _bg_curl=$!
+        _LLM_CURL_PID="$_bg_curl"
+
+        while IFS= read -r line; do
 
             [[ "$line" == data:* ]] || continue
             local json="${line#data: }"
@@ -1877,7 +1963,13 @@ llm_chat() {
                 [ -f "$_got_tokens" ] || touch "$_got_tokens"
                 printf "%s" "$token"
             fi
-        done
+        done < "$_fifo"
+
+        # Kill curl → closes TCP → server aborts inference
+        kill "$_bg_curl" 2>/dev/null
+        wait "$_bg_curl" 2>/dev/null 2>&1 || true
+        _LLM_CURL_PID=""
+        rm -f "$_fifo"
 
         _LLM_ACTIVE=0
         if [ ! -f "$_got_tokens" ]; then

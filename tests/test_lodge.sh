@@ -766,6 +766,45 @@ describe "Cancellation infrastructure"
     assert_not_empty "$traps"
   }
 
+  it "TERM trap is set" && {
+    traps=$(trap -p TERM)
+    assert_not_empty "$traps"
+  }
+
+  it "EXIT trap is set for exit cleanup" && {
+    traps=$(trap -p EXIT)
+    assert_not_empty "$traps"
+  }
+
+  it "_lodge_exit_cleanup is defined" && {
+    declare -f _lodge_exit_cleanup &>/dev/null
+    assert_ok $?
+  }
+
+  it "_lodge_cleanup kills llama-server curls (v1/chat/completions)" && {
+    _body=$(declare -f _lodge_cleanup 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'v1/chat/completions'
+    assert_ok $? "cleanup must kill curls targeting llama-server endpoint"
+  }
+
+  it "_lodge_cleanup kills tracked _LLM_CURL_PID" && {
+    _body=$(declare -f _lodge_cleanup 2>/dev/null || echo "")
+    echo "$_body" | grep -q '_LLM_CURL_PID'
+    assert_ok $? "cleanup must kill tracked curl PID"
+  }
+
+  it "_lodge_cleanup removes FIFO temp files" && {
+    _body=$(declare -f _lodge_cleanup 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'lodge-fifo'
+    assert_ok $? "cleanup must remove FIFO files"
+  }
+
+  it "_lodge_exit_cleanup kills orphan llama-server curls" && {
+    _body=$(declare -f _lodge_exit_cleanup 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'v1/chat/completions'
+    assert_ok $? "exit cleanup must kill curls targeting llama-server"
+  }
+
 # ── Email send parser: address= alias ───────────────────────────────
 describe "Email send parser — address= alias"
 
