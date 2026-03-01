@@ -320,10 +320,49 @@ describe "Dynamic dual-loop architecture"
     assert_ok $?
   }
 
+  it "specialist journal card includes read and write syntax" && {
+    local body
+    body=$(declare -f _build_specialist_prompt)
+    # Must document /journal (no args = read all)
+    echo "$body" | grep -q '/journal.*Read ALL journal entries'
+    assert_ok $?
+    # Must document /journal show
+    echo "$body" | grep -q '/journal show'
+    assert_ok $?
+    # Must document /journal write
+    echo "$body" | grep -q '/journal write'
+    assert_ok $?
+    # Must warn against writing when task asks to read
+    echo "$body" | grep -q 'NEVER write new content when the task asks you to check'
+    assert_ok $?
+  }
+
+  it "router catalog lists journal as read or write" && {
+    local body
+    body=$(declare -f _build_router_prompt)
+    echo "$body" | grep -q '/journal.*Read or write'
+    assert_ok $?
+  }
+
+  it "strategist tool summary lists journal read and write" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '/journal (read).*journal write (write)'
+    assert_ok $?
+  }
+
   it "agent_inner_loop uses escalation matrix" && {
     local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'Escalation L1\|Naive retry'
+    assert_ok $?
+  }
+
+  it "agent_inner_loop overwrites micro_memory per milestone" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    # Strict overwrite: micro_memory is destroyed and recreated each handoff
+    echo "$body" | grep -q 'Micro Objective.*micro_objective.*> .*micro_file'
     assert_ok $?
   }
 
@@ -1047,6 +1086,33 @@ describe "Milestone deduplication in macro loop"
     assert_ok $?
   }
 
+  it "deduplication extracts slash command signature" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_milestone_slash'
+    assert_ok $?
+    echo "$body" | grep -q '_prev_slash'
+    assert_ok $?
+  }
+
+  it "exact-repeat of last milestone triggers immediate dup" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'exact repeat of last milestone'
+    assert_ok $?
+    echo "$body" | grep -q '_last_milestone_text'
+    assert_ok $?
+  }
+
+  it "force-progression still runs overall evaluator before continue" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_agent_evaluate_completion.*macro_file.*micro_memory'
+    assert_ok $?
+    echo "$body" | grep -q 'Milestone skipped (duplicate)'
+    assert_ok $?
+  }
+
 # ── Specialist key injection ──────────────────────────────────
 describe "Specialist per-command key status"
 
@@ -1119,21 +1185,42 @@ describe "Task completion evaluator"
     assert_ok $?
   }
 
-  it "evaluator uses personality-free system prompt" && {
-    local body
-    body=$(declare -f _agent_evaluate_completion)
-    echo "$body" | grep -q 'strict task-completion evaluator'
-    assert_ok $?
-    echo "$body" | grep -qi 'no personality'
+  it "_agent_evaluate_milestone is defined" && {
+    declare -f _agent_evaluate_milestone &>/dev/null
     assert_ok $?
   }
 
-  it "evaluator reads macro_memory file" && {
+  it "milestone evaluator uses pragmatic system prompt" && {
+    local body
+    body=$(declare -f _agent_evaluate_milestone)
+    echo "$body" | grep -q 'pragmatic milestone evaluator'
+    assert_ok $?
+    echo "$body" | grep -q 'milestone_text'
+    assert_ok $?
+  }
+
+  it "milestone evaluator accepts exit 0 as success" && {
+    local body
+    body=$(declare -f _agent_evaluate_milestone)
+    echo "$body" | grep -q 'Exit code 0'
+    assert_ok $?
+    echo "$body" | grep -q 'COMPLETE'
+    assert_ok $?
+  }
+
+  it "overall evaluator uses strategic system prompt" && {
+    local body
+    body=$(declare -f _agent_evaluate_completion)
+    echo "$body" | grep -q 'strategic task-completion evaluator'
+    assert_ok $?
+  }
+
+  it "overall evaluator reads macro_memory file" && {
     local body
     body=$(declare -f _agent_evaluate_completion)
     echo "$body" | grep -q 'macro_file'
     assert_ok $?
-    echo "$body" | grep -q 'eval_context'
+    echo "$body" | grep -q 'macro_context'
     assert_ok $?
   }
 
@@ -1169,10 +1256,28 @@ describe "Task completion evaluator"
     assert_ok $?
   }
 
-  it "evaluator is called in agent_run after successful milestones" && {
+  it "dual evaluator is called in agent_run after successful milestones" && {
     local body
     body=$(declare -f agent_run)
+    echo "$body" | grep -q '_agent_evaluate_milestone'
+    assert_ok $?
     echo "$body" | grep -q '_agent_evaluate_completion'
+    assert_ok $?
+  }
+
+  it "evaluator feedback is threaded into strategist prompt" && {
+    local body
+    body=$(declare -f agent_run)
+    # _last_eval_feedback variable is initialized
+    echo "$body" | grep -q '_last_eval_feedback'
+    assert_ok $?
+    # Feedback injected at end of strategist system prompt with attention markers
+    echo "$body" | grep -q 'EVALUATOR FEEDBACK'
+    assert_ok $?
+    # Feedback is set from both evaluator passes
+    echo "$body" | grep -q 'Still missing'
+    assert_ok $?
+    echo "$body" | grep -q 'was NOT completed'
     assert_ok $?
   }
 

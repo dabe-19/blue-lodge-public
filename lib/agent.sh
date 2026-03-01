@@ -24,16 +24,102 @@ AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto |
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-512}"     # Max output tokens for evaluator
 
-# ── Task Completion Evaluator ──────────────────────────────────
-# Impartial judge with no personality injection. Reads micro_memory.md
-# (concise Action/Status/Output log) rather than the full macro_memory
-# (which carries persona bloat and stale placeholders). The primary
-# objective is extracted from macro_memory for reference.
-# Returns 0 if the task is complete, 1 if work remains.
+# ── Dual Evaluator System ─────────────────────────────────────
+# Two-pass evaluation after each milestone:
+#
+# Pass 1 — _agent_evaluate_milestone():
+#   Pragmatic check: did the action log show this specific milestone
+#   was executed? Exit 0 = success, empty output = normal.
+#   Sets _EVAL_MILESTONE_REASON on failure.
+#
+# Pass 2 — _agent_evaluate_completion():
+#   Strategic check: given ALL milestones completed so far, is the
+#   user's original request fully satisfied? Uses macro_memory (full
+#   milestone history) supplemented by recent micro_memory.
+#   Sets _EVAL_INCOMPLETE_REASON on failure.
+#   Includes interactive/auto mode handling for task completion.
 #
 # Modes (AGENT_EVAL_MODE):
 #   auto        — (default) Silently finish the task chain with a summary.
 #   interactive — Prompt the operator to confirm satisfaction or continue.
+#   disabled    — Skip evaluation entirely.
+
+# ── Pass 1: Milestone Evaluator ───────────────────────────────
+# Focused, pragmatic check on whether a SPECIFIC milestone was
+# achieved by examining the micro_memory action log. Avoids the
+# goalpost-moving that occurs when evaluating the entire objective
+# during every single milestone.
+_agent_evaluate_milestone() {
+    local macro_file="$1"
+    local micro_file="$2"
+    local milestone_text="$3"
+
+    # Read micro_memory as the action log for this milestone
+    local eval_context=""
+    if [ -n "$micro_file" ] && [ -f "$micro_file" ]; then
+        eval_context=$(cat "$micro_file")
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: milestone-eval <- micro_memory ($(wc -l < "$micro_file") lines)"
+    else
+        ui_info "Milestone evaluator: no micro_memory available"
+        return 1
+    fi
+
+    # Truncate to prevent attention dilution
+    local _max_ctx_lines="${AGENT_EVAL_CONTEXT_LINES:-50}"
+    local _ctx_total
+    _ctx_total=$(echo "$eval_context" | wc -l)
+    if [ "$_ctx_total" -gt "$_max_ctx_lines" ]; then
+        eval_context=$(echo "$eval_context" | tail -n "$_max_ctx_lines")
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] milestone-eval context truncated: $_ctx_total -> $_max_ctx_lines lines"
+    fi
+
+    # ATTENTION REORDER: Action log FIRST, milestone LAST (recency bias)
+    local eval_prompt="ACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions in the log above accomplish this specific milestone?\n\nRULES:\n- A command with Status: EXECUTED SUCCESSFULLY (exit 0) satisfies the milestone unless its output clearly indicates failure.\n- Empty output is normal for many tools (email, social, file ops). Exit code 0 with empty output = success.\n- Focus ONLY on whether THIS milestone was achieved — ignore the broader task objective.\n- If the action log shows a relevant command was executed and succeeded, the milestone is done.\n- Do NOT require confirmation, follow-up, or verification steps unless the milestone explicitly asked for them.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence reason>"
+
+    local eval_sys="You are a pragmatic milestone evaluator. Judge whether a specific action step was executed successfully based on the action log. Exit code 0 means the command succeeded — do not second-guess it. Empty output is normal and expected for many tools. Only mark INCOMPLETE if no relevant action was attempted or the action clearly failed. Respond COMPLETE or INCOMPLETE: <reason>."
+
+    ui_think "Evaluator (pass 1): assessing milestone completion..."
+    local verdict
+    local LLM_SCENARIO=evaluator
+    verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-256}" "$LLM_BUDGET_AGENT")
+
+    # Clean up LLM output — strip think blocks, whitespace
+    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+    verdict=$(echo "$verdict" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
+    verdict=$(echo "$verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+    local first_line
+    first_line=$(echo "$verdict" | head -1)
+    local verdict_word
+    verdict_word=$(echo "$first_line" | awk '{print $1}')
+
+    # Parse INCOMPLETE reason
+    _EVAL_MILESTONE_REASON=""
+    if [[ "$verdict_word" != "COMPLETE" ]]; then
+        if [[ "$first_line" == *":"* ]]; then
+            _EVAL_MILESTONE_REASON=$(echo "$first_line" | sed 's/^[^:]*:[[:space:]]*//')
+        elif [ "$(echo "$first_line" | wc -w)" -gt 1 ]; then
+            _EVAL_MILESTONE_REASON=$(echo "$first_line" | sed 's/^[^ ]* *//')
+        fi
+        if [ -z "$_EVAL_MILESTONE_REASON" ] && [ "$(echo "$verdict" | wc -l)" -gt 1 ]; then
+            _EVAL_MILESTONE_REASON=$(echo "$verdict" | head -3)
+        fi
+        local _reason_display="${_EVAL_MILESTONE_REASON:+(${_EVAL_MILESTONE_REASON:0:80})}"
+        ui_info "Milestone evaluator: not complete ${_reason_display}"
+        return 1
+    fi
+
+    ui_ok "Milestone evaluator: milestone achieved"
+    return 0
+}
+
+# ── Pass 2: Overall Task Evaluator ─────────────────────────────
+# Strategic check on whether the PRIMARY OBJECTIVE (the user's
+# original request) has been satisfied by all milestones completed
+# so far. Uses macro_memory (full milestone history) supplemented
+# by recent micro_memory actions for detail.
+#
+# Returns 0 if the task is complete, 1 if work remains.
 _agent_evaluate_completion() {
     local macro_file="$1"
     local micro_file="$2"
@@ -41,42 +127,32 @@ _agent_evaluate_completion() {
     # Extract ONLY the primary objective from macro_memory (skip persona bloat)
     local primary_obj
     primary_obj=$(awk '/^## Primary Objective/{getline; if(NF) print; exit}' "$macro_file" 2>/dev/null)
-    [ -z "$primary_obj" ] && { ui_info "Evaluator: no primary objective found"; return 1; }
+    [ -z "$primary_obj" ] && { ui_info "Overall evaluator: no primary objective found"; return 1; }
 
-    # Use micro_memory as evaluation context — it's concise with clear
-    # Action/Status/Output entries. Falls back to macro if micro unavailable.
-    local eval_context
+    # Use macro_memory as the primary context — it has the full milestone history
+    local macro_context
+    macro_context=$(cat "$macro_file")
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: overall-eval <- macro_memory ($(wc -l < "$macro_file") lines)"
+
+    # Supplement with recent micro_memory for action-level detail
+    local micro_context=""
     if [ -n "$micro_file" ] && [ -f "$micro_file" ]; then
-        eval_context=$(cat "$micro_file")
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: evaluator <- micro_memory ($(wc -l < "$micro_file") lines)"
-    else
-        eval_context=$(cat "$macro_file")
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: evaluator <- macro_memory fallback ($(wc -l < "$macro_file") lines)"
+        local _micro_lines
+        _micro_lines=$(wc -l < "$micro_file")
+        if [ "$_micro_lines" -gt 30 ]; then
+            micro_context=$(tail -30 "$micro_file")
+        else
+            micro_context=$(cat "$micro_file")
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: overall-eval <- micro_memory supplement (${_micro_lines} lines)"
     fi
 
-    # Truncate eval_context to the last N lines to prevent attention
-    # dilution. When micro_memory grows huge (50+ actions), the primary
-    # objective at the top of the prompt gets washed out by recency bias
-    # in small models. Keeping only the tail + reordering (below) ensures
-    # the objective gets maximum attention.
-    local _max_ctx_lines="${AGENT_EVAL_CONTEXT_LINES:-50}"
-    local _ctx_total
-    _ctx_total=$(echo "$eval_context" | wc -l)
-    if [ "$_ctx_total" -gt "$_max_ctx_lines" ]; then
-        eval_context=$(echo "$eval_context" | tail -n "$_max_ctx_lines")
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval context truncated: $_ctx_total -> $_max_ctx_lines lines"
-    fi
+    # ATTENTION REORDER: context first, objective + criteria last
+    local eval_prompt="TASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE (the user's original request):\n${primary_obj}\n\nGiven all the milestones completed above, is the PRIMARY OBJECTIVE fully satisfied?\n\nRULES:\n- Review the Completed Milestones section for what has been accomplished.\n- For single-action objectives (e.g., 'send a Discord DM to X'), one successful milestone that executed the action is sufficient.\n- For multi-part objectives, verify each distinct part has a corresponding completed milestone.\n- Do NOT invent extra requirements beyond what the user explicitly asked for.\n- Do NOT require confirmation or verification steps unless the user asked for them.\n- If the key action(s) have been executed successfully, the task is done.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence description of what specific part remains>"
 
-    # Build a strict, personality-free evaluation prompt.
-    # ATTENTION REORDER: Action log comes FIRST so that the primary
-    # objective and evaluation criteria sit at the END of the prompt
-    # where small models pay the most attention (recency bias). This
-    # prevents the objective from being buried under pages of action log.
-    local eval_prompt="ACTION LOG (from the most recent milestone — review for successful actions):\n${eval_context}\n\n---\n\nPRIMARY OBJECTIVE (the original user request):\n${primary_obj}\n\nEvaluate whether ALL parts of the primary objective above have been satisfied by the Action Log.\n\nSTEP 1: Decompose the objective into distinct required parts.\n  Example: 'research X, write a report, and email it to Y' has THREE parts:\n    a) research X  b) write a report  c) email it to Y\n\nSTEP 2: For each part, check the Action Log for an action that addresses it.\n  - A relevant action with Status EXECUTED SUCCESSFULLY (exit 0) satisfies that part.\n  - Output may be empty — many tools (email, social) produce no output on success. That is normal.\n  - Do NOT count research/search as satisfying a 'write report' or 'email' part.\n\nSTEP 3: If ANY required part has no corresponding successful action, respond INCOMPLETE.\n\nCRITICAL RULES:\n- Do NOT treat the word SUCCESS in the log as automatic proof — verify the Action actually addresses each part.\n- A web search only satisfies a 'research' or 'find information' part — NOT a 'write', 'email', 'post', or 'send' part.\n- ALL parts must be satisfied for COMPLETE. Even one missing part means INCOMPLETE.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence reason what is still missing>\n\nExamples:\n  COMPLETE\n  INCOMPLETE: the report has not been written yet\n  INCOMPLETE: email was never sent to the recipient"
+    local eval_sys="You are a strategic task-completion evaluator. Given the full history of completed milestones, determine whether the user's original request has been fully addressed. Be pragmatic — if the requested actions were executed successfully, the task is complete. Do not add requirements the user did not ask for. Respond COMPLETE or INCOMPLETE: <reason>."
 
-    local eval_sys="You are a strict task-completion evaluator. Decompose multi-part objectives into distinct required parts and verify each has a corresponding successful action. A web search satisfies research, but NOT writing, emailing, or posting. Output may be empty for successful commands — that is normal. Respond COMPLETE or INCOMPLETE: <reason>."
-
-    ui_think "Evaluator: assessing task completion..."
+    ui_think "Evaluator (pass 2): assessing overall task completion..."
     local verdict
     local LLM_SCENARIO=evaluator
     verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-512}" "$LLM_BUDGET_AGENT")
@@ -86,18 +162,11 @@ _agent_evaluate_completion() {
     verdict=$(echo "$verdict" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
     verdict=$(echo "$verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
-    # Extract the first meaningful line
     local first_line
     first_line=$(echo "$verdict" | head -1)
-
-    # Parse verdict word and optional reason
     local verdict_word
     verdict_word=$(echo "$first_line" | awk '{print $1}')
 
-    # Extract INCOMPLETE reason: smart parse per user spec
-    # - If "INCOMPLETE: reason", take after colon
-    # - If "INCOMPLETE" with no colon but text follows, take full remaining text
-    # - If no text at all, reason stays empty (that's OK)
     _EVAL_INCOMPLETE_REASON=""
     if [[ "$verdict_word" != "COMPLETE" ]]; then
         if [[ "$first_line" == *":"* ]]; then
@@ -105,17 +174,16 @@ _agent_evaluate_completion() {
         elif [ "$(echo "$first_line" | wc -w)" -gt 1 ]; then
             _EVAL_INCOMPLETE_REASON=$(echo "$first_line" | sed 's/^[^ ]* *//')
         fi
-        # If reason is still empty but there are more lines, use entire output
         if [ -z "$_EVAL_INCOMPLETE_REASON" ] && [ "$(echo "$verdict" | wc -l)" -gt 1 ]; then
             _EVAL_INCOMPLETE_REASON=$(echo "$verdict" | head -3)
         fi
         local _reason_display="${_EVAL_INCOMPLETE_REASON:+(${_EVAL_INCOMPLETE_REASON:0:80})}"
-        ui_info "Evaluator: objective not yet fulfilled ${_reason_display}— continuing"
+        ui_info "Overall evaluator: objective not yet fulfilled ${_reason_display}— continuing"
         return 1
     fi
 
     # ── Task is complete — handle by mode ──────────────────────
-    ui_ok "Evaluator: primary objective fulfilled"
+    ui_ok "Overall evaluator: primary objective fulfilled"
 
     if [[ "${AGENT_EVAL_MODE:-auto}" == "interactive" ]]; then
         # Interactive mode: ask the operator
@@ -126,7 +194,7 @@ _agent_evaluate_completion() {
         read -r answer < /dev/tty 2>/dev/null || answer="y"
         answer="${answer:-y}"
         if [[ "${answer,,}" == "y"* ]]; then
-            local summary_prompt="Summarize briefly: the user asked to '${primary_obj}'. Based on this action log, what was accomplished?\n\n${eval_context}"
+            local summary_prompt="Summarize briefly: the user asked to '${primary_obj}'. Based on this task memory, what was accomplished?\n\n${macro_context}"
             local summary_sys="You are a concise summarizer. No personality. Output only the summary in 2-3 sentences."
             local task_summary
             local LLM_SCENARIO=evaluator
@@ -143,7 +211,7 @@ _agent_evaluate_completion() {
     fi
 
     # Auto mode (default): generate brief summary and signal completion
-    local summary_prompt="Summarize briefly: the user asked to '${primary_obj}'. Based on this action log, what was accomplished?\n\n${eval_context}"
+    local summary_prompt="Summarize briefly: the user asked to '${primary_obj}'. Based on this task memory, what was accomplished?\n\n${macro_context}"
     local summary_sys="You are a concise summarizer. No personality. Output only the summary in 2-3 sentences."
     local task_summary
     local LLM_SCENARIO=evaluator
@@ -660,7 +728,7 @@ _build_router_prompt() {
 KNOWLEDGE & REASONING:
   /ask         — Answer a question from your own knowledge (no tools)
   /recall      — Search your knowledge base (FTS5)
-  /journal     — Write to your living memory
+  /journal     — Read or write your living memory (no args = read all)
 
 FILE & PROJECT:
   /write       — Write or overwrite a file
@@ -925,10 +993,18 @@ _build_specialist_prompt() {
                 echo "Example: /email send gmail user@example.com subject=Hello there body=How are you?"
                 ;;
             journal)
-                echo "- /journal write <entry_text>"
+                echo "- /journal              — Read ALL journal entries (no arguments needed)"
+                echo "- /journal show         — Read all entries (same as no args)"
+                echo "- /journal show vivid   — Read only vivid (recent) entries"
+                echo "- /journal show fading  — Read fading entries"
+                echo "- /journal show sediment — Read oldest (sediment) entries"
+                echo "- /journal write <entry_text> — Write a new entry"
                 echo "  Types: reflection, learning, struggle, beauty, feeling, encounter."
                 echo "  Appends timestamped entry to journal.md."
-                echo "Example: /journal Because in every Animal that walks upright, the Deficiency of the Fluids that fill the Muscles appears first in the highest Part: The Face first grows lank and wrinkled; then the Neck; then the Breast and Arms; the lower Parts continuing to the last as plump as ever: So that covering all above with a Basket, and regarding2 only what is below the Girdle, it is impossible of two Women to know an old from a young one. And as in the dark all Cats are grey, the Pleasure of corporal Enjoyment with an old Woman is at least equal, and frequently superior, every Knack being by Practice capable of Improvement."
+                echo "  IMPORTANT: To READ the journal, use /journal (no args). To WRITE, use /journal write <text>."
+                echo "  NEVER write new content when the task asks you to check, read, review, or show the journal."
+                echo "Example (read): /journal"
+                echo "Example (write): /journal write Today I learned about the theory of moral sentiments."
                 ;;
             recall)
                 echo "- /recall <query>"
@@ -1054,6 +1130,14 @@ agent_inner_loop() {
     # This is not appended — it is destroyed and recreated on every
     # handoff from the Macro loop.
     echo "# Micro Objective: $micro_objective" > "$micro_file"
+
+    # ── MEMORY CONTEXT CONDENSER ──────────────────────────────
+    # When micro_memory grows large (from previous milestone being
+    # re-used), condense old action entries into one-liners to prevent
+    # attention dilution in small models. The last 3 entries are kept
+    # in full detail; older entries are collapsed to:
+    #   Step N: /command → OK|FAILED (first 60 chars of output)
+    # This is a no-op on the first pass (micro_memory just has the header).
 
     # ── PRIMARY OBJECTIVE INJECTION ────────────────────────────
     # Inject the overarching task goal so the inner loop's router and
@@ -1637,6 +1721,10 @@ agent_run() {
     # strategist doesn't regenerate the same failed milestone in a
     # loop. Each entry is "status|milestone_text".
     local -a _attempted_milestones=()
+    # Last evaluator feedback — prominently surfaced to strategist.
+    # Updated after each evaluator pass so the strategist sees exactly
+    # what the evaluator said was missing on the PREVIOUS iteration.
+    local _last_eval_feedback=""
 
     while [ "$macro_iterations" -lt "$max_macro_loops" ]; do
         # Check for cancellation between milestones
@@ -1675,7 +1763,7 @@ agent_run() {
         # generate exact syntax (the specialist handles that).
         local _tool_summary=""
         _tool_summary="YOUR WORKING COMMANDS (by category):
-KNOWLEDGE: /ask /recall /journal write
+KNOWLEDGE: /ask /recall /journal (read) /journal write (write)
 FILES: /write /save /download /init /clone /build /test /fix /commit /push
 WEB: /web search|fetch|images|scrape-images /github search /vision
 COMMUNICATION: /social post discord|telegram|x|mastodon <target> <text>
@@ -1727,7 +1815,11 @@ STRATEGIC RULES:
 - CONVERSATION RULE: If the user's objective is simply to chat or ask a question, and you have executed the /ask command to answer them, the objective is complete. Output DONE.
 - NEVER prefix a milestone with DONE, DONE:, COMPLETE, or any completion keyword — those are reserved signals
 - MILESTONE FORMAT: Output ONLY a concise imperative sentence (e.g., 'Search the web for X', 'Use /recall to look up syntax').
-- NO INTRODUCTIONS. NO EXPLANATIONS. NEVER say 'The next milestone is...'. Output the action and NOTHING else.${_milestone_history}"
+- NO INTRODUCTIONS. NO EXPLANATIONS. NEVER say 'The next milestone is...'. Output the action and NOTHING else.${_milestone_history}${_last_eval_feedback:+
+
+>>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<
+${_last_eval_feedback}
+>>> You MUST address the above feedback in your next milestone. <<<}"
 
         ui_think "Strategist: determining next milestone..."
         local milestone
@@ -1775,25 +1867,75 @@ STRATEGIC RULES:
         # If the strategist generated a milestone substantially similar
         # to one that already failed, detect it and either force the
         # strategist to try a different approach or skip ahead.
+        #
+        # Similarity detection uses TWO strategies:
+        #   1) First 40 chars match (catches rephrased duplicates)
+        #   2) Same primary slash command + first argument extracted
+        #      (catches "/social discord dm dabe" vs "Send a DM to dabe via /social discord dm")
         local _milestone_lower
         _milestone_lower=$(echo "$milestone" | tr '[:upper:]' '[:lower:]')
+        # Extract slash command signature: e.g. "/social discord dm dabe" → "social discord dm dabe"
+        local _milestone_slash=""
+        if [[ "$_milestone_lower" =~ /([a-z]+[[:space:]]+[a-z].*) ]]; then
+            _milestone_slash=$(echo "${BASH_REMATCH[1]}" | sed 's/[[:space:]]\+/ /g' | cut -d' ' -f1-4)
+        fi
         local _dup_count=0
+        local _last_milestone_text=""
         for _prev in "${_attempted_milestones[@]}"; do
-            local _prev_text _prev_lower
+            local _prev_text _prev_lower _prev_slash
             _prev_text="${_prev#*|}"  # strip "FAILED|" or "OK|" prefix
             _prev_lower=$(echo "$_prev_text" | tr '[:upper:]' '[:lower:]')
-            # Check for substantial similarity (first 40 chars match or
-            # both contain the same primary slash command + keyword)
+            # Strategy 1: first 40 chars match
             if [ "${_milestone_lower:0:40}" = "${_prev_lower:0:40}" ]; then
                 _dup_count=$((_dup_count + 1))
+            # Strategy 2: same slash command signature
+            elif [ -n "$_milestone_slash" ]; then
+                _prev_slash=""
+                if [[ "$_prev_lower" =~ /([a-z]+[[:space:]]+[a-z].*) ]]; then
+                    _prev_slash=$(echo "${BASH_REMATCH[1]}" | sed 's/[[:space:]]\+/ /g' | cut -d' ' -f1-4)
+                fi
+                if [ -n "$_prev_slash" ] && [ "$_milestone_slash" = "$_prev_slash" ]; then
+                    _dup_count=$((_dup_count + 1))
+                fi
             fi
+            _last_milestone_text="$_prev_text"
         done
+
+        # Exact-repeat guard: if the strategist output is identical to the
+        # very last milestone (even on first attempt), it's stuck in a loop.
+        # Immediately set feedback and force a different approach.
+        if [ -n "$_last_milestone_text" ]; then
+            local _last_lower
+            _last_lower=$(echo "$_last_milestone_text" | tr '[:upper:]' '[:lower:]')
+            if [ "$_milestone_lower" = "$_last_lower" ]; then
+                _dup_count=$((${AGENT_MAX_MILESTONE_RETRIES:-2}))
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] exact repeat of last milestone — forcing progression"
+            fi
+        fi
         if [ "$_dup_count" -ge "${AGENT_MAX_MILESTONE_RETRIES:-2}" ]; then
             ui_warn "Milestone '$milestone' already attempted $_dup_count times — forcing progression"
             echo "- Milestone: $milestone -> SKIPPED (duplicate of failed milestone)" >> "$macro_file"
             _attempted_milestones+=("SKIPPED|$milestone")
             macro_iterations=$((macro_iterations + 1))
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — SKIPPED (dup)\n"
+            _last_eval_feedback="Milestone '${milestone:0:80}' was skipped (duplicate). Try a completely different approach to advance the task."
+
+            # Run overall evaluator before skipping — earlier milestones
+            # may have already fulfilled the objective. Without this check,
+            # the `continue` below would jump past the dual evaluator block
+            # and the loop would keep generating (and skipping) milestones
+            # for a task that's already done.
+            if [ "${AGENT_EVAL_MODE:-auto}" != "disabled" ] && [ "$completed_milestones" -gt 0 ]; then
+                if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.md"; then
+                    _last_eval_feedback=""
+                    break
+                else
+                    if [ -n "${_EVAL_INCOMPLETE_REASON:-}" ]; then
+                        _last_eval_feedback="Milestone skipped (duplicate). Overall task still missing: ${_EVAL_INCOMPLETE_REASON}"
+                    fi
+                fi
+            fi
+
             sleep "${AGENT_STEP_DELAY:-1}"
             continue
         fi
@@ -1828,19 +1970,39 @@ STRATEGIC RULES:
             fi
         fi
 
-        # ── Evaluator: check if objective is already fulfilled ─
-        # After each completed milestone, an impartial evaluator
-        # judges whether the primary objective has been satisfied.
-        # This prevents unnecessary extra milestones when the task
-        # is already done. Skipped when AGENT_EVAL_MODE=disabled.
+        # ── Dual Evaluator: milestone + overall ───────────────
+        # After a milestone executes successfully, a two-pass evaluator
+        # system validates completion:
+        #   Pass 1 (milestone): Did this specific milestone's action succeed?
+        #   Pass 2 (overall): Is the user's primary objective now satisfied?
+        # This prevents both premature termination (pass 1 catches false
+        # positives from the inner loop) and unnecessary extra milestones
+        # (pass 2 catches when the task is already done).
+        # Skipped when AGENT_EVAL_MODE=disabled.
         if [ "${AGENT_EVAL_MODE:-auto}" != "disabled" ] && [ "$completed_milestones" -gt 0 ]; then
-            if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.md"; then
-                break
+            if _agent_evaluate_milestone "$macro_file" "$george_dir/micro_memory.md" "$milestone"; then
+                # Milestone confirmed — now check overall objective
+                if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.md"; then
+                    _last_eval_feedback=""  # clear — task is done
+                    break
+                else
+                    # Overall not done — feed reason to strategist for next milestone
+                    if [ -n "${_EVAL_INCOMPLETE_REASON:-}" ]; then
+                        _attempted_milestones+=("EVAL|still missing: $_EVAL_INCOMPLETE_REASON")
+                        _last_eval_feedback="Milestone '${milestone:0:80}' succeeded, but the overall task is NOT done yet. Still missing: ${_EVAL_INCOMPLETE_REASON}"
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval feedback -> strategist: ${_last_eval_feedback:0:100}"
+                    else
+                        _last_eval_feedback="Milestone '${milestone:0:80}' succeeded, but the overall task is NOT done yet."
+                    fi
+                fi
             else
-                # Inject evaluator's INCOMPLETE reason into milestone history
-                # so the strategist can use it when planning the next milestone.
-                if [ -n "${_EVAL_INCOMPLETE_REASON:-}" ]; then
-                    _attempted_milestones+=("EVAL|still missing: $_EVAL_INCOMPLETE_REASON")
+                # Milestone evaluator disagrees — feed milestone-level feedback
+                if [ -n "${_EVAL_MILESTONE_REASON:-}" ]; then
+                    _attempted_milestones+=("EVAL|milestone not done: $_EVAL_MILESTONE_REASON")
+                    _last_eval_feedback="Milestone '${milestone:0:80}' was NOT completed: ${_EVAL_MILESTONE_REASON}. Try a different approach."
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval feedback -> strategist: ${_last_eval_feedback:0:100}"
+                else
+                    _last_eval_feedback="Milestone '${milestone:0:80}' was NOT completed. Try a different approach."
                 fi
             fi
         fi
