@@ -3401,6 +3401,12 @@ _repl() {
         # Trim
         input=$(echo "$input" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         
+        # ── LLM backend health check ──────────────────────────
+        # Verify the active backend is still alive before dispatching.
+        # If llamacpp crashed (OOM, phone sleep), this restarts it or
+        # falls back to Ollama in auto mode. Lightweight: 2s timeout.
+        llm_repl_health_check 2>/dev/null
+        
         # Auto-detect slashless commands: "model temp-ask" → "/model temp-ask"
         # Only if input doesn't already start with / and first word is a known command
         # that is NOT an ambiguous English verb ("write", "read", "test", etc.).

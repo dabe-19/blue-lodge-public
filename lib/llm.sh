@@ -89,6 +89,22 @@ LODGE_THINK_STREAM="${LODGE_THINK_STREAM:-1}"  # When LODGE_THINK=1: 0=hide thin
 LODGE_NOTHINK="${LODGE_NOTHINK:-0}"             # 0=model thinks normally, 1=suppress reasoning (model-specific: /no_think for Qwen, system prompt for Granite)
 LODGE_DEBUG="${LODGE_DEBUG:-0}"                 # 0=normal, 1=show timers + token counts per LLM call
 
+# ── Thinking model token multiplier ────────────────────────────
+# When a thinking model is active, output token budgets must be
+# significantly larger because the model emits <think>...</think>
+# blocks BEFORE the actual response. A 512-token cap that works
+# for instruct models cuts off mid-think for reasoning models,
+# causing unclosed [THINK] tags and empty milestones.
+# Returns the multiplied value: tokens * 4 for thinking, unchanged otherwise.
+_llm_apply_thinking_multiplier() {
+    local tokens="${1:-0}"
+    if models_current_has_thinking 2>/dev/null; then
+        echo $(( tokens * 4 ))
+    else
+        echo "$tokens"
+    fi
+}
+
 # ── Bracket think-tag normalizer ───────────────────────────────
 # Models hallucinate various bracket think tags: [THINK], [think],
 # [THOUGHT], [thought] and their closing counterparts.
@@ -864,6 +880,66 @@ llm_ensure() {
     return 0
 }
 
+# ── REPL health check — lightweight pre-input validation ──────
+# Called before each REPL input dispatch to verify the active
+# backend is still alive. If llamacpp dies (OOM, crash, phone
+# sleep), this detects it and either restarts or falls back.
+# Returns 0 = healthy, 1 = no backend available.
+llm_repl_health_check() {
+    local backend
+    backend=$(_llm_detect_backend 2>/dev/null)
+
+    if [ "$backend" = "llamacpp" ]; then
+        # Quick health probe — 2s timeout, no retry
+        if curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null | grep -q '"status"'; then
+            return 0  # healthy
+        fi
+
+        # Server died — try to restart
+        ui_warn "llama-server not responding — restarting..."
+        _LLM_BACKEND_CACHE=""
+        if _llm_start_llamacpp_server "${LLAMA_CPP_MODEL:-}" "--quiet" 2>/dev/null; then
+            _LLM_BACKEND_CACHE="llamacpp"
+            ui_ok "llama-server restarted"
+            return 0
+        fi
+
+        # Restart failed — fall back to Ollama if in auto mode
+        if [ "${LLM_BACKEND:-auto}" = "auto" ] || [ -z "${LLM_BACKEND:-}" ]; then
+            ui_warn "llama-server restart failed — falling back to Ollama"
+            _LLM_BACKEND_CACHE=""
+            if curl -sf --max-time 2 "$OLLAMA_URL/api/tags" &>/dev/null; then
+                _LLM_BACKEND_CACHE="ollama"
+                return 0
+            fi
+            # Try starting Ollama
+            if command -v ollama &>/dev/null; then
+                ollama serve > /tmp/lodge-ollama.log 2>&1 &
+                sleep 3
+                if curl -sf --max-time 2 "$OLLAMA_URL/api/tags" &>/dev/null; then
+                    _LLM_BACKEND_CACHE="ollama"
+                    return 0
+                fi
+            fi
+        fi
+
+        ui_err "No LLM backend available — commands requiring LLM will fail"
+        return 1
+    fi
+
+    # Ollama backend — quick check
+    if [ "$backend" = "ollama" ]; then
+        if curl -sf --max-time 2 "$OLLAMA_URL/api/tags" &>/dev/null; then
+            return 0
+        fi
+        ui_warn "Ollama not responding"
+        _LLM_BACKEND_CACHE=""
+        return 1
+    fi
+
+    return 0
+}
+
 # ── Create the model from registry Modelfile ───────────────────
 # Resolves LODGE_MODEL to a registry key, generates the correct
 # per-model Modelfile, and creates. Falls back to root Modelfile
@@ -988,6 +1064,11 @@ llm_generate() {
     local budget="${4:-$LLM_BUDGET_TOKENS}"
     local payload
 
+    # Thinking model 4x multiplier: thinking models emit <think> blocks
+    # before the response, so token budgets must be larger to avoid
+    # truncating mid-think (which causes unclosed [THINK] tags).
+    max_tokens=$(_llm_apply_thinking_multiplier "$max_tokens")
+
     _llm_debug_start_timer
 
     # Detect active backend
@@ -1048,6 +1129,13 @@ llm_generate() {
 
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] generate (llamacpp): url=%s max_tokens=%s\n" "$LLAMA_CPP_URL" "$max_tokens" > "$_tty" 2>/dev/null
 
+        # ── Think-tag handling for llamacpp ────────────────────
+        # llama-server has no thinking API — all output is content tokens.
+        # Buffer the full response and strip <think>...</think> blocks
+        # before emitting to stdout. Show thinking tokens on tty if enabled.
+        local _gen_buffer=""
+        local _gen_in_think=0
+
         # Use a FIFO so we can track and kill the curl PID independently
         # of the read loop. Without this, curl survives `break` and keeps
         # llama-server's slot busy (phone stays hot).
@@ -1082,7 +1170,7 @@ llm_generate() {
             token=$(echo "$json" | jq -r '.choices[0].delta.content // empty' 2>/dev/null)
             if [ -n "$token" ]; then
                 [ -f "$_got_tokens" ] || touch "$_got_tokens"
-                printf "%s" "$token"
+                _gen_buffer="${_gen_buffer}${token}"
                 _dbg_out=$((_dbg_out + 1))
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\033[90m%s\033[0m" "$token" > "$_tty" 2>/dev/null
             fi
@@ -1102,6 +1190,20 @@ llm_generate() {
             return 1
         fi
         rm -f "$_got_tokens"
+
+        # Strip think blocks from buffered output before emitting.
+        # Normalize bracket variants first, then strip <think>...</think>.
+        _llm_normalize_think _gen_buffer
+        # Strip complete think blocks (multi-line)
+        _gen_buffer=$(echo "$_gen_buffer" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+        # Strip unclosed think blocks (token limit truncated before </think>)
+        _gen_buffer=$(echo "$_gen_buffer" | sed ':a;N;$!ba;s/<think>.*$//g')
+        # Strip <response>...</response> tags (Granite4 format)
+        _gen_buffer="${_gen_buffer//<response>/}"
+        _gen_buffer="${_gen_buffer//<\/response>/}"
+        # Trim leading/trailing whitespace
+        _gen_buffer=$(echo "$_gen_buffer" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        printf "%s" "$_gen_buffer"
         return 0
     fi
 
@@ -1414,6 +1516,9 @@ llm_stream() {
     local payload
     local full_response=""
 
+    # Thinking model 4x multiplier (see llm_generate for rationale)
+    max_tokens=$(_llm_apply_thinking_multiplier "$max_tokens")
+
     _llm_debug_start_timer
 
     # Detect active backend
@@ -1477,6 +1582,15 @@ llm_stream() {
 
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] stream (llamacpp): url=%s max_tokens=%s\n" "$LLAMA_CPP_URL" "$max_tokens" > "$_tty" 2>/dev/null
 
+        # ── Think-tag state for llamacpp streaming ─────────────
+        # llama-server has no thinking API: thinking tokens arrive as
+        # regular content. We track <think>/</ think> (and bracket
+        # variants) in real-time and divert thinking tokens to tty
+        # (if enabled) instead of stdout/tty response output.
+        local _stream_in_think=0
+        local _stream_think_banner=0
+        local _stream_token_buf=""
+
         # FIFO for curl → read loop decoupling (enables PID tracking)
         local _fifo="$_tmpdir/.lodge-fifo-stream-$$"
         rm -f "$_fifo"
@@ -1496,6 +1610,10 @@ llm_stream() {
             local json="${line#data: }"
 
             if [ "$json" = "[DONE]" ]; then
+                # Close think banner if still open (unclosed think block)
+                if [ "$_stream_in_think" -eq 1 ] && [ "$_stream_think_banner" -eq 1 ]; then
+                    _think_close
+                fi
                 if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
                     _llm_debug_end_timer "stream(llamacpp)" "?" "$_dbg_out"
                 fi
@@ -1513,8 +1631,68 @@ llm_stream() {
                     kill "$_llm_spinner_pid" 2>/dev/null
                     printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
                 fi
-                printf "%s" "$token"
-                printf "%s" "$token" > "$_tty" 2>/dev/null
+
+                # Normalize bracket think tags inline
+                _llm_normalize_think token
+
+                # Accumulate into buffer for tag boundary detection
+                _stream_token_buf="${_stream_token_buf}${token}"
+
+                # Detect think open: <think> in buffer
+                while [[ "$_stream_token_buf" == *"<think>"* ]]; do
+                    # Emit everything before <think> as response
+                    local _pre="${_stream_token_buf%%<think>*}"
+                    if [ -n "$_pre" ] && [ "$_stream_in_think" -eq 0 ]; then
+                        printf "%s" "$_pre"
+                        printf "%s" "$_pre" > "$_tty" 2>/dev/null
+                    fi
+                    _stream_token_buf="${_stream_token_buf#*<think>}"
+                    _stream_in_think=1
+                    # Show think banner on tty
+                    if [ "$_stream_think_banner" -eq 0 ]; then
+                        _stream_think_banner=1
+                        _think_open
+                    fi
+                done
+
+                # Detect think close: </think> in buffer
+                while [[ "$_stream_token_buf" == *"</think>"* ]]; do
+                    # Show thinking content on tty if enabled
+                    local _think_content="${_stream_token_buf%%</think>*}"
+                    _think_show "$_think_content"
+                    _stream_token_buf="${_stream_token_buf#*</think>}"
+                    _stream_in_think=0
+                    if [ "$_stream_think_banner" -eq 1 ]; then
+                        _think_close
+                        _stream_think_banner=0
+                    fi
+                done
+
+                # Emit buffered non-think content (keep small tail for
+                # boundary detection in case <think> spans multiple tokens)
+                if [ "$_stream_in_think" -eq 0 ]; then
+                    # Safe to emit if buffer doesn't contain a partial tag
+                    if [[ "$_stream_token_buf" != *"<"* ]]; then
+                        if [ -n "$_stream_token_buf" ]; then
+                            printf "%s" "$_stream_token_buf"
+                            printf "%s" "$_stream_token_buf" > "$_tty" 2>/dev/null
+                        fi
+                        _stream_token_buf=""
+                    elif [ ${#_stream_token_buf} -gt 20 ]; then
+                        # Buffer growing — partial "<" is likely just content
+                        printf "%s" "$_stream_token_buf"
+                        printf "%s" "$_stream_token_buf" > "$_tty" 2>/dev/null
+                        _stream_token_buf=""
+                    fi
+                else
+                    # Inside think block — show tokens on tty
+                    _think_show "$_stream_token_buf"
+                    _stream_token_buf=""
+                fi
+
+                # Strip <response>/</ response> tags (Granite4)
+                # (handled in buffer above; residual tags cleaned here)
+
                 _dbg_out=$((_dbg_out + 1))
             fi
         done < "$_fifo"
@@ -1917,6 +2095,13 @@ llm_chat() {
     # Build options with per-scenario sampling parameters
     local _opts
     _opts=$(_llm_build_opts "$LLM_MAX_TOKENS")
+
+    # Thinking model 4x multiplier for chat (see llm_generate for rationale)
+    if models_current_has_thinking 2>/dev/null; then
+        local _chat_np
+        _chat_np=$(echo "$_opts" | jq -r '.num_predict // 4096')
+        _opts=$(echo "$_opts" | jq --argjson np $(( _chat_np * 4 )) '.num_predict = $np')
+    fi
 
     # ── llama.cpp chat path ────────────────────────────────────
     # Cleanest backend translation — llama-server natively uses

@@ -407,8 +407,11 @@ $project_mem
 "
 
     if [ -n "$task_hint" ] && declare -f recall_search_context &>/dev/null; then
+        # Reduce recall chunks for thinking models (need room for <think> blocks)
+        local _recall_n=4
+        models_current_has_thinking 2>/dev/null && _recall_n=2
         local recall_ctx
-        recall_ctx=$(recall_search_context "$task_hint" 4 2>/dev/null)
+        recall_ctx=$(recall_search_context "$task_hint" "$_recall_n" 2>/dev/null)
         [ -n "$recall_ctx" ] && prompt="${prompt}
 ## RECALLED KNOWLEDGE
 $recall_ctx
@@ -417,8 +420,11 @@ $recall_ctx
 
     if [ -f "$LODGE_DIR/journal.md" ]; then
         source "$LODGE_DIR/lib/journal.sh" 2>/dev/null
+        # Reduce journal context for thinking models
+        local _journal_limit=500
+        models_current_has_thinking 2>/dev/null && _journal_limit=250
         local journal_context
-        journal_context=$(journal_read 500)
+        journal_context=$(journal_read "$_journal_limit")
         [ -n "$journal_context" ] && prompt="${prompt}
 $journal_context
 "

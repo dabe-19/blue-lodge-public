@@ -24,6 +24,21 @@ AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto |
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-512}"     # Max output tokens for evaluator
 
+# ── Context-aware memory injection for thinking models ─────────
+# Thinking models consume input context faster (need room for
+# <think> blocks). When a thinking model is active, reduce memory
+# injection sizes to avoid overwhelming the context window.
+# Returns the reduced value for thinking models, original otherwise.
+_agent_thinking_context_limit() {
+    local default_val="$1"
+    if models_current_has_thinking 2>/dev/null; then
+        # Halve context injection for thinking models
+        echo $(( default_val / 2 ))
+    else
+        echo "$default_val"
+    fi
+}
+
 # ── Dual Evaluator System ─────────────────────────────────────
 # Two-pass evaluation after each milestone:
 #
@@ -65,7 +80,8 @@ _agent_evaluate_milestone() {
     fi
 
     # Truncate to prevent attention dilution
-    local _max_ctx_lines="${AGENT_EVAL_CONTEXT_LINES:-50}"
+    local _max_ctx_lines
+    _max_ctx_lines=$(_agent_thinking_context_limit "${AGENT_EVAL_CONTEXT_LINES:-50}")
     local _ctx_total
     _ctx_total=$(echo "$eval_context" | wc -l)
     if [ "$_ctx_total" -gt "$_max_ctx_lines" ]; then
@@ -88,6 +104,9 @@ _agent_evaluate_milestone() {
     # Clean up LLM output — strip think blocks, whitespace
     verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
     verdict=$(echo "$verdict" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
+    # Strip unclosed think blocks (token limit truncated before closing tag)
+    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>.*$//g')
+    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
     verdict=$(echo "$verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
     local first_line
@@ -138,11 +157,13 @@ _agent_evaluate_completion() {
 
     # Supplement with recent micro_memory for action-level detail
     local micro_context=""
+    local _micro_ctx_max
+    _micro_ctx_max=$(_agent_thinking_context_limit 30)
     if [ -n "$micro_file" ] && [ -f "$micro_file" ]; then
         local _micro_lines
         _micro_lines=$(wc -l < "$micro_file")
-        if [ "$_micro_lines" -gt 30 ]; then
-            micro_context=$(tail -30 "$micro_file")
+        if [ "$_micro_lines" -gt "$_micro_ctx_max" ]; then
+            micro_context=$(tail -n "$_micro_ctx_max" "$micro_file")
         else
             micro_context=$(cat "$micro_file")
         fi
@@ -164,6 +185,9 @@ _agent_evaluate_completion() {
     # Clean up LLM output — strip think blocks, whitespace
     verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
     verdict=$(echo "$verdict" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
+    # Strip unclosed think blocks (token limit truncated before closing tag)
+    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>.*$//g')
+    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
     verdict=$(echo "$verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
     local first_line
@@ -204,6 +228,7 @@ _agent_evaluate_completion() {
             local LLM_SCENARIO=evaluator
             task_summary=$(llm_generate "$summary_prompt" "$summary_sys" "${LLM_EVALUATOR_TOKENS:-512}" "$LLM_BUDGET_AGENT")
             task_summary=$(echo "$task_summary" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+            task_summary=$(echo "$task_summary" | sed ':a;N;$!ba;s/<think>.*$//g')
             task_summary=$(echo "$task_summary" | sed '/^[[:space:]]*$/d' | head -5)
             echo ""
             ui_ok "Summary: $task_summary"
@@ -221,6 +246,7 @@ _agent_evaluate_completion() {
     local LLM_SCENARIO=evaluator
     task_summary=$(llm_generate "$summary_prompt" "$summary_sys" "${LLM_EVALUATOR_TOKENS:-512}" "$LLM_BUDGET_AGENT")
     task_summary=$(echo "$task_summary" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+    task_summary=$(echo "$task_summary" | sed ':a;N;$!ba;s/<think>.*$//g')
     task_summary=$(echo "$task_summary" | sed '/^[[:space:]]*$/d' | head -5)
     echo ""
     ui_ok "Task complete — $task_summary"
@@ -1694,8 +1720,16 @@ agent_run() {
     # ── Initialize Memory Architecture ────────────────────────
     local george_dir="$workdir/.george"
     local macro_file="$george_dir/macro_memory.md"
+    local micro_file="$george_dir/micro_memory.md"
     local fail_file="$george_dir/failures_log.md"
     mkdir -p "$george_dir"
+
+    # ── Flush stale memory from previous task ──────────────────
+    # Previous task's memory files are preserved for review after
+    # the task completes (they've already been summarized to journal).
+    # Now wipe them fresh so old task requirements don't leak into
+    # the new task's context via journal_reflect or evaluators.
+    rm -f "$micro_file" "$fail_file" 2>/dev/null
 
     # Seed macro_memory.md with the identity section from soul.md
     # and the primary objective. This persists for the duration of the task.
@@ -1851,6 +1885,12 @@ ${_last_eval_feedback}
         milestone=$(echo "$milestone" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
         milestone=$(echo "$milestone" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
         milestone=$(echo "$milestone" | sed 's/\[THOUGHT\][^[]*\[\/THOUGHT\]//gI')
+        # 1b. Remove UNCLOSED think blocks — when token limit truncates
+        # before the closing tag, the entire think content leaks through.
+        # Strip from opening tag to end of string.
+        milestone=$(echo "$milestone" | sed ':a;N;$!ba;s/<think>.*$//g')
+        milestone=$(echo "$milestone" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+        milestone=$(echo "$milestone" | sed ':a;N;$!ba;s/\[THOUGHT\].*$//gI')
         # 2. Remove stray opening/closing think tags (both formats, all case variants)
         milestone=$(echo "$milestone" | sed 's/<\/?think>//gI')
         milestone=$(echo "$milestone" | sed 's/\[\/?THINK\]//gI')
@@ -2054,6 +2094,33 @@ ${_last_eval_feedback}
     # a model unload+load at that moment races with the cleanup and can crash
     # Termux. The cancelled task will be visible in macro_memory.md anyway.
     if [ "$_was_cancelled" -eq 0 ]; then
+        # ── Summarize macro_memory → journal ──────────────────
+        # Condense the task's macro_memory into ≤4 sentences and write
+        # it as a structured journal entry. This preserves task context
+        # for future recall without requiring George to read the full
+        # macro_memory (which is overwritten on the next task start).
+        if [ -f "$macro_file" ]; then
+            local _macro_content
+            _macro_content=$(cat "$macro_file" 2>/dev/null)
+            if [ -n "$_macro_content" ]; then
+                local _sum_prompt="Summarize this task memory in 1-4 factual sentences. Include what was done, key outcomes, and any failures. No headers, no formatting, just the summary.\n\n${_macro_content}"
+                local _sum_sys="You are a concise summarizer. Write 1-4 factual sentences. No personality. No formatting."
+                local _task_journal_summary
+                local LLM_SCENARIO=journal
+                _task_journal_summary=$(llm_generate "$_sum_prompt" "$_sum_sys" 256 "$LLM_BUDGET_JOURNAL" 2>/dev/null)
+                if [ $? -eq 0 ] && [ -n "$_task_journal_summary" ] && [[ "$_task_journal_summary" != ERROR* ]]; then
+                    # Strip think blocks from summary
+                    _task_journal_summary=$(echo "$_task_journal_summary" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+                    _task_journal_summary=$(echo "$_task_journal_summary" | sed ':a;N;$!ba;s/<think>.*$//g')
+                    _task_journal_summary=$(echo "$_task_journal_summary" | sed '/^[[:space:]]*$/d' | head -4)
+                    if [ -n "$_task_journal_summary" ]; then
+                        journal_write "task_summary" "$_task_journal_summary"
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] task summary journaled ($(echo "$_task_journal_summary" | wc -w) words)"
+                    fi
+                fi
+            fi
+        fi
+
         local reflect_summary="$task ($completed_milestones/$macro_iterations milestones in $(basename "$workdir"))"
         if [ -n "$failed_milestones" ]; then
             reflect_summary="${reflect_summary}. Failed: ${failed_milestones}"
