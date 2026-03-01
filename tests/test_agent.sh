@@ -911,6 +911,61 @@ describe "Soul injection in dual-loop architecture"
     assert_ok $?
   }
 
+  it "macro memory seed includes task start timestamp" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'Task Started'
+    assert_ok $?
+  }
+
+  it "micro memory includes milestone start timestamp" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'Started:.*date'
+    assert_ok $?
+  }
+
+  it "strategist prompt includes current date/time" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_strat_now'
+    assert_ok $?
+    echo "$body" | grep -q 'current date and time is'
+    assert_ok $?
+  }
+
+  it "milestone evaluator prompt includes current timestamp" && {
+    local body
+    body=$(declare -f _agent_evaluate_milestone)
+    echo "$body" | grep -q 'CURRENT DATE/TIME'
+    assert_ok $?
+  }
+
+  it "overall evaluator prompt includes current timestamp" && {
+    local body
+    body=$(declare -f _agent_evaluate_completion)
+    echo "$body" | grep -q 'CURRENT DATE/TIME'
+    assert_ok $?
+  }
+
+  it "router prompt includes current date/time" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_route_now'
+    assert_ok $?
+    echo "$body" | grep -q 'Current date/time'
+    assert_ok $?
+  }
+
+  it "journal_reflect background is disowned in agent_run" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'journal_reflect.*&'
+    assert_ok $?
+    echo "$body" | grep -q 'disown'
+    assert_ok $?
+  }
+
   it "agent_run does NOT use head -20 for soul extraction" && {
     local body
     body=$(declare -f agent_run)

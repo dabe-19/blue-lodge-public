@@ -244,4 +244,12 @@ describe "journal_reflect prompt"
     _teardown_journal
   }
 
+  it "journal_reflect includes current timestamp in prompt" && {
+    _setup_journal
+    body=$(declare -f journal_reflect)
+    echo "$body" | grep -q 'Current date/time'
+    assert_ok $?
+    _teardown_journal
+  }
+
 test_end

@@ -420,6 +420,7 @@ journal_reflect() {
         # We have real execution data — write from the log
         prompt="You are George. Write a brief factual journal entry about what just happened.
 
+Current date/time: $(date '+%Y-%m-%d %H:%M:%S %Z')
 Task: $task_summary
 Directory: $(basename "$workdir")
 
@@ -433,6 +434,7 @@ Do NOT use headers or formatting. Just the raw entry."
         # No execution log (REPL exit, /reflect) — keep it vague and honest
         prompt="You are George. Write a brief journal entry about this session.
 
+Current date/time: $(date '+%Y-%m-%d %H:%M:%S %Z')
 Context: $task_summary
 Directory: $(basename "$workdir")
 

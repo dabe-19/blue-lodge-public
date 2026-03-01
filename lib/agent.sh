@@ -74,7 +74,9 @@ _agent_evaluate_milestone() {
     fi
 
     # ATTENTION REORDER: Action log FIRST, milestone LAST (recency bias)
-    local eval_prompt="ACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions in the log above accomplish this specific milestone?\n\nRULES:\n- A command with Status: EXECUTED SUCCESSFULLY (exit 0) satisfies the milestone unless its output clearly indicates failure.\n- Empty output is normal for many tools (email, social, file ops). Exit code 0 with empty output = success.\n- Focus ONLY on whether THIS milestone was achieved — ignore the broader task objective.\n- If the action log shows a relevant command was executed and succeeded, the milestone is done.\n- Do NOT require confirmation, follow-up, or verification steps unless the milestone explicitly asked for them.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence reason>"
+    local _eval_now
+    _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions in the log above accomplish this specific milestone?\n\nRULES:\n- A command with Status: EXECUTED SUCCESSFULLY (exit 0) satisfies the milestone unless its output clearly indicates failure.\n- Empty output is normal for many tools (email, social, file ops). Exit code 0 with empty output = success.\n- Focus ONLY on whether THIS milestone was achieved — ignore the broader task objective.\n- If the action log shows a relevant command was executed and succeeded, the milestone is done.\n- Do NOT require confirmation, follow-up, or verification steps unless the milestone explicitly asked for them.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence reason>"
 
     local eval_sys="You are a pragmatic milestone evaluator. Judge whether a specific action step was executed successfully based on the action log. Exit code 0 means the command succeeded — do not second-guess it. Empty output is normal and expected for many tools. Only mark INCOMPLETE if no relevant action was attempted or the action clearly failed. Respond COMPLETE or INCOMPLETE: <reason>."
 
@@ -148,7 +150,9 @@ _agent_evaluate_completion() {
     fi
 
     # ATTENTION REORDER: context first, objective + criteria last
-    local eval_prompt="TASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE (the user's original request):\n${primary_obj}\n\nGiven all the milestones completed above, is the PRIMARY OBJECTIVE fully satisfied?\n\nRULES:\n- Review the Completed Milestones section for what has been accomplished.\n- For single-action objectives (e.g., 'send a Discord DM to X'), one successful milestone that executed the action is sufficient.\n- For multi-part objectives, verify each distinct part has a corresponding completed milestone.\n- Do NOT invent extra requirements beyond what the user explicitly asked for.\n- Do NOT require confirmation or verification steps unless the user asked for them.\n- If the key action(s) have been executed successfully, the task is done.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence description of what specific part remains>"
+    local _eval_now
+    _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE (the user's original request):\n${primary_obj}\n\nGiven all the milestones completed above, is the PRIMARY OBJECTIVE fully satisfied?\n\nRULES:\n- Review the Completed Milestones section for what has been accomplished.\n- For single-action objectives (e.g., 'send a Discord DM to X'), one successful milestone that executed the action is sufficient.\n- For multi-part objectives, verify each distinct part has a corresponding completed milestone.\n- Do NOT invent extra requirements beyond what the user explicitly asked for.\n- Do NOT require confirmation or verification steps unless the user asked for them.\n- If the key action(s) have been executed successfully, the task is done.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence description of what specific part remains>"
 
     local eval_sys="You are a strategic task-completion evaluator. Given the full history of completed milestones, determine whether the user's original request has been fully addressed. Be pragmatic — if the requested actions were executed successfully, the task is complete. Do not add requirements the user did not ask for. Respond COMPLETE or INCOMPLETE: <reason>."
 
@@ -1130,6 +1134,7 @@ agent_inner_loop() {
     # This is not appended — it is destroyed and recreated on every
     # handoff from the Macro loop.
     echo "# Micro Objective: $micro_objective" > "$micro_file"
+    echo "## Started: $(date '+%Y-%m-%d %H:%M:%S %Z')" >> "$micro_file"
 
     # ── MEMORY CONTEXT CONDENSER ──────────────────────────────
     # When micro_memory grows large (from previous milestone being
@@ -1176,7 +1181,9 @@ agent_inner_loop() {
 
         # ── PHASE 1: Fast Tool Routing ────────────────────────
         local router_sys=$(_build_router_prompt)
-        local route_prompt="Review the Action Log. If the objective is ALREADY FULFILLED by the actions taken (data gathered, command executed, content created), output SUCCESS: <brief summary>. Otherwise, output the SINGLE tool name needed for the next action."
+        local _route_now
+        _route_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
+        local route_prompt="Current date/time: ${_route_now}\n\nReview the Action Log. If the objective is ALREADY FULFILLED by the actions taken (data gathered, command executed, content created), output SUCCESS: <brief summary>. Otherwise, output the SINGLE tool name needed for the next action."
 
         # ── RESEARCH SUFFICIENCY GUIDANCE ──────────────────────
         # For objectives involving web research, tell the router to
@@ -1697,6 +1704,9 @@ agent_run() {
     {
         echo "# George — Task Memory"
         echo ""
+        echo "## Task Started"
+        echo "$(date '+%Y-%m-%d %H:%M:%S %Z')"
+        echo ""
         echo "## Persona"
         _memory_soul_identity
         echo ""
@@ -1791,7 +1801,9 @@ EXTENSION: /slash create|run"
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- milestone history (${#_attempted_milestones[@]} entries)"
         fi
 
-        local macro_sys="You are a strategic planning engine. Given a task memory with completed milestones, determine the single next milestone needed.
+        local _strat_now
+        _strat_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
+        local macro_sys="You are a strategic planning engine. The current date and time is: ${_strat_now}. Given a task memory with completed milestones, determine the single next milestone needed.
 
 ${_tool_summary}
 
@@ -2047,6 +2059,7 @@ ${_last_eval_feedback}
             reflect_summary="${reflect_summary}. Failed: ${failed_milestones}"
         fi
         journal_reflect "$reflect_summary" "$workdir" "$_exec_log" &
+        disown 2>/dev/null
 
         # Notify on phone if available
         tools_phone_toast "Lodge: Task complete ($completed_milestones/$macro_iterations milestones)"
