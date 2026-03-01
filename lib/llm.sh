@@ -304,10 +304,30 @@ _llm_start_llamacpp_server() {
     local _port_check
     _port_check=$(echo "$LLAMA_CPP_URL" | grep -oP ':\K[0-9]+$' || echo "8080")
     if curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null | grep -q '"status"'; then
-        [ "$quiet" != "--quiet" ] && ui_ok "llama-server already running on port $_port_check (adopted)"
-        _LLM_BACKEND_CACHE=""
-        LLAMA_CPP_MODEL="$model_path"
-        return 0
+        # Verify the running server's GPU layers match our config.
+        # A stale server from a previous session might have been launched
+        # with -ngl >0 (Vulkan), producing gibberish on Adreno 830.
+        local _running_ngl="" _srv_pid_adopt
+        _srv_pid_adopt=$(pgrep -f "llama-server.*--port" 2>/dev/null | head -1)
+        if [ -n "$_srv_pid_adopt" ] && [ -f "/proc/$_srv_pid_adopt/cmdline" ]; then
+            _running_ngl=$(tr '\0' ' ' < "/proc/$_srv_pid_adopt/cmdline" 2>/dev/null \
+                | grep -oP '\-ngl\s+\K[0-9]+')
+        fi
+        # Also try ps if /proc wasn't available
+        if [ -z "$_running_ngl" ] && [ -n "$_srv_pid_adopt" ]; then
+            _running_ngl=$(ps -p "$_srv_pid_adopt" -o args= 2>/dev/null \
+                | grep -oP '\-ngl\s+\K[0-9]+')
+        fi
+        if [ -n "$_running_ngl" ] && [ "$_running_ngl" != "$LLAMA_CPP_GPU_LAYERS" ]; then
+            [ "$quiet" != "--quiet" ] && ui_warn "Running llama-server has -ngl $_running_ngl but config wants $LLAMA_CPP_GPU_LAYERS — restarting"
+            kill -9 "$_srv_pid_adopt" 2>/dev/null
+            sleep 1
+        else
+            [ "$quiet" != "--quiet" ] && ui_ok "llama-server already running on port $_port_check (adopted)"
+            _LLM_BACKEND_CACHE=""
+            LLAMA_CPP_MODEL="$model_path"
+            return 0
+        fi
     fi
     # Server may be loading a model — wait up to 30s for it
     local _loading_resp

@@ -248,6 +248,22 @@ _cmd_backend() {
             ui_section "Health"
             printf "  %-22s %s\n" "Ollama:" "$ollama_status"
             printf "  %-22s %s\n" "llama-server:" "$llamacpp_status"
+            # Show actual vs configured GPU layers for running llama-server
+            if [ "$llamacpp_status" != "unreachable" ]; then
+                local _srv_pid_status _actual_ngl="?"
+                _srv_pid_status=$(pgrep -f "llama-server.*--port" 2>/dev/null | head -1)
+                if [ -n "$_srv_pid_status" ]; then
+                    if [ -f "/proc/$_srv_pid_status/cmdline" ]; then
+                        _actual_ngl=$(tr '\0' ' ' < "/proc/$_srv_pid_status/cmdline" 2>/dev/null \
+                            | grep -oP '\-ngl\s+\K[0-9]+' || echo "?")
+                    fi
+                    [ "$_actual_ngl" = "?" ] && _actual_ngl=$(ps -p "$_srv_pid_status" -o args= 2>/dev/null \
+                        | grep -oP '\-ngl\s+\K[0-9]+' || echo "?")
+                fi
+                local _ngl_match=""
+                [ "$_actual_ngl" != "?" ] && [ "$_actual_ngl" != "$LLAMA_CPP_GPU_LAYERS" ] && _ngl_match=" ⚠ MISMATCH (config=$LLAMA_CPP_GPU_LAYERS)"
+                printf "  %-22s %s%s\n" "GPU layers (running):" "$_actual_ngl" "$_ngl_match"
+            fi
             ;;
         auto|ollama|llamacpp|llama-cpp)
             LLM_BACKEND="$action"

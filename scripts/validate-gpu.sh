@@ -47,7 +47,7 @@ _TERMUX_HOME="$(_resolve_termux_home)"
 # Auto-detect from script location (works regardless of install path)
 LODGE_DIR="${LODGE_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 LLAMA_CPP_SERVER_BIN="${LLAMA_CPP_SERVER_BIN:-$_TERMUX_HOME/llama.cpp/build/bin/llama-server}"
-LLAMA_CPP_GPU_LAYERS="${LLAMA_CPP_GPU_LAYERS:-99}"
+LLAMA_CPP_GPU_LAYERS="${LLAMA_CPP_GPU_LAYERS:-99}"   # GPU validation: offload all layers by default
 LLAMA_CPP_CTX_SIZE="${LLAMA_CPP_CTX_SIZE:-4096}"
 VALIDATE_PORT="${VALIDATE_PORT:-8090}"
 VALIDATE_URL="http://127.0.0.1:$VALIDATE_PORT"

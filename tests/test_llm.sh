@@ -345,6 +345,12 @@ describe "Core LLM functions"
     assert_ok $? "start function must adopt existing healthy server"
   }
 
+  it "_llm_start_llamacpp_server validates GPU layers on adopt" && {
+    _body=$(declare -f _llm_start_llamacpp_server 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'LLAMA_CPP_GPU_LAYERS.*restarting'
+    assert_ok $? "adopt must verify -ngl matches config, restart if mismatched"
+  }
+
   it "_llm_start_llamacpp_server kills orphan processes" && {
     _body=$(declare -f _llm_start_llamacpp_server 2>/dev/null || echo "")
     echo "$_body" | grep -q 'orphan'
