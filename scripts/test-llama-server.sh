@@ -109,16 +109,19 @@ _ok "Binary: $LLAMA_BIN"
 
 # ── Step 2: Check Ollama isn't hogging RAM ────────────────────
 _step "2" "Checking for running Ollama"
-if pgrep -x ollama &>/dev/null; then
+if pgrep -f ollama &>/dev/null; then
     _warn "Ollama is running — loading the same model twice WILL cause OOM"
     read -rp "    Kill Ollama before continuing? [Y/n] " _ans
     if [[ ! "${_ans:-y}" =~ ^[Nn] ]]; then
-        killall ollama 2>/dev/null || true
+        # SIGTERM is ignored by Ollama when a model is loaded (it waits
+        # for the keep-alive timeout). Go straight to SIGKILL and also
+        # kill child runner processes that hold GPU/RAM.
+        _dim "Sending SIGKILL to all Ollama processes..."
+        pkill -9 -f ollama 2>/dev/null || killall -9 ollama 2>/dev/null || true
         sleep 2
-        if pgrep -x ollama &>/dev/null; then
-            _warn "Ollama still running — trying SIGKILL"
-            killall -9 ollama 2>/dev/null || true
-            sleep 1
+        if pgrep -f ollama &>/dev/null; then
+            _fail "Could not kill Ollama — kill it manually: pkill -9 -f ollama"
+            exit 1
         fi
         _ok "Ollama stopped"
     else
