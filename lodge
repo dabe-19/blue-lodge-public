@@ -322,9 +322,13 @@ _cmd_backend() {
             ui_dim "  Model:   $_model_path"
             ui_dim "  GPU layers: $LLAMA_CPP_GPU_LAYERS"
             ui_dim "  Context: $LLAMA_CPP_CTX_SIZE"
+            # Kill Ollama first — frees RAM and avoids confusion
+            _llm_kill_ollama --quiet
             # Chat template: --jinja uses the GGUF-embedded Jinja2 template,
             # so no per-model template name resolution is needed.
             if _llm_start_llamacpp_server "$_model_path"; then
+                _LLM_BACKEND_CACHE=""
+                LLM_BACKEND="llamacpp"
                 local _health _status
                 _health=$(curl -sf "$LLAMA_CPP_URL/health" 2>/dev/null)
                 _status=$(echo "$_health" | jq -r '.status // "unknown"' 2>/dev/null)
@@ -3422,12 +3426,16 @@ main() {
     # Initialize model library (sets LODGE_MODEL from model slots)
     models_init
 
-    # Check LLM
+    # Start LLM backend (prefers llama-server, falls back to Ollama)
+    ui_spinner_start "Starting LLM backend"
     if ! llm_ensure; then
-        ui_err "Cannot connect to Ollama. Is it running?"
-        ui_dim "Start with: ollama serve"
+        ui_spinner_stop
+        ui_err "No LLM backend available."
+        ui_dim "  Build llama-server: see docs/ADRENO_GPU_SETUP.md"
+        ui_dim "  Or install Ollama:  curl -fsSL https://ollama.com/install.sh | sh"
         exit 1
     fi
+    ui_spinner_stop
     
     # Pre-load model weights (avoids cold-start delay on first query)
     ui_spinner_start "Loading model"

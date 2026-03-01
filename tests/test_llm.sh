@@ -313,6 +313,26 @@ describe "Core LLM functions"
     assert_ok $?
   }
 
+  it "_llm_kill_ollama is defined" && {
+    declare -f _llm_kill_ollama &>/dev/null
+    assert_ok $?
+  }
+
+  it "llm_ensure prefers llamacpp over Ollama" && {
+    _body=$(declare -f llm_ensure 2>/dev/null || echo "")
+    # Must try llama-server BEFORE Ollama fallback
+    _llamacpp_line=$(echo "$_body" | grep -n '_llm_start_llamacpp_server' | head -1 | cut -d: -f1)
+    _ollama_line=$(echo "$_body" | grep -n 'ollama serve' | head -1 | cut -d: -f1)
+    [ -n "$_llamacpp_line" ] && [ -n "$_ollama_line" ] && [ "$_llamacpp_line" -lt "$_ollama_line" ]
+    assert_ok $? "llm_ensure must try llamacpp before Ollama"
+  }
+
+  it "llm_ensure kills Ollama when starting llamacpp" && {
+    _body=$(declare -f llm_ensure 2>/dev/null || echo "")
+    echo "$_body" | grep -q '_llm_kill_ollama'
+    assert_ok $? "llm_ensure must call _llm_kill_ollama"
+  }
+
   it "llm_create_model is defined" && {
     declare -f llm_create_model &>/dev/null
     assert_ok $?

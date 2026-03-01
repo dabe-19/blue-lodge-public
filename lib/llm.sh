@@ -608,24 +608,42 @@ llm_warmup() {
     fi
 }
 
+# ── Kill Ollama and free its RAM ───────────────────────────────
+# Sends SIGKILL (Ollama ignores SIGTERM with a loaded model).
+_llm_kill_ollama() {
+    local quiet="${1:-}"
+    if pgrep -f ollama &>/dev/null; then
+        pkill -9 -f ollama 2>/dev/null
+        sleep 1
+        [ "$quiet" != "--quiet" ] && ui_dim "Stopped Ollama (freed RAM for llama-server)"
+    fi
+}
+
 # ── Ensure LLM backend is running ─────────────────────────────
+# Strategy: try llama-server first (custom-compiled, faster on this
+# hardware), kill Ollama if llamacpp succeeds, fall back to Ollama
+# only when llamacpp is unavailable.
 llm_ensure() {
     local backend
     backend=$(_llm_detect_backend)
 
-    # Capture llm_check return code immediately — $? gets overwritten
-    # by subsequent commands (echo, if, ui_warn, etc.)
-    llm_check
-    local status=$?
-
+    # ── llamacpp already running? ──────────────────────────────
     if [ "$backend" = "llamacpp" ]; then
+        llm_check
+        local status=$?
         if [ "$status" -eq 0 ]; then
+            # Kill Ollama if it happens to be running alongside
+            _llm_kill_ollama --quiet
             return 0
         fi
-        # llama-server not responding — attempt auto-start
-        if [ -x "$LLAMA_CPP_SERVER_BIN" ]; then
-            ui_warn "llama-server not responding. Attempting to start..."
-            # Resolve model to start with
+    fi
+
+    # ── Try to auto-start llama-server (preferred backend) ─────
+    if [ -x "$LLAMA_CPP_SERVER_BIN" ]; then
+        # Only attempt if not already running but we just checked
+        if [ "$backend" != "llamacpp" ] || ! curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null | grep -q '"status"'; then
+            ui_dim "llama-server available — starting..."
+            # Resolve GGUF model to load
             local _gguf="$LLAMA_CPP_MODEL"
             if [ -z "$_gguf" ] || [ ! -f "$_gguf" ]; then
                 # Try to resolve from the current primary model
@@ -642,26 +660,32 @@ llm_ensure() {
                 fi
             fi
             if [ -n "$_gguf" ] && [ -f "$_gguf" ]; then
+                # Kill Ollama first — frees RAM and avoids port conflicts
+                _llm_kill_ollama --quiet
                 if _llm_start_llamacpp_server "$_gguf"; then
+                    _LLM_BACKEND_CACHE="llamacpp"
+                    LLM_BACKEND="llamacpp"
                     _MODELS_ACTIVE="$LODGE_MODEL_PRIMARY"
                     LODGE_MODEL="$LODGE_MODEL_PRIMARY"
                     return 0
                 fi
+                ui_warn "llama-server failed to start — falling back to Ollama"
+            else
+                ui_dim "  No GGUF found for $LODGE_MODEL_PRIMARY — trying Ollama"
             fi
-            ui_err "Could not auto-start llama-server (no GGUF found for $LODGE_MODEL_PRIMARY)"
-            ui_dim "  Pull a model first: ollama pull <model>"
-            ui_dim "  Then start manually: /backend start <model-key>"
-        else
-            ui_err "llama-server not found at: $LLAMA_CPP_SERVER_BIN"
-            ui_dim "  Build guide: docs/ADRENO_GPU_SETUP.md"
         fi
-        return 1
     fi
 
-    # Ollama path
+    # ── Ollama fallback ────────────────────────────────────────
+    _LLM_BACKEND_CACHE=""  # Clear so detection re-checks
+    backend=$(_llm_detect_backend)
+    llm_check
+    local status=$?
+
     if [ "$status" -eq 1 ]; then
-        ui_warn "Ollama not running. Attempting to start..."
+        # Ollama not running — attempt to start
         if command -v ollama &>/dev/null; then
+            ui_warn "Starting Ollama as fallback..."
             ollama serve > /tmp/lodge-ollama.log 2>&1 &
             sleep 3
 
@@ -669,11 +693,16 @@ llm_ensure() {
             status=$?
 
             if [ "$status" -eq 1 ]; then
-                ui_err "Failed to start Ollama. Check /tmp/lodge-ollama.log"
+                ui_err "No LLM backend available."
+                ui_dim "  llama-server: $LLAMA_CPP_SERVER_BIN"
+                [ ! -x "$LLAMA_CPP_SERVER_BIN" ] && ui_dim "    ^ not found — build: docs/ADRENO_GPU_SETUP.md"
+                ui_dim "  Ollama: failed to start. Check /tmp/lodge-ollama.log"
                 return 1
             fi
         else
-            ui_err "Ollama not found. Install: curl -fsSL https://ollama.com/install.sh | sh"
+            ui_err "No LLM backend available."
+            ui_dim "  llama-server: ${LLAMA_CPP_SERVER_BIN:-<not set>}"
+            ui_dim "  Ollama: not installed"
             return 1
         fi
     fi
