@@ -830,10 +830,13 @@ describe "GPU layers command (/gpu)"
     LLAMA_CPP_GPU_LAYERS="$_gpu_old"
   }
 
-  it "/backend start resolves chat template" && {
+  it "/backend start uses --jinja (not per-model template names)" && {
     _gpu_body=$(declare -f _cmd_backend)
-    echo "$_gpu_body" | grep -q '_models_resolve_chat_template\|_models_chat_template_name'
-    assert_ok $? "/backend start must resolve chat template"
+    echo "$_gpu_body" | grep -q '_llm_start_llamacpp_server'
+    assert_ok $? "/backend start must call _llm_start_llamacpp_server"
+    # Should NOT resolve per-model template names — --jinja handles it
+    ! echo "$_gpu_body" | grep -q '_models_resolve_chat_template'
+    assert_ok $? "/backend start should rely on --jinja, not template name mapping"
   }
 
 test_end

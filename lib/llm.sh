@@ -262,7 +262,7 @@ _llm_stop_llamacpp_server() {
 _llm_start_llamacpp_server() {
     local model_path="$1"
     local quiet="${2:-}"
-    local chat_template="${3:-}"   # llama.cpp built-in name (e.g. "mistral-v7", "chatml")
+    local chat_template_file="${3:-}"   # optional path to .jinja template file override
 
     # Validate
     if [ ! -f "$model_path" ]; then
@@ -299,14 +299,17 @@ _llm_start_llamacpp_server() {
         --threads "$(nproc 2>/dev/null || echo 4)"
     )
 
-    # Inject chat template (required for /v1/chat/completions).
-    # Ollama templates use Go syntax — NOT compatible with llama-server's Jinja.
-    # We use --chat-template <name> to select a built-in template instead.
-    if [ -n "$chat_template" ]; then
-        _launch_args+=(--chat-template "$chat_template")
-        [ "$quiet" != "--quiet" ] && ui_dim "Chat template: $chat_template (built-in)"
+    # Chat template: use the Jinja2 engine for the template embedded in the
+    # GGUF's tokenizer.chat_template metadata.  This replaces the old approach
+    # of mapping model names to built-in C++ template names (--chat-template),
+    # which produced gibberish for fine-tuned models (e.g. Unsloth) whose
+    # templates include custom tokens ([THINK]/[/THINK], [SYSTEM_PROMPT], etc).
+    if [ -n "$chat_template_file" ] && [ -f "$chat_template_file" ]; then
+        _launch_args+=(--jinja --chat-template-file "$chat_template_file")
+        [ "$quiet" != "--quiet" ] && ui_dim "Chat template: $chat_template_file (external file, jinja)"
     else
-        [ "$quiet" != "--quiet" ] && ui_warn "No chat template — /v1/chat/completions may return empty"
+        _launch_args+=(--jinja)
+        [ "$quiet" != "--quiet" ] && ui_dim "Chat template: GGUF-embedded (--jinja)"
     fi
 
     "$LLAMA_CPP_SERVER_BIN" "${_launch_args[@]}" \
@@ -614,12 +617,7 @@ llm_ensure() {
                 fi
             fi
             if [ -n "$_gguf" ] && [ -f "$_gguf" ]; then
-                # Resolve chat template name for /v1/chat/completions support
-                local _tmpl=""
-                if [ -n "$_key" ]; then
-                    _tmpl=$(_models_resolve_chat_template "$_key" 2>/dev/null) || true
-                fi
-                if _llm_start_llamacpp_server "$_gguf" "" "$_tmpl"; then
+                if _llm_start_llamacpp_server "$_gguf"; then
                     _MODELS_ACTIVE="$LODGE_MODEL_PRIMARY"
                     LODGE_MODEL="$LODGE_MODEL_PRIMARY"
                     return 0

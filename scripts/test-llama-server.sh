@@ -185,33 +185,28 @@ GGUF_SIZE=$(du -h "$GGUF" 2>/dev/null | cut -f1)
 _ok "Resolved: $MODEL_REF → $GGUF_SIZE GGUF"
 _dim "$GGUF"
 
-# ── Step 3a: Determine chat template ──────────────────────────
-# Ollama templates use Go syntax — NOT compatible with llama-server's Jinja2.
-# We map the model name to a llama.cpp built-in template instead.
-_chat_template=""
-_model_lower=$(echo "$MODEL_REF" | tr '[:upper:]' '[:lower:]')
-case "$_model_lower" in
-    *minist*|*mistral*)     _chat_template="mistral-v7"  ;;
-    *qwen3*|*qwen2.5*)     _chat_template="chatml"       ;;
-    *llama*3*)              _chat_template="llama3"       ;;
-    *granite*)              _chat_template="granite"      ;;
-    *phi-4*|*phi4*)         _chat_template="phi4"         ;;
-    *phi-3*|*phi3*)         _chat_template="phi3"         ;;
-    *deepseek*v3*|*deepseek*r2*)  _chat_template="deepseek3" ;;
-    *deepseek*)             _chat_template="deepseek"     ;;
-    *gemma*)                _chat_template="gemma"        ;;
-    *command-r*)            _chat_template="command-r"    ;;
-esac
+# ── Step 3a: Chat template strategy ───────────────────────────
+# Modern GGUFs embed the correct Jinja2 chat template in their metadata
+# (tokenizer.chat_template). The --jinja flag tells llama-server to use
+# it instead of approximated built-in C++ templates. This is critical
+# for fine-tuned models (e.g. Unsloth) whose templates include custom
+# tokens like [THINK]/[/THINK], [SYSTEM_PROMPT], etc.
+#
+# Override: set CHAT_TEMPLATE_FILE to a .jinja file path to use instead
+# of the GGUF-embedded template.
+_use_jinja=1
+_chat_template_file="${CHAT_TEMPLATE_FILE:-}"
 
-# Allow override via env
-_chat_template="${CHAT_TEMPLATE:-$_chat_template}"
-
-if [ -n "$_chat_template" ]; then
-    _ok "Chat template: $_chat_template (llama.cpp built-in)"
+if [ -n "$_chat_template_file" ]; then
+    if [ -f "$_chat_template_file" ]; then
+        _ok "Chat template: $_chat_template_file (external file)"
+        _use_jinja=0   # --chat-template-file implies jinja already
+    else
+        _warn "CHAT_TEMPLATE_FILE not found: $_chat_template_file — using GGUF-embedded template"
+        _chat_template_file=""
+    fi
 else
-    _warn "Unknown model family — no chat template mapped"
-    _dim "Set CHAT_TEMPLATE=<name> to override (e.g. chatml, mistral-v7, llama3)"
-    _dim "Will fall back to /completion endpoint"
+    _ok "Chat template: GGUF-embedded (--jinja)"
 fi
 
 # ── Step 4: Start server ──────────────────────────────────────
@@ -230,9 +225,11 @@ _launch_args=(
     --threads "$THREADS"
 )
 
-# Pass chat template if mapped
-if [ -n "$_chat_template" ]; then
-    _launch_args+=(--chat-template "$_chat_template")
+# Use Jinja2 engine for GGUF-embedded chat template, or explicit file override
+if [ -n "$_chat_template_file" ]; then
+    _launch_args+=(--jinja --chat-template-file "$_chat_template_file")
+elif [ "$_use_jinja" -eq 1 ]; then
+    _launch_args+=(--jinja)
 fi
 
 "$LLAMA_BIN" "${_launch_args[@]}" \

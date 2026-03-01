@@ -322,13 +322,9 @@ _cmd_backend() {
             ui_dim "  Model:   $_model_path"
             ui_dim "  GPU layers: $LLAMA_CPP_GPU_LAYERS"
             ui_dim "  Context: $LLAMA_CPP_CTX_SIZE"
-            # Resolve chat template for /v1/chat/completions
-            local _start_tmpl=""
-            if [ -n "$arg2" ]; then
-                _start_tmpl=$(_models_resolve_chat_template "$arg2" 2>/dev/null) || true
-                [ -z "$_start_tmpl" ] && _start_tmpl=$(_models_chat_template_name "$arg2" 2>/dev/null) || true
-            fi
-            if _llm_start_llamacpp_server "$_model_path" "" "$_start_tmpl"; then
+            # Chat template: --jinja uses the GGUF-embedded Jinja2 template,
+            # so no per-model template name resolution is needed.
+            if _llm_start_llamacpp_server "$_model_path"; then
                 local _health _status
                 _health=$(curl -sf "$LLAMA_CPP_URL/health" 2>/dev/null)
                 _status=$(echo "$_health" | jq -r '.status // "unknown"' 2>/dev/null)
@@ -441,23 +437,9 @@ _cmd_gpu() {
             local _current_model="$LLAMA_CPP_MODEL"
             _llm_stop_llamacpp_server "--quiet"
 
-            # Resolve chat template for the current model
-            local _tmpl=""
-            for _entry in "${_MODELS_REGISTRY[@]}"; do
-                _models_parse_entry "$_entry"
-                local _gguf
-                _gguf=$(_models_resolve_gguf "$_ME_KEY" 2>/dev/null) || true
-                if [ "$_gguf" = "$_current_model" ]; then
-                    _tmpl=$(_models_resolve_chat_template "$_ME_KEY" 2>/dev/null) || true
-                    break
-                fi
-            done
-            # Fallback: try to infer template from the model path
-            if [ -z "$_tmpl" ] && [ -n "$_current_model" ]; then
-                _tmpl=$(_models_chat_template_name "$_current_model" 2>/dev/null) || true
-            fi
-
-            if _llm_start_llamacpp_server "$_current_model" "" "$_tmpl"; then
+            # Chat template: --jinja uses the GGUF-embedded Jinja2 template,
+            # so no per-model template resolution is needed.
+            if _llm_start_llamacpp_server "$_current_model"; then
                 local _health _status
                 _health=$(curl -sf "$LLAMA_CPP_URL/health" 2>/dev/null)
                 _status=$(echo "$_health" | jq -r '.status // "unknown"' 2>/dev/null)

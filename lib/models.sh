@@ -777,15 +777,9 @@ _models_switch() {
 
         # Stop current → start with new model
         _llm_stop_llamacpp_server "--quiet"
-        # Resolve llama.cpp chat template name for /v1/chat/completions
-        local _tmpl=""
-        if [ -n "$_key" ]; then
-            _tmpl=$(_models_resolve_chat_template "$_key" 2>/dev/null) || true
-        else
-            # Direct model ref — try mapping base image name
-            _tmpl=$(_models_chat_template_name "$target" 2>/dev/null) || true
-        fi
-        if _llm_start_llamacpp_server "$_gguf" "--quiet" "$_tmpl"; then
+        # Chat template: --jinja uses the GGUF-embedded Jinja2 template,
+        # so no per-model template resolution is needed.
+        if _llm_start_llamacpp_server "$_gguf" "--quiet"; then
             _MODELS_ACTIVE="$target"
             LODGE_MODEL="$target"
             return 0
