@@ -19,6 +19,11 @@ GEORGE_SSH_DIR="${GEORGE_SSH_DIR:-$GEORGE_CONFIG_DIR/.ssh}"
 GEORGE_SSH_KEY="${GEORGE_SSH_KEY:-$GEORGE_SSH_DIR/id_ed25519}"
 GEORGE_GIT_CONFIG="${GEORGE_GIT_CONFIG:-$GEORGE_CONFIG_DIR/gitconfig}"
 
+# SSH Host alias — George’s remotes use git@github.com-george:owner/repo.git
+# so his key never collides with the operator’s git@github.com identity.
+# SSH resolves github.com-george → github.com via HostName in the config.
+GEORGE_GIT_HOST="${GEORGE_GIT_HOST:-github.com-george}"
+
 # ═══════════════════════════════════════════════════════════════
 # Git Identity
 # ═══════════════════════════════════════════════════════════════
@@ -58,9 +63,11 @@ git_show_identity() {
 # SSH Configuration (persistent)
 # ═══════════════════════════════════════════════════════════════
 
-# ── Write SSH config entry for GitHub ──────────────────────────
-# Creates $LODGE_DIR/.george/.ssh/config so the key is used automatically
-# for any git@github.com connection — persists across sessions.
+# ── Write SSH config entry for GitHub (Host alias) ─────────────
+# Creates $LODGE_DIR/.george/.ssh/config with a Host alias so
+# George's key is used ONLY for remotes that address
+# git@github.com-george:... — the operator's git@github.com
+# remotes are never touched.
 git_write_ssh_config() {
     if ! declare -f ssh_has_key &>/dev/null || ! ssh_has_key; then
         ui_err "No SSH key. Generate one first: /git ssh-keygen"
@@ -70,16 +77,22 @@ git_write_ssh_config() {
     local ssh_config="$GEORGE_SSH_DIR/config"
     mkdir -p "$GEORGE_SSH_DIR"
 
-    # Only add the GitHub block if not already present
-    if [ -f "$ssh_config" ] && grep -q "Host github.com" "$ssh_config" 2>/dev/null; then
-        ui_dim "SSH config already has GitHub entry"
+    # ── Migrate old "Host github.com" block if present ──
+    if [ -f "$ssh_config" ] && grep -q "^Host github\.com$" "$ssh_config" 2>/dev/null; then
+        ui_dim "Migrating old Host github.com block → Host $GEORGE_GIT_HOST"
+        sed -i '/^Host github\.com$/,/^$/d' "$ssh_config"
+    fi
+
+    # Idempotent — skip if alias already present
+    if [ -f "$ssh_config" ] && grep -q "^Host ${GEORGE_GIT_HOST}$" "$ssh_config" 2>/dev/null; then
+        ui_dim "SSH config already has Host $GEORGE_GIT_HOST entry"
         return 0
     fi
 
     cat >> "$ssh_config" << EOF
 
-# George's GitHub SSH identity
-Host github.com
+# George's GitHub SSH identity (Host alias — does not touch operator's config)
+Host $GEORGE_GIT_HOST
     HostName github.com
     User git
     IdentityFile $GEORGE_SSH_KEY
@@ -87,29 +100,34 @@ Host github.com
     StrictHostKeyChecking accept-new
 EOF
     chmod 600 "$ssh_config"
-    ui_ok "SSH config written: $ssh_config"
+    ui_ok "SSH config written: Host $GEORGE_GIT_HOST → $ssh_config"
     return 0
 }
 
-# ── Set GIT_SSH_COMMAND and write includeIf to global gitconfig ─
-# This makes git automatically use George's SSH key for GitHub.
+# ── Configure SSH for GitHub (Host alias, no global pollution) ───
+# Writes the Host alias to George’s isolated SSH config.
+# Does NOT set GIT_SSH_COMMAND or core.sshCommand (either global
+# or local). George’s remotes use git@github.com-george:... which
+# routes through the Host alias automatically.
+#
+# Also cleans up any legacy global core.sshCommand or
+# GIT_SSH_COMMAND that older versions may have left behind.
 git_configure_ssh() {
     if ! declare -f ssh_has_key &>/dev/null || ! ssh_has_key; then
         ui_err "No SSH key. Generate one first: /git ssh-keygen"
         return 1
     fi
 
-    # 1. Set session-level env var (immediate effect)
-    export GIT_SSH_COMMAND="ssh -F $GEORGE_SSH_DIR/config -i $GEORGE_SSH_KEY -o IdentitiesOnly=yes"
+    # Clean up legacy global pollution from older versions
+    git config --global --unset core.sshCommand 2>/dev/null || true
+    unset GIT_SSH_COMMAND 2>/dev/null || true
 
-    # 2. Write SSH config entry (persistent across sessions)
+    # Write SSH config with Host alias (persistent, isolated)
     git_write_ssh_config
 
-    # 3. Write global git config for SSH command
-    git config --global core.sshCommand \
-        "ssh -F $GEORGE_SSH_DIR/config -i $GEORGE_SSH_KEY -o IdentitiesOnly=yes" 2>/dev/null
-
-    ui_ok "Git SSH configured (persistent)"
+    ui_ok "Git SSH configured (Host alias: $GEORGE_GIT_HOST)"
+    ui_dim "  George’s remotes: git@$GEORGE_GIT_HOST:owner/repo.git"
+    ui_dim "  Your remotes:     git@github.com:owner/repo.git  (untouched)"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -195,14 +213,18 @@ git_add_remote() {
         return 1
     fi
 
-    # Auto-convert HTTPS GitHub URLs to SSH format
+    # Auto-convert HTTPS GitHub URLs to SSH format (using George's Host alias)
     if [[ "$url" =~ ^https://github\.com/([^/]+)/(.+)$ ]]; then
         local owner="${BASH_REMATCH[1]}"
         local repo="${BASH_REMATCH[2]}"
         repo="${repo%.git}"
-        local ssh_url="git@github.com:${owner}/${repo}.git"
-        ui_dim "Converting HTTPS → SSH: $ssh_url"
+        local ssh_url="git@${GEORGE_GIT_HOST}:${owner}/${repo}.git"
+        ui_dim "Converting HTTPS → SSH (Host alias): $ssh_url"
         url="$ssh_url"
+    # Also convert plain git@github.com URLs to use the Host alias
+    elif [[ "$url" =~ ^git@github\.com:(.+)$ ]] && [[ "$url" != *"$GEORGE_GIT_HOST"* ]]; then
+        url="git@${GEORGE_GIT_HOST}:${BASH_REMATCH[1]}"
+        ui_dim "Converting to Host alias: $url"
     fi
 
     if git remote get-url "$name" &>/dev/null; then
@@ -350,16 +372,16 @@ git_status_overview() {
         local pubkey_snippet
         pubkey_snippet=$(cat "$GEORGE_SSH_KEY.pub" 2>/dev/null | awk '{print $1, $NF}')
         printf "  Pub:    %s\n" "$pubkey_snippet"
-        if [ -f "$GEORGE_SSH_DIR/config" ] && grep -q "Host github.com" "$GEORGE_SSH_DIR/config" 2>/dev/null; then
-            printf "  Config: %b%s%b\n" "$C_GREEN" "persistent (ssh config)" "$C_RESET"
+        if [ -f "$GEORGE_SSH_DIR/config" ] && grep -q "Host $GEORGE_GIT_HOST" "$GEORGE_SSH_DIR/config" 2>/dev/null; then
+            printf "  Config: %b%s%b\n" "$C_GREEN" "persistent (Host alias: $GEORGE_GIT_HOST)" "$C_RESET"
         else
             printf "  Config: %b%s%b\n" "$C_YELLOW" "session only" "$C_RESET"
         fi
-        # Check git core.sshCommand
+        # Check git core.sshCommand (should NOT be set with Host alias approach)
         local ssh_cmd
         ssh_cmd=$(git config --global core.sshCommand 2>/dev/null)
         if [ -n "$ssh_cmd" ]; then
-            printf "  Git:    %b%s%b\n" "$C_GREEN" "core.sshCommand set" "$C_RESET"
+            printf "  Git:    %b%s%b\n" "$C_YELLOW" "core.sshCommand set (legacy — run /git setup to fix)" "$C_RESET"
         fi
     else
         printf "  Key:    %b%s%b\n" "$C_RED" "not generated" "$C_RESET"
@@ -409,7 +431,8 @@ if ! declare -f github_push_guard &>/dev/null; then
     github_push_guard() {
         local remote_url="${1:-}"
         [ -z "$remote_url" ] && return 0
-        [[ "$remote_url" != *"github.com"* ]] && return 0
+        # Match both github.com and the george Host alias
+        [[ "$remote_url" != *"github.com"* ]] && [[ "$remote_url" != *"$GEORGE_GIT_HOST"* ]] && return 0
 
         if declare -f email_init &>/dev/null; then
             email_init >/dev/null 2>&1

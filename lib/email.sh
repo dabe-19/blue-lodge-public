@@ -1281,15 +1281,49 @@ ssh_get_pubkey() {
     cat "$GEORGE_SSH_KEY.pub"
 }
 
-# ── Configure git to use George's SSH key ─────────────────────
-# Sets GIT_SSH_COMMAND so git operations use George's key.
+# ── Configure git to use George's SSH key (Host alias) ────────
+# Writes an SSH Host alias so git@github.com-george routes
+# through George's key. Does NOT export GIT_SSH_COMMAND or
+# set global core.sshCommand — operator's git is untouched.
 ssh_configure_git() {
     if ! ssh_has_key; then
         ui_err "No SSH key found. Run: /email ssh-keygen"
         return 1
     fi
-    export GIT_SSH_COMMAND="ssh -i $GEORGE_SSH_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-    ui_dim "Git configured to use George's SSH key"
+
+    # Delegate to git.sh if loaded (preferred — single source of truth)
+    if declare -f git_write_ssh_config &>/dev/null; then
+        git_write_ssh_config
+        return $?
+    fi
+
+    # Fallback: write config directly (same logic as git_write_ssh_config)
+    local ssh_config="$GEORGE_SSH_DIR/config"
+    mkdir -p "$GEORGE_SSH_DIR"
+    local host="${GEORGE_GIT_HOST:-github.com-george}"
+
+    # Migrate old block
+    if [ -f "$ssh_config" ] && grep -q "^Host github\.com$" "$ssh_config" 2>/dev/null; then
+        sed -i '/^Host github\.com$/,/^$/d' "$ssh_config"
+    fi
+
+    # Idempotent
+    if [ -f "$ssh_config" ] && grep -q "^Host ${host}$" "$ssh_config" 2>/dev/null; then
+        return 0
+    fi
+
+    cat >> "$ssh_config" << EOF
+
+# George's GitHub SSH identity (Host alias)
+Host $host
+    HostName github.com
+    User git
+    IdentityFile $GEORGE_SSH_KEY
+    IdentitiesOnly yes
+    StrictHostKeyChecking accept-new
+EOF
+    chmod 600 "$ssh_config"
+    ui_dim "SSH config: Host $host → $ssh_config"
 }
 
 # ── Configure git identity (user.name + user.email) ───────────
@@ -1306,17 +1340,22 @@ git_configure_identity() {
     ui_dim "Git identity: $git_name <$git_email>"
 }
 
-# ── Test SSH connection to GitHub ──────────────────────────────
+# ── Test SSH connection to GitHub (via Host alias) ────────────
 ssh_test_github() {
     if ! ssh_has_key; then
         ui_err "No SSH key. Run: /email ssh-keygen"
         return 1
     fi
 
-    ui_step "Testing SSH connection to GitHub..."
+    # Ensure SSH config exists
+    ssh_configure_git 2>/dev/null
+
+    local host="${GEORGE_GIT_HOST:-github.com-george}"
+    local ssh_config="$GEORGE_SSH_DIR/config"
+
+    ui_step "Testing SSH connection to GitHub via Host alias ($host)..."
     local result
-    result=$(ssh -i "$GEORGE_SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
-        -o ConnectTimeout=10 -T git@github.com 2>&1)
+    result=$(ssh -F "$ssh_config" -o ConnectTimeout=10 -T "git@${host}" 2>&1)
     if [[ "$result" == *"successfully authenticated"* ]]; then
         ui_ok "GitHub SSH authenticated!"
         echo "$result"
@@ -1360,8 +1399,9 @@ github_setup() {
     git_configure_identity
     ui_ok "Git identity configured"
 
-    # Step 4: Configure git to use George's key
+    # Step 4: Write SSH Host alias config (no global pollution)
     ssh_configure_git
+    ui_ok "SSH Host alias configured (${GEORGE_GIT_HOST:-github.com-george})"
 
     # Step 5: Test GitHub connection
     echo ""
@@ -1391,7 +1431,7 @@ github_is_ready() {
 # ── Check if a git remote is GitHub ───────────────────────────
 _is_github_remote() {
     local remote_url="${1:-}"
-    [[ "$remote_url" == *"github.com"* ]]
+    [[ "$remote_url" == *"github.com"* ]] || [[ "$remote_url" == *"${GEORGE_GIT_HOST:-github.com-george}"* ]]
 }
 
 # ── GitHub push guard ─────────────────────────────────────────
@@ -1420,8 +1460,8 @@ github_push_guard() {
         return 1
     fi
 
-    # Ensure git is configured to use the key for this push
-    ssh_configure_git
+    # Ensure SSH Host alias config is written
+    ssh_configure_git 2>/dev/null
     return 0
 }
 

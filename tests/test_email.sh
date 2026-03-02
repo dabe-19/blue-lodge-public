@@ -392,11 +392,23 @@ describe "SSH key management"
     _teardown_email
   }
 
-  it "ssh_configure_git sets GIT_SSH_COMMAND" && {
+  it "ssh_configure_git writes SSH Host alias config" && {
     _setup_email
     ssh_generate_key >/dev/null 2>&1
     ssh_configure_git >/dev/null 2>&1
-    assert_contains "$GIT_SSH_COMMAND" "id_ed25519"
+    config_content=$(cat "$GEORGE_SSH_DIR/config" 2>/dev/null)
+    host="${GEORGE_GIT_HOST:-github.com-george}"
+    assert_contains "$config_content" "Host $host"
+    assert_contains "$config_content" "HostName github.com"
+    _teardown_email
+  }
+
+  it "ssh_configure_git does NOT set GIT_SSH_COMMAND" && {
+    _setup_email
+    ssh_generate_key >/dev/null 2>&1
+    unset GIT_SSH_COMMAND 2>/dev/null
+    ssh_configure_git >/dev/null 2>&1
+    assert_empty "${GIT_SSH_COMMAND:-}"
     _teardown_email
   }
 

@@ -209,12 +209,12 @@ describe "git_write_ssh_config"
     _teardown_git
   }
 
-  it "writes Host github.com entry" && {
+  it "writes Host alias entry (github.com-george)" && {
     _setup_git_with_ssh_key
     git_write_ssh_config >/dev/null 2>&1
     local content
     content=$(cat "$GEORGE_SSH_DIR/config" 2>/dev/null)
-    assert_contains "$content" "Host github.com"
+    assert_contains "$content" "Host $GEORGE_GIT_HOST"
     _teardown_git
   }
 
@@ -250,8 +250,40 @@ describe "git_write_ssh_config"
     git_write_ssh_config >/dev/null 2>&1
     git_write_ssh_config >/dev/null 2>&1
     local count
-    count=$(grep -c "Host github.com" "$GEORGE_SSH_DIR/config" 2>/dev/null)
+    count=$(grep -c "Host $GEORGE_GIT_HOST" "$GEORGE_SSH_DIR/config" 2>/dev/null)
     assert_eq "$count" "1"
+    _teardown_git
+  }
+
+  it "includes HostName github.com (real hostname)" && {
+    _setup_git_with_ssh_key
+    git_write_ssh_config >/dev/null 2>&1
+    local content
+    content=$(cat "$GEORGE_SSH_DIR/config" 2>/dev/null)
+    assert_contains "$content" "HostName github.com"
+    _teardown_git
+  }
+
+  it "migrates old Host github.com block" && {
+    _setup_git_with_ssh_key
+    # Plant an old-style config
+    mkdir -p "$GEORGE_SSH_DIR"
+    cat > "$GEORGE_SSH_DIR/config" << 'OLDEOF'
+Host github.com
+    HostName github.com
+    User git
+    IdentityFile /tmp/old-key
+    IdentitiesOnly yes
+OLDEOF
+    git_write_ssh_config >/dev/null 2>&1
+    local content
+    content=$(cat "$GEORGE_SSH_DIR/config" 2>/dev/null)
+    # Old block gone (exact "Host github.com" line, not the alias)
+    local old_count
+    old_count=$(echo "$content" | grep -c "^Host github\.com$" 2>/dev/null || true)
+    assert_eq "$old_count" "0"
+    # New alias present
+    assert_contains "$content" "Host $GEORGE_GIT_HOST"
     _teardown_git
   }
 
@@ -264,27 +296,38 @@ describe "git_configure_ssh"
     _teardown_git
   }
 
-  it "sets GIT_SSH_COMMAND env var" && {
+  it "does NOT set GIT_SSH_COMMAND (no global pollution)" && {
     _setup_git_with_ssh_key
+    unset GIT_SSH_COMMAND 2>/dev/null
     git_configure_ssh >/dev/null 2>&1
-    assert_not_empty "$GIT_SSH_COMMAND"
+    assert_empty "${GIT_SSH_COMMAND:-}"
     _teardown_git
   }
 
-  it "GIT_SSH_COMMAND references George's key" && {
-    _setup_git_with_ssh_key
-    git_configure_ssh >/dev/null 2>&1
-    assert_contains "$GIT_SSH_COMMAND" "$GEORGE_SSH_KEY"
-    _teardown_git
-  }
-
-  it "sets core.sshCommand in global git config" && {
+  it "does NOT set global core.sshCommand (no global pollution)" && {
     _setup_git_with_ssh_key
     git_configure_ssh >/dev/null 2>&1
     local ssh_cmd
     ssh_cmd=$(git config --global core.sshCommand 2>/dev/null)
-    assert_not_empty "$ssh_cmd"
-    assert_contains "$ssh_cmd" "$GEORGE_SSH_KEY"
+    assert_empty "$ssh_cmd"
+    _teardown_git
+  }
+
+  it "cleans up legacy GIT_SSH_COMMAND if set" && {
+    _setup_git_with_ssh_key
+    export GIT_SSH_COMMAND="ssh -i /old/key"
+    git_configure_ssh >/dev/null 2>&1
+    assert_empty "${GIT_SSH_COMMAND:-}"
+    _teardown_git
+  }
+
+  it "cleans up legacy global core.sshCommand" && {
+    _setup_git_with_ssh_key
+    git config --global core.sshCommand "ssh -i /old/key" 2>/dev/null
+    git_configure_ssh >/dev/null 2>&1
+    local ssh_cmd
+    ssh_cmd=$(git config --global core.sshCommand 2>/dev/null)
+    assert_empty "$ssh_cmd"
     _teardown_git
   }
 
@@ -439,21 +482,21 @@ describe "git_add_remote"
     _teardown_git
   }
 
-  it "adds a remote with SSH url" && {
+  it "adds a remote with SSH url (converts to Host alias)" && {
     _setup_git_repo
     git_add_remote "testremote" "git@github.com:user/repo.git" >/dev/null 2>&1
     local url
     url=$(git remote get-url testremote 2>/dev/null)
-    assert_eq "$url" "git@github.com:user/repo.git"
+    assert_eq "$url" "git@${GEORGE_GIT_HOST}:user/repo.git"
     _teardown_git
   }
 
-  it "converts HTTPS GitHub URL to SSH format" && {
+  it "converts HTTPS GitHub URL to SSH Host alias format" && {
     _setup_git_repo
     git_add_remote "httpsremote" "https://github.com/owner/myproject" >/dev/null 2>&1
     local url
     url=$(git remote get-url httpsremote 2>/dev/null)
-    assert_eq "$url" "git@github.com:owner/myproject.git"
+    assert_eq "$url" "git@${GEORGE_GIT_HOST}:owner/myproject.git"
     _teardown_git
   }
 
@@ -462,7 +505,7 @@ describe "git_add_remote"
     git_add_remote "dotgit" "https://github.com/owner/myrepo.git" >/dev/null 2>&1
     local url
     url=$(git remote get-url dotgit 2>/dev/null)
-    assert_eq "$url" "git@github.com:owner/myrepo.git"
+    assert_eq "$url" "git@${GEORGE_GIT_HOST}:owner/myrepo.git"
     _teardown_git
   }
 
@@ -481,7 +524,7 @@ describe "git_add_remote"
     git_add_remote "updtest" "git@github.com:new/repo.git" >/dev/null 2>&1
     local url
     url=$(git remote get-url updtest 2>/dev/null)
-    assert_eq "$url" "git@github.com:new/repo.git"
+    assert_eq "$url" "git@${GEORGE_GIT_HOST}:new/repo.git"
     _teardown_git
   }
 
