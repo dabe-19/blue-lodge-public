@@ -299,6 +299,10 @@ email_send() {
     local subject="$3"
     local body="$4"
 
+    # Expand LLM escape sequences (literal \n → real newlines)
+    body=$(ui_expand_escapes "$body")
+    subject=$(ui_expand_escapes "$subject")
+
     if [ -z "$provider" ]; then
         ui_err "Provider required. Usage: /email send <provider> <recipient> s=subject b=body"
         return 1

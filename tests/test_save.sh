@@ -124,4 +124,22 @@ describe "save existing file without content"
     rm -rf "$_tmpdir"
   }
 
+# ── Escape expansion in save ──────────────────────────────────
+describe "LLM escape expansion in /save"
+
+  it "cmd_save expands literal backslash-n to real newlines" && {
+    _tmpdir=$(test_tmpdir)
+    cmd_save 'test.md line1\nline2\nline3' "$_tmpdir" 2>&1
+    local lines
+    lines=$(wc -l < "$_tmpdir/test.md")
+    assert_gt "$lines" 1
+    rm -rf "$_tmpdir"
+  }
+
+  it "cmd_save function references ui_expand_escapes" && {
+    local fn_body
+    fn_body=$(declare -f cmd_save)
+    assert_contains "$fn_body" "ui_expand_escapes"
+  }
+
 test_end

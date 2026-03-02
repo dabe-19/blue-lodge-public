@@ -693,4 +693,55 @@ describe "Discord DM support"
     _teardown_social
   }
 
+# ── Escape expansion in social functions ───────────────────────
+describe "LLM escape expansion in social output"
+
+  it "x_post expands escapes" && {
+    _setup_social
+    local fn_body
+    fn_body=$(declare -f x_post)
+    assert_contains "$fn_body" "ui_expand_escapes"
+    _teardown_social
+  }
+
+  it "mastodon_post expands escapes" && {
+    _setup_social
+    local fn_body
+    fn_body=$(declare -f mastodon_post)
+    assert_contains "$fn_body" "ui_expand_escapes"
+    _teardown_social
+  }
+
+  it "bluesky_post expands escapes" && {
+    _setup_social
+    local fn_body
+    fn_body=$(declare -f bluesky_post)
+    assert_contains "$fn_body" "ui_expand_escapes"
+    _teardown_social
+  }
+
+  it "discord_webhook expands escapes" && {
+    _setup_social
+    local fn_body
+    fn_body=$(declare -f discord_webhook)
+    assert_contains "$fn_body" "ui_expand_escapes"
+    _teardown_social
+  }
+
+  it "discord_send expands escapes" && {
+    _setup_social
+    local fn_body
+    fn_body=$(declare -f discord_send)
+    assert_contains "$fn_body" "ui_expand_escapes"
+    _teardown_social
+  }
+
+  it "telegram_send expands escapes" && {
+    _setup_social
+    local fn_body
+    fn_body=$(declare -f telegram_send)
+    assert_contains "$fn_body" "ui_expand_escapes"
+    _teardown_social
+  }
+
 test_end

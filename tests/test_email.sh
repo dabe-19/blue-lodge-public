@@ -761,4 +761,22 @@ describe "Bridge constants"
     assert_eq "$BRIDGE_SMTP_HOST" "127.0.0.1"
   }
 
+# ── Escape expansion in email ─────────────────────────────────
+describe "LLM escape expansion in email"
+
+  it "email_send expands escapes in body" && {
+    local fn_body
+    fn_body=$(declare -f email_send)
+    assert_contains "$fn_body" "ui_expand_escapes"
+  }
+
+  it "email_send expands escapes in subject" && {
+    local fn_body
+    fn_body=$(declare -f email_send)
+    # Should call ui_expand_escapes on subject too
+    local count
+    count=$(echo "$fn_body" | grep -c "ui_expand_escapes")
+    assert_gt "$count" 1
+  }
+
 test_end

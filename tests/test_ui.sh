@@ -189,6 +189,42 @@ describe "ui_prompt"
     assert_contains "$out" "❯"
   }
 
+# ── Escape expansion ───────────────────────────────────────────
+describe "ui_expand_escapes"
+
+  it "converts literal backslash-n to real newlines" && {
+    result=$(ui_expand_escapes 'line1\nline2\nline3')
+    lines=$(echo "$result" | wc -l)
+    assert_eq "$lines" "3"
+  }
+
+  it "converts literal backslash-t to real tabs" && {
+    result=$(ui_expand_escapes 'col1\tcol2')
+    assert_contains "$result" "$(printf '\t')"
+  }
+
+  it "skips expansion when content already has real newlines" && {
+    input=$'line1\nline2'
+    result=$(ui_expand_escapes "$input")
+    assert_eq "$result" "$input"
+  }
+
+  it "returns empty for empty input" && {
+    result=$(ui_expand_escapes "")
+    assert_eq "$result" ""
+  }
+
+  it "passes through plain text unchanged" && {
+    result=$(ui_expand_escapes "Hello world")
+    assert_eq "$result" "Hello world"
+  }
+
+  it "handles mixed escapes in LLM-style output" && {
+    result=$(ui_expand_escapes '1. First item\n2. Second item\n\n**Bold section**')
+    lines=$(echo "$result" | wc -l)
+    assert_gt "$lines" 2
+  }
+
 # ── Token estimate ─────────────────────────────────────────────
 describe "llm_estimate_tokens (from llm.sh)"
 

@@ -248,3 +248,22 @@ ui_render_response() {
     done <<< "$text"
     printf "%b" "$C_RESET"
 }
+
+# ── Expand LLM escape sequences ───────────────────────────────
+# LLMs emit literal \n, \t etc. in single-line output. This
+# converts them to real characters for output endpoints (email,
+# social, file writes).
+#
+# printf '%b' interprets C-style escapes:
+#   \n → newline    \t → tab    \\ → literal backslash
+#
+# SKIP expansion for content that already contains real newlines
+# (multi-line stdin, pre-formatted text).
+ui_expand_escapes() {
+    local text="$1"
+    [ -z "$text" ] && return 0
+    if [[ "$text" != *$'\n'* ]]; then
+        text=$(printf '%b' "$text")
+    fi
+    printf '%s' "$text"
+}

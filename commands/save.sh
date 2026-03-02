@@ -84,6 +84,10 @@ cmd_save() {
         return 1
     fi
 
+    # Expand LLM escape sequences (literal \n → real newlines)
+    # Skip if content already contains real newlines (stdin input)
+    content=$(ui_expand_escapes "$content")
+
     # Create parent directories if needed
     mkdir -p "$(dirname "$fullpath")"
 

@@ -14,6 +14,8 @@ source "$LODGE_DIR/lib/api.sh"
 
 x_post() {
     local text="$1"
+    # Expand LLM escape sequences (literal \n → real newlines)
+    text=$(ui_expand_escapes "$text")
     local token
     token=$(api_require_key "X_BEARER_TOKEN" "X/Twitter") || return 1
 
@@ -226,6 +228,8 @@ _mastodon_base() {
 
 mastodon_post() {
     local text="$1"
+    # Expand LLM escape sequences (literal \n → real newlines)
+    text=$(ui_expand_escapes "$text")
     local visibility="${2:-public}"  # public, unlisted, private, direct
     local instance="${3:-}"          # optional: specific instance URL
     local token
@@ -359,6 +363,8 @@ _bluesky_did() {
 
 bluesky_post() {
     local text="$1"
+    # Expand LLM escape sequences (literal \n → real newlines)
+    text=$(ui_expand_escapes "$text")
     local token
     token=$(_bluesky_token) || return 1
     local did
@@ -429,6 +435,8 @@ DISCORD_CHANNELS_DB="${DISCORD_CHANNELS_DB:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}
 
 discord_webhook() {
     local message="$1"
+    # Expand LLM escape sequences (literal \n → real newlines)
+    message=$(ui_expand_escapes "$message")
     local username="${2:-George}"
     local webhook_url
     webhook_url=$(api_require_key "DISCORD_WEBHOOK_URL" "Discord Webhook") || return 1
@@ -455,6 +463,9 @@ discord_send() {
     # Strip surrounding quotes — LLM wraps args in "..." or '...'
     channel_id=$(echo "$channel_id" | sed "s/^[\"']//; s/[\"']$//")
     message=$(echo "$message" | sed "s/^[\"']//; s/[\"']$//")
+
+    # Expand LLM escape sequences (literal \n → real newlines)
+    message=$(ui_expand_escapes "$message")
 
     # Resolve channel name → ID if not numeric
     if ! [[ "$channel_id" =~ ^[0-9]+$ ]]; then
@@ -995,6 +1006,8 @@ _telegram_api() {
 
 telegram_send() {
     local text="$1"
+    # Expand LLM escape sequences (literal \n → real newlines)
+    text=$(ui_expand_escapes "$text")
     local chat_id="${2:-}"
     if [ -z "$chat_id" ]; then
         chat_id=$(api_require_key "TELEGRAM_CHAT_ID" "Telegram") || return 1

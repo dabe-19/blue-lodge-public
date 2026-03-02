@@ -97,16 +97,10 @@ cmd_write() {
     # The LLM sends multi-line content as a single line with \n
     # separators (as instructed by the syntax card). Expand them
     # to real newlines so files are written correctly.
-    #
-    # printf '%b' interprets C-style escapes:
-    #   \n → newline    \t → tab    \\ → literal backslash
-    #   \\n → literal \n (model can escape when needed)
-    #
     # SKIP expansion for --edit mode (sed expressions use their own
-    # escape conventions) and for content that already contains real
-    # newlines (multi-line stdin input).
-    if [ "$mode" != "edit" ] && [[ "$content" != *$'\n'* ]]; then
-        content=$(printf '%b' "$content")
+    # escape conventions).
+    if [ "$mode" != "edit" ]; then
+        content=$(ui_expand_escapes "$content")
     fi
 
     # Resolve path relative to workdir
