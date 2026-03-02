@@ -133,8 +133,8 @@ command -v sqlite3 &>/dev/null || MISSING+=("sqlite3")
 if [ ${#MISSING[@]} -gt 0 ]; then
     warn "Missing: ${MISSING[*]}"
     info "Installing..."
-    if [ "$IS_TERMUX" -eq 1 ]; then
-        # Termux uses 'sqlite' not 'sqlite3' as the package name
+    if [ "$IS_TERMUX" -eq 1 ] && [ "$IS_PROOT" -eq 0 ]; then
+        # Native Termux uses 'sqlite' not 'sqlite3' as the package name
         local_pkgs=()
         for dep in "${MISSING[@]}"; do
             if [ "$dep" = "sqlite3" ]; then
@@ -145,7 +145,11 @@ if [ ${#MISSING[@]} -gt 0 ]; then
         done
         pkg install -y "${local_pkgs[@]}"
     elif command -v apt &>/dev/null; then
-        sudo apt update -qq && sudo apt install -y -qq "${MISSING[@]}"
+        if [ "$(id -u)" = "0" ]; then
+            apt update -qq && apt install -y -qq "${MISSING[@]}"
+        else
+            sudo apt update -qq && sudo apt install -y -qq "${MISSING[@]}"
+        fi
     elif command -v pkg &>/dev/null; then
         pkg install -y "${MISSING[@]}"
     else
@@ -166,7 +170,10 @@ if ! command -v pdftotext &>/dev/null; then
     printf "  Install poppler-utils for better PDF support? [y/N] "
     read -r _install_poppler
     if [[ "$_install_poppler" =~ ^[Yy] ]]; then
-        if [ "$IS_TERMUX" -eq 1 ]; then
+        if [ "$IS_PROOT" -eq 1 ] && command -v apt &>/dev/null; then
+            # proot-distro Ubuntu: apt works, pkg does not
+            apt install -y -qq poppler-utils 2>/dev/null || warn "poppler-utils install failed — will use fallback"
+        elif [ "$IS_TERMUX" -eq 1 ] && [ "$IS_PROOT" -eq 0 ]; then
             pkg install -y poppler 2>/dev/null || warn "poppler install failed — will use fallback"
         elif command -v apt &>/dev/null; then
             sudo apt install -y -qq poppler-utils 2>/dev/null || warn "poppler-utils install failed — will use fallback"
@@ -183,7 +190,8 @@ fi
 # ── 1c. Termux extras (gawk, procps, bc) ─────────────────────
 # Termux ships mawk by default which has NUL byte issues.
 # procps provides 'free' for vitals. bc for location math.
-if [ "$IS_TERMUX" -eq 1 ]; then
+# Skip in proot-distro — these are standard Ubuntu packages.
+if [ "$IS_TERMUX" -eq 1 ] && [ "$IS_PROOT" -eq 0 ]; then
     TERMUX_EXTRAS=()
     command -v gawk &>/dev/null || TERMUX_EXTRAS+=("gawk")
     command -v free &>/dev/null || TERMUX_EXTRAS+=("procps")
