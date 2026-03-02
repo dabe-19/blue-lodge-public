@@ -358,8 +358,8 @@ describe "memory_build_system_prompt soul mode"
     _setup_mem
     LODGE_SOUL=1
     prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "" "plan")
-    # Full soul.md has the NEVER VIOLATE section
-    assert_contains "$prompt" "NEVER VIOLATE"
+    # Full soul.md has the INVIOLABLE LANDMARKS section
+    assert_contains "$prompt" "INVIOLABLE LANDMARKS"
     LODGE_SOUL=0
     _teardown_mem
   }
