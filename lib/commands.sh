@@ -133,7 +133,8 @@ commands_is_safe_auto_route() {
     # a natural-language instruction, not a slash command.
     case "$first_word" in
         read|write|test|build|fix|save|plan|ask|push|commit|clone|clear|compact|\
-        init|reflect|think|recall|debug|model|status|email|backup|web|cd|files|git)
+        init|reflect|think|recall|debug|model|status|email|backup|web|cd|files|git|\
+        service)
             return 1 ;;
     esac
 
@@ -296,6 +297,22 @@ Never guess syntax; use `/recall <cmd>`. If a tool is missing, use `/slash creat
 *Sandbox Execution Chains:*
 - Rust: `/sandbox new my-api rust` → `/sandbox run my-api cargo add serde` → `/sandbox test my-api`
 - Python: `/sandbox new my-app python` → `/sandbox run my-app pip install flask` → `/sandbox build my-app`
+
+## 2b. MICROSERVICES (Rust binary lifecycle)
+/service list                   — List registered services and their status
+/service register <name> [path] — Register a Cargo project as a service
+/service build <name>           — Compile service (release mode)
+/service deploy <name>          — Build + install to /usr/local/bin + restart
+/service start <name>           — Start in background (nohup)
+/service stop <name>            — Graceful shutdown
+/service restart <name>         — Stop + start
+/service status <name>          — PID, uptime, port, log tail
+/service logs <name> [n]        — Last N log lines (default 30)
+/service unregister <name>      — Remove registration (keeps binary)
+
+*Service Deploy Pipeline:*
+- Register + deploy: `/service register ingestion .` → `/service deploy ingestion`
+- Check status: `/service status ingestion` → `/service logs ingestion 50`
 
 ## 3. RESEARCH & MEMORY
 /ask <q>             — Quick answer
