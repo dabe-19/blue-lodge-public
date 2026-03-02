@@ -55,16 +55,21 @@ _lodge_termux_api_ok() {
     [[ "$LODGE_TERMUX_API" == "1" ]]
 }
 
+# ── Transcript hook stubs ──────────────────────────────────────
+# No-op unless lib/transcript.sh is loaded (overrides with real impls).
+declare -f _transcript_ui  &>/dev/null || _transcript_ui()  { :; }
+declare -f transcript_section &>/dev/null || transcript_section() { :; }
+
 # ── Core Print Functions ───────────────────────────────────────
-ui_print() { printf "%b\n" "$1"; }
-ui_info()  { printf " %b%s %b%s%b\n" "$C_BLUE" "$SYM_DOT" "$C_WHITE" "$1" "$C_RESET"; }
-ui_ok()    { printf " %b%s %b%s%b\n" "$C_GREEN" "$SYM_CHECK" "$C_WHITE" "$1" "$C_RESET"; }
-ui_warn()  { printf " %b%s %b%s%b\n" "$C_YELLOW" "$SYM_WARN" "$C_WHITE" "$1" "$C_RESET"; }
-ui_err()   { printf " %b%s %b%s%b\n" "$C_RED" "$SYM_CROSS" "$C_WHITE" "$1" "$C_RESET"; }
-ui_step()  { printf " %b%s %b%s%b\n" "$C_CYAN" "$SYM_ARROW" "$C_WHITE" "$1" "$C_RESET"; }
-ui_think() { printf " %b%s %b%s%b\n" "$C_PURPLE" "$SYM_THINK" "$C_GRAY" "$1" "$C_RESET"; }
-ui_dim()   { printf " %b  %s%b\n" "$C_DIM" "$1" "$C_RESET"; }
-ui_code()  { printf " %b  %s%b\n" "$C_GRAY" "$1" "$C_RESET"; }
+ui_print() { printf "%b\n" "$1"; _transcript_ui print "$1"; }
+ui_info()  { printf " %b%s %b%s%b\n" "$C_BLUE" "$SYM_DOT" "$C_WHITE" "$1" "$C_RESET"; _transcript_ui info "$1"; }
+ui_ok()    { printf " %b%s %b%s%b\n" "$C_GREEN" "$SYM_CHECK" "$C_WHITE" "$1" "$C_RESET"; _transcript_ui ok "$1"; }
+ui_warn()  { printf " %b%s %b%s%b\n" "$C_YELLOW" "$SYM_WARN" "$C_WHITE" "$1" "$C_RESET"; _transcript_ui warn "$1"; }
+ui_err()   { printf " %b%s %b%s%b\n" "$C_RED" "$SYM_CROSS" "$C_WHITE" "$1" "$C_RESET"; _transcript_ui error "$1"; }
+ui_step()  { printf " %b%s %b%s%b\n" "$C_CYAN" "$SYM_ARROW" "$C_WHITE" "$1" "$C_RESET"; _transcript_ui step "$1"; }
+ui_think() { printf " %b%s %b%s%b\n" "$C_PURPLE" "$SYM_THINK" "$C_GRAY" "$1" "$C_RESET"; _transcript_ui think "$1"; }
+ui_dim()   { printf " %b  %s%b\n" "$C_DIM" "$1" "$C_RESET"; _transcript_ui dim "$1"; }
+ui_code()  { printf " %b  %s%b\n" "$C_GRAY" "$1" "$C_RESET"; _transcript_ui code "$1"; }
 
 # ── Structured Output ──────────────────────────────────────────
 ui_header() {
@@ -93,6 +98,7 @@ ui_header() {
     printf '─%.0s' $(seq 1 $w)
     printf "╯%b\n" "$C_RESET"
     echo ""
+    _transcript_ui header "$title${sub:+ — $sub}"
 }
 
 ui_section() {
@@ -101,12 +107,14 @@ ui_section() {
     printf " %b── %s %b" "$C_LODGE" "$title" "$C_DIM"
     printf '─%.0s' $(seq 1 $(( 40 - ${#title} )))
     printf "%b\n" "$C_RESET"
+    transcript_section "$title"
 }
 
 ui_divider() {
     printf " %b" "$C_DIM"
     printf '─%.0s' $(seq 1 48)
     printf "%b\n" "$C_RESET"
+    _transcript_ui divider "────────────────────────────────────────────────"
 }
 
 # ── Progress ───────────────────────────────────────────────────

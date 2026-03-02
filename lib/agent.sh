@@ -701,6 +701,9 @@ ${base_rules}"
         plan=$(llm_stream "$prompt" "$system_prompt" 512 "$LLM_BUDGET_AGENT")
         echo ""
 
+        # Transcript: log the plan
+        declare -f transcript_log_block &>/dev/null && transcript_log_block "plan" "$plan"
+
         if [ -z "$plan" ] || [[ "$plan" == ERROR* ]]; then
             ui_err "Planning failed: ${plan:-empty response}"
             return 1
@@ -1329,6 +1332,9 @@ agent_inner_loop() {
         local LLM_SCENARIO=router
         selected_tool=$(llm_generate "$route_prompt" "$router_sys" "${LLM_ROUTER_TOKENS:-50}" "$LLM_BUDGET_ROUTER")
 
+        # Transcript: log router decision
+        declare -f transcript_log &>/dev/null && transcript_log "router" "$selected_tool"
+
         # Cancel check after router LLM call — curl may have been killed
         if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
             return 1
@@ -1522,6 +1528,9 @@ agent_inner_loop() {
         local LLM_SCENARIO=agent
         action_plan=$(llm_generate "$specialist_prompt" "$specialist_sys" "${LLM_AGENT_TOKENS:-512}" "$LLM_BUDGET_AGENT")
 
+        # Transcript: log specialist response
+        declare -f transcript_log_block &>/dev/null && transcript_log_block "specialist" "$action_plan"
+
         # ── DEBUG: Specialist raw response ─────────────────────
         if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
             local _spec_lines
@@ -1688,6 +1697,9 @@ agent_inner_loop() {
                 _last_success_snippet="${output:0:200}"
                 echo -e "\n**Action:** \`$cmd\`\n**Status:** EXECUTED SUCCESSFULLY (exit 0)\n**Output:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
 
+                # Transcript: log command execution result
+                declare -f transcript_log_block &>/dev/null && transcript_log_block "output (exit 0)" "$cmd\n${output:0:3000}"
+
                 # ── DEBUG: Command output to TTY ──────────────
                 # Print command result to TTY so operator can see
                 # what the agent is receiving as feedback. Shows
@@ -1714,7 +1726,8 @@ agent_inner_loop() {
                 # on the next iteration instead of routing to /web.
                 if [[ "$cmd" == /web* ]]; then
                     local _web_ok_count
-                    _web_ok_count=$(grep -c '^\*\*Action:\*\* `/web' "$micro_file" 2>/dev/null || echo 0)
+                    _web_ok_count=$(grep -c '^\*\*Action:\*\* `/web' "$micro_file" 2>/dev/null)
+                    _web_ok_count=${_web_ok_count:-0}
                     if [ "$_web_ok_count" -ge "${AGENT_WEB_SUFFICIENCY:-3}" ]; then
                         echo -e "\n**SUFFICIENCY REACHED:** $_web_ok_count web actions completed. You have gathered enough data to fulfill the objective. Do NOT fetch more URLs. Summarize your findings and output SUCCESS: <summary>." >> "$micro_file"
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Web sufficiency gate: $_web_ok_count actions reached threshold"
@@ -1756,7 +1769,8 @@ agent_inner_loop() {
             # if the successful scrapes provided enough context.
             if [[ "$cmd" == /web* ]]; then
                 local _prior_web_ok
-                _prior_web_ok=$(grep -c '^\*\*Action:\*\* `/web.*EXECUTED SUCCESSFULLY' "$micro_file" 2>/dev/null || echo 0)
+                _prior_web_ok=$(grep -c '^\*\*Action:\*\* `/web.*EXECUTED SUCCESSFULLY' "$micro_file" 2>/dev/null)
+                _prior_web_ok=${_prior_web_ok:-0}
                 if [ "$_prior_web_ok" -gt 0 ]; then
                     echo -e "\n**Action:** \`$cmd\`\n**Status:** FAILED (exit $exit_code) — soft failure, prior web results available\n**Error (abbreviated):**\n\`\`\`\n${output:0:300}\n\`\`\`" >> "$micro_file"
                     echo -e "\n**NOTE:** This web fetch failed, but $_prior_web_ok previous web action(s) succeeded. You already have research data. Consider outputting SUCCESS with a summary of the data you have, or try a different URL." >> "$micro_file"
@@ -1839,6 +1853,9 @@ agent_inner_loop() {
 
             # Append failure to micro memory so the LLM sees it on the next loop
             echo -e "\n**Action:** \`$cmd\`\n**Status:** FAILED (exit $exit_code)\n**Error:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
+
+            # Transcript: log failed command
+            declare -f transcript_log_block &>/dev/null && transcript_log_block "output (exit $exit_code)" "$cmd\n${output:0:3000}"
         fi
 
         inner_attempts=$((inner_attempts + 1))
@@ -2009,6 +2026,9 @@ agent_run() {
 
     # Reset debug counters at task start
     declare -f llm_debug_reset &>/dev/null && llm_debug_reset
+
+    # ── Start transcript logging ──────────────────────────────
+    declare -f transcript_start &>/dev/null && transcript_start "$task" "$workdir"
 
     ui_section "Task"
     ui_info "$task"
@@ -2272,6 +2292,9 @@ ${_last_eval_feedback}
         # 6. Truncate to 200 chars max (prevents context bloat)
         milestone="${milestone:0:200}"
 
+        # Transcript: log strategist milestone
+        declare -f transcript_log &>/dev/null && transcript_log "strategist" "$milestone"
+
         # ── Check for completion ──────────────────────────────
         if [ -z "$milestone" ] || [[ "$milestone" == ERROR* ]]; then
             ui_err "Macro loop failed: ${milestone:-empty response}"
@@ -2475,6 +2498,13 @@ ${_last_eval_feedback}
     # Print debug summary (timers + token totals) if enabled
     declare -f llm_debug_summary &>/dev/null && llm_debug_summary
 
+    # ── Stop transcript logging ───────────────────────────────
+    if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
+        local _transcript_path
+        _transcript_path=$(transcript_stop)
+        [ -n "$_transcript_path" ] && ui_dim "  Transcript: $_transcript_path"
+    fi
+
     # Reflect in journal (background — don't block user)
     # SKIP if task was cancelled — journal_reflect triggers a model switch
     # to the secondary model (LLM_SCENARIO=journal → LODGE_MODEL_SECONDARY).
@@ -2597,6 +2627,9 @@ $question"
     response=$(llm_stream "$full_question" "$system_prompt" "$LLM_ASK_TOKENS" "$LLM_BUDGET_ASK")
     echo ""
     
+    # Transcript: log the ask response
+    declare -f transcript_log_block &>/dev/null && transcript_log_block "llm-response (ask)" "$response"
+
     # Track this exchange for future context
     [ -n "$response" ] && [[ "$response" != ERROR* ]] && _agent_conv_push "$question" "$response"
     

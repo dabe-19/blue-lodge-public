@@ -51,6 +51,7 @@ source "$LODGE_DIR/lib/slash.sh"
 source "$LODGE_DIR/lib/vitals.sh"
 source "$LODGE_DIR/lib/email.sh"
 source "$LODGE_DIR/lib/git.sh"
+source "$LODGE_DIR/lib/transcript.sh"
 
 # ── Graceful Cancellation ─────────────────────────────────────
 # Tracks whether we're in task execution so Ctrl+C behaves smartly:
@@ -275,7 +276,8 @@ _cmd_config() {
             _llm_save_config
             ui_ok "Config saved to $_LLM_CONFIG_FILE"
             local _count
-            _count=$(grep -c '^[A-Z]' "$_LLM_CONFIG_FILE" 2>/dev/null || echo 0)
+            _count=$(grep -c '^[A-Z]' "$_LLM_CONFIG_FILE" 2>/dev/null)
+            _count=${_count:-0}
             ui_dim "  $_count settings persisted" ;;
         reset)
             rm -f "$_LLM_CONFIG_FILE" 2>/dev/null
@@ -3381,6 +3383,66 @@ _cmd_slash() {
     esac
 }
 
+# ── Transcript Management ──────────────────────────────────────
+_cmd_transcript() {
+    local sub="$1"
+    local workdir="${2:-.}"
+
+    case "$sub" in
+        list|ls|"")
+            ui_section "Recent Transcripts"
+            transcript_list "$workdir" 15
+            ;;
+        last|latest|recent)
+            local last
+            last=$(transcript_last "$workdir")
+            if [ -z "$last" ]; then
+                ui_warn "No transcripts found"
+                return 1
+            fi
+            ui_info "Latest: $last"
+            echo ""
+            cat "$last"
+            ;;
+        path)
+            if transcript_active; then
+                ui_ok "Active transcript: $(transcript_path)"
+            else
+                ui_dim "No transcript active"
+            fi
+            ;;
+        show)
+            # Show a specific transcript (second arg)
+            local target
+            target=$(echo "$sub" | sed 's/^show *//')
+            if [ -z "$target" ] || [ "$target" = "show" ]; then
+                # No argument — show latest
+                target=$(transcript_last "$workdir")
+            fi
+            if [ -z "$target" ] || [ ! -f "$target" ]; then
+                # Try matching by partial filename
+                local dir="$workdir/.george/transcripts"
+                if [ -d "$dir" ]; then
+                    target=$(ls -1t "$dir"/*.md 2>/dev/null | head -1)
+                fi
+            fi
+            if [ -n "$target" ] && [ -f "$target" ]; then
+                cat "$target"
+            else
+                ui_warn "No transcript found"
+                return 1
+            fi
+            ;;
+        *)
+            ui_info "Usage: /transcript [list|last|path|show]"
+            ui_dim "  list  — Show recent transcripts"
+            ui_dim "  last  — Display the most recent transcript"
+            ui_dim "  path  — Show path to active transcript"
+            ui_dim "  show  — Display latest transcript content"
+            ;;
+    esac
+}
+
 # ── Register all commands ──────────────────────────────────────
 _register_commands() {
     commands_register "init"     "Scaffold a new project" "_cmd_init"
@@ -3423,6 +3485,7 @@ _register_commands() {
     commands_register "config"   "Persistent settings — save/show/reset/edit" "_cmd_config"
     commands_register "backend"  "LLM backend — auto-detect, switch (ollama/llamacpp)" "_cmd_backend"
     commands_register "gpu"      "GPU layers — set offload layers for llama-server" "_cmd_gpu"
+    commands_register "transcript" "View task transcripts (list/last/path/show)" "_cmd_transcript"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"
     commands_register "files"    "List workspace files" "_cmd_files"

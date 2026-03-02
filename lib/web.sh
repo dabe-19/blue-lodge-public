@@ -182,18 +182,25 @@ _html_extract_title() {
 #   - <img src=...> URLs from content areas
 # Returns lines of content; caller can pipe to jq or consume directly.
 _html_extract_content() {
-    # Remove scripts, styles, navs, footers, headers, asides
-    sed -e 's/<script[^>]*>.*<\/script>//g' \
-        -e 's/<style[^>]*>.*<\/style>//g' \
-        -e 's/<nav[^>]*>.*<\/nav>//gi' \
-        -e 's/<header[^>]*>.*<\/header>//gi' \
-        -e 's/<footer[^>]*>.*<\/footer>//gi' \
-        -e 's/<aside[^>]*>.*<\/aside>//gi' | \
-    # Extract text from semantic tags
-    grep -oP '(?<=<(?:p|h[1-6]|li|td|th|figcaption|blockquote|summary)[^>]*>)[^<]+' 2>/dev/null | \
-    sed 's/&nbsp;/ /g; s/&amp;/\&/g; s/&lt;/</g; s/&gt;/>/g; s/&quot;/"/g' | \
+    # Multi-line aware content extraction.
+    # Step 1: Join all lines into one (HTML doesn't care about newlines),
+    #         then remove non-content blocks: script, style, nav, footer, etc.
+    # Step 2: Extract text from semantic content tags.
+    # Step 3: Decode entities and clean whitespace.
+    tr '\n' ' ' | \
+    sed -e 's/<script[^>]*>[^<]*\(<[^/][^<]*\)*<\/script>//gi' \
+        -e 's/<style[^>]*>[^<]*\(<[^/][^<]*\)*<\/style>//gi' \
+        -e 's/<nav[^>]*>[^<]*\(<[^/][^<]*\)*<\/nav>//gi' \
+        -e 's/<header[^>]*>[^<]*\(<[^/][^<]*\)*<\/header>//gi' \
+        -e 's/<footer[^>]*>[^<]*\(<[^/][^<]*\)*<\/footer>//gi' \
+        -e 's/<aside[^>]*>[^<]*\(<[^/][^<]*\)*<\/aside>//gi' | \
+    # Insert newlines before semantic tags so grep can find them
+    sed 's/<\(p\|h[1-6]\|li\|td\|th\|figcaption\|blockquote\|summary\|article\|section\|div\|main\)/\n<\1/gi' | \
+    # Extract text content from those tags (strip inner HTML)
+    sed -n 's/<\(p\|h[1-6]\|li\|td\|th\|figcaption\|blockquote\|summary\)[^>]*>\([^<]*\).*/\2/ip' | \
+    sed 's/&nbsp;/ /g; s/&amp;/\&/g; s/&lt;/</g; s/&gt;/>/g; s/&quot;/"/g; s/&#39;/'"'"'/g; s/&#[0-9]*;//g' | \
     awk '{$1=$1}1' | \
-    grep -v '^$' | \
+    grep -v '^[[:space:]]*$' | \
     head -300
 }
 
@@ -296,9 +303,14 @@ web_fetch_json() {
     # Extract structured content
     local content
     content=$(echo "$html" | _html_extract_content)
-    # Fallback to full text dump if semantic extraction is empty
-    if [ -z "$content" ]; then
-        content=$(echo "$html" | _html_to_text)
+    # Fallback to full text dump if semantic extraction is empty or too short
+    if [ -z "$content" ] || [ "${#content}" -lt 80 ]; then
+        local fallback
+        fallback=$(echo "$html" | _html_to_text)
+        # Use fallback if it produced more content
+        if [ "${#fallback}" -gt "${#content}" ]; then
+            content="$fallback"
+        fi
     fi
 
     # Extract image URLs
@@ -368,21 +380,14 @@ web_scrape_images() {
         return 1
     fi
 
-    # Display human-readable summary to TTY
+    # Display human-readable summary to stderr (keep stdout clean for agent)
     local title img_count content_lines
     title=$(echo "$json_result" | jq -r '.title // "Untitled"' 2>/dev/null)
     img_count=$(echo "$json_result" | jq -r '.images | length' 2>/dev/null)
     content_lines=$(echo "$json_result" | jq -r '.content' 2>/dev/null | wc -l)
 
-    ui_ok "Scraped: $title"
-    ui_dim "  Content: ~${content_lines} lines | Images: ${img_count}"
-
-    # Display numbered image list (backward compat with agent expectations)
-    local i=1
-    echo "$json_result" | jq -r '.images[]?' 2>/dev/null | while IFS= read -r img_url; do
-        printf '[%d] %s\n' "$i" "$img_url"
-        i=$((i + 1))
-    done
+    ui_ok "Scraped: $title" >&2
+    ui_dim "  Content: ~${content_lines} lines | Images: ${img_count}" >&2
 
     # Journal the structured result for agent memory
     local journal_text="Title: $title\nImages: $img_count\nContent excerpt: $(echo "$json_result" | jq -r '.content' 2>/dev/null | head -10)"

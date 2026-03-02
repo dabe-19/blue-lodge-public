@@ -408,7 +408,8 @@ sandbox_list() {
         # Journal info
         local last_used="never" exec_count=0
         if [ -f "$SANDBOX_JOURNAL" ]; then
-            exec_count=$(grep -c "\"name\":\"$name\"" "$SANDBOX_JOURNAL" 2>/dev/null || echo 0)
+            exec_count=$(grep -c "\"name\":\"$name\"" "$SANDBOX_JOURNAL" 2>/dev/null)
+            exec_count=${exec_count:-0}
             local last_line
             last_line=$(grep "\"name\":\"$name\"" "$SANDBOX_JOURNAL" | tail -1)
             if [ -n "$last_line" ]; then
@@ -552,7 +553,8 @@ sandbox_journal_summary() {
         # Last-used and event count from journal
         local last_used="never" exec_count=0 last_rc=0
         if [ -f "$SANDBOX_JOURNAL" ]; then
-            exec_count=$(grep -c "\"name\":\"$name\"" "$SANDBOX_JOURNAL" 2>/dev/null || echo 0)
+            exec_count=$(grep -c "\"name\":\"$name\"" "$SANDBOX_JOURNAL" 2>/dev/null)
+            exec_count=${exec_count:-0}
             local last_line
             last_line=$(grep "\"name\":\"$name\"" "$SANDBOX_JOURNAL" | tail -1)
             if [ -n "$last_line" ]; then

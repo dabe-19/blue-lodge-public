@@ -575,7 +575,8 @@ security_status() {
     ui_dim "Command allowlist: $allowlist_count prefixes"
     if [ -f "$GEORGE_CONFIG_DIR/allowlist.conf" ]; then
         local user_count
-        user_count=$(grep -cv '^\(#\|$\)' "$GEORGE_CONFIG_DIR/allowlist.conf" 2>/dev/null || echo 0)
+        user_count=$(grep -cv '^\(#\|$\)' "$GEORGE_CONFIG_DIR/allowlist.conf" 2>/dev/null)
+        user_count=${user_count:-0}
         ui_dim "  (includes $user_count user-defined entries)"
     fi
 
