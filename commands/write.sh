@@ -1,12 +1,27 @@
 #!/bin/bash
-# DESC: Write content to a file (create or overwrite)
+# DESC: Write content to a file (create, overwrite, or append)
 # Usage: /write <filepath> <content...>
+#        /write --append <filepath> <content...>
+#        /write --edit <filepath> <sed_expression>
 #   Writes the given content to the specified file.
 #   Creates parent directories automatically.
-#   Aliases: works like /save but designed for code generation steps.
+#
+# Modes:
+#   Default  — create or overwrite (with protection in interactive mode)
+#   --append — append content to end of existing file
+#   --edit   — apply sed expression for inline edits
+#   Agent    — in non-interactive mode, reads existing file first and
+#              logs its contents to micro_memory so the LLM can see
+#              what it's overwriting. Prevents blind overwrites.
 
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
+
+# ── Detect if we're running inside the agent loop ─────────────
+_write_is_agent_mode() {
+    # Agent mode: not interactive AND no forced confirm
+    [ ! -t 2 ] && [ -z "${LODGE_FORCE_CONFIRM:-}" ]
+}
 
 cmd_write() {
     local args="$1"
@@ -14,11 +29,29 @@ cmd_write() {
 
     if [ -z "$args" ]; then
         ui_err "Usage: /write <filepath> <content...>"
+        ui_dim "       /write --append <filepath> <content...>"
+        ui_dim "       /write --edit <filepath> <sed_expression>"
         ui_dim "Examples:"
         ui_dim "  /write src/main.rs fn main() { println!(\"hello\"); }"
-        ui_dim "  /write README.md # My Project"
+        ui_dim "  /write --append Cargo.toml [dependencies]\\nreqwest = \"0.11\""
+        ui_dim "  /write --edit src/main.rs s/old_func/new_func/g"
         return 1
     fi
+
+    # ── Parse flags ──────────────────────────────────────────
+    local mode="write"  # write | append | edit
+    case "$args" in
+        --append\ *|--append)
+            mode="append"
+            args="${args#--append }"
+            args="${args#--append}"
+            ;;
+        --edit\ *|--edit)
+            mode="edit"
+            args="${args#--edit }"
+            args="${args#--edit}"
+            ;;
+    esac
 
     # Parse: first token is filepath, rest is content
     # Fix LLM hallucination: missing spaces in output
@@ -71,8 +104,64 @@ cmd_write() {
     # Create parent directories if needed
     mkdir -p "$(dirname "$fullpath")"
 
+    # ── Handle --edit mode (sed inline edits) ──────────────────
+    if [ "$mode" = "edit" ]; then
+        if [ ! -f "$fullpath" ]; then
+            ui_err "Cannot edit — file does not exist: $filepath"
+            return 1
+        fi
+        # content holds the sed expression
+        local before_lines after_lines
+        before_lines=$(wc -l < "$fullpath")
+        if sed -i "$content" "$fullpath" 2>/dev/null; then
+            after_lines=$(wc -l < "$fullpath")
+            ui_ok "Edited: $filepath ($before_lines → $after_lines lines)"
+            return 0
+        else
+            ui_err "Edit failed — invalid sed expression: $content"
+            return 1
+        fi
+    fi
+
+    # ── Handle --append mode ───────────────────────────────────
+    if [ "$mode" = "append" ]; then
+        if [ ! -f "$fullpath" ]; then
+            # File doesn't exist — create it (append to nothing = create)
+            printf '%s\n' "$content" > "$fullpath"
+            local lines
+            lines=$(printf '%s' "$content" | wc -l)
+            ui_ok "Created: $filepath ($((lines + 1)) lines)"
+            return 0
+        fi
+        printf '\n%s\n' "$content" >> "$fullpath"
+        local lines
+        lines=$(wc -l < "$fullpath")
+        ui_ok "Appended to: $filepath ($lines total lines)"
+        return 0
+    fi
+
     local existed=0
     [ -f "$fullpath" ] && existed=1
+
+    # ── Agent-mode pre-read ───────────────────────────────────
+    # When running inside the agent loop (non-interactive), read the
+    # existing file and echo a WARNING + contents to stderr so it
+    # gets captured in the 2000-byte output and written to micro_memory.
+    # This gives the LLM visibility into what it's overwriting, so the
+    # strategist/specialist can decide to use --append or --edit next.
+    if [ "$existed" -eq 1 ] && _write_is_agent_mode; then
+        local _existing_lines _existing_preview
+        _existing_lines=$(wc -l < "$fullpath")
+        # Show first 30 lines (enough for the LLM to see structure)
+        _existing_preview=$(head -30 "$fullpath")
+        echo "WARNING: $filepath already exists (${_existing_lines} lines). Content preview:" >&2
+        echo "$_existing_preview" >&2
+        if [ "$_existing_lines" -gt 30 ]; then
+            echo "... (${_existing_lines} lines total, showing first 30)" >&2
+        fi
+        echo "---" >&2
+        echo "OVERWRITING with new content. Use /write --append or /write --edit for partial updates." >&2
+    fi
 
     # ── Overwrite protection ──────────────────────────────────
     # LODGE_WRITE_MODE controls behavior when the target file exists:

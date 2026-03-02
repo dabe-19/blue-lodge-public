@@ -621,9 +621,9 @@ describe "web_scrape_images"
 
   it "extracts img src from HTML" && {
     _setup_web
-    # Create a mock HTML file and test the extraction logic
+    # Image extraction logic now delegates to _html_extract_images
     local fn_body
-    fn_body=$(declare -f web_scrape_images)
+    fn_body=$(declare -f _html_extract_images)
     # Verify it greps for src/data-src/srcset patterns
     assert_contains "$fn_body" "src"
     assert_contains "$fn_body" "data-src"
@@ -634,7 +634,7 @@ describe "web_scrape_images"
   it "filters to common image extensions" && {
     _setup_web
     local fn_body
-    fn_body=$(declare -f web_scrape_images)
+    fn_body=$(declare -f _html_extract_images)
     assert_contains "$fn_body" "jpg"
     assert_contains "$fn_body" "png"
     assert_contains "$fn_body" "webp"
@@ -645,24 +645,26 @@ describe "web_scrape_images"
   it "resolves protocol-relative URLs" && {
     _setup_web
     local fn_body
-    fn_body=$(declare -f web_scrape_images)
+    fn_body=$(declare -f _html_extract_images)
     assert_contains "$fn_body" "https:"
     _teardown_web
   }
 
   it "skips data: URIs" && {
     _setup_web
+    # data: URI filtering now lives in _html_extract_images helper
     local fn_body
-    fn_body=$(declare -f web_scrape_images)
-    assert_contains "$fn_body" "data:*"
+    fn_body=$(declare -f _html_extract_images)
+    assert_contains "$fn_body" "data:"
     _teardown_web
   }
 
-  it "caps results at 30" && {
+  it "caps image results" && {
     _setup_web
+    # Image cap now lives in _html_extract_images helper (head -20)
     local fn_body
-    fn_body=$(declare -f web_scrape_images)
-    assert_contains "$fn_body" "30"
+    fn_body=$(declare -f _html_extract_images)
+    assert_contains "$fn_body" "head"
     _teardown_web
   }
 

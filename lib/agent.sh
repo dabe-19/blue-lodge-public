@@ -92,7 +92,7 @@ _agent_evaluate_milestone() {
     # ATTENTION REORDER: Action log FIRST, milestone LAST (recency bias)
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions in the log above accomplish this specific milestone?\n\nRULES:\n- A command with Status: EXECUTED SUCCESSFULLY (exit 0) satisfies the milestone unless its output clearly indicates failure.\n- Empty output is normal for many tools (email, social, file ops). Exit code 0 with empty output = success.\n- Focus ONLY on whether THIS milestone was achieved — ignore the broader task objective.\n- If the action log shows a relevant command was executed and succeeded, the milestone is done.\n- Do NOT require confirmation, follow-up, or verification steps unless the milestone explicitly asked for them.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence reason>"
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions in the log above accomplish this specific milestone?\n\nRULES:\n- A command with Status: EXECUTED SUCCESSFULLY (exit 0) satisfies the milestone unless its output clearly indicates failure.\n- Empty output is normal for many tools (email, social, file ops). Exit code 0 with empty output = success.\n- Focus ONLY on whether THIS milestone was achieved — ignore the broader task objective.\n- If the action log shows a relevant command was executed and succeeded, the milestone is done.\n- Do NOT require confirmation, follow-up, or verification steps unless the milestone explicitly asked for them.\n\nSPECIAL RULES FOR CODE/BUILD MILESTONES:\n- If the milestone involves writing code files: a /write that succeeded is COMPLETE only if you can see\n  the written content contains meaningful, non-trivial code (not just a header or partial snippet).\n- If the milestone says 'create project' or 'initialize': verify that key project files were written\n  (e.g., Cargo.toml + src/main.rs for Rust, package.json + index.js for Node).\n- If the milestone says 'build' or 'compile': a /build or cargo build with exit 0 is required.\n  /write alone does NOT satisfy a build milestone.\n- If ONLY web searches were performed for a code-writing milestone, mark INCOMPLETE.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence reason>"
 
     local eval_sys="You are a pragmatic milestone evaluator. Judge whether a specific action step was executed successfully based on the action log. Exit code 0 means the command succeeded — do not second-guess it. Empty output is normal and expected for many tools. Only mark INCOMPLETE if no relevant action was attempted or the action clearly failed. Respond COMPLETE or INCOMPLETE: <reason>."
 
@@ -100,6 +100,9 @@ _agent_evaluate_milestone() {
     local verdict
     local LLM_SCENARIO=evaluator
     verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-256}" "$LLM_BUDGET_AGENT")
+
+    # ── DEBUG: Evaluator raw verdict ────────────────────────────
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
 
     # Clean up LLM output — strip think blocks, whitespace
     verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
@@ -173,14 +176,17 @@ _agent_evaluate_completion() {
     # ATTENTION REORDER: context first, objective + criteria last
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE (the user's original request):\n${primary_obj}\n\nGiven all the milestones completed above, is the PRIMARY OBJECTIVE fully satisfied?\n\nRULES:\n- Review the Completed Milestones section for what has been accomplished.\n- For single-action objectives (e.g., 'send a Discord DM to X'), one successful milestone that executed the action is sufficient.\n- For multi-part objectives, verify each distinct part has a corresponding completed milestone.\n- Do NOT invent extra requirements beyond what the user explicitly asked for.\n- Do NOT require confirmation or verification steps unless the user asked for them.\n- If the key action(s) have been executed successfully, the task is done.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence description of what specific part remains>"
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE (the user's original request):\n${primary_obj}\n\nGiven all the milestones completed above, is the PRIMARY OBJECTIVE fully satisfied?\n\nRULES:\n- Review the Completed Milestones section for what has been accomplished.\n- For single-action objectives (e.g., 'send a Discord DM to X'), one successful milestone that executed the action is sufficient.\n- For multi-part objectives, verify each distinct part has a corresponding completed milestone.\n- Do NOT invent extra requirements beyond what the user explicitly asked for.\n- Do NOT require confirmation or verification steps unless the user asked for them.\n- If the key action(s) have been executed successfully, the task is done.\n\nSPECIAL RULES FOR SOFTWARE/CODE TASKS:\n- If the objective involves building a program, microservice, or application:\n  * Source code files must have been written with meaningful, non-trivial content.\n  * The project must compile/build successfully (a /build with exit 0, not just /write).\n  * Only mark COMPLETE if the code could plausibly run. /write alone is not enough.\n- If the action log is MOSTLY web searches with little or no code written, mark INCOMPLETE.\n- Web research does NOT count as progress toward a coding objective unless\n  it is supplemented by actual file creation, building, and testing.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence description of what specific part remains>"
 
-    local eval_sys="You are a strategic task-completion evaluator. Given the full history of completed milestones, determine whether the user's original request has been fully addressed. Be pragmatic — if the requested actions were executed successfully, the task is complete. Do not add requirements the user did not ask for. Respond COMPLETE or INCOMPLETE: <reason>."
+    local eval_sys="You are a strategic task-completion evaluator. Given the full history of completed milestones, determine whether the user's original request has been fully addressed. Be pragmatic — if the requested actions were executed successfully, the task is complete. Do not add requirements the user did not ask for. For SOFTWARE/CODE tasks, be stricter: writing files is not enough — the code must compile and be plausibly functional. Web research alone never satisfies a code-writing objective. Respond COMPLETE or INCOMPLETE: <reason>."
 
     ui_think "Evaluator (pass 2): assessing overall task completion..."
     local verdict
     local LLM_SCENARIO=evaluator
     verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-512}" "$LLM_BUDGET_AGENT")
+
+    # ── DEBUG: Evaluator raw verdict ────────────────────────────
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p2 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
 
     # Clean up LLM output — strip think blocks, whitespace
     verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
@@ -922,32 +928,43 @@ _build_specialist_prompt() {
                 echo "Example: /init task-manager rust"
                 ;;
             write)
-                echo "- /write <filepath> <content>"
+                echo "- /write <filepath> <content>              — Create or overwrite file"
+                echo "- /write --append <filepath> <content>     — Append to existing file"
+                echo "- /write --edit <filepath> <sed_expression> — Inline edit with sed"
                 echo "  filepath relative to current project dir."
                 echo "  Content is everything after filepath (no quoting)."
                 echo "  Creates parent directories automatically."
                 echo "  For multi-line, use \\n for newlines."
                 echo ""
+                echo "CRITICAL RULES FOR CODE FILES:"
+                echo "  - If the file ALREADY EXISTS, prefer --append or --edit over overwrite."
+                echo "  - To add dependencies to Cargo.toml/package.json: use --append."
+                echo "  - To change a function name: use --edit with sed expression."
+                echo "  - Only use plain /write (overwrite) when writing the COMPLETE file contents."
+                echo "  - When overwriting, include ALL file content — never write partial files."
+                echo ""
                 echo "FEW-SHOT FORMATTING EXAMPLES:"
                 echo ""
+                echo "Complete file write (Rust):"
+                echo '  /write src/main.rs use std::env;\n\nfn main() {\n    let args: Vec<String> = env::args().collect();\n    println!("Hello, {}!", args.get(1).unwrap_or(&"world".to_string()));\n}'
+                echo ""
+                echo "Append dependencies to existing Cargo.toml:"
+                echo '  /write --append Cargo.toml \n[dependencies]\nreqwest = { version = "0.11", features = ["json"] }\ntokio = { version = "1.0", features = ["full"] }'
+                echo ""
+                echo "Inline edit (rename function):"
+                echo '  /write --edit src/main.rs s/old_function/new_function/g'
+                echo ""
                 echo "Markdown:"
-                echo '  /write README.md # Project Title\n\n## Overview\n\nA brief description of the project.\n\n## Installation\n\n```bash\nnpm install\n```\n\n## Usage\n\n- Step 1: Configure settings\n- Step 2: Run the app'
+                echo '  /write README.md # Project Title\n\n## Overview\n\nA brief description of the project.\n\n## Installation\n\n```bash\nnpm install\n```'
                 echo ""
                 echo "JSON:"
-                echo '  /write config.json {\n  "name": "my-project",\n  "version": "1.0.0",\n  "settings": {\n    "debug": false,\n    "port": 8080\n  },\n  "dependencies": ["express", "dotenv"]\n}'
-                echo ""
-                echo "XML:"
-                echo '  /write config.xml <?xml version="1.0" encoding="UTF-8"?>\n<config>\n  <server>\n    <host>localhost</host>\n    <port>8080</port>\n  </server>\n  <logging level="info" />\n</config>'
-                echo ""
-                echo "CSV:"
-                echo '  /write data.csv name,age,role\nAlice,30,engineer\nBob,25,designer\nCharlie,35,manager'
+                echo '  /write config.json {\n  "name": "my-project",\n  "version": "1.0.0",\n  "settings": {\n    "debug": false,\n    "port": 8080\n  }\n}'
                 echo ""
                 echo "RULES:"
                 echo "  - Use \\n for newlines (NEVER literal line breaks in the command)."
+                echo "  - When writing code files, include the COMPLETE source — never truncate."
                 echo "  - JSON: ensure valid syntax — matching braces, quoted keys."
                 echo "  - Markdown: use ## for headers, - for lists, triple backtick for code blocks."
-                echo "  - XML: always close tags. Use self-closing for empty elements."
-                echo "  - CSV/TSV: first row is header. Use commas (CSV) or tabs (TSV) consistently."
                 echo "Example: /write src/main.rs fn main() { println!(\"Hello\"); }"
                 ;;
             save)
@@ -960,13 +977,18 @@ _build_specialist_prompt() {
                 echo "- /web search <query>         — Search the web (returns URLs + snippets)"
                 echo "- /web fetch <url>            — Read a webpage's content"
                 echo "- /web images <query>         — Find image URLs via Serper API"
-                echo "- /web scrape-images <url>    — Extract image URLs from a webpage (no API key)"
+                echo "- /web scrape-images <url>    — Extract page content + images as structured JSON"
                 echo "  RULES:"
                 echo "  - /web search takes a QUERY. /web fetch takes a URL. Never swap them."
+                echo "  - /web scrape-images returns JSON: {url, title, content, images[]}."
+                echo "    The 'content' field has extracted text — read it before searching again."
                 echo "  - To DESCRIBE an image: use /vision <image_url> (NOT /web fetch on an image URL)."
                 echo "  - /vision accepts image URLs directly — no need to /download first."
+                echo "  - AVOID redundant web actions. If you already have the info you need, STOP searching."
+                echo "  - For CODING tasks: prefer /write, /build, /test, /sandbox over web research."
+                echo "    Only search the web when you genuinely lack domain knowledge."
                 echo "  IMAGE WORKFLOW: /web search <topic> → pick image URL → /vision <image_url> [prompt]"
-                echo "  ALT IMAGE WORKFLOW: /web scrape-images <page_url> → /vision <image_url> [prompt]"
+                echo "  ALT IMAGE WORKFLOW: /web scrape-images <page_url> → read content + /vision <image_url>"
                 echo "Example: /web search rust async tutorial 2025"
                 ;;
             download)
@@ -1294,6 +1316,13 @@ agent_inner_loop() {
             else
                 echo "- Step [$_step_ts]: $micro_objective -> milestone_summary: $_milestone_summary" >> "$george_dir/macro_memory.md"
             fi
+
+            # ── DEBUG: Memory write visibility ─────────────────
+            if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
+                printf '  [debug] macro_memory <- milestone: %s\n' "${_milestone_summary:0:120}" > /dev/tty 2>/dev/null
+                printf '  [debug] micro_memory <- COMPLETE: %s\n' "${summary:0:80}" > /dev/tty 2>/dev/null
+            fi
+
             return 0
         fi
 
@@ -1400,6 +1429,13 @@ agent_inner_loop() {
         local LLM_SCENARIO=agent
         action_plan=$(llm_generate "$specialist_prompt" "$specialist_sys" "${LLM_AGENT_TOKENS:-512}" "$LLM_BUDGET_AGENT")
 
+        # ── DEBUG: Specialist raw response ─────────────────────
+        if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
+            local _spec_lines
+            _spec_lines=$(echo "$action_plan" | wc -l)
+            printf '  [debug] specialist response (%d lines): %s\n' "$_spec_lines" "$(echo "$action_plan" | head -3 | tr '\n' ' ' | head -c 120)" > /dev/tty 2>/dev/null
+        fi
+
         # Cancel check after specialist LLM call
         if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
             return 1
@@ -1487,6 +1523,24 @@ agent_inner_loop() {
                 _last_success_cmd="$cmd"
                 _last_success_snippet="${output:0:200}"
                 echo -e "\n**Action:** \`$cmd\`\n**Status:** EXECUTED SUCCESSFULLY (exit 0)\n**Output:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
+
+                # ── DEBUG: Command output to TTY ──────────────
+                # Print command result to TTY so operator can see
+                # what the agent is receiving as feedback. Shows
+                # a truncated preview (no risk of model contamination
+                # since this goes to /dev/tty, not stdout).
+                if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
+                    local _out_lines _out_preview
+                    _out_lines=$(echo "$output" | wc -l)
+                    if [ "$_out_lines" -le 10 ]; then
+                        _out_preview="$output"
+                    else
+                        _out_preview=$(echo "$output" | head -8)
+                        _out_preview="${_out_preview}\n  ... (${_out_lines} lines total)"
+                    fi
+                    [ -n "$output" ] && printf '  [debug] cmd output (exit %d, %d lines):\n%s\n' "$exit_code" "$_out_lines" "$_out_preview" > /dev/tty 2>/dev/null
+                    [ -z "$output" ] && printf '  [debug] cmd output: (empty, exit 0)\n' > /dev/tty 2>/dev/null
+                fi
 
                 # ── WEB SUFFICIENCY GATE ───────────────────────
                 # Prevent George from exhaustively scraping every
@@ -1787,6 +1841,25 @@ agent_run() {
         echo "## Primary Objective"
         echo "$task"
         echo ""
+        # ── Inject GEORGE.md project context ───────────────────
+        # If the project has a GEORGE.md, pull in build/test commands,
+        # key files, and notes so the strategist/evaluator know the
+        # project structure and conventions.
+        local _george_ctx=""
+        if declare -f memory_read_project &>/dev/null; then
+            _george_ctx=$(memory_read_project "$workdir" 2>/dev/null)
+        fi
+        if [ -n "$_george_ctx" ]; then
+            echo "## Project Context (from GEORGE.md)"
+            # Include type, build, test, key files, notes — skip plan/current task
+            echo "$_george_ctx" | awk '
+                /^## (Type|Build|Test|Key Files|Notes|Errors)/ { show=1 }
+                /^## (Current Task|Plan|Completed Steps)/ { show=0 }
+                show { print }
+            '
+            echo ""
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: macro_memory <- GEORGE.md project context"
+        fi
         echo "## Completed Milestones"
         echo "(none yet)"
     } > "$macro_file"
@@ -2050,6 +2123,26 @@ ${_last_eval_feedback}
             if [ "$completed_milestones" -eq 1 ]; then
                 sed -i '/^(none yet)$/d' "$macro_file"
             fi
+
+            # ── Update GEORGE.md with milestone progress ──────
+            # Keeps project memory in sync so /build, /test, and future
+            # tasks can see what steps have been completed.
+            if declare -f memory_update_section &>/dev/null; then
+                memory_update_section "Current Task" "$task (milestone $completed_milestones complete)" "$workdir" 2>/dev/null
+                # Append to Completed Steps (avoid overwriting previous steps)
+                local _george_file="$workdir/GEORGE.md"
+                [ ! -f "$_george_file" ] && [ -f "$workdir/CLAUDE.md" ] && _george_file="$workdir/CLAUDE.md"
+                if [ -f "$_george_file" ]; then
+                    local _step_line="- [$(date '+%H:%M')] $milestone"
+                    local _current_steps
+                    _current_steps=$(awk '/^## Completed Steps/{getline; p=1} /^## /{if(p)exit} p' "$_george_file" 2>/dev/null)
+                    if [ "$_current_steps" = "(none)" ] || [ -z "$_current_steps" ]; then
+                        memory_update_section "Completed Steps" "$_step_line" "$workdir" 2>/dev/null
+                    else
+                        memory_update_section "Completed Steps" "${_current_steps}\n${_step_line}" "$workdir" 2>/dev/null
+                    fi
+                fi
+            fi
         else
             failed_milestones="${failed_milestones:+${failed_milestones}, }milestone $macro_iterations: $milestone"
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — FAILED\n"
@@ -2164,6 +2257,14 @@ ${_last_eval_feedback}
         local reflect_summary="$task ($completed_milestones/$macro_iterations milestones in $(basename "$workdir"))"
         if [ -n "$failed_milestones" ]; then
             reflect_summary="${reflect_summary}. Failed: ${failed_milestones}"
+        fi
+
+        # ── Update GEORGE.md with task completion ─────────────
+        # Mark the task as done (or cancelled) so the next task or
+        # interactive session sees what was accomplished.
+        if declare -f memory_update_section &>/dev/null; then
+            memory_update_section "Current Task" "(none — last task: ${task:0:80})" "$workdir" 2>/dev/null
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] GEORGE.md updated: task complete"
         fi
         journal_reflect "$reflect_summary" "$workdir" "$_exec_log" &
         disown 2>/dev/null

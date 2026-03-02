@@ -170,6 +170,62 @@ _html_to_text() {
     esac
 }
 
+# ── Extract page title from HTML ──────────────────────────────
+_html_extract_title() {
+    grep -oP '(?<=<title>).*?(?=</title>)' | head -1 | \
+        sed 's/&amp;/\&/g; s/&lt;/</g; s/&gt;/>/g; s/&quot;/"/g; s/&#39;/'"'"'/g'
+}
+
+# ── Extract structured content from HTML ───────────────────────
+# Uses tag-based heuristics to find meaningful text sections:
+#   - <h1>-<h6>, <p>, <article>, <main>, <section> text
+#   - <img src=...> URLs from content areas
+# Returns lines of content; caller can pipe to jq or consume directly.
+_html_extract_content() {
+    # Remove scripts, styles, navs, footers, headers, asides
+    sed -e 's/<script[^>]*>.*<\/script>//g' \
+        -e 's/<style[^>]*>.*<\/style>//g' \
+        -e 's/<nav[^>]*>.*<\/nav>//gi' \
+        -e 's/<header[^>]*>.*<\/header>//gi' \
+        -e 's/<footer[^>]*>.*<\/footer>//gi' \
+        -e 's/<aside[^>]*>.*<\/aside>//gi' | \
+    # Extract text from semantic tags
+    grep -oP '(?<=<(?:p|h[1-6]|li|td|th|figcaption|blockquote|summary)[^>]*>)[^<]+' 2>/dev/null | \
+    sed 's/&nbsp;/ /g; s/&amp;/\&/g; s/&lt;/</g; s/&gt;/>/g; s/&quot;/"/g' | \
+    awk '{$1=$1}1' | \
+    grep -v '^$' | \
+    head -300
+}
+
+# ── Extract image URLs from HTML (content areas only) ──────────
+_html_extract_images() {
+    local base_url="$1"
+    # Pull src/data-src/srcset from img tags
+    grep -oP '(?:src|data-src|srcset)="[^"]+"' | \
+        sed 's/^[^"]*"//;s/"$//' | \
+        sed 's/ [0-9]*[wx].*$//' | \
+        sort -u | \
+    while IFS= read -r img_url; do
+        [ -z "$img_url" ] && continue
+        [[ "$img_url" == data:* ]] && continue
+        [[ "$img_url" == javascript:* ]] && continue
+        # Resolve relative URLs
+        if [[ "$img_url" == //* ]]; then
+            img_url="https:$img_url"
+        elif [[ "$img_url" == /* ]]; then
+            img_url="${base_url}${img_url}"
+        elif [[ "$img_url" != http* ]]; then
+            continue  # skip truly relative paths for safety
+        fi
+        # Filter to common image extensions
+        if [[ "$img_url" =~ \.(jpg|jpeg|png|gif|webp|bmp|svg|avif|tiff)(\?|$) ]]; then
+            local safe_url
+            safe_url=$(_web_sanitize_url "$img_url")
+            [ -n "$safe_url" ] && echo "$safe_url"
+        fi
+    done | head -20
+}
+
 # ── Fetch a URL and return clean text ─────────────────────────
 web_fetch() {
     local url="$1"
@@ -206,13 +262,68 @@ web_fetch() {
     echo "$text"
 }
 
+# ── Fetch a URL and return structured JSON ─────────────────────
+# Returns: {"url":"...","title":"...","content":"...","images":[...]}
+# Uses tag-based extraction for better structured output than
+# plain-text dumping. Falls back to _html_to_text for content
+# if semantic extraction yields nothing.
+web_fetch_json() {
+    local url="$1"
+    local clean_url
+    clean_url=$(_web_sanitize_url "$url")
+    if [ -z "$clean_url" ]; then
+        ui_err "Invalid URL: $url"
+        return 1
+    fi
+
+    ui_dim "Fetching (structured): $clean_url"
+    local html
+    html=$(web_fetch_raw "$clean_url")
+    if [ -z "$html" ]; then
+        ui_err "Failed to fetch: $clean_url"
+        return 1
+    fi
+
+    # Extract base URL for resolving relative image paths
+    local base_url
+    base_url=$(echo "$clean_url" | sed 's|^\(https\?://[^/]*\).*|\1|')
+
+    # Extract title
+    local title
+    title=$(echo "$html" | _html_extract_title)
+    [ -z "$title" ] && title=""
+
+    # Extract structured content
+    local content
+    content=$(echo "$html" | _html_extract_content)
+    # Fallback to full text dump if semantic extraction is empty
+    if [ -z "$content" ]; then
+        content=$(echo "$html" | _html_to_text)
+    fi
+
+    # Extract image URLs
+    local images_json="[]"
+    local img_lines
+    img_lines=$(echo "$html" | _html_extract_images "$base_url")
+    if [ -n "$img_lines" ]; then
+        images_json=$(echo "$img_lines" | jq -R '.' | jq -s '.')
+    fi
+
+    # Build JSON output — jq handles escaping
+    jq -n \
+        --arg url "$clean_url" \
+        --arg title "$title" \
+        --arg content "$content" \
+        --argjson images "$images_json" \
+        '{"url":$url,"title":$title,"content":$content,"images":$images}'
+}
+
 # ── Extract just the title from a page ────────────────────────
 web_title() {
     local url="$1"
     local html
     html=$(web_fetch_raw "$url")
-    echo "$html" | grep -oP '(?<=<title>).*?(?=</title>)' | head -1 | \
-        sed 's/&amp;/\&/g; s/&lt;/</g; s/&gt;/>/g; s/&quot;/"/g'
+    echo "$html" | _html_extract_title
 }
 
 # ── Extract all links from a page ─────────────────────────────
@@ -224,16 +335,16 @@ web_links() {
         grep -E '^https?://' | sort -u | head -50
 }
 
-# ── Extract image URLs from a page ─────────────────────────────
-# Scrapes <img src>, <img data-src>, and <source srcset> attributes
-# from the raw HTML of a page.  Returns only absolute image URLs
-# (http/https) filtered to common image extensions.  Relative URLs
-# are resolved against the page's base URL.
+# ── Extract image URLs from a page (JSON) ──────────────────────
+# Scrapes page content AND images into structured JSON format.
+# Returns: {"url":"...","title":"...","content":"...","images":[...]}
+#
+# This replaces the old web_scrape_images which returned only a
+# numbered list of image URLs. The new format gives the agent
+# structured context: page title, body text, and image URLs.
 #
 # Usage: web_scrape_images "https://en.wikipedia.org/wiki/Grand_Lodge"
-# Output:
-#   [1] https://upload.wikimedia.org/…/Grand_Lodge.jpg
-#   [2] https://upload.wikimedia.org/…/Coat_of_Arms.png
+# Output: JSON object with url, title, content, images keys
 web_scrape_images() {
     local url="$1"
 
@@ -250,87 +361,45 @@ web_scrape_images() {
         return 1
     fi
 
-    ui_dim "Scraping images from: $clean_url"
-    local html
-    html=$(web_fetch_raw "$clean_url")
-    if [ -z "$html" ]; then
-        ui_err "Failed to fetch: $clean_url"
+    # Delegate to the JSON fetcher for structured output
+    local json_result
+    json_result=$(web_fetch_json "$clean_url")
+    if [ -z "$json_result" ]; then
         return 1
     fi
 
-    # Extract the base URL (scheme + host) for resolving relative paths
-    local base_url
-    base_url=$(echo "$clean_url" | sed 's|^\(https\?://[^/]*\).*|\1|')
+    # Display human-readable summary to TTY
+    local title img_count content_lines
+    title=$(echo "$json_result" | jq -r '.title // "Untitled"' 2>/dev/null)
+    img_count=$(echo "$json_result" | jq -r '.images | length' 2>/dev/null)
+    content_lines=$(echo "$json_result" | jq -r '.content' 2>/dev/null | wc -l)
 
-    # Extract image URLs from multiple HTML patterns:
-    #   1. <img src="...">
-    #   2. <img data-src="...">  (lazy-loaded images)
-    #   3. <source srcset="...">  (picture elements)
-    local raw_urls
-    raw_urls=$(
-        echo "$html" | grep -oP '(?:src|data-src|srcset)="[^"]+"' | \
-            sed 's/^[^"]*"//;s/"$//' | \
-            sed 's/ [0-9]*[wx].*$//' | \
-            sort -u
-    )
+    ui_ok "Scraped: $title"
+    ui_dim "  Content: ~${content_lines} lines | Images: ${img_count}"
 
-    if [ -z "$raw_urls" ]; then
-        ui_warn "No images found on: $clean_url"
-        return 1
-    fi
-
-    # Resolve relative URLs and filter to image extensions
-    local output=""
+    # Display numbered image list (backward compat with agent expectations)
     local i=1
-    while IFS= read -r img_url; do
-        [ -z "$img_url" ] && continue
+    echo "$json_result" | jq -r '.images[]?' 2>/dev/null | while IFS= read -r img_url; do
+        printf '[%d] %s\n' "$i" "$img_url"
+        i=$((i + 1))
+    done
 
-        # Skip data: URIs, inline SVG, and tracking pixels
-        [[ "$img_url" == data:* ]] && continue
-        [[ "$img_url" == javascript:* ]] && continue
+    # Journal the structured result for agent memory
+    local journal_text="Title: $title\nImages: $img_count\nContent excerpt: $(echo "$json_result" | jq -r '.content' 2>/dev/null | head -10)"
+    _web_journal_results "scrape $clean_url" "$journal_text" "scrape"
 
-        # Resolve protocol-relative URLs
-        if [[ "$img_url" == //* ]]; then
-            img_url="https:$img_url"
-        # Resolve absolute-path URLs
-        elif [[ "$img_url" == /* ]]; then
-            img_url="${base_url}${img_url}"
-        # Skip if not already a full URL
-        elif [[ "$img_url" != http* ]]; then
-            # Relative path — resolve against page URL (strip filename)
-            local page_dir
-            page_dir=$(echo "$clean_url" | sed 's|/[^/]*$|/|')
-            img_url="${page_dir}${img_url}"
-        fi
-
-        # Filter to common image extensions
-        if [[ "$img_url" =~ \.(jpg|jpeg|png|gif|webp|bmp|svg|avif|tiff)(\?|$) ]]; then
-            # Sanitize the resolved URL
-            local safe_url
-            safe_url=$(_web_sanitize_url "$img_url")
-            [ -z "$safe_url" ] && continue
-
-            printf '[%d] %s\n' "$i" "$safe_url"
-            output="${output}[$i] $safe_url\n"
-            i=$((i + 1))
-
-            # Cap at 30 results to avoid flooding
-            [ "$i" -gt 30 ] && break
-        fi
-    done <<< "$raw_urls"
-
-    if [ -z "$output" ]; then
-        ui_warn "No image URLs found (page may use JavaScript-loaded images)"
-        return 1
-    fi
-
-    # Journal the results for agent memory
-    _web_journal_results "images from $clean_url" "$output" "scrape"
+    # Return the full JSON to stdout (captured by agent)
+    echo "$json_result"
 }
 
 # ── Search the web ────────────────────────────────────────────
 # Uses Serper.dev API (Google results) if key is set,
-# otherwise falls back to DuckDuckGo HTML scraping
+# otherwise falls back to DuckDuckGo HTML scraping.
+#
+# Sets _WEB_LAST_SEARCH_JSON with structured results for debug
+# output and agent consumption.
+
+_WEB_LAST_SEARCH_JSON=""
 
 web_search() {
     local query="$1"
@@ -389,6 +458,7 @@ _web_search_serper() {
         fi
 
         local output=""
+        local json_results="[]"
         local i=1
         while IFS='|' read -r _pos url title snippet; do
             local clean_url
@@ -399,9 +469,11 @@ _web_search_serper() {
             entry=$(printf '[%d] %s\n    %s\n    %s\n' "$i" "$title" "$clean_url" "$snippet")
             output="${output}${entry}\n"
             printf '[%d] %s\n    %s\n    %s\n\n' "$i" "$title" "$clean_url" "$snippet"
+            json_results=$(echo "$json_results" | jq --arg t "$title" --arg u "$clean_url" --arg s "$snippet" '. + [{"title":$t,"url":$u,"snippet":$s}]')
             i=$((i + 1))
         done <<< "$raw_results"
 
+        _WEB_LAST_SEARCH_JSON=$(jq -n --arg q "$query" --arg p "serper" --argjson r "$json_results" '{"query":$q,"provider":$p,"results":$r}')
         _web_journal_results "$query" "$output" "serper"
     else
         ui_warn "Serper search failed, falling back to DuckDuckGo"
@@ -501,6 +573,12 @@ _web_search_ddg() {
             i=$((i + 1))
         done <<< "$results"
 
+        # Build JSON and journal
+        _WEB_LAST_SEARCH_JSON=$(echo "$output" | awk -F'\n' -v q="$query" '
+            BEGIN { printf "{\"query\":\"%s\",\"provider\":\"ddg\",\"results\":[", q }
+            /^\[/ { if(NR>1) printf ","; gsub(/^\[[0-9]+\] /,""); title=$0; getline; gsub(/^    /,""); url=$0; printf "{\"title\":\"%s\",\"url\":\"%s\"}", title, url }
+            END { print "]}" }
+        ' 2>/dev/null || echo '{"query":"'"$query"'","provider":"ddg","results":[]}')
         # Journal the clean results for agent memory
         if [ -n "$output" ]; then
             _web_journal_results "$query" "$output" "ddg"
