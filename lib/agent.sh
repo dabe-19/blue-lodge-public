@@ -1712,7 +1712,8 @@ agent_inner_loop() {
                         _out_preview="$output"
                     else
                         _out_preview=$(echo "$output" | head -8)
-                        _out_preview="${_out_preview}\n  ... (${_out_lines} lines total)"
+                        _out_preview="${_out_preview}
+  ... (${_out_lines} lines total)"
                     fi
                     [ -n "$output" ] && printf '  [debug] cmd output (exit %d, %d lines):\n%s\n' "$exit_code" "$_out_lines" "$_out_preview" > /dev/tty 2>/dev/null
                     [ -z "$output" ] && printf '  [debug] cmd output: (empty, exit 0)\n' > /dev/tty 2>/dev/null
