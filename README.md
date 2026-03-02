@@ -58,7 +58,7 @@ lodge /ask "what is a monad?"      # Quick question
 - **8 Linux containers** via proot-distro (Ubuntu, Kali, Alpine, Debian, Fedora, Arch, Void, openSUSE)
 
 ### Memory & Knowledge
-- **Project memory** — `GEORGE.md` tracks plans, errors, key files per project
+- **Project memory** — `GEORGE.md` tracks milestones, considerations, and context per project
 - **Living journal** — temporal memory with decay (recent = vivid, old = impressions)
 - **FTS5 knowledge base** — BM25 search over docs, journal, and ingested files (~0 RAM, <1ms queries)
 - **Document ingestion** — index PDFs, Markdown, code, HTML, DOCX into the knowledge base
@@ -266,7 +266,7 @@ George plans 7 steps, generates all files, and tests them. Full walkthrough: [do
 
 George uses `GEORGE.md` files as persistent project memory:
 
-- **Per-project**: Each project gets its own `GEORGE.md` tracking tasks, plans, errors, and key files
+- **Per-project**: Each project gets its own `GEORGE.md` tracking tasks, milestones, validation, and context files
 - **Living journal**: `journal.md` with temporal decay — recent memories are vivid, old ones fade
 - **Soul**: `soul.md` defines personality, ethics, and working style (Washington's discipline, Franklin's wit, Smith's moral philosophy)
 - **Auto-compact**: Old completed steps are compressed to keep token count low

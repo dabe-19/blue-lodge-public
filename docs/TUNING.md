@@ -37,7 +37,7 @@ Toggle with `/soul` (or `/soul on`/`/soul off`). Default is light (condensed).
 
 George has three persistent memory layers that survive between LLM calls:
 
-- **GEORGE.md** — project state: current task, plan, completed steps, key files
+- **GEORGE.md** — project state: active task, completed milestones, validation, context files
 - **Journal** — reflections, learnings, struggles (with temporal decay) — up to 500 tokens injected in task mode
 - **FTS5 Recall** — BM25-ranked search over RECALL_INDEX.md, journal, GEORGE.md, and ingested files — 4 chunks in task mode, 1 chunk (200 char cap) in ask mode
 - **Conversation history** — ring buffer of last 3 exchanges (~300-600 tokens) injected into `/ask` for conversational continuity

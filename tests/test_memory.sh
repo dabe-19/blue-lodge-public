@@ -81,15 +81,15 @@ describe "memory_get_section"
   it "extracts a section from GEORGE.md" && {
     _setup_mem
     memory_init "$TMPDIR_MEM" "Test" "Shell" "bash run.sh" "bash test.sh" >/dev/null 2>&1
-    result=$(memory_get_section "Type" "$TMPDIR_MEM")
+    result=$(memory_get_section "Project Overview" "$TMPDIR_MEM")
     assert_contains "$result" "Shell"
     _teardown_mem
   }
 
-  it "extracts Build section" && {
+  it "extracts Validation section" && {
     _setup_mem
     memory_init "$TMPDIR_MEM" "Test" "Rust" "cargo build" "cargo test" >/dev/null 2>&1
-    result=$(memory_get_section "Build" "$TMPDIR_MEM")
+    result=$(memory_get_section "Validation" "$TMPDIR_MEM")
     assert_contains "$result" "cargo build"
     _teardown_mem
   }
@@ -108,15 +108,15 @@ describe "memory_update_section"
   it "replaces section content" && {
     _setup_mem
     memory_init "$TMPDIR_MEM" "Test" >/dev/null 2>&1
-    memory_update_section "Current Task" "Build the API" "$TMPDIR_MEM"
-    result=$(memory_get_section "Current Task" "$TMPDIR_MEM")
+    memory_update_section "Active Task" "Build the API" "$TMPDIR_MEM"
+    result=$(memory_get_section "Active Task" "$TMPDIR_MEM")
     assert_contains "$result" "Build the API"
     _teardown_mem
   }
 
   it "returns error for missing file" && {
     _setup_mem
-    memory_update_section "Current Task" "nope" "$TMPDIR_MEM" 2>/dev/null
+    memory_update_section "Active Task" "nope" "$TMPDIR_MEM" 2>/dev/null
     assert_fail $?
     _teardown_mem
   }
@@ -127,9 +127,9 @@ describe "memory_append_section"
   it "appends to a section" && {
     _setup_mem
     memory_init "$TMPDIR_MEM" "Test" >/dev/null 2>&1
-    memory_append_section "Completed Steps" "Step 1 done" "$TMPDIR_MEM"
-    memory_append_section "Completed Steps" "Step 2 done" "$TMPDIR_MEM"
-    result=$(memory_get_section "Completed Steps" "$TMPDIR_MEM")
+    memory_append_section "Completed Milestones" "Step 1 done" "$TMPDIR_MEM"
+    memory_append_section "Completed Milestones" "Step 2 done" "$TMPDIR_MEM"
+    result=$(memory_get_section "Completed Milestones" "$TMPDIR_MEM")
     assert_contains "$result" "Step 1 done"
     assert_contains "$result" "Step 2 done"
     _teardown_mem
@@ -138,8 +138,8 @@ describe "memory_append_section"
   it "replaces (none) placeholder" && {
     _setup_mem
     memory_init "$TMPDIR_MEM" "Test" >/dev/null 2>&1
-    memory_append_section "Current Task" "New task" "$TMPDIR_MEM"
-    result=$(memory_get_section "Current Task" "$TMPDIR_MEM")
+    memory_append_section "Active Task" "New task" "$TMPDIR_MEM"
+    result=$(memory_get_section "Active Task" "$TMPDIR_MEM")
     assert_not_contains "$result" "(none)"
     assert_contains "$result" "New task"
     _teardown_mem
@@ -152,10 +152,10 @@ describe "memory_compact"
     _setup_mem
     memory_init "$TMPDIR_MEM" "Test" >/dev/null 2>&1
     for i in $(seq 1 15); do
-        memory_append_section "Completed Steps" "Step $i complete" "$TMPDIR_MEM"
+        memory_append_section "Completed Milestones" "Step $i complete" "$TMPDIR_MEM"
     done
     memory_compact "$TMPDIR_MEM" >/dev/null 2>&1
-    result=$(memory_get_section "Completed Steps" "$TMPDIR_MEM")
+    result=$(memory_get_section "Completed Milestones" "$TMPDIR_MEM")
     assert_contains "$result" "archived"
     assert_contains "$result" "Step 15"
     _teardown_mem
@@ -164,9 +164,9 @@ describe "memory_compact"
   it "does nothing with few steps" && {
     _setup_mem
     memory_init "$TMPDIR_MEM" "Test" >/dev/null 2>&1
-    memory_append_section "Completed Steps" "Step 1" "$TMPDIR_MEM"
+    memory_append_section "Completed Milestones" "Step 1" "$TMPDIR_MEM"
     memory_compact "$TMPDIR_MEM" >/dev/null 2>&1
-    result=$(memory_get_section "Completed Steps" "$TMPDIR_MEM")
+    result=$(memory_get_section "Completed Milestones" "$TMPDIR_MEM")
     assert_not_contains "$result" "archived"
     _teardown_mem
   }
@@ -336,8 +336,8 @@ describe "memory_build_system_prompt soul mode"
     _setup_mem
     LODGE_SOUL=0
     prompt=$(memory_build_system_prompt "$TMPDIR_MEM" "hello" "task")
-    # Practical Craft section should be present, but not the deep philosophy
-    assert_contains "$prompt" "PRACTICAL CRAFT"
+    # Inviolable Landmarks section should be present, but not the deep philosophy
+    assert_contains "$prompt" "INVIOLABLE LANDMARKS"
     _teardown_mem
   }
 

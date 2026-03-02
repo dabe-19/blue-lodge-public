@@ -61,7 +61,11 @@ _TOOLS_EXTENSIONS=(
     .zip .tar .rpm .deb .dmg .img .iso .apk .jar .war .gem .whl
     .bat .cmd .ps1 .psm .awk .sed .zsh .xsl .man .doc .ppt .xls .rtf
     # 2-char extensions
-    .c .h .r .d .m .v .s .o .a
+    # CAUTION: Single-letter extensions like .a, .o, .s, .v, .d are excluded.
+    # They conflict with common TLDs (.ai, .org, .sh, .vc, .dev) and URL
+    # path components, causing broken URLs. Only include 2-char extensions
+    # that are unambiguous and commonly emitted by LLMs without spacing.
+    .c .h .r .m
 )
 
 # ── Fix missing space after file extensions ────────────────────
@@ -80,6 +84,24 @@ _TOOLS_EXTENSIONS=(
 tools_fix_ext_spacing() {
     local input="$1"
     [ -z "$input" ] && return 0
+
+    # ── URL PROTECTION ────────────────────────────────────────
+    # URLs must be left completely untouched. If the input contains a URL
+    # (http://, https://, or ftp://), temporarily replace it with a
+    # placeholder, run the extension fixer on the remainder, then restore.
+    # This prevents TLD/path components like .ai, .io, .com/path from
+    # triggering false extension splits.
+    local _url_placeholders=()
+    local _url_idx=0
+    local processed="$input"
+    while [[ "$processed" =~ (https?://[^[:space:]]+|ftp://[^[:space:]]+) ]]; do
+        local _url="${BASH_REMATCH[1]}"
+        local _placeholder="__LODGE_URL_${_url_idx}__"
+        _url_placeholders+=("$_url")
+        processed="${processed/"$_url"/$_placeholder}"
+        _url_idx=$((_url_idx + 1))
+    done
+    input="$processed"
 
     # Build an alternation pattern from the extension list, longest first.
     # Escape dots for regex. The list is already sorted longest-first.
@@ -143,6 +165,12 @@ tools_fix_ext_spacing() {
             fi
         fi
     done
+
+    # ── Restore URLs from placeholders ────────────────────────
+    for (( i=0; i<${#_url_placeholders[@]}; i++ )); do
+        result="${result/__LODGE_URL_${i}__/${_url_placeholders[$i]}}"
+    done
+
     echo "$result"
 }
 

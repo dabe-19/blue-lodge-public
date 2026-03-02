@@ -176,9 +176,9 @@ _agent_evaluate_completion() {
     # ATTENTION REORDER: context first, objective + criteria last
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE (the user's original request):\n${primary_obj}\n\nGiven all the milestones completed above, is the PRIMARY OBJECTIVE fully satisfied?\n\nRULES:\n- Review the Completed Milestones section for what has been accomplished.\n- For single-action objectives (e.g., 'send a Discord DM to X'), one successful milestone that executed the action is sufficient.\n- For multi-part objectives, verify each distinct part has a corresponding completed milestone.\n- Do NOT invent extra requirements beyond what the user explicitly asked for.\n- Do NOT require confirmation or verification steps unless the user asked for them.\n- If the key action(s) have been executed successfully, the task is done.\n\nSPECIAL RULES FOR SOFTWARE/CODE TASKS:\n- If the objective involves building a program, microservice, or application:\n  * Source code files must have been written with meaningful, non-trivial content.\n  * Placeholder or stub code (todo, unimplemented, panic, 'Missing implementation') does NOT count.\n  * The project must compile/build successfully (a /build with exit 0, not just /write).\n  * Only mark COMPLETE if the code could plausibly run. /write alone is not enough.\n- If the action log is MOSTLY web searches with little or no code written, mark INCOMPLETE.\n- Web research does NOT count as progress toward a coding objective unless\n  it is supplemented by actual file creation, building, and testing.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence description of what specific part remains>"
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE (the user's original request):\n${primary_obj}\n\nGiven all the milestones completed above, is the PRIMARY OBJECTIVE fully satisfied?\n\nRULES:\n- Review the Completed Milestones section for what has been accomplished.\n- For single-action objectives (e.g., 'send a Discord DM to X'), one successful milestone that executed the action is sufficient.\n- For multi-part objectives, verify each distinct part has a corresponding completed milestone.\n- Do NOT invent extra requirements beyond what the user explicitly asked for.\n- Do NOT require confirmation or verification steps unless the user asked for them.\n- If the key action(s) have been executed successfully, the task is done.\n\nSPECIAL RULES FOR SOFTWARE/CODE TASKS:\n- If the objective involves building a program, microservice, or application:\n  * Source code files must have been written with meaningful, non-trivial content.\n  * Placeholder or stub code (todo, unimplemented, panic, 'Missing implementation') does NOT count.\n  * The project must compile/build successfully (a /build with exit 0, not just /write).\n  * Only mark COMPLETE if the code could plausibly run. /write alone is not enough.\n- If the action log is MOSTLY web searches with little or no code written, mark INCOMPLETE.\n- Web research does NOT count as progress toward a coding objective unless\n  it is supplemented by actual file creation, building, and testing.\n\nSPECIAL RULES FOR WRITING/CONTENT/SOCIAL TASKS:\n- If the objective asks to 'write', 'invent', 'create', 'compose', or 'draft' content\n  (a song, poem, essay, review, message, etc.) AND THEN post/send/save it:\n  * The ACTUAL content must appear in the milestone output or action log.\n  * A teaser, placeholder, or generic message is NOT the requested content.\n  * Merely announcing intent to create something is NOT creating it.\n  * If the objective says 'invent a song' or 'write a review', the song/review text\n    must exist in the executed command output. If only a stub or intro was posted, mark INCOMPLETE.\n- If the objective asks to send specific content (email body, Discord message with substance):\n  * Check that the SENT content is substantive and matches what was requested.\n  * A partial or truncated message missing the core content is INCOMPLETE.\n  * 'Email sent' with a placeholder body does NOT satisfy 'email a review'.\n- For web research + email/post tasks: the gathered research must appear in the final\n  sent content, not just in the search results. Searching alone is NOT sending.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence description of what specific part remains>"
 
-    local eval_sys="You are a strategic task-completion evaluator. Given the full history of completed milestones, determine whether the user's original request has been fully addressed. Be pragmatic — if the requested actions were executed successfully, the task is complete. Do not add requirements the user did not ask for. For SOFTWARE/CODE tasks, be stricter: writing files is not enough — the code must compile and be plausibly functional. Web research alone never satisfies a code-writing objective. Respond COMPLETE or INCOMPLETE: <reason>."
+    local eval_sys="You are a strategic task-completion evaluator. Given the full history of completed milestones, determine whether the user's original request has been fully addressed. Be pragmatic — if the requested actions were executed successfully, the task is complete. Do not add requirements the user did not ask for. For SOFTWARE/CODE tasks, be stricter: writing files is not enough — the code must compile and be plausibly functional. For WRITING/CONTENT tasks, verify the actual content was created and delivered — not just a placeholder or announcement. Respond COMPLETE or INCOMPLETE: <reason>."
 
     ui_think "Evaluator (pass 2): assessing overall task completion..."
     local verdict
@@ -564,7 +564,7 @@ _agent_run_subtask() {
 
     # Inject parent context so subtask plan is aware of the bigger picture
     if [ -n "$parent_task" ]; then
-        memory_update_section "Current Task" "SUBTASK of: $parent_task\nSubtask: $task" "$workdir"
+        memory_update_section "Active Task" "SUBTASK of: $parent_task\nSubtask: $task" "$workdir"
     fi
 
     ui_section "Subtask (depth $depth)"
@@ -739,8 +739,7 @@ ${base_rules}"
     done
     
     # Update memory
-    memory_update_section "Current Task" "$task" "$workdir"
-    memory_update_section "Plan" "$plan" "$workdir"
+    memory_update_section "Active Task" "$task" "$workdir"
     
     echo "$plan"
 }
@@ -1020,13 +1019,13 @@ _build_specialist_prompt() {
             build)
                 echo "- /build [release]"
                 echo "  Auto-detects Cargo/pyproject/Makefile."
-                echo "  Reads GEORGE.md ## Build section for instructions."
+                echo "  Reads GEORGE.md ## Validation section for build command."
                 echo "Example: /build release"
                 ;;
             test)
                 echo "- /test [specific_test]"
                 echo "  Auto-detects Cargo/pytest/npm/make."
-                echo "  Reads GEORGE.md ## Test section for instructions."
+                echo "  Reads GEORGE.md ## Validation section for test command."
                 echo "Example: /test"
                 ;;
             fix)
@@ -1174,6 +1173,22 @@ _build_specialist_prompt() {
         if [ -n "$_key_status" ]; then
             echo ""
             echo "$_key_status"
+        fi
+
+        # ── Inject service availability into specialist ────────
+        # The specialist needs to know which services (discord, email,
+        # telegram, etc.) are actually configured so it can use the
+        # correct provider/channel names and avoid commands that will
+        # fail due to missing credentials.
+        if declare -f commands_services_status &>/dev/null; then
+            local _svc_status_spec
+            _svc_status_spec=$(commands_services_status 2>/dev/null)
+            if [ -n "$_svc_status_spec" ]; then
+                echo ""
+                echo "SERVICES STATUS:"
+                echo "$_svc_status_spec"
+                echo "ONLY use services listed as CONFIGURED. Do NOT attempt unconfigured services."
+            fi
         fi
 
         # Previous search results are already visible in the micro_memory
@@ -1454,14 +1469,31 @@ agent_inner_loop() {
         # Extract command based on routing: slash commands vs bash.
         # Slash commands: extracted as lines starting with /
         # Bash commands: extracted from ```bash blocks
+        #
+        # CRITICAL: Content-bearing commands (/write, /save, /email, /social)
+        # may span multiple lines. The specialist outputs:
+        #   /write filename.txt
+        #   Line 1 of content
+        #   Line 2 of content
+        # We must capture the /command line AND all following non-slash,
+        # non-code-fence continuation lines as the full command body.
         local cmd=""
         local cmd_is_slash=0
         if [ "$selected_tool" != "bash" ]; then
-            # Extract slash command line (first /command line outside code blocks)
+            # Extract slash command + continuation lines (content body).
+            # Captures the first /command line outside code blocks, then
+            # all subsequent lines until EOF, another /command, or a code fence.
+            # Continuation lines are joined with \n literal so /write and
+            # /save receive them as multi-line content.
             cmd=$(echo "$action_plan" | awk '
                 /^```/ { in_block = !in_block; next }
                 in_block { next }
-                /^\/[a-z]/ { print; exit }
+                !found && /^\/[a-z]/ { found=1; cmd=$0; next }
+                found && /^\/[a-z]/ { exit }
+                found && /^```/ { exit }
+                found && /^\*\(/ { exit }
+                found { cmd = cmd "\\n" $0 }
+                END { if(found) print cmd }
             ')
             if [ -n "$cmd" ]; then
                 cmd_is_slash=1
@@ -1478,7 +1510,10 @@ agent_inner_loop() {
         # The LLM sometimes concatenates multiple slash commands on one line:
         #   /sandbox new x  /write file.md "text"  /social post discord "msg"
         # Extract only the FIRST slash command and discard the rest.
-        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" =~ ^(/[a-z]+[[:space:]]) ]]; then
+        # SKIP for multi-line commands (content body uses literal \n) — those
+        # are content-bearing commands like /write, /save, /email where the
+        # "second /command" pattern would incorrectly split content text.
+        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" != *'\n'* ]] && [[ "$cmd" =~ ^(/[a-z]+[[:space:]]) ]]; then
             # Check for a second embedded slash command (space-/cmd pattern)
             local _first_cmd
             _first_cmd=$(echo "$cmd" | sed 's|  */|\n/|g' | head -1)
@@ -1512,7 +1547,18 @@ agent_inner_loop() {
         fi
 
         if [ -n "$cmd" ]; then
-            ui_step "Running: $cmd"
+            # Display a truncated version for multi-line commands
+            local _cmd_display
+            if [[ "$cmd" == *'\n'* ]]; then
+                # Show first line + indicator that content follows
+                _cmd_display=$(echo "$cmd" | head -1)
+                local _cmd_lines
+                _cmd_lines=$(echo "$cmd" | awk -F'\\\\n' '{print NF}')
+                _cmd_display="${_cmd_display:0:120} (+${_cmd_lines} lines)"
+            else
+                _cmd_display="$cmd"
+            fi
+            ui_step "Running: $_cmd_display"
 
             # ── DIRECTORY CHANGE INTERCEPTION ─────────────────
             # /cd and /init change directories but commands_dispatch
@@ -1868,6 +1914,47 @@ agent_run() {
     local fail_file="$george_dir/failures_log.md"
     mkdir -p "$george_dir"
 
+    # ── Auto-create GEORGE.md if it doesn't exist ─────────────
+    # Non-sandbox tasks (social posts, web searches, emails, etc.)
+    # still need a GEORGE.md for task summaries and milestone tracking.
+    # Without this, memory_update_section silently fails and task
+    # history is lost for any task not preceded by /init.
+    local _george_md="$workdir/GEORGE.md"
+    if [ ! -f "$_george_md" ] && [ ! -f "$workdir/CLAUDE.md" ]; then
+        local _proj_name
+        _proj_name=$(basename "$workdir")
+        if declare -f memory_init &>/dev/null; then
+            memory_init "$workdir" "$_proj_name" "General" "N/A" "N/A"
+        else
+            cat > "$_george_md" << MEMEOF
+# THE TRESTLE BOARD — $_proj_name
+
+## Project Overview
+* **Name:** $_proj_name
+* **Objective:** (TBD)
+* **Domain & Tools:** General
+
+## Validation
+* **How do we prove success?** (TBD)
+* **Build:** \`N/A\`
+* **Test:** \`N/A\`
+
+## Active Task
+(none)
+
+## Completed Milestones
+(none)
+
+## Context Files
+(auto-populated as agent works)
+
+## Considerations
+- Auto-created by agent_run for task tracking.
+MEMEOF
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] auto-created GEORGE.md in $workdir"
+    fi
+
     # ── Flush stale memory from previous task ──────────────────
     # Previous task's memory files are preserved for review after
     # the task completes (they've already been summarized to journal).
@@ -1901,10 +1988,10 @@ agent_run() {
         fi
         if [ -n "$_george_ctx" ]; then
             echo "## Project Context (from GEORGE.md)"
-            # Include type, build, test, key files, notes — skip plan/current task
+            # Include project overview, validation, context, considerations — skip active task/milestones
             echo "$_george_ctx" | awk '
-                /^## (Type|Build|Test|Key Files|Notes|Errors)/ { show=1 }
-                /^## (Current Task|Plan|Completed Steps)/ { show=0 }
+                /^## (Project Overview|Validation|Context Files|Considerations)/ { show=1 }
+                /^## (Active Task|Completed Milestones)/ { show=0 }
                 show { print }
             '
             echo ""
@@ -2178,18 +2265,18 @@ ${_last_eval_feedback}
             # Keeps project memory in sync so /build, /test, and future
             # tasks can see what steps have been completed.
             if declare -f memory_update_section &>/dev/null; then
-                memory_update_section "Current Task" "$task (milestone $completed_milestones complete)" "$workdir" 2>/dev/null
-                # Append to Completed Steps (avoid overwriting previous steps)
+                memory_update_section "Active Task" "$task (milestone $completed_milestones complete)" "$workdir" 2>/dev/null
+                # Append to Completed Milestones (avoid overwriting previous milestones)
                 local _george_file="$workdir/GEORGE.md"
                 [ ! -f "$_george_file" ] && [ -f "$workdir/CLAUDE.md" ] && _george_file="$workdir/CLAUDE.md"
                 if [ -f "$_george_file" ]; then
                     local _step_line="- [$(date '+%H:%M')] $milestone"
                     local _current_steps
-                    _current_steps=$(awk '/^## Completed Steps/{getline; p=1} /^## /{if(p)exit} p' "$_george_file" 2>/dev/null)
+                    _current_steps=$(awk '/^## Completed Milestones/{getline; p=1} /^## /{if(p)exit} p' "$_george_file" 2>/dev/null)
                     if [ "$_current_steps" = "(none)" ] || [ -z "$_current_steps" ]; then
-                        memory_update_section "Completed Steps" "$_step_line" "$workdir" 2>/dev/null
+                        memory_update_section "Completed Milestones" "$_step_line" "$workdir" 2>/dev/null
                     else
-                        memory_update_section "Completed Steps" "${_current_steps}\n${_step_line}" "$workdir" 2>/dev/null
+                        memory_update_section "Completed Milestones" "${_current_steps}\n${_step_line}" "$workdir" 2>/dev/null
                     fi
                 fi
             fi
@@ -2313,7 +2400,7 @@ ${_last_eval_feedback}
         # Mark the task as done (or cancelled) so the next task or
         # interactive session sees what was accomplished.
         if declare -f memory_update_section &>/dev/null; then
-            memory_update_section "Current Task" "(none — last task: ${task:0:80})" "$workdir" 2>/dev/null
+            memory_update_section "Active Task" "(none — last task: ${task:0:80})" "$workdir" 2>/dev/null
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] GEORGE.md updated: task complete"
         fi
         journal_reflect "$reflect_summary" "$workdir" "$_exec_log" &
@@ -2446,7 +2533,7 @@ agent_step_mode() {
             agent_inner_loop "${steps[$i]}" "$workdir"
         else
             ui_warn "Skipped step $step_num"
-            memory_append_section "Completed Steps" "Step $step_num: SKIPPED — ${steps[$i]}" "$workdir"
+            memory_append_section "Completed Milestones" "Step $step_num: SKIPPED — ${steps[$i]}" "$workdir"
         fi
     done
 }

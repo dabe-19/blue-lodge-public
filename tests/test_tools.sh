@@ -673,6 +673,50 @@ describe "tools_fix_ext_spacing — should NOT modify"
     assert_eq "$result" "config.json already spaced"
   }
 
+describe "tools_fix_ext_spacing — URL protection"
+
+  it "does NOT break .ai domain URLs" && {
+    result=$(tools_fix_ext_spacing "https://example.ai/path content")
+    assert_eq "$result" "https://example.ai/path content"
+  }
+
+  it "does NOT break .io domain URLs" && {
+    result=$(tools_fix_ext_spacing "https://fly.io/docs here")
+    assert_eq "$result" "https://fly.io/docs here"
+  }
+
+  it "does NOT break .rs domain URLs" && {
+    result=$(tools_fix_ext_spacing "https://crates.rs/crates/tokio info")
+    assert_eq "$result" "https://crates.rs/crates/tokio info"
+  }
+
+  it "does NOT break .sh domain URLs" && {
+    result=$(tools_fix_ext_spacing "https://bun.sh/docs content")
+    assert_eq "$result" "https://bun.sh/docs content"
+  }
+
+  it "does NOT break URL with .com/path" && {
+    result=$(tools_fix_ext_spacing "https://udisc.com/blog/post/best-disc here")
+    assert_eq "$result" "https://udisc.com/blog/post/best-disc here"
+  }
+
+  it "does NOT break URL with .org/path" && {
+    result=$(tools_fix_ext_spacing "https://example.org/api/v1 data")
+    assert_eq "$result" "https://example.org/api/v1 data"
+  }
+
+  it "preserves URL while fixing non-URL extensions" && {
+    result=$(tools_fix_ext_spacing "file.txtContent https://example.ai/test")
+    assert_contains "$result" "file.txt Content"
+    assert_contains "$result" "https://example.ai/test"
+  }
+
+  it "handles multiple URLs in input" && {
+    result=$(tools_fix_ext_spacing "See https://a.ai and https://b.sh/docs here")
+    assert_contains "$result" "https://a.ai"
+    assert_contains "$result" "https://b.sh/docs"
+  }
+
 # ── tools_fix_fence_spacing ───────────────────────────────────
 describe "tools_fix_fence_spacing"
 

@@ -230,13 +230,20 @@ $line"
     fi
     
     # Build output with decay layers
+    # ORDER: Sediment (oldest) → Fading → Vivid (newest) at bottom.
+    # LLM attention is biased toward tokens at the END of the context
+    # window (recency bias), so placing the most recent entries last
+    # ensures they receive the highest attention weight.
     output="--- JOURNAL (living memory) ---"
     
-    if [ -n "$vivid_entries" ]; then
+    # Read sediment section from file (oldest — least attention)
+    local sediment
+    sediment=$(awk '/^## Sediment/{found=1; next} /^---$/{if(found) exit} found{print}' "$JOURNAL_FILE" 2>/dev/null)
+    if [ -n "$sediment" ] && [ "$sediment" != "(Nothing yet. The work has just begun.)" ]; then
         output="$output
 
-### Recent (vivid)
-$vivid_entries"
+### Sediment (deep memory)
+$sediment"
     fi
     
     if [ -n "$fading_summaries" ]; then
@@ -246,14 +253,11 @@ $vivid_entries"
 $fading_summaries"
     fi
     
-    # Read sediment section from file
-    local sediment
-    sediment=$(awk '/^## Sediment/{found=1; next} /^---$/{if(found) exit} found{print}' "$JOURNAL_FILE" 2>/dev/null)
-    if [ -n "$sediment" ] && [ "$sediment" != "(Nothing yet. The work has just begun.)" ]; then
+    if [ -n "$vivid_entries" ]; then
         output="$output
 
-### Sediment (deep memory)
-$sediment"
+### Recent (vivid)
+$vivid_entries"
     fi
     
     echo "$output"

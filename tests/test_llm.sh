@@ -208,8 +208,8 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     unset LLM_SCENARIO
     _result=$(_llm_build_opts 512)
     _mp=$(echo "$_result" | jq -r '.min_p')
-    # All current models have min_p=0.0
-    assert_eq "$_mp" "0.0"
+    # All current models have min_p=0
+    assert_eq "$_mp" "0"
   }
 
   it "thinking directive injected for strategist scenario" && {

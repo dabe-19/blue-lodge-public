@@ -168,8 +168,8 @@ Default dest: current directory with original filename.
 
 ## Build Test Fix Commit Push
 
-/build [release] — build project (reads GEORGE.md ## Build).
-/test [args] — run tests (reads GEORGE.md ## Test).
+/build [release] — build project (reads GEORGE.md ## Validation).
+/test [args] — run tests (reads GEORGE.md ## Validation).
 /fix [error] — diagnose and fix errors.
 /commit [msg] — generate AI commit message and commit.
 /push — push to GitHub (requires SSH key setup).

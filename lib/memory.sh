@@ -43,33 +43,28 @@ memory_init() {
     local test_cmd="${5:-make test}"
     
     cat > "$dir/GEORGE.md" << MEMEOF
-# $project_name
+# THE TRESTLE BOARD — $project_name
 
-## Type
-$project_type
+## Project Overview
+* **Name:** $project_name
+* **Objective:** (TBD)
+* **Domain & Tools:** $project_type
 
-## Build
-\`$build_cmd\`
+## Validation
+* **How do we prove success?** (TBD)
+* **Build:** \`$build_cmd\`
+* **Test:** \`$test_cmd\`
 
-## Test
-\`$test_cmd\`
-
-## Current Task
+## Active Task
 (none)
 
-## Plan
+## Completed Milestones
 (none)
 
-## Completed Steps
-(none)
-
-## Key Files
+## Context Files
 (auto-populated as agent works)
 
-## Errors
-(none)
-
-## Notes
+## Considerations
 - Hardware: Galaxy Fold 7, Snapdragon 8 Elite, 12GB RAM
 - Keep context lean. Small functions. Structured logging.
 MEMEOF
@@ -78,7 +73,7 @@ MEMEOF
 }
 
 # ── Update a section in GEORGE.md ──────────────────────────────
-# Usage: memory_update_section "Current Task" "new content"
+# Usage: memory_update_section "Active Task" "new content"
 memory_update_section() {
     local section="$1"
     local content="$2"
@@ -253,7 +248,7 @@ OUTPUT FORMAT: In no more than 5 sentences, answer the question directly. Respon
 
         # Add minimal project context if GEORGE.md exists
         local project_task
-        project_task=$(memory_get_section "Current Task" "$dir" 2>/dev/null)
+        project_task=$(memory_get_section "Active Task" "$dir" 2>/dev/null)
         if [ -n "$project_task" ] && [ "$project_task" != "(none)" ]; then
             prompt="$prompt
 
@@ -451,7 +446,16 @@ $(commands_catalog)
     if [ "${LODGE_SOUL:-0}" -eq 1 ]; then
         soul=$(cat "$LODGE_DIR/soul.md" 2>/dev/null)
     else
-        soul=$({ head -20 "$LODGE_DIR/soul.md"; echo ""; awk '/^## PRACTICAL CRAFT/,0' "$LODGE_DIR/soul.md"; } 2>/dev/null)
+        # Lean extraction: Identity + Landmarks + Memory Architecture.
+        # Skip CORE VIRTUES (philosophy) and THREE DEGREES (workflow prose)
+        # to save ~300 tokens. These are encoded in the agent loop code.
+        soul=$(awk '
+            /^## CORE VIRTUES/ { skip=1 }
+            /^## THE INVIOLABLE LANDMARKS/ { skip=0 }
+            /^## THE THREE DEGREES/ { skip=1 }
+            /^## THE MEMORY ARCHITECTURE/ { skip=0 }
+            !skip { print }
+        ' "$LODGE_DIR/soul.md" 2>/dev/null)
     fi
     prompt="${prompt}
 ${soul}"
@@ -470,9 +474,9 @@ memory_compact() {
     
     if [ ! -f "$file" ]; then return; fi
     
-    # 1. Compact completed steps: keep last 5, summarize older
+    # 1. Compact completed milestones: keep last 5, summarize older
     local completed
-    completed=$(memory_get_section "Completed Steps" "$dir")
+    completed=$(memory_get_section "Completed Milestones" "$dir")
     local line_count
     line_count=$(echo "$completed" | wc -l)
     
@@ -480,20 +484,20 @@ memory_compact() {
         local keep
         keep=$(echo "$completed" | tail -5)
         local old_count=$(( line_count - 5 ))
-        memory_update_section "Completed Steps" "[$old_count older steps archived]
+        memory_update_section "Completed Milestones" "[$old_count older milestones archived]
 $keep" "$dir"
-        ui_ok "Compacted memory: kept last 5 of $line_count steps"
+        ui_ok "Compacted memory: kept last 5 of $line_count milestones"
     fi
 
-    # 2. Compact Key Files: deduplicate and keep last 20
+    # 2. Compact Context Files: deduplicate and keep last 20
     local key_files
-    key_files=$(memory_get_section "Key Files" "$dir")
+    key_files=$(memory_get_section "Context Files" "$dir")
     local kf_count
     kf_count=$(echo "$key_files" | wc -l)
     if [ "$kf_count" -gt 20 ]; then
         local deduped
         deduped=$(echo "$key_files" | sort -u | tail -20)
-        memory_update_section "Key Files" "$deduped" "$dir"
+        memory_update_section "Context Files" "$deduped" "$dir"
     fi
 
     # 3. Hard cap: if GEORGE.md exceeds ~6KB (with 16K context we have room,
@@ -501,11 +505,8 @@ $keep" "$dir"
     local file_size
     file_size=$(wc -c < "$file")
     if [ "$file_size" -gt 6144 ]; then
-        # Keep header + current task + plan, compact everything else
-        memory_update_section "Errors" "[archived]" "$dir"
-        local notes
-        notes=$(memory_get_section "Notes" "$dir" | head -5)
-        memory_update_section "Notes" "$notes" "$dir"
+        # Keep header + active task, compact everything else
+        memory_update_section "Considerations" "[archived]" "$dir"
         ui_warn "GEORGE.md exceeded 6KB — compacted to protect context window"
     fi
 }

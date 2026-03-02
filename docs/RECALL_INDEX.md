@@ -198,8 +198,8 @@ Default dest: current directory with original filename.
 
 ## Build Test Fix Project
 
-/build [release] — build project (reads GEORGE.md ## Build).
-/test [args] — run tests (reads GEORGE.md ## Test).
+/build [release] — build project (reads GEORGE.md ## Validation).
+/test [args] — run tests (reads GEORGE.md ## Validation).
 /fix [error] — diagnose and fix errors.
 Rust: cargo check > cargo build (saves RAM). cargo check then cargo test.
 

@@ -14,7 +14,10 @@ cmd_test() {
     
     # Get test command from GEORGE.md or detect
     local test_cmd
-    test_cmd=$(memory_get_section "Test" "$workdir" | head -1 | sed 's/^`//;s/`$//')
+    # New format: labeled entry in Validation section
+    test_cmd=$(memory_get_section "Validation" "$workdir" | grep '\*\*Test' | grep -oP '`\K[^`]+' | head -1)
+    # Fallback: old format (## Test section)
+    [ -z "$test_cmd" ] && test_cmd=$(memory_get_section "Test" "$workdir" | head -1 | sed 's/^`//;s/`$//')
     
     if [ -z "$test_cmd" ]; then
         # Auto-detect
@@ -27,7 +30,7 @@ cmd_test() {
         elif [ -f "Makefile" ]; then
             test_cmd="make test"
         else
-            ui_err "Can't detect test command. Add it to GEORGE.md under ## Test"
+            ui_err "Can't detect test command. Add it to GEORGE.md under ## Validation"
             return 1
         fi
     fi
@@ -47,7 +50,7 @@ cmd_test() {
         ui_ok "Tests passed"
     else
         ui_err "Tests failed (exit $exit_code)"
-        memory_append_section "Errors" "Tests failed: exit $exit_code" "$workdir"
+        memory_append_section "Considerations" "Tests failed: exit $exit_code" "$workdir"
     fi
     
     return $exit_code
