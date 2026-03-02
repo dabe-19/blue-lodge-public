@@ -833,10 +833,10 @@ describe "L3 failure history recall"
     assert_ok $?
   }
 
-  it "L3 triggers at inner_attempts >= 2" && {
+  it "L3 triggers at _fail_count >= 3" && {
     local body
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'inner_attempts.*-ge 2.*fail_file'
+    echo "$body" | grep -q '_fail_count.*-ge 3.*fail_file'
     assert_ok $?
   }
 
@@ -1419,6 +1419,133 @@ describe "Macro memory: timestamped command results"
     # The guided recovery writes: ran: $final_cmd (exit 0)
     echo "$body" | grep -q 'ran: \$final_cmd'
     assert_ok $?
+  }
+
+# ── Research buffer: cross-milestone data flow ────────────────
+describe "Research buffer (cross-milestone data flow)"
+
+  it "inner loop saves research_buffer.md from successful /web outputs" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'research_buffer.md'
+    assert_ok $? "Must reference research_buffer.md"
+  }
+
+  it "inner loop injects research buffer into micro_memory on start" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'Research Context (from previous milestone)'
+    assert_ok $? "Must inject research buffer header"
+  }
+
+  it "research buffer is deleted after injection" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'rm -f.*_research_buf'
+    assert_ok $? "Must delete research buffer after injection"
+  }
+
+  it "research buffer uses awk to extract web output blocks" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'EXECUTED SUCCESSFULLY.*ok=1'
+    assert_ok $? "Must use awk to extract successful /web output blocks"
+  }
+
+  it "research buffer is capped at 2000 chars" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '2000'
+    assert_ok $? "Must cap research buffer at 2000 chars"
+  }
+
+# ── Web soft-failure tolerance ────────────────────────────────
+describe "Web soft-failure tolerance"
+
+  it "web soft-failure checks for prior successful /web actions" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_prior_web_ok'
+    assert_ok $? "Must check for prior successful web actions"
+  }
+
+  it "web soft-failure skips escalation matrix when prior web successes exist" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'soft failure.*prior web results available'
+    assert_ok $? "Must log as soft failure"
+  }
+
+  it "web soft-failure injects NOTE about available data" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'Consider outputting SUCCESS'
+    assert_ok $? "Must nudge to use existing data"
+  }
+
+  it "web soft-failure only applies to /web commands" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    # The soft-failure guard is inside: if [[ "$cmd" == /web* ]]
+    echo "$body" | grep -q 'cmd.*== /web\*'
+    assert_ok $? "Must only trigger for /web commands"
+  }
+
+  it "escalation uses _fail_count (not inner_attempts)" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    # L1 should use _fail_count
+    echo "$body" | grep -q '_fail_count.*-le 1'
+    assert_ok $? "L1 must use _fail_count"
+    # L2 should use _fail_count
+    echo "$body" | grep -q '_fail_count.*-le 2'
+    assert_ok $? "L2 must use _fail_count"
+    # L5 should use _fail_count
+    echo "$body" | grep -q '_fail_count.*-ge 5'
+    assert_ok $? "L5 must use _fail_count"
+  }
+
+  it "_fail_count only increments on actual failures (not soft failures)" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    # _fail_count increment must be AFTER the soft-failure check
+    # (which does continue before reaching _fail_count++)
+    echo "$body" | grep -q '_fail_count=$((_fail_count + 1))'
+    assert_ok $? "Must increment _fail_count after soft-failure check"
+  }
+
+# ── Placeholder detection in /write ───────────────────────────
+describe "Placeholder detection in /write"
+
+  it "inner loop detects placeholder brackets in /write content" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'placeholder.*TEMPLATE'
+    assert_ok $? "Must warn about template/placeholder content"
+  }
+
+  it "placeholder check only runs on /write commands" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'cmd.*== /write\*'
+    assert_ok $? "Must only check /write commands"
+  }
+
+  it "placeholder check looks for common bracket patterns" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'your \|briefly \|TBD\|TODO\|placeholder'
+    assert_ok $? "Must detect common placeholder patterns"
+  }
+
+# ── Richer milestone summaries ────────────────────────────────
+describe "Richer milestone summaries"
+
+  it "milestone summary prompt asks for key data from web results" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'INCLUDE the most important facts'
+    assert_ok $? "Must instruct summarizer to retain research data"
   }
 
 test_end

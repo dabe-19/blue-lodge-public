@@ -1254,9 +1254,24 @@ agent_inner_loop() {
         fi
     fi
 
+    # ── RESEARCH BUFFER INJECTION ──────────────────────────
+    # If the previous milestone saved a research buffer (web search
+    # results, fetched content, etc.), inject it so this milestone's
+    # specialist can use the gathered data.  Deleted after injection
+    # so it doesn't leak into subsequent milestones.
+    local _research_buf="$george_dir/research_buffer.md"
+    if [ -f "$_research_buf" ]; then
+        echo "## Research Context (from previous milestone)" >> "$micro_file"
+        cat "$_research_buf" >> "$micro_file"
+        echo "" >> "$micro_file"
+        rm -f "$_research_buf"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: research buffer -> micro_memory"
+    fi
+
     echo "## Action Log" >> "$micro_file"
 
     local inner_attempts=0
+    local _fail_count=0              # Failure-specific counter for escalation gating
     local max_inner_loops="$AGENT_INNER_LOOPS"
     local last_failed_cmd=""
     local _last_success_cmd=""      # Track last successful command for macro_memory
@@ -1325,7 +1340,7 @@ agent_inner_loop() {
             local _micro_content _milestone_summary
             _micro_content=$(cat "$micro_file" 2>/dev/null)
             if [ -n "$_micro_content" ]; then
-                local _ms_prompt="In no more than 4 sentences, summarize this milestone execution log. Include the command(s) run, their outcomes, and whether the objective was met. No headers, no formatting.\n\n${_micro_content}"
+                local _ms_prompt="In no more than 4 sentences, summarize this milestone execution log. Include the command(s) run, their outcomes, and whether the objective was met. If web search or fetch results contain factual data (names, dates, descriptions, URLs, key findings), INCLUDE the most important facts — they will be needed by subsequent milestones. No headers, no formatting.\n\n${_micro_content}"
                 local _ms_sys="You are a concise summarizer. In no more than 4 factual sentences, write your output. No personality. No formatting."
                 local LLM_SCENARIO=evaluator
                 _milestone_summary=$(llm_generate "$_ms_prompt" "$_ms_sys" 256 "$LLM_BUDGET_AGENT" 2>/dev/null)
@@ -1346,6 +1361,26 @@ agent_inner_loop() {
             if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
                 printf '  [debug] macro_memory <- milestone: %s\n' "${_milestone_summary:0:120}" > /dev/tty 2>/dev/null
                 printf '  [debug] micro_memory <- COMPLETE: %s\n' "${summary:0:80}" > /dev/tty 2>/dev/null
+            fi
+
+            # ── RESEARCH BUFFER: Carry forward web data ────────
+            # If this milestone executed any successful /web actions,
+            # save the output snippets so the NEXT milestone's specialist
+            # can reference the gathered data (e.g., writing a file based
+            # on web research).  Without this, micro_memory is wiped
+            # between milestones and research results are lost.
+            local _web_outputs
+            _web_outputs=$(awk '
+                /^\*\*Action:\*\* `\/web/ { capture=1; next }
+                capture && /^\*\*Status:\*\* EXECUTED SUCCESSFULLY/ { ok=1; next }
+                capture && ok && /^\*\*Output:\*\*/ { printing=1; next }
+                capture && ok && printing && /^```$/ { printing=0; ok=0; capture=0; next }
+                capture && ok && printing { print }
+            ' "$micro_file" 2>/dev/null)
+            if [ -n "$_web_outputs" ]; then
+                # Cap at 2000 chars to avoid bloating the next milestone
+                echo "${_web_outputs:0:2000}" > "$george_dir/research_buffer.md"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] research buffer saved (%d chars)\n' "${#_web_outputs}" > /dev/tty 2>/dev/null
             fi
 
             return 0
@@ -1539,7 +1574,7 @@ agent_inner_loop() {
         # ── PROGRAMMATIC INTERLOCK: Identicality Lockout ──────
         # Levels 3-4: Prevents the LLM from re-running the exact same
         # broken command. If identical, reject and force regeneration.
-        if [ "$inner_attempts" -ge 2 ] && [ -n "$cmd" ] && [ "$cmd" == "$last_failed_cmd" ]; then
+        if [ "$_fail_count" -ge 3 ] && [ -n "$cmd" ] && [ "$cmd" == "$last_failed_cmd" ]; then
             ui_warn "Interlock Triggered: Identical failed command. Forcing regeneration."
             echo "**System Interlock:** Command \`$cmd\` rejected (identical to previous failure)." >> "$micro_file"
             inner_attempts=$((inner_attempts + 1))
@@ -1653,6 +1688,21 @@ agent_inner_loop() {
                     fi
                 fi
 
+                # ── PLACEHOLDER DETECTION FOR /write ───────────
+                # If a /write command succeeded but the written content
+                # contains bracket placeholders like [your name here],
+                # inject a WARNING so the evaluator and router see that
+                # the content is incomplete/generic — not real.
+                if [[ "$cmd" == /write* ]]; then
+                    # Check the command body (multi-line content after first line)
+                    local _write_body
+                    _write_body=$(echo "$cmd" | tail -n +2)
+                    if [ -n "$_write_body" ] && echo "$_write_body" | grep -qP '\[(?:your |briefly |mention |e\.g\.|TBD|TODO|placeholder)' 2>/dev/null; then
+                        echo -e "\n**WARNING:** The file was created but contains placeholder text (e.g., [your ...], [briefly mention ...], [TBD]). This is a TEMPLATE, not finished content. The file should be rewritten with actual data from research or context." >> "$micro_file"
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] /write placeholder detected — warning injected"
+                    fi
+                fi
+
                 inner_attempts=$((inner_attempts + 1))
                 continue
             fi
@@ -1663,11 +1713,33 @@ agent_inner_loop() {
             last_failed_cmd="$cmd"
             echo -e "\nFAILED COMMAND: \`$cmd\`\nEXIT CODE: $exit_code\nOUTPUT:\n$output\n---" >> "$fail_file"
 
+            # ── WEB SOFT-FAILURE TOLERANCE ─────────────────────
+            # Web fetches/scrapes fail frequently (HTML parsing errors,
+            # anti-bot blocks, fragment URLs, etc.).  If this milestone
+            # already has successful /web actions in micro_memory, treat
+            # the failure as a soft failure: log it, inject a nudge to
+            # use existing data, but do NOT burn escalation levels or
+            # require operator intervention.  The evaluator will decide
+            # if the successful scrapes provided enough context.
+            if [[ "$cmd" == /web* ]]; then
+                local _prior_web_ok
+                _prior_web_ok=$(grep -c '^\*\*Action:\*\* `/web.*EXECUTED SUCCESSFULLY' "$micro_file" 2>/dev/null || echo 0)
+                if [ "$_prior_web_ok" -gt 0 ]; then
+                    echo -e "\n**Action:** \`$cmd\`\n**Status:** FAILED (exit $exit_code) — soft failure, prior web results available\n**Error (abbreviated):**\n\`\`\`\n${output:0:300}\n\`\`\`" >> "$micro_file"
+                    echo -e "\n**NOTE:** This web fetch failed, but $_prior_web_ok previous web action(s) succeeded. You already have research data. Consider outputting SUCCESS with a summary of the data you have, or try a different URL." >> "$micro_file"
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] Web soft-failure: %d prior successes, skipping escalation\n' "$_prior_web_ok" > /dev/tty 2>/dev/null
+                    inner_attempts=$((inner_attempts + 1))
+                    continue
+                fi
+            fi
+
+            _fail_count=$((_fail_count + 1))
+
             # ── Level 1: Naive Retry (Programmatic Bypass) ────
             # LLM is completely bypassed. Re-run the exact command
             # after a brief sleep. Catches transient network errors,
             # file locks, or race conditions without wasting tokens.
-            if [ "$inner_attempts" -eq 0 ]; then
+            if [ "$_fail_count" -le 1 ]; then
                 ui_warn "Escalation L1: Naive retry..."
                 sleep 1
                 if [ "$cmd_is_slash" -eq 1 ] && declare -f commands_dispatch &>/dev/null; then
@@ -1688,7 +1760,7 @@ agent_inner_loop() {
             # programmatically execute /recall <base_command>.
             # Inject the recall stdout into micro_memory so the
             # LLM reads its own documentation BEFORE retrying.
-            if [ "$inner_attempts" -le 1 ] && declare -f recall_search_context &>/dev/null; then
+            if [ "$_fail_count" -le 2 ] && declare -f recall_search_context &>/dev/null; then
                 local base_cmd
                 base_cmd=$(echo "$cmd" | awk '{print $1}')
                 ui_warn "Escalation L2: Forced recall for '$base_cmd'..."
@@ -1705,7 +1777,7 @@ agent_inner_loop() {
             # Additionally, read the failure log for past RECOVERY entries.
             # If the operator has previously solved a similar failure,
             # inject those instructions so the LLM can self-correct.
-            if [ "$inner_attempts" -ge 2 ] && [ -f "$fail_file" ]; then
+            if [ "$_fail_count" -ge 3 ] && [ -f "$fail_file" ]; then
                 local past_recoveries
                 past_recoveries=$(grep -B1 -A2 "^RECOVERY:\|^OPERATOR GUIDANCE:" "$fail_file" 2>/dev/null | tail -20)
                 if [ -n "$past_recoveries" ]; then
@@ -1718,7 +1790,7 @@ agent_inner_loop() {
             # ── Level 5: Forced Web Fallback ──────────────────
             # LLM is bypassed again. Extract the last 5 lines of stderr
             # and automatically search the web for the error.
-            if [ "$inner_attempts" -ge 4 ] && declare -f web_search &>/dev/null; then
+            if [ "$_fail_count" -ge 5 ] && declare -f web_search &>/dev/null; then
                 local stderr_tail
                 stderr_tail=$(echo "$output" | tail -n 5)
                 local base_cmd
