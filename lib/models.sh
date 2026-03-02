@@ -144,6 +144,67 @@ _models_find_ollama_gguf() {
     return 1
 }
 
+# ── Find Ollama vision projector blob (mmproj) ────────────────
+# Vision-capable models (e.g., Ministral-3B-Instruct) store the
+# vision encoder as a separate GGUF blob alongside the main model.
+# llama-server needs this passed via --mmproj for image input.
+#
+# Ollama mediaType: "application/vnd.ollama.image.projector"
+# Usage: _models_find_ollama_mmproj "model:tag" → /path/to/projector/blob
+_models_find_ollama_mmproj() {
+    local model_ref="$1"
+    local ollama_dir="$(_lodge_termux_home)/.ollama/models"
+    [ -d "$ollama_dir" ] || return 1
+
+    local _name _tag
+    _tag="${model_ref##*:}"
+    _name="${model_ref%:*}"
+    [ "$_tag" = "$_name" ] && _tag="latest"
+
+    local manifest
+    if [[ "$_name" == hf.co/* ]]; then
+        manifest="$ollama_dir/manifests/$_name/$_tag"
+    elif [[ "$_name" == */* ]]; then
+        manifest="$ollama_dir/manifests/registry.ollama.ai/$_name/$_tag"
+    else
+        manifest="$ollama_dir/manifests/registry.ollama.ai/library/$_name/$_tag"
+    fi
+
+    [ -f "$manifest" ] || return 1
+
+    local digest
+    digest=$(jq -r '.layers[] | select(.mediaType == "application/vnd.ollama.image.projector") | .digest' "$manifest" 2>/dev/null)
+    [ -z "$digest" ] && return 1
+
+    local blob="$ollama_dir/blobs/${digest//:/-}"
+    [ -f "$blob" ] && echo "$blob" && return 0
+    return 1
+}
+
+# ── Resolve mmproj for a registry key ──────────────────────────
+# Usage: _models_resolve_mmproj "minist-inst" → /path/to/projector/blob
+_models_resolve_mmproj() {
+    local key="$1"
+    local entry
+    entry=$(_models_lookup "$key") || return 1
+    _models_parse_entry "$entry"
+
+    local mmproj
+    mmproj=$(_models_find_ollama_mmproj "$_ME_BASE" 2>/dev/null)
+    if [ -n "$mmproj" ] && [ -f "$mmproj" ]; then
+        echo "$mmproj"
+        return 0
+    fi
+
+    mmproj=$(_models_find_ollama_mmproj "$_ME_NAME" 2>/dev/null)
+    if [ -n "$mmproj" ] && [ -f "$mmproj" ]; then
+        echo "$mmproj"
+        return 0
+    fi
+
+    return 1
+}
+
 # ── Find Ollama chat template blob ─────────────────────────────
 # Ollama stores chat templates as separate blobs (mediaType
 # "application/vnd.ollama.image.template"), NOT inside the GGUF.

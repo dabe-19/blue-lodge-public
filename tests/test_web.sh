@@ -676,4 +676,324 @@ describe "web_scrape_images"
     _teardown_web
   }
 
+# ── Content-type detection ─────────────────────────────────────
+# Stub curl to return nothing so HEAD request yields no content-type
+# and the URL extension fallback path is exercised
+_ct_setup() { _setup_web; curl() { return 1; }; export -f curl; }
+_ct_teardown() { unset -f curl; _teardown_web; }
+
+describe "_web_detect_content_type"
+
+  it "detects PDF by URL extension" && {
+    _ct_setup
+    result=$(_web_detect_content_type "https://example.com/doc.pdf")
+    assert_eq "$result" "pdf"
+    _ct_teardown
+  }
+
+  it "detects PDF with query string" && {
+    _ct_setup
+    result=$(_web_detect_content_type "https://example.com/doc.pdf?token=abc")
+    assert_eq "$result" "pdf"
+    _ct_teardown
+  }
+
+  it "detects plain text by extension" && {
+    _ct_setup
+    result=$(_web_detect_content_type "https://example.com/data.txt")
+    assert_eq "$result" "text"
+    _ct_teardown
+  }
+
+  it "detects CSV as text" && {
+    _ct_setup
+    result=$(_web_detect_content_type "https://example.com/data.csv")
+    assert_eq "$result" "text"
+    _ct_teardown
+  }
+
+  it "detects markdown as text" && {
+    _ct_setup
+    result=$(_web_detect_content_type "https://raw.githubusercontent.com/user/repo/main/README.md")
+    assert_eq "$result" "text"
+    _ct_teardown
+  }
+
+  it "detects JSON by extension" && {
+    _ct_setup
+    result=$(_web_detect_content_type "https://api.example.com/data.json")
+    assert_eq "$result" "json"
+    _ct_teardown
+  }
+
+  it "detects XML by extension" && {
+    _ct_setup
+    result=$(_web_detect_content_type "https://example.com/feed.xml")
+    assert_eq "$result" "xml"
+    _ct_teardown
+  }
+
+  it "detects RSS as XML" && {
+    _ct_setup
+    result=$(_web_detect_content_type "https://example.com/feed.rss")
+    assert_eq "$result" "xml"
+    _ct_teardown
+  }
+
+  it "detects image as binary" && {
+    _ct_setup
+    result=$(_web_detect_content_type "https://example.com/photo.jpg")
+    assert_eq "$result" "binary"
+    _ct_teardown
+  }
+
+  it "detects zip as binary" && {
+    _ct_setup
+    result=$(_web_detect_content_type "https://example.com/archive.zip")
+    assert_eq "$result" "binary"
+    _ct_teardown
+  }
+
+  it "detects docx as binary" && {
+    _ct_setup
+    result=$(_web_detect_content_type "https://example.com/report.docx")
+    assert_eq "$result" "binary"
+    _ct_teardown
+  }
+
+  it "defaults to html for unknown extensions" && {
+    _ct_setup
+    result=$(_web_detect_content_type "https://example.com/page")
+    assert_eq "$result" "html"
+    _ct_teardown
+  }
+
+  it "handles case-insensitive extensions" && {
+    _ct_setup
+    result=$(_web_detect_content_type "https://example.com/DOC.PDF")
+    assert_eq "$result" "pdf"
+    _ct_teardown
+  }
+
+  it "detects log files as text" && {
+    _ct_setup
+    result=$(_web_detect_content_type "https://example.com/server.log")
+    assert_eq "$result" "text"
+    _ct_teardown
+  }
+
+  it "detects .jsonl as json" && {
+    _ct_setup
+    result=$(_web_detect_content_type "https://example.com/data.jsonl")
+    assert_eq "$result" "json"
+    _ct_teardown
+  }
+
+  it "detects video as binary" && {
+    _ct_setup
+    result=$(_web_detect_content_type "https://example.com/clip.mp4")
+    assert_eq "$result" "binary"
+    _ct_teardown
+  }
+
+# ── PDF extraction ─────────────────────────────────────────────
+describe "_web_extract_pdf"
+
+  it "function exists" && {
+    _setup_web
+    declare -f _web_extract_pdf &>/dev/null
+    assert_eq "$?" "0"
+    _teardown_web
+  }
+
+  it "returns failure on empty input" && {
+    _setup_web
+    _web_extract_pdf "" 2>/dev/null
+    assert_eq "$?" "1"
+    _teardown_web
+  }
+
+  it "returns failure on nonexistent file" && {
+    _setup_web
+    _web_extract_pdf "/nonexistent/file.pdf" 2>/dev/null
+    assert_eq "$?" "1"
+    _teardown_web
+  }
+
+  it "uses strings as fallback extractor" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f _web_extract_pdf)
+    assert_contains "$fn_body" "strings"
+    _teardown_web
+  }
+
+  it "tries pdftotext first" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f _web_extract_pdf)
+    assert_contains "$fn_body" "pdftotext"
+    _teardown_web
+  }
+
+# ── Fetch-to-file ─────────────────────────────────────────────
+describe "_web_fetch_to_file"
+
+  it "function exists" && {
+    _setup_web
+    declare -f _web_fetch_to_file &>/dev/null
+    assert_eq "$?" "0"
+    _teardown_web
+  }
+
+  it "uses higher max-filesize for PDFs" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f _web_fetch_to_file)
+    assert_contains "$fn_body" "WEB_MAX_SIZE_PDF"
+    _teardown_web
+  }
+
+# ── Text/JSON/XML fetch helpers ────────────────────────────────
+describe "Non-HTML fetch helpers"
+
+  it "_web_fetch_text function exists" && {
+    _setup_web
+    declare -f _web_fetch_text &>/dev/null
+    assert_eq "$?" "0"
+    _teardown_web
+  }
+
+  it "_web_fetch_json_raw function exists" && {
+    _setup_web
+    declare -f _web_fetch_json_raw &>/dev/null
+    assert_eq "$?" "0"
+    _teardown_web
+  }
+
+  it "_web_extract_xml function exists" && {
+    _setup_web
+    declare -f _web_extract_xml &>/dev/null
+    assert_eq "$?" "0"
+    _teardown_web
+  }
+
+  it "_web_fetch_json_raw sends Accept: application/json" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f _web_fetch_json_raw)
+    assert_contains "$fn_body" "application/json"
+    _teardown_web
+  }
+
+  it "_web_extract_xml strips tags" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f _web_extract_xml)
+    assert_contains "$fn_body" '<[^>]*>'
+    _teardown_web
+  }
+
+# ── Content-type routing in web_fetch ──────────────────────────
+describe "web_fetch content-type routing"
+
+  it "calls _web_extract_pdf for PDFs" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_fetch)
+    assert_contains "$fn_body" "_web_extract_pdf"
+    _teardown_web
+  }
+
+  it "calls _web_fetch_text for text content" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_fetch)
+    assert_contains "$fn_body" "_web_fetch_text"
+    _teardown_web
+  }
+
+  it "calls _web_fetch_json_raw for JSON content" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_fetch)
+    assert_contains "$fn_body" "_web_fetch_json_raw"
+    _teardown_web
+  }
+
+  it "calls _web_extract_xml for XML content" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_fetch)
+    assert_contains "$fn_body" "_web_extract_xml"
+    _teardown_web
+  }
+
+  it "rejects binary files" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_fetch)
+    assert_contains "$fn_body" "binary"
+    _teardown_web
+  }
+
+  it "detects content type before fetching" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_fetch)
+    assert_contains "$fn_body" "_web_detect_content_type"
+    _teardown_web
+  }
+
+# ── Content-type routing in web_fetch_json ─────────────────────
+describe "web_fetch_json content-type routing"
+
+  it "has PDF path in web_fetch_json" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_fetch_json)
+    assert_contains "$fn_body" "_web_extract_pdf"
+    _teardown_web
+  }
+
+  it "has text path in web_fetch_json" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_fetch_json)
+    assert_contains "$fn_body" "_web_fetch_text"
+    _teardown_web
+  }
+
+  it "returns JSON for non-HTML types" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_fetch_json)
+    # Should use jq to build structured JSON for all paths
+    assert_contains "$fn_body" "jq -n"
+    _teardown_web
+  }
+
+  it "rejects binary files in web_fetch_json" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_fetch_json)
+    assert_contains "$fn_body" "binary"
+    _teardown_web
+  }
+
+# ── Config: PDF max size ───────────────────────────────────────
+describe "PDF config"
+
+  it "WEB_MAX_SIZE_PDF defaults to 10000000" && {
+    _setup_web
+    assert_eq "$WEB_MAX_SIZE_PDF" "10000000"
+    _teardown_web
+  }
+
+  it "WEB_MAX_SIZE_PDF is larger than WEB_MAX_SIZE" && {
+    _setup_web
+    assert_true "[ $WEB_MAX_SIZE_PDF -gt $WEB_MAX_SIZE ]"
+    _teardown_web
+  }
+
 test_end

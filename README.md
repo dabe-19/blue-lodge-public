@@ -125,6 +125,180 @@ lodge /ask "what is a monad?"      # Quick question
 └── ~/.george/         # User data: keys, vault, backups, recall.db, cache
 ```
 
+## Dependencies
+
+George is written in pure bash. Every external binary it calls is listed here — no hidden dependencies.
+
+### Required (core)
+
+These are installed automatically by `install.sh` if missing.
+
+| Binary | Language | What it does in George |
+|--------|----------|----------------------|
+| **curl** | C (libcurl) | Every HTTP call — LLM requests, web fetching, APIs, social, email |
+| **jq** | C | Parses every JSON response from LLM backends, APIs, and config |
+| **git** | C | Version control — /commit, /push, /clone, /backup |
+| **sqlite3** | C (SQLite) | FTS5 knowledge base (recall), social media state |
+
+### Required — LLM Backend (at least one)
+
+George needs a local LLM inference server. Choose one or both:
+
+| Binary | Language | What it does | Installed by |
+|--------|----------|-------------|-------------|
+| **ollama** | Go | Primary LLM backend — manages model download, creation, and inference | `install.sh` auto-installs |
+| **llama-server** | C++ (llama.cpp) | Alternative backend — direct GGUF loading, Vulkan GPU acceleration | User compiles manually ([guide](docs/ADRENO_GPU_SETUP.md)) |
+
+Ollama is installed during `install.sh`. llama-server is opt-in for users who want direct GPU control (e.g., Vulkan on phone GPUs). When both exist, George prefers llama-server for speed and falls back to Ollama.
+
+### Optional — Prompted During Install
+
+The installer asks about these. Saying no is fine — George falls back gracefully.
+
+| Binary | Package | Language | Feature | Fallback without it |
+|--------|---------|----------|---------|---------------------|
+| **pdftotext** | poppler-utils / poppler (Termux) | C | High-fidelity PDF text extraction via /web | `strings` extracts readable ASCII (lower quality) |
+
+### Optional — Feature-Gated
+
+These are **not** installed by George. If you need the feature, you install the tool yourself.
+
+| Binary | Language | Feature | Without it |
+|--------|----------|---------|-----------|
+| **openssl** | C | Secrets vault (AES-256-CBC), HMAC signing | Vault unavailable; hashing falls back to `sha256sum` |
+| **gpg** | C (GnuPG) | PGP signing, Git commit signing | /pgp and signed commits unavailable |
+| **w3m** | C | Best HTML→text rendering for /web | Falls back to lynx → html2text → sed/awk |
+| **lynx** | C | Second-best HTML→text rendering | Falls back to html2text → sed/awk |
+| **cargo** | Rust | Rust project build/test/scaffold | Rust projects unavailable |
+| **python3** | C (CPython) | Python project scaffold/sandbox | Python projects unavailable |
+| **uv** | Rust (Astral) | Fast Python package management | Falls back to pip3 / python3 -m venv |
+| **proot** | C | Sandbox isolation (Termux) | Falls back to unshare → directory isolation |
+| **proot-distro** | Shell (Termux) | Full Linux containers on Android | Containers unavailable (Termux-only feature) |
+| **bitcoin-cli** or **electrum** | C++ / Python | Bitcoin send transactions | BTC send unavailable; balance queries still work via API |
+| **cardano-cli** | Haskell | Cardano transactions | ADA send unavailable |
+| **solana** | Rust | Solana transactions | SOL send unavailable |
+| **pandoc** | Haskell | DOCX/ODT ingestion into knowledge base | Falls back to libreoffice → unavailable |
+| **npm** | JavaScript (Node.js) | Node.js project build/test | Node.js projects unavailable |
+| **make** | C | Generic project build/test fallback | Some auto-detected build systems skipped |
+
+### Termux-Only (Android)
+
+These require the [Termux:API](https://wiki.termux.com/wiki/Termux:API) companion app. Enabled with `export LODGE_TERMUX_API=1`.
+
+| Binary | Feature |
+|--------|---------|
+| **termux-battery-status** | Battery level, temperature |
+| **termux-clipboard-get/set** | Phone clipboard bridge |
+| **termux-notification** | Push notifications |
+| **termux-share** | Android share sheet |
+| **termux-sms-send/list** | SMS read/send |
+| **termux-location** | GPS location |
+| **termux-vibrate**, **termux-toast** | Haptics, toast messages |
+
+Also installed on Termux during setup: **gawk** (replaces mawk), **procps** (for `free`), **bc** (location math).
+
+### Always Available (coreutils / standard)
+
+These ship with every Linux and Termux installation. Listed for completeness:
+
+`awk`, `sed`, `grep`, `head`, `tail`, `sort`, `uniq`, `wc`, `cut`, `tr`, `tee`, `cat`, `date`, `stat`, `mv`, `cp`, `rm`, `mkdir`, `find`, `xargs`, `md5sum`, `sha256sum`, `base64`, `strings`, `diff`, `timeout`, `kill`, `ps`, `pgrep`, `df`, `du`, `nproc`, `od`, `shred`
+
+### What George Does NOT Use
+
+- **No Node.js runtime** — npm is only called for Node.js project builds, never for George itself
+- **No Python runtime** — python3 is only called for Python project scaffolding, never internally
+- **No Docker** — sandboxes use proot/unshare; containers use proot-distro
+- **No pip packages** — no PyPDF2, no requests, no third-party Python
+- **No cloud services for core function** — LLM inference is always local. Cloud providers are opt-in extras.
+
+### Install Commands
+
+Copy-paste the ones you need. `install.sh` handles the **Required** group automatically — these are here if you prefer to install manually or want the optional tools.
+
+<details>
+<summary><strong>Ubuntu / Debian (apt)</strong></summary>
+
+```bash
+# Required (core) — auto-installed by install.sh
+sudo apt install -y curl jq git sqlite3
+
+# LLM backend — Ollama (auto-installed by install.sh)
+curl -fsSL https://ollama.com/install.sh | sh
+# LLM backend — llama.cpp (compile from source, see docs/ADRENO_GPU_SETUP.md)
+
+# Optional — prompted during install
+sudo apt install -y poppler-utils          # pdftotext (PDF extraction)
+
+# Optional — feature-gated (install what you need)
+sudo apt install -y openssl                # Secrets vault, HMAC signing
+sudo apt install -y gnupg                  # PGP signing, git commit signing
+sudo apt install -y w3m                    # Best HTML→text rendering
+sudo apt install -y lynx                   # Second-best HTML→text rendering
+sudo apt install -y python3 python3-venv   # Python project scaffolding
+sudo apt install -y pandoc                 # DOCX/ODT ingestion
+sudo apt install -y make                   # Generic project build fallback
+sudo apt install -y npm                    # Node.js project build/test
+
+# Rust (via rustup, not apt)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh  # cargo + rustc
+
+# uv (Python package manager, via standalone installer)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Crypto CLIs (install only if using /wallet)
+# bitcoin-cli: requires Bitcoin Core — https://bitcoin.org/en/download
+# cardano-cli: requires Cardano Node — https://developers.cardano.org/docs/get-started/installing-cardano-node
+# solana: sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+```
+
+</details>
+
+<details>
+<summary><strong>Termux (Android)</strong></summary>
+
+```bash
+# Required (core) — auto-installed by install.sh
+pkg install -y curl jq git sqlite
+
+# LLM backend — Ollama (auto-installed by install.sh)
+curl -fsSL https://ollama.com/install.sh | sh
+# LLM backend — llama.cpp (compile from source, see docs/ADRENO_GPU_SETUP.md)
+
+# Termux extras — auto-installed by install.sh
+pkg install -y gawk procps bc
+
+# Termux:API — requires Termux:API companion app from F-Droid
+pkg install -y termux-api
+
+# Optional — prompted during install
+pkg install -y poppler                     # pdftotext (PDF extraction)
+
+# Optional — feature-gated (install what you need)
+pkg install -y openssl-tool                # Secrets vault, HMAC signing
+pkg install -y gnupg                       # PGP signing
+pkg install -y w3m                         # Best HTML→text rendering
+pkg install -y lynx                        # Second-best HTML→text rendering
+pkg install -y python                      # Python project scaffolding
+pkg install -y pandoc                      # DOCX/ODT ingestion
+pkg install -y make                        # Generic project build fallback
+pkg install -y nodejs                      # npm + Node.js project build/test
+pkg install -y proot                       # Sandbox isolation
+pkg install -y proot-distro               # Full Linux containers
+
+# Rust (via rustup)
+pkg install -y rust                        # or: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# uv (Python package manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Crypto CLIs (install only if using /wallet)
+# bitcoin-cli: not available in Termux — use Electrum: pip install electrum
+# cardano-cli: not available in Termux — use proot-distro Ubuntu
+# solana: sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+```
+
+</details>
+
 ## Slash Commands
 
 50+ built-in commands, each with optional shell aliases for rapid access. Type `/help` for the full list.

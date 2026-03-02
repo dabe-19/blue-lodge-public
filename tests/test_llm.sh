@@ -1167,4 +1167,45 @@ describe "Chat template — GGUF-embedded Jinja2 via --jinja"
     assert_ok $? "Model switch should rely on --jinja, not per-model template mapping"
   }
 
+# ── Vision projector (mmproj) ──────────────────────────────────
+describe "Vision projector (mmproj) support"
+
+  it "_models_find_ollama_mmproj is defined" && {
+    declare -f _models_find_ollama_mmproj &>/dev/null
+    assert_ok $? "_models_find_ollama_mmproj must exist"
+  }
+
+  it "_models_resolve_mmproj is defined" && {
+    declare -f _models_resolve_mmproj &>/dev/null
+    assert_ok $? "_models_resolve_mmproj must exist"
+  }
+
+  it "_models_find_ollama_mmproj looks for projector layer" && {
+    _body=$(declare -f _models_find_ollama_mmproj)
+    echo "$_body" | grep -q 'application/vnd.ollama.image.projector'
+    assert_ok $? "Must look for projector mediaType in manifest"
+  }
+
+  it "_models_resolve_mmproj tries base and name" && {
+    _body=$(declare -f _models_resolve_mmproj)
+    echo "$_body" | grep -q '_models_find_ollama_mmproj'
+    assert_ok $? "Must call _models_find_ollama_mmproj"
+  }
+
+  it "llama-server launch includes mmproj hook" && {
+    _body=$(declare -f _llm_start_llamacpp_server)
+    echo "$_body" | grep -q 'mmproj'
+    assert_ok $? "Launch args must include mmproj support"
+  }
+
+  it "models_has_vision recognizes minist-inst" && {
+    result=$(models_has_vision "blue-lodge-minist-inst:4b" && echo "yes" || echo "no")
+    assert_eq "$result" "yes"
+  }
+
+  it "models_has_vision rejects non-vision models" && {
+    result=$(models_has_vision "blue-lodge-minist-think:4b" && echo "yes" || echo "no")
+    assert_eq "$result" "no"
+  }
+
 test_end

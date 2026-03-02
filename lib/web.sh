@@ -9,8 +9,9 @@ source "$LODGE_DIR/lib/api.sh"
 
 # ── Config ─────────────────────────────────────────────────────
 WEB_TIMEOUT="${WEB_TIMEOUT:-15}"
-WEB_MAX_SIZE="${WEB_MAX_SIZE:-500000}"  # 500KB max download
-WEB_CACHE_TTL="${WEB_CACHE_TTL:-3600}" # Cache pages for 1 hour
+WEB_MAX_SIZE="${WEB_MAX_SIZE:-500000}"      # 500KB max HTML download
+WEB_MAX_SIZE_PDF="${WEB_MAX_SIZE_PDF:-10000000}"  # 10MB max PDF download
+WEB_CACHE_TTL="${WEB_CACHE_TTL:-3600}"     # Cache pages for 1 hour
 
 # ── URL Sanitization ──────────────────────────────────────────
 # Whitelist-based URL cleaner. Strips control characters, validates
@@ -119,6 +120,165 @@ _web_renderer() {
     else
         echo "sed"  # fallback: strip HTML with sed
     fi
+}
+
+# ── Content-type detection ──────────────────────────────────────
+# Returns a category: html, pdf, text, json, xml, binary
+# Uses a HEAD request first, falls back to URL extension heuristic.
+_web_detect_content_type() {
+    local url="$1"
+
+    # 1. Try HTTP HEAD (fast, authoritative)
+    local ct
+    ct=$(curl -sI -L --max-time 5 \
+        -H "User-Agent: Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/131.0 Safari/537.36" \
+        "$url" 2>/dev/null | grep -i '^content-type:' | tail -1 | tr -d '\r')
+    ct=$(echo "$ct" | sed 's/^[Cc]ontent-[Tt]ype:[[:space:]]*//' | cut -d';' -f1 | tr -d ' ')
+
+    if [ -n "$ct" ]; then
+        case "$ct" in
+            application/pdf)                echo "pdf"; return ;;
+            text/plain)                     echo "text"; return ;;
+            text/csv)                       echo "text"; return ;;
+            text/markdown)                  echo "text"; return ;;
+            text/tab-separated-values)      echo "text"; return ;;
+            application/json)               echo "json"; return ;;
+            text/json)                      echo "json"; return ;;
+            application/xml|text/xml)       echo "xml"; return ;;
+            application/rss+xml)            echo "xml"; return ;;
+            application/atom+xml)           echo "xml"; return ;;
+            text/html*)                     echo "html"; return ;;
+            application/xhtml+xml)          echo "html"; return ;;
+            application/octet-stream)       ;; # ambiguous — fall through to extension
+            image/*|audio/*|video/*)        echo "binary"; return ;;
+        esac
+    fi
+
+    # 2. Fallback: URL extension heuristic (strip query string first)
+    local path
+    path=$(echo "$url" | sed 's/[?#].*//' | tr '[:upper:]' '[:lower:]')
+    case "$path" in
+        *.pdf)                      echo "pdf" ;;
+        *.txt|*.log|*.cfg|*.ini)    echo "text" ;;
+        *.csv|*.tsv)                echo "text" ;;
+        *.md|*.markdown|*.rst)      echo "text" ;;
+        *.json|*.jsonl|*.geojson)   echo "json" ;;
+        *.xml|*.rss|*.atom|*.svg)   echo "xml" ;;
+        *.jpg|*.jpeg|*.png|*.gif|*.webp|*.bmp|*.ico) echo "binary" ;;
+        *.mp3|*.mp4|*.wav|*.avi|*.mov) echo "binary" ;;
+        *.zip|*.tar|*.gz|*.bz2|*.7z|*.rar) echo "binary" ;;
+        *.doc|*.docx|*.ppt|*.pptx|*.xls|*.xlsx) echo "binary" ;;
+        *)                          echo "html" ;;
+    esac
+}
+
+# ── Download to temp file ─────────────────────────────────────
+# For binary formats (PDF) that need file-based processing.
+# Prints the temp file path. Caller must rm -f when done.
+_web_fetch_to_file() {
+    local url="$1"
+    local max_size="${2:-$WEB_MAX_SIZE_PDF}"
+    local _tmpdir="${TMPDIR:-/tmp}"
+    local tmpfile="$_tmpdir/.lodge-web-dl-$$.tmp"
+
+    if ! curl -sL \
+        --max-time "$((WEB_TIMEOUT * 3))" \
+        --max-filesize "$max_size" \
+        -H "User-Agent: Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/131.0 Safari/537.36" \
+        -o "$tmpfile" \
+        "$url" 2>/dev/null; then
+        rm -f "$tmpfile"
+        return 1
+    fi
+
+    if [ ! -s "$tmpfile" ]; then
+        rm -f "$tmpfile"
+        return 1
+    fi
+
+    echo "$tmpfile"
+}
+
+# ── PDF text extraction ───────────────────────────────────────
+# Requires pdftotext (poppler-utils). Falls back to strings(1).
+# Input: URL or file path. Output: plain text to stdout.
+_web_extract_pdf() {
+    local source="$1"
+    local tmpfile=""
+    local pdf_path
+
+    if [[ "$source" == http* ]]; then
+        tmpfile=$(_web_fetch_to_file "$source")
+        if [ -z "$tmpfile" ]; then
+            return 1
+        fi
+        pdf_path="$tmpfile"
+    else
+        pdf_path="$source"
+    fi
+
+    local text=""
+    if command -v pdftotext &>/dev/null; then
+        # pdftotext -layout preserves formatting; -q suppresses warnings
+        text=$(pdftotext -layout -q "$pdf_path" - 2>/dev/null | head -2000)
+    fi
+
+    # Last resort: strings(1) — crude but extracts readable ASCII
+    if [ -z "$text" ] && command -v strings &>/dev/null; then
+        text=$(strings "$pdf_path" 2>/dev/null | \
+            grep -E '[a-zA-Z]{3,}' | \
+            head -1000)
+    fi
+
+    [ -n "$tmpfile" ] && rm -f "$tmpfile"
+
+    if [ -z "$text" ]; then
+        return 1
+    fi
+    echo "$text"
+}
+
+# ── Plain text / structured text fetch ─────────────────────────
+# For text/plain, CSV, Markdown, etc. — just return raw content.
+_web_fetch_text() {
+    local url="$1"
+    curl -sL \
+        --max-time "$WEB_TIMEOUT" \
+        --max-filesize "$WEB_MAX_SIZE" \
+        -H "User-Agent: Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/131.0 Safari/537.36" \
+        "$url" 2>/dev/null | head -2000
+}
+
+# ── JSON fetch ─────────────────────────────────────────────────
+# Returns prettified JSON.
+_web_fetch_json_raw() {
+    local url="$1"
+    curl -sL \
+        --max-time "$WEB_TIMEOUT" \
+        --max-filesize "$WEB_MAX_SIZE" \
+        -H "User-Agent: Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/131.0 Safari/537.36" \
+        -H "Accept: application/json" \
+        "$url" 2>/dev/null | jq '.' 2>/dev/null | head -2000
+}
+
+# ── XML/RSS to text ────────────────────────────────────────────
+# Strips XML tags and decodes entities for readable text.
+_web_extract_xml() {
+    local url="$1"
+    curl -sL \
+        --max-time "$WEB_TIMEOUT" \
+        --max-filesize "$WEB_MAX_SIZE" \
+        -H "User-Agent: Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/131.0 Safari/537.36" \
+        "$url" 2>/dev/null | \
+        sed -e 's/<[^>]*>//g' \
+            -e 's/&amp;/\&/g' \
+            -e 's/&lt;/</g' \
+            -e 's/&gt;/>/g' \
+            -e 's/&quot;/"/g' \
+            -e "s/&#39;/'/g" \
+            -e '/^[[:space:]]*$/d' | \
+        awk '{$1=$1}1' | \
+        head -2000
 }
 
 # ── Fetch raw HTML ─────────────────────────────────────────────
@@ -251,6 +411,71 @@ web_fetch() {
         fi
     fi
 
+    # Detect content type — route non-HTML to appropriate handler
+    local ctype
+    ctype=$(_web_detect_content_type "$url")
+
+    case "$ctype" in
+        pdf)
+            ui_dim "Fetching PDF: $url"
+            local pdf_text
+            pdf_text=$(_web_extract_pdf "$url")
+            if [ -z "$pdf_text" ]; then
+                ui_err "Failed to extract PDF: $url"
+                ui_dim "  Hint: install poppler-utils for best results (apt install poppler-utils)"
+                return 1
+            fi
+            mkdir -p "$GEORGE_CACHE_DIR"
+            echo "$pdf_text" > "$cache_file" 2>/dev/null
+            echo "$pdf_text"
+            return 0
+            ;;
+        text)
+            ui_dim "Fetching text: $url"
+            local raw_text
+            raw_text=$(_web_fetch_text "$url")
+            if [ -z "$raw_text" ]; then
+                ui_err "Failed to fetch: $url"
+                return 1
+            fi
+            mkdir -p "$GEORGE_CACHE_DIR"
+            echo "$raw_text" > "$cache_file" 2>/dev/null
+            echo "$raw_text"
+            return 0
+            ;;
+        json)
+            ui_dim "Fetching JSON: $url"
+            local json_text
+            json_text=$(_web_fetch_json_raw "$url")
+            if [ -z "$json_text" ]; then
+                ui_err "Failed to fetch: $url"
+                return 1
+            fi
+            mkdir -p "$GEORGE_CACHE_DIR"
+            echo "$json_text" > "$cache_file" 2>/dev/null
+            echo "$json_text"
+            return 0
+            ;;
+        xml)
+            ui_dim "Fetching XML: $url"
+            local xml_text
+            xml_text=$(_web_extract_xml "$url")
+            if [ -z "$xml_text" ]; then
+                ui_err "Failed to fetch: $url"
+                return 1
+            fi
+            mkdir -p "$GEORGE_CACHE_DIR"
+            echo "$xml_text" > "$cache_file" 2>/dev/null
+            echo "$xml_text"
+            return 0
+            ;;
+        binary)
+            ui_err "Cannot extract text from binary file: $url"
+            return 1
+            ;;
+    esac
+
+    # Default: HTML path (original logic)
     ui_dim "Fetching: $url"
     local html
     html=$(web_fetch_raw "$url")
@@ -283,6 +508,83 @@ web_fetch_json() {
         return 1
     fi
 
+    # Detect content type — route non-HTML to appropriate handler
+    local ctype
+    ctype=$(_web_detect_content_type "$clean_url")
+
+    case "$ctype" in
+        pdf)
+            ui_dim "Fetching PDF (structured): $clean_url"
+            local pdf_text
+            pdf_text=$(_web_extract_pdf "$clean_url")
+            if [ -z "$pdf_text" ]; then
+                ui_err "Failed to extract PDF: $clean_url"
+                ui_dim "  Hint: install poppler-utils for best results (apt install poppler-utils)"
+                return 1
+            fi
+            # Return structured JSON with PDF content (no images/title from PDF)
+            local pdf_title
+            pdf_title=$(echo "$pdf_text" | head -5 | grep -m1 -E '.{5,}' | head -c 120)
+            [ -z "$pdf_title" ] && pdf_title="PDF Document"
+            jq -n \
+                --arg url "$clean_url" \
+                --arg title "$pdf_title" \
+                --arg content "$pdf_text" \
+                '{"url":$url,"title":$title,"content":$content,"images":[]}'
+            return 0
+            ;;
+        text)
+            ui_dim "Fetching text (structured): $clean_url"
+            local raw_text
+            raw_text=$(_web_fetch_text "$clean_url")
+            if [ -z "$raw_text" ]; then
+                ui_err "Failed to fetch: $clean_url"
+                return 1
+            fi
+            jq -n \
+                --arg url "$clean_url" \
+                --arg title "" \
+                --arg content "$raw_text" \
+                '{"url":$url,"title":$title,"content":$content,"images":[]}'
+            return 0
+            ;;
+        json)
+            ui_dim "Fetching JSON (structured): $clean_url"
+            local json_text
+            json_text=$(_web_fetch_json_raw "$clean_url")
+            if [ -z "$json_text" ]; then
+                ui_err "Failed to fetch: $clean_url"
+                return 1
+            fi
+            jq -n \
+                --arg url "$clean_url" \
+                --arg title "JSON Data" \
+                --arg content "$json_text" \
+                '{"url":$url,"title":$title,"content":$content,"images":[]}'
+            return 0
+            ;;
+        xml)
+            ui_dim "Fetching XML (structured): $clean_url"
+            local xml_text
+            xml_text=$(_web_extract_xml "$clean_url")
+            if [ -z "$xml_text" ]; then
+                ui_err "Failed to fetch: $clean_url"
+                return 1
+            fi
+            jq -n \
+                --arg url "$clean_url" \
+                --arg title "XML/RSS Feed" \
+                --arg content "$xml_text" \
+                '{"url":$url,"title":$title,"content":$content,"images":[]}'
+            return 0
+            ;;
+        binary)
+            ui_err "Cannot extract text from binary file: $clean_url"
+            return 1
+            ;;
+    esac
+
+    # Default: HTML path (original logic)
     ui_dim "Fetching (structured): $clean_url"
     local html
     html=$(web_fetch_raw "$clean_url")

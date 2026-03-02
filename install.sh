@@ -155,7 +155,32 @@ if [ ${#MISSING[@]} -gt 0 ]; then
 fi
 ok "Dependencies ready"
 
-# ── 1b. Termux extras (gawk, procps, bc) ─────────────────────
+# ── 1b. Optional: PDF text extraction ────────────────────────
+# pdftotext (poppler-utils) lets /web read PDF documents.
+# Without it, George falls back to strings(1) — functional but
+# lower fidelity. Skip to keep the install minimal.
+if ! command -v pdftotext &>/dev/null; then
+    printf "\n"
+    info "Optional: pdftotext enables high-quality PDF text extraction."
+    info "Without it, /web will still read PDFs using strings (basic fallback)."
+    printf "  Install poppler-utils for better PDF support? [y/N] "
+    read -r _install_poppler
+    if [[ "$_install_poppler" =~ ^[Yy] ]]; then
+        if [ "$IS_TERMUX" -eq 1 ]; then
+            pkg install -y poppler 2>/dev/null || warn "poppler install failed — will use fallback"
+        elif command -v apt &>/dev/null; then
+            sudo apt install -y -qq poppler-utils 2>/dev/null || warn "poppler-utils install failed — will use fallback"
+        elif command -v pkg &>/dev/null; then
+            pkg install -y poppler-utils 2>/dev/null || warn "poppler-utils install failed — will use fallback"
+        else
+            warn "No supported package manager — install poppler-utils manually for PDF support"
+        fi
+    else
+        info "Skipped — PDFs will use strings(1) fallback"
+    fi
+fi
+
+# ── 1c. Termux extras (gawk, procps, bc) ─────────────────────
 # Termux ships mawk by default which has NUL byte issues.
 # procps provides 'free' for vitals. bc for location math.
 if [ "$IS_TERMUX" -eq 1 ]; then

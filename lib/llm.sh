@@ -580,6 +580,17 @@ _llm_start_llamacpp_server() {
         --parallel 1    # single slot — saves RAM on phones; lodge uses sequential calls
     )
 
+    # Vision projector: if the model has an mmproj blob (e.g., Ministral-3B-Instruct),
+    # pass it to llama-server so /vision can send images.
+    if declare -f _models_resolve_mmproj &>/dev/null; then
+        local _mmproj
+        _mmproj=$(_models_resolve_mmproj "$LODGE_MODEL" 2>/dev/null)
+        if [ -n "$_mmproj" ] && [ -f "$_mmproj" ]; then
+            _launch_args+=(--mmproj "$_mmproj")
+            [ "$quiet" != "--quiet" ] && ui_dim "Vision projector: $_mmproj"
+        fi
+    fi
+
     # Chat template: use the Jinja2 engine for the template embedded in the
     # GGUF's tokenizer.chat_template metadata.  This replaces the old approach
     # of mapping model names to built-in C++ template names (--chat-template),
