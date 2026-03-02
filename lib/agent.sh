@@ -1268,6 +1268,23 @@ agent_inner_loop() {
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: research buffer -> micro_memory"
     fi
 
+    # ── MILESTONE HISTORY INJECTION ────────────────────────────
+    # Inject completed milestone summaries from macro_memory so the
+    # specialist knows what previous milestones accomplished. Without
+    # this, each milestone's specialist starts blind — it can't see
+    # data gathered by earlier milestones (e.g., web research results
+    # that should inform an email draft).
+    if [ -f "$george_dir/macro_memory.md" ]; then
+        local _milestone_lines
+        _milestone_lines=$(awk '/^- Step \[/{found=1} found{print} /^$/{if(found) found=0}' "$george_dir/macro_memory.md" 2>/dev/null)
+        if [ -n "$_milestone_lines" ]; then
+            echo "## Prior Milestones (what has already been accomplished)" >> "$micro_file"
+            echo "$_milestone_lines" >> "$micro_file"
+            echo "" >> "$micro_file"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: milestone history -> micro_memory ($(echo "$_milestone_lines" | wc -l) lines)"
+        fi
+    fi
+
     echo "## Action Log" >> "$micro_file"
 
     local inner_attempts=0
@@ -1335,26 +1352,35 @@ agent_inner_loop() {
             # ── Summarize micro_memory into milestone_summary ──
             # The raw micro_memory can be hundreds of lines of Action/
             # Status/Output blocks. The evaluator and macro_memory both
-            # struggle when flooded with raw output. Condense into ≤4
-            # sentences that capture what was done and the outcome.
+            # struggle when flooded with raw output. Condense into ≤6
+            # sentences that capture what was done, key data, and outcome.
             local _micro_content _milestone_summary
             _micro_content=$(cat "$micro_file" 2>/dev/null)
             if [ -n "$_micro_content" ]; then
-                local _ms_prompt="In no more than 4 sentences, summarize this milestone execution log. Include the command(s) run, their outcomes, and whether the objective was met. If web search or fetch results contain factual data (names, dates, descriptions, URLs, key findings), INCLUDE the most important facts — they will be needed by subsequent milestones. No headers, no formatting.\n\n${_micro_content}"
-                local _ms_sys="You are a concise summarizer. In no more than 4 factual sentences, write your output. No personality. No formatting."
+                local _ms_prompt="In no more than 6 sentences, summarize this milestone execution log. Include the command(s) run, their outcomes, and whether the objective was met. If web search or fetch results contain factual data (names, prices, specs, dates, descriptions, URLs, key findings), you MUST INCLUDE those specific facts verbatim — they will be needed by subsequent milestones. If a draft email, post, or message body was composed, include its key points. Generic summaries like 'Web research data gathered' are USELESS. Be specific.\n\n${_micro_content}"
+                local _ms_sys="You are a concise summarizer. In no more than 6 factual sentences, write your output. PRESERVE specific facts (names, numbers, URLs). No personality. No formatting."
                 local LLM_SCENARIO=evaluator
-                _milestone_summary=$(llm_generate "$_ms_prompt" "$_ms_sys" 256 "$LLM_BUDGET_AGENT" 2>/dev/null)
+                _milestone_summary=$(llm_generate "$_ms_prompt" "$_ms_sys" 512 "$LLM_BUDGET_AGENT" 2>/dev/null)
                 # Strip think blocks
                 _milestone_summary=$(echo "$_milestone_summary" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
                 _milestone_summary=$(echo "$_milestone_summary" | sed ':a;N;$!ba;s/<think>.*$//g')
-                _milestone_summary=$(echo "$_milestone_summary" | sed '/^[[:space:]]*$/d' | head -4)
+                _milestone_summary=$(echo "$_milestone_summary" | sed '/^[[:space:]]*$/d' | head -6)
             fi
             [ -z "$_milestone_summary" ] && _milestone_summary="$summary"
 
             if [ -n "$_last_success_cmd" ]; then
-                echo "- Step [$_step_ts]: $micro_objective -> milestone_summary: $_milestone_summary | ran: $_last_success_cmd" >> "$george_dir/macro_memory.md"
+                {
+                    echo ""
+                    echo "- Step [$_step_ts]: $micro_objective"
+                    echo "  Summary: $_milestone_summary"
+                    echo "  Command: $_last_success_cmd"
+                } >> "$george_dir/macro_memory.md"
             else
-                echo "- Step [$_step_ts]: $micro_objective -> milestone_summary: $_milestone_summary" >> "$george_dir/macro_memory.md"
+                {
+                    echo ""
+                    echo "- Step [$_step_ts]: $micro_objective"
+                    echo "  Summary: $_milestone_summary"
+                } >> "$george_dir/macro_memory.md"
             fi
 
             # ── DEBUG: Memory write visibility ─────────────────
@@ -1374,12 +1400,15 @@ agent_inner_loop() {
                 /^\*\*Action:\*\* `\/web/ { capture=1; next }
                 capture && /^\*\*Status:\*\* EXECUTED SUCCESSFULLY/ { ok=1; next }
                 capture && ok && /^\*\*Output:\*\*/ { printing=1; next }
-                capture && ok && printing && /^```$/ { printing=0; ok=0; capture=0; next }
-                capture && ok && printing { print }
+                capture && ok && printing && /^```/ {
+                    if (!in_fence) { in_fence=1; next }   # skip opening fence
+                    else { in_fence=0; printing=0; ok=0; capture=0; next }  # closing fence
+                }
+                capture && ok && printing && in_fence { print }
             ' "$micro_file" 2>/dev/null)
             if [ -n "$_web_outputs" ]; then
-                # Cap at 2000 chars to avoid bloating the next milestone
-                echo "${_web_outputs:0:2000}" > "$george_dir/research_buffer.md"
+                # Cap at 3000 chars to carry forward richer research context
+                echo "${_web_outputs:0:3000}" > "$george_dir/research_buffer.md"
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] research buffer saved (%d chars)\n' "${#_web_outputs}" > /dev/tty 2>/dev/null
             fi
 
@@ -1402,7 +1431,11 @@ agent_inner_loop() {
             local _step_ts
             _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
             echo -e "\n**Milestone Result:** COMPLETE — $_suff_summary" >> "$micro_file"
-            echo "- Step [$_step_ts]: $micro_objective -> milestone_summary: $_suff_summary" >> "$george_dir/macro_memory.md"
+            {
+                echo "- Step [$_step_ts]: $micro_objective"
+                echo "  Summary: $_suff_summary"
+                echo "  Status: SUFFICIENCY_GATE"
+            } >> "$george_dir/macro_memory.md"
             return 0
         fi
 
@@ -1819,7 +1852,10 @@ agent_inner_loop() {
     if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
         local _step_ts
         _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
-        echo "- Step [$_step_ts]: $micro_objective -> CANCELLED" >> "$george_dir/macro_memory.md"
+        {
+            echo "- Step [$_step_ts]: $micro_objective"
+            echo "  Status: CANCELLED"
+        } >> "$george_dir/macro_memory.md"
         return 1
     fi
     ui_err "Inner loop exhausted all escalation levels."
@@ -1843,7 +1879,10 @@ agent_inner_loop() {
         touch "$_cancel_file" 2>/dev/null
         local _step_ts
         _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
-        echo "- Step [$_step_ts]: $micro_objective -> ABORTED by operator" >> "$george_dir/macro_memory.md"
+        {
+            echo "- Step [$_step_ts]: $micro_objective"
+            echo "  Status: ABORTED by operator"
+        } >> "$george_dir/macro_memory.md"
         return 1
     fi
 
@@ -1922,7 +1961,11 @@ Output a slash command line starting with / OR a bash code block."
                 _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
                 echo -e "\n**Action:** \`$final_cmd\`\n**Status:** EXECUTED SUCCESSFULLY (exit 0)\n**Output:**\n\`\`\`\n$final_output\n\`\`\`" >> "$micro_file"
                 echo -e "\n**Milestone Result:** COMPLETE — $summary" >> "$micro_file"
-                echo "- Step [$_step_ts]: $micro_objective -> $summary | ran: $final_cmd (exit 0)" >> "$george_dir/macro_memory.md"
+                {
+                    echo "- Step [$_step_ts]: $micro_objective"
+                    echo "  Summary: $summary"
+                    echo "  Command: $final_cmd (exit 0)"
+                } >> "$george_dir/macro_memory.md"
                 return 0
             else
                 # Log guided failure for the record
@@ -1933,7 +1976,10 @@ Output a slash command line starting with / OR a bash code block."
 
     local _step_ts
     _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "- Step [$_step_ts]: $micro_objective -> FAILED" >> "$george_dir/macro_memory.md"
+    {
+        echo "- Step [$_step_ts]: $micro_objective"
+        echo "  Status: FAILED (all escalation levels exhausted)"
+    } >> "$george_dir/macro_memory.md"
     return 1
 }
 

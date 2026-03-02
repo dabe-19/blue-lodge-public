@@ -224,17 +224,21 @@ _cmd_debug() {
     case "$arg" in
         on|1)
             LODGE_DEBUG=1
+            _llm_save_config
             ui_ok "Debug mode ON — timers + token counts per LLM call" ;;
         off|0)
             LODGE_DEBUG=0
+            _llm_save_config
             ui_ok "Debug mode OFF" ;;
         "")
             # Toggle
             if [ "${LODGE_DEBUG:-0}" -eq 0 ]; then
                 LODGE_DEBUG=1
+                _llm_save_config
                 ui_ok "Debug mode ON — timers + token counts per LLM call"
             else
                 LODGE_DEBUG=0
+                _llm_save_config
                 ui_ok "Debug mode OFF"
             fi ;;
         *)
@@ -244,6 +248,58 @@ _cmd_debug() {
             ui_dim ""
             ui_dim "  When ON, each LLM call prints elapsed time and token counts"
             ui_dim "  (input/output). A summary is printed after each task completes." ;;
+    esac
+}
+_cmd_config() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+
+    case "$action" in
+        ""|show)
+            ui_section "Persistent Configuration"
+            if [ -f "$_LLM_CONFIG_FILE" ]; then
+                ui_dim "  File: $_LLM_CONFIG_FILE"
+                echo ""
+                while IFS= read -r _line; do
+                    if [[ "$_line" =~ ^# ]]; then
+                        ui_dim "  $_line"
+                    elif [[ -n "$_line" ]]; then
+                        printf "  %s\n" "$_line"
+                    fi
+                done < "$_LLM_CONFIG_FILE"
+            else
+                ui_dim "  No config file yet. Use /config save to create one."
+            fi ;;
+        save)
+            _llm_save_config
+            ui_ok "Config saved to $_LLM_CONFIG_FILE"
+            local _count
+            _count=$(grep -c '^[A-Z]' "$_LLM_CONFIG_FILE" 2>/dev/null || echo 0)
+            ui_dim "  $_count settings persisted" ;;
+        reset)
+            rm -f "$_LLM_CONFIG_FILE" 2>/dev/null
+            ui_ok "Config file removed — defaults will apply on next launch" ;;
+        edit)
+            if [ -f "$_LLM_CONFIG_FILE" ]; then
+                local _editor="${EDITOR:-vi}"
+                "$_editor" "$_LLM_CONFIG_FILE"
+                # Reload after edit
+                _llm_load_config
+                ui_ok "Config reloaded"
+            else
+                ui_warn "No config file yet. Use /config save first."
+            fi ;;
+        *)
+            ui_info "Usage: /config [show|save|reset|edit]"
+            echo ""
+            ui_dim "  show   — Display current persistent settings (default)"
+            ui_dim "  save   — Write current settings to $_LLM_CONFIG_FILE"
+            ui_dim "  reset  — Remove config file (revert to defaults)"
+            ui_dim "  edit   — Open config in \$EDITOR"
+            ui_dim ""
+            ui_dim "  Settings auto-save when changed via /backend, /debug, /model."
+            ui_dim "  Environment variables always override config file values." ;;
     esac
 }
 _cmd_backend() {
@@ -295,6 +351,7 @@ _cmd_backend() {
         auto|ollama|llamacpp|llama-cpp)
             LLM_BACKEND="$action"
             _LLM_BACKEND_CACHE=""  # Clear cache to force re-detection
+            _llm_save_config
             local new_backend
             new_backend=$(_llm_detect_backend 2>/dev/null)
             ui_ok "Backend preference set to '$action' → active: $new_backend" ;;
@@ -372,6 +429,7 @@ _cmd_backend() {
             if _llm_start_llamacpp_server "$_model_path"; then
                 _LLM_BACKEND_CACHE=""
                 LLM_BACKEND="llamacpp"
+                _llm_save_config
                 local _health _status
                 _health=$(curl -sf "$LLAMA_CPP_URL/health" 2>/dev/null)
                 _status=$(echo "$_health" | jq -r '.status // "unknown"' 2>/dev/null)
@@ -425,11 +483,12 @@ _cmd_backend() {
                 fi
             fi ;;
         reset)
-            LLM_BACKEND="auto"
+            LLM_BACKEND="llamacpp"
             OLLAMA_URL="http://127.0.0.1:11434"
             LLAMA_CPP_URL="http://127.0.0.1:8080"
             _LLM_BACKEND_CACHE=""
-            ui_ok "Backend reset to defaults (auto-detect)" ;;
+            rm -f "$_LLM_CONFIG_FILE" "$_LLM_BACKEND_PREF_FILE" 2>/dev/null
+            ui_ok "Backend reset to defaults (llamacpp preferred)" ;;
         *)
             ui_info "Usage: /backend [status|auto|ollama|llamacpp|start|stop|model|url|reset]"
             echo ""
@@ -870,6 +929,7 @@ _cmd_model() {
             return 1
         fi
         eval "$var_name=$val"
+        _llm_save_config
         ui_ok "$label set to $val"
     }
 
@@ -1008,6 +1068,7 @@ _cmd_model() {
             if declare -f models_apply_defaults &>/dev/null; then
                 models_apply_defaults "$LODGE_MODEL"
                 LODGE_WRITE_MODE=confirm
+                _llm_save_config
                 ui_ok "All sampling parameters reset to $LODGE_MODEL defaults"
             else
                 ui_err "Model library not loaded — cannot determine defaults"
@@ -3359,6 +3420,7 @@ _register_commands() {
     commands_register "models"   "Model library — list, select, switch" "_cmd_models"
     commands_register "think"    "Toggle thinking: on/off/bright/dim/hide/test" "_cmd_think"
     commands_register "debug"    "Toggle debug mode (timers + token counts)" "_cmd_debug"
+    commands_register "config"   "Persistent settings — save/show/reset/edit" "_cmd_config"
     commands_register "backend"  "LLM backend — auto-detect, switch (ollama/llamacpp)" "_cmd_backend"
     commands_register "gpu"      "GPU layers — set offload layers for llama-server" "_cmd_gpu"
     commands_register "clear"    "Clear screen" "_cmd_clear"
@@ -3474,6 +3536,11 @@ main() {
     
     # Initialize model library (sets LODGE_MODEL from model slots)
     models_init
+
+    # Re-apply persistent config overrides — models_init() sets sampling
+    # params from the model registry, but the user may have customized
+    # them via /model or /config and those should win.
+    _llm_load_config --force
 
     # Start LLM backend (prefers llama-server, falls back to Ollama)
     ui_spinner_start "Starting LLM backend"

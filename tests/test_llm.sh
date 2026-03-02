@@ -31,12 +31,12 @@ describe "Configuration defaults"
     assert_eq "$LLM_AGENT_TOKENS" "20480"
   }
 
-  it "LLM_STRATEGIST_TOKENS defaults to 512" && {
-    assert_eq "$LLM_STRATEGIST_TOKENS" "512"
+  it "LLM_STRATEGIST_TOKENS defaults to 768" && {
+    assert_eq "$LLM_STRATEGIST_TOKENS" "768"
   }
 
-  it "LLM_ROUTER_TOKENS defaults to 256" && {
-    assert_eq "$LLM_ROUTER_TOKENS" "256"
+  it "LLM_ROUTER_TOKENS defaults to 512" && {
+    assert_eq "$LLM_ROUTER_TOKENS" "512"
   }
 
   it "LLM_BUDGET_TOKENS defaults to 1024" && {
@@ -47,20 +47,20 @@ describe "Configuration defaults"
     assert_eq "$LLM_BUDGET_ASK" "1024"
   }
 
-  it "LLM_BUDGET_AGENT defaults to 512" && {
-    assert_eq "$LLM_BUDGET_AGENT" "512"
+  it "LLM_BUDGET_AGENT defaults to 768" && {
+    assert_eq "$LLM_BUDGET_AGENT" "768"
   }
 
-  it "LLM_BUDGET_ROUTER defaults to 128" && {
-    assert_eq "$LLM_BUDGET_ROUTER" "128"
+  it "LLM_BUDGET_ROUTER defaults to 256" && {
+    assert_eq "$LLM_BUDGET_ROUTER" "256"
   }
 
-  it "LLM_BUDGET_JOURNAL defaults to 64" && {
-    assert_eq "$LLM_BUDGET_JOURNAL" "64"
+  it "LLM_BUDGET_JOURNAL defaults to 128" && {
+    assert_eq "$LLM_BUDGET_JOURNAL" "128"
   }
 
-  it "LLM_BUDGET_TOOL defaults to 256" && {
-    assert_eq "$LLM_BUDGET_TOOL" "256"
+  it "LLM_BUDGET_TOOL defaults to 512" && {
+    assert_eq "$LLM_BUDGET_TOOL" "512"
   }
 
 # ── Sampling parameters ───────────────────────────────────────

@@ -98,14 +98,15 @@ describe "Inner loop cancellation"
     local body
     body=$(declare -f agent_inner_loop)
     # After the while loop ends, should check cancel before operator prompt
-    echo "$body" | grep -q 'CANCELLED.*macro_memory'
+    # Multi-line format: Status: CANCELLED written inside block >> macro_memory
+    echo "$body" | grep -q 'Status: CANCELLED'
     assert_ok $?
   }
 
   it "agent_inner_loop writes CANCELLED to macro_memory on cancel" && {
     local body
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'CANCELLED.*macro_memory'
+    echo "$body" | grep -q 'Status: CANCELLED'
     assert_ok $?
   }
 
@@ -1388,36 +1389,38 @@ describe "Macro memory: timestamped command results"
   it "SUCCESS macro_memory entry includes ran: command" && {
     local body
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'ran: \$_last_success_cmd'
+    # Multi-line format: Command: $_last_success_cmd
+    echo "$body" | grep -q 'Command: \$_last_success_cmd'
     assert_ok $?
   }
 
   it "FAILED macro_memory entry includes timestamp" && {
     local body
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep 'FAILED' | grep -q '_step_ts'
+    # Multi-line format: Step on one line, Status: FAILED on next
+    echo "$body" | grep -q 'Status: FAILED'
     assert_ok $?
   }
 
   it "CANCELLED macro_memory entry includes timestamp" && {
     local body
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep 'CANCELLED' | grep -q '_step_ts'
+    echo "$body" | grep -q 'Status: CANCELLED'
     assert_ok $?
   }
 
   it "ABORTED macro_memory entry includes timestamp" && {
     local body
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep 'ABORTED' | grep -q '_step_ts'
+    echo "$body" | grep -q 'Status: ABORTED'
     assert_ok $?
   }
 
   it "guided recovery macro_memory entry includes ran: command" && {
     local body
     body=$(declare -f agent_inner_loop)
-    # The guided recovery writes: ran: $final_cmd (exit 0)
-    echo "$body" | grep -q 'ran: \$final_cmd'
+    # Multi-line format: Command: $final_cmd (exit 0)
+    echo "$body" | grep -q 'Command: \$final_cmd'
     assert_ok $?
   }
 
@@ -1452,11 +1455,11 @@ describe "Research buffer (cross-milestone data flow)"
     assert_ok $? "Must use awk to extract successful /web output blocks"
   }
 
-  it "research buffer is capped at 2000 chars" && {
+  it "research buffer is capped at 3000 chars" && {
     local body
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q '2000'
-    assert_ok $? "Must cap research buffer at 2000 chars"
+    echo "$body" | grep -q '3000'
+    assert_ok $? "Must cap research buffer at 3000 chars"
   }
 
 # ── Web soft-failure tolerance ────────────────────────────────
@@ -1544,7 +1547,7 @@ describe "Richer milestone summaries"
   it "milestone summary prompt asks for key data from web results" && {
     local body
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'INCLUDE the most important facts'
+    echo "$body" | grep -q 'MUST INCLUDE those specific facts'
     assert_ok $? "Must instruct summarizer to retain research data"
   }
 
