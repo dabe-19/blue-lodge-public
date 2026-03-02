@@ -93,6 +93,22 @@ cmd_write() {
         return 1
     fi
 
+    # ── Expand escape sequences ────────────────────────────────
+    # The LLM sends multi-line content as a single line with \n
+    # separators (as instructed by the syntax card). Expand them
+    # to real newlines so files are written correctly.
+    #
+    # printf '%b' interprets C-style escapes:
+    #   \n → newline    \t → tab    \\ → literal backslash
+    #   \\n → literal \n (model can escape when needed)
+    #
+    # SKIP expansion for --edit mode (sed expressions use their own
+    # escape conventions) and for content that already contains real
+    # newlines (multi-line stdin input).
+    if [ "$mode" != "edit" ] && [[ "$content" != *$'\n'* ]]; then
+        content=$(printf '%b' "$content")
+    fi
+
     # Resolve path relative to workdir
     local fullpath
     if [[ "$filepath" == /* ]]; then
@@ -105,11 +121,43 @@ cmd_write() {
     mkdir -p "$(dirname "$fullpath")"
 
     # ── Handle --edit mode (sed inline edits) ──────────────────
+    # Validates that content looks like a sed expression before
+    # attempting. The model sometimes tries to write entire multi-line
+    # code blocks as sed, which always fails.
     if [ "$mode" = "edit" ]; then
         if [ ! -f "$fullpath" ]; then
             ui_err "Cannot edit — file does not exist: $filepath"
             return 1
         fi
+
+        # Guard: reject content that's clearly NOT a sed expression.
+        # Valid sed: s/old/new/g, /pattern/d, /pattern/a\text, etc.
+        # Invalid: multi-line code the model tried to cram into sed.
+        local _sed_ok=0
+        if [[ "$content" =~ ^s[/\|,\#] ]]; then
+            _sed_ok=1  # substitution: s/old/new/ s|old|new| etc
+        elif [[ "$content" =~ ^[0-9]*,?[0-9]*/.*/ ]]; then
+            _sed_ok=1  # address + command: /pattern/d, 3,5d, etc
+        elif [[ "$content" =~ ^[0-9]+[dips] ]]; then
+            _sed_ok=1  # line-addressed command: 5d, 3i, etc
+        fi
+
+        if [ "$_sed_ok" -eq 0 ]; then
+            ui_err "Edit rejected — content is not a valid sed expression: ${content:0:80}"
+            ui_dim "  --edit is for SIMPLE substitutions only (e.g. s/old_name/new_name/g)"
+            ui_dim "  To rewrite a file, use: /write <filepath> <complete content>"
+            return 1
+        fi
+
+        # Guard: reject excessively long sed expressions (> 200 chars).
+        # These are almost always the model trying to write code as sed.
+        if [ "${#content}" -gt 200 ]; then
+            ui_err "Edit rejected — sed expression too long (${#content} chars)"
+            ui_dim "  --edit is for small, targeted changes."
+            ui_dim "  To rewrite a file, use: /write <filepath> <complete content>"
+            return 1
+        fi
+
         # content holds the sed expression
         local before_lines after_lines
         before_lines=$(wc -l < "$fullpath")
@@ -119,6 +167,8 @@ cmd_write() {
             return 0
         else
             ui_err "Edit failed — invalid sed expression: $content"
+            ui_dim "  --edit is for SIMPLE substitutions: s/old/new/g"
+            ui_dim "  To rewrite a file, use: /write <filepath> <complete content>"
             return 1
         fi
     fi

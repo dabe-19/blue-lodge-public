@@ -252,4 +252,22 @@ describe "journal_reflect prompt"
     _teardown_journal
   }
 
+# ── ANSI stripping ────────────────────────────────────────────
+describe "ANSI escape code stripping"
+
+  it "strips terminal color codes from journal entries" && {
+    _setup_journal
+    journal_init 2>/dev/null
+    journal_write "web_search" $'\x1b[38;5;203m✗ \x1b[38;5;255mSearch failed: timeout\x1b[0m'
+    content=$(cat "$JOURNAL_FILE")
+    assert_contains "$content" "Search failed: timeout"
+    # Must NOT contain raw escape codes
+    if echo "$content" | grep -qP '\x1b\['; then
+      assert_ok 1  # fail — escape codes still present
+    else
+      assert_ok 0
+    fi
+    _teardown_journal
+  }
+
 test_end

@@ -63,6 +63,10 @@ journal_write() {
     _trimmed=$(echo "$content" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     [ -z "$_trimmed" ] && return 0
 
+    # Strip ANSI escape codes — command output often contains terminal
+    # color codes (e.g. [38;5;203m✗ [38;5;255m...) that corrupt the journal.
+    content=$(echo "$content" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b(B//g')
+
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M')
     local date_stamp

@@ -92,7 +92,7 @@ _agent_evaluate_milestone() {
     # ATTENTION REORDER: Action log FIRST, milestone LAST (recency bias)
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions in the log above accomplish this specific milestone?\n\nRULES:\n- A command with Status: EXECUTED SUCCESSFULLY (exit 0) satisfies the milestone unless its output clearly indicates failure.\n- Empty output is normal for many tools (email, social, file ops). Exit code 0 with empty output = success.\n- Focus ONLY on whether THIS milestone was achieved — ignore the broader task objective.\n- If the action log shows a relevant command was executed and succeeded, the milestone is done.\n- Do NOT require confirmation, follow-up, or verification steps unless the milestone explicitly asked for them.\n\nSPECIAL RULES FOR CODE/BUILD MILESTONES:\n- If the milestone involves writing code files: a /write that succeeded is COMPLETE only if you can see\n  the written content contains meaningful, non-trivial code (not just a header or partial snippet).\n- If the milestone says 'create project' or 'initialize': verify that key project files were written\n  (e.g., Cargo.toml + src/main.rs for Rust, package.json + index.js for Node).\n- If the milestone says 'build' or 'compile': a /build or cargo build with exit 0 is required.\n  /write alone does NOT satisfy a build milestone.\n- If ONLY web searches were performed for a code-writing milestone, mark INCOMPLETE.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence reason>"
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions in the log above accomplish this specific milestone?\n\nRULES:\n- A command with Status: EXECUTED SUCCESSFULLY (exit 0) satisfies the milestone unless its output clearly indicates failure.\n- Empty output is normal for many tools (email, social, file ops). Exit code 0 with empty output = success.\n- Focus ONLY on whether THIS milestone was achieved — ignore the broader task objective.\n- If the action log shows a relevant command was executed and succeeded, the milestone is done.\n- Do NOT require confirmation, follow-up, or verification steps unless the milestone explicitly asked for them.\n\nSPECIAL RULES FOR CODE/BUILD MILESTONES:\n- If the milestone involves writing code files: a /write that succeeded is COMPLETE only if you can see\n  the written content contains meaningful, non-trivial code (not just a header or partial snippet).\n- If the milestone says 'create project' or 'initialize': verify that key project files were written\n  (e.g., Cargo.toml + src/main.rs for Rust, package.json + index.js for Node).\n- If the milestone says 'build' or 'compile': a /build or cargo build with exit 0 is required.\n  /write alone does NOT satisfy a build milestone.\n- If ONLY web searches were performed for a code-writing milestone, mark INCOMPLETE.\n- PLACEHOLDER/STUB CODE IS NOT COMPLETE. If the written content contains:\n  * 'todo', 'unimplemented', 'Missing implementation', 'placeholder', 'stub'\n  * Empty function bodies, panic!(), or error-only responses\n  * JSON like {\"error\": ...} instead of actual functional code\n  Then the milestone is INCOMPLETE — the code must be functional, not a stub.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence reason>"
 
     local eval_sys="You are a pragmatic milestone evaluator. Judge whether a specific action step was executed successfully based on the action log. Exit code 0 means the command succeeded — do not second-guess it. Empty output is normal and expected for many tools. Only mark INCOMPLETE if no relevant action was attempted or the action clearly failed. Respond COMPLETE or INCOMPLETE: <reason>."
 
@@ -176,7 +176,7 @@ _agent_evaluate_completion() {
     # ATTENTION REORDER: context first, objective + criteria last
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE (the user's original request):\n${primary_obj}\n\nGiven all the milestones completed above, is the PRIMARY OBJECTIVE fully satisfied?\n\nRULES:\n- Review the Completed Milestones section for what has been accomplished.\n- For single-action objectives (e.g., 'send a Discord DM to X'), one successful milestone that executed the action is sufficient.\n- For multi-part objectives, verify each distinct part has a corresponding completed milestone.\n- Do NOT invent extra requirements beyond what the user explicitly asked for.\n- Do NOT require confirmation or verification steps unless the user asked for them.\n- If the key action(s) have been executed successfully, the task is done.\n\nSPECIAL RULES FOR SOFTWARE/CODE TASKS:\n- If the objective involves building a program, microservice, or application:\n  * Source code files must have been written with meaningful, non-trivial content.\n  * The project must compile/build successfully (a /build with exit 0, not just /write).\n  * Only mark COMPLETE if the code could plausibly run. /write alone is not enough.\n- If the action log is MOSTLY web searches with little or no code written, mark INCOMPLETE.\n- Web research does NOT count as progress toward a coding objective unless\n  it is supplemented by actual file creation, building, and testing.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence description of what specific part remains>"
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE (the user's original request):\n${primary_obj}\n\nGiven all the milestones completed above, is the PRIMARY OBJECTIVE fully satisfied?\n\nRULES:\n- Review the Completed Milestones section for what has been accomplished.\n- For single-action objectives (e.g., 'send a Discord DM to X'), one successful milestone that executed the action is sufficient.\n- For multi-part objectives, verify each distinct part has a corresponding completed milestone.\n- Do NOT invent extra requirements beyond what the user explicitly asked for.\n- Do NOT require confirmation or verification steps unless the user asked for them.\n- If the key action(s) have been executed successfully, the task is done.\n\nSPECIAL RULES FOR SOFTWARE/CODE TASKS:\n- If the objective involves building a program, microservice, or application:\n  * Source code files must have been written with meaningful, non-trivial content.\n  * Placeholder or stub code (todo, unimplemented, panic, 'Missing implementation') does NOT count.\n  * The project must compile/build successfully (a /build with exit 0, not just /write).\n  * Only mark COMPLETE if the code could plausibly run. /write alone is not enough.\n- If the action log is MOSTLY web searches with little or no code written, mark INCOMPLETE.\n- Web research does NOT count as progress toward a coding objective unless\n  it is supplemented by actual file creation, building, and testing.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence description of what specific part remains>"
 
     local eval_sys="You are a strategic task-completion evaluator. Given the full history of completed milestones, determine whether the user's original request has been fully addressed. Be pragmatic — if the requested actions were executed successfully, the task is complete. Do not add requirements the user did not ask for. For SOFTWARE/CODE tasks, be stricter: writing files is not enough — the code must compile and be plausibly functional. Web research alone never satisfies a code-writing objective. Respond COMPLETE or INCOMPLETE: <reason>."
 
@@ -924,24 +924,33 @@ _build_specialist_prompt() {
                 echo "  name MUST have no spaces (use underscores)."
                 echo "  Types: rust, python, rl, data, automation, notebook, shell"
                 echo "- Creates project dir, GEORGE.md, starter code, git init."
-                echo "- After /init, use /write to add files, /build to build."
+                echo "- After /init, you are AUTOMATICALLY cd'd into the project dir."
+                echo "- Then use /write to add files, /build to build."
+                echo "- Do NOT /init again if the project already exists."
                 echo "Example: /init task-manager rust"
+                ;;
+            cd)
+                echo "- /cd <path>"
+                echo "  Change working directory. Use after /init or to navigate."
+                echo "  Relative paths OK. Use /cd .. to go up."
+                echo "Example: /cd weather-poller"
+                echo "Example: /cd src"
                 ;;
             write)
                 echo "- /write <filepath> <content>              — Create or overwrite file"
                 echo "- /write --append <filepath> <content>     — Append to existing file"
-                echo "- /write --edit <filepath> <sed_expression> — Inline edit with sed"
+                echo "- /write --edit <filepath> <sed_expression> — SIMPLE sed substitution ONLY"
                 echo "  filepath relative to current project dir."
                 echo "  Content is everything after filepath (no quoting)."
                 echo "  Creates parent directories automatically."
                 echo "  For multi-line, use \\n for newlines."
                 echo ""
-                echo "CRITICAL RULES FOR CODE FILES:"
-                echo "  - If the file ALREADY EXISTS, prefer --append or --edit over overwrite."
-                echo "  - To add dependencies to Cargo.toml/package.json: use --append."
-                echo "  - To change a function name: use --edit with sed expression."
-                echo "  - Only use plain /write (overwrite) when writing the COMPLETE file contents."
-                echo "  - When overwriting, include ALL file content — never write partial files."
+                echo "MODE SELECTION RULES:"
+                echo "  - /write (overwrite): Write COMPLETE file contents. Use for new files or full rewrites."
+                echo "  - --append: Add content to END of existing file. Use for adding deps, new functions."
+                echo "  - --edit: ONLY for short sed substitutions (rename, change a value). Max 200 chars."
+                echo "    NEVER use --edit to write multi-line code. It will FAIL."
+                echo "    If you need to change more than one line, use plain /write with COMPLETE file."
                 echo ""
                 echo "FEW-SHOT FORMATTING EXAMPLES:"
                 echo ""
@@ -951,8 +960,9 @@ _build_specialist_prompt() {
                 echo "Append dependencies to existing Cargo.toml:"
                 echo '  /write --append Cargo.toml \n[dependencies]\nreqwest = { version = "0.11", features = ["json"] }\ntokio = { version = "1.0", features = ["full"] }'
                 echo ""
-                echo "Inline edit (rename function):"
+                echo "Simple rename (sed — the ONLY correct use of --edit):"
                 echo '  /write --edit src/main.rs s/old_function/new_function/g'
+                echo '  /write --edit Cargo.toml s/version = "0.1.0"/version = "0.2.0"/'
                 echo ""
                 echo "Markdown:"
                 echo '  /write README.md # Project Title\n\n## Overview\n\nA brief description of the project.\n\n## Installation\n\n```bash\nnpm install\n```'
@@ -1504,6 +1514,34 @@ agent_inner_loop() {
         if [ -n "$cmd" ]; then
             ui_step "Running: $cmd"
 
+            # ── DIRECTORY CHANGE INTERCEPTION ─────────────────
+            # /cd and /init change directories but commands_dispatch
+            # runs in a subshell ($(...)) so cd never propagates.
+            # Handle these in the parent shell directly.
+            if [[ "$cmd" == /cd\ * ]]; then
+                local _cd_target
+                _cd_target=$(echo "$cmd" | sed 's|^/cd *||')
+                if [ -d "$workdir/$_cd_target" ]; then
+                    workdir=$(cd "$workdir/$_cd_target" && pwd)
+                    output="Changed to: $workdir"
+                    exit_code=0
+                    ui_ok "$output"
+                elif [ -d "$_cd_target" ]; then
+                    workdir=$(cd "$_cd_target" && pwd)
+                    output="Changed to: $workdir"
+                    exit_code=0
+                    ui_ok "$output"
+                else
+                    output="Directory not found: $_cd_target"
+                    exit_code=1
+                    ui_err "$output"
+                fi
+                echo -e "\n**Action:** \`$cmd\`\n**Status:** $([ $exit_code -eq 0 ] && echo 'EXECUTED SUCCESSFULLY (exit 0)' || echo "FAILED (exit $exit_code)")\n**Output:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] workdir now: %s\n' "$workdir" > /dev/tty 2>/dev/null
+                inner_attempts=$((inner_attempts + 1))
+                continue
+            fi
+
             # Execute based on command type:
             #   Slash commands → commands_dispatch (proper command registry)
             #   Bash commands  → eval (direct shell execution)
@@ -1520,6 +1558,18 @@ agent_inner_loop() {
             fi
 
             if [ $exit_code -eq 0 ]; then
+                # ── POST-INIT WORKDIR UPDATE ───────────────────
+                # /init creates a project dir and cd's into it,
+                # but that cd happens in the subshell. Update
+                # workdir so subsequent commands target the project.
+                if [[ "$cmd" == /init\ * ]]; then
+                    local _init_name
+                    _init_name=$(echo "$cmd" | awk '{print $2}')
+                    if [ -n "$_init_name" ] && [ -d "$workdir/$_init_name" ]; then
+                        workdir="$workdir/$_init_name"
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] post-init workdir: %s\n' "$workdir" > /dev/tty 2>/dev/null
+                    fi
+                fi
                 _last_success_cmd="$cmd"
                 _last_success_snippet="${output:0:200}"
                 echo -e "\n**Action:** \`$cmd\`\n**Status:** EXECUTED SUCCESSFULLY (exit 0)\n**Output:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
@@ -1921,7 +1971,7 @@ agent_run() {
         local _tool_summary=""
         _tool_summary="YOUR WORKING COMMANDS (by category):
 KNOWLEDGE: /ask /recall /journal (read) /journal write (write)
-FILES: /write /save /download /init /clone /build /test /fix /commit /push
+FILES: /write /save /download /init /clone /build /test /fix /commit /push /cd
 WEB: /web search|fetch|images|scrape-images /github search /vision
 COMMUNICATION: /social post discord|telegram|x|mastodon <target> <text>
   /social discord dm|read <user|channel> /email send|inbox /phone

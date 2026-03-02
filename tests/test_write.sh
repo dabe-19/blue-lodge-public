@@ -87,4 +87,69 @@ describe "filename sanitization in cmd_write"
     rm -rf "$_tmpdir"
   }
 
+# ── Newline expansion ─────────────────────────────────────────
+describe "newline expansion"
+
+  it "expands \\n to real newlines in written files" && {
+    _tmpdir=$(test_tmpdir)
+    cmd_write 'multi.txt line1\nline2\nline3' "$_tmpdir" 2>/dev/null
+    _lines=$(wc -l < "$_tmpdir/multi.txt")
+    assert_eq "$_lines" "3"
+    _content=$(cat "$_tmpdir/multi.txt")
+    assert_contains "$_content" "line2"
+    rm -rf "$_tmpdir"
+  }
+
+  it "expands \\n in --append mode" && {
+    _tmpdir=$(test_tmpdir)
+    echo "existing" > "$_tmpdir/append.txt"
+    cmd_write '--append append.txt \n[deps]\nfoo = "1.0"' "$_tmpdir" 2>/dev/null
+    _content=$(cat "$_tmpdir/append.txt")
+    assert_contains "$_content" "[deps]"
+    # Should have real newlines, not literal \n
+    _lines=$(wc -l < "$_tmpdir/append.txt")
+    [ "$_lines" -ge 3 ] && assert_ok 0 || assert_ok 1
+    rm -rf "$_tmpdir"
+  }
+
+  it "preserves content with real newlines from stdin" && {
+    _tmpdir=$(test_tmpdir)
+    printf 'line1\nline2\nline3\n' | cmd_write "stdin_multi.txt" "$_tmpdir" 2>/dev/null
+    _lines=$(wc -l < "$_tmpdir/stdin_multi.txt")
+    assert_eq "$_lines" "3"
+    rm -rf "$_tmpdir"
+  }
+
+# ── Edit mode validation ──────────────────────────────────────
+describe "--edit mode validation"
+
+  it "accepts valid sed substitution" && {
+    _tmpdir=$(test_tmpdir)
+    echo "old_name" > "$_tmpdir/edit.txt"
+    _out=$(cmd_write '--edit edit.txt s/old_name/new_name/g' "$_tmpdir" 2>&1)
+    assert_ok $?
+    _content=$(cat "$_tmpdir/edit.txt")
+    assert_contains "$_content" "new_name"
+    rm -rf "$_tmpdir"
+  }
+
+  it "rejects multi-line code as sed expression" && {
+    _tmpdir=$(test_tmpdir)
+    echo "placeholder" > "$_tmpdir/code.rs"
+    _out=$(cmd_write '--edit code.rs fn main() { println!("Hello"); }' "$_tmpdir" 2>&1)
+    assert_fail $?
+    assert_contains "$_out" "not a valid sed"
+    rm -rf "$_tmpdir"
+  }
+
+  it "rejects excessively long sed expressions" && {
+    _tmpdir=$(test_tmpdir)
+    echo "x" > "$_tmpdir/long.txt"
+    _long_sed="s/x/$(head -c 250 /dev/zero | tr '\0' 'y')/g"
+    _out=$(cmd_write "--edit long.txt $_long_sed" "$_tmpdir" 2>&1)
+    assert_fail $?
+    assert_contains "$_out" "too long"
+    rm -rf "$_tmpdir"
+  }
+
 test_end
