@@ -1109,6 +1109,18 @@ llm_generate() {
     # Ensure correct model is loaded for this scenario
     models_ensure_for_scenario "${LLM_SCENARIO:-}"
 
+    # ── Identity fallback (llamacpp only) ──────────────────────
+    # Ollama bakes Modelfiles in — the SYSTEM block persists even
+    # when callers pass no system prompt. llamacpp loads a raw GGUF
+    # with no Modelfile — without this, the model reverts to its base
+    # training identity ("I am Qwen", "I am Mistral", etc.).
+    # We inject models/<key>.system (or models/default.system).
+    if [ -z "$system" ] && [ "$_active_backend" = "llamacpp" ] \
+       && declare -f models_default_system &>/dev/null; then
+        system=$(models_default_system 2>/dev/null)
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$system" ] && ui_dim "  [debug] inject: ${_ME_KEY:-default}.system identity (${#system} chars)"
+    fi
+
     # Model-aware nothink: append model-specific suffix (e.g., /no_think for Qwen3)
     local _nt
     _nt=$(models_nothink_suffix)
@@ -1664,6 +1676,14 @@ llm_stream() {
 
     # Ensure correct model is loaded for this scenario
     models_ensure_for_scenario "${LLM_SCENARIO:-}"
+
+    # ── Identity fallback (llamacpp only) ──────────────────────
+    # (see llm_generate for rationale — models/<key>.system)
+    if [ -z "$system" ] && [ "$_active_backend" = "llamacpp" ] \
+       && declare -f models_default_system &>/dev/null; then
+        system=$(models_default_system 2>/dev/null)
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$system" ] && ui_dim "  [debug] inject: ${_ME_KEY:-default}.system identity (${#system} chars)"
+    fi
 
     # Model-aware nothink: append model-specific suffix (e.g., /no_think for Qwen3)
     local _nt
@@ -2236,6 +2256,14 @@ llm_chat() {
 
     # Ensure correct model is loaded for this scenario
     models_ensure_for_scenario "${LLM_SCENARIO:-}"
+
+    # ── Identity fallback (llamacpp only) ──────────────────────
+    # (see llm_generate for rationale — models/<key>.system)
+    if [ -z "$system" ] && [ "$_active_backend" = "llamacpp" ] \
+       && declare -f models_default_system &>/dev/null; then
+        system=$(models_default_system 2>/dev/null)
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$system" ] && ui_dim "  [debug] inject: ${_ME_KEY:-default}.system identity (${#system} chars)"
+    fi
 
     # Model-aware nothink: append model-specific suffix to last user message
     local _nt

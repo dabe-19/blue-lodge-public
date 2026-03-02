@@ -956,6 +956,42 @@ From the rough ashlar to the perfect — this is the work."
     esac
 }
 
+# ── Default system prompt (backend-agnostic) ──────────────────
+# Provide a default system prompt when the caller passes none.
+# Critical for llamacpp where there is no Modelfile concept —
+# without this, the model reverts to its base training identity
+# ("I am Qwen", "I am Mistral", etc.).
+#
+# Reads per-model .system files from models/ (keyed by registry
+# key, e.g. models/minist-think.system).  Falls back to
+# models/default.system if no model-specific file exists.
+# This is intentionally NOT soul.md — soul.md is the full
+# multi-page persona document; .system files are concise prompts
+# tuned to each model's training expectations (e.g. ministral's
+# [THINK] template, qwen3's "think briefly" directive).
+#
+# Usage: models_default_system
+# Returns: The system prompt text, or empty string.
+models_default_system() {
+    local key="${_ME_KEY:-}"
+    # If no key resolved yet, try to resolve from active model
+    if [ -z "$key" ]; then
+        models_info "${LODGE_MODEL:-}" 2>/dev/null || true
+        key="${_ME_KEY:-}"
+    fi
+    # 1. Model-specific system prompt
+    if [ -n "$key" ] && [ -f "${LODGE_DIR}/models/${key}.system" ]; then
+        cat "${LODGE_DIR}/models/${key}.system"
+        return 0
+    fi
+    # 2. Default fallback
+    if [ -f "${LODGE_DIR}/models/default.system" ]; then
+        cat "${LODGE_DIR}/models/default.system"
+        return 0
+    fi
+    return 1
+}
+
 # ── Check if current model produces thinking tokens ────────────
 # Used by llm.sh to decide whether to parse <think> tags
 models_current_has_thinking() {
