@@ -31,9 +31,9 @@ describe "Configuration defaults"
     _teardown_web
   }
 
-  it "WEB_MAX_SIZE defaults to 500000" && {
+  it "WEB_MAX_SIZE defaults to 2000000" && {
     _setup_web
-    assert_eq "$WEB_MAX_SIZE" "500000"
+    assert_eq "$WEB_MAX_SIZE" "2000000"
     _teardown_web
   }
 
@@ -992,7 +992,128 @@ describe "PDF config"
 
   it "WEB_MAX_SIZE_PDF is larger than WEB_MAX_SIZE" && {
     _setup_web
-    assert_true "[ $WEB_MAX_SIZE_PDF -gt $WEB_MAX_SIZE ]"
+    assert_gt "$WEB_MAX_SIZE_PDF" "$WEB_MAX_SIZE"
+    _teardown_web
+  }
+
+# ── HTML preprocessor (awk state machine) ─────────────────────
+describe "_html_preprocess"
+
+  it "is defined" && {
+    _setup_web
+    declare -f _html_preprocess &>/dev/null
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "strips script blocks" && {
+    _setup_web
+    local result
+    result=$(echo '<p>Hello</p><script>var x=1;</script><p>World</p>' | _html_preprocess)
+    assert_contains "$result" "Hello"
+    assert_contains "$result" "World"
+    assert_not_contains "$result" "var x"
+    _teardown_web
+  }
+
+  it "strips style blocks" && {
+    _setup_web
+    local result
+    result=$(echo '<p>Text</p><style>.foo{color:red}</style><p>More</p>' | _html_preprocess)
+    assert_contains "$result" "Text"
+    assert_contains "$result" "More"
+    assert_not_contains "$result" "color"
+    _teardown_web
+  }
+
+  it "strips noscript blocks" && {
+    _setup_web
+    local result
+    result=$(echo '<p>Content</p><noscript>Enable JS</noscript><p>End</p>' | _html_preprocess)
+    assert_contains "$result" "Content"
+    assert_contains "$result" "End"
+    assert_not_contains "$result" "Enable JS"
+    _teardown_web
+  }
+
+  it "decodes HTML entities" && {
+    _setup_web
+    local result
+    result=$(echo '<p>A &amp; B &lt; C</p>' | _html_preprocess)
+    assert_contains "$result" "A & B"
+    _teardown_web
+  }
+
+  it "handles long single-line HTML without hanging" && {
+    _setup_web
+    # Generate a big single-line HTML blob (simulates modern SPA pages)
+    # Build in a subshell to avoid local variable issues in test framework
+    result=$(
+      big_html="<html><body>"
+      for i in $(seq 1 500); do
+        big_html="${big_html}<p>Paragraph $i</p>"
+      done
+      big_html="${big_html}<script>var x='$(printf 'x%.0s' $(seq 1 5000))';</script>"
+      big_html="${big_html}<p>Final paragraph</p></body></html>"
+      echo "$big_html" | _html_preprocess
+    )
+    assert_contains "$result" "Paragraph 1"
+    assert_contains "$result" "Final paragraph"
+    assert_not_contains "$result" "xxxxx"
+    _teardown_web
+  }
+
+  it "strips HTML tags" && {
+    _setup_web
+    local result
+    result=$(echo '<div class="foo"><p>Clean text</p></div>' | _html_preprocess)
+    assert_contains "$result" "Clean text"
+    assert_not_contains "$result" "<div"
+    assert_not_contains "$result" "<p>"
+    _teardown_web
+  }
+
+  it "removes empty lines" && {
+    _setup_web
+    local result
+    result=$(echo '<p>A</p>   <p>B</p>' | _html_preprocess)
+    # Should not have blank lines
+    local blank_count
+    blank_count=$(echo "$result" | grep -c '^[[:space:]]*$')
+    assert_eq "$blank_count" "0"
+    _teardown_web
+  }
+
+# ── web_fetch_raw head -c safety valve ─────────────────────────
+describe "web_fetch_raw safety"
+
+  it "pipes through head -c" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_fetch_raw)
+    assert_contains "$fn_body" "head -c"
+    _teardown_web
+  }
+
+# ── _html_extract_content uses awk preprocessor ───────────────
+describe "_html_extract_content rewrite"
+
+  it "does NOT use tr newline-join (old approach)" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f _html_extract_content)
+    # Old approach used tr '\n' ' ' which caused hangs — should be gone
+    _has_tr=$(echo "$fn_body" | grep -v "_html_extract_content" | grep -c "tr '" || true)
+    assert_eq "$_has_tr" "0" "Should not use tr to join newlines"
+    _teardown_web
+  }
+
+  it "uses awk state machine for script removal" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f _html_extract_content)
+    assert_contains "$fn_body" "skip"
+    assert_contains "$fn_body" "script"
     _teardown_web
   }
 

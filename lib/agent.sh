@@ -1695,6 +1695,38 @@ agent_inner_loop() {
                 fi
                 _last_success_cmd="$cmd"
                 _last_success_snippet="${output:0:200}"
+
+                # ── WEB OUTPUT CONDENSER ───────────────────────
+                # Raw web scrape output can be 100+ lines of noisy
+                # HTML-extracted text that gets carried through EVERY
+                # subsequent router + specialist call. Instead, pay
+                # for one cheap LLM call to condense it into a focused
+                # summary the evaluator can actually use. The summary
+                # is injected with task context so the model knows
+                # what data matters, and it flags junk/paywalled content.
+                if [[ "$cmd" == /web* ]] && [ "${#output}" -gt 300 ]; then
+                    local _condense_prompt _condensed
+                    # Build context-aware condense prompt
+                    _condense_prompt="TASK: $micro_objective"
+                    # Inject primary objective if available
+                    if [ -f "$george_dir/macro_memory.md" ]; then
+                        local _primary_for_condense
+                        _primary_for_condense=$(awk '/^## Primary Objective/{getline; if(NF) print; exit}' "$george_dir/macro_memory.md" 2>/dev/null)
+                        [ -n "$_primary_for_condense" ] && _condense_prompt="OVERALL GOAL: $_primary_for_condense\nCURRENT STEP: $micro_objective"
+                    fi
+                    _condense_prompt="${_condense_prompt}\n\nWEB CONTENT (from: $cmd):\n${output}\n\nINSTRUCTIONS: Summarize the useful information from this web content in 3-5 concise sentences. Preserve specific facts, names, numbers, prices, and data points relevant to the task. If the content is mostly junk (cookie notices, paywalls, login walls, ad text, empty/broken page, or irrelevant boilerplate), say: JUNK: <brief reason>. If the content is partially useful, extract what matters and note what was missing."
+                    local LLM_SCENARIO=agent
+                    _condensed=$(llm_generate "$_condense_prompt" "" "${LLM_WEB_CONDENSE_TOKENS:-200}" "$LLM_BUDGET_AGENT" 2>/dev/null)
+                    # Strip think blocks from summary
+                    _condensed=$(echo "$_condensed" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+                    _condensed=$(echo "$_condensed" | sed ':a;N;$!ba;s/<think>.*$//g')
+                    _condensed=$(echo "$_condensed" | sed '/^[[:space:]]*$/d')
+                    if [ -n "$_condensed" ]; then
+                        output="[Web Summary] $_condensed"
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web condenser: %d chars -> %d chars\n' "${#output}" "${#_condensed}" > /dev/tty 2>/dev/null
+                    fi
+                fi
+
                 echo -e "\n**Action:** \`$cmd\`\n**Status:** EXECUTED SUCCESSFULLY (exit 0)\n**Output:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
 
                 # Transcript: log command execution result

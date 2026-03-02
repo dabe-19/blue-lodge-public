@@ -292,20 +292,33 @@ email_get_provider() {
 }
 
 # ── Send an email ─────────────────────────────────────────────
-# Usage: email_send <provider> <to> <subject> <body>
+# Usage: email_send <provider> <to> <subject> <body> [attachment_path]
 email_send() {
     local provider="$1"
     local to="$2"
     local subject="$3"
     local body="$4"
+    local attachment="${5:-}"
 
     # Expand LLM escape sequences (literal \n → real newlines)
     body=$(ui_expand_escapes "$body")
     subject=$(ui_expand_escapes "$subject")
 
     if [ -z "$provider" ]; then
-        ui_err "Provider required. Usage: /email send <provider> <recipient> s=subject b=body"
+        ui_err "Provider required. Usage: /email send <provider> <recipient> s=subject b=body [f=file.txt]"
         return 1
+    fi
+
+    # Validate attachment if provided
+    if [ -n "$attachment" ]; then
+        if [ ! -f "$attachment" ]; then
+            ui_err "Attachment not found: $attachment"
+            return 1
+        fi
+        if ! command -v base64 &>/dev/null; then
+            ui_err "base64 command required for attachments (apt install coreutils)"
+            return 1
+        fi
     fi
 
     email_init "$provider"
@@ -315,9 +328,9 @@ email_send() {
     fi
 
     case "$EMAIL_PROVIDER" in
-        protonmail) _email_send_smtp "$to" "$subject" "$body" "127.0.0.1" "1025" ;;
-        gmail)      _email_send_smtp "$to" "$subject" "$body" "smtp.gmail.com" "587" ;;
-        zoho)       _email_send_smtp "$to" "$subject" "$body" "smtp.zoho.com" "587" ;;
+        protonmail) _email_send_smtp "$to" "$subject" "$body" "127.0.0.1" "1025" "$attachment" ;;
+        gmail)      _email_send_smtp "$to" "$subject" "$body" "smtp.gmail.com" "587" "$attachment" ;;
+        zoho)       _email_send_smtp "$to" "$subject" "$body" "smtp.zoho.com" "587" "$attachment" ;;
         tutanota)
             ui_err "Tuta does not support SMTP. Use the Tuta app to send email."
             return 1 ;;
@@ -331,6 +344,7 @@ email_send() {
 # ── Send via SMTP (curl) ──────────────────────────────────────
 _email_send_smtp() {
     local to="$1" subject="$2" body="$3" host="$4" port="$5"
+    local attachment="${6:-}"
 
     local password=""
     if [ "$EMAIL_AUTH_METHOD" = "secret" ] && declare -f secrets_get &>/dev/null; then
@@ -352,7 +366,54 @@ _email_send_smtp() {
     # Build RFC 2822 message
     local msg_file
     msg_file=$(mktemp)
-    cat > "$msg_file" << MSGEOF
+
+    if [ -n "$attachment" ] && [ -f "$attachment" ]; then
+        # ── MIME multipart/mixed with attachment ──────────
+        local boundary="----=_LodgeBoundary_$(date +%s%N)_$$"
+        local filename
+        filename=$(basename "$attachment")
+        # Detect MIME type by extension
+        local mimetype="application/octet-stream"
+        case "$(echo "$filename" | tr '[:upper:]' '[:lower:]')" in
+            *.txt)  mimetype="text/plain" ;;
+            *.md)   mimetype="text/markdown" ;;
+            *.html) mimetype="text/html" ;;
+            *.csv)  mimetype="text/csv" ;;
+            *.json) mimetype="application/json" ;;
+            *.pdf)  mimetype="application/pdf" ;;
+            *.png)  mimetype="image/png" ;;
+            *.jpg|*.jpeg) mimetype="image/jpeg" ;;
+            *.gif)  mimetype="image/gif" ;;
+            *.zip)  mimetype="application/zip" ;;
+        esac
+
+        cat > "$msg_file" << MSGEOF
+From: $EMAIL_ADDRESS
+To: $to
+Subject: $subject
+Date: $(date -R)
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="$boundary"
+
+--$boundary
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+
+$body
+
+--$boundary
+Content-Type: $mimetype; name="$filename"
+Content-Disposition: attachment; filename="$filename"
+Content-Transfer-Encoding: base64
+
+MSGEOF
+        # Append base64-encoded file content
+        base64 "$attachment" >> "$msg_file"
+        echo "" >> "$msg_file"
+        echo "--${boundary}--" >> "$msg_file"
+    else
+        # ── Simple text/plain (no attachment) ─────────────
+        cat > "$msg_file" << MSGEOF
 From: $EMAIL_ADDRESS
 To: $to
 Subject: $subject
@@ -362,6 +423,7 @@ Content-Type: text/plain; charset=UTF-8
 
 $body
 MSGEOF
+    fi
 
     # Build curl args as an array to prevent word splitting on password
     local curl_args=(

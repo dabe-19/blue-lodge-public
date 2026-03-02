@@ -779,4 +779,76 @@ describe "LLM escape expansion in email"
     assert_gt "$count" 1
   }
 
+# ── Attachment support ─────────────────────────────────────────
+describe "Email attachment support"
+
+  it "email_send accepts 5th attachment parameter" && {
+    local fn_body
+    fn_body=$(declare -f email_send)
+    assert_contains "$fn_body" "attachment"
+  }
+
+  it "_email_send_smtp accepts 6th attachment parameter" && {
+    local fn_body
+    fn_body=$(declare -f _email_send_smtp)
+    assert_contains "$fn_body" "attachment"
+  }
+
+  it "_email_send_smtp builds multipart/mixed when attachment provided" && {
+    local fn_body
+    fn_body=$(declare -f _email_send_smtp)
+    assert_contains "$fn_body" "multipart/mixed"
+    assert_contains "$fn_body" "boundary"
+  }
+
+  it "_email_send_smtp uses base64 encoding for attachments" && {
+    local fn_body
+    fn_body=$(declare -f _email_send_smtp)
+    assert_contains "$fn_body" "base64"
+    assert_contains "$fn_body" "Content-Transfer-Encoding"
+  }
+
+  it "email_send rejects missing attachment file" && {
+    _setup_email
+    _write_provider_conf "gmail" <<< 'EMAIL_ADDRESS="test@gmail.com"
+EMAIL_AUTH_METHOD="secret"'
+    local out
+    out=$(email_send "gmail" "user@example.com" "Test" "Body" "/nonexistent/file.txt" 2>&1)
+    assert_fail $?
+    assert_contains "$out" "not found"
+    _teardown_email
+  }
+
+  it "_email_send_smtp detects MIME type for .txt files" && {
+    local fn_body
+    fn_body=$(declare -f _email_send_smtp)
+    assert_contains "$fn_body" "text/plain"
+  }
+
+  it "_email_send_smtp detects MIME type for .md files" && {
+    local fn_body
+    fn_body=$(declare -f _email_send_smtp)
+    assert_contains "$fn_body" "text/markdown"
+  }
+
+  it "_email_send_smtp detects MIME type for .pdf files" && {
+    local fn_body
+    fn_body=$(declare -f _email_send_smtp)
+    assert_contains "$fn_body" "application/pdf"
+  }
+
+  it "_email_send_smtp Content-Disposition includes filename" && {
+    local fn_body
+    fn_body=$(declare -f _email_send_smtp)
+    assert_contains "$fn_body" "Content-Disposition: attachment"
+    assert_contains "$fn_body" 'filename='
+  }
+
+  it "_email_send_smtp falls back to text/plain without attachment" && {
+    local fn_body
+    fn_body=$(declare -f _email_send_smtp)
+    # Should have the simple path with text/plain; charset=UTF-8
+    assert_contains "$fn_body" "text/plain; charset=UTF-8"
+  }
+
 test_end

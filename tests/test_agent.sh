@@ -1551,4 +1551,72 @@ describe "Richer milestone summaries"
     assert_ok $? "Must instruct summarizer to retain research data"
   }
 
+# ── Web Output Condenser ──────────────────────────────────────
+describe "Web output condenser in agent_inner_loop"
+
+  it "has web condenser logic for /web commands" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'Web Summary'
+    assert_ok $? "Must inject [Web Summary] prefix for condensed output"
+  }
+
+  it "condenser only triggers for /web commands" && {
+    body=$(declare -f agent_inner_loop)
+    # The condenser check should be gated on /web* and include condense_prompt
+    echo "$body" | grep -q 'cmd.*==.*/web'
+    assert_ok $? "Must gate condenser on /web commands"
+    echo "$body" | grep -q '_condense_prompt'
+    assert_ok $? "Must use _condense_prompt variable"
+  }
+
+  it "condenser only triggers for output > 300 chars" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    # Small outputs should pass through uncondensed
+    echo "$body" | grep -q '300'
+    assert_ok $? "Must have minimum length threshold"
+  }
+
+  it "condenser injects task context (micro_objective)" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'micro_objective'
+    assert_ok $? "Must include task objective for context-aware summarization"
+  }
+
+  it "condenser injects primary objective from macro_memory" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'primary_for_condense\|OVERALL GOAL'
+    assert_ok $? "Must inject primary objective for broader context"
+  }
+
+  it "condenser instructs LLM to flag junk data" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'JUNK'
+    assert_ok $? "Must instruct model to flag junk/paywall/empty content"
+  }
+
+  it "condenser uses llm_generate" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'llm_generate.*condense_prompt'
+    assert_ok $? "Must use llm_generate for condense call"
+  }
+
+  it "condenser strips think blocks from output" && {
+    body=$(declare -f agent_inner_loop)
+    # Should clean <think> blocks from condensed output  
+    echo "$body" | grep -q 'think.*_condensed\|_condensed.*think'
+    assert_ok $? "Must strip thinking artifacts from summary"
+  }
+
+  it "LLM_WEB_CONDENSE_TOKENS has default of 200" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'LLM_WEB_CONDENSE_TOKENS:-200'
+    assert_ok $? "Must default condense token budget to 200"
+  }
+
 test_end

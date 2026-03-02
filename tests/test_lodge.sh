@@ -878,4 +878,51 @@ describe "GPU layers command (/gpu)"
     assert_ok $? "/backend start should rely on --jinja, not template name mapping"
   }
 
+# ── Email attachment parser ────────────────────────────────────
+describe "Email send parser — attachment support"
+
+  it "_cmd_email normalizes file= to f=" && {
+    local body
+    body=$(declare -f _cmd_email)
+    echo "$body" | grep -q 'file=/f='
+    assert_ok $? "Must alias file= to f="
+  }
+
+  it "_cmd_email normalizes attach= to f=" && {
+    local body
+    body=$(declare -f _cmd_email)
+    echo "$body" | grep -q 'attach=/f='
+    assert_ok $? "Must alias attach= to f="
+  }
+
+  it "_cmd_email passes attachment to email_send" && {
+    local body
+    body=$(declare -f _cmd_email)
+    echo "$body" | grep -q 'email_send.*attachment'
+    assert_ok $? "Must pass attachment parameter to email_send"
+  }
+
+  it "_cmd_email help shows f= parameter" && {
+    local body
+    body=$(declare -f _cmd_email)
+    echo "$body" | grep -q 'f=file.txt\|f=.*\.md\|f=.*\.txt'
+    assert_ok $? "Help must mention f= parameter"
+  }
+
+  it "b= parser stops at f=" && {
+    local body
+    body=$(declare -f _cmd_email)
+    # Body parsing should strip f= to avoid including it in body text
+    echo "$body" | grep -q 'body.*f=\|%% f='
+    assert_ok $? "Body parser must stop at f= boundary"
+  }
+
+  it "s= parser stops at f=" && {
+    local body
+    body=$(declare -f _cmd_email)
+    # Subject parsing should also respect f= boundary
+    echo "$body" | grep -q 'f=.*subject\|subject.*f='
+    assert_ok $? "Subject parser must stop at f= boundary"
+  }
+
 test_end
