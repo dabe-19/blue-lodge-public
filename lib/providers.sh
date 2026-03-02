@@ -455,14 +455,14 @@ provider_status() {
         printf "  %b●%b %-15s configured\n" "$C_GREEN" "$C_RESET" "Serper"
         web_configured=$((web_configured + 1))
     else
-        printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "Serper"
+        printf "  %b○%b %-15s not configured  %b%s%b\n" "$C_DIM" "$C_RESET" "Serper" "$C_DIM" "SERPER_API_KEY" "$C_RESET"
     fi
 
     if api_get_key "PERPLEXITY_API_KEY" &>/dev/null; then
         printf "  %b●%b %-15s configured\n" "$C_GREEN" "$C_RESET" "Perplexity"
         web_configured=$((web_configured + 1))
     else
-        printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "Perplexity"
+        printf "  %b○%b %-15s not configured  %b%s%b\n" "$C_DIM" "$C_RESET" "Perplexity" "$C_DIM" "PERPLEXITY_API_KEY" "$C_RESET"
     fi
 
     printf "  %b●%b %-15s always available (no key needed)\n" "$C_GREEN" "$C_RESET" "DuckDuckGo"
@@ -497,7 +497,7 @@ provider_status() {
             printf "  %b●%b %-15s configured\n" "$C_GREEN" "$C_RESET" "$name"
             configured=$((configured + 1))
         else
-            printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "$name"
+            printf "  %b○%b %-15s not configured  %b%s%b\n" "$C_DIM" "$C_RESET" "$name" "$C_DIM" "$key" "$C_RESET"
         fi
     done
 

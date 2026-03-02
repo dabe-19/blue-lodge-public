@@ -1162,7 +1162,7 @@ social_status() {
         printf "  %b●%b %-15s configured\n" "$C_GREEN" "$C_RESET" "X"
         configured=$((configured + 1))
     else
-        printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "X"
+        printf "  %b○%b %-15s not configured  %b%s%b\n" "$C_DIM" "$C_RESET" "X" "$C_DIM" "X_BEARER_TOKEN" "$C_RESET"
     fi
 
     # Mastodon — check multi-instance registry directly via DB count
@@ -1177,7 +1177,7 @@ social_status() {
         printf "  %b●%b %-15s configured (legacy key)\n" "$C_GREEN" "$C_RESET" "MASTODON"
         configured=$((configured + 1))
     else
-        printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "MASTODON"
+        printf "  %b○%b %-15s not configured  %b%s%b\n" "$C_DIM" "$C_RESET" "MASTODON" "$C_DIM" "MASTODON_ACCESS_TOKEN" "$C_RESET"
     fi
 
     # Bluesky
@@ -1185,7 +1185,7 @@ social_status() {
         printf "  %b●%b %-15s configured\n" "$C_GREEN" "$C_RESET" "BLUESKY"
         configured=$((configured + 1))
     else
-        printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "BLUESKY"
+        printf "  %b○%b %-15s not configured  %b%s + %s%b\n" "$C_DIM" "$C_RESET" "BLUESKY" "$C_DIM" "BLUESKY_HANDLE" "BLUESKY_APP_PASSWORD" "$C_RESET"
     fi
 
     # Discord — query DB directly to avoid counting help text
@@ -1202,7 +1202,7 @@ social_status() {
         printf "  %b●%b %-15s configured (webhook)\n" "$C_GREEN" "$C_RESET" "DISCORD"
         configured=$((configured + 1))
     else
-        printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "DISCORD"
+        printf "  %b○%b %-15s not configured  %b%s%b\n" "$C_DIM" "$C_RESET" "DISCORD" "$C_DIM" "DISCORD_BOT_TOKEN or DISCORD_WEBHOOK_URL" "$C_RESET"
     fi
 
     # Telegram
@@ -1210,7 +1210,7 @@ social_status() {
         printf "  %b●%b %-15s configured\n" "$C_GREEN" "$C_RESET" "TELEGRAM"
         configured=$((configured + 1))
     else
-        printf "  %b○%b %-15s not configured\n" "$C_DIM" "$C_RESET" "TELEGRAM"
+        printf "  %b○%b %-15s not configured  %b%s + %s%b\n" "$C_DIM" "$C_RESET" "TELEGRAM" "$C_DIM" "TELEGRAM_BOT_TOKEN" "TELEGRAM_CHAT_ID" "$C_RESET"
     fi
 
     # Unified post toggle

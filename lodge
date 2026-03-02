@@ -1802,6 +1802,18 @@ _cmd_api() {
             ui_dim "  keys set K V  — Set an API key (value may contain spaces)"
             ui_dim "  keys rm K     — Remove an API key"
             ui_dim "  status        — Show integration status"
+            echo ""
+            ui_dim "  Key reference (set with: /api keys set KEY_NAME value):"
+            ui_dim "    Social:    X_BEARER_TOKEN  MASTODON_ACCESS_TOKEN"
+            ui_dim "               BLUESKY_HANDLE  BLUESKY_APP_PASSWORD"
+            ui_dim "               DISCORD_BOT_TOKEN  DISCORD_WEBHOOK_URL"
+            ui_dim "               DISCORD_DEFAULT_CHANNEL"
+            ui_dim "               TELEGRAM_BOT_TOKEN  TELEGRAM_CHAT_ID"
+            ui_dim "    Search:    SERPER_API_KEY  PERPLEXITY_API_KEY"
+            ui_dim "    Cloud AI:  OPENAI_API_KEY  ANTHROPIC_API_KEY  GOOGLE_AI_API_KEY"
+            ui_dim "               GROQ_API_KEY  MISTRAL_API_KEY  TOGETHER_API_KEY"
+            ui_dim "               COHERE_API_KEY  DEEPSEEK_API_KEY  XAI_API_KEY"
+            ui_dim "    Email:     EMAIL_PROVIDER  (then /email setup <provider>)"
             ;;
     esac
 }
