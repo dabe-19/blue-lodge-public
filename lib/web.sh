@@ -12,6 +12,79 @@ WEB_TIMEOUT="${WEB_TIMEOUT:-15}"
 WEB_MAX_SIZE="${WEB_MAX_SIZE:-2000000}"      # 2MB max HTML download
 WEB_MAX_SIZE_PDF="${WEB_MAX_SIZE_PDF:-10000000}"  # 10MB max PDF download
 WEB_CACHE_TTL="${WEB_CACHE_TTL:-3600}"     # Cache pages for 1 hour
+WEB_BLACKLIST_FILE="${WEB_BLACKLIST_FILE:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/web_blacklist.log}"
+
+# ── Blocked-site detection + blacklist ───────────────────────
+_web_block_reason() {
+    local status="$1"
+    local html="$2"
+    local lower_html
+    lower_html=$(printf '%s' "$html" | tr '[:upper:]' '[:lower:]')
+
+    # HTTP status based blocking / throttling / WAF signals
+    case "$status" in
+        401) echo "HTTP_401_UNAUTHORIZED"; return 0 ;;
+        403) echo "HTTP_403_FORBIDDEN"; return 0 ;;
+        407) echo "HTTP_407_PROXY_AUTH"; return 0 ;;
+        429) echo "HTTP_429_RATE_LIMIT"; return 0 ;;
+        451) echo "HTTP_451_LEGAL_RESTRICTED"; return 0 ;;
+        503) echo "HTTP_503_UNAVAILABLE"; return 0 ;;
+        520|521|522|523|525|530) echo "HTTP_${status}_EDGE_BLOCK"; return 0 ;;
+        999) echo "HTTP_999_PLATFORM_BLOCK"; return 0 ;;
+    esac
+
+    # HTML challenge/captcha/waf detection
+    if echo "$lower_html" | grep -qE 'captcha|cf-chl|challenge-platform|verify you are human|security check|request blocked|access denied|bot detection|cloudflare|incapsula|akamai'; then
+        echo "HTML_CHALLENGE_OR_CAPTCHA"
+        return 0
+    fi
+
+    return 1
+}
+
+_web_blacklist_contains() {
+    local url="$1"
+    local host
+    host=$(echo "$url" | sed 's|^https\?://||' | cut -d'/' -f1)
+
+    [ -f "$WEB_BLACKLIST_FILE" ] || return 1
+    grep -qE "\|url=${url//\//\\/}(\||$)|\|host=${host//\./\\.}(\||$)" "$WEB_BLACKLIST_FILE" 2>/dev/null
+}
+
+_web_blacklist_reason() {
+    local url="$1"
+    local host
+    host=$(echo "$url" | sed 's|^https\?://||' | cut -d'/' -f1)
+
+    [ -f "$WEB_BLACKLIST_FILE" ] || return 1
+
+    # Prefer exact URL match, fallback to host match
+    local line
+    line=$(grep "|url=$url|" "$WEB_BLACKLIST_FILE" 2>/dev/null | tail -1)
+    if [ -z "$line" ]; then
+        line=$(grep "|host=$host|" "$WEB_BLACKLIST_FILE" 2>/dev/null | tail -1)
+    fi
+    [ -z "$line" ] && return 1
+
+    echo "$line" | sed -n 's/.*|reason=\([^|]*\).*/\1/p'
+}
+
+_web_blacklist_add() {
+    local url="$1"
+    local reason="$2"
+    local status="$3"
+    local host
+    host=$(echo "$url" | sed 's|^https\?://||' | cut -d'/' -f1)
+
+    mkdir -p "$(dirname "$WEB_BLACKLIST_FILE")" 2>/dev/null
+
+    # Avoid duplicate entries for the same host+reason in the same file
+    if [ -f "$WEB_BLACKLIST_FILE" ] && grep -q "|host=$host|" "$WEB_BLACKLIST_FILE" 2>/dev/null && grep -q "|reason=$reason" "$WEB_BLACKLIST_FILE" 2>/dev/null; then
+        return 0
+    fi
+
+    printf '%s|url=%s|host=%s|status=%s|reason=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$url" "$host" "${status:-unknown}" "$reason" >> "$WEB_BLACKLIST_FILE"
+}
 
 # ── URL Sanitization ──────────────────────────────────────────
 # Whitelist-based URL cleaner. Strips control characters, validates
@@ -326,6 +399,28 @@ web_fetch_raw() {
         return 1
     fi
 
+    # Treat explicit HTTP errors as failures (curl -L still returns HTML body).
+    if [[ "$_status" =~ ^[0-9]+$ ]] && [ "$_status" -ge 400 ]; then
+        local _reason
+        _reason=$(_web_block_reason "$_status" "$html")
+        if [ -n "$_reason" ]; then
+            _web_blacklist_add "$url" "$_reason" "$_status"
+            echo "BLOCKED:${_reason}:${_status}" > "$_WEB_STATUS_FILE" 2>/dev/null
+        else
+            echo "$_status" > "$_WEB_STATUS_FILE" 2>/dev/null
+        fi
+        return 1
+    fi
+
+    # Some anti-bot pages return HTTP 200 with challenge HTML.
+    local _html_reason
+    _html_reason=$(_web_block_reason "${_status:-200}" "$html")
+    if [ -n "$_html_reason" ]; then
+        _web_blacklist_add "$url" "$_html_reason" "${_status:-200}"
+        echo "BLOCKED:${_html_reason}:${_status:-200}" > "$_WEB_STATUS_FILE" 2>/dev/null
+        return 1
+    fi
+
     echo "${_status:-200}" > "$_WEB_STATUS_FILE" 2>/dev/null
     echo "$html"
 }
@@ -434,11 +529,18 @@ _html_extract_content() {
 # ── Extract image URLs from HTML (content areas only) ──────────
 _html_extract_images() {
     local base_url="$1"
-    # Pull src/data-src/srcset from img tags
-    grep -oP '(?:src|data-src|srcset)="[^"]+"' | \
-        sed 's/^[^"]*"//;s/"$//' | \
-        sed 's/ [0-9]*[wx].*$//' | \
-        sort -u | \
+    local _preferred_img_exts='jpg|jpeg|png|gif|webp|bmp|svg|avif|tiff'
+    # Pull image URLs from:
+    #  1) <img src|data-src|srcset=...>
+    #  2) <meta property="og:image" content="..."> and twitter:image
+    #  3) <link rel="image_src" href="...">
+    # NOTE: keep common extensions (jpg/png/webp/gif...) in logic for quality,
+    # but do not hard-require them because many modern CDNs use extensionless URLs.
+    {
+        grep -oiP '<img[^>]*>' | grep -oP '(?:src|data-src|srcset)="[^"]+"' | sed 's/^[^"]*"//;s/"$//' | sed 's/ [0-9]*[wx].*$//'
+        grep -oiP '<meta[^>]+(og:image|twitter:image)[^>]*>' | grep -oP 'content="[^"]+"' | sed 's/^content="//;s/"$//'
+        grep -oiP '<link[^>]+rel="image_src"[^>]*>' | grep -oP 'href="[^"]+"' | sed 's/^href="//;s/"$//'
+    } | sort -u | \
     while IFS= read -r img_url; do
         [ -z "$img_url" ] && continue
         [[ "$img_url" == data:* ]] && continue
@@ -451,18 +553,30 @@ _html_extract_images() {
         elif [[ "$img_url" != http* ]]; then
             continue  # skip truly relative paths for safety
         fi
-        # Filter to common image extensions
-        if [[ "$img_url" =~ \.(jpg|jpeg|png|gif|webp|bmp|svg|avif|tiff)(\?|$) ]]; then
-            local safe_url
-            safe_url=$(_web_sanitize_url "$img_url")
-            [ -n "$safe_url" ] && echo "$safe_url"
+
+        # Keep image-like URLs; reject obvious non-image static assets.
+        if [[ "$img_url" =~ \.(css|js|map|woff2?|ttf|eot|json|xml)(\?|$) ]]; then
+            continue
         fi
+
+        # Prefer known image extensions (${_preferred_img_exts}),
+        # but allow extensionless URLs from image tags/meta cards.
+        local safe_url
+        safe_url=$(_web_sanitize_url "$img_url")
+        [ -n "$safe_url" ] && echo "$safe_url"
     done | head -20
 }
 
 # ── Fetch a URL and return clean text ─────────────────────────
 web_fetch() {
     local url="$1"
+
+    if _web_blacklist_contains "$url"; then
+        local _bl_reason
+        _bl_reason=$(_web_blacklist_reason "$url")
+        ui_err "URL is blacklisted from prior block/challenge: $url (reason: ${_bl_reason:-unknown})" >&2
+        return 1
+    fi
 
     # Check cache first
     local cache_key
@@ -484,12 +598,12 @@ web_fetch() {
 
     case "$ctype" in
         pdf)
-            ui_dim "Fetching PDF: $url"
+            ui_dim "Fetching PDF: $url" >&2
             local pdf_text
             pdf_text=$(_web_extract_pdf "$url")
             if [ -z "$pdf_text" ]; then
-                ui_err "Failed to extract PDF: $url"
-                ui_dim "  Hint: install poppler-utils for best results (apt install poppler-utils)"
+                ui_err "Failed to extract PDF: $url" >&2
+                ui_dim "  Hint: install poppler-utils for best results (apt install poppler-utils)" >&2
                 return 1
             fi
             mkdir -p "$GEORGE_CACHE_DIR"
@@ -498,11 +612,11 @@ web_fetch() {
             return 0
             ;;
         text)
-            ui_dim "Fetching text: $url"
+            ui_dim "Fetching text: $url" >&2
             local raw_text
             raw_text=$(_web_fetch_text "$url")
             if [ -z "$raw_text" ]; then
-                ui_err "Failed to fetch: $url"
+                ui_err "Failed to fetch: $url" >&2
                 return 1
             fi
             mkdir -p "$GEORGE_CACHE_DIR"
@@ -511,11 +625,11 @@ web_fetch() {
             return 0
             ;;
         json)
-            ui_dim "Fetching JSON: $url"
+            ui_dim "Fetching JSON: $url" >&2
             local json_text
             json_text=$(_web_fetch_json_raw "$url")
             if [ -z "$json_text" ]; then
-                ui_err "Failed to fetch: $url"
+                ui_err "Failed to fetch: $url" >&2
                 return 1
             fi
             mkdir -p "$GEORGE_CACHE_DIR"
@@ -524,11 +638,11 @@ web_fetch() {
             return 0
             ;;
         xml)
-            ui_dim "Fetching XML: $url"
+            ui_dim "Fetching XML: $url" >&2
             local xml_text
             xml_text=$(_web_extract_xml "$url")
             if [ -z "$xml_text" ]; then
-                ui_err "Failed to fetch: $url"
+                ui_err "Failed to fetch: $url" >&2
                 return 1
             fi
             mkdir -p "$GEORGE_CACHE_DIR"
@@ -537,26 +651,32 @@ web_fetch() {
             return 0
             ;;
         binary)
-            ui_err "Cannot extract text from binary file: $url"
+                ui_err "Cannot extract text from binary file: $url" >&2
             return 1
             ;;
     esac
 
     # Default: HTML path (original logic)
-    ui_dim "Fetching: $url"
+    ui_dim "Fetching: $url" >&2
     local html
     html=$(web_fetch_raw "$url")
     if [ -z "$html" ]; then
         local _reason="unknown"
         [ -f "$_WEB_STATUS_FILE" ] && _reason=$(cat "$_WEB_STATUS_FILE" 2>/dev/null)
         case "$_reason" in
-            DNS_FAIL)     ui_err "Failed to fetch: $url (DNS resolution failed — site may not exist)" ;;
-            CONN_REFUSED) ui_err "Failed to fetch: $url (connection refused)" ;;
-            TIMEOUT)      ui_err "Failed to fetch: $url (request timed out after ${WEB_TIMEOUT}s)" ;;
-            SSL_ERROR)    ui_err "Failed to fetch: $url (SSL/TLS error)" ;;
-            4[0-9][0-9])  ui_err "Failed to fetch: $url (HTTP $_reason)" ;;
-            5[0-9][0-9])  ui_err "Failed to fetch: $url (server error HTTP $_reason)" ;;
-            *)            ui_err "Failed to fetch: $url (status: $_reason)" ;;
+            BLOCKED:*)
+                local _b_reason _b_code
+                _b_reason=$(echo "$_reason" | cut -d':' -f2)
+                _b_code=$(echo "$_reason" | cut -d':' -f3)
+                ui_err "Blocked by target site: $url (reason: ${_b_reason:-unknown}, status: ${_b_code:-unknown})" >&2
+                ;;
+            DNS_FAIL)     ui_err "Failed to fetch: $url (DNS resolution failed — site may not exist)" >&2 ;;
+            CONN_REFUSED) ui_err "Failed to fetch: $url (connection refused)" >&2 ;;
+            TIMEOUT)      ui_err "Failed to fetch: $url (request timed out after ${WEB_TIMEOUT}s)" >&2 ;;
+            SSL_ERROR)    ui_err "Failed to fetch: $url (SSL/TLS error)" >&2 ;;
+            4[0-9][0-9])  ui_err "Failed to fetch: $url (HTTP $_reason)" >&2 ;;
+            5[0-9][0-9])  ui_err "Failed to fetch: $url (server error HTTP $_reason)" >&2 ;;
+            *)            ui_err "Failed to fetch: $url (status: $_reason)" >&2 ;;
         esac
         return 1
     fi
@@ -580,6 +700,19 @@ web_fetch_json() {
     local url="$1"
     local clean_url
     clean_url=$(_web_sanitize_url "$url")
+        if _web_blacklist_contains "$clean_url"; then
+            local _bl_reason
+            _bl_reason=$(_web_blacklist_reason "$clean_url")
+            jq -n \
+                --arg url "$clean_url" \
+                --arg title "" \
+                --arg content "" \
+                --arg reason "BLACKLISTED_${_bl_reason:-unknown}" \
+                --arg status "blacklist" \
+                '{"url":$url,"title":$title,"content":$content,"images":[],"blocked":true,"block_reason":$reason,"http_status":$status}'
+            return 0
+        fi
+
     if [ -z "$clean_url" ]; then
         ui_err "Invalid URL: $url"
         return 1
@@ -591,12 +724,12 @@ web_fetch_json() {
 
     case "$ctype" in
         pdf)
-            ui_dim "Fetching PDF (structured): $clean_url"
+            ui_dim "Fetching PDF (structured): $clean_url" >&2
             local pdf_text
             pdf_text=$(_web_extract_pdf "$clean_url")
             if [ -z "$pdf_text" ]; then
-                ui_err "Failed to extract PDF: $clean_url"
-                ui_dim "  Hint: install poppler-utils for best results (apt install poppler-utils)"
+                ui_err "Failed to extract PDF: $clean_url" >&2
+                ui_dim "  Hint: install poppler-utils for best results (apt install poppler-utils)" >&2
                 return 1
             fi
             # Return structured JSON with PDF content (no images/title from PDF)
@@ -611,11 +744,11 @@ web_fetch_json() {
             return 0
             ;;
         text)
-            ui_dim "Fetching text (structured): $clean_url"
+            ui_dim "Fetching text (structured): $clean_url" >&2
             local raw_text
             raw_text=$(_web_fetch_text "$clean_url")
             if [ -z "$raw_text" ]; then
-                ui_err "Failed to fetch: $clean_url"
+                ui_err "Failed to fetch: $clean_url" >&2
                 return 1
             fi
             jq -n \
@@ -626,11 +759,11 @@ web_fetch_json() {
             return 0
             ;;
         json)
-            ui_dim "Fetching JSON (structured): $clean_url"
+            ui_dim "Fetching JSON (structured): $clean_url" >&2
             local json_text
             json_text=$(_web_fetch_json_raw "$clean_url")
             if [ -z "$json_text" ]; then
-                ui_err "Failed to fetch: $clean_url"
+                ui_err "Failed to fetch: $clean_url" >&2
                 return 1
             fi
             jq -n \
@@ -641,11 +774,11 @@ web_fetch_json() {
             return 0
             ;;
         xml)
-            ui_dim "Fetching XML (structured): $clean_url"
+            ui_dim "Fetching XML (structured): $clean_url" >&2
             local xml_text
             xml_text=$(_web_extract_xml "$clean_url")
             if [ -z "$xml_text" ]; then
-                ui_err "Failed to fetch: $clean_url"
+                ui_err "Failed to fetch: $clean_url" >&2
                 return 1
             fi
             jq -n \
@@ -656,26 +789,40 @@ web_fetch_json() {
             return 0
             ;;
         binary)
-            ui_err "Cannot extract text from binary file: $clean_url"
+                ui_err "Cannot extract text from binary file: $clean_url" >&2
             return 1
             ;;
     esac
 
     # Default: HTML path (original logic)
-    ui_dim "Fetching (structured): $clean_url"
+    ui_dim "Fetching (structured): $clean_url" >&2
     local html
     html=$(web_fetch_raw "$clean_url")
     if [ -z "$html" ]; then
         local _reason="unknown"
         [ -f "$_WEB_STATUS_FILE" ] && _reason=$(cat "$_WEB_STATUS_FILE" 2>/dev/null)
         case "$_reason" in
-            DNS_FAIL)     ui_err "Failed to fetch: $clean_url (DNS resolution failed — site may not exist)" ;;
-            CONN_REFUSED) ui_err "Failed to fetch: $clean_url (connection refused)" ;;
-            TIMEOUT)      ui_err "Failed to fetch: $clean_url (request timed out after ${WEB_TIMEOUT}s)" ;;
-            SSL_ERROR)    ui_err "Failed to fetch: $clean_url (SSL/TLS error)" ;;
-            4[0-9][0-9])  ui_err "Failed to fetch: $clean_url (HTTP $_reason)" ;;
-            5[0-9][0-9])  ui_err "Failed to fetch: $clean_url (server error HTTP $_reason)" ;;
-            *)            ui_err "Failed to fetch: $clean_url (status: $_reason)" ;;
+            BLOCKED:*)
+                local _b_reason _b_code
+                _b_reason=$(echo "$_reason" | cut -d':' -f2)
+                _b_code=$(echo "$_reason" | cut -d':' -f3)
+                # Keep output machine-readable for /web scrape-images callers.
+                jq -n \
+                    --arg url "$clean_url" \
+                    --arg title "" \
+                    --arg content "" \
+                    --arg reason "${_b_reason:-unknown}" \
+                    --arg status "${_b_code:-unknown}" \
+                    '{"url":$url,"title":$title,"content":$content,"images":[],"blocked":true,"block_reason":$reason,"http_status":$status}'
+                return 0
+                ;;
+            DNS_FAIL)     ui_err "Failed to fetch: $clean_url (DNS resolution failed — site may not exist)" >&2 ;;
+            CONN_REFUSED) ui_err "Failed to fetch: $clean_url (connection refused)" >&2 ;;
+            TIMEOUT)      ui_err "Failed to fetch: $clean_url (request timed out after ${WEB_TIMEOUT}s)" >&2 ;;
+            SSL_ERROR)    ui_err "Failed to fetch: $clean_url (SSL/TLS error)" >&2 ;;
+            4[0-9][0-9])  ui_err "Failed to fetch: $clean_url (HTTP $_reason)" >&2 ;;
+            5[0-9][0-9])  ui_err "Failed to fetch: $clean_url (server error HTTP $_reason)" >&2 ;;
+            *)            ui_err "Failed to fetch: $clean_url (status: $_reason)" >&2 ;;
         esac
         return 1
     fi
@@ -769,11 +916,37 @@ web_scrape_images() {
         return 1
     fi
 
+    # Guard: ensure stdout from web_fetch_json is parseable JSON.
+    if ! echo "$json_result" | jq -e '.' >/dev/null 2>&1; then
+        ui_err "web_scrape_images produced invalid JSON for: $clean_url"
+        return 1
+    fi
+
     # Display human-readable summary to stderr (keep stdout clean for agent)
-    local title img_count content_lines
+    local title img_count content_lines is_blocked block_reason http_status
     title=$(echo "$json_result" | jq -r '.title // "Untitled"' 2>/dev/null)
     img_count=$(echo "$json_result" | jq -r '.images | length' 2>/dev/null)
-    content_lines=$(echo "$json_result" | jq -r '.content' 2>/dev/null | wc -l)
+    is_blocked=$(echo "$json_result" | jq -r '.blocked // false' 2>/dev/null)
+    block_reason=$(echo "$json_result" | jq -r '.block_reason // ""' 2>/dev/null)
+    http_status=$(echo "$json_result" | jq -r '.http_status // ""' 2>/dev/null)
+
+    if [ "$is_blocked" = "true" ]; then
+        ui_warn "Site blocked scraping (reason: ${block_reason:-unknown}, status: ${http_status:-unknown})" >&2
+    fi
+
+    content_lines=$(echo "$json_result" | jq -r '.content // ""' 2>/dev/null | awk 'NF{c++} END{print c+0}')
+
+    # Naive fallback: if scrape returns no content lines, switch to /web fetch
+    # style extraction for the same URL and inject that text into JSON.
+    if [ "$is_blocked" != "true" ] && [ "${content_lines:-0}" -eq 0 ]; then
+        ui_warn "scrape-images returned 0 content lines; falling back to fetch" >&2
+        local fetched_text
+        fetched_text=$(web_fetch "$clean_url" 2>/dev/null)
+        if [ -n "$fetched_text" ]; then
+            json_result=$(echo "$json_result" | jq --arg content "$fetched_text" '.content = $content' 2>/dev/null)
+            content_lines=$(echo "$json_result" | jq -r '.content // ""' 2>/dev/null | awk 'NF{c++} END{print c+0}')
+        fi
+    fi
 
     ui_ok "Scraped: $title" >&2
     ui_dim "  Content: ~${content_lines} lines | Images: ${img_count}" >&2

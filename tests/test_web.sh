@@ -92,6 +92,26 @@ describe "web_fetch_raw"
     _teardown_web
   }
 
+  it "includes HTTP block status handling" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f _web_block_reason)
+    assert_contains "$fn_body" "429"
+    assert_contains "$fn_body" "451"
+    assert_contains "$fn_body" "999"
+    assert_contains "$fn_body" "captcha"
+    _teardown_web
+  }
+
+  it "logs blocked sites to blacklist" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_fetch_raw)
+    assert_contains "$fn_body" "_web_blacklist_add"
+    assert_contains "$fn_body" "BLOCKED:"
+    _teardown_web
+  }
+
 # ── web_fetch (with caching) ──────────────────────────────────
 describe "web_fetch"
 
@@ -673,6 +693,38 @@ describe "web_scrape_images"
     local fn_body
     fn_body=$(declare -f web_scrape_images)
     assert_contains "$fn_body" "_web_journal_results"
+    _teardown_web
+  }
+
+  it "surfaces blocked metadata from structured JSON" && {
+    _setup_web
+    local fn_body
+    fn_body=$(declare -f web_scrape_images)
+    assert_contains "$fn_body" "block_reason"
+    assert_contains "$fn_body" "http_status"
+    assert_contains "$fn_body" "Site blocked scraping"
+    _teardown_web
+  }
+
+describe "web blacklist helpers"
+
+  it "blacklist helper functions are defined" && {
+    _setup_web
+    declare -f _web_blacklist_contains &>/dev/null
+    assert_ok $?
+    declare -f _web_blacklist_add &>/dev/null
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "writes blacklist entry with host and reason" && {
+    _setup_web
+    _web_blacklist_add "https://example.com/path" "HTTP_429_RATE_LIMIT" "429"
+    assert_file_exists "$WEB_BLACKLIST_FILE"
+    local content
+    content=$(cat "$WEB_BLACKLIST_FILE")
+    assert_contains "$content" "host=example.com"
+    assert_contains "$content" "reason=HTTP_429_RATE_LIMIT"
     _teardown_web
   }
 
