@@ -10,7 +10,7 @@ source "$(dirname "$0")/framework.sh"
 source "$LODGE_DIR/lib/ui.sh"
 source "$LODGE_DIR/lib/models.sh"
 
-test_start "lib/models.sh — Ollama Dir Resolution & Native Linux Paths"
+test_start "lib/models.sh — Ollama Dir Resolution & Native Linux Paths + Model Families"
 
 # ── Helper: create mock Ollama directory structure ─────────────
 # Creates a fake Ollama model store with manifest + blob for testing.
@@ -395,6 +395,414 @@ describe "Cross-file consistency"
     _template_path=$(declare -f _models_find_ollama_template | grep -o '/usr/share/ollama/[^"]*' | head -1)
     assert_eq "$_gguf_path" "$_mmproj_path" "gguf and mmproj must use same path"
     assert_eq "$_gguf_path" "$_template_path" "gguf and template must use same path"
+  }
+
+# ════════════════════════════════════════════════════════════════
+# Model Registry — New Families (Gemma 3, Qwen 3.5, Phi-4)
+# ════════════════════════════════════════════════════════════════
+describe "Model Registry — Gemma 3 entries"
+
+  it "gemma3-4b-inst is registered" && {
+    _entry=$(_models_lookup "gemma3-4b-inst")
+    assert_not_empty "$_entry"
+  }
+
+  it "gemma3-4b-inst has correct base image" && {
+    _entry=$(_models_lookup "gemma3-4b-inst")
+    _models_parse_entry "$_entry"
+    echo "$_ME_BASE" | grep -q "gemma-3-4b-it-qat-GGUF"
+    assert_ok $?
+  }
+
+  it "gemma3-4b-inst is instruct role" && {
+    _entry=$(_models_lookup "gemma3-4b-inst")
+    _models_parse_entry "$_entry"
+    assert_eq "$_ME_ROLE" "instruct"
+  }
+
+  it "gemma3-4b-inst has <end_of_turn> stop token" && {
+    _entry=$(_models_lookup "gemma3-4b-inst")
+    _models_parse_entry "$_entry"
+    assert_eq "$_ME_STOP" "<end_of_turn>"
+  }
+
+  it "gemma3-1b-inst is registered" && {
+    _entry=$(_models_lookup "gemma3-1b-inst")
+    assert_not_empty "$_entry"
+  }
+
+  it "gemma3-1b-inst has BF16 quant" && {
+    _entry=$(_models_lookup "gemma3-1b-inst")
+    _models_parse_entry "$_entry"
+    echo "$_ME_BASE" | grep -q "BF16"
+    assert_ok $?
+  }
+
+describe "Model Registry — Qwen 3.5 entries"
+
+  it "qwen35-2b is registered" && {
+    _entry=$(_models_lookup "qwen35-2b")
+    assert_not_empty "$_entry"
+  }
+
+  it "qwen35-2b has correct base image" && {
+    _entry=$(_models_lookup "qwen35-2b")
+    _models_parse_entry "$_entry"
+    echo "$_ME_BASE" | grep -q "Qwen3.5-2B-GGUF:UD-Q8_K_XL"
+    assert_ok $?
+  }
+
+  it "qwen35-2b is instruct with no thinking" && {
+    _entry=$(_models_lookup "qwen35-2b")
+    _models_parse_entry "$_entry"
+    assert_eq "$_ME_ROLE" "instruct"
+    assert_eq "$_ME_THINKS" "0"
+  }
+
+  it "qwen35-2b-q8 uses Q8_0 quant" && {
+    _entry=$(_models_lookup "qwen35-2b-q8")
+    _models_parse_entry "$_entry"
+    echo "$_ME_BASE" | grep -q ":Q8_0"
+    assert_ok $?
+  }
+
+  it "qwen35-4b is registered" && {
+    _entry=$(_models_lookup "qwen35-4b")
+    assert_not_empty "$_entry"
+  }
+
+  it "qwen35-2b-think has thinking enabled" && {
+    _entry=$(_models_lookup "qwen35-2b-think")
+    _models_parse_entry "$_entry"
+    assert_eq "$_ME_ROLE" "thinking"
+    assert_eq "$_ME_THINKS" "1"
+    assert_eq "$_ME_NOTHINK" "qwen"
+  }
+
+  it "qwen35-4b-think has thinking enabled" && {
+    _entry=$(_models_lookup "qwen35-4b-think")
+    _models_parse_entry "$_entry"
+    assert_eq "$_ME_ROLE" "thinking"
+    assert_eq "$_ME_THINKS" "1"
+  }
+
+  it "qwen35 instruct and thinking share same base GGUF" && {
+    _entry_inst=$(_models_lookup "qwen35-2b")
+    _models_parse_entry "$_entry_inst"
+    _base_inst="$_ME_BASE"
+    _entry_think=$(_models_lookup "qwen35-2b-think")
+    _models_parse_entry "$_entry_think"
+    _base_think="$_ME_BASE"
+    assert_eq "$_base_inst" "$_base_think" "Same GGUF, different configs"
+  }
+
+  it "all qwen35 entries use <|im_end|> stop token" && {
+    for _key in qwen35-2b qwen35-2b-q8 qwen35-4b qwen35-2b-think qwen35-4b-think; do
+      _entry=$(_models_lookup "$_key")
+      _models_parse_entry "$_entry"
+      assert_eq "$_ME_STOP" '<|im_end|>' "qwen35 stop token for $_key"
+    done
+  }
+
+describe "Model Registry — Phi-4 entries"
+
+  it "phi4-inst is registered" && {
+    _entry=$(_models_lookup "phi4-inst")
+    assert_not_empty "$_entry"
+  }
+
+  it "phi4-inst has Q5_K_M quant" && {
+    _entry=$(_models_lookup "phi4-inst")
+    _models_parse_entry "$_entry"
+    echo "$_ME_BASE" | grep -q "Q5_K_M"
+    assert_ok $?
+  }
+
+  it "phi4-inst is instruct with no thinking" && {
+    _entry=$(_models_lookup "phi4-inst")
+    _models_parse_entry "$_entry"
+    assert_eq "$_ME_ROLE" "instruct"
+    assert_eq "$_ME_THINKS" "0"
+  }
+
+  it "phi4-reason is registered" && {
+    _entry=$(_models_lookup "phi4-reason")
+    assert_not_empty "$_entry"
+  }
+
+  it "phi4-reason has thinking via system prompt" && {
+    _entry=$(_models_lookup "phi4-reason")
+    _models_parse_entry "$_entry"
+    assert_eq "$_ME_ROLE" "thinking"
+    assert_eq "$_ME_THINKS" "1"
+    assert_eq "$_ME_NOTHINK" "system"
+  }
+
+  it "phi4-reason has <|end|> stop token" && {
+    _entry=$(_models_lookup "phi4-reason")
+    _models_parse_entry "$_entry"
+    assert_eq "$_ME_STOP" '<|end|>'
+  }
+
+  it "phi4-reason uses higher temperature for exploration" && {
+    _entry=$(_models_lookup "phi4-reason")
+    _models_parse_entry "$_entry"
+    # Should be 0.8 per Microsoft recommendation
+    assert_eq "$_ME_TEMP" "0.8"
+  }
+
+# ════════════════════════════════════════════════════════════════
+# Model Families — new definitions
+# ════════════════════════════════════════════════════════════════
+describe "Model Families — new definitions"
+
+  it "gemma family is defined" && {
+    _fam=$(_models_family_lookup "gemma")
+    assert_not_empty "$_fam"
+  }
+
+  it "gemma family contains gemma3-4b-inst and gemma3-1b-inst" && {
+    _fam=$(_models_family_lookup "gemma")
+    _keys=$(_models_family_keys "$_fam")
+    echo "$_keys" | grep -q "gemma3-4b-inst"
+    assert_ok $? "Must contain gemma3-4b-inst"
+    echo "$_keys" | grep -q "gemma3-1b-inst"
+    assert_ok $? "Must contain gemma3-1b-inst"
+  }
+
+  it "qwen35 family is defined" && {
+    _fam=$(_models_family_lookup "qwen35")
+    assert_not_empty "$_fam"
+  }
+
+  it "qwen35 family contains instruct and thinking variants" && {
+    _fam=$(_models_family_lookup "qwen35")
+    _keys=$(_models_family_keys "$_fam")
+    echo "$_keys" | grep -q "qwen35-2b"
+    assert_ok $? "Must contain qwen35-2b"
+    echo "$_keys" | grep -q "qwen35-4b"
+    assert_ok $? "Must contain qwen35-4b"
+    echo "$_keys" | grep -q "qwen35-2b-think"
+    assert_ok $? "Must contain qwen35-2b-think"
+    echo "$_keys" | grep -q "qwen35-4b-think"
+    assert_ok $? "Must contain qwen35-4b-think"
+  }
+
+  it "phi4 family is defined" && {
+    _fam=$(_models_family_lookup "phi4")
+    assert_not_empty "$_fam"
+  }
+
+  it "phi4 family contains phi4-inst and phi4-reason" && {
+    _fam=$(_models_family_lookup "phi4")
+    _keys=$(_models_family_keys "$_fam")
+    echo "$_keys" | grep -q "phi4-inst"
+    assert_ok $? "Must contain phi4-inst"
+    echo "$_keys" | grep -q "phi4-reason"
+    assert_ok $? "Must contain phi4-reason"
+  }
+
+  it "total family count is 7" && {
+    _count=$(models_family_list | wc -l)
+    assert_eq "$_count" "7" "Should have 7 families: qwen, llama, granite, ministral, gemma, qwen35, phi4"
+  }
+
+# ════════════════════════════════════════════════════════════════
+# Chat Template Mapping — new models
+# ════════════════════════════════════════════════════════════════
+describe "Chat Template Mapping — new models"
+
+  it "gemma3 maps to 'gemma' template" && {
+    _entry=$(_models_lookup "gemma3-4b-inst")
+    _models_parse_entry "$_entry"
+    _tmpl=$(_models_chat_template_name "$_ME_BASE")
+    assert_eq "$_tmpl" "gemma"
+  }
+
+  it "qwen35 maps to 'chatml' template" && {
+    _entry=$(_models_lookup "qwen35-2b")
+    _models_parse_entry "$_entry"
+    _tmpl=$(_models_chat_template_name "$_ME_BASE")
+    assert_eq "$_tmpl" "chatml"
+  }
+
+  it "qwen35 thinking variant maps to 'chatml' template" && {
+    _entry=$(_models_lookup "qwen35-4b-think")
+    _models_parse_entry "$_entry"
+    _tmpl=$(_models_chat_template_name "$_ME_BASE")
+    assert_eq "$_tmpl" "chatml"
+  }
+
+  it "phi4-inst maps to 'phi4' template" && {
+    _entry=$(_models_lookup "phi4-inst")
+    _models_parse_entry "$_entry"
+    _tmpl=$(_models_chat_template_name "$_ME_BASE")
+    assert_eq "$_tmpl" "phi4"
+  }
+
+  it "phi4-reason maps to 'phi4' template" && {
+    _entry=$(_models_lookup "phi4-reason")
+    _models_parse_entry "$_entry"
+    _tmpl=$(_models_chat_template_name "$_ME_BASE")
+    assert_eq "$_tmpl" "phi4"
+  }
+
+# ════════════════════════════════════════════════════════════════
+# Vision Support — new models
+# ════════════════════════════════════════════════════════════════
+describe "Vision Support — new models"
+
+  it "gemma3-4b-inst has vision support" && {
+    models_has_vision "blue-lodge-gemma3-inst:4b"
+    assert_ok $?
+  }
+
+  it "gemma3-1b-inst does NOT have vision support" && {
+    models_has_vision "blue-lodge-gemma3-inst:1b"
+    _rc=$?
+    assert_fail $_rc "1B model should not have vision"
+  }
+
+  it "phi4-inst does NOT have vision support" && {
+    models_has_vision "blue-lodge-phi4-inst:4b"
+    _rc=$?
+    assert_fail $_rc "Phi-4 mini is text-only"
+  }
+
+  it "minist-inst still has vision support" && {
+    models_has_vision "blue-lodge-minist-inst:4b"
+    assert_ok $?
+  }
+
+# ════════════════════════════════════════════════════════════════
+# Think Flag Support — new models
+# ════════════════════════════════════════════════════════════════
+describe "Think Flag Support — new models"
+
+  it "qwen35-think supports think flag" && {
+    models_supports_think_flag "blue-lodge-qwen35-think:2b"
+    assert_ok $?
+  }
+
+  it "qwen35-think:4b supports think flag" && {
+    models_supports_think_flag "blue-lodge-qwen35-think:4b"
+    assert_ok $?
+  }
+
+  it "qwen35 instruct does NOT support think flag" && {
+    models_supports_think_flag "blue-lodge-qwen35:2b"
+    _rc=$?
+    assert_fail $_rc "Instruct Qwen 3.5 should not support think flag"
+  }
+
+  it "phi4-reason does NOT support think flag (system-prompt method)" && {
+    models_supports_think_flag "blue-lodge-phi4-reason:4b"
+    _rc=$?
+    assert_fail $_rc "Phi-4 reasoning uses system prompt, not think:true"
+  }
+
+  it "phi4-inst does NOT support think flag" && {
+    models_supports_think_flag "blue-lodge-phi4-inst:4b"
+    _rc=$?
+    assert_fail $_rc
+  }
+
+  it "qwen3-think still supports think flag" && {
+    models_supports_think_flag "blue-lodge-qwen3-think:4b"
+    assert_ok $?
+  }
+
+# ════════════════════════════════════════════════════════════════
+# Thinking Directive — new models
+# ════════════════════════════════════════════════════════════════
+describe "Thinking Directive — Qwen 3.5 excluded"
+
+  it "qwen35 thinking variants return no directive (template-native)" && {
+    # Qwen 3.5 uses ChatML template with enable_thinking — no system prompt injection needed
+    _directive=$(LODGE_NOTHINK=0 models_thinking_directive "blue-lodge-qwen35-think:2b")
+    assert_empty "$_directive" "Qwen 3.5 should return empty directive (template handles thinking)"
+  }
+
+describe "Thinking Directive — Phi-4 reasoning"
+
+  it "phi4-reason returns thinking directive with George personality" && {
+    _directive=$(LODGE_NOTHINK=0 models_thinking_directive "blue-lodge-phi4-reason:4b")
+    echo "$_directive" | grep -q '<think>'
+    assert_ok $? "Must include <think> tags instruction"
+    echo "$_directive" | grep -q 'George'
+    assert_ok $? "Must include George personality"
+  }
+
+# ════════════════════════════════════════════════════════════════
+# Nothink Method — new models
+# ════════════════════════════════════════════════════════════════
+describe "Nothink Method — new models"
+
+  it "qwen35-2b-think uses qwen nothink method" && {
+    _method=$(models_nothink_method "blue-lodge-qwen35-think:2b")
+    assert_eq "$_method" "qwen"
+  }
+
+  it "phi4-reason uses system nothink method" && {
+    _method=$(models_nothink_method "blue-lodge-phi4-reason:4b")
+    assert_eq "$_method" "system"
+  }
+
+  it "gemma3-4b-inst uses none nothink method" && {
+    _method=$(models_nothink_method "blue-lodge-gemma3-inst:4b")
+    assert_eq "$_method" "none"
+  }
+
+# ════════════════════════════════════════════════════════════════
+# install.sh — Qwen3 family creation fix
+# ════════════════════════════════════════════════════════════════
+describe "install.sh — Qwen3 family creation"
+
+  it "install.sh creates qwen family when _need_qwen=1" && {
+    grep -q 'models_create_family "qwen"' "$LODGE_DIR/install.sh"
+    assert_ok $? "install.sh must call models_create_family for qwen"
+  }
+
+  it "install.sh uses _need_qwen variable to gate creation" && {
+    grep -q '_need_qwen.*-eq 1' "$LODGE_DIR/install.sh"
+    assert_ok $? "Must check _need_qwen before creating"
+  }
+
+  it "install.sh excludes ministral from extra_missing" && {
+    # ministral is a default family, should not appear in the extra download prompt
+    _block=$(sed -n '/_extra_missing/,/^fi$/p' "$LODGE_DIR/install.sh")
+    echo "$_block" | grep -q '"ministral".*continue'
+    assert_ok $? "Must exclude ministral from extra_missing"
+  }
+
+# ════════════════════════════════════════════════════════════════
+# System prompt files — new models
+# ════════════════════════════════════════════════════════════════
+describe "System prompt files — new models"
+
+  it "phi4-reason.system exists" && {
+    [ -f "$LODGE_DIR/models/phi4-reason.system" ]
+    assert_ok $?
+  }
+
+  it "phi4-reason.system contains thinking instruction" && {
+    grep -q '<think>' "$LODGE_DIR/models/phi4-reason.system"
+    assert_ok $?
+  }
+
+  it "qwen35-2b-think.system exists" && {
+    [ -f "$LODGE_DIR/models/qwen35-2b-think.system" ]
+    assert_ok $?
+  }
+
+  it "qwen35-4b-think.system exists" && {
+    [ -f "$LODGE_DIR/models/qwen35-4b-think.system" ]
+    assert_ok $?
+  }
+
+  it "default.system exists as fallback" && {
+    [ -f "$LODGE_DIR/models/default.system" ]
+    assert_ok $?
   }
 
 test_end

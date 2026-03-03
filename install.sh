@@ -285,14 +285,17 @@ if printf '%s\n' "${_install_missing_families[@]}" "${_install_partial_families[
     _need_qwen=1
 fi
 
-# If there are non-Qwen families missing, offer to download them
+# If there are non-default families missing, offer to download them
+# Default families (qwen, ministral) are handled separately below.
 _extra_missing=()
 for _fm in "${_install_missing_families[@]}"; do
     [ "$_fm" = "qwen" ] && continue
+    [ "$_fm" = "ministral" ] && continue
     _extra_missing+=("$_fm")
 done
 for _fm in "${_install_partial_families[@]}"; do
     [ "$_fm" = "qwen" ] && continue
+    [ "$_fm" = "ministral" ] && continue
     _extra_missing+=("$_fm")
 done
 
@@ -307,7 +310,7 @@ if [ ${#_extra_missing[@]} -gt 0 ]; then
     done
     echo ""
     printf " Would you like to download additional model families?\n"
-    printf " ${DIM}Enter family names separated by spaces, or press Enter for Qwen only.${RESET}\n"
+    printf " ${DIM}Enter family names separated by spaces, or press Enter to skip.${RESET}\n"
     printf " ${DIM}Enter 'all' to download everything (~3GB per family).${RESET}\n"
     printf " ${YELLOW}→${RESET} "
     read -r _user_families
@@ -336,6 +339,17 @@ if [ ${#_extra_missing[@]} -gt 0 ]; then
                 warn "$_fam family had errors — some models may be missing"
             fi
         done
+    fi
+fi
+
+# Always ensure the Qwen default family exists
+if [ "$_need_qwen" -eq 1 ]; then
+    echo ""
+    info "Ensuring default Qwen family is ready..."
+    if models_create_family "qwen"; then
+        ok "Qwen family ready"
+    else
+        warn "Qwen family had errors — some models may be missing"
     fi
 fi
 
