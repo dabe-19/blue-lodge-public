@@ -335,39 +335,54 @@ if [ ${#_extra_missing[@]} -gt 0 ]; then
 fi
 
 
-# Always ensure Ministral default models exist (required for George to start)
+# ── Default model: Ministral 3 Instruct ──────────────────────
+# Ministral 3 Instruct is the default model for George. Both the primary
+# and secondary model slots point to it out of the box. If it is already
+# installed we skip ahead; otherwise we ask the user before downloading.
 echo ""
-info "Ensuring default Ministral models are ready..."
-
+_minist_installed=0
 if ollama list 2>/dev/null | grep -q "$LODGE_MODEL_PRIMARY"; then
-    ok "Primary model '$LODGE_MODEL_PRIMARY' already exists"
-else
-    # When both slots point to the same model (single-model mode),
-    # create from instruct base only — instruct handles both roles.
-    if [ "$LODGE_MODEL_PRIMARY" = "$LODGE_MODEL_SECONDARY" ]; then
-        info "Creating model: $LODGE_MODEL_PRIMARY (first run downloads ~3GB)..."
-        _mf=$(models_generate_modelfile "minist-inst")
-        ollama create "$LODGE_MODEL_PRIMARY" -f "$_mf"
-        ok "Model created (single-model instruct mode)"
-    else
-        info "Creating primary model: $LODGE_MODEL_PRIMARY (first run downloads ~3GB)..."
-        _mf=$(models_generate_modelfile "minist-think")
-        ollama create "$LODGE_MODEL_PRIMARY" -f "$_mf"
-        ok "Primary model created"
-    fi
+    ok "Default model '$LODGE_MODEL_PRIMARY' already installed"
+    _minist_installed=1
 fi
 
-if [ "$LODGE_MODEL_PRIMARY" != "$LODGE_MODEL_SECONDARY" ]; then
-    if ollama list 2>/dev/null | grep -q "$LODGE_MODEL_SECONDARY"; then
-        ok "Secondary model '$LODGE_MODEL_SECONDARY' already exists"
+if [ "$LODGE_MODEL_PRIMARY" != "$LODGE_MODEL_SECONDARY" ] \
+   && ollama list 2>/dev/null | grep -q "$LODGE_MODEL_SECONDARY"; then
+    ok "Secondary model '$LODGE_MODEL_SECONDARY' already installed"
+elif [ "$LODGE_MODEL_PRIMARY" = "$LODGE_MODEL_SECONDARY" ] && [ "$_minist_installed" -eq 1 ]; then
+    true  # single-model mode, already reported above
+fi
+
+if [ "$_minist_installed" -eq 0 ]; then
+    echo ""
+    printf " ${BOLD}Ministral 3 Instruct${RESET} is configured as the default model for George.\n"
+    printf " ${DIM}It is a small (~3 GB) general-purpose model that works well out of the box.${RESET}\n"
+    printf " ${DIM}You can change the default later in lodge.conf.${RESET}\n"
+    echo ""
+    printf " Install the default model now? ${DIM}[Y/n]${RESET} "
+    read -r _install_default
+
+    if [ -z "$_install_default" ] || [[ "$_install_default" =~ ^[Yy] ]]; then
+        if [ "$LODGE_MODEL_PRIMARY" = "$LODGE_MODEL_SECONDARY" ]; then
+            info "Creating model: $LODGE_MODEL_PRIMARY (first run downloads ~3 GB)..."
+            _mf=$(models_generate_modelfile "minist-inst")
+            ollama create "$LODGE_MODEL_PRIMARY" -f "$_mf"
+            ok "Default model created"
+        else
+            info "Creating primary model: $LODGE_MODEL_PRIMARY (first run downloads ~3 GB)..."
+            _mf=$(models_generate_modelfile "minist-think")
+            ollama create "$LODGE_MODEL_PRIMARY" -f "$_mf"
+            ok "Primary model created"
+
+            info "Creating secondary model: $LODGE_MODEL_SECONDARY..."
+            _mf=$(models_generate_modelfile "minist-inst")
+            ollama create "$LODGE_MODEL_SECONDARY" -f "$_mf"
+            ok "Secondary model created"
+        fi
+        _minist_installed=1
     else
-        info "Creating secondary model: $LODGE_MODEL_SECONDARY"
-        _mf=$(models_generate_modelfile "minist-inst")
-        ollama create "$LODGE_MODEL_SECONDARY" -f "$_mf"
-        ok "Secondary model created"
+        warn "Skipped default model — George will not work until a model is configured"
     fi
-else
-    ok "Secondary model matches primary (single-model mode)"
 fi
 
 # ── 5. Quick model test ─────────────────────────────────────
@@ -375,6 +390,9 @@ fi
 # take 30-60s on ARM with a cold cache). Then test responsiveness with a
 # trivial prompt. Separating the two prevents the weight-load time from
 # eating into the response timeout.
+if [ "$_minist_installed" -eq 0 ]; then
+    warn "Skipping model test — no default model installed"
+else
 info "Loading model into memory (first time may take 30-60s)..."
 # Phase 1: Preload weights. The /api/generate endpoint with an empty prompt
 # and keep_alive loads the model without generating anything.
@@ -415,6 +433,7 @@ if [ "$_MODEL_OK" -eq 1 ]; then
 else
     warn "Model slow or unresponsive. It may need a warm-up on first run."
 fi
+fi  # end _minist_installed check
 
 # ── 6. Make lodge executable ─────────────────────────────────
 chmod +x "$LODGE_DIR/lodge"

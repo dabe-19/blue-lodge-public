@@ -777,6 +777,21 @@ describe "install.sh — family list handling"
     assert_ok $? "No _need_qwen variable — qwen is offered in the normal family list"
   }
 
+  it "install.sh prompts before installing default Ministral model" && {
+    grep -q 'Install the default model now?' "$LODGE_DIR/install.sh"
+    assert_ok $? "Must ask user before installing Ministral"
+  }
+
+  it "install.sh tells user Ministral is the configured default" && {
+    grep -q 'configured as the default model' "$LODGE_DIR/install.sh"
+    assert_ok $? "Must inform user that Ministral is the default"
+  }
+
+  it "install.sh skips model test when default not installed" && {
+    grep -q '_minist_installed.*-eq 0' "$LODGE_DIR/install.sh"
+    assert_ok $? "Must gate model test on _minist_installed"
+  }
+
 # ════════════════════════════════════════════════════════════════
 # System prompt files — new models
 # ════════════════════════════════════════════════════════════════
