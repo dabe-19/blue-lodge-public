@@ -720,12 +720,21 @@ _BACKUP_AUTH_GLOBS=(
 
 # ── Create auth/config backup ─────────────────────────────────
 # Copies only auth & config items to a timestamped directory.
+# Usage: backup_auth_create [target_directory]
+#   If target_directory is supplied, the timestamped auth-* folder
+#   is created there instead of inside $GEORGE_BACKUP_DIR.
 backup_auth_create() {
     backup_init
 
+    local target_dir="$GEORGE_BACKUP_DIR"
+    if [ "${1:-}" != "" ] && [ "${1:-}" != "--" ]; then
+        target_dir="$1"
+        mkdir -p "$target_dir" || { ui_err "Cannot create directory: $target_dir"; return 1; }
+    fi
+
     local timestamp
     timestamp=$(date +%Y%m%d_%H%M%S)
-    local backup_path="$GEORGE_BACKUP_DIR/auth-$timestamp"
+    local backup_path="$target_dir/auth-$timestamp"
     mkdir -p "$backup_path"
 
     ui_step "Creating auth & config backup"
@@ -795,14 +804,20 @@ MEOF
 }
 
 # ── List auth/config backups ──────────────────────────────────
+# Usage: backup_auth_list [directory]
 backup_auth_list() {
     backup_init
 
+    local search_dir="$GEORGE_BACKUP_DIR"
+    if [ -n "${1:-}" ] && [ -d "${1:-}" ]; then
+        search_dir="$1"
+    fi
+
     local found=0
-    for d in "$GEORGE_BACKUP_DIR"/auth-*/; do
+    for d in "$search_dir"/auth-*/; do
         [ -d "$d" ] || continue
         if [ "$found" -eq 0 ]; then
-            ui_section "Auth & Config Backups"
+            ui_section "Auth & Config Backups (${search_dir})"
             found=1
         fi
         local name
@@ -815,29 +830,43 @@ backup_auth_list() {
     done
 
     if [ "$found" -eq 0 ]; then
-        ui_info "No auth backups found"
-        ui_dim "Create one: /backup auth create"
+        ui_info "No auth backups found in $search_dir"
+        ui_dim "Create one: /backup auth create [directory]"
     fi
 }
 
 # ── Restore auth/config backup ────────────────────────────────
+# Usage: backup_auth_restore [backup_name] [source_directory]
+#   backup_name   — Name of backup (e.g. auth-20260303_120000).
+#                   Omit to auto-select latest.
+#   source_directory — Directory to search for auth-* backups.
+#                      Defaults to $GEORGE_BACKUP_DIR.
 backup_auth_restore() {
     local backup_name="${1:-}"
+    local source_dir="${2:-}"
+
+    # If backup_name looks like a directory path, treat it as source_dir
+    if [ -n "$backup_name" ] && [ -d "$backup_name" ] && [[ "$backup_name" == /* || "$backup_name" == .* || "$backup_name" == ~* ]]; then
+        source_dir="$backup_name"
+        backup_name=""
+    fi
+
+    local search_dir="${source_dir:-$GEORGE_BACKUP_DIR}"
 
     if [ -z "$backup_name" ]; then
-        # Use most recent auth backup
-        backup_name=$(ls -dt "$GEORGE_BACKUP_DIR"/auth-*/ 2>/dev/null | head -1 | xargs basename 2>/dev/null)
+        # Use most recent auth backup from search_dir
+        backup_name=$(ls -dt "$search_dir"/auth-*/ 2>/dev/null | head -1 | xargs basename 2>/dev/null)
         if [ -z "$backup_name" ]; then
-            ui_err "No auth backups found"
-            ui_dim "Create one: /backup auth create"
+            ui_err "No auth backups found in $search_dir"
+            ui_dim "Create one: /backup auth create [directory]"
             return 1
         fi
         ui_info "Using most recent auth backup: $backup_name"
     fi
 
-    local backup_path="$GEORGE_BACKUP_DIR/$backup_name"
+    local backup_path="$search_dir/$backup_name"
     if [ ! -d "$backup_path" ]; then
-        ui_err "Backup not found: $backup_name"
+        ui_err "Backup not found: $backup_path"
         return 1
     fi
 

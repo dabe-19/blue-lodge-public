@@ -12,6 +12,8 @@ _setup_web() {
     export GEORGE_KEYS_FILE="$GEORGE_CONFIG_DIR/keys.conf"
     export GEORGE_COOKIES_DIR="$GEORGE_CONFIG_DIR/cookies"
     export GEORGE_CACHE_DIR="$GEORGE_CONFIG_DIR/cache"
+    export WEB_BLACKLIST_FILE="$GEORGE_CONFIG_DIR/web_blacklist.log"
+    export WEB_BLACKLIST_ENABLED="true"
     api_init 2>/dev/null
     source "$LODGE_DIR/lib/web.sh"
 }
@@ -725,6 +727,105 @@ describe "web blacklist helpers"
     content=$(cat "$WEB_BLACKLIST_FILE")
     assert_contains "$content" "host=example.com"
     assert_contains "$content" "reason=HTTP_429_RATE_LIMIT"
+    _teardown_web
+  }
+
+  it "_web_blacklist_is_enabled returns true by default" && {
+    _setup_web
+    _web_blacklist_is_enabled
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "_web_blacklist_contains skips check when disabled" && {
+    _setup_web
+    _web_blacklist_add "https://blocked.com/test" "HTTP_403_FORBIDDEN" "403"
+    WEB_BLACKLIST_ENABLED="false"
+    if _web_blacklist_contains "https://blocked.com/test"; then
+        WEB_BLACKLIST_ENABLED="true"
+        _teardown_web
+        assert_fail 0 "Should not find blacklisted URL when disabled"
+    fi
+    WEB_BLACKLIST_ENABLED="true"
+    assert_ok 0
+    _teardown_web
+  }
+
+# ── Blacklist management commands ──────────────────────────────
+describe "web blacklist management"
+
+  it "web_blacklist_list shows empty when no entries" && {
+    _setup_web
+    local out
+    out=$(web_blacklist_list 2>&1)
+    assert_contains "$out" "empty"
+    _teardown_web
+  }
+
+  it "web_blacklist_list shows entries" && {
+    _setup_web
+    _web_blacklist_add "https://bad.com/page" "HTTP_403_FORBIDDEN" "403"
+    local out
+    out=$(web_blacklist_list 2>&1)
+    assert_contains "$out" "bad.com"
+    assert_contains "$out" "HTTP_403_FORBIDDEN"
+    _teardown_web
+  }
+
+  it "web_blacklist_rm removes a host" && {
+    _setup_web
+    _web_blacklist_add "https://removeme.com/page" "HTTP_429_RATE_LIMIT" "429"
+    _web_blacklist_contains "https://removeme.com/page"
+    assert_ok $? "Should exist before removal"
+    web_blacklist_rm "removeme.com" >/dev/null 2>&1
+    _web_blacklist_contains "https://removeme.com/page"
+    assert_fail $? "Should not exist after removal"
+    _teardown_web
+  }
+
+  it "web_blacklist_rm accepts full URL" && {
+    _setup_web
+    _web_blacklist_add "https://rmurl.com/foo" "HTTP_999_PLATFORM_BLOCK" "999"
+    web_blacklist_rm "https://rmurl.com/foo" >/dev/null 2>&1
+    _web_blacklist_contains "https://rmurl.com/foo"
+    assert_fail $? "Should be removed by URL"
+    _teardown_web
+  }
+
+  it "web_blacklist_clear removes all entries" && {
+    _setup_web
+    _web_blacklist_add "https://a.com/" "HTTP_403_FORBIDDEN" "403"
+    _web_blacklist_add "https://b.com/" "HTTP_429_RATE_LIMIT" "429"
+    web_blacklist_clear >/dev/null 2>&1
+    [ ! -s "$WEB_BLACKLIST_FILE" ]
+    assert_ok $? "Blacklist file should be empty"
+    _teardown_web
+  }
+
+  it "web_blacklist_enable sets enabled" && {
+    _setup_web
+    WEB_BLACKLIST_ENABLED="false"
+    web_blacklist_enable >/dev/null 2>&1
+    assert_eq "$WEB_BLACKLIST_ENABLED" "true"
+    _teardown_web
+  }
+
+  it "web_blacklist_disable sets disabled" && {
+    _setup_web
+    web_blacklist_disable >/dev/null 2>&1
+    assert_eq "$WEB_BLACKLIST_ENABLED" "false"
+    WEB_BLACKLIST_ENABLED="true"
+    _teardown_web
+  }
+
+  it "management functions are defined" && {
+    _setup_web
+    declare -f web_blacklist_list &>/dev/null && \
+    declare -f web_blacklist_rm &>/dev/null && \
+    declare -f web_blacklist_clear &>/dev/null && \
+    declare -f web_blacklist_enable &>/dev/null && \
+    declare -f web_blacklist_disable &>/dev/null
+    assert_ok $?
     _teardown_web
   }
 

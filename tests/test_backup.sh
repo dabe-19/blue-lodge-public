@@ -693,4 +693,118 @@ describe "Auth backup — code structure"
     assert_ok $? "lodge must wire backup_auth_list"
   }
 
+# ═══════════════════════════════════════════════════════════════
+# Custom backup directory
+# ═══════════════════════════════════════════════════════════════
+
+describe "backup_auth_create — custom directory"
+
+  it "creates auth backup in a custom directory" && {
+    _setup_backup
+    backup_init
+    echo "API_KEY=test" > "$GEORGE_CONFIG_DIR/keys.conf"
+    _custom_dir="$TMPDIR_BACKUP/custom-backups"
+    mkdir -p "$_custom_dir"
+    _result=$(backup_auth_create "$_custom_dir" 2>/dev/null | tail -1)
+    assert_not_empty "$_result"
+    assert_contains "$_result" "$_custom_dir"
+    assert_file_exists "$_result/keys.conf"
+    _teardown_backup
+  }
+
+  it "creates the custom directory if it does not exist" && {
+    _setup_backup
+    backup_init
+    echo "API_KEY=test" > "$GEORGE_CONFIG_DIR/keys.conf"
+    _custom_dir="$TMPDIR_BACKUP/new-dir/sub"
+    _result=$(backup_auth_create "$_custom_dir" 2>/dev/null | tail -1)
+    assert_dir_exists "$_custom_dir"
+    assert_not_empty "$_result"
+    _teardown_backup
+  }
+
+  it "defaults to GEORGE_BACKUP_DIR when no dir given" && {
+    _setup_backup
+    backup_init
+    echo "API_KEY=test" > "$GEORGE_CONFIG_DIR/keys.conf"
+    _result=$(backup_auth_create 2>/dev/null | tail -1)
+    assert_contains "$_result" "$GEORGE_BACKUP_DIR"
+    _teardown_backup
+  }
+
+describe "backup_auth_list — custom directory"
+
+  it "lists backups from a custom directory" && {
+    _setup_backup
+    backup_init
+    echo "API_KEY=test" > "$GEORGE_CONFIG_DIR/keys.conf"
+    _custom_dir="$TMPDIR_BACKUP/list-custom"
+    backup_auth_create "$_custom_dir" >/dev/null 2>&1
+    _output=$(backup_auth_list "$_custom_dir" 2>&1)
+    assert_contains "$_output" "auth-"
+    assert_contains "$_output" "$_custom_dir"
+    _teardown_backup
+  }
+
+  it "reports no backups in empty custom directory" && {
+    _setup_backup
+    _empty_dir="$TMPDIR_BACKUP/empty-custom"
+    mkdir -p "$_empty_dir"
+    _output=$(backup_auth_list "$_empty_dir" 2>&1)
+    assert_contains "$_output" "No auth backups"
+    _teardown_backup
+  }
+
+describe "backup_auth_restore — custom directory"
+
+  it "restores from a custom directory" && {
+    _setup_backup
+    backup_init
+    echo "API_KEY=custom_restore_test" > "$GEORGE_CONFIG_DIR/keys.conf"
+    mkdir -p "$GEORGE_CONFIG_DIR/.ssh"
+    echo "ssh-rsa TEST" > "$GEORGE_CONFIG_DIR/.ssh/id_rsa.pub"
+    _custom_dir="$TMPDIR_BACKUP/restore-custom"
+    backup_auth_create "$_custom_dir" >/dev/null 2>&1
+    # Nuke originals
+    rm -f "$GEORGE_CONFIG_DIR/keys.conf"
+    rm -rf "$GEORGE_CONFIG_DIR/.ssh"
+    # Restore from custom dir (auto-selects latest)
+    export _LODGE_IN_TASK=1
+    backup_auth_restore "" "$_custom_dir" 2>/dev/null
+    export _LODGE_IN_TASK=0
+    assert_file_exists "$GEORGE_CONFIG_DIR/keys.conf"
+    _content=$(cat "$GEORGE_CONFIG_DIR/keys.conf")
+    assert_eq "$_content" "API_KEY=custom_restore_test"
+    _teardown_backup
+  }
+
+  it "restores by name from custom directory" && {
+    _setup_backup
+    backup_init
+    echo "key=val" > "$GEORGE_CONFIG_DIR/keys.conf"
+    _custom_dir="$TMPDIR_BACKUP/named-restore"
+    _result=$(backup_auth_create "$_custom_dir" 2>/dev/null | tail -1)
+    _bname=$(basename "$_result")
+    rm -f "$GEORGE_CONFIG_DIR/keys.conf"
+    export _LODGE_IN_TASK=1
+    backup_auth_restore "$_bname" "$_custom_dir" 2>/dev/null
+    export _LODGE_IN_TASK=0
+    assert_file_exists "$GEORGE_CONFIG_DIR/keys.conf"
+    _teardown_backup
+  }
+
+  it "auto-detects directory path as source_dir" && {
+    _setup_backup
+    backup_init
+    echo "key=detect" > "$GEORGE_CONFIG_DIR/keys.conf"
+    _custom_dir="$TMPDIR_BACKUP/detect-dir"
+    backup_auth_create "$_custom_dir" >/dev/null 2>&1
+    rm -f "$GEORGE_CONFIG_DIR/keys.conf"
+    export _LODGE_IN_TASK=1
+    backup_auth_restore "$_custom_dir" 2>/dev/null
+    export _LODGE_IN_TASK=0
+    assert_file_exists "$GEORGE_CONFIG_DIR/keys.conf"
+    _teardown_backup
+  }
+
 test_end

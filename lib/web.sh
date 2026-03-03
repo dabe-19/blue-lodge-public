@@ -13,6 +13,7 @@ WEB_MAX_SIZE="${WEB_MAX_SIZE:-2000000}"      # 2MB max HTML download
 WEB_MAX_SIZE_PDF="${WEB_MAX_SIZE_PDF:-10000000}"  # 10MB max PDF download
 WEB_CACHE_TTL="${WEB_CACHE_TTL:-3600}"     # Cache pages for 1 hour
 WEB_BLACKLIST_FILE="${WEB_BLACKLIST_FILE:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/web_blacklist.log}"
+WEB_BLACKLIST_ENABLED="${WEB_BLACKLIST_ENABLED:-true}"
 
 # ── Blocked-site detection + blacklist ───────────────────────
 _web_block_reason() {
@@ -42,7 +43,12 @@ _web_block_reason() {
     return 1
 }
 
+_web_blacklist_is_enabled() {
+    [[ "$WEB_BLACKLIST_ENABLED" == "true" || "$WEB_BLACKLIST_ENABLED" == "1" || "$WEB_BLACKLIST_ENABLED" == "yes" ]]
+}
+
 _web_blacklist_contains() {
+    _web_blacklist_is_enabled || return 1
     local url="$1"
     local host
     host=$(echo "$url" | sed 's|^https\?://||' | cut -d'/' -f1)
@@ -84,6 +90,86 @@ _web_blacklist_add() {
     fi
 
     printf '%s|url=%s|host=%s|status=%s|reason=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$url" "$host" "${status:-unknown}" "$reason" >> "$WEB_BLACKLIST_FILE"
+}
+
+# ── Blacklist management commands ─────────────────────────────
+web_blacklist_list() {
+    if [ ! -f "$WEB_BLACKLIST_FILE" ] || [ ! -s "$WEB_BLACKLIST_FILE" ]; then
+        ui_info "Blacklist is empty"
+        return 0
+    fi
+
+    local _state="enabled"
+    _web_blacklist_is_enabled || _state="disabled"
+    ui_section "Web Blacklist ($_state)"
+
+    local count=0
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local ts host reason status
+        ts=$(echo "$line" | sed -n 's/^\([^|]*\)|.*/\1/p')
+        host=$(echo "$line" | sed -n 's/.*|host=\([^|]*\).*/\1/p')
+        reason=$(echo "$line" | sed -n 's/.*|reason=\([^|]*\).*/\1/p')
+        status=$(echo "$line" | sed -n 's/.*|status=\([^|]*\).*/\1/p')
+        printf '  %b%-30s%b  status=%-4s  %s  %b(%s)%b\n' \
+            "$C_WHITE" "$host" "$C_RESET" "$status" "$reason" "$C_DIM" "$ts" "$C_RESET"
+        count=$((count + 1))
+    done < "$WEB_BLACKLIST_FILE"
+
+    echo ""
+    ui_dim "  $count entries total"
+}
+
+web_blacklist_rm() {
+    local target="$1"
+    if [ -z "$target" ]; then
+        ui_err "Usage: /web blacklist rm <host-or-url>"
+        return 1
+    fi
+
+    if [ ! -f "$WEB_BLACKLIST_FILE" ]; then
+        ui_info "Blacklist is empty — nothing to remove"
+        return 0
+    fi
+
+    # Extract host from URL if a full URL was given
+    local host
+    host=$(echo "$target" | sed 's|^https\?://||' | cut -d'/' -f1)
+
+    local before after
+    before=$(wc -l < "$WEB_BLACKLIST_FILE")
+    grep -v "|host=$host|" "$WEB_BLACKLIST_FILE" > "${WEB_BLACKLIST_FILE}.tmp" 2>/dev/null
+    mv "${WEB_BLACKLIST_FILE}.tmp" "$WEB_BLACKLIST_FILE"
+    after=$(wc -l < "$WEB_BLACKLIST_FILE")
+
+    local removed=$((before - after))
+    if [ "$removed" -gt 0 ]; then
+        ui_ok "Removed $removed entries for $host"
+    else
+        ui_info "No entries found for $host"
+    fi
+}
+
+web_blacklist_clear() {
+    if [ ! -f "$WEB_BLACKLIST_FILE" ] || [ ! -s "$WEB_BLACKLIST_FILE" ]; then
+        ui_info "Blacklist is already empty"
+        return 0
+    fi
+
+    local count
+    count=$(wc -l < "$WEB_BLACKLIST_FILE")
+    : > "$WEB_BLACKLIST_FILE"
+    ui_ok "Cleared $count blacklist entries"
+}
+
+web_blacklist_enable() {
+    WEB_BLACKLIST_ENABLED="true"
+    ui_ok "Web blacklist enabled"
+}
+
+web_blacklist_disable() {
+    WEB_BLACKLIST_ENABLED="false"
+    ui_warn "Web blacklist disabled — blocked sites will be retried"
 }
 
 # ── URL Sanitization ──────────────────────────────────────────

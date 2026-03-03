@@ -2232,6 +2232,31 @@ _cmd_web() {
         images)      web_images "$rest" ;;
         scrape-images|scrapeimages)
                      web_scrape_images "$rest" ;;
+        blacklist)
+            local bl_sub
+            bl_sub=$(echo "$rest" | awk '{print $1}')
+            local bl_args
+            bl_args=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$bl_sub" in
+                list|ls|"")
+                    web_blacklist_list ;;
+                rm|remove|delete)
+                    web_blacklist_rm "$bl_args" ;;
+                clear)
+                    web_blacklist_clear ;;
+                enable|on)
+                    web_blacklist_enable ;;
+                disable|off)
+                    web_blacklist_disable ;;
+                *)
+                    ui_info "Usage: /web blacklist <list|rm|clear|enable|disable>"
+                    ui_dim "  list             — Show all blacklisted hosts"
+                    ui_dim "  rm <host|url>    — Remove a host from the blacklist"
+                    ui_dim "  clear            — Remove all blacklist entries"
+                    ui_dim "  enable           — Turn on blacklist enforcement"
+                    ui_dim "  disable          — Turn off blacklist (retry blocked sites)"
+                    ;;
+            esac ;;
         summary)     web_summary "$rest" ;;
         links)       web_links "$rest" ;;
         title)       web_title "$rest" ;;
@@ -2259,6 +2284,7 @@ _cmd_web() {
             ui_dim "  title <url>       — Get page title"
             ui_dim "  download <url>    — Download a file"
             ui_dim "  ping <url>        — Check if URL is reachable"
+            ui_dim "  blacklist          — Manage blocked-site blacklist"
             ui_dim "  cache clear       — Clear web cache"
             ;;
     esac
@@ -2599,14 +2625,17 @@ _cmd_backup() {
             local aargs
             aargs=$(echo "$rest" | sed 's/^[^ ]* *//')
             case "$sub" in
-                create|save) backup_auth_create ;;
-                restore)     backup_auth_restore "$aargs" ;;
-                list|ls)     backup_auth_list ;;
+                create|save) backup_auth_create "$aargs" ;;
+                restore)     backup_auth_restore $aargs ;;
+                list|ls)     backup_auth_list "$aargs" ;;
                 *)
-                    ui_info "Usage: /backup auth <create|restore|list>"
-                    ui_dim "  create          — Back up SSH, GPG, API keys, social configs"
-                    ui_dim "  restore [name]  — Restore auth/config from a backup"
-                    ui_dim "  list            — Show auth/config backups"
+                    ui_info "Usage: /backup auth <create|restore|list> [directory]"
+                    ui_dim "  create [dir]          — Back up SSH, GPG, API keys, social configs"
+                    ui_dim "  restore [name] [dir]  — Restore auth/config from a backup"
+                    ui_dim "  list [dir]            — Show auth/config backups"
+                    ui_dim ""
+                    ui_dim "  If [dir] is given, backups are stored/read there"
+                    ui_dim "  instead of the default .george/backups/ location."
                     ;;
             esac ;;
         git)
