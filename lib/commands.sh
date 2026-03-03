@@ -218,10 +218,15 @@ commands_services_status() {
         api_get_key "TELEGRAM_BOT_TOKEN" &>/dev/null && _configured="${_configured}telegram," || _unconfigured="${_unconfigured}telegram,"
         api_get_key "X_BEARER_TOKEN" &>/dev/null && _configured="${_configured}x/twitter," || _unconfigured="${_unconfigured}x/twitter,"
         # Mastodon: check multi-instance registry first, then legacy key
+        # NOTE: Do NOT call mastodon_instance_list here — it prints UI output
+        # ("No Mastodon instances registered") that leaks into the status string
+        # and gets injected into every strategist/specialist prompt as noise.
+        # Instead, query the sqlite DB directly for a silent count check.
         local _masto_ok=0
-        if declare -f mastodon_instance_list &>/dev/null; then
+        local _masto_db="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/mastodon_instances.db"
+        if [ -f "$_masto_db" ] && command -v sqlite3 &>/dev/null; then
             local _inst_count
-            _inst_count=$(mastodon_instance_list 2>/dev/null | grep -c "^" || true)
+            _inst_count=$(sqlite3 "$_masto_db" "SELECT COUNT(*) FROM instances;" 2>/dev/null)
             [ "${_inst_count:-0}" -gt 0 ] && _masto_ok=1
         fi
         if [ "$_masto_ok" -eq 0 ]; then

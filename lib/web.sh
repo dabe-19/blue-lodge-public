@@ -282,15 +282,52 @@ _web_extract_xml() {
 }
 
 # ── Fetch raw HTML ─────────────────────────────────────────────
+# Returns raw HTML on success, empty string on failure.
+# Writes the HTTP status / error code to a temp file so callers
+# can report detailed failure reasons. The temp file path is
+# stored in _WEB_STATUS_FILE (shared across calls in the same PID).
+_WEB_STATUS_FILE="${TMPDIR:-/tmp}/.lodge-web-status-$$.tmp"
 web_fetch_raw() {
     local url="$1"
-    curl -sL \
+    local _tmpdir="${TMPDIR:-/tmp}"
+    local _hdr_file="$_tmpdir/.lodge-web-hdr-$$.tmp"
+
+    local html
+    html=$(curl -sL \
         --max-time "$WEB_TIMEOUT" \
         --max-filesize "$WEB_MAX_SIZE" \
+        -D "$_hdr_file" \
         -H "User-Agent: Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/131.0 Safari/537.36" \
         -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
         -H "Accept-Language: en-US,en;q=0.9" \
-        "$url" 2>/dev/null | head -c "$WEB_MAX_SIZE"
+        "$url" 2>/dev/null | head -c "$WEB_MAX_SIZE")
+    local _curl_rc=$?
+
+    # Extract HTTP status code from response headers and write to
+    # shared temp file so callers outside subshells can read it.
+    local _status=""
+    if [ -f "$_hdr_file" ]; then
+        _status=$(grep -oP 'HTTP/[0-9.]+ \K[0-9]+' "$_hdr_file" 2>/dev/null | tail -1)
+        rm -f "$_hdr_file"
+    fi
+
+    # curl exit code meanings for better diagnostics
+    if [ "$_curl_rc" -ne 0 ] && [ -z "$html" ]; then
+        case "$_curl_rc" in
+            6)  _status="DNS_FAIL" ;;
+            7)  _status="CONN_REFUSED" ;;
+            28) _status="TIMEOUT" ;;
+            35) _status="SSL_ERROR" ;;
+            56) _status="RECV_ERROR" ;;
+            63) _status="MAX_SIZE" ;;
+            *)  _status="CURL_ERR_$_curl_rc" ;;
+        esac
+        echo "$_status" > "$_WEB_STATUS_FILE" 2>/dev/null
+        return 1
+    fi
+
+    echo "${_status:-200}" > "$_WEB_STATUS_FILE" 2>/dev/null
+    echo "$html"
 }
 
 # ── HTML preprocessor ──────────────────────────────────────────
@@ -510,7 +547,17 @@ web_fetch() {
     local html
     html=$(web_fetch_raw "$url")
     if [ -z "$html" ]; then
-        ui_err "Failed to fetch: $url"
+        local _reason="unknown"
+        [ -f "$_WEB_STATUS_FILE" ] && _reason=$(cat "$_WEB_STATUS_FILE" 2>/dev/null)
+        case "$_reason" in
+            DNS_FAIL)     ui_err "Failed to fetch: $url (DNS resolution failed — site may not exist)" ;;
+            CONN_REFUSED) ui_err "Failed to fetch: $url (connection refused)" ;;
+            TIMEOUT)      ui_err "Failed to fetch: $url (request timed out after ${WEB_TIMEOUT}s)" ;;
+            SSL_ERROR)    ui_err "Failed to fetch: $url (SSL/TLS error)" ;;
+            4[0-9][0-9])  ui_err "Failed to fetch: $url (HTTP $_reason)" ;;
+            5[0-9][0-9])  ui_err "Failed to fetch: $url (server error HTTP $_reason)" ;;
+            *)            ui_err "Failed to fetch: $url (status: $_reason)" ;;
+        esac
         return 1
     fi
 
@@ -619,7 +666,17 @@ web_fetch_json() {
     local html
     html=$(web_fetch_raw "$clean_url")
     if [ -z "$html" ]; then
-        ui_err "Failed to fetch: $clean_url"
+        local _reason="unknown"
+        [ -f "$_WEB_STATUS_FILE" ] && _reason=$(cat "$_WEB_STATUS_FILE" 2>/dev/null)
+        case "$_reason" in
+            DNS_FAIL)     ui_err "Failed to fetch: $clean_url (DNS resolution failed — site may not exist)" ;;
+            CONN_REFUSED) ui_err "Failed to fetch: $clean_url (connection refused)" ;;
+            TIMEOUT)      ui_err "Failed to fetch: $clean_url (request timed out after ${WEB_TIMEOUT}s)" ;;
+            SSL_ERROR)    ui_err "Failed to fetch: $clean_url (SSL/TLS error)" ;;
+            4[0-9][0-9])  ui_err "Failed to fetch: $clean_url (HTTP $_reason)" ;;
+            5[0-9][0-9])  ui_err "Failed to fetch: $clean_url (server error HTTP $_reason)" ;;
+            *)            ui_err "Failed to fetch: $clean_url (status: $_reason)" ;;
+        esac
         return 1
     fi
 

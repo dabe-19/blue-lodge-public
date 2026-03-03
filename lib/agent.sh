@@ -1520,13 +1520,26 @@ agent_inner_loop() {
         local specialist_prompt="MICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\nWrite the exact command to execute next."
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist <- micro_memory action log ($(echo "$inner_context" | wc -l) lines)"
 
+        # ── Per-command specialist token limit ─────────────────
+        # Content-bearing commands (/write, /save, /email) need high
+        # token limits (full file contents). Short commands (/web,
+        # /social, /recall, etc.) only need 1-2 lines — cap them
+        # tight to prevent verbose rambling.
+        local _spec_tokens="${LLM_AGENT_TOKENS:-512}"
+        local _base_cmd="${selected_tool#/}"
+        case "$_base_cmd" in
+            web|social|recall|journal|ask|vitals|phone|pgp|backup|cd|build|test|fix|commit|push|clone|git|github|container|wallet|slash|secret|download|vision|sandbox)
+                _spec_tokens="${LLM_SPECIALIST_SHORT_TOKENS:-128}"
+                ;;
+        esac
+
         # Use llm_generate (non-streaming) for the specialist. The output
         # is a single command line that will be displayed by "Running: ..."
         # below. Streaming it first wastes time showing the same text twice
         # and confuses the user with redundant output.
         local action_plan
         local LLM_SCENARIO=agent
-        action_plan=$(llm_generate "$specialist_prompt" "$specialist_sys" "${LLM_AGENT_TOKENS:-512}" "$LLM_BUDGET_AGENT")
+        action_plan=$(llm_generate "$specialist_prompt" "$specialist_sys" "$_spec_tokens" "$LLM_BUDGET_AGENT")
 
         # Transcript: log specialist response
         declare -f transcript_log_block &>/dev/null && transcript_log_block "specialist" "$action_plan"
@@ -1697,14 +1710,21 @@ agent_inner_loop() {
                 _last_success_snippet="${output:0:200}"
 
                 # ── WEB OUTPUT CONDENSER ───────────────────────
-                # Raw web scrape output can be 100+ lines of noisy
+                # Raw web scrape/fetch output can be 100+ lines of noisy
                 # HTML-extracted text that gets carried through EVERY
                 # subsequent router + specialist call. Instead, pay
                 # for one cheap LLM call to condense it into a focused
-                # summary the evaluator can actually use. The summary
-                # is injected with task context so the model knows
-                # what data matters, and it flags junk/paywalled content.
-                if [[ "$cmd" == /web* ]] && [ "${#output}" -gt 300 ]; then
+                # summary the evaluator can actually use.
+                #
+                # SKIP for /web search — search results are already
+                # structured (numbered URLs + snippets) and MUST be
+                # preserved verbatim so the agent can pick URLs for
+                # follow-up /web fetch commands. Condensing search
+                # results destroys the URLs.
+                #
+                # SKIP for /web images — same reason (image URLs needed).
+                if [[ "$cmd" == /web\ fetch* ]] || [[ "$cmd" == /web\ scrape* ]] || [[ "$cmd" == /web\ summary* ]]; then
+                  if [ "${#output}" -gt 300 ]; then
                     local _condense_prompt _condensed
                     # Build context-aware condense prompt
                     _condense_prompt="TASK: $micro_objective"
@@ -1714,9 +1734,10 @@ agent_inner_loop() {
                         _primary_for_condense=$(awk '/^## Primary Objective/{getline; if(NF) print; exit}' "$george_dir/macro_memory.md" 2>/dev/null)
                         [ -n "$_primary_for_condense" ] && _condense_prompt="OVERALL GOAL: $_primary_for_condense\nCURRENT STEP: $micro_objective"
                     fi
-                    _condense_prompt="${_condense_prompt}\n\nWEB CONTENT (from: $cmd):\n${output}\n\nINSTRUCTIONS: Summarize the useful information from this web content in 3-5 concise sentences. Preserve specific facts, names, numbers, prices, and data points relevant to the task. If the content is mostly junk (cookie notices, paywalls, login walls, ad text, empty/broken page, or irrelevant boilerplate), say: JUNK: <brief reason>. If the content is partially useful, extract what matters and note what was missing."
-                    local LLM_SCENARIO=agent
-                    _condensed=$(llm_generate "$_condense_prompt" "" "${LLM_WEB_CONDENSE_TOKENS:-200}" "$LLM_BUDGET_AGENT" 2>/dev/null)
+                    _condense_prompt="${_condense_prompt}\n\nWEB CONTENT (from: $cmd):\n${output}\n\nIn 3-5 sentences, summarize useful information. Preserve specific facts, names, numbers, URLs, and data points relevant to the task. If the content is mostly junk (cookie notices, paywalls, login walls, ad text, empty/broken page, or irrelevant boilerplate), say: JUNK: <brief reason>. If partially useful, extract what matters and note what was missing."
+                    local _condense_sys="You are a concise factual summarizer. No personality. Preserve URLs, names, numbers. 3-5 sentences max."
+                    local LLM_SCENARIO=evaluator
+                    _condensed=$(llm_generate "$_condense_prompt" "$_condense_sys" "${LLM_WEB_CONDENSE_TOKENS:-200}" "$LLM_BUDGET_AGENT" 2>/dev/null)
                     # Strip think blocks from summary
                     _condensed=$(echo "$_condensed" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
                     _condensed=$(echo "$_condensed" | sed ':a;N;$!ba;s/<think>.*$//g')
@@ -1725,6 +1746,7 @@ agent_inner_loop() {
                         output="[Web Summary] $_condensed"
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web condenser: %d chars -> %d chars\n' "${#output}" "${#_condensed}" > /dev/tty 2>/dev/null
                     fi
+                  fi
                 fi
 
                 echo -e "\n**Action:** \`$cmd\`\n**Status:** EXECUTED SUCCESSFULLY (exit 0)\n**Output:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
@@ -1790,7 +1812,26 @@ agent_inner_loop() {
             # FAILURE ESCALATION MATRIX
             # ═══════════════════════════════════════════════════
             last_failed_cmd="$cmd"
-            echo -e "\nFAILED COMMAND: \`$cmd\`\nEXIT CODE: $exit_code\nOUTPUT:\n$output\n---" >> "$fail_file"
+
+            # ── Enhanced failure logging ───────────────────────
+            # Include timestamp, HTTP status (for web commands), and
+            # the URL that failed so the log is actionable without
+            # cross-referencing micro_memory.
+            {
+                echo ""
+                echo "FAILED COMMAND: \`$cmd\`"
+                echo "EXIT CODE: $exit_code"
+                echo "TIMESTAMP: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+                # For /web commands, include the HTTP status / error code
+                if [[ "$cmd" == /web* ]] && [ -f "$_WEB_STATUS_FILE" ]; then
+                    local _web_fail_status
+                    _web_fail_status=$(cat "$_WEB_STATUS_FILE" 2>/dev/null)
+                    [ -n "$_web_fail_status" ] && echo "HTTP STATUS: $_web_fail_status"
+                fi 2>/dev/null
+                echo "OUTPUT:"
+                echo " ${output:0:500}"
+                echo "---"
+            } >> "$fail_file"
 
             # ── WEB SOFT-FAILURE TOLERANCE ─────────────────────
             # Web fetches/scrapes fail frequently (HTML parsing errors,
