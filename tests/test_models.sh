@@ -754,25 +754,27 @@ describe "Nothink Method — new models"
   }
 
 # ════════════════════════════════════════════════════════════════
-# install.sh — Qwen3 family creation fix
+# install.sh — family list handling
 # ════════════════════════════════════════════════════════════════
-describe "install.sh — Qwen3 family creation"
+describe "install.sh — family list handling"
 
-  it "install.sh creates qwen family when _need_qwen=1" && {
-    grep -q 'models_create_family "qwen"' "$LODGE_DIR/install.sh"
-    assert_ok $? "install.sh must call models_create_family for qwen"
-  }
-
-  it "install.sh uses _need_qwen variable to gate creation" && {
-    grep -q '_need_qwen.*-eq 1' "$LODGE_DIR/install.sh"
-    assert_ok $? "Must check _need_qwen before creating"
+  it "install.sh does NOT exclude qwen from extra_missing" && {
+    # qwen should appear in the available families list like any other optional family
+    _block=$(sed -n '/_extra_missing/,/^done$/p' "$LODGE_DIR/install.sh")
+    ! echo "$_block" | grep -q '"qwen".*continue'
+    assert_ok $? "qwen must NOT be skipped in extra_missing loops"
   }
 
   it "install.sh excludes ministral from extra_missing" && {
-    # ministral is a default family, should not appear in the extra download prompt
-    _block=$(sed -n '/_extra_missing/,/^fi$/p' "$LODGE_DIR/install.sh")
+    # ministral is the required default family, should not appear in the extra download prompt
+    _block=$(sed -n '/_extra_missing/,/^done$/p' "$LODGE_DIR/install.sh")
     echo "$_block" | grep -q '"ministral".*continue'
     assert_ok $? "Must exclude ministral from extra_missing"
+  }
+
+  it "install.sh does NOT have _need_qwen auto-create block" && {
+    ! grep -q '_need_qwen' "$LODGE_DIR/install.sh"
+    assert_ok $? "No _need_qwen variable — qwen is offered in the normal family list"
   }
 
 # ════════════════════════════════════════════════════════════════

@@ -279,22 +279,14 @@ for _fam_entry in "${_MODELS_FAMILIES[@]}"; do
     esac
 done
 
-# Always ensure the default Qwen family exists
-_need_qwen=0
-if printf '%s\n' "${_install_missing_families[@]}" "${_install_partial_families[@]}" | grep -qx "qwen" 2>/dev/null; then
-    _need_qwen=1
-fi
-
 # If there are non-default families missing, offer to download them
-# Default families (qwen, ministral) are handled separately below.
+# Ministral is handled separately below (required for George to start).
 _extra_missing=()
 for _fm in "${_install_missing_families[@]}"; do
-    [ "$_fm" = "qwen" ] && continue
     [ "$_fm" = "ministral" ] && continue
     _extra_missing+=("$_fm")
 done
 for _fm in "${_install_partial_families[@]}"; do
-    [ "$_fm" = "qwen" ] && continue
     [ "$_fm" = "ministral" ] && continue
     _extra_missing+=("$_fm")
 done
@@ -342,16 +334,6 @@ if [ ${#_extra_missing[@]} -gt 0 ]; then
     fi
 fi
 
-# Always ensure the Qwen default family exists
-if [ "$_need_qwen" -eq 1 ]; then
-    echo ""
-    info "Ensuring default Qwen family is ready..."
-    if models_create_family "qwen"; then
-        ok "Qwen family ready"
-    else
-        warn "Qwen family had errors — some models may be missing"
-    fi
-fi
 
 # Always ensure Ministral default models exist (required for George to start)
 echo ""
