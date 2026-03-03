@@ -858,8 +858,8 @@ describe "Thinking mode configuration (thinking-only model)"
 # ── Model Families ─────────────────────────────────────────────
 describe "Model family system"
 
-  it "_MODELS_FAMILIES has 4 families" && {
-    assert_eq "${#_MODELS_FAMILIES[@]}" "4"
+  it "_MODELS_FAMILIES has 7 families" && {
+    assert_eq "${#_MODELS_FAMILIES[@]}" "7"
   }
 
   it "models_family_list returns all family names" && {
@@ -869,6 +869,9 @@ describe "Model family system"
     assert_contains "$fams" "llama"
     assert_contains "$fams" "granite"
     assert_contains "$fams" "ministral"
+    assert_contains "$fams" "gemma"
+    assert_contains "$fams" "qwen35"
+    assert_contains "$fams" "phi4"
   }
 
   it "_models_family_lookup finds qwen family" && {

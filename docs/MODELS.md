@@ -6,7 +6,7 @@
 
 ## Overview
 
-George ships with a **model library** of 9 pre-configured models across 4 families. Two models run in tandem:
+George ships with a **model library** of 18 pre-configured models across 7 families. Two models run in tandem:
 
 - **Primary model** — handles conversational queries (`/ask`) and agent planning/execution. Should be a strong reasoning model.
 - **Secondary model** — handles fast utility tasks: tool routing, commit messages, journal reflections, web summaries. Should be a fast instruct model.
@@ -34,6 +34,15 @@ Dual-model mode gives you the best of both: deep reasoning where it matters, spe
 | `granite4-preview` | ibm/granite4.0-preview:tiny | Granite 4 | thinking | Yes | 32K | IBM Granite 4 Preview. Extended thinking via Ollama `.thinking` field. |
 | `minist-think` | Ministral-3-3B-Reasoning-2512 UD-Q5_K_XL | Ministral | thinking | Yes | 32K | **Default primary.** Mistral reasoning with thinking via system prompt. |
 | `minist-inst` | Ministral-3-3B-Instruct-2512 UD-Q5_K_XL | Ministral | instruct | No | 32K | **Default secondary.** Mistral instruct with vision support. |
+| `gemma3-4b-inst` | gemma-3-4b-it-qat UD-Q5_K_XL | Gemma 3 | instruct | No | 32K | Google Gemma 3 4B QAT instruct. Vision-capable multimodal. |
+| `gemma3-1b-inst` | gemma-3-1b-it BF16 | Gemma 3 | instruct | No | 32K | Google Gemma 3 1B instruct. Ultra-lightweight text-only. |
+| `qwen35-2b` | Qwen3.5-2B UD-Q8_K_XL | Qwen 3.5 | instruct | No | 32K | Qwen 3.5 2B instruct (UD-Q8). Downloaded via Ollama; usable by both backends. |
+| `qwen35-2b-q8` | Qwen3.5-2B Q8_0 | Qwen 3.5 | instruct | No | 32K | Qwen 3.5 2B instruct (Q8_0). Downloaded via Ollama; usable by both backends. |
+| `qwen35-4b` | Qwen3.5-4B UD-Q4_K_XL | Qwen 3.5 | instruct | No | 32K | Qwen 3.5 4B instruct (UD-Q4). Downloaded via Ollama; usable by both backends. |
+| `qwen35-2b-think` | Qwen3.5-2B UD-Q8_K_XL | Qwen 3.5 | thinking | Yes | 32K | Qwen 3.5 2B thinking. Thinking mode requires llama.cpp `--chat-template-kwargs`. |
+| `qwen35-4b-think` | Qwen3.5-4B UD-Q4_K_XL | Qwen 3.5 | thinking | Yes | 32K | Qwen 3.5 4B thinking. Thinking mode requires llama.cpp `--chat-template-kwargs`. |
+| `phi4-inst` | Phi-4-mini-instruct Q5_K_M | Phi-4 | instruct | No | 32K | Microsoft Phi-4 mini instruct. Compact general-purpose. |
+| `phi4-reason` | Phi-4-mini-reasoning UD-Q5_K_XL | Phi-4 | thinking | Yes | 32K | Microsoft Phi-4 mini reasoning. Math/logic specialist. |
 
 ### Sizing
 
@@ -90,17 +99,17 @@ ollama create blue-lodge-minist-think:4b -f ~/blue-lodge/models/minist-think.Mod
 
 ### Pre-Downloading All Models
 
-To download all 9 models upfront (useful before going offline):
+To download all 18 models upfront (useful before going offline):
 
 ```bash
 source ~/blue-lodge/lib/models.sh
-for key in qwen3-think qwen3-inst llama32 llama32-inst granite4 granite4-h granite4-preview minist-think minist-inst; do
+for key in qwen3-think qwen3-inst llama32 llama32-inst granite4 granite4-h granite4-preview minist-think minist-inst gemma3-4b-inst gemma3-1b-inst qwen35-2b qwen35-2b-q8 qwen35-4b qwen35-2b-think qwen35-4b-think phi4-inst phi4-reason; do
     echo "Creating $key..."
     models_create "$key"
 done
 ```
 
-> **Storage:** Each base image is ~2.5-3.5 GB. All 9 models share some base layers but expect ~20-25 GB total disk usage for the full library.
+> **Storage:** Each base image is ~2.5-3.5 GB. All 18 models share some base layers but expect ~40-50 GB total disk usage for the full library. Most users only need 2-4 models.
 
 ### Ollama Base Images
 
@@ -117,6 +126,15 @@ Some models use official Ollama library tags, others use HuggingFace GGUF files 
 | `granite4-preview` | `ibm/granite4.0-preview:tiny` | Official Ollama library (`ollama pull ibm/granite4.0-preview:tiny`) |
 | `minist-think` | `hf.co/unsloth/Ministral-3-3B-Reasoning-2512-GGUF:UD-Q5_K_XL` | Auto-downloaded by `ollama create` |
 | `minist-inst` | `hf.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF:UD-Q5_K_XL` | Auto-downloaded by `ollama create` |
+| `gemma3-4b-inst` | `hf.co/unsloth/gemma-3-4b-it-qat-GGUF:UD-Q5_K_XL` | Auto-downloaded by `ollama create` |
+| `gemma3-1b-inst` | `hf.co/unsloth/gemma-3-1b-it-GGUF:BF16` | Auto-downloaded by `ollama create` |
+| `qwen35-2b` | `hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL` | Auto-downloaded by `ollama create` |
+| `qwen35-2b-q8` | `hf.co/unsloth/Qwen3.5-2B-GGUF:Q8_0` | Auto-downloaded by `ollama create` |
+| `qwen35-4b` | `hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL` | Auto-downloaded by `ollama create` |
+| `qwen35-2b-think` | `hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL` | Auto-downloaded by `ollama create` |
+| `qwen35-4b-think` | `hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL` | Auto-downloaded by `ollama create` |
+| `phi4-inst` | `hf.co/unsloth/Phi-4-mini-instruct-GGUF:Q5_K_M` | Auto-downloaded by `ollama create` |
+| `phi4-reason` | `hf.co/unsloth/Phi-4-mini-reasoning-GGUF:UD-Q5_K_XL` | Auto-downloaded by `ollama create` |
 
 > **Note:** The `hf.co/` URI scheme requires **Ollama 0.5.0+**. If your Ollama version doesn't support it, manually download the GGUF file and use a local `FROM ./path/to/file.gguf` in the Modelfile instead.
 
@@ -278,6 +296,74 @@ When George switches between primary and secondary:
 - Mistral-recommended sampling: temp=0.15 (set to 0.3 for slightly more variety)
 - Stop token: `</s>`
 
+### Gemma 3 Family (Google)
+
+**gemma3-4b-inst** — Google's Gemma 3 4B QAT (Quantization-Aware Trained) instruct model.
+
+- Multimodal — supports vision (image analysis)
+- QAT preserves accuracy at lower precision: smaller download, same quality
+- 128K native context (capped at 32K by default to conserve RAM)
+- Stop token: `<end_of_turn>`
+- Uses Gemma chat template (auto-mapped by `_models_chat_template_name`)
+
+**gemma3-1b-inst** — Google's Gemma 3 1B instruct model.
+
+- Ultra-lightweight: ~0.6 GB weights (BF16 quantization)
+- Text-only (no vision at 1B)
+- 32K context window (native)
+- Stop token: `<end_of_turn>`
+- Good for extremely constrained hardware or as a very fast secondary
+
+### Qwen 3.5 Family
+
+Qwen 3.5 models share the same ChatML format and `/no_think` mechanism as Qwen 3. All are downloaded via Ollama's `hf.co/` URI scheme and are usable by both backends.
+
+**qwen35-2b** — Qwen 3.5 2B instruct (UD-Q8_K_XL quantization).
+
+- High-quality 2B model at Q8 precision
+- Same `<|im_end|>` stop token as Qwen 3 — cross-compatible for dual-model pairing
+- 256K native context (capped at 32K by default)
+
+**qwen35-2b-q8** — Qwen 3.5 2B instruct (Q8_0 quantization).
+
+- Standard Q8_0 quantization variant of the same 2B base
+- Slightly different size/performance tradeoff vs UD-Q8_K_XL
+
+**qwen35-4b** — Qwen 3.5 4B instruct (UD-Q4_K_XL quantization).
+
+- Larger 4B model at Q4 precision — good balance of size and capability
+- 256K native context (capped at 32K by default)
+
+**qwen35-2b-think** — Qwen 3.5 2B thinking variant.
+
+- Same base weights as `qwen35-2b` but configured for reasoning mode
+- Nothink method: `qwen` — supports `/no_think` prompt suffix like Qwen 3
+- Higher temperature (0.6) and presence_penalty (1.5) for exploration
+- Thinking mode requires llama.cpp `--chat-template-kwargs '{"enable_thinking":true}'`
+
+**qwen35-4b-think** — Qwen 3.5 4B thinking variant.
+
+- Same base weights as `qwen35-4b` but configured for reasoning mode
+- Same nothink/sampling as `qwen35-2b-think`
+
+### Phi-4 Family (Microsoft)
+
+**phi4-inst** — Microsoft's Phi-4 mini instruct (3.8B params).
+
+- Compact general-purpose instruct model with function calling support
+- MIT-licensed
+- 128K native context (capped at 32K by default)
+- Stop token: `<|end|>`
+- Chat format: `<|system|>...<|end|><|user|>...<|end|><|assistant|>`
+
+**phi4-reason** — Microsoft's Phi-4 mini reasoning model.
+
+- Math/logic specialist, trained on DeepSeek-R1 distillation
+- Produces extended reasoning chains
+- Nothink method: `system` — system prompt instruction to skip reasoning
+- Microsoft-recommended sampling: temp=0.8, top_p=0.95
+- Stop token: `<|end|>`
+
 ---
 
 ## Gotchas & Warnings
@@ -301,8 +387,10 @@ The `/think nothink` command and `LODGE_NOTHINK=1` variable behave differently p
 | Model | Nothink Method | Effectiveness |
 |-------|---------------|---------------|
 | `qwen3-think` | `/no_think` prompt suffix | **Strong** — architecturally supported by Qwen3 |
+| `qwen35-*-think` | `/no_think` prompt suffix | **Strong** — same mechanism as Qwen3 |
 | `granite4-preview` | System prompt instruction | **Weak** — model may still reason despite instruction |
 | `minist-think` | System prompt instruction | **Moderate** — model respects system prompt instruction to skip reasoning |
+| `phi4-reason` | System prompt instruction | **Moderate** — system prompt instruction |
 | `llama32` | None | **No effect** — model doesn't think to begin with |
 | `granite4`, `granite4-h` | N/A | **Not applicable** — instruct models, never reason |
 | All instruct models | N/A | **Not applicable** — they never reason |
@@ -343,9 +431,12 @@ Each model family uses a different stop token. The model library handles this co
 | Family | Correct Stop Token |
 |--------|--------------------|
 | Qwen3 | `<\|im_end\|>` |
+| Qwen 3.5 | `<\|im_end\|>` |
 | Llama 3.2 | `<\|eot_id\|>` |
 | Granite 4 | `<\|end_of_text\|>` |
 | Ministral | `</s>` |
+| Gemma 3 | `<end_of_turn>` |
+| Phi-4 | `<\|end\|>` |
 
 **Mitigation:** Always use `/models select` or `models_generate_modelfile()` to create models — they set the correct stop token automatically. Never manually copy a Qwen Modelfile and change only the `FROM` line.
 
@@ -359,8 +450,11 @@ However, be aware that different families have different strengths:
 |---------|-------|
 | Ministral + Ministral (default) | Best tested. Same stop token family. Fastest swaps. Vision on secondary. |
 | Qwen3 + Qwen3 | Same stop token family. Strongest nothink support. |
+| Qwen3 + Qwen 3.5 | Same stop token (`<\|im_end\|>`). Cross-generation but fully compatible. |
 | Qwen3 + Llama3.2 | Works well. Different stop tokens but handled automatically. |
 | Granite + Ministral | Works, but nothink is system-prompt-based (weaker). |
+| Gemma 3 + Ministral | Works. Gemma 4B adds vision capability on the instruct side. |
+| Phi-4 + Phi-4 | Microsoft pair. Reasoning + instruct. Same stop token. |
 | Llama + Llama | No thinking on either side — fast but less capable for complex planning. |
 
 ### 8. LODGE_MODEL Is Now Managed — Don't Set It Directly

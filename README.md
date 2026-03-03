@@ -1,6 +1,6 @@
 # ⌂ George — Your AI Coding Agent, Running on Your Phone
 
-**A full coding agent that runs offline on a phone.** No cloud. No API keys. No subscription. Just a 3B-parameter model, 12GB of RAM, and 24,000 lines of pure bash that turn your Android device into an autonomous development environment.
+**A full coding agent that runs offline on a phone.** No cloud. No API keys. No subscription. Just a 3B-parameter model, 12GB of RAM, and 29,000 lines of pure bash that turn your Android device into an autonomous development environment.
 
 George scaffolds projects, writes code, runs tests, fixes errors, manages git, browses the web, posts to social media, handles email, manages crypto wallets, signs commits with PGP, and remembers everything across sessions — all from a terminal on your phone.
 
@@ -18,7 +18,7 @@ George scaffolds projects, writes code, runs tests, fixes errors, manages git, b
 | **Privacy** | Your code goes to their servers | Your code never leaves your device |
 | **Model size** | 70B-400B+ parameters | 3-4B parameters — purpose-built prompts make up the difference |
 | **Language** | TypeScript/Python + Docker | Pure bash — zero runtime dependencies |
-| **Tests** | Varies | 30 modules, 1,886 assertions, all passing |
+| **Tests** | Varies | 34 modules, 2,479 assertions, all passing |
 
 Cloud coding agents don't work with small local models. Their massive system prompts, streaming protocol mismatches, and token-hungry architectures choke on 4B models. George replaces all of that with an agent purpose-built for constrained hardware:
 
@@ -26,7 +26,7 @@ Cloud coding agents don't work with small local models. Their massive system pro
 - **Dual LLM backend** — Ollama or llama.cpp with Vulkan GPU acceleration
 - **Automatic model memory management** — loads for tasks, unloads to free ~4GB RAM for builds
 - **File-based persistence** — memory lives in Markdown files, not model state. Crash-proof by design.
-- **9 pre-configured models** across 4 families, hot-swappable at runtime
+- **18 pre-configured models** across 7 families, hot-swappable at runtime
 
 ---
 
@@ -86,7 +86,7 @@ lodge /ask "what is a monad?"      # Quick question
 
 ## Architecture
 
-24,000 lines of pure bash. No Node.js, no Python runtime, no Docker.
+29,000 lines of pure bash. No Node.js, no Python runtime, no Docker.
 
 ```
 ~/blue-lodge/
@@ -94,15 +94,16 @@ lodge /ask "what is a monad?"      # Quick question
 ├── soul.md            # George's personality & ethical framework
 ├── journal.md         # George's living memory (auto-managed)
 ├── lib/
-│   ├── agent.sh       # Plan → Execute → Memory loop (2,019 lines)
-│   ├── llm.sh         # Dual backend: Ollama + llama.cpp (2,012 lines)
-│   ├── models.sh      # Model library & hot-swap (1,383 lines)
-│   ├── email.sh       # 4 email providers + SMTP/IMAP (1,439 lines)
-│   ├── social.sh      # 5 social platforms (1,216 lines)
+│   ├── agent.sh       # Plan → Execute → Memory loop (3,048 lines)
+│   ├── llm.sh         # Dual backend: Ollama + llama.cpp (2,986 lines)
+│   ├── models.sh      # Model library & hot-swap (1,665 lines)
+│   ├── email.sh       # 4 email providers + SMTP/IMAP (1,545 lines)
+│   ├── social.sh      # 5 social platforms (1,229 lines)
+│   ├── web.sh         # Web browsing & search (1,256 lines)
+│   ├── backup.sh      # Backup/restore identity + auth export (907 lines)
 │   ├── wallet.sh      # BTC/ADA/SOL wallets (863 lines)
 │   ├── recall.sh      # FTS5 knowledge base (849 lines)
-│   ├── web.sh         # Web browsing & search (784 lines)
-│   ├── tools.sh       # File/shell ops + safety checks (732 lines)
+│   ├── tools.sh       # File/shell ops + safety checks (760 lines)
 │   ├── ui.sh          # TUI rendering (ANSI, spinners)
 │   ├── memory.sh      # GEORGE.md read/write/compact
 │   ├── commands.sh    # Slash command dispatcher
@@ -116,11 +117,12 @@ lodge /ask "what is a monad?"      # Quick question
 │   ├── providers.sh   # 11 cloud AI providers
 │   ├── pgp.sh         # PGP signing & verification
 │   ├── phone.sh       # Termux-API integration
-│   ├── backup.sh      # Backup/restore identity
-│   └── slash.sh       # Custom slash command engine
-├── commands/          # Built-in slash commands (init, fix, test, build, commit, push, clone, write, download)
+│   ├── slash.sh       # Custom slash command engine
+│   ├── vitals.sh      # System vitals (CPU, RAM, disk, battery)
+│   └── transcript.sh  # Session transcript recording
+├── commands/          # Built-in slash commands (init, fix, test, build, commit, push, clone, write, download, service, vision, save)
 ├── models/            # Per-model Modelfiles (auto-generated)
-├── tests/             # 30 test modules, 1,886 assertions
+├── tests/             # 34 test modules, 2,479 assertions
 ├── docs/              # Setup guides, examples, reference docs
 └── ~/.george/         # User data: keys, vault, backups, recall.db, cache
 ```
@@ -636,25 +638,28 @@ Search uses Serper.dev (Google results) if configured, Perplexity as an alternat
 |--------|-----|--------|
 | Galaxy Fold 7 (Snapdragon 8 Elite) | 12GB | Primary target |
 | Galaxy S25 Ultra | 12GB | Supported |
-| Chromebooks (ARM) | 8GB+ | Supported |
+| Chromebooks (ARM/x86) | 8GB+ | Supported ([Debian/Crostini guide](docs/DEBIAN_CHROMEOS_SETUP.md)) |
 | Any Linux device | 8GB+ | Supported |
 | Raspberry Pi 5 | 8GB | Should work (slower) |
 
 ## Models
 
-Ships with a **model library** of 9 pre-configured models across 4 families. Default pair:
+Ships with a **model library** of 18 pre-configured models across 7 families. Default pair:
 
 - **Primary:** Ministral-3-3B-Reasoning — reasoning and planning
 - **Secondary:** Ministral-3-3B-Instruct — fast utility tasks with vision support
 
-All models are 3-4B parameters, UD-Q5_K_XL quantization. Only one is loaded at a time (~8GB at 32K context). George hot-swaps automatically based on the task type.
+All models are 1-4B parameters at Q4–Q8 quantization. Only one is loaded at a time (~8GB at 32K context). George hot-swaps automatically based on the task type.
 
 | Family | Models | Strengths |
 |--------|--------|-----------|
-| **Ministral** | Reasoning, Instruct | Default pair. Strong reasoning + fast utility |
-| **Qwen3** | 4B | Good multilingual, strong reasoning |
-| **Llama 3.2** | 3B | Meta's flagship small model |
-| **Granite 4** | Tiny (3B) | IBM's code-tuned model |
+| **Ministral** | Reasoning, Instruct | Default pair. Strong reasoning + fast utility. Vision on instruct. |
+| **Qwen3** | Thinking, Instruct | Best nothink support (architecturally enforced). Good multilingual. |
+| **Qwen 3.5** | 2B, 4B, Thinking variants | Newest Qwen generation. 256K native context. Both backends. |
+| **Llama 3.2** | Base, Instruct | Meta's flagship small model. 128K native context. |
+| **Granite 4** | Micro, Hybrid, Preview | IBM's code-tuned family. Preview adds thinking. |
+| **Gemma 3** | 4B QAT, 1B | Google multimodal. 4B has vision. 1B ultra-lightweight. |
+| **Phi-4** | Instruct, Reasoning | Microsoft. Math/logic specialist on reasoning variant. |
 
 ```bash
 lodge /models list                          # Show all available
@@ -713,7 +718,7 @@ Full step-by-step guide with four installation paths: **[docs/PHONE_SETUP.md](do
 
 ## Testing
 
-30 test modules. 1,886 assertions. Zero external dependencies. All passing.
+34 test modules. 2,479 assertions. Zero external dependencies. All passing.
 
 ```bash
 bash tests/run_all.sh              # Run all (compact output)
@@ -726,36 +731,40 @@ bash tests/run_all.sh test_llm     # Run specific module
 
 | Module | Assertions | Covers |
 |--------|-----------|--------|
-| `test_agent.sh` | 140 | Agent loop, config, cancellation, auto-install, cascade |
+| `test_agent.sh` | 276 | Agent loop, config, cancellation, auto-install, cascade, honeydew task tracking |
 | `test_api.sh` | 33 | REST client, keys, JSON, auth headers |
-| `test_backup.sh` | 46 | Local/git backup, restore, pruning, export/import |
-| `test_commands.sh` | 47 | Slash command registration, dispatch, catalog |
+| `test_backup.sh` | 81 | Local/git backup, restore, pruning, export/import, auth credential export |
+| `test_commands.sh` | 75 | Slash command registration, dispatch, catalog |
 | `test_container.sh` | 28 | Container management, distro resolution |
 | `test_download.sh` | 10 | URL download, local copy |
-| `test_email.sh` | 78 | Gmail/ProtonMail/Zoho/Tuta, SMTP/IMAP, bridge |
-| `test_git.sh` | 60 | Git identity, SSH, remote, push guard |
+| `test_email.sh` | 107 | Gmail/ProtonMail/Zoho/Tuta, SMTP/IMAP, bridge |
+| `test_git.sh` | 63 | Git identity, SSH, remote, push guard |
 | `test_gsuite.sh` | 35 | OAuth2, Gmail/Drive/Docs, validation |
 | `test_init.sh` | 38 | Project scaffolding, type resolution |
-| `test_journal.sh` | 32 | Temporal memory, decay, greetings |
-| `test_llm.sh` | 128 | LLM config, tokens, model library, dual-model, sampling |
-| `test_lodge.sh` | 136 | Main script, command wiring, soul toggle, REPL |
-| `test_memory.sh` | 60 | GEORGE.md sections, compaction, snapshots |
+| `test_journal.sh` | 36 | Temporal memory, decay, greetings |
+| `test_llm.sh` | 229 | LLM config, tokens, model library, dual-model, sampling |
+| `test_lodge.sh` | 167 | Main script, command wiring, soul toggle, REPL |
+| `test_memory.sh` | 57 | GEORGE.md sections, compaction, snapshots |
+| `test_models.sh` | 118 | Model registry, families, hot-swap, Modelfile generation |
 | `test_pgp.sh` | 34 | PGP signing, verification, key management |
 | `test_phone.sh` | 43 | Phone integration, Termux API, dashboard |
 | `test_providers.sh` | 32 | 11 AI providers, dispatcher, aliases |
 | `test_recall.sh` | 71 | FTS5 indexing, search, self-review, quality |
-| `test_sandbox.sh` | 57 | Sandbox lifecycle, build, permissions |
-| `test_save.sh` | 23 | File save, directory creation |
+| `test_sandbox.sh` | 63 | Sandbox lifecycle, build, permissions |
+| `test_save.sh` | 25 | File save, directory creation |
 | `test_secrets.sh` | 30 | Vault encrypt/decrypt, rotate, import |
 | `test_security.sh` | 56 | Allowlist, signing, encryption |
+| `test_service.sh` | 44 | Service command, daemon management |
 | `test_slash.sh` | 53 | Custom commands, create, template, rename |
-| `test_social.sh` | 95 | 5 platforms, Discord channels, post dispatch |
-| `test_tools.sh` | 56 | Code extraction, file ops, safety |
-| `test_ui.sh` | 39 | Colors, print functions, markdown rendering |
+| `test_social.sh` | 101 | 5 platforms, Discord channels, post dispatch |
+| `test_tools.sh` | 123 | Code extraction, file ops, safety |
+| `test_transcript.sh` | 48 | Session transcript recording, rotation |
+| `test_ui.sh` | 45 | Colors, print functions, markdown rendering |
+| `test_validate_gpu.sh` | 45 | GPU detection, Vulkan validation |
 | `test_vitals.sh` | 83 | System vitals, thresholds, guards |
 | `test_wallet.sh` | 51 | BTC/ADA/SOL wallets, network, send validation |
-| `test_web.sh` | 68 | Web fetch, HTML parsing, DDG search, cache |
-| `test_write.sh` | 15 | File write, code extraction |
+| `test_web.sh` | 150 | Web fetch, HTML parsing, DDG search, cache, scrape-images fallback |
+| `test_write.sh` | 29 | File write, code extraction |
 
 </details>
 
@@ -789,6 +798,7 @@ bash ~/blue-lodge/uninstall.sh
 | Doc | Content |
 |-----|---------|
 | [docs/PHONE_SETUP.md](docs/PHONE_SETUP.md) | Android setup (4 installation paths) |
+| [docs/DEBIAN_CHROMEOS_SETUP.md](docs/DEBIAN_CHROMEOS_SETUP.md) | Debian / Chrome OS (Crostini) setup |
 | [docs/MODELS.md](docs/MODELS.md) | Model library & configuration |
 | [docs/BACKEND_VALIDATION.md](docs/BACKEND_VALIDATION.md) | LLM backend setup & validation |
 | [docs/ADRENO_GPU_SETUP.md](docs/ADRENO_GPU_SETUP.md) | Vulkan GPU acceleration |
