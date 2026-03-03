@@ -110,7 +110,14 @@ _lodge_termux_home() {
 
 _models_find_ollama_gguf() {
     local model_ref="$1"
-    local ollama_dir="$(_lodge_termux_home)/.ollama/models"
+    local ollama_dir=""
+    if [ -n "${OLLAMA_MODELS:-}" ] && [ -d "$OLLAMA_MODELS" ]; then
+        ollama_dir="$OLLAMA_MODELS"
+    elif [ -d "/usr/share/ollama/.ollama/models" ]; then
+        ollama_dir="/usr/share/ollama/.ollama/models"
+    else
+        ollama_dir="$(_lodge_termux_home)/.ollama/models"
+    fi
     [ -d "$ollama_dir" ] || return 1
 
     # Split into name and tag on the LAST colon
@@ -153,7 +160,14 @@ _models_find_ollama_gguf() {
 # Usage: _models_find_ollama_mmproj "model:tag" → /path/to/projector/blob
 _models_find_ollama_mmproj() {
     local model_ref="$1"
-    local ollama_dir="$(_lodge_termux_home)/.ollama/models"
+    local ollama_dir=""
+    if [ -n "${OLLAMA_MODELS:-}" ] && [ -d "$OLLAMA_MODELS" ]; then
+        ollama_dir="$OLLAMA_MODELS"
+    elif [ -d "/usr/share/ollama/.ollama/models" ]; then
+        ollama_dir="/usr/share/ollama/.ollama/models"
+    else
+        ollama_dir="$(_lodge_termux_home)/.ollama/models"
+    fi
     [ -d "$ollama_dir" ] || return 1
 
     local _name _tag
@@ -214,7 +228,14 @@ _models_resolve_mmproj() {
 # Usage: _models_find_ollama_template "model:tag" → /path/to/template/blob
 _models_find_ollama_template() {
     local model_ref="$1"
-    local ollama_dir="$(_lodge_termux_home)/.ollama/models"
+    local ollama_dir=""
+    if [ -n "${OLLAMA_MODELS:-}" ] && [ -d "$OLLAMA_MODELS" ]; then
+        ollama_dir="$OLLAMA_MODELS"
+    elif [ -d "/usr/share/ollama/.ollama/models" ]; then
+        ollama_dir="/usr/share/ollama/.ollama/models"
+    else
+        ollama_dir="$(_lodge_termux_home)/.ollama/models"
+    fi
     [ -d "$ollama_dir" ] || return 1
 
     local _name _tag

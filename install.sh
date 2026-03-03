@@ -75,6 +75,8 @@ _lodge_shell_block() {
         # Without this, 'ollama serve' from proot sees zero models.
         if [ -d "/data/data/com.termux/files/home/.ollama/models" ]; then
             ollama_models_line='export OLLAMA_MODELS="/data/data/com.termux/files/home/.ollama/models"  # proot→Termux path'
+        elif [ -d "/usr/share/ollama/.ollama/models" ]; then
+            ollama_models_line='export OLLAMA_MODELS="/usr/share/ollama/.ollama/models" # Linux systemd path'
         else
             ollama_models_line='# export OLLAMA_MODELS=          # Set if Ollama models are at a non-default path'
         fi
@@ -234,6 +236,8 @@ if ! curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
     # Ensure Ollama can find models when started from proot-distro
     if [ "$IS_PROOT" -eq 1 ] && [ -d "/data/data/com.termux/files/home/.ollama/models" ]; then
         export OLLAMA_MODELS="/data/data/com.termux/files/home/.ollama/models"
+    elif [ -d "/usr/share/ollama/.ollama/models" ]; then
+        export OLLAMA_MODELS="/usr/share/ollama/.ollama/models"
     fi
     ollama serve > "$local_tmpdir/lodge-ollama.log" 2>&1 &
     sleep 3
