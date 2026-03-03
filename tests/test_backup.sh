@@ -398,4 +398,299 @@ describe "backup_import"
     _teardown_backup
   }
 
+# ═══════════════════════════════════════════════════════════════
+# Auth & Config Backup
+# ═══════════════════════════════════════════════════════════════
+
+describe "backup_auth_create"
+
+  it "creates auth backup with SSH keys" && {
+    _setup_backup
+    backup_init
+    mkdir -p "$GEORGE_CONFIG_DIR/.ssh"
+    echo "ssh-rsa AAAA" > "$GEORGE_CONFIG_DIR/.ssh/id_rsa.pub"
+    backup_auth_create >/dev/null 2>&1
+    local auth_dir
+    auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
+    assert_dir_exists "$auth_dir/.ssh"
+    _teardown_backup
+  }
+
+  it "creates auth backup with GPG keyring" && {
+    _setup_backup
+    backup_init
+    mkdir -p "$GEORGE_CONFIG_DIR/.gnupg"
+    echo "gpg-data" > "$GEORGE_CONFIG_DIR/.gnupg/pubring.kbx"
+    backup_auth_create >/dev/null 2>&1
+    local auth_dir
+    auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
+    assert_dir_exists "$auth_dir/.gnupg"
+    _teardown_backup
+  }
+
+  it "creates auth backup with keys.conf" && {
+    _setup_backup
+    backup_init
+    echo "API_KEY=test123" > "$GEORGE_CONFIG_DIR/keys.conf"
+    backup_auth_create >/dev/null 2>&1
+    local auth_dir
+    auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
+    assert_file_exists "$auth_dir/keys.conf"
+    _teardown_backup
+  }
+
+  it "creates auth backup with vault directory" && {
+    _setup_backup
+    backup_init
+    mkdir -p "$GEORGE_CONFIG_DIR/.vault"
+    echo "encrypted" > "$GEORGE_CONFIG_DIR/.vault/secret.enc"
+    backup_auth_create >/dev/null 2>&1
+    local auth_dir
+    auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
+    assert_dir_exists "$auth_dir/.vault"
+    _teardown_backup
+  }
+
+  it "includes email provider configs via glob" && {
+    _setup_backup
+    backup_init
+    echo "GMAIL=yes" > "$GEORGE_CONFIG_DIR/email_gmail.conf"
+    echo "OUTLOOK=yes" > "$GEORGE_CONFIG_DIR/email_outlook.conf"
+    backup_auth_create >/dev/null 2>&1
+    local auth_dir
+    auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
+    assert_file_exists "$auth_dir/email_gmail.conf"
+    assert_file_exists "$auth_dir/email_outlook.conf"
+    _teardown_backup
+  }
+
+  it "includes social config databases" && {
+    _setup_backup
+    backup_init
+    echo "mastodon-data" > "$GEORGE_CONFIG_DIR/mastodon_instances.db"
+    echo "discord-data" > "$GEORGE_CONFIG_DIR/discord_channels.db"
+    backup_auth_create >/dev/null 2>&1
+    local auth_dir
+    auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
+    assert_file_exists "$auth_dir/mastodon_instances.db"
+    assert_file_exists "$auth_dir/discord_channels.db"
+    _teardown_backup
+  }
+
+  it "includes lodge.conf from LODGE_DIR" && {
+    _setup_backup
+    backup_init
+    echo "LODGE_MODEL=test" > "$LODGE_DIR/lodge.conf"
+    echo "placeholder" > "$GEORGE_CONFIG_DIR/keys.conf"
+    backup_auth_create >/dev/null 2>&1
+    local auth_dir
+    auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
+    assert_file_exists "$auth_dir/lodge.conf"
+    rm -f "$LODGE_DIR/lodge.conf"
+    _teardown_backup
+  }
+
+  it "does NOT include recall.db" && {
+    _setup_backup
+    backup_init
+    echo "knowledge" > "$GEORGE_CONFIG_DIR/recall.db"
+    echo "placeholder" > "$GEORGE_CONFIG_DIR/keys.conf"
+    backup_auth_create >/dev/null 2>&1
+    local auth_dir
+    auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
+    [ ! -f "$auth_dir/recall.db" ]
+    assert_ok $? "recall.db must not be in auth backup"
+    _teardown_backup
+  }
+
+  it "does NOT include transcripts" && {
+    _setup_backup
+    backup_init
+    mkdir -p "$GEORGE_CONFIG_DIR/transcripts"
+    echo "session" > "$GEORGE_CONFIG_DIR/transcripts/2025-01-01.md"
+    echo "placeholder" > "$GEORGE_CONFIG_DIR/keys.conf"
+    backup_auth_create >/dev/null 2>&1
+    local auth_dir
+    auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
+    [ ! -d "$auth_dir/transcripts" ]
+    assert_ok $? "transcripts must not be in auth backup"
+    _teardown_backup
+  }
+
+  it "returns error when nothing to back up" && {
+    _setup_backup
+    backup_init
+    backup_auth_create >/dev/null 2>&1
+    assert_fail $? "Should fail with no auth files"
+    _teardown_backup
+  }
+
+  it "sets secure permissions on backup" && {
+    _setup_backup
+    backup_init
+    echo "secret" > "$GEORGE_CONFIG_DIR/keys.conf"
+    backup_auth_create >/dev/null 2>&1
+    local auth_dir
+    auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
+    local perms
+    perms=$(stat -c '%a' "$auth_dir" 2>/dev/null)
+    assert_eq "$perms" "700"
+    perms=$(stat -c '%a' "$auth_dir/keys.conf" 2>/dev/null)
+    assert_eq "$perms" "600"
+    _teardown_backup
+  }
+
+  it "writes a MANIFEST.md" && {
+    _setup_backup
+    backup_init
+    echo "key" > "$GEORGE_CONFIG_DIR/keys.conf"
+    backup_auth_create >/dev/null 2>&1
+    local auth_dir
+    auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
+    assert_file_exists "$auth_dir/MANIFEST.md"
+    grep -q "Auth & Config Backup" "$auth_dir/MANIFEST.md"
+    assert_ok $? "Manifest must have auth backup header"
+    _teardown_backup
+  }
+
+describe "backup_auth_list"
+
+  it "reports no auth backups when none exist" && {
+    _setup_backup
+    mkdir -p "$GEORGE_BACKUP_DIR"
+    _output=$(backup_auth_list 2>&1)
+    echo "$_output" | grep -qi "no auth backups"
+    assert_ok $? "Should report no auth backups"
+    _teardown_backup
+  }
+
+  it "lists existing auth backups" && {
+    _setup_backup
+    backup_init
+    echo "key" > "$GEORGE_CONFIG_DIR/keys.conf"
+    backup_auth_create >/dev/null 2>&1
+    _output=$(backup_auth_list 2>&1)
+    echo "$_output" | grep -q "auth-"
+    assert_ok $? "Should list auth backup entries"
+    _teardown_backup
+  }
+
+describe "backup_auth_restore"
+
+  it "restores auth items to .george" && {
+    _setup_backup
+    backup_init
+    mkdir -p "$GEORGE_CONFIG_DIR/.ssh"
+    echo "ssh-key" > "$GEORGE_CONFIG_DIR/.ssh/id_rsa"
+    echo "API_KEY=abc" > "$GEORGE_CONFIG_DIR/keys.conf"
+    backup_auth_create >/dev/null 2>&1
+    # Nuke the originals
+    rm -rf "$GEORGE_CONFIG_DIR/.ssh"
+    rm -f "$GEORGE_CONFIG_DIR/keys.conf"
+    # Restore (auto-selects latest, auto-confirm via task mode)
+    export _LODGE_IN_TASK=1
+    backup_auth_restore 2>/dev/null
+    export _LODGE_IN_TASK=0
+    assert_file_exists "$GEORGE_CONFIG_DIR/keys.conf"
+    assert_dir_exists "$GEORGE_CONFIG_DIR/.ssh"
+    _teardown_backup
+  }
+
+  it "restores lodge.conf to LODGE_DIR" && {
+    _setup_backup
+    backup_init
+    echo "key" > "$GEORGE_CONFIG_DIR/keys.conf"
+    echo "MY_CONFIG=1" > "$LODGE_DIR/lodge.conf"
+    backup_auth_create >/dev/null 2>&1
+    rm -f "$LODGE_DIR/lodge.conf"
+    export _LODGE_IN_TASK=1
+    backup_auth_restore 2>/dev/null
+    export _LODGE_IN_TASK=0
+    assert_file_exists "$LODGE_DIR/lodge.conf"
+    _content=$(cat "$LODGE_DIR/lodge.conf")
+    assert_eq "$_content" "MY_CONFIG=1"
+    rm -f "$LODGE_DIR/lodge.conf"
+    _teardown_backup
+  }
+
+  it "fails when no auth backups exist" && {
+    _setup_backup
+    mkdir -p "$GEORGE_BACKUP_DIR"
+    backup_auth_restore 2>/dev/null
+    assert_fail $? "Should fail with no auth backups"
+    _teardown_backup
+  }
+
+  it "sets correct permissions after restore" && {
+    _setup_backup
+    backup_init
+    echo "secret" > "$GEORGE_CONFIG_DIR/keys.conf"
+    mkdir -p "$GEORGE_CONFIG_DIR/.ssh"
+    echo "key" > "$GEORGE_CONFIG_DIR/.ssh/id_rsa"
+    backup_auth_create >/dev/null 2>&1
+    rm -rf "$GEORGE_CONFIG_DIR/.ssh" "$GEORGE_CONFIG_DIR/keys.conf"
+    export _LODGE_IN_TASK=1
+    backup_auth_restore 2>/dev/null
+    export _LODGE_IN_TASK=0
+    local perms
+    perms=$(stat -c '%a' "$GEORGE_CONFIG_DIR/.ssh" 2>/dev/null)
+    assert_eq "$perms" "700"
+    perms=$(stat -c '%a' "$GEORGE_CONFIG_DIR/keys.conf" 2>/dev/null)
+    assert_eq "$perms" "600"
+    _teardown_backup
+  }
+
+# ═══════════════════════════════════════════════════════════════
+# Code structure — auth backup definitions
+# ═══════════════════════════════════════════════════════════════
+
+describe "Auth backup — code structure"
+
+  it "_BACKUP_AUTH_ITEMS includes .ssh" && {
+    printf '%s\n' "${_BACKUP_AUTH_ITEMS[@]}" | grep -qx '.ssh'
+    assert_ok $? ".ssh must be in auth items"
+  }
+
+  it "_BACKUP_AUTH_ITEMS includes .gnupg" && {
+    printf '%s\n' "${_BACKUP_AUTH_ITEMS[@]}" | grep -qx '.gnupg'
+    assert_ok $? ".gnupg must be in auth items"
+  }
+
+  it "_BACKUP_AUTH_ITEMS includes keys.conf" && {
+    printf '%s\n' "${_BACKUP_AUTH_ITEMS[@]}" | grep -qx 'keys.conf'
+    assert_ok $? "keys.conf must be in auth items"
+  }
+
+  it "_BACKUP_AUTH_ITEMS includes .vault" && {
+    printf '%s\n' "${_BACKUP_AUTH_ITEMS[@]}" | grep -qx '.vault'
+    assert_ok $? ".vault must be in auth items"
+  }
+
+  it "_BACKUP_AUTH_ITEMS includes social databases" && {
+    printf '%s\n' "${_BACKUP_AUTH_ITEMS[@]}" | grep -q 'mastodon_instances'
+    assert_ok $? "mastodon_instances.db must be in auth items"
+    printf '%s\n' "${_BACKUP_AUTH_ITEMS[@]}" | grep -q 'discord_channels'
+    assert_ok $? "discord_channels.db must be in auth items"
+  }
+
+  it "_BACKUP_AUTH_GLOBS matches email provider configs" && {
+    printf '%s\n' "${_BACKUP_AUTH_GLOBS[@]}" | grep -q 'email_\*'
+    assert_ok $? "Must have email_*.conf glob"
+  }
+
+  it "lodge dispatches /backup auth create" && {
+    grep -q 'backup_auth_create' "$LODGE_DIR/lodge"
+    assert_ok $? "lodge must wire backup_auth_create"
+  }
+
+  it "lodge dispatches /backup auth restore" && {
+    grep -q 'backup_auth_restore' "$LODGE_DIR/lodge"
+    assert_ok $? "lodge must wire backup_auth_restore"
+  }
+
+  it "lodge dispatches /backup auth list" && {
+    grep -q 'backup_auth_list' "$LODGE_DIR/lodge"
+    assert_ok $? "lodge must wire backup_auth_list"
+  }
+
 test_end

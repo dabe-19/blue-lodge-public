@@ -87,13 +87,13 @@ _MODELS_REGISTRY=(
     # Non-thinking: temp=0.7 (general) / 1.0 (reasoning), top_p=0.8, top_k=20
     # Max context: 262,144 (256K). Has mmproj for vision.
     # Uses same ChatML format and /no_think mechanism as Qwen 3.
-    "qwen35-2b^blue-lodge-qwen35:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL^instruct^0^none^<|im_end|>^0.15^1.0^0.0^32768^16384^0.8^20^0.0^Qwen 3.5 2B instruct (UD-Q8). llama.cpp only — no Ollama support."
-    "qwen35-2b-q8^blue-lodge-qwen35-q8:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:Q8_0^instruct^0^none^<|im_end|>^0.15^1.0^0.0^32768^16384^0.8^20^0.0^Qwen 3.5 2B instruct (Q8_0). llama.cpp only — no Ollama support."
-    "qwen35-4b^blue-lodge-qwen35:4b^hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL^instruct^0^none^<|im_end|>^0.15^1.0^0.0^32768^16384^0.8^20^0.0^Qwen 3.5 4B instruct (UD-Q4). llama.cpp only — no Ollama support."
+    "qwen35-2b^blue-lodge-qwen35:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL^instruct^0^none^<|im_end|>^0.15^1.0^0.0^32768^16384^0.8^20^0.0^Qwen 3.5 2B instruct (UD-Q8). Downloaded via Ollama; usable by both backends."
+    "qwen35-2b-q8^blue-lodge-qwen35-q8:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:Q8_0^instruct^0^none^<|im_end|>^0.15^1.0^0.0^32768^16384^0.8^20^0.0^Qwen 3.5 2B instruct (Q8_0). Downloaded via Ollama; usable by both backends."
+    "qwen35-4b^blue-lodge-qwen35:4b^hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL^instruct^0^none^<|im_end|>^0.15^1.0^0.0^32768^16384^0.8^20^0.0^Qwen 3.5 4B instruct (UD-Q4). Downloaded via Ollama; usable by both backends."
     # Thinking variants: enable reasoning on the same base weights.
     # These use the Qwen /no_think mechanism and higher temperature for exploration.
-    "qwen35-2b-think^blue-lodge-qwen35-think:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.0^1.5^32768^32768^0.95^20^0.0^Qwen 3.5 2B thinking. llama.cpp only — requires --chat-template-kwargs."
-    "qwen35-4b-think^blue-lodge-qwen35-think:4b^hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.0^1.5^32768^32768^0.95^20^0.0^Qwen 3.5 4B thinking. llama.cpp only — requires --chat-template-kwargs."
+    "qwen35-2b-think^blue-lodge-qwen35-think:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.0^1.5^32768^32768^0.95^20^0.0^Qwen 3.5 2B thinking. Thinking mode requires llama.cpp --chat-template-kwargs."
+    "qwen35-4b-think^blue-lodge-qwen35-think:4b^hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.0^1.5^32768^32768^0.95^20^0.0^Qwen 3.5 4B thinking. Thinking mode requires llama.cpp --chat-template-kwargs."
 
     # ── Phi-4 family (Microsoft) ───────────────────────────────
     # Phi-4 mini: 3.8B params, 128K context, MIT license.
@@ -1503,7 +1503,7 @@ _MODELS_FAMILIES=(
     "granite|Granite 4 (IBM) — instruct + hybrid + preview thinking|granite4 granite4-h granite4-preview"
     "ministral|Ministral 3 (3B) — default thinking + instruct pair|minist-think minist-inst"
     "gemma|Gemma 3 (Google) — 4B QAT vision + 1B lightweight instruct|gemma3-4b-inst gemma3-1b-inst"
-    "qwen35|Qwen 3.5 (llama.cpp only) — instruct + thinking variants|qwen35-2b qwen35-4b qwen35-2b-think qwen35-4b-think"
+    "qwen35|Qwen 3.5 — instruct + thinking variants (GGUF via Ollama)|qwen35-2b qwen35-4b qwen35-2b-think qwen35-4b-think"
     "phi4|Phi-4 mini (Microsoft) — instruct + reasoning|phi4-inst phi4-reason"
 )
 

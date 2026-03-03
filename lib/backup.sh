@@ -667,3 +667,241 @@ backup_import() {
     ui_ok "Imported .george from $source_path ($file_count files)"
     ui_dim "  Restart George to pick up changes: /quit then relaunch"
 }
+
+# ═══════════════════════════════════════════════════════════════
+# Auth & Config Backup/Restore
+# ═══════════════════════════════════════════════════════════════
+# Portable backup of authentication credentials and service
+# configuration only — no memory, history, transcripts, cache,
+# or other runtime data. Designed for migrating George to a new
+# machine or recovering from a fresh install.
+#
+# What's included:
+#   .ssh/                   SSH keys
+#   .gnupg/                 GPG/PGP keyring
+#   gpg-george.sh           GPG wrapper script
+#   george_public.asc       GPG public key
+#   keys.conf               API keys (plaintext)
+#   .vault/                 Encrypted secrets vault
+#   email.conf              Legacy email credentials
+#   email_*.conf            Per-provider email configs
+#   mastodon_instances.db   Mastodon instance registry
+#   discord_channels.db     Discord channel mappings
+#   lodge.conf              User configuration overrides
+#
+# What's NOT included:
+#   recall.db               Knowledge base (rebuilt on start)
+#   transcripts/            Session transcripts
+#   backups/                Backup history
+#   backup-repo/            Git backup repository
+#   cache/                  API response cache
+#   cookies/                Web session cookies
+#   sandbox_journal.jsonl   Sandbox history
+#   slash/                  Custom slash commands (code, not creds)
+
+# Files and directories that belong in an auth/config backup.
+# Paths are relative to $GEORGE_CONFIG_DIR.
+_BACKUP_AUTH_ITEMS=(
+    ".ssh"
+    ".gnupg"
+    "gpg-george.sh"
+    "george_public.asc"
+    "keys.conf"
+    ".vault"
+    "email.conf"
+    "mastodon_instances.db"
+    "discord_channels.db"
+)
+
+# Glob patterns for items that can have variable names
+_BACKUP_AUTH_GLOBS=(
+    "email_*.conf"
+)
+
+# ── Create auth/config backup ─────────────────────────────────
+# Copies only auth & config items to a timestamped directory.
+backup_auth_create() {
+    backup_init
+
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_path="$GEORGE_BACKUP_DIR/auth-$timestamp"
+    mkdir -p "$backup_path"
+
+    ui_step "Creating auth & config backup"
+
+    local count=0
+
+    # Fixed-name items
+    for item in "${_BACKUP_AUTH_ITEMS[@]}"; do
+        local src="$GEORGE_CONFIG_DIR/$item"
+        if [ -e "$src" ]; then
+            if [ -d "$src" ]; then
+                cp -a "$src" "$backup_path/$item"
+            else
+                cp -p "$src" "$backup_path/$item"
+            fi
+            count=$((count + 1))
+        fi
+    done
+
+    # Glob-pattern items (e.g., email_gmail.conf, email_outlook.conf)
+    for pattern in "${_BACKUP_AUTH_GLOBS[@]}"; do
+        for src in "$GEORGE_CONFIG_DIR"/$pattern; do
+            [ -f "$src" ] || continue
+            cp -p "$src" "$backup_path/$(basename "$src")"
+            count=$((count + 1))
+        done
+    done
+
+    # lodge.conf from LODGE_DIR (not inside .george)
+    if [ -f "$LODGE_DIR/lodge.conf" ]; then
+        cp -p "$LODGE_DIR/lodge.conf" "$backup_path/lodge.conf"
+        count=$((count + 1))
+    fi
+
+    if [ "$count" -eq 0 ]; then
+        rmdir "$backup_path" 2>/dev/null
+        ui_warn "Nothing to back up — no auth or config files found"
+        return 1
+    fi
+
+    # Lock down permissions
+    chmod 700 "$backup_path"
+    [ -f "$backup_path/keys.conf" ] && chmod 600 "$backup_path/keys.conf"
+    [ -d "$backup_path/.vault" ] && chmod 700 "$backup_path/.vault"
+
+    # Write manifest
+    cat > "$backup_path/MANIFEST.md" << MEOF
+# Auth & Config Backup — $timestamp
+
+Created: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+Lodge version: ${LODGE_VERSION:-unknown}
+Items backed up: $count
+
+## Contents
+$(ls -la "$backup_path" | tail -n +2)
+
+## Notes
+This backup contains ONLY authentication credentials and service
+configuration. No memory, transcripts, or runtime data is included.
+Restore with: /backup auth restore auth-$timestamp
+MEOF
+
+    local size
+    size=$(du -sh "$backup_path" 2>/dev/null | cut -f1)
+    ui_ok "Auth backup complete: $count items → auth-$timestamp ($size)"
+    echo "$backup_path"
+}
+
+# ── List auth/config backups ──────────────────────────────────
+backup_auth_list() {
+    backup_init
+
+    local found=0
+    for d in "$GEORGE_BACKUP_DIR"/auth-*/; do
+        [ -d "$d" ] || continue
+        if [ "$found" -eq 0 ]; then
+            ui_section "Auth & Config Backups"
+            found=1
+        fi
+        local name
+        name=$(basename "$d")
+        local size
+        size=$(du -sh "$d" 2>/dev/null | cut -f1)
+        local file_count
+        file_count=$(find "$d" -type f | wc -l)
+        printf "  %b%-28s%b %s  (%d files)\n" "$C_WHITE" "$name" "$C_RESET" "$size" "$file_count"
+    done
+
+    if [ "$found" -eq 0 ]; then
+        ui_info "No auth backups found"
+        ui_dim "Create one: /backup auth create"
+    fi
+}
+
+# ── Restore auth/config backup ────────────────────────────────
+backup_auth_restore() {
+    local backup_name="${1:-}"
+
+    if [ -z "$backup_name" ]; then
+        # Use most recent auth backup
+        backup_name=$(ls -dt "$GEORGE_BACKUP_DIR"/auth-*/ 2>/dev/null | head -1 | xargs basename 2>/dev/null)
+        if [ -z "$backup_name" ]; then
+            ui_err "No auth backups found"
+            ui_dim "Create one: /backup auth create"
+            return 1
+        fi
+        ui_info "Using most recent auth backup: $backup_name"
+    fi
+
+    local backup_path="$GEORGE_BACKUP_DIR/$backup_name"
+    if [ ! -d "$backup_path" ]; then
+        ui_err "Backup not found: $backup_name"
+        return 1
+    fi
+
+    # Show what will be restored
+    ui_section "Restore Auth & Config from $backup_name"
+    echo ""
+    ui_dim "  Items to restore:"
+    for item in "${_BACKUP_AUTH_ITEMS[@]}"; do
+        [ -e "$backup_path/$item" ] && printf "    ● %s\n" "$item"
+    done
+    for f in "$backup_path"/email_*.conf; do
+        [ -f "$f" ] && printf "    ● %s\n" "$(basename "$f")"
+    done
+    [ -f "$backup_path/lodge.conf" ] && printf "    ● lodge.conf\n"
+    echo ""
+
+    ui_warn "This will overwrite any existing auth files with the backup copies."
+    if ! ui_confirm "Continue?" "n"; then
+        return 0
+    fi
+
+    mkdir -p "$GEORGE_CONFIG_DIR"
+
+    local count=0
+
+    # Fixed-name items
+    for item in "${_BACKUP_AUTH_ITEMS[@]}"; do
+        local src="$backup_path/$item"
+        local dest="$GEORGE_CONFIG_DIR/$item"
+        if [ -e "$src" ]; then
+            # Remove existing before restoring directories
+            [ -d "$dest" ] && rm -rf "$dest"
+            if [ -d "$src" ]; then
+                cp -a "$src" "$dest"
+            else
+                cp -p "$src" "$dest"
+            fi
+            ui_dim "  Restored: $item"
+            count=$((count + 1))
+        fi
+    done
+
+    # Glob items
+    for f in "$backup_path"/email_*.conf; do
+        [ -f "$f" ] || continue
+        cp -p "$f" "$GEORGE_CONFIG_DIR/$(basename "$f")"
+        ui_dim "  Restored: $(basename "$f")"
+        count=$((count + 1))
+    done
+
+    # lodge.conf goes to LODGE_DIR, not .george
+    if [ -f "$backup_path/lodge.conf" ]; then
+        cp -p "$backup_path/lodge.conf" "$LODGE_DIR/lodge.conf"
+        ui_dim "  Restored: lodge.conf → $LODGE_DIR/"
+        count=$((count + 1))
+    fi
+
+    # Fix permissions
+    chmod 700 "$GEORGE_CONFIG_DIR"
+    [ -f "$GEORGE_CONFIG_DIR/keys.conf" ] && chmod 600 "$GEORGE_CONFIG_DIR/keys.conf"
+    [ -d "$GEORGE_CONFIG_DIR/.vault" ] && chmod 700 "$GEORGE_CONFIG_DIR/.vault"
+    [ -d "$GEORGE_CONFIG_DIR/.ssh" ] && chmod 700 "$GEORGE_CONFIG_DIR/.ssh"
+    [ -d "$GEORGE_CONFIG_DIR/.gnupg" ] && chmod 700 "$GEORGE_CONFIG_DIR/.gnupg"
+
+    ui_ok "Restored $count auth/config items from $backup_name"
+    ui_dim "  Restart George to pick up changes: /quit then relaunch"
+}

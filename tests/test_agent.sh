@@ -1619,4 +1619,206 @@ describe "Web output condenser in agent_inner_loop"
     assert_ok $? "Must default condense token budget to 200"
   }
 
+# ── Honeydew list system ──────────────────────────────────────
+describe "Honeydew list system"
+
+  it "_agent_honeydew_build is defined" && {
+    declare -f _agent_honeydew_build &>/dev/null
+    assert_ok $?
+  }
+
+  it "_agent_honeydew_mark is defined" && {
+    declare -f _agent_honeydew_mark &>/dev/null
+    assert_ok $?
+  }
+
+  it "_agent_honeydew_status is defined" && {
+    declare -f _agent_honeydew_status &>/dev/null
+    assert_ok $?
+  }
+
+  it "_agent_honeydew_read is defined" && {
+    declare -f _agent_honeydew_read &>/dev/null
+    assert_ok $?
+  }
+
+  it "_agent_honeydew_auto_check is defined" && {
+    declare -f _agent_honeydew_auto_check &>/dev/null
+    assert_ok $?
+  }
+
+  it "honeydew_mark updates checklist items" && {
+    local _tmpdir
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    printf '## Honeydew List\nPrimary task: test\n\n1. [ ] First task\n2. [ ] Second task\n3. [ ] Third task\n' > "$_tmpdir/.george/honeydew.md"
+    _agent_honeydew_mark 2 "$_tmpdir"
+    grep -q '^2\. \[x\] Second task' "$_tmpdir/.george/honeydew.md"
+    assert_ok $? "Item 2 should be marked [x]"
+    grep -q '^1\. \[ \] First task' "$_tmpdir/.george/honeydew.md"
+    assert_ok $? "Item 1 should remain [ ]"
+    rm -rf "$_tmpdir"
+  }
+
+  it "honeydew_status reports correct counts" && {
+    local _tmpdir
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    printf '## Honeydew List\nPrimary task: test\n\n1. [x] Done task\n2. [ ] Pending task\n3. [ ] Another pending\n' > "$_tmpdir/.george/honeydew.md"
+    local status
+    status=$(_agent_honeydew_status "$_tmpdir")
+    echo "$status" | grep -q '1/3 complete'
+    assert_ok $? "Should show 1/3 complete, got: $status"
+    rm -rf "$_tmpdir"
+  }
+
+  it "honeydew_status shows all-done when fully checked" && {
+    local _tmpdir
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    printf '## Honeydew List\nPrimary task: test\n\n1. [x] Done\n2. [x] Also done\n' > "$_tmpdir/.george/honeydew.md"
+    local status
+    status=$(_agent_honeydew_status "$_tmpdir")
+    echo "$status" | grep -q 'All tasks done'
+    assert_ok $? "Should report all done, got: $status"
+    rm -rf "$_tmpdir"
+  }
+
+  it "honeydew_read returns file contents" && {
+    local _tmpdir
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    printf '## Honeydew List\n1. [ ] Test item\n' > "$_tmpdir/.george/honeydew.md"
+    local content
+    content=$(_agent_honeydew_read "$_tmpdir")
+    echo "$content" | grep -q 'Honeydew List'
+    assert_ok $? "Should contain honeydew header"
+    rm -rf "$_tmpdir"
+  }
+
+  it "honeydew_auto_check matches milestone to item by keywords" && {
+    local _tmpdir
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    printf '## Honeydew List\nPrimary task: test\n\n1. [ ] Search the web for HiBy M500 specs\n2. [ ] Write markdown report\n3. [ ] Email the report\n' > "$_tmpdir/.george/honeydew.md"
+    _agent_honeydew_auto_check "Search the web for HiBy M500 specifications and pricing" "$_tmpdir"
+    assert_ok $? "Should match item 1"
+    grep -q '^1\. \[x\]' "$_tmpdir/.george/honeydew.md"
+    assert_ok $? "Item 1 should be auto-checked"
+    rm -rf "$_tmpdir"
+  }
+
+  it "honeydew_auto_check requires minimum 2 word overlap" && {
+    local _tmpdir
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    printf '## Honeydew List\nPrimary task: test\n\n1. [ ] Search web for HiBy specs\n2. [ ] Write report about findings\n' > "$_tmpdir/.george/honeydew.md"
+    _agent_honeydew_auto_check "completely unrelated milestone about cats" "$_tmpdir" || true
+    # Verify no items were checked
+    grep -q '^1\. \[ \]' "$_tmpdir/.george/honeydew.md"
+    assert_ok $? "Item 1 should remain unchecked with no keyword overlap"
+    grep -q '^2\. \[ \]' "$_tmpdir/.george/honeydew.md"
+    assert_ok $? "Item 2 should remain unchecked with no keyword overlap"
+    rm -rf "$_tmpdir"
+  }
+
+  it "agent_run calls _agent_honeydew_build" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_agent_honeydew_build'
+    assert_ok $? "agent_run must call honeydew build"
+  }
+
+  it "agent_run auto-checks honeydew on milestone success" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_agent_honeydew_auto_check'
+    assert_ok $? "agent_run must auto-check honeydew items"
+  }
+
+  it "overall evaluator includes honeydew list injection" && {
+    local body
+    body=$(declare -f _agent_evaluate_completion)
+    echo "$body" | grep -q 'HONEYDEW LIST'
+    assert_ok $? "Pass 2 evaluator must reference honeydew"
+    echo "$body" | grep -q 'unchecked.*INCOMPLETE\|INCOMPLETE.*unchecked'
+    assert_ok $? "Pass 2 evaluator must enforce unchecked = INCOMPLETE"
+  }
+
+  it "strategist rules reference honeydew list" && {
+    local body
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'HONEYDEW LIST.*precedence'
+    assert_ok $? "Strategist must know about honeydew list"
+  }
+
+  it "inner loop injects honeydew status into micro_memory" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'Honeydew Progress'
+    assert_ok $? "Inner loop must inject honeydew status"
+  }
+
+# ── L1 scrape-images fallback ────────────────────────────────
+describe "L1 scrape-images to fetch fallback"
+
+  it "L1 detects /web scrape-images and falls back to /web fetch" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'scrape-images.*fetch'
+    assert_ok $? "L1 must detect scrape-images and convert to fetch"
+  }
+
+  it "L1 labels fallback as scrape-images→fetch" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'scrape-images.*fetch'
+    assert_ok $? "L1 label must show fallback type"
+  }
+
+  it "L1 extracts URL from scrape-images command" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_scrape_url'
+    assert_ok $? "Must extract URL into _scrape_url variable"
+  }
+
+  it "L1 constructs /web fetch command with extracted URL" && {
+    local body
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '/web fetch.*_scrape_url'
+    assert_ok $? "Must build /web fetch with the URL"
+  }
+
+# ── Web flow chain examples in specialist ─────────────────────
+describe "Web flow chain examples in specialist"
+
+  it "specialist /web card includes flow chain examples" && {
+    local body
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'FLOW CHAINS'
+    assert_ok $? "Must include FLOW CHAINS section"
+  }
+
+  it "specialist /web card includes scrape-images fallback guidance" && {
+    local body
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'scrape-images returns empty.*fetch'
+    assert_ok $? "Must guide fallback from scrape-images to fetch"
+  }
+
+  it "specialist /web card includes research flow example" && {
+    local body
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'Research flow.*search.*fetch.*summarize'
+    assert_ok $? "Must show research flow chain"
+  }
+
+  it "specialist /web card includes report flow example" && {
+    local body
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'Report flow.*search.*fetch.*write.*email'
+    assert_ok $? "Must show report flow chain"
+  }
+
 test_end

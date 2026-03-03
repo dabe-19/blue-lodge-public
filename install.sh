@@ -248,6 +248,41 @@ if ! curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
 fi
 ok "Ollama running"
 
+# ── 3b. Check llama.cpp (llama-server) ───────────────────────
+# llama.cpp is the preferred inference backend — faster startup, lower
+# memory overhead, and native GGUF support. Ollama manages GGUF
+# downloads and serves as the fallback backend.
+info "Checking llama-server..."
+_llama_server_found=0
+
+# 1) Check LLAMA_CPP_SERVER_BIN if set explicitly
+if [ -n "${LLAMA_CPP_SERVER_BIN:-}" ] && [ -x "$LLAMA_CPP_SERVER_BIN" ]; then
+    _llama_server_found=1
+    ok "llama-server found: $LLAMA_CPP_SERVER_BIN"
+# 2) Check default build path (Termux / proot layout)
+elif [ "$IS_TERMUX" -eq 1 ] || [ "$IS_PROOT" -eq 1 ]; then
+    _termux_home="${HOME}"
+    [ "$IS_PROOT" -eq 1 ] && _termux_home="/data/data/com.termux/files/home"
+    _default_bin="${_termux_home}/llama.cpp/build/bin/llama-server"
+    if [ -x "$_default_bin" ]; then
+        _llama_server_found=1
+        ok "llama-server found: $_default_bin"
+    fi
+    unset _termux_home _default_bin
+# 3) Check PATH
+elif command -v llama-server &>/dev/null; then
+    _llama_server_found=1
+    ok "llama-server found: $(command -v llama-server)"
+fi
+
+if [ "$_llama_server_found" -eq 0 ]; then
+    warn "llama-server not found — Ollama will be used as the inference backend."
+    info "To use llama.cpp (recommended), build it from source:"
+    info "  git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp"
+    info "  cmake -B build && cmake --build build --config Release -j\$(nproc)"
+    info "Then set LLAMA_CPP_SERVER_BIN in lodge.conf or your environment."
+fi
+
 # Source model library for model creation
 source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/models.sh" 2>/dev/null || true
@@ -385,55 +420,21 @@ if [ "$_minist_installed" -eq 0 ]; then
     fi
 fi
 
-# ── 5. Quick model test ─────────────────────────────────────
-# Two-phase approach: first, preload model weights into memory (this can
-# take 30-60s on ARM with a cold cache). Then test responsiveness with a
-# trivial prompt. Separating the two prevents the weight-load time from
-# eating into the response timeout.
+# ── 5. Verify Ollama API ─────────────────────────────────────
+# Quick health check — confirm the Ollama server responds to API
+# requests. We do NOT preload the model here; that would hold GPU/RAM
+# for the keep_alive window and interfere with lodge's first run.
 if [ "$_minist_installed" -eq 0 ]; then
-    warn "Skipping model test — no default model installed"
+    warn "Skipping API check — no default model installed"
 else
-info "Loading model into memory (first time may take 30-60s)..."
-# Phase 1: Preload weights. The /api/generate endpoint with an empty prompt
-# and keep_alive loads the model without generating anything.
-if curl -sf --connect-timeout 10 --max-time 180 http://127.0.0.1:11434/api/generate \
-    -d "{\"model\":\"$LODGE_MODEL_PRIMARY\",\"prompt\":\"\",\"keep_alive\":\"30m\"}" \
-    >/dev/null 2>&1; then
-    ok "Model loaded"
-else
-    warn "Model preload timed out — continuing anyway"
+    info "Verifying Ollama API..."
+    if curl -sf --connect-timeout 5 --max-time 10 \
+        http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+        ok "Ollama API responding — model will load on first use"
+    else
+        warn "Ollama API not responding — George may need Ollama restarted"
+    fi
 fi
-
-info "Testing model responsiveness..."
-_MODEL_OK=0
-# Phase 2: With weights already in memory, a trivial prompt should respond
-# in seconds. The system prompt overrides the Modelfile's SYSTEM (which
-# contains thinking instructions) — telling the model to skip reasoning.
-# num_predict:8 gives room for a few tokens even if the model emits a
-# short <think> stub before responding. budget_tokens:0 tells models
-# with native thinking support (Granite/Qwen3) to skip thinking entirely.
-# temperature:0 makes output deterministic and fast.
-if curl -sfN --connect-timeout 5 --max-time 30 http://127.0.0.1:11434/api/generate \
-    -d "{\"model\":\"$LODGE_MODEL_PRIMARY\",\"prompt\":\"Say OK\",\"system\":\"Reply with exactly one word. No reasoning. No thinking.\",\"stream\":true,\"budget_tokens\":0,\"options\":{\"num_predict\":8,\"temperature\":0}}" \
-    2>/dev/null | while IFS= read -r _line; do
-        _tok=$(echo "$_line" | jq -r '.response // empty' 2>/dev/null)
-        _think=$(echo "$_line" | jq -r '.thinking // empty' 2>/dev/null)
-        if [ -n "$_tok" ] || [ -n "$_think" ]; then
-            # Got at least one token — model is alive
-            exit 0
-        fi
-        _done=$(echo "$_line" | jq -r '.done // empty' 2>/dev/null)
-        [ "$_done" = "true" ] && exit 0
-    done; then
-    _MODEL_OK=1
-fi
-
-if [ "$_MODEL_OK" -eq 1 ]; then
-    ok "Model responsive"
-else
-    warn "Model slow or unresponsive. It may need a warm-up on first run."
-fi
-fi  # end _minist_installed check
 
 # ── 6. Make lodge executable ─────────────────────────────────
 chmod +x "$LODGE_DIR/lodge"

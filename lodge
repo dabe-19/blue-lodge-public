@@ -2593,6 +2593,22 @@ _cmd_backup() {
         list|ls)  backup_list ;;
         status)   backup_status ;;
         prune)    backup_prune "$rest" ;;
+        auth)
+            local sub
+            sub=$(echo "$rest" | awk '{print $1}')
+            local aargs
+            aargs=$(echo "$rest" | sed 's/^[^ ]* *//')
+            case "$sub" in
+                create|save) backup_auth_create ;;
+                restore)     backup_auth_restore "$aargs" ;;
+                list|ls)     backup_auth_list ;;
+                *)
+                    ui_info "Usage: /backup auth <create|restore|list>"
+                    ui_dim "  create          — Back up SSH, GPG, API keys, social configs"
+                    ui_dim "  restore [name]  — Restore auth/config from a backup"
+                    ui_dim "  list            — Show auth/config backups"
+                    ;;
+            esac ;;
         git)
             local sub
             sub=$(echo "$rest" | awk '{print $1}')
@@ -2610,8 +2626,9 @@ _cmd_backup() {
         export)   backup_export "$rest" ;;
         import)   backup_import "$rest" ;;
         *)
-            ui_info "Usage: /backup <local|restore|list|status|prune|export|import|git|github>"
+            ui_info "Usage: /backup <local|auth|restore|list|status|prune|export|import|git|github>"
             ui_dim "  local           — Quick file backup of identity & memory"
+            ui_dim "  auth            — Back up/restore auth credentials & config only"
             ui_dim "  restore [name]  — Restore from a backup"
             ui_dim "  list            — Show all backups"
             ui_dim "  status          — Show backup system status"

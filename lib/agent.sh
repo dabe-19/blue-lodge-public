@@ -39,6 +39,185 @@ _agent_thinking_context_limit() {
     fi
 }
 
+# ── Honeydew List System ──────────────────────────────────────
+# A persistent, precedence-ranked task decomposition that gives the
+# evaluator and strategist structured visibility into multi-step
+# tasks. The LLM decomposes the user's request into numbered
+# subtasks at task start. Each subtask is tracked as:
+#   1. [ ] Research HiBy M500 specifications
+#   2. [ ] Write markdown report with findings
+#   3. [ ] Email report to user@example.com
+#
+# The honeydew list persists in .george/honeydew.md and is injected
+# into the pass 2 evaluator, strategist, and micro_memory so
+# every component can see "2/3 tasks remain" rather than guessing.
+#
+# Name: "honeydew" is intentional — unique to George, not "todo".
+HONEYDEW_FILE="honeydew.md"
+
+# Build the honeydew list from a user task via LLM decomposition.
+# Writes .george/honeydew.md with numbered checklist items.
+# Args: $1=task text, $2=workdir
+_agent_honeydew_build() {
+    local task="$1"
+    local workdir="${2:-.}"
+    local george_dir="$workdir/.george"
+    local hd_file="$george_dir/$HONEYDEW_FILE"
+    mkdir -p "$george_dir"
+
+    local decompose_prompt="Break this task into a numbered checklist of concrete, actionable subtasks in execution order (highest precedence first). Each subtask should map to one or two slash commands.
+
+TASK: $task
+
+RULES:
+- Output ONLY the numbered list, nothing else.
+- Each item: a short imperative sentence (e.g., 'Search the web for X specs').
+- 2-6 items maximum. Simple tasks may have just 2.
+- Order by dependency: research before writing, writing before sending.
+- If the task is a single action (e.g., 'send a DM'), output 1-2 items.
+- Do NOT include verification, confirmation, or cleanup steps.
+- Do NOT prefix with checkboxes — just numbers."
+
+    local decompose_sys="You are a task decomposition engine. Output ONLY a numbered list of subtasks. No explanation, no headers, no formatting beyond the numbered list."
+
+    local raw_list
+    local LLM_SCENARIO=strategist
+    raw_list=$(llm_generate "$decompose_prompt" "$decompose_sys" "${LLM_STRATEGIST_TOKENS:-256}" "$LLM_BUDGET_AGENT")
+
+    # Clean think blocks
+    raw_list=$(echo "$raw_list" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+    raw_list=$(echo "$raw_list" | sed ':a;N;$!ba;s/<think>.*$//g')
+    raw_list=$(echo "$raw_list" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
+    raw_list=$(echo "$raw_list" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+    raw_list=$(echo "$raw_list" | sed '/^[[:space:]]*$/d')
+
+    # Parse numbered lines and write as checklist
+    {
+        echo "## Honeydew List"
+        echo "Primary task: $task"
+        echo ""
+        local count=0
+        while IFS= read -r line; do
+            # Strip leading whitespace, match numbered lines
+            line=$(echo "$line" | sed 's/^[[:space:]]*//')
+            if [[ "$line" =~ ^[0-9]+[\.\)][[:space:]]*(.*) ]]; then
+                count=$((count + 1))
+                local item="${BASH_REMATCH[1]}"
+                # Strip any LLM-added checkboxes
+                item=$(echo "$item" | sed 's/^\[[ x✓]*\][[:space:]]*//')
+                echo "${count}. [ ] ${item}"
+            fi
+        done <<< "$raw_list"
+        # Fallback: if LLM gave no parseable items, create a single item
+        if [ "$count" -eq 0 ]; then
+            echo "1. [ ] $task"
+        fi
+    } > "$hd_file"
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew list built ($(grep -c '^[0-9]*\. \[ \]' "$hd_file" 2>/dev/null || echo 0) items)"
+
+    # Display the list
+    ui_section "Honeydew List"
+    grep '^[0-9]*\.' "$hd_file" 2>/dev/null | while IFS= read -r line; do
+        ui_info "$line"
+    done
+}
+
+# Mark a honeydew item as complete by matching item number.
+# Args: $1=item_number, $2=workdir
+_agent_honeydew_mark() {
+    local item_num="$1"
+    local workdir="${2:-.}"
+    local hd_file="$workdir/.george/$HONEYDEW_FILE"
+
+    [ ! -f "$hd_file" ] && return 1
+
+    # Replace [ ] with [x] for the matching item number
+    sed -i "s/^${item_num}\. \[ \]/${item_num}. [x]/" "$hd_file"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew item $item_num marked complete"
+}
+
+# Return a structured status summary of the honeydew list.
+# Output: "2/5 complete | Next: 3. Research pricing data"
+# Args: $1=workdir
+_agent_honeydew_status() {
+    local workdir="${1:-.}"
+    local hd_file="$workdir/.george/$HONEYDEW_FILE"
+
+    [ ! -f "$hd_file" ] && { echo "No honeydew list"; return 1; }
+
+    local _hd_total _hd_done next_item
+    _hd_total=$(grep -cE '^[0-9]+\. \[[ x]\]' "$hd_file" 2>/dev/null)
+    _hd_total=${_hd_total:-0}
+    _hd_done=$(grep -cE '^[0-9]+\. \[x\]' "$hd_file" 2>/dev/null)
+    _hd_done=${_hd_done:-0}
+    next_item=$(grep -m1 '^[0-9]*\. \[ \]' "$hd_file" 2>/dev/null || true)
+
+    if [ "$_hd_done" -eq "$_hd_total" ] && [ "$_hd_total" -gt 0 ]; then
+        echo "${_hd_done}/${_hd_total} complete | All tasks done"
+    elif [ -n "$next_item" ]; then
+        echo "${_hd_done}/${_hd_total} complete | Next: ${next_item}"
+    else
+        echo "${_hd_done}/${_hd_total} complete"
+    fi
+}
+
+# Return the full honeydew checklist (for injection into prompts).
+# Args: $1=workdir
+_agent_honeydew_read() {
+    local workdir="${1:-.}"
+    local hd_file="$workdir/.george/$HONEYDEW_FILE"
+
+    [ ! -f "$hd_file" ] && return 1
+    cat "$hd_file"
+}
+
+# Match a completed milestone against honeydew items and mark
+# the best-matching item as done. Uses simple keyword overlap.
+# Args: $1=milestone_text, $2=workdir
+_agent_honeydew_auto_check() {
+    local milestone="$1"
+    local workdir="${2:-.}"
+    local hd_file="$workdir/.george/$HONEYDEW_FILE"
+
+    [ ! -f "$hd_file" ] && return 1
+
+    local milestone_lower
+    milestone_lower=$(echo "$milestone" | tr '[:upper:]' '[:lower:]')
+
+    # Iterate unchecked items and find best keyword match
+    local best_num=0
+    local best_score=0
+    while IFS= read -r line; do
+        local item_num item_text item_lower score=0
+        item_num=$(echo "$line" | grep -oE '^[0-9]+')
+        item_text=$(echo "$line" | sed 's/^[0-9]*\. \[ \] //')
+        item_lower=$(echo "$item_text" | tr '[:upper:]' '[:lower:]')
+
+        # Score: count shared words (>3 chars) between milestone and item
+        for word in $item_lower; do
+            [ ${#word} -le 3 ] && continue
+            if [[ "$milestone_lower" == *"$word"* ]]; then
+                score=$((score + 1))
+            fi
+        done
+
+        if [ "$score" -gt "$best_score" ]; then
+            best_score=$score
+            best_num=$item_num
+        fi
+    done < <(grep '^[0-9]*\. \[ \]' "$hd_file" 2>/dev/null)
+
+    # Require at least 2 matching words to auto-check
+    if [ "$best_score" -ge 2 ] && [ "$best_num" -gt 0 ]; then
+        _agent_honeydew_mark "$best_num" "$workdir"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew auto-check: item $best_num (score=$best_score)"
+        return 0
+    fi
+
+    return 1
+}
+
 # ── Dual Evaluator System ─────────────────────────────────────
 # Two-pass evaluation after each milestone:
 #
@@ -176,7 +355,24 @@ _agent_evaluate_completion() {
     # ATTENTION REORDER: context first, objective + criteria last
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE (the user's original request):\n${primary_obj}\n\nGiven all the milestones completed above, is the PRIMARY OBJECTIVE fully satisfied?\n\nRULES:\n- Review the Completed Milestones section for what has been accomplished.\n- For single-action objectives (e.g., 'send a Discord DM to X'), one successful milestone that executed the action is sufficient.\n- For multi-part objectives, verify each distinct part has a corresponding completed milestone.\n- Do NOT invent extra requirements beyond what the user explicitly asked for.\n- Do NOT require confirmation or verification steps unless the user asked for them.\n- If the key action(s) have been executed successfully, the task is done.\n\nSPECIAL RULES FOR SOFTWARE/CODE TASKS:\n- If the objective involves building a program, microservice, or application:\n  * Source code files must have been written with meaningful, non-trivial content.\n  * Placeholder or stub code (todo, unimplemented, panic, 'Missing implementation') does NOT count.\n  * The project must compile/build successfully (a /build with exit 0, not just /write).\n  * Only mark COMPLETE if the code could plausibly run. /write alone is not enough.\n- If the action log is MOSTLY web searches with little or no code written, mark INCOMPLETE.\n- Web research does NOT count as progress toward a coding objective unless\n  it is supplemented by actual file creation, building, and testing.\n\nSPECIAL RULES FOR WRITING/CONTENT/SOCIAL TASKS:\n- If the objective asks to 'write', 'invent', 'create', 'compose', or 'draft' content\n  (a song, poem, essay, review, message, etc.) AND THEN post/send/save it:\n  * The ACTUAL content must appear in the milestone output or action log.\n  * A teaser, placeholder, or generic message is NOT the requested content.\n  * Merely announcing intent to create something is NOT creating it.\n  * If the objective says 'invent a song' or 'write a review', the song/review text\n    must exist in the executed command output. If only a stub or intro was posted, mark INCOMPLETE.\n- If the objective asks to send specific content (email body, Discord message with substance):\n  * Check that the SENT content is substantive and matches what was requested.\n  * A partial or truncated message missing the core content is INCOMPLETE.\n  * 'Email sent' with a placeholder body does NOT satisfy 'email a review'.\n- For web research + email/post tasks: the gathered research must appear in the final\n  sent content, not just in the search results. Searching alone is NOT sending.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence description of what specific part remains>"
+
+    # ── Inject honeydew list status into evaluator ─────────────
+    # The honeydew list provides structured visibility into multi-step
+    # tasks. If ANY items are unchecked [ ], the task is NOT done.
+    local _hd_eval_block=""
+    local _hd_eval_file
+    _hd_eval_file="$(dirname "$macro_file")/$HONEYDEW_FILE"
+    if [ -f "$_hd_eval_file" ]; then
+        local _hd_eval_content
+        _hd_eval_content=$(cat "$_hd_eval_file")
+        local _hd_total _hd_done
+        _hd_total=$(grep -cE '^[0-9]+\. \[[ x]\]' "$_hd_eval_file" 2>/dev/null || echo 0)
+        _hd_done=$(grep -cE '^[0-9]+\. \[x\]' "$_hd_eval_file" 2>/dev/null || echo 0)
+        _hd_eval_block="\n\n>>> HONEYDEW LIST (${_hd_done}/${_hd_total} complete) <<<\n${_hd_eval_content}\n>>> If ANY items above show [ ] (unchecked), the task is INCOMPLETE. <<<"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: overall-eval <- honeydew (${_hd_done}/${_hd_total})"
+    fi
+
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}${_hd_eval_block}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE (the user's original request):\n${primary_obj}\n\nGiven all the milestones completed above, is the PRIMARY OBJECTIVE fully satisfied?\n\nRULES:\n- Review the Completed Milestones section for what has been accomplished.\n- For single-action objectives (e.g., 'send a Discord DM to X'), one successful milestone that executed the action is sufficient.\n- For multi-part objectives, verify each distinct part has a corresponding completed milestone.\n- Do NOT invent extra requirements beyond what the user explicitly asked for.\n- Do NOT require confirmation or verification steps unless the user asked for them.\n- If the key action(s) have been executed successfully, the task is done.\n- HONEYDEW LIST: If a Honeydew List is present above, ALL items must be marked [x] for the task to be COMPLETE.\n  Any item still showing [ ] means that subtask has NOT been performed — mark INCOMPLETE.\n\nSPECIAL RULES FOR SOFTWARE/CODE TASKS:\n- If the objective involves building a program, microservice, or application:\n  * Source code files must have been written with meaningful, non-trivial content.\n  * Placeholder or stub code (todo, unimplemented, panic, 'Missing implementation') does NOT count.\n  * The project must compile/build successfully (a /build with exit 0, not just /write).\n  * Only mark COMPLETE if the code could plausibly run. /write alone is not enough.\n- If the action log is MOSTLY web searches with little or no code written, mark INCOMPLETE.\n- Web research does NOT count as progress toward a coding objective unless\n  it is supplemented by actual file creation, building, and testing.\n\nSPECIAL RULES FOR WRITING/CONTENT/SOCIAL TASKS:\n- If the objective asks to 'write', 'invent', 'create', 'compose', or 'draft' content\n  (a song, poem, essay, review, message, etc.) AND THEN post/send/save it:\n  * The ACTUAL content must appear in the milestone output or action log.\n  * A teaser, placeholder, or generic message is NOT the requested content.\n  * Merely announcing intent to create something is NOT creating it.\n  * If the objective says 'invent a song' or 'write a review', the song/review text\n    must exist in the executed command output. If only a stub or intro was posted, mark INCOMPLETE.\n- If the objective asks to send specific content (email body, Discord message with substance):\n  * Check that the SENT content is substantive and matches what was requested.\n  * A partial or truncated message missing the core content is INCOMPLETE.\n  * 'Email sent' with a placeholder body does NOT satisfy 'email a review'.\n- For web research + email/post tasks: the gathered research must appear in the final\n  sent content, not just in the search results. Searching alone is NOT sending.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence description of what specific part remains>"
 
     local eval_sys="You are a strategic task-completion evaluator. Given the full history of completed milestones, determine whether the user's original request has been fully addressed. Be pragmatic — if the requested actions were executed successfully, the task is complete. Do not add requirements the user did not ask for. For SOFTWARE/CODE tasks, be stricter: writing files is not enough — the code must compile and be plausibly functional. For WRITING/CONTENT tasks, verify the actual content was created and delivered — not just a placeholder or announcement. Respond COMPLETE or INCOMPLETE: <reason>."
 
@@ -1001,6 +1197,15 @@ _build_specialist_prompt() {
                 echo "    Only search the web when you genuinely lack domain knowledge."
                 echo "  IMAGE WORKFLOW: /web search <topic> → pick image URL → /vision <image_url> [prompt]"
                 echo "  ALT IMAGE WORKFLOW: /web scrape-images <page_url> → read content + /vision <image_url>"
+                echo ""
+                echo "  FLOW CHAINS (how web steps connect):"
+                echo "  1. Research flow: /web search <topic> → /web fetch <url> → summarize"
+                echo "  2. Image flow:   /web search <topic> → pick image URL → /vision <url>"
+                echo "  3. Deep scrape:  /web search <topic> → /web scrape-images <url> → read content"
+                echo "     If scrape-images returns ~0 content or images, FALL BACK to /web fetch <same_url>"
+                echo "  4. Report flow:  /web search → /web fetch (1-2 pages) → /write report → /email send"
+                echo "  IMPORTANT: Do NOT fetch every URL from search results. 1 search + 1-2 fetches is enough."
+                echo "  If /web scrape-images returns empty content, use /web fetch for the same URL instead."
                 echo "Example: /web search rust async tutorial 2025"
                 ;;
             download)
@@ -1254,6 +1459,20 @@ agent_inner_loop() {
             echo "$_primary_obj" >> "$micro_file"
             echo "" >> "$micro_file"
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: primary objective -> micro_memory"
+        fi
+    fi
+
+    # ── HONEYDEW STATUS INJECTION ──────────────────────────────
+    # Show the inner loop what tasks remain so the router/specialist
+    # can see progress at a glance (e.g., "2/4 complete | Next: ...").
+    local _hd_inner_file="$george_dir/$HONEYDEW_FILE"
+    if [ -f "$_hd_inner_file" ]; then
+        local _hd_inner_status
+        _hd_inner_status=$(_agent_honeydew_status "$(dirname "$george_dir")" 2>/dev/null)
+        if [ -n "$_hd_inner_status" ]; then
+            echo "## Honeydew Progress: $_hd_inner_status" >> "$micro_file"
+            echo "" >> "$micro_file"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew status -> micro_memory"
         fi
     fi
 
@@ -1860,16 +2079,33 @@ agent_inner_loop() {
             # LLM is completely bypassed. Re-run the exact command
             # after a brief sleep. Catches transient network errors,
             # file locks, or race conditions without wasting tokens.
+            #
+            # SPECIAL CASE: /web scrape-images often fails on JS-rendered
+            # SPAs (returns empty content or SIGPIPE). Instead of retrying
+            # the same scrape-images, fall back to /web fetch which uses
+            # simpler HTML extraction and handles more sites reliably.
+            # /web fetch CAN naive-retry to itself since it's idempotent.
             if [ "$_fail_count" -le 1 ]; then
-                ui_warn "Escalation L1: Naive retry..."
+                local _l1_cmd="$cmd"
+                local _l1_label="Retry"
+                # Detect scrape-images and fall back to /web fetch
+                if [[ "$cmd" == "/web scrape-images "* ]] || [[ "$cmd" == "/web scrapeimages "* ]]; then
+                    local _scrape_url="${cmd##* }"
+                    _l1_cmd="/web fetch $_scrape_url"
+                    _l1_label="Fallback: scrape-images→fetch"
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] L1: scrape-images fallback -> /web fetch %s\n' "$_scrape_url" > /dev/tty 2>/dev/null
+                fi
+                ui_warn "Escalation L1: ${_l1_label}..."
                 sleep 1
-                if [ "$cmd_is_slash" -eq 1 ] && declare -f commands_dispatch &>/dev/null; then
-                    output=$(commands_dispatch "$cmd" "$workdir" 2>&1 | head -c 2000)
+                if [[ "$_l1_cmd" == /* ]] && declare -f commands_dispatch &>/dev/null; then
+                    output=$(commands_dispatch "$_l1_cmd" "$workdir" 2>&1 | head -c 2000)
+                elif [ "$cmd_is_slash" -eq 1 ] && declare -f commands_dispatch &>/dev/null; then
+                    output=$(commands_dispatch "$_l1_cmd" "$workdir" 2>&1 | head -c 2000)
                 else
-                    output=$(eval "$cmd" 2>&1 | head -c 2000)
+                    output=$(eval "$_l1_cmd" 2>&1 | head -c 2000)
                 fi
                 if [ ${PIPESTATUS[0]} -eq 0 ]; then
-                    echo -e "\n**Action:** \`$cmd\` (Retry)\n**Status:** EXECUTED SUCCESSFULLY (exit 0)\n**Output:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
+                    echo -e "\n**Action:** \`$_l1_cmd\` ($_l1_label)\n**Status:** EXECUTED SUCCESSFULLY (exit 0)\n**Output:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
                     inner_attempts=$((inner_attempts + 1))
                     continue
                 fi
@@ -2217,6 +2453,26 @@ MEMEOF
     echo "# Failures Log" > "$fail_file"
     echo "---" >> "$fail_file"
 
+    # ── Build Honeydew List ───────────────────────────────────
+    # Decompose the user's task into a precedence-ranked checklist
+    # BEFORE the first strategist call. This gives the evaluator
+    # and strategist structured visibility into remaining work
+    # (e.g., "2/4 tasks remain") instead of guessing.
+    _agent_honeydew_build "$task" "$workdir"
+
+    # Inject honeydew list into macro_memory so strategist + evaluator
+    # see it as part of the task context.
+    local _hd_content
+    _hd_content=$(_agent_honeydew_read "$workdir" 2>/dev/null)
+    if [ -n "$_hd_content" ]; then
+        {
+            echo ""
+            echo "$_hd_content"
+            echo ""
+        } >> "$macro_file"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew list -> macro_memory"
+    fi
+
     # ── Macro Loop: Milestone-by-milestone execution ──────────
     local macro_iterations=0
     local max_macro_loops="${AGENT_MAX_STEPS:-20}"
@@ -2319,7 +2575,10 @@ STRATEGIC RULES:
 - Do NOT regenerate a milestone that previously FAILED — try a different approach or skip it
 - For multi-part tasks, advance to the NEXT part even if a previous part partially failed
 - For multi-part tasks, advance to the NEXT part even if a previous part partially failed
-- COMPLETION: When the Primary Objective is fulfilled, output EXACTLY the word DONE (nothing else)
+- HONEYDEW LIST: The task memory contains a Honeydew List — a precedence-ranked checklist.
+  Items marked [x] are done. Items marked [ ] are pending. Pick the NEXT unchecked [ ] item
+  as your milestone. Do NOT output DONE while unchecked items remain.
+- COMPLETION: When the Primary Objective is fulfilled AND all Honeydew items are [x], output EXACTLY the word DONE (nothing else)
 - CONVERSATION RULE: If the user's objective is simply to chat or ask a question, and you have executed the /ask command to answer them, the objective is complete. Output DONE.
 - NEVER prefix a milestone with DONE, DONE:, COMPLETE, or any completion keyword — those are reserved signals
 - MILESTONE FORMAT: Output ONLY a concise imperative sentence (e.g., 'Search the web for X', 'Use /recall to look up syntax').
@@ -2493,6 +2752,31 @@ ${_last_eval_feedback}
                     else
                         memory_update_section "Completed Milestones" "${_current_steps}\n${_step_line}" "$workdir" 2>/dev/null
                     fi
+                fi
+            fi
+
+            # ── Auto-check honeydew items on milestone success ─
+            # Match the completed milestone against unchecked honeydew
+            # items and mark the best match as done. Updates the
+            # honeydew file AND refreshes it in macro_memory so the
+            # evaluator sees the updated checklist.
+            if _agent_honeydew_auto_check "$milestone" "$workdir"; then
+                local _hd_status
+                _hd_status=$(_agent_honeydew_status "$workdir" 2>/dev/null)
+                [ -n "$_hd_status" ] && ui_dim "  Honeydew: $_hd_status"
+                # Refresh honeydew section in macro_memory by rewriting
+                local _hd_updated
+                _hd_updated=$(_agent_honeydew_read "$workdir" 2>/dev/null)
+                if [ -n "$_hd_updated" ] && [ -f "$macro_file" ]; then
+                    # Remove old honeydew block, re-append fresh one
+                    local _macro_tmp="${macro_file}.tmp"
+                    awk '/^## Honeydew List/{skip=1; next} /^## /{skip=0} !skip' "$macro_file" > "$_macro_tmp"
+                    {
+                        cat "$_macro_tmp"
+                        echo ""
+                        echo "$_hd_updated"
+                    } > "$macro_file"
+                    rm -f "$_macro_tmp"
                 fi
             fi
         else

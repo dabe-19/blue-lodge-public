@@ -504,6 +504,33 @@ describe "Model Registry — Qwen 3.5 entries"
     done
   }
 
+  it "qwen35 instruct notes say downloaded via Ollama" && {
+    for _key in qwen35-2b qwen35-2b-q8 qwen35-4b; do
+      _entry=$(_models_lookup "$_key")
+      _models_parse_entry "$_entry"
+      echo "$_ME_NOTES" | grep -q "Downloaded via Ollama"
+      assert_ok $? "Notes for $_key should mention Ollama download"
+    done
+  }
+
+  it "qwen35 notes do NOT say llama.cpp only" && {
+    for _key in qwen35-2b qwen35-2b-q8 qwen35-4b qwen35-2b-think qwen35-4b-think; do
+      _entry=$(_models_lookup "$_key")
+      _models_parse_entry "$_entry"
+      ! echo "$_ME_NOTES" | grep -q "llama.cpp only"
+      assert_ok $? "Notes for $_key should not say llama.cpp only"
+    done
+  }
+
+  it "qwen35 thinking notes mention --chat-template-kwargs" && {
+    for _key in qwen35-2b-think qwen35-4b-think; do
+      _entry=$(_models_lookup "$_key")
+      _models_parse_entry "$_entry"
+      echo "$_ME_NOTES" | grep -q "chat-template-kwargs"
+      assert_ok $? "Notes for $_key should mention chat-template-kwargs"
+    done
+  }
+
 describe "Model Registry — Phi-4 entries"
 
   it "phi4-inst is registered" && {
@@ -573,6 +600,12 @@ describe "Model Families — new definitions"
   it "qwen35 family is defined" && {
     _fam=$(_models_family_lookup "qwen35")
     assert_not_empty "$_fam"
+  }
+
+  it "qwen35 family description does not say llama.cpp only" && {
+    _fam=$(_models_family_lookup "qwen35")
+    ! echo "$_fam" | grep -q "llama.cpp only"
+    assert_ok $? "Family description should not say llama.cpp only"
   }
 
   it "qwen35 family contains instruct and thinking variants" && {
