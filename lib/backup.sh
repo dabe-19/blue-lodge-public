@@ -681,6 +681,7 @@ backup_import() {
 # What's included:
 #   .ssh/                   SSH keys
 #   .gnupg/                 GPG/PGP keyring
+#   .keyring/               Vault encryption key (AES-256 signing.key)
 #   gpg-george.sh           GPG wrapper script
 #   george_public.asc       GPG public key
 #   keys.conf               API keys (plaintext)
@@ -706,6 +707,7 @@ backup_import() {
 _BACKUP_AUTH_ITEMS=(
     ".ssh"
     ".gnupg"
+    ".keyring"
     "gpg-george.sh"
     "george_public.asc"
     "keys.conf"
@@ -781,6 +783,8 @@ backup_auth_create() {
     chmod 700 "$backup_path"
     [ -f "$backup_path/keys.conf" ] && chmod 600 "$backup_path/keys.conf"
     [ -d "$backup_path/.vault" ] && chmod 700 "$backup_path/.vault"
+    [ -d "$backup_path/.keyring" ] && chmod 700 "$backup_path/.keyring"
+    [ -f "$backup_path/.keyring/signing.key" ] && chmod 600 "$backup_path/.keyring/signing.key"
 
     # Write manifest
     cat > "$backup_path/MANIFEST.md" << MEOF
@@ -930,6 +934,8 @@ backup_auth_restore() {
     chmod 700 "$GEORGE_CONFIG_DIR"
     [ -f "$GEORGE_CONFIG_DIR/keys.conf" ] && chmod 600 "$GEORGE_CONFIG_DIR/keys.conf"
     [ -d "$GEORGE_CONFIG_DIR/.vault" ] && chmod 700 "$GEORGE_CONFIG_DIR/.vault"
+    [ -d "$GEORGE_CONFIG_DIR/.keyring" ] && chmod 700 "$GEORGE_CONFIG_DIR/.keyring"
+    [ -f "$GEORGE_CONFIG_DIR/.keyring/signing.key" ] && chmod 600 "$GEORGE_CONFIG_DIR/.keyring/signing.key"
     [ -d "$GEORGE_CONFIG_DIR/.ssh" ] && chmod 700 "$GEORGE_CONFIG_DIR/.ssh"
     [ -d "$GEORGE_CONFIG_DIR/.gnupg" ] && chmod 700 "$GEORGE_CONFIG_DIR/.gnupg"
 

@@ -447,6 +447,19 @@ describe "backup_auth_create"
     _teardown_backup
   }
 
+  it "creates auth backup with keyring directory" && {
+    _setup_backup
+    backup_init
+    mkdir -p "$GEORGE_CONFIG_DIR/.keyring"
+    echo "abc123hex" > "$GEORGE_CONFIG_DIR/.keyring/signing.key"
+    chmod 600 "$GEORGE_CONFIG_DIR/.keyring/signing.key"
+    backup_auth_create >/dev/null 2>&1
+    auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
+    assert_dir_exists "$auth_dir/.keyring"
+    assert_file_exists "$auth_dir/.keyring/signing.key"
+    _teardown_backup
+  }
+
   it "includes email provider configs via glob" && {
     _setup_backup
     backup_init
@@ -627,6 +640,35 @@ describe "backup_auth_restore"
     _teardown_backup
   }
 
+  it "restores keyring with vault so secrets remain decryptable" && {
+    _setup_backup
+    backup_init
+    # Create a keyring and vault
+    mkdir -p "$GEORGE_CONFIG_DIR/.keyring" "$GEORGE_CONFIG_DIR/.vault"
+    echo "deadbeef1234" > "$GEORGE_CONFIG_DIR/.keyring/signing.key"
+    chmod 600 "$GEORGE_CONFIG_DIR/.keyring/signing.key"
+    echo "encrypted-data" > "$GEORGE_CONFIG_DIR/.vault/gmail_pass.enc"
+    backup_auth_create >/dev/null 2>&1
+    # Nuke originals (simulates fresh install)
+    rm -rf "$GEORGE_CONFIG_DIR/.keyring" "$GEORGE_CONFIG_DIR/.vault"
+    export _LODGE_IN_TASK=1
+    backup_auth_restore 2>/dev/null
+    export _LODGE_IN_TASK=0
+    assert_dir_exists "$GEORGE_CONFIG_DIR/.keyring"
+    assert_file_exists "$GEORGE_CONFIG_DIR/.keyring/signing.key"
+    assert_dir_exists "$GEORGE_CONFIG_DIR/.vault"
+    assert_file_exists "$GEORGE_CONFIG_DIR/.vault/gmail_pass.enc"
+    # Verify the key content survived round-trip
+    restored_key=$(cat "$GEORGE_CONFIG_DIR/.keyring/signing.key")
+    assert_eq "$restored_key" "deadbeef1234"
+    # Verify permissions
+    perms=$(stat -c '%a' "$GEORGE_CONFIG_DIR/.keyring" 2>/dev/null)
+    assert_eq "$perms" "700"
+    perms=$(stat -c '%a' "$GEORGE_CONFIG_DIR/.keyring/signing.key" 2>/dev/null)
+    assert_eq "$perms" "600"
+    _teardown_backup
+  }
+
 # ═══════════════════════════════════════════════════════════════
 # Code structure — auth backup definitions
 # ═══════════════════════════════════════════════════════════════
@@ -651,6 +693,11 @@ describe "Auth backup — code structure"
   it "_BACKUP_AUTH_ITEMS includes .vault" && {
     printf '%s\n' "${_BACKUP_AUTH_ITEMS[@]}" | grep -qx '.vault'
     assert_ok $? ".vault must be in auth items"
+  }
+
+  it "_BACKUP_AUTH_ITEMS includes .keyring" && {
+    printf '%s\n' "${_BACKUP_AUTH_ITEMS[@]}" | grep -qx '.keyring'
+    assert_ok $? ".keyring must be in auth items (vault encryption key)"
   }
 
   it "_BACKUP_AUTH_ITEMS includes social databases" && {

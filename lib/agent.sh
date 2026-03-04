@@ -41,6 +41,229 @@ _agent_thinking_context_limit() {
     fi
 }
 
+# ── JSON Memory Helpers ─────────────────────────────────────────
+# Micro and macro memory use structured JSON for inter-agent context.
+# jq handles all read/modify/write operations to ensure valid JSON
+# and safe string escaping (no injection from command output).
+#
+# micro_memory.json — Per-milestone working memory (wiped each milestone).
+# macro_memory.json — Per-task persistent memory (persona + milestones).
+# ---------------------------------------------------------------
+
+# ── Micro Memory (per-milestone working memory) ───────────────
+
+_micro_init() {
+    local file="$1" objective="$2"
+    jq -n --arg obj "$objective" --arg ts "$(date '+%Y-%m-%d %H:%M:%S %Z')" '{
+        micro_objective: $obj,
+        started: $ts,
+        primary_objective: null,
+        honeydew_progress: null,
+        research_context: null,
+        prior_milestones: [],
+        action_log: [],
+        milestone_result: null,
+        sufficiency_reached: false,
+        warnings: [],
+        system_notes: []
+    }' > "$file"
+}
+
+_micro_set() {
+    local file="$1" key="$2" value="$3"
+    local tmp="${file}.tmp"
+    jq --arg k "$key" --arg v "$value" '.[$k] = $v' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+_micro_add_action() {
+    local file="$1" action="$2" status="$3" exit_code="$4" output="$5" source="${6:-specialist}"
+    local tmp="${file}.tmp"
+    jq --arg a "$action" --arg s "$status" --argjson e "$exit_code" \
+       --arg o "${output:0:2000}" --arg src "$source" \
+       '.action_log += [{"action": $a, "status": $s, "exit_code": $e, "output": $o, "source": $src}]' \
+       "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+_micro_add_warning() {
+    local file="$1" warning="$2"
+    local tmp="${file}.tmp"
+    jq --arg w "$warning" '.warnings += [$w]' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+_micro_add_note() {
+    local file="$1" note="$2"
+    local tmp="${file}.tmp"
+    jq --arg n "$note" '.system_notes += [$n]' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+_micro_set_result() {
+    local file="$1" status="$2" summary="$3"
+    local tmp="${file}.tmp"
+    jq --arg s "$status" --arg sum "$summary" \
+       '.milestone_result = {"status": $s, "summary": $sum}' \
+       "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+_micro_set_sufficiency() {
+    local file="$1"
+    local tmp="${file}.tmp"
+    jq '.sufficiency_reached = true' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+_micro_set_prior_milestones() {
+    local file="$1" milestones_json="$2"
+    local tmp="${file}.tmp"
+    jq --argjson m "$milestones_json" '.prior_milestones = $m' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+# Count actions matching an optional regex on the action field
+_micro_action_count() {
+    local file="$1" pattern="${2:-}"
+    if [ -n "$pattern" ]; then
+        jq --arg p "$pattern" '[.action_log[] | select(.action | test($p))] | length' "$file" 2>/dev/null || echo 0
+    else
+        jq '.action_log | length' "$file" 2>/dev/null || echo 0
+    fi
+}
+
+# Count successful actions matching an optional regex
+_micro_success_count() {
+    local file="$1" pattern="${2:-}"
+    if [ -n "$pattern" ]; then
+        jq --arg p "$pattern" '[.action_log[] | select(.status == "SUCCESS") | select(.action | test($p))] | length' "$file" 2>/dev/null || echo 0
+    else
+        jq '[.action_log[] | select(.status == "SUCCESS")] | length' "$file" 2>/dev/null || echo 0
+    fi
+}
+
+# Check if sufficiency gate has triggered
+_micro_sufficiency_reached() {
+    local file="$1"
+    jq -e '.sufficiency_reached == true' "$file" >/dev/null 2>&1
+}
+
+# Serialize for LLM injection — last N actions with output capped
+_micro_serialize() {
+    local file="$1" max_actions="${2:-10}"
+    jq --argjson n "$max_actions" '
+        .action_log = (.action_log | .[-$n:] | map(.output = .output[:300]))
+    ' "$file" 2>/dev/null
+}
+
+# Extract successful web outputs for research buffer
+_micro_web_outputs() {
+    local file="$1" max_chars="${2:-1500}"
+    local result
+    result=$(jq -r '[.action_log[] | select(.action | test("^/web")) | select(.status == "SUCCESS") | .output] | join("\n---\n")' "$file" 2>/dev/null)
+    echo "${result:0:$max_chars}"
+}
+
+# ── Macro Memory (per-task persistent memory) ─────────────────
+
+_macro_init() {
+    local file="$1" task="$2" persona="$3" project_ctx="${4:-}"
+    jq -n --arg ts "$(date '+%Y-%m-%d %H:%M:%S %Z')" \
+          --arg task "$task" --arg persona "$persona" \
+          --arg ctx "$project_ctx" '{
+        task_started: $ts,
+        persona: $persona,
+        primary_objective: $task,
+        project_context: (if $ctx == "" then null else $ctx end),
+        completed_milestones: [],
+        honeydew: null
+    }' > "$file"
+}
+
+_macro_add_milestone() {
+    local file="$1" objective="$2" summary="$3" command="${4:-}" action_class="${5:-UNKNOWN}" status="${6:-OK}"
+    local tmp="${file}.tmp"
+    jq --arg ts "$(date '+%Y-%m-%d %H:%M:%S')" \
+       --arg obj "$objective" --arg sum "$summary" \
+       --arg cmd "$command" --arg ac "$action_class" --arg st "$status" \
+       '.completed_milestones += [{"timestamp": $ts, "objective": $obj, "summary": $sum, "command": $cmd, "action_class": $ac, "status": $st}]' \
+       "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+_macro_get() {
+    local file="$1" key="$2"
+    jq -r --arg k "$key" '.[$k] // empty' "$file" 2>/dev/null
+}
+
+_macro_set_honeydew() {
+    local file="$1" honeydew_text="$2"
+    local tmp="${file}.tmp"
+    jq --arg hd "$honeydew_text" '.honeydew = $hd' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+_macro_milestone_count() {
+    local file="$1"
+    jq '.completed_milestones | length' "$file" 2>/dev/null || echo 0
+}
+
+# Get last N milestones as a JSON array
+_macro_milestones_json() {
+    local file="$1" last_n="${2:-3}"
+    jq --argjson n "$last_n" '.completed_milestones | .[-$n:]' "$file" 2>/dev/null || echo '[]'
+}
+
+_macro_serialize() {
+    local file="$1"
+    cat "$file" 2>/dev/null
+}
+
+# ── Milestone Completion Helper ────────────────────────────────
+# Shared logic for completing a milestone: summarize micro_memory,
+# tag the action class, write to macro_memory, save research buffer.
+# Called by the evaluator-based completion check and the sufficiency gate.
+_agent_complete_milestone() {
+    local micro_file="$1" macro_file="$2" micro_objective="$3"
+    local summary="${4:-Objective fulfilled}"
+    local last_success_cmd="${5:-}" george_dir="${6:-.george}"
+
+    _micro_set_result "$micro_file" "COMPLETE" "$summary"
+
+    # ── Summarize micro_memory into milestone_summary ──────
+    local _micro_content _milestone_summary
+    _micro_content=$(cat "$micro_file" 2>/dev/null)
+    if [ -n "$_micro_content" ]; then
+        local _ms_prompt="In no more than 6 sentences, summarize this milestone execution log. Include the command(s) run, their outcomes, and whether the objective was met. If web search or fetch results contain factual data (names, prices, specs, dates, descriptions, URLs, key findings), you MUST INCLUDE those specific facts verbatim — they will be needed by subsequent milestones. If a draft email, post, or message body was composed, include its key points. Generic summaries like 'Web research data gathered' are USELESS. Be specific.\n\n${_micro_content}"
+        local _ms_sys="You are a concise summarizer. In no more than 6 factual sentences, write your output. PRESERVE specific facts (names, numbers, URLs). No personality. No formatting."
+        local LLM_SCENARIO=evaluator
+        _milestone_summary=$(llm_generate "$_ms_prompt" "$_ms_sys" 512 "$LLM_BUDGET_AGENT" 2>/dev/null)
+        _milestone_summary=$(echo "$_milestone_summary" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+        _milestone_summary=$(echo "$_milestone_summary" | sed ':a;N;$!ba;s/<think>.*$//g')
+        _milestone_summary=$(echo "$_milestone_summary" | sed '/^[[:space:]]*$/d' | head -6)
+    fi
+    [ -z "$_milestone_summary" ] && _milestone_summary="$summary"
+
+    # ── TAG milestone with action class ────────────────────
+    local _action_class="ACTION"
+    if [ -n "$last_success_cmd" ]; then
+        if [[ "$last_success_cmd" == /web* ]]; then
+            _action_class="RESEARCH_ONLY"
+        elif [[ "$last_success_cmd" == /recall* ]] || [[ "$last_success_cmd" == /ask* ]]; then
+            _action_class="RESEARCH_ONLY"
+        fi
+    else
+        _action_class="UNKNOWN"
+    fi
+    _macro_add_milestone "$macro_file" "$micro_objective" \
+        "$_milestone_summary" "${last_success_cmd:-}" "$_action_class"
+
+    if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
+        printf '  [debug] macro_memory <- milestone: %s\n' "${_milestone_summary:0:120}" > /dev/tty 2>/dev/null
+        printf '  [debug] micro_memory <- COMPLETE: %s\n' "${summary:0:80}" > /dev/tty 2>/dev/null
+    fi
+
+    # ── RESEARCH BUFFER: Carry forward web data ────────────
+    local _web_outputs
+    _web_outputs=$(_micro_web_outputs "$micro_file")
+    if [ -n "$_web_outputs" ]; then
+        echo "${_web_outputs:0:1500}" > "$george_dir/research_buffer.md"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] research buffer saved (%d chars)\n' "${#_web_outputs}" > /dev/tty 2>/dev/null
+    fi
+}
+
 # ── Honeydew List System ──────────────────────────────────────
 # A persistent, precedence-ranked task decomposition that gives the
 # evaluator and strategist structured visibility into multi-step
@@ -362,7 +585,7 @@ _agent_evaluate_completion() {
 
     # Extract ONLY the primary objective from macro_memory (skip persona bloat)
     local primary_obj
-    primary_obj=$(awk '/^## Primary Objective/{getline; if(NF) print; exit}' "$macro_file" 2>/dev/null)
+    primary_obj=$(_macro_get "$macro_file" "primary_objective")
     [ -z "$primary_obj" ] && { ui_info "Overall evaluator: no primary objective found"; return 1; }
 
     # Use macro_memory as the primary context — it has the full milestone history
@@ -1012,12 +1235,12 @@ ${base_rules}"
 
 _build_router_prompt() {
     # Phase 1 Prompt: The Command Catalog Router (JSON)
-    # Compact JSON command→description map with few-shot routing +
-    # completion detection. The router's job: classify task → command
-    # OR detect that the milestone is complete (SUCCESS).
-    # Specialist handles exact syntax. ~250 tokens.
+    # Compact JSON command→description map with few-shot routing.
+    # The router's ONLY job: classify task → command.
+    # Completion detection is handled by the milestone evaluator.
+    # Specialist handles exact syntax. ~200 tokens.
     cat << 'ROUTER_JSON'
-{"role":"Pick the best tool OR detect completion.",
+{"role":"Pick the best tool for the next action.",
 "commands":{
   "/ask":"Answer from own knowledge (no tools)",
   "/recall":"Search knowledge base (FTS5)",
@@ -1060,13 +1283,12 @@ _build_router_prompt() {
   {"q":"find and describe images of X","t":"/web"},
   {"q":"check what files we have","t":"/ls"},
   {"q":"read my journal","t":"/journal"}],
-"output":"ONLY the tool name (/web, /social, etc.) OR SUCCESS: <summary>",
+"output":"ONLY the tool name (/web, /social, etc.)",
 "rules":{
   "classify":["match specific tool first","/ask only if no tool is relevant",
     "/social for Discord/Telegram/X (NOT /email)","/email for actual email only",
     "do NOT route to /sandbox for slash commands"],
-  "success":{"when":"Action Log has **Action:** entries with EXECUTED SUCCESSFULLY for current objective",
-    "reject":["no **Action:** entries yet → MUST pick a tool","Research Context / Prior Milestones = PREVIOUS milestone data, NOT current actions"]}}}
+  "no_completion":"NEVER output SUCCESS or DONE — only tool names"}}
 ROUTER_JSON
 }
 
@@ -1427,37 +1649,25 @@ agent_inner_loop() {
     local micro_objective="$1"
     local workdir="${2:-.}"
     local george_dir="$workdir/.george"
-    local micro_file="$george_dir/micro_memory.md"
+    local micro_file="$george_dir/micro_memory.json"
+    local macro_file="$george_dir/macro_memory.json"
     local fail_file="$george_dir/failures_log.md"
 
     mkdir -p "$george_dir"
 
     # STRICT OVERWRITE: Wipe micro memory clean for the new objective.
     # This is not appended — it is destroyed and recreated on every
-    # handoff from the Macro loop.
-    echo "# Micro Objective: $micro_objective" > "$micro_file"
-    echo "## Started: $(date '+%Y-%m-%d %H:%M:%S %Z')" >> "$micro_file"
-
-    # ── MEMORY CONTEXT CONDENSER ──────────────────────────────
-    # When micro_memory grows large (from previous milestone being
-    # re-used), condense old action entries into one-liners to prevent
-    # attention dilution in small models. The last 3 entries are kept
-    # in full detail; older entries are collapsed to:
-    #   Step N: /command → OK|FAILED (first 60 chars of output)
-    # This is a no-op on the first pass (micro_memory just has the header).
+    # handoff from the Macro loop. JSON format for structured context.
+    _micro_init "$micro_file" "$micro_objective"
 
     # ── PRIMARY OBJECTIVE INJECTION ────────────────────────────
     # Inject the overarching task goal so the inner loop's router and
-    # specialist never lose sight of the bigger picture. Without this,
-    # the LLM optimizes locally (e.g. fetching every URL) instead of
-    # progressing toward the user's actual request.
-    if [ -f "$george_dir/macro_memory.md" ]; then
+    # specialist never lose sight of the bigger picture.
+    if [ -f "$macro_file" ]; then
         local _primary_obj
-        _primary_obj=$(awk '/^## Primary Objective/{getline; if(NF) print; exit}' "$george_dir/macro_memory.md" 2>/dev/null)
+        _primary_obj=$(_macro_get "$macro_file" "primary_objective")
         if [ -n "$_primary_obj" ] && [ "$_primary_obj" != "$micro_objective" ]; then
-            echo "## Primary Objective (overall task — stay focused)" >> "$micro_file"
-            echo "$_primary_obj" >> "$micro_file"
-            echo "" >> "$micro_file"
+            _micro_set "$micro_file" "primary_objective" "$_primary_obj"
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: primary objective -> micro_memory"
         fi
     fi
@@ -1470,60 +1680,35 @@ agent_inner_loop() {
         local _hd_inner_status
         _hd_inner_status=$(_agent_honeydew_status "$(dirname "$george_dir")" 2>/dev/null)
         if [ -n "$_hd_inner_status" ]; then
-            echo "## Honeydew Progress: $_hd_inner_status" >> "$micro_file"
-            echo "" >> "$micro_file"
+            _micro_set "$micro_file" "honeydew_progress" "$_hd_inner_status"
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew status -> micro_memory"
         fi
     fi
 
     # ── RESEARCH BUFFER INJECTION ──────────────────────────
-    # If the previous milestone saved a research buffer (web search
-    # results, fetched content, etc.), inject it so this milestone's
-    # specialist can use the gathered data.  Deleted after injection
-    # so it doesn't leak into subsequent milestones.
-    #
-    # CRITICAL: The research buffer is DATA from a prior milestone —
-    # it does NOT mean THIS milestone is complete. The router and
-    # specialist must still execute THIS milestone's objective using
-    # the tools (e.g., /write, /email, /save). The directive below
-    # makes this explicit to prevent the model from skipping execution.
+    # If the previous milestone saved a research buffer, inject it
+    # so this milestone's specialist can use the gathered data.
+    # Deleted after injection to prevent leaking into subsequent milestones.
     local _research_buf="$george_dir/research_buffer.md"
     if [ -f "$_research_buf" ]; then
-        # Cap research buffer at 1500 chars to prevent context flood
         local _rb_content
         _rb_content=$(head -c 1500 "$_research_buf")
-        echo "## Research Context (from previous milestone)" >> "$micro_file"
-        echo ">>> USE THIS DATA to complete your current objective below." >> "$micro_file"
-        echo ">>> This data was gathered in a PRIOR milestone. It does NOT mean your current milestone is done." >> "$micro_file"
-        echo ">>> You MUST still execute a command (/write, /email, /save, etc.) to fulfill THIS milestone. <<<" >> "$micro_file"
-        echo "$_rb_content" >> "$micro_file"
-        echo "" >> "$micro_file"
+        _micro_set "$micro_file" "research_context" "$_rb_content"
         rm -f "$_research_buf"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: research buffer -> micro_memory (${#_rb_content} chars)"
     fi
 
     # ── MILESTONE HISTORY INJECTION ────────────────────────────
-    # Inject completed milestone summaries from macro_memory so the
-    # specialist knows what previous milestones accomplished. Without
-    # this, each milestone's specialist starts blind — it can't see
-    # data gathered by earlier milestones (e.g., web research results
-    # that should inform an email draft).
-    #
-    # CAP: Only inject the last 3 milestones (most recent context).
-    # Full history bloats micro_memory and causes the router to
-    # interpret past research as current-milestone completion.
-    if [ -f "$george_dir/macro_memory.md" ]; then
-        local _milestone_lines
-        _milestone_lines=$(awk '/^- Step \[/{found=1} found{print} /^$/{if(found) found=0}' "$george_dir/macro_memory.md" 2>/dev/null | tail -15)
-        if [ -n "$_milestone_lines" ]; then
-            echo "## Prior Milestones (what previous milestones accomplished — NOT actions taken in THIS milestone)" >> "$micro_file"
-            echo "$_milestone_lines" >> "$micro_file"
-            echo "" >> "$micro_file"
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: milestone history -> micro_memory ($(echo "$_milestone_lines" | wc -l) lines)"
+    # Inject last 3 completed milestones from macro_memory so the
+    # specialist knows what previous milestones accomplished.
+    if [ -f "$macro_file" ]; then
+        local _prior_ms
+        _prior_ms=$(_macro_milestones_json "$macro_file" 3)
+        if [ "$_prior_ms" != "[]" ] && [ -n "$_prior_ms" ]; then
+            _micro_set_prior_milestones "$micro_file" "$_prior_ms"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: milestone history -> micro_memory"
         fi
     fi
-
-    echo "## Action Log" >> "$micro_file"
 
     local inner_attempts=0
     local _fail_count=0              # Failure-specific counter for escalation gating
@@ -1541,34 +1726,13 @@ agent_inner_loop() {
             return 1
         fi
 
-        local inner_context=$(cat "$micro_file")
+        local inner_context=$(_micro_serialize "$micro_file")
 
         # ── PHASE 1: Fast Tool Routing ────────────────────────
         local router_sys=$(_build_router_prompt)
         local _route_now
         _route_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
-        local route_prompt="Current date/time: ${_route_now}\nRoute the next action OR output SUCCESS if done.\n"
-
-        # ── RESEARCH SUFFICIENCY GUIDANCE ──────────────────────
-        # For objectives involving web research, tell the router to
-        # output SUCCESS once there's enough gathered data instead
-        # of exhaustively scraping every URL from search results.
-        # ONLY applies to milestones that are explicitly about research/search.
-        # Does NOT apply to write/email/save milestones that have injected
-        # research context — those need to execute their delivery action.
-        local _obj_lower_rt
-        _obj_lower_rt=$(echo "$micro_objective" | tr '[:upper:]' '[:lower:]')
-        local _has_action_entries
-        _has_action_entries=$(grep -c '^\*\*Action:\*\*' "$micro_file" 2>/dev/null)
-        _has_action_entries=${_has_action_entries:-0}
-        if [[ "$_obj_lower_rt" == *search* ]] || [[ "$_obj_lower_rt" == *web* ]] || [[ "$_obj_lower_rt" == *fetch* ]] || [[ "$_obj_lower_rt" == *find* ]] || [[ "$_obj_lower_rt" == *look*up* ]]; then
-            # Only inject sufficiency for research-type milestones
-            # AND only if actual actions have been logged in this milestone
-            if [ "$_has_action_entries" -gt 0 ]; then
-                route_prompt="${route_prompt}{\"web_sufficiency\":\"ENOUGH after 1 search + 1-2 fetches. Output SUCCESS with summary.\"}\n"
-            fi
-        fi
-
+        local route_prompt="Current date/time: ${_route_now}\nRoute the next action.\n"
         route_prompt="${route_prompt}\n$inner_context"
 
         # llm_generate is used here for maximum speed — no streaming,
@@ -1585,120 +1749,37 @@ agent_inner_loop() {
             return 1
         fi
 
-        if [[ "$selected_tool" == *"SUCCESS:"* ]]; then
-            local summary
-            summary=$(echo "$selected_tool" | sed -n 's/.*SUCCESS:[[:space:]]*//p' | head -1)
-            [ -z "$summary" ] && summary="Objective fulfilled"
-            local _step_ts
-            _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
-
-            # Write completion verdict to micro_memory BEFORE returning.
-            # The evaluator reads micro_memory after the inner loop returns.
-            # Without this, micro_memory has the raw Action/Status/Output but
-            # no explicit completion marker — which can cause a conservative
-            # evaluator (especially on a 4B model) to return INCOMPLETE when
-            # the output is empty or ANSI-garbled.
-            echo -e "\n**Milestone Result:** COMPLETE — $summary" >> "$micro_file"
-
-            # ── Summarize micro_memory into milestone_summary ──
-            # The raw micro_memory can be hundreds of lines of Action/
-            # Status/Output blocks. The evaluator and macro_memory both
-            # struggle when flooded with raw output. Condense into ≤6
-            # sentences that capture what was done, key data, and outcome.
-            local _micro_content _milestone_summary
-            _micro_content=$(cat "$micro_file" 2>/dev/null)
-            if [ -n "$_micro_content" ]; then
-                local _ms_prompt="In no more than 6 sentences, summarize this milestone execution log. Include the command(s) run, their outcomes, and whether the objective was met. If web search or fetch results contain factual data (names, prices, specs, dates, descriptions, URLs, key findings), you MUST INCLUDE those specific facts verbatim — they will be needed by subsequent milestones. If a draft email, post, or message body was composed, include its key points. Generic summaries like 'Web research data gathered' are USELESS. Be specific.\n\n${_micro_content}"
-                local _ms_sys="You are a concise summarizer. In no more than 6 factual sentences, write your output. PRESERVE specific facts (names, numbers, URLs). No personality. No formatting."
-                local LLM_SCENARIO=evaluator
-                _milestone_summary=$(llm_generate "$_ms_prompt" "$_ms_sys" 512 "$LLM_BUDGET_AGENT" 2>/dev/null)
-                # Strip think blocks
-                _milestone_summary=$(echo "$_milestone_summary" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-                _milestone_summary=$(echo "$_milestone_summary" | sed ':a;N;$!ba;s/<think>.*$//g')
-                _milestone_summary=$(echo "$_milestone_summary" | sed '/^[[:space:]]*$/d' | head -6)
+        # ── ROUTER: Ignore stale SUCCESS from hallucinating models ──
+        # The router should ONLY output tool names. If it outputs
+        # SUCCESS (from cached prompt patterns), strip it and fall
+        # through to the evaluator-based completion check below.
+        if [[ "$selected_tool" == *"SUCCESS"* ]]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router output 'SUCCESS' — ignoring (completion is evaluator's job)"
+            # If there are successful actions, the evaluator will
+            # detect completion. If not, we need more actions.
+            local _sr_count
+            _sr_count=$(_micro_action_count "$micro_file")
+            if [ "$_sr_count" -gt 0 ]; then
+                # Let evaluator decide — skip to end of loop
+                inner_attempts=$((inner_attempts + 1))
+                continue
             fi
-            [ -z "$_milestone_summary" ] && _milestone_summary="$summary"
-
-            if [ -n "$_last_success_cmd" ]; then
-                # ── TAG milestone with action class ────────────
-                # Distinguish research-only milestones from action
-                # milestones so the P2 evaluator doesn't treat "web
-                # search data gathered" as "email sent" or "file written".
-                local _action_class="ACTION"
-                if [[ "$_last_success_cmd" == /web* ]]; then
-                    _action_class="RESEARCH_ONLY"
-                elif [[ "$_last_success_cmd" == /recall* ]] || [[ "$_last_success_cmd" == /ask* ]]; then
-                    _action_class="RESEARCH_ONLY"
-                fi
-                {
-                    echo ""
-                    echo "- Step [$_step_ts]: $micro_objective"
-                    echo "  Summary: $_milestone_summary"
-                    echo "  Command: $_last_success_cmd"
-                    echo "  Action-Class: $_action_class"
-                } >> "$george_dir/macro_memory.md"
-            else
-                {
-                    echo ""
-                    echo "- Step [$_step_ts]: $micro_objective"
-                    echo "  Summary: $_milestone_summary"
-                    echo "  Action-Class: UNKNOWN"
-                } >> "$george_dir/macro_memory.md"
-            fi
-
-            # ── DEBUG: Memory write visibility ─────────────────
-            if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
-                printf '  [debug] macro_memory <- milestone: %s\n' "${_milestone_summary:0:120}" > /dev/tty 2>/dev/null
-                printf '  [debug] micro_memory <- COMPLETE: %s\n' "${summary:0:80}" > /dev/tty 2>/dev/null
-            fi
-
-            # ── RESEARCH BUFFER: Carry forward web data ────────
-            # If this milestone executed any successful /web actions,
-            # save the output snippets so the NEXT milestone's specialist
-            # can reference the gathered data (e.g., writing a file based
-            # on web research).  Without this, micro_memory is wiped
-            # between milestones and research results are lost.
-            local _web_outputs
-            _web_outputs=$(awk '
-                /^\*\*Action:\*\* `\/web/ { capture=1; next }
-                capture && /^\*\*Status:\*\* EXECUTED SUCCESSFULLY/ { ok=1; next }
-                capture && ok && /^\*\*Output:\*\*/ { printing=1; next }
-                capture && ok && printing && /^```/ {
-                    if (!in_fence) { in_fence=1; next }   # skip opening fence
-                    else { in_fence=0; printing=0; ok=0; capture=0; next }  # closing fence
-                }
-                capture && ok && printing && in_fence { print }
-            ' "$micro_file" 2>/dev/null)
-            if [ -n "$_web_outputs" ]; then
-                # Cap at 1500 chars to prevent context flood on injection
-                echo "${_web_outputs:0:1500}" > "$george_dir/research_buffer.md"
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] research buffer saved (%d chars)\n' "${#_web_outputs}" > /dev/tty 2>/dev/null
-            fi
-
-            return 0
+            # No actions yet — fall through to specialist
+            selected_tool="/ask"
         fi
 
         # ── WEB SUFFICIENCY ENFORCEMENT ───────────────────────
-        # The sufficiency gate (below) writes SUFFICIENCY REACHED to
-        # micro_memory after N successful web actions. If the router
-        # STILL doesn't output SUCCESS on the next iteration, we
-        # programmatically force completion instead of wasting more
-        # escalation rounds. This catches models (e.g., Ministral)
-        # that ignore prompt-based stop signals.
-        if grep -q "SUFFICIENCY REACHED" "$micro_file" 2>/dev/null; then
+        # The sufficiency gate (in the action success block below)
+        # sets sufficiency_reached after N successful web actions.
+        # If the evaluator hasn't already triggered completion,
+        # force it here as a programmatic override.
+        if _micro_sufficiency_reached "$micro_file"; then
             local _suff_summary="Web research data gathered"
-            # Extract the last web search result for a meaningful summary
             local _last_web
-            _last_web=$(grep -oP '(?<=Web search.*: ).*' "$micro_file" 2>/dev/null | tail -1)
+            _last_web=$(jq -r '[.action_log[] | select(.action | test("^/web")) | select(.status == "SUCCESS") | .output] | last // empty' "$micro_file" 2>/dev/null)
             [ -n "$_last_web" ] && _suff_summary="${_last_web:0:120}"
-            local _step_ts
-            _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
-            echo -e "\n**Milestone Result:** COMPLETE — $_suff_summary" >> "$micro_file"
-            {
-                echo "- Step [$_step_ts]: $micro_objective"
-                echo "  Summary: $_suff_summary"
-                echo "  Status: SUFFICIENCY_GATE"
-            } >> "$george_dir/macro_memory.md"
+            _agent_complete_milestone "$micro_file" "$macro_file" "$micro_objective" \
+                "$_suff_summary" "" "$george_dir"
             return 0
         fi
 
@@ -1888,7 +1969,7 @@ agent_inner_loop() {
         # broken command. If identical, reject and force regeneration.
         if [ "$_fail_count" -ge 3 ] && [ -n "$cmd" ] && [ "$cmd" == "$last_failed_cmd" ]; then
             ui_warn "Interlock Triggered: Identical failed command. Forcing regeneration."
-            echo "**System Interlock:** Command \`$cmd\` rejected (identical to previous failure)." >> "$micro_file"
+            _micro_add_note "$micro_file" "System interlock: Command '$cmd' rejected (identical to previous failure)"
             inner_attempts=$((inner_attempts + 1))
             continue
         fi
@@ -1929,7 +2010,7 @@ agent_inner_loop() {
                     exit_code=1
                     ui_err "$output"
                 fi
-                echo -e "\n**Action:** \`$cmd\`\n**Status:** $([ $exit_code -eq 0 ] && echo 'EXECUTED SUCCESSFULLY (exit 0)' || echo "FAILED (exit $exit_code)")\n**Output:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
+                _micro_add_action "$micro_file" "$cmd" "$([ $exit_code -eq 0 ] && echo 'SUCCESS' || echo 'FAILED')" "$exit_code" "$output" "cd_intercept"
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] workdir now: %s\n' "$workdir" > /dev/tty 2>/dev/null
                 inner_attempts=$((inner_attempts + 1))
                 continue
@@ -1986,9 +2067,9 @@ agent_inner_loop() {
                     # Build context-aware condense prompt
                     _condense_prompt="TASK: $micro_objective"
                     # Inject primary objective if available
-                    if [ -f "$george_dir/macro_memory.md" ]; then
+                    if [ -f "$macro_file" ]; then
                         local _primary_for_condense
-                        _primary_for_condense=$(awk '/^## Primary Objective/{getline; if(NF) print; exit}' "$george_dir/macro_memory.md" 2>/dev/null)
+                        _primary_for_condense=$(_macro_get "$macro_file" "primary_objective")
                         [ -n "$_primary_for_condense" ] && _condense_prompt="OVERALL GOAL: $_primary_for_condense\nCURRENT STEP: $micro_objective"
                     fi
                     _condense_prompt="${_condense_prompt}\n\nWEB CONTENT (from: $cmd):\n${output}\n\nIn 3-5 sentences, summarize useful information. Preserve specific facts, names, numbers, URLs, and data points relevant to the task. If the content is mostly junk (cookie notices, paywalls, login walls, ad text, empty/broken page, or irrelevant boilerplate), say: JUNK: <brief reason>. If partially useful, extract what matters and note what was missing."
@@ -2006,7 +2087,7 @@ agent_inner_loop() {
                   fi
                 fi
 
-                echo -e "\n**Action:** \`$cmd\`\n**Status:** EXECUTED SUCCESSFULLY (exit 0)\n**Output:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
+                _micro_add_action "$micro_file" "$cmd" "SUCCESS" 0 "$output" "specialist"
 
                 # Transcript: log command execution result
                 declare -f transcript_log_block &>/dev/null && transcript_log_block "output (exit 0)" "$cmd\n${output:0:3000}"
@@ -2031,17 +2112,15 @@ agent_inner_loop() {
                 fi
 
                 # ── WEB SUFFICIENCY GATE ───────────────────────
-                # Prevent George from exhaustively scraping every
-                # URL returned by a search. After N successful web
-                # actions, inject a strong "stop fetching" signal
-                # into micro_memory so the router outputs SUCCESS
-                # on the next iteration instead of routing to /web.
+                # After N successful web actions, mark sufficiency
+                # so the programmatic enforcement gate at loop top
+                # forces completion on the next iteration.
                 if [[ "$cmd" == /web* ]]; then
                     local _web_ok_count
-                    _web_ok_count=$(grep -c '^\*\*Action:\*\* `/web' "$micro_file" 2>/dev/null)
-                    _web_ok_count=${_web_ok_count:-0}
+                    _web_ok_count=$(_micro_action_count "$micro_file" "^/web")
                     if [ "$_web_ok_count" -ge "${AGENT_WEB_SUFFICIENCY:-3}" ]; then
-                        echo -e "\n**SUFFICIENCY REACHED:** $_web_ok_count web actions completed. You have gathered enough data to fulfill the objective. Do NOT fetch more URLs. Summarize your findings and output SUCCESS: <summary>." >> "$micro_file"
+                        _micro_set_sufficiency "$micro_file"
+                        _micro_add_note "$micro_file" "SUFFICIENCY: $_web_ok_count web actions completed. Enough data gathered."
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Web sufficiency gate: $_web_ok_count actions reached threshold"
                     fi
                 fi
@@ -2052,12 +2131,27 @@ agent_inner_loop() {
                 # inject a WARNING so the evaluator and router see that
                 # the content is incomplete/generic — not real.
                 if [[ "$cmd" == /write* ]]; then
-                    # Check the command body (multi-line content after first line)
                     local _write_body
                     _write_body=$(echo "$cmd" | tail -n +2)
                     if [ -n "$_write_body" ] && echo "$_write_body" | grep -qP '\[(?:your |briefly |mention |e\.g\.|TBD|TODO|placeholder)' 2>/dev/null; then
-                        echo -e "\n**WARNING:** The file was created but contains placeholder text (e.g., [your ...], [briefly mention ...], [TBD]). This is a TEMPLATE, not finished content. The file should be rewritten with actual data from research or context." >> "$micro_file"
+                        _micro_add_warning "$micro_file" "File contains placeholder text ([your ...], [TBD], etc.). Template, not finished content. Rewrite with actual data."
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] /write placeholder detected — warning injected"
+                    fi
+                fi
+
+                # ── EVALUATOR-BASED COMPLETION CHECK ───────────
+                # After each successful action, run the P1 milestone
+                # evaluator to determine if the micro-objective is met.
+                # This replaces the old router SUCCESS detection — the
+                # evaluator has richer context and can't be fooled by
+                # the model hallucinating early completion.
+                local _action_count
+                _action_count=$(_micro_action_count "$micro_file")
+                if [ "$_action_count" -ge 1 ]; then
+                    if _agent_evaluate_milestone "$macro_file" "$micro_file" "$micro_objective"; then
+                        _agent_complete_milestone "$micro_file" "$macro_file" "$micro_objective" \
+                            "Objective fulfilled" "$_last_success_cmd" "$george_dir"
+                        return 0
                     fi
                 fi
 
@@ -2100,11 +2194,10 @@ agent_inner_loop() {
             # if the successful scrapes provided enough context.
             if [[ "$cmd" == /web* ]]; then
                 local _prior_web_ok
-                _prior_web_ok=$(grep -c '^\*\*Action:\*\* `/web.*EXECUTED SUCCESSFULLY' "$micro_file" 2>/dev/null)
-                _prior_web_ok=${_prior_web_ok:-0}
+                _prior_web_ok=$(_micro_success_count "$micro_file" "^/web")
                 if [ "$_prior_web_ok" -gt 0 ]; then
-                    echo -e "\n**Action:** \`$cmd\`\n**Status:** FAILED (exit $exit_code) — soft failure, prior web results available\n**Error (abbreviated):**\n\`\`\`\n${output:0:300}\n\`\`\`" >> "$micro_file"
-                    echo -e "\n**NOTE:** This web fetch failed, but $_prior_web_ok previous web action(s) succeeded. You already have research data. Consider outputting SUCCESS with a summary of the data you have, or try a different URL." >> "$micro_file"
+                    _micro_add_action "$micro_file" "$cmd" "FAILED" "$exit_code" "${output:0:300}" "specialist_soft_fail"
+                    _micro_add_note "$micro_file" "Web fetch failed, but $_prior_web_ok prior web action(s) succeeded. Use existing data or try a different URL."
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] Web soft-failure: %d prior successes, skipping escalation\n' "$_prior_web_ok" > /dev/tty 2>/dev/null
                     inner_attempts=$((inner_attempts + 1))
                     continue
@@ -2143,7 +2236,7 @@ agent_inner_loop() {
                     output=$(eval "$_l1_cmd" 2>&1 | head -c 2000)
                 fi
                 if [ ${PIPESTATUS[0]} -eq 0 ]; then
-                    echo -e "\n**Action:** \`$_l1_cmd\` ($_l1_label)\n**Status:** EXECUTED SUCCESSFULLY (exit 0)\n**Output:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
+                    _micro_add_action "$micro_file" "$_l1_cmd" "SUCCESS" 0 "$output" "L1_retry"
                     inner_attempts=$((inner_attempts + 1))
                     continue
                 fi
@@ -2162,7 +2255,7 @@ agent_inner_loop() {
                 local recall_result
                 recall_result=$(recall_search_context "$base_cmd" 3 2>/dev/null)
                 if [ -n "$recall_result" ]; then
-                    echo -e "\n**Recall ($base_cmd):**\n\`\`\`\n$recall_result\n\`\`\`" >> "$micro_file"
+                    _micro_add_note "$micro_file" "L2_recall ($base_cmd): $recall_result"
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: L2 recall for '$base_cmd' -> micro_memory"
                 fi
             fi
@@ -2177,7 +2270,7 @@ agent_inner_loop() {
                 past_recoveries=$(grep -B1 -A2 "^RECOVERY:\|^OPERATOR GUIDANCE:" "$fail_file" 2>/dev/null | tail -20)
                 if [ -n "$past_recoveries" ]; then
                     ui_warn "Escalation L3: Injecting past recovery instructions..."
-                    echo -e "\n**Past Recovery Instructions (from failure log):**\n\`\`\`\n$past_recoveries\n\`\`\`" >> "$micro_file"
+                    _micro_add_note "$micro_file" "L3_recovery: $past_recoveries"
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: L3 past recoveries -> micro_memory"
                 fi
             fi
@@ -2194,13 +2287,13 @@ agent_inner_loop() {
                 local web_result
                 web_result=$(web_search "error: $stderr_tail $base_cmd" 3 2>/dev/null)
                 if [ -n "$web_result" ]; then
-                    echo -e "\n**Web Search Results:**\n\`\`\`\n${web_result:0:1500}\n\`\`\`" >> "$micro_file"
+                    _micro_add_note "$micro_file" "L5_web_error_search: ${web_result:0:1500}"
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: L5 web error search -> micro_memory"
                 fi
             fi
 
             # Append failure to micro memory so the LLM sees it on the next loop
-            echo -e "\n**Action:** \`$cmd\`\n**Status:** FAILED (exit $exit_code)\n**Error:**\n\`\`\`\n$output\n\`\`\`" >> "$micro_file"
+            _micro_add_action "$micro_file" "$cmd" "FAILED" "$exit_code" "$output" "specialist"
 
             # Transcript: log failed command
             declare -f transcript_log_block &>/dev/null && transcript_log_block "output (exit $exit_code)" "$cmd\n${output:0:3000}"
@@ -2215,12 +2308,7 @@ agent_inner_loop() {
     # Skip entirely if cancelled — user wants to return to REPL, not be
     # prompted for guidance on an operation they already abandoned.
     if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
-        local _step_ts
-        _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
-        {
-            echo "- Step [$_step_ts]: $micro_objective"
-            echo "  Status: CANCELLED"
-        } >> "$george_dir/macro_memory.md"
+        _macro_add_milestone "$macro_file" "$micro_objective" "Cancelled" "" "UNKNOWN" "CANCELLED"
         return 1
     fi
     ui_err "Inner loop exhausted all escalation levels."
@@ -2242,17 +2330,12 @@ agent_inner_loop() {
     if [ "$guidance" = "abort" ]; then
         _LODGE_CANCELLED=1
         touch "$_cancel_file" 2>/dev/null
-        local _step_ts
-        _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
-        {
-            echo "- Step [$_step_ts]: $micro_objective"
-            echo "  Status: ABORTED by operator"
-        } >> "$george_dir/macro_memory.md"
+        _macro_add_milestone "$macro_file" "$micro_objective" "Aborted by operator" "" "UNKNOWN" "ABORTED"
         return 1
     fi
 
     if [ -n "$guidance" ] && [ "$guidance" != "abort" ]; then
-        echo -e "\n**Operator Guidance:** $guidance" >> "$micro_file"
+        _micro_add_note "$micro_file" "Operator guidance: $guidance"
 
         # ── Catalog-Aware Guided Retry ────────────────────────
         # Combine operator input with the full command catalog so
@@ -2322,15 +2405,9 @@ Output a slash command line starting with / OR a bash code block."
                     echo "---"
                 } >> "$fail_file"
                 local summary="Completed with operator guidance"
-                local _step_ts
-                _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
-                echo -e "\n**Action:** \`$final_cmd\`\n**Status:** EXECUTED SUCCESSFULLY (exit 0)\n**Output:**\n\`\`\`\n$final_output\n\`\`\`" >> "$micro_file"
-                echo -e "\n**Milestone Result:** COMPLETE — $summary" >> "$micro_file"
-                {
-                    echo "- Step [$_step_ts]: $micro_objective"
-                    echo "  Summary: $summary"
-                    echo "  Command: $final_cmd (exit 0)"
-                } >> "$george_dir/macro_memory.md"
+                _micro_add_action "$micro_file" "$final_cmd" "SUCCESS" 0 "$final_output" "operator_guided"
+                _micro_set_result "$micro_file" "COMPLETE" "$summary"
+                _macro_add_milestone "$macro_file" "$micro_objective" "$summary" "$final_cmd" "ACTION"
                 return 0
             else
                 # Log guided failure for the record
@@ -2339,12 +2416,7 @@ Output a slash command line starting with / OR a bash code block."
         fi
     fi
 
-    local _step_ts
-    _step_ts=$(date '+%Y-%m-%d %H:%M:%S')
-    {
-        echo "- Step [$_step_ts]: $micro_objective"
-        echo "  Status: FAILED (all escalation levels exhausted)"
-    } >> "$george_dir/macro_memory.md"
+    _macro_add_milestone "$macro_file" "$micro_objective" "All escalation levels exhausted" "${last_failed_cmd:-}" "UNKNOWN" "FAILED"
     return 1
 }
 
@@ -2355,8 +2427,8 @@ Output a slash command line starting with / OR a bash code block."
 #   Micro Loop: Executes via agent_inner_loop.
 #
 # Memory Architecture (all legacy CLAUDE.md references migrated to GEORGE.md):
-#   macro_memory.md — Persona seed + objective + completed milestones.
-#   micro_memory.md — Overwritten per micro-objective (managed by inner loop).
+#   macro_memory.json — Persona seed + objective + completed milestones (JSON).
+#   micro_memory.json — Overwritten per micro-objective (JSON, managed by inner loop).
 #   failures_log.md — Isolated stderr graveyard (managed by inner loop).
 agent_run() {
     local task="$1"
@@ -2395,8 +2467,8 @@ agent_run() {
 
     # ── Initialize Memory Architecture ────────────────────────
     local george_dir="$workdir/.george"
-    local macro_file="$george_dir/macro_memory.md"
-    local micro_file="$george_dir/micro_memory.md"
+    local macro_file="$george_dir/macro_memory.json"
+    local micro_file="$george_dir/micro_memory.json"
     local fail_file="$george_dir/failures_log.md"
     mkdir -p "$george_dir"
 
@@ -2448,44 +2520,25 @@ MEMEOF
     # the new task's context via journal_reflect or evaluators.
     rm -f "$micro_file" "$fail_file" 2>/dev/null
 
-    # Seed macro_memory.md with the identity section from soul.md
-    # and the primary objective. This persists for the duration of the task.
+    # Seed macro_memory.json with persona, objective, and project context.
     # Uses _memory_soul_identity() for a clean cut at the TMS boundary
     # instead of an arbitrary head -20 that could split mid-paragraph.
-    {
-        echo "# George — Task Memory"
-        echo ""
-        echo "## Task Started"
-        echo "$(date '+%Y-%m-%d %H:%M:%S %Z')"
-        echo ""
-        echo "## Persona"
-        _memory_soul_identity
-        echo ""
-        echo "## Primary Objective"
-        echo "$task"
-        echo ""
-        # ── Inject GEORGE.md project context ───────────────────
-        # If the project has a GEORGE.md, pull in build/test commands,
-        # key files, and notes so the strategist/evaluator know the
-        # project structure and conventions.
-        local _george_ctx=""
-        if declare -f memory_read_project &>/dev/null; then
-            _george_ctx=$(memory_read_project "$workdir" 2>/dev/null)
-        fi
+    local _persona_text
+    _persona_text=$(_memory_soul_identity)
+    local _george_ctx=""
+    if declare -f memory_read_project &>/dev/null; then
+        _george_ctx=$(memory_read_project "$workdir" 2>/dev/null)
         if [ -n "$_george_ctx" ]; then
-            echo "## Project Context (from GEORGE.md)"
             # Include project overview, validation, context, considerations — skip active task/milestones
-            echo "$_george_ctx" | awk '
+            _george_ctx=$(echo "$_george_ctx" | awk '
                 /^## (Project Overview|Validation|Context Files|Considerations)/ { show=1 }
                 /^## (Active Task|Completed Milestones)/ { show=0 }
                 show { print }
-            '
-            echo ""
+            ')
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: macro_memory <- GEORGE.md project context"
         fi
-        echo "## Completed Milestones"
-        echo "(none yet)"
-    } > "$macro_file"
+    fi
+    _macro_init "$macro_file" "$task" "$_persona_text" "$_george_ctx"
 
     # Create failures log alongside macro memory
     echo "# Failures Log" > "$fail_file"
@@ -2503,11 +2556,7 @@ MEMEOF
     local _hd_content
     _hd_content=$(_agent_honeydew_read "$workdir" 2>/dev/null)
     if [ -n "$_hd_content" ]; then
-        {
-            echo ""
-            echo "$_hd_content"
-            echo ""
-        } >> "$macro_file"
+        _macro_set_honeydew "$macro_file" "$_hd_content"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew list -> macro_memory"
     fi
 
@@ -2542,7 +2591,7 @@ MEMEOF
             vitals_guard_ram 2>/dev/null || true
         fi
 
-        # Read macro_memory.md and ask for the SINGLE next milestone
+        # Read macro_memory.json and ask for the SINGLE next milestone
         local macro_context
         macro_context=$(cat "$macro_file")
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- macro_memory ($(echo "$macro_context" | wc -l) lines)"
@@ -2724,7 +2773,7 @@ ${_last_eval_feedback}
         fi
         if [ "$_dup_count" -ge "${AGENT_MAX_MILESTONE_RETRIES:-2}" ]; then
             ui_warn "Milestone '$milestone' already attempted $_dup_count times — forcing progression"
-            echo "- Milestone: $milestone -> SKIPPED (duplicate of failed milestone)" >> "$macro_file"
+            _macro_add_milestone "$macro_file" "$milestone" "Skipped (duplicate of failed milestone)" "" "UNKNOWN" "SKIPPED"
             _attempted_milestones+=("SKIPPED|$milestone")
             macro_iterations=$((macro_iterations + 1))
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — SKIPPED (dup)\n"
@@ -2736,7 +2785,7 @@ ${_last_eval_feedback}
             # and the loop would keep generating (and skipping) milestones
             # for a task that's already done.
             if [ "${AGENT_EVAL_MODE:-auto}" != "disabled" ] && [ "$completed_milestones" -gt 0 ]; then
-                if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.md"; then
+                if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.json"; then
                     _last_eval_feedback=""
                     break
                 else
@@ -2761,12 +2810,9 @@ ${_last_eval_feedback}
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — OK\n"
             _attempted_milestones+=("OK|$milestone")
 
-            # Remove the seed placeholder after first successful milestone.
-            # Without this, "(none yet)" sits above real step entries in
-            # macro_memory and misleads the evaluator/strategist into
-            # thinking no milestones have been completed.
-            if [ "$completed_milestones" -eq 1 ]; then
-                sed -i '/^(none yet)$/d' "$macro_file"
+            # JSON uses empty array for milestones — no placeholder to remove
+            if false; then
+                : # removed: sed placeholder cleanup (JSON has no "(none yet)")
             fi
 
             # ── Update GEORGE.md with milestone progress ──────
@@ -2802,15 +2848,7 @@ ${_last_eval_feedback}
                 local _hd_updated
                 _hd_updated=$(_agent_honeydew_read "$workdir" 2>/dev/null)
                 if [ -n "$_hd_updated" ] && [ -f "$macro_file" ]; then
-                    # Remove old honeydew block, re-append fresh one
-                    local _macro_tmp="${macro_file}.tmp"
-                    awk '/^## Honeydew List/{skip=1; next} /^## /{skip=0} !skip' "$macro_file" > "$_macro_tmp"
-                    {
-                        cat "$_macro_tmp"
-                        echo ""
-                        echo "$_hd_updated"
-                    } > "$macro_file"
-                    rm -f "$_macro_tmp"
+                    _macro_set_honeydew "$macro_file" "$_hd_updated"
                 fi
             fi
         else
@@ -2835,9 +2873,9 @@ ${_last_eval_feedback}
         # (pass 2 catches when the task is already done).
         # Skipped when AGENT_EVAL_MODE=disabled.
         if [ "${AGENT_EVAL_MODE:-auto}" != "disabled" ] && [ "$completed_milestones" -gt 0 ]; then
-            if _agent_evaluate_milestone "$macro_file" "$george_dir/micro_memory.md" "$milestone"; then
+            if _agent_evaluate_milestone "$macro_file" "$george_dir/micro_memory.json" "$milestone"; then
                 # Milestone confirmed — now check overall objective
-                if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.md"; then
+                if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.json"; then
                     _last_eval_feedback=""  # clear — task is done
                     break
                 else
@@ -2902,7 +2940,7 @@ ${_last_eval_feedback}
     # to the secondary model (LLM_SCENARIO=journal → LODGE_MODEL_SECONDARY).
     # After Ctrl+C, Ollama may still be cleaning up killed requests; issuing
     # a model unload+load at that moment races with the cleanup and can crash
-    # Termux. The cancelled task will be visible in macro_memory.md anyway.
+    # Termux. The cancelled task will be visible in macro_memory.json anyway.
     if [ "$_was_cancelled" -eq 0 ]; then
         # ── Summarize macro_memory → journal ──────────────────
         # Condense the task's macro_memory into ≤4 sentences and write

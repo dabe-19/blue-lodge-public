@@ -741,6 +741,61 @@ describe "web blacklist helpers"
     _teardown_web
   }
 
+# ── Preloaded domain blacklist ─────────────────────────────────
+describe "preloaded domain blacklist"
+
+  it "WEB_BLACKLIST_DOMAINS has default value" && {
+    _setup_web
+    [ -n "$WEB_BLACKLIST_DOMAINS" ]
+    assert_ok $? "WEB_BLACKLIST_DOMAINS should have defaults"
+    _teardown_web
+  }
+
+  it "_web_blacklist_contains blocks preloaded domains" && {
+    _setup_web
+    _web_blacklist_contains "https://www.linkedin.com/in/test-user"
+    assert_ok $? "linkedin.com should be blocked by default"
+    _teardown_web
+  }
+
+  it "_web_blacklist_contains blocks subdomains of preloaded domains" && {
+    _setup_web
+    _web_blacklist_contains "https://m.facebook.com/page"
+    assert_ok $? "m.facebook.com should match facebook.com"
+    _teardown_web
+  }
+
+  it "_web_blacklist_contains allows non-blacklisted domains" && {
+    _setup_web
+    # Clear file-based blacklist, keep only domain defaults
+    rm -f "$WEB_BLACKLIST_FILE"
+    if _web_blacklist_contains "https://example.com/test"; then
+        _teardown_web
+        assert_fail 0 "example.com should NOT be blocked"
+    fi
+    assert_ok 0
+    _teardown_web
+  }
+
+  it "WEB_BLACKLIST_DOMAINS is configurable" && {
+    _setup_web
+    _old_domains="$WEB_BLACKLIST_DOMAINS"
+    WEB_BLACKLIST_DOMAINS="onlythis.com"
+    _web_blacklist_contains "https://onlythis.com/page"
+    _rc=$?
+    WEB_BLACKLIST_DOMAINS="$_old_domains"
+    assert_ok $_rc "Custom domain should be blocked"
+    _teardown_web
+  }
+
+  it "search results are not written to journal" && {
+    _setup_web
+    fn_body=$(declare -f _web_journal_results)
+    echo "$fn_body" | grep -q 'journal_write'
+    assert_fail $? "journal_write should NOT be called — URLs belong in search_results.md"
+    _teardown_web
+  }
+
 # ── Blacklist management commands ──────────────────────────────
 describe "web blacklist management"
 

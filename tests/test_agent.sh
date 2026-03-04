@@ -92,14 +92,14 @@ describe "Inner loop cancellation"
   it "agent_inner_loop skips terminal escalation when cancelled" && {
     body=$(declare -f agent_inner_loop)
     # After the while loop ends, should check cancel before operator prompt
-    # Multi-line format: Status: CANCELLED written inside block >> macro_memory
-    echo "$body" | grep -q 'Status: CANCELLED'
+    # JSON: _macro_add_milestone writes CANCELLED status via jq
+    echo "$body" | grep -q '_macro_add_milestone.*CANCELLED'
     assert_ok $?
   }
 
   it "agent_inner_loop writes CANCELLED to macro_memory on cancel" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'Status: CANCELLED'
+    echo "$body" | grep -q '_macro_add_milestone.*CANCELLED'
     assert_ok $?
   }
 
@@ -343,8 +343,8 @@ describe "Dynamic dual-loop architecture"
 
   it "agent_inner_loop overwrites micro_memory per milestone" && {
     body=$(declare -f agent_inner_loop)
-    # Strict overwrite: micro_memory is destroyed and recreated each handoff
-    echo "$body" | grep -q 'Micro Objective.*micro_objective.*> .*micro_file'
+    # Strict overwrite: micro_memory is destroyed and recreated via _micro_init
+    echo "$body" | grep -q '_micro_init.*micro_file'
     assert_ok $?
   }
 
@@ -790,7 +790,7 @@ describe "L3 failure history recall"
 
   it "L3 reads failure log for past recovery instructions" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'Past Recovery Instructions'
+    echo "$body" | grep -q 'L3_recovery'
     assert_ok $?
   }
 
@@ -864,13 +864,15 @@ describe "Soul injection in dual-loop architecture"
 
   it "macro memory seed includes task start timestamp" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q 'Task Started'
+    # _macro_init writes task_started field via jq with date timestamp
+    echo "$body" | grep -q '_macro_init.*macro_file'
     assert_ok $?
   }
 
   it "micro memory includes milestone start timestamp" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'Started:.*date'
+    # _micro_init writes 'started' field with timestamp
+    echo "$body" | grep -q '_micro_init.*micro_file'
     assert_ok $?
   }
 
@@ -930,9 +932,9 @@ describe "Web sufficiency gate in agent_inner_loop"
     assert_eq "$AGENT_WEB_SUFFICIENCY" "3"
   }
 
-  it "inner loop body contains SUFFICIENCY REACHED injection" && {
+  it "inner loop body contains sufficiency gate" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'SUFFICIENCY REACHED'
+    echo "$body" | grep -q '_micro_sufficiency_reached'
     assert_ok $?
   }
 
@@ -952,15 +954,15 @@ describe "Web sufficiency gate in agent_inner_loop"
 # ── Primary Objective Injection ────────────────────────────────
 describe "Primary objective injection in inner loop"
 
-  it "inner loop injects primary objective from macro_memory.md" && {
+  it "inner loop injects primary objective from macro_memory" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'Primary Objective'
+    echo "$body" | grep -q 'primary_objective'
     assert_ok $?
   }
 
-  it "injection reads from macro_memory.md" && {
+  it "injection reads from macro_memory via _macro_get" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'macro_memory.md'
+    echo "$body" | grep -q '_macro_get.*macro_file.*primary_objective'
     assert_ok $?
   }
 
@@ -972,18 +974,17 @@ describe "Primary objective injection in inner loop"
   }
 
 # ── Router Research Guidance ────────────────────────────────────
-describe "Router web research sufficiency guidance"
+describe "Web sufficiency enforcement gate"
 
-  it "route_prompt includes web sufficiency guidance for search objectives" && {
+  it "inner loop has programmatic sufficiency enforcement" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'web_sufficiency\|WEB RESEARCH RULE'
+    echo "$body" | grep -q 'WEB SUFFICIENCY ENFORCEMENT\|_micro_sufficiency_reached'
     assert_ok $?
   }
 
-  it "research guidance triggers for search-related objectives" && {
+  it "sufficiency gate calls _agent_complete_milestone" && {
     body=$(declare -f agent_inner_loop)
-    # Must check for web/search/fetch/find keywords
-    echo "$body" | grep -q '_obj_lower_rt.*search'
+    echo "$body" | grep -q '_agent_complete_milestone.*micro_file.*macro_file'
     assert_ok $?
   }
 
@@ -1007,14 +1008,14 @@ describe "Abort propagation from inner loop to macro loop"
 
   it "abort writes ABORTED to macro_memory" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'ABORTED by operator'
+    echo "$body" | grep -q '_macro_add_milestone.*ABORTED'
     assert_ok $?
   }
 
   it "abort returns 1 immediately without guided retry" && {
     # Verify abort block (with return 1) appears before guided retry block
     # in the source file. declare -f strips comments so we read the file.
-    abort_line=$(grep -n 'ABORTED by operator' "$LODGE_DIR/lib/agent.sh" | head -1 | cut -d: -f1)
+    abort_line=$(grep -n 'Aborted by operator' "$LODGE_DIR/lib/agent.sh" | head -1 | cut -d: -f1)
     guided_line=$(grep -n 'Catalog-Aware Guided Retry' "$LODGE_DIR/lib/agent.sh" | head -1 | cut -d: -f1)
     [ -n "$abort_line" ] && [ -n "$guided_line" ] && [ "$abort_line" -lt "$guided_line" ]
     assert_ok $?
@@ -1056,7 +1057,7 @@ describe "Milestone deduplication in macro loop"
 
   it "duplicate milestones are skipped after max retries" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q 'SKIPPED (duplicate of failed milestone)'
+    echo "$body" | grep -q 'Skipped (duplicate of failed milestone)'
     assert_ok $?
   }
 
@@ -1279,42 +1280,41 @@ describe "Macro memory: timestamped command results"
     assert_ok $?
   }
 
-  it "SUCCESS macro_memory entry includes timestamp" && {
-    body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'Step \[\$_step_ts\]'
+  it "SUCCESS macro_memory entry uses _macro_add_milestone" && {
+    body=$(declare -f _agent_complete_milestone)
+    echo "$body" | grep -q '_macro_add_milestone.*macro_file.*micro_objective'
     assert_ok $?
   }
 
-  it "SUCCESS macro_memory entry includes ran: command" && {
-    body=$(declare -f agent_inner_loop)
-    # Multi-line format: Command: $_last_success_cmd
-    echo "$body" | grep -q 'Command: \$_last_success_cmd'
+  it "SUCCESS macro_memory entry includes command" && {
+    body=$(declare -f _agent_complete_milestone)
+    # _macro_add_milestone receives the command as a parameter
+    echo "$body" | grep -q '_macro_add_milestone.*last_success_cmd'
     assert_ok $?
   }
 
-  it "FAILED macro_memory entry includes timestamp" && {
+  it "FAILED macro_memory entry uses _macro_add_milestone" && {
     body=$(declare -f agent_inner_loop)
-    # Multi-line format: Step on one line, Status: FAILED on next
-    echo "$body" | grep -q 'Status: FAILED'
+    echo "$body" | grep -q '_macro_add_milestone.*FAILED'
     assert_ok $?
   }
 
-  it "CANCELLED macro_memory entry includes timestamp" && {
+  it "CANCELLED macro_memory entry uses _macro_add_milestone" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'Status: CANCELLED'
+    echo "$body" | grep -q '_macro_add_milestone.*CANCELLED'
     assert_ok $?
   }
 
-  it "ABORTED macro_memory entry includes timestamp" && {
+  it "ABORTED macro_memory entry uses _macro_add_milestone" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'Status: ABORTED'
+    echo "$body" | grep -q '_macro_add_milestone.*ABORTED'
     assert_ok $?
   }
 
-  it "guided recovery macro_memory entry includes ran: command" && {
+  it "guided recovery macro_memory entry includes command" && {
     body=$(declare -f agent_inner_loop)
-    # Multi-line format: Command: $final_cmd (exit 0)
-    echo "$body" | grep -q 'Command: \$final_cmd'
+    # _macro_add_milestone receives the command as a parameter
+    echo "$body" | grep -q '_macro_add_milestone.*final_cmd'
     assert_ok $?
   }
 
@@ -1329,8 +1329,8 @@ describe "Research buffer (cross-milestone data flow)"
 
   it "inner loop injects research buffer into micro_memory on start" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'Research Context (from previous milestone)'
-    assert_ok $? "Must inject research buffer header"
+    echo "$body" | grep -q '_micro_set.*micro_file.*research_context'
+    assert_ok $? "Must inject research buffer via _micro_set"
   }
 
   it "research buffer is deleted after injection" && {
@@ -1339,16 +1339,78 @@ describe "Research buffer (cross-milestone data flow)"
     assert_ok $? "Must delete research buffer after injection"
   }
 
-  it "research buffer uses awk to extract web output blocks" && {
-    body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'EXECUTED SUCCESSFULLY.*ok=1'
-    assert_ok $? "Must use awk to extract successful /web output blocks"
+  it "research buffer uses _micro_web_outputs to extract web data" && {
+    body=$(declare -f _agent_complete_milestone)
+    echo "$body" | grep -q '_micro_web_outputs'
+    assert_ok $? "Must use _micro_web_outputs to extract successful /web output blocks"
   }
 
-  it "research buffer is capped at 3000 chars" && {
+  it "research buffer is capped at 1500 chars" && {
+    body=$(declare -f _agent_complete_milestone)
+    echo "$body" | grep -q '1500'
+    assert_ok $? "Must cap research buffer at 1500 chars"
+  }
+
+# ── Evaluator-based completion (router decoupling) ────────────
+describe "Evaluator-based milestone completion"
+
+  it "_agent_complete_milestone helper is defined" && {
+    declare -f _agent_complete_milestone &>/dev/null
+    assert_ok $?
+  }
+
+  it "_agent_complete_milestone writes COMPLETE to micro_memory" && {
+    body=$(declare -f _agent_complete_milestone)
+    echo "$body" | grep -q '_micro_set_result.*COMPLETE'
+    assert_ok $? "Must write COMPLETE verdict"
+  }
+
+  it "_agent_complete_milestone summarizes micro_memory via LLM" && {
+    body=$(declare -f _agent_complete_milestone)
+    echo "$body" | grep -q 'llm_generate.*_ms_prompt'
+    assert_ok $? "Must call llm_generate for milestone summary"
+  }
+
+  it "_agent_complete_milestone tags action class" && {
+    body=$(declare -f _agent_complete_milestone)
+    echo "$body" | grep -q '_action_class='
+    assert_ok $? "Must tag milestone with action class"
+  }
+
+  it "_agent_complete_milestone saves research buffer for web actions" && {
+    body=$(declare -f _agent_complete_milestone)
+    echo "$body" | grep -q 'research_buffer.md'
+    assert_ok $? "Must save research buffer to .george dir"
+  }
+
+  it "inner loop calls _agent_evaluate_milestone after successful action" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q '3000'
-    assert_ok $? "Must cap research buffer at 3000 chars"
+    echo "$body" | grep -q '_agent_evaluate_milestone'
+    assert_ok $? "Must call evaluator after each successful action"
+  }
+
+  it "inner loop calls _agent_complete_milestone on evaluator pass" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_agent_complete_milestone'
+    assert_ok $? "Must call completion helper when evaluator says COMPLETE"
+  }
+
+  it "router prompt forbids SUCCESS/DONE output" && {
+    body=$(declare -f _build_router_prompt)
+    echo "$body" | grep -q 'NEVER output SUCCESS or DONE'
+    assert_ok $? "Router must be told to never output SUCCESS"
+  }
+
+  it "router prompt outputs only tool names" && {
+    body=$(declare -f _build_router_prompt)
+    echo "$body" | grep -q '"output":"ONLY the tool name'
+    assert_ok $? "Router output instruction: only tool names"
+  }
+
+  it "inner loop ignores hallucinated SUCCESS from router" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'Router output.*SUCCESS.*ignoring'
+    assert_ok $? "Must gracefully handle hallucinated SUCCESS"
   }
 
 # ── Web soft-failure tolerance ────────────────────────────────
@@ -1362,13 +1424,13 @@ describe "Web soft-failure tolerance"
 
   it "web soft-failure skips escalation matrix when prior web successes exist" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'soft failure.*prior web results available'
+    echo "$body" | grep -q 'specialist_soft_fail'
     assert_ok $? "Must log as soft failure"
   }
 
   it "web soft-failure injects NOTE about available data" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'Consider outputting SUCCESS'
+    echo "$body" | grep -q 'Use existing data\|try a different URL'
     assert_ok $? "Must nudge to use existing data"
   }
 
@@ -1405,7 +1467,7 @@ describe "Placeholder detection in /write"
 
   it "inner loop detects placeholder brackets in /write content" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'placeholder.*TEMPLATE'
+    echo "$body" | grep -q 'placeholder.*Template\|Template.*not finished'
     assert_ok $? "Must warn about template/placeholder content"
   }
 
@@ -1425,7 +1487,7 @@ describe "Placeholder detection in /write"
 describe "Richer milestone summaries"
 
   it "milestone summary prompt asks for key data from web results" && {
-    body=$(declare -f agent_inner_loop)
+    body=$(declare -f _agent_complete_milestone)
     echo "$body" | grep -q 'MUST INCLUDE those specific facts'
     assert_ok $? "Must instruct summarizer to retain research data"
   }
@@ -1614,7 +1676,7 @@ describe "Honeydew list system"
 
   it "inner loop injects honeydew status into micro_memory" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'Honeydew Progress'
+    echo "$body" | grep -q 'honeydew_progress'
     assert_ok $? "Inner loop must inject honeydew status"
   }
 

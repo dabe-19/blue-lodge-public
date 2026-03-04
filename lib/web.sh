@@ -17,6 +17,12 @@ WEB_CACHE_TTL="${WEB_CACHE_TTL:-3600}"     # Cache pages for 1 hour
 WEB_BLACKLIST_FILE="${WEB_BLACKLIST_FILE:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/web_blacklist.log}"
 WEB_BLACKLIST_ENABLED="${WEB_BLACKLIST_ENABLED:-true}"
 
+# Preloaded domain blacklist — sites that aggressively block bots.
+# Comma-separated list. Fetch/scrape is skipped for these hosts,
+# but search-result headers (title + snippet) are still used.
+# Override in .george/config or environment to add/remove domains.
+WEB_BLACKLIST_DOMAINS="${WEB_BLACKLIST_DOMAINS:-linkedin.com,facebook.com,instagram.com,twitter.com,x.com,tiktok.com,pinterest.com}"
+
 # ── Blocked-site detection + blacklist ───────────────────────
 _web_block_reason() {
     local status="$1"
@@ -54,6 +60,22 @@ _web_blacklist_contains() {
     local url="$1"
     local host
     host=$(echo "$url" | sed 's|^https\?://||' | cut -d'/' -f1)
+
+    # Check preloaded domain blacklist first (fast, no file I/O)
+    if [ -n "${WEB_BLACKLIST_DOMAINS:-}" ]; then
+        local _domain
+        local _host_lower
+        _host_lower=$(echo "$host" | tr '[:upper:]' '[:lower:]')
+        IFS=',' read -ra _bl_domains <<< "$WEB_BLACKLIST_DOMAINS"
+        for _domain in "${_bl_domains[@]}"; do
+            _domain=$(echo "$_domain" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')
+            [ -z "$_domain" ] && continue
+            # Match exact or subdomain (e.g., www.linkedin.com matches linkedin.com)
+            if [[ "$_host_lower" == "$_domain" ]] || [[ "$_host_lower" == *".${_domain}" ]]; then
+                return 0
+            fi
+        done
+    fi
 
     [ -f "$WEB_BLACKLIST_FILE" ] || return 1
     grep -qE "\|url=${url//\//\\/}(\||$)|\|host=${host//\./\\.}(\||$)" "$WEB_BLACKLIST_FILE" 2>/dev/null
@@ -248,11 +270,9 @@ _web_journal_results() {
 
     [ -z "$results_text" ] && return 0
 
-    # Write to journal (persistent cross-task memory)
-    if declare -f journal_write &>/dev/null; then
-        local entry="Web search ($provider): $query\n\n$results_text"
-        journal_write "web_search" "$entry" 2>/dev/null
-    fi
+    # NOTE: Search results are NOT written to journal.
+    # Journal is for task reflection, quips, and personality — not raw URLs.
+    # All search data goes to .george/search_results.md (current task memory).
 
     # Write to .george/search_results.md (current task memory)
     # This file is read by the agent inner loop when it needs to
