@@ -14,7 +14,7 @@ source "$LODGE_DIR/lib/journal.sh"
 
 # ── Config ─────────────────────────────────────────────────────
 AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-20}"       # Macro loop milestone ceiling
-AGENT_PLAN_STEPS="${AGENT_PLAN_STEPS:-5}"      # Max steps per plan/subtask
+AGENT_PLAN_STEPS="${AGENT_PLAN_STEPS:-6}"      # Max steps per plan/subtask
 AGENT_INNER_LOOPS="${AGENT_INNER_LOOPS:-6}"    # Inner loop escalation ceiling
 AGENT_STEP_DELAY="${AGENT_STEP_DELAY:-1}"
 AGENT_MAX_CLARIFY="${AGENT_MAX_CLARIFY:-2}"
@@ -24,7 +24,7 @@ AGENT_WEB_SUFFICIENCY="${AGENT_WEB_SUFFICIENCY:-3}"  # Web actions before suffic
 AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-2}"  # Max times to retry same milestone
 AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto | interactive | disabled
 
-LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-512}"     # Max output tokens for evaluator
+LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
 
 # ── Context-aware memory injection for thinking models ─────────
 # Thinking models consume input context faster (need room for
@@ -146,7 +146,7 @@ _micro_sufficiency_reached() {
 _micro_serialize() {
     local file="$1" max_actions="${2:-10}"
     jq --argjson n "$max_actions" '
-        .action_log = (.action_log | .[-$n:] | map(.output = .output[:300]))
+        .action_log = (.action_log | .[-$n:] | map(.output = .output[:1024]))
     ' "$file" 2>/dev/null
 }
 
