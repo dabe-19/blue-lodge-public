@@ -236,17 +236,20 @@ memory_build_system_prompt() {
     fi
 
     if [ "$mode" = "ask" ]; then
-        # ── Lean mode for /ask: ~250 tokens ──────────────────────
-        # Uses the condensed soul — identity + philosophy digest.
-        # This replaces the old hardcoded personality blurb with a
-        # canonical excerpt that stays in sync with soul.md.
+        # ── Enriched /ask mode: ~400-500 tokens ─────────────────
+        # Uses condensed soul + task context so the user can ask
+        # George what he's been doing, what files exist, etc.
+        # Budget: ~400-500 tokens (up from ~250). Still lean enough
+        # for near-instant prefill on edge devices.
         local condensed
         condensed=$(_memory_soul_condensed)
         prompt="${prompt}${condensed}
 
 OUTPUT FORMAT: In no more than 5 sentences, answer the question directly. Respond in plain conversational text. Do NOT wrap your answer in code blocks, bash blocks, or markdown formatting. Do NOT output commands unless the user specifically asked for a command. Just answer naturally."
 
-        # Add minimal project context if GEORGE.md exists
+        # ── Task context: what George has been working on ────────
+        # Inject active task + completed milestones so the user
+        # can ask "what have you been doing?" and get a real answer.
         local project_task
         project_task=$(memory_get_section "Active Task" "$dir" 2>/dev/null)
         if [ -n "$project_task" ] && [ "$project_task" != "(none)" ]; then
@@ -254,6 +257,41 @@ OUTPUT FORMAT: In no more than 5 sentences, answer the question directly. Respon
 
 Current project: $(basename "$dir") — $project_task"
         fi
+
+        # Recent milestones — last 3 completed steps
+        local milestones
+        milestones=$(memory_get_section "Completed Milestones" "$dir" 2>/dev/null)
+        if [ -n "$milestones" ] && [ "$milestones" != "(none)" ]; then
+            local recent_milestones
+            recent_milestones=$(echo "$milestones" | tail -3)
+            prompt="$prompt
+
+Recent activity:
+$recent_milestones"
+        fi
+
+        # ── Journal context: recent entries (~150 chars) ─────────
+        # Let George reference what he's written in the journal.
+        if [ -f "$LODGE_DIR/journal.md" ]; then
+            source "$LODGE_DIR/lib/journal.sh" 2>/dev/null
+            if declare -f journal_read &>/dev/null; then
+                local _ask_journal
+                _ask_journal=$(journal_read 150 2>/dev/null)
+                [ -n "$_ask_journal" ] && prompt="$prompt
+
+$_ask_journal"
+            fi
+        fi
+
+        # ── Workspace files (compact, 8 entries) ────────────────
+        local _ask_files
+        _ask_files=$(find "$dir" -maxdepth 2 -type f \
+            ! -path '*/.git/*' ! -path '*/target/*' ! -path '*/__pycache__/*' \
+            ! -path '*/.venv/*' ! -path '*/node_modules/*' \
+            2>/dev/null | head -8 | sed "s|^$dir/||")
+        [ -n "$_ask_files" ] && prompt="$prompt
+
+Files: $_ask_files"
 
         # Add 1 recall chunk if available (not 3)
         if [ -n "$task_hint" ] && declare -f recall_search_context &>/dev/null; then
@@ -302,49 +340,36 @@ Plan concisely."
 $project_mem"
         fi
 
-        # Command catalog — George needs to know what tools exist and their syntax
-        # so plans reference real commands. Use a lean catalog (~200 tokens)
-        # instead of the full catalog with examples (~800 tokens) to reduce
+        # Command catalog (JSON) — George needs to know what tools exist and
+        # their syntax so plans reference real commands.  Lean JSON (~250
+        # tokens) instead of the full catalog (~800 tokens) to reduce
         # prefill time on constrained hardware.
         prompt="$prompt
 
 --- COMMANDS (use ONLY these — do NOT invent commands) ---
-/ask <q> — Quick answer
-/init <name> <lang> — Scaffold project (rust, python, shell, etc.)
-/recall <query> — Search knowledge base (DO THIS FIRST)
-/save <file> <text> — Save content to file
-/write <file> <text> — Write/overwrite file (creates dirs)
-/download <url> [dest] — Download a URL
-/build [release] — Build project
-/test [args] — Run tests
-/fix [error] — Diagnose and fix
-/commit [msg] — AI commit + commit
-/push — Push to GitHub
-/clone <url> — Clone and setup repo
-/web search <query> — Web search
-/web fetch <url> — Fetch a URL
-/github search <q> — Find GitHub repos
-/journal write <text> — Write to journal
-/social post discord <channel> <text> — Post to Discord
-/social post telegram|x|mastodon <text> — Post to other platforms
-/social discord dm <user> <text> — DM a Discord user
-/social discord read <channel> — Read Discord messages
-/email send <prov> <addr> s= b= — Send email (also: subject= body=, to=)
-/email inbox <provider> [count] — Check inbox
-/email status — Email status
-/phone — Phone dashboard
-/secret set|get <k> — Encrypted secrets
-/sandbox new <name> [type] — Create sandbox (types: rust, python, shell)
-/sandbox build|test|run|cd|rm <name> — Sandbox operations
-/container create|enter <name> — Linux containers
-/pgp sign|signpost|export — PGP operations
-/slash create <name> <desc> — Create custom command
-/vitals — System dashboard
-/vision <image> — Analyze image
-/backup local|restore — Backup operations
-/git setup|status|ssh-keygen — Git configuration
-bash — Standard Linux shell (fallback)
-If unsure: /recall <cmd> to check syntax. If missing: /slash create <name> <desc>"
+{\"commands\":{
+\"/ask\":\"Quick answer\",\"/init\":\"Scaffold project (rust,python,shell)\",
+\"/recall\":\"Search knowledge base (DO THIS FIRST)\",
+\"/ls\":\"List files as tree (depth 1-8, default 3)\",\"/read\":\"Read file (100 lines)\",
+\"/save\":\"Save to file\",\"/write\":\"Write/overwrite file (creates dirs)\",\"/cd\":\"Change dir\",
+\"/download\":\"Download URL\",\"/build\":\"Build project\",\"/test\":\"Run tests\",
+\"/fix\":\"Diagnose/fix errors\",\"/commit\":\"AI commit\",\"/push\":\"Push to GitHub\",
+\"/clone\":\"Clone repo\",
+\"/web\":{\"search\":\"query\",\"fetch\":\"url\",\"images\":\"query\"},
+\"/github\":\"Search repos\",\"/vision\":\"Analyze image (URL or path)\",
+\"/journal\":{\"read\":\"/journal (no args)\",\"write\":\"/journal write <text>\"},
+\"/social\":{\"post\":\"/social post discord <channel> <text>\",\"read\":\"/social discord read <ch>\",\"dm\":\"/social discord dm <user> <text>\"},
+\"/email\":{\"send\":\"/email send <prov> <addr> subject= body=\",\"inbox\":\"/email inbox <prov>\"},
+\"/phone\":\"Dashboard, SMS\",\"/secret\":\"set|get <key>\",
+\"/sandbox\":{\"new\":\"new <name> [type]\",\"build|test|run|cd|rm\":\"<name>\"},
+\"/container\":\"create|enter <distro>\",\"/pgp\":\"sign|signpost|export\",
+\"/slash\":\"create|run <name>\",\"/vitals\":\"System dashboard\",
+\"/backup\":\"local|restore\",\"/git\":\"setup|status|ssh-keygen\",
+\"/model\":\"Tune sampling (temp,repeat,presence per scenario)\",
+\"/limits\":\"Tune planning (steps,depth,tokens)\",
+\"/think\":\"on|off|dim|hide\",\"/config\":\"show|save|reset\",
+\"bash\":\"Linux shell (fallback)\"},
+\"rules\":[\"If unsure: /recall <cmd>\",\"If missing: /slash create <name>\",\"Before editing: check with /ls or /read\"]}"
 
         # Workspace files (needed for planning)
         local files

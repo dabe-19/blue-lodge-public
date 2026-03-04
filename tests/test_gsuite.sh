@@ -8,7 +8,7 @@ declare -A _MOCK_SECRETS=()
 
 secrets_set() { _MOCK_SECRETS["$1"]="$2"; }
 secrets_get() {
-    local val="${_MOCK_SECRETS[$1]:-}"
+    val="${_MOCK_SECRETS[$1]:-}"
     [ -n "$val" ] && echo "$val" || return 1
 }
 secrets_exists() { [ -n "${_MOCK_SECRETS[$1]:-}" ]; }
@@ -69,7 +69,6 @@ describe "gsuite_setup"
   it "stores client ID in secrets" && {
     _MOCK_SECRETS=()
     gsuite_setup "test_client_id" "test_client_secret" >/dev/null 2>&1
-    local stored
     stored=$(secrets_get "google_client_id")
     assert_eq "$stored" "test_client_id"
   }
@@ -77,7 +76,6 @@ describe "gsuite_setup"
   it "stores client secret in secrets" && {
     _MOCK_SECRETS=()
     gsuite_setup "test_client_id" "test_client_secret" >/dev/null 2>&1
-    local stored
     stored=$(secrets_get "google_client_secret")
     assert_eq "$stored" "test_client_secret"
   }
@@ -113,7 +111,6 @@ describe "_gsuite_get_token"
     _MOCK_SECRETS["google_token_expiry"]="$(( $(date +%s) + 9999 ))"
     _MOCK_SECRETS["google_client_id"]="cid"
     _MOCK_SECRETS["google_client_secret"]="csecret"
-    local token
     token=$(_gsuite_get_token 2>/dev/null)
     assert_eq "$token" "fresh_token_123"
   }
@@ -129,7 +126,6 @@ describe "gsuite_status"
 
   it "shows unconfigured state" && {
     _MOCK_SECRETS=()
-    local output
     output=$(gsuite_status 2>/dev/null)
     assert_contains "$output" "No"
   }
@@ -137,7 +133,6 @@ describe "gsuite_status"
   it "shows configured state" && {
     _MOCK_SECRETS=()
     _MOCK_SECRETS["google_client_id"]="test_id"
-    local output
     output=$(gsuite_status 2>/dev/null)
     assert_contains "$output" "Yes"
   }

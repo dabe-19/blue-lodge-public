@@ -133,7 +133,7 @@ commands_is_safe_auto_route() {
     # a natural-language instruction, not a slash command.
     case "$first_word" in
         read|write|test|build|fix|save|plan|ask|push|commit|clone|clear|compact|\
-        init|reflect|think|recall|debug|model|status|email|backup|web|cd|files|git|\
+        init|reflect|think|recall|debug|model|status|email|backup|web|cd|ls|files|git|\
         service)
             return 1 ;;
     esac
@@ -264,152 +264,153 @@ commands_catalog_plan() {
     commands_catalog
 }
 
-# ── Full command catalog for LLM injection ─────────────────────
-# Returns the detailed command reference with syntax and examples.
+# ── Full command catalog for LLM injection (JSON) ─────────────
+# Returns a structured JSON command reference with syntax, examples,
+# and rules keyed per command/subcommand.  Structured format helps
+# 4B models on edge devices parse tool syntax unambiguously.
 # Injected during planning, routing, guided retry, and execution.
 commands_catalog() {
     local _catalog_ts
     _catalog_ts=$(date '+%Y-%m-%d %H:%M:%S %Z')
-    printf '# SYSTEM CAPABILITIES & TOOLS\nTime: %s.\n' "$_catalog_ts"
-    cat << 'CATALOG'
-Invoke tools using `/`. Do NOT quote arguments (parsed by whitespace). 
-Never guess syntax; use `/recall <cmd>`. If a tool is missing, use `/slash create <name> <desc>`.
 
-## CORE WORKFLOW (Read → Gather → Ingest → Respond)
-1. **READ:** Check memory (`/recall <topic>`) or source (`/social discord read`).
-2. **GATHER:** If missing info, autonomously find it (`/web search`, `/github search`, `/secret get`). *Never give up due to missing info—find it first.*
-3. **INGEST:** Save new facts to memory (`/journal write <fact>`).
-4. **RESPOND:** Execute final action.
-
-## 1. PROJECT & CODE
-/init <name> <lang>  — Setup project (langs: rust, python, rl, data, shell)
-/write <file> <text> — Write/overwrite file (creates dirs)
-/build [release], /test [args], /fix [error], /commit [msg], /push, /clone <url>, /files, /read <file>
-
-## 2. SANDBOX (Code execution & isolated environments)
-/sandbox list               — List all sandboxes (type, size, last-used)
-/sandbox new <name> [type]  — Create sandbox (types: rust, python, shell)
-/sandbox build <name>       — Build project in sandbox
-/sandbox test <name>        — Run tests in sandbox
-/sandbox run <name> <cmd>   — Run arbitrary shell command in sandbox
-/sandbox status <name>      — Detailed info + recent activity
-/sandbox journal [n]        — Show last N sandbox journal entries
-/sandbox rm <name>          — Delete sandbox
-/sandbox clone <url> [name] — Clone repo into a new sandbox
-/sandbox cd <name>          — Switch working directory into sandbox
-/container <create|enter> <name> — Manage proot-distro containers
-
-*Sandbox Execution Chains:*
-- Rust: `/sandbox new my-api rust` → `/sandbox run my-api cargo add serde` → `/sandbox test my-api`
-- Python: `/sandbox new my-app python` → `/sandbox run my-app pip install flask` → `/sandbox build my-app`
-
-## 2b. MICROSERVICES (Rust binary lifecycle)
-/service list                   — List registered services and their status
-/service register <name> [path] — Register a Cargo project as a service
-/service build <name>           — Compile service (release mode)
-/service deploy <name>          — Build + install to /usr/local/bin + restart
-/service start <name>           — Start in background (nohup)
-/service stop <name>            — Graceful shutdown
-/service restart <name>         — Stop + start
-/service status <name>          — PID, uptime, port, log tail
-/service logs <name> [n]        — Last N log lines (default 30)
-/service unregister <name>      — Remove registration (keeps binary)
-
-*Service Deploy Pipeline:*
-- Register + deploy: `/service register ingestion .` → `/service deploy ingestion`
-- Check status: `/service status ingestion` → `/service logs ingestion 50`
-
-## 3. RESEARCH & MEMORY
-/ask <q>             — Quick answer
-/recall <q>          — Search internal memory (DO THIS FIRST BEFORE WEB SEARCH)
-/web search <query>  — Search the web (returns URLs + snippets)
-/web fetch <url>     — Read a webpage's content (needs a URL, NOT a query)
-/web images <query>  — Find image URLs via Serper API
-/web scrape-images <url> — Extract image URLs from a webpage (no API key)
-/github <search|check> <q|repo>
-/download <url> [dest]
-/vision <image_url_or_path> [prompt]     — Analyze image with AI vision (accepts URLs directly — no /download needed)
-/journal <write|vivid|fading|sediment|count|decay> [text] — Access persistent living memory
-/ingest <add|summarize|list|remove> [filepath] [label] — Upload docs to knowledge base
-
-## 4. COMMS & SOCIAL
-/social post <discord|telegram|x|mastodon|bluesky> [target] <text> — target = channel or instance
-/social <platform> <read|dm|timeline|search|sync> [args]
-/email send <provider> to=addr s=subject b=body — Send email (provider required: gmail, protonmail, zoho)
-/email inbox <provider> [count] — Check inbox for a specific provider
-/email <status|address|setup|ssh-keygen|github-setup|github-test> [provider] [args]
-/phone <dashboard|location|where|sms|calls|telephony|wifi> [args]
-
-## 5. SECURITY & CONFIG
-/pgp <sign|signpost|export> [msg]
-/api keys set <KEY> <value>      — Value captures everything after key name (spaces OK)
-/api keys <list|rm> [k]
-/secret set <k> <value>         — Value captures everything after name (spaces OK)
-/secret get <k>
-/git <setup|status|identity|ssh-keygen|ssh-config|sign|remote|test|pubkey|gpg-pub> [args]
-/wallet <coin> <action>
-/gsuite <gmail|drive|docs>
-
-## 6. SYSTEM CONTROLS
-/models <list|status|select|single|dual|param> [args]
-/model <temp|repeat|presence>[-ask|-agent] <val>
-/think [on|off|bright|dim|hide], /soul [on|off]
-/cleanup <selective|all>, /backup <local|restore|list|status|git|github>, /vitals [context]
-/slash <create|test|show|delete> <name> [args] — Create/manage custom LLM-assisted tools
-
----
-
-## WORKFLOW EXAMPLES (In-Context Learning)
-
-**Task: "Review your journal and tell me what you've been up to"**
-1. `/journal` (read ALL journal entries)
-2. Summarize themes, tasks, learnings from the entries.
-
-**Task: "What did they say on Discord?"**
-1. `/social discord read general`
-2. `/journal write Discord update: <summary of messages>`
-3. Answer the Brother using what you just read and saved.
-*WRONG:* `/web search "what did discord say"` ← NEVER do this. Read the source.
-
-**Task: "Find me a good Rust HTTP library"**
-1. `/github search rust http client` (find real repos)
-2. `/web search best rust http library` (search if recall is empty)
-3. `/recall rust http library` (check existing knowledge first)
-4. `/journal write Rust HTTP: recommend reqwest (95k stars, async)`
-
-**Task: "Show me what the Grand Lodge of England looks like"**
-1. `/web search Grand Lodge of England building photos` (find pages with images)
-2. `/web scrape-images <result_url>` (extract image URLs from the page)
-3. `/vision <image_url> Describe this building` (analyze the image directly by URL)
-*NOTE:* /vision accepts image URLs directly — no /download step needed.
-*WRONG:* `/web fetch <image_url>` ← /web fetch is for webpages, not image files.
-*WRONG:* `/vision https://en.wikipedia.org/wiki/...` ← that's a webpage, not an image.
-
-## TASK FREEDOM & AUTONOMY (Gather Before Acting)
-You have full authority to find missing information or tools. DO NOT proceed blindly. DO NOT give up. Create a research milestone first.
-
-**When blocked, use your tools:**
-- **Missing knowledge?** → `/recall` first, then `/web search`, then `/web fetch`
-- **Need an image?** → `/web images <query>` or `/web scrape-images <page_url>`, then `/vision <image_url>`
-- **Missing past context?** → `/journal`
-- **Missing social context?** → `/social discord read`
-- **Missing credentials/keys?** → `/secret get` or `/api keys list`
-- **Missing files/docs?** → `/download` or `/web fetch`
-- **Missing command/tool?** → `/slash create <name> <desc>`, then run `/slash <name> [args]`
-
-**HARD CONSTRAINTS:**
-1. NEVER say "I don't have that information" without trying `/recall` and `/web search`.
-2. NEVER fail a task due to a missing credential without first checking `/secret get`.
-CATALOG
-
-    # Inject live service configuration status
+    # ── Dynamic parts (captured first, spliced into JSON below) ──
+    local _svc_json=""
     if declare -f commands_services_status &>/dev/null; then
-        echo ""
-        commands_services_status
+        local _svc_raw
+        _svc_raw=$(commands_services_status 2>/dev/null)
+        # Escape for JSON: newlines → \n, quotes → \"
+        _svc_json=$(printf '%s' "$_svc_raw" | sed ':a;N;$!ba;s/\n/\\n/g;s/"/\\"/g')
     fi
 
-    # Append custom slash commands if any exist
+    local _slash_json=""
     if declare -f slash_catalog &>/dev/null; then
-        slash_catalog
+        local _slash_raw
+        _slash_raw=$(slash_catalog 2>/dev/null)
+        if [ -n "$_slash_raw" ]; then
+            _slash_json=$(printf '%s' "$_slash_raw" | sed ':a;N;$!ba;s/\n/\\n/g;s/"/\\"/g')
+        fi
     fi
+
+    # ── JSON catalog body ─────────────────────────────────────
+    # Keys match section names expected by tests and other consumers.
+    # Examples are keyed under their parent command for in-context learning.
+    cat << CATALOG
+{"SYSTEM CAPABILITIES & TOOLS":{"time":"${_catalog_ts}",
+"note":"Do NOT quote arguments (parsed by whitespace). Never guess syntax; use /recall <cmd>.",
+"CORE WORKFLOW":["READ: /recall or source","GATHER: /web, /secret get","INGEST: /journal write","RESPOND: execute"],
+"commands":{
+  "PROJECT & CODE":{
+    "/init":{"syntax":"/init <name> <lang>","desc":"Scaffold project (rust,python,rl,data,shell)","ex":["/init task-manager rust"]},
+    "/write":{"syntax":"/write <file> <content>","desc":"Write/overwrite file (creates dirs)",
+      "variants":{"--append":"Append to end of file","--edit":"Sed substitution ONLY (short, max 200 chars)"},
+      "rules":["Use \\\\n for newlines","--edit ONLY for short sed, NEVER multi-line code","Include COMPLETE source for code files","Creates parent dirs automatically"],
+      "ex":["/write src/main.rs fn main() { println!(\"Hello\"); }","/write --append Cargo.toml \\\\n[dependencies]\\\\nreqwest = \"0.11\"","/write --edit src/main.rs s/old_fn/new_fn/g"]},
+    "/read":{"syntax":"/read <file>","desc":"Read file contents (first 100 lines)"},
+    "/ls":{"syntax":"/ls [path] [depth]","desc":"List files as tree (depth 1-8, default 3)",
+      "ex":[{"cmd":"/ls","out":"my-project/\n\u251c\u2500\u2500 src/\n\u2502   \u251c\u2500\u2500 lib.rs\n\u2502   \u2514\u2500\u2500 main.rs\n\u251c\u2500\u2500 Cargo.toml\n\u2514\u2500\u2500 README.md"},
+            {"cmd":"/ls src/config 2","out":"config/\n\u251c\u2500\u2500 mod.rs\n\u251c\u2500\u2500 database/\n\u2502   \u251c\u2500\u2500 mod.rs\n\u2502   \u2514\u2500\u2500 pool.rs\n\u2514\u2500\u2500 settings.rs"},
+            "/ls . 5"]},
+    "/build":{"syntax":"/build [release]","desc":"Build (auto-detects Cargo/pyproject/Make)"},
+    "/test":{"syntax":"/test [args]","desc":"Run tests"},
+    "/fix":{"syntax":"/fix [error]","desc":"Diagnose and fix errors"},
+    "/commit":{"syntax":"/commit [msg]","desc":"AI commit message + commit"},
+    "/push":{"syntax":"/push","desc":"Push to GitHub"},
+    "/clone":{"syntax":"/clone <url>","desc":"Clone and setup repo"},
+    "/save":{"syntax":"/save <file> <text>","desc":"Save content to file"}
+  },
+  "SANDBOX & SERVICES":{
+    "/sandbox":{"syntax":"/sandbox <action> <name> [args]","desc":"Code execution sandboxes",
+      "actions":{"list":"list all","new":"new <name> [type] (rust/python/shell)","build":"build <name>","test":"test <name>","run":"run <name> <cmd>","status":"status <name>","cd":"cd <name>","rm":"rm <name>","clone":"clone <url> [name]","journal":"journal [n]"},
+      "rules":["Do NOT use /sandbox to run slash commands"],
+      "ex":[{"task":"Rust sandbox","chain":["/sandbox new my-api rust","/sandbox run my-api cargo add serde","/sandbox test my-api"]},
+            {"task":"Python sandbox","chain":["/sandbox new my-app python","/sandbox run my-app pip install flask"]}]},
+    "/container":{"syntax":"/container <create|enter|exec|rm> <distro>","desc":"Linux containers (ubuntu/alpine/debian/fedora)"},
+    "/service":{"syntax":"/service <action> <name>","desc":"Rust binary lifecycle",
+      "actions":{"register":"register <name> [path]","build":"build <name>","deploy":"deploy <name>","start":"start <name>","stop":"stop <name>","restart":"restart <name>","status":"status <name>","logs":"logs <name> [n]","list":"list","unregister":"unregister <name>"},
+      "ex":[{"task":"Deploy pipeline","chain":["/service register ingestion .","/service deploy ingestion","/service status ingestion"]}]}
+  },
+  "RESEARCH & MEMORY":{
+    "/ask":{"syntax":"/ask <q>","desc":"Quick answer from knowledge (no tools)"},
+    "/recall":{"syntax":"/recall <q>","desc":"Search knowledge base FTS5 (DO THIS FIRST BEFORE WEB SEARCH)","ex":["/recall trout stocking schedule"]},
+    "/web":{"syntax":"/web <action> <query|url>","desc":"Web search and fetch",
+      "actions":{"search":"/web search <query> (returns URLs+snippets)","fetch":"/web fetch <url> (read webpage, NOT images)","images":"/web images <query> (find image URLs)","scrape-images":"/web scrape-images <url> (extract text+images as JSON)"},
+      "rules":["search=QUERY, fetch=URL, NEVER swap","Use /vision for images, NOT /web fetch","1 search + 1-2 fetches is enough","scrape-images returns {url,title,content,images[]}"],
+      "chains":["Research: /web search <topic> -> /web fetch <url> -> summarize","Images: /web search <topic> -> pick image URL -> /vision <url>","Deep: /web scrape-images <url> -> read content field -> /vision <img>"],
+      "ex":["/web search rust async tutorial 2025"]},
+    "/github":{"syntax":"/github <search|check> <q|repo>","desc":"Search GitHub repos"},
+    "/download":{"syntax":"/download <url> [dest]","desc":"Download a file"},
+    "/vision":{"syntax":"/vision <url|path> [prompt]","desc":"Analyze image (accepts URLs directly, no /download needed)","ex":["/vision https://example.com/photo.jpg describe this scene"]},
+    "/journal":{"syntax":"/journal [show] [tier]","desc":"Access persistent living memory",
+      "actions":{"read":"/journal (no args=read ALL)","show vivid":"/journal show vivid","show fading":"/journal show fading","show sediment":"/journal show sediment","write":"/journal write <text>","count":"/journal count","decay":"/journal decay"},
+      "rules":["To READ: /journal (no args). To WRITE: /journal write <text>","NEVER write when task says check/read/review/show journal"],
+      "ex":["/journal","/journal show vivid","/journal write Today I learned about moral sentiments"]},
+    "/ingest":{"syntax":"/ingest <add|summarize|list|remove> [file] [label]","desc":"Upload docs to knowledge base"}
+  },
+  "COMMS & SOCIAL":{
+    "/social":{"syntax":"/social <action> <platform> [target] <text>","desc":"Post to Discord/Telegram/X/Mastodon/Bluesky (NOT email)",
+      "actions":{"post":"/social post <discord|telegram|x|mastodon|bluesky> [channel] <text>","read|dm|timeline|search|sync":"/social <platform> <action> [args]"},
+      "rules":["ALWAYS include channel name for Discord post","Do NOT wrap args in quotes","@DisplayName auto-resolved to <@user_id>","Channel goes BEFORE text"],
+      "ex":["/social post discord lunkers @Pompler Just landed a 5lb bass","/social discord read general","/social discord dm Pompler Hey check this out"]},
+    "/email":{"syntax":"/email <action> <provider> [args]","desc":"Send/check actual email (gmail/protonmail/zoho)",
+      "actions":{"send":"/email send <provider> <addr> subject=<subj> body=<body>","inbox":"/email inbox <provider> [count]","status":"/email status"},
+      "rules":["For social platforms use /social NOT /email"],
+      "ex":["/email send gmail user@test.com subject=Hello body=How are you?"]},
+    "/phone":{"syntax":"/phone [dashboard|location|sms|calls|wifi]","desc":"Phone dashboard, SMS, calls"}
+  },
+  "SECURITY & CONFIG":{
+    "/pgp":{"syntax":"/pgp <sign|signpost|export> [msg]","desc":"PGP operations"},
+    "/api":{"syntax":"/api keys <set|list|rm> <KEY> [value]","desc":"API key management"},
+    "/secret":{"syntax":"/secret <set|get> <key> [value]","desc":"Encrypted vault (AES-256-CBC)"},
+    "/git":{"syntax":"/git <setup|status|ssh-keygen|ssh-config|sign|remote|test|pubkey|gpg-pub>","desc":"Git configuration"},
+    "/wallet":{"syntax":"/wallet <coin> <action>","desc":"Crypto wallets"},
+    "/gsuite":{"syntax":"/gsuite <gmail|drive|docs>","desc":"Google Suite"},
+    "/backup":{"syntax":"/backup <local|restore|list|status|git|github>","desc":"Backup operations"},
+    "/vitals":{"syntax":"/vitals [context]","desc":"System dashboard (disk, RAM, battery, network)"}
+  },
+  "SYSTEM CONTROLS & META":{
+    "/ls":{"syntax":"/ls [path] [depth]","desc":"Tree view of files (depth 1-8, default 3)"},
+    "/cd":{"syntax":"/cd <dir>","desc":"Change working directory"},
+    "/models":{"syntax":"/models <list|status|select|single|dual|param>","desc":"Model management"},
+    "/model":{"syntax":"/model <param>[-scenario] <val>","desc":"Tune sampling hyper-parameters",
+      "actions":{"temp":"/model temp[-ask|-agent|-router|-journal|-tool] <val>","repeat":"/model repeat[-scenario] <val>","presence":"/model presence[-scenario] <val>","reset":"/model reset","write-mode":"/model write-mode <confirm|append|dangerous>"},
+      "ex":["/model temp-agent 0.4","/model reset"]},
+    "/limits":{"syntax":"/limits [param] [val]","desc":"Tune planning parameters",
+      "actions":{"steps":"steps <n>","depth":"depth <n>","milestones":"milestones <n>","inner":"inner <n>","tokens":"tokens <n>","eval-mode":"eval-mode <val>"}},
+    "/think":{"syntax":"/think [on|off|bright|dim|hide]","desc":"Toggle/configure thinking mode"},
+    "/soul":{"syntax":"/soul [on|off]","desc":"Toggle full personality injection"},
+    "/config":{"syntax":"/config <show|save|reset|edit>","desc":"Persistent settings"},
+    "/debug":{"syntax":"/debug [on|off]","desc":"Toggle debug mode"},
+    "/backend":{"syntax":"/backend <auto|ollama|llamacpp>","desc":"Switch LLM backend"},
+    "/gpu":{"syntax":"/gpu <layers>","desc":"Set GPU offload layers"},
+    "/cleanup":{"syntax":"/cleanup <selective|all>","desc":"Cleanup temp files"},
+    "/slash":{"syntax":"/slash <create|test|show|delete> <name> [args]","desc":"Create/manage custom commands","ex":["/slash create morning-brief Show weather, calendar, unread messages"]}
+  }
+},
+"WORKFLOW EXAMPLES":[
+  {"task":"What files do we have?","steps":["/ls"]},
+  {"task":"Check config module","steps":["/ls src/config 2","/read src/config/mod.rs"]},
+  {"task":"Full project tree","steps":["/ls . 5"]},
+  {"task":"Review journal","steps":["/journal"],"note":"Summarize themes and learnings","wrong":"/write or /web search"},
+  {"task":"What did they say on Discord?","steps":["/social discord read general","/journal write Discord update: <summary>"],"wrong":"/web search 'discord'"},
+  {"task":"Find Rust HTTP library","steps":["/recall rust http library","/github search rust http client","/web search best rust http library","/journal write Rust HTTP: recommend reqwest"]},
+  {"task":"Show Grand Lodge of England","steps":["/web search Grand Lodge photos","/web scrape-images <url>","/vision <image_url> Describe building"],"wrong":"/web fetch <image_url>"},
+  {"task":"Lower agent temperature","steps":["/model temp-agent 0.4"],"wrong":"Editing config files"}
+],
+"TASK FREEDOM & AUTONOMY":{"principle":"Full authority to find missing info. DO NOT give up.",
+  "when_blocked":{
+    "missing_knowledge":"/recall first, then /web search, then /web fetch",
+    "need_image":"/web images <query> or /web scrape-images <url>, then /vision <url>",
+    "missing_context":"/journal or /social discord read",
+    "missing_creds":"/secret get or /api keys list",
+    "missing_files":"/ls or /read, then /download or /web fetch",
+    "missing_tool":"/slash create <name> <desc>",
+    "tune_behavior":"/model (sampling), /limits (planning), /think (reasoning)"},
+  "HARD CONSTRAINTS":["NEVER say 'I don't have that' without trying /recall and /web search",
+    "NEVER fail due to missing credential without /secret get first",
+    "NEVER edit a file without checking it exists with /ls or /read"]
+},
+"services":"${_svc_json}",
+"custom_commands":"${_slash_json}"
+}}
+CATALOG
 }

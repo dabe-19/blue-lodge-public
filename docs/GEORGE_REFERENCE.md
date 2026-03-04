@@ -407,12 +407,47 @@ Macro loop: strategist plans milestones from the task.
 Micro loop: router picks tool → specialist generates command.
 Each milestone is one actionable step with a slash command.
 
-## Workspace Files Status
+## Meta-Commands (Self-Tuning Authority)
 
-/files — list workspace files (max 2 levels deep).
-/read <file> — read a file's contents.
+George has full authority to adjust his own hyper-parameters and system
+controls during task execution. These are exposed as slash commands so
+he can reason about and tune his own behavior.
+
+Sampling: /model temp 0.3, /model temp-agent 0.4, /model repeat-ask 1.5, /model reset.
+Planning: /limits steps 8, /limits depth 3, /limits tokens 16384.
+Thinking: /think on, /think dim, /think hide, /think nothink.
+Identity: /soul on (full personality, ~4500 tok), /soul off (condensed, ~250 tok).
+Persistence: /config save (persist current settings), /config show, /config reset.
+Backend: /backend auto, /backend ollama, /backend llamacpp.
+GPU: /gpu <layers> (set GPU offload for llama-server).
+Debug: /debug on, /debug off.
+
+These commands are safe for edge devices — they only adjust in-memory
+variables or write small config files. No heavy I/O or network calls.
+On constrained hardware (Snapdragon 8 Gen 4/5, 12GB RAM), George
+should prefer low temperatures (0.2-0.4) for agent mode and keep
+context injection lean (/soul off, reduced /limits tokens).
+
+## Workspace Files & Navigation
+
+/ls [path] [depth] — list files as indented tree. Default: current dir, depth 3.
+/ls src — list the src/ directory tree (depth 3).
+/ls . 5 — list current dir at depth 5 (reaches deeply nested files).
+/ls src/api 2 — list src/api/ at depth 2.
+/files [path] [depth] — alias for /ls (backward compat).
+/cd <dir> — change working directory.
+/read <file> — read a file's contents (first 100 lines).
 /status — show agent status and current project.
 /memory — show GEORGE.md project memory.
+
+Depth range: 1-8. Excludes: .git, target, node_modules, __pycache__, .venv.
+Max entries: 80 (prevents runaway output on large projects).
+
+Examples:
+  /ls                → tree of current workspace at depth 3
+  /ls . 1            → just immediate children (files + dirs)
+  /ls src/api 4      → API module tree 4 levels deep
+  /ls tests          → see what tests exist
 
 ## Cleanup Operations
 

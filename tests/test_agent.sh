@@ -67,7 +67,6 @@ describe "Cancellation tracking"
 describe "Inner loop cancellation"
 
   it "agent_inner_loop checks cancel file at top of while loop" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # Must check cancel file BEFORE making any LLM calls
     echo "$body" | grep -q '_LODGE_CANCELLED.*-eq 1.*_cancel_file'
@@ -75,27 +74,22 @@ describe "Inner loop cancellation"
   }
 
   it "agent_inner_loop checks cancel after router LLM call" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # After llm_generate there should be a cancel check (3+ cancel checks total)
-    local count
     count=$(echo "$body" | grep -c '_LODGE_CANCELLED.*_cancel_file')
     [ "$count" -ge 3 ]
     assert_ok $?
   }
 
   it "agent_inner_loop checks cancel after specialist LLM call" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # The cancel check pattern appears at loop top + after router + after specialist = 3+
-    local count
     count=$(echo "$body" | grep -c '_cancel_file')
     [ "$count" -ge 4 ]
     assert_ok $?
   }
 
   it "agent_inner_loop skips terminal escalation when cancelled" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # After the while loop ends, should check cancel before operator prompt
     # Multi-line format: Status: CANCELLED written inside block >> macro_memory
@@ -104,7 +98,6 @@ describe "Inner loop cancellation"
   }
 
   it "agent_inner_loop writes CANCELLED to macro_memory on cancel" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'Status: CANCELLED'
     assert_ok $?
@@ -114,7 +107,6 @@ describe "Inner loop cancellation"
 describe "llm_stream cancellation propagation"
 
   it "llm_stream checks cancel file after pipe completes" && {
-    local body
     body=$(declare -f llm_stream)
     # After the done block, should check cancel file and return 1
     echo "$body" | grep -A1 '_cancel_file' | grep -q 'return 1'
@@ -160,14 +152,12 @@ describe "Interactive planning flag"
   }
 
   it "agent_plan uses AGENT_INTERACTIVE_PLANNING to gate clarification" && {
-    local body
     body=$(declare -f agent_plan)
     echo "$body" | grep -q "AGENT_INTERACTIVE_PLANNING"
     assert_ok $?
   }
 
   it "agent_plan includes 'Do NOT ask questions' instruction when non-interactive" && {
-    local body
     body=$(declare -f agent_plan)
     echo "$body" | grep -q "Do NOT ask questions"
     assert_ok $?
@@ -234,21 +224,18 @@ describe "Critical error detection"
 describe "Plan prompt includes clarification instruction"
 
   it "agent_plan function body mentions CLARIFY:" && {
-    local body
     body=$(declare -f agent_plan)
     echo "$body" | grep -q "CLARIFY:"
     assert_ok $?
   }
 
   it "agent_plan function body mentions AGENT_MAX_CLARIFY" && {
-    local body
     body=$(declare -f agent_plan)
     echo "$body" | grep -q "AGENT_MAX_CLARIFY"
     assert_ok $?
   }
 
   it "agent_plan function body reads from /dev/tty for user input" && {
-    local body
     body=$(declare -f agent_plan)
     echo "$body" | grep -q "/dev/tty"
     assert_ok $?
@@ -313,7 +300,6 @@ describe "Dynamic dual-loop architecture"
   }
 
   it "specialist includes /web syntax card for web tool" && {
-    local body
     body=$(declare -f _build_specialist_prompt)
     echo "$body" | grep -q '/web search'
     assert_ok $?
@@ -322,7 +308,6 @@ describe "Dynamic dual-loop architecture"
   }
 
   it "specialist journal card includes read and write syntax" && {
-    local body
     body=$(declare -f _build_specialist_prompt)
     # Must document /journal (no args = read all)
     echo "$body" | grep -q '/journal.*Read ALL journal entries'
@@ -339,28 +324,24 @@ describe "Dynamic dual-loop architecture"
   }
 
   it "router catalog lists journal as read or write" && {
-    local body
     body=$(declare -f _build_router_prompt)
     echo "$body" | grep -q '/journal.*Read or write'
     assert_ok $?
   }
 
   it "strategist tool summary lists journal read and write" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q '/journal (read).*journal write (write)'
     assert_ok $?
   }
 
   it "agent_inner_loop uses escalation matrix" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'Escalation L1\|Naive retry'
     assert_ok $?
   }
 
   it "agent_inner_loop overwrites micro_memory per milestone" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # Strict overwrite: micro_memory is destroyed and recreated each handoff
     echo "$body" | grep -q 'Micro Objective.*micro_objective.*> .*micro_file'
@@ -368,35 +349,30 @@ describe "Dynamic dual-loop architecture"
   }
 
   it "agent_inner_loop implements identicality lockout" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'Identical failed command'
     assert_ok $?
   }
 
   it "agent_inner_loop validates router tool output" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q '_tool_valid'
     assert_ok $?
   }
 
   it "macro strategist injects lean command list" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'YOUR WORKING COMMANDS'
     assert_ok $?
   }
 
   it "macro strategist has question detection rule" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'ONLY use /ask for simple questions'
     assert_ok $?
   }
 
   it "macro strategist uses llm_generate for clean output" && {
-    local body
     body=$(declare -f agent_run)
     # The strategist milestone call should use llm_generate (not llm_stream)
     # so that milestone text doesn't appear twice (once streamed, once via ui_info).
@@ -405,21 +381,18 @@ describe "Dynamic dual-loop architecture"
   }
 
   it "macro strategist uses LLM_SCENARIO=strategist (not agent)" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'LLM_SCENARIO=strategist'
     assert_ok $?
   }
 
   it "macro strategist uses LLM_STRATEGIST_TOKENS (not LLM_AGENT_TOKENS)" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'LLM_STRATEGIST_TOKENS'
     assert_ok $?
   }
 
   it "macro strategist strips <think> blocks from milestone" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q '<think>'
     assert_ok $?
@@ -519,14 +492,12 @@ describe "Dynamic dual-loop architecture"
   }
 
   it "agent_run resets debug counters" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'llm_debug_reset'
     assert_ok $?
   }
 
   it "agent_run prints debug summary" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'llm_debug_summary'
     assert_ok $?
@@ -595,21 +566,18 @@ describe "Recursive subtask execution"
   }
 
   it "_agent_run_subtask detects [SUBTASK] markers" && {
-    local body
     body=$(declare -f _agent_run_subtask)
     echo "$body" | grep -q 'SUBTASK'
     assert_ok $?
   }
 
   it "_agent_run_subtask function body checks AGENT_MAX_DEPTH" && {
-    local body
     body=$(declare -f _agent_run_subtask)
     echo "$body" | grep -q 'AGENT_MAX_DEPTH'
     assert_ok $?
   }
 
   it "_agent_run_subtask function body calls agent_plan" && {
-    local body
     body=$(declare -f _agent_run_subtask)
     echo "$body" | grep -q 'agent_plan'
     assert_ok $?
@@ -619,7 +587,6 @@ describe "Recursive subtask execution"
 describe "Plan prompt uses configurable step limit"
 
   it "agent_plan prompt uses AGENT_PLAN_STEPS variable" && {
-    local body
     body=$(declare -f agent_plan)
     echo "$body" | grep -q 'AGENT_PLAN_STEPS'
     assert_ok $?
@@ -650,21 +617,18 @@ describe "Plan prompt uses configurable step limit"
   }
 
   it "agent_inner_loop body uses AGENT_INNER_LOOPS" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'AGENT_INNER_LOOPS'
     assert_ok $?
   }
 
   it "AGENT_MAX_RETRIES is removed (dead code)" && {
-    local body
     body=$(cat "$LODGE_DIR/lib/agent.sh")
     ! echo "$body" | grep -q 'AGENT_MAX_RETRIES'
     assert_ok $?
   }
 
   it "agent_plan prompt mentions [SUBTASK] syntax" && {
-    local body
     body=$(declare -f agent_plan)
     echo "$body" | grep -q '\[SUBTASK\]'
     assert_ok $?
@@ -804,21 +768,18 @@ describe "Plan validation (_agent_validate_plan)"
 describe "Escalation matrix in agent_inner_loop"
 
   it "implements Level 2 forced knowledge retrieval" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'recall_search_context\|Escalation L2'
     assert_ok $?
   }
 
   it "implements Level 5 forced web fallback" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'web_search\|Escalation L5'
     assert_ok $?
   }
 
   it "implements terminal escalation with operator input" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'read -r guidance'
     assert_ok $?
@@ -828,21 +789,18 @@ describe "Escalation matrix in agent_inner_loop"
 describe "L3 failure history recall"
 
   it "L3 reads failure log for past recovery instructions" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'Past Recovery Instructions'
     assert_ok $?
   }
 
   it "L3 triggers at _fail_count >= 3" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q '_fail_count.*-ge 3.*fail_file'
     assert_ok $?
   }
 
   it "L3 greps RECOVERY and OPERATOR GUIDANCE from failure log" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'RECOVERY.*OPERATOR GUIDANCE'
     assert_ok $?
@@ -852,14 +810,12 @@ describe "L3 failure history recall"
 describe "Catalog-aware operator guided retry"
 
   it "guided retry injects command catalog" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'commands_catalog'
     assert_ok $?
   }
 
   it "guided retry extracts slash commands (not just bash)" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # Must handle both /command lines and ```bash blocks
     echo "$body" | grep -q 'final_is_slash'
@@ -867,35 +823,30 @@ describe "Catalog-aware operator guided retry"
   }
 
   it "guided retry logs RECOVERY entry on success" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'RECOVERY:.*final_cmd'
     assert_ok $?
   }
 
   it "guided retry logs OPERATOR GUIDANCE in recovery entry" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'OPERATOR GUIDANCE:.*guidance'
     assert_ok $?
   }
 
   it "guided retry logs ORIGINAL FAILURE in recovery entry" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'ORIGINAL FAILURE:.*last_failed_cmd'
     assert_ok $?
   }
 
   it "guided retry logs failure when guided attempt also fails" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'FAILED COMMAND (guided)'
     assert_ok $?
   }
 
   it "guided retry uses commands_dispatch for slash commands" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # The guided retry section should dispatch slash commands properly
     echo "$body" | grep -q 'final_is_slash.*commands_dispatch'
@@ -906,28 +857,24 @@ describe "Catalog-aware operator guided retry"
 describe "Soul injection in dual-loop architecture"
 
   it "agent_run uses _memory_soul_identity for macro memory seed" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q '_memory_soul_identity'
     assert_ok $?
   }
 
   it "macro memory seed includes task start timestamp" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'Task Started'
     assert_ok $?
   }
 
   it "micro memory includes milestone start timestamp" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'Started:.*date'
     assert_ok $?
   }
 
   it "strategist prompt includes current date/time" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q '_strat_now'
     assert_ok $?
@@ -936,21 +883,18 @@ describe "Soul injection in dual-loop architecture"
   }
 
   it "milestone evaluator prompt includes current timestamp" && {
-    local body
     body=$(declare -f _agent_evaluate_milestone)
     echo "$body" | grep -q 'CURRENT DATE/TIME'
     assert_ok $?
   }
 
   it "overall evaluator prompt includes current timestamp" && {
-    local body
     body=$(declare -f _agent_evaluate_completion)
     echo "$body" | grep -q 'CURRENT DATE/TIME'
     assert_ok $?
   }
 
   it "router prompt includes current date/time" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q '_route_now'
     assert_ok $?
@@ -959,7 +903,6 @@ describe "Soul injection in dual-loop architecture"
   }
 
   it "journal_reflect background is disowned in agent_run" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'journal_reflect.*&'
     assert_ok $?
@@ -968,7 +911,6 @@ describe "Soul injection in dual-loop architecture"
   }
 
   it "agent_run does NOT use head -20 for soul extraction" && {
-    local body
     body=$(declare -f agent_run)
     # Old pattern was 'head -20' — should be replaced
     ! echo "$body" | grep -q 'head -20'
@@ -976,7 +918,6 @@ describe "Soul injection in dual-loop architecture"
   }
 
   it "agent_plan calls memory_build_system_prompt with plan mode" && {
-    local body
     body=$(declare -f agent_plan)
     echo "$body" | grep -q '"plan"'
     assert_ok $?
@@ -990,21 +931,18 @@ describe "Web sufficiency gate in agent_inner_loop"
   }
 
   it "inner loop body contains SUFFICIENCY REACHED injection" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'SUFFICIENCY REACHED'
     assert_ok $?
   }
 
   it "sufficiency gate checks _web_ok_count against threshold" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'AGENT_WEB_SUFFICIENCY'
     assert_ok $?
   }
 
   it "sufficiency gate only fires for /web commands" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # Must contain the conditional: cmd == /web*
     echo "$body" | grep -q '/web\*'
@@ -1015,21 +953,18 @@ describe "Web sufficiency gate in agent_inner_loop"
 describe "Primary objective injection in inner loop"
 
   it "inner loop injects primary objective from macro_memory.md" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'Primary Objective'
     assert_ok $?
   }
 
   it "injection reads from macro_memory.md" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'macro_memory.md'
     assert_ok $?
   }
 
   it "injection only adds objective when different from micro objective" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # Must compare _primary_obj != micro_objective
     echo "$body" | grep -q '_primary_obj.*!=.*micro_objective'
@@ -1040,14 +975,12 @@ describe "Primary objective injection in inner loop"
 describe "Router web research sufficiency guidance"
 
   it "route_prompt includes WEB RESEARCH RULE for search objectives" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'WEB RESEARCH RULE'
     assert_ok $?
   }
 
   it "research guidance triggers for search-related objectives" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # Must check for web/search/fetch/find keywords
     echo "$body" | grep -q '_obj_lower_rt.*search'
@@ -1058,7 +991,6 @@ describe "Router web research sufficiency guidance"
 describe "Abort propagation from inner loop to macro loop"
 
   it "abort sets _LODGE_CANCELLED flag" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # Must contain: guidance = abort -> _LODGE_CANCELLED=1
     echo "$body" | grep -q 'guidance.*abort'
@@ -1068,14 +1000,12 @@ describe "Abort propagation from inner loop to macro loop"
   }
 
   it "abort touches cancel file for subshell visibility" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'touch.*_cancel_file'
     assert_ok $?
   }
 
   it "abort writes ABORTED to macro_memory" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'ABORTED by operator'
     assert_ok $?
@@ -1084,7 +1014,6 @@ describe "Abort propagation from inner loop to macro loop"
   it "abort returns 1 immediately without guided retry" && {
     # Verify abort block (with return 1) appears before guided retry block
     # in the source file. declare -f strips comments so we read the file.
-    local abort_line guided_line
     abort_line=$(grep -n 'ABORTED by operator' "$LODGE_DIR/lib/agent.sh" | head -1 | cut -d: -f1)
     guided_line=$(grep -n 'Catalog-Aware Guided Retry' "$LODGE_DIR/lib/agent.sh" | head -1 | cut -d: -f1)
     [ -n "$abort_line" ] && [ -n "$guided_line" ] && [ "$abort_line" -lt "$guided_line" ]
@@ -1099,14 +1028,12 @@ describe "Milestone deduplication in macro loop"
   }
 
   it "agent_run initializes _attempted_milestones array" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q '_attempted_milestones'
     assert_ok $?
   }
 
   it "agent_run tracks milestone outcomes (OK/FAILED) in array" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'OK|'
     assert_ok $?
@@ -1122,28 +1049,24 @@ describe "Milestone deduplication in macro loop"
   }
 
   it "milestone history injected into strategist system prompt" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'PREVIOUSLY ATTEMPTED MILESTONES'
     assert_ok $?
   }
 
   it "duplicate milestones are skipped after max retries" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'SKIPPED (duplicate of failed milestone)'
     assert_ok $?
   }
 
   it "deduplication checks first 40 chars for similarity" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q '_milestone_lower:0:40'
     assert_ok $?
   }
 
   it "deduplication extracts slash command signature" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q '_milestone_slash'
     assert_ok $?
@@ -1152,7 +1075,6 @@ describe "Milestone deduplication in macro loop"
   }
 
   it "exact-repeat of last milestone triggers immediate dup" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'exact repeat of last milestone'
     assert_ok $?
@@ -1161,7 +1083,6 @@ describe "Milestone deduplication in macro loop"
   }
 
   it "force-progression still runs overall evaluator before continue" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q '_agent_evaluate_completion.*macro_file.*micro_memory'
     assert_ok $?
@@ -1178,19 +1099,16 @@ describe "Specialist per-command key status"
   }
 
   it "returns empty for commands with no keys (build)" && {
-    local out
     out=$(_specialist_key_status "build" 2>/dev/null)
     assert_empty "$out"
   }
 
   it "returns empty for commands with no keys (test)" && {
-    local out
     out=$(_specialist_key_status "test" 2>/dev/null)
     assert_empty "$out"
   }
 
   it "maps web command to SERPER and PERPLEXITY keys" && {
-    local body
     body=$(declare -f _specialist_key_status)
     echo "$body" | grep -q 'SERPER_API_KEY'
     assert_ok $?
@@ -1199,7 +1117,6 @@ describe "Specialist per-command key status"
   }
 
   it "maps social command to platform tokens" && {
-    local body
     body=$(declare -f _specialist_key_status)
     echo "$body" | grep -q 'DISCORD_BOT_TOKEN'
     assert_ok $?
@@ -1208,14 +1125,12 @@ describe "Specialist per-command key status"
   }
 
   it "maps email command to EMAIL_PROVIDER" && {
-    local body
     body=$(declare -f _specialist_key_status)
     echo "$body" | grep -q 'EMAIL_PROVIDER'
     assert_ok $?
   }
 
   it "specialist prompt calls _specialist_key_status" && {
-    local body
     body=$(declare -f _build_specialist_prompt)
     echo "$body" | grep -q '_specialist_key_status'
     assert_ok $?
@@ -1247,7 +1162,6 @@ describe "Task completion evaluator"
   }
 
   it "milestone evaluator uses pragmatic system prompt" && {
-    local body
     body=$(declare -f _agent_evaluate_milestone)
     echo "$body" | grep -q 'pragmatic milestone evaluator'
     assert_ok $?
@@ -1256,7 +1170,6 @@ describe "Task completion evaluator"
   }
 
   it "milestone evaluator accepts exit 0 as success" && {
-    local body
     body=$(declare -f _agent_evaluate_milestone)
     echo "$body" | grep -q 'Exit code 0'
     assert_ok $?
@@ -1265,14 +1178,12 @@ describe "Task completion evaluator"
   }
 
   it "overall evaluator uses strategic system prompt" && {
-    local body
     body=$(declare -f _agent_evaluate_completion)
     echo "$body" | grep -q 'strategic task-completion evaluator'
     assert_ok $?
   }
 
   it "overall evaluator reads macro_memory file" && {
-    local body
     body=$(declare -f _agent_evaluate_completion)
     echo "$body" | grep -q 'macro_file'
     assert_ok $?
@@ -1281,7 +1192,6 @@ describe "Task completion evaluator"
   }
 
   it "evaluator expects COMPLETE or INCOMPLETE verdict" && {
-    local body
     body=$(declare -f _agent_evaluate_completion)
     echo "$body" | grep -q 'COMPLETE'
     assert_ok $?
@@ -1290,7 +1200,6 @@ describe "Task completion evaluator"
   }
 
   it "evaluator supports interactive mode via AGENT_EVAL_MODE" && {
-    local body
     body=$(declare -f _agent_evaluate_completion)
     echo "$body" | grep -q 'AGENT_EVAL_MODE'
     assert_ok $?
@@ -1299,21 +1208,18 @@ describe "Task completion evaluator"
   }
 
   it "evaluator generates summary in auto mode" && {
-    local body
     body=$(declare -f _agent_evaluate_completion)
     echo "$body" | grep -q 'summary_prompt'
     assert_ok $?
   }
 
   it "evaluator uses LLM_SCENARIO=evaluator" && {
-    local body
     body=$(declare -f _agent_evaluate_completion)
     echo "$body" | grep -q 'LLM_SCENARIO=evaluator'
     assert_ok $?
   }
 
   it "dual evaluator is called in agent_run after successful milestones" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q '_agent_evaluate_milestone'
     assert_ok $?
@@ -1322,7 +1228,6 @@ describe "Task completion evaluator"
   }
 
   it "evaluator feedback is threaded into strategist prompt" && {
-    local body
     body=$(declare -f agent_run)
     # _last_eval_feedback variable is initialized
     echo "$body" | grep -q '_last_eval_feedback'
@@ -1338,14 +1243,12 @@ describe "Task completion evaluator"
   }
 
   it "evaluator is skipped when AGENT_EVAL_MODE=disabled" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'AGENT_EVAL_MODE.*!=.*disabled'
     assert_ok $?
   }
 
   it "evaluator only triggers when completed_milestones > 0" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'completed_milestones.*-gt 0'
     assert_ok $?
@@ -1359,35 +1262,30 @@ describe "Task completion evaluator"
 describe "Macro memory: timestamped command results"
 
   it "inner loop tracks _last_success_cmd" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q '_last_success_cmd='
     assert_ok $?
   }
 
   it "inner loop tracks _last_success_snippet" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q '_last_success_snippet='
     assert_ok $?
   }
 
   it "inner loop updates _last_success_cmd on exit 0" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q '_last_success_cmd="\$cmd"'
     assert_ok $?
   }
 
   it "SUCCESS macro_memory entry includes timestamp" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'Step \[\$_step_ts\]'
     assert_ok $?
   }
 
   it "SUCCESS macro_memory entry includes ran: command" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # Multi-line format: Command: $_last_success_cmd
     echo "$body" | grep -q 'Command: \$_last_success_cmd'
@@ -1395,7 +1293,6 @@ describe "Macro memory: timestamped command results"
   }
 
   it "FAILED macro_memory entry includes timestamp" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # Multi-line format: Step on one line, Status: FAILED on next
     echo "$body" | grep -q 'Status: FAILED'
@@ -1403,21 +1300,18 @@ describe "Macro memory: timestamped command results"
   }
 
   it "CANCELLED macro_memory entry includes timestamp" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'Status: CANCELLED'
     assert_ok $?
   }
 
   it "ABORTED macro_memory entry includes timestamp" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'Status: ABORTED'
     assert_ok $?
   }
 
   it "guided recovery macro_memory entry includes ran: command" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # Multi-line format: Command: $final_cmd (exit 0)
     echo "$body" | grep -q 'Command: \$final_cmd'
@@ -1428,35 +1322,30 @@ describe "Macro memory: timestamped command results"
 describe "Research buffer (cross-milestone data flow)"
 
   it "inner loop saves research_buffer.md from successful /web outputs" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'research_buffer.md'
     assert_ok $? "Must reference research_buffer.md"
   }
 
   it "inner loop injects research buffer into micro_memory on start" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'Research Context (from previous milestone)'
     assert_ok $? "Must inject research buffer header"
   }
 
   it "research buffer is deleted after injection" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'rm -f.*_research_buf'
     assert_ok $? "Must delete research buffer after injection"
   }
 
   it "research buffer uses awk to extract web output blocks" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'EXECUTED SUCCESSFULLY.*ok=1'
     assert_ok $? "Must use awk to extract successful /web output blocks"
   }
 
   it "research buffer is capped at 3000 chars" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q '3000'
     assert_ok $? "Must cap research buffer at 3000 chars"
@@ -1466,28 +1355,24 @@ describe "Research buffer (cross-milestone data flow)"
 describe "Web soft-failure tolerance"
 
   it "web soft-failure checks for prior successful /web actions" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q '_prior_web_ok'
     assert_ok $? "Must check for prior successful web actions"
   }
 
   it "web soft-failure skips escalation matrix when prior web successes exist" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'soft failure.*prior web results available'
     assert_ok $? "Must log as soft failure"
   }
 
   it "web soft-failure injects NOTE about available data" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'Consider outputting SUCCESS'
     assert_ok $? "Must nudge to use existing data"
   }
 
   it "web soft-failure only applies to /web commands" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # The soft-failure guard is inside: if [[ "$cmd" == /web* ]]
     echo "$body" | grep -q 'cmd.*== /web\*'
@@ -1495,7 +1380,6 @@ describe "Web soft-failure tolerance"
   }
 
   it "escalation uses _fail_count (not inner_attempts)" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # L1 should use _fail_count
     echo "$body" | grep -q '_fail_count.*-le 1'
@@ -1509,7 +1393,6 @@ describe "Web soft-failure tolerance"
   }
 
   it "_fail_count only increments on actual failures (not soft failures)" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # _fail_count increment must be AFTER the soft-failure check
     # (which does continue before reaching _fail_count++)
@@ -1521,21 +1404,18 @@ describe "Web soft-failure tolerance"
 describe "Placeholder detection in /write"
 
   it "inner loop detects placeholder brackets in /write content" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'placeholder.*TEMPLATE'
     assert_ok $? "Must warn about template/placeholder content"
   }
 
   it "placeholder check only runs on /write commands" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'cmd.*== /write\*'
     assert_ok $? "Must only check /write commands"
   }
 
   it "placeholder check looks for common bracket patterns" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'your \|briefly \|TBD\|TODO\|placeholder'
     assert_ok $? "Must detect common placeholder patterns"
@@ -1545,7 +1425,6 @@ describe "Placeholder detection in /write"
 describe "Richer milestone summaries"
 
   it "milestone summary prompt asks for key data from web results" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'MUST INCLUDE those specific facts'
     assert_ok $? "Must instruct summarizer to retain research data"
@@ -1555,7 +1434,6 @@ describe "Richer milestone summaries"
 describe "Web output condenser in agent_inner_loop"
 
   it "has web condenser logic for /web commands" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'Web Summary'
     assert_ok $? "Must inject [Web Summary] prefix for condensed output"
@@ -1571,7 +1449,6 @@ describe "Web output condenser in agent_inner_loop"
   }
 
   it "condenser only triggers for output > 300 chars" && {
-    local body
     body=$(declare -f agent_inner_loop)
     # Small outputs should pass through uncondensed
     echo "$body" | grep -q '300'
@@ -1579,7 +1456,6 @@ describe "Web output condenser in agent_inner_loop"
   }
 
   it "condenser injects task context (micro_objective)" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'micro_objective'
     assert_ok $? "Must include task objective for context-aware summarization"
@@ -1592,14 +1468,12 @@ describe "Web output condenser in agent_inner_loop"
   }
 
   it "condenser instructs LLM to flag junk data" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'JUNK'
     assert_ok $? "Must instruct model to flag junk/paywall/empty content"
   }
 
   it "condenser uses llm_generate" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'llm_generate.*condense_prompt'
     assert_ok $? "Must use llm_generate for condense call"
@@ -1613,7 +1487,6 @@ describe "Web output condenser in agent_inner_loop"
   }
 
   it "LLM_WEB_CONDENSE_TOKENS has default of 200" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'LLM_WEB_CONDENSE_TOKENS:-200'
     assert_ok $? "Must default condense token budget to 200"
@@ -1648,7 +1521,6 @@ describe "Honeydew list system"
   }
 
   it "honeydew_mark updates checklist items" && {
-    local _tmpdir
     _tmpdir=$(mktemp -d)
     mkdir -p "$_tmpdir/.george"
     printf '## Honeydew List\nPrimary task: test\n\n1. [ ] First task\n2. [ ] Second task\n3. [ ] Third task\n' > "$_tmpdir/.george/honeydew.md"
@@ -1661,11 +1533,9 @@ describe "Honeydew list system"
   }
 
   it "honeydew_status reports correct counts" && {
-    local _tmpdir
     _tmpdir=$(mktemp -d)
     mkdir -p "$_tmpdir/.george"
     printf '## Honeydew List\nPrimary task: test\n\n1. [x] Done task\n2. [ ] Pending task\n3. [ ] Another pending\n' > "$_tmpdir/.george/honeydew.md"
-    local status
     status=$(_agent_honeydew_status "$_tmpdir")
     echo "$status" | grep -q '1/3 complete'
     assert_ok $? "Should show 1/3 complete, got: $status"
@@ -1673,11 +1543,9 @@ describe "Honeydew list system"
   }
 
   it "honeydew_status shows all-done when fully checked" && {
-    local _tmpdir
     _tmpdir=$(mktemp -d)
     mkdir -p "$_tmpdir/.george"
     printf '## Honeydew List\nPrimary task: test\n\n1. [x] Done\n2. [x] Also done\n' > "$_tmpdir/.george/honeydew.md"
-    local status
     status=$(_agent_honeydew_status "$_tmpdir")
     echo "$status" | grep -q 'All tasks done'
     assert_ok $? "Should report all done, got: $status"
@@ -1685,11 +1553,9 @@ describe "Honeydew list system"
   }
 
   it "honeydew_read returns file contents" && {
-    local _tmpdir
     _tmpdir=$(mktemp -d)
     mkdir -p "$_tmpdir/.george"
     printf '## Honeydew List\n1. [ ] Test item\n' > "$_tmpdir/.george/honeydew.md"
-    local content
     content=$(_agent_honeydew_read "$_tmpdir")
     echo "$content" | grep -q 'Honeydew List'
     assert_ok $? "Should contain honeydew header"
@@ -1697,7 +1563,6 @@ describe "Honeydew list system"
   }
 
   it "honeydew_auto_check matches milestone to item by keywords" && {
-    local _tmpdir
     _tmpdir=$(mktemp -d)
     mkdir -p "$_tmpdir/.george"
     printf '## Honeydew List\nPrimary task: test\n\n1. [ ] Search the web for HiBy M500 specs\n2. [ ] Write markdown report\n3. [ ] Email the report\n' > "$_tmpdir/.george/honeydew.md"
@@ -1709,7 +1574,6 @@ describe "Honeydew list system"
   }
 
   it "honeydew_auto_check requires minimum 2 word overlap" && {
-    local _tmpdir
     _tmpdir=$(mktemp -d)
     mkdir -p "$_tmpdir/.george"
     printf '## Honeydew List\nPrimary task: test\n\n1. [ ] Search web for HiBy specs\n2. [ ] Write report about findings\n' > "$_tmpdir/.george/honeydew.md"
@@ -1723,37 +1587,32 @@ describe "Honeydew list system"
   }
 
   it "agent_run calls _agent_honeydew_build" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q '_agent_honeydew_build'
     assert_ok $? "agent_run must call honeydew build"
   }
 
   it "agent_run auto-checks honeydew on milestone success" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q '_agent_honeydew_auto_check'
     assert_ok $? "agent_run must auto-check honeydew items"
   }
 
   it "overall evaluator includes honeydew list injection" && {
-    local body
     body=$(declare -f _agent_evaluate_completion)
     echo "$body" | grep -q 'HONEYDEW LIST'
     assert_ok $? "Pass 2 evaluator must reference honeydew"
-    echo "$body" | grep -q 'unchecked.*INCOMPLETE\|INCOMPLETE.*unchecked'
-    assert_ok $? "Pass 2 evaluator must enforce unchecked = INCOMPLETE"
+    echo "$body" | grep -q 'Unchecked.*work remains\|unchecked.*suggest'
+    assert_ok $? "Pass 2 evaluator must note unchecked items as progress guide"
   }
 
   it "strategist rules reference honeydew list" && {
-    local body
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'HONEYDEW LIST.*precedence'
     assert_ok $? "Strategist must know about honeydew list"
   }
 
   it "inner loop injects honeydew status into micro_memory" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'Honeydew Progress'
     assert_ok $? "Inner loop must inject honeydew status"
@@ -1763,28 +1622,24 @@ describe "Honeydew list system"
 describe "L1 scrape-images to fetch fallback"
 
   it "L1 detects /web scrape-images and falls back to /web fetch" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'scrape-images.*fetch'
     assert_ok $? "L1 must detect scrape-images and convert to fetch"
   }
 
   it "L1 labels fallback as scrape-images→fetch" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'scrape-images.*fetch'
     assert_ok $? "L1 label must show fallback type"
   }
 
   it "L1 extracts URL from scrape-images command" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q '_scrape_url'
     assert_ok $? "Must extract URL into _scrape_url variable"
   }
 
   it "L1 constructs /web fetch command with extracted URL" && {
-    local body
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q '/web fetch.*_scrape_url'
     assert_ok $? "Must build /web fetch with the URL"
@@ -1794,28 +1649,24 @@ describe "L1 scrape-images to fetch fallback"
 describe "Web flow chain examples in specialist"
 
   it "specialist /web card includes flow chain examples" && {
-    local body
     body=$(declare -f _build_specialist_prompt)
     echo "$body" | grep -q 'FLOW CHAINS'
     assert_ok $? "Must include FLOW CHAINS section"
   }
 
   it "specialist /web card includes scrape-images fallback guidance" && {
-    local body
     body=$(declare -f _build_specialist_prompt)
     echo "$body" | grep -q 'scrape-images returns empty.*fetch'
     assert_ok $? "Must guide fallback from scrape-images to fetch"
   }
 
   it "specialist /web card includes research flow example" && {
-    local body
     body=$(declare -f _build_specialist_prompt)
     echo "$body" | grep -q 'Research flow.*search.*fetch.*summarize'
     assert_ok $? "Must show research flow chain"
   }
 
   it "specialist /web card includes report flow example" && {
-    local body
     body=$(declare -f _build_specialist_prompt)
     echo "$body" | grep -q 'Report flow.*search.*fetch.*write.*email'
     assert_ok $? "Must show report flow chain"

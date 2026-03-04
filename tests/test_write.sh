@@ -156,7 +156,6 @@ describe "--edit mode validation"
 describe "LLM escape expansion in /write"
 
   it "cmd_write uses ui_expand_escapes" && {
-    local fn_body
     fn_body=$(declare -f cmd_write)
     assert_contains "$fn_body" "ui_expand_escapes"
   }
@@ -164,7 +163,6 @@ describe "LLM escape expansion in /write"
   it "expands literal backslash-n in file content" && {
     _tmpdir=$(test_tmpdir)
     cmd_write 'output.txt line1\nline2\nline3' "$_tmpdir" 2>&1
-    local lines
     lines=$(wc -l < "$_tmpdir/output.txt")
     assert_gt "$lines" 1
     rm -rf "$_tmpdir"
@@ -174,7 +172,6 @@ describe "LLM escape expansion in /write"
     _tmpdir=$(test_tmpdir)
     echo "old_value" > "$_tmpdir/cfg.txt"
     cmd_write '--edit cfg.txt s/old_value/new_value/' "$_tmpdir" 2>&1
-    local content
     content=$(cat "$_tmpdir/cfg.txt")
     assert_contains "$content" "new_value"
     rm -rf "$_tmpdir"

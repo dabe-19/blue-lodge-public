@@ -69,7 +69,6 @@ describe "resolve_model()"
   eval "$(awk '/^resolve_model\(\) \{/{found=1} found{print; if(/^\}/) exit}' "$_VALIDATE_SCRIPT")"
 
   _mk_resolve_tmp() {
-    local tmpdir
     tmpdir=$(test_tmpdir)
     GGUF_PATH=""
     MODEL_LABEL=""

@@ -16,9 +16,8 @@ test_start "lib/models.sh — Ollama Dir Resolution & Native Linux Paths + Model
 # Creates a fake Ollama model store with manifest + blob for testing.
 # Usage: _mk_mock_ollama <tmpdir> <model_name> <tag> <media_type> <digest>
 _mk_mock_ollama() {
-    local base_dir="$1" model_name="$2" tag="$3" media_type="$4" digest="$5"
+    base_dir="$1" model_name="$2" tag="$3" media_type="$4" digest="$5"
 
-    local manifest_dir
     if [[ "$model_name" == hf.co/* ]]; then
         manifest_dir="$base_dir/manifests/$model_name"
     elif [[ "$model_name" == */* ]]; then
@@ -30,7 +29,7 @@ _mk_mock_ollama() {
     mkdir -p "$manifest_dir"
     mkdir -p "$base_dir/blobs"
 
-    local blob_path="$base_dir/blobs/${digest//:/-}"
+    blob_path="$base_dir/blobs/${digest//:/-}"
     echo "fake-blob-content" > "$blob_path"
 
     cat > "$manifest_dir/$tag" << MANIFEST

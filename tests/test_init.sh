@@ -22,13 +22,12 @@ source "$LODGE_DIR/commands/init.sh"
 
 # Run cmd_init in a temporary directory to avoid polluting the repo
 _init_in_tmpdir() {
-    local tmpdir
     tmpdir=$(test_tmpdir)
     (
         cd "$tmpdir"
         cmd_init "$@"
     )
-    local rc=$?
+    rc=$?
     rm -rf "$tmpdir"
     return $rc
 }

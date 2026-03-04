@@ -583,8 +583,10 @@ The slash commands are abstractions — they encapsulate configuration, error ha
 | `/slash create <name> <desc>` | Create custom command | `/slash create greet Say hello` |
 | `/slash <name> [args]` | Run custom command | `/slash greet world` |
 | `/slash test <name>` | Test custom command | `/slash test greet` |
-| `/files` | List workspace files | `/files` |
-| `/read <file>` | Read a file | `/read src/main.rs` |
+| `/ls [path] [depth]` | List files as tree (default: cwd, depth 3) | `/ls`, `/ls src 5`, `/ls . 2` |
+| `/files [path] [depth]` | Alias for /ls | `/files` |
+| `/cd <dir>` | Change working directory | `/cd src` |
+| `/read <file>` | Read a file (first 100 lines) | `/read src/main.rs` |
 | `/status` | Agent status | `/status` |
 | `/memory` | Show GEORGE.md | `/memory` |
 | `/help [command]` | Show help | `/help pgp` |

@@ -96,7 +96,6 @@ describe "web_fetch_raw"
 
   it "includes HTTP block status handling" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f _web_block_reason)
     assert_contains "$fn_body" "429"
     assert_contains "$fn_body" "451"
@@ -107,7 +106,6 @@ describe "web_fetch_raw"
 
   it "logs blocked sites to blacklist" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f web_fetch_raw)
     assert_contains "$fn_body" "_web_blacklist_add"
     assert_contains "$fn_body" "BLOCKED:"
@@ -644,7 +642,6 @@ describe "web_scrape_images"
   it "extracts img src from HTML" && {
     _setup_web
     # Image extraction logic now delegates to _html_extract_images
-    local fn_body
     fn_body=$(declare -f _html_extract_images)
     # Verify it greps for src/data-src/srcset patterns
     assert_contains "$fn_body" "src"
@@ -655,7 +652,6 @@ describe "web_scrape_images"
 
   it "filters to common image extensions" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f _html_extract_images)
     assert_contains "$fn_body" "jpg"
     assert_contains "$fn_body" "png"
@@ -666,7 +662,6 @@ describe "web_scrape_images"
 
   it "resolves protocol-relative URLs" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f _html_extract_images)
     assert_contains "$fn_body" "https:"
     _teardown_web
@@ -675,7 +670,6 @@ describe "web_scrape_images"
   it "skips data: URIs" && {
     _setup_web
     # data: URI filtering now lives in _html_extract_images helper
-    local fn_body
     fn_body=$(declare -f _html_extract_images)
     assert_contains "$fn_body" "data:"
     _teardown_web
@@ -684,7 +678,6 @@ describe "web_scrape_images"
   it "caps image results" && {
     _setup_web
     # Image cap now lives in _html_extract_images helper (head -20)
-    local fn_body
     fn_body=$(declare -f _html_extract_images)
     assert_contains "$fn_body" "head"
     _teardown_web
@@ -692,7 +685,6 @@ describe "web_scrape_images"
 
   it "journals results for agent memory" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f web_scrape_images)
     assert_contains "$fn_body" "_web_journal_results"
     _teardown_web
@@ -700,7 +692,6 @@ describe "web_scrape_images"
 
   it "surfaces blocked metadata from structured JSON" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f web_scrape_images)
     assert_contains "$fn_body" "block_reason"
     assert_contains "$fn_body" "http_status"
@@ -723,7 +714,6 @@ describe "web blacklist helpers"
     _setup_web
     _web_blacklist_add "https://example.com/path" "HTTP_429_RATE_LIMIT" "429"
     assert_file_exists "$WEB_BLACKLIST_FILE"
-    local content
     content=$(cat "$WEB_BLACKLIST_FILE")
     assert_contains "$content" "host=example.com"
     assert_contains "$content" "reason=HTTP_429_RATE_LIMIT"
@@ -756,7 +746,6 @@ describe "web blacklist management"
 
   it "web_blacklist_list shows empty when no entries" && {
     _setup_web
-    local out
     out=$(web_blacklist_list 2>&1)
     assert_contains "$out" "empty"
     _teardown_web
@@ -765,7 +754,6 @@ describe "web blacklist management"
   it "web_blacklist_list shows entries" && {
     _setup_web
     _web_blacklist_add "https://bad.com/page" "HTTP_403_FORBIDDEN" "403"
-    local out
     out=$(web_blacklist_list 2>&1)
     assert_contains "$out" "bad.com"
     assert_contains "$out" "HTTP_403_FORBIDDEN"
@@ -975,7 +963,6 @@ describe "_web_extract_pdf"
 
   it "uses strings as fallback extractor" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f _web_extract_pdf)
     assert_contains "$fn_body" "strings"
     _teardown_web
@@ -983,7 +970,6 @@ describe "_web_extract_pdf"
 
   it "tries pdftotext first" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f _web_extract_pdf)
     assert_contains "$fn_body" "pdftotext"
     _teardown_web
@@ -1001,7 +987,6 @@ describe "_web_fetch_to_file"
 
   it "uses higher max-filesize for PDFs" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f _web_fetch_to_file)
     assert_contains "$fn_body" "WEB_MAX_SIZE_PDF"
     _teardown_web
@@ -1033,7 +1018,6 @@ describe "Non-HTML fetch helpers"
 
   it "_web_fetch_json_raw sends Accept: application/json" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f _web_fetch_json_raw)
     assert_contains "$fn_body" "application/json"
     _teardown_web
@@ -1041,7 +1025,6 @@ describe "Non-HTML fetch helpers"
 
   it "_web_extract_xml strips tags" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f _web_extract_xml)
     assert_contains "$fn_body" '<[^>]*>'
     _teardown_web
@@ -1052,7 +1035,6 @@ describe "web_fetch content-type routing"
 
   it "calls _web_extract_pdf for PDFs" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f web_fetch)
     assert_contains "$fn_body" "_web_extract_pdf"
     _teardown_web
@@ -1060,7 +1042,6 @@ describe "web_fetch content-type routing"
 
   it "calls _web_fetch_text for text content" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f web_fetch)
     assert_contains "$fn_body" "_web_fetch_text"
     _teardown_web
@@ -1068,7 +1049,6 @@ describe "web_fetch content-type routing"
 
   it "calls _web_fetch_json_raw for JSON content" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f web_fetch)
     assert_contains "$fn_body" "_web_fetch_json_raw"
     _teardown_web
@@ -1076,7 +1056,6 @@ describe "web_fetch content-type routing"
 
   it "calls _web_extract_xml for XML content" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f web_fetch)
     assert_contains "$fn_body" "_web_extract_xml"
     _teardown_web
@@ -1084,7 +1063,6 @@ describe "web_fetch content-type routing"
 
   it "rejects binary files" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f web_fetch)
     assert_contains "$fn_body" "binary"
     _teardown_web
@@ -1092,7 +1070,6 @@ describe "web_fetch content-type routing"
 
   it "detects content type before fetching" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f web_fetch)
     assert_contains "$fn_body" "_web_detect_content_type"
     _teardown_web
@@ -1103,7 +1080,6 @@ describe "web_fetch_json content-type routing"
 
   it "has PDF path in web_fetch_json" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f web_fetch_json)
     assert_contains "$fn_body" "_web_extract_pdf"
     _teardown_web
@@ -1111,7 +1087,6 @@ describe "web_fetch_json content-type routing"
 
   it "has text path in web_fetch_json" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f web_fetch_json)
     assert_contains "$fn_body" "_web_fetch_text"
     _teardown_web
@@ -1119,7 +1094,6 @@ describe "web_fetch_json content-type routing"
 
   it "returns JSON for non-HTML types" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f web_fetch_json)
     # Should use jq to build structured JSON for all paths
     assert_contains "$fn_body" "jq -n"
@@ -1128,7 +1102,6 @@ describe "web_fetch_json content-type routing"
 
   it "rejects binary files in web_fetch_json" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f web_fetch_json)
     assert_contains "$fn_body" "binary"
     _teardown_web
@@ -1161,7 +1134,6 @@ describe "_html_preprocess"
 
   it "strips script blocks" && {
     _setup_web
-    local result
     result=$(echo '<p>Hello</p><script>var x=1;</script><p>World</p>' | _html_preprocess)
     assert_contains "$result" "Hello"
     assert_contains "$result" "World"
@@ -1171,7 +1143,6 @@ describe "_html_preprocess"
 
   it "strips style blocks" && {
     _setup_web
-    local result
     result=$(echo '<p>Text</p><style>.foo{color:red}</style><p>More</p>' | _html_preprocess)
     assert_contains "$result" "Text"
     assert_contains "$result" "More"
@@ -1181,7 +1152,6 @@ describe "_html_preprocess"
 
   it "strips noscript blocks" && {
     _setup_web
-    local result
     result=$(echo '<p>Content</p><noscript>Enable JS</noscript><p>End</p>' | _html_preprocess)
     assert_contains "$result" "Content"
     assert_contains "$result" "End"
@@ -1191,7 +1161,6 @@ describe "_html_preprocess"
 
   it "decodes HTML entities" && {
     _setup_web
-    local result
     result=$(echo '<p>A &amp; B &lt; C</p>' | _html_preprocess)
     assert_contains "$result" "A & B"
     _teardown_web
@@ -1218,7 +1187,6 @@ describe "_html_preprocess"
 
   it "strips HTML tags" && {
     _setup_web
-    local result
     result=$(echo '<div class="foo"><p>Clean text</p></div>' | _html_preprocess)
     assert_contains "$result" "Clean text"
     assert_not_contains "$result" "<div"
@@ -1228,10 +1196,8 @@ describe "_html_preprocess"
 
   it "removes empty lines" && {
     _setup_web
-    local result
     result=$(echo '<p>A</p>   <p>B</p>' | _html_preprocess)
     # Should not have blank lines
-    local blank_count
     blank_count=$(echo "$result" | grep -c '^[[:space:]]*$')
     assert_eq "$blank_count" "0"
     _teardown_web
@@ -1242,7 +1208,6 @@ describe "web_fetch_raw safety"
 
   it "pipes through head -c" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f web_fetch_raw)
     assert_contains "$fn_body" "head -c"
     _teardown_web
@@ -1253,7 +1218,6 @@ describe "_html_extract_content rewrite"
 
   it "does NOT use tr newline-join (old approach)" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f _html_extract_content)
     # Old approach used tr '\n' ' ' which caused hangs — should be gone
     _has_tr=$(echo "$fn_body" | grep -v "_html_extract_content" | grep -c "tr '" || true)
@@ -1263,7 +1227,6 @@ describe "_html_extract_content rewrite"
 
   it "uses awk state machine for script removal" && {
     _setup_web
-    local fn_body
     fn_body=$(declare -f _html_extract_content)
     assert_contains "$fn_body" "skip"
     assert_contains "$fn_body" "script"

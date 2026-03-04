@@ -116,7 +116,6 @@ describe "Sampling parameter resolver (_llm_build_opts)"
   }
 
   it "_llm_build_opts returns valid JSON" && {
-    local result
     result=$(_llm_build_opts 512)
     echo "$result" | jq . &>/dev/null
     assert_ok $?
@@ -124,9 +123,7 @@ describe "Sampling parameter resolver (_llm_build_opts)"
 
   it "_llm_build_opts uses model defaults when no scenario set" && {
     unset LLM_SCENARIO
-    local result
     result=$(_llm_build_opts 1024)
-    local temp
     temp=$(echo "$result" | jq -r '.temperature')
     # No scenario → uses model registry temp (minist-inst: 0.15)
     assert_eq "$temp" "0.15"
@@ -134,10 +131,8 @@ describe "Sampling parameter resolver (_llm_build_opts)"
 
   it "_llm_build_opts uses ask scenario (inherits model default)" && {
     LLM_SCENARIO=ask
-    local result
     result=$(_llm_build_opts 512)
     unset LLM_SCENARIO
-    local temp
     temp=$(echo "$result" | jq -r '.temperature')
     # Ask has no override — falls through to model default 0.15
     assert_eq "$temp" "0.15"
@@ -145,10 +140,8 @@ describe "Sampling parameter resolver (_llm_build_opts)"
 
   it "_llm_build_opts uses router scenario (inherits model default)" && {
     LLM_SCENARIO=router
-    local result
     result=$(_llm_build_opts 50)
     unset LLM_SCENARIO
-    local temp
     temp=$(echo "$result" | jq -r '.temperature')
     # Router has no override — inherits model default 0.15
     assert_eq "$temp" "0.15"
@@ -156,7 +149,6 @@ describe "Sampling parameter resolver (_llm_build_opts)"
 
   it "_llm_build_opts handles strategist scenario" && {
     LLM_SCENARIO=strategist
-    local result
     result=$(_llm_build_opts 256)
     unset LLM_SCENARIO
     echo "$result" | jq . &>/dev/null
@@ -164,19 +156,15 @@ describe "Sampling parameter resolver (_llm_build_opts)"
   }
 
   it "_llm_build_opts includes num_predict in output" && {
-    local result
     result=$(_llm_build_opts 256)
-    local np
     np=$(echo "$result" | jq -r '.num_predict')
     assert_eq "$np" "256"
   }
 
   it "_llm_build_opts includes presence_penalty" && {
     LLM_SCENARIO=journal
-    local result
     result=$(_llm_build_opts 512)
     unset LLM_SCENARIO
-    local pp
     pp=$(echo "$result" | jq -r '.presence_penalty')
     # Journal has no override — inherits model default (minist-inst: 0.3)
     [[ "$pp" == "0.3" ]]
@@ -215,7 +203,6 @@ describe "Sampling parameter resolver (_llm_build_opts)"
   it "thinking directive injected for strategist scenario" && {
     # Strategist gets thinking — safeguarded by LLM_STRATEGIST_TOKENS cap
     # and milestone cleanup. Only router is excluded.
-    local body
     body=$(declare -f llm_generate)
     # The guard should NOT exclude strategist (only router)
     echo "$body" | grep -q 'LLM_SCENARIO.*router'
@@ -233,11 +220,9 @@ describe "Per-scenario overrides are absolute (not additive)"
     # Setting LLM_TEMP_ASK=0.5 should yield temp=0.5, NOT 0.15+0.5
     LLM_TEMP_ASK=0.5
     LLM_SCENARIO=ask
-    local result
     result=$(_llm_build_opts 512)
     unset LLM_SCENARIO
     LLM_TEMP_ASK=""  # restore
-    local temp
     temp=$(echo "$result" | jq -r '.temperature')
     assert_eq "$temp" "0.5"
   }
@@ -245,10 +230,8 @@ describe "Per-scenario overrides are absolute (not additive)"
   it "empty scenario override inherits model default exactly" && {
     LLM_TEMP_AGENT=""
     LLM_SCENARIO=agent
-    local result
     result=$(_llm_build_opts 512)
     unset LLM_SCENARIO
-    local temp
     temp=$(echo "$result" | jq -r '.temperature')
     # Should be model default (0.15), not some other value
     assert_eq "$temp" "0.15"
@@ -304,14 +287,12 @@ describe "models_apply_defaults"
   }
 
   it "thinking directive skipped for router scenario" && {
-    local body
     body=$(declare -f llm_generate)
     echo "$body" | grep -q 'LLM_SCENARIO.*router'
     assert_ok $?
   }
 
   it "llm_generate has debug tty echo helper (_gen_tty)" && {
-    local body
     body=$(declare -f llm_generate)
     echo "$body" | grep -q '_gen_tty'
     assert_ok $?
@@ -618,7 +599,6 @@ describe "llm_estimate_tokens"
   }
 
   it "scales with text length" && {
-    local short_tokens long_tokens
     short_tokens=$(llm_estimate_tokens "short")
     long_tokens=$(llm_estimate_tokens "This is a much longer string that should produce more tokens than the short one above")
     assert_gt "$long_tokens" "$short_tokens"
@@ -863,7 +843,6 @@ describe "Model family system"
   }
 
   it "models_family_list returns all family names" && {
-    local fams
     fams=$(models_family_list)
     assert_contains "$fams" "qwen"
     assert_contains "$fams" "llama"
@@ -875,7 +854,6 @@ describe "Model family system"
   }
 
   it "_models_family_lookup finds qwen family" && {
-    local entry
     entry=$(_models_family_lookup "qwen")
     assert_ok $?
     assert_contains "$entry" "qwen3-think"
@@ -888,7 +866,6 @@ describe "Model family system"
   }
 
   it "_models_family_keys returns correct keys for qwen" && {
-    local entry keys
     entry=$(_models_family_lookup "qwen")
     keys=$(_models_family_keys "$entry")
     assert_contains "$keys" "qwen3-think"
@@ -896,7 +873,6 @@ describe "Model family system"
   }
 
   it "_models_family_keys returns correct keys for granite" && {
-    local entry keys
     entry=$(_models_family_lookup "granite")
     keys=$(_models_family_keys "$entry")
     assert_contains "$keys" "granite4"

@@ -211,7 +211,6 @@ describe "recall_init"
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     recall_init
-    local tables
     tables=$(sqlite3 "$RECALL_DB" ".tables" 2>/dev/null)
     assert_contains "$tables" "chunks"
     _teardown_recall
@@ -222,7 +221,6 @@ describe "recall_init"
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     recall_init
-    local tables
     tables=$(sqlite3 "$RECALL_DB" ".tables" 2>/dev/null)
     assert_contains "$tables" "chunks_fts"
     _teardown_recall
@@ -245,7 +243,6 @@ describe "_recall_chunk_markdown"
   it "splits on ## headers" && {
     _setup_recall
     _create_sample_readme
-    local count
     count=$(_recall_chunk_markdown "$LODGE_DIR/README.md" | tr '\0' '\n' | grep -c $'\t')
     assert_gt "$count" 4
     _teardown_recall
@@ -254,7 +251,6 @@ describe "_recall_chunk_markdown"
   it "extracts section titles" && {
     _setup_recall
     _create_sample_readme
-    local sections
     sections=$(_recall_chunk_markdown "$LODGE_DIR/README.md" | tr '\0' '\n' | cut -f1)
     assert_contains "$sections" "Quick Start"
     assert_contains "$sections" "Architecture"
@@ -264,7 +260,6 @@ describe "_recall_chunk_markdown"
 
   it "returns empty for nonexistent file" && {
     _setup_recall
-    local out
     out=$(_recall_chunk_markdown "/nonexistent/file.md" 2>/dev/null)
     assert_empty "$out"
     _teardown_recall
@@ -279,7 +274,6 @@ describe "recall_index_file"
     _create_sample_readme
     recall_init
     recall_index_file "readme" "$LODGE_DIR/README.md"
-    local count
     count=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='readme';" 2>/dev/null)
     assert_gt "$count" 0
     _teardown_recall
@@ -292,10 +286,8 @@ describe "recall_index_file"
     _create_sample_readme
     recall_init
     recall_index_file "readme" "$LODGE_DIR/README.md"
-    local count1
     count1=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='readme';" 2>/dev/null)
     recall_index_file "readme" "$LODGE_DIR/README.md"
-    local count2
     count2=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='readme';" 2>/dev/null)
     assert_eq "$count1" "$count2"
     _teardown_recall
@@ -308,7 +300,6 @@ describe "recall_index_file"
     _create_sample_soul
     recall_init
     recall_index_file "soul" "$LODGE_DIR/soul.md"
-    local sources
     sources=$(sqlite3 "$RECALL_DB" "SELECT DISTINCT source FROM chunks;" 2>/dev/null)
     assert_contains "$sources" "soul"
     _teardown_recall
@@ -324,7 +315,6 @@ describe "recall_reindex"
     _create_sample_ref
     _create_sample_journal
     recall_reindex
-    local sources
     sources=$(sqlite3 "$RECALL_DB" "SELECT DISTINCT source FROM chunks ORDER BY source;" 2>/dev/null)
     assert_contains "$sources" "ref"
     assert_contains "$sources" "journal"
@@ -337,7 +327,6 @@ describe "recall_reindex"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local results
     results=$(recall_search "crypto wallet bitcoin" 3)
     assert_not_empty "$results"
     assert_contains "$results" "Crypto"
@@ -398,7 +387,6 @@ describe "recall_search"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local results
     results=$(recall_search "sandboxes proot isolation" 5)
     assert_not_empty "$results"
     assert_contains "$results" "Sandbox"
@@ -412,7 +400,6 @@ describe "recall_search"
     _create_sample_ref
     _create_sample_journal
     recall_reindex
-    local results
     results=$(recall_search "George Washington" 5)
     assert_not_empty "$results"
     _teardown_recall
@@ -424,7 +411,6 @@ describe "recall_search"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local results
     results=$(recall_search "xyzzynonexistentterm" 5)
     assert_empty "$results"
     _teardown_recall
@@ -436,9 +422,7 @@ describe "recall_search"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local results
     results=$(recall_search "George" 2)
-    local count
     count=$(echo "$results" | grep -c '|' || echo "0")
     [[ "$count" -le 2 ]]
     assert_ok $?
@@ -454,7 +438,6 @@ describe "recall_search_context"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local ctx
     ctx=$(recall_search_context "architecture Ollama" 3)
     assert_not_empty "$ctx"
     assert_contains "$ctx" "[ref:"
@@ -467,7 +450,6 @@ describe "recall_search_context"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local ctx
     ctx=$(recall_search_context "xyzzynonexistent" 3)
     assert_empty "$ctx"
     _teardown_recall
@@ -482,7 +464,6 @@ describe "recall_self_review"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local review
     review=$(recall_self_review)
     assert_not_empty "$review"
     assert_contains "$review" "CAPABILITIES"
@@ -495,7 +476,6 @@ describe "recall_self_review"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local review
     review=$(recall_self_review)
     assert_contains "$review" "Slash Commands"
     _teardown_recall
@@ -510,7 +490,6 @@ describe "recall_stats"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local stats
     stats=$(recall_stats)
     assert_contains "$stats" "Total chunks"
     assert_contains "$stats" "ref"
@@ -553,7 +532,6 @@ describe "FTS5 special character escaping"
     _create_sample_ref
     recall_reindex
     # Should not produce a runtime error — may return empty but must not crash
-    local results
     results=$(recall_search "recall.db" 5 2>&1)
     [[ "$results" != *"syntax error"* ]]
     assert_ok $?
@@ -566,7 +544,6 @@ describe "FTS5 special character escaping"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local results
     results=$(recall_search ".george" 5 2>&1)
     [[ "$results" != *"syntax error"* ]]
     assert_ok $?
@@ -579,7 +556,6 @@ describe "FTS5 special character escaping"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local results
     results=$(recall_search "/recall" 5 2>&1)
     [[ "$results" != *"syntax error"* ]]
     assert_ok $?
@@ -592,7 +568,6 @@ describe "FTS5 special character escaping"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local results
     results=$(recall_search "test@email.com" 5 2>&1)
     [[ "$results" != *"syntax error"* ]]
     assert_ok $?
@@ -605,7 +580,6 @@ describe "FTS5 special character escaping"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local results
     results=$(recall_search '#heading $variable' 5 2>&1)
     [[ "$results" != *"syntax error"* ]]
     assert_ok $?
@@ -618,7 +592,6 @@ describe "FTS5 special character escaping"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local results
     results=$(recall_search "a,b & c<d>e" 5 2>&1)
     [[ "$results" != *"syntax error"* ]]
     assert_ok $?
@@ -631,7 +604,6 @@ describe "FTS5 special character escaping"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local results
     results=$(recall_search "AND OR NOT" 5 2>&1)
     [[ "$results" != *"syntax error"* ]]
     assert_ok $?
@@ -644,7 +616,6 @@ describe "FTS5 special character escaping"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local results
     results=$(recall_search 'test*+^~:(){}[]!' 5 2>&1)
     [[ "$results" != *"syntax error"* ]]
     assert_ok $?
@@ -657,7 +628,6 @@ describe "FTS5 special character escaping"
     _setup_recall
     _create_sample_ref
     recall_reindex
-    local results
     results=$(recall_search 'a|b a\b' 5 2>&1)
     [[ "$results" != *"syntax error"* ]]
     assert_ok $?
@@ -671,7 +641,6 @@ describe "FTS5 special character escaping"
     _create_sample_ref
     recall_reindex
     # Pure punctuation should sanitize to empty and return 0, not crash
-    local results
     results=$(recall_search "...///###" 5 2>&1)
     [[ "$results" != *"syntax error"* ]]
     assert_ok $?
@@ -685,7 +654,6 @@ describe "FTS5 special character escaping"
   }
 
   it "_recall_sanitize_query strips dots and slashes" && {
-    local result
     result=$(_recall_sanitize_query "recall.db")
     assert_not_contains "$result" "."
     assert_contains "$result" "recall"
@@ -693,14 +661,12 @@ describe "FTS5 special character escaping"
   }
 
   it "_recall_sanitize_query wraps words in quotes" && {
-    local result
     result=$(_recall_sanitize_query "hello world")
     assert_contains "$result" '"hello"'
     assert_contains "$result" '"world"'
   }
 
   it "_recall_sanitize_query OR mode joins terms with OR" && {
-    local result
     result=$(_recall_sanitize_query "hello world" "OR")
     assert_contains "$result" "OR"
   }
@@ -714,7 +680,6 @@ describe "recall_ensure_indexed"
     _create_sample_ref
     recall_ensure_indexed
     assert_file_exists "$RECALL_DB"
-    local count
     count=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks;" 2>/dev/null)
     assert_gt "$count" 0
     _teardown_recall
@@ -740,7 +705,6 @@ _setup_recall_with_ref() {
     _setup_recall
     mkdir -p "$LODGE_DIR/docs"
     # Copy the real RECALL_INDEX.md from the repo
-    local _real_ref
     _real_ref="$(cd "$(dirname "$0")/.." && pwd)/docs/RECALL_INDEX.md"
     if [ -f "$_real_ref" ]; then
         cp "$_real_ref" "$LODGE_DIR/docs/RECALL_INDEX.md"
@@ -756,7 +720,6 @@ describe "RECALL_INDEX.md recall quality"
   it "ref doc indexes with 'ref' source name" && {
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall_with_ref
-    local sources
     sources=$(sqlite3 "$RECALL_DB" "SELECT DISTINCT source FROM chunks ORDER BY source;" 2>/dev/null)
     assert_contains "$sources" "ref"
     _teardown_recall
@@ -766,7 +729,6 @@ describe "RECALL_INDEX.md recall quality"
   it "ref produces 40+ short knowledge cards" && {
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall_with_ref
-    local count
     count=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='ref';" 2>/dev/null)
     assert_gt "$count" 39
     _teardown_recall
@@ -776,7 +738,6 @@ describe "RECALL_INDEX.md recall quality"
   it "ref cards are concise (avg under 500 chars)" && {
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall_with_ref
-    local avg_len
     avg_len=$(sqlite3 "$RECALL_DB" "SELECT CAST(AVG(length(content)) AS INTEGER) FROM chunks WHERE source='ref';" 2>/dev/null)
     [[ "$avg_len" -lt 500 ]]
     assert_ok $?
@@ -787,9 +748,7 @@ describe "RECALL_INDEX.md recall quality"
   it "discord post query returns ref card first" && {
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall_with_ref
-    local ctx
     ctx=$(recall_search_context "discord post channel" 4)
-    local first_line
     first_line=$(echo "$ctx" | head -1)
     assert_contains "$first_line" "[ref:"
     _teardown_recall
@@ -799,7 +758,6 @@ describe "RECALL_INDEX.md recall quality"
   it "discord post context includes exact syntax" && {
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall_with_ref
-    local ctx
     ctx=$(recall_search_context "discord post channel" 2)
     assert_contains "$ctx" "/social post discord"
     _teardown_recall
@@ -809,7 +767,6 @@ describe "RECALL_INDEX.md recall quality"
   it "context output has no snippet markers" && {
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall_with_ref
-    local ctx
     ctx=$(recall_search_context "discord post channel" 4)
     [[ "$ctx" != *">>>"* ]] && [[ "$ctx" != *"<<<"* ]]
     assert_ok $?
@@ -820,7 +777,6 @@ describe "RECALL_INDEX.md recall quality"
   it "sandbox query returns actionable ref card" && {
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall_with_ref
-    local ctx
     ctx=$(recall_search_context "sandbox build test run" 3)
     assert_contains "$ctx" "/sandbox"
     _teardown_recall
@@ -830,7 +786,6 @@ describe "RECALL_INDEX.md recall quality"
   it "crypto wallet query returns concise ref card" && {
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall_with_ref
-    local ctx
     ctx=$(recall_search_context "crypto wallet bitcoin" 2)
     assert_contains "$ctx" "/wallet btc"
     _teardown_recall
@@ -840,7 +795,6 @@ describe "RECALL_INDEX.md recall quality"
   it "discord dm query returns DM syntax" && {
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall_with_ref
-    local ctx
     ctx=$(recall_search_context "discord dm user" 2)
     assert_contains "$ctx" "/social discord dm"
     _teardown_recall
@@ -850,7 +804,6 @@ describe "RECALL_INDEX.md recall quality"
   it "mastodon instance query returns multi-instance syntax" && {
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall_with_ref
-    local ctx
     ctx=$(recall_search_context "mastodon instance token" 2)
     assert_contains "$ctx" "instances"
     _teardown_recall
@@ -860,7 +813,6 @@ describe "RECALL_INDEX.md recall quality"
   it "email query clearly says not for social" && {
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall_with_ref
-    local ctx
     ctx=$(recall_search_context "email send" 2)
     assert_contains "$ctx" "email ONLY"
     _teardown_recall
@@ -870,7 +822,6 @@ describe "RECALL_INDEX.md recall quality"
   it "git ssh query returns setup commands" && {
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall_with_ref
-    local ctx
     ctx=$(recall_search_context "git setup ssh" 2)
     assert_contains "$ctx" "/git setup"
     _teardown_recall
@@ -880,7 +831,6 @@ describe "RECALL_INDEX.md recall quality"
   it "no ref card exceeds 2000 chars" && {
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall_with_ref
-    local max_len
     max_len=$(sqlite3 "$RECALL_DB" "SELECT MAX(length(content)) FROM chunks WHERE source='ref';" 2>/dev/null)
     [[ "${max_len:-9999}" -lt 2000 ]]
     assert_ok $?
@@ -891,7 +841,6 @@ describe "RECALL_INDEX.md recall quality"
   it "memory loop pattern is searchable" && {
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall_with_ref
-    local ctx
     ctx=$(recall_search_context "memory loop read remember respond" 2)
     assert_contains "$ctx" "journal write"
     _teardown_recall

@@ -274,7 +274,7 @@ describe "discord_validate"
   it "shows bot info on valid token" && {
     _setup_social
     api_set_key "DISCORD_BOT_TOKEN" "fake_token"
-    local call_count=0
+    call_count=0
     test_mock "api_get" '
       call_count=$((${call_count:-0} + 1))
       if [[ "$1" == *"/users/@me/guilds"* ]]; then
@@ -326,7 +326,6 @@ describe "Discord channel registry"
     _setup_social
     export DISCORD_CHANNELS_DB="$TMPDIR_SOCIAL/discord_channels.db"
     discord_channel_add "general" "123456789012345678" 2>/dev/null
-    local resolved
     resolved=$(discord_channel_resolve "general")
     assert_eq "$resolved" "123456789012345678"
     _teardown_social
@@ -336,7 +335,6 @@ describe "Discord channel registry"
     _setup_social
     export DISCORD_CHANNELS_DB="$TMPDIR_SOCIAL/discord_channels.db"
     discord_channel_add "dev" "987654321098765432" 2>/dev/null
-    local resolved
     resolved=$(discord_channel_resolve "#dev")
     assert_eq "$resolved" "987654321098765432"
     _teardown_social
@@ -358,7 +356,6 @@ describe "Discord channel registry"
     export DISCORD_CHANNELS_DB="$TMPDIR_SOCIAL/discord_channels.db"
     discord_channel_add "temp" "333333333333333333" 2>/dev/null
     discord_channel_remove "temp" 2>/dev/null
-    local resolved
     resolved=$(discord_channel_resolve "temp")
     assert_eq "$resolved" ""
     _teardown_social
@@ -369,7 +366,6 @@ describe "Discord channel registry"
     export DISCORD_CHANNELS_DB="$TMPDIR_SOCIAL/discord_channels.db"
     discord_channel_add "general" "444444444444444444" 2>/dev/null
     discord_channel_add "random" "555555555555555555" 2>/dev/null
-    local def
     def=$(discord_default_channel)
     assert_eq "$def" "444444444444444444"
     _teardown_social
@@ -379,7 +375,6 @@ describe "Discord channel registry"
     _setup_social
     export DISCORD_CHANNELS_DB="$TMPDIR_SOCIAL/discord_channels.db"
     api_set_key "DISCORD_DEFAULT_CHANNEL" "666666666666666666"
-    local def
     def=$(discord_default_channel)
     assert_eq "$def" "666666666666666666"
     _teardown_social
@@ -698,7 +693,6 @@ describe "LLM escape expansion in social output"
 
   it "x_post expands escapes" && {
     _setup_social
-    local fn_body
     fn_body=$(declare -f x_post)
     assert_contains "$fn_body" "ui_expand_escapes"
     _teardown_social
@@ -706,7 +700,6 @@ describe "LLM escape expansion in social output"
 
   it "mastodon_post expands escapes" && {
     _setup_social
-    local fn_body
     fn_body=$(declare -f mastodon_post)
     assert_contains "$fn_body" "ui_expand_escapes"
     _teardown_social
@@ -714,7 +707,6 @@ describe "LLM escape expansion in social output"
 
   it "bluesky_post expands escapes" && {
     _setup_social
-    local fn_body
     fn_body=$(declare -f bluesky_post)
     assert_contains "$fn_body" "ui_expand_escapes"
     _teardown_social
@@ -722,7 +714,6 @@ describe "LLM escape expansion in social output"
 
   it "discord_webhook expands escapes" && {
     _setup_social
-    local fn_body
     fn_body=$(declare -f discord_webhook)
     assert_contains "$fn_body" "ui_expand_escapes"
     _teardown_social
@@ -730,7 +721,6 @@ describe "LLM escape expansion in social output"
 
   it "discord_send expands escapes" && {
     _setup_social
-    local fn_body
     fn_body=$(declare -f discord_send)
     assert_contains "$fn_body" "ui_expand_escapes"
     _teardown_social
@@ -738,7 +728,6 @@ describe "LLM escape expansion in social output"
 
   it "telegram_send expands escapes" && {
     _setup_social
-    local fn_body
     fn_body=$(declare -f telegram_send)
     assert_contains "$fn_body" "ui_expand_escapes"
     _teardown_social

@@ -809,21 +809,18 @@ describe "Cancellation infrastructure"
 describe "Email send parser — address= alias"
 
   it "_cmd_email normalizes address= to to=" && {
-    local body
     body=$(declare -f _cmd_email)
     echo "$body" | grep -q 'address=/to='
     assert_ok $?
   }
 
   it "_cmd_email help mentions address=" && {
-    local body
     body=$(declare -f _cmd_email)
     echo "$body" | grep -q 'address='
     assert_ok $?
   }
 
   it "_cmd_email accepted formats comment includes address=" && {
-    local body
     body=$(declare -f _cmd_email)
     echo "$body" | grep -q 'address=addr'
     assert_ok $?
@@ -882,35 +879,30 @@ describe "GPU layers command (/gpu)"
 describe "Email send parser — attachment support"
 
   it "_cmd_email normalizes file= to f=" && {
-    local body
     body=$(declare -f _cmd_email)
     echo "$body" | grep -q 'file=/f='
     assert_ok $? "Must alias file= to f="
   }
 
   it "_cmd_email normalizes attach= to f=" && {
-    local body
     body=$(declare -f _cmd_email)
     echo "$body" | grep -q 'attach=/f='
     assert_ok $? "Must alias attach= to f="
   }
 
   it "_cmd_email passes attachment to email_send" && {
-    local body
     body=$(declare -f _cmd_email)
     echo "$body" | grep -q 'email_send.*attachment'
     assert_ok $? "Must pass attachment parameter to email_send"
   }
 
   it "_cmd_email help shows f= parameter" && {
-    local body
     body=$(declare -f _cmd_email)
     echo "$body" | grep -q 'f=file.txt\|f=.*\.md\|f=.*\.txt'
     assert_ok $? "Help must mention f= parameter"
   }
 
   it "b= parser stops at f=" && {
-    local body
     body=$(declare -f _cmd_email)
     # Body parsing should strip f= to avoid including it in body text
     echo "$body" | grep -q 'body.*f=\|%% f='
@@ -918,7 +910,6 @@ describe "Email send parser — attachment support"
   }
 
   it "s= parser stops at f=" && {
-    local body
     body=$(declare -f _cmd_email)
     # Subject parsing should also respect f= boundary
     echo "$body" | grep -q 'f=.*subject\|subject.*f='

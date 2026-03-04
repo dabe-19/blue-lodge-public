@@ -22,8 +22,8 @@ _teardown_slash() {
 
 # Write a valid custom command for testing
 _create_test_command() {
-    local name="${1:-testcmd}"
-    local desc="${2:-A test command}"
+    name="${1:-testcmd}"
+    desc="${2:-A test command}"
     mkdir -p "$SLASH_DIR"
     cat > "$SLASH_DIR/${name}.sh" << 'CMDEOF'
 #!/bin/bash
@@ -34,8 +34,8 @@ _create_test_command() {
 # Version: 1
 
 slash_testcmd() {
-    local args="$1"
-    local workdir="${2:-.}"
+    args="$1"
+    workdir="${2:-.}"
     echo "testcmd ran with args: $args"
 }
 CMDEOF
@@ -514,9 +514,8 @@ describe "Recursive composition"
 # Description: Outer command
 # Author: George
 slash_outer() {
-    local args="$1"
-    local workdir="${2:-.}"
-    local result
+    args="$1"
+    workdir="${2:-.}"
     result=$(slash_run "inner" "from outer" "$workdir" 2>/dev/null)
     echo "outer got: $result"
 }

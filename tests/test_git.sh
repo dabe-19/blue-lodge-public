@@ -41,7 +41,7 @@ _setup_git_with_ssh_key() {
 
 _setup_git_repo() {
     _setup_git_with_ssh_key
-    local repo_dir="$TMPDIR_GIT/repo"
+    repo_dir="$TMPDIR_GIT/repo"
     mkdir -p "$repo_dir"
     cd "$repo_dir"
     git init >/dev/null 2>&1
@@ -136,7 +136,6 @@ describe "git_set_identity"
   it "sets git user.name globally" && {
     _setup_git
     git_set_identity "Test George" "test@example.com" "--global" >/dev/null 2>&1
-    local name
     name=$(git config --global user.name 2>/dev/null)
     assert_eq "$name" "Test George"
     _teardown_git
@@ -145,7 +144,6 @@ describe "git_set_identity"
   it "sets git user.email globally" && {
     _setup_git
     git_set_identity "Test George" "test@example.com" "--global" >/dev/null 2>&1
-    local email
     email=$(git config --global user.email 2>/dev/null)
     assert_eq "$email" "test@example.com"
     _teardown_git
@@ -154,7 +152,6 @@ describe "git_set_identity"
   it "uses default name when not provided" && {
     _setup_git
     git_set_identity "" "test@example.com" "--global" >/dev/null 2>&1
-    local name
     name=$(git config --global user.name 2>/dev/null)
     assert_eq "$name" "George (Blue Lodge)"
     _teardown_git
@@ -163,7 +160,6 @@ describe "git_set_identity"
   it "uses local fallback email when no email configured" && {
     _setup_git
     git_set_identity "George" "" "--global" >/dev/null 2>&1
-    local email
     email=$(git config --global user.email 2>/dev/null)
     assert_contains "$email" "blue-lodge"
     _teardown_git
@@ -174,7 +170,6 @@ describe "git_show_identity"
   it "outputs Name: line" && {
     _setup_git
     git_set_identity "Display Test" "disp@test.com" "--global" >/dev/null 2>&1
-    local output
     output=$(git_show_identity 2>&1)
     assert_contains "$output" "Display Test"
     _teardown_git
@@ -183,7 +178,6 @@ describe "git_show_identity"
   it "outputs Email: line" && {
     _setup_git
     git_set_identity "Display Test" "disp@test.com" "--global" >/dev/null 2>&1
-    local output
     output=$(git_show_identity 2>&1)
     assert_contains "$output" "disp@test.com"
     _teardown_git
@@ -196,7 +190,6 @@ describe "git_write_ssh_config"
 
   it "fails without SSH key" && {
     _setup_git
-    local output
     output=$(git_write_ssh_config 2>&1)
     assert_fail $?
     _teardown_git
@@ -212,7 +205,6 @@ describe "git_write_ssh_config"
   it "writes Host alias entry (github.com-george)" && {
     _setup_git_with_ssh_key
     git_write_ssh_config >/dev/null 2>&1
-    local content
     content=$(cat "$GEORGE_SSH_DIR/config" 2>/dev/null)
     assert_contains "$content" "Host $GEORGE_GIT_HOST"
     _teardown_git
@@ -221,7 +213,6 @@ describe "git_write_ssh_config"
   it "includes IdentityFile pointing to George's key" && {
     _setup_git_with_ssh_key
     git_write_ssh_config >/dev/null 2>&1
-    local content
     content=$(cat "$GEORGE_SSH_DIR/config" 2>/dev/null)
     assert_contains "$content" "IdentityFile $GEORGE_SSH_KEY"
     _teardown_git
@@ -230,7 +221,6 @@ describe "git_write_ssh_config"
   it "sets IdentitiesOnly yes" && {
     _setup_git_with_ssh_key
     git_write_ssh_config >/dev/null 2>&1
-    local content
     content=$(cat "$GEORGE_SSH_DIR/config" 2>/dev/null)
     assert_contains "$content" "IdentitiesOnly yes"
     _teardown_git
@@ -239,7 +229,6 @@ describe "git_write_ssh_config"
   it "sets permissions to 600 on config file" && {
     _setup_git_with_ssh_key
     git_write_ssh_config >/dev/null 2>&1
-    local perms
     perms=$(stat -c '%a' "$GEORGE_SSH_DIR/config" 2>/dev/null)
     assert_eq "$perms" "600"
     _teardown_git
@@ -249,7 +238,6 @@ describe "git_write_ssh_config"
     _setup_git_with_ssh_key
     git_write_ssh_config >/dev/null 2>&1
     git_write_ssh_config >/dev/null 2>&1
-    local count
     count=$(grep -c "Host $GEORGE_GIT_HOST" "$GEORGE_SSH_DIR/config" 2>/dev/null)
     assert_eq "$count" "1"
     _teardown_git
@@ -258,7 +246,6 @@ describe "git_write_ssh_config"
   it "includes HostName github.com (real hostname)" && {
     _setup_git_with_ssh_key
     git_write_ssh_config >/dev/null 2>&1
-    local content
     content=$(cat "$GEORGE_SSH_DIR/config" 2>/dev/null)
     assert_contains "$content" "HostName github.com"
     _teardown_git
@@ -276,10 +263,8 @@ Host github.com
     IdentitiesOnly yes
 OLDEOF
     git_write_ssh_config >/dev/null 2>&1
-    local content
     content=$(cat "$GEORGE_SSH_DIR/config" 2>/dev/null)
     # Old block gone (exact "Host github.com" line, not the alias)
-    local old_count
     old_count=$(echo "$content" | grep -c "^Host github\.com$" 2>/dev/null || true)
     assert_eq "$old_count" "0"
     # New alias present
@@ -307,7 +292,6 @@ describe "git_configure_ssh"
   it "does NOT set global core.sshCommand (no global pollution)" && {
     _setup_git_with_ssh_key
     git_configure_ssh >/dev/null 2>&1
-    local ssh_cmd
     ssh_cmd=$(git config --global core.sshCommand 2>/dev/null)
     assert_empty "$ssh_cmd"
     _teardown_git
@@ -325,7 +309,6 @@ describe "git_configure_ssh"
     _setup_git_with_ssh_key
     git config --global core.sshCommand "ssh -i /old/key" 2>/dev/null
     git_configure_ssh >/dev/null 2>&1
-    local ssh_cmd
     ssh_cmd=$(git config --global core.sshCommand 2>/dev/null)
     assert_empty "$ssh_cmd"
     _teardown_git
@@ -376,7 +359,6 @@ describe "git_disable_signing"
     _setup_git
     git config --global tag.gpgsign true 2>/dev/null
     git_disable_signing >/dev/null 2>&1
-    local tag_sign
     tag_sign=$(git config --global tag.gpgsign 2>/dev/null)
     assert_empty "$tag_sign"
     _teardown_git
@@ -386,7 +368,6 @@ describe "git_disable_signing"
     _setup_git
     git config --global user.signingkey "ABCD1234" 2>/dev/null
     git_disable_signing >/dev/null 2>&1
-    local key
     key=$(git config --global user.signingkey 2>/dev/null)
     assert_empty "$key"
     _teardown_git
@@ -416,7 +397,6 @@ describe "git_configure_signing"
     else
         pgp_generate_key >/dev/null 2>&1
         git_configure_signing >/dev/null 2>&1
-        local key
         key=$(git config --global user.signingkey 2>/dev/null)
         assert_not_empty "$key"
         # Clean up
@@ -446,7 +426,6 @@ describe "git_configure_signing"
     else
         pgp_generate_key >/dev/null 2>&1
         git_configure_signing >/dev/null 2>&1
-        local wrapper_content
         wrapper_content=$(cat "$GEORGE_CONFIG_DIR/gpg-george.sh" 2>/dev/null)
         assert_contains "$wrapper_content" "GNUPGHOME"
         # Clean up
@@ -485,7 +464,6 @@ describe "git_add_remote"
   it "adds a remote with SSH url (converts to Host alias)" && {
     _setup_git_repo
     git_add_remote "testremote" "git@github.com:user/repo.git" >/dev/null 2>&1
-    local url
     url=$(git remote get-url testremote 2>/dev/null)
     assert_eq "$url" "git@${GEORGE_GIT_HOST}:user/repo.git"
     _teardown_git
@@ -494,7 +472,6 @@ describe "git_add_remote"
   it "converts HTTPS GitHub URL to SSH Host alias format" && {
     _setup_git_repo
     git_add_remote "httpsremote" "https://github.com/owner/myproject" >/dev/null 2>&1
-    local url
     url=$(git remote get-url httpsremote 2>/dev/null)
     assert_eq "$url" "git@${GEORGE_GIT_HOST}:owner/myproject.git"
     _teardown_git
@@ -503,7 +480,6 @@ describe "git_add_remote"
   it "converts HTTPS URL with .git suffix" && {
     _setup_git_repo
     git_add_remote "dotgit" "https://github.com/owner/myrepo.git" >/dev/null 2>&1
-    local url
     url=$(git remote get-url dotgit 2>/dev/null)
     assert_eq "$url" "git@${GEORGE_GIT_HOST}:owner/myrepo.git"
     _teardown_git
@@ -512,7 +488,6 @@ describe "git_add_remote"
   it "passes non-GitHub URLs through unchanged" && {
     _setup_git_repo
     git_add_remote "gitlab" "git@gitlab.com:user/repo.git" >/dev/null 2>&1
-    local url
     url=$(git remote get-url gitlab 2>/dev/null)
     assert_eq "$url" "git@gitlab.com:user/repo.git"
     _teardown_git
@@ -522,7 +497,6 @@ describe "git_add_remote"
     _setup_git_repo
     git_add_remote "updtest" "git@github.com:old/repo.git" >/dev/null 2>&1
     git_add_remote "updtest" "git@github.com:new/repo.git" >/dev/null 2>&1
-    local url
     url=$(git remote get-url updtest 2>/dev/null)
     assert_eq "$url" "git@${GEORGE_GIT_HOST}:new/repo.git"
     _teardown_git
@@ -532,7 +506,6 @@ describe "git_list_remotes"
 
   it "shows 'No remotes' when none exist" && {
     _setup_git_repo
-    local output
     output=$(git_list_remotes 2>&1)
     assert_contains "$output" "No remotes"
     _teardown_git
@@ -541,7 +514,6 @@ describe "git_list_remotes"
   it "lists configured remotes" && {
     _setup_git_repo
     git remote add showremote "git@github.com:user/repo.git" 2>/dev/null
-    local output
     output=$(git_list_remotes 2>&1)
     assert_contains "$output" "showremote"
     _teardown_git
@@ -555,7 +527,6 @@ describe "git_status_overview"
   it "shows Identity section" && {
     _setup_git
     git_set_identity "Status Test" "status@test.com" "--global" >/dev/null 2>&1
-    local output
     output=$(git_status_overview 2>&1)
     assert_contains "$output" "Identity"
     _teardown_git
@@ -563,7 +534,6 @@ describe "git_status_overview"
 
   it "shows SSH section" && {
     _setup_git
-    local output
     output=$(git_status_overview 2>&1)
     assert_contains "$output" "SSH"
     _teardown_git
@@ -571,7 +541,6 @@ describe "git_status_overview"
 
   it "shows Commit Signing section" && {
     _setup_git
-    local output
     output=$(git_status_overview 2>&1)
     assert_contains "$output" "Commit Signing"
     _teardown_git
@@ -579,7 +548,6 @@ describe "git_status_overview"
 
   it "shows 'not generated' when no SSH key" && {
     _setup_git
-    local output
     output=$(git_status_overview 2>&1)
     assert_contains "$output" "not generated"
     _teardown_git
@@ -587,7 +555,6 @@ describe "git_status_overview"
 
   it "shows 'configured' when SSH key exists" && {
     _setup_git_with_ssh_key
-    local output
     output=$(git_status_overview 2>&1)
     assert_contains "$output" "configured"
     _teardown_git
@@ -596,7 +563,6 @@ describe "git_status_overview"
   it "shows 'persistent' when SSH config exists" && {
     _setup_git_with_ssh_key
     git_write_ssh_config >/dev/null 2>&1
-    local output
     output=$(git_status_overview 2>&1)
     assert_contains "$output" "persistent"
     _teardown_git
@@ -605,7 +571,6 @@ describe "git_status_overview"
   it "shows signing 'disabled' when not configured" && {
     _setup_git
     git config --global --unset commit.gpgsign 2>/dev/null
-    local output
     output=$(git_status_overview 2>&1)
     assert_contains "$output" "disabled"
     _teardown_git

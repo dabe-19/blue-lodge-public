@@ -410,7 +410,6 @@ describe "backup_auth_create"
     mkdir -p "$GEORGE_CONFIG_DIR/.ssh"
     echo "ssh-rsa AAAA" > "$GEORGE_CONFIG_DIR/.ssh/id_rsa.pub"
     backup_auth_create >/dev/null 2>&1
-    local auth_dir
     auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
     assert_dir_exists "$auth_dir/.ssh"
     _teardown_backup
@@ -422,7 +421,6 @@ describe "backup_auth_create"
     mkdir -p "$GEORGE_CONFIG_DIR/.gnupg"
     echo "gpg-data" > "$GEORGE_CONFIG_DIR/.gnupg/pubring.kbx"
     backup_auth_create >/dev/null 2>&1
-    local auth_dir
     auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
     assert_dir_exists "$auth_dir/.gnupg"
     _teardown_backup
@@ -433,7 +431,6 @@ describe "backup_auth_create"
     backup_init
     echo "API_KEY=test123" > "$GEORGE_CONFIG_DIR/keys.conf"
     backup_auth_create >/dev/null 2>&1
-    local auth_dir
     auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
     assert_file_exists "$auth_dir/keys.conf"
     _teardown_backup
@@ -445,7 +442,6 @@ describe "backup_auth_create"
     mkdir -p "$GEORGE_CONFIG_DIR/.vault"
     echo "encrypted" > "$GEORGE_CONFIG_DIR/.vault/secret.enc"
     backup_auth_create >/dev/null 2>&1
-    local auth_dir
     auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
     assert_dir_exists "$auth_dir/.vault"
     _teardown_backup
@@ -457,7 +453,6 @@ describe "backup_auth_create"
     echo "GMAIL=yes" > "$GEORGE_CONFIG_DIR/email_gmail.conf"
     echo "OUTLOOK=yes" > "$GEORGE_CONFIG_DIR/email_outlook.conf"
     backup_auth_create >/dev/null 2>&1
-    local auth_dir
     auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
     assert_file_exists "$auth_dir/email_gmail.conf"
     assert_file_exists "$auth_dir/email_outlook.conf"
@@ -470,7 +465,6 @@ describe "backup_auth_create"
     echo "mastodon-data" > "$GEORGE_CONFIG_DIR/mastodon_instances.db"
     echo "discord-data" > "$GEORGE_CONFIG_DIR/discord_channels.db"
     backup_auth_create >/dev/null 2>&1
-    local auth_dir
     auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
     assert_file_exists "$auth_dir/mastodon_instances.db"
     assert_file_exists "$auth_dir/discord_channels.db"
@@ -483,7 +477,6 @@ describe "backup_auth_create"
     echo "LODGE_MODEL=test" > "$LODGE_DIR/lodge.conf"
     echo "placeholder" > "$GEORGE_CONFIG_DIR/keys.conf"
     backup_auth_create >/dev/null 2>&1
-    local auth_dir
     auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
     assert_file_exists "$auth_dir/lodge.conf"
     rm -f "$LODGE_DIR/lodge.conf"
@@ -496,7 +489,6 @@ describe "backup_auth_create"
     echo "knowledge" > "$GEORGE_CONFIG_DIR/recall.db"
     echo "placeholder" > "$GEORGE_CONFIG_DIR/keys.conf"
     backup_auth_create >/dev/null 2>&1
-    local auth_dir
     auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
     [ ! -f "$auth_dir/recall.db" ]
     assert_ok $? "recall.db must not be in auth backup"
@@ -510,7 +502,6 @@ describe "backup_auth_create"
     echo "session" > "$GEORGE_CONFIG_DIR/transcripts/2025-01-01.md"
     echo "placeholder" > "$GEORGE_CONFIG_DIR/keys.conf"
     backup_auth_create >/dev/null 2>&1
-    local auth_dir
     auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
     [ ! -d "$auth_dir/transcripts" ]
     assert_ok $? "transcripts must not be in auth backup"
@@ -530,9 +521,7 @@ describe "backup_auth_create"
     backup_init
     echo "secret" > "$GEORGE_CONFIG_DIR/keys.conf"
     backup_auth_create >/dev/null 2>&1
-    local auth_dir
     auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
-    local perms
     perms=$(stat -c '%a' "$auth_dir" 2>/dev/null)
     assert_eq "$perms" "700"
     perms=$(stat -c '%a' "$auth_dir/keys.conf" 2>/dev/null)
@@ -545,7 +534,6 @@ describe "backup_auth_create"
     backup_init
     echo "key" > "$GEORGE_CONFIG_DIR/keys.conf"
     backup_auth_create >/dev/null 2>&1
-    local auth_dir
     auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
     assert_file_exists "$auth_dir/MANIFEST.md"
     grep -q "Auth & Config Backup" "$auth_dir/MANIFEST.md"
@@ -632,7 +620,6 @@ describe "backup_auth_restore"
     export _LODGE_IN_TASK=1
     backup_auth_restore 2>/dev/null
     export _LODGE_IN_TASK=0
-    local perms
     perms=$(stat -c '%a' "$GEORGE_CONFIG_DIR/.ssh" 2>/dev/null)
     assert_eq "$perms" "700"
     perms=$(stat -c '%a' "$GEORGE_CONFIG_DIR/keys.conf" 2>/dev/null)

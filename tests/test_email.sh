@@ -34,9 +34,9 @@ _setup_email() {
 
 # Helper: write a per-provider config for tests
 _write_provider_conf() {
-    local provider="$1"
+    provider="$1"
     shift
-    local conf="$GEORGE_CONFIG_DIR/email_${provider}.conf"
+    conf="$GEORGE_CONFIG_DIR/email_${provider}.conf"
     cat > "$conf" "$@"
     chmod 600 "$conf"
 }
@@ -765,16 +765,13 @@ describe "Bridge constants"
 describe "LLM escape expansion in email"
 
   it "email_send expands escapes in body" && {
-    local fn_body
     fn_body=$(declare -f email_send)
     assert_contains "$fn_body" "ui_expand_escapes"
   }
 
   it "email_send expands escapes in subject" && {
-    local fn_body
     fn_body=$(declare -f email_send)
     # Should call ui_expand_escapes on subject too
-    local count
     count=$(echo "$fn_body" | grep -c "ui_expand_escapes")
     assert_gt "$count" 1
   }
@@ -783,26 +780,22 @@ describe "LLM escape expansion in email"
 describe "Email attachment support"
 
   it "email_send accepts 5th attachment parameter" && {
-    local fn_body
     fn_body=$(declare -f email_send)
     assert_contains "$fn_body" "attachment"
   }
 
   it "_email_send_smtp accepts 6th attachment parameter" && {
-    local fn_body
     fn_body=$(declare -f _email_send_smtp)
     assert_contains "$fn_body" "attachment"
   }
 
   it "_email_send_smtp builds multipart/mixed when attachment provided" && {
-    local fn_body
     fn_body=$(declare -f _email_send_smtp)
     assert_contains "$fn_body" "multipart/mixed"
     assert_contains "$fn_body" "boundary"
   }
 
   it "_email_send_smtp uses base64 encoding for attachments" && {
-    local fn_body
     fn_body=$(declare -f _email_send_smtp)
     assert_contains "$fn_body" "base64"
     assert_contains "$fn_body" "Content-Transfer-Encoding"
@@ -812,7 +805,6 @@ describe "Email attachment support"
     _setup_email
     _write_provider_conf "gmail" <<< 'EMAIL_ADDRESS="test@gmail.com"
 EMAIL_AUTH_METHOD="secret"'
-    local out
     out=$(email_send "gmail" "user@example.com" "Test" "Body" "/nonexistent/file.txt" 2>&1)
     assert_fail $?
     assert_contains "$out" "not found"
@@ -820,32 +812,27 @@ EMAIL_AUTH_METHOD="secret"'
   }
 
   it "_email_send_smtp detects MIME type for .txt files" && {
-    local fn_body
     fn_body=$(declare -f _email_send_smtp)
     assert_contains "$fn_body" "text/plain"
   }
 
   it "_email_send_smtp detects MIME type for .md files" && {
-    local fn_body
     fn_body=$(declare -f _email_send_smtp)
     assert_contains "$fn_body" "text/markdown"
   }
 
   it "_email_send_smtp detects MIME type for .pdf files" && {
-    local fn_body
     fn_body=$(declare -f _email_send_smtp)
     assert_contains "$fn_body" "application/pdf"
   }
 
   it "_email_send_smtp Content-Disposition includes filename" && {
-    local fn_body
     fn_body=$(declare -f _email_send_smtp)
     assert_contains "$fn_body" "Content-Disposition: attachment"
     assert_contains "$fn_body" 'filename='
   }
 
   it "_email_send_smtp falls back to text/plain without attachment" && {
-    local fn_body
     fn_body=$(declare -f _email_send_smtp)
     # Should have the simple path with text/plain; charset=UTF-8
     assert_contains "$fn_body" "text/plain; charset=UTF-8"

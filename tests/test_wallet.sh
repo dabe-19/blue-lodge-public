@@ -8,7 +8,7 @@ declare -A _MOCK_SECRETS=()
 
 secrets_set() { _MOCK_SECRETS["$1"]="$2"; }
 secrets_get() {
-    local val="${_MOCK_SECRETS[$1]:-}"
+    val="${_MOCK_SECRETS[$1]:-}"
     [ -n "$val" ] && echo "$val" || return 1
 }
 secrets_exists() { [ -n "${_MOCK_SECRETS[$1]:-}" ]; }

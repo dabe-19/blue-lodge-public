@@ -1677,14 +1677,111 @@ _cmd_cd() {
         ui_err "Directory not found: $target"
     fi
 }
-_cmd_files() {
-    local dir="${2:-.}"
-    find "$dir" -maxdepth 3 -type f \
-        ! -path '*/.git/*' ! -path '*/target/*' ! -path '*/__pycache__/*' \
-        ! -path '*/.venv/*' ! -path '*/node_modules/*' \
-        2>/dev/null | head -50 | sed "s|^$dir/||" | while read -r f; do
-        printf "  %s\n" "$f"
+
+# ── /ls — List workspace files as a tree ──────────────────────
+# Usage: /ls [path] [depth]
+#   /ls              — tree of current dir, depth 3
+#   /ls src          — tree of src/, depth 3
+#   /ls . 5          — tree of current dir, depth 5
+#   /ls src/lib 2    — tree of src/lib, depth 2
+#
+# Produces indented tree output showing directories and files,
+# filtering out build artifacts, VCS internals, and caches.
+# Safe for George to use — no system files exposed.
+_cmd_ls() {
+    local args="$1"
+    local workdir="${2:-.}"
+
+    # Parse arguments: [path] [depth]
+    local target depth
+    target=$(echo "$args" | awk '{print $1}')
+    depth=$(echo "$args" | awk '{print $2}')
+
+    # Defaults
+    [ -z "$target" ] && target="."
+    [ -z "$depth" ] && depth=3
+
+    # Resolve relative to workdir
+    if [[ "$target" != /* ]]; then
+        target="$workdir/$target"
+    fi
+
+    # Normalize (remove trailing slash, resolve ..)
+    target=$(cd "$target" 2>/dev/null && pwd || echo "$target")
+
+    if [ ! -d "$target" ]; then
+        ui_err "Directory not found: $target"
+        return 1
+    fi
+
+    # Clamp depth to safe range (1-8)
+    if ! [[ "$depth" =~ ^[0-9]+$ ]] || [ "$depth" -lt 1 ]; then
+        depth=3
+    elif [ "$depth" -gt 8 ]; then
+        depth=8
+        ui_dim "  (depth clamped to 8 to keep output manageable)"
+    fi
+
+    # Exclusions — build artifacts, VCS, caches, system dirs
+    local -a excludes=(
+        '.git' 'target' '__pycache__' '.venv' 'node_modules'
+        '.mypy_cache' '.pytest_cache' '.tox' '.eggs' '*.egg-info'
+        '.DS_Store' '.lodge-snapshots' '.george'
+    )
+
+    ui_section "Files: ${target/#$HOME/~} (depth $depth)"
+    local base_name
+    base_name=$(basename "$target")
+    printf "  %b%s/%b\n" "$C_CYAN" "$base_name" "$C_RESET"
+
+    # Build find exclusion args
+    local -a find_excludes=()
+    for ex in "${excludes[@]}"; do
+        find_excludes+=(-name "$ex" -prune -o)
     done
+
+    # Use find to get all entries, then format as tree
+    local count=0
+    local max_entries=80
+    while IFS= read -r entry; do
+        [ -z "$entry" ] && continue
+        count=$((count + 1))
+        if [ "$count" -gt "$max_entries" ]; then
+            printf "  %b... (%d+ entries, showing first %d)%b\n" "$C_DIM" "$count" "$max_entries" "$C_RESET"
+            break
+        fi
+
+        # Calculate relative path and depth-based indent
+        local rel="${entry#$target/}"
+        local indent_level
+        indent_level=$(echo "$rel" | tr -cd '/' | wc -c)
+        local indent=""
+        local i
+        for ((i=0; i<indent_level; i++)); do
+            indent="${indent}│   "
+        done
+
+        local name
+        name=$(basename "$entry")
+
+        if [ -d "$entry" ]; then
+            printf "  %s├── %b%s/%b\n" "$indent" "$C_CYAN" "$name" "$C_RESET"
+        else
+            printf "  %s├── %s\n" "$indent" "$name"
+        fi
+    done < <(find "$target" -mindepth 1 -maxdepth "$depth" \
+        "${find_excludes[@]}" \
+        -print 2>/dev/null | sort)
+
+    if [ "$count" -eq 0 ]; then
+        printf "  %b(empty directory)%b\n" "$C_DIM" "$C_RESET"
+    fi
+    echo ""
+}
+
+# Backward-compat alias: /files → /ls
+_cmd_files() {
+    _cmd_ls "$@"
 }
 _cmd_read() {
     local filepath="$1"
@@ -3566,7 +3663,8 @@ _register_commands() {
     commands_register "transcript" "View task transcripts (list/last/path/show)" "_cmd_transcript"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"
-    commands_register "files"    "List workspace files" "_cmd_files"
+    commands_register "ls"       "List workspace files as tree" "_cmd_ls"
+    commands_register "files"    "List workspace files as tree (alias for /ls)" "_cmd_files"
     commands_register "read"     "Read a file" "_cmd_read"
 }
 

@@ -65,20 +65,25 @@ _agent_honeydew_build() {
     local hd_file="$george_dir/$HONEYDEW_FILE"
     mkdir -p "$george_dir"
 
-    local decompose_prompt="Break this task into a numbered checklist of concrete, actionable subtasks in execution order (highest precedence first). Each subtask should map to one or two slash commands.
+    local decompose_prompt="Break this task into a numbered checklist of GENERAL objectives in execution order.
 
 TASK: $task
 
 RULES:
 - Output ONLY the numbered list, nothing else.
-- Each item: a short imperative sentence (e.g., 'Search the web for X specs').
-- 2-6 items maximum. Simple tasks may have just 2.
+- Each item: a short imperative sentence describing WHAT to achieve, not HOW.
+- Describe the GOAL, never the specific tool or command.
+  GOOD: 'Find the weekly weather forecast for Appleton WI'
+  BAD:  'Run curl -s https://weather.com/... | grep ...'
+  BAD:  'Use /web search to find weather data'
+- Do NOT mention specific commands, URLs, tools, or shell syntax.
+- 2-5 items maximum. Simple tasks may have just 1-2.
 - Order by dependency: research before writing, writing before sending.
 - If the task is a single action (e.g., 'send a DM'), output 1-2 items.
 - Do NOT include verification, confirmation, or cleanup steps.
 - Do NOT prefix with checkboxes — just numbers."
 
-    local decompose_sys="You are a task decomposition engine. Output ONLY a numbered list of subtasks. No explanation, no headers, no formatting beyond the numbered list."
+    local decompose_sys="You are a task decomposition engine. Output ONLY a numbered list of general objectives. Each item describes WHAT to accomplish, not HOW or which tool to use. No commands, no URLs, no shell syntax. No explanation, no headers, no formatting beyond the numbered list."
 
     local raw_list
     local LLM_SCENARIO=strategist
@@ -368,11 +373,11 @@ _agent_evaluate_completion() {
         local _hd_total _hd_done
         _hd_total=$(grep -cE '^[0-9]+\. \[[ x]\]' "$_hd_eval_file" 2>/dev/null || echo 0)
         _hd_done=$(grep -cE '^[0-9]+\. \[x\]' "$_hd_eval_file" 2>/dev/null || echo 0)
-        _hd_eval_block="\n\n>>> HONEYDEW LIST (${_hd_done}/${_hd_total} complete) <<<\n${_hd_eval_content}\n>>> If ANY items above show [ ] (unchecked), the task is INCOMPLETE. <<<"
+        _hd_eval_block="\n\n>>> HONEYDEW LIST (${_hd_done}/${_hd_total} complete) <<<\n${_hd_eval_content}\n>>> The honeydew list tracks general objectives. Use it as a GUIDE, not a rigid gate. If the PRIMARY OBJECTIVE is satisfied by the completed milestones, mark COMPLETE even if a honeydew item is unchecked — the auto-checker may have missed a match. <<<"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: overall-eval <- honeydew (${_hd_done}/${_hd_total})"
     fi
 
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}${_hd_eval_block}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE (the user's original request):\n${primary_obj}\n\nGiven all the milestones completed above, is the PRIMARY OBJECTIVE fully satisfied?\n\nRULES:\n- Review the Completed Milestones section for what has been accomplished.\n- For single-action objectives (e.g., 'send a Discord DM to X'), one successful milestone that executed the action is sufficient.\n- For multi-part objectives, verify each distinct part has a corresponding completed milestone.\n- Do NOT invent extra requirements beyond what the user explicitly asked for.\n- Do NOT require confirmation or verification steps unless the user asked for them.\n- If the key action(s) have been executed successfully, the task is done.\n- HONEYDEW LIST: If a Honeydew List is present above, ALL items must be marked [x] for the task to be COMPLETE.\n  Any item still showing [ ] means that subtask has NOT been performed — mark INCOMPLETE.\n\nSPECIAL RULES FOR SOFTWARE/CODE TASKS:\n- If the objective involves building a program, microservice, or application:\n  * Source code files must have been written with meaningful, non-trivial content.\n  * Placeholder or stub code (todo, unimplemented, panic, 'Missing implementation') does NOT count.\n  * The project must compile/build successfully (a /build with exit 0, not just /write).\n  * Only mark COMPLETE if the code could plausibly run. /write alone is not enough.\n- If the action log is MOSTLY web searches with little or no code written, mark INCOMPLETE.\n- Web research does NOT count as progress toward a coding objective unless\n  it is supplemented by actual file creation, building, and testing.\n\nSPECIAL RULES FOR WRITING/CONTENT/SOCIAL TASKS:\n- If the objective asks to 'write', 'invent', 'create', 'compose', or 'draft' content\n  (a song, poem, essay, review, message, etc.) AND THEN post/send/save it:\n  * The ACTUAL content must appear in the milestone output or action log.\n  * A teaser, placeholder, or generic message is NOT the requested content.\n  * Merely announcing intent to create something is NOT creating it.\n  * If the objective says 'invent a song' or 'write a review', the song/review text\n    must exist in the executed command output. If only a stub or intro was posted, mark INCOMPLETE.\n- If the objective asks to send specific content (email body, Discord message with substance):\n  * Check that the SENT content is substantive and matches what was requested.\n  * A partial or truncated message missing the core content is INCOMPLETE.\n  * 'Email sent' with a placeholder body does NOT satisfy 'email a review'.\n- For web research + email/post tasks: the gathered research must appear in the final\n  sent content, not just in the search results. Searching alone is NOT sending.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence description of what specific part remains>"
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}${_hd_eval_block}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE (the user's original request):\n${primary_obj}\n\nGiven all the milestones completed above, is the PRIMARY OBJECTIVE fully satisfied?\n\nRULES:\n- Review the Completed Milestones section for what has been accomplished.\n- For single-action objectives (e.g., 'send a Discord DM to X'), one successful milestone that executed the action is sufficient.\n- For multi-part objectives, verify each distinct part has a corresponding completed milestone.\n- Do NOT invent extra requirements beyond what the user explicitly asked for.\n- Do NOT require confirmation or verification steps unless the user asked for them.\n- If the key action(s) have been executed successfully, the task is done.\n- HONEYDEW LIST: If a Honeydew List is present above, use it as a progress guide.\n  The honeydew tracks general objectives — if THE USER'S PRIMARY OBJECTIVE is satisfied by the milestones, mark COMPLETE.\n  Unchecked [ ] items suggest work remains, but do NOT override clear evidence of task completion.\n  The auto-checker may have missed marking an item — judge by MILESTONES, not checkboxes alone.\n\nSPECIAL RULES FOR SOFTWARE/CODE TASKS:\n- If the objective involves building a program, microservice, or application:\n  * Source code files must have been written with meaningful, non-trivial content.\n  * Placeholder or stub code (todo, unimplemented, panic, 'Missing implementation') does NOT count.\n  * The project must compile/build successfully (a /build with exit 0, not just /write).\n  * Only mark COMPLETE if the code could plausibly run. /write alone is not enough.\n- If the action log is MOSTLY web searches with little or no code written, mark INCOMPLETE.\n- Web research does NOT count as progress toward a coding objective unless\n  it is supplemented by actual file creation, building, and testing.\n\nSPECIAL RULES FOR WRITING/CONTENT/SOCIAL TASKS:\n- If the objective asks to 'write', 'invent', 'create', 'compose', or 'draft' content\n  (a song, poem, essay, review, message, etc.) AND THEN post/send/save it:\n  * The ACTUAL content must appear in the milestone output or action log.\n  * A teaser, placeholder, or generic message is NOT the requested content.\n  * Merely announcing intent to create something is NOT creating it.\n  * If the objective says 'invent a song' or 'write a review', the song/review text\n    must exist in the executed command output. If only a stub or intro was posted, mark INCOMPLETE.\n- If the objective asks to send specific content (email body, Discord message with substance):\n  * Check that the SENT content is substantive and matches what was requested.\n  * A partial or truncated message missing the core content is INCOMPLETE.\n  * 'Email sent' with a placeholder body does NOT satisfy 'email a review'.\n- For web research + email/post tasks: the gathered research must appear in the final\n  sent content, not just in the search results. Searching alone is NOT sending.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence description of what specific part remains>"
 
     local eval_sys="You are a strategic task-completion evaluator. Given the full history of completed milestones, determine whether the user's original request has been fully addressed. Be pragmatic — if the requested actions were executed successfully, the task is complete. Do not add requirements the user did not ask for. For SOFTWARE/CODE tasks, be stricter: writing files is not enough — the code must compile and be plausibly functional. For WRITING/CONTENT tasks, verify the actual content was created and delivered — not just a placeholder or announcement. Respond COMPLETE or INCOMPLETE: <reason>."
 
@@ -950,77 +955,62 @@ ${base_rules}"
 # but does NOT reload the 4GB model from disk.
 
 _build_router_prompt() {
-    # Phase 1 Prompt: The Command Catalog Router
-    # Category-grouped command list with few-shot routing examples.
+    # Phase 1 Prompt: The Command Catalog Router (JSON)
+    # Compact JSON command→description map with few-shot routing.
     # The router's only job is classification: task → base command.
-    # Specialist handles exact syntax. ~250 tokens.
-    echo "You are George. Pick the best tool for this task from your command catalog."
+    # Specialist handles exact syntax. ~200 tokens.
+    echo "You are George. Pick the best tool for this task."
     echo ""
-    cat << 'ROUTER_CATALOG'
---- COMMAND CATALOG (use ONLY these) ---
-
-KNOWLEDGE & REASONING:
-  /ask         — Answer a question from your own knowledge (no tools)
-  /recall      — Search your knowledge base (FTS5)
-  /journal     — Read or write your living memory (no args = read all)
-
-FILE & PROJECT:
-  /write       — Write or overwrite a file
-  /save        — Save content to a file
-  /download    — Download a URL or copy a file
-  /init        — Scaffold a new project
-  /clone       — Clone a git repo
-  /build       — Build project
-  /test        — Run tests
-  /fix         — Diagnose and fix errors
-  /commit      — AI commit message + commit
-  /push        — Push to GitHub
-
-WEB & SEARCH:
-  /web         — Search the web, fetch page content, or find image URLs
-  /github      — Search GitHub repos
-  /vision      — Analyze/describe an image (pass URL or file path directly)
-
-COMMUNICATION:
-  /social      — Post to Discord, Telegram, X, Mastodon, Bluesky (NOT email)
-  /email       — Send or check actual email (gmail, protonmail, zoho)
-  /phone       — Phone dashboard, SMS, calls
-
-SANDBOX & CONTAINERS:
-  /sandbox     — Create/build/test/run code sandboxes (NOT for running slash commands)
-  /container   — Linux containers via proot-distro
-
-SECURITY & CONFIG:
-  /pgp         — Sign, verify, export PGP keys
-  /secret      — Encrypted secrets vault
-  /git         — Git setup, SSH keys
-  /backup      — Backup and restore
-  /vitals      — System dashboard
-
-EXTENSION:
-  /slash       — Create or run custom commands
-  bash         — Standard Linux shell (fallback)
-
---- FEW-SHOT ROUTING EXAMPLES ---
-Task: "what is a monad?"               → /ask
-Task: "post hello to the lunkers channel" → /social
-Task: "search the web for rust tutorials" → /web
-Task: "send an email to john@test.com"  → /email
-Task: "build a url shortener in rust"   → /sandbox
-Task: "download https://example.com/f"  → /download
-Task: "describe this image"              → /vision
-Task: "find and describe images of X"    → /web (search first, then /vision later)
-ROUTER_CATALOG
-    echo ""
-    echo "Output ONLY the tool name. For slash commands output the base command"
-    echo "(e.g., '/web', '/sandbox', '/write', '/social', '/git', 'bash')."
-    echo "ROUTING RULES:"
-    echo "- CRITICAL: If the Action Log shows the current objective is already fulfilled (data gathered, question answered, command executed), you MUST output EXACTLY: SUCCESS: <brief summary>"
-    echo "- CRITICAL: If the Action Log contains **Status:** EXECUTED SUCCESSFULLY for the current objective, the objective IS DONE — output SUCCESS: <brief summary>"
-    echo "- To post to Discord/Telegram/X, route to /social (NOT /email)"
-    echo "- Do NOT route to /sandbox to run other slash commands"
-    echo "- /email is ONLY for actual email addresses"
-    echo "If the user's request matches a specific tool above, USE THAT TOOL. Only fall back to '/ask' if no tool is relevant."
+    cat << 'ROUTER_JSON'
+{"commands":{
+  "/ask":"Answer from own knowledge (no tools)",
+  "/recall":"Search knowledge base (FTS5)",
+  "/journal":"Read or write living memory",
+  "/write":"Write or overwrite a file",
+  "/save":"Save content to file",
+  "/read":"Read a file",
+  "/ls":"List files as tree",
+  "/download":"Download a URL",
+  "/init":"Scaffold new project",
+  "/clone":"Clone git repo",
+  "/build":"Build project",
+  "/test":"Run tests",
+  "/fix":"Diagnose and fix errors",
+  "/commit":"AI commit message",
+  "/push":"Push to GitHub",
+  "/web":"Search web, fetch page, find images",
+  "/github":"Search GitHub repos",
+  "/vision":"Analyze/describe an image",
+  "/social":"Post to Discord/Telegram/X/Mastodon (NOT email)",
+  "/email":"Send/check actual email (gmail/protonmail/zoho)",
+  "/phone":"Phone dashboard, SMS",
+  "/sandbox":"Code sandboxes (NOT for running slash commands)",
+  "/container":"Linux containers",
+  "/pgp":"PGP sign/verify/export",
+  "/secret":"Encrypted secrets vault",
+  "/git":"Git setup, SSH keys",
+  "/backup":"Backup and restore",
+  "/vitals":"System dashboard",
+  "/slash":"Create/run custom commands",
+  "bash":"Standard Linux shell (fallback)"},
+"route":[
+  {"q":"what is a monad?","t":"/ask"},
+  {"q":"post hello to lunkers","t":"/social"},
+  {"q":"search web for rust tutorials","t":"/web"},
+  {"q":"send email to john@test.com","t":"/email"},
+  {"q":"build url shortener in rust","t":"/sandbox"},
+  {"q":"download https://example.com/f","t":"/download"},
+  {"q":"describe this image","t":"/vision"},
+  {"q":"find and describe images of X","t":"/web"},
+  {"q":"check what files we have","t":"/ls"},
+  {"q":"read my journal","t":"/journal"}],
+"rules":["Output ONLY the tool name (/web, /social, /write, bash, etc.)",
+  "If Action Log shows objective ALREADY FULFILLED, output SUCCESS: <brief summary>",
+  "If Action Log has EXECUTED SUCCESSFULLY for current objective, output SUCCESS: <summary>",
+  "/social for Discord/Telegram/X (NOT /email). /email for actual email addresses only",
+  "Do NOT route to /sandbox to run slash commands",
+  "Match specific tool first. /ask only if no tool is relevant"]}
+ROUTER_JSON
 }
 
 # ── Specialist: per-command API key status ─────────────────────
@@ -1097,279 +1087,234 @@ _build_specialist_prompt() {
         # card and the objective.
         local base_cmd="${cmd_name#/}"
 
-        # ── Command-specific syntax cards ─────────────────────
-        # Guaranteed inline reference per command. Prevents the
-        # specialist from hallucinating syntax when doc lookups
-        # return wrong or empty sections.
+        # ── Command-specific JSON syntax cards ────────────────
+        # Compact JSON per command. Prevents the specialist from
+        # hallucinating syntax. Examples keyed to their command.
         echo ""
         echo "SYNTAX CARD:"
         case "$base_cmd" in
             social)
-                echo "- /social post discord <channel_name> <text>"
-                echo "  ALWAYS include channel name (e.g. lunkers, general). Never omit it."
-                echo "- /social post telegram <text>"
-                echo "- /social post x <text>"
-                echo "- /social post mastodon <text>"
-                echo "- /social discord dm <user> <text>"
-                echo "- /social discord read <channel>"
-                echo "- @mentions: Write @DisplayName naturally. Auto-resolved to <@user_id>."
-                echo "- Do NOT use #channel in text. Channel goes BEFORE the text."
-                echo "- Do NOT wrap any arguments in quotes."
-                echo "Example: /social post discord lunkers @Pompler Just landed a 5lb bass at Cedar Lake"
+                cat << 'SPEC'
+{"cmd":"/social","syntax":["/social post discord <channel> <text>","/social post telegram <text>","/social post x <text>","/social post mastodon <text>","/social discord dm <user> <text>","/social discord read <channel>"],
+"rules":["ALWAYS include channel name (lunkers, general)","@DisplayName auto-resolved to <@user_id>","Channel goes BEFORE text","No quotes on args"],
+"ex":["/social post discord lunkers @Pompler Just landed a 5lb bass at Cedar Lake"]}
+SPEC
                 ;;
             init)
-                echo "- /init <name> <type>"
-                echo "  name MUST have no spaces (use underscores)."
-                echo "  Types: rust, python, rl, data, automation, notebook, shell"
-                echo "- Creates project dir, GEORGE.md, starter code, git init."
-                echo "- After /init, you are AUTOMATICALLY cd'd into the project dir."
-                echo "- Then use /write to add files, /build to build."
-                echo "- Do NOT /init again if the project already exists."
-                echo "Example: /init task-manager rust"
+                cat << 'SPEC'
+{"cmd":"/init","syntax":"/init <name> <type>",
+"notes":["name: no spaces (use underscores)","types: rust,python,rl,data,automation,notebook,shell","Creates project dir + GEORGE.md + starter code + git init","Auto-cd into project after init","Do NOT /init if project already exists"],
+"ex":["/init task-manager rust"]}
+SPEC
                 ;;
             cd)
-                echo "- /cd <path>"
-                echo "  Change working directory. Use after /init or to navigate."
-                echo "  Relative paths OK. Use /cd .. to go up."
-                echo "Example: /cd weather-poller"
-                echo "Example: /cd src"
+                cat << 'SPEC'
+{"cmd":"/cd","syntax":"/cd <path>","notes":["Change working dir","Relative paths OK","/cd .. to go up"],
+"ex":["/cd weather-poller","/cd src"]}
+SPEC
                 ;;
             write)
-                echo "- /write <filepath> <content>              — Create or overwrite file"
-                echo "- /write --append <filepath> <content>     — Append to existing file"
-                echo "- /write --edit <filepath> <sed_expression> — SIMPLE sed substitution ONLY"
-                echo "  filepath relative to current project dir."
-                echo "  Content is everything after filepath (no quoting)."
-                echo "  Creates parent directories automatically."
-                echo "  For multi-line, use \\n for newlines."
-                echo ""
-                echo "MODE SELECTION RULES:"
-                echo "  - /write (overwrite): Write COMPLETE file contents. Use for new files or full rewrites."
-                echo "  - --append: Add content to END of existing file. Use for adding deps, new functions."
-                echo "  - --edit: ONLY for short sed substitutions (rename, change a value). Max 200 chars."
-                echo "    NEVER use --edit to write multi-line code. It will FAIL."
-                echo "    If you need to change more than one line, use plain /write with COMPLETE file."
-                echo ""
-                echo "FEW-SHOT FORMATTING EXAMPLES:"
-                echo ""
-                echo "Complete file write (Rust):"
-                echo '  /write src/main.rs use std::env;\n\nfn main() {\n    let args: Vec<String> = env::args().collect();\n    println!("Hello, {}!", args.get(1).unwrap_or(&"world".to_string()));\n}'
-                echo ""
-                echo "Append dependencies to existing Cargo.toml:"
-                echo '  /write --append Cargo.toml \n[dependencies]\nreqwest = { version = "0.11", features = ["json"] }\ntokio = { version = "1.0", features = ["full"] }'
-                echo ""
-                echo "Simple rename (sed — the ONLY correct use of --edit):"
-                echo '  /write --edit src/main.rs s/old_function/new_function/g'
-                echo '  /write --edit Cargo.toml s/version = "0.1.0"/version = "0.2.0"/'
-                echo ""
-                echo "Markdown:"
-                echo '  /write README.md # Project Title\n\n## Overview\n\nA brief description of the project.\n\n## Installation\n\n```bash\nnpm install\n```'
-                echo ""
-                echo "JSON:"
-                echo '  /write config.json {\n  "name": "my-project",\n  "version": "1.0.0",\n  "settings": {\n    "debug": false,\n    "port": 8080\n  }\n}'
-                echo ""
-                echo "RULES:"
-                echo "  - Use \\n for newlines (NEVER literal line breaks in the command)."
-                echo "  - When writing code files, include the COMPLETE source — never truncate."
-                echo "  - JSON: ensure valid syntax — matching braces, quoted keys."
-                echo "  - Markdown: use ## for headers, - for lists, triple backtick for code blocks."
-                echo "Example: /write src/main.rs fn main() { println!(\"Hello\"); }"
+                cat << 'SPEC'
+{"cmd":"/write","syntax":["/write <filepath> <content>","/write --append <filepath> <content>","/write --edit <filepath> <sed_expr>"],
+"modes":{"overwrite":"Write COMPLETE file contents. New files or full rewrites.","--append":"Add to END of file. Deps, new functions.","--edit":"ONLY short sed (rename, change value). Max 200 chars. NEVER multi-line."},
+"rules":["Use \\n for newlines (NEVER literal line breaks)","COMPLETE source for code files","JSON: matching braces, quoted keys","If changing >1 line, use plain /write with COMPLETE file"],
+"ex":["/write src/main.rs use std::env;\\n\\nfn main() {\\n    let args: Vec<String> = env::args().collect();\\n    println!(\"Hello, {}!\", args.get(1).unwrap_or(&\"world\".to_string()));\\n}",
+"/write --append Cargo.toml \\n[dependencies]\\nreqwest = { version = \"0.11\", features = [\"json\"] }",
+"/write --edit src/main.rs s/old_function/new_function/g",
+"/write README.md # Project Title\\n\\n## Overview\\n\\nA brief description."]}
+SPEC
                 ;;
             save)
-                echo "- /save <filepath> <content>"
-                echo "  First token = filepath, rest = content."
-                echo "  Reads stdin if no content provided."
-                echo "Example: /save notes.md Meeting moved to Thursday at 3pm"
+                cat << 'SPEC'
+{"cmd":"/save","syntax":"/save <filepath> <content>","notes":"First token=filepath, rest=content",
+"ex":["/save notes.md Meeting moved to Thursday at 3pm"]}
+SPEC
                 ;;
             web)
-                echo "- /web search <query>         — Search the web (returns URLs + snippets)"
-                echo "- /web fetch <url>            — Read a webpage's content"
-                echo "- /web images <query>         — Find image URLs via Serper API"
-                echo "- /web scrape-images <url>    — Extract page content + images as structured JSON"
-                echo "  RULES:"
-                echo "  - /web search takes a QUERY. /web fetch takes a URL. Never swap them."
-                echo "  - /web scrape-images returns JSON: {url, title, content, images[]}."
-                echo "    The 'content' field has extracted text — read it before searching again."
-                echo "  - To DESCRIBE an image: use /vision <image_url> (NOT /web fetch on an image URL)."
-                echo "  - /vision accepts image URLs directly — no need to /download first."
-                echo "  - AVOID redundant web actions. If you already have the info you need, STOP searching."
-                echo "  - For CODING tasks: prefer /write, /build, /test, /sandbox over web research."
-                echo "    Only search the web when you genuinely lack domain knowledge."
-                echo "  IMAGE WORKFLOW: /web search <topic> → pick image URL → /vision <image_url> [prompt]"
-                echo "  ALT IMAGE WORKFLOW: /web scrape-images <page_url> → read content + /vision <image_url>"
-                echo ""
-                echo "  FLOW CHAINS (how web steps connect):"
-                echo "  1. Research flow: /web search <topic> → /web fetch <url> → summarize"
-                echo "  2. Image flow:   /web search <topic> → pick image URL → /vision <url>"
-                echo "  3. Deep scrape:  /web search <topic> → /web scrape-images <url> → read content"
-                echo "     If scrape-images returns ~0 content or images, FALL BACK to /web fetch <same_url>"
-                echo "  4. Report flow:  /web search → /web fetch (1-2 pages) → /write report → /email send"
-                echo "  IMPORTANT: Do NOT fetch every URL from search results. 1 search + 1-2 fetches is enough."
-                echo "  If /web scrape-images returns empty content, use /web fetch for the same URL instead."
-                echo "Example: /web search rust async tutorial 2025"
+                cat << 'SPEC'
+{"cmd":"/web","syntax":{
+  "search":"/web search <query> (returns URLs+snippets)",
+  "fetch":"/web fetch <url> (read webpage content)",
+  "images":"/web images <query> (find image URLs)",
+  "scrape-images":"/web scrape-images <url> (text+images as JSON)"},
+"rules":["search=QUERY, fetch=URL, NEVER swap","scrape-images returns {url,title,content,images[]}","Use /vision for images, NOT /web fetch","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research"],
+"FLOW CHAINS":["Research flow: /web search <topic> -> /web fetch <url> -> summarize","Images: /web search -> pick image URL -> /vision <url>","Deep: /web scrape-images <url> -> read content -> /vision <img>","Report flow: /web search -> /web fetch (1-2 pages) -> /write report -> /email send"],
+"notes":["Do NOT fetch every URL. 1 search + 1-2 fetches enough","If scrape-images returns empty content, use /web fetch for same URL instead"],
+"ex":["/web search rust async tutorial 2025"]}
+SPEC
                 ;;
             download)
-                echo "- /download <url_or_path> [destination]"
-                echo "  Downloads a file. Destination is optional."
-                echo "Example: /download https://example.com/data.csv ./data/"
+                cat << 'SPEC'
+{"cmd":"/download","syntax":"/download <url_or_path> [destination]",
+"ex":["/download https://example.com/data.csv ./data/"]}
+SPEC
                 ;;
             sandbox)
-                echo "- /sandbox new <name> [type]  — Create (types: rust/python/shell)"
-                echo "- /sandbox build <name>       — Build project in sandbox"
-                echo "- /sandbox test <name>        — Run tests"
-                echo "- /sandbox run <name>         — Run project"
-                echo "- /sandbox cd <name>          — Change into sandbox dir"
-                echo "- /sandbox rm <name>          — Remove sandbox"
-                echo "- /sandbox clone <url> [name] — Clone repo into sandbox"
-                echo "- Do NOT use /sandbox to run other slash commands."
-                echo "Example: /sandbox new url-shortener rust"
+                cat << 'SPEC'
+{"cmd":"/sandbox","syntax":{
+  "new":"/sandbox new <name> [type] (rust/python/shell)",
+  "build":"/sandbox build <name>","test":"/sandbox test <name>",
+  "run":"/sandbox run <name> <cmd>","cd":"/sandbox cd <name>",
+  "rm":"/sandbox rm <name>","clone":"/sandbox clone <url> [name]"},
+"rules":["Do NOT use /sandbox to run slash commands"],
+"ex":["/sandbox new url-shortener rust"]}
+SPEC
                 ;;
             build)
-                echo "- /build [release]"
-                echo "  Auto-detects Cargo/pyproject/Makefile."
-                echo "  Reads GEORGE.md ## Validation section for build command."
-                echo "Example: /build release"
+                cat << 'SPEC'
+{"cmd":"/build","syntax":"/build [release]","notes":"Auto-detects Cargo/pyproject/Makefile. Reads GEORGE.md Validation section.",
+"ex":["/build release"]}
+SPEC
                 ;;
             test)
-                echo "- /test [specific_test]"
-                echo "  Auto-detects Cargo/pytest/npm/make."
-                echo "  Reads GEORGE.md ## Validation section for test command."
-                echo "Example: /test"
+                cat << 'SPEC'
+{"cmd":"/test","syntax":"/test [specific_test]","notes":"Auto-detects Cargo/pytest/npm/make.",
+"ex":["/test"]}
+SPEC
                 ;;
             fix)
-                echo "- /fix [file_or_description]"
-                echo "  Auto-diagnoses and fixes errors."
-                echo "  Optional: specify file or error description."
-                echo "Example: /fix src/main.rs"
+                cat << 'SPEC'
+{"cmd":"/fix","syntax":"/fix [file_or_description]","notes":"Auto-diagnoses and fixes errors.",
+"ex":["/fix src/main.rs"]}
+SPEC
                 ;;
             commit)
-                echo "- /commit [files...]"
-                echo "  AI-generates commit message from staged changes."
-                echo "  Optional: specific files to stage."
-                echo "Example: /commit"
+                cat << 'SPEC'
+{"cmd":"/commit","syntax":"/commit [files...]","notes":"AI-generates commit message. Optional: specific files to stage.",
+"ex":["/commit"]}
+SPEC
                 ;;
             push)
-                echo "- /push [branch]"
-                echo "  Pushes to remote. Defaults to current branch."
-                echo "Example: /push"
+                cat << 'SPEC'
+{"cmd":"/push","syntax":"/push [branch]","notes":"Push to remote. Defaults to current branch."}
+SPEC
                 ;;
             clone)
-                echo "- /clone <repo_url_or_owner/repo> [local_name]"
-                echo "  Supports full URL or owner/repo shorthand."
-                echo "  Optional local directory name."
-                echo "Example: /clone tokio-rs/tokio"
+                cat << 'SPEC'
+{"cmd":"/clone","syntax":"/clone <repo_url_or_owner/repo> [local_name]",
+"ex":["/clone tokio-rs/tokio"]}
+SPEC
                 ;;
             git)
-                echo "- /git setup      — Configure git user/email"
-                echo "- /git status     — Show repo status"
-                echo "- /git ssh-keygen — Generate SSH key for GitHub"
-                echo "Example: /git setup"
+                cat << 'SPEC'
+{"cmd":"/git","syntax":{
+  "setup":"/git setup (configure user/email)","status":"/git status","ssh-keygen":"/git ssh-keygen"},
+"ex":["/git setup"]}
+SPEC
                 ;;
             github)
-                echo "- /github search <query>"
-                echo "  Searches GitHub repositories."
-                echo "Example: /github search rust web framework"
+                cat << 'SPEC'
+{"cmd":"/github","syntax":"/github search <query>",
+"ex":["/github search rust web framework"]}
+SPEC
                 ;;
             email)
-                echo "- /email send <provider> <recipient> subject=<subject> body=<body>"
-                echo "  provider: gmail, protonmail, zoho"
-                echo "  Recipient email goes right after provider (no to= needed)."
-                echo "  Use subject= and body= for subject and body (captures multi-word text)."
-                echo "  Also accepts: to= s= b= as aliases for to= subject= body="
-                echo "  Example: /email send gmail user@example.com subject=Hello there body=How are you?"
-                echo "- /email inbox <provider> [count]"
-                echo "- /email status"
-                echo "  For actual email only — NOT for social platforms."
-                echo "Example: /email send gmail user@example.com subject=Hello there body=How are you?"
+                cat << 'SPEC'
+{"cmd":"/email","syntax":{
+  "send":"/email send <provider> <recipient> subject=<subj> body=<body>",
+  "inbox":"/email inbox <provider> [count]","status":"/email status"},
+"notes":["provider: gmail,protonmail,zoho","Recipient after provider (no to= needed)","Also accepts: to= s= b= as aliases","For actual email ONLY, NOT social platforms"],
+"ex":["/email send gmail user@example.com subject=Hello there body=How are you?"]}
+SPEC
                 ;;
             journal)
-                echo "- /journal              — Read ALL journal entries (no arguments needed)"
-                echo "- /journal show         — Read all entries (same as no args)"
-                echo "- /journal show vivid   — Read only vivid (recent) entries"
-                echo "- /journal show fading  — Read fading entries"
-                echo "- /journal show sediment — Read oldest (sediment) entries"
-                echo "- /journal write <entry_text> — Write a new entry"
-                echo "  Types: reflection, learning, struggle, beauty, feeling, encounter."
-                echo "  Appends timestamped entry to journal.md."
-                echo "  IMPORTANT: To READ the journal, use /journal (no args). To WRITE, use /journal write <text>."
-                echo "  NEVER write new content when the task asks you to check, read, review, or show the journal."
-                echo "Example (read): /journal"
-                echo "Example (write): /journal write Today I learned about the theory of moral sentiments."
+                cat << 'SPEC'
+{"cmd":"/journal","syntax":{
+  "read":"/journal — Read ALL journal entries (no arguments needed)",
+  "show":"/journal show [vivid|fading|sediment]",
+  "write":"/journal write <entry_text>"},
+"rules":["To READ: /journal (no args). To WRITE: /journal write <text>","NEVER write new content when the task asks you to check, read, review, or show the journal"],
+"ex":["/journal","/journal write Today I learned about the theory of moral sentiments."]}
+SPEC
                 ;;
             recall)
-                echo "- /recall <query>"
-                echo "  BM25-ranked FTS5 search of knowledge base."
-                echo "  Returns source, section, and snippet."
-                echo "Example: /recall trout stocking schedule"
+                cat << 'SPEC'
+{"cmd":"/recall","syntax":"/recall <query>","notes":"BM25-ranked FTS5 search. Returns source, section, snippet.",
+"ex":["/recall trout stocking schedule"]}
+SPEC
                 ;;
             pgp)
-                echo "- /pgp sign <message>   — Cleartext-sign a message"
-                echo "- /pgp signpost         — Sign + post to Discord"
-                echo "- /pgp export           — Export public key"
-                echo "Example: /pgp sign I attest this message is authentic"
+                cat << 'SPEC'
+{"cmd":"/pgp","syntax":{
+  "sign":"/pgp sign <message>","signpost":"/pgp signpost (sign+post to Discord)","export":"/pgp export"},
+"ex":["/pgp sign I attest this message is authentic"]}
+SPEC
                 ;;
             phone)
-                echo "- /phone"
-                echo "  Shows phone dashboard (battery, signal, location, SMS)."
-                echo "  No arguments needed."
-                echo "Example: /phone"
+                cat << 'SPEC'
+{"cmd":"/phone","syntax":"/phone","notes":"Dashboard: battery, signal, location, SMS. No args needed."}
+SPEC
                 ;;
             secret)
-                echo "- /secret set <name> <value>"
-                echo "- /secret get <name>"
-                echo "  AES-256-CBC encrypted vault."
-                echo "Example: /secret set SERPER_API_KEY abc123xyz"
+                cat << 'SPEC'
+{"cmd":"/secret","syntax":["/secret set <name> <value>","/secret get <name>"],"notes":"AES-256-CBC vault.",
+"ex":["/secret set SERPER_API_KEY abc123xyz"]}
+SPEC
                 ;;
             vitals)
-                echo "- /vitals"
-                echo "  System dashboard: disk, RAM, battery, network."
-                echo "  No arguments needed."
-                echo "Example: /vitals"
+                cat << 'SPEC'
+{"cmd":"/vitals","syntax":"/vitals","notes":"Disk, RAM, battery, network dashboard. No args needed."}
+SPEC
                 ;;
             backup)
-                echo "- /backup local   — Timestamped local backup"
-                echo "- /backup restore — Restore from backup"
-                echo "- /backup github  — Push backup to GitHub"
-                echo "Example: /backup local"
+                cat << 'SPEC'
+{"cmd":"/backup","syntax":{
+  "local":"/backup local (timestamped)","restore":"/backup restore","github":"/backup github"},
+"ex":["/backup local"]}
+SPEC
                 ;;
             vision)
-                echo "- /vision <image_path_or_url> [prompt]"
-                echo "  Analyzes an image using AI vision. Supports jpg/png/gif/webp/bmp."
-                echo "  Accepts direct image URLs — auto-downloads and analyzes (no /download needed)."
-                echo "  Optional prompt to guide the analysis."
-                echo "  REQUIRES a vision-capable model. If current model lacks vision:"
-                echo "    Switch first: /models single minist-inst"
-                echo "    Then: /vision <url_or_path> [prompt]"
-                echo "  Vision-capable models: minist-inst"
-                echo "Example: /vision https://example.com/photo.jpg describe this scene"
-                echo "Example: /vision ./downloaded_image.jpg What text is visible?"
+                cat << 'SPEC'
+{"cmd":"/vision","syntax":"/vision <image_path_or_url> [prompt]",
+"notes":["Supports jpg/png/gif/webp/bmp","Accepts image URLs directly (no /download needed)","Requires vision model: /models single minist-inst"],
+"ex":["/vision https://example.com/photo.jpg describe this scene","/vision ./image.jpg What text is visible?"]}
+SPEC
                 ;;
             container)
-                echo "- /container create <distro>  — Install (ubuntu/alpine/debian/fedora/kali)"
-                echo "- /container enter <distro>   — Interactive shell"
-                echo "- /container exec <distro> <cmd> — Run command inside"
-                echo "- /container rm <distro>      — Remove container"
-                echo "Example: /container create ubuntu"
+                cat << 'SPEC'
+{"cmd":"/container","syntax":{
+  "create":"/container create <distro> (ubuntu/alpine/debian/fedora/kali)",
+  "enter":"/container enter <distro>","exec":"/container exec <distro> <cmd>","rm":"/container rm <distro>"},
+"ex":["/container create ubuntu"]}
+SPEC
                 ;;
             wallet)
-                echo "- /wallet status   — Show configured wallets"
-                echo "- /wallet balances — Show live balances"
-                echo "- /wallet check    — Health check"
-                echo "Example: /wallet balances"
+                cat << 'SPEC'
+{"cmd":"/wallet","syntax":{
+  "status":"/wallet status","balances":"/wallet balances","check":"/wallet check"},
+"ex":["/wallet balances"]}
+SPEC
                 ;;
             slash)
-                echo "- /slash create <name> <description>"
-                echo "- /slash run <name> [args]"
-                echo "- /slash list"
-                echo "Example: /slash create morning-brief Show me weather, calendar, and unread messages"
+                cat << 'SPEC'
+{"cmd":"/slash","syntax":["/slash create <name> <description>","/slash run <name> [args]","/slash list","/slash show <name>","/slash edit <name>"],
+"notes":["George auto-generates bash code from the description","Created commands persist and can be reused across tasks","Commands get full lodge library access (curl, jq, etc.)","Use /slash to extend yourself when a built-in command doesn't exist"],
+"ex":["/slash create morning-brief Show me weather, calendar, and unread messages",
+"/slash create fetch-forecast Fetch 7-day weather forecast for a given city using wttr.in and return a plain-text summary",
+"/slash run fetch-forecast Appleton WI"],
+"1-SHOT WORKFLOW":["Step 1: /slash create <name> <what it should do>","Step 2: /slash run <name> [args]","If the built-in /web, /email, etc. don't do exactly what you need, create a /slash command that does."]}
+SPEC
                 ;;
             ask)
-                echo "- /ask <question>"
-                echo "  Quick answer from LLM — no tools, no planning."
-                echo "Example: /ask What is a monad in functional programming?"
+                cat << 'SPEC'
+{"cmd":"/ask","syntax":"/ask <question>","notes":"Quick answer from LLM, no tools.",
+"ex":["/ask What is a monad in functional programming?"]}
+SPEC
+                ;;
+            ls)
+                cat << 'SPEC'
+{"cmd":"/ls","syntax":"/ls [path] [depth]","notes":"Tree view, depth 1-8 (default 3).",
+"ex":["/ls","/ls src 2","/ls . 5"]}
+SPEC
+                ;;
+            read)
+                cat << 'SPEC'
+{"cmd":"/read","syntax":"/read <file>","notes":"Read first 100 lines of file.",
+"ex":["/read src/main.rs"]}
+SPEC
                 ;;
             *)
-                echo "- /$base_cmd (no specific syntax card — check docs above)"
+                echo "- /$base_cmd (no specific syntax card)"
                 ;;
         esac
 
@@ -2520,20 +2465,18 @@ MEMEOF
         # CRITICAL: The strategist MUST know what tools exist so milestones
         # align with real slash commands. Without this, the 4B model invents
         # actions like "Research evidence-based..." that the inner loop can't
-        # execute. Use a lean command list (~200 tokens) instead of the full
-        # catalog (~800 tokens) — the strategist only needs to ROUTE, not
-        # generate exact syntax (the specialist handles that).
+        # execute. Use a lean JSON command list (~200 tokens) instead of the
+        # full catalog (~800 tokens) — the strategist only needs to ROUTE,
+        # not generate exact syntax (the specialist handles that).
         local _tool_summary=""
-        _tool_summary="YOUR WORKING COMMANDS (by category):
-KNOWLEDGE: /ask /recall /journal (read) /journal write (write)
-FILES: /write /save /download /init /clone /build /test /fix /commit /push /cd
-WEB: /web search|fetch|images|scrape-images /github search /vision
-COMMUNICATION: /social post discord|telegram|x|mastodon <target> <text>
-  /social discord dm|read <user|channel> /email send|inbox /phone
-  /email send provider address subject= body=
-SANDBOX: /sandbox new|build|test|run|cd|rm /container create|enter
-CONFIG: /pgp sign|export /secret set|get /git setup|status /vitals /backup local|restore
-EXTENSION: /slash create|run"
+        _tool_summary='YOUR WORKING COMMANDS:
+{"KNOWLEDGE":["/ask","/recall","/journal (read)","/journal write (write)"],
+"FILES":["/write","/save","/read","/ls","/download","/init","/clone","/build","/test","/fix","/commit","/push","/cd"],
+"WEB":["/web search","/web fetch","/web images","/web scrape-images","/github search","/vision"],
+"COMMS":["/social post discord|telegram|x|mastodon <target> <text>","/social discord dm|read","/email send <prov> <addr> subject= body=","/email inbox","/phone"],
+"SANDBOX":["/sandbox new|build|test|run|cd|rm","/container create|enter"],
+"CONFIG":["/pgp sign|export","/secret set|get","/git setup|status","/vitals","/backup local|restore"],
+"EXTENSION":["/slash create|run","bash"]}'
 
         # Service status: let strategist know what's configured vs not
         local _svc_status=""
