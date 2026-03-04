@@ -2,6 +2,8 @@
 # ── George: Slash Command Dispatcher ───────────────────────
 # Registers and dispatches /commands similar to Claude Code.
 
+[ -n "${_LIB_COMMANDS_LOADED:-}" ] && return 0; _LIB_COMMANDS_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 LODGE_COMMANDS_DIR="$LODGE_DIR/commands"
 

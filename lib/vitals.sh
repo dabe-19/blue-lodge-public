@@ -12,6 +12,8 @@
 #   VITALS_BATTERY_WARN   — warn when battery < this % (default: 15)
 #   VITALS_BATTERY_CRIT   — block long ops when < this % (default: 5)
 
+[ -n "${_LIB_VITALS_LOADED:-}" ] && return 0; _LIB_VITALS_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 

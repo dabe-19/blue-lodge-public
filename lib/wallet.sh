@@ -12,6 +12,8 @@
 #
 # Dependencies: curl, jq, lib/secrets.sh
 
+[ -n "${_LIB_WALLET_LOADED:-}" ] && return 0; _LIB_WALLET_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 

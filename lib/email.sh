@@ -13,6 +13,8 @@
 # Auth: credentials stored in the secrets vault (/secret set)
 # or provided interactively by the operator.
 
+[ -n "${_LIB_EMAIL_LOADED:-}" ] && return 0; _LIB_EMAIL_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 source "$LODGE_DIR/lib/web.sh"

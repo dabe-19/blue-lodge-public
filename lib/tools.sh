@@ -3,6 +3,8 @@
 # Parses LLM responses and applies file/shell operations.
 # Permissioned: asks before destructive actions.
 
+[ -n "${_LIB_TOOLS_LOADED:-}" ] && return 0; _LIB_TOOLS_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 

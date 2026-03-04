@@ -3,6 +3,8 @@
 # Lightweight project isolation for Termux/Ubuntu.
 # Uses proot or directory isolation — no Docker needed.
 
+[ -n "${_LIB_SANDBOX_LOADED:-}" ] && return 0; _LIB_SANDBOX_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 

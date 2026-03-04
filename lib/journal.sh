@@ -10,6 +10,8 @@
 #
 # Types: reflection, learning, struggle, beauty, feeling, encounter
 
+[ -n "${_LIB_JOURNAL_LOADED:-}" ] && return 0; _LIB_JOURNAL_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 

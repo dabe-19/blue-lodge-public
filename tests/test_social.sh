@@ -15,6 +15,10 @@ _setup_social() {
     export GEORGE_COOKIES_DIR="$GEORGE_CONFIG_DIR/cookies"
     export GEORGE_CACHE_DIR="$GEORGE_CONFIG_DIR/cache"
     api_init 2>/dev/null
+    # Re-derive DB paths after GEORGE_CONFIG_DIR change (include guard
+    # prevents social.sh re-source from doing this automatically)
+    MASTODON_INSTANCES_DB="$GEORGE_CONFIG_DIR/mastodon_instances.db"
+    DISCORD_USERS_DB="$GEORGE_CONFIG_DIR/discord_users.db"
     source "$LODGE_DIR/lib/social.sh"
 }
 

@@ -14,6 +14,8 @@
 # The model registry is the ONLY place model-specific knowledge lives.
 # Everything else (llm.sh, agent.sh, etc.) is model-agnostic.
 
+[ -n "${_LIB_MODELS_LOADED:-}" ] && return 0; _LIB_MODELS_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 
 # ── Model Slots ────────────────────────────────────────────────
@@ -56,9 +58,9 @@ _MODELS_REGISTRY=(
     # granite4:3b and granite4:3b-h are instruct-only (no thinking).
     # ibm/granite4.0-preview:tiny is the thinking variant (uses .thinking field).
     # Preview model emits <response>...</response> tags — stripped by llm.sh.
-    "granite4^blue-lodge-granite4:3b^granite4:3b^instruct^0^none^<|end_of_text|>^0.15^1.0^0.0^32768^8192^0.85^50^0.0^IBM Granite 4 Micro instruct. Fast structured output."
-    "granite4-h^blue-lodge-granite4-h:3b^granite4:3b-h^instruct^0^none^<|end_of_text|>^0.15^1.0^0.0^32768^8192^0.85^50^0.0^IBM Granite 4 hybrid quant. Smaller footprint (1.9GB vs 2.1GB)."
-    "granite4-preview^blue-lodge-granite4-preview:tiny^ibm/granite4.0-preview:tiny^thinking^1^system^<|end_of_text|>^0.6^1.0^0.0^32768^8192^0.85^50^0.0^IBM Granite 4 Preview. Extended thinking with concise output."
+    "granite4^blue-lodge-granite4:3b^granite4:3b^instruct^0^none^<|end_of_text|>^0.0^1.0^0.0^32768^8192^1.0^0^0.0^IBM Granite 4 Micro instruct. Fast structured output."
+    "granite4-h^blue-lodge-granite4-h:3b^granite4:3b-h^instruct^0^none^<|end_of_text|>^0.0^1.0^0.0^32768^8192^1.0^0^0.0^IBM Granite 4 hybrid quant. Smaller footprint (1.9GB vs 2.1GB)."
+    "granite4-preview^blue-lodge-granite4-preview:tiny^ibm/granite4.0-preview:tiny^thinking^1^system^<|end_of_text|>^0.6^1.0^0.0^32768^8192^1.0^0^0.0^IBM Granite 4 Preview. Extended thinking with concise output."
 
     # ── Ministral family ──────────────────────────────────────
     # Reasoning model needs system prompt instruction for <think> tags (no native thinking template).
@@ -75,8 +77,8 @@ _MODELS_REGISTRY=(
     # QAT (Quantization-Aware Trained) 4B variant preserves accuracy at lower precision.
     # Google publishes no specific sampling recommendations; we use conservative defaults.
     # Stop token: <end_of_turn>. Chat template: "gemma" (already mapped in _models_chat_template_name).
-    "gemma3-4b-inst^blue-lodge-gemma3-inst:4b^hf.co/unsloth/gemma-3-4b-it-qat-GGUF:UD-Q5_K_XL^instruct^0^none^<end_of_turn>^0.15^1.0^0.0^32768^8192^0.9^40^0.0^Google Gemma 3 4B QAT instruct. Vision-capable multimodal."
-    "gemma3-1b-inst^blue-lodge-gemma3-inst:1b^hf.co/unsloth/gemma-3-1b-it-GGUF:BF16^instruct^0^none^<end_of_turn>^0.15^1.0^0.0^32768^8192^0.9^40^0.0^Google Gemma 3 1B instruct. Ultra-lightweight text-only."
+    "gemma3-4b-inst^blue-lodge-gemma3-inst:4b^hf.co/unsloth/gemma-3-4b-it-qat-GGUF:UD-Q5_K_XL^instruct^0^none^<end_of_turn>^1.0^1.0^0.0^32768^8192^0.95^64^0.0^Google Gemma 3 4B QAT instruct. Vision-capable multimodal."
+    "gemma3-1b-inst^blue-lodge-gemma3-inst:1b^hf.co/unsloth/gemma-3-1b-it-GGUF:BF16^instruct^0^none^<end_of_turn>^1.0^1.0^0.0^32768^8192^0.95^64^0.0^Google Gemma 3 1B instruct. Ultra-lightweight text-only."
 
     # ── Qwen 3.5 family ───────────────────────────────────────
     # NOTE: As of July 2025, Qwen3.5 GGUFs do NOT work in Ollama.
@@ -87,12 +89,12 @@ _MODELS_REGISTRY=(
     # Non-thinking: temp=0.7 (general) / 1.0 (reasoning), top_p=0.8, top_k=20
     # Max context: 262,144 (256K). Has mmproj for vision.
     # Uses same ChatML format and /no_think mechanism as Qwen 3.
-    "qwen35-2b^blue-lodge-qwen35:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL^instruct^0^none^<|im_end|>^0.15^1.0^0.0^32768^16384^0.8^20^0.0^Qwen 3.5 2B instruct (UD-Q8). Downloaded via Ollama; usable by both backends."
-    "qwen35-2b-q8^blue-lodge-qwen35-q8:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:Q8_0^instruct^0^none^<|im_end|>^0.15^1.0^0.0^32768^16384^0.8^20^0.0^Qwen 3.5 2B instruct (Q8_0). Downloaded via Ollama; usable by both backends."
-    "qwen35-4b^blue-lodge-qwen35:4b^hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL^instruct^0^none^<|im_end|>^0.15^1.0^0.0^32768^16384^0.8^20^0.0^Qwen 3.5 4B instruct (UD-Q4). Downloaded via Ollama; usable by both backends."
+    "qwen35-2b^blue-lodge-qwen35:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL^instruct^0^none^<|im_end|>^1.0^1.0^1.5^32768^16384^0.95^20^0.0^Qwen 3.5 2B instruct (UD-Q8). Downloaded via Ollama; usable by both backends."
+    "qwen35-2b-q8^blue-lodge-qwen35-q8:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:Q8_0^instruct^0^none^<|im_end|>^1.0^1.0^1.5^32768^16384^0.95^20^0.0^Qwen 3.5 2B instruct (Q8_0). Downloaded via Ollama; usable by both backends."
+    "qwen35-4b^blue-lodge-qwen35:4b^hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL^instruct^0^none^<|im_end|>^1.0^1.0^1.5^32768^16384^0.95^20^0.0^Qwen 3.5 4B instruct (UD-Q4). Downloaded via Ollama; usable by both backends."
     # Thinking variants: enable reasoning on the same base weights.
     # These use the Qwen /no_think mechanism and higher temperature for exploration.
-    "qwen35-2b-think^blue-lodge-qwen35-think:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.0^1.5^32768^32768^0.95^20^0.0^Qwen 3.5 2B thinking. Thinking mode requires llama.cpp --chat-template-kwargs."
+    "qwen35-2b-think^blue-lodge-qwen35-think:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.0^0.0^32768^32768^0.95^20^0.0^Qwen 3.5 2B thinking. Thinking mode requires llama.cpp --chat-template-kwargs."
     "qwen35-4b-think^blue-lodge-qwen35-think:4b^hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.0^1.5^32768^32768^0.95^20^0.0^Qwen 3.5 4B thinking. Thinking mode requires llama.cpp --chat-template-kwargs."
 
     # ── Phi-4 family (Microsoft) ───────────────────────────────

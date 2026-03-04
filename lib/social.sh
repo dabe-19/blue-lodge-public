@@ -3,6 +3,8 @@
 # Post, read, and interact on X, Mastodon, Bluesky, Discord,
 # and Telegram — all via pure curl + their REST APIs.
 
+[ -n "${_LIB_SOCIAL_LOADED:-}" ] && return 0; _LIB_SOCIAL_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/api.sh"
 

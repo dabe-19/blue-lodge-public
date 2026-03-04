@@ -3,6 +3,8 @@
 # Pure-curl HTTP client with auth, rate-limit awareness, and
 # JSON helpers. Foundation for social media & provider integrations.
 
+[ -n "${_LIB_API_LOADED:-}" ] && return 0; _LIB_API_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 

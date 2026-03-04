@@ -3,6 +3,8 @@
 # Multi-backend LLM wrapper. Supports Ollama and llama.cpp (llama-server).
 # Auto-detects which backend is available; falls back gracefully.
 
+[ -n "${_LIB_LLM_LOADED:-}" ] && return 0; _LIB_LLM_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 source "$LODGE_DIR/lib/models.sh"

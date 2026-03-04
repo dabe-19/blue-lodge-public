@@ -3,6 +3,8 @@
 # The core plan→execute→memory cycle.
 # Each step is a small LLM call with full memory context.
 
+[ -n "${_LIB_AGENT_LOADED:-}" ] && return 0; _LIB_AGENT_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 source "$LODGE_DIR/lib/llm.sh"
@@ -95,6 +97,18 @@ RULES:
     raw_list=$(echo "$raw_list" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
     raw_list=$(echo "$raw_list" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
     raw_list=$(echo "$raw_list" | sed '/^[[:space:]]*$/d')
+
+    # ── INLINE LIST SPLITTING ─────────────────────────────────
+    # Some models (gemma, granite) output all items on one line:
+    #   "1. Do thing one  2. Do thing two  3. Do thing three"
+    # or without leading spaces:
+    #   "1. Do thing one 2. Do thing two"
+    # Split these into separate lines BEFORE the line-by-line parser.
+    # Insert a newline before any digit-dot pattern preceded by a
+    # space (but not at the start of a line, to preserve first item).
+    raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\+\.\)/\1\n\2/g')
+    # Also handle "N)" format
+    raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\+)\)/\1\n\2/g')
 
     # Parse numbered lines and write as checklist
     {
@@ -343,9 +357,13 @@ _agent_evaluate_completion() {
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: overall-eval <- macro_memory ($(wc -l < "$macro_file") lines)"
 
     # Supplement with recent micro_memory for action-level detail
+    # CRITICAL: P2 needs SUFFICIENT context to distinguish "research done"
+    # from "task fully complete". Previously capped at 30 lines — too low
+    # for the evaluator to see what actions ACTUALLY ran. Match the context
+    # depth of the final task summarizer so P2 has the same judgment quality.
     local micro_context=""
     local _micro_ctx_max
-    _micro_ctx_max=$(_agent_thinking_context_limit 30)
+    _micro_ctx_max=$(_agent_thinking_context_limit 60)
     if [ -n "$micro_file" ] && [ -f "$micro_file" ]; then
         local _micro_lines
         _micro_lines=$(wc -l < "$micro_file")
@@ -373,13 +391,13 @@ _agent_evaluate_completion() {
         local _hd_total _hd_done
         _hd_total=$(grep -cE '^[0-9]+\. \[[ x]\]' "$_hd_eval_file" 2>/dev/null || echo 0)
         _hd_done=$(grep -cE '^[0-9]+\. \[x\]' "$_hd_eval_file" 2>/dev/null || echo 0)
-        _hd_eval_block="\n\n>>> HONEYDEW LIST (${_hd_done}/${_hd_total} complete) <<<\n${_hd_eval_content}\n>>> The honeydew list tracks general objectives. Use it as a GUIDE, not a rigid gate. If the PRIMARY OBJECTIVE is satisfied by the completed milestones, mark COMPLETE even if a honeydew item is unchecked — the auto-checker may have missed a match. <<<"
+        _hd_eval_block="\n\n>>> HONEYDEW LIST (${_hd_done}/${_hd_total} complete) <<<\n${_hd_eval_content}\n>>> HONEYDEW ENFORCEMENT: Items marked [ ] are NOT complete. If ANY item is still [ ], the task is INCOMPLETE — you must return INCOMPLETE with a description of what remains. The auto-checker marks items [x] when milestones complete them. Do NOT assume an unchecked item was done unless the milestones explicitly show it was. Only mark COMPLETE when ALL items are [x] or the PRIMARY OBJECTIVE is PROVABLY satisfied by examining the ACTUAL COMMANDS EXECUTED (not just summaries). <<<"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: overall-eval <- honeydew (${_hd_done}/${_hd_total})"
     fi
 
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}${_hd_eval_block}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE (the user's original request):\n${primary_obj}\n\nGiven all the milestones completed above, is the PRIMARY OBJECTIVE fully satisfied?\n\nRULES:\n- Review the Completed Milestones section for what has been accomplished.\n- For single-action objectives (e.g., 'send a Discord DM to X'), one successful milestone that executed the action is sufficient.\n- For multi-part objectives, verify each distinct part has a corresponding completed milestone.\n- Do NOT invent extra requirements beyond what the user explicitly asked for.\n- Do NOT require confirmation or verification steps unless the user asked for them.\n- If the key action(s) have been executed successfully, the task is done.\n- HONEYDEW LIST: If a Honeydew List is present above, use it as a progress guide.\n  The honeydew tracks general objectives — if THE USER'S PRIMARY OBJECTIVE is satisfied by the milestones, mark COMPLETE.\n  Unchecked [ ] items suggest work remains, but do NOT override clear evidence of task completion.\n  The auto-checker may have missed marking an item — judge by MILESTONES, not checkboxes alone.\n\nSPECIAL RULES FOR SOFTWARE/CODE TASKS:\n- If the objective involves building a program, microservice, or application:\n  * Source code files must have been written with meaningful, non-trivial content.\n  * Placeholder or stub code (todo, unimplemented, panic, 'Missing implementation') does NOT count.\n  * The project must compile/build successfully (a /build with exit 0, not just /write).\n  * Only mark COMPLETE if the code could plausibly run. /write alone is not enough.\n- If the action log is MOSTLY web searches with little or no code written, mark INCOMPLETE.\n- Web research does NOT count as progress toward a coding objective unless\n  it is supplemented by actual file creation, building, and testing.\n\nSPECIAL RULES FOR WRITING/CONTENT/SOCIAL TASKS:\n- If the objective asks to 'write', 'invent', 'create', 'compose', or 'draft' content\n  (a song, poem, essay, review, message, etc.) AND THEN post/send/save it:\n  * The ACTUAL content must appear in the milestone output or action log.\n  * A teaser, placeholder, or generic message is NOT the requested content.\n  * Merely announcing intent to create something is NOT creating it.\n  * If the objective says 'invent a song' or 'write a review', the song/review text\n    must exist in the executed command output. If only a stub or intro was posted, mark INCOMPLETE.\n- If the objective asks to send specific content (email body, Discord message with substance):\n  * Check that the SENT content is substantive and matches what was requested.\n  * A partial or truncated message missing the core content is INCOMPLETE.\n  * 'Email sent' with a placeholder body does NOT satisfy 'email a review'.\n- For web research + email/post tasks: the gathered research must appear in the final\n  sent content, not just in the search results. Searching alone is NOT sending.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence description of what specific part remains>"
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}${_hd_eval_block}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE (the user's original request):\n${primary_obj}\n\nGiven all the milestones completed above, is the PRIMARY OBJECTIVE fully satisfied?\n\nRULES:\n- Review the Completed Milestones section for what has been accomplished.\n- CHECK ACTION-CLASS TAGS: Milestones tagged 'RESEARCH_ONLY' mean data was gathered but NO output action (write, email, save, post) was performed. If the primary objective requires DELIVERING content (email, file, post), RESEARCH_ONLY milestones do NOT satisfy it.\n- For single-action objectives (e.g., 'send a Discord DM to X'), one successful milestone that executed the action is sufficient.\n- For multi-part objectives, verify each distinct part has a corresponding completed milestone WITH the right action class.\n- Do NOT invent extra requirements beyond what the user explicitly asked for.\n- Do NOT require confirmation or verification steps unless the user asked for them.\n- If the key action(s) have been executed successfully, the task is done.\n- HONEYDEW LIST: If a Honeydew List is present above, it is a HARD constraint.\n  Items marked [ ] are NOT done. If ANY item is [ ], return INCOMPLETE.\n  Only mark COMPLETE when ALL items are [x] OR the milestones clearly show the work was done.\n- CRITICAL: Searching the web or gathering data is NOT the same as writing a report, sending an email, or posting content. If the objective says 'write a report AND email it', completing only the research is INCOMPLETE.\n\nSPECIAL RULES FOR SOFTWARE/CODE TASKS:\n- If the objective involves building a program, microservice, or application:\n  * Source code files must have been written with meaningful, non-trivial content.\n  * Placeholder or stub code (todo, unimplemented, panic, 'Missing implementation') does NOT count.\n  * The project must compile/build successfully (a /build with exit 0, not just /write).\n  * Only mark COMPLETE if the code could plausibly run. /write alone is not enough.\n- If the action log is MOSTLY web searches with little or no code written, mark INCOMPLETE.\n- Web research does NOT count as progress toward a coding objective unless\n  it is supplemented by actual file creation, building, and testing.\n\nSPECIAL RULES FOR WRITING/CONTENT/SOCIAL TASKS:\n- If the objective asks to 'write', 'invent', 'create', 'compose', or 'draft' content\n  (a song, poem, essay, review, message, etc.) AND THEN post/send/save it:\n  * The ACTUAL content must appear in the milestone output or action log.\n  * A teaser, placeholder, or generic message is NOT the requested content.\n  * Merely announcing intent to create something is NOT creating it.\n  * If the objective says 'invent a song' or 'write a review', the song/review text\n    must exist in the executed command output. If only a stub or intro was posted, mark INCOMPLETE.\n- If the objective asks to send specific content (email body, Discord message with substance):\n  * Check that the SENT content is substantive and matches what was requested.\n  * A partial or truncated message missing the core content is INCOMPLETE.\n  * 'Email sent' with a placeholder body does NOT satisfy 'email a review'.\n- For web research + email/post tasks: the gathered research must appear in the final\n  sent content, not just in the search results. Searching alone is NOT sending.\n\nSPECIAL RULES FOR RESEARCH+DELIVERY TASKS:\n- Tasks like 'research X and email a report' require BOTH research AND delivery.\n- If only /web search commands ran (Action-Class: RESEARCH_ONLY) but no /write, /email,\n  /save, or /social commands ran, the task is INCOMPLETE regardless of what the summaries say.\n- A milestone summary describing what was found does NOT equal a written/sent report.\n- Look for ACTUAL /email send, /write, or /save commands in the milestones.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence description of what specific part remains>"
 
-    local eval_sys="You are a strategic task-completion evaluator. Given the full history of completed milestones, determine whether the user's original request has been fully addressed. Be pragmatic — if the requested actions were executed successfully, the task is complete. Do not add requirements the user did not ask for. For SOFTWARE/CODE tasks, be stricter: writing files is not enough — the code must compile and be plausibly functional. For WRITING/CONTENT tasks, verify the actual content was created and delivered — not just a placeholder or announcement. Respond COMPLETE or INCOMPLETE: <reason>."
+    local eval_sys="You are a strategic task-completion evaluator. Given the full history of completed milestones, determine whether the user's original request has been fully addressed. Be pragmatic — if the requested actions were executed successfully, the task is complete. Do not add requirements the user did not ask for. For SOFTWARE/CODE tasks, be stricter: writing files is not enough — the code must compile and be plausibly functional. For WRITING/CONTENT tasks, verify the actual content was created and delivered — not just a placeholder or announcement. For RESEARCH+DELIVERY tasks (e.g., 'research X and email a report'), verify that BOTH the research AND the delivery action (/write, /email, /save) were executed — completing only the research phase is INCOMPLETE. Check Action-Class tags: RESEARCH_ONLY milestones do not satisfy delivery requirements. Respond COMPLETE or INCOMPLETE: <reason>."
 
     ui_think "Evaluator (pass 2): assessing overall task completion..."
     local verdict
@@ -1005,8 +1023,9 @@ _build_router_prompt() {
   {"q":"check what files we have","t":"/ls"},
   {"q":"read my journal","t":"/journal"}],
 "rules":["Output ONLY the tool name (/web, /social, /write, bash, etc.)",
-  "If Action Log shows objective ALREADY FULFILLED, output SUCCESS: <brief summary>",
-  "If Action Log has EXECUTED SUCCESSFULLY for current objective, output SUCCESS: <summary>",
+  "Output SUCCESS: <brief summary> ONLY if the Action Log has **Action:** entries with EXECUTED SUCCESSFULLY for the current objective",
+  "If the Action Log has NO **Action:** entries yet, you MUST pick a tool — NEVER output SUCCESS",
+  "Research Context from previous milestones does NOT count as actions taken — you must still execute a command",
   "/social for Discord/Telegram/X (NOT /email). /email for actual email addresses only",
   "Do NOT route to /sandbox to run slash commands",
   "Match specific tool first. /ask only if no tool is relevant"]}
@@ -1426,13 +1445,25 @@ agent_inner_loop() {
     # results, fetched content, etc.), inject it so this milestone's
     # specialist can use the gathered data.  Deleted after injection
     # so it doesn't leak into subsequent milestones.
+    #
+    # CRITICAL: The research buffer is DATA from a prior milestone —
+    # it does NOT mean THIS milestone is complete. The router and
+    # specialist must still execute THIS milestone's objective using
+    # the tools (e.g., /write, /email, /save). The directive below
+    # makes this explicit to prevent the model from skipping execution.
     local _research_buf="$george_dir/research_buffer.md"
     if [ -f "$_research_buf" ]; then
+        # Cap research buffer at 1500 chars to prevent context flood
+        local _rb_content
+        _rb_content=$(head -c 1500 "$_research_buf")
         echo "## Research Context (from previous milestone)" >> "$micro_file"
-        cat "$_research_buf" >> "$micro_file"
+        echo ">>> USE THIS DATA to complete your current objective below." >> "$micro_file"
+        echo ">>> This data was gathered in a PRIOR milestone. It does NOT mean your current milestone is done." >> "$micro_file"
+        echo ">>> You MUST still execute a command (/write, /email, /save, etc.) to fulfill THIS milestone. <<<" >> "$micro_file"
+        echo "$_rb_content" >> "$micro_file"
         echo "" >> "$micro_file"
         rm -f "$_research_buf"
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: research buffer -> micro_memory"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: research buffer -> micro_memory (${#_rb_content} chars)"
     fi
 
     # ── MILESTONE HISTORY INJECTION ────────────────────────────
@@ -1441,11 +1472,15 @@ agent_inner_loop() {
     # this, each milestone's specialist starts blind — it can't see
     # data gathered by earlier milestones (e.g., web research results
     # that should inform an email draft).
+    #
+    # CAP: Only inject the last 3 milestones (most recent context).
+    # Full history bloats micro_memory and causes the router to
+    # interpret past research as current-milestone completion.
     if [ -f "$george_dir/macro_memory.md" ]; then
         local _milestone_lines
-        _milestone_lines=$(awk '/^- Step \[/{found=1} found{print} /^$/{if(found) found=0}' "$george_dir/macro_memory.md" 2>/dev/null)
+        _milestone_lines=$(awk '/^- Step \[/{found=1} found{print} /^$/{if(found) found=0}' "$george_dir/macro_memory.md" 2>/dev/null | tail -15)
         if [ -n "$_milestone_lines" ]; then
-            echo "## Prior Milestones (what has already been accomplished)" >> "$micro_file"
+            echo "## Prior Milestones (what previous milestones accomplished — NOT actions taken in THIS milestone)" >> "$micro_file"
             echo "$_milestone_lines" >> "$micro_file"
             echo "" >> "$micro_file"
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: milestone history -> micro_memory ($(echo "$_milestone_lines" | wc -l) lines)"
@@ -1476,16 +1511,26 @@ agent_inner_loop() {
         local router_sys=$(_build_router_prompt)
         local _route_now
         _route_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
-        local route_prompt="Current date/time: ${_route_now}\n\nReview the Action Log. If the objective is ALREADY FULFILLED by the actions taken (data gathered, command executed, content created), output SUCCESS: <brief summary>. Otherwise, output the SINGLE tool name needed for the next action."
+        local route_prompt="Current date/time: ${_route_now}\n\nReview the Action Log below. Output SUCCESS ONLY if the Action Log contains a command that was EXECUTED SUCCESSFULLY in THIS milestone (look for '**Action:**' entries with '**Status:** EXECUTED SUCCESSFULLY'). The 'Research Context' and 'Prior Milestones' sections show data from PREVIOUS milestones — they do NOT count as actions taken in THIS milestone.\n\nIf no **Action:** entries exist yet in the log, you MUST route to a tool — do NOT output SUCCESS.\nIf the only data present is from 'Research Context (from previous milestone)' or 'Prior Milestones', you MUST route to a tool to USE that data (e.g., /write, /email, /save).\n\nOtherwise, output the SINGLE tool name needed for the next action."
 
         # ── RESEARCH SUFFICIENCY GUIDANCE ──────────────────────
         # For objectives involving web research, tell the router to
         # output SUCCESS once there's enough gathered data instead
         # of exhaustively scraping every URL from search results.
+        # ONLY applies to milestones that are explicitly about research/search.
+        # Does NOT apply to write/email/save milestones that have injected
+        # research context — those need to execute their delivery action.
         local _obj_lower_rt
         _obj_lower_rt=$(echo "$micro_objective" | tr '[:upper:]' '[:lower:]')
+        local _has_action_entries
+        _has_action_entries=$(grep -c '^\*\*Action:\*\*' "$micro_file" 2>/dev/null)
+        _has_action_entries=${_has_action_entries:-0}
         if [[ "$_obj_lower_rt" == *search* ]] || [[ "$_obj_lower_rt" == *web* ]] || [[ "$_obj_lower_rt" == *fetch* ]] || [[ "$_obj_lower_rt" == *find* ]] || [[ "$_obj_lower_rt" == *look*up* ]]; then
-            route_prompt="${route_prompt}\nWEB RESEARCH RULE: You have ENOUGH data after 1 search + 1-2 page fetches. Do NOT fetch every URL. Once you have substantive content, output SUCCESS with a summary of findings."
+            # Only inject sufficiency for research-type milestones
+            # AND only if actual actions have been logged in this milestone
+            if [ "$_has_action_entries" -gt 0 ]; then
+                route_prompt="${route_prompt}\nWEB RESEARCH RULE: You have ENOUGH data after 1 search + 1-2 page fetches. Do NOT fetch every URL. Once you have substantive content from commands YOU executed (not from Research Context), output SUCCESS with a summary of findings."
+            fi
         fi
 
         route_prompt="${route_prompt}\n\n$inner_context"
@@ -1539,17 +1584,29 @@ agent_inner_loop() {
             [ -z "$_milestone_summary" ] && _milestone_summary="$summary"
 
             if [ -n "$_last_success_cmd" ]; then
+                # ── TAG milestone with action class ────────────
+                # Distinguish research-only milestones from action
+                # milestones so the P2 evaluator doesn't treat "web
+                # search data gathered" as "email sent" or "file written".
+                local _action_class="ACTION"
+                if [[ "$_last_success_cmd" == /web* ]]; then
+                    _action_class="RESEARCH_ONLY"
+                elif [[ "$_last_success_cmd" == /recall* ]] || [[ "$_last_success_cmd" == /ask* ]]; then
+                    _action_class="RESEARCH_ONLY"
+                fi
                 {
                     echo ""
                     echo "- Step [$_step_ts]: $micro_objective"
                     echo "  Summary: $_milestone_summary"
                     echo "  Command: $_last_success_cmd"
+                    echo "  Action-Class: $_action_class"
                 } >> "$george_dir/macro_memory.md"
             else
                 {
                     echo ""
                     echo "- Step [$_step_ts]: $micro_objective"
                     echo "  Summary: $_milestone_summary"
+                    echo "  Action-Class: UNKNOWN"
                 } >> "$george_dir/macro_memory.md"
             fi
 
@@ -1577,8 +1634,8 @@ agent_inner_loop() {
                 capture && ok && printing && in_fence { print }
             ' "$micro_file" 2>/dev/null)
             if [ -n "$_web_outputs" ]; then
-                # Cap at 3000 chars to carry forward richer research context
-                echo "${_web_outputs:0:3000}" > "$george_dir/research_buffer.md"
+                # Cap at 1500 chars to prevent context flood on injection
+                echo "${_web_outputs:0:1500}" > "$george_dir/research_buffer.md"
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] research buffer saved (%d chars)\n' "${#_web_outputs}" > /dev/tty 2>/dev/null
             fi
 

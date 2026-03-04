@@ -173,13 +173,13 @@ describe "Sampling parameter resolver (_llm_build_opts)"
 
   it "_llm_build_opts includes top_p from model registry" && {
     unset LLM_SCENARIO
-    # Switch to granite4 which has top_p=0.85
+    # Switch to granite4 which has top_p=1.0
     _saved_model="$LODGE_MODEL"
     LODGE_MODEL="blue-lodge-granite4:3b"
     _result=$(_llm_build_opts 512)
     LODGE_MODEL="$_saved_model"
     _tp=$(echo "$_result" | jq -r '.top_p')
-    assert_eq "$_tp" "0.85"
+    assert_eq "$_tp" "1.0"
   }
 
   it "_llm_build_opts includes top_k from model registry" && {
@@ -189,15 +189,15 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     _result=$(_llm_build_opts 512)
     LODGE_MODEL="$_saved_model"
     _tk=$(echo "$_result" | jq -r '.top_k')
-    assert_eq "$_tk" "50"
+    assert_eq "$_tk" "0"
   }
 
   it "_llm_build_opts includes min_p from model registry" && {
     unset LLM_SCENARIO
     _result=$(_llm_build_opts 512)
     _mp=$(echo "$_result" | jq -r '.min_p')
-    # All current models have min_p=0
-    assert_eq "$_mp" "0"
+    # All current models have min_p=0.0
+    assert_eq "$_mp" "0.0"
   }
 
   it "thinking directive injected for strategist scenario" && {
@@ -261,8 +261,8 @@ describe "models_apply_defaults"
 
   it "models_apply_defaults top_p/top_k track model switch" && {
     models_apply_defaults "blue-lodge-granite4:3b" 2>/dev/null
-    assert_eq "$LLM_TOP_P" "0.85"
-    assert_eq "$LLM_TOP_K" "50"
+    assert_eq "$LLM_TOP_P" "1.0"
+    assert_eq "$LLM_TOP_K" "0"
     # Restore
     models_apply_defaults "blue-lodge-minist-inst:4b" 2>/dev/null
   }
@@ -894,7 +894,7 @@ describe "Model family system"
 
     models_info "granite4"
     assert_eq "$_ME_STOP" '<|end_of_text|>' "granite4 stop token"
-    assert_eq "$_ME_TEMP" "0.15" "granite4 temp"
+    assert_eq "$_ME_TEMP" "0.0" "granite4 temp"
 
     models_info "llama32"
     assert_eq "$_ME_STOP" '<|eot_id|>' "llama32 stop token"

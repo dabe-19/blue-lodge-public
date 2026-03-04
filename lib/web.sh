@@ -4,6 +4,8 @@
 # curl + sed/awk (with optional w3m/lynx for better rendering).
 # George can now read the web and act on what he finds.
 
+[ -n "${_LIB_WEB_LOADED:-}" ] && return 0; _LIB_WEB_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/api.sh"
 

@@ -10,6 +10,8 @@
 #   - READ_CALL_LOG          (call history)
 #   - RECEIVE_SMS            (SMS notifications)
 
+[ -n "${_LIB_PHONE_LOADED:-}" ] && return 0; _LIB_PHONE_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 

@@ -3,6 +3,8 @@
 # Lightweight TUI components using ANSI escape codes.
 # No ncurses, no Python — pure bash for mobile.
 
+[ -n "${_LIB_UI_LOADED:-}" ] && return 0; _LIB_UI_LOADED=1
+
 # ── Colors ─────────────────────────────────────────────────────
 export C_RESET='\033[0m'
 export C_BOLD='\033[1m'

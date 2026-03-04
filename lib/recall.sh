@@ -16,6 +16,8 @@
 # Overhead: ~50-100KB on disk, <1ms per query, 0 RAM.
 # No network, no embedding model, no Python required.
 
+[ -n "${_LIB_RECALL_LOADED:-}" ] && return 0; _LIB_RECALL_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 

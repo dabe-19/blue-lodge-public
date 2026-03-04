@@ -11,6 +11,8 @@
 #   - George can set up his own git/GitHub with minimal operator input
 #   - Clear error messages when manual steps are needed
 
+[ -n "${_LIB_GIT_LOADED:-}" ] && return 0; _LIB_GIT_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 

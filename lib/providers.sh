@@ -4,6 +4,8 @@
 # queries to cloud providers when local Ollama is insufficient
 # or when the user explicitly requests a specific model.
 
+[ -n "${_LIB_PROVIDERS_LOADED:-}" ] && return 0; _LIB_PROVIDERS_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/api.sh"
 

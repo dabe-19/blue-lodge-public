@@ -13,6 +13,8 @@
 # Storage: $LODGE_DIR/.george/.vault/<name>.enc  (each secret is a separate file)
 # Key derivation: Uses the signing key from security.sh keyring
 
+[ -n "${_LIB_SECRETS_LOADED:-}" ] && return 0; _LIB_SECRETS_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 

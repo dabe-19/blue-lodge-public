@@ -15,6 +15,8 @@
 #   Different George instances have different keys. The public key
 #   acts as a cryptographic identity anchor.
 
+[ -n "${_LIB_PGP_LOADED:-}" ] && return 0; _LIB_PGP_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 

@@ -10,6 +10,8 @@
 # memory files. Only George can read/write his encrypted journal
 # and GEORGE.md. He can choose to share access when needed.
 
+[ -n "${_LIB_SECURITY_LOADED:-}" ] && return 0; _LIB_SECURITY_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 

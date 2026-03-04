@@ -3,6 +3,8 @@
 # GEORGE.md project memory file management.
 # The agent reads this before every action, writes after every step.
 
+[ -n "${_LIB_MEMORY_LOADED:-}" ] && return 0; _LIB_MEMORY_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 

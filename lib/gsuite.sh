@@ -11,6 +11,8 @@
 #
 # Dependencies: curl, jq, lib/api.sh, lib/secrets.sh
 
+[ -n "${_LIB_GSUITE_LOADED:-}" ] && return 0; _LIB_GSUITE_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 

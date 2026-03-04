@@ -11,6 +11,8 @@
 #
 # From the rough ashlar to the perfect — this is the work.
 
+[ -n "${_LIB_SLASH_LOADED:-}" ] && return 0; _LIB_SLASH_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 

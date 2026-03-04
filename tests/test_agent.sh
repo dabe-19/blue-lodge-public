@@ -1602,8 +1602,8 @@ describe "Honeydew list system"
     body=$(declare -f _agent_evaluate_completion)
     echo "$body" | grep -q 'HONEYDEW LIST'
     assert_ok $? "Pass 2 evaluator must reference honeydew"
-    echo "$body" | grep -q 'Unchecked.*work remains\|unchecked.*suggest'
-    assert_ok $? "Pass 2 evaluator must note unchecked items as progress guide"
+    echo "$body" | grep -q 'HONEYDEW ENFORCEMENT\|Items marked.*NOT complete\|NOT done'
+    assert_ok $? "Pass 2 evaluator must enforce unchecked items as incomplete"
   }
 
   it "strategist rules reference honeydew list" && {

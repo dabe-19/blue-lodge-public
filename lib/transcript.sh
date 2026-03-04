@@ -17,6 +17,8 @@
 #   /transcript path     — print path to active transcript
 
 # ── State ──────────────────────────────────────────────────────
+[ -n "${_LIB_TRANSCRIPT_LOADED:-}" ] && return 0; _LIB_TRANSCRIPT_LOADED=1
+
 _TRANSCRIPT_FILE=""
 _TRANSCRIPT_DIR=""
 _TRANSCRIPT_START_TS=""

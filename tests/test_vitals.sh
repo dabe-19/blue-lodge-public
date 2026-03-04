@@ -794,6 +794,7 @@ describe "Threshold configuration"
     _setup_vitals
     # Reset to default
     unset VITALS_DISK_WARN_MB
+    unset _LIB_VITALS_LOADED
     source "$LODGE_DIR/lib/vitals.sh"
     assert_eq "$VITALS_DISK_WARN_MB" "500"
     _teardown_vitals
@@ -802,6 +803,7 @@ describe "Threshold configuration"
   it "default disk crit threshold is 100" && {
     _setup_vitals
     unset VITALS_DISK_CRIT_MB
+    unset _LIB_VITALS_LOADED
     source "$LODGE_DIR/lib/vitals.sh"
     assert_eq "$VITALS_DISK_CRIT_MB" "100"
     _teardown_vitals
@@ -810,6 +812,7 @@ describe "Threshold configuration"
   it "default RAM warn threshold is 200" && {
     _setup_vitals
     unset VITALS_RAM_WARN_MB
+    unset _LIB_VITALS_LOADED
     source "$LODGE_DIR/lib/vitals.sh"
     assert_eq "$VITALS_RAM_WARN_MB" "200"
     _teardown_vitals
@@ -818,6 +821,7 @@ describe "Threshold configuration"
   it "default RAM crit threshold is 100" && {
     _setup_vitals
     unset VITALS_RAM_CRIT_MB
+    unset _LIB_VITALS_LOADED
     source "$LODGE_DIR/lib/vitals.sh"
     assert_eq "$VITALS_RAM_CRIT_MB" "100"
     _teardown_vitals
@@ -826,6 +830,7 @@ describe "Threshold configuration"
   it "default battery warn is 15" && {
     _setup_vitals
     unset VITALS_BATTERY_WARN
+    unset _LIB_VITALS_LOADED
     source "$LODGE_DIR/lib/vitals.sh"
     assert_eq "$VITALS_BATTERY_WARN" "15"
     _teardown_vitals
@@ -834,6 +839,7 @@ describe "Threshold configuration"
   it "default battery crit is 5" && {
     _setup_vitals
     unset VITALS_BATTERY_CRIT
+    unset _LIB_VITALS_LOADED
     source "$LODGE_DIR/lib/vitals.sh"
     assert_eq "$VITALS_BATTERY_CRIT" "5"
     _teardown_vitals
@@ -842,6 +848,7 @@ describe "Threshold configuration"
   it "custom thresholds are respected" && {
     _setup_vitals
     export VITALS_DISK_WARN_MB=2000
+    unset _LIB_VITALS_LOADED
     source "$LODGE_DIR/lib/vitals.sh"
     assert_eq "$VITALS_DISK_WARN_MB" "2000"
     _teardown_vitals

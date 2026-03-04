@@ -7,6 +7,8 @@
 # Philosophy: George's code can be rewritten, but his memories
 # and personality are irreplaceable. Protect them.
 
+[ -n "${_LIB_BACKUP_LOADED:-}" ] && return 0; _LIB_BACKUP_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 

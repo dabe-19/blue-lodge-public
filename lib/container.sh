@@ -11,6 +11,8 @@
 #   kali     — Kali Nethunter (pentest tools)
 #   archlinux — Rolling release
 
+[ -n "${_LIB_CONTAINER_LOADED:-}" ] && return 0; _LIB_CONTAINER_LOADED=1
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 
