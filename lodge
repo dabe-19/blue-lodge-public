@@ -2432,13 +2432,25 @@ _cmd_email() {
     local rest
     rest=$(echo "$args" | sed 's/^[^ ]* *//')
 
+    # ── Normalize provider token ──────────────────────────────
+    # LLMs sometimes output provider=gmail, p=gmail, or just gmail.
+    # Strip known prefixes so all variants resolve to the bare name.
+    _normalize_provider() {
+        local _val="$1"
+        _val="${_val#provider=}"  # strip provider= prefix
+        _val="${_val#p=}"         # strip p= prefix
+        echo "$_val"
+    }
+
     case "$action" in
         setup|configure)
+            rest=$(_normalize_provider "$rest")
             email_setup "$rest" ;;
         status|info)
             local _st_provider
             _st_provider=$(echo "$rest" | awk '{print $1}')
             [ "$_st_provider" = "$action" ] && _st_provider=""
+            _st_provider=$(_normalize_provider "$_st_provider")
             email_status "$_st_provider"
             ssh_status ;;
         send)
@@ -2453,7 +2465,7 @@ _cmd_email() {
             # - s= / subject= are aliases; b= / body= are aliases
             # - s= and b= are preferred for multi-line/multi-word input
             local provider _send_rest to subject body
-            provider=$(echo "$rest" | awk '{print $1}')
+            provider=$(_normalize_provider "$(echo "$rest" | awk '{print $1}')")
             _send_rest=$(echo "$rest" | sed 's/^[^ ]* *//')
             if [ -z "$provider" ] || [ -z "$_send_rest" ] || [ "$_send_rest" = "$provider" ]; then
                 ui_info "Usage: /email send <provider> <recipient> s=subject b=body [f=file.txt]"
@@ -2544,7 +2556,7 @@ _cmd_email() {
         inbox|check)
             # Syntax: /email inbox <provider> [count]
             local _inbox_provider _inbox_count
-            _inbox_provider=$(echo "$rest" | awk '{print $1}')
+            _inbox_provider=$(_normalize_provider "$(echo "$rest" | awk '{print $1}')")
             _inbox_count=$(echo "$rest" | awk '{print $2}')
             if [ -z "$_inbox_provider" ] || [ "$_inbox_provider" = "$action" ]; then
                 ui_info "Usage: /email inbox <provider> [count]"
@@ -2555,7 +2567,7 @@ _cmd_email() {
             email_inbox "$_inbox_provider" "${_inbox_count:-5}" ;;
         address)
             local _addr_provider
-            _addr_provider=$(echo "$rest" | awk '{print $1}')
+            _addr_provider=$(_normalize_provider "$(echo "$rest" | awk '{print $1}')")
             [ "$_addr_provider" = "$action" ] && _addr_provider=""
             local addr
             addr=$(email_get_address "$_addr_provider")

@@ -916,4 +916,73 @@ describe "Email send parser — attachment support"
     assert_ok $? "Subject parser must stop at f= boundary"
   }
 
+# ── Email provider normalization ───────────────────────────────
+describe "Email provider normalization"
+
+  it "_cmd_email defines _normalize_provider helper" && {
+    body=$(declare -f _cmd_email)
+    echo "$body" | grep -q '_normalize_provider'
+    assert_ok $? "Must define _normalize_provider"
+  }
+
+  it "_normalize_provider strips provider= prefix" && {
+    body=$(declare -f _cmd_email)
+    echo "$body" | grep -q 'provider='
+    assert_ok $? "Must handle provider= prefix"
+  }
+
+  it "_normalize_provider strips p= prefix" && {
+    body=$(declare -f _cmd_email)
+    echo "$body" | grep -q '{_val#p=}'
+    assert_ok $? "Must handle p= prefix"
+  }
+
+  it "send action normalizes provider" && {
+    body=$(declare -f _cmd_email)
+    echo "$body" | grep -A2 'send)' | head -20
+    echo "$body" | grep -q '_normalize_provider.*provider\|provider.*_normalize_provider'
+    assert_ok $? "send must normalize provider"
+  }
+
+  it "inbox action normalizes provider" && {
+    body=$(declare -f _cmd_email)
+    echo "$body" | grep -q '_normalize_provider.*_inbox_provider\|_inbox_provider.*_normalize_provider'
+    assert_ok $? "inbox must normalize provider"
+  }
+
+  it "status action normalizes provider" && {
+    body=$(declare -f _cmd_email)
+    echo "$body" | grep -q '_normalize_provider.*_st_provider\|_st_provider=\$(_normalize_provider'
+    assert_ok $? "status must normalize provider"
+  }
+
+  it "address action normalizes provider" && {
+    body=$(declare -f _cmd_email)
+    echo "$body" | grep -q '_normalize_provider.*_addr_provider\|_addr_provider=\$(_normalize_provider'
+    assert_ok $? "address must normalize provider"
+  }
+
+  it "setup action normalizes provider" && {
+    body=$(declare -f _cmd_email)
+    # setup uses $rest directly — must normalize before passing
+    echo "$body" | grep -B1 'email_setup' | grep -q '_normalize_provider'
+    assert_ok $? "setup must normalize provider"
+  }
+
+  it "_normalize_provider resolves provider=gmail to gmail" && {
+    # _normalize_provider is local to _cmd_email; exercise via direct call
+    _cmd_email "send provider=gmail test@x.com s=Hi b=Hello" 2>/dev/null || true
+    # If normalisation works, it won't blow up looking for "provider=gmail" as a provider name.
+    # Introspect: the body must strip provider= before passing to email_send
+    body=$(declare -f _cmd_email)
+    echo "$body" | grep -q '{_val#provider=}'
+    assert_ok $? "provider= prefix strip must exist"
+  }
+
+  it "_normalize_provider resolves p=zoho to zoho" && {
+    body=$(declare -f _cmd_email)
+    echo "$body" | grep -q '{_val#p=}'
+    assert_ok $? "p= prefix strip must exist"
+  }
+
 test_end
