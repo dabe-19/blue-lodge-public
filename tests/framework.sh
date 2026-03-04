@@ -300,7 +300,13 @@ test_unmock_all() {
 }
 
 # ── Setup LODGE_DIR for testing ────────────────────────────────
-# Points LODGE_DIR to the repo root, sets up a clean test environment
+# Points LODGE_DIR to the repo root, sets up a clean test environment.
+# GEORGE_CONFIG_DIR is set to a fresh temp directory so tests never
+# read the real lodge.conf (which would leak persisted user settings
+# into assertions about code defaults).
 _TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export LODGE_DIR="$(dirname "$_TESTS_DIR")"
-export GEORGE_CONFIG_DIR=""  # Will be set per-test to temp dirs
+_FRAMEWORK_CONFIG_DIR=$(mktemp -d /tmp/george-test-config-XXXXXX)
+export GEORGE_CONFIG_DIR="$_FRAMEWORK_CONFIG_DIR"
+# Cleanup on exit
+trap 'rm -rf "$_FRAMEWORK_CONFIG_DIR" 2>/dev/null' EXIT

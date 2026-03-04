@@ -290,9 +290,23 @@ _agent_evaluate_milestone() {
     # ATTENTION REORDER: Action log FIRST, milestone LAST (recency bias)
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions in the log above accomplish this specific milestone?\n\nRULES:\n- A command with Status: EXECUTED SUCCESSFULLY (exit 0) satisfies the milestone unless its output clearly indicates failure.\n- Empty output is normal for many tools (email, social, file ops). Exit code 0 with empty output = success.\n- Focus ONLY on whether THIS milestone was achieved — ignore the broader task objective.\n- If the action log shows a relevant command was executed and succeeded, the milestone is done.\n- Do NOT require confirmation, follow-up, or verification steps unless the milestone explicitly asked for them.\n\nSPECIAL RULES FOR CODE/BUILD MILESTONES:\n- If the milestone involves writing code files: a /write that succeeded is COMPLETE only if you can see\n  the written content contains meaningful, non-trivial code (not just a header or partial snippet).\n- If the milestone says 'create project' or 'initialize': verify that key project files were written\n  (e.g., Cargo.toml + src/main.rs for Rust, package.json + index.js for Node).\n- If the milestone says 'build' or 'compile': a /build or cargo build with exit 0 is required.\n  /write alone does NOT satisfy a build milestone.\n- If ONLY web searches were performed for a code-writing milestone, mark INCOMPLETE.\n- PLACEHOLDER/STUB CODE IS NOT COMPLETE. If the written content contains:\n  * 'todo', 'unimplemented', 'Missing implementation', 'placeholder', 'stub'\n  * Empty function bodies, panic!(), or error-only responses\n  * JSON like {\"error\": ...} instead of actual functional code\n  Then the milestone is INCOMPLETE — the code must be functional, not a stub.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence reason>"
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions above accomplish this milestone? Apply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_P1_JSON'
+{"classify":"COMPLETE|INCOMPLETE",
+ "default":"COMPLETE if exit_0 and relevant_command_ran",
+ "success":{"exit_0":true,"empty_output":"normal for email/social/file ops"},
+ "scope":"THIS milestone only — ignore broader task objective",
+ "no_extra_requirements":"do NOT require confirmation/follow-up/verification unless milestone asked",
+ "code_tasks":{
+   "write":"COMPLETE only if content is meaningful non-trivial code",
+   "init":"verify key project files created (Cargo.toml+src/main.rs, package.json+index.js)",
+   "build":"requires /build or cargo build exit_0 — /write alone is NOT enough",
+   "web_only":"INCOMPLETE if ONLY web searches performed for a code milestone",
+   "reject":["todo","unimplemented","Missing implementation","placeholder","stub","panic!()","empty function body","{\"error\":...}"]},
+ "respond":"COMPLETE or INCOMPLETE: <one-sentence reason>"}
+EVAL_P1_JSON
+)"
 
-    local eval_sys="You are a pragmatic milestone evaluator. Judge whether a specific action step was executed successfully based on the action log. Exit code 0 means the command succeeded — do not second-guess it. Empty output is normal and expected for many tools. Only mark INCOMPLETE if no relevant action was attempted or the action clearly failed. Respond COMPLETE or INCOMPLETE: <reason>."
+    local eval_sys="You are a pragmatic milestone evaluator. Judge by the action log. exit_0 = success. Empty output = normal. Respond COMPLETE or INCOMPLETE: <reason>."
 
     ui_think "Evaluator (pass 1): assessing milestone completion..."
     local verdict
@@ -391,13 +405,37 @@ _agent_evaluate_completion() {
         local _hd_total _hd_done
         _hd_total=$(grep -cE '^[0-9]+\. \[[ x]\]' "$_hd_eval_file" 2>/dev/null || echo 0)
         _hd_done=$(grep -cE '^[0-9]+\. \[x\]' "$_hd_eval_file" 2>/dev/null || echo 0)
-        _hd_eval_block="\n\n>>> HONEYDEW LIST (${_hd_done}/${_hd_total} complete) <<<\n${_hd_eval_content}\n>>> HONEYDEW ENFORCEMENT: Items marked [ ] are NOT complete. If ANY item is still [ ], the task is INCOMPLETE — you must return INCOMPLETE with a description of what remains. The auto-checker marks items [x] when milestones complete them. Do NOT assume an unchecked item was done unless the milestones explicitly show it was. Only mark COMPLETE when ALL items are [x] or the PRIMARY OBJECTIVE is PROVABLY satisfied by examining the ACTUAL COMMANDS EXECUTED (not just summaries). <<<"
+        _hd_eval_block="\n\n>>> HONEYDEW LIST (${_hd_done}/${_hd_total} complete) <<<\n${_hd_eval_content}\n>>> Any item marked [ ] = INCOMPLETE. ALL must be [x] for COMPLETE. <<<"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: overall-eval <- honeydew (${_hd_done}/${_hd_total})"
     fi
 
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}${_hd_eval_block}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE (the user's original request):\n${primary_obj}\n\nGiven all the milestones completed above, is the PRIMARY OBJECTIVE fully satisfied?\n\nRULES:\n- Review the Completed Milestones section for what has been accomplished.\n- CHECK ACTION-CLASS TAGS: Milestones tagged 'RESEARCH_ONLY' mean data was gathered but NO output action (write, email, save, post) was performed. If the primary objective requires DELIVERING content (email, file, post), RESEARCH_ONLY milestones do NOT satisfy it.\n- For single-action objectives (e.g., 'send a Discord DM to X'), one successful milestone that executed the action is sufficient.\n- For multi-part objectives, verify each distinct part has a corresponding completed milestone WITH the right action class.\n- Do NOT invent extra requirements beyond what the user explicitly asked for.\n- Do NOT require confirmation or verification steps unless the user asked for them.\n- If the key action(s) have been executed successfully, the task is done.\n- HONEYDEW LIST: If a Honeydew List is present above, it is a HARD constraint.\n  Items marked [ ] are NOT done. If ANY item is [ ], return INCOMPLETE.\n  Only mark COMPLETE when ALL items are [x] OR the milestones clearly show the work was done.\n- CRITICAL: Searching the web or gathering data is NOT the same as writing a report, sending an email, or posting content. If the objective says 'write a report AND email it', completing only the research is INCOMPLETE.\n\nSPECIAL RULES FOR SOFTWARE/CODE TASKS:\n- If the objective involves building a program, microservice, or application:\n  * Source code files must have been written with meaningful, non-trivial content.\n  * Placeholder or stub code (todo, unimplemented, panic, 'Missing implementation') does NOT count.\n  * The project must compile/build successfully (a /build with exit 0, not just /write).\n  * Only mark COMPLETE if the code could plausibly run. /write alone is not enough.\n- If the action log is MOSTLY web searches with little or no code written, mark INCOMPLETE.\n- Web research does NOT count as progress toward a coding objective unless\n  it is supplemented by actual file creation, building, and testing.\n\nSPECIAL RULES FOR WRITING/CONTENT/SOCIAL TASKS:\n- If the objective asks to 'write', 'invent', 'create', 'compose', or 'draft' content\n  (a song, poem, essay, review, message, etc.) AND THEN post/send/save it:\n  * The ACTUAL content must appear in the milestone output or action log.\n  * A teaser, placeholder, or generic message is NOT the requested content.\n  * Merely announcing intent to create something is NOT creating it.\n  * If the objective says 'invent a song' or 'write a review', the song/review text\n    must exist in the executed command output. If only a stub or intro was posted, mark INCOMPLETE.\n- If the objective asks to send specific content (email body, Discord message with substance):\n  * Check that the SENT content is substantive and matches what was requested.\n  * A partial or truncated message missing the core content is INCOMPLETE.\n  * 'Email sent' with a placeholder body does NOT satisfy 'email a review'.\n- For web research + email/post tasks: the gathered research must appear in the final\n  sent content, not just in the search results. Searching alone is NOT sending.\n\nSPECIAL RULES FOR RESEARCH+DELIVERY TASKS:\n- Tasks like 'research X and email a report' require BOTH research AND delivery.\n- If only /web search commands ran (Action-Class: RESEARCH_ONLY) but no /write, /email,\n  /save, or /social commands ran, the task is INCOMPLETE regardless of what the summaries say.\n- A milestone summary describing what was found does NOT equal a written/sent report.\n- Look for ACTUAL /email send, /write, or /save commands in the milestones.\n\nRespond with EXACTLY one of:\n  COMPLETE\n  INCOMPLETE: <one-sentence description of what specific part remains>"
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}${_hd_eval_block}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE:\n${primary_obj}\n\nIs the PRIMARY OBJECTIVE fully satisfied? Apply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_P2_JSON'
+{"classify":"COMPLETE|INCOMPLETE",
+ "default":"COMPLETE if key actions executed successfully",
+ "action_class_check":{
+   "RESEARCH_ONLY":"does NOT satisfy delivery objectives (write/email/save/post)",
+   "ACTION":"satisfies if exit_0"},
+ "no_extras":"do NOT invent requirements user did not ask for",
+ "single_action":"one successful milestone with correct action = COMPLETE",
+ "multi_part":"each distinct part needs a completed milestone with right action_class",
+ "honeydew":"if present, ALL items must be [x] for COMPLETE",
+ "code_tasks":{
+   "require":["meaningful_files_written","build_exit_0"],
+   "reject":["todo","unimplemented","stub","panic","placeholder"],
+   "web_only":"INCOMPLETE — research is not coding"},
+ "content_tasks":{
+   "require":["actual_content_in_output","delivery_command_executed"],
+   "reject":["placeholder","announcement_only","teaser","stub_body"],
+   "email_check":"sent body must be substantive, not generic"},
+ "research_delivery":{
+   "require_both":"research AND delivery_command (/write,/email,/save,/social)",
+   "summary_not_delivery":"a milestone summary is NOT a written/sent report",
+   "check":"look for ACTUAL delivery commands in milestones"},
+ "respond":"COMPLETE or INCOMPLETE: <one-sentence description of what remains>"}
+EVAL_P2_JSON
+)"
 
-    local eval_sys="You are a strategic task-completion evaluator. Given the full history of completed milestones, determine whether the user's original request has been fully addressed. Be pragmatic — if the requested actions were executed successfully, the task is complete. Do not add requirements the user did not ask for. For SOFTWARE/CODE tasks, be stricter: writing files is not enough — the code must compile and be plausibly functional. For WRITING/CONTENT tasks, verify the actual content was created and delivered — not just a placeholder or announcement. For RESEARCH+DELIVERY tasks (e.g., 'research X and email a report'), verify that BOTH the research AND the delivery action (/write, /email, /save) were executed — completing only the research phase is INCOMPLETE. Check Action-Class tags: RESEARCH_ONLY milestones do not satisfy delivery requirements. Respond COMPLETE or INCOMPLETE: <reason>."
+    local eval_sys="You are a task-completion evaluator. Be pragmatic: actions executed successfully = done. Check Action-Class tags: RESEARCH_ONLY does not satisfy delivery. For code: must compile. For content: must exist in output. Respond COMPLETE or INCOMPLETE: <reason>."
 
     ui_think "Evaluator (pass 2): assessing overall task completion..."
     local verdict
@@ -974,13 +1012,13 @@ ${base_rules}"
 
 _build_router_prompt() {
     # Phase 1 Prompt: The Command Catalog Router (JSON)
-    # Compact JSON command→description map with few-shot routing.
-    # The router's only job is classification: task → base command.
-    # Specialist handles exact syntax. ~200 tokens.
-    echo "You are George. Pick the best tool for this task."
-    echo ""
+    # Compact JSON command→description map with few-shot routing +
+    # completion detection. The router's job: classify task → command
+    # OR detect that the milestone is complete (SUCCESS).
+    # Specialist handles exact syntax. ~250 tokens.
     cat << 'ROUTER_JSON'
-{"commands":{
+{"role":"Pick the best tool OR detect completion.",
+"commands":{
   "/ask":"Answer from own knowledge (no tools)",
   "/recall":"Search knowledge base (FTS5)",
   "/journal":"Read or write living memory",
@@ -1022,13 +1060,13 @@ _build_router_prompt() {
   {"q":"find and describe images of X","t":"/web"},
   {"q":"check what files we have","t":"/ls"},
   {"q":"read my journal","t":"/journal"}],
-"rules":["Output ONLY the tool name (/web, /social, /write, bash, etc.)",
-  "Output SUCCESS: <brief summary> ONLY if the Action Log has **Action:** entries with EXECUTED SUCCESSFULLY for the current objective",
-  "If the Action Log has NO **Action:** entries yet, you MUST pick a tool — NEVER output SUCCESS",
-  "Research Context from previous milestones does NOT count as actions taken — you must still execute a command",
-  "/social for Discord/Telegram/X (NOT /email). /email for actual email addresses only",
-  "Do NOT route to /sandbox to run slash commands",
-  "Match specific tool first. /ask only if no tool is relevant"]}
+"output":"ONLY the tool name (/web, /social, etc.) OR SUCCESS: <summary>",
+"rules":{
+  "classify":["match specific tool first","/ask only if no tool is relevant",
+    "/social for Discord/Telegram/X (NOT /email)","/email for actual email only",
+    "do NOT route to /sandbox for slash commands"],
+  "success":{"when":"Action Log has **Action:** entries with EXECUTED SUCCESSFULLY for current objective",
+    "reject":["no **Action:** entries yet → MUST pick a tool","Research Context / Prior Milestones = PREVIOUS milestone data, NOT current actions"]}}}
 ROUTER_JSON
 }
 
@@ -1090,12 +1128,10 @@ _build_specialist_prompt() {
     #   (eval handles execution)
 
     if [ "$cmd_name" != "bash" ]; then
-        echo "You are George. Execute this task by outputting exactly ONE slash command."
-        echo "Output the FULL command on its own line starting with / — do NOT wrap in a code block."
-        echo "Do NOT use /sandbox to run slash commands. Slash commands execute directly."
-        echo "Do NOT quote arguments with \" or '. Slash commands parse by whitespace, not shell quoting."
-        echo "Output only ONE command per line — never chain multiple /commands together."
-        echo ""
+        cat << 'SPEC_PREAMBLE'
+{"output":{"format":"exactly ONE slash command on its own line","starts_with":"/",
+ "forbidden":["code_block_wrapper","quotes_on_args","multiple_commands_per_line","/sandbox for slash commands"]}}
+SPEC_PREAMBLE
 
         # Docs injection is SKIPPED for the specialist. The syntax card
         # below provides all needed syntax in ~10 lines per command.
@@ -1511,7 +1547,7 @@ agent_inner_loop() {
         local router_sys=$(_build_router_prompt)
         local _route_now
         _route_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
-        local route_prompt="Current date/time: ${_route_now}\n\nReview the Action Log below. Output SUCCESS ONLY if the Action Log contains a command that was EXECUTED SUCCESSFULLY in THIS milestone (look for '**Action:**' entries with '**Status:** EXECUTED SUCCESSFULLY'). The 'Research Context' and 'Prior Milestones' sections show data from PREVIOUS milestones — they do NOT count as actions taken in THIS milestone.\n\nIf no **Action:** entries exist yet in the log, you MUST route to a tool — do NOT output SUCCESS.\nIf the only data present is from 'Research Context (from previous milestone)' or 'Prior Milestones', you MUST route to a tool to USE that data (e.g., /write, /email, /save).\n\nOtherwise, output the SINGLE tool name needed for the next action."
+        local route_prompt="Current date/time: ${_route_now}\nRoute the next action OR output SUCCESS if done.\n"
 
         # ── RESEARCH SUFFICIENCY GUIDANCE ──────────────────────
         # For objectives involving web research, tell the router to
@@ -1529,11 +1565,11 @@ agent_inner_loop() {
             # Only inject sufficiency for research-type milestones
             # AND only if actual actions have been logged in this milestone
             if [ "$_has_action_entries" -gt 0 ]; then
-                route_prompt="${route_prompt}\nWEB RESEARCH RULE: You have ENOUGH data after 1 search + 1-2 page fetches. Do NOT fetch every URL. Once you have substantive content from commands YOU executed (not from Research Context), output SUCCESS with a summary of findings."
+                route_prompt="${route_prompt}{\"web_sufficiency\":\"ENOUGH after 1 search + 1-2 fetches. Output SUCCESS with summary.\"}\n"
             fi
         fi
 
-        route_prompt="${route_prompt}\n\n$inner_context"
+        route_prompt="${route_prompt}\n$inner_context"
 
         # llm_generate is used here for maximum speed — no streaming,
         # no personality, just returns the raw string.
@@ -2555,34 +2591,32 @@ MEMEOF
 
         local _strat_now
         _strat_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
-        local macro_sys="You are a strategic planning engine. The current date and time is: ${_strat_now}. Given a task memory with completed milestones, determine the single next milestone needed.
+        local macro_sys="Strategic planning engine. Date: ${_strat_now}. Output the SINGLE next milestone.
 
 ${_tool_summary}
 
 SERVICES STATUS: ${_svc_status:-unknown}
 
-STRATEGIC RULES:
-- If the user explicitly names a tool or action (e.g., 'search the web', 'post to discord', 'send email', 'download'), route to that tool — NEVER override with /ask
-- ONLY use /ask for simple questions George can answer from his own knowledge with NO tools (e.g., 'what is a monad?', 'explain recursion')
-- Every milestone MUST use a command from YOUR WORKING COMMANDS above. Do NOT invent commands.
-- To post to Discord/Telegram/X, use /social (NOT /email). /email is for actual email addresses only.
-- Do NOT use /sandbox to run slash commands. Slash commands run directly.
-- ONLY use services that are CONFIGURED (see SERVICES STATUS above)
-- Frame milestones as tool-executable actions, not abstract goals
-- RESEARCH MILESTONES: If you lack information needed to proceed (API keys, URLs, package names, technical details), create a milestone to gather that information using /web search, /recall, /web fetch, or /social discord read. It is ALWAYS acceptable to create a milestone whose purpose is research or information gathering.
-- If a task requires credentials or keys you don't have, search for them (/secret get, /web search, /recall) before giving up.
-- Use /recall to check your knowledge base before assuming you don't know something.
-- Do NOT regenerate a milestone that previously FAILED — try a different approach or skip it
-- For multi-part tasks, advance to the NEXT part even if a previous part partially failed
-- For multi-part tasks, advance to the NEXT part even if a previous part partially failed
-- HONEYDEW LIST: The task memory contains a Honeydew List — a precedence-ranked checklist.
-  Items marked [x] are done. Items marked [ ] are pending. Pick the NEXT unchecked [ ] item
-  as your milestone. Do NOT output DONE while unchecked items remain.
-- COMPLETION: When the Primary Objective is fulfilled AND all Honeydew items are [x], output EXACTLY the word DONE (nothing else)
-- CONVERSATION RULE: If the user's objective is simply to chat or ask a question, and you have executed the /ask command to answer them, the objective is complete. Output DONE.
-- NEVER prefix a milestone with DONE, DONE:, COMPLETE, or any completion keyword — those are reserved signals
-- MILESTONE FORMAT: Output ONLY a concise imperative sentence (e.g., 'Search the web for X', 'Use /recall to look up syntax').
-- NO INTRODUCTIONS. NO EXPLANATIONS. NEVER say 'The next milestone is...'. Output the action and NOTHING else.${_milestone_history}${_last_eval_feedback:+
+$(cat << 'STRAT_RULES_JSON'
+{"rules":{
+ "routing":{"explicit_request":"use the named tool — NEVER override with /ask",
+   "/ask":"ONLY for questions answerable from own knowledge, no tools needed",
+   "/social":"Discord/Telegram/X/Mastodon (NOT /email)","/email":"actual email addresses only",
+   "/sandbox":"NEVER for running slash commands"},
+ "milestones":{"must_use":"commands from YOUR WORKING COMMANDS above — do NOT invent",
+   "format":"single imperative sentence only (e.g. 'Search the web for X')",
+   "no_prefix":"NEVER start with DONE/COMPLETE/keyword — those are reserved signals",
+   "no_intro":"NO explanations, NO 'The next milestone is...'",
+   "only_configured":"ONLY use services listed as CONFIGURED"},
+ "research":{"when":"you lack info (API keys, URLs, packages, technical details)",
+   "tools":["/web search","/recall","/web fetch","/social discord read","/secret get"],
+   "always_ok":"creating a research milestone is ALWAYS acceptable"},
+ "failure":{"no_repeat":"do NOT regenerate a FAILED milestone — try different approach",
+   "multi_part":"advance to NEXT part even if previous part partially failed"},
+ "honeydew":{"pick":"next unchecked [ ] item","done_when":"ALL items [x] AND Primary Objective fulfilled → output DONE"},
+ "conversation":"if objective is just a question and /ask answered it → output DONE"}}
+STRAT_RULES_JSON
+)${_milestone_history}${_last_eval_feedback:+
 
 >>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<
 ${_last_eval_feedback}

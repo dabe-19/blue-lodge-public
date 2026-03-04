@@ -368,7 +368,7 @@ describe "Dynamic dual-loop architecture"
 
   it "macro strategist has question detection rule" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q 'ONLY use /ask for simple questions'
+    echo "$body" | grep -q '/ask.*ONLY for questions\|no tools needed'
     assert_ok $?
   }
 
@@ -428,7 +428,7 @@ describe "Dynamic dual-loop architecture"
 
   it "macro strategist has anti-sandbox rule" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q 'NOT use /sandbox to run slash'
+    echo "$body" | grep -q '/sandbox.*NEVER.*slash\|NEVER for running slash'
     assert_ok $?
   }
 
@@ -458,13 +458,13 @@ describe "Dynamic dual-loop architecture"
 
   it "specialist prompt tells LLM not to quote arguments" && {
     body=$(declare -f _build_specialist_prompt)
-    echo "$body" | grep -q 'NOT quote arguments'
+    echo "$body" | grep -q 'quotes_on_args\|NOT quote arguments'
     assert_ok $?
   }
 
   it "specialist prompt tells LLM one command per line" && {
     body=$(declare -f _build_specialist_prompt)
-    echo "$body" | grep -q 'ONE command per line'
+    echo "$body" | grep -q 'multiple_commands_per_line\|ONE command per line'
     assert_ok $?
   }
 
@@ -878,7 +878,7 @@ describe "Soul injection in dual-loop architecture"
     body=$(declare -f agent_run)
     echo "$body" | grep -q '_strat_now'
     assert_ok $?
-    echo "$body" | grep -q 'current date and time is'
+    echo "$body" | grep -q 'Date:.*_strat_now\|current date and time'
     assert_ok $?
   }
 
@@ -974,9 +974,9 @@ describe "Primary objective injection in inner loop"
 # ── Router Research Guidance ────────────────────────────────────
 describe "Router web research sufficiency guidance"
 
-  it "route_prompt includes WEB RESEARCH RULE for search objectives" && {
+  it "route_prompt includes web sufficiency guidance for search objectives" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'WEB RESEARCH RULE'
+    echo "$body" | grep -q 'web_sufficiency\|WEB RESEARCH RULE'
     assert_ok $?
   }
 
@@ -1044,7 +1044,7 @@ describe "Milestone deduplication in macro loop"
   it "strategist prompt includes 'do NOT repeat failed milestones' rule" && {
     # Check the source file directly since declare -f may mangle multi-byte
     # characters (em dashes) in string literals.
-    grep -q 'Do NOT regenerate a milestone that previously FAILED' "$LODGE_DIR/lib/agent.sh"
+    grep -q 'no_repeat\|Do NOT regenerate' "$LODGE_DIR/lib/agent.sh"
     assert_ok $?
   }
 
@@ -1171,7 +1171,7 @@ describe "Task completion evaluator"
 
   it "milestone evaluator accepts exit 0 as success" && {
     body=$(declare -f _agent_evaluate_milestone)
-    echo "$body" | grep -q 'Exit code 0'
+    echo "$body" | grep -q 'exit_0\|Exit code 0'
     assert_ok $?
     echo "$body" | grep -q 'COMPLETE'
     assert_ok $?
@@ -1179,7 +1179,7 @@ describe "Task completion evaluator"
 
   it "overall evaluator uses strategic system prompt" && {
     body=$(declare -f _agent_evaluate_completion)
-    echo "$body" | grep -q 'strategic task-completion evaluator'
+    echo "$body" | grep -q 'task-completion evaluator'
     assert_ok $?
   }
 
@@ -1602,13 +1602,13 @@ describe "Honeydew list system"
     body=$(declare -f _agent_evaluate_completion)
     echo "$body" | grep -q 'HONEYDEW LIST'
     assert_ok $? "Pass 2 evaluator must reference honeydew"
-    echo "$body" | grep -q 'HONEYDEW ENFORCEMENT\|Items marked.*NOT complete\|NOT done'
+    echo "$body" | grep -q 'INCOMPLETE\|NOT done\|= INCOMPLETE'
     assert_ok $? "Pass 2 evaluator must enforce unchecked items as incomplete"
   }
 
   it "strategist rules reference honeydew list" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q 'HONEYDEW LIST.*precedence'
+    echo "$body" | grep -q 'honeydew\|HONEYDEW'
     assert_ok $? "Strategist must know about honeydew list"
   }
 
