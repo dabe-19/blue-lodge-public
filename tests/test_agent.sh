@@ -592,8 +592,8 @@ describe "Plan prompt uses configurable step limit"
     assert_ok $?
   }
 
-  it "AGENT_PLAN_STEPS defaults to 5" && {
-    assert_eq "$AGENT_PLAN_STEPS" "5"
+  it "AGENT_PLAN_STEPS defaults to 6" && {
+    assert_eq "$AGENT_PLAN_STEPS" "6"
   }
 
   it "AGENT_PLAN_STEPS is overridable" && {
@@ -1585,19 +1585,25 @@ describe "Honeydew list system"
   it "honeydew_mark updates checklist items" && {
     _tmpdir=$(mktemp -d)
     mkdir -p "$_tmpdir/.george"
-    printf '## Honeydew List\nPrimary task: test\n\n1. [ ] First task\n2. [ ] Second task\n3. [ ] Third task\n' > "$_tmpdir/.george/honeydew.md"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"First task","status":"pending"},
+      {"id":2,"task":"Second task","status":"pending"},
+      {"id":3,"task":"Third task","status":"pending"}]}' > "$_tmpdir/.george/honeydew.json"
     _agent_honeydew_mark 2 "$_tmpdir"
-    grep -q '^2\. \[x\] Second task' "$_tmpdir/.george/honeydew.md"
-    assert_ok $? "Item 2 should be marked [x]"
-    grep -q '^1\. \[ \] First task' "$_tmpdir/.george/honeydew.md"
-    assert_ok $? "Item 1 should remain [ ]"
+    _status=$(jq -r '.items[] | select(.id == 2) | .status' "$_tmpdir/.george/honeydew.json")
+    assert_eq "$_status" "done" "Item 2 should be marked done"
+    _status1=$(jq -r '.items[] | select(.id == 1) | .status' "$_tmpdir/.george/honeydew.json")
+    assert_eq "$_status1" "pending" "Item 1 should remain pending"
     rm -rf "$_tmpdir"
   }
 
   it "honeydew_status reports correct counts" && {
     _tmpdir=$(mktemp -d)
     mkdir -p "$_tmpdir/.george"
-    printf '## Honeydew List\nPrimary task: test\n\n1. [x] Done task\n2. [ ] Pending task\n3. [ ] Another pending\n' > "$_tmpdir/.george/honeydew.md"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Done task","status":"done"},
+      {"id":2,"task":"Pending task","status":"pending"},
+      {"id":3,"task":"Another pending","status":"pending"}]}' > "$_tmpdir/.george/honeydew.json"
     status=$(_agent_honeydew_status "$_tmpdir")
     echo "$status" | grep -q '1/3 complete'
     assert_ok $? "Should show 1/3 complete, got: $status"
@@ -1607,7 +1613,9 @@ describe "Honeydew list system"
   it "honeydew_status shows all-done when fully checked" && {
     _tmpdir=$(mktemp -d)
     mkdir -p "$_tmpdir/.george"
-    printf '## Honeydew List\nPrimary task: test\n\n1. [x] Done\n2. [x] Also done\n' > "$_tmpdir/.george/honeydew.md"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Done","status":"done"},
+      {"id":2,"task":"Also done","status":"done"}]}' > "$_tmpdir/.george/honeydew.json"
     status=$(_agent_honeydew_status "$_tmpdir")
     echo "$status" | grep -q 'All tasks done'
     assert_ok $? "Should report all done, got: $status"
@@ -1617,34 +1625,38 @@ describe "Honeydew list system"
   it "honeydew_read returns file contents" && {
     _tmpdir=$(mktemp -d)
     mkdir -p "$_tmpdir/.george"
-    printf '## Honeydew List\n1. [ ] Test item\n' > "$_tmpdir/.george/honeydew.md"
+    jq -n '{"primary_task":"test","items":[{"id":1,"task":"Test item","status":"pending"}]}' > "$_tmpdir/.george/honeydew.json"
     content=$(_agent_honeydew_read "$_tmpdir")
-    echo "$content" | grep -q 'Honeydew List'
-    assert_ok $? "Should contain honeydew header"
+    echo "$content" | grep -q 'primary_task'
+    assert_ok $? "Should contain primary_task field"
     rm -rf "$_tmpdir"
   }
 
   it "honeydew_auto_check matches milestone to item by keywords" && {
     _tmpdir=$(mktemp -d)
     mkdir -p "$_tmpdir/.george"
-    printf '## Honeydew List\nPrimary task: test\n\n1. [ ] Search the web for HiBy M500 specs\n2. [ ] Write markdown report\n3. [ ] Email the report\n' > "$_tmpdir/.george/honeydew.md"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Search the web for HiBy M500 specs","status":"pending"},
+      {"id":2,"task":"Write markdown report","status":"pending"},
+      {"id":3,"task":"Email the report","status":"pending"}]}' > "$_tmpdir/.george/honeydew.json"
     _agent_honeydew_auto_check "Search the web for HiBy M500 specifications and pricing" "$_tmpdir"
     assert_ok $? "Should match item 1"
-    grep -q '^1\. \[x\]' "$_tmpdir/.george/honeydew.md"
-    assert_ok $? "Item 1 should be auto-checked"
+    _status=$(jq -r '.items[] | select(.id == 1) | .status' "$_tmpdir/.george/honeydew.json")
+    assert_eq "$_status" "done" "Item 1 should be auto-checked"
     rm -rf "$_tmpdir"
   }
 
   it "honeydew_auto_check requires minimum 2 word overlap" && {
     _tmpdir=$(mktemp -d)
     mkdir -p "$_tmpdir/.george"
-    printf '## Honeydew List\nPrimary task: test\n\n1. [ ] Search web for HiBy specs\n2. [ ] Write report about findings\n' > "$_tmpdir/.george/honeydew.md"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Search web for HiBy specs","status":"pending"},
+      {"id":2,"task":"Write report about findings","status":"pending"}]}' > "$_tmpdir/.george/honeydew.json"
     _agent_honeydew_auto_check "completely unrelated milestone about cats" "$_tmpdir" || true
-    # Verify no items were checked
-    grep -q '^1\. \[ \]' "$_tmpdir/.george/honeydew.md"
-    assert_ok $? "Item 1 should remain unchecked with no keyword overlap"
-    grep -q '^2\. \[ \]' "$_tmpdir/.george/honeydew.md"
-    assert_ok $? "Item 2 should remain unchecked with no keyword overlap"
+    _status1=$(jq -r '.items[] | select(.id == 1) | .status' "$_tmpdir/.george/honeydew.json")
+    assert_eq "$_status1" "pending" "Item 1 should remain pending with no keyword overlap"
+    _status2=$(jq -r '.items[] | select(.id == 2) | .status' "$_tmpdir/.george/honeydew.json")
+    assert_eq "$_status2" "pending" "Item 2 should remain pending with no keyword overlap"
     rm -rf "$_tmpdir"
   }
 
@@ -1732,6 +1744,58 @@ describe "Web flow chain examples in specialist"
     body=$(declare -f _build_specialist_prompt)
     echo "$body" | grep -q 'Report flow.*search.*fetch.*write.*email'
     assert_ok $? "Must show report flow chain"
+  }
+
+# ── Code fence stripping & parse failure handling ─────────────
+describe "Code fence stripping & parse failure handling"
+
+  it "inner loop strips code fence lines before command extraction" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_clean_plan'
+    assert_ok $? "Must use _clean_plan variable for fence-stripped output"
+    echo "$body" | grep -q 'sed.*```'
+    assert_ok $? "Must use sed to strip code fence lines"
+  }
+
+  it "slash extraction uses clean_plan not raw action_plan" && {
+    body=$(declare -f agent_inner_loop)
+    # All awk extraction paths must use _clean_plan not action_plan
+    echo "$body" | grep -q 'echo.*_clean_plan.*awk'
+    assert_ok $? "Slash awk must operate on _clean_plan"
+  }
+
+  it "empty cmd triggers parse_failure action in micro_memory" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'parse_failure'
+    assert_ok $? "Must log parse_failure when cmd is empty"
+    echo "$body" | grep -q 'could not be parsed\|Specialist output'
+    assert_ok $? "Must include diagnostic message for parse failure"
+  }
+
+  it "specialist forbidden list includes code_block_wrapper" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'code_block_wrapper'
+    assert_ok $? "Specialist prompt must forbid code block wrapping"
+  }
+
+  it "honeydew_display function exists" && {
+    declare -f _agent_honeydew_display > /dev/null 2>&1
+    assert_ok $? "_agent_honeydew_display must be defined"
+  }
+
+  it "honeydew_display renders checklist from JSON" && {
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    _hd_file="$_tmpdir/.george/honeydew.json"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Alpha","status":"done"},
+      {"id":2,"task":"Beta","status":"pending"}]}' > "$_hd_file"
+    output=$(_agent_honeydew_display "$_hd_file" 2>&1)
+    echo "$output" | grep -q '\[x\].*Alpha'
+    assert_ok $? "Done item should show [x]"
+    echo "$output" | grep -q '\[ \].*Beta'
+    assert_ok $? "Pending item should show [ ]"
+    rm -rf "$_tmpdir"
   }
 
 test_end

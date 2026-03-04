@@ -273,15 +273,20 @@ _agent_complete_milestone() {
 #   2. [ ] Write markdown report with findings
 #   3. [ ] Email report to user@example.com
 #
-# The honeydew list persists in .george/honeydew.md and is injected
+# The honeydew list persists in .george/honeydew.json and is injected
 # into the pass 2 evaluator, strategist, and micro_memory so
 # every component can see "2/3 tasks remain" rather than guessing.
 #
 # Name: "honeydew" is intentional — unique to George, not "todo".
-HONEYDEW_FILE="honeydew.md"
+#
+# JSON format:
+#   {"primary_task":"...", "items":[
+#     {"id":1, "task":"...", "status":"pending"},
+#     {"id":2, "task":"...", "status":"done"}]}
+HONEYDEW_FILE="honeydew.json"
 
 # Build the honeydew list from a user task via LLM decomposition.
-# Writes .george/honeydew.md with numbered checklist items.
+# Writes .george/honeydew.json with structured items.
 # Args: $1=task text, $2=workdir
 _agent_honeydew_build() {
     local task="$1"
@@ -324,43 +329,50 @@ RULES:
     # ── INLINE LIST SPLITTING ─────────────────────────────────
     # Some models (gemma, granite) output all items on one line:
     #   "1. Do thing one  2. Do thing two  3. Do thing three"
-    # or without leading spaces:
-    #   "1. Do thing one 2. Do thing two"
     # Split these into separate lines BEFORE the line-by-line parser.
-    # Insert a newline before any digit-dot pattern preceded by a
-    # space (but not at the start of a line, to preserve first item).
     raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\+\.\)/\1\n\2/g')
-    # Also handle "N)" format
     raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\+)\)/\1\n\2/g')
 
-    # Parse numbered lines and write as checklist
-    {
-        echo "## Honeydew List"
-        echo "Primary task: $task"
-        echo ""
-        local count=0
-        while IFS= read -r line; do
-            # Strip leading whitespace, match numbered lines
-            line=$(echo "$line" | sed 's/^[[:space:]]*//')
-            if [[ "$line" =~ ^[0-9]+[\.\)][[:space:]]*(.*) ]]; then
-                count=$((count + 1))
-                local item="${BASH_REMATCH[1]}"
-                # Strip any LLM-added checkboxes
-                item=$(echo "$item" | sed 's/^\[[ x✓]*\][[:space:]]*//')
-                echo "${count}. [ ] ${item}"
-            fi
-        done <<< "$raw_list"
-        # Fallback: if LLM gave no parseable items, create a single item
-        if [ "$count" -eq 0 ]; then
-            echo "1. [ ] $task"
+    # Parse numbered lines into JSON array
+    local _items_json='[]'
+    local count=0
+    while IFS= read -r line; do
+        line=$(echo "$line" | sed 's/^[[:space:]]*//')
+        if [[ "$line" =~ ^[0-9]+[\.\)][[:space:]]*(.*) ]]; then
+            count=$((count + 1))
+            local item="${BASH_REMATCH[1]}"
+            item=$(echo "$item" | sed 's/^\[[ x✓]*\][[:space:]]*//')
+            _items_json=$(echo "$_items_json" | jq --argjson id "$count" --arg t "$item" \
+                '. += [{"id": $id, "task": $t, "status": "pending"}]')
         fi
-    } > "$hd_file"
+    done <<< "$raw_list"
 
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew list built ($(grep -c '^[0-9]*\. \[ \]' "$hd_file" 2>/dev/null || echo 0) items)"
+    # Fallback: if LLM gave no parseable items, create a single item
+    if [ "$count" -eq 0 ]; then
+        _items_json=$(jq -n --arg t "$task" '[{"id": 1, "task": $t, "status": "pending"}]')
+        count=1
+    fi
 
-    # Display the list
+    # Write honeydew.json
+    jq -n --arg task "$task" --argjson items "$_items_json" \
+        '{"primary_task": $task, "items": $items}' > "$hd_file"
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew list built ($count items)"
+
+    # Display the list to TTY — pretty checklist format
+    _agent_honeydew_display "$hd_file"
+}
+
+# Display honeydew list to TTY in human-readable checklist format.
+# Reads JSON, prints: 1. [ ] Task text  or  1. [x] Task text
+# Args: $1=honeydew file path
+_agent_honeydew_display() {
+    local hd_file="$1"
+    [ ! -f "$hd_file" ] && return 1
+
     ui_section "Honeydew List"
-    grep '^[0-9]*\.' "$hd_file" 2>/dev/null | while IFS= read -r line; do
+    jq -r '.items[] | "\(.id). [\(if .status == "done" then "x" else " " end)] \(.task)"' \
+        "$hd_file" 2>/dev/null | while IFS= read -r line; do
         ui_info "$line"
     done
 }
@@ -371,11 +383,12 @@ _agent_honeydew_mark() {
     local item_num="$1"
     local workdir="${2:-.}"
     local hd_file="$workdir/.george/$HONEYDEW_FILE"
-
     [ ! -f "$hd_file" ] && return 1
 
-    # Replace [ ] with [x] for the matching item number
-    sed -i "s/^${item_num}\. \[ \]/${item_num}. [x]/" "$hd_file"
+    local tmp="${hd_file}.tmp"
+    jq --argjson id "$item_num" \
+        '.items = [.items[] | if .id == $id then .status = "done" else . end]' \
+        "$hd_file" > "$tmp" && mv "$tmp" "$hd_file"
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew item $item_num marked complete"
 }
 
@@ -385,31 +398,28 @@ _agent_honeydew_mark() {
 _agent_honeydew_status() {
     local workdir="${1:-.}"
     local hd_file="$workdir/.george/$HONEYDEW_FILE"
-
     [ ! -f "$hd_file" ] && { echo "No honeydew list"; return 1; }
 
-    local _hd_total _hd_done next_item
-    _hd_total=$(grep -cE '^[0-9]+\. \[[ x]\]' "$hd_file" 2>/dev/null)
-    _hd_total=${_hd_total:-0}
-    _hd_done=$(grep -cE '^[0-9]+\. \[x\]' "$hd_file" 2>/dev/null)
-    _hd_done=${_hd_done:-0}
-    next_item=$(grep -m1 '^[0-9]*\. \[ \]' "$hd_file" 2>/dev/null || true)
+    local _hd_total _hd_done _next_task _next_id
+    _hd_total=$(jq '.items | length' "$hd_file" 2>/dev/null || echo 0)
+    _hd_done=$(jq '[.items[] | select(.status == "done")] | length' "$hd_file" 2>/dev/null || echo 0)
+    _next_id=$(jq -r '[.items[] | select(.status == "pending")][0].id // empty' "$hd_file" 2>/dev/null)
+    _next_task=$(jq -r '[.items[] | select(.status == "pending")][0].task // empty' "$hd_file" 2>/dev/null)
 
     if [ "$_hd_done" -eq "$_hd_total" ] && [ "$_hd_total" -gt 0 ]; then
         echo "${_hd_done}/${_hd_total} complete | All tasks done"
-    elif [ -n "$next_item" ]; then
-        echo "${_hd_done}/${_hd_total} complete | Next: ${next_item}"
+    elif [ -n "$_next_id" ]; then
+        echo "${_hd_done}/${_hd_total} complete | Next: ${_next_id}. ${_next_task}"
     else
         echo "${_hd_done}/${_hd_total} complete"
     fi
 }
 
-# Return the full honeydew checklist (for injection into prompts).
+# Return the full honeydew JSON (for injection into prompts).
 # Args: $1=workdir
 _agent_honeydew_read() {
     local workdir="${1:-.}"
     local hd_file="$workdir/.george/$HONEYDEW_FILE"
-
     [ ! -f "$hd_file" ] && return 1
     cat "$hd_file"
 }
@@ -421,19 +431,20 @@ _agent_honeydew_auto_check() {
     local milestone="$1"
     local workdir="${2:-.}"
     local hd_file="$workdir/.george/$HONEYDEW_FILE"
-
     [ ! -f "$hd_file" ] && return 1
 
     local milestone_lower
     milestone_lower=$(echo "$milestone" | tr '[:upper:]' '[:lower:]')
 
-    # Iterate unchecked items and find best keyword match
+    # Iterate pending items and find best keyword match
     local best_num=0
     local best_score=0
-    while IFS= read -r line; do
-        local item_num item_text item_lower score=0
-        item_num=$(echo "$line" | grep -oE '^[0-9]+')
-        item_text=$(echo "$line" | sed 's/^[0-9]*\. \[ \] //')
+    local _pending_items
+    _pending_items=$(jq -r '.items[] | select(.status == "pending") | "\(.id)|\(.task)"' "$hd_file" 2>/dev/null)
+
+    while IFS='|' read -r item_num item_text; do
+        [ -z "$item_num" ] && continue
+        local item_lower score=0
         item_lower=$(echo "$item_text" | tr '[:upper:]' '[:lower:]')
 
         # Score: count shared words (>3 chars) between milestone and item
@@ -448,7 +459,7 @@ _agent_honeydew_auto_check() {
             best_score=$score
             best_num=$item_num
         fi
-    done < <(grep '^[0-9]*\. \[ \]' "$hd_file" 2>/dev/null)
+    done <<< "$_pending_items"
 
     # Require at least 2 matching words to auto-check
     if [ "$best_score" -ge 2 ] && [ "$best_num" -gt 0 ]; then
@@ -618,7 +629,7 @@ _agent_evaluate_completion() {
 
     # ── Inject honeydew list status into evaluator ─────────────
     # The honeydew list provides structured visibility into multi-step
-    # tasks. If ANY items are unchecked [ ], the task is NOT done.
+    # tasks. If ANY items have status "pending", the task is NOT done.
     local _hd_eval_block=""
     local _hd_eval_file
     _hd_eval_file="$(dirname "$macro_file")/$HONEYDEW_FILE"
@@ -626,9 +637,9 @@ _agent_evaluate_completion() {
         local _hd_eval_content
         _hd_eval_content=$(cat "$_hd_eval_file")
         local _hd_total _hd_done
-        _hd_total=$(grep -cE '^[0-9]+\. \[[ x]\]' "$_hd_eval_file" 2>/dev/null || echo 0)
-        _hd_done=$(grep -cE '^[0-9]+\. \[x\]' "$_hd_eval_file" 2>/dev/null || echo 0)
-        _hd_eval_block="\n\n>>> HONEYDEW LIST (${_hd_done}/${_hd_total} complete) <<<\n${_hd_eval_content}\n>>> Any item marked [ ] = INCOMPLETE. ALL must be [x] for COMPLETE. <<<"
+        _hd_total=$(jq '.items | length' "$_hd_eval_file" 2>/dev/null || echo 0)
+        _hd_done=$(jq '[.items[] | select(.status == "done")] | length' "$_hd_eval_file" 2>/dev/null || echo 0)
+        _hd_eval_block="\n\n>>> HONEYDEW LIST (${_hd_done}/${_hd_total} complete) <<<\n${_hd_eval_content}\n>>> Any item with status \"pending\" = INCOMPLETE. ALL must be \"done\" for COMPLETE. <<<"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: overall-eval <- honeydew (${_hd_done}/${_hd_total})"
     fi
 
@@ -641,7 +652,7 @@ _agent_evaluate_completion() {
  "no_extras":"do NOT invent requirements user did not ask for",
  "single_action":"one successful milestone with correct action = COMPLETE",
  "multi_part":"each distinct part needs a completed milestone with right action_class",
- "honeydew":"if present, ALL items must be [x] for COMPLETE",
+ "honeydew":"if present, ALL items must have status done for COMPLETE",
  "code_tasks":{
    "require":["meaningful_files_written","build_exit_0"],
    "reject":["todo","unimplemented","stub","panic","placeholder"],
@@ -1907,13 +1918,23 @@ agent_inner_loop() {
         # non-code-fence continuation lines as the full command body.
         local cmd=""
         local cmd_is_slash=0
+
+        # ── STRIP CODE FENCE WRAPPING ─────────────────────────
+        # The 4B specialist model frequently wraps its output in
+        # markdown code fences (```...```) despite being told not to.
+        # The awk parser below skips lines inside fences, which means
+        # the actual /command gets ignored. Strip all fence lines
+        # before parsing so the bare /command is visible.
+        local _clean_plan
+        _clean_plan=$(echo "$action_plan" | sed '/^```[a-z]*[[:space:]]*$/d')
+
         if [ "$selected_tool" != "bash" ]; then
             # Extract slash command + continuation lines (content body).
             # Captures the first /command line outside code blocks, then
             # all subsequent lines until EOF, another /command, or a code fence.
             # Continuation lines are joined with \n literal so /write and
             # /save receive them as multi-line content.
-            cmd=$(echo "$action_plan" | awk '
+            cmd=$(echo "$_clean_plan" | awk '
                 /^```/ { in_block = !in_block; next }
                 in_block { next }
                 !found && /^\/[a-z]/ { found=1; cmd=$0; next }
@@ -1927,11 +1948,11 @@ agent_inner_loop() {
                 cmd_is_slash=1
             else
                 # Fallback: LLM may have wrapped it in a bash block anyway
-                cmd=$(echo "$action_plan" | awk '/```bash/{flag=1; next} /```/{flag=0} flag')
+                cmd=$(echo "$_clean_plan" | awk '/```bash/{flag=1; next} /```/{flag=0} flag')
             fi
         else
             # awk: /```bash/ sets flag, /```/ clears flag, flag prints lines between.
-            cmd=$(echo "$action_plan" | awk '/```bash/{flag=1; next} /```/{flag=0} flag')
+            cmd=$(echo "$_clean_plan" | awk '/```bash/{flag=1; next} /```/{flag=0} flag')
         fi
 
         # ── MULTI-COMMAND SPLITTER ────────────────────────────
@@ -1970,6 +1991,19 @@ agent_inner_loop() {
         if [ "$_fail_count" -ge 3 ] && [ -n "$cmd" ] && [ "$cmd" == "$last_failed_cmd" ]; then
             ui_warn "Interlock Triggered: Identical failed command. Forcing regeneration."
             _micro_add_note "$micro_file" "System interlock: Command '$cmd' rejected (identical to previous failure)"
+            inner_attempts=$((inner_attempts + 1))
+            continue
+        fi
+
+        # ── EMPTY COMMAND HANDLER ──────────────────────────────
+        # If command extraction failed (specialist output was garbage,
+        # unparseable, or entirely wrapped in noise), log the failure
+        # to micro_memory and increment the loop. Without this, the
+        # loop silently burns all iterations with no diagnostic trail.
+        if [ -z "$cmd" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] No command extracted from specialist output"
+            _micro_add_action "$micro_file" "(parse_failure)" "FAILED" 1 \
+                "Specialist output could not be parsed into a command: ${action_plan:0:200}" "system"
             inner_attempts=$((inner_attempts + 1))
             continue
         fi
