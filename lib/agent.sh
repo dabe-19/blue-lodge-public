@@ -561,7 +561,7 @@ EVAL_P1_JSON
     local first_line
     first_line=$(echo "$verdict" | head -1)
     local verdict_word
-    verdict_word=$(echo "$first_line" | awk '{print $1}')
+    verdict_word=$(echo "$first_line" | awk '{print $1}' | sed 's/^[*_]\+//;s/[*_:.,]\+$//')
 
     # Parse INCOMPLETE reason
     _EVAL_MILESTONE_REASON=""
@@ -690,7 +690,7 @@ EVAL_P2_JSON
     local first_line
     first_line=$(echo "$verdict" | head -1)
     local verdict_word
-    verdict_word=$(echo "$first_line" | awk '{print $1}')
+    verdict_word=$(echo "$first_line" | awk '{print $1}' | sed 's/^[*_]\+//;s/[*_:.,]\+$//')
 
     _EVAL_INCOMPLETE_REASON=""
     if [[ "$verdict_word" != "COMPLETE" ]]; then
@@ -1871,7 +1871,14 @@ agent_inner_loop() {
         # Inject micro_memory (action log) so the specialist sees
         # prior outputs, created files, and error history. Without this,
         # multi-step objectives fail because the specialist can't adapt.
-        local specialist_prompt="MICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\nWrite the exact command to execute next."
+        local _spec_tail="Write the exact command to execute next."
+        # /web search gets a focused constraint — the model ignores
+        # search_tips buried in the JSON card, so put it at the end
+        # where recency bias makes it impossible to miss.
+        if [[ "${selected_tool#/}" == "web" ]]; then
+            _spec_tail="Output ONLY the /web command. For /web search: MAX 5 keywords. Drop filler words (the, a, for, in, to, and, or, about, including, regarding, comprehensive, professional, community, organizations, associations). Example: objective='Find David McCabe professional associations in Green Bay WI area' -> /web search David McCabe Green Bay WI"
+        fi
+        local specialist_prompt="MICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\n${_spec_tail}"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist <- micro_memory action log ($(echo "$inner_context" | wc -l) lines)"
 
         # ── Per-command specialist token limit ─────────────────
@@ -1988,6 +1995,36 @@ agent_inner_loop() {
         fi
         if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" == *"'"* ]]; then
             cmd=$(echo "$cmd" | sed "s/'//g")
+        fi
+
+        # ── WEB SEARCH QUERY TRIMMER ──────────────────────────
+        # Programmatic backstop: even with prompt guidance, the 4B
+        # model produces verbose search queries. Strip common filler
+        # words and cap at 8 tokens so search engines get clean input.
+        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" == /web\ search\ * ]]; then
+            local _raw_query="${cmd#/web search }"
+            # Strip filler/stopwords (case-insensitive)
+            local _trimmed_query
+            _trimmed_query=$(echo "$_raw_query" | sed '
+                s/\bOR\b//g; s/\bAND\b//g;
+                s/\b[Tt]he\b//g; s/\b[Aa]n\?\b//g; s/\b[Ff]or\b//g;
+                s/\b[Ii]n\b//g; s/\b[Tt]o\b//g; s/\b[Aa]nd\b//g;
+                s/\b[Oo]r\b//g; s/\b[Oo]f\b//g; s/\b[Oo]n\b//g;
+                s/\b[Aa]bout\b//g; s/\b[Ii]ncluding\b//g;
+                s/\b[Rr]egarding\b//g; s/\b[Cc]omprehensive\b//g;
+                s/\b[Pp]rofessional\b//g; s/\b[Cc]ommunity\b//g;
+                s/\b[Oo]rganizations\?\b//g; s/\b[Aa]ssociations\?\b//g;
+                s/\b[Ff]ocusing\b//g; s/\b[Ii]dentify\b//g;
+                s/\b[Rr]elevant\b//g; s/\b[Ss]pecific\b//g;
+                s/\b[Vv]arious\b//g; s/\b[Rr]elated\b//g;
+                s/\b[Ww]ith\b//g; s/\b[Tt]hat\b//g; s/\b[Ff]rom\b//g;
+                s/  */ /g; s/^ *//; s/ *$//' )
+            # Cap at 8 words
+            _trimmed_query=$(echo "$_trimmed_query" | awk '{for(i=1;i<=NF&&i<=8;i++) printf "%s ", $i; print ""}'  | sed 's/ *$//')
+            if [ -n "$_trimmed_query" ] && [ "$_trimmed_query" != "$_raw_query" ]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web-search trimmed: '$_raw_query' -> '$_trimmed_query'"
+                cmd="/web search $_trimmed_query"
+            fi
         fi
 
         # ── PROGRAMMATIC INTERLOCK: Identicality Lockout ──────
