@@ -692,6 +692,30 @@ _cmd_limits() {
             else
                 _limits_set AGENT_EVAL_CONTEXT_LINES "Eval context lines" "$value" 5 500
             fi ;;
+        web-sufficiency)
+            if [ -z "$value" ]; then
+                ui_info "Web sufficiency threshold: $AGENT_WEB_SUFFICIENCY (default: 3)"
+            else
+                _limits_set AGENT_WEB_SUFFICIENCY "Web sufficiency" "$value" 1 20
+            fi ;;
+        milestone-retries)
+            if [ -z "$value" ]; then
+                ui_info "Milestone retry limit: $AGENT_MAX_MILESTONE_RETRIES (default: 2)"
+            else
+                _limits_set AGENT_MAX_MILESTONE_RETRIES "Milestone retries" "$value" 1 10
+            fi ;;
+        cmd-family)
+            if [ -z "$value" ]; then
+                ui_info "Command family cap: $AGENT_MAX_CMD_FAMILY (default: 3)"
+            else
+                _limits_set AGENT_MAX_CMD_FAMILY "Command family cap" "$value" 1 20
+            fi ;;
+        honeydew-match)
+            if [ -z "$value" ]; then
+                ui_info "Honeydew keyword match score: $AGENT_HONEYDEW_MATCH (default: 2)"
+            else
+                _limits_set AGENT_HONEYDEW_MATCH "Honeydew match score" "$value" 1 10
+            fi ;;
         ask-tokens)
             if [ -z "$value" ]; then
                 ui_info "Ask output tokens: $LLM_ASK_TOKENS (default: 20480)"
@@ -772,6 +796,10 @@ _cmd_limits() {
             LLM_BUDGET_JOURNAL=64
             LLM_BUDGET_TOOL=256
             AGENT_EVAL_CONTEXT_LINES=50
+            AGENT_WEB_SUFFICIENCY=3
+            AGENT_MAX_MILESTONE_RETRIES=2
+            AGENT_MAX_CMD_FAMILY=3
+            AGENT_HONEYDEW_MATCH=2
             ui_ok "All limits reset to defaults" ;;
         "")
             ui_section "Agent Limits"
@@ -782,6 +810,10 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Step delay:" "${AGENT_STEP_DELAY}s  (default: 1)"
             printf "  %-22s %s\n" "Eval mode:" "$AGENT_EVAL_MODE  (default: auto, options: auto|interactive|disabled)"
             printf "  %-22s %s\n" "Eval context lines:" "${AGENT_EVAL_CONTEXT_LINES:-50}  (default: 50)"
+            printf "  %-22s %s\n" "Web sufficiency:" "$AGENT_WEB_SUFFICIENCY  (default: 3)"
+            printf "  %-22s %s\n" "Milestone retries:" "$AGENT_MAX_MILESTONE_RETRIES  (default: 2)"
+            printf "  %-22s %s\n" "Command family cap:" "$AGENT_MAX_CMD_FAMILY  (default: 3)"
+            printf "  %-22s %s\n" "Honeydew match score:" "$AGENT_HONEYDEW_MATCH  (default: 2)"
             echo ""
             ui_section "Output Tokens (num_predict)"
             printf "  %-22s %s\n" "Max tokens:" "$LLM_MAX_TOKENS  (default: 20480)"
@@ -812,6 +844,10 @@ _cmd_limits() {
             ui_dim "    delay N         — Seconds between milestones (current: $AGENT_STEP_DELAY)"
             ui_dim "    eval-mode M     — Evaluator mode: auto|interactive|disabled (current: $AGENT_EVAL_MODE)"
             ui_dim "    eval-context N  — Max action log lines for evaluator (current: ${AGENT_EVAL_CONTEXT_LINES:-50})"
+            ui_dim "    web-sufficiency N — Web actions before sufficiency signal (current: $AGENT_WEB_SUFFICIENCY)"
+            ui_dim "    milestone-retries N — Max retries of same milestone (current: $AGENT_MAX_MILESTONE_RETRIES)"
+            ui_dim "    cmd-family N     — Max milestones with same base command (current: $AGENT_MAX_CMD_FAMILY)"
+            ui_dim "    honeydew-match N — Min keyword score for honeydew auto-check (current: $AGENT_HONEYDEW_MATCH)"
             echo ""
             ui_dim "  Output tokens (num_predict):"
             ui_dim "    max-tokens N    — Global max output cap (current: $LLM_MAX_TOKENS)"

@@ -22,6 +22,8 @@ AGENT_INTERACTIVE_PLANNING="${AGENT_INTERACTIVE_PLANNING:-0}"
 AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-2}"        # Subtask recursion depth
 AGENT_WEB_SUFFICIENCY="${AGENT_WEB_SUFFICIENCY:-3}"  # Web actions before sufficiency signal
 AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-2}"  # Max times to retry same milestone
+AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-3}"                # Max milestones with same base command
+AGENT_HONEYDEW_MATCH="${AGENT_HONEYDEW_MATCH:-2}"              # Min keyword score to auto-check honeydew item
 AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto | interactive | disabled
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
@@ -463,15 +465,28 @@ _agent_honeydew_read() {
 
 # Match a completed milestone against honeydew items and mark
 # the best-matching item as done. Uses simple keyword overlap.
-# Args: $1=milestone_text, $2=workdir
+# Args: $1=milestone_text, $2=workdir, $3=macro_file (optional)
 _agent_honeydew_auto_check() {
     local milestone="$1"
     local workdir="${2:-.}"
+    local macro_file="${3:-}"
     local hd_file="$workdir/.george/$HONEYDEW_FILE"
     [ ! -f "$hd_file" ] && return 1
 
+    # Build combined match text from milestone + last milestone summary.
+    # The strategist milestone is often a bare slash command ("/web search X")
+    # with minimal vocabulary overlap against high-level honeydew items.
+    # The milestone summary (written by _agent_complete_milestone) contains
+    # rich factual keywords that match honeydew descriptions much better.
+    local match_text="$milestone"
+    if [ -n "$macro_file" ] && [ -f "$macro_file" ]; then
+        local _last_summary
+        _last_summary=$(jq -r '.completed_milestones[-1].summary // empty' "$macro_file" 2>/dev/null)
+        [ -n "$_last_summary" ] && match_text="${match_text} ${_last_summary}"
+    fi
+
     local milestone_lower
-    milestone_lower=$(echo "$milestone" | tr '[:upper:]' '[:lower:]')
+    milestone_lower=$(echo "$match_text" | tr '[:upper:]' '[:lower:]')
 
     # Iterate pending items and find best keyword match
     local best_num=0
@@ -498,8 +513,8 @@ _agent_honeydew_auto_check() {
         fi
     done <<< "$_pending_items"
 
-    # Require at least 2 matching words to auto-check
-    if [ "$best_score" -ge 2 ] && [ "$best_num" -gt 0 ]; then
+    # Require minimum keyword overlap to auto-check
+    if [ "$best_score" -ge "${AGENT_HONEYDEW_MATCH:-2}" ] && [ "$best_num" -gt 0 ]; then
         _agent_honeydew_mark "$best_num" "$workdir"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew auto-check: item $best_num (score=$best_score)"
         return 0
@@ -1409,6 +1424,7 @@ _build_specialist_prompt() {
 {"output":{"format":"exactly ONE slash command on its own line","starts_with":"/",
  "forbidden":["code_block_wrapper","quotes_on_args","multiple_commands_per_line","/sandbox for slash commands"]}}
 SPEC_PREAMBLE
+        echo "CRITICAL: Output the bare slash command. NO backticks. NO code fences. NO markdown formatting. Just the command."
 
         # Docs injection is SKIPPED for the specialist. The syntax card
         # below provides all needed syntax in ~10 lines per command.
@@ -1915,14 +1931,16 @@ agent_inner_loop() {
                     selected_tool="$_real_cmd"
                 else
                     # Fallback: scan objective for common command keywords
+                    # Delivery commands checked FIRST to prevent research
+                    # loop (e.g. "write a report" matching *web* before *write*).
                     case "$_obj_lower" in
-                        *social*|*discord*|*telegram*|*post*|*tweet*) selected_tool="social" ;;
-                        *search*|*web*|*fetch*|*url*)                selected_tool="web" ;;
-                        *write*|*save*|*file*)                      selected_tool="write" ;;
-                        *email*|*send*mail*)                        selected_tool="email" ;;
-                        *journal*|*log*|*note*)                     selected_tool="journal" ;;
-                        *recall*|*remember*|*knowledge*)            selected_tool="recall" ;;
-                        *)                                          selected_tool="ask" ;;
+                        *write*|*save*|*file*|*create*|*draft*|*compose*) selected_tool="write" ;;
+                        *email*|*send*mail*)                             selected_tool="email" ;;
+                        *social*|*discord*|*telegram*|*post*|*tweet*)    selected_tool="social" ;;
+                        *journal*|*log*|*note*)                          selected_tool="journal" ;;
+                        *recall*|*remember*|*knowledge*)                 selected_tool="recall" ;;
+                        *search*|*web*|*fetch*|*url*|*look*up*)          selected_tool="web" ;;
+                        *)                                               selected_tool="ask" ;;
                     esac
                 fi
             fi
@@ -2323,6 +2341,21 @@ agent_inner_loop() {
                     if [ -n "$_write_body" ] && echo "$_write_body" | grep -qP '\[(?:your |briefly |mention |e\.g\.|TBD|TODO|placeholder)' 2>/dev/null; then
                         _micro_add_warning "$micro_file" "File contains placeholder text ([your ...], [TBD], etc.). Template, not finished content. Rewrite with actual data."
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] /write placeholder detected — warning injected"
+                    fi
+                fi
+
+                # ── USAGE/HELP OUTPUT DETECTION ────────────────
+                # Some commands return usage/help text on exit 0 when
+                # called with missing or wrong arguments. The P1 evaluator
+                # can't distinguish "usage printed" from "work done".
+                # Detect common usage patterns and inject a warning.
+                if [ -n "$output" ] && [ "${#output}" -lt 2000 ]; then
+                    local _out_lower
+                    _out_lower=$(echo "$output" | tr '[:upper:]' '[:lower:]')
+                    if [[ "$_out_lower" =~ (^usage:|^usage |subcommands:|commands:|options:|synopsis:) ]] || \
+                       [[ "$_out_lower" =~ (^[[:space:]]*\/[a-z]+[[:space:]]+(search|fetch|post|send|read|write|new|build|test|run)[[:space:]]) && "$_out_lower" =~ (description|help|available) ]]; then
+                        _micro_add_warning "$micro_file" "Command returned USAGE/HELP text, not actual work output. The command was likely called with wrong or missing arguments. Retry with correct arguments."
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] usage/help output detected — warning injected"
                     fi
                 fi
 
@@ -2757,6 +2790,9 @@ MEMEOF
     # strategist doesn't regenerate the same failed milestone in a
     # loop. Each entry is "status|milestone_text".
     local -a _attempted_milestones=()
+    # Track consecutive research-only milestones (web/recall) so
+    # the strategist is forced toward delivery after saturation.
+    local _research_milestone_count=0
     # Last evaluator feedback — prominently surfaced to strategist.
     # Updated after each evaluator pass so the strategist sees exactly
     # what the evaluator said was missing on the PREVIOUS iteration.
@@ -2832,6 +2868,20 @@ MEMEOF
         # reuse across consecutive strategist calls (~30-60% prefill savings).
         local macro_prompt="Current date/time: ${_strat_now}\n\nRead the following task memory. What is the SINGLE next logical milestone to advance the Primary Objective? If the objective is fully complete, reply with EXACTLY the word DONE and nothing else.\n\n$macro_context"
 
+        # ── Research→Delivery Gate ────────────────────────────
+        # After 2+ consecutive research milestones, inject a hard
+        # constraint forcing the strategist to use a delivery command.
+        # This breaks the /web loop where the model endlessly searches
+        # instead of producing output.
+        local _research_gate=""
+        if [ "$_research_milestone_count" -ge 2 ]; then
+            _research_gate="
+
+>>> RESEARCH PHASE COMPLETE — you have done ${_research_milestone_count} consecutive research milestones. <<<
+>>> Next milestone MUST use a DELIVERY command: /write, /email, /save, /social, /build. <<<
+>>> Do NOT use /web or /recall. Deliver results using the data already gathered. <<<"
+        fi
+
         local macro_sys="Strategic planning engine. Output the SINGLE next milestone. No markdown formatting (no ** or * markers). Plain text only.
 
 ${_tool_summary}
@@ -2851,12 +2901,12 @@ $(cat << 'STRAT_RULES_JSON'
    "only_configured":true},
  "research":{"when":"missing info (keys,URLs,packages,specs)",
    "tools":["/web search","/recall","/web fetch","/social discord read","/secret get"],
-   "always_ok":true},
+   "max_consecutive":2,"then":"MUST use delivery command (/write,/email,/save,/social,/build)"},
  "failure":{"no_repeat":true,"advance_next_part":true},
  "honeydew":{"pick":"next [ ] item","done_when":"ALL [x] → DONE"},
  "conversation":"question + /ask answered → DONE"}}
 STRAT_RULES_JSON
-)${_milestone_history}${_last_eval_feedback:+
+)${_research_gate}${_milestone_history}${_last_eval_feedback:+
 
 >>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<
 ${_last_eval_feedback}
@@ -2922,10 +2972,13 @@ ${_last_eval_feedback}
         # to one that already failed, detect it and either force the
         # strategist to try a different approach or skip ahead.
         #
-        # Similarity detection uses TWO strategies:
+        # Similarity detection uses THREE strategies:
         #   1) First 40 chars match (catches rephrased duplicates)
         #   2) Same primary slash command + first argument extracted
         #      (catches "/social discord dm dabe" vs "Send a DM to dabe via /social discord dm")
+        #   3) Command-family cap — if 3+ milestones used the same base
+        #      command (e.g. /web), force a different approach even if
+        #      the arguments differ ("/web search X" vs "/web search Y").
         local _milestone_lower
         _milestone_lower=$(echo "$milestone" | tr '[:upper:]' '[:lower:]')
         # Extract slash command signature: e.g. "/social discord dm dabe" → "social discord dm dabe"
@@ -2954,6 +3007,26 @@ ${_last_eval_feedback}
             fi
             _last_milestone_text="$_prev_text"
         done
+
+        # Strategy 3: Command-family cap — count all milestones
+        # sharing the same base command regardless of arguments.
+        if [ -n "$_milestone_slash" ] && [ "$_dup_count" -eq 0 ]; then
+            local _ms_base_cmd _family_count=0
+            _ms_base_cmd=$(echo "$_milestone_slash" | cut -d' ' -f1)
+            for _prev in "${_attempted_milestones[@]}"; do
+                local _prev_text_fam _prev_lower_fam _prev_base=""
+                _prev_text_fam="${_prev#*|}"
+                _prev_lower_fam=$(echo "$_prev_text_fam" | tr '[:upper:]' '[:lower:]')
+                if [[ "$_prev_lower_fam" =~ /([a-z]+) ]]; then
+                    _prev_base="${BASH_REMATCH[1]}"
+                fi
+                [ "$_prev_base" = "$_ms_base_cmd" ] && _family_count=$((_family_count + 1))
+            done
+            if [ "$_family_count" -ge "${AGENT_MAX_CMD_FAMILY:-3}" ]; then
+                _dup_count=$((${AGENT_MAX_MILESTONE_RETRIES:-2}))
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] command-family cap: $_family_count milestones used /$_ms_base_cmd — forcing progression"
+            fi
+        fi
 
         # Exact-repeat guard: if the strategist output is identical to the
         # very last milestone (even on first attempt), it's stuck in a loop.
@@ -3005,6 +3078,15 @@ ${_last_eval_feedback}
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — OK\n"
             _attempted_milestones+=("OK|$milestone")
 
+            # ── Track research vs delivery milestones ─────────
+            local _ms_lower_track
+            _ms_lower_track=$(echo "$milestone" | tr '[:upper:]' '[:lower:]')
+            if [[ "$_ms_lower_track" =~ (/web |/recall |search|fetch|lookup|research) ]]; then
+                _research_milestone_count=$((_research_milestone_count + 1))
+            else
+                _research_milestone_count=0  # reset on delivery milestone
+            fi
+
             # JSON uses empty array for milestones — no placeholder to remove
             if false; then
                 : # removed: sed placeholder cleanup (JSON has no "(none yet)")
@@ -3035,7 +3117,7 @@ ${_last_eval_feedback}
             # items and mark the best match as done. Updates the
             # honeydew file AND refreshes it in macro_memory so the
             # evaluator sees the updated checklist.
-            if _agent_honeydew_auto_check "$milestone" "$workdir"; then
+            if _agent_honeydew_auto_check "$milestone" "$workdir" "$macro_file"; then
                 local _hd_status
                 _hd_status=$(_agent_honeydew_status "$workdir" 2>/dev/null)
                 [ -n "$_hd_status" ] && ui_dim "  Honeydew: $_hd_status"

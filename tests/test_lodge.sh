@@ -436,6 +436,42 @@ describe "Limits command"
     LLM_BUDGET_TOOL=256  # restore
   }
 
+  it "_cmd_limits web-sufficiency sets AGENT_WEB_SUFFICIENCY" && {
+    _cmd_limits "web-sufficiency 5" >/dev/null 2>&1
+    assert_eq "$AGENT_WEB_SUFFICIENCY" "5"
+    AGENT_WEB_SUFFICIENCY=3  # restore
+  }
+
+  it "_cmd_limits milestone-retries sets AGENT_MAX_MILESTONE_RETRIES" && {
+    _cmd_limits "milestone-retries 4" >/dev/null 2>&1
+    assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "4"
+    AGENT_MAX_MILESTONE_RETRIES=2  # restore
+  }
+
+  it "_cmd_limits cmd-family sets AGENT_MAX_CMD_FAMILY" && {
+    _cmd_limits "cmd-family 5" >/dev/null 2>&1
+    assert_eq "$AGENT_MAX_CMD_FAMILY" "5"
+    AGENT_MAX_CMD_FAMILY=3  # restore
+  }
+
+  it "_cmd_limits honeydew-match sets AGENT_HONEYDEW_MATCH" && {
+    _cmd_limits "honeydew-match 3" >/dev/null 2>&1
+    assert_eq "$AGENT_HONEYDEW_MATCH" "3"
+    AGENT_HONEYDEW_MATCH=2  # restore
+  }
+
+  it "_cmd_limits show includes agent loop lines" && {
+    output=$(_cmd_limits "" 2>&1)
+    echo "$output" | grep -q "Web sufficiency"
+    assert_ok $?
+    echo "$output" | grep -q "Milestone retries"
+    assert_ok $?
+    echo "$output" | grep -q "Command family"
+    assert_ok $?
+    echo "$output" | grep -q "Honeydew match"
+    assert_ok $?
+  }
+
   it "_cmd_limits show includes token lines" && {
     output=$(_cmd_limits "" 2>&1)
     echo "$output" | grep -q "Agent tokens"
@@ -482,6 +518,10 @@ describe "Limits command"
     assert_eq "$LLM_BUDGET_ROUTER" "128"
     assert_eq "$LLM_BUDGET_JOURNAL" "64"
     assert_eq "$LLM_BUDGET_TOOL" "256"
+    assert_eq "$AGENT_WEB_SUFFICIENCY" "3"
+    assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "2"
+    assert_eq "$AGENT_MAX_CMD_FAMILY" "3"
+    assert_eq "$AGENT_HONEYDEW_MATCH" "2"
   }
 
 # ── /model command ─────────────────────────────────────────────

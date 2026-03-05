@@ -1805,6 +1805,12 @@ describe "Code fence stripping & parse failure handling"
     assert_ok $? "Specialist prompt must forbid code block wrapping"
   }
 
+  it "specialist prompt has explicit anti-backtick instruction" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'NO backticks.*NO code fences'
+    assert_ok $? "Specialist prompt must have plain-text anti-backtick directive"
+  }
+
   it "honeydew_display function exists" && {
     declare -f _agent_honeydew_display > /dev/null 2>&1
     assert_ok $? "_agent_honeydew_display must be defined"
@@ -1823,6 +1829,176 @@ describe "Code fence stripping & parse failure handling"
     echo "$output" | grep -q '\[ \].*Beta'
     assert_ok $? "Pending item should show [ ]"
     rm -rf "$_tmpdir"
+  }
+
+# ── Honeydew auto-check with milestone summary ────────────────
+describe "Honeydew auto-check uses milestone summary"
+
+  it "AGENT_HONEYDEW_MATCH defaults to 2" && {
+    assert_eq "$AGENT_HONEYDEW_MATCH" "2"
+  }
+
+  it "auto-check uses AGENT_HONEYDEW_MATCH threshold" && {
+    body=$(declare -f _agent_honeydew_auto_check)
+    echo "$body" | grep -q 'AGENT_HONEYDEW_MATCH'
+    assert_ok $? "Must use configurable threshold variable"
+  }
+
+  it "auto-check accepts optional macro_file argument" && {
+    body=$(declare -f _agent_honeydew_auto_check)
+    echo "$body" | grep -q 'macro_file'
+    assert_ok $? "Must accept macro_file parameter"
+  }
+
+  it "auto-check reads last milestone summary from macro_memory" && {
+    body=$(declare -f _agent_honeydew_auto_check)
+    echo "$body" | grep -q 'completed_milestones.*summary'
+    assert_ok $? "Must read summary from macro_memory"
+  }
+
+  it "auto-check combines milestone text with summary for matching" && {
+    body=$(declare -f _agent_honeydew_auto_check)
+    echo "$body" | grep -q 'match_text.*_last_summary'
+    assert_ok $? "Must combine milestone and summary into match_text"
+  }
+
+  it "auto-check matches slash command milestone via macro summary" && {
+    # Functional test: a bare /web search milestone wouldn't match
+    # "Research NFL free agency predictions" but the summary will.
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    _hd_file="$_tmpdir/.george/$HONEYDEW_FILE"
+    _macro_file="$_tmpdir/.george/macro_memory.json"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Research NFL free agency predictions","status":"pending"},
+      {"id":2,"task":"Write summary report","status":"pending"}]}' > "$_hd_file"
+    # Macro memory with a rich summary that shares keywords with honeydew item 1
+    jq -n '{"primary_objective":"test","completed_milestones":[
+      {"timestamp":"2026-03-05","objective":"/web search Hendrickson Ravens 2026",
+       "summary":"Sporting News predicted Hendrickson joins Ravens in 2026 NFL free agency. Multiple sources confirmed predictions about contract value.",
+       "command":"/web search Hendrickson Ravens 2026","action_class":"RESEARCH_ONLY","status":"OK"}]}' > "$_macro_file"
+    # The milestone text alone has weak overlap with honeydew item 1
+    # but the summary adds "predictions", "free", "agency" which match
+    _agent_honeydew_auto_check '/web search Hendrickson Ravens 2026' "$_tmpdir" "$_macro_file"
+    _rc=$?
+    # Verify item 1 was marked done
+    _status=$(jq -r '.items[] | select(.id == 1) .status' "$_hd_file")
+    assert_eq "$_status" "done" "Honeydew item 1 should be marked done via summary matching"
+    rm -rf "$_tmpdir"
+  }
+
+  it "auto-check still works without macro_file (backward compat)" && {
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    _hd_file="$_tmpdir/.george/$HONEYDEW_FILE"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Search for Hendrickson Ravens contract details","status":"pending"}]}' > "$_hd_file"
+    # milestone text alone has enough keywords (hendrickson, ravens, contract, details)
+    _agent_honeydew_auto_check 'Search for Hendrickson Ravens contract details' "$_tmpdir"
+    _rc=$?
+    _status=$(jq -r '.items[] | select(.id == 1) .status' "$_hd_file")
+    assert_eq "$_status" "done" "Should match on milestone text alone when keywords overlap"
+    rm -rf "$_tmpdir"
+  }
+
+  it "call site passes macro_file to auto-check" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_agent_honeydew_auto_check.*milestone.*workdir.*macro_file'
+    assert_ok $? "Must pass macro_file to _agent_honeydew_auto_check"
+  }
+
+# ── Research→Delivery state machine ───────────────────────────
+describe "Research→Delivery state machine"
+
+  it "agent_run initializes _research_milestone_count" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_research_milestone_count=0'
+    assert_ok $? "Must initialize research milestone counter"
+  }
+
+  it "agent_run tracks research milestones and resets on delivery" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_research_milestone_count=$((_research_milestone_count + 1))'
+    assert_ok $? "Must increment research counter"
+    # Reset to 0 happens on non-research milestones (delivery)
+    # declare -f strips comments so check the source file directly
+    grep -q '_research_milestone_count=0.*reset on delivery' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "Must reset counter on delivery milestone"
+  }
+
+  it "strategist prompt injects research gate after 2+ research milestones" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'RESEARCH PHASE COMPLETE'
+    assert_ok $? "Must inject research phase complete directive"
+    echo "$body" | grep -q '_research_milestone_count.*-ge 2'
+    assert_ok $? "Must check for 2+ consecutive research milestones"
+  }
+
+  it "strategist rules do NOT have always_ok for research" && {
+    body=$(declare -f agent_run)
+    ! echo "$body" | grep -q '"always_ok":true'
+    assert_ok $? "always_ok must be removed from strategist rules"
+  }
+
+  it "strategist rules have max_consecutive for research" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '"max_consecutive":2'
+    assert_ok $? "Must set max_consecutive research limit"
+  }
+
+# ── Command-family dedup cap ──────────────────────────────────
+describe "Command-family dedup cap"
+
+  it "AGENT_MAX_CMD_FAMILY defaults to 3" && {
+    assert_eq "$AGENT_MAX_CMD_FAMILY" "3"
+  }
+
+  it "deduplication implements command-family strategy" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_ms_base_cmd'
+    assert_ok $? "Must extract base command for family tracking"
+    echo "$body" | grep -q '_family_count'
+    assert_ok $? "Must count family occurrences"
+    echo "$body" | grep -q 'AGENT_MAX_CMD_FAMILY'
+    assert_ok $? "Must check against family cap"
+  }
+
+  it "command-family cap triggers dup when threshold reached" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'command-family cap'
+    assert_ok $? "Must log command-family cap in debug"
+  }
+
+# ── Usage/help output detection ───────────────────────────────
+describe "Usage/help output detection"
+
+  it "inner loop detects usage/help output on exit 0" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'USAGE/HELP text'
+    assert_ok $? "Must warn about usage/help output"
+  }
+
+  it "usage detection checks for common patterns" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'usage:\|subcommands:\|synopsis:'
+    assert_ok $? "Must check for standard usage patterns"
+  }
+
+  it "usage detection only runs on short output" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '2000'
+    assert_ok $? "Must limit detection to short outputs"
+  }
+
+# ── Sandbox interlock delivery-first ordering ─────────────────
+describe "Sandbox interlock delivery-first ordering"
+
+  it "sandbox fallback checks delivery commands before research" && {
+    # Read source file directly (declare -f strips comments and mangles case blocks)
+    _write_line=$(grep -n '\*write\*|\*save\*|\*file\*' "$LODGE_DIR/lib/agent.sh" | head -1 | cut -d: -f1)
+    _web_line=$(grep -n '\*search\*|\*web\*|\*fetch\*' "$LODGE_DIR/lib/agent.sh" | head -1 | cut -d: -f1)
+    [ -n "$_write_line" ] && [ -n "$_web_line" ] && [ "$_write_line" -lt "$_web_line" ]
+    assert_ok $? "Delivery commands (/write) must be checked before research (/web) in fallback"
   }
 
 test_end

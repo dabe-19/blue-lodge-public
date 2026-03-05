@@ -854,4 +854,37 @@ describe "System prompt files — new models"
     assert_ok $?
   }
 
+# ════════════════════════════════════════════════════════════════
+# Prompt contamination guards
+# ════════════════════════════════════════════════════════════════
+describe "Prompt contamination guards"
+
+  it "minist-inst Modelfile SYSTEM has no Mistral tool-calling preamble" && {
+    body=$(declare -f models_generate_modelfile)
+    ! echo "$body" | grep -q 'TOOL CALLING INSTRUCTIONS'
+    assert_ok $? "Mistral tool-calling preamble must be stripped"
+  }
+
+  it "minist-inst Modelfile SYSTEM has no Format using Markdown" && {
+    body=$(declare -f models_generate_modelfile)
+    ! echo "$body" | grep -q 'Format your response using Markdown'
+    assert_ok $? "Markdown formatting instruction must be removed"
+  }
+
+  it "minist-think.system has no Format using Markdown" && {
+    ! grep -q 'Format your response using Markdown' "$LODGE_DIR/models/minist-think.system"
+    assert_ok $? "minist-think.system must not instruct Markdown formatting"
+  }
+
+  it "thinking directive for minist has no Format using Markdown" && {
+    body=$(declare -f models_thinking_directive)
+    ! echo "$body" | grep -q 'Format your response using Markdown'
+    assert_ok $? "Thinking directive must not instruct Markdown formatting"
+  }
+
+  it "no .system file contains Format using Markdown" && {
+    _found=$(grep -rl 'Format your response using Markdown' "$LODGE_DIR/models/"*.system 2>/dev/null || true)
+    assert_empty "$_found" "No .system file should contain Markdown formatting instruction"
+  }
+
 test_end
