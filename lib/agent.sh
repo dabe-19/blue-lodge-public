@@ -369,15 +369,20 @@ RULES:
     # Some models (gemma, granite) output all items on one line:
     #   "1. Do thing one  2. Do thing two  3. Do thing three"
     # Split these into separate lines BEFORE the line-by-line parser.
-    raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\+\.\)/\1\n\2/g')
-    raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\+)\)/\1\n\2/g')
+    # Require exactly 1-2 whitespace chars AFTER the period/paren:
+    #   - 0 spaces → prose number ("in 2026.The")  → no split
+    #   - 1-2 spaces → real list item ("3. Do" / "3.  Do") → split
+    #   - 3+ spaces → end-of-sentence padding, not a list item → no split
+    # Also limit to 1-2 digit numbers to guard against years/prices.
+    raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\}\.[[:space:]]\{1,2\}\)/\1\n\2/g')
+    raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\})[[:space:]]\{1,2\}\)/\1\n\2/g')
 
     # Parse numbered lines into JSON array
     local _items_json='[]'
     local count=0
     while IFS= read -r line; do
         line=$(echo "$line" | sed 's/^[[:space:]]*//')
-        if [[ "$line" =~ ^[0-9]+[\.\)][[:space:]]*(.*) ]]; then
+        if [[ "$line" =~ ^[0-9]{1,2}[\.\)][[:space:]]*(.*) ]]; then
             count=$((count + 1))
             local item="${BASH_REMATCH[1]}"
             item=$(echo "$item" | sed 's/^\[[ x✓]*\][[:space:]]*//')
