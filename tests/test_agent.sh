@@ -880,7 +880,7 @@ describe "Soul injection in dual-loop architecture"
     body=$(declare -f agent_run)
     echo "$body" | grep -q '_strat_now'
     assert_ok $?
-    echo "$body" | grep -q 'Date:.*_strat_now\|current date and time'
+    echo "$body" | grep -q 'date/time:.*_strat_now\|current date and time'
     assert_ok $?
   }
 

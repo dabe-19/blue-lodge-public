@@ -116,6 +116,9 @@ _llm_load_config
 LLM_BACKEND="${LLM_BACKEND:-llamacpp}"
 # Cached backend result (set by _llm_detect_backend, cleared on /backend change)
 _LLM_BACKEND_CACHE=""
+# Cached identity system prompt (invalidated when LODGE_MODEL changes)
+_LLM_DEFAULT_SYSTEM_CACHE=""
+_LLM_DEFAULT_SYSTEM_MODEL=""
 # PID file for llama-server started by lodge
 _LLAMA_CPP_PID_FILE="${TMPDIR:-/tmp}/.lodge-llama-server.pid"
 LODGE_MODEL="${LODGE_MODEL:-blue-lodge}"
@@ -682,14 +685,11 @@ _llm_build_llamacpp_payload() {
     local max_tokens="$4"
     local stream="${5:-true}"
 
-    # Extract sampling params from opts_json (Ollama-format keys)
+    # Extract all sampling params in a single jq call (6→1).
+    # Each jq invocation costs ~20-50ms on ARM (process spawn + parse).
+    # Batching saves ~100-250ms per LLM call.
     local temp rep_raw pres top_p top_k min_p
-    temp=$(echo "$opts_json" | jq -r '.temperature // 0.7')
-    rep_raw=$(echo "$opts_json" | jq -r '.repeat_penalty // 1.2')
-    pres=$(echo "$opts_json" | jq -r '.presence_penalty // 0.3')
-    top_p=$(echo "$opts_json" | jq -r '.top_p // 1.0')
-    top_k=$(echo "$opts_json" | jq -r '.top_k // 40')
-    min_p=$(echo "$opts_json" | jq -r '.min_p // 0.0')
+    read -r temp rep_raw pres top_p top_k min_p <<< "$(echo "$opts_json" | jq -r '[.temperature // 0.7, .repeat_penalty // 1.2, .presence_penalty // 0.3, .top_p // 1.0, .top_k // 40, .min_p // 0.0] | @tsv')"
 
     # Convert Ollama repeat_penalty → OpenAI frequency_penalty
     local freq
@@ -1270,11 +1270,16 @@ llm_generate() {
     # when callers pass no system prompt. llamacpp loads a raw GGUF
     # with no Modelfile — without this, the model reverts to its base
     # training identity ("I am Qwen", "I am Mistral", etc.).
-    # We inject models/<key>.system (or models/default.system).
+    # Uses cached _LLM_DEFAULT_SYSTEM to avoid re-reading the .system
+    # file from disk on every call (~20ms saved per call on ARM).
     if [ -z "$system" ] && [ "$_active_backend" = "llamacpp" ] \
        && declare -f models_default_system &>/dev/null; then
-        system=$(models_default_system 2>/dev/null)
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$system" ] && ui_dim "  [debug] inject: ${_ME_KEY:-default}.system identity (${#system} chars)"
+        if [ -z "${_LLM_DEFAULT_SYSTEM_CACHE:-}" ] || [ "${_LLM_DEFAULT_SYSTEM_MODEL:-}" != "$LODGE_MODEL" ]; then
+            _LLM_DEFAULT_SYSTEM_CACHE=$(models_default_system 2>/dev/null)
+            _LLM_DEFAULT_SYSTEM_MODEL="$LODGE_MODEL"
+        fi
+        system="$_LLM_DEFAULT_SYSTEM_CACHE"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$system" ] && ui_dim "  [debug] inject: ${_ME_KEY:-default}.system identity (${#system} chars, cached)"
     fi
 
     # Model-aware nothink: append model-specific suffix (e.g., /no_think for Qwen3)
@@ -1879,11 +1884,15 @@ llm_stream() {
     models_ensure_for_scenario "${LLM_SCENARIO:-}"
 
     # ── Identity fallback (llamacpp only) ──────────────────────
-    # (see llm_generate for rationale — models/<key>.system)
+    # (see llm_generate for rationale — uses cached .system file)
     if [ -z "$system" ] && [ "$_active_backend" = "llamacpp" ] \
        && declare -f models_default_system &>/dev/null; then
-        system=$(models_default_system 2>/dev/null)
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$system" ] && ui_dim "  [debug] inject: ${_ME_KEY:-default}.system identity (${#system} chars)"
+        if [ -z "${_LLM_DEFAULT_SYSTEM_CACHE:-}" ] || [ "${_LLM_DEFAULT_SYSTEM_MODEL:-}" != "$LODGE_MODEL" ]; then
+            _LLM_DEFAULT_SYSTEM_CACHE=$(models_default_system 2>/dev/null)
+            _LLM_DEFAULT_SYSTEM_MODEL="$LODGE_MODEL"
+        fi
+        system="$_LLM_DEFAULT_SYSTEM_CACHE"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$system" ] && ui_dim "  [debug] inject: ${_ME_KEY:-default}.system identity (${#system} chars, cached)"
     fi
 
     # Model-aware nothink: append model-specific suffix (e.g., /no_think for Qwen3)
@@ -2499,11 +2508,15 @@ llm_chat() {
     models_ensure_for_scenario "${LLM_SCENARIO:-}"
 
     # ── Identity fallback (llamacpp only) ──────────────────────
-    # (see llm_generate for rationale — models/<key>.system)
+    # (see llm_generate for rationale — uses cached .system file)
     if [ -z "$system" ] && [ "$_active_backend" = "llamacpp" ] \
        && declare -f models_default_system &>/dev/null; then
-        system=$(models_default_system 2>/dev/null)
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$system" ] && ui_dim "  [debug] inject: ${_ME_KEY:-default}.system identity (${#system} chars)"
+        if [ -z "${_LLM_DEFAULT_SYSTEM_CACHE:-}" ] || [ "${_LLM_DEFAULT_SYSTEM_MODEL:-}" != "$LODGE_MODEL" ]; then
+            _LLM_DEFAULT_SYSTEM_CACHE=$(models_default_system 2>/dev/null)
+            _LLM_DEFAULT_SYSTEM_MODEL="$LODGE_MODEL"
+        fi
+        system="$_LLM_DEFAULT_SYSTEM_CACHE"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$system" ] && ui_dim "  [debug] inject: ${_ME_KEY:-default}.system identity (${#system} chars, cached)"
     fi
 
     # Model-aware nothink: append model-specific suffix to last user message
@@ -2548,14 +2561,9 @@ llm_chat() {
     # Cleanest backend translation — llama-server natively uses
     # OpenAI messages format. No payload wrapping needed.
     if [ "$_active_backend" = "llamacpp" ]; then
+        # Extract all sampling params in a single jq call (7→1).
         local temp rep_raw pres max_tok freq top_p top_k min_p
-        temp=$(echo "$_opts" | jq -r '.temperature // 0.7')
-        rep_raw=$(echo "$_opts" | jq -r '.repeat_penalty // 1.2')
-        pres=$(echo "$_opts" | jq -r '.presence_penalty // 0.3')
-        max_tok=$(echo "$_opts" | jq -r '.num_predict // 4096')
-        top_p=$(echo "$_opts" | jq -r '.top_p // 1.0')
-        top_k=$(echo "$_opts" | jq -r '.top_k // 40')
-        min_p=$(echo "$_opts" | jq -r '.min_p // 0.0')
+        read -r temp rep_raw pres max_tok top_p top_k min_p <<< "$(echo "$_opts" | jq -r '[.temperature // 0.7, .repeat_penalty // 1.2, .presence_penalty // 0.3, .num_predict // 4096, .top_p // 1.0, .top_k // 40, .min_p // 0.0] | @tsv')"
 
         # Convert Ollama repeat_penalty → OpenAI frequency_penalty
         freq=$(_llm_repeat_to_freq "$rep_raw")

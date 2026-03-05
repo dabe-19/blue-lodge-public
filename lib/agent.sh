@@ -1739,6 +1739,10 @@ agent_inner_loop() {
             return 1
         fi
 
+        # Cache serialized micro_memory — reused by both router and
+        # specialist within this iteration. Re-serialized only after a
+        # command executes and modifies micro_memory (saves 1 jq call
+        # + disk read per inner loop iteration).
         local inner_context=$(_micro_serialize "$micro_file")
 
         # ── PHASE 1: Fast Tool Routing ────────────────────────
@@ -1868,9 +1872,10 @@ agent_inner_loop() {
         local specialist_sys=$(_build_specialist_prompt "$selected_tool" "$workdir" "$micro_objective")
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist prompt <- syntax card for $selected_tool"
 
-        # Inject micro_memory (action log) so the specialist sees
+        # Inject cached micro_memory (action log) so the specialist sees
         # prior outputs, created files, and error history. Without this,
         # multi-step objectives fail because the specialist can't adapt.
+        # Uses inner_context cached above (same iteration, no mutations yet).
         local _spec_tail="Write the exact command to execute next."
         # /web search gets a focused constraint — the model ignores
         # search_tips buried in the JSON card, so put it at the end
@@ -2672,7 +2677,7 @@ MEMEOF
         macro_context=$(cat "$macro_file")
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- macro_memory ($(echo "$macro_context" | wc -l) lines)"
 
-        local macro_prompt="Read the following task memory. What is the SINGLE next logical milestone to advance the Primary Objective? If the objective is fully complete, reply with EXACTLY the word DONE and nothing else.\n\n$macro_context"
+        local macro_prompt="Current date/time: ${_strat_now}\n\nRead the following task memory. What is the SINGLE next logical milestone to advance the Primary Objective? If the objective is fully complete, reply with EXACTLY the word DONE and nothing else.\n\n$macro_context"
 
         # Use a lean system prompt — no personality, just strategic reasoning.
         # By stripping the ~500-token soul and ~200-token vitals during
@@ -2716,7 +2721,10 @@ MEMEOF
 
         local _strat_now
         _strat_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
-        local macro_sys="Strategic planning engine. Date: ${_strat_now}. Output the SINGLE next milestone.
+        # NOTE: Date is in the USER prompt, not system prompt.
+        # Keeping system prompt static enables llama-server KV cache
+        # reuse across consecutive strategist calls (~30-60% prefill savings).
+        local macro_sys="Strategic planning engine. Output the SINGLE next milestone.
 
 ${_tool_summary}
 
