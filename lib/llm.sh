@@ -1402,6 +1402,41 @@ llm_generate() {
             local token
             token=$(echo "$json" | jq -r '.choices[0].delta.content // empty' 2>/dev/null)
 
+            # ── reasoning_content support (llama-server ≥ b4000) ──
+            # When the model's chat template has <think> support,
+            # llama-server separates thinking from content:
+            #   .choices[0].delta.reasoning_content = think tokens
+            #   .choices[0].delta.content            = response tokens
+            # This bypasses the inline-tag state machine entirely.
+            local _rc=""
+            _rc=$(echo "$json" | jq -r '.choices[0].delta.reasoning_content // empty' 2>/dev/null)
+            if [ -n "$_rc" ]; then
+                [ -f "$_got_tokens" ] || touch "$_got_tokens"
+                _dbg_out=$((_dbg_out + 1))
+                if [ "$_think_banner_open" -eq 0 ] && [ "$_can_think" -eq 1 ]; then
+                    _think_banner_open=1
+                    _in_think_block=1
+                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                        _llm_think_open "$_tty"
+                    fi
+                fi
+                if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                    _llm_think_show "$_rc" "$_tty"
+                fi
+                _response_pending=""
+                continue
+            fi
+            # Close think banner when switching from reasoning to content
+            if [ "$_in_think_block" -eq 1 ] && [ -n "$token" ] && [ "$_think_banner_open" -eq 1 ]; then
+                _think_banner_open=0
+                _in_think_block=0
+                if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                    _llm_think_close "$_tty"
+                fi
+                _response_pending=""
+                _can_think=0  # disable inline detection — server handles it
+            fi
+
             # ── Capture usage stats from SSE chunks ──────────────
             # llama-server emits usage in the final content chunk
             # (with finish_reason) when stream_options.include_usage
@@ -1969,6 +2004,37 @@ llm_stream() {
 
             local token
             token=$(echo "$json" | jq -r '.choices[0].delta.content // empty' 2>/dev/null)
+
+            # ── reasoning_content support (llama-server ≥ b4000) ──
+            # Same as llm_generate path — llama-server puts thinking
+            # in a separate field when the template supports <think>.
+            local _rc=""
+            _rc=$(echo "$json" | jq -r '.choices[0].delta.reasoning_content // empty' 2>/dev/null)
+            if [ -n "$_rc" ]; then
+                # Kill spinner on first think token
+                if [ ! -f "$_llm_ft_file" ]; then
+                    touch "$_llm_ft_file"
+                    kill "$_llm_spinner_pid" 2>/dev/null
+                    printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
+                fi
+                _dbg_out=$((_dbg_out + 1))
+                if [ "$_think_banner_open" -eq 0 ] && [ "$_can_think" -eq 1 ]; then
+                    _think_banner_open=1
+                    _in_think_block=1
+                    _llm_think_open "$_tty"
+                fi
+                _llm_think_show "$_rc" "$_tty"
+                _response_pending=""
+                continue
+            fi
+            # Close think banner when switching from reasoning to content
+            if [ "$_in_think_block" -eq 1 ] && [ -n "$token" ] && [ "$_think_banner_open" -eq 1 ]; then
+                _think_banner_open=0
+                _in_think_block=0
+                _llm_think_close "$_tty"
+                _response_pending=""
+                _can_think=0  # disable inline detection — server handles it
+            fi
 
             # ── Capture usage stats from SSE chunks ──────────────
             # llama-server emits usage in the final content chunk

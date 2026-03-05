@@ -1187,4 +1187,31 @@ describe "Vision projector (mmproj) support"
     assert_eq "$result" "no"
   }
 
+# ── reasoning_content support (llama-server) ──────────────────
+describe "reasoning_content support"
+
+  it "llm_generate extracts reasoning_content from SSE chunks" && {
+    body=$(declare -f llm_generate)
+    echo "$body" | grep -q 'reasoning_content'
+    assert_ok $? "llm_generate must handle reasoning_content field"
+  }
+
+  it "llm_stream extracts reasoning_content from SSE chunks" && {
+    body=$(declare -f llm_stream)
+    echo "$body" | grep -q 'reasoning_content'
+    assert_ok $? "llm_stream must handle reasoning_content field"
+  }
+
+  it "reasoning_content opens think banner when detected" && {
+    body=$(declare -f llm_generate)
+    echo "$body" | grep -q '_think_banner_open.*_can_think'
+    assert_ok $? "Must open think banner for reasoning_content"
+  }
+
+  it "reasoning_content closes banner when switching to content" && {
+    body=$(declare -f llm_stream)
+    echo "$body" | grep -q '_in_think_block.*_think_banner_open'
+    assert_ok $? "Must close banner transitioning from reasoning to content"
+  }
+
 test_end

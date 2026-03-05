@@ -1403,8 +1403,20 @@ describe "Evaluator-based milestone completion"
 
   it "router prompt outputs only tool names" && {
     body=$(declare -f _build_router_prompt)
-    echo "$body" | grep -q '"output":"ONLY the tool name'
+    echo "$body" | grep -q '"output":"ONLY the bare tool name'
     assert_ok $? "Router output instruction: only tool names"
+  }
+
+  it "router prompt forbids code fences in output" && {
+    body=$(declare -f _build_router_prompt)
+    echo "$body" | grep -q 'NEVER wrap output in.*code fences'
+    assert_ok $? "Router must forbid backtick wrapping"
+  }
+
+  it "inner loop strips code fences from router output" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'sed.*```'
+    assert_ok $? "Must strip code fences before tool extraction"
   }
 
   it "inner loop ignores hallucinated SUCCESS from router" && {
@@ -1744,6 +1756,16 @@ describe "Web flow chain examples in specialist"
     body=$(declare -f _build_specialist_prompt)
     echo "$body" | grep -q 'Report flow.*search.*fetch.*write.*email'
     assert_ok $? "Must show report flow chain"
+  }
+
+  it "specialist /web card includes search_tips for concise queries" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'search_tips'
+    assert_ok $? "Must include search_tips section"
+    echo "$body" | grep -q '3-5 keywords MAX'
+    assert_ok $? "Must limit search queries to 3-5 keywords"
+    echo "$body" | grep -q 'NEVER paste entire milestone'
+    assert_ok $? "Must warn against pasting milestone as query"
   }
 
 # ── Code fence stripping & parse failure handling ─────────────

@@ -1294,11 +1294,12 @@ _build_router_prompt() {
   {"q":"find and describe images of X","t":"/web"},
   {"q":"check what files we have","t":"/ls"},
   {"q":"read my journal","t":"/journal"}],
-"output":"ONLY the tool name (/web, /social, etc.)",
+"output":"ONLY the bare tool name (/web, /social, etc.) — NO backticks, NO code blocks, NO quotes",
 "rules":{
   "classify":["match specific tool first","/ask only if no tool is relevant",
     "/social for Discord/Telegram/X (NOT /email)","/email for actual email only",
     "do NOT route to /sandbox for slash commands"],
+  "format":"NEVER wrap output in ``` code fences or quotes — only the bare /command",
   "no_completion":"NEVER output SUCCESS or DONE — only tool names"}}
 ROUTER_JSON
 }
@@ -1426,9 +1427,10 @@ SPEC
   "images":"/web images <query> (find image URLs)",
   "scrape-images":"/web scrape-images <url> (text+images as JSON)"},
 "rules":["search=QUERY, fetch=URL, NEVER swap","scrape-images returns {url,title,content,images[]}","Use /vision for images, NOT /web fetch","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research"],
+"search_tips":["3-5 keywords MAX — Google FAILS with long queries","Drop filler: the/a/for/including/regarding/comprehensive","NEVER paste entire milestone as search query","Use specific names + 1-2 context words"],
 "FLOW CHAINS":["Research flow: /web search <topic> -> /web fetch <url> -> summarize","Images: /web search -> pick image URL -> /vision <url>","Deep: /web scrape-images <url> -> read content -> /vision <img>","Report flow: /web search -> /web fetch (1-2 pages) -> /write report -> /email send"],
 "notes":["Do NOT fetch every URL. 1 search + 1-2 fetches enough","If scrape-images returns empty content, use /web fetch for same URL instead"],
-"ex":["/web search rust async tutorial 2025"]}
+"ex":["/web search Matt Jasmer De Pere WI","/web search Trident Automation reviews","/web search rust async tutorial 2025"]}
 SPEC
                 ;;
             download)
@@ -1795,8 +1797,11 @@ agent_inner_loop() {
         fi
 
         # ── PHASE 2: Specialist Execution ─────────────────────
-        # sed -e 's/^[[:space:]]*//' : Strips leading whitespace.
-        # sed -e 's/[[:space:]]*$//' : Strips trailing whitespace.
+        # Strip code fences — small models wrap router output in ```
+        # when the prompt context is JSON-heavy.  sed removes bare
+        # fence lines AND inline backticks so /web survives.
+        selected_tool=$(echo "$selected_tool" | sed '/^```[a-z]*[[:space:]]*$/d; s/```//g')
+        # Trim leading/trailing whitespace.
         selected_tool=$(echo "$selected_tool" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
         # Extract just the base command name (first word of FIRST line, strip leading /)
