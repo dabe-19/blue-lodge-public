@@ -368,7 +368,7 @@ describe "Dynamic dual-loop architecture"
 
   it "macro strategist has question detection rule" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q '/ask.*ONLY for questions\|no tools needed'
+    echo "$body" | grep -q 'own knowledge only\|no tools'
     assert_ok $?
   }
 
@@ -446,7 +446,7 @@ describe "Dynamic dual-loop architecture"
 
   it "router prompt has anti-sandbox rule" && {
     body=$(declare -f _build_router_prompt)
-    echo "$body" | grep -q 'NOT route to /sandbox'
+    echo "$body" | grep -q 'sandbox.*NEVER\|NOT.*sandbox'
     assert_ok $?
   }
 
@@ -1208,9 +1208,9 @@ describe "Task completion evaluator"
     assert_ok $?
   }
 
-  it "evaluator generates summary in auto mode" && {
+  it "evaluator reuses verdict reason as task summary" && {
     body=$(declare -f _agent_evaluate_completion)
-    echo "$body" | grep -q 'summary_prompt'
+    echo "$body" | grep -q '_EVAL_COMPLETE_REASON'
     assert_ok $?
   }
 
@@ -1397,19 +1397,19 @@ describe "Evaluator-based milestone completion"
 
   it "router prompt forbids SUCCESS/DONE output" && {
     body=$(declare -f _build_router_prompt)
-    echo "$body" | grep -q 'NEVER output SUCCESS or DONE'
+    echo "$body" | grep -q 'forbidden.*SUCCESS\|NEVER output SUCCESS'
     assert_ok $? "Router must be told to never output SUCCESS"
   }
 
   it "router prompt outputs only tool names" && {
     body=$(declare -f _build_router_prompt)
-    echo "$body" | grep -q '"output":"ONLY the bare tool name'
+    echo "$body" | grep -q 'bare tool name'
     assert_ok $? "Router output instruction: only tool names"
   }
 
   it "router prompt forbids code fences in output" && {
     body=$(declare -f _build_router_prompt)
-    echo "$body" | grep -q 'NEVER wrap output in.*code fences'
+    echo "$body" | grep -q 'no_fences\|NEVER wrap output'
     assert_ok $? "Router must forbid backtick wrapping"
   }
 
@@ -1696,6 +1696,11 @@ describe "Honeydew list system"
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'honeydew\|HONEYDEW'
     assert_ok $? "Strategist must know about honeydew list"
+  }
+
+  it "strategist rules enforce one milestone per honeydew item" && {
+    grep -q 'one_action' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "Strategist must have one_action rule"
   }
 
   it "inner loop injects honeydew status into micro_memory" && {

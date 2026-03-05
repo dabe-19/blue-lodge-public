@@ -526,17 +526,16 @@ _agent_evaluate_milestone() {
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
     local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions above accomplish this milestone? Apply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_P1_JSON'
 {"classify":"COMPLETE|INCOMPLETE",
- "default":"COMPLETE if exit_0 and relevant_command_ran",
- "success":{"exit_0":true,"empty_output":"normal for email/social/file ops"},
- "scope":"THIS milestone only — ignore broader task objective",
- "no_extra_requirements":"do NOT require confirmation/follow-up/verification unless milestone asked",
- "code_tasks":{
-   "write":"COMPLETE only if content is meaningful non-trivial code",
-   "init":"verify key project files created (Cargo.toml+src/main.rs, package.json+index.js)",
-   "build":"requires /build or cargo build exit_0 — /write alone is NOT enough",
-   "web_only":"INCOMPLETE if ONLY web searches performed for a code milestone",
-   "reject":["todo","unimplemented","Missing implementation","placeholder","stub","panic!()","empty function body","{\"error\":...}"]},
- "respond":"COMPLETE or INCOMPLETE: <one-sentence reason>"}
+ "default":{"exit_0":"COMPLETE","empty_output":"normal (email/social/file)"},
+ "scope":"THIS milestone only",
+ "no_extras":"no confirmation/follow-up unless milestone asked",
+ "code":{
+   "write":"meaningful non-trivial code required",
+   "init":"key files created (Cargo.toml+src/main.rs, package.json+index.js)",
+   "build":"/build exit_0 required — /write alone NOT enough",
+   "web_only":"INCOMPLETE",
+   "reject":["todo","unimplemented","placeholder","stub","panic!()","empty body"]},
+ "respond":"COMPLETE or INCOMPLETE: <reason>"}
 EVAL_P1_JSON
 )"
 
@@ -645,27 +644,23 @@ _agent_evaluate_completion() {
 
     local eval_prompt="CURRENT DATE/TIME: ${_eval_now}${_hd_eval_block}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE:\n${primary_obj}\n\nIs the PRIMARY OBJECTIVE fully satisfied? Apply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_P2_JSON'
 {"classify":"COMPLETE|INCOMPLETE",
- "default":"COMPLETE if key actions executed successfully",
- "action_class_check":{
-   "RESEARCH_ONLY":"does NOT satisfy delivery objectives (write/email/save/post)",
-   "ACTION":"satisfies if exit_0"},
- "no_extras":"do NOT invent requirements user did not ask for",
- "single_action":"one successful milestone with correct action = COMPLETE",
- "multi_part":"each distinct part needs a completed milestone with right action_class",
- "honeydew":"if present, ALL items must have status done for COMPLETE",
- "code_tasks":{
-   "require":["meaningful_files_written","build_exit_0"],
-   "reject":["todo","unimplemented","stub","panic","placeholder"],
-   "web_only":"INCOMPLETE — research is not coding"},
- "content_tasks":{
-   "require":["actual_content_in_output","delivery_command_executed"],
-   "reject":["placeholder","announcement_only","teaser","stub_body"],
-   "email_check":"sent body must be substantive, not generic"},
- "research_delivery":{
-   "require_both":"research AND delivery_command (/write,/email,/save,/social)",
-   "summary_not_delivery":"a milestone summary is NOT a written/sent report",
-   "check":"look for ACTUAL delivery commands in milestones"},
- "respond":"COMPLETE or INCOMPLETE: <one-sentence description of what remains>"}
+ "default":{"actions_exit_0":"COMPLETE","no_extras":true},
+ "action_class":{
+   "RESEARCH_ONLY":"does NOT satisfy delivery",
+   "ACTION":{"exit_0":"COMPLETE"}},
+ "parts":{"single":"1 correct milestone = COMPLETE",
+   "multi":"each part needs own milestone+action_class"},
+ "honeydew":{"all_done":"required for COMPLETE"},
+ "code":{"require":["files_written","build_exit_0"],
+   "reject":["todo","stub","panic","placeholder"],
+   "web_only":"INCOMPLETE"},
+ "content":{"require":["actual_content","delivery_command"],
+   "reject":["placeholder","announcement_only","stub_body"],
+   "email":"body must be substantive"},
+ "delivery":{"need_both":"research + delivery (/write,/email,/save,/social)",
+   "summary_!=_delivery":true,
+   "check":"ACTUAL delivery commands in milestones"},
+ "respond":"COMPLETE or INCOMPLETE: <what was accomplished or what remains>"}
 EVAL_P2_JSON
 )"
 
@@ -692,22 +687,29 @@ EVAL_P2_JSON
     local verdict_word
     verdict_word=$(echo "$first_line" | awk '{print $1}' | sed 's/^[*_]\+//;s/[*_:.,]\+$//')
 
+    # Extract reason text from verdict (used for both COMPLETE and INCOMPLETE)
+    local _eval_reason=""
+    if [[ "$first_line" == *":"* ]]; then
+        _eval_reason=$(echo "$first_line" | sed 's/^[^:]*:[[:space:]]*//')
+    elif [ "$(echo "$first_line" | wc -w)" -gt 1 ]; then
+        _eval_reason=$(echo "$first_line" | sed 's/^[^ ]* *//')
+    fi
+    if [ -z "$_eval_reason" ] && [ "$(echo "$verdict" | wc -l)" -gt 1 ]; then
+        _eval_reason=$(echo "$verdict" | head -3)
+    fi
+
     _EVAL_INCOMPLETE_REASON=""
     if [[ "$verdict_word" != "COMPLETE" ]]; then
-        if [[ "$first_line" == *":"* ]]; then
-            _EVAL_INCOMPLETE_REASON=$(echo "$first_line" | sed 's/^[^:]*:[[:space:]]*//')
-        elif [ "$(echo "$first_line" | wc -w)" -gt 1 ]; then
-            _EVAL_INCOMPLETE_REASON=$(echo "$first_line" | sed 's/^[^ ]* *//')
-        fi
-        if [ -z "$_EVAL_INCOMPLETE_REASON" ] && [ "$(echo "$verdict" | wc -l)" -gt 1 ]; then
-            _EVAL_INCOMPLETE_REASON=$(echo "$verdict" | head -3)
-        fi
+        _EVAL_INCOMPLETE_REASON="$_eval_reason"
         local _reason_display="${_EVAL_INCOMPLETE_REASON:+(${_EVAL_INCOMPLETE_REASON:0:80})}"
         ui_info "Overall evaluator: objective not yet fulfilled ${_reason_display}— continuing"
         return 1
     fi
 
-    # ── Task is complete — handle by mode ──────────────────────
+    # ── Task is complete — reuse evaluator reason as summary ───
+    # The P2 evaluator already explains what was accomplished.
+    # No separate summarizer LLM call needed — saves ~10-15s.
+    _EVAL_COMPLETE_REASON="${_eval_reason:-primary objective fulfilled}"
     ui_ok "Overall evaluator: primary objective fulfilled"
 
     if [[ "${AGENT_EVAL_MODE:-auto}" == "interactive" ]]; then
@@ -719,16 +721,8 @@ EVAL_P2_JSON
         read -r answer < /dev/tty 2>/dev/null || answer="y"
         answer="${answer:-y}"
         if [[ "${answer,,}" == "y"* ]]; then
-            local summary_prompt="Summarize briefly: the user asked to '${primary_obj}'. Based on this task memory, what was accomplished?\n\n${macro_context}"
-            local summary_sys="In no more than 3 sentences, write a concise summary. No personality."
-            local task_summary
-            local LLM_SCENARIO=evaluator
-            task_summary=$(llm_generate "$summary_prompt" "$summary_sys" "${LLM_EVALUATOR_TOKENS:-512}" "$LLM_BUDGET_AGENT")
-            task_summary=$(echo "$task_summary" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-            task_summary=$(echo "$task_summary" | sed ':a;N;$!ba;s/<think>.*$//g')
-            task_summary=$(echo "$task_summary" | sed '/^[[:space:]]*$/d' | head -5)
             echo ""
-            ui_ok "Summary: $task_summary"
+            ui_ok "Summary: $_EVAL_COMPLETE_REASON"
             return 0
         else
             ui_info "Continuing work — operator requested more progress"
@@ -736,17 +730,9 @@ EVAL_P2_JSON
         fi
     fi
 
-    # Auto mode (default): generate brief summary and signal completion
-    local summary_prompt="Summarize briefly: the user asked to '${primary_obj}'. Based on this task memory, what was accomplished?\n\n${macro_context}"
-    local summary_sys="In no more than 3 sentences, write a concise summary. No personality."
-    local task_summary
-    local LLM_SCENARIO=evaluator
-    task_summary=$(llm_generate "$summary_prompt" "$summary_sys" "${LLM_EVALUATOR_TOKENS:-512}" "$LLM_BUDGET_AGENT")
-    task_summary=$(echo "$task_summary" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-    task_summary=$(echo "$task_summary" | sed ':a;N;$!ba;s/<think>.*$//g')
-    task_summary=$(echo "$task_summary" | sed '/^[[:space:]]*$/d' | head -5)
+    # Auto mode (default): display evaluator reason as summary
     echo ""
-    ui_ok "Task complete — $task_summary"
+    ui_ok "Task complete — $_EVAL_COMPLETE_REASON"
     return 0
 }
 
@@ -1294,13 +1280,13 @@ _build_router_prompt() {
   {"q":"find and describe images of X","t":"/web"},
   {"q":"check what files we have","t":"/ls"},
   {"q":"read my journal","t":"/journal"}],
-"output":"ONLY the bare tool name (/web, /social, etc.) — NO backticks, NO code blocks, NO quotes",
+"output":"bare tool name only (/web, /social, etc.)",
 "rules":{
-  "classify":["match specific tool first","/ask only if no tool is relevant",
-    "/social for Discord/Telegram/X (NOT /email)","/email for actual email only",
-    "do NOT route to /sandbox for slash commands"],
-  "format":"NEVER wrap output in ``` code fences or quotes — only the bare /command",
-  "no_completion":"NEVER output SUCCESS or DONE — only tool names"}}
+  "match":["specific tool first","/ask only if no tool fits",
+    "/social for Discord/Telegram/X","/email for actual email",
+    "/sandbox NEVER for slash commands"],
+  "format":{"no_fences":true,"no_quotes":true,"no_backticks":true},
+  "forbidden":["SUCCESS","DONE","```"]}}
 ROUTER_JSON
 }
 
@@ -2677,8 +2663,6 @@ MEMEOF
         macro_context=$(cat "$macro_file")
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- macro_memory ($(echo "$macro_context" | wc -l) lines)"
 
-        local macro_prompt="Current date/time: ${_strat_now}\n\nRead the following task memory. What is the SINGLE next logical milestone to advance the Primary Objective? If the objective is fully complete, reply with EXACTLY the word DONE and nothing else.\n\n$macro_context"
-
         # Use a lean system prompt — no personality, just strategic reasoning.
         # By stripping the ~500-token soul and ~200-token vitals during
         # execution, we drastically reduce prefill time. Ollama flushes the
@@ -2724,6 +2708,8 @@ MEMEOF
         # NOTE: Date is in the USER prompt, not system prompt.
         # Keeping system prompt static enables llama-server KV cache
         # reuse across consecutive strategist calls (~30-60% prefill savings).
+        local macro_prompt="Current date/time: ${_strat_now}\n\nRead the following task memory. What is the SINGLE next logical milestone to advance the Primary Objective? If the objective is fully complete, reply with EXACTLY the word DONE and nothing else.\n\n$macro_context"
+
         local macro_sys="Strategic planning engine. Output the SINGLE next milestone.
 
 ${_tool_summary}
@@ -2732,22 +2718,21 @@ SERVICES STATUS: ${_svc_status:-unknown}
 
 $(cat << 'STRAT_RULES_JSON'
 {"rules":{
- "routing":{"explicit_request":"use the named tool — NEVER override with /ask",
-   "/ask":"ONLY for questions answerable from own knowledge, no tools needed",
-   "/social":"Discord/Telegram/X/Mastodon (NOT /email)","/email":"actual email addresses only",
-   "/sandbox":"NEVER for running slash commands"},
- "milestones":{"must_use":"commands from YOUR WORKING COMMANDS above — do NOT invent",
-   "format":"single imperative sentence only (e.g. 'Search the web for X')",
-   "no_prefix":"NEVER start with DONE/COMPLETE/keyword — those are reserved signals",
-   "no_intro":"NO explanations, NO 'The next milestone is...'",
-   "only_configured":"ONLY use services listed as CONFIGURED"},
- "research":{"when":"you lack info (API keys, URLs, packages, technical details)",
+ "routing":{"named_tool":"use it — NEVER override with /ask",
+   "/ask":"own knowledge only, no tools",
+   "/social":"Discord/Telegram/X/Mastodon (NOT /email)",
+   "/email":"actual email only","/sandbox":"NEVER for slash commands"},
+ "milestones":{"source":"YOUR WORKING COMMANDS only",
+   "format":"single imperative sentence",
+   "one_action":"1 milestone = 1 honeydew item, NEVER combine two items",
+   "reserved":["DONE","COMPLETE"],"no_prefix":true,"no_intro":true,
+   "only_configured":true},
+ "research":{"when":"missing info (keys,URLs,packages,specs)",
    "tools":["/web search","/recall","/web fetch","/social discord read","/secret get"],
-   "always_ok":"creating a research milestone is ALWAYS acceptable"},
- "failure":{"no_repeat":"do NOT regenerate a FAILED milestone — try different approach",
-   "multi_part":"advance to NEXT part even if previous part partially failed"},
- "honeydew":{"pick":"next unchecked [ ] item","done_when":"ALL items [x] AND Primary Objective fulfilled → output DONE"},
- "conversation":"if objective is just a question and /ask answered it → output DONE"}}
+   "always_ok":true},
+ "failure":{"no_repeat":true,"advance_next_part":true},
+ "honeydew":{"pick":"next [ ] item","done_when":"ALL [x] → DONE"},
+ "conversation":"question + /ask answered → DONE"}}
 STRAT_RULES_JSON
 )${_milestone_history}${_last_eval_feedback:+
 
@@ -3026,44 +3011,21 @@ ${_last_eval_feedback}
     # a model unload+load at that moment races with the cleanup and can crash
     # Termux. The cancelled task will be visible in macro_memory.json anyway.
     if [ "$_was_cancelled" -eq 0 ]; then
-        # ── Summarize macro_memory → journal ──────────────────
-        # Condense the task's macro_memory into ≤4 sentences and write
-        # it as a structured journal entry. This preserves task context
-        # for future recall without requiring George to read the full
-        # macro_memory (which is overwritten on the next task start).
-        if [ -f "$macro_file" ]; then
-            local _macro_content
-            _macro_content=$(cat "$macro_file" 2>/dev/null)
-            if [ -n "$_macro_content" ]; then
-                local _sum_prompt="In no more than 4 sentences, summarize this task memory. Include what was done, key outcomes, and any failures. No headers, no formatting, just the summary.\n\n${_macro_content}"
-                local _sum_sys="In no more than 4 factual sentences, write your summary. No personality. No formatting."
-                local _task_journal_summary
-                local LLM_SCENARIO=journal
-                _task_journal_summary=$(llm_generate "$_sum_prompt" "$_sum_sys" 256 "$LLM_BUDGET_JOURNAL" 2>/dev/null)
-                if [ $? -eq 0 ] && [ -n "$_task_journal_summary" ] && [[ "$_task_journal_summary" != ERROR* ]]; then
-                    # Strip think blocks from summary
-                    _task_journal_summary=$(echo "$_task_journal_summary" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-                    _task_journal_summary=$(echo "$_task_journal_summary" | sed ':a;N;$!ba;s/<think>.*$//g')
-                    _task_journal_summary=$(echo "$_task_journal_summary" | sed '/^[[:space:]]*$/d' | head -4)
-                    if [ -n "$_task_journal_summary" ]; then
-                        journal_write "task_summary" "$_task_journal_summary"
-                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] task summary journaled ($(echo "$_task_journal_summary" | wc -w) words)"
-                    fi
-                fi
-            fi
-        fi
-
-        local reflect_summary="$task ($completed_milestones/$macro_iterations milestones in $(basename "$workdir"))"
-        if [ -n "$failed_milestones" ]; then
-            reflect_summary="${reflect_summary}. Failed: ${failed_milestones}"
-        fi
-
         # ── Update GEORGE.md with task completion ─────────────
         # Mark the task as done (or cancelled) so the next task or
         # interactive session sees what was accomplished.
         if declare -f memory_update_section &>/dev/null; then
             memory_update_section "Active Task" "(none — last task: ${task:0:80})" "$workdir" 2>/dev/null
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] GEORGE.md updated: task complete"
+        fi
+
+        # ── Single journal entry (reflect only) ───────────────
+        # Previously wrote TWO entries: a factual summary + a personality
+        # reflection. Now merged into one journal_reflect call (which
+        # already summarizes the exec_log). Saves one LLM call (~10s).
+        local reflect_summary="$task ($completed_milestones/$macro_iterations milestones in $(basename "$workdir"))"
+        if [ -n "$failed_milestones" ]; then
+            reflect_summary="${reflect_summary}. Failed: ${failed_milestones}"
         fi
         journal_reflect "$reflect_summary" "$workdir" "$_exec_log" &
         disown 2>/dev/null
