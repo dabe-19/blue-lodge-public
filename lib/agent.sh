@@ -262,11 +262,13 @@ _agent_complete_milestone() {
     _micro_content=$(cat "$micro_file" 2>/dev/null)
     if [ -n "$_micro_content" ]; then
         local _ms_prompt="In no more than 6 sentences, summarize this milestone execution log. Include the command(s) run, their outcomes, and whether the objective was met. If web search or fetch results contain factual data (names, prices, specs, dates, descriptions, URLs, key findings), you MUST INCLUDE those specific facts verbatim — they will be needed by subsequent milestones. If a draft email, post, or message body was composed, include its key points. Generic summaries like 'Web research data gathered' are USELESS. Be specific.\n\n${_micro_content}"
-        local _ms_sys="You are a concise summarizer. In no more than 6 factual sentences, write your output. PRESERVE specific facts (names, numbers, URLs). No personality. No formatting."
+        local _ms_sys="You are a concise summarizer. In no more than 6 factual sentences, write your output. PRESERVE specific facts (names, numbers, URLs). No personality. No markdown formatting (no ** or * markers). Plain text only."
         local LLM_SCENARIO=evaluator
         _milestone_summary=$(llm_generate "$_ms_prompt" "$_ms_sys" 512 "$LLM_BUDGET_AGENT" 2>/dev/null)
         _milestone_summary=$(echo "$_milestone_summary" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
         _milestone_summary=$(echo "$_milestone_summary" | sed ':a;N;$!ba;s/<think>.*$//g')
+        # Strip markdown bold/italic from summary before storing in macro_memory
+        _milestone_summary=$(echo "$_milestone_summary" | sed 's/\*\+//g')
         _milestone_summary=$(echo "$_milestone_summary" | sed '/^[[:space:]]*$/d' | head -6)
     fi
     [ -z "$_milestone_summary" ] && _milestone_summary="$summary"
@@ -348,7 +350,7 @@ RULES:
 - Do NOT include verification, confirmation, or cleanup steps.
 - Do NOT prefix with checkboxes — just numbers."
 
-    local decompose_sys="You are a task decomposition engine. Output ONLY a numbered list of general objectives. Each item describes WHAT to accomplish, not HOW or which tool to use. No commands, no URLs, no shell syntax. No explanation, no headers, no formatting beyond the numbered list."
+    local decompose_sys="You are a task decomposition engine. Output ONLY a numbered list of general objectives. Each item describes WHAT to accomplish, not HOW or which tool to use. No commands, no URLs, no shell syntax. No explanation, no headers, no markdown formatting. Plain numbered list only."
 
     local raw_list
     local LLM_SCENARIO=strategist
@@ -577,7 +579,7 @@ _agent_evaluate_milestone() {
 EVAL_P1_JSON
 )"
 
-    local eval_sys="You are a pragmatic milestone evaluator. Judge by the action log. exit_0 = success. Empty output = normal. Respond COMPLETE or INCOMPLETE: <reason>."
+    local eval_sys="You are a pragmatic milestone evaluator. Judge by the action log. exit_0 = success. Empty output = normal. No markdown formatting. Respond COMPLETE or INCOMPLETE: <reason>."
 
     ui_think "Evaluator (pass 1): assessing milestone completion..."
     local verdict
@@ -587,12 +589,15 @@ EVAL_P1_JSON
     # ── DEBUG: Evaluator raw verdict ────────────────────────────
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
 
-    # Clean up LLM output — strip think blocks, whitespace
+    # Clean up LLM output — strip think blocks, markdown, whitespace
     verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
     verdict=$(echo "$verdict" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
     # Strip unclosed think blocks (token limit truncated before closing tag)
     verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>.*$//g')
     verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+    # Strip markdown bold/italic — prevents contamination when verdict
+    # is re-injected into strategist as _last_eval_feedback.
+    verdict=$(echo "$verdict" | sed 's/\*\+//g')
     verdict=$(echo "$verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
     local first_line
@@ -704,7 +709,7 @@ _agent_evaluate_completion() {
 EVAL_P2_JSON
 )"
 
-    local eval_sys="You are a task-completion evaluator. Be pragmatic: actions executed successfully = done. Check Action-Class tags: RESEARCH_ONLY does not satisfy delivery. For code: must compile. For content: must exist in output. Respond COMPLETE or INCOMPLETE: <reason>."
+    local eval_sys="You are a task-completion evaluator. Be pragmatic: actions executed successfully = done. Check Action-Class tags: RESEARCH_ONLY does not satisfy delivery. For code: must compile. For content: must exist in output. No markdown formatting. Respond COMPLETE or INCOMPLETE: <reason>."
 
     ui_think "Evaluator (pass 2): assessing overall task completion..."
     local verdict
@@ -714,12 +719,15 @@ EVAL_P2_JSON
     # ── DEBUG: Evaluator raw verdict ────────────────────────────
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p2 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
 
-    # Clean up LLM output — strip think blocks, whitespace
+    # Clean up LLM output — strip think blocks, markdown, whitespace
     verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
     verdict=$(echo "$verdict" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
     # Strip unclosed think blocks (token limit truncated before closing tag)
     verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>.*$//g')
     verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+    # Strip markdown bold/italic — prevents contamination when verdict
+    # is re-injected into strategist as _last_eval_feedback.
+    verdict=$(echo "$verdict" | sed 's/\*\+//g')
     verdict=$(echo "$verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
     local first_line
@@ -2064,6 +2072,8 @@ agent_inner_loop() {
         # words and cap at 8 tokens so search engines get clean input.
         if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" == /web\ search\ * ]]; then
             local _raw_query="${cmd#/web search }"
+            # Strip markdown bold/italic markers leaked from milestone text
+            _raw_query=$(echo "$_raw_query" | sed 's/\*\+//g')
             # Strip filler/stopwords (case-insensitive)
             local _trimmed_query
             _trimmed_query=$(echo "$_raw_query" | sed '
@@ -2085,6 +2095,46 @@ agent_inner_loop() {
             if [ -n "$_trimmed_query" ] && [ "$_trimmed_query" != "$_raw_query" ]; then
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web-search trimmed: '$_raw_query' -> '$_trimmed_query'"
                 cmd="/web search $_trimmed_query"
+            fi
+        fi
+
+        # ── SINGLE-URL ENFORCEMENT ────────────────────────────
+        # The 4B model generates "OR" chains with multiple URLs:
+        #   /web fetch URL1 OR URL2 OR URL3
+        # These fail because web_fetch/scrape/download/vision expect
+        # exactly one URL. Extract only the first http(s) URL.
+        if [ "$cmd_is_slash" -eq 1 ]; then
+            local _needs_single_url=0
+            local _url_cmd_prefix=""
+            case "$cmd" in
+                "/web fetch "*)          _needs_single_url=1; _url_cmd_prefix="/web fetch" ;;
+                "/web scrape-images "*)   _needs_single_url=1; _url_cmd_prefix="/web scrape-images" ;;
+                "/web scrapeimages "*)    _needs_single_url=1; _url_cmd_prefix="/web scrapeimages" ;;
+                "/download "*)            _needs_single_url=1; _url_cmd_prefix="/download" ;;
+                "/vision "*)              _needs_single_url=1; _url_cmd_prefix="/vision" ;;
+            esac
+            if [ "$_needs_single_url" -eq 1 ]; then
+                local _url_args="${cmd#$_url_cmd_prefix }"
+                # Count URLs — only intervene if multiple detected
+                local _url_count
+                _url_count=$(echo "$_url_args" | grep -oP 'https?://[^\s"'"'"']+' | wc -l)
+                if [ "$_url_count" -gt 1 ]; then
+                    local _first_url
+                    _first_url=$(echo "$_url_args" | grep -oP 'https?://[^\s"'"'"']+' | head -1)
+                    if [ -n "$_first_url" ]; then
+                        # /vision may have a prompt after the URL — preserve it
+                        if [[ "$cmd" == "/vision "* ]]; then
+                            # Extract prompt: everything after the first URL
+                            local _after_url="${_url_args#*"$_first_url"}"
+                            # Strip any trailing URLs/OR chains from the prompt
+                            _after_url=$(echo "$_after_url" | sed 's/[[:space:]]*\(OR\|AND\)[[:space:]].*//I; s/[[:space:]]*https\?:\/\/.*//; s/^[[:space:]]*//')
+                            cmd="/vision ${_first_url}${_after_url:+ $_after_url}"
+                        else
+                            cmd="${_url_cmd_prefix} ${_first_url}"
+                        fi
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] single-url: kept first of $_url_count URLs"
+                    fi
+                fi
             fi
         fi
 
@@ -2782,7 +2832,7 @@ MEMEOF
         # reuse across consecutive strategist calls (~30-60% prefill savings).
         local macro_prompt="Current date/time: ${_strat_now}\n\nRead the following task memory. What is the SINGLE next logical milestone to advance the Primary Objective? If the objective is fully complete, reply with EXACTLY the word DONE and nothing else.\n\n$macro_context"
 
-        local macro_sys="Strategic planning engine. Output the SINGLE next milestone.
+        local macro_sys="Strategic planning engine. Output the SINGLE next milestone. No markdown formatting (no ** or * markers). Plain text only.
 
 ${_tool_summary}
 
@@ -2846,7 +2896,11 @@ ${_last_eval_feedback}
         milestone=$(echo "$milestone" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
         # 5. Take ONLY the first non-empty line (milestone = one sentence)
         milestone=$(echo "$milestone" | head -1)
-        # 6. Truncate to 200 chars max (prevents context bloat)
+        # 6. Strip markdown bold/italic markers (**, *, _) — prevents
+        # formatting contamination when milestone text is re-injected
+        # into specialist and evaluator prompts as micro_objective.
+        milestone=$(echo "$milestone" | sed 's/\*\+//g')
+        # 7. Truncate to 200 chars max (prevents context bloat)
         milestone="${milestone:0:200}"
 
         # Transcript: log strategist milestone
