@@ -191,9 +191,9 @@ describe "commands_catalog"
     assert_contains "$_cat_out" "/ingest"
   }
 
-  it "catalog contains workflow examples section" && {
+  it "catalog contains workflow patterns section" && {
     _cat_out=$(commands_catalog)
-    assert_contains "$_cat_out" "WORKFLOW EXAMPLES"
+    assert_contains "$_cat_out" "WORKFLOW PATTERNS"
   }
 
   it "catalog contains core workflow pattern" && {
@@ -202,9 +202,17 @@ describe "commands_catalog"
     assert_contains "$_cat_out" "HARD CONSTRAINTS"
   }
 
-  it "plan catalog contains workflow examples" && {
+  it "plan catalog contains workflow patterns" && {
     _plan_out=$(commands_catalog_plan)
-    assert_contains "$_plan_out" "WORKFLOW EXAMPLES"
+    assert_contains "$_plan_out" "WORKFLOW PATTERNS"
+  }
+
+  it "workflow patterns use generic flows not concrete task examples" && {
+    _cat_out=$(commands_catalog)
+    echo "$_cat_out" | grep -q '"pattern"'
+    assert_ok $? "Patterns should use generic 'pattern' key"
+    echo "$_cat_out" | grep -q '"flow"'
+    assert_ok $? "Patterns should use generic 'flow' key"
   }
 
   it "plan catalog has hard constraints" && {

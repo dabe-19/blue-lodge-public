@@ -46,6 +46,12 @@ describe "Core agent functions"
     assert_ok $?
   }
 
+  it "agent_ask echoes response to stdout for capture" && {
+    body=$(declare -f agent_ask)
+    echo "$body" | grep -q 'echo "$response"'
+    assert_ok $? "agent_ask must echo response to stdout so agent inner loop captures it"
+  }
+
   it "agent_step_mode is defined" && {
     declare -f agent_step_mode &>/dev/null
     assert_ok $?
@@ -988,6 +994,12 @@ describe "Web sufficiency enforcement gate"
     assert_ok $?
   }
 
+  it "sufficiency INCOMPLETE injects eval reason into micro_memory" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_micro_add_note.*EVAL_FEEDBACK'
+    assert_ok $? "INCOMPLETE eval reason must be injected into micro_memory for inner loop visibility"
+  }
+
 # ── Abort Propagation ─────────────────────────────────────────
 describe "Abort propagation from inner loop to macro loop"
 
@@ -1413,6 +1425,24 @@ describe "Evaluator-based milestone completion"
     assert_ok $? "Router must forbid backtick wrapping"
   }
 
+  it "router prompt has plain-text preamble before JSON" && {
+    body=$(declare -f _build_router_prompt)
+    echo "$body" | grep -q 'Output ONLY the bare tool name'
+    assert_ok $? "Router must have plain-text anti-backtick preamble"
+  }
+
+  it "router prompt warns /ask may be stale for time-sensitive queries" && {
+    body=$(declare -f _build_router_prompt)
+    echo "$body" | grep -q '/ask.*stale\|/ask.*prefer.*web'
+    assert_ok $? "Router must warn that /ask output may be outdated"
+  }
+
+  it "router prefers /web search for time-sensitive information" && {
+    body=$(declare -f _build_router_prompt)
+    echo "$body" | grep -q 'web.*time-sensitive\|dates.*scores.*events'
+    assert_ok $? "Router rules must prefer /web for date-gated queries"
+  }
+
   it "inner loop strips code fences from router output" && {
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'sed.*```'
@@ -1771,15 +1801,15 @@ describe "Web flow chain examples in specialist"
     assert_ok $? "Must guide fallback from scrape-images to fetch"
   }
 
-  it "specialist /web card includes research flow example" && {
+  it "specialist /web card includes research flow chain" && {
     body=$(declare -f _build_specialist_prompt)
-    echo "$body" | grep -q 'Research flow.*search.*fetch.*summarize'
+    echo "$body" | grep -q 'Research.*search.*fetch.*summarize'
     assert_ok $? "Must show research flow chain"
   }
 
-  it "specialist /web card includes report flow example" && {
+  it "specialist /web card includes report flow chain" && {
     body=$(declare -f _build_specialist_prompt)
-    echo "$body" | grep -q 'Report flow.*search.*fetch.*write.*email'
+    echo "$body" | grep -q 'Report.*search.*fetch.*write'
     assert_ok $? "Must show report flow chain"
   }
 
@@ -1829,6 +1859,18 @@ describe "Code fence stripping & parse failure handling"
     body=$(declare -f _build_specialist_prompt)
     echo "$body" | grep -q 'NO backticks.*NO code fences'
     assert_ok $? "Specialist prompt must have plain-text anti-backtick directive"
+  }
+
+  it "specialist cards use format_only_ex templates not concrete examples" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'format_only_ex'
+    assert_ok $? "Specialist syntax cards must use format_only_ex to avoid small-model example copying"
+  }
+
+  it "specialist /ask card warns about staleness for time-sensitive info" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'may be stale'
+    assert_ok $? "Specialist /ask card must warn about potentially stale model knowledge"
   }
 
   it "honeydew_display function exists" && {

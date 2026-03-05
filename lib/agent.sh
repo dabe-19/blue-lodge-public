@@ -1304,10 +1304,15 @@ _build_router_prompt() {
     # The router's ONLY job: classify task → command.
     # Completion detection is handled by the milestone evaluator.
     # Specialist handles exact syntax. ~200 tokens.
+    #
+    # Plain-text preamble BEFORE JSON so the anti-backtick rule is
+    # in primacy position — small models (1-4B) read JSON formatting
+    # as "my output should look like JSON" and wrap in backticks.
+    echo 'Output ONLY the bare tool name. NO backticks. NO code fences. NO quotes. Example: /web'
     cat << 'ROUTER_JSON'
 {"role":"Pick the best tool for the next action.",
 "commands":{
-  "/ask":"Answer from own knowledge (no tools)",
+  "/ask":"Answer from own knowledge (no tools, may be stale — prefer /web for dates/events/scores)",
   "/recall":"Search knowledge base (FTS5)",
   "/journal":"Read or write living memory",
   "/write":"Write or overwrite a file",
@@ -1350,11 +1355,11 @@ _build_router_prompt() {
   {"q":"read my journal","t":"/journal"}],
 "output":"bare tool name only (/web, /social, etc.)",
 "rules":{
-  "match":["specific tool first","/ask only if no tool fits",
+  "match":["specific tool first","/ask only if no tool fits","/web search for anything time-sensitive (dates, scores, events, current info)",
     "/social for Discord/Telegram/X","/email for actual email",
     "/sandbox NEVER for slash commands"],
   "format":{"no_fences":true,"no_quotes":true,"no_backticks":true},
-  "forbidden":["SUCCESS","DONE","```"]}}
+  "forbidden":["SUCCESS","DONE"]}}
 ROUTER_JSON
 }
 
@@ -1450,14 +1455,14 @@ SPEC_PREAMBLE
                 cat << 'SPEC'
 {"cmd":"/social","syntax":["/social post discord <channel> <text>","/social post telegram <text>","/social post x <text>","/social post mastodon <text>","/social discord dm <user> <text>","/social discord read <channel>"],
 "rules":["ALWAYS include channel name (lunkers, general)","@DisplayName auto-resolved to <@user_id>","Channel goes BEFORE text","No quotes on args"],
-"ex":["/social post discord lunkers @Pompler Just landed a 5lb bass at Cedar Lake"]}
+"format_only_ex":["/social post discord <channel-name> <your message text>","/social discord dm <username> <your message text>"]}
 SPEC
                 ;;
             init)
                 cat << 'SPEC'
 {"cmd":"/init","syntax":"/init <name> <type>",
 "notes":["name: no spaces (use underscores)","types: rust,python,rl,data,automation,notebook,shell","Creates project dir + GEORGE.md + starter code + git init","Auto-cd into project after init","Do NOT /init if project already exists"],
-"ex":["/init task-manager rust"]}
+"format_only_ex":["/init <project-name> <type>"]}
 SPEC
                 ;;
             cd)
@@ -1471,10 +1476,7 @@ SPEC
 {"cmd":"/write","syntax":["/write <filepath> <content>","/write --append <filepath> <content>","/write --edit <filepath> <sed_expr>"],
 "modes":{"overwrite":"Write COMPLETE file contents. New files or full rewrites.","--append":"Add to END of file. Deps, new functions.","--edit":"ONLY short sed (rename, change value). Max 200 chars. NEVER multi-line."},
 "rules":["Use \\n for newlines (NEVER literal line breaks)","COMPLETE source for code files","JSON: matching braces, quoted keys","If changing >1 line, use plain /write with COMPLETE file"],
-"ex":["/write src/main.rs use std::env;\\n\\nfn main() {\\n    let args: Vec<String> = env::args().collect();\\n    println!(\"Hello, {}!\", args.get(1).unwrap_or(&\"world\".to_string()));\\n}",
-"/write --append Cargo.toml \\n[dependencies]\\nreqwest = { version = \"0.11\", features = [\"json\"] }",
-"/write --edit src/main.rs s/old_function/new_function/g",
-"/write README.md # Project Title\\n\\n## Overview\\n\\nA brief description."]}
+"format_only_ex":["/write <filepath> <complete file content with \\n for newlines>","/write --append <filepath> <content to add>","/write --edit <filepath> s/<old>/<new>/g"]}
 SPEC
                 ;;
             save)
@@ -1492,7 +1494,7 @@ SPEC
   "scrape-images":"/web scrape-images <url> (text+images as JSON)"},
 "rules":["search=QUERY, fetch=URL, NEVER swap","scrape-images returns {url,title,content,images[]}","Use /vision for images, NOT /web fetch","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples"],
 "search_tips":["3-5 keywords MAX — Google FAILS with long queries","Drop filler: the/a/for/including/regarding/comprehensive","NEVER paste entire milestone as search query","Extract keywords from TASK context only"],
-"FLOW CHAINS":["Research flow: /web search <topic> -> /web fetch <url> -> summarize","Images: /web search -> pick image URL -> /vision <url>","Deep: /web scrape-images <url> -> read content -> /vision <img>","Report flow: /web search -> /web fetch (1-2 pages) -> /write report -> /email send"],
+"FLOW CHAINS":["Research: /web search -> /web fetch -> summarize","Images: /web search -> pick image URL -> /vision","Report: /web search -> /web fetch -> /write report"],
 "notes":["Do NOT fetch every URL. 1 search + 1-2 fetches enough","If scrape-images returns empty content, use /web fetch for same URL instead"],
 "format_only_ex":["/web search <keyword1> <keyword2> <keyword3>","/web fetch <url>"]}
 SPEC
@@ -1500,7 +1502,7 @@ SPEC
             download)
                 cat << 'SPEC'
 {"cmd":"/download","syntax":"/download <url_or_path> [destination]",
-"ex":["/download https://example.com/data.csv ./data/"]}
+"format_only_ex":["/download <url> [destination-path]"]}
 SPEC
                 ;;
             sandbox)
@@ -1511,7 +1513,7 @@ SPEC
   "run":"/sandbox run <name> <cmd>","cd":"/sandbox cd <name>",
   "rm":"/sandbox rm <name>","clone":"/sandbox clone <url> [name]"},
 "rules":["Do NOT use /sandbox to run slash commands"],
-"ex":["/sandbox new url-shortener rust"]}
+"format_only_ex":["/sandbox new <project-name> <type>","/sandbox build <project-name>"]}
 SPEC
                 ;;
             build)
@@ -1546,7 +1548,7 @@ SPEC
             clone)
                 cat << 'SPEC'
 {"cmd":"/clone","syntax":"/clone <repo_url_or_owner/repo> [local_name]",
-"ex":["/clone tokio-rs/tokio"]}
+"format_only_ex":["/clone <owner/repo-or-url> [local-name]"]}
 SPEC
                 ;;
             git)
@@ -1568,7 +1570,7 @@ SPEC
   "send":"/email send <provider> <recipient> subject=<subj> body=<body>",
   "inbox":"/email inbox <provider> [count]","status":"/email status"},
 "notes":["provider: gmail,protonmail,zoho","Recipient after provider (no to= needed)","Also accepts: to= s= b= as aliases","For actual email ONLY, NOT social platforms"],
-"ex":["/email send gmail user@example.com subject=Hello there body=How are you?"]}
+"format_only_ex":["/email send <provider> <address> subject=<subject line> body=<email body>","/email inbox <provider>"]}
 SPEC
                 ;;
             journal)
@@ -1578,20 +1580,20 @@ SPEC
   "show":"/journal show [vivid|fading|sediment]",
   "write":"/journal write <entry_text>"},
 "rules":["To READ: /journal (no args). To WRITE: /journal write <text>","NEVER write new content when the task asks you to check, read, review, or show the journal"],
-"ex":["/journal","/journal write Today I learned about the theory of moral sentiments."]}
+"format_only_ex":["/journal","/journal write <your entry text>"]}
 SPEC
                 ;;
             recall)
                 cat << 'SPEC'
 {"cmd":"/recall","syntax":"/recall <query>","notes":"BM25-ranked FTS5 search. Returns source, section, snippet.",
-"ex":["/recall trout stocking schedule"]}
+"format_only_ex":["/recall <search keywords>"]}
 SPEC
                 ;;
             pgp)
                 cat << 'SPEC'
 {"cmd":"/pgp","syntax":{
   "sign":"/pgp sign <message>","signpost":"/pgp signpost (sign+post to Discord)","export":"/pgp export"},
-"ex":["/pgp sign I attest this message is authentic"]}
+"format_only_ex":["/pgp sign <your message>"]}
 SPEC
                 ;;
             phone)
@@ -1602,7 +1604,7 @@ SPEC
             secret)
                 cat << 'SPEC'
 {"cmd":"/secret","syntax":["/secret set <name> <value>","/secret get <name>"],"notes":"AES-256-CBC vault.",
-"ex":["/secret set SERPER_API_KEY abc123xyz"]}
+"format_only_ex":["/secret set <KEY_NAME> <value>","/secret get <KEY_NAME>"]}
 SPEC
                 ;;
             vitals)
@@ -1621,7 +1623,7 @@ SPEC
                 cat << 'SPEC'
 {"cmd":"/vision","syntax":"/vision <image_path_or_url> [prompt]",
 "notes":["Supports jpg/png/gif/webp/bmp","Accepts image URLs directly (no /download needed)","Requires vision model: /models single minist-inst"],
-"ex":["/vision https://example.com/photo.jpg describe this scene","/vision ./image.jpg What text is visible?"]}
+"format_only_ex":["/vision <image-url-or-path> <description prompt>"]}
 SPEC
                 ;;
             container)
@@ -1651,8 +1653,9 @@ SPEC
                 ;;
             ask)
                 cat << 'SPEC'
-{"cmd":"/ask","syntax":"/ask <question>","notes":"Quick answer from LLM, no tools.",
-"ex":["/ask What is a monad in functional programming?"]}
+{"cmd":"/ask","syntax":"/ask <question>",
+"notes":"Answer from model knowledge. WARNING: may be stale for dates, scores, events, prices. Prefer /web search for time-sensitive info.",
+"format_only_ex":["/ask <question>"]}
 SPEC
                 ;;
             ls)
@@ -1881,7 +1884,14 @@ agent_inner_loop() {
                     "$_suff_summary" "" "$george_dir"
                 return 0
             else
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Sufficiency reached but evaluator says INCOMPLETE — continuing"
+                # Inject eval reason into micro_memory so the router/specialist
+                # can see WHY the previous attempt was judged INCOMPLETE and adapt.
+                if [ -n "${_EVAL_MILESTONE_REASON:-}" ]; then
+                    _micro_add_note "$micro_file" "EVAL_FEEDBACK: Milestone NOT complete — ${_EVAL_MILESTONE_REASON}. Try a different approach or tool."
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Sufficiency reached but evaluator says INCOMPLETE — injecting feedback into micro_memory"
+                else
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Sufficiency reached but evaluator says INCOMPLETE — continuing"
+                fi
             fi
         fi
 
@@ -2896,7 +2906,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
 $(cat << 'STRAT_RULES_JSON'
 {"rules":{
  "routing":{"named_tool":"use it — NEVER override with /ask",
-   "/ask":"own knowledge only, no tools",
+   "/ask":"own knowledge only (may be stale — prefer /web for dates/events/scores)",
    "/social":"Discord/Telegram/X/Mastodon (NOT /email)",
    "/email":"actual email only","/sandbox":"NEVER for slash commands"},
  "milestones":{"source":"YOUR WORKING COMMANDS only",
@@ -3334,6 +3344,14 @@ $question"
         return 1
     fi
     
+    # Emit response to stdout so the agent inner loop's
+    # output=$(commands_dispatch ...) captures it into the action log.
+    # In interactive mode llm_stream already displayed tokens to /dev/tty,
+    # so this is harmless (visible but already seen).  Without this line
+    # the nested $() in agent_ask absorbs llm_stream's stdout and the
+    # evaluator never sees the actual /ask answer.
+    echo "$response"
+
     # Journal the exchange — George writes a witty one-liner for posterity
     # Runs in background so user isn't blocked
     if declare -f journal_write_quip &>/dev/null; then

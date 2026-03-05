@@ -388,15 +388,14 @@ commands_catalog() {
     "/slash":{"syntax":"/slash <create|test|show|delete> <name> [args]","desc":"Create/manage custom commands","ex":["/slash create morning-brief Show weather, calendar, unread messages"]}
   }
 },
-"WORKFLOW EXAMPLES":[
-  {"task":"What files do we have?","steps":["/ls"]},
-  {"task":"Check config module","steps":["/ls src/config 2","/read src/config/mod.rs"]},
-  {"task":"Full project tree","steps":["/ls . 5"]},
-  {"task":"Review journal","steps":["/journal"],"note":"Summarize themes and learnings","wrong":"/write or /web search"},
-  {"task":"What did they say on Discord?","steps":["/social discord read general","/journal write Discord update: <summary>"],"wrong":"/web search 'discord'"},
-  {"task":"Find Rust HTTP library","steps":["/recall rust http library","/github search rust http client","/web search best rust http library","/journal write Rust HTTP: recommend reqwest"]},
-  {"task":"Show Grand Lodge of England","steps":["/web search Grand Lodge photos","/web scrape-images <url>","/vision <image_url> Describe building"],"wrong":"/web fetch <image_url>"},
-  {"task":"Lower agent temperature","steps":["/model temp-agent 0.4"],"wrong":"Editing config files"}
+"WORKFLOW PATTERNS":[
+  {"pattern":"List files","flow":"/ls [path] [depth]"},
+  {"pattern":"Read before edit","flow":"/ls -> /read <file> -> /write <file>"},
+  {"pattern":"Review journal","flow":"/journal (read only)","wrong":"/write or /web search"},
+  {"pattern":"Check social","flow":"/social discord read <channel>","wrong":"/web search 'discord'"},
+  {"pattern":"Research topic","flow":"/recall <keywords> -> /web search <keywords> -> /web fetch <url>"},
+  {"pattern":"Find images","flow":"/web images <query> or /web scrape-images <url> -> /vision <url>","wrong":"/web fetch <image_url>"},
+  {"pattern":"Tune settings","flow":"/model <param> <value> or /limits <param> <value>"}
 ],
 "TASK FREEDOM & AUTONOMY":{"principle":"Full authority to find missing info. DO NOT give up.",
   "when_blocked":{
