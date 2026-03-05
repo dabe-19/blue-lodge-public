@@ -150,6 +150,32 @@ _micro_serialize() {
     ' "$file" 2>/dev/null
 }
 
+# Lean serialize for the router — only objective + action summaries.
+# The router doesn't need prior_milestones, research_context,
+# system_notes, or warnings. Those fields dilute the routing
+# decision on 4B models and waste tokens.
+_micro_serialize_lean() {
+    local file="$1" max_actions="${2:-6}"
+    jq --argjson n "$max_actions" '{
+        micro_objective: .micro_objective,
+        primary_objective: .primary_objective,
+        honeydew_progress: .honeydew_progress,
+        action_log: (.action_log | .[-$n:] | map({action, status, exit_code}))
+    }' "$file" 2>/dev/null
+}
+
+# Serialize only the action log for the P1 milestone evaluator.
+# P1 should judge THIS milestone's actions, not carryover context
+# from prior milestones (research_context, prior_milestones, etc.).
+_micro_serialize_eval() {
+    local file="$1" max_actions="${2:-10}"
+    jq --argjson n "$max_actions" '{
+        micro_objective: .micro_objective,
+        action_log: (.action_log | .[-$n:] | map(.output = .output[:1024])),
+        warnings: .warnings
+    }' "$file" 2>/dev/null
+}
+
 # Extract successful web outputs for research buffer
 _micro_web_outputs() {
     local file="$1" max_chars="${2:-1500}"
@@ -209,6 +235,15 @@ _macro_milestones_json() {
 _macro_serialize() {
     local file="$1"
     cat "$file" 2>/dev/null
+}
+
+# Serialize macro_memory without persona bloat for evaluators/strategist.
+# Persona text (~200 tokens) adds no value for milestone selection or
+# completion judgment. Stripping it frees context window for actual
+# task data on the 4B model.
+_macro_serialize_lean() {
+    local file="$1"
+    jq 'del(.persona)' "$file" 2>/dev/null
 }
 
 # ── Milestone Completion Helper ────────────────────────────────
@@ -501,11 +536,14 @@ _agent_evaluate_milestone() {
     local micro_file="$2"
     local milestone_text="$3"
 
-    # Read micro_memory as the action log for this milestone
+    # Read micro_memory action log ONLY for this milestone.
+    # P1 should judge THIS milestone's actions in isolation — not
+    # carryover context like prior_milestones or research_context
+    # which can confuse the 4B model into thinking prior work counts.
     local eval_context=""
     if [ -n "$micro_file" ] && [ -f "$micro_file" ]; then
-        eval_context=$(cat "$micro_file")
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: milestone-eval <- micro_memory ($(wc -l < "$micro_file") lines)"
+        eval_context=$(_micro_serialize_eval "$micro_file")
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: milestone-eval <- micro_memory action_log ($(echo "$eval_context" | wc -l) lines)"
     else
         ui_info "Milestone evaluator: no micro_memory available"
         return 1
@@ -598,10 +636,12 @@ _agent_evaluate_completion() {
     primary_obj=$(_macro_get "$macro_file" "primary_objective")
     [ -z "$primary_obj" ] && { ui_info "Overall evaluator: no primary objective found"; return 1; }
 
-    # Use macro_memory as the primary context — it has the full milestone history
+    # Use macro_memory without persona for evaluation context.
+    # The persona (~200 tokens of identity text) adds no value for
+    # task-completion judgment and wastes context on 4B models.
     local macro_context
-    macro_context=$(cat "$macro_file")
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: overall-eval <- macro_memory ($(wc -l < "$macro_file") lines)"
+    macro_context=$(_macro_serialize_lean "$macro_file")
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: overall-eval <- macro_memory lean ($(echo "$macro_context" | wc -l) lines)"
 
     # Supplement with recent micro_memory for action-level detail
     # CRITICAL: P2 needs SUFFICIENT context to distinguish "research done"
@@ -1348,6 +1388,15 @@ _build_specialist_prompt() {
     #   (eval handles execution)
 
     if [ "$cmd_name" != "bash" ]; then
+        # Inject task context at the TOP of the system prompt so it
+        # occupies the primacy position. On 4B models, early system
+        # content outweighs everything else. Without this, syntax card
+        # examples in the "ex" field dominate the model's attention.
+        if [ -n "$micro_objective" ]; then
+            echo "TASK: $micro_objective"
+            echo "Generate a command that serves THIS task. Ignore example values."
+            echo ""
+        fi
         cat << 'SPEC_PREAMBLE'
 {"output":{"format":"exactly ONE slash command on its own line","starts_with":"/",
  "forbidden":["code_block_wrapper","quotes_on_args","multiple_commands_per_line","/sandbox for slash commands"]}}
@@ -1412,11 +1461,11 @@ SPEC
   "fetch":"/web fetch <url> (read webpage content)",
   "images":"/web images <query> (find image URLs)",
   "scrape-images":"/web scrape-images <url> (text+images as JSON)"},
-"rules":["search=QUERY, fetch=URL, NEVER swap","scrape-images returns {url,title,content,images[]}","Use /vision for images, NOT /web fetch","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research"],
-"search_tips":["3-5 keywords MAX — Google FAILS with long queries","Drop filler: the/a/for/including/regarding/comprehensive","NEVER paste entire milestone as search query","Use specific names + 1-2 context words"],
+"rules":["search=QUERY, fetch=URL, NEVER swap","scrape-images returns {url,title,content,images[]}","Use /vision for images, NOT /web fetch","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples"],
+"search_tips":["3-5 keywords MAX — Google FAILS with long queries","Drop filler: the/a/for/including/regarding/comprehensive","NEVER paste entire milestone as search query","Extract keywords from TASK context only"],
 "FLOW CHAINS":["Research flow: /web search <topic> -> /web fetch <url> -> summarize","Images: /web search -> pick image URL -> /vision <url>","Deep: /web scrape-images <url> -> read content -> /vision <img>","Report flow: /web search -> /web fetch (1-2 pages) -> /write report -> /email send"],
 "notes":["Do NOT fetch every URL. 1 search + 1-2 fetches enough","If scrape-images returns empty content, use /web fetch for same URL instead"],
-"ex":["/web search Matt Jasmer De Pere WI","/web search Trident Automation reviews","/web search rust async tutorial 2025"]}
+"format_only_ex":["/web search <keyword1> <keyword2> <keyword3>","/web fetch <url>"]}
 SPEC
                 ;;
             download)
@@ -1688,10 +1737,19 @@ agent_inner_loop() {
     # If the previous milestone saved a research buffer, inject it
     # so this milestone's specialist can use the gathered data.
     # Deleted after injection to prevent leaking into subsequent milestones.
+    # Tagged with source context so the model can judge relevance.
     local _research_buf="$george_dir/research_buffer.md"
     if [ -f "$_research_buf" ]; then
         local _rb_content
         _rb_content=$(head -c 1500 "$_research_buf")
+        # Tag with source: last milestone objective from macro_memory
+        local _rb_source=""
+        if [ -f "$macro_file" ]; then
+            _rb_source=$(jq -r '.completed_milestones[-1].objective // empty' "$macro_file" 2>/dev/null)
+        fi
+        if [ -n "$_rb_source" ]; then
+            _rb_content="[From prior milestone: ${_rb_source:0:100}]\n${_rb_content}"
+        fi
         _micro_set "$micro_file" "research_context" "$_rb_content"
         rm -f "$_research_buf"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: research buffer -> micro_memory (${#_rb_content} chars)"
@@ -1735,8 +1793,14 @@ agent_inner_loop() {
         local router_sys=$(_build_router_prompt)
         local _route_now
         _route_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
+        # Lean context for router: only objective + action summaries.
+        # The router picks a tool name — it doesn't need full outputs,
+        # prior milestones, or research context. Using the lean
+        # projection keeps router input under ~200 tokens.
+        local _router_context
+        _router_context=$(_micro_serialize_lean "$micro_file")
         local route_prompt="Current date/time: ${_route_now}\nRoute the next action.\n"
-        route_prompt="${route_prompt}\n$inner_context"
+        route_prompt="${route_prompt}\n$_router_context"
 
         # llm_generate is used here for maximum speed — no streaming,
         # no personality, just returns the raw string.
@@ -1774,16 +1838,22 @@ agent_inner_loop() {
         # ── WEB SUFFICIENCY ENFORCEMENT ───────────────────────
         # The sufficiency gate (in the action success block below)
         # sets sufficiency_reached after N successful web actions.
-        # If the evaluator hasn't already triggered completion,
-        # force it here as a programmatic override.
+        # Instead of forcing completion blindly, run the milestone
+        # evaluator one final time. This prevents N *irrelevant*
+        # web searches (e.g. model parroting an example query) from
+        # being stamped as complete when the objective is unmet.
         if _micro_sufficiency_reached "$micro_file"; then
-            local _suff_summary="Web research data gathered"
-            local _last_web
-            _last_web=$(jq -r '[.action_log[] | select(.action | test("^/web")) | select(.status == "SUCCESS") | .output] | last // empty' "$micro_file" 2>/dev/null)
-            [ -n "$_last_web" ] && _suff_summary="${_last_web:0:120}"
-            _agent_complete_milestone "$micro_file" "$macro_file" "$micro_objective" \
-                "$_suff_summary" "" "$george_dir"
-            return 0
+            if _agent_evaluate_milestone "$macro_file" "$micro_file" "$micro_objective"; then
+                local _suff_summary="Web research data gathered"
+                local _last_web
+                _last_web=$(jq -r '[.action_log[] | select(.action | test("^/web")) | select(.status == "SUCCESS") | .output] | last // empty' "$micro_file" 2>/dev/null)
+                [ -n "$_last_web" ] && _suff_summary="${_last_web:0:120}"
+                _agent_complete_milestone "$micro_file" "$macro_file" "$micro_objective" \
+                    "$_suff_summary" "" "$george_dir"
+                return 0
+            else
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Sufficiency reached but evaluator says INCOMPLETE — continuing"
+            fi
         fi
 
         # ── PHASE 2: Specialist Execution ─────────────────────
@@ -1867,7 +1937,7 @@ agent_inner_loop() {
         # search_tips buried in the JSON card, so put it at the end
         # where recency bias makes it impossible to miss.
         if [[ "${selected_tool#/}" == "web" ]]; then
-            _spec_tail="Output ONLY the /web command. For /web search: MAX 5 keywords. Drop filler words (the, a, for, in, to, and, or, about, including, regarding, comprehensive, professional, community, organizations, associations). Example: objective='Find David McCabe professional associations in Green Bay WI area' -> /web search David McCabe Green Bay WI"
+            _spec_tail="Output ONLY the /web command. For /web search: extract 3-5 keywords FROM THE MICRO OBJECTIVE above. Drop filler words (the, a, for, in, to, and, or, about, including, regarding, comprehensive, professional, community, organizations, associations). DO NOT copy examples — derive keywords from the objective."
         fi
         local specialist_prompt="MICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\n${_spec_tail}"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist <- micro_memory action log ($(echo "$inner_context" | wc -l) lines)"
@@ -2658,10 +2728,12 @@ MEMEOF
             vitals_guard_ram 2>/dev/null || true
         fi
 
-        # Read macro_memory.json and ask for the SINGLE next milestone
+        # Read macro_memory without persona for strategist context.
+        # Persona identity text wastes ~200 tokens that the strategist
+        # doesn't need for milestone selection.
         local macro_context
-        macro_context=$(cat "$macro_file")
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- macro_memory ($(echo "$macro_context" | wc -l) lines)"
+        macro_context=$(_macro_serialize_lean "$macro_file")
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- macro_memory lean ($(echo "$macro_context" | wc -l) lines)"
 
         # Use a lean system prompt — no personality, just strategic reasoning.
         # By stripping the ~500-token soul and ~200-token vitals during
