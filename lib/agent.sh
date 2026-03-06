@@ -156,14 +156,20 @@ _micro_serialize() {
 # The router doesn't need prior_milestones, research_context,
 # system_notes, or warnings. Those fields dilute the routing
 # decision on 4B models and waste tokens.
+#
+# Once a honeydew list exists (honeydew_progress is set), the
+# primary_objective is redundant and is omitted to prevent the
+# router from fixating on the raw query instead of the current
+# milestone + honeydew context.
 _micro_serialize_lean() {
     local file="$1" max_actions="${2:-6}"
     jq --argjson n "$max_actions" '{
         micro_objective: .micro_objective,
-        primary_objective: .primary_objective,
         honeydew_progress: .honeydew_progress,
         action_log: (.action_log | .[-$n:] | map({action, status, exit_code}))
-    }' "$file" 2>/dev/null
+    } + (if .honeydew_progress == null and .primary_objective != null then
+        {primary_objective: .primary_objective}
+    else {} end)' "$file" 2>/dev/null
 }
 
 # Serialize only the action log for the P1 milestone evaluator.
@@ -243,9 +249,18 @@ _macro_serialize() {
 # Persona text (~200 tokens) adds no value for milestone selection or
 # completion judgment. Stripping it frees context window for actual
 # task data on the 4B model.
+#
+# Once the honeydew list is built, primary_objective is redundant —
+# the honeydew list encodes the original objective as structured
+# subtasks. Stripping it prevents the strategist/evaluator from
+# chasing the raw query instead of the remaining honeydew items.
 _macro_serialize_lean() {
     local file="$1"
-    jq 'del(.persona)' "$file" 2>/dev/null
+    if jq -e '.honeydew != null' "$file" >/dev/null 2>&1; then
+        jq 'del(.persona) | del(.primary_objective)' "$file" 2>/dev/null
+    else
+        jq 'del(.persona)' "$file" 2>/dev/null
+    fi
 }
 
 # ── Milestone Completion Helper ────────────────────────────────
@@ -656,10 +671,23 @@ _agent_evaluate_completion() {
     local macro_file="$1"
     local micro_file="$2"
 
-    # Extract ONLY the primary objective from macro_memory (skip persona bloat)
-    local primary_obj
-    primary_obj=$(_macro_get "$macro_file" "primary_objective")
-    [ -z "$primary_obj" ] && { ui_info "Overall evaluator: no primary objective found"; return 1; }
+    # When a honeydew list exists, it IS the completion criteria —
+    # the raw primary_objective is redundant and can mislead the
+    # evaluator into judging the original query instead of the
+    # structured subtasks. Only fall back to primary_objective when
+    # no honeydew list was built.
+    local primary_obj=""
+    local _hd_eval_file_check
+    _hd_eval_file_check="$(dirname "$macro_file")/$HONEYDEW_FILE"
+    if [ -f "$_hd_eval_file_check" ]; then
+        # Honeydew exists — it encodes the objective; primary_obj
+        # will be empty so the eval prompt anchors on the honeydew
+        # list block injected below, not the raw query.
+        primary_obj=""
+    else
+        primary_obj=$(_macro_get "$macro_file" "primary_objective")
+        [ -z "$primary_obj" ] && { ui_info "Overall evaluator: no primary objective found"; return 1; }
+    fi
 
     # Use macro_memory without persona for evaluation context.
     # The persona (~200 tokens of identity text) adds no value for
@@ -707,7 +735,19 @@ _agent_evaluate_completion() {
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: overall-eval <- honeydew (${_hd_done}/${_hd_total})"
     fi
 
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}${_hd_eval_block}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\nPRIMARY OBJECTIVE:\n${primary_obj}\n\nIs the PRIMARY OBJECTIVE fully satisfied? Apply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_P2_JSON'
+    # Build the objective anchor — honeydew list when available,
+    # otherwise fall back to the raw primary_objective.
+    local _obj_block=""
+    if [ -n "$primary_obj" ]; then
+        _obj_block="PRIMARY OBJECTIVE:\n${primary_obj}"
+    elif [ -n "$_hd_eval_block" ]; then
+        _obj_block="The HONEYDEW LIST above defines the completion criteria."
+    else
+        ui_info "Overall evaluator: no objective or honeydew found"
+        return 1
+    fi
+
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}${_hd_eval_block}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\n${_obj_block}\n\nAre all completion criteria fully satisfied? Apply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_P2_JSON'
 {"classify":"COMPLETE|INCOMPLETE",
  "default":{"actions_exit_0":"COMPLETE","no_extras":true},
  "action_class":{
@@ -1740,28 +1780,34 @@ agent_inner_loop() {
     # handoff from the Macro loop. JSON format for structured context.
     _micro_init "$micro_file" "$micro_objective"
 
-    # ── PRIMARY OBJECTIVE INJECTION ────────────────────────────
-    # Inject the overarching task goal so the inner loop's router and
-    # specialist never lose sight of the bigger picture.
-    if [ -f "$macro_file" ]; then
-        local _primary_obj
-        _primary_obj=$(_macro_get "$macro_file" "primary_objective")
-        if [ -n "$_primary_obj" ] && [ "$_primary_obj" != "$micro_objective" ]; then
-            _micro_set "$micro_file" "primary_objective" "$_primary_obj"
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: primary objective -> micro_memory"
-        fi
-    fi
-
     # ── HONEYDEW STATUS INJECTION ──────────────────────────────
     # Show the inner loop what tasks remain so the router/specialist
     # can see progress at a glance (e.g., "2/4 complete | Next: ...").
     local _hd_inner_file="$george_dir/$HONEYDEW_FILE"
+    local _has_honeydew=0
     if [ -f "$_hd_inner_file" ]; then
         local _hd_inner_status
         _hd_inner_status=$(_agent_honeydew_status "$(dirname "$george_dir")" 2>/dev/null)
         if [ -n "$_hd_inner_status" ]; then
             _micro_set "$micro_file" "honeydew_progress" "$_hd_inner_status"
+            _has_honeydew=1
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew status -> micro_memory"
+        fi
+    fi
+
+    # ── PRIMARY OBJECTIVE INJECTION ────────────────────────────
+    # Inject the overarching task goal so the inner loop's router and
+    # specialist never lose sight of the bigger picture.
+    # SKIP when the honeydew list exists — the honeydew encodes the
+    # original objective as structured subtasks. Injecting the raw
+    # query alongside the honeydew causes the router/specialist to
+    # chase the original query instead of the current honeydew item.
+    if [ "$_has_honeydew" -eq 0 ] && [ -f "$macro_file" ]; then
+        local _primary_obj
+        _primary_obj=$(_macro_get "$macro_file" "primary_objective")
+        if [ -n "$_primary_obj" ] && [ "$_primary_obj" != "$micro_objective" ]; then
+            _micro_set "$micro_file" "primary_objective" "$_primary_obj"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: primary objective -> micro_memory"
         fi
     fi
 
@@ -2881,7 +2927,7 @@ MEMEOF
         # NOTE: Date is in the USER prompt, not system prompt.
         # Keeping system prompt static enables llama-server KV cache
         # reuse across consecutive strategist calls (~30-60% prefill savings).
-        local macro_prompt="Current date/time: ${_strat_now}\n\nRead the following task memory. What is the SINGLE next logical milestone to advance the Primary Objective? If the objective is fully complete, reply with EXACTLY the word DONE and nothing else.\n\n$macro_context"
+        local macro_prompt="Current date/time: ${_strat_now}\n\nRead the following task memory. What is the SINGLE next logical milestone to advance the remaining objectives? If all objectives are fully complete, reply with EXACTLY the word DONE and nothing else.\n\n$macro_context"
 
         # ── Research→Delivery Gate ────────────────────────────
         # After 2+ consecutive research milestones, inject a hard
