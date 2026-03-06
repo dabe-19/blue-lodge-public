@@ -402,13 +402,13 @@ RULES:
             local item="${BASH_REMATCH[1]}"
             item=$(echo "$item" | sed 's/^\[[ x✓]*\][[:space:]]*//')
             _items_json=$(echo "$_items_json" | jq --argjson id "$count" --arg t "$item" \
-                '. += [{"id": $id, "task": $t, "status": "pending"}]')
+                '. += [{"id": $id, "task": $t, "status": "pending", "depth": 0}]')
         fi
     done <<< "$raw_list"
 
     # Fallback: if LLM gave no parseable items, create a single item
     if [ "$count" -eq 0 ]; then
-        _items_json=$(jq -n --arg t "$task" '[{"id": 1, "task": $t, "status": "pending"}]')
+        _items_json=$(jq -n --arg t "$task" '[{"id": 1, "task": $t, "status": "pending", "depth": 0}]')
         count=1
     fi
 
@@ -481,6 +481,205 @@ _agent_honeydew_read() {
     local hd_file="$workdir/.george/$HONEYDEW_FILE"
     [ ! -f "$hd_file" ] && return 1
     cat "$hd_file"
+}
+
+# ── Subtask Decomposition (Single-Level Expansion) ────────────
+# When a honeydew item is complex (compound goal, comparisons,
+# multi-entity operations), expands it into sub-items IN-PLACE.
+#
+# This is NOT full recursion — it's a one-shot splice into the
+# flat honeydew list. The parent item is replaced with 2-4
+# sub-items that inherit the parent's position. Sub-items are
+# tagged with depth=1 (or depth=parent+1) and will NOT be
+# expanded further once depth reaches AGENT_MAX_DEPTH.
+#
+# Integration point: called at the TOP of each macro loop
+# iteration, BEFORE the strategist picks the next milestone.
+# If the next pending item needs expansion, expand it in-place
+# so the strategist sees granular sub-items instead of one
+# monolithic compound goal.
+#
+# Design constraints:
+#   - No nesting beyond AGENT_MAX_DEPTH (default 2)
+#   - Sub-items are purely flat siblings in the items[] array
+#   - IDs are renumbered after splice to stay sequential
+#   - The primary_task field is never modified
+
+# Heuristic: does a honeydew item look complex enough to
+# warrant sub-decomposition? Returns 0 if yes, 1 if no.
+# Pure string analysis — no LLM call.
+# Args: $1=item text
+_agent_honeydew_needs_expansion() {
+    local text="$1"
+    local lower
+    lower=$(echo "$text" | tr '[:upper:]' '[:lower:]')
+
+    # ── Complexity signals ─────────────────────────────────────
+    # Each pattern targets a specific class of compound goals that
+    # a single strategist milestone can't handle atomically.
+
+    # 1. Multi-entity: "compare X and Y", "research A, B, and C"
+    #    The model needs separate milestones per entity.
+    if [[ "$lower" =~ (compare|contrast|evaluate).*(and|vs|versus) ]]; then
+        return 0
+    fi
+
+    # 2. "each" / "every" / "all of" — iterative goals
+    if [[ "$lower" =~ (for each|for every|each of|all of the|for all) ]]; then
+        return 0
+    fi
+
+    # 3. Compound conjunction: "research X and write Y" or
+    #    "find A then send B" — two distinct actions in one item
+    if [[ "$lower" =~ (research|find|gather|search|look up).*(and|then).*(write|send|email|post|create|build|save) ]]; then
+        return 0
+    fi
+
+    # 4. Explicit list separators: "A, B, and C" pattern
+    #    (at least 2 commas + "and" = multi-item enumeration)
+    local comma_count
+    comma_count=$(echo "$lower" | tr -cd ',' | wc -c)
+    if [ "$comma_count" -ge 2 ] && [[ "$lower" =~ " and " ]]; then
+        return 0
+    fi
+
+    # 5. Long item text (>120 chars) — usually compound goals
+    if [ ${#text} -gt 120 ]; then
+        return 0
+    fi
+
+    return 1
+}
+
+# Expand a single honeydew item into sub-items via LLM decomposition.
+# Replaces the parent item in-place, renumbers all IDs sequentially.
+# Args: $1=item_id, $2=workdir
+# Returns: 0 if expanded, 1 if no expansion needed/possible
+_agent_honeydew_expand() {
+    local item_id="$1"
+    local workdir="${2:-.}"
+    local hd_file="$workdir/.george/$HONEYDEW_FILE"
+    [ ! -f "$hd_file" ] && return 1
+
+    # Read the target item
+    local item_text item_depth
+    item_text=$(jq -r --argjson id "$item_id" \
+        '.items[] | select(.id == $id) | .task' "$hd_file" 2>/dev/null)
+    item_depth=$(jq -r --argjson id "$item_id" \
+        '.items[] | select(.id == $id) | .depth // 0' "$hd_file" 2>/dev/null)
+
+    [ -z "$item_text" ] && return 1
+
+    # Depth guard: don't expand beyond AGENT_MAX_DEPTH
+    local max_depth="${AGENT_MAX_DEPTH:-2}"
+    if [ "$item_depth" -ge "$max_depth" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew expand: item #$item_id at depth $item_depth >= max $max_depth — skipping"
+        return 1
+    fi
+
+    # Check complexity heuristic
+    if ! _agent_honeydew_needs_expansion "$item_text"; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew expand: item #$item_id not complex enough — skipping"
+        return 1
+    fi
+
+    # ── LLM decomposition of the single item ──────────────────
+    local sub_depth=$((item_depth + 1))
+
+    local expand_prompt="Break this objective into 2-4 smaller sub-steps in execution order.
+
+OBJECTIVE: $item_text
+
+RULES:
+- Output ONLY a numbered list (2-4 items).
+- Each sub-step: a short imperative sentence describing WHAT, not HOW.
+- Do NOT mention commands, URLs, tools, or shell syntax.
+- Order by dependency (research before writing, writing before sending).
+- Do NOT include verification or cleanup steps.
+- Keep each sub-step atomic — achievable in a single action."
+
+    local expand_sys="You are a task decomposition engine. Break ONE complex objective into 2-4 atomic sub-steps. Output ONLY a numbered list. No commands, no URLs, no explanation. Plain numbered list only."
+
+    ui_think "Expanding honeydew item #${item_id} into sub-tasks..."
+    local raw_list
+    local LLM_SCENARIO=strategist
+    raw_list=$(llm_generate "$expand_prompt" "$expand_sys" "${LLM_STRATEGIST_TOKENS:-256}" "$LLM_BUDGET_AGENT")
+
+    # Clean think blocks (same pipeline as _agent_honeydew_build)
+    raw_list=$(echo "$raw_list" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+    raw_list=$(echo "$raw_list" | sed ':a;N;$!ba;s/<think>.*$//g')
+    raw_list=$(echo "$raw_list" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
+    raw_list=$(echo "$raw_list" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+    raw_list=$(echo "$raw_list" | sed '/^[[:space:]]*$/d')
+
+    # Inline list splitting (same as _agent_honeydew_build)
+    raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\}\.[[:space:]]\{1,2\}\)/\1\n\2/g')
+    raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\})[[:space:]]\{1,2\}\)/\1\n\2/g')
+
+    # Parse numbered lines
+    local _sub_items='[]'
+    local sub_count=0
+    while IFS= read -r line; do
+        line=$(echo "$line" | sed 's/^[[:space:]]*//')
+        if [[ "$line" =~ ^[0-9]{1,2}[\.\)][[:space:]]*(.*) ]]; then
+            sub_count=$((sub_count + 1))
+            local sub_item="${BASH_REMATCH[1]}"
+            sub_item=$(echo "$sub_item" | sed 's/^\[[ x✓]*\][[:space:]]*//')
+            _sub_items=$(echo "$_sub_items" | jq --arg t "$sub_item" --argjson d "$sub_depth" \
+                '. += [{"task": $t, "status": "pending", "depth": $d}]')
+        fi
+    done <<< "$raw_list"
+
+    # Need at least 2 sub-items for expansion to be worthwhile
+    if [ "$sub_count" -lt 2 ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew expand: LLM produced $sub_count items — not enough, keeping original"
+        return 1
+    fi
+
+    # ── Splice sub-items into honeydew list ───────────────────
+    # Strategy: collect items before the target, add sub-items,
+    # collect items after the target, renumber all IDs sequentially.
+    local tmp="${hd_file}.tmp"
+    jq --argjson id "$item_id" --argjson subs "$_sub_items" '
+        .items = (
+            [.items[] | select(.id < $id)] +
+            $subs +
+            [.items[] | select(.id > $id)]
+        ) |
+        .items = [.items | to_entries[] | .value + {"id": (.key + 1)}]
+    ' "$hd_file" > "$tmp" && mv "$tmp" "$hd_file"
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew expand: item #$item_id -> $sub_count sub-items (depth=$sub_depth)"
+
+    # Display the updated list
+    _agent_honeydew_display "$hd_file"
+    return 0
+}
+
+# Check if the next pending honeydew item needs expansion and
+# expand it if so. Called at top of each macro loop iteration.
+# Args: $1=workdir
+_agent_honeydew_maybe_expand() {
+    local workdir="${1:-.}"
+    local hd_file="$workdir/.george/$HONEYDEW_FILE"
+    [ ! -f "$hd_file" ] && return 1
+
+    # Find the next pending item
+    local next_id next_depth
+    next_id=$(jq -r '[.items[] | select(.status == "pending")][0].id // empty' "$hd_file" 2>/dev/null)
+    [ -z "$next_id" ] && return 1
+
+    next_depth=$(jq -r --argjson id "$next_id" \
+        '.items[] | select(.id == $id) | .depth // 0' "$hd_file" 2>/dev/null)
+
+    # Already at max depth — skip
+    local max_depth="${AGENT_MAX_DEPTH:-2}"
+    if [ "${next_depth:-0}" -ge "$max_depth" ]; then
+        return 1
+    fi
+
+    # Try expansion (heuristic + LLM)
+    _agent_honeydew_expand "$next_id" "$workdir"
 }
 
 # Match a completed milestone against honeydew items and mark
@@ -764,23 +963,59 @@ _agent_evaluate_completion() {
     local macro_file="$1"
     local micro_file="$2"
 
-    # When a honeydew list exists, it IS the completion criteria —
-    # the raw primary_objective is redundant and can mislead the
-    # evaluator into judging the original query instead of the
-    # structured subtasks. Only fall back to primary_objective when
-    # no honeydew list was built.
-    local primary_obj=""
+    # ── HARD HONEYDEW GATE ─────────────────────────────────────
+    # When a honeydew list exists, completion is DETERMINISTIC:
+    # all items done → COMPLETE, any pending → INCOMPLETE.
+    # No LLM heuristics — each item was already individually
+    # evaluated by the honeydew item evaluator + P1. The LLM-based
+    # P2 path is reserved for tasks without a honeydew list.
     local _hd_eval_file_check
     _hd_eval_file_check="$(dirname "$macro_file")/$HONEYDEW_FILE"
     if [ -f "$_hd_eval_file_check" ]; then
-        # Honeydew exists — it encodes the objective; primary_obj
-        # will be empty so the eval prompt anchors on the honeydew
-        # list block injected below, not the raw query.
-        primary_obj=""
-    else
-        primary_obj=$(_macro_get "$macro_file" "primary_objective")
-        [ -z "$primary_obj" ] && { ui_info "Overall evaluator: no primary objective found"; return 1; }
+        local _hd_gate_total _hd_gate_done _hd_gate_pending
+        _hd_gate_total=$(jq '.items | length' "$_hd_eval_file_check" 2>/dev/null || echo 0)
+        _hd_gate_done=$(jq '[.items[] | select(.status == "done")] | length' "$_hd_eval_file_check" 2>/dev/null || echo 0)
+        _hd_gate_pending=$((_hd_gate_total - _hd_gate_done))
+
+        if [ "$_hd_gate_total" -gt 0 ] && [ "$_hd_gate_pending" -gt 0 ]; then
+            _EVAL_INCOMPLETE_REASON="${_hd_gate_done}/${_hd_gate_total} honeydew items complete — ${_hd_gate_pending} still pending"
+            local _reason_display="(${_EVAL_INCOMPLETE_REASON})"
+            ui_info "Overall evaluator: ${_reason_display} — continuing"
+            return 1
+        fi
+
+        if [ "$_hd_gate_total" -gt 0 ] && [ "$_hd_gate_pending" -eq 0 ]; then
+            _EVAL_COMPLETE_REASON="All ${_hd_gate_total} honeydew items completed"
+            ui_ok "Overall evaluator: $_EVAL_COMPLETE_REASON"
+
+            if [[ "${AGENT_EVAL_MODE:-auto}" == "interactive" ]]; then
+                echo ""
+                ui_info "All honeydew items completed. The evaluator believes the task is done."
+                printf " %b%s%b %b%s%b " "\033[1;37m" "Are you satisfied with the result?" "\033[0m" "\033[2m" "[Y/n]" "\033[0m"
+                local answer
+                read -r answer < /dev/tty 2>/dev/null || answer="y"
+                answer="${answer:-y}"
+                if [[ "${answer,,}" == "y"* ]]; then
+                    echo ""
+                    ui_ok "Task complete — $_EVAL_COMPLETE_REASON"
+                    return 0
+                else
+                    ui_info "Continuing work — operator requested more progress"
+                    return 1
+                fi
+            fi
+
+            echo ""
+            ui_ok "Task complete — $_EVAL_COMPLETE_REASON"
+            return 0
+        fi
+        # _hd_gate_total is 0 — empty/malformed honeydew, fall through to LLM
     fi
+
+    # ── No honeydew list — LLM-based P2 evaluation ────────────
+    local primary_obj=""
+    primary_obj=$(_macro_get "$macro_file" "primary_objective")
+    [ -z "$primary_obj" ] && { ui_info "Overall evaluator: no primary objective found"; return 1; }
 
     # Use macro_memory without persona for evaluation context.
     # The persona (~200 tokens of identity text) adds no value for
@@ -812,35 +1047,11 @@ _agent_evaluate_completion() {
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
 
-    # ── Inject honeydew list status into evaluator ─────────────
-    # The honeydew list provides structured visibility into multi-step
-    # tasks. If ANY items have status "pending", the task is NOT done.
-    local _hd_eval_block=""
-    local _hd_eval_file
-    _hd_eval_file="$(dirname "$macro_file")/$HONEYDEW_FILE"
-    if [ -f "$_hd_eval_file" ]; then
-        local _hd_eval_content
-        _hd_eval_content=$(cat "$_hd_eval_file")
-        local _hd_total _hd_done
-        _hd_total=$(jq '.items | length' "$_hd_eval_file" 2>/dev/null || echo 0)
-        _hd_done=$(jq '[.items[] | select(.status == "done")] | length' "$_hd_eval_file" 2>/dev/null || echo 0)
-        _hd_eval_block="\n\n>>> HONEYDEW LIST (${_hd_done}/${_hd_total} complete) <<<\n${_hd_eval_content}\n>>> Any item with status \"pending\" = INCOMPLETE. ALL must be \"done\" for COMPLETE. <<<"
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: overall-eval <- honeydew (${_hd_done}/${_hd_total})"
-    fi
+    # No honeydew list exists at this point (the hard gate above
+    # handles all honeydew cases). Build the objective from primary_obj.
+    local _obj_block="PRIMARY OBJECTIVE:\n${primary_obj}"
 
-    # Build the objective anchor — honeydew list when available,
-    # otherwise fall back to the raw primary_objective.
-    local _obj_block=""
-    if [ -n "$primary_obj" ]; then
-        _obj_block="PRIMARY OBJECTIVE:\n${primary_obj}"
-    elif [ -n "$_hd_eval_block" ]; then
-        _obj_block="The HONEYDEW LIST above defines the completion criteria."
-    else
-        ui_info "Overall evaluator: no objective or honeydew found"
-        return 1
-    fi
-
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}${_hd_eval_block}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\n${_obj_block}\n\nAre all completion criteria fully satisfied? Apply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_P2_JSON'
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\n${_obj_block}\n\nAre all completion criteria fully satisfied? Apply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_P2_JSON'
 {"classify":"COMPLETE|INCOMPLETE",
  "default":{"actions_exit_0":"COMPLETE","no_extras":true},
  "action_class":{
@@ -848,7 +1059,6 @@ _agent_evaluate_completion() {
    "ACTION":{"exit_0":"COMPLETE"}},
  "parts":{"single":"1 correct milestone = COMPLETE",
    "multi":"each part needs own milestone+action_class"},
- "honeydew":{"all_done":"required for COMPLETE"},
  "code":{"require":["files_written","build_exit_0"],
    "reject":["todo","stub","panic","placeholder"],
    "web_only":"INCOMPLETE"},
@@ -2112,13 +2322,36 @@ agent_inner_loop() {
         # Trim leading/trailing whitespace.
         selected_tool=$(echo "$selected_tool" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
-        # Extract just the base command name (first word of FIRST line, strip leading /)
-        # Router sometimes outputs "/ask" or "/web search" or noise.
-        # CRITICAL: head -1 ensures multi-line router output (the router
-        # sometimes regurgitates the entire command) only yields the first
-        # line. Without this, awk emits one word per line and the tool
-        # name becomes a multi-line string that fails file existence checks.
-        selected_tool=$(echo "$selected_tool" | head -1 | awk '{print $1}' | sed 's|^/||; s|^/||')
+        # ── SMART COMMAND EXTRACTION ──────────────────────────
+        # Thinking models (Phi4, Qwen3) often wrap the tool name in
+        # prose: "The next action is to use `/web` to..."
+        # Strategy: scan the full output for a /(known_command) match
+        # FIRST. Only fall back to first-word extraction if no valid
+        # slash command is found anywhere in the output.
+        local _extracted_cmd=""
+        local _router_raw="$selected_tool"
+        # Scan for /command patterns and validate against registry
+        local _candidate
+        while [[ "$_router_raw" =~ /([a-z]+) ]]; do
+            _candidate="${BASH_REMATCH[1]}"
+            if [ "$_candidate" = "bash" ]; then
+                _extracted_cmd="$_candidate"; break
+            elif declare -p CMD_REGISTRY &>/dev/null && [[ -n "${CMD_REGISTRY[$_candidate]+x}" ]]; then
+                _extracted_cmd="$_candidate"; break
+            elif [ -f "${LODGE_COMMANDS_DIR:-$LODGE_DIR/commands}/${_candidate}.sh" ]; then
+                _extracted_cmd="$_candidate"; break
+            fi
+            # Remove this match and continue scanning
+            _router_raw="${_router_raw#*"/${_candidate}"}"
+        done
+
+        if [ -n "$_extracted_cmd" ]; then
+            selected_tool="$_extracted_cmd"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router: extracted /$_extracted_cmd from prose output"
+        else
+            # Fallback: first word of first line (original behavior)
+            selected_tool=$(echo "$selected_tool" | head -1 | awk '{print $1}' | sed 's|^/||; s|^/||')
+        fi
 
         # ── TOOL VALIDATION: Reject hallucinated commands ─────
         # If the router outputs a tool name that doesn't exist in the
@@ -3119,6 +3352,22 @@ MEMEOF
             vitals_guard_ram 2>/dev/null || true
         fi
 
+        # ── Subtask expansion: decompose complex honeydew items ──
+        # Before the strategist picks the next milestone, check if
+        # the next pending honeydew item is compound/complex. If so,
+        # expand it into 2-4 atomic sub-items in-place. This gives
+        # the strategist granular targets instead of monolithic goals
+        # that require multiple milestones to satisfy.
+        if _agent_honeydew_maybe_expand "$workdir"; then
+            # Refresh honeydew in macro_memory after expansion
+            local _hd_expanded
+            _hd_expanded=$(_agent_honeydew_read "$workdir" 2>/dev/null)
+            if [ -n "$_hd_expanded" ] && [ -f "$macro_file" ]; then
+                _macro_set_honeydew "$macro_file" "$_hd_expanded"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] macro_memory refreshed after honeydew expansion"
+            fi
+        fi
+
         # Read macro_memory without persona for strategist context.
         # Persona identity text wastes ~200 tokens that the strategist
         # doesn't need for milestone selection.
@@ -3289,8 +3538,33 @@ ${_last_eval_feedback}
         fi
 
         if [[ "$milestone" == DONE* ]]; then
-            ui_ok "Strategist: Objective complete."
-            break
+            # ── HONEYDEW DONE GUARD ─────────────────────────────
+            # Thinking models (Phi4) sometimes hallucinate DONE when
+            # the honeydew list has pending items. If ANY items remain
+            # pending, reject DONE and substitute the next pending item
+            # as the milestone text. This prevents premature exit.
+            local _done_guard_file="$george_dir/$HONEYDEW_FILE"
+            if [ -f "$_done_guard_file" ]; then
+                local _dg_pending _dg_next_task
+                _dg_pending=$(jq '[.items[] | select(.status == "pending")] | length' "$_done_guard_file" 2>/dev/null || echo 0)
+                if [ "$_dg_pending" -gt 0 ]; then
+                    _dg_next_task=$(jq -r '[.items[] | select(.status == "pending")][0].task // empty' "$_done_guard_file" 2>/dev/null)
+                    if [ -n "$_dg_next_task" ]; then
+                        ui_warn "Strategist hallucinated DONE with $_dg_pending honeydew items pending — overriding"
+                        milestone="$_dg_next_task"
+                        _last_eval_feedback="Strategist tried to exit early. ${_dg_pending} honeydew items remain. Address them."
+                    else
+                        ui_ok "Strategist: Objective complete."
+                        break
+                    fi
+                else
+                    ui_ok "Strategist: Objective complete."
+                    break
+                fi
+            else
+                ui_ok "Strategist: Objective complete."
+                break
+            fi
         fi
 
         # ── MILESTONE DEDUPLICATION CHECK ─────────────────────

@@ -426,6 +426,29 @@ describe "Dynamic dual-loop architecture"
     assert_ok $?
   }
 
+  it "strategist DONE guard rejects DONE with pending honeydew items" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_dg_pending'
+    assert_ok $? "Must check pending count on DONE"
+    echo "$body" | grep -q 'hallucinated DONE'
+    assert_ok $? "Must warn about hallucinated DONE"
+  }
+
+  it "strategist DONE guard substitutes next pending item" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_dg_next_task'
+    assert_ok $? "Must read next pending task from honeydew"
+    echo "$body" | grep -q 'milestone=.*_dg_next_task'
+    assert_ok $? "Must override milestone with honeydew task"
+  }
+
+  it "strategist DONE guard allows DONE when all items complete" && {
+    body=$(declare -f agent_run)
+    # When _dg_pending is 0, the guard must fall through to break
+    echo "$body" | grep -q '_dg_pending.*-gt 0'
+    assert_ok $? "Must check if pending > 0 before overriding"
+  }
+
   it "macro strategist has anti-email-for-social rule" && {
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'NOT.*email'
@@ -495,6 +518,33 @@ describe "Dynamic dual-loop architecture"
     # Strips double quotes from slash commands
     echo "$body" | grep -q 'sed.*s/\"//g'
     assert_ok $?
+  }
+
+# ── Router smart command extraction ─────────────────────────
+describe "Router smart command extraction"
+
+  it "inner loop scans for valid slash command in prose output" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_extracted_cmd'
+    assert_ok $? "Must have smart extraction variable"
+    echo "$body" | grep -q 'CMD_REGISTRY.*_candidate'
+    assert_ok $? "Must validate candidate against registry"
+  }
+
+  it "smart extraction falls back to first-word when no valid command found" && {
+    body=$(declare -f agent_inner_loop)
+    # When _extracted_cmd is empty, falls back to head -1 | awk
+    echo "$body" | grep -q '_extracted_cmd.*\]'
+    assert_ok $? "Must check if extracted_cmd is set"
+    echo "$body" | grep -q "head -1.*awk.*print.*1"
+    assert_ok $? "Fallback must use head -1 | awk"
+  }
+
+  it "smart extraction prefers registry match over first word" && {
+    body=$(declare -f agent_inner_loop)
+    # The _extracted_cmd path runs BEFORE the fallback
+    echo "$body" | grep -q 'extracted_cmd.*from prose output'
+    assert_ok $? "Must log extracted command from prose"
   }
 
   it "agent_run resets debug counters" && {
@@ -1714,12 +1764,43 @@ describe "Honeydew list system"
     assert_ok $? "agent_run must use honeydew evaluator"
   }
 
-  it "overall evaluator includes honeydew list injection" && {
+  it "overall evaluator hard-gates on honeydew completion (no LLM)" && {
     body=$(declare -f _agent_evaluate_completion)
-    echo "$body" | grep -q 'HONEYDEW LIST'
-    assert_ok $? "Pass 2 evaluator must reference honeydew"
-    echo "$body" | grep -q 'INCOMPLETE\|NOT done\|= INCOMPLETE'
-    assert_ok $? "Pass 2 evaluator must enforce unchecked items as incomplete"
+    # When honeydew exists, P2 must check item counts deterministically
+    echo "$body" | grep -q '_hd_gate_total'
+    assert_ok $? "P2 must count honeydew items for hard gate"
+    echo "$body" | grep -q '_hd_gate_pending'
+    assert_ok $? "P2 must track pending count"
+    # Hard gate returns INCOMPLETE when pending > 0, COMPLETE when pending = 0
+    echo "$body" | grep -q 'still pending'
+    assert_ok $? "P2 must report pending items on INCOMPLETE"
+    echo "$body" | grep -q 'All.*honeydew items completed'
+    assert_ok $? "P2 must confirm all-done on COMPLETE"
+  }
+
+  it "overall evaluator skips LLM call when honeydew exists" && {
+    body=$(declare -f _agent_evaluate_completion)
+    # The hard gate checks honeydew item counts and returns before LLM call
+    echo "$body" | grep -q '_hd_gate_pending.*-gt 0'
+    assert_ok $? "P2 must return 1 on pending > 0"
+    echo "$body" | grep -q '_hd_gate_pending.*-eq 0'
+    assert_ok $? "P2 must return 0 on pending = 0"
+  }
+
+  it "overall evaluator falls back to LLM P2 when no honeydew" && {
+    body=$(declare -f _agent_evaluate_completion)
+    # When no honeydew, uses primary_objective + LLM-based evaluation
+    echo "$body" | grep -q 'primary_objective'
+    assert_ok $? "P2 must fall back to primary_objective without honeydew"
+    echo "$body" | grep -q 'task-completion evaluator'
+    assert_ok $? "LLM fallback path must have task-completion system prompt"
+  }
+
+  it "overall evaluator supports interactive mode in honeydew gate" && {
+    body=$(declare -f _agent_evaluate_completion)
+    # Interactive mode check must exist in the hard gate path
+    echo "$body" | grep -q 'AGENT_EVAL_MODE.*interactive'
+    assert_ok $? "Hard gate must support interactive mode"
   }
 
   it "strategist rules reference honeydew list" && {
@@ -1757,6 +1838,162 @@ describe "Honeydew list system"
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'honeydew_progress'
     assert_ok $? "Inner loop must inject honeydew status"
+  }
+
+# ── Honeydew subtask decomposition ────────────────────────────
+describe "Honeydew subtask decomposition"
+
+  it "_agent_honeydew_needs_expansion is defined" && {
+    declare -f _agent_honeydew_needs_expansion &>/dev/null
+    assert_ok $?
+  }
+
+  it "_agent_honeydew_expand is defined" && {
+    declare -f _agent_honeydew_expand &>/dev/null
+    assert_ok $?
+  }
+
+  it "_agent_honeydew_maybe_expand is defined" && {
+    declare -f _agent_honeydew_maybe_expand &>/dev/null
+    assert_ok $?
+  }
+
+  it "needs_expansion detects compare/contrast patterns" && {
+    _agent_honeydew_needs_expansion "Compare HiBy M500 and FiiO M11 features and pricing"
+    assert_ok $? "compare...and should trigger expansion"
+  }
+
+  it "needs_expansion detects 'for each' patterns" && {
+    _agent_honeydew_needs_expansion "For each product, gather specs and pricing"
+    assert_ok $? "'for each' should trigger expansion"
+  }
+
+  it "needs_expansion detects compound research+write patterns" && {
+    _agent_honeydew_needs_expansion "Research weather data and write a summary report"
+    assert_ok $? "research...and...write should trigger expansion"
+  }
+
+  it "needs_expansion detects multi-item enumerations" && {
+    _agent_honeydew_needs_expansion "Gather pricing for widgets, gadgets, and sprockets from the web"
+    assert_ok $? "comma-separated list with 'and' should trigger expansion"
+  }
+
+  it "needs_expansion detects long item text (>120 chars)" && {
+    _long="Research the complete specifications including pricing weight dimensions battery and display for HiBy M500 digital audio player from multiple sources"
+    _agent_honeydew_needs_expansion "$_long"
+    assert_ok $? "Item >120 chars should trigger expansion"
+  }
+
+  it "needs_expansion rejects simple items" && {
+    _agent_honeydew_needs_expansion "Find the weather forecast"
+    _result=$?
+    assert_eq "$_result" "1" "Simple item should NOT trigger expansion"
+  }
+
+  it "needs_expansion rejects short single-action items" && {
+    _agent_honeydew_needs_expansion "Email the report to Bob"
+    _result=$?
+    assert_eq "$_result" "1" "Short single-action should NOT trigger expansion"
+  }
+
+  it "expand splices sub-items into honeydew list" && {
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Done task","status":"done","depth":0},
+      {"id":2,"task":"Compare product A and product B specs and pricing","status":"pending","depth":0},
+      {"id":3,"task":"Email the comparison","status":"pending","depth":0}]}' > "$_tmpdir/.george/honeydew.json"
+
+    # Mock llm_generate to return predictable sub-items
+    _orig_llm=$(declare -f llm_generate)
+    llm_generate() { echo "1. Research product A specs and pricing"; echo "2. Research product B specs and pricing"; echo "3. Write comparison summary"; }
+    _agent_honeydew_expand 2 "$_tmpdir" 2>/dev/null
+
+    # Restore llm_generate
+    eval "$_orig_llm"
+
+    # Verify: original 3 items -> 1 done + 3 sub-items + 1 pending = 5 total
+    _total=$(jq '.items | length' "$_tmpdir/.george/honeydew.json")
+    assert_eq "$_total" "5" "Should have 5 items after expansion (1 done + 3 sub + 1 original)"
+
+    # Sub-items should have depth=1
+    _d1=$(jq '[.items[] | select(.depth == 1)] | length' "$_tmpdir/.george/honeydew.json")
+    [ "$_d1" -ge 2 ]
+    assert_ok $? "Sub-items should have depth=1, got $_d1 items"
+
+    # IDs should be sequential
+    _ids=$(jq '[.items[].id] | sort == [range(1; length+1)]' "$_tmpdir/.george/honeydew.json")
+    assert_eq "$_ids" "true" "IDs must be sequential after splice"
+
+    # Done item should still be first
+    _first_status=$(jq -r '.items[0].status' "$_tmpdir/.george/honeydew.json")
+    assert_eq "$_first_status" "done" "First item should still be done"
+
+    # Email task should be last
+    _last_task=$(jq -r '.items[-1].task' "$_tmpdir/.george/honeydew.json")
+    assert_contains "$_last_task" "Email"
+
+    rm -rf "$_tmpdir"
+  }
+
+  it "expand respects AGENT_MAX_DEPTH" && {
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Compare X and Y features and pricing","status":"pending","depth":2}]}' > "$_tmpdir/.george/honeydew.json"
+
+    AGENT_MAX_DEPTH=2
+    _agent_honeydew_expand 1 "$_tmpdir" 2>/dev/null
+    _result=$?
+    assert_eq "$_result" "1" "Should refuse to expand at max depth"
+
+    # Item count should be unchanged
+    _total=$(jq '.items | length' "$_tmpdir/.george/honeydew.json")
+    assert_eq "$_total" "1" "Should not have expanded"
+
+    rm -rf "$_tmpdir"
+  }
+
+  it "expand skips items that fail complexity heuristic" && {
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Find the weather","status":"pending","depth":0}]}' > "$_tmpdir/.george/honeydew.json"
+
+    _agent_honeydew_expand 1 "$_tmpdir" 2>/dev/null
+    _result=$?
+    assert_eq "$_result" "1" "Simple item should not be expanded"
+
+    _total=$(jq '.items | length' "$_tmpdir/.george/honeydew.json")
+    assert_eq "$_total" "1" "Should not have expanded"
+
+    rm -rf "$_tmpdir"
+  }
+
+  it "maybe_expand returns 1 when no honeydew file" && {
+    _tmpdir=$(mktemp -d)
+    _agent_honeydew_maybe_expand "$_tmpdir"
+    _result=$?
+    assert_eq "$_result" "1" "No honeydew file should return 1"
+    rm -rf "$_tmpdir"
+  }
+
+  it "initial honeydew build sets depth=0 on items" && {
+    body=$(declare -f _agent_honeydew_build)
+    echo "$body" | grep -q '"depth": 0\|"depth":0'
+    assert_ok $? "Initial items must have depth: 0"
+  }
+
+  it "agent_run calls _agent_honeydew_maybe_expand in macro loop" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_agent_honeydew_maybe_expand'
+    assert_ok $? "Macro loop must call maybe_expand"
+  }
+
+  it "macro loop refreshes macro_memory after expansion" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'honeydew expansion\|_hd_expanded'
+    assert_ok $? "Macro loop must refresh macro_memory after expansion"
   }
 
 # ── L1 scrape-images fallback ────────────────────────────────
