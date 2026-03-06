@@ -1232,9 +1232,9 @@ describe "Task completion evaluator"
     assert_ok $?
   }
 
-  it "dual evaluator is called in agent_run after successful milestones" && {
+  it "honeydew + overall evaluator chain in agent_run after successful milestones" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q '_agent_evaluate_milestone'
+    echo "$body" | grep -q '_agent_evaluate_honeydew_item'
     assert_ok $?
     echo "$body" | grep -q '_agent_evaluate_completion'
     assert_ok $?
@@ -1248,10 +1248,10 @@ describe "Task completion evaluator"
     # Feedback injected at end of strategist system prompt with attention markers
     echo "$body" | grep -q 'EVALUATOR FEEDBACK'
     assert_ok $?
-    # Feedback is set from both evaluator passes
-    echo "$body" | grep -q 'Still missing'
+    # Feedback is set from honeydew evaluator and overall evaluator
+    echo "$body" | grep -q 'Still needed'
     assert_ok $?
-    echo "$body" | grep -q 'was NOT completed'
+    echo "$body" | grep -q 'NOT satisfied'
     assert_ok $?
   }
 
@@ -1708,10 +1708,10 @@ describe "Honeydew list system"
     assert_ok $? "agent_run must call honeydew build"
   }
 
-  it "agent_run auto-checks honeydew on milestone success" && {
+  it "agent_run evaluates honeydew items via LLM on milestone success" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q '_agent_honeydew_auto_check'
-    assert_ok $? "agent_run must auto-check honeydew items"
+    echo "$body" | grep -q '_agent_evaluate_honeydew_item'
+    assert_ok $? "agent_run must use honeydew evaluator"
   }
 
   it "overall evaluator includes honeydew list injection" && {
@@ -1963,10 +1963,10 @@ describe "Honeydew auto-check uses milestone summary"
     rm -rf "$_tmpdir"
   }
 
-  it "call site passes macro_file to auto-check" && {
+  it "call site passes macro_file to honeydew evaluator" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q '_agent_honeydew_auto_check.*milestone.*workdir.*macro_file'
-    assert_ok $? "Must pass macro_file to _agent_honeydew_auto_check"
+    echo "$body" | grep -q '_agent_evaluate_honeydew_item.*macro_file.*micro_memory.*milestone.*workdir'
+    assert_ok $? "Must pass macro_file, micro_memory, milestone, workdir to honeydew evaluator"
   }
 
 # ── Research→Delivery state machine ───────────────────────────

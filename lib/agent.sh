@@ -543,6 +543,99 @@ _agent_honeydew_auto_check() {
     return 1
 }
 
+# ── Honeydew Item Evaluator ───────────────────────────────────
+# LLM-based evaluation of whether a completed milestone satisfies
+# the CURRENT honeydew item. Called AFTER the milestone P1 eval
+# confirms the milestone succeeded and the rich summary is created.
+#
+# This is SEPARATE from the milestone evaluator (P1) and the
+# overall evaluator (P2):
+#   P1: Did the milestone's actions succeed? (inside inner loop)
+#   Honeydew: Did the milestone satisfy the current honeydew item?
+#   P2: Are ALL honeydew items done?
+#
+# Returns 0 if the honeydew item is satisfied, 1 if not.
+# Sets _EVAL_HONEYDEW_REASON on failure.
+# Sets _EVAL_HONEYDEW_ITEM_NUM to the item number evaluated.
+_agent_evaluate_honeydew_item() {
+    local macro_file="$1"
+    local micro_file="$2"
+    local milestone_text="$3"
+    local workdir="${4:-.}"
+
+    local hd_file="$workdir/.george/$HONEYDEW_FILE"
+    [ ! -f "$hd_file" ] && return 0  # no honeydew = pass through
+
+    # Find the first pending honeydew item
+    local _next_id _next_task
+    _next_id=$(jq -r '[.items[] | select(.status == "pending")][0].id // empty' "$hd_file" 2>/dev/null)
+    _next_task=$(jq -r '[.items[] | select(.status == "pending")][0].task // empty' "$hd_file" 2>/dev/null)
+
+    if [ -z "$_next_id" ] || [ -z "$_next_task" ]; then
+        # All items already done
+        _EVAL_HONEYDEW_ITEM_NUM=""
+        return 0
+    fi
+
+    _EVAL_HONEYDEW_ITEM_NUM="$_next_id"
+
+    # Build context: milestone summary from macro_memory (the rich
+    # summary just written by _agent_complete_milestone) + action log
+    local _milestone_summary=""
+    if [ -f "$macro_file" ]; then
+        _milestone_summary=$(jq -r '.completed_milestones[-1].summary // empty' "$macro_file" 2>/dev/null)
+    fi
+
+    local eval_context=""
+    if [ -n "$micro_file" ] && [ -f "$micro_file" ]; then
+        eval_context=$(_micro_serialize_eval "$micro_file")
+    fi
+
+    local _eval_now
+    _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
+
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nMILESTONE COMPLETED:\n${milestone_text}\n\nMILESTONE SUMMARY:\n${_milestone_summary:-No summary available.}\n\nACTION LOG:\n${eval_context:-No actions available.}\n\n---\n\nHONEYDEW ITEM TO EVALUATE (item #${_next_id}):\n${_next_task}\n\nDoes the completed milestone SATISFY this honeydew item? The milestone does not need to match exactly — if the work accomplished meaningfully addresses the honeydew item's goal, it is SATISFIED.\n\nRespond: SATISFIED or UNSATISFIED: <reason>"
+
+    local eval_sys="You are a honeydew item evaluator. Judge whether a completed milestone satisfies a specific task item. Be pragmatic: if the milestone's work meaningfully addresses the item's goal, it is SATISFIED. Do not require perfection. No markdown formatting. Respond SATISFIED or UNSATISFIED: <reason>."
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew-eval <- item #${_next_id}: ${_next_task:0:80}"
+    ui_think "Honeydew evaluator: checking item #${_next_id}..."
+    local verdict
+    local LLM_SCENARIO=evaluator
+    verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-256}" "$LLM_BUDGET_AGENT")
+
+    # ── DEBUG: Honeydew evaluator raw verdict ───────────────────
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
+
+    # Clean up LLM output
+    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+    verdict=$(echo "$verdict" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
+    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>.*$//g')
+    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+    verdict=$(echo "$verdict" | sed 's/\*\+//g')
+    verdict=$(echo "$verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+    local first_line
+    first_line=$(echo "$verdict" | head -1)
+    local verdict_word
+    verdict_word=$(echo "$first_line" | awk '{print $1}' | sed 's/^[*_]\+//;s/[*_:.,]\+$//')
+
+    _EVAL_HONEYDEW_REASON=""
+    if [[ "$verdict_word" == "SATISFIED" ]]; then
+        ui_ok "Honeydew evaluator: item #${_next_id} satisfied"
+        return 0
+    else
+        if [[ "$first_line" == *":"* ]]; then
+            _EVAL_HONEYDEW_REASON=$(echo "$first_line" | sed 's/^[^:]*:[[:space:]]*//')
+        elif [ "$(echo "$first_line" | wc -w)" -gt 1 ]; then
+            _EVAL_HONEYDEW_REASON=$(echo "$first_line" | sed 's/^[^ ]* *//')
+        fi
+        local _reason_display="${_EVAL_HONEYDEW_REASON:+(${_EVAL_HONEYDEW_REASON:0:80})}"
+        ui_info "Honeydew evaluator: item #${_next_id} not yet satisfied ${_reason_display}"
+        return 1
+    fi
+}
+
 # ── Dual Evaluator System ─────────────────────────────────────
 # Two-pass evaluation after each milestone:
 #
@@ -2332,8 +2425,12 @@ agent_inner_loop() {
                     local _condense_prompt _condensed
                     # Build context-aware condense prompt
                     _condense_prompt="TASK: $micro_objective"
-                    # Inject primary objective if available
-                    if [ -f "$macro_file" ]; then
+                    # Inject goal context: prefer current honeydew item over raw primary_objective
+                    if [ "$_has_honeydew" -eq 1 ] && [ -f "$_hd_inner_file" ]; then
+                        local _hd_current
+                        _hd_current=$(jq -r '[.[] | select(.done != true)] | first | .task // empty' "$_hd_inner_file" 2>/dev/null)
+                        [ -n "$_hd_current" ] && _condense_prompt="CURRENT OBJECTIVE: $_hd_current\nCURRENT STEP: $micro_objective"
+                    elif [ -f "$macro_file" ]; then
                         local _primary_for_condense
                         _primary_for_condense=$(_macro_get "$macro_file" "primary_objective")
                         [ -n "$_primary_for_condense" ] && _condense_prompt="OVERALL GOAL: $_primary_for_condense\nCURRENT STEP: $micro_objective"
@@ -2924,10 +3021,29 @@ MEMEOF
 
         local _strat_now
         _strat_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
+
+        # ── Inject honeydew list prominently into strategist ───
+        # The honeydew list IS the driving objective once it exists.
+        # Surface it as a separate block so the strategist picks the
+        # next pending item instead of re-deriving goals from memory.
+        local _strat_honeydew=""
+        local _strat_hd_file="$george_dir/$HONEYDEW_FILE"
+        if [ -f "$_strat_hd_file" ]; then
+            local _strat_hd_content
+            _strat_hd_content=$(jq -r '.items[] | "\(.id). [\(if .status == "done" then "x" else " " end)] \(.task)"' "$_strat_hd_file" 2>/dev/null)
+            if [ -n "$_strat_hd_content" ]; then
+                local _strat_hd_total _strat_hd_done
+                _strat_hd_total=$(jq '.items | length' "$_strat_hd_file" 2>/dev/null || echo 0)
+                _strat_hd_done=$(jq '[.items[] | select(.status == "done")] | length' "$_strat_hd_file" 2>/dev/null || echo 0)
+                _strat_honeydew="\n\n>>> HONEYDEW LIST (${_strat_hd_done}/${_strat_hd_total} complete) — YOUR DRIVING OBJECTIVES <<<\n${_strat_hd_content}\n>>> Pick the NEXT [ ] item. Do NOT re-derive objectives from memory. <<<"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- honeydew list (${_strat_hd_done}/${_strat_hd_total})"
+            fi
+        fi
+
         # NOTE: Date is in the USER prompt, not system prompt.
         # Keeping system prompt static enables llama-server KV cache
         # reuse across consecutive strategist calls (~30-60% prefill savings).
-        local macro_prompt="Current date/time: ${_strat_now}\n\nRead the following task memory. What is the SINGLE next logical milestone to advance the remaining objectives? If all objectives are fully complete, reply with EXACTLY the word DONE and nothing else.\n\n$macro_context"
+        local macro_prompt="Current date/time: ${_strat_now}${_strat_honeydew}\n\nRead the following task memory. What is the SINGLE next logical milestone to advance the remaining objectives? If all objectives are fully complete, reply with EXACTLY the word DONE and nothing else.\n\n$macro_context"
 
         # ── Research→Delivery Gate ────────────────────────────
         # After 2+ consecutive research milestones, inject a hard
@@ -3173,22 +3289,83 @@ ${_last_eval_feedback}
                 fi
             fi
 
-            # ── Auto-check honeydew items on milestone success ─
-            # Match the completed milestone against unchecked honeydew
-            # items and mark the best match as done. Updates the
-            # honeydew file AND refreshes it in macro_memory so the
-            # evaluator sees the updated checklist.
-            if _agent_honeydew_auto_check "$milestone" "$workdir" "$macro_file"; then
-                local _hd_status
-                _hd_status=$(_agent_honeydew_status "$workdir" 2>/dev/null)
-                [ -n "$_hd_status" ] && ui_dim "  Honeydew: $_hd_status"
-                # Refresh honeydew section in macro_memory by rewriting
-                local _hd_updated
-                _hd_updated=$(_agent_honeydew_read "$workdir" 2>/dev/null)
-                if [ -n "$_hd_updated" ] && [ -f "$macro_file" ]; then
-                    _macro_set_honeydew "$macro_file" "$_hd_updated"
+            # ── Honeydew + Overall Evaluation Chain ─────────────
+            # The milestone P1 eval already ran INSIDE agent_inner_loop.
+            # If we're here with success, the milestone is confirmed.
+            # Now evaluate honeydew item completion (if honeydew exists),
+            # then overall task completion.
+            #
+            # Chain:
+            #   1. Honeydew eval: Does this milestone satisfy the
+            #      current honeydew item?
+            #      - NO  → feedback to strategist, continue loop
+            #      - YES → mark item done, proceed to step 2
+            #   2. Overall eval (P2): Are ALL honeydew items done?
+            #      - NO  → feedback with remaining honeydew, continue
+            #      - YES → task complete, break
+            #
+            # When no honeydew list exists, skip straight to P2.
+            if [ "${AGENT_EVAL_MODE:-auto}" != "disabled" ] && [ "$completed_milestones" -gt 0 ]; then
+                local _hd_eval_file="$george_dir/$HONEYDEW_FILE"
+                if [ -f "$_hd_eval_file" ]; then
+                    # ── Honeydew item evaluation ──────────────
+                    if _agent_evaluate_honeydew_item "$macro_file" "$george_dir/micro_memory.json" "$milestone" "$workdir"; then
+                        # Honeydew item satisfied — mark it done
+                        if [ -n "${_EVAL_HONEYDEW_ITEM_NUM:-}" ]; then
+                            _agent_honeydew_mark "$_EVAL_HONEYDEW_ITEM_NUM" "$workdir"
+                            local _hd_status
+                            _hd_status=$(_agent_honeydew_status "$workdir" 2>/dev/null)
+                            [ -n "$_hd_status" ] && ui_dim "  Honeydew: $_hd_status"
+                            # Refresh honeydew in macro_memory
+                            local _hd_updated
+                            _hd_updated=$(_agent_honeydew_read "$workdir" 2>/dev/null)
+                            if [ -n "$_hd_updated" ] && [ -f "$macro_file" ]; then
+                                _macro_set_honeydew "$macro_file" "$_hd_updated"
+                            fi
+                        fi
+
+                        # ── Overall evaluation (P2) ───────────
+                        if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.json"; then
+                            _last_eval_feedback=""
+                            break
+                        else
+                            if [ -n "${_EVAL_INCOMPLETE_REASON:-}" ]; then
+                                _attempted_milestones+=("EVAL|honeydew remaining: $_EVAL_INCOMPLETE_REASON")
+                                _last_eval_feedback="Honeydew item completed, but tasks remain. Still needed: ${_EVAL_INCOMPLETE_REASON}"
+                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval feedback -> strategist: ${_last_eval_feedback:0:100}"
+                            else
+                                _last_eval_feedback="Honeydew item completed, but tasks remain on the honeydew list."
+                            fi
+                        fi
+                    else
+                        # Honeydew item NOT satisfied — milestone
+                        # succeeded but didn't address the current
+                        # honeydew item. Feed back to strategist.
+                        if [ -n "${_EVAL_HONEYDEW_REASON:-}" ]; then
+                            _attempted_milestones+=("EVAL|honeydew item unsatisfied: $_EVAL_HONEYDEW_REASON")
+                            _last_eval_feedback="Milestone '${milestone:0:80}' succeeded, but honeydew item #${_EVAL_HONEYDEW_ITEM_NUM:-?} is NOT satisfied: ${_EVAL_HONEYDEW_REASON}. Next milestone must address it."
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval feedback -> strategist: ${_last_eval_feedback:0:100}"
+                        else
+                            _last_eval_feedback="Milestone '${milestone:0:80}' succeeded, but the current honeydew item is NOT satisfied. Try a different approach."
+                        fi
+                    fi
+                else
+                    # ── No honeydew list — P2 only ────────────
+                    if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.json"; then
+                        _last_eval_feedback=""
+                        break
+                    else
+                        if [ -n "${_EVAL_INCOMPLETE_REASON:-}" ]; then
+                            _attempted_milestones+=("EVAL|still missing: $_EVAL_INCOMPLETE_REASON")
+                            _last_eval_feedback="Milestone '${milestone:0:80}' succeeded, but the overall task is NOT done yet. Still missing: ${_EVAL_INCOMPLETE_REASON}"
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval feedback -> strategist: ${_last_eval_feedback:0:100}"
+                        else
+                            _last_eval_feedback="Milestone '${milestone:0:80}' succeeded, but the overall task is NOT done yet."
+                        fi
+                    fi
                 fi
             fi
+
         else
             failed_milestones="${failed_milestones:+${failed_milestones}, }milestone $macro_iterations: $milestone"
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — FAILED\n"
@@ -3199,43 +3376,9 @@ ${_last_eval_feedback}
                 ui_warn "Milestone $macro_iterations cancelled"
                 break
             fi
-        fi
 
-        # ── Dual Evaluator: milestone + overall ───────────────
-        # After a milestone executes successfully, a two-pass evaluator
-        # system validates completion:
-        #   Pass 1 (milestone): Did this specific milestone's action succeed?
-        #   Pass 2 (overall): Is the user's primary objective now satisfied?
-        # This prevents both premature termination (pass 1 catches false
-        # positives from the inner loop) and unnecessary extra milestones
-        # (pass 2 catches when the task is already done).
-        # Skipped when AGENT_EVAL_MODE=disabled.
-        if [ "${AGENT_EVAL_MODE:-auto}" != "disabled" ] && [ "$completed_milestones" -gt 0 ]; then
-            if _agent_evaluate_milestone "$macro_file" "$george_dir/micro_memory.json" "$milestone"; then
-                # Milestone confirmed — now check overall objective
-                if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.json"; then
-                    _last_eval_feedback=""  # clear — task is done
-                    break
-                else
-                    # Overall not done — feed reason to strategist for next milestone
-                    if [ -n "${_EVAL_INCOMPLETE_REASON:-}" ]; then
-                        _attempted_milestones+=("EVAL|still missing: $_EVAL_INCOMPLETE_REASON")
-                        _last_eval_feedback="Milestone '${milestone:0:80}' succeeded, but the overall task is NOT done yet. Still missing: ${_EVAL_INCOMPLETE_REASON}"
-                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval feedback -> strategist: ${_last_eval_feedback:0:100}"
-                    else
-                        _last_eval_feedback="Milestone '${milestone:0:80}' succeeded, but the overall task is NOT done yet."
-                    fi
-                fi
-            else
-                # Milestone evaluator disagrees — feed milestone-level feedback
-                if [ -n "${_EVAL_MILESTONE_REASON:-}" ]; then
-                    _attempted_milestones+=("EVAL|milestone not done: $_EVAL_MILESTONE_REASON")
-                    _last_eval_feedback="Milestone '${milestone:0:80}' was NOT completed: ${_EVAL_MILESTONE_REASON}. Try a different approach."
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval feedback -> strategist: ${_last_eval_feedback:0:100}"
-                else
-                    _last_eval_feedback="Milestone '${milestone:0:80}' was NOT completed. Try a different approach."
-                fi
-            fi
+            # Milestone failed — feed back to strategist
+            _last_eval_feedback="Milestone '${milestone:0:80}' FAILED. Try a different approach."
         fi
 
         sleep "${AGENT_STEP_DELAY:-1}"
