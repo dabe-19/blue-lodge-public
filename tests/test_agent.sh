@@ -559,6 +559,64 @@ describe "Router smart command extraction"
     assert_ok $?
   }
 
+# ── Router heuristics: remap and direct respond ───────────────
+describe "Router heuristics"
+
+  it "remaps /research to /web" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'selected_tool.*==.*"research"'
+    assert_ok $? "Must detect /research hallucination"
+    echo "$body" | grep -q 'remapped.*web'
+    assert_ok $? "Must remap to /web"
+  }
+
+  it "remaps /search to /web" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'selected_tool.*==.*"search"'
+    assert_ok $? "Must detect /search hallucination"
+  }
+
+  it "direct respond bypasses specialist when no slash command found" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_direct_respond=1'
+    assert_ok $? "Must set direct respond flag"
+    echo "$body" | grep -q '_direct_respond.*-eq 1'
+    assert_ok $? "Must check direct respond flag"
+    echo "$body" | grep -q '/respond.*_router_full_text'
+    assert_ok $? "Must route full text to /respond"
+  }
+
+  it "direct respond only triggers when no slash pattern exists in text" && {
+    body=$(declare -f agent_inner_loop)
+    # Must check for absence of /[a-z] pattern before triggering
+    echo "$body" | grep -q '_router_full_text.*\/\[a-z\]'
+    assert_ok $? "Must verify no slash pattern in full text"
+  }
+
+  it "saves router full text before extraction modifies it" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_router_full_text=.*selected_tool'
+    assert_ok $? "Must save full text before extraction"
+  }
+
+  it "direct respond skips specialist LLM call" && {
+    body=$(declare -f agent_inner_loop)
+    # The specialist LLM call must be gated by the direct_respond check
+    echo "$body" | grep -q '_direct_respond.*-eq 1.*then'
+    assert_ok $? "Must guard specialist with direct_respond check"
+    # Specialist prompt building only happens in else branch
+    echo "$body" | grep -q '_build_specialist_prompt'
+    assert_ok $? "Specialist prompt must exist outside direct respond path"
+  }
+
+  it "direct respond skips quote normalization and post-processing" && {
+    body=$(declare -f agent_inner_loop)
+    # The cleanup pipeline (quote strip, splitter, trimmer) must be
+    # gated so prose text is not mangled (e.g. apostrophes in "it's").
+    echo "$body" | grep -q '_direct_respond.*-ne 1'
+    assert_ok $? "Must skip specialist output cleanup for direct respond"
+  }
+
 # ── Recursive planning config ─────────────────────────────────
 describe "Recursive planning config"
 
@@ -1149,7 +1207,7 @@ describe "Milestone deduplication in macro loop"
     body=$(declare -f agent_run)
     echo "$body" | grep -q '_agent_evaluate_completion.*macro_file.*micro_memory'
     assert_ok $?
-    echo "$body" | grep -q 'Milestone skipped (duplicate)'
+    echo "$body" | grep -q 'Milestone skipped (repeated)'
     assert_ok $?
   }
 
@@ -1299,10 +1357,22 @@ describe "Task completion evaluator"
     echo "$body" | grep -q 'EVALUATOR FEEDBACK'
     assert_ok $?
     # Feedback is set from honeydew evaluator and overall evaluator
-    echo "$body" | grep -q 'Still needed'
+    echo "$body" | grep -q 'Remaining work'
     assert_ok $?
-    echo "$body" | grep -q 'NOT satisfied'
+    echo "$body" | grep -q 'NOT addressed'
     assert_ok $?
+    # Feedback templates must not inject status words into strategist.
+    # We check only the string-literal portion of each assignment,
+    # excluding variable names like _EVAL_INCOMPLETE_REASON.
+    # Extract just the quoted template text from each assignment.
+    local feedback_templates
+    feedback_templates=$(echo "$body" | grep '_last_eval_feedback="' | grep -v '_last_eval_feedback=""' | sed 's/.*_last_eval_feedback="//' | sed 's/".*//')
+    ! echo "$feedback_templates" | grep -qw 'DONE'
+    assert_ok $? "Eval feedback templates must not contain DONE"
+    ! echo "$feedback_templates" | grep -qw 'SUCCESS'
+    assert_ok $? "Eval feedback templates must not contain SUCCESS"
+    ! echo "$feedback_templates" | grep -qw 'FAILED'
+    assert_ok $? "Eval feedback templates must not contain FAILED"
   }
 
   it "evaluator is skipped when AGENT_EVAL_MODE=disabled" && {
@@ -1457,10 +1527,13 @@ describe "Evaluator-based milestone completion"
     assert_ok $? "Must call completion helper when evaluator says COMPLETE"
   }
 
-  it "router prompt forbids SUCCESS/DONE output" && {
+  it "router prompt constrains output to slash commands only" && {
     body=$(declare -f _build_router_prompt)
-    echo "$body" | grep -q 'FORBIDDEN.*SUCCESS\|forbidden.*SUCCESS\|NEVER output SUCCESS'
-    assert_ok $? "Router must be told to never output SUCCESS"
+    echo "$body" | grep -q 'Output ONLY a slash command'
+    assert_ok $? "Router must constrain output to slash commands only"
+    # Must NOT mention DONE/SUCCESS/COMPLETE — those words contaminate attention
+    ! echo "$body" | grep -q 'DONE\|SUCCESS\|COMPLETE'
+    assert_ok $? "Router must not mention status words"
   }
 
   it "router prompt outputs only tool names" && {
@@ -1807,6 +1880,38 @@ describe "Honeydew list system"
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'honeydew\|HONEYDEW'
     assert_ok $? "Strategist must know about honeydew list"
+  }
+
+  it "strategist prompt never mentions DONE or COMPLETE" && {
+    body=$(declare -f agent_run)
+    # Strategist prompt construction must not contain the words DONE or COMPLETE
+    # in any form that gets injected into LLM prompts (macro_prompt or macro_sys).
+    # Only the evaluator should know these concepts exist.
+    # Exclude code-side checks (DONE guard uses [[ == DONE* ]] which is bash, not prompt).
+    local prompt_parts
+    prompt_parts=$(echo "$body" | grep -E 'macro_prompt=|macro_sys=|STRAT_RULES_JSON' -A2)
+    ! echo "$prompt_parts" | grep -qi 'DONE'
+    assert_ok $? "Strategist prompts must not contain the word DONE"
+    ! echo "$prompt_parts" | grep -qi 'COMPLETE'
+    assert_ok $? "Strategist prompts must not contain the word COMPLETE"
+    # Must NOT contain "done_when" rules
+    ! echo "$body" | grep -q 'done_when'
+    assert_ok $? "Must not have done_when rule in strategist"
+  }
+
+  it "strategist honeydew rule says FIRST not NEXT" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'FIRST \[ \] item by number'
+    assert_ok $? "Honeydew injection must say FIRST not NEXT"
+    echo "$body" | grep -q 'Do NOT skip items'
+    assert_ok $? "Honeydew injection must forbid skipping"
+  }
+
+  it "strategist prompt places honeydew after macro_context" && {
+    body=$(declare -f agent_run)
+    # macro_prompt must have macro_context BEFORE _strat_honeydew
+    echo "$body" | grep -q 'macro_context.*_strat_honeydew'
+    assert_ok $? "macro_context must appear before honeydew list for recency bias"
   }
 
   it "honeydew inline splitter requires 1-2 whitespace after period" && {
@@ -2227,8 +2332,8 @@ describe "Research→Delivery state machine"
 
   it "strategist prompt injects research gate after 2+ research milestones" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q 'RESEARCH PHASE COMPLETE'
-    assert_ok $? "Must inject research phase complete directive"
+    echo "$body" | grep -q 'RESEARCH PHASE FINISHED'
+    assert_ok $? "Must inject research phase gate directive"
     echo "$body" | grep -q '_research_milestone_count.*-ge 2'
     assert_ok $? "Must check for 2+ consecutive research milestones"
   }

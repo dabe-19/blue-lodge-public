@@ -978,7 +978,7 @@ _agent_evaluate_completion() {
         _hd_gate_pending=$((_hd_gate_total - _hd_gate_done))
 
         if [ "$_hd_gate_total" -gt 0 ] && [ "$_hd_gate_pending" -gt 0 ]; then
-            _EVAL_INCOMPLETE_REASON="${_hd_gate_done}/${_hd_gate_total} honeydew items complete — ${_hd_gate_pending} still pending"
+            _EVAL_INCOMPLETE_REASON="${_hd_gate_done}/${_hd_gate_total} honeydew items addressed — ${_hd_gate_pending} still pending"
             local _reason_display="(${_EVAL_INCOMPLETE_REASON})"
             ui_info "Overall evaluator: ${_reason_display} — continuing"
             return 1
@@ -1717,7 +1717,7 @@ RULES:
 - If unsure between TOOLS, use /web or /slash
 - If no explicit output command requested, ALWAYS use /respond
 
-FORMAT: bare tool name only. FORBIDDEN: SUCCESS, DONE, backticks, code fences, quotes.
+FORMAT: bare tool name only. Output ONLY a slash command from the list above. No sentences, no explanations, no backticks, no code fences, no quotes.
 ROUTER_PROMPT
 }
 
@@ -2345,6 +2345,10 @@ agent_inner_loop() {
             _router_raw="${_router_raw#*"/${_candidate}"}"
         done
 
+        # Save full cleaned router text for direct /respond fallback
+        local _router_full_text="$selected_tool"
+        local _direct_respond=0
+
         if [ -n "$_extracted_cmd" ]; then
             selected_tool="$_extracted_cmd"
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router: extracted /$_extracted_cmd from prose output"
@@ -2353,12 +2357,21 @@ agent_inner_loop() {
             selected_tool=$(echo "$selected_tool" | head -1 | awk '{print $1}' | sed 's|^/||; s|^/||')
         fi
 
+        # ── SEARCH/RESEARCH REMAP ─────────────────────────────
+        # Small models hallucinate /research or /search — these don't
+        # exist. Remap to /web so the specialist generates a proper
+        # /web search <query> command.
+        if [[ "$selected_tool" == "research" || "$selected_tool" == "search" ]]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router: remapped /$selected_tool -> /web"
+            selected_tool="web"
+        fi
+
         # ── TOOL VALIDATION: Reject hallucinated commands ─────
         # If the router outputs a tool name that doesn't exist in the
         # command registry or commands directory, fall back to re-routing
         # with the full command catalog injected.
         # This prevents the inner loop from wasting escalation rounds
-        # on imaginary commands like "/execute" or "/research".
+        # on imaginary commands like "/execute".
         local _tool_valid=0
         local _hallucination_fallback=0
         if [ "$selected_tool" = "bash" ]; then
@@ -2369,9 +2382,18 @@ agent_inner_loop() {
             _tool_valid=1
         fi
         if [ "$_tool_valid" -eq 0 ]; then
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router hallucinated '/$selected_tool' — injecting full catalog for re-route"
-            _hallucination_fallback=1
-            selected_tool="respond"
+            # ── NO-SLASH DIRECT RESPOND ─────────────────────────
+            # If the router produced prose with no slash command at all,
+            # the text IS the answer. Route directly to /respond with
+            # the full text — no specialist needed.
+            if [ -z "$_extracted_cmd" ] && ! [[ "$_router_full_text" =~ /[a-z] ]]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router: no slash command found — direct /respond"
+                _direct_respond=1
+            else
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router hallucinated '/$selected_tool' — injecting full catalog for re-route"
+                _hallucination_fallback=1
+                selected_tool="respond"
+            fi
         fi
 
         # ── SANDBOX INTERLOCK: Programmatic gate ──────────────
@@ -2406,6 +2428,19 @@ agent_inner_loop() {
                 fi
             fi
         fi
+
+        # Declare cmd/cmd_is_slash early so both branches can set them
+        local cmd=""
+        local cmd_is_slash=0
+
+        # ── DIRECT RESPOND BYPASS ─────────────────────────
+        # When the router output was pure prose (no slash command),
+        # skip the specialist entirely and deliver the text via /respond.
+        if [ "$_direct_respond" -eq 1 ]; then
+            cmd="/respond $_router_full_text"
+            cmd_is_slash=1
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Direct respond bypass — skipping specialist"
+        else
 
         # Re-prefix for specialist lookup
         [ "$selected_tool" != "bash" ] && selected_tool="/$selected_tool"
@@ -2496,8 +2531,6 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
         #   Line 2 of content
         # We must capture the /command line AND all following non-slash,
         # non-code-fence continuation lines as the full command body.
-        local cmd=""
-        local cmd_is_slash=0
 
         # ── STRIP CODE FENCE WRAPPING ─────────────────────────
         # The 4B specialist model frequently wraps its output in
@@ -2540,6 +2573,15 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
             # when the specialist correctly outputs a ```bash block.
             cmd=$(echo "$action_plan" | awk '/```bash/{flag=1; next} /```/{flag=0} flag')
         fi
+
+        fi  # end direct_respond / specialist branch
+
+        # ── SPECIALIST OUTPUT CLEANUP ─────────────────────────
+        # These post-processing steps fix LLM artifacts in specialist
+        # output (quote wrapping, multi-command concat, verbose queries).
+        # Skip entirely for direct respond — the text is prose content,
+        # not LLM-generated command syntax.
+        if [ "$_direct_respond" -ne 1 ]; then
 
         # ── MULTI-COMMAND SPLITTER ────────────────────────────
         # The LLM sometimes concatenates multiple slash commands on one line:
@@ -2642,6 +2684,8 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
                 fi
             fi
         fi
+
+        fi  # end specialist output cleanup (skipped for direct respond)
 
         # ── PROGRAMMATIC INTERLOCK: Identicality Lockout ──────
         # Levels 3-4: Prevents the LLM from re-running the exact same
@@ -3432,7 +3476,7 @@ MEMEOF
                 local _strat_hd_total _strat_hd_done
                 _strat_hd_total=$(jq '.items | length' "$_strat_hd_file" 2>/dev/null || echo 0)
                 _strat_hd_done=$(jq '[.items[] | select(.status == "done")] | length' "$_strat_hd_file" 2>/dev/null || echo 0)
-                _strat_honeydew="\n\n>>> HONEYDEW LIST (${_strat_hd_done}/${_strat_hd_total} complete) — YOUR DRIVING OBJECTIVES <<<\n${_strat_hd_content}\n>>> Pick the NEXT [ ] item. Do NOT re-derive objectives from memory. <<<"
+                _strat_honeydew="\n\n>>> HONEYDEW LIST (${_strat_hd_done}/${_strat_hd_total} complete) — YOUR DRIVING OBJECTIVES <<<\n${_strat_hd_content}\n>>> Pick the FIRST [ ] item by number. Do NOT skip items. Do NOT re-derive objectives from memory. <<<"
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- honeydew list (${_strat_hd_done}/${_strat_hd_total})"
             fi
         fi
@@ -3440,7 +3484,7 @@ MEMEOF
         # NOTE: Date is in the USER prompt, not system prompt.
         # Keeping system prompt static enables llama-server KV cache
         # reuse across consecutive strategist calls (~30-60% prefill savings).
-        local macro_prompt="Current date/time: ${_strat_now}${_strat_honeydew}\n\nRead the following task memory. What is the SINGLE next logical milestone to advance the remaining objectives? If all objectives are fully complete, reply with EXACTLY the word DONE and nothing else.\n\n$macro_context"
+        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
 
         # ── Research→Delivery Gate ────────────────────────────
         # After 2+ consecutive research milestones, inject a hard
@@ -3451,7 +3495,7 @@ MEMEOF
         if [ "$_research_milestone_count" -ge 2 ]; then
             _research_gate="
 
->>> RESEARCH PHASE COMPLETE — you have done ${_research_milestone_count} consecutive research milestones. <<<
+>>> RESEARCH PHASE FINISHED — you have done ${_research_milestone_count} consecutive research milestones. <<<
 >>> Next milestone MUST use a DELIVERY command: /respond, /write, /email, /save, /social, /build. <<<
 >>> Do NOT use /web or /recall. Deliver results using the data already gathered. <<<"
         fi
@@ -3471,15 +3515,15 @@ $(cat << 'STRAT_RULES_JSON'
  "milestones":{"source":"YOUR WORKING COMMANDS only",
    "format":"single imperative sentence",
    "one_action":"1 milestone = 1 honeydew item, NEVER combine two items",
-   "reserved":["DONE","COMPLETE"],"no_prefix":true,"no_intro":true,
+   "no_prefix":true,"no_intro":true,
    "only_configured":true},
  "research":{"when":"missing info (keys,URLs,packages,specs)",
    "tools":["/web search","/recall","/web fetch","/web scrape-images","/social discord read","/secret get"],
    "max_consecutive":2,"then":"MUST use delivery command (/respond,/write,/email,/save,/social,/build)"},
  "failure":{"no_repeat":true,"advance_next_part":true},
- "honeydew":{"pick":"next [ ] item","done_when":"ALL [x] → DONE"},
+ "honeydew":{"pick":"FIRST [ ] item by number — do NOT skip items"},
  "multi_delivery":"Different honeydew items may each need their own DELIVERY command (e.g. item 2=/write report, item 3=/email report). This is normal — chain them across milestones.",
- "conversation":"question + /ask answered → DONE"}}
+ "conversation":"question → use /ask"}}
 STRAT_RULES_JSON
 )${_research_gate}${_milestone_history}${_last_eval_feedback:+
 
@@ -3645,7 +3689,7 @@ ${_last_eval_feedback}
             _attempted_milestones+=("SKIPPED|$milestone")
             macro_iterations=$((macro_iterations + 1))
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — SKIPPED (dup)\n"
-            _last_eval_feedback="Milestone '${milestone:0:80}' was skipped (duplicate). Try a completely different approach to advance the task."
+            _last_eval_feedback="Milestone '${milestone:0:80}' was skipped (repeated). Try a completely different approach to advance the task."
 
             # Run overall evaluator before skipping — earlier milestones
             # may have already fulfilled the objective. Without this check,
@@ -3658,7 +3702,7 @@ ${_last_eval_feedback}
                     break
                 else
                     if [ -n "${_EVAL_INCOMPLETE_REASON:-}" ]; then
-                        _last_eval_feedback="Milestone skipped (duplicate). Overall task still missing: ${_EVAL_INCOMPLETE_REASON}"
+                        _last_eval_feedback="Milestone skipped (repeated). Still needed: ${_EVAL_INCOMPLETE_REASON}"
                     fi
                 fi
             fi
@@ -3754,10 +3798,10 @@ ${_last_eval_feedback}
                         else
                             if [ -n "${_EVAL_INCOMPLETE_REASON:-}" ]; then
                                 _attempted_milestones+=("EVAL|honeydew remaining: $_EVAL_INCOMPLETE_REASON")
-                                _last_eval_feedback="Honeydew item completed, but tasks remain. Still needed: ${_EVAL_INCOMPLETE_REASON}"
+                                _last_eval_feedback="Honeydew item addressed. Remaining work: ${_EVAL_INCOMPLETE_REASON}"
                                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval feedback -> strategist: ${_last_eval_feedback:0:100}"
                             else
-                                _last_eval_feedback="Honeydew item completed, but tasks remain on the honeydew list."
+                                _last_eval_feedback="Honeydew item addressed. More items remain on the honeydew list."
                             fi
                         fi
                     else
@@ -3766,10 +3810,10 @@ ${_last_eval_feedback}
                         # honeydew item. Feed back to strategist.
                         if [ -n "${_EVAL_HONEYDEW_REASON:-}" ]; then
                             _attempted_milestones+=("EVAL|honeydew item unsatisfied: $_EVAL_HONEYDEW_REASON")
-                            _last_eval_feedback="Milestone '${milestone:0:80}' succeeded, but honeydew item #${_EVAL_HONEYDEW_ITEM_NUM:-?} is NOT satisfied: ${_EVAL_HONEYDEW_REASON}. Next milestone must address it."
+                            _last_eval_feedback="Milestone '${milestone:0:80}' ran, but honeydew item #${_EVAL_HONEYDEW_ITEM_NUM:-?} is NOT addressed: ${_EVAL_HONEYDEW_REASON}. Next milestone must address it."
                             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval feedback -> strategist: ${_last_eval_feedback:0:100}"
                         else
-                            _last_eval_feedback="Milestone '${milestone:0:80}' succeeded, but the current honeydew item is NOT satisfied. Try a different approach."
+                            _last_eval_feedback="Milestone '${milestone:0:80}' ran, but the current honeydew item is NOT addressed. Try a different approach."
                         fi
                     fi
                 else
@@ -3780,10 +3824,10 @@ ${_last_eval_feedback}
                     else
                         if [ -n "${_EVAL_INCOMPLETE_REASON:-}" ]; then
                             _attempted_milestones+=("EVAL|still missing: $_EVAL_INCOMPLETE_REASON")
-                            _last_eval_feedback="Milestone '${milestone:0:80}' succeeded, but the overall task is NOT done yet. Still missing: ${_EVAL_INCOMPLETE_REASON}"
+                            _last_eval_feedback="Milestone '${milestone:0:80}' ran, but more work needed. Still missing: ${_EVAL_INCOMPLETE_REASON}"
                             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval feedback -> strategist: ${_last_eval_feedback:0:100}"
                         else
-                            _last_eval_feedback="Milestone '${milestone:0:80}' succeeded, but the overall task is NOT done yet."
+                            _last_eval_feedback="Milestone '${milestone:0:80}' ran, but more work is needed."
                         fi
                     fi
                 fi
@@ -3801,7 +3845,7 @@ ${_last_eval_feedback}
             fi
 
             # Milestone failed — feed back to strategist
-            _last_eval_feedback="Milestone '${milestone:0:80}' FAILED. Try a different approach."
+            _last_eval_feedback="Milestone '${milestone:0:80}' did not work. Try a different approach."
         fi
 
         sleep "${AGENT_STEP_DELAY:-1}"
