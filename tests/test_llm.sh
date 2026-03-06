@@ -179,8 +179,8 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     _result=$(_llm_build_opts 512)
     LODGE_MODEL="$_saved_model"
     _tp=$(echo "$_result" | jq -r '.top_p')
-    # jq normalizes 1.0 → 1 (integer); both are valid JSON numbers
-    assert_eq "$_tp" "1"
+    # jq 1.7 preserves the decimal — 1.0 stays "1.0"
+    assert_eq "$_tp" "1.0"
   }
 
   it "_llm_build_opts includes top_k from model registry" && {
@@ -197,8 +197,8 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     unset LLM_SCENARIO
     _result=$(_llm_build_opts 512)
     _mp=$(echo "$_result" | jq -r '.min_p')
-    # jq normalizes 0.0 → 0 (integer); both are valid JSON numbers
-    assert_eq "$_mp" "0"
+    # jq 1.7 preserves the decimal — 0.0 stays "0.0"
+    assert_eq "$_mp" "0.0"
   }
 
   it "thinking directive injected for strategist scenario" && {

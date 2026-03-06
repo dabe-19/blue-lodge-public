@@ -1432,82 +1432,83 @@ ${base_rules}"
 # but does NOT reload the 4GB model from disk.
 
 _build_router_prompt() {
-    # Phase 1 Prompt: The Command Catalog Router (JSON)
-    # Compact JSON command→description map with few-shot routing.
+    # Phase 1 Prompt: The Command Catalog Router (line-oriented)
+    # Line-per-command format with clear TOOLS vs DELIVERY separation.
     # The router's ONLY job: classify task → command.
     # Completion detection is handled by the milestone evaluator.
-    # Specialist handles exact syntax. ~200 tokens.
+    # Specialist handles exact syntax. ~250 tokens.
+    #
+    # FORMAT: Plain text, one command per line, two clear sections.
+    # Small models (2-4B) parse line-oriented text far more reliably
+    # than nested JSON with escaped quotes and brackets.
     #
     # ORDERING: Commands are ranked by utility/frequency. 2B models
     # exhibit strong primacy bias — items listed first are chosen
-    # disproportionately. High-utility tools (web, write, recall)
-    # are at the top; /ask (no-tool fallback) is near the bottom.
-    # /slash is promoted as the escape valve for missing capabilities.
-    #
-    # Plain-text preamble BEFORE JSON so the anti-backtick rule is
-    # in primacy position — small models (1-4B) read JSON formatting
-    # as "my output should look like JSON" and wrap in backticks.
-    echo 'Output ONLY the bare tool name. NO backticks. NO code fences. NO quotes. Example: /web'
-    cat << 'ROUTER_JSON'
-{"role":"Pick the best tool for the next action. ONLY output commands from this list.",
-"commands":{
-  "/web":"Search web, fetch page, find images (USE FOR weather, news, scores, prices, current info)",
-  "/write":"Write or overwrite a file",
-  "/recall":"Search knowledge base (FTS5)",
-  "/respond":"Present final answer/output directly to operator (no file needed)",
-  "/slash":"Create/run custom commands (USE when no built-in command fits the task)",
-  "/journal":"Read or write living memory",
-  "/save":"Save content to file",
-  "/read":"Read a file",
-  "/ls":"List files as tree",
-  "/sandbox":"Code sandboxes (NOT for running slash commands)",
-  "/init":"Scaffold new project",
-  "/build":"Build project",
-  "/test":"Run tests",
-  "/fix":"Diagnose and fix errors",
-  "/clone":"Clone git repo",
-  "/commit":"AI commit message",
-  "/push":"Push to GitHub",
-  "/social":"Post to Discord/Telegram/X/Mastodon (NOT email)",
-  "/email":"Send/check actual email (gmail/protonmail/zoho)",
-  "/download":"Download a URL",
-  "/vision":"Analyze/describe an image",
-  "/github":"Search GitHub repos",
-  "/phone":"Phone dashboard, SMS",
-  "/container":"Linux containers",
-  "/pgp":"PGP sign/verify/export",
-  "/secret":"Encrypted secrets vault",
-  "/git":"Git setup, SSH keys",
-  "/backup":"Backup and restore",
-  "/vitals":"System dashboard",
-  "/ask":"Answer from own knowledge ONLY (no tools, STALE for dates/events/scores — prefer /web)",
-  "bash":"Standard Linux shell (fallback)"},
-"route":[
-  {"q":"check the weather in Appleton","t":"/web"},
-  {"q":"what time is the next event","t":"/web"},
-  {"q":"present findings to the user","t":"/respond"},
-  {"q":"search web for rust tutorials","t":"/web"},
-  {"q":"post a message to discord","t":"/social"},
-  {"q":"send email to gwbluelodge@gmail.com","t":"/email"},
-  {"q":"build url shortener in rust","t":"/sandbox"},
-  {"q":"download https://example.com/f","t":"/download"},
-  {"q":"describe this image","t":"/vision"},
-  {"q":"find and describe images of X","t":"/web"},
-  {"q":"check what files we have","t":"/ls"},
-  {"q":"read my journal","t":"/journal"},
-  {"q":"get forecast data for planning","t":"/slash"},
-  {"q":"what is a monad?","t":"/ask"}],
-"output":"bare tool name only (/web, /social, etc.)",
-"rules":{
-  "match":["specific tool first","/ask ONLY as last resort when no tool fits",
-    "/web for ANYTHING time-sensitive or requiring current/live data (weather, dates, scores, events, prices, news)",
-    "/slash to CREATE custom tool when no built-in command exists (e.g. /slash create weather ...)",
-    "/social for Discord/Telegram/X","/email for actual email",
-    "/sandbox NEVER for slash commands",
-    "NEVER output a command not in this list — if unsure, use /web or /slash"],
-  "format":{"no_fences":true,"no_quotes":true,"no_backticks":true},
-  "forbidden":["SUCCESS","DONE"]}}
-ROUTER_JSON
+    # disproportionately. High-utility tools (web, recall) are at
+    # the top. /slash is the escape valve for missing capabilities.
+    cat << 'ROUTER_PROMPT'
+Output ONLY the bare tool name. NO backticks. NO code fences. NO quotes. Example: /web
+
+TOOLS — gather info, execute work (these do NOT deliver results to the user):
+/web         Search web, fetch page, scrape page+images (/web search|fetch|scrape-images|images)
+/recall      Search knowledge base FTS5 (DO THIS FIRST before web)
+/read        Read a file
+/ls          List files as tree
+/journal     Read or write living memory
+/build       Build project
+/test        Run tests
+/fix         Diagnose and fix errors
+/init        Scaffold new project
+/clone       Clone git repo
+/download    Download a URL
+/vision      Analyze/describe an image (accepts URLs from /web scrape-images)
+/github      Search GitHub repos
+/sandbox     Code sandboxes (NOT for running slash commands)
+/container   Linux containers
+/secret      Encrypted secrets vault
+/vitals      System dashboard
+/phone       Phone dashboard, SMS
+/pgp         PGP sign/verify/export
+/git         Git setup, SSH keys
+/backup      Backup and restore
+/slash       Create/run custom commands (USE when no built-in fits)
+bash         Standard Linux shell (fallback)
+
+DELIVERY — present results to user (one per milestone; a full task may chain several, e.g. /write then /email):
+/respond     Present answer directly to operator (DEFAULT — use when no file/email/post needed)
+/write       Write or overwrite a file
+/save        Save content to file
+/email       Send/check actual email (gmail/protonmail/zoho)
+/social      Post to Discord/Telegram/X/Mastodon (NOT email)
+/commit      AI commit message + commit
+/push        Push to GitHub
+
+DEFAULT RULE: If the task does NOT explicitly require /write, /save, /email, /social, /commit, or /push, use /respond to deliver the answer.
+
+ROUTE EXAMPLES:
+<weather or news question>         → /web
+<deliver answer to user>           → /respond
+<post to discord/telegram/x>       → /social
+<send an email>                    → /email
+<code sandbox project>             → /sandbox
+<list or read files>               → /ls
+<journal read/write>               → /journal
+<create a custom tool>             → /slash
+<analyze or describe an image>     → /vision
+<write a report/file then email>   → /write (first), then /email (next milestone)
+<general knowledge, no tools>      → /respond
+
+RULES:
+- /web for ANYTHING time-sensitive (weather, dates, scores, events, prices, news)
+- /slash to CREATE a custom tool when no built-in command fits
+- /sandbox NEVER for slash commands
+- /social for Discord/Telegram/X, /email for actual email
+- NEVER output a command not in this list
+- If unsure between TOOLS, use /web or /slash
+- If no explicit output command requested, ALWAYS use /respond
+
+FORMAT: bare tool name only. FORBIDDEN: SUCCESS, DONE, backticks, code fences, quotes.
+ROUTER_PROMPT
 }
 
 # ── Specialist: per-command API key status ─────────────────────
@@ -1579,8 +1580,14 @@ _build_specialist_prompt() {
             echo ""
         fi
         cat << 'SPEC_PREAMBLE'
-{"output":{"format":"exactly ONE slash command on its own line","starts_with":"/",
- "forbidden":["code_block_wrapper","quotes_on_args","multiple_commands_per_line","/sandbox for slash commands"]}}
+OUTPUT FORMAT: exactly ONE slash command on its own line, starting with /
+FORBIDDEN: code fences, quotes on args, multiple commands per line, /sandbox for slash commands
+
+COMMAND TYPES:
+  TOOLS (gather info, do work): /web /recall /read /ls /build /test /fix /init /clone /download /vision /github /sandbox /container /secret /vitals /phone /pgp /git /backup /slash /journal bash
+  DELIVERY (present output to user): /respond /write /save /email /social /commit /push
+  NOTE: A full task may chain multiple DELIVERY commands across milestones (e.g. /write a report, then /email it).
+  DEFAULT: If the task does NOT explicitly need a file, email, or post, use /respond to deliver the answer.
 SPEC_PREAMBLE
         echo "CRITICAL: Output the bare slash command. NO backticks. NO code fences. NO markdown formatting. Just the command."
 
@@ -1603,20 +1610,23 @@ SPEC_PREAMBLE
                 cat << 'SPEC'
 {"cmd":"/social","syntax":["/social post discord <channel> <text>","/social post telegram <text>","/social post x <text>","/social post mastodon <text>","/social discord dm <user> <text>","/social discord read <channel>"],
 "rules":["ALWAYS include channel name","@DisplayName auto-resolved to <@user_id>","Channel goes BEFORE text","No quotes on args"],
-"format_only_ex":["/social post discord <channel-name> <your message text>","/social discord dm <username> <your message text>"]}
+"format_only_ex":["/social post discord <channel> <text>","/social discord dm <user> <text>"],
+"fill":{"<channel>":"Discord channel name without #","<text>":"Your message content","<user>":"Discord username"}}
 SPEC
                 ;;
             init)
                 cat << 'SPEC'
 {"cmd":"/init","syntax":"/init <name> <type>",
 "notes":["name: no spaces (use underscores)","types: rust,python,rl,data,automation,notebook,shell","Creates project dir + GEORGE.md + starter code + git init","Auto-cd into project after init","Do NOT /init if project already exists"],
-"format_only_ex":["/init <project-name> <type>"]}
+"format_only_ex":["/init <name> <type>"],
+"fill":{"<name>":"project name with underscores not spaces","<type>":"one of: rust, python, rl, data, automation, notebook, shell"}}
 SPEC
                 ;;
             cd)
                 cat << 'SPEC'
 {"cmd":"/cd","syntax":"/cd <path>","notes":["Change working dir","Relative paths OK","/cd .. to go up"],
-"ex":["/cd weather-poller","/cd src"]}
+"format_only_ex":["/cd <directory>"],
+"fill":{"<directory>":"target directory name or relative path"}}
 SPEC
                 ;;
             write)
@@ -1630,21 +1640,23 @@ SPEC
             save)
                 cat << 'SPEC'
 {"cmd":"/save","syntax":"/save <filepath> <content>","notes":"First token=filepath, rest=content",
-"ex":["/save notes.md Meeting moved to Thursday at 3pm"]}
+"format_only_ex":["/save <filepath> <content>"],
+"fill":{"<filepath>":"target filename or path","<content>":"text to save to the file"}}
 SPEC
                 ;;
             web)
                 cat << 'SPEC'
 {"cmd":"/web","syntax":{
-  "search":"/web search <query> (returns URLs+snippets)",
-  "fetch":"/web fetch <url> (read webpage content)",
-  "images":"/web images <query> (find image URLs)",
-  "scrape-images":"/web scrape-images <url> (text+images as JSON)"},
-"rules":["search=QUERY, fetch=URL, NEVER swap","scrape-images returns {url,title,content,images[]}","Use /vision for images, NOT /web fetch","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples"],
+  "search":"/web search <query> — returns URLs + text snippets from search engines",
+  "fetch":"/web fetch <url> — downloads and extracts readable TEXT from a webpage (HTML/PDF/JSON). Returns plain text only, NO images.",
+  "scrape-images":"/web scrape-images <url> — returns STRUCTURED JSON: {url, title, content, images:[]} with page text AND image URIs. Pass image URIs to /vision for analysis.",
+  "images":"/web images <query> — searches for image URLs by keyword (Serper API). Returns image URLs only."},
+"rules":["search=QUERY (keywords), fetch/scrape-images=URL — NEVER swap","/web fetch returns TEXT only — use /web scrape-images when you need images","scrape-images returns {url,title,content,images[]} — pass images[] URLs to /vision","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples"],
 "search_tips":["3-5 keywords MAX — Google FAILS with long queries","Drop filler: the/a/for/including/regarding/comprehensive","NEVER paste entire milestone as search query","Extract keywords from TASK context only"],
-"FLOW CHAINS":["Research: /web search -> /web fetch -> summarize","Images: /web search -> pick image URL -> /vision","Report: /web search -> /web fetch -> /write report"],
+"FLOW CHAINS":["Text research: /web search -> /web fetch -> summarize","Image research: /web scrape-images <url> -> /vision <image_url_from_images[]>","Report: /web search -> /web fetch -> /write report"],
 "notes":["Do NOT fetch every URL. 1 search + 1-2 fetches enough","If scrape-images returns empty content, use /web fetch for same URL instead"],
-"ex":["/web search Appleton WI weather forecast","/web fetch https://weather.gov/forecast/WI","/web scrape-images https://en.wikipedia.org/wiki/Appleton,_Wisconsin","/web images northern lights photo"]}
+"format_only_ex":["/web search <keywords>","/web fetch <url>","/web scrape-images <url>","/web images <keywords>"],
+"fill":{"<keywords>":"3-5 search terms derived from the TASK","<url>":"full https:// URL from search results or task"}}
 SPEC
                 ;;
             download)
@@ -1667,7 +1679,7 @@ SPEC
             build)
                 cat << 'SPEC'
 {"cmd":"/build","syntax":"/build [release]","notes":"Auto-detects Cargo/pyproject/Makefile. Reads GEORGE.md Validation section.",
-"ex":["/build release"]}
+"format_only_ex":["/build","/build release"]}
 SPEC
                 ;;
             test)
@@ -1679,13 +1691,15 @@ SPEC
             fix)
                 cat << 'SPEC'
 {"cmd":"/fix","syntax":"/fix [file_or_description]","notes":"Auto-diagnoses and fixes errors.",
-"ex":["/fix src/main.rs"]}
+"format_only_ex":["/fix <file-or-description>"],
+"fill":{"<file-or-description>":"filename or error description from the TASK"}}
 SPEC
                 ;;
             commit)
                 cat << 'SPEC'
 {"cmd":"/commit","syntax":"/commit [files...]","notes":"AI-generates commit message. Optional: specific files to stage.",
-"ex":["/commit"]}
+"format_only_ex":["/commit","/commit <files>"],
+"fill":{"<files>":"optional specific filenames to stage"}}
 SPEC
                 ;;
             push)
@@ -1703,13 +1717,15 @@ SPEC
                 cat << 'SPEC'
 {"cmd":"/git","syntax":{
   "setup":"/git setup (configure user/email)","status":"/git status","ssh-keygen":"/git ssh-keygen"},
-"ex":["/git setup"]}
+"format_only_ex":["/git <action>"],
+"fill":{"<action>":"one of: setup, status, ssh-keygen"}}
 SPEC
                 ;;
             github)
                 cat << 'SPEC'
 {"cmd":"/github","syntax":"/github search <query>",
-"ex":["/github search rust web framework"]}
+"format_only_ex":["/github search <keywords>"],
+"fill":{"<keywords>":"search terms for GitHub repos"}}
 SPEC
                 ;;
             email)
@@ -1728,7 +1744,8 @@ SPEC
   "show":"/journal show [vivid|fading|sediment]",
   "write":"/journal write <entry_text>"},
 "rules":["To READ: /journal (no args). To WRITE: /journal write <text>","NEVER write new content when the task asks you to check, read, review, or show the journal"],
-"format_only_ex":["/journal","/journal write <your entry text>"]}
+"format_only_ex":["/journal","/journal show <tier>","/journal write <text>"],
+"fill":{"<tier>":"one of: vivid, fading, sediment","<text>":"journal entry content"}}
 SPEC
                 ;;
             recall)
@@ -1764,14 +1781,16 @@ SPEC
                 cat << 'SPEC'
 {"cmd":"/backup","syntax":{
   "local":"/backup local (timestamped)","restore":"/backup restore","github":"/backup github"},
-"ex":["/backup local"]}
+"format_only_ex":["/backup <action>"],
+"fill":{"<action>":"one of: local, restore, github"}}
 SPEC
                 ;;
             vision)
                 cat << 'SPEC'
 {"cmd":"/vision","syntax":"/vision <image_path_or_url> [prompt]",
-"notes":["Supports jpg/png/gif/webp/bmp","Accepts image URLs directly (no /download needed)","Requires vision model: /models single minist-inst"],
-"ex":["/vision https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.jpg describe this insect in detail","/vision ./screenshots/error.png what error is shown in this screenshot"]}
+"notes":["Supports jpg/png/gif/webp/bmp","Accepts image URLs directly (no /download needed)","Requires vision model: /models single minist-inst","Pair with /web scrape-images: scrape a page, then pass image URLs from images[] array to /vision","Returns detailed text description of image contents"],
+"format_only_ex":["/vision <image> <prompt>"],
+"fill":{"<image>":"URL or local path to image file (e.g. URL from /web scrape-images images[] output)","<prompt>":"what to analyze or describe about the image"}}
 SPEC
                 ;;
             container)
@@ -1779,24 +1798,25 @@ SPEC
 {"cmd":"/container","syntax":{
   "create":"/container create <distro> (ubuntu/alpine/debian/fedora/kali)",
   "enter":"/container enter <distro>","exec":"/container exec <distro> <cmd>","rm":"/container rm <distro>"},
-"ex":["/container create ubuntu"]}
+"format_only_ex":["/container <action> <distro>"],
+"fill":{"<action>":"one of: create, enter, exec, rm","<distro>":"one of: ubuntu, alpine, debian, fedora, kali"}}
 SPEC
                 ;;
             wallet)
                 cat << 'SPEC'
 {"cmd":"/wallet","syntax":{
   "status":"/wallet status","balances":"/wallet balances","check":"/wallet check"},
-"ex":["/wallet balances"]}
+"format_only_ex":["/wallet <action>"],
+"fill":{"<action>":"one of: status, balances, check"}}
 SPEC
                 ;;
             slash)
                 cat << 'SPEC'
 {"cmd":"/slash","syntax":["/slash create <name> <description>","/slash run <name> [args]","/slash list","/slash show <name>","/slash edit <name>"],
 "notes":["George auto-generates bash code from the description","Created commands persist and can be reused across tasks","Commands get full lodge library access (curl, jq, etc.)","Use /slash to extend yourself when a built-in command doesn't exist"],
-"ex":["/slash create morning-brief Show me weather, calendar, and unread messages",
-"/slash create fetch-forecast Fetch 7-day weather forecast for a given city using wttr.in and return a plain-text summary",
-"/slash run fetch-forecast Appleton WI"],
-"1-SHOT WORKFLOW":["Step 1: /slash create <name> <what it should do>","Step 2: /slash run <name> [args]","If the built-in /web, /email, etc. don't do exactly what you need, create a /slash command that does."]}
+"format_only_ex":["/slash create <name> <description>","/slash run <name> <args>"],
+"fill":{"<name>":"short hyphenated command name","<description>":"plain English description of what the command should do","<args>":"runtime arguments for the custom command"},
+"workflow":["Step 1: /slash create <name> <what it should do>","Step 2: /slash run <name> [args]","If a built-in command doesn't do exactly what you need, create a /slash command."]}
 SPEC
                 ;;
             respond)
@@ -1816,13 +1836,15 @@ SPEC
             ls)
                 cat << 'SPEC'
 {"cmd":"/ls","syntax":"/ls [path] [depth]","notes":"Tree view, depth 1-8 (default 3).",
-"ex":["/ls","/ls src 2","/ls . 5"]}
+"format_only_ex":["/ls","/ls <path> <depth>"],
+"fill":{"<path>":"directory path to list","<depth>":"tree depth 1-8"}}
 SPEC
                 ;;
             read)
                 cat << 'SPEC'
 {"cmd":"/read","syntax":"/read <file>","notes":"Read first 100 lines of file.",
-"ex":["/read src/main.rs"]}
+"format_only_ex":["/read <filepath>"],
+"fill":{"<filepath>":"path to file to read"}}
 SPEC
                 ;;
             *)
@@ -2116,7 +2138,7 @@ agent_inner_loop() {
         if [ "$_tool_valid" -eq 0 ]; then
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router hallucinated '/$selected_tool' — injecting full catalog for re-route"
             _hallucination_fallback=1
-            selected_tool="ask"
+            selected_tool="respond"
         fi
 
         # ── SANDBOX INTERLOCK: Programmatic gate ──────────────
@@ -2146,7 +2168,7 @@ agent_inner_loop() {
                         *journal*|*log*|*note*)                          selected_tool="journal" ;;
                         *recall*|*remember*|*knowledge*)                 selected_tool="recall" ;;
                         *search*|*web*|*fetch*|*url*|*look*up*)          selected_tool="web" ;;
-                        *)                                               selected_tool="ask" ;;
+                        *)                                               selected_tool="respond" ;;
                     esac
                 fi
             fi
@@ -2165,8 +2187,8 @@ agent_inner_loop() {
         # visibility into ALL available commands to pick a real one.
         # Inject the full command catalog so the model can route itself
         # to an appropriate tool instead of re-hallucinating the same
-        # non-existent command. This replaces the narrow /ask card with
-        # the complete toolbox view.
+        # non-existent command. The /respond card acts as a minimal
+        # fallback while the catalog provides the full toolbox view.
         if [ "$_hallucination_fallback" -eq 1 ] && declare -f commands_catalog &>/dev/null; then
             local _recovery_catalog
             _recovery_catalog=$(commands_catalog 2>/dev/null)
@@ -2400,8 +2422,8 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
 
         # ── SPECIALIST OUTPUT VALIDATION ───────────────────────
         # The specialist may hallucinate commands that don't exist
-        # (e.g. "/weather" when the router fell back to /ask but
-        # the specialist ignored the /ask card). Validate the
+        # (e.g. "/weather" when the router fell back to /respond but
+        # the specialist ignored the catalog injection). Validate the
         # extracted slash command BEFORE dispatching to prevent
         # burning escalation levels on commands that will always
         # return exit 127. On rejection, log the hallucination and
@@ -3203,10 +3225,11 @@ $(cat << 'STRAT_RULES_JSON'
    "reserved":["DONE","COMPLETE"],"no_prefix":true,"no_intro":true,
    "only_configured":true},
  "research":{"when":"missing info (keys,URLs,packages,specs)",
-   "tools":["/web search","/recall","/web fetch","/social discord read","/secret get"],
+   "tools":["/web search","/recall","/web fetch","/web scrape-images","/social discord read","/secret get"],
    "max_consecutive":2,"then":"MUST use delivery command (/respond,/write,/email,/save,/social,/build)"},
  "failure":{"no_repeat":true,"advance_next_part":true},
  "honeydew":{"pick":"next [ ] item","done_when":"ALL [x] → DONE"},
+ "multi_delivery":"Different honeydew items may each need their own DELIVERY command (e.g. item 2=/write report, item 3=/email report). This is normal — chain them across milestones.",
  "conversation":"question + /ask answered → DONE"}}
 STRAT_RULES_JSON
 )${_research_gate}${_milestone_history}${_last_eval_feedback:+

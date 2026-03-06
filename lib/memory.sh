@@ -360,25 +360,22 @@ $project_mem"
         fi
 
         # Command catalog (JSON) — George needs to know what tools exist and
-        # their syntax so plans reference real commands.  Lean JSON (~250
-        # tokens) instead of the full catalog (~800 tokens) to reduce
-        # prefill time on constrained hardware.
+        # their syntax so plans reference real commands.  Lean JSON (~280
+        # tokens) instead of the full catalog (~900 tokens) to reduce
+        # prefill time on constrained hardware. TOOLS vs DELIVERY split
+        # prevents confusion about which commands produce output.
         prompt="$prompt
 
 --- COMMANDS (use ONLY these — do NOT invent commands) ---
-{\"commands\":{
-\"/ask\":\"Quick answer\",\"/init\":\"Scaffold project (rust,python,shell)\",
+{\"TOOLS (gather info, execute work)\":{
 \"/recall\":\"Search knowledge base (DO THIS FIRST)\",
-\"/ls\":\"List files as tree (depth 1-8, default 3)\",\"/read\":\"Read file (100 lines)\",
-\"/save\":\"Save to file\",\"/write\":\"Write/overwrite file (creates dirs)\",\"/cd\":\"Change dir\",
+\"/web\":{\"search\":\"query (returns URLs+snippets)\",\"fetch\":\"url (returns TEXT only, no images)\",\"scrape-images\":\"url (returns JSON: {url,title,content,images[]} — use images[] with /vision)\",\"images\":\"query (find image URLs via Serper)\"},
+\"/read\":\"Read file (100 lines)\",\"/ls\":\"List files as tree (depth 1-8, default 3)\",\"/cd\":\"Change dir\",
+\"/init\":\"Scaffold project (rust,python,shell)\",
 \"/download\":\"Download URL\",\"/build\":\"Build project\",\"/test\":\"Run tests\",
-\"/fix\":\"Diagnose/fix errors\",\"/commit\":\"AI commit\",\"/push\":\"Push to GitHub\",
-\"/clone\":\"Clone repo\",
-\"/web\":{\"search\":\"query\",\"fetch\":\"url\",\"images\":\"query\"},
-\"/github\":\"Search repos\",\"/vision\":\"Analyze image (URL or path)\",
+\"/fix\":\"Diagnose/fix errors\",\"/clone\":\"Clone repo\",
+\"/github\":\"Search repos\",\"/vision\":\"Analyze image (URL or path) — pair with /web scrape-images for web images\",
 \"/journal\":{\"read\":\"/journal (no args)\",\"write\":\"/journal write <text>\"},
-\"/social\":{\"post\":\"/social post discord <channel> <text>\",\"read\":\"/social discord read <ch>\",\"dm\":\"/social discord dm <user> <text>\"},
-\"/email\":{\"send\":\"/email send <prov> <addr> subject= body=\",\"inbox\":\"/email inbox <prov>\"},
 \"/phone\":\"Dashboard, SMS\",\"/secret\":\"set|get <key>\",
 \"/sandbox\":{\"new\":\"new <name> [type]\",\"build|test|run|cd|rm\":\"<name>\"},
 \"/container\":\"create|enter <distro>\",\"/pgp\":\"sign|signpost|export\",
@@ -388,6 +385,14 @@ $project_mem"
 \"/limits\":\"Tune planning (steps,depth,tokens)\",
 \"/think\":\"on|off|dim|hide\",\"/config\":\"show|save|reset\",
 \"bash\":\"Linux shell (fallback)\"},
+\"DELIVERY (present output to user)\":{
+\"/respond\":\"Present answer to operator — DEFAULT when no file/email/post needed\",
+\"/write\":\"Write/overwrite file (creates dirs)\",\"/save\":\"Save to file\",
+\"/email\":{\"send\":\"/email send <prov> <addr> subject= body=\",\"inbox\":\"/email inbox <prov>\"},
+\"/social\":{\"post\":\"/social post discord <channel> <text>\",\"read\":\"/social discord read <ch>\",\"dm\":\"/social discord dm <user> <text>\"},
+\"/commit\":\"AI commit\",\"/push\":\"Push to GitHub\"},
+\"DEFAULT RULE\":\"If task does NOT explicitly need /write, /save, /email, /social, /commit, or /push, use /respond.\",
+\"MULTI_DELIVERY\":\"A task may chain multiple DELIVERY commands across milestones (e.g. /write report THEN /email it).\",
 \"rules\":[\"If unsure: /recall <cmd>\",\"If missing: /slash create <name>\",\"Before editing: check with /ls or /read\"]}"
 
         # Workspace files (needed for planning)

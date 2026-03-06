@@ -464,13 +464,13 @@ describe "Dynamic dual-loop architecture"
 
   it "specialist prompt tells LLM not to quote arguments" && {
     body=$(declare -f _build_specialist_prompt)
-    echo "$body" | grep -q 'quotes_on_args\|NOT quote arguments'
+    echo "$body" | grep -q 'quotes on args\|quotes_on_args\|NOT quote arguments'
     assert_ok $?
   }
 
   it "specialist prompt tells LLM one command per line" && {
     body=$(declare -f _build_specialist_prompt)
-    echo "$body" | grep -q 'multiple_commands_per_line\|ONE command per line'
+    echo "$body" | grep -q 'multiple commands per line\|multiple_commands_per_line\|ONE command per line'
     assert_ok $?
   }
 
@@ -1409,7 +1409,7 @@ describe "Evaluator-based milestone completion"
 
   it "router prompt forbids SUCCESS/DONE output" && {
     body=$(declare -f _build_router_prompt)
-    echo "$body" | grep -q 'forbidden.*SUCCESS\|NEVER output SUCCESS'
+    echo "$body" | grep -q 'FORBIDDEN.*SUCCESS\|forbidden.*SUCCESS\|NEVER output SUCCESS'
     assert_ok $? "Router must be told to never output SUCCESS"
   }
 
@@ -1421,7 +1421,7 @@ describe "Evaluator-based milestone completion"
 
   it "router prompt forbids code fences in output" && {
     body=$(declare -f _build_router_prompt)
-    echo "$body" | grep -q 'no_fences\|NEVER wrap output'
+    echo "$body" | grep -q 'no_fences\|NEVER wrap output\|NO code fences\|code fences'
     assert_ok $? "Router must forbid backtick wrapping"
   }
 
@@ -1431,10 +1431,10 @@ describe "Evaluator-based milestone completion"
     assert_ok $? "Router must have plain-text anti-backtick preamble"
   }
 
-  it "router prompt warns /ask may be stale for time-sensitive queries" && {
+  it "router prompt defaults to /respond instead of /ask" && {
     body=$(declare -f _build_router_prompt)
-    echo "$body" | grep -q '/ask.*stale\|/ask.*prefer.*web'
-    assert_ok $? "Router must warn that /ask output may be outdated"
+    echo "$body" | grep -q '/respond.*DEFAULT\|DEFAULT.*respond'
+    assert_ok $? "Router must default to /respond for general answers"
   }
 
   it "router prefers /web search for time-sensitive information" && {
@@ -1803,7 +1803,7 @@ describe "Web flow chain examples in specialist"
 
   it "specialist /web card includes research flow chain" && {
     body=$(declare -f _build_specialist_prompt)
-    echo "$body" | grep -q 'Research.*search.*fetch.*summarize'
+    echo "$body" | grep -q 'research.*search.*fetch.*summarize\|Text research.*search.*fetch.*summarize'
     assert_ok $? "Must show research flow chain"
   }
 
@@ -1849,9 +1849,9 @@ describe "Code fence stripping & parse failure handling"
     assert_ok $? "Must include diagnostic message for parse failure"
   }
 
-  it "specialist forbidden list includes code_block_wrapper" && {
+  it "specialist forbidden list includes code fence prohibition" && {
     body=$(declare -f _build_specialist_prompt)
-    echo "$body" | grep -q 'code_block_wrapper'
+    echo "$body" | grep -q 'code_block_wrapper\|code fences'
     assert_ok $? "Specialist prompt must forbid code block wrapping"
   }
 

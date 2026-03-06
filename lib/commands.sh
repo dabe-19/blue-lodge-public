@@ -295,72 +295,99 @@ commands_catalog() {
 
     # ── JSON catalog body ─────────────────────────────────────
     # Keys match section names expected by tests and other consumers.
-    # Examples are keyed under their parent command for in-context learning.
+    # Examples use <placeholder> tags — fill keys explain what to substitute.
+    # Commands split into TOOLS (gather/execute) and DELIVERY (output to user).
     cat << CATALOG
 {"SYSTEM CAPABILITIES & TOOLS":{"time":"${_catalog_ts}",
 "note":"Do NOT quote arguments (parsed by whitespace). Never guess syntax; use /recall <cmd>.",
 "CORE WORKFLOW":["READ: /recall or source","GATHER: /web, /secret get","INGEST: /journal write","RESPOND: execute"],
+"DEFAULT RULE":"If the task does NOT explicitly require /write, /save, /email, /social, /commit, or /push, use /respond to deliver the answer.",
 "commands":{
-  "PROJECT & CODE":{
-    "/init":{"syntax":"/init <name> <lang>","desc":"Scaffold project (rust,python,rl,data,shell)","ex":["/init task-manager rust"]},
-    "/write":{"syntax":"/write <file> <content>","desc":"Write/overwrite file (creates dirs)",
+  "PROJECT & CODE (TOOLS — gather info, execute work)":{
+    "/init":{"syntax":"/init <name> <lang>","desc":"Scaffold project (rust,python,rl,data,shell)",
+      "format_only_ex":["/init <name> <lang>"],
+      "fill":{"<name>":"project name, no spaces, use underscores","<lang>":"one of: rust, python, rl, data, shell"}},
+    "/write":{"syntax":"/write <file> <content>","desc":"Write/overwrite file (creates dirs) [DELIVERY]",
       "variants":{"--append":"Append to end of file","--edit":"Sed substitution ONLY (short, max 200 chars)"},
       "rules":["Use \\\\n for newlines","--edit ONLY for short sed, NEVER multi-line code","Include COMPLETE source for code files","Creates parent dirs automatically"],
-      "ex":["/write src/main.rs fn main() { println!(\"Hello\"); }","/write --append Cargo.toml \\\\n[dependencies]\\\\nreqwest = \"0.11\"","/write --edit src/main.rs s/old_fn/new_fn/g"]},
-    "/read":{"syntax":"/read <file>","desc":"Read file contents (first 100 lines)"},
+      "format_only_ex":["/write <filepath> <complete file content with \\\\n>","/write --append <filepath> <content to add>","/write --edit <filepath> s/<old>/<new>/g"],
+      "fill":{"<filepath>":"target file path","<complete file content>":"entire file source, use \\\\n for newlines","<old>":"text to find","<new>":"replacement text"}},
+    "/read":{"syntax":"/read <file>","desc":"Read file contents (first 100 lines)",
+      "format_only_ex":["/read <filepath>"],"fill":{"<filepath>":"path to file to read"}},
     "/ls":{"syntax":"/ls [path] [depth]","desc":"List files as tree (depth 1-8, default 3)",
-      "ex":[{"cmd":"/ls","out":"my-project/\n\u251c\u2500\u2500 src/\n\u2502   \u251c\u2500\u2500 lib.rs\n\u2502   \u2514\u2500\u2500 main.rs\n\u251c\u2500\u2500 Cargo.toml\n\u2514\u2500\u2500 README.md"},
-            {"cmd":"/ls src/config 2","out":"config/\n\u251c\u2500\u2500 mod.rs\n\u251c\u2500\u2500 database/\n\u2502   \u251c\u2500\u2500 mod.rs\n\u2502   \u2514\u2500\u2500 pool.rs\n\u2514\u2500\u2500 settings.rs"},
-            "/ls . 5"]},
-    "/build":{"syntax":"/build [release]","desc":"Build (auto-detects Cargo/pyproject/Make)"},
-    "/test":{"syntax":"/test [args]","desc":"Run tests"},
-    "/fix":{"syntax":"/fix [error]","desc":"Diagnose and fix errors"},
-    "/commit":{"syntax":"/commit [msg]","desc":"AI commit message + commit"},
-    "/push":{"syntax":"/push","desc":"Push to GitHub"},
-    "/clone":{"syntax":"/clone <url>","desc":"Clone and setup repo"},
-    "/save":{"syntax":"/save <file> <text>","desc":"Save content to file"}
+      "format_only_ex":["/ls","/ls <path> <depth>"],"fill":{"<path>":"directory to list","<depth>":"tree depth 1-8"}},
+    "/build":{"syntax":"/build [release]","desc":"Build (auto-detects Cargo/pyproject/Make)",
+      "format_only_ex":["/build","/build release"]},
+    "/test":{"syntax":"/test [args]","desc":"Run tests",
+      "format_only_ex":["/test","/test <specific_test>"],"fill":{"<specific_test>":"optional test name or filter"}},
+    "/fix":{"syntax":"/fix [error]","desc":"Diagnose and fix errors",
+      "format_only_ex":["/fix <file-or-error>"],"fill":{"<file-or-error>":"filename or error description"}},
+    "/clone":{"syntax":"/clone <url>","desc":"Clone and setup repo",
+      "format_only_ex":["/clone <url>"],"fill":{"<url>":"repository URL or owner/repo"}}
   },
-  "SANDBOX & SERVICES":{
+  "DELIVERY — present output to user (one per milestone; a full task may chain several across milestones, e.g. /write then /email)":{
+    "/respond":{"syntax":"/respond <text>","desc":"Present answer directly to operator — DEFAULT when no file/email/post needed [DELIVERY]",
+      "format_only_ex":["/respond <answer text>"],"fill":{"<answer text>":"your complete response to the user"}},
+    "/commit":{"syntax":"/commit [msg]","desc":"AI commit message + commit [DELIVERY]",
+      "format_only_ex":["/commit","/commit <files>"],"fill":{"<files>":"optional specific files to stage"}},
+    "/push":{"syntax":"/push","desc":"Push to GitHub [DELIVERY]"},
+    "/save":{"syntax":"/save <file> <text>","desc":"Save content to file [DELIVERY]",
+      "format_only_ex":["/save <filepath> <content>"],"fill":{"<filepath>":"target filename","<content>":"text to save"}}
+  },
+  "SANDBOX & SERVICES (TOOLS)":{
     "/sandbox":{"syntax":"/sandbox <action> <name> [args]","desc":"Code execution sandboxes",
       "actions":{"list":"list all","new":"new <name> [type] (rust/python/shell)","build":"build <name>","test":"test <name>","run":"run <name> <cmd>","status":"status <name>","cd":"cd <name>","rm":"rm <name>","clone":"clone <url> [name]","journal":"journal [n]"},
       "rules":["Do NOT use /sandbox to run slash commands"],
-      "ex":[{"task":"Rust sandbox","chain":["/sandbox new my-api rust","/sandbox run my-api cargo add serde","/sandbox test my-api"]},
-            {"task":"Python sandbox","chain":["/sandbox new my-app python","/sandbox run my-app pip install flask"]}]},
+      "format_only_ex":["/sandbox new <name> <type>","/sandbox run <name> <cmd>","/sandbox test <name>"],
+      "fill":{"<name>":"sandbox project name","<type>":"one of: rust, python, shell","<cmd>":"command to run inside sandbox"}},
     "/container":{"syntax":"/container <create|enter|exec|rm> <distro>","desc":"Linux containers (ubuntu/alpine/debian/fedora)"},
     "/service":{"syntax":"/service <action> <name>","desc":"Rust binary lifecycle",
       "actions":{"register":"register <name> [path]","build":"build <name>","deploy":"deploy <name>","start":"start <name>","stop":"stop <name>","restart":"restart <name>","status":"status <name>","logs":"logs <name> [n]","list":"list","unregister":"unregister <name>"},
-      "ex":[{"task":"Deploy pipeline","chain":["/service register ingestion .","/service deploy ingestion","/service status ingestion"]}]}
+      "format_only_ex":["/service <action> <name>"],
+      "fill":{"<action>":"one of: register, build, deploy, start, stop, restart, status, logs, list","<name>":"service name"}}
   },
-  "RESEARCH & MEMORY":{
-    "/ask":{"syntax":"/ask <q>","desc":"Quick answer from knowledge (no tools)"},
-    "/respond":{"syntax":"/respond <text>","desc":"Present output directly to operator (no file/email needed, satisfies delivery)"},
-    "/recall":{"syntax":"/recall <q>","desc":"Search knowledge base FTS5 (DO THIS FIRST BEFORE WEB SEARCH)","ex":["/recall trout stocking schedule"]},
-    "/web":{"syntax":"/web <action> <query|url>","desc":"Web search and fetch",
-      "actions":{"search":"/web search <query> (returns URLs+snippets)","fetch":"/web fetch <url> (read webpage, NOT images)","images":"/web images <query> (find image URLs)","scrape-images":"/web scrape-images <url> (extract text+images as JSON)"},
-      "rules":["search=QUERY, fetch=URL, NEVER swap","Use /vision for images, NOT /web fetch","1 search + 1-2 fetches is enough","scrape-images returns {url,title,content,images[]}"],
-      "chains":["Research: /web search <topic> -> /web fetch <url> -> summarize","Images: /web search <topic> -> pick image URL -> /vision <url>","Deep: /web scrape-images <url> -> read content field -> /vision <img>"],
-      "ex":["/web search rust async tutorial 2025","/web fetch https://docs.rs/tokio/latest","/web scrape-images https://en.wikipedia.org/wiki/Rust_(programming_language)","/web images rust programming logo"]},
-    "/github":{"syntax":"/github <search|check> <q|repo>","desc":"Search GitHub repos"},
-    "/download":{"syntax":"/download <url> [dest]","desc":"Download a file"},
-    "/vision":{"syntax":"/vision <url|path> [prompt]","desc":"Analyze image (accepts URLs directly, no /download needed)","ex":["/vision https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.jpg describe this insect","/vision ./photos/dashboard.png what do the gauges show"]},
+  "RESEARCH & MEMORY (TOOLS)":{
+    "/recall":{"syntax":"/recall <q>","desc":"Search knowledge base FTS5 (DO THIS FIRST BEFORE WEB SEARCH)",
+      "format_only_ex":["/recall <keywords>"],"fill":{"<keywords>":"search terms for knowledge base"}},
+    "/web":{"syntax":"/web <action> <query|url>","desc":"Web search, fetch, and image extraction",
+      "actions":{
+        "search":"/web search <query> — returns list of URLs + text snippets from search engines (Serper/DuckDuckGo)",
+        "fetch":"/web fetch <url> — downloads and extracts readable TEXT from a webpage (HTML→text, PDF→text, JSON→text). Returns plain text content only, NO images.",
+        "scrape-images":"/web scrape-images <url> — returns STRUCTURED JSON: {url, title, content, images:[]} with page text AND image URIs. Use this when you need BOTH text and images from a page. Image URIs can be passed to /vision for analysis.",
+        "images":"/web images <query> — searches for image URLs by keyword query via Serper API (requires SERPER_API_KEY). Returns image URLs only, no page content."},
+      "rules":["search=QUERY (keywords), fetch/scrape-images=URL — NEVER swap","/web fetch returns TEXT only — use /web scrape-images when you need images","1 search + 1-2 fetches is enough — do NOT fetch every result","scrape-images returns {url,title,content,images[]} — pass images[] URLs to /vision"],
+      "chains":["Text research: /web search <topic> -> /web fetch <url> -> summarize","Image research: /web scrape-images <url> -> /vision <image_url_from_images[]>","Image search: /web images <query> -> /vision <image_url>","Deep page analysis: /web scrape-images <url> -> read content + /vision on each image"],
+      "format_only_ex":["/web search <keywords>","/web fetch <url>","/web scrape-images <url>","/web images <keywords>"],
+      "fill":{"<keywords>":"3-5 search terms derived from the task","<url>":"full https:// URL from search results or task"}},
+    "/github":{"syntax":"/github <search|check> <q|repo>","desc":"Search GitHub repos",
+      "format_only_ex":["/github search <keywords>"],"fill":{"<keywords>":"search terms for GitHub"}},
+    "/download":{"syntax":"/download <url> [dest]","desc":"Download a file",
+      "format_only_ex":["/download <url>"],"fill":{"<url>":"URL to download"}},
+    "/vision":{"syntax":"/vision <url|path> [prompt]","desc":"Analyze/describe an image using vision model. Accepts URLs directly (no /download needed). Returns detailed text description of image contents.",
+      "notes":["Supports jpg/png/gif/webp/bmp","Pair with /web scrape-images to analyze images from web pages","Default prompt: describe image in detail (text, objects, people)"],
+      "format_only_ex":["/vision <image> <prompt>"],
+      "fill":{"<image>":"URL or local path to image (e.g. from /web scrape-images images[] array)","<prompt>":"what to analyze or describe"}},
     "/journal":{"syntax":"/journal [show] [tier]","desc":"Access persistent living memory",
       "actions":{"read":"/journal (no args=read ALL)","show vivid":"/journal show vivid","show fading":"/journal show fading","show sediment":"/journal show sediment","write":"/journal write <text>","count":"/journal count","decay":"/journal decay"},
       "rules":["To READ: /journal (no args). To WRITE: /journal write <text>","NEVER write when task says check/read/review/show journal"],
-      "ex":["/journal","/journal show vivid","/journal write Today I learned about moral sentiments"]},
+      "format_only_ex":["/journal","/journal show <tier>","/journal write <text>"],
+      "fill":{"<tier>":"one of: vivid, fading, sediment","<text>":"journal entry content"}},
     "/ingest":{"syntax":"/ingest <add|summarize|list|remove> [file] [label]","desc":"Upload docs to knowledge base"}
   },
-  "COMMS & SOCIAL":{
-    "/social":{"syntax":"/social <action> <platform> [target] <text>","desc":"Post to Discord/Telegram/X/Mastodon/Bluesky (NOT email)",
+  "COMMS & SOCIAL (DELIVERY)":{
+    "/social":{"syntax":"/social <action> <platform> [target] <text>","desc":"Post to Discord/Telegram/X/Mastodon/Bluesky (NOT email) [DELIVERY]",
       "actions":{"post":"/social post <discord|telegram|x|mastodon|bluesky> [channel] <text>","read|dm|timeline|search|sync":"/social <platform> <action> [args]"},
       "rules":["ALWAYS include channel name for Discord post","Do NOT wrap args in quotes","@DisplayName auto-resolved to <@user_id>","Channel goes BEFORE text"],
-      "ex":["/social post discord <channel> <@mention> <your message text>","/social discord read <channel>","/social discord dm <username> <your message text>"]},
-    "/email":{"syntax":"/email <action> <provider> [args]","desc":"Send/check actual email (gmail/protonmail/zoho)",
+      "format_only_ex":["/social post discord <channel> <text>","/social discord read <channel>","/social discord dm <user> <text>"],
+      "fill":{"<channel>":"Discord channel name without #","<text>":"message content","<user>":"Discord username"}},
+    "/email":{"syntax":"/email <action> <provider> [args]","desc":"Send/check actual email (gmail/protonmail/zoho) [DELIVERY]",
       "actions":{"send":"/email send <provider> <addr> subject=<subj> body=<body>","inbox":"/email inbox <provider> [count]","status":"/email status"},
       "rules":["For social platforms use /social NOT /email"],
-      "ex":["/email send gmail gwbluelodge@gmail.com subject=Hello body=How are you?"]},
+      "format_only_ex":["/email send <provider> <addr> subject=<subj> body=<body>","/email inbox <provider>"],
+      "fill":{"<provider>":"one of: gmail, protonmail, zoho","<addr>":"recipient email address","<subj>":"email subject line","<body>":"email body text"}},
     "/phone":{"syntax":"/phone [dashboard|location|sms|calls|wifi]","desc":"Phone dashboard, SMS, calls"}
   },
-  "SECURITY & CONFIG":{
+  "SECURITY & CONFIG (TOOLS)":{
     "/pgp":{"syntax":"/pgp <sign|signpost|export> [msg]","desc":"PGP operations"},
     "/api":{"syntax":"/api keys <set|list|rm> <KEY> [value]","desc":"API key management"},
     "/secret":{"syntax":"/secret <set|get> <key> [value]","desc":"Encrypted vault (AES-256-CBC)"},
@@ -376,7 +403,8 @@ commands_catalog() {
     "/models":{"syntax":"/models <list|status|select|single|dual|param>","desc":"Model management"},
     "/model":{"syntax":"/model <param>[-scenario] <val>","desc":"Tune sampling hyper-parameters",
       "actions":{"temp":"/model temp[-ask|-agent|-router|-journal|-tool] <val>","repeat":"/model repeat[-scenario] <val>","presence":"/model presence[-scenario] <val>","reset":"/model reset","write-mode":"/model write-mode <confirm|append|dangerous>"},
-      "ex":["/model temp-agent 0.4","/model reset"]},
+      "format_only_ex":["/model <param> <value>"],
+      "fill":{"<param>":"temp, repeat, presence, reset, or write-mode","<value>":"numeric value or mode"}},
     "/limits":{"syntax":"/limits [param] [val]","desc":"Tune planning parameters",
       "actions":{"steps":"steps <n>","depth":"depth <n>","milestones":"milestones <n>","inner":"inner <n>","tokens":"tokens <n>","eval-mode":"eval-mode <val>"}},
     "/think":{"syntax":"/think [on|off|bright|dim|hide]","desc":"Toggle/configure thinking mode"},
@@ -386,7 +414,9 @@ commands_catalog() {
     "/backend":{"syntax":"/backend <auto|ollama|llamacpp>","desc":"Switch LLM backend"},
     "/gpu":{"syntax":"/gpu <layers>","desc":"Set GPU offload layers"},
     "/cleanup":{"syntax":"/cleanup <selective|all>","desc":"Cleanup temp files"},
-    "/slash":{"syntax":"/slash <create|test|show|delete> <name> [args]","desc":"Create/manage custom commands","ex":["/slash create morning-brief Show weather, calendar, unread messages"]}
+    "/slash":{"syntax":"/slash <create|test|show|delete> <name> [args]","desc":"Create/manage custom commands",
+      "format_only_ex":["/slash create <name> <description>","/slash run <name> <args>"],
+      "fill":{"<name>":"short hyphenated command name","<description>":"what the command should do","<args>":"runtime arguments"}}
   }
 },
 "WORKFLOW PATTERNS":[
@@ -395,9 +425,16 @@ commands_catalog() {
   {"pattern":"Review journal","flow":"/journal (read only)","wrong":"/write or /web search"},
   {"pattern":"Check social","flow":"/social discord read <channel>","wrong":"/web search 'discord'"},
   {"pattern":"Research topic","flow":"/recall <keywords> -> /web search <keywords> -> /web fetch <url>"},
-  {"pattern":"Find images","flow":"/web images <query> or /web scrape-images <url> -> /vision <url>","wrong":"/web fetch <image_url>"},
-  {"pattern":"Tune settings","flow":"/model <param> <value> or /limits <param> <value>"}
+  {"pattern":"Find images","flow":"/web scrape-images <url> -> /vision <image_url_from_images[]>","alt":"/web images <query> -> /vision <url>","wrong":"/web fetch <image_url>"},
+  {"pattern":"Write then email","flow":"/web search -> /web fetch -> /write report.md -> /read report.md -> /email send","note":"Multi-delivery: /write creates the artifact, /email delivers it. Both are DELIVERY commands used across separate milestones."},
+  {"pattern":"Tune settings","flow":"/model <param> <value> or /limits <param> <value>"},
+  {"pattern":"Present answer","flow":"After gathering info with TOOLS, use /respond to deliver the result"}
 ],
+"COMMAND TYPES":{
+  "TOOLS":"Commands that gather info or execute work: /web, /recall, /read, /ls, /build, /test, /fix, /init, /clone, /download, /vision, /github, /sandbox, /container, /secret, /vitals, /phone, /pgp, /git, /backup, /slash, /journal, bash",
+  "DELIVERY":"Commands that present output to user: /respond (DEFAULT), /write, /save, /email, /social, /commit, /push",
+  "RULE":"After using TOOLS commands to gather info, you MUST use a DELIVERY command to present the result. If no specific output format is required, use /respond.",
+  "MULTI_DELIVERY":"A task may require MULTIPLE delivery commands across separate milestones (e.g., /write a report THEN /email it). Each honeydew item can use its own delivery command. Common chain: research -> /write file -> /read file -> /email or /social."},
 "TASK FREEDOM & AUTONOMY":{"principle":"Full authority to find missing info. DO NOT give up.",
   "when_blocked":{
     "missing_knowledge":"/recall first, then /web search, then /web fetch",
