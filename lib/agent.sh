@@ -1438,61 +1438,73 @@ _build_router_prompt() {
     # Completion detection is handled by the milestone evaluator.
     # Specialist handles exact syntax. ~200 tokens.
     #
+    # ORDERING: Commands are ranked by utility/frequency. 2B models
+    # exhibit strong primacy bias — items listed first are chosen
+    # disproportionately. High-utility tools (web, write, recall)
+    # are at the top; /ask (no-tool fallback) is near the bottom.
+    # /slash is promoted as the escape valve for missing capabilities.
+    #
     # Plain-text preamble BEFORE JSON so the anti-backtick rule is
     # in primacy position — small models (1-4B) read JSON formatting
     # as "my output should look like JSON" and wrap in backticks.
     echo 'Output ONLY the bare tool name. NO backticks. NO code fences. NO quotes. Example: /web'
     cat << 'ROUTER_JSON'
-{"role":"Pick the best tool for the next action.",
+{"role":"Pick the best tool for the next action. ONLY output commands from this list.",
 "commands":{
-  "/ask":"Answer from own knowledge (no tools, may be stale — prefer /web for dates/events/scores)",
-  "/recall":"Search knowledge base (FTS5)",
-  "/journal":"Read or write living memory",
+  "/web":"Search web, fetch page, find images (USE FOR weather, news, scores, prices, current info)",
   "/write":"Write or overwrite a file",
+  "/recall":"Search knowledge base (FTS5)",
+  "/respond":"Present final answer/output directly to operator (no file needed)",
+  "/slash":"Create/run custom commands (USE when no built-in command fits the task)",
+  "/journal":"Read or write living memory",
   "/save":"Save content to file",
   "/read":"Read a file",
   "/ls":"List files as tree",
-  "/download":"Download a URL",
+  "/sandbox":"Code sandboxes (NOT for running slash commands)",
   "/init":"Scaffold new project",
-  "/clone":"Clone git repo",
   "/build":"Build project",
   "/test":"Run tests",
   "/fix":"Diagnose and fix errors",
+  "/clone":"Clone git repo",
   "/commit":"AI commit message",
   "/push":"Push to GitHub",
-  "/web":"Search web, fetch page, find images",
-  "/github":"Search GitHub repos",
-  "/vision":"Analyze/describe an image",
   "/social":"Post to Discord/Telegram/X/Mastodon (NOT email)",
   "/email":"Send/check actual email (gmail/protonmail/zoho)",
+  "/download":"Download a URL",
+  "/vision":"Analyze/describe an image",
+  "/github":"Search GitHub repos",
   "/phone":"Phone dashboard, SMS",
-  "/sandbox":"Code sandboxes (NOT for running slash commands)",
   "/container":"Linux containers",
   "/pgp":"PGP sign/verify/export",
   "/secret":"Encrypted secrets vault",
   "/git":"Git setup, SSH keys",
   "/backup":"Backup and restore",
   "/vitals":"System dashboard",
-  "/respond":"Present final answer/output directly to operator (no file needed)",
-  "/slash":"Create/run custom commands",
+  "/ask":"Answer from own knowledge ONLY (no tools, STALE for dates/events/scores — prefer /web)",
   "bash":"Standard Linux shell (fallback)"},
 "route":[
-  {"q":"what is a monad?","t":"/ask"},
+  {"q":"check the weather in Appleton","t":"/web"},
+  {"q":"what time is the next event","t":"/web"},
   {"q":"present findings to the user","t":"/respond"},
-  {"q":"post a message to discord","t":"/social"},
   {"q":"search web for rust tutorials","t":"/web"},
+  {"q":"post a message to discord","t":"/social"},
   {"q":"send email to gwbluelodge@gmail.com","t":"/email"},
   {"q":"build url shortener in rust","t":"/sandbox"},
   {"q":"download https://example.com/f","t":"/download"},
   {"q":"describe this image","t":"/vision"},
   {"q":"find and describe images of X","t":"/web"},
   {"q":"check what files we have","t":"/ls"},
-  {"q":"read my journal","t":"/journal"}],
+  {"q":"read my journal","t":"/journal"},
+  {"q":"get forecast data for planning","t":"/slash"},
+  {"q":"what is a monad?","t":"/ask"}],
 "output":"bare tool name only (/web, /social, etc.)",
 "rules":{
-  "match":["specific tool first","/ask only if no tool fits","/web search for anything time-sensitive (dates, scores, events, current info)",
+  "match":["specific tool first","/ask ONLY as last resort when no tool fits",
+    "/web for ANYTHING time-sensitive or requiring current/live data (weather, dates, scores, events, prices, news)",
+    "/slash to CREATE custom tool when no built-in command exists (e.g. /slash create weather ...)",
     "/social for Discord/Telegram/X","/email for actual email",
-    "/sandbox NEVER for slash commands"],
+    "/sandbox NEVER for slash commands",
+    "NEVER output a command not in this list — if unsure, use /web or /slash"],
   "format":{"no_fences":true,"no_quotes":true,"no_backticks":true},
   "forbidden":["SUCCESS","DONE"]}}
 ROUTER_JSON
@@ -2088,10 +2100,12 @@ agent_inner_loop() {
 
         # ── TOOL VALIDATION: Reject hallucinated commands ─────
         # If the router outputs a tool name that doesn't exist in the
-        # command registry or commands directory, fall back to /ask.
+        # command registry or commands directory, fall back to re-routing
+        # with the full command catalog injected.
         # This prevents the inner loop from wasting escalation rounds
         # on imaginary commands like "/execute" or "/research".
         local _tool_valid=0
+        local _hallucination_fallback=0
         if [ "$selected_tool" = "bash" ]; then
             _tool_valid=1
         elif declare -p CMD_REGISTRY &>/dev/null && [[ -n "${CMD_REGISTRY[$selected_tool]+x}" ]]; then
@@ -2100,7 +2114,8 @@ agent_inner_loop() {
             _tool_valid=1
         fi
         if [ "$_tool_valid" -eq 0 ]; then
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router hallucinated '/$selected_tool' — falling back to /ask"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router hallucinated '/$selected_tool' — injecting full catalog for re-route"
+            _hallucination_fallback=1
             selected_tool="ask"
         fi
 
@@ -2144,6 +2159,26 @@ agent_inner_loop() {
 
         local specialist_sys=$(_build_specialist_prompt "$selected_tool" "$workdir" "$micro_objective")
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist prompt <- syntax card for $selected_tool"
+
+        # ── HALLUCINATION RECOVERY: Inject full command catalog ──
+        # When the router hallucinated a command, the specialist needs
+        # visibility into ALL available commands to pick a real one.
+        # Inject the full command catalog so the model can route itself
+        # to an appropriate tool instead of re-hallucinating the same
+        # non-existent command. This replaces the narrow /ask card with
+        # the complete toolbox view.
+        if [ "$_hallucination_fallback" -eq 1 ] && declare -f commands_catalog &>/dev/null; then
+            local _recovery_catalog
+            _recovery_catalog=$(commands_catalog 2>/dev/null)
+            specialist_sys="${specialist_sys}
+
+IMPORTANT: The previously attempted command does not exist. Choose from ONLY the commands listed below.
+AVAILABLE COMMANDS:
+${_recovery_catalog}
+
+Pick the BEST command from this list for the task. Output exactly ONE command with arguments."
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist <- full command catalog (hallucination recovery)"
+        fi
 
         # Inject cached micro_memory (action log) so the specialist sees
         # prior outputs, created files, and error history. Without this,
@@ -2237,12 +2272,18 @@ agent_inner_loop() {
             if [ -n "$cmd" ]; then
                 cmd_is_slash=1
             else
-                # Fallback: LLM may have wrapped it in a bash block anyway
-                cmd=$(echo "$_clean_plan" | awk '/```bash/{flag=1; next} /```/{flag=0} flag')
+                # Fallback: LLM may have wrapped it in a bash block anyway.
+                # Use original action_plan — _clean_plan strips the fence
+                # markers that the awk parser needs to find the block.
+                cmd=$(echo "$action_plan" | awk '/```bash/{flag=1; next} /```/{flag=0} flag')
             fi
         else
-            # awk: /```bash/ sets flag, /```/ clears flag, flag prints lines between.
-            cmd=$(echo "$_clean_plan" | awk '/```bash/{flag=1; next} /```/{flag=0} flag')
+            # IMPORTANT: Use the ORIGINAL action_plan (not _clean_plan) for
+            # bash extraction. _clean_plan strips code fence lines, but the
+            # bash awk parser NEEDS the ```bash markers to locate the code
+            # block. Using _clean_plan here causes "No command extracted"
+            # when the specialist correctly outputs a ```bash block.
+            cmd=$(echo "$action_plan" | awk '/```bash/{flag=1; next} /```/{flag=0} flag')
         fi
 
         # ── MULTI-COMMAND SPLITTER ────────────────────────────
@@ -2355,6 +2396,39 @@ agent_inner_loop() {
             _micro_add_note "$micro_file" "System interlock: Command '$cmd' rejected (identical to previous failure)"
             inner_attempts=$((inner_attempts + 1))
             continue
+        fi
+
+        # ── SPECIALIST OUTPUT VALIDATION ───────────────────────
+        # The specialist may hallucinate commands that don't exist
+        # (e.g. "/weather" when the router fell back to /ask but
+        # the specialist ignored the /ask card). Validate the
+        # extracted slash command BEFORE dispatching to prevent
+        # burning escalation levels on commands that will always
+        # return exit 127. On rejection, log the hallucination and
+        # inject the full command catalog into micro_memory so the
+        # next iteration's specialist has visibility into real tools.
+        if [ "$cmd_is_slash" -eq 1 ] && [ -n "$cmd" ]; then
+            local _spec_cmd_name
+            _spec_cmd_name=$(echo "$cmd" | awk '{print $1}' | sed 's|^/||')
+            local _spec_cmd_valid=0
+            if declare -p CMD_REGISTRY &>/dev/null && [[ -n "${CMD_REGISTRY[$_spec_cmd_name]+x}" ]]; then
+                _spec_cmd_valid=1
+            elif [ -f "${LODGE_COMMANDS_DIR:-$LODGE_DIR/commands}/${_spec_cmd_name}.sh" ]; then
+                _spec_cmd_valid=1
+            fi
+            if [ "$_spec_cmd_valid" -eq 0 ]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Specialist hallucinated '/$_spec_cmd_name' — rejecting before dispatch"
+                _micro_add_action "$micro_file" "$cmd" "FAILED" 127 \
+                    "Command /$_spec_cmd_name does not exist. Available commands: $(echo "${!CMD_REGISTRY[@]}" | tr ' ' ', ')" "system_validation"
+                # Inject catalog reminder so next iteration picks a real command
+                if declare -f commands_catalog &>/dev/null; then
+                    local _valid_cmds
+                    _valid_cmds=$(echo "${!CMD_REGISTRY[@]}" | tr ' ' '\n' | sort | sed 's/^/\//' | tr '\n' ', ')
+                    _micro_add_note "$micro_file" "SYSTEM: /$_spec_cmd_name is not a valid command. Valid commands: ${_valid_cmds%. }"
+                fi
+                inner_attempts=$((inner_attempts + 1))
+                continue
+            fi
         fi
 
         # ── EMPTY COMMAND HANDLER ──────────────────────────────
@@ -2663,15 +2737,29 @@ agent_inner_loop() {
             # programmatically execute /recall <base_command>.
             # Inject the recall stdout into micro_memory so the
             # LLM reads its own documentation BEFORE retrying.
-            if [ "$_fail_count" -le 2 ] && declare -f recall_search_context &>/dev/null; then
-                local base_cmd
-                base_cmd=$(echo "$cmd" | awk '{print $1}')
-                ui_warn "Escalation L2: Forced recall for '$base_cmd'..."
-                local recall_result
-                recall_result=$(recall_search_context "$base_cmd" 3 2>/dev/null)
-                if [ -n "$recall_result" ]; then
-                    _micro_add_note "$micro_file" "L2_recall ($base_cmd): $recall_result"
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: L2 recall for '$base_cmd' -> micro_memory"
+            # Also inject the full command catalog so the model
+            # can see ALL available commands and pick a real one
+            # instead of re-hallucinating a non-existent command.
+            if [ "$_fail_count" -le 2 ]; then
+                if declare -f recall_search_context &>/dev/null; then
+                    local base_cmd
+                    base_cmd=$(echo "$cmd" | awk '{print $1}')
+                    ui_warn "Escalation L2: Forced recall for '$base_cmd'..."
+                    local recall_result
+                    recall_result=$(recall_search_context "$base_cmd" 3 2>/dev/null)
+                    if [ -n "$recall_result" ]; then
+                        _micro_add_note "$micro_file" "L2_recall ($base_cmd): $recall_result"
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: L2 recall for '$base_cmd' -> micro_memory"
+                    fi
+                fi
+                # Inject compact command list so the model knows what
+                # tools actually exist. Prevents repeated hallucinations
+                # of non-existent commands (e.g. /weather, /research).
+                if declare -p CMD_REGISTRY &>/dev/null; then
+                    local _l2_valid_cmds
+                    _l2_valid_cmds=$(echo "${!CMD_REGISTRY[@]}" | tr ' ' '\n' | sort | sed 's/^/\//' | tr '\n' ', ')
+                    _micro_add_note "$micro_file" "L2_AVAILABLE_COMMANDS: ${_l2_valid_cmds%,}. Use ONLY these commands. If no built-in command fits, use /slash create <name> <description> to create a custom command, or /web search <query> to find information, or bash for shell commands."
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: L2 command list -> micro_memory"
                 fi
             fi
 
