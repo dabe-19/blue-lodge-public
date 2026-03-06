@@ -145,6 +145,21 @@ _cmd_plan() {
 _cmd_ask() {
     agent_ask "$1" "${2:-.}"
 }
+_cmd_respond() {
+    local text="$1"
+    if [ -z "$text" ]; then
+        ui_err "Nothing to respond with"
+        return 1
+    fi
+    # Expand LLM escape sequences (\n → newline, etc.)
+    text=$(ui_expand_escapes "$text")
+    echo ""
+    # Render with markdown-lite formatting (headers, lists, code blocks)
+    ui_render_response "$text"
+    echo ""
+    # Emit raw text to stdout so agent inner loop captures it in action log
+    echo "$text"
+}
 _cmd_think() {
     local arg="$1"
     case "$arg" in
@@ -3714,6 +3729,7 @@ _register_commands() {
     commands_register "ls"       "List workspace files as tree" "_cmd_ls"
     commands_register "files"    "List workspace files as tree (alias for /ls)" "_cmd_files"
     commands_register "read"     "Read a file" "_cmd_read"
+    commands_register "respond"  "Present response to the operator" "_cmd_respond"
 }
 
 # ── REPL ───────────────────────────────────────────────────────

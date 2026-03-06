@@ -325,7 +325,7 @@ _agent_complete_milestone() {
 # subtasks at task start. Each subtask is tracked as:
 #   1. [ ] Research HiBy M500 specifications
 #   2. [ ] Write markdown report with findings
-#   3. [ ] Email report to user@example.com
+#   3. [ ] Email report to gwbluelodge@gmail.com
 #
 # The honeydew list persists in .george/honeydew.json and is injected
 # into the pass 2 evaluator, strategist, and micro_memory so
@@ -855,7 +855,7 @@ _agent_evaluate_completion() {
  "content":{"require":["actual_content","delivery_command"],
    "reject":["placeholder","announcement_only","stub_body"],
    "email":"body must be substantive"},
- "delivery":{"need_both":"research + delivery (/write,/email,/save,/social)",
+ "delivery":{"need_both":"research + delivery (/respond,/write,/email,/save,/social)",
    "summary_!=_delivery":true,
    "check":"ACTUAL delivery commands in milestones"},
  "respond":"COMPLETE or INCOMPLETE: <what was accomplished or what remains>"}
@@ -1473,13 +1473,15 @@ _build_router_prompt() {
   "/git":"Git setup, SSH keys",
   "/backup":"Backup and restore",
   "/vitals":"System dashboard",
+  "/respond":"Present final answer/output directly to operator (no file needed)",
   "/slash":"Create/run custom commands",
   "bash":"Standard Linux shell (fallback)"},
 "route":[
   {"q":"what is a monad?","t":"/ask"},
-  {"q":"post hello to lunkers","t":"/social"},
+  {"q":"present findings to the user","t":"/respond"},
+  {"q":"post a message to discord","t":"/social"},
   {"q":"search web for rust tutorials","t":"/web"},
-  {"q":"send email to john@test.com","t":"/email"},
+  {"q":"send email to gwbluelodge@gmail.com","t":"/email"},
   {"q":"build url shortener in rust","t":"/sandbox"},
   {"q":"download https://example.com/f","t":"/download"},
   {"q":"describe this image","t":"/vision"},
@@ -1587,7 +1589,7 @@ SPEC_PREAMBLE
             social)
                 cat << 'SPEC'
 {"cmd":"/social","syntax":["/social post discord <channel> <text>","/social post telegram <text>","/social post x <text>","/social post mastodon <text>","/social discord dm <user> <text>","/social discord read <channel>"],
-"rules":["ALWAYS include channel name (lunkers, general)","@DisplayName auto-resolved to <@user_id>","Channel goes BEFORE text","No quotes on args"],
+"rules":["ALWAYS include channel name","@DisplayName auto-resolved to <@user_id>","Channel goes BEFORE text","No quotes on args"],
 "format_only_ex":["/social post discord <channel-name> <your message text>","/social discord dm <username> <your message text>"]}
 SPEC
                 ;;
@@ -1782,6 +1784,13 @@ SPEC
 "/slash create fetch-forecast Fetch 7-day weather forecast for a given city using wttr.in and return a plain-text summary",
 "/slash run fetch-forecast Appleton WI"],
 "1-SHOT WORKFLOW":["Step 1: /slash create <name> <what it should do>","Step 2: /slash run <name> [args]","If the built-in /web, /email, etc. don't do exactly what you need, create a /slash command that does."]}
+SPEC
+                ;;
+            respond)
+                cat << 'SPEC'
+{"cmd":"/respond","syntax":"/respond <text>",
+"notes":["Present output directly to operator — use when no file/email/post is needed","Use \\n for line breaks, supports markdown formatting","This IS a delivery command — satisfies task completion"],
+"format_only_ex":["/respond <your complete answer text>"]}
 SPEC
                 ;;
             ask)
@@ -2088,6 +2097,7 @@ agent_inner_loop() {
                     # Delivery commands checked FIRST to prevent research
                     # loop (e.g. "write a report" matching *web* before *write*).
                     case "$_obj_lower" in
+                        *respond*|*present*|*deliver*answer*)             selected_tool="respond" ;;
                         *write*|*save*|*file*|*create*|*draft*|*compose*) selected_tool="write" ;;
                         *email*|*send*mail*)                             selected_tool="email" ;;
                         *social*|*discord*|*telegram*|*post*|*tweet*)    selected_tool="social" ;;
@@ -2994,6 +3004,7 @@ MEMEOF
         local _tool_summary=""
         _tool_summary='YOUR WORKING COMMANDS:
 {"KNOWLEDGE":["/ask","/recall","/journal (read)","/journal write (write)"],
+"DELIVERY":["/respond <text> (present answer directly to operator)","/write","/save","/email","/social","/build"],
 "FILES":["/write","/save","/read","/ls","/download","/init","/clone","/build","/test","/fix","/commit","/push","/cd"],
 "WEB":["/web search","/web fetch","/web images","/web scrape-images","/github search","/vision"],
 "COMMS":["/social post discord|telegram|x|mastodon <target> <text>","/social discord dm|read","/email send <prov> <addr> subject= body=","/email inbox","/phone"],
@@ -3055,7 +3066,7 @@ MEMEOF
             _research_gate="
 
 >>> RESEARCH PHASE COMPLETE — you have done ${_research_milestone_count} consecutive research milestones. <<<
->>> Next milestone MUST use a DELIVERY command: /write, /email, /save, /social, /build. <<<
+>>> Next milestone MUST use a DELIVERY command: /respond, /write, /email, /save, /social, /build. <<<
 >>> Do NOT use /web or /recall. Deliver results using the data already gathered. <<<"
         fi
 
@@ -3078,7 +3089,7 @@ $(cat << 'STRAT_RULES_JSON'
    "only_configured":true},
  "research":{"when":"missing info (keys,URLs,packages,specs)",
    "tools":["/web search","/recall","/web fetch","/social discord read","/secret get"],
-   "max_consecutive":2,"then":"MUST use delivery command (/write,/email,/save,/social,/build)"},
+   "max_consecutive":2,"then":"MUST use delivery command (/respond,/write,/email,/save,/social,/build)"},
  "failure":{"no_repeat":true,"advance_next_part":true},
  "honeydew":{"pick":"next [ ] item","done_when":"ALL [x] → DONE"},
  "conversation":"question + /ask answered → DONE"}}

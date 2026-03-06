@@ -1144,7 +1144,7 @@ EOF
     ui_ok "Email configured: $address (ProtonMail Bridge)"
     echo ""
     ui_info "George can now send and receive email via Bridge."
-    ui_dim "  Send:  /email send protonmail to=user@proton.me s=Subject here b=Body here"
+    ui_dim "  Send:  /email send protonmail to=gwbluelodge@gmail.com s=Subject here b=Body here"
     ui_dim "  Inbox: /email inbox protonmail"
     ui_dim "  Test:  /email bridge test"
     return 0

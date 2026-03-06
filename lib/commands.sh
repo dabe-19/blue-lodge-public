@@ -333,6 +333,7 @@ commands_catalog() {
   },
   "RESEARCH & MEMORY":{
     "/ask":{"syntax":"/ask <q>","desc":"Quick answer from knowledge (no tools)"},
+    "/respond":{"syntax":"/respond <text>","desc":"Present output directly to operator (no file/email needed, satisfies delivery)"},
     "/recall":{"syntax":"/recall <q>","desc":"Search knowledge base FTS5 (DO THIS FIRST BEFORE WEB SEARCH)","ex":["/recall trout stocking schedule"]},
     "/web":{"syntax":"/web <action> <query|url>","desc":"Web search and fetch",
       "actions":{"search":"/web search <query> (returns URLs+snippets)","fetch":"/web fetch <url> (read webpage, NOT images)","images":"/web images <query> (find image URLs)","scrape-images":"/web scrape-images <url> (extract text+images as JSON)"},
@@ -352,11 +353,11 @@ commands_catalog() {
     "/social":{"syntax":"/social <action> <platform> [target] <text>","desc":"Post to Discord/Telegram/X/Mastodon/Bluesky (NOT email)",
       "actions":{"post":"/social post <discord|telegram|x|mastodon|bluesky> [channel] <text>","read|dm|timeline|search|sync":"/social <platform> <action> [args]"},
       "rules":["ALWAYS include channel name for Discord post","Do NOT wrap args in quotes","@DisplayName auto-resolved to <@user_id>","Channel goes BEFORE text"],
-      "ex":["/social post discord lunkers @Pompler Just landed a 5lb bass","/social discord read general","/social discord dm Pompler Hey check this out"]},
+      "ex":["/social post discord <channel> <@mention> <your message text>","/social discord read <channel>","/social discord dm <username> <your message text>"]},
     "/email":{"syntax":"/email <action> <provider> [args]","desc":"Send/check actual email (gmail/protonmail/zoho)",
       "actions":{"send":"/email send <provider> <addr> subject=<subj> body=<body>","inbox":"/email inbox <provider> [count]","status":"/email status"},
       "rules":["For social platforms use /social NOT /email"],
-      "ex":["/email send gmail user@test.com subject=Hello body=How are you?"]},
+      "ex":["/email send gmail gwbluelodge@gmail.com subject=Hello body=How are you?"]},
     "/phone":{"syntax":"/phone [dashboard|location|sms|calls|wifi]","desc":"Phone dashboard, SMS, calls"}
   },
   "SECURITY & CONFIG":{
