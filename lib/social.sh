@@ -667,6 +667,42 @@ discord_channel_list() {
         done
 }
 
+# ── Compact social context for LLM injection ─────────────────
+# Returns a terse summary of registered Discord channels and
+# Mastodon instances for injection into strategist/specialist
+# prompts. Silent — no UI output, returns empty string when
+# nothing is configured.
+social_context_compact() {
+    local _out=""
+
+    # Discord channels
+    if [ -n "${DISCORD_CHANNELS_DB:-}" ] && [ -f "$DISCORD_CHANNELS_DB" ] && command -v sqlite3 &>/dev/null; then
+        local _ch_count
+        _ch_count=$(sqlite3 "$DISCORD_CHANNELS_DB" "SELECT COUNT(*) FROM channels;" 2>/dev/null || echo 0)
+        if [ "${_ch_count:-0}" -gt 0 ]; then
+            local _ch_list
+            _ch_list=$(sqlite3 "$DISCORD_CHANNELS_DB" \
+                "SELECT name || ' (' || COALESCE(NULLIF(guild_name,''), '?') || ')' FROM channels ORDER BY guild_name, name;" 2>/dev/null)
+            _out="Discord channels: ${_ch_list//$'\n'/, }"
+        fi
+    fi
+
+    # Mastodon instances
+    if [ -n "${MASTODON_INSTANCES_DB:-}" ] && [ -f "$MASTODON_INSTANCES_DB" ] && command -v sqlite3 &>/dev/null; then
+        local _mi_count
+        _mi_count=$(sqlite3 "$MASTODON_INSTANCES_DB" "SELECT COUNT(*) FROM instances;" 2>/dev/null || echo 0)
+        if [ "${_mi_count:-0}" -gt 0 ]; then
+            local _mi_list
+            _mi_list=$(sqlite3 "$MASTODON_INSTANCES_DB" \
+                "SELECT COALESCE(NULLIF(display_name,''), instance_url) FROM instances ORDER BY instance_url;" 2>/dev/null)
+            [ -n "$_out" ] && _out="${_out}\n"
+            _out="${_out}Mastodon instances: ${_mi_list//$'\n'/, }"
+        fi
+    fi
+
+    echo -e "$_out"
+}
+
 # Sync channels from all connected guilds via the Discord API
 discord_channels_sync() {
     local token

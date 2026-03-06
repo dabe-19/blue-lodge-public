@@ -737,4 +737,54 @@ describe "LLM escape expansion in social output"
     _teardown_social
   }
 
+# ── social_context_compact ────────────────────────────────────
+describe "social_context_compact"
+
+  it "social_context_compact is defined" && {
+    declare -f social_context_compact &>/dev/null
+    assert_ok $?
+  }
+
+  it "social_context_compact returns empty when no DB exists" && {
+    _setup_social
+    _saved_db="${DISCORD_CHANNELS_DB:-}"
+    DISCORD_CHANNELS_DB="/tmp/nonexistent_$$.db"
+    _saved_mdb="${MASTODON_INSTANCES_DB:-}"
+    MASTODON_INSTANCES_DB="/tmp/nonexistent_m_$$.db"
+    out=$(social_context_compact 2>/dev/null)
+    assert_eq "$out" "" "Should return empty when no DBs exist"
+    DISCORD_CHANNELS_DB="$_saved_db"
+    MASTODON_INSTANCES_DB="$_saved_mdb"
+    _teardown_social
+  }
+
+  it "social_context_compact lists Discord channels from DB" && {
+    _setup_social
+    _test_db="/tmp/test_channels_$$.db"
+    DISCORD_CHANNELS_DB="$_test_db"
+    sqlite3 "$_test_db" "CREATE TABLE IF NOT EXISTS channels (name TEXT NOT NULL COLLATE NOCASE, channel_id TEXT NOT NULL UNIQUE, guild_name TEXT DEFAULT '', guild_id TEXT DEFAULT '', type TEXT DEFAULT 'text', created_at TEXT NOT NULL DEFAULT (datetime('now')));"
+    sqlite3 "$_test_db" "INSERT INTO channels(name, channel_id, guild_name) VALUES ('general', '111', 'Logic');"
+    sqlite3 "$_test_db" "INSERT INTO channels(name, channel_id, guild_name) VALUES ('lunkers', '222', 'Logic');"
+    out=$(social_context_compact 2>/dev/null)
+    assert_contains "$out" "Discord channels:"
+    assert_contains "$out" "general (Logic)"
+    assert_contains "$out" "lunkers (Logic)"
+    rm -f "$_test_db"
+    _teardown_social
+  }
+
+  it "social_context_compact does not produce UI output" && {
+    _setup_social
+    _test_db="/tmp/test_channels_quiet_$$.db"
+    DISCORD_CHANNELS_DB="$_test_db"
+    sqlite3 "$_test_db" "CREATE TABLE IF NOT EXISTS channels (name TEXT NOT NULL COLLATE NOCASE, channel_id TEXT NOT NULL UNIQUE, guild_name TEXT DEFAULT '', guild_id TEXT DEFAULT '', type TEXT DEFAULT 'text', created_at TEXT NOT NULL DEFAULT (datetime('now')));"
+    sqlite3 "$_test_db" "INSERT INTO channels(name, channel_id, guild_name) VALUES ('test', '333', 'TestGuild');"
+    out=$(social_context_compact 2>&1)
+    # Should NOT contain UI formatting (colors, icons, sections)
+    echo "$out" | grep -qvE '●|▸|Channels|section' 2>/dev/null
+    assert_ok $?
+    rm -f "$_test_db"
+    _teardown_social
+  }
+
 test_end

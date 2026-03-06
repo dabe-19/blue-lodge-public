@@ -19,7 +19,9 @@ AGENT_INNER_LOOPS="${AGENT_INNER_LOOPS:-6}"    # Inner loop escalation ceiling
 AGENT_STEP_DELAY="${AGENT_STEP_DELAY:-1}"
 AGENT_MAX_CLARIFY="${AGENT_MAX_CLARIFY:-2}"
 AGENT_INTERACTIVE_PLANNING="${AGENT_INTERACTIVE_PLANNING:-0}"
-AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-2}"        # Subtask recursion depth
+AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-1}"        # Subtask recursion depth (1 = single expansion only)
+AGENT_HONEYDEW_EXPAND="${AGENT_HONEYDEW_EXPAND:-0}"  # Subtask expansion: 0=disabled, 1=enabled
+AGENT_HONEYDEW_MAX_ITEMS="${AGENT_HONEYDEW_MAX_ITEMS:-8}"  # Max honeydew items before expansion is suppressed
 AGENT_WEB_SUFFICIENCY="${AGENT_WEB_SUFFICIENCY:-3}"  # Web actions before sufficiency signal
 AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-2}"  # Max times to retry same milestone
 AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-3}"                # Max milestones with same base command
@@ -543,8 +545,8 @@ _agent_honeydew_needs_expansion() {
         return 0
     fi
 
-    # 5. Long item text (>120 chars) — usually compound goals
-    if [ ${#text} -gt 120 ]; then
+    # 5. Long item text (>200 chars) — usually compound goals
+    if [ ${#text} -gt 200 ]; then
         return 0
     fi
 
@@ -571,7 +573,7 @@ _agent_honeydew_expand() {
     [ -z "$item_text" ] && return 1
 
     # Depth guard: don't expand beyond AGENT_MAX_DEPTH
-    local max_depth="${AGENT_MAX_DEPTH:-2}"
+    local max_depth="${AGENT_MAX_DEPTH:-1}"
     if [ "$item_depth" -ge "$max_depth" ]; then
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew expand: item #$item_id at depth $item_depth >= max $max_depth — skipping"
         return 1
@@ -664,18 +666,65 @@ _agent_honeydew_maybe_expand() {
     local hd_file="$workdir/.george/$HONEYDEW_FILE"
     [ ! -f "$hd_file" ] && return 1
 
+    # ── Master toggle: expansion disabled by default ───────────
+    # On edge hardware (2-4B models) the LLM lacks the context
+    # window to detect macro-redundancy, causing fractal task
+    # explosion. Enable only when the model/hardware can handle it.
+    if [ "${AGENT_HONEYDEW_EXPAND:-0}" -ne 1 ]; then
+        return 1
+    fi
+
+    # ── Item count cap: stop expanding bloated lists ───────────
+    # Even when enabled, don't expand if the list is already large.
+    local _hd_item_count
+    _hd_item_count=$(jq '.items | length' "$hd_file" 2>/dev/null || echo 0)
+    local _max_items="${AGENT_HONEYDEW_MAX_ITEMS:-8}"
+    if [ "$_hd_item_count" -ge "$_max_items" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew expand: list already has $_hd_item_count items (max $_max_items) — suppressed"
+        return 1
+    fi
+
     # Find the next pending item
-    local next_id next_depth
+    local next_id next_depth next_task
     next_id=$(jq -r '[.items[] | select(.status == "pending")][0].id // empty' "$hd_file" 2>/dev/null)
     [ -z "$next_id" ] && return 1
 
     next_depth=$(jq -r --argjson id "$next_id" \
         '.items[] | select(.id == $id) | .depth // 0' "$hd_file" 2>/dev/null)
+    next_task=$(jq -r --argjson id "$next_id" \
+        '.items[] | select(.id == $id) | .task // empty' "$hd_file" 2>/dev/null)
 
     # Already at max depth — skip
-    local max_depth="${AGENT_MAX_DEPTH:-2}"
+    local max_depth="${AGENT_MAX_DEPTH:-1}"
     if [ "${next_depth:-0}" -ge "$max_depth" ]; then
         return 1
+    fi
+
+    # ── Redundancy guard: skip if siblings already cover this ──
+    # Extract keywords from the target item and compare against
+    # other pending items. If >=60% of the target's keywords
+    # already appear in sibling items, expansion would just
+    # produce duplicates (the fractal explosion pattern).
+    if [ -n "$next_task" ]; then
+        local _target_words _sibling_text _overlap=0 _total=0
+        _target_words=$(echo "$next_task" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alpha:]' '\n' | sort -u | grep -E '.{4,}')
+        _sibling_text=$(jq -r --argjson id "$next_id" \
+            '[.items[] | select(.status == "pending" and .id != $id) | .task] | join(" ")' \
+            "$hd_file" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+        while IFS= read -r word; do
+            [ -z "$word" ] && continue
+            _total=$((_total + 1))
+            if echo "$_sibling_text" | grep -qw "$word"; then
+                _overlap=$((_overlap + 1))
+            fi
+        done <<< "$_target_words"
+        if [ "$_total" -gt 0 ]; then
+            local _pct=$(( (_overlap * 100) / _total ))
+            if [ "$_pct" -ge 60 ]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew expand: item #$next_id has ${_pct}% keyword overlap with siblings — redundant, skipping"
+                return 1
+            fi
+        fi
     fi
 
     # Try expansion (heuristic + LLM)
@@ -946,6 +995,21 @@ EVAL_P1_JSON
         local _reason_display="${_EVAL_MILESTONE_REASON:+(${_EVAL_MILESTONE_REASON:0:80})}"
         ui_info "Milestone evaluator: not complete ${_reason_display}"
         return 1
+    fi
+
+    # ── Contradiction guard ─────────────────────────────────
+    # Small models sometimes emit "COMPLETE: the milestone was not
+    # achieved..." where the verdict word contradicts the explanation.
+    # If the reason text after the colon negates the verdict, override.
+    if [[ "$first_line" == *":"* ]]; then
+        local _complete_reason
+        _complete_reason=$(echo "$first_line" | sed 's/^[^:]*:[[:space:]]*//')
+        if echo "$_complete_reason" | grep -qiE 'not (achieved|accomplished|completed|done|successful|satisfied)|fail(ed|ure)?|unable|could not|cannot|did not|wasn.t|weren.t|isn.t|does not exist|incomplete'; then
+            _EVAL_MILESTONE_REASON="$_complete_reason"
+            local _reason_display="${_EVAL_MILESTONE_REASON:+(${_EVAL_MILESTONE_REASON:0:80})}"
+            ui_warn "Milestone evaluator: overrode contradictory COMPLETE ${_reason_display}"
+            return 1
+        fi
     fi
 
     ui_ok "Milestone evaluator: milestone achieved"
@@ -2085,6 +2149,19 @@ SPEC
                 echo "SERVICES STATUS:"
                 echo "$_svc_status_spec"
                 echo "ONLY use services listed as CONFIGURED. Do NOT attempt unconfigured services."
+            fi
+        fi
+
+        # ── Inject registered channels/instances into specialist ─
+        # When the command is social, inject the actual channel names
+        # so the specialist uses correct names, not placeholders.
+        if [[ "$base_cmd" == "social" ]] && declare -f social_context_compact &>/dev/null; then
+            local _social_ctx_spec
+            _social_ctx_spec=$(social_context_compact 2>/dev/null)
+            if [ -n "$_social_ctx_spec" ]; then
+                echo ""
+                echo "REGISTERED SOCIAL CHANNELS (use these exact names):"
+                echo "$_social_ctx_spec"
             fi
         fi
 
@@ -3449,6 +3526,15 @@ MEMEOF
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_svc_status" ] && ui_dim "  [debug] inject: strategist <- services status"
         fi
 
+        # Social context: registered Discord channels and Mastodon
+        # instances so the strategist can generate correct names
+        # and potentially bypass the router on social commands.
+        local _social_ctx=""
+        if declare -f social_context_compact &>/dev/null; then
+            _social_ctx=$(social_context_compact 2>/dev/null)
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_social_ctx" ] && ui_dim "  [debug] inject: strategist <- social context"
+        fi
+
         # ── Inject milestone history into strategist prompt ─────
         # Prevents the strategist from regenerating failed milestones.
         local _milestone_history=""
@@ -3505,6 +3591,9 @@ MEMEOF
 ${_tool_summary}
 
 SERVICES STATUS: ${_svc_status:-unknown}
+${_social_ctx:+
+REGISTERED SOCIAL CHANNELS (use these exact names):
+${_social_ctx}}
 
 $(cat << 'STRAT_RULES_JSON'
 {"rules":{

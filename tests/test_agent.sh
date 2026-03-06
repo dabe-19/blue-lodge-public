@@ -620,8 +620,8 @@ describe "Router heuristics"
 # ── Recursive planning config ─────────────────────────────────
 describe "Recursive planning config"
 
-  it "AGENT_MAX_DEPTH defaults to 2" && {
-    assert_eq "$AGENT_MAX_DEPTH" "2"
+  it "AGENT_MAX_DEPTH defaults to 1" && {
+    assert_eq "$AGENT_MAX_DEPTH" "1"
   }
 
   it "AGENT_MAX_DEPTH is overridable" && {
@@ -1983,10 +1983,10 @@ describe "Honeydew subtask decomposition"
     assert_ok $? "comma-separated list with 'and' should trigger expansion"
   }
 
-  it "needs_expansion detects long item text (>120 chars)" && {
-    _long="Research the complete specifications including pricing weight dimensions battery and display for HiBy M500 digital audio player from multiple sources"
+  it "needs_expansion detects long item text (>200 chars)" && {
+    _long="Research the complete specifications including pricing weight dimensions battery life display technology sound quality codec support Bluetooth version storage capacity RAM operating system firmware and build quality for HiBy M500 digital audio player from multiple reputable online sources and expert review"
     _agent_honeydew_needs_expansion "$_long"
-    assert_ok $? "Item >120 chars should trigger expansion"
+    assert_ok $? "Item >200 chars should trigger expansion"
   }
 
   it "needs_expansion rejects simple items" && {
@@ -2099,6 +2099,84 @@ describe "Honeydew subtask decomposition"
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'honeydew expansion\|_hd_expanded'
     assert_ok $? "Macro loop must refresh macro_memory after expansion"
+  }
+
+# ── Honeydew expansion interlocks ─────────────────────────────
+describe "Honeydew expansion interlocks"
+
+  it "AGENT_HONEYDEW_EXPAND defaults to 0 (disabled)" && {
+    # Read from source to check the default, not the runtime value
+    grep -q 'AGENT_HONEYDEW_EXPAND.*:-0' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "AGENT_HONEYDEW_EXPAND must default to 0"
+  }
+
+  it "maybe_expand returns 1 when expansion is disabled" && {
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Compare product A and product B specs and pricing","status":"pending","depth":0}]}' > "$_tmpdir/.george/honeydew.json"
+    AGENT_HONEYDEW_EXPAND=0
+    _agent_honeydew_maybe_expand "$_tmpdir"
+    _result=$?
+    assert_eq "$_result" "1" "Expansion disabled should return 1"
+    _total=$(jq '.items | length' "$_tmpdir/.george/honeydew.json")
+    assert_eq "$_total" "1" "List should be unchanged when expansion disabled"
+    rm -rf "$_tmpdir"
+  }
+
+  it "maybe_expand has master toggle guard" && {
+    body=$(declare -f _agent_honeydew_maybe_expand)
+    echo "$body" | grep -q 'AGENT_HONEYDEW_EXPAND'
+    assert_ok $? "maybe_expand must check AGENT_HONEYDEW_EXPAND"
+  }
+
+  it "maybe_expand has item count cap" && {
+    body=$(declare -f _agent_honeydew_maybe_expand)
+    echo "$body" | grep -q 'AGENT_HONEYDEW_MAX_ITEMS'
+    assert_ok $? "maybe_expand must check AGENT_HONEYDEW_MAX_ITEMS"
+  }
+
+  it "maybe_expand suppresses expansion when list is at max items" && {
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    # Create a list with 8 items (at default max)
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Compare stuff A and stuff B features and pricing","status":"pending","depth":0},
+      {"id":2,"task":"Item two","status":"pending","depth":0},
+      {"id":3,"task":"Item three","status":"pending","depth":0},
+      {"id":4,"task":"Item four","status":"pending","depth":0},
+      {"id":5,"task":"Item five","status":"pending","depth":0},
+      {"id":6,"task":"Item six","status":"pending","depth":0},
+      {"id":7,"task":"Item seven","status":"pending","depth":0},
+      {"id":8,"task":"Item eight","status":"pending","depth":0}]}' > "$_tmpdir/.george/honeydew.json"
+    AGENT_HONEYDEW_EXPAND=1
+    AGENT_HONEYDEW_MAX_ITEMS=8
+    _agent_honeydew_maybe_expand "$_tmpdir"
+    _result=$?
+    assert_eq "$_result" "1" "Should refuse to expand when at item cap"
+    _total=$(jq '.items | length' "$_tmpdir/.george/honeydew.json")
+    assert_eq "$_total" "8" "List should be unchanged"
+    AGENT_HONEYDEW_EXPAND=0
+    rm -rf "$_tmpdir"
+  }
+
+  it "maybe_expand has redundancy guard" && {
+    body=$(declare -f _agent_honeydew_maybe_expand)
+    echo "$body" | grep -q 'keyword overlap\|redundant'
+    assert_ok $? "maybe_expand must have redundancy detection"
+  }
+
+  it "AGENT_MAX_DEPTH defaults to 1 (single expansion)" && {
+    grep -q 'AGENT_MAX_DEPTH.*:-1' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "AGENT_MAX_DEPTH must default to 1"
+  }
+
+  it "needs_expansion length threshold is 200 chars" && {
+    # 150 chars should NOT trigger
+    _medium=$(printf 'x%.0s' $(seq 1 150))
+    _agent_honeydew_needs_expansion "$_medium"
+    _result=$?
+    assert_eq "$_result" "1" "150-char item should NOT trigger expansion"
   }
 
 # ── L1 scrape-images fallback ────────────────────────────────
@@ -2403,6 +2481,69 @@ describe "Sandbox interlock delivery-first ordering"
     _web_line=$(grep -n '\*search\*|\*web\*|\*fetch\*' "$LODGE_DIR/lib/agent.sh" | head -1 | cut -d: -f1)
     [ -n "$_write_line" ] && [ -n "$_web_line" ] && [ "$_write_line" -lt "$_web_line" ]
     assert_ok $? "Delivery commands (/write) must be checked before research (/web) in fallback"
+  }
+
+# ── Evaluator contradiction guard ────────────────────────────
+describe "Evaluator contradiction guard"
+
+  it "milestone evaluator has contradiction guard" && {
+    grep -q 'Contradiction guard' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $?
+  }
+
+  it "contradiction guard catches 'not achieved'" && {
+    body=$(declare -f _agent_evaluate_milestone)
+    echo "$body" | grep -q 'not (achieved'
+    assert_ok $?
+  }
+
+  it "contradiction guard catches 'failed'" && {
+    body=$(declare -f _agent_evaluate_milestone)
+    echo "$body" | grep -q 'fail(ed'
+    assert_ok $?
+  }
+
+  it "contradiction guard catches 'does not exist'" && {
+    body=$(declare -f _agent_evaluate_milestone)
+    echo "$body" | grep -q 'does not exist'
+    assert_ok $?
+  }
+
+  it "contradiction guard catches 'incomplete'" && {
+    body=$(declare -f _agent_evaluate_milestone)
+    echo "$body" | grep -q 'incomplete'
+    assert_ok $?
+  }
+
+  it "contradiction guard returns 1 on override" && {
+    body=$(declare -f _agent_evaluate_milestone)
+    echo "$body" | grep -q 'overrode contradictory COMPLETE'
+    assert_ok $?
+    echo "$body" | grep -A1 'overrode contradictory' | grep -q 'return 1'
+    assert_ok $?
+  }
+
+# ── Social context injection into strategist ──────────────────
+describe "Social context injection into strategist"
+
+  it "strategist prompt fetches social context" && {
+    body=$(declare -f _agent_strategist_prompt 2>/dev/null || declare -f agent_run)
+    echo "$body" | grep -q 'social_context_compact'
+    assert_ok $?
+  }
+
+  it "strategist prompt injects REGISTERED SOCIAL CHANNELS" && {
+    body=$(declare -f _agent_strategist_prompt 2>/dev/null || declare -f agent_run)
+    echo "$body" | grep -q 'REGISTERED SOCIAL CHANNELS'
+    assert_ok $?
+  }
+
+  it "specialist injects social context for /social commands" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'social_context_compact'
+    assert_ok $?
+    echo "$body" | grep -q 'social'
+    assert_ok $?
   }
 
 test_end
