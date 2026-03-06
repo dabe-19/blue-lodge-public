@@ -187,9 +187,9 @@ _memory_soul_identity() {
 
 _memory_soul_condensed() {
     # ~200 token digest: personality + behavioral rules + key landmarks.
-    # Identity is now injected separately by models_thinking_directive()
-    # (or baked into the Modelfile SYSTEM). This avoids double-injection
-    # that was confusing the 4B model with two conflicting identity blocks.
+    # Identity ("You ARE George") is injected by memory_build_system_prompt
+    # from the model's .system file. This condensed soul covers personality
+    # and rules only — no identity declaration needed here.
     # Budget: ~200 tokens. Lean enough for /ask and plan modes.
     cat << 'CONDENSED_SOUL'
 # PERSONALITY
@@ -221,6 +221,23 @@ memory_build_system_prompt() {
     now=$(date '+%A, %B %d, %Y %H:%M %Z')
     local prompt="[Current time: $now]
 "
+
+    # ── Model identity: ~40 tokens, always injected ──────────────
+    # The .system file (e.g. models/qwen35-2b-think.system) declares
+    # "You ARE George" and prevents the model from reverting to its
+    # base training identity ("I am Qwen", "I am an AI assistant").
+    # Previously, identity was only injected by the llamacpp fallback
+    # in llm.sh when $system was empty — but ask/plan modes always
+    # pass a non-empty system prompt, so the identity was lost.
+    # Inject unconditionally at the top (primacy position).
+    if declare -f models_default_system &>/dev/null; then
+        local _identity
+        _identity=$(models_default_system 2>/dev/null)
+        if [ -n "$_identity" ]; then
+            prompt="${prompt}${_identity}
+"
+        fi
+    fi
 
     # ── System vitals: ~30-50 tokens, always injected ────────────
     if declare -f vitals_context &>/dev/null; then
