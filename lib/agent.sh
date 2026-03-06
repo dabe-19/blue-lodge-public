@@ -1644,7 +1644,7 @@ SPEC
 "search_tips":["3-5 keywords MAX — Google FAILS with long queries","Drop filler: the/a/for/including/regarding/comprehensive","NEVER paste entire milestone as search query","Extract keywords from TASK context only"],
 "FLOW CHAINS":["Research: /web search -> /web fetch -> summarize","Images: /web search -> pick image URL -> /vision","Report: /web search -> /web fetch -> /write report"],
 "notes":["Do NOT fetch every URL. 1 search + 1-2 fetches enough","If scrape-images returns empty content, use /web fetch for same URL instead"],
-"format_only_ex":["/web search <keyword1> <keyword2> <keyword3>","/web fetch <url>"]}
+"ex":["/web search Appleton WI weather forecast","/web fetch https://weather.gov/forecast/WI","/web scrape-images https://en.wikipedia.org/wiki/Appleton,_Wisconsin","/web images northern lights photo"]}
 SPEC
                 ;;
             download)
@@ -1771,7 +1771,7 @@ SPEC
                 cat << 'SPEC'
 {"cmd":"/vision","syntax":"/vision <image_path_or_url> [prompt]",
 "notes":["Supports jpg/png/gif/webp/bmp","Accepts image URLs directly (no /download needed)","Requires vision model: /models single minist-inst"],
-"format_only_ex":["/vision <image-url-or-path> <description prompt>"]}
+"ex":["/vision https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.jpg describe this insect in detail","/vision ./screenshots/error.png what error is shown in this screenshot"]}
 SPEC
                 ;;
             container)
