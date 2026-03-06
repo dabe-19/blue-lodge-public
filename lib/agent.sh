@@ -1562,7 +1562,8 @@ _build_specialist_prompt() {
         # examples in the "ex" field dominate the model's attention.
         if [ -n "$micro_objective" ]; then
             echo "TASK: $micro_objective"
-            echo "Generate a command that serves THIS task. Ignore example values."
+            echo "Generate the command WITH REAL ARGUMENTS derived from the TASK above."
+            echo "Replace every <placeholder> in the syntax with actual values from the TASK. NEVER output bare commands without arguments."
             echo ""
         fi
         cat << 'SPEC_PREAMBLE'
@@ -1969,22 +1970,45 @@ agent_inner_loop() {
         # + disk read per inner loop iteration).
         local inner_context=$(_micro_serialize "$micro_file")
 
+        # ── PRE-ROUTE: Extract explicit slash command from milestone ──
+        # When the strategist milestone already names a specific command
+        # (e.g. "Use /respond to present findings"), skip the LLM router
+        # entirely — saves one LLM call and prevents the 2B router from
+        # misrouting explicit instructions.
+        # Regex anchors to space or start-of-string to avoid matching
+        # URL path segments (e.g. https://example.com/api → "api").
+        local _pre_route=""
+        if [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
+            local _pre_cmd="${BASH_REMATCH[2]}"
+            # Validate it's a real command before trusting the extraction
+            local _pre_valid=0
+            if [ "$_pre_cmd" = "bash" ]; then
+                _pre_valid=1
+            elif declare -p CMD_REGISTRY &>/dev/null && [[ -n "${CMD_REGISTRY[$_pre_cmd]+x}" ]]; then
+                _pre_valid=1
+            elif [ -f "${LODGE_COMMANDS_DIR:-$LODGE_DIR/commands}/${_pre_cmd}.sh" ]; then
+                _pre_valid=1
+            fi
+            if [ "$_pre_valid" -eq 1 ]; then
+                _pre_route="$_pre_cmd"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-routed from milestone: /$_pre_route (skipping LLM router)"
+                declare -f transcript_log &>/dev/null && transcript_log "router" "/$_pre_route (pre-routed)"
+            fi
+        fi
+
         # ── PHASE 1: Fast Tool Routing ────────────────────────
+        local selected_tool
+        if [ -n "$_pre_route" ]; then
+            selected_tool="$_pre_route"
+        else
         local router_sys=$(_build_router_prompt)
         local _route_now
         _route_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
-        # Lean context for router: only objective + action summaries.
-        # The router picks a tool name — it doesn't need full outputs,
-        # prior milestones, or research context. Using the lean
-        # projection keeps router input under ~200 tokens.
         local _router_context
         _router_context=$(_micro_serialize_lean "$micro_file")
         local route_prompt="Current date/time: ${_route_now}\nRoute the next action.\n"
         route_prompt="${route_prompt}\n$_router_context"
 
-        # llm_generate is used here for maximum speed — no streaming,
-        # no personality, just returns the raw string.
-        local selected_tool
         local LLM_SCENARIO=router
         selected_tool=$(llm_generate "$route_prompt" "$router_sys" "${LLM_ROUTER_TOKENS:-50}" "$LLM_BUDGET_ROUTER")
 
@@ -2015,6 +2039,8 @@ agent_inner_loop() {
             selected_tool="/ask"
         fi
 
+        fi  # end pre-route / LLM router branch
+
         # ── WEB SUFFICIENCY ENFORCEMENT ───────────────────────
         # The sufficiency gate (in the action success block below)
         # sets sufficiency_reached after N successful web actions.
@@ -2022,6 +2048,7 @@ agent_inner_loop() {
         # evaluator one final time. This prevents N *irrelevant*
         # web searches (e.g. model parroting an example query) from
         # being stamped as complete when the objective is unmet.
+        # Runs for both pre-routed and LLM-routed paths.
         if _micro_sufficiency_reached "$micro_file"; then
             if _agent_evaluate_milestone "$macro_file" "$micro_file" "$micro_objective"; then
                 local _suff_summary="Web research data gathered"
@@ -2122,12 +2149,12 @@ agent_inner_loop() {
         # prior outputs, created files, and error history. Without this,
         # multi-step objectives fail because the specialist can't adapt.
         # Uses inner_context cached above (same iteration, no mutations yet).
-        local _spec_tail="Write the exact command to execute next."
+        local _spec_tail="Write the COMPLETE command with all required arguments filled in from the MICRO OBJECTIVE. NEVER output a bare command name without arguments."
         # /web search gets a focused constraint — the model ignores
         # search_tips buried in the JSON card, so put it at the end
         # where recency bias makes it impossible to miss.
         if [[ "${selected_tool#/}" == "web" ]]; then
-            _spec_tail="Output ONLY the /web command. For /web search: extract 3-5 keywords FROM THE MICRO OBJECTIVE above. Drop filler words (the, a, for, in, to, and, or, about, including, regarding, comprehensive, professional, community, organizations, associations). DO NOT copy examples — derive keywords from the objective."
+            _spec_tail="Output ONLY the /web command WITH ARGUMENTS. For /web search: extract 3-5 keywords FROM THE MICRO OBJECTIVE above. Drop filler words (the, a, for, in, to, and, or, about, including, regarding, comprehensive, professional, community, organizations, associations). DO NOT copy examples — derive keywords from the objective. NEVER output just '/web search' without keywords."
         fi
         local specialist_prompt="MICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\n${_spec_tail}"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist <- micro_memory action log ($(echo "$inner_context" | wc -l) lines)"
