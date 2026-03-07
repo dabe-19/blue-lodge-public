@@ -673,6 +673,29 @@ _cmd_limits() {
                     ui_err "Expand must be 'on' or 'off' (or 1/0, enable/disable)"
                 fi
             fi ;;
+        rewrite)
+            if [ -z "$value" ]; then
+                local _rewrite_label="disabled"
+                [ "${AGENT_HONEYDEW_REWRITE:-0}" -eq 1 ] && _rewrite_label="enabled"
+                ui_info "Honeydew rewrite: $_rewrite_label (default: disabled)"
+                ui_info "Rewrite rounds: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-2} (default: 2)"
+            else
+                if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
+                    AGENT_HONEYDEW_REWRITE=1
+                    ui_ok "Honeydew rewrite enabled"
+                elif [[ "$value" == "off" || "$value" == "0" || "$value" == "disable" || "$value" == "disabled" ]]; then
+                    AGENT_HONEYDEW_REWRITE=0
+                    ui_ok "Honeydew rewrite disabled"
+                else
+                    ui_err "Rewrite must be 'on' or 'off' (or 1/0, enable/disable)"
+                fi
+            fi ;;
+        rewrite-rounds)
+            if [ -z "$value" ]; then
+                ui_info "Honeydew rewrite rounds: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-2} (default: 2)"
+            else
+                _limits_set AGENT_HONEYDEW_REWRITE_ROUNDS "Rewrite rounds" "$value" 1 10
+            fi ;;
         max-items)
             if [ -z "$value" ]; then
                 ui_info "Honeydew max items: $AGENT_HONEYDEW_MAX_ITEMS (default: 8)"
@@ -828,6 +851,8 @@ _cmd_limits() {
             AGENT_MAX_STEPS=20
             AGENT_MAX_DEPTH=1
             AGENT_HONEYDEW_EXPAND=0
+            AGENT_HONEYDEW_REWRITE=0
+            AGENT_HONEYDEW_REWRITE_ROUNDS=2
             AGENT_HONEYDEW_MAX_ITEMS=8
             AGENT_STEP_DELAY=1
             AGENT_EVAL_MODE=auto
@@ -857,6 +882,10 @@ _cmd_limits() {
             local _expand_show="disabled"
             [ "${AGENT_HONEYDEW_EXPAND:-0}" -eq 1 ] && _expand_show="enabled"
             printf "  %-22s %s\n" "Honeydew expansion:" "$_expand_show  (default: disabled)"
+            local _rewrite_show="disabled"
+            [ "${AGENT_HONEYDEW_REWRITE:-0}" -eq 1 ] && _rewrite_show="enabled"
+            printf "  %-22s %s\n" "Honeydew rewrite:" "$_rewrite_show  (default: disabled)"
+            printf "  %-22s %s\n" "Rewrite rounds:" "${AGENT_HONEYDEW_REWRITE_ROUNDS:-2}  (default: 2)"
             printf "  %-22s %s\n" "Subtask depth:" "$AGENT_MAX_DEPTH  (default: 1)"
             printf "  %-22s %s\n" "Honeydew max items:" "$AGENT_HONEYDEW_MAX_ITEMS  (default: 8)"
             printf "  %-22s %s\n" "Macro milestones:" "$AGENT_MAX_STEPS  (default: 20)"
@@ -895,6 +924,8 @@ _cmd_limits() {
             ui_dim "  Agent loop:"
             ui_dim "    steps N         — Max steps per plan/subtask (current: $AGENT_PLAN_STEPS)"
             ui_dim "    expand on|off   — Honeydew subtask expansion (current: $([ "${AGENT_HONEYDEW_EXPAND:-0}" -eq 1 ] && echo on || echo off))"
+            ui_dim "    rewrite on|off  — Dynamic honeydew rewrite after milestones (current: $([ "${AGENT_HONEYDEW_REWRITE:-0}" -eq 1 ] && echo on || echo off))"
+            ui_dim "    rewrite-rounds N — Max honeydew rewrite rounds per task (current: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-2})"
             ui_dim "    depth N         — Subtask recursion depth (current: $AGENT_MAX_DEPTH)"
             ui_dim "    max-items N     — Max honeydew items before expansion suppressed (current: $AGENT_HONEYDEW_MAX_ITEMS)"
             ui_dim "    milestones N    — Macro loop milestone ceiling (current: $AGENT_MAX_STEPS)"

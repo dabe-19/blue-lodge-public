@@ -43,9 +43,19 @@ cmd_download() {
     # SECURITY: Never allow writes outside the workdir tree.
     local fullpath
     if [[ "$dest" == /* ]]; then
-        dest="${dest#/}"
+        # Absolute path: use directly if already under workdir,
+        # otherwise strip leading slash to sandbox it under workdir.
+        local _real_workdir
+        _real_workdir=$(cd "$workdir" 2>/dev/null && pwd -P)
+        if [[ "$dest" == "$_real_workdir"/* ]] || [[ "$dest" == "$workdir"/* ]]; then
+            fullpath="$dest"
+        else
+            dest="${dest#/}"
+            fullpath="$workdir/$dest"
+        fi
+    else
+        fullpath="$workdir/$dest"
     fi
-    fullpath="$workdir/$dest"
 
     # Create parent directories
     if ! mkdir -p "$(dirname "$fullpath")" 2>/dev/null; then

@@ -160,7 +160,11 @@ assert_match() {
 assert_ok() {
     local exit_code="$1"
     local msg="${2:-Expected exit code 0, got $exit_code}"
-    if [ "$exit_code" -eq 0 ]; then
+    # Treat SIGPIPE (141) as success — happens when `echo "$body" | grep -q`
+    # finds a match and closes the pipe while echo is still writing.
+    # With pipefail enabled, the pipe exit code becomes 141 instead of 0.
+    # This is normal grep behavior, not a test failure.
+    if [ "$exit_code" -eq 0 ] || [ "$exit_code" -eq 141 ]; then
         _test_pass
     else
         _test_fail "$msg"

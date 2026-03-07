@@ -284,6 +284,9 @@ The `/limits` command provides runtime control over George's planning and execut
 |-------|----------|---------|------------------|
 | `steps` | `AGENT_PLAN_STEPS` | 5 | Max steps per plan/subtask |
 | `depth` | `AGENT_MAX_DEPTH` | 2 | Subtask recursion ceiling |
+| `expand` | `AGENT_HONEYDEW_EXPAND` | off | Honeydew subtask expansion toggle |
+| `rewrite` | `AGENT_HONEYDEW_REWRITE` | off | Dynamic honeydew rewrite after milestones |
+| `rewrite-rounds` | `AGENT_HONEYDEW_REWRITE_ROUNDS` | 2 | Max rewrite rounds per task |
 | `milestones` | `AGENT_MAX_STEPS` | 20 | Macro loop milestone ceiling |
 | `inner` | `AGENT_INNER_LOOPS` | 6 | Inner loop escalation retries |
 | `delay` | `AGENT_STEP_DELAY` | 1 | Seconds between milestones |

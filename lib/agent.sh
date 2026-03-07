@@ -22,6 +22,8 @@ AGENT_INTERACTIVE_PLANNING="${AGENT_INTERACTIVE_PLANNING:-0}"
 AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-1}"        # Subtask recursion depth (1 = single expansion only)
 AGENT_HONEYDEW_EXPAND="${AGENT_HONEYDEW_EXPAND:-0}"  # Subtask expansion: 0=disabled, 1=enabled
 AGENT_HONEYDEW_MAX_ITEMS="${AGENT_HONEYDEW_MAX_ITEMS:-8}"  # Max honeydew items before expansion is suppressed
+AGENT_HONEYDEW_REWRITE="${AGENT_HONEYDEW_REWRITE:-0}"    # Dynamic honeydew rewrite: 0=disabled, 1=enabled
+AGENT_HONEYDEW_REWRITE_ROUNDS="${AGENT_HONEYDEW_REWRITE_ROUNDS:-5}"  # Global honeydew rewrite limit (all paths: normal, pressure relief, auto-recovery)
 AGENT_WEB_SUFFICIENCY="${AGENT_WEB_SUFFICIENCY:-3}"  # Web actions before sufficiency signal
 AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-2}"  # Max times to retry same milestone
 AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-3}"                # Max milestones with same base command
@@ -29,6 +31,7 @@ AGENT_HONEYDEW_MATCH="${AGENT_HONEYDEW_MATCH:-2}"              # Min keyword sco
 AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto | interactive | disabled
 AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-1}"  # Max consecutive /web search before fallback to fetch/scrape
 AGENT_EVAL_REC_CHARS="${AGENT_EVAL_REC_CHARS:-120}"              # Max chars after a slash command in evaluator recommendations
+AGENT_PRESSURE_RELIEF="${AGENT_PRESSURE_RELIEF:-2}"          # Consecutive milestone skips before pressure relief fires (0=disabled)
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
 
@@ -734,6 +737,239 @@ _agent_honeydew_maybe_expand() {
 
     # Try expansion (heuristic + LLM)
     _agent_honeydew_expand "$next_id" "$workdir"
+}
+
+# ── Dynamic Honeydew Rewrite ──────────────────────────────────
+# After milestone evaluation reveals the honeydew list doesn't
+# align well with the original task (e.g., key entities or goals
+# missed during initial decomposition), this function gives George
+# the ability to rewrite the PENDING (non-completed) honeydew
+# items based on what the milestones have uncovered.
+#
+# Two-phase approach:
+#   Phase 1 — Router: lightweight LLM call decides REWRITE or KEEP
+#   Phase 2 — Rewriter: regenerates pending items, preserving done items
+#
+# Integration: called at the TOP of each macro loop iteration,
+# BEFORE _agent_honeydew_maybe_expand(). This ensures the expander
+# operates on the freshly rewritten list.
+#
+# Guards:
+#   - AGENT_HONEYDEW_REWRITE toggle (0=disabled, 1=enabled)
+#   - AGENT_HONEYDEW_REWRITE_ROUNDS cap (default 2)
+#   - _honeydew_rewrite_rounds_used counter (scoped per task in agent_run)
+#
+# Args: $1=macro_file, $2=micro_file, $3=workdir
+# Returns 0 if rewrite occurred, 1 if skipped/kept.
+_agent_honeydew_rewrite() {
+    local macro_file="$1"
+    local micro_file="$2"
+    local workdir="${3:-.}"
+    local failure_context="${4:-}"  # Optional: failure data for auto-recovery rewrites
+
+    # ── Guard: toggle disabled ─────────────────────────────────
+    if [ "${AGENT_HONEYDEW_REWRITE:-0}" -ne 1 ]; then
+        return 1
+    fi
+
+    # ── Guard: rounds exhausted ────────────────────────────────
+    local _max_rounds="${AGENT_HONEYDEW_REWRITE_ROUNDS:-5}"
+    if [ "${_honeydew_rewrite_rounds_used:-0}" -ge "$_max_rounds" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: all $_max_rounds rounds exhausted — bypassed"
+        return 1
+    fi
+
+    local hd_file="$workdir/.george/$HONEYDEW_FILE"
+    [ ! -f "$hd_file" ] && return 1
+
+    # ── Guard: need at least one completed milestone ───────────
+    # Rewriting before any milestone context exists is pointless.
+    local _ms_count=0
+    if [ -f "$macro_file" ]; then
+        _ms_count=$(jq '.completed_milestones | length' "$macro_file" 2>/dev/null || echo 0)
+    fi
+    [ "$_ms_count" -eq 0 ] && return 1
+
+    # ── Guard: need pending items to rewrite ───────────────────
+    local _pending_count
+    _pending_count=$(jq '[.items[] | select(.status == "pending")] | length' "$hd_file" 2>/dev/null || echo 0)
+    [ "$_pending_count" -eq 0 ] && return 1
+
+    # ── Gather context ─────────────────────────────────────────
+    local _original_task
+    _original_task=$(jq -r '.primary_task // empty' "$hd_file" 2>/dev/null)
+    [ -z "$_original_task" ] && return 1
+
+    local _current_list
+    _current_list=$(jq -r '.items[] | "\(.id). [\(if .status == "done" then "x" else " " end)] \(.task)"' "$hd_file" 2>/dev/null)
+
+    # Use lean macro_memory for milestone context (summaries of what's been done)
+    local _milestone_ctx=""
+    if [ -f "$macro_file" ]; then
+        _milestone_ctx=$(_macro_serialize_lean "$macro_file")
+    fi
+
+    # ── Phase 1: Router — REWRITE or KEEP? ─────────────────────
+    local _rewrite_now
+    _rewrite_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
+
+    # Build optional failure context section for auto-recovery rewrites
+    local _failure_section=""
+    if [ -n "$failure_context" ]; then
+        _failure_section="\n\nFAILURE CONTEXT (why auto-recovery was triggered):\n${failure_context}"
+    fi
+
+    local router_prompt="CURRENT DATE/TIME: ${_rewrite_now}
+
+ORIGINAL TASK (PRIMARY OBJECTIVE):
+${_original_task}
+
+CURRENT HONEYDEW LIST:
+${_current_list}
+
+MILESTONE CONTEXT (what has been accomplished so far):
+${_milestone_ctx}${_failure_section}
+
+Based on what the completed milestones have revealed (and any failure data above), should the PENDING (non-completed) honeydew items be rewritten to better serve the original task?
+
+$(cat << 'REWRITE_ROUTER_JSON'
+{"classify":"REWRITE|KEEP",
+ "REWRITE_when":["pending items miss key entities/names from original task",
+   "milestone discoveries change the scope of remaining work",
+   "pending items are too generic given what is now known"],
+ "KEEP_when":["pending items already align with original task",
+   "no significant new information from milestones",
+   "list is already specific enough"],
+ "respond":"REWRITE or KEEP: <one-sentence reason>"}
+REWRITE_ROUTER_JSON
+)"
+
+    local router_sys="Honeydew list quality router. Decide if pending items need rewriting based on milestone discoveries vs. original task intent. One word verdict: REWRITE or KEEP, followed by a brief reason."
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: router evaluating (round $((${_honeydew_rewrite_rounds_used:-0} + 1))/$_max_rounds)"
+    ui_think "Honeydew rewrite router: evaluating list quality..."
+
+    local _router_verdict
+    local LLM_SCENARIO=evaluator
+    _router_verdict=$(llm_generate "$router_prompt" "$router_sys" "${LLM_EVALUATOR_TOKENS:-256}" "$LLM_BUDGET_ROUTER")
+
+    # Clean think blocks
+    _router_verdict=$(echo "$_router_verdict" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+    _router_verdict=$(echo "$_router_verdict" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
+    _router_verdict=$(echo "$_router_verdict" | sed ':a;N;$!ba;s/<think>.*$//g')
+    _router_verdict=$(echo "$_router_verdict" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+    _router_verdict=$(echo "$_router_verdict" | sed 's/\*\+//g')
+    _router_verdict=$(echo "$_router_verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew rewrite router verdict: %s\n' "$(echo "$_router_verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
+
+    local _verdict_word
+    _verdict_word=$(echo "$_router_verdict" | head -1 | awk -F'[: \t]' '{print $1}' | sed 's/^[*_]\+//;s/[*_.,]\+$//')
+
+    if [[ "$_verdict_word" != "REWRITE" ]]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: router says KEEP — no rewrite needed"
+        ui_info "Honeydew rewrite router: list is well-aligned — keeping current items"
+        return 1
+    fi
+
+    # ── Phase 2: Rewriter — regenerate pending items ───────────
+    ui_think "Honeydew rewrite: updating pending items based on milestone discoveries..."
+
+    # Build context of completed items (to preserve)
+    local _done_items
+    _done_items=$(jq -r '.items[] | select(.status == "done") | "\(.id). [x] \(.task)"' "$hd_file" 2>/dev/null)
+    local _done_count
+    _done_count=$(jq '[.items[] | select(.status == "done")] | length' "$hd_file" 2>/dev/null || echo 0)
+
+    local _fail_rewrite_section=""
+    if [ -n "$failure_context" ]; then
+        _fail_rewrite_section="\n\nFAILURE DATA (what went wrong — pending items must work around these failures):\n${failure_context}"
+    fi
+
+    local rewrite_prompt="ORIGINAL TASK (PRIMARY OBJECTIVE — this is the #1 priority):
+${_original_task}
+
+COMPLETED ITEMS (DO NOT MODIFY — these are already done):
+${_done_items:-None yet.}
+
+MILESTONE DISCOVERIES (what has been learned so far):
+${_milestone_ctx}${_fail_rewrite_section}
+
+CURRENT PENDING ITEMS (these need rewriting):
+$(jq -r '.items[] | select(.status == "pending") | "\(.id). [ ] \(.task)"' "$hd_file" 2>/dev/null)
+
+Rewrite ONLY the pending items to better serve the original task based on what the milestones have revealed. Preserve the same number of items (${_pending_count}) or fewer. Maintain execution order.
+
+$(cat << 'REWRITE_JSON'
+{"output":"numbered list ONLY of replacement pending items",
+ "each_item":"short imperative sentence — WHAT to achieve, not HOW",
+ "describe":"GOAL only — never tools, commands, URLs, shell syntax",
+ "preserve":"completed items are untouched — only rewrite pending",
+ "count":"same count or fewer than current pending items",
+ "order":"by dependency (research first, delivery last)",
+ "never":["verification steps","confirmation steps","cleanup steps","checkboxes"]}
+REWRITE_JSON
+)"
+
+    local rewrite_sys="You are a task decomposition rewrite engine. Rewrite ONLY the pending honeydew items to better align with the original task based on milestone discoveries. Output ONLY a numbered list. Each item: short imperative sentence — WHAT, not HOW. No commands, no URLs, no explanation."
+
+    local _raw_rewrite
+    local LLM_SCENARIO=strategist
+    _raw_rewrite=$(llm_generate "$rewrite_prompt" "$rewrite_sys" "${LLM_STRATEGIST_TOKENS:-256}" "$LLM_BUDGET_AGENT")
+
+    # Clean think blocks (same pipeline as _agent_honeydew_build)
+    _raw_rewrite=$(echo "$_raw_rewrite" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+    _raw_rewrite=$(echo "$_raw_rewrite" | sed ':a;N;$!ba;s/<think>.*$//g')
+    _raw_rewrite=$(echo "$_raw_rewrite" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
+    _raw_rewrite=$(echo "$_raw_rewrite" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+    _raw_rewrite=$(echo "$_raw_rewrite" | sed '/^[[:space:]]*$/d')
+
+    # Inline list splitting
+    _raw_rewrite=$(echo "$_raw_rewrite" | sed 's/\([^0-9]\)\([0-9]\{1,2\}\.[[:space:]]\{1,2\}\)/\1\n\2/g')
+    _raw_rewrite=$(echo "$_raw_rewrite" | sed 's/\([^0-9]\)\([0-9]\{1,2\})[[:space:]]\{1,2\}\)/\1\n\2/g')
+
+    # Parse numbered lines into JSON array
+    local _new_items='[]'
+    local _new_count=0
+    while IFS= read -r line; do
+        line=$(echo "$line" | sed 's/^[[:space:]]*//')
+        if [[ "$line" =~ ^[0-9]{1,2}[\.\)][[:space:]]*(.*) ]]; then
+            _new_count=$((_new_count + 1))
+            local _item_text="${BASH_REMATCH[1]}"
+            _item_text=$(echo "$_item_text" | sed 's/^\[[ x✓]*\][[:space:]]*//')
+            _new_items=$(echo "$_new_items" | jq --arg t "$_item_text" \
+                '. += [{"task": $t, "status": "pending", "depth": 0}]')
+        fi
+    done <<< "$_raw_rewrite"
+
+    # Need at least 1 valid item to proceed with rewrite
+    if [ "$_new_count" -eq 0 ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: LLM produced no parseable items — keeping original"
+        ui_warn "Honeydew rewrite: failed to parse rewritten items — keeping current list"
+        return 1
+    fi
+
+    # ── Splice: preserve done items, replace pending with new ──
+    # Strategy: keep all done items, append new pending items,
+    # renumber all IDs sequentially.
+    local tmp="${hd_file}.tmp"
+    jq --argjson new_items "$_new_items" '
+        .items = (
+            [.items[] | select(.status == "done")] +
+            $new_items
+        ) |
+        .items = [.items | to_entries[] | .value + {"id": (.key + 1)}]
+    ' "$hd_file" > "$tmp" && mv "$tmp" "$hd_file"
+
+    # Increment the rounds counter
+    _honeydew_rewrite_rounds_used=$(( ${_honeydew_rewrite_rounds_used:-0} + 1 ))
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: replaced $_pending_count pending items with $_new_count new items (round ${_honeydew_rewrite_rounds_used}/$_max_rounds)"
+    ui_ok "Honeydew rewrite: updated $_new_count pending items (round ${_honeydew_rewrite_rounds_used}/$_max_rounds)"
+
+    # Display the updated list
+    _agent_honeydew_display "$hd_file"
+    return 0
 }
 
 # Match a completed milestone against honeydew items and mark
@@ -3355,16 +3591,79 @@ INTERLOCK_JSON
         inner_attempts=$((inner_attempts + 1))
     done
 
-    # ── Terminal Escalation: Human Operator Intervention ───────
-    # All 5 levels exhausted. Drop to a safe holding state.
-    # Present failures_log.md to the operator for guidance.
-    # Skip entirely if cancelled — user wants to return to REPL, not be
-    # prompted for guidance on an operation they already abandoned.
+    # ── Terminal Escalation: Auto-Recovery / Human Intervention ─
+    # All escalation levels exhausted. Attempt auto-recovery via
+    # honeydew rewrite first (default behavior). Injects failure data,
+    # original objective, and completed honeydew items so the rewriter
+    # can generate fresh targets that work around the failures.
+    # Falls through to human intervention ONLY when the global
+    # honeydew rewrite limit (AGENT_HONEYDEW_REWRITE_ROUNDS) is hit.
+    #
+    # Skip entirely if cancelled.
     if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
         _macro_add_milestone "$macro_file" "$micro_objective" "Cancelled" "" "UNKNOWN" "CANCELLED"
         return 1
     fi
-    ui_err "Inner loop exhausted all escalation levels."
+
+    # ── Auto-Recovery: Honeydew Rewrite with Failure Injection ─
+    local _max_rewrite_rounds="${AGENT_HONEYDEW_REWRITE_ROUNDS:-5}"
+    if [ "${_honeydew_rewrite_rounds_used:-0}" -lt "$_max_rewrite_rounds" ]; then
+        ui_warn "Inner loop exhausted — auto-recovery via honeydew rewrite (round $((${_honeydew_rewrite_rounds_used:-0} + 1))/$_max_rewrite_rounds)"
+
+        # NOTE: We do NOT record a milestone here. The failure data
+        # reaches the rewriter through the failure_context parameter
+        # (4th arg). Recording a milestone here would create a
+        # duplicate if the rewrite fails and we fall through to
+        # human help (which records its own milestone on failure).
+
+        # Build failure summary from the failures log
+        local _fail_summary=""
+        if [ -f "$fail_file" ]; then
+            _fail_summary=$(tail -30 "$fail_file" 2>/dev/null)
+        fi
+
+        # Force honeydew rewrite even if normal toggle is off
+        local _saved_rewrite_toggle="${AGENT_HONEYDEW_REWRITE:-0}"
+        AGENT_HONEYDEW_REWRITE=1
+        if _agent_honeydew_rewrite "$macro_file" "$micro_file" "$workdir" "$_fail_summary"; then
+            # Refresh honeydew in macro_memory
+            local _hd_recovery
+            _hd_recovery=$(_agent_honeydew_read "$workdir" 2>/dev/null)
+            if [ -n "$_hd_recovery" ] && [ -f "$macro_file" ]; then
+                _macro_set_honeydew "$macro_file" "$_hd_recovery"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] macro_memory refreshed after auto-recovery rewrite"
+            fi
+            AGENT_HONEYDEW_REWRITE="$_saved_rewrite_toggle"
+            _AGENT_AUTO_RECOVERED=1
+            ui_ok "Auto-recovery complete — honeydew rewritten. Returning to strategist."
+
+            # Record the failed milestone with auto-recovery outcome.
+            # This is the ONLY milestone entry for this objective —
+            # we don't record before the rewrite attempt to avoid
+            # duplicates if the rewrite were to fail.
+            _macro_add_milestone "$macro_file" "$micro_objective" "Escalation exhausted — auto-recovered via honeydew rewrite" "${last_failed_cmd:-}" "UNKNOWN" "FAILED"
+
+            # URL poisoning: blacklist failed URLs so they don't reappear
+            if [ -n "$last_failed_cmd" ] && declare -f _web_blacklist_add &>/dev/null; then
+                if [[ "$last_failed_cmd" == /web\ fetch\ * ]] || [[ "$last_failed_cmd" == /web\ scrape* ]]; then
+                    local _poison_url
+                    _poison_url=$(echo "$last_failed_cmd" | awk '{print $NF}')
+                    if [[ "$_poison_url" == http* ]]; then
+                        _web_blacklist_add "$_poison_url" "auto_recovery" "FAILED"
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] URL blacklisted during auto-recovery: $_poison_url"
+                    fi
+                fi
+            fi
+
+            return 1  # Failed milestone — macro loop continues with fresh targets
+        fi
+        AGENT_HONEYDEW_REWRITE="$_saved_rewrite_toggle"
+        # Rewrite declined (router said KEEP) or failed — fall through to human help
+    fi
+
+    # ── Fallback: Human Operator Intervention ─────────────────
+    # Rewrite limit exhausted or rewrite router declined.
+    ui_err "Inner loop exhausted all escalation levels (honeydew rewrite limit reached)."
     if [ -f "$fail_file" ]; then
         echo ""
         ui_warn "Failures log:"
@@ -3470,6 +3769,25 @@ Output a slash command line starting with / OR a bash code block."
     fi
 
     _macro_add_milestone "$macro_file" "$micro_objective" "All escalation levels exhausted" "${last_failed_cmd:-}" "UNKNOWN" "FAILED"
+
+    # ── URL POISONING: Blacklist URLs from exhausted web commands ──
+    # When the inner loop exhausts all escalation levels on a /web
+    # fetch or /web scrape command, the target URL is unreachable
+    # (blocked, dead page, anti-bot, etc.). Blacklist it so the
+    # specialist and strategist don't regenerate the same dead URL
+    # in subsequent milestones, breaking the feedback loop.
+    if [ -n "$last_failed_cmd" ] && declare -f _web_blacklist_add &>/dev/null; then
+        if [[ "$last_failed_cmd" == /web\ fetch\ * ]] || [[ "$last_failed_cmd" == /web\ scrape* ]]; then
+            local _poison_url
+            _poison_url=$(echo "$last_failed_cmd" | awk '{print $NF}')
+            if [[ "$_poison_url" == http* ]]; then
+                _web_blacklist_add "$_poison_url" "inner_loop_exhausted" "FAILED"
+                _micro_add_note "$micro_file" "URL BLACKLISTED: $_poison_url — all fetch attempts failed. Do NOT retry this URL. Use /web search to find alternative sources."
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] URL poisoned after inner loop exhaustion: $_poison_url"
+            fi
+        fi
+    fi
+
     return 1
 }
 
@@ -3625,6 +3943,16 @@ MEMEOF
     # Updated after each evaluator pass so the strategist sees exactly
     # what the evaluator said was missing on the PREVIOUS iteration.
     local _last_eval_feedback=""
+    # Dynamic honeydew rewrite: track how many rewrite rounds have
+    # been used this task. Capped by AGENT_HONEYDEW_REWRITE_ROUNDS.
+    local _honeydew_rewrite_rounds_used=0
+    # Auto-recovery flag: set by inner loop when honeydew rewrite fires
+    # on escalation exhaustion. Checked by macro loop for feedback.
+    local _AGENT_AUTO_RECOVERED=0
+    # Pressure relief valve: count consecutive milestone skips so we
+    # can force a honeydew rewrite when the system is stuck in a loop.
+    local _consecutive_skips=0
+    local _total_skips=0
 
     while [ "$macro_iterations" -lt "$max_macro_loops" ]; do
         # Check for cancellation between milestones
@@ -3640,6 +3968,24 @@ MEMEOF
                 break
             fi
             vitals_guard_ram 2>/dev/null || true
+        fi
+
+        # ── Dynamic honeydew rewrite: update pending items ─────────
+        # After milestone evaluation reveals misalignment between the
+        # honeydew list and the original task, rewrite the pending
+        # (non-completed) items based on milestone discoveries. Runs
+        # BEFORE expansion so the expander works on the updated list.
+        # Capped by AGENT_HONEYDEW_REWRITE_ROUNDS to prevent infinite
+        # rewrite loops. The _honeydew_rewrite_rounds_used counter is
+        # scoped to this task (initialized above the while loop).
+        if _agent_honeydew_rewrite "$macro_file" "$george_dir/micro_memory.json" "$workdir"; then
+            # Refresh honeydew in macro_memory after rewrite
+            local _hd_rewritten
+            _hd_rewritten=$(_agent_honeydew_read "$workdir" 2>/dev/null)
+            if [ -n "$_hd_rewritten" ] && [ -f "$macro_file" ]; then
+                _macro_set_honeydew "$macro_file" "$_hd_rewritten"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] macro_memory refreshed after honeydew rewrite"
+            fi
         fi
 
         # ── Subtask expansion: decompose complex honeydew items ──
@@ -3955,8 +4301,9 @@ ${_last_eval_feedback}
             ui_warn "Milestone '$milestone' already attempted $_dup_count times — forcing progression"
             _macro_add_milestone "$macro_file" "$milestone" "Skipped (duplicate of failed milestone)" "" "UNKNOWN" "SKIPPED"
             _attempted_milestones+=("SKIPPED|$milestone")
-            macro_iterations=$((macro_iterations + 1))
-            _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — SKIPPED (dup)\n"
+            _total_skips=$((_total_skips + 1))
+            _consecutive_skips=$((_consecutive_skips + 1))
+            _exec_log="${_exec_log}Skip $_total_skips: ${milestone:0:60} — SKIPPED (dup)\n"
             _last_eval_feedback="Milestone '${milestone:0:80}' was skipped (repeated). Try a completely different approach to advance the task."
 
             # Run overall evaluator before skipping — earlier milestones
@@ -3975,6 +4322,63 @@ ${_last_eval_feedback}
                 fi
             fi
 
+            # ── PRESSURE RELIEF VALVE ─────────────────────────
+            # After N consecutive skips, the strategist is stuck in a
+            # loop generating milestones that always get caught by the
+            # command-family cap or dedup guard. Force a honeydew
+            # rewrite to redirect the system, regardless of whether
+            # AGENT_HONEYDEW_REWRITE is toggled on. This acts as an
+            # unsupervised reset — rewriting pending objectives based
+            # on what milestones have actually accomplished breaks
+            # the cycle and gives the strategist fresh targets.
+            local _relief_threshold="${AGENT_PRESSURE_RELIEF:-2}"
+            if [ "$_relief_threshold" -gt 0 ] && [ "$_consecutive_skips" -ge "$_relief_threshold" ]; then
+                ui_warn "Pressure relief: $_consecutive_skips consecutive skips — forcing honeydew rewrite"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] pressure relief triggered ($_consecutive_skips consecutive skips, threshold=$_relief_threshold)"
+
+                # Extract any URLs from the skipped milestone and
+                # blacklist them — the strategist keeps generating
+                # milestones targeting unreachable URLs. Poisoning
+                # them prevents regeneration of the same dead targets.
+                if declare -f _web_blacklist_add &>/dev/null; then
+                    local _skip_urls
+                    _skip_urls=$(echo "$milestone" | grep -oP 'https?://[^\s)>"]+' | head -3)
+                    while IFS= read -r _surl; do
+                        [ -z "$_surl" ] && continue
+                        _web_blacklist_add "$_surl" "pressure_relief_skip" "SKIP"
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] pressure relief: blacklisted URL $_surl"
+                    done <<< "$_skip_urls"
+                fi
+
+                # Force honeydew rewrite — temporarily override the
+                # toggle so the rewrite runs even when disabled.
+                local _saved_rewrite_toggle="${AGENT_HONEYDEW_REWRITE:-0}"
+                AGENT_HONEYDEW_REWRITE=1
+                if _agent_honeydew_rewrite "$macro_file" "$george_dir/micro_memory.json" "$workdir"; then
+                    local _hd_relief
+                    _hd_relief=$(_agent_honeydew_read "$workdir" 2>/dev/null)
+                    if [ -n "$_hd_relief" ] && [ -f "$macro_file" ]; then
+                        _macro_set_honeydew "$macro_file" "$_hd_relief"
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] macro_memory refreshed after pressure relief rewrite"
+                    fi
+                    _last_eval_feedback="System was stuck in a skip loop. Honeydew list has been rewritten. Address the updated first pending item using a NEW approach — do NOT repeat /web fetch on the same URLs."
+                else
+                    # Rewrite declined (router said KEEP) or failed.
+                    # Still inject strong redirect feedback.
+                    _last_eval_feedback="System stuck: $_consecutive_skips milestones skipped. The current approach (repeated /${_ms_base_cmd:-web} commands) is not working. Use a completely DIFFERENT command family to make progress. If web fetches keep failing, use /respond to deliver what you already know."
+                fi
+                AGENT_HONEYDEW_REWRITE="$_saved_rewrite_toggle"
+
+                # Reset consecutive skip counter after relief fires
+                _consecutive_skips=0
+            fi
+
+            # Cap total skips to prevent infinite budget consumption
+            if [ "$_total_skips" -ge $(( max_macro_loops / 2 )) ]; then
+                ui_err "Too many skipped milestones ($_total_skips) — aborting task"
+                break
+            fi
+
             sleep "${AGENT_STEP_DELAY:-1}"
             continue
         fi
@@ -3987,6 +4391,7 @@ ${_last_eval_feedback}
 
         if agent_inner_loop "$milestone" "$workdir"; then
             completed_milestones=$((completed_milestones + 1))
+            _consecutive_skips=0  # Reset: actual progress breaks the skip cycle
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — OK\n"
             _attempted_milestones+=("OK|$milestone")
 
@@ -4081,7 +4486,21 @@ ${_last_eval_feedback}
                         if [ -n "${_EVAL_HONEYDEW_REASON:-}" ]; then
                             _attempted_milestones+=("EVAL|honeydew item unsatisfied: ${_EVAL_HONEYDEW_REASON:0:200}")
                             if [ -n "${_EVAL_HONEYDEW_RECOMMENDATION:-}" ]; then
-                                _last_eval_feedback="Honeydew item #${_EVAL_HONEYDEW_ITEM_NUM:-?} NOT addressed. Evaluator recommends: ${_EVAL_HONEYDEW_RECOMMENDATION}"
+                                # ── Sanitize recommendation: strip blacklisted URLs ──
+                                # The evaluator may recommend /web fetch <blacklisted_url>,
+                                # which the strategist copies verbatim into the next
+                                # milestone — creating a skip loop. Strip URLs whose
+                                # domains are blacklisted and replace with a redirect.
+                                local _sanitized_rec="${_EVAL_HONEYDEW_RECOMMENDATION}"
+                                if declare -f _web_blacklist_contains &>/dev/null; then
+                                    local _rec_url
+                                    _rec_url=$(echo "$_sanitized_rec" | grep -oP 'https?://[^\s)>"]+' | head -1)
+                                    if [ -n "$_rec_url" ] && _web_blacklist_contains "$_rec_url"; then
+                                        _sanitized_rec=$(echo "$_sanitized_rec" | sed "s|${_rec_url}|<blocked URL — use /web search to find an alternative>|g")
+                                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval recommendation sanitized: stripped blacklisted URL $_rec_url"
+                                    fi
+                                fi
+                                _last_eval_feedback="Honeydew item #${_EVAL_HONEYDEW_ITEM_NUM:-?} NOT addressed. Evaluator recommends: ${_sanitized_rec}"
                             else
                                 _last_eval_feedback="Milestone '${milestone:0:80}' ran, but honeydew item #${_EVAL_HONEYDEW_ITEM_NUM:-?} is NOT addressed: ${_EVAL_HONEYDEW_REASON:0:200}. Next milestone must address it."
                             fi
@@ -4109,6 +4528,7 @@ ${_last_eval_feedback}
 
         else
             failed_milestones="${failed_milestones:+${failed_milestones}, }milestone $macro_iterations: $milestone"
+            _consecutive_skips=0  # Reset: even a failed milestone is real execution, not a skip
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — FAILED\n"
             _attempted_milestones+=("FAILED|$milestone")
 
@@ -4118,8 +4538,19 @@ ${_last_eval_feedback}
                 break
             fi
 
-            # Milestone failed — feed back to strategist
-            _last_eval_feedback="Milestone '${milestone:0:80}' did not work. Try a different approach."
+            # Milestone failed — check if auto-recovery rewrote the honeydew
+            if [ "${_AGENT_AUTO_RECOVERED:-0}" -eq 1 ]; then
+                _AGENT_AUTO_RECOVERED=0
+                # Refresh honeydew in macro_memory (rewrite already happened in inner loop)
+                local _hd_ar
+                _hd_ar=$(_agent_honeydew_read "$workdir" 2>/dev/null)
+                if [ -n "$_hd_ar" ] && [ -f "$macro_file" ]; then
+                    _macro_set_honeydew "$macro_file" "$_hd_ar"
+                fi
+                _last_eval_feedback="Escalation exhausted — honeydew list was automatically rewritten for recovery. Address the FIRST pending honeydew item using a NEW approach. Do NOT repeat commands that already failed."
+            else
+                _last_eval_feedback="Milestone '${milestone:0:80}' did not work. Try a different approach."
+            fi
         fi
 
         sleep "${AGENT_STEP_DELAY:-1}"

@@ -2546,4 +2546,141 @@ describe "Social context injection into strategist"
     assert_ok $?
   }
 
+# ── Dynamic Honeydew Rewrite ──────────────────────────────────
+describe "Dynamic honeydew rewrite configuration"
+
+  it "AGENT_HONEYDEW_REWRITE defaults to 0 (disabled)" && {
+    grep -q 'AGENT_HONEYDEW_REWRITE.*:-0' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "AGENT_HONEYDEW_REWRITE must default to 0"
+  }
+
+  it "AGENT_HONEYDEW_REWRITE_ROUNDS defaults to 5" && {
+    grep -q 'AGENT_HONEYDEW_REWRITE_ROUNDS.*:-5' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "AGENT_HONEYDEW_REWRITE_ROUNDS must default to 5"
+  }
+
+describe "Dynamic honeydew rewrite function"
+
+  it "_agent_honeydew_rewrite is defined" && {
+    declare -f _agent_honeydew_rewrite &>/dev/null
+    assert_ok $?
+  }
+
+  it "rewrite returns 1 when toggle is disabled" && {
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Do something","status":"pending","depth":0}]}' > "$_tmpdir/.george/honeydew.json"
+    jq -n '{"primary_objective":"test","completed_milestones":[{"summary":"did a thing"}]}' > "$_tmpdir/.george/macro_memory.json"
+    AGENT_HONEYDEW_REWRITE=0
+    _agent_honeydew_rewrite "$_tmpdir/.george/macro_memory.json" "$_tmpdir/.george/micro_memory.json" "$_tmpdir"
+    _result=$?
+    assert_eq "$_result" "1" "Rewrite disabled should return 1"
+    rm -rf "$_tmpdir"
+  }
+
+  it "rewrite returns 1 when rounds exhausted" && {
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Do something","status":"pending","depth":0}]}' > "$_tmpdir/.george/honeydew.json"
+    jq -n '{"primary_objective":"test","completed_milestones":[{"summary":"did a thing"}]}' > "$_tmpdir/.george/macro_memory.json"
+    AGENT_HONEYDEW_REWRITE=1
+    AGENT_HONEYDEW_REWRITE_ROUNDS=2
+    _honeydew_rewrite_rounds_used=2
+    _agent_honeydew_rewrite "$_tmpdir/.george/macro_memory.json" "$_tmpdir/.george/micro_memory.json" "$_tmpdir"
+    _result=$?
+    assert_eq "$_result" "1" "Exhausted rounds should return 1"
+    AGENT_HONEYDEW_REWRITE=0
+    _honeydew_rewrite_rounds_used=0
+    rm -rf "$_tmpdir"
+  }
+
+  it "rewrite returns 1 when no completed milestones exist" && {
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Do something","status":"pending","depth":0}]}' > "$_tmpdir/.george/honeydew.json"
+    jq -n '{"primary_objective":"test","completed_milestones":[]}' > "$_tmpdir/.george/macro_memory.json"
+    AGENT_HONEYDEW_REWRITE=1
+    AGENT_HONEYDEW_REWRITE_ROUNDS=2
+    _honeydew_rewrite_rounds_used=0
+    _agent_honeydew_rewrite "$_tmpdir/.george/macro_memory.json" "$_tmpdir/.george/micro_memory.json" "$_tmpdir"
+    _result=$?
+    assert_eq "$_result" "1" "No milestones should return 1"
+    AGENT_HONEYDEW_REWRITE=0
+    rm -rf "$_tmpdir"
+  }
+
+  it "rewrite returns 1 when no pending items exist" && {
+    _tmpdir=$(mktemp -d)
+    mkdir -p "$_tmpdir/.george"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Already done","status":"done","depth":0}]}' > "$_tmpdir/.george/honeydew.json"
+    jq -n '{"primary_objective":"test","completed_milestones":[{"summary":"did a thing"}]}' > "$_tmpdir/.george/macro_memory.json"
+    AGENT_HONEYDEW_REWRITE=1
+    AGENT_HONEYDEW_REWRITE_ROUNDS=2
+    _honeydew_rewrite_rounds_used=0
+    _agent_honeydew_rewrite "$_tmpdir/.george/macro_memory.json" "$_tmpdir/.george/micro_memory.json" "$_tmpdir"
+    _result=$?
+    assert_eq "$_result" "1" "No pending items should return 1"
+    AGENT_HONEYDEW_REWRITE=0
+    rm -rf "$_tmpdir"
+  }
+
+  it "rewrite has toggle guard" && {
+    body=$(declare -f _agent_honeydew_rewrite)
+    echo "$body" | grep -q 'AGENT_HONEYDEW_REWRITE'
+    assert_ok $? "rewrite must check AGENT_HONEYDEW_REWRITE toggle"
+  }
+
+  it "rewrite has rounds guard" && {
+    body=$(declare -f _agent_honeydew_rewrite)
+    echo "$body" | grep -q 'AGENT_HONEYDEW_REWRITE_ROUNDS'
+    assert_ok $? "rewrite must check AGENT_HONEYDEW_REWRITE_ROUNDS"
+  }
+
+  it "rewrite has rounds-used counter check" && {
+    body=$(declare -f _agent_honeydew_rewrite)
+    echo "$body" | grep -q '_honeydew_rewrite_rounds_used'
+    assert_ok $? "rewrite must track rounds used"
+  }
+
+  it "rewrite preserves completed items during splice" && {
+    body=$(declare -f _agent_honeydew_rewrite)
+    echo "$body" | grep -q 'select(.status == "done")'
+    assert_ok $? "rewrite must preserve done items"
+  }
+
+  it "rewrite increments rounds counter" && {
+    body=$(declare -f _agent_honeydew_rewrite)
+    echo "$body" | grep -q '_honeydew_rewrite_rounds_used=$(('
+    assert_ok $? "rewrite must increment rounds counter"
+  }
+
+describe "Dynamic honeydew rewrite integration"
+
+  it "agent_run initializes _honeydew_rewrite_rounds_used counter" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_honeydew_rewrite_rounds_used=0'
+    assert_ok $? "agent_run must initialize rewrite rounds counter"
+  }
+
+  it "agent_run calls _agent_honeydew_rewrite before expand" && {
+    body=$(declare -f agent_run)
+    # Verify rewrite is called and comes before expand
+    _rewrite_line=$(echo "$body" | grep -n '_agent_honeydew_rewrite' | head -1 | cut -d: -f1)
+    _expand_line=$(echo "$body" | grep -n '_agent_honeydew_maybe_expand' | head -1 | cut -d: -f1)
+    [ -n "$_rewrite_line" ] && [ -n "$_expand_line" ]
+    assert_ok $? "Both rewrite and expand must be called in agent_run"
+    [ "$_rewrite_line" -lt "$_expand_line" ]
+    assert_ok $? "Rewrite must be called BEFORE expand"
+  }
+
+  it "agent_run refreshes macro_memory after rewrite" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'macro_memory refreshed after honeydew rewrite'
+    assert_ok $? "agent_run must refresh macro_memory after rewrite"
+  }
+
 test_end
