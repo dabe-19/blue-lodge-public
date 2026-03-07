@@ -5,6 +5,11 @@ RAM, battery, WiFi signal, and cell signal — so he can make intelligent
 decisions about what operations are safe to attempt. This is his
 "stateful awareness of living arrangements."
 
+> **How vitals fit the dual-loop architecture:** The macro strategist checks `vitals_preflight()` before
+> committing to a plan. Between execution steps, the inner loop calls `vitals_guard_disk` and
+> `vitals_guard_ram` to bail early if resources drop. In `/ask` mode (quick questions), only
+> warnings are injected — zero overhead when everything is healthy.
+
 ## Why It Matters
 
 George runs on a mobile device with finite resources. Before attempting

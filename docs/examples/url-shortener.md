@@ -159,3 +159,12 @@ $ lodge /push
 - **Lodge remembered context** — when adding rate limiting, it already knew the project structure from GEORGE.md
 - **7 steps completed** — each step was one LLM call, keeping token usage low
 - **Total time** — ~5 minutes on Snapdragon 8 Elite with Qwen3-4B-Thinking
+
+---
+
+## Pro Tips for API Projects
+
+- **Save snippets to recall** — `/recall save "Python stdlib HTTP server pattern"` indexes code for instant retrieval later. Next time you build an API, ask: `How did I do HTTP routing last time?`
+- **Test with /web** — `/web get http://127.0.0.1:8080/stats` lets you hit your running server without leaving Lodge.
+- **Model swap for debugging** — If your API has a subtle bug, temporarily `/models set qwen3-think` for stronger reasoning, then switch back.
+- **Create a deploy script** — `/slash create deploy-api "Kill existing server, run tests, start server in background, verify /stats returns 200"` — one command to ship.

@@ -183,10 +183,117 @@ $ lodge "Write a Python script that renames all .jpeg files in the
 
 2. **Use `/ask` explicitly** — Forces quick-answer mode even for longer prompts. No files will be created or modified.
 
-3. **Longer prompts trigger task mode** — If you write more than 6 words without a `?`, Lodge enters plan-then-execute mode. This is great for "build me X" but overkill for simple questions.
+3. **Conversation memory** — George remembers the last 3 exchanges in `/ask` mode. Follow up naturally: "And what about..." works.
 
-4. **Battery check before long tasks** — On low battery, consider using `LLM_KEEP_ALIVE=0` to unload the model immediately after each call.
+4. **Longer prompts trigger task mode** — If you write more than 6 words without a `?`, Lodge enters plan-then-execute mode. This is great for "build me X" but overkill for simple questions.
 
-5. **Journal your learning** — The journal persists across sessions. Use `/journal write "..."` to note what you learned. Lodge reads this context on the next session and it subtly shapes its responses.
+5. **Battery check before long tasks** — On low battery, consider using `LLM_KEEP_ALIVE=0` to unload the model immediately after each call.
 
-6. **Clipboard is your bridge** — Copy from any app, paste into Lodge with `/phone clip`, ask about it, and copy the answer back.
+6. **Journal your learning** — The journal persists across sessions with temporal decay. Recent entries are vivid, old ones fade to summaries, ancient ones become impressions. Use `/journal write "..."` to note what you learned.
+
+7. **Clipboard is your bridge** — Copy from any app, paste into Lodge with `/phone clip`, ask about it, and copy the answer back.
+
+---
+
+## Social Media & Email
+
+Manage your social presence from the terminal:
+
+```
+> /social post "Just finished a 3-hour deep dive into Rust lifetimes. My brain hurts."
+  ✓ Posted to X
+  ✓ Posted to Mastodon (hachyderm.io)
+  ✓ Posted to Bluesky
+  ✓ Posted to Discord (#general)
+  ✓ Posted to Telegram
+
+> /social x timeline
+  @rustlang: Rust 1.84 is here! 🎉
+  @ferrisCrab: Who else struggles with Pin<Box<dyn Future>>?
+  ...
+
+> /email inbox gmail
+  3 unread:
+  1. GitHub — [blue-lodge] New issue: Add /weather command
+  2. AWS — Your monthly bill: $0.00
+  3. Mom — Did you eat today?
+
+> /email send gmail mom@example.com "Re: Did you eat today?" "Yes Mom, I had pizza. George says hi."
+  ✓ Sent via Gmail
+```
+
+## Self-Extending Commands
+
+George writes his own slash commands. Build custom workflows:
+
+```
+> /slash create morning-briefing "Check email inbox, crypto balances, and system vitals. Summarize in 3 bullets."
+  ✓ Created ~/.george/slash/morning-briefing.sh
+
+> /slash morning-briefing
+  • 3 unread emails (2 GitHub notifications, 1 from Mom)
+  • BTC: ₿0.0042 ($180) | ADA: ₳1,420 ($0.89) | SOL: ◎2.1 ($312)
+  • Disk: 14.2GB/64GB ok | RAM: 4.1GB/12GB ok | Battery: 82% ⚡
+
+> /slash create standup "Write a standup update from my recent git commits and journal entries."
+
+> /slash create deploy "Build the project, run tests, commit with AI message, and push."
+
+> /slash list
+  morning-briefing    Check email inbox, crypto balances...
+  standup             Write a standup update from recent...
+  deploy              Build the project, run tests, commit...
+```
+
+Custom commands have full access to all lodge libraries — they can call other slash commands, run shell commands, make LLM calls, and access the knowledge base.
+
+## Crypto Portfolio Check
+
+```
+> /wallet balance
+  BTC  ₿0.00420000  ($180.31)   addr: bc1q...
+  ADA  ₳1,420.00    ($0.89)     addr: addr1q...
+  SOL  ◎2.10        ($312.00)   addr: 7xK...
+
+> /wallet sol airdrop 1
+  ✓ Airdropped 1 SOL (devnet)
+
+> /wallet network testnet
+  ✓ All wallets switched to testnet
+```
+
+## Knowledge Base & Document Ingestion
+
+Turn any document into searchable knowledge:
+
+```
+> /ingest add ~/papers/attention-is-all-you-need.pdf
+  ✓ Indexed: attention-is-all-you-need (23 chunks)
+
+> /recall "multi-head attention mechanism"
+  [attention-is-all-you-need] Multi-head attention allows the model
+  to jointly attend to information from different representation
+  subspaces at different positions...
+
+> /ingest summarize ~/docs/company-handbook.pdf
+  ✓ Indexed + summarized: company-handbook (45 chunks)
+```
+
+## Encrypted Secrets
+
+Store API keys, passwords, and sensitive data in George's vault:
+
+```
+> /secret set OPENAI_KEY sk-abc123...
+  ✓ Encrypted and stored
+
+> /secret list
+  OPENAI_KEY
+  GITHUB_TOKEN
+  DISCORD_BOT_TOKEN
+
+> /secret rotate
+  ✓ All 3 secrets re-encrypted with new key
+```
+
+All secrets are AES-256-CBC encrypted with PBKDF2 (100K iterations). Plaintext never touches disk.

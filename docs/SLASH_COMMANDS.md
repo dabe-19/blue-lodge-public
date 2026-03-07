@@ -1,12 +1,72 @@
-# Slash Command Self-Awareness
+# Slash Commands — Architecture & Reference
 
-> How George knows, plans with, and executes his own slash commands.
+> How George knows, plans with, and executes his 56 slash commands.
 
-## Overview
+## Quick Reference
 
-George is a fully self-aware agent with respect to his slash commands. He doesn't just *have* commands — he **knows** he has them, **plans** with them, and **invokes** them during autonomous task execution. This document explains the four-layer architecture that makes this possible and provides proof that each layer is operational.
+All commands at a glance. For detailed usage, run `/help` inside George or see the README.
+
+| Command | Args | Description |
+|---------|------|-------------|
+| `/help` | — | Show all commands |
+| `/ask` | `<question>` | Quick question (lightweight, conversation memory) |
+| `/plan` | `<task>` | Plan without execution |
+| `/init` | `<name> <type>` | Scaffold project (rust/python/rl/data/automation/notebook/shell) |
+| `/fix` | `[file\|error]` | Detect and fix errors (cascade L1→L2 recovery) |
+| `/test` | `[name]` | Run project tests |
+| `/build` | `[release]` | Build the project |
+| `/commit` | `[files]` | AI-generated commit message |
+| `/push` | `[branch]` | Push to GitHub |
+| `/clone` | `<repo>` | Clone + auto-setup into sandbox |
+| `/write` | `<file> <content>` | Write/overwrite a file |
+| `/save` | `<file> <content>` | Alias for /write |
+| `/read` | `<file>` | Read a file |
+| `/download` | `<url> [dest]` | Download URL or copy file |
+| `/files` | — | List workspace files |
+| `/cd` | `<dir>` | Change directory |
+| `/memory` | — | Show current GEORGE.md |
+| `/journal` | `[show\|vivid\|fading\|sediment\|write\|decay]` | View/write journal |
+| `/reflect` | — | Record a reflection in journal |
+| `/recall` | `<query>` | FTS5 search knowledge base |
+| `/ingest` | `<file> [label]` | Upload docs to knowledge base |
+| `/compact` | — | Compress memory |
+| `/snapshot` | — | Checkpoint memory |
+| `/readme` | `[topic]` | Review own capabilities |
+| `/respond` | `<text>` | Echo and format response |
+| `/sandbox` | `[list\|new\|build\|rm\|cd\|clone\|status\|journal]` | Sandbox management |
+| `/container` | `[install\|login\|exec\|list\|info\|reset\|rm\|pentest]` | proot-distro containers |
+| `/social` | `[post\|<platform>\|status]` | Social media (X/Mastodon/Bluesky/Discord/Telegram) |
+| `/email` | `[send\|inbox\|setup\|status\|bridge]` | Email (Gmail/ProtonMail/Zoho/Tuta/disposable) |
+| `/api` | `[keys\|status]` | API key management |
+| `/provider` | `[chat\|models\|status]` | Cloud AI providers (11 providers) |
+| `/web` | `[fetch\|search\|images\|summary\|download]` | Web browsing |
+| `/github` | `<query>` | Search GitHub repos |
+| `/git` | `[identity\|ssh-keygen\|ssh-config\|remote\|status\|test]` | Git & GitHub config |
+| `/pgp` | `[generate\|sign\|verify\|keys\|export\|import\|pubkey]` | PGP signing (Ed25519) |
+| `/secret` | `[set\|get\|delete\|list\|import\|rotate\|status]` | Encrypted vault |
+| `/security` | `[signing\|encryption\|sandbox]` | Security settings |
+| `/backup` | `[local\|github\|restore\|export\|list]` | Backup & restore identity |
+| `/wallet` | `[btc\|ada\|sol\|balance\|address\|send\|network\|test]` | Crypto wallets |
+| `/gsuite` | `[setup\|auth\|gmail\|drive\|docs]` | Google Workspace |
+| `/vitals` | `[disk\|ram\|battery\|wifi\|cell\|network\|refresh\|check]` | System vitals |
+| `/phone` | `[battery\|clip\|notify\|share\|sms\|calls\|wifi\|location]` | Termux integration |
+| `/slash` | `[create\|edit\|delete\|show\|test\|list\|export\|rename]` | Custom self-extending commands |
+| `/think` | `[on\|off\|bright\|dim\|hide\|test]` | Toggle thinking mode |
+| `/debug` | `[on\|off\|toggle]` | Toggle debug output |
+| `/soul` | `[on\|off]` | Toggle soul injection level |
+| `/limits` | `[steps\|depth\|milestones\|inner\|delay\|reset]` | Planning limits |
+| `/model` | `[temp\|repeat\|presence] [value]` | Sampling parameters |
+| `/models` | `[list\|status\|select\|single\|dual]` | Model library |
+| `/config` | `[show\|save\|reset\|edit]` | Persistent configuration |
+| `/backend` | `[status\|auto\|ollama\|llamacpp\|url\|start\|stop\|model]` | Backend management |
+| `/status` | — | Agent + device status |
+| `/quit` | — | Exit George |
+
+---
 
 ## Architecture: Four Layers of Command Awareness
+
+George is a fully self-aware agent with respect to his slash commands. He doesn't just *have* commands — he **knows** he has them, **plans** with them, and **invokes** them during autonomous task execution. This is the four-layer architecture that makes it work.
 
 ```
 ┌──────────────────────────────────────────────────────────┐

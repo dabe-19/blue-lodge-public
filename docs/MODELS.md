@@ -549,6 +549,45 @@ ollama create blue-lodge-llama32:3b -f ~/blue-lodge/models/llama32.Modelfile
 
 ---
 
+## Performance & Throughput
+
+### Understanding Token/Second Numbers
+
+George's tok/s numbers look lower than cloud APIs. This is expected and not a performance problem:
+
+| Metric | What It Measures | Typical Value (ARM) | Typical Value (Desktop) |
+|--------|-----------------|--------------------|-----------------------|
+| **Reported tok/s** | Total tokens ÷ total wall time (including model load) | 7-15 tok/s | 20-40 tok/s |
+| **Generation tok/s** | Tokens ÷ generation-only time (model already loaded) | 15-30 tok/s | 25-50 tok/s |
+| **Model load time** | Time to load ~3GB weights into memory | 5-15 seconds | 1-3 seconds |
+
+**Why the headline number looks bad:** The reported tok/s amortizes model load time across the entire response. A 200-token response that takes 15 seconds generates for ~7 seconds (28+ tok/s actual) but loads for ~8 seconds, giving a reported ~13 tok/s. During sustained multi-step agent runs where the model stays loaded, you see the true generation speed.
+
+**The bottleneck is I/O, not compute.** Reading 3GB of quantized weights from flash storage is the slow part. Once in RAM, the 3-4B parameter models generate efficiently. This is the opposite of the cloud problem (where compute is the bottleneck and I/O is fast).
+
+### Dual-Model Swap Cost
+
+| Transition | ARM (Snapdragon 8 Elite) | Desktop SSD |
+|-----------|-------------------------|-------------|
+| Same model (consecutive) | **0 seconds** (no swap) | **0 seconds** |
+| Primary → Secondary | 5-15 seconds | 1-3 seconds |
+| Secondary → Primary | 5-15 seconds | 1-3 seconds |
+
+George minimizes swaps: consecutive same-model calls are free. The swap only happens when crossing a scenario boundary (e.g., planning → tool routing → planning).
+
+### Thinking vs Instruct Speed
+
+Thinking models generate more tokens per response (thinking tokens + response tokens), but the per-token speed is the same. The wall-clock difference:
+
+| Model Type | Typical Response Tokens | Wall-Clock Time (ARM) | Notes |
+|-----------|------------------------|----------------------|-------|
+| Thinking (e.g., minist-think) | 200-2,000 | 7-70 seconds | Includes `<think>` phase |
+| Instruct (e.g., minist-inst) | 50-300 | 2-10 seconds | Direct response, no reasoning |
+
+For tasks that don't need deep reasoning (commit messages, tool routing, web summaries), the instruct model is 3-10x faster. This is why dual-model mode exists.
+
+---
+
 ## Slash Command Reference
 
 ### `/models`

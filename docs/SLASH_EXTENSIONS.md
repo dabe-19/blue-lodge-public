@@ -4,6 +4,11 @@ George can create his own slash commands. This is the self-extending
 command system — the Great Work of the Craft. From the rough ashlar
 of raw bash, George shapes his own perfect tools.
 
+> **TL;DR** — `/slash create deploy "Build, test, commit, push"` → George writes the bash,
+> validates it, and you can run `/slash deploy` forever. Custom commands get full access
+> to all 27 lodge libraries, all 56 base commands, and each other (recursive composition).
+> George sees his custom commands in his system prompt — he'll use them in plans automatically.
+
 ## Overview
 
 The `/slash` command lets George:

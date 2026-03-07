@@ -27,6 +27,7 @@ AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-2}"  # Max times to 
 AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-3}"                # Max milestones with same base command
 AGENT_HONEYDEW_MATCH="${AGENT_HONEYDEW_MATCH:-2}"              # Min keyword score to auto-check honeydew item
 AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto | interactive | disabled
+AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-1}"  # Max consecutive /web search before fallback to fetch/scrape
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
 
@@ -178,10 +179,10 @@ _micro_serialize_lean() {
 # P1 should judge THIS milestone's actions, not carryover context
 # from prior milestones (research_context, prior_milestones, etc.).
 _micro_serialize_eval() {
-    local file="$1" max_actions="${2:-10}"
-    jq --argjson n "$max_actions" '{
+    local file="$1" max_actions="${2:-10}" max_output="${3:-1024}"
+    jq --argjson n "$max_actions" --argjson m "$max_output" '{
         micro_objective: .micro_objective,
-        action_log: (.action_log | .[-$n:] | map(.output = .output[:1024])),
+        action_log: (.action_log | .[-$n:] | map(.output = .output[:$m])),
         warnings: .warnings
     }' "$file" 2>/dev/null
 }
@@ -836,15 +837,18 @@ _agent_evaluate_honeydew_item() {
 
     local eval_context=""
     if [ -n "$micro_file" ] && [ -f "$micro_file" ]; then
-        eval_context=$(_micro_serialize_eval "$micro_file")
+        # Use higher output limit (2048) for honeydew eval — the default
+        # 1024 truncates web search results and the evaluator can't see
+        # URLs/snippets needed to judge whether research was sufficient.
+        eval_context=$(_micro_serialize_eval "$micro_file" 10 2048)
     fi
 
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
 
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nMILESTONE COMPLETED:\n${milestone_text}\n\nMILESTONE SUMMARY:\n${_milestone_summary:-No summary available.}\n\nACTION LOG:\n${eval_context:-No actions available.}\n\n---\n\nHONEYDEW ITEM TO EVALUATE (item #${_next_id}):\n${_next_task}\n\nDoes the completed milestone SATISFY this honeydew item? The milestone does not need to match exactly — if the work accomplished meaningfully addresses the honeydew item's goal, it is SATISFIED.\n\nRespond: SATISFIED or UNSATISFIED: <reason>"
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nMILESTONE COMPLETED:\n${milestone_text}\n\nMILESTONE SUMMARY:\n${_milestone_summary:-No summary available.}\n\nACTION LOG:\n${eval_context:-No actions available.}\n\n---\n\nHONEYDEW ITEM TO EVALUATE (item #${_next_id}):\n${_next_task}\n\nDoes the completed milestone SATISFY this honeydew item? The milestone does not need to match exactly — if the work accomplished meaningfully addresses the honeydew item's goal, it is SATISFIED.\n\nRespond: SATISFIED or UNSATISFIED: <reason>. <recommendation>\nIf UNSATISFIED, explain WHY (what is missing or wrong) and RECOMMEND the next action (e.g. 'Try /web fetch <url> to get the actual page content' or 'The search returned results but no fetch was done — use /web fetch on result URL')."
 
-    local eval_sys="You are a honeydew item evaluator. Judge whether a completed milestone satisfies a specific task item. Be pragmatic: if the milestone's work meaningfully addresses the item's goal, it is SATISFIED. Do not require perfection. No markdown formatting. Respond SATISFIED or UNSATISFIED: <reason>."
+    local eval_sys="You are a honeydew item evaluator. Judge whether a completed milestone satisfies a specific task item. Be pragmatic: if the milestone's work meaningfully addresses the item's goal, it is SATISFIED. Do not require perfection. No markdown formatting. Respond SATISFIED or UNSATISFIED: <reason>. <recommendation>. If unsatisfied, explain what is missing and recommend the specific next action."
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew-eval <- item #${_next_id}: ${_next_task:0:80}"
     ui_think "Honeydew evaluator: checking item #${_next_id}..."
@@ -866,7 +870,9 @@ _agent_evaluate_honeydew_item() {
     local first_line
     first_line=$(echo "$verdict" | head -1)
     local verdict_word
-    verdict_word=$(echo "$first_line" | awk '{print $1}' | sed 's/^[*_]\+//;s/[*_:.,]\+$//')
+    # Extract just the verdict keyword — strip punctuation AND handle
+    # "UNSATISFIED:reason" (no space after colon) by splitting on colon first.
+    verdict_word=$(echo "$first_line" | awk -F'[: \t]' '{print $1}' | sed 's/^[*_]\+//;s/[*_.,]\+$//')
 
     _EVAL_HONEYDEW_REASON=""
     if [[ "$verdict_word" == "SATISFIED" ]]; then
@@ -878,8 +884,15 @@ _agent_evaluate_honeydew_item() {
         elif [ "$(echo "$first_line" | wc -w)" -gt 1 ]; then
             _EVAL_HONEYDEW_REASON=$(echo "$first_line" | sed 's/^[^ ]* *//')
         fi
-        local _reason_display="${_EVAL_HONEYDEW_REASON:+(${_EVAL_HONEYDEW_REASON:0:80})}"
+        # Multi-line verdicts: append lines 2-4 for richer context
+        local _extra_lines
+        _extra_lines=$(echo "$verdict" | sed -n '2,4p' | sed '/^[[:space:]]*$/d')
+        if [ -n "$_extra_lines" ]; then
+            _EVAL_HONEYDEW_REASON="${_EVAL_HONEYDEW_REASON:+${_EVAL_HONEYDEW_REASON} }$(echo "$_extra_lines" | tr '\n' ' ')"
+        fi
+        local _reason_display="${_EVAL_HONEYDEW_REASON:+(${_EVAL_HONEYDEW_REASON:0:200})}"
         ui_info "Honeydew evaluator: item #${_next_id} not yet satisfied ${_reason_display}"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval full verdict:\n%s\n' "$verdict" > /dev/tty 2>/dev/null
         return 1
     fi
 }
@@ -2275,6 +2288,7 @@ agent_inner_loop() {
     local last_failed_cmd=""
     local _last_success_cmd=""      # Track last successful command for macro_memory
     local _last_success_snippet=""  # First 200 chars of last successful output
+    local _web_search_consec=0     # Consecutive /web search counter (reset on non-search)
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
 
     while [ "$inner_attempts" -lt "$max_inner_loops" ]; do
@@ -2764,6 +2778,74 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
 
         fi  # end specialist output cleanup (skipped for direct respond)
 
+        # ── CONSECUTIVE WEB SEARCH INTERLOCK ──────────────────
+        # When the agent has already done N consecutive /web search
+        # commands (default: 1), redirect to /web fetch or /web
+        # scrape-images instead. Inject the previous search results
+        # as research context + dedicated fetch/scrape-images catalog
+        # cards so the model picks a URL to fetch instead of searching
+        # again. This prevents the search-loop where the agent keeps
+        # searching without ever fetching page content.
+        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" == /web\ search\ * ]] && [ "$_web_search_consec" -ge "${AGENT_WEB_SEARCH_CONSEC_MAX:-1}" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web-search interlock: $_web_search_consec consecutive searches (max ${AGENT_WEB_SEARCH_CONSEC_MAX:-1}) — redirecting to fetch/scrape"
+            ui_warn "Web search interlock: $_web_search_consec consecutive searches. Redirecting to fetch/scrape."
+
+            # Inject previous search output as research buffer
+            local _prev_search_output=""
+            _prev_search_output=$(jq -r '[.action_log[] | select(.action | test("^/web search")) | select(.status == "SUCCESS") | .output] | last // empty' "$micro_file" 2>/dev/null)
+
+            # Build a focused specialist prompt with ONLY fetch/scrape cards
+            local _ws_interlock_sys="TASK: $micro_objective
+You have already searched the web. Now you must FETCH or SCRAPE a specific URL from the search results below.
+
+OUTPUT FORMAT: exactly ONE /web command on its own line, starting with /
+FORBIDDEN: /web search (already done — use the URLs below instead)
+
+AVAILABLE COMMANDS (use ONLY these):
+/web fetch <url>           — Download and extract readable TEXT from a webpage (HTML/PDF/JSON). Returns plain text, no images.
+/web scrape-images <url>   — Returns STRUCTURED JSON: {url, title, content, images:[]} with page text AND image URIs. Use when you need images.
+
+RULES:
+- Pick the MOST RELEVANT URL from the search results below
+- Use /web fetch for text content (articles, docs, specs, prices)
+- Use /web scrape-images when you need images or visual content
+- Output exactly ONE command with a full https:// URL
+- NEVER output /web search — you must use a URL from the results"
+
+            local _ws_interlock_prompt="MICRO OBJECTIVE: $micro_objective\n\nPREVIOUS SEARCH RESULTS:\n${_prev_search_output:-No search results available.}\n\nPick the best URL from the search results and output a /web fetch or /web scrape-images command."
+
+            local _ws_interlock_cmd
+            local LLM_SCENARIO=agent
+            _ws_interlock_cmd=$(llm_generate "$_ws_interlock_prompt" "$_ws_interlock_sys" "${LLM_SPECIALIST_SHORT_TOKENS:-128}" "$LLM_BUDGET_AGENT")
+
+            # Clean and extract the command
+            _ws_interlock_cmd=$(echo "$_ws_interlock_cmd" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
+            _ws_interlock_cmd=$(echo "$_ws_interlock_cmd" | sed ':a;N;$!ba;s/<think>.*$//g')
+            _ws_interlock_cmd=$(echo "$_ws_interlock_cmd" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
+            _ws_interlock_cmd=$(echo "$_ws_interlock_cmd" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+            _ws_interlock_cmd=$(echo "$_ws_interlock_cmd" | sed '/^```[a-z]*[[:space:]]*$/d; s/```//g')
+            _ws_interlock_cmd=$(echo "$_ws_interlock_cmd" | grep -m1 '^/web ' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/"//g')
+
+            if [[ "$_ws_interlock_cmd" == /web\ fetch\ * ]] || [[ "$_ws_interlock_cmd" == /web\ scrape-images\ * ]] || [[ "$_ws_interlock_cmd" == /web\ scrapeimages\ * ]]; then
+                cmd="$_ws_interlock_cmd"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web-search interlock: redirected to '$cmd'"
+                _micro_add_note "$micro_file" "INTERLOCK: Consecutive web search limit reached. Redirected to: $cmd"
+            else
+                # Fallback: if specialist couldn't extract a URL, try to grab
+                # the first URL from the previous search results programmatically
+                local _fallback_url=""
+                _fallback_url=$(echo "$_prev_search_output" | grep -oP 'https?://[^\s"'"'"']+' | head -1)
+                if [ -n "$_fallback_url" ]; then
+                    cmd="/web fetch $_fallback_url"
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web-search interlock: programmatic fallback to '$cmd'"
+                    _micro_add_note "$micro_file" "INTERLOCK: Consecutive web search limit. Programmatic fallback to: $cmd"
+                else
+                    # No URLs available — let the original search through but warn
+                    _micro_add_note "$micro_file" "WARNING: $_web_search_consec consecutive web searches. No URLs found to fetch. Consider using /recall or /respond."
+                fi
+            fi
+        fi
+
         # ── PROGRAMMATIC INTERLOCK: Identicality Lockout ──────
         # Levels 3-4: Prevents the LLM from re-running the exact same
         # broken command. If identical, reject and force regeneration.
@@ -2892,6 +2974,17 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
                 fi
                 _last_success_cmd="$cmd"
                 _last_success_snippet="${output:0:200}"
+
+                # ── CONSECUTIVE WEB SEARCH COUNTER ─────────────
+                # Track how many /web search commands run in a row.
+                # Reset on any non-web-search command so the interlock
+                # only triggers on genuine consecutive search loops.
+                if [[ "$cmd" == /web\ search\ * ]]; then
+                    _web_search_consec=$((_web_search_consec + 1))
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web-search-consec: $_web_search_consec (max ${AGENT_WEB_SEARCH_CONSEC_MAX:-1})"
+                else
+                    _web_search_consec=0
+                fi
 
                 # ── WEB OUTPUT CONDENSER ───────────────────────
                 # Raw web scrape/fetch output can be 100+ lines of noisy
@@ -4092,10 +4185,10 @@ $question"
     # Emit response to stdout so the agent inner loop's
     # output=$(commands_dispatch ...) captures it into the action log.
     # In interactive mode llm_stream already displayed tokens to /dev/tty,
-    # so this is harmless (visible but already seen).  Without this line
-    # the nested $() in agent_ask absorbs llm_stream's stdout and the
-    # evaluator never sees the actual /ask answer.
-    echo "$response"
+    # so only echo when stdout is NOT a terminal (i.e., captured by $()).
+    if ! [ -t 1 ]; then
+        echo "$response"
+    fi
 
     # Journal the exchange — George writes a witty one-liner for posterity
     # Runs in background so user isn't blocked

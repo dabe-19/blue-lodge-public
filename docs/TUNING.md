@@ -256,23 +256,20 @@ PARAMETER num_predict 256
 
 ## Using Custom Models
 
-> **Model Library:** George ships with 9 pre-configured models across 4 families. Before creating a custom model from scratch, check whether [MODELS.md](MODELS.md) already covers your use case. The model library handles stop tokens, sampling, nothink mechanisms, and dual-model routing automatically.
+> **Model Library:** George ships with 18 pre-configured models across 7 families. Before creating a custom model from scratch, check whether [MODELS.md](MODELS.md) already covers your use case. The model library handles stop tokens, sampling, nothink mechanisms, and dual-model routing automatically.
 
 ### Step 1: Choose a model
 
-George works with any Ollama-compatible model. Tested recommendations:
+George works with any Ollama-compatible model. The model library covers 18 models — for custom models beyond those, tested recommendations:
 
 | Model | Size | RAM needed | Context | Notes |
 |-------|------|-----------|---------|-------|
-| Ministral-3-3B-Reasoning-2512 UD-Q5_K_XL | ~2.5GB | 7-10GB | 32K | **Default primary.** Thinking/reasoning. Optimized for mobile. |
-| Ministral-3-3B-Instruct-2512 UD-Q5_K_XL | ~2.5GB | 7-10GB | 32K | **Default secondary.** Fast instruct with vision support. |
-| Qwen3-4B-Thinking-2507 UD-Q5_K_XL | ~3.5GB | 8-12GB | 20K | Thinking/reasoning. Strongest nothink support. |
-| Qwen3-4B-Instruct-2507 Q5_K_M | ~3GB | 6-10GB | 16K | Non-thinking fallback. Faster inference. |
-| Qwen3-8B Q5_K_M | ~6GB | 10-12GB | 32K | More capable. Needs more RAM. |
-| Llama 3.1 8B Q4_K_M | ~5GB | 8-10GB | 8K-128K | Excellent code reasoning. |
-| DeepSeek-Coder-V2-Lite Q4 | ~2.5GB | 4-6GB | 16K | Coding specialist. |
-| Phi-3 Mini Q4 | ~2.5GB | 4-6GB | 4K-128K | Small but punchy. |
-| Gemma 2 2B Q5 | ~2GB | 3-4GB | 8K | Google's compact model. |
+| Ministral-3-3B-Reasoning-2512 UD-Q5_K_XL | ~2.5GB | 7-10GB | 32K | **Default primary.** Thinking/reasoning. Best mobile perf. |
+| Ministral-3-3B-Instruct-2512 UD-Q5_K_XL | ~2.5GB | 7-10GB | 32K | **Default secondary.** Fast instruct + vision. |
+| Qwen3-4B-Thinking-2507 UD-Q5_K_XL | ~3.5GB | 8-12GB | 32K | Strongest nothink support (`/no_think`). |
+| Qwen3.5-4B UD-Q4_K_XL | ~3.0GB | 7-10GB | 32K | Newest generation. 256K native. |
+| Gemma 3 4B QAT UD-Q5_K_XL | ~3.0GB | 7-10GB | 32K | Google multimodal. Vision. |
+| Phi-4 mini reasoning UD-Q5_K_XL | ~2.5GB | 7-10GB | 32K | Microsoft math/logic. MIT. |
 
 ### Step 2: Create a custom Modelfile
 
@@ -341,12 +338,12 @@ Different model families use different stop tokens. Using the wrong one makes th
 
 | Model family | Stop token |
 |-------------|------------|
-| Qwen3 | `<\|im_end\|>` |
+| Qwen3 / Qwen 3.5 | `<\|im_end\|>` |
 | Llama 3.x | `<\|eot_id\|>` |
-| Phi-3 / Phi-4 | `<\|end\|>` |
-| Gemma 2 | `<end_of_turn>` |
-| DeepSeek-Coder | `<\|EOT\|>` |
-| Mistral / Mixtral | `[/INST]` |
+| Phi-4 | `<\|end\|>` |
+| Gemma 3 | `<end_of_turn>` |
+| Granite 4 | `<\|end_of_text\|>` |
+| Ministral | `</s>` |
 
 If the model produces runaway output, check your stop token first.
 
@@ -430,6 +427,51 @@ George right-sizes token budgets per command:
 | Journal decay | 512 | 64 (`LLM_BUDGET_JOURNAL`) | Sediment compression |
 
 Output tokens and think budgets are hardcoded per call. To change output tokens, modify the third argument to `llm_generate` or `llm_stream` in the source. Think budgets can be overridden via environment variables (`LLM_BUDGET_ASK`, `LLM_BUDGET_AGENT`, `LLM_BUDGET_ROUTER`, `LLM_BUDGET_JOURNAL`, `LLM_BUDGET_TOOL`).
+
+---
+
+## Performance Baselines
+
+Reference numbers for common hardware configurations. Use these to gauge whether your setup is performing as expected.
+
+### Inference Speed by Hardware
+
+| Hardware | Model | num_ctx | Prompt eval (tok/s) | Generation (tok/s) | Wall-clock /ask | Notes |
+|----------|-------|---------|--------------------|--------------------|-----------------|-------|
+| Snapdragon 8 Elite (12GB) | minist-think Q5 | 32K | ~80-120 | 15-30 | 3-15s | Primary target. CPU only. |
+| Snapdragon 8 Elite + Vulkan | minist-think Q5 | 32K | ~150-200 | 20-40 | 2-10s | llama.cpp with Adreno GPU |
+| Desktop i7/Ryzen (32GB) | minist-think Q5 | 32K | ~200-400 | 25-50 | 1-5s | CPU inference |
+| Desktop + NVIDIA GPU | minist-think Q5 | 32K | ~500+ | 40-80 | <2s | num_gpu=99 |
+| Raspberry Pi 5 (8GB) | minist-think Q5 | 16K | ~30-60 | 5-10 | 10-30s | Reduce num_ctx |
+| Chromebook ARM (8GB) | minist-think Q5 | 16K | ~50-80 | 8-15 | 5-20s | Via Crostini/Debian |
+
+> **Why reported tok/s looks low:** The wall-clock time includes model loading (5-15s on ARM, 1-3s on SSD). Once loaded, generation runs at the "Generation (tok/s)" rate. During sustained multi-step agent runs, the model stays loaded and you see true throughput. **The bottleneck is I/O (loading weights), not compute (generating tokens).**
+
+### Memory Usage by Configuration
+
+| Model | num_ctx | Weights | KV Cache | Overhead | Total | Free on 12GB |
+|-------|---------|---------|----------|----------|-------|-------------|
+| minist-think Q5 | 32K | ~2.5 GB | ~4.5 GB | ~0.5 GB | ~7.5 GB | ~4.5 GB |
+| minist-think Q5 | 16K | ~2.5 GB | ~2.3 GB | ~0.5 GB | ~5.3 GB | ~6.7 GB |
+| qwen3-think Q5 | 32K | ~3.5 GB | ~5.0 GB | ~0.5 GB | ~9.0 GB | ~3.0 GB |
+| gemma3-1b BF16 | 32K | ~0.6 GB | ~2.0 GB | ~0.5 GB | ~3.1 GB | ~8.9 GB |
+
+### Tuning Recipes
+
+**"George is too slow for simple questions"**
+→ Use dual-model mode (default). The instruct model handles routing/tools at 2-5x the speed of the thinking model. If you're in single-model mode with a thinking model, that's why.
+
+**"I see lots of model swap messages"**
+→ This is expected in dual-model mode during agent tasks. Each swap costs 5-15s on ARM. If it's too much, use `/models single minist-think` to trade speed variability for consistency.
+
+**"George runs out of RAM during builds"**
+→ Set `export LLM_KEEP_ALIVE=0` to unload the model (~4GB freed) immediately after each LLM call. Or reduce `num_ctx` to 16K.
+
+**"Thinking models waste tokens on simple tasks"**
+→ This is by design — thinking tokens help with planning. For tasks that don't need it, the dual-model system routes to the instruct model automatically. You can also use `/think nothink` to suppress reasoning on Qwen3 models (architecturally enforced) or via system prompt instruction on others.
+
+**"I want faster startup"**
+→ Reduce the knowledge base size (fewer ingested docs), or pre-warm the model: `curl -s http://localhost:11434/api/generate -d '{"model":"blue-lodge-minist-think:4b","prompt":"hi","stream":false,"options":{"num_predict":1}}'`
 
 ---
 

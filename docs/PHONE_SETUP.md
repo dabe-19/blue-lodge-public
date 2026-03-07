@@ -2,16 +2,18 @@
 
 Four installation paths depending on your needs and Termux source.
 
+> **Important:** Phone integration (`/phone` commands — SMS, GPS, battery, clipboard) **only works in native Termux**, not inside proot. If you need both full Linux tools and phone features, use **Option B+ (Hybrid)**.
+
 | | A: Termux-Native (F-Droid) | B: proot Ubuntu | B+: Hybrid | C: Play Store Termux |
 |---|---|---|---|---|
 | **Termux source** | F-Droid | F-Droid | F-Droid | Google Play Store |
 | **Complexity** | Simple — 4 steps | More steps | Most steps | Simple — 4 steps |
-| **Phone integration** | Full (`/phone`, SMS, GPS) | None (proot blocks API) | Exit proot for `/phone` | Full (`/phone`, SMS, GPS) |
+| **Phone integration** | Full (`/phone`, SMS, GPS) | **None** (proot blocks API) | Exit proot for `/phone` | Full (`/phone`, SMS, GPS) |
 | **Linux tools** | Termux `pkg` packages | Full `apt` ecosystem | Both (switch contexts) | Termux `pkg` packages |
 | **proot containers** | Not used | Required | Required | Not available |
 | **Performance** | Native | ~5-10% proot overhead | Mixed | Native |
-| **Storage** | ~4GB | ~5-6GB | ~5-6GB | ~4GB |
-| **Recommended for** | Most users | Heavy Linux needs | Power users | Fallback / F-Droid unavailable |
+| **Storage** | ~5GB | ~6-8GB | ~6-8GB | ~5GB |
+| **Recommended for** | **Most users** | Heavy Linux needs | Power users | Fallback / F-Droid unavailable |
 
 > **Which should I pick?**
 > - **Option A** if you just want George working with full phone features.
