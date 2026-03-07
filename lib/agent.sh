@@ -1783,6 +1783,7 @@ ROUTE EXAMPLES:
 <create a custom tool>             → /slash
 <analyze or describe an image>     → /vision
 <write a report/file then email>   → /write (first), then /email (next milestone)
+<draft a document/report>          → /write
 <general knowledge, no tools>      → /respond
 
 RULES:
@@ -2315,6 +2316,8 @@ agent_inner_loop() {
         local _pre_route=""
         if [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
             local _pre_cmd="${BASH_REMATCH[2]}"
+            # Synonym remap: models love "/draft" — treat as /write
+            [ "$_pre_cmd" = "draft" ] && _pre_cmd="write"
             # Validate it's a real command before trusting the extraction
             local _pre_valid=0
             if [ "$_pre_cmd" = "bash" ]; then
@@ -3629,8 +3632,11 @@ MEMEOF
         fi
 
         # Social context: registered Discord channels and Mastodon
-        # instances so the strategist can generate correct names
-        # and potentially bypass the router on social commands.
+        # instances so the strategist can generate correct channel
+        # names. Injected into the USER prompt (not system prompt)
+        # as reference data — keeps system prompt static for KV
+        # cache reuse and avoids priming the model toward social
+        # research loops on small (3-4B) models.
         local _social_ctx=""
         if declare -f social_context_compact &>/dev/null; then
             _social_ctx=$(social_context_compact 2>/dev/null)
@@ -3672,7 +3678,7 @@ MEMEOF
         # NOTE: Date is in the USER prompt, not system prompt.
         # Keeping system prompt static enables llama-server KV cache
         # reuse across consecutive strategist calls (~30-60% prefill savings).
-        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
+        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
 
         # ── Research→Delivery Gate ────────────────────────────
         # After 2+ consecutive research milestones, inject a hard
@@ -3693,9 +3699,6 @@ MEMEOF
 ${_tool_summary}
 
 SERVICES STATUS: ${_svc_status:-unknown}
-${_social_ctx:+
-REGISTERED SOCIAL CHANNELS (use these exact names):
-${_social_ctx}}
 
 $(cat << 'STRAT_RULES_JSON'
 {"rules":{
@@ -3773,7 +3776,10 @@ ${_last_eval_feedback}
         if [[ "$milestone" =~ ^/([a-z]+)[[:space:]]+(.*) ]]; then
             milestone="Use /${BASH_REMATCH[1]} to ${BASH_REMATCH[2]}"
         fi
-        # 8. Truncate to 200 chars max (prevents context bloat)
+        # 8. Synonym remap: /draft → /write (models love "draft")
+        milestone="${milestone//\/draft /\/write }"
+        milestone="${milestone//\/draft$/\/write}"
+        # 9. Truncate to 200 chars max (prevents context bloat)
         milestone="${milestone:0:200}"
 
         # Transcript: log strategist milestone
