@@ -12,6 +12,26 @@ source "$LODGE_DIR/lib/api.sh"
 # ── Provider timeout (longer for LLM calls) ───────────────────
 PROVIDER_TIMEOUT="${PROVIDER_TIMEOUT:-120}"
 
+# ── Response validation helper ────────────────────────────────
+# Checks both HTTP errors and empty/null content from API responses.
+# Usage: _provider_check_response $? "$resp" '.jq.path' "Label"
+_provider_check_response() {
+    local exit_code="$1" resp="$2" jq_path="$3" label="$4"
+    if [ "$exit_code" -eq 0 ]; then
+        local text
+        text=$(api_json_get "$resp" "$jq_path")
+        if [ -n "$text" ] && [ "$text" != "null" ]; then
+            echo "$text"
+            return 0
+        fi
+    fi
+    local err_msg
+    err_msg=$(api_json_get "$resp" '.error.message // .error.type // .message // "unknown error"')
+    [ -z "$err_msg" ] || [ "$err_msg" = "null" ] && err_msg="empty or blocked response"
+    ui_err "$label: $err_msg"
+    return 1
+}
+
 # ═══════════════════════════════════════════════════════════════
 # OpenAI — GPT-4o, GPT-4o-mini, o1, o3, etc.
 # ═══════════════════════════════════════════════════════════════
@@ -40,12 +60,7 @@ openai_chat() {
         "https://api.openai.com/v1/chat/completions" "$data" \
         -H "Authorization: Bearer $key")
 
-    if [ $? -eq 0 ]; then
-        api_json_get "$resp" '.choices[0].message.content'
-    else
-        ui_err "OpenAI request failed: $(api_json_get "$resp" '.error.message // "unknown"')"
-        return 1
-    fi
+    _provider_check_response $? "$resp" '.choices[0].message.content' "OpenAI"
 }
 
 openai_models() {
@@ -85,12 +100,7 @@ anthropic_chat() {
         -H "x-api-key: $key" \
         -H "anthropic-version: 2023-06-01")
 
-    if [ $? -eq 0 ]; then
-        api_json_get "$resp" '.content[0].text'
-    else
-        ui_err "Anthropic request failed: $(api_json_get "$resp" '.error.message // "unknown"')"
-        return 1
-    fi
+    _provider_check_response $? "$resp" '.content[0].text' "Anthropic"
 }
 
 anthropic_models() {
@@ -125,12 +135,7 @@ google_chat() {
         "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}" \
         "$data")
 
-    if [ $? -eq 0 ]; then
-        api_json_get "$resp" '.candidates[0].content.parts[0].text'
-    else
-        ui_err "Google AI failed: $(api_json_get "$resp" '.error.message // "unknown"')"
-        return 1
-    fi
+    _provider_check_response $? "$resp" '.candidates[0].content.parts[0].text' "Google AI"
 }
 
 google_models() {
@@ -218,12 +223,7 @@ groq_chat() {
         "https://api.groq.com/openai/v1/chat/completions" "$data" \
         -H "Authorization: Bearer $key")
 
-    if [ $? -eq 0 ]; then
-        api_json_get "$resp" '.choices[0].message.content'
-    else
-        ui_err "Groq request failed"
-        return 1
-    fi
+    _provider_check_response $? "$resp" '.choices[0].message.content' "Groq"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -250,12 +250,7 @@ mistral_chat() {
         "https://api.mistral.ai/v1/chat/completions" "$data" \
         -H "Authorization: Bearer $key")
 
-    if [ $? -eq 0 ]; then
-        api_json_get "$resp" '.choices[0].message.content'
-    else
-        ui_err "Mistral request failed"
-        return 1
-    fi
+    _provider_check_response $? "$resp" '.choices[0].message.content' "Mistral"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -282,12 +277,7 @@ together_chat() {
         "https://api.together.xyz/v1/chat/completions" "$data" \
         -H "Authorization: Bearer $key")
 
-    if [ $? -eq 0 ]; then
-        api_json_get "$resp" '.choices[0].message.content'
-    else
-        ui_err "Together request failed"
-        return 1
-    fi
+    _provider_check_response $? "$resp" '.choices[0].message.content' "Together"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -314,12 +304,7 @@ perplexity_chat() {
         "https://api.perplexity.ai/chat/completions" "$data" \
         -H "Authorization: Bearer $key")
 
-    if [ $? -eq 0 ]; then
-        api_json_get "$resp" '.choices[0].message.content'
-    else
-        ui_err "Perplexity request failed"
-        return 1
-    fi
+    _provider_check_response $? "$resp" '.choices[0].message.content' "Perplexity"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -346,12 +331,7 @@ cohere_chat() {
         "https://api.cohere.ai/v1/chat" "$data" \
         -H "Authorization: Bearer $key")
 
-    if [ $? -eq 0 ]; then
-        api_json_get "$resp" '.text'
-    else
-        ui_err "Cohere request failed"
-        return 1
-    fi
+    _provider_check_response $? "$resp" '.text' "Cohere"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -378,12 +358,7 @@ deepseek_chat() {
         "https://api.deepseek.com/chat/completions" "$data" \
         -H "Authorization: Bearer $key")
 
-    if [ $? -eq 0 ]; then
-        api_json_get "$resp" '.choices[0].message.content'
-    else
-        ui_err "DeepSeek request failed"
-        return 1
-    fi
+    _provider_check_response $? "$resp" '.choices[0].message.content' "DeepSeek"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -410,12 +385,7 @@ xai_chat() {
         "https://api.x.ai/v1/chat/completions" "$data" \
         -H "Authorization: Bearer $key")
 
-    if [ $? -eq 0 ]; then
-        api_json_get "$resp" '.choices[0].message.content'
-    else
-        ui_err "xAI request failed"
-        return 1
-    fi
+    _provider_check_response $? "$resp" '.choices[0].message.content' "xAI"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -429,16 +399,16 @@ provider_chat() {
     local model="${3:-}"
 
     case "$provider" in
-        openai|gpt)         openai_chat "$message" "${model:-gpt-4o-mini}" ;;
-        anthropic|claude)   anthropic_chat "$message" "${model:-claude-sonnet-4-20250514}" ;;
-        google|gemini)      google_chat "$message" "${model:-gemini-2.0-flash}" ;;
-        groq)               groq_chat "$message" "${model:-llama-3.3-70b-versatile}" ;;
-        mistral)            mistral_chat "$message" "${model:-mistral-large-latest}" ;;
-        together)           together_chat "$message" "${model:-meta-llama/Llama-3.3-70B-Instruct-Turbo}" ;;
-        perplexity|pplx)    perplexity_chat "$message" "${model:-sonar}" ;;
-        cohere)             cohere_chat "$message" "${model:-command-r-plus}" ;;
-        deepseek)           deepseek_chat "$message" "${model:-deepseek-chat}" ;;
-        xai|grok)           xai_chat "$message" "${model:-grok-2}" ;;
+        openai|gpt)         openai_chat "$message" "$model" ;;
+        anthropic|claude)   anthropic_chat "$message" "$model" ;;
+        google|gemini)      google_chat "$message" "$model" ;;
+        groq)               groq_chat "$message" "$model" ;;
+        mistral)            mistral_chat "$message" "$model" ;;
+        together)           together_chat "$message" "$model" ;;
+        perplexity|pplx)    perplexity_chat "$message" "$model" ;;
+        cohere)             cohere_chat "$message" "$model" ;;
+        deepseek)           deepseek_chat "$message" "$model" ;;
+        xai|grok)           xai_chat "$message" "$model" ;;
         *)
             ui_err "Unknown provider: $provider"
             ui_dim "Available: openai, anthropic, google, groq, mistral, together, perplexity, cohere, deepseek, xai"

@@ -2433,13 +2433,19 @@ _cmd_provider() {
             provider=$(echo "$rest" | awk '{print $1}')
             local message
             message=$(echo "$rest" | sed 's/^[^ ]* *//')
+            # Support provider/model syntax: google/gemma-3-27b-it
+            local model_override=""
+            if [[ "$provider" == */* ]]; then
+                model_override="${provider#*/}"
+                provider="${provider%%/*}"
+            fi
             if [ -z "$provider" ] || [ -z "$message" ]; then
-                ui_err "Usage: /provider chat <provider> <message>"
+                ui_err "Usage: /provider chat <provider>[/model] <message>"
                 return 1
             fi
             local response
-            response=$(provider_chat "$provider" "$message")
-            if [ $? -eq 0 ]; then
+            response=$(provider_chat "$provider" "$message" "$model_override")
+            if [ $? -eq 0 ] && [ -n "$response" ]; then
                 echo ""
                 ui_render_response "$response"
             fi ;;
@@ -2455,7 +2461,7 @@ _cmd_provider() {
         status) provider_status ;;
         *)
             ui_info "Usage: /provider <chat|models|status>"
-            ui_dim "  chat <provider> <msg> — Send a message to a cloud AI"
+            ui_dim "  chat <provider>[/model] <msg> — Send a message to a cloud AI"
             ui_dim "  models <provider>     — List available models"
             ui_dim "  status                — Show configured providers"
             ui_dim ""
