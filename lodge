@@ -816,6 +816,12 @@ _cmd_limits() {
             else
                 _limits_set AGENT_STEP_DELAY "Step delay" "$value" 0 30
             fi ;;
+        rec-chars)
+            if [ -z "$value" ]; then
+                ui_info "Evaluator recommendation char limit: ${AGENT_EVAL_REC_CHARS:-120} (default: 120)"
+            else
+                _limits_set AGENT_EVAL_REC_CHARS "Recommendation chars" "$value" 20 500
+            fi ;;
         reset)
             AGENT_PLAN_STEPS=5
             AGENT_INNER_LOOPS=6
@@ -843,6 +849,7 @@ _cmd_limits() {
             AGENT_MAX_CMD_FAMILY=3
             AGENT_HONEYDEW_MATCH=2
             AGENT_WEB_SEARCH_CONSEC_MAX=1
+            AGENT_EVAL_REC_CHARS=120
             ui_ok "All limits reset to defaults" ;;
         "")
             ui_section "Agent Limits"
@@ -862,6 +869,7 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Command family cap:" "$AGENT_MAX_CMD_FAMILY  (default: 3)"
             printf "  %-22s %s\n" "Honeydew match score:" "$AGENT_HONEYDEW_MATCH  (default: 2)"
             printf "  %-22s %s\n" "Web search repeat:" "${AGENT_WEB_SEARCH_CONSEC_MAX:-1}  (default: 1)"
+            printf "  %-22s %s\n" "Recommendation chars:" "${AGENT_EVAL_REC_CHARS:-120}  (default: 120)"
             echo ""
             ui_section "Output Tokens (num_predict)"
             printf "  %-22s %s\n" "Max tokens:" "$LLM_MAX_TOKENS  (default: 20480)"
@@ -899,6 +907,7 @@ _cmd_limits() {
             ui_dim "    cmd-family N     — Max milestones with same base command (current: $AGENT_MAX_CMD_FAMILY)"
             ui_dim "    honeydew-match N — Min keyword score for honeydew auto-check (current: $AGENT_HONEYDEW_MATCH)"
             ui_dim "    web-search-repeat N — Max consecutive /web search before forced fetch (current: ${AGENT_WEB_SEARCH_CONSEC_MAX:-1})"
+            ui_dim "    rec-chars N      — Max chars in evaluator recommendation to strategist (current: ${AGENT_EVAL_REC_CHARS:-120})"
             echo ""
             ui_dim "  Output tokens (num_predict):"
             ui_dim "    max-tokens N    — Global max output cap (current: $LLM_MAX_TOKENS)"
@@ -2413,7 +2422,7 @@ _cmd_web() {
         fetch|read)  web_fetch "$rest" ;;
         search)      web_search "$rest" ;;
         images)      web_images "$rest" ;;
-        scrape-images|scrapeimages)
+        scrape-images|scrapeimages|scrape)
                      web_scrape_images "$rest" ;;
         blacklist)
             local bl_sub

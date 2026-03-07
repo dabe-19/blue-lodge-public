@@ -28,6 +28,7 @@ AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-3}"                # Max milestone
 AGENT_HONEYDEW_MATCH="${AGENT_HONEYDEW_MATCH:-2}"              # Min keyword score to auto-check honeydew item
 AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto | interactive | disabled
 AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-1}"  # Max consecutive /web search before fallback to fetch/scrape
+AGENT_EVAL_REC_CHARS="${AGENT_EVAL_REC_CHARS:-120}"              # Max chars after a slash command in evaluator recommendations
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
 
@@ -259,16 +260,15 @@ _macro_serialize() {
 # chasing the raw query instead of the remaining honeydew items.
 _macro_serialize_lean() {
     local file="$1"
-    # Strip: persona (always), primary_objective (when honeydew exists),
-    # command field from milestones (prevents slash-command priming on
-    # subsequent strategist calls), and cap milestones to last 5
-    # (prevents unbounded token growth on long tasks).
+    # Strip: persona (always), command field from milestones (prevents
+    # slash-command priming on subsequent strategist calls), and cap
+    # milestones to last 5 (prevents unbounded token growth on long tasks).
+    # NOTE: primary_objective is ALWAYS kept — even when honeydew exists.
+    # The honeydew decomposition can lose specifics from the original
+    # request (dates, names, scope qualifiers) that the strategist needs
+    # to stay on-topic across milestones.
     local _jq_lean='.completed_milestones |= (.[-5:] | [.[] | del(.command)])'
-    if jq -e '.honeydew != null' "$file" >/dev/null 2>&1; then
-        jq "del(.persona) | del(.primary_objective) | $_jq_lean" "$file" 2>/dev/null
-    else
-        jq "del(.persona) | $_jq_lean" "$file" 2>/dev/null
-    fi
+    jq "del(.persona) | $_jq_lean" "$file" 2>/dev/null
 }
 
 # ── Milestone Completion Helper ────────────────────────────────
@@ -848,12 +848,17 @@ _agent_evaluate_honeydew_item() {
         eval_context=$(_micro_serialize_eval "$micro_file" 10 2048)
     fi
 
+    # Retrieve the user's original request so the evaluator can verify
+    # milestones stay on-topic (e.g., "2026 NFL draft" not drifting to 2025).
+    local _hd_original_request=""
+    _hd_original_request=$(jq -r '.primary_task // empty' "$hd_file" 2>/dev/null)
+
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
 
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nMILESTONE COMPLETED:\n${milestone_text}\n\nMILESTONE SUMMARY:\n${_milestone_summary:-No summary available.}\n\nACTION LOG:\n${eval_context:-No actions available.}\n\n---\n\nHONEYDEW ITEM TO EVALUATE (item #${_next_id}):\n${_next_task}\n\nDoes the completed milestone SATISFY this honeydew item? The milestone does not need to match exactly — if the work accomplished meaningfully addresses the honeydew item's goal, it is SATISFIED.\n\nRespond: SATISFIED or UNSATISFIED: <reason>. <recommendation>\nIf UNSATISFIED, explain WHY (what is missing or wrong) and RECOMMEND the next action (e.g. 'Try /web fetch <url> to get the actual page content' or 'The search returned results but no fetch was done — use /web fetch on result URL')."
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nORIGINAL USER REQUEST:\n${_hd_original_request:-Unknown}\n\nMILESTONE COMPLETED:\n${milestone_text}\n\nMILESTONE SUMMARY:\n${_milestone_summary:-No summary available.}\n\nACTION LOG:\n${eval_context:-No actions available.}\n\n---\n\nHONEYDEW ITEM TO EVALUATE (item #${_next_id}):\n${_next_task}\n\nDoes the completed milestone SATISFY this honeydew item in the context of the ORIGINAL USER REQUEST? The milestone does not need to match exactly — if the work accomplished meaningfully addresses the honeydew item's goal, it is SATISFIED. However, check that the milestone work is relevant to the original request (correct dates, topics, scope).\n\nRespond: SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <next action>\nIf UNSATISFIED, explain WHY (what is missing or wrong) and RECOMMEND the next action using a specific slash command (e.g. 'RECOMMENDATION: /web fetch <url> to get the actual page content')."
 
-    local eval_sys="You are a honeydew item evaluator. Judge whether a completed milestone satisfies a specific task item. Be pragmatic: if the milestone's work meaningfully addresses the item's goal, it is SATISFIED. Do not require perfection. No markdown formatting. Respond SATISFIED or UNSATISFIED: <reason>. <recommendation>. If unsatisfied, explain what is missing and recommend the specific next action."
+    local eval_sys="You are a honeydew item evaluator. Judge whether a completed milestone satisfies a specific task item in the context of the original user request. Be pragmatic: if the milestone's work meaningfully addresses the item's goal, it is SATISFIED. Do not require perfection. Verify the work is relevant to the original request (correct dates, subjects, scope). No markdown formatting. Respond SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <next action with slash command>."
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew-eval <- item #${_next_id}: ${_next_task:0:80}"
     ui_think "Honeydew evaluator: checking item #${_next_id}..."
@@ -880,6 +885,7 @@ _agent_evaluate_honeydew_item() {
     verdict_word=$(echo "$first_line" | awk -F'[: \t]' '{print $1}' | sed 's/^[*_]\+//;s/[*_.,]\+$//')
 
     _EVAL_HONEYDEW_REASON=""
+    _EVAL_HONEYDEW_RECOMMENDATION=""
     if [[ "$verdict_word" == "SATISFIED" ]]; then
         ui_ok "Honeydew evaluator: item #${_next_id} satisfied"
         return 0
@@ -895,9 +901,34 @@ _agent_evaluate_honeydew_item() {
         if [ -n "$_extra_lines" ]; then
             _EVAL_HONEYDEW_REASON="${_EVAL_HONEYDEW_REASON:+${_EVAL_HONEYDEW_REASON} }$(echo "$_extra_lines" | tr '\n' ' ')"
         fi
+
+        # ── Parse RECOMMENDATION with slash command extraction ──
+        # Look for RECOMMEND/RECOMMENDATION in the verdict text and
+        # extract the first slash command plus a capped number of
+        # following characters. This gives the strategist a focused,
+        # actionable recommendation without verbose prose.
+        local _full_verdict_text
+        _full_verdict_text=$(echo "$verdict" | tr '\n' ' ')
+        local _rec_text=""
+        # Look for RECOMMEND: or RECOMMENDATION: prefix
+        if [[ "$_full_verdict_text" =~ [Rr][Ee][Cc][Oo][Mm][Mm][Ee][Nn][Dd]([Aa][Tt][Ii][Oo][Nn])?:?[[:space:]]*(.*) ]]; then
+            _rec_text="${BASH_REMATCH[2]}"
+        fi
+        # Extract the first slash command from the recommendation (or full text)
+        local _rec_source="${_rec_text:-$_full_verdict_text}"
+        local _rec_chars="${AGENT_EVAL_REC_CHARS:-120}"
+        if [[ "$_rec_source" =~ (/[a-z]+[[:space:]][^.]*) ]]; then
+            local _slash_snippet="${BASH_REMATCH[1]}"
+            _EVAL_HONEYDEW_RECOMMENDATION="${_slash_snippet:0:$_rec_chars}"
+        elif [ -n "$_rec_text" ]; then
+            # Recommendation exists but no slash command — use capped text
+            _EVAL_HONEYDEW_RECOMMENDATION="${_rec_text:0:$_rec_chars}"
+        fi
+
         local _reason_display="${_EVAL_HONEYDEW_REASON:+(${_EVAL_HONEYDEW_REASON:0:200})}"
         ui_info "Honeydew evaluator: item #${_next_id} not yet satisfied ${_reason_display}"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval full verdict:\n%s\n' "$verdict" > /dev/tty 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_EVAL_HONEYDEW_RECOMMENDATION" ] && printf '  [debug] honeydew-eval recommendation: %s\n' "$_EVAL_HONEYDEW_RECOMMENDATION" > /dev/tty 2>/dev/null
         return 1
     fi
 }
@@ -2758,7 +2789,17 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
         #   /web fetch URL1 OR URL2 OR URL3
         # These fail because web_fetch/scrape/download/vision expect
         # exactly one URL. Extract only the first http(s) URL.
+        #
+        # Also normalizes /web scrape → /web scrape-images (models
+        # emit the shorter form which doesn't exist as a subcommand).
         if [ "$cmd_is_slash" -eq 1 ]; then
+            # ── /web scrape → /web scrape-images normalization ──
+            if [[ "$cmd" == "/web scrape "* ]] && [[ "$cmd" != "/web scrape-images "* ]] && [[ "$cmd" != "/web scrapeimages "* ]]; then
+                local _scrape_rest="${cmd#/web scrape }"
+                cmd="/web scrape-images $_scrape_rest"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] normalized /web scrape -> /web scrape-images"
+            fi
+
             local _needs_single_url=0
             local _url_cmd_prefix=""
             case "$cmd" in
@@ -2789,6 +2830,25 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
                         fi
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] single-url: kept first of $_url_count URLs"
                     fi
+                fi
+            fi
+
+            # ── URL ARG SANITIZATION ──────────────────────────
+            # Models sometimes append CLI-style flags, JSON field specs,
+            # or other garbage after a URL argument:
+            #   /web scrape-images https://example.com --extract "..." --output-format "JSON" --fields "stats{...}"
+            #   /web fetch https://example.com/page | grep "..."
+            # Strip everything after what looks like a valid URL for
+            # URL-based commands (fetch, scrape-images, download).
+            # /vision is excluded — it legitimately has a prompt after the URL.
+            if [ "$_needs_single_url" -eq 1 ] && [[ "$cmd" != "/vision "* ]]; then
+                local _sanitize_args="${cmd#$_url_cmd_prefix }"
+                local _sanitize_url
+                _sanitize_url=$(echo "$_sanitize_args" | grep -oP 'https?://[^\s"'"'"']+' | head -1)
+                if [ -n "$_sanitize_url" ] && [ "$_sanitize_url" != "$_sanitize_args" ]; then
+                    # URL found but there's trailing content — strip it
+                    cmd="${_url_cmd_prefix} ${_sanitize_url}"
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] url-sanitize: stripped trailing args from URL command"
                 fi
             fi
         fi
@@ -4011,9 +4071,16 @@ ${_last_eval_feedback}
                         # Honeydew item NOT satisfied — milestone
                         # succeeded but didn't address the current
                         # honeydew item. Feed back to strategist.
+                        # Prefer the parsed recommendation (with slash
+                        # command) over full verbose reason — the strategist
+                        # needs an actionable hint, not a paragraph.
                         if [ -n "${_EVAL_HONEYDEW_REASON:-}" ]; then
-                            _attempted_milestones+=("EVAL|honeydew item unsatisfied: $_EVAL_HONEYDEW_REASON")
-                            _last_eval_feedback="Milestone '${milestone:0:80}' ran, but honeydew item #${_EVAL_HONEYDEW_ITEM_NUM:-?} is NOT addressed: ${_EVAL_HONEYDEW_REASON}. Next milestone must address it."
+                            _attempted_milestones+=("EVAL|honeydew item unsatisfied: ${_EVAL_HONEYDEW_REASON:0:200}")
+                            if [ -n "${_EVAL_HONEYDEW_RECOMMENDATION:-}" ]; then
+                                _last_eval_feedback="Honeydew item #${_EVAL_HONEYDEW_ITEM_NUM:-?} NOT addressed. Evaluator recommends: ${_EVAL_HONEYDEW_RECOMMENDATION}"
+                            else
+                                _last_eval_feedback="Milestone '${milestone:0:80}' ran, but honeydew item #${_EVAL_HONEYDEW_ITEM_NUM:-?} is NOT addressed: ${_EVAL_HONEYDEW_REASON:0:200}. Next milestone must address it."
+                            fi
                             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval feedback -> strategist: ${_last_eval_feedback:0:100}"
                         else
                             _last_eval_feedback="Milestone '${milestone:0:80}' ran, but the current honeydew item is NOT addressed. Try a different approach."
