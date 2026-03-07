@@ -1,6 +1,6 @@
 #!/bin/bash
 # ── George: Slash Command Dispatcher ───────────────────────
-# Registers and dispatches /commands similar to Claude Code.
+# Registers and dispatches George /commands.
 
 [ -n "${_LIB_COMMANDS_LOADED:-}" ] && return 0; _LIB_COMMANDS_LOADED=1
 

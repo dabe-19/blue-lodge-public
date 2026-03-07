@@ -337,7 +337,7 @@ describe "Dynamic dual-loop architecture"
 
   it "strategist tool summary lists journal read and write" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q '/journal (read).*journal write (write)'
+    echo "$body" | grep -q '/journal","/journal write'
     assert_ok $?
   }
 
@@ -2532,9 +2532,9 @@ describe "Social context injection into strategist"
     assert_ok $?
   }
 
-  it "strategist prompt injects REGISTERED SOCIAL CHANNELS" && {
+  it "strategist prompt injects registered social channel names" && {
     body=$(declare -f _agent_strategist_prompt 2>/dev/null || declare -f agent_run)
-    echo "$body" | grep -q 'REGISTERED SOCIAL CHANNELS'
+    echo "$body" | grep -q 'registered social channel names'
     assert_ok $?
   }
 

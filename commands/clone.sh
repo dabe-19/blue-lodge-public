@@ -42,7 +42,7 @@ cmd_clone() {
             type="Node.js"; build="npm run build"; test="npm test"
         fi
         
-        if [ ! -f "GEORGE.md" ] && [ ! -f "CLAUDE.md" ]; then
+        if [ ! -f "GEORGE.md" ]; then
             source "$LODGE_DIR/lib/memory.sh"
             memory_init "." "$name" "$type" "$build" "$test"
         fi

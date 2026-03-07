@@ -586,9 +586,6 @@ _cmd_memory() {
     if [ -f "$dir/GEORGE.md" ]; then
         ui_section "GEORGE.md"
         cat "$dir/GEORGE.md"
-    elif [ -f "$dir/CLAUDE.md" ]; then
-        ui_section "GEORGE.md (legacy)"
-        cat "$dir/CLAUDE.md"
     else
         ui_warn "No GEORGE.md in current directory"
     fi
@@ -1260,7 +1257,6 @@ _cmd_status() {
     printf "  %bPermission:%b %s\n" "$C_CYAN" "$C_RESET" "$([ "$LODGE_PERMISSION" -eq 0 ] && echo 'ask-all' || ([ "$LODGE_PERMISSION" -eq 1 ] && echo 'ask-destructive' || echo 'auto'))"
     local mem_exists="no"
     [ -f "./GEORGE.md" ] && mem_exists="yes"
-    [ "$mem_exists" = "no" ] && [ -f "./CLAUDE.md" ] && mem_exists="yes (legacy)"
     printf "  %bGEORGE.md:%b %s\n" "$C_CYAN" "$C_RESET" "$mem_exists"
     local j_count
     j_count=$(journal_count)

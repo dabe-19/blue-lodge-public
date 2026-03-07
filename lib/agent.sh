@@ -259,10 +259,15 @@ _macro_serialize() {
 # chasing the raw query instead of the remaining honeydew items.
 _macro_serialize_lean() {
     local file="$1"
+    # Strip: persona (always), primary_objective (when honeydew exists),
+    # command field from milestones (prevents slash-command priming on
+    # subsequent strategist calls), and cap milestones to last 5
+    # (prevents unbounded token growth on long tasks).
+    local _jq_lean='.completed_milestones |= (.[-5:] | [.[] | del(.command)])'
     if jq -e '.honeydew != null' "$file" >/dev/null 2>&1; then
-        jq 'del(.persona) | del(.primary_objective)' "$file" 2>/dev/null
+        jq "del(.persona) | del(.primary_objective) | $_jq_lean" "$file" 2>/dev/null
     else
-        jq 'del(.persona)' "$file" 2>/dev/null
+        jq "del(.persona) | $_jq_lean" "$file" 2>/dev/null
     fi
 }
 
@@ -3596,35 +3601,29 @@ MEMEOF
         macro_context=$(_macro_serialize_lean "$macro_file")
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- macro_memory lean ($(echo "$macro_context" | wc -l) lines)"
 
-        # Use a lean system prompt — no personality, just strategic reasoning.
-        # By stripping the ~500-token soul and ~200-token vitals during
-        # execution, we drastically reduce prefill time. Ollama flushes the
-        # context window (not the 4GB model) so a 150-token prompt reasons
-        # almost instantly.
-        #
-        # CRITICAL: The strategist MUST know what tools exist so milestones
-        # align with real slash commands. Without this, the 4B model invents
-        # actions like "Research evidence-based..." that the inner loop can't
-        # execute. Use a lean JSON command list (~200 tokens) instead of the
-        # full catalog (~800 tokens) — the strategist only needs to ROUTE,
-        # not generate exact syntax (the specialist handles that).
-        local _tool_summary=""
-        _tool_summary='YOUR WORKING COMMANDS:
-{"KNOWLEDGE":["/ask","/recall","/journal (read)","/journal write (write)"],
-"DELIVERY":["/respond <text> (present answer directly to operator)","/write","/save","/email","/social","/build"],
-"FILES":["/write","/save","/read","/ls","/download","/init","/clone","/build","/test","/fix","/commit","/push","/cd"],
-"WEB":["/web search","/web fetch","/web images","/web scrape-images","/github search","/vision"],
-"COMMS":["/social post discord|telegram|x|mastodon <target> <text>","/social discord dm|read","/email send <prov> <addr> subject= body=","/email inbox","/phone"],
-"SANDBOX":["/sandbox new|build|test|run|cd|rm","/container create|enter"],
-"CONFIG":["/pgp sign|export","/secret set|get","/git setup|status","/vitals","/backup local|restore"],
-"EXTENSION":["/slash create|run","bash"]}'
-
-        # Service status: let strategist know what's configured vs not
+        # Service status: let strategist know what's configured vs not.
+        # Computed BEFORE tool_summary so COMMS can be conditionally included.
         local _svc_status=""
         if declare -f commands_services_status &>/dev/null; then
             _svc_status=$(commands_services_status 2>/dev/null)
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_svc_status" ] && ui_dim "  [debug] inject: strategist <- services status"
         fi
+
+        # Lean command list for the strategist (~150 tokens vs ~200 prior).
+        # The strategist only needs to ROUTE — the specialist handles syntax.
+        # Removed: CONFIG (interactive setup), EXTENSION (edge case),
+        # DELIVERY as separate group (deduplicated into CORE/FILES).
+        # COMMS is conditional — only included when social/email is configured.
+        local _tool_summary='YOUR WORKING COMMANDS:
+{"CORE":["/ask","/respond","/recall","/journal","/journal write"],
+"FILES":["/write","/save","/read","/ls","/download","/build","/test","/fix","/commit","/push","/init","/clone","/cd"],
+"WEB":["/web search","/web fetch","/web images","/github search","/vision"],
+"SANDBOX":["/sandbox","/container"]'
+        # Include COMMS only when social or email services are configured
+        if echo "$_svc_status" | grep -qE 'CONFIGURED:.*(discord|telegram|mastodon|x/twitter|bluesky|email)'; then
+            _tool_summary="${_tool_summary}"',"COMMS":["/social post","/social dm","/social read","/email send","/email inbox","/phone"]'
+        fi
+        _tool_summary="${_tool_summary}}"
 
         # Social context: registered Discord channels and Mastodon
         # instances so the strategist can generate correct channel

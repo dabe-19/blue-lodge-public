@@ -481,36 +481,7 @@ else
     echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi
 
-# ── 10. Remove Claude Code (if present) ──────────────────────
-echo ""
-if command -v claude &>/dev/null; then
-    warn "Claude Code CLI detected."
-    printf " Remove it? [y/N] "
-    read -r remove_claude
-    if [[ "${remove_claude,,}" == "y"* ]]; then
-        info "Removing Claude Code..."
-        # npm global uninstall
-        npm uninstall -g @anthropic-ai/claude-code 2>/dev/null || true
-        # Clean up env vars from shell rc
-        if [ -n "$SHELL_RC" ]; then
-            sed -i '/ANTHROPIC_BASE_URL/d' "$SHELL_RC" 2>/dev/null
-            sed -i '/ANTHROPIC_AUTH_TOKEN/d' "$SHELL_RC" 2>/dev/null
-            sed -i '/ANTHROPIC_API_KEY/d' "$SHELL_RC" 2>/dev/null
-            sed -i '/CLAUDE_CODE_MAX_CONCURRENT/d' "$SHELL_RC" 2>/dev/null
-        fi
-        # Kill proxy if running
-        pkill -f "anthropic-proxy" 2>/dev/null || true
-        # Remove proxy binary
-        rm -f "$HOME/.cargo/bin/anthropic-proxy" 2>/dev/null
-        # Clean config dir
-        rm -rf "$HOME/.claude" 2>/dev/null
-        ok "Claude Code removed"
-    else
-        ok "Keeping Claude Code (it won't conflict)"
-    fi
-fi
-
-# ── 11. Remove old qwen-lab setup ────────────────────────────
+# ── 10. Remove old qwen-lab setup ────────────────────────────
 if [ -f "$HOME/qwen-lab.sh" ]; then
     info "Found old qwen-lab.sh"
     printf " Remove it? [y/N] "
@@ -518,7 +489,6 @@ if [ -f "$HOME/qwen-lab.sh" ]; then
     if [[ "${remove_lab,,}" == "y"* ]]; then
         rm -f "$HOME/qwen-lab.sh"
         # Remove old model
-        ollama rm claude-oryon 2>/dev/null || true
         ok "Old setup cleaned"
     fi
 fi

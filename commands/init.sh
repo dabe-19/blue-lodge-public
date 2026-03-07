@@ -135,7 +135,7 @@ _init_guard_existing_project() {
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 
-    if [ -f "$PWD/GEORGE.md" ] || [ -f "$PWD/CLAUDE.md" ]; then
+    if [ -f "$PWD/GEORGE.md" ]; then
         ui_err "[$timestamp] Already inside a project (GEORGE.md exists in $PWD)"
         ui_dim "  cd to a parent directory first, or use a different location"
         return 1
