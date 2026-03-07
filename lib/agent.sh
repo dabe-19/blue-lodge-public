@@ -361,19 +361,17 @@ _agent_honeydew_build() {
 
 TASK: $task
 
-RULES:
-- Output ONLY the numbered list, nothing else.
-- Each item: a short imperative sentence describing WHAT to achieve, not HOW.
-- Describe the GOAL, never the specific tool or command.
-  GOOD: 'Find the weekly weather forecast for Appleton WI'
-  BAD:  'Run curl -s https://weather.com/... | grep ...'
-  BAD:  'Use /web search to find weather data'
-- Do NOT mention specific commands, URLs, tools, or shell syntax.
-- 2-5 items maximum. Simple tasks may have just 1-2.
-- Order by dependency: research before writing, writing before sending.
-- If the task is a single action (e.g., 'send a DM'), output 1-2 items.
-- Do NOT include verification, confirmation, or cleanup steps.
-- Do NOT prefix with checkboxes — just numbers."
+$(cat << 'DECOMPOSE_JSON'
+{"output":"numbered list ONLY",
+ "each_item":"short imperative sentence — WHAT to achieve, not HOW",
+ "describe":"GOAL only — never tools, commands, URLs, shell syntax",
+ "good":"Find the weekly weather forecast for Appleton WI",
+ "bad":["Run curl -s https://...","Use /web search to find..."],
+ "count":"2-5 items (simple tasks: 1-2)",
+ "order":"by dependency (research→writing→sending)",
+ "never":["verification steps","confirmation steps","cleanup steps","checkboxes"]}
+DECOMPOSE_JSON
+)"
 
     local decompose_sys="You are a task decomposition engine. Output ONLY a numbered list of general objectives. Each item describes WHAT to accomplish, not HOW or which tool to use. No commands, no URLs, no shell syntax. No explanation, no headers, no markdown formatting. Plain numbered list only."
 
@@ -598,13 +596,14 @@ _agent_honeydew_expand() {
 
 OBJECTIVE: $item_text
 
-RULES:
-- Output ONLY a numbered list (2-4 items).
-- Each sub-step: a short imperative sentence describing WHAT, not HOW.
-- Do NOT mention commands, URLs, tools, or shell syntax.
-- Order by dependency (research before writing, writing before sending).
-- Do NOT include verification or cleanup steps.
-- Keep each sub-step atomic — achievable in a single action."
+$(cat << 'EXPAND_JSON'
+{"output":"numbered list ONLY (2-4 items)",
+ "each_item":"short imperative sentence — WHAT, not HOW",
+ "never":["commands","URLs","tools","shell syntax","verification steps","cleanup steps"],
+ "order":"by dependency (research→writing→sending)",
+ "atomic":true}
+EXPAND_JSON
+)"
 
     local expand_sys="You are a task decomposition engine. Break ONE complex objective into 2-4 atomic sub-steps. Output ONLY a numbered list. No commands, no URLs, no explanation. Plain numbered list only."
 
@@ -856,9 +855,19 @@ _agent_evaluate_honeydew_item() {
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
 
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nORIGINAL USER REQUEST:\n${_hd_original_request:-Unknown}\n\nMILESTONE COMPLETED:\n${milestone_text}\n\nMILESTONE SUMMARY:\n${_milestone_summary:-No summary available.}\n\nACTION LOG:\n${eval_context:-No actions available.}\n\n---\n\nHONEYDEW ITEM TO EVALUATE (item #${_next_id}):\n${_next_task}\n\nDoes the completed milestone SATISFY this honeydew item in the context of the ORIGINAL USER REQUEST? The milestone does not need to match exactly — if the work accomplished meaningfully addresses the honeydew item's goal, it is SATISFIED. However, check that the milestone work is relevant to the original request (correct dates, topics, scope).\n\nRespond: SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <next action>\nIf UNSATISFIED, explain WHY (what is missing or wrong) and RECOMMEND the next action using a specific slash command (e.g. 'RECOMMENDATION: /web fetch <url> to get the actual page content')."
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nORIGINAL USER REQUEST:\n${_hd_original_request:-Unknown}\n\nMILESTONE COMPLETED:\n${milestone_text}\n\nMILESTONE SUMMARY:\n${_milestone_summary:-No summary available.}\n\nACTION LOG:\n${eval_context:-No actions available.}\n\n---\n\nHONEYDEW ITEM TO EVALUATE (item #${_next_id}):\n${_next_task}\n\nApply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_HD_JSON'
+{"classify":"SATISFIED|UNSATISFIED",
+ "scope":"does milestone satisfy THIS honeydew item?",
+ "pragmatic":true,"exact_match_not_required":true,
+ "relevance_check":{"dates":true,"topics":true,"scope":true,
+   "verify_against":"ORIGINAL USER REQUEST above"},
+ "respond":"SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <slash command>",
+ "if_unsatisfied":{"explain_why":true,
+   "recommend_next":"specific /command (e.g. /web fetch <url>)"}}
+EVAL_HD_JSON
+)"
 
-    local eval_sys="You are a honeydew item evaluator. Judge whether a completed milestone satisfies a specific task item in the context of the original user request. Be pragmatic: if the milestone's work meaningfully addresses the item's goal, it is SATISFIED. Do not require perfection. Verify the work is relevant to the original request (correct dates, subjects, scope). No markdown formatting. Respond SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <next action with slash command>."
+    local eval_sys="Honeydew item evaluator. Pragmatic: meaningful progress = SATISFIED. Verify relevance to original request (dates, topics, scope). No markdown. Respond SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <slash command>."
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew-eval <- item #${_next_id}: ${_next_task:0:80}"
     ui_think "Honeydew evaluator: checking item #${_next_id}..."
@@ -2873,21 +2882,16 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
 
             # Build a focused specialist prompt with ONLY fetch/scrape cards
             local _ws_interlock_sys="TASK: $micro_objective
-You have already searched the web. Now you must FETCH or SCRAPE a specific URL from the search results below.
-
-OUTPUT FORMAT: exactly ONE /web command on its own line, starting with /
-FORBIDDEN: /web search (already done — use the URLs below instead)
-
-AVAILABLE COMMANDS (use ONLY these):
-/web fetch <url>           — Download and extract readable TEXT from a webpage (HTML/PDF/JSON). Returns plain text, no images.
-/web scrape-images <url>   — Returns STRUCTURED JSON: {url, title, content, images:[]} with page text AND image URIs. Use when you need images.
-
-RULES:
-- Pick the MOST RELEVANT URL from the search results below
-- Use /web fetch for text content (articles, docs, specs, prices)
-- Use /web scrape-images when you need images or visual content
-- Output exactly ONE command with a full https:// URL
-- NEVER output /web search — you must use a URL from the results"
+$(cat << 'INTERLOCK_JSON'
+{"context":"web search already done — now FETCH or SCRAPE a URL from results",
+ "output":"exactly ONE /web command on its own line",
+ "forbidden":"/web search",
+ "commands":{
+   "/web fetch <url>":"extract readable TEXT (HTML/PDF/JSON)",
+   "/web scrape-images <url>":"structured JSON {url,title,content,images[]} — use when images needed"},
+ "rules":["pick MOST RELEVANT URL from results","fetch=text, scrape-images=images","ONE command, full https:// URL","NEVER /web search"]}
+INTERLOCK_JSON
+)"
 
             local _ws_interlock_prompt="MICRO OBJECTIVE: $micro_objective\n\nPREVIOUS SEARCH RESULTS:\n${_prev_search_output:-No search results available.}\n\nPick the best URL from the search results and output a /web fetch or /web scrape-images command."
 
