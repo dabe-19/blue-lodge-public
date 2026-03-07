@@ -1068,4 +1068,31 @@ describe "Email provider normalization"
     assert_ok $? "p= prefix strip must exist"
   }
 
+# ── /provider use command ──────────────────────────────────────
+describe "/provider use command"
+
+  it "_cmd_provider handles 'use' action" && {
+    body=$(declare -f _cmd_provider)
+    echo "$body" | grep -q 'use.*harness'
+    assert_ok $? "_cmd_provider must handle use|harness action"
+  }
+
+  it "_cmd_provider use calls provider_use" && {
+    body=$(declare -f _cmd_provider)
+    echo "$body" | grep -q 'provider_use'
+    assert_ok $? "_cmd_provider use must call provider_use"
+  }
+
+  it "_cmd_provider help mentions use" && {
+    body=$(declare -f _cmd_provider)
+    echo "$body" | grep -q 'use.*provider.*Route\|use.*local.*Switch'
+    assert_ok $? "help text must mention /provider use"
+  }
+
+  it "_cmd_provider use supports provider/model syntax" && {
+    body=$(declare -f _cmd_provider)
+    echo "$body" | grep -q 'model_override.*provider#\*/\|provider%%/\*'
+    assert_ok $? "provider/model syntax must be parsed"
+  }
+
 test_end

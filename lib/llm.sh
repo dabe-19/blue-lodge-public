@@ -764,6 +764,9 @@ _llm_parse_llamacpp_sse() {
 
 # ── Health Check ───────────────────────────────────────────────
 llm_check() {
+    # Provider harness: no local backend needed
+    [ -n "${GEORGE_PROVIDER:-}" ] && return 0
+
     local backend
     backend=$(_llm_detect_backend)
 
@@ -947,6 +950,9 @@ _llm_kill_ollama() {
 # hardware), kill Ollama if llamacpp succeeds, fall back to Ollama
 # only when llamacpp is unavailable.
 llm_ensure() {
+    # Provider harness: no local backend needed
+    [ -n "${GEORGE_PROVIDER:-}" ] && return 0
+
     local backend
     backend=$(_llm_detect_backend)
 
@@ -1250,6 +1256,22 @@ llm_generate() {
     local max_tokens="${3:-$LLM_MAX_TOKENS}"
     local budget="${4:-$LLM_BUDGET_TOKENS}"
     local payload
+
+    # ── Provider harness intercept ─────────────────────────────
+    # When a cloud provider is active, skip all local backend logic
+    # and route directly through the provider API.
+    if [ -n "${GEORGE_PROVIDER:-}" ] && declare -f provider_chat &>/dev/null; then
+        _llm_debug_start_timer
+        local _provider_resp
+        _provider_resp=$(provider_chat "$GEORGE_PROVIDER" "$prompt" "" "$system")
+        local _rc=$?
+        if [ $_rc -eq 0 ] && [ -n "$_provider_resp" ]; then
+            echo "$_provider_resp"
+            _llm_debug_stop_timer "provider/$GEORGE_PROVIDER"
+            return 0
+        fi
+        return $_rc
+    fi
 
     # Thinking model 4x multiplier: thinking models emit <think> blocks
     # before the response, so token budgets must be larger to avoid
@@ -1870,6 +1892,25 @@ llm_stream() {
     local budget="${4:-$LLM_BUDGET_TOKENS}"
     local payload
     local full_response=""
+
+    # ── Provider harness intercept ─────────────────────────────
+    # Route through cloud provider, printing response to tty for
+    # real-time visual feedback (matches llm_stream contract).
+    if [ -n "${GEORGE_PROVIDER:-}" ] && declare -f provider_chat &>/dev/null; then
+        _llm_debug_start_timer
+        printf "\r\033[K" >/dev/tty 2>/dev/null  # Clear any spinner line
+        ui_dim "  [$GEORGE_PROVIDER]" >/dev/tty 2>/dev/null
+        local _provider_resp
+        _provider_resp=$(provider_chat "$GEORGE_PROVIDER" "$prompt" "" "$system")
+        local _rc=$?
+        if [ $_rc -eq 0 ] && [ -n "$_provider_resp" ]; then
+            printf "%s\n" "$_provider_resp" >/dev/tty 2>/dev/null
+            echo "$_provider_resp"
+            _llm_debug_stop_timer "provider/$GEORGE_PROVIDER"
+            return 0
+        fi
+        return $_rc
+    fi
 
     # Thinking model 4x multiplier (see llm_generate for rationale)
     max_tokens=$(_llm_apply_thinking_multiplier "$max_tokens")
@@ -2499,6 +2540,23 @@ llm_chat() {
     local system="${2:-}"
     local budget="${3:-$LLM_BUDGET_TOKENS}"
     local payload
+
+    # ── Provider harness intercept ─────────────────────────────
+    # Extract the last user message and route through the provider.
+    if [ -n "${GEORGE_PROVIDER:-}" ] && declare -f provider_chat &>/dev/null; then
+        local _last_msg
+        _last_msg=$(echo "$messages" | jq -r '[.[] | select(.role == "user")] | last | .content // empty' 2>/dev/null)
+        if [ -n "$_last_msg" ]; then
+            local _provider_resp
+            _provider_resp=$(provider_chat "$GEORGE_PROVIDER" "$_last_msg" "" "$system")
+            local _rc=$?
+            if [ $_rc -eq 0 ] && [ -n "$_provider_resp" ]; then
+                echo "$_provider_resp"
+                return 0
+            fi
+            return $_rc
+        fi
+    fi
 
     # Detect active backend
     local _active_backend

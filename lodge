@@ -2484,8 +2484,23 @@ _cmd_provider() {
                 provider_set_model "$provider" "$model_name"
             fi ;;
         status) provider_status ;;
+        use|harness)
+            local provider
+            provider=$(echo "$rest" | awk '{print $1}')
+            # Support provider/model syntax: google/gemini-2.5-pro
+            local model_override=""
+            if [[ "${provider:-}" == */* ]]; then
+                model_override="${provider#*/}"
+                provider="${provider%%/*}"
+            fi
+            if [ -n "$model_override" ]; then
+                provider_set_model "$provider" "$model_override"
+            fi
+            provider_use "${provider:-}" ;;
         *)
-            ui_info "Usage: /provider <chat|model|models|status>"
+            ui_info "Usage: /provider <chat|use|model|models|status>"
+            ui_dim "  use <provider>[/model]  — Route ALL LLM calls through provider"
+            ui_dim "  use local               — Switch back to local backend"
             ui_dim "  chat <provider>[/model] <msg> — Send a message to a cloud AI"
             ui_dim "  model <provider> [model|clear] — Get/set default model"
             ui_dim "  models <provider>     — List available models from API"
@@ -3974,21 +3989,32 @@ main() {
     # them via /model or /config and those should win.
     _llm_load_config --force
 
+    # Load persisted provider harness setting
+    _provider_load_harness
+
     # Start LLM backend (prefers llama-server, falls back to Ollama)
-    ui_spinner_start "Starting LLM backend"
-    if ! llm_ensure; then
+    if [ -n "${GEORGE_PROVIDER:-}" ]; then
+        ui_ok "Provider harness: all LLM calls → $GEORGE_PROVIDER"
+        local _h_model
+        _h_model=$(provider_get_model "$GEORGE_PROVIDER" 2>/dev/null)
+        [ -n "$_h_model" ] && ui_dim "  Model: $_h_model"
+    else
+        ui_spinner_start "Starting LLM backend"
+        if ! llm_ensure; then
+            ui_spinner_stop
+            ui_err "No LLM backend available."
+            ui_dim "  Build llama-server: see docs/ADRENO_GPU_SETUP.md"
+            ui_dim "  Or install Ollama:  curl -fsSL https://ollama.com/install.sh | sh"
+            ui_dim "  Or use a cloud provider: /provider use google"
+            exit 1
+        fi
         ui_spinner_stop
-        ui_err "No LLM backend available."
-        ui_dim "  Build llama-server: see docs/ADRENO_GPU_SETUP.md"
-        ui_dim "  Or install Ollama:  curl -fsSL https://ollama.com/install.sh | sh"
-        exit 1
-    fi
-    ui_spinner_stop
     
-    # Pre-load model weights (avoids cold-start delay on first query)
-    ui_spinner_start "Loading model"
-    llm_warmup 2>/dev/null
-    ui_spinner_stop
+        # Pre-load model weights (avoids cold-start delay on first query)
+        ui_spinner_start "Loading model"
+        llm_warmup 2>/dev/null
+        ui_spinner_stop
+    fi
     
     # Termux wake lock
     if _lodge_termux_api_ok && command -v termux-wake-lock &>/dev/null; then

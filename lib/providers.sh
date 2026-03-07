@@ -9,6 +9,14 @@
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/api.sh"
 
+# ── Provider Harness ──────────────────────────────────────────
+# When GEORGE_PROVIDER is set, ALL llm_generate/llm_stream/llm_chat
+# calls route through the cloud provider API instead of llama.cpp/Ollama.
+# Activate:  /provider use google        (or any configured provider)
+# Deactivate: /provider use local
+
+GEORGE_PROVIDER="${GEORGE_PROVIDER:-}"
+
 # ── Provider timeout (longer for LLM calls) ───────────────────
 PROVIDER_TIMEOUT="${PROVIDER_TIMEOUT:-120}"
 
@@ -209,11 +217,13 @@ google_chat() {
     local message="$1"
     local model
     model=$(_provider_resolve_model "$2" "google" "gemini-2.0-flash")
+    local system="${3:-You are a helpful assistant.}"
     local key
     key=$(api_require_key "GOOGLE_AI_API_KEY" "Google AI") || return 1
 
     local data
-    data=$(jq -n --arg u "$message" '{
+    data=$(jq -n --arg s "$system" --arg u "$message" '{
+        "systemInstruction": {"parts": [{"text": $s}]},
         "contents": [{"parts": [{"text": $u}]}],
         "generationConfig": {
             "maxOutputTokens": 4096,
@@ -299,13 +309,17 @@ groq_chat() {
     local message="$1"
     local model
     model=$(_provider_resolve_model "$2" "groq" "llama-3.3-70b-versatile")
+    local system="${3:-You are a helpful assistant.}"
     local key
     key=$(api_require_key "GROQ_API_KEY" "Groq") || return 1
 
     local data
-    data=$(jq -n --arg m "$model" --arg u "$message" '{
+    data=$(jq -n --arg m "$model" --arg s "$system" --arg u "$message" '{
         "model": $m,
-        "messages": [{"role": "user", "content": $u}],
+        "messages": [
+            {"role": "system", "content": $s},
+            {"role": "user", "content": $u}
+        ],
         "max_tokens": 4096,
         "temperature": 0.3
     }')
@@ -327,13 +341,17 @@ mistral_chat() {
     local message="$1"
     local model
     model=$(_provider_resolve_model "$2" "mistral" "mistral-large-latest")
+    local system="${3:-You are a helpful assistant.}"
     local key
     key=$(api_require_key "MISTRAL_API_KEY" "Mistral") || return 1
 
     local data
-    data=$(jq -n --arg m "$model" --arg u "$message" '{
+    data=$(jq -n --arg m "$model" --arg s "$system" --arg u "$message" '{
         "model": $m,
-        "messages": [{"role": "user", "content": $u}],
+        "messages": [
+            {"role": "system", "content": $s},
+            {"role": "user", "content": $u}
+        ],
         "max_tokens": 4096,
         "temperature": 0.3
     }')
@@ -355,13 +373,17 @@ together_chat() {
     local message="$1"
     local model
     model=$(_provider_resolve_model "$2" "together" "meta-llama/Llama-3.3-70B-Instruct-Turbo")
+    local system="${3:-You are a helpful assistant.}"
     local key
     key=$(api_require_key "TOGETHER_API_KEY" "Together") || return 1
 
     local data
-    data=$(jq -n --arg m "$model" --arg u "$message" '{
+    data=$(jq -n --arg m "$model" --arg s "$system" --arg u "$message" '{
         "model": $m,
-        "messages": [{"role": "user", "content": $u}],
+        "messages": [
+            {"role": "system", "content": $s},
+            {"role": "user", "content": $u}
+        ],
         "max_tokens": 4096,
         "temperature": 0.3
     }')
@@ -383,13 +405,17 @@ perplexity_chat() {
     local message="$1"
     local model
     model=$(_provider_resolve_model "$2" "perplexity" "sonar")
+    local system="${3:-You are a helpful assistant.}"
     local key
     key=$(api_require_key "PERPLEXITY_API_KEY" "Perplexity") || return 1
 
     local data
-    data=$(jq -n --arg m "$model" --arg u "$message" '{
+    data=$(jq -n --arg m "$model" --arg s "$system" --arg u "$message" '{
         "model": $m,
-        "messages": [{"role": "user", "content": $u}],
+        "messages": [
+            {"role": "system", "content": $s},
+            {"role": "user", "content": $u}
+        ],
         "max_tokens": 4096,
         "temperature": 0.3
     }')
@@ -411,13 +437,15 @@ cohere_chat() {
     local message="$1"
     local model
     model=$(_provider_resolve_model "$2" "cohere" "command-r-plus")
+    local system="${3:-You are a helpful assistant.}"
     local key
     key=$(api_require_key "COHERE_API_KEY" "Cohere") || return 1
 
     local data
-    data=$(jq -n --arg m "$model" --arg u "$message" '{
+    data=$(jq -n --arg m "$model" --arg p "$system" --arg u "$message" '{
         "model": $m,
         "message": $u,
+        "preamble": $p,
         "max_tokens": 4096,
         "temperature": 0.3
     }')
@@ -439,13 +467,17 @@ deepseek_chat() {
     local message="$1"
     local model
     model=$(_provider_resolve_model "$2" "deepseek" "deepseek-chat")
+    local system="${3:-You are a helpful assistant.}"
     local key
     key=$(api_require_key "DEEPSEEK_API_KEY" "DeepSeek") || return 1
 
     local data
-    data=$(jq -n --arg m "$model" --arg u "$message" '{
+    data=$(jq -n --arg m "$model" --arg s "$system" --arg u "$message" '{
         "model": $m,
-        "messages": [{"role": "user", "content": $u}],
+        "messages": [
+            {"role": "system", "content": $s},
+            {"role": "user", "content": $u}
+        ],
         "max_tokens": 4096,
         "temperature": 0.3
     }')
@@ -467,13 +499,17 @@ xai_chat() {
     local message="$1"
     local model
     model=$(_provider_resolve_model "$2" "xai" "grok-2")
+    local system="${3:-You are a helpful assistant.}"
     local key
     key=$(api_require_key "XAI_API_KEY" "xAI") || return 1
 
     local data
-    data=$(jq -n --arg m "$model" --arg u "$message" '{
+    data=$(jq -n --arg m "$model" --arg s "$system" --arg u "$message" '{
         "model": $m,
-        "messages": [{"role": "user", "content": $u}],
+        "messages": [
+            {"role": "system", "content": $s},
+            {"role": "user", "content": $u}
+        ],
         "max_tokens": 4096,
         "temperature": 0.3
     }')
@@ -495,18 +531,19 @@ provider_chat() {
     local provider="$1"
     local message="$2"
     local model="${3:-}"
+    local system="${4:-}"
 
     case "$provider" in
-        openai|gpt)         openai_chat "$message" "$model" ;;
-        anthropic|claude)   anthropic_chat "$message" "$model" ;;
-        google|gemini)      google_chat "$message" "$model" ;;
-        groq)               groq_chat "$message" "$model" ;;
-        mistral)            mistral_chat "$message" "$model" ;;
-        together)           together_chat "$message" "$model" ;;
-        perplexity|pplx)    perplexity_chat "$message" "$model" ;;
-        cohere)             cohere_chat "$message" "$model" ;;
-        deepseek)           deepseek_chat "$message" "$model" ;;
-        xai|grok)           xai_chat "$message" "$model" ;;
+        openai|gpt)         openai_chat "$message" "$model" "$system" ;;
+        anthropic|claude)   anthropic_chat "$message" "$model" "$system" ;;
+        google|gemini)      google_chat "$message" "$model" "$system" ;;
+        groq)               groq_chat "$message" "$model" "$system" ;;
+        mistral)            mistral_chat "$message" "$model" "$system" ;;
+        together)           together_chat "$message" "$model" "$system" ;;
+        perplexity|pplx)    perplexity_chat "$message" "$model" "$system" ;;
+        cohere)             cohere_chat "$message" "$model" "$system" ;;
+        deepseek)           deepseek_chat "$message" "$model" "$system" ;;
+        xai|grok)           xai_chat "$message" "$model" "$system" ;;
         *)
             ui_err "Unknown provider: $provider"
             ui_dim "Available: openai, anthropic, google, groq, mistral, together, perplexity, cohere, deepseek, xai"
@@ -514,8 +551,118 @@ provider_chat() {
     esac
 }
 
+# ═══════════════════════════════════════════════════════════════
+# Provider Harness — Route ALL LLM calls through a cloud provider
+# ═══════════════════════════════════════════════════════════════
+
+# Map provider name to its required API key name
+_provider_key_name() {
+    case "$1" in
+        openai|gpt)       echo "OPENAI_API_KEY" ;;
+        anthropic|claude)  echo "ANTHROPIC_API_KEY" ;;
+        google|gemini)     echo "GOOGLE_AI_API_KEY" ;;
+        groq)              echo "GROQ_API_KEY" ;;
+        mistral)           echo "MISTRAL_API_KEY" ;;
+        together)          echo "TOGETHER_API_KEY" ;;
+        perplexity|pplx)   echo "PERPLEXITY_API_KEY" ;;
+        cohere)            echo "COHERE_API_KEY" ;;
+        deepseek)          echo "DEEPSEEK_API_KEY" ;;
+        xai|grok)          echo "XAI_API_KEY" ;;
+        *)                 echo "" ;;
+    esac
+}
+
+# Activate a cloud provider for ALL LLM calls
+provider_use() {
+    local provider="$1"
+
+    # Switch back to local backend
+    if [ -z "$provider" ] || [ "$provider" = "local" ] || [ "$provider" = "off" ]; then
+        provider_use_local
+        return
+    fi
+
+    # Validate provider name
+    local canon
+    canon=$(_provider_canon "$provider")
+    if [ -z "$canon" ]; then
+        ui_err "Unknown provider: $provider"
+        ui_dim "Available: openai, anthropic, google, groq, mistral, together, perplexity, cohere, deepseek, xai"
+        return 1
+    fi
+
+    # Verify API key is configured
+    local key_name
+    key_name=$(_provider_key_name "$provider")
+    if [ -n "$key_name" ] && ! api_get_key "$key_name" &>/dev/null; then
+        ui_err "No API key configured for $provider"
+        ui_dim "  Set it: /api keys set $key_name <your-key>"
+        return 1
+    fi
+
+    GEORGE_PROVIDER="$provider"
+    api_set_key "GEORGE_PROVIDER" "$provider"
+
+    local _model
+    _model=$(provider_get_model "$provider" 2>/dev/null)
+    ui_ok "Provider harness active: all LLM calls → $provider"
+    [ -n "$_model" ] && ui_dim "  Model: $_model"
+    ui_dim "  Switch back: /provider use local"
+}
+
+# Deactivate provider harness — return to local backend
+provider_use_local() {
+    GEORGE_PROVIDER=""
+    # Remove from keys.conf
+    if [ -f "$GEORGE_KEYS_FILE" ] && grep -q "^GEORGE_PROVIDER=" "$GEORGE_KEYS_FILE" 2>/dev/null; then
+        local tmpfile
+        tmpfile=$(mktemp)
+        grep -v "^GEORGE_PROVIDER=" "$GEORGE_KEYS_FILE" > "$tmpfile"
+        mv "$tmpfile" "$GEORGE_KEYS_FILE"
+        chmod 600 "$GEORGE_KEYS_FILE"
+    fi
+    ui_ok "Provider harness off — LLM calls → local backend (llama.cpp/Ollama)"
+}
+
+# Return the active provider name (empty = local backend)
+provider_active() {
+    echo "${GEORGE_PROVIDER:-}"
+}
+
+# Load persisted provider setting (called at startup)
+_provider_load_harness() {
+    local stored
+    stored=$(api_get_key "GEORGE_PROVIDER" 2>/dev/null)
+    if [ -n "$stored" ]; then
+        # Validate it's still a known provider with a key
+        local canon
+        canon=$(_provider_canon "$stored")
+        local key_name
+        key_name=$(_provider_key_name "$stored")
+        if [ -n "$canon" ] && [ -n "$key_name" ] && api_get_key "$key_name" &>/dev/null; then
+            GEORGE_PROVIDER="$stored"
+        else
+            # Stale or misconfigured — clear it
+            GEORGE_PROVIDER=""
+        fi
+    fi
+}
+
 # Show which providers are configured
 provider_status() {
+    # ── Active Provider Harness ──
+    if [ -n "${GEORGE_PROVIDER:-}" ]; then
+        echo ""
+        ui_section "Provider Harness"
+        local _h_model
+        _h_model=$(provider_get_model "$GEORGE_PROVIDER" 2>/dev/null)
+        if [ -n "$_h_model" ]; then
+            printf "  %b★%b %-15s active  %bmodel: %s%b\n" "$C_GREEN" "$C_RESET" "$GEORGE_PROVIDER" "$C_DIM" "$_h_model" "$C_RESET"
+        else
+            printf "  %b★%b %-15s active (all LLM calls routed here)\n" "$C_GREEN" "$C_RESET" "$GEORGE_PROVIDER"
+        fi
+    fi
+
     # ── Web & Search Tools ──
     echo ""
     ui_section "Web & Search"

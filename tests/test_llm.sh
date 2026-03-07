@@ -1215,4 +1215,53 @@ describe "reasoning_content support"
     assert_ok $? "Must close banner transitioning from reasoning to content"
   }
 
+# ── Provider harness intercept ─────────────────────────────────
+describe "Provider harness bypass"
+
+  it "llm_check returns 0 when GEORGE_PROVIDER is set" && {
+    GEORGE_PROVIDER="google"
+    llm_check
+    _trc=$?
+    GEORGE_PROVIDER=""
+    assert_eq "$_trc" "0"
+  }
+
+  it "llm_ensure returns 0 when GEORGE_PROVIDER is set" && {
+    GEORGE_PROVIDER="google"
+    llm_ensure
+    _trc=$?
+    GEORGE_PROVIDER=""
+    assert_eq "$_trc" "0"
+  }
+
+  it "llm_generate has provider intercept" && {
+    body=$(declare -f llm_generate)
+    echo "$body" | grep -q 'GEORGE_PROVIDER'
+    assert_ok $? "llm_generate must check GEORGE_PROVIDER"
+  }
+
+  it "llm_stream has provider intercept" && {
+    body=$(declare -f llm_stream)
+    echo "$body" | grep -q 'GEORGE_PROVIDER'
+    assert_ok $? "llm_stream must check GEORGE_PROVIDER"
+  }
+
+  it "llm_chat has provider intercept" && {
+    body=$(declare -f llm_chat)
+    echo "$body" | grep -q 'GEORGE_PROVIDER'
+    assert_ok $? "llm_chat must check GEORGE_PROVIDER"
+  }
+
+  it "llm_generate intercept calls provider_chat" && {
+    body=$(declare -f llm_generate)
+    echo "$body" | grep -q 'provider_chat.*GEORGE_PROVIDER'
+    assert_ok $? "intercept must route to provider_chat"
+  }
+
+  it "llm_stream intercept calls provider_chat" && {
+    body=$(declare -f llm_stream)
+    echo "$body" | grep -q 'provider_chat.*GEORGE_PROVIDER'
+    assert_ok $? "intercept must route to provider_chat"
+  }
+
 test_end

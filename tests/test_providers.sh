@@ -10,6 +10,7 @@ TMPDIR_PROV=""
 
 _setup_prov() {
     TMPDIR_PROV=$(test_tmpdir)
+    GEORGE_PROVIDER=""
     export GEORGE_CONFIG_DIR="$TMPDIR_PROV/.george"
     export GEORGE_KEYS_FILE="$GEORGE_CONFIG_DIR/keys.conf"
     export GEORGE_COOKIES_DIR="$GEORGE_CONFIG_DIR/cookies"
@@ -303,6 +304,156 @@ describe "Provider model defaults"
     _setup_prov
     _tresult=$(_provider_resolve_model "" "google" "hardcoded-model")
     assert_eq "$_tresult" "hardcoded-model"
+    _teardown_prov
+  }
+
+# ── Provider Harness ───────────────────────────────────────────
+describe "Provider harness (use/active/local)"
+
+  it "provider_use is defined" && {
+    _setup_prov
+    declare -f provider_use &>/dev/null
+    assert_ok $?
+    _teardown_prov
+  }
+
+  it "provider_use_local is defined" && {
+    declare -f provider_use_local &>/dev/null
+    assert_ok $?
+  }
+
+  it "provider_active is defined" && {
+    declare -f provider_active &>/dev/null
+    assert_ok $?
+  }
+
+  it "_provider_load_harness is defined" && {
+    declare -f _provider_load_harness &>/dev/null
+    assert_ok $?
+  }
+
+  it "_provider_key_name maps known providers" && {
+    _setup_prov
+    assert_eq "$(_provider_key_name "openai")" "OPENAI_API_KEY"
+    assert_eq "$(_provider_key_name "google")" "GOOGLE_AI_API_KEY"
+    assert_eq "$(_provider_key_name "anthropic")" "ANTHROPIC_API_KEY"
+    assert_eq "$(_provider_key_name "groq")" "GROQ_API_KEY"
+    assert_eq "$(_provider_key_name "xai")" "XAI_API_KEY"
+    _teardown_prov
+  }
+
+  it "_provider_key_name returns empty for unknown" && {
+    _tresult=$(_provider_key_name "nonexistent")
+    assert_eq "$_tresult" ""
+  }
+
+  it "provider_use sets GEORGE_PROVIDER and persists" && {
+    _setup_prov
+    api_set_key "GOOGLE_AI_API_KEY" "test-key-123"
+    provider_use "google" >/dev/null 2>&1
+    assert_eq "$GEORGE_PROVIDER" "google"
+    _tresult=$(api_get_key "GEORGE_PROVIDER" 2>/dev/null)
+    assert_eq "$_tresult" "google"
+    _teardown_prov
+  }
+
+  it "provider_use rejects unknown providers" && {
+    _setup_prov
+    provider_use "fakeprovider" 2>/dev/null
+    assert_fail $?
+    assert_eq "$GEORGE_PROVIDER" ""
+    _teardown_prov
+  }
+
+  it "provider_use rejects providers without API key" && {
+    _setup_prov
+    GEORGE_PROVIDER=""
+    provider_use "openai" 2>/dev/null
+    assert_fail $?
+    assert_eq "$GEORGE_PROVIDER" ""
+    _teardown_prov
+  }
+
+  it "provider_use_local clears GEORGE_PROVIDER" && {
+    _setup_prov
+    GEORGE_PROVIDER="google"
+    api_set_key "GEORGE_PROVIDER" "google"
+    provider_use_local >/dev/null 2>&1
+    assert_eq "$GEORGE_PROVIDER" ""
+    _tresult=$(api_get_key "GEORGE_PROVIDER" 2>/dev/null)
+    assert_eq "$_tresult" ""
+    _teardown_prov
+  }
+
+  it "provider_use 'local' calls provider_use_local" && {
+    _setup_prov
+    GEORGE_PROVIDER="google"
+    api_set_key "GEORGE_PROVIDER" "google"
+    provider_use "local" >/dev/null 2>&1
+    assert_eq "$GEORGE_PROVIDER" ""
+    _teardown_prov
+  }
+
+  it "provider_use 'off' calls provider_use_local" && {
+    _setup_prov
+    GEORGE_PROVIDER="google"
+    api_set_key "GEORGE_PROVIDER" "google"
+    provider_use "off" >/dev/null 2>&1
+    assert_eq "$GEORGE_PROVIDER" ""
+    _teardown_prov
+  }
+
+  it "provider_active returns current provider" && {
+    _setup_prov
+    GEORGE_PROVIDER="anthropic"
+    _tresult=$(provider_active)
+    assert_eq "$_tresult" "anthropic"
+    GEORGE_PROVIDER=""
+    _tresult=$(provider_active)
+    assert_eq "$_tresult" ""
+    _teardown_prov
+  }
+
+  it "_provider_load_harness restores from keys.conf" && {
+    _setup_prov
+    api_set_key "GOOGLE_AI_API_KEY" "test-key-123"
+    api_set_key "GEORGE_PROVIDER" "google"
+    GEORGE_PROVIDER=""
+    _provider_load_harness
+    assert_eq "$GEORGE_PROVIDER" "google"
+    _teardown_prov
+  }
+
+  it "_provider_load_harness ignores missing API key" && {
+    _setup_prov
+    api_set_key "GEORGE_PROVIDER" "openai"
+    GEORGE_PROVIDER=""
+    _provider_load_harness
+    assert_eq "$GEORGE_PROVIDER" ""
+    _teardown_prov
+  }
+
+  it "provider_use with provider/model sets model" && {
+    _setup_prov
+    api_set_key "GOOGLE_AI_API_KEY" "test-key-123"
+    provider_set_model "google" "gemini-2.5-pro" >/dev/null 2>&1
+    provider_use "google" >/dev/null 2>&1
+    assert_eq "$GEORGE_PROVIDER" "google"
+    _tresult=$(provider_get_model "google" 2>/dev/null)
+    assert_eq "$_tresult" "gemini-2.5-pro"
+    _teardown_prov
+  }
+
+# ── System prompt passthrough ──────────────────────────────────
+describe "Provider system prompt support"
+
+  it "provider_chat accepts 4th system arg" && {
+    _setup_prov
+    # provider_chat should dispatch correctly with system=$4
+    # (will fail due to missing API key, but must NOT say "Unknown provider")
+    _tresult=$(provider_chat "openai" "hello" "" "You are George." 2>&1)
+    echo "$_tresult" | grep -qi "unknown provider"
+    assert_fail $? "system arg must not confuse dispatcher"
     _teardown_prov
   }
 
