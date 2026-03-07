@@ -656,9 +656,31 @@ _cmd_limits() {
             fi ;;
         depth)
             if [ -z "$value" ]; then
-                ui_info "Subtask recursion depth: $AGENT_MAX_DEPTH (default: 2)"
+                ui_info "Subtask recursion depth: $AGENT_MAX_DEPTH (default: 1)"
             else
                 _limits_set AGENT_MAX_DEPTH "Recursion depth" "$value" 1 10
+            fi ;;
+        expand)
+            if [ -z "$value" ]; then
+                local _expand_label="disabled"
+                [ "${AGENT_HONEYDEW_EXPAND:-0}" -eq 1 ] && _expand_label="enabled"
+                ui_info "Honeydew expansion: $_expand_label (default: disabled)"
+            else
+                if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
+                    AGENT_HONEYDEW_EXPAND=1
+                    ui_ok "Honeydew expansion enabled"
+                elif [[ "$value" == "off" || "$value" == "0" || "$value" == "disable" || "$value" == "disabled" ]]; then
+                    AGENT_HONEYDEW_EXPAND=0
+                    ui_ok "Honeydew expansion disabled"
+                else
+                    ui_err "Expand must be 'on' or 'off' (or 1/0, enable/disable)"
+                fi
+            fi ;;
+        max-items)
+            if [ -z "$value" ]; then
+                ui_info "Honeydew max items: $AGENT_HONEYDEW_MAX_ITEMS (default: 8)"
+            else
+                _limits_set AGENT_HONEYDEW_MAX_ITEMS "Honeydew max items" "$value" 2 30
             fi ;;
         milestones)
             if [ -z "$value" ]; then
@@ -795,7 +817,9 @@ _cmd_limits() {
             AGENT_PLAN_STEPS=5
             AGENT_INNER_LOOPS=6
             AGENT_MAX_STEPS=20
-            AGENT_MAX_DEPTH=2
+            AGENT_MAX_DEPTH=1
+            AGENT_HONEYDEW_EXPAND=0
+            AGENT_HONEYDEW_MAX_ITEMS=8
             AGENT_STEP_DELAY=1
             AGENT_EVAL_MODE=auto
             LLM_MAX_TOKENS=20480
@@ -819,7 +843,11 @@ _cmd_limits() {
         "")
             ui_section "Agent Limits"
             printf "  %-22s %s\n" "Plan steps/subtask:" "$AGENT_PLAN_STEPS  (default: 5)"
-            printf "  %-22s %s\n" "Subtask depth:" "$AGENT_MAX_DEPTH  (default: 2)"
+            local _expand_show="disabled"
+            [ "${AGENT_HONEYDEW_EXPAND:-0}" -eq 1 ] && _expand_show="enabled"
+            printf "  %-22s %s\n" "Honeydew expansion:" "$_expand_show  (default: disabled)"
+            printf "  %-22s %s\n" "Subtask depth:" "$AGENT_MAX_DEPTH  (default: 1)"
+            printf "  %-22s %s\n" "Honeydew max items:" "$AGENT_HONEYDEW_MAX_ITEMS  (default: 8)"
             printf "  %-22s %s\n" "Macro milestones:" "$AGENT_MAX_STEPS  (default: 20)"
             printf "  %-22s %s\n" "Inner loop retries:" "$AGENT_INNER_LOOPS  (default: 6)"
             printf "  %-22s %s\n" "Step delay:" "${AGENT_STEP_DELAY}s  (default: 1)"
@@ -853,7 +881,9 @@ _cmd_limits() {
             echo ""
             ui_dim "  Agent loop:"
             ui_dim "    steps N         — Max steps per plan/subtask (current: $AGENT_PLAN_STEPS)"
+            ui_dim "    expand on|off   — Honeydew subtask expansion (current: $([ "${AGENT_HONEYDEW_EXPAND:-0}" -eq 1 ] && echo on || echo off))"
             ui_dim "    depth N         — Subtask recursion depth (current: $AGENT_MAX_DEPTH)"
+            ui_dim "    max-items N     — Max honeydew items before expansion suppressed (current: $AGENT_HONEYDEW_MAX_ITEMS)"
             ui_dim "    milestones N    — Macro loop milestone ceiling (current: $AGENT_MAX_STEPS)"
             ui_dim "    inner N         — Inner loop escalation retries (current: $AGENT_INNER_LOOPS)"
             ui_dim "    delay N         — Seconds between milestones (current: $AGENT_STEP_DELAY)"

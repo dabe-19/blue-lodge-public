@@ -327,7 +327,7 @@ describe "Limits command"
   it "_cmd_limits depth sets AGENT_MAX_DEPTH" && {
     _cmd_limits "depth 4" >/dev/null 2>&1
     assert_eq "$AGENT_MAX_DEPTH" "4"
-    AGENT_MAX_DEPTH=2  # restore
+    AGENT_MAX_DEPTH=1  # restore
   }
 
   it "_cmd_limits milestones sets AGENT_MAX_STEPS" && {
@@ -460,6 +460,42 @@ describe "Limits command"
     AGENT_HONEYDEW_MATCH=2  # restore
   }
 
+  it "_cmd_limits expand on enables AGENT_HONEYDEW_EXPAND" && {
+    _cmd_limits "expand on" >/dev/null 2>&1
+    assert_eq "$AGENT_HONEYDEW_EXPAND" "1"
+    AGENT_HONEYDEW_EXPAND=0  # restore
+  }
+
+  it "_cmd_limits expand off disables AGENT_HONEYDEW_EXPAND" && {
+    AGENT_HONEYDEW_EXPAND=1
+    _cmd_limits "expand off" >/dev/null 2>&1
+    assert_eq "$AGENT_HONEYDEW_EXPAND" "0"
+  }
+
+  it "_cmd_limits expand accepts enable/disable aliases" && {
+    _cmd_limits "expand enable" >/dev/null 2>&1
+    assert_eq "$AGENT_HONEYDEW_EXPAND" "1"
+    _cmd_limits "expand disable" >/dev/null 2>&1
+    assert_eq "$AGENT_HONEYDEW_EXPAND" "0"
+  }
+
+  it "_cmd_limits expand rejects invalid value" && {
+    AGENT_HONEYDEW_EXPAND=0
+    _cmd_limits "expand maybe" >/dev/null 2>&1
+    assert_eq "$AGENT_HONEYDEW_EXPAND" "0"
+  }
+
+  it "_cmd_limits max-items sets AGENT_HONEYDEW_MAX_ITEMS" && {
+    _cmd_limits "max-items 12" >/dev/null 2>&1
+    assert_eq "$AGENT_HONEYDEW_MAX_ITEMS" "12"
+    AGENT_HONEYDEW_MAX_ITEMS=8  # restore
+  }
+
+  it "_cmd_limits max-items rejects below min" && {
+    _cmd_limits "max-items 1" >/dev/null 2>&1
+    assert_eq "$AGENT_HONEYDEW_MAX_ITEMS" "8"
+  }
+
   it "_cmd_limits show includes agent loop lines" && {
     output=$(_cmd_limits "" 2>&1)
     echo "$output" | grep -q "Web sufficiency"
@@ -469,6 +505,10 @@ describe "Limits command"
     echo "$output" | grep -q "Command family"
     assert_ok $?
     echo "$output" | grep -q "Honeydew match"
+    assert_ok $?
+    echo "$output" | grep -q "Honeydew expansion"
+    assert_ok $?
+    echo "$output" | grep -q "Honeydew max items"
     assert_ok $?
   }
 
@@ -505,7 +545,7 @@ describe "Limits command"
     assert_eq "$AGENT_PLAN_STEPS" "5"
     assert_eq "$AGENT_INNER_LOOPS" "6"
     assert_eq "$AGENT_MAX_STEPS" "20"
-    assert_eq "$AGENT_MAX_DEPTH" "2"
+    assert_eq "$AGENT_MAX_DEPTH" "1"
     assert_eq "$AGENT_STEP_DELAY" "1"
     assert_eq "$LLM_MAX_TOKENS" "20480"
     assert_eq "$LLM_AGENT_TOKENS" "20480"
@@ -522,6 +562,8 @@ describe "Limits command"
     assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "2"
     assert_eq "$AGENT_MAX_CMD_FAMILY" "3"
     assert_eq "$AGENT_HONEYDEW_MATCH" "2"
+    assert_eq "$AGENT_HONEYDEW_EXPAND" "0"
+    assert_eq "$AGENT_HONEYDEW_MAX_ITEMS" "8"
   }
 
 # ── /model command ─────────────────────────────────────────────
