@@ -81,15 +81,15 @@ describe "memory_get_section"
   it "extracts a section from GEORGE.md" && {
     _setup_mem
     memory_init "$TMPDIR_MEM" "Test" "Shell" "bash run.sh" "bash test.sh" >/dev/null 2>&1
-    result=$(memory_get_section "Project Overview" "$TMPDIR_MEM")
+    result=$(memory_get_section "Project" "$TMPDIR_MEM")
     assert_contains "$result" "Shell"
     _teardown_mem
   }
 
-  it "extracts Validation section" && {
+  it "extracts Build section" && {
     _setup_mem
     memory_init "$TMPDIR_MEM" "Test" "Rust" "cargo build" "cargo test" >/dev/null 2>&1
-    result=$(memory_get_section "Validation" "$TMPDIR_MEM")
+    result=$(memory_get_section "Build" "$TMPDIR_MEM")
     assert_contains "$result" "cargo build"
     _teardown_mem
   }

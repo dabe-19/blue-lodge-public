@@ -57,11 +57,9 @@ if [ -f "$GEORGE_CONFIG_DIR/keys.conf" ]; then
     cp "$GEORGE_CONFIG_DIR/keys.conf" "$BACKUP_PATH/keys.conf"
 fi
 
-# GEORGE.md from current dir (backwards-compatible: also backs up CLAUDE.md)
+# GEORGE.md from current dir
 if [ -f "$PWD/GEORGE.md" ]; then
     cp "$PWD/GEORGE.md" "$BACKUP_PATH/GEORGE.md"
-elif [ -f "$PWD/CLAUDE.md" ]; then
-    cp "$PWD/CLAUDE.md" "$BACKUP_PATH/GEORGE.md"
 fi
 
 ok "Identity backed up to $BACKUP_PATH"

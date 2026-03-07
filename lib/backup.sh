@@ -60,26 +60,23 @@ backup_local() {
     fi
 
     # Collect all GEORGE.md files from known project locations
-    # (backwards-compatible: also collects legacy CLAUDE.md)
-    local claude_files=()
+    local george_files=()
     # Current directory
     if [ -f "$PWD/GEORGE.md" ]; then
-        claude_files+=("$PWD/GEORGE.md")
-    elif [ -f "$PWD/CLAUDE.md" ]; then
-        claude_files+=("$PWD/CLAUDE.md")
+        george_files+=("$PWD/GEORGE.md")
     fi
     # Sandboxes
     if [ -d "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" ]; then
         while IFS= read -r -d '' cf; do
-            claude_files+=("$cf")
-        done < <(find "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" \( -name "GEORGE.md" -o -name "CLAUDE.md" \) -print0 2>/dev/null)
+            george_files+=("$cf")
+        done < <(find "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" -name "GEORGE.md" -print0 2>/dev/null)
     fi
     # Home directory projects (1 level deep)
     while IFS= read -r -d '' cf; do
-        claude_files+=("$cf")
-    done < <(find "$HOME" -maxdepth 2 \( -name "GEORGE.md" -o -name "CLAUDE.md" \) -not -path "*/.george/*" -not -path "*/blue-lodge/*" -print0 2>/dev/null)
+        george_files+=("$cf")
+    done < <(find "$HOME" -maxdepth 2 -name "GEORGE.md" -not -path "*/.george/*" -not -path "*/blue-lodge/*" -print0 2>/dev/null)
 
-    for cf in "${claude_files[@]}"; do
+    for cf in "${george_files[@]}"; do
         local project_name
         project_name=$(basename "$(dirname "$cf")")
         mkdir -p "$backup_path/projects/$project_name"
@@ -245,10 +242,10 @@ backup_git_save() {
         cp "$GEORGE_CONFIG_DIR/keys.conf" "$GEORGE_BACKUP_REPO/keys.conf"
     fi
 
-    # Copy GEORGE.md files (backwards-compatible: also finds CLAUDE.md)
+    # Copy GEORGE.md files
     mkdir -p "$GEORGE_BACKUP_REPO/projects"
     if [ -d "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" ]; then
-        find "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" \( -name "GEORGE.md" -o -name "CLAUDE.md" \) -print0 2>/dev/null | \
+        find "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" -name "GEORGE.md" -print0 2>/dev/null | \
             while IFS= read -r -d '' cf; do
                 local pname
                 pname=$(basename "$(dirname "$cf")")

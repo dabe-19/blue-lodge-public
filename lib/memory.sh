@@ -26,11 +26,8 @@ memory_read_soul() {
 memory_read_project() {
     local dir="${1:-.}"
     local mem_file="$dir/GEORGE.md"
-    # Backwards-compatible: fall back to CLAUDE.md if GEORGE.md doesn't exist
     if [ -f "$mem_file" ]; then
         cat "$mem_file"
-    elif [ -f "$dir/CLAUDE.md" ]; then
-        cat "$dir/CLAUDE.md"
     else
         echo ""
     fi
@@ -41,21 +38,19 @@ memory_init() {
     local dir="${1:-.}"
     local project_name="${2:-$(basename "$dir")}"
     local project_type="${3:-General}"
-    local build_cmd="${4:-make}"
-    local test_cmd="${5:-make test}"
-    
+    local build_cmd="${4:-N/A}"
+    local test_cmd="${5:-N/A}"
+
     cat > "$dir/GEORGE.md" << MEMEOF
-# THE TRESTLE BOARD — $project_name
+# GEORGE — $project_name
 
-## Project Overview
-* **Name:** $project_name
-* **Objective:** (TBD)
-* **Domain & Tools:** $project_type
+## Project
+name: $project_name
+type: $project_type
 
-## Validation
-* **How do we prove success?** (TBD)
-* **Build:** \`$build_cmd\`
-* **Test:** \`$test_cmd\`
+## Build
+build: $build_cmd
+test: $test_cmd
 
 ## Active Task
 (none)
@@ -64,13 +59,9 @@ memory_init() {
 (none)
 
 ## Context Files
-(auto-populated as agent works)
-
-## Considerations
-- Hardware: Galaxy Fold 7, Snapdragon 8 Elite, 12GB RAM
-- Keep context lean. Small functions. Structured logging.
+(none)
 MEMEOF
-    
+
     ui_ok "GEORGE.md initialized in $dir"
 }
 
@@ -81,8 +72,6 @@ memory_update_section() {
     local content="$2"
     local dir="${3:-.}"
     local file="$dir/GEORGE.md"
-    # Backwards-compatible: fall back to CLAUDE.md
-    [ ! -f "$file" ] && [ -f "$dir/CLAUDE.md" ] && file="$dir/CLAUDE.md"
     
     if [ ! -f "$file" ]; then
         ui_warn "No GEORGE.md found in $dir"
@@ -110,8 +99,6 @@ memory_append_section() {
     local line="$2"
     local dir="${3:-.}"
     local file="$dir/GEORGE.md"
-    # Backwards-compatible: fall back to CLAUDE.md
-    [ ! -f "$file" ] && [ -f "$dir/CLAUDE.md" ] && file="$dir/CLAUDE.md"
     
     if [ ! -f "$file" ]; then return 1; fi
     
@@ -134,8 +121,6 @@ memory_get_section() {
     local section="$1"
     local dir="${2:-.}"
     local file="$dir/GEORGE.md"
-    # Backwards-compatible: fall back to CLAUDE.md
-    [ ! -f "$file" ] && [ -f "$dir/CLAUDE.md" ] && file="$dir/CLAUDE.md"
     
     if [ ! -f "$file" ]; then echo ""; return; fi
     
@@ -518,8 +503,6 @@ ${soul}"
 memory_compact() {
     local dir="${1:-.}"
     local file="$dir/GEORGE.md"
-    # Backwards-compatible: fall back to CLAUDE.md
-    [ ! -f "$file" ] && [ -f "$dir/CLAUDE.md" ] && file="$dir/CLAUDE.md"
     
     if [ ! -f "$file" ]; then return; fi
     
@@ -554,8 +537,16 @@ $keep" "$dir"
     local file_size
     file_size=$(wc -c < "$file")
     if [ "$file_size" -gt 6144 ]; then
-        # Keep header + active task, compact everything else
-        memory_update_section "Considerations" "[archived]" "$dir"
+        # Aggressively trim milestones to protect context window
+        local _overflow_ms
+        _overflow_ms=$(memory_get_section "Completed Milestones" "$dir")
+        local _overflow_lc
+        _overflow_lc=$(echo "$_overflow_ms" | wc -l)
+        if [ "$_overflow_lc" -gt 3 ]; then
+            local _overflow_old=$(( _overflow_lc - 3 ))
+            memory_update_section "Completed Milestones" "[$_overflow_old older milestones archived]
+$(echo "$_overflow_ms" | tail -3)" "$dir"
+        fi
         ui_warn "GEORGE.md exceeded 6KB — compacted to protect context window"
     fi
 }
@@ -564,8 +555,6 @@ $keep" "$dir"
 memory_snapshot() {
     local dir="${1:-.}"
     local file="$dir/GEORGE.md"
-    # Backwards-compatible: fall back to CLAUDE.md
-    [ ! -f "$file" ] && [ -f "$dir/CLAUDE.md" ] && file="$dir/CLAUDE.md"
     local archive_dir="$dir/.lodge-snapshots"
     
     if [ ! -f "$file" ]; then return; fi

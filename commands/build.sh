@@ -13,10 +13,10 @@ cmd_build() {
     cd "$workdir"
     
     local build_cmd
-    # New format: labeled entry in Validation section
-    build_cmd=$(memory_get_section "Validation" "$workdir" | grep '\*\*Build' | grep -oP '`\K[^`]+' | head -1)
-    # Fallback: old format (## Build section)
-    [ -z "$build_cmd" ] && build_cmd=$(memory_get_section "Build" "$workdir" | head -1 | sed 's/^`//;s/`$//')
+    # Read build command from ## Build section (key:value format)
+    build_cmd=$(memory_get_section "Build" "$workdir" | grep '^build:' | sed 's/^build:[[:space:]]*//' | head -1)
+    # Filter out placeholder values
+    [[ "$build_cmd" == "N/A" ]] && build_cmd=""
     
     if [ -z "$build_cmd" ]; then
         if [ -f "Cargo.toml" ]; then
@@ -26,7 +26,7 @@ cmd_build() {
         elif [ -f "Makefile" ]; then
             build_cmd="make"
         else
-            ui_err "Can't detect build command. Add it to GEORGE.md under ## Validation"
+            ui_err "Can't detect build command. Add it to GEORGE.md under ## Build"
             return 1
         fi
     fi

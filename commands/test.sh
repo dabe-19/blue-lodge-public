@@ -14,10 +14,10 @@ cmd_test() {
     
     # Get test command from GEORGE.md or detect
     local test_cmd
-    # New format: labeled entry in Validation section
-    test_cmd=$(memory_get_section "Validation" "$workdir" | grep '\*\*Test' | grep -oP '`\K[^`]+' | head -1)
-    # Fallback: old format (## Test section)
-    [ -z "$test_cmd" ] && test_cmd=$(memory_get_section "Test" "$workdir" | head -1 | sed 's/^`//;s/`$//')
+    # Read test command from ## Build section (key:value format)
+    test_cmd=$(memory_get_section "Build" "$workdir" | grep '^test:' | sed 's/^test:[[:space:]]*//' | head -1)
+    # Filter out placeholder values
+    [[ "$test_cmd" == "N/A" ]] && test_cmd=""
     
     if [ -z "$test_cmd" ]; then
         # Auto-detect
@@ -30,7 +30,7 @@ cmd_test() {
         elif [ -f "Makefile" ]; then
             test_cmd="make test"
         else
-            ui_err "Can't detect test command. Add it to GEORGE.md under ## Validation"
+            ui_err "Can't detect test command. Add it to GEORGE.md under ## Build"
             return 1
         fi
     fi
@@ -50,7 +50,7 @@ cmd_test() {
         ui_ok "Tests passed"
     else
         ui_err "Tests failed (exit $exit_code)"
-        memory_append_section "Considerations" "Tests failed: exit $exit_code" "$workdir"
+        memory_append_section "Context Files" "tests failed: exit $exit_code" "$workdir"
     fi
     
     return $exit_code

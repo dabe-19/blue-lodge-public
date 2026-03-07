@@ -59,7 +59,7 @@ recall_init() {
     sqlite3 "$RECALL_DB" <<'SQL'
 CREATE TABLE IF NOT EXISTS chunks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source TEXT NOT NULL,       -- readme, soul, journal, claude
+    source TEXT NOT NULL,       -- ref, journal, george, doc:<name>
     section TEXT NOT NULL,      -- section heading
     content TEXT NOT NULL,      -- section body
     filepath TEXT NOT NULL,     -- original file path
@@ -201,8 +201,6 @@ _recall_all_sources() {
     # Current project memory (dynamic)
     if [ -f "./GEORGE.md" ]; then
         echo "george:$PWD/GEORGE.md"
-    elif [ -f "./CLAUDE.md" ]; then
-        echo "george:$PWD/CLAUDE.md"
     fi
 }
 
@@ -280,15 +278,12 @@ recall_ensure_indexed() {
 #
 # Strategy:
 #   1. Strip ALL non-alphanumeric, non-space, non-underscore chars.
-#      This is a whitelist approach — safer than chasing individual
-#      blacklist entries as new edge cases surface.
-#   2. Collapse whitespace and trim.
-#   3. Wrap each surviving word in FTS5 double-quotes.
-#      This prevents bare AND/OR/NOT from being parsed as operators
-#      and protects against any future tokenizer surprises.
-#
-# The tradeoff: we lose the ability to use FTS5 operators in queries.
-# That's fine — George's users type natural language, not FTS5 syntax.
+#   2. Remove stop words (articles, verbs-of-intent, filler).
+#      LLM-generated queries like "check existing isolation configs"
+#      become "isolation configs" — the words that actually appear in
+#      indexed content.
+#   3. Collapse whitespace and trim.
+#   4. Wrap each surviving word in FTS5 double-quotes.
 #
 # Args:
 #   $1 — raw query string
@@ -300,10 +295,33 @@ _recall_sanitize_query() {
     # Step 1: Keep only alphanumeric, spaces, and underscores
     local clean
     clean=$(printf '%s' "$raw" | tr -c 'A-Za-z0-9_ \n' ' ')
-    # Step 2: Collapse multiple spaces and trim
+    # Step 2: Remove stop words — articles, prepositions, and verbs-of-intent
+    # that LLMs prepend to queries but never appear in indexed content.
+    # Lowercase comparison; preserve original case in output.
+    local _word _filtered=""
+    for _word in $clean; do
+        case "${_word,,}" in
+            # Articles & pronouns
+            a|an|the|this|that|these|those|it|its|my|our|your|their) ;;
+            # Prepositions & conjunctions
+            in|on|at|to|of|for|from|with|by|about|into|and|or|but|if|is|are|was|were|be|been|am|has|have|had|do|does|did|will|would|can|could|should|shall|may|might|not|no) ;;
+            # Verbs-of-intent (LLM filler: "check existing", "find current", "look up")
+            check|find|search|look|lookup|get|retrieve|fetch|show|list|display|identify|determine|examine|review|verify|confirm|locate|discover|explore|investigate|detect|analyze|ensure|obtain) ;;
+            # Adjectives-of-state (LLM padding: "existing configs", "current setup")
+            existing|current|available|possible|relevant|specific|particular|various|all|any|some|new|old|first|last|next|previous) ;;
+            *) _filtered="$_filtered $_word" ;;
+        esac
+    done
+    clean="${_filtered# }"
+    # Fallback: if stop-word removal eliminated everything, use original
+    # (e.g. "/recall find all" → all words are stop words)
+    if [ -z "${clean// /}" ]; then
+        clean=$(printf '%s' "$raw" | tr -c 'A-Za-z0-9_ \n' ' ')
+    fi
+    # Step 3: Collapse multiple spaces and trim
     clean=$(printf '%s' "$clean" | sed 's/  */ /g; s/^ *//; s/ *$//')
     [ -z "$clean" ] && return 0
-    # Step 3: Wrap each word in double-quotes for FTS5
+    # Step 4: Wrap each word in double-quotes for FTS5
     if [ "$join" = "OR" ]; then
         # "recall" OR "db" — explicit OR between quoted terms
         printf '%s' "$clean" | sed 's/[^ ][^ ]*/\"&\"/g; s/" "/\" OR \"/g'

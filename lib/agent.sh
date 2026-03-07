@@ -1966,7 +1966,7 @@ SPEC
                 ;;
             build)
                 cat << 'SPEC'
-{"cmd":"/build","syntax":"/build [release]","notes":"Auto-detects Cargo/pyproject/Makefile. Reads GEORGE.md Validation section.",
+{"cmd":"/build","syntax":"/build [release]","notes":"Auto-detects Cargo/pyproject/Makefile. Reads GEORGE.md Build section.",
 "format_only_ex":["/build","/build release"]}
 SPEC
                 ;;
@@ -3410,7 +3410,7 @@ Output a slash command line starting with / OR a bash code block."
 #   Macro Loop: Determines the next high-level milestone.
 #   Micro Loop: Executes via agent_inner_loop.
 #
-# Memory Architecture (all legacy CLAUDE.md references migrated to GEORGE.md):
+# Memory Architecture:
 #   macro_memory.json — Persona seed + objective + completed milestones (JSON).
 #   micro_memory.json — Overwritten per micro-objective (JSON, managed by inner loop).
 #   failures_log.md — Isolated stderr graveyard (managed by inner loop).
@@ -3462,24 +3462,22 @@ agent_run() {
     # Without this, memory_update_section silently fails and task
     # history is lost for any task not preceded by /init.
     local _george_md="$workdir/GEORGE.md"
-    if [ ! -f "$_george_md" ] && [ ! -f "$workdir/CLAUDE.md" ]; then
+    if [ ! -f "$_george_md" ]; then
         local _proj_name
         _proj_name=$(basename "$workdir")
         if declare -f memory_init &>/dev/null; then
-            memory_init "$workdir" "$_proj_name" "General" "N/A" "N/A"
+            memory_init "$workdir" "$_proj_name" "General"
         else
             cat > "$_george_md" << MEMEOF
-# THE TRESTLE BOARD — $_proj_name
+# GEORGE — $_proj_name
 
-## Project Overview
-* **Name:** $_proj_name
-* **Objective:** (TBD)
-* **Domain & Tools:** General
+## Project
+name: $_proj_name
+type: General
 
-## Validation
-* **How do we prove success?** (TBD)
-* **Build:** \`N/A\`
-* **Test:** \`N/A\`
+## Build
+build: N/A
+test: N/A
 
 ## Active Task
 (none)
@@ -3488,10 +3486,7 @@ agent_run() {
 (none)
 
 ## Context Files
-(auto-populated as agent works)
-
-## Considerations
-- Auto-created by agent_run for task tracking.
+(none)
 MEMEOF
         fi
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] auto-created GEORGE.md in $workdir"
@@ -3513,9 +3508,9 @@ MEMEOF
     if declare -f memory_read_project &>/dev/null; then
         _george_ctx=$(memory_read_project "$workdir" 2>/dev/null)
         if [ -n "$_george_ctx" ]; then
-            # Include project overview, validation, context, considerations — skip active task/milestones
+            # Include project info + context files — skip active task/milestones
             _george_ctx=$(echo "$_george_ctx" | awk '
-                /^## (Project Overview|Validation|Context Files|Considerations)/ { show=1 }
+                /^## (Project|Build|Context Files)/ { show=1 }
                 /^## (Active Task|Completed Milestones)/ { show=0 }
                 show { print }
             ')
@@ -3953,7 +3948,6 @@ ${_last_eval_feedback}
                 memory_update_section "Active Task" "$task (milestone $completed_milestones complete)" "$workdir" 2>/dev/null
                 # Append to Completed Milestones (avoid overwriting previous milestones)
                 local _george_file="$workdir/GEORGE.md"
-                [ ! -f "$_george_file" ] && [ -f "$workdir/CLAUDE.md" ] && _george_file="$workdir/CLAUDE.md"
                 if [ -f "$_george_file" ]; then
                     local _step_line="- [$(date '+%H:%M')] $milestone"
                     local _current_steps
