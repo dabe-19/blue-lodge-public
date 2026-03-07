@@ -321,7 +321,7 @@ describe "Limits command"
   it "_cmd_limits steps sets AGENT_PLAN_STEPS" && {
     _cmd_limits "steps 8" >/dev/null 2>&1
     assert_eq "$AGENT_PLAN_STEPS" "8"
-    AGENT_PLAN_STEPS=5  # restore
+    AGENT_PLAN_STEPS=6  # restore
   }
 
   it "_cmd_limits depth sets AGENT_MAX_DEPTH" && {
@@ -351,13 +351,13 @@ describe "Limits command"
   it "_cmd_limits rejects invalid numbers" && {
     _cmd_limits "steps 0" >/dev/null 2>&1
     # Should remain at default since 0 is below min of 1
-    assert_eq "$AGENT_PLAN_STEPS" "5"
+    assert_eq "$AGENT_PLAN_STEPS" "6"
   }
 
   it "_cmd_limits rejects out-of-range values" && {
     _cmd_limits "steps 999" >/dev/null 2>&1
     # Should remain at default since 999 exceeds max of 20
-    assert_eq "$AGENT_PLAN_STEPS" "5"
+    assert_eq "$AGENT_PLAN_STEPS" "6"
   }
 
   it "_cmd_limits tokens sets LLM_AGENT_TOKENS" && {
@@ -542,7 +542,7 @@ describe "Limits command"
     LLM_BUDGET_JOURNAL=4096
     LLM_BUDGET_TOOL=4096
     _cmd_limits "reset" >/dev/null 2>&1
-    assert_eq "$AGENT_PLAN_STEPS" "5"
+    assert_eq "$AGENT_PLAN_STEPS" "6"
     assert_eq "$AGENT_INNER_LOOPS" "6"
     assert_eq "$AGENT_MAX_STEPS" "40"
     assert_eq "$AGENT_MAX_DEPTH" "3"

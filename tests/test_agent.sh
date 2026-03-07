@@ -2104,10 +2104,10 @@ describe "Honeydew subtask decomposition"
 # ── Honeydew expansion interlocks ─────────────────────────────
 describe "Honeydew expansion interlocks"
 
-  it "AGENT_HONEYDEW_EXPAND defaults to 0 (disabled)" && {
+  it "AGENT_HONEYDEW_EXPAND defaults to 1 (enabled)" && {
     # Read from source to check the default, not the runtime value
-    grep -q 'AGENT_HONEYDEW_EXPAND.*:-0' "$LODGE_DIR/lib/agent.sh"
-    assert_ok $? "AGENT_HONEYDEW_EXPAND must default to 0"
+    grep -q 'AGENT_HONEYDEW_EXPAND.*:-1' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "AGENT_HONEYDEW_EXPAND must default to 1"
   }
 
   it "maybe_expand returns 1 when expansion is disabled" && {

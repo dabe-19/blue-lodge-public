@@ -647,7 +647,7 @@ _cmd_limits() {
     case "$action" in
         steps)
             if [ -z "$value" ]; then
-                ui_info "Plan steps per subtask: $AGENT_PLAN_STEPS (default: 5)"
+                ui_info "Plan steps per subtask: $AGENT_PLAN_STEPS (default: 6)"
             else
                 _limits_set AGENT_PLAN_STEPS "Plan steps" "$value" 1 20
             fi ;;
@@ -862,7 +862,7 @@ _cmd_limits() {
                 _limits_set AGENT_EVAL_REC_CHARS "Recommendation chars" "$value" 20 500
             fi ;;
         reset)
-            AGENT_PLAN_STEPS=5
+            AGENT_PLAN_STEPS=6
             AGENT_INNER_LOOPS=6
             AGENT_MAX_STEPS=40
             AGENT_MAX_DEPTH=3
@@ -891,11 +891,12 @@ _cmd_limits() {
             AGENT_HONEYDEW_MATCH=3
             AGENT_WEB_SEARCH_CONSEC_MAX=5
             AGENT_EVAL_REC_CHARS=120
+            AGENT_PRESSURE_RELIEF=2
             AGENT_SMART_ROUTE=1
             ui_ok "All limits reset to defaults" ;;
         "")
             ui_section "Agent Limits"
-            printf "  %-22s %s\n" "Plan steps/subtask:" "$AGENT_PLAN_STEPS  (default: 5)"
+            printf "  %-22s %s\n" "Plan steps/subtask:" "$AGENT_PLAN_STEPS  (default: 6)"
             local _expand_show="disabled"
             [ "${AGENT_HONEYDEW_EXPAND:-0}" -eq 1 ] && _expand_show="enabled"
             printf "  %-22s %s\n" "Honeydew expansion:" "$_expand_show  (default: enabled)"
@@ -945,7 +946,7 @@ _cmd_limits() {
             ui_dim "    steps N         — Max steps per plan/subtask (current: $AGENT_PLAN_STEPS)"
             ui_dim "    expand on|off   — Honeydew subtask expansion (current: $([ "${AGENT_HONEYDEW_EXPAND:-0}" -eq 1 ] && echo on || echo off))"
             ui_dim "    rewrite on|off  — Dynamic honeydew rewrite after milestones (current: $([ "${AGENT_HONEYDEW_REWRITE:-0}" -eq 1 ] && echo on || echo off))"
-            ui_dim "    rewrite-rounds N — Max honeydew rewrite rounds per task (current: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-2})"
+            ui_dim "    rewrite-rounds N — Max honeydew rewrite rounds per task (current: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-8})"
             ui_dim "    depth N         — Subtask recursion depth (current: $AGENT_MAX_DEPTH)"
             ui_dim "    max-items N     — Max honeydew items before expansion suppressed (current: $AGENT_HONEYDEW_MAX_ITEMS)"
             ui_dim "    milestones N    — Macro loop milestone ceiling (current: $AGENT_MAX_STEPS)"
