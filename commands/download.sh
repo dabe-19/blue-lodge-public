@@ -40,15 +40,18 @@ cmd_download() {
     fi
 
     # Resolve destination relative to workdir
+    # SECURITY: Never allow writes outside the workdir tree.
     local fullpath
     if [[ "$dest" == /* ]]; then
-        fullpath="$dest"
-    else
-        fullpath="$workdir/$dest"
+        dest="${dest#/}"
     fi
+    fullpath="$workdir/$dest"
 
     # Create parent directories
-    mkdir -p "$(dirname "$fullpath")"
+    if ! mkdir -p "$(dirname "$fullpath")" 2>/dev/null; then
+        ui_err "Cannot create directory: $(dirname "$dest")"
+        return 1
+    fi
 
     # URL download
     if [[ "$source" == http://* ]] || [[ "$source" == https://* ]]; then

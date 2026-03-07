@@ -63,12 +63,15 @@ cmd_save() {
     fi
 
     # Resolve path relative to workdir
+    # SECURITY: Never allow writes outside the workdir tree.
+    # LLMs frequently hallucinate absolute paths (e.g. /responses/file.json)
+    # which would attempt to write to filesystem root. Strip leading / and
+    # treat ALL paths as relative to workdir.
     local fullpath
     if [[ "$filepath" == /* ]]; then
-        fullpath="$filepath"
-    else
-        fullpath="$workdir/$filepath"
+        filepath="${filepath#/}"
     fi
+    fullpath="$workdir/$filepath"
 
     # If no content but file already exists, confirm it's saved
     if [ -z "$content" ] && [ -f "$fullpath" ]; then
@@ -89,10 +92,16 @@ cmd_save() {
     content=$(ui_expand_escapes "$content")
 
     # Create parent directories if needed
-    mkdir -p "$(dirname "$fullpath")"
+    if ! mkdir -p "$(dirname "$fullpath")" 2>/dev/null; then
+        ui_err "Cannot create directory: $(dirname "$filepath")"
+        return 1
+    fi
 
     # Write the file
-    printf '%s\n' "$content" > "$fullpath"
+    if ! printf '%s\n' "$content" > "$fullpath" 2>/dev/null; then
+        ui_err "Write failed: $filepath (permission denied or invalid path)"
+        return 1
+    fi
     local lines
     lines=$(printf '%s' "$content" | wc -l)
     lines=$((lines + 1))

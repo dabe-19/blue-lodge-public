@@ -1920,14 +1920,14 @@ SPEC
                 cat << 'SPEC'
 {"cmd":"/write","syntax":["/write <filepath> <content>","/write --append <filepath> <content>","/write --edit <filepath> <sed_expr>"],
 "modes":{"overwrite":"Write COMPLETE file contents. New files or full rewrites.","--append":"Add to END of file. Deps, new functions.","--edit":"ONLY short sed (rename, change value). Max 200 chars. NEVER multi-line."},
-"rules":["Use \\n for newlines (NEVER literal line breaks)","COMPLETE source for code files","JSON: matching braces, quoted keys","If changing >1 line, use plain /write with COMPLETE file"],
-"format_only_ex":["/write <filepath> <complete file content with \\n for newlines>","/write --append <filepath> <content to add>","/write --edit <filepath> s/<old>/<new>/g"]}
+"rules":["RELATIVE PATHS ONLY (e.g. responses/file.json, src/main.rs) — NEVER start with /","Use \\n for newlines (NEVER literal line breaks)","COMPLETE source for code files","JSON: matching braces, quoted keys","If changing >1 line, use plain /write with COMPLETE file"],
+"format_only_ex":["/write <relative-filepath> <complete file content with \\n for newlines>","/write --append <relative-filepath> <content to add>","/write --edit <relative-filepath> s/<old>/<new>/g"]}
 SPEC
                 ;;
             save)
                 cat << 'SPEC'
-{"cmd":"/save","syntax":"/save <filepath> <content>","notes":"First token=filepath, rest=content",
-"format_only_ex":["/save <filepath> <content>"],
+{"cmd":"/save","syntax":"/save <filepath> <content>","notes":"First token=filepath, rest=content. RELATIVE PATHS ONLY.",
+"format_only_ex":["/save <relative-filepath> <content>"],
 "fill":{"<filepath>":"target filename or path","<content>":"text to save to the file"}}
 SPEC
                 ;;
