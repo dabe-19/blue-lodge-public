@@ -218,4 +218,92 @@ describe "Configuration"
     _teardown_prov
   }
 
+# ── Provider model defaults ───────────────────────────────────
+describe "Provider model defaults"
+
+  it "_provider_canon maps google to GOOGLE" && {
+    _setup_prov
+    assert_eq "$(_provider_canon "google")" "GOOGLE"
+    _teardown_prov
+  }
+
+  it "_provider_canon maps gemini alias to GOOGLE" && {
+    assert_eq "$(_provider_canon "gemini")" "GOOGLE"
+  }
+
+  it "_provider_canon maps openai to OPENAI" && {
+    assert_eq "$(_provider_canon "openai")" "OPENAI"
+  }
+
+  it "_provider_canon maps gpt alias to OPENAI" && {
+    assert_eq "$(_provider_canon "gpt")" "OPENAI"
+  }
+
+  it "_provider_canon returns empty for unknown" && {
+    _tresult=$(_provider_canon "nonexistent")
+    assert_eq "$_tresult" ""
+  }
+
+  it "provider_set_model stores model in keys.conf" && {
+    _setup_prov
+    provider_set_model "google" "gemma-3-27b-it" >/dev/null 2>&1
+    _tresult=$(api_get_key "PROVIDER_MODEL_GOOGLE")
+    assert_eq "$_tresult" "gemma-3-27b-it"
+    _teardown_prov
+  }
+
+  it "provider_get_model returns stored model" && {
+    _setup_prov
+    api_set_key "PROVIDER_MODEL_OPENAI" "gpt-4o"
+    _tresult=$(provider_get_model "openai")
+    assert_eq "$_tresult" "gpt-4o"
+    _teardown_prov
+  }
+
+  it "provider_get_model returns empty when not set" && {
+    _setup_prov
+    _tresult=$(provider_get_model "google" 2>/dev/null)
+    assert_eq "$_tresult" ""
+    _teardown_prov
+  }
+
+  it "provider_clear_model removes stored model" && {
+    _setup_prov
+    api_set_key "PROVIDER_MODEL_GOOGLE" "gemma-3-27b-it"
+    provider_clear_model "google" >/dev/null 2>&1
+    _tresult=$(api_get_key "PROVIDER_MODEL_GOOGLE" 2>/dev/null)
+    assert_eq "$_tresult" ""
+    _teardown_prov
+  }
+
+  it "provider_set_model fails for unknown provider" && {
+    _setup_prov
+    provider_set_model "nonexistent" "model" 2>/dev/null
+    assert_fail $?
+    _teardown_prov
+  }
+
+  it "_provider_resolve_model uses explicit arg first" && {
+    _setup_prov
+    api_set_key "PROVIDER_MODEL_GOOGLE" "stored-model"
+    _tresult=$(_provider_resolve_model "explicit-model" "google" "hardcoded-model")
+    assert_eq "$_tresult" "explicit-model"
+    _teardown_prov
+  }
+
+  it "_provider_resolve_model uses stored default when no explicit" && {
+    _setup_prov
+    api_set_key "PROVIDER_MODEL_GOOGLE" "stored-model"
+    _tresult=$(_provider_resolve_model "" "google" "hardcoded-model")
+    assert_eq "$_tresult" "stored-model"
+    _teardown_prov
+  }
+
+  it "_provider_resolve_model falls back to hardcoded" && {
+    _setup_prov
+    _tresult=$(_provider_resolve_model "" "google" "hardcoded-model")
+    assert_eq "$_tresult" "hardcoded-model"
+    _teardown_prov
+  }
+
 test_end

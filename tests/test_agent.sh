@@ -1365,13 +1365,12 @@ describe "Task completion evaluator"
     # We check only the string-literal portion of each assignment,
     # excluding variable names like _EVAL_INCOMPLETE_REASON.
     # Extract just the quoted template text from each assignment.
-    local feedback_templates
-    feedback_templates=$(echo "$body" | grep '_last_eval_feedback="' | grep -v '_last_eval_feedback=""' | sed 's/.*_last_eval_feedback="//' | sed 's/".*//')
-    ! echo "$feedback_templates" | grep -qw 'DONE'
+    _t_feedback_templates=$(echo "$body" | grep '_last_eval_feedback="' | grep -v '_last_eval_feedback=""' | sed 's/.*_last_eval_feedback="//' | sed 's/".*//')
+    ! echo "$_t_feedback_templates" | grep -qw 'DONE'
     assert_ok $? "Eval feedback templates must not contain DONE"
-    ! echo "$feedback_templates" | grep -qw 'SUCCESS'
+    ! echo "$_t_feedback_templates" | grep -qw 'SUCCESS'
     assert_ok $? "Eval feedback templates must not contain SUCCESS"
-    ! echo "$feedback_templates" | grep -qw 'FAILED'
+    ! echo "$_t_feedback_templates" | grep -qw 'FAILED'
     assert_ok $? "Eval feedback templates must not contain FAILED"
   }
 
@@ -1888,11 +1887,10 @@ describe "Honeydew list system"
     # in any form that gets injected into LLM prompts (macro_prompt or macro_sys).
     # Only the evaluator should know these concepts exist.
     # Exclude code-side checks (DONE guard uses [[ == DONE* ]] which is bash, not prompt).
-    local prompt_parts
-    prompt_parts=$(echo "$body" | grep -E 'macro_prompt=|macro_sys=|STRAT_RULES_JSON' -A2)
-    ! echo "$prompt_parts" | grep -qi 'DONE'
+    _t_prompt_parts=$(echo "$body" | grep -E 'macro_prompt=|macro_sys=|STRAT_RULES_JSON' -A2)
+    ! echo "$_t_prompt_parts" | grep -qi 'DONE'
     assert_ok $? "Strategist prompts must not contain the word DONE"
-    ! echo "$prompt_parts" | grep -qi 'COMPLETE'
+    ! echo "$_t_prompt_parts" | grep -qi 'COMPLETE'
     assert_ok $? "Strategist prompts must not contain the word COMPLETE"
     # Must NOT contain "done_when" rules
     ! echo "$body" | grep -q 'done_when'

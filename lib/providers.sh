@@ -12,6 +12,94 @@ source "$LODGE_DIR/lib/api.sh"
 # ── Provider timeout (longer for LLM calls) ───────────────────
 PROVIDER_TIMEOUT="${PROVIDER_TIMEOUT:-120}"
 
+# ── Provider model defaults ────────────────────────────────────────
+# Stored in keys.conf as PROVIDER_MODEL_<PROVIDER>=<model>
+# Resolved per call: explicit arg > stored default > hardcoded fallback
+
+# Map provider name to canonical key name
+_provider_canon() {
+    case "$1" in
+        openai|gpt)       echo "OPENAI" ;;
+        anthropic|claude)  echo "ANTHROPIC" ;;
+        google|gemini)     echo "GOOGLE" ;;
+        groq)              echo "GROQ" ;;
+        mistral)           echo "MISTRAL" ;;
+        together)          echo "TOGETHER" ;;
+        perplexity|pplx)   echo "PERPLEXITY" ;;
+        cohere)            echo "COHERE" ;;
+        deepseek)          echo "DEEPSEEK" ;;
+        xai|grok)          echo "XAI" ;;
+        *)                 echo "" ;;
+    esac
+}
+
+# Resolve model: explicit arg > stored default > hardcoded fallback
+_provider_resolve_model() {
+    local explicit="$1" provider="$2" hardcoded="$3"
+    # Explicit override wins
+    if [ -n "$explicit" ]; then
+        echo "$explicit"
+        return
+    fi
+    # Check stored default
+    local canon
+    canon=$(_provider_canon "$provider")
+    if [ -n "$canon" ]; then
+        local stored
+        stored=$(api_get_key "PROVIDER_MODEL_${canon}" 2>/dev/null)
+        if [ -n "$stored" ]; then
+            echo "$stored"
+            return
+        fi
+    fi
+    # Hardcoded fallback
+    echo "$hardcoded"
+}
+
+provider_set_model() {
+    local provider="$1" model="$2"
+    local canon
+    canon=$(_provider_canon "$provider")
+    if [ -z "$canon" ]; then
+        ui_err "Unknown provider: $provider"
+        return 1
+    fi
+    api_set_key "PROVIDER_MODEL_${canon}" "$model"
+    ui_ok "Default model for $provider set to: $model"
+}
+
+provider_get_model() {
+    local provider="$1"
+    local canon
+    canon=$(_provider_canon "$provider")
+    if [ -z "$canon" ]; then
+        ui_err "Unknown provider: $provider"
+        return 1
+    fi
+    api_get_key "PROVIDER_MODEL_${canon}" 2>/dev/null
+}
+
+provider_clear_model() {
+    local provider="$1"
+    local canon
+    canon=$(_provider_canon "$provider")
+    if [ -z "$canon" ]; then
+        ui_err "Unknown provider: $provider"
+        return 1
+    fi
+    local key_name="PROVIDER_MODEL_${canon}"
+    if grep -q "^${key_name}=" "$GEORGE_KEYS_FILE" 2>/dev/null; then
+        local tmpfile
+        tmpfile=$(mktemp)
+        grep -v "^${key_name}=" "$GEORGE_KEYS_FILE" > "$tmpfile"
+        mv "$tmpfile" "$GEORGE_KEYS_FILE"
+        chmod 600 "$GEORGE_KEYS_FILE"
+        ui_ok "Cleared custom model for $provider (back to built-in default)"
+    else
+        ui_info "No custom model set for $provider"
+    fi
+}
+
 # ── Response validation helper ────────────────────────────────
 # Checks both HTTP errors and empty/null content from API responses.
 # Usage: _provider_check_response $? "$resp" '.jq.path' "Label"
@@ -39,7 +127,8 @@ _provider_check_response() {
 
 openai_chat() {
     local message="$1"
-    local model="${2:-gpt-4o-mini}"
+    local model
+    model=$(_provider_resolve_model "$2" "openai" "gpt-4o-mini")
     local system="${3:-You are a helpful assistant.}"
     local key
     key=$(api_require_key "OPENAI_API_KEY" "OpenAI") || return 1
@@ -79,7 +168,8 @@ openai_models() {
 
 anthropic_chat() {
     local message="$1"
-    local model="${2:-claude-sonnet-4-20250514}"
+    local model
+    model=$(_provider_resolve_model "$2" "anthropic" "claude-sonnet-4-20250514")
     local system="${3:-You are a helpful assistant.}"
     local key
     key=$(api_require_key "ANTHROPIC_API_KEY" "Anthropic") || return 1
@@ -117,7 +207,8 @@ anthropic_models() {
 
 google_chat() {
     local message="$1"
-    local model="${2:-gemini-2.0-flash}"
+    local model
+    model=$(_provider_resolve_model "$2" "google" "gemini-2.0-flash")
     local key
     key=$(api_require_key "GOOGLE_AI_API_KEY" "Google AI") || return 1
 
@@ -206,7 +297,8 @@ google_adk_list_agents() {
 
 groq_chat() {
     local message="$1"
-    local model="${2:-llama-3.3-70b-versatile}"
+    local model
+    model=$(_provider_resolve_model "$2" "groq" "llama-3.3-70b-versatile")
     local key
     key=$(api_require_key "GROQ_API_KEY" "Groq") || return 1
 
@@ -233,7 +325,8 @@ groq_chat() {
 
 mistral_chat() {
     local message="$1"
-    local model="${2:-mistral-large-latest}"
+    local model
+    model=$(_provider_resolve_model "$2" "mistral" "mistral-large-latest")
     local key
     key=$(api_require_key "MISTRAL_API_KEY" "Mistral") || return 1
 
@@ -260,7 +353,8 @@ mistral_chat() {
 
 together_chat() {
     local message="$1"
-    local model="${2:-meta-llama/Llama-3.3-70B-Instruct-Turbo}"
+    local model
+    model=$(_provider_resolve_model "$2" "together" "meta-llama/Llama-3.3-70B-Instruct-Turbo")
     local key
     key=$(api_require_key "TOGETHER_API_KEY" "Together") || return 1
 
@@ -287,7 +381,8 @@ together_chat() {
 
 perplexity_chat() {
     local message="$1"
-    local model="${2:-sonar}"
+    local model
+    model=$(_provider_resolve_model "$2" "perplexity" "sonar")
     local key
     key=$(api_require_key "PERPLEXITY_API_KEY" "Perplexity") || return 1
 
@@ -314,7 +409,8 @@ perplexity_chat() {
 
 cohere_chat() {
     local message="$1"
-    local model="${2:-command-r-plus}"
+    local model
+    model=$(_provider_resolve_model "$2" "cohere" "command-r-plus")
     local key
     key=$(api_require_key "COHERE_API_KEY" "Cohere") || return 1
 
@@ -341,7 +437,8 @@ cohere_chat() {
 
 deepseek_chat() {
     local message="$1"
-    local model="${2:-deepseek-chat}"
+    local model
+    model=$(_provider_resolve_model "$2" "deepseek" "deepseek-chat")
     local key
     key=$(api_require_key "DEEPSEEK_API_KEY" "DeepSeek") || return 1
 
@@ -368,7 +465,8 @@ deepseek_chat() {
 
 xai_chat() {
     local message="$1"
-    local model="${2:-grok-2}"
+    local model
+    model=$(_provider_resolve_model "$2" "xai" "grok-2")
     local key
     key=$(api_require_key "XAI_API_KEY" "xAI") || return 1
 
@@ -466,7 +564,15 @@ provider_status() {
     for name in $(echo "${!provider_keys[@]}" | tr ' ' '\n' | sort); do
         local key="${provider_keys[$name]}"
         if api_get_key "$key" &>/dev/null; then
-            printf "  %b●%b %-15s configured\n" "$C_GREEN" "$C_RESET" "$name"
+            local _model_val
+            _model_val=$(api_get_key "PROVIDER_MODEL_${name^^}" 2>/dev/null)
+            # Google_AI^^ = GOOGLE_AI but stored as PROVIDER_MODEL_GOOGLE
+            [ -z "$_model_val" ] && [ "$name" = "Google_AI" ] && _model_val=$(api_get_key "PROVIDER_MODEL_GOOGLE" 2>/dev/null)
+            if [ -n "$_model_val" ]; then
+                printf "  %b\u25cf%b %-15s configured  %bmodel: %s%b\n" "$C_GREEN" "$C_RESET" "$name" "$C_DIM" "$_model_val" "$C_RESET"
+            else
+                printf "  %b\u25cf%b %-15s configured\n" "$C_GREEN" "$C_RESET" "$name"
+            fi
             configured=$((configured + 1))
         else
             printf "  %b○%b %-15s not configured  %b%s%b\n" "$C_DIM" "$C_RESET" "$name" "$C_DIM" "$key" "$C_RESET"

@@ -2458,11 +2458,37 @@ _cmd_provider() {
                 anthropic) anthropic_models ;;
                 *)         ui_err "Usage: /provider models <openai|google|anthropic>" ;;
             esac ;;
+        model)
+            local provider model_name
+            provider=$(echo "$rest" | awk '{print $1}')
+            model_name=$(echo "$rest" | awk '{print $2}')
+            if [ -z "$provider" ]; then
+                ui_err "Usage: /provider model <provider> [model|clear]"
+                ui_dim "  Show or set the default model for a provider"
+                ui_dim "  /provider model google              — show current default"
+                ui_dim "  /provider model google gemma-3-27b-it — set default"
+                ui_dim "  /provider model google clear         — reset to built-in"
+                return 1
+            fi
+            if [ -z "$model_name" ]; then
+                local current
+                current=$(provider_get_model "$provider")
+                if [ -n "$current" ]; then
+                    ui_info "Default model for $provider: $current"
+                else
+                    ui_info "No custom model set for $provider (using built-in default)"
+                fi
+            elif [ "$model_name" = "clear" ] || [ "$model_name" = "reset" ]; then
+                provider_clear_model "$provider"
+            else
+                provider_set_model "$provider" "$model_name"
+            fi ;;
         status) provider_status ;;
         *)
-            ui_info "Usage: /provider <chat|models|status>"
+            ui_info "Usage: /provider <chat|model|models|status>"
             ui_dim "  chat <provider>[/model] <msg> — Send a message to a cloud AI"
-            ui_dim "  models <provider>     — List available models"
+            ui_dim "  model <provider> [model|clear] — Get/set default model"
+            ui_dim "  models <provider>     — List available models from API"
             ui_dim "  status                — Show configured providers"
             ui_dim ""
             ui_dim "  Providers: openai, anthropic, google, groq, mistral,"
