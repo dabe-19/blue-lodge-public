@@ -13,25 +13,26 @@ source "$LODGE_DIR/lib/tools.sh"
 source "$LODGE_DIR/lib/journal.sh"
 
 # ── Config ─────────────────────────────────────────────────────
-AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-20}"       # Macro loop milestone ceiling
+AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-40}"       # Macro loop milestone ceiling
 AGENT_PLAN_STEPS="${AGENT_PLAN_STEPS:-6}"      # Max steps per plan/subtask
 AGENT_INNER_LOOPS="${AGENT_INNER_LOOPS:-6}"    # Inner loop escalation ceiling
 AGENT_STEP_DELAY="${AGENT_STEP_DELAY:-1}"
 AGENT_MAX_CLARIFY="${AGENT_MAX_CLARIFY:-2}"
 AGENT_INTERACTIVE_PLANNING="${AGENT_INTERACTIVE_PLANNING:-0}"
-AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-1}"        # Subtask recursion depth (1 = single expansion only)
-AGENT_HONEYDEW_EXPAND="${AGENT_HONEYDEW_EXPAND:-0}"  # Subtask expansion: 0=disabled, 1=enabled
-AGENT_HONEYDEW_MAX_ITEMS="${AGENT_HONEYDEW_MAX_ITEMS:-8}"  # Max honeydew items before expansion is suppressed
-AGENT_HONEYDEW_REWRITE="${AGENT_HONEYDEW_REWRITE:-0}"    # Dynamic honeydew rewrite: 0=disabled, 1=enabled
-AGENT_HONEYDEW_REWRITE_ROUNDS="${AGENT_HONEYDEW_REWRITE_ROUNDS:-5}"  # Global honeydew rewrite limit (all paths: normal, pressure relief, auto-recovery)
+AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-3}"        # Subtask recursion depth (3 = three levels of expansion)
+AGENT_HONEYDEW_EXPAND="${AGENT_HONEYDEW_EXPAND:-1}"  # Subtask expansion: 0=disabled, 1=enabled
+AGENT_HONEYDEW_MAX_ITEMS="${AGENT_HONEYDEW_MAX_ITEMS:-16}"  # Max honeydew items before expansion is suppressed
+AGENT_HONEYDEW_REWRITE="${AGENT_HONEYDEW_REWRITE:-1}"    # Dynamic honeydew rewrite: 0=disabled, 1=enabled
+AGENT_HONEYDEW_REWRITE_ROUNDS="${AGENT_HONEYDEW_REWRITE_ROUNDS:-8}"  # Global honeydew rewrite limit (all paths: normal, pressure relief, auto-recovery)
 AGENT_WEB_SUFFICIENCY="${AGENT_WEB_SUFFICIENCY:-3}"  # Web actions before sufficiency signal
 AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-2}"  # Max times to retry same milestone
-AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-3}"                # Max milestones with same base command
-AGENT_HONEYDEW_MATCH="${AGENT_HONEYDEW_MATCH:-2}"              # Min keyword score to auto-check honeydew item
+AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-10}"               # Max milestones with same base command
+AGENT_HONEYDEW_MATCH="${AGENT_HONEYDEW_MATCH:-3}"              # Min keyword score to auto-check honeydew item
 AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto | interactive | disabled
-AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-1}"  # Max consecutive /web search before fallback to fetch/scrape
+AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-5}"  # Max consecutive /web search before fallback to fetch/scrape
 AGENT_EVAL_REC_CHARS="${AGENT_EVAL_REC_CHARS:-120}"              # Max chars after a slash command in evaluator recommendations
 AGENT_PRESSURE_RELIEF="${AGENT_PRESSURE_RELIEF:-2}"          # Consecutive milestone skips before pressure relief fires (0=disabled)
+AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-1}"              # Smart command routing: 0=disabled, 1=enabled
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
 
@@ -739,6 +740,202 @@ _agent_honeydew_maybe_expand() {
     _agent_honeydew_expand "$next_id" "$workdir"
 }
 
+# ── Smart Command Route ───────────────────────────────────────
+# Pre-execution heuristic that detects when the LLM picked the
+# wrong slash command for its argument and reroutes automatically.
+# Uses a combination of:
+#   1. URL prefix detection    (http://, https://, www.)
+#   2. Web domain suffix check (.com, .org, .html, etc.)
+#   3. File extension check    (.md, .py, .png, etc.)
+#   4. Local file existence    (workdir-relative or absolute)
+#
+# Cascading priority (when no web prefix):
+#   File exists locally → /read (text) or /vision (image)
+#   Has file suffix but no local file → /web search (fallback)
+#   Has web domain suffix → keep as web command (likely URL)
+#   Completely ambiguous → /web search (final fallback)
+#
+# Reverse (URL used with local-only command):
+#   /read with URL → /web fetch
+#
+# Uses bash dynamic scoping: modifies the caller's $cmd variable
+# directly. Sets _SMART_ROUTE_REROUTED=1 when a substitution occurs.
+#
+# Args: $1=workdir, $2=micro_file (optional, for logging)
+# Side effects: modifies caller's $cmd, sets _SMART_ROUTE_REROUTED
+_agent_smart_route() {
+    local _sr_workdir="${1:-.}"
+    local _sr_micro="${2:-}"
+    _SMART_ROUTE_REROUTED=0
+
+    # ── Gate: feature toggle ───────────────────────────────
+    [ "${AGENT_SMART_ROUTE:-1}" -ne 1 ] && return 0
+
+    # ── Extract base command and argument ──────────────────
+    local _sr_base="" _sr_arg=""
+    case "$cmd" in
+        "/web fetch "*)          _sr_base="/web fetch";          _sr_arg="${cmd#/web fetch }" ;;
+        "/web scrape-images "*)  _sr_base="/web scrape-images";  _sr_arg="${cmd#/web scrape-images }" ;;
+        "/web scrapeimages "*)   _sr_base="/web scrapeimages";   _sr_arg="${cmd#/web scrapeimages }" ;;
+        "/web search "*)         _sr_base="/web search";         _sr_arg="${cmd#/web search }" ;;
+        "/read "*)               _sr_base="/read";               _sr_arg="${cmd#/read }" ;;
+        "/vision "*)             _sr_base="/vision";             _sr_arg="${cmd#/vision }" ;;
+        "/download "*)           _sr_base="/download";           _sr_arg="${cmd#/download }" ;;
+        *) return 0 ;;         # Not a routable command
+    esac
+
+    # Strip surrounding quotes the model may wrap around paths
+    _sr_arg=$(echo "$_sr_arg" | sed 's/^["'"'"']//; s/["'"'"']$//')
+    [ -z "$_sr_arg" ] && return 0
+
+    # For /vision with a prompt, isolate the first token (path/URL)
+    local _sr_first_token="$_sr_arg"
+    local _sr_trailing=""
+    if [[ "$_sr_base" == "/vision" ]]; then
+        _sr_first_token=$(echo "$_sr_arg" | awk '{print $1}')
+        _sr_trailing=$(echo "$_sr_arg" | sed 's/^[^ ]* *//')
+        [ "$_sr_trailing" = "$_sr_first_token" ] && _sr_trailing=""
+    fi
+
+    # ── Classify the argument ──────────────────────────────
+    local _sr_has_web_prefix=0
+    local _sr_has_web_suffix=0
+    local _sr_has_file_suffix=0
+    local _sr_is_image=0
+    local _sr_file_exists=0
+    local _sr_resolved=""
+
+    # Web prefix check
+    if [[ "$_sr_first_token" == http://* ]] || [[ "$_sr_first_token" == https://* ]] || [[ "$_sr_first_token" == www.* ]]; then
+        _sr_has_web_prefix=1
+    fi
+
+    # Extract extension (lowercase, strip query params)
+    local _sr_ext=""
+    if [[ "$_sr_first_token" == *.* ]]; then
+        _sr_ext="${_sr_first_token##*.}"
+        _sr_ext=$(echo "$_sr_ext" | tr '[:upper:]' '[:lower:]' | sed 's/[?#&].*//')
+    fi
+
+    # Web domain / page suffix check (TLDs + server-side extensions)
+    case "$_sr_ext" in
+        com|org|net|io|edu|gov|co|us|uk|ca|au|de|fr|jp|br|in|ru|nl|it|es|\
+        html|htm|php|asp|aspx|jsp|cgi|shtml|xhtml|cfm)
+            _sr_has_web_suffix=1 ;;
+    esac
+
+    # Image file check
+    case "$_sr_ext" in
+        jpg|jpeg|png|gif|webp|bmp|tiff|avif|ico|svg)
+            _sr_is_image=1
+            _sr_has_file_suffix=1 ;;
+    esac
+
+    # Text / code / data file suffix check (known extensions)
+    if [ "$_sr_has_file_suffix" -eq 0 ] && [ -n "$_sr_ext" ] && [ "$_sr_has_web_suffix" -eq 0 ]; then
+        case "$_sr_ext" in
+            md|txt|rst|json|jsonl|yaml|yml|toml|xml|csv|ini|env|log|conf|cfg|\
+            py|js|ts|tsx|jsx|sh|bash|zsh|go|rs|rb|java|c|cpp|h|hpp|cs|swift|\
+            kt|scala|r|lua|pl|pm|awk|sed|fish|ps1|bat|\
+            sql|graphql|proto|tf|hcl|nix|ex|exs|erl|hs|ml|clj|el|vim|\
+            pdf|docx|xlsx|pptx|odt|rtf|tex|css|scss|sass|less|\
+            mp3|mp4|ogg|webm|wav|flac|makefile|dockerfile)
+                _sr_has_file_suffix=1 ;;
+        esac
+    fi
+
+    # Local file existence check (only when no web prefix detected)
+    if [ "$_sr_has_web_prefix" -eq 0 ]; then
+        if [[ "$_sr_first_token" == /* ]] && [ -e "$_sr_first_token" ]; then
+            _sr_file_exists=1
+            _sr_resolved="$_sr_first_token"
+        elif [ -e "$_sr_workdir/$_sr_first_token" ]; then
+            _sr_file_exists=1
+            _sr_resolved="$_sr_workdir/$_sr_first_token"
+        fi
+    fi
+
+    # ── Routing decision ───────────────────────────────────
+    local _sr_new="" _sr_reason=""
+
+    if [ "$_sr_has_web_prefix" -eq 1 ]; then
+        # ── CONFIRMED URL ──────────────────────────────────
+        # Only intervene when a URL was given to a local-only command
+        case "$_sr_base" in
+            "/read")
+                _sr_new="/web fetch $_sr_arg"
+                _sr_reason="URL detected in /read — rerouting to /web fetch" ;;
+        esac
+
+    elif [ "$_sr_file_exists" -eq 1 ]; then
+        # ── LOCAL FILE FOUND ───────────────────────────────
+        # Route web commands to local readers
+        case "$_sr_base" in
+            "/web fetch"|"/web scrape-images"|"/web scrapeimages"|"/web search")
+                if [ "$_sr_is_image" -eq 1 ]; then
+                    _sr_new="/vision $_sr_arg"
+                    _sr_reason="local image file found (.$_sr_ext) — rerouting to /vision"
+                elif [ -f "$_sr_resolved" ]; then
+                    _sr_new="/read $_sr_arg"
+                    _sr_reason="local file found (.$_sr_ext) — rerouting to /read"
+                fi ;;
+            "/vision")
+                # Image path used with /vision — correct. But text file?
+                if [ "$_sr_is_image" -eq 0 ] && [ -f "$_sr_resolved" ]; then
+                    if [ -n "$_sr_trailing" ]; then
+                        _sr_new="/read $_sr_first_token"
+                    else
+                        _sr_new="/read $_sr_arg"
+                    fi
+                    _sr_reason="text file given to /vision — rerouting to /read"
+                fi ;;
+        esac
+
+    elif [ "$_sr_has_web_suffix" -eq 1 ]; then
+        # ── LOOKS LIKE A WEB ADDRESS ───────────────────────
+        # Has .com/.org/.html etc. but no http:// prefix.
+        # Keep web commands as-is (they'll add protocol). Reroute /read.
+        case "$_sr_base" in
+            "/read")
+                _sr_new="/web fetch $_sr_arg"
+                _sr_reason="web suffix .$_sr_ext with no local file — rerouting /read to /web fetch" ;;
+        esac
+
+    elif [ "$_sr_has_file_suffix" -eq 1 ]; then
+        # ── HAS FILE EXTENSION BUT NO LOCAL FILE ──────────
+        # Looks like a file reference but nothing found on disk.
+        # For web commands: fall back to /web search so the agent
+        # can discover the actual resource.
+        case "$_sr_base" in
+            "/web fetch"|"/web scrape-images"|"/web scrapeimages")
+                _sr_new="/web search $_sr_arg"
+                _sr_reason="file suffix .$_sr_ext but no local file — falling back to /web search" ;;
+        esac
+
+    elif [ "$_sr_has_web_prefix" -eq 0 ] && [ "$_sr_has_web_suffix" -eq 0 ] && \
+         [ "$_sr_has_file_suffix" -eq 0 ] && [ "$_sr_file_exists" -eq 0 ]; then
+        # ── COMPLETELY AMBIGUOUS ──────────────────────────
+        # No web prefix, no TLD, no file extension, no local file.
+        # For web commands that expect a URL: fall back to search.
+        case "$_sr_base" in
+            "/web fetch"|"/web scrape-images"|"/web scrapeimages")
+                _sr_new="/web search $_sr_arg"
+                _sr_reason="ambiguous argument (no web/file indicators) — falling back to /web search" ;;
+        esac
+    fi
+
+    # ── Apply substitution ─────────────────────────────────
+    if [ -n "$_sr_new" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] smart-route: $_sr_base -> ${_sr_new%% *} | $_sr_reason"
+        cmd="$_sr_new"
+        _SMART_ROUTE_REROUTED=1
+        # Log the reroute into micro_memory for action trail
+        if [ -n "$_sr_micro" ] && [ -f "$_sr_micro" ]; then
+            _micro_add_note "$_sr_micro" "SMART ROUTE: $_sr_base -> ${_sr_new%% *} | $_sr_reason"
+        fi
+    fi
+}
+
 # ── Dynamic Honeydew Rewrite ──────────────────────────────────
 # After milestone evaluation reveals the honeydew list doesn't
 # align well with the original task (e.g., key entities or goals
@@ -773,7 +970,7 @@ _agent_honeydew_rewrite() {
     fi
 
     # ── Guard: rounds exhausted ────────────────────────────────
-    local _max_rounds="${AGENT_HONEYDEW_REWRITE_ROUNDS:-5}"
+    local _max_rounds="${AGENT_HONEYDEW_REWRITE_ROUNDS:-8}"
     if [ "${_honeydew_rewrite_rounds_used:-0}" -ge "$_max_rounds" ]; then
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: all $_max_rounds rounds exhausted — bypassed"
         return 1
@@ -966,6 +1163,34 @@ REWRITE_JSON
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: replaced $_pending_count pending items with $_new_count new items (round ${_honeydew_rewrite_rounds_used}/$_max_rounds)"
     ui_ok "Honeydew rewrite: updated $_new_count pending items (round ${_honeydew_rewrite_rounds_used}/$_max_rounds)"
+
+    # ── Context Reset: clear stale data after rewrite ──────────
+    # The honeydew was just rewritten with fresh targets. Old failure
+    # data, research buffers, and micro_memory reflect the PREVIOUS
+    # strategy. Keeping them pollutes the context window and biases
+    # the model toward already-captured failures (URL blacklisting
+    # preserves what matters; the raw failures log does not).
+    local _george_dir="$workdir/.george"
+    local _fail_file="$_george_dir/failures_log.md"
+    local _rb_file="$_george_dir/research_buffer.md"
+
+    # Reset failures log to header only (stale failures already
+    # captured in URL blacklist, milestone summaries, etc.)
+    if [ -f "$_fail_file" ]; then
+        echo "# Failures Log" > "$_fail_file"
+        echo "---" >> "$_fail_file"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: failures_log reset (stale context cleared)"
+    fi
+
+    # Clear research buffer (old research applies to old targets)
+    rm -f "$_rb_file" 2>/dev/null
+
+    # Reset micro_memory research_context (injected from prior milestone)
+    if [ -f "$micro_file" ]; then
+        local _tmp_micro="${micro_file}.tmp"
+        jq '.research_context = null | .action_log = []' "$micro_file" > "$_tmp_micro" 2>/dev/null && mv "$_tmp_micro" "$micro_file"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: micro_memory research context + action log cleared"
+    fi
 
     # Display the updated list
     _agent_honeydew_display "$hd_file"
@@ -2220,12 +2445,12 @@ SPEC
   "fetch":"/web fetch <url> — downloads and extracts readable TEXT from a webpage (HTML/PDF/JSON). Returns plain text only, NO images.",
   "scrape-images":"/web scrape-images <url> — returns STRUCTURED JSON: {url, title, content, images:[]} with page text AND image URIs. Pass image URIs to /vision for analysis.",
   "images":"/web images <query> — searches for image URLs by keyword (Serper API). Returns image URLs only."},
-"rules":["search=QUERY (keywords), fetch/scrape-images=URL — NEVER swap","/web fetch returns TEXT only — use /web scrape-images when you need images","scrape-images returns {url,title,content,images[]} — pass images[] URLs to /vision","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples"],
+"rules":["search=QUERY (keywords), fetch/scrape-images=URL — NEVER swap","/web fetch returns TEXT only — use /web scrape-images when you need images","scrape-images returns {url,title,content,images[]} — pass images[] URLs to /vision","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples","LOCAL FILES: NEVER use /web fetch on local files or relative paths — use /read for text files, /vision for images"],
 "search_tips":["3-5 keywords MAX — Google FAILS with long queries","Drop filler: the/a/for/including/regarding/comprehensive","NEVER paste entire milestone as search query","Extract keywords from TASK context only"],
 "FLOW CHAINS":["Text research: /web search -> /web fetch -> summarize","Image research: /web scrape-images <url> -> /vision <image_url_from_images[]>","Report: /web search -> /web fetch -> /write report"],
-"notes":["Do NOT fetch every URL. 1 search + 1-2 fetches enough","If scrape-images returns empty content, use /web fetch for same URL instead"],
+"notes":["Do NOT fetch every URL. 1 search + 1-2 fetches enough","If scrape-images returns empty content, use /web fetch for same URL instead","/web fetch and /web scrape-images require a full https:// URL — for local files use /read or /vision instead"],
 "format_only_ex":["/web search <keywords>","/web fetch <url>","/web scrape-images <url>","/web images <keywords>"],
-"fill":{"<keywords>":"3-5 search terms derived from the TASK","<url>":"full https:// URL from search results or task"}}
+"fill":{"<keywords>":"3-5 search terms derived from the TASK","<url>":"full https:// URL from search results or task — NEVER a local file path"}}
 SPEC
                 ;;
             download)
@@ -3045,6 +3270,14 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] normalized /web scrape -> /web scrape-images"
             fi
 
+            # ── SMART COMMAND ROUTE ────────────────────────────
+            # Cascading heuristic that detects when the LLM picked
+            # the wrong command for its argument (e.g., /web fetch
+            # on a local path, /read on a URL) and reroutes before
+            # execution. See _agent_smart_route() for full logic.
+            # Sets _SMART_ROUTE_REROUTED=1 on substitution.
+            _agent_smart_route "$workdir" "$micro_file"
+
             local _needs_single_url=0
             local _url_cmd_prefix=""
             case "$cmd" in
@@ -3606,7 +3839,7 @@ INTERLOCK_JSON
     fi
 
     # ── Auto-Recovery: Honeydew Rewrite with Failure Injection ─
-    local _max_rewrite_rounds="${AGENT_HONEYDEW_REWRITE_ROUNDS:-5}"
+    local _max_rewrite_rounds="${AGENT_HONEYDEW_REWRITE_ROUNDS:-8}"
     if [ "${_honeydew_rewrite_rounds_used:-0}" -lt "$_max_rewrite_rounds" ]; then
         ui_warn "Inner loop exhausted — auto-recovery via honeydew rewrite (round $((${_honeydew_rewrite_rounds_used:-0} + 1))/$_max_rewrite_rounds)"
 

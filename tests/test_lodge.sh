@@ -327,13 +327,13 @@ describe "Limits command"
   it "_cmd_limits depth sets AGENT_MAX_DEPTH" && {
     _cmd_limits "depth 4" >/dev/null 2>&1
     assert_eq "$AGENT_MAX_DEPTH" "4"
-    AGENT_MAX_DEPTH=1  # restore
+    AGENT_MAX_DEPTH=3  # restore
   }
 
   it "_cmd_limits milestones sets AGENT_MAX_STEPS" && {
     _cmd_limits "milestones 30" >/dev/null 2>&1
     assert_eq "$AGENT_MAX_STEPS" "30"
-    AGENT_MAX_STEPS=20  # restore
+    AGENT_MAX_STEPS=40  # restore
   }
 
   it "_cmd_limits inner sets AGENT_INNER_LOOPS" && {
@@ -451,19 +451,19 @@ describe "Limits command"
   it "_cmd_limits cmd-family sets AGENT_MAX_CMD_FAMILY" && {
     _cmd_limits "cmd-family 5" >/dev/null 2>&1
     assert_eq "$AGENT_MAX_CMD_FAMILY" "5"
-    AGENT_MAX_CMD_FAMILY=3  # restore
+    AGENT_MAX_CMD_FAMILY=10  # restore
   }
 
   it "_cmd_limits honeydew-match sets AGENT_HONEYDEW_MATCH" && {
-    _cmd_limits "honeydew-match 3" >/dev/null 2>&1
-    assert_eq "$AGENT_HONEYDEW_MATCH" "3"
-    AGENT_HONEYDEW_MATCH=2  # restore
+    _cmd_limits "honeydew-match 5" >/dev/null 2>&1
+    assert_eq "$AGENT_HONEYDEW_MATCH" "5"
+    AGENT_HONEYDEW_MATCH=3  # restore
   }
 
   it "_cmd_limits expand on enables AGENT_HONEYDEW_EXPAND" && {
     _cmd_limits "expand on" >/dev/null 2>&1
     assert_eq "$AGENT_HONEYDEW_EXPAND" "1"
-    AGENT_HONEYDEW_EXPAND=0  # restore
+    AGENT_HONEYDEW_EXPAND=1  # restore
   }
 
   it "_cmd_limits expand off disables AGENT_HONEYDEW_EXPAND" && {
@@ -488,12 +488,12 @@ describe "Limits command"
   it "_cmd_limits max-items sets AGENT_HONEYDEW_MAX_ITEMS" && {
     _cmd_limits "max-items 12" >/dev/null 2>&1
     assert_eq "$AGENT_HONEYDEW_MAX_ITEMS" "12"
-    AGENT_HONEYDEW_MAX_ITEMS=8  # restore
+    AGENT_HONEYDEW_MAX_ITEMS=16  # restore
   }
 
   it "_cmd_limits max-items rejects below min" && {
     _cmd_limits "max-items 1" >/dev/null 2>&1
-    assert_eq "$AGENT_HONEYDEW_MAX_ITEMS" "8"
+    assert_eq "$AGENT_HONEYDEW_MAX_ITEMS" "16"
   }
 
   it "_cmd_limits show includes agent loop lines" && {
@@ -544,8 +544,8 @@ describe "Limits command"
     _cmd_limits "reset" >/dev/null 2>&1
     assert_eq "$AGENT_PLAN_STEPS" "5"
     assert_eq "$AGENT_INNER_LOOPS" "6"
-    assert_eq "$AGENT_MAX_STEPS" "20"
-    assert_eq "$AGENT_MAX_DEPTH" "1"
+    assert_eq "$AGENT_MAX_STEPS" "40"
+    assert_eq "$AGENT_MAX_DEPTH" "3"
     assert_eq "$AGENT_STEP_DELAY" "1"
     assert_eq "$LLM_MAX_TOKENS" "20480"
     assert_eq "$LLM_AGENT_TOKENS" "20480"
@@ -560,10 +560,11 @@ describe "Limits command"
     assert_eq "$LLM_BUDGET_TOOL" "256"
     assert_eq "$AGENT_WEB_SUFFICIENCY" "3"
     assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "2"
-    assert_eq "$AGENT_MAX_CMD_FAMILY" "3"
-    assert_eq "$AGENT_HONEYDEW_MATCH" "2"
-    assert_eq "$AGENT_HONEYDEW_EXPAND" "0"
-    assert_eq "$AGENT_HONEYDEW_MAX_ITEMS" "8"
+    assert_eq "$AGENT_MAX_CMD_FAMILY" "10"
+    assert_eq "$AGENT_HONEYDEW_MATCH" "3"
+    assert_eq "$AGENT_HONEYDEW_EXPAND" "1"
+    assert_eq "$AGENT_HONEYDEW_MAX_ITEMS" "16"
+    assert_eq "$AGENT_SMART_ROUTE" "1"
   }
 
 # ── /model command ─────────────────────────────────────────────

@@ -15,8 +15,8 @@ test_start "lib/agent.sh — Agent Loop"
 # ── Configuration ──────────────────────────────────────────────
 describe "Configuration defaults"
 
-  it "AGENT_MAX_STEPS defaults to 20" && {
-    assert_eq "$AGENT_MAX_STEPS" "20"
+  it "AGENT_MAX_STEPS defaults to 40" && {
+    assert_eq "$AGENT_MAX_STEPS" "40"
   }
 
   it "AGENT_STEP_DELAY defaults to 1" && {
@@ -620,8 +620,8 @@ describe "Router heuristics"
 # ── Recursive planning config ─────────────────────────────────
 describe "Recursive planning config"
 
-  it "AGENT_MAX_DEPTH defaults to 1" && {
-    assert_eq "$AGENT_MAX_DEPTH" "1"
+  it "AGENT_MAX_DEPTH defaults to 3" && {
+    assert_eq "$AGENT_MAX_DEPTH" "3"
   }
 
   it "AGENT_MAX_DEPTH is overridable" && {
@@ -2166,9 +2166,9 @@ describe "Honeydew expansion interlocks"
     assert_ok $? "maybe_expand must have redundancy detection"
   }
 
-  it "AGENT_MAX_DEPTH defaults to 1 (single expansion)" && {
-    grep -q 'AGENT_MAX_DEPTH.*:-1' "$LODGE_DIR/lib/agent.sh"
-    assert_ok $? "AGENT_MAX_DEPTH must default to 1"
+  it "AGENT_MAX_DEPTH defaults to 3" && {
+    grep -q 'AGENT_MAX_DEPTH.*:-3' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "AGENT_MAX_DEPTH must default to 3"
   }
 
   it "needs_expansion length threshold is 200 chars" && {
@@ -2316,8 +2316,8 @@ describe "Code fence stripping & parse failure handling"
 # ── Honeydew auto-check with milestone summary ────────────────
 describe "Honeydew auto-check uses milestone summary"
 
-  it "AGENT_HONEYDEW_MATCH defaults to 2" && {
-    assert_eq "$AGENT_HONEYDEW_MATCH" "2"
+  it "AGENT_HONEYDEW_MATCH defaults to 3" && {
+    assert_eq "$AGENT_HONEYDEW_MATCH" "3"
   }
 
   it "auto-check uses AGENT_HONEYDEW_MATCH threshold" && {
@@ -2431,8 +2431,8 @@ describe "Research→Delivery state machine"
 # ── Command-family dedup cap ──────────────────────────────────
 describe "Command-family dedup cap"
 
-  it "AGENT_MAX_CMD_FAMILY defaults to 3" && {
-    assert_eq "$AGENT_MAX_CMD_FAMILY" "3"
+  it "AGENT_MAX_CMD_FAMILY defaults to 10" && {
+    assert_eq "$AGENT_MAX_CMD_FAMILY" "10"
   }
 
   it "deduplication implements command-family strategy" && {
@@ -2549,14 +2549,14 @@ describe "Social context injection into strategist"
 # ── Dynamic Honeydew Rewrite ──────────────────────────────────
 describe "Dynamic honeydew rewrite configuration"
 
-  it "AGENT_HONEYDEW_REWRITE defaults to 0 (disabled)" && {
-    grep -q 'AGENT_HONEYDEW_REWRITE.*:-0' "$LODGE_DIR/lib/agent.sh"
-    assert_ok $? "AGENT_HONEYDEW_REWRITE must default to 0"
+  it "AGENT_HONEYDEW_REWRITE defaults to 1 (enabled)" && {
+    grep -q 'AGENT_HONEYDEW_REWRITE.*:-1' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "AGENT_HONEYDEW_REWRITE must default to 1"
   }
 
-  it "AGENT_HONEYDEW_REWRITE_ROUNDS defaults to 5" && {
-    grep -q 'AGENT_HONEYDEW_REWRITE_ROUNDS.*:-5' "$LODGE_DIR/lib/agent.sh"
-    assert_ok $? "AGENT_HONEYDEW_REWRITE_ROUNDS must default to 5"
+  it "AGENT_HONEYDEW_REWRITE_ROUNDS defaults to 8" && {
+    grep -q 'AGENT_HONEYDEW_REWRITE_ROUNDS.*:-8' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "AGENT_HONEYDEW_REWRITE_ROUNDS must default to 8"
   }
 
 describe "Dynamic honeydew rewrite function"
