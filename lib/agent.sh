@@ -2326,6 +2326,15 @@ agent_inner_loop() {
             fi
             if [ "$_pre_valid" -eq 1 ]; then
                 _pre_route="$_pre_cmd"
+                # ── SAFETY: Rewrite bare-command milestones ────────
+                # If the milestone IS a raw slash command (starts with
+                # /cmd), rewrite micro_objective into natural language
+                # so the specialist generates a real command instead
+                # of parroting the milestone verbatim.
+                # "/write a summary" → "Use /write to a summary"
+                if [[ "$micro_objective" =~ ^/[a-z]+[[:space:]] ]]; then
+                    micro_objective="Use /${_pre_cmd} to ${micro_objective#/"$_pre_cmd" }"
+                fi
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-routed from milestone: /$_pre_route (skipping LLM router)"
                 declare -f transcript_log &>/dev/null && transcript_log "router" "/$_pre_route (pre-routed)"
             fi
@@ -3695,7 +3704,8 @@ $(cat << 'STRAT_RULES_JSON'
    "/social":"Discord/Telegram/X/Mastodon (NOT /email)",
    "/email":"actual email only","/sandbox":"NEVER for slash commands"},
  "milestones":{"source":"YOUR WORKING COMMANDS only",
-   "format":"single imperative sentence",
+   "format":"single imperative sentence starting with a verb (e.g. 'Use /write to create a summary')",
+   "NEVER_raw_command":"Do NOT output a bare slash command as the milestone (WRONG: '/write a summary' — RIGHT: 'Use /write to create a summary')",
    "one_action":"1 milestone = 1 honeydew item, NEVER combine two items",
    "no_prefix":true,"no_intro":true,
    "only_configured":true},
@@ -3751,7 +3761,19 @@ ${_last_eval_feedback}
         # formatting contamination when milestone text is re-injected
         # into specialist and evaluator prompts as micro_objective.
         milestone=$(echo "$milestone" | sed 's/\*\+//g')
-        # 7. Truncate to 200 chars max (prevents context bloat)
+        # 7. Strip leading slash-command prefix from milestone text.
+        # Small models (Gemma, etc.) sometimes emit milestones that
+        # look like raw slash commands: "/write a summary of the war".
+        # The pre-route optimization then matches the "/write", skips
+        # the router, and the specialist echoes it verbatim — causing
+        # /write to parse "a" as filename and "summary..." as content.
+        # Fix: convert "/write a summary" → "Use /write to a summary"
+        # so the pre-route still works but the specialist sees a task
+        # description, not a literal command to parrot.
+        if [[ "$milestone" =~ ^/([a-z]+)[[:space:]]+(.*) ]]; then
+            milestone="Use /${BASH_REMATCH[1]} to ${BASH_REMATCH[2]}"
+        fi
+        # 8. Truncate to 200 chars max (prevents context bloat)
         milestone="${milestone:0:200}"
 
         # Transcript: log strategist milestone
