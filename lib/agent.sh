@@ -1298,12 +1298,13 @@ _agent_evaluate_honeydew_item() {
 
     _EVAL_HONEYDEW_ITEM_NUM="$_next_id"
 
-    # Build context: milestone summary from macro_memory (the rich
-    # summary just written by _agent_complete_milestone) + action log
-    local _milestone_summary=""
-    if [ -f "$macro_file" ]; then
-        _milestone_summary=$(jq -r '.completed_milestones[-1].summary // empty' "$macro_file" 2>/dev/null)
-    fi
+    # Build context from the raw action log — NOT the milestone's own
+    # self-assessment.  The milestone evaluator (P1) already judged
+    # success from the milestone's perspective, but that verdict often
+    # says "COMPLETE" even when the actual outputs don't satisfy the
+    # honeydew item.  We deliberately omit the milestone summary here
+    # so the honeydew evaluator forms an independent judgment from the
+    # raw command outputs.
 
     local eval_context=""
     if [ -n "$micro_file" ] && [ -f "$micro_file" ]; then
@@ -1321,19 +1322,21 @@ _agent_evaluate_honeydew_item() {
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
 
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nORIGINAL USER REQUEST:\n${_hd_original_request:-Unknown}\n\nMILESTONE COMPLETED:\n${milestone_text}\n\nMILESTONE SUMMARY:\n${_milestone_summary:-No summary available.}\n\nACTION LOG:\n${eval_context:-No actions available.}\n\n---\n\nHONEYDEW ITEM TO EVALUATE (item #${_next_id}):\n${_next_task}\n\nApply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_HD_JSON'
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nORIGINAL USER REQUEST:\n${_hd_original_request:-Unknown}\n\nMILESTONE ATTEMPTED:\n${milestone_text}\n\nACTION LOG (raw command outputs):\n${eval_context:-No actions available.}\n\n---\n\nHONEYDEW ITEM TO EVALUATE (item #${_next_id}):\n${_next_task}\n\nIMPORTANT: Ignore whether the milestone was marked COMPLETE or INCOMPLETE. Judge ONLY from the raw command outputs in the ACTION LOG above. Ask: did the outputs ACTUALLY accomplish the honeydew item's specific goal? A search that returns generic links without concrete details (e.g. specific items, prices, names) does NOT satisfy an item asking to identify specific things.\n\nApply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_HD_JSON'
 {"classify":"SATISFIED|UNSATISFIED",
- "scope":"does milestone satisfy THIS honeydew item?",
+ "scope":"did the ACTUAL COMMAND OUTPUTS accomplish the honeydew item goal?",
  "pragmatic":true,"exact_match_not_required":true,
+ "requires_concrete_output":true,
  "relevance_check":{"dates":true,"topics":true,"scope":true,
-   "verify_against":"ORIGINAL USER REQUEST above"},
+   "verify_against":"ORIGINAL USER REQUEST above",
+   "output_substance":"do outputs contain specific data the item asked for?"},
  "respond":"SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <slash command>",
  "if_unsatisfied":{"explain_why":true,
    "recommend_next":"specific /command (e.g. /web fetch <url>)"}}
 EVAL_HD_JSON
 )"
 
-    local eval_sys="Honeydew item evaluator. Pragmatic: meaningful progress = SATISFIED. Verify relevance to original request (dates, topics, scope). No markdown. Respond SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <slash command>."
+    local eval_sys="Honeydew item evaluator. Judge from ACTUAL COMMAND OUTPUTS only — ignore milestone pass/fail status. SATISFIED requires concrete results matching what the honeydew item asked for (specific data, not just generic search links). Verify relevance to original request (dates, topics, scope). No markdown. Respond SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <slash command>."
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew-eval <- item #${_next_id}: ${_next_task:0:80}"
     ui_think "Honeydew evaluator: checking item #${_next_id}..."
