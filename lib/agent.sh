@@ -4935,14 +4935,42 @@ agent_ask() {
 $question"
     fi
     
-    # Generate the response (llm_generate streams to tty for local
-    # backends and uses the proven sync path for cloud providers)
     echo ""
     local response
     local LLM_SCENARIO=ask
-    response=$(llm_generate "$full_question" "$system_prompt" "$LLM_ASK_TOKENS" "$LLM_BUDGET_ASK")
-    echo ""
-    
+
+    # ── Provider path: call the API directly ──────────────────
+    # Uses the same proven flow as /provider chat, folding the
+    # personality system prompt into the user message so every
+    # provider handles it uniformly (no systemInstruction quirks).
+    if [ -n "${GEORGE_PROVIDER:-}" ] && declare -f _provider_call_with_backoff &>/dev/null; then
+        local _ask_msg="$full_question"
+        if [ -n "$system_prompt" ]; then
+            _ask_msg="Instructions: ${system_prompt}
+
+${full_question}"
+        fi
+
+        ui_spinner_start "$GEORGE_PROVIDER" >/dev/tty 2>/dev/null
+        response=$(_provider_call_with_backoff "$GEORGE_PROVIDER" "$_ask_msg")
+        local _ask_rc=$?
+        ui_spinner_stop 2>/dev/null
+
+        if [ $_ask_rc -ne 0 ] || [ -z "$response" ]; then
+            echo ""
+            ui_err "Provider returned no response"
+            _LODGE_IN_TASK=0
+            return 1
+        fi
+
+        echo ""
+        ui_render_response "$response"
+    else
+        # ── Local backend: llm_generate streams tokens to /dev/tty
+        response=$(llm_generate "$full_question" "$system_prompt" "$LLM_ASK_TOKENS" "$LLM_BUDGET_ASK")
+        echo ""
+    fi
+
     # Transcript: log the ask response
     declare -f transcript_log_block &>/dev/null && transcript_log_block "llm-response (ask)" "$response"
 
