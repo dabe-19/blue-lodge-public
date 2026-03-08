@@ -66,9 +66,11 @@ describe "commands_dispatch"
     assert_eq "$?" "99"
   }
 
-  it "returns 99 for /q" && {
-    commands_dispatch "/q" "."
-    assert_eq "$?" "99"
+  it "dispatches /q to registered handler" && {
+    # /q is registered as brainstorm/quick question, not quit
+    # It will fail (agent_ask not loaded) but should NOT return 99
+    commands_dispatch "/q" "." 2>/dev/null
+    assert_neq "$?" "99"
   }
 
   it "handles /help without error" && {

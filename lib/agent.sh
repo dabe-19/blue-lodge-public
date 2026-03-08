@@ -37,6 +37,7 @@ AGENT_EVAL_REC_CHARS="${AGENT_EVAL_REC_CHARS:-120}"              # Max chars aft
 AGENT_PRESSURE_RELIEF="${AGENT_PRESSURE_RELIEF:-2}"          # Consecutive milestone skips before pressure relief fires (0=disabled)
 AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-1}"              # Smart command routing: 0=disabled, 1=enabled
 AGENT_ASK_USER="${AGENT_ASK_USER:-1}"                    # Allow George to /ask the user questions during tasks: 0=disabled, 1=enabled
+AGENT_BRAINSTORM="${AGENT_BRAINSTORM:-1}"                  # Allow George to /brainstorm (self-reason) during tasks: 0=disabled, 1=enabled
 AGENT_PRE_ROUTE="${AGENT_PRE_ROUTE:-1}"                  # Pre-route: extract /cmd from milestone, skip router: 0=disabled, 1=enabled
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
@@ -2134,8 +2135,11 @@ agent_plan() {
     fi
 
     local base_rules="Plan this task. Rules:
-- THINK FIRST: Is this a simple question George can answer from his own knowledge (no web search, no tools, no external actions)? If so, output ONLY: 1. /ask <the user's question>. Done. No sandbox, no coding.
+- THINK FIRST: Is this a simple question George can answer from his own knowledge (no web search, no tools, no external actions)? If so, use /respond to answer directly. No sandbox, no coding.
+- If the task needs George to GENERATE IDEAS or BRAINSTORM (not ask the user), use /brainstorm.
+- /ask is ONLY for getting info from the HUMAN (preferences, names, allergies). /brainstorm is for George figuring things out HIMSELF.
 - If the user explicitly names a tool or action (e.g., 'search the web', 'post to discord'), route to that tool — do NOT use /ask.
+- If /brainstorm is not available, use /respond to reason through options and deliver the answer directly.
 - Use the MINIMUM steps needed. Most tasks need 1-3 steps. Maximum: $AGENT_PLAN_STEPS steps.
 - NEVER pad plans. No filler steps (no READMEs, no backup, no status checks, no recall searches, no reviews).
 - Every step must directly advance the user's stated goal.
@@ -2275,6 +2279,12 @@ _build_router_prompt() {
         _ask_line="/ask        Ask the human operator a question (get preferences, clarification, missing info)"
     fi
 
+    # Conditional /brainstorm line — only available when AGENT_BRAINSTORM=1
+    local _brainstorm_line=""
+    if [ "${AGENT_BRAINSTORM:-1}" -eq 1 ]; then
+        _brainstorm_line="/brainstorm  Think/reason/brainstorm using own knowledge (NO human input — George answers himself)"
+    fi
+
     cat << ROUTER_PROMPT
 Output ONLY the bare tool name. NO backticks. NO code fences. NO quotes. Example: /web
 
@@ -2301,7 +2311,8 @@ TOOLS — gather info, execute work (these do NOT deliver results to the user):
 /git         Git setup, SSH keys
 /backup      Backup and restore
 /slash       Create/run custom commands (USE when no built-in fits)
-${_ask_line:+${_ask_line}
+${_brainstorm_line:+${_brainstorm_line}
+}${_ask_line:+${_ask_line}
 }bash         Standard Linux shell (fallback)
 
 DELIVERY — present results to user (one per milestone; a full task may chain several, e.g. /write then /email):
@@ -2328,6 +2339,7 @@ ROUTE EXAMPLES:
 <write a report/file then email>   → /write (first), then /email (next milestone)
 <draft a document/report>          → /write
 ${_ask_line:+<need user preferences or clarification> → /ask
+}${_brainstorm_line:+<generate ideas, brainstorm, reason through options> → /brainstorm
 }<general knowledge, no tools>      → /respond
 
 RULES:
@@ -2336,6 +2348,7 @@ RULES:
 - /sandbox NEVER for slash commands
 - /social for Discord/Telegram/X, /email for actual email
 ${_ask_line:+- /ask to get REAL answers from the human — use when you need specific preferences, dietary info, names, allergies, or ANY user-specific detail that you cannot research
+}${_brainstorm_line:+- /brainstorm to think through something YOURSELF — generate ideas, weigh options, reason through problems. NO human input. Use when YOU need to figure something out.
 }- NEVER output a command not in this list
 - If unsure between TOOLS, use /web or /slash
 - If no explicit output command requested, ALWAYS use /respond
@@ -2659,11 +2672,12 @@ SPEC
 "format_only_ex":["/respond <your complete answer text>"]}
 SPEC
                 ;;
-            q)
+            q|brainstorm)
                 cat << 'SPEC'
-{"cmd":"/q","syntax":"/q <question>",
-"notes":"Quick question answered from model knowledge. WARNING: may be stale for dates, scores, events, prices. Prefer /web search for time-sensitive info.",
-"format_only_ex":["/q <question>"]}
+{"cmd":"/brainstorm","syntax":"/brainstorm <question or topic>",
+"notes":"Think, reason, or brainstorm using George's own knowledge. NO human input — George answers HIMSELF. Use when you need to generate ideas, weigh options, plan approaches, or reason through a problem. Alias: /q. WARNING: may be stale for dates, scores, events, prices — prefer /web for time-sensitive info.",
+"contrast":"vs /ask: /ask asks the HUMAN and waits for their answer. /brainstorm = George thinks it through himself.",
+"format_only_ex":["/brainstorm What are good chicken dinner recipes with rice and peppers?","/brainstorm What are the pros and cons of using SQLite vs PostgreSQL?"]}
 SPEC
                 ;;
             ask)
@@ -4389,7 +4403,9 @@ MEMEOF
         # DELIVERY as separate group (deduplicated into CORE/FILES).
         # COMMS is conditional — only included when social/email is configured.
         local _tool_summary='YOUR WORKING COMMANDS:
-{"CORE":["/ask","/respond","/recall","/journal","/journal write"],
+{"CORE":["/ask"';
+        [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _tool_summary="${_tool_summary}"',"/brainstorm"'
+        _tool_summary="${_tool_summary}"',"/respond","/recall","/journal","/journal write"],
 "FILES":["/write","/save","/read","/ls","/download","/build","/test","/fix","/commit","/push","/init","/clone","/cd"],
 "WEB":["/web search","/web fetch","/web images","/github search","/vision"],
 "SANDBOX":["/sandbox","/container"]'
@@ -4468,6 +4484,12 @@ MEMEOF
             _ask_rule='"\/ask":"asks the HUMAN operator a question — use when you need specific preferences, dietary needs, allergies, names, or details ONLY the user knows. The user types an answer.",'
         fi
 
+        # Conditional /brainstorm rule for strategist
+        local _brainstorm_rule=""
+        if [ "${AGENT_BRAINSTORM:-1}" -eq 1 ]; then
+            _brainstorm_rule='"\/brainstorm":"think\/reason\/brainstorm using own knowledge — George figures it out HIMSELF (no human input). Use when user says I don'\''t know or when George needs to generate ideas, weigh options, or reason through a problem.","\/q":"alias for \/brainstorm",'
+        fi
+
         # Hint about user preferences on file (nudges /recall usage)
         local _pref_hint=""
         if declare -f recall_user_pref_count &>/dev/null; then
@@ -4488,7 +4510,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
 {\"rules\":{
  \"routing\":{\"named_tool\":\"use it\",
    ${_ask_rule}
-   \"\/q\":\"quick question from own knowledge (may be stale — prefer \/web for dates\/events\/scores)\",
+   ${_brainstorm_rule}
    \"\/social\":\"Discord\/Telegram\/X\/Mastodon (NOT \/email)\",
    \"\/email\":\"actual email only\",\"\/sandbox\":\"NEVER for slash commands\"},
  \"milestones\":{\"source\":\"YOUR WORKING COMMANDS only\",
@@ -4497,8 +4519,8 @@ SERVICES STATUS: ${_svc_status:-unknown}
    \"one_action\":\"1 milestone = 1 honeydew item, NEVER combine two items\",
    \"no_prefix\":true,\"no_intro\":true,
    \"only_configured\":true},
- \"research\":{\"when\":\"missing info (keys,URLs,packages,specs)\",
-   \"tools\":[\"\/web search\",\"\/recall\",\"\/web fetch\",\"\/web scrape-images\",\"\/social discord read\",\"\/secret get\"${_ask_rule:+,\"\/ask\"}],
+ \"research\":{\"when\":\"missing info (keys,URLs,packages,specs) OR need to generate ideas\/reason through options\",
+   \"tools\":[\"\/web search\",\"\/recall\"${_brainstorm_rule:+,\"\/brainstorm\"},\"\/web fetch\",\"\/web scrape-images\",\"\/social discord read\",\"\/secret get\"${_ask_rule:+,\"\/ask\"}],
    \"max_consecutive\":2,\"then\":\"MUST use delivery command (\/respond,\/write,\/email,\/save,\/social,\/build)\"},
  \"failure\":{\"no_repeat\":true,\"advance_next_part\":true},
  \"honeydew\":{\"pick\":\"FIRST [ ] item by number — do NOT skip items\"},

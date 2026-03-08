@@ -352,6 +352,9 @@ commands_catalog() {
     "/ask":{"syntax":"/ask <question>","desc":"Ask the HUMAN OPERATOR a question — use when you need real preferences, dietary details, names, allergies, or any info only the user knows. User types an answer.",
       "rules":["ONE specific question per /ask","Ask about concrete details the user must provide","Do NOT ask rhetorical or philosophical questions"],
       "format_only_ex":["/ask What dietary restrictions does the family have?"]},
+    "/brainstorm":{"syntax":"/brainstorm <question or topic>","desc":"George thinks/reasons/brainstorms using his OWN knowledge — NO human input. Use to generate ideas, weigh options, or reason through problems. Alias: /q",
+      "contrast":"/ask asks the HUMAN. /brainstorm = George figures it out himself.",
+      "format_only_ex":["/brainstorm What are good chicken dinner recipes with rice and peppers?","/brainstorm What are the pros and cons of SQLite vs PostgreSQL?"]},
     "/web":{"syntax":"/web <action> <query|url>","desc":"Web search, fetch, and image extraction",
       "actions":{
         "search":"/web search <query> — returns list of URLs + text snippets from search engines (Serper/DuckDuckGo)",
