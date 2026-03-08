@@ -862,7 +862,7 @@ _google_needs_system_workaround() {
 google_chat() {
     local message="$1"
     local model
-    model=$(_provider_resolve_model "$2" "google" "gemini-2.0-flash")
+    model=$(_provider_resolve_model "$2" "google" "gemma-3-27b-it")
     local system="${3:-}"
     local key
     key=$(api_require_key "GOOGLE_AI_API_KEY" "Google AI") || return 1
