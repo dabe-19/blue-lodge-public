@@ -494,13 +494,13 @@ describe "Google systemInstruction handling"
     api_post() {
       _t_cnt=$(cat "$_t_cntfile"); _t_cnt=$((_t_cnt + 1)); echo "$_t_cnt" > "$_t_cntfile"
       if [ "$_t_cnt" -eq 1 ]; then
-        echo '{"error":{"message":"Developer instruction is not enabled for models/gemma-3-27b-it"}}'
+        echo '{"error":{"message":"Developer instruction is not enabled for models/some-new-model"}}'
         return 1
       fi
       echo '{"candidates":[{"content":{"parts":[{"text":"retried ok"}]}}]}'
       return 0
     }
-    _tresult=$(google_chat "hello" "gemma-3-27b-it" "You are George." 2>/dev/null)
+    _tresult=$(google_chat "hello" "some-new-model" "You are George." 2>/dev/null)
     assert_ok $? "retry must succeed"
     assert_eq "$_tresult" "retried ok" "must return response from retry"
     rm -f "$_t_cntfile"
@@ -515,19 +515,68 @@ describe "Google systemInstruction handling"
     api_post() {
       _t_cnt=$(cat "$_t_cntfile"); _t_cnt=$((_t_cnt + 1)); echo "$_t_cnt" > "$_t_cntfile"
       if [ "$_t_cnt" -eq 1 ]; then
-        echo '{"error":{"message":"Developer instruction is not enabled for models/gemma-3-27b-it"}}'
+        echo '{"error":{"message":"Developer instruction is not enabled for models/some-new-model"}}'
         return 1
       fi
       echo "$2" > "$_t_capfile"
       echo '{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}'
       return 0
     }
-    google_chat "hello" "gemma-3-27b-it" "Be helpful." >/dev/null 2>&1
+    google_chat "hello" "some-new-model" "Be helpful." >/dev/null 2>&1
     cat "$_t_capfile" | grep -q "systemInstruction"
     assert_fail $? "retry payload must NOT have systemInstruction"
     cat "$_t_capfile" | grep -q "Be helpful."
     assert_ok $? "retry payload must contain system text in user message"
     rm -f "$_t_cntfile" "$_t_capfile"
+    _teardown_prov
+  }
+
+test_end
+
+# ── Gemma system instruction workaround ─────────────────────────────
+describe "Gemma systemInstruction workaround"
+
+  it "_google_needs_system_workaround returns true for gemma models" && {
+    _google_needs_system_workaround "gemma-3-27b-it"
+    assert_ok $? "gemma-3-27b-it must need workaround"
+    _google_needs_system_workaround "gemma-2-9b"
+    assert_ok $? "gemma-2-9b must need workaround"
+  }
+
+  it "_google_needs_system_workaround returns false for gemini models" && {
+    _google_needs_system_workaround "gemini-2.0-flash"
+    assert_fail $? "gemini must NOT need workaround"
+    _google_needs_system_workaround "gemini-1.5-pro"
+    assert_fail $? "gemini-1.5-pro must NOT need workaround"
+  }
+
+  it "google_chat skips systemInstruction for gemma model" && {
+    _setup_prov
+    _t_capfile=$(mktemp)
+    api_require_key() { echo "fake-key"; return 0; }
+    api_post() { echo "$2" > "$_t_capfile"; echo '{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}'; return 0; }
+    google_chat "hello" "gemma-3-27b-it" "You are George." >/dev/null 2>&1
+    cat "$_t_capfile" | grep -q "systemInstruction"
+    assert_fail $? "gemma payload must NOT include systemInstruction"
+    cat "$_t_capfile" | grep -q "Instructions:"
+    assert_ok $? "gemma payload must inline system as Instructions:"
+    rm -f "$_t_capfile"
+    _teardown_prov
+  }
+
+  it "google_chat sends only 1 request for gemma with system prompt" && {
+    _setup_prov
+    _t_cntfile=$(mktemp); echo "0" > "$_t_cntfile"
+    api_require_key() { echo "fake-key"; return 0; }
+    api_post() {
+      _t_cnt=$(cat "$_t_cntfile"); _t_cnt=$((_t_cnt + 1)); echo "$_t_cnt" > "$_t_cntfile"
+      echo '{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}'
+      return 0
+    }
+    google_chat "hello" "gemma-3-27b-it" "system" >/dev/null 2>&1
+    _t_cnt=$(cat "$_t_cntfile")
+    assert_eq "$_t_cnt" "1" "Gemma must send exactly 1 API request"
+    rm -f "$_t_cntfile"
     _teardown_prov
   }
 

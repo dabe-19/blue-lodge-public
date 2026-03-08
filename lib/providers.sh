@@ -130,6 +130,14 @@ _provider_countdown() {
     local _tty="/dev/tty"
     [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
     if [ "$secs" -le 0 ] 2>/dev/null; then return; fi
+
+    # Pause any active spinner so it doesn't fight for the terminal line
+    local _had_spinner=0
+    if [ -n "${_SPINNER_PID:-}" ]; then
+        _had_spinner=1
+        ui_spinner_stop 2>/dev/null
+    fi
+
     local i="$secs"
     while [ "$i" -gt 0 ]; do
         local filled=$(( (secs - i) * 20 / secs ))
@@ -142,6 +150,11 @@ _provider_countdown() {
         i=$((i - 1))
     done
     printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
+
+    # Restart spinner if we paused it
+    if [ "$_had_spinner" -eq 1 ] && declare -f ui_spinner_start &>/dev/null; then
+        ui_spinner_start "${GEORGE_PROVIDER:-wait}" >/dev/null 2>/dev/null
+    fi
 }
 
 # ── Response validation helper ────────────────────────────────
@@ -693,9 +706,16 @@ provider_stream_chat() {
             model=$(_provider_resolve_model "$model" "$provider" "gemini-2.0-flash")
 
             local data
-            if [ -n "$system" ]; then
+            if [ -n "$system" ] && ! _google_needs_system_workaround "$model"; then
                 data=$(jq -n --arg s "$system" --arg u "$message" '{
                     "systemInstruction": {"parts": [{"text": $s}]},
+                    "contents": [{"parts": [{"text": $u}]}],
+                    "generationConfig": {"maxOutputTokens": 4096, "temperature": 0.3}
+                }')
+            elif [ -n "$system" ]; then
+                data=$(jq -n --arg u "Instructions: ${system}
+
+${message}" '{
                     "contents": [{"parts": [{"text": $u}]}],
                     "generationConfig": {"maxOutputTokens": 4096, "temperature": 0.3}
                 }')
@@ -828,6 +848,17 @@ anthropic_models() {
 # Key: GOOGLE_AI_API_KEY
 # ADK Keys: GOOGLE_ADK_PROJECT_ID, GOOGLE_ADK_LOCATION
 
+# Detect models that don't support Google's systemInstruction field.
+# Gemma (open-weight) models return 400 "Developer instruction is not enabled".
+# Returns 0 (true) if the model requires the workaround.
+_google_needs_system_workaround() {
+    local model="$1"
+    case "$model" in
+        gemma*|Gemma*) return 0 ;;
+        *)             return 1 ;;
+    esac
+}
+
 google_chat() {
     local message="$1"
     local model
@@ -836,10 +867,27 @@ google_chat() {
     local key
     key=$(api_require_key "GOOGLE_AI_API_KEY" "Google AI") || return 1
 
+    # Gemma models reject systemInstruction — prepend system to user message
+    local _use_sys_inst=1
+    if _google_needs_system_workaround "$model"; then
+        _use_sys_inst=0
+    fi
+
     local data
-    if [ -n "$system" ]; then
+    if [ -n "$system" ] && [ "$_use_sys_inst" -eq 1 ]; then
         data=$(jq -n --arg s "$system" --arg u "$message" '{
             "systemInstruction": {"parts": [{"text": $s}]},
+            "contents": [{"parts": [{"text": $u}]}],
+            "generationConfig": {
+                "maxOutputTokens": 4096,
+                "temperature": 0.3
+            }
+        }')
+    elif [ -n "$system" ]; then
+        # System prompt inlined into user message for Gemma-class models
+        data=$(jq -n --arg u "Instructions: ${system}
+
+${message}" '{
             "contents": [{"parts": [{"text": $u}]}],
             "generationConfig": {
                 "maxOutputTokens": 4096,
@@ -861,9 +909,10 @@ google_chat() {
     resp=$(API_DEFAULT_TIMEOUT=$PROVIDER_TIMEOUT api_post "$url" "$data")
     rc=$?
 
-    # Models like Gemma don't support systemInstruction ("Developer instruction
-    # is not enabled"). Retry with the system prompt prepended to the user message.
-    if [ $rc -ne 0 ] && [ -n "$system" ] && echo "$resp" | grep -qi "developer instruction"; then
+    # Safety net: if a non-Gemma model also rejects systemInstruction,
+    # retry with the inline workaround (one-time fallback, not every call)
+    if [ $rc -ne 0 ] && [ "$_use_sys_inst" -eq 1 ] && [ -n "$system" ] \
+       && echo "$resp" | grep -qi "developer instruction"; then
         data=$(jq -n --arg u "Instructions: ${system}
 
 ${message}" '{
