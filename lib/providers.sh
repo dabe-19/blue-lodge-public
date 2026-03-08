@@ -703,7 +703,7 @@ provider_stream_chat() {
         GOOGLE)
             local key
             key=$(api_require_key "GOOGLE_AI_API_KEY") || { rm -f "$_fifo"; return 1; }
-            model=$(_provider_resolve_model "$model" "$provider" "gemini-2.0-flash")
+            model=$(_provider_resolve_model "$model" "$provider" "gemma-3-27b-it")
 
             local data
             if [ -n "$system" ] && ! _google_needs_system_workaround "$model"; then
