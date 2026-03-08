@@ -148,6 +148,9 @@ ui_spinner_start() {
     local msg="${1:-Thinking}"
     local _tty="$_SPINNER_TTY"
     (
+        # Close inherited stdout/stderr so this subshell doesn't hold
+        # the write-end of any $() pipe open (prevents FD-leak hangs).
+        exec >/dev/null 2>/dev/null
         local frames=('◐' '◓' '◑' '◒')
         local i=0
         while true; do
