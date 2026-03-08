@@ -56,7 +56,7 @@ commands_dispatch() {
                 commands_help
             fi
             return 0 ;;
-        quit|exit|q) return 99 ;;
+        quit|exit) return 99 ;;
     esac
     
     # Check registry
@@ -103,7 +103,7 @@ commands_is_known_name() {
     local name="$1"
     # Built-ins
     case "$name" in
-        help|quit|exit|q) return 0 ;;
+        help|quit|exit) return 0 ;;
     esac
     # Registry
     [ -n "${CMD_REGISTRY[$name]:-}" ] && return 0
