@@ -38,7 +38,7 @@ All commands at a glance. For detailed usage, run `/help` inside George or see t
 | `/social` | `[post\|<platform>\|status]` | Social media (X/Mastodon/Bluesky/Discord/Telegram) |
 | `/email` | `[send\|inbox\|setup\|status\|bridge]` | Email (Gmail/ProtonMail/Zoho/Tuta/disposable) |
 | `/api` | `[keys\|status]` | API key management |
-| `/provider` | `[chat\|models\|status]` | Cloud AI providers (11 providers) |
+| `/provider` | `[chat\|use\|models\|status]` | Cloud AI providers (10 providers + harness mode) |
 | `/web` | `[fetch\|search\|images\|summary\|download]` | Web browsing |
 | `/github` | `<query>` | Search GitHub repos |
 | `/git` | `[identity\|ssh-keygen\|ssh-config\|remote\|status\|test]` | Git & GitHub config |

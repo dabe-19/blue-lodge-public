@@ -217,26 +217,52 @@ google_chat() {
     local message="$1"
     local model
     model=$(_provider_resolve_model "$2" "google" "gemini-2.0-flash")
-    local system="${3:-You are a helpful assistant.}"
+    local system="${3:-}"
     local key
     key=$(api_require_key "GOOGLE_AI_API_KEY" "Google AI") || return 1
 
     local data
-    data=$(jq -n --arg s "$system" --arg u "$message" '{
-        "systemInstruction": {"parts": [{"text": $s}]},
-        "contents": [{"parts": [{"text": $u}]}],
-        "generationConfig": {
-            "maxOutputTokens": 4096,
-            "temperature": 0.3
-        }
-    }')
+    if [ -n "$system" ]; then
+        data=$(jq -n --arg s "$system" --arg u "$message" '{
+            "systemInstruction": {"parts": [{"text": $s}]},
+            "contents": [{"parts": [{"text": $u}]}],
+            "generationConfig": {
+                "maxOutputTokens": 4096,
+                "temperature": 0.3
+            }
+        }')
+    else
+        data=$(jq -n --arg u "$message" '{
+            "contents": [{"parts": [{"text": $u}]}],
+            "generationConfig": {
+                "maxOutputTokens": 4096,
+                "temperature": 0.3
+            }
+        }')
+    fi
 
-    local resp
-    resp=$(API_DEFAULT_TIMEOUT=$PROVIDER_TIMEOUT api_post \
-        "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}" \
-        "$data")
+    local url="https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}"
+    local resp rc
+    resp=$(API_DEFAULT_TIMEOUT=$PROVIDER_TIMEOUT api_post "$url" "$data")
+    rc=$?
 
-    _provider_check_response $? "$resp" '.candidates[0].content.parts[0].text' "Google AI"
+    # Models like Gemma don't support systemInstruction ("Developer instruction
+    # is not enabled"). Retry with the system prompt prepended to the user message.
+    if [ $rc -ne 0 ] && [ -n "$system" ] && echo "$resp" | grep -qi "developer instruction"; then
+        data=$(jq -n --arg u "Instructions: ${system}
+
+${message}" '{
+            "contents": [{"parts": [{"text": $u}]}],
+            "generationConfig": {
+                "maxOutputTokens": 4096,
+                "temperature": 0.3
+            }
+        }')
+        resp=$(API_DEFAULT_TIMEOUT=$PROVIDER_TIMEOUT api_post "$url" "$data")
+        rc=$?
+    fi
+
+    _provider_check_response $rc "$resp" '.candidates[0].content.parts[0].text' "Google AI"
 }
 
 google_models() {

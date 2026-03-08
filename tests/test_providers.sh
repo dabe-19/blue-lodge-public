@@ -458,3 +458,76 @@ describe "Provider system prompt support"
   }
 
 test_end
+
+# ── Google systemInstruction conditional ───────────────────────
+describe "Google systemInstruction handling"
+
+  it "google_chat omits systemInstruction when no system prompt" && {
+    _setup_prov
+    _t_capfile=$(mktemp)
+    api_require_key() { echo "fake-key"; return 0; }
+    api_post() { echo "$2" > "$_t_capfile"; echo '{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}'; return 0; }
+    google_chat "hello" "gemini-2.0-flash" "" >/dev/null 2>&1
+    cat "$_t_capfile" | grep -q "systemInstruction"
+    assert_fail $? "payload must NOT include systemInstruction when system is empty"
+    rm -f "$_t_capfile"
+    _teardown_prov
+  }
+
+  it "google_chat includes systemInstruction when system prompt given" && {
+    _setup_prov
+    _t_capfile=$(mktemp)
+    api_require_key() { echo "fake-key"; return 0; }
+    api_post() { echo "$2" > "$_t_capfile"; echo '{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}'; return 0; }
+    google_chat "hello" "gemini-2.0-flash" "You are George." >/dev/null 2>&1
+    cat "$_t_capfile" | grep -q "systemInstruction"
+    assert_ok $? "payload must include systemInstruction when system is provided"
+    rm -f "$_t_capfile"
+    _teardown_prov
+  }
+
+  it "google_chat retries without systemInstruction on developer-instruction error" && {
+    _setup_prov
+    _t_cntfile=$(mktemp); echo "0" > "$_t_cntfile"
+    api_require_key() { echo "fake-key"; return 0; }
+    api_post() {
+      _t_cnt=$(cat "$_t_cntfile"); _t_cnt=$((_t_cnt + 1)); echo "$_t_cnt" > "$_t_cntfile"
+      if [ "$_t_cnt" -eq 1 ]; then
+        echo '{"error":{"message":"Developer instruction is not enabled for models/gemma-3-27b-it"}}'
+        return 1
+      fi
+      echo '{"candidates":[{"content":{"parts":[{"text":"retried ok"}]}}]}'
+      return 0
+    }
+    _tresult=$(google_chat "hello" "gemma-3-27b-it" "You are George." 2>/dev/null)
+    assert_ok $? "retry must succeed"
+    assert_eq "$_tresult" "retried ok" "must return response from retry"
+    rm -f "$_t_cntfile"
+    _teardown_prov
+  }
+
+  it "google_chat retry payload prepends system to user message" && {
+    _setup_prov
+    _t_cntfile=$(mktemp); echo "0" > "$_t_cntfile"
+    _t_capfile=$(mktemp)
+    api_require_key() { echo "fake-key"; return 0; }
+    api_post() {
+      _t_cnt=$(cat "$_t_cntfile"); _t_cnt=$((_t_cnt + 1)); echo "$_t_cnt" > "$_t_cntfile"
+      if [ "$_t_cnt" -eq 1 ]; then
+        echo '{"error":{"message":"Developer instruction is not enabled for models/gemma-3-27b-it"}}'
+        return 1
+      fi
+      echo "$2" > "$_t_capfile"
+      echo '{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}'
+      return 0
+    }
+    google_chat "hello" "gemma-3-27b-it" "Be helpful." >/dev/null 2>&1
+    cat "$_t_capfile" | grep -q "systemInstruction"
+    assert_fail $? "retry payload must NOT have systemInstruction"
+    cat "$_t_capfile" | grep -q "Be helpful."
+    assert_ok $? "retry payload must contain system text in user message"
+    rm -f "$_t_cntfile" "$_t_capfile"
+    _teardown_prov
+  }
+
+test_end
