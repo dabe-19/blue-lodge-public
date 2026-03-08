@@ -1441,14 +1441,28 @@ _agent_evaluate_milestone() {
     local macro_file="$1"
     local micro_file="$2"
     local milestone_text="$3"
+    local skip_prior="${4:-0}"        # Actions to skip (prior INCOMPLETE attempts)
 
     # Read micro_memory action log ONLY for this milestone.
     # P1 should judge THIS milestone's actions in isolation — not
     # carryover context like prior_milestones or research_context
     # which can confuse the 4B model into thinking prior work counts.
+    #
+    # When skip_prior > 0, earlier actions that already received
+    # INCOMPLETE verdicts are trimmed from the log so the evaluator
+    # judges ONLY the fresh attempt. This prevents context poisoning
+    # where accumulated negative history taints good new answers.
     local eval_context=""
     if [ -n "$micro_file" ] && [ -f "$micro_file" ]; then
-        eval_context=$(_micro_serialize_eval "$micro_file")
+        local _eval_max_actions=10
+        if [ "$skip_prior" -gt 0 ]; then
+            local _total_actions
+            _total_actions=$(_micro_action_count "$micro_file")
+            _eval_max_actions=$((_total_actions - skip_prior))
+            [ "$_eval_max_actions" -lt 1 ] && _eval_max_actions=1
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval context trim: $skip_prior prior INCOMPLETE actions skipped (showing last $_eval_max_actions of $_total_actions)"
+        fi
+        eval_context=$(_micro_serialize_eval "$micro_file" "$_eval_max_actions")
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: milestone-eval <- micro_memory action_log ($(echo "$eval_context" | wc -l) lines)"
     else
         ui_info "Milestone evaluator: no micro_memory available"
@@ -1472,6 +1486,7 @@ _agent_evaluate_milestone() {
 {"classify":"COMPLETE|INCOMPLETE",
  "default":{"exit_0":"COMPLETE","empty_output":"normal (email/social/file)"},
  "scope":"THIS milestone only",
+ "recency":"judge the LAST action in the log — earlier failed attempts do NOT invalidate a later successful one",
  "no_extras":"no confirmation/follow-up unless milestone asked",
  "code":{
    "write":"meaningful non-trivial code required",
@@ -1483,7 +1498,7 @@ _agent_evaluate_milestone() {
 EVAL_P1_JSON
 )"
 
-    local eval_sys="You are a pragmatic milestone evaluator. Judge by the action log. exit_0 = success. Empty output = normal. No markdown formatting. Respond COMPLETE or INCOMPLETE: <reason>."
+    local eval_sys="You are a pragmatic milestone evaluator. Judge by the MOST RECENT action in the log — earlier failed attempts do not invalidate a later success. exit_0 = success. Empty output = normal. No markdown formatting. Respond COMPLETE or INCOMPLETE: <reason>."
 
     ui_think "Evaluator (pass 1): assessing milestone completion..."
     local verdict
@@ -2857,6 +2872,7 @@ agent_inner_loop() {
     local _last_success_cmd=""      # Track last successful command for macro_memory
     local _last_success_snippet=""  # First 200 chars of last successful output
     local _web_search_consec=0     # Consecutive /web search counter (reset on non-search)
+    local _p1_incomplete_consec=0  # Consecutive P1 INCOMPLETE verdicts (pre-route breaker)
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
 
     while [ "$inner_attempts" -lt "$max_inner_loops" ]; do
@@ -2881,7 +2897,7 @@ agent_inner_loop() {
         # Regex anchors to space or start-of-string to avoid matching
         # URL path segments (e.g. https://example.com/api → "api").
         local _pre_route=""
-        if [ "${AGENT_PRE_ROUTE:-1}" -eq 1 ] && [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
+        if [ "${AGENT_PRE_ROUTE:-1}" -eq 1 ] && [ "$_p1_incomplete_consec" -lt 2 ] && [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
             local _pre_cmd="${BASH_REMATCH[2]}"
             # Synonym remap: models love "/draft" — treat as /write
             [ "$_pre_cmd" = "draft" ] && _pre_cmd="write"
@@ -3801,10 +3817,21 @@ INTERLOCK_JSON
                 local _action_count
                 _action_count=$(_micro_action_count "$micro_file")
                 if [ "$_action_count" -ge 1 ]; then
-                    if _agent_evaluate_milestone "$macro_file" "$micro_file" "$micro_objective"; then
+                    if _agent_evaluate_milestone "$macro_file" "$micro_file" "$micro_objective" "$_p1_incomplete_consec"; then
                         _agent_complete_milestone "$micro_file" "$macro_file" "$micro_objective" \
                             "Objective fulfilled" "$_last_success_cmd" "$george_dir"
                         return 0
+                    else
+                        # ── PRE-ROUTE BREAKER ────────────────────
+                        # Track consecutive P1 INCOMPLETE verdicts.
+                        # After 2, the pre-route is disabled so the
+                        # LLM router can pick a different tool instead
+                        # of hammering the same command in a loop.
+                        _p1_incomplete_consec=$((_p1_incomplete_consec + 1))
+                        if [ -n "${_EVAL_MILESTONE_REASON:-}" ]; then
+                            _micro_add_note "$micro_file" "EVAL_FEEDBACK: Milestone NOT complete — ${_EVAL_MILESTONE_REASON}. Try a different approach or tool."
+                        fi
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] P1 INCOMPLETE (${_p1_incomplete_consec} consecutive) — feedback injected"
                     fi
                 fi
 
