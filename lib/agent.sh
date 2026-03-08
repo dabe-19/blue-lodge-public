@@ -5112,9 +5112,10 @@ ${full_question}"
         echo ""
         ui_render_response "$response"
     else
-        # ── Local backend: llm_generate streams tokens to /dev/tty
+        # ── Local backend: llm_generate captures tokens via $() ──
         response=$(llm_generate "$full_question" "$system_prompt" "$LLM_ASK_TOKENS" "$LLM_BUDGET_ASK")
         echo ""
+        ui_render_response "$response"
     fi
 
     # Transcript: log the ask response
