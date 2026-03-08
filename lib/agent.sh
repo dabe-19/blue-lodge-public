@@ -1315,6 +1315,17 @@ _agent_evaluate_honeydew_item() {
         eval_context=$(_micro_serialize_eval "$micro_file" 10 2048)
     fi
 
+    # ── Prior milestone context for cross-milestone satisfaction ──
+    # Honeydew items may have been accomplished by a PRIOR milestone
+    # (e.g., /ask confirmed dietary restrictions in milestone 1, but
+    # the evaluator runs after milestone 3's /write).  Inject compact
+    # prior milestone summaries so the evaluator can recognize this.
+    local _prior_milestones=""
+    if [ -n "$macro_file" ] && [ -f "$macro_file" ]; then
+        _prior_milestones=$(_macro_milestones_json "$macro_file" 5 | \
+            jq -r '.[] | "[\(.result // "DONE")] \(.milestone // "?"): \(.summary // "no summary")"' 2>/dev/null)
+    fi
+
     # Retrieve the user's original request so the evaluator can verify
     # milestones stay on-topic (e.g., "2026 NFL draft" not drifting to 2025).
     local _hd_original_request=""
@@ -1323,11 +1334,12 @@ _agent_evaluate_honeydew_item() {
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
 
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nORIGINAL USER REQUEST:\n${_hd_original_request:-Unknown}\n\nMILESTONE ATTEMPTED:\n${milestone_text}\n\nACTION LOG (raw command outputs):\n${eval_context:-No actions available.}\n\n---\n\nHONEYDEW ITEM TO EVALUATE (item #${_next_id}):\n${_next_task}\n\nIMPORTANT: Ignore whether the milestone was marked COMPLETE or INCOMPLETE. Judge ONLY from the raw command outputs in the ACTION LOG above. Ask: did the outputs ACTUALLY accomplish the honeydew item's specific goal? A search that returns generic links without concrete details (e.g. specific items, prices, names) does NOT satisfy an item asking to identify specific things.\n\nApply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_HD_JSON'
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nORIGINAL USER REQUEST:\n${_hd_original_request:-Unknown}\n\n${_prior_milestones:+PRIOR COMPLETED MILESTONES (already accomplished):\n${_prior_milestones}\n\n}MILESTONE ATTEMPTED:\n${milestone_text}\n\nACTION LOG (raw command outputs from current milestone):\n${eval_context:-No actions available.}\n\n---\n\nHONEYDEW ITEM TO EVALUATE (item #${_next_id}):\n${_next_task}\n\nIMPORTANT: Judge whether this honeydew item has been accomplished by ANY work so far — either in the ACTION LOG above OR in the PRIOR COMPLETED MILESTONES. If a prior milestone already accomplished what this item asks for, that counts as SATISFIED. For the current milestone's actions, judge from the raw command outputs, not the milestone pass/fail status. A search that returns generic links without concrete details does NOT satisfy an item asking to identify specific things.\n\nApply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_HD_JSON'
 {"classify":"SATISFIED|UNSATISFIED",
- "scope":"did the ACTUAL COMMAND OUTPUTS accomplish the honeydew item goal?",
+ "scope":"did ANY work so far (prior milestones OR current action log) accomplish this honeydew item?",
  "pragmatic":true,"exact_match_not_required":true,
  "requires_concrete_output":true,
+ "cross_milestone":"if a PRIOR milestone already did what this item asks, SATISFIED",
  "relevance_check":{"dates":true,"topics":true,"scope":true,
    "verify_against":"ORIGINAL USER REQUEST above",
    "output_substance":"do outputs contain specific data the item asked for?"},
@@ -1337,7 +1349,7 @@ _agent_evaluate_honeydew_item() {
 EVAL_HD_JSON
 )"
 
-    local eval_sys="Honeydew item evaluator. Judge from ACTUAL COMMAND OUTPUTS only — ignore milestone pass/fail status. SATISFIED requires concrete results matching what the honeydew item asked for (specific data, not just generic search links). Verify relevance to original request (dates, topics, scope). No markdown. Respond SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <slash command>."
+    local eval_sys="Honeydew item evaluator. Judge whether this item was accomplished by ANY work so far — current action log OR prior completed milestones. If a prior milestone already did what the item asks, answer SATISFIED. For current actions, judge from ACTUAL COMMAND OUTPUTS — ignore milestone pass/fail status. SATISFIED requires concrete results matching what the item asked for. Verify relevance to original request (dates, topics, scope). No markdown. Respond SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <slash command>."
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew-eval <- item #${_next_id}: ${_next_task:0:80}"
     ui_think "Honeydew evaluator: checking item #${_next_id}..."
@@ -4063,7 +4075,28 @@ INTERLOCK_JSON
             return 1  # Failed milestone — macro loop continues with fresh targets
         fi
         AGENT_HONEYDEW_REWRITE="$_saved_rewrite_toggle"
-        # Rewrite declined (router said KEEP) or failed — fall through to human help
+        # Rewrite declined (router said KEEP) — the router thinks the
+        # honeydew list is fine, but we exhausted the inner loop trying
+        # to fulfill it. Force-skip this milestone so the macro loop
+        # can attempt a fresh strategy rather than asking for human help.
+        ui_warn "Auto-recovery: rewrite router declined (KEEP) — skipping stuck milestone"
+        _macro_add_milestone "$macro_file" "$micro_objective" \
+            "Escalation exhausted — rewrite router said KEEP, milestone skipped" \
+            "${last_failed_cmd:-}" "UNKNOWN" "SKIPPED"
+
+        # URL poisoning: blacklist failed URLs so they don't reappear
+        if [ -n "$last_failed_cmd" ] && declare -f _web_blacklist_add &>/dev/null; then
+            if [[ "$last_failed_cmd" == /web\ fetch\ * ]] || [[ "$last_failed_cmd" == /web\ scrape* ]]; then
+                local _poison_url
+                _poison_url=$(echo "$last_failed_cmd" | awk '{print $NF}')
+                if [[ "$_poison_url" == http* ]]; then
+                    _web_blacklist_add "$_poison_url" "auto_recovery" "FAILED"
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] URL poisoned after KEEP skip: $_poison_url"
+                fi
+            fi
+        fi
+
+        return 1  # Skip to macro loop — strategist picks a new approach
     fi
 
     # ── Fallback: Human Operator Intervention ─────────────────
@@ -5190,6 +5223,15 @@ ${full_question}"
     # In interactive mode llm_stream already displayed tokens to /dev/tty,
     # so only echo when stdout is NOT a terminal (i.e., captured by $()).
     if ! [ -t 1 ]; then
+        # Also render to /dev/tty so the operator can see /brainstorm
+        # and /q results during task execution (otherwise only visible
+        # in debug mode or transcripts).
+        {
+            echo ""
+            printf "  %b/brainstorm:%b\n" "$C_DIM" "$C_RESET"
+            ui_render_response "$response"
+            echo ""
+        } > /dev/tty 2>/dev/null
         echo "$response"
     fi
 
