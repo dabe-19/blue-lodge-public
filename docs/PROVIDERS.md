@@ -258,22 +258,32 @@ George's prompts include system prompts (~300-5000 tokens), memory context, comm
 
 6. **Limit agent complexity**: George's agent loop generates the most API calls. Reduce with:
    ```bash
-   /limits max_steps 3      # Fewer steps per milestone
-   /limits milestones 2     # Fewer milestones per task
-   /limits rewrite_rounds 1 # Fewer goal refinements
+   /limits steps 3           # Fewer steps per subtask
+   /limits milestones 2      # Fewer milestones per task
+   /limits rewrite-rounds 1  # Fewer goal refinements
+   ```
+
+7. **Apply provider-tuned rate limits**: Each provider has pre-calculated rate limit settings that keep George safely under the free-tier ceiling:
+   ```bash
+   /limits suggest google    # See the recommended settings
+   /limits apply google      # Apply them all at once
    ```
 
 ### Rate Limits
 
-Free tiers have rate limits that can interrupt George mid-task:
+Free tiers have rate limits that can interrupt George mid-task. Limits vary **per model** — use `/limits models <provider>` to see the exact figures for every model a provider offers.
 
-| Provider | Free Tier Limits | What Happens When Hit |
-|----------|-----------------|----------------------|
-| Google AI | 15 requests/min, 1,500/day | 429 error, George reports failure |
-| Groq | 30 requests/min, 14,400 tokens/min | 429 error, brief pause needed |
+Some highlights:
+
+| Provider | Typical Free Limits | What Happens When Hit |
+|----------|---------------------|----------------------|
+| Google AI | 5-30 RPM, 20-14.4K RPD (varies by model) | 429 error, George retries with backoff |
+| Groq | 20-60 RPM, 6K-70K TPM (varies by model) | 429 error, George retries with backoff |
 | Together | $5 credit, then pay | Credit exhausted → 402 error |
 | DeepSeek | $5 credit, then pay | Credit exhausted → 402 error |
 | Cohere | 20 requests/min (trial) | 429 error |
+
+George includes a built-in rate limit configuration database with per-model limits for Google and Groq. See the [Free-Tier Rate Limit Management](#free-tier-rate-limit-management) section below for how to view, tune, and extend these.
 
 If George reports errors during a task, check if you've hit rate limits. Wait 60 seconds and try again, or switch to a different provider.
 
@@ -312,9 +322,10 @@ If George reports errors during a task, check if you've hit rate limits. Wait 60
 
 ### Provider returns errors during agent task
 The agent may be hitting rate limits. Options:
-1. Wait 60 seconds and retry
-2. Switch to a different provider: `/provider use openai`
-3. Reduce agent steps: `/limits max_steps 3`
+1. Apply the provider's suggested rate limits: `/limits apply google`
+2. Wait 60 seconds and retry
+3. Switch to a different provider: `/provider use openai`
+4. Reduce agent steps: `/limits steps 3`
 
 ### "empty or blocked response"
 The API returned 200 OK but no content. Common causes:
@@ -337,9 +348,272 @@ Or manually remove from `keys.conf`:
 
 ### Provider works for /ask but fails during agent tasks
 Some providers (especially free tiers) have aggressive rate limits. The agent fires many rapid calls. Try:
-1. A paid provider or higher-limit tier
-2. Groq can handle short bursts well
-3. Google AI's 15 RPM limit works for most tasks
+1. Apply recommended rate limits: `/limits apply google` (or your provider)
+2. Check per-model limits: `/limits models google` — some models have much higher ceilings
+3. Groq can handle short bursts well
+4. Google AI's Gemma-class models allow 30 RPM vs Gemini's 5 RPM
+
+---
+
+## Free-Tier Rate Limit Management
+
+George ships with a rate limit configuration database at `models/free-tier-limits.json` that tracks per-model rate limits for every provider. This drives a set of `/limits` subcommands for viewing, tuning, and applying provider-optimal settings.
+
+### Viewing Rate Limits
+
+```bash
+# Overview — how many models have limits configured per provider
+/limits models
+
+# Per-provider table — RPM, RPD, TPM, TPD for every model
+/limits models google
+/limits models groq
+```
+
+The table marks your active model with ▸ so you can see exactly which rate limits apply to your current session.
+
+Example output for `/limits models groq`:
+
+```
+  Free-Tier Rate Limits: groq
+
+  MODEL                                      RPM      RPD      TPM      TPD
+  ──────────────────────────────────────── ────── ──────── ──────── ────────
+  ▸ llama-3.3-70b-versatile                   30     1000    12000   100000
+    llama-3.1-8b-instant                      30    14400     6000   500000
+    qwen/qwen3-32b                            60     1000     6000   500000
+    moonshotai/kimi-k2-instruct               60     1000    10000   300000
+    ...
+```
+
+### Suggested Settings
+
+Each provider in the config file includes a `suggested` block — pre-calculated values for George's six rate limit knobs that keep you safely under the free-tier ceiling.
+
+```bash
+# Show what the suggested settings are (with current values for comparison)
+/limits suggest google
+
+# Apply them all at once
+/limits apply google
+```
+
+`/limits suggest` shows each setting with `(current)` in green when your value already matches, so you can see at a glance what would change.
+
+`/limits apply` shows a before → after diff for every setting it changes:
+
+```
+  ✓ Applied suggested limits for groq
+  api-delay:              7 → 5
+  api-retries:            4 → 4
+  api-backoff:            5 → 5
+  api-max-backoff:        60 → 60
+  api-cooldown-max:       8 → 10
+  api-cooldown-window:    60 → 60
+```
+
+### The Six Rate Limit Knobs
+
+These settings control how George paces its API calls. They can be set individually with `/limits <param> <value>` or all at once with `/limits apply <provider>`.
+
+| Setting | What it does | Default |
+|---------|-------------|--------|
+| `api-delay` | Minimum seconds between consecutive API calls | 7 |
+| `api-retries` | Max retry attempts when a call fails (429, 500, timeout) | 4 |
+| `api-backoff` | Initial backoff delay in seconds after a failed call | 5 |
+| `api-max-backoff` | Maximum backoff cap in seconds (exponential backoff ceiling) | 60 |
+| `api-cooldown-max` | Max calls allowed within the cooldown window before pausing | 8 |
+| `api-cooldown-window` | Cooldown window duration in seconds | 60 |
+
+The defaults are conservative (tuned for Google Gemma-class models at 30 RPM). Groq's suggested settings use `api-delay=5` and `api-cooldown-max=10` because Groq's rate limits are slightly more generous for burst traffic.
+
+### Fetching Live Model Lists
+
+```bash
+# List all models available from a provider's API (requires API key)
+/limits fetch google
+/limits fetch groq
+```
+
+This queries the provider's live API and cross-references each model with the config file, showing `(limits configured)` next to models that already have rate limit data. Use this to discover new models that have been added since the config was last updated.
+
+### Recommended Workflow
+
+When switching to a new provider:
+
+```bash
+# 1. Set the API key
+/api keys set GROQ_API_KEY gsk_abc...
+
+# 2. Activate the provider
+/provider use groq
+
+# 3. Check what models + limits are available
+/limits models groq
+
+# 4. Apply the recommended rate limit settings
+/limits apply groq
+
+# 5. Go
+/ask explain the CAP theorem
+```
+
+---
+
+## Maintaining the Rate Limit Config
+
+The rate limit database lives at `models/free-tier-limits.json`. It is designed to be human-editable, version-controlled, and extensible. This section explains how to keep it current as providers change their offerings, and how to fill in data for providers that only have placeholder entries.
+
+### File Structure
+
+```json
+{
+  "google": {
+    "_api_models_endpoint": "https://generativelanguage.googleapis.com/v1beta/models",
+    "_doc": "Google AI Studio free tier. Limits as of 2026-03.",
+    "models": {
+      "gemma-3-27b-it": { "rpm": 30, "rpd": 14400, "tpm": 15000, "category": "other" },
+      "gemini-2.5-flash": { "rpm": 5,  "rpd": 20,    "tpm": 250000, "category": "text-out" }
+    },
+    "suggested": {
+      "_doc": "Defaults tuned for Gemma-class (30 RPM, 15K TPM, 14.4K RPD).",
+      "api-delay": 7,
+      "api-retries": 4,
+      "api-backoff": 5,
+      "api-max-backoff": 60,
+      "api-cooldown-max": 8,
+      "api-cooldown-window": 60
+    }
+  }
+}
+```
+
+Each provider is a top-level key matching the canonical name returned by `_provider_canon()` (lowercase: `google`, `groq`, `openai`, `anthropic`, `mistral`, `together`, `perplexity`, `cohere`, `deepseek`, `xai`).
+
+Within each provider:
+
+| Field | Purpose |
+|-------|---------|
+| `_api_models_endpoint` | (Optional) The URL used by `/limits fetch` to list models from the API |
+| `_doc` | Human-readable note — ignored by code |
+| `models` | Object mapping model names → rate limit objects |
+| `suggested` | Object mapping `/limits` parameter names → recommended values |
+
+Rate limit objects use these fields (all optional — omit or set to `null` if unknown):
+
+| Field | Meaning |
+|-------|---------|
+| `rpm` | Requests per minute |
+| `rpd` | Requests per day |
+| `tpm` | Tokens per minute |
+| `tpd` | Tokens per day |
+| `category` | (Google-specific) Limit category: `"text-out"`, `"other"` |
+| `ash` | (Groq audio models) Audio seconds per hour |
+| `asd` | (Groq audio models) Audio seconds per day |
+
+### Adding a New Model to an Existing Provider
+
+When a provider launches a new model:
+
+1. **Find the rate limits** — check the provider's documentation or pricing page
+2. **Add the entry** to the provider's `models` object:
+
+```json
+"new-model-name": { "rpm": 30, "rpd": 1000, "tpm": 12000, "tpd": 100000 }
+```
+
+3. **Validate the JSON**:
+```bash
+jq empty models/free-tier-limits.json && echo "Valid JSON"
+```
+
+4. **Verify it shows up**:
+```bash
+/limits models google   # should list the new model
+```
+
+### Filling Out a Placeholder Provider
+
+Providers like OpenAI, Anthropic, Mistral, etc. currently have empty `models` objects and generic `suggested` values. To populate one:
+
+1. **Check the provider's rate limit documentation** — most providers publish per-model or per-tier limits
+2. **Fetch the model list** to discover current model names:
+```bash
+/limits fetch openai
+```
+3. **Add entries** for each model you care about. You don't need to add every model — just the ones you'll actually use:
+
+```json
+"openai": {
+  "models": {
+    "gpt-4o-mini": { "rpm": 500, "rpd": 10000, "tpm": 200000 },
+    "gpt-4o":      { "rpm": 500, "rpd": 10000, "tpm": 30000 }
+  }
+}
+```
+
+4. **Tune the suggested settings** — calculate based on the RPM of your primary model:
+   - `api-delay`: `60 / RPM` rounded up (e.g., 500 RPM → `api-delay: 1`)
+   - `api-cooldown-max`: roughly `RPM × (api-cooldown-window / 60)` with headroom
+   - `api-retries`: 3-5 is usually good
+   - `api-backoff` / `api-max-backoff`: 5/60 for most providers; increase for providers with long cooldown periods
+
+### Updating When Provider Limits Change
+
+Providers periodically change their free-tier limits. To update:
+
+1. **Check the provider's latest rate limit page** (see the "Where to Get Keys" table above for dashboard URLs)
+2. **Update the model entries** — change `rpm`, `rpd`, `tpm`, `tpd` values as needed
+3. **Update the `_doc` field** with the new date so future maintainers know when it was last verified
+4. **Re-evaluate suggested settings** — if the ceiling went up, you might want a smaller `api-delay`; if it went down, increase it
+
+The `_doc` field convention is: `"Limits as of YYYY-MM."`
+
+### Adding the Code for a New Provider's Model Listing API
+
+If a new provider offers a model listing API (most OpenAI-compatible providers do), you can wire it into `/limits fetch`:
+
+1. **Add a `<provider>_models()` function** in `lib/providers.sh` following the existing pattern:
+
+```bash
+newprovider_models() {
+    local key
+    key=$(api_require_key "NEWPROVIDER_API_KEY" "NewProvider") || return 1
+    api_get "https://api.newprovider.com/v1/models" \
+        -H "Authorization: Bearer $key" | \
+        jq -r '.data[]? | .id' 2>/dev/null | sort
+}
+```
+
+2. **Add the route** in `provider_models()` (same file, in the case statement):
+
+```bash
+NEWPROVIDER) newprovider_models ;;
+```
+
+3. **Add `_api_models_endpoint`** to the provider's entry in `free-tier-limits.json` (used as documentation — the actual URL is in the function).
+
+4. **Test it**:
+```bash
+/limits fetch newprovider
+```
+
+Providers without an API model listing still work — `/limits models` and `/limits suggest` read directly from the JSON config file. The `fetch` subcommand just won't be available for that provider.
+
+### Testing Your Changes
+
+The test suite validates the config file structure and all provider functions:
+
+```bash
+# Run provider-specific tests (validates JSON structure, function existence, limit lookups)
+bash tests/test_providers.sh
+
+# Run /limits subcommand tests (validates models/suggest/apply/fetch case branches)
+bash tests/test_lodge.sh
+
+# Run the full suite
+bash tests/run_all.sh
+```
 
 ---
 
@@ -381,8 +655,9 @@ Agent/REPL receives response
 ```
 
 Files involved:
-- **`lib/providers.sh`** — All provider functions, harness control, dispatcher
+- **`lib/providers.sh`** — All provider functions, harness control, dispatcher, model listing, rate limit lookups
 - **`lib/llm.sh`** — Intercepts at `llm_generate`, `llm_stream`, `llm_chat`, `llm_ensure`, `llm_check`
 - **`lib/api.sh`** — HTTP client (`api_post`), key storage (`api_get_key`/`api_set_key`)
-- **`lodge`** — `/provider` command handler, startup bootstrap
+- **`models/free-tier-limits.json`** — Per-model rate limits and suggested settings for all 10 providers
+- **`lodge`** — `/provider` and `/limits` command handlers, startup bootstrap
 - **`.george/keys.conf`** — API keys and persisted `GEORGE_PROVIDER` setting

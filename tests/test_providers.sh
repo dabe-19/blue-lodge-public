@@ -878,4 +878,210 @@ describe "Cohere v2 API migration"
     _teardown_prov
   }
 
+# ── groq_models function ──────────────────────────────────────
+describe "groq_models"
+
+  it "groq_models is defined" && {
+    _setup_prov
+    declare -f groq_models &>/dev/null
+    assert_ok $?
+    _teardown_prov
+  }
+
+  it "groq_models calls Groq API endpoint" && {
+    _setup_prov
+    body=$(declare -f groq_models)
+    echo "$body" | grep -q 'api.groq.com/openai/v1/models'
+    assert_ok $? "must call Groq models API"
+    _teardown_prov
+  }
+
+# ── provider_models dispatcher ─────────────────────────────────
+describe "provider_models dispatcher"
+
+  it "provider_models is defined" && {
+    _setup_prov
+    declare -f provider_models &>/dev/null
+    assert_ok $?
+    _teardown_prov
+  }
+
+  it "provider_models routes google to google_models" && {
+    _setup_prov
+    body=$(declare -f provider_models)
+    echo "$body" | grep -q 'google_models'
+    assert_ok $? "must route GOOGLE to google_models"
+    _teardown_prov
+  }
+
+  it "provider_models routes groq to groq_models" && {
+    _setup_prov
+    body=$(declare -f provider_models)
+    echo "$body" | grep -q 'groq_models'
+    assert_ok $? "must route GROQ to groq_models"
+    _teardown_prov
+  }
+
+  it "provider_models falls back to config file for unknown providers" && {
+    _setup_prov
+    body=$(declare -f provider_models)
+    echo "$body" | grep -q 'free-tier-limits.json'
+    assert_ok $? "must fall back to config file"
+    _teardown_prov
+  }
+
+# ── provider_model_limits ─────────────────────────────────────
+describe "provider_model_limits"
+
+  it "provider_model_limits is defined" && {
+    _setup_prov
+    declare -f provider_model_limits &>/dev/null
+    assert_ok $?
+    _teardown_prov
+  }
+
+  it "returns limits for google gemma-3-27b-it" && {
+    _setup_prov
+    local result
+    result=$(provider_model_limits "google" "gemma-3-27b-it")
+    echo "$result" | grep -q '"rpm"'
+    assert_ok $? "must return rpm field"
+    _teardown_prov
+  }
+
+  it "returns rpm=30 for google gemma-3-27b-it" && {
+    _setup_prov
+    local rpm
+    rpm=$(provider_model_limits "google" "gemma-3-27b-it" | jq -r '.rpm')
+    assert_eq "$rpm" "30"
+    _teardown_prov
+  }
+
+  it "returns limits for groq llama-3.3-70b-versatile" && {
+    _setup_prov
+    local result
+    result=$(provider_model_limits "groq" "llama-3.3-70b-versatile")
+    echo "$result" | grep -q '"rpm"'
+    assert_ok $? "must return rpm field for groq model"
+    _teardown_prov
+  }
+
+  it "returns empty for unknown model" && {
+    _setup_prov
+    local result
+    result=$(provider_model_limits "google" "nonexistent-model-xyz")
+    assert_empty "$result"
+    _teardown_prov
+  }
+
+# ── provider_suggested_limits ─────────────────────────────────
+describe "provider_suggested_limits"
+
+  it "provider_suggested_limits is defined" && {
+    _setup_prov
+    declare -f provider_suggested_limits &>/dev/null
+    assert_ok $?
+    _teardown_prov
+  }
+
+  it "returns suggested limits for google" && {
+    _setup_prov
+    local result
+    result=$(provider_suggested_limits "google")
+    assert_not_empty "$result"
+    _teardown_prov
+  }
+
+  it "google suggested includes api-delay" && {
+    _setup_prov
+    local result
+    result=$(provider_suggested_limits "google")
+    echo "$result" | grep -q 'api-delay'
+    assert_ok $? "must include api-delay"
+    _teardown_prov
+  }
+
+  it "groq suggested includes api-cooldown-max" && {
+    _setup_prov
+    local result
+    result=$(provider_suggested_limits "groq")
+    echo "$result" | grep -q 'api-cooldown-max'
+    assert_ok $? "must include api-cooldown-max"
+    _teardown_prov
+  }
+
+# ── provider_apply_suggested_limits ────────────────────────────
+describe "provider_apply_suggested_limits"
+
+  it "provider_apply_suggested_limits is defined" && {
+    _setup_prov
+    declare -f provider_apply_suggested_limits &>/dev/null
+    assert_ok $?
+    _teardown_prov
+  }
+
+  it "applies google suggested limits to variables" && {
+    _setup_prov
+    PROVIDER_CALL_DELAY=99
+    PROVIDER_MAX_RETRIES=99
+    provider_apply_suggested_limits "google"
+    assert_eq "$PROVIDER_CALL_DELAY" "7" "api-delay should be set to 7"
+    assert_eq "$PROVIDER_MAX_RETRIES" "4" "api-retries should be set to 4"
+    _teardown_prov
+  }
+
+  it "applies groq suggested limits to variables" && {
+    _setup_prov
+    PROVIDER_CALL_DELAY=99
+    provider_apply_suggested_limits "groq"
+    assert_eq "$PROVIDER_CALL_DELAY" "5" "groq api-delay should be set to 5"
+    _teardown_prov
+  }
+
+# ── free-tier-limits.json config file ──────────────────────────
+describe "free-tier-limits.json"
+
+  it "config file exists" && {
+    assert_file_exists "$LODGE_DIR/models/free-tier-limits.json"
+  }
+
+  it "config file is valid JSON" && {
+    jq empty "$LODGE_DIR/models/free-tier-limits.json" 2>/dev/null
+    assert_ok $?
+  }
+
+  it "config has google provider" && {
+    jq -e '.google' "$LODGE_DIR/models/free-tier-limits.json" >/dev/null 2>&1
+    assert_ok $?
+  }
+
+  it "config has groq provider" && {
+    jq -e '.groq' "$LODGE_DIR/models/free-tier-limits.json" >/dev/null 2>&1
+    assert_ok $?
+  }
+
+  it "google has at least 10 models" && {
+    _setup_prov
+    local count
+    count=$(jq '.google.models | length' "$LODGE_DIR/models/free-tier-limits.json")
+    assert_gt "$count" 9
+    _teardown_prov
+  }
+
+  it "groq has at least 10 models" && {
+    _setup_prov
+    local count
+    count=$(jq '.groq.models | length' "$LODGE_DIR/models/free-tier-limits.json")
+    assert_gt "$count" 9
+    _teardown_prov
+  }
+
+  it "all 10 cloud provider keys exist" && {
+    _setup_prov
+    local count
+    count=$(jq '[keys[] | select(startswith("_") | not)] | length' "$LODGE_DIR/models/free-tier-limits.json")
+    assert_eq "$count" "10"
+    _teardown_prov
+  }
+
 test_end

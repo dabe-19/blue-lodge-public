@@ -93,6 +93,15 @@ cmd_write() {
         return 1
     fi
 
+    # ── Inline /read expansion ──────────────────────────────────
+    # LLM may embed /read <file> in the content to inline another
+    # file's contents (including PDFs via text extraction).
+    if [[ "$content" == */read\ * ]] || [[ "$content" == /read\ * ]]; then
+        if declare -f tools_expand_inline_read &>/dev/null; then
+            content=$(tools_expand_inline_read "$content")
+        fi
+    fi
+
     # ── Expand escape sequences ────────────────────────────────
     # The LLM sends multi-line content as a single line with \n
     # separators (as instructed by the syntax card). Expand them

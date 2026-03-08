@@ -2,6 +2,7 @@
 # ── Tests: commands/write.sh ───────────────────────────────────
 source "$(dirname "$0")/framework.sh"
 source "$LODGE_DIR/lib/ui.sh"
+source "$LODGE_DIR/lib/tools.sh"
 source "$LODGE_DIR/lib/commands.sh"
 
 test_start "commands/write.sh — Write Files"
@@ -174,6 +175,33 @@ describe "LLM escape expansion in /write"
     cmd_write '--edit cfg.txt s/old_value/new_value/' "$_tmpdir" 2>&1
     content=$(cat "$_tmpdir/cfg.txt")
     assert_contains "$content" "new_value"
+    rm -rf "$_tmpdir"
+  }
+
+# ── Inline /read expansion in /write content ───────────────
+describe "Inline /read expansion in /write"
+
+  it "cmd_write has inline read expansion" && {
+    fn_body=$(declare -f cmd_write)
+    assert_contains "$fn_body" "tools_expand_inline_read"
+  }
+
+  it "/write inlines file content from /read reference" && {
+    _tmpdir=$(test_tmpdir)
+    echo "Source file content" > "$_tmpdir/source.txt"
+    cmd_write "output.txt /read $_tmpdir/source.txt" "$_tmpdir" 2>&1
+    content=$(cat "$_tmpdir/output.txt")
+    assert_contains "$content" "Source file content"
+    rm -rf "$_tmpdir"
+  }
+
+  it "/write preserves prefix text before /read" && {
+    _tmpdir=$(test_tmpdir)
+    echo "inline data" > "$_tmpdir/data.txt"
+    cmd_write "output.txt Header text /read $_tmpdir/data.txt" "$_tmpdir" 2>&1
+    content=$(cat "$_tmpdir/output.txt")
+    assert_contains "$content" "Header text"
+    assert_contains "$content" "inline data"
     rm -rf "$_tmpdir"
   }
 

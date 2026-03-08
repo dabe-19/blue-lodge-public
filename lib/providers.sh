@@ -1019,6 +1019,15 @@ groq_chat() {
     _provider_check_response $? "$resp" '.choices[0].message.content' "Groq"
 }
 
+groq_models() {
+    local key
+    key=$(api_require_key "GROQ_API_KEY" "Groq") || return 1
+
+    api_get "https://api.groq.com/openai/v1/models" \
+        -H "Authorization: Bearer $key" | \
+        jq -r '.data[]? | .id' 2>/dev/null | sort
+}
+
 # ═══════════════════════════════════════════════════════════════
 # Mistral AI
 # ═══════════════════════════════════════════════════════════════
@@ -1264,6 +1273,99 @@ provider_chat() {
             ui_dim "Available: openai, anthropic, google, groq, mistral, together, perplexity, cohere, deepseek, xai"
             return 1 ;;
     esac
+}
+
+# ═══════════════════════════════════════════════════════════════
+# Provider Model Listing — Unified dispatcher for all providers
+# ═══════════════════════════════════════════════════════════════
+
+# List available models from a provider's API.
+# Usage: provider_models <provider>
+provider_models() {
+    local provider
+    provider=$(_provider_canon "$1")
+    if [ -z "$provider" ]; then
+        ui_err "Unknown provider: $1"
+        return 1
+    fi
+
+    case "$provider" in
+        OPENAI)     openai_models ;;
+        ANTHROPIC)  anthropic_models ;;
+        GOOGLE)     google_models ;;
+        GROQ)       groq_models ;;
+        # Providers without API model listing fall back to config file
+        *)
+            local _canon_lower
+            _canon_lower=$(echo "$provider" | tr '[:upper:]' '[:lower:]')
+            local _limits_file="${LODGE_DIR}/models/free-tier-limits.json"
+            if [ -f "$_limits_file" ]; then
+                jq -r --arg p "$_canon_lower" '.[$p].models // {} | keys[]' "$_limits_file" 2>/dev/null | sort
+            else
+                ui_dim "No model listing available for $provider (no API endpoint or config)"
+                return 1
+            fi ;;
+    esac
+}
+
+# ── Free-tier rate limit lookup ────────────────────────────────
+# Returns JSON object with rpm, rpd, tpm, tpd for a specific model.
+# Usage: provider_model_limits <provider> <model>
+provider_model_limits() {
+    local provider="$1" model="$2"
+    local _limits_file="${LODGE_DIR}/models/free-tier-limits.json"
+
+    [ -f "$_limits_file" ] || return 1
+
+    local _canon
+    _canon=$(_provider_canon "$provider")
+    local _canon_lower
+    _canon_lower=$(echo "${_canon:-$provider}" | tr '[:upper:]' '[:lower:]')
+
+    jq -r --arg p "$_canon_lower" --arg m "$model" \
+        '.[$p].models[$m] // empty' "$_limits_file" 2>/dev/null
+}
+
+# ── Suggested /limit settings for a provider ───────────────────
+# Returns the suggested rate-limit config from the free-tier file.
+# Usage: provider_suggested_limits <provider>
+provider_suggested_limits() {
+    local provider="$1"
+    local _limits_file="${LODGE_DIR}/models/free-tier-limits.json"
+
+    [ -f "$_limits_file" ] || return 1
+
+    local _canon
+    _canon=$(_provider_canon "$provider")
+    local _canon_lower
+    _canon_lower=$(echo "${_canon:-$provider}" | tr '[:upper:]' '[:lower:]')
+
+    jq -r --arg p "$_canon_lower" \
+        '.[$p].suggested // empty | to_entries[] | select(.key != "_doc") | "\(.key) \(.value)"' \
+        "$_limits_file" 2>/dev/null
+}
+
+# ── Apply suggested limits for a provider ──────────────────────
+# Reads the suggested config and sets the corresponding variables.
+# Usage: provider_apply_suggested_limits <provider>
+provider_apply_suggested_limits() {
+    local provider="$1"
+    local _line
+
+    while IFS= read -r _line; do
+        [ -z "$_line" ] && continue
+        local _key _val
+        _key=$(echo "$_line" | awk '{print $1}')
+        _val=$(echo "$_line" | awk '{print $2}')
+        case "$_key" in
+            api-delay)           PROVIDER_CALL_DELAY="$_val" ;;
+            api-retries)         PROVIDER_MAX_RETRIES="$_val" ;;
+            api-backoff)         PROVIDER_INITIAL_BACKOFF="$_val" ;;
+            api-max-backoff)     PROVIDER_MAX_BACKOFF="$_val" ;;
+            api-cooldown-max)    PROVIDER_COOLDOWN_MAX="$_val" ;;
+            api-cooldown-window) PROVIDER_COOLDOWN_WINDOW="$_val" ;;
+        esac
+    done < <(provider_suggested_limits "$provider")
 }
 
 # ═══════════════════════════════════════════════════════════════

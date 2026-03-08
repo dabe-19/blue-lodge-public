@@ -815,4 +815,80 @@ describe "tools_fix_llm_spacing — combined fixer"
     assert_empty "$result"
   }
 
+# ── tools_expand_inline_read ───────────────────────────────────
+describe "tools_expand_inline_read — text files"
+
+  it "expands /read <filepath> to file contents" && {
+    _setup_tools
+    echo "Hello from the report" > "$TMPDIR_TOOLS/report.txt"
+    result=$(tools_expand_inline_read "/read $TMPDIR_TOOLS/report.txt")
+    assert_contains "$result" "Hello from the report"
+    _teardown_tools
+  }
+
+  it "preserves text before /read" && {
+    _setup_tools
+    echo "file contents here" > "$TMPDIR_TOOLS/data.txt"
+    result=$(tools_expand_inline_read "Prefix text /read $TMPDIR_TOOLS/data.txt")
+    assert_contains "$result" "Prefix text"
+    assert_contains "$result" "file contents here"
+    _teardown_tools
+  }
+
+  it "preserves text after /read <filepath>" && {
+    _setup_tools
+    echo "inline" > "$TMPDIR_TOOLS/snip.txt"
+    result=$(tools_expand_inline_read "/read $TMPDIR_TOOLS/snip.txt suffix words")
+    assert_contains "$result" "inline"
+    assert_contains "$result" "suffix words"
+    _teardown_tools
+  }
+
+  it "returns original text when file not found" && {
+    result=$(tools_expand_inline_read "/read /nonexistent/path.txt")
+    assert_eq "$result" "/read /nonexistent/path.txt"
+  }
+
+  it "returns nothing (quick bail) when no /read present" && {
+    result=$(tools_expand_inline_read "just plain text")
+    assert_empty "$result"
+  }
+
+  it "handles /read without leading slash (bare read)" && {
+    _setup_tools
+    echo "bare content" > "$TMPDIR_TOOLS/bare.txt"
+    result=$(tools_expand_inline_read "read $TMPDIR_TOOLS/bare.txt")
+    assert_contains "$result" "bare content"
+    _teardown_tools
+  }
+
+describe "tools_expand_inline_read — PDF files"
+
+  it "detects PDF extension and calls extraction" && {
+    body=$(declare -f tools_expand_inline_read)
+    echo "$body" | grep -q '\.pdf'
+    assert_ok $? "must detect .pdf extension"
+  }
+
+  it "falls back to pdftotext when _web_extract_pdf unavailable" && {
+    body=$(declare -f tools_expand_inline_read)
+    echo "$body" | grep -q 'pdftotext'
+    assert_ok $? "must have pdftotext fallback"
+  }
+
+  it "falls back to strings when pdftotext unavailable" && {
+    body=$(declare -f tools_expand_inline_read)
+    echo "$body" | grep -q 'strings'
+    assert_ok $? "must have strings fallback"
+  }
+
+  it "returns original text when PDF extraction fails" && {
+    _setup_tools
+    # Create a fake empty PDF (not a real PDF, so extraction will fail)
+    echo "" > "$TMPDIR_TOOLS/empty.pdf"
+    result=$(tools_expand_inline_read "/read $TMPDIR_TOOLS/empty.pdf")
+    assert_contains "$result" "/read"
+    _teardown_tools
+  }
+
 test_end

@@ -760,3 +760,83 @@ tools_phone_toast() {
         termux-toast "$msg"
     fi
 }
+
+# ── Inline /read expansion ────────────────────────────────────
+# When used inside a /email body or /write content, the LLM may
+# embed "/read <filepath>" to inline file contents. This function
+# detects and replaces such references with the actual file content.
+#
+# For PDF files, uses _web_extract_pdf (pdftotext + strings fallback)
+# when available, otherwise falls back to strings(1) directly.
+#
+# Patterns matched:
+#   /read <filepath>         — reads the file
+#   /read <filepath> <extra> — reads the file, appends extra text
+#
+# Usage: expanded=$(tools_expand_inline_read "$text")
+tools_expand_inline_read() {
+    local text="$1"
+
+    # Quick bail — nothing to expand
+    [[ "$text" == */read\ * ]] || [[ "$text" == /read\ * ]] || [[ "$text" == read\ * ]] || return 0
+
+    # Extract the /read reference: /read <filepath>
+    # The filepath is the token immediately after /read
+    local _read_path=""
+    if [[ "$text" =~ ^/?read[[:space:]]+([^[:space:]]+) ]]; then
+        _read_path="${BASH_REMATCH[1]}"
+    elif [[ "$text" =~ /read[[:space:]]+([^[:space:]]+) ]]; then
+        _read_path="${BASH_REMATCH[1]}"
+    fi
+
+    if [ -z "$_read_path" ]; then
+        echo "$text"
+        return 0
+    fi
+
+    if [ ! -f "$_read_path" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inline /read: file not found: %s\n' "$_read_path" > /dev/tty 2>/dev/null
+        echo "$text"
+        return 0
+    fi
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inline /read: expanding %s\n' "$_read_path" > /dev/tty 2>/dev/null
+
+    local _file_content
+
+    # ── PDF handling ─────────────────────────────────────────
+    if [[ "${_read_path,,}" == *.pdf ]]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inline /read: PDF detected, extracting text\n' > /dev/tty 2>/dev/null
+        if declare -f _web_extract_pdf &>/dev/null; then
+            _file_content=$(_web_extract_pdf "$_read_path")
+        elif command -v pdftotext &>/dev/null; then
+            _file_content=$(pdftotext -layout -q "$_read_path" - 2>/dev/null | head -2000)
+        elif command -v strings &>/dev/null; then
+            _file_content=$(strings "$_read_path" 2>/dev/null | grep -E '[a-zA-Z]{3,}' | head -1000)
+        fi
+        if [ -z "$_file_content" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inline /read: PDF text extraction failed for %s\n' "$_read_path" > /dev/tty 2>/dev/null
+            echo "$text"
+            return 0
+        fi
+    else
+        _file_content=$(cat "$_read_path")
+    fi
+
+    # Replace the /read <filepath> token with the file content
+    # Preserve any text before or after the /read reference
+    local _before _after
+    _before="${text%%/read *}"
+    # Remove leading / if text starts with /read (no prefix)
+    [ -z "$_before" ] && [[ "$text" == /read* ]] && _before=""
+    _after="${text#*/read }"
+    # _after starts with "<filepath> <rest>" — remove the filepath token
+    _after="${_after#"$_read_path"}"
+    _after="${_after# }"  # trim leading space
+
+    # Assemble: prefix + file content + suffix
+    local _result="${_before}${_file_content}"
+    [ -n "$_after" ] && _result="${_result}
+${_after}"
+    echo "$_result"
+}

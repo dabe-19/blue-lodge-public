@@ -1172,4 +1172,93 @@ describe "/provider use command"
     assert_ok $? "help text must mention /provider delay"
   }
 
+# ── /limits subcommands ────────────────────────────────────────
+describe "/limits models subcommand"
+
+  it "_cmd_limits handles models action" && {
+    body=$(declare -f _cmd_limits)
+    echo "$body" | grep -q 'models)'
+    assert_ok $? "_cmd_limits must have models case branch"
+  }
+
+  it "_cmd_limits models uses free-tier-limits.json" && {
+    body=$(declare -f _cmd_limits)
+    echo "$body" | grep -q 'free-tier-limits.json'
+    assert_ok $? "models must reference config file"
+  }
+
+  it "_cmd_limits models reads rate limit data from config" && {
+    body=$(declare -f _cmd_limits)
+    echo "$body" | grep -q 'free-tier-limits.json'
+    assert_ok $? "models must read from config file"
+  }
+
+describe "/limits suggest subcommand"
+
+  it "_cmd_limits handles suggest action" && {
+    body=$(declare -f _cmd_limits)
+    echo "$body" | grep -q 'suggest)'
+    assert_ok $? "_cmd_limits must have suggest case branch"
+  }
+
+  it "_cmd_limits suggest calls provider_suggested_limits" && {
+    body=$(declare -f _cmd_limits)
+    echo "$body" | grep -q 'provider_suggested_limits'
+    assert_ok $? "suggest must call provider_suggested_limits"
+  }
+
+describe "/limits apply subcommand"
+
+  it "_cmd_limits handles apply action" && {
+    body=$(declare -f _cmd_limits)
+    echo "$body" | grep -q 'apply)'
+    assert_ok $? "_cmd_limits must have apply case branch"
+  }
+
+  it "_cmd_limits apply calls provider_apply_suggested_limits" && {
+    body=$(declare -f _cmd_limits)
+    echo "$body" | grep -q 'provider_apply_suggested_limits'
+    assert_ok $? "apply must call provider_apply_suggested_limits"
+  }
+
+describe "/limits fetch subcommand"
+
+  it "_cmd_limits handles fetch action" && {
+    body=$(declare -f _cmd_limits)
+    echo "$body" | grep -q 'fetch)'
+    assert_ok $? "_cmd_limits must have fetch case branch"
+  }
+
+  it "_cmd_limits fetch calls provider_models" && {
+    body=$(declare -f _cmd_limits)
+    echo "$body" | grep -q 'provider_models'
+    assert_ok $? "fetch must call provider_models"
+  }
+
+describe "/limits help text"
+
+  it "help mentions models subcommand" && {
+    body=$(declare -f _cmd_limits)
+    echo "$body" | grep -q 'models.*free-tier\|models.*rate limit'
+    assert_ok $? "help must mention /limits models"
+  }
+
+  it "help mentions suggest subcommand" && {
+    body=$(declare -f _cmd_limits)
+    echo "$body" | grep -q 'suggest.*recommended\|suggest.*settings'
+    assert_ok $? "help must mention /limits suggest"
+  }
+
+  it "help mentions apply subcommand" && {
+    body=$(declare -f _cmd_limits)
+    echo "$body" | grep -q 'apply.*suggested\|apply.*settings\|apply.*automatically'
+    assert_ok $? "help must mention /limits apply"
+  }
+
+  it "help mentions fetch subcommand" && {
+    body=$(declare -f _cmd_limits)
+    echo "$body" | grep -q 'fetch.*API\|fetch.*models'
+    assert_ok $? "help must mention /limits fetch"
+  }
+
 test_end

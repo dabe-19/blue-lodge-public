@@ -838,4 +838,28 @@ EMAIL_AUTH_METHOD="secret"'
     assert_contains "$fn_body" "text/plain; charset=UTF-8"
   }
 
+# ── Inline /read expansion in email body ───────────────────
+describe "Inline /read expansion in /email send"
+
+  it "_cmd_email send branch has inline read expansion" && {
+    grep -q 'tools_expand_inline_read' "$LODGE_DIR/lodge"
+    assert_ok $?
+  }
+
+  it "_cmd_email checks for /read pattern before expanding" && {
+    grep -q '/read' "$LODGE_DIR/lodge"
+    assert_ok $?
+  }
+
+  it "tools_expand_inline_read inlines a text file for email body" && {
+    source "$LODGE_DIR/lib/tools.sh"
+    _setup_email
+    _tmpdir=$(test_tmpdir)
+    echo "Report content for email" > "$_tmpdir/report.txt"
+    result=$(tools_expand_inline_read "/read $_tmpdir/report.txt")
+    assert_contains "$result" "Report content for email"
+    rm -rf "$_tmpdir"
+    _teardown_email
+  }
+
 test_end
