@@ -2495,7 +2495,7 @@ describe "Evaluator contradiction guard"
     assert_ok $?
   }
 
-  it "contradiction guard catches 'failed'" && {
+  it "contradiction guard catches 'failed' (hard context)" && {
     body=$(declare -f _agent_evaluate_milestone)
     echo "$body" | grep -q 'fail(ed'
     assert_ok $?
@@ -2519,6 +2519,29 @@ describe "Evaluator contradiction guard"
     assert_ok $?
     echo "$body" | grep -A1 'overrode contradictory' | grep -q 'return 1'
     assert_ok $?
+  }
+
+  it "contradiction guard has dismissal filter for soft-fail words" && {
+    body=$(declare -f _agent_evaluate_milestone)
+    # Soft negation branch: fail* triggers only when not dismissed
+    echo "$body" | grep -q '_contradiction=1'
+    assert_ok $? "must set _contradiction flag"
+    echo "$body" | grep -qiE 'irrelevant.*fail|fail.*irrelevant'
+    assert_ok $? "must check for 'irrelevant' near fail"
+    echo "$body" | grep -qiE 'but.*fail|fail.*but'
+    assert_ok $? "must check for 'but' near fail"
+  }
+
+  it "contradiction guard separates hard and soft negation tiers" && {
+    body=$(declare -f _agent_evaluate_milestone)
+    # Hard negation sets _contradiction without dismissal check
+    echo "$body" | grep -q '_contradiction=1'
+    assert_ok $? "must set _contradiction flag"
+    # Soft negation has an elif branch for fail* with a dismissal filter (if !)
+    echo "$body" | grep -qE 'fail\(ed\|ure\|s\)'
+    assert_ok $? "must have soft fail pattern"
+    echo "$body" | grep -q '_contradiction=0'
+    assert_ok $? "must initialize _contradiction to 0"
   }
 
 # ── Social context injection into strategist ──────────────────

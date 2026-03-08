@@ -128,6 +128,7 @@ api_request() {
         -s
         -X "$method"
         -H "User-Agent: $API_USER_AGENT"
+        --connect-timeout 10
         --max-time "$API_DEFAULT_TIMEOUT"
         -w "\n%{http_code}"
     )

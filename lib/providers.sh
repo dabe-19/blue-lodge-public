@@ -150,11 +150,6 @@ _provider_countdown() {
         i=$((i - 1))
     done
     printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
-
-    # Restart spinner if we paused it
-    if [ "$_had_spinner" -eq 1 ] && declare -f ui_spinner_start &>/dev/null; then
-        ui_spinner_start "${GEORGE_PROVIDER:-wait}" >/dev/null 2>/dev/null
-    fi
 }
 
 # ── Response validation helper ────────────────────────────────
@@ -278,6 +273,7 @@ _provider_call_with_backoff() {
         # Record the call
         _provider_meter_tick
 
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] provider/$provider: calling API..." >/dev/tty 2>/dev/null
         resp=$(provider_chat "$provider" "$message" "$model" "$system" 2>&1)
         rc=$?
 
@@ -340,6 +336,7 @@ _provider_stream_with_backoff() {
         _provider_meter_throttle
         _provider_meter_tick
 
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] provider/$provider: streaming API call..." >/dev/tty 2>/dev/null
         resp=$(provider_stream_chat "$provider" "$message" "$model" "$system")
         rc=$?
 

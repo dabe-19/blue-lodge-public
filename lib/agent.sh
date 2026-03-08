@@ -33,6 +33,7 @@ AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-5}"  # Max consecuti
 AGENT_EVAL_REC_CHARS="${AGENT_EVAL_REC_CHARS:-120}"              # Max chars after a slash command in evaluator recommendations
 AGENT_PRESSURE_RELIEF="${AGENT_PRESSURE_RELIEF:-2}"          # Consecutive milestone skips before pressure relief fires (0=disabled)
 AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-1}"              # Smart command routing: 0=disabled, 1=enabled
+AGENT_PRE_ROUTE="${AGENT_PRE_ROUTE:-1}"                  # Pre-route: extract /cmd from milestone, skip router: 0=disabled, 1=enabled
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
 
@@ -1520,10 +1521,31 @@ EVAL_P1_JSON
     # Small models sometimes emit "COMPLETE: the milestone was not
     # achieved..." where the verdict word contradicts the explanation.
     # If the reason text after the colon negates the verdict, override.
+    #
+    # Two tiers:
+    #   Hard negation — "not achieved", "unable", etc. — always override.
+    #   Soft negation — "fail(ed|ure)" — only override when NOT in
+    #     a dismissed context ("failed, but not required" / "failure
+    #     was irrelevant").  Without this, mentioning an incidental
+    #     sub-action failure causes a false override loop.
     if [[ "$first_line" == *":"* ]]; then
         local _complete_reason
         _complete_reason=$(echo "$first_line" | sed 's/^[^:]*:[[:space:]]*//')
-        if echo "$_complete_reason" | grep -qiE 'not (achieved|accomplished|completed|done|successful|satisfied)|fail(ed|ure)?|unable|could not|cannot|did not|wasn.t|weren.t|isn.t|does not exist|incomplete'; then
+
+        local _contradiction=0
+
+        # Hard negation — always indicates contradiction
+        if echo "$_complete_reason" | grep -qiE 'not (achieved|accomplished|completed|done|successful|satisfied)|unable|could not|cannot|did not|wasn.t|weren.t|isn.t|does not exist|incomplete'; then
+            _contradiction=1
+        # Soft negation — "fail*" may appear in incidental/dismissed context
+        elif echo "$_complete_reason" | grep -qiE '\bfail(ed|ure|s)?\b'; then
+            # Override only when the failure is NOT near a dismissal qualifier
+            if ! echo "$_complete_reason" | grep -qiE 'fail(ed|ure|s)?[^.;]*(,?\s*(but|however)\b|\birrelevant|\bnot (required|needed|necessary|part of))|\b(irrelevant|not (required|needed|necessary|part of))[^.;]*fail(ed|ure|s)?|\bno\s+fail(ure|ed|s)?|\bwithout\s+fail'; then
+                _contradiction=1
+            fi
+        fi
+
+        if [ "$_contradiction" -eq 1 ]; then
             _EVAL_MILESTONE_REASON="$_complete_reason"
             local _reason_display="${_EVAL_MILESTONE_REASON:+(${_EVAL_MILESTONE_REASON:0:80})}"
             ui_warn "Milestone evaluator: overrode contradictory COMPLETE ${_reason_display}"
@@ -2820,7 +2842,7 @@ agent_inner_loop() {
         # Regex anchors to space or start-of-string to avoid matching
         # URL path segments (e.g. https://example.com/api → "api").
         local _pre_route=""
-        if [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
+        if [ "${AGENT_PRE_ROUTE:-1}" -eq 1 ] && [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
             local _pre_cmd="${BASH_REMATCH[2]}"
             # Synonym remap: models love "/draft" — treat as /write
             [ "$_pre_cmd" = "draft" ] && _pre_cmd="write"
