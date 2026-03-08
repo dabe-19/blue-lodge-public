@@ -404,8 +404,12 @@ _provider_sse_loop() {
 
     local _in_think=0 _think_banner=0
     local _got_content=0
+    local _idle_timeout=45  # seconds — safety net if sentinel is missed
 
-    while IFS= read -r line || [ -n "$line" ]; do
+    while IFS= read -t "$_idle_timeout" -r line || [ -n "$line" ]; do
+        # Strip \r from CRLF line endings (common in HTTP SSE)
+        line="${line%$'\r'}"
+
         # SSE format: "data: {...}"
         [[ "$line" == data:* ]] || continue
         local json="${line#data: }"
@@ -477,8 +481,12 @@ _provider_anthropic_sse_loop() {
     local _in_think=0 _think_banner=0
     local _got_content=0
     local _event_type=""
+    local _idle_timeout=45
 
-    while IFS= read -r line || [ -n "$line" ]; do
+    while IFS= read -t "$_idle_timeout" -r line || [ -n "$line" ]; do
+        # Strip \r from CRLF line endings (common in HTTP SSE)
+        line="${line%$'\r'}"
+
         # Track SSE event type
         if [[ "$line" == event:* ]]; then
             _event_type="${line#event: }"
@@ -550,8 +558,12 @@ _provider_google_sse_loop() {
     local _tty="/dev/tty"
     [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
     local _got_content=0
+    local _idle_timeout=45
 
-    while IFS= read -r line || [ -n "$line" ]; do
+    while IFS= read -t "$_idle_timeout" -r line || [ -n "$line" ]; do
+        # Strip \r from CRLF line endings (common in HTTP SSE)
+        line="${line%$'\r'}"
+
         [[ "$line" == data:* ]] || continue
         local json="${line#data: }"
         json="${json#"${json%%[![:space:]]*}"}"
@@ -578,8 +590,12 @@ _provider_cohere_sse_loop() {
     local _tty="/dev/tty"
     [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
     local _got_content=0
+    local _idle_timeout=45
 
-    while IFS= read -r line || [ -n "$line" ]; do
+    while IFS= read -t "$_idle_timeout" -r line || [ -n "$line" ]; do
+        # Strip \r from CRLF line endings
+        line="${line%$'\r'}"
+
         # Cohere sends NDJSON (one JSON per line, no "data:" prefix)
         [ -z "$line" ] && continue
         local event_type

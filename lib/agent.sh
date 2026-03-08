@@ -4935,11 +4935,12 @@ agent_ask() {
 $question"
     fi
     
-    # Stream the response so user sees tokens arrive in real-time
+    # Generate the response (llm_generate streams to tty for local
+    # backends and uses the proven sync path for cloud providers)
     echo ""
     local response
     local LLM_SCENARIO=ask
-    response=$(llm_stream "$full_question" "$system_prompt" "$LLM_ASK_TOKENS" "$LLM_BUDGET_ASK")
+    response=$(llm_generate "$full_question" "$system_prompt" "$LLM_ASK_TOKENS" "$LLM_BUDGET_ASK")
     echo ""
     
     # Transcript: log the ask response
