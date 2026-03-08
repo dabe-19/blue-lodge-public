@@ -846,6 +846,38 @@ _cmd_limits() {
                     ui_err "Smart route must be 'on' or 'off' (or 1/0, enable/disable)"
                 fi
             fi ;;
+        ask)
+            if [ -z "$value" ]; then
+                local _ask_label="disabled"
+                [ "${AGENT_ASK_USER:-1}" -eq 1 ] && _ask_label="enabled"
+                ui_info "Ask user (/ask): $_ask_label (default: enabled)"
+            else
+                if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
+                    AGENT_ASK_USER=1
+                    ui_ok "/ask enabled — George can ask the human questions"
+                elif [[ "$value" == "off" || "$value" == "0" || "$value" == "disable" || "$value" == "disabled" ]]; then
+                    AGENT_ASK_USER=0
+                    ui_ok "/ask disabled — George will not prompt the human"
+                else
+                    ui_err "Ask must be 'on' or 'off' (or 1/0, enable/disable)"
+                fi
+            fi ;;
+        brainstorm)
+            if [ -z "$value" ]; then
+                local _bs_label="disabled"
+                [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _bs_label="enabled"
+                ui_info "Brainstorm (/brainstorm): $_bs_label (default: enabled)"
+            else
+                if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
+                    AGENT_BRAINSTORM=1
+                    ui_ok "/brainstorm enabled — George can self-reason"
+                elif [[ "$value" == "off" || "$value" == "0" || "$value" == "disable" || "$value" == "disabled" ]]; then
+                    AGENT_BRAINSTORM=0
+                    ui_ok "/brainstorm disabled — no self-reasoning loops"
+                else
+                    ui_err "Brainstorm must be 'on' or 'off' (or 1/0, enable/disable)"
+                fi
+            fi ;;
         ask-tokens)
             if [ -z "$value" ]; then
                 ui_info "Ask output tokens: $LLM_ASK_TOKENS (default: 20480)"
@@ -1222,6 +1254,12 @@ _cmd_limits() {
             local _sr_show="disabled"
             [ "${AGENT_SMART_ROUTE:-1}" -eq 1 ] && _sr_show="enabled"
             printf "  %-22s %s\n" "Smart route:" "$_sr_show  (default: enabled)"
+            local _ask_show="disabled"
+            [ "${AGENT_ASK_USER:-1}" -eq 1 ] && _ask_show="enabled"
+            printf "  %-22s %s\n" "Ask user (/ask):" "$_ask_show  (default: enabled)"
+            local _bs_show="disabled"
+            [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _bs_show="enabled"
+            printf "  %-22s %s\n" "Brainstorm:" "$_bs_show  (default: enabled)"
             echo ""
             ui_section "Output Tokens (num_predict)"
             printf "  %-22s %s\n" "Max tokens:" "$LLM_MAX_TOKENS  (default: 20480)"
@@ -1278,6 +1316,8 @@ _cmd_limits() {
             ui_dim "    web-search-ops N  — Max AND/OR operators in loose web search mode (current: ${AGENT_WEB_SEARCH_MAX_OPERATORS:-3})"
             ui_dim "    rec-chars N      — Max chars in evaluator recommendation to strategist (current: ${AGENT_EVAL_REC_CHARS:-120})"
             ui_dim "    smart-route on|off — Smart command routing heuristic (current: $([ "${AGENT_SMART_ROUTE:-1}" -eq 1 ] && echo on || echo off))"
+            ui_dim "    ask on|off       — Allow George to /ask human questions (current: $([ "${AGENT_ASK_USER:-1}" -eq 1 ] && echo on || echo off))"
+            ui_dim "    brainstorm on|off — Allow George to /brainstorm (self-reason) (current: $([ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && echo on || echo off))"
             echo ""
             ui_dim "  Output tokens (num_predict):"
             ui_dim "    max-tokens N    — Global max output cap (current: $LLM_MAX_TOKENS)"
