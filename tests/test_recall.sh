@@ -847,4 +847,173 @@ describe "RECALL_INDEX.md recall quality"
     fi
   }
 
+# ── User Preference Recall ────────────────────────────────────
+describe "recall_log_user_input"
+
+  it "is defined" && {
+    declare -f recall_log_user_input &>/dev/null
+    assert_ok $?
+  }
+
+  it "inserts a user_pref entry into the database" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    recall_init
+    recall_log_user_input "Preferred language?" "Rust"
+    count=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='user_pref';")
+    assert_eq "$count" "1"
+    _teardown_recall
+    fi
+  }
+
+  it "stores question as section and answer as content" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    recall_init
+    recall_log_user_input "Favorite color?" "Blue"
+    section=$(sqlite3 "$RECALL_DB" "SELECT section FROM chunks WHERE source='user_pref';")
+    content=$(sqlite3 "$RECALL_DB" "SELECT content FROM chunks WHERE source='user_pref';")
+    assert_eq "$section" "Favorite color?"
+    assert_eq "$content" "Blue"
+    _teardown_recall
+    fi
+  }
+
+  it "FIFO evicts oldest when exceeding RECALL_USER_PREF_MAX" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    recall_init
+    RECALL_USER_PREF_MAX=3
+    recall_log_user_input "Q1?" "A1"
+    recall_log_user_input "Q2?" "A2"
+    recall_log_user_input "Q3?" "A3"
+    recall_log_user_input "Q4?" "A4"
+    count=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='user_pref';")
+    assert_eq "$count" "3"
+    # Oldest (Q1) should be gone
+    q1=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='user_pref' AND section='Q1?';")
+    assert_eq "$q1" "0"
+    RECALL_USER_PREF_MAX=20
+    _teardown_recall
+    fi
+  }
+
+  it "returns 1 on empty input" && {
+    recall_log_user_input "" "answer" 2>/dev/null
+    assert_eq $? 1
+  }
+
+  it "user_pref entries are searchable via recall_search" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    recall_init
+    recall_log_user_input "Dietary restrictions?" "Vegetarian, no shellfish"
+    result=$(recall_search "dietary vegetarian" 5)
+    assert_contains "$result" "Vegetarian"
+    _teardown_recall
+    fi
+  }
+
+describe "recall_prune_user_prefs"
+
+  it "is defined" && {
+    declare -f recall_prune_user_prefs &>/dev/null
+    assert_ok $?
+  }
+
+  it "removes entries before a given date" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    recall_init
+    # Insert with old and new timestamps
+    sqlite3 "$RECALL_DB" \
+      "INSERT INTO chunks (source, section, content, filepath, indexed_at)
+       VALUES ('user_pref', 'OldQ?', 'OldA', 'agent:/ask', '2025-01-15T10:00:00');"
+    sqlite3 "$RECALL_DB" \
+      "INSERT INTO chunks (source, section, content, filepath, indexed_at)
+       VALUES ('user_pref', 'NewQ?', 'NewA', 'agent:/ask', '2026-03-08T10:00:00');"
+    recall_prune_user_prefs "2026-01-01" >/dev/null 2>&1
+    count=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='user_pref';")
+    assert_eq "$count" "1"
+    remaining=$(sqlite3 "$RECALL_DB" "SELECT section FROM chunks WHERE source='user_pref';")
+    assert_eq "$remaining" "NewQ?"
+    _teardown_recall
+    fi
+  }
+
+  it "validates date format" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    recall_init
+    recall_prune_user_prefs "not-a-date" >/dev/null 2>&1
+    assert_eq $? 1
+    _teardown_recall
+    fi
+  }
+
+describe "recall_compact_user_prefs"
+
+  it "is defined" && {
+    declare -f recall_compact_user_prefs &>/dev/null
+    assert_ok $?
+  }
+
+  it "skips when 0 or 1 entries" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    recall_init
+    recall_log_user_input "Solo?" "Yes"
+    result=$(recall_compact_user_prefs 2>&1)
+    assert_contains "$result" "nothing to compact"
+    _teardown_recall
+    fi
+  }
+
+describe "recall_clear_user_prefs"
+
+  it "removes all user_pref entries" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    recall_init
+    recall_log_user_input "Q1?" "A1"
+    recall_log_user_input "Q2?" "A2"
+    recall_clear_user_prefs >/dev/null 2>&1
+    count=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='user_pref';")
+    assert_eq "$count" "0"
+    _teardown_recall
+    fi
+  }
+
+describe "recall_user_pref_count"
+
+  it "returns 0 when no prefs exist" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    recall_init
+    count=$(recall_user_pref_count)
+    assert_eq "$count" "0"
+    _teardown_recall
+    fi
+  }
+
+  it "returns correct count after inserts" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    recall_init
+    recall_log_user_input "Q1?" "A1"
+    recall_log_user_input "Q2?" "A2"
+    count=$(recall_user_pref_count)
+    assert_eq "$count" "2"
+    _teardown_recall
+    fi
+  }
+
+describe "recall_search_pretty user_pref label"
+
+  it "shows User Pref label for user_pref source" && {
+    body=$(declare -f recall_search_pretty)
+    echo "$body" | grep -q 'user_pref'
+    assert_ok $? "recall_search_pretty must handle user_pref source"
+  }
+
 test_end

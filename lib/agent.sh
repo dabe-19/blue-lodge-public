@@ -4400,6 +4400,17 @@ MEMEOF
             _ask_rule='"\/ask":"asks the HUMAN operator a question — use when you need specific preferences, dietary needs, allergies, names, or details ONLY the user knows. The user types an answer.",'
         fi
 
+        # Hint about user preferences on file (nudges /recall usage)
+        local _pref_hint=""
+        if declare -f recall_user_pref_count &>/dev/null; then
+            local _pref_n
+            _pref_n=$(recall_user_pref_count 2>/dev/null)
+            if [ "${_pref_n:-0}" -gt 0 ]; then
+                _pref_hint="
+USER PREFERENCES ON FILE: ${_pref_n} stored. Use /recall before assuming user preferences."
+            fi
+        fi
+
         local macro_sys="Strategic planning engine. Output the SINGLE next milestone. No markdown formatting (no ** or * markers). Plain text only.
 
 ${_tool_summary}
@@ -4423,7 +4434,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
    \"max_consecutive\":2,\"then\":\"MUST use delivery command (\/respond,\/write,\/email,\/save,\/social,\/build)\"},
  \"failure\":{\"no_repeat\":true,\"advance_next_part\":true},
  \"honeydew\":{\"pick\":\"FIRST [ ] item by number — do NOT skip items\"},
- \"multi_delivery\":\"Different honeydew items may each need their own DELIVERY command (e.g. item 2=\/write report, item 3=\/email report). This is normal — chain them across milestones.\"}}${_research_gate}${_milestone_history}${_last_eval_feedback:+
+ \"multi_delivery\":\"Different honeydew items may each need their own DELIVERY command (e.g. item 2=\/write report, item 3=\/email report). This is normal — chain them across milestones.\"}}${_research_gate}${_pref_hint}${_milestone_history}${_last_eval_feedback:+
 
 >>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<
 ${_last_eval_feedback}
@@ -4893,6 +4904,29 @@ ${_last_eval_feedback}
     # After Ctrl+C, Ollama may still be cleaning up killed requests; issuing
     # a model unload+load at that moment races with the cleanup and can crash
     # Termux. The cancelled task will be visible in macro_memory.json anyway.
+
+    # ── Flush /ask user inputs to recall ──────────────────────
+    # Scan macro_memory for USER_INPUT milestones (from /ask) and
+    # log each Q&A pair to the recall FTS5 index under "user_pref".
+    # Runs for all tasks (including cancelled) — the user still provided
+    # the answer even if the task didn't finish.
+    if [ -f "$macro_file" ] && declare -f recall_log_user_input &>/dev/null; then
+        local _pref_pairs
+        _pref_pairs=$(jq -r '.completed_milestones[]? | select(.action_class == "USER_INPUT") | .summary' "$macro_file" 2>/dev/null)
+        if [ -n "$_pref_pairs" ]; then
+            while IFS= read -r _pref_line; do
+                # Format: "User answered: Q: <question> A: <answer>"
+                local _pq="${_pref_line#User answered: Q: }"
+                local _pa="${_pq#* A: }"
+                _pq="${_pq%% A: *}"
+                [ -n "$_pq" ] && [ -n "$_pa" ] && recall_log_user_input "$_pq" "$_pa"
+            done <<< "$_pref_pairs"
+            local _pref_count
+            _pref_count=$(echo "$_pref_pairs" | wc -l)
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Flushed $_pref_count user pref(s) to recall"
+        fi
+    fi
+
     if [ "$_was_cancelled" -eq 0 ]; then
         # ── Update GEORGE.md with task completion ─────────────
         # Mark the task as done (or cancelled) so the next task or

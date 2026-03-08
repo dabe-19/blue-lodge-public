@@ -169,6 +169,27 @@ describe "Agent ask user toggle"
     assert_ok $? "Router must check AGENT_ASK_USER toggle"
   }
 
+# ── User preference recall integration ────────────────────────
+describe "User preference recall integration"
+
+  it "agent_run flushes USER_INPUT milestones to recall" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'recall_log_user_input'
+    assert_ok $? "agent_run must call recall_log_user_input for user inputs"
+  }
+
+  it "strategist injects pref hint when user_pref entries exist" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'recall_user_pref_count\|_pref_hint\|USER PREFERENCES ON FILE'
+    assert_ok $? "strategist must include user preference hint"
+  }
+
+  it "task-success flush parses Q and A from macro_memory summary" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'User answered'
+    assert_ok $? "flush must parse USER_INPUT summaries from macro_memory"
+  }
+
 # ── Interactive planning flag ─────────────────────────────────
 describe "Interactive planning flag"
 

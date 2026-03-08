@@ -29,6 +29,9 @@ All commands at a glance. For detailed usage, run `/help` inside George or see t
 | `/journal` | `[show\|vivid\|fading\|sediment\|write\|decay]` | View/write journal |
 | `/reflect` | — | Record a reflection in journal |
 | `/recall` | `<query>` | FTS5 search knowledge base |
+| `/recall prefs` | — | List stored user preferences |
+| `/recall prune` | `<date\|days>` | Prune old user preferences |
+| `/recall compact` | — | LLM-summarize user preferences |
 | `/ingest` | `<file> [label]` | Upload docs to knowledge base |
 | `/compact` | — | Compress memory |
 | `/snapshot` | — | Checkpoint memory |

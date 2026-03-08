@@ -15,10 +15,11 @@ Python, zero RAM overhead, sub-millisecond queries.
 4. [Commands Reference](#commands-reference)
 5. [Search Syntax](#search-syntax)
 6. [How George Uses Recall](#how-george-uses-recall)
-7. [Ingesting Your Own Documents](#ingesting-your-own-documents)
-8. [Architecture](#architecture)
-9. [Reindexing & Maintenance](#reindexing--maintenance)
-10. [Troubleshooting](#troubleshooting)
+7. [User Preferences](#user-preferences)
+8. [Ingesting Your Own Documents](#ingesting-your-own-documents)
+9. [Architecture](#architecture)
+10. [Reindexing & Maintenance](#reindexing--maintenance)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -101,6 +102,7 @@ George automatically indexes these sources on startup:
 | `ref` | `docs/RECALL_INDEX.md` | FTS5-optimized master reference (~75 keyword-rich sections distilled from all docs) |
 | `journal` | `journal.md` | George's living memory (with decay) |
 | `george` | `./GEORGE.md` | Current project memory |
+| `user_pref` | *(virtual)* | User answers from `/ask` (agent-collected preferences) |
 | `doc:<label>` | User-ingested files | Added via `/ingest` (e.g., `doc:research-paper`) |
 
 > **Design note:** Raw human-readable docs (README.md, soul.md, docs/*.md) are **not** indexed directly. Their actionable content is distilled into `RECALL_INDEX.md` — a single file with ~75 dense, keyword-rich sections optimized for FTS5 retrieval. This keeps the index small (~20-40 chunks from built-in sources) while covering all of George's documentation.
@@ -121,6 +123,10 @@ automatically reindexes. You generally don't need to manually reindex.
 | `/recall stats` | Show chunk counts per source and DB size |
 | `/recall reindex` | Force clear + reindex all sources |
 | `/recall clear` | Delete the entire index |
+| `/recall prefs` | List all stored user preferences |
+| `/recall prune <date\|days>` | Remove user preferences before a date (`2026-03-01`) or older than N days (`30`) |
+| `/recall compact` | LLM-summarize user preferences into a condensed profile |
+| `/recall clearprefs` | Delete all user preferences |
 | `/ingest <file> [label]` | Add a document to the knowledge base |
 | `/ingest list` | Show all ingested documents |
 | `/ingest rm <label>` | Remove an ingested document |
@@ -227,6 +233,65 @@ You: /ask what's my vault encryption?
 
 Planning does **not** use recall — it only needs identity + project state +
 file listing + lean command catalog. This keeps the plan prompt under ~700 tokens.
+
+---
+
+## User Preferences
+
+When George uses `/ask` to collect information from the user during a task,
+those Q&A pairs are automatically flushed to the recall index at task
+completion under the `user_pref` source. This means future tasks can
+`/recall` the user's stated preferences instead of asking again.
+
+### How It Works
+
+1. **During a task**: George asks `/ask What is your preferred language?`
+2. **User answers**: "Rust"
+3. **At task end**: The Q&A is logged to recall as `user_pref`
+4. **Future tasks**: `/recall preferred language` finds the answer
+5. **Strategist nudge**: When prefs exist, the strategist sees
+   "USER PREFERENCES ON FILE — Use /recall before assuming"
+
+### FIFO Eviction
+
+Entries are capped at `RECALL_USER_PREF_MAX` (default: 20). When the
+cap is reached, the oldest entries are automatically evicted.
+
+### Maintenance
+
+```bash
+# View all stored preferences
+george> /recall prefs
+
+# Prune entries before a date
+george> /recall prune 2026-03-01
+
+# Prune entries older than 30 days
+george> /recall prune 30
+
+# LLM-summarize all preferences into a condensed profile
+george> /recall compact
+
+# Clear all preferences
+george> /recall clearprefs
+```
+
+### Compaction
+
+`/recall compact` feeds all stored Q&A pairs to the LLM and asks it to
+consolidate them into a brief preference profile. Contradictions are
+resolved by keeping the most recent preference (entries are timestamped).
+The originals are then replaced with a single summary entry.
+
+Example: if George collected "Prefers Python" (January) and "Actually
+switched to Rust" (March), compact produces: `Prefers Rust (previously Python)`.
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RECALL_USER_PREF_MAX` | `20` | Max user_pref entries before FIFO eviction |
+| `AGENT_ASK_USER` | `1` | Enable/disable `/ask` (and therefore preference collection) |
 
 ---
 

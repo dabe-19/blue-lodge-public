@@ -1266,4 +1266,37 @@ describe "/limits help text"
     assert_ok $? "help must mention /limits fetch"
   }
 
+# ── /recall subcommands ───────────────────────────────────────
+describe "/recall REPL subcommands"
+
+  it "_cmd_recall handles prefs subcommand" && {
+    body=$(declare -f _cmd_recall)
+    echo "$body" | grep -q 'prefs'
+    assert_ok $? "_cmd_recall must handle prefs subcommand"
+  }
+
+  it "_cmd_recall handles prune subcommand" && {
+    body=$(declare -f _cmd_recall)
+    echo "$body" | grep -q 'prune'
+    assert_ok $? "_cmd_recall must handle prune subcommand"
+  }
+
+  it "_cmd_recall handles compact subcommand" && {
+    body=$(declare -f _cmd_recall)
+    echo "$body" | grep -q 'compact'
+    assert_ok $? "_cmd_recall must handle compact subcommand"
+  }
+
+  it "_cmd_recall handles clearprefs subcommand" && {
+    body=$(declare -f _cmd_recall)
+    echo "$body" | grep -q 'clearprefs'
+    assert_ok $? "_cmd_recall must handle clearprefs subcommand"
+  }
+
+  it "_cmd_recall help mentions prune usage" && {
+    body=$(declare -f _cmd_recall)
+    echo "$body" | grep -q 'recall prune'
+    assert_ok $? "help must show /recall prune usage"
+  }
+
 test_end

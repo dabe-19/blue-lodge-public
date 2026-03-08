@@ -410,6 +410,7 @@ SQL
             ref)        label="Reference" ;;
             journal)    label="Journal" ;;
             george)     label="Project" ;;
+            user_pref)  label="User Pref" ;;
             doc:*)      label="${source#doc:}" ;;
             *)          label="$source" ;;
         esac
@@ -866,4 +867,210 @@ $text" "You are a concise summarizer. Output only bullet points." 256 "$LLM_BUDG
     fi
 
     return 0
+}
+
+# ═══════════════════════════════════════════════════════════════
+# User Preference Recall — Agent-collected user answers via /ask
+# ═══════════════════════════════════════════════════════════════
+# Source tag: "user_pref"
+# Section:   the question the agent asked
+# Content:   the user's answer
+# Filepath:  "agent:/ask" (virtual — no physical file)
+#
+# Capped at RECALL_USER_PREF_MAX entries (default 20, FIFO eviction).
+# Supports: prune by date, compact via LLM summarization.
+
+RECALL_USER_PREF_MAX="${RECALL_USER_PREF_MAX:-20}"
+
+# ── Log a single Q&A pair from /ask ──────────────────────────
+# Usage: recall_log_user_input "What is your preferred language?" "Rust"
+recall_log_user_input() {
+    local question="$1"
+    local answer="$2"
+
+    [ -z "$question" ] || [ -z "$answer" ] && return 1
+    recall_init || return 1
+
+    local now
+    now=$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S')
+
+    # Escape single quotes for SQL
+    local q_safe="${question//\'/\'\'}"
+    local a_safe="${answer//\'/\'\'}"
+
+    sqlite3 "$RECALL_DB" \
+        "INSERT INTO chunks (source, section, content, filepath, indexed_at)
+         VALUES ('user_pref', '$q_safe', '$a_safe', 'agent:/ask', '$now');"
+
+    # FIFO eviction: keep only the newest N entries
+    local count
+    count=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='user_pref';" 2>/dev/null || echo "0")
+    if [ "$count" -gt "$RECALL_USER_PREF_MAX" ]; then
+        local excess=$(( count - RECALL_USER_PREF_MAX ))
+        sqlite3 "$RECALL_DB" \
+            "DELETE FROM chunks WHERE id IN (
+                SELECT id FROM chunks WHERE source='user_pref'
+                ORDER BY indexed_at ASC LIMIT $excess
+            );"
+    fi
+
+    return 0
+}
+
+# ── List all user preference entries ──────────────────────────
+recall_list_user_prefs() {
+    if [ ! -f "$RECALL_DB" ]; then
+        ui_dim "  No user preferences stored yet."
+        return
+    fi
+
+    local prefs
+    prefs=$(sqlite3 -separator '|' "$RECALL_DB" \
+        "SELECT section, content, indexed_at FROM chunks WHERE source='user_pref' ORDER BY indexed_at DESC;")
+
+    if [ -z "$prefs" ]; then
+        ui_dim "  No user preferences stored yet."
+        return
+    fi
+
+    local count=0
+    while IFS='|' read -r question answer ts; do
+        [ -z "$question" ] && continue
+        (( count++ ))
+        printf "  %b%s%b\n" "$C_CYAN" "$ts" "$C_RESET"
+        printf "    Q: %s\n" "$question"
+        printf "    A: %s\n\n" "$answer"
+    done <<< "$prefs"
+
+    printf "  %b%d user preference(s) stored%b\n" "$C_DIM" "$count" "$C_RESET"
+}
+
+# ── Prune user preferences before a given date ───────────────
+# Usage: recall_prune_user_prefs "2026-03-01"
+#    or: recall_prune_user_prefs 30   (days)
+recall_prune_user_prefs() {
+    local cutoff="$1"
+
+    if [ -z "$cutoff" ]; then
+        ui_err "Usage: recall_prune_user_prefs <YYYY-MM-DD | days>"
+        return 1
+    fi
+
+    [ ! -f "$RECALL_DB" ] && { ui_dim "No recall database."; return 0; }
+
+    # If numeric, treat as days-ago
+    if [[ "$cutoff" =~ ^[0-9]+$ ]]; then
+        cutoff=$(date -d "-${cutoff} days" '+%Y-%m-%d' 2>/dev/null \
+              || date -v-${cutoff}d '+%Y-%m-%d' 2>/dev/null)
+        if [ -z "$cutoff" ]; then
+            ui_err "Could not compute date offset"
+            return 1
+        fi
+    fi
+
+    # Validate date format (loose check)
+    if ! [[ "$cutoff" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        ui_err "Invalid date format. Use YYYY-MM-DD or a number of days."
+        return 1
+    fi
+
+    local before_count
+    before_count=$(sqlite3 "$RECALL_DB" \
+        "SELECT COUNT(*) FROM chunks WHERE source='user_pref' AND indexed_at < '${cutoff}T00:00:00';" 2>/dev/null || echo "0")
+
+    if [ "$before_count" -eq 0 ]; then
+        ui_dim "  No user preferences before $cutoff"
+        return 0
+    fi
+
+    sqlite3 "$RECALL_DB" \
+        "DELETE FROM chunks WHERE source='user_pref' AND indexed_at < '${cutoff}T00:00:00';"
+
+    ui_ok "Pruned $before_count user preference(s) before $cutoff"
+    return 0
+}
+
+# ── Compact user preferences via LLM summarization ───────────
+# Reads all user_pref entries, asks the LLM to consolidate into a
+# concise preference profile, deletes originals, inserts summary.
+# If contradictions exist, keeps the most recent preference.
+recall_compact_user_prefs() {
+    [ ! -f "$RECALL_DB" ] && { ui_dim "No recall database."; return 0; }
+
+    local count
+    count=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='user_pref';" 2>/dev/null || echo "0")
+
+    if [ "$count" -le 1 ]; then
+        ui_dim "  Only $count preference(s) — nothing to compact."
+        return 0
+    fi
+
+    # Gather all Q&A pairs with timestamps
+    local entries
+    entries=$(sqlite3 -separator '|' "$RECALL_DB" \
+        "SELECT indexed_at, section, content FROM chunks WHERE source='user_pref' ORDER BY indexed_at ASC;")
+
+    # Build input for LLM
+    local qa_text=""
+    while IFS='|' read -r ts question answer; do
+        [ -z "$question" ] && continue
+        qa_text="${qa_text}[${ts}] Q: ${question}
+A: ${answer}
+"
+    done <<< "$entries"
+
+    if ! declare -f llm_generate &>/dev/null; then
+        ui_warn "LLM not available — cannot compact. Use /recall prune <date> instead."
+        return 1
+    fi
+
+    local summary
+    ui_spinner_start "Compacting preferences"
+    local LLM_SCENARIO=tool
+    summary=$(llm_generate "Below are user preference Q&A entries collected over time (oldest first).
+Consolidate them into a brief preference profile. Rules:
+- If contradictory preferences exist, KEEP THE MOST RECENT one and note the change.
+- Group related preferences (e.g., language, food, tools).
+- Use \"Prefers X\" format, one per line.
+- Keep it under 15 lines. No preamble.
+
+$qa_text" \
+        "You are a preference consolidator. Output only the consolidated profile." \
+        512 "$LLM_BUDGET_TOOL" 2>/dev/null)
+    ui_spinner_stop
+
+    if [ -z "$summary" ] || [[ "$summary" == ERROR* ]]; then
+        ui_err "LLM summarization failed — preferences unchanged."
+        return 1
+    fi
+
+    # Replace all user_pref entries with the compacted summary
+    sqlite3 "$RECALL_DB" "DELETE FROM chunks WHERE source='user_pref';"
+
+    local now
+    now=$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S')
+    local s_safe="${summary//\'/\'\'}"
+
+    sqlite3 "$RECALL_DB" \
+        "INSERT INTO chunks (source, section, content, filepath, indexed_at)
+         VALUES ('user_pref', 'User Preference Profile (compacted)', '$s_safe', 'agent:/ask', '$now');"
+
+    ui_ok "Compacted $count preferences into 1 summary entry"
+    printf "\n%s\n" "$summary"
+    return 0
+}
+
+# ── Clear all user preferences ────────────────────────────────
+recall_clear_user_prefs() {
+    [ ! -f "$RECALL_DB" ] && return 0
+    local count
+    count=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='user_pref';" 2>/dev/null || echo "0")
+    sqlite3 "$RECALL_DB" "DELETE FROM chunks WHERE source='user_pref';"
+    ui_ok "Cleared $count user preference(s)"
+}
+
+# ── Count user preference entries ─────────────────────────────
+recall_user_pref_count() {
+    [ ! -f "$RECALL_DB" ] && { echo "0"; return; }
+    sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='user_pref';" 2>/dev/null || echo "0"
 }

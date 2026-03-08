@@ -3883,14 +3883,19 @@ _cmd_recall() {
         ui_dim "  /recall stats       — Show index statistics"
         ui_dim "  /recall reindex     — Force reindex all sources"
         ui_dim "  /recall clear       — Clear the index"
+        ui_dim "  /recall prefs       — List user preferences"
+        ui_dim "  /recall prune <date|days> — Prune preferences before date"
+        ui_dim "  /recall compact     — LLM-summarize user preferences"
+        ui_dim "  /recall clearprefs  — Clear all user preferences"
         echo ""
         recall_stats
         return
     fi
 
     # Extract first word for subcommand check
-    local first_word
+    local first_word rest_args
     first_word=$(echo "$args" | awk '{print $1}')
+    rest_args=$(echo "$args" | awk '{$1=""; print}' | sed 's/^ //')
 
     case "$first_word" in
         stats)
@@ -3907,6 +3912,26 @@ _cmd_recall() {
         clear)
             recall_clear
             ui_ok "Recall index cleared"
+            ;;
+        prefs)
+            ui_section "User Preferences"
+            recall_list_user_prefs
+            ;;
+        prune)
+            if [ -z "$rest_args" ]; then
+                ui_err "Usage: /recall prune <YYYY-MM-DD | days>"
+                ui_dim "  /recall prune 2026-03-01   — prune before March 1"
+                ui_dim "  /recall prune 30           — prune older than 30 days"
+                return 1
+            fi
+            recall_prune_user_prefs "$rest_args"
+            ;;
+        compact)
+            ui_section "Compacting User Preferences"
+            recall_compact_user_prefs
+            ;;
+        clearprefs)
+            recall_clear_user_prefs
             ;;
         *)
             # It's a search query — use the FULL args
