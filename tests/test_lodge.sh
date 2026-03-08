@@ -444,13 +444,13 @@ describe "Limits command"
   it "_cmd_limits web-sufficiency sets AGENT_WEB_SUFFICIENCY" && {
     _cmd_limits "web-sufficiency 5" >/dev/null 2>&1
     assert_eq "$AGENT_WEB_SUFFICIENCY" "5"
-    AGENT_WEB_SUFFICIENCY=3  # restore
+    AGENT_WEB_SUFFICIENCY=20  # restore
   }
 
   it "_cmd_limits milestone-retries sets AGENT_MAX_MILESTONE_RETRIES" && {
     _cmd_limits "milestone-retries 4" >/dev/null 2>&1
     assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "4"
-    AGENT_MAX_MILESTONE_RETRIES=2  # restore
+    AGENT_MAX_MILESTONE_RETRIES=20  # restore
   }
 
   it "_cmd_limits cmd-family sets AGENT_MAX_CMD_FAMILY" && {
@@ -468,7 +468,7 @@ describe "Limits command"
   it "_cmd_limits expand on enables AGENT_HONEYDEW_EXPAND" && {
     _cmd_limits "expand on" >/dev/null 2>&1
     assert_eq "$AGENT_HONEYDEW_EXPAND" "1"
-    AGENT_HONEYDEW_EXPAND=1  # restore
+    AGENT_HONEYDEW_EXPAND=0  # restore
   }
 
   it "_cmd_limits expand off disables AGENT_HONEYDEW_EXPAND" && {
@@ -515,6 +515,31 @@ describe "Limits command"
     assert_ok $?
     echo "$output" | grep -q "Honeydew max items"
     assert_ok $?
+    echo "$output" | grep -q "Tight parsing"
+    assert_ok $?
+    echo "$output" | grep -q "Web search length"
+    assert_ok $?
+    echo "$output" | grep -q "Web search operators"
+    assert_ok $?
+  }
+
+  it "_cmd_limits tight-parsing on/off toggles AGENT_WEB_SEARCH_TIGHT_PARSING" && {
+    _cmd_limits "tight-parsing on" >/dev/null 2>&1
+    assert_eq "$AGENT_WEB_SEARCH_TIGHT_PARSING" "1"
+    _cmd_limits "tight-parsing off" >/dev/null 2>&1
+    assert_eq "$AGENT_WEB_SEARCH_TIGHT_PARSING" "0"
+  }
+
+  it "_cmd_limits web-search-length sets AGENT_WEB_SEARCH_MAX_LENGTH" && {
+    _cmd_limits "web-search-length 200" >/dev/null 2>&1
+    assert_eq "$AGENT_WEB_SEARCH_MAX_LENGTH" "200"
+    AGENT_WEB_SEARCH_MAX_LENGTH=160  # restore
+  }
+
+  it "_cmd_limits web-search-ops sets AGENT_WEB_SEARCH_MAX_OPERATORS" && {
+    _cmd_limits "web-search-ops 5" >/dev/null 2>&1
+    assert_eq "$AGENT_WEB_SEARCH_MAX_OPERATORS" "5"
+    AGENT_WEB_SEARCH_MAX_OPERATORS=3  # restore
   }
 
   it "_cmd_limits show includes token lines" && {
@@ -563,13 +588,16 @@ describe "Limits command"
     assert_eq "$LLM_BUDGET_ROUTER" "128"
     assert_eq "$LLM_BUDGET_JOURNAL" "64"
     assert_eq "$LLM_BUDGET_TOOL" "256"
-    assert_eq "$AGENT_WEB_SUFFICIENCY" "3"
-    assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "2"
+    assert_eq "$AGENT_WEB_SUFFICIENCY" "20"
+    assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "20"
     assert_eq "$AGENT_MAX_CMD_FAMILY" "10"
     assert_eq "$AGENT_HONEYDEW_MATCH" "3"
-    assert_eq "$AGENT_HONEYDEW_EXPAND" "1"
+    assert_eq "$AGENT_HONEYDEW_EXPAND" "0"
     assert_eq "$AGENT_HONEYDEW_MAX_ITEMS" "16"
     assert_eq "$AGENT_SMART_ROUTE" "1"
+    assert_eq "$AGENT_WEB_SEARCH_TIGHT_PARSING" "0"
+    assert_eq "$AGENT_WEB_SEARCH_MAX_LENGTH" "160"
+    assert_eq "$AGENT_WEB_SEARCH_MAX_OPERATORS" "3"
     assert_eq "$PROVIDER_CALL_DELAY" "7"
     assert_eq "$PROVIDER_MAX_RETRIES" "4"
     assert_eq "$PROVIDER_INITIAL_BACKOFF" "5"

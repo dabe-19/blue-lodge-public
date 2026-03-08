@@ -684,7 +684,7 @@ _cmd_limits() {
             if [ -z "$value" ]; then
                 local _expand_label="disabled"
                 [ "${AGENT_HONEYDEW_EXPAND:-0}" -eq 1 ] && _expand_label="enabled"
-                ui_info "Honeydew expansion: $_expand_label (default: enabled)"
+                ui_info "Honeydew expansion: $_expand_label (default: disabled)"
             else
                 if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
                     AGENT_HONEYDEW_EXPAND=1
@@ -774,15 +774,15 @@ _cmd_limits() {
             fi ;;
         web-sufficiency)
             if [ -z "$value" ]; then
-                ui_info "Web sufficiency threshold: $AGENT_WEB_SUFFICIENCY (default: 3)"
+                ui_info "Web sufficiency threshold: $AGENT_WEB_SUFFICIENCY (default: 20)"
             else
                 _limits_set AGENT_WEB_SUFFICIENCY "Web sufficiency" "$value" 1 20
             fi ;;
         milestone-retries)
             if [ -z "$value" ]; then
-                ui_info "Milestone retry limit: $AGENT_MAX_MILESTONE_RETRIES (default: 2)"
+                ui_info "Milestone retry limit: $AGENT_MAX_MILESTONE_RETRIES (default: 20)"
             else
-                _limits_set AGENT_MAX_MILESTONE_RETRIES "Milestone retries" "$value" 1 10
+                _limits_set AGENT_MAX_MILESTONE_RETRIES "Milestone retries" "$value" 1 30
             fi ;;
         cmd-family)
             if [ -z "$value" ]; then
@@ -798,9 +798,37 @@ _cmd_limits() {
             fi ;;
         web-search-repeat)
             if [ -z "$value" ]; then
-                ui_info "Web search repeat limit: ${AGENT_WEB_SEARCH_CONSEC_MAX:-5} (default: 5)"
+                ui_info "Web search repeat limit: ${AGENT_WEB_SEARCH_CONSEC_MAX:-20} (default: 20)"
             else
                 _limits_set AGENT_WEB_SEARCH_CONSEC_MAX "Web search repeat" "$value" 1 20
+            fi ;;
+        tight-parsing)
+            if [ -z "$value" ]; then
+                local _tp_label="disabled"
+                [ "${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}" -eq 1 ] && _tp_label="enabled"
+                ui_info "Web search tight parsing: $_tp_label (default: disabled)"
+            else
+                if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
+                    AGENT_WEB_SEARCH_TIGHT_PARSING=1
+                    ui_ok "Web search tight parsing enabled"
+                elif [[ "$value" == "off" || "$value" == "0" || "$value" == "disable" || "$value" == "disabled" ]]; then
+                    AGENT_WEB_SEARCH_TIGHT_PARSING=0
+                    ui_ok "Web search tight parsing disabled"
+                else
+                    ui_err "Tight parsing must be 'on' or 'off' (or 1/0, enable/disable)"
+                fi
+            fi ;;
+        web-search-length)
+            if [ -z "$value" ]; then
+                ui_info "Web search max length: ${AGENT_WEB_SEARCH_MAX_LENGTH:-160} (default: 160)"
+            else
+                _limits_set AGENT_WEB_SEARCH_MAX_LENGTH "Web search max length" "$value" 20 500
+            fi ;;
+        web-search-ops)
+            if [ -z "$value" ]; then
+                ui_info "Web search max operators: ${AGENT_WEB_SEARCH_MAX_OPERATORS:-3} (default: 3)"
+            else
+                _limits_set AGENT_WEB_SEARCH_MAX_OPERATORS "Web search max operators" "$value" 0 20
             fi ;;
         smart-route)
             if [ -z "$value" ]; then
@@ -925,7 +953,7 @@ _cmd_limits() {
             AGENT_INNER_LOOPS=6
             AGENT_MAX_STEPS=40
             AGENT_MAX_DEPTH=3
-            AGENT_HONEYDEW_EXPAND=1
+            AGENT_HONEYDEW_EXPAND=0
             AGENT_HONEYDEW_REWRITE=1
             AGENT_HONEYDEW_REWRITE_ROUNDS=8
             AGENT_HONEYDEW_MAX_ITEMS=16
@@ -944,14 +972,17 @@ _cmd_limits() {
             LLM_BUDGET_JOURNAL=64
             LLM_BUDGET_TOOL=256
             AGENT_EVAL_CONTEXT_LINES=50
-            AGENT_WEB_SUFFICIENCY=3
-            AGENT_MAX_MILESTONE_RETRIES=2
+            AGENT_WEB_SUFFICIENCY=20
+            AGENT_MAX_MILESTONE_RETRIES=20
             AGENT_MAX_CMD_FAMILY=10
             AGENT_HONEYDEW_MATCH=3
-            AGENT_WEB_SEARCH_CONSEC_MAX=5
+            AGENT_WEB_SEARCH_CONSEC_MAX=20
             AGENT_EVAL_REC_CHARS=120
             AGENT_PRESSURE_RELIEF=2
             AGENT_SMART_ROUTE=1
+            AGENT_WEB_SEARCH_TIGHT_PARSING=0
+            AGENT_WEB_SEARCH_MAX_LENGTH=160
+            AGENT_WEB_SEARCH_MAX_OPERATORS=3
             PROVIDER_CALL_DELAY=7
             PROVIDER_MAX_RETRIES=4
             PROVIDER_INITIAL_BACKOFF=5
@@ -1165,7 +1196,7 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Plan steps/subtask:" "$AGENT_PLAN_STEPS  (default: 6)"
             local _expand_show="disabled"
             [ "${AGENT_HONEYDEW_EXPAND:-0}" -eq 1 ] && _expand_show="enabled"
-            printf "  %-22s %s\n" "Honeydew expansion:" "$_expand_show  (default: enabled)"
+            printf "  %-22s %s\n" "Honeydew expansion:" "$_expand_show  (default: disabled)"
             local _rewrite_show="disabled"
             [ "${AGENT_HONEYDEW_REWRITE:-0}" -eq 1 ] && _rewrite_show="enabled"
             printf "  %-22s %s\n" "Honeydew rewrite:" "$_rewrite_show  (default: enabled)"
@@ -1177,12 +1208,17 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Step delay:" "${AGENT_STEP_DELAY}s  (default: 1)"
             printf "  %-22s %s\n" "Eval mode:" "$AGENT_EVAL_MODE  (default: auto, options: auto|interactive|disabled)"
             printf "  %-22s %s\n" "Eval context lines:" "${AGENT_EVAL_CONTEXT_LINES:-50}  (default: 50)"
-            printf "  %-22s %s\n" "Web sufficiency:" "$AGENT_WEB_SUFFICIENCY  (default: 3)"
-            printf "  %-22s %s\n" "Milestone retries:" "$AGENT_MAX_MILESTONE_RETRIES  (default: 2)"
+            printf "  %-22s %s\n" "Web sufficiency:" "$AGENT_WEB_SUFFICIENCY  (default: 20)"
+            printf "  %-22s %s\n" "Milestone retries:" "$AGENT_MAX_MILESTONE_RETRIES  (default: 20)"
             printf "  %-22s %s\n" "Command family cap:" "$AGENT_MAX_CMD_FAMILY  (default: 10)"
             printf "  %-22s %s\n" "Honeydew match score:" "$AGENT_HONEYDEW_MATCH  (default: 3)"
-            printf "  %-22s %s\n" "Web search repeat:" "${AGENT_WEB_SEARCH_CONSEC_MAX:-5}  (default: 5)"
+            printf "  %-22s %s\n" "Web search repeat:" "${AGENT_WEB_SEARCH_CONSEC_MAX:-20}  (default: 20)"
             printf "  %-22s %s\n" "Recommendation chars:" "${AGENT_EVAL_REC_CHARS:-120}  (default: 120)"
+            local _tp_show="disabled"
+            [ "${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}" -eq 1 ] && _tp_show="enabled"
+            printf "  %-22s %s\n" "Tight parsing:" "$_tp_show  (default: disabled)"
+            printf "  %-22s %s\n" "Web search length:" "${AGENT_WEB_SEARCH_MAX_LENGTH:-160}  (default: 160)"
+            printf "  %-22s %s\n" "Web search operators:" "${AGENT_WEB_SEARCH_MAX_OPERATORS:-3}  (default: 3)"
             local _sr_show="disabled"
             [ "${AGENT_SMART_ROUTE:-1}" -eq 1 ] && _sr_show="enabled"
             printf "  %-22s %s\n" "Smart route:" "$_sr_show  (default: enabled)"
@@ -1236,7 +1272,10 @@ _cmd_limits() {
             ui_dim "    milestone-retries N — Max retries of same milestone (current: $AGENT_MAX_MILESTONE_RETRIES)"
             ui_dim "    cmd-family N     — Max milestones with same base command (current: $AGENT_MAX_CMD_FAMILY)"
             ui_dim "    honeydew-match N — Min keyword score for honeydew auto-check (current: $AGENT_HONEYDEW_MATCH)"
-            ui_dim "    web-search-repeat N — Max consecutive /web search before forced fetch (current: ${AGENT_WEB_SEARCH_CONSEC_MAX:-5})"
+            ui_dim "    web-search-repeat N — Max consecutive /web search before forced fetch (current: ${AGENT_WEB_SEARCH_CONSEC_MAX:-20})"
+            ui_dim "    tight-parsing on|off — Web search query cleaning mode: off=loose, on=strict (current: $([ "${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}" -eq 1 ] && echo on || echo off))"
+            ui_dim "    web-search-length N — Max character length for web search queries (current: ${AGENT_WEB_SEARCH_MAX_LENGTH:-160})"
+            ui_dim "    web-search-ops N  — Max AND/OR operators in loose web search mode (current: ${AGENT_WEB_SEARCH_MAX_OPERATORS:-3})"
             ui_dim "    rec-chars N      — Max chars in evaluator recommendation to strategist (current: ${AGENT_EVAL_REC_CHARS:-120})"
             ui_dim "    smart-route on|off — Smart command routing heuristic (current: $([ "${AGENT_SMART_ROUTE:-1}" -eq 1 ] && echo on || echo off))"
             echo ""

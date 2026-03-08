@@ -1090,8 +1090,8 @@ describe "Soul injection in dual-loop architecture"
 # ── Web Sufficiency Gate ───────────────────────────────────────
 describe "Web sufficiency gate in agent_inner_loop"
 
-  it "AGENT_WEB_SUFFICIENCY defaults to 3" && {
-    assert_eq "$AGENT_WEB_SUFFICIENCY" "3"
+  it "AGENT_WEB_SUFFICIENCY defaults to 20" && {
+    assert_eq "$AGENT_WEB_SUFFICIENCY" "20"
   }
 
   it "inner loop body contains sufficiency gate" && {
@@ -1192,8 +1192,8 @@ describe "Abort propagation from inner loop to macro loop"
 # ── Milestone Deduplication ────────────────────────────────────
 describe "Milestone deduplication in macro loop"
 
-  it "AGENT_MAX_MILESTONE_RETRIES defaults to 2" && {
-    assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "2"
+  it "AGENT_MAX_MILESTONE_RETRIES defaults to 20" && {
+    assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "20"
   }
 
   it "agent_run initializes _attempted_milestones array" && {
@@ -2150,10 +2150,10 @@ describe "Honeydew subtask decomposition"
 # ── Honeydew expansion interlocks ─────────────────────────────
 describe "Honeydew expansion interlocks"
 
-  it "AGENT_HONEYDEW_EXPAND defaults to 1 (enabled)" && {
+  it "AGENT_HONEYDEW_EXPAND defaults to 0 (disabled)" && {
     # Read from source to check the default, not the runtime value
-    grep -q 'AGENT_HONEYDEW_EXPAND.*:-1' "$LODGE_DIR/lib/agent.sh"
-    assert_ok $? "AGENT_HONEYDEW_EXPAND must default to 1"
+    grep -q 'AGENT_HONEYDEW_EXPAND.*:-0' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "AGENT_HONEYDEW_EXPAND must default to 0"
   }
 
   it "maybe_expand returns 1 when expansion is disabled" && {
@@ -2756,6 +2756,72 @@ describe "Dynamic honeydew rewrite integration"
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'macro_memory refreshed after honeydew rewrite'
     assert_ok $? "agent_run must refresh macro_memory after rewrite"
+  }
+
+# ── Web Search Tight Parsing ──────────────────────────────────
+describe "Web search tight-parsing configuration"
+
+  it "AGENT_WEB_SEARCH_TIGHT_PARSING defaults to 0 (loose)" && {
+    assert_eq "${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}" "0"
+  }
+
+  it "AGENT_WEB_SEARCH_MAX_LENGTH defaults to 160" && {
+    assert_eq "${AGENT_WEB_SEARCH_MAX_LENGTH:-160}" "160"
+  }
+
+  it "AGENT_WEB_SEARCH_MAX_OPERATORS defaults to 3" && {
+    assert_eq "${AGENT_WEB_SEARCH_MAX_OPERATORS:-3}" "3"
+  }
+
+  it "AGENT_WEB_SEARCH_CONSEC_MAX defaults to 20" && {
+    assert_eq "${AGENT_WEB_SEARCH_CONSEC_MAX:-20}" "20"
+  }
+
+  it "agent.sh config section declares AGENT_WEB_SEARCH_TIGHT_PARSING" && {
+    grep -q 'AGENT_WEB_SEARCH_TIGHT_PARSING' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $?
+  }
+
+  it "agent.sh config section declares AGENT_WEB_SEARCH_MAX_LENGTH" && {
+    grep -q 'AGENT_WEB_SEARCH_MAX_LENGTH' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $?
+  }
+
+  it "agent.sh config section declares AGENT_WEB_SEARCH_MAX_OPERATORS" && {
+    grep -q 'AGENT_WEB_SEARCH_MAX_OPERATORS' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $?
+  }
+
+describe "Web search query cleaner dual-mode"
+
+  it "inner loop contains tight-parsing conditional" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'AGENT_WEB_SEARCH_TIGHT_PARSING'
+    assert_ok $? "Inner loop must branch on AGENT_WEB_SEARCH_TIGHT_PARSING"
+  }
+
+  it "loose mode preserves quotes for /web search" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_skip_quote_strip'
+    assert_ok $? "Quote normalization must skip stripping for /web search in loose mode"
+  }
+
+  it "loose mode caps operators at AGENT_WEB_SEARCH_MAX_OPERATORS" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'AGENT_WEB_SEARCH_MAX_OPERATORS'
+    assert_ok $? "Loose mode must reference operator cap variable"
+  }
+
+  it "loose mode applies AGENT_WEB_SEARCH_MAX_LENGTH character cap" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'AGENT_WEB_SEARCH_MAX_LENGTH'
+    assert_ok $? "Loose mode must reference max length variable"
+  }
+
+  it "tight mode strips stopwords and caps at 8 words" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'i<=8'
+    assert_ok $? "Tight mode must cap at 8 words"
   }
 
 test_end

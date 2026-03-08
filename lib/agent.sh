@@ -20,16 +20,19 @@ AGENT_STEP_DELAY="${AGENT_STEP_DELAY:-1}"
 AGENT_MAX_CLARIFY="${AGENT_MAX_CLARIFY:-2}"
 AGENT_INTERACTIVE_PLANNING="${AGENT_INTERACTIVE_PLANNING:-0}"
 AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-3}"        # Subtask recursion depth (3 = three levels of expansion)
-AGENT_HONEYDEW_EXPAND="${AGENT_HONEYDEW_EXPAND:-1}"  # Subtask expansion: 0=disabled, 1=enabled
+AGENT_HONEYDEW_EXPAND="${AGENT_HONEYDEW_EXPAND:-0}"  # Subtask expansion: 0=disabled, 1=enabled
 AGENT_HONEYDEW_MAX_ITEMS="${AGENT_HONEYDEW_MAX_ITEMS:-16}"  # Max honeydew items before expansion is suppressed
 AGENT_HONEYDEW_REWRITE="${AGENT_HONEYDEW_REWRITE:-1}"    # Dynamic honeydew rewrite: 0=disabled, 1=enabled
 AGENT_HONEYDEW_REWRITE_ROUNDS="${AGENT_HONEYDEW_REWRITE_ROUNDS:-8}"  # Global honeydew rewrite limit (all paths: normal, pressure relief, auto-recovery)
-AGENT_WEB_SUFFICIENCY="${AGENT_WEB_SUFFICIENCY:-3}"  # Web actions before sufficiency signal
-AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-2}"  # Max times to retry same milestone
+AGENT_WEB_SUFFICIENCY="${AGENT_WEB_SUFFICIENCY:-20}"  # Web actions before sufficiency signal
+AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-20}"  # Max times to retry same milestone
 AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-10}"               # Max milestones with same base command
 AGENT_HONEYDEW_MATCH="${AGENT_HONEYDEW_MATCH:-3}"              # Min keyword score to auto-check honeydew item
 AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto | interactive | disabled
-AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-5}"  # Max consecutive /web search before fallback to fetch/scrape
+AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-20}"  # Max consecutive /web search before fallback to fetch/scrape
+AGENT_WEB_SEARCH_TIGHT_PARSING="${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}"  # Tight web query parsing: 0=loose (keep quotes/negations/operators), 1=strict (strip all)
+AGENT_WEB_SEARCH_MAX_LENGTH="${AGENT_WEB_SEARCH_MAX_LENGTH:-160}"  # Max character length for /web search queries
+AGENT_WEB_SEARCH_MAX_OPERATORS="${AGENT_WEB_SEARCH_MAX_OPERATORS:-3}"  # Max AND/OR operators allowed in loose mode
 AGENT_EVAL_REC_CHARS="${AGENT_EVAL_REC_CHARS:-120}"              # Max chars after a slash command in evaluator recommendations
 AGENT_PRESSURE_RELIEF="${AGENT_PRESSURE_RELIEF:-2}"          # Consecutive milestone skips before pressure relief fires (0=disabled)
 AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-1}"              # Smart command routing: 0=disabled, 1=enabled
@@ -3256,22 +3259,36 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
         #   /social post discord "#lunkers" "hello world"
         # Slash commands don't use shell parsing — quotes are literal.
         # Strip matching outer quotes from the args portion.
-        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" == *'"'* ]]; then
+        # For /web search in loose mode, skip quote stripping so that
+        # quoted phrases pass through to the search engine intact.
+        local _skip_quote_strip=0
+        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" == /web\ search\ * ]] && [ "${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}" -eq 0 ]; then
+            _skip_quote_strip=1
+        fi
+        if [ "$cmd_is_slash" -eq 1 ] && [ "$_skip_quote_strip" -eq 0 ] && [[ "$cmd" == *'"'* ]]; then
             cmd=$(echo "$cmd" | sed 's/"//g')
         fi
-        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" == *"'"* ]]; then
+        if [ "$cmd_is_slash" -eq 1 ] && [ "$_skip_quote_strip" -eq 0 ] && [[ "$cmd" == *"'"* ]]; then
             cmd=$(echo "$cmd" | sed "s/'//g")
         fi
 
         # ── WEB SEARCH QUERY TRIMMER ──────────────────────────
-        # Programmatic backstop: even with prompt guidance, the 4B
-        # model produces verbose search queries. Strip common filler
-        # words and cap at 8 tokens so search engines get clean input.
+        # Two modes controlled by AGENT_WEB_SEARCH_TIGHT_PARSING:
+        #
+        # TIGHT (1): Aggressive cleaning for 2b/4b models —
+        #   strip stopwords, AND/OR, negations, cap at 8 words.
+        #
+        # LOOSE (0, default): Preserve search operators for
+        #   smarter models — keep quotes, negations, AND/OR.
+        #   Cap operators at AGENT_WEB_SEARCH_MAX_OPERATORS (default 3).
+        #   Truncate at AGENT_WEB_SEARCH_MAX_LENGTH chars (default 160).
         if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" == /web\ search\ * ]]; then
             local _raw_query="${cmd#/web search }"
             # Strip markdown bold/italic markers leaked from milestone text
             _raw_query=$(echo "$_raw_query" | sed 's/\*\+//g')
-            # Strip filler/stopwords (case-insensitive)
+
+          if [ "${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}" -eq 1 ]; then
+            # ── TIGHT MODE: aggressive stripping ──────────────
             local _trimmed_query
             _trimmed_query=$(echo "$_raw_query" | sed '
                 s/\bOR\b//g; s/\bAND\b//g;
@@ -3286,13 +3303,61 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
                 s/\b[Rr]elevant\b//g; s/\b[Ss]pecific\b//g;
                 s/\b[Vv]arious\b//g; s/\b[Rr]elated\b//g;
                 s/\b[Ww]ith\b//g; s/\b[Tt]hat\b//g; s/\b[Ff]rom\b//g;
+                s/ -[^ ]*//g;
                 s/  */ /g; s/^ *//; s/ *$//' )
             # Cap at 8 words
             _trimmed_query=$(echo "$_trimmed_query" | awk '{for(i=1;i<=NF&&i<=8;i++) printf "%s ", $i; print ""}'  | sed 's/ *$//')
             if [ -n "$_trimmed_query" ] && [ "$_trimmed_query" != "$_raw_query" ]; then
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web-search trimmed: '$_raw_query' -> '$_trimmed_query'"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web-search tight-trim: '$_raw_query' -> '$_trimmed_query'"
                 cmd="/web search $_trimmed_query"
             fi
+          else
+            # ── LOOSE MODE: preserve operators, cap length ─────
+            # Strip stopwords but keep quotes, negations, AND/OR
+            local _trimmed_query
+            _trimmed_query=$(echo "$_raw_query" | sed '
+                s/\b[Tt]he\b//g; s/\b[Aa]n\?\b//g; s/\b[Ff]or\b//g;
+                s/\b[Ii]n\b//g; s/\b[Tt]o\b//g; s/\b[Oo]f\b//g;
+                s/\b[Oo]n\b//g; s/\b[Aa]bout\b//g; s/\b[Ii]ncluding\b//g;
+                s/\b[Rr]egarding\b//g; s/\b[Cc]omprehensive\b//g;
+                s/\b[Pp]rofessional\b//g; s/\b[Cc]ommunity\b//g;
+                s/\b[Oo]rganizations\?\b//g; s/\b[Aa]ssociations\?\b//g;
+                s/\b[Ff]ocusing\b//g; s/\b[Ii]dentify\b//g;
+                s/\b[Rr]elevant\b//g; s/\b[Ss]pecific\b//g;
+                s/\b[Vv]arious\b//g; s/\b[Rr]elated\b//g;
+                s/\b[Ww]ith\b//g; s/\b[Tt]hat\b//g; s/\b[Ff]rom\b//g;
+                s/  */ /g; s/^ *//; s/ *$//' )
+            # Cap boolean operators at AGENT_WEB_SEARCH_MAX_OPERATORS
+            # Matches: AND, OR, and, or, &, ||
+            local _max_ops="${AGENT_WEB_SEARCH_MAX_OPERATORS:-3}"
+            local _op_count=0
+            local _result=""
+            local _word
+            for _word in $_trimmed_query; do
+                case "$_word" in
+                    AND|OR|and|or|'&'|'||')
+                        (( _op_count++ ))
+                        if [ "$_op_count" -gt "$_max_ops" ]; then
+                            break
+                        fi
+                        _result="${_result} ${_word}"
+                        ;;
+                    *) _result="${_result} ${_word}" ;;
+                esac
+            done
+            _trimmed_query="${_result# }"
+            # Cap at max character length
+            local _max_len="${AGENT_WEB_SEARCH_MAX_LENGTH:-160}"
+            if [ "${#_trimmed_query}" -gt "$_max_len" ]; then
+                _trimmed_query="${_trimmed_query:0:$_max_len}"
+                # Trim to last complete word
+                _trimmed_query="${_trimmed_query% *}"
+            fi
+            if [ -n "$_trimmed_query" ] && [ "$_trimmed_query" != "$_raw_query" ]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web-search loose-trim: '$_raw_query' -> '$_trimmed_query'"
+                cmd="/web search $_trimmed_query"
+            fi
+          fi
         fi
 
         # ── SINGLE-URL ENFORCEMENT ────────────────────────────
