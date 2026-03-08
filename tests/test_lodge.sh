@@ -76,6 +76,11 @@ describe "Command registration"
     assert_ok $?
   }
 
+  it "registers q command" && {
+    commands_is_command "/q"
+    assert_ok $?
+  }
+
   it "registers compact command" && {
     commands_is_command "/compact"
     assert_ok $?

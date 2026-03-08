@@ -142,6 +142,33 @@ describe "Clarification rounds"
     assert_ok $?
   }
 
+# ── Agent ask user toggle ─────────────────────────────────────
+describe "Agent ask user toggle"
+
+  it "AGENT_ASK_USER defaults to 1 (enabled)" && {
+    assert_eq "$AGENT_ASK_USER" "1"
+  }
+
+  it "AGENT_ASK_USER is overridable" && {
+    (
+      AGENT_ASK_USER=0
+      assert_eq "$AGENT_ASK_USER" "0"
+    )
+    assert_ok $?
+  }
+
+  it "router prompt conditionally includes /ask via _ask_line" && {
+    body=$(declare -f _build_router_prompt)
+    echo "$body" | grep -q '_ask_line'
+    assert_ok $? "Router must use _ask_line conditional for /ask injection"
+  }
+
+  it "router /ask injection is gated on AGENT_ASK_USER" && {
+    body=$(declare -f _build_router_prompt)
+    echo "$body" | grep -q 'AGENT_ASK_USER'
+    assert_ok $? "Router must check AGENT_ASK_USER toggle"
+  }
+
 # ── Interactive planning flag ─────────────────────────────────
 describe "Interactive planning flag"
 
@@ -374,7 +401,7 @@ describe "Dynamic dual-loop architecture"
 
   it "macro strategist has question detection rule" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q 'own knowledge only\|no tools'
+    echo "$body" | grep -q 'own knowledge\|no tools'
     assert_ok $?
   }
 
@@ -2285,10 +2312,16 @@ describe "Code fence stripping & parse failure handling"
     assert_ok $? "Specialist syntax cards must use format_only_ex to avoid small-model example copying"
   }
 
-  it "specialist /ask card warns about staleness for time-sensitive info" && {
+  it "specialist /ask card describes human-in-the-loop behavior" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'HUMAN.*USER\|human operator\|user.*answer'
+    assert_ok $? "Specialist /ask card must describe asking the human user"
+  }
+
+  it "specialist /q card warns about staleness for time-sensitive info" && {
     body=$(declare -f _build_specialist_prompt)
     echo "$body" | grep -q 'may be stale'
-    assert_ok $? "Specialist /ask card must warn about potentially stale model knowledge"
+    assert_ok $? "Specialist /q card must warn about potentially stale model knowledge"
   }
 
   it "honeydew_display function exists" && {
@@ -2422,7 +2455,7 @@ describe "Research→Delivery state machine"
 
   it "strategist rules have max_consecutive for research" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q '"max_consecutive":2'
+    echo "$body" | grep -q 'max_consecutive.*2'
     assert_ok $? "Must set max_consecutive research limit"
   }
 

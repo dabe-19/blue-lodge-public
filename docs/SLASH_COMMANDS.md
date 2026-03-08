@@ -9,7 +9,8 @@ All commands at a glance. For detailed usage, run `/help` inside George or see t
 | Command | Args | Description |
 |---------|------|-------------|
 | `/help` | — | Show all commands |
-| `/ask` | `<question>` | Quick question (lightweight, conversation memory) |
+| `/q` | `<question>` | Quick question (lightweight, conversation memory) |
+| `/ask` | `<question>` | Ask the user a question (agent-only, human-in-the-loop) |
 | `/plan` | `<task>` | Plan without execution |
 | `/init` | `<name> <type>` | Scaffold project (rust/python/rl/data/automation/notebook/shell) |
 | `/fix` | `[file\|error]` | Detect and fix errors (cascade L1→L2 recovery) |
@@ -153,7 +154,7 @@ George's system prompt is built by `memory_build_system_prompt()` using a three-
 
 | Mode | Token Budget | Catalog Injected? | Soul Injected? | When Used |
 |------|-------------|-------------------|----------------|-----------|
-| `ask` | ~250 tokens | **No** — stays lean | Condensed (~250 tok) | `/ask` quick questions |
+| `ask` | ~250 tokens | **No** — stays lean | Condensed (~250 tok) | `/q` quick questions |
 | `plan` (light) | ~700 tokens | **Yes** (lean catalog, ~400 tokens) | Condensed (~250 tok) | `agent_plan()` (LODGE_SOUL=0) |
 | `plan` (dense) | ~5,000 tokens | **Yes** (lean catalog, ~400 tokens) | Full (~4,500 tok) | `agent_plan()` (LODGE_SOUL=1) |
 | `task` | ~3,500 tokens | **Yes** (full catalog, ~1,443 tokens) | Full or condensed (LODGE_SOUL) | `memory_build_system_prompt` task mode |
@@ -194,7 +195,8 @@ CURRENT DATE/TIME (from real-time clock): 2026-03-01 14:32:10 UTC
 ALWAYS use this timestamp for any date references. NEVER make up a date.
 
 /plan <task>         — Plan a task (no execution)
-/ask <question>      — Quick question
+/q <question>        — Quick question
+/ask <question>      — Ask the human operator (agent-only)
 /init <name> <lang>  — Scaffold a new project (types: rust, python, rl, data, automation, notebook, shell)
 /recall <query>      — Search your knowledge base
 /social post <text>  — Post to all configured social platforms
@@ -228,9 +230,19 @@ The output rules also specify planning format:
 Plans as short numbered lists (use [SUBTASK] for complex work)
 ```
 
-### Conversation History (Ask Mode)
+### Human-in-the-Loop (`/ask` — Agent-to-User)
 
-For `/ask` continuity, George maintains a **ring buffer** of the last 3 exchanges (configurable via `AGENT_CONV_MAX`). Each exchange stores the user's question and George's response (truncated to ~150 characters). This lets George remember recent conversation without bloating the prompt:
+When `AGENT_ASK_USER=1` (default), George can use `/ask` during task execution to ask the **human operator** a question. This enables real-time preference gathering — dietary needs, project requirements, names, etc. The user's answer is:
+
+1. Logged to **micro_memory** with `source: "user_input"` (anti-contamination tag)
+2. Logged to **macro_memory** as a milestone with `action_class: "USER_INPUT"`
+3. Visible to the **strategist** on the next planning cycle
+
+The toggle `AGENT_ASK_USER=0` disables this entirely — George will not see `/ask` in his router or strategist prompts.
+
+### Conversation History (Quick Question Mode)
+
+For `/q` continuity, George maintains a **ring buffer** of the last 3 exchanges (configurable via `AGENT_CONV_MAX`). Each exchange stores the user's question and George's response (truncated to ~150 characters). This lets George remember recent conversation without bloating the prompt:
 
 ```
 --- RECENT CONVERSATION ---

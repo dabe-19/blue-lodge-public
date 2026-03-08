@@ -142,8 +142,31 @@ _cmd_plan() {
     plan=$(agent_plan "$task" "$workdir")
     echo ""
 }
-_cmd_ask() {
+_cmd_q() {
     agent_ask "$1" "${2:-.}"
+}
+_cmd_ask() {
+    # /ask is an agent-only command — George asks the USER a question
+    # during task execution. From the REPL, users should use /q instead.
+    if [ -z "$1" ]; then
+        ui_err "Usage: /ask <question>  (agent-only — asks the user)"
+        ui_info "Did you mean /q? Use /q <question> for quick questions."
+        return 1
+    fi
+    # When invoked from the inner loop, the question is the argument.
+    # Read the user's answer from /dev/tty and emit it on stdout
+    # so commands_dispatch captures it in the action log.
+    echo ""
+    printf "  %b George asks: %b%s%b\n" "$C_LODGE" "$C_CYAN" "$1" "$C_RESET" > /dev/tty 2>/dev/null
+    echo "" > /dev/tty 2>/dev/null
+    printf "  %b> %b" "$C_BOLD" "$C_RESET" > /dev/tty 2>/dev/null
+    local answer
+    read -r answer < /dev/tty
+    if [ -z "$answer" ]; then
+        echo "(no answer provided)"
+        return 0
+    fi
+    echo "$answer"
 }
 _cmd_respond() {
     local text="$1"
@@ -4124,7 +4147,8 @@ _cmd_transcript() {
 _register_commands() {
     commands_register "init"     "Scaffold a new project" "_cmd_init"
     commands_register "plan"     "Plan a task (no execution)" "_cmd_plan"
-    commands_register "ask"      "Quick question (no actions)" "_cmd_ask"
+    commands_register "q"        "Quick question (no actions)" "_cmd_q"
+    commands_register "ask"      "Ask user a question (agent-only)" "_cmd_ask"
     commands_register "compact"  "Compress memory file" "_cmd_compact"
     commands_register "snapshot" "Save memory checkpoint" "_cmd_snapshot"
     commands_register "memory"   "Show GEORGE.md contents" "_cmd_memory"

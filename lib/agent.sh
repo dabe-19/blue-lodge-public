@@ -33,6 +33,7 @@ AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-5}"  # Max consecuti
 AGENT_EVAL_REC_CHARS="${AGENT_EVAL_REC_CHARS:-120}"              # Max chars after a slash command in evaluator recommendations
 AGENT_PRESSURE_RELIEF="${AGENT_PRESSURE_RELIEF:-2}"          # Consecutive milestone skips before pressure relief fires (0=disabled)
 AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-1}"              # Smart command routing: 0=disabled, 1=enabled
+AGENT_ASK_USER="${AGENT_ASK_USER:-1}"                    # Allow George to /ask the user questions during tasks: 0=disabled, 1=enabled
 AGENT_PRE_ROUTE="${AGENT_PRE_ROUTE:-1}"                  # Pre-route: extract /cmd from milestone, skip router: 0=disabled, 1=enabled
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
@@ -2261,7 +2262,14 @@ _build_router_prompt() {
     # exhibit strong primacy bias — items listed first are chosen
     # disproportionately. High-utility tools (web, recall) are at
     # the top. /slash is the escape valve for missing capabilities.
-    cat << 'ROUTER_PROMPT'
+
+    # Conditional /ask line — only available when AGENT_ASK_USER=1
+    local _ask_line=""
+    if [ "${AGENT_ASK_USER:-1}" -eq 1 ]; then
+        _ask_line="/ask        Ask the human operator a question (get preferences, clarification, missing info)"
+    fi
+
+    cat << ROUTER_PROMPT
 Output ONLY the bare tool name. NO backticks. NO code fences. NO quotes. Example: /web
 
 TOOLS — gather info, execute work (these do NOT deliver results to the user):
@@ -2287,7 +2295,8 @@ TOOLS — gather info, execute work (these do NOT deliver results to the user):
 /git         Git setup, SSH keys
 /backup      Backup and restore
 /slash       Create/run custom commands (USE when no built-in fits)
-bash         Standard Linux shell (fallback)
+${_ask_line:+${_ask_line}
+}bash         Standard Linux shell (fallback)
 
 DELIVERY — present results to user (one per milestone; a full task may chain several, e.g. /write then /email):
 /respond     Present answer directly to operator (DEFAULT — use when no file/email/post needed)
@@ -2312,14 +2321,16 @@ ROUTE EXAMPLES:
 <analyze or describe an image>     → /vision
 <write a report/file then email>   → /write (first), then /email (next milestone)
 <draft a document/report>          → /write
-<general knowledge, no tools>      → /respond
+${_ask_line:+<need user preferences or clarification> → /ask
+}<general knowledge, no tools>      → /respond
 
 RULES:
 - /web for ANYTHING time-sensitive (weather, dates, scores, events, prices, news)
 - /slash to CREATE a custom tool when no built-in command fits
 - /sandbox NEVER for slash commands
 - /social for Discord/Telegram/X, /email for actual email
-- NEVER output a command not in this list
+${_ask_line:+- /ask to get REAL answers from the human — use when you need specific preferences, dietary info, names, allergies, or ANY user-specific detail that you cannot research
+}- NEVER output a command not in this list
 - If unsure between TOOLS, use /web or /slash
 - If no explicit output command requested, ALWAYS use /respond
 
@@ -2642,11 +2653,19 @@ SPEC
 "format_only_ex":["/respond <your complete answer text>"]}
 SPEC
                 ;;
+            q)
+                cat << 'SPEC'
+{"cmd":"/q","syntax":"/q <question>",
+"notes":"Quick question answered from model knowledge. WARNING: may be stale for dates, scores, events, prices. Prefer /web search for time-sensitive info.",
+"format_only_ex":["/q <question>"]}
+SPEC
+                ;;
             ask)
                 cat << 'SPEC'
-{"cmd":"/ask","syntax":"/ask <question>",
-"notes":"Answer from model knowledge. WARNING: may be stale for dates, scores, events, prices. Prefer /web search for time-sensitive info.",
-"format_only_ex":["/ask <question>"]}
+{"cmd":"/ask","syntax":"/ask <question to ask the human operator>",
+"notes":"Asks the HUMAN USER a question and waits for their typed answer. Use to get real preferences, dietary needs, allergies, names, specific details that ONLY the user knows. The user's answer is returned as output. Do NOT use for general knowledge — use /web or /recall instead.",
+"rules":["ONE specific question per /ask","Ask about concrete details the user must provide","Do NOT ask rhetorical or philosophical questions"],
+"format_only_ex":["/ask What are the specific dietary restrictions or allergies for each family member?","/ask What is your preferred programming language for this project?"]}
 SPEC
                 ;;
             ls)
@@ -3604,6 +3623,28 @@ INTERLOCK_JSON
 
                 _micro_add_action "$micro_file" "$cmd" "SUCCESS" 0 "$output" "specialist"
 
+                # ── /ask USER INPUT: special memory handling ───
+                # When the agent uses /ask to get info from the user,
+                # tag the action as user_input and inject the answer
+                # into macro_memory so the strategist sees it.
+                if [[ "$cmd" == /ask\ * ]]; then
+                    # Re-tag the last action with user_input source
+                    local _ask_tmp="${micro_file}.tmp"
+                    jq '.action_log[-1].source = "user_input"' "$micro_file" > "$_ask_tmp" && mv "$_ask_tmp" "$micro_file"
+                    # Inject into macro_memory for strategist visibility
+                    if [ -f "$macro_file" ]; then
+                        local _ask_q="${cmd#/ask }"
+                        local _ask_a="${output:0:500}"
+                        # Sanitize: strip markdown formatting from user answer
+                        _ask_a=$(echo "$_ask_a" | sed 's/\*\+//g')
+                        local _ask_note="User answered: Q: ${_ask_q} A: ${_ask_a}"
+                        local _ask_macro_tmp="${macro_file}.tmp"
+                        jq --arg note "$_ask_note" --arg ts "$(date '+%Y-%m-%d %H:%M:%S %Z')" \
+                            '.completed_milestones += [{"timestamp": $ts, "objective": "User provided information", "summary": $note, "command": "/ask", "action_class": "USER_INPUT", "status": "OK"}]' \
+                            "$macro_file" > "$_ask_macro_tmp" && mv "$_ask_macro_tmp" "$macro_file"
+                    fi
+                fi
+
                 # Transcript: log command execution result
                 declare -f transcript_log_block &>/dev/null && transcript_log_block "output (exit 0)" "$cmd\n${output:0:3000}"
 
@@ -4353,33 +4394,36 @@ MEMEOF
 >>> Do NOT use /web or /recall. Deliver results using the data already gathered. <<<"
         fi
 
+        # Conditional /ask rule for strategist
+        local _ask_rule=""
+        if [ "${AGENT_ASK_USER:-1}" -eq 1 ]; then
+            _ask_rule='"\/ask":"asks the HUMAN operator a question — use when you need specific preferences, dietary needs, allergies, names, or details ONLY the user knows. The user types an answer.",'
+        fi
+
         local macro_sys="Strategic planning engine. Output the SINGLE next milestone. No markdown formatting (no ** or * markers). Plain text only.
 
 ${_tool_summary}
 
 SERVICES STATUS: ${_svc_status:-unknown}
 
-$(cat << 'STRAT_RULES_JSON'
-{"rules":{
- "routing":{"named_tool":"use it — NEVER override with /ask",
-   "/ask":"own knowledge only (may be stale — prefer /web for dates/events/scores)",
-   "/social":"Discord/Telegram/X/Mastodon (NOT /email)",
-   "/email":"actual email only","/sandbox":"NEVER for slash commands"},
- "milestones":{"source":"YOUR WORKING COMMANDS only",
-   "format":"single imperative sentence starting with a verb (e.g. 'Use /write to create a summary')",
-   "NEVER_raw_command":"Do NOT output a bare slash command as the milestone (WRONG: '/write a summary' — RIGHT: 'Use /write to create a summary')",
-   "one_action":"1 milestone = 1 honeydew item, NEVER combine two items",
-   "no_prefix":true,"no_intro":true,
-   "only_configured":true},
- "research":{"when":"missing info (keys,URLs,packages,specs)",
-   "tools":["/web search","/recall","/web fetch","/web scrape-images","/social discord read","/secret get"],
-   "max_consecutive":2,"then":"MUST use delivery command (/respond,/write,/email,/save,/social,/build)"},
- "failure":{"no_repeat":true,"advance_next_part":true},
- "honeydew":{"pick":"FIRST [ ] item by number — do NOT skip items"},
- "multi_delivery":"Different honeydew items may each need their own DELIVERY command (e.g. item 2=/write report, item 3=/email report). This is normal — chain them across milestones.",
- "conversation":"question → use /ask"}}
-STRAT_RULES_JSON
-)${_research_gate}${_milestone_history}${_last_eval_feedback:+
+{\"rules\":{
+ \"routing\":{\"named_tool\":\"use it\",
+   ${_ask_rule}
+   \"\/q\":\"quick question from own knowledge (may be stale — prefer \/web for dates\/events\/scores)\",
+   \"\/social\":\"Discord\/Telegram\/X\/Mastodon (NOT \/email)\",
+   \"\/email\":\"actual email only\",\"\/sandbox\":\"NEVER for slash commands\"},
+ \"milestones\":{\"source\":\"YOUR WORKING COMMANDS only\",
+   \"format\":\"single imperative sentence starting with a verb (e.g. 'Use \/write to create a summary')\",
+   \"NEVER_raw_command\":\"Do NOT output a bare slash command as the milestone (WRONG: '\/write a summary' — RIGHT: 'Use \/write to create a summary')\",
+   \"one_action\":\"1 milestone = 1 honeydew item, NEVER combine two items\",
+   \"no_prefix\":true,\"no_intro\":true,
+   \"only_configured\":true},
+ \"research\":{\"when\":\"missing info (keys,URLs,packages,specs)\",
+   \"tools\":[\"\/web search\",\"\/recall\",\"\/web fetch\",\"\/web scrape-images\",\"\/social discord read\",\"\/secret get\"${_ask_rule:+,\"\/ask\"}],
+   \"max_consecutive\":2,\"then\":\"MUST use delivery command (\/respond,\/write,\/email,\/save,\/social,\/build)\"},
+ \"failure\":{\"no_repeat\":true,\"advance_next_part\":true},
+ \"honeydew\":{\"pick\":\"FIRST [ ] item by number — do NOT skip items\"},
+ \"multi_delivery\":\"Different honeydew items may each need their own DELIVERY command (e.g. item 2=\/write report, item 3=\/email report). This is normal — chain them across milestones.\"}}${_research_gate}${_milestone_history}${_last_eval_feedback:+
 
 >>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<
 ${_last_eval_feedback}
@@ -4998,9 +5042,11 @@ ${full_question}"
     fi
 
     # Journal the exchange — George writes a witty one-liner for posterity
-    # Runs in background so user isn't blocked
+    # Runs in background so user isn't blocked.
+    # Redirect /dev/tty writes to /dev/null so debug output from the
+    # background LLM call doesn't overwrite the REPL prompt.
     if declare -f journal_write_quip &>/dev/null; then
-        journal_write_quip "$question" "$response" &
+        journal_write_quip "$question" "$response" </dev/null >/dev/null 2>&1 &
     fi
     
     # Model stays loaded during active session for fast response times.

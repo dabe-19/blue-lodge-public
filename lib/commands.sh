@@ -349,6 +349,9 @@ commands_catalog() {
   "RESEARCH & MEMORY (TOOLS)":{
     "/recall":{"syntax":"/recall <q>","desc":"Search knowledge base FTS5 (DO THIS FIRST BEFORE WEB SEARCH)",
       "format_only_ex":["/recall <keywords>"],"fill":{"<keywords>":"search terms for knowledge base"}},
+    "/ask":{"syntax":"/ask <question>","desc":"Ask the HUMAN OPERATOR a question — use when you need real preferences, dietary details, names, allergies, or any info only the user knows. User types an answer.",
+      "rules":["ONE specific question per /ask","Ask about concrete details the user must provide","Do NOT ask rhetorical or philosophical questions"],
+      "format_only_ex":["/ask What dietary restrictions does the family have?"]},
     "/web":{"syntax":"/web <action> <query|url>","desc":"Web search, fetch, and image extraction",
       "actions":{
         "search":"/web search <query> — returns list of URLs + text snippets from search engines (Serper/DuckDuckGo)",
