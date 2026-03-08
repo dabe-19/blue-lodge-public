@@ -193,6 +193,26 @@ api_post() {
     api_request "POST" "$url" "$data" "$@"
 }
 
+# ── Streaming POST ────────────────────────────────────────────
+# Launches curl in unbuffered streaming mode, writing SSE data to
+# a FIFO.  Caller reads from the FIFO and must kill the PID when done.
+# Usage: api_stream_post URL DATA FIFO [EXTRA_CURL_ARGS...]
+#   Writes curl PID to stdout.  Caller reads from FIFO.
+api_stream_post() {
+    local url="$1" data="$2" fifo="$3"
+    shift 3
+    local extra_args=("$@")
+
+    curl -sN --connect-timeout 10 --max-time "${API_DEFAULT_TIMEOUT}" \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -H "User-Agent: $API_USER_AGENT" \
+        -d "$data" \
+        "${extra_args[@]}" \
+        "$url" > "$fifo" 2>/dev/null &
+    echo $!
+}
+
 api_put() {
     local url="$1"
     local data="$2"

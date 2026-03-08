@@ -20,6 +20,20 @@ GEORGE_PROVIDER="${GEORGE_PROVIDER:-}"
 # ── Provider timeout (longer for LLM calls) ───────────────────
 PROVIDER_TIMEOUT="${PROVIDER_TIMEOUT:-120}"
 
+# ── Rate-limit / metering config ──────────────────────────────
+# Defaults are tuned for Google AI free-tier Gemma models (27B/14B):
+#   RPM: 30 req/min  |  TPM: 15K tok/min  |  RPD: 14.4K req/day
+# At 7s delay + 8 calls/window: ~8.6 req/min, ~12.3K req/day — safely under all three.
+PROVIDER_MAX_RETRIES="${PROVIDER_MAX_RETRIES:-4}"        # Max retries on 429
+PROVIDER_INITIAL_BACKOFF="${PROVIDER_INITIAL_BACKOFF:-5}" # Initial backoff secs
+PROVIDER_MAX_BACKOFF="${PROVIDER_MAX_BACKOFF:-60}"        # Max backoff secs
+PROVIDER_COOLDOWN_WINDOW="${PROVIDER_COOLDOWN_WINDOW:-60}" # Metering window (secs)
+PROVIDER_COOLDOWN_MAX="${PROVIDER_COOLDOWN_MAX:-8}"        # Max calls per window
+PROVIDER_CALL_DELAY="${PROVIDER_CALL_DELAY:-7}"            # Min gap (secs) between calls
+
+# Metering state (file-based to survive subshells)
+_PROVIDER_METER_DIR="${TMPDIR:-/tmp}/george-provider-meter.$$"
+
 # ── Provider model defaults ────────────────────────────────────────
 # Stored in keys.conf as PROVIDER_MODEL_<PROVIDER>=<model>
 # Resolved per call: explicit arg > stored default > hardcoded fallback
@@ -108,6 +122,28 @@ provider_clear_model() {
     fi
 }
 
+# ── Countdown timer ───────────────────────────────────────────
+# Shows a ticking countdown so the user knows the wait is intentional.
+# Usage: _provider_countdown seconds "label"
+_provider_countdown() {
+    local secs="$1" label="${2:-Waiting}"
+    local _tty="/dev/tty"
+    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    if [ "$secs" -le 0 ] 2>/dev/null; then return; fi
+    local i="$secs"
+    while [ "$i" -gt 0 ]; do
+        local filled=$(( (secs - i) * 20 / secs ))
+        local empty=$(( 20 - filled ))
+        printf "\r %b[%b" "\033[90m" "\033[34m" > "$_tty" 2>/dev/null
+        local j=0; while [ $j -lt $filled ]; do printf '█' > "$_tty" 2>/dev/null; j=$((j+1)); done
+        j=0; while [ $j -lt $empty ]; do printf '░' > "$_tty" 2>/dev/null; j=$((j+1)); done
+        printf "%b] %b%s: %ds%b " "\033[90m" "\033[37m" "$label" "$i" "\033[0m" > "$_tty" 2>/dev/null
+        sleep 1
+        i=$((i - 1))
+    done
+    printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
+}
+
 # ── Response validation helper ────────────────────────────────
 # Checks both HTTP errors and empty/null content from API responses.
 # Usage: _provider_check_response $? "$resp" '.jq.path' "Label"
@@ -128,6 +164,573 @@ _provider_check_response() {
     return 1
 }
 
+# ── Call metering ─────────────────────────────────────────────
+# Track provider API calls within a rolling window.  Logs are
+# written to temp files so they survive $(…) subshells.
+
+_provider_meter_init() {
+    mkdir -p "$_PROVIDER_METER_DIR" 2>/dev/null
+}
+
+# Record that a call just happened
+_provider_meter_tick() {
+    _provider_meter_init
+    date +%s >> "$_PROVIDER_METER_DIR/calls" 2>/dev/null
+}
+
+# Count calls inside the current window
+_provider_meter_count() {
+    _provider_meter_init
+    local now cutoff
+    now=$(date +%s)
+    cutoff=$((now - PROVIDER_COOLDOWN_WINDOW))
+    if [ ! -f "$_PROVIDER_METER_DIR/calls" ]; then
+        echo 0
+        return
+    fi
+    awk -v c="$cutoff" '$1 >= c' "$_PROVIDER_METER_DIR/calls" 2>/dev/null | wc -l
+}
+
+# If near the limit, sleep until the oldest call falls outside the window
+_provider_meter_throttle() {
+    local count
+    count=$(_provider_meter_count)
+    if [ "$count" -ge "$PROVIDER_COOLDOWN_MAX" ]; then
+        local oldest now wait_s
+        oldest=$(awk -v c="$(($(date +%s) - PROVIDER_COOLDOWN_WINDOW))" '$1 >= c' \
+                 "$_PROVIDER_METER_DIR/calls" 2>/dev/null | head -1)
+        now=$(date +%s)
+        wait_s=$(( (oldest + PROVIDER_COOLDOWN_WINDOW) - now + 1 ))
+        [ "$wait_s" -lt 1 ] && wait_s=1
+        [ "$wait_s" -gt "$PROVIDER_MAX_BACKOFF" ] && wait_s="$PROVIDER_MAX_BACKOFF"
+        ui_warn "Provider rate-limit cooldown: pausing ${wait_s}s ($count calls in ${PROVIDER_COOLDOWN_WINDOW}s window)"
+        _provider_countdown "$wait_s" "Cooldown"
+        # Prune old entries
+        local cutoff
+        cutoff=$(($(date +%s) - PROVIDER_COOLDOWN_WINDOW))
+        local tmpf; tmpf=$(mktemp)
+        awk -v c="$cutoff" '$1 >= c' "$_PROVIDER_METER_DIR/calls" > "$tmpf" 2>/dev/null
+        mv "$tmpf" "$_PROVIDER_METER_DIR/calls" 2>/dev/null
+    fi
+}
+
+# Clean up meter (called on exit or /provider use local)
+_provider_meter_reset() {
+    rm -rf "$_PROVIDER_METER_DIR" 2>/dev/null
+}
+
+# ── Inter-call delay ──────────────────────────────────────────
+# Enforces a minimum gap between provider API calls.  The last-call
+# timestamp lives in _PROVIDER_METER_DIR so it survives subshells.
+
+_provider_inter_call_delay() {
+    [ "${PROVIDER_CALL_DELAY:-0}" -le 0 ] 2>/dev/null && return
+    _provider_meter_init
+    local last_file="$_PROVIDER_METER_DIR/last_call"
+    if [ -f "$last_file" ]; then
+        local last now elapsed remaining
+        last=$(cat "$last_file" 2>/dev/null)
+        now=$(date +%s)
+        elapsed=$((now - last))
+        remaining=$((PROVIDER_CALL_DELAY - elapsed))
+        if [ "$remaining" -gt 0 ]; then
+            _provider_countdown "$remaining" "API delay"
+        fi
+    fi
+    # Stamp is written by _provider_call_with_backoff after the call
+}
+
+_provider_stamp_last_call() {
+    _provider_meter_init
+    date +%s > "$_PROVIDER_METER_DIR/last_call" 2>/dev/null
+}
+
+# ── Retry with exponential backoff ────────────────────────────
+# Wraps provider_chat with rate-limit awareness.  On 429 (returned
+# as exit-code 2 from api_request, or detected in the response body)
+# it backs off exponentially.  On other failures it returns immediately.
+#
+# Usage: _provider_call_with_backoff provider message model system
+_provider_call_with_backoff() {
+    local provider="$1" message="$2" model="${3:-}" system="${4:-}"
+    local attempt=0 delay="$PROVIDER_INITIAL_BACKOFF"
+    local max="$PROVIDER_MAX_RETRIES"
+    local resp rc
+
+    while [ "$attempt" -le "$max" ]; do
+        # Pre-flight: inter-call delay + meter throttle
+        _provider_inter_call_delay
+        _provider_meter_throttle
+
+        # Record the call
+        _provider_meter_tick
+
+        resp=$(provider_chat "$provider" "$message" "$model" "$system" 2>&1)
+        rc=$?
+
+        if [ $rc -eq 0 ] && [ -n "$resp" ]; then
+            _provider_stamp_last_call
+            echo "$resp"
+            return 0
+        fi
+
+        # Detect rate limiting — either exit code 2 (from api_request) or
+        # keywords in the error body (some providers return 200 with error JSON)
+        local is_rate_limit=0
+        if [ "$rc" -eq 2 ]; then
+            is_rate_limit=1
+        elif echo "$resp" | grep -qiE "rate.limit|quota.*exceed|too.many.request|429|retry.in"; then
+            is_rate_limit=1
+        fi
+
+        if [ "$is_rate_limit" -eq 0 ]; then
+            # Non-rate-limit error — don't retry, emit whatever provider_chat said
+            echo "$resp" >&2
+            return $rc
+        fi
+
+        attempt=$((attempt + 1))
+        if [ "$attempt" -gt "$max" ]; then
+            ui_err "Provider rate limit: gave up after $max retries"
+            return 1
+        fi
+
+        # Parse "retry in Xs" hint from Google/etc if available
+        local hint_wait
+        hint_wait=$(echo "$resp" | grep -oiP 'retry\s+in\s+\K[0-9]+(\.[0-9]+)?' | head -1)
+        if [ -n "$hint_wait" ]; then
+            # Round up the hint
+            delay=$(printf '%.0f' "$hint_wait" 2>/dev/null || echo "$delay")
+            [ "$delay" -lt 1 ] && delay=1
+        fi
+        [ "$delay" -gt "$PROVIDER_MAX_BACKOFF" ] && delay="$PROVIDER_MAX_BACKOFF"
+
+        ui_warn "Rate limited — retry ${attempt}/${max} in ${delay}s"
+        _provider_countdown "$delay" "Backoff"
+        delay=$((delay * 2))
+    done
+    return 1
+}
+
+# ── Streaming-aware backoff wrapper ──────────────────────────
+# Like _provider_call_with_backoff but uses provider_stream_chat
+# for real-time token output.  Falls back to sync on failure.
+# Output: tokens stream to both stdout and /dev/tty.
+_provider_stream_with_backoff() {
+    local provider="$1" message="$2" model="${3:-}" system="${4:-}"
+    local attempt=0 delay="$PROVIDER_INITIAL_BACKOFF"
+    local max="$PROVIDER_MAX_RETRIES"
+    local resp rc
+
+    while [ "$attempt" -le "$max" ]; do
+        _provider_inter_call_delay
+        _provider_meter_throttle
+        _provider_meter_tick
+
+        resp=$(provider_stream_chat "$provider" "$message" "$model" "$system")
+        rc=$?
+
+        if [ $rc -eq 0 ] && [ -n "$resp" ]; then
+            _provider_stamp_last_call
+            # Content already streamed to tty by the SSE loop — echo for capture
+            echo "$resp"
+            return 0
+        fi
+
+        local is_rate_limit=0
+        if [ "$rc" -eq 2 ]; then
+            is_rate_limit=1
+        elif echo "$resp" | grep -qiE "rate.limit|quota.*exceed|too.many.request|429|retry.in"; then
+            is_rate_limit=1
+        fi
+
+        [ "$is_rate_limit" -eq 0 ] && { echo "$resp" >&2; return $rc; }
+
+        attempt=$((attempt + 1))
+        [ "$attempt" -gt "$max" ] && { ui_err "Provider rate limit: gave up after $max retries"; return 1; }
+
+        local hint_wait
+        hint_wait=$(echo "$resp" | grep -oiP 'retry\s+in\s+\K[0-9]+(\.[0-9]+)?' | head -1)
+        if [ -n "$hint_wait" ]; then
+            delay=$(printf '%.0f' "$hint_wait" 2>/dev/null || echo "$delay")
+            [ "$delay" -lt 1 ] && delay=1
+        fi
+        [ "$delay" -gt "$PROVIDER_MAX_BACKOFF" ] && delay="$PROVIDER_MAX_BACKOFF"
+
+        ui_warn "Rate limited — retry ${attempt}/${max} in ${delay}s"
+        _provider_countdown "$delay" "Backoff"
+        delay=$((delay * 2))
+    done
+    return 1
+}
+
+# ═══════════════════════════════════════════════════════════════
+# Provider Streaming Infrastructure
+# ═══════════════════════════════════════════════════════════════
+# SSE-based streaming for cloud provider APIs.  Tokens are emitted
+# to a callback as they arrive, with optional thinking-block support.
+#
+# Token extraction varies by provider family:
+#   OpenAI-compat: .choices[0].delta.content  (+ .reasoning_content for DeepSeek)
+#   Anthropic:     content_block_delta events with .delta.text / .delta.thinking
+#   Google:        .candidates[0].content.parts[0].text
+#   Cohere:        .text in text-generation events
+
+# ── Generic SSE read loop ─────────────────────────────────────
+# Reads SSE lines from a FIFO, extracts tokens via a provider-specific
+# jq filter, and calls callbacks for content and thinking tokens.
+#
+# Usage: _provider_sse_loop FIFO CURL_PID content_jq [think_jq] [done_match]
+#   content_jq: jq expression to extract content delta from an SSE data line
+#   think_jq:   jq expression to extract thinking delta (optional, "" to skip)
+#   done_match: string that signals end-of-stream (default: "[DONE]")
+#
+# Output: content tokens to stdout, thinking tokens to /dev/tty (dimmed)
+_provider_sse_loop() {
+    local fifo="$1" curl_pid="$2" content_jq="$3"
+    local think_jq="${4:-}" done_match="${5:-[DONE]}"
+    local _tty="/dev/tty"
+    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+
+    local _in_think=0 _think_banner=0
+    local _got_content=0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        # SSE format: "data: {...}"
+        [[ "$line" == data:* ]] || continue
+        local json="${line#data: }"
+        json="${json#"${json%%[![:space:]]*}"}"  # trim leading whitespace
+
+        # End-of-stream sentinel
+        [ "$json" = "$done_match" ] && break
+
+        # ── Think tokens ──
+        if [ -n "$think_jq" ]; then
+            local think_tok
+            think_tok=$(echo "$json" | jq -r "$think_jq" 2>/dev/null)
+            if [ -n "$think_tok" ] && [ "$think_tok" != "null" ]; then
+                if [ "$_think_banner" -eq 0 ]; then
+                    _think_banner=1; _in_think=1
+                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                        local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
+                        printf "\n%b┌─ thinking ─\033[0m\n%b" "$_c" "$_c" > "$_tty" 2>/dev/null
+                    fi
+                fi
+                if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                    printf "%s" "$think_tok" > "$_tty" 2>/dev/null
+                fi
+                continue
+            fi
+        fi
+
+        # ── Content tokens ──
+        local tok
+        tok=$(echo "$json" | jq -r "$content_jq" 2>/dev/null)
+        if [ -n "$tok" ] && [ "$tok" != "null" ]; then
+            # Close thinking banner if transitioning from think → content
+            if [ "$_in_think" -eq 1 ] && [ "$_think_banner" -eq 1 ]; then
+                _in_think=0; _think_banner=0
+                if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                    local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
+                    printf "\033[0m\n%b└────────────\033[0m\n" "$_c" > "$_tty" 2>/dev/null
+                fi
+            fi
+            _got_content=1
+            printf "%s" "$tok"
+            printf "%s" "$tok" > "$_tty" 2>/dev/null
+        fi
+    done < "$fifo"
+
+    # Close unclosed thinking banner
+    if [ "$_think_banner" -eq 1 ]; then
+        if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+            local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
+            printf "\033[0m\n%b└────────────\033[0m\n" "$_c" > "$_tty" 2>/dev/null
+        fi
+    fi
+
+    kill "$curl_pid" 2>/dev/null
+    wait "$curl_pid" 2>/dev/null 2>&1 || true
+
+    [ "$_got_content" -eq 1 ] && return 0
+    return 1
+}
+
+# ── Anthropic SSE loop (different event structure) ────────────
+# Anthropic uses typed events: content_block_start, content_block_delta,
+# message_delta, etc.  Thinking blocks have type "thinking".
+_provider_anthropic_sse_loop() {
+    local fifo="$1" curl_pid="$2"
+    local _tty="/dev/tty"
+    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+
+    local _in_think=0 _think_banner=0
+    local _got_content=0
+    local _event_type=""
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Track SSE event type
+        if [[ "$line" == event:* ]]; then
+            _event_type="${line#event: }"
+            _event_type="${_event_type#"${_event_type%%[![:space:]]*}"}"
+            continue
+        fi
+        [[ "$line" == data:* ]] || continue
+        local json="${line#data: }"
+        json="${json#"${json%%[![:space:]]*}"}"
+
+        case "$_event_type" in
+            content_block_start)
+                local block_type
+                block_type=$(echo "$json" | jq -r '.content_block.type // empty' 2>/dev/null)
+                if [ "$block_type" = "thinking" ]; then
+                    _in_think=1
+                    if [ "$_think_banner" -eq 0 ]; then
+                        _think_banner=1
+                        if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                            local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
+                            printf "\n%b┌─ thinking ─\033[0m\n%b" "$_c" "$_c" > "$_tty" 2>/dev/null
+                        fi
+                    fi
+                else
+                    if [ "$_in_think" -eq 1 ]; then
+                        _in_think=0; _think_banner=0
+                        if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                            local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
+                            printf "\033[0m\n%b└────────────\033[0m\n" "$_c" > "$_tty" 2>/dev/null
+                        fi
+                    fi
+                fi ;;
+            content_block_delta)
+                local tok
+                tok=$(echo "$json" | jq -r '.delta.text // .delta.thinking // empty' 2>/dev/null)
+                if [ -n "$tok" ]; then
+                    if [ "$_in_think" -eq 1 ]; then
+                        if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                            printf "%s" "$tok" > "$_tty" 2>/dev/null
+                        fi
+                    else
+                        _got_content=1
+                        printf "%s" "$tok"
+                        printf "%s" "$tok" > "$_tty" 2>/dev/null
+                    fi
+                fi ;;
+            message_stop) break ;;
+        esac
+    done < "$fifo"
+
+    # Close unclosed thinking banner
+    if [ "$_think_banner" -eq 1 ]; then
+        if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+            local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
+            printf "\033[0m\n%b└────────────\033[0m\n" "$_c" > "$_tty" 2>/dev/null
+        fi
+    fi
+
+    kill "$curl_pid" 2>/dev/null
+    wait "$curl_pid" 2>/dev/null 2>&1 || true
+
+    [ "$_got_content" -eq 1 ] && return 0
+    return 1
+}
+
+# ── Google SSE loop (array-based chunks) ──────────────────────
+_provider_google_sse_loop() {
+    local fifo="$1" curl_pid="$2"
+    local _tty="/dev/tty"
+    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    local _got_content=0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        [[ "$line" == data:* ]] || continue
+        local json="${line#data: }"
+        json="${json#"${json%%[![:space:]]*}"}"
+
+        local tok
+        tok=$(echo "$json" | jq -r '.candidates[0].content.parts[0].text // empty' 2>/dev/null)
+        if [ -n "$tok" ]; then
+            _got_content=1
+            printf "%s" "$tok"
+            printf "%s" "$tok" > "$_tty" 2>/dev/null
+        fi
+    done < "$fifo"
+
+    kill "$curl_pid" 2>/dev/null
+    wait "$curl_pid" 2>/dev/null 2>&1 || true
+
+    [ "$_got_content" -eq 1 ] && return 0
+    return 1
+}
+
+# ── Cohere SSE loop ──────────────────────────────────────────
+_provider_cohere_sse_loop() {
+    local fifo="$1" curl_pid="$2"
+    local _tty="/dev/tty"
+    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    local _got_content=0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Cohere sends NDJSON (one JSON per line, no "data:" prefix)
+        [ -z "$line" ] && continue
+        local event_type
+        event_type=$(echo "$line" | jq -r '.event_type // empty' 2>/dev/null)
+        case "$event_type" in
+            text-generation)
+                local tok
+                tok=$(echo "$line" | jq -r '.text // empty' 2>/dev/null)
+                if [ -n "$tok" ]; then
+                    _got_content=1
+                    printf "%s" "$tok"
+                    printf "%s" "$tok" > "$_tty" 2>/dev/null
+                fi ;;
+            stream-end) break ;;
+        esac
+    done < "$fifo"
+
+    kill "$curl_pid" 2>/dev/null
+    wait "$curl_pid" 2>/dev/null 2>&1 || true
+
+    [ "$_got_content" -eq 1 ] && return 0
+    return 1
+}
+
+# ═══════════════════════════════════════════════════════════════
+# Unified streaming dispatcher
+# ═══════════════════════════════════════════════════════════════
+# Streams tokens from a cloud provider.  Falls back to synchronous
+# provider_chat if streaming fails.
+#
+# Usage: provider_stream_chat provider message [model] [system]
+# Output: response tokens streamed to stdout + /dev/tty
+provider_stream_chat() {
+    local provider="$1" message="$2" model="${3:-}" system="${4:-}"
+
+    local canon
+    canon=$(_provider_canon "$provider")
+    [ -z "$canon" ] && { provider_chat "$provider" "$message" "$model" "$system"; return $?; }
+
+    local _tmpdir="${TMPDIR:-/tmp}"
+    local _fifo="$_tmpdir/.lodge-provider-stream-$$"
+    rm -f "$_fifo"
+    mkfifo "$_fifo"
+
+    local curl_pid resp_text
+
+    case "$canon" in
+        OPENAI|GROQ|MISTRAL|TOGETHER|PERPLEXITY|DEEPSEEK|XAI|COHERE)
+            local key_name key url default_model
+            case "$canon" in
+                OPENAI)     key_name="OPENAI_API_KEY"; url="https://api.openai.com/v1/chat/completions"; default_model="gpt-4o-mini" ;;
+                GROQ)       key_name="GROQ_API_KEY"; url="https://api.groq.com/openai/v1/chat/completions"; default_model="llama-3.3-70b-versatile" ;;
+                MISTRAL)    key_name="MISTRAL_API_KEY"; url="https://api.mistral.ai/v1/chat/completions"; default_model="mistral-large-latest" ;;
+                TOGETHER)   key_name="TOGETHER_API_KEY"; url="https://api.together.xyz/v1/chat/completions"; default_model="meta-llama/Llama-3.3-70B-Instruct-Turbo" ;;
+                PERPLEXITY) key_name="PERPLEXITY_API_KEY"; url="https://api.perplexity.ai/chat/completions"; default_model="sonar" ;;
+                DEEPSEEK)   key_name="DEEPSEEK_API_KEY"; url="https://api.deepseek.com/chat/completions"; default_model="deepseek-chat" ;;
+                XAI)        key_name="XAI_API_KEY"; url="https://api.x.ai/v1/chat/completions"; default_model="grok-2" ;;
+                COHERE)     key_name="COHERE_API_KEY"; url="https://api.cohere.com/v2/chat"; default_model="command-a-03-2025" ;;
+            esac
+            key=$(api_require_key "$key_name") || { rm -f "$_fifo"; return 1; }
+            model=$(_provider_resolve_model "$model" "$provider" "$default_model")
+            system="${system:-You are a helpful assistant.}"
+
+            local data sys_role="system" _temp_clause='"temperature": 0.3,'
+            # OpenAI o-series: developer role, no temperature
+            if [ "$canon" = "OPENAI" ] && [[ "$model" == o1* || "$model" == o3* ]]; then
+                sys_role="developer"; _temp_clause=""
+            fi
+            # DeepSeek reasoner: no temperature
+            if [ "$canon" = "DEEPSEEK" ] && [[ "$model" == *reasoner* ]]; then
+                _temp_clause=""
+            fi
+            data=$(jq -n --arg m "$model" --arg s "$system" --arg u "$message" --arg sr "$sys_role" \
+                "{
+                    \"model\": \$m,
+                    \"messages\": [
+                        {\"role\": \$sr, \"content\": \$s},
+                        {\"role\": \"user\", \"content\": \$u}
+                    ],
+                    \"max_tokens\": 4096,
+                    ${_temp_clause}
+                    \"stream\": true
+                }")
+
+            curl_pid=$(API_DEFAULT_TIMEOUT=$PROVIDER_TIMEOUT api_stream_post \
+                "$url" "$data" "$_fifo" \
+                -H "Authorization: Bearer $key")
+
+            # DeepSeek models may emit reasoning_content
+            local think_jq=""
+            [ "$canon" = "DEEPSEEK" ] && think_jq='.choices[0].delta.reasoning_content // empty'
+
+            resp_text=$(_provider_sse_loop "$_fifo" "$curl_pid" \
+                '.choices[0].delta.content // empty' "$think_jq") ;;
+
+        ANTHROPIC)
+            local key
+            key=$(api_require_key "ANTHROPIC_API_KEY") || { rm -f "$_fifo"; return 1; }
+            model=$(_provider_resolve_model "$model" "$provider" "claude-sonnet-4-20250514")
+            system="${system:-You are a helpful assistant.}"
+
+            local data
+            data=$(jq -n --arg m "$model" --arg s "$system" --arg u "$message" '{
+                "model": $m,
+                "max_tokens": 4096,
+                "system": $s,
+                "messages": [{"role": "user", "content": $u}],
+                "stream": true
+            }')
+
+            curl_pid=$(API_DEFAULT_TIMEOUT=$PROVIDER_TIMEOUT api_stream_post \
+                "https://api.anthropic.com/v1/messages" "$data" "$_fifo" \
+                -H "x-api-key: $key" \
+                -H "anthropic-version: 2023-06-01")
+
+            resp_text=$(_provider_anthropic_sse_loop "$_fifo" "$curl_pid") ;;
+
+        GOOGLE)
+            local key
+            key=$(api_require_key "GOOGLE_AI_API_KEY") || { rm -f "$_fifo"; return 1; }
+            model=$(_provider_resolve_model "$model" "$provider" "gemini-2.0-flash")
+
+            local data
+            if [ -n "$system" ]; then
+                data=$(jq -n --arg s "$system" --arg u "$message" '{
+                    "systemInstruction": {"parts": [{"text": $s}]},
+                    "contents": [{"parts": [{"text": $u}]}],
+                    "generationConfig": {"maxOutputTokens": 4096, "temperature": 0.3}
+                }')
+            else
+                data=$(jq -n --arg u "$message" '{
+                    "contents": [{"parts": [{"text": $u}]}],
+                    "generationConfig": {"maxOutputTokens": 4096, "temperature": 0.3}
+                }')
+            fi
+
+            local url="https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${key}"
+            curl_pid=$(API_DEFAULT_TIMEOUT=$PROVIDER_TIMEOUT api_stream_post \
+                "$url" "$data" "$_fifo")
+
+            resp_text=$(_provider_google_sse_loop "$_fifo" "$curl_pid") ;;
+
+        *)
+            rm -f "$_fifo"
+            provider_chat "$provider" "$message" "$model" "$system"
+            return $? ;;
+    esac
+
+    local rc=$?
+    rm -f "$_fifo"
+
+    if [ $rc -eq 0 ] && [ -n "$resp_text" ]; then
+        echo "$resp_text"
+        return 0
+    fi
+
+    # Streaming failed — fall back to synchronous
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] provider stream failed, falling back to sync" >/dev/tty 2>/dev/null
+    provider_chat "$provider" "$message" "$model" "$system"
+}
+
 # ═══════════════════════════════════════════════════════════════
 # OpenAI — GPT-4o, GPT-4o-mini, o1, o3, etc.
 # ═══════════════════════════════════════════════════════════════
@@ -142,15 +745,27 @@ openai_chat() {
     key=$(api_require_key "OPENAI_API_KEY" "OpenAI") || return 1
 
     local data
-    data=$(jq -n --arg m "$model" --arg s "$system" --arg u "$message" '{
-        "model": $m,
-        "messages": [
-            {"role": "system", "content": $s},
-            {"role": "user", "content": $u}
-        ],
-        "max_tokens": 4096,
-        "temperature": 0.3
-    }')
+    # o-series reasoning models require developer role + no temperature
+    if [[ "$model" == o1* || "$model" == o3* ]]; then
+        data=$(jq -n --arg m "$model" --arg s "$system" --arg u "$message" '{
+            "model": $m,
+            "messages": [
+                {"role": "developer", "content": $s},
+                {"role": "user", "content": $u}
+            ],
+            "max_completion_tokens": 4096
+        }')
+    else
+        data=$(jq -n --arg m "$model" --arg s "$system" --arg u "$message" '{
+            "model": $m,
+            "messages": [
+                {"role": "system", "content": $s},
+                {"role": "user", "content": $u}
+            ],
+            "max_completion_tokens": 4096,
+            "temperature": 0.3
+        }')
+    fi
 
     local resp
     resp=$(API_DEFAULT_TIMEOUT=$PROVIDER_TIMEOUT api_post \
@@ -204,7 +819,7 @@ anthropic_chat() {
 anthropic_models() {
     echo "claude-opus-4-20250514"
     echo "claude-sonnet-4-20250514"
-    echo "claude-haiku-3-20240307"
+    echo "claude-haiku-4-20250514"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -462,26 +1077,28 @@ perplexity_chat() {
 cohere_chat() {
     local message="$1"
     local model
-    model=$(_provider_resolve_model "$2" "cohere" "command-r-plus")
+    model=$(_provider_resolve_model "$2" "cohere" "command-a-03-2025")
     local system="${3:-You are a helpful assistant.}"
     local key
     key=$(api_require_key "COHERE_API_KEY" "Cohere") || return 1
 
     local data
-    data=$(jq -n --arg m "$model" --arg p "$system" --arg u "$message" '{
+    data=$(jq -n --arg m "$model" --arg s "$system" --arg u "$message" '{
         "model": $m,
-        "message": $u,
-        "preamble": $p,
+        "messages": [
+            {"role": "system", "content": $s},
+            {"role": "user", "content": $u}
+        ],
         "max_tokens": 4096,
         "temperature": 0.3
     }')
 
     local resp
     resp=$(API_DEFAULT_TIMEOUT=$PROVIDER_TIMEOUT api_post \
-        "https://api.cohere.ai/v1/chat" "$data" \
+        "https://api.cohere.com/v2/chat" "$data" \
         -H "Authorization: Bearer $key")
 
-    _provider_check_response $? "$resp" '.text' "Cohere"
+    _provider_check_response $? "$resp" '.message.content[0].text' "Cohere"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -498,22 +1115,48 @@ deepseek_chat() {
     key=$(api_require_key "DEEPSEEK_API_KEY" "DeepSeek") || return 1
 
     local data
-    data=$(jq -n --arg m "$model" --arg s "$system" --arg u "$message" '{
-        "model": $m,
-        "messages": [
-            {"role": "system", "content": $s},
-            {"role": "user", "content": $u}
-        ],
-        "max_tokens": 4096,
-        "temperature": 0.3
-    }')
+    # deepseek-reasoner rejects temperature != 1 and puts output in reasoning_content
+    if [[ "$model" == *reasoner* ]]; then
+        data=$(jq -n --arg m "$model" --arg s "$system" --arg u "$message" '{
+            "model": $m,
+            "messages": [
+                {"role": "system", "content": $s},
+                {"role": "user", "content": $u}
+            ],
+            "max_tokens": 4096
+        }')
+    else
+        data=$(jq -n --arg m "$model" --arg s "$system" --arg u "$message" '{
+            "model": $m,
+            "messages": [
+                {"role": "system", "content": $s},
+                {"role": "user", "content": $u}
+            ],
+            "max_tokens": 4096,
+            "temperature": 0.3
+        }')
+    fi
 
     local resp
     resp=$(API_DEFAULT_TIMEOUT=$PROVIDER_TIMEOUT api_post \
         "https://api.deepseek.com/chat/completions" "$data" \
         -H "Authorization: Bearer $key")
 
-    _provider_check_response $? "$resp" '.choices[0].message.content' "DeepSeek"
+    # For reasoner models, try to extract reasoning_content if content is empty
+    local rc=$?
+    if [ $rc -eq 0 ] && [[ "$model" == *reasoner* ]]; then
+        local text
+        text=$(api_json_get "$resp" '.choices[0].message.content')
+        if [ -z "$text" ] || [ "$text" = "null" ]; then
+            text=$(api_json_get "$resp" '.choices[0].message.reasoning_content')
+        fi
+        if [ -n "$text" ] && [ "$text" != "null" ]; then
+            echo "$text"
+            return 0
+        fi
+    fi
+
+    _provider_check_response $rc "$resp" '.choices[0].message.content' "DeepSeek"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -633,6 +1276,8 @@ provider_use() {
     _model=$(provider_get_model "$provider" 2>/dev/null)
     ui_ok "Provider harness active: all LLM calls → $provider"
     [ -n "$_model" ] && ui_dim "  Model: $_model"
+    local _delay="${PROVIDER_CALL_DELAY:-0}"
+    [ "$_delay" -gt 0 ] 2>/dev/null && ui_dim "  Call delay: ${_delay}s between LLM calls"
     ui_dim "  Switch back: /provider use local"
 }
 
@@ -672,6 +1317,33 @@ _provider_load_harness() {
             GEORGE_PROVIDER=""
         fi
     fi
+    # Restore persisted call delay
+    local stored_delay
+    stored_delay=$(api_get_key "PROVIDER_CALL_DELAY" 2>/dev/null)
+    if [ -n "$stored_delay" ] && [ "$stored_delay" -gt 0 ] 2>/dev/null; then
+        PROVIDER_CALL_DELAY="$stored_delay"
+    fi
+}
+
+# Set inter-call delay (persisted to keys.conf)
+provider_set_delay() {
+    local secs="$1"
+    if ! [[ "$secs" =~ ^[0-9]+$ ]]; then
+        ui_err "Delay must be a number of seconds (e.g. 30)"
+        return 1
+    fi
+    PROVIDER_CALL_DELAY="$secs"
+    api_set_key "PROVIDER_CALL_DELAY" "$secs"
+    if [ "$secs" -eq 0 ]; then
+        ui_ok "Provider call delay disabled"
+    else
+        ui_ok "Provider call delay set to ${secs}s between LLM calls"
+    fi
+}
+
+# Return current delay
+provider_get_delay() {
+    echo "${PROVIDER_CALL_DELAY:-0}"
 }
 
 # Show which providers are configured
@@ -687,6 +1359,9 @@ provider_status() {
         else
             printf "  %b★%b %-15s active (all LLM calls routed here)\n" "$C_GREEN" "$C_RESET" "$GEORGE_PROVIDER"
         fi
+        local _s_delay="${PROVIDER_CALL_DELAY:-0}"
+        [ "$_s_delay" -gt 0 ] 2>/dev/null && \
+            printf "  %b  %-15s %s%b\n" "$C_DIM" "" "call delay: ${_s_delay}s" "$C_RESET"
     fi
 
     # ── Web & Search Tools ──

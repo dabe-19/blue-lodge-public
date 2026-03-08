@@ -855,6 +855,42 @@ _cmd_limits() {
             else
                 _limits_set AGENT_STEP_DELAY "Step delay" "$value" 0 30
             fi ;;
+        api-delay)
+            if [ -z "$value" ]; then
+                ui_info "Provider call delay: ${PROVIDER_CALL_DELAY}s (default: 7)"
+            else
+                _limits_set PROVIDER_CALL_DELAY "Provider call delay" "$value" 0 120
+            fi ;;
+        api-retries)
+            if [ -z "$value" ]; then
+                ui_info "Provider max retries: $PROVIDER_MAX_RETRIES (default: 4)"
+            else
+                _limits_set PROVIDER_MAX_RETRIES "Provider max retries" "$value" 0 20
+            fi ;;
+        api-backoff)
+            if [ -z "$value" ]; then
+                ui_info "Provider initial backoff: ${PROVIDER_INITIAL_BACKOFF}s (default: 5)"
+            else
+                _limits_set PROVIDER_INITIAL_BACKOFF "Provider initial backoff" "$value" 1 120
+            fi ;;
+        api-max-backoff)
+            if [ -z "$value" ]; then
+                ui_info "Provider max backoff: ${PROVIDER_MAX_BACKOFF}s (default: 60)"
+            else
+                _limits_set PROVIDER_MAX_BACKOFF "Provider max backoff" "$value" 1 300
+            fi ;;
+        api-cooldown-max)
+            if [ -z "$value" ]; then
+                ui_info "Provider cooldown max calls: $PROVIDER_COOLDOWN_MAX (default: 8)"
+            else
+                _limits_set PROVIDER_COOLDOWN_MAX "Provider cooldown max" "$value" 1 100
+            fi ;;
+        api-cooldown-window)
+            if [ -z "$value" ]; then
+                ui_info "Provider cooldown window: ${PROVIDER_COOLDOWN_WINDOW}s (default: 60)"
+            else
+                _limits_set PROVIDER_COOLDOWN_WINDOW "Provider cooldown window" "$value" 10 600
+            fi ;;
         rec-chars)
             if [ -z "$value" ]; then
                 ui_info "Evaluator recommendation char limit: ${AGENT_EVAL_REC_CHARS:-120} (default: 120)"
@@ -893,6 +929,12 @@ _cmd_limits() {
             AGENT_EVAL_REC_CHARS=120
             AGENT_PRESSURE_RELIEF=2
             AGENT_SMART_ROUTE=1
+            PROVIDER_CALL_DELAY=7
+            PROVIDER_MAX_RETRIES=4
+            PROVIDER_INITIAL_BACKOFF=5
+            PROVIDER_MAX_BACKOFF=60
+            PROVIDER_COOLDOWN_MAX=8
+            PROVIDER_COOLDOWN_WINDOW=60
             ui_ok "All limits reset to defaults" ;;
         "")
             ui_section "Agent Limits"
@@ -937,6 +979,14 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Journal:" "$LLM_BUDGET_JOURNAL  (default: 64)"
             printf "  %-22s %s\n" "Tools:" "$LLM_BUDGET_TOOL  (default: 256)"
             echo ""
+            ui_section "Provider Rate Limits"
+            printf "  %-22s %s\n" "API call delay:" "${PROVIDER_CALL_DELAY}s  (default: 7)"
+            printf "  %-22s %s\n" "Max retries:" "$PROVIDER_MAX_RETRIES  (default: 4)"
+            printf "  %-22s %s\n" "Initial backoff:" "${PROVIDER_INITIAL_BACKOFF}s  (default: 5)"
+            printf "  %-22s %s\n" "Max backoff:" "${PROVIDER_MAX_BACKOFF}s  (default: 60)"
+            printf "  %-22s %s\n" "Cooldown max calls:" "$PROVIDER_COOLDOWN_MAX  (default: 8)"
+            printf "  %-22s %s\n" "Cooldown window:" "${PROVIDER_COOLDOWN_WINDOW}s  (default: 60)"
+            echo ""
             ui_dim "  Usage: /limits <param> [value]"
             ui_dim "  Reset: /limits reset" ;;
         *)
@@ -977,6 +1027,14 @@ _cmd_limits() {
             ui_dim "    budget-router N — Router tool selection (current: $LLM_BUDGET_ROUTER)"
             ui_dim "    budget-journal N — Journal reflect/quip (current: $LLM_BUDGET_JOURNAL)"
             ui_dim "    budget-tool N   — Commit, web, recall, slash (current: $LLM_BUDGET_TOOL)"
+            echo ""
+            ui_dim "  Provider rate limits:"
+            ui_dim "    api-delay N          — Seconds between API calls (current: $PROVIDER_CALL_DELAY)"
+            ui_dim "    api-retries N        — Max retry attempts on 429 (current: $PROVIDER_MAX_RETRIES)"
+            ui_dim "    api-backoff N        — Initial backoff seconds (current: $PROVIDER_INITIAL_BACKOFF)"
+            ui_dim "    api-max-backoff N    — Max backoff cap seconds (current: $PROVIDER_MAX_BACKOFF)"
+            ui_dim "    api-cooldown-max N   — Max calls in cooldown window (current: $PROVIDER_COOLDOWN_MAX)"
+            ui_dim "    api-cooldown-window N — Cooldown window seconds (current: $PROVIDER_COOLDOWN_WINDOW)"
             echo ""
             ui_dim "    reset           — Reset all to defaults" ;;
     esac
@@ -2497,10 +2555,27 @@ _cmd_provider() {
                 provider_set_model "$provider" "$model_override"
             fi
             provider_use "${provider:-}" ;;
+        delay|throttle)
+            local secs
+            secs=$(echo "$rest" | awk '{print $1}')
+            if [ -z "$secs" ]; then
+                local cur
+                cur=$(provider_get_delay)
+                if [ "$cur" -gt 0 ] 2>/dev/null; then
+                    ui_info "Current call delay: ${cur}s between LLM calls"
+                else
+                    ui_info "No call delay set (calls fire immediately)"
+                fi
+                ui_dim "  Set: /provider delay 30"
+                ui_dim "  Off: /provider delay 0"
+            else
+                provider_set_delay "$secs"
+            fi ;;
         *)
-            ui_info "Usage: /provider <chat|use|model|models|status>"
+            ui_info "Usage: /provider <chat|use|delay|model|models|status>"
             ui_dim "  use <provider>[/model]  — Route ALL LLM calls through provider"
             ui_dim "  use local               — Switch back to local backend"
+            ui_dim "  delay <seconds>         — Set minimum gap between LLM calls"
             ui_dim "  chat <provider>[/model] <msg> — Send a message to a cloud AI"
             ui_dim "  model <provider> [model|clear] — Get/set default model"
             ui_dim "  models <provider>     — List available models from API"

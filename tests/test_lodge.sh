@@ -565,6 +565,65 @@ describe "Limits command"
     assert_eq "$AGENT_HONEYDEW_EXPAND" "1"
     assert_eq "$AGENT_HONEYDEW_MAX_ITEMS" "16"
     assert_eq "$AGENT_SMART_ROUTE" "1"
+    assert_eq "$PROVIDER_CALL_DELAY" "7"
+    assert_eq "$PROVIDER_MAX_RETRIES" "4"
+    assert_eq "$PROVIDER_INITIAL_BACKOFF" "5"
+    assert_eq "$PROVIDER_MAX_BACKOFF" "60"
+    assert_eq "$PROVIDER_COOLDOWN_MAX" "8"
+    assert_eq "$PROVIDER_COOLDOWN_WINDOW" "60"
+  }
+
+  it "_cmd_limits api-delay sets PROVIDER_CALL_DELAY" && {
+    _cmd_limits "api-delay 10" >/dev/null 2>&1
+    assert_eq "$PROVIDER_CALL_DELAY" "10"
+  }
+
+  it "_cmd_limits api-retries sets PROVIDER_MAX_RETRIES" && {
+    _cmd_limits "api-retries 6" >/dev/null 2>&1
+    assert_eq "$PROVIDER_MAX_RETRIES" "6"
+  }
+
+  it "_cmd_limits api-backoff sets PROVIDER_INITIAL_BACKOFF" && {
+    _cmd_limits "api-backoff 10" >/dev/null 2>&1
+    assert_eq "$PROVIDER_INITIAL_BACKOFF" "10"
+  }
+
+  it "_cmd_limits api-max-backoff sets PROVIDER_MAX_BACKOFF" && {
+    _cmd_limits "api-max-backoff 90" >/dev/null 2>&1
+    assert_eq "$PROVIDER_MAX_BACKOFF" "90"
+  }
+
+  it "_cmd_limits api-cooldown-max sets PROVIDER_COOLDOWN_MAX" && {
+    _cmd_limits "api-cooldown-max 15" >/dev/null 2>&1
+    assert_eq "$PROVIDER_COOLDOWN_MAX" "15"
+  }
+
+  it "_cmd_limits api-cooldown-window sets PROVIDER_COOLDOWN_WINDOW" && {
+    _cmd_limits "api-cooldown-window 120" >/dev/null 2>&1
+    assert_eq "$PROVIDER_COOLDOWN_WINDOW" "120"
+  }
+
+  it "_cmd_limits show includes provider rate limits" && {
+    _toutput=$(_cmd_limits "" 2>&1)
+    echo "$_toutput" | grep -q "Provider Rate Limits"
+    assert_ok $?
+    echo "$_toutput" | grep -q "API call delay"
+    assert_ok $?
+    echo "$_toutput" | grep -q "Cooldown max"
+    assert_ok $?
+  }
+
+  it "_cmd_limits help includes provider rate params" && {
+    _toutput=$(_cmd_limits "help" 2>&1)
+    echo "$_toutput" | grep -q "api-delay"
+    assert_ok $?
+    echo "$_toutput" | grep -q "api-cooldown-max"
+    assert_ok $?
+  }
+
+  it "_cmd_limits api-delay rejects out-of-range" && {
+    _cmd_limits "api-delay 999" >/dev/null 2>&1
+    assert_fail $? "api-delay 999 should fail"
   }
 
 # ── /model command ─────────────────────────────────────────────
@@ -1093,6 +1152,24 @@ describe "/provider use command"
     body=$(declare -f _cmd_provider)
     echo "$body" | grep -q 'model_override.*provider#\*/\|provider%%/\*'
     assert_ok $? "provider/model syntax must be parsed"
+  }
+
+  it "_cmd_provider handles delay action" && {
+    body=$(declare -f _cmd_provider)
+    echo "$body" | grep -q 'delay.*throttle'
+    assert_ok $? "_cmd_provider must handle delay|throttle action"
+  }
+
+  it "_cmd_provider delay calls provider_set_delay" && {
+    body=$(declare -f _cmd_provider)
+    echo "$body" | grep -q 'provider_set_delay'
+    assert_ok $? "delay action must call provider_set_delay"
+  }
+
+  it "_cmd_provider help mentions delay" && {
+    body=$(declare -f _cmd_provider)
+    echo "$body" | grep -q 'delay.*seconds.*gap\|delay.*Set'
+    assert_ok $? "help text must mention /provider delay"
   }
 
 test_end

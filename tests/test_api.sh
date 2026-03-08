@@ -216,6 +216,11 @@ describe "Convenience functions"
     assert_ok $?
   }
 
+  it "api_stream_post is defined" && {
+    declare -f api_stream_post &>/dev/null
+    assert_ok $?
+  }
+
   it "api_put is defined" && {
     declare -f api_put &>/dev/null
     assert_ok $?

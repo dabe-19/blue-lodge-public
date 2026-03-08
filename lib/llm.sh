@@ -1260,14 +1260,16 @@ llm_generate() {
     # ── Provider harness intercept ─────────────────────────────
     # When a cloud provider is active, skip all local backend logic
     # and route directly through the provider API.
-    if [ -n "${GEORGE_PROVIDER:-}" ] && declare -f provider_chat &>/dev/null; then
+    if [ -n "${GEORGE_PROVIDER:-}" ] && declare -f _provider_call_with_backoff &>/dev/null; then
         _llm_debug_start_timer
+        ui_spinner_start "$GEORGE_PROVIDER" >/dev/tty 2>/dev/null
         local _provider_resp
-        _provider_resp=$(provider_chat "$GEORGE_PROVIDER" "$prompt" "" "$system")
+        _provider_resp=$(_provider_call_with_backoff "$GEORGE_PROVIDER" "$prompt" "" "$system")
         local _rc=$?
+        ui_spinner_stop 2>/dev/null
         if [ $_rc -eq 0 ] && [ -n "$_provider_resp" ]; then
             echo "$_provider_resp"
-            _llm_debug_stop_timer "provider/$GEORGE_PROVIDER"
+            _llm_debug_end_timer "provider/$GEORGE_PROVIDER"
             return 0
         fi
         return $_rc
@@ -1894,19 +1896,17 @@ llm_stream() {
     local full_response=""
 
     # ── Provider harness intercept ─────────────────────────────
-    # Route through cloud provider, printing response to tty for
-    # real-time visual feedback (matches llm_stream contract).
-    if [ -n "${GEORGE_PROVIDER:-}" ] && declare -f provider_chat &>/dev/null; then
+    # Route through cloud provider with real-time SSE streaming.
+    # Tokens appear on tty as they arrive, with thinking-block display.
+    if [ -n "${GEORGE_PROVIDER:-}" ] && declare -f _provider_stream_with_backoff &>/dev/null; then
         _llm_debug_start_timer
-        printf "\r\033[K" >/dev/tty 2>/dev/null  # Clear any spinner line
-        ui_dim "  [$GEORGE_PROVIDER]" >/dev/tty 2>/dev/null
+        printf "\r\033[K" >/dev/tty 2>/dev/null
         local _provider_resp
-        _provider_resp=$(provider_chat "$GEORGE_PROVIDER" "$prompt" "" "$system")
+        _provider_resp=$(_provider_stream_with_backoff "$GEORGE_PROVIDER" "$prompt" "" "$system")
         local _rc=$?
         if [ $_rc -eq 0 ] && [ -n "$_provider_resp" ]; then
-            printf "%s\n" "$_provider_resp" >/dev/tty 2>/dev/null
             echo "$_provider_resp"
-            _llm_debug_stop_timer "provider/$GEORGE_PROVIDER"
+            _llm_debug_end_timer "provider/$GEORGE_PROVIDER"
             return 0
         fi
         return $_rc
@@ -2543,13 +2543,15 @@ llm_chat() {
 
     # ── Provider harness intercept ─────────────────────────────
     # Extract the last user message and route through the provider.
-    if [ -n "${GEORGE_PROVIDER:-}" ] && declare -f provider_chat &>/dev/null; then
+    if [ -n "${GEORGE_PROVIDER:-}" ] && declare -f _provider_call_with_backoff &>/dev/null; then
         local _last_msg
         _last_msg=$(echo "$messages" | jq -r '[.[] | select(.role == "user")] | last | .content // empty' 2>/dev/null)
         if [ -n "$_last_msg" ]; then
+            ui_spinner_start "$GEORGE_PROVIDER" >/dev/tty 2>/dev/null
             local _provider_resp
-            _provider_resp=$(provider_chat "$GEORGE_PROVIDER" "$_last_msg" "" "$system")
+            _provider_resp=$(_provider_call_with_backoff "$GEORGE_PROVIDER" "$_last_msg" "" "$system")
             local _rc=$?
+            ui_spinner_stop 2>/dev/null
             if [ $_rc -eq 0 ] && [ -n "$_provider_resp" ]; then
                 echo "$_provider_resp"
                 return 0

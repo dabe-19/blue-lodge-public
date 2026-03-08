@@ -1252,16 +1252,22 @@ describe "Provider harness bypass"
     assert_ok $? "llm_chat must check GEORGE_PROVIDER"
   }
 
-  it "llm_generate intercept calls provider_chat" && {
+  it "llm_generate intercept uses _provider_call_with_backoff" && {
     body=$(declare -f llm_generate)
-    echo "$body" | grep -q 'provider_chat.*GEORGE_PROVIDER'
-    assert_ok $? "intercept must route to provider_chat"
+    echo "$body" | grep -q '_provider_call_with_backoff.*GEORGE_PROVIDER'
+    assert_ok $? "intercept must route through backoff wrapper"
   }
 
-  it "llm_stream intercept calls provider_chat" && {
+  it "llm_stream intercept uses _provider_stream_with_backoff" && {
     body=$(declare -f llm_stream)
-    echo "$body" | grep -q 'provider_chat.*GEORGE_PROVIDER'
-    assert_ok $? "intercept must route to provider_chat"
+    echo "$body" | grep -q '_provider_stream_with_backoff.*GEORGE_PROVIDER'
+    assert_ok $? "intercept must route through streaming backoff wrapper"
+  }
+
+  it "llm_chat intercept uses _provider_call_with_backoff" && {
+    body=$(declare -f llm_chat)
+    echo "$body" | grep -q '_provider_call_with_backoff.*GEORGE_PROVIDER'
+    assert_ok $? "intercept must route through backoff wrapper"
   }
 
 test_end

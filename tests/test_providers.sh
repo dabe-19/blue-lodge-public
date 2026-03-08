@@ -105,6 +105,7 @@ describe "Model listing functions"
     models=$(anthropic_models)
     assert_contains "$models" "claude-opus-4"
     assert_contains "$models" "claude-sonnet-4"
+    assert_contains "$models" "claude-haiku-4"
   }
 
   it "google_models is defined" && {
@@ -527,6 +528,304 @@ describe "Google systemInstruction handling"
     cat "$_t_capfile" | grep -q "Be helpful."
     assert_ok $? "retry payload must contain system text in user message"
     rm -f "$_t_cntfile" "$_t_capfile"
+    _teardown_prov
+  }
+
+test_end
+
+# ── Metering and rate-limit functions ────────────────────────────
+describe "Provider metering and rate limits"
+
+  it "_provider_meter_tick records a call" && {
+    _setup_prov
+    _PROVIDER_METER_DIR=$(mktemp -d)
+    _provider_meter_tick
+    _tresult=$(cat "$_PROVIDER_METER_DIR/calls" 2>/dev/null | wc -l)
+    assert_eq "$_tresult" "1" "must record one call"
+    rm -rf "$_PROVIDER_METER_DIR"
+    _teardown_prov
+  }
+
+  it "_provider_meter_count tracks calls in window" && {
+    _setup_prov
+    _PROVIDER_METER_DIR=$(mktemp -d)
+    PROVIDER_COOLDOWN_WINDOW=60
+    _provider_meter_tick
+    _provider_meter_tick
+    _tresult=$(_provider_meter_count)
+    assert_eq "$_tresult" "2" "must count 2 calls"
+    rm -rf "$_PROVIDER_METER_DIR"
+    _teardown_prov
+  }
+
+  it "_provider_meter_count ignores calls outside window" && {
+    _setup_prov
+    _PROVIDER_METER_DIR=$(mktemp -d)
+    PROVIDER_COOLDOWN_WINDOW=60
+    # Write an old timestamp (2 minutes ago)
+    echo "$(($(date +%s) - 120))" > "$_PROVIDER_METER_DIR/calls"
+    _tresult=$(_provider_meter_count)
+    assert_eq "$_tresult" "0" "old calls must be outside window"
+    rm -rf "$_PROVIDER_METER_DIR"
+    _teardown_prov
+  }
+
+  it "_provider_meter_reset cleans up" && {
+    _setup_prov
+    _PROVIDER_METER_DIR=$(mktemp -d)
+    _provider_meter_tick
+    _provider_meter_reset
+    [ ! -d "$_PROVIDER_METER_DIR" ]
+    assert_ok $? "meter dir must be removed"
+    _teardown_prov
+  }
+
+  it "_provider_call_with_backoff is defined" && {
+    _setup_prov
+    declare -f _provider_call_with_backoff &>/dev/null
+    assert_ok $?
+    _teardown_prov
+  }
+
+  it "_provider_call_with_backoff calls provider_chat" && {
+    _setup_prov
+    _PROVIDER_METER_DIR=$(mktemp -d)
+    PROVIDER_CALL_DELAY=0
+    provider_chat() { echo "backoff-result"; return 0; }
+    _tresult=$(_provider_call_with_backoff "google" "hello" "" "" 2>/dev/null)
+    assert_eq "$_tresult" "backoff-result"
+    rm -rf "$_PROVIDER_METER_DIR"
+    _teardown_prov
+  }
+
+test_end
+
+# ── Inter-call delay ──────────────────────────────────────────
+describe "Provider call delay"
+
+  it "provider_set_delay is defined" && {
+    _setup_prov
+    declare -f provider_set_delay &>/dev/null
+    assert_ok $?
+    _teardown_prov
+  }
+
+  it "provider_get_delay returns default of 7" && {
+    _setup_prov
+    unset PROVIDER_CALL_DELAY
+    _LIB_PROVIDERS_LOADED=""
+    source "$LODGE_DIR/lib/providers.sh"
+    _tresult=$(provider_get_delay)
+    assert_eq "$_tresult" "7"
+    _teardown_prov
+  }
+
+  it "provider_set_delay sets and persists value" && {
+    _setup_prov
+    provider_set_delay 30 >/dev/null 2>&1
+    assert_eq "$PROVIDER_CALL_DELAY" "30" "global must be set"
+    _tresult=$(api_get_key "PROVIDER_CALL_DELAY" 2>/dev/null)
+    assert_eq "$_tresult" "30" "must be persisted to keys.conf"
+    _teardown_prov
+  }
+
+  it "provider_set_delay rejects non-numeric input" && {
+    _setup_prov
+    provider_set_delay "abc" 2>/dev/null
+    assert_fail $?
+    _teardown_prov
+  }
+
+  it "_provider_load_harness restores delay from keys.conf" && {
+    _setup_prov
+    api_set_key "PROVIDER_CALL_DELAY" "25"
+    PROVIDER_CALL_DELAY=0
+    _provider_load_harness
+    assert_eq "$PROVIDER_CALL_DELAY" "25" "delay must be restored"
+    _teardown_prov
+  }
+
+  it "_provider_inter_call_delay skips when delay is 0" && {
+    _setup_prov
+    _PROVIDER_METER_DIR=$(mktemp -d)
+    PROVIDER_CALL_DELAY=0
+    _t_start=$(date +%s)
+    _provider_inter_call_delay
+    _t_elapsed=$(( $(date +%s) - _t_start ))
+    [ "$_t_elapsed" -lt 2 ]
+    assert_ok $? "must not sleep when delay is 0"
+    rm -rf "$_PROVIDER_METER_DIR"
+    _teardown_prov
+  }
+
+  it "_provider_stamp_last_call writes timestamp" && {
+    _setup_prov
+    _PROVIDER_METER_DIR=$(mktemp -d)
+    _provider_stamp_last_call
+    [ -f "$_PROVIDER_METER_DIR/last_call" ]
+    assert_ok $? "must write last_call file"
+    _tresult=$(cat "$_PROVIDER_METER_DIR/last_call")
+    [[ "$_tresult" =~ ^[0-9]+$ ]]
+    assert_ok $? "must contain a timestamp"
+    rm -rf "$_PROVIDER_METER_DIR"
+    _teardown_prov
+  }
+
+# ── Countdown timer ─────────────────────────────────────────
+describe "Provider countdown timer"
+
+  it "_provider_countdown is defined" && {
+    declare -f _provider_countdown &>/dev/null
+    assert_ok $?
+  }
+
+  it "_provider_countdown skips when secs<=0" && {
+    _t_start=$(date +%s)
+    _provider_countdown 0 "test" 2>/dev/null
+    _t_elapsed=$(( $(date +%s) - _t_start ))
+    [ "$_t_elapsed" -lt 2 ]
+    assert_ok $? "must return immediately for 0"
+  }
+
+# ── Streaming infrastructure ──────────────────────────────────
+describe "Provider streaming infrastructure"
+
+  it "provider_stream_chat is defined" && {
+    declare -f provider_stream_chat &>/dev/null
+    assert_ok $?
+  }
+
+  it "_provider_stream_with_backoff is defined" && {
+    declare -f _provider_stream_with_backoff &>/dev/null
+    assert_ok $?
+  }
+
+  it "_provider_sse_loop is defined" && {
+    declare -f _provider_sse_loop &>/dev/null
+    assert_ok $?
+  }
+
+  it "_provider_anthropic_sse_loop is defined" && {
+    declare -f _provider_anthropic_sse_loop &>/dev/null
+    assert_ok $?
+  }
+
+  it "_provider_google_sse_loop is defined" && {
+    declare -f _provider_google_sse_loop &>/dev/null
+    assert_ok $?
+  }
+
+  it "api_stream_post is defined" && {
+    declare -f api_stream_post &>/dev/null
+    assert_ok $?
+  }
+
+# ── OpenAI o-series guard ─────────────────────────────────────
+describe "OpenAI reasoning model guard"
+
+  it "openai_chat uses developer role for o3 models" && {
+    _setup_prov
+    _t_capfile=$(mktemp)
+    api_post() { echo "$2" > "$_t_capfile"; echo '{"choices":[{"message":{"content":"ok"}}]}'; }
+    api_require_key() { echo "sk-test"; }
+    openai_chat "test" "o3-mini" "sys" 2>/dev/null
+    cat "$_t_capfile" | grep -q '"developer"'
+    assert_ok $? "must use developer role"
+    cat "$_t_capfile" | grep -q '"temperature"'
+    assert_fail $? "must not include temperature"
+    rm -f "$_t_capfile"
+    _teardown_prov
+  }
+
+  it "openai_chat uses system role for gpt models" && {
+    _setup_prov
+    _t_capfile=$(mktemp)
+    api_post() { echo "$2" > "$_t_capfile"; echo '{"choices":[{"message":{"content":"ok"}}]}'; }
+    api_require_key() { echo "sk-test"; }
+    openai_chat "test" "gpt-4o-mini" "sys" 2>/dev/null
+    cat "$_t_capfile" | grep -q '"system"'
+    assert_ok $? "must use system role"
+    rm -f "$_t_capfile"
+    _teardown_prov
+  }
+
+  it "openai_chat uses max_completion_tokens" && {
+    _setup_prov
+    _t_capfile=$(mktemp)
+    api_post() { echo "$2" > "$_t_capfile"; echo '{"choices":[{"message":{"content":"ok"}}]}'; }
+    api_require_key() { echo "sk-test"; }
+    openai_chat "test" "" "sys" 2>/dev/null
+    cat "$_t_capfile" | grep -q 'max_completion_tokens'
+    assert_ok $? "must use max_completion_tokens not max_tokens"
+    rm -f "$_t_capfile"
+    _teardown_prov
+  }
+
+# ── DeepSeek reasoner guard ───────────────────────────────────
+describe "DeepSeek reasoning model guard"
+
+  it "deepseek_chat omits temperature for reasoner" && {
+    _setup_prov
+    _t_capfile=$(mktemp)
+    api_post() { echo "$2" > "$_t_capfile"; echo '{"choices":[{"message":{"content":"ok"}}]}'; }
+    api_require_key() { echo "sk-test"; }
+    deepseek_chat "test" "deepseek-reasoner" "sys" 2>/dev/null
+    cat "$_t_capfile" | grep -q '"temperature"'
+    assert_fail $? "must not include temperature for reasoner"
+    rm -f "$_t_capfile"
+    _teardown_prov
+  }
+
+  it "deepseek_chat includes temperature for deepseek-chat" && {
+    _setup_prov
+    _t_capfile=$(mktemp)
+    api_post() { echo "$2" > "$_t_capfile"; echo '{"choices":[{"message":{"content":"ok"}}]}'; }
+    api_require_key() { echo "sk-test"; }
+    deepseek_chat "test" "deepseek-chat" "sys" 2>/dev/null
+    cat "$_t_capfile" | grep -q '"temperature"'
+    assert_ok $? "must include temperature for deepseek-chat"
+    rm -f "$_t_capfile"
+    _teardown_prov
+  }
+
+# ── Cohere v2 API ────────────────────────────────────────────
+describe "Cohere v2 API migration"
+
+  it "cohere_chat uses v2 endpoint" && {
+    _setup_prov
+    _t_capfile=$(mktemp)
+    api_post() { echo "$1" > "$_t_capfile"; echo '{"message":{"content":[{"text":"ok"}]}}'; }
+    api_require_key() { echo "test-key"; }
+    cohere_chat "test" "" "sys" 2>/dev/null
+    cat "$_t_capfile" | grep -q 'cohere.com/v2/chat'
+    assert_ok $? "must use cohere.com/v2/chat endpoint"
+    rm -f "$_t_capfile"
+    _teardown_prov
+  }
+
+  it "cohere_chat uses messages array format" && {
+    _setup_prov
+    _t_capfile=$(mktemp)
+    api_post() { echo "$2" > "$_t_capfile"; echo '{"message":{"content":[{"text":"ok"}]}}'; }
+    api_require_key() { echo "test-key"; }
+    cohere_chat "test" "" "sys" 2>/dev/null
+    cat "$_t_capfile" | grep -q '"messages"'
+    assert_ok $? "must use messages array"
+    cat "$_t_capfile" | grep -q '"preamble"'
+    assert_fail $? "must not use deprecated preamble field"
+    rm -f "$_t_capfile"
+    _teardown_prov
+  }
+
+  it "cohere_chat default model is command-a-03-2025" && {
+    _setup_prov
+    _t_capfile=$(mktemp)
+    api_post() { echo "$2" > "$_t_capfile"; echo '{"message":{"content":[{"text":"ok"}]}}'; }
+    api_require_key() { echo "test-key"; }
+    cohere_chat "test" "" "sys" 2>/dev/null
+    cat "$_t_capfile" | grep -q 'command-a-03-2025'
+    assert_ok $? "must default to command-a-03-2025"
+    rm -f "$_t_capfile"
     _teardown_prov
   }
 
