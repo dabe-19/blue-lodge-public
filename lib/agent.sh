@@ -2935,6 +2935,31 @@ agent_inner_loop() {
             local _pre_cmd="${BASH_REMATCH[2]}"
             # Synonym remap: models love "/draft" — treat as /write
             [ "$_pre_cmd" = "draft" ] && _pre_cmd="write"
+            # ── CODING VERB REMAP ──────────────────────────────
+            # Small models write "Use /write to build the project" or
+            # "Use /write to scaffold a Rust project" — they know the
+            # GOAL but pick /write because it's the only file tool
+            # they've seen examples of. Detect coding action verbs in
+            # the milestone and remap /write to /init or /build.
+            # NOTE: We avoid matching "compile" because it's ambiguous
+            # ("compile a report" vs "compile code").
+            if [ "$_pre_cmd" = "write" ]; then
+                local _mo_lower
+                _mo_lower=$(echo "$micro_objective" | tr '[:upper:]' '[:lower:]')
+                # /write → /init: milestone is about creating/scaffolding a project
+                if [[ "$_mo_lower" =~ (scaffold|create.*(new|a).*(project|app|crate|package|module)|initialize.*(project|app|repo|crate)|init.*(new|a|the).*(project|app)|new.*(rust|python|node|go|java|typescript).*(project|app)) ]]; then
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route: remapped /write -> /init (coding scaffold detected)"
+                    _pre_cmd="init"
+                # /write → /build: milestone is about building/making the project
+                elif [[ "$_mo_lower" =~ (build.*(the|this|it|project|app|code|binary|crate|package)|cargo.build|make[[:space:]]|npm.run.build|run.*(cargo|make|maven|gradle|cmake)) ]]; then
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route: remapped /write -> /build (build action detected)"
+                    _pre_cmd="build"
+                # /write → /test: milestone is about running tests
+                elif [[ "$_mo_lower" =~ (run.*(the|this)?.*(test|spec|suite)|cargo.test|pytest|npm.test|test.*(the|this|it|project|code)) ]]; then
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route: remapped /write -> /test (test action detected)"
+                    _pre_cmd="test"
+                fi
+            fi
             # Validate it's a real command before trusting the extraction
             local _pre_valid=0
             if [ "$_pre_cmd" = "bash" ]; then
@@ -4597,6 +4622,29 @@ MEMEOF
         fi
         _tool_summary="${_tool_summary}}"
 
+        # ── Coding workflow card ──────────────────────────────
+        # When the task or honeydew involves code/build/project work,
+        # inject descriptions of /init, /build, /test, /fix so the
+        # strategist knows WHAT they do. Without this, 2-4B models
+        # only see flat command names and default to /write for
+        # everything (scaffolding, compiling, running).
+        # Detection uses language names and toolchain nouns — NOT
+        # "compile" which is ambiguous ("compile a report").
+        local _coding_card=""
+        local _coding_signal="${task} ${_strat_honeydew:-}"
+        _coding_signal=$(echo "$_coding_signal" | tr '[:upper:]' '[:lower:]')
+        if [[ "$_coding_signal" =~ (rust|cargo|python|pip|node|npm|typescript|java|maven|gradle|golang|makefile|cmake|clang|gcc|\.(rs|py|go|ts|js|cpp|c|java)\b|create.*(project|app|cli|tool|program|binary|package|crate|module)|scaffold|new.*project|build.*(it|the|this|project|app|code)|run.*(the|it|this).*(project|app|program|binary|executable)|init.*(project|app|repo)) ]]; then
+            _coding_card='
+CODING COMMANDS (use these for code tasks — /write is for FILES only):
+  /init <name> <type>  — scaffold a new project (creates Cargo.toml, pyproject.toml, etc.)
+  /build               — build/compile the project (runs cargo build, make, pip install, etc.)
+  /test                — run the project test suite (cargo test, pytest, npm test, etc.)
+  /fix                 — auto-fix errors from the last failed /build or /test
+  /write <path> <code> — write code to a specific FILE (not for building or running)
+WORKFLOW: /init -> /write source files -> /build -> /test -> /fix if needed'
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- coding workflow card"
+        fi
+
         # Social context: registered Discord channels and Mastodon
         # instances so the strategist can generate correct channel
         # names. Injected into the USER prompt (not system prompt)
@@ -4685,7 +4733,7 @@ USER PREFERENCES ON FILE: ${_pref_n} stored. Use /recall before assuming user pr
 
         local macro_sys="Strategic planning engine. Output the SINGLE next milestone. No markdown formatting (no ** or * markers). Plain text only.
 
-${_tool_summary}
+${_tool_summary}${_coding_card}
 
 SERVICES STATUS: ${_svc_status:-unknown}
 
@@ -4696,7 +4744,8 @@ SERVICES STATUS: ${_svc_status:-unknown}
    \"\/social\":\"Discord\/Telegram\/X\/Mastodon (NOT \/email)\",
    \"\/email\":\"actual email only\",\"\/sandbox\":\"NEVER for slash commands\"},
  \"milestones\":{\"source\":\"YOUR WORKING COMMANDS only\",
-   \"format\":\"single imperative sentence starting with a verb (e.g. 'Use \/write to create a summary')\",
+   \"format\":\"single imperative sentence starting with a verb\",
+   \"examples\":[\"Use \/write to create a summary\",\"Use \/init to scaffold the Rust project\",\"Use \/build to build the project\",\"Use \/test to run the test suite\"],
    \"NEVER_raw_command\":\"Do NOT output a bare slash command as the milestone (WRONG: '\/write a summary' — RIGHT: 'Use \/write to create a summary')\",
    \"one_action\":\"1 milestone = 1 honeydew item, NEVER combine two items\",
    \"no_prefix\":true,\"no_intro\":true,
