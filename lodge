@@ -4427,8 +4427,9 @@ _repl() {
         _LODGE_IN_TASK=0
         rm -f "$_LODGE_CANCEL_FILE" 2>/dev/null
         
-        ui_prompt
-        IFS= read -r -e input
+        local _prompt_str
+        _prompt_str=$(ui_prompt_string)
+        IFS= read -r -e -p "$_prompt_str" input
         
         # Empty input
         [ -z "$input" ] && continue

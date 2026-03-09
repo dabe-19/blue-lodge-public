@@ -5077,12 +5077,23 @@ ${_last_eval_feedback}
             # to the macro loop so all subsequent milestones target
             # the correct directory.
             if [ -n "${_AGENT_WORKDIR_CHANGED:-}" ]; then
+                local _old_george_dir="$george_dir"
                 workdir="$_AGENT_WORKDIR_CHANGED"
                 george_dir="$workdir/.george"
                 macro_file="$george_dir/macro_memory.json"
                 micro_file="$george_dir/micro_memory.json"
                 fail_file="$george_dir/failures_log.md"
                 mkdir -p "$george_dir"
+                # Carry forward macro_memory and honeydew from old workdir
+                # so task context (persona, objective, milestones) survives
+                # the directory switch. Without this, jq errors on missing file.
+                if [ -d "$_old_george_dir" ] && [ "$_old_george_dir" != "$george_dir" ]; then
+                    for _carry_file in macro_memory.json honeydew.json; do
+                        if [ -f "$_old_george_dir/$_carry_file" ] && [ ! -f "$george_dir/$_carry_file" ]; then
+                            cp "$_old_george_dir/$_carry_file" "$george_dir/$_carry_file"
+                        fi
+                    done
+                fi
                 # Re-read GEORGE.md from new workdir into macro_memory
                 # so the strategist sees updated project context.
                 if [ -f "$workdir/GEORGE.md" ] && [ -f "$macro_file" ]; then
@@ -5237,12 +5248,21 @@ ${_last_eval_feedback}
             # milestone ultimately failed. Still propagate so the
             # next milestone targets the correct directory.
             if [ -n "${_AGENT_WORKDIR_CHANGED:-}" ]; then
+                local _old_george_dir="$george_dir"
                 workdir="$_AGENT_WORKDIR_CHANGED"
                 george_dir="$workdir/.george"
                 macro_file="$george_dir/macro_memory.json"
                 micro_file="$george_dir/micro_memory.json"
                 fail_file="$george_dir/failures_log.md"
                 mkdir -p "$george_dir"
+                # Carry forward macro_memory and honeydew from old workdir
+                if [ -d "$_old_george_dir" ] && [ "$_old_george_dir" != "$george_dir" ]; then
+                    for _carry_file in macro_memory.json honeydew.json; do
+                        if [ -f "$_old_george_dir/$_carry_file" ] && [ ! -f "$george_dir/$_carry_file" ]; then
+                            cp "$_old_george_dir/$_carry_file" "$george_dir/$_carry_file"
+                        fi
+                    done
+                fi
                 if [ -f "$workdir/GEORGE.md" ] && [ -f "$macro_file" ]; then
                     local _new_proj_ctx
                     _new_proj_ctx=$(cat "$workdir/GEORGE.md" 2>/dev/null | head -c 1000)

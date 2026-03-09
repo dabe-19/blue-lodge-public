@@ -142,7 +142,7 @@ describe "Workdir propagation signal"
 
   it "propagation re-reads GEORGE.md into project_context" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -A15 'workdir=.*_AGENT_WORKDIR_CHANGED' | grep -q '_macro_set.*macro_file.*project_context'
+    echo "$body" | grep -A25 'workdir=.*_AGENT_WORKDIR_CHANGED' | grep -q '_macro_set.*macro_file.*project_context'
     assert_ok $? "Must call _macro_set to update project_context"
   }
 
@@ -150,6 +150,12 @@ describe "Workdir propagation signal"
     body=$(declare -f agent_run)
     echo "$body" | grep -A10 'workdir=.*_AGENT_WORKDIR_CHANGED' | grep -q 'mkdir -p.*george_dir'
     assert_ok $? "Must mkdir -p new george_dir"
+  }
+
+  it "propagation carries forward macro_memory.json to new workdir" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -A20 'workdir=.*_AGENT_WORKDIR_CHANGED' | grep -q 'cp.*_old_george_dir.*_carry_file.*george_dir'
+    assert_ok $? "Must copy macro_memory.json from old george_dir to new"
   }
 
   it "propagation has debug logging" && {

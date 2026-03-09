@@ -149,7 +149,7 @@ _provider_countdown() {
         sleep 1
         i=$((i - 1))
     done
-    printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
+    printf "\033[2K\r" > "$_tty" 2>/dev/null
 }
 
 # ── Response validation helper ────────────────────────────────

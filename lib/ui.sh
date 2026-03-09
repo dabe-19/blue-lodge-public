@@ -168,7 +168,7 @@ ui_spinner_stop() {
         kill "$_SPINNER_PID" 2>/dev/null
         wait "$_SPINNER_PID" 2>/dev/null
         _SPINNER_PID=""
-        printf "\r%*s\r" 60 "" > "$_SPINNER_TTY" 2>/dev/null  # clear line
+        printf "\033[2K\r" > "$_SPINNER_TTY" 2>/dev/null
     fi
 }
 
@@ -176,6 +176,16 @@ ui_spinner_stop() {
 ui_prompt() {
     local project="${LODGE_PROJECT:-~}"
     printf "%b%s%b %b❯%b " "$C_BLUE" "$project" "$C_RESET" "$C_LODGE" "$C_RESET"
+}
+
+# Build a readline-safe prompt string for use with read -p.
+# Non-printing ANSI escapes wrapped in \001..\002 so readline
+# correctly calculates visible width (prevents backspace-into-prompt
+# and cursor misalignment on long input lines).
+ui_prompt_string() {
+    local project="${LODGE_PROJECT:-~}"
+    printf '\001%b\002%s\001%b\002 \001%b\002❯\001%b\002 ' \
+        "$C_BLUE" "$project" "$C_RESET" "$C_LODGE" "$C_RESET"
 }
 
 # ── Code Block Rendering ──────────────────────────────────────
