@@ -2718,7 +2718,8 @@ SPEC
 {"cmd":"/brainstorm","syntax":"/brainstorm <question or topic>",
 "notes":"Think, reason, or brainstorm using George's own knowledge. NO human input — George answers HIMSELF. Use when you need to generate ideas, weigh options, plan approaches, or reason through a problem. Alias: /q. WARNING: may be stale for dates, scores, events, prices — prefer /web for time-sensitive info.",
 "contrast":"vs /ask: /ask asks the HUMAN and waits for their answer. /brainstorm = George thinks it through himself.",
-"format_only_ex":["/brainstorm What are good chicken dinner recipes with rice and peppers?","/brainstorm What are the pros and cons of using SQLite vs PostgreSQL?"]}
+"rules":["Output ONLY your reasoning and ideas as plain text","NEVER include slash commands, bash blocks, or code fences in your brainstorm output","Do NOT draft the next command — just think through the problem"],
+"format_only_ex":["/brainstorm What are the pros and cons of using SQLite vs PostgreSQL?","/brainstorm What factors should I consider when planning a weekend trip?"]}
 SPEC
                 ;;
             ask)
@@ -3765,6 +3766,24 @@ INTERLOCK_JSON
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web condenser: %d chars -> %d chars\n' "${#output}" "${#_condensed}" > /dev/tty 2>/dev/null
                     fi
                   fi
+                fi
+
+                # ── BRAINSTORM COMMAND LEAKAGE SANITIZER ──────
+                # Smarter models sometimes embed slash commands
+                # (e.g. /social, /email, /write) in brainstorm output,
+                # thinking they're "drafting" the next step.  The
+                # evaluator then sees command text in the action log
+                # and marks the milestone complete — even though no
+                # command was actually dispatched.  Strip any lines
+                # that look like slash commands from brainstorm output
+                # before it enters the action log.
+                if [[ "$cmd" == /brainstorm\ * ]] || [[ "$cmd" == /q\ * ]]; then
+                    local _bs_clean
+                    _bs_clean=$(printf '%s\n' "$output" | sed '/^[[:space:]]*\/[a-z]\+[[:space:]]/d' | sed '/^[[:space:]]*```/,/^[[:space:]]*```/d')
+                    if [ "${#_bs_clean}" -lt "${#output}" ]; then
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] brainstorm sanitizer: stripped embedded commands (%d -> %d chars)\n' "${#output}" "${#_bs_clean}" > /dev/tty 2>/dev/null
+                        output="$_bs_clean"
+                    fi
                 fi
 
                 _micro_add_action "$micro_file" "$cmd" "SUCCESS" 0 "$output" "specialist"

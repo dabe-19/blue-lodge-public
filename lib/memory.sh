@@ -249,7 +249,7 @@ memory_build_system_prompt() {
         condensed=$(_memory_soul_condensed)
         prompt="${prompt}${condensed}
 
-OUTPUT FORMAT: In no more than 5 sentences, answer the question directly. Respond in plain conversational text. Do NOT wrap your answer in code blocks, bash blocks, or markdown formatting. Do NOT output commands unless the user specifically asked for a command. Just answer naturally."
+OUTPUT FORMAT: In no more than 5 sentences, answer the question directly. Respond in plain conversational text. Do NOT wrap your answer in code blocks, bash blocks, or markdown formatting. Do NOT output commands unless the user specifically asked for a command. NEVER include slash commands (like /social, /email, /write) in your response — your job is to THINK, not to act. Just answer naturally."
 
         # ── Task context: what George has been working on ────────
         # Inject active task + completed milestones so the user
