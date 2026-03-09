@@ -293,7 +293,8 @@ _ok "Server healthy"
 
 # Check GPU offload
 _gpu_offloaded=$(grep -c "offloaded.*layers to GPU" "$SERVER_LOG" 2>/dev/null || echo "0")
-_gpu_layers=$(grep "offloaded" "$SERVER_LOG" 2>/dev/null | grep -oP '\d+(?=/\d+ layers)' 2>/dev/null || echo "0")
+_gpu_layers=$(grep "offloaded" "$SERVER_LOG" 2>/dev/null | sed -n 's/.*\([0-9]\{1,\}\)\/[0-9]\{1,\} layers.*/\1/p' | head -1)
+_gpu_layers="${_gpu_layers:-0}"
 if [ "${_gpu_layers:-0}" -gt 0 ]; then
     _ok "GPU offload: $_gpu_layers layers"
 else

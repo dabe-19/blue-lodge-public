@@ -1600,9 +1600,9 @@ EVAL_P1_JSON
         if echo "$_complete_reason" | grep -qiE 'not (achieved|accomplished|completed|done|successful|satisfied)|unable|could not|cannot|did not|wasn.t|weren.t|isn.t|does not exist|incomplete'; then
             _contradiction=1
         # Soft negation — "fail*" may appear in incidental/dismissed context
-        elif echo "$_complete_reason" | grep -qiE '\bfail(ed|ure|s)?\b'; then
+        elif echo "$_complete_reason" | grep -qiE '(^|[^a-zA-Z])fail(ed|ure|s)?([^a-zA-Z]|$)'; then
             # Override only when the failure is NOT near a dismissal qualifier
-            if ! echo "$_complete_reason" | grep -qiE 'fail(ed|ure|s)?[^.;]*(,?\s*(but|however)\b|\birrelevant|\bnot (required|needed|necessary|part of))|\b(irrelevant|not (required|needed|necessary|part of))[^.;]*fail(ed|ure|s)?|\bno\s+fail(ure|ed|s)?|\bwithout\s+fail'; then
+            if ! echo "$_complete_reason" | grep -qiE 'fail(ed|ure|s)?[^.;]*(,?[[:space:]]*(but|however)([^a-zA-Z]|$)|(^|[^a-zA-Z])irrelevant|(^|[^a-zA-Z])not (required|needed|necessary|part of))|(^|[^a-zA-Z])(irrelevant|not (required|needed|necessary|part of))[^.;]*fail(ed|ure|s)?|(^|[^a-zA-Z])no[[:space:]]+fail(ure|ed|s)?|(^|[^a-zA-Z])without[[:space:]]+fail'; then
                 _contradiction=1
             fi
         fi
@@ -3206,7 +3206,7 @@ agent_inner_loop() {
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Sandbox rejected for non-code objective — extracting real command"
                 # Try to extract the real slash command from the micro objective
                 local _real_cmd
-                _real_cmd=$(echo "$micro_objective" | grep -oP '/[a-z]+' | head -1 | sed 's|^/||')
+                _real_cmd=$(echo "$micro_objective" | grep -oE '/[a-z]+' | head -1 | sed 's|^/||')
                 if [ -n "$_real_cmd" ] && { declare -p CMD_REGISTRY &>/dev/null && [[ -n "${CMD_REGISTRY[$_real_cmd]+x}" ]]; }; then
                     selected_tool="$_real_cmd"
                 else
@@ -3542,10 +3542,10 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
                 local _url_args="${cmd#$_url_cmd_prefix }"
                 # Count URLs — only intervene if multiple detected
                 local _url_count
-                _url_count=$(echo "$_url_args" | grep -oP 'https?://[^\s"'"'"']+' | wc -l)
+                _url_count=$(echo "$_url_args" | grep -oE 'https?://[^ "'"'"']+' | wc -l)
                 if [ "$_url_count" -gt 1 ]; then
                     local _first_url
-                    _first_url=$(echo "$_url_args" | grep -oP 'https?://[^\s"'"'"']+' | head -1)
+                    _first_url=$(echo "$_url_args" | grep -oE 'https?://[^ "'"'"']+' | head -1)
                     if [ -n "$_first_url" ]; then
                         # /vision may have a prompt after the URL — preserve it
                         if [[ "$cmd" == "/vision "* ]]; then
@@ -3573,7 +3573,7 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
             if [ "$_needs_single_url" -eq 1 ] && [[ "$cmd" != "/vision "* ]]; then
                 local _sanitize_args="${cmd#$_url_cmd_prefix }"
                 local _sanitize_url
-                _sanitize_url=$(echo "$_sanitize_args" | grep -oP 'https?://[^\s"'"'"']+' | head -1)
+                _sanitize_url=$(echo "$_sanitize_args" | grep -oE 'https?://[^ "'"'"']+' | head -1)
                 if [ -n "$_sanitize_url" ] && [ "$_sanitize_url" != "$_sanitize_args" ]; then
                     # URL found but there's trailing content — strip it
                     cmd="${_url_cmd_prefix} ${_sanitize_url}"
@@ -3603,10 +3603,10 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
             if [ -n "$_embed_body" ]; then
                 # Match the first /social or /email command in the body
                 local _embed_match=""
-                _embed_match=$(printf '%s\n' "$_embed_body" | grep -oP '^\s*/(?:social|email)\s+\S.*' | head -1 | sed 's/^[[:space:]]*//')
+                _embed_match=$(printf '%s\n' "$_embed_body" | grep -oE '^[[:space:]]*/(social|email)[[:space:]][[:space:]]*[^[:space:]].*' | head -1 | sed 's/^[[:space:]]*//')
                 if [ -z "$_embed_match" ]; then
                     # Also check inline: /social or /email mid-line
-                    _embed_match=$(printf '%s\n' "$_embed_body" | grep -oP '/(?:social|email)\s+\S.*' | head -1)
+                    _embed_match=$(printf '%s\n' "$_embed_body" | grep -oE '/(social|email)[[:space:]][[:space:]]*[^[:space:]].*' | head -1)
                 fi
                 if [ -n "$_embed_match" ]; then
                     local _wrapper_cmd
@@ -3675,7 +3675,7 @@ INTERLOCK_JSON
                 # Fallback: if specialist couldn't extract a URL, try to grab
                 # the first URL from the previous search results programmatically
                 local _fallback_url=""
-                _fallback_url=$(echo "$_prev_search_output" | grep -oP 'https?://[^\s"'"'"']+' | head -1)
+                _fallback_url=$(echo "$_prev_search_output" | grep -oE 'https?://[^ "'"'"']+' | head -1)
                 if [ -n "$_fallback_url" ]; then
                     cmd="/web fetch $_fallback_url"
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web-search interlock: programmatic fallback to '$cmd'"
@@ -3994,7 +3994,7 @@ INTERLOCK_JSON
                 if [[ "$cmd" == /write* ]]; then
                     local _write_body
                     _write_body=$(echo "$cmd" | tail -n +2)
-                    if [ -n "$_write_body" ] && echo "$_write_body" | grep -qP '\[(?:your |briefly |mention |e\.g\.|TBD|TODO|placeholder)' 2>/dev/null; then
+                    if [ -n "$_write_body" ] && echo "$_write_body" | grep -qE '\[(your |briefly |mention |e\.g\.|TBD|TODO|placeholder)' 2>/dev/null; then
                         _micro_add_warning "$micro_file" "File contains placeholder text ([your ...], [TBD], etc.). Template, not finished content. Rewrite with actual data."
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] /write placeholder detected — warning injected"
                     fi
@@ -5015,7 +5015,7 @@ ${_last_eval_feedback}
                 # them prevents regeneration of the same dead targets.
                 if declare -f _web_blacklist_add &>/dev/null; then
                     local _skip_urls
-                    _skip_urls=$(echo "$milestone" | grep -oP 'https?://[^\s)>"]+' | head -3)
+                    _skip_urls=$(echo "$milestone" | grep -oE 'https?://[^ )>"]+' | head -3)
                     while IFS= read -r _surl; do
                         [ -z "$_surl" ] && continue
                         _web_blacklist_add "$_surl" "pressure_relief_skip" "SKIP"
@@ -5194,7 +5194,7 @@ ${_last_eval_feedback}
                                 local _sanitized_rec="${_EVAL_HONEYDEW_RECOMMENDATION}"
                                 if declare -f _web_blacklist_contains &>/dev/null; then
                                     local _rec_url
-                                    _rec_url=$(echo "$_sanitized_rec" | grep -oP 'https?://[^\s)>"]+' | head -1)
+                                    _rec_url=$(echo "$_sanitized_rec" | grep -oE 'https?://[^ )>"]+' | head -1)
                                     if [ -n "$_rec_url" ] && _web_blacklist_contains "$_rec_url"; then
                                         _sanitized_rec=$(echo "$_sanitized_rec" | sed "s|${_rec_url}|<blocked URL — use /web search to find an alternative>|g")
                                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval recommendation sanitized: stripped blacklisted URL $_rec_url"

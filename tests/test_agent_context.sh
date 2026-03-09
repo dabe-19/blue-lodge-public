@@ -740,38 +740,38 @@ describe "Embedded command extraction"
   # Functional: test extraction regex directly
   it "extracts /social from /respond body" && {
     _body="/social dm jazzy92012 Hey there"
-    _match=$(printf '%s\n' "$_body" | grep -oP '^\s*/(?:social|email)\s+\S.*' | head -1 | sed 's/^[[:space:]]*//')
+    _match=$(printf '%s\n' "$_body" | grep -oE '^[[:space:]]*/(social|email)[[:space:]][[:space:]]*[^[:space:]].*' | head -1 | sed 's/^[[:space:]]*//')
     assert_eq "$_match" "/social dm jazzy92012 Hey there"
   }
 
   it "extracts /email from /respond body" && {
     _body="/email send user@test.com Subject This is the body"
-    _match=$(printf '%s\n' "$_body" | grep -oP '^\s*/(?:social|email)\s+\S.*' | head -1 | sed 's/^[[:space:]]*//')
+    _match=$(printf '%s\n' "$_body" | grep -oE '^[[:space:]]*/(social|email)[[:space:]][[:space:]]*[^[:space:]].*' | head -1 | sed 's/^[[:space:]]*//')
     assert_eq "$_match" "/email send user@test.com Subject This is the body"
   }
 
   it "extracts embedded /social from /write multi-line body" && {
     _body=$'report.md\n/social post discord general Check this out'
     _embed_body=$(echo "$_body" | tail -n +2)
-    _match=$(printf '%s\n' "$_embed_body" | grep -oP '^\s*/(?:social|email)\s+\S.*' | head -1 | sed 's/^[[:space:]]*//')
+    _match=$(printf '%s\n' "$_embed_body" | grep -oE '^[[:space:]]*/(social|email)[[:space:]][[:space:]]*[^[:space:]].*' | head -1 | sed 's/^[[:space:]]*//')
     assert_eq "$_match" "/social post discord general Check this out"
   }
 
   it "extracts inline /social not at line start" && {
     _body="Here is the result: /social dm jazzy92012 Done"
-    _match=$(printf '%s\n' "$_body" | grep -oP '/(?:social|email)\s+\S.*' | head -1)
+    _match=$(printf '%s\n' "$_body" | grep -oE '/(social|email)[[:space:]][[:space:]]*[^[:space:]].*' | head -1)
     assert_eq "$_match" "/social dm jazzy92012 Done"
   }
 
   it "does NOT extract /web from /respond" && {
     _body="/web search something"
-    _match=$(printf '%s\n' "$_body" | grep -oP '^\s*/(?:social|email)\s+\S.*' | head -1 | sed 's/^[[:space:]]*//')
+    _match=$(printf '%s\n' "$_body" | grep -oE '^[[:space:]]*/(social|email)[[:space:]][[:space:]]*[^[:space:]].*' | head -1 | sed 's/^[[:space:]]*//')
     assert_empty "$_match" "Must only extract /social and /email"
   }
 
   it "does NOT extract /build from /respond" && {
     _body="/build release"
-    _match=$(printf '%s\n' "$_body" | grep -oP '^\s*/(?:social|email)\s+\S.*' | head -1 | sed 's/^[[:space:]]*//')
+    _match=$(printf '%s\n' "$_body" | grep -oE '^[[:space:]]*/(social|email)[[:space:]][[:space:]]*[^[:space:]].*' | head -1 | sed 's/^[[:space:]]*//')
     assert_empty "$_match" "Must only extract /social and /email"
   }
 

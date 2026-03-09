@@ -119,7 +119,7 @@ for test_file in "${test_files[@]}"; do
         passed_files=$((passed_files + 1))
         if [ "$VERBOSE" -eq 0 ]; then
             # Show just the summary line from the test output
-            summary=$(echo "$output" | grep -E '^\s*(PASS|✓|Tests:)' | tail -1)
+            summary=$(echo "$output" | grep -E '^[[:space:]]*(PASS|✓|Tests:)' | tail -1)
             if [ -n "$summary" ]; then
                 echo -e "  ${GREEN}✓${RESET} $summary ${DIM}(${file_elapsed}s)${RESET}"
             else

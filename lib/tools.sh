@@ -430,7 +430,7 @@ tools_exec_bash() {
         # First check: is the command on the safe allowlist?
         if security_check_allowlist "$commands" 2>/dev/null; then
             : # Allowlisted — proceed without asking
-        elif echo "$commands" | grep -qE '(rm -rf|sudo|chmod 777|dd if=|mkfs|>\s*/dev/|curl.*\|\s*(ba)?sh|wget.*\|\s*(ba)?sh|nc\s+-|ncat|/dev/tcp|mkfifo|eval\s|\bexec\s|>\s*/etc/)'; then
+        elif echo "$commands" | grep -qE '(rm -rf|sudo|chmod 777|dd if=|mkfs|>[[:space:]]*/dev/|curl.*\|[[:space:]]*(ba)?sh|wget.*\|[[:space:]]*(ba)?sh|nc[[:space:]]+-|ncat|/dev/tcp|mkfifo|eval[[:space:]]|(^|[^a-zA-Z])exec[[:space:]]|>[[:space:]]*/etc/)'; then
             ui_warn "Potentially dangerous command detected!"
             if ! ui_confirm "Execute anyway?" "n"; then
                 ui_warn "Skipped by user"
@@ -521,7 +521,7 @@ tools_write_file() {
         
         # Show diff preview for existing files
         local tmpfile
-        tmpfile=$(mktemp /tmp/lodge-diff-XXXXXX)
+        tmpfile=$(mktemp "${TMPDIR:-/tmp}/lodge-diff-XXXXXX")
         printf "%s" "$content" > "$tmpfile"
         if command -v diff &>/dev/null; then
             local diff_output

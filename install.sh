@@ -31,6 +31,7 @@ LODGE_DIR="$_SCRIPT_DIR"
 for _rc_file in "$HOME/.bashrc" "$HOME/.zshrc"; do
     if [ -f "$_rc_file" ] && grep -q '# ── Blue Lodge' "$_rc_file" 2>/dev/null; then
         sed -i '/# ── Blue Lodge/,/alias lghelp/d' "$_rc_file" 2>/dev/null
+        sed -i '/# ── Blue Lodge Cloud Provider/,/^export [A-Z_]*_API_KEY=/d' "$_rc_file" 2>/dev/null || true
         sed -i '/^$/N;/^\n$/d' "$_rc_file" 2>/dev/null
     fi
 done
@@ -210,6 +211,7 @@ if [ "$IS_TERMUX" -eq 1 ] && [ "$IS_PROOT" -eq 0 ]; then
 fi
 
 # ── 2. Check Ollama ──────────────────────────────────────────
+_OLLAMA_AVAILABLE=0
 info "Checking Ollama..."
 if ! command -v ollama &>/dev/null; then
     warn "Ollama not found. Installing..."
@@ -224,29 +226,149 @@ if ! command -v ollama &>/dev/null; then
         chmod +x "$HOME/.local/bin/ollama"
         export PATH="$HOME/.local/bin:$PATH"
     else
-        curl -fsSL https://ollama.com/install.sh | sh
+        curl -fsSL https://ollama.com/install.sh | sh || {
+            warn "Ollama install failed ($(uname -m) may not be supported)"
+            warn "George can run with cloud providers: lodge /provider use google"
+        }
     fi
 fi
-ok "Ollama installed"
+if command -v ollama &>/dev/null; then
+    _OLLAMA_AVAILABLE=1
+    ok "Ollama installed"
+else
+    warn "Ollama not available — local models disabled"
+    warn "Use cloud providers: export GEORGE_PROVIDER=google"
+fi
+
+# ── 2b. Cloud provider setup ─────────────────────────────────
+# If Ollama isn't available (or the user prefers cloud), offer to
+# configure a cloud provider so George works out of the box.
+_INSTALL_PROVIDER=""
+_INSTALL_PROVIDER_KEY_NAME=""
+_INSTALL_PROVIDER_KEY_VALUE=""
+
+_offer_cloud_setup() {
+    echo ""
+    printf " ${BOLD}Cloud Provider Setup${RESET}\n"
+    printf " ${DIM}George can use cloud LLM APIs instead of (or alongside) local models.${RESET}\n"
+    printf " ${DIM}Free tiers available from Google and Groq — no credit card needed.${RESET}\n"
+    echo ""
+    printf "   ${BLUE}google${RESET}      Google AI (Gemini) — free tier, recommended\n"
+    printf "   ${BLUE}groq${RESET}        Groq — free tier, very fast\n"
+    printf "   ${BLUE}openai${RESET}      OpenAI (GPT) — paid\n"
+    printf "   ${BLUE}anthropic${RESET}   Anthropic (Claude) — paid\n"
+    printf "   ${BLUE}mistral${RESET}     Mistral AI — free tier available\n"
+    printf "   ${BLUE}deepseek${RESET}    DeepSeek — very cheap\n"
+    printf "   ${BLUE}together${RESET}    Together AI — free tier available\n"
+    printf "   ${BLUE}xai${RESET}         xAI (Grok) — paid\n"
+    printf "   ${BLUE}cohere${RESET}      Cohere — free tier available\n"
+    echo ""
+    printf " Enter a provider name, or press Enter to skip: "
+    read -r _chosen_provider
+
+    [ -z "$_chosen_provider" ] && return 0
+
+    # Normalize and validate
+    case "$_chosen_provider" in
+        google|gemini)      _INSTALL_PROVIDER="google";    _INSTALL_PROVIDER_KEY_NAME="GOOGLE_AI_API_KEY" ;;
+        groq)               _INSTALL_PROVIDER="groq";      _INSTALL_PROVIDER_KEY_NAME="GROQ_API_KEY" ;;
+        openai|gpt)         _INSTALL_PROVIDER="openai";    _INSTALL_PROVIDER_KEY_NAME="OPENAI_API_KEY" ;;
+        anthropic|claude)   _INSTALL_PROVIDER="anthropic"; _INSTALL_PROVIDER_KEY_NAME="ANTHROPIC_API_KEY" ;;
+        mistral)            _INSTALL_PROVIDER="mistral";   _INSTALL_PROVIDER_KEY_NAME="MISTRAL_API_KEY" ;;
+        deepseek)           _INSTALL_PROVIDER="deepseek";  _INSTALL_PROVIDER_KEY_NAME="DEEPSEEK_API_KEY" ;;
+        together)           _INSTALL_PROVIDER="together";  _INSTALL_PROVIDER_KEY_NAME="TOGETHER_API_KEY" ;;
+        xai|grok)           _INSTALL_PROVIDER="xai";       _INSTALL_PROVIDER_KEY_NAME="XAI_API_KEY" ;;
+        cohere)             _INSTALL_PROVIDER="cohere";     _INSTALL_PROVIDER_KEY_NAME="COHERE_API_KEY" ;;
+        *)
+            warn "Unknown provider '$_chosen_provider' — skipping cloud setup"
+            return 0
+            ;;
+    esac
+
+    # Check if the API key is already in the environment
+    eval "_existing_key=\${${_INSTALL_PROVIDER_KEY_NAME}:-}"
+    if [ -n "$_existing_key" ]; then
+        ok "$_INSTALL_PROVIDER_KEY_NAME already set"
+        _INSTALL_PROVIDER_KEY_VALUE="$_existing_key"
+    else
+        echo ""
+        printf " ${DIM}Get your API key from the provider's dashboard.${RESET}\n"
+        case "$_INSTALL_PROVIDER" in
+            google)    printf " ${DIM}  → https://aistudio.google.com/apikey${RESET}\n" ;;
+            groq)      printf " ${DIM}  → https://console.groq.com/keys${RESET}\n" ;;
+            openai)    printf " ${DIM}  → https://platform.openai.com/api-keys${RESET}\n" ;;
+            anthropic) printf " ${DIM}  → https://console.anthropic.com/settings/keys${RESET}\n" ;;
+        esac
+        printf " Enter your ${BOLD}$_INSTALL_PROVIDER_KEY_NAME${RESET}: "
+        read -r _INSTALL_PROVIDER_KEY_VALUE
+
+        if [ -z "$_INSTALL_PROVIDER_KEY_VALUE" ]; then
+            warn "No API key entered — skipping cloud setup"
+            _INSTALL_PROVIDER=""
+            return 0
+        fi
+    fi
+
+    ok "Cloud provider: $_INSTALL_PROVIDER"
+}
+
+if [ "$_OLLAMA_AVAILABLE" -eq 0 ]; then
+    warn "No local LLM backend — cloud provider required"
+    _offer_cloud_setup
+    if [ -z "$_INSTALL_PROVIDER" ]; then
+        warn "No provider configured — George will need one before it can run"
+        warn "  Set later: export GEORGE_PROVIDER=google && lodge"
+    fi
+else
+    printf "\n"
+    printf " ${DIM}Want to also configure a cloud provider (for fallback or remote use)?${RESET}\n"
+    printf " Configure cloud provider? [y/N] "
+    read -r _want_cloud
+    if [[ "$_want_cloud" =~ ^[Yy] ]]; then
+        _offer_cloud_setup
+    fi
+fi
+
+# Write provider config to shell RC (append after the existing Blue Lodge block)
+if [ -n "$_INSTALL_PROVIDER" ]; then
+    _provider_block=$(cat << 'PROVEOF'
+
+# ── Blue Lodge Cloud Provider ──────────────────────────────
+PROVEOF
+    )
+    _provider_block+=$'\n'"export GEORGE_PROVIDER='$_INSTALL_PROVIDER'"
+    _provider_block+=$'\n'"export $_INSTALL_PROVIDER_KEY_NAME='$_INSTALL_PROVIDER_KEY_VALUE'"
+
+    for _rc_file in "$HOME/.zshrc" "$HOME/.bashrc"; do
+        if [ -f "$_rc_file" ] && grep -q '# ── Blue Lodge' "$_rc_file" 2>/dev/null; then
+            echo "$_provider_block" >> "$_rc_file"
+        fi
+    done
+    # Also export for this session so steps below can use it
+    export GEORGE_PROVIDER="$_INSTALL_PROVIDER"
+    export "$_INSTALL_PROVIDER_KEY_NAME=$_INSTALL_PROVIDER_KEY_VALUE"
+fi
 
 # ── 3. Ensure Ollama is running ──────────────────────────────
-if ! curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
-    info "Starting Ollama..."
-    local_tmpdir="${TMPDIR:-/tmp}"
-    # Ensure Ollama can find models when started from proot-distro
-    if [ "$IS_PROOT" -eq 1 ] && [ -d "/data/data/com.termux/files/home/.ollama/models" ]; then
-        export OLLAMA_MODELS="/data/data/com.termux/files/home/.ollama/models"
-    elif [ -d "/usr/share/ollama/.ollama/models" ]; then
-        export OLLAMA_MODELS="/usr/share/ollama/.ollama/models"
-    fi
-    ollama serve > "$local_tmpdir/lodge-ollama.log" 2>&1 &
-    sleep 3
+if [ "$_OLLAMA_AVAILABLE" -eq 1 ]; then
     if ! curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
-        err "Ollama failed to start. Check $local_tmpdir/lodge-ollama.log"
-        exit 1
+        info "Starting Ollama..."
+        local_tmpdir="${TMPDIR:-/tmp}"
+        # Ensure Ollama can find models when started from proot-distro
+        if [ "$IS_PROOT" -eq 1 ] && [ -d "/data/data/com.termux/files/home/.ollama/models" ]; then
+            export OLLAMA_MODELS="/data/data/com.termux/files/home/.ollama/models"
+        elif [ -d "/usr/share/ollama/.ollama/models" ]; then
+            export OLLAMA_MODELS="/usr/share/ollama/.ollama/models"
+        fi
+        ollama serve > "$local_tmpdir/lodge-ollama.log" 2>&1 &
+        sleep 3
+        if ! curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
+            err "Ollama failed to start. Check $local_tmpdir/lodge-ollama.log"
+            exit 1
+        fi
     fi
+    ok "Ollama running"
 fi
-ok "Ollama running"
 
 # ── 3b. Check llama.cpp (llama-server) ───────────────────────
 # llama.cpp is the preferred inference backend — faster startup, lower
@@ -291,6 +413,9 @@ source "$LODGE_DIR/lib/models.sh" 2>/dev/null || true
 # Check which model families are already created, then offer to
 # download any that are missing. Pressing Enter with no input
 # installs only the default Qwen family.
+if [ "$_OLLAMA_AVAILABLE" -eq 0 ]; then
+    warn "Skipping model setup — Ollama not available"
+else
 info "Checking model families..."
 
 # Collect family status
@@ -420,11 +545,15 @@ if [ "$_minist_installed" -eq 0 ]; then
     fi
 fi
 
+fi  # end _OLLAMA_AVAILABLE gate for steps 4 + default model
+
 # ── 5. Verify Ollama API ─────────────────────────────────────
 # Quick health check — confirm the Ollama server responds to API
 # requests. We do NOT preload the model here; that would hold GPU/RAM
 # for the keep_alive window and interfere with lodge's first run.
-if [ "$_minist_installed" -eq 0 ]; then
+if [ "$_OLLAMA_AVAILABLE" -eq 0 ]; then
+    info "Skipping API check — Ollama not available"
+elif [ "${_minist_installed:-0}" -eq 0 ]; then
     warn "Skipping API check — no default model installed"
 else
     info "Verifying Ollama API..."

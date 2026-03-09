@@ -20,6 +20,20 @@ if [ -z "${LODGE_DIR:-}" ]; then
 fi
 export LODGE_PROJECT="${LODGE_PROJECT:-$(basename "$PWD")}"
 
+# ── Platform detection ─────────────────────────────────────────
+# Detect constrained environments (iSH/Alpine on iOS, Termux, etc.)
+# so we can gate local-LLM features that require native binaries.
+LODGE_PLATFORM="linux"
+LODGE_CLOUD_ONLY=0
+if [ -f /proc/ish/version ] || ([ -f /etc/os-release ] && grep -qi 'alpine' /etc/os-release 2>/dev/null && [ "$(uname -m)" = "i686" ]); then
+    LODGE_PLATFORM="ish"
+    # iSH can't run Ollama/llama-server (i686 emulation, no native binaries)
+    [ -z "${GEORGE_PROVIDER:-}" ] && LODGE_CLOUD_ONLY=1
+elif [ -n "${TERMUX_VERSION:-}" ] || [ -d /data/data/com.termux ]; then
+    LODGE_PLATFORM="termux"
+fi
+export LODGE_PLATFORM LODGE_CLOUD_ONLY
+
 # ── George's isolated environment (everything lives inside LODGE_DIR) ──
 export GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-$LODGE_DIR/.george}"
 export LODGE_SANDBOXES="${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}"
@@ -378,10 +392,10 @@ _cmd_backend() {
                 if [ -n "$_srv_pid_status" ]; then
                     if [ -f "/proc/$_srv_pid_status/cmdline" ]; then
                         _actual_ngl=$(tr '\0' ' ' < "/proc/$_srv_pid_status/cmdline" 2>/dev/null \
-                            | grep -oP '\-ngl\s+\K[0-9]+' || echo "?")
+                            | sed -n 's/.*-ngl[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' || echo "?")
                     fi
                     [ "$_actual_ngl" = "?" ] && _actual_ngl=$(ps -p "$_srv_pid_status" -o args= 2>/dev/null \
-                        | grep -oP '\-ngl\s+\K[0-9]+' || echo "?")
+                        | sed -n 's/.*-ngl[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' || echo "?")
                 fi
                 local _ngl_match=""
                 [ "$_actual_ngl" != "?" ] && [ "$_actual_ngl" != "$LLAMA_CPP_GPU_LAYERS" ] && _ngl_match=" ⚠ MISMATCH (config=$LLAMA_CPP_GPU_LAYERS)"
@@ -3328,7 +3342,7 @@ _cmd_git() {
         identity|id)
             if [ -n "$rest" ] && [ "$rest" != "$action" ]; then
                 local name email
-                email=$(echo "$rest" | grep -oP '[^ ]+@[^ ]+' || echo "")
+                email=$(echo "$rest" | grep -oE '[^ ]+@[^ ]+' || echo "")
                 name=$(echo "$rest" | sed 's/[^ ]*@[^ ]*//g' | xargs)
                 git_set_identity "${name:-George (Blue Lodge)}" "$email"
             else
@@ -4514,6 +4528,12 @@ main() {
         local _h_model
         _h_model=$(provider_get_model "$GEORGE_PROVIDER" 2>/dev/null)
         [ -n "$_h_model" ] && ui_dim "  Model: $_h_model"
+    elif [ "$LODGE_CLOUD_ONLY" -eq 1 ]; then
+        ui_err "No local LLM backend available on this platform ($LODGE_PLATFORM)."
+        ui_dim "  Set a cloud provider first:"
+        ui_dim "    export GEORGE_PROVIDER=google   # or groq, openai, anthropic"
+        ui_dim "    lodge"
+        exit 1
     else
         ui_spinner_start "Starting LLM backend"
         if ! llm_ensure; then

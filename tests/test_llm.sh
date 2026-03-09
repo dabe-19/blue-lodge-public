@@ -179,7 +179,8 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     _result=$(_llm_build_opts 512)
     LODGE_MODEL="$_saved_model"
     _tp=$(echo "$_result" | jq -r '.top_p')
-    # jq 1.7 preserves the decimal — 1.0 stays "1.0"
+    # jq <1.7 drops .0 from integers (1.0→1); normalize for comparison
+    _tp=$(awk "BEGIN{printf \"%.1f\", $_tp}")
     assert_eq "$_tp" "1.0"
   }
 
@@ -197,7 +198,8 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     unset LLM_SCENARIO
     _result=$(_llm_build_opts 512)
     _mp=$(echo "$_result" | jq -r '.min_p')
-    # jq 1.7 preserves the decimal — 0.0 stays "0.0"
+    # jq <1.7 drops .0 from integers (0.0→0); normalize for comparison
+    _mp=$(awk "BEGIN{printf \"%.1f\", $_mp}")
     assert_eq "$_mp" "0.0"
   }
 

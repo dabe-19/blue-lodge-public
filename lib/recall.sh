@@ -35,7 +35,7 @@ recall_available() {
     if [[ "${_RECALL_FTS5_OK:-}" == "1" ]]; then
         return 0
     fi
-    local test_db="/tmp/.recall_fts5_test_$$.db"
+    local test_db="${TMPDIR:-/tmp}/.recall_fts5_test_$$.db"
     if sqlite3 "$test_db" "CREATE VIRTUAL TABLE _t USING fts5(c); DROP TABLE _t;" 2>/dev/null; then
         rm -f "$test_db"
         _RECALL_FTS5_OK=1
@@ -619,8 +619,8 @@ _recall_extract_text() {
             if command -v pandoc &>/dev/null; then
                 pandoc -t plain "$filepath" 2>/dev/null
             elif command -v libreoffice &>/dev/null; then
-                libreoffice --headless --convert-to txt --outdir /tmp "$filepath" 2>/dev/null
-                local txt_file="/tmp/$(basename "${filepath%.*}").txt"
+                libreoffice --headless --convert-to txt --outdir "${TMPDIR:-/tmp}" "$filepath" 2>/dev/null
+                local txt_file="${TMPDIR:-/tmp}/$(basename "${filepath%.*}").txt"
                 [ -f "$txt_file" ] && cat "$txt_file" && rm -f "$txt_file"
             else
                 ui_err "Cannot extract from .$ext — install pandoc or libreoffice"

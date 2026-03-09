@@ -73,7 +73,7 @@ email_list_configured() {
     # Backward compat: check old email.conf if no per-provider configs
     if [ -z "$providers" ] && [ -f "$GEORGE_CONFIG_DIR/email.conf" ]; then
         local _old_prov=""
-        _old_prov=$(grep -oP 'EMAIL_PROVIDER="\K[^"]+' "$GEORGE_CONFIG_DIR/email.conf" 2>/dev/null)
+        _old_prov=$(sed -n 's/.*EMAIL_PROVIDER="\([^"]*\)".*/\1/p' "$GEORGE_CONFIG_DIR/email.conf" 2>/dev/null)
         [ -n "$_old_prov" ] && providers="$_old_prov"
     fi
     echo "$providers"
@@ -254,8 +254,10 @@ _email_setup_disposable() {
     fi
 
     local address sid_token
-    address=$(echo "$resp" | grep -oP '"email_addr"\s*:\s*"\K[^"]+' || echo "")
-    sid_token=$(echo "$resp" | grep -oP '"sid_token"\s*:\s*"\K[^"]+' || echo "")
+    address=$(echo "$resp" | sed -n 's/.*"email_addr"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    address="${address:-}"
+    sid_token=$(echo "$resp" | sed -n 's/.*"sid_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    sid_token="${sid_token:-}"
 
     if [ -z "$address" ]; then
         ui_err "Failed to get disposable address from Guerrilla Mail"
@@ -547,7 +549,7 @@ _email_inbox_guerrilla() {
 
     # Parse email list from JSON
     local emails
-    emails=$(echo "$resp" | grep -oP '"mail_subject"\s*:\s*"\K[^"]+' | head -n "$count")
+    emails=$(echo "$resp" | sed -n 's/.*"mail_subject"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n "$count")
     if [ -z "$emails" ]; then
         ui_info "No messages"
     else

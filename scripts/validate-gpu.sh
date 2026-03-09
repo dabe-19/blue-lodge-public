@@ -377,15 +377,16 @@ fi
 # Extract specific offload count
 _offload_line=$(grep -i "offloaded.*layers" "$SERVER_LOG" 2>/dev/null | tail -1)
 if [ -n "$_offload_line" ]; then
-    _GPU_LAYERS_OFFLOADED=$(echo "$_offload_line" | grep -oP '\d+(?=/\d+ layers)' || echo "?")
+    _GPU_LAYERS_OFFLOADED=$(echo "$_offload_line" | sed -n 's/.*\([0-9]\{1,\}\)\/[0-9]\{1,\} layers.*/\1/p')
+    _GPU_LAYERS_OFFLOADED="${_GPU_LAYERS_OFFLOADED:-?}"
 fi
 
 # Detect GPU backend name
-_vulkan_line=$(grep -iP "VULKAN|ggml_vulkan|vk_device" "$SERVER_LOG" 2>/dev/null | head -1)
+_vulkan_line=$(grep -iE "VULKAN|ggml_vulkan|vk_device" "$SERVER_LOG" 2>/dev/null | head -1)
 if [ -n "$_vulkan_line" ]; then
     _GPU_BACKEND="Vulkan"
 fi
-_cuda_line=$(grep -iP "CUDA|cublas|ggml_cuda" "$SERVER_LOG" 2>/dev/null | head -1)
+_cuda_line=$(grep -iE "CUDA|cublas|ggml_cuda" "$SERVER_LOG" 2>/dev/null | head -1)
 if [ -n "$_cuda_line" ]; then
     _GPU_BACKEND="CUDA"
 fi
@@ -402,7 +403,7 @@ else
     _warn "Model may be running on CPU only"
     _dim "Check -ngl flag and Vulkan driver availability"
     _dim "Relevant log lines:"
-    grep -iP "GPU|vulkan|cuda|offload|device|error|warn" "$SERVER_LOG" 2>/dev/null | head -5 | while IFS= read -r line; do
+    grep -iE "GPU|vulkan|cuda|offload|device|error|warn" "$SERVER_LOG" 2>/dev/null | head -5 | while IFS= read -r line; do
         _dim "  $line"
     done
     _log "GPU offload: NO (CPU-only detected)"

@@ -1066,7 +1066,7 @@ discord_resolve_mentions() {
     # Find all @word patterns and try to resolve each
     local result="$text"
     local mentions
-    mentions=$(echo "$text" | grep -oP '@[a-zA-Z0-9_.-]+' | sort -u)
+    mentions=$(echo "$text" | grep -oE '@[a-zA-Z0-9_.-]+' | sort -u)
 
     while IFS= read -r mention; do
         [ -z "$mention" ] && continue

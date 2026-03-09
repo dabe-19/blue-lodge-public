@@ -262,7 +262,7 @@ describe "ANSI escape code stripping"
     content=$(cat "$JOURNAL_FILE")
     assert_contains "$content" "Search failed: timeout"
     # Must NOT contain raw escape codes
-    if echo "$content" | grep -qP '\x1b\['; then
+    if printf '%s' "$content" | grep -q $'\x1b\['; then
       assert_ok 1  # fail — escape codes still present
     else
       assert_ok 0

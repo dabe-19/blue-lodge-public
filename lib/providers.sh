@@ -306,7 +306,7 @@ _provider_call_with_backoff() {
 
         # Parse "retry in Xs" hint from Google/etc if available
         local hint_wait
-        hint_wait=$(echo "$resp" | grep -oiP 'retry\s+in\s+\K[0-9]+(\.[0-9]+)?' | head -1)
+        hint_wait=$(echo "$resp" | sed -n 's/.*[Rr]etry[[:space:]]\{1,\}in[[:space:]]\{1,\}\([0-9]\{1,\}\(\.[0-9]\{1,\}\)\{0,1\}\).*/\1/p' | head -1)
         if [ -n "$hint_wait" ]; then
             # Round up the hint
             delay=$(printf '%.0f' "$hint_wait" 2>/dev/null || echo "$delay")
@@ -360,7 +360,7 @@ _provider_stream_with_backoff() {
         [ "$attempt" -gt "$max" ] && { ui_err "Provider rate limit: gave up after $max retries"; return 1; }
 
         local hint_wait
-        hint_wait=$(echo "$resp" | grep -oiP 'retry\s+in\s+\K[0-9]+(\.[0-9]+)?' | head -1)
+        hint_wait=$(echo "$resp" | sed -n 's/.*[Rr]etry[[:space:]]\{1,\}in[[:space:]]\{1,\}\([0-9]\{1,\}\(\.[0-9]\{1,\}\)\{0,1\}\).*/\1/p' | head -1)
         if [ -n "$hint_wait" ]; then
             delay=$(printf '%.0f' "$hint_wait" 2>/dev/null || echo "$delay")
             [ "$delay" -lt 1 ] && delay=1

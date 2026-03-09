@@ -82,7 +82,7 @@ pgp_has_key() {
             # Auto-populate email from existing key: uid field format is
             # uid:u::::timestamp::hash::Name (Comment) <email>::
             local _email
-            _email=$(echo "$_uid_line" | grep -oP '<\K[^>]+')
+            _email=$(echo "$_uid_line" | sed -n 's/.*<\([^>]*\)>.*/\1/p')
             if [ -n "$_email" ]; then
                 PGP_KEY_EMAIL="$_email"
                 # Also extract name if available
@@ -308,7 +308,7 @@ pgp_verify_message() {
         ui_ok "Signature VALID"
         # Extract signer info
         local signer
-        signer=$(echo "$result" | grep -oP 'Good signature from "\K[^"]+' 2>/dev/null)
+        signer=$(echo "$result" | sed -n 's/.*Good signature from "\([^"]*\)".*/\1/p' 2>/dev/null)
         [ -n "$signer" ] && ui_dim "Signed by: $signer"
         return 0
     else
@@ -355,7 +355,7 @@ pgp_import_key() {
         ui_ok "Public key imported"
         # Show what was imported
         local imported
-        imported=$(echo "$result" | grep -oP 'imported: \K\d+' 2>/dev/null)
+        imported=$(echo "$result" | sed -n 's/.*imported: \([0-9]*\).*/\1/p' 2>/dev/null)
         [ -n "$imported" ] && ui_dim "$imported key(s) imported"
         return 0
     else

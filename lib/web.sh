@@ -498,7 +498,7 @@ web_fetch_raw() {
     # can read them (the GET body arrives via stdout / subshell capture).
     local _status="" _content_type=""
     if [ -f "$_hdr_file" ]; then
-        _status=$(grep -oP 'HTTP/[0-9.]+ \K[0-9]+' "$_hdr_file" 2>/dev/null | tail -1)
+        _status=$(sed -n 's/.*HTTP\/[0-9.]* \([0-9]\{3\}\).*/\1/p' "$_hdr_file" 2>/dev/null | tail -1)
         _content_type=$(grep -i '^content-type:' "$_hdr_file" 2>/dev/null | tail -1 | sed 's/^[Cc]ontent-[Tt]ype:[[:space:]]*//' | tr -d '\r')
         rm -f "$_hdr_file"
     fi
@@ -516,7 +516,7 @@ web_fetch_raw() {
             "$url" 2>/dev/null | head -c "$WEB_MAX_SIZE")
         _curl_rc=$?
         if [ -f "$_hdr_file" ]; then
-            _status=$(grep -oP 'HTTP/[0-9.]+ \K[0-9]+' "$_hdr_file" 2>/dev/null | tail -1)
+            _status=$(sed -n 's/.*HTTP\/[0-9.]* \([0-9]\{3\}\).*/\1/p' "$_hdr_file" 2>/dev/null | tail -1)
             _content_type=$(grep -i '^content-type:' "$_hdr_file" 2>/dev/null | tail -1 | sed 's/^[Cc]ontent-[Tt]ype:[[:space:]]*//' | tr -d '\r')
             rm -f "$_hdr_file"
         fi
@@ -629,7 +629,7 @@ _html_to_text() {
 
 # ── Extract page title from HTML ──────────────────────────────
 _html_extract_title() {
-    grep -oP '(?<=<title>).*?(?=</title>)' | head -1 | \
+    sed -n 's/.*<title>\([^<]*\)<\/title>.*/\1/p' | head -1 | \
         sed 's/&amp;/\&/g; s/&lt;/</g; s/&gt;/>/g; s/&quot;/"/g; s/&#39;/'"'"'/g'
 }
 
@@ -710,15 +710,15 @@ _html_extract_images() {
     #  4) <link rel="image_src" href="...">
     {
         # <img> tags — src, data-src, data-lazy-src attributes
-        grep -oiP '<img[^>]*>' | grep -oP '(?:src|data-src|data-lazy-src)="[^"]+"' | sed 's/^[^"]*"//;s/"$//'
+        grep -oiE '<img[^>]*>' | grep -oE '(src|data-src|data-lazy-src)="[^"]+"' | sed 's/^[^"]*"//;s/"$//'
         # <img> srcset — extract individual URLs from comma-separated entries
-        grep -oiP '<img[^>]*>' | grep -oP 'srcset="[^"]+"' | sed 's/^srcset="//;s/"$//' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/ [0-9]*[wx].*$//'
+        grep -oiE '<img[^>]*>' | grep -oE 'srcset="[^"]+"' | sed 's/^srcset="//;s/"$//' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/ [0-9]*[wx].*$//'
         # <picture><source> srcset — responsive image sources
-        grep -oiP '<source[^>]*>' | grep -oP 'srcset="[^"]+"' | sed 's/^srcset="//;s/"$//' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/ [0-9]*[wx].*$//'
+        grep -oiE '<source[^>]*>' | grep -oE 'srcset="[^"]+"' | sed 's/^srcset="//;s/"$//' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/ [0-9]*[wx].*$//'
         # Open Graph and Twitter Card meta images
-        grep -oiP '<meta[^>]+(og:image|twitter:image)[^>]*>' | grep -oP 'content="[^"]+"' | sed 's/^content="//;s/"$//'
+        grep -oiE '<meta[^>]+(og:image|twitter:image)[^>]*>' | grep -oE 'content="[^"]+"' | sed 's/^content="//;s/"$//'
         # <link rel="image_src">
-        grep -oiP '<link[^>]+rel="image_src"[^>]*>' | grep -oP 'href="[^"]+"' | sed 's/^href="//;s/"$//'
+        grep -oiE '<link[^>]+rel="image_src"[^>]*>' | grep -oE 'href="[^"]+"' | sed 's/^href="//;s/"$//'
     } | sort -u | \
     while IFS= read -r img_url; do
         [ -z "$img_url" ] && continue
@@ -1020,7 +1020,7 @@ web_links() {
     local url="$1"
     local html
     html=$(web_fetch_raw "$url")
-    echo "$html" | grep -oP 'href="[^"]*"' | sed 's/href="//;s/"$//' | \
+    echo "$html" | grep -oE 'href="[^"]*"' | sed 's/href="//;s/"$//' | \
         grep -E '^https?://' | sort -u | head -50
 }
 
@@ -1234,19 +1234,19 @@ _web_search_ddg() {
 
     # Method 1: Parse result-link class (DDG Lite format)
     # Handle both attribute orders: class before href AND href before class
-    results=$(echo "$html" | grep -oP '<a[^>]*class="result-link"[^>]*>[^<]*' 2>/dev/null | \
+    results=$(echo "$html" | grep -oE '<a[^>]*class="result-link"[^>]*>[^<]*' 2>/dev/null | \
         sed -n 's/.*href="\([^"]*\)".*>\([^<]*\)/\1|\2/p' | head -"$count")
 
     # Method 2: If no result-link, try result__a (standard DDG HTML)
     if [ -z "$results" ]; then
-        results=$(echo "$html" | grep -oP 'class="result__a"[^>]*href="[^"]*"[^>]*>[^<]*' 2>/dev/null | \
+        results=$(echo "$html" | grep -oE 'class="result__a"[^>]*href="[^"]*"[^>]*>[^<]*' 2>/dev/null | \
             sed 's/.*href="//;s/"[^>]*>/|/' | head -"$count")
     fi
 
     # Method 3: Extract from DDG Lite table rows (most reliable)
     if [ -z "$results" ]; then
         results=$(echo "$html" | \
-            grep -oP '<a[^>]+rel="nofollow"[^>]+href="[^"]+"[^>]*>[^<]+' 2>/dev/null | \
+            grep -oE '<a[^>]+rel="nofollow"[^>]+href="[^"]+"[^>]*>[^<]+' 2>/dev/null | \
             sed 's/<a[^>]*href="//;s/"[^>]*>/|/' | head -"$count")
     fi
 
@@ -1259,7 +1259,7 @@ _web_search_ddg() {
         while IFS='|' read -r url title; do
             # Decode DDG redirect URLs (uddg= parameter)
             if [[ "$url" == *"uddg="* ]]; then
-                url=$(echo "$url" | grep -oP 'uddg=\K[^&]+' | python3 -c 'import sys,urllib.parse;print(urllib.parse.unquote(sys.stdin.read().strip()))' 2>/dev/null || echo "$url")
+                url=$(echo "$url" | sed -n 's/.*uddg=\([^&]*\).*/\1/p' | python3 -c 'import sys,urllib.parse;print(urllib.parse.unquote(sys.stdin.read().strip()))' 2>/dev/null || echo "$url")
             fi
 
             # Skip ad/tracking URLs

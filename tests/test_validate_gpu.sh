@@ -246,7 +246,7 @@ describe "Display helpers"
   it "defines all display helper functions" && {
     # Source enough of the script to get the helper definitions
     # without actually running the full script
-    _funcs=$(grep -P '^_\w+\(\)' "$_VALIDATE_SCRIPT" | sed 's/().*//')
+    _funcs=$(grep -E '^_[a-zA-Z0-9_]+\(\)' "$_VALIDATE_SCRIPT" | sed 's/().*//')
     assert_contains "$_funcs" "_header"
     assert_contains "$_funcs" "_step"
     assert_contains "$_funcs" "_ok"

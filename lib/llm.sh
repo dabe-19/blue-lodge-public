@@ -406,16 +406,16 @@ _llm_detect_backend() {
     # Process-based port discovery: if configured port didn't respond, check
     # for a running llama-server and try its actual --port value.
     local _running_port
-    _running_port=$(ps aux 2>/dev/null | grep -oP 'llama-server.*--port\s+\K[0-9]+' | head -1)
+    _running_port=$(ps aux 2>/dev/null | sed -n 's/.*llama-server.*--port[[:space:]]*\([0-9]*\).*/\1/p' | head -1)
     if [ -z "$_running_port" ]; then
         # pgrep + /proc/PID/cmdline fallback (Termux/proot may lack ps aux)
         local _srv_pid
         _srv_pid=$(pgrep -f "llama-server" 2>/dev/null | head -1)
         if [ -n "$_srv_pid" ] && [ -f "/proc/$_srv_pid/cmdline" ]; then
-            _running_port=$(tr '\0' ' ' < "/proc/$_srv_pid/cmdline" 2>/dev/null | grep -oP '\-\-port\s+\K[0-9]+')
+            _running_port=$(tr '\0' ' ' < "/proc/$_srv_pid/cmdline" 2>/dev/null | sed -n 's/.*--port[[:space:]]*\([0-9]*\).*/\1/p')
         fi
     fi
-    if [ -n "$_running_port" ] && [ "$_running_port" != "$(echo "$LLAMA_CPP_URL" | grep -oP ':\K[0-9]+$')" ]; then
+    if [ -n "$_running_port" ] && [ "$_running_port" != "$(echo "$LLAMA_CPP_URL" | sed -n 's/.*:\([0-9]*\)$/\1/p')" ]; then
         local _alt_url="http://127.0.0.1:$_running_port"
         if curl -sf --max-time 2 "$_alt_url/health" 2>/dev/null | grep -q '"status"'; then
             LLAMA_CPP_URL="$_alt_url"
@@ -501,7 +501,8 @@ _llm_start_llamacpp_server() {
     # This handles: another Lodge session started it, the smoke test left it
     # running, or this session's own PID file is still valid.
     local _port_check
-    _port_check=$(echo "$LLAMA_CPP_URL" | grep -oP ':\K[0-9]+$' || echo "8080")
+    _port_check=$(echo "$LLAMA_CPP_URL" | sed -n 's/.*:\([0-9]*\)$/\1/p')
+    _port_check="${_port_check:-8080}"
     if curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null | grep -q '"status"'; then
         # Verify the running server's GPU layers match our config.
         # A stale server from a previous session might have been launched
@@ -510,12 +511,12 @@ _llm_start_llamacpp_server() {
         _srv_pid_adopt=$(pgrep -f "llama-server.*--port" 2>/dev/null | head -1)
         if [ -n "$_srv_pid_adopt" ] && [ -f "/proc/$_srv_pid_adopt/cmdline" ]; then
             _running_ngl=$(tr '\0' ' ' < "/proc/$_srv_pid_adopt/cmdline" 2>/dev/null \
-                | grep -oP '\-ngl\s+\K[0-9]+')
+                | sed -n 's/.*-ngl[[:space:]]*\([0-9]*\).*/\1/p')
         fi
         # Also try ps if /proc wasn't available
         if [ -z "$_running_ngl" ] && [ -n "$_srv_pid_adopt" ]; then
             _running_ngl=$(ps -p "$_srv_pid_adopt" -o args= 2>/dev/null \
-                | grep -oP '\-ngl\s+\K[0-9]+')
+                | sed -n 's/.*-ngl[[:space:]]*\([0-9]*\).*/\1/p')
         fi
         if [ -n "$_running_ngl" ] && [ "$_running_ngl" != "$LLAMA_CPP_GPU_LAYERS" ]; then
             [ "$quiet" != "--quiet" ] && ui_warn "Running llama-server has -ngl $_running_ngl but config wants $LLAMA_CPP_GPU_LAYERS — restarting"
@@ -571,7 +572,8 @@ _llm_start_llamacpp_server() {
     fi
 
     local _port
-    _port=$(echo "$LLAMA_CPP_URL" | grep -oP ':\K[0-9]+$' || echo "8080")
+    _port=$(echo "$LLAMA_CPP_URL" | sed -n 's/.*:\([0-9]*\)$/\1/p')
+    _port="${_port:-8080}"
 
     [ "$quiet" != "--quiet" ] && ui_dim "Starting llama-server on port $_port..."
 
@@ -902,7 +904,7 @@ llm_warmup() {
                 printf "\033[2m  Restarting Ollama...\033[0m\n" > "$_tty" 2>/dev/null
                 killall ollama 2>/dev/null || true
                 sleep 2
-                ollama serve > /tmp/lodge-ollama.log 2>&1 &
+                ollama serve > "${TMPDIR:-/tmp}/lodge-ollama.log" 2>&1 &
                 disown 2>/dev/null
                 # Wait for Ollama to become responsive
                 local _retries=0
@@ -1030,7 +1032,7 @@ llm_ensure() {
         # Ollama not running — attempt to start
         if command -v ollama &>/dev/null; then
             ui_warn "Starting Ollama as fallback..."
-            ollama serve > /tmp/lodge-ollama.log 2>&1 &
+            ollama serve > "${TMPDIR:-/tmp}/lodge-ollama.log" 2>&1 &
             sleep 3
 
             llm_check
@@ -1040,7 +1042,7 @@ llm_ensure() {
                 ui_err "No LLM backend available."
                 ui_dim "  llama-server: $LLAMA_CPP_SERVER_BIN"
                 [ ! -x "$LLAMA_CPP_SERVER_BIN" ] && ui_dim "    ^ not found — build: docs/ADRENO_GPU_SETUP.md"
-                ui_dim "  Ollama: failed to start. Check /tmp/lodge-ollama.log"
+                ui_dim "  Ollama: failed to start. Check ${TMPDIR:-/tmp}/lodge-ollama.log"
                 return 1
             fi
         else
@@ -1094,7 +1096,7 @@ llm_repl_health_check() {
             fi
             # Try starting Ollama
             if command -v ollama &>/dev/null; then
-                ollama serve > /tmp/lodge-ollama.log 2>&1 &
+                ollama serve > "${TMPDIR:-/tmp}/lodge-ollama.log" 2>&1 &
                 sleep 3
                 if curl -sf --max-time 2 "$OLLAMA_URL/api/tags" &>/dev/null; then
                     _LLM_BACKEND_CACHE="ollama"

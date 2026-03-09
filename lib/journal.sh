@@ -479,7 +479,7 @@ journal_greeting() {
     entry_count=$(grep -c '^## [0-9]' "$JOURNAL_FILE" 2>/dev/null) || true
     entry_count="${entry_count:-0}"
     local last_date
-    last_date=$(grep '^## [0-9]' "$JOURNAL_FILE" 2>/dev/null | tail -1 | grep -oP '^## \K[0-9-]+' || echo "")
+    last_date=$(grep '^## [0-9]' "$JOURNAL_FILE" 2>/dev/null | tail -1 | sed -n 's/^## \([0-9-]*\).*/\1/p')
     local today
     today=$(date '+%Y-%m-%d')
     

