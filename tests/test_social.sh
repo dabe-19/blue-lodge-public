@@ -640,6 +640,38 @@ describe "Discord user registry"
     _teardown_social
   }
 
+  it "discord_user_resolve strips email-like suffix (user@discord.com)" && {
+    _setup_social
+    discord_user_add "Babadoo" "111111111111111111" &>/dev/null
+    uid=$(discord_user_resolve "Babadoo@discord.com")
+    assert_eq "$uid" "111111111111111111"
+    _teardown_social
+  }
+
+  it "discord_user_resolve cleans garbled @User@domain@User handles" && {
+    _setup_social
+    discord_user_add "Babadoo" "111111111111111111" &>/dev/null
+    uid=$(discord_user_resolve "@Babadoo@discord.com@Babadoo")
+    assert_eq "$uid" "111111111111111111"
+    _teardown_social
+  }
+
+  it "discord_user_resolve strips trailing punctuation" && {
+    _setup_social
+    discord_user_add "Nubster" "222222222222222222" &>/dev/null
+    uid=$(discord_user_resolve "Nubster,")
+    assert_eq "$uid" "222222222222222222"
+    _teardown_social
+  }
+
+  it "discord_user_resolve handles @user@user doubled names" && {
+    _setup_social
+    discord_user_add "testuser" "333333333333333333" &>/dev/null
+    uid=$(discord_user_resolve "@testuser@testuser")
+    assert_eq "$uid" "333333333333333333"
+    _teardown_social
+  }
+
   it "discord_user_resolve returns empty for unknown" && {
     _setup_social
     uid=$(discord_user_resolve "nobody_here" 2>/dev/null)
@@ -689,6 +721,79 @@ describe "Discord DM support"
     _setup_social
     declare -f discord_dm &>/dev/null
     assert_ok $?
+    _teardown_social
+  }
+
+# ── Discord Multi-DM parsing ─────────────────────────────────
+describe "Discord multi-DM recipient parsing"
+
+  it "discord_dm_parse_recipients resolves single recipient" && {
+    _setup_social
+    discord_user_add "Babadoo" "111111111111111111" &>/dev/null
+    discord_dm_parse_recipients "Babadoo Hey there!"
+    assert_eq "${#_DM_RESOLVED_IDS[@]}" "1"
+    assert_eq "${_DM_RESOLVED_IDS[0]}" "111111111111111111"
+    assert_eq "$_DM_MESSAGE" "Hey there!"
+    _teardown_social
+  }
+
+  it "discord_dm_parse_recipients resolves multiple recipients with 'and'" && {
+    _setup_social
+    discord_user_add "Babadoo" "111111111111111111" &>/dev/null
+    discord_user_add "Nubster" "222222222222222222" &>/dev/null
+    discord_dm_parse_recipients "Babadoo and Nubster Check this out!"
+    assert_eq "${#_DM_RESOLVED_IDS[@]}" "2"
+    assert_contains "${_DM_RESOLVED_IDS[*]}" "111111111111111111"
+    assert_contains "${_DM_RESOLVED_IDS[*]}" "222222222222222222"
+    assert_eq "$_DM_MESSAGE" "Check this out!"
+    _teardown_social
+  }
+
+  it "discord_dm_parse_recipients cleans garbled names before resolving" && {
+    _setup_social
+    discord_user_add "Babadoo" "111111111111111111" &>/dev/null
+    discord_user_add "Nubster" "222222222222222222" &>/dev/null
+    discord_dm_parse_recipients "Babadoo@discord.com Nubster@discord.com Check out the review!"
+    assert_eq "${#_DM_RESOLVED_IDS[@]}" "2"
+    assert_eq "$_DM_MESSAGE" "Check out the review!"
+    _teardown_social
+  }
+
+  it "discord_dm_parse_recipients deduplicates same user" && {
+    _setup_social
+    discord_user_add "Babadoo" "111111111111111111" &>/dev/null
+    discord_dm_parse_recipients "Babadoo and Babadoo Hello!"
+    assert_eq "${#_DM_RESOLVED_IDS[@]}" "1"
+    assert_eq "$_DM_MESSAGE" "Hello!"
+    _teardown_social
+  }
+
+  it "discord_dm_parse_recipients does not consume dangling connectors" && {
+    _setup_social
+    discord_user_add "Babadoo" "111111111111111111" &>/dev/null
+    discord_dm_parse_recipients "Babadoo and then some message"
+    assert_eq "${#_DM_RESOLVED_IDS[@]}" "1"
+    # "and" should NOT be consumed since "then" didn't resolve
+    assert_contains "$_DM_MESSAGE" "and"
+    _teardown_social
+  }
+
+  it "discord_dm_parse_recipients returns empty for no matches" && {
+    _setup_social
+    discord_dm_parse_recipients "nobody_known Hello!"
+    assert_eq "${#_DM_RESOLVED_IDS[@]}" "0"
+    _teardown_social
+  }
+
+  it "discord_dm_parse_recipients respects scan window" && {
+    _setup_social
+    discord_user_add "Babadoo" "111111111111111111" &>/dev/null
+    discord_user_add "Nubster" "222222222222222222" &>/dev/null
+    # Scan only 10 chars — "Babadoo an" fits, but "Nubster" starts at char 12+
+    discord_dm_parse_recipients "Babadoo and Nubster Hey!" "10"
+    # Only Babadoo should resolve within the window
+    assert_eq "${#_DM_RESOLVED_IDS[@]}" "1"
+    assert_eq "${_DM_RESOLVED_IDS[0]}" "111111111111111111"
     _teardown_social
   }
 

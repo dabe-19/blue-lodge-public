@@ -102,6 +102,13 @@ cmd_write() {
         fi
     fi
 
+    # ── Auto-expand file references in content ─────────────────
+    # File paths (e.g. data.json, notes.txt) in content are replaced
+    # with their contents when AGENT_FILE_EXPAND=1.
+    if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then
+        content=$(tools_expand_file_refs "$content" "$workdir")
+    fi
+
     # ── Expand escape sequences ────────────────────────────────
     # The LLM sends multi-line content as a single line with \n
     # separators (as instructed by the syntax card). Expand them

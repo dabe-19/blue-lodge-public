@@ -1,6 +1,6 @@
 # Slash Commands — Architecture & Reference
 
-> How George knows, plans with, and executes his 56 slash commands.
+> How George knows, plans with, and executes his 49 slash commands.
 
 ## Quick Reference
 
@@ -10,6 +10,7 @@ All commands at a glance. For detailed usage, run `/help` inside George or see t
 |---------|------|-------------|
 | `/help` | — | Show all commands |
 | `/q` | `<question>` | Quick question (lightweight, conversation memory) |
+| `/brainstorm` | `<topic>` | Self-reasoning (no human input, uses own knowledge) |
 | `/ask` | `<question>` | Ask the user a question (agent-only, human-in-the-loop) |
 | `/plan` | `<task>` | Plan without execution |
 | `/init` | `<name> <type>` | Scaffold project (rust/python/rl/data/automation/notebook/shell) |
@@ -58,12 +59,16 @@ All commands at a glance. For detailed usage, run `/help` inside George or see t
 | `/think` | `[on\|off\|bright\|dim\|hide\|test]` | Toggle thinking mode |
 | `/debug` | `[on\|off\|toggle]` | Toggle debug output |
 | `/soul` | `[on\|off]` | Toggle soul injection level |
-| `/limits` | `[steps\|depth\|milestones\|inner\|delay\|reset]` | Planning limits |
+| `/limits` | `[steps\|depth\|milestones\|inner\|delay\|rewrite\|rewrite-rounds\|ask\|brainstorm\|reset]` | Planning limits & toggles |
 | `/model` | `[temp\|repeat\|presence] [value]` | Sampling parameters |
 | `/models` | `[list\|status\|select\|single\|dual]` | Model library |
 | `/config` | `[show\|save\|reset\|edit]` | Persistent configuration |
 | `/backend` | `[status\|auto\|ollama\|llamacpp\|url\|start\|stop\|model]` | Backend management |
+| `/gpu` | `[layers]` | GPU offload layers for llama-server |
 | `/status` | — | Agent + device status |
+| `/transcript` | `[list\|last\|path\|show]` | View task transcripts |
+| `/cleanup` | — | Remove George's created files |
+| `/clear` | — | Clear screen |
 | `/quit` | — | Exit George |
 
 ---
@@ -208,7 +213,7 @@ ALWAYS use this timestamp for any date references. NEVER make up a date.
 /web search <query>  — Search the web
 /web images <query>  — Find images (Serper API or scrape a page)
 /journal write <text> — Write to your journal
-... (40+ commands total)
+... (49 commands total)
 ```
 
 The real-time clock injection ensures George **never hallucinates dates**

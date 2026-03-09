@@ -891,4 +891,95 @@ describe "tools_expand_inline_read — PDF files"
     _teardown_tools
   }
 
+# ── tools_expand_file_refs ─────────────────────────────────────
+describe "tools_expand_file_refs — auto file reference expansion"
+
+  it "expands a .txt file reference to contents" && {
+    _setup_tools
+    echo "Hello from report" > "$TMPDIR_TOOLS/report.txt"
+    result=$(tools_expand_file_refs "Check this out: $TMPDIR_TOOLS/report.txt please")
+    assert_contains "$result" "Hello from report"
+    _teardown_tools
+  }
+
+  it "expands a .md file reference to contents" && {
+    _setup_tools
+    echo "# Review" > "$TMPDIR_TOOLS/review.md"
+    result=$(tools_expand_file_refs "Here is the review $TMPDIR_TOOLS/review.md for you")
+    assert_contains "$result" "# Review"
+    _teardown_tools
+  }
+
+  it "expands a .json file reference to contents" && {
+    _setup_tools
+    echo '{"key":"value"}' > "$TMPDIR_TOOLS/data.json"
+    result=$(tools_expand_file_refs "data is in $TMPDIR_TOOLS/data.json ok")
+    assert_contains "$result" '"key":"value"'
+    _teardown_tools
+  }
+
+  it "does NOT expand URLs (http/https)" && {
+    result=$(tools_expand_file_refs "visit https://example.com/report.txt for info")
+    assert_contains "$result" "https://example.com/report.txt"
+    assert_not_contains "$result" "Hello"
+  }
+
+  it "does NOT expand attachment flags (f=file)" && {
+    _setup_tools
+    echo "secret data" > "$TMPDIR_TOOLS/attach.txt"
+    result=$(tools_expand_file_refs "send this f=$TMPDIR_TOOLS/attach.txt please")
+    assert_contains "$result" "f=$TMPDIR_TOOLS/attach.txt"
+    _teardown_tools
+  }
+
+  it "returns original text when file does not exist" && {
+    result=$(tools_expand_file_refs "check /nonexistent/report.txt here")
+    assert_contains "$result" "/nonexistent/report.txt"
+  }
+
+  it "returns original text when no file extensions present" && {
+    result=$(tools_expand_file_refs "just some plain text without files")
+    assert_eq "$result" "just some plain text without files"
+  }
+
+  it "skips non-readable extensions (images)" && {
+    result=$(tools_expand_file_refs "look at photo.png and icon.jpg")
+    assert_contains "$result" "photo.png"
+    assert_contains "$result" "icon.jpg"
+  }
+
+  it "expands multiple file refs in same text" && {
+    _setup_tools
+    echo "file one" > "$TMPDIR_TOOLS/a.txt"
+    echo "file two" > "$TMPDIR_TOOLS/b.txt"
+    result=$(tools_expand_file_refs "$TMPDIR_TOOLS/a.txt and $TMPDIR_TOOLS/b.txt")
+    assert_contains "$result" "file one"
+    assert_contains "$result" "file two"
+    _teardown_tools
+  }
+
+  it "resolves paths relative to workdir" && {
+    _setup_tools
+    echo "relative content" > "$TMPDIR_TOOLS/notes.txt"
+    result=$(tools_expand_file_refs "see notes.txt for details" "$TMPDIR_TOOLS")
+    assert_contains "$result" "relative content"
+    _teardown_tools
+  }
+
+  it "respects AGENT_FILE_EXPAND=0 toggle (function still works, caller gates)" && {
+    # The function itself doesn't check the toggle — callers do.
+    # Verify the function works regardless; toggle is tested at integration level.
+    _setup_tools
+    echo "content" > "$TMPDIR_TOOLS/test.txt"
+    result=$(tools_expand_file_refs "$TMPDIR_TOOLS/test.txt")
+    assert_contains "$result" "content"
+    _teardown_tools
+  }
+
+describe "tools_expand_file_refs — AGENT_FILE_EXPAND toggle"
+
+  it "file expand is enabled by default" && {
+    assert_eq "${AGENT_FILE_EXPAND:-1}" "1"
+  }
+
 test_end

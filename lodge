@@ -878,6 +878,30 @@ _cmd_limits() {
                     ui_err "Brainstorm must be 'on' or 'off' (or 1/0, enable/disable)"
                 fi
             fi ;;
+        file-expand|fileexpand|file_expand)
+            if [ -z "$value" ]; then
+                local _fe_label="disabled"
+                [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && _fe_label="enabled"
+                ui_info "File expand: $_fe_label (default: enabled)"
+                ui_dim "When enabled, file paths in /social, /email, and /write text are auto-expanded to file contents"
+            else
+                if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
+                    AGENT_FILE_EXPAND=1
+                    ui_ok "File expand enabled — file refs in messages auto-expanded to contents"
+                elif [[ "$value" == "off" || "$value" == "0" || "$value" == "disable" || "$value" == "disabled" ]]; then
+                    AGENT_FILE_EXPAND=0
+                    ui_ok "File expand disabled — file paths sent as literal text"
+                else
+                    ui_err "File expand must be 'on' or 'off' (or 1/0, enable/disable)"
+                fi
+            fi ;;
+        dm-scan-chars|dmscan|dm-scan)
+            if [ -z "$value" ]; then
+                ui_info "DM scan chars: ${AGENT_DM_SCAN_CHARS:-80} (default: 80)"
+                ui_dim "Characters to scan for recipient names at start of /social discord dm"
+            else
+                _limits_set AGENT_DM_SCAN_CHARS "DM scan chars" "$value" 20 300
+            fi ;;
         ask-tokens)
             if [ -z "$value" ]; then
                 ui_info "Ask output tokens: $LLM_ASK_TOKENS (default: 20480)"
@@ -985,6 +1009,8 @@ _cmd_limits() {
             AGENT_INNER_LOOPS=6
             AGENT_MAX_STEPS=40
             AGENT_MAX_DEPTH=3
+            AGENT_FILE_EXPAND=1
+            AGENT_DM_SCAN_CHARS=80
             AGENT_HONEYDEW_EXPAND=0
             AGENT_HONEYDEW_REWRITE=1
             AGENT_HONEYDEW_REWRITE_ROUNDS=8
@@ -1260,6 +1286,10 @@ _cmd_limits() {
             local _bs_show="disabled"
             [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _bs_show="enabled"
             printf "  %-22s %s\n" "Brainstorm:" "$_bs_show  (default: enabled)"
+            local _fe_show="disabled"
+            [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && _fe_show="enabled"
+            printf "  %-22s %s\n" "File expand:" "$_fe_show  (default: enabled)"
+            printf "  %-22s %s\n" "DM scan chars:" "${AGENT_DM_SCAN_CHARS:-80}  (default: 80)"
             echo ""
             ui_section "Output Tokens (num_predict)"
             printf "  %-22s %s\n" "Max tokens:" "$LLM_MAX_TOKENS  (default: 20480)"
@@ -1318,6 +1348,8 @@ _cmd_limits() {
             ui_dim "    smart-route on|off — Smart command routing heuristic (current: $([ "${AGENT_SMART_ROUTE:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    ask on|off       — Allow George to /ask human questions (current: $([ "${AGENT_ASK_USER:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    brainstorm on|off — Allow George to /brainstorm (self-reason) (current: $([ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && echo on || echo off))"
+            ui_dim "    file-expand on|off — Auto-expand file refs in /social /email /write (current: $([ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && echo on || echo off))"
+            ui_dim "    dm-scan-chars N  — Chars to scan for DM recipients in /social discord dm (current: ${AGENT_DM_SCAN_CHARS:-80})"
             echo ""
             ui_dim "  Output tokens (num_predict):"
             ui_dim "    max-tokens N    — Global max output cap (current: $LLM_MAX_TOKENS)"
@@ -2656,27 +2688,61 @@ _cmd_social() {
                         fi
                     fi ;;
                 dm)
-                    # /social discord dm <user> <text>
-                    local _dm_user _dm_text
-                    _dm_user=$(echo "$dargs" | awk '{print $1}')
-                    _dm_text=$(echo "$dargs" | sed 's/^[^ ]* *//')
-                    if [ -z "$_dm_user" ] || [ -z "$_dm_text" ] || [ "$_dm_text" = "$_dm_user" ]; then
-                        ui_info "Usage: /social discord dm <user_id_or_name> <message>"
+                    # /social discord dm <user[s]> <text>
+                    # Multi-DM: scans first AGENT_DM_SCAN_CHARS characters for
+                    # multiple recipient names, resolves each, sends a DM to all.
+                    if [ -z "$dargs" ]; then
+                        ui_info "Usage: /social discord dm <user(s)> <message>"
+                        ui_dim "  Multiple: /social discord dm Babadoo and Nubster Hey!"
                         ui_dim "  Sync users first: /social discord users sync"
                         return 1
                     fi
-                    # Resolve username → user ID if not numeric
-                    if ! [[ "$_dm_user" =~ ^[0-9]+$ ]]; then
-                        local _uid
-                        _uid=$(discord_user_resolve "$_dm_user")
-                        if [ -z "$_uid" ]; then
-                            ui_err "Unknown user: $_dm_user"
-                            ui_dim "Sync users: /social discord users sync"
+
+                    if declare -f discord_dm_parse_recipients &>/dev/null; then
+                        discord_dm_parse_recipients "$dargs"
+                    else
+                        _DM_RESOLVED_IDS=()
+                        _DM_MESSAGE=""
+                    fi
+
+                    if [ ${#_DM_RESOLVED_IDS[@]} -gt 0 ] && [ -n "$_DM_MESSAGE" ]; then
+                        # Send DM to each resolved recipient
+                        local _dm_ok=0 _dm_fail=0 _dm_uid
+                        for _dm_uid in "${_DM_RESOLVED_IDS[@]}"; do
+                            if discord_dm "$_dm_uid" "$_DM_MESSAGE"; then
+                                _dm_ok=$((_dm_ok + 1))
+                            else
+                                _dm_fail=$((_dm_fail + 1))
+                            fi
+                        done
+                        if [ ${#_DM_RESOLVED_IDS[@]} -gt 1 ]; then
+                            [ "$_dm_fail" -eq 0 ] \
+                                && ui_ok "Multi-DM complete: ${_dm_ok} sent to ${#_DM_RESOLVED_IDS[@]} recipients" \
+                                || ui_warn "Multi-DM: ${_dm_ok} sent, ${_dm_fail} failed (${#_DM_RESOLVED_IDS[@]} recipients)"
+                        fi
+                    else
+                        # Fallback: single-user DM (original behavior)
+                        local _dm_user _dm_text
+                        _dm_user=$(echo "$dargs" | awk '{print $1}')
+                        _dm_text=$(echo "$dargs" | sed 's/^[^ ]* *//')
+                        if [ -z "$_dm_user" ] || [ -z "$_dm_text" ] || [ "$_dm_text" = "$_dm_user" ]; then
+                            ui_info "Usage: /social discord dm <user_id_or_name> <message>"
+                            ui_dim "  Sync users first: /social discord users sync"
                             return 1
                         fi
-                        _dm_user="$_uid"
-                    fi
-                    discord_dm "$_dm_user" "$_dm_text" ;;
+                        # Resolve username → user ID if not numeric
+                        if ! [[ "$_dm_user" =~ ^[0-9]+$ ]]; then
+                            local _uid
+                            _uid=$(discord_user_resolve "$_dm_user")
+                            if [ -z "$_uid" ]; then
+                                ui_err "Unknown user: $_dm_user"
+                                ui_dim "Sync users: /social discord users sync"
+                                return 1
+                            fi
+                            _dm_user="$_uid"
+                        fi
+                        discord_dm "$_dm_user" "$_dm_text"
+                    fi ;;
                 read)
                     local cid
                     cid=$(echo "$dargs" | awk '{print $1}')
@@ -3142,6 +3208,13 @@ _cmd_email() {
                 if declare -f tools_expand_inline_read &>/dev/null; then
                     body=$(tools_expand_inline_read "$body")
                 fi
+            fi
+
+            # ── Auto-expand file references in body ────────────
+            # File paths (e.g. report.md, notes.txt) in the body are
+            # replaced with their contents when AGENT_FILE_EXPAND=1.
+            if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then
+                body=$(tools_expand_file_refs "$body")
             fi
 
             email_send "$provider" "$to" "$subject" "$body" "$attachment" ;;

@@ -16,6 +16,10 @@ source "$LODGE_DIR/lib/api.sh"
 
 x_post() {
     local text="$1"
+    # Auto-expand readable file references in text
+    if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then
+        text=$(tools_expand_file_refs "$text")
+    fi
     # Expand LLM escape sequences (literal \n → real newlines)
     text=$(ui_expand_escapes "$text")
     local token
@@ -132,7 +136,7 @@ mastodon_instance_add() {
     _mastodon_instances_init || return 1
     sqlite3 "$MASTODON_INSTANCES_DB" \
         "INSERT OR REPLACE INTO instances(instance_url, access_token, display_name)
-         VALUES ('$instance_url', '$access_token', '$display_name');"
+         VALUES ('${instance_url//\'/\'\'}', '${access_token//\'/\'\'}', '${display_name//\'/\'\'}');"
     ui_ok "Registered Mastodon instance: $instance_url${display_name:+ ($display_name)}"
 }
 
@@ -143,7 +147,7 @@ mastodon_instance_remove() {
     instance_url="${instance_url%/}"
     _mastodon_instances_init || return 1
     sqlite3 "$MASTODON_INSTANCES_DB" \
-        "DELETE FROM instances WHERE instance_url = '$instance_url' COLLATE NOCASE;"
+        "DELETE FROM instances WHERE instance_url = '${instance_url//\'/\'\'}' COLLATE NOCASE;"
     ui_ok "Removed Mastodon instance: $instance_url"
 }
 
@@ -182,7 +186,7 @@ _mastodon_instance_token() {
         _mastodon_instances_init 2>/dev/null
         local token
         token=$(sqlite3 "$MASTODON_INSTANCES_DB" \
-            "SELECT access_token FROM instances WHERE instance_url = '$instance_url' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
+            "SELECT access_token FROM instances WHERE instance_url = '${instance_url//\'/\'\'}' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
         if [ -n "$token" ]; then
             echo "$token"
             return 0
@@ -230,6 +234,10 @@ _mastodon_base() {
 
 mastodon_post() {
     local text="$1"
+    # Auto-expand readable file references in text
+    if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then
+        text=$(tools_expand_file_refs "$text")
+    fi
     # Expand LLM escape sequences (literal \n → real newlines)
     text=$(ui_expand_escapes "$text")
     local visibility="${2:-public}"  # public, unlisted, private, direct
@@ -365,6 +373,10 @@ _bluesky_did() {
 
 bluesky_post() {
     local text="$1"
+    # Auto-expand readable file references in text
+    if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then
+        text=$(tools_expand_file_refs "$text")
+    fi
     # Expand LLM escape sequences (literal \n → real newlines)
     text=$(ui_expand_escapes "$text")
     local token
@@ -437,6 +449,10 @@ DISCORD_CHANNELS_DB="${DISCORD_CHANNELS_DB:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}
 
 discord_webhook() {
     local message="$1"
+    # Auto-expand readable file references in message
+    if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then
+        message=$(tools_expand_file_refs "$message")
+    fi
     # Expand LLM escape sequences (literal \n → real newlines)
     message=$(ui_expand_escapes "$message")
     local username="${2:-George}"
@@ -465,6 +481,11 @@ discord_send() {
     # Strip surrounding quotes — LLM wraps args in "..." or '...'
     channel_id=$(echo "$channel_id" | sed "s/^[\"']//; s/[\"']$//")
     message=$(echo "$message" | sed "s/^[\"']//; s/[\"']$//")
+
+    # Auto-expand readable file references in message
+    if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then
+        message=$(tools_expand_file_refs "$message")
+    fi
 
     # Expand LLM escape sequences (literal \n → real newlines)
     message=$(ui_expand_escapes "$message")
@@ -621,7 +642,7 @@ discord_channel_resolve() {
     name="${name#\#}"
     _discord_channels_init 2>/dev/null || return 1
     sqlite3 "$DISCORD_CHANNELS_DB" \
-        "SELECT channel_id FROM channels WHERE name = '$name' COLLATE NOCASE LIMIT 1;" 2>/dev/null
+        "SELECT channel_id FROM channels WHERE name = '${name//\'/\'\'}' COLLATE NOCASE LIMIT 1;" 2>/dev/null
 }
 
 # Add a channel mapping manually
@@ -634,7 +655,7 @@ discord_channel_add() {
     _discord_channels_init || return 1
     sqlite3 "$DISCORD_CHANNELS_DB" \
         "INSERT OR REPLACE INTO channels(name, channel_id, guild_name, guild_id)
-         VALUES ('$name', '$channel_id', '$guild_name', '$guild_id');"
+         VALUES ('${name//\'/\'\'}', '${channel_id//\'/\'\'}', '${guild_name//\'/\'\'}', '${guild_id//\'/\'\'}');"
     ui_ok "Registered channel #${name} → ${channel_id}${guild_name:+ (${guild_name})}"
 }
 
@@ -644,7 +665,7 @@ discord_channel_remove() {
     name="${name#\#}"
     _discord_channels_init || return 1
     sqlite3 "$DISCORD_CHANNELS_DB" \
-        "DELETE FROM channels WHERE name = '$name' COLLATE NOCASE;"
+        "DELETE FROM channels WHERE name = '${name//\'/\'\'}' COLLATE NOCASE;"
     ui_ok "Removed channel #${name}"
 }
 
@@ -742,7 +763,7 @@ discord_channels_sync() {
         echo "$channels" | jq -r '.[]? | select(.type == 0 or .type == 5) | "\(.id) \(.name)"' 2>/dev/null | while IFS=' ' read -r cid cname; do
             sqlite3 "$DISCORD_CHANNELS_DB" \
                 "INSERT OR REPLACE INTO channels(name, channel_id, guild_name, guild_id, type)
-                 VALUES ('$cname', '$cid', '$gname', '$gid', 'text');" 2>/dev/null
+                 VALUES ('${cname//\'/\'\'}', '${cid//\'/\'\'}', '${gname//\'/\'\'}', '${gid//\'/\'\'}', 'text');" 2>/dev/null
             total_added=$((total_added + 1))
         done
     done
@@ -816,28 +837,110 @@ discord_user_resolve() {
     # Strip surrounding quotes
     name=$(echo "$name" | sed 's/^["'\'']*//; s/["'\'']*$//')
     name="${name#@}"  # double-strip in case quotes wrapped the @
+
+    # ── Aggressive name cleaning ──────────────────────────
+    # The LLM often garbles handles with email-like suffixes or
+    # doubled names:
+    #   @Babadoo@discord.com@Babadoo  →  Babadoo
+    #   Nubster@discord.com           →  Nubster
+    #   @user@user                    →  user
+    # Split on @ and take the first non-domain token.
+    if [[ "$name" == *@* ]]; then
+        local _clean_name="" _part
+        IFS='@' read -ra _parts <<< "$name"
+        for _part in "${_parts[@]}"; do
+            [ -z "$_part" ] && continue
+            # Skip domain-like tokens (contain a dot)
+            [[ "$_part" == *.* ]] && continue
+            _clean_name="$_part"
+            break
+        done
+        [ -n "$_clean_name" ] && name="$_clean_name"
+    fi
+
+    # Strip trailing punctuation the LLM may leave
+    name=$(echo "$name" | sed 's/[,;:!?.]*$//')
+
+    [ -z "$name" ] && return 1
     _discord_users_init 2>/dev/null || return 1
+
+    # Sanitize for SQL (escape single quotes)
+    local _safe="${name//\'/\'\'}"
 
     # 1. Exact username match (primary)
     local uid
     uid=$(sqlite3 "$DISCORD_USERS_DB" \
-        "SELECT user_id FROM users WHERE username = '$name' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
+        "SELECT user_id FROM users WHERE username = '$_safe' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
     if [ -n "$uid" ]; then echo "$uid"; return 0; fi
 
     # 2. Exact display_name match (allows @Pompler → pomps5246's user_id)
     uid=$(sqlite3 "$DISCORD_USERS_DB" \
-        "SELECT user_id FROM users WHERE display_name = '$name' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
+        "SELECT user_id FROM users WHERE display_name = '$_safe' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
     if [ -n "$uid" ]; then echo "$uid"; return 0; fi
 
     # 3. Prefix match on username (allows @pomps → pomps5246)
     uid=$(sqlite3 "$DISCORD_USERS_DB" \
-        "SELECT user_id FROM users WHERE username LIKE '${name}%' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
+        "SELECT user_id FROM users WHERE username LIKE '$_safe%' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
     if [ -n "$uid" ]; then echo "$uid"; return 0; fi
 
     # 4. Prefix match on display_name
     uid=$(sqlite3 "$DISCORD_USERS_DB" \
-        "SELECT user_id FROM users WHERE display_name LIKE '${name}%' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
+        "SELECT user_id FROM users WHERE display_name LIKE '$_safe%' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
     [ -n "$uid" ] && echo "$uid"
+}
+
+# ── Discord: Multi-DM recipient parser ──────────────────────────
+# Scans the first AGENT_DM_SCAN_CHARS characters of the text for
+# Discord usernames/handles. Populates:
+#   _DM_RESOLVED_IDS  — array of unique numeric user IDs
+#   _DM_MESSAGE        — the message text after the name section
+# Handles connectors ("and", "&") between names.
+discord_dm_parse_recipients() {
+    local text="$1"
+    local scan_chars="${2:-${AGENT_DM_SCAN_CHARS:-80}}"
+
+    _DM_RESOLVED_IDS=()
+    _DM_MESSAGE=""
+
+    local _consumed=0 _words_consumed=0 _pending_connectors=0
+
+    for _word in $text; do
+        # Stop if past scan window
+        [ $_consumed -ge "$scan_chars" ] && break
+        _consumed=$(( _consumed + ${#_word} + 1 ))
+
+        # Buffer connector words — only consume if followed by a resolved name
+        case "${_word,,}" in
+            and|"&"|","|"+") _pending_connectors=$((_pending_connectors + 1)); continue ;;
+        esac
+
+        # Try to resolve as a Discord user
+        local _uid
+        _uid=$(discord_user_resolve "$_word" 2>/dev/null)
+        if [ -n "$_uid" ]; then
+            # Accept the pending connectors
+            _words_consumed=$((_words_consumed + _pending_connectors + 1))
+            _pending_connectors=0
+            # Deduplicate
+            local _dup=0 _ex
+            for _ex in "${_DM_RESOLVED_IDS[@]}"; do
+                [ "$_ex" == "$_uid" ] && { _dup=1; break; }
+            done
+            [ "$_dup" -eq 0 ] && _DM_RESOLVED_IDS+=("$_uid")
+        else
+            # Not a name — stop scanning
+            break
+        fi
+    done
+
+    # Strip consumed words from front to get message
+    _DM_MESSAGE="$text"
+    local _i=0
+    while [ $_i -lt $_words_consumed ]; do
+        _DM_MESSAGE=$(echo "$_DM_MESSAGE" | sed 's/^[[:space:]]*//' | sed 's/^[^[:space:]]*//')
+        _i=$((_i + 1))
+    done
+    _DM_MESSAGE=$(echo "$_DM_MESSAGE" | sed 's/^[[:space:]]*//')
 }
 
 # Add a user mapping manually
@@ -851,7 +954,7 @@ discord_user_add() {
     _discord_users_init || return 1
     sqlite3 "$DISCORD_USERS_DB" \
         "INSERT OR REPLACE INTO users(username, user_id, display_name, guild_name, guild_id)
-         VALUES ('$username', '$user_id', '$display_name', '$guild_name', '$guild_id');"
+         VALUES ('${username//\'/\'\'}', '${user_id//\'/\'\'}', '${display_name//\'/\'\'}', '${guild_name//\'/\'\'}', '${guild_id//\'/\'\'}');"
     ui_ok "Registered user @${username} → ${user_id}${display_name:+ (${display_name})}"
 }
 
@@ -861,7 +964,7 @@ discord_user_remove() {
     username="${username#@}"
     _discord_users_init || return 1
     sqlite3 "$DISCORD_USERS_DB" \
-        "DELETE FROM users WHERE username = '$username' COLLATE NOCASE;"
+        "DELETE FROM users WHERE username = '${username//\'/\'\'}' COLLATE NOCASE;"
     ui_ok "Removed user @${username}"
 }
 
@@ -937,7 +1040,7 @@ discord_users_sync() {
                 [ "$is_bot" = "true" ] && bot_flag=1
                 sqlite3 "$DISCORD_USERS_DB" \
                     "INSERT OR REPLACE INTO users(username, user_id, display_name, guild_name, guild_id, is_bot)
-                     VALUES ('$uname', '$uid', '$dname', '$gname', '$gid', $bot_flag);" 2>/dev/null
+                     VALUES ('${uname//\'/\'\'}', '${uid//\'/\'\'}', '${dname//\'/\'\'}', '${gname//\'/\'\'}', '${gid//\'/\'\'}', $bot_flag);" 2>/dev/null
                 total_added=$((total_added + 1))
             done
 
@@ -1044,6 +1147,10 @@ _telegram_api() {
 
 telegram_send() {
     local text="$1"
+    # Auto-expand readable file references in text
+    if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then
+        text=$(tools_expand_file_refs "$text")
+    fi
     # Expand LLM escape sequences (literal \n → real newlines)
     text=$(ui_expand_escapes "$text")
     local chat_id="${2:-}"

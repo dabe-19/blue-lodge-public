@@ -38,6 +38,8 @@ AGENT_PRESSURE_RELIEF="${AGENT_PRESSURE_RELIEF:-2}"          # Consecutive miles
 AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-1}"              # Smart command routing: 0=disabled, 1=enabled
 AGENT_ASK_USER="${AGENT_ASK_USER:-1}"                    # Allow George to /ask the user questions during tasks: 0=disabled, 1=enabled
 AGENT_BRAINSTORM="${AGENT_BRAINSTORM:-1}"                  # Allow George to /brainstorm (self-reason) during tasks: 0=disabled, 1=enabled
+AGENT_FILE_EXPAND="${AGENT_FILE_EXPAND:-1}"              # Auto-expand file references in /social, /email, /write text: 0=disabled, 1=enabled
+AGENT_DM_SCAN_CHARS="${AGENT_DM_SCAN_CHARS:-80}"          # Characters to scan for recipient names from start of DM text
 AGENT_PRE_ROUTE="${AGENT_PRE_ROUTE:-1}"                  # Pre-route: extract /cmd from milestone, skip router: 0=disabled, 1=enabled
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
@@ -3562,9 +3564,31 @@ INTERLOCK_JSON
         # ── PROGRAMMATIC INTERLOCK: Identicality Lockout ──────
         # Levels 3-4: Prevents the LLM from re-running the exact same
         # broken command. If identical, reject and force regeneration.
+        # When triggered, also attempt a honeydew rewrite to escape
+        # the local minima the agent is stuck in.
         if [ "$_fail_count" -ge 3 ] && [ -n "$cmd" ] && [ "$cmd" == "$last_failed_cmd" ]; then
             ui_warn "Interlock Triggered: Identical failed command. Forcing regeneration."
             _micro_add_note "$micro_file" "System interlock: Command '$cmd' rejected (identical to previous failure)"
+
+            # Auto-recovery: honeydew rewrite on interlock
+            local _il_max_rewrite="${AGENT_HONEYDEW_REWRITE_ROUNDS:-8}"
+            if [ "${_honeydew_rewrite_rounds_used:-0}" -lt "$_il_max_rewrite" ] && declare -f _agent_honeydew_rewrite &>/dev/null; then
+                local _il_fail_ctx=""
+                [ -f "$fail_file" ] && _il_fail_ctx=$(tail -20 "$fail_file" 2>/dev/null)
+                local _il_saved_rewrite="${AGENT_HONEYDEW_REWRITE:-0}"
+                AGENT_HONEYDEW_REWRITE=1
+                if _agent_honeydew_rewrite "$macro_file" "$micro_file" "$workdir" "$_il_fail_ctx"; then
+                    local _il_hd_refresh
+                    _il_hd_refresh=$(_agent_honeydew_read "$workdir" 2>/dev/null)
+                    if [ -n "$_il_hd_refresh" ] && [ -f "$macro_file" ]; then
+                        _macro_set_honeydew "$macro_file" "$_il_hd_refresh"
+                    fi
+                    ui_ok "Interlock auto-recovery: honeydew rewritten to escape local minima"
+                    _micro_add_note "$micro_file" "SYSTEM: Interlock triggered honeydew rewrite — plan updated to work around repeated failure"
+                fi
+                AGENT_HONEYDEW_REWRITE="$_il_saved_rewrite"
+            fi
+
             inner_attempts=$((inner_attempts + 1))
             continue
         fi

@@ -490,6 +490,34 @@ describe "Limits command"
     assert_eq "$AGENT_HONEYDEW_EXPAND" "0"
   }
 
+  it "_cmd_limits file-expand on/off toggles AGENT_FILE_EXPAND" && {
+    _cmd_limits "file-expand on" >/dev/null 2>&1
+    assert_eq "$AGENT_FILE_EXPAND" "1"
+    _cmd_limits "file-expand off" >/dev/null 2>&1
+    assert_eq "$AGENT_FILE_EXPAND" "0"
+    AGENT_FILE_EXPAND=1  # restore
+  }
+
+  it "_cmd_limits file-expand accepts enable/disable aliases" && {
+    _cmd_limits "file-expand enable" >/dev/null 2>&1
+    assert_eq "$AGENT_FILE_EXPAND" "1"
+    _cmd_limits "file-expand disable" >/dev/null 2>&1
+    assert_eq "$AGENT_FILE_EXPAND" "0"
+    AGENT_FILE_EXPAND=1  # restore
+  }
+
+  it "_cmd_limits dm-scan-chars sets AGENT_DM_SCAN_CHARS" && {
+    _cmd_limits "dm-scan-chars 120" >/dev/null 2>&1
+    assert_eq "$AGENT_DM_SCAN_CHARS" "120"
+    AGENT_DM_SCAN_CHARS=80  # restore
+  }
+
+  it "_cmd_limits show includes DM scan chars line" && {
+    output=$(_cmd_limits "" 2>&1)
+    echo "$output" | grep -q "DM scan chars"
+    assert_ok $?
+  }
+
   it "_cmd_limits max-items sets AGENT_HONEYDEW_MAX_ITEMS" && {
     _cmd_limits "max-items 12" >/dev/null 2>&1
     assert_eq "$AGENT_HONEYDEW_MAX_ITEMS" "12"
@@ -510,6 +538,8 @@ describe "Limits command"
     echo "$output" | grep -q "Command family"
     assert_ok $?
     echo "$output" | grep -q "Honeydew match"
+    assert_ok $?
+    echo "$output" | grep -q "File expand"
     assert_ok $?
     echo "$output" | grep -q "Honeydew expansion"
     assert_ok $?
@@ -592,6 +622,8 @@ describe "Limits command"
     assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "20"
     assert_eq "$AGENT_MAX_CMD_FAMILY" "10"
     assert_eq "$AGENT_HONEYDEW_MATCH" "3"
+    assert_eq "$AGENT_FILE_EXPAND" "1"
+    assert_eq "$AGENT_DM_SCAN_CHARS" "80"
     assert_eq "$AGENT_HONEYDEW_EXPAND" "0"
     assert_eq "$AGENT_HONEYDEW_MAX_ITEMS" "16"
     assert_eq "$AGENT_SMART_ROUTE" "1"

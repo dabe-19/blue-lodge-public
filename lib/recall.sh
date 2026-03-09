@@ -152,7 +152,7 @@ recall_index_file() {
     now=$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S')
 
     # Remove old entries for this source
-    sqlite3 "$RECALL_DB" "DELETE FROM chunks WHERE source = '$source';"
+    sqlite3 "$RECALL_DB" "DELETE FROM chunks WHERE source = '${source//\'/\'\'}';"
 
     # Chunk and index
     local count=0
@@ -165,7 +165,7 @@ recall_index_file() {
 
         sqlite3 "$RECALL_DB" \
             "INSERT INTO chunks (source, section, content, filepath, indexed_at)
-             VALUES ('$source', '$section', '$content', '$filepath_safe', '$now');"
+             VALUES ('${source//\'/\'\'}', '$section', '$content', '$filepath_safe', '$now');"
         (( count++ ))
     done < <(_recall_chunk_markdown "$filepath")
 
@@ -753,7 +753,7 @@ recall_ingest() {
             local fp_safe="${filepath//\'/\'\'}"
             sqlite3 "$RECALL_DB" \
                 "INSERT INTO chunks (source, section, content, filepath, indexed_at)
-                 VALUES ('$source', '$section', '$content', '$fp_safe', '$now');"
+                 VALUES ('${source//\'/\'\'}', '$section', '$content', '$fp_safe', '$now');"
             (( count++ ))
         done < <(_recall_chunk_markdown "$filepath")
     else
@@ -765,7 +765,7 @@ recall_ingest() {
             local fp_safe="${filepath//\'/\'\'}"
             sqlite3 "$RECALL_DB" \
                 "INSERT INTO chunks (source, section, content, filepath, indexed_at)
-                 VALUES ('$source', '$section', '$content', '$fp_safe', '$now');"
+                 VALUES ('${source//\'/\'\'}', '$section', '$content', '$fp_safe', '$now');"
             (( count++ ))
         done < <(_recall_chunk_text "$filepath" "$label")
     fi
@@ -862,7 +862,7 @@ $text" "You are a concise summarizer. Output only bullet points." 256 "$LLM_BUDG
             local fp_safe="${filepath//\'/\'\'}"
             sqlite3 "$RECALL_DB" \
                 "INSERT INTO chunks (source, section, content, filepath, indexed_at)
-                 VALUES ('$source', 'Summary', '$summary', '$fp_safe', '$now');"
+                 VALUES ('${source//\'/\'\'}', 'Summary', '$summary', '$fp_safe', '$now');"
         fi
     fi
 

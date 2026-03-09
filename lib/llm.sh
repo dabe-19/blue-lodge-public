@@ -2947,7 +2947,6 @@ llm_vision() {
             local json="${line#data: }"
             if [ "$json" = "[DONE]" ]; then
                 echo ""
-                echo "" > "$_tty" 2>/dev/null
                 break
             fi
             local token
@@ -2960,7 +2959,6 @@ llm_vision() {
                     printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
                 fi
                 printf "%s" "$token"
-                printf "%s" "$token" > "$_tty" 2>/dev/null
             fi
         done
 

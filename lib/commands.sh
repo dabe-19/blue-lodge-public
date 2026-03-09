@@ -383,14 +383,14 @@ commands_catalog() {
   "COMMS & SOCIAL (DELIVERY)":{
     "/social":{"syntax":"/social <action> <platform> [target] <text>","desc":"Post to Discord/Telegram/X/Mastodon/Bluesky (NOT email) [DELIVERY]",
       "actions":{"post":"/social post <discord|telegram|x|mastodon|bluesky> [channel] <text>","read|dm|timeline|search|sync":"/social <platform> <action> [args]"},
-      "rules":["ALWAYS include channel name for Discord post","Do NOT wrap args in quotes","@DisplayName auto-resolved to <@user_id>","Channel goes BEFORE text"],
-      "format_only_ex":["/social post discord <channel> <text>","/social discord read <channel>","/social discord dm <user> <text>"],
-      "fill":{"<channel>":"Discord channel name without #","<text>":"message content","<user>":"Discord username"}},
+      "rules":["ALWAYS include channel name for Discord post","Do NOT wrap args in quotes","@DisplayName auto-resolved to <@user_id>","Channel goes BEFORE text","FILE REFS AUTO-EXPAND: Any readable file path (e.g. report.md, notes.txt) in message text is automatically replaced with the file contents. Just mention the filename — no /read needed.","MULTI-DM: /social discord dm accepts multiple recipients separated by 'and' — e.g. /social discord dm Babadoo and Nubster Hey!","NAME CLEANING: Garbled handles like @User@discord.com or @User@User are auto-cleaned to the bare username before lookup"],
+      "format_only_ex":["/social post discord <channel> <text>","/social discord read <channel>","/social discord dm <user> <text>","/social discord dm Babadoo and Nubster Check this out!","/social post discord general Check this out: responses/review.md"],
+      "fill":{"<channel>":"Discord channel name without #","<text>":"message content (file paths auto-expand to contents)","<user>":"Discord username (bare name — no @domain suffix)"}},
     "/email":{"syntax":"/email <action> <provider> [args]","desc":"Send/check actual email (gmail/protonmail/zoho) [DELIVERY]",
       "actions":{"send":"/email send <provider> <addr> subject=<subj> body=<body>","inbox":"/email inbox <provider> [count]","status":"/email status"},
-      "rules":["For social platforms use /social NOT /email"],
-      "format_only_ex":["/email send <provider> <addr> subject=<subj> body=<body>","/email inbox <provider>"],
-      "fill":{"<provider>":"one of: gmail, protonmail, zoho","<addr>":"recipient email address","<subj>":"email subject line","<body>":"email body text"}},
+      "rules":["For social platforms use /social NOT /email","FILE REFS AUTO-EXPAND: File paths in body= text (e.g. body=report.md) are auto-replaced with file contents. Just reference the file."],
+      "format_only_ex":["/email send <provider> <addr> subject=<subj> body=<body>","/email send gmail user@x.com s=Report b=See the full report: results.txt","/email inbox <provider>"],
+      "fill":{"<provider>":"one of: gmail, protonmail, zoho","<addr>":"recipient email address","<subj>":"email subject line","<body>":"email body text (file paths auto-expand to contents)"}},
     "/phone":{"syntax":"/phone [dashboard|location|sms|calls|wifi]","desc":"Phone dashboard, SMS, calls"}
   },
   "SECURITY & CONFIG (TOOLS)":{
@@ -432,7 +432,7 @@ commands_catalog() {
   {"pattern":"Check social","flow":"/social discord read <channel>","wrong":"/web search 'discord'"},
   {"pattern":"Research topic","flow":"/recall <keywords> -> /web search <keywords> -> /web fetch <url>"},
   {"pattern":"Find images","flow":"/web scrape-images <url> -> /vision <image_url_from_images[]>","alt":"/web images <query> -> /vision <url>","wrong":"/web fetch <image_url>"},
-  {"pattern":"Write then email","flow":"/web search -> /web fetch -> /write report.md -> /read report.md -> /email send","note":"Multi-delivery: /write creates the artifact, /email delivers it. Both are DELIVERY commands used across separate milestones."},
+  {"pattern":"Write then email","flow":"/web search -> /web fetch -> /write report.md -> /email send gmail addr s=Report b=report.md","note":"Multi-delivery: /write creates the artifact, /email delivers it. File paths in body= auto-expand to file contents — no /read step needed."},
   {"pattern":"Tune settings","flow":"/model <param> <value> or /limits <param> <value>"},
   {"pattern":"Present answer","flow":"After gathering info with TOOLS, use /respond to deliver the result"}
 ],
@@ -440,7 +440,7 @@ commands_catalog() {
   "TOOLS":"Commands that gather info or execute work: /web, /recall, /read, /ls, /build, /test, /fix, /init, /clone, /download, /vision, /github, /sandbox, /container, /secret, /vitals, /phone, /pgp, /git, /backup, /slash, /journal, bash",
   "DELIVERY":"Commands that present output to user: /respond (DEFAULT), /write, /save, /email, /social, /commit, /push",
   "RULE":"After using TOOLS commands to gather info, you MUST use a DELIVERY command to present the result. If no specific output format is required, use /respond.",
-  "MULTI_DELIVERY":"A task may require MULTIPLE delivery commands across separate milestones (e.g., /write a report THEN /email it). Each honeydew item can use its own delivery command. Common chain: research -> /write file -> /read file -> /email or /social."},
+  "MULTI_DELIVERY":"A task may require MULTIPLE delivery commands across separate milestones (e.g., /write a report THEN /email it). Each honeydew item can use its own delivery command. Common chain: research -> /write report.md -> /social post discord general report.md (file contents auto-expand). File paths in /social, /email body, and /write text are automatically replaced with the file's contents."},
 "TASK FREEDOM & AUTONOMY":{"principle":"Full authority to find missing info. DO NOT give up.",
   "when_blocked":{
     "missing_knowledge":"/recall first, then /web search, then /web fetch",

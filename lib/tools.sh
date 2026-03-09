@@ -840,3 +840,148 @@ tools_expand_inline_read() {
 ${_after}"
     echo "$_result"
 }
+
+# ── Auto-expand readable file references in text ─────────────
+# Scans a text string for tokens that look like paths to readable
+# files (e.g. report.md, notes.txt, data.json). When found AND the
+# file exists on disk, replaces the filename token with the full
+# file contents inlined. This lets George reference files in
+# /social, /email, and /write text and have them expanded
+# transparently — no /read prefix required.
+#
+# Skips:
+#   - URLs (http:// https://)
+#   - Attachment flags (f=file, file=file, attach=file)
+#   - Tokens inside markdown links [text](url)
+#   - Files that don't exist
+#   - Binary/image extensions
+#
+# Readable extensions (text-like files only):
+#   .txt .md .rst .csv .json .jsonl .yaml .yml .toml .xml .html
+#   .htm .log .conf .cfg .ini .env .sh .bash .zsh .py .rs .js
+#   .ts .go .rb .c .h .cpp .hpp .java .kt .sql .graphql .tex
+#   .org .diff .patch
+#
+# Usage: expanded=$(tools_expand_file_refs "$text" "$workdir")
+tools_expand_file_refs() {
+    local text="$1"
+    local workdir="${2:-.}"
+    local changed=0
+
+    # Quick bail — no dots means no file extensions
+    [[ "$text" == *.* ]] || { echo "$text"; return 0; }
+
+    # Readable extension set (lowercase, no dot)
+    local -A _readable_exts=(
+        [txt]=1 [md]=1 [rst]=1 [csv]=1 [json]=1 [jsonl]=1
+        [yaml]=1 [yml]=1 [toml]=1 [xml]=1 [html]=1 [htm]=1
+        [log]=1 [conf]=1 [cfg]=1 [ini]=1 [env]=1
+        [sh]=1 [bash]=1 [zsh]=1 [py]=1 [rs]=1 [js]=1 [ts]=1
+        [go]=1 [rb]=1 [c]=1 [h]=1 [cpp]=1 [hpp]=1 [java]=1
+        [kt]=1 [sql]=1 [graphql]=1 [tex]=1 [org]=1
+        [diff]=1 [patch]=1 [pdf]=1
+    )
+
+    # Build result word by word
+    local result=""
+    local token prev_token=""
+
+    while IFS= read -r -d '' token || [ -n "$token" ]; do
+        # Skip empty tokens from leading/trailing spaces
+        [ -z "$token" ] && continue
+
+        # Skip URLs
+        if [[ "$token" =~ ^https?:// ]]; then
+            result="${result:+$result }${token}"
+            prev_token="$token"
+            continue
+        fi
+
+        # Skip attachment flags: f=file, file=file, attach=file
+        if [[ "$token" =~ ^(f|file|attach)= ]]; then
+            result="${result:+$result }${token}"
+            prev_token="$token"
+            continue
+        fi
+
+        # Skip if inside markdown link syntax — previous token ends with ](
+        # or token starts with ]( — these are URLs not files
+        if [[ "$prev_token" == *"](" ]] || [[ "$token" == "]("* ]]; then
+            result="${result:+$result }${token}"
+            prev_token="$token"
+            continue
+        fi
+
+        # Strip trailing punctuation for extension check but keep for replacement
+        local clean="$token"
+        clean="${clean%,}"
+        clean="${clean%.}"
+        clean="${clean%)}"
+        clean="${clean%\"}"
+        clean="${clean%\'}"
+
+        # Check if this token has a readable extension
+        local ext=""
+        if [[ "$clean" =~ \.([a-zA-Z0-9]+)$ ]]; then
+            ext="${BASH_REMATCH[1],,}"  # lowercase
+        fi
+
+        if [ -n "$ext" ] && [ -n "${_readable_exts[$ext]:-}" ]; then
+            # Looks like a readable file reference — resolve path
+            local fpath="$clean"
+
+            # Strip backticks (LLM wraps in `filename.txt`)
+            fpath="${fpath#\`}"
+            fpath="${fpath%\`}"
+            # Strip surrounding parens
+            fpath="${fpath#(}"
+            fpath="${fpath%)}"
+
+            # Try: as-is, then relative to workdir
+            local resolved=""
+            if [ -f "$fpath" ]; then
+                resolved="$fpath"
+            elif [ -f "$workdir/$fpath" ]; then
+                resolved="$workdir/$fpath"
+            fi
+
+            if [ -n "$resolved" ]; then
+                local _content
+                if [[ "${ext}" == "pdf" ]]; then
+                    # PDF: use text extraction
+                    if declare -f _web_extract_pdf &>/dev/null; then
+                        _content=$(_web_extract_pdf "$resolved")
+                    elif command -v pdftotext &>/dev/null; then
+                        _content=$(pdftotext -layout -q "$resolved" - 2>/dev/null | head -2000)
+                    elif command -v strings &>/dev/null; then
+                        _content=$(strings "$resolved" 2>/dev/null | grep -E '[a-zA-Z]{3,}' | head -1000)
+                    fi
+                else
+                    _content=$(cat "$resolved")
+                fi
+
+                if [ -n "$_content" ]; then
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] file-ref expand: %s (%d bytes)\n' "$resolved" "${#_content}" > /dev/tty 2>/dev/null
+
+                    # Preserve any trailing punctuation that was stripped
+                    local suffix="${token#"$clean"}"
+                    result="${result:+$result
+}${_content}${suffix}"
+                    changed=1
+                    prev_token="$token"
+                    continue
+                fi
+            fi
+        fi
+
+        result="${result:+$result }${token}"
+        prev_token="$token"
+    done < <(printf '%s\0' $text)
+
+    # If nothing changed, return original (preserves exact whitespace)
+    if [ "$changed" -eq 0 ]; then
+        echo "$text"
+    else
+        echo "$result"
+    fi
+}
