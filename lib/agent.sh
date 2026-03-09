@@ -3796,7 +3796,18 @@ INTERLOCK_JSON
                 # workdir so subsequent commands target the project.
                 if [[ "$cmd" == /init\ * ]]; then
                     local _init_name
+                    # Extract project name — handle both /init name type
+                    # and /init type name (args may be swapped by init.sh).
+                    # Try $2 first, fall back to $3 if $2 matches a type.
                     _init_name=$(echo "$cmd" | awk '{print $2}')
+                    if [ -n "$_init_name" ] && [ ! -d "$workdir/$_init_name" ]; then
+                        # $2 wasn't the name (might be swapped type) — try $3
+                        local _init_arg3
+                        _init_arg3=$(echo "$cmd" | awk '{print $3}')
+                        if [ -n "$_init_arg3" ] && [ -d "$workdir/$_init_arg3" ]; then
+                            _init_name="$_init_arg3"
+                        fi
+                    fi
                     if [ -n "$_init_name" ] && [ -d "$workdir/$_init_name" ]; then
                         workdir="$workdir/$_init_name"
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] post-init workdir: %s\n' "$workdir" > /dev/tty 2>/dev/null

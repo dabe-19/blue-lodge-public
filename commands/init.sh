@@ -131,13 +131,23 @@ _init_check_prereqs() {
 }
 
 # ── Guard: prevent init inside existing project ────────────────
+# Only blocks in-place init (no project name). When a name is
+# provided, /init creates a subdirectory — the parent directory
+# having GEORGE.md is expected and allowed.
 _init_guard_existing_project() {
+    local target_dir="$1"  # empty for in-place, or the target project dir
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 
-    if [ -f "$PWD/GEORGE.md" ]; then
+    # In-place init (no name): block if GEORGE.md exists here
+    if [ -z "$target_dir" ] && [ -f "$PWD/GEORGE.md" ]; then
         ui_err "[$timestamp] Already inside a project (GEORGE.md exists in $PWD)"
         ui_dim "  cd to a parent directory first, or use a different location"
+        return 1
+    fi
+    # Named project: block if target directory already has GEORGE.md
+    if [ -n "$target_dir" ] && [ -f "$target_dir/GEORGE.md" ]; then
+        ui_err "[$timestamp] Project already exists (GEORGE.md exists in $target_dir)"
         return 1
     fi
     if [ -f "$PWD/Cargo.toml" ] || [ -f "$PWD/pyproject.toml" ] || [ -f "$PWD/package.json" ]; then
@@ -251,7 +261,7 @@ cmd_init() {
     fi
 
     # ── Guardrail: check we're not inside an existing project ──
-    _init_guard_existing_project || return 1
+    _init_guard_existing_project "$PWD/$name" || return 1
 
     # ── Guardrail: check prerequisites for chosen type ─────────
     if ! _init_check_prereqs "$normalized_type"; then
