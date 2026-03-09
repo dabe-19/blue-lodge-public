@@ -1095,24 +1095,24 @@ describe "web_fetch content-type routing"
     _teardown_web
   }
 
-  it "calls _web_fetch_text for text content" && {
+  it "routes text content via _web_classify_content_type" && {
     _setup_web
     fn_body=$(declare -f web_fetch)
-    assert_contains "$fn_body" "_web_fetch_text"
+    assert_contains "$fn_body" "_web_classify_content_type"
     _teardown_web
   }
 
-  it "calls _web_fetch_json_raw for JSON content" && {
+  it "routes JSON content inline" && {
     _setup_web
     fn_body=$(declare -f web_fetch)
-    assert_contains "$fn_body" "_web_fetch_json_raw"
+    assert_contains "$fn_body" "jq"
     _teardown_web
   }
 
-  it "calls _web_extract_xml for XML content" && {
+  it "routes XML content inline" && {
     _setup_web
     fn_body=$(declare -f web_fetch)
-    assert_contains "$fn_body" "_web_extract_xml"
+    assert_contains "$fn_body" "xml"
     _teardown_web
   }
 
@@ -1123,10 +1123,10 @@ describe "web_fetch content-type routing"
     _teardown_web
   }
 
-  it "detects content type before fetching" && {
+  it "uses single-GET with content-type routing" && {
     _setup_web
     fn_body=$(declare -f web_fetch)
-    assert_contains "$fn_body" "_web_detect_content_type"
+    assert_contains "$fn_body" "_web_guess_content_type"
     _teardown_web
   }
 
@@ -1143,7 +1143,7 @@ describe "web_fetch_json content-type routing"
   it "has text path in web_fetch_json" && {
     _setup_web
     fn_body=$(declare -f web_fetch_json)
-    assert_contains "$fn_body" "_web_fetch_text"
+    assert_contains "$fn_body" "text"
     _teardown_web
   }
 

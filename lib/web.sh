@@ -23,6 +23,25 @@ WEB_BLACKLIST_ENABLED="${WEB_BLACKLIST_ENABLED:-true}"
 # Override in .george/config or environment to add/remove domains.
 WEB_BLACKLIST_DOMAINS="${WEB_BLACKLIST_DOMAINS:-linkedin.com,facebook.com,instagram.com,twitter.com,x.com,tiktok.com,pinterest.com}"
 
+# ── Centralized curl wrapper ──────────────────────────────────
+# All web-browsing curl calls route through _web_curl to ensure:
+#   - Current, realistic User-Agent (prevents UA-based bot detection)
+#   - --compressed (gzip/deflate/br — many CDNs require this)
+#   - Cookie jar (prevents cookie-wall and CF challenge failures)
+#   - Accept-Language
+# Override WEB_USER_AGENT in env or .george/config to customize.
+WEB_USER_AGENT="${WEB_USER_AGENT:-Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.150 Mobile Safari/537.36}"
+_WEB_COOKIE_JAR="${TMPDIR:-/tmp}/.lodge-web-cookies-$$.jar"
+
+_web_curl() {
+    curl -sL \
+        --compressed \
+        -b "$_WEB_COOKIE_JAR" -c "$_WEB_COOKIE_JAR" \
+        -H "User-Agent: $WEB_USER_AGENT" \
+        -H "Accept-Language: en-US,en;q=0.9" \
+        "$@"
+}
+
 # ── Blocked-site detection + blacklist ───────────────────────
 _web_block_reason() {
     local status="$1"
@@ -303,39 +322,28 @@ _web_renderer() {
     fi
 }
 
-# ── Content-type detection ──────────────────────────────────────
-# Returns a category: html, pdf, text, json, xml, binary
-# Uses a HEAD request first, falls back to URL extension heuristic.
-_web_detect_content_type() {
+# ── Content-type classification ─────────────────────────────────
+# Classify a raw Content-Type header value (e.g. "text/html; charset=utf-8")
+# into a category: html, pdf, text, json, xml, binary, or empty string
+# if unrecognized.  Pure string logic — no network call.
+_web_classify_content_type() {
+    local ct="$1"
+    ct=$(echo "$ct" | cut -d';' -f1 | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+    [ -z "$ct" ] && return 0
+    case "$ct" in
+        application/pdf)                echo "pdf" ;;
+        text/plain|text/csv|text/markdown|text/tab-separated-values) echo "text" ;;
+        application/json|text/json)     echo "json" ;;
+        application/xml|text/xml|application/rss+xml|application/atom+xml) echo "xml" ;;
+        text/html*|application/xhtml+xml) echo "html" ;;
+        application/octet-stream)       ;; # ambiguous — caller falls through
+        image/*|audio/*|video/*)        echo "binary" ;;
+    esac
+}
+
+# Guess content type from URL extension alone — no network call.
+_web_guess_content_type() {
     local url="$1"
-
-    # 1. Try HTTP HEAD (fast, authoritative)
-    local ct
-    ct=$(curl -sI -L --max-time 5 \
-        -H "User-Agent: Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/131.0 Safari/537.36" \
-        "$url" 2>/dev/null | grep -i '^content-type:' | tail -1 | tr -d '\r')
-    ct=$(echo "$ct" | sed 's/^[Cc]ontent-[Tt]ype:[[:space:]]*//' | cut -d';' -f1 | tr -d ' ')
-
-    if [ -n "$ct" ]; then
-        case "$ct" in
-            application/pdf)                echo "pdf"; return ;;
-            text/plain)                     echo "text"; return ;;
-            text/csv)                       echo "text"; return ;;
-            text/markdown)                  echo "text"; return ;;
-            text/tab-separated-values)      echo "text"; return ;;
-            application/json)               echo "json"; return ;;
-            text/json)                      echo "json"; return ;;
-            application/xml|text/xml)       echo "xml"; return ;;
-            application/rss+xml)            echo "xml"; return ;;
-            application/atom+xml)           echo "xml"; return ;;
-            text/html*)                     echo "html"; return ;;
-            application/xhtml+xml)          echo "html"; return ;;
-            application/octet-stream)       ;; # ambiguous — fall through to extension
-            image/*|audio/*|video/*)        echo "binary"; return ;;
-        esac
-    fi
-
-    # 2. Fallback: URL extension heuristic (strip query string first)
     local path
     path=$(echo "$url" | sed 's/[?#].*//' | tr '[:upper:]' '[:lower:]')
     case "$path" in
@@ -353,6 +361,12 @@ _web_detect_content_type() {
     esac
 }
 
+# Legacy wrapper — now uses URL-extension guess only (no HEAD request).
+# Kept for backward compatibility with tests and any external callers.
+_web_detect_content_type() {
+    _web_guess_content_type "$1"
+}
+
 # ── Download to temp file ─────────────────────────────────────
 # For binary formats (PDF) that need file-based processing.
 # Prints the temp file path. Caller must rm -f when done.
@@ -362,10 +376,9 @@ _web_fetch_to_file() {
     local _tmpdir="${TMPDIR:-/tmp}"
     local tmpfile="$_tmpdir/.lodge-web-dl-$$.tmp"
 
-    if ! curl -sL \
+    if ! _web_curl \
         --max-time "$((WEB_TIMEOUT * 3))" \
         --max-filesize "$max_size" \
-        -H "User-Agent: Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/131.0 Safari/537.36" \
         -o "$tmpfile" \
         "$url" 2>/dev/null; then
         rm -f "$tmpfile"
@@ -423,10 +436,9 @@ _web_extract_pdf() {
 # For text/plain, CSV, Markdown, etc. — just return raw content.
 _web_fetch_text() {
     local url="$1"
-    curl -sL \
+    _web_curl \
         --max-time "$WEB_TIMEOUT" \
         --max-filesize "$WEB_MAX_SIZE" \
-        -H "User-Agent: Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/131.0 Safari/537.36" \
         "$url" 2>/dev/null | head -2000
 }
 
@@ -434,10 +446,9 @@ _web_fetch_text() {
 # Returns prettified JSON.
 _web_fetch_json_raw() {
     local url="$1"
-    curl -sL \
+    _web_curl \
         --max-time "$WEB_TIMEOUT" \
         --max-filesize "$WEB_MAX_SIZE" \
-        -H "User-Agent: Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/131.0 Safari/537.36" \
         -H "Accept: application/json" \
         "$url" 2>/dev/null | jq '.' 2>/dev/null | head -2000
 }
@@ -446,10 +457,9 @@ _web_fetch_json_raw() {
 # Strips XML tags and decodes entities for readable text.
 _web_extract_xml() {
     local url="$1"
-    curl -sL \
+    _web_curl \
         --max-time "$WEB_TIMEOUT" \
         --max-filesize "$WEB_MAX_SIZE" \
-        -H "User-Agent: Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/131.0 Safari/537.36" \
         "$url" 2>/dev/null | \
         sed -e 's/<[^>]*>//g' \
             -e 's/&amp;/\&/g' \
@@ -463,33 +473,53 @@ _web_extract_xml() {
 }
 
 # ── Fetch raw HTML ─────────────────────────────────────────────
-# Returns raw HTML on success, empty string on failure.
-# Writes the HTTP status / error code to a temp file so callers
-# can report detailed failure reasons. The temp file path is
-# stored in _WEB_STATUS_FILE (shared across calls in the same PID).
+# Returns raw HTML/content on success, empty string on failure.
+# Writes the HTTP status / error code to _WEB_STATUS_FILE and the
+# response Content-Type to _WEB_CTYPE_FILE so callers can route
+# based on the actual server-reported type (no separate HEAD needed).
 _WEB_STATUS_FILE="${TMPDIR:-/tmp}/.lodge-web-status-$$.tmp"
+_WEB_CTYPE_FILE="${TMPDIR:-/tmp}/.lodge-web-ctype-$$.tmp"
 web_fetch_raw() {
     local url="$1"
     local _tmpdir="${TMPDIR:-/tmp}"
     local _hdr_file="$_tmpdir/.lodge-web-hdr-$$.tmp"
 
     local html
-    html=$(curl -sL \
+    html=$(_web_curl \
         --max-time "$WEB_TIMEOUT" \
         --max-filesize "$WEB_MAX_SIZE" \
         -D "$_hdr_file" \
-        -H "User-Agent: Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/131.0 Safari/537.36" \
         -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
-        -H "Accept-Language: en-US,en;q=0.9" \
         "$url" 2>/dev/null | head -c "$WEB_MAX_SIZE")
     local _curl_rc=$?
 
-    # Extract HTTP status code from response headers and write to
-    # shared temp file so callers outside subshells can read it.
-    local _status=""
+    # Extract HTTP status code and Content-Type from response headers.
+    # Both are written to shared temp files so callers outside subshells
+    # can read them (the GET body arrives via stdout / subshell capture).
+    local _status="" _content_type=""
     if [ -f "$_hdr_file" ]; then
         _status=$(grep -oP 'HTTP/[0-9.]+ \K[0-9]+' "$_hdr_file" 2>/dev/null | tail -1)
+        _content_type=$(grep -i '^content-type:' "$_hdr_file" 2>/dev/null | tail -1 | sed 's/^[Cc]ontent-[Tt]ype:[[:space:]]*//' | tr -d '\r')
         rm -f "$_hdr_file"
+    fi
+
+    # ── Retry once on total network failure ──────────────────
+    # If curl returned nothing (no HTML, no headers), it's likely a
+    # transient DNS/timeout/connection error.  Retry once after 1s.
+    if [ -z "$html" ] && [ -z "$_status" ]; then
+        sleep 1
+        html=$(_web_curl \
+            --max-time "$WEB_TIMEOUT" \
+            --max-filesize "$WEB_MAX_SIZE" \
+            -D "$_hdr_file" \
+            -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+            "$url" 2>/dev/null | head -c "$WEB_MAX_SIZE")
+        _curl_rc=$?
+        if [ -f "$_hdr_file" ]; then
+            _status=$(grep -oP 'HTTP/[0-9.]+ \K[0-9]+' "$_hdr_file" 2>/dev/null | tail -1)
+            _content_type=$(grep -i '^content-type:' "$_hdr_file" 2>/dev/null | tail -1 | sed 's/^[Cc]ontent-[Tt]ype:[[:space:]]*//' | tr -d '\r')
+            rm -f "$_hdr_file"
+        fi
     fi
 
     # curl exit code meanings for better diagnostics
@@ -530,6 +560,7 @@ web_fetch_raw() {
     fi
 
     echo "${_status:-200}" > "$_WEB_STATUS_FILE" 2>/dev/null
+    echo "$_content_type" > "$_WEB_CTYPE_FILE" 2>/dev/null
     echo "$html"
 }
 
@@ -552,6 +583,10 @@ _html_preprocess() {
     /<\/style>/   { skip = 0; next }
     /<noscript/ { skip = 1 }
     /<\/noscript>/ { skip = 0; next }
+    /<header[^a-z]/ { skip = 1 }
+    /<\/header>/    { skip = 0; next }
+    /<aside/    { skip = 1 }
+    /<\/aside>/    { skip = 0; next }
     skip { next }
     {
         gsub(/<[^>]*>/, "")
@@ -599,54 +634,90 @@ _html_extract_title() {
 }
 
 # ── Extract structured content from HTML ───────────────────────
-# Uses tag-based heuristics to find meaningful text sections:
-#   - <h1>-<h6>, <p>, <article>, <main>, <section> text
-#   - <img src=...> URLs from content areas
-# Returns lines of content; caller can pipe to jq or consume directly.
+# Uses semantic HTML priority: prefer <article> or <main> content,
+# then fall back to full-page extraction with junk blocks stripped.
+# Strips script/style/nav/header/footer/aside before extracting,
+# then decodes entities and emits clean text lines.
 _html_extract_content() {
-    # Semantic content extraction — safe on any line length.
-    # Old approach used tr '\n' ' ' to join the entire page onto one
-    # line then ran greedy sed regexes, which hung on modern SPA pages.
-    # New approach: preprocess first (splits lines, strips script/style
-    # via awk state machine), then extract text from semantic tags.
-    # Step 1: Split > boundaries, strip junk blocks (O(n) awk)
-    # Step 2: Re-inject tag markers for semantic extraction
-    # Step 3: Pull text from <p>, <h1>-<h6>, <li>, etc.
-    sed 's/>/>\n/g' | awk '
+    local _raw
+    _raw=$(sed 's/>/>\n/g')
+
+    # Priority: narrow scope to <article> or <main> if present.
+    # These semantic containers hold the actual content on modern sites
+    # and dramatically improve signal-to-noise ratio.
+    local _focused
+    _focused=$(printf '%s\n' "$_raw" | awk '
+        tolower($0) ~ /<article/ { inside = 1 }
+        inside { print }
+        tolower($0) ~ /<\/article>/ { inside = 0 }
+    ')
+    if [ -z "$_focused" ] || [ "$(printf '%s' "$_focused" | wc -c)" -lt 200 ]; then
+        _focused=$(printf '%s\n' "$_raw" | awk '
+            tolower($0) ~ /<main/ { inside = 1 }
+            inside { print }
+            tolower($0) ~ /<\/main>/ { inside = 0 }
+        ')
+    fi
+    if [ -n "$_focused" ] && [ "$(printf '%s' "$_focused" | wc -c)" -ge 200 ]; then
+        _raw="$_focused"
+    fi
+
+    printf '%s\n' "$_raw" | awk '
     BEGIN { skip = 0 }
-    /<script/   { skip = 1 }
+    /<script/      { skip = 1 }
     /<\/script>/   { skip = 0; next }
-    /<style/    { skip = 1 }
+    /<style/       { skip = 1 }
     /<\/style>/    { skip = 0; next }
-    /<noscript/ { skip = 1 }
+    /<noscript/    { skip = 1 }
     /<\/noscript>/ { skip = 0; next }
-    /<nav/      { skip = 1 }
+    /<nav/         { skip = 1 }
     /<\/nav>/      { skip = 0; next }
-    /<footer/   { skip = 1 }
+    /<header[^a-z]/ { skip = 1 }
+    /<\/header>/   { skip = 0; next }
+    /<footer/      { skip = 1 }
     /<\/footer>/   { skip = 0; next }
+    /<aside/       { skip = 1 }
+    /<\/aside>/    { skip = 0; next }
     skip { next }
-    { print }' | \
-    # Extract text from semantic content tags
-    sed -n 's/<\(p\|h[1-6]\|li\|td\|th\|figcaption\|blockquote\|summary\)[^>]*>\([^<]*\).*/\2/ip' | \
-    sed 's/&nbsp;/ /g; s/&amp;/\&/g; s/&lt;/</g; s/&gt;/>/g; s/&quot;/"/g; s/&#39;/'"'"'/g; s/&#[0-9]*;//g' | \
-    awk '{$1=$1}1' | \
-    grep -v '^[[:space:]]*$' | \
-    head -300
+    {
+        gsub(/<[^>]*>/, "")
+        gsub(/&nbsp;/, " ")
+        gsub(/&amp;/, "\\&")
+        gsub(/&lt;/, "<")
+        gsub(/&gt;/, ">")
+        gsub(/&quot;/, "\"")
+        gsub(/&#39;/, "\x27")
+        gsub(/&mdash;/, "\xe2\x80\x94")
+        gsub(/&ndash;/, "\xe2\x80\x93")
+        gsub(/&hellip;/, "...")
+        gsub(/&apos;/, "\x27")
+        gsub(/&#[0-9]+;/, "")
+        gsub(/^[[:space:]]+/, "")
+        gsub(/[[:space:]]+$/, "")
+        if (length($0) > 2) print
+    }' | head -300
 }
 
 # ── Extract image URLs from HTML (content areas only) ──────────
 _html_extract_images() {
     local base_url="$1"
-    local _preferred_img_exts='jpg|jpeg|png|gif|webp|bmp|svg|avif|tiff'
+    # Accepted image types — kept as a variable so tests can verify coverage.
+    local _img_exts='jpg|jpeg|png|gif|webp|bmp|svg|avif|tiff'
     # Pull image URLs from:
-    #  1) <img src|data-src|srcset=...>
-    #  2) <meta property="og:image" content="..."> and twitter:image
-    #  3) <link rel="image_src" href="...">
-    # NOTE: keep common extensions (jpg/png/webp/gif...) in logic for quality,
-    # but do not hard-require them because many modern CDNs use extensionless URLs.
+    #  1) <img src|data-src|data-lazy-src|srcset=...>
+    #  2) <picture><source srcset=...> (modern responsive images)
+    #  3) <meta property="og:image" content="..."> and twitter:image
+    #  4) <link rel="image_src" href="...">
     {
-        grep -oiP '<img[^>]*>' | grep -oP '(?:src|data-src|srcset)="[^"]+"' | sed 's/^[^"]*"//;s/"$//' | sed 's/ [0-9]*[wx].*$//'
+        # <img> tags — src, data-src, data-lazy-src attributes
+        grep -oiP '<img[^>]*>' | grep -oP '(?:src|data-src|data-lazy-src)="[^"]+"' | sed 's/^[^"]*"//;s/"$//'
+        # <img> srcset — extract individual URLs from comma-separated entries
+        grep -oiP '<img[^>]*>' | grep -oP 'srcset="[^"]+"' | sed 's/^srcset="//;s/"$//' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/ [0-9]*[wx].*$//'
+        # <picture><source> srcset — responsive image sources
+        grep -oiP '<source[^>]*>' | grep -oP 'srcset="[^"]+"' | sed 's/^srcset="//;s/"$//' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/ [0-9]*[wx].*$//'
+        # Open Graph and Twitter Card meta images
         grep -oiP '<meta[^>]+(og:image|twitter:image)[^>]*>' | grep -oP 'content="[^"]+"' | sed 's/^content="//;s/"$//'
+        # <link rel="image_src">
         grep -oiP '<link[^>]+rel="image_src"[^>]*>' | grep -oP 'href="[^"]+"' | sed 's/^href="//;s/"$//'
     } | sort -u | \
     while IFS= read -r img_url; do
@@ -700,11 +771,11 @@ web_fetch() {
         fi
     fi
 
-    # Detect content type — route non-HTML to appropriate handler
-    local ctype
-    ctype=$(_web_detect_content_type "$url")
-
-    case "$ctype" in
+    # ── Pre-screen by URL extension for formats needing special fetch ──
+    # PDF/binary need file-based download, not streaming through web_fetch_raw.
+    local _url_guess
+    _url_guess=$(_web_guess_content_type "$url")
+    case "$_url_guess" in
         pdf)
             ui_dim "Fetching PDF: $url" >&2
             local pdf_text
@@ -719,56 +790,20 @@ web_fetch() {
             echo "$pdf_text"
             return 0
             ;;
-        text)
-            ui_dim "Fetching text: $url" >&2
-            local raw_text
-            raw_text=$(_web_fetch_text "$url")
-            if [ -z "$raw_text" ]; then
-                ui_err "Failed to fetch: $url" >&2
-                return 1
-            fi
-            mkdir -p "$GEORGE_CACHE_DIR"
-            echo "$raw_text" > "$cache_file" 2>/dev/null
-            echo "$raw_text"
-            return 0
-            ;;
-        json)
-            ui_dim "Fetching JSON: $url" >&2
-            local json_text
-            json_text=$(_web_fetch_json_raw "$url")
-            if [ -z "$json_text" ]; then
-                ui_err "Failed to fetch: $url" >&2
-                return 1
-            fi
-            mkdir -p "$GEORGE_CACHE_DIR"
-            echo "$json_text" > "$cache_file" 2>/dev/null
-            echo "$json_text"
-            return 0
-            ;;
-        xml)
-            ui_dim "Fetching XML: $url" >&2
-            local xml_text
-            xml_text=$(_web_extract_xml "$url")
-            if [ -z "$xml_text" ]; then
-                ui_err "Failed to fetch: $url" >&2
-                return 1
-            fi
-            mkdir -p "$GEORGE_CACHE_DIR"
-            echo "$xml_text" > "$cache_file" 2>/dev/null
-            echo "$xml_text"
-            return 0
-            ;;
         binary)
-                ui_err "Cannot extract text from binary file: $url" >&2
+            ui_err "Cannot extract text from binary file: $url" >&2
             return 1
             ;;
     esac
 
-    # Default: HTML path (original logic)
+    # ── Single GET — then route by server Content-Type ──────────
+    # One request for everything: HTML, text, JSON, XML.  The old
+    # approach did HEAD (content-type detection) then GET (fetch) —
+    # two requests per page, doubling rate-limit/captcha exposure.
     ui_dim "Fetching: $url" >&2
-    local html
-    html=$(web_fetch_raw "$url")
-    if [ -z "$html" ]; then
+    local body
+    body=$(web_fetch_raw "$url")
+    if [ -z "$body" ]; then
         local _reason="unknown"
         [ -f "$_WEB_STATUS_FILE" ] && _reason=$(cat "$_WEB_STATUS_FILE" 2>/dev/null)
         case "$_reason" in
@@ -789,8 +824,21 @@ web_fetch() {
         return 1
     fi
 
-    local text
-    text=$(echo "$html" | _html_to_text)
+    # Classify by server Content-Type header, fallback to URL extension
+    local ctype=""
+    [ -f "$_WEB_CTYPE_FILE" ] && ctype=$(_web_classify_content_type "$(cat "$_WEB_CTYPE_FILE" 2>/dev/null)")
+    [ -z "$ctype" ] && ctype="$_url_guess"
+
+    local text=""
+    case "$ctype" in
+        text)   text=$(echo "$body" | head -2000) ;;
+        json)   text=$(echo "$body" | jq '.' 2>/dev/null | head -2000) ;;
+        xml)    text=$(echo "$body" | sed -e 's/<[^>]*>//g' \
+                    -e 's/&amp;/\&/g' -e 's/&lt;/</g' -e 's/&gt;/>/g' \
+                    -e 's/&quot;/"/g' -e "s/&#39;/'/g" -e '/^[[:space:]]*$/d' | \
+                    awk '{$1=$1}1' | head -2000) ;;
+        *)      text=$(echo "$body" | _html_to_text) ;;
+    esac
 
     # Cache result
     mkdir -p "$GEORGE_CACHE_DIR"
@@ -826,11 +874,10 @@ web_fetch_json() {
         return 1
     fi
 
-    # Detect content type — route non-HTML to appropriate handler
-    local ctype
-    ctype=$(_web_detect_content_type "$clean_url")
-
-    case "$ctype" in
+    # ── Pre-screen by URL extension for formats needing special fetch ──
+    local _url_guess
+    _url_guess=$(_web_guess_content_type "$clean_url")
+    case "$_url_guess" in
         pdf)
             ui_dim "Fetching PDF (structured): $clean_url" >&2
             local pdf_text
@@ -840,7 +887,6 @@ web_fetch_json() {
                 ui_dim "  Hint: install poppler-utils for best results (apt install poppler-utils)" >&2
                 return 1
             fi
-            # Return structured JSON with PDF content (no images/title from PDF)
             local pdf_title
             pdf_title=$(echo "$pdf_text" | head -5 | grep -m1 -E '.{5,}' | head -c 120)
             [ -z "$pdf_title" ] && pdf_title="PDF Document"
@@ -851,62 +897,17 @@ web_fetch_json() {
                 '{"url":$url,"title":$title,"content":$content,"images":[]}'
             return 0
             ;;
-        text)
-            ui_dim "Fetching text (structured): $clean_url" >&2
-            local raw_text
-            raw_text=$(_web_fetch_text "$clean_url")
-            if [ -z "$raw_text" ]; then
-                ui_err "Failed to fetch: $clean_url" >&2
-                return 1
-            fi
-            jq -n \
-                --arg url "$clean_url" \
-                --arg title "" \
-                --arg content "$raw_text" \
-                '{"url":$url,"title":$title,"content":$content,"images":[]}'
-            return 0
-            ;;
-        json)
-            ui_dim "Fetching JSON (structured): $clean_url" >&2
-            local json_text
-            json_text=$(_web_fetch_json_raw "$clean_url")
-            if [ -z "$json_text" ]; then
-                ui_err "Failed to fetch: $clean_url" >&2
-                return 1
-            fi
-            jq -n \
-                --arg url "$clean_url" \
-                --arg title "JSON Data" \
-                --arg content "$json_text" \
-                '{"url":$url,"title":$title,"content":$content,"images":[]}'
-            return 0
-            ;;
-        xml)
-            ui_dim "Fetching XML (structured): $clean_url" >&2
-            local xml_text
-            xml_text=$(_web_extract_xml "$clean_url")
-            if [ -z "$xml_text" ]; then
-                ui_err "Failed to fetch: $clean_url" >&2
-                return 1
-            fi
-            jq -n \
-                --arg url "$clean_url" \
-                --arg title "XML/RSS Feed" \
-                --arg content "$xml_text" \
-                '{"url":$url,"title":$title,"content":$content,"images":[]}'
-            return 0
-            ;;
         binary)
-                ui_err "Cannot extract text from binary file: $clean_url" >&2
+            ui_err "Cannot extract text from binary file: $clean_url" >&2
             return 1
             ;;
     esac
 
-    # Default: HTML path (original logic)
+    # ── Single GET — then route by server Content-Type ──────────
     ui_dim "Fetching (structured): $clean_url" >&2
-    local html
-    html=$(web_fetch_raw "$clean_url")
-    if [ -z "$html" ]; then
+    local body
+    body=$(web_fetch_raw "$clean_url")
+    if [ -z "$body" ]; then
         local _reason="unknown"
         [ -f "$_WEB_STATUS_FILE" ] && _reason=$(cat "$_WEB_STATUS_FILE" 2>/dev/null)
         case "$_reason" in
@@ -914,7 +915,6 @@ web_fetch_json() {
                 local _b_reason _b_code
                 _b_reason=$(echo "$_reason" | cut -d':' -f2)
                 _b_code=$(echo "$_reason" | cut -d':' -f3)
-                # Keep output machine-readable for /web scrape-images callers.
                 jq -n \
                     --arg url "$clean_url" \
                     --arg title "" \
@@ -935,37 +935,70 @@ web_fetch_json() {
         return 1
     fi
 
-    # Extract base URL for resolving relative image paths
+    # Classify by server Content-Type header, fallback to URL extension
+    local ctype=""
+    [ -f "$_WEB_CTYPE_FILE" ] && ctype=$(_web_classify_content_type "$(cat "$_WEB_CTYPE_FILE" 2>/dev/null)")
+    [ -z "$ctype" ] && ctype="$_url_guess"
+
+    case "$ctype" in
+        text)
+            jq -n \
+                --arg url "$clean_url" \
+                --arg title "" \
+                --arg content "$(echo "$body" | head -2000)" \
+                '{"url":$url,"title":$title,"content":$content,"images":[]}'
+            return 0
+            ;;
+        json)
+            local _pretty
+            _pretty=$(echo "$body" | jq '.' 2>/dev/null | head -2000)
+            jq -n \
+                --arg url "$clean_url" \
+                --arg title "JSON Data" \
+                --arg content "${_pretty:-$body}" \
+                '{"url":$url,"title":$title,"content":$content,"images":[]}'
+            return 0
+            ;;
+        xml)
+            local _xml_text
+            _xml_text=$(echo "$body" | sed -e 's/<[^>]*>//g' \
+                -e 's/&amp;/\&/g' -e 's/&lt;/</g' -e 's/&gt;/>/g' \
+                -e 's/&quot;/"/g' -e "s/&#39;/'/g" -e '/^[[:space:]]*$/d' | \
+                awk '{$1=$1}1' | head -2000)
+            jq -n \
+                --arg url "$clean_url" \
+                --arg title "XML/RSS Feed" \
+                --arg content "$_xml_text" \
+                '{"url":$url,"title":$title,"content":$content,"images":[]}'
+            return 0
+            ;;
+    esac
+
+    # Default: treat as HTML
     local base_url
     base_url=$(echo "$clean_url" | sed 's|^\(https\?://[^/]*\).*|\1|')
 
-    # Extract title
     local title
-    title=$(echo "$html" | _html_extract_title)
+    title=$(echo "$body" | _html_extract_title)
     [ -z "$title" ] && title=""
 
-    # Extract structured content
     local content
-    content=$(echo "$html" | _html_extract_content)
-    # Fallback to full text dump if semantic extraction is empty or too short
+    content=$(echo "$body" | _html_extract_content)
     if [ -z "$content" ] || [ "${#content}" -lt 80 ]; then
         local fallback
-        fallback=$(echo "$html" | _html_to_text)
-        # Use fallback if it produced more content
+        fallback=$(echo "$body" | _html_to_text)
         if [ "${#fallback}" -gt "${#content}" ]; then
             content="$fallback"
         fi
     fi
 
-    # Extract image URLs
     local images_json="[]"
     local img_lines
-    img_lines=$(echo "$html" | _html_extract_images "$base_url")
+    img_lines=$(echo "$body" | _html_extract_images "$base_url")
     if [ -n "$img_lines" ]; then
         images_json=$(echo "$img_lines" | jq -R '.' | jq -s '.')
     fi
 
-    # Build JSON output — jq handles escaping
     jq -n \
         --arg url "$clean_url" \
         --arg title "$title" \
@@ -1184,11 +1217,9 @@ _web_search_ddg() {
 
     # Use DuckDuckGo Lite — simpler HTML, more reliable parsing
     local html
-    html=$(curl -sL \
+    html=$(_web_curl \
         --max-time 10 \
-        -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0" \
         -H "Accept: text/html" \
-        -H "Accept-Language: en-US,en;q=0.5" \
         "https://lite.duckduckgo.com/lite/?q=$encoded" 2>/dev/null)
 
     if [ -z "$html" ]; then

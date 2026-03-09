@@ -1320,8 +1320,11 @@ _agent_evaluate_honeydew_item() {
     # (e.g., /ask confirmed dietary restrictions in milestone 1, but
     # the evaluator runs after milestone 3's /write).  Inject compact
     # prior milestone summaries so the evaluator can recognize this.
+    # NOTE: Only inject when a provider is active (larger models).
+    # Small local models (4B) get context-poisoned by the extra text
+    # and start hallucinating satisfaction where there is none.
     local _prior_milestones=""
-    if [ -n "$macro_file" ] && [ -f "$macro_file" ]; then
+    if [ -n "${GEORGE_PROVIDER:-}" ] && [ -n "$macro_file" ] && [ -f "$macro_file" ]; then
         _prior_milestones=$(_macro_milestones_json "$macro_file" 5 | \
             jq -r '.[] | "[\(.result // "DONE")] \(.milestone // "?"): \(.summary // "no summary")"' 2>/dev/null)
     fi
@@ -1334,12 +1337,19 @@ _agent_evaluate_honeydew_item() {
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
 
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nORIGINAL USER REQUEST:\n${_hd_original_request:-Unknown}\n\n${_prior_milestones:+PRIOR COMPLETED MILESTONES (already accomplished):\n${_prior_milestones}\n\n}MILESTONE ATTEMPTED:\n${milestone_text}\n\nACTION LOG (raw command outputs from current milestone):\n${eval_context:-No actions available.}\n\n---\n\nHONEYDEW ITEM TO EVALUATE (item #${_next_id}):\n${_next_task}\n\nIMPORTANT: Judge whether this honeydew item has been accomplished by ANY work so far — either in the ACTION LOG above OR in the PRIOR COMPLETED MILESTONES. If a prior milestone already accomplished what this item asks for, that counts as SATISFIED. For the current milestone's actions, judge from the raw command outputs, not the milestone pass/fail status. A search that returns generic links without concrete details does NOT satisfy an item asking to identify specific things.\n\nApply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_HD_JSON'
+    # Build eval instructions — cross-milestone language only when
+    # prior milestone context is actually present.
+    local _cross_inst=""
+    if [ -n "$_prior_milestones" ]; then
+        _cross_inst="Judge whether this honeydew item has been accomplished by ANY work so far — either in the ACTION LOG above OR in the PRIOR COMPLETED MILESTONES. If a prior milestone already accomplished what this item asks for, that counts as SATISFIED. "
+    fi
+
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nORIGINAL USER REQUEST:\n${_hd_original_request:-Unknown}\n\n${_prior_milestones:+PRIOR COMPLETED MILESTONES (already accomplished):\n${_prior_milestones}\n\n}MILESTONE ATTEMPTED:\n${milestone_text}\n\nACTION LOG (raw command outputs from current milestone):\n${eval_context:-No actions available.}\n\n---\n\nHONEYDEW ITEM TO EVALUATE (item #${_next_id}):\n${_next_task}\n\nIMPORTANT: ${_cross_inst}For the current milestone's actions, judge from the raw command outputs, not the milestone pass/fail status. A search that returns generic links without concrete details does NOT satisfy an item asking to identify specific things.\n\nApply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_HD_JSON'
 {"classify":"SATISFIED|UNSATISFIED",
- "scope":"did ANY work so far (prior milestones OR current action log) accomplish this honeydew item?",
+ "scope":"did the action log accomplish this honeydew item?",
  "pragmatic":true,"exact_match_not_required":true,
  "requires_concrete_output":true,
- "cross_milestone":"if a PRIOR milestone already did what this item asks, SATISFIED",
+ ${_prior_milestones:+"cross_milestone":"if a PRIOR milestone already did what this item asks, SATISFIED",}
  "relevance_check":{"dates":true,"topics":true,"scope":true,
    "verify_against":"ORIGINAL USER REQUEST above",
    "output_substance":"do outputs contain specific data the item asked for?"},
@@ -1349,7 +1359,9 @@ _agent_evaluate_honeydew_item() {
 EVAL_HD_JSON
 )"
 
-    local eval_sys="Honeydew item evaluator. Judge whether this item was accomplished by ANY work so far — current action log OR prior completed milestones. If a prior milestone already did what the item asks, answer SATISFIED. For current actions, judge from ACTUAL COMMAND OUTPUTS — ignore milestone pass/fail status. SATISFIED requires concrete results matching what the item asked for. Verify relevance to original request (dates, topics, scope). No markdown. Respond SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <slash command>."
+    local _sys_cross=""
+    [ -n "$_prior_milestones" ] && _sys_cross=" Judge whether this item was accomplished by ANY work so far — current action log OR prior completed milestones. If a prior milestone already did what the item asks, answer SATISFIED."
+    local eval_sys="Honeydew item evaluator.${_sys_cross} For current actions, judge from ACTUAL COMMAND OUTPUTS — ignore milestone pass/fail status. SATISFIED requires concrete results matching what the item asked for. Verify relevance to original request (dates, topics, scope). No markdown. Respond SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <slash command>."
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew-eval <- item #${_next_id}: ${_next_task:0:80}"
     ui_think "Honeydew evaluator: checking item #${_next_id}..."
