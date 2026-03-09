@@ -719,6 +719,24 @@ _cmd_limits() {
             else
                 _limits_set AGENT_HONEYDEW_REWRITE_ROUNDS "Rewrite rounds" "$value" 1 20
             fi ;;
+        force-rewrite)
+            if [ -z "$value" ]; then
+                local _fr_label="disabled"
+                [ "${AGENT_FORCE_REWRITE:-1}" -eq 1 ] && _fr_label="enabled"
+                ui_info "Forced honeydew rewrite on interlock/failure: $_fr_label (default: enabled)"
+                ui_dim "  When enabled, interlock and escalation recovery bypass the LLM rewrite router"
+                ui_dim "  and force honeydew rewrite directly. Prevents the model from blocking recovery."
+            else
+                if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
+                    AGENT_FORCE_REWRITE=1
+                    ui_ok "Forced honeydew rewrite enabled"
+                elif [[ "$value" == "off" || "$value" == "0" || "$value" == "disable" || "$value" == "disabled" ]]; then
+                    AGENT_FORCE_REWRITE=0
+                    ui_ok "Forced honeydew rewrite disabled"
+                else
+                    ui_err "Force-rewrite must be 'on' or 'off' (or 1/0, enable/disable)"
+                fi
+            fi ;;
         max-items)
             if [ -z "$value" ]; then
                 ui_info "Honeydew max items: $AGENT_HONEYDEW_MAX_ITEMS (default: 16)"
@@ -1329,6 +1347,7 @@ _cmd_limits() {
             ui_dim "    expand on|off   — Honeydew subtask expansion (current: $([ "${AGENT_HONEYDEW_EXPAND:-0}" -eq 1 ] && echo on || echo off))"
             ui_dim "    rewrite on|off  — Dynamic honeydew rewrite after milestones (current: $([ "${AGENT_HONEYDEW_REWRITE:-0}" -eq 1 ] && echo on || echo off))"
             ui_dim "    rewrite-rounds N — Max honeydew rewrite rounds per task (current: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-8})"
+            ui_dim "    force-rewrite on|off — Force rewrite on interlock/failure, bypass LLM router (current: $([ "${AGENT_FORCE_REWRITE:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    depth N         — Subtask recursion depth (current: $AGENT_MAX_DEPTH)"
             ui_dim "    max-items N     — Max honeydew items before expansion suppressed (current: $AGENT_HONEYDEW_MAX_ITEMS)"
             ui_dim "    milestones N    — Macro loop milestone ceiling (current: $AGENT_MAX_STEPS)"

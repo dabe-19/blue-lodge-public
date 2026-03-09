@@ -24,6 +24,7 @@ AGENT_HONEYDEW_EXPAND="${AGENT_HONEYDEW_EXPAND:-0}"  # Subtask expansion: 0=disa
 AGENT_HONEYDEW_MAX_ITEMS="${AGENT_HONEYDEW_MAX_ITEMS:-16}"  # Max honeydew items before expansion is suppressed
 AGENT_HONEYDEW_REWRITE="${AGENT_HONEYDEW_REWRITE:-1}"    # Dynamic honeydew rewrite: 0=disabled, 1=enabled
 AGENT_HONEYDEW_REWRITE_ROUNDS="${AGENT_HONEYDEW_REWRITE_ROUNDS:-8}"  # Global honeydew rewrite limit (all paths: normal, pressure relief, auto-recovery)
+AGENT_FORCE_REWRITE="${AGENT_FORCE_REWRITE:-1}"          # Force honeydew rewrite in interlock/failure recovery (bypass Phase 1 router): 0=disabled, 1=enabled
 AGENT_WEB_SUFFICIENCY="${AGENT_WEB_SUFFICIENCY:-20}"  # Web actions before sufficiency signal
 AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-20}"  # Max times to retry same milestone
 AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-10}"               # Max milestones with same base command
@@ -971,6 +972,7 @@ _agent_honeydew_rewrite() {
     local micro_file="$2"
     local workdir="${3:-.}"
     local failure_context="${4:-}"  # Optional: failure data for auto-recovery rewrites
+    local force_rewrite="${5:-0}"   # When 1, skip Phase 1 router and force Phase 2 rewrite
 
     # ── Guard: toggle disabled ─────────────────────────────────
     if [ "${AGENT_HONEYDEW_REWRITE:-0}" -ne 1 ]; then
@@ -1072,9 +1074,14 @@ REWRITE_ROUTER_JSON
     _verdict_word=$(echo "$_router_verdict" | head -1 | awk -F'[: \t]' '{print $1}' | sed 's/^[*_]\+//;s/[*_.,]\+$//')
 
     if [[ "$_verdict_word" != "REWRITE" ]]; then
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: router says KEEP — no rewrite needed"
-        ui_info "Honeydew rewrite router: list is well-aligned — keeping current items"
-        return 1
+        if [ "$force_rewrite" -eq 1 ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: router says KEEP but force_rewrite=1 — overriding to REWRITE"
+            ui_warn "Honeydew rewrite: router declined, but forced rewrite active (interlock/recovery) — overriding"
+        else
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: router says KEEP — no rewrite needed"
+            ui_info "Honeydew rewrite router: list is well-aligned — keeping current items"
+            return 1
+        fi
     fi
 
     # ── Phase 2: Rewriter — regenerate pending items ───────────
@@ -3079,6 +3086,26 @@ agent_inner_loop() {
             selected_tool="web"
         fi
 
+        # ── RESPOND→SOCIAL REMAP ──────────────────────────────
+        # When the router or pre-route selects /respond but the
+        # micro_objective references Discord, Telegram, or social
+        # messaging targets (DM, direct message, channel names),
+        # the model chose the wrong delivery tool. /respond only
+        # prints to the terminal — it cannot send messages.
+        # Reroute to /social so the specialist generates the correct
+        # /social dm or /social post command.
+        if [[ "$selected_tool" == "respond" ]]; then
+            local _mo_lower
+            _mo_lower=$(echo "$micro_objective" | tr '[:upper:]' '[:lower:]')
+            if [[ "$_mo_lower" =~ (discord|telegram|mastodon|bluesky|x/twitter|slack)[[:space:]]|[[:space:]](dm|direct.message)[[:space:]]|\b(send.*(message|dm)|post.*(to|on).*(discord|telegram|mastodon|bluesky|channel))\b ]]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router: remapped /respond -> /social (objective mentions social delivery target)"
+                selected_tool="social"
+                # Also rewrite the micro_objective to use /social phrasing
+                # so the specialist generates the right command syntax
+                micro_objective="${micro_objective//\/respond/\/social}"
+            fi
+        fi
+
         # ── TOOL VALIDATION: Reject hallucinated commands ─────
         # If the router outputs a tool name that doesn't exist in the
         # command registry or commands directory, fall back to re-routing
@@ -3497,6 +3524,46 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
             fi
         fi
 
+        # ── EMBEDDED COMMAND EXTRACTION ───────────────────────
+        # When the specialist wraps a /social or /email command
+        # inside /respond or /write, the real intent is the
+        # embedded command — not the wrapper. This catches cases
+        # like:
+        #   /respond /social dm jazzy92012 Here is the report
+        #   /write report.md\n/email send user@... Subject Body
+        # Extract the FIRST embedded /social or /email command
+        # and promote it to the primary command.
+        if [ "$cmd_is_slash" -eq 1 ]; then
+          if [[ "$cmd" == /respond\ * ]] || [[ "$cmd" == /write\ * ]]; then
+            local _embed_body
+            if [[ "$cmd" == /respond\ * ]]; then
+                _embed_body="${cmd#/respond }"
+            else
+                # /write body starts after line 1 (filename)
+                _embed_body=$(echo "$cmd" | tail -n +2)
+            fi
+            if [ -n "$_embed_body" ]; then
+                # Match the first /social or /email command in the body
+                local _embed_match=""
+                _embed_match=$(printf '%s\n' "$_embed_body" | grep -oP '^\s*/(?:social|email)\s+\S.*' | head -1 | sed 's/^[[:space:]]*//')
+                if [ -z "$_embed_match" ]; then
+                    # Also check inline: /social or /email mid-line
+                    _embed_match=$(printf '%s\n' "$_embed_body" | grep -oP '/(?:social|email)\s+\S.*' | head -1)
+                fi
+                if [ -n "$_embed_match" ]; then
+                    local _wrapper_cmd
+                    _wrapper_cmd=$(echo "$cmd" | awk '{print $1}')
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] embedded-cmd: extracted '${_embed_match:0:60}' from $_wrapper_cmd body"
+                    ui_info "Embedded command detected in $_wrapper_cmd — promoting to primary command"
+                    cmd="$_embed_match"
+                    if [ -n "$micro_file" ] && [ -f "$micro_file" ]; then
+                        _micro_add_note "$micro_file" "EMBEDDED_CMD: Extracted '${_embed_match:0:80}' from $_wrapper_cmd wrapper"
+                    fi
+                fi
+            fi
+          fi
+        fi
+
         fi  # end specialist output cleanup (skipped for direct respond)
 
         # ── CONSECUTIVE WEB SEARCH INTERLOCK ──────────────────
@@ -3578,7 +3645,7 @@ INTERLOCK_JSON
                 [ -f "$fail_file" ] && _il_fail_ctx=$(tail -20 "$fail_file" 2>/dev/null)
                 local _il_saved_rewrite="${AGENT_HONEYDEW_REWRITE:-0}"
                 AGENT_HONEYDEW_REWRITE=1
-                if _agent_honeydew_rewrite "$macro_file" "$micro_file" "$workdir" "$_il_fail_ctx"; then
+                if _agent_honeydew_rewrite "$macro_file" "$micro_file" "$workdir" "$_il_fail_ctx" "${AGENT_FORCE_REWRITE:-1}"; then
                     local _il_hd_refresh
                     _il_hd_refresh=$(_agent_honeydew_read "$workdir" 2>/dev/null)
                     if [ -n "$_il_hd_refresh" ] && [ -f "$macro_file" ]; then
@@ -4097,7 +4164,7 @@ INTERLOCK_JSON
         # Force honeydew rewrite even if normal toggle is off
         local _saved_rewrite_toggle="${AGENT_HONEYDEW_REWRITE:-0}"
         AGENT_HONEYDEW_REWRITE=1
-        if _agent_honeydew_rewrite "$macro_file" "$micro_file" "$workdir" "$_fail_summary"; then
+        if _agent_honeydew_rewrite "$macro_file" "$micro_file" "$workdir" "$_fail_summary" "${AGENT_FORCE_REWRITE:-1}"; then
             # Refresh honeydew in macro_memory
             local _hd_recovery
             _hd_recovery=$(_agent_honeydew_read "$workdir" 2>/dev/null)
@@ -4869,7 +4936,7 @@ ${_last_eval_feedback}
                 # toggle so the rewrite runs even when disabled.
                 local _saved_rewrite_toggle="${AGENT_HONEYDEW_REWRITE:-0}"
                 AGENT_HONEYDEW_REWRITE=1
-                if _agent_honeydew_rewrite "$macro_file" "$george_dir/micro_memory.json" "$workdir"; then
+                if _agent_honeydew_rewrite "$macro_file" "$george_dir/micro_memory.json" "$workdir" "" "${AGENT_FORCE_REWRITE:-1}"; then
                     local _hd_relief
                     _hd_relief=$(_agent_honeydew_read "$workdir" 2>/dev/null)
                     if [ -n "$_hd_relief" ] && [ -f "$macro_file" ]; then
