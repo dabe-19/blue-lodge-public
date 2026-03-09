@@ -240,6 +240,12 @@ _macro_get() {
     jq -r --arg k "$key" '.[$k] // empty' "$file" 2>/dev/null
 }
 
+_macro_set() {
+    local file="$1" key="$2" value="$3"
+    local tmp="${file}.tmp"
+    jq --arg k "$key" --arg v "$value" '.[$k] = $v' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
 _macro_set_honeydew() {
     local file="$1" honeydew_text="$2"
     local tmp="${file}.tmp"
@@ -2473,6 +2479,33 @@ _build_specialist_prompt() {
             echo "Replace every <placeholder> in the syntax with actual values from the TASK. NEVER output bare commands without arguments."
             echo ""
         fi
+        # ── PROJECT CONTEXT CARD ──────────────────────────────
+        # For coding commands, inject project structure from GEORGE.md
+        # so the specialist knows where files go, build commands, etc.
+        local _base_for_ctx="${cmd_name#/}"
+        case "$_base_for_ctx" in
+            write|build|test|fix|init|save)
+                if [ -n "$workdir" ] && [ -f "$workdir/GEORGE.md" ]; then
+                    local _proj_name _proj_type _build_cmd _test_cmd _proj_struct
+                    _proj_name=$(awk -F': ' '/^name:/{print $2; exit}' "$workdir/GEORGE.md" 2>/dev/null)
+                    _proj_type=$(awk -F': ' '/^type:/{print $2; exit}' "$workdir/GEORGE.md" 2>/dev/null)
+                    _build_cmd=$(awk -F': ' '/^build:/{print $2; exit}' "$workdir/GEORGE.md" 2>/dev/null)
+                    _test_cmd=$(awk -F': ' '/^test:/{print $2; exit}' "$workdir/GEORGE.md" 2>/dev/null)
+                    # Quick directory listing for structure awareness
+                    _proj_struct=$(find "$workdir" -maxdepth 2 -not -path '*/.george/*' -not -path '*/.git/*' -not -name '.*' -type f 2>/dev/null | sed "s|^$workdir/||" | head -15 | paste -sd ',' -)
+                    # Compact JSON project card — matches specialist syntax card pattern
+                    local _pctx='{"project":{"name":"'"${_proj_name:-$(basename "$workdir")}"'","type":"'"${_proj_type:-unknown}"'","workdir":"'"$workdir"'"'
+                    [ -n "$_proj_struct" ] && _pctx="${_pctx},\"files\":[\"${_proj_struct//,/\",\"}\"]" || _pctx="${_pctx}"
+                    [ -n "$_build_cmd" ] && [ "$_build_cmd" != "N/A" ] && _pctx="${_pctx},\"build\":\"${_build_cmd}\""
+                    [ -n "$_test_cmd" ] && [ "$_test_cmd" != "N/A" ] && _pctx="${_pctx},\"test\":\"${_test_cmd}\""
+                    _pctx="${_pctx}},\"rules\":[\"ALL /write paths MUST be relative to project root\",\"NEVER use absolute paths\"]}"
+                    echo "PROJECT CONTEXT:"
+                    echo "$_pctx"
+                    echo ""
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- project context card (%s)\n' "${_proj_name:-?}" > /dev/tty 2>/dev/null
+                fi
+                ;;
+        esac
         cat << 'SPEC_PREAMBLE'
 OUTPUT FORMAT: exactly ONE slash command on its own line, starting with /
 FORBIDDEN: code fences, quotes on args, multiple commands per line, /sandbox for slash commands
@@ -3769,6 +3802,9 @@ INTERLOCK_JSON
                     ui_err "$output"
                 fi
                 _micro_add_action "$micro_file" "$cmd" "$([ $exit_code -eq 0 ] && echo 'SUCCESS' || echo 'FAILED')" "$exit_code" "$output" "cd_intercept"
+                if [ $exit_code -eq 0 ]; then
+                    _AGENT_WORKDIR_CHANGED="$workdir"
+                fi
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] workdir now: %s\n' "$workdir" > /dev/tty 2>/dev/null
                 inner_attempts=$((inner_attempts + 1))
                 continue
@@ -3810,6 +3846,7 @@ INTERLOCK_JSON
                     fi
                     if [ -n "$_init_name" ] && [ -d "$workdir/$_init_name" ]; then
                         workdir="$workdir/$_init_name"
+                        _AGENT_WORKDIR_CHANGED="$workdir"
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] post-init workdir: %s\n' "$workdir" > /dev/tty 2>/dev/null
                     fi
                 fi
@@ -4646,13 +4683,7 @@ MEMEOF
         _coding_signal=$(echo "$_coding_signal" | tr '[:upper:]' '[:lower:]')
         if [[ "$_coding_signal" =~ (rust|cargo|python|pip|node|npm|typescript|java|maven|gradle|golang|makefile|cmake|clang|gcc|\.(rs|py|go|ts|js|cpp|c|java)\b|create.*(project|app|cli|tool|program|binary|package|crate|module)|scaffold|new.*project|build.*(it|the|this|project|app|code)|run.*(the|it|this).*(project|app|program|binary|executable)|init.*(project|app|repo)) ]]; then
             _coding_card='
-CODING COMMANDS (use these for code tasks — /write is for FILES only):
-  /init <name> <type>  — scaffold a new project (creates Cargo.toml, pyproject.toml, etc.)
-  /build               — build/compile the project (runs cargo build, make, pip install, etc.)
-  /test                — run the project test suite (cargo test, pytest, npm test, etc.)
-  /fix                 — auto-fix errors from the last failed /build or /test
-  /write <path> <code> — write code to a specific FILE (not for building or running)
-WORKFLOW: /init -> /write source files -> /build -> /test -> /fix if needed'
+{"coding":{"commands":{"/init <name> <type>":"scaffold new project (Cargo.toml, pyproject.toml, etc.)","/build":"build the project (cargo build, make, etc.)","/test":"run test suite (cargo test, pytest, etc.)","/fix":"auto-fix errors from last /build or /test","/write <path> <code>":"write code to a FILE (not for building or running)"},"workflow":["/init","/write source files","/build","/test","/fix if needed"]}}'
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- coding workflow card"
         fi
 
@@ -5031,11 +5062,38 @@ ${_last_eval_feedback}
         ui_section "Milestone $macro_iterations"
         ui_info "$milestone"
 
+        # Reset workdir-change signal before each milestone
+        _AGENT_WORKDIR_CHANGED=""
+
         if agent_inner_loop "$milestone" "$workdir"; then
             completed_milestones=$((completed_milestones + 1))
             _consecutive_skips=0  # Reset: actual progress breaks the skip cycle
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — OK\n"
             _attempted_milestones+=("OK|$milestone")
+
+            # ── WORKDIR PROPAGATION ─────────────────────────
+            # /cd and /init update workdir inside agent_inner_loop,
+            # but that's a local variable. Propagate the change back
+            # to the macro loop so all subsequent milestones target
+            # the correct directory.
+            if [ -n "${_AGENT_WORKDIR_CHANGED:-}" ]; then
+                workdir="$_AGENT_WORKDIR_CHANGED"
+                george_dir="$workdir/.george"
+                macro_file="$george_dir/macro_memory.json"
+                micro_file="$george_dir/micro_memory.json"
+                fail_file="$george_dir/failures_log.md"
+                mkdir -p "$george_dir"
+                # Re-read GEORGE.md from new workdir into macro_memory
+                # so the strategist sees updated project context.
+                if [ -f "$workdir/GEORGE.md" ] && [ -f "$macro_file" ]; then
+                    local _new_proj_ctx
+                    _new_proj_ctx=$(cat "$workdir/GEORGE.md" 2>/dev/null | head -c 1000)
+                    if [ -n "$_new_proj_ctx" ] && declare -f _macro_set &>/dev/null; then
+                        _macro_set "$macro_file" "project_context" "$_new_proj_ctx"
+                    fi
+                fi
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] macro workdir updated: $workdir"
+            fi
 
             # ── Track research vs delivery milestones ─────────
             local _ms_lower_track
@@ -5173,6 +5231,27 @@ ${_last_eval_feedback}
             _consecutive_skips=0  # Reset: even a failed milestone is real execution, not a skip
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — FAILED\n"
             _attempted_milestones+=("FAILED|$milestone")
+
+            # ── WORKDIR PROPAGATION (even on failure) ─────────
+            # /cd or /init may have updated workdir before the
+            # milestone ultimately failed. Still propagate so the
+            # next milestone targets the correct directory.
+            if [ -n "${_AGENT_WORKDIR_CHANGED:-}" ]; then
+                workdir="$_AGENT_WORKDIR_CHANGED"
+                george_dir="$workdir/.george"
+                macro_file="$george_dir/macro_memory.json"
+                micro_file="$george_dir/micro_memory.json"
+                fail_file="$george_dir/failures_log.md"
+                mkdir -p "$george_dir"
+                if [ -f "$workdir/GEORGE.md" ] && [ -f "$macro_file" ]; then
+                    local _new_proj_ctx
+                    _new_proj_ctx=$(cat "$workdir/GEORGE.md" 2>/dev/null | head -c 1000)
+                    if [ -n "$_new_proj_ctx" ] && declare -f _macro_set &>/dev/null; then
+                        _macro_set "$macro_file" "project_context" "$_new_proj_ctx"
+                    fi
+                fi
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] macro workdir updated (post-fail): $workdir"
+            fi
 
             # Check if failure was due to cancellation or operator abort
             if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
