@@ -377,7 +377,7 @@ $(cat << 'DECOMPOSE_JSON'
 {"output":"numbered list ONLY",
  "each_item":"short imperative sentence — WHAT to achieve, not HOW",
  "describe":"GOAL only — never tools, commands, URLs, shell syntax",
- "good":"Find the weekly weather forecast for Appleton WI",
+ "good":"Identify the key objectives for the project",
  "bad":["Run curl -s https://...","Use /web search to find..."],
  "count":"2-5 items (simple tasks: 1-2)",
  "order":"by dependency (research→writing→sending)",
@@ -1319,7 +1319,7 @@ _agent_evaluate_honeydew_item() {
 
     # ── Prior milestone context for cross-milestone satisfaction ──
     # Honeydew items may have been accomplished by a PRIOR milestone
-    # (e.g., /ask confirmed dietary restrictions in milestone 1, but
+    # (e.g., /ask confirmed user preferences in milestone 1, but
     # the evaluator runs after milestone 3's /write).  Inject compact
     # prior milestone summaries so the evaluator can recognize this.
     # NOTE: Only inject when a provider is active (larger models).
@@ -2178,7 +2178,7 @@ agent_plan() {
     local base_rules="Plan this task. Rules:
 - THINK FIRST: Is this a simple question George can answer from his own knowledge (no web search, no tools, no external actions)? If so, use /respond to answer directly. No sandbox, no coding.
 - If the task needs George to GENERATE IDEAS or BRAINSTORM (not ask the user), use /brainstorm.
-- /ask is ONLY for getting info from the HUMAN (preferences, names, allergies). /brainstorm is for George figuring things out HIMSELF.
+- /ask is ONLY for getting info from the HUMAN (preferences, names, details). /brainstorm is for George figuring things out HIMSELF.
 - If the user explicitly names a tool or action (e.g., 'search the web', 'post to discord'), route to that tool — do NOT use /ask.
 - If /brainstorm is not available, use /respond to reason through options and deliver the answer directly.
 - Use the MINIMUM steps needed. Most tasks need 1-3 steps. Maximum: $AGENT_PLAN_STEPS steps.
@@ -2388,7 +2388,7 @@ RULES:
 - /slash to CREATE a custom tool when no built-in command fits
 - /sandbox NEVER for slash commands
 - /social for Discord/Telegram/X, /email for actual email
-${_ask_line:+- /ask to get REAL answers from the human — use when you need specific preferences, dietary info, names, allergies, or ANY user-specific detail that you cannot research
+${_ask_line:+- /ask to get REAL answers from the human — use when you need specific preferences, names, or ANY user-specific detail that you cannot research
 }${_brainstorm_line:+- /brainstorm to think through something YOURSELF — generate ideas, weigh options, reason through problems. NO human input. Use when YOU need to figure something out.
 }- NEVER output a command not in this list
 - If unsure between TOOLS, use /web or /slash
@@ -2724,9 +2724,9 @@ SPEC
             ask)
                 cat << 'SPEC'
 {"cmd":"/ask","syntax":"/ask <question to ask the human operator>",
-"notes":"Asks the HUMAN USER a question and waits for their typed answer. Use to get real preferences, dietary needs, allergies, names, specific details that ONLY the user knows. The user's answer is returned as output. Do NOT use for general knowledge — use /web or /recall instead.",
+"notes":"Asks the HUMAN USER a question and waits for their typed answer. Use to get real user-specific details that ONLY the user knows. The user's answer is returned as output. Do NOT use for general knowledge — use /web or /recall instead.",
 "rules":["ONE specific question per /ask","Ask about concrete details the user must provide","Do NOT ask rhetorical or philosophical questions"],
-"format_only_ex":["/ask What are the specific dietary restrictions or allergies for each family member?","/ask What is your preferred programming language for this project?"]}
+"format_only_ex":["/ask What is your preferred programming language for this project?","/ask What is the target audience for this document?"]}
 SPEC
                 ;;
             ls)
@@ -4577,7 +4577,7 @@ MEMEOF
         # Conditional /ask rule for strategist
         local _ask_rule=""
         if [ "${AGENT_ASK_USER:-1}" -eq 1 ]; then
-            _ask_rule='"\/ask":"asks the HUMAN operator a question — use when you need specific preferences, dietary needs, allergies, names, or details ONLY the user knows. The user types an answer.",'
+            _ask_rule='"\/ask":"asks the HUMAN operator a question — use when you need specific preferences, names, or details ONLY the user knows. The user types an answer.",'
         fi
 
         # Conditional /brainstorm rule for strategist
