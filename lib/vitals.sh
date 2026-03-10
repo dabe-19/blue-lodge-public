@@ -59,12 +59,24 @@ vitals_disk_pct() {
 # ── RAM free (MB) — available, not just 'free' ────────────────
 vitals_ram_free_mb() {
     # 'available' is the best metric — it includes reclaimable cache
-    free -m 2>/dev/null | awk '/^Mem:/{print $7}'
+    local val
+    val=$(free -m 2>/dev/null | awk '/^Mem:/{print $7}')
+    # Fallback: parse /proc/meminfo directly (iSH, minimal Alpine)
+    if [ -z "$val" ] && [ -f /proc/meminfo ]; then
+        val=$(awk '/^MemAvailable:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null)
+    fi
+    # If still empty, platform can't report RAM — return empty (not 0)
+    echo "${val:-}"
 }
 
 # ── RAM total (MB) ────────────────────────────────────────────
 vitals_ram_total_mb() {
-    free -m 2>/dev/null | awk '/^Mem:/{print $2}'
+    local val
+    val=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')
+    if [ -z "$val" ] && [ -f /proc/meminfo ]; then
+        val=$(awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null)
+    fi
+    echo "${val:-}"
 }
 
 # ── RAM used (MB) ─────────────────────────────────────────────
@@ -207,7 +219,12 @@ vitals_disk_status() {
 
 vitals_ram_status() {
     _vitals_refresh_cache
-    local free="${_VITALS_CACHE_RAM_FREE_MB:-0}"
+    local free="${_VITALS_CACHE_RAM_FREE_MB:-}"
+    # If RAM is unreadable (iSH, ChromeOS, etc.) assume ok — don't block work
+    if [ -z "$free" ]; then
+        echo "ok"
+        return 0
+    fi
     if [ "$free" -lt "$VITALS_RAM_CRIT_MB" ] 2>/dev/null; then
         echo "critical"
     elif [ "$free" -lt "$VITALS_RAM_WARN_MB" ] 2>/dev/null; then
@@ -283,6 +300,8 @@ vitals_guard_disk() {
 
 # Check if it's safe to run memory-intensive operations
 vitals_guard_ram() {
+    # Cloud-only mode: inference is remote, local RAM is irrelevant
+    [ -n "${GEORGE_PROVIDER:-}" ] && return 0
     local status
     status=$(vitals_ram_status)
     if [ "$status" = "critical" ]; then
