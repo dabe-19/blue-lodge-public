@@ -534,7 +534,17 @@ mcp_tool_call() {
 mcp_web_fetch() {
     local url="$1"
 
-    # Try "fetch" server first
+    # Try built-in george-fetch server first (pure bash, no Node.js)
+    if _mcp_server_exists "george-fetch"; then
+        local result
+        result=$(mcp_tool_call "george-fetch" "fetch" "$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')" 2>/dev/null)
+        if [ -n "$result" ]; then
+            printf '%s' "$result"
+            return 0
+        fi
+    fi
+
+    # Try external "fetch" server (e.g. @anthropic/mcp-server-fetch)
     if _mcp_server_exists "fetch"; then
         local result
         result=$(mcp_tool_call "fetch" "fetch" "$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')" 2>/dev/null)
@@ -661,10 +671,11 @@ mcp_find_tool() {
 
 _mcp_write_default_catalog() {
     mkdir -p "$MCP_CONFIG_DIR"
-    cat > "$MCP_CATALOG_FILE" << 'CATALOG'
+    cat > "$MCP_CATALOG_FILE" << CATALOG
 # George MCP Server Catalog — recommended servers
 # Format: name|command|description
 # Install with: /mcp install <name>
+george-fetch|bash $LODGE_DIR/lib/mcp_server_fetch.sh|Built-in web fetch (pure bash, no Node.js)
 fetch|npx -y @anthropic/mcp-server-fetch|Web content fetching (enhanced scraping)
 puppeteer|npx -y @anthropic/mcp-server-puppeteer|Browser automation for JS-rendered pages
 brave-search|npx -y @anthropic/mcp-server-brave-search|Web search via Brave API (needs BRAVE_API_KEY)
