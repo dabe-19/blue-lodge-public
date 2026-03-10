@@ -371,10 +371,12 @@ vitals_preflight() {
     local issues=0
 
     # Cloud-only mode: inference is remote; disk/RAM/battery guards
-    # protect local model loading which isn't happening. Skip strict
-    # checks to avoid false aborts on iSH and similar platforms.
+    # protect local model loading which isn't happening. Downgrade to
+    # warn AND force return 0 so agent_run never aborts on iSH/cloud.
+    local cloud_only=0
     if [ -n "${GEORGE_PROVIDER:-}" ] && [ "$severity" = "strict" ]; then
         severity="warn"
+        cloud_only=1
     fi
 
     _vitals_refresh_cache
@@ -410,6 +412,8 @@ vitals_preflight() {
         issues=$((issues + 1))
     fi
 
+    # Cloud-only: warnings were printed but never block task execution
+    [ "$cloud_only" -eq 1 ] && return 0
     return "$issues"
 }
 

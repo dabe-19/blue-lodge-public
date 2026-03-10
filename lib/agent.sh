@@ -79,6 +79,7 @@ _micro_init() {
         primary_objective: null,
         honeydew_progress: null,
         research_context: null,
+        recall_context: null,
         prior_milestones: [],
         action_log: [],
         milestone_result: null,
@@ -4149,8 +4150,9 @@ INTERLOCK_JSON
                     ui_warn "Escalation L2: Forced recall for '$base_cmd'..."
                     local recall_result
                     recall_result=$(recall_search_context "$base_cmd" 3 2>/dev/null)
-                    if [ -n "$recall_result" ]; then
-                        _micro_add_note "$micro_file" "L2_recall ($base_cmd): $recall_result"
+                    if [ -n "$recall_result" ] && [ "$recall_result" != "[]" ]; then
+                        local _rf_tmp="${micro_file}.tmp"
+                        jq --argjson rc "$recall_result" '.recall_context = $rc' "$micro_file" > "$_rf_tmp" && mv "$_rf_tmp" "$micro_file"
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: L2 recall for '$base_cmd' -> micro_memory"
                     fi
                 fi

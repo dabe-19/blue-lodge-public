@@ -433,14 +433,14 @@ describe "recall_search"
 # ── Search for LLM Context ───────────────────────────────────
 describe "recall_search_context"
 
-  it "returns plain text suitable for prompts" && {
+  it "returns JSON array suitable for prompts" && {
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall
     _create_sample_ref
     recall_reindex
     ctx=$(recall_search_context "architecture Ollama" 3)
     assert_not_empty "$ctx"
-    assert_contains "$ctx" "[ref:"
+    assert_contains "$ctx" '"src":"ref"'
     _teardown_recall
     fi
   }
@@ -749,8 +749,7 @@ describe "RECALL_INDEX.md recall quality"
     if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
     _setup_recall_with_ref
     ctx=$(recall_search_context "discord post channel" 4)
-    first_line=$(echo "$ctx" | head -1)
-    assert_contains "$first_line" "[ref:"
+    assert_contains "$ctx" '"src":"ref"'
     _teardown_recall
     fi
   }

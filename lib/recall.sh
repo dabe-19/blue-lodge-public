@@ -506,14 +506,22 @@ SQL
 
     [ -z "$results" ] && return 0
 
-    local output=""
+    # JSON array output — compact, matches micro_memory/syntax card patterns.
+    # Small 2-4B models parse uniform JSON far more reliably than mixed
+    # free-text-inside-JSON. Each result is {src, sec, body}.
+    local first=1
+    printf '['
     while IFS='|' read -r source section body; do
         [ -z "$source" ] && continue
-        output+="[$source: $section] $body
-"
+        # Escape for JSON string values
+        source="${source//\\/\\\\}"; source="${source//\"/\\\"}"
+        section="${section//\\/\\\\}"; section="${section//\"/\\\"}"
+        body="${body//\\/\\\\}"; body="${body//\"/\\\"}"
+        body="${body//$'\n'/\\n}"
+        [ "$first" -eq 1 ] && first=0 || printf ','
+        printf '{"src":"%s","sec":"%s","body":"%s"}' "$source" "$section" "$body"
     done <<< "$results"
-
-    echo "$output"
+    printf ']\n'
 }
 
 # ── Get George's own capabilities summary ─────────────────────
