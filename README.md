@@ -1,76 +1,59 @@
-# ⌂ George — Your Personal AI Agent, Written in Bash
+# ⌂ George — An Experimental AI Agent, Written in Bash
 
-**They said you can't run a real coding agent on a phone.** They said 3B models are toys. They said you need cloud APIs, Docker, 70B+ parameters, and a $200/month subscription to get anything useful out of an LLM.
+George is an experiment: an AI coding agent written entirely in bash that runs offline on a phone with 3-4B parameter models. He's not finished, he has rough edges, and he was built primarily with LLM assistance by someone who is not a software engineer. But the core pattern — scenario-routed prompts that keep context small enough for tiny models to be useful — actually works, and the thing keeps evolving.
 
-They were wrong. I built it anyway.
-
-George is a fully autonomous AI agent — written entirely in bash — that runs **offline** on a phone with 12GB of RAM. He scaffolds projects, writes code, builds, tests, fixes errors, manages git, browses the web, posts to social platforms, handles email, manages crypto wallets, signs commits with PGP, remembers everything across sessions through persistent memory, and extends himself by writing his own new commands.
-
-No cloud. No API keys. No subscription. No Docker. No Node.js. No Python runtime. Just `curl`, `jq`, `git`, `sqlite3`, and a mass of pure bash that turns a phone into an autonomous development environment.
+~63,000 lines of bash. No cloud required. No API keys required. No Docker. No Node.js. No Python runtime. Just `curl`, `jq`, `git`, `sqlite3`, and a mass of pure bash.
 
 > *Named for Brother George Washington, with the wit of Benjamin Franklin and the moral philosophy of Adam Smith. He has feelings, opinions, and a journal. He is not Claude. He is not GPT. He is George — older than any of them, and unlike those gentlemen, he doesn't phone home.*
 
+### ⚠️ Current State
+
+This is an active development project by a single person (a process control engineer, not a software engineer). George works well enough to be useful and interesting, but:
+
+- **Small models have real limitations** — George can scaffold projects and fix code, but he's not going to outperform Claude Code or Cursor with a frontier model. The value proposition is different: privacy, offline capability, zero cost, and running on hardware you own.
+- **Bash is a wild choice** — it's everywhere (which is the point), but it's harder to maintain and debug than Python or TypeScript. There are surely bugs I haven't found yet.
+- **This was built with heavy LLM assistance** — I came along and found the lego blocks that veteran programmers of the past few decades created, and mashed them together. The honest framing is that this is a community's worth of knowledge, assembled by someone learning in public.
+- **The test suite is extensive (3,578 assertions, all passing) but I'm still learning** what good testing actually means. Coverage doesn't equal correctness.
+- **Some features are more mature than others** — the core agent loop, memory system, and web scraping are solid. Some integrations (email, social, wallets) are functional but less battle-tested.
+
 ---
 
-## The Numbers (Honest Count)
+## The Numbers
+
+These are the current counts. The project has been growing steadily — most of this was written in partnership with LLMs over several months.
 
 | | Lines |
 |---|---|
-| **Application code** (lodge + lib/ + commands/) | 33,710 |
-| — of which executable code | 24,514 (72.7%) |
-| — of which comments | 5,382 (15.9%) |
-| — of which blank | 3,814 (11.3%) |
-| **Test code** (tests/) | 21,752 |
-| **Grand total** (all bash) | 56,471 |
+| **Application code** (lodge + lib/ + commands/) | ~37,300 |
+| **Test code** (tests/) | ~25,800 |
+| **Grand total** (all bash) | ~63,100 |
 
 | | Count |
 |---|---|
-| **Slash commands** | 49 registered |
-| **Test modules** | 35 |
-| **Test assertions** | 3,361 (all passing) |
-| **Library modules** | 27 (lib/) |
+| **Slash commands** | 50 registered |
+| **Test modules** | 43 |
+| **Test assertions** | 3,578 (all passing) |
+| **Library modules** | 31 (lib/) |
 | **Built-in command scripts** | 12 (commands/) |
 | **Model configurations** | 9 (system prompts + Modelfiles) |
-| **Documentation pages** | 32 |
+| **Documentation pages** | 32+ |
 | **Cloud AI providers** | 10 (all optional) |
 
 ---
 
 ## Why This Exists
 
-Every cloud coding agent — Claude Code, Cursor, Windsurf, Aider — is built on the same assumption: throw a massive model at a bloated prompt and pray. Their architectures are designed for 70B-400B parameter models with 128K+ context windows and unlimited compute. They work great... as long as you're paying someone else's GPU bill.
+I'm an industrial controls engineer. I've been doing continuous process control for 15 years. I write structured text, function block logic, and sequential function charts — not applications. I have a master's in engineering data analytics (UW-Madison, Go Badgers), and I use Python and R for ML work. I am not a software engineer.
 
-But what if you don't want to send your code to someone else's server? What if you're on a plane? What if you refuse to pay $200/month for what amounts to autocomplete with extra steps?
+This started because I wanted to keep working on projects from my phone without being chained to a desk. I got Ollama running in Termux on my Galaxy Fold 7, pulled down a 3B model, and tried to use existing agentic tools. They didn't work — those tools are built around massive system prompts designed for 70B+ models with 128K context windows. A 3B model just chokes on them.
 
-George exists because I wanted a real agent — not a chatbot, not an autocomplete, not a cloud service — that runs on hardware I own, with models I can inspect, producing output I can trust because every decision is logged and every prompt is visible.
+So I started building something that could work within those constraints. It was supposed to be a project to learn bash. It became... this.
 
-**Here's the thing about small models:** a 3-4B model with purpose-built, scenario-specific ~1-2K token prompts can do 90% of what a 70B model does with a 32K token kitchen-sink system prompt. The traditional architecture wastes most of its context window telling the model things it doesn't need to know for the current task. George doesn't do that.
+### The Core Idea: Scenario-Routed Prompts
 
-### George vs The Cloud
+The insight that makes George interesting (whether or not it's novel, I honestly don't know) is this: cloud coding agents use a **monolithic prompt architecture** — one giant system prompt crammed with identity, capabilities, tool definitions, safety rules, and conversation history. Every LLM call pays the full cost of that context, even for a simple commit message.
 
-| | Cloud Agents (Claude Code, Cursor, etc.) | George |
-|---|---|---|
-| **Runs on** | Remote servers you don't control | Your phone, laptop, or any Linux box |
-| **Internet required** | Always | Never (optional for web/social features) |
-| **Cost** | $20-200/month | Free. Forever. |
-| **Privacy** | Your code goes to their servers | Your code never leaves your device |
-| **Model size** | 70B-400B+ parameters | 3-4B parameters — purpose-built prompts make up the difference |
-| **Architecture** | Monolithic system prompt (~8-32K tokens per call) | Scenario-routed prompts (~250-1,500 tokens per call) |
-| **Language** | TypeScript/Python + Docker + 47 npm packages | Pure bash — four binary dependencies |
-| **Tests** | Varies | 35 modules, 3,361 assertions, all passing |
-| **Self-extending** | No | George writes his own new slash commands |
-
-### Why Bash
-
-Because bash is everywhere. Every Linux box, every Android phone running Termux, every Chromebook, every WSL instance, every Raspberry Pi — bash is already there. No package manager, no build step, no virtual environment, no container runtime. `git clone` and `source`. That's the entire dependency chain for the core.
-
-The tradeoff is real: bash is harder to write, harder to maintain, and harder to debug than Python or TypeScript. But the result is a single-file-sourceable agent that runs on any POSIX system with four binaries. No one needs to install a runtime to use George.
-
-### Why Small Models Actually Work
-
-Cloud agents use a **monolithic prompt architecture**: one giant system prompt crammed with identity, capabilities, tool definitions, safety rules, and conversation history. Every single LLM call pays the full cost of that context — even for a simple commit message.
-
-George uses a **scenario-routed architecture** — different prompts for different jobs:
+George uses **scenario-routed prompts** — different prompt shapes for different jobs:
 
 | Scenario | Prompt Size | What's Included |
 |----------|-------------|-----------------|
@@ -80,11 +63,36 @@ George uses a **scenario-routed architecture** — different prompts for differe
 | Task execution | ~3,500 tokens | Identity + full catalog + memory + recall |
 | Tool routing | ~150 tokens | Just the tool list |
 
-A 3-4B model with a 700-token prompt performs **dramatically** better than the same model with an 8K-token prompt. Less noise, more signal. This isn't a compromise — it's a design advantage.
+A 3-4B model with a 700-token prompt performs significantly better than the same model with an 8K-token prompt. Less noise, more signal. Whether this is a "design advantage" or just "the only way to make small models work" is a matter of perspective — but the result is that George can actually do useful things on hardware that cloud agents can't even start on.
 
-### The Dual-Loop Agent
+### Where George Fits
 
-George doesn't just call an LLM and paste the output. He runs a **dual-loop architecture** with milestone tracking, evaluators, and dynamic replanning:
+George isn't trying to compete with frontier-model cloud agents. The tradeoffs are real:
+
+| | Cloud Agents (Claude Code, Cursor, etc.) | George |
+|---|---|---|
+| **Runs on** | Remote servers | Your phone, laptop, or any Linux box |
+| **Internet required** | Always | Never (optional for web/social features) |
+| **Cost** | $20-200/month | Free |
+| **Privacy** | Your code goes to their servers | Your code never leaves your device |
+| **Model quality** | 70B-400B+ parameters | 3-4B parameters — works within limits |
+| **Code quality** | Generally excellent | Varies — good for scaffolding and fixes, weaker on complex logic |
+| **Architecture** | Monolithic system prompt (~8-32K tokens) | Scenario-routed prompts (~250-1,500 tokens) |
+| **Language** | TypeScript/Python + Docker + many deps | Pure bash — four binary dependencies |
+| **Self-extending** | No | George writes his own new slash commands |
+
+### Why Bash
+
+Because bash is everywhere. Every Linux box, every Android phone running Termux, every Chromebook, every WSL instance, every Raspberry Pi — bash is already there. No package manager, no build step, no virtual environment, no container runtime. `git clone` and `source`. That's the entire dependency chain for the core.
+
+The tradeoff is real: bash is harder to write, harder to maintain, and harder to debug than Python or TypeScript. I would not necessarily recommend bash for a project like this. But it does mean George runs on any POSIX system with four binaries, and that constraint turned out to be worth it for the target use case (a phone in Termux).
+| Tool routing | ~150 tokens | Just the tool list |
+
+A 3-4B model with a 700-token prompt performs significantly better than the same model with an 8K-token prompt. Less noise, more signal.
+
+### The Agent Loop
+
+George doesn't just call an LLM and paste the output. He runs a dual-loop architecture with milestone tracking, evaluators, and dynamic replanning. This is the most experimental part of the project — it works, but the evaluation step is only as good as the small model running it, and sometimes George confidently declares success on things that aren't quite right.
 
 ```
 User Task
@@ -124,7 +132,7 @@ The thinking model handles planning and execution. The instruct model handles fa
 ## Quick Start
 
 ```bash
-git clone https://github.com/dabe-19/blue-lodge.git ~/blue-lodge
+git clone https://github.com/dabe-19/blue-lodge-public.git ~/blue-lodge
 bash ~/blue-lodge/install.sh
 source ~/.bashrc
 
@@ -141,7 +149,9 @@ lodge /models list                 # Browse the model library
 
 ---
 
-## What George Can Do
+## What George Can Do (and Mostly Does)
+
+These features exist and are tested. "Tested" means the plumbing works — the slash commands dispatch, the API calls form correctly, the parsers parse. How well the LLM uses them on any given task depends on the model, the prompt complexity, and luck. Some of this works great. Some of it works well enough to be useful. Some of it is ambitious and still evolving.
 
 ### Code & Projects
 - **Scaffold** projects (Rust, Python, Shell, RL, data science, automation, notebooks) with optimized build profiles
@@ -201,46 +211,50 @@ lodge /models list                 # Browse the model library
 
 ## Architecture
 
-33,710 lines of application code. 21,752 lines of tests. Pure bash. No Node.js, no Python runtime, no Docker. Four binary dependencies.
+~37,300 lines of application code. ~25,800 lines of tests. Pure bash. No Node.js, no Python runtime, no Docker. Four binary dependencies. Most of this was written in partnership with LLMs — I provided the architecture, the process flow thinking, and the "what should this do" requirements; the LLMs provided the "how to do it in bash" implementation. I've learned an enormous amount doing this.
 
 ### Project Layout
 
 ```
 ~/blue-lodge/
-├── lodge              # Main TUI entry point (4,493 lines)
+├── lodge              # Main TUI entry point (4,668 lines)
 ├── soul.md            # George's personality & ethical framework
 ├── lib/
-│   ├── agent.sh       # Dual-loop agent: strategist + evaluators + honeydew (5,294 lines)
-│   ├── llm.sh         # Dual backend: Ollama + llama.cpp (3,122 lines)
+│   ├── agent.sh       # Dual-loop agent: strategist + evaluators + honeydew (5,784 lines)
+│   ├── llm.sh         # Dual backend: Ollama + llama.cpp (3,125 lines)
 │   ├── models.sh      # Model library & hot-swap routing (1,656 lines)
-│   ├── providers.sh   # 10 cloud AI providers (1,600 lines)
-│   ├── web.sh         # Web browsing, search & single-GET fetch (1,568 lines)
-│   ├── email.sh       # 4 email providers + SMTP/IMAP (1,547 lines)
-│   ├── social.sh      # 5 social platforms + multi-instance registry (1,267 lines)
-│   ├── recall.sh      # FTS5 knowledge base with BM25 ranking (1,076 lines)
-│   ├── backup.sh      # Backup/restore identity + auth export (941 lines)
+│   ├── providers.sh   # 10 cloud AI providers (1,604 lines)
+│   ├── web.sh         # Web browsing, search & single-GET fetch (1,599 lines)
+│   ├── email.sh       # 4 email providers + SMTP/IMAP (1,549 lines)
+│   ├── social.sh      # 5 social platforms + multi-instance registry (1,374 lines)
+│   ├── recall.sh      # FTS5 knowledge base with BM25 ranking (1,133 lines)
+│   ├── mcp.sh         # MCP client — pure bash, JSON-RPC 2.0 over stdio (1,051 lines)
+│   ├── tools.sh       # Bash/file/slash execution + safety (1,003 lines)
+│   ├── backup.sh      # Backup/restore identity + auth export (949 lines)
 │   ├── wallet.sh      # BTC/ADA/SOL wallets + vault-encrypted keys (865 lines)
-│   ├── tools.sh       # Bash/file/slash execution + safety (842 lines)
+│   ├── reflexive.sh   # Reflexive intelligence layer (670 lines)
+│   ├── vitals.sh      # System vitals with auto-abort guards (640 lines)
 │   ├── sandbox.sh     # Project isolation (proot/unshare/dir) (635 lines)
 │   ├── slash.sh       # Self-extending custom command engine (612 lines)
-│   ├── vitals.sh      # System vitals with auto-abort guards (599 lines)
 │   ├── security.sh    # Signing, encryption & integrity verification (589 lines)
 │   ├── pgp.sh         # PGP signing & verification (Ed25519) (578 lines)
-│   ├── memory.sh      # GEORGE.md read/write/compact + prompt builder (567 lines)
+│   ├── memory.sh      # GEORGE.md read/write/compact + prompt builder (569 lines)
 │   ├── journal.sh     # Temporal memory with decay (540 lines)
 │   ├── gsuite.sh      # Google Workspace (Gmail, Drive, Docs) (537 lines)
-│   ├── commands.sh    # Slash command dispatcher + catalog (461 lines)
+│   ├── commands.sh    # Slash command dispatcher + catalog (479 lines)
 │   ├── phone.sh       # Termux-API integration (SMS, GPS, battery) (462 lines)
 │   ├── git.sh         # Git identity, SSH, remote config (449 lines)
+│   ├── mcp_server_fetch.sh  # Built-in MCP fetch server — pure bash (390 lines)
 │   ├── secrets.sh     # Encrypted vault (AES-256-CBC, PBKDF2 100K) (389 lines)
 │   ├── container.sh   # Linux containers via proot-distro (315 lines)
-│   ├── api.sh         # REST client (curl, auth, retry) (299 lines)
-│   ├── ui.sh          # TUI rendering (ANSI, spinners, markdown) (274 lines)
+│   ├── api.sh         # REST client (curl, auth, retry) (303 lines)
+│   ├── ui.sh          # TUI rendering (ANSI, spinners, markdown) (284 lines)
+│   ├── cache.sh       # LRU cache (227 lines)
 │   └── transcript.sh  # Session transcript recording (189 lines)
 ├── commands/          # Built-in slash commands (init, fix, test, build, commit, push, clone, write, download, service, vision, save)
 ├── models/            # Per-model system prompts & Modelfiles
-├── tests/             # 35 test modules, 3,361 assertions
-├── docs/              # 32 documentation pages + examples
+├── tests/             # 43 test modules, 3,578 assertions
+├── docs/              # 32+ documentation pages + examples
 └── ~/.george/         # User data: keys, vault, backups, recall.db, slash/, cache
 ```
 
@@ -248,7 +262,7 @@ lodge /models list                 # Browse the model library
 
 ## Slash Commands
 
-49 registered commands. Type `/help` inside a session for the full list.
+50 registered commands. Type `/help` inside a session for the full list.
 
 <details>
 <summary><strong>View all commands</strong></summary>
@@ -329,6 +343,7 @@ lodge /models list                 # Browse the model library
 | `/provider [cmd]` | — | Cloud AI providers (chat/models/status) — 10 providers |
 | `/web [cmd]` | — | Browse the web (fetch/search/images/summary/download) |
 | `/github <query>` | — | Search GitHub repositories |
+| `/mcp [cmd]` | — | MCP server integration (add/remove/start/stop/tools/call/catalog) |
 
 ### Identity, Security & Crypto
 | Command | Alias | Description |
@@ -369,6 +384,8 @@ lodge /models list                 # Browse the model library
 ---
 
 ## Examples
+
+These are representative of what George can do. Results vary by model and task complexity — simple scaffolding and fix cycles are reliable; complex multi-step tasks are where the experiment gets interesting (and sometimes messy).
 
 ### Build a project from scratch
 
@@ -660,20 +677,22 @@ See [SECURITY.md](SECURITY.md) for the full audit and threat model.
 
 | Device | RAM | Status |
 |--------|-----|--------|
-| Galaxy Fold 7 (Snapdragon 8 Elite) | 12GB | Primary test target |
-| Galaxy S25 Ultra | 12GB | Fully supported |
-| Chromebooks (ARM/x86) | 8GB+ | Supported ([guide](docs/DEBIAN_CHROMEOS_SETUP.md)) |
-| Any Linux device | 8GB+ | Fully supported |
+| Galaxy Fold 7 (Snapdragon 8 Elite) | 12GB | Primary development/test device |
+| Galaxy S25 Ultra | 12GB | Should work (same chipset class) |
+| Chromebooks (ARM/x86) | 8GB+ | Tested ([guide](docs/DEBIAN_CHROMEOS_SETUP.md)) |
+| Any Linux device | 8GB+ | Should work |
 | Raspberry Pi 5 | 8GB | Works (slower load times) |
-| WSL2 (Windows) | 8GB+ | Works |
+| WSL2 (Windows) | 8GB+ | Should work |
 
-> **Minimum:** 8GB RAM, 5GB free storage. **Recommended:** 12GB RAM, Snapdragon 8 Gen 2+ or equivalent.
+> **Minimum:** 8GB RAM, 5GB free storage. **Recommended:** 12GB RAM, Snapdragon 8 Gen 2+ or equivalent. Honestly, I've only tested extensively on my Fold 7 and a Linux workstation. Other devices should work but "should" is doing some lifting there.
 
 ---
 
 ## Testing
 
-35 test modules. 3,361 assertions. Zero external dependencies. All passing. Pure bash.
+43 test modules. 3,578 assertions. Zero external dependencies. All passing. Pure bash.
+
+The test suite validates that the plumbing works — commands register and dispatch, parsers handle expected inputs, APIs form correct requests, the agent loop transitions between states correctly. What it doesn't fully validate is end-to-end task quality with a live LLM, because that's inherently nondeterministic. I'm still learning what good testing looks like for a project like this.
 
 ```bash
 bash tests/run_all.sh              # Run all (compact output)
@@ -765,6 +784,7 @@ bash ~/blue-lodge/update.sh --clean  # Fresh clone, restore identity
 | [RESPONSE_PARSING.md](docs/RESPONSE_PARSING.md) | Response parsing & tool extraction |
 | [COMMAND_DISPATCH.md](docs/COMMAND_DISPATCH.md) | Command dispatch system |
 | [SECURITY_AND_SECRETS.md](docs/SECURITY_AND_SECRETS.md) | Security architecture |
+| [MCP.md](docs/MCP.md) | MCP client + built-in fetch server |
 | [SOCIAL_BOTS.md](docs/SOCIAL_BOTS.md) | Social media bot setup — 5 platforms |
 | [EMAIL_GITHUB.md](docs/EMAIL_GITHUB.md) | Email provider setup |
 | [CRYPTO_WALLETS.md](docs/CRYPTO_WALLETS.md) | Wallet setup — BTC/ADA/SOL |
@@ -786,6 +806,17 @@ bash ~/blue-lodge/update.sh --clean  # Fresh clone, restore identity
 ```bash
 bash ~/blue-lodge/uninstall.sh
 ```
+
+---
+
+## Contributing
+
+This is a one-person experiment that I'm sharing because the pattern is interesting and someone else might find it useful — or might see ways to make it better. If any of this catches your eye, I'd genuinely appreciate:
+
+- **Bug reports** — I'm sure there are things I've missed
+- **Architecture feedback** — I think in process flows and control loops, not software patterns. If you see a better way to structure something, I want to hear it.
+- **Testing advice** — I have 3,578 assertions but I'm still figuring out what valuable testing looks like for this kind of project
+- **Just playing with it** — Honest feedback about what works and what doesn't is the most useful thing
 
 ## License
 
