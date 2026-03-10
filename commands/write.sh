@@ -1,18 +1,11 @@
 #!/bin/bash
-# DESC: Write content to a file (create, overwrite, or append)
+# DESC: Write content to a file (create or overwrite)
 # Usage: /write <filepath> <content...>
-#        /write --append <filepath> <content...>
-#        /write --edit <filepath> <sed_expression>
 #   Writes the given content to the specified file.
 #   Creates parent directories automatically.
 #
-# Modes:
-#   Default  — create or overwrite (with protection in interactive mode)
-#   --append — append content to end of existing file
-#   --edit   — apply sed expression for inline edits
-#   Agent    — in non-interactive mode, reads existing file first and
-#              logs its contents to micro_memory so the LLM can see
-#              what it's overwriting. Prevents blind overwrites.
+# For appending to files, use /append <filepath> <content>
+# For sed edits, use /edit <filepath> <sed_expression>
 
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
@@ -29,27 +22,35 @@ cmd_write() {
 
     if [ -z "$args" ]; then
         ui_err "Usage: /write <filepath> <content...>"
-        ui_dim "       /write --append <filepath> <content...>"
-        ui_dim "       /write --edit <filepath> <sed_expression>"
         ui_dim "Examples:"
         ui_dim "  /write src/main.rs fn main() { println!(\"hello\"); }"
-        ui_dim "  /write --append Cargo.toml [dependencies]\\nreqwest = \"0.11\""
-        ui_dim "  /write --edit src/main.rs s/old_func/new_func/g"
+        ui_dim "  /write README.md # My Project\\nFirst line of content"
+        ui_dim ""
+        ui_dim "Related: /append (add to file), /edit (sed substitution)"
         return 1
     fi
 
-    # ── Parse flags ──────────────────────────────────────────
-    local mode="write"  # write | append | edit
+    # ── Legacy flag redirect ─────────────────────────────────
+    # Transparently redirect --append and --edit to their new
+    # standalone commands for backward compatibility.
     case "$args" in
         --append\ *|--append)
-            mode="append"
-            args="${args#--append }"
-            args="${args#--append}"
+            local _redir_args="${args#--append }"
+            _redir_args="${_redir_args#--append}"
+            if declare -f cmd_append &>/dev/null || [ -f "${LODGE_DIR}/commands/append.sh" ]; then
+                [ ! "$(type -t cmd_append)" = "function" ] && source "${LODGE_DIR}/commands/append.sh"
+                cmd_append "$_redir_args" "$workdir"
+                return $?
+            fi
             ;;
         --edit\ *|--edit)
-            mode="edit"
-            args="${args#--edit }"
-            args="${args#--edit}"
+            local _redir_args="${args#--edit }"
+            _redir_args="${_redir_args#--edit}"
+            if declare -f cmd_edit &>/dev/null || [ -f "${LODGE_DIR}/commands/edit.sh" ]; then
+                [ ! "$(type -t cmd_edit)" = "function" ] && source "${LODGE_DIR}/commands/edit.sh"
+                cmd_edit "$_redir_args" "$workdir"
+                return $?
+            fi
             ;;
     esac
 
@@ -113,11 +114,7 @@ cmd_write() {
     # The LLM sends multi-line content as a single line with \n
     # separators (as instructed by the syntax card). Expand them
     # to real newlines so files are written correctly.
-    # SKIP expansion for --edit mode (sed expressions use their own
-    # escape conventions).
-    if [ "$mode" != "edit" ]; then
-        content=$(ui_expand_escapes "$content")
-    fi
+    content=$(ui_expand_escapes "$content")
 
     # Resolve path relative to workdir
     # SECURITY: Never allow writes outside the workdir tree.
@@ -137,76 +134,6 @@ cmd_write() {
         return 1
     fi
 
-    # ── Handle --edit mode (sed inline edits) ──────────────────
-    # Validates that content looks like a sed expression before
-    # attempting. The model sometimes tries to write entire multi-line
-    # code blocks as sed, which always fails.
-    if [ "$mode" = "edit" ]; then
-        if [ ! -f "$fullpath" ]; then
-            ui_err "Cannot edit — file does not exist: $filepath"
-            return 1
-        fi
-
-        # Guard: reject content that's clearly NOT a sed expression.
-        # Valid sed: s/old/new/g, /pattern/d, /pattern/a\text, etc.
-        # Invalid: multi-line code the model tried to cram into sed.
-        local _sed_ok=0
-        if [[ "$content" =~ ^s[/\|,\#] ]]; then
-            _sed_ok=1  # substitution: s/old/new/ s|old|new| etc
-        elif [[ "$content" =~ ^[0-9]*,?[0-9]*/.*/ ]]; then
-            _sed_ok=1  # address + command: /pattern/d, 3,5d, etc
-        elif [[ "$content" =~ ^[0-9]+[dips] ]]; then
-            _sed_ok=1  # line-addressed command: 5d, 3i, etc
-        fi
-
-        if [ "$_sed_ok" -eq 0 ]; then
-            ui_err "Edit rejected — content is not a valid sed expression: ${content:0:80}"
-            ui_dim "  --edit is for SIMPLE substitutions only (e.g. s/old_name/new_name/g)"
-            ui_dim "  To rewrite a file, use: /write <filepath> <complete content>"
-            return 1
-        fi
-
-        # Guard: reject excessively long sed expressions (> 200 chars).
-        # These are almost always the model trying to write code as sed.
-        if [ "${#content}" -gt 200 ]; then
-            ui_err "Edit rejected — sed expression too long (${#content} chars)"
-            ui_dim "  --edit is for small, targeted changes."
-            ui_dim "  To rewrite a file, use: /write <filepath> <complete content>"
-            return 1
-        fi
-
-        # content holds the sed expression
-        local before_lines after_lines
-        before_lines=$(wc -l < "$fullpath")
-        if sed -i "$content" "$fullpath" 2>/dev/null; then
-            after_lines=$(wc -l < "$fullpath")
-            ui_ok "Edited: $filepath ($before_lines → $after_lines lines)"
-            return 0
-        else
-            ui_err "Edit failed — invalid sed expression: $content"
-            ui_dim "  --edit is for SIMPLE substitutions: s/old/new/g"
-            ui_dim "  To rewrite a file, use: /write <filepath> <complete content>"
-            return 1
-        fi
-    fi
-
-    # ── Handle --append mode ───────────────────────────────────
-    if [ "$mode" = "append" ]; then
-        if [ ! -f "$fullpath" ]; then
-            # File doesn't exist — create it (append to nothing = create)
-            printf '%s\n' "$content" > "$fullpath"
-            local lines
-            lines=$(printf '%s' "$content" | wc -l)
-            ui_ok "Created: $filepath ($((lines + 1)) lines)"
-            return 0
-        fi
-        printf '\n%s\n' "$content" >> "$fullpath"
-        local lines
-        lines=$(wc -l < "$fullpath")
-        ui_ok "Appended to: $filepath ($lines total lines)"
-        return 0
-    fi
-
     local existed=0
     [ -f "$fullpath" ] && existed=1
 
@@ -215,7 +142,7 @@ cmd_write() {
     # existing file and echo a WARNING + contents to stderr so it
     # gets captured in the 2000-byte output and written to micro_memory.
     # This gives the LLM visibility into what it's overwriting, so the
-    # strategist/specialist can decide to use --append or --edit next.
+    # strategist/specialist can decide to use /append or /edit next.
     if [ "$existed" -eq 1 ] && _write_is_agent_mode; then
         local _existing_lines _existing_preview
         _existing_lines=$(wc -l < "$fullpath")
@@ -227,7 +154,7 @@ cmd_write() {
             echo "... (${_existing_lines} lines total, showing first 30)" >&2
         fi
         echo "---" >&2
-        echo "OVERWRITING with new content. Use /write --append or /write --edit for partial updates." >&2
+        echo "OVERWRITING with new content. Use /append to add to existing content, or /edit for small changes." >&2
     fi
 
     # ── Overwrite protection ──────────────────────────────────

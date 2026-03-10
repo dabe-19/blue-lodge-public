@@ -275,6 +275,11 @@ recall_reindex() {
 
     _recall_save_mtimes
 
+    # Invalidate LRU cache — reindexed data means cached queries are stale
+    if declare -f cache_invalidate_ns &>/dev/null; then
+        cache_invalidate_ns "recall"
+    fi
+
     ui_ok "Indexed $total sources" 2>/dev/null
     return 0
 }
@@ -456,6 +461,16 @@ recall_search_context() {
         return 1
     fi
 
+    # ── LRU cache fast path (skips stat ops + sqlite3 fork) ──
+    local _rsc_cache_key="recall:ctx:${query}:${limit}:${max_chars}"
+    if declare -f cache_get &>/dev/null; then
+        local _rsc_cached
+        if _rsc_cached=$(cache_get "$_rsc_cache_key" "recall"); then
+            printf '%s\n' "$_rsc_cached"
+            return 0
+        fi
+    fi
+
     recall_ensure_indexed
 
     local safe_query
@@ -509,19 +524,29 @@ SQL
     # JSON array output — compact, matches micro_memory/syntax card patterns.
     # Small 2-4B models parse uniform JSON far more reliably than mixed
     # free-text-inside-JSON. Each result is {src, sec, body}.
-    local first=1
-    printf '['
-    while IFS='|' read -r source section body; do
-        [ -z "$source" ] && continue
-        # Escape for JSON string values
-        source="${source//\\/\\\\}"; source="${source//\"/\\\"}"
-        section="${section//\\/\\\\}"; section="${section//\"/\\\"}"
-        body="${body//\\/\\\\}"; body="${body//\"/\\\"}"
-        body="${body//$'\n'/\\n}"
-        [ "$first" -eq 1 ] && first=0 || printf ','
-        printf '{"src":"%s","sec":"%s","body":"%s"}' "$source" "$section" "$body"
-    done <<< "$results"
-    printf ']\n'
+    local _rsc_json
+    _rsc_json=$(
+        local first=1
+        printf '['
+        while IFS='|' read -r source section body; do
+            [ -z "$source" ] && continue
+            # Escape for JSON string values
+            source="${source//\\/\\\\}"; source="${source//\"/\\\"}"
+            section="${section//\\/\\\\}"; section="${section//\"/\\\"}"
+            body="${body//\\/\\\\}"; body="${body//\"/\\\"}"
+            body="${body//$'\n'/\\n}"
+            [ "$first" -eq 1 ] && first=0 || printf ','
+            printf '{"src":"%s","sec":"%s","body":"%s"}' "$source" "$section" "$body"
+        done <<< "$results"
+        printf ']'
+    )
+
+    # Store in LRU cache for subsequent turns
+    if declare -f cache_put &>/dev/null && [ -n "$_rsc_json" ] && [ "$_rsc_json" != "[]" ]; then
+        cache_put "$_rsc_cache_key" "recall" "$_rsc_json"
+    fi
+
+    printf '%s\n' "$_rsc_json"
 }
 
 # ── Get George's own capabilities summary ─────────────────────

@@ -488,7 +488,7 @@ describe "Coding workflow card (strategist)"
 
   it "card JSON contains /build command" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q '"/build":"build the project'
+    echo "$body" | grep -q '"/build":"compile/build EXISTING project'
     assert_ok $? "Card must describe /build"
   }
 
@@ -506,12 +506,12 @@ describe "Coding workflow card (strategist)"
 
   it "card JSON contains workflow sequence" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q '"workflow":.*"/init".*"/write source files".*"/build".*"/test"'
+    echo "$body" | grep -q '/init to scaffold.*write source files.*build to compile.*test to verify'
     assert_ok $? "Card must contain workflow sequence"
   }
 
   it "card is valid JSON" && {
-    _card='{"coding":{"commands":{"/init <name> <type>":"scaffold new project (Cargo.toml, pyproject.toml, etc.)","/build":"build the project (cargo build, make, etc.)","/test":"run test suite (cargo test, pytest, etc.)","/fix":"auto-fix errors from last /build or /test","/write <path> <code>":"write code to a FILE (not for building or running)"},"workflow":["/init","/write source files","/build","/test","/fix if needed"]}}'
+    _card='{"coding":{"commands":{"/init <name> <type>":"scaffold NEW project (creates dir + Cargo.toml/pyproject.toml). ONLY for new projects.","/build":"compile/build EXISTING project (cargo build, make, pip install). Use AFTER /init.","/test":"run test suite (cargo test, pytest). Use AFTER /build.","/fix":"auto-fix errors from last /build or /test","/write <path> <code>":"write COMPLETE code file","/append <path> <code>":"add code to END of existing file","/edit <path> <sed>":"small targeted change (s/old/new/g)"},"workflow":["1. /init to scaffold","2. /write source files","3. /build to compile","4. /test to verify","5. /fix if errors"],"IMPORTANT":"If /init FAILS (project already exists), skip to /write or /build. NEVER retry /init on the same project."}}'
     echo "$_card" | python3 -m json.tool >/dev/null 2>&1
     assert_ok $? "Coding workflow card must be valid JSON"
   }

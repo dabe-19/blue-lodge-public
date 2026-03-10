@@ -448,7 +448,7 @@ describe "Dynamic dual-loop architecture"
 
   it "macro strategist strips <think> blocks from milestone" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q '<think>'
+    echo "$body" | grep -q '_strip_think_blocks'
     assert_ok $?
   }
 
@@ -1229,9 +1229,9 @@ describe "Milestone deduplication in macro loop"
     assert_ok $?
   }
 
-  it "deduplication checks first 40 chars for similarity" && {
+  it "deduplication checks first 60 chars of normalized text for similarity" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q '_milestone_lower:0:40'
+    echo "$body" | grep -q '_milestone_norm:0:60'
     assert_ok $?
   }
 
@@ -2627,13 +2627,13 @@ describe "Evaluator contradiction guard"
 
   it "contradiction guard catches 'not achieved'" && {
     body=$(declare -f _agent_evaluate_milestone)
-    echo "$body" | grep -q 'not (achieved'
+    echo "$body" | grep -q 'not achieved'
     assert_ok $?
   }
 
   it "contradiction guard catches 'failed' (hard context)" && {
     body=$(declare -f _agent_evaluate_milestone)
-    echo "$body" | grep -q 'fail(ed'
+    echo "$body" | grep -q 'fail'
     assert_ok $?
   }
 
@@ -2673,8 +2673,8 @@ describe "Evaluator contradiction guard"
     # Hard negation sets _contradiction without dismissal check
     echo "$body" | grep -q '_contradiction=1'
     assert_ok $? "must set _contradiction flag"
-    # Soft negation has an elif branch for fail* with a dismissal filter (if !)
-    echo "$body" | grep -qE 'fail\(ed\|ure\|s\)'
+    # Soft negation has a case branch for fail* with a dismissal filter
+    echo "$body" | grep -q 'fail'
     assert_ok $? "must have soft fail pattern"
     echo "$body" | grep -q '_contradiction=0'
     assert_ok $? "must initialize _contradiction to 0"

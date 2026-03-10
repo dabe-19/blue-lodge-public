@@ -16,6 +16,7 @@ WEB_MAX_SIZE_PDF="${WEB_MAX_SIZE_PDF:-10000000}"  # 10MB max PDF download
 WEB_CACHE_TTL="${WEB_CACHE_TTL:-3600}"     # Cache pages for 1 hour
 WEB_BLACKLIST_FILE="${WEB_BLACKLIST_FILE:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/web_blacklist.log}"
 WEB_BLACKLIST_ENABLED="${WEB_BLACKLIST_ENABLED:-true}"
+WEB_BLACKLIST_TTL="${WEB_BLACKLIST_TTL:-1800}"  # Dynamic blacklist entries expire after 30 minutes (seconds)
 
 # Preloaded domain blacklist — sites that aggressively block bots.
 # Comma-separated list. Fetch/scrape is skipped for these hosts,
@@ -97,7 +98,22 @@ _web_blacklist_contains() {
     fi
 
     [ -f "$WEB_BLACKLIST_FILE" ] || return 1
-    grep -qE "\|url=${url//\//\\/}(\||$)|\|host=${host//\./\\.}(\||$)" "$WEB_BLACKLIST_FILE" 2>/dev/null
+    # Dynamic blacklist entries have a TTL — check timestamp
+    local _now _line_ts _line_epoch _age
+    _now=$(date +%s)
+    local _match_line
+    _match_line=$(grep -E "\|url=${url//\//\\/}(\||$)|\|host=${host//\./\\.}(\||$)" "$WEB_BLACKLIST_FILE" 2>/dev/null | tail -1)
+    [ -z "$_match_line" ] && return 1
+    # Extract ISO timestamp from line start and check TTL
+    _line_ts=$(echo "$_match_line" | sed -n 's/^\([^|]*\)|.*/\1/p')
+    if [ -n "$_line_ts" ]; then
+        _line_epoch=$(date -d "$_line_ts" +%s 2>/dev/null || echo 0)
+        _age=$((_now - _line_epoch))
+        if [ "$_age" -gt "${WEB_BLACKLIST_TTL:-1800}" ]; then
+            return 1  # entry expired — allow retry
+        fi
+    fi
+    return 0
 }
 
 _web_blacklist_reason() {

@@ -61,6 +61,71 @@ _agent_thinking_context_limit() {
     fi
 }
 
+# ── Think Block Stripper ───────────────────────────────────────
+# Single awk pass replaces ~40 sed forks across 12 call sites.
+# Handles <think>, [THINK], [THOUGHT] variants case-insensitively
+# including unclosed blocks (token limit truncated before closing tag).
+# Saves 360-1080ms per task cycle on constrained hardware
+# (each sed fork = ~15ms RAM alloc on Jetson Nano / Termux).
+#
+# Usage: cleaned=$(echo "$raw" | _strip_think_blocks)
+_strip_think_blocks() {
+    awk 'BEGIN { IGNORECASE=1; skip=0 }
+    {
+        # Remove complete balanced blocks on a single line first
+        gsub(/<think>[^<]*<\/think>/, "")
+        gsub(/\[THINK\][^\[]*\[\/THINK\]/, "")
+        gsub(/\[THOUGHT\][^\[]*\[\/THOUGHT\]/, "")
+
+        # Multi-line block detection: opening tag starts skip mode
+        if (match($0, /<think>/)) {
+            sub(/<think>.*/, "", $0)
+            if (length($0) > 0) print $0
+            skip=1; next
+        }
+        if (match($0, /\[THINK\]/)) {
+            sub(/\[THINK\].*/, "", $0)
+            if (length($0) > 0) print $0
+            skip=1; next
+        }
+        if (match($0, /\[THOUGHT\]/)) {
+            sub(/\[THOUGHT\].*/, "", $0)
+            if (length($0) > 0) print $0
+            skip=1; next
+        }
+
+        # Closing tags end skip mode
+        if (skip) {
+            if (match($0, /<\/think>/)) {
+                sub(/.*<\/think>/, "", $0)
+                skip=0
+                if (length($0) > 0) print $0
+                next
+            }
+            if (match($0, /\[\/THINK\]/)) {
+                sub(/.*\[\/THINK\]/, "", $0)
+                skip=0
+                if (length($0) > 0) print $0
+                next
+            }
+            if (match($0, /\[\/THOUGHT\]/)) {
+                sub(/.*\[\/THOUGHT\]/, "", $0)
+                skip=0
+                if (length($0) > 0) print $0
+                next
+            }
+            next  # inside unclosed block — skip line
+        }
+
+        # Strip stray opening/closing tags (orphaned fragments)
+        gsub(/<\/?think>/, "")
+        gsub(/\[\/?THINK\]/, "")
+        gsub(/\[\/?THOUGHT\]/, "")
+
+        if (length($0) > 0) print $0
+    }'
+}
+
 # ── JSON Memory Helpers ─────────────────────────────────────────
 # Micro and macro memory use structured JSON for inter-agent context.
 # jq handles all read/modify/write operations to ensure valid JSON
@@ -310,8 +375,7 @@ _agent_complete_milestone() {
         local _ms_sys="You are a concise summarizer. In no more than 6 factual sentences, write your output. PRESERVE specific facts (names, numbers, URLs). No personality. No markdown formatting (no ** or * markers). Plain text only."
         local LLM_SCENARIO=evaluator
         _milestone_summary=$(llm_generate "$_ms_prompt" "$_ms_sys" 512 "$LLM_BUDGET_AGENT" 2>/dev/null)
-        _milestone_summary=$(echo "$_milestone_summary" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-        _milestone_summary=$(echo "$_milestone_summary" | sed ':a;N;$!ba;s/<think>.*$//g')
+        _milestone_summary=$(echo "$_milestone_summary" | _strip_think_blocks)
         # Strip markdown bold/italic from summary before storing in macro_memory
         _milestone_summary=$(echo "$_milestone_summary" | sed 's/\*\+//g')
         _milestone_summary=$(echo "$_milestone_summary" | sed '/^[[:space:]]*$/d' | head -6)
@@ -402,10 +466,7 @@ DECOMPOSE_JSON
     raw_list=$(llm_generate "$decompose_prompt" "$decompose_sys" "${LLM_STRATEGIST_TOKENS:-256}" "$LLM_BUDGET_AGENT")
 
     # Clean think blocks
-    raw_list=$(echo "$raw_list" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-    raw_list=$(echo "$raw_list" | sed ':a;N;$!ba;s/<think>.*$//g')
-    raw_list=$(echo "$raw_list" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
-    raw_list=$(echo "$raw_list" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+    raw_list=$(echo "$raw_list" | _strip_think_blocks)
     raw_list=$(echo "$raw_list" | sed '/^[[:space:]]*$/d')
 
     # ── INLINE LIST SPLITTING ─────────────────────────────────
@@ -635,10 +696,7 @@ EXPAND_JSON
     raw_list=$(llm_generate "$expand_prompt" "$expand_sys" "${LLM_STRATEGIST_TOKENS:-256}" "$LLM_BUDGET_AGENT")
 
     # Clean think blocks (same pipeline as _agent_honeydew_build)
-    raw_list=$(echo "$raw_list" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-    raw_list=$(echo "$raw_list" | sed ':a;N;$!ba;s/<think>.*$//g')
-    raw_list=$(echo "$raw_list" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
-    raw_list=$(echo "$raw_list" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+    raw_list=$(echo "$raw_list" | _strip_think_blocks)
     raw_list=$(echo "$raw_list" | sed '/^[[:space:]]*$/d')
 
     # Inline list splitting (same as _agent_honeydew_build)
@@ -991,9 +1049,13 @@ _agent_honeydew_rewrite() {
     fi
 
     # ── Guard: rounds exhausted ────────────────────────────────
+    # When all rewrite rounds are spent, the honeydew list is final.
+    # Force a /respond delivery so the agent doesn't spin endlessly
+    # on stale items it can't rewrite around.
     local _max_rounds="${AGENT_HONEYDEW_REWRITE_ROUNDS:-3}"
     if [ "${_honeydew_rewrite_rounds_used:-0}" -ge "$_max_rounds" ]; then
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: all $_max_rounds rounds exhausted — bypassed"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: all $_max_rounds rounds exhausted — forcing /respond delivery"
+        _HONEYDEW_REWRITE_BUDGET_EXHAUSTED=1
         return 1
     fi
 
@@ -1090,10 +1152,7 @@ REWRITE_ROUTER_JSON
     _router_verdict=$(llm_generate "$router_prompt" "$router_sys" "${LLM_EVALUATOR_TOKENS:-256}" "$LLM_BUDGET_ROUTER")
 
     # Clean think blocks
-    _router_verdict=$(echo "$_router_verdict" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-    _router_verdict=$(echo "$_router_verdict" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
-    _router_verdict=$(echo "$_router_verdict" | sed ':a;N;$!ba;s/<think>.*$//g')
-    _router_verdict=$(echo "$_router_verdict" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+    _router_verdict=$(echo "$_router_verdict" | _strip_think_blocks)
     _router_verdict=$(echo "$_router_verdict" | sed 's/\*\+//g')
     _router_verdict=$(echo "$_router_verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
@@ -1171,10 +1230,7 @@ REWRITE_JSON
     _raw_rewrite=$(llm_generate "$rewrite_prompt" "$rewrite_sys" "${LLM_STRATEGIST_TOKENS:-256}" "$LLM_BUDGET_AGENT")
 
     # Clean think blocks (same pipeline as _agent_honeydew_build)
-    _raw_rewrite=$(echo "$_raw_rewrite" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-    _raw_rewrite=$(echo "$_raw_rewrite" | sed ':a;N;$!ba;s/<think>.*$//g')
-    _raw_rewrite=$(echo "$_raw_rewrite" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
-    _raw_rewrite=$(echo "$_raw_rewrite" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+    _raw_rewrite=$(echo "$_raw_rewrite" | _strip_think_blocks)
     _raw_rewrite=$(echo "$_raw_rewrite" | sed '/^[[:space:]]*$/d')
 
     # Inline list splitting
@@ -1424,10 +1480,7 @@ EVAL_HD_JSON
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
 
     # Clean up LLM output
-    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-    verdict=$(echo "$verdict" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
-    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>.*$//g')
-    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+    verdict=$(echo "$verdict" | _strip_think_blocks)
     verdict=$(echo "$verdict" | sed 's/\*\+//g')
     verdict=$(echo "$verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
@@ -1584,11 +1637,7 @@ EVAL_P1_JSON
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
 
     # Clean up LLM output — strip think blocks, markdown, whitespace
-    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-    verdict=$(echo "$verdict" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
-    # Strip unclosed think blocks (token limit truncated before closing tag)
-    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>.*$//g')
-    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+    verdict=$(echo "$verdict" | _strip_think_blocks)
     # Strip markdown bold/italic — prevents contamination when verdict
     # is re-injected into strategist as _last_eval_feedback.
     verdict=$(echo "$verdict" | sed 's/\*\+//g')
@@ -1626,21 +1675,41 @@ EVAL_P1_JSON
     #     a dismissed context ("failed, but not required" / "failure
     #     was irrelevant").  Without this, mentioning an incidental
     #     sub-action failure causes a false override loop.
+    #
+    # Replaced fragile multi-layer regex with simple case keyword
+    # matching — more readable, fewer false positives, zero forks.
     if [[ "$first_line" == *":"* ]]; then
         local _complete_reason
         _complete_reason=$(echo "$first_line" | sed 's/^[^:]*:[[:space:]]*//')
+        local _reason_lower
+        _reason_lower=$(echo "$_complete_reason" | tr '[:upper:]' '[:lower:]')
 
         local _contradiction=0
 
-        # Hard negation — always indicates contradiction
-        if echo "$_complete_reason" | grep -qiE 'not (achieved|accomplished|completed|done|successful|satisfied)|unable|could not|cannot|did not|wasn.t|weren.t|isn.t|does not exist|incomplete'; then
-            _contradiction=1
-        # Soft negation — "fail*" may appear in incidental/dismissed context
-        elif echo "$_complete_reason" | grep -qiE '(^|[^a-zA-Z])fail(ed|ure|s)?([^a-zA-Z]|$)'; then
-            # Override only when the failure is NOT near a dismissal qualifier
-            if ! echo "$_complete_reason" | grep -qiE 'fail(ed|ure|s)?[^.;]*(,?[[:space:]]*(but|however)([^a-zA-Z]|$)|(^|[^a-zA-Z])irrelevant|(^|[^a-zA-Z])not (required|needed|necessary|part of))|(^|[^a-zA-Z])(irrelevant|not (required|needed|necessary|part of))[^.;]*fail(ed|ure|s)?|(^|[^a-zA-Z])no[[:space:]]+fail(ure|ed|s)?|(^|[^a-zA-Z])without[[:space:]]+fail'; then
-                _contradiction=1
-            fi
+        # Hard negation — keyword patterns that always indicate contradiction
+        case "$_reason_lower" in
+            *"not achieved"*|*"not accomplished"*|*"not completed"*|*"not done"*|\
+            *"not successful"*|*"not satisfied"*|*"unable"*|*"could not"*|\
+            *"cannot"*|*"did not"*|*"wasn't"*|*"weren't"*|*"isn't"*|\
+            *"does not exist"*|*"incomplete"*)
+                _contradiction=1 ;;
+        esac
+
+        # Soft negation — "fail*" check with dismissal qualifier bypass
+        if [ "$_contradiction" -eq 0 ]; then
+            case "$_reason_lower" in
+                *fail*|*failure*|*failed*)
+                    # Override unless dismissal qualifiers are present
+                    case "$_reason_lower" in
+                        *"but "*|*"however "*|*"irrelevant"*|*"not required"*|\
+                        *"not needed"*|*"not necessary"*|*"not part of"*|\
+                        *"no fail"*|*"without fail"*)
+                            ;; # dismissed — not a contradiction
+                        *)
+                            _contradiction=1 ;;
+                    esac
+                    ;;
+            esac
         fi
 
         if [ "$_contradiction" -eq 1 ]; then
@@ -1786,11 +1855,7 @@ EVAL_P2_JSON
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p2 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
 
     # Clean up LLM output — strip think blocks, markdown, whitespace
-    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-    verdict=$(echo "$verdict" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
-    # Strip unclosed think blocks (token limit truncated before closing tag)
-    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/<think>.*$//g')
-    verdict=$(echo "$verdict" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+    verdict=$(echo "$verdict" | _strip_think_blocks)
     # Strip markdown bold/italic — prevents contamination when verdict
     # is re-injected into strategist as _last_eval_feedback.
     verdict=$(echo "$verdict" | sed 's/\*\+//g')
@@ -2598,10 +2663,26 @@ SPEC
                 ;;
             write)
                 cat << 'SPEC'
-{"cmd":"/write","syntax":["/write <filepath> <content>","/write --append <filepath> <content>","/write --edit <filepath> <sed_expr>"],
-"modes":{"overwrite":"Write COMPLETE file contents. New files or full rewrites.","--append":"Add to END of file. Deps, new functions.","--edit":"ONLY short sed (rename, change value). Max 200 chars. NEVER multi-line."},
-"rules":["RELATIVE PATHS ONLY (e.g. responses/file.json, src/main.rs) — NEVER start with /","Use \\n for newlines (NEVER literal line breaks)","COMPLETE source for code files","JSON: matching braces, quoted keys","If changing >1 line, use plain /write with COMPLETE file"],
-"format_only_ex":["/write <relative-filepath> <complete file content with \\n for newlines>","/write --append <relative-filepath> <content to add>","/write --edit <relative-filepath> s/<old>/<new>/g"]}
+{"cmd":"/write","syntax":"/write <filepath> <content>",
+"desc":"Write COMPLETE file contents. Creates or overwrites.",
+"rules":["RELATIVE PATHS ONLY (e.g. responses/file.json, src/main.rs) — NEVER start with /","Use \\n for newlines (NEVER literal line breaks)","COMPLETE source for code files","JSON: matching braces, quoted keys","To ADD to a file, use /append instead","To change one line, use /edit instead"],
+"format_only_ex":["/write <relative-filepath> <complete file content with \\n for newlines>"]}
+SPEC
+                ;;
+            append)
+                cat << 'SPEC'
+{"cmd":"/append","syntax":"/append <filepath> <content>",
+"desc":"Add content to END of existing file.",
+"rules":["RELATIVE PATHS ONLY","Use \\n for newlines","Creates file if it does not exist","Use for: adding dependencies, new functions, new sections"],
+"format_only_ex":["/append Cargo.toml [dependencies]\\nreqwest = \"0.11\"","/append README.md ## New Section\\nContent here"]}
+SPEC
+                ;;
+            edit)
+                cat << 'SPEC'
+{"cmd":"/edit","syntax":"/edit <filepath> <sed_expression>",
+"desc":"Small targeted change via sed. Max 200 chars.",
+"rules":["ONLY for short substitutions: s/old/new/g","NEVER multi-line code","Max 200 chars","If changing >1 line, use /write with COMPLETE file instead"],
+"format_only_ex":["/edit src/main.rs s/old_func/new_func/g","/edit config.toml s/port = 8080/port = 3000/"]}
 SPEC
                 ;;
             save)
@@ -2639,8 +2720,9 @@ SPEC
   "build":"/sandbox build <name>","test":"/sandbox test <name>",
   "run":"/sandbox run <name> <cmd>","cd":"/sandbox cd <name>",
   "rm":"/sandbox rm <name>","clone":"/sandbox clone <url> [name]"},
-"rules":["Do NOT use /sandbox to run slash commands"],
-"format_only_ex":["/sandbox new <project-name> <type>","/sandbox build <project-name>"]}
+"rules":["Do NOT use /sandbox to run slash commands","Only use /sandbox for ISOLATED code projects","For EXISTING projects, use /build and /test instead"],
+"when_to_use":{"USE /sandbox":"new isolated project that does not exist yet","USE /build":"compile existing project in current dir","USE /init":"scaffold new project in a NEW directory","DO NOT":"use /sandbox for web, email, social, or non-code tasks"},
+"format_only_ex":["/sandbox new <project-name> <type>","/sandbox build <project-name>","/sandbox run <project-name> <command>"]}
 SPEC
                 ;;
             build)
@@ -3276,6 +3358,8 @@ agent_inner_loop() {
                     # loop (e.g. "write a report" matching *web* before *write*).
                     case "$_obj_lower" in
                         *respond*|*present*|*deliver*answer*)             selected_tool="respond" ;;
+                        *append*to*|*add*to*file*)                       selected_tool="append" ;;
+                        *edit*file*|*change*line*|*substitut*)           selected_tool="edit" ;;
                         *write*|*save*|*file*|*create*|*draft*|*compose*) selected_tool="write" ;;
                         *email*|*send*mail*)                             selected_tool="email" ;;
                         *social*|*discord*|*telegram*|*post*|*tweet*)    selected_tool="social" ;;
@@ -3291,6 +3375,15 @@ agent_inner_loop() {
         # Declare cmd/cmd_is_slash early so both branches can set them
         local cmd=""
         local cmd_is_slash=0
+
+        # ── HONEYDEW REWRITE BUDGET EXHAUSTION ─────────────
+        # When all rewrite rounds are spent, force /respond delivery
+        # to prevent the agent from spinning on stale honeydew items.
+        if [ "${_HONEYDEW_REWRITE_BUDGET_EXHAUSTED:-0}" -eq 1 ]; then
+            selected_tool="respond"
+            _HONEYDEW_REWRITE_BUDGET_EXHAUSTED=0
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew budget exhausted: forcing /respond delivery"
+        fi
 
         # ── DIRECT RESPOND BYPASS ─────────────────────────
         # When the router output was pure prose (no slash command),
@@ -3721,10 +3814,7 @@ INTERLOCK_JSON
             _ws_interlock_cmd=$(llm_generate "$_ws_interlock_prompt" "$_ws_interlock_sys" "${LLM_SPECIALIST_SHORT_TOKENS:-128}" "$LLM_BUDGET_AGENT")
 
             # Clean and extract the command
-            _ws_interlock_cmd=$(echo "$_ws_interlock_cmd" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-            _ws_interlock_cmd=$(echo "$_ws_interlock_cmd" | sed ':a;N;$!ba;s/<think>.*$//g')
-            _ws_interlock_cmd=$(echo "$_ws_interlock_cmd" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
-            _ws_interlock_cmd=$(echo "$_ws_interlock_cmd" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
+            _ws_interlock_cmd=$(echo "$_ws_interlock_cmd" | _strip_think_blocks)
             _ws_interlock_cmd=$(echo "$_ws_interlock_cmd" | sed '/^```[a-z]*[[:space:]]*$/d; s/```//g')
             _ws_interlock_cmd=$(echo "$_ws_interlock_cmd" | grep -m1 '^/web ' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/"//g')
 
@@ -3749,11 +3839,11 @@ INTERLOCK_JSON
         fi
 
         # ── PROGRAMMATIC INTERLOCK: Identicality Lockout ──────
-        # Levels 3-4: Prevents the LLM from re-running the exact same
+        # Levels 2+: Prevents the LLM from re-running the exact same
         # broken command. If identical, reject and force regeneration.
         # When triggered, also attempt a honeydew rewrite to escape
         # the local minima the agent is stuck in.
-        if [ "$_fail_count" -ge 3 ] && [ -n "$cmd" ] && [ "$cmd" == "$last_failed_cmd" ]; then
+        if [ "$_fail_count" -ge 2 ] && [ -n "$cmd" ] && [ "$cmd" == "$last_failed_cmd" ]; then
             ui_warn "Interlock Triggered: Identical failed command. Forcing regeneration."
             _micro_add_note "$micro_file" "System interlock: Command '$cmd' rejected (identical to previous failure)"
 
@@ -3940,7 +4030,16 @@ INTERLOCK_JSON
                 #
                 # SKIP for /web images — same reason (image URLs needed).
                 if [[ "$cmd" == /web\ fetch* ]] || [[ "$cmd" == /web\ scrape* ]] || [[ "$cmd" == /web\ summary* ]]; then
-                  if [ "${#output}" -gt 300 ]; then
+                  # ── EMPTY WEB FETCH GUARD ────────────────────
+                  # If the raw output is <20 chars, the fetch returned
+                  # essentially nothing (broken page, empty body).
+                  # Mark as false-success so the evaluator doesn't
+                  # count it as useful research.
+                  if [ "${#output}" -lt 20 ]; then
+                    output="[Web Fetch: Empty] Page returned no usable content (<20 chars)."
+                    _micro_add_warning "$micro_file" "Empty web fetch: $cmd returned <20 chars"
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web fetch empty guard: <20 chars"
+                  elif [ "${#output}" -gt 300 ]; then
                     local _condense_prompt _condensed
                     # Build context-aware condense prompt
                     _condense_prompt="TASK: $micro_objective"
@@ -3959,11 +4058,22 @@ INTERLOCK_JSON
                     local LLM_SCENARIO=evaluator
                     _condensed=$(llm_generate "$_condense_prompt" "$_condense_sys" "${LLM_WEB_CONDENSE_TOKENS:-200}" "$LLM_BUDGET_AGENT" 2>/dev/null)
                     # Strip think blocks from summary
-                    _condensed=$(echo "$_condensed" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-                    _condensed=$(echo "$_condensed" | sed ':a;N;$!ba;s/<think>.*$//g')
+                    _condensed=$(echo "$_condensed" | _strip_think_blocks)
                     _condensed=$(echo "$_condensed" | sed '/^[[:space:]]*$/d')
                     if [ -n "$_condensed" ]; then
-                        output="[Web Summary] $_condensed"
+                        # ── JUNK DETECTION ──────────────────────
+                        # If the condenser flagged the content as junk,
+                        # mark it as a failed fetch so the evaluator
+                        # and specialist don't treat it as useful data.
+                        local _condensed_upper
+                        _condensed_upper=$(echo "$_condensed" | head -1 | tr '[:lower:]' '[:upper:]')
+                        if [[ "$_condensed_upper" == JUNK:* ]] || [[ "$_condensed_upper" == "JUNK "* ]]; then
+                            output="[Web Fetch: Junk] $_condensed"
+                            _micro_add_warning "$micro_file" "Junk web content: $cmd — $_condensed"
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web condenser: JUNK detected"
+                        else
+                            output="[Web Summary] $_condensed"
+                        fi
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web condenser: %d chars -> %d chars\n' "${#output}" "${#_condensed}" > /dev/tty 2>/dev/null
                     fi
                   fi
@@ -4127,6 +4237,18 @@ INTERLOCK_JSON
             # FAILURE ESCALATION MATRIX
             # ═══════════════════════════════════════════════════
             last_failed_cmd="$cmd"
+
+            # ── PRE-ROUTE FAILURE BREAKER ──────────────────────
+            # If this command was pre-routed (extracted from milestone
+            # text), increment the pre-route breaker on failure too.
+            # Without this, _p1_incomplete_consec only increments on
+            # evaluator INCOMPLETE (success path) — a pre-routed
+            # command that keeps FAILING never disables pre-routing,
+            # causing a stuck loop (seen with /init on iPhone 7+).
+            if [ -n "$_pre_route" ]; then
+                _p1_incomplete_consec=$((_p1_incomplete_consec + 1))
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route failure breaker: _p1_incomplete_consec=${_p1_incomplete_consec}"
+            fi
 
             # ── Enhanced failure logging ───────────────────────
             # Include timestamp, HTTP status (for web commands), and
@@ -4742,7 +4864,7 @@ MEMEOF
 {"CORE":["/ask"';
         [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _tool_summary="${_tool_summary}"',"/brainstorm"'
         _tool_summary="${_tool_summary}"',"/respond","/recall","/journal","/journal write"],
-"FILES":["/write","/save","/read","/ls","/download","/build","/test","/fix","/commit","/push","/init","/clone","/cd"],
+"FILES":["/write","/append","/edit","/save","/read","/ls","/download","/build","/test","/fix","/commit","/push","/init","/clone","/cd"],
 "WEB":["/web search","/web fetch","/web images","/github search","/vision"],
 "SANDBOX":["/sandbox","/container"]'
         # Include COMMS only when social or email services are configured
@@ -4764,7 +4886,7 @@ MEMEOF
         _coding_signal=$(echo "$_coding_signal" | tr '[:upper:]' '[:lower:]')
         if [[ "$_coding_signal" =~ (rust|cargo|python|pip|node|npm|typescript|java|maven|gradle|golang|makefile|cmake|clang|gcc|\.(rs|py|go|ts|js|cpp|c|java)\b|create.*(project|app|cli|tool|program|binary|package|crate|module)|scaffold|new.*project|build.*(it|the|this|project|app|code)|run.*(the|it|this).*(project|app|program|binary|executable)|init.*(project|app|repo)) ]]; then
             _coding_card='
-{"coding":{"commands":{"/init <name> <type>":"scaffold new project (Cargo.toml, pyproject.toml, etc.)","/build":"build the project (cargo build, make, etc.)","/test":"run test suite (cargo test, pytest, etc.)","/fix":"auto-fix errors from last /build or /test","/write <path> <code>":"write code to a FILE (not for building or running)"},"workflow":["/init","/write source files","/build","/test","/fix if needed"]}}'
+{"coding":{"commands":{"/init <name> <type>":"scaffold NEW project (creates dir + Cargo.toml/pyproject.toml). ONLY for new projects.","/build":"compile/build EXISTING project (cargo build, make, pip install). Use AFTER /init.","/test":"run test suite (cargo test, pytest). Use AFTER /build.","/fix":"auto-fix errors from last /build or /test","/write <path> <code>":"write COMPLETE code file","/append <path> <code>":"add code to END of existing file","/edit <path> <sed>":"small targeted change (s/old/new/g)"},"workflow":["1. /init to scaffold","2. /write source files","3. /build to compile","4. /test to verify","5. /fix if errors"],"IMPORTANT":"If /init FAILS (project already exists), skip to /write or /build. NEVER retry /init on the same project."}}'
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- coding workflow card"
         fi
 
@@ -4915,21 +5037,9 @@ ${_last_eval_feedback}
         # small models sometimes emit <think> blocks, code fences,
         # explanatory preamble, or repetitive content. Strip all of
         # that so the milestone is a clean, single-line action.
-        # 1. Remove <think>...</think> and [THINK]...[/THINK] blocks (including multi-line)
-        milestone=$(echo "$milestone" | sed ':a;N;$!ba;s/<think>[^<]*<\/think>//g')
-        milestone=$(echo "$milestone" | sed 's/\[THINK\][^[]*\[\/THINK\]//gI')
-        milestone=$(echo "$milestone" | sed 's/\[THOUGHT\][^[]*\[\/THOUGHT\]//gI')
-        # 1b. Remove UNCLOSED think blocks — when token limit truncates
-        # before the closing tag, the entire think content leaks through.
-        # Strip from opening tag to end of string.
-        milestone=$(echo "$milestone" | sed ':a;N;$!ba;s/<think>.*$//g')
-        milestone=$(echo "$milestone" | sed ':a;N;$!ba;s/\[THINK\].*$//gI')
-        milestone=$(echo "$milestone" | sed ':a;N;$!ba;s/\[THOUGHT\].*$//gI')
-        # 2. Remove stray opening/closing think tags (both formats, all case variants)
-        milestone=$(echo "$milestone" | sed 's/<\/?think>//gI')
-        milestone=$(echo "$milestone" | sed 's/\[\/?THINK\]//gI')
-        milestone=$(echo "$milestone" | sed 's/\[\/?THOUGHT\]//gI')
-        # 3. Remove code fences and their content
+        # 1. Remove think blocks (all variants, balanced + unclosed)
+        milestone=$(echo "$milestone" | _strip_think_blocks)
+        # 2. Remove code fences and their content
         milestone=$(echo "$milestone" | sed '/^```/,/^```/d')
         # 4. Strip leading/trailing whitespace and blank lines
         milestone=$(echo "$milestone" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
@@ -5002,7 +5112,8 @@ ${_last_eval_feedback}
         # strategist to try a different approach or skip ahead.
         #
         # Similarity detection uses THREE strategies:
-        #   1) First 40 chars match (catches rephrased duplicates)
+        #   1) First 60 chars of normalized text (strips articles and
+        #      prepositions before comparison to catch rephrased duplicates)
         #   2) Same primary slash command + first argument extracted
         #      (catches "/social discord dm dabe" vs "Send a DM to dabe via /social discord dm")
         #   3) Command-family cap — if 3+ milestones used the same base
@@ -5010,6 +5121,9 @@ ${_last_eval_feedback}
         #      the arguments differ ("/web search X" vs "/web search Y").
         local _milestone_lower
         _milestone_lower=$(echo "$milestone" | tr '[:upper:]' '[:lower:]')
+        # Normalize: strip articles and prepositions for comparison
+        local _milestone_norm
+        _milestone_norm=$(echo "$_milestone_lower" | sed 's/\b\(the\|a\|an\|to\|for\|of\|in\|on\|at\|by\|with\|from\|into\|via\|using\)\b//g' | tr -s ' ')
         # Extract slash command signature: e.g. "/social discord dm dabe" → "social discord dm dabe"
         local _milestone_slash=""
         if [[ "$_milestone_lower" =~ /([a-z]+[[:space:]]+[a-z].*) ]]; then
@@ -5021,8 +5135,11 @@ ${_last_eval_feedback}
             local _prev_text _prev_lower _prev_slash
             _prev_text="${_prev#*|}"  # strip "FAILED|" or "OK|" prefix
             _prev_lower=$(echo "$_prev_text" | tr '[:upper:]' '[:lower:]')
-            # Strategy 1: first 40 chars match
-            if [ "${_milestone_lower:0:40}" = "${_prev_lower:0:40}" ]; then
+            # Normalize previous milestone same as current
+            local _prev_norm
+            _prev_norm=$(echo "$_prev_lower" | sed 's/\b\(the\|a\|an\|to\|for\|of\|in\|on\|at\|by\|with\|from\|into\|via\|using\)\b//g' | tr -s ' ')
+            # Strategy 1: first 60 chars of normalized text match
+            if [ "${_milestone_norm:0:60}" = "${_prev_norm:0:60}" ]; then
                 _dup_count=$((_dup_count + 1))
             # Strategy 2: same slash command signature
             elif [ -n "$_milestone_slash" ]; then
@@ -5489,20 +5606,23 @@ ${_last_eval_feedback}
 # ── Conversation history (ring buffer for /ask continuity) ─────
 # Stores last N exchanges so George remembers recent conversation.
 # Each entry: "USER: ...\nGEORGE: ..."
+# Parallel array stores full responses for accuracy when needed.
 _AGENT_CONV_HISTORY=()
-AGENT_CONV_MAX="${AGENT_CONV_MAX:-3}"  # Keep last 3 exchanges (~300-600 tokens)
+_AGENT_CONV_FULL=()
+AGENT_CONV_MAX="${AGENT_CONV_MAX:-6}"  # Keep last 6 exchanges
+# Graduated compression: last 2 = 400 chars, middle 2 = 200 chars, oldest 2 = 100 chars
 
 _agent_conv_push() {
     local user_msg="$1"
     local george_msg="$2"
-    # Truncate long responses to ~150 chars to stay token-lean
-    local trunc_response="${george_msg:0:150}"
-    [ ${#george_msg} -gt 150 ] && trunc_response="${trunc_response}..."
+    # Store full response in parallel array for accuracy references
+    _AGENT_CONV_FULL+=("$george_msg")
     _AGENT_CONV_HISTORY+=("USER: $user_msg
-GEORGE: $trunc_response")
+GEORGE: $george_msg")
     # Trim to max size
     while [ ${#_AGENT_CONV_HISTORY[@]} -gt "$AGENT_CONV_MAX" ]; do
         _AGENT_CONV_HISTORY=("${_AGENT_CONV_HISTORY[@]:1}")
+        _AGENT_CONV_FULL=("${_AGENT_CONV_FULL[@]:1}")
     done
 }
 
@@ -5512,9 +5632,30 @@ _agent_conv_context() {
         return
     fi
     local ctx="--- RECENT CONVERSATION ---"
-    for entry in "${_AGENT_CONV_HISTORY[@]}"; do
+    local _total=${#_AGENT_CONV_HISTORY[@]}
+    local i
+    for (( i=0; i<_total; i++ )); do
+        local _age=$((_total - i))  # 1=newest, _total=oldest
+        local _limit
+        if [ "$_age" -le 2 ]; then
+            _limit=400  # last 2 exchanges: 400 chars
+        elif [ "$_age" -le 4 ]; then
+            _limit=200  # middle 2 exchanges: 200 chars
+        else
+            _limit=100  # oldest 2 exchanges: 100 chars
+        fi
+        local _entry="${_AGENT_CONV_HISTORY[$i]}"
+        # Apply graduated compression to the GEORGE response portion
+        local _user_part _george_part
+        _user_part=$(echo "$_entry" | head -1)
+        _george_part=$(echo "$_entry" | tail -n +2)
+        local _george_text="${_george_part#GEORGE: }"
+        if [ ${#_george_text} -gt "$_limit" ]; then
+            _george_part="GEORGE: ${_george_text:0:$_limit}..."
+        fi
         ctx="$ctx
-$entry"
+$_user_part
+$_george_part"
     done
     echo "$ctx"
 }

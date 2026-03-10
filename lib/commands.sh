@@ -134,7 +134,7 @@ commands_is_safe_auto_route() {
     # when followed by additional words, the user almost certainly means
     # a natural-language instruction, not a slash command.
     case "$first_word" in
-        read|write|test|build|fix|save|plan|ask|push|commit|clone|clear|compact|\
+        read|write|append|edit|test|build|fix|save|plan|ask|push|commit|clone|clear|compact|\
         init|reflect|think|recall|debug|model|status|email|backup|web|cd|ls|files|git|\
         service)
             return 1 ;;
@@ -301,17 +301,24 @@ commands_catalog() {
 {"SYSTEM CAPABILITIES & TOOLS":{"time":"${_catalog_ts}",
 "note":"Do NOT quote arguments (parsed by whitespace). Never guess syntax; use /recall <cmd>.",
 "CORE WORKFLOW":["READ: /recall or source","GATHER: /web, /secret get","INGEST: /journal write","RESPOND: execute"],
-"DEFAULT RULE":"If the task does NOT explicitly require /write, /save, /email, /social, /commit, or /push, use /respond to deliver the answer.",
+"DEFAULT RULE":"If the task does NOT explicitly require /write, /append, /edit, /save, /email, /social, /commit, or /push, use /respond to deliver the answer.",
 "commands":{
   "PROJECT & CODE (TOOLS — gather info, execute work)":{
     "/init":{"syntax":"/init <name> <lang>","desc":"Scaffold project (rust,python,rl,data,shell)",
       "format_only_ex":["/init <name> <lang>"],
       "fill":{"<name>":"project name, no spaces, use underscores","<lang>":"one of: rust, python, rl, data, shell"}},
-    "/write":{"syntax":"/write <file> <content>","desc":"Write/overwrite file (creates dirs) [DELIVERY]",
-      "variants":{"--append":"Append to end of file","--edit":"Sed substitution ONLY (short, max 200 chars)"},
-      "rules":["Use \\\\n for newlines","--edit ONLY for short sed, NEVER multi-line code","Include COMPLETE source for code files","Creates parent dirs automatically"],
-      "format_only_ex":["/write <filepath> <complete file content with \\\\n>","/write --append <filepath> <content to add>","/write --edit <filepath> s/<old>/<new>/g"],
-      "fill":{"<filepath>":"target file path","<complete file content>":"entire file source, use \\\\n for newlines","<old>":"text to find","<new>":"replacement text"}},
+    "/write":{"syntax":"/write <file> <content>","desc":"Write/overwrite COMPLETE file (creates dirs) [DELIVERY]",
+      "rules":["Use \\\\n for newlines","Include COMPLETE source for code files","Creates parent dirs automatically","To ADD to a file use /append, to change one line use /edit"],
+      "format_only_ex":["/write <filepath> <complete file content with \\\\n>"],
+      "fill":{"<filepath>":"target file path","<complete file content>":"entire file source, use \\\\n for newlines"}},
+    "/append":{"syntax":"/append <file> <content>","desc":"Append content to END of existing file",
+      "rules":["Use \\\\n for newlines","Creates file if it does not exist","Use for: deps, new functions, new sections"],
+      "format_only_ex":["/append <filepath> <content to add>"],
+      "fill":{"<filepath>":"target file path","<content>":"text to append"}},
+    "/edit":{"syntax":"/edit <file> <sed_expr>","desc":"Small sed substitution (max 200 chars)",
+      "rules":["ONLY for short substitutions: s/old/new/g","NEVER multi-line code","Max 200 chars","If changing >1 line, use /write with COMPLETE file"],
+      "format_only_ex":["/edit <filepath> s/<old>/<new>/g"],
+      "fill":{"<filepath>":"target file path","<old>":"text to find","<new>":"replacement text"}},
     "/read":{"syntax":"/read <file>","desc":"Read file contents (first 100 lines)",
       "format_only_ex":["/read <filepath>"],"fill":{"<filepath>":"path to file to read"}},
     "/ls":{"syntax":"/ls [path] [depth]","desc":"List files as tree (depth 1-8, default 3)",
@@ -427,7 +434,7 @@ commands_catalog() {
 },
 "WORKFLOW PATTERNS":[
   {"pattern":"List files","flow":"/ls [path] [depth]"},
-  {"pattern":"Read before edit","flow":"/ls -> /read <file> -> /write <file>"},
+  {"pattern":"Read before edit","flow":"/ls -> /read <file> -> /edit or /write <file>"},
   {"pattern":"Review journal","flow":"/journal (read only)","wrong":"/write or /web search"},
   {"pattern":"Check social","flow":"/social discord read <channel>","wrong":"/web search 'discord'"},
   {"pattern":"Research topic","flow":"/recall <keywords> -> /web search <keywords> -> /web fetch <url>"},

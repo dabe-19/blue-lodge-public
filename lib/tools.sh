@@ -885,10 +885,15 @@ tools_expand_file_refs() {
     # Build result word by word
     local result=""
     local token prev_token=""
+    local -A _ef_seen=()  # dedup: skip files already expanded in this call
 
     local _ef_tmp
     _ef_tmp=$(mktemp "${TMPDIR:-/tmp}/tools-expand.XXXXXX")
-    printf '%s\0' $text > "$_ef_tmp"
+    # Quote $text to prevent glob expansion (*.md → GEORGE.md README.md ...)
+    # and word-split the text safely by reading into an array first.
+    local -a _ef_words
+    read -ra _ef_words <<< "$text"
+    printf '%s\0' "${_ef_words[@]}" > "$_ef_tmp"
     while IFS= read -r -d '' token || [ -n "$token" ]; do
         # Skip empty tokens from leading/trailing spaces
         [ -z "$token" ] && continue
@@ -949,6 +954,13 @@ tools_expand_file_refs() {
             fi
 
             if [ -n "$resolved" ]; then
+                # Dedup: skip files already expanded in this call
+                if [ -n "${_ef_seen[$resolved]:-}" ]; then
+                    result="${result:+$result }${token}"
+                    prev_token="$token"
+                    continue
+                fi
+                _ef_seen[$resolved]=1
                 local _content
                 if [[ "${ext}" == "pdf" ]]; then
                     # PDF: use text extraction

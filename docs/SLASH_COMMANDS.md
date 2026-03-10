@@ -21,6 +21,8 @@ All commands at a glance. For detailed usage, run `/help` inside George or see t
 | `/push` | `[branch]` | Push to GitHub |
 | `/clone` | `<repo>` | Clone + auto-setup into sandbox |
 | `/write` | `<file> <content>` | Write/overwrite a file |
+| `/append` | `<file> <content>` | Append to end of file |
+| `/edit` | `<file> <sed_expr>` | Small sed substitution |
 | `/save` | `<file> <content>` | Alias for /write |
 | `/read` | `<file>` | Read a file |
 | `/download` | `<url> [dest]` | Download URL or copy file |
