@@ -841,6 +841,12 @@ _cmd_limits() {
             else
                 _limits_set AGENT_HONEYDEW_MATCH "Honeydew match score" "$value" 1 10
             fi ;;
+        honeydew-count)
+            if [ -z "$value" ]; then
+                ui_info "Honeydew initial task count (upper bound): $AGENT_HONEYDEW_INITIAL_COUNT (default: 4)"
+            else
+                _limits_set AGENT_HONEYDEW_INITIAL_COUNT "Honeydew initial count" "$value" 2 10
+            fi ;;
         web-search-repeat)
             if [ -z "$value" ]; then
                 ui_info "Web search repeat limit: ${AGENT_WEB_SEARCH_CONSEC_MAX:-20} (default: 20)"
@@ -1105,6 +1111,7 @@ _cmd_limits() {
             AGENT_MAX_MILESTONE_RETRIES=20
             AGENT_MAX_CMD_FAMILY=10
             AGENT_HONEYDEW_MATCH=3
+            AGENT_HONEYDEW_INITIAL_COUNT=4
             AGENT_WEB_SEARCH_CONSEC_MAX=20
             AGENT_EVAL_REC_CHARS=120
             AGENT_PRESSURE_RELIEF=2
@@ -1424,6 +1431,7 @@ _cmd_limits() {
             ui_dim "    milestone-retries N — Max retries of same milestone (current: $AGENT_MAX_MILESTONE_RETRIES)"
             ui_dim "    cmd-family N     — Max milestones with same base command (current: $AGENT_MAX_CMD_FAMILY)"
             ui_dim "    honeydew-match N — Min keyword score for honeydew auto-check (current: $AGENT_HONEYDEW_MATCH)"
+            ui_dim "    honeydew-count N — Upper bound on initial honeydew items (current: $AGENT_HONEYDEW_INITIAL_COUNT)"
             ui_dim "    web-search-repeat N — Max consecutive /web search before forced fetch (current: ${AGENT_WEB_SEARCH_CONSEC_MAX:-20})"
             ui_dim "    tight-parsing on|off — Web search query cleaning mode: off=loose, on=strict (current: $([ "${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}" -eq 1 ] && echo on || echo off))"
             ui_dim "    web-search-length N — Max character length for web search queries (current: ${AGENT_WEB_SEARCH_MAX_LENGTH:-160})"

@@ -30,6 +30,7 @@ AGENT_WEB_SUFFICIENCY="${AGENT_WEB_SUFFICIENCY:-20}"  # Web actions before suffi
 AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-20}"  # Max times to retry same milestone
 AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-10}"               # Max milestones with same base command
 AGENT_HONEYDEW_MATCH="${AGENT_HONEYDEW_MATCH:-3}"              # Min keyword score to auto-check honeydew item
+AGENT_HONEYDEW_INITIAL_COUNT="${AGENT_HONEYDEW_INITIAL_COUNT:-4}"  # Upper bound on initial honeydew items (prompt hint)
 AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto | interactive | disabled
 AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-20}"  # Max consecutive /web search before fallback to fetch/scrape
 AGENT_WEB_SEARCH_TIGHT_PARSING="${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}"  # Tight web query parsing: 0=loose (keep quotes/negations/operators), 1=strict (strip all)
@@ -447,17 +448,14 @@ _agent_honeydew_build() {
 
 TASK: $task
 
-$(cat << 'DECOMPOSE_JSON'
-{"output":"numbered list ONLY",
- "each_item":"short imperative sentence — WHAT to achieve, not HOW",
- "describe":"GOAL only — never tools, commands, URLs, shell syntax",
- "good":"Identify the key objectives for the project",
- "bad":["Run curl -s https://...","Use /web search to find..."],
- "count":"2-5 items (simple tasks: 1-2)",
- "order":"by dependency (research→writing→sending)",
- "never":["verification steps","confirmation steps","cleanup steps","checkboxes"]}
-DECOMPOSE_JSON
-)"
+{\"output\":\"numbered list ONLY\",
+ \"each_item\":\"short imperative sentence — WHAT to achieve, not HOW\",
+ \"describe\":\"GOAL only — never tools, commands, URLs, shell syntax\",
+ \"good\":\"Identify the key objectives for the project\",
+ \"bad\":[\"Run curl -s https://...\",\"Use /web search to find...\"],
+ \"count\":\"2-${AGENT_HONEYDEW_INITIAL_COUNT} items (simple tasks: 2-3)\",
+ \"order\":\"by dependency (research→writing→sending)\",
+ \"never\":[\"verification steps\",\"confirmation steps\",\"cleanup steps\",\"checkboxes\"]}"
 
     local decompose_sys="You are a task decomposition engine. Output ONLY a numbered list of general objectives. Each item describes WHAT to accomplish, not HOW or which tool to use. No commands, no URLs, no shell syntax. No explanation, no headers, no markdown formatting. Plain numbered list only."
 
