@@ -2711,9 +2711,14 @@ describe "Dynamic honeydew rewrite configuration"
     assert_ok $? "AGENT_HONEYDEW_REWRITE must default to 1"
   }
 
-  it "AGENT_HONEYDEW_REWRITE_ROUNDS defaults to 8" && {
-    grep -q 'AGENT_HONEYDEW_REWRITE_ROUNDS.*:-8' "$LODGE_DIR/lib/agent.sh"
-    assert_ok $? "AGENT_HONEYDEW_REWRITE_ROUNDS must default to 8"
+  it "AGENT_HONEYDEW_REWRITE_ROUNDS defaults to 3" && {
+    grep -q 'AGENT_HONEYDEW_REWRITE_ROUNDS.*:-3' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "AGENT_HONEYDEW_REWRITE_ROUNDS must default to 3"
+  }
+
+  it "AGENT_HONEYDEW_REWRITE_CADENCE defaults to 2" && {
+    grep -q 'AGENT_HONEYDEW_REWRITE_CADENCE.*:-2' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "AGENT_HONEYDEW_REWRITE_CADENCE must default to 2"
   }
 
 describe "Dynamic honeydew rewrite function"
@@ -2838,6 +2843,30 @@ describe "Dynamic honeydew rewrite integration"
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'macro_memory refreshed after honeydew rewrite'
     assert_ok $? "agent_run must refresh macro_memory after rewrite"
+  }
+
+  it "agent_run initializes _honeydew_rewrite_last_ms cadence watermark" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_honeydew_rewrite_last_ms=0'
+    assert_ok $? "agent_run must initialize cadence watermark"
+  }
+
+  it "rewrite has cadence guard checking AGENT_HONEYDEW_REWRITE_CADENCE" && {
+    body=$(declare -f _agent_honeydew_rewrite)
+    echo "$body" | grep -q 'AGENT_HONEYDEW_REWRITE_CADENCE'
+    assert_ok $? "rewrite must check AGENT_HONEYDEW_REWRITE_CADENCE"
+  }
+
+  it "rewrite cadence gate is bypassed when force_rewrite=1" && {
+    body=$(declare -f _agent_honeydew_rewrite)
+    echo "$body" | grep -q 'force_rewrite.*-ne 1'
+    assert_ok $? "cadence gate must skip when force_rewrite is active"
+  }
+
+  it "rewrite updates _honeydew_rewrite_last_ms after successful rewrite" && {
+    body=$(declare -f _agent_honeydew_rewrite)
+    echo "$body" | grep -q '_honeydew_rewrite_last_ms='
+    assert_ok $? "rewrite must update cadence watermark"
   }
 
 # ── Web Search Tight Parsing ──────────────────────────────────

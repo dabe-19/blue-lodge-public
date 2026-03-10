@@ -575,7 +575,8 @@ _agent_honeydew_rewrite() {
 
 **Guards**:
 - `AGENT_HONEYDEW_REWRITE=1` must be enabled
-- Maximum `AGENT_HONEYDEW_REWRITE_ROUNDS=8` rewrites per task
+- Maximum `AGENT_HONEYDEW_REWRITE_ROUNDS=3` rewrites per task
+- `AGENT_HONEYDEW_REWRITE_CADENCE=2` — minimum new milestones between rewrites (prevents constant re-evaluation; forced rewrites from interlock/pressure-relief bypass this gate)
 - Clears stale research buffer and micro_memory on rewrite
 
 ### Honeydew Expansion

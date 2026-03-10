@@ -715,7 +715,7 @@ _cmd_limits() {
                 local _rewrite_label="disabled"
                 [ "${AGENT_HONEYDEW_REWRITE:-0}" -eq 1 ] && _rewrite_label="enabled"
                 ui_info "Honeydew rewrite: $_rewrite_label (default: enabled)"
-                ui_info "Rewrite rounds: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-8} (default: 8)"
+                ui_info "Rewrite rounds: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-3} (default: 3)"
             else
                 if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
                     AGENT_HONEYDEW_REWRITE=1
@@ -729,9 +729,16 @@ _cmd_limits() {
             fi ;;
         rewrite-rounds)
             if [ -z "$value" ]; then
-                ui_info "Honeydew rewrite rounds: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-8} (default: 8)"
+                ui_info "Honeydew rewrite rounds: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-3} (default: 3)"
             else
                 _limits_set AGENT_HONEYDEW_REWRITE_ROUNDS "Rewrite rounds" "$value" 1 20
+            fi ;;
+        rewrite-cadence)
+            if [ -z "$value" ]; then
+                ui_info "Honeydew rewrite cadence: ${AGENT_HONEYDEW_REWRITE_CADENCE:-2} milestones (default: 2)"
+                ui_dim "  Min new milestones between rewrites. 0=every iteration (old behavior)."
+            else
+                _limits_set AGENT_HONEYDEW_REWRITE_CADENCE "Rewrite cadence" "$value" 0 10
             fi ;;
         force-rewrite)
             if [ -z "$value" ]; then
@@ -1045,7 +1052,8 @@ _cmd_limits() {
             AGENT_DM_SCAN_CHARS=80
             AGENT_HONEYDEW_EXPAND=0
             AGENT_HONEYDEW_REWRITE=1
-            AGENT_HONEYDEW_REWRITE_ROUNDS=8
+            AGENT_HONEYDEW_REWRITE_ROUNDS=3
+            AGENT_HONEYDEW_REWRITE_CADENCE=2
             AGENT_HONEYDEW_MAX_ITEMS=16
             AGENT_STEP_DELAY=1
             AGENT_EVAL_MODE=auto
@@ -1290,7 +1298,8 @@ _cmd_limits() {
             local _rewrite_show="disabled"
             [ "${AGENT_HONEYDEW_REWRITE:-0}" -eq 1 ] && _rewrite_show="enabled"
             printf "  %-22s %s\n" "Honeydew rewrite:" "$_rewrite_show  (default: enabled)"
-            printf "  %-22s %s\n" "Rewrite rounds:" "${AGENT_HONEYDEW_REWRITE_ROUNDS:-8}  (default: 8)"
+            printf "  %-22s %s\n" "Rewrite rounds:" "${AGENT_HONEYDEW_REWRITE_ROUNDS:-3}  (default: 3)"
+            printf "  %-22s %s\n" "Rewrite cadence:" "${AGENT_HONEYDEW_REWRITE_CADENCE:-2}  (default: 2)"
             printf "  %-22s %s\n" "Subtask depth:" "$AGENT_MAX_DEPTH  (default: 3)"
             printf "  %-22s %s\n" "Honeydew max items:" "$AGENT_HONEYDEW_MAX_ITEMS  (default: 16)"
             printf "  %-22s %s\n" "Macro milestones:" "$AGENT_MAX_STEPS  (default: 40)"
@@ -1360,7 +1369,8 @@ _cmd_limits() {
             ui_dim "    steps N         — Max steps per plan/subtask (current: $AGENT_PLAN_STEPS)"
             ui_dim "    expand on|off   — Honeydew subtask expansion (current: $([ "${AGENT_HONEYDEW_EXPAND:-0}" -eq 1 ] && echo on || echo off))"
             ui_dim "    rewrite on|off  — Dynamic honeydew rewrite after milestones (current: $([ "${AGENT_HONEYDEW_REWRITE:-0}" -eq 1 ] && echo on || echo off))"
-            ui_dim "    rewrite-rounds N — Max honeydew rewrite rounds per task (current: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-8})"
+            ui_dim "    rewrite-rounds N — Max honeydew rewrite rounds per task (current: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-3})"
+            ui_dim "    rewrite-cadence N — Min milestones between rewrites, 0=every iter (current: ${AGENT_HONEYDEW_REWRITE_CADENCE:-2})"
             ui_dim "    force-rewrite on|off — Force rewrite on interlock/failure, bypass LLM router (current: $([ "${AGENT_FORCE_REWRITE:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    depth N         — Subtask recursion depth (current: $AGENT_MAX_DEPTH)"
             ui_dim "    max-items N     — Max honeydew items before expansion suppressed (current: $AGENT_HONEYDEW_MAX_ITEMS)"

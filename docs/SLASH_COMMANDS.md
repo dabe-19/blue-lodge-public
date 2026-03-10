@@ -59,7 +59,7 @@ All commands at a glance. For detailed usage, run `/help` inside George or see t
 | `/think` | `[on\|off\|bright\|dim\|hide\|test]` | Toggle thinking mode |
 | `/debug` | `[on\|off\|toggle]` | Toggle debug output |
 | `/soul` | `[on\|off]` | Toggle soul injection level |
-| `/limits` | `[steps\|depth\|milestones\|inner\|delay\|rewrite\|rewrite-rounds\|ask\|brainstorm\|reset]` | Planning limits & toggles |
+| `/limits` | `[steps\|depth\|milestones\|inner\|delay\|rewrite\|rewrite-rounds\|rewrite-cadence\|ask\|brainstorm\|reset]` | Planning limits & toggles |
 | `/model` | `[temp\|repeat\|presence] [value]` | Sampling parameters |
 | `/models` | `[list\|status\|select\|single\|dual]` | Model library |
 | `/config` | `[show\|save\|reset\|edit]` | Persistent configuration |
@@ -306,7 +306,8 @@ The `/limits` command provides runtime control over George's planning and execut
 | `depth` | `AGENT_MAX_DEPTH` | 2 | Subtask recursion ceiling |
 | `expand` | `AGENT_HONEYDEW_EXPAND` | off | Honeydew subtask expansion toggle |
 | `rewrite` | `AGENT_HONEYDEW_REWRITE` | off | Dynamic honeydew rewrite after milestones |
-| `rewrite-rounds` | `AGENT_HONEYDEW_REWRITE_ROUNDS` | 2 | Max rewrite rounds per task |
+| `rewrite-rounds` | `AGENT_HONEYDEW_REWRITE_ROUNDS` | 3 | Max rewrite rounds per task |
+| `rewrite-cadence` | `AGENT_HONEYDEW_REWRITE_CADENCE` | 2 | Min new milestones between rewrites |
 | `milestones` | `AGENT_MAX_STEPS` | 20 | Macro loop milestone ceiling |
 | `inner` | `AGENT_INNER_LOOPS` | 6 | Inner loop escalation retries |
 | `delay` | `AGENT_STEP_DELAY` | 1 | Seconds between milestones |

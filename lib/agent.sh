@@ -23,7 +23,8 @@ AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-3}"        # Subtask recursion depth (3 = th
 AGENT_HONEYDEW_EXPAND="${AGENT_HONEYDEW_EXPAND:-0}"  # Subtask expansion: 0=disabled, 1=enabled
 AGENT_HONEYDEW_MAX_ITEMS="${AGENT_HONEYDEW_MAX_ITEMS:-16}"  # Max honeydew items before expansion is suppressed
 AGENT_HONEYDEW_REWRITE="${AGENT_HONEYDEW_REWRITE:-1}"    # Dynamic honeydew rewrite: 0=disabled, 1=enabled
-AGENT_HONEYDEW_REWRITE_ROUNDS="${AGENT_HONEYDEW_REWRITE_ROUNDS:-8}"  # Global honeydew rewrite limit (all paths: normal, pressure relief, auto-recovery)
+AGENT_HONEYDEW_REWRITE_ROUNDS="${AGENT_HONEYDEW_REWRITE_ROUNDS:-3}"  # Global honeydew rewrite limit (all paths: normal, pressure relief, auto-recovery)
+AGENT_HONEYDEW_REWRITE_CADENCE="${AGENT_HONEYDEW_REWRITE_CADENCE:-2}"  # Min new milestones between rewrites (0=every iteration)
 AGENT_FORCE_REWRITE="${AGENT_FORCE_REWRITE:-1}"          # Force honeydew rewrite in interlock/failure recovery (bypass Phase 1 router): 0=disabled, 1=enabled
 AGENT_WEB_SUFFICIENCY="${AGENT_WEB_SUFFICIENCY:-20}"  # Web actions before sufficiency signal
 AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-20}"  # Max times to retry same milestone
@@ -970,8 +971,10 @@ _agent_smart_route() {
 #
 # Guards:
 #   - AGENT_HONEYDEW_REWRITE toggle (0=disabled, 1=enabled)
-#   - AGENT_HONEYDEW_REWRITE_ROUNDS cap (default 2)
+#   - AGENT_HONEYDEW_REWRITE_ROUNDS cap (default 3)
+#   - AGENT_HONEYDEW_REWRITE_CADENCE — min new milestones between rewrites
 #   - _honeydew_rewrite_rounds_used counter (scoped per task in agent_run)
+#   - _honeydew_rewrite_last_ms counter (milestones at last rewrite)
 #
 # Args: $1=macro_file, $2=micro_file, $3=workdir
 # Returns 0 if rewrite occurred, 1 if skipped/kept.
@@ -988,7 +991,7 @@ _agent_honeydew_rewrite() {
     fi
 
     # ── Guard: rounds exhausted ────────────────────────────────
-    local _max_rounds="${AGENT_HONEYDEW_REWRITE_ROUNDS:-8}"
+    local _max_rounds="${AGENT_HONEYDEW_REWRITE_ROUNDS:-3}"
     if [ "${_honeydew_rewrite_rounds_used:-0}" -ge "$_max_rounds" ]; then
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: all $_max_rounds rounds exhausted — bypassed"
         return 1
@@ -1004,6 +1007,19 @@ _agent_honeydew_rewrite() {
         _ms_count=$(jq '.completed_milestones | length' "$macro_file" 2>/dev/null || echo 0)
     fi
     [ "$_ms_count" -eq 0 ] && return 1
+
+    # ── Guard: milestone cadence — don't rewrite too often ─────
+    # Require N new milestones completed since the last rewrite
+    # before considering another. Forced rewrites (interlock,
+    # pressure relief) bypass this gate to preserve recovery.
+    local _cadence="${AGENT_HONEYDEW_REWRITE_CADENCE:-2}"
+    if [ "$force_rewrite" -ne 1 ] && [ "$_cadence" -gt 0 ]; then
+        local _since_last=$(( _ms_count - ${_honeydew_rewrite_last_ms:-0} ))
+        if [ "$_since_last" -lt "$_cadence" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: cadence gate — $_since_last new milestones < $_cadence required"
+            return 1
+        fi
+    fi
 
     # ── Guard: need pending items to rewrite ───────────────────
     local _pending_count
@@ -1047,19 +1063,24 @@ ${_milestone_ctx}${_failure_section}
 
 Based on what the completed milestones have revealed (and any failure data above), should the PENDING (non-completed) honeydew items be rewritten to better serve the original task?
 
+IMPORTANT: Default to KEEP. Only say REWRITE if the pending items are genuinely misaligned with the original task. Minor wording improvements or incremental refinements do NOT justify a rewrite. The existing list is working — rewrites cost time and risk drifting from the objective.
+
 $(cat << 'REWRITE_ROUTER_JSON'
 {"classify":"REWRITE|KEEP",
- "REWRITE_when":["pending items miss key entities/names from original task",
-   "milestone discoveries change the scope of remaining work",
-   "pending items are too generic given what is now known"],
- "KEEP_when":["pending items already align with original task",
+ "REWRITE_when":["pending items contradict or miss CRITICAL entities from original task",
+   "milestone discoveries fundamentally change the scope of remaining work",
+   "pending items are completely wrong given what is now known"],
+ "KEEP_when":["pending items roughly align with original task (even if imperfect)",
    "no significant new information from milestones",
-   "list is already specific enough"],
+   "list is already specific enough",
+   "items could be slightly better but are still directionally correct",
+   "rewording would be cosmetic, not structural"],
+ "default":"KEEP — only rewrite when the list is genuinely broken",
  "respond":"REWRITE or KEEP: <one-sentence reason>"}
 REWRITE_ROUTER_JSON
 )"
 
-    local router_sys="Honeydew list quality router. Decide if pending items need rewriting based on milestone discoveries vs. original task intent. One word verdict: REWRITE or KEEP, followed by a brief reason."
+    local router_sys="Honeydew list quality router. Default verdict: KEEP. Only say REWRITE when pending items are genuinely misaligned with the original task — not for minor improvements. One word verdict: REWRITE or KEEP, followed by a brief reason."
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: router evaluating (round $((${_honeydew_rewrite_rounds_used:-0} + 1))/$_max_rounds)"
     ui_think "Honeydew rewrite router: evaluating list quality..."
@@ -1193,8 +1214,9 @@ REWRITE_JSON
         .items = [.items | to_entries[] | .value + {"id": (.key + 1)}]
     ' "$hd_file" > "$tmp" && mv "$tmp" "$hd_file"
 
-    # Increment the rounds counter
+    # Increment the rounds counter and record milestone watermark
     _honeydew_rewrite_rounds_used=$(( ${_honeydew_rewrite_rounds_used:-0} + 1 ))
+    _honeydew_rewrite_last_ms=$_ms_count
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: replaced $_pending_count pending items with $_new_count new items (round ${_honeydew_rewrite_rounds_used}/$_max_rounds)"
     ui_ok "Honeydew rewrite: updated $_new_count pending items (round ${_honeydew_rewrite_rounds_used}/$_max_rounds)"
@@ -3736,7 +3758,7 @@ INTERLOCK_JSON
             _micro_add_note "$micro_file" "System interlock: Command '$cmd' rejected (identical to previous failure)"
 
             # Auto-recovery: honeydew rewrite on interlock
-            local _il_max_rewrite="${AGENT_HONEYDEW_REWRITE_ROUNDS:-8}"
+            local _il_max_rewrite="${AGENT_HONEYDEW_REWRITE_ROUNDS:-3}"
             if [ "${_honeydew_rewrite_rounds_used:-0}" -lt "$_il_max_rewrite" ] && declare -f _agent_honeydew_rewrite &>/dev/null; then
                 local _il_fail_ctx=""
                 [ -f "$fail_file" ] && _il_fail_ctx=$(tail -20 "$fail_file" 2>/dev/null)
@@ -4635,6 +4657,9 @@ MEMEOF
     # Dynamic honeydew rewrite: track how many rewrite rounds have
     # been used this task. Capped by AGENT_HONEYDEW_REWRITE_ROUNDS.
     local _honeydew_rewrite_rounds_used=0
+    # Cadence watermark: milestones completed at time of last rewrite.
+    # Used by the cadence gate to enforce N new milestones between rewrites.
+    local _honeydew_rewrite_last_ms=0
     # Auto-recovery flag: set by inner loop when honeydew rewrite fires
     # on escalation exhaustion. Checked by macro loop for feedback.
     local _AGENT_AUTO_RECOVERED=0
