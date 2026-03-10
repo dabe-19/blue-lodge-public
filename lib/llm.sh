@@ -1068,6 +1068,9 @@ llm_ensure() {
 # sleep), this detects it and either restarts or falls back.
 # Returns 0 = healthy, 1 = no backend available.
 llm_repl_health_check() {
+    # Provider harness: no local backend needed
+    [ -n "${GEORGE_PROVIDER:-}" ] && return 0
+
     local backend
     backend=$(_llm_detect_backend 2>/dev/null)
 

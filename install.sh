@@ -52,6 +52,7 @@ err()   { printf " ${RED}✗${RESET} %s\n" "$1"; }
 # ── Detect environment ────────────────────────────────────────
 IS_TERMUX=0
 IS_PROOT=0
+IS_ISH=0
 if [ -n "${TERMUX_VERSION:-}" ] || [ -d "/data/data/com.termux" ]; then
     IS_TERMUX=1
 fi
@@ -59,6 +60,12 @@ fi
 # Inside proot, termux-api commands hang forever — must NOT enable LODGE_TERMUX_API.
 if [ "$(id -u)" = "0" ] || [ -d /host-rootfs ] || [ -n "${PROOT_TMP_DIR:-}" ]; then
     IS_PROOT=1
+fi
+# Detect iSH (Alpine Linux on iOS/iPadOS).
+# iSH exposes /proc/ish/version; fallback: Alpine + i686 arch.
+# No Ollama/llama-server possible — cloud providers only.
+if [ -f /proc/ish/version ] || ([ -f /etc/os-release ] && grep -qi 'alpine' /etc/os-release 2>/dev/null && [ "$(uname -m)" = "i686" ]); then
+    IS_ISH=1
 fi
 
 # ── Write shell config IMMEDIATELY after cleanup ─────────────
@@ -119,7 +126,9 @@ done
 
 echo ""
 printf " ${BOLD}⌂ George Installer${RESET}\n"
-if [ "$IS_TERMUX" -eq 1 ]; then
+if [ "$IS_ISH" -eq 1 ]; then
+    printf " ${DIM}Detected: iSH (Alpine Linux on iOS) — cloud-only mode${RESET}\n"
+elif [ "$IS_TERMUX" -eq 1 ]; then
     printf " ${DIM}Detected: Termux (native Android)${RESET}\n"
 fi
 echo ""
@@ -136,7 +145,18 @@ command -v sqlite3 &>/dev/null || MISSING+=("sqlite3")
 if [ ${#MISSING[@]} -gt 0 ]; then
     warn "Missing: ${MISSING[*]}"
     info "Installing..."
-    if [ "$IS_TERMUX" -eq 1 ] && [ "$IS_PROOT" -eq 0 ]; then
+    if [ "$IS_ISH" -eq 1 ] || command -v apk &>/dev/null; then
+        # iSH / Alpine: use apk; sqlite3 package is 'sqlite'
+        local_pkgs=()
+        for dep in "${MISSING[@]}"; do
+            if [ "$dep" = "sqlite3" ]; then
+                local_pkgs+=("sqlite")
+            else
+                local_pkgs+=("$dep")
+            fi
+        done
+        apk add --no-cache "${local_pkgs[@]}"
+    elif [ "$IS_TERMUX" -eq 1 ] && [ "$IS_PROOT" -eq 0 ]; then
         # Native Termux uses 'sqlite' not 'sqlite3' as the package name
         local_pkgs=()
         for dep in "${MISSING[@]}"; do
@@ -173,7 +193,9 @@ if ! command -v pdftotext &>/dev/null; then
     printf "  Install poppler-utils for better PDF support? [y/N] "
     read -r _install_poppler
     if [[ "$_install_poppler" =~ ^[Yy] ]]; then
-        if [ "$IS_PROOT" -eq 1 ] && command -v apt &>/dev/null; then
+        if [ "$IS_ISH" -eq 1 ] || command -v apk &>/dev/null; then
+            apk add --no-cache poppler-utils 2>/dev/null || warn "poppler-utils install failed — will use fallback"
+        elif [ "$IS_PROOT" -eq 1 ] && command -v apt &>/dev/null; then
             # proot-distro Ubuntu: apt works, pkg does not
             apt install -y -qq poppler-utils 2>/dev/null || warn "poppler-utils install failed — will use fallback"
         elif [ "$IS_TERMUX" -eq 1 ] && [ "$IS_PROOT" -eq 0 ]; then
@@ -210,8 +232,33 @@ if [ "$IS_TERMUX" -eq 1 ] && [ "$IS_PROOT" -eq 0 ]; then
     fi
 fi
 
+# ── 1d. iSH extras (gawk, coreutils, grep, sed, bash) ────────
+# iSH ships BusyBox with minimal tool variants. George needs
+# GNU grep (-oE), GNU awk, GNU date, readlink, bash 4+, etc.
+if [ "$IS_ISH" -eq 1 ]; then
+    ISH_EXTRAS=()
+    # bash 4+ for associative arrays, namerefs
+    command -v bash &>/dev/null || ISH_EXTRAS+=("bash")
+    # GNU grep for -oE (extended regex)
+    command -v gawk &>/dev/null || ISH_EXTRAS+=("gawk")
+    # GNU coreutils for readlink -f, mktemp, date, etc.
+    command -v readlink &>/dev/null || ISH_EXTRAS+=("coreutils")
+    # GNU grep — BusyBox grep lacks -oP
+    grep --version 2>&1 | grep -q "GNU" || ISH_EXTRAS+=("grep")
+    # GNU sed for in-place editing
+    sed --version 2>&1 | grep -q "GNU" || ISH_EXTRAS+=("sed")
+    if [ ${#ISH_EXTRAS[@]} -gt 0 ]; then
+        info "Installing iSH extras: ${ISH_EXTRAS[*]}"
+        apk add --no-cache "${ISH_EXTRAS[@]}" 2>/dev/null || warn "Some iSH extras failed — install manually: apk add ${ISH_EXTRAS[*]}"
+    fi
+fi
+
 # ── 2. Check Ollama ──────────────────────────────────────────
 _OLLAMA_AVAILABLE=0
+if [ "$IS_ISH" -eq 1 ]; then
+    info "iSH detected — skipping local LLM backend (Ollama/llama-server)"
+    info "George will use cloud providers for all inference"
+else
 info "Checking Ollama..."
 if ! command -v ollama &>/dev/null; then
     warn "Ollama not found. Installing..."
@@ -239,6 +286,7 @@ else
     warn "Ollama not available — local models disabled"
     warn "Use cloud providers: export GEORGE_PROVIDER=google"
 fi
+fi  # end IS_ISH guard for Ollama
 
 # ── 2b. Cloud provider setup ─────────────────────────────────
 # If Ollama isn't available (or the user prefers cloud), offer to
@@ -312,7 +360,14 @@ _offer_cloud_setup() {
     ok "Cloud provider: $_INSTALL_PROVIDER"
 }
 
-if [ "$_OLLAMA_AVAILABLE" -eq 0 ]; then
+if [ "$IS_ISH" -eq 1 ]; then
+    info "Cloud provider required — iSH cannot run local models"
+    _offer_cloud_setup
+    if [ -z "$_INSTALL_PROVIDER" ]; then
+        warn "No provider configured — George will need one before it can run"
+        warn "  Set later: lodge /provider use google"
+    fi
+elif [ "$_OLLAMA_AVAILABLE" -eq 0 ]; then
     warn "No local LLM backend — cloud provider required"
     _offer_cloud_setup
     if [ -z "$_INSTALL_PROVIDER" ]; then
@@ -347,6 +402,32 @@ PROVEOF
     # Also export for this session so steps below can use it
     export GEORGE_PROVIDER="$_INSTALL_PROVIDER"
     export "$_INSTALL_PROVIDER_KEY_NAME=$_INSTALL_PROVIDER_KEY_VALUE"
+
+    # Persist API key into keys.conf so George's runtime can find it.
+    # The shell RC export works for new shell sessions, but the provider
+    # system reads keys from keys.conf via api_get_key().
+    _IST_CONFIG_DIR="${GEORGE_CONFIG_DIR:-$LODGE_DIR/.george}"
+    _IST_KEYS_FILE="$_IST_CONFIG_DIR/keys.conf"
+    mkdir -p "$_IST_CONFIG_DIR"
+    chmod 700 "$_IST_CONFIG_DIR"
+    # Source api.sh to get api_set_key if not already loaded
+    if declare -f api_set_key &>/dev/null; then
+        api_set_key "$_INSTALL_PROVIDER_KEY_NAME" "$_INSTALL_PROVIDER_KEY_VALUE"
+        api_set_key "GEORGE_PROVIDER" "$_INSTALL_PROVIDER"
+    else
+        # Inline write: create keys.conf if missing, then upsert the keys
+        if [ ! -f "$_IST_KEYS_FILE" ]; then
+            touch "$_IST_KEYS_FILE"
+            chmod 600 "$_IST_KEYS_FILE"
+        fi
+        # Remove existing lines, then append
+        grep -v "^${_INSTALL_PROVIDER_KEY_NAME}=" "$_IST_KEYS_FILE" 2>/dev/null > "$_IST_KEYS_FILE.tmp" || true
+        grep -v "^GEORGE_PROVIDER=" "$_IST_KEYS_FILE.tmp" 2>/dev/null > "$_IST_KEYS_FILE" || true
+        rm -f "$_IST_KEYS_FILE.tmp"
+        echo "${_INSTALL_PROVIDER_KEY_NAME}=${_INSTALL_PROVIDER_KEY_VALUE}" >> "$_IST_KEYS_FILE"
+        echo "GEORGE_PROVIDER=${_INSTALL_PROVIDER}" >> "$_IST_KEYS_FILE"
+        chmod 600 "$_IST_KEYS_FILE"
+    fi
 fi
 
 # ── 3. Ensure Ollama is running ──────────────────────────────
@@ -374,6 +455,10 @@ fi
 # llama.cpp is the preferred inference backend — faster startup, lower
 # memory overhead, and native GGUF support. Ollama manages GGUF
 # downloads and serves as the fallback backend.
+# Skip on iSH — no native binaries can run.
+if [ "$IS_ISH" -eq 1 ]; then
+    _llama_server_found=0
+else
 info "Checking llama-server..."
 _llama_server_found=0
 
@@ -404,6 +489,7 @@ if [ "$_llama_server_found" -eq 0 ]; then
     info "  cmake -B build && cmake --build build --config Release -j\$(nproc)"
     info "Then set LLAMA_CPP_SERVER_BIN in lodge.conf or your environment."
 fi
+fi  # end IS_ISH guard for llama-server
 
 # Source model library for model creation
 source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
