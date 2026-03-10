@@ -57,6 +57,7 @@ source "$LODGE_DIR/lib/backup.sh"
 source "$LODGE_DIR/lib/journal.sh"
 source "$LODGE_DIR/lib/security.sh"
 source "$LODGE_DIR/lib/cache.sh"
+source "$LODGE_DIR/lib/mcp.sh"
 source "$LODGE_DIR/lib/recall.sh"
 source "$LODGE_DIR/lib/secrets.sh"
 source "$LODGE_DIR/lib/gsuite.sh"
@@ -134,6 +135,8 @@ _lodge_exit_cleanup() {
     pkill -f "curl.*v1/chat/completions" 2>/dev/null || true
     pkill -f "curl.*api/generate" 2>/dev/null || true
     pkill -f "curl.*api/chat" 2>/dev/null || true
+    # Stop MCP servers
+    declare -f _mcp_cleanup &>/dev/null && _mcp_cleanup
     # Clean temp files
     rm -f "${TMPDIR:-/tmp}"/.lodge-fifo-*-$$ 2>/dev/null
     rm -f "${TMPDIR:-/tmp}"/.lodge-cancel-$$ 2>/dev/null
@@ -192,10 +195,11 @@ _cmd_respond() {
     fi
     # Expand LLM escape sequences (\n → newline, etc.)
     text=$(ui_expand_escapes "$text")
-    echo ""
-    # Render with markdown-lite formatting (headers, lists, code blocks)
-    ui_render_response "$text"
-    echo ""
+    echo "" >/dev/tty 2>/dev/null
+    # Render with markdown-lite formatting directly to TTY so the user
+    # sees it even when the agent loop captures stdout for the action log.
+    ui_render_response "$text" >/dev/tty 2>/dev/null
+    echo "" >/dev/tty 2>/dev/null
     # Emit raw text to stdout so agent inner loop captures it in action log
     echo "$text"
 }
@@ -4405,6 +4409,11 @@ _cmd_transcript() {
     esac
 }
 
+# ── /mcp — MCP (Model Context Protocol) integration ────────────
+_cmd_mcp() {
+    mcp_command "$1"
+}
+
 # ── Register all commands ──────────────────────────────────────
 _register_commands() {
     commands_register "init"     "Scaffold a new project" "_cmd_init"
@@ -4449,6 +4458,7 @@ _register_commands() {
     commands_register "config"   "Persistent settings — save/show/reset/edit" "_cmd_config"
     commands_register "backend"  "LLM backend — auto-detect, switch (ollama/llamacpp)" "_cmd_backend"
     commands_register "gpu"      "GPU layers — set offload layers for llama-server" "_cmd_gpu"
+    commands_register "mcp"        "MCP server integration (Model Context Protocol)" "_cmd_mcp"
     commands_register "transcript" "View task transcripts (list/last/path/show)" "_cmd_transcript"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"

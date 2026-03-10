@@ -46,6 +46,17 @@ commands_dispatch() {
     if declare -f tools_fix_llm_spacing &>/dev/null; then
         args=$(tools_fix_llm_spacing "$args")
     fi
+
+    # ── MCP intercept — when MCP is enabled and has a matching tool,
+    # try it first. Falls through to normal dispatch on failure.
+    if declare -f _mcp_dispatch_intercept &>/dev/null; then
+        local _mcp_out
+        _mcp_out=$(_mcp_dispatch_intercept "$cmd" "$args" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$_mcp_out" ]; then
+            echo "$_mcp_out"
+            return 0
+        fi
+    fi
     
     # Check built-in commands first
     case "$cmd" in

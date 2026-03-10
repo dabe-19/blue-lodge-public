@@ -5687,37 +5687,19 @@ $question"
     local response
     local LLM_SCENARIO=ask
 
-    # ── Provider path: call the API directly ──────────────────
-    # Uses the same proven flow as /provider chat, folding the
-    # personality system prompt into the user message so every
-    # provider handles it uniformly (no systemInstruction quirks).
-    if [ -n "${GEORGE_PROVIDER:-}" ] && declare -f _provider_call_with_backoff &>/dev/null; then
-        local _ask_msg="$full_question"
-        if [ -n "$system_prompt" ]; then
-            _ask_msg="Instructions: ${system_prompt}
+    # ── Stream tokens to TTY for real-time reading ────────────
+    # llm_stream() writes every token to /dev/tty as it arrives
+    # (both local and provider paths), while stdout is captured
+    # into $response via $(). This gives streaming UX on slow
+    # devices without losing the text for transcript/context.
+    response=$(llm_stream "$full_question" "$system_prompt" "$LLM_ASK_TOKENS" "$LLM_BUDGET_ASK")
+    local _ask_rc=$?
 
-${full_question}"
-        fi
-
-        ui_spinner_start "$GEORGE_PROVIDER" >/dev/tty 2>/dev/null
-        response=$(_provider_call_with_backoff "$GEORGE_PROVIDER" "$_ask_msg")
-        local _ask_rc=$?
-        ui_spinner_stop 2>/dev/null
-
-        if [ $_ask_rc -ne 0 ] || [ -z "$response" ]; then
-            echo ""
-            ui_err "Provider returned no response"
-            _LODGE_IN_TASK=0
-            return 1
-        fi
-
+    if [ $_ask_rc -ne 0 ] || [ -z "$response" ]; then
         echo ""
-        ui_render_response "$response"
-    else
-        # ── Local backend: llm_generate captures tokens via $() ──
-        response=$(llm_generate "$full_question" "$system_prompt" "$LLM_ASK_TOKENS" "$LLM_BUDGET_ASK")
-        echo ""
-        ui_render_response "$response"
+        ui_err "No response generated"
+        _LODGE_IN_TASK=0
+        return 1
     fi
 
     # Transcript: log the ask response

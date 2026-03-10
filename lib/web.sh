@@ -787,6 +787,21 @@ web_fetch() {
         fi
     fi
 
+    # ── MCP-first fetch (when enabled) ────────────────────────────
+    # When MCP is on, try MCP servers before curl. MCP servers like
+    # @anthropic/mcp-server-fetch handle JS-rendered pages and
+    # anti-bot challenges that curl can't. Falls through to curl on failure.
+    if declare -f mcp_enabled &>/dev/null && mcp_enabled; then
+        local mcp_body
+        mcp_body=$(mcp_web_fetch "$url" 2>/dev/null)
+        if [ -n "$mcp_body" ]; then
+            mkdir -p "$GEORGE_CACHE_DIR"
+            echo "$mcp_body" > "$cache_file" 2>/dev/null
+            echo "$mcp_body"
+            return 0
+        fi
+    fi
+
     # ── Pre-screen by URL extension for formats needing special fetch ──
     # PDF/binary need file-based download, not streaming through web_fetch_raw.
     local _url_guess
