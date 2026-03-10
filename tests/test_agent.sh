@@ -1500,16 +1500,27 @@ describe "Macro memory: timestamped command results"
 # ── Research buffer: cross-milestone data flow ────────────────
 describe "Research buffer (cross-milestone data flow)"
 
-  it "inner loop saves research_buffer.md from successful /web outputs" && {
-    body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q 'research_buffer.md'
-    assert_ok $? "Must reference research_buffer.md"
+  it "RESEARCH_BUFFER_FILE constant is defined" && {
+    [ -n "$RESEARCH_BUFFER_FILE" ]
+    assert_ok $? "RESEARCH_BUFFER_FILE must be set"
   }
 
-  it "inner loop injects research buffer into micro_memory on start" && {
+  it "inner loop references RESEARCH_BUFFER_FILE for write" && {
+    body=$(declare -f _agent_complete_milestone)
+    echo "$body" | grep -q 'RESEARCH_BUFFER_FILE'
+    assert_ok $? "Must reference RESEARCH_BUFFER_FILE"
+  }
+
+  it "_micro_web_outputs returns JSON array" && {
+    body=$(declare -f _micro_web_outputs)
+    echo "$body" | grep -q 'jq'
+    assert_ok $? "Must use jq for JSON output"
+  }
+
+  it "inner loop injects research buffer as native JSON via jq --argjson" && {
     body=$(declare -f agent_inner_loop)
-    echo "$body" | grep -q '_micro_set.*micro_file.*research_context'
-    assert_ok $? "Must inject research buffer via _micro_set"
+    echo "$body" | grep -q 'jq --argjson rc'
+    assert_ok $? "Must inject research buffer via jq --argjson"
   }
 
   it "research buffer is deleted after injection" && {
@@ -1524,10 +1535,16 @@ describe "Research buffer (cross-milestone data flow)"
     assert_ok $? "Must use _micro_web_outputs to extract successful /web output blocks"
   }
 
-  it "research buffer is capped at 1500 chars" && {
-    body=$(declare -f _agent_complete_milestone)
+  it "research buffer tags with source milestone" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'source.*src'
+    assert_ok $? "Must tag research context with source milestone"
+  }
+
+  it "research buffer default max_chars is 1500" && {
+    body=$(declare -f _micro_web_outputs)
     echo "$body" | grep -q '1500'
-    assert_ok $? "Must cap research buffer at 1500 chars"
+    assert_ok $? "Must default max_chars to 1500"
   }
 
 # ── Evaluator-based completion (router decoupling) ────────────
@@ -1558,7 +1575,7 @@ describe "Evaluator-based milestone completion"
 
   it "_agent_complete_milestone saves research buffer for web actions" && {
     body=$(declare -f _agent_complete_milestone)
-    echo "$body" | grep -q 'research_buffer.md'
+    echo "$body" | grep -q 'RESEARCH_BUFFER_FILE'
     assert_ok $? "Must save research buffer to .george dir"
   }
 
@@ -1572,6 +1589,71 @@ describe "Evaluator-based milestone completion"
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q '_agent_complete_milestone'
     assert_ok $? "Must call completion helper when evaluator says COMPLETE"
+  }
+
+# ── Brainstorm buffer (cross-milestone data flow) ─────────────
+describe "Brainstorm buffer (cross-milestone data flow)"
+
+  it "BRAINSTORM_FILE constant is defined" && {
+    [ -n "$BRAINSTORM_FILE" ]
+    assert_ok $? "BRAINSTORM_FILE must be set"
+  }
+
+  it "brainstorm output writes JSON sidecar file on success" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'BRAINSTORM_FILE'
+    assert_ok $? "Inner loop must reference BRAINSTORM_FILE"
+    echo "$body" | grep -q 'jq -n.*query.*response.*timestamp'
+    assert_ok $? "Must write structured JSON with query, response, timestamp"
+  }
+
+  it "brainstorm JSON is injected into micro_memory on inner loop start" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'brainstorm_context'
+    assert_ok $? "Must inject brainstorm_context into micro_memory"
+  }
+
+  it "brainstorm JSON is deleted after injection into micro_memory" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'rm -f.*_bs_buf'
+    assert_ok $? "Must delete brainstorm file after injection"
+  }
+
+  it "strategist prompt includes brainstorm context when file exists" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_strat_brainstorm'
+    assert_ok $? "Strategist must have brainstorm injection variable"
+    echo "$body" | grep -q 'BRAINSTORM OUTPUT'
+    assert_ok $? "Strategist must display brainstorm output header"
+  }
+
+  it "honeydew rewriter includes brainstorm context when file exists" && {
+    body=$(declare -f _agent_honeydew_rewrite)
+    echo "$body" | grep -q '_rewrite_brainstorm'
+    assert_ok $? "Honeydew rewriter must have brainstorm injection variable"
+    echo "$body" | grep -q 'BRAINSTORM_FILE'
+    assert_ok $? "Honeydew rewriter must reference BRAINSTORM_FILE"
+  }
+
+  it "brainstorm response is capped at 3000 chars in JSON file" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'output:0:3000'
+    assert_ok $? "Must cap brainstorm response to 3000 chars"
+  }
+
+  it "micro_init includes brainstorm_context field" && {
+    local _tmpf
+    _tmpf=$(mktemp)
+    _micro_init "$_tmpf" "test"
+    jq -e 'has("brainstorm_context")' "$_tmpf" >/dev/null 2>&1
+    assert_ok $? "micro_memory must include brainstorm_context field"
+    rm -f "$_tmpf"
+  }
+
+  it "honeydew rewrite clears brainstorm_context from micro_memory" && {
+    body=$(declare -f _agent_honeydew_rewrite)
+    echo "$body" | grep -q 'brainstorm_context.*null'
+    assert_ok $? "Honeydew rewrite must reset brainstorm_context"
   }
 
   it "router prompt constrains output to slash commands only" && {
