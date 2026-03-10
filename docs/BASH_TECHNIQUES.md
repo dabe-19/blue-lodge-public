@@ -10,6 +10,7 @@
 - [Named References (Namerefs)](#named-references-namerefs)
 - [FIFOs (Named Pipes)](#fifos-named-pipes)
 - [Process Substitution](#process-substitution)
+- [Tmpfile Redirect Pattern](#tmpfile-redirect-pattern)
 - [Background Jobs & Process Management](#background-jobs--process-management)
 - [Traps & Cleanup](#traps--cleanup)
 - [Associative Arrays](#associative-arrays)
@@ -183,6 +184,74 @@ The `< <()` pattern is the idiom for "loop over command output while keeping var
 
 - Process substitution is a bashism. Not available in `sh`, `dash`, or POSIX-only shells.
 - The command inside `<()` runs asynchronously. If it produces output slowly, the `read` will block.
+- **Requires `/dev/fd`**. Process substitution internally creates file descriptors under `/dev/fd/` (usually symlinked from `/proc/self/fd`). Platforms that don't mount `/dev/fd` (notably **iSH on iOS**) will fail with `No such file or directory`. See [Tmpfile Redirect Pattern](#tmpfile-redirect-pattern) for the portable alternative used throughout the codebase.
+
+---
+
+## Tmpfile Redirect Pattern
+
+### Problem
+
+Process substitution (`< <(cmd)`) is the standard idiom for looping over command output while keeping variables in the parent shell. But it relies on `/dev/fd/` being mounted — Bash creates a file descriptor like `/dev/fd/63` behind the scenes. On platforms without `/dev/fd` (iSH on iOS, some minimal containers), every `< <()` is a hard crash:
+
+```
+/dev/fd/63: No such file or directory
+```
+
+### Why Not Here-Strings?
+
+The obvious alternative `done <<< "$(cmd)"` has a fatal flaw: **command substitution `$(...)` strips NUL bytes**. Any loop using `read -d ''` for NUL-delimited input (e.g., `find -print0` or `printf '%s\0'` word tokenization) silently breaks — the entire input arrives as one token instead of many.
+
+```bash
+# BROKEN: NUL bytes stripped by $(), read -d '' gets everything as one token
+while IFS= read -r -d '' token; do
+    process "$token"
+done <<< "$(printf '%s\0' $text)"
+```
+
+### Solution: Tmpfile Redirect
+
+Write command output to a temp file, redirect the loop from that file:
+
+```bash
+local _tmp
+_tmp=$(mktemp "${TMPDIR:-/tmp}/recall-chunk.XXXXXX")
+some_command > "$_tmp"
+while IFS= read -r line; do
+    steps+=("$line")
+done < "$_tmp"
+rm -f "$_tmp"
+```
+
+### Why This Works
+
+1. **Parent-shell scope preserved** — the `while` loop body runs in the current shell (same as `< <()`), so variable assignments persist after the loop.
+2. **No `/dev/fd` dependency** — plain file redirection (`< "$file"`) works on every Unix platform.
+3. **NUL bytes preserved** — temp files store raw bytes. `read -d ''` still works for NUL-delimited iteration (unlike `<<<` which strips them).
+4. **Cleanup is safe** — by the time the loop exits, the file has been fully read and can be removed.
+
+### Where Used
+
+Replaced all 15 process substitutions across the codebase:
+
+| File | Variables | What it loops over |
+|------|-----------|--------------------|
+| `lib/recall.sh` | `_rc_tmp`, `_sm_tmp`, `_ri_tmp`, `_ic_tmp` | Markdown chunking, source iteration |
+| `lib/backup.sh` | `_bk_tmp` | `find -print0` GEORGE.md files |
+| `lib/api.sh` | `_ak_tmp` | `grep` over keys.conf |
+| `lib/agent.sh` | `_ap_tmp` | Plan step parsing |
+| `lib/providers.sh` | `_pl_tmp` | Provider suggested limits |
+| `lib/tools.sh` | `_ef_tmp` | NUL-delimited word tokenization |
+
+### Naming Convention
+
+Temp variables use a short prefix scoped to the function to avoid collisions: `_rc_` for recall-chunk, `_sm_` for source-map, `_ef_` for expand-file-refs, etc.
+
+### Gotchas
+
+- Always `rm -f` the tmpfile after the loop. Missing cleanup leaks files in `/tmp`.
+- Use `${TMPDIR:-/tmp}` — Termux and some containers set `TMPDIR` to a non-standard path.
+- If the function can `return` early or hit an error mid-loop, consider a `trap 'rm -f "$_tmp"' RETURN` to guarantee cleanup.
 
 ---
 
@@ -901,7 +970,8 @@ Used in: `lib/secrets.sh` for vault operations.
 |-----------|--------|---------|-------|
 | Nameref | `local -n ref="$1"` | Zero-copy pass-by-reference | llm.sh |
 | FIFO | `mkfifo "$path"` | Decouple processes | llm.sh, providers.sh |
-| Process substitution | `< <(cmd)` | Loop without subshell scope loss | agent.sh, recall.sh |
+| Process substitution | `< <(cmd)` | Loop without subshell scope loss | (replaced — see tmpfile) |
+| Tmpfile redirect | `cmd > $tmp; done < $tmp` | Portable `< <()` replacement | recall.sh, tools.sh, agent.sh |
 | Background PID | `cmd &; pid=$!` | Track async processes | providers.sh, ui.sh |
 | Disown | `disown $pid` | Suppress job notifications | ui.sh, agent.sh |
 | Trap | `trap 'cleanup' EXIT` | Guaranteed resource cleanup | lodge, install.sh |

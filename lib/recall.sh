@@ -156,6 +156,9 @@ recall_index_file() {
 
     # Chunk and index
     local count=0
+    local _rc_tmp
+    _rc_tmp=$(mktemp "${TMPDIR:-/tmp}/recall-chunk.XXXXXX")
+    _recall_chunk_markdown "$filepath" > "$_rc_tmp"
     while IFS=$'\t' read -r section content; do
         [ -z "$content" ] && continue
         # Escape single quotes for SQL
@@ -167,7 +170,8 @@ recall_index_file() {
             "INSERT INTO chunks (source, section, content, filepath, indexed_at)
              VALUES ('${source//\'/\'\'}', '$section', '$content', '$filepath_safe', '$now');"
         (( count++ ))
-    done < <(_recall_chunk_markdown "$filepath")
+    done < "$_rc_tmp"
+    rm -f "$_rc_tmp"
 
     return 0
 }
@@ -214,6 +218,9 @@ recall_needs_reindex() {
 
     local needs=1  # 1 = false (doesn't need)
 
+    local _rs_tmp
+    _rs_tmp=$(mktemp "${TMPDIR:-/tmp}/recall-src.XXXXXX")
+    _recall_all_sources > "$_rs_tmp"
     while IFS=: read -r source filepath; do
         [ -f "$filepath" ] || continue
 
@@ -228,7 +235,8 @@ recall_needs_reindex() {
             needs=0  # true — at least one file changed
             break
         fi
-    done < <(_recall_all_sources)
+    done < "$_rs_tmp"
+    rm -f "$_rs_tmp"
 
     return $needs
 }
@@ -236,12 +244,16 @@ recall_needs_reindex() {
 # ── Save mtimes after indexing ─────────────────────────────────
 _recall_save_mtimes() {
     > "$RECALL_MTIME_FILE"
+    local _sm_tmp
+    _sm_tmp=$(mktemp "${TMPDIR:-/tmp}/recall-src.XXXXXX")
+    _recall_all_sources > "$_sm_tmp"
     while IFS=: read -r source filepath; do
         [ -f "$filepath" ] || continue
         local mtime
         mtime=$(_recall_file_mtime "$filepath")
         echo "${source}=${mtime}" >> "$RECALL_MTIME_FILE"
-    done < <(_recall_all_sources)
+    done < "$_sm_tmp"
+    rm -f "$_sm_tmp"
 }
 
 # ── Full reindex of all knowledge sources ─────────────────────
@@ -251,11 +263,15 @@ recall_reindex() {
     local total=0
 
     # Index all sources (RECALL_INDEX.md + journal + GEORGE.md)
+    local _ri_tmp
+    _ri_tmp=$(mktemp "${TMPDIR:-/tmp}/recall-src.XXXXXX")
+    _recall_all_sources > "$_ri_tmp"
     while IFS=: read -r source filepath; do
         [ -f "$filepath" ] || continue
         recall_index_file "$source" "$filepath"
         (( total++ ))
-    done < <(_recall_all_sources)
+    done < "$_ri_tmp"
+    rm -f "$_ri_tmp"
 
     _recall_save_mtimes
 
@@ -746,6 +762,9 @@ recall_ingest() {
 
     if [[ "$ext" == "md" ]]; then
         # Use markdown chunker
+        local _ic_tmp
+        _ic_tmp=$(mktemp "${TMPDIR:-/tmp}/recall-chunk.XXXXXX")
+        _recall_chunk_markdown "$filepath" > "$_ic_tmp"
         while IFS=$'\t' read -r section content; do
             [ -z "$content" ] && continue
             section="${section//\'/\'\'}"
@@ -755,9 +774,13 @@ recall_ingest() {
                 "INSERT INTO chunks (source, section, content, filepath, indexed_at)
                  VALUES ('${source//\'/\'\'}', '$section', '$content', '$fp_safe', '$now');"
             (( count++ ))
-        done < <(_recall_chunk_markdown "$filepath")
+        done < "$_ic_tmp"
+        rm -f "$_ic_tmp"
     else
         # Use generic text chunker
+        local _ic_tmp
+        _ic_tmp=$(mktemp "${TMPDIR:-/tmp}/recall-chunk.XXXXXX")
+        _recall_chunk_text "$filepath" "$label" > "$_ic_tmp"
         while IFS=$'\t' read -r section content; do
             [ -z "$content" ] && continue
             section="${section//\'/\'\'}"
@@ -767,7 +790,8 @@ recall_ingest() {
                 "INSERT INTO chunks (source, section, content, filepath, indexed_at)
                  VALUES ('${source//\'/\'\'}', '$section', '$content', '$fp_safe', '$now');"
             (( count++ ))
-        done < <(_recall_chunk_text "$filepath" "$label")
+        done < "$_ic_tmp"
+        rm -f "$_ic_tmp"
     fi
 
     return 0

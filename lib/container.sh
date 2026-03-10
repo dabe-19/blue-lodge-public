@@ -87,7 +87,7 @@ container_list() {
             printf "  %b%-20s%b %s\n" "$C_WHITE" "$distro_id" "$C_RESET" "$size"
             found=1
         fi
-    done < <(proot-distro list 2>/dev/null)
+    done <<< "$(proot-distro list 2>/dev/null)"
 
     if [ "$found" -eq 0 ]; then
         ui_dim "  No containers installed yet."

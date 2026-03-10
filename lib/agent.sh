@@ -2130,9 +2130,13 @@ _agent_run_subtask() {
     if [ $? -ne 0 ]; then return 1; fi
 
     local -a steps=()
+    local _ps_tmp
+    _ps_tmp=$(mktemp "${TMPDIR:-/tmp}/lodge-steps.XXXXXX")
+    _agent_parse_steps "$plan" > "$_ps_tmp"
     while IFS= read -r s; do
         [ -n "$s" ] && steps+=("$s")
-    done < <(_agent_parse_steps "$plan")
+    done < "$_ps_tmp"
+    rm -f "$_ps_tmp"
 
     local total=${#steps[@]}
     if [ "$total" -eq 0 ]; then

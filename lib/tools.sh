@@ -886,6 +886,9 @@ tools_expand_file_refs() {
     local result=""
     local token prev_token=""
 
+    local _ef_tmp
+    _ef_tmp=$(mktemp "${TMPDIR:-/tmp}/tools-expand.XXXXXX")
+    printf '%s\0' $text > "$_ef_tmp"
     while IFS= read -r -d '' token || [ -n "$token" ]; do
         # Skip empty tokens from leading/trailing spaces
         [ -z "$token" ] && continue
@@ -976,7 +979,8 @@ tools_expand_file_refs() {
 
         result="${result:+$result }${token}"
         prev_token="$token"
-    done < <(printf '%s\0' $text)
+    done < "$_ef_tmp"
+    rm -f "$_ef_tmp"
 
     # If nothing changed, return original (preserves exact whitespace)
     if [ "$changed" -eq 0 ]; then

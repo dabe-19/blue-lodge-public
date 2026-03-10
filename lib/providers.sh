@@ -1368,6 +1368,9 @@ provider_apply_suggested_limits() {
     local provider="$1"
     local _line
 
+    local _pl_tmp
+    _pl_tmp=$(mktemp "${TMPDIR:-/tmp}/lodge-limits.XXXXXX")
+    provider_suggested_limits "$provider" > "$_pl_tmp"
     while IFS= read -r _line; do
         [ -z "$_line" ] && continue
         local _key _val
@@ -1381,7 +1384,8 @@ provider_apply_suggested_limits() {
             api-cooldown-max)    PROVIDER_COOLDOWN_MAX="$_val" ;;
             api-cooldown-window) PROVIDER_COOLDOWN_WINDOW="$_val" ;;
         esac
-    done < <(provider_suggested_limits "$provider")
+    done < "$_pl_tmp"
+    rm -f "$_pl_tmp"
 }
 
 # ═══════════════════════════════════════════════════════════════

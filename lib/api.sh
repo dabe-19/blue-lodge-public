@@ -101,12 +101,16 @@ api_list_keys() {
     fi
     ui_section "Configured API Keys"
     local _found=0
+    local _ak_tmp
+    _ak_tmp=$(mktemp "${TMPDIR:-/tmp}/lodge-keys.XXXXXX")
+    grep "^[A-Z].*=" "$GEORGE_KEYS_FILE" 2>/dev/null > "$_ak_tmp" || true
     while IFS='=' read -r name _value; do
         local masked
         masked=$(echo "$_value" | sed 's/./*/g' | head -c 20)
         printf "  %b%-30s%b %s...\n" "$C_WHITE" "$name" "$C_RESET" "${masked:0:8}"
         _found=1
-    done < <(grep "^[A-Z].*=" "$GEORGE_KEYS_FILE" 2>/dev/null)
+    done < "$_ak_tmp"
+    rm -f "$_ak_tmp"
     if [ "$_found" -eq 0 ]; then
         ui_dim "  No keys configured yet"
         ui_dim "  Set keys with: /api keys set KEY_NAME value"

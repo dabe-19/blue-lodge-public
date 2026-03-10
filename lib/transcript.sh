@@ -176,7 +176,7 @@ transcript_list() {
         printf "\n"
         count=$((count + 1))
         [ "$count" -ge "$limit" ] && break
-    done < <(ls -1t "$dir"/*.md 2>/dev/null)
+    done <<< "$(ls -1t "$dir"/*.md 2>/dev/null)"
 
     [ "$count" -eq 0 ] && echo "(no transcripts)"
 }

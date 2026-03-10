@@ -43,7 +43,13 @@ _VITALS_CACHE_CELL_SIGNAL=""
 
 # ── Disk free space (MB) on the main filesystem ───────────────
 vitals_disk_free_mb() {
-    df -m "${HOME:-/}" 2>/dev/null | awk 'NR==2{print $4}'
+    local val
+    val=$(df -m "${HOME:-/}" 2>/dev/null | awk 'NR==2{print $4}')
+    # BusyBox df on iSH may use different column layout; try 'Available' header
+    if [ -z "$val" ]; then
+        val=$(df -m "${HOME:-/}" 2>/dev/null | awk '/\// {print $4}' | head -1)
+    fi
+    echo "${val:-}"
 }
 
 # ── Disk total space (MB) ─────────────────────────────────────
@@ -207,7 +213,12 @@ vitals_refresh() {
 # Returns: ok | warn | critical
 vitals_disk_status() {
     _vitals_refresh_cache
-    local free="${_VITALS_CACHE_DISK_FREE_MB:-0}"
+    local free="${_VITALS_CACHE_DISK_FREE_MB:-}"
+    # If disk free is unreadable (iSH emulated fs, etc.) assume ok
+    if [ -z "$free" ]; then
+        echo "ok"
+        return 0
+    fi
     if [ "$free" -lt "$VITALS_DISK_CRIT_MB" ] 2>/dev/null; then
         echo "critical"
     elif [ "$free" -lt "$VITALS_DISK_WARN_MB" ] 2>/dev/null; then
@@ -358,6 +369,13 @@ vitals_guard_network() {
 vitals_preflight() {
     local severity="${1:-warn}"  # "warn" = non-blocking, "strict" = abort on any issue
     local issues=0
+
+    # Cloud-only mode: inference is remote; disk/RAM/battery guards
+    # protect local model loading which isn't happening. Skip strict
+    # checks to avoid false aborts on iSH and similar platforms.
+    if [ -n "${GEORGE_PROVIDER:-}" ] && [ "$severity" = "strict" ]; then
+        severity="warn"
+    fi
 
     _vitals_refresh_cache
 

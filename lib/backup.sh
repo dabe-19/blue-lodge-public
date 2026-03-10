@@ -67,14 +67,22 @@ backup_local() {
     fi
     # Sandboxes
     if [ -d "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" ]; then
+        local _bf_tmp
+        _bf_tmp=$(mktemp "${TMPDIR:-/tmp}/lodge-backup.XXXXXX")
+        find "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" -name "GEORGE.md" -print0 2>/dev/null > "$_bf_tmp"
         while IFS= read -r -d '' cf; do
             george_files+=("$cf")
-        done < <(find "${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}" -name "GEORGE.md" -print0 2>/dev/null)
+        done < "$_bf_tmp"
+        rm -f "$_bf_tmp"
     fi
     # Home directory projects (1 level deep)
+    local _bf_tmp2
+    _bf_tmp2=$(mktemp "${TMPDIR:-/tmp}/lodge-backup.XXXXXX")
+    find "$HOME" -maxdepth 2 -name "GEORGE.md" -not -path "*/.george/*" -not -path "*/blue-lodge/*" -print0 2>/dev/null > "$_bf_tmp2"
     while IFS= read -r -d '' cf; do
         george_files+=("$cf")
-    done < <(find "$HOME" -maxdepth 2 -name "GEORGE.md" -not -path "*/.george/*" -not -path "*/blue-lodge/*" -print0 2>/dev/null)
+    done < "$_bf_tmp2"
+    rm -f "$_bf_tmp2"
 
     for cf in "${george_files[@]}"; do
         local project_name

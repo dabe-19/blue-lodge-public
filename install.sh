@@ -251,6 +251,18 @@ if [ "$IS_ISH" -eq 1 ]; then
         info "Installing iSH extras: ${ISH_EXTRAS[*]}"
         apk add --no-cache "${ISH_EXTRAS[@]}" 2>/dev/null || warn "Some iSH extras failed — install manually: apk add ${ISH_EXTRAS[*]}"
     fi
+
+    # iSH doesn't mount /dev/fd — Bash process substitution (<(...))
+    # requires it. Create the symlink so while-read loops work.
+    if [ ! -e /dev/fd ]; then
+        if [ -d /proc/self/fd ]; then
+            ln -sf /proc/self/fd /dev/fd 2>/dev/null && ok "/dev/fd symlinked (needed for Bash)" \
+                || warn "/dev/fd missing — some recall features may not work"
+        else
+            warn "/dev/fd and /proc/self/fd missing — process substitution unavailable"
+            warn "Some features (recall indexing) may use fallback paths"
+        fi
+    fi
 fi
 
 # ── 2. Check Ollama ──────────────────────────────────────────
