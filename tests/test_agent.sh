@@ -422,7 +422,7 @@ describe "Dynamic dual-loop architecture"
 
   it "macro strategist has question detection rule" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q 'own knowledge\|no tools'
+    echo "$body" | grep -q 'LAST RESORT\|no tools\|general knowledge'
     assert_ok $?
   }
 

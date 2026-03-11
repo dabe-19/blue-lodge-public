@@ -792,14 +792,19 @@ web_fetch() {
     # @anthropic/mcp-server-fetch handle JS-rendered pages and
     # anti-bot challenges that curl can't. Falls through to curl on failure.
     if declare -f mcp_enabled &>/dev/null && mcp_enabled; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] web_fetch: trying MCP-first path for $url"
         local mcp_body
         mcp_body=$(mcp_web_fetch "$url" 2>/dev/null)
         if [ -n "$mcp_body" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] web_fetch: MCP succeeded (${#mcp_body} bytes) — skipping curl"
+            declare -f transcript_log &>/dev/null && transcript_log "mcp" "web_fetch MCP-first OK: url=${url:0:80} (${#mcp_body} bytes)"
             mkdir -p "$GEORGE_CACHE_DIR"
             echo "$mcp_body" > "$cache_file" 2>/dev/null
             echo "$mcp_body"
             return 0
         fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] web_fetch: MCP-first failed — falling back to curl"
+        declare -f transcript_log &>/dev/null && transcript_log "mcp" "web_fetch MCP-first FAILED: url=${url:0:80} — falling back to curl"
     fi
 
     # ── Pre-screen by URL extension for formats needing special fetch ──

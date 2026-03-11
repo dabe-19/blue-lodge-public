@@ -336,6 +336,8 @@ mcp_start() {
     # Verify server is still alive
     if ! kill -0 "$server_pid" 2>/dev/null; then
         echo "ERROR: MCP server '$name' died on startup" >&2
+        declare -f ui_err &>/dev/null && ui_err "MCP server '$name' died on startup (pid=$server_pid)"
+        declare -f transcript_log &>/dev/null && transcript_log "mcp" "server '$name' FAILED to start (died on launch)"
         mcp_stop "$name"
         return 1
     fi
@@ -343,17 +345,24 @@ mcp_start() {
     # MCP handshake
     if ! _mcp_handshake "$name"; then
         echo "ERROR: MCP handshake failed for '$name'" >&2
+        declare -f ui_err &>/dev/null && ui_err "MCP handshake FAILED for '$name'"
+        declare -f transcript_log &>/dev/null && transcript_log "mcp" "server '$name' handshake FAILED"
         mcp_stop "$name"
         return 1
     fi
 
     touch "$rundir/ready"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP server '$name' started (pid=$server_pid)"
+    declare -f transcript_log &>/dev/null && transcript_log "mcp" "server '$name' started OK (pid=$server_pid, cmd=${cmd:0:80})"
     return 0
 }
 
 mcp_stop() {
     local name="$1"
     local rundir="$MCP_RUN_DIR/$name"
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP server '$name' stopping"
+    declare -f transcript_log &>/dev/null && transcript_log "mcp" "server '$name' stopping"
 
     # Kill keeper process (FIFO writer)
     if [ -f "$rundir/keeper_pid" ]; then
@@ -450,6 +459,8 @@ mcp_tools_list() {
     _tl_err=$(printf '%s' "$resp" | _mcp_jq -r '.error.message // empty' 2>/dev/null)
     if [ -n "$_tl_err" ]; then
         echo "MCP ERROR (tools/list): $_tl_err" >&2
+        declare -f ui_err &>/dev/null && ui_err "MCP tools/list ERROR: server=$name msg=$_tl_err"
+        declare -f transcript_log &>/dev/null && transcript_log "mcp" "tools/list ERROR: server=$name msg=$_tl_err"
         return 1
     fi
 
@@ -458,6 +469,11 @@ mcp_tools_list() {
     if [ -z "$tools" ] || [ "$tools" = "null" ]; then
         tools="[]"
     fi
+
+    # Log discovered tools count
+    local _tool_count
+    _tool_count=$(printf '%s' "$tools" | _mcp_jq 'length' 2>/dev/null || echo 0)
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP tools/list: server=$name tools=$_tool_count"
 
     # Cache the tools list
     if declare -f cache_put &>/dev/null; then
@@ -474,9 +490,15 @@ mcp_tool_call() {
     local params="$3"
     [ -z "$params" ] && params='{}'
 
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP tool_call: server=$server tool=$tool params=${params:0:120}"
+
     # Ensure server is running
     mcp_status "$server" >/dev/null 2>&1 || {
-        mcp_start "$server" || return 1
+        mcp_start "$server" || {
+            declare -f ui_err &>/dev/null && ui_err "MCP tool_call FAILED: cannot start server '$server'"
+            declare -f transcript_log &>/dev/null && transcript_log "mcp" "tool_call FAILED: server '$server' won't start (tool=$tool)"
+            return 1
+        }
     }
 
     local req_id
@@ -494,6 +516,8 @@ mcp_tool_call() {
     local resp
     resp=$(_mcp_recv "$server" "$req_id" "$MCP_TIMEOUT")
     if [ -z "$resp" ]; then
+        declare -f ui_err &>/dev/null && ui_err "MCP tool_call TIMEOUT: server=$server tool=$tool (${MCP_TIMEOUT}s)"
+        declare -f transcript_log &>/dev/null && transcript_log "mcp" "tool_call TIMEOUT: server=$server tool=$tool (${MCP_TIMEOUT}s)"
         return 1
     fi
 
@@ -501,7 +525,11 @@ mcp_tool_call() {
     local err
     err=$(printf '%s' "$resp" | _mcp_jq -r '.error.message // empty' 2>/dev/null)
     if [ -n "$err" ]; then
+        local err_code
+        err_code=$(printf '%s' "$resp" | _mcp_jq -r '.error.code // "unknown"' 2>/dev/null)
         echo "MCP ERROR: $err" >&2
+        declare -f ui_err &>/dev/null && ui_err "MCP tool_call ERROR: server=$server tool=$tool code=$err_code msg=$err"
+        declare -f transcript_log &>/dev/null && transcript_log "mcp" "tool_call ERROR: server=$server tool=$tool code=$err_code msg=$err"
         return 1
     fi
 
@@ -512,6 +540,10 @@ mcp_tool_call() {
         select(.type == "text") |
         .text
     ' 2>/dev/null)
+
+    local _content_len=${#content}
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP tool_call OK: server=$server tool=$tool response_len=$_content_len"
+    declare -f transcript_log &>/dev/null && transcript_log "mcp" "tool_call OK: server=$server tool=$tool response_len=$_content_len"
 
     printf '%s' "$content"
 }
@@ -524,14 +556,19 @@ mcp_tool_call() {
 mcp_web_fetch() {
     local url="$1"
 
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch: url=${url:0:120}"
+
     # Try built-in george-fetch server first (pure bash, no Node.js)
     if _mcp_server_exists "george-fetch"; then
         local result
         result=$(mcp_tool_call "george-fetch" "fetch" "$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')" 2>/dev/null)
         if [ -n "$result" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch OK via george-fetch (${#result} bytes)"
+            declare -f transcript_log &>/dev/null && transcript_log "mcp" "web_fetch OK: george-fetch url=${url:0:80} (${#result} bytes)"
             printf '%s' "$result"
             return 0
         fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch: george-fetch returned empty — trying next"
     fi
 
     # Try external "fetch" server (e.g. @anthropic/mcp-server-fetch)
@@ -539,9 +576,12 @@ mcp_web_fetch() {
         local result
         result=$(mcp_tool_call "fetch" "fetch" "$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')" 2>/dev/null)
         if [ -n "$result" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch OK via fetch server (${#result} bytes)"
+            declare -f transcript_log &>/dev/null && transcript_log "mcp" "web_fetch OK: fetch url=${url:0:80} (${#result} bytes)"
             printf '%s' "$result"
             return 0
         fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch: fetch server returned empty — trying next"
     fi
 
     # Try "puppeteer" server for JS-rendered content
@@ -549,11 +589,16 @@ mcp_web_fetch() {
         local result
         result=$(mcp_tool_call "puppeteer" "puppeteer_navigate" "$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')" 2>/dev/null)
         if [ -n "$result" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch OK via puppeteer (${#result} bytes)"
+            declare -f transcript_log &>/dev/null && transcript_log "mcp" "web_fetch OK: puppeteer url=${url:0:80} (${#result} bytes)"
             printf '%s' "$result"
             return 0
         fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch: puppeteer returned empty"
     fi
 
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch: all servers exhausted — falling back to curl"
+    declare -f transcript_log &>/dev/null && transcript_log "mcp" "web_fetch FALLBACK: no MCP server succeeded for url=${url:0:80}"
     return 1
 }
 
@@ -567,6 +612,8 @@ _mcp_dispatch_intercept() {
     local args="$2"
 
     mcp_enabled || return 1
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP dispatch intercept: cmd=$cmd args=${args:0:80}"
 
     # Check cached tool mappings for all running servers
     local server_name
@@ -584,19 +631,56 @@ _mcp_dispatch_intercept() {
                           (.name | ascii_downcase) == ($cmd | ascii_downcase)) |
              .name' 2>/dev/null | head -1)
 
+        # Compound command matching: /git status → git_status, /github search → github_search
+        local params=""
+        if [ -z "$match" ] && [ -n "$args" ]; then
+            local _subcmd _subrest
+            _subcmd=$(echo "$args" | awk '{print $1}')
+            _subrest=$(echo "$args" | sed 's/^[^ ]* *//')
+            [ "$_subrest" = "$args" ] && _subrest=""
+
+            if [ -n "$_subcmd" ]; then
+                local _compound="${cmd}_${_subcmd}"
+                match=$(printf '%s' "$tools_json" | _mcp_jq -r \
+                    --arg compound "$_compound" \
+                    '.[] | select((.name | ascii_downcase) == ($compound | ascii_downcase)) | .name' 2>/dev/null | head -1)
+
+                if [ -n "$match" ]; then
+                    # Map remaining args to the tool's first required parameter
+                    local _req_param
+                    _req_param=$(printf '%s' "$tools_json" | _mcp_jq -r \
+                        --arg name "$match" \
+                        '.[] | select(.name == $name) | .inputSchema.required // [] | .[0] // empty' 2>/dev/null)
+
+                    if [ -n "$_subrest" ] && [ -n "$_req_param" ]; then
+                        params=$(_mcp_jq -n -c --arg key "$_req_param" --arg val "$_subrest" '{($key): $val}')
+                    elif [ -n "$_subrest" ]; then
+                        params=$(_mcp_jq -n -c --arg input "$_subrest" '{"input":$input}')
+                    else
+                        params='{}'
+                    fi
+                fi
+            fi
+        fi
+
         if [ -n "$match" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP dispatch: matched tool '$match' on server '$server_name'"
             # Build params from args (pass as a generic "input" or "query" field)
-            local params
-            params=$(_mcp_jq -n -c --arg input "$args" '{"input":$input}')
+            [ -z "$params" ] && params=$(_mcp_jq -n -c --arg input "$args" '{"input":$input}')
             local result
             result=$(mcp_tool_call "$server_name" "$match" "$params" 2>/dev/null)
             if [ -n "$result" ]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP dispatch OK: server=$server_name tool=$match (${#result} bytes)"
+                declare -f transcript_log &>/dev/null && transcript_log "mcp" "dispatch intercept OK: server=$server_name tool=$match cmd=$cmd (${#result} bytes)"
                 printf '%s' "$result"
                 return 0
             fi
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP dispatch: tool '$match' returned empty on server '$server_name'"
+            declare -f transcript_log &>/dev/null && transcript_log "mcp" "dispatch intercept EMPTY: server=$server_name tool=$match cmd=$cmd"
         fi
     done
 
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP dispatch: no matching tool for cmd=$cmd — falling back to native"
     return 1
 }
 
@@ -666,6 +750,7 @@ _mcp_write_default_catalog() {
 # Format: name|command|description
 # Install with: /mcp install <name>
 george-fetch|bash $LODGE_DIR/lib/mcp_server_fetch.sh|Built-in web fetch (pure bash, no Node.js)
+george-git|bash $LODGE_DIR/lib/mcp_server_git.sh|Built-in git & GitHub operations (pure bash, no Node.js)
 fetch|npx -y @anthropic/mcp-server-fetch|Web content fetching (enhanced scraping)
 puppeteer|npx -y @anthropic/mcp-server-puppeteer|Browser automation for JS-rendered pages
 brave-search|npx -y @anthropic/mcp-server-brave-search|Web search via Brave API (needs BRAVE_API_KEY)

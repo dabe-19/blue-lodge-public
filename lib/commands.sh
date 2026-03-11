@@ -53,6 +53,7 @@ commands_dispatch() {
         local _mcp_out
         _mcp_out=$(_mcp_dispatch_intercept "$cmd" "$args" 2>/dev/null)
         if [ $? -eq 0 ] && [ -n "$_mcp_out" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] commands_dispatch: MCP intercepted /$cmd (${#_mcp_out} bytes)"
             echo "$_mcp_out"
             return 0
         fi

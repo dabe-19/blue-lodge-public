@@ -2439,7 +2439,7 @@ _build_router_prompt() {
     # Conditional /brainstorm line — only available when AGENT_BRAINSTORM=1
     local _brainstorm_line=""
     if [ "${AGENT_BRAINSTORM:-1}" -eq 1 ]; then
-        _brainstorm_line="/brainstorm  Think/reason/brainstorm using own knowledge (NO human input — George answers himself)"
+        _brainstorm_line="/brainstorm  LAST RESORT self-reasoning (no human input) — use ONLY when decision has no clear answer and /web or /recall cannot help"
     fi
 
     cat << ROUTER_PROMPT
@@ -2496,7 +2496,7 @@ ROUTE EXAMPLES:
 <write a report/file then email>   → /write (first), then /email (next milestone)
 <draft a document/report>          → /write
 ${_ask_line:+<need user preferences or clarification> → /ask
-}${_brainstorm_line:+<generate ideas, brainstorm, reason through options> → /brainstorm
+}${_brainstorm_line:+<hard decision with no clear answer, can'\''t be researched> → /brainstorm
 }<general knowledge, no tools>      → /respond
 
 RULES:
@@ -2505,7 +2505,7 @@ RULES:
 - /sandbox NEVER for slash commands
 - /social for Discord/Telegram/X, /email for actual email
 ${_ask_line:+- /ask to get REAL answers from the human — use when you need specific preferences, names, or ANY user-specific detail that you cannot research
-}${_brainstorm_line:+- /brainstorm to think through something YOURSELF — generate ideas, weigh options, reason through problems. NO human input. Use when YOU need to figure something out.
+}${_brainstorm_line:+- /brainstorm LAST RESORT for hard decisions with no clear answer — NOT for general planning, summarizing, or anything /web or /recall can handle. Max 1 per task.
 }- NEVER output a command not in this list
 - If unsure between TOOLS, use /web or /slash
 - If no explicit output command requested, ALWAYS use /respond
@@ -3734,6 +3734,29 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
             fi
         fi
 
+        # ── URL VALIDATION GATE ───────────────────────────────
+        # Reject URL-based commands where the LLM hallucinated an
+        # incomplete or malformed URL (e.g. "https://claude" with
+        # no TLD). Without this gate, the bad URL fails at execution,
+        # wastes an escalation level, and gets retried indefinitely.
+        # Convert to /web search with the domain name as query instead.
+        if [ "$_needs_single_url" -eq 1 ] && [[ "$cmd" != "/vision "* ]]; then
+            local _val_url_raw="${cmd#$_url_cmd_prefix }"
+            local _val_url
+            _val_url=$(echo "$_val_url_raw" | grep -oE 'https?://[^ "'"'"']+' | head -1)
+            if [ -n "$_val_url" ]; then
+                # Extract host portion and verify it has a dot (needs a TLD)
+                local _val_host
+                _val_host=$(echo "$_val_url" | sed 's|^https\?://||' | cut -d'/' -f1 | cut -d'?' -f1 | cut -d':' -f1)
+                if [[ ! "$_val_host" == *.* ]]; then
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] url-validation: '$_val_url' has no TLD — converting to search"
+                    ui_warn "URL validation: '$_val_url' has no TLD (e.g. .com/.io) — redirecting to search"
+                    cmd="/web search ${_val_host}"
+                    _micro_add_note "$micro_file" "SYSTEM: URL '$_val_url' is malformed (no TLD). Redirected to: $cmd"
+                fi
+            fi
+        fi
+
         # ── EMBEDDED COMMAND EXTRACTION ───────────────────────
         # When the specialist wraps a /social or /email command
         # inside /respond or /write, the real intent is the
@@ -3841,6 +3864,12 @@ INTERLOCK_JSON
         # broken command. If identical, reject and force regeneration.
         # When triggered, also attempt a honeydew rewrite to escape
         # the local minima the agent is stuck in.
+        #
+        # CRITICAL: After a successful honeydew rewrite, we MUST break
+        # out of the inner loop (return 1) so the macro loop picks up
+        # the new honeydew targets and creates a fresh milestone. The
+        # old continue-based approach kept the stale milestone active,
+        # causing the same failed command to repeat indefinitely.
         if [ "$_fail_count" -ge 2 ] && [ -n "$cmd" ] && [ "$cmd" == "$last_failed_cmd" ]; then
             ui_warn "Interlock Triggered: Identical failed command. Forcing regeneration."
             _micro_add_note "$micro_file" "System interlock: Command '$cmd' rejected (identical to previous failure)"
@@ -3860,6 +3889,28 @@ INTERLOCK_JSON
                     fi
                     ui_ok "Interlock auto-recovery: honeydew rewritten to escape local minima"
                     _micro_add_note "$micro_file" "SYSTEM: Interlock triggered honeydew rewrite — plan updated to work around repeated failure"
+
+                    # Record the failed milestone before returning
+                    _macro_add_milestone "$macro_file" "$micro_objective" \
+                        "Interlock: identical command repeated — auto-recovered via honeydew rewrite" \
+                        "$cmd" "UNKNOWN" "FAILED"
+
+                    # URL poisoning: blacklist the failed URL so it doesn't reappear
+                    if declare -f _web_blacklist_add &>/dev/null; then
+                        if [[ "$cmd" == /web\ fetch\ * ]] || [[ "$cmd" == /web\ scrape* ]]; then
+                            local _il_poison_url
+                            _il_poison_url=$(echo "$cmd" | awk '{print $NF}')
+                            if [[ "$_il_poison_url" == http* ]]; then
+                                _web_blacklist_add "$_il_poison_url" "interlock_recovery" "FAILED"
+                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] URL blacklisted during interlock recovery: $_il_poison_url"
+                            fi
+                        fi
+                    fi
+
+                    AGENT_HONEYDEW_REWRITE="$_il_saved_rewrite"
+                    # Signal auto-recovery to macro loop and break out
+                    _AGENT_AUTO_RECOVERED=1
+                    return 1
                 fi
                 AGENT_HONEYDEW_REWRITE="$_il_saved_rewrite"
             fi
@@ -4977,7 +5028,7 @@ MEMEOF
         # Conditional /brainstorm rule for strategist
         local _brainstorm_rule=""
         if [ "${AGENT_BRAINSTORM:-1}" -eq 1 ]; then
-            _brainstorm_rule='"\/brainstorm":"think\/reason\/brainstorm using own knowledge — George figures it out HIMSELF (no human input). Use when user says I don'\''t know or when George needs to generate ideas, weigh options, or reason through a problem.","\/q":"alias for \/brainstorm",'
+            _brainstorm_rule='"\/brainstorm":"LAST RESORT for reasoning — only when a decision has NO clear answer AND no web search or recall can help. NOT for planning or summarizing. Max 1 per task.","\/q":"alias for \/brainstorm",'
         fi
 
         # Hint about user preferences on file (nudges /recall usage)
@@ -5322,7 +5373,7 @@ ${_last_eval_feedback}
             # ── Track research vs delivery milestones ─────────
             local _ms_lower_track
             _ms_lower_track=$(echo "$milestone" | tr '[:upper:]' '[:lower:]')
-            if [[ "$_ms_lower_track" =~ (/web |/recall |search|fetch|lookup|research) ]]; then
+            if [[ "$_ms_lower_track" =~ (/web |/recall |/brainstorm|/q |search|fetch|lookup|research|brainstorm) ]]; then
                 _research_milestone_count=$((_research_milestone_count + 1))
             else
                 _research_milestone_count=0  # reset on delivery milestone
