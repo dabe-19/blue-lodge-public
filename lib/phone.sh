@@ -74,7 +74,7 @@ phone_api_call() {
         return 1
     fi
     if ! command -v "$cmd" &>/dev/null; then
-        echo "{\"error\": \"$cmd not installed\"}"
+        jq -n -c --arg cmd "$cmd" '{"error": ($cmd + " not installed")}'
         return 1
     fi
     local result

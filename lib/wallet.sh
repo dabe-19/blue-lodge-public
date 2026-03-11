@@ -446,9 +446,15 @@ _sol_rpc() {
     local rpc
     rpc=$(_wallet_solana_rpc)
 
+    local _payload
+    _payload=$(jq -n -c \
+        --arg method "$method" \
+        --argjson params "[${params}]" \
+        '{"jsonrpc":"2.0","id":1,"method":$method,"params":$params}')
+
     curl -s -X POST "$rpc" \
         -H "Content-Type: application/json" \
-        -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"${method}\",\"params\":[${params}]}"
+        -d "$_payload"
 }
 
 # ── SOL balance ───────────────────────────────────────────────

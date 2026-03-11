@@ -3027,7 +3027,7 @@ agent_inner_loop() {
     if [ -f "$_research_buf" ]; then
         local _rb_json
         _rb_json=$(cat "$_research_buf")
-        if [ -n "$_rb_json" ]; then
+        if [ -n "$_rb_json" ] && jq -e '.' <<< "$_rb_json" >/dev/null 2>&1; then
             # Tag with source: last milestone objective from macro_memory
             local _rb_source=""
             if [ -f "$macro_file" ]; then
@@ -3053,7 +3053,7 @@ agent_inner_loop() {
     if [ -f "$_bs_buf" ]; then
         local _bs_json
         _bs_json=$(cat "$_bs_buf")
-        if [ -n "$_bs_json" ]; then
+        if [ -n "$_bs_json" ] && jq -e '.' <<< "$_bs_json" >/dev/null 2>&1; then
             local _bs_tmp="${micro_file}.tmp"
             jq --argjson bs "$_bs_json" '.brainstorm_context = $bs' "$micro_file" > "$_bs_tmp" && mv "$_bs_tmp" "$micro_file"
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: brainstorm buffer -> micro_memory"
@@ -4342,7 +4342,7 @@ INTERLOCK_JSON
                     ui_warn "Escalation L2: Forced recall for '$base_cmd'..."
                     local recall_result
                     recall_result=$(recall_search_context "$base_cmd" 3 2>/dev/null)
-                    if [ -n "$recall_result" ] && [ "$recall_result" != "[]" ]; then
+                    if [ -n "$recall_result" ] && [ "$recall_result" != "[]" ] && jq -e '.' <<< "$recall_result" >/dev/null 2>&1; then
                         local _rf_tmp="${micro_file}.tmp"
                         jq --argjson rc "$recall_result" '.recall_context = $rc' "$micro_file" > "$_rf_tmp" && mv "$_rf_tmp" "$micro_file"
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: L2 recall for '$base_cmd' -> micro_memory"

@@ -524,22 +524,19 @@ SQL
     # JSON array output — compact, matches micro_memory/syntax card patterns.
     # Small 2-4B models parse uniform JSON far more reliably than mixed
     # free-text-inside-JSON. Each result is {src, sec, body}.
-    local _rsc_json
-    _rsc_json=$(
-        local first=1
-        printf '['
-        while IFS='|' read -r source section body; do
-            [ -z "$source" ] && continue
-            # Escape for JSON string values
-            source="${source//\\/\\\\}"; source="${source//\"/\\\"}"
-            section="${section//\\/\\\\}"; section="${section//\"/\\\"}"
-            body="${body//\\/\\\\}"; body="${body//\"/\\\"}"
-            body="${body//$'\n'/\\n}"
-            [ "$first" -eq 1 ] && first=0 || printf ','
-            printf '{"src":"%s","sec":"%s","body":"%s"}' "$source" "$section" "$body"
-        done <<< "$results"
-        printf ']'
-    )
+    # Uses jq for proper JSON encoding — manual printf escaping missed
+    # tabs, carriage returns, and control chars, causing --argjson failures.
+    local _rsc_json='[]'
+    local _rsc_arr='[]'
+    while IFS='|' read -r source section body; do
+        [ -z "$source" ] && continue
+        _rsc_arr=$(jq -c \
+            --arg src "$source" \
+            --arg sec "$section" \
+            --arg body "$body" \
+            '. + [{"src":$src,"sec":$sec,"body":$body}]' <<< "$_rsc_arr")
+    done <<< "$results"
+    _rsc_json="$_rsc_arr"
 
     # Store in LRU cache for subsequent turns
     if declare -f cache_put &>/dev/null && [ -n "$_rsc_json" ] && [ "$_rsc_json" != "[]" ]; then

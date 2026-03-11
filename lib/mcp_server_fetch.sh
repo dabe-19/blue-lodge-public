@@ -45,16 +45,10 @@ source "$LODGE_DIR/lib/web.sh"
 GEORGE_CACHE_DIR="${GEORGE_CACHE_DIR:-$GEORGE_DIR/cache/web}"
 mkdir -p "$GEORGE_CACHE_DIR" 2>/dev/null
 
-# ── jq detection ───────────────────────────────────────────────
-_JQ=""
-if command -v jq >/dev/null 2>&1; then
-    _JQ="jq"
-elif command -v gojq >/dev/null 2>&1; then
-    _JQ="gojq"
-else
-    echo '{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"jq or gojq required"}}' >&2
-    exit 1
-fi
+# ── jq (hard dependency — installed by install.sh) ────────────
+# Prefer gojq if available (faster for streaming), otherwise jq.
+_JQ="jq"
+command -v gojq >/dev/null 2>&1 && _JQ="gojq"
 
 # ── JSON-RPC Response Helpers ──────────────────────────────────
 

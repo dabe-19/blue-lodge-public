@@ -321,14 +321,7 @@ describe "mcp_start (mock server)"
     MCP_ENABLED=0
   }
 
-  it "fails when jq is missing" && {
-    saved="$_MCP_JQ_CMD"
-    _MCP_JQ_CMD=""
-    err=$(mcp_start "anything" 2>&1)
-    assert_fail $?
-    assert_contains "$err" "jq"
-    _MCP_JQ_CMD="$saved"
-  }
+  # (jq-missing test removed — jq is now a hard dependency enforced at startup)
 
 describe "mcp_stop"
 

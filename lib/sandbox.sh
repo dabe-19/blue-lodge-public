@@ -511,11 +511,13 @@ sandbox_journal_log() {
     local ts
     ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
     mkdir -p "$(dirname "$SANDBOX_JOURNAL")"
-    # Escape double quotes and newlines in detail
-    detail="${detail//\"/\\\"}"
-    detail="${detail//$'\n'/\\n}"
-    printf '{"ts":"%s","ev":"%s","name":"%s","detail":"%s","rc":%s}\n' \
-        "$ts" "$event" "$name" "$detail" "$rc" >> "$SANDBOX_JOURNAL"
+    jq -n -c \
+        --arg ts "$ts" \
+        --arg ev "$event" \
+        --arg name "$name" \
+        --arg detail "$detail" \
+        --argjson rc "${rc:-0}" \
+        '{"ts":$ts,"ev":$ev,"name":$name,"detail":$detail,"rc":$rc}' >> "$SANDBOX_JOURNAL"
 }
 
 # Read last N journal entries (raw JSONL).
@@ -555,13 +557,13 @@ sandbox_journal_summary() {
         # Last-used and event count from journal
         local last_used="never" exec_count=0 last_rc=0
         if [ -f "$SANDBOX_JOURNAL" ]; then
-            exec_count=$(grep -c "\"name\":\"$name\"" "$SANDBOX_JOURNAL" 2>/dev/null)
+            exec_count=$(jq -c --arg n "$name" 'select(.name == $n)' "$SANDBOX_JOURNAL" 2>/dev/null | wc -l)
             exec_count=${exec_count:-0}
             local last_line
-            last_line=$(grep "\"name\":\"$name\"" "$SANDBOX_JOURNAL" | tail -1)
+            last_line=$(jq -c --arg n "$name" 'select(.name == $n)' "$SANDBOX_JOURNAL" 2>/dev/null | tail -1)
             if [ -n "$last_line" ]; then
-                last_used=$(echo "$last_line" | sed -n 's/.*"ts":"\([^"]*\)".*/\1/p' | cut -dT -f1)
-                last_rc=$(echo "$last_line" | sed -n 's/.*"rc":\([0-9]*\).*/\1/p')
+                last_used=$(jq -r '.ts // empty' <<< "$last_line" | cut -dT -f1)
+                last_rc=$(jq -r '.rc // 0' <<< "$last_line")
             fi
         fi
 

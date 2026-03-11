@@ -39,13 +39,8 @@ MCP_CACHE_NS="mcp"               # LRU cache namespace
 MCP_SERVERS_FILE="${MCP_CONFIG_DIR}/servers.conf"
 MCP_CATALOG_FILE="${MCP_CONFIG_DIR}/catalog.conf"
 
-# ── Dependency check ───────────────────────────────────────────
-_MCP_JQ_CMD=""
-if command -v jq >/dev/null 2>&1; then
-    _MCP_JQ_CMD="jq"
-elif command -v gojq >/dev/null 2>&1; then
-    _MCP_JQ_CMD="gojq"
-fi
+# ── jq is a hard dependency (enforced by install.sh + lodge main) ──
+_MCP_JQ_CMD=jq
 
 # ── Initialize ─────────────────────────────────────────────────
 mcp_init() {
@@ -61,7 +56,7 @@ mcp_init() {
 }
 
 mcp_enabled() {
-    [ "${MCP_ENABLED:-0}" -eq 1 ] && [ -n "$_MCP_JQ_CMD" ]
+    [ "${MCP_ENABLED:-0}" -eq 1 ]
 }
 
 # ── Utility: safe jq wrapper ──────────────────────────────────
@@ -295,11 +290,6 @@ _mcp_handshake() {
 
 mcp_start() {
     local name="$1"
-
-    if [ -z "$_MCP_JQ_CMD" ]; then
-        echo "ERROR: MCP requires jq or gojq" >&2
-        return 1
-    fi
 
     local cmd
     cmd=$(_mcp_server_cmd "$name")
@@ -921,8 +911,6 @@ _mcp_show_status() {
     local status_label="DISABLED"
     if mcp_enabled; then
         status_label="ENABLED"
-    elif [ "${MCP_ENABLED:-0}" -eq 1 ] && [ -z "$_MCP_JQ_CMD" ]; then
-        status_label="ENABLED (but jq missing — install jq to activate)"
     fi
     $_ui_info "Status: $status_label"
 
