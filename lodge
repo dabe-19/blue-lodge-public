@@ -2448,6 +2448,133 @@ _cmd_read() {
         ui_err "File not found: $filepath"
     fi
 }
+_cmd_grep() {
+    local args="$1"
+    local workdir="${2:-.}"
+
+    if [ -z "$args" ]; then
+        ui_info "Usage: /grep <pattern> [path] [| pipeline...]"
+        ui_dim "  /grep TODO                     — search all files for TODO"
+        ui_dim "  /grep 'fn main' src/           — search in src/ directory"
+        ui_dim "  /grep 'import.*os' lib/ | head  — pipe through head"
+        ui_dim "  /grep -i error logs/            — case-insensitive"
+        ui_dim "  /grep 'class [A-Z]' . | wc -l   — count matches"
+        ui_dim ""
+        ui_dim "Supports extended regex. Excludes .git, node_modules, __pycache__,"
+        ui_dim "build artifacts, and binary files automatically."
+        return 1
+    fi
+
+    # ── Split on first unquoted pipe for pipeline support ──────
+    local grep_part="" pipe_part=""
+    local in_sq=0 in_dq=0
+    local i ch prev_ch=""
+    for (( i=0; i<${#args}; i++ )); do
+        ch="${args:$i:1}"
+        if [ "$ch" = "'" ] && [ "$in_dq" -eq 0 ] && [ "$prev_ch" != "\\" ]; then
+            in_sq=$(( 1 - in_sq ))
+        elif [ "$ch" = '"' ] && [ "$in_sq" -eq 0 ] && [ "$prev_ch" != "\\" ]; then
+            in_dq=$(( 1 - in_dq ))
+        elif [ "$ch" = "|" ] && [ "$in_sq" -eq 0 ] && [ "$in_dq" -eq 0 ]; then
+            pipe_part="${args:$((i+1))}"
+            break
+        fi
+        grep_part="${grep_part}${ch}"
+        prev_ch="$ch"
+    done
+    # Trim whitespace
+    grep_part="$(echo "$grep_part" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    pipe_part="$(echo "$pipe_part" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+
+    # ── Parse grep flags and positional args ───────────────────
+    local -a grep_flags=()
+    local pattern="" search_path=""
+    local -a tokens=()
+    eval "tokens=($grep_part)" 2>/dev/null || read -ra tokens <<< "$grep_part"
+
+    for tok in "${tokens[@]}"; do
+        if [[ "$tok" == -* ]] && [ -z "$pattern" ]; then
+            grep_flags+=("$tok")
+        elif [ -z "$pattern" ]; then
+            pattern="$tok"
+        elif [ -z "$search_path" ]; then
+            search_path="$tok"
+        fi
+    done
+
+    if [ -z "$pattern" ]; then
+        ui_err "No search pattern provided"
+        return 1
+    fi
+
+    # Default search path
+    [ -z "$search_path" ] && search_path="."
+
+    # Resolve relative to workdir
+    if [[ "$search_path" != /* ]]; then
+        search_path="$workdir/$search_path"
+    fi
+
+    if [ ! -e "$search_path" ]; then
+        ui_err "Path not found: $search_path"
+        return 1
+    fi
+
+    # ── Exclusions ─────────────────────────────────────────────
+    local -a excludes=(
+        --exclude-dir=.git
+        --exclude-dir=node_modules
+        --exclude-dir=__pycache__
+        --exclude-dir=.venv
+        --exclude-dir=target
+        --exclude-dir=.mypy_cache
+        --exclude-dir=.pytest_cache
+        --exclude-dir=.tox
+        --exclude-dir=.eggs
+        --exclude-dir=.george
+        --exclude-dir=.lodge-snapshots
+    )
+
+    # ── Build grep command ─────────────────────────────────────
+    local -a cmd=(grep -rn -E --binary-files=without-match)
+    cmd+=("${excludes[@]}")
+    [ -t 1 ] && cmd+=(--color=always)
+    cmd+=("${grep_flags[@]}")
+    cmd+=("--" "$pattern" "$search_path")
+
+    # ── Execute with optional pipe ─────────────────────────────
+    # Pipe commands are restricted to safe read-only utilities.
+    if [ -n "$pipe_part" ]; then
+        local pipe_cmd
+        pipe_cmd=$(echo "$pipe_part" | awk '{print $1}')
+        case "$pipe_cmd" in
+            head|tail|wc|sort|uniq|less|cat|awk|sed|grep|cut|tr|tee|nl)
+                "${cmd[@]}" 2>/dev/null | eval "$pipe_part"
+                ;;
+            *)
+                ui_err "Pipe to '$pipe_cmd' not allowed (use head, tail, wc, sort, uniq, grep, awk, sed, cut, tr, nl)"
+                return 1
+                ;;
+        esac
+    else
+        # Cap output at 200 lines to avoid flooding
+        local output
+        output=$("${cmd[@]}" 2>/dev/null | head -n 200)
+        local total
+        total=$("${cmd[@]}" 2>/dev/null | wc -l)
+
+        if [ -z "$output" ]; then
+            ui_dim "  No matches found."
+            return 0
+        fi
+
+        echo "$output"
+        if [ "$total" -gt 200 ]; then
+            echo ""
+            ui_dim "  ... ($total total matches, showing first 200. Pipe to narrow: /grep pattern | tail -20)"
+        fi
+    fi
+}
 _cmd_container() {
     local args="$1"
     local action
@@ -4482,6 +4609,7 @@ _register_commands() {
     commands_register "ls"       "List workspace files as tree" "_cmd_ls"
     commands_register "files"    "List workspace files as tree (alias for /ls)" "_cmd_files"
     commands_register "read"     "Read a file" "_cmd_read"
+    commands_register "grep"     "Regex search files (supports pipes)" "_cmd_grep"
     commands_register "respond"  "Present response to the operator" "_cmd_respond"
 }
 

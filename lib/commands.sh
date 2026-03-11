@@ -147,7 +147,7 @@ commands_is_safe_auto_route() {
     case "$first_word" in
         read|write|append|edit|test|build|fix|save|plan|ask|push|commit|clone|clear|compact|\
         init|reflect|think|recall|debug|model|status|email|backup|web|cd|ls|files|git|\
-        service)
+        grep|service)
             return 1 ;;
     esac
 
