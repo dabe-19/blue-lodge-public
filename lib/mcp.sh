@@ -562,7 +562,7 @@ mcp_web_fetch() {
     if _mcp_server_exists "george-fetch"; then
         local result
         result=$(mcp_tool_call "george-fetch" "fetch" "$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')" 2>/dev/null)
-        if [ -n "$result" ]; then
+        if [ $? -eq 0 ] && [ -n "$result" ]; then
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch OK via george-fetch (${#result} bytes)"
             declare -f transcript_log &>/dev/null && transcript_log "mcp" "web_fetch OK: george-fetch url=${url:0:80} (${#result} bytes)"
             printf '%s' "$result"
@@ -575,7 +575,7 @@ mcp_web_fetch() {
     if _mcp_server_exists "fetch"; then
         local result
         result=$(mcp_tool_call "fetch" "fetch" "$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')" 2>/dev/null)
-        if [ -n "$result" ]; then
+        if [ $? -eq 0 ] && [ -n "$result" ]; then
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch OK via fetch server (${#result} bytes)"
             declare -f transcript_log &>/dev/null && transcript_log "mcp" "web_fetch OK: fetch url=${url:0:80} (${#result} bytes)"
             printf '%s' "$result"
@@ -588,7 +588,7 @@ mcp_web_fetch() {
     if _mcp_server_exists "puppeteer"; then
         local result
         result=$(mcp_tool_call "puppeteer" "puppeteer_navigate" "$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')" 2>/dev/null)
-        if [ -n "$result" ]; then
+        if [ $? -eq 0 ] && [ -n "$result" ]; then
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch OK via puppeteer (${#result} bytes)"
             declare -f transcript_log &>/dev/null && transcript_log "mcp" "web_fetch OK: puppeteer url=${url:0:80} (${#result} bytes)"
             printf '%s' "$result"
@@ -751,6 +751,7 @@ _mcp_write_default_catalog() {
 # Install with: /mcp install <name>
 george-fetch|bash $LODGE_DIR/lib/mcp_server_fetch.sh|Built-in web fetch (pure bash, no Node.js)
 george-git|bash $LODGE_DIR/lib/mcp_server_git.sh|Built-in git & GitHub operations (pure bash, no Node.js)
+george-x|bash $LODGE_DIR/lib/mcp_server_x.sh|Built-in X/Twitter integration (pure bash, no Node.js)
 fetch|npx -y @anthropic/mcp-server-fetch|Web content fetching (enhanced scraping)
 puppeteer|npx -y @anthropic/mcp-server-puppeteer|Browser automation for JS-rendered pages
 brave-search|npx -y @anthropic/mcp-server-brave-search|Web search via Brave API (needs BRAVE_API_KEY)

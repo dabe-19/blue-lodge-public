@@ -62,10 +62,59 @@ _web_block_reason() {
         999) echo "HTTP_999_PLATFORM_BLOCK"; return 0 ;;
     esac
 
-    # HTML challenge/captcha/waf detection
-    if echo "$lower_html" | grep -qE 'captcha|cf-chl|challenge-platform|verify you are human|security check|request blocked|access denied|bot detection|cloudflare|incapsula|akamai'; then
+    # HTML challenge/captcha/WAF detection — multi-signal heuristic.
+    #
+    # PROBLEM: Single-keyword matching ("cloudflare", "akamai") causes
+    # false positives on legitimate pages that reference CDN URLs like
+    # cdnjs.cloudflare.com/... or akamaized.net/... in link/script tags.
+    # A raw site like tridentautomation.in gets blacklisted just because
+    # it loads Font Awesome from Cloudflare's CDN.
+    #
+    # FIX: Two tiers of signals:
+    #   Tier 1 (high confidence) — terms that ONLY appear in actual
+    #           challenge/WAF pages, never in legitimate content.
+    #           A single match triggers blocking.
+    #   Tier 2 (ambiguous) — terms like "cloudflare" or "access denied"
+    #           that appear in CDN URLs, footer credits, and article text.
+    #           These require CORROBORATING evidence: the page must also
+    #           be small (< 10KB) with minimal visible text content,
+    #           indicating it's a challenge interstitial, not a real page.
+
+    # Tier 1: unambiguous WAF/challenge markers
+    if echo "$lower_html" | grep -qE 'cf-chl-bypass|cf-chl-widget|challenge-platform|_cf_chl_opt|verify you are human|just a moment\.\.\.|enable javascript and cookies|ray id'; then
         echo "HTML_CHALLENGE_OR_CAPTCHA"
         return 0
+    fi
+
+    # Tier 2: ambiguous terms — require small page + low content ratio
+    if echo "$lower_html" | grep -qE 'captcha|request blocked|bot detection|incapsula'; then
+        # These terms rarely appear in legitimate content, but still
+        # check page size — a real captcha page is typically < 10KB.
+        local _html_size=${#html}
+        if [ "$_html_size" -lt 20000 ]; then
+            echo "HTML_CHALLENGE_OR_CAPTCHA"
+            return 0
+        fi
+        # Large page with "captcha" — likely an article ABOUT captchas
+    fi
+
+    # Tier 3: highly ambiguous — "cloudflare", "akamai", "access denied",
+    # "security check". Only flag if the page is a tiny interstitial
+    # AND the term appears outside HTML attributes (not in a CDN URL).
+    if echo "$lower_html" | grep -qE 'cloudflare|akamai|access denied|security check'; then
+        local _html_size=${#html}
+        # Real challenge pages are small interstitials (< 5KB typically).
+        # Any page over 10KB with these words is almost certainly legit
+        # content referencing a CDN or discussing security topics.
+        if [ "$_html_size" -lt 5000 ]; then
+            # Strip tags+URLs to check if the word appears in visible text
+            local _visible_text
+            _visible_text=$(printf '%s' "$lower_html" | sed -e 's/<[^>]*>//g' -e 's/https\?:\/\/[^ "]*//g')
+            if echo "$_visible_text" | grep -qE 'cloudflare|akamai|access denied|security check'; then
+                echo "HTML_CHALLENGE_OR_CAPTCHA"
+                return 0
+            fi
+        fi
     fi
 
     return 1
