@@ -886,6 +886,82 @@ _html_extract_images() {
     done | head -20
 }
 
+# ── GitHub repo URL detection ──────────────────────────────────
+# Returns owner/repo if URL matches github.com/owner/repo (no deeper paths).
+# Used to redirect to the GitHub API for README content instead of
+# scraping the SPA HTML (which yields only navigation boilerplate).
+_web_github_repo_slug() {
+    local url="$1"
+    local slug
+    # Strip trailing slashes and .git suffix
+    url="${url%/}"
+    url="${url%.git}"
+    # Match github.com/owner/repo (exactly 2 path segments)
+    slug=$(echo "$url" | sed -n 's|^https\?://github\.com/\([a-zA-Z0-9_.-]\+/[a-zA-Z0-9_.-]\+\)$|\1|p')
+    [ -n "$slug" ] && echo "$slug"
+}
+
+# ── Fetch GitHub repo README via API ───────────────────────────
+# Returns: repo metadata header + README markdown content.
+# Much better than scraping the HTML page which is an SPA.
+_web_fetch_github_readme() {
+    local slug="$1"  # owner/repo
+
+    local api_url="https://api.github.com/repos/${slug}/readme"
+    local resp
+    resp=$(curl -sL --max-time "${WEB_TIMEOUT:-15}" \
+        -H "Accept: application/vnd.github.v3+json" \
+        -H "User-Agent: Blue-Lodge-George/0.1" \
+        "$api_url" 2>/dev/null)
+    [ -z "$resp" ] && return 1
+
+    # Check for API errors (404 = no README, 403 = rate limited)
+    local msg
+    msg=$(echo "$resp" | jq -r '.message // empty' 2>/dev/null)
+    if [ -n "$msg" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] GitHub README API: $msg" >&2
+        return 1
+    fi
+
+    # Decode base64 content directly from the API response (saves an HTTP request)
+    local readme="" encoding
+    encoding=$(echo "$resp" | jq -r '.encoding // empty' 2>/dev/null)
+    if [ "$encoding" = "base64" ]; then
+        readme=$(echo "$resp" | jq -r '.content // empty' 2>/dev/null | base64 -d 2>/dev/null)
+    fi
+
+    # Fallback: fetch raw content via download_url if base64 decode failed
+    if [ -z "$readme" ]; then
+        local download_url
+        download_url=$(echo "$resp" | jq -r '.download_url // empty' 2>/dev/null)
+        [ -z "$download_url" ] && return 1
+        readme=$(curl -sL --max-time "${WEB_TIMEOUT:-15}" \
+            -H "User-Agent: Blue-Lodge-George/0.1" \
+            "$download_url" 2>/dev/null)
+        [ -z "$readme" ] && return 1
+    fi
+
+    # Also fetch repo metadata for context
+    local repo_resp repo_desc repo_stars repo_lang repo_topics
+    repo_resp=$(curl -sL --max-time "${WEB_TIMEOUT:-15}" \
+        -H "Accept: application/vnd.github.v3+json" \
+        -H "User-Agent: Blue-Lodge-George/0.1" \
+        "https://api.github.com/repos/${slug}" 2>/dev/null)
+    if [ -n "$repo_resp" ]; then
+        repo_desc=$(echo "$repo_resp" | jq -r '.description // "No description"' 2>/dev/null)
+        repo_stars=$(echo "$repo_resp" | jq -r '.stargazers_count // 0' 2>/dev/null)
+        repo_lang=$(echo "$repo_resp" | jq -r '.language // "Unknown"' 2>/dev/null)
+        repo_topics=$(echo "$repo_resp" | jq -r '(.topics // []) | join(", ")' 2>/dev/null)
+    fi
+
+    # Build output: repo header + README content
+    printf '[GitHub: %s] ★%s | %s\n' "$slug" "${repo_stars:-0}" "${repo_lang:-Unknown}"
+    [ -n "$repo_desc" ] && [ "$repo_desc" != "No description" ] && printf 'Description: %s\n' "$repo_desc"
+    [ -n "$repo_topics" ] && [ "$repo_topics" != "" ] && printf 'Topics: %s\n' "$repo_topics"
+    printf '\n--- README ---\n%s\n' "$readme"
+}
+
 # ── Fetch a URL and return clean text ─────────────────────────
 web_fetch() {
     local url="$1"
@@ -909,6 +985,28 @@ web_fetch() {
             cat "$cache_file"
             return 0
         fi
+    fi
+
+    # ── GitHub repo URL → API-based README fetch ──────────────────
+    # GitHub repo pages are SPAs that yield only nav boilerplate when
+    # scraped. Detect github.com/owner/repo URLs and fetch the README
+    # via the GitHub API instead, giving the agent actual content.
+    local _gh_slug
+    _gh_slug=$(_web_github_repo_slug "$url")
+    if [ -n "$_gh_slug" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] web_fetch: GitHub repo detected ($url) — using API for README"
+        local _gh_content
+        _gh_content=$(_web_fetch_github_readme "$_gh_slug")
+        if [ -n "$_gh_content" ]; then
+            _gh_content=$(echo "$_gh_content" | _web_truncate_content)
+            mkdir -p "$GEORGE_CACHE_DIR"
+            echo "$_gh_content" > "$cache_file" 2>/dev/null
+            echo "$_gh_content"
+            return 0
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] web_fetch: GitHub API README failed — falling through to normal fetch"
     fi
 
     # ── MCP-first fetch (when enabled) ────────────────────────────
@@ -1039,6 +1137,23 @@ web_fetch_json() {
         return 1
     fi
 
+    # ── GitHub repo URL → API-based README fetch (structured) ──────
+    local _gh_slug
+    _gh_slug=$(_web_github_repo_slug "$clean_url")
+    if [ -n "$_gh_slug" ]; then
+        local _gh_content
+        _gh_content=$(_web_fetch_github_readme "$_gh_slug")
+        if [ -n "$_gh_content" ]; then
+            _gh_content=$(echo "$_gh_content" | _web_truncate_content)
+            jq -n \
+                --arg url "$clean_url" \
+                --arg title "GitHub: $_gh_slug" \
+                --arg content "$_gh_content" \
+                '{"url":$url,"title":$title,"content":$content,"images":[],"links":[]}'
+            return 0
+        fi
+    fi
+
     # ── Pre-screen by URL extension for formats needing special fetch ──
     local _url_guess
     _url_guess=$(_web_guess_content_type "$clean_url")
@@ -1167,12 +1282,21 @@ web_fetch_json() {
         images_json=$(echo "$img_lines" | jq -R '.' | jq -s '.')
     fi
 
+    # Extract follow-up links for agent exploration
+    local links_json="[]"
+    local link_lines
+    link_lines=$(echo "$body" | _html_extract_links "$base_url")
+    if [ -n "$link_lines" ]; then
+        links_json=$(echo "$link_lines" | jq -R '.' | jq -s '.')
+    fi
+
     jq -n \
         --arg url "$clean_url" \
         --arg title "$title" \
         --arg content "$content" \
         --argjson images "$images_json" \
-        '{"url":$url,"title":$title,"content":$content,"images":$images}'
+        --argjson links "$links_json" \
+        '{"url":$url,"title":$title,"content":$content,"images":$images,"links":$links}'
 }
 
 # ── Extract just the title from a page ────────────────────────
@@ -1181,6 +1305,37 @@ web_title() {
     local html
     html=$(web_fetch_raw "$url")
     echo "$html" | _html_extract_title
+}
+
+# ── Extract links from HTML (for structured scraping) ──────────
+# Extracts href links from <a> tags, resolves relative URLs,
+# filters out navigation/UI noise, and returns clean absolute URLs.
+# Capped at 30 links to keep context manageable for the agent.
+_html_extract_links() {
+    local base_url="$1"
+    # Extract href attributes from <a> tags
+    grep -oiE '<a[^>]+href="[^"]*"[^>]*>' | \
+        grep -oE 'href="[^"]+"' | sed 's/href="//;s/"$//' | \
+    while IFS= read -r link_url; do
+        [ -z "$link_url" ] && continue
+        # Skip anchors, javascript, mailto, tel
+        case "$link_url" in
+            \#*|javascript:*|mailto:*|tel:*|data:*) continue ;;
+        esac
+        # Resolve relative URLs
+        if [[ "$link_url" == //* ]]; then
+            link_url="https:${link_url}"
+        elif [[ "$link_url" == /* ]]; then
+            link_url="${base_url}${link_url}"
+        elif [[ "$link_url" != http* ]]; then
+            continue  # skip truly relative paths
+        fi
+        # Skip static assets
+        if [[ "$link_url" =~ \.(css|js|map|woff2?|ttf|eot|ico|xml|json)(\?|$) ]]; then
+            continue
+        fi
+        echo "$link_url"
+    done | sort -u | head -30
 }
 
 # ── Extract all links from a page ─────────────────────────────

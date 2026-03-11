@@ -38,7 +38,7 @@ AGENT_WEB_SEARCH_MAX_LENGTH="${AGENT_WEB_SEARCH_MAX_LENGTH:-160}"  # Max charact
 AGENT_WEB_SEARCH_MAX_OPERATORS="${AGENT_WEB_SEARCH_MAX_OPERATORS:-3}"  # Max AND/OR operators allowed in loose mode
 AGENT_EVAL_REC_CHARS="${AGENT_EVAL_REC_CHARS:-120}"              # Max chars after a slash command in evaluator recommendations
 AGENT_PRESSURE_RELIEF="${AGENT_PRESSURE_RELIEF:-2}"          # Consecutive milestone skips before pressure relief fires (0=disabled)
-AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-1}"              # Smart command routing: 0=disabled, 1=enabled
+AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-3}"              # Smart command routing: 0=disabled, 1=post-dispatch reroute only, 2=fuzzy keyword catalog injection only, 3=combined (default)
 AGENT_ASK_USER="${AGENT_ASK_USER:-1}"                    # Allow George to /ask the user questions during tasks: 0=disabled, 1=enabled
 AGENT_BRAINSTORM="${AGENT_BRAINSTORM:-1}"                  # Allow George to /brainstorm (self-reason) during tasks: 0=disabled, 1=enabled
 AGENT_FILE_EXPAND="${AGENT_FILE_EXPAND:-1}"              # Auto-expand file references in /social, /email, /write text: 0=disabled, 1=enabled
@@ -815,6 +815,111 @@ _agent_honeydew_maybe_expand() {
     _agent_honeydew_expand "$next_id" "$workdir"
 }
 
+# ── Fuzzy Keyword Catalog Match ───────────────────────────────
+# Scans milestone text for domain keywords that hint the specialist
+# should see additional command catalogs beyond the pre-routed one.
+#
+# Problem: small models (4B) default to /web for tasks like "search
+# GitHub repos" because /web appears first in the catalog.  If the
+# milestone mentions "github" or "discord", we should inject the
+# /git, /github, or /social syntax card so the specialist can pick
+# the right tool.
+#
+# Returns: space-separated list of extra command names (without /)
+#          whose syntax cards should be injected into the specialist
+#          prompt.  Empty string if no matches.
+#
+# Args:  $1 = milestone text (micro_objective)
+#        $2 = pre-routed command (base, no /)
+# Output: echoes extra command names
+_agent_fuzzy_catalog_match() {
+    local _fz_text _fz_preroute
+    _fz_text=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+    _fz_preroute="${2:-}"
+    local _fz_extras=""
+
+    # ── Keyword → command mappings ────────────────────────
+    # Each block checks for domain keywords in the milestone.
+    # Skip if the pre-routed command already matches (no need
+    # to inject /git catalog when we're already routed to /git).
+
+    # Git / GitHub
+    if [ "$_fz_preroute" != "git" ] && [ "$_fz_preroute" != "github" ]; then
+        if [[ "$_fz_text" =~ (github|git[[:space:]]repo|git[[:space:]]clone|pull[[:space:]]request|merge[[:space:]]request|\.git[[:space:]]|fork[[:space:]]|starred|githu) ]]; then
+            _fz_extras="${_fz_extras} github git"
+        fi
+    fi
+
+    # Social (Discord, Telegram, X/Twitter, Mastodon)
+    if [ "$_fz_preroute" != "social" ]; then
+        if [[ "$_fz_text" =~ (discord|telegram|mastodon|tweet|post[[:space:]]to[[:space:]]|dm[[:space:]]|direct[[:space:]]message|slack|bluesky|fediverse|toot) ]]; then
+            _fz_extras="${_fz_extras} social"
+        fi
+    fi
+
+    # Email
+    # NOTE: send.*@ is intentionally excluded — it false-positives on
+    # Discord @mentions ("send file to @babadoo on discord").  Instead
+    # we match @word.word which looks like an actual email address.
+    if [ "$_fz_preroute" != "email" ]; then
+        if [[ "$_fz_text" =~ (email|e-mail|inbox|gmail|protonmail|zoho|@[a-z0-9]+\.[a-z]|mail[[:space:]]to|smtp) ]]; then
+            _fz_extras="${_fz_extras} email"
+        fi
+    fi
+
+    # Journal
+    if [ "$_fz_preroute" != "journal" ]; then
+        if [[ "$_fz_text" =~ (journal|diary|daily[[:space:]]log|log[[:space:]]entry|morning[[:space:]]entry|evening[[:space:]]entry) ]]; then
+            _fz_extras="${_fz_extras} journal"
+        fi
+    fi
+
+    # PGP / encryption
+    if [ "$_fz_preroute" != "pgp" ]; then
+        if [[ "$_fz_text" =~ (pgp|gpg|encrypt|decrypt|sign[[:space:]]with[[:space:]]key|armored|keyring) ]]; then
+            _fz_extras="${_fz_extras} pgp"
+        fi
+    fi
+
+    # Container / Docker / Sandbox
+    if [ "$_fz_preroute" != "container" ] && [ "$_fz_preroute" != "sandbox" ]; then
+        if [[ "$_fz_text" =~ (docker|container|sandbox|alpine[[:space:]]|ubuntu[[:space:]]|kali[[:space:]]|debian[[:space:]]|fedora[[:space:]]|chroot|isolated[[:space:]]env) ]]; then
+            _fz_extras="${_fz_extras} container sandbox"
+        fi
+    fi
+
+    # Wallet / Crypto
+    if [ "$_fz_preroute" != "wallet" ]; then
+        if [[ "$_fz_text" =~ (wallet|bitcoin|ethereum|crypto[[:space:]]|btc|eth[[:space:]]|solana|monero|blockchain) ]]; then
+            _fz_extras="${_fz_extras} wallet"
+        fi
+    fi
+
+    # Backup
+    if [ "$_fz_preroute" != "backup" ]; then
+        if [[ "$_fz_text" =~ (backup|restore[[:space:]]|snapshot|archive[[:space:]]the) ]]; then
+            _fz_extras="${_fz_extras} backup"
+        fi
+    fi
+
+    # Phone
+    if [ "$_fz_preroute" != "phone" ]; then
+        if [[ "$_fz_text" =~ (phone|sms|text[[:space:]]message|iphone|android|battery[[:space:]]level|cell[[:space:]]signal) ]]; then
+            _fz_extras="${_fz_extras} phone"
+        fi
+    fi
+
+    # Vision / image analysis
+    if [ "$_fz_preroute" != "vision" ]; then
+        if [[ "$_fz_text" =~ (analyze.*image|describe.*image|image.*analy|screenshot|photo[[:space:]]|picture[[:space:]]|ocr[[:space:]]) ]]; then
+            _fz_extras="${_fz_extras} vision"
+        fi
+    fi
+
+    # Trim leading space
+    echo "${_fz_extras# }"
+}
+
 # ── Smart Command Route ───────────────────────────────────────
 # Pre-execution heuristic that detects when the LLM picked the
 # wrong slash command for its argument and reroutes automatically.
@@ -844,7 +949,9 @@ _agent_smart_route() {
     _SMART_ROUTE_REROUTED=0
 
     # ── Gate: feature toggle ───────────────────────────────
-    [ "${AGENT_SMART_ROUTE:-1}" -ne 1 ] && return 0
+    # Post-dispatch reroute fires for modes 1 and 3
+    local _sr_mode="${AGENT_SMART_ROUTE:-3}"
+    [ "$_sr_mode" -ne 1 ] && [ "$_sr_mode" -ne 3 ] && return 0
 
     # ── Extract base command and argument ──────────────────
     local _sr_base="" _sr_arg=""
@@ -1158,7 +1265,7 @@ REWRITE_ROUTER_JSON
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew rewrite router verdict: %s\n' "$(echo "$_router_verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
 
     local _verdict_word
-    _verdict_word=$(echo "$_router_verdict" | head -1 | awk -F'[: \t]' '{print $1}' | sed 's/^[*_]\+//;s/[*_.,]\+$//')
+    _verdict_word=$(echo "$_router_verdict" | head -1 | awk -F'[: \t]' '{print $1}' | sed 's/^[*_"\x27]\+//;s/[*_.,"\x27]\+$//')
 
     if [[ "$_verdict_word" != "REWRITE" ]]; then
         if [ "$force_rewrite" -eq 1 ]; then
@@ -1486,9 +1593,11 @@ EVAL_HD_JSON
     local first_line
     first_line=$(echo "$verdict" | head -1)
     local verdict_word
-    # Extract just the verdict keyword — strip punctuation AND handle
+    # Extract just the verdict keyword — strip punctuation, quotes, AND handle
     # "UNSATISFIED:reason" (no space after colon) by splitting on colon first.
-    verdict_word=$(echo "$first_line" | awk -F'[: \t]' '{print $1}' | sed 's/^[*_]\+//;s/[*_.,]\+$//')
+    # NOTE: Small models (4B) often echo the JSON schema back with the verdict
+    # wrapped in double quotes (e.g., '"SATISFIED"') — strip those too.
+    verdict_word=$(echo "$first_line" | awk -F'[: \t]' '{print $1}' | sed 's/^[*_"\x27]\+//;s/[*_.,"\x27]\+$//')
 
     _EVAL_HONEYDEW_REASON=""
     _EVAL_HONEYDEW_RECOMMENDATION=""
@@ -1645,7 +1754,7 @@ EVAL_P1_JSON
     local first_line
     first_line=$(echo "$verdict" | head -1)
     local verdict_word
-    verdict_word=$(echo "$first_line" | awk '{print $1}' | sed 's/^[*_]\+//;s/[*_:.,]\+$//')
+    verdict_word=$(echo "$first_line" | awk '{print $1}' | sed 's/^[*_"\x27]\+//;s/[*_:.,"\x27]\+$//')
 
     # Parse INCOMPLETE reason
     _EVAL_MILESTONE_REASON=""
@@ -1863,7 +1972,7 @@ EVAL_P2_JSON
     local first_line
     first_line=$(echo "$verdict" | head -1)
     local verdict_word
-    verdict_word=$(echo "$first_line" | awk '{print $1}' | sed 's/^[*_]\+//;s/[*_:.,]\+$//')
+    verdict_word=$(echo "$first_line" | awk '{print $1}' | sed 's/^[*_"\x27]\+//;s/[*_:.,"\x27]\+$//')
 
     # Extract reason text from verdict (used for both COMPLETE and INCOMPLETE)
     local _eval_reason=""
@@ -3419,6 +3528,49 @@ ${_recovery_catalog}
 
 Pick the BEST command from this list for the task. Output exactly ONE command with arguments."
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist <- full command catalog (hallucination recovery)"
+        fi
+
+        # ── FUZZY KEYWORD CATALOG INJECTION ────────────────────
+        # Modes 2 and 3: Scan milestone for domain keywords that
+        # suggest the specialist needs additional command catalogs.
+        # E.g., milestone says "search GitHub repos" but routed to
+        # /web → inject /git and /github syntax cards so the model
+        # can pick the right tool.
+        local _sr_mode="${AGENT_SMART_ROUTE:-3}"
+        if [ "$_sr_mode" -ge 2 ] && [ "$_hallucination_fallback" -eq 0 ]; then
+            local _fz_base="${selected_tool#/}"
+            local _fz_extras
+            _fz_extras=$(_agent_fuzzy_catalog_match "$micro_objective" "$_fz_base")
+            if [ -n "$_fz_extras" ]; then
+                # Build syntax cards for each fuzzy-matched command
+                local _fz_cards="" _fz_cmd
+                for _fz_cmd in $_fz_extras; do
+                    local _fz_card
+                    _fz_card=$(_build_specialist_prompt "/$_fz_cmd" "" "" 2>/dev/null | sed -n '/^SYNTAX CARD:/,/^$/p')
+                    [ -n "$_fz_card" ] && _fz_cards="${_fz_cards}${_fz_card}"$'\n'
+                done
+                if [ -n "$_fz_cards" ]; then
+                    # Mode 2: fuzzy cards replace the primary; fall back to original if no fuzzy matches
+                    # Mode 3: fuzzy cards are appended alongside the primary
+                    if [ "$_sr_mode" -eq 2 ]; then
+                        specialist_sys=$(_build_specialist_prompt "/${_fz_extras%% *}" "$workdir" "$micro_objective")
+                        # Inject remaining cards if multiple fuzzy matches
+                        local _fz_remaining="${_fz_extras#* }"
+                        if [ "$_fz_remaining" != "$_fz_extras" ]; then
+                            specialist_sys="${specialist_sys}
+ADDITIONAL COMMANDS (also relevant to this task):
+${_fz_cards}"
+                        fi
+                        selected_tool="/${_fz_extras%% *}"
+                    else
+                        specialist_sys="${specialist_sys}
+ALSO CONSIDER — these commands may be more appropriate for this task:
+${_fz_cards}
+Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a better fit than the primary command."
+                    fi
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] fuzzy-catalog: injected [$_fz_extras] alongside $selected_tool"
+                fi
+            fi
         fi
 
         # Inject cached micro_memory (action log) so the specialist sees
@@ -5470,6 +5622,9 @@ ${_last_eval_feedback}
                         # Honeydew item satisfied — mark it done
                         if [ -n "${_EVAL_HONEYDEW_ITEM_NUM:-}" ]; then
                             _agent_honeydew_mark "$_EVAL_HONEYDEW_ITEM_NUM" "$workdir"
+                            # Reprint full honeydew checklist with [x] marks
+                            local _hd_eval_display_file="$george_dir/$HONEYDEW_FILE"
+                            [ -f "$_hd_eval_display_file" ] && _agent_honeydew_display "$_hd_eval_display_file"
                             local _hd_status
                             _hd_status=$(_agent_honeydew_status "$workdir" 2>/dev/null)
                             [ -n "$_hd_status" ] && ui_dim "  Honeydew: $_hd_status"

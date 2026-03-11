@@ -1402,4 +1402,240 @@ describe "WEB_CONTENT_MAX_CHARS configuration"
     _teardown_web
   }
 
+# ── _web_github_repo_slug ─────────────────────────────────────
+describe "_web_github_repo_slug"
+
+  it "function exists" && {
+    _setup_web
+    declare -f _web_github_repo_slug &>/dev/null
+    assert_ok $? "_web_github_repo_slug should be defined"
+    _teardown_web
+  }
+
+  it "extracts owner/repo from GitHub repo URL" && {
+    _setup_web
+    result=$(_web_github_repo_slug "https://github.com/dabe-19/blue-lodge-public")
+    assert_eq "$result" "dabe-19/blue-lodge-public"
+    _teardown_web
+  }
+
+  it "handles trailing slash" && {
+    _setup_web
+    result=$(_web_github_repo_slug "https://github.com/owner/repo/")
+    assert_eq "$result" "owner/repo"
+    _teardown_web
+  }
+
+  it "handles .git suffix" && {
+    _setup_web
+    result=$(_web_github_repo_slug "https://github.com/owner/repo.git")
+    assert_eq "$result" "owner/repo"
+    _teardown_web
+  }
+
+  it "returns empty for non-GitHub URLs" && {
+    _setup_web
+    result=$(_web_github_repo_slug "https://gitlab.com/owner/repo")
+    assert_empty "$result"
+    _teardown_web
+  }
+
+  it "returns empty for deep GitHub paths (not repo root)" && {
+    _setup_web
+    result=$(_web_github_repo_slug "https://github.com/owner/repo/tree/main/src")
+    assert_empty "$result"
+    _teardown_web
+  }
+
+  it "returns empty for github.com homepage" && {
+    _setup_web
+    result=$(_web_github_repo_slug "https://github.com")
+    assert_empty "$result"
+    _teardown_web
+  }
+
+  it "returns empty for github.com/owner (no repo)" && {
+    _setup_web
+    result=$(_web_github_repo_slug "https://github.com/owner")
+    assert_empty "$result"
+    _teardown_web
+  }
+
+# ── _web_fetch_github_readme base64 decoding ──────────────────
+describe "_web_fetch_github_readme"
+
+  it "function exists" && {
+    _setup_web
+    declare -f _web_fetch_github_readme &>/dev/null
+    assert_ok $? "_web_fetch_github_readme should be defined"
+    _teardown_web
+  }
+
+  it "decodes base64-encoded content from API response" && {
+    _setup_web
+    # Mock curl to return a base64-encoded README API response
+    _readme_text="# Hello World\nThis is a test README."
+    _b64_content=$(printf '%s' "$_readme_text" | base64 | tr -d '\n')
+    # Inject newlines like GH API does (76-char line wrap)
+    _b64_wrapped=$(printf '%s' "$_b64_content" | fold -w 76 | paste -sd'\n' -)
+    _api_json=$(cat <<EOJSON
+{"name":"README.md","path":"README.md","encoding":"base64","content":"${_b64_wrapped}","download_url":"https://raw.githubusercontent.com/test/test/main/README.md"}
+EOJSON
+)
+    _repo_json='{"description":"Test repo","stargazers_count":42,"language":"Bash","topics":["test"]}'
+    # Use file-based counter to survive subshells
+    _curl_counter="$TMPDIR_WEB/.curl_count_b64"
+    printf '0' > "$_curl_counter"
+    curl() {
+      local _n; _n=$(cat "$_curl_counter"); _n=$((_n + 1)); printf '%s' "$_n" > "$_curl_counter"
+      if [ "$_n" -eq 1 ]; then
+        printf '%s' "$_api_json"
+      else
+        printf '%s' "$_repo_json"
+      fi
+    }
+    export -f curl
+    export _curl_counter _api_json _repo_json
+    result=$(_web_fetch_github_readme "test/test")
+    _final_count=$(cat "$_curl_counter")
+    assert_contains "$result" "Hello World" "should contain decoded README content"
+    assert_contains "$result" "GitHub: test/test" "should contain repo header"
+    # Should NOT have made a 3rd curl call (no download_url fallback needed)
+    assert_eq "$_final_count" "2" "should make only 2 curl calls (readme API + repo metadata)"
+    unset -f curl
+    _teardown_web
+  }
+
+  it "falls back to download_url when encoding is not base64" && {
+    _setup_web
+    _api_json='{"name":"README.md","path":"README.md","encoding":"none","content":"","download_url":"https://raw.githubusercontent.com/test/test/main/README.md"}'
+    _repo_json='{"description":"Fallback test","stargazers_count":1,"language":"Shell","topics":[]}'
+    _curl_counter="$TMPDIR_WEB/.curl_count_fb"
+    printf '0' > "$_curl_counter"
+    curl() {
+      local _n; _n=$(cat "$_curl_counter"); _n=$((_n + 1)); printf '%s' "$_n" > "$_curl_counter"
+      if [ "$_n" -eq 1 ]; then
+        printf '%s' "$_api_json"
+      elif [ "$_n" -eq 2 ]; then
+        printf '%s' "# Fallback README"
+      else
+        printf '%s' "$_repo_json"
+      fi
+    }
+    export -f curl
+    export _curl_counter _api_json _repo_json
+    result=$(_web_fetch_github_readme "test/test")
+    _final_count=$(cat "$_curl_counter")
+    assert_contains "$result" "Fallback README" "should contain fallback README content"
+    assert_eq "$_final_count" "3" "should make 3 curl calls (API + download_url + repo metadata)"
+    unset -f curl
+    _teardown_web
+  }
+
+  it "decodes real GitHub API base64 response (blue-lodge-public README)" && {
+    _setup_web
+    # Real base64 from https://api.github.com/repos/dabe-19/blue-lodge-public/readme
+    # GitHub API returns base64-encoded content with \n line breaks in JSON.
+    # This is the first ~2KB of the actual README to keep the test manageable.
+    # We join lines here to embed safely in JSON — base64 -d handles both formats.
+    _real_b64='IyDijIIgR2VvcmdlIOKAlCBBbiBFeHBlcmltZW50YWwgQUkgQWdlbnQsIFdyaXR0ZW4gaW4gQmFzaAoKR2VvcmdlIGlzIGFuIGV4cGVyaW1lbnQ6IGFuIEFJIGNvZGluZyBhZ2VudCB3cml0dGVuIGVudGlyZWx5IGluIGJhc2ggdGhhdCBydW5zIG9mZmxpbmUgb24gYSBwaG9uZSB3aXRoIDMtNEIgcGFyYW1ldGVyIG1vZGVscy4gSGUncyBub3QgZmluaXNoZWQsIGhlIGhhcyByb3VnaCBlZGdlcywgYW5kIGhlIHdhcyBidWlsdCBwcmltYXJpbHkgd2l0aCBMTE0gYXNzaXN0YW5jZSBieSBzb21lb25lIHdobyBpcyBub3QgYSBzb2Z0d2FyZSBlbmdpbmVlci4gQnV0IHRoZSBjb3JlIHBhdHRlcm4g4oCUIHNjZW5hcmlvLXJvdXRlZCBwcm9tcHRzIHRoYXQga2VlcCBjb250ZXh0IHNtYWxsIGVub3VnaCBmb3IgdGlueSBtb2RlbHMgdG8gYmUgdXNlZnVsIOKAlCBhY3R1YWxseSB3b3JrcywgYW5kIHRoZSB0aGluZyBrZWVwcyBldm9sdmluZy4KCn42MywwMDAgbGluZXMgb2YgYmFzaC4gTm8gY2xvdWQgcmVxdWlyZWQuIE5vIEFQSSBrZXlzIHJlcXVpcmVkLiBObyBEb2NrZXIuIE5vIE5vZGUuanMuIE5vIFB5dGhvbiBydW50aW1lLiBKdXN0IGBjdXJsYCwgYGpxYCwgYGdpdGAsIGBzcWxpdGUzYCwgYW5kIGEgbWFzcyBvZiBwdXJlIGJhc2guCgo+ICpOYW1lZCBmb3IgQnJvdGhlciBHZW9yZ2UgV2FzaGluZ3Rvbiwgd2l0aCB0aGUgd2l0IG9mIEJlbmphbWluIEZyYW5rbGluIGFuZCB0aGUgbW9yYWwgcGhpbG9zb3BoeSBvZiBBZGFtIFNtaXRoLioKCiMjIyDimqDvuI8gQ3VycmVudCBTdGF0ZQ=='
+    _api_json="{\"name\":\"README.md\",\"path\":\"README.md\",\"sha\":\"b714835e\",\"size\":59903,\"encoding\":\"base64\",\"content\":\"${_real_b64}\",\"download_url\":\"https://raw.githubusercontent.com/dabe-19/blue-lodge-public/main/README.md\"}"
+    _repo_json='{"description":"An experimental AI agent written in bash","stargazers_count":0,"language":"Shell","topics":["ai","bash","agent"]}'
+    _curl_counter="$TMPDIR_WEB/.curl_count_real"
+    printf '0' > "$_curl_counter"
+    curl() {
+      local _n; _n=$(cat "$_curl_counter"); _n=$((_n + 1)); printf '%s' "$_n" > "$_curl_counter"
+      if [ "$_n" -eq 1 ]; then
+        printf '%s' "$_api_json"
+      else
+        printf '%s' "$_repo_json"
+      fi
+    }
+    export -f curl
+    export _curl_counter _api_json _repo_json
+    result=$(_web_fetch_github_readme "dabe-19/blue-lodge-public")
+    _final_count=$(cat "$_curl_counter")
+    # Verify the markdown decoded correctly — check key phrases from the real README
+    assert_contains "$result" "George — An Experimental AI Agent, Written in Bash" \
+        "should decode the H1 title from base64"
+    assert_contains "$result" "scenario-routed prompts" \
+        "should decode body text about the core pattern"
+    assert_contains "$result" "~63,000 lines of bash" \
+        "should decode the project stats line"
+    assert_contains "$result" "Named for Brother George Washington" \
+        "should decode the blockquote attribution"
+    assert_contains "$result" "Current State" \
+        "should decode section headers"
+    # Verify repo metadata header
+    assert_contains "$result" "GitHub: dabe-19/blue-lodge-public" \
+        "should contain repo slug in header"
+    assert_contains "$result" "Shell" \
+        "should contain language from repo metadata"
+    assert_contains "$result" "ai, bash, agent" \
+        "should contain topics from repo metadata"
+    # Should NOT have fallen back to download_url
+    assert_eq "$_final_count" "2" "should make only 2 curl calls (base64 decode, no download_url fallback)"
+    unset -f curl
+    _teardown_web
+  }
+
+# ── _html_extract_links ───────────────────────────────────────
+describe "_html_extract_links"
+
+  it "function exists" && {
+    _setup_web
+    declare -f _html_extract_links &>/dev/null
+    assert_ok $? "_html_extract_links should be defined"
+    _teardown_web
+  }
+
+  it "extracts absolute href URLs" && {
+    _setup_web
+    html='<a href="https://example.com/page1">Link</a><a href="https://example.com/page2">Link</a>'
+    result=$(echo "$html" | _html_extract_links "https://example.com")
+    assert_contains "$result" "https://example.com/page1"
+    assert_contains "$result" "https://example.com/page2"
+    _teardown_web
+  }
+
+  it "resolves relative URLs with base" && {
+    _setup_web
+    html='<a href="/about">About</a>'
+    result=$(echo "$html" | _html_extract_links "https://example.com")
+    assert_contains "$result" "https://example.com/about"
+    _teardown_web
+  }
+
+  it "skips javascript: and mailto: links" && {
+    _setup_web
+    html='<a href="javascript:void(0)">JS</a><a href="mailto:test@test.com">Email</a><a href="https://real.com">Real</a>'
+    result=$(echo "$html" | _html_extract_links "https://example.com")
+    assert_not_contains "$result" "javascript"
+    assert_not_contains "$result" "mailto"
+    assert_contains "$result" "https://real.com"
+    _teardown_web
+  }
+
+  it "skips static asset extensions (.css, .js)" && {
+    _setup_web
+    html='<a href="https://cdn.com/style.css">CSS</a><a href="https://cdn.com/app.js">JS</a><a href="https://real.com/page">Page</a>'
+    result=$(echo "$html" | _html_extract_links "https://example.com")
+    assert_not_contains "$result" "style.css"
+    assert_not_contains "$result" "app.js"
+    assert_contains "$result" "https://real.com/page"
+    _teardown_web
+  }
+
+  it "deduplicates and caps at 30 links" && {
+    _setup_web
+    html=""
+    for i in $(seq 1 40); do
+      html="${html}<a href=\"https://example.com/page${i}\">Link $i</a>"
+    done
+    count=$(echo "$html" | _html_extract_links "https://example.com" | wc -l)
+    [ "$count" -le 30 ]
+    assert_ok $? "Should cap at 30 links (got $count)"
+    _teardown_web
+  }
+
 test_end

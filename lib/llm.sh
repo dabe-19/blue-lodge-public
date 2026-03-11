@@ -106,6 +106,9 @@ LLM_PRESENCE_PENALTY=${LLM_PRESENCE_PENALTY:-0.3}
 LLM_TOP_P=${LLM_TOP_P:-0.9}
 LLM_TOP_K=${LLM_TOP_K:-40}
 LLM_MIN_P=${LLM_MIN_P:-0.0}
+
+# ── MCP ────────────────────────────────────────────────────────
+MCP_ENABLED=${MCP_ENABLED:-0}
 EOF
     return 0
 }

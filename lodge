@@ -4907,6 +4907,25 @@ main() {
     if _lodge_termux_api_ok && command -v termux-wake-lock &>/dev/null; then
         termux-wake-lock 2>/dev/null
     fi
+
+    # ── MCP auto-start ─────────────────────────────────────────
+    # If MCP_ENABLED=1 (from lodge.conf or env) and servers are
+    # registered, auto-start them so the agent has MCP tools
+    # available immediately without manual /mcp on + /mcp start.
+    if [ "${MCP_ENABLED:-0}" -eq 1 ] && declare -f mcp_has_servers &>/dev/null && mcp_has_servers; then
+        mcp_init
+        local _mcp_names _mcp_name _mcp_started=0
+        _mcp_names=$(mcp_server_names 2>/dev/null)
+        if [ -n "$_mcp_names" ]; then
+            while IFS= read -r _mcp_name; do
+                [ -z "$_mcp_name" ] && continue
+                if mcp_start "$_mcp_name" 2>/dev/null; then
+                    _mcp_started=$((_mcp_started + 1))
+                fi
+            done <<< "$_mcp_names"
+            [ "$_mcp_started" -gt 0 ] && ui_dim "MCP: $_mcp_started server(s) auto-started"
+        fi
+    fi
     
     # Handle arguments
     # Apply journal decay on startup (cleans old entries)

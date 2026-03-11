@@ -735,4 +735,106 @@ describe "edge cases"
     MCP_ENABLED=0
   }
 
+# ── mcp_start_all ─────────────────────────────────────────────
+describe "mcp_start_all"
+
+  it "function exists" && {
+    declare -f mcp_start_all &>/dev/null
+    assert_ok $? "mcp_start_all should be defined"
+  }
+
+  it "starts all registered servers" && {
+    _mcp_test_setup
+    MCP_ENABLED=1
+    mcp_server_add "mock1" "bash $_MCP_MOCK_SCRIPT" "Mock1"
+    mcp_server_add "mock2" "bash $_MCP_MOCK_SCRIPT" "Mock2"
+    mcp_start_all
+    assert_ok $?
+    mcp_status "mock1" >/dev/null 2>&1
+    assert_ok $? "mock1 should be running"
+    mcp_status "mock2" >/dev/null 2>&1
+    assert_ok $? "mock2 should be running"
+    _mcp_test_teardown
+    MCP_ENABLED=0
+  }
+
+  it "skips already-running servers" && {
+    _mcp_test_setup
+    MCP_ENABLED=1
+    mcp_server_add "mock" "bash $_MCP_MOCK_SCRIPT" "Mock"
+    mcp_start "mock"
+    pid1=$(cat "$MCP_RUN_DIR/mock/pid" 2>/dev/null)
+    mcp_start_all
+    pid2=$(cat "$MCP_RUN_DIR/mock/pid" 2>/dev/null)
+    assert_eq "$pid1" "$pid2"
+    _mcp_test_teardown
+    MCP_ENABLED=0
+  }
+
+  it "returns failure when no servers registered" && {
+    _mcp_test_setup
+    MCP_ENABLED=1
+    mcp_start_all 2>/dev/null
+    assert_fail $? "Should fail with no servers"
+    _mcp_test_teardown
+    MCP_ENABLED=0
+  }
+
+# ── mcp_has_servers ────────────────────────────────────────────
+describe "mcp_has_servers"
+
+  it "function exists" && {
+    declare -f mcp_has_servers &>/dev/null
+    assert_ok $? "mcp_has_servers should be defined"
+  }
+
+  it "returns false when no servers registered" && {
+    _mcp_test_setup
+    MCP_ENABLED=1
+    mcp_init
+    mcp_has_servers
+    assert_fail $? "Should return false with empty registry"
+    _mcp_test_teardown
+    MCP_ENABLED=0
+  }
+
+  it "returns true when servers are registered" && {
+    _mcp_test_setup
+    MCP_ENABLED=1
+    mcp_server_add "mock" "bash $_MCP_MOCK_SCRIPT" "Mock"
+    mcp_has_servers
+    assert_ok $? "Should return true with registered server"
+    _mcp_test_teardown
+    MCP_ENABLED=0
+  }
+
+# ── /mcp on auto-starts servers ───────────────────────────────
+describe "mcp_command on/off auto-start/stop"
+
+  it "/mcp on auto-starts registered servers" && {
+    _mcp_test_setup
+    MCP_ENABLED=0
+    mcp_init
+    mcp_server_add "mock" "bash $_MCP_MOCK_SCRIPT" "Mock"
+    mcp_command "on" 2>/dev/null
+    assert_eq "$MCP_ENABLED" "1"
+    mcp_status "mock" >/dev/null 2>&1
+    assert_ok $? "mock server should be running after /mcp on"
+    _mcp_test_teardown
+    MCP_ENABLED=0
+  }
+
+  it "/mcp off stops all running servers" && {
+    _mcp_test_setup
+    MCP_ENABLED=1
+    mcp_init
+    mcp_server_add "mock" "bash $_MCP_MOCK_SCRIPT" "Mock"
+    mcp_start "mock"
+    mcp_command "off" 2>/dev/null
+    assert_eq "$MCP_ENABLED" "0"
+    mcp_status "mock" >/dev/null 2>&1
+    assert_fail $? "mock server should be stopped after /mcp off"
+    _mcp_test_teardown
+  }
+
 test_end

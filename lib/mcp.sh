@@ -397,6 +397,36 @@ mcp_stop_all() {
     done
 }
 
+# Start all registered servers (skips already-running ones).
+# Returns 0 if at least one server started successfully.
+mcp_start_all() {
+    mcp_init
+    local names started=0 failed=0
+    names=$(mcp_server_names)
+    [ -z "$names" ] && return 1
+    local name
+    while IFS= read -r name; do
+        [ -z "$name" ] && continue
+        if mcp_status "$name" >/dev/null 2>&1; then
+            continue  # already running
+        fi
+        if mcp_start "$name" 2>/dev/null; then
+            started=$((started + 1))
+        else
+            failed=$((failed + 1))
+            declare -f ui_warn &>/dev/null && ui_warn "MCP server '$name' failed to start"
+        fi
+    done <<< "$names"
+    [ "$started" -gt 0 ]
+}
+
+# Check if any MCP servers are registered (servers.conf has entries).
+mcp_has_servers() {
+    [ -f "$MCP_SERVERS_FILE" ] || return 1
+    grep -q -v '^#' "$MCP_SERVERS_FILE" 2>/dev/null && \
+        grep -v '^#' "$MCP_SERVERS_FILE" 2>/dev/null | grep -q -v '^$'
+}
+
 mcp_status() {
     local name="$1"
     local rundir="$MCP_RUN_DIR/$name"
@@ -801,6 +831,26 @@ mcp_command() {
         on|enable)
             MCP_ENABLED=1
             mcp_init
+            # Auto-start all registered servers
+            if mcp_has_servers; then
+                local _started_any=0
+                local _sname
+                while IFS= read -r _sname; do
+                    [ -z "$_sname" ] && continue
+                    if mcp_status "$_sname" >/dev/null 2>&1; then
+                        continue
+                    fi
+                    declare -f ui_dim &>/dev/null && ui_dim "  Starting MCP server '$_sname'..."
+                    if mcp_start "$_sname" 2>/dev/null; then
+                        declare -f ui_ok &>/dev/null && ui_ok "MCP server '$_sname' started"
+                        _started_any=1
+                    else
+                        declare -f ui_warn &>/dev/null && ui_warn "MCP server '$_sname' failed to start"
+                    fi
+                done <<< "$(mcp_server_names)"
+            fi
+            # Persist setting
+            declare -f _llm_save_config &>/dev/null && _llm_save_config 2>/dev/null
             if declare -f ui_ok &>/dev/null; then
                 ui_ok "MCP integration enabled"
             else
@@ -810,6 +860,8 @@ mcp_command() {
         off|disable)
             MCP_ENABLED=0
             mcp_stop_all
+            # Persist setting
+            declare -f _llm_save_config &>/dev/null && _llm_save_config 2>/dev/null
             if declare -f ui_ok &>/dev/null; then
                 ui_ok "MCP integration disabled"
             else

@@ -2960,4 +2960,216 @@ describe "AGENT_OUTPUT_DIR enforcement"
     assert_ok $? "Must check if path already starts with output dir"
   }
 
+# ── Fuzzy keyword catalog matching ────────────────────────────
+describe "Fuzzy keyword catalog matching (_agent_fuzzy_catalog_match)"
+
+  it "AGENT_SMART_ROUTE defaults to 3 (combined mode)" && {
+    assert_eq "$AGENT_SMART_ROUTE" "3"
+  }
+
+  it "function is defined" && {
+    declare -f _agent_fuzzy_catalog_match &>/dev/null
+    assert_ok $?
+  }
+
+  # ── GitHub / Git keywords ──────────────────────────────────
+  it "matches 'github' keyword → github git" && {
+    result=$(_agent_fuzzy_catalog_match "Search for a github repo" "web")
+    assert_contains "$result" "github"
+    assert_contains "$result" "git"
+  }
+
+  it "matches 'pull request' keyword → github git" && {
+    result=$(_agent_fuzzy_catalog_match "Check the pull request status" "web")
+    assert_contains "$result" "github"
+  }
+
+  it "matches 'git repo' keyword" && {
+    result=$(_agent_fuzzy_catalog_match "Find a git repo for ML models" "web")
+    assert_contains "$result" "github"
+  }
+
+  it "skips github when already routed to github" && {
+    result=$(_agent_fuzzy_catalog_match "Search github repos" "github")
+    assert_eq "$result" ""
+  }
+
+  it "skips github when already routed to git" && {
+    result=$(_agent_fuzzy_catalog_match "Find a github project" "git")
+    assert_eq "$result" ""
+  }
+
+  # ── Social keywords ───────────────────────────────────────
+  it "matches 'discord' keyword → social" && {
+    result=$(_agent_fuzzy_catalog_match "Post this to discord general" "write")
+    assert_contains "$result" "social"
+  }
+
+  it "matches 'telegram' keyword → social" && {
+    result=$(_agent_fuzzy_catalog_match "Send update via telegram" "web")
+    assert_contains "$result" "social"
+  }
+
+  it "matches 'tweet' keyword → social" && {
+    result=$(_agent_fuzzy_catalog_match "Tweet about the new release" "write")
+    assert_contains "$result" "social"
+  }
+
+  it "matches 'post to' keyword → social" && {
+    result=$(_agent_fuzzy_catalog_match "Post to the announcements channel" "web")
+    assert_contains "$result" "social"
+  }
+
+  it "skips social when already routed to social" && {
+    result=$(_agent_fuzzy_catalog_match "Post to discord general" "social")
+    assert_eq "$result" ""
+  }
+
+  # ── Email keywords ────────────────────────────────────────
+  it "matches 'email' keyword → email" && {
+    result=$(_agent_fuzzy_catalog_match "Send an email to the team" "web")
+    assert_contains "$result" "email"
+  }
+
+  it "matches 'gmail' keyword → email" && {
+    result=$(_agent_fuzzy_catalog_match "Check gmail inbox for replies" "web")
+    assert_contains "$result" "email"
+  }
+
+  it "matches email address pattern → email" && {
+    result=$(_agent_fuzzy_catalog_match "Send the report to bob@corp.com" "write")
+    assert_contains "$result" "email"
+  }
+
+  it "does NOT false-positive email on Discord @mention" && {
+    result=$(_agent_fuzzy_catalog_match "send the text file to @babadoo on discord" "write")
+    assert_not_contains "$result" "email"
+    assert_contains "$result" "social"
+  }
+
+  it "skips email when already routed to email" && {
+    result=$(_agent_fuzzy_catalog_match "Email the report" "email")
+    assert_eq "$result" ""
+  }
+
+  # ── No match cases ────────────────────────────────────────
+  it "returns empty for generic write task" && {
+    result=$(_agent_fuzzy_catalog_match "Write a summary of findings" "write")
+    assert_eq "$result" ""
+  }
+
+  it "returns empty for plain web search" && {
+    result=$(_agent_fuzzy_catalog_match "Search for Python tutorials" "web")
+    assert_eq "$result" ""
+  }
+
+  # ── Other domain keywords ─────────────────────────────────
+  it "matches 'journal' keyword → journal" && {
+    result=$(_agent_fuzzy_catalog_match "Write a daily log entry" "write")
+    assert_contains "$result" "journal"
+  }
+
+  it "matches 'pgp' keyword → pgp" && {
+    result=$(_agent_fuzzy_catalog_match "Encrypt the file with pgp" "write")
+    assert_contains "$result" "pgp"
+  }
+
+  it "matches 'docker' keyword → container sandbox" && {
+    result=$(_agent_fuzzy_catalog_match "Run this in a docker container" "web")
+    assert_contains "$result" "container"
+  }
+
+  it "matches 'wallet' keyword → wallet" && {
+    result=$(_agent_fuzzy_catalog_match "Check bitcoin wallet balance" "web")
+    assert_contains "$result" "wallet"
+  }
+
+  it "matches 'screenshot' keyword → vision" && {
+    result=$(_agent_fuzzy_catalog_match "Analyze the screenshot of the error" "web")
+    assert_contains "$result" "vision"
+  }
+
+  it "matches 'phone' keyword → phone" && {
+    result=$(_agent_fuzzy_catalog_match "Check the phone battery level" "web")
+    assert_contains "$result" "phone"
+  }
+
+  it "matches 'backup' keyword → backup" && {
+    result=$(_agent_fuzzy_catalog_match "Backup the project files" "write")
+    assert_contains "$result" "backup"
+  }
+
+  # ── Agent inner loop integration ──────────────────────────
+  it "inner loop references _agent_fuzzy_catalog_match" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_agent_fuzzy_catalog_match'
+    assert_ok $? "Inner loop must call fuzzy catalog matcher"
+  }
+
+  it "inner loop gates fuzzy injection on AGENT_SMART_ROUTE >= 2" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_sr_mode.*-ge 2'
+    assert_ok $? "Must gate on mode >= 2"
+  }
+
+  it "mode 2 replaces primary catalog with fuzzy match" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_sr_mode.*-eq 2'
+    assert_ok $? "Must have mode 2 logic for replacement"
+  }
+
+  it "mode 3 appends fuzzy catalogs alongside primary" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'ALSO CONSIDER'
+    assert_ok $? "Mode 3 must inject 'ALSO CONSIDER' phrasing"
+  }
+
+# ── Verdict parsing (quote stripping) ─────────────────────────
+# Small models (4B) echo back JSON schema with the verdict keyword
+# wrapped in double quotes, e.g. '"SATISFIED"' instead of 'SATISFIED'.
+# The verdict parser must strip these quotes to avoid false negatives.
+describe "Verdict parsing strips quotes from small model output"
+
+  it "strips double quotes from SATISFIED verdict" && {
+    _verdict='"SATISFIED", "scope":"test"'
+    _word=$(echo "$_verdict" | head -1 | awk -F'[: \t]' '{print $1}' | sed "s/^[*_\"\\x27]\\+//;s/[*_.,\"\\x27]\\+$//")
+    assert_eq "$_word" "SATISFIED"
+  }
+
+  it "strips double quotes from UNSATISFIED verdict" && {
+    _verdict='"UNSATISFIED": reason here'
+    _word=$(echo "$_verdict" | head -1 | awk -F'[: \t]' '{print $1}' | sed "s/^[*_\"\\x27]\\+//;s/[*_.,\"\\x27]\\+$//")
+    assert_eq "$_word" "UNSATISFIED"
+  }
+
+  it "strips double quotes from COMPLETE verdict (P1)" && {
+    _verdict='"COMPLETE": milestone done'
+    _word=$(echo "$_verdict" | head -1 | awk '{print $1}' | sed "s/^[*_\"\\x27]\\+//;s/[*_:.,\"\\x27]\\+$//")
+    assert_eq "$_word" "COMPLETE"
+  }
+
+  it "strips double quotes from INCOMPLETE verdict (P1)" && {
+    _verdict='"INCOMPLETE": not done'
+    _word=$(echo "$_verdict" | head -1 | awk '{print $1}' | sed "s/^[*_\"\\x27]\\+//;s/[*_:.,\"\\x27]\\+$//")
+    assert_eq "$_word" "INCOMPLETE"
+  }
+
+  it "still works with unquoted SATISFIED (normal case)" && {
+    _verdict='SATISFIED: looks good'
+    _word=$(echo "$_verdict" | head -1 | awk -F'[: \t]' '{print $1}' | sed "s/^[*_\"\\x27]\\+//;s/[*_.,\"\\x27]\\+$//")
+    assert_eq "$_word" "SATISFIED"
+  }
+
+  it "handles markdown bold wrapped verdict" && {
+    _verdict='**SATISFIED**: content matched'
+    _word=$(echo "$_verdict" | head -1 | awk -F'[: \t]' '{print $1}' | sed "s/^[*_\"\\x27]\\+//;s/[*_.,\"\\x27]\\+$//")
+    assert_eq "$_word" "SATISFIED"
+  }
+
+  it "handles single-quoted verdict from small models" && {
+    _verdict="'SATISFIED': it worked"
+    _word=$(echo "$_verdict" | head -1 | awk -F'[: \t]' '{print $1}' | sed "s/^[*_\"\\x27]\\+//;s/[*_.,\"\\x27]\\+$//")
+    assert_eq "$_word" "SATISFIED"
+  }
+
 test_end
