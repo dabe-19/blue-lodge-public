@@ -96,7 +96,9 @@ tools_fix_ext_spacing() {
     local _url_placeholders=()
     local _url_idx=0
     local processed="$input"
-    while [[ "$processed" =~ (https?://[^[:space:]]+|ftp://[^[:space:]]+) ]]; do
+    # Protect protocol URLs (http://, https://, ftp://)
+    # AND bare www. URLs (www.example.com) that lack a scheme.
+    while [[ "$processed" =~ (https?://[^[:space:]]+|ftp://[^[:space:]]+|www\.[^[:space:]]+) ]]; do
         local _url="${BASH_REMATCH[1]}"
         local _placeholder="__LODGE_URL_${_url_idx}__"
         _url_placeholders+=("$_url")

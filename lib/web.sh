@@ -17,6 +17,7 @@ WEB_CACHE_TTL="${WEB_CACHE_TTL:-3600}"     # Cache pages for 1 hour
 WEB_BLACKLIST_FILE="${WEB_BLACKLIST_FILE:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/web_blacklist.log}"
 WEB_BLACKLIST_ENABLED="${WEB_BLACKLIST_ENABLED:-true}"
 WEB_BLACKLIST_TTL="${WEB_BLACKLIST_TTL:-1800}"  # Dynamic blacklist entries expire after 30 minutes (seconds)
+WEB_CONTENT_MAX_CHARS="${WEB_CONTENT_MAX_CHARS:-4000}"  # Max chars for cleaned web content (post-boilerplate)
 
 # Preloaded domain blacklist — sites that aggressively block bots.
 # Comma-separated list. Fetch/scrape is skipped for these hosts,
@@ -668,6 +669,80 @@ _html_preprocess() {
     }'
 }
 
+# ── Strip web boilerplate from extracted text ──────────────────
+# Removes common navigation, UI, and cookie/consent noise that
+# text extractors (MCP fetch, w3m, lynx, sed) leave behind.
+# Targets clearly identifiable patterns — not overly aggressive.
+# Input: plain text on stdin.  Output: cleaned text on stdout.
+_web_strip_boilerplate() {
+    awk '
+    BEGIN { skip_run = 0 }
+    # Nav / UI boilerplate lines — exact or near-exact matches
+    /^Skip to (content|main|navigation)/ { next }
+    /^Toggle navigation/ { next }
+    /^Navigation Menu/ { next }
+    /^Sign in$/ || /^Sign up$/ || /^Log in$/ || /^Log out$/ { next }
+    /^Search$/ || /^Clear$/ || /^Cancel$/ { next }
+    /^Search or jump to/ { next }
+    /^Search code, repositories/ { next }
+    /^Search syntax tips/ { next }
+    /^Provide feedback/ { next }
+    /^Submit feedback/ { next }
+    /^Saved searches/ { next }
+    /^Create saved search/ { next }
+    /^Use saved searches/ { next }
+    /^Cancel Submit/ { next }
+    /^Appearance settings/ { next }
+    /^Resetting focus/ { next }
+    /^You signed in with another tab/ { next }
+    /^You signed out in another tab/ { next }
+    /^You switched accounts on another tab/ { next }
+    /^Reload to refresh your session/ { next }
+    /^Dismiss alert/ { next }
+    /^\{\{ message \}\}/ { next }
+
+    # Cookie / consent / GDPR
+    /^(Accept|Reject|Manage) (all )?(cookies|preferences)/ { next }
+    /^(We|This site|This website) use[s]? cookies/ { next }
+    /^Cookie (policy|settings|preferences|consent)/ { next }
+    /^By (continuing|using this)/ && /cookies/ { next }
+
+    # Footer boilerplate
+    /^[©Ⓒ] [0-9]{4}/ { next }
+    /^Copyright [0-9]{4}/ { next }
+    /^All rights reserved/ { next }
+    /^Terms (of (Service|Use)|and Conditions)/ && length($0) < 60 { next }
+    /^Privacy Policy$/ { next }
+    /^Terms$/ || /^Privacy$/ || /^Legal$/ || /^Sitemap$/ { next }
+
+    # Collapse runs of blank or very short lines (1-2 chars) to one blank
+    /^[[:space:]]*$/ || (length($0) <= 2 && !/^[0-9]/) {
+        if (!skip_run) { print ""; skip_run = 1 }
+        next
+    }
+    { skip_run = 0; print }
+    '
+}
+
+# ── Truncate text to WEB_CONTENT_MAX_CHARS ─────────────────────
+# Cuts at the character limit, then trims to the last complete line.
+_web_truncate_content() {
+    local max="${WEB_CONTENT_MAX_CHARS:-4000}"
+    local input
+    input=$(cat)
+    if [ "${#input}" -le "$max" ]; then
+        printf '%s' "$input"
+    else
+        # Cut at max, then backtrack to last newline for clean break
+        local trimmed="${input:0:$max}"
+        # Find last newline
+        if [[ "$trimmed" == *$'\n'* ]]; then
+            trimmed="${trimmed%$'\n'*}"
+        fi
+        printf '%s' "$trimmed"
+    fi
+}
+
 # ── Strip HTML to plain text ──────────────────────────────────
 _html_to_text_sed() {
     # awk state-machine preprocessor — safe on any line length.
@@ -845,6 +920,8 @@ web_fetch() {
         local mcp_body
         mcp_body=$(mcp_web_fetch "$url" 2>/dev/null)
         if [ -n "$mcp_body" ]; then
+            # Strip boilerplate + truncate before caching
+            mcp_body=$(echo "$mcp_body" | _web_strip_boilerplate | _web_truncate_content)
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] web_fetch: MCP succeeded (${#mcp_body} bytes) — skipping curl"
             declare -f transcript_log &>/dev/null && transcript_log "mcp" "web_fetch MCP-first OK: url=${url:0:80} (${#mcp_body} bytes)"
             mkdir -p "$GEORGE_CACHE_DIR"
@@ -924,6 +1001,9 @@ web_fetch() {
                     awk '{$1=$1}1' | head -2000) ;;
         *)      text=$(echo "$body" | _html_to_text) ;;
     esac
+
+    # Strip boilerplate + truncate
+    text=$(echo "$text" | _web_strip_boilerplate | _web_truncate_content)
 
     # Cache result
     mkdir -p "$GEORGE_CACHE_DIR"
@@ -1076,6 +1156,9 @@ web_fetch_json() {
             content="$fallback"
         fi
     fi
+
+    # Strip boilerplate + truncate content
+    content=$(echo "$content" | _web_strip_boilerplate | _web_truncate_content)
 
     local images_json="[]"
     local img_lines

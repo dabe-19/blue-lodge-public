@@ -44,6 +44,7 @@ AGENT_BRAINSTORM="${AGENT_BRAINSTORM:-1}"                  # Allow George to /br
 AGENT_FILE_EXPAND="${AGENT_FILE_EXPAND:-1}"              # Auto-expand file references in /social, /email, /write text: 0=disabled, 1=enabled
 AGENT_DM_SCAN_CHARS="${AGENT_DM_SCAN_CHARS:-80}"          # Characters to scan for recipient names from start of DM text
 AGENT_PRE_ROUTE="${AGENT_PRE_ROUTE:-1}"                  # Pre-route: extract /cmd from milestone, skip router: 0=disabled, 1=enabled
+AGENT_OUTPUT_DIR="${AGENT_OUTPUT_DIR:-responses}"       # Parent directory for agent file writes (/write, /save, /append)
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
 
@@ -3966,6 +3967,29 @@ INTERLOCK_JSON
         fi
 
         if [ -n "$cmd" ]; then
+            # ── AGENT OUTPUT DIR ENFORCEMENT ────────────────
+            # Force /write, /save, /append to save under AGENT_OUTPUT_DIR
+            # so that all agent output lands in one predictable location.
+            # Only fires for slash commands with a filepath argument.
+            if [ -n "${AGENT_OUTPUT_DIR:-}" ]; then
+                case "$cmd" in
+                    /write\ *|/save\ *|/append\ *)
+                        local _aod_verb _aod_rest _aod_path _aod_content
+                        _aod_verb=${cmd%% *}
+                        _aod_rest=${cmd#* }
+                        _aod_path=$(printf '%s' "$_aod_rest" | awk '{print $1}')
+                        _aod_content=${_aod_rest#"$_aod_path"}
+                        _aod_content=${_aod_content# }
+                        # Skip if path already starts with the output dir
+                        if [[ "$_aod_path" != "${AGENT_OUTPUT_DIR}"/* ]] && [[ "$_aod_path" != "${AGENT_OUTPUT_DIR}" ]]; then
+                            _aod_path="${AGENT_OUTPUT_DIR}/${_aod_path}"
+                            cmd="${_aod_verb} ${_aod_path}${_aod_content:+ }${_aod_content}"
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] output-dir enforced: %s\n' "$_aod_path" > /dev/tty 2>/dev/null
+                        fi
+                        ;;
+                esac
+            fi
+
             # Display a truncated version for multi-line commands
             local _cmd_display
             if [[ "$cmd" == *'\n'* ]]; then
@@ -4079,6 +4103,25 @@ INTERLOCK_JSON
                 #
                 # SKIP for /web images — same reason (image URLs needed).
                 if [[ "$cmd" == /web\ fetch* ]] || [[ "$cmd" == /web\ scrape* ]] || [[ "$cmd" == /web\ summary* ]]; then
+                  # ── FLATTEN JSON WEB OUTPUT ──────────────────
+                  # /web scrape-images returns JSON where the
+                  # content field has \n-encoded newlines.  Extract
+                  # the content with jq -r so downstream consumers
+                  # (condenser, action log, evaluator) see clean text
+                  # instead of a JSON blob with literal \n sequences.
+                  if [[ "$output" == \{* ]] && echo "$output" | jq -e '.content' &>/dev/null; then
+                    local _wj_title _wj_content _wj_imgs
+                    _wj_title=$(echo "$output" | jq -r '.title // ""' 2>/dev/null)
+                    _wj_content=$(echo "$output" | jq -r '.content // ""' 2>/dev/null)
+                    _wj_imgs=$(echo "$output" | jq -r '.images // [] | length' 2>/dev/null)
+                    output="${_wj_title:+Title: $_wj_title$'\n'}${_wj_content}"
+                    [ "${_wj_imgs:-0}" -gt 0 ] && output="${output}"$'\n'"(${_wj_imgs} images found)"
+                  fi
+                  # ── RESOLVE LITERAL ESCAPES ──────────────────
+                  # Web content and small-model output may contain
+                  # literal \n, \t sequences that should be newlines.
+                  output=$(echo "$output" | ui_unescape_literals)
+
                   # ── EMPTY WEB FETCH GUARD ────────────────────
                   # If the raw output is <20 chars, the fetch returned
                   # essentially nothing (broken page, empty body).
@@ -4088,7 +4131,7 @@ INTERLOCK_JSON
                     output="[Web Fetch: Empty] Page returned no usable content (<20 chars)."
                     _micro_add_warning "$micro_file" "Empty web fetch: $cmd returned <20 chars"
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web fetch empty guard: <20 chars"
-                  elif [ "${#output}" -gt 300 ]; then
+                  elif [ "${#output}" -gt 300 ] && [ "${AGENT_WEB_CONDENSE:-1}" -eq 1 ]; then
                     local _condense_prompt _condensed
                     # Build context-aware condense prompt
                     _condense_prompt="TASK: $micro_objective"

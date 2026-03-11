@@ -272,13 +272,26 @@ ui_render_response() {
 # printf '%b' interprets C-style escapes:
 #   \n → newline    \t → tab    \\ → literal backslash
 #
-# SKIP expansion for content that already contains real newlines
-# (multi-line stdin, pre-formatted text).
+# Expand literal escape sequences from LLM output.
+# If text has no real newlines, use printf %b (full expansion).
+# If text already has real newlines, use targeted sed to resolve
+# only literal \n/\t/\\ without disturbing existing formatting.
 ui_expand_escapes() {
     local text="$1"
     [ -z "$text" ] && return 0
     if [[ "$text" != *$'\n'* ]]; then
         text=$(printf '%b' "$text")
+    elif [[ "$text" == *'\n'* ]] || [[ "$text" == *'\t'* ]]; then
+        text=$(printf '%s' "$text" | ui_unescape_literals)
     fi
     printf '%s' "$text"
+}
+
+# ── Resolve literal \n, \t, \\ in text ────────────────────────
+# Unlike ui_expand_escapes, this works on text that ALREADY has
+# real newlines — it only targets literal two-character sequences
+# the model wrote (e.g. backslash-n) that should have been actual
+# escape characters.  Safe for mixed content.
+ui_unescape_literals() {
+    sed -e 's/\\\\/\x00/g' -e 's/\\n/\n/g' -e 's/\\t/\t/g' -e 's/\x00/\\/g'
 }

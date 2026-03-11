@@ -1288,4 +1288,118 @@ describe "_html_extract_content rewrite"
     _teardown_web
   }
 
+# ── _web_strip_boilerplate ────────────────────────────────────
+describe "_web_strip_boilerplate"
+
+  it "strips 'Skip to content' nav lines" && {
+    _setup_web
+    _bp_result=$(printf 'Skip to content\nActual article text\nMore good content\n' | _web_strip_boilerplate)
+    assert_not_contains "$_bp_result" "Skip to content"
+    assert_contains "$_bp_result" "Actual article text"
+    _teardown_web
+  }
+
+  it "strips GitHub-specific nav boilerplate" && {
+    _setup_web
+    _bp_input="Toggle navigation
+Navigation Menu
+Sign in
+Search or jump to...
+Search code, repositories, users, issues, pull requests...
+Saved searches
+Use saved searches to filter your results more quickly
+Cancel Submit feedback
+Appearance settings
+Resetting focus
+You signed in with another tab or window. Reload to refresh your session.
+Dismiss alert
+This is the actual README content"
+    _bp_result=$(echo "$_bp_input" | _web_strip_boilerplate)
+    assert_not_contains "$_bp_result" "Toggle navigation"
+    assert_not_contains "$_bp_result" "Search or jump to"
+    assert_not_contains "$_bp_result" "Saved searches"
+    assert_not_contains "$_bp_result" "Appearance settings"
+    assert_not_contains "$_bp_result" "Resetting focus"
+    assert_not_contains "$_bp_result" "Dismiss alert"
+    assert_contains "$_bp_result" "actual README content"
+    _teardown_web
+  }
+
+  it "strips cookie consent lines" && {
+    _setup_web
+    _bp_result=$(printf 'Accept all cookies\nWe use cookies to improve\nReal content here\n' | _web_strip_boilerplate)
+    assert_not_contains "$_bp_result" "cookies"
+    assert_contains "$_bp_result" "Real content here"
+    _teardown_web
+  }
+
+  it "strips footer boilerplate" && {
+    _setup_web
+    _bp_result=$(printf 'Article body text\n© 2025 Company Inc\nAll rights reserved\nPrivacy Policy\nTerms\n' | _web_strip_boilerplate)
+    assert_not_contains "$_bp_result" "2025 Company"
+    assert_not_contains "$_bp_result" "All rights reserved"
+    assert_contains "$_bp_result" "Article body text"
+    _teardown_web
+  }
+
+  it "preserves actual content lines" && {
+    _setup_web
+    _bp_result=$(printf 'This is a great framework for building AI agents.\nIt uses bash and runs on any Linux system.\nPerformance is excellent.\n' | _web_strip_boilerplate)
+    assert_contains "$_bp_result" "great framework"
+    assert_contains "$_bp_result" "bash and runs"
+    assert_contains "$_bp_result" "Performance"
+    _teardown_web
+  }
+
+  it "collapses runs of blank lines" && {
+    _setup_web
+    _bp_result=$(printf 'Line one\n\n\n\n\n\nLine two\n' | _web_strip_boilerplate)
+    _bp_blank_count=$(echo "$_bp_result" | grep -c '^$' || true)
+    assert_contains "$_bp_result" "Line one"
+    assert_contains "$_bp_result" "Line two"
+    [ "$_bp_blank_count" -le 2 ]
+    assert_ok $? "Should collapse multiple blanks (got $_bp_blank_count)"
+    _teardown_web
+  }
+
+# ── _web_truncate_content ─────────────────────────────────────
+describe "_web_truncate_content"
+
+  it "passes through short content unchanged" && {
+    _setup_web
+    WEB_CONTENT_MAX_CHARS=4000
+    _tc_result=$(echo "Short text" | _web_truncate_content)
+    assert_eq "$_tc_result" "Short text"
+    _teardown_web
+  }
+
+  it "truncates content exceeding WEB_CONTENT_MAX_CHARS" && {
+    _setup_web
+    WEB_CONTENT_MAX_CHARS=50
+    _tc_long=$(printf 'Line one of content\nLine two of content\nLine three of content\nLine four of content\nLine five')
+    _tc_result=$(echo "$_tc_long" | _web_truncate_content)
+    [ "${#_tc_result}" -le 55 ]
+    assert_ok $? "Should be truncated to ~50 chars (got ${#_tc_result})"
+    _teardown_web
+  }
+
+  it "respects custom WEB_CONTENT_MAX_CHARS value" && {
+    _setup_web
+    WEB_CONTENT_MAX_CHARS=20
+    _tc_result=$(printf 'Abcdef\nGhijkl\nMnopqr\nStuvwx\n' | _web_truncate_content)
+    [ "${#_tc_result}" -le 25 ]
+    assert_ok $? "Should be within ~20 chars (got ${#_tc_result})"
+    _teardown_web
+  }
+
+# ── WEB_CONTENT_MAX_CHARS default ─────────────────────────────
+describe "WEB_CONTENT_MAX_CHARS configuration"
+
+  it "defaults to 4000" && {
+    unset WEB_CONTENT_MAX_CHARS _LIB_WEB_LOADED
+    _setup_web
+    assert_eq "$WEB_CONTENT_MAX_CHARS" "4000"
+    _teardown_web
+  }
+
 test_end

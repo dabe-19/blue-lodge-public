@@ -616,4 +616,85 @@ describe "_cmd_git (lodge integration)"
     assert_ok $?
   }
 
+# ═══════════════════════════════════════════════════════════════
+# /git consolidation — unified entrypoint routing
+# ═══════════════════════════════════════════════════════════════
+describe "_cmd_git consolidation (search/check/clone/commit/push)"
+
+  # Source lodge functions using the same eval trick as test_lodge.sh
+  _load_cmd_git() {
+    source "$LODGE_DIR/lib/web.sh" 2>/dev/null || true
+    source "$LODGE_DIR/lib/backup.sh" 2>/dev/null || true
+    source "$LODGE_DIR/lib/journal.sh" 2>/dev/null || true
+    eval "$(sed 's/^main "$@"$//' "$LODGE_DIR/lodge" | grep -v '^set -uo pipefail')" 2>/dev/null
+  }
+
+  it "/git search with no query shows usage error" && {
+    _setup_git
+    _load_cmd_git
+    out=$(_cmd_git "search" 2>&1)
+    assert_contains "$out" "Usage"
+    _teardown_git
+  }
+
+  it "/git check with no repo shows usage error" && {
+    _setup_git
+    _load_cmd_git
+    out=$(_cmd_git "check" 2>&1)
+    assert_contains "$out" "Usage"
+    _teardown_git
+  }
+
+  it "/git search shows usage with just the action word" && {
+    _setup_git
+    _load_cmd_git
+    out=$(_cmd_git "search" 2>&1)
+    assert_contains "$out" "search"
+    _teardown_git
+  }
+
+  it "/git clone command script exists for delegation" && {
+    assert_file_exists "$LODGE_DIR/commands/clone.sh"
+  }
+
+  it "/git commit command script exists for delegation" && {
+    assert_file_exists "$LODGE_DIR/commands/commit.sh"
+  }
+
+  it "/git push command script exists for delegation" && {
+    assert_file_exists "$LODGE_DIR/commands/push.sh"
+  }
+
+  it "/git help includes search in usage" && {
+    _setup_git
+    _load_cmd_git
+    out=$(_cmd_git "" 2>&1)
+    assert_contains "$out" "search"
+    _teardown_git
+  }
+
+  it "/git help includes clone in usage" && {
+    _setup_git
+    _load_cmd_git
+    out=$(_cmd_git "" 2>&1)
+    assert_contains "$out" "clone"
+    _teardown_git
+  }
+
+  it "/git help includes commit in usage" && {
+    _setup_git
+    _load_cmd_git
+    out=$(_cmd_git "" 2>&1)
+    assert_contains "$out" "commit"
+    _teardown_git
+  }
+
+  it "/git help includes push in usage" && {
+    _setup_git
+    _load_cmd_git
+    out=$(_cmd_git "" 2>&1)
+    assert_contains "$out" "push"
+    _teardown_git
+  }
+
 test_end

@@ -717,6 +717,27 @@ describe "tools_fix_ext_spacing — URL protection"
     assert_contains "$result" "https://b.sh/docs"
   }
 
+  it "does NOT break bare www.example.com URLs" && {
+    result=$(tools_fix_ext_spacing "fetch www.example.com/page info")
+    assert_contains "$result" "www.example.com/page"
+  }
+
+  it "does NOT break www.example.org/path URLs" && {
+    result=$(tools_fix_ext_spacing "fetch www.example.org/api/v2 data")
+    assert_contains "$result" "www.example.org/api/v2"
+  }
+
+  it "does NOT break www.site.rs URLs" && {
+    result=$(tools_fix_ext_spacing "fetch www.crates.rs/search here")
+    assert_contains "$result" "www.crates.rs/search"
+  }
+
+  it "preserves www URL while fixing non-URL extensions" && {
+    result=$(tools_fix_ext_spacing "file.txtContent www.example.com/page")
+    assert_contains "$result" "file.txt Content"
+    assert_contains "$result" "www.example.com/page"
+  }
+
 # ── tools_fix_fence_spacing ───────────────────────────────────
 describe "tools_fix_fence_spacing"
 

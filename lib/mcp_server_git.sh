@@ -307,6 +307,38 @@ _TOOLS_JSON='[
     }
   },
   {
+    "name": "git_search",
+    "description": "Search GitHub repositories by keyword. Alias for github_search — routes /git search through MCP.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The search query"
+        },
+        "count": {
+          "type": "integer",
+          "description": "Number of results to return (default: 5)"
+        }
+      },
+      "required": ["query"]
+    }
+  },
+  {
+    "name": "git_check",
+    "description": "Verify that a GitHub repository exists and is accessible. Alias for github_check — routes /git check through MCP.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "description": "Repository in owner/repo format (required)"
+        }
+      },
+      "required": ["repo"]
+    }
+  },
+  {
     "name": "git_setup_status",
     "description": "Show George git configuration overview: identity, SSH key status, GPG signing status, and remotes.",
     "inputSchema": {
@@ -643,7 +675,7 @@ _handle_tool_call() {
             esac
             ;;
 
-        github_search)
+        git_search|github_search)
             local query count
             query=$(printf '%s' "$arguments" | $_JQ -r '.query // empty' 2>/dev/null)
             count=$(printf '%s' "$arguments" | $_JQ -r '.count // empty' 2>/dev/null)
@@ -664,7 +696,7 @@ _handle_tool_call() {
             _respond_result "$id" "$(_text_content "$results")"
             ;;
 
-        github_check)
+        git_check|github_check)
             local repo
             repo=$(printf '%s' "$arguments" | $_JQ -r '.repo // empty' 2>/dev/null)
 

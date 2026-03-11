@@ -2935,4 +2935,29 @@ describe "Web search query cleaner dual-mode"
     assert_ok $? "Tight mode must cap at 8 words"
   }
 
+# ── AGENT_OUTPUT_DIR enforcement ──────────────────────────────
+describe "AGENT_OUTPUT_DIR enforcement"
+
+  it "AGENT_OUTPUT_DIR defaults to responses" && {
+    assert_eq "$AGENT_OUTPUT_DIR" "responses"
+  }
+
+  it "agent_inner_loop references AGENT_OUTPUT_DIR" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'AGENT_OUTPUT_DIR'
+    assert_ok $? "Inner loop must reference AGENT_OUTPUT_DIR"
+  }
+
+  it "output dir enforcement matches /write, /save, /append" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '/write.*| /save.*| /append'
+    assert_ok $? "Must match /write, /save, and /append commands"
+  }
+
+  it "output dir enforcement skips already-prefixed paths" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'AGENT_OUTPUT_DIR.*/'
+    assert_ok $? "Must check if path already starts with output dir"
+  }
+
 test_end

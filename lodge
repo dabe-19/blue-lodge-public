@@ -791,24 +791,6 @@ _cmd_limits() {
             else
                 _limits_set AGENT_INNER_LOOPS "Inner loops" "$value" 1 20
             fi ;;
-        tokens)
-            if [ -z "$value" ]; then
-                ui_info "Agent output tokens: $LLM_AGENT_TOKENS (default: 20480)"
-            else
-                _limits_set LLM_AGENT_TOKENS "Agent tokens" "$value" 64 20480
-            fi ;;
-        strat-tokens)
-            if [ -z "$value" ]; then
-                ui_info "Strategist output tokens: $LLM_STRATEGIST_TOKENS (default: 512)"
-            else
-                _limits_set LLM_STRATEGIST_TOKENS "Strategist tokens" "$value" 32 1024
-            fi ;;
-        eval-tokens)
-            if [ -z "$value" ]; then
-                ui_info "Evaluator output tokens: $LLM_EVALUATOR_TOKENS (default: 512)"
-            else
-                _limits_set LLM_EVALUATOR_TOKENS "Evaluator tokens" "$value" 32 1024
-            fi ;;
         eval-mode)
             if [ -z "$value" ]; then
                 ui_info "Evaluator mode: $AGENT_EVAL_MODE (default: auto, options: auto|interactive)"
@@ -962,132 +944,17 @@ _cmd_limits() {
             else
                 _limits_set AGENT_DM_SCAN_CHARS "DM scan chars" "$value" 20 300
             fi ;;
-        ask-tokens)
-            if [ -z "$value" ]; then
-                ui_info "Ask output tokens: $LLM_ASK_TOKENS (default: 20480)"
-            else
-                _limits_set LLM_ASK_TOKENS "Ask tokens" "$value" 64 20480
-            fi ;;
-        router-tokens)
-            if [ -z "$value" ]; then
-                ui_info "Router output tokens: $LLM_ROUTER_TOKENS (default: 256)"
-            else
-                _limits_set LLM_ROUTER_TOKENS "Router tokens" "$value" 10 20480
-            fi ;;
-        max-tokens)
-            if [ -z "$value" ]; then
-                ui_info "Global max output tokens: $LLM_MAX_TOKENS (default: 20480)"
-            else
-                _limits_set LLM_MAX_TOKENS "Max tokens" "$value" 64 32768
-            fi ;;
-        budget|budget-tokens|think-tokens)
-            if [ -z "$value" ]; then
-                ui_info "Think budget (global default): $LLM_BUDGET_TOKENS (default: 1024, 0=unlimited)"
-            else
-                _limits_set LLM_BUDGET_TOKENS "Think budget" "$value" 0 16384
-            fi ;;
-        budget-ask)
-            if [ -z "$value" ]; then
-                ui_info "Think budget for /ask: $LLM_BUDGET_ASK (default: 1024, 0=unlimited)"
-            else
-                _limits_set LLM_BUDGET_ASK "Ask think budget" "$value" 0 16384
-            fi ;;
-        budget-agent)
-            if [ -z "$value" ]; then
-                ui_info "Think budget for strategist/specialist: $LLM_BUDGET_AGENT (default: 512, 0=unlimited)"
-            else
-                _limits_set LLM_BUDGET_AGENT "Agent think budget" "$value" 0 16384
-            fi ;;
-        budget-router)
-            if [ -z "$value" ]; then
-                ui_info "Think budget for router: $LLM_BUDGET_ROUTER (default: 128, 0=unlimited)"
-            else
-                _limits_set LLM_BUDGET_ROUTER "Router think budget" "$value" 0 16384
-            fi ;;
-        budget-journal)
-            if [ -z "$value" ]; then
-                ui_info "Think budget for journal: $LLM_BUDGET_JOURNAL (default: 64, 0=unlimited)"
-            else
-                _limits_set LLM_BUDGET_JOURNAL "Journal think budget" "$value" 0 16384
-            fi ;;
-        budget-tool)
-            if [ -z "$value" ]; then
-                ui_info "Think budget for tools (commit, web, recall, slash): $LLM_BUDGET_TOOL (default: 256, 0=unlimited)"
-            else
-                _limits_set LLM_BUDGET_TOOL "Tool think budget" "$value" 0 16384
-            fi ;;
         delay)
             if [ -z "$value" ]; then
                 ui_info "Step delay: ${AGENT_STEP_DELAY}s (default: 1)"
             else
                 _limits_set AGENT_STEP_DELAY "Step delay" "$value" 0 30
             fi ;;
-        api-delay)
-            if [ -z "$value" ]; then
-                ui_info "Provider call delay: ${PROVIDER_CALL_DELAY}s (default: 7)"
-            else
-                _limits_set PROVIDER_CALL_DELAY "Provider call delay" "$value" 0 120
-            fi ;;
-        api-retries)
-            if [ -z "$value" ]; then
-                ui_info "Provider max retries: $PROVIDER_MAX_RETRIES (default: 4)"
-            else
-                _limits_set PROVIDER_MAX_RETRIES "Provider max retries" "$value" 0 20
-            fi ;;
-        api-backoff)
-            if [ -z "$value" ]; then
-                ui_info "Provider initial backoff: ${PROVIDER_INITIAL_BACKOFF}s (default: 5)"
-            else
-                _limits_set PROVIDER_INITIAL_BACKOFF "Provider initial backoff" "$value" 1 120
-            fi ;;
-        api-max-backoff)
-            if [ -z "$value" ]; then
-                ui_info "Provider max backoff: ${PROVIDER_MAX_BACKOFF}s (default: 60)"
-            else
-                _limits_set PROVIDER_MAX_BACKOFF "Provider max backoff" "$value" 1 300
-            fi ;;
-        api-cooldown-max)
-            if [ -z "$value" ]; then
-                ui_info "Provider cooldown max calls: $PROVIDER_COOLDOWN_MAX (default: 8)"
-            else
-                _limits_set PROVIDER_COOLDOWN_MAX "Provider cooldown max" "$value" 1 100
-            fi ;;
-        api-cooldown-window)
-            if [ -z "$value" ]; then
-                ui_info "Provider cooldown window: ${PROVIDER_COOLDOWN_WINDOW}s (default: 60)"
-            else
-                _limits_set PROVIDER_COOLDOWN_WINDOW "Provider cooldown window" "$value" 10 600
-            fi ;;
         rec-chars)
             if [ -z "$value" ]; then
                 ui_info "Evaluator recommendation char limit: ${AGENT_EVAL_REC_CHARS:-120} (default: 120)"
             else
                 _limits_set AGENT_EVAL_REC_CHARS "Recommendation chars" "$value" 20 500
-            fi ;;
-        cache-depth)
-            if [ -z "$value" ]; then
-                ui_info "LRU cache capacity (max entries): $CACHE_CAPACITY (default: 32)"
-                if declare -f cache_stats &>/dev/null; then
-                    ui_dim "  $(cache_stats)  entries=$(cache_count)"
-                fi
-            else
-                _limits_set CACHE_CAPACITY "Cache depth" "$value" 1 256
-            fi ;;
-        cache-ttl)
-            if [ -z "$value" ]; then
-                ui_info "LRU cache TTL: ${CACHE_TTL}s (default: 300)"
-                if declare -f cache_stats &>/dev/null; then
-                    ui_dim "  $(cache_stats)  entries=$(cache_count)"
-                fi
-            else
-                _limits_set CACHE_TTL "Cache TTL" "$value" 0 3600
-            fi ;;
-        cache-clear)
-            if declare -f cache_clear &>/dev/null; then
-                cache_clear
-                ui_ok "LRU cache cleared"
-            else
-                ui_warn "Cache not loaded"
             fi ;;
         reset)
             AGENT_PLAN_STEPS=6
@@ -1103,18 +970,6 @@ _cmd_limits() {
             AGENT_HONEYDEW_MAX_ITEMS=16
             AGENT_STEP_DELAY=1
             AGENT_EVAL_MODE=auto
-            LLM_MAX_TOKENS=20480
-            LLM_AGENT_TOKENS=20480
-            LLM_STRATEGIST_TOKENS=512
-            LLM_EVALUATOR_TOKENS=512
-            LLM_ASK_TOKENS=20480
-            LLM_ROUTER_TOKENS=256
-            LLM_BUDGET_TOKENS=1024
-            LLM_BUDGET_ASK=1024
-            LLM_BUDGET_AGENT=512
-            LLM_BUDGET_ROUTER=128
-            LLM_BUDGET_JOURNAL=64
-            LLM_BUDGET_TOOL=256
             AGENT_EVAL_CONTEXT_LINES=50
             AGENT_WEB_SUFFICIENCY=20
             AGENT_MAX_MILESTONE_RETRIES=20
@@ -1128,15 +983,8 @@ _cmd_limits() {
             AGENT_WEB_SEARCH_TIGHT_PARSING=0
             AGENT_WEB_SEARCH_MAX_LENGTH=160
             AGENT_WEB_SEARCH_MAX_OPERATORS=3
-            PROVIDER_CALL_DELAY=7
-            PROVIDER_MAX_RETRIES=4
-            PROVIDER_INITIAL_BACKOFF=5
-            PROVIDER_MAX_BACKOFF=60
-            PROVIDER_COOLDOWN_MAX=8
-            PROVIDER_COOLDOWN_WINDOW=60
-            CACHE_CAPACITY=32
-            CACHE_TTL=300
-            ui_ok "All limits reset to defaults" ;;
+            ui_ok "All limits reset to defaults"
+            ui_dim "  (Token/budget/provider/cache settings: use /tuning reset)" ;;
         models)
             # /limits models [provider] — show models + rate limits from config
             local _lm_provider
@@ -1381,44 +1229,13 @@ _cmd_limits() {
             printf "  %-22s %s\n" "File expand:" "$_fe_show  (default: enabled)"
             printf "  %-22s %s\n" "DM scan chars:" "${AGENT_DM_SCAN_CHARS:-80}  (default: 80)"
             echo ""
-            ui_section "Output Tokens (num_predict)"
-            printf "  %-22s %s\n" "Max tokens:" "$LLM_MAX_TOKENS  (default: 20480)"
-            printf "  %-22s %s\n" "Agent tokens:" "$LLM_AGENT_TOKENS  (default: 20480)"
-            printf "  %-22s %s\n" "Strategist tokens:" "$LLM_STRATEGIST_TOKENS  (default: 512)"
-            printf "  %-22s %s\n" "Evaluator tokens:" "$LLM_EVALUATOR_TOKENS  (default: 512)"
-            printf "  %-22s %s\n" "Ask tokens:" "$LLM_ASK_TOKENS  (default: 20480)"
-            printf "  %-22s %s\n" "Router tokens:" "$LLM_ROUTER_TOKENS  (default: 256)"
-            echo ""
-            ui_section "Think Budgets (budget_tokens, 0=unlimited)"
-            printf "  %-22s %s\n" "Global default:" "$LLM_BUDGET_TOKENS  (default: 1024)"
-            printf "  %-22s %s\n" "Ask (/ask):" "$LLM_BUDGET_ASK  (default: 1024)"
-            printf "  %-22s %s\n" "Agent (strat/spec):" "$LLM_BUDGET_AGENT  (default: 512)"
-            printf "  %-22s %s\n" "Router:" "$LLM_BUDGET_ROUTER  (default: 128)"
-            printf "  %-22s %s\n" "Journal:" "$LLM_BUDGET_JOURNAL  (default: 64)"
-            printf "  %-22s %s\n" "Tools:" "$LLM_BUDGET_TOOL  (default: 256)"
-            echo ""
-            ui_section "Provider Rate Limits"
-            printf "  %-22s %s\n" "API call delay:" "${PROVIDER_CALL_DELAY}s  (default: 7)"
-            printf "  %-22s %s\n" "Max retries:" "$PROVIDER_MAX_RETRIES  (default: 4)"
-            printf "  %-22s %s\n" "Initial backoff:" "${PROVIDER_INITIAL_BACKOFF}s  (default: 5)"
-            printf "  %-22s %s\n" "Max backoff:" "${PROVIDER_MAX_BACKOFF}s  (default: 60)"
-            printf "  %-22s %s\n" "Cooldown max calls:" "$PROVIDER_COOLDOWN_MAX  (default: 8)"
-            printf "  %-22s %s\n" "Cooldown window:" "${PROVIDER_COOLDOWN_WINDOW}s  (default: 60)"
-            echo ""
-            ui_section "LRU Cache"
-            printf "  %-22s %s\n" "Cache depth:" "$CACHE_CAPACITY  (default: 32)"
-            printf "  %-22s %s\n" "Cache TTL:" "${CACHE_TTL}s  (default: 300)"
-            if declare -f cache_stats &>/dev/null; then
-                printf "  %-22s %s\n" "Stats:" "$(cache_stats)"
-                printf "  %-22s %s\n" "Entries:" "$(cache_count)/$CACHE_CAPACITY"
-            fi
-            echo ""
             ui_dim "  Usage: /limits <param> [value]"
             ui_dim "  Reset: /limits reset"
             ui_dim "  Models: /limits models [provider]  — Free-tier rate limits per model"
             ui_dim "  Suggest: /limits suggest <provider> — Recommended settings"
             ui_dim "  Apply: /limits apply <provider>     — Apply suggested settings"
-            ui_dim "  Fetch: /limits fetch <provider>     — List models from API" ;;
+            ui_dim "  Fetch: /limits fetch <provider>     — List models from API"
+            ui_dim "  See also: /tuning — LLM tokens, budgets, provider rates, cache, web processing" ;;
         *)
             ui_info "Usage: /limits [param] [value]"
             echo ""
@@ -1452,6 +1269,270 @@ _cmd_limits() {
             ui_dim "    file-expand on|off — Auto-expand file refs in /social /email /write (current: $([ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    dm-scan-chars N  — Chars to scan for DM recipients in /social discord dm (current: ${AGENT_DM_SCAN_CHARS:-80})"
             echo ""
+            ui_dim "  Free-tier tools:"
+            ui_dim "    models [provider]    — Show models with free-tier rate limits"
+            ui_dim "    suggest <provider>   — Show recommended /limit settings"
+            ui_dim "    apply <provider>     — Apply suggested settings automatically"
+            ui_dim "    fetch <provider>     — List models from provider API"
+            echo ""
+            ui_dim "    reset           — Reset all to defaults"
+            echo ""
+            ui_dim "  See also: /tuning — LLM tokens, budgets, provider rates, cache, web processing" ;;
+    esac
+}
+_cmd_tuning() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local value
+    value=$(echo "$args" | awk '{print $2}')
+
+    _tuning_set() {
+        local var_name="$1" label="$2" val="$3" min="${4:-1}" max="${5:-100}"
+        if ! [[ "$val" =~ ^[0-9]+$ ]] || [ "$val" -lt "$min" ] || [ "$val" -gt "$max" ]; then
+            ui_err "$label must be a number between $min and $max"
+            return 1
+        fi
+        eval "$var_name=$val"
+        ui_ok "$label set to $val"
+    }
+
+    case "$action" in
+        tokens)
+            if [ -z "$value" ]; then
+                ui_info "Agent output tokens: $LLM_AGENT_TOKENS (default: 20480)"
+            else
+                _tuning_set LLM_AGENT_TOKENS "Agent tokens" "$value" 64 20480
+            fi ;;
+        strat-tokens)
+            if [ -z "$value" ]; then
+                ui_info "Strategist output tokens: $LLM_STRATEGIST_TOKENS (default: 512)"
+            else
+                _tuning_set LLM_STRATEGIST_TOKENS "Strategist tokens" "$value" 32 1024
+            fi ;;
+        eval-tokens)
+            if [ -z "$value" ]; then
+                ui_info "Evaluator output tokens: $LLM_EVALUATOR_TOKENS (default: 512)"
+            else
+                _tuning_set LLM_EVALUATOR_TOKENS "Evaluator tokens" "$value" 32 1024
+            fi ;;
+        ask-tokens)
+            if [ -z "$value" ]; then
+                ui_info "Ask output tokens: $LLM_ASK_TOKENS (default: 20480)"
+            else
+                _tuning_set LLM_ASK_TOKENS "Ask tokens" "$value" 64 20480
+            fi ;;
+        router-tokens)
+            if [ -z "$value" ]; then
+                ui_info "Router output tokens: $LLM_ROUTER_TOKENS (default: 256)"
+            else
+                _tuning_set LLM_ROUTER_TOKENS "Router tokens" "$value" 10 20480
+            fi ;;
+        max-tokens)
+            if [ -z "$value" ]; then
+                ui_info "Global max output tokens: $LLM_MAX_TOKENS (default: 20480)"
+            else
+                _tuning_set LLM_MAX_TOKENS "Max tokens" "$value" 64 32768
+            fi ;;
+        budget|budget-tokens|think-tokens)
+            if [ -z "$value" ]; then
+                ui_info "Think budget (global default): $LLM_BUDGET_TOKENS (default: 1024, 0=unlimited)"
+            else
+                _tuning_set LLM_BUDGET_TOKENS "Think budget" "$value" 0 16384
+            fi ;;
+        budget-ask)
+            if [ -z "$value" ]; then
+                ui_info "Think budget for /ask: $LLM_BUDGET_ASK (default: 1024, 0=unlimited)"
+            else
+                _tuning_set LLM_BUDGET_ASK "Ask think budget" "$value" 0 16384
+            fi ;;
+        budget-agent)
+            if [ -z "$value" ]; then
+                ui_info "Think budget for strategist/specialist: $LLM_BUDGET_AGENT (default: 512, 0=unlimited)"
+            else
+                _tuning_set LLM_BUDGET_AGENT "Agent think budget" "$value" 0 16384
+            fi ;;
+        budget-router)
+            if [ -z "$value" ]; then
+                ui_info "Think budget for router: $LLM_BUDGET_ROUTER (default: 128, 0=unlimited)"
+            else
+                _tuning_set LLM_BUDGET_ROUTER "Router think budget" "$value" 0 16384
+            fi ;;
+        budget-journal)
+            if [ -z "$value" ]; then
+                ui_info "Think budget for journal: $LLM_BUDGET_JOURNAL (default: 64, 0=unlimited)"
+            else
+                _tuning_set LLM_BUDGET_JOURNAL "Journal think budget" "$value" 0 16384
+            fi ;;
+        budget-tool)
+            if [ -z "$value" ]; then
+                ui_info "Think budget for tools (commit, web, recall, slash): $LLM_BUDGET_TOOL (default: 256, 0=unlimited)"
+            else
+                _tuning_set LLM_BUDGET_TOOL "Tool think budget" "$value" 0 16384
+            fi ;;
+        api-delay)
+            if [ -z "$value" ]; then
+                ui_info "Provider call delay: ${PROVIDER_CALL_DELAY}s (default: 7)"
+            else
+                _tuning_set PROVIDER_CALL_DELAY "Provider call delay" "$value" 0 120
+            fi ;;
+        api-retries)
+            if [ -z "$value" ]; then
+                ui_info "Provider max retries: $PROVIDER_MAX_RETRIES (default: 4)"
+            else
+                _tuning_set PROVIDER_MAX_RETRIES "Provider max retries" "$value" 0 20
+            fi ;;
+        api-backoff)
+            if [ -z "$value" ]; then
+                ui_info "Provider initial backoff: ${PROVIDER_INITIAL_BACKOFF}s (default: 5)"
+            else
+                _tuning_set PROVIDER_INITIAL_BACKOFF "Provider initial backoff" "$value" 1 120
+            fi ;;
+        api-max-backoff)
+            if [ -z "$value" ]; then
+                ui_info "Provider max backoff: ${PROVIDER_MAX_BACKOFF}s (default: 60)"
+            else
+                _tuning_set PROVIDER_MAX_BACKOFF "Provider max backoff" "$value" 1 300
+            fi ;;
+        api-cooldown-max)
+            if [ -z "$value" ]; then
+                ui_info "Provider cooldown max calls: $PROVIDER_COOLDOWN_MAX (default: 8)"
+            else
+                _tuning_set PROVIDER_COOLDOWN_MAX "Provider cooldown max" "$value" 1 100
+            fi ;;
+        api-cooldown-window)
+            if [ -z "$value" ]; then
+                ui_info "Provider cooldown window: ${PROVIDER_COOLDOWN_WINDOW}s (default: 60)"
+            else
+                _tuning_set PROVIDER_COOLDOWN_WINDOW "Provider cooldown window" "$value" 10 600
+            fi ;;
+        cache-depth)
+            if [ -z "$value" ]; then
+                ui_info "LRU cache capacity (max entries): $CACHE_CAPACITY (default: 32)"
+                if declare -f cache_stats &>/dev/null; then
+                    ui_dim "  $(cache_stats)  entries=$(cache_count)"
+                fi
+            else
+                _tuning_set CACHE_CAPACITY "Cache depth" "$value" 1 256
+            fi ;;
+        cache-ttl)
+            if [ -z "$value" ]; then
+                ui_info "LRU cache TTL: ${CACHE_TTL}s (default: 300)"
+                if declare -f cache_stats &>/dev/null; then
+                    ui_dim "  $(cache_stats)  entries=$(cache_count)"
+                fi
+            else
+                _tuning_set CACHE_TTL "Cache TTL" "$value" 0 3600
+            fi ;;
+        cache-clear)
+            if declare -f cache_clear &>/dev/null; then
+                cache_clear
+                ui_ok "LRU cache cleared"
+            else
+                ui_warn "Cache not loaded"
+            fi ;;
+        web-condense)
+            if [ -z "$value" ]; then
+                local _wc_label="disabled"
+                [ "${AGENT_WEB_CONDENSE:-1}" -eq 1 ] && _wc_label="enabled"
+                ui_info "Web content condenser (LLM summarizer): $_wc_label (default: enabled)"
+                ui_dim "  When enabled, web fetch/scrape output >300 chars is summarized by LLM"
+                ui_dim "  before entering the action log. Saves context for small models."
+            else
+                if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
+                    AGENT_WEB_CONDENSE=1
+                    ui_ok "Web condenser enabled — web output will be LLM-summarized"
+                elif [[ "$value" == "off" || "$value" == "0" || "$value" == "disable" || "$value" == "disabled" ]]; then
+                    AGENT_WEB_CONDENSE=0
+                    ui_ok "Web condenser disabled — raw web output passed to action log"
+                else
+                    ui_err "Web condense must be 'on' or 'off' (or 1/0, enable/disable)"
+                fi
+            fi ;;
+        condense-tokens)
+            if [ -z "$value" ]; then
+                ui_info "Web condenser output tokens: ${LLM_WEB_CONDENSE_TOKENS:-200} (default: 200)"
+            else
+                _tuning_set LLM_WEB_CONDENSE_TOKENS "Condense tokens" "$value" 50 1024
+            fi ;;
+        web-content-max)
+            if [ -z "$value" ]; then
+                ui_info "Web content max chars: ${WEB_CONTENT_MAX_CHARS:-4000} (default: 4000)"
+                ui_dim "  Max characters kept from web fetch/scrape after boilerplate removal."
+                ui_dim "  Lower values save context for small models. Higher values preserve detail."
+            else
+                _tuning_set WEB_CONTENT_MAX_CHARS "Web content max" "$value" 500 50000
+            fi ;;
+        reset)
+            LLM_MAX_TOKENS=20480
+            LLM_AGENT_TOKENS=20480
+            LLM_STRATEGIST_TOKENS=512
+            LLM_EVALUATOR_TOKENS=512
+            LLM_ASK_TOKENS=20480
+            LLM_ROUTER_TOKENS=256
+            LLM_BUDGET_TOKENS=1024
+            LLM_BUDGET_ASK=1024
+            LLM_BUDGET_AGENT=512
+            LLM_BUDGET_ROUTER=128
+            LLM_BUDGET_JOURNAL=64
+            LLM_BUDGET_TOOL=256
+            PROVIDER_CALL_DELAY=7
+            PROVIDER_MAX_RETRIES=4
+            PROVIDER_INITIAL_BACKOFF=5
+            PROVIDER_MAX_BACKOFF=60
+            PROVIDER_COOLDOWN_MAX=8
+            PROVIDER_COOLDOWN_WINDOW=60
+            CACHE_CAPACITY=32
+            CACHE_TTL=300
+            AGENT_WEB_CONDENSE=1
+            LLM_WEB_CONDENSE_TOKENS=200
+            WEB_CONTENT_MAX_CHARS=4000
+            ui_ok "All tuning parameters reset to defaults" ;;
+        "")
+            ui_section "Output Tokens (num_predict)"
+            printf "  %-22s %s\n" "Max tokens:" "$LLM_MAX_TOKENS  (default: 20480)"
+            printf "  %-22s %s\n" "Agent tokens:" "$LLM_AGENT_TOKENS  (default: 20480)"
+            printf "  %-22s %s\n" "Strategist tokens:" "$LLM_STRATEGIST_TOKENS  (default: 512)"
+            printf "  %-22s %s\n" "Evaluator tokens:" "$LLM_EVALUATOR_TOKENS  (default: 512)"
+            printf "  %-22s %s\n" "Ask tokens:" "$LLM_ASK_TOKENS  (default: 20480)"
+            printf "  %-22s %s\n" "Router tokens:" "$LLM_ROUTER_TOKENS  (default: 256)"
+            echo ""
+            ui_section "Think Budgets (budget_tokens, 0=unlimited)"
+            printf "  %-22s %s\n" "Global default:" "$LLM_BUDGET_TOKENS  (default: 1024)"
+            printf "  %-22s %s\n" "Ask (/ask):" "$LLM_BUDGET_ASK  (default: 1024)"
+            printf "  %-22s %s\n" "Agent (strat/spec):" "$LLM_BUDGET_AGENT  (default: 512)"
+            printf "  %-22s %s\n" "Router:" "$LLM_BUDGET_ROUTER  (default: 128)"
+            printf "  %-22s %s\n" "Journal:" "$LLM_BUDGET_JOURNAL  (default: 64)"
+            printf "  %-22s %s\n" "Tools:" "$LLM_BUDGET_TOOL  (default: 256)"
+            echo ""
+            ui_section "Web Content Processing"
+            local _wc_show="disabled"
+            [ "${AGENT_WEB_CONDENSE:-1}" -eq 1 ] && _wc_show="enabled"
+            printf "  %-22s %s\n" "Web condenser:" "$_wc_show  (default: enabled)"
+            printf "  %-22s %s\n" "Condense tokens:" "${LLM_WEB_CONDENSE_TOKENS:-200}  (default: 200)"
+            printf "  %-22s %s\n" "Web content max:" "${WEB_CONTENT_MAX_CHARS:-4000} chars  (default: 4000)"
+            echo ""
+            ui_section "Provider Rate Limits"
+            printf "  %-22s %s\n" "API call delay:" "${PROVIDER_CALL_DELAY}s  (default: 7)"
+            printf "  %-22s %s\n" "Max retries:" "$PROVIDER_MAX_RETRIES  (default: 4)"
+            printf "  %-22s %s\n" "Initial backoff:" "${PROVIDER_INITIAL_BACKOFF}s  (default: 5)"
+            printf "  %-22s %s\n" "Max backoff:" "${PROVIDER_MAX_BACKOFF}s  (default: 60)"
+            printf "  %-22s %s\n" "Cooldown max calls:" "$PROVIDER_COOLDOWN_MAX  (default: 8)"
+            printf "  %-22s %s\n" "Cooldown window:" "${PROVIDER_COOLDOWN_WINDOW}s  (default: 60)"
+            echo ""
+            ui_section "LRU Cache"
+            printf "  %-22s %s\n" "Cache depth:" "$CACHE_CAPACITY  (default: 32)"
+            printf "  %-22s %s\n" "Cache TTL:" "${CACHE_TTL}s  (default: 300)"
+            if declare -f cache_stats &>/dev/null; then
+                printf "  %-22s %s\n" "Stats:" "$(cache_stats)"
+                printf "  %-22s %s\n" "Entries:" "$(cache_count)/$CACHE_CAPACITY"
+            fi
+            echo ""
+            ui_dim "  Usage: /tuning <param> [value]"
+            ui_dim "  Reset: /tuning reset" ;;
+        *)
+            ui_info "Usage: /tuning [param] [value]"
+            echo ""
             ui_dim "  Output tokens (num_predict):"
             ui_dim "    max-tokens N    — Global max output cap (current: $LLM_MAX_TOKENS)"
             ui_dim "    tokens N        — Agent specialist (current: $LLM_AGENT_TOKENS)"
@@ -1468,6 +1549,11 @@ _cmd_limits() {
             ui_dim "    budget-journal N — Journal reflect/quip (current: $LLM_BUDGET_JOURNAL)"
             ui_dim "    budget-tool N   — Commit, web, recall, slash (current: $LLM_BUDGET_TOOL)"
             echo ""
+            ui_dim "  Web content processing:"
+            ui_dim "    web-condense on|off  — LLM summarizer for web output (current: $([ "${AGENT_WEB_CONDENSE:-1}" -eq 1 ] && echo on || echo off))"
+            ui_dim "    condense-tokens N    — Output tokens for web condenser (current: ${LLM_WEB_CONDENSE_TOKENS:-200})"
+            ui_dim "    web-content-max N    — Max chars from web fetch/scrape (current: ${WEB_CONTENT_MAX_CHARS:-4000})"
+            echo ""
             ui_dim "  Provider rate limits:"
             ui_dim "    api-delay N          — Seconds between API calls (current: $PROVIDER_CALL_DELAY)"
             ui_dim "    api-retries N        — Max retry attempts on 429 (current: $PROVIDER_MAX_RETRIES)"
@@ -1480,12 +1566,6 @@ _cmd_limits() {
             ui_dim "    cache-depth N     — Max cached entries before LRU eviction (current: $CACHE_CAPACITY)"
             ui_dim "    cache-ttl N       — Seconds before cache entry expires (current: $CACHE_TTL)"
             ui_dim "    cache-clear       — Flush all cached recall queries"
-            echo ""
-            ui_dim "  Free-tier tools:"
-            ui_dim "    models [provider]    — Show models with free-tier rate limits"
-            ui_dim "    suggest <provider>   — Show recommended /limit settings"
-            ui_dim "    apply <provider>     — Apply suggested settings automatically"
-            ui_dim "    fetch <provider>     — List models from provider API"
             echo ""
             ui_dim "    reset           — Reset all to defaults" ;;
     esac
@@ -3210,7 +3290,27 @@ _cmd_web() {
         search)      web_search "$rest" ;;
         images)      web_images "$rest" ;;
         scrape-images|scrapeimages|scrape)
-                     web_scrape_images "$rest" ;;
+                     local _sj
+                     _sj=$(web_scrape_images "$rest")
+                     [ -z "$_sj" ] && return 1
+                     # If running in agent loop (not interactive),
+                     # echo raw JSON for downstream processing.
+                     # In interactive mode, pretty-print for readability.
+                     if [ ! -t 1 ]; then
+                         echo "$_sj"
+                     else
+                         echo "$_sj" | jq -r '
+                           "Title: \(.title // "Untitled")",
+                           "",
+                           (.content // ""),
+                           "",
+                           if (.images | length) > 0 then
+                             "Images (\(.images | length)):",
+                             (.images | to_entries[] | "  \(.key+1). \(.value)")
+                           else empty end
+                         ' 2>/dev/null || echo "$_sj"
+                     fi
+                     ;;
         blacklist)
             local bl_sub
             bl_sub=$(echo "$rest" | awk '{print $1}')
@@ -3598,8 +3698,50 @@ _cmd_git() {
             else
                 ui_err "PGP functions not available"
             fi ;;
+        search|find)
+            if [ -z "$rest" ] || [ "$rest" = "$action" ]; then
+                ui_err "Usage: /git search <query>"
+                ui_dim "  Example: /git search \"TI-84 calculator rust\""
+                return 1
+            fi
+            web_search_github "$rest"
+            ;;
+        check|exists)
+            if [ -z "$rest" ] || [ "$rest" = "$action" ]; then
+                ui_err "Usage: /git check <owner/repo>"
+                return 1
+            fi
+            if web_github_repo_exists "$rest"; then
+                ui_ok "Repository exists: $rest"
+            else
+                ui_err "Repository not found: $rest"
+            fi
+            ;;
+        clone)
+            source "$LODGE_DIR/commands/clone.sh"
+            cmd_clone "$rest" "${2:-.}"
+            ;;
+        commit)
+            source "$LODGE_DIR/commands/commit.sh"
+            cmd_commit "$rest" "${2:-.}"
+            ;;
+        push)
+            source "$LODGE_DIR/commands/push.sh"
+            cmd_push "$rest" "${2:-.}"
+            ;;
         *)
-            ui_info "Usage: /git <setup|status|identity|ssh-keygen|sign|remote|test>"
+            ui_info "Usage: /git <subcommand>"
+            ui_dim ""
+            ui_dim "  Git workflow:"
+            ui_dim "  clone <repo>        — Clone a GitHub repo into sandbox"
+            ui_dim "  commit [files]      — AI-generated commit message"
+            ui_dim "  push [branch]       — Push to remote"
+            ui_dim ""
+            ui_dim "  GitHub:"
+            ui_dim "  search <query>      — Search GitHub repositories"
+            ui_dim "  check <owner/repo>  — Verify a repo exists"
+            ui_dim ""
+            ui_dim "  Configuration:"
             ui_dim "  setup               — Full auto-setup (identity + SSH + GPG + GitHub test)"
             ui_dim "  status              — Show git configuration overview"
             ui_dim "  identity [name] [email] — Set/show git user identity"
@@ -4570,6 +4712,7 @@ _register_commands() {
     commands_register "memory"   "Show GEORGE.md contents" "_cmd_memory"
     commands_register "soul"     "Toggle soul mode on/off (full personality)" "_cmd_soul"
     commands_register "limits"   "View/adjust agent planning limits" "_cmd_limits"
+    commands_register "tuning"   "LLM tokens, budgets, provider rates, cache & web processing" "_cmd_tuning"
     commands_register "model"    "View/adjust sampling parameters (temp, penalties)" "_cmd_model"
     commands_register "status"   "Show agent status" "_cmd_status"
     commands_register "journal"  "View/write journal" "_cmd_journal"

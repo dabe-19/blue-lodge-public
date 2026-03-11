@@ -225,6 +225,49 @@ describe "ui_expand_escapes"
     assert_gt "$lines" 2
   }
 
+  it "expands literal \\n in mixed content (real + escaped newlines)" && {
+    input=$'Real line one\nLiteral \\n here'
+    result=$(ui_expand_escapes "$input")
+    lines=$(echo "$result" | wc -l)
+    assert_eq "$lines" "3"
+  }
+
+  it "leaves mixed content unchanged when no literal escapes" && {
+    input=$'Real line one\nReal line two'
+    result=$(ui_expand_escapes "$input")
+    assert_eq "$result" "$input"
+  }
+
+# ── ui_unescape_literals ──────────────────────────────────────
+describe "ui_unescape_literals"
+
+  it "converts literal \\n to real newlines" && {
+    result=$(printf '%s' 'line1\nline2\nline3' | ui_unescape_literals)
+    lines=$(echo "$result" | wc -l)
+    assert_eq "$lines" "3"
+  }
+
+  it "converts literal \\t to real tabs" && {
+    result=$(printf '%s' 'col1\tcol2' | ui_unescape_literals)
+    assert_contains "$result" "$(printf '\t')"
+  }
+
+  it "converts literal \\\\ to single backslash" && {
+    result=$(printf '%s' 'path\\to\\file' | ui_unescape_literals)
+    assert_eq "$result" 'path\to\file'
+  }
+
+  it "works on text that already has real newlines" && {
+    result=$(printf 'Real newline\nLiteral \\n here\n' | ui_unescape_literals)
+    lines=$(echo "$result" | wc -l)
+    assert_eq "$lines" "3"
+  }
+
+  it "passes through text without escapes unchanged" && {
+    result=$(printf '%s' 'Just normal text' | ui_unescape_literals)
+    assert_eq "$result" "Just normal text"
+  }
+
 # ── Token estimate ─────────────────────────────────────────────
 describe "llm_estimate_tokens (from llm.sh)"
 

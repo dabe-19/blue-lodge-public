@@ -106,10 +106,10 @@ describe "MCP protocol compliance"
 # ── tools/list ─────────────────────────────────────────────────
 describe "tools/list"
 
-  it "returns all 12 tools" && {
+  it "returns all 14 tools" && {
     resp=$(_msg_call '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
     count=$(printf '%s' "$resp" | jq '.result.tools | length' 2>/dev/null)
-    assert_eq "$count" "12"
+    assert_eq "$count" "14"
   }
 
   it "includes git_status tool" && {
@@ -136,6 +136,18 @@ describe "tools/list"
     assert_eq "$has" "1"
   }
 
+  it "includes git_search alias tool" && {
+    resp=$(_msg_call '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
+    has=$(printf '%s' "$resp" | jq '[.result.tools[] | select(.name == "git_search")] | length' 2>/dev/null)
+    assert_eq "$has" "1"
+  }
+
+  it "includes git_check alias tool" && {
+    resp=$(_msg_call '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
+    has=$(printf '%s' "$resp" | jq '[.result.tools[] | select(.name == "git_check")] | length' 2>/dev/null)
+    assert_eq "$has" "1"
+  }
+
   it "includes git_clone tool" && {
     resp=$(_msg_call '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
     has=$(printf '%s' "$resp" | jq '[.result.tools[] | select(.name == "git_clone")] | length' 2>/dev/null)
@@ -157,7 +169,7 @@ describe "tools/list"
   it "all tools have required inputSchema" && {
     resp=$(_msg_call '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
     all_have=$(printf '%s' "$resp" | jq '[.result.tools[] | select(.inputSchema != null)] | length' 2>/dev/null)
-    assert_eq "$all_have" "12" "all tools should have inputSchema"
+    assert_eq "$all_have" "14" "all tools should have inputSchema"
   }
 
 # ── tools/call — git_status ───────────────────────────────────
@@ -415,6 +427,24 @@ describe "tools/call — github_check"
     assert_contains "$text" "Error"
   }
 
+# ── tools/call — git_search (alias) ───────────────────────────
+describe "tools/call — git_search (alias for github_search)"
+
+  it "requires query parameter via git_search alias" && {
+    resp=$(_msg_call '{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"git_search","arguments":{}}}')
+    text=$(printf '%s' "$resp" | jq -r '.result.content[0].text' 2>/dev/null)
+    assert_contains "$text" "Error"
+  }
+
+# ── tools/call — git_check (alias) ────────────────────────────
+describe "tools/call — git_check (alias for github_check)"
+
+  it "requires repo parameter via git_check alias" && {
+    resp=$(_msg_call '{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"git_check","arguments":{}}}')
+    text=$(printf '%s' "$resp" | jq -r '.result.content[0].text' 2>/dev/null)
+    assert_contains "$text" "Error"
+  }
+
 # ── tools/call — git_setup_status ─────────────────────────────
 describe "tools/call — git_setup_status"
 
@@ -456,7 +486,7 @@ describe "integration with George MCP client"
     mcp_start "george-git"
     tools=$(mcp_tools_list "george-git")
     count=$(printf '%s' "$tools" | jq 'length' 2>/dev/null)
-    assert_eq "$count" "12" "should have 12 tools"
+    assert_eq "$count" "14" "should have 14 tools"
     _msg_teardown
     MCP_ENABLED=0
   }

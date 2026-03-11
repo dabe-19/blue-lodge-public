@@ -365,80 +365,10 @@ describe "Limits command"
     assert_eq "$AGENT_PLAN_STEPS" "6"
   }
 
-  it "_cmd_limits tokens sets LLM_AGENT_TOKENS" && {
-    _cmd_limits "tokens 768" >/dev/null 2>&1
-    assert_eq "$LLM_AGENT_TOKENS" "768"
-    LLM_AGENT_TOKENS=20480  # restore
-  }
-
-  it "_cmd_limits ask-tokens sets LLM_ASK_TOKENS" && {
-    _cmd_limits "ask-tokens 400" >/dev/null 2>&1
-    assert_eq "$LLM_ASK_TOKENS" "400"
-    LLM_ASK_TOKENS=20480  # restore
-  }
-
-  it "_cmd_limits router-tokens sets LLM_ROUTER_TOKENS" && {
-    _cmd_limits "router-tokens 80" >/dev/null 2>&1
-    assert_eq "$LLM_ROUTER_TOKENS" "80"
-    LLM_ROUTER_TOKENS=256  # restore
-  }
-
-  it "_cmd_limits max-tokens sets LLM_MAX_TOKENS" && {
-    _cmd_limits "max-tokens 8192" >/dev/null 2>&1
-    assert_eq "$LLM_MAX_TOKENS" "8192"
-    LLM_MAX_TOKENS=20480  # restore
-  }
-
-  it "_cmd_limits tokens rejects out-of-range" && {
-    _cmd_limits "tokens 25000" >/dev/null 2>&1
-    assert_eq "$LLM_AGENT_TOKENS" "20480"
-  }
-
-  it "_cmd_limits router-tokens rejects below min" && {
-    _cmd_limits "router-tokens 5" >/dev/null 2>&1
-    assert_eq "$LLM_ROUTER_TOKENS" "256"
-  }
-
-  it "_cmd_limits budget sets LLM_BUDGET_TOKENS" && {
-    _cmd_limits "budget 2048" >/dev/null 2>&1
-    assert_eq "$LLM_BUDGET_TOKENS" "2048"
-    LLM_BUDGET_TOKENS=1024  # restore
-  }
-
-  it "_cmd_limits budget-ask sets LLM_BUDGET_ASK" && {
-    _cmd_limits "budget-ask 2048" >/dev/null 2>&1
-    assert_eq "$LLM_BUDGET_ASK" "2048"
-    LLM_BUDGET_ASK=1024  # restore
-  }
-
-  it "_cmd_limits budget-agent sets LLM_BUDGET_AGENT" && {
-    _cmd_limits "budget-agent 1024" >/dev/null 2>&1
-    assert_eq "$LLM_BUDGET_AGENT" "1024"
-    LLM_BUDGET_AGENT=512  # restore
-  }
-
-  it "_cmd_limits budget-router sets LLM_BUDGET_ROUTER" && {
-    _cmd_limits "budget-router 256" >/dev/null 2>&1
-    assert_eq "$LLM_BUDGET_ROUTER" "256"
-    LLM_BUDGET_ROUTER=128  # restore
-  }
-
-  it "_cmd_limits budget-journal sets LLM_BUDGET_JOURNAL" && {
-    _cmd_limits "budget-journal 128" >/dev/null 2>&1
-    assert_eq "$LLM_BUDGET_JOURNAL" "128"
-    LLM_BUDGET_JOURNAL=64  # restore
-  }
-
-  it "_cmd_limits budget-tool sets LLM_BUDGET_TOOL" && {
-    _cmd_limits "budget-tool 512" >/dev/null 2>&1
-    assert_eq "$LLM_BUDGET_TOOL" "512"
-    LLM_BUDGET_TOOL=256  # restore
-  }
-
-  it "_cmd_limits budget-tool allows zero (unlimited)" && {
-    _cmd_limits "budget-tool 0" >/dev/null 2>&1
-    assert_eq "$LLM_BUDGET_TOOL" "0"
-    LLM_BUDGET_TOOL=256  # restore
+  it "_cmd_limits show points to /tuning" && {
+    output=$(_cmd_limits "" 2>&1)
+    echo "$output" | grep -q "/tuning"
+    assert_ok $?
   }
 
   it "_cmd_limits web-sufficiency sets AGENT_WEB_SUFFICIENCY" && {
@@ -572,52 +502,25 @@ describe "Limits command"
     AGENT_WEB_SEARCH_MAX_OPERATORS=3  # restore
   }
 
-  it "_cmd_limits show includes token lines" && {
+  it "_cmd_limits show does not include token/budget lines" && {
     output=$(_cmd_limits "" 2>&1)
-    echo "$output" | grep -q "Agent tokens"
-    assert_ok $?
+    echo "$output" | grep -q "Agent tokens" && { fail "should not show Agent tokens"; return 1; }
+    echo "$output" | grep -q "Think Budgets" && { fail "should not show Think Budgets"; return 1; }
+    assert_ok 0
   }
 
-  it "_cmd_limits show includes budget lines" && {
-    output=$(_cmd_limits "" 2>&1)
-    echo "$output" | grep -q "Think Budgets"
-    assert_ok $?
-  }
-
-  it "_cmd_limits reset restores all defaults" && {
+  it "_cmd_limits reset restores agent-behaviour defaults" && {
     AGENT_PLAN_STEPS=10
     AGENT_INNER_LOOPS=12
     AGENT_MAX_STEPS=50
     AGENT_MAX_DEPTH=5
     AGENT_STEP_DELAY=5
-    LLM_MAX_TOKENS=4096
-    LLM_AGENT_TOKENS=1024
-    LLM_STRATEGIST_TOKENS=64
-    LLM_ASK_TOKENS=500
-    LLM_ROUTER_TOKENS=100
-    LLM_BUDGET_TOKENS=4096
-    LLM_BUDGET_ASK=4096
-    LLM_BUDGET_AGENT=4096
-    LLM_BUDGET_ROUTER=4096
-    LLM_BUDGET_JOURNAL=4096
-    LLM_BUDGET_TOOL=4096
     _cmd_limits "reset" >/dev/null 2>&1
     assert_eq "$AGENT_PLAN_STEPS" "6"
     assert_eq "$AGENT_INNER_LOOPS" "6"
     assert_eq "$AGENT_MAX_STEPS" "40"
     assert_eq "$AGENT_MAX_DEPTH" "3"
     assert_eq "$AGENT_STEP_DELAY" "1"
-    assert_eq "$LLM_MAX_TOKENS" "20480"
-    assert_eq "$LLM_AGENT_TOKENS" "20480"
-    assert_eq "$LLM_STRATEGIST_TOKENS" "512"
-    assert_eq "$LLM_ASK_TOKENS" "20480"
-    assert_eq "$LLM_ROUTER_TOKENS" "256"
-    assert_eq "$LLM_BUDGET_TOKENS" "1024"
-    assert_eq "$LLM_BUDGET_ASK" "1024"
-    assert_eq "$LLM_BUDGET_AGENT" "512"
-    assert_eq "$LLM_BUDGET_ROUTER" "128"
-    assert_eq "$LLM_BUDGET_JOURNAL" "64"
-    assert_eq "$LLM_BUDGET_TOOL" "256"
     assert_eq "$AGENT_WEB_SUFFICIENCY" "20"
     assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "20"
     assert_eq "$AGENT_MAX_CMD_FAMILY" "10"
@@ -630,65 +533,241 @@ describe "Limits command"
     assert_eq "$AGENT_WEB_SEARCH_TIGHT_PARSING" "0"
     assert_eq "$AGENT_WEB_SEARCH_MAX_LENGTH" "160"
     assert_eq "$AGENT_WEB_SEARCH_MAX_OPERATORS" "3"
-    assert_eq "$PROVIDER_CALL_DELAY" "7"
-    assert_eq "$PROVIDER_MAX_RETRIES" "4"
-    assert_eq "$PROVIDER_INITIAL_BACKOFF" "5"
-    assert_eq "$PROVIDER_MAX_BACKOFF" "60"
-    assert_eq "$PROVIDER_COOLDOWN_MAX" "8"
-    assert_eq "$PROVIDER_COOLDOWN_WINDOW" "60"
   }
 
-  it "_cmd_limits api-delay sets PROVIDER_CALL_DELAY" && {
-    _cmd_limits "api-delay 10" >/dev/null 2>&1
-    assert_eq "$PROVIDER_CALL_DELAY" "10"
+  it "_cmd_limits reset does NOT touch tuning vars" && {
+    LLM_AGENT_TOKENS=999
+    PROVIDER_CALL_DELAY=99
+    _cmd_limits "reset" >/dev/null 2>&1
+    assert_eq "$LLM_AGENT_TOKENS" "999"
+    assert_eq "$PROVIDER_CALL_DELAY" "99"
+    LLM_AGENT_TOKENS=20480  # restore
+    PROVIDER_CALL_DELAY=7   # restore
   }
 
-  it "_cmd_limits api-retries sets PROVIDER_MAX_RETRIES" && {
-    _cmd_limits "api-retries 6" >/dev/null 2>&1
-    assert_eq "$PROVIDER_MAX_RETRIES" "6"
-  }
-
-  it "_cmd_limits api-backoff sets PROVIDER_INITIAL_BACKOFF" && {
-    _cmd_limits "api-backoff 10" >/dev/null 2>&1
-    assert_eq "$PROVIDER_INITIAL_BACKOFF" "10"
-  }
-
-  it "_cmd_limits api-max-backoff sets PROVIDER_MAX_BACKOFF" && {
-    _cmd_limits "api-max-backoff 90" >/dev/null 2>&1
-    assert_eq "$PROVIDER_MAX_BACKOFF" "90"
-  }
-
-  it "_cmd_limits api-cooldown-max sets PROVIDER_COOLDOWN_MAX" && {
-    _cmd_limits "api-cooldown-max 15" >/dev/null 2>&1
-    assert_eq "$PROVIDER_COOLDOWN_MAX" "15"
-  }
-
-  it "_cmd_limits api-cooldown-window sets PROVIDER_COOLDOWN_WINDOW" && {
-    _cmd_limits "api-cooldown-window 120" >/dev/null 2>&1
-    assert_eq "$PROVIDER_COOLDOWN_WINDOW" "120"
-  }
-
-  it "_cmd_limits show includes provider rate limits" && {
+  it "_cmd_limits show does not include provider rate limits" && {
     _toutput=$(_cmd_limits "" 2>&1)
-    echo "$_toutput" | grep -q "Provider Rate Limits"
-    assert_ok $?
-    echo "$_toutput" | grep -q "API call delay"
-    assert_ok $?
-    echo "$_toutput" | grep -q "Cooldown max"
+    echo "$_toutput" | grep -q "Provider Rate Limits" && { fail "should not show Provider Rate Limits"; return 1; }
+    assert_ok 0
+  }
+
+# ── /tuning command ────────────────────────────────────────────
+describe "Tuning command (tokens, budgets, provider, cache, web processing)"
+
+  it "registers tuning command" && {
+    commands_is_command "/tuning"
     assert_ok $?
   }
 
-  it "_cmd_limits help includes provider rate params" && {
-    _toutput=$(_cmd_limits "help" 2>&1)
+  it "_cmd_tuning is defined" && {
+    declare -f _cmd_tuning &>/dev/null
+    assert_ok $?
+  }
+
+  it "_cmd_tuning show displays tuning dashboard" && {
+    output=$(_cmd_tuning "" 2>&1)
+    echo "$output" | grep -q "Agent tokens"
+    assert_ok $?
+    echo "$output" | grep -q "Think Budgets"
+    assert_ok $?
+    echo "$output" | grep -q "Provider Rate Limits"
+    assert_ok $?
+  }
+
+  it "_cmd_tuning tokens sets LLM_AGENT_TOKENS" && {
+    _cmd_tuning "tokens 768" >/dev/null 2>&1
+    assert_eq "$LLM_AGENT_TOKENS" "768"
+    LLM_AGENT_TOKENS=20480  # restore
+  }
+
+  it "_cmd_tuning ask-tokens sets LLM_ASK_TOKENS" && {
+    _cmd_tuning "ask-tokens 400" >/dev/null 2>&1
+    assert_eq "$LLM_ASK_TOKENS" "400"
+    LLM_ASK_TOKENS=20480  # restore
+  }
+
+  it "_cmd_tuning router-tokens sets LLM_ROUTER_TOKENS" && {
+    _cmd_tuning "router-tokens 80" >/dev/null 2>&1
+    assert_eq "$LLM_ROUTER_TOKENS" "80"
+    LLM_ROUTER_TOKENS=256  # restore
+  }
+
+  it "_cmd_tuning max-tokens sets LLM_MAX_TOKENS" && {
+    _cmd_tuning "max-tokens 8192" >/dev/null 2>&1
+    assert_eq "$LLM_MAX_TOKENS" "8192"
+    LLM_MAX_TOKENS=20480  # restore
+  }
+
+  it "_cmd_tuning tokens rejects out-of-range" && {
+    _cmd_tuning "tokens 25000" >/dev/null 2>&1
+    assert_eq "$LLM_AGENT_TOKENS" "20480"
+  }
+
+  it "_cmd_tuning router-tokens rejects below min" && {
+    _cmd_tuning "router-tokens 5" >/dev/null 2>&1
+    assert_eq "$LLM_ROUTER_TOKENS" "256"
+  }
+
+  it "_cmd_tuning budget sets LLM_BUDGET_TOKENS" && {
+    _cmd_tuning "budget 2048" >/dev/null 2>&1
+    assert_eq "$LLM_BUDGET_TOKENS" "2048"
+    LLM_BUDGET_TOKENS=1024  # restore
+  }
+
+  it "_cmd_tuning budget-ask sets LLM_BUDGET_ASK" && {
+    _cmd_tuning "budget-ask 2048" >/dev/null 2>&1
+    assert_eq "$LLM_BUDGET_ASK" "2048"
+    LLM_BUDGET_ASK=1024  # restore
+  }
+
+  it "_cmd_tuning budget-agent sets LLM_BUDGET_AGENT" && {
+    _cmd_tuning "budget-agent 1024" >/dev/null 2>&1
+    assert_eq "$LLM_BUDGET_AGENT" "1024"
+    LLM_BUDGET_AGENT=512  # restore
+  }
+
+  it "_cmd_tuning budget-router sets LLM_BUDGET_ROUTER" && {
+    _cmd_tuning "budget-router 256" >/dev/null 2>&1
+    assert_eq "$LLM_BUDGET_ROUTER" "256"
+    LLM_BUDGET_ROUTER=128  # restore
+  }
+
+  it "_cmd_tuning budget-journal sets LLM_BUDGET_JOURNAL" && {
+    _cmd_tuning "budget-journal 128" >/dev/null 2>&1
+    assert_eq "$LLM_BUDGET_JOURNAL" "128"
+    LLM_BUDGET_JOURNAL=64  # restore
+  }
+
+  it "_cmd_tuning budget-tool sets LLM_BUDGET_TOOL" && {
+    _cmd_tuning "budget-tool 512" >/dev/null 2>&1
+    assert_eq "$LLM_BUDGET_TOOL" "512"
+    LLM_BUDGET_TOOL=256  # restore
+  }
+
+  it "_cmd_tuning budget-tool allows zero (unlimited)" && {
+    _cmd_tuning "budget-tool 0" >/dev/null 2>&1
+    assert_eq "$LLM_BUDGET_TOOL" "0"
+    LLM_BUDGET_TOOL=256  # restore
+  }
+
+  it "_cmd_tuning api-delay sets PROVIDER_CALL_DELAY" && {
+    _cmd_tuning "api-delay 10" >/dev/null 2>&1
+    assert_eq "$PROVIDER_CALL_DELAY" "10"
+    PROVIDER_CALL_DELAY=7  # restore
+  }
+
+  it "_cmd_tuning api-retries sets PROVIDER_MAX_RETRIES" && {
+    _cmd_tuning "api-retries 6" >/dev/null 2>&1
+    assert_eq "$PROVIDER_MAX_RETRIES" "6"
+    PROVIDER_MAX_RETRIES=4  # restore
+  }
+
+  it "_cmd_tuning api-backoff sets PROVIDER_INITIAL_BACKOFF" && {
+    _cmd_tuning "api-backoff 10" >/dev/null 2>&1
+    assert_eq "$PROVIDER_INITIAL_BACKOFF" "10"
+    PROVIDER_INITIAL_BACKOFF=5  # restore
+  }
+
+  it "_cmd_tuning api-max-backoff sets PROVIDER_MAX_BACKOFF" && {
+    _cmd_tuning "api-max-backoff 90" >/dev/null 2>&1
+    assert_eq "$PROVIDER_MAX_BACKOFF" "90"
+    PROVIDER_MAX_BACKOFF=60  # restore
+  }
+
+  it "_cmd_tuning api-cooldown-max sets PROVIDER_COOLDOWN_MAX" && {
+    _cmd_tuning "api-cooldown-max 15" >/dev/null 2>&1
+    assert_eq "$PROVIDER_COOLDOWN_MAX" "15"
+    PROVIDER_COOLDOWN_MAX=8  # restore
+  }
+
+  it "_cmd_tuning api-cooldown-window sets PROVIDER_COOLDOWN_WINDOW" && {
+    _cmd_tuning "api-cooldown-window 120" >/dev/null 2>&1
+    assert_eq "$PROVIDER_COOLDOWN_WINDOW" "120"
+    PROVIDER_COOLDOWN_WINDOW=60  # restore
+  }
+
+  it "_cmd_tuning api-delay rejects out-of-range" && {
+    PROVIDER_CALL_DELAY=7
+    _cmd_tuning "api-delay 999" >/dev/null 2>&1
+    assert_eq "$PROVIDER_CALL_DELAY" "7"
+  }
+
+  it "_cmd_tuning web-condense on/off toggles AGENT_WEB_CONDENSE" && {
+    _cmd_tuning "web-condense off" >/dev/null 2>&1
+    assert_eq "$AGENT_WEB_CONDENSE" "0"
+    _cmd_tuning "web-condense on" >/dev/null 2>&1
+    assert_eq "$AGENT_WEB_CONDENSE" "1"
+  }
+
+  it "_cmd_tuning condense-tokens sets LLM_WEB_CONDENSE_TOKENS" && {
+    _cmd_tuning "condense-tokens 500" >/dev/null 2>&1
+    assert_eq "$LLM_WEB_CONDENSE_TOKENS" "500"
+    LLM_WEB_CONDENSE_TOKENS=200  # restore
+  }
+
+  it "_cmd_tuning web-content-max sets WEB_CONTENT_MAX_CHARS" && {
+    _cmd_tuning "web-content-max 8000" >/dev/null 2>&1
+    assert_eq "$WEB_CONTENT_MAX_CHARS" "8000"
+    WEB_CONTENT_MAX_CHARS=4000  # restore
+  }
+
+  it "_cmd_tuning web-content-max rejects below min" && {
+    WEB_CONTENT_MAX_CHARS=4000
+    _cmd_tuning "web-content-max 100" >/dev/null 2>&1
+    assert_eq "$WEB_CONTENT_MAX_CHARS" "4000"
+  }
+
+  it "_cmd_tuning help includes tuning params" && {
+    _toutput=$(_cmd_tuning "help" 2>&1)
+    echo "$_toutput" | grep -q "tokens"
+    assert_ok $?
     echo "$_toutput" | grep -q "api-delay"
     assert_ok $?
-    echo "$_toutput" | grep -q "api-cooldown-max"
+    echo "$_toutput" | grep -q "web-condense"
     assert_ok $?
   }
 
-  it "_cmd_limits api-delay rejects out-of-range" && {
-    _cmd_limits "api-delay 999" >/dev/null 2>&1
-    assert_fail $? "api-delay 999 should fail"
+  it "_cmd_tuning reset restores tuning defaults" && {
+    LLM_MAX_TOKENS=4096
+    LLM_AGENT_TOKENS=1024
+    LLM_STRATEGIST_TOKENS=64
+    LLM_ASK_TOKENS=500
+    LLM_ROUTER_TOKENS=100
+    LLM_BUDGET_TOKENS=4096
+    LLM_BUDGET_ASK=4096
+    LLM_BUDGET_AGENT=4096
+    LLM_BUDGET_ROUTER=4096
+    LLM_BUDGET_JOURNAL=4096
+    LLM_BUDGET_TOOL=4096
+    PROVIDER_CALL_DELAY=99
+    PROVIDER_MAX_RETRIES=99
+    AGENT_WEB_CONDENSE=0
+    LLM_WEB_CONDENSE_TOKENS=999
+    WEB_CONTENT_MAX_CHARS=999
+    _cmd_tuning "reset" >/dev/null 2>&1
+    assert_eq "$LLM_MAX_TOKENS" "20480"
+    assert_eq "$LLM_AGENT_TOKENS" "20480"
+    assert_eq "$LLM_STRATEGIST_TOKENS" "512"
+    assert_eq "$LLM_ASK_TOKENS" "20480"
+    assert_eq "$LLM_ROUTER_TOKENS" "256"
+    assert_eq "$LLM_BUDGET_TOKENS" "1024"
+    assert_eq "$LLM_BUDGET_ASK" "1024"
+    assert_eq "$LLM_BUDGET_AGENT" "512"
+    assert_eq "$LLM_BUDGET_ROUTER" "128"
+    assert_eq "$LLM_BUDGET_JOURNAL" "64"
+    assert_eq "$LLM_BUDGET_TOOL" "256"
+    assert_eq "$PROVIDER_CALL_DELAY" "7"
+    assert_eq "$PROVIDER_MAX_RETRIES" "4"
+    assert_eq "$AGENT_WEB_CONDENSE" "1"
+    assert_eq "$LLM_WEB_CONDENSE_TOKENS" "200"
+    assert_eq "$WEB_CONTENT_MAX_CHARS" "4000"
+  }
+
+  it "_cmd_tuning reset does NOT touch limits vars" && {
+    AGENT_PLAN_STEPS=99
+    _cmd_tuning "reset" >/dev/null 2>&1
+    assert_eq "$AGENT_PLAN_STEPS" "99"
+    AGENT_PLAN_STEPS=6  # restore
   }
 
 # ── /model command ─────────────────────────────────────────────
