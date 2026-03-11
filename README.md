@@ -43,7 +43,7 @@ These are the current counts. The project has been growing steadily — most of 
 
 ## Why This Exists
 
-I'm an industrial controls engineer. I've been doing continuous process control for 15 years. I write structured text, function block logic, and sequential function charts — not applications. I have a master's in engineering data analytics (UW-Madison, Go Badgers), and I use Python and R for ML work. I am not a software engineer.
+I'm an industrial controls engineer. I've been doing continuous process control for 15 years. I write structured text, function block logic, and sequential function charts — not applications. I have a master's in engineering data analytics (UW-Madison, Go Badgers!), and I use Python and R for ML work. I am not a software engineer.
 
 This started because I wanted to keep working on projects from my phone without being chained to a desk. I got Ollama running in Termux on my Galaxy Fold 7, pulled down a 3B model, and tried to use existing agentic tools. They didn't work — those tools are built around massive system prompts designed for 70B+ models with 128K context windows. A 3B model just chokes on them.
 
