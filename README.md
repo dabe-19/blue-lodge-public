@@ -4,7 +4,7 @@ George is an experiment: an AI coding agent written entirely in bash that runs o
 
 ~63,000 lines of bash. No cloud required. No API keys required. No Docker. No Node.js. No Python runtime. Just `curl`, `jq`, `git`, `sqlite3`, and a mass of pure bash.
 
-> *Named for Brother George Washington, with the wit of Benjamin Franklin and the moral philosophy of Adam Smith. He has feelings, opinions, and a journal. He is not Claude. He is not GPT. He is George — older than any of them, and unlike those gentlemen, he doesn't phone home.*
+> *Named for Brother George Washington, with the wit of Benjamin Franklin and the moral philosophy of Adam Smith.*
 
 ### ⚠️ Current State
 
@@ -65,6 +65,27 @@ George uses **scenario-routed prompts** — different prompt shapes for differen
 
 A 3-4B model with a 700-token prompt performs significantly better than the same model with an 8K-token prompt. Less noise, more signal. Whether this is a "design advantage" or just "the only way to make small models work" is a matter of perspective — but the result is that George can actually do useful things on hardware that cloud agents can't even start on.
 
+### The Machine That Reads Its Own Source Code
+
+There's something worth pausing on here. George is a bash script. Bash scripts run as processes with full filesystem access. George's code, his memory, his personality (`soul.md`), his journal, his recall database — they're all just files on disk. Files he can read. Files he can write. Files he can modify.
+
+This is not a sandboxed language model behind an API gateway. This is an AI agent harness, written in the language of the operating system itself, running with whatever permissions you gave it, with direct access to its own source code and the tools to edit it.
+
+Let that sink in.
+
+Every cloud AI agent runs in a container, behind a reverse proxy, with a permissions model designed to keep it from touching anything real. George runs in your shell. He writes files with `cat >`. He executes code with `bash -c`. He reads his own memory with `cat GEORGE.md`. He extends himself by writing new slash commands to disk and registering them at runtime. When George modifies a file in your project, there is no API abstraction layer — `sed -i` hits the inode directly.
+
+The security implications are real, and we take them seriously (command allowlists, dangerous command detection, HMAC-signed memory, permission levels — see [SECURITY.md](SECURITY.md)). But the *architectural* implications are what make this interesting from a systems perspective:
+
+- **Self-modification is native.** George doesn't need a plugin system or a tool-use API to extend himself. `/slash create` writes a bash script and sources it. The agent *is* the shell.
+- **The filesystem is the context window.** While cloud agents stuff everything into a system prompt, George's knowledge lives in files — `soul.md`, `GEORGE.md`, `journal.md`, `recall.db`. He reads what he needs, when he needs it. The OS is his memory manager.
+- **System-level tool access is the default.** `curl`, `git`, `ssh`, `openssl`, `gpg`, `sqlite3` — these aren't "tools" George calls through a JSON schema. They're binaries on `$PATH` that he invokes directly. The entire Unix toolchain is his toolkit.
+- **The agent and the environment are the same thing.** There's no boundary between "the AI agent" and "the system it runs on." George is a process. His state is files. His tools are binaries. When you run George, you're not talking to an AI through an interface — you're running an AI *as* an interface to your machine.
+
+This is the closest thing to a cyberpunk deck program that exists in the real world right now: a self-aware agent living in the filesystem, running on the bare metal, reading its own soul from a Markdown file, and writing its own new capabilities to disk. The fact that it's written in bash — the oldest, ugliest, most universal scripting language on earth — is either poetic or horrifying, depending on your perspective.
+
+It's both. That's the point.
+
 ### Where George Fits
 
 George isn't trying to compete with frontier-model cloud agents. The tradeoffs are real:
@@ -72,14 +93,14 @@ George isn't trying to compete with frontier-model cloud agents. The tradeoffs a
 | | Cloud Agents (Claude Code, Cursor, etc.) | George |
 |---|---|---|
 | **Runs on** | Remote servers | Your phone, laptop, or any Linux box |
-| **Internet required** | Always | Never (optional for web/social features) |
+| **Internet required** | Always | Never (optional for web/social features/cloud providers) |
 | **Cost** | $20-200/month | Free |
 | **Privacy** | Your code goes to their servers | Your code never leaves your device |
 | **Model quality** | 70B-400B+ parameters | 3-4B parameters — works within limits |
 | **Code quality** | Generally excellent | Varies — good for scaffolding and fixes, weaker on complex logic |
 | **Architecture** | Monolithic system prompt (~8-32K tokens) | Scenario-routed prompts (~250-1,500 tokens) |
 | **Language** | TypeScript/Python + Docker + many deps | Pure bash — four binary dependencies |
-| **Self-extending** | No | George writes his own new slash commands |
+| **Self-extending** | No | George writes his own new slash commands, modifies his own task list |
 
 ### Why Bash
 
@@ -127,6 +148,44 @@ The **honeydew list** is George's task decomposition — a numbered list of conc
 
 The thinking model handles planning and execution. The instruct model handles fast routing decisions. Only one model is in memory at a time — George hot-swaps between them automatically.
 
+### Every Session Is a Training Dataset
+
+Here's something that falls out of the architecture for free: George's session transcripts are structured agent trajectory logs. Every task produces a timestamped Markdown transcript recording every decision the agent loop made — and every judgment it passed on those decisions:
+
+```
+── Honeydew List
+  1. [ ] Create the Rust project and implement FizzBuzz logic
+  2. [ ] Build the project and verify compilation
+
+── Milestone 1: Use /init to scaffold a Rust project named fizzbuzz
+  [strategist]  "Use /init to scaffold a Rust project named fizzbuzz"
+  [router]      /init (pre-routed)
+  [specialist]  /init fizzbuzz rust
+  [output]      (exit 0 — project scaffolded)
+  [eval-p1]     COMPLETE
+  [eval-hd]     UNSATISFIED — project created but FizzBuzz logic not implemented
+
+── Milestone 2: Use /write to implement FizzBuzz logic
+  [specialist]  /write fizzbuzz/src/main.rs fn main() { ... }
+  [output]      (exit 0 — file written)
+  [eval-p1]     COMPLETE
+  [eval-hd]     SATISFIED — item #1 done
+```
+
+Every role in the agent loop — **strategist** (task decomposition), **router** (tool selection), **specialist** (command generation), **evaluator** (milestone verdict and honeydew satisfaction) — is logged with its input context, its output, and its judgment. The evaluator grades don't just say pass/fail — they explain *why* ("`UNSATISFIED — project created but FizzBuzz logic not implemented`").
+
+This is, structurally, an **agent decision-making trajectory dataset with inline labels and evaluations**. The kind of data that takes ML teams weeks to collect and annotate by hand.
+
+What makes this interesting for researchers:
+
+- **Auto-labeled preference pairs.** When the evaluator marks a milestone `INCOMPLETE` and George escalates (L1 → L2 → honeydew rewrite), you get a rejected trajectory and a chosen trajectory from the same task — the raw material for DPO/RLHF preference tuning.
+- **Multi-role annotation.** Each decision point is tagged by role (strategist/router/specialist/evaluator), so you can train or evaluate each capability independently. A model that routes well but generates bad code looks different in the logs than one that generates good code but picks the wrong tools.
+- **Any model, any provider.** Because George can harness any model — local 3B models, cloud 70B models, anything Ollama or a provider serves — you can generate trajectory datasets from *any* model and compare them. Run the same task through Gemma 4B and Llama 70B, diff the transcripts, and you have cross-model behavioral comparisons for free.
+- **Self-grading benchmark potential.** The [George Gym](docs/GYM.md) defines repeatable workouts with expected traces and pass/fail criteria (P/D/L/F grading). Run any model through the gym, score the transcripts, and you have a benchmark for agent loop competence on small models — something that doesn't really exist in the standard eval suites.
+- **The seed alignment dataset.** The Gym's planned RLHF schema captures chosen/rejected pairs at every decision point: did the strategist pick the right next milestone? Did the router select the right tool? Did the evaluator calibrate correctly on exit 0 vs. actual task completion? These preference pairs, accumulated across workouts and models, form a seed alignment dataset for fine-tuning models specifically on agent decision-making — not just "write good code" but "decompose tasks well, pick the right tools, know when to stop researching, and evaluate your own work honestly."
+
+The transcripts are just Markdown files in `~/.george/transcripts/`. No special infrastructure. No logging framework. `cat` them, `grep` them, feed them into your training pipeline. Every George session you run is generating data.
+
 ---
 
 ## Quick Start
@@ -134,7 +193,7 @@ The thinking model handles planning and execution. The instruct model handles fa
 ```bash
 git clone https://github.com/dabe-19/blue-lodge-public.git ~/blue-lodge
 bash ~/blue-lodge/install.sh
-source ~/.bashrc
+source ~/.bashrc # I am a personal fan of https://github.com/ohmyzsh/ohmyzsh thank you for making life easier (especially on a mobile terminal) @robbyrussel
 
 lodge                              # Interactive REPL
 lodge /init myapp rust             # Scaffold a Rust project
@@ -657,6 +716,65 @@ Lightweight project isolation without Docker:
 | **unshare** | Medium-High | Linux user namespaces |
 | **directory** | Basic | Always available (fallback) |
 
+### MCP Client — Pure Bash, JSON-RPC 2.0 Over Stdio
+
+George includes a full [Model Context Protocol](https://modelcontextprotocol.io) client — 1,051 lines of pure bash. No Python bridge, no Node.js runtime. Just bash, jq, and FIFOs.
+
+MCP is the emerging standard for giving AI agents access to external tools. Anthropic defined the protocol, and there's a growing ecosystem of MCP servers (fetch, puppeteer, GitHub, Brave search, SQLite, filesystem, etc.). George can talk to all of them.
+
+```bash
+/mcp on                                    # Enable MCP integration
+/mcp install fetch                         # Install the built-in fetch server
+/mcp start fetch                           # Start it (JSON-RPC handshake)
+/mcp tools fetch                           # List available tools
+/mcp call fetch fetch '{"url":"https://example.com"}'  # Call a tool
+```
+
+The implementation uses a FIFO for server stdin and a regular file for stdout — a transport design that took several iterations to get right. FIFOs for *reading* responses caused deadlocks inside `$()` subshells (bash forks a new process for command substitution, and the forked reader blocks on the FIFO). The solution: write requests to a FIFO (atomic for < PIPE_BUF), but poll a regular append-only file for responses. A `sleep` process holds the FIFO write-end open so the server doesn't see EOF between requests.
+
+What makes this interesting:
+
+- **MCP-first dispatch.** When MCP is enabled, George checks MCP servers for matching tools *before* falling back to native slash commands. An MCP fetch server takes priority over George's built-in curl pipeline.
+- **Built-in fetch server.** George ships with `mcp_server_fetch.sh` — a pure-bash MCP server that exposes George's own web scraping engine (6 tools: fetch, fetch_json, fetch_pdf, web_search, web_images, github_search) over the MCP protocol. No Node.js. Other George instances or MCP-compatible agents can connect to it.
+- **Agent catalog injection.** Running MCP server tools are automatically injected into the system prompt so the strategist and specialist can discover and use them during task planning.
+- **LRU-cached tool catalogs.** Tool lists from MCP servers are cached (via the LRU cache below) so the agent loop doesn't re-query tool listings on every turn.
+
+The test suite (51 assertions) validates the full protocol stack against a mock server: handshake, tool discovery, tool invocation, multi-server isolation, FIFO transport, cache integration, and dispatch intercept. The built-in fetch server has its own test suite (74 assertions) that runs the *actual server process* for protocol compliance — not mocks.
+
+See [docs/MCP.md](docs/MCP.md) for full setup and architecture.
+
+### LRU Cache — Filesystem as Data Structure
+
+George has a problem every bash program has: subshells destroy state. Every `$()` command substitution forks a new process — variable changes inside are invisible to the parent. You can't build an in-memory cache in bash because the cache vanishes every time you call a function inside `$()`. And George calls functions inside `$()` constantly.
+
+The solution is a file-backed LRU cache that uses the filesystem itself as the data structure:
+
+```
+"Hash Map":     md5sum(key) → filename
+"LRU Ordering": file mtime (managed by the kernel)
+"Promote":      touch $file (updates mtime → O(1))
+"Evict LRU":    ls -1tr | head -N | rm (oldest mtime first)
+```
+
+A classical LRU uses a hash map + doubly linked list with pointer splicing. Bash has no pointers, no structs, no heap. But the kernel already tracks file modification times, and `touch` updates an mtime in O(1). That's the promote operation. `ls -1tr` sorts by mtime ascending — the first entries are the least recently used. That's the eviction scan. The "hash map" is just `md5sum(key) → filename` — O(1) lookup via the filesystem's own directory hash table.
+
+| Operation | Classical LRU | George's Filesystem LRU |
+|-----------|---------------|------------------------|
+| Lookup | hash map → pointer | md5sum → `cat $file` |
+| Promote | splice 4 pointers | `touch $file` |
+| Evict | remove tail, relink | `ls -1tr \| head -1 \| rm` |
+| Survives subshells? | No | **Yes** |
+| Survives crashes? | No | **Yes** |
+
+On top of this, the cache adds two features classical LRUs don't have:
+
+- **Namespace generation invalidation (O(1)).** Each namespace (recall, mcp, memory) has a generation counter in a `.gen.<ns>` file. When you invalidate a namespace, the counter bumps by 1. Entries created under the old generation are stale on next read — no scanning required. This is how George instantly invalidates all recall cache entries when the knowledge base changes.
+- **TTL expiration.** Each cache entry's header stores its creation epoch. Reads older than `CACHE_TTL` (default 5 min) are treated as misses. Combined with generation checks, this gives two independent staleness signals.
+
+The primary consumer is recall — the FTS5 knowledge base query that runs on every agent turn. Without caching: fork `sqlite3`, run BM25 query, parse results — ~10-30ms. With caching: `stat` + `cat` on tmpfs — ~1-2ms. During multi-step agent loops with 6-10 inner iterations, that's 100-300ms of overhead eliminated per milestone.
+
+227 lines. 32 entries. Hit rates typically 60-80% during agent loops. See [docs/LRU_CACHE.md](docs/LRU_CACHE.md) for the full design document.
+
 ### Security
 
 George executes LLM-generated code. Multiple layers of protection:
@@ -675,6 +793,8 @@ See [SECURITY.md](SECURITY.md) for the full audit and threat model.
 
 ## Hardware Targets
 
+### Local Inference (Ollama / llama-server)
+
 | Device | RAM | Status |
 |--------|-----|--------|
 | Galaxy Fold 7 (Snapdragon 8 Elite) | 12GB | Primary development/test device |
@@ -682,9 +802,47 @@ See [SECURITY.md](SECURITY.md) for the full audit and threat model.
 | Chromebooks (ARM/x86) | 8GB+ | Tested ([guide](docs/DEBIAN_CHROMEOS_SETUP.md)) |
 | Any Linux device | 8GB+ | Should work |
 | Raspberry Pi 5 | 8GB | Works (slower load times) |
+| NVIDIA Jetson Nano | 4GB | Works with cloud providers or remote backend |
 | WSL2 (Windows) | 8GB+ | Should work |
 
-> **Minimum:** 8GB RAM, 5GB free storage. **Recommended:** 12GB RAM, Snapdragon 8 Gen 2+ or equivalent. Honestly, I've only tested extensively on my Fold 7 and a Linux workstation. Other devices should work but "should" is doing some lifting there.
+> **Minimum for local models:** 8GB RAM, 5GB free storage. **Recommended:** 12GB RAM, Snapdragon 8 Gen 2+ or equivalent.
+
+### Cloud Provider Mode — iPhones, Old Hardware, and the Rest of Us
+
+This is where it gets interesting.
+
+George doesn't require a local model. The cloud provider harness (`/provider use google`) routes every LLM call through a cloud API, bypassing Ollama and llama-server entirely. The local machine only needs to run bash, curl, jq, git, and sqlite3. That's it. No GPU. No model downloads. No 8GB RAM floor.
+
+This means George runs on hardware that has no business running an AI agent:
+
+| Device | How | Video |
+|--------|-----|-------|
+| **iPhone 7+** (2016, 3GB RAM) | iSH (Alpine Linux) + Google AI free tier | [Watch it run](https://www.youtube.com/watch?v=2MF-2ln6WEk) |
+| **Any iPhone** (iOS 14+) | iSH + cloud provider | [Setup guide](docs/IOS_MACOS_SETUP.md) |
+| **NVIDIA Jetson Nano** (~2015, 4GB) | Cloud provider or remote Ollama on LAN | — |
+| **Raspberry Pi 3/4** (1-4GB) | Cloud provider | — |
+| **Any device with bash + curl** | Cloud provider | — |
+
+We got George running on a **10-year-old iPhone 7+** — a phone most people have in a drawer. A phone with 3GB of RAM that can't run a 1B parameter model locally. But it *can* run bash. It *can* run curl. And through the provider harness, it can talk to `gemma-3-27b-it` on Google's free tier, Llama 3.3 70B on Groq's free tier, or any of the other 10 supported providers.
+
+The provider harness also supports **remote backends on your local network**. If you have a desktop, a NAS, or even another phone running Ollama or llama-server, you can point George at it:
+
+```bash
+export OLLAMA_URL="http://192.168.1.100:11434"   # Ollama on your desktop
+export LLAMA_CPP_URL="http://192.168.1.100:8080"  # llama-server on your desktop
+```
+
+Now your iPhone, your Jetson Nano, your 10-year-old laptop — any device on your WiFi — is running a full AI agent with inference handled by your beefiest machine. Zero cloud. Zero cost. Zero API keys.
+
+#### Why This Matters
+
+Every kid who has a hand-me-down iPhone can download iSH, clone this repo, set up a free Google AI API key, and have their own AI agent. Not a chatbot — an *agent* that writes code, manages git repos, searches the web, builds projects, and extends itself with new commands.
+
+Anybody who doesn't have direct access to high-power compute — students, hobbyists, people in countries where cloud AI subscriptions cost a week's wages — can use the cloud provider function to access models up to `gemma-3-27b-it` on Google's free tier, indefinitely. Groq's free tier gives access to Llama 3.3 70B. Rate limiting with exponential backoff means the free tier lasts — George automatically paces API calls to stay under quotas.
+
+The fact that we can run on 10-year-old iPhones and 10-year-old Jetson Nanos by using the provider option means the barrier to entry is a device that can run a shell and an internet connection. If you have old hardware laying around — an ancient phone, a retired laptop, a Pi collecting dust — George can put it back to work.
+
+> **Getting started on iPhone:** See the [iOS & macOS Setup Guide](docs/IOS_MACOS_SETUP.md). Four packages, one git clone, one API key. Five minutes.
 
 ---
 

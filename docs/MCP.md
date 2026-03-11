@@ -56,6 +56,160 @@ Node.js server) → `puppeteer` (headless browser) → curl fallback.
 sessions. Running servers do not — they're killed on exit and must be
 started again (or will auto-start on first use).
 
+## Sequence Diagram: Agent Loop → MCP Client → george-fetch
+
+This shows the full path when George's agent loop needs to fetch a URL.
+The LLM strategist decides to call `web_fetch`, which routes through the
+MCP client to the pure-bash george-fetch server — all over stdio FIFOs
+within the same shell session:
+
+```mermaid
+sequenceDiagram
+    participant Agent as Agent Loop<br/>(lib/agent.sh)
+    participant Web as web_fetch()<br/>(lib/web.sh)
+    participant MCP as MCP Client<br/>(lib/mcp.sh)
+    participant FIFO as Transport<br/>(FIFO stdin + file stdout)
+    participant Server as george-fetch<br/>(lib/mcp_server_fetch.sh)
+    participant Curl as curl + web.sh<br/>(scraping engine)
+
+    Note over Agent,Curl: George decides to fetch a URL during task execution
+
+    Agent->>Web: web_fetch("https://example.com")
+    Web->>Web: MCP enabled? Check MCP_ENABLED=1
+
+    alt MCP Enabled (primary path)
+        Web->>MCP: mcp_web_fetch(url)
+        MCP->>MCP: Server running? Check PID file
+
+        alt Server not started yet
+            MCP->>FIFO: mkfifo in.fifo, touch responses.jsonl
+            MCP->>Server: eval "bash lib/mcp_server_fetch.sh"<br/>< in.fifo >> responses.jsonl
+            MCP->>FIFO: sleep 86400 > in.fifo &<br/>(hold FIFO write-end open)
+
+            Note over MCP,Server: JSON-RPC 2.0 Handshake
+
+            MCP->>FIFO: printf '{"jsonrpc":"2.0","id":1,<br/>"method":"initialize",...}' > in.fifo
+            FIFO->>Server: (server reads stdin)
+            Server->>FIFO: >> responses.jsonl:<br/>{"protocolVersion":"2024-11-05",...}
+            FIFO-->>MCP: poll responses.jsonl for id:1
+            MCP->>FIFO: printf '{"method":<br/>"notifications/initialized"}' > in.fifo
+            MCP->>MCP: touch ready flag
+        end
+
+        Note over MCP,Server: Tool Call (tools/call)
+
+        MCP->>MCP: req_id = next_id (file counter)
+        MCP->>FIFO: printf '{"jsonrpc":"2.0","id":2,<br/>"method":"tools/call",<br/>"params":{"name":"fetch",<br/>"arguments":{"url":"..."}}}' > in.fifo
+        FIFO->>Server: (server reads line from stdin)
+        Server->>Curl: web_fetch(url)<br/>curl + semantic HTML extraction<br/>(<article>/<main> priority)
+        Curl-->>Server: cleaned text content
+        Server->>FIFO: >> responses.jsonl:<br/>{"jsonrpc":"2.0","id":2,<br/>"result":{"content":[{"type":"text",...}]}}
+        FIFO-->>MCP: poll responses.jsonl,<br/>match id:2, parse .result
+        MCP-->>Web: extracted text
+        Web-->>Agent: content for LLM context
+
+    else MCP Disabled (fallback)
+        Web->>Curl: curl -sL url | html_extract
+        Curl-->>Web: raw text
+        Web-->>Agent: content for LLM context
+    end
+```
+
+### How the Transport Works (and Why It's This Way)
+
+The transport layer is the critical difference between George's
+implementation and every other MCP client on the planet. Here's
+what's actually happening at the file descriptor level:
+
+```
+┌──────────────┐      ┌──────────────┐      ┌──────────────────┐
+│  MCP Client  │      │   Kernel     │      │  george-fetch    │
+│  (mcp.sh)    │      │              │      │  (bash process)  │
+│              │      │              │      │                  │
+│  printf ──────────► │  in.fifo     │ ────►│  stdin (read)    │
+│  (atomic     │      │  (named pipe)│      │                  │
+│   < PIPE_BUF)│      │              │      │                  │
+│              │      │              │      │                  │
+│  poll ◄──────────── │ responses    │ ◄────│  stdout (append) │
+│  (tail -c,   │      │ .jsonl       │      │  (>> regular     │
+│   grep id)   │      │ (regular     │      │   file)          │
+│              │      │  file)       │      │                  │
+│  sleep 86400 ─────► │  (holds FIFO │      │                  │
+│  (keeper)    │      │   open)      │      │                  │
+└──────────────┘      └──────────────┘      └──────────────────┘
+```
+
+**Why not two FIFOs?** (the obvious approach)
+
+Most MCP clients use bidirectional pipes or paired FIFOs. George
+tried this first — it deadlocked. Here's why:
+
+```bash
+# This deadlocks in bash:
+response=$(cat < response.fifo)   # $() forks a subshell
+                                  # subshell blocks on FIFO read
+                                  # parent never sends the request
+                                  # because it's waiting for $() to finish
+```
+
+`$()` command substitution in bash forks a new process. If that
+subprocess tries to read a FIFO, it blocks — and the parent process
+that would trigger the write is suspended waiting for the subshell.
+Classic deadlock.
+
+**The solution**: Write to a FIFO (for the request — atomic, < PIPE_BUF),
+but read from a regular file (for the response — `tail -c` + poll loop,
+no blocking). The server appends JSON-RPC responses to `responses.jsonl`.
+The client polls the file size, reads new bytes, and scans for a matching
+`"id"` field. No race conditions, no deadlocks, works from any subshell
+depth.
+
+**Why the `sleep 86400` keeper process?**
+
+A FIFO closes when the last writer hangs up. Between requests, the MCP
+client isn't writing — so the FIFO would close and the server would see
+EOF on stdin and exit. A `sleep 86400` process holds the write end of the
+FIFO open for 24 hours, keeping the server alive between requests.
+
+### George's Pure Bash vs. Anthropic's TypeScript SDK
+
+Anthropic publishes a [TypeScript MCP SDK](https://github.com/modelcontextprotocol/typescript-sdk)
+that most MCP clients are built on. Here's how George's pure-bash
+implementation compares:
+
+| Aspect | George (pure bash) | Anthropic TypeScript SDK |
+|---|---|---|
+| **Runtime** | bash + jq (already installed) | Node.js 18+ (200MB+) |
+| **Dependencies** | 0 (jq is the only requirement) | ~40 npm packages |
+| **Transport** | FIFO stdin + regular file stdout | Node Streams / stdio |
+| **Startup time** | ~50ms (fork bash + jq) | ~800ms (Node.js cold start) |
+| **Memory** | ~2MB (bash process) | ~50-80MB (V8 heap) |
+| **Subshell safe?** | Yes (file-based transport) | N/A (single process) |
+| **Protocol coverage** | initialize, tools/list, tools/call | Full spec + SSE + sampling |
+| **Bash 3.2 compatible?** | Yes (macOS default bash) | No (not bash) |
+| **Server registry** | Flat file (`name\|cmd\|desc`) | JSON config file |
+| **Tool caching** | LRU file cache (lib/cache.sh) | In-memory |
+| **Concurrent servers** | Yes (separate FIFO per server) | Yes (separate connections) |
+
+**What George doesn't implement** (intentionally):
+- SSE (Server-Sent Events) transport — stdio is sufficient for local servers
+- Sampling/completion requests — George has its own LLM pipeline
+- Resource subscriptions — not needed for tool-calling use case
+- Prompt templates — George uses its own prompt architecture
+
+**What George does that the SDK doesn't**:
+- Survives bash subshells (the file-based transport is fork-safe)
+- Runs on bash 3.2 (macOS ships bash 3.2 due to GPLv3)
+- Zero-dependency install (no npm, no package.json)
+- LRU-cached tool catalogs that persist across subshells
+- MCP-first dispatch intercept (transparent to the agent loop)
+- Built-in server catalog with one-command install (`/mcp install fetch`)
+
+The SDK is more complete — it implements the full MCP spec. George
+implements exactly the subset needed to discover and call tools from
+the agent loop, in a language where every `$()` is a potential fork
+bomb for stateful protocols.
+
 ## Commands
 
 | Command | Description |
