@@ -99,6 +99,10 @@ _lodge_cleanup() {
     # and the phone stays hot long after Ctrl+C.
     pkill -f "curl.*v1/chat/completions" 2>/dev/null
     pkill -f "timeout.*curl.*v1/chat" 2>/dev/null
+    # Cloud provider API endpoints (safety net for streaming paths)
+    pkill -f "curl.*generativelanguage.googleapis" 2>/dev/null
+    pkill -f "curl.*api\.anthropic\.com" 2>/dev/null
+    pkill -f "curl.*api\.openai\.com" 2>/dev/null
 
     # Also kill curl via tracked PID (set by FIFO-based streaming)
     if [ -n "${_LLM_CURL_PID:-}" ] && kill -0 "$_LLM_CURL_PID" 2>/dev/null; then
@@ -109,6 +113,7 @@ _lodge_cleanup() {
 
     # Clean up FIFO files left by interrupted streams
     rm -f "${TMPDIR:-/tmp}"/.lodge-fifo-*-$$ 2>/dev/null
+    rm -f "${TMPDIR:-/tmp}"/.lodge-provider-stream-$$ 2>/dev/null
 
     if [ "$_LODGE_IN_TASK" -eq 1 ]; then
         _LODGE_CANCELLED=1
@@ -135,6 +140,9 @@ _lodge_exit_cleanup() {
     pkill -f "curl.*v1/chat/completions" 2>/dev/null || true
     pkill -f "curl.*api/generate" 2>/dev/null || true
     pkill -f "curl.*api/chat" 2>/dev/null || true
+    pkill -f "curl.*generativelanguage.googleapis" 2>/dev/null || true
+    pkill -f "curl.*api\.anthropic\.com" 2>/dev/null || true
+    pkill -f "curl.*api\.openai\.com" 2>/dev/null || true
     # Stop MCP servers
     declare -f _mcp_cleanup &>/dev/null && _mcp_cleanup
     # Clean temp files
@@ -144,6 +152,7 @@ _lodge_exit_cleanup() {
     rm -f "${TMPDIR:-/tmp}"/.lodge-gen-tok-$$ 2>/dev/null
     rm -f "${TMPDIR:-/tmp}"/.lodge-chat-tok-$$ 2>/dev/null
     rm -f "${TMPDIR:-/tmp}"/.lodge-curl-pid-$$ 2>/dev/null
+    rm -f "${TMPDIR:-/tmp}"/.lodge-provider-stream-$$ 2>/dev/null
 }
 
 trap '_lodge_cleanup' INT TERM

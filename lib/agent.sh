@@ -5684,14 +5684,37 @@ $question"
     echo ""
     local response
     local LLM_SCENARIO=ask
+    local _ask_rc
 
-    # ── Stream tokens to TTY for real-time reading ────────────
-    # llm_stream() writes every token to /dev/tty as it arrives
-    # (both local and provider paths), while stdout is captured
-    # into $response via $(). This gives streaming UX on slow
-    # devices without losing the text for transcript/context.
-    response=$(llm_stream "$full_question" "$system_prompt" "$LLM_ASK_TOKENS" "$LLM_BUDGET_ASK")
-    local _ask_rc=$?
+    # ── Provider path: synchronous API call ───────────────────
+    # Cloud APIs return fast enough that chunked response is fine.
+    # Streaming via FIFO + background curl in nested $() subshells
+    # traps the curl PID where Ctrl+C can't reach it, causing hangs.
+    if [ -n "${GEORGE_PROVIDER:-}" ] && declare -f _provider_call_with_backoff &>/dev/null; then
+        local _ask_msg="$full_question"
+        if [ -n "$system_prompt" ]; then
+            _ask_msg="Instructions: ${system_prompt}
+
+${full_question}"
+        fi
+
+        ui_spinner_start "$GEORGE_PROVIDER" >/dev/tty 2>/dev/null
+        response=$(_provider_call_with_backoff "$GEORGE_PROVIDER" "$_ask_msg")
+        _ask_rc=$?
+        ui_spinner_stop 2>/dev/null
+
+        # Render response for interactive REPL mode
+        if [ -t 1 ] && [ "$_ask_rc" -eq 0 ] && [ -n "$response" ]; then
+            echo ""
+            ui_render_response "$response"
+        fi
+    else
+        # ── Local backend: stream tokens to TTY ──────────────────
+        # llm_stream() writes every token to /dev/tty as it arrives,
+        # while stdout is captured into $response via $().
+        response=$(llm_stream "$full_question" "$system_prompt" "$LLM_ASK_TOKENS" "$LLM_BUDGET_ASK")
+        _ask_rc=$?
+    fi
 
     if [ $_ask_rc -ne 0 ] || [ -z "$response" ]; then
         echo ""
