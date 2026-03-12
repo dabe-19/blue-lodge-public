@@ -317,8 +317,8 @@ describe "command catalog"
 describe "tool summary includes new commands"
 
   it "FILES list includes /append and /edit" && {
-    agent_code=$(cat "$LODGE_DIR/lib/agent.sh")
-    assert_contains "$agent_code" '"/append","/edit"'
+    grep -q '"/edit","/append"' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "agent.sh should list /edit and /append in FILES"
   }
 
 # ══════════════════════════════════════════════════════════════

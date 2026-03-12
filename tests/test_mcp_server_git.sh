@@ -106,10 +106,10 @@ describe "MCP protocol compliance"
 # ── tools/list ─────────────────────────────────────────────────
 describe "tools/list"
 
-  it "returns all 14 tools" && {
+  it "returns all 16 tools" && {
     resp=$(_msg_call '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
     count=$(printf '%s' "$resp" | jq '.result.tools | length' 2>/dev/null)
-    assert_eq "$count" "14"
+    assert_eq "$count" "16"
   }
 
   it "includes git_status tool" && {
@@ -169,7 +169,7 @@ describe "tools/list"
   it "all tools have required inputSchema" && {
     resp=$(_msg_call '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
     all_have=$(printf '%s' "$resp" | jq '[.result.tools[] | select(.inputSchema != null)] | length' 2>/dev/null)
-    assert_eq "$all_have" "14" "all tools should have inputSchema"
+    assert_eq "$all_have" "16" "all tools should have inputSchema"
   }
 
 # ── tools/call — git_status ───────────────────────────────────
@@ -486,7 +486,7 @@ describe "integration with George MCP client"
     mcp_start "george-git"
     tools=$(mcp_tools_list "george-git")
     count=$(printf '%s' "$tools" | jq 'length' 2>/dev/null)
-    assert_eq "$count" "14" "should have 14 tools"
+    assert_eq "$count" "16" "should have 16 tools"
     _msg_teardown
     MCP_ENABLED=0
   }
