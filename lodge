@@ -1002,6 +1002,23 @@ _cmd_limits() {
             else
                 _limits_set AGENT_EVAL_REC_CHARS "Recommendation chars" "$value" 20 500
             fi ;;
+        rec-inject)
+            if [ -z "$value" ]; then
+                local _ri_desc="off"
+                [ "${AGENT_EVAL_REC_INJECT:-0}" -eq 1 ] && _ri_desc="recommendation-only"
+                [ "${AGENT_EVAL_REC_INJECT:-0}" -eq 2 ] && _ri_desc="both"
+                ui_info "Recommendation injection to rewriter: ${AGENT_EVAL_REC_INJECT:-0} [$_ri_desc] (default: 0)"
+                ui_dim "  0=off  1=recommendation-only (high weight)  2=both (recommendation + full context)"
+            else
+                _limits_set AGENT_EVAL_REC_INJECT "Recommendation injection" "$value" 0 2
+            fi ;;
+        cross-sieve)
+            if [ -z "$value" ]; then
+                ui_info "Cross-task memory sieve: ${AGENT_CROSS_TASK_SIEVE:-1} (default: 1)"
+                ui_dim "  0=disabled  1=keyword recall injection at task start"
+            else
+                _limits_set AGENT_CROSS_TASK_SIEVE "Cross-task sieve" "$value" 0 1
+            fi ;;
         reset)
             AGENT_PLAN_STEPS=6
             AGENT_INNER_LOOPS=6
@@ -1024,6 +1041,8 @@ _cmd_limits() {
             AGENT_HONEYDEW_INITIAL_COUNT=5
             AGENT_WEB_SEARCH_CONSEC_MAX=20
             AGENT_EVAL_REC_CHARS=120
+            AGENT_EVAL_REC_INJECT=0
+            AGENT_CROSS_TASK_SIEVE=1
             AGENT_PRESSURE_RELIEF=2
             AGENT_SMART_ROUTE=2
             AGENT_PRE_ROUTE=1
@@ -1258,6 +1277,13 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Honeydew match score:" "$AGENT_HONEYDEW_MATCH  (default: 3)"
             printf "  %-22s %s\n" "Web search repeat:" "${AGENT_WEB_SEARCH_CONSEC_MAX:-20}  (default: 20)"
             printf "  %-22s %s\n" "Recommendation chars:" "${AGENT_EVAL_REC_CHARS:-120}  (default: 120)"
+            local _ri_show="off"
+            [ "${AGENT_EVAL_REC_INJECT:-0}" -eq 1 ] && _ri_show="recommendation-only"
+            [ "${AGENT_EVAL_REC_INJECT:-0}" -eq 2 ] && _ri_show="both"
+            printf "  %-22s %s\n" "Rec inject to rewriter:" "${AGENT_EVAL_REC_INJECT:-0} [$_ri_show]  (default: 0)"
+            local _cs_show="disabled"
+            [ "${AGENT_CROSS_TASK_SIEVE:-1}" -eq 1 ] && _cs_show="enabled"
+            printf "  %-22s %s\n" "Cross-task sieve:" "$_cs_show  (default: enabled)"
             local _tp_show="disabled"
             [ "${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}" -eq 1 ] && _tp_show="enabled"
             printf "  %-22s %s\n" "Tight parsing:" "$_tp_show  (default: disabled)"
@@ -1316,6 +1342,8 @@ _cmd_limits() {
             ui_dim "    web-search-length N — Max character length for web search queries (current: ${AGENT_WEB_SEARCH_MAX_LENGTH:-160})"
             ui_dim "    web-search-ops N  — Max AND/OR operators in loose web search mode (current: ${AGENT_WEB_SEARCH_MAX_OPERATORS:-3})"
             ui_dim "    rec-chars N      — Max chars in evaluator recommendation to strategist (current: ${AGENT_EVAL_REC_CHARS:-120})"
+            ui_dim "    rec-inject 0-2   — Recommendation injection to rewriter: 0=off 1=rec-only 2=both (current: ${AGENT_EVAL_REC_INJECT:-0})"
+            ui_dim "    cross-sieve 0|1  — Cross-task memory sieve at task start: 0=off 1=on (current: ${AGENT_CROSS_TASK_SIEVE:-1})"
             ui_dim "    smart-route 0-3|on|off — Smart routing: 0=off 1=reroute 2=fuzzy 3=combined (current: ${AGENT_SMART_ROUTE:-2})"
             ui_dim "    fast-route on|off  — Keyword filter before LLM router (current: $([ "${AGENT_FAST_ROUTE:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    ask on|off       — Allow George to /ask human questions (current: $([ "${AGENT_ASK_USER:-1}" -eq 1 ] && echo on || echo off))"
@@ -3065,6 +3093,10 @@ _cmd_social() {
                         return 1
                     fi
 
+                    # Expand literal \n from LLM output so word-splitting
+                    # separates username(s) from the message body correctly
+                    dargs=$(ui_expand_escapes "$dargs")
+
                     if declare -f discord_dm_parse_recipients &>/dev/null; then
                         discord_dm_parse_recipients "$dargs"
                     else
@@ -3340,10 +3372,10 @@ _cmd_web() {
     rest=$(echo "$args" | sed 's/^[^ ]* *//')
 
     case "$action" in
-        fetch|read)  web_fetch "$rest" ;;
+        fetch|read|scrape)  web_fetch "$rest" ;;
         search)      web_search "$rest" ;;
         images)      web_images "$rest" ;;
-        scrape-images|scrapeimages|scrape)
+        scrape-images|scrapeimages)
                      local _sj
                      _sj=$(web_scrape_images "$rest")
                      [ -z "$_sj" ] && return 1
@@ -3407,8 +3439,9 @@ _cmd_web() {
                 *)     ui_info "Usage: /web cache clear" ;;
             esac ;;
         *)
-            ui_info "Usage: /web <fetch|search|images|scrape-images|summary|links|title|download|ping|cache>"
+            ui_info "Usage: /web <fetch|scrape|search|images|scrape-images|summary|links|title|download|ping|cache>"
             ui_dim "  fetch <url>       — Read a web page as text"
+            ui_dim "  scrape <url>      — Alias for fetch"
             ui_dim "  search <query>    — Search the web"
             ui_dim "  images <query>    — Search for images (Serper, returns image URLs)"
             ui_dim "  scrape-images <url> — Extract image URLs embedded in a page"

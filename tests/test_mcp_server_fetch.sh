@@ -85,10 +85,10 @@ describe "MCP protocol compliance"
 # ── tools/list ─────────────────────────────────────────────────
 describe "tools/list"
 
-  it "returns all 6 tools" && {
+  it "returns all 7 tools" && {
     resp=$(_msf_call '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
     count=$(printf '%s' "$resp" | jq '.result.tools | length' 2>/dev/null)
-    assert_eq "$count" "6"
+    assert_eq "$count" "7"
   }
 
   it "includes fetch tool" && {
@@ -108,11 +108,15 @@ describe "tools/list"
     has_gh=$(printf '%s' "$resp" | jq '[.result.tools[] | select(.name == "github_search")] | length' 2>/dev/null)
     assert_eq "$has_gh" "1"
   }
-
+  it "includes fetch_reddit tool" && {
+    resp=$(_msf_call '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
+    has_rd=$(printf '%s' "$resp" | jq '[.result.tools[] | select(.name == "fetch_reddit")] | length' 2>/dev/null)
+    assert_eq "$has_rd" "1"
+  }
   it "tools have required inputSchema" && {
     resp=$(_msf_call '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
     all_have_schema=$(printf '%s' "$resp" | jq '[.result.tools[] | select(.inputSchema != null)] | length' 2>/dev/null)
-    assert_eq "$all_have_schema" "6" "all tools should have inputSchema"
+    assert_eq "$all_have_schema" "7" "all tools should have inputSchema"
   }
 
 # ── tools/call — fetch ─────────────────────────────────────────
@@ -159,6 +163,21 @@ describe "tools/call — web_search"
     assert_contains "$text" "Error" "should require query"
   }
 
+# ── tools/call — fetch_reddit ──────────────────────────────────
+describe "tools/call — fetch_reddit"
+
+  it "returns error when url is missing" && {
+    resp=$(_msf_call '{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"fetch_reddit","arguments":{}}}')
+    text=$(printf '%s' "$resp" | jq -r '.result.content[0].text' 2>/dev/null)
+    assert_contains "$text" "Error" "should require url"
+  }
+
+  it "returns error for non-Reddit URL" && {
+    resp=$(_msf_call '{"jsonrpc":"2.0","id":26,"method":"tools/call","params":{"name":"fetch_reddit","arguments":{"url":"https://example.com"}}}')
+    text=$(printf '%s' "$resp" | jq -r '.result.content[0].text' 2>/dev/null)
+    assert_contains "$text" "Not a valid Reddit URL"
+  }
+
 # ── tools/call — github_search ─────────────────────────────────
 describe "tools/call — github_search"
 
@@ -191,7 +210,7 @@ describe "integration with George MCP client"
     mcp_start "george-fetch"
     tools=$(mcp_tools_list "george-fetch")
     count=$(printf '%s' "$tools" | jq 'length' 2>/dev/null)
-    assert_eq "$count" "6" "should have 6 tools"
+    assert_eq "$count" "7" "should have 7 tools"
     _msf_teardown
     MCP_ENABLED=0
   }

@@ -511,6 +511,49 @@ discord_send() {
     local token
     token=$(api_require_key "DISCORD_BOT_TOKEN" "Discord Bot") || return 1
 
+    # ── Discord message length limit (2000 chars) ──────────────
+    # Discord rejects messages > 2000 characters. Split long messages
+    # into multiple sends, breaking at newline boundaries when possible.
+    if [ ${#message} -gt 2000 ]; then
+        local _chunks=() _chunk="" _line
+        while IFS= read -r _line || [ -n "$_line" ]; do
+            if [ -n "$_chunk" ] && [ $(( ${#_chunk} + ${#_line} + 1 )) -gt 2000 ]; then
+                _chunks+=("$_chunk")
+                _chunk=""
+            fi
+            if [ ${#_line} -gt 2000 ]; then
+                [ -n "$_chunk" ] && { _chunks+=("$_chunk"); _chunk=""; }
+                while [ ${#_line} -gt 2000 ]; do
+                    _chunks+=("${_line:0:2000}")
+                    _line="${_line:2000}"
+                done
+                [ -n "$_line" ] && _chunk="$_line"
+            else
+                [ -n "$_chunk" ] && _chunk+=$'\n'
+                _chunk+="$_line"
+            fi
+        done <<< "$message"
+        [ -n "$_chunk" ] && _chunks+=("$_chunk")
+
+        local _chunk_count=${#_chunks[@]} _chunk_i=0 _chunk_ok=0
+        for _ci in "${_chunks[@]}"; do
+            _chunk_i=$((_chunk_i + 1))
+            local data
+            data=$(jq -n --arg c "$_ci" '{"content": $c}')
+            api_post "https://discord.com/api/v10/channels/$channel_id/messages" "$data" \
+                -H "Authorization: Bot $token" > /dev/null
+            [ $? -eq 0 ] && _chunk_ok=$((_chunk_ok + 1))
+            # Brief delay between chunks to respect rate limits
+            [ $_chunk_i -lt $_chunk_count ] && sleep 0.5
+        done
+        if [ "$_chunk_ok" -eq "$_chunk_count" ]; then
+            ui_ok "Sent to Discord (channel: $channel_id) — ${_chunk_count} parts"
+        else
+            ui_warn "Discord: ${_chunk_ok}/${_chunk_count} message parts sent (channel: $channel_id)"
+        fi
+        return 0
+    fi
+
     local data
     data=$(jq -n --arg c "$message" '{"content": $c}')
 
@@ -933,14 +976,18 @@ discord_dm_parse_recipients() {
         fi
     done
 
-    # Strip consumed words from front to get message
+    # Strip consumed words from front to get message.
+    # Use bash parameter expansion (not sed) so multi-line text
+    # only strips from the front, not from every line.
     _DM_MESSAGE="$text"
-    local _i=0
-    while [ $_i -lt $_words_consumed ]; do
-        _DM_MESSAGE=$(echo "$_DM_MESSAGE" | sed 's/^[[:space:]]*//' | sed 's/^[^[:space:]]*//')
+    local _i=0 _w
+    for _w in $text; do
+        [ $_i -ge $_words_consumed ] && break
+        _DM_MESSAGE="${_DM_MESSAGE#"${_DM_MESSAGE%%[![:space:]]*}"}"
+        _DM_MESSAGE="${_DM_MESSAGE#"$_w"}"
         _i=$((_i + 1))
     done
-    _DM_MESSAGE=$(echo "$_DM_MESSAGE" | sed 's/^[[:space:]]*//')
+    _DM_MESSAGE="${_DM_MESSAGE#"${_DM_MESSAGE%%[![:space:]]*}"}"
 }
 
 # Add a user mapping manually

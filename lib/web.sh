@@ -962,6 +962,115 @@ _web_fetch_github_readme() {
     printf '\n--- README ---\n%s\n' "$readme"
 }
 
+# ── Reddit URL detection ───────────────────────────────────────
+# Returns "post:<subreddit>:<post_id>" for post URLs, or
+# "sub:<subreddit>" for subreddit listing URLs.
+# Used to redirect to Reddit's JSON API for clean content
+# instead of scraping the heavy SPA HTML.
+_web_reddit_url() {
+    local url="$1"
+    # Strip trailing slashes and query strings
+    url="${url%%\?*}"
+    url="${url%/}"
+    # Match reddit.com/r/subreddit/comments/id/...
+    if [[ "$url" =~ ^https?://(www\.|old\.|new\.)?reddit\.com/r/([a-zA-Z0-9_]+)/comments/([a-z0-9]+) ]]; then
+        echo "post:${BASH_REMATCH[2]}:${BASH_REMATCH[3]}"
+    elif [[ "$url" =~ ^https?://(www\.|old\.|new\.)?reddit\.com/r/([a-zA-Z0-9_]+)$ ]]; then
+        echo "sub:${BASH_REMATCH[2]}"
+    fi
+}
+
+# ── Fetch Reddit post or subreddit via JSON API ───────────────
+# Returns: clean formatted text with post content and/or comments.
+# Reddit's .json API is public and returns structured data without
+# the SPA boilerplate that makes normal scraping yield junk.
+_web_fetch_reddit() {
+    local url="$1"
+    local _rinfo
+    _rinfo=$(_web_reddit_url "$url")
+    [ -z "$_rinfo" ] && return 1
+
+    local _rtype="${_rinfo%%:*}"
+    local _rrest="${_rinfo#*:}"
+
+    # Build JSON API URL: strip query/fragment, append .json
+    local _json_url
+    _json_url=$(echo "$url" | sed 's|/*$||; s|\?.*$||; s|#.*$||')
+    _json_url="${_json_url}.json"
+
+    local _raw
+    _raw=$(curl -sL --max-time "${WEB_TIMEOUT:-15}" \
+        -A "Blue-Lodge-George/0.1 (by /u/george-agent)" \
+        -H "Accept: application/json" \
+        "$_json_url" 2>/dev/null)
+    [ -z "$_raw" ] && return 1
+
+    # Verify we got valid JSON (Reddit sometimes returns HTML errors)
+    echo "$_raw" | jq empty 2>/dev/null || return 1
+
+    if [ "$_rtype" = "post" ]; then
+        local _sub="${_rrest%%:*}"
+        local _title _author _score _selftext _url_link
+        _title=$(echo "$_raw" | jq -r '.[0].data.children[0].data.title // "untitled"' 2>/dev/null)
+        _author=$(echo "$_raw" | jq -r '.[0].data.children[0].data.author // "unknown"' 2>/dev/null)
+        _score=$(echo "$_raw" | jq -r '.[0].data.children[0].data.score // 0' 2>/dev/null)
+        _selftext=$(echo "$_raw" | jq -r '.[0].data.children[0].data.selftext // ""' 2>/dev/null)
+        _url_link=$(echo "$_raw" | jq -r '.[0].data.children[0].data.url // ""' 2>/dev/null)
+
+        printf '[Reddit: r/%s] %s\n' "$_sub" "$_title"
+        printf 'By u/%s | Score: %s\n' "$_author" "$_score"
+
+        if [ -n "$_selftext" ] && [ "$_selftext" != "null" ] && [ "$_selftext" != "" ]; then
+            printf '\n---\n%s\n' "$_selftext"
+        elif [ -n "$_url_link" ] && [ "$_url_link" != "null" ] && [[ "$_url_link" != *"reddit.com"* ]]; then
+            printf 'Link: %s\n' "$_url_link"
+        fi
+
+        # Top comments (up to 10)
+        local _num_comments
+        _num_comments=$(echo "$_raw" | jq '.[1].data.children | map(select(.kind == "t1")) | length' 2>/dev/null)
+        _num_comments=${_num_comments:-0}
+        [ "$_num_comments" -gt 10 ] && _num_comments=10
+
+        if [ "$_num_comments" -gt 0 ]; then
+            printf '\n--- Top Comments ---\n'
+            local _ci
+            for _ci in $(seq 0 $((_num_comments - 1))); do
+                local _cauthor _cbody _cscore
+                _cauthor=$(echo "$_raw" | jq -r "[.[1].data.children[] | select(.kind == \"t1\")][$_ci].data.author // \"\"" 2>/dev/null)
+                _cbody=$(echo "$_raw" | jq -r "[.[1].data.children[] | select(.kind == \"t1\")][$_ci].data.body // \"\"" 2>/dev/null)
+                _cscore=$(echo "$_raw" | jq -r "[.[1].data.children[] | select(.kind == \"t1\")][$_ci].data.score // 0" 2>/dev/null)
+                [ -z "$_cauthor" ] || [ "$_cauthor" = "null" ] && continue
+                [ -z "$_cbody" ] || [ "$_cbody" = "null" ] && continue
+                # Truncate very long comments
+                [ ${#_cbody} -gt 500 ] && _cbody="${_cbody:0:497}..."
+                printf '\n  u/%s (%s):\n  %s\n' "$_cauthor" "$_cscore" "$_cbody"
+            done
+        fi
+    else
+        # Subreddit listing: extract top posts
+        local _sub="${_rrest}"
+        local _num_posts
+        _num_posts=$(echo "$_raw" | jq '.data.children | length' 2>/dev/null)
+        _num_posts=${_num_posts:-0}
+        [ "$_num_posts" -gt 15 ] && _num_posts=15
+
+        printf '[Reddit: r/%s] Top %d Posts\n---\n' "$_sub" "$_num_posts"
+        local _pi
+        for _pi in $(seq 0 $((_num_posts - 1))); do
+            local _ptitle _pauthor _pscore _ppermalink
+            _ptitle=$(echo "$_raw" | jq -r ".data.children[$_pi].data.title // \"\"" 2>/dev/null)
+            _pauthor=$(echo "$_raw" | jq -r ".data.children[$_pi].data.author // \"\"" 2>/dev/null)
+            _pscore=$(echo "$_raw" | jq -r ".data.children[$_pi].data.score // 0" 2>/dev/null)
+            _ppermalink=$(echo "$_raw" | jq -r ".data.children[$_pi].data.permalink // \"\"" 2>/dev/null)
+            [ -z "$_ptitle" ] || [ "$_ptitle" = "null" ] && continue
+            printf '  %s↑ %s — u/%s\n' "$_pscore" "$_ptitle" "$_pauthor"
+            [ -n "$_ppermalink" ] && [ "$_ppermalink" != "null" ] && \
+                printf '    https://reddit.com%s\n' "$_ppermalink"
+        done
+    fi
+}
+
 # ── Fetch a URL and return clean text ─────────────────────────
 web_fetch() {
     local url="$1"
@@ -1007,6 +1116,28 @@ web_fetch() {
         fi
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
             ui_dim "  [debug] web_fetch: GitHub API README failed — falling through to normal fetch"
+    fi
+
+    # ── Reddit URL → JSON API fetch ───────────────────────────────
+    # Reddit pages are heavy SPAs full of navigation boilerplate that
+    # the condenser frequently flags as JUNK. Use the .json API to get
+    # clean structured content (post text + top comments).
+    local _rd_info
+    _rd_info=$(_web_reddit_url "$url")
+    if [ -n "$_rd_info" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] web_fetch: Reddit URL detected ($url) — using JSON API"
+        local _rd_content
+        _rd_content=$(_web_fetch_reddit "$url")
+        if [ -n "$_rd_content" ]; then
+            _rd_content=$(echo "$_rd_content" | _web_truncate_content)
+            mkdir -p "$GEORGE_CACHE_DIR"
+            echo "$_rd_content" > "$cache_file" 2>/dev/null
+            echo "$_rd_content"
+            return 0
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] web_fetch: Reddit JSON API failed — falling through to normal fetch"
     fi
 
     # ── MCP-first fetch (when enabled) ────────────────────────────

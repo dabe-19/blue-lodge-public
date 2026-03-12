@@ -1638,4 +1638,94 @@ describe "_html_extract_links"
     _teardown_web
   }
 
+# ── _web_reddit_url ───────────────────────────────────────────
+describe "_web_reddit_url"
+
+  it "function exists" && {
+    _setup_web
+    declare -f _web_reddit_url &>/dev/null
+    assert_ok $? "_web_reddit_url should be defined"
+    _teardown_web
+  }
+
+  it "detects post URL (www.reddit.com)" && {
+    _setup_web
+    result=$(_web_reddit_url "https://www.reddit.com/r/linux/comments/abc123/some_post_title")
+    assert_eq "$result" "post:linux:abc123"
+    _teardown_web
+  }
+
+  it "detects post URL (old.reddit.com)" && {
+    _setup_web
+    result=$(_web_reddit_url "https://old.reddit.com/r/bash/comments/xyz789/cool_script")
+    assert_eq "$result" "post:bash:xyz789"
+    _teardown_web
+  }
+
+  it "detects post URL (plain reddit.com)" && {
+    _setup_web
+    result=$(_web_reddit_url "https://reddit.com/r/programming/comments/def456/hello")
+    assert_eq "$result" "post:programming:def456"
+    _teardown_web
+  }
+
+  it "detects subreddit listing URL" && {
+    _setup_web
+    result=$(_web_reddit_url "https://www.reddit.com/r/selfhosted")
+    assert_eq "$result" "sub:selfhosted"
+    _teardown_web
+  }
+
+  it "handles trailing slash on subreddit" && {
+    _setup_web
+    result=$(_web_reddit_url "https://www.reddit.com/r/linux/")
+    assert_eq "$result" "sub:linux"
+    _teardown_web
+  }
+
+  it "handles query string on post URL" && {
+    _setup_web
+    result=$(_web_reddit_url "https://www.reddit.com/r/tech/comments/aaa111/post?utm_source=share")
+    assert_eq "$result" "post:tech:aaa111"
+    _teardown_web
+  }
+
+  it "returns empty for non-Reddit URLs" && {
+    _setup_web
+    result=$(_web_reddit_url "https://github.com/r/something/comments/abc")
+    assert_empty "$result"
+    _teardown_web
+  }
+
+  it "returns empty for reddit.com homepage" && {
+    _setup_web
+    result=$(_web_reddit_url "https://www.reddit.com")
+    assert_empty "$result"
+    _teardown_web
+  }
+
+  it "returns empty for reddit.com/u/ user URLs" && {
+    _setup_web
+    result=$(_web_reddit_url "https://www.reddit.com/u/someuser")
+    assert_empty "$result"
+    _teardown_web
+  }
+
+# ── _web_fetch_reddit ────────────────────────────────────────
+describe "_web_fetch_reddit"
+
+  it "function exists" && {
+    _setup_web
+    declare -f _web_fetch_reddit &>/dev/null
+    assert_ok $? "_web_fetch_reddit should be defined"
+    _teardown_web
+  }
+
+  it "returns failure for non-Reddit URL" && {
+    _setup_web
+    _web_fetch_reddit "https://example.com" >/dev/null 2>&1
+    assert_fail $? "should fail for non-Reddit URL"
+    _teardown_web
+  }
+
 test_end

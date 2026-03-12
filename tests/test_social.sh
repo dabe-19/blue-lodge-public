@@ -797,6 +797,20 @@ describe "Discord multi-DM recipient parsing"
     _teardown_social
   }
 
+  it "discord_dm_parse_recipients handles newlines in message body" && {
+    _setup_social
+    discord_user_add "PageOfABook" "333333333333333333" &>/dev/null
+    # After ui_expand_escapes, literal \n becomes real newlines.
+    # Word-splitting should separate the username from the body.
+    local expanded
+    expanded=$(printf 'PageOfABook\n\n---\n**Structured Report**\nHere are findings.')
+    discord_dm_parse_recipients "$expanded"
+    assert_eq "${#_DM_RESOLVED_IDS[@]}" "1"
+    assert_eq "${_DM_RESOLVED_IDS[0]}" "333333333333333333"
+    assert_contains "$_DM_MESSAGE" "Structured Report"
+    _teardown_social
+  }
+
 # ── Escape expansion in social functions ───────────────────────
 describe "LLM escape expansion in social output"
 

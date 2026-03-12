@@ -37,6 +37,8 @@ AGENT_WEB_SEARCH_TIGHT_PARSING="${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}"  # Tight w
 AGENT_WEB_SEARCH_MAX_LENGTH="${AGENT_WEB_SEARCH_MAX_LENGTH:-160}"  # Max character length for /web search queries
 AGENT_WEB_SEARCH_MAX_OPERATORS="${AGENT_WEB_SEARCH_MAX_OPERATORS:-3}"  # Max AND/OR operators allowed in loose mode
 AGENT_EVAL_REC_CHARS="${AGENT_EVAL_REC_CHARS:-120}"              # Max chars after a slash command in evaluator recommendations
+AGENT_EVAL_REC_INJECT="${AGENT_EVAL_REC_INJECT:-0}"            # Recommendation injection to honeydew rewriter: 0=off (current), 1=recommendation-only (high weight), 2=both (recommendation + full context)
+AGENT_CROSS_TASK_SIEVE="${AGENT_CROSS_TASK_SIEVE:-1}"          # Cross-task memory sieve: 0=disabled, 1=keyword recall injection at task start
 AGENT_PRESSURE_RELIEF="${AGENT_PRESSURE_RELIEF:-2}"          # Consecutive milestone skips before pressure relief fires (0=disabled)
 AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-2}"              # Smart command routing: 0=disabled, 1=post-dispatch reroute only, 2=fuzzy keyword catalog injection only, 3=combined
 AGENT_ASK_USER="${AGENT_ASK_USER:-1}"                    # Allow George to /ask the user questions during tasks: 0=disabled, 1=enabled
@@ -909,8 +911,12 @@ _fast_route() {
         echo "mqtt"; return 0
     fi
 
-    # /recall — knowledge base search
-    if [[ "$_fr_text" =~ (recall[[:space:]]|search.*knowledge|knowledge[[:space:]]base|fts5|look[[:space:]]up.*in[[:space:]]memory) ]]; then
+    # /recall — knowledge base search + memory-retrieval signals
+    # Matches explicit recall keywords AND phrases that imply
+    # "use what you already know" — previous search results,
+    # prior task findings, etc. Without this, 4B models default
+    # to /web search even when the data is already in recall/journal.
+    if [[ "$_fr_text" =~ (recall[[:space:]]|search.*knowledge|knowledge[[:space:]]base|fts5|look[[:space:]]up.*in[[:space:]]memory|previous[[:space:]]search|prior[[:space:]]search|earlier[[:space:]]search|from[[:space:]]before|you[[:space:]]found|you[[:space:]]searched|you[[:space:]]identified|identified[[:space:]]in[[:space:]]your|results[[:space:]]from[[:space:]]your|from[[:space:]]your[[:space:]]previous|from[[:space:]]your[[:space:]]earlier|based[[:space:]]on[[:space:]]your[[:space:]]previous|websites[[:space:]]identified|urls[[:space:]]found) ]]; then
         echo "recall"; return 0
     fi
 
@@ -984,6 +990,16 @@ _agent_fuzzy_catalog_match() {
     if [ "$_fz_preroute" != "journal" ]; then
         if [[ "$_fz_text" =~ (journal|diary|daily[[:space:]]log|log[[:space:]]entry|morning[[:space:]]entry|evening[[:space:]]entry) ]]; then
             _fz_extras="${_fz_extras} journal"
+        fi
+    fi
+
+    # Memory-retrieval signals — inject recall + journal cards when
+    # the milestone implies "use what you already know". Without this,
+    # the specialist only sees the pre-routed command (often /web) and
+    # defaults to web search even when prior task data is in memory.
+    if [ "$_fz_preroute" != "recall" ] && [ "$_fz_preroute" != "journal" ]; then
+        if [[ "$_fz_text" =~ (previous[[:space:]]search|prior[[:space:]]search|earlier[[:space:]]search|from[[:space:]]before|you[[:space:]]found|you[[:space:]]searched|you[[:space:]]identified|identified[[:space:]]in|results[[:space:]]from|from[[:space:]]your[[:space:]]previous|from[[:space:]]your[[:space:]]earlier|based[[:space:]]on[[:space:]]your[[:space:]]previous|already[[:space:]]found|already[[:space:]]searched|already[[:space:]]know) ]]; then
+            _fz_extras="${_fz_extras} recall journal"
         fi
     fi
 
@@ -1077,6 +1093,7 @@ _agent_smart_route() {
     local _sr_base="" _sr_arg=""
     case "$cmd" in
         "/web fetch "*)          _sr_base="/web fetch";          _sr_arg="${cmd#/web fetch }" ;;
+        "/web scrape "*)         _sr_base="/web fetch";          _sr_arg="${cmd#/web scrape }" ;;
         "/web scrape-images "*)  _sr_base="/web scrape-images";  _sr_arg="${cmd#/web scrape-images }" ;;
         "/web scrapeimages "*)   _sr_base="/web scrapeimages";   _sr_arg="${cmd#/web scrapeimages }" ;;
         "/web search "*)         _sr_base="/web search";         _sr_arg="${cmd#/web search }" ;;
@@ -1338,6 +1355,13 @@ _agent_honeydew_rewrite() {
         _failure_section="\n\nFAILURE CONTEXT (why auto-recovery was triggered):\n${failure_context}"
     fi
 
+    # Build optional recommendation section for router (modes 1 and 2)
+    local _router_rec_section=""
+    local _rec_inject_mode="${AGENT_EVAL_REC_INJECT:-0}"
+    if [ "$_rec_inject_mode" -ge 1 ] && [ -n "${_EVAL_HONEYDEW_RECOMMENDATION:-}" ]; then
+        _router_rec_section="\n\nEVALUATOR RECOMMENDATION (the honeydew evaluator recommended this action after the last milestone failed to satisfy the current item):\n${_EVAL_HONEYDEW_RECOMMENDATION}"
+    fi
+
     local router_prompt="CURRENT DATE/TIME: ${_rewrite_now}
 
 ORIGINAL TASK (PRIMARY OBJECTIVE):
@@ -1347,7 +1371,7 @@ CURRENT HONEYDEW LIST:
 ${_current_list}
 
 MILESTONE CONTEXT (what has been accomplished so far):
-${_milestone_ctx}${_failure_section}
+${_milestone_ctx}${_failure_section}${_router_rec_section}
 
 Based on what the completed milestones have revealed (and any failure data above), should the PENDING (non-completed) honeydew items be rewritten to better serve the original task?
 
@@ -1424,14 +1448,40 @@ REWRITE_ROUTER_JSON
         fi
     fi
 
+    # ── Inject evaluator recommendation into rewriter ──────────
+    # AGENT_EVAL_REC_INJECT controls how the honeydew evaluator's
+    # recommendation (e.g. "use /recall to retrieve prior task data")
+    # flows into the rewriter:
+    #   0 = off (current default — recommendation only goes to strategist)
+    #   1 = recommendation-only: ONLY the recommendation block is injected
+    #       into the rewriter, giving it highly weighted attention for
+    #       aligning new items with the evaluator's suggested next action
+    #   2 = both: recommendation is injected alongside full milestone context
+    local _rewrite_recommendation=""
+    local _rec_inject_mode="${AGENT_EVAL_REC_INJECT:-0}"
+    if [ "$_rec_inject_mode" -ge 1 ] && [ -n "${_EVAL_HONEYDEW_RECOMMENDATION:-}" ]; then
+        _rewrite_recommendation="\n\n>>> EVALUATOR RECOMMENDATION (the last honeydew evaluator suggested this action — rewrite pending items to INCORPORATE this recommendation) <<<\n${_EVAL_HONEYDEW_RECOMMENDATION}\n>>> Pending items should align with executing the above recommendation first. <<<"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: injecting evaluator recommendation (mode=$_rec_inject_mode)"
+    fi
+
+    # Build the rewrite prompt based on recommendation injection mode.
+    # Mode 1: foreground recommendation, omit milestone context to focus attention.
+    # Mode 0/2: include full milestone context (mode 2 adds recommendation too).
+    local _rewrite_context_section=""
+    if [ "$_rec_inject_mode" -eq 1 ] && [ -n "$_rewrite_recommendation" ]; then
+        # Mode 1: recommendation-only — skip milestone context to maximize attention weight
+        _rewrite_context_section="${_rewrite_recommendation}${_fail_rewrite_section}${_rewrite_brainstorm}"
+    else
+        # Mode 0 or 2: full milestone context, mode 2 adds recommendation
+        _rewrite_context_section="\nMILESTONE DISCOVERIES (what has been learned so far):\n${_milestone_ctx}${_fail_rewrite_section}${_rewrite_brainstorm}${_rewrite_recommendation}"
+    fi
+
     local rewrite_prompt="ORIGINAL TASK (PRIMARY OBJECTIVE — this is the #1 priority):
 ${_original_task}
 
 COMPLETED ITEMS (DO NOT MODIFY — these are already done):
 ${_done_items:-None yet.}
-
-MILESTONE DISCOVERIES (what has been learned so far):
-${_milestone_ctx}${_fail_rewrite_section}${_rewrite_brainstorm}
+${_rewrite_context_section}
 
 CURRENT PENDING ITEMS (these need rewriting):
 $(jq -r '.items[] | select(.status == "pending") | "\(.id). [ ] \(.task)"' "$hd_file" 2>/dev/null)
@@ -2970,14 +3020,15 @@ SPEC
                 cat << 'SPEC'
 {"cmd":"/web","syntax":{
   "search":"/web search <query> — returns URLs + text snippets from search engines",
-  "fetch":"/web fetch <url> — downloads and extracts readable TEXT from a webpage (HTML/PDF/JSON). Returns plain text only, NO images.",
+  "fetch":"/web fetch <url> — downloads and extracts readable TEXT from a webpage (HTML/PDF/JSON). Returns plain text only, NO images. Alias: /web scrape",
+  "scrape":"/web scrape <url> — alias for /web fetch. Downloads and extracts readable TEXT from a webpage.",
   "scrape-images":"/web scrape-images <url> — returns STRUCTURED JSON: {url, title, content, images:[]} with page text AND image URIs. Pass image URIs to /vision for analysis.",
   "images":"/web images <query> — searches for image URLs by keyword (Serper API). Returns image URLs only."},
-"rules":["search=QUERY (keywords), fetch/scrape-images=URL — NEVER swap","/web fetch returns TEXT only — use /web scrape-images when you need images","scrape-images returns {url,title,content,images[]} — pass images[] URLs to /vision","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples","LOCAL FILES: NEVER use /web fetch on local files or relative paths — use /read for text files, /vision for images"],
+"rules":["search=QUERY (keywords), fetch/scrape/scrape-images=URL — NEVER swap","/web fetch (or /web scrape) returns TEXT only — use /web scrape-images when you need images","scrape-images returns {url,title,content,images[]} — pass images[] URLs to /vision","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples","LOCAL FILES: NEVER use /web fetch on local files or relative paths — use /read for text files, /vision for images"],
 "search_tips":["3-5 keywords MAX — Google FAILS with long queries","Drop filler: the/a/for/including/regarding/comprehensive","NEVER paste entire milestone as search query","Extract keywords from TASK context only"],
-"FLOW CHAINS":["Text research: /web search -> /web fetch -> summarize","Image research: /web scrape-images <url> -> /vision <image_url_from_images[]>","Report: /web search -> /web fetch -> /write report"],
+"FLOW CHAINS":["Text research: /web search -> /web fetch -> summarize","Scrape workflow: /web search -> /web scrape -> summarize","Image research: /web scrape-images <url> -> /vision <image_url_from_images[]>","Report: /web search -> /web fetch -> /write report"],
 "notes":["Do NOT fetch every URL. 1 search + 1-2 fetches enough","If scrape-images returns empty content, use /web fetch for same URL instead","/web fetch and /web scrape-images require a full https:// URL — for local files use /read or /vision instead"],
-"format_only_ex":["/web search <keywords>","/web fetch <url>","/web scrape-images <url>","/web images <keywords>"],
+"format_only_ex":["/web search <keywords>","/web fetch <url>","/web scrape <url>","/web scrape-images <url>","/web images <keywords>"],
 "fill":{"<keywords>":"3-5 search terms derived from the TASK","<url>":"full https:// URL from search results or task — NEVER a local file path"}}
 SPEC
                 ;;
@@ -4488,7 +4539,7 @@ INTERLOCK_JSON
                         _primary_for_condense=$(_macro_get "$macro_file" "primary_objective")
                         [ -n "$_primary_for_condense" ] && _condense_prompt="OVERALL GOAL: $_primary_for_condense\nCURRENT STEP: $micro_objective"
                     fi
-                    _condense_prompt="${_condense_prompt}\n\nWEB CONTENT (from: $cmd):\n${output}\n\nIn 3-5 sentences, summarize useful information. Preserve specific facts, names, numbers, URLs, and data points relevant to the task. If the content is mostly junk (cookie notices, paywalls, login walls, ad text, empty/broken page, or irrelevant boilerplate), say: JUNK: <brief reason>. If partially useful, extract what matters and note what was missing."
+                    _condense_prompt="${_condense_prompt}\n\nWEB CONTENT (from: $cmd):\n${output}\n\nIn 3-5 sentences, summarize useful information. Preserve specific facts, names, numbers, URLs, and data points relevant to the task. Only say JUNK: <brief reason> if the content is ENTIRELY useless (login/paywall walls with zero real content, completely empty pages, or pure ad/cookie text with no article body). Noisy pages that still contain some real content should be summarized — extract what matters and note what was missing."
                     local _condense_sys="You are a concise factual summarizer. No personality. Preserve URLs, names, numbers. 3-5 sentences max."
                     local LLM_SCENARIO=evaluator
                     _condensed=$(llm_generate "$_condense_prompt" "$_condense_sys" "${LLM_WEB_CONDENSE_TOKENS:-200}" "$LLM_BUDGET_AGENT" 2>/dev/null)
@@ -5059,6 +5110,57 @@ Output a slash command line starting with / OR a bash code block."
     return 1
 }
 
+# ── Cross-Task Memory Sieve ──────────────────────────────────
+# Searches the recall DB (FTS5) for prior knowledge relevant to
+# the current task BEFORE the first strategist call.  Injects
+# matching snippets into macro_memory so the strategist and
+# specialist see previous task results in their context.
+#
+# Purpose: prevents the 4B model from defaulting to /web search
+# when the answer already exists in journal/recall from a prior
+# task (e.g. "scrape 1 or 2 of the websites identified in your
+# previous search" → should use /recall, not /web search).
+#
+# Args:
+#   $1 — task description (user's raw input)
+#   $2 — macro_memory.json file path
+# Returns 0 on success (even if no results), 1 on error.
+# Side effects: sets prior_context field in macro_memory.json.
+_agent_cross_task_sieve() {
+    local _sieve_task="$1"
+    local _sieve_macro="$2"
+
+    # Gate: disabled or recall unavailable
+    [ "${AGENT_CROSS_TASK_SIEVE:-1}" -eq 0 ] && return 0
+    declare -f recall_search_context &>/dev/null || return 0
+    declare -f recall_available &>/dev/null || return 0
+    recall_available || return 0
+
+    # Extract keywords from task using recall's own sanitizer.
+    # Use OR mode for broad matching — the task description is
+    # short so we want any hit, not all-words-match.
+    local _sieve_query
+    _sieve_query=$(_recall_sanitize_query "$_sieve_task" "OR")
+    [ -z "$_sieve_query" ] && return 0
+
+    # Search recall for relevant prior context (top 4, 400 chars each)
+    local _sieve_results
+    _sieve_results=$(recall_search_context "$_sieve_task" 4 400 2>/dev/null)
+
+    # Nothing found — no injection needed
+    if [ -z "$_sieve_results" ] || [ "$_sieve_results" = "[]" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] cross-task sieve: no recall matches for task keywords"
+        return 0
+    fi
+
+    # Inject into macro_memory as prior_context field
+    local _sieve_tmp="${_sieve_macro}.tmp"
+    jq --argjson ctx "$_sieve_results" '.prior_context = $ctx' "$_sieve_macro" > "$_sieve_tmp" && mv "$_sieve_tmp" "$_sieve_macro"
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] cross-task sieve: injected prior context from recall"
+    return 0
+}
+
 # ── Run full task: Macro Loop (The Strategist) ────────────────
 # Governs the overall trajectory of the task using a dynamic
 # dual-loop ReAct architecture:
@@ -5194,6 +5296,13 @@ MEMEOF
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew list -> macro_memory"
     fi
 
+    # ── Cross-Task Memory Sieve ──────────────────────────────
+    # Search recall DB for prior context matching the task keywords.
+    # Injects matching snippets into macro_memory.prior_context so
+    # the strategist sees relevant history from previous tasks and
+    # prefers /recall or /journal over /web search.
+    _agent_cross_task_sieve "$task" "$macro_file"
+
     # ── Cache static prompt parts ────────────────────────────
     # Build once per task instead of every loop iteration. These
     # depend only on config flags and services, not on milestone
@@ -5308,7 +5417,7 @@ MEMEOF
         _tool_summary="${_tool_summary}"',"/recall","/journal","/journal write","/respond"],
 "FILES":["/edit","/append","/write","/save","/read","/ls","/init","/build","/test","/fix","/download","/commit","/push","/cd"],
 "GIT":["/git search","/git fetch","/git clone","/git check","/git setup"],
-"WEB":["/vision","/web search","/web fetch","/web images"],
+"WEB":["/vision","/web search","/web fetch","/web scrape","/web images"],
 "SANDBOX":["/sandbox","/container"]'
         # Include COMMS only when social or email services are configured
         if echo "$_svc_status" | grep -qE 'CONFIGURED:.*(discord|telegram|mastodon|x/twitter|bluesky|email)'; then
@@ -5402,7 +5511,22 @@ MEMEOF
         fi
         fi  # end AGENT_BRAINSTORM gate
 
-        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
+        # ── Prior-context hint (cross-task sieve) ─────────────
+        # If the sieve injected prior_context into macro_memory, AND
+        # the task text contains memory-retrieval signals (words that
+        # imply "use what you already know"), add an explicit nudge
+        # directing the strategist to /recall or /journal first.
+        local _sieve_hint=""
+        if [ "${AGENT_CROSS_TASK_SIEVE:-1}" -eq 1 ]; then
+            local _has_prior_ctx
+            _has_prior_ctx=$(jq -r '.prior_context // empty' "$macro_file" 2>/dev/null)
+            if [ -n "$_has_prior_ctx" ] && [ "$_has_prior_ctx" != "null" ] && [ "$_has_prior_ctx" != "[]" ]; then
+                _sieve_hint='\n\n>>> PRIOR KNOWLEDGE AVAILABLE — your task memory already contains prior_context from previous tasks. Use /recall or /journal to retrieve details BEFORE resorting to /web search. <<<'
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- prior-context sieve hint"
+            fi
+        fi
+
+        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_sieve_hint}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
 
         # ── Research→Delivery Gate ────────────────────────────
         # After 2+ consecutive research milestones, inject a hard
@@ -5461,7 +5585,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
    \"no_prefix\":true,\"no_intro\":true,
    \"only_configured\":true},
  \"research\":{\"when\":\"missing info (keys,URLs,packages,specs) OR need to generate ideas\/reason through options\",
-   \"tools\":[\"\/web search\",\"\/recall\"${_brainstorm_rule:+,\"\/brainstorm\"},\"\/web fetch\",\"\/web scrape-images\",\"\/social discord read\",\"\/secret get\"${_ask_rule:+,\"\/ask\"}],
+   \"tools\":[\"\/web search\",\"\/recall\"${_brainstorm_rule:+,\"\/brainstorm\"},\"\/web fetch\",\"\/web scrape\",\"\/web scrape-images\",\"\/social discord read\",\"\/secret get\"${_ask_rule:+,\"\/ask\"}],
    \"max_consecutive\":2,\"then\":\"MUST use delivery command (\/respond,\/write,\/email,\/save,\/social,\/build)\"},
  \"failure\":{\"no_repeat\":true,\"advance_next_part\":true},
  \"honeydew\":{\"pick\":\"FIRST [ ] item by number — do NOT skip items\"},

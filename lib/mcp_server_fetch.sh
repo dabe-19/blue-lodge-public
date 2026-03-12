@@ -7,6 +7,7 @@
 #   fetch          — Fetch a URL, return clean extracted text
 #   fetch_json     — Fetch a URL, return structured JSON (title, content, images)
 #   fetch_pdf      — Fetch and extract text from a PDF URL
+#   fetch_reddit   — Fetch a Reddit post/subreddit via JSON API
 #   web_search     — Search the web (DDG, Serper, Perplexity)
 #   web_images     — Search for images (Serper)
 #   github_search  — Search GitHub repositories
@@ -172,6 +173,20 @@ _TOOLS_JSON='[
     }
   },
   {
+    "name": "fetch_reddit",
+    "description": "Fetch a Reddit post or subreddit listing via the JSON API. Returns clean structured text: post title, author, score, selftext, and top comments for post URLs; top post listings for subreddit URLs. Much better than scraping the SPA HTML.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "A Reddit URL (post or subreddit, e.g. https://www.reddit.com/r/linux/comments/abc123/post_title or https://www.reddit.com/r/selfhosted)"
+        }
+      },
+      "required": ["url"]
+    }
+  },
+  {
     "name": "github_search",
     "description": "Search GitHub repositories by keyword. Returns repo name, stars, language, and description. No auth needed.",
     "inputSchema": {
@@ -299,6 +314,33 @@ _handle_tool_call() {
             fi
 
             _respond_result "$id" "$(_text_content "$results")"
+            ;;
+
+        fetch_reddit)
+            local url
+            url=$(printf '%s' "$arguments" | $_JQ -r '.url // empty' 2>/dev/null)
+
+            if [ -z "$url" ]; then
+                _respond_result "$id" "$(_text_content "Error: url parameter is required")"
+                return
+            fi
+
+            # Validate this is a Reddit URL
+            local _rd_check
+            _rd_check=$(_web_reddit_url "$url" 2>/dev/null)
+            if [ -z "$_rd_check" ]; then
+                _respond_result "$id" "$(_text_content "Error: Not a valid Reddit URL (expected reddit.com/r/... post or subreddit)")"
+                return
+            fi
+
+            local content
+            content=$(_web_fetch_reddit "$url" 2>/dev/null)
+            if [ -z "$content" ]; then
+                _respond_result "$id" "$(_text_content "Error: Failed to fetch Reddit content from $url")"
+                return
+            fi
+
+            _respond_result "$id" "$(_text_content "$content")"
             ;;
 
         github_search)
