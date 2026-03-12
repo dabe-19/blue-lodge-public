@@ -1192,8 +1192,8 @@ describe "Abort propagation from inner loop to macro loop"
 # ── Milestone Deduplication ────────────────────────────────────
 describe "Milestone deduplication in macro loop"
 
-  it "AGENT_MAX_MILESTONE_RETRIES defaults to 20" && {
-    assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "20"
+  it "AGENT_MAX_MILESTONE_RETRIES defaults to 2" && {
+    assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "2"
   }
 
   it "agent_run initializes _attempted_milestones array" && {
@@ -2232,10 +2232,9 @@ describe "Honeydew subtask decomposition"
 # ── Honeydew expansion interlocks ─────────────────────────────
 describe "Honeydew expansion interlocks"
 
-  it "AGENT_HONEYDEW_EXPAND defaults to 0 (disabled)" && {
-    # Read from source to check the default, not the runtime value
-    grep -q 'AGENT_HONEYDEW_EXPAND.*:-0' "$LODGE_DIR/lib/agent.sh"
-    assert_ok $? "AGENT_HONEYDEW_EXPAND must default to 0"
+  it "AGENT_HONEYDEW_EXPAND defaults to 1 (enabled)" && {
+    grep -q 'AGENT_HONEYDEW_EXPAND.*:-1' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "AGENT_HONEYDEW_EXPAND must default to 1"
   }
 
   it "maybe_expand returns 1 when expansion is disabled" && {
@@ -2711,14 +2710,14 @@ describe "Dynamic honeydew rewrite configuration"
     assert_ok $? "AGENT_HONEYDEW_REWRITE must default to 1"
   }
 
-  it "AGENT_HONEYDEW_REWRITE_ROUNDS defaults to 3" && {
-    grep -q 'AGENT_HONEYDEW_REWRITE_ROUNDS.*:-3' "$LODGE_DIR/lib/agent.sh"
-    assert_ok $? "AGENT_HONEYDEW_REWRITE_ROUNDS must default to 3"
+  it "AGENT_HONEYDEW_REWRITE_ROUNDS defaults to 5" && {
+    grep -q 'AGENT_HONEYDEW_REWRITE_ROUNDS.*:-5' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "AGENT_HONEYDEW_REWRITE_ROUNDS must default to 5"
   }
 
-  it "AGENT_HONEYDEW_REWRITE_CADENCE defaults to 2" && {
-    grep -q 'AGENT_HONEYDEW_REWRITE_CADENCE.*:-2' "$LODGE_DIR/lib/agent.sh"
-    assert_ok $? "AGENT_HONEYDEW_REWRITE_CADENCE must default to 2"
+  it "AGENT_HONEYDEW_REWRITE_CADENCE defaults to 1" && {
+    grep -q 'AGENT_HONEYDEW_REWRITE_CADENCE.*:-1' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "AGENT_HONEYDEW_REWRITE_CADENCE must default to 1"
   }
 
 describe "Dynamic honeydew rewrite function"
@@ -2963,8 +2962,8 @@ describe "AGENT_OUTPUT_DIR enforcement"
 # ── Fuzzy keyword catalog matching ────────────────────────────
 describe "Fuzzy keyword catalog matching (_agent_fuzzy_catalog_match)"
 
-  it "AGENT_SMART_ROUTE defaults to 3 (combined mode)" && {
-    assert_eq "$AGENT_SMART_ROUTE" "3"
+  it "AGENT_SMART_ROUTE defaults to 2 (fuzzy only)" && {
+    assert_eq "$AGENT_SMART_ROUTE" "2"
   }
 
   it "function is defined" && {
@@ -2972,21 +2971,20 @@ describe "Fuzzy keyword catalog matching (_agent_fuzzy_catalog_match)"
     assert_ok $?
   }
 
-  # ── GitHub / Git keywords ──────────────────────────────────
-  it "matches 'github' keyword → github git" && {
+  # ── GitHub / Git keywords (unified → git) ─────────────────
+  it "matches 'github' keyword → git" && {
     result=$(_agent_fuzzy_catalog_match "Search for a github repo" "web")
-    assert_contains "$result" "github"
     assert_contains "$result" "git"
   }
 
-  it "matches 'pull request' keyword → github git" && {
+  it "matches 'pull request' keyword → git" && {
     result=$(_agent_fuzzy_catalog_match "Check the pull request status" "web")
-    assert_contains "$result" "github"
+    assert_contains "$result" "git"
   }
 
-  it "matches 'git repo' keyword" && {
+  it "matches 'git repo' keyword → git" && {
     result=$(_agent_fuzzy_catalog_match "Find a git repo for ML models" "web")
-    assert_contains "$result" "github"
+    assert_contains "$result" "git"
   }
 
   it "skips github when already routed to github" && {
@@ -3192,9 +3190,9 @@ describe "Fast route keyword filter"
     assert_ok $?
   }
 
-  it "routes 'search github repo' to github" && {
+  it "routes 'search github repo' to git" && {
     result=$(_fast_route "Use /github search to find the blue-lodge-public repo")
-    assert_eq "$result" "github"
+    assert_eq "$result" "git"
   }
 
   it "routes 'post to discord general channel' to social" && {
@@ -3262,19 +3260,19 @@ describe "Fast route keyword filter"
     assert_eq "$result" "mqtt"
   }
 
-  it "routes 'git clone' to clone" && {
-    result=$(_fast_route "Git clone the repository")
-    assert_eq "$result" "clone"
+  it "routes 'git clone' to git" && {
+    result=$(_fast_route "Git clone the project from remote")
+    assert_eq "$result" "git"
   }
 
-  it "routes 'commit changes' to commit" && {
+  it "routes 'commit changes' to git" && {
     result=$(_fast_route "Commit changes to the repo")
-    assert_eq "$result" "commit"
+    assert_eq "$result" "git"
   }
 
-  it "routes 'push changes' to push" && {
+  it "routes 'push changes' to git" && {
     result=$(_fast_route "Push changes to the remote")
-    assert_eq "$result" "push"
+    assert_eq "$result" "git"
   }
 
   it "routes 'ssh key setup' to git" && {
@@ -3319,7 +3317,7 @@ describe "Fast route keyword filter"
 
   it "routes case-insensitively" && {
     result=$(_fast_route "Search GITHUB for the repo")
-    assert_eq "$result" "github"
+    assert_eq "$result" "git"
   }
 
   it "routes 'google drive' to gsuite" && {
@@ -3332,14 +3330,107 @@ describe "Fast route keyword filter"
     assert_eq "$result" "mqtt"
   }
 
-  it "routes 'pull request' to github without explicit github keyword" && {
+  it "routes 'pull request' to git" && {
     result=$(_fast_route "Create a pull request for this branch")
-    assert_eq "$result" "github"
+    assert_eq "$result" "git"
+  }
+
+  it "routes 'repository' to git" && {
+    result=$(_fast_route "List all repositories in the org")
+    assert_eq "$result" "git"
+  }
+
+  it "routes 'repo' to git" && {
+    result=$(_fast_route "Clone the repo locally")
+    assert_eq "$result" "git"
   }
 
   it "routes 'telegram message' to social" && {
     result=$(_fast_route "Send a message via telegram")
     assert_eq "$result" "social"
+  }
+
+  it "routes '/post something' to social" && {
+    result=$(_fast_route "/post the update to the general channel")
+    assert_eq "$result" "social"
+  }
+
+  it "routes 'post to channel' to social" && {
+    result=$(_fast_route "post the summary to channel general")
+    assert_eq "$result" "social"
+  }
+
+  it "routes 'post to general' to social" && {
+    result=$(_fast_route "post to general the latest news")
+    assert_eq "$result" "social"
+  }
+
+# ── Git/GitHub unification ────────────────────────────────────
+describe "Git/GitHub unification"
+
+  it "specialist /git card includes fetch subcommand" && {
+    card=$(_build_specialist_prompt "git" "fetch readme" "")
+    echo "$card" | grep -q '"fetch"'
+    assert_ok $? "/git specialist card must include fetch subcommand"
+  }
+
+  it "specialist /git card includes workflow hint" && {
+    card=$(_build_specialist_prompt "git" "search and scrape" "")
+    echo "$card" | grep -q '"workflow"'
+    assert_ok $? "/git specialist card must include workflow JSON"
+  }
+
+  it "full router prompt references /git not /github" && {
+    AGENT_FAST_ROUTE=0
+    prompt=$(_build_router_prompt)
+    echo "$prompt" | grep -q '/git '
+    assert_ok $? "full router prompt must reference /git"
+    echo "$prompt" | grep -q '/github search'
+    assert_fail $? "full router prompt must NOT reference /github search (use /git search)"
+    AGENT_FAST_ROUTE=1
+  }
+
+  it "full router prompt GIT section includes fetch" && {
+    AGENT_FAST_ROUTE=0
+    prompt=$(_build_router_prompt)
+    echo "$prompt" | grep -q '/git fetch'
+    assert_ok $? "full router prompt GIT section must include /git fetch"
+    AGENT_FAST_ROUTE=1
+  }
+
+  it "full router prompt mentions post routes to social" && {
+    AGENT_FAST_ROUTE=0
+    prompt=$(_build_router_prompt)
+    echo "$prompt" | grep -qi 'post.*social\|/post.*social'
+    assert_ok $? "full router prompt must mention /post routes to /social"
+    AGENT_FAST_ROUTE=1
+  }
+
+  it "specialist TOOLS list omits /github and /clone as separate entries" && {
+    body=$(declare -f _build_specialist_prompt)
+    tools_line=$(echo "$body" | grep 'TOOLS (gather info')
+    echo "$tools_line" | grep -q '/github '
+    assert_fail $? "specialist TOOLS list must NOT list /github separately"
+    echo "$tools_line" | grep -q '/clone'
+    assert_fail $? "specialist TOOLS list must NOT list /clone separately"
+  }
+
+  it "specialist TOOLS list includes /git" && {
+    body=$(declare -f _build_specialist_prompt)
+    tools_line=$(echo "$body" | grep 'TOOLS (gather info')
+    echo "$tools_line" | grep -q '/git '
+    assert_ok $? "specialist TOOLS list must include /git"
+  }
+
+  it "MCP dispatch aliases github_* to git_*" && {
+    grep -q '_alias_compound="git_' "$LODGE_DIR/lib/mcp.sh"
+    assert_ok $? "MCP dispatch must alias github compound commands to git"
+  }
+
+  it "_specialist_key_status handles both github and git" && {
+    body=$(declare -f _specialist_key_status)
+    echo "$body" | grep -q 'github.*git'
+    assert_ok $? "_specialist_key_status must match both github and git"
   }
 
 # ── Fast Route + Lean Router integration ──────────────────────
@@ -3387,18 +3478,18 @@ describe "Fast route + lean router integration"
     assert_ok $? "lean prompt must include /respond (default delivery)"
   }
 
-  it "lean router prompt does NOT contain /github (handled by fast-route)" && {
+  it "lean router prompt does NOT contain /git (handled by fast-route)" && {
     AGENT_FAST_ROUTE=1
     prompt=$(_build_router_prompt)
-    echo "$prompt" | grep -q '/github'
-    assert_fail $? "lean prompt must NOT include /github (fast-route handles it)"
+    echo "$prompt" | grep -q '/git '
+    assert_fail $? "lean prompt must NOT include /git (fast-route handles it)"
   }
 
-  it "full router prompt contains /github when fast-route disabled" && {
+  it "full router prompt contains /git when fast-route disabled" && {
     AGENT_FAST_ROUTE=0
     prompt=$(_build_router_prompt)
-    echo "$prompt" | grep -q '/github'
-    assert_ok $? "full prompt must include /github when fast-route disabled"
+    echo "$prompt" | grep -q '/git '
+    assert_ok $? "full prompt must include /git when fast-route disabled"
     AGENT_FAST_ROUTE=1
   }
 

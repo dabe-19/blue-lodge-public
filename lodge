@@ -713,8 +713,8 @@ _cmd_limits() {
         expand)
             if [ -z "$value" ]; then
                 local _expand_label="disabled"
-                [ "${AGENT_HONEYDEW_EXPAND:-0}" -eq 1 ] && _expand_label="enabled"
-                ui_info "Honeydew expansion: $_expand_label (default: disabled)"
+                [ "${AGENT_HONEYDEW_EXPAND:-1}" -eq 1 ] && _expand_label="enabled"
+                ui_info "Honeydew expansion: $_expand_label (default: enabled)"
             else
                 if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
                     AGENT_HONEYDEW_EXPAND=1
@@ -731,7 +731,7 @@ _cmd_limits() {
                 local _rewrite_label="disabled"
                 [ "${AGENT_HONEYDEW_REWRITE:-0}" -eq 1 ] && _rewrite_label="enabled"
                 ui_info "Honeydew rewrite: $_rewrite_label (default: enabled)"
-                ui_info "Rewrite rounds: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-3} (default: 3)"
+                ui_info "Rewrite rounds: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-5} (default: 5)"
             else
                 if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
                     AGENT_HONEYDEW_REWRITE=1
@@ -745,13 +745,13 @@ _cmd_limits() {
             fi ;;
         rewrite-rounds)
             if [ -z "$value" ]; then
-                ui_info "Honeydew rewrite rounds: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-3} (default: 3)"
+                ui_info "Honeydew rewrite rounds: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-5} (default: 5)"
             else
                 _limits_set AGENT_HONEYDEW_REWRITE_ROUNDS "Rewrite rounds" "$value" 1 20
             fi ;;
         rewrite-cadence)
             if [ -z "$value" ]; then
-                ui_info "Honeydew rewrite cadence: ${AGENT_HONEYDEW_REWRITE_CADENCE:-2} milestones (default: 2)"
+                ui_info "Honeydew rewrite cadence: ${AGENT_HONEYDEW_REWRITE_CADENCE:-1} milestones (default: 1)"
                 ui_dim "  Min new milestones between rewrites. 0=every iteration (old behavior)."
             else
                 _limits_set AGENT_HONEYDEW_REWRITE_CADENCE "Rewrite cadence" "$value" 0 10
@@ -776,7 +776,7 @@ _cmd_limits() {
             fi ;;
         max-items)
             if [ -z "$value" ]; then
-                ui_info "Honeydew max items: $AGENT_HONEYDEW_MAX_ITEMS (default: 16)"
+                ui_info "Honeydew max items: $AGENT_HONEYDEW_MAX_ITEMS (default: 8)"
             else
                 _limits_set AGENT_HONEYDEW_MAX_ITEMS "Honeydew max items" "$value" 2 30
             fi ;;
@@ -817,7 +817,7 @@ _cmd_limits() {
             fi ;;
         milestone-retries)
             if [ -z "$value" ]; then
-                ui_info "Milestone retry limit: $AGENT_MAX_MILESTONE_RETRIES (default: 20)"
+                ui_info "Milestone retry limit: $AGENT_MAX_MILESTONE_RETRIES (default: 2)"
             else
                 _limits_set AGENT_MAX_MILESTONE_RETRIES "Milestone retries" "$value" 1 30
             fi ;;
@@ -835,7 +835,7 @@ _cmd_limits() {
             fi ;;
         honeydew-count)
             if [ -z "$value" ]; then
-                ui_info "Honeydew initial task count (upper bound): $AGENT_HONEYDEW_INITIAL_COUNT (default: 4)"
+                ui_info "Honeydew initial task count (upper bound): $AGENT_HONEYDEW_INITIAL_COUNT (default: 5)"
             else
                 _limits_set AGENT_HONEYDEW_INITIAL_COUNT "Honeydew initial count" "$value" 2 10
             fi ;;
@@ -875,12 +875,12 @@ _cmd_limits() {
             fi ;;
         smart-route)
             if [ -z "$value" ]; then
-                local _sr_val="${AGENT_SMART_ROUTE:-3}"
+                local _sr_val="${AGENT_SMART_ROUTE:-2}"
                 local _sr_label="disabled"
                 [ "$_sr_val" -eq 1 ] && _sr_label="reroute only"
                 [ "$_sr_val" -eq 2 ] && _sr_label="fuzzy injection only"
                 [ "$_sr_val" -ge 3 ] && _sr_label="combined (reroute + fuzzy)"
-                ui_info "Smart command routing: $_sr_label ($_sr_val)  (default: 3, range: 0-3)"
+                ui_info "Smart command routing: $_sr_label ($_sr_val)  (default: 2, range: 0-3)"
                 ui_dim "  0=disabled  1=reroute only  2=fuzzy catalog only  3=combined"
             else
                 if [[ "$value" == "off" || "$value" == "disable" || "$value" == "disabled" ]]; then
@@ -888,9 +888,9 @@ _cmd_limits() {
                     AGENT_PRE_ROUTE=0
                     ui_ok "Smart command routing disabled"
                 elif [[ "$value" == "on" || "$value" == "enable" || "$value" == "enabled" ]]; then
-                    AGENT_SMART_ROUTE=3
+                    AGENT_SMART_ROUTE=2
                     AGENT_PRE_ROUTE=1
-                    ui_ok "Smart command routing enabled (combined mode)"
+                    ui_ok "Smart command routing enabled (fuzzy catalog mode)"
                 elif [[ "$value" =~ ^[0-3]$ ]]; then
                     AGENT_SMART_ROUTE="$value"
                     if [ "$value" -eq 0 ]; then
@@ -910,19 +910,28 @@ _cmd_limits() {
         fast-route|fastroute|fast_route)
             if [ -z "$value" ]; then
                 local _fr_label="disabled"
-                [ "${AGENT_FAST_ROUTE:-1}" -eq 1 ] && _fr_label="enabled"
-                ui_info "Fast route (keyword filter): $_fr_label (default: enabled)"
-                ui_dim "  When enabled, domain-specific commands are matched by keyword"
-                ui_dim "  before the LLM router fires. Saves ~1 LLM call per milestone."
+                [ "${AGENT_FAST_ROUTE:-2}" -eq 1 ] && _fr_label="keywords+lean"
+                [ "${AGENT_FAST_ROUTE:-2}" -eq 2 ] && _fr_label="fuzzy only"
+                ui_info "Fast route: $_fr_label (${AGENT_FAST_ROUTE:-2}) (default: 2 fuzzy only)"
+                ui_dim "  0=disabled (full router), 1=keywords+lean, 2=fuzzy only (lean prompt, no keyword matching)"
             else
-                if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
+                if [[ "$value" =~ ^[0-2]$ ]]; then
+                    AGENT_FAST_ROUTE=$value
+                    local _fr_desc="disabled"
+                    [ "$value" -eq 1 ] && _fr_desc="keywords+lean"
+                    [ "$value" -eq 2 ] && _fr_desc="fuzzy only"
+                    ui_ok "Fast route set to $value ($_fr_desc)"
+                elif [[ "$value" == "on" || "$value" == "enable" || "$value" == "enabled" ]]; then
                     AGENT_FAST_ROUTE=1
                     ui_ok "Fast route enabled — keyword filter active before LLM router"
-                elif [[ "$value" == "off" || "$value" == "0" || "$value" == "disable" || "$value" == "disabled" ]]; then
+                elif [[ "$value" == "off" || "$value" == "disable" || "$value" == "disabled" ]]; then
                     AGENT_FAST_ROUTE=0
                     ui_ok "Fast route disabled — all routing goes through LLM router"
+                elif [[ "$value" == "fuzzy" ]]; then
+                    AGENT_FAST_ROUTE=2
+                    ui_ok "Fast route set to fuzzy only — lean prompt, no keyword matching"
                 else
-                    ui_err "Fast route must be 'on' or 'off' (or 1/0, enable/disable)"
+                    ui_err "Fast route: 0=off 1=keywords+lean 2=fuzzy (or on/off/fuzzy)"
                 fi
             fi ;;
         ask)
@@ -1000,23 +1009,23 @@ _cmd_limits() {
             AGENT_MAX_DEPTH=3
             AGENT_FILE_EXPAND=1
             AGENT_DM_SCAN_CHARS=80
-            AGENT_HONEYDEW_EXPAND=0
+            AGENT_HONEYDEW_EXPAND=1
             AGENT_HONEYDEW_REWRITE=1
-            AGENT_HONEYDEW_REWRITE_ROUNDS=3
-            AGENT_HONEYDEW_REWRITE_CADENCE=2
-            AGENT_HONEYDEW_MAX_ITEMS=16
+            AGENT_HONEYDEW_REWRITE_ROUNDS=5
+            AGENT_HONEYDEW_REWRITE_CADENCE=1
+            AGENT_HONEYDEW_MAX_ITEMS=8
             AGENT_STEP_DELAY=1
             AGENT_EVAL_MODE=auto
             AGENT_EVAL_CONTEXT_LINES=50
             AGENT_WEB_SUFFICIENCY=20
-            AGENT_MAX_MILESTONE_RETRIES=20
+            AGENT_MAX_MILESTONE_RETRIES=2
             AGENT_MAX_CMD_FAMILY=10
             AGENT_HONEYDEW_MATCH=3
-            AGENT_HONEYDEW_INITIAL_COUNT=4
+            AGENT_HONEYDEW_INITIAL_COUNT=5
             AGENT_WEB_SEARCH_CONSEC_MAX=20
             AGENT_EVAL_REC_CHARS=120
             AGENT_PRESSURE_RELIEF=2
-            AGENT_SMART_ROUTE=3
+            AGENT_SMART_ROUTE=2
             AGENT_PRE_ROUTE=1
             AGENT_FAST_ROUTE=1
             AGENT_WEB_SEARCH_TIGHT_PARSING=0
@@ -1229,22 +1238,22 @@ _cmd_limits() {
             ui_section "Agent Limits"
             printf "  %-22s %s\n" "Plan steps/subtask:" "$AGENT_PLAN_STEPS  (default: 6)"
             local _expand_show="disabled"
-            [ "${AGENT_HONEYDEW_EXPAND:-0}" -eq 1 ] && _expand_show="enabled"
-            printf "  %-22s %s\n" "Honeydew expansion:" "$_expand_show  (default: disabled)"
+            [ "${AGENT_HONEYDEW_EXPAND:-1}" -eq 1 ] && _expand_show="enabled"
+            printf "  %-22s %s\n" "Honeydew expansion:" "$_expand_show  (default: enabled)"
             local _rewrite_show="disabled"
             [ "${AGENT_HONEYDEW_REWRITE:-0}" -eq 1 ] && _rewrite_show="enabled"
             printf "  %-22s %s\n" "Honeydew rewrite:" "$_rewrite_show  (default: enabled)"
-            printf "  %-22s %s\n" "Rewrite rounds:" "${AGENT_HONEYDEW_REWRITE_ROUNDS:-3}  (default: 3)"
-            printf "  %-22s %s\n" "Rewrite cadence:" "${AGENT_HONEYDEW_REWRITE_CADENCE:-2}  (default: 2)"
+            printf "  %-22s %s\n" "Rewrite rounds:" "${AGENT_HONEYDEW_REWRITE_ROUNDS:-5}  (default: 5)"
+            printf "  %-22s %s\n" "Rewrite cadence:" "${AGENT_HONEYDEW_REWRITE_CADENCE:-1}  (default: 1)"
             printf "  %-22s %s\n" "Subtask depth:" "$AGENT_MAX_DEPTH  (default: 3)"
-            printf "  %-22s %s\n" "Honeydew max items:" "$AGENT_HONEYDEW_MAX_ITEMS  (default: 16)"
+            printf "  %-22s %s\n" "Honeydew max items:" "$AGENT_HONEYDEW_MAX_ITEMS  (default: 8)"
             printf "  %-22s %s\n" "Macro milestones:" "$AGENT_MAX_STEPS  (default: 40)"
             printf "  %-22s %s\n" "Inner loop retries:" "$AGENT_INNER_LOOPS  (default: 6)"
             printf "  %-22s %s\n" "Step delay:" "${AGENT_STEP_DELAY}s  (default: 1)"
             printf "  %-22s %s\n" "Eval mode:" "$AGENT_EVAL_MODE  (default: auto, options: auto|interactive|disabled)"
             printf "  %-22s %s\n" "Eval context lines:" "${AGENT_EVAL_CONTEXT_LINES:-50}  (default: 50)"
             printf "  %-22s %s\n" "Web sufficiency:" "$AGENT_WEB_SUFFICIENCY  (default: 20)"
-            printf "  %-22s %s\n" "Milestone retries:" "$AGENT_MAX_MILESTONE_RETRIES  (default: 20)"
+            printf "  %-22s %s\n" "Milestone retries:" "$AGENT_MAX_MILESTONE_RETRIES  (default: 2)"
             printf "  %-22s %s\n" "Command family cap:" "$AGENT_MAX_CMD_FAMILY  (default: 10)"
             printf "  %-22s %s\n" "Honeydew match score:" "$AGENT_HONEYDEW_MATCH  (default: 3)"
             printf "  %-22s %s\n" "Web search repeat:" "${AGENT_WEB_SEARCH_CONSEC_MAX:-20}  (default: 20)"
@@ -1255,10 +1264,10 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Web search length:" "${AGENT_WEB_SEARCH_MAX_LENGTH:-160}  (default: 160)"
             printf "  %-22s %s\n" "Web search operators:" "${AGENT_WEB_SEARCH_MAX_OPERATORS:-3}  (default: 3)"
             local _sr_show="disabled"
-            [ "${AGENT_SMART_ROUTE:-3}" -eq 1 ] && _sr_show="reroute only"
-            [ "${AGENT_SMART_ROUTE:-3}" -eq 2 ] && _sr_show="fuzzy only"
-            [ "${AGENT_SMART_ROUTE:-3}" -ge 3 ] && _sr_show="combined"
-            printf "  %-22s %s\n" "Smart route:" "$_sr_show (${AGENT_SMART_ROUTE:-3})  (default: 3 combined)"
+            [ "${AGENT_SMART_ROUTE:-2}" -eq 1 ] && _sr_show="reroute only"
+            [ "${AGENT_SMART_ROUTE:-2}" -eq 2 ] && _sr_show="fuzzy only"
+            [ "${AGENT_SMART_ROUTE:-2}" -ge 3 ] && _sr_show="combined"
+            printf "  %-22s %s\n" "Smart route:" "$_sr_show (${AGENT_SMART_ROUTE:-2})  (default: 2 fuzzy only)"
             local _fr_show="disabled"
             [ "${AGENT_FAST_ROUTE:-1}" -eq 1 ] && _fr_show="enabled"
             printf "  %-22s %s\n" "Fast route:" "$_fr_show  (default: enabled)"
@@ -1285,10 +1294,10 @@ _cmd_limits() {
             echo ""
             ui_dim "  Agent loop:"
             ui_dim "    steps N         — Max steps per plan/subtask (current: $AGENT_PLAN_STEPS)"
-            ui_dim "    expand on|off   — Honeydew subtask expansion (current: $([ "${AGENT_HONEYDEW_EXPAND:-0}" -eq 1 ] && echo on || echo off))"
+            ui_dim "    expand on|off   — Honeydew subtask expansion (current: $([ "${AGENT_HONEYDEW_EXPAND:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    rewrite on|off  — Dynamic honeydew rewrite after milestones (current: $([ "${AGENT_HONEYDEW_REWRITE:-0}" -eq 1 ] && echo on || echo off))"
-            ui_dim "    rewrite-rounds N — Max honeydew rewrite rounds per task (current: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-3})"
-            ui_dim "    rewrite-cadence N — Min milestones between rewrites, 0=every iter (current: ${AGENT_HONEYDEW_REWRITE_CADENCE:-2})"
+            ui_dim "    rewrite-rounds N — Max honeydew rewrite rounds per task (current: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-5})"
+            ui_dim "    rewrite-cadence N — Min milestones between rewrites, 0=every iter (current: ${AGENT_HONEYDEW_REWRITE_CADENCE:-1})"
             ui_dim "    force-rewrite on|off — Force rewrite on interlock/failure, bypass LLM router (current: $([ "${AGENT_FORCE_REWRITE:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    depth N         — Subtask recursion depth (current: $AGENT_MAX_DEPTH)"
             ui_dim "    max-items N     — Max honeydew items before expansion suppressed (current: $AGENT_HONEYDEW_MAX_ITEMS)"
@@ -1307,7 +1316,7 @@ _cmd_limits() {
             ui_dim "    web-search-length N — Max character length for web search queries (current: ${AGENT_WEB_SEARCH_MAX_LENGTH:-160})"
             ui_dim "    web-search-ops N  — Max AND/OR operators in loose web search mode (current: ${AGENT_WEB_SEARCH_MAX_OPERATORS:-3})"
             ui_dim "    rec-chars N      — Max chars in evaluator recommendation to strategist (current: ${AGENT_EVAL_REC_CHARS:-120})"
-            ui_dim "    smart-route 0-3|on|off — Smart routing: 0=off 1=reroute 2=fuzzy 3=combined (current: ${AGENT_SMART_ROUTE:-3})"
+            ui_dim "    smart-route 0-3|on|off — Smart routing: 0=off 1=reroute 2=fuzzy 3=combined (current: ${AGENT_SMART_ROUTE:-2})"
             ui_dim "    fast-route on|off  — Keyword filter before LLM router (current: $([ "${AGENT_FAST_ROUTE:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    ask on|off       — Allow George to /ask human questions (current: $([ "${AGENT_ASK_USER:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    brainstorm on|off — Allow George to /brainstorm (self-reason) (current: $([ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && echo on || echo off))"
@@ -3762,6 +3771,22 @@ _cmd_git() {
                 ui_err "Repository not found: $rest"
             fi
             ;;
+        fetch|scrape|readme)
+            # /git fetch <url> — delegates to /web fetch for repo scraping
+            if [ -z "$rest" ] || [ "$rest" = "$action" ]; then
+                ui_err "Usage: /git fetch <url_or_owner/repo>"
+                ui_dim "  Fetches README and repo summary from GitHub"
+                ui_dim "  Example: /git fetch dabe-19/blue-lodge-public"
+                ui_dim "  Example: /git fetch https://github.com/dabe-19/blue-lodge-public"
+                return 1
+            fi
+            # Normalize owner/repo shorthand to full GitHub URL
+            local _fetch_url="$rest"
+            if [[ "$_fetch_url" != http://* ]] && [[ "$_fetch_url" != https://* ]]; then
+                _fetch_url="https://github.com/${_fetch_url}"
+            fi
+            _cmd_web "fetch $_fetch_url"
+            ;;
         clone)
             source "$LODGE_DIR/commands/clone.sh"
             cmd_clone "$rest" "${2:-.}"
@@ -3779,6 +3804,7 @@ _cmd_git() {
             ui_dim ""
             ui_dim "  Git workflow:"
             ui_dim "  clone <repo>        — Clone a GitHub repo into sandbox"
+            ui_dim "  fetch <url>         — Fetch README/summary from a repo"
             ui_dim "  commit [files]      — AI-generated commit message"
             ui_dim "  push [branch]       — Push to remote"
             ui_dim ""

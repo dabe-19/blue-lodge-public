@@ -675,6 +675,14 @@ _mcp_dispatch_intercept() {
                     --arg compound "$_compound" \
                     '.[] | select((.name | ascii_downcase) == ($compound | ascii_downcase)) | .name' 2>/dev/null | head -1)
 
+                # Alias: github_* → git_* (e.g. /github clone → git_clone)
+                if [ -z "$match" ] && [ "$cmd" = "github" ]; then
+                    local _alias_compound="git_${_subcmd}"
+                    match=$(printf '%s' "$tools_json" | _mcp_jq -r \
+                        --arg compound "$_alias_compound" \
+                        '.[] | select((.name | ascii_downcase) == ($compound | ascii_downcase)) | .name' 2>/dev/null | head -1)
+                fi
+
                 if [ -n "$match" ]; then
                     # Map remaining args to the tool's first required parameter
                     local _req_param

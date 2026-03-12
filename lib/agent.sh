@@ -20,17 +20,17 @@ AGENT_STEP_DELAY="${AGENT_STEP_DELAY:-1}"
 AGENT_MAX_CLARIFY="${AGENT_MAX_CLARIFY:-2}"
 AGENT_INTERACTIVE_PLANNING="${AGENT_INTERACTIVE_PLANNING:-0}"
 AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-3}"        # Subtask recursion depth (3 = three levels of expansion)
-AGENT_HONEYDEW_EXPAND="${AGENT_HONEYDEW_EXPAND:-0}"  # Subtask expansion: 0=disabled, 1=enabled
-AGENT_HONEYDEW_MAX_ITEMS="${AGENT_HONEYDEW_MAX_ITEMS:-16}"  # Max honeydew items before expansion is suppressed
+AGENT_HONEYDEW_EXPAND="${AGENT_HONEYDEW_EXPAND:-1}"  # Subtask expansion: 0=disabled, 1=enabled
+AGENT_HONEYDEW_MAX_ITEMS="${AGENT_HONEYDEW_MAX_ITEMS:-8}"  # Max honeydew items before expansion is suppressed
 AGENT_HONEYDEW_REWRITE="${AGENT_HONEYDEW_REWRITE:-1}"    # Dynamic honeydew rewrite: 0=disabled, 1=enabled
-AGENT_HONEYDEW_REWRITE_ROUNDS="${AGENT_HONEYDEW_REWRITE_ROUNDS:-3}"  # Global honeydew rewrite limit (all paths: normal, pressure relief, auto-recovery)
-AGENT_HONEYDEW_REWRITE_CADENCE="${AGENT_HONEYDEW_REWRITE_CADENCE:-2}"  # Min new milestones between rewrites (0=every iteration)
+AGENT_HONEYDEW_REWRITE_ROUNDS="${AGENT_HONEYDEW_REWRITE_ROUNDS:-5}"  # Global honeydew rewrite limit (all paths: normal, pressure relief, auto-recovery)
+AGENT_HONEYDEW_REWRITE_CADENCE="${AGENT_HONEYDEW_REWRITE_CADENCE:-1}"  # Min new milestones between rewrites (0=every iteration)
 AGENT_FORCE_REWRITE="${AGENT_FORCE_REWRITE:-1}"          # Force honeydew rewrite in interlock/failure recovery (bypass Phase 1 router): 0=disabled, 1=enabled
 AGENT_WEB_SUFFICIENCY="${AGENT_WEB_SUFFICIENCY:-20}"  # Web actions before sufficiency signal
-AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-20}"  # Max times to retry same milestone
+AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-2}"  # Max times to retry same milestone
 AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-10}"               # Max milestones with same base command
 AGENT_HONEYDEW_MATCH="${AGENT_HONEYDEW_MATCH:-3}"              # Min keyword score to auto-check honeydew item
-AGENT_HONEYDEW_INITIAL_COUNT="${AGENT_HONEYDEW_INITIAL_COUNT:-4}"  # Upper bound on initial honeydew items (prompt hint)
+AGENT_HONEYDEW_INITIAL_COUNT="${AGENT_HONEYDEW_INITIAL_COUNT:-5}"  # Upper bound on initial honeydew items (prompt hint)
 AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto | interactive | disabled
 AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-20}"  # Max consecutive /web search before fallback to fetch/scrape
 AGENT_WEB_SEARCH_TIGHT_PARSING="${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}"  # Tight web query parsing: 0=loose (keep quotes/negations/operators), 1=strict (strip all)
@@ -38,13 +38,13 @@ AGENT_WEB_SEARCH_MAX_LENGTH="${AGENT_WEB_SEARCH_MAX_LENGTH:-160}"  # Max charact
 AGENT_WEB_SEARCH_MAX_OPERATORS="${AGENT_WEB_SEARCH_MAX_OPERATORS:-3}"  # Max AND/OR operators allowed in loose mode
 AGENT_EVAL_REC_CHARS="${AGENT_EVAL_REC_CHARS:-120}"              # Max chars after a slash command in evaluator recommendations
 AGENT_PRESSURE_RELIEF="${AGENT_PRESSURE_RELIEF:-2}"          # Consecutive milestone skips before pressure relief fires (0=disabled)
-AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-3}"              # Smart command routing: 0=disabled, 1=post-dispatch reroute only, 2=fuzzy keyword catalog injection only, 3=combined (default)
+AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-2}"              # Smart command routing: 0=disabled, 1=post-dispatch reroute only, 2=fuzzy keyword catalog injection only, 3=combined
 AGENT_ASK_USER="${AGENT_ASK_USER:-1}"                    # Allow George to /ask the user questions during tasks: 0=disabled, 1=enabled
 AGENT_BRAINSTORM="${AGENT_BRAINSTORM:-1}"                  # Allow George to /brainstorm (self-reason) during tasks: 0=disabled, 1=enabled
 AGENT_FILE_EXPAND="${AGENT_FILE_EXPAND:-1}"              # Auto-expand file references in /social, /email, /write text: 0=disabled, 1=enabled
 AGENT_DM_SCAN_CHARS="${AGENT_DM_SCAN_CHARS:-80}"          # Characters to scan for recipient names from start of DM text
 AGENT_PRE_ROUTE="${AGENT_PRE_ROUTE:-1}"                  # Pre-route: extract /cmd from milestone, skip router: 0=disabled, 1=enabled
-AGENT_FAST_ROUTE="${AGENT_FAST_ROUTE:-1}"                # Fast-route: keyword filter before LLM router, 0=disabled, 1=enabled
+AGENT_FAST_ROUTE="${AGENT_FAST_ROUTE:-1}"                # Fast-route: 0=disabled, 1=keywords+lean, 2=fuzzy only (lean prompt, no keyword matching)
 AGENT_OUTPUT_DIR="${AGENT_OUTPUT_DIR:-responses}"       # Parent directory for agent file writes (/write, /save, /append)
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
@@ -837,13 +837,15 @@ _fast_route() {
     # Each pattern tests for keywords that strongly correlate
     # with exactly one command. Ordered by frequency of use.
 
-    # /github — repos, PRs, issues, stars, forks
-    if [[ "$_fr_text" =~ (github|pull[[:space:]]request|merge[[:space:]]request|search.*repos?|starred|fork[[:space:]]) ]]; then
-        echo "github"; return 0
+    # /git — unified git+github: repos, PRs, setup, SSH, clone, commit, push
+    # All git-related tasks route to /git (the superset command).
+    # /git includes: search, check, clone, commit, push, setup, ssh-keygen, etc.
+    if [[ "$_fr_text" =~ (github|git[[:space:]]|git$|pull[[:space:]]request|merge[[:space:]]request|repositor|repos?[^a-z]|starred|fork[[:space:]]|clone[[:space:]]|commit[[:space:]]|push[[:space:]]to|push[[:space:]]change|push[[:space:]]code|ssh[[:space:]]key|git[[:space:]]remote|git[[:space:]]branch) ]]; then
+        echo "git"; return 0
     fi
 
-    # /social — Discord, Telegram, X/Twitter, Mastodon, Bluesky
-    if [[ "$_fr_text" =~ (discord|telegram|mastodon|bluesky|tweet|toot|post[[:space:]]to[[:space:]]|dm[[:space:]].*on[[:space:]]|general[[:space:]]channel|fediverse) ]]; then
+    # /social — Discord, Telegram, X/Twitter, Mastodon, Bluesky, posting
+    if [[ "$_fr_text" =~ (discord|telegram|mastodon|bluesky|tweet|toot|post[[:space:]]to[[:space:]]|post[[:space:]].*channel|post[[:space:]].*general|dm[[:space:]].*on[[:space:]]|general[[:space:]]channel|fediverse|/post[[:space:]]) ]]; then
         echo "social"; return 0
     fi
 
@@ -912,35 +914,14 @@ _fast_route() {
         echo "recall"; return 0
     fi
 
-    # /clone — clone a repo
-    if [[ "$_fr_text" =~ (clone[[:space:]].*repo|git[[:space:]]clone) ]]; then
-        echo "clone"; return 0
-    fi
-
     # /download — download a URL
     if [[ "$_fr_text" =~ (download[[:space:]].*url|download[[:space:]].*http|download[[:space:]].*file[[:space:]]from) ]]; then
         echo "download"; return 0
     fi
 
-    # /git — git setup, SSH keys (not github search)
-    if [[ "$_fr_text" =~ (ssh[[:space:]]key|git[[:space:]]setup|git[[:space:]]config|git[[:space:]]remote|git[[:space:]]branch) ]]; then
-        echo "git"; return 0
-    fi
-
     # /gsuite — Google Workspace
     if [[ "$_fr_text" =~ (google[[:space:]]doc|google[[:space:]]sheet|google[[:space:]]drive|gsuite|g[[:space:]]suite) ]]; then
         echo "gsuite"; return 0
-    fi
-
-    # ── FILE OPERATIONS (verb + path patterns) ──────────
-    # /commit — commit changes
-    if [[ "$_fr_text" =~ (commit[[:space:]]|git[[:space:]]commit|commit[[:space:]]changes) ]]; then
-        echo "commit"; return 0
-    fi
-
-    # /push — push to GitHub
-    if [[ "$_fr_text" =~ (push[[:space:]]to|git[[:space:]]push|push[[:space:]]changes|push[[:space:]]code) ]]; then
-        echo "push"; return 0
     fi
 
     # No deterministic match — fall through to LLM router
@@ -975,10 +956,10 @@ _agent_fuzzy_catalog_match() {
     # Skip if the pre-routed command already matches (no need
     # to inject /git catalog when we're already routed to /git).
 
-    # Git / GitHub
+    # Git / GitHub (unified — always inject /git card)
     if [ "$_fz_preroute" != "git" ] && [ "$_fz_preroute" != "github" ]; then
-        if [[ "$_fz_text" =~ (github|git[[:space:]]repo|git[[:space:]]clone|pull[[:space:]]request|merge[[:space:]]request|\.git[[:space:]]|fork[[:space:]]|starred|githu) ]]; then
-            _fz_extras="${_fz_extras} github git"
+        if [[ "$_fz_text" =~ (github|git[[:space:]]repo|git[[:space:]]clone|pull[[:space:]]request|merge[[:space:]]request|\.git[[:space:]]|fork[[:space:]]|starred|githu|repositor|repos?[^a-z]|clone[[:space:]]|commit[[:space:]]|push[[:space:]]) ]]; then
+            _fz_extras="${_fz_extras} git"
         fi
     fi
 
@@ -1089,7 +1070,7 @@ _agent_smart_route() {
 
     # ── Gate: feature toggle ───────────────────────────────
     # Post-dispatch reroute fires for modes 1 and 3
-    local _sr_mode="${AGENT_SMART_ROUTE:-3}"
+    local _sr_mode="${AGENT_SMART_ROUTE:-2}"
     [ "$_sr_mode" -ne 1 ] && [ "$_sr_mode" -ne 3 ] && return 0
 
     # ── Extract base command and argument ──────────────────
@@ -2554,7 +2535,7 @@ agent_plan() {
 - If using /sandbox: create it FIRST with /sandbox new <name> <type>.
 - For complex multi-file or design-heavy work, prefix a step with [SUBTASK] — describe WHAT the code must do (architecture, modules, behavior). The subtask gets its own recursive sub-plan. Use [SUBTASK] for the heavy lifting; keep your top-level plan lean.
 - Code steps must produce REAL implementation — no Hello World, no stubs.
-- NEVER invent URLs or repo names. Use /web search or /github search first.
+- NEVER invent URLs or repo names. Use /web search or /git search first.
 - Output ONLY a NUMBERED LIST (1. 2. 3. etc.) — no explanations, no code."
 
     if [ "$effective_max_clarify" -gt 0 ]; then
@@ -2665,14 +2646,15 @@ ${base_rules}"
 
 _build_router_prompt() {
     # Phase 1 Prompt: Lean Router (fast-route fallback).
-    # When AGENT_FAST_ROUTE=1, domain-specific commands (/github,
-    # /social, /email, /pgp, /phone, /vision, /journal, /container,
-    # /sandbox, /wallet, /backup, /vitals, /secret, /mqtt, /recall,
-    # /clone, /download, /git, /gsuite, /commit, /push) are already
+    # When AGENT_FAST_ROUTE=1, domain-specific commands (/git [including
+    # github, clone, commit, push], /social, /email, /pgp, /phone,
+    # /vision, /journal, /container, /sandbox, /wallet, /backup,
+    # /vitals, /secret, /mqtt, /recall, /download, /gsuite) are already
     # handled by _fast_route(). The LLM only sees the AMBIGUOUS
     # commands that require reasoning about context.
     #
     # When AGENT_FAST_ROUTE=0, fall back to the full catalog.
+    # When AGENT_FAST_ROUTE=1 or 2, use the lean router prompt.
     #
     # ~100 tokens (lean) vs ~750 tokens (full).
 
@@ -2730,8 +2712,7 @@ _build_router_prompt_full() {
 Output ONLY the bare tool name. NO backticks. NO code fences. NO quotes. Example: /web
 
 TOOLS — gather info, execute work (these do NOT deliver results to the user):
-/github      Search GitHub repos
-/git         Git setup, SSH keys
+/git         Git + GitHub: search repos, check, fetch/scrape README, clone, setup, SSH keys, commit, push
 /social      Post to Discord/Telegram/X/Mastodon (see DELIVERY)
 /email       Send/check actual email — gmail/protonmail/zoho (see DELIVERY)
 /pgp         PGP sign/verify/export
@@ -2743,7 +2724,6 @@ TOOLS — gather info, execute work (these do NOT deliver results to the user):
 /secret      Encrypted secrets vault
 /vitals      System dashboard
 /backup      Backup and restore
-/clone       Clone git repo
 /download    Download a URL
 /recall      Search knowledge base FTS5 (DO THIS FIRST before web)
 /init        Scaffold new project
@@ -2772,8 +2752,9 @@ DELIVERY — present results to user (one per milestone; a full task may chain s
 DEFAULT RULE: If the task does NOT explicitly require /write, /save, /email, /social, /commit, or /push, use /respond to deliver the answer.
 
 ROUTE EXAMPLES:
-<search github repos, issues, PRs> → /github
+<search github repos, issues, PRs> → /git
 <git setup, SSH keys, clone>       → /git
+<scrape/fetch a git repo README>   → /git
 <post to discord/telegram/x>       → /social
 <send an email>                    → /email
 <PGP sign/encrypt/verify>          → /pgp
@@ -2793,8 +2774,9 @@ ${_ask_line:+<need user preferences or clarification> → /ask
 <general knowledge, no tools>      → /respond
 
 RULES:
-- SPECIFICITY: prefer domain commands over /web — /github for GitHub, /git for git ops, /social for social, /email for email, /phone for phone
+- SPECIFICITY: prefer domain commands over /web — /git for GitHub+git ops (including repo scraping via /git fetch), /social for social, /email for email, /phone for phone
 - /web for time-sensitive queries (weather, dates, scores, events, prices, news) and general searches — NOT when a domain command fits
+- /post or "post to" = /social (Discord/Telegram/X/Mastodon)
 - /slash to CREATE a custom tool when no built-in command fits
 - /sandbox NEVER for slash commands
 - /social for Discord/Telegram/X, /email for actual email
@@ -2825,7 +2807,7 @@ _specialist_key_status() {
         web)      keys=(SERPER_API_KEY PERPLEXITY_API_KEY) ;;
         social)   keys=(DISCORD_BOT_TOKEN DISCORD_WEBHOOK_URL TELEGRAM_BOT_TOKEN X_BEARER_TOKEN MASTODON_ACCESS_TOKEN BLUESKY_APP_PASSWORD) ;;
         email)    keys=(EMAIL_PROVIDER) ;;
-        github)   keys=(GITHUB_TOKEN) ;;
+        github|git)   keys=(GITHUB_TOKEN) ;;
         wallet)   keys=(btc_address ada_address sol_address) ;;
         pgp)      ;; # uses gpg keyring, not API keys
         *)        return 0 ;;  # no keys needed
@@ -2908,7 +2890,7 @@ OUTPUT FORMAT: exactly ONE slash command on its own line, starting with /
 FORBIDDEN: code fences, quotes on args, multiple commands per line, /sandbox for slash commands
 
 COMMAND TYPES:
-  TOOLS (gather info, do work): /github /git /pgp /phone /vision /journal /edit /append /sandbox /container /secret /clone /init /recall /download /build /test /fix /read /ls /web /slash /vitals /backup bash
+  TOOLS (gather info, do work): /git /pgp /phone /vision /journal /edit /append /sandbox /container /secret /init /recall /download /build /test /fix /read /ls /web /slash /vitals /backup bash
   DELIVERY (present output to user): /social /email /commit /push /write /save /respond
   NOTE: A full task may chain multiple DELIVERY commands across milestones (e.g. /write a report, then /email it).
   DEFAULT: If the task does NOT explicitly need a file, email, or post, use /respond to deliver the answer.
@@ -3057,16 +3039,22 @@ SPEC
             git)
                 cat << 'SPEC'
 {"cmd":"/git","syntax":{
-  "setup":"/git setup (configure user/email)","status":"/git status","ssh-keygen":"/git ssh-keygen"},
-"format_only_ex":["/git <action>"],
-"fill":{"<action>":"one of: setup, status, ssh-keygen"}}
+  "search":"/git search <query>","check":"/git check <owner/repo>",
+  "fetch":"/git fetch <url_or_owner/repo>",
+  "clone":"/git clone <repo_url_or_owner/repo>",
+  "commit":"/git commit [files]","push":"/git push [branch]",
+  "setup":"/git setup","status":"/git status","ssh-keygen":"/git ssh-keygen"},
+"workflow":{"scrape_repo":"/git search <query> -> /git fetch <owner/repo>"},
+"format_only_ex":["/git search <keywords>","/git fetch <owner/repo>","/git clone <owner/repo>","/git commit","/git push","/git setup"],
+"fill":{"<action>":"one of: search, check, fetch, clone, commit, push, setup, status, ssh-keygen"}}
 SPEC
                 ;;
             github)
                 cat << 'SPEC'
-{"cmd":"/github","syntax":"/github search <query>",
-"format_only_ex":["/github search <keywords>"],
-"fill":{"<keywords>":"search terms for GitHub repos"}}
+{"cmd":"/git","alias_note":"/github is an alias — use /git for all git+github ops","syntax":{
+  "search":"/git search <query>","check":"/git check <owner/repo>","fetch":"/git fetch <url_or_owner/repo>"},
+"workflow":{"scrape_repo":"/git search <query> -> /git fetch <owner/repo>"},
+"format_only_ex":["/git search <keywords>","/git fetch <owner/repo>","/git check <owner/repo>"]}
 SPEC
                 ;;
             email)
@@ -3399,7 +3387,7 @@ agent_inner_loop() {
         # Regex anchors to space or start-of-string to avoid matching
         # URL path segments (e.g. https://example.com/api → "api").
         local _pre_route=""
-        if [ "${AGENT_PRE_ROUTE:-1}" -eq 1 ] && [ "${AGENT_SMART_ROUTE:-3}" -ge 1 ] && [ "$_p1_incomplete_consec" -lt 2 ] && [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
+        if [ "${AGENT_PRE_ROUTE:-1}" -eq 1 ] && [ "${AGENT_SMART_ROUTE:-2}" -ge 1 ] && [ "$_p1_incomplete_consec" -lt 2 ] && [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
             local _pre_cmd="${BASH_REMATCH[2]}"
             # Synonym remap: models love "/draft" — treat as /write
             [ "$_pre_cmd" = "draft" ] && _pre_cmd="write"
@@ -3739,7 +3727,7 @@ Pick the BEST command from this list for the task. Output exactly ONE command wi
         # E.g., milestone says "search GitHub repos" but routed to
         # /web → inject /git and /github syntax cards so the model
         # can pick the right tool.
-        local _sr_mode="${AGENT_SMART_ROUTE:-3}"
+        local _sr_mode="${AGENT_SMART_ROUTE:-2}"
         if [ "$_sr_mode" -ge 2 ] && [ "$_hallucination_fallback" -eq 0 ]; then
             local _fz_base="${selected_tool#/}"
             local _fz_extras
@@ -5318,8 +5306,9 @@ MEMEOF
 {"CORE":["/ask"';
         [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _tool_summary="${_tool_summary}"',"/brainstorm"'
         _tool_summary="${_tool_summary}"',"/recall","/journal","/journal write","/respond"],
-"FILES":["/edit","/append","/write","/save","/read","/ls","/init","/clone","/build","/test","/fix","/download","/commit","/push","/cd"],
-"WEB":["/github search","/vision","/web search","/web fetch","/web images"],
+"FILES":["/edit","/append","/write","/save","/read","/ls","/init","/build","/test","/fix","/download","/commit","/push","/cd"],
+"GIT":["/git search","/git fetch","/git clone","/git check","/git setup"],
+"WEB":["/vision","/web search","/web fetch","/web images"],
 "SANDBOX":["/sandbox","/container"]'
         # Include COMMS only when social or email services are configured
         if echo "$_svc_status" | grep -qE 'CONFIGURED:.*(discord|telegram|mastodon|x/twitter|bluesky|email)'; then

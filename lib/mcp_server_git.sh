@@ -345,6 +345,38 @@ _TOOLS_JSON='[
       "type": "object",
       "properties": {}
     }
+  },
+  {
+    "name": "git_fetch_readme",
+    "description": "Fetch and return the README content from a GitHub repository. Accepts owner/repo or full URL.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "description": "Repository as owner/repo or full GitHub URL"
+        }
+      },
+      "required": ["repo"]
+    }
+  },
+  {
+    "name": "github_clone",
+    "description": "Clone a GitHub repository. Alias for git_clone.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "Repository URL or owner/repo shorthand (required)"
+        },
+        "path": {
+          "type": "string",
+          "description": "Local directory to clone into (optional)"
+        }
+      },
+      "required": ["url"]
+    }
   }
 ]'
 
@@ -760,6 +792,49 @@ _handle_tool_call() {
             fi
 
             _respond_result "$id" "$(_text_content "$(printf '%b' "$result")")"
+            ;;
+
+        git_fetch_readme)
+            local repo
+            repo=$(printf '%s' "$arguments" | $_JQ -r '.repo // empty' 2>/dev/null)
+            if [ -z "$repo" ]; then
+                _respond_result "$id" "$(_text_content "Error: repo parameter is required")"
+                return
+            fi
+            # Strip GitHub URL prefix to get owner/repo slug
+            repo="${repo#https://github.com/}"
+            repo="${repo#http://github.com/}"
+            repo="${repo%/}"
+            # Fetch via web_fetch with full GitHub URL
+            local fetch_url="https://github.com/${repo}"
+            local readme_result=""
+            if declare -f web_fetch &>/dev/null; then
+                readme_result=$(web_fetch "$fetch_url" 2>/dev/null)
+            elif declare -f _web_fetch_github_readme &>/dev/null; then
+                readme_result=$(_web_fetch_github_readme "$repo" 2>/dev/null)
+            fi
+            if [ -n "$readme_result" ]; then
+                _respond_result "$id" "$(_text_content "$readme_result")"
+            else
+                _respond_result "$id" "$(_text_content "Could not fetch README for: $repo")"
+            fi
+            ;;
+
+        github_clone)
+            # Alias: delegate to git_clone handler
+            local url path
+            url=$(printf '%s' "$arguments" | $_JQ -r '.url // empty' 2>/dev/null)
+            path=$(printf '%s' "$arguments" | $_JQ -r '.path // empty' 2>/dev/null)
+            if [ -z "$url" ]; then
+                _respond_result "$id" "$(_text_content "Error: url parameter is required")"
+                return
+            fi
+            # Reformat arguments and call git_clone logic inline
+            local clone_args
+            clone_args=$(_mcp_jq -n -c --arg url "$url" --arg path "$path" \
+                '{url: $url, path: (if $path == "" then null else $path end)}')
+            # Re-dispatch to git_clone
+            _handle_tool_call "$id" "git_clone" "$clone_args"
             ;;
 
         *)
