@@ -907,6 +907,24 @@ _cmd_limits() {
                     ui_err "Smart route: 0=off 1=reroute 2=fuzzy 3=combined (or on/off)"
                 fi
             fi ;;
+        fast-route|fastroute|fast_route)
+            if [ -z "$value" ]; then
+                local _fr_label="disabled"
+                [ "${AGENT_FAST_ROUTE:-1}" -eq 1 ] && _fr_label="enabled"
+                ui_info "Fast route (keyword filter): $_fr_label (default: enabled)"
+                ui_dim "  When enabled, domain-specific commands are matched by keyword"
+                ui_dim "  before the LLM router fires. Saves ~1 LLM call per milestone."
+            else
+                if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
+                    AGENT_FAST_ROUTE=1
+                    ui_ok "Fast route enabled — keyword filter active before LLM router"
+                elif [[ "$value" == "off" || "$value" == "0" || "$value" == "disable" || "$value" == "disabled" ]]; then
+                    AGENT_FAST_ROUTE=0
+                    ui_ok "Fast route disabled — all routing goes through LLM router"
+                else
+                    ui_err "Fast route must be 'on' or 'off' (or 1/0, enable/disable)"
+                fi
+            fi ;;
         ask)
             if [ -z "$value" ]; then
                 local _ask_label="disabled"
@@ -1000,6 +1018,7 @@ _cmd_limits() {
             AGENT_PRESSURE_RELIEF=2
             AGENT_SMART_ROUTE=3
             AGENT_PRE_ROUTE=1
+            AGENT_FAST_ROUTE=1
             AGENT_WEB_SEARCH_TIGHT_PARSING=0
             AGENT_WEB_SEARCH_MAX_LENGTH=160
             AGENT_WEB_SEARCH_MAX_OPERATORS=3
@@ -1240,6 +1259,9 @@ _cmd_limits() {
             [ "${AGENT_SMART_ROUTE:-3}" -eq 2 ] && _sr_show="fuzzy only"
             [ "${AGENT_SMART_ROUTE:-3}" -ge 3 ] && _sr_show="combined"
             printf "  %-22s %s\n" "Smart route:" "$_sr_show (${AGENT_SMART_ROUTE:-3})  (default: 3 combined)"
+            local _fr_show="disabled"
+            [ "${AGENT_FAST_ROUTE:-1}" -eq 1 ] && _fr_show="enabled"
+            printf "  %-22s %s\n" "Fast route:" "$_fr_show  (default: enabled)"
             local _ask_show="disabled"
             [ "${AGENT_ASK_USER:-1}" -eq 1 ] && _ask_show="enabled"
             printf "  %-22s %s\n" "Ask user (/ask):" "$_ask_show  (default: enabled)"
@@ -1286,6 +1308,7 @@ _cmd_limits() {
             ui_dim "    web-search-ops N  — Max AND/OR operators in loose web search mode (current: ${AGENT_WEB_SEARCH_MAX_OPERATORS:-3})"
             ui_dim "    rec-chars N      — Max chars in evaluator recommendation to strategist (current: ${AGENT_EVAL_REC_CHARS:-120})"
             ui_dim "    smart-route 0-3|on|off — Smart routing: 0=off 1=reroute 2=fuzzy 3=combined (current: ${AGENT_SMART_ROUTE:-3})"
+            ui_dim "    fast-route on|off  — Keyword filter before LLM router (current: $([ "${AGENT_FAST_ROUTE:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    ask on|off       — Allow George to /ask human questions (current: $([ "${AGENT_ASK_USER:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    brainstorm on|off — Allow George to /brainstorm (self-reason) (current: $([ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    file-expand on|off — Auto-expand file refs in /social /email /write (current: $([ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && echo on || echo off))"

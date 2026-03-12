@@ -44,6 +44,7 @@ AGENT_BRAINSTORM="${AGENT_BRAINSTORM:-1}"                  # Allow George to /br
 AGENT_FILE_EXPAND="${AGENT_FILE_EXPAND:-1}"              # Auto-expand file references in /social, /email, /write text: 0=disabled, 1=enabled
 AGENT_DM_SCAN_CHARS="${AGENT_DM_SCAN_CHARS:-80}"          # Characters to scan for recipient names from start of DM text
 AGENT_PRE_ROUTE="${AGENT_PRE_ROUTE:-1}"                  # Pre-route: extract /cmd from milestone, skip router: 0=disabled, 1=enabled
+AGENT_FAST_ROUTE="${AGENT_FAST_ROUTE:-1}"                # Fast-route: keyword filter before LLM router, 0=disabled, 1=enabled
 AGENT_OUTPUT_DIR="${AGENT_OUTPUT_DIR:-responses}"       # Parent directory for agent file writes (/write, /save, /append)
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
@@ -813,6 +814,137 @@ _agent_honeydew_maybe_expand() {
 
     # Try expansion (heuristic + LLM)
     _agent_honeydew_expand "$next_id" "$workdir"
+}
+
+# ── Fast Route: Keyword Filter ────────────────────────────────
+# Deterministic keyword-based routing that captures unambiguous
+# slash commands WITHOUT an LLM call. Only fires when the micro
+# objective (milestone text) contains clear domain keywords.
+#
+# Design: This is a FILTER, not a replacement for the LLM router.
+# It captures ~70% of routing decisions via cheap string matching,
+# letting ambiguous tasks fall through to a much leaner LLM prompt
+# that only needs to know the ~12 commands fast-route can't match.
+#
+# Args:  $1 = micro_objective text (the milestone)
+# Output: echoes the command name (without /) or empty string
+# Returns: 0 if matched, 1 if no match (fall through to LLM)
+_fast_route() {
+    local _fr_text
+    _fr_text=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+
+    # ── DOMAIN COMMANDS (high-signal keywords) ──────────
+    # Each pattern tests for keywords that strongly correlate
+    # with exactly one command. Ordered by frequency of use.
+
+    # /github — repos, PRs, issues, stars, forks
+    if [[ "$_fr_text" =~ (github|pull[[:space:]]request|merge[[:space:]]request|search.*repos?|starred|fork[[:space:]]) ]]; then
+        echo "github"; return 0
+    fi
+
+    # /social — Discord, Telegram, X/Twitter, Mastodon, Bluesky
+    if [[ "$_fr_text" =~ (discord|telegram|mastodon|bluesky|tweet|toot|post[[:space:]]to[[:space:]]|dm[[:space:]].*on[[:space:]]|general[[:space:]]channel|fediverse) ]]; then
+        echo "social"; return 0
+    fi
+
+    # /email — actual email sending/checking
+    if [[ "$_fr_text" =~ (send.*email|check.*email|inbox|gmail|protonmail|zoho|mail[[:space:]]to|smtp|@[a-z0-9]+\.[a-z]) ]]; then
+        echo "email"; return 0
+    fi
+
+    # /pgp — encryption, signing, keys
+    if [[ "$_fr_text" =~ (pgp|gpg|encrypt[[:space:]]|decrypt[[:space:]]|sign[[:space:]]with[[:space:]]key|armored|keyring) ]]; then
+        echo "pgp"; return 0
+    fi
+
+    # /phone — phone status, SMS
+    if [[ "$_fr_text" =~ (phone[[:space:]]status|sms[[:space:]]|text[[:space:]]message|iphone[[:space:]]|android[[:space:]]|battery[[:space:]]level|cell[[:space:]]signal) ]]; then
+        echo "phone"; return 0
+    fi
+
+    # /vision — image analysis
+    if [[ "$_fr_text" =~ (analyze.*image|describe.*image|image.*analy|screenshot|ocr[[:space:]]) ]]; then
+        echo "vision"; return 0
+    fi
+
+    # /journal — journal read/write
+    if [[ "$_fr_text" =~ (journal[[:space:]]|diary[[:space:]]|daily[[:space:]]log|log[[:space:]]entry|morning[[:space:]]entry|evening[[:space:]]entry) ]]; then
+        echo "journal"; return 0
+    fi
+
+    # /container — Docker, Linux containers
+    if [[ "$_fr_text" =~ (docker[[:space:]]|container[[:space:]]|alpine[[:space:]]|chroot|isolated[[:space:]]env) ]]; then
+        echo "container"; return 0
+    fi
+
+    # /sandbox — code sandboxes
+    if [[ "$_fr_text" =~ (sandbox[[:space:]]|sandboxed[[:space:]]|ephemeral[[:space:]]env) ]]; then
+        echo "sandbox"; return 0
+    fi
+
+    # /wallet — crypto wallets
+    if [[ "$_fr_text" =~ (wallet[[:space:]]|bitcoin|ethereum|crypto[[:space:]]|btc[[:space:]]|eth[[:space:]]|solana|blockchain) ]]; then
+        echo "wallet"; return 0
+    fi
+
+    # /backup — backup/restore
+    if [[ "$_fr_text" =~ (backup[[:space:]]|restore[[:space:]]from|snapshot[[:space:]]|archive[[:space:]]the) ]]; then
+        echo "backup"; return 0
+    fi
+
+    # /vitals — system dashboard
+    if [[ "$_fr_text" =~ (vitals|system[[:space:]]dashboard|system[[:space:]]status|health[[:space:]]check|disk[[:space:]]space|memory[[:space:]]usage|cpu[[:space:]]usage) ]]; then
+        echo "vitals"; return 0
+    fi
+
+    # /secret — secrets vault
+    if [[ "$_fr_text" =~ (secret[[:space:]]|vault[[:space:]]|store.*key|retrieve.*key|api[[:space:]]key[[:space:]]|credential) ]]; then
+        echo "secret"; return 0
+    fi
+
+    # /mqtt — MQTT/IoT
+    if [[ "$_fr_text" =~ (mqtt|mosquitto|pub.sub|subscribe.*topic|publish.*topic|iot[[:space:]]|sensor.*data|smart[[:space:]]home) ]]; then
+        echo "mqtt"; return 0
+    fi
+
+    # /recall — knowledge base search
+    if [[ "$_fr_text" =~ (recall[[:space:]]|search.*knowledge|knowledge[[:space:]]base|fts5|look[[:space:]]up.*in[[:space:]]memory) ]]; then
+        echo "recall"; return 0
+    fi
+
+    # /clone — clone a repo
+    if [[ "$_fr_text" =~ (clone[[:space:]].*repo|git[[:space:]]clone) ]]; then
+        echo "clone"; return 0
+    fi
+
+    # /download — download a URL
+    if [[ "$_fr_text" =~ (download[[:space:]].*url|download[[:space:]].*http|download[[:space:]].*file[[:space:]]from) ]]; then
+        echo "download"; return 0
+    fi
+
+    # /git — git setup, SSH keys (not github search)
+    if [[ "$_fr_text" =~ (ssh[[:space:]]key|git[[:space:]]setup|git[[:space:]]config|git[[:space:]]remote|git[[:space:]]branch) ]]; then
+        echo "git"; return 0
+    fi
+
+    # /gsuite — Google Workspace
+    if [[ "$_fr_text" =~ (google[[:space:]]doc|google[[:space:]]sheet|google[[:space:]]drive|gsuite|g[[:space:]]suite) ]]; then
+        echo "gsuite"; return 0
+    fi
+
+    # ── FILE OPERATIONS (verb + path patterns) ──────────
+    # /commit — commit changes
+    if [[ "$_fr_text" =~ (commit[[:space:]]|git[[:space:]]commit|commit[[:space:]]changes) ]]; then
+        echo "commit"; return 0
+    fi
+
+    # /push — push to GitHub
+    if [[ "$_fr_text" =~ (push[[:space:]]to|git[[:space:]]push|push[[:space:]]changes|push[[:space:]]code) ]]; then
+        echo "push"; return 0
+    fi
+
+    # No deterministic match — fall through to LLM router
+    return 1
 }
 
 # ── Fuzzy Keyword Catalog Match ───────────────────────────────
@@ -2532,23 +2664,56 @@ ${base_rules}"
 # but does NOT reload the 4GB model from disk.
 
 _build_router_prompt() {
-    # Phase 1 Prompt: The Command Catalog Router (line-oriented)
-    # Line-per-command format with clear TOOLS vs DELIVERY separation.
-    # The router's ONLY job: classify task → command.
-    # Completion detection is handled by the milestone evaluator.
-    # Specialist handles exact syntax. ~250 tokens.
+    # Phase 1 Prompt: Lean Router (fast-route fallback).
+    # When AGENT_FAST_ROUTE=1, domain-specific commands (/github,
+    # /social, /email, /pgp, /phone, /vision, /journal, /container,
+    # /sandbox, /wallet, /backup, /vitals, /secret, /mqtt, /recall,
+    # /clone, /download, /git, /gsuite, /commit, /push) are already
+    # handled by _fast_route(). The LLM only sees the AMBIGUOUS
+    # commands that require reasoning about context.
     #
-    # FORMAT: Plain text, one command per line, two clear sections.
-    # Small models (2-4B) parse line-oriented text far more reliably
-    # than nested JSON with escaped quotes and brackets.
+    # When AGENT_FAST_ROUTE=0, fall back to the full catalog.
     #
-    # ORDERING: Specificity-first (most-specific → most-general).
-    # 2B models exhibit strong primacy bias — items listed first
-    # are chosen disproportionately. Specific commands (/github,
-    # /edit) lead so the model prefers them when intent matches,
-    # falling through to generals (/web, /write) only when nothing
-    # specific fits. /slash is the escape valve for missing capabilities.
+    # ~100 tokens (lean) vs ~750 tokens (full).
 
+    if [ "${AGENT_FAST_ROUTE:-1}" -eq 0 ]; then
+        _build_router_prompt_full
+        return
+    fi
+
+    # Conditional lines
+    local _ask_line="" _brainstorm_line=""
+    [ "${AGENT_ASK_USER:-1}" -eq 1 ] && _ask_line="/ask=need human input"
+    [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _brainstorm_line="/brainstorm=hard decision, no clear answer"
+
+    cat << 'LEAN_ROUTER'
+Output ONLY a bare /command. No prose. Example: /web
+
+/web=search,fetch,news,weather,time-sensitive
+/respond=answer directly (DEFAULT if no file/email/post needed)
+/write=create/overwrite file
+/save=save content to file
+/edit=small file change (sed, max 200 chars)
+/append=add to end of file
+/read=read a file
+/ls=list files
+/init=scaffold new project
+/build=build/compile project
+/test=run tests
+/fix=diagnose/fix errors
+/slash=create custom command (nothing else fits)
+LEAN_ROUTER
+    # Conditional commands (outside heredoc to avoid substitution issues)
+    [ -n "$_ask_line" ] && echo "$_ask_line"
+    [ -n "$_brainstorm_line" ] && echo "$_brainstorm_line"
+    echo "bash=shell fallback"
+    echo ""
+    echo "DEFAULT: /respond unless the task explicitly needs file/email/post output."
+}
+
+# Full router prompt — used when AGENT_FAST_ROUTE=0 to provide
+# the complete command catalog to the LLM router.
+_build_router_prompt_full() {
     # Conditional /ask line — only available when AGENT_ASK_USER=1
     local _ask_line=""
     if [ "${AGENT_ASK_USER:-1}" -eq 1 ]; then
@@ -2623,7 +2788,7 @@ ROUTE EXAMPLES:
 <draft a document/report>          → /write
 <weather or news question>         → /web
 ${_ask_line:+<need user preferences or clarification> → /ask
-}${_brainstorm_line:+<hard decision with no clear answer, can'\''t be researched> → /brainstorm
+}${_brainstorm_line:+<hard decision, cannot be researched> → /brainstorm
 }<deliver answer to user>           → /respond
 <general knowledge, no tools>      → /respond
 
@@ -3293,7 +3458,24 @@ agent_inner_loop() {
         if [ -n "$_pre_route" ]; then
             selected_tool="$_pre_route"
         else
-        local router_sys=$(_build_router_prompt)
+
+        # ── FAST ROUTE: keyword filter (no LLM call) ──────────
+        # Deterministic keyword matching captures domain-specific
+        # commands (~70% of routes). Only ambiguous tasks fall
+        # through to the lean LLM router prompt (~100 tokens).
+        local _fr_result=""
+        if [ "${AGENT_FAST_ROUTE:-1}" -eq 1 ]; then
+            _fr_result=$(_fast_route "$micro_objective")
+            if [ -n "$_fr_result" ]; then
+                selected_tool="$_fr_result"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Fast-routed: /$_fr_result (keyword match, skipping LLM router)"
+                declare -f transcript_log &>/dev/null && transcript_log "router" "/$_fr_result (fast-routed)"
+            fi
+        fi
+
+        if [ -z "$_fr_result" ]; then
+        # ── LLM ROUTER: ambiguous commands only ───────────────
+        local router_sys="$_cached_router_sys"
         local _route_now
         _route_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
         local _router_context
@@ -3331,7 +3513,9 @@ agent_inner_loop() {
             selected_tool="/ask"
         fi
 
-        fi  # end pre-route / LLM router branch
+        fi  # end fast-route / LLM router branch
+
+        fi  # end pre-route / LLM+fast router branch
 
         # ── WEB SUFFICIENCY ENFORCEMENT ───────────────────────
         # The sufficiency gate (in the action success block below)
@@ -5022,6 +5206,13 @@ MEMEOF
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew list -> macro_memory"
     fi
 
+    # ── Cache static prompt parts ────────────────────────────
+    # Build once per task instead of every loop iteration. These
+    # depend only on config flags and services, not on milestone
+    # state or action history.
+    local _cached_router_sys
+    _cached_router_sys=$(_build_router_prompt)
+
     # ── Macro Loop: Milestone-by-milestone execution ──────────
     local macro_iterations=0
     local max_macro_loops="${AGENT_MAX_STEPS:-20}"
@@ -5155,14 +5346,16 @@ MEMEOF
 
         # Social context: registered Discord channels and Mastodon
         # instances so the strategist can generate correct channel
-        # names. Injected into the USER prompt (not system prompt)
-        # as reference data — keeps system prompt static for KV
-        # cache reuse and avoids priming the model toward social
-        # research loops on small (3-4B) models.
+        # names. Only injected when the task or honeydew mentions
+        # social platforms — saves ~100-200 tokens on non-social tasks.
         local _social_ctx=""
-        if declare -f social_context_compact &>/dev/null; then
-            _social_ctx=$(social_context_compact 2>/dev/null)
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_social_ctx" ] && ui_dim "  [debug] inject: strategist <- social context"
+        local _social_signal="${task} ${_strat_honeydew:-}"
+        _social_signal=$(echo "$_social_signal" | tr '[:upper:]' '[:lower:]')
+        if [[ "$_social_signal" =~ (discord|telegram|mastodon|bluesky|tweet|toot|post[[:space:]]to|dm[[:space:]]|x/twitter|fediverse|slack|social) ]]; then
+            if declare -f social_context_compact &>/dev/null; then
+                _social_ctx=$(social_context_compact 2>/dev/null)
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_social_ctx" ] && ui_dim "  [debug] inject: strategist <- social context"
+            fi
         fi
 
         # ── Inject milestone history into strategist prompt ─────
@@ -5205,7 +5398,9 @@ MEMEOF
         # surface its content so the strategist crafts a milestone
         # that references the ACTUAL brainstorm data (e.g. the meal
         # plan items) instead of a generic "[insert plan here]".
+        # Only injected when brainstorm is enabled and data exists.
         local _strat_brainstorm=""
+        if [ "${AGENT_BRAINSTORM:-1}" -eq 1 ]; then
         local _strat_bs_file="$george_dir/$BRAINSTORM_FILE"
         if [ -f "$_strat_bs_file" ]; then
             local _strat_bs_query _strat_bs_response
@@ -5216,6 +5411,7 @@ MEMEOF
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- brainstorm context"
             fi
         fi
+        fi  # end AGENT_BRAINSTORM gate
 
         local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
 

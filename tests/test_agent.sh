@@ -378,7 +378,7 @@ describe "Dynamic dual-loop architecture"
   }
 
   it "router catalog lists journal as read or write" && {
-    body=$(declare -f _build_router_prompt)
+    body=$(declare -f _build_router_prompt_full)
     echo "$body" | grep -q '/journal.*Read or write'
     assert_ok $?
   }
@@ -516,13 +516,13 @@ describe "Dynamic dual-loop architecture"
   }
 
   it "router prompt has social routing rules" && {
-    body=$(declare -f _build_router_prompt)
+    body=$(declare -f _build_router_prompt_full)
     echo "$body" | grep -q 'NOT.*email'
     assert_ok $?
   }
 
   it "router prompt has anti-sandbox rule" && {
-    body=$(declare -f _build_router_prompt)
+    body=$(declare -f _build_router_prompt_full)
     echo "$body" | grep -q 'sandbox.*NEVER\|NOT.*sandbox'
     assert_ok $?
   }
@@ -1657,7 +1657,7 @@ describe "Brainstorm buffer (cross-milestone data flow)"
   }
 
   it "router prompt constrains output to slash commands only" && {
-    body=$(declare -f _build_router_prompt)
+    body=$(declare -f _build_router_prompt_full)
     echo "$body" | grep -q 'Output ONLY a slash command'
     assert_ok $? "Router must constrain output to slash commands only"
     # Must NOT mention DONE/SUCCESS/COMPLETE — those words contaminate attention
@@ -1666,19 +1666,19 @@ describe "Brainstorm buffer (cross-milestone data flow)"
   }
 
   it "router prompt outputs only tool names" && {
-    body=$(declare -f _build_router_prompt)
+    body=$(declare -f _build_router_prompt_full)
     echo "$body" | grep -q 'bare tool name'
     assert_ok $? "Router output instruction: only tool names"
   }
 
   it "router prompt forbids code fences in output" && {
-    body=$(declare -f _build_router_prompt)
+    body=$(declare -f _build_router_prompt_full)
     echo "$body" | grep -q 'no_fences\|NEVER wrap output\|NO code fences\|code fences'
     assert_ok $? "Router must forbid backtick wrapping"
   }
 
   it "router prompt has plain-text preamble before JSON" && {
-    body=$(declare -f _build_router_prompt)
+    body=$(declare -f _build_router_prompt_full)
     echo "$body" | grep -q 'Output ONLY the bare tool name'
     assert_ok $? "Router must have plain-text anti-backtick preamble"
   }
@@ -3170,6 +3170,269 @@ describe "Verdict parsing strips quotes from small model output"
     _verdict="'SATISFIED': it worked"
     _word=$(echo "$_verdict" | head -1 | awk -F'[: \t]' '{print $1}' | sed "s/^[*_\"\\x27]\\+//;s/[*_.,\"\\x27]\\+$//")
     assert_eq "$_word" "SATISFIED"
+  }
+
+# ── Fast Route: keyword filter ─────────────────────────────────
+describe "Fast route keyword filter"
+
+  it "_fast_route is defined" && {
+    declare -f _fast_route &>/dev/null
+    assert_ok $?
+  }
+
+  it "AGENT_FAST_ROUTE defaults to 1 (enabled)" && {
+    assert_eq "$AGENT_FAST_ROUTE" "1"
+  }
+
+  it "AGENT_FAST_ROUTE is overridable" && {
+    (
+      AGENT_FAST_ROUTE=0
+      assert_eq "$AGENT_FAST_ROUTE" "0"
+    )
+    assert_ok $?
+  }
+
+  it "routes 'search github repo' to github" && {
+    result=$(_fast_route "Use /github search to find the blue-lodge-public repo")
+    assert_eq "$result" "github"
+  }
+
+  it "routes 'post to discord general channel' to social" && {
+    result=$(_fast_route "Post a summary to the general channel in discord")
+    assert_eq "$result" "social"
+  }
+
+  it "routes 'send email to bob' to email" && {
+    result=$(_fast_route "Send email to bob@example.com with the report")
+    assert_eq "$result" "email"
+  }
+
+  it "routes 'check inbox' to email" && {
+    result=$(_fast_route "Check email inbox for new messages")
+    assert_eq "$result" "email"
+  }
+
+  it "routes 'encrypt with pgp' to pgp" && {
+    result=$(_fast_route "PGP sign the release file")
+    assert_eq "$result" "pgp"
+  }
+
+  it "routes 'phone status' to phone" && {
+    result=$(_fast_route "Check phone status and battery level")
+    assert_eq "$result" "phone"
+  }
+
+  it "routes 'analyze image' to vision" && {
+    result=$(_fast_route "Analyze image at /tmp/screenshot.png")
+    assert_eq "$result" "vision"
+  }
+
+  it "routes 'journal write' to journal" && {
+    result=$(_fast_route "Write a journal entry about today")
+    assert_eq "$result" "journal"
+  }
+
+  it "routes 'docker container' to container" && {
+    result=$(_fast_route "Start a Docker container with alpine")
+    assert_eq "$result" "container"
+  }
+
+  it "routes 'sandbox test' to sandbox" && {
+    result=$(_fast_route "Run the code in a sandbox environment")
+    assert_eq "$result" "sandbox"
+  }
+
+  it "routes 'bitcoin wallet' to wallet" && {
+    result=$(_fast_route "Check bitcoin wallet balance")
+    assert_eq "$result" "wallet"
+  }
+
+  it "routes 'backup files' to backup" && {
+    result=$(_fast_route "Backup the project files")
+    assert_eq "$result" "backup"
+  }
+
+  it "routes 'system status' to vitals" && {
+    result=$(_fast_route "Check system dashboard for disk space")
+    assert_eq "$result" "vitals"
+  }
+
+  it "routes 'mqtt publish' to mqtt" && {
+    result=$(_fast_route "MQTT publish to sensor topic")
+    assert_eq "$result" "mqtt"
+  }
+
+  it "routes 'git clone' to clone" && {
+    result=$(_fast_route "Git clone the repository")
+    assert_eq "$result" "clone"
+  }
+
+  it "routes 'commit changes' to commit" && {
+    result=$(_fast_route "Commit changes to the repo")
+    assert_eq "$result" "commit"
+  }
+
+  it "routes 'push changes' to push" && {
+    result=$(_fast_route "Push changes to the remote")
+    assert_eq "$result" "push"
+  }
+
+  it "routes 'ssh key setup' to git" && {
+    result=$(_fast_route "Set up SSH key for git remote")
+    assert_eq "$result" "git"
+  }
+
+  it "routes 'recall knowledge' to recall" && {
+    result=$(_fast_route "Recall from the knowledge base about preferences")
+    assert_eq "$result" "recall"
+  }
+
+  it "routes 'secret vault' to secret" && {
+    result=$(_fast_route "Retrieve api key from the secret vault")
+    assert_eq "$result" "secret"
+  }
+
+  it "returns failure for ambiguous task (falls through to LLM)" && {
+    _fast_route "write a summary of the project"
+    assert_fail $? "ambiguous tasks must fall through to LLM router"
+  }
+
+  it "returns failure for 'what is the weather'" && {
+    _fast_route "what is the weather in New York"
+    assert_fail $? "weather queries should fall through to LLM (/web)"
+  }
+
+  it "returns failure for 'read the README'" && {
+    _fast_route "read the README file"
+    assert_fail $? "/read should fall through to LLM"
+  }
+
+  it "returns failure for 'fix the build errors'" && {
+    _fast_route "fix the build errors"
+    assert_fail $? "/fix should fall through to LLM"
+  }
+
+  it "returns failure for 'create a custom script'" && {
+    _fast_route "create a custom script for deployment"
+    assert_fail $? "/slash should fall through to LLM"
+  }
+
+  it "routes case-insensitively" && {
+    result=$(_fast_route "Search GITHUB for the repo")
+    assert_eq "$result" "github"
+  }
+
+  it "routes 'google drive' to gsuite" && {
+    result=$(_fast_route "Upload to Google Drive")
+    assert_eq "$result" "gsuite"
+  }
+
+  it "routes 'smart home sensor' to mqtt" && {
+    result=$(_fast_route "Check smart home sensor data")
+    assert_eq "$result" "mqtt"
+  }
+
+  it "routes 'pull request' to github without explicit github keyword" && {
+    result=$(_fast_route "Create a pull request for this branch")
+    assert_eq "$result" "github"
+  }
+
+  it "routes 'telegram message' to social" && {
+    result=$(_fast_route "Send a message via telegram")
+    assert_eq "$result" "social"
+  }
+
+# ── Fast Route + Lean Router integration ──────────────────────
+describe "Fast route + lean router integration"
+
+  it "agent_run uses _cached_router_sys for prompt caching" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_cached_router_sys'
+    assert_ok $? "agent_run must cache router prompt at task init"
+  }
+
+  it "agent_inner_loop uses _fast_route before LLM router" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_fast_route'
+    assert_ok $? "agent_inner_loop must call _fast_route before LLM router"
+  }
+
+  it "agent_inner_loop uses cached router sys" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_cached_router_sys'
+    assert_ok $? "agent_inner_loop must use cached router sys instead of rebuilding"
+  }
+
+  it "lean router prompt is smaller than full prompt" && {
+    AGENT_FAST_ROUTE=1
+    lean_size=$(_build_router_prompt | wc -c)
+    AGENT_FAST_ROUTE=0
+    full_size=$(_build_router_prompt | wc -c)
+    AGENT_FAST_ROUTE=1
+    [ "$lean_size" -lt "$full_size" ]
+    assert_ok $? "lean prompt ($lean_size chars) must be smaller than full ($full_size chars)"
+  }
+
+  it "lean router prompt contains /web" && {
+    AGENT_FAST_ROUTE=1
+    prompt=$(_build_router_prompt)
+    echo "$prompt" | grep -q '/web'
+    assert_ok $? "lean prompt must include /web (ambiguous command)"
+  }
+
+  it "lean router prompt contains /respond" && {
+    AGENT_FAST_ROUTE=1
+    prompt=$(_build_router_prompt)
+    echo "$prompt" | grep -q '/respond'
+    assert_ok $? "lean prompt must include /respond (default delivery)"
+  }
+
+  it "lean router prompt does NOT contain /github (handled by fast-route)" && {
+    AGENT_FAST_ROUTE=1
+    prompt=$(_build_router_prompt)
+    echo "$prompt" | grep -q '/github'
+    assert_fail $? "lean prompt must NOT include /github (fast-route handles it)"
+  }
+
+  it "full router prompt contains /github when fast-route disabled" && {
+    AGENT_FAST_ROUTE=0
+    prompt=$(_build_router_prompt)
+    echo "$prompt" | grep -q '/github'
+    assert_ok $? "full prompt must include /github when fast-route disabled"
+    AGENT_FAST_ROUTE=1
+  }
+
+  it "_build_router_prompt delegates to _build_router_prompt_full when AGENT_FAST_ROUTE=0" && {
+    body=$(declare -f _build_router_prompt)
+    echo "$body" | grep -q '_build_router_prompt_full'
+    assert_ok $? "lean prompt must delegate to full when fast-route disabled"
+  }
+
+# ── Conditional strategist injection ──────────────────────────
+describe "Conditional strategist injection"
+
+  it "social context is gated on task keywords in agent_run" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_social_signal'
+    assert_ok $? "social context injection must use keyword gating"
+  }
+
+  it "brainstorm context is gated on AGENT_BRAINSTORM" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'AGENT_BRAINSTORM.*BRAINSTORM_FILE\|AGENT_BRAINSTORM.*brainstorm'
+    assert_ok $? "brainstorm context must be gated on AGENT_BRAINSTORM toggle"
+  }
+
+  it "coding card is conditionally injected based on task keywords" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_coding_signal'
+    assert_ok $? "coding card must use keyword detection"
+  }
+
+  it "COMMS tools only injected when social/email services configured" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'CONFIGURED.*discord\|CONFIGURED.*email'
+    assert_ok $? "COMMS section must be conditional on service configuration"
   }
 
 test_end
