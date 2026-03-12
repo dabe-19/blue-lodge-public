@@ -868,20 +868,35 @@ mcp_command() {
                 echo "MCP integration disabled"
             fi
             ;;
-        add)
+        add|register)
             local name cmd_str desc_str
             name=$(echo "$rest" | awk '{print $1}')
             cmd_str=$(echo "$rest" | awk '{$1=""; print}' | sed 's/^ *//')
+            # Interactive mode when args are missing
             if [ -z "$name" ] || [ -z "$cmd_str" ]; then
-                echo "Usage: /mcp add <name> <command>" >&2
-                return 1
-            fi
-            desc_str="MCP server: $name"
-            mcp_server_add "$name" "$cmd_str" "$desc_str"
-            if declare -f ui_ok &>/dev/null; then
-                ui_ok "MCP server '$name' registered"
+                declare -f ui_section &>/dev/null && ui_section "Register MCP Server"
+                printf "  Server name (alphanumeric, hyphens, underscores): "
+                read -r name
+                [ -z "$name" ] && { echo "Cancelled — no name given" >&2; return 1; }
+                printf "  Command to start the server: "
+                read -r cmd_str
+                [ -z "$cmd_str" ] && { echo "Cancelled — no command given" >&2; return 1; }
+                printf "  Description [MCP server: %s]: " "$name"
+                read -r desc_str
+                [ -z "$desc_str" ] && desc_str="MCP server: $name"
             else
-                echo "MCP server '$name' registered"
+                desc_str="MCP server: $name"
+            fi
+            mcp_init 2>/dev/null
+            mcp_server_add "$name" "$cmd_str" "$desc_str"
+            if [ $? -eq 0 ]; then
+                if declare -f ui_ok &>/dev/null; then
+                    ui_ok "MCP server '$name' registered"
+                    ui_dim "  cmd: $cmd_str"
+                    ui_dim "  Start with: /mcp start $name"
+                else
+                    echo "MCP server '$name' registered"
+                fi
             fi
             ;;
         remove|rm)
@@ -1154,7 +1169,8 @@ _mcp_show_help() {
     echo ""
     $_ui_dim "  /mcp                         Show status overview"
     $_ui_dim "  /mcp on | off                Enable/disable MCP integration"
-    $_ui_dim "  /mcp add <name> <command>    Register a custom server"
+    $_ui_dim "  /mcp add [name] [command]    Register a server (interactive if no args)"
+    $_ui_dim "  /mcp register               Interactive server registration"
     $_ui_dim "  /mcp remove <name>           Unregister a server"
     $_ui_dim "  /mcp list                    List registered servers"
     $_ui_dim "  /mcp catalog                 Browse recommended servers"

@@ -1691,7 +1691,7 @@ describe "Brainstorm buffer (cross-milestone data flow)"
 
   it "router prefers /web search for time-sensitive information" && {
     body=$(declare -f _build_router_prompt)
-    echo "$body" | grep -q 'web.*time-sensitive\|dates.*scores.*events'
+    echo "$body" | grep -q 'web.*time-sensitive\|weather.*dates.*scores.*events'
     assert_ok $? "Router rules must prefer /web for date-gated queries"
   }
 

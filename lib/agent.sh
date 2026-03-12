@@ -916,6 +916,13 @@ _agent_fuzzy_catalog_match() {
         fi
     fi
 
+    # MQTT / IoT / pub-sub messaging
+    if [ "$_fz_preroute" != "mqtt" ]; then
+        if [[ "$_fz_text" =~ (mqtt|mosquitto|broker[[:space:]]|pub.sub|subscribe.*topic|publish.*topic|iot[[:space:]]|sensor.*data|smart[[:space:]]home|home[[:space:]]assist|thermostat|temperature.*sensor) ]]; then
+            _fz_extras="${_fz_extras} mqtt"
+        fi
+    fi
+
     # Trim leading space
     echo "${_fz_extras# }"
 }
@@ -2535,10 +2542,12 @@ _build_router_prompt() {
     # Small models (2-4B) parse line-oriented text far more reliably
     # than nested JSON with escaped quotes and brackets.
     #
-    # ORDERING: Commands are ranked by utility/frequency. 2B models
-    # exhibit strong primacy bias — items listed first are chosen
-    # disproportionately. High-utility tools (web, recall) are at
-    # the top. /slash is the escape valve for missing capabilities.
+    # ORDERING: Specificity-first (most-specific → most-general).
+    # 2B models exhibit strong primacy bias — items listed first
+    # are chosen disproportionately. Specific commands (/github,
+    # /edit) lead so the model prefers them when intent matches,
+    # falling through to generals (/web, /write) only when nothing
+    # specific fits. /slash is the escape valve for missing capabilities.
 
     # Conditional /ask line — only available when AGENT_ASK_USER=1
     local _ask_line=""
@@ -2556,61 +2565,71 @@ _build_router_prompt() {
 Output ONLY the bare tool name. NO backticks. NO code fences. NO quotes. Example: /web
 
 TOOLS — gather info, execute work (these do NOT deliver results to the user):
-/web         Search web, fetch page, scrape page+images (/web search|fetch|scrape-images|images)
-/recall      Search knowledge base FTS5 (DO THIS FIRST before web)
-/read        Read a file
-/ls          List files as tree
-/journal     Read or write living memory
-/build       Build project
-/test        Run tests
-/fix         Diagnose and fix errors
-/init        Scaffold new project
-/clone       Clone git repo
-/download    Download a URL
-/vision      Analyze/describe an image (accepts URLs from /web scrape-images)
 /github      Search GitHub repos
+/git         Git setup, SSH keys
+/social      Post to Discord/Telegram/X/Mastodon (see DELIVERY)
+/email       Send/check actual email — gmail/protonmail/zoho (see DELIVERY)
+/pgp         PGP sign/verify/export
+/phone       Phone dashboard, SMS
+/vision      Analyze/describe an image (accepts URLs from /web scrape-images)
+/journal     Read or write living memory
 /sandbox     Code sandboxes (NOT for running slash commands)
 /container   Linux containers
 /secret      Encrypted secrets vault
 /vitals      System dashboard
-/phone       Phone dashboard, SMS
-/pgp         PGP sign/verify/export
-/git         Git setup, SSH keys
 /backup      Backup and restore
+/clone       Clone git repo
+/download    Download a URL
+/recall      Search knowledge base FTS5 (DO THIS FIRST before web)
+/init        Scaffold new project
+/edit        Small change to existing file (sed substitution, max 200 chars)
+/append      Add content to end of existing file
+/build       Build project
+/test        Run tests
+/fix         Diagnose and fix errors
+/read        Read a file
+/ls          List files as tree
+/web         Search web, fetch page, scrape page+images (/web search|fetch|scrape-images|images)
 /slash       Create/run custom commands (USE when no built-in fits)
 ${_brainstorm_line:+${_brainstorm_line}
 }${_ask_line:+${_ask_line}
 }bash         Standard Linux shell (fallback)
 
 DELIVERY — present results to user (one per milestone; a full task may chain several, e.g. /write then /email):
-/respond     Present answer directly to operator (DEFAULT — use when no file/email/post needed)
-/write       Write or overwrite a file
-/save        Save content to file
-/email       Send/check actual email (gmail/protonmail/zoho)
 /social      Post to Discord/Telegram/X/Mastodon (NOT email)
+/email       Send/check actual email (gmail/protonmail/zoho)
 /commit      AI commit message + commit
 /push        Push to GitHub
+/write       Write or overwrite ENTIRE file (for SMALL changes: /edit or /append)
+/save        Save content to file
+/respond     Present answer directly to operator (DEFAULT — use when no file/email/post needed)
 
 DEFAULT RULE: If the task does NOT explicitly require /write, /save, /email, /social, /commit, or /push, use /respond to deliver the answer.
 
 ROUTE EXAMPLES:
-<weather or news question>         → /web
-<deliver answer to user>           → /respond
+<search github repos, issues, PRs> → /github
+<git setup, SSH keys, clone>       → /git
 <post to discord/telegram/x>       → /social
 <send an email>                    → /email
-<code sandbox project>             → /sandbox
-<list or read files>               → /ls
-<journal read/write>               → /journal
-<create a custom tool>             → /slash
+<PGP sign/encrypt/verify>          → /pgp
+<phone status, SMS>                → /phone
 <analyze or describe an image>     → /vision
+<journal read/write>               → /journal
+<code sandbox project>             → /sandbox
+<create a custom tool>             → /slash
 <write a report/file then email>   → /write (first), then /email (next milestone)
+<change one line in a file>        → /edit
+<add a function/section to a file> → /append
 <draft a document/report>          → /write
+<weather or news question>         → /web
 ${_ask_line:+<need user preferences or clarification> → /ask
 }${_brainstorm_line:+<hard decision with no clear answer, can'\''t be researched> → /brainstorm
-}<general knowledge, no tools>      → /respond
+}<deliver answer to user>           → /respond
+<general knowledge, no tools>      → /respond
 
 RULES:
-- /web for ANYTHING time-sensitive (weather, dates, scores, events, prices, news)
+- SPECIFICITY: prefer domain commands over /web — /github for GitHub, /git for git ops, /social for social, /email for email, /phone for phone
+- /web for time-sensitive queries (weather, dates, scores, events, prices, news) and general searches — NOT when a domain command fits
 - /slash to CREATE a custom tool when no built-in command fits
 - /sandbox NEVER for slash commands
 - /social for Discord/Telegram/X, /email for actual email
@@ -2724,8 +2743,8 @@ OUTPUT FORMAT: exactly ONE slash command on its own line, starting with /
 FORBIDDEN: code fences, quotes on args, multiple commands per line, /sandbox for slash commands
 
 COMMAND TYPES:
-  TOOLS (gather info, do work): /web /recall /read /ls /build /test /fix /init /clone /download /vision /github /sandbox /container /secret /vitals /phone /pgp /git /backup /slash /journal bash
-  DELIVERY (present output to user): /respond /write /save /email /social /commit /push
+  TOOLS (gather info, do work): /github /git /pgp /phone /vision /journal /edit /append /sandbox /container /secret /clone /init /recall /download /build /test /fix /read /ls /web /slash /vitals /backup bash
+  DELIVERY (present output to user): /social /email /commit /push /write /save /respond
   NOTE: A full task may chain multiple DELIVERY commands across milestones (e.g. /write a report, then /email it).
   DEFAULT: If the task does NOT explicitly need a file, email, or post, use /respond to deliver the answer.
 SPEC_PREAMBLE
@@ -3215,7 +3234,7 @@ agent_inner_loop() {
         # Regex anchors to space or start-of-string to avoid matching
         # URL path segments (e.g. https://example.com/api → "api").
         local _pre_route=""
-        if [ "${AGENT_PRE_ROUTE:-1}" -eq 1 ] && [ "$_p1_incomplete_consec" -lt 2 ] && [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
+        if [ "${AGENT_PRE_ROUTE:-1}" -eq 1 ] && [ "${AGENT_SMART_ROUTE:-3}" -ge 1 ] && [ "$_p1_incomplete_consec" -lt 2 ] && [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
             local _pre_cmd="${BASH_REMATCH[2]}"
             # Synonym remap: models love "/draft" — treat as /write
             [ "$_pre_cmd" = "draft" ] && _pre_cmd="write"
@@ -5107,9 +5126,9 @@ MEMEOF
         local _tool_summary='YOUR WORKING COMMANDS:
 {"CORE":["/ask"';
         [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _tool_summary="${_tool_summary}"',"/brainstorm"'
-        _tool_summary="${_tool_summary}"',"/respond","/recall","/journal","/journal write"],
-"FILES":["/write","/append","/edit","/save","/read","/ls","/download","/build","/test","/fix","/commit","/push","/init","/clone","/cd"],
-"WEB":["/web search","/web fetch","/web images","/github search","/vision"],
+        _tool_summary="${_tool_summary}"',"/recall","/journal","/journal write","/respond"],
+"FILES":["/edit","/append","/write","/save","/read","/ls","/init","/clone","/build","/test","/fix","/download","/commit","/push","/cd"],
+"WEB":["/github search","/vision","/web search","/web fetch","/web images"],
 "SANDBOX":["/sandbox","/container"]'
         # Include COMMS only when social or email services are configured
         if echo "$_svc_status" | grep -qE 'CONFIGURED:.*(discord|telegram|mastodon|x/twitter|bluesky|email)'; then

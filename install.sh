@@ -212,7 +212,36 @@ if ! command -v pdftotext &>/dev/null; then
     fi
 fi
 
-# ── 1c. Termux extras (gawk, procps, bc) ─────────────────────
+# ── 1c. Optional: MQTT pub/sub messaging ─────────────────────
+# mosquitto-clients (mosquitto_pub + mosquitto_sub) are small C
+# binaries (~200 KB total) that give George MQTT capabilities.
+# No Python, Node.js, or Java — pure C with only libc + libssl.
+if ! command -v mosquitto_pub &>/dev/null; then
+    printf "\n"
+    info "Optional: mosquitto-clients enables MQTT pub/sub messaging."
+    info "Without it, /mqtt commands will not be available."
+    printf "  Install mosquitto-clients for MQTT support? [y/N] "
+    read -r _install_mqtt
+    if [[ "$_install_mqtt" =~ ^[Yy] ]]; then
+        if [ "$IS_ISH" -eq 1 ] || command -v apk &>/dev/null; then
+            apk add --no-cache mosquitto-clients 2>/dev/null || warn "mosquitto-clients install failed"
+        elif [ "$IS_PROOT" -eq 1 ] && command -v apt &>/dev/null; then
+            apt install -y -qq mosquitto-clients 2>/dev/null || warn "mosquitto-clients install failed"
+        elif [ "$IS_TERMUX" -eq 1 ] && [ "$IS_PROOT" -eq 0 ]; then
+            pkg install -y mosquitto 2>/dev/null || warn "mosquitto install failed"
+        elif command -v apt &>/dev/null; then
+            sudo apt install -y -qq mosquitto-clients 2>/dev/null || warn "mosquitto-clients install failed"
+        elif command -v pkg &>/dev/null; then
+            pkg install -y mosquitto-clients 2>/dev/null || warn "mosquitto-clients install failed"
+        else
+            warn "No supported package manager — install mosquitto-clients manually for MQTT support"
+        fi
+    else
+        info "Skipped — /mqtt commands will not be available"
+    fi
+fi
+
+# ── 1d. Termux extras (gawk, procps, bc) ─────────────────────
 # Termux ships mawk by default which has NUL byte issues.
 # procps provides 'free' for vitals. bc for location math.
 # Skip in proot-distro — these are standard Ubuntu packages.

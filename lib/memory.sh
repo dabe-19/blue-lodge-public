@@ -359,6 +359,7 @@ $project_mem"
 \"/web\":{\"search\":\"query (returns URLs+snippets)\",\"fetch\":\"url (returns TEXT only, no images)\",\"scrape-images\":\"url (returns JSON: {url,title,content,images[]} — use images[] with /vision)\",\"images\":\"query (find image URLs via Serper)\"},
 \"/read\":\"Read file (100 lines)\",\"/ls\":\"List files as tree (depth 1-8, default 3)\",\"/cd\":\"Change dir\",
 \"/init\":\"Scaffold project (rust,python,shell)\",
+\"/edit\":\"Small sed change to existing file\",\"/append\":\"Add to end of existing file\",
 \"/download\":\"Download URL\",\"/build\":\"Build project\",\"/test\":\"Run tests\",
 \"/fix\":\"Diagnose/fix errors\",\"/clone\":\"Clone repo\",
 \"/github\":\"Search repos\",\"/vision\":\"Analyze image (URL or path) — pair with /web scrape-images for web images\",
@@ -378,7 +379,7 @@ $project_mem"
 \"/email\":{\"send\":\"/email send <prov> <addr> subject= body=\",\"inbox\":\"/email inbox <prov>\"},
 \"/social\":{\"post\":\"/social post discord <channel> <text>\",\"read\":\"/social discord read <ch>\",\"dm\":\"/social discord dm <user> <text>\"},
 \"/commit\":\"AI commit\",\"/push\":\"Push to GitHub\"},
-\"DEFAULT RULE\":\"If task does NOT explicitly need /write, /save, /email, /social, /commit, or /push, use /respond.\",
+\"DEFAULT RULE\":\"If task does NOT explicitly need /edit, /append, /write, /save, /email, /social, /commit, or /push, use /respond.\",
 \"MULTI_DELIVERY\":\"A task may chain multiple DELIVERY commands across milestones (e.g. /write report THEN /email it).\",
 \"rules\":[\"If unsure: /recall <cmd>\",\"If missing: /slash create <name>\",\"Before editing: check with /ls or /read\"]}"
 

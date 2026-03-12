@@ -67,6 +67,7 @@ source "$LODGE_DIR/lib/phone.sh"
 source "$LODGE_DIR/lib/slash.sh"
 source "$LODGE_DIR/lib/vitals.sh"
 source "$LODGE_DIR/lib/email.sh"
+source "$LODGE_DIR/lib/mqtt.sh"
 source "$LODGE_DIR/lib/git.sh"
 source "$LODGE_DIR/lib/transcript.sh"
 
@@ -874,18 +875,36 @@ _cmd_limits() {
             fi ;;
         smart-route)
             if [ -z "$value" ]; then
+                local _sr_val="${AGENT_SMART_ROUTE:-3}"
                 local _sr_label="disabled"
-                [ "${AGENT_SMART_ROUTE:-1}" -eq 1 ] && _sr_label="enabled"
-                ui_info "Smart command routing: $_sr_label (default: enabled)"
+                [ "$_sr_val" -eq 1 ] && _sr_label="reroute only"
+                [ "$_sr_val" -eq 2 ] && _sr_label="fuzzy injection only"
+                [ "$_sr_val" -ge 3 ] && _sr_label="combined (reroute + fuzzy)"
+                ui_info "Smart command routing: $_sr_label ($_sr_val)  (default: 3, range: 0-3)"
+                ui_dim "  0=disabled  1=reroute only  2=fuzzy catalog only  3=combined"
             else
-                if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
-                    AGENT_SMART_ROUTE=1
-                    ui_ok "Smart command routing enabled"
-                elif [[ "$value" == "off" || "$value" == "0" || "$value" == "disable" || "$value" == "disabled" ]]; then
+                if [[ "$value" == "off" || "$value" == "disable" || "$value" == "disabled" ]]; then
                     AGENT_SMART_ROUTE=0
+                    AGENT_PRE_ROUTE=0
                     ui_ok "Smart command routing disabled"
+                elif [[ "$value" == "on" || "$value" == "enable" || "$value" == "enabled" ]]; then
+                    AGENT_SMART_ROUTE=3
+                    AGENT_PRE_ROUTE=1
+                    ui_ok "Smart command routing enabled (combined mode)"
+                elif [[ "$value" =~ ^[0-3]$ ]]; then
+                    AGENT_SMART_ROUTE="$value"
+                    if [ "$value" -eq 0 ]; then
+                        AGENT_PRE_ROUTE=0
+                    else
+                        AGENT_PRE_ROUTE=1
+                    fi
+                    local _sr_desc="disabled"
+                    [ "$value" -eq 1 ] && _sr_desc="reroute only"
+                    [ "$value" -eq 2 ] && _sr_desc="fuzzy catalog only"
+                    [ "$value" -eq 3 ] && _sr_desc="combined"
+                    ui_ok "Smart command routing set to $value ($_sr_desc)"
                 else
-                    ui_err "Smart route must be 'on' or 'off' (or 1/0, enable/disable)"
+                    ui_err "Smart route: 0=off 1=reroute 2=fuzzy 3=combined (or on/off)"
                 fi
             fi ;;
         ask)
@@ -979,7 +998,8 @@ _cmd_limits() {
             AGENT_WEB_SEARCH_CONSEC_MAX=20
             AGENT_EVAL_REC_CHARS=120
             AGENT_PRESSURE_RELIEF=2
-            AGENT_SMART_ROUTE=1
+            AGENT_SMART_ROUTE=3
+            AGENT_PRE_ROUTE=1
             AGENT_WEB_SEARCH_TIGHT_PARSING=0
             AGENT_WEB_SEARCH_MAX_LENGTH=160
             AGENT_WEB_SEARCH_MAX_OPERATORS=3
@@ -1216,8 +1236,10 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Web search length:" "${AGENT_WEB_SEARCH_MAX_LENGTH:-160}  (default: 160)"
             printf "  %-22s %s\n" "Web search operators:" "${AGENT_WEB_SEARCH_MAX_OPERATORS:-3}  (default: 3)"
             local _sr_show="disabled"
-            [ "${AGENT_SMART_ROUTE:-1}" -eq 1 ] && _sr_show="enabled"
-            printf "  %-22s %s\n" "Smart route:" "$_sr_show  (default: enabled)"
+            [ "${AGENT_SMART_ROUTE:-3}" -eq 1 ] && _sr_show="reroute only"
+            [ "${AGENT_SMART_ROUTE:-3}" -eq 2 ] && _sr_show="fuzzy only"
+            [ "${AGENT_SMART_ROUTE:-3}" -ge 3 ] && _sr_show="combined"
+            printf "  %-22s %s\n" "Smart route:" "$_sr_show (${AGENT_SMART_ROUTE:-3})  (default: 3 combined)"
             local _ask_show="disabled"
             [ "${AGENT_ASK_USER:-1}" -eq 1 ] && _ask_show="enabled"
             printf "  %-22s %s\n" "Ask user (/ask):" "$_ask_show  (default: enabled)"
@@ -1263,7 +1285,7 @@ _cmd_limits() {
             ui_dim "    web-search-length N — Max character length for web search queries (current: ${AGENT_WEB_SEARCH_MAX_LENGTH:-160})"
             ui_dim "    web-search-ops N  — Max AND/OR operators in loose web search mode (current: ${AGENT_WEB_SEARCH_MAX_OPERATORS:-3})"
             ui_dim "    rec-chars N      — Max chars in evaluator recommendation to strategist (current: ${AGENT_EVAL_REC_CHARS:-120})"
-            ui_dim "    smart-route on|off — Smart command routing heuristic (current: $([ "${AGENT_SMART_ROUTE:-1}" -eq 1 ] && echo on || echo off))"
+            ui_dim "    smart-route 0-3|on|off — Smart routing: 0=off 1=reroute 2=fuzzy 3=combined (current: ${AGENT_SMART_ROUTE:-3})"
             ui_dim "    ask on|off       — Allow George to /ask human questions (current: $([ "${AGENT_ASK_USER:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    brainstorm on|off — Allow George to /brainstorm (self-reason) (current: $([ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    file-expand on|off — Auto-expand file refs in /social /email /write (current: $([ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && echo on || echo off))"
@@ -4695,6 +4717,69 @@ _cmd_transcript() {
     esac
 }
 
+# ── /mqtt — MQTT pub/sub messaging ─────────────────────────────
+_cmd_mqtt() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local rest
+    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+    [ "$rest" = "$action" ] && rest=""
+
+    if ! mqtt_available; then
+        ui_warn "mosquitto-clients not installed. Install with: apt install mosquitto-clients"
+        return 1
+    fi
+
+    case "$action" in
+        setup|configure)
+            mqtt_setup "$rest" ;;
+        pub|publish|send)
+            local topic msg
+            topic=$(echo "$rest" | awk '{print $1}')
+            msg=$(echo "$rest" | sed 's/^[^ ]* *//')
+            [ "$msg" = "$topic" ] && msg=""
+            # Pass through --qos and --retain flags
+            mqtt_publish "$topic" "$msg" ;;
+        sub|subscribe|listen|read)
+            local topic count timeout
+            topic=$(echo "$rest" | awk '{print $1}')
+            count=$(echo "$rest" | awk '{print $2}')
+            timeout=$(echo "$rest" | awk '{print $3}')
+            [ -z "$count" ] || [ "$count" = "$topic" ] && count=""
+            [ -z "$timeout" ] && timeout=""
+            local _sub_args=("$topic")
+            [ -n "$count" ] && _sub_args+=("--count" "$count")
+            [ -n "$timeout" ] && _sub_args+=("--timeout" "$timeout")
+            mqtt_subscribe "${_sub_args[@]}" ;;
+        status|test|ping)
+            mqtt_status ;;
+        config|show)
+            mqtt_show_config ;;
+        topics|list)
+            mqtt_topics ;;
+        history|messages|log)
+            local hist_topic hist_count
+            hist_topic=$(echo "$rest" | awk '{print $1}')
+            hist_count=$(echo "$rest" | awk '{print $2}')
+            [ "$hist_topic" = "$action" ] && hist_topic=""
+            mqtt_history "$hist_topic" "$hist_count" ;;
+        ""|help)
+            ui_info "MQTT pub/sub messaging"
+            ui_dim "  /mqtt setup [broker:port]  — Configure broker"
+            ui_dim "  /mqtt pub <topic> <msg>    — Publish a message"
+            ui_dim "  /mqtt sub <topic> [N] [T]  — Subscribe (N msgs, T sec timeout)"
+            ui_dim "  /mqtt status               — Test broker connectivity"
+            ui_dim "  /mqtt config               — Show configuration"
+            ui_dim "  /mqtt topics               — List tracked topics"
+            ui_dim "  /mqtt history [topic] [N]  — Message history"
+            ;;
+        *)
+            ui_warn "Unknown mqtt action: $action"
+            ui_dim "Try: /mqtt help" ;;
+    esac
+}
+
 # ── /mcp — MCP (Model Context Protocol) integration ────────────
 _cmd_mcp() {
     mcp_command "$1"
@@ -4746,6 +4831,7 @@ _register_commands() {
     commands_register "backend"  "LLM backend — auto-detect, switch (ollama/llamacpp)" "_cmd_backend"
     commands_register "gpu"      "GPU layers — set offload layers for llama-server" "_cmd_gpu"
     commands_register "mcp"        "MCP server integration (Model Context Protocol)" "_cmd_mcp"
+    commands_register "mqtt"       "MQTT pub/sub messaging (IoT, sensors, home automation)" "_cmd_mqtt"
     commands_register "transcript" "View task transcripts (list/last/path/show)" "_cmd_transcript"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"
