@@ -1140,6 +1140,38 @@ web_fetch() {
             ui_dim "  [debug] web_fetch: Reddit JSON API failed — falling through to normal fetch"
     fi
 
+    # ── Structured extraction first ───────────────────────────────
+    # Try web_fetch_json (semantic HTML extraction) before falling
+    # back to raw text dump. This catches YouTube, SPAs, and any
+    # page where meta/og tags carry the real content while _html_to_text
+    # returns only base64 image data or SPA boilerplate.
+    # Guard: skip when called from within web_fetch_json to avoid
+    # double work (web_fetch_json already does structured extraction).
+    if [ "${_WEB_FETCH_STRUCTURED_ACTIVE:-0}" -eq 0 ]; then
+        local _sf_json _sf_content _sf_title _sf_text
+        _WEB_FETCH_STRUCTURED_ACTIVE=1
+        _sf_json=$(web_fetch_json "$url" 2>/dev/null)
+        _WEB_FETCH_STRUCTURED_ACTIVE=0
+        if [ -n "$_sf_json" ]; then
+            _sf_title=$(echo "$_sf_json" | jq -r '.title // ""' 2>/dev/null)
+            _sf_content=$(echo "$_sf_json" | jq -r '.content // ""' 2>/dev/null)
+            local _sf_blocked
+            _sf_blocked=$(echo "$_sf_json" | jq -r '.blocked // false' 2>/dev/null)
+            if [ "$_sf_blocked" != "true" ] && [ -n "$_sf_content" ] && [ ${#_sf_content} -gt 80 ]; then
+                [ -n "$_sf_title" ] && _sf_text="${_sf_title}"$'\n\n'"${_sf_content}" || _sf_text="$_sf_content"
+                _sf_text=$(echo "$_sf_text" | _web_truncate_content)
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+                    ui_dim "  [debug] web_fetch: structured extraction succeeded (${#_sf_text} chars)"
+                mkdir -p "$GEORGE_CACHE_DIR"
+                echo "$_sf_text" > "$cache_file" 2>/dev/null
+                echo "$_sf_text"
+                return 0
+            fi
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+                ui_dim "  [debug] web_fetch: structured extraction returned insufficient content — falling through"
+        fi
+    fi
+
     # ── MCP-first fetch (when enabled) ────────────────────────────
     # When MCP is on, try MCP servers before curl. MCP servers like
     # @anthropic/mcp-server-fetch handle JS-rendered pages and
