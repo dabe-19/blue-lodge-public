@@ -146,6 +146,38 @@ _mqtt_build_args() {
 
 # ── Publish ────────────────────────────────────────────────────
 mqtt_publish() {
+    # MCP-first: route through george-mqtt mqtt_publish tool
+    if declare -f mcp_enabled &>/dev/null && mcp_enabled; then
+        # Pre-parse topic and message for the MCP fast path
+        local _mcp_topic="" _mcp_msg="" _mcp_qos=0 _mcp_retain="false"
+        local _mcp_args=("$@")
+        local _mcp_i=0
+        while [ $_mcp_i -lt ${#_mcp_args[@]} ]; do
+            case "${_mcp_args[$_mcp_i]}" in
+                --qos)   _mcp_i=$((_mcp_i+1)); _mcp_qos="${_mcp_args[$_mcp_i]:-0}" ;;
+                --retain) _mcp_retain="true" ;;
+                *)
+                    if [ -z "$_mcp_topic" ]; then
+                        _mcp_topic="${_mcp_args[$_mcp_i]}"
+                    elif [ -z "$_mcp_msg" ]; then
+                        _mcp_msg="${_mcp_args[$_mcp_i]}"
+                    fi
+                    ;;
+            esac
+            _mcp_i=$((_mcp_i+1))
+        done
+        if [ -n "$_mcp_topic" ] && [ -n "$_mcp_msg" ]; then
+            local _mcp_result
+            _mcp_result=$(mcp_mqtt_publish "$_mcp_topic" "$_mcp_msg" "$_mcp_qos" "$_mcp_retain" 2>/dev/null)
+            if [ $? -eq 0 ] && [ -n "$_mcp_result" ]; then
+                echo "$_mcp_result"
+                return 0
+            fi
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] mqtt_publish: MCP failed — falling through to direct"
+    fi
+
     _mqtt_require_config || return 1
 
     _mp_topic=""
@@ -194,6 +226,33 @@ mqtt_publish() {
 
 # ── Subscribe ──────────────────────────────────────────────────
 mqtt_subscribe() {
+    # MCP-first: route through george-mqtt mqtt_subscribe tool
+    if declare -f mcp_enabled &>/dev/null && mcp_enabled; then
+        local _mcp_topic="" _mcp_count=1 _mcp_timeout=10
+        local _mcp_args=("$@")
+        local _mcp_i=0
+        while [ $_mcp_i -lt ${#_mcp_args[@]} ]; do
+            case "${_mcp_args[$_mcp_i]}" in
+                --count)   _mcp_i=$((_mcp_i+1)); _mcp_count="${_mcp_args[$_mcp_i]:-1}" ;;
+                --timeout) _mcp_i=$((_mcp_i+1)); _mcp_timeout="${_mcp_args[$_mcp_i]:-10}" ;;
+                *)
+                    [ -z "$_mcp_topic" ] && _mcp_topic="${_mcp_args[$_mcp_i]}"
+                    ;;
+            esac
+            _mcp_i=$((_mcp_i+1))
+        done
+        if [ -n "$_mcp_topic" ]; then
+            local _mcp_result
+            _mcp_result=$(mcp_mqtt_subscribe "$_mcp_topic" "$_mcp_count" "$_mcp_timeout" 2>/dev/null)
+            if [ $? -eq 0 ] && [ -n "$_mcp_result" ]; then
+                printf '%s' "$_mcp_result"
+                return 0
+            fi
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] mqtt_subscribe: MCP failed — falling through to direct"
+    fi
+
     _mqtt_require_config || return 1
 
     _ms_topic=""
@@ -242,6 +301,18 @@ mqtt_subscribe() {
 
 # ── Status (quick connectivity test) ──────────────────────────
 mqtt_status() {
+    # MCP-first: route through george-mqtt mqtt_status tool
+    if declare -f mcp_enabled &>/dev/null && mcp_enabled; then
+        local _mcp_result
+        _mcp_result=$(mcp_mqtt_status 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$_mcp_result" ]; then
+            echo "$_mcp_result"
+            return 0
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] mqtt_status: MCP failed — falling through to direct"
+    fi
+
     _mqtt_require_config || return 1
 
     _mqtt_build_args

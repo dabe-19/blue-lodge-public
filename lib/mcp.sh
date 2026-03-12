@@ -578,58 +578,368 @@ mcp_tool_call() {
     printf '%s' "$content"
 }
 
-# ── MCP Web Fetch (fallback/priority for web.sh) ──────────────
-# Tries MCP fetch servers for a URL. Called by web.sh when:
-#   - MCP enabled → try MCP first (primary path)
-#   - curl fails → try MCP as fallback
+# ── MCP Web Service Boundary ───────────────────────────────────
+# All web operations route through MCP when available. Each wrapper
+# tries the george-fetch MCP server first, falls back to external
+# MCP servers, and returns 1 on failure so the caller can use its
+# own direct implementation (curl, jq, etc.) as a last resort.
+#
+# Architecture: slash-command → web function → MCP wrapper → MCP server
+#   /web fetch       → web_fetch()       → mcp_web_fetch()       → fetch_json / fetch
+#   /web search      → web_search()      → mcp_web_search()      → web_search
+#   /web images      → web_images()      → mcp_web_images()      → web_images
+#   /web scrape-imgs → web_scrape_imgs() → mcp_web_fetch_json()  → fetch_json
+#   /web fetch .pdf  → web_fetch()       → mcp_web_fetch_pdf()   → fetch_pdf
+#   /github search   → web_search_github → mcp_github_search()   → github_search
+#
+# This boundary means:
+#   - Swap george-fetch for a cloud service → zero changes to web.sh
+#   - Add a new provider → add one MCP tool + update the wrapper
+#   - External MCP clients get the same tools the agent uses
 
+# ── Helper: try a tool across fetch-capable MCP servers ────────
+# Usage: _mcp_try_fetch_tool "tool_name" '{"url":"..."}' ["fallback_tool" '{"url":"..."}']
+# Returns 0+content on first success, 1 if all exhausted.
+_mcp_try_fetch_tool() {
+    local tool="$1"
+    local args_json="$2"
+    local fallback_tool="${3:-}"
+    local fallback_args="${4:-}"
+
+    local servers=("george-fetch" "fetch")
+    local server result
+
+    for server in "${servers[@]}"; do
+        _mcp_server_exists "$server" || continue
+        result=$(mcp_tool_call "$server" "$tool" "$args_json" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$result" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+                ui_dim "  [debug] MCP $tool OK via $server (${#result} bytes)"
+            declare -f transcript_log &>/dev/null && \
+                transcript_log "mcp" "$tool OK: $server (${#result} bytes)"
+            printf '%s' "$result"
+            return 0
+        fi
+    done
+
+    # Try fallback tool if specified (e.g. fetch_json failed → try fetch)
+    if [ -n "$fallback_tool" ]; then
+        [ -z "$fallback_args" ] && fallback_args="$args_json"
+        for server in "${servers[@]}"; do
+            _mcp_server_exists "$server" || continue
+            result=$(mcp_tool_call "$server" "$fallback_tool" "$fallback_args" 2>/dev/null)
+            if [ $? -eq 0 ] && [ -n "$result" ]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+                    ui_dim "  [debug] MCP $fallback_tool (fallback) OK via $server (${#result} bytes)"
+                declare -f transcript_log &>/dev/null && \
+                    transcript_log "mcp" "$fallback_tool (fallback from $tool) OK: $server (${#result} bytes)"
+                printf '%s' "$result"
+                return 0
+            fi
+        done
+    fi
+
+    # Try puppeteer as last resort for plain fetch
+    if [ "$tool" = "fetch" ] || [ "$tool" = "fetch_json" ]; then
+        if _mcp_server_exists "puppeteer"; then
+            result=$(mcp_tool_call "puppeteer" "puppeteer_navigate" "$args_json" 2>/dev/null)
+            if [ $? -eq 0 ] && [ -n "$result" ]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+                    ui_dim "  [debug] MCP puppeteer fallback OK (${#result} bytes)"
+                declare -f transcript_log &>/dev/null && \
+                    transcript_log "mcp" "puppeteer fallback OK (${#result} bytes)"
+                printf '%s' "$result"
+                return 0
+            fi
+        fi
+    fi
+
+    return 1
+}
+
+# ── mcp_web_fetch: Structured-first URL fetching ──────────────
+# Tries fetch_json first (semantic HTML extraction → title+content),
+# extracts plain text from the JSON response. Falls back to plain
+# fetch if structured extraction returns insufficient content (<80 chars).
 mcp_web_fetch() {
     local url="$1"
+    local _url_json
+    _url_json=$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')
 
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch: url=${url:0:120}"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+        ui_dim "  [debug] MCP web_fetch: url=${url:0:120}"
 
-    # Try built-in george-fetch server first (pure bash, no Node.js)
-    if _mcp_server_exists "george-fetch"; then
-        local result
-        result=$(mcp_tool_call "george-fetch" "fetch" "$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')" 2>/dev/null)
-        if [ $? -eq 0 ] && [ -n "$result" ]; then
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch OK via george-fetch (${#result} bytes)"
-            declare -f transcript_log &>/dev/null && transcript_log "mcp" "web_fetch OK: george-fetch url=${url:0:80} (${#result} bytes)"
-            printf '%s' "$result"
+    # Try structured extraction first via fetch_json
+    local json_result _sf_content _sf_title _sf_text _sf_blocked
+    json_result=$(_mcp_try_fetch_tool "fetch_json" "$_url_json" 2>/dev/null)
+    if [ $? -eq 0 ] && [ -n "$json_result" ]; then
+        # Parse structured fields from JSON response
+        _sf_title=$(echo "$json_result" | _mcp_jq -r '.title // ""' 2>/dev/null)
+        _sf_content=$(echo "$json_result" | _mcp_jq -r '.content // ""' 2>/dev/null)
+        _sf_blocked=$(echo "$json_result" | _mcp_jq -r '.blocked // false' 2>/dev/null)
+
+        if [ "$_sf_blocked" != "true" ] && [ -n "$_sf_content" ] && [ ${#_sf_content} -gt 80 ]; then
+            [ -n "$_sf_title" ] && _sf_text="${_sf_title}"$'\n\n'"${_sf_content}" || _sf_text="$_sf_content"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+                ui_dim "  [debug] MCP web_fetch: structured extraction succeeded (${#_sf_text} chars)"
+            declare -f transcript_log &>/dev/null && \
+                transcript_log "mcp" "web_fetch structured OK: url=${url:0:80} (${#_sf_text} chars)"
+            printf '%s' "$_sf_text"
             return 0
         fi
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch: george-fetch returned empty — trying next"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] MCP web_fetch: structured extraction insufficient — trying plain fetch"
     fi
 
-    # Try external "fetch" server (e.g. @anthropic/mcp-server-fetch)
-    if _mcp_server_exists "fetch"; then
-        local result
-        result=$(mcp_tool_call "fetch" "fetch" "$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')" 2>/dev/null)
-        if [ $? -eq 0 ] && [ -n "$result" ]; then
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch OK via fetch server (${#result} bytes)"
-            declare -f transcript_log &>/dev/null && transcript_log "mcp" "web_fetch OK: fetch url=${url:0:80} (${#result} bytes)"
-            printf '%s' "$result"
-            return 0
-        fi
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch: fetch server returned empty — trying next"
+    # Fall back to plain text fetch
+    local result
+    result=$(_mcp_try_fetch_tool "fetch" "$_url_json" 2>/dev/null)
+    if [ $? -eq 0 ] && [ -n "$result" ]; then
+        printf '%s' "$result"
+        return 0
     fi
 
-    # Try "puppeteer" server for JS-rendered content
-    if _mcp_server_exists "puppeteer"; then
-        local result
-        result=$(mcp_tool_call "puppeteer" "puppeteer_navigate" "$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')" 2>/dev/null)
-        if [ $? -eq 0 ] && [ -n "$result" ]; then
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch OK via puppeteer (${#result} bytes)"
-            declare -f transcript_log &>/dev/null && transcript_log "mcp" "web_fetch OK: puppeteer url=${url:0:80} (${#result} bytes)"
-            printf '%s' "$result"
-            return 0
-        fi
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch: puppeteer returned empty"
-    fi
-
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP web_fetch: all servers exhausted — falling back to curl"
-    declare -f transcript_log &>/dev/null && transcript_log "mcp" "web_fetch FALLBACK: no MCP server succeeded for url=${url:0:80}"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+        ui_dim "  [debug] MCP web_fetch: all servers exhausted — falling back to caller"
+    declare -f transcript_log &>/dev/null && \
+        transcript_log "mcp" "web_fetch FALLBACK: no MCP server succeeded for url=${url:0:80}"
     return 1
+}
+
+# ── mcp_web_fetch_json: Structured JSON URL fetching ──────────
+# Returns raw JSON from fetch_json tool (title, content, images, links).
+# Used by web_fetch_json() and web_scrape_images().
+mcp_web_fetch_json() {
+    local url="$1"
+    local _url_json
+    _url_json=$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+        ui_dim "  [debug] MCP web_fetch_json: url=${url:0:120}"
+
+    _mcp_try_fetch_tool "fetch_json" "$_url_json"
+}
+
+# ── mcp_web_search: Web search via MCP ────────────────────────
+# Routes through george-fetch web_search tool.
+mcp_web_search() {
+    local query="$1"
+    local count="${2:-5}"
+    local _args_json
+    _args_json=$(_mcp_jq -n -c --arg q "$query" --argjson c "$count" '{"query":$q,"count":$c}')
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+        ui_dim "  [debug] MCP web_search: query=${query:0:80}"
+
+    _mcp_try_fetch_tool "web_search" "$_args_json"
+}
+
+# ── mcp_web_images: Image search via MCP ──────────────────────
+# Routes through george-fetch web_images tool.
+mcp_web_images() {
+    local query="$1"
+    local count="${2:-5}"
+    local _args_json
+    _args_json=$(_mcp_jq -n -c --arg q "$query" --argjson c "$count" '{"query":$q,"count":$c}')
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+        ui_dim "  [debug] MCP web_images: query=${query:0:80}"
+
+    _mcp_try_fetch_tool "web_images" "$_args_json"
+}
+
+# ── mcp_web_fetch_pdf: PDF extraction via MCP ─────────────────
+# Routes through george-fetch fetch_pdf tool.
+mcp_web_fetch_pdf() {
+    local url="$1"
+    local _url_json
+    _url_json=$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+        ui_dim "  [debug] MCP web_fetch_pdf: url=${url:0:120}"
+
+    _mcp_try_fetch_tool "fetch_pdf" "$_url_json"
+}
+
+# ── mcp_github_search: GitHub repo search via MCP ─────────────
+# Routes through george-fetch github_search tool.
+mcp_github_search() {
+    local query="$1"
+    local count="${2:-5}"
+    local _args_json
+    _args_json=$(_mcp_jq -n -c --arg q "$query" --argjson c "$count" '{"query":$q,"count":$c}')
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+        ui_dim "  [debug] MCP github_search: query=${query:0:80}"
+
+    _mcp_try_fetch_tool "github_search" "$_args_json"
+}
+
+# ── Helper: try a tool on a specific MCP server ───────────────
+# Usage: _mcp_try_server_tool "george-git" "git_status" '{"path":"."}'
+# Returns 0+content on success, 1 if server missing or tool fails.
+_mcp_try_server_tool() {
+    local server="$1"
+    local tool="$2"
+    local args_json="$3"
+
+    _mcp_server_exists "$server" || return 1
+
+    local result
+    result=$(mcp_tool_call "$server" "$tool" "$args_json" 2>/dev/null)
+    if [ $? -eq 0 ] && [ -n "$result" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] MCP $tool OK via $server (${#result} bytes)"
+        declare -f transcript_log &>/dev/null && \
+            transcript_log "mcp" "$tool OK: $server (${#result} bytes)"
+        printf '%s' "$result"
+        return 0
+    fi
+    return 1
+}
+
+# ═══════════════════════════════════════════════════════════════
+# Git MCP Wrappers (george-git server)
+# ═══════════════════════════════════════════════════════════════
+
+mcp_git_status() {
+    local path="${1:-.}"
+    local _args
+    _args=$(_mcp_jq -n -c --arg p "$path" '{"path":$p}')
+    _mcp_try_server_tool "george-git" "git_status" "$_args"
+}
+
+mcp_git_log() {
+    local count="${1:-10}"
+    local path="${2:-.}"
+    local _args
+    _args=$(_mcp_jq -n -c --argjson c "$count" --arg p "$path" '{"count":$c,"path":$p}')
+    _mcp_try_server_tool "george-git" "git_log" "$_args"
+}
+
+mcp_git_diff() {
+    local path="${1:-.}"
+    local staged="${2:-false}"
+    local ref="${3:-}"
+    local _args
+    _args=$(_mcp_jq -n -c --arg p "$path" --arg s "$staged" --arg r "$ref" \
+        '{path:$p} + (if $s == "true" then {staged:true} else {} end) + (if $r != "" then {ref:$r} else {} end)')
+    _mcp_try_server_tool "george-git" "git_diff" "$_args"
+}
+
+mcp_git_commit() {
+    local message="$1"
+    local path="${2:-.}"
+    local files="${3:-}"
+    local _args
+    _args=$(_mcp_jq -n -c --arg m "$message" --arg p "$path" --arg f "$files" \
+        '{"message":$m,"path":$p} + (if $f != "" then {"files":$f} else {} end)')
+    _mcp_try_server_tool "george-git" "git_commit" "$_args"
+}
+
+mcp_git_push() {
+    local path="${1:-.}"
+    local remote="${2:-origin}"
+    local branch="${3:-}"
+    local _args
+    _args=$(_mcp_jq -n -c --arg p "$path" --arg r "$remote" --arg b "$branch" \
+        '{"path":$p,"remote":$r} + (if $b != "" then {"branch":$b} else {} end)')
+    _mcp_try_server_tool "george-git" "git_push" "$_args"
+}
+
+mcp_git_pull() {
+    local path="${1:-.}"
+    local remote="${2:-origin}"
+    local _args
+    _args=$(_mcp_jq -n -c --arg p "$path" --arg r "$remote" '{"path":$p,"remote":$r}')
+    _mcp_try_server_tool "george-git" "git_pull" "$_args"
+}
+
+mcp_git_branch() {
+    local path="${1:-.}"
+    local name="${2:-}"
+    local _args
+    _args=$(_mcp_jq -n -c --arg p "$path" --arg n "$name" \
+        '{"path":$p} + (if $n != "" then {"name":$n} else {} end)')
+    _mcp_try_server_tool "george-git" "git_branch" "$_args"
+}
+
+mcp_git_clone() {
+    local url="$1"
+    local path="${2:-.}"
+    local _args
+    _args=$(_mcp_jq -n -c --arg u "$url" --arg p "$path" '{"url":$u,"path":$p}')
+    _mcp_try_server_tool "george-git" "git_clone" "$_args"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# MQTT MCP Wrappers (george-mqtt server)
+# ═══════════════════════════════════════════════════════════════
+
+mcp_mqtt_publish() {
+    local topic="$1"
+    local message="$2"
+    local qos="${3:-0}"
+    local retain="${4:-false}"
+    local _args
+    _args=$(_mcp_jq -n -c --arg t "$topic" --arg m "$message" --argjson q "$qos" --arg r "$retain" \
+        '{"topic":$t,"message":$m,"qos":$q} + (if $r == "true" then {"retain":true} else {} end)')
+    _mcp_try_server_tool "george-mqtt" "mqtt_publish" "$_args"
+}
+
+mcp_mqtt_subscribe() {
+    local topic="$1"
+    local count="${2:-1}"
+    local timeout="${3:-10}"
+    local _args
+    _args=$(_mcp_jq -n -c --arg t "$topic" --argjson c "$count" --argjson to "$timeout" \
+        '{"topic":$t,"count":$c,"timeout":$to}')
+    _mcp_try_server_tool "george-mqtt" "mqtt_subscribe" "$_args"
+}
+
+mcp_mqtt_status() {
+    _mcp_try_server_tool "george-mqtt" "mqtt_status" '{}'
+}
+
+# ═══════════════════════════════════════════════════════════════
+# X (Twitter) MCP Wrappers (george-x server)
+# ═══════════════════════════════════════════════════════════════
+
+mcp_x_post() {
+    local text="$1"
+    local _args
+    _args=$(_mcp_jq -n -c --arg t "$text" '{"text":$t}')
+    _mcp_try_server_tool "george-x" "x_post" "$_args"
+}
+
+mcp_x_timeline() {
+    local count="${1:-10}"
+    local _args
+    _args=$(_mcp_jq -n -c --argjson c "$count" '{"count":$c}')
+    _mcp_try_server_tool "george-x" "x_timeline" "$_args"
+}
+
+mcp_x_reply() {
+    local tweet_id="$1"
+    local text="$2"
+    local _args
+    _args=$(_mcp_jq -n -c --arg id "$tweet_id" --arg t "$text" '{"tweet_id":$id,"text":$t}')
+    _mcp_try_server_tool "george-x" "x_reply" "$_args"
+}
+
+mcp_x_search() {
+    local query="$1"
+    local count="${2:-10}"
+    local _args
+    _args=$(_mcp_jq -n -c --arg q "$query" --argjson c "$count" '{"query":$q,"count":$c}')
+    _mcp_try_server_tool "george-x" "x_search" "$_args"
+}
+
+mcp_x_delete() {
+    local tweet_id="$1"
+    local _args
+    _args=$(_mcp_jq -n -c --arg id "$tweet_id" '{"tweet_id":$id}')
+    _mcp_try_server_tool "george-x" "x_delete" "$_args"
 }
 
 # ── MCP Dispatch Intercept ─────────────────────────────────────

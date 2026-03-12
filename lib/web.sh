@@ -467,6 +467,20 @@ _web_extract_pdf() {
     local tmpfile=""
     local pdf_path
 
+    # MCP-first: route through george-fetch fetch_pdf tool for URLs
+    if [[ "$source" == http* ]] && declare -f mcp_enabled &>/dev/null && mcp_enabled; then
+        local _mcp_pdf
+        _mcp_pdf=$(mcp_web_fetch_pdf "$source" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$_mcp_pdf" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+                ui_dim "  [debug] _web_extract_pdf: MCP succeeded (${#_mcp_pdf} bytes)"
+            echo "$_mcp_pdf"
+            return 0
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] _web_extract_pdf: MCP failed — falling through to direct extraction"
+    fi
+
     if [[ "$source" == http* ]]; then
         tmpfile=$(_web_fetch_to_file "$source")
         if [ -z "$tmpfile" ]; then
@@ -1140,42 +1154,12 @@ web_fetch() {
             ui_dim "  [debug] web_fetch: Reddit JSON API failed — falling through to normal fetch"
     fi
 
-    # ── Structured extraction first ───────────────────────────────
-    # Try web_fetch_json (semantic HTML extraction) before falling
-    # back to raw text dump. This catches YouTube, SPAs, and any
-    # page where meta/og tags carry the real content while _html_to_text
-    # returns only base64 image data or SPA boilerplate.
-    # Guard: skip when called from within web_fetch_json to avoid
-    # double work (web_fetch_json already does structured extraction).
-    if [ "${_WEB_FETCH_STRUCTURED_ACTIVE:-0}" -eq 0 ]; then
-        local _sf_json _sf_content _sf_title _sf_text
-        _WEB_FETCH_STRUCTURED_ACTIVE=1
-        _sf_json=$(web_fetch_json "$url" 2>/dev/null)
-        _WEB_FETCH_STRUCTURED_ACTIVE=0
-        if [ -n "$_sf_json" ]; then
-            _sf_title=$(echo "$_sf_json" | jq -r '.title // ""' 2>/dev/null)
-            _sf_content=$(echo "$_sf_json" | jq -r '.content // ""' 2>/dev/null)
-            local _sf_blocked
-            _sf_blocked=$(echo "$_sf_json" | jq -r '.blocked // false' 2>/dev/null)
-            if [ "$_sf_blocked" != "true" ] && [ -n "$_sf_content" ] && [ ${#_sf_content} -gt 80 ]; then
-                [ -n "$_sf_title" ] && _sf_text="${_sf_title}"$'\n\n'"${_sf_content}" || _sf_text="$_sf_content"
-                _sf_text=$(echo "$_sf_text" | _web_truncate_content)
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-                    ui_dim "  [debug] web_fetch: structured extraction succeeded (${#_sf_text} chars)"
-                mkdir -p "$GEORGE_CACHE_DIR"
-                echo "$_sf_text" > "$cache_file" 2>/dev/null
-                echo "$_sf_text"
-                return 0
-            fi
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-                ui_dim "  [debug] web_fetch: structured extraction returned insufficient content — falling through"
-        fi
-    fi
-
     # ── MCP-first fetch (when enabled) ────────────────────────────
-    # When MCP is on, try MCP servers before curl. MCP servers like
-    # @anthropic/mcp-server-fetch handle JS-rendered pages and
-    # anti-bot challenges that curl can't. Falls through to curl on failure.
+    # Routes through MCP service boundary. mcp_web_fetch() tries
+    # structured extraction (fetch_json) first, then plain fetch.
+    # This catches YouTube, SPAs, and any page where meta/og tags
+    # carry the real content while _html_to_text returns boilerplate.
+    # Falls through to curl on failure.
     if declare -f mcp_enabled &>/dev/null && mcp_enabled; then
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] web_fetch: trying MCP-first path for $url"
         local mcp_body
@@ -1282,6 +1266,27 @@ web_fetch_json() {
     local url="$1"
     local clean_url
     clean_url=$(_web_sanitize_url "$url")
+
+    # MCP-first: route through george-fetch fetch_json tool
+    # Guard: skip when called from within mcp_web_fetch to avoid
+    # recursion (mcp_web_fetch calls fetch_json on the server side).
+    if [ "${_WEB_FETCH_STRUCTURED_ACTIVE:-0}" -eq 0 ] && \
+       declare -f mcp_enabled &>/dev/null && mcp_enabled; then
+        local _mcp_json
+        _mcp_json=$(mcp_web_fetch_json "$clean_url" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$_mcp_json" ]; then
+            # Validate it's parseable JSON with expected fields
+            if echo "$_mcp_json" | jq -e '.url // .content // .title' &>/dev/null 2>&1; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+                    ui_dim "  [debug] web_fetch_json: MCP succeeded (${#_mcp_json} bytes)"
+                echo "$_mcp_json"
+                return 0
+            fi
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] web_fetch_json: MCP failed — falling through to direct extraction"
+    fi
+
         if _web_blacklist_contains "$clean_url"; then
             local _bl_reason
             _bl_reason=$(_web_blacklist_reason "$clean_url")
@@ -1605,6 +1610,21 @@ web_search() {
     query="${query#\'}"
     query="${query%\'}"
 
+    # MCP-first: route through george-fetch web_search tool
+    if declare -f mcp_enabled &>/dev/null && mcp_enabled; then
+        local _mcp_result
+        _mcp_result=$(mcp_web_search "$query" "$count" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$_mcp_result" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+                ui_dim "  [debug] web_search: MCP succeeded (${#_mcp_result} bytes)"
+            echo "$_mcp_result"
+            _web_journal_results "$query" "$_mcp_result" "search"
+            return 0
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] web_search: MCP failed — falling through to direct providers"
+    fi
+
     # Try Serper first (better results)
     local serper_key
     serper_key=$(api_get_key "SERPER_API_KEY" 2>/dev/null)
@@ -1815,6 +1835,20 @@ web_images() {
         return 1
     fi
 
+    # MCP-first: route through george-fetch web_images tool
+    if declare -f mcp_enabled &>/dev/null && mcp_enabled; then
+        local _mcp_result
+        _mcp_result=$(mcp_web_images "$query" "$count" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$_mcp_result" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+                ui_dim "  [debug] web_images: MCP succeeded (${#_mcp_result} bytes)"
+            echo "$_mcp_result"
+            return 0
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] web_images: MCP failed — falling through to direct providers"
+    fi
+
     # Try Serper image search
     local serper_key
     serper_key=$(api_get_key "SERPER_API_KEY" 2>/dev/null)
@@ -1975,6 +2009,21 @@ web_search_github() {
     if [ -z "$query" ]; then
         ui_err "Usage: web_search_github <query> [count]"
         return 1
+    fi
+
+    # MCP-first: route through george-fetch github_search tool
+    if declare -f mcp_enabled &>/dev/null && mcp_enabled; then
+        local _mcp_result
+        _mcp_result=$(mcp_github_search "$query" "$count" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$_mcp_result" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+                ui_dim "  [debug] web_search_github: MCP succeeded (${#_mcp_result} bytes)"
+            echo "$_mcp_result"
+            _web_journal_results "$query" "$_mcp_result" "github"
+            return 0
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] web_search_github: MCP failed — falling through to direct API"
     fi
 
     local encoded

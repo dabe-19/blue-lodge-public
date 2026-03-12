@@ -12,6 +12,7 @@
 - [The Macro Loop (Task Level)](#the-macro-loop)
 - [The Inner Loop (Milestone Level)](#the-inner-loop)
 - [Smart Command Routing](#smart-command-routing)
+- [MCP Service Boundary in Execution](#mcp-service-boundary-in-execution)
 - [The Router-Specialist Pipeline](#the-router-specialist-pipeline)
 - [Five-Level Failure Escalation](#five-level-failure-escalation)
 - [The Dual Evaluator System](#the-dual-evaluator-system)
@@ -261,7 +262,7 @@ agent_inner_loop() {
         # Phase 3: Smart Route (fix LLM errors)
         cmd=$(_agent_smart_route "$cmd")
 
-        # Phase 4: Execute
+        # Phase 4: Execute (MCP dispatch intercept → normal routing → MCP-first lib calls)
         local output exit_code
         output=$(commands_dispatch "$cmd" 2>&1 | head -c 2000)
         exit_code=${PIPESTATUS[0]}
@@ -321,6 +322,106 @@ The cascading priority:
 ```
 
 The `_SMART_ROUTE_REROUTED` flag lets the evaluator know a correction was made, so it can retry the original if the correction fails.
+
+---
+
+## MCP Service Boundary in Execution
+
+### How Commands Reach MCP
+
+When the inner loop calls `commands_dispatch()` in Phase 4, the command
+flows through multiple layers before hitting the outside world. MCP acts
+as the **service boundary** — the single point where all external
+interactions are mediated:
+
+```
+┌─ Inner Loop Phase 4: Execute ────────────────────────────────┐
+│                                                               │
+│  commands_dispatch("/web fetch https://youtube.com/...")       │
+│       │                                                       │
+│       ├─ 1. MCP dispatch intercept                            │
+│       │     _mcp_dispatch_intercept() checks if a running     │
+│       │     MCP server has a tool matching the command         │
+│       │     (/git status → git_status tool). If matched,      │
+│       │     call tool directly and return.                     │
+│       │                                                       │
+│       └─ 2. Normal command dispatch (if no MCP intercept)     │
+│             Route to _cmd_web(), _cmd_git(), etc.             │
+│                  │                                             │
+│                  ▼                                             │
+│             Lib function (web_fetch, mqtt_publish, x_post)    │
+│                  │                                             │
+│                  ├─ Domain cleaning (strip quotes, normalize)  │
+│                  ├─ Local fast-path (cache, special APIs)      │
+│                  └─ MCP-first call                             │
+│                       │                                        │
+│                       ▼                                        │
+│                  MCP wrapper (mcp_web_fetch, mcp_x_post)      │
+│                       │                                        │
+│                       ▼                                        │
+│                  MCP server (george-fetch, george-x)           │
+│                       │                                        │
+│                       ▼                                        │
+│                  Raw execution (curl, git, mosquitto_pub)      │
+│                                                               │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Two MCP Entry Points
+
+There are two distinct paths into MCP:
+
+**Path A — Dispatch Intercept** (used by git commands):
+The command name itself maps to an MCP tool. `/git status` becomes
+`git_status`, and `_mcp_dispatch_intercept()` calls the george-git
+server directly. The lib function is bypassed entirely.
+
+**Path B — Lib-Level Routing** (used by web, MQTT, X):
+The command routes through normal dispatch to a lib function like
+`web_fetch()`. The lib function does domain-specific work (caching,
+URL normalization) then calls its MCP wrapper as the primary execution
+path.
+
+### Concrete Example: `/web fetch https://youtube.com/watch?v=abc`
+
+```mermaid
+sequenceDiagram
+    participant IL as Inner Loop
+    participant SR as _agent_smart_route
+    participant CD as commands_dispatch
+    participant CW as _cmd_web
+    participant WF as web_fetch()
+    participant MW as mcp_web_fetch()
+    participant GF as george-fetch
+
+    IL->>SR: /web fetch https://youtube.com/watch?v=abc
+    SR->>SR: URL detected, /web fetch is correct ✓
+    SR->>CD: /web fetch https://youtube.com/watch?v=abc
+    CD->>CD: MCP intercept? "web" ≠ any tool name → no
+    CD->>CW: ("fetch", "https://youtube.com/watch?v=abc")
+    CW->>WF: web_fetch("https://youtube.com/watch?v=abc")
+    WF->>WF: Cache check → miss
+    WF->>WF: GitHub special? No. Reddit? No.
+    WF->>MW: mcp_web_fetch(url) [MCP enabled]
+    MW->>GF: fetch_json tool (structured-first)
+    GF-->>MW: {title: "Video Title", content: "description..."}
+    MW->>MW: content > 80 chars? → yes → format as markdown
+    MW-->>WF: "# Video Title\n\ndescription..."
+    WF-->>CW: content
+    CW-->>CD: output
+    CD-->>IL: output → micro_memory → evaluator
+```
+
+### Why Two Paths?
+
+**Git** uses dispatch intercept because the MCP server calls `git`
+directly — there's no lib-level cleaning needed. `/git status` goes
+straight to the george-git server.
+
+**Web, MQTT, X** use lib-level routing because the lib functions add
+value before MCP: URL normalization, cache checking, Reddit/GitHub
+special-casing, argument pre-parsing. The MCP server is the execution
+backend, not the entry point.
 
 ---
 
@@ -852,6 +953,19 @@ _agent_validate_plan() {
 | `_build_router_prompt()` | Compact command catalog for router |
 | `_build_specialist_prompt()` | Per-command syntax card for specialist |
 | `_agent_validate_plan()` | Pre-execution linting of honeydew |
+
+### MCP Service Boundary (lib/mcp.sh)
+
+| Function | Purpose |
+|----------|---------|
+| `_mcp_dispatch_intercept()` | Match slash command → MCP tool (compound: `/git status` → `git_status`) |
+| `_mcp_try_fetch_tool()` | Iterate fetch servers: george-fetch → fetch → puppeteer |
+| `_mcp_try_server_tool()` | Call a specific named MCP server |
+| `mcp_web_fetch()` | Structured-first web fetch (fetch_json → fetch fallback) |
+| `mcp_web_search()` | Web search via george-fetch |
+| `mcp_git_*()` | Git operations via george-git (status, log, diff, commit, push, pull, branch, clone) |
+| `mcp_mqtt_*()` | MQTT operations via george-mqtt (publish, subscribe, status) |
+| `mcp_x_*()` | X/Twitter operations via george-x (post, timeline, reply, search, delete) |
 
 ### Evaluation
 

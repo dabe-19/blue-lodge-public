@@ -22,6 +22,19 @@ x_post() {
     fi
     # Expand LLM escape sequences (literal \n → real newlines)
     text=$(ui_expand_escapes "$text")
+
+    # MCP-first: route through george-x x_post tool
+    if declare -f mcp_enabled &>/dev/null && mcp_enabled; then
+        local _mcp_result
+        _mcp_result=$(mcp_x_post "$text" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$_mcp_result" ]; then
+            echo "$_mcp_result"
+            return 0
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] x_post: MCP failed — falling through to direct"
+    fi
+
     local token
     token=$(api_require_key "X_BEARER_TOKEN" "X/Twitter") || return 1
 
@@ -46,6 +59,19 @@ x_post() {
 
 x_timeline() {
     local count="${1:-10}"
+
+    # MCP-first: route through george-x x_timeline tool
+    if declare -f mcp_enabled &>/dev/null && mcp_enabled; then
+        local _mcp_result
+        _mcp_result=$(mcp_x_timeline "$count" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$_mcp_result" ]; then
+            echo "$_mcp_result"
+            return 0
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] x_timeline: MCP failed — falling through to direct"
+    fi
+
     local token
     token=$(api_require_key "X_BEARER_TOKEN" "X/Twitter") || return 1
 
@@ -64,6 +90,19 @@ x_timeline() {
 x_reply() {
     local tweet_id="$1"
     local text="$2"
+
+    # MCP-first: route through george-x x_reply tool
+    if declare -f mcp_enabled &>/dev/null && mcp_enabled; then
+        local _mcp_result
+        _mcp_result=$(mcp_x_reply "$tweet_id" "$text" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$_mcp_result" ]; then
+            echo "$_mcp_result"
+            return 0
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] x_reply: MCP failed — falling through to direct"
+    fi
+
     local token
     token=$(api_require_key "X_BEARER_TOKEN" "X/Twitter") || return 1
 
@@ -78,6 +117,19 @@ x_reply() {
 x_search() {
     local query="$1"
     local count="${2:-10}"
+
+    # MCP-first: route through george-x x_search tool
+    if declare -f mcp_enabled &>/dev/null && mcp_enabled; then
+        local _mcp_result
+        _mcp_result=$(mcp_x_search "$query" "$count" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$_mcp_result" ]; then
+            echo "$_mcp_result"
+            return 0
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] x_search: MCP failed — falling through to direct"
+    fi
+
     local token
     token=$(api_require_key "X_BEARER_TOKEN" "X/Twitter") || return 1
 
@@ -91,6 +143,19 @@ x_search() {
 
 x_delete() {
     local tweet_id="$1"
+
+    # MCP-first: route through george-x x_delete tool
+    if declare -f mcp_enabled &>/dev/null && mcp_enabled; then
+        local _mcp_result
+        _mcp_result=$(mcp_x_delete "$tweet_id" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$_mcp_result" ]; then
+            echo "$_mcp_result"
+            return 0
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] x_delete: MCP failed — falling through to direct"
+    fi
+
     local token
     token=$(api_require_key "X_BEARER_TOKEN" "X/Twitter") || return 1
 

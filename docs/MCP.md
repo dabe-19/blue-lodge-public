@@ -6,11 +6,19 @@ servers. No Python bridge, no Node.js runtime — just bash + jq over stdio.
 The client itself has **zero dependencies beyond bash and jq**. Any
 process that speaks MCP (JSON-RPC 2.0 over stdin/stdout) works as a
 server — Python, Go, Rust, even another bash script. George ships with
-two **built-in pure-bash MCP servers**:
-- **`george-fetch`** — Web scraping, search, and PDF extraction (reuses `web.sh`)
-- **`george-git`** — Git operations and GitHub search (reuses `git.sh`)
+four **built-in pure-bash MCP servers** (31 tools total):
+
+- **`george-fetch`** — Web scraping, search, PDF extraction, Reddit (7 tools, reuses `web.sh`)
+- **`george-git`** — Git operations, GitHub search, repo management (16 tools, reuses `git.sh`)
+- **`george-mqtt`** — MQTT pub/sub messaging (3 tools, reuses `mqtt.sh`)
+- **`george-x`** — X/Twitter posting, timeline, search (5 tools, reuses `social.sh`)
 
 No Node.js, no Python, no external runtime needed.
+
+MCP isn't just a sidecar — it's the **service boundary** that all
+external interactions route through. Every `web_fetch()`, `mqtt_publish()`,
+and `x_post()` call tries its MCP wrapper first, falling back to direct
+execution only when MCP is disabled or the server isn't reachable.
 
 ## Prerequisites
 
@@ -29,13 +37,104 @@ No Node.js, no Python, no external runtime needed.
 /mcp on                           # Enable MCP integration
 /mcp install george-fetch         # Register built-in fetch server (pure bash)
 /mcp install george-git           # Register built-in git server (pure bash)
+/mcp install george-x             # Register built-in X/Twitter server (pure bash)
 /mcp start george-fetch           # Start the server (handshake + ready)
-/mcp tools george-fetch           # List available tools
+/mcp tools george-fetch           # List available tools (7 tools)
 /mcp call george-fetch fetch '{"url":"https://example.com"}'
 /mcp call george-git git_status   # Show working tree status
+/mcp call george-x x_timeline '{"count":5}'  # Read recent tweets
 ```
 
 ## How It Works
+
+### The 3-Layer Service Boundary
+
+MCP acts as the universal service boundary for all external interactions.
+Every command that touches the outside world flows through three layers:
+
+```
+┌─ Layer 1: Lib Functions ──────────────────────────────────────┐
+│  web_fetch(), mqtt_publish(), x_post(), ...                    │
+│  Role: Domain-specific cleaning, arg normalization, caching    │
+│  Lives in: lib/web.sh, lib/mqtt.sh, lib/social.sh            │
+│  Rule: "Clean the input, then hand off to MCP"                │
+└───────────────────────┬──────────────────────────────────────┘
+                        │  MCP enabled? → call wrapper
+                        ▼
+┌─ Layer 2: MCP Wrappers ──────────────────────────────────────┐
+│  mcp_web_fetch(), mcp_mqtt_publish(), mcp_x_post(), ...       │
+│  Role: Server routing, structured-first logic, fallback chain  │
+│  Lives in: lib/mcp.sh                                         │
+│  Rule: "Pick the right server, build JSON args, call it"      │
+└───────────────────────┬──────────────────────────────────────┘
+                        │  JSON-RPC 2.0 over FIFO
+                        ▼
+┌─ Layer 3: MCP Servers ───────────────────────────────────────┐
+│  george-fetch, george-git, george-mqtt, george-x              │
+│  Role: Raw execution (curl, git, mosquitto_pub, twitter API)  │
+│  Lives in: lib/mcp_server_*.sh                                │
+│  Rule: "Execute the tool, return the result"                  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Example: `/web fetch https://youtube.com/watch?v=abc`**
+
+```
+1. Specialist outputs:  /web fetch https://youtube.com/watch?v=abc
+2. _agent_smart_route:  looks like a URL → keep as /web fetch (correct)
+3. commands_dispatch:   strips quotes, routes to _cmd_web()
+4. _cmd_web():          sub-command "fetch" → web_fetch(url)
+5. web_fetch():         cache miss → not GitHub → not Reddit →
+                        MCP enabled? → mcp_web_fetch(url)
+6. mcp_web_fetch():     try fetch_json first (structured extraction)
+                        → george-fetch server: fetch_json tool
+                        → result has .content + .title
+                        → content > 80 chars? → return structured result
+                        → too short? fall back to plain fetch tool
+7. _mcp_try_fetch_tool: george-fetch → (success) → return
+                        (or: george-fetch fails → try "fetch" server
+                         → try "puppeteer" server → give up)
+```
+
+The model only needs to pick the right broad category (`/web`, `/git`,
+`/mqtt`) and produce a roughly-correct argument. The layers handle
+the rest — cleaning, routing, structured extraction, and fallback.
+
+### MCP Wrapper Inventory
+
+All wrapper functions in `lib/mcp.sh` that lib-level functions call:
+
+| Wrapper | Server | Tool | Called by |
+|---------|--------|------|-----------|
+| `mcp_web_fetch()` | george-fetch | `fetch_json` → `fetch` | `web_fetch()` |
+| `mcp_web_fetch_json()` | george-fetch | `fetch_json` | `web_fetch_json()` |
+| `mcp_web_search()` | george-fetch | `web_search` | `web_search()` |
+| `mcp_web_images()` | george-fetch | `web_images` | `web_images()` |
+| `mcp_web_fetch_pdf()` | george-fetch | `fetch_pdf` | `_web_extract_pdf()` |
+| `mcp_github_search()` | george-fetch | `github_search` | `web_search_github()` |
+| `mcp_git_status()` | george-git | `git_status` | dispatch intercept |
+| `mcp_git_log()` | george-git | `git_log` | dispatch intercept |
+| `mcp_git_diff()` | george-git | `git_diff` | dispatch intercept |
+| `mcp_git_commit()` | george-git | `git_commit` | dispatch intercept |
+| `mcp_git_push()` | george-git | `git_push` | dispatch intercept |
+| `mcp_git_pull()` | george-git | `git_pull` | dispatch intercept |
+| `mcp_git_branch()` | george-git | `git_branch` | dispatch intercept |
+| `mcp_git_clone()` | george-git | `git_clone` | dispatch intercept |
+| `mcp_mqtt_publish()` | george-mqtt | `mqtt_publish` | `mqtt_publish()` |
+| `mcp_mqtt_subscribe()` | george-mqtt | `mqtt_subscribe` | `mqtt_subscribe()` |
+| `mcp_mqtt_status()` | george-mqtt | `mqtt_status` | `mqtt_status()` |
+| `mcp_x_post()` | george-x | `x_post` | `x_post()` |
+| `mcp_x_timeline()` | george-x | `x_timeline` | `x_timeline()` |
+| `mcp_x_reply()` | george-x | `x_reply` | `x_reply()` |
+| `mcp_x_search()` | george-x | `x_search` | `x_search()` |
+| `mcp_x_delete()` | george-x | `x_delete` | `x_delete()` |
+
+Two routing helpers power these wrappers:
+
+- **`_mcp_try_fetch_tool(tool, args_json)`** — Iterates fetch-capable
+  servers: `george-fetch` → `fetch` → `puppeteer`. Used by all web wrappers.
+- **`_mcp_try_server_tool(server, tool, args_json)`** — Calls a specific
+  named server directly. Used by git, MQTT, and X wrappers.
 
 **Architecture**: FIFO for server stdin + regular file for stdout.
 Avoids named-pipe deadlocks in subshells. Background `sleep` process
@@ -56,9 +155,23 @@ On failure, it falls back to native slash commands. This includes
 command and subcommand with an underscore, then searches for a matching
 tool name across all running servers.
 
-**Web Fetch Priority**: When MCP is on, `web_fetch()` tries MCP servers
-in order: `george-fetch` (built-in, pure bash) → `fetch` (Anthropic's
-Node.js server) → `puppeteer` (headless browser) → curl fallback.
+**Service Boundary Routing**: Every lib-level function that touches
+the outside world (web, git, MQTT, X) routes MCP-first. For example,
+`web_fetch()` → `mcp_web_fetch()` → george-fetch server. If MCP is
+disabled or the server fails, the function falls back to direct
+execution (curl, mosquitto_pub, etc.). The model never needs to know
+about MCP — it just calls `/web fetch` and the infrastructure handles
+the routing.
+
+**Structured-First Fetch**: `mcp_web_fetch()` tries `fetch_json` before
+plain `fetch`. The structured result includes title, content, and images
+as separate fields. If the structured result is too short (<80 chars), it
+falls back to plain `fetch`. This gives YouTube, SPAs, and JavaScript-
+rendered pages a second chance via metadata extraction.
+
+**Fetch Server Cascade**: For web tools, `_mcp_try_fetch_tool()` tries
+servers in order: `george-fetch` (built-in) → `fetch` (Anthropic's
+Node.js server) → `puppeteer` (headless browser). First success wins.
 
 **Persistence**: Server registrations (`servers.conf`) persist across
 sessions. Running servers do not — they're killed on exit and must be
@@ -190,62 +303,89 @@ On `lodge` exit, `mcp_stop_all()` iterates every subdirectory of
 (`/tmp/.lodge-mcp-<PID>/`) is ephemeral — it's gone after the
 session ends.
 
-## Sequence Diagram: Agent Loop → MCP Client → george-fetch
+## Sequence Diagram: Full Service Boundary Flow
 
-This shows the full path when George's agent loop needs to fetch a URL.
-The LLM strategist decides to call `web_fetch`, which routes through the
-MCP client to the pure-bash george-fetch server — all over stdio FIFOs
-within the same shell session:
+This shows the complete path when George's agent loop needs to fetch a URL.
+The LLM specialist generates a `/web fetch` command, which flows through all
+three layers — lib function → MCP wrapper (structured-first) → MCP server —
+over stdio FIFOs within the same shell session:
 
 ```mermaid
 sequenceDiagram
     participant Agent as Agent Loop<br/>(lib/agent.sh)
+    participant Cmd as commands_dispatch<br/>(lib/commands.sh)
     participant Web as web_fetch()<br/>(lib/web.sh)
-    participant MCP as MCP Client<br/>(lib/mcp.sh)
-    participant FIFO as Transport<br/>(FIFO stdin + file stdout)
-    participant Server as george-fetch<br/>(lib/mcp_server_fetch.sh)
-    participant Curl as curl + web.sh<br/>(scraping engine)
+    participant MCP as MCP Wrapper<br/>(lib/mcp.sh)
+    participant FIFO as Transport<br/>(FIFO + file)
+    participant Server as george-fetch<br/>(mcp_server_fetch.sh)
 
-    Note over Agent,Curl: George decides to fetch a URL during task execution
+    Note over Agent,Server: Specialist generates: /web fetch https://youtube.com/watch?v=abc
 
-    Agent->>Web: web_fetch("https://example.com")
-    Web->>Web: MCP enabled? Check MCP_ENABLED=1
+    Agent->>Cmd: commands_dispatch("/web fetch url")
+    Cmd->>Cmd: _mcp_dispatch_intercept? No match (web≠tool name)
+    Cmd->>Web: _cmd_web("fetch", url)
+    Web->>Web: Cache check → miss
+    Web->>Web: GitHub API? No. Reddit? No.
 
-    alt MCP Enabled (primary path)
+    alt MCP Enabled (Layer 1 → Layer 2)
         Web->>MCP: mcp_web_fetch(url)
-        MCP->>MCP: Server running? Check PID file
 
-        alt Server not started yet
-            MCP->>FIFO: mkfifo in.fifo, touch responses.jsonl
-            MCP->>Server: eval "bash lib/mcp_server_fetch.sh"<br/>< in.fifo >> responses.jsonl
-            MCP->>FIFO: sleep 86400 > in.fifo &<br/>(hold FIFO write-end open)
+        Note over MCP,Server: Structured-First: try fetch_json before fetch
 
-            Note over MCP,Server: JSON-RPC 2.0 Handshake
+        MCP->>MCP: _mcp_try_fetch_tool("fetch_json", {url})
+        MCP->>FIFO: JSON-RPC tools/call fetch_json
+        FIFO->>Server: stdin read
+        Server->>Server: web_fetch_json(url) → curl + extract
+        Server->>FIFO: >> responses.jsonl
+        FIFO-->>MCP: {title, content, images}
 
-            MCP->>FIFO: printf '{"jsonrpc":"2.0","id":1,<br/>"method":"initialize",...}' > in.fifo
-            FIFO->>Server: (server reads stdin)
-            Server->>FIFO: >> responses.jsonl:<br/>{"protocolVersion":"2024-11-05",...}
-            FIFO-->>MCP: poll responses.jsonl for id:1
-            MCP->>FIFO: printf '{"method":<br/>"notifications/initialized"}' > in.fifo
-            MCP->>MCP: touch ready flag
+        alt Content > 80 chars (structured extraction succeeded)
+            MCP-->>Web: "# Title\n\ncontent..."
+            Web-->>Cmd: result
+            Cmd-->>Agent: output for LLM context
+        else Content ≤ 80 chars (fall back to plain fetch)
+            MCP->>MCP: _mcp_try_fetch_tool("fetch", {url})
+            MCP->>FIFO: JSON-RPC tools/call fetch
+            FIFO->>Server: stdin read
+            Server->>Server: web_fetch(url) → curl + HTML extract
+            Server->>FIFO: >> responses.jsonl
+            FIFO-->>MCP: plain text content
+            MCP-->>Web: text
+            Web-->>Cmd: result
+            Cmd-->>Agent: output for LLM context
         end
 
-        Note over MCP,Server: Tool Call (tools/call)
-
-        MCP->>MCP: req_id = next_id (file counter)
-        MCP->>FIFO: printf '{"jsonrpc":"2.0","id":2,<br/>"method":"tools/call",<br/>"params":{"name":"fetch",<br/>"arguments":{"url":"..."}}}' > in.fifo
-        FIFO->>Server: (server reads line from stdin)
-        Server->>Curl: web_fetch(url)<br/>curl + semantic HTML extraction<br/>(<article>/<main> priority)
-        Curl-->>Server: cleaned text content
-        Server->>FIFO: >> responses.jsonl:<br/>{"jsonrpc":"2.0","id":2,<br/>"result":{"content":[{"type":"text",...}]}}
-        FIFO-->>MCP: poll responses.jsonl,<br/>match id:2, parse .result
-        MCP-->>Web: extracted text
-        Web-->>Agent: content for LLM context
-
     else MCP Disabled (fallback)
-        Web->>Curl: curl -sL url | html_extract
-        Curl-->>Web: raw text
-        Web-->>Agent: content for LLM context
+        Web->>Web: curl -sL url | html_extract
+        Web-->>Cmd: raw text
+        Cmd-->>Agent: output for LLM context
+    end
+```
+
+### Fetch Server Cascade (when george-fetch fails)
+
+```mermaid
+sequenceDiagram
+    participant MCP as mcp_web_fetch()
+    participant GF as george-fetch<br/>(pure bash)
+    participant AF as fetch<br/>(Anthropic Node.js)
+    participant PP as puppeteer<br/>(headless browser)
+
+    MCP->>GF: _mcp_try_fetch_tool("fetch", {url})
+    alt george-fetch succeeds
+        GF-->>MCP: content ✓
+    else george-fetch fails or not running
+        MCP->>AF: try "fetch" server
+        alt Anthropic fetch succeeds
+            AF-->>MCP: content ✓
+        else Anthropic fetch fails or not installed
+            MCP->>PP: try "puppeteer" server
+            alt puppeteer succeeds
+                PP-->>MCP: content ✓ (JS-rendered)
+            else all servers failed
+                MCP-->>MCP: return failure → lib function falls back to curl
+            end
+        end
     end
 ```
 
@@ -387,13 +527,14 @@ George ships with a pure-bash MCP fetch server that reuses the existing
 
 **Install**: `/mcp install george-fetch`
 
-### Tools
+### Tools (7)
 
 | Tool | Description |
 |---|---|
 | `fetch` | Fetch a URL → clean extracted text (semantic HTML, PDF, JSON, XML) |
-| `fetch_json` | Fetch a URL → structured JSON (title, content, images) |
+| `fetch_json` | Fetch a URL → structured JSON (title, content, images, metadata) |
 | `fetch_pdf` | Fetch a PDF URL → extracted text (pdftotext / strings fallback) |
+| `fetch_reddit` | Fetch a Reddit URL → structured post + top comments |
 | `web_search` | Search the web (DDG, Serper, Perplexity) |
 | `web_images` | Image search (requires `SERPER_API_KEY`) |
 | `github_search` | Search GitHub repositories (no auth needed) |
@@ -419,12 +560,15 @@ to puppeteer for pages that need a headless browser.
 ## Built-in Server: george-git
 
 George ships with a pure-bash MCP server for Git and GitHub operations.
-It exposes 12 tools covering local git operations, branch management,
-and GitHub search — all backed by `lib/git.sh` and `lib/web.sh`.
+It exposes 16 tools covering local git operations, branch management,
+repo discovery, and GitHub search — all backed by `lib/git.sh` and
+`lib/web.sh`. Higher-level orchestrations like `cmd_commit` and
+`cmd_push` (which do GPG signing, push guards, etc.) remain in the
+agent — the MCP server handles raw git operations.
 
 **Install**: `/mcp install george-git`
 
-### Tools
+### Tools (16)
 
 | Tool | Description |
 |---|---|
@@ -439,7 +583,11 @@ and GitHub search — all backed by `lib/git.sh` and `lib/web.sh`.
 | `git_remote` | List, add, or remove remotes |
 | `github_search` | Search GitHub repositories by keyword (no auth needed) |
 | `github_check` | Verify a GitHub repository exists |
+| `git_search` | Search for text in tracked files (git grep) |
+| `git_check` | Check if current directory is a git repo |
 | `git_setup_status` | Show George's git config: identity, SSH, GPG, remotes |
+| `git_fetch_readme` | Fetch a repo's README from GitHub |
+| `github_clone` | Clone from GitHub with smart URL resolution |
 
 ### Compound Command Dispatch
 
@@ -475,6 +623,88 @@ You can also call tools directly with explicit JSON parameters:
 /mcp call george-git github_search '{"query":"bash mcp server","count":10}'
 ```
 
+## Built-in Server: george-mqtt
+
+George ships with a pure-bash MCP server for MQTT pub/sub messaging.
+It exposes 3 tools backed by `lib/mqtt.sh` — publish messages, subscribe
+to topics, and check broker status.
+
+**Install**: Register manually (not in the default catalog):
+```
+/mcp add george-mqtt "bash $LODGE_DIR/lib/mcp_server_mqtt.sh"
+```
+
+### Tools (3)
+
+| Tool | Description |
+|---|---|
+| `mqtt_publish` | Publish a message to an MQTT topic (requires `mosquitto_pub`) |
+| `mqtt_subscribe` | Subscribe and read messages from an MQTT topic |
+| `mqtt_status` | Check MQTT broker connectivity and config status |
+
+### Service Boundary Routing
+
+When MCP is enabled and george-mqtt is running, the lib-level MQTT
+functions route through MCP automatically:
+
+| Lib function | MCP wrapper | Tool called |
+|---|---|---|
+| `mqtt_publish()` | `mcp_mqtt_publish()` | `mqtt_publish` |
+| `mqtt_subscribe()` | `mcp_mqtt_subscribe()` | `mqtt_subscribe` |
+| `mqtt_status()` | `mcp_mqtt_status()` | `mqtt_status` |
+
+The lib functions pre-parse arguments into JSON before calling the MCP
+wrapper. If MCP fails or is disabled, they fall back to direct
+`mosquitto_pub`/`mosquitto_sub` calls.
+
+### Direct Tool Calls
+
+```
+/mcp call george-mqtt mqtt_publish '{"topic":"home/lights","message":"on"}'
+/mcp call george-mqtt mqtt_subscribe '{"topic":"home/#","count":5}'
+/mcp call george-mqtt mqtt_status '{}'
+```
+
+## Built-in Server: george-x
+
+George ships with a pure-bash MCP server for X (Twitter) operations.
+It exposes 5 tools backed by `lib/social.sh` for posting, reading
+timelines, replying, searching, and deleting tweets.
+
+**Install**: `/mcp install george-x`
+
+### Tools (5)
+
+| Tool | Description |
+|---|---|
+| `x_post` | Post a tweet (requires X API credentials) |
+| `x_timeline` | Read your home timeline or a user's recent tweets |
+| `x_reply` | Reply to a specific tweet by ID |
+| `x_search` | Search tweets by keyword |
+| `x_delete` | Delete a tweet by ID |
+
+### Service Boundary Routing
+
+When MCP is enabled and george-x is running, the lib-level X
+functions route through MCP automatically:
+
+| Lib function | MCP wrapper | Tool called |
+|---|---|---|
+| `x_post()` | `mcp_x_post()` | `x_post` |
+| `x_timeline()` | `mcp_x_timeline()` | `x_timeline` |
+| `x_reply()` | `mcp_x_reply()` | `x_reply` |
+| `x_search()` | `mcp_x_search()` | `x_search` |
+| `x_delete()` | `mcp_x_delete()` | `x_delete` |
+
+### Direct Tool Calls
+
+```
+/mcp call george-x x_post '{"text":"Hello from George"}'
+/mcp call george-x x_timeline '{"count":10}'
+/mcp call george-x x_reply '{"tweet_id":"123456","text":"Thanks!"}'
+/mcp call george-x x_search '{"query":"bash MCP","count":5}'
+```
+
 ## Server Catalog (optional, requires Node.js)
 
 The built-in catalog also includes Anthropic's official MCP servers for
@@ -484,8 +714,9 @@ is only needed if you install these specific entries. For most use cases,
 
 | Server | Command | Description |
 |---|---|---|
-| `george-fetch` | `bash lib/mcp_server_fetch.sh` | **Built-in** web fetch (pure bash, no Node.js) |
-| `george-git` | `bash lib/mcp_server_git.sh` | **Built-in** git & GitHub operations (pure bash, no Node.js) |
+| `george-fetch` | `bash lib/mcp_server_fetch.sh` | **Built-in** web fetch, search, Reddit, PDF (pure bash) |
+| `george-git` | `bash lib/mcp_server_git.sh` | **Built-in** git & GitHub operations (pure bash) |
+| `george-x` | `bash lib/mcp_server_x.sh` | **Built-in** X/Twitter integration (pure bash) |
 | `fetch` | `npx -y @anthropic/mcp-server-fetch` | Web content fetching (enhanced scraping) |
 | `puppeteer` | `npx -y @anthropic/mcp-server-puppeteer` | Browser automation for JS-rendered pages |
 | `brave-search` | `npx -y @anthropic/mcp-server-brave-search` | Brave web search (needs `BRAVE_API_KEY`) |
@@ -508,11 +739,15 @@ Install from catalog with `/mcp install <name>`, then `/mcp start <name>`.
 
 ## Integration Points
 
-- **`lib/mcp.sh`** — Complete MCP client library (start, stop, tool calls, dispatch intercept)
-- **`lib/mcp_server_fetch.sh`** — Built-in pure-bash MCP fetch server (george-fetch)
-- **`lib/mcp_server_git.sh`** — Built-in pure-bash MCP git server (george-git)
-- **`lib/web.sh`** — MCP-first fetch in `web_fetch()`, falls back to curl
-- **`lib/commands.sh`** — MCP dispatch intercept before normal routing
+- **`lib/mcp.sh`** — MCP client library: start/stop, tool calls, dispatch intercept, all service boundary wrappers
+- **`lib/mcp_server_fetch.sh`** — george-fetch: 7 tools (web fetch, structured fetch, PDF, Reddit, search, images, GitHub)
+- **`lib/mcp_server_git.sh`** — george-git: 16 tools (git ops, branch, clone, GitHub search/check)
+- **`lib/mcp_server_mqtt.sh`** — george-mqtt: 3 tools (publish, subscribe, status)
+- **`lib/mcp_server_x.sh`** — george-x: 5 tools (post, timeline, reply, search, delete)
+- **`lib/web.sh`** — MCP-first routing in web_fetch, web_search, web_images, web_fetch_json, web_search_github
+- **`lib/mqtt.sh`** — MCP-first routing in mqtt_publish, mqtt_subscribe, mqtt_status
+- **`lib/social.sh`** — MCP-first routing in x_post, x_timeline, x_reply, x_search, x_delete
+- **`lib/commands.sh`** — MCP dispatch intercept before normal routing (compound command matching)
 - **`lodge`** — `/mcp` command registration, source chain, exit cleanup
 
 ## Tool Caching
@@ -546,13 +781,70 @@ before starting lodge: `export BRAVE_API_KEY=...` or `export GITHUB_TOKEN=...`.
 may linger. Kill them with `pkill -f mcp-server` or check for orphaned
 `sleep 86400` processes.
 
+## External Agent Interaction
+
+George's MCP servers are standard JSON-RPC 2.0 processes. **Any MCP
+client** — not just George — can connect to them and use the same 31
+tools. This makes George's capabilities available to external agents,
+IDEs, and automation pipelines.
+
+### How Outside Agents Connect
+
+George's MCP servers read from stdin and write to stdout. To connect:
+
+```bash
+# 1. Start the server as a subprocess
+bash lib/mcp_server_fetch.sh < /path/to/request.fifo >> /path/to/responses.jsonl &
+
+# 2. Send the initialize handshake
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"my-agent","version":"1.0"}}}' > /path/to/request.fifo
+
+# 3. Discover available tools
+echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' > /path/to/request.fifo
+
+# 4. Call any tool
+echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fetch","arguments":{"url":"https://example.com"}}}' > /path/to/request.fifo
+```
+
+Or pipe directly for one-shot usage:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"web_search","arguments":{"query":"bash MCP server"}}}' \
+  | bash lib/mcp_server_fetch.sh 2>/dev/null
+```
+
+### What External Agents Get
+
+| Server | What it exposes | Environment needed |
+|---|---|---|
+| george-fetch | Web scraping, search, Reddit, PDF, GitHub search | bash + curl + jq |
+| george-git | Full git operations + GitHub API | bash + git + jq |
+| george-mqtt | MQTT pub/sub | bash + mosquitto-clients + jq |
+| george-x | X/Twitter API | bash + curl + jq + X API keys |
+
+**No George session required.** The servers are self-contained — they
+source only the lib files they need (`web.sh`, `git.sh`, etc.). An
+external agent can start `george-fetch` without running lodge at all.
+
+### Use Cases
+
+- **IDE integration**: VS Code, Cursor, or any MCP-aware editor can
+  register george-fetch for web lookups without Node.js
+- **CI/CD pipelines**: Script git operations through george-git's
+  JSON-RPC interface for structured, parseable results
+- **Multi-agent systems**: A Python orchestrator can spawn George's
+  servers as subprocesses and call tools via standard MCP protocol
+- **IoT automation**: george-mqtt lets any MCP client publish/subscribe
+  to MQTT topics without knowing mosquitto CLI syntax
+
 ## Building Your Own MCP Server
 
 George's MCP client talks to any process that reads JSON-RPC 2.0 from
 stdin and writes JSON-RPC 2.0 to stdout, one JSON object per line. You
 can write a custom server in bash, Python, Go, Ruby — anything. Below
-is the anatomy of a pure-bash server, since that's what `george-fetch`
-and `george-git` are built with.
+is the anatomy of a pure-bash server, since that's what all four
+built-in servers (`george-fetch`, `george-git`, `george-mqtt`,
+`george-x`) are built with.
 
 ### Minimal Server Template
 
@@ -737,7 +1029,8 @@ source "$LODGE_DIR/lib/ui.sh"     # ui_bold, ui_dim (optional)
 
 The `george-fetch` server sources `web.sh` and calls `web_fetch()`,
 `web_search_ddg()`, etc. The `george-git` server sources `git.sh` and
-`web.sh`. Your server can use any library in `lib/`.
+`web.sh`. The `george-mqtt` server sources `mqtt.sh`, and `george-x`
+sources `social.sh`. Your server can use any library in `lib/`.
 
 ### Register and Test Your Server
 
