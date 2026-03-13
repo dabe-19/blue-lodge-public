@@ -788,33 +788,70 @@ _html_extract_title() {
 }
 
 # ── Extract structured content from HTML ───────────────────────
-# Uses semantic HTML priority: prefer <article> or <main> content,
-# then fall back to full-page extraction with junk blocks stripped.
+# Uses a tiered extraction strategy to isolate article content:
+#   Tier 1: <article> semantic tag (≥200 chars)
+#   Tier 1.5: class/id-aware block selection (div/section with content-like names)
+#   Tier 2: <main> semantic tag (≥200 chars)
+#   Tier 3: Content density scoring (text-to-tag ratio, paragraph count, link density)
+#   Tier 4: Full page with junk blocks stripped (last resort)
 # Strips script/style/nav/header/footer/aside before extracting,
 # then decodes entities and emits clean text lines.
 _html_extract_content() {
     local _raw
     _raw=$(sed 's/>/>\n/g')
 
-    # Priority: narrow scope to <article> or <main> if present.
-    # These semantic containers hold the actual content on modern sites
-    # and dramatically improve signal-to-noise ratio.
-    local _focused
-    _focused=$(printf '%s\n' "$_raw" | awk '
-        tolower($0) ~ /<article/ { inside = 1 }
-        inside { print }
-        tolower($0) ~ /<\/article>/ { inside = 0 }
-    ')
-    if [ -z "$_focused" ] || [ "$(printf '%s' "$_focused" | wc -c)" -lt 200 ]; then
+    # Tier 1: <article> (but only if there's exactly one — multiple
+    # <article> tags usually means a listing page with preview cards)
+    local _focused _article_count
+    _article_count=$(printf '%s\n' "$_raw" | grep -ciE '<article[ >]' || true)
+    if [ "$_article_count" -eq 1 ]; then
+        _focused=$(printf '%s\n' "$_raw" | awk '
+            tolower($0) ~ /<article/ { inside = 1 }
+            inside { print }
+            tolower($0) ~ /<\/article>/ { inside = 0 }
+        ')
+        if [ -n "$_focused" ] && [ "$(printf '%s' "$_focused" | wc -c)" -ge 200 ]; then
+            _raw="$_focused"
+        else
+            _focused=""
+        fi
+    else
+        _focused=""
+    fi
+
+    # Tier 1.5: class/id-aware block selection
+    if [ -z "$_focused" ]; then
+        _focused=$(_html_extract_by_class_id "$_raw")
+        if [ -n "$_focused" ] && [ "$(printf '%s' "$_focused" | wc -c)" -ge 200 ]; then
+            _raw="$_focused"
+        else
+            _focused=""
+        fi
+    fi
+
+    # Tier 2: <main>
+    if [ -z "$_focused" ]; then
         _focused=$(printf '%s\n' "$_raw" | awk '
             tolower($0) ~ /<main/ { inside = 1 }
             inside { print }
             tolower($0) ~ /<\/main>/ { inside = 0 }
         ')
+        if [ -n "$_focused" ] && [ "$(printf '%s' "$_focused" | wc -c)" -ge 200 ]; then
+            _raw="$_focused"
+        else
+            _focused=""
+        fi
     fi
-    if [ -n "$_focused" ] && [ "$(printf '%s' "$_focused" | wc -c)" -ge 200 ]; then
-        _raw="$_focused"
+
+    # Tier 3: content density scoring
+    if [ -z "$_focused" ]; then
+        _focused=$(_html_score_blocks "$_raw")
+        if [ -n "$_focused" ] && [ "$(printf '%s' "$_focused" | wc -c)" -ge 200 ]; then
+            _raw="$_focused"
+        fi
     fi
+
+    # Tier 4 (implicit): full page — _raw is unchanged, junk stripped below.
 
     printf '%s\n' "$_raw" | awk '
     BEGIN { skip = 0 }
@@ -850,6 +887,166 @@ _html_extract_content() {
         gsub(/[[:space:]]+$/, "")
         if (length($0) > 2) print
     }' | head -300
+}
+
+# ── Tier 1.5: Class/ID-aware block extraction ─────────────────
+# Scans for <div> or <section> tags whose class or id attribute
+# matches known content-area patterns (WordPress, Medium, Wikipedia,
+# news sites, documentation frameworks). Returns the inner HTML of
+# the first matching block.
+_html_extract_by_class_id() {
+    local html="$1"
+    printf '%s\n' "$html" | awk '
+    BEGIN {
+        # Positive patterns — class/id substrings that indicate content
+        split("article-body,post-content,entry-content,story-body," \
+              "main-content,page-content,article-text,blog-post," \
+              "content-area,single-post,td-post-content," \
+              "mw-parser-output,mw-content-text," \
+              "post-body,article-content,node-content," \
+              "field-item,prose,markdown-body," \
+              "rich-text,text-content,body-content", pos, ",")
+        for (i in pos) positive[pos[i]] = 1
+
+        found = 0; depth = 0; buf = ""
+    }
+
+    !found {
+        line = tolower($0)
+        # Match opening <div or <section with class= or id=
+        if (line ~ /<(div|section)[^>]*(class|id)=/) {
+            # Extract the attribute value
+            attr = line
+            gsub(/.*class="/, "", attr)
+            gsub(/.*id="/, "", attr)
+            gsub(/".*/, "", attr)
+            # Check each positive pattern
+            for (p in positive) {
+                if (index(attr, p) > 0) {
+                    found = 1; depth = 1; buf = $0
+                    next
+                }
+            }
+        }
+    }
+
+    found {
+        if (NR > 1 || buf == "") buf = buf "\n" $0
+        line = tolower($0)
+        # Count opening and closing div/section tags to track nesting
+        n = split(line, tmp, /<(div|section)[ >]/)
+        depth += (n - 1)
+        n = split(line, tmp, /<\/(div|section)>/)
+        depth -= (n - 1)
+        if (depth <= 0) {
+            print buf
+            exit
+        }
+    }
+    '
+}
+
+# ── Tier 3: Content density scoring ───────────────────────────
+# Splits the page into candidate blocks (top-level <div> and
+# <section> boundaries) and scores each by content density signals:
+#   - text_chars / tag_chars ratio (prose has high ratio)
+#   - <p> paragraph count (articles have many paragraphs)
+#   - link density penalty (nav blocks are link-heavy)
+#   - comma count bonus (prose uses commas; menus don't)
+# Returns the highest-scoring block's raw HTML.
+_html_score_blocks() {
+    local html="$1"
+    printf '%s\n' "$html" | awk '
+    BEGIN {
+        best_score = 0; best_block = ""; cur_block = ""
+        in_block = 0; depth = 0; block_count = 0
+    }
+
+    # Start a new candidate block at top-level div/section opens
+    tolower($0) ~ /<(div|section)[ >]/ && !in_block {
+        in_block = 1; depth = 1; cur_block = $0
+        next
+    }
+
+    in_block {
+        cur_block = cur_block "\n" $0
+        line = tolower($0)
+
+        # Track nesting depth
+        n = split(line, tmp, /<(div|section)[ >]/)
+        depth += (n - 1)
+        n = split(line, tmp, /<\/(div|section)>/)
+        depth -= (n - 1)
+
+        # Block closed — score it
+        if (depth <= 0) {
+            in_block = 0
+            block_count++
+
+            # Extract text (strip tags)
+            text_buf = cur_block
+            gsub(/<script[^>]*>.*<\/script>/, "", text_buf)
+            gsub(/<style[^>]*>.*<\/style>/, "", text_buf)
+            tag_chars = 0
+            n = split(text_buf, pieces, /<[^>]*>/)
+            for (i in pieces) tag_chars += length(pieces[i])
+            tag_chars = length(text_buf) - tag_chars
+            if (tag_chars < 1) tag_chars = 1
+
+            # Text content (tags removed)
+            text_only = text_buf
+            gsub(/<[^>]*>/, "", text_only)
+            gsub(/&[a-z]+;/, " ", text_only)
+            gsub(/&#[0-9]+;/, " ", text_only)
+            gsub(/[[:space:]]+/, " ", text_only)
+            text_len = length(text_only)
+
+            # Skip tiny blocks
+            if (text_len < 100) { cur_block = ""; next }
+
+            # Signal 1: text-to-tag ratio (0-5 range, capped)
+            ratio = text_len / tag_chars
+            if (ratio > 5) ratio = 5
+
+            # Signal 2: paragraph count
+            p_count = split(tolower(cur_block), tmp, /<p[ >]/) - 1
+            if (p_count < 0) p_count = 0
+
+            # Signal 3: link density penalty
+            link_text = cur_block
+            gsub(/<a[^>]*>/, "\x01", link_text)
+            gsub(/<\/a>/, "\x02", link_text)
+            gsub(/<[^>]*>/, "", link_text)
+            lt = 0; in_link = 0
+            for (i = 1; i <= length(link_text); i++) {
+                c = substr(link_text, i, 1)
+                if (c == "\x01") in_link = 1
+                else if (c == "\x02") in_link = 0
+                else if (in_link) lt++
+            }
+            link_density = (text_len > 0) ? lt / text_len : 1
+            link_penalty = 1 - link_density
+            if (link_penalty < 0.1) link_penalty = 0.1
+
+            # Signal 4: comma count (prose indicator)
+            comma_count = gsub(/,/, ",", text_only)
+
+            # Composite score
+            score = (ratio * 10) + (p_count * 3) + (comma_count * 0.5)
+            score = score * link_penalty
+
+            if (score > best_score) {
+                best_score = score
+                best_block = cur_block
+            }
+            cur_block = ""
+        }
+    }
+
+    END {
+        if (best_block != "") print best_block
+    }
+    '
 }
 
 # ── Extract image URLs from HTML (content areas only) ──────────

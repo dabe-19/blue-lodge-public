@@ -1288,6 +1288,258 @@ describe "_html_extract_content rewrite"
     _teardown_web
   }
 
+  it "prefers single <article> tag over full page" && {
+    _setup_web
+    _tw_html='<html><body><nav>Menu links here nav stuff</nav><article><p>This is the real article content with enough text to pass the threshold easily and be selected by tier one extraction.</p></article><footer>Footer stuff</footer></body></html>'
+    _tw_result=$(echo "$_tw_html" | _html_extract_content)
+    assert_contains "$_tw_result" "real article content"
+    assert_not_contains "$_tw_result" "Menu links"
+    assert_not_contains "$_tw_result" "Footer stuff"
+    _teardown_web
+  }
+
+  it "skips <article> when there are multiple (listing page)" && {
+    _setup_web
+    _tw_html='<html><body><article><p>Card one preview</p></article><article><p>Card two preview</p></article><div class="entry-content"><p>This is the actual main content of the page with enough words to pass the two hundred character minimum threshold for class-based extraction to work properly in the tier system.</p></div></body></html>'
+    _tw_result=$(echo "$_tw_html" | _html_extract_content)
+    assert_contains "$_tw_result" "actual main content"
+    _teardown_web
+  }
+
+# ── _html_extract_by_class_id (Tier 1.5) ─────────────────────
+describe "_html_extract_by_class_id"
+
+  it "function exists" && {
+    _setup_web
+    declare -f _html_extract_by_class_id >/dev/null 2>&1
+    assert_ok $? "_html_extract_by_class_id should be defined"
+    _teardown_web
+  }
+
+  it "extracts div with class=entry-content (WordPress)" && {
+    _setup_web
+    _tw_html='<nav>Navigation stuff</nav>
+<div class="entry-content">
+<p>This is a WordPress blog post with real content that should be extracted by the class-aware tier.</p>
+</div>
+<div class="sidebar">Related posts</div>'
+    _tw_pre=$(echo "$_tw_html" | sed 's/>/>\n/g')
+    _tw_result=$(_html_extract_by_class_id "$_tw_pre")
+    assert_contains "$_tw_result" "WordPress blog post"
+    assert_not_contains "$_tw_result" "Navigation stuff"
+    assert_not_contains "$_tw_result" "Related posts"
+    _teardown_web
+  }
+
+  it "extracts div with class=mw-parser-output (Wikipedia)" && {
+    _setup_web
+    _tw_html='<div id="mw-navigation">Wiki nav</div>
+<div class="mw-parser-output">
+<p>Wikipedia article content with detailed information about the topic covering multiple paragraphs of encyclopedic text.</p>
+</div>
+<div class="catlinks">Categories</div>'
+    _tw_pre=$(echo "$_tw_html" | sed 's/>/>\n/g')
+    _tw_result=$(_html_extract_by_class_id "$_tw_pre")
+    assert_contains "$_tw_result" "Wikipedia article content"
+    assert_not_contains "$_tw_result" "Wiki nav"
+    _teardown_web
+  }
+
+  it "extracts div with class=post-content" && {
+    _setup_web
+    _tw_html='<header>Site header</header>
+<div class="post-content">
+<p>Blog post body text that is the main content area of this page and should be extracted.</p>
+</div>
+<footer>Site footer</footer>'
+    _tw_pre=$(echo "$_tw_html" | sed 's/>/>\n/g')
+    _tw_result=$(_html_extract_by_class_id "$_tw_pre")
+    assert_contains "$_tw_result" "Blog post body text"
+    _teardown_web
+  }
+
+  it "extracts section with class=article-body" && {
+    _setup_web
+    _tw_html='<nav>Menu</nav>
+<section class="article-body">
+<p>News article content with important information about current events and detailed reporting.</p>
+</section>
+<aside>Sidebar</aside>'
+    _tw_pre=$(echo "$_tw_html" | sed 's/>/>\n/g')
+    _tw_result=$(_html_extract_by_class_id "$_tw_pre")
+    assert_contains "$_tw_result" "News article content"
+    _teardown_web
+  }
+
+  it "extracts div with id=content when class matches" && {
+    _setup_web
+    _tw_html='<div id="header">Header</div>
+<div id="main-content">
+<p>The main content area identified by its ID attribute which matches a known content pattern.</p>
+</div>
+<div id="footer">Footer</div>'
+    _tw_pre=$(echo "$_tw_html" | sed 's/>/>\n/g')
+    _tw_result=$(_html_extract_by_class_id "$_tw_pre")
+    assert_contains "$_tw_result" "main content area"
+    _teardown_web
+  }
+
+  it "returns empty for pages with no matching class/id" && {
+    _setup_web
+    _tw_html='<div class="css-1a2b3c"><p>Obfuscated class content</p></div>'
+    _tw_pre=$(echo "$_tw_html" | sed 's/>/>\n/g')
+    _tw_result=$(_html_extract_by_class_id "$_tw_pre")
+    [ -z "$_tw_result" ]
+    assert_ok $? "Should return empty for non-matching classes"
+    _teardown_web
+  }
+
+  it "handles nested divs inside the content block" && {
+    _setup_web
+    _tw_html='<div class="entry-content">
+<div class="inner-wrapper">
+<p>Content inside nested divs should still be captured because the depth tracking follows the nesting correctly through multiple levels.</p>
+</div>
+</div>'
+    _tw_pre=$(echo "$_tw_html" | sed 's/>/>\n/g')
+    _tw_result=$(_html_extract_by_class_id "$_tw_pre")
+    assert_contains "$_tw_result" "nested divs"
+    _teardown_web
+  }
+
+  it "extracts div with class=markdown-body (GitHub)" && {
+    _setup_web
+    _tw_html='<div class="AppHeader">GitHub nav bar content</div>
+<div class="markdown-body">
+<h1>Project README</h1>
+<p>This is a GitHub README rendered in markdown-body with enough content to pass the minimum threshold.</p>
+</div>
+<div class="footer">Footer</div>'
+    _tw_pre=$(echo "$_tw_html" | sed 's/>/>\n/g')
+    _tw_result=$(_html_extract_by_class_id "$_tw_pre")
+    assert_contains "$_tw_result" "Project README"
+    assert_not_contains "$_tw_result" "GitHub nav bar"
+    _teardown_web
+  }
+
+# ── _html_score_blocks (Tier 3) ───────────────────────────────
+describe "_html_score_blocks"
+
+  it "function exists" && {
+    _setup_web
+    declare -f _html_score_blocks >/dev/null 2>&1
+    assert_ok $? "_html_score_blocks should be defined"
+    _teardown_web
+  }
+
+  it "selects prose-heavy block over nav-heavy block" && {
+    _setup_web
+    _tw_html='<div class="nav-menu">
+<a href="/a">Link A</a>
+<a href="/b">Link B</a>
+<a href="/c">Link C</a>
+<a href="/d">Link D</a>
+<a href="/e">Link E</a>
+</div>
+<div class="content">
+<p>This is a long paragraph of prose content, with commas, that discusses an important topic. The paragraph continues with more detail about the subject matter, providing context and background information that readers need to understand.</p>
+<p>A second paragraph adds more depth to the discussion, covering additional angles and perspectives on the topic at hand.</p>
+</div>
+<div class="sidebar">
+<a href="/x">Related 1</a>
+<a href="/y">Related 2</a>
+</div>'
+    _tw_pre=$(echo "$_tw_html" | sed 's/>/>\n/g')
+    _tw_result=$(_html_score_blocks "$_tw_pre")
+    assert_contains "$_tw_result" "long paragraph of prose content"
+    _teardown_web
+  }
+
+  it "prefers blocks with more paragraphs" && {
+    _setup_web
+    _tw_html='<div>
+<span>Just a single span with some text but no paragraph tags at all in this block here.</span>
+</div>
+<div>
+<p>First paragraph of the article content with real information and details about the topic.</p>
+<p>Second paragraph continues the discussion with more context, examples, and supporting evidence.</p>
+<p>Third paragraph wraps up with a conclusion, summary of key points, and final thoughts on the matter.</p>
+</div>'
+    _tw_pre=$(echo "$_tw_html" | sed 's/>/>\n/g')
+    _tw_result=$(_html_score_blocks "$_tw_pre")
+    assert_contains "$_tw_result" "First paragraph"
+    _teardown_web
+  }
+
+  it "penalizes link-heavy blocks" && {
+    _setup_web
+    _tw_html='<div>
+<p><a href="/1">Link text one is quite long and descriptive</a> <a href="/2">Link text two is also verbose</a> <a href="/3">Link text three</a> <a href="/4">Link text four</a></p>
+</div>
+<div>
+<p>Regular prose content without many links, discussing a subject in depth with commas, clauses, and detailed explanations that typical article text contains.</p>
+<p>More regular text continues here, adding to the narrative with additional paragraphs of substantial prose content.</p>
+</div>'
+    _tw_pre=$(echo "$_tw_html" | sed 's/>/>\n/g')
+    _tw_result=$(_html_score_blocks "$_tw_pre")
+    assert_contains "$_tw_result" "Regular prose content"
+    _teardown_web
+  }
+
+  it "returns empty for page with only tiny blocks" && {
+    _setup_web
+    _tw_html='<div><p>Tiny</p></div><div><span>Small</span></div>'
+    _tw_pre=$(echo "$_tw_html" | sed 's/>/>\n/g')
+    _tw_result=$(_html_score_blocks "$_tw_pre")
+    [ -z "$_tw_result" ]
+    assert_ok $? "Should return empty when all blocks are tiny"
+    _teardown_web
+  }
+
+  it "comma count boosts prose blocks" && {
+    _setup_web
+    _tw_html='<div>
+<p>A list of items: apples, oranges, bananas, grapes, strawberries, blueberries, raspberries, and watermelons are available at the market, which opens daily.</p>
+<p>The market, which has been running for decades, offers fresh produce, dairy products, baked goods, and artisan crafts from local vendors, farmers, and craftspeople.</p>
+</div>
+<div>
+<p>Click here to learn more about the topic Click here for details Click here to subscribe Click here to download the app now</p>
+</div>'
+    _tw_pre=$(echo "$_tw_html" | sed 's/>/>\n/g')
+    _tw_result=$(_html_score_blocks "$_tw_pre")
+    assert_contains "$_tw_result" "apples"
+    _teardown_web
+  }
+
+# ── Full pipeline integration (all tiers) ─────────────────────
+describe "_html_extract_content tiered extraction"
+
+  it "tier 1.5 fires when no <article> or <main> exists" && {
+    _setup_web
+    _tw_html='<html><body><nav>Navigation links and menu items</nav><div class="post-content"><p>The actual blog post content that should be extracted by tier one point five because there is no article or main tag on this page but the class name matches a known content pattern.</p></div><footer>Footer links and copyright</footer></body></html>'
+    _tw_result=$(echo "$_tw_html" | _html_extract_content)
+    assert_contains "$_tw_result" "actual blog post content"
+    assert_not_contains "$_tw_result" "Navigation links"
+    assert_not_contains "$_tw_result" "Footer links"
+    _teardown_web
+  }
+
+  it "tier 3 fires when no semantic tags or class matches" && {
+    _setup_web
+    _tw_html='<html><body><div class="css-xyz123"><a href="/a">Nav1</a><a href="/b">Nav2</a><a href="/c">Nav3</a><a href="/d">Nav4</a></div><div class="css-abc789"><p>This is a real article with prose content, including commas, that the density scorer should identify as the best block on the page.</p><p>A second paragraph provides more detail and context about the subject, with additional commas, clauses, and descriptive language.</p><p>A third paragraph ensures this block has enough content to pass the minimum threshold and score well on the density analysis.</p></div><div class="css-footer99"><a href="/x">Link X</a><a href="/y">Link Y</a></div></body></html>'
+    _tw_result=$(echo "$_tw_html" | _html_extract_content)
+    assert_contains "$_tw_result" "real article with prose"
+    _teardown_web
+  }
+
+  it "tier 1 still wins when single <article> is present" && {
+    _setup_web
+    _tw_html='<html><body><div class="entry-content"><p>Class match content that would win tier 1.5</p></div><article><p>The article tag content is preferred by tier one when there is exactly one article element on the page and it has enough characters to meet the minimum threshold.</p></article></body></html>'
+    _tw_result=$(echo "$_tw_html" | _html_extract_content)
+    assert_contains "$_tw_result" "article tag content is preferred"
+    _teardown_web
+  }
+
 # ── _web_strip_boilerplate ────────────────────────────────────
 describe "_web_strip_boilerplate"
 
