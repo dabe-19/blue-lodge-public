@@ -4314,6 +4314,41 @@ INTERLOCK_JSON
             continue
         fi
 
+        # ── MISSING-SPACE REPAIR ───────────────────────────────
+        # Small models sometimes omit the space between a slash
+        # command and its arguments (e.g. "/respondKey developments…").
+        # Before validation, check whether the first word starts with
+        # a known command name followed by a non-space character.
+        # If so, inject a space so the command can dispatch normally.
+        if [ "$cmd_is_slash" -eq 1 ] && [ -n "$cmd" ]; then
+            local _ms_first_word
+            _ms_first_word=$(echo "$cmd" | awk '{print $1}' | sed 's|^/||')
+            local _ms_matched=""
+            # Only attempt repair if the first word is NOT already a valid command
+            if ! { declare -p CMD_REGISTRY &>/dev/null && [[ -n "${CMD_REGISTRY[$_ms_first_word]+x}" ]]; } \
+               && ! [ -f "${LODGE_COMMANDS_DIR:-$LODGE_DIR/commands}/${_ms_first_word}.sh" ]; then
+                # Scan known commands for a prefix match (longest first)
+                local _ms_candidates _ms_cand
+                _ms_candidates=$(
+                    { echo "${!CMD_REGISTRY[@]}"; ls "${LODGE_COMMANDS_DIR:-$LODGE_DIR/commands}/" 2>/dev/null | sed 's/\.sh$//'; } \
+                    | tr ' ' '\n' | awk '{print length, $0}' | sort -rn | awk '{print $2}'
+                )
+                for _ms_cand in $_ms_candidates; do
+                    if [[ "$_ms_first_word" == "${_ms_cand}"?* ]]; then
+                        _ms_matched="$_ms_cand"
+                        break
+                    fi
+                done
+                if [ -n "$_ms_matched" ]; then
+                    local _ms_remainder="${_ms_first_word#"$_ms_matched"}"
+                    local _ms_rest
+                    _ms_rest=$(echo "$cmd" | sed 's|^/[^ ]*||')
+                    cmd="/${_ms_matched} ${_ms_remainder}${_ms_rest}"
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Missing-space repair: /${_ms_first_word} → /${_ms_matched} ${_ms_remainder}..."
+                fi
+            fi
+        fi
+
         # ── SPECIALIST OUTPUT VALIDATION ───────────────────────
         # The specialist may hallucinate commands that don't exist
         # (e.g. "/weather" when the router fell back to /respond but

@@ -337,7 +337,7 @@ _provider_stream_with_backoff() {
         _provider_meter_tick
 
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] provider/$provider: streaming API call..." >/dev/tty 2>/dev/null
-        resp=$(provider_stream_chat "$provider" "$message" "$model" "$system")
+        resp=$(provider_stream_chat "$provider" "$message" "$model" "$system" 2>&1)
         rc=$?
 
         if [ $rc -eq 0 ] && [ -n "$resp" ]; then

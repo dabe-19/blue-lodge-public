@@ -272,7 +272,21 @@ Output ONLY the complete bash script as a single code block. No explanation befo
     ui_step "George is writing the command..."
     local response
     local LLM_SCENARIO=tool
-    response=$(llm_stream "$user_prompt" "$sys_prompt" 1024 "$LLM_BUDGET_TOOL")
+
+    # ── Provider-aware generation ──────────────────────────────
+    # When a cloud provider is active, use llm_generate (non-streaming)
+    # instead of llm_stream. The response is captured into a variable
+    # anyway, so streaming provides no user benefit. More importantly,
+    # the provider streaming path (FIFO + SSE loop + sync fallback)
+    # can hang or time out slowly on rate-limited free tiers, leaving
+    # the user stuck for minutes.  llm_generate through the provider
+    # makes a single synchronous POST with a hard --max-time, which
+    # is more reliable for code generation.
+    if [ -n "${GEORGE_PROVIDER:-}" ]; then
+        response=$(llm_generate "$user_prompt" "$sys_prompt" 1024 "$LLM_BUDGET_TOOL")
+    else
+        response=$(llm_stream "$user_prompt" "$sys_prompt" 1024 "$LLM_BUDGET_TOOL")
+    fi
     echo ""
 
     # Extract bash code from the response
