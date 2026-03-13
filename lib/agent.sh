@@ -5282,6 +5282,16 @@ _agent_cross_task_sieve() {
         return 0
     fi
 
+    # Filter out reference-index entries (src:"ref"). The sieve should
+    # surface memories from prior tasks, not static capability docs.
+    # "discord server" in a task shouldn't pull Discord-setup reference
+    # cards — those are George's own documentation, not prior context.
+    _sieve_results=$(jq -c '[.[] | select(.src != "ref")]' <<< "$_sieve_results")
+    if [ "$_sieve_results" = "[]" ] || [ -z "$_sieve_results" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] cross-task sieve: all recall matches were ref docs — skipping injection"
+        return 0
+    fi
+
     # Inject into macro_memory as prior_context field
     local _sieve_tmp="${_sieve_macro}.tmp"
     jq --argjson ctx "$_sieve_results" '.prior_context = $ctx' "$_sieve_macro" > "$_sieve_tmp" && mv "$_sieve_tmp" "$_sieve_macro"

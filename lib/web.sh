@@ -1472,8 +1472,11 @@ web_fetch_json() {
         local _mcp_json
         _mcp_json=$(mcp_web_fetch_json "$clean_url" 2>/dev/null)
         if [ $? -eq 0 ] && [ -n "$_mcp_json" ]; then
-            # Validate it's parseable JSON with expected fields
-            if echo "$_mcp_json" | jq -e '.url // .content // .title' &>/dev/null 2>&1; then
+            # Validate: parseable JSON object (any fields accepted).
+            # Previous check (.url // .content // .title) was too strict —
+            # MCP server wraps errors as text content in a success envelope,
+            # and valid responses may omit those exact fields.
+            if echo "$_mcp_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
                     ui_dim "  [debug] web_fetch_json: MCP succeeded (${#_mcp_json} bytes)"
                 echo "$_mcp_json"
@@ -1481,7 +1484,7 @@ web_fetch_json() {
             fi
         fi
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-            ui_dim "  [debug] web_fetch_json: MCP failed — falling through to direct extraction"
+            ui_dim "  [debug] web_fetch_json: MCP returned non-JSON — falling through to direct extraction"
     fi
 
         if _web_blacklist_contains "$clean_url"; then
