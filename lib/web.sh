@@ -1282,6 +1282,121 @@ _web_fetch_reddit() {
     fi
 }
 
+# ── Fetch Reddit post/subreddit as structured JSON ────────────
+# Returns: {"url":"...","title":"...","content":"...","images":[...]}
+# Uses the same .json API as _web_fetch_reddit but outputs the
+# structured JSON format expected by web_fetch_json/web_scrape_images.
+_web_fetch_reddit_json() {
+    local url="$1"
+    local _rinfo
+    _rinfo=$(_web_reddit_url "$url")
+    [ -z "$_rinfo" ] && return 1
+
+    local _rtype="${_rinfo%%:*}"
+    local _rrest="${_rinfo#*:}"
+
+    # Build JSON API URL: strip query/fragment, append .json
+    local _json_url
+    _json_url=$(echo "$url" | sed 's|/*$||; s|\?.*$||; s|#.*$||')
+    _json_url="${_json_url}.json"
+
+    local _raw
+    _raw=$(curl -sL --max-time "${WEB_TIMEOUT:-15}" \
+        -A "Blue-Lodge-George/0.1 (by /u/george-agent)" \
+        -H "Accept: application/json" \
+        "$_json_url" 2>/dev/null)
+    [ -z "$_raw" ] && return 1
+    echo "$_raw" | jq empty 2>/dev/null || return 1
+
+    local _title="" _content="" _images_json="[]"
+
+    if [ "$_rtype" = "post" ]; then
+        local _sub="${_rrest%%:*}"
+        local _author _score _selftext _url_link _thumbnail
+        _title=$(echo "$_raw" | jq -r '.[0].data.children[0].data.title // "untitled"' 2>/dev/null)
+        _author=$(echo "$_raw" | jq -r '.[0].data.children[0].data.author // "unknown"' 2>/dev/null)
+        _score=$(echo "$_raw" | jq -r '.[0].data.children[0].data.score // 0' 2>/dev/null)
+        _selftext=$(echo "$_raw" | jq -r '.[0].data.children[0].data.selftext // ""' 2>/dev/null)
+        _url_link=$(echo "$_raw" | jq -r '.[0].data.children[0].data.url // ""' 2>/dev/null)
+        _thumbnail=$(echo "$_raw" | jq -r '.[0].data.children[0].data.thumbnail // ""' 2>/dev/null)
+        _title="[Reddit: r/${_sub}] ${_title}"
+
+        # Build content text (same as _web_fetch_reddit but captured)
+        _content="By u/${_author} | Score: ${_score}"
+        if [ -n "$_selftext" ] && [ "$_selftext" != "null" ] && [ "$_selftext" != "" ]; then
+            _content="${_content}"$'\n\n'"${_selftext}"
+        elif [ -n "$_url_link" ] && [ "$_url_link" != "null" ] && [[ "$_url_link" != *"reddit.com"* ]]; then
+            _content="${_content}"$'\n'"Link: ${_url_link}"
+        fi
+
+        # Top comments
+        local _num_comments
+        _num_comments=$(echo "$_raw" | jq '.[1].data.children | map(select(.kind == "t1")) | length' 2>/dev/null)
+        _num_comments=${_num_comments:-0}
+        [ "$_num_comments" -gt 10 ] && _num_comments=10
+        if [ "$_num_comments" -gt 0 ]; then
+            _content="${_content}"$'\n\n--- Top Comments ---'
+            local _ci
+            for _ci in $(seq 0 $((_num_comments - 1))); do
+                local _cauthor _cbody _cscore
+                _cauthor=$(echo "$_raw" | jq -r "[.[1].data.children[] | select(.kind == \"t1\")][$_ci].data.author // \"\"" 2>/dev/null)
+                _cbody=$(echo "$_raw" | jq -r "[.[1].data.children[] | select(.kind == \"t1\")][$_ci].data.body // \"\"" 2>/dev/null)
+                _cscore=$(echo "$_raw" | jq -r "[.[1].data.children[] | select(.kind == \"t1\")][$_ci].data.score // 0" 2>/dev/null)
+                [ -z "$_cauthor" ] || [ "$_cauthor" = "null" ] && continue
+                [ -z "$_cbody" ] || [ "$_cbody" = "null" ] && continue
+                [ ${#_cbody} -gt 500 ] && _cbody="${_cbody:0:497}..."
+                _content="${_content}"$'\n\n'"  u/${_cauthor} (${_cscore}):"$'\n'"  ${_cbody}"
+            done
+        fi
+
+        # Extract images from post data (preview images, thumbnail, linked images)
+        _images_json=$(echo "$_raw" | jq -c '[
+            .[0].data.children[0].data |
+            (.preview.images[]?.source.url // empty),
+            (.thumbnail | select(startswith("http")) // empty),
+            (.url | select(test("\\.(jpg|jpeg|png|gif|webp)(\\?|$)")) // empty)
+        ] | map(gsub("&amp;"; "&")) | unique' 2>/dev/null)
+        [ -z "$_images_json" ] || [ "$_images_json" = "null" ] && _images_json="[]"
+    else
+        # Subreddit listing
+        local _sub="${_rrest}"
+        _title="[Reddit: r/${_sub}] Top Posts"
+        local _num_posts
+        _num_posts=$(echo "$_raw" | jq '.data.children | length' 2>/dev/null)
+        _num_posts=${_num_posts:-0}
+        [ "$_num_posts" -gt 15 ] && _num_posts=15
+
+        _content=""
+        local _pi
+        for _pi in $(seq 0 $((_num_posts - 1))); do
+            local _ptitle _pauthor _pscore _ppermalink
+            _ptitle=$(echo "$_raw" | jq -r ".data.children[$_pi].data.title // \"\"" 2>/dev/null)
+            _pauthor=$(echo "$_raw" | jq -r ".data.children[$_pi].data.author // \"\"" 2>/dev/null)
+            _pscore=$(echo "$_raw" | jq -r ".data.children[$_pi].data.score // 0" 2>/dev/null)
+            _ppermalink=$(echo "$_raw" | jq -r ".data.children[$_pi].data.permalink // \"\"" 2>/dev/null)
+            [ -z "$_ptitle" ] || [ "$_ptitle" = "null" ] && continue
+            _content="${_content}${_pscore}↑ ${_ptitle} — u/${_pauthor}"
+            [ -n "$_ppermalink" ] && [ "$_ppermalink" != "null" ] && \
+                _content="${_content}"$'\n'"  https://reddit.com${_ppermalink}"
+            _content="${_content}"$'\n'
+        done
+
+        # Collect thumbnails from listing
+        _images_json=$(echo "$_raw" | jq -c '[
+            .data.children[].data.thumbnail |
+            select(startswith("http"))
+        ] | unique' 2>/dev/null)
+        [ -z "$_images_json" ] || [ "$_images_json" = "null" ] && _images_json="[]"
+    fi
+
+    jq -n \
+        --arg url "$url" \
+        --arg title "$_title" \
+        --arg content "$_content" \
+        --argjson images "$_images_json" \
+        '{"url":$url,"title":$title,"content":$content,"images":$images}'
+}
+
 # ── Fetch a URL and return clean text ─────────────────────────
 web_fetch() {
     local url="$1"
@@ -1463,6 +1578,24 @@ web_fetch_json() {
     local url="$1"
     local clean_url
     clean_url=$(_web_sanitize_url "$url")
+
+    # ── Reddit URL → JSON API (structured) ──────────────────────
+    # Reddit pages are heavy SPAs. Use the .json API for clean
+    # structured output — same data as /web fetch but in JSON format.
+    local _rd_check
+    _rd_check=$(_web_reddit_url "$clean_url")
+    if [ -n "$_rd_check" ]; then
+        local _rd_json
+        _rd_json=$(_web_fetch_reddit_json "$clean_url" 2>/dev/null)
+        if [ -n "$_rd_json" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+                ui_dim "  [debug] web_fetch_json: Reddit JSON API succeeded (${#_rd_json} bytes)"
+            echo "$_rd_json"
+            return 0
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] web_fetch_json: Reddit JSON API failed — falling through"
+    fi
 
     # MCP-first: route through george-fetch fetch_json tool
     # Guard: skip when called from within mcp_web_fetch to avoid
