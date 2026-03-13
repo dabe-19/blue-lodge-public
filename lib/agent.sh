@@ -459,7 +459,8 @@ TASK: $task
  \"bad\":[\"Run curl -s https://...\",\"Use /web search to find...\"],
  \"count\":\"2-${AGENT_HONEYDEW_INITIAL_COUNT} items (simple tasks: 2-3)\",
  \"order\":\"by dependency (research→writing→sending)\",
- \"never\":[\"verification steps\",\"confirmation steps\",\"cleanup steps\",\"checkboxes\"]}"
+ \"no_redundancy\":\"each item must be DISTINCT — never two items that describe the same work differently (e.g. 'summarize X' and 'present X concisely' are the SAME item — merge them)\",
+ \"never\":[\"verification steps\",\"confirmation steps\",\"cleanup steps\",\"checkboxes\",\"redundant items that overlap with other items\"]}"
 
     local decompose_sys="You are a task decomposition engine. Output ONLY a numbered list of general objectives. Each item describes WHAT to accomplish, not HOW or which tool to use. No commands, no URLs, no shell syntax. No explanation, no headers, no markdown formatting. Plain numbered list only."
 
@@ -1381,7 +1382,8 @@ $(cat << 'REWRITE_ROUTER_JSON'
 {"classify":"REWRITE|KEEP",
  "REWRITE_when":["pending items contradict or miss CRITICAL entities from original task",
    "milestone discoveries fundamentally change the scope of remaining work",
-   "pending items are completely wrong given what is now known"],
+   "pending items are completely wrong given what is now known",
+   "pending items are redundant or overlapping (multiple items describing the same work)"],
  "KEEP_when":["pending items roughly align with original task (even if imperfect)",
    "no significant new information from milestones",
    "list is already specific enough",
@@ -1488,14 +1490,17 @@ $(jq -r '.items[] | select(.status == "pending") | "\(.id). [ ] \(.task)"' "$hd_
 
 Rewrite ONLY the pending items to better serve the original task based on what the milestones have revealed. Preserve the same number of items (${_pending_count}) or fewer. Maintain execution order.
 
+IMPORTANT: Consolidate redundant or overlapping items. If two pending items describe essentially the same work (e.g., 'summarize events' and 'present information concisely'), merge them into ONE clear item. Fewer focused items are always better than many overlapping ones.
+
 $(cat << 'REWRITE_JSON'
 {"output":"numbered list ONLY of replacement pending items",
  "each_item":"short imperative sentence — WHAT to achieve, not HOW",
  "describe":"GOAL only — never tools, commands, URLs, shell syntax",
  "preserve":"completed items are untouched — only rewrite pending",
- "count":"same count or fewer than current pending items",
+ "consolidate":"merge overlapping or redundant items into fewer focused items",
+ "count":"same count or fewer — REDUCE count when items overlap",
  "order":"by dependency (research first, delivery last)",
- "never":["verification steps","confirmation steps","cleanup steps","checkboxes"]}
+ "never":["verification steps","confirmation steps","cleanup steps","checkboxes","redundant items that duplicate existing ones"]}
 REWRITE_JSON
 )"
 
@@ -1709,7 +1714,7 @@ _agent_evaluate_honeydew_item() {
     local _prior_milestones=""
     if [ -n "${GEORGE_PROVIDER:-}" ] && [ -n "$macro_file" ] && [ -f "$macro_file" ]; then
         _prior_milestones=$(_macro_milestones_json "$macro_file" 5 | \
-            jq -r '.[] | "[\(.result // "DONE")] \(.milestone // "?"): \(.summary // "no summary")"' 2>/dev/null)
+            jq -r '.[] | "[\(.status // "DONE")] \(.objective // "?"): \(.summary // "no summary")"' 2>/dev/null)
     fi
 
     # Retrieve the user's original request so the evaluator can verify
@@ -1736,15 +1741,29 @@ _agent_evaluate_honeydew_item() {
  "relevance_check":{"dates":true,"topics":true,"scope":true,
    "verify_against":"ORIGINAL USER REQUEST above",
    "output_substance":"do outputs contain specific data the item asked for?"},
- "respond":"SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <slash command>",
+ "respond":"SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <slash command from AVAILABLE COMMANDS>",
  "if_unsatisfied":{"explain_why":true,
-   "recommend_next":"specific /command (e.g. /web fetch <url>)"}}
+   "recommend_next":"pick from AVAILABLE COMMANDS below (e.g. /web fetch <url>)"}}
 EVAL_HD_JSON
-)"
+)
+
+AVAILABLE COMMANDS (RECOMMENDATION must be one of these):
+${_eval_commands}"
+
+    # ── Compact command catalog for evaluator recommendations ──
+    # Categorized JSON matching the convention used by the strategist
+    # and router. Most-specific-first ordering within each category.
+    # ~150 tokens — well within 4B budget. Ensures the evaluator
+    # only recommends commands that actually exist.
+    local _eval_commands='{"RESEARCH":["/web search","/web fetch","/web scrape","/recall","/git search","/git fetch"],
+ "ANALYSIS":["/ask","/brainstorm","/vision"],
+ "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
+ "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
+ "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
 
     local _sys_cross=""
     [ -n "$_prior_milestones" ] && _sys_cross=" Judge whether this item was accomplished by ANY work so far — current action log OR prior completed milestones. If a prior milestone already did what the item asks, answer SATISFIED."
-    local eval_sys="Honeydew item evaluator.${_sys_cross} For current actions, judge from ACTUAL COMMAND OUTPUTS — ignore milestone pass/fail status. SATISFIED requires concrete results matching what the item asked for. Verify relevance to original request (dates, topics, scope). No markdown. Respond SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <slash command>."
+    local eval_sys="Honeydew item evaluator.${_sys_cross} For current actions, judge from ACTUAL COMMAND OUTPUTS — ignore milestone pass/fail status. SATISFIED requires concrete results matching what the item asked for. Verify relevance to original request (dates, topics, scope). No markdown. Respond SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION must be one of the AVAILABLE COMMANDS listed in the prompt."
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew-eval <- item #${_next_id}: ${_next_task:0:80}"
     ui_think "Honeydew evaluator: checking item #${_next_id}..."
@@ -1808,6 +1827,29 @@ EVAL_HD_JSON
         elif [ -n "$_rec_text" ]; then
             # Recommendation exists but no slash command — use capped text
             _EVAL_HONEYDEW_RECOMMENDATION="${_rec_text:0:$_rec_chars}"
+        fi
+
+        # ── Validate recommendation against real commands ──────
+        # Hard gate: if the evaluator hallucinated a command that
+        # doesn't exist (e.g. /summarize), discard it before it can
+        # reach the strategist feedback and create a stuck loop.
+        if [ -n "$_EVAL_HONEYDEW_RECOMMENDATION" ]; then
+            local _rec_base_cmd
+            _rec_base_cmd=$(echo "$_EVAL_HONEYDEW_RECOMMENDATION" | grep -oE '/[a-z]+' | head -1 | sed 's|^/||')
+            if [ -n "$_rec_base_cmd" ]; then
+                local _rec_valid=0
+                if [ "$_rec_base_cmd" = "bash" ]; then
+                    _rec_valid=1
+                elif declare -p CMD_REGISTRY &>/dev/null && [[ -n "${CMD_REGISTRY[$_rec_base_cmd]+x}" ]]; then
+                    _rec_valid=1
+                elif [ -f "${LODGE_COMMANDS_DIR:-$LODGE_DIR/commands}/${_rec_base_cmd}.sh" ]; then
+                    _rec_valid=1
+                fi
+                if [ "$_rec_valid" -eq 0 ]; then
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew-eval recommendation '/$_rec_base_cmd' not a valid command — discarded"
+                    _EVAL_HONEYDEW_RECOMMENDATION=""
+                fi
+            fi
         fi
 
         local _reason_display="${_EVAL_HONEYDEW_REASON:+(${_EVAL_HONEYDEW_REASON:0:200})}"
@@ -1904,7 +1946,7 @@ _agent_evaluate_milestone() {
 EVAL_P1_JSON
 )"
 
-    local eval_sys="You are a pragmatic milestone evaluator. Judge by the MOST RECENT action in the log — earlier failed attempts do not invalidate a later success. exit_0 = success. Empty output = normal. No markdown formatting. Respond COMPLETE or INCOMPLETE: <reason>."
+    local eval_sys="You are a pragmatic milestone evaluator. Judge by the MOST RECENT action in the log — earlier failed attempts do not invalidate a later success. exit_0 = success. Empty output = normal. No markdown formatting. Output ONLY the word COMPLETE or INCOMPLETE followed by a colon and brief reason. Do NOT echo or repeat the evaluation schema."
 
     ui_think "Evaluator (pass 1): assessing milestone completion..."
     local verdict
@@ -3401,8 +3443,11 @@ agent_inner_loop() {
         local _prior_ms
         _prior_ms=$(_macro_milestones_json "$macro_file" 3)
         if [ "$_prior_ms" != "[]" ] && [ -n "$_prior_ms" ]; then
+            # Strip command field to reduce token usage and prevent
+            # 4B models from being confused by prior slash command text
+            _prior_ms=$(echo "$_prior_ms" | jq '[.[] | del(.command)]' 2>/dev/null || echo "$_prior_ms")
             _micro_set_prior_milestones "$micro_file" "$_prior_ms"
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: milestone history -> micro_memory"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: milestone history -> micro_memory (commands stripped)"
         fi
     fi
 
@@ -3413,6 +3458,7 @@ agent_inner_loop() {
     local _last_success_cmd=""      # Track last successful command for macro_memory
     local _last_success_snippet=""  # First 200 chars of last successful output
     local _web_search_consec=0     # Consecutive /web search counter (reset on non-search)
+    local _respond_consec=0        # Consecutive /respond counter (reset on non-respond)
     local _p1_incomplete_consec=0  # Consecutive P1 INCOMPLETE verdicts (pre-route breaker)
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
 
@@ -3681,9 +3727,13 @@ agent_inner_loop() {
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router: no slash command found — direct /respond"
                 _direct_respond=1
             else
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router hallucinated '/$selected_tool' — injecting full catalog for re-route"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router hallucinated '/$selected_tool' — compact catalog re-route"
                 _hallucination_fallback=1
-                selected_tool="respond"
+                # Do NOT default to "respond" — let the specialist pick
+                # freely from the compact command catalog. Set to a
+                # neutral placeholder; the specialist prompt will be
+                # built without a specific syntax card (see below).
+                selected_tool="_hallucinated"
             fi
         fi
 
@@ -3745,32 +3795,53 @@ agent_inner_loop() {
         else
 
         # Re-prefix for specialist lookup
-        [ "$selected_tool" != "bash" ] && selected_tool="/$selected_tool"
+        [ "$selected_tool" != "bash" ] && [ "$selected_tool" != "_hallucinated" ] && selected_tool="/$selected_tool"
 
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Phase 2 specialist: loading docs for $selected_tool"
 
-        local specialist_sys=$(_build_specialist_prompt "$selected_tool" "$workdir" "$micro_objective")
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist prompt <- syntax card for $selected_tool"
+        local specialist_sys
+        if [ "$_hallucination_fallback" -eq 1 ]; then
+            # ── HALLUCINATION RECOVERY: Compact catalog re-route ──
+            # Instead of building a syntax card for /respond (which gives
+            # it positional primacy and biases the model), build a minimal
+            # specialist prompt with ONLY the compact categorized command
+            # list (~150 tokens vs ~2500-3500 for full catalog).
+            # /respond is present but not amplified — the model picks freely.
+            local _compact_cmds='{"RESEARCH":["/web search","/web fetch","/web scrape","/recall","/git search","/git fetch"],
+ "ANALYSIS":["/ask","/brainstorm","/vision"],
+ "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
+ "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
+ "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
 
-        # ── HALLUCINATION RECOVERY: Inject full command catalog ──
-        # When the router hallucinated a command, the specialist needs
-        # visibility into ALL available commands to pick a real one.
-        # Inject the full command catalog so the model can route itself
-        # to an appropriate tool instead of re-hallucinating the same
-        # non-existent command. The /respond card acts as a minimal
-        # fallback while the catalog provides the full toolbox view.
-        if [ "$_hallucination_fallback" -eq 1 ] && declare -f commands_catalog &>/dev/null; then
-            local _recovery_catalog
-            _recovery_catalog=$(commands_catalog 2>/dev/null)
-            specialist_sys="${specialist_sys}
+            # If /respond has been tried 2+ times without success, remove it
+            if [ "$_respond_consec" -ge 2 ]; then
+                _compact_cmds=$(echo "$_compact_cmds" | sed 's|"/respond",||')
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] hallucination recovery: /respond removed from catalog ($_respond_consec consecutive uses)"
+            fi
 
-IMPORTANT: The previously attempted command does not exist. Choose from ONLY the commands listed below.
+            specialist_sys="Phase 2: Action Specialist
+
+TASK: ${micro_objective}
+Generate exactly ONE slash command with real arguments derived from the TASK above.
+
+OUTPUT FORMAT: exactly ONE slash command on its own line, starting with /
+FORBIDDEN: code fences, quotes on args, multiple commands per line
+
+The previously attempted command does not exist. Pick the BEST command from AVAILABLE COMMANDS for this task. Output exactly ONE command with arguments.
+
 AVAILABLE COMMANDS:
-${_recovery_catalog}
+${_compact_cmds}${_respond_consec:+$([ "$_respond_consec" -ge 2 ] && echo "
 
-Pick the BEST command from this list for the task. Output exactly ONE command with arguments."
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist <- full command catalog (hallucination recovery)"
+WARNING: /respond has been tried ${_respond_consec} times without success. You MUST use a different command.")}"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist <- compact command catalog (hallucination recovery)"
+        else
+            specialist_sys=$(_build_specialist_prompt "$selected_tool" "$workdir" "$micro_objective")
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist prompt <- syntax card for $selected_tool"
         fi
+
+        # ── HALLUCINATION RECOVERY (legacy block skipped) ──────
+        # The old code injected the full commands_catalog() here.
+        # Now handled above via compact catalog in the if-branch.
 
         # ── FUZZY KEYWORD CATALOG INJECTION ────────────────────
         # Modes 2 and 3: Scan milestone for domain keywords that
@@ -4515,6 +4586,18 @@ INTERLOCK_JSON
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web-search-consec: $_web_search_consec (max ${AGENT_WEB_SEARCH_CONSEC_MAX:-1})"
                 else
                     _web_search_consec=0
+                fi
+
+                # ── CONSECUTIVE /respond COUNTER ───────────────
+                # Track consecutive /respond dispatches to detect loops.
+                # Reset on any non-respond command. When >= 2, the
+                # hallucination recovery path removes /respond from
+                # the compact command catalog to force alternatives.
+                if [[ "$cmd" == /respond\ * ]]; then
+                    _respond_consec=$((_respond_consec + 1))
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] respond-consec: $_respond_consec"
+                else
+                    _respond_consec=0
                 fi
 
                 # ── WEB OUTPUT CONDENSER ───────────────────────
@@ -5613,6 +5696,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
    \"\/social\":\"Discord\/Telegram\/X\/Mastodon (NOT \/email)\",
    \"\/email\":\"actual email only\",\"\/sandbox\":\"NEVER for slash commands\"},
  \"milestones\":{\"source\":\"YOUR WORKING COMMANDS only\",
+   \"NEVER_hallucinate_commands\":\"Use ONLY commands from YOUR WORKING COMMANDS above. If evaluator feedback recommends a command not in your list, map it to the closest available command.\",
    \"format\":\"single imperative sentence starting with a verb\",
    \"examples\":[\"Use \/write to create a summary\",\"Use \/init to scaffold the Rust project\",\"Use \/build to build the project\",\"Use \/test to run the test suite\"],
    \"NEVER_raw_command\":\"Do NOT output a bare slash command as the milestone (WRONG: '\/write a summary' — RIGHT: 'Use \/write to create a summary')\",
