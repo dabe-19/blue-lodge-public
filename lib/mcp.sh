@@ -317,9 +317,9 @@ mcp_start() {
         mkfifo "$rundir/in.fifo" || return 1
     }
 
-    # Start server: reads from FIFO stdin, appends stdout to regular file
-    # eval handles commands with arguments like "npx -y @anthropic/server-fetch"
-    eval "$cmd" < "$rundir/in.fifo" >> "$rundir/responses.jsonl" 2>"$rundir/stderr.log" &
+    # Start server: exec replaces the backgrounded subshell so $! tracks the
+    # real server PID (without exec, $! captures the intermediate subshell).
+    eval "exec $cmd" < "$rundir/in.fifo" >> "$rundir/responses.jsonl" 2>"$rundir/stderr.log" &
     local server_pid=$!
     echo "$server_pid" > "$rundir/pid"
 
