@@ -464,7 +464,7 @@ TASK: $task
  \"no_redundancy\":\"each item must be DISTINCT — never two items that describe the same work differently (e.g. 'summarize X' and 'present X concisely' are the SAME item — merge them)\",
  \"never\":[\"verification steps\",\"confirmation steps\",\"cleanup steps\",\"checkboxes\",\"redundant items that overlap with other items\"]}"
 
-    local decompose_sys="You are a task decomposition engine. Output ONLY a numbered list of general objectives. Each item describes WHAT to accomplish, not HOW or which tool to use. No commands, no URLs, no shell syntax. No explanation, no headers, no markdown formatting. Plain numbered list only."
+    local decompose_sys="You are a task decomposition engine. Output ONLY a numbered list of general objectives. Each item: short imperative sentence - no more than 10 words. Describe WHAT, not HOW. No commands, URLs, tools, or parenthetical details. Plain numbered list only."
 
     local raw_list
     local LLM_SCENARIO=strategist
@@ -1496,8 +1496,9 @@ IMPORTANT: Consolidate redundant or overlapping items. If two pending items desc
 
 $(cat << 'REWRITE_JSON'
 {"output":"numbered list ONLY of replacement pending items",
- "each_item":"short imperative sentence — WHAT to achieve, not HOW",
+ "each_item":"short imperative sentence (max 10-12 words) — WHAT to achieve, not HOW",
  "describe":"GOAL only — never tools, commands, URLs, shell syntax",
+ "brevity":"keep items general and achievable — one clear verb + object, no sub-clauses or parenthetical details",
  "preserve":"completed items are untouched — only rewrite pending",
  "consolidate":"merge overlapping or redundant items into fewer focused items",
  "count":"same count or fewer — REDUCE count when items overlap",
@@ -1506,7 +1507,7 @@ $(cat << 'REWRITE_JSON'
 REWRITE_JSON
 )"
 
-    local rewrite_sys="You are a task decomposition rewrite engine. Rewrite ONLY the pending honeydew items to better align with the original task based on milestone discoveries. Output ONLY a numbered list. Each item: short imperative sentence — WHAT, not HOW. No commands, no URLs, no explanation."
+    local rewrite_sys="You are a task decomposition rewrite engine. Rewrite ONLY the pending honeydew items to better align with the original task based on milestone discoveries. Output ONLY a numbered list. Each item: short imperative sentence (max 10-12 words). WHAT, not HOW. No commands, URLs, or parenthetical details."
 
     local _raw_rewrite
     local LLM_SCENARIO=strategist
@@ -5270,6 +5271,14 @@ _agent_cross_task_sieve() {
     # Nothing found — no injection needed
     if [ -z "$_sieve_results" ] || [ "$_sieve_results" = "[]" ]; then
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] cross-task sieve: no recall matches for task keywords"
+        return 0
+    fi
+
+    # Validate JSON before passing to --argjson (recall can return
+    # malformed output if sqlite3 hits encoding issues or the LRU
+    # cache stored a corrupted entry)
+    if ! jq empty <<< "$_sieve_results" 2>/dev/null; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] cross-task sieve: recall returned invalid JSON — skipping injection"
         return 0
     fi
 
