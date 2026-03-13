@@ -1589,12 +1589,12 @@ web_fetch_json() {
         _rd_json=$(_web_fetch_reddit_json "$clean_url" 2>/dev/null)
         if [ -n "$_rd_json" ]; then
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-                ui_dim "  [debug] web_fetch_json: Reddit JSON API succeeded (${#_rd_json} bytes)"
+                ui_dim "  [debug] web_fetch_json: Reddit JSON API succeeded (${#_rd_json} bytes)" >&2
             echo "$_rd_json"
             return 0
         fi
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-            ui_dim "  [debug] web_fetch_json: Reddit JSON API failed — falling through"
+            ui_dim "  [debug] web_fetch_json: Reddit JSON API failed — falling through" >&2
     fi
 
     # MCP-first: route through george-fetch fetch_json tool
@@ -1611,13 +1611,13 @@ web_fetch_json() {
             # and valid responses may omit those exact fields.
             if echo "$_mcp_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-                    ui_dim "  [debug] web_fetch_json: MCP succeeded (${#_mcp_json} bytes)"
+                    ui_dim "  [debug] web_fetch_json: MCP succeeded (${#_mcp_json} bytes)" >&2
                 echo "$_mcp_json"
                 return 0
             fi
         fi
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-            ui_dim "  [debug] web_fetch_json: MCP returned non-JSON — falling through to direct extraction"
+            ui_dim "  [debug] web_fetch_json: MCP returned non-JSON — falling through to direct extraction" >&2
     fi
 
         if _web_blacklist_contains "$clean_url"; then
