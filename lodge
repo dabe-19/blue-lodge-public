@@ -861,6 +861,28 @@ _cmd_limits() {
                     ui_err "Tight parsing must be 'on' or 'off' (or 1/0, enable/disable)"
                 fi
             fi ;;
+        respond-repeat)
+            if [ -z "$value" ]; then
+                ui_info "Respond repeat limit: ${AGENT_RESPOND_CONSEC_MAX:-2} (default: 2)"
+            else
+                _limits_set AGENT_RESPOND_CONSEC_MAX "Respond repeat limit" "$value" 1 20
+            fi ;;
+        eval-validate)
+            if [ -z "$value" ]; then
+                local _ev_label="disabled"
+                [ "${AGENT_EVAL_VALIDATE:-1}" -eq 1 ] && _ev_label="enabled"
+                ui_info "Evaluator command validation: $_ev_label (default: enabled)"
+            else
+                if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
+                    AGENT_EVAL_VALIDATE=1
+                    ui_ok "Evaluator command validation enabled"
+                elif [[ "$value" == "off" || "$value" == "0" || "$value" == "disable" || "$value" == "disabled" ]]; then
+                    AGENT_EVAL_VALIDATE=0
+                    ui_ok "Evaluator command validation disabled"
+                else
+                    ui_err "Eval-validate must be 'on' or 'off' (or 1/0, enable/disable)"
+                fi
+            fi ;;
         web-search-length)
             if [ -z "$value" ]; then
                 ui_info "Web search max length: ${AGENT_WEB_SEARCH_MAX_LENGTH:-160} (default: 160)"
@@ -1339,6 +1361,8 @@ _cmd_limits() {
             ui_dim "    honeydew-count N — Upper bound on initial honeydew items (current: $AGENT_HONEYDEW_INITIAL_COUNT)"
             ui_dim "    web-search-repeat N — Max consecutive /web search before forced fetch (current: ${AGENT_WEB_SEARCH_CONSEC_MAX:-20})"
             ui_dim "    tight-parsing on|off — Web search query cleaning mode: off=loose, on=strict (current: $([ "${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}" -eq 1 ] && echo on || echo off))"
+            ui_dim "    respond-repeat N — Max consecutive /respond before removal from catalog (current: ${AGENT_RESPOND_CONSEC_MAX:-2})"
+            ui_dim "    eval-validate on|off — Evaluator command validation (current: $([ "${AGENT_EVAL_VALIDATE:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    web-search-length N — Max character length for web search queries (current: ${AGENT_WEB_SEARCH_MAX_LENGTH:-160})"
             ui_dim "    web-search-ops N  — Max AND/OR operators in loose web search mode (current: ${AGENT_WEB_SEARCH_MAX_OPERATORS:-3})"
             ui_dim "    rec-chars N      — Max chars in evaluator recommendation to strategist (current: ${AGENT_EVAL_REC_CHARS:-120})"

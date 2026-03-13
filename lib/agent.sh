@@ -36,6 +36,8 @@ AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-20}"  # Max consecut
 AGENT_WEB_SEARCH_TIGHT_PARSING="${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}"  # Tight web query parsing: 0=loose (keep quotes/negations/operators), 1=strict (strip all)
 AGENT_WEB_SEARCH_MAX_LENGTH="${AGENT_WEB_SEARCH_MAX_LENGTH:-160}"  # Max character length for /web search queries
 AGENT_WEB_SEARCH_MAX_OPERATORS="${AGENT_WEB_SEARCH_MAX_OPERATORS:-3}"  # Max AND/OR operators allowed in loose mode
+AGENT_RESPOND_CONSEC_MAX="${AGENT_RESPOND_CONSEC_MAX:-2}"        # Max consecutive /respond before removal from catalog
+AGENT_EVAL_VALIDATE="${AGENT_EVAL_VALIDATE:-1}"                  # Evaluator command validation: 0=disabled, 1=enabled
 AGENT_EVAL_REC_CHARS="${AGENT_EVAL_REC_CHARS:-120}"              # Max chars after a slash command in evaluator recommendations
 AGENT_EVAL_REC_INJECT="${AGENT_EVAL_REC_INJECT:-0}"            # Recommendation injection to honeydew rewriter: 0=off (current), 1=recommendation-only (high weight), 2=both (recommendation + full context)
 AGENT_CROSS_TASK_SIEVE="${AGENT_CROSS_TASK_SIEVE:-1}"          # Cross-task memory sieve: 0=disabled, 1=keyword recall injection at task start
@@ -1725,6 +1727,17 @@ _agent_evaluate_honeydew_item() {
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
 
+    # ── Compact command catalog for evaluator recommendations ──
+    # Categorized JSON matching the convention used by the strategist
+    # and router. Most-specific-first ordering within each category.
+    # ~150 tokens — well within 4B budget. Ensures the evaluator
+    # only recommends commands that actually exist.
+    local _eval_commands='{"RESEARCH":["/web search","/web fetch","/web scrape","/recall","/git search","/git fetch"],
+ "ANALYSIS":["/ask","/brainstorm","/vision"],
+ "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
+ "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
+ "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
+
     # Build eval instructions — cross-milestone language only when
     # prior milestone context is actually present.
     local _cross_inst=""
@@ -1749,17 +1762,6 @@ EVAL_HD_JSON
 
 AVAILABLE COMMANDS (RECOMMENDATION must be one of these):
 ${_eval_commands}"
-
-    # ── Compact command catalog for evaluator recommendations ──
-    # Categorized JSON matching the convention used by the strategist
-    # and router. Most-specific-first ordering within each category.
-    # ~150 tokens — well within 4B budget. Ensures the evaluator
-    # only recommends commands that actually exist.
-    local _eval_commands='{"RESEARCH":["/web search","/web fetch","/web scrape","/recall","/git search","/git fetch"],
- "ANALYSIS":["/ask","/brainstorm","/vision"],
- "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
- "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
- "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
 
     local _sys_cross=""
     [ -n "$_prior_milestones" ] && _sys_cross=" Judge whether this item was accomplished by ANY work so far — current action log OR prior completed milestones. If a prior milestone already did what the item asks, answer SATISFIED."
@@ -1833,7 +1835,7 @@ ${_eval_commands}"
         # Hard gate: if the evaluator hallucinated a command that
         # doesn't exist (e.g. /summarize), discard it before it can
         # reach the strategist feedback and create a stuck loop.
-        if [ -n "$_EVAL_HONEYDEW_RECOMMENDATION" ]; then
+        if [ "${AGENT_EVAL_VALIDATE:-1}" -eq 1 ] && [ -n "$_EVAL_HONEYDEW_RECOMMENDATION" ]; then
             local _rec_base_cmd
             _rec_base_cmd=$(echo "$_EVAL_HONEYDEW_RECOMMENDATION" | grep -oE '/[a-z]+' | head -1 | sed 's|^/||')
             if [ -n "$_rec_base_cmd" ]; then
@@ -3813,10 +3815,10 @@ agent_inner_loop() {
  "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
  "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
 
-            # If /respond has been tried 2+ times without success, remove it
-            if [ "$_respond_consec" -ge 2 ]; then
+            # If /respond has been tried too many times without success, remove it
+            if [ "$_respond_consec" -ge "${AGENT_RESPOND_CONSEC_MAX:-2}" ]; then
                 _compact_cmds=$(echo "$_compact_cmds" | sed 's|"/respond",||')
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] hallucination recovery: /respond removed from catalog ($_respond_consec consecutive uses)"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] hallucination recovery: /respond removed from catalog ($_respond_consec consecutive, max ${AGENT_RESPOND_CONSEC_MAX:-2})"
             fi
 
             specialist_sys="Phase 2: Action Specialist
@@ -3830,7 +3832,7 @@ FORBIDDEN: code fences, quotes on args, multiple commands per line
 The previously attempted command does not exist. Pick the BEST command from AVAILABLE COMMANDS for this task. Output exactly ONE command with arguments.
 
 AVAILABLE COMMANDS:
-${_compact_cmds}${_respond_consec:+$([ "$_respond_consec" -ge 2 ] && echo "
+${_compact_cmds}${_respond_consec:+$([ "$_respond_consec" -ge "${AGENT_RESPOND_CONSEC_MAX:-2}" ] && echo "
 
 WARNING: /respond has been tried ${_respond_consec} times without success. You MUST use a different command.")}"
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist <- compact command catalog (hallucination recovery)"

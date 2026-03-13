@@ -35,6 +35,14 @@ transcript_start() {
     local ts
     ts=$(date '+%Y-%m-%d_%H-%M-%S')
     _TRANSCRIPT_FILE="$_TRANSCRIPT_DIR/${ts}.md"
+    # Avoid filename collisions when multiple transcripts start in the same second
+    if [ -f "$_TRANSCRIPT_FILE" ]; then
+        local _sfx=2
+        while [ -f "$_TRANSCRIPT_DIR/${ts}_${_sfx}.md" ]; do
+            _sfx=$((_sfx + 1))
+        done
+        _TRANSCRIPT_FILE="$_TRANSCRIPT_DIR/${ts}_${_sfx}.md"
+    fi
     _TRANSCRIPT_START_TS=$(date '+%s')
 
     {
