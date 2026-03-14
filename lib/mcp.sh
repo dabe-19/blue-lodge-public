@@ -336,7 +336,7 @@ mcp_start() {
     # Verify server is still alive
     if ! kill -0 "$server_pid" 2>/dev/null; then
         echo "ERROR: MCP server '$name' died on startup" >&2
-        declare -f ui_err &>/dev/null && ui_err "MCP server '$name' died on startup (pid=$server_pid)"
+        declare -f ui_err &>/dev/null && ui_err "MCP server '$name' died on startup (pid=$server_pid)" >&2
         declare -f transcript_log &>/dev/null && transcript_log "mcp" "server '$name' FAILED to start (died on launch)"
         mcp_stop "$name"
         return 1
@@ -345,14 +345,14 @@ mcp_start() {
     # MCP handshake
     if ! _mcp_handshake "$name"; then
         echo "ERROR: MCP handshake failed for '$name'" >&2
-        declare -f ui_err &>/dev/null && ui_err "MCP handshake FAILED for '$name'"
+        declare -f ui_err &>/dev/null && ui_err "MCP handshake FAILED for '$name'" >&2
         declare -f transcript_log &>/dev/null && transcript_log "mcp" "server '$name' handshake FAILED"
         mcp_stop "$name"
         return 1
     fi
 
     touch "$rundir/ready"
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP server '$name' started (pid=$server_pid)"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP server '$name' started (pid=$server_pid)" >&2
     declare -f transcript_log &>/dev/null && transcript_log "mcp" "server '$name' started OK (pid=$server_pid, cmd=${cmd:0:80})"
     return 0
 }
@@ -361,7 +361,7 @@ mcp_stop() {
     local name="$1"
     local rundir="$MCP_RUN_DIR/$name"
 
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP server '$name' stopping"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP server '$name' stopping" >&2
     declare -f transcript_log &>/dev/null && transcript_log "mcp" "server '$name' stopping"
 
     # Kill keeper process (FIFO writer)
@@ -414,7 +414,7 @@ mcp_start_all() {
             started=$((started + 1))
         else
             failed=$((failed + 1))
-            declare -f ui_warn &>/dev/null && ui_warn "MCP server '$name' failed to start"
+            declare -f ui_warn &>/dev/null && ui_warn "MCP server '$name' failed to start" >&2
         fi
     done <<< "$names"
     [ "$started" -gt 0 ]
@@ -489,7 +489,7 @@ mcp_tools_list() {
     _tl_err=$(printf '%s' "$resp" | _mcp_jq -r '.error.message // empty' 2>/dev/null)
     if [ -n "$_tl_err" ]; then
         echo "MCP ERROR (tools/list): $_tl_err" >&2
-        declare -f ui_err &>/dev/null && ui_err "MCP tools/list ERROR: server=$name msg=$_tl_err"
+        declare -f ui_err &>/dev/null && ui_err "MCP tools/list ERROR: server=$name msg=$_tl_err" >&2
         declare -f transcript_log &>/dev/null && transcript_log "mcp" "tools/list ERROR: server=$name msg=$_tl_err"
         return 1
     fi
@@ -503,7 +503,7 @@ mcp_tools_list() {
     # Log discovered tools count
     local _tool_count
     _tool_count=$(printf '%s' "$tools" | _mcp_jq 'length' 2>/dev/null || echo 0)
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP tools/list: server=$name tools=$_tool_count"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP tools/list: server=$name tools=$_tool_count" >&2
 
     # Cache the tools list
     if declare -f cache_put &>/dev/null; then
@@ -520,12 +520,12 @@ mcp_tool_call() {
     local params="$3"
     [ -z "$params" ] && params='{}'
 
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP tool_call: server=$server tool=$tool params=${params:0:120}"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP tool_call: server=$server tool=$tool params=${params:0:120}" >&2
 
     # Ensure server is running
     mcp_status "$server" >/dev/null 2>&1 || {
         mcp_start "$server" || {
-            declare -f ui_err &>/dev/null && ui_err "MCP tool_call FAILED: cannot start server '$server'"
+            declare -f ui_err &>/dev/null && ui_err "MCP tool_call FAILED: cannot start server '$server'" >&2
             declare -f transcript_log &>/dev/null && transcript_log "mcp" "tool_call FAILED: server '$server' won't start (tool=$tool)"
             return 1
         }
@@ -546,7 +546,7 @@ mcp_tool_call() {
     local resp
     resp=$(_mcp_recv "$server" "$req_id" "$MCP_TIMEOUT")
     if [ -z "$resp" ]; then
-        declare -f ui_err &>/dev/null && ui_err "MCP tool_call TIMEOUT: server=$server tool=$tool (${MCP_TIMEOUT}s)"
+        declare -f ui_err &>/dev/null && ui_err "MCP tool_call TIMEOUT: server=$server tool=$tool (${MCP_TIMEOUT}s)" >&2
         declare -f transcript_log &>/dev/null && transcript_log "mcp" "tool_call TIMEOUT: server=$server tool=$tool (${MCP_TIMEOUT}s)"
         return 1
     fi
@@ -558,7 +558,7 @@ mcp_tool_call() {
         local err_code
         err_code=$(printf '%s' "$resp" | _mcp_jq -r '.error.code // "unknown"' 2>/dev/null)
         echo "MCP ERROR: $err" >&2
-        declare -f ui_err &>/dev/null && ui_err "MCP tool_call ERROR: server=$server tool=$tool code=$err_code msg=$err"
+        declare -f ui_err &>/dev/null && ui_err "MCP tool_call ERROR: server=$server tool=$tool code=$err_code msg=$err" >&2
         declare -f transcript_log &>/dev/null && transcript_log "mcp" "tool_call ERROR: server=$server tool=$tool code=$err_code msg=$err"
         return 1
     fi
@@ -572,7 +572,7 @@ mcp_tool_call() {
     ' 2>/dev/null)
 
     local _content_len=${#content}
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP tool_call OK: server=$server tool=$tool response_len=$_content_len"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP tool_call OK: server=$server tool=$tool response_len=$_content_len" >&2
     declare -f transcript_log &>/dev/null && transcript_log "mcp" "tool_call OK: server=$server tool=$tool response_len=$_content_len"
 
     printf '%s' "$content"
@@ -614,7 +614,7 @@ _mcp_try_fetch_tool() {
         result=$(mcp_tool_call "$server" "$tool" "$args_json" 2>/dev/null)
         if [ $? -eq 0 ] && [ -n "$result" ]; then
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-                ui_dim "  [debug] MCP $tool OK via $server (${#result} bytes)"
+                ui_dim "  [debug] MCP $tool OK via $server (${#result} bytes)" >&2
             declare -f transcript_log &>/dev/null && \
                 transcript_log "mcp" "$tool OK: $server (${#result} bytes)"
             printf '%s' "$result"
@@ -630,7 +630,7 @@ _mcp_try_fetch_tool() {
             result=$(mcp_tool_call "$server" "$fallback_tool" "$fallback_args" 2>/dev/null)
             if [ $? -eq 0 ] && [ -n "$result" ]; then
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-                    ui_dim "  [debug] MCP $fallback_tool (fallback) OK via $server (${#result} bytes)"
+                    ui_dim "  [debug] MCP $fallback_tool (fallback) OK via $server (${#result} bytes)" >&2
                 declare -f transcript_log &>/dev/null && \
                     transcript_log "mcp" "$fallback_tool (fallback from $tool) OK: $server (${#result} bytes)"
                 printf '%s' "$result"
@@ -645,7 +645,7 @@ _mcp_try_fetch_tool() {
             result=$(mcp_tool_call "puppeteer" "puppeteer_navigate" "$args_json" 2>/dev/null)
             if [ $? -eq 0 ] && [ -n "$result" ]; then
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-                    ui_dim "  [debug] MCP puppeteer fallback OK (${#result} bytes)"
+                    ui_dim "  [debug] MCP puppeteer fallback OK (${#result} bytes)" >&2
                 declare -f transcript_log &>/dev/null && \
                     transcript_log "mcp" "puppeteer fallback OK (${#result} bytes)"
                 printf '%s' "$result"
@@ -667,7 +667,7 @@ mcp_web_fetch() {
     _url_json=$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-        ui_dim "  [debug] MCP web_fetch: url=${url:0:120}"
+        ui_dim "  [debug] MCP web_fetch: url=${url:0:120}" >&2
 
     # Try structured extraction first via fetch_json
     local json_result _sf_content _sf_title _sf_text _sf_blocked
@@ -681,14 +681,14 @@ mcp_web_fetch() {
         if [ "$_sf_blocked" != "true" ] && [ -n "$_sf_content" ] && [ ${#_sf_content} -gt 80 ]; then
             [ -n "$_sf_title" ] && _sf_text="${_sf_title}"$'\n\n'"${_sf_content}" || _sf_text="$_sf_content"
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-                ui_dim "  [debug] MCP web_fetch: structured extraction succeeded (${#_sf_text} chars)"
+                ui_dim "  [debug] MCP web_fetch: structured extraction succeeded (${#_sf_text} chars)" >&2
             declare -f transcript_log &>/dev/null && \
                 transcript_log "mcp" "web_fetch structured OK: url=${url:0:80} (${#_sf_text} chars)"
             printf '%s' "$_sf_text"
             return 0
         fi
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-            ui_dim "  [debug] MCP web_fetch: structured extraction insufficient — trying plain fetch"
+            ui_dim "  [debug] MCP web_fetch: structured extraction insufficient — trying plain fetch" >&2
     fi
 
     # Fall back to plain text fetch
@@ -700,7 +700,7 @@ mcp_web_fetch() {
     fi
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-        ui_dim "  [debug] MCP web_fetch: all servers exhausted — falling back to caller"
+        ui_dim "  [debug] MCP web_fetch: all servers exhausted — falling back to caller" >&2
     declare -f transcript_log &>/dev/null && \
         transcript_log "mcp" "web_fetch FALLBACK: no MCP server succeeded for url=${url:0:80}"
     return 1
@@ -715,7 +715,7 @@ mcp_web_fetch_json() {
     _url_json=$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-        ui_dim "  [debug] MCP web_fetch_json: url=${url:0:120}"
+        ui_dim "  [debug] MCP web_fetch_json: url=${url:0:120}" >&2
 
     _mcp_try_fetch_tool "fetch_json" "$_url_json"
 }
@@ -729,7 +729,7 @@ mcp_web_search() {
     _args_json=$(_mcp_jq -n -c --arg q "$query" --argjson c "$count" '{"query":$q,"count":$c}')
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-        ui_dim "  [debug] MCP web_search: query=${query:0:80}"
+        ui_dim "  [debug] MCP web_search: query=${query:0:80}" >&2
 
     _mcp_try_fetch_tool "web_search" "$_args_json"
 }
@@ -743,7 +743,7 @@ mcp_web_images() {
     _args_json=$(_mcp_jq -n -c --arg q "$query" --argjson c "$count" '{"query":$q,"count":$c}')
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-        ui_dim "  [debug] MCP web_images: query=${query:0:80}"
+        ui_dim "  [debug] MCP web_images: query=${query:0:80}" >&2
 
     _mcp_try_fetch_tool "web_images" "$_args_json"
 }
@@ -756,7 +756,7 @@ mcp_web_fetch_pdf() {
     _url_json=$(_mcp_jq -n -c --arg url "$url" '{"url":$url}')
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-        ui_dim "  [debug] MCP web_fetch_pdf: url=${url:0:120}"
+        ui_dim "  [debug] MCP web_fetch_pdf: url=${url:0:120}" >&2
 
     _mcp_try_fetch_tool "fetch_pdf" "$_url_json"
 }
@@ -770,7 +770,7 @@ mcp_github_search() {
     _args_json=$(_mcp_jq -n -c --arg q "$query" --argjson c "$count" '{"query":$q,"count":$c}')
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-        ui_dim "  [debug] MCP github_search: query=${query:0:80}"
+        ui_dim "  [debug] MCP github_search: query=${query:0:80}" >&2
 
     _mcp_try_fetch_tool "github_search" "$_args_json"
 }
@@ -789,7 +789,7 @@ _mcp_try_server_tool() {
     result=$(mcp_tool_call "$server" "$tool" "$args_json" 2>/dev/null)
     if [ $? -eq 0 ] && [ -n "$result" ]; then
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
-            ui_dim "  [debug] MCP $tool OK via $server (${#result} bytes)"
+            ui_dim "  [debug] MCP $tool OK via $server (${#result} bytes)" >&2
         declare -f transcript_log &>/dev/null && \
             transcript_log "mcp" "$tool OK: $server (${#result} bytes)"
         printf '%s' "$result"
@@ -953,7 +953,7 @@ _mcp_dispatch_intercept() {
 
     mcp_enabled || return 1
 
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP dispatch intercept: cmd=$cmd args=${args:0:80}"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP dispatch intercept: cmd=$cmd args=${args:0:80}" >&2
 
     # Check cached tool mappings for all running servers
     local server_name
@@ -1012,23 +1012,23 @@ _mcp_dispatch_intercept() {
         fi
 
         if [ -n "$match" ]; then
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP dispatch: matched tool '$match' on server '$server_name'"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP dispatch: matched tool '$match' on server '$server_name'" >&2
             # Build params from args (pass as a generic "input" or "query" field)
             [ -z "$params" ] && params=$(_mcp_jq -n -c --arg input "$args" '{"input":$input}')
             local result
             result=$(mcp_tool_call "$server_name" "$match" "$params" 2>/dev/null)
             if [ -n "$result" ]; then
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP dispatch OK: server=$server_name tool=$match (${#result} bytes)"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP dispatch OK: server=$server_name tool=$match (${#result} bytes)" >&2
                 declare -f transcript_log &>/dev/null && transcript_log "mcp" "dispatch intercept OK: server=$server_name tool=$match cmd=$cmd (${#result} bytes)"
                 printf '%s' "$result"
                 return 0
             fi
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP dispatch: tool '$match' returned empty on server '$server_name'"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP dispatch: tool '$match' returned empty on server '$server_name'" >&2
             declare -f transcript_log &>/dev/null && transcript_log "mcp" "dispatch intercept EMPTY: server=$server_name tool=$match cmd=$cmd"
         fi
     done
 
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP dispatch: no matching tool for cmd=$cmd — falling back to native"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP dispatch: no matching tool for cmd=$cmd — falling back to native" >&2
     return 1
 }
 
@@ -1158,12 +1158,12 @@ mcp_command() {
                     if mcp_status "$_sname" >/dev/null 2>&1; then
                         continue
                     fi
-                    declare -f ui_dim &>/dev/null && ui_dim "  Starting MCP server '$_sname'..."
+                    declare -f ui_dim &>/dev/null && ui_dim "  Starting MCP server '$_sname'..." >&2
                     if mcp_start "$_sname" 2>/dev/null; then
                         declare -f ui_ok &>/dev/null && ui_ok "MCP server '$_sname' started"
                         _started_any=1
                     else
-                        declare -f ui_warn &>/dev/null && ui_warn "MCP server '$_sname' failed to start"
+                        declare -f ui_warn &>/dev/null && ui_warn "MCP server '$_sname' failed to start" >&2
                     fi
                 done <<< "$(mcp_server_names)"
             fi
@@ -1210,8 +1210,8 @@ mcp_command() {
             if [ $? -eq 0 ]; then
                 if declare -f ui_ok &>/dev/null; then
                     ui_ok "MCP server '$name' registered"
-                    ui_dim "  cmd: $cmd_str"
-                    ui_dim "  Start with: /mcp start $name"
+                    ui_dim "  cmd: $cmd_str" >&2
+                    ui_dim "  Start with: /mcp start $name" >&2
                 else
                     echo "MCP server '$name' registered"
                 fi
@@ -1249,7 +1249,7 @@ mcp_command() {
             [ -z "$name" ] && { echo "Usage: /mcp start <name>" >&2; return 1; }
             MCP_ENABLED=1
             if declare -f ui_dim &>/dev/null; then
-                ui_dim "Starting MCP server '$name'..."
+                ui_dim "Starting MCP server '$name'..." >&2
             fi
             if mcp_start "$name"; then
                 if declare -f ui_ok &>/dev/null; then
@@ -1259,12 +1259,12 @@ mcp_command() {
                 fi
             else
                 if declare -f ui_err &>/dev/null; then
-                    ui_err "Failed to start MCP server '$name'"
+                    ui_err "Failed to start MCP server '$name'" >&2
                     local stderr_file="$MCP_RUN_DIR/$name/stderr.log"
                     if [ -f "$stderr_file" ] && [ -s "$stderr_file" ]; then
-                        ui_dim "Server stderr:"
+                        ui_dim "Server stderr:" >&2
                         tail -5 "$stderr_file" | while IFS= read -r line; do
-                            ui_dim "  $line"
+                            ui_dim "  $line" >&2
                         done
                     fi
                 fi
@@ -1393,28 +1393,28 @@ _mcp_show_status() {
         for name in $running; do
             local desc
             desc=$(_mcp_server_desc "$name")
-            $_ui_dim "  ● $name — ${desc:-MCP server}"
+            $_ui_dim "  ● $name — ${desc:-MCP server}" >&2
         done
     else
-        $_ui_dim "No servers running"
+        $_ui_dim "No servers running" >&2
     fi
 
     # Registered servers
     local total
     total=$(mcp_server_names | wc -l)
     total="${total## }"
-    $_ui_dim "Registered: ${total:-0} servers"
+    $_ui_dim "Registered: ${total:-0} servers" >&2
 
     # Cache stats
     if declare -f cache_stats &>/dev/null; then
-        $_ui_dim "Tool cache: $(cache_stats)"
+        $_ui_dim "Tool cache: $(cache_stats)" >&2
     fi
 
     echo ""
-    $_ui_dim "  /mcp on|off     — Enable/disable MCP"
-    $_ui_dim "  /mcp list       — Show registered servers"
-    $_ui_dim "  /mcp catalog    — Browse recommended servers"
-    $_ui_dim "  /mcp help       — Full command reference"
+    $_ui_dim "  /mcp on|off     — Enable/disable MCP" >&2
+    $_ui_dim "  /mcp list       — Show registered servers" >&2
+    $_ui_dim "  /mcp catalog    — Browse recommended servers" >&2
+    $_ui_dim "  /mcp help       — Full command reference" >&2
 }
 
 _mcp_show_servers() {
@@ -1429,7 +1429,7 @@ _mcp_show_servers() {
     local entries
     entries=$(mcp_server_list)
     if [ -z "$entries" ]; then
-        $_ui_dim "No servers registered. Try: /mcp install fetch"
+        $_ui_dim "No servers registered. Try: /mcp install fetch" >&2
         return
     fi
 
@@ -1440,11 +1440,11 @@ _mcp_show_servers() {
             state="●"
         fi
         printf "  %s %-15s %s\n" "$state" "$name" "${desc:-}"
-        $_ui_dim "    cmd: $cmd"
+        $_ui_dim "    cmd: $cmd" >&2
     done <<< "$entries"
 
     echo ""
-    $_ui_dim "  ● = running, ○ = stopped"
+    $_ui_dim "  ● = running, ○ = stopped" >&2
 }
 
 _mcp_show_catalog() {
@@ -1459,7 +1459,7 @@ _mcp_show_catalog() {
     local entries
     entries=$(mcp_catalog_list)
     if [ -z "$entries" ]; then
-        $_ui_dim "No catalog available"
+        $_ui_dim "No catalog available" >&2
         return
     fi
 
@@ -1473,8 +1473,8 @@ _mcp_show_catalog() {
     done <<< "$entries"
 
     echo ""
-    $_ui_dim "  Install: /mcp install <name>"
-    $_ui_dim "  Then:    /mcp start <name>"
+    $_ui_dim "  Install: /mcp install <name>" >&2
+    $_ui_dim "  Then:    /mcp start <name>" >&2
 }
 
 _mcp_show_help() {
@@ -1485,23 +1485,23 @@ _mcp_show_help() {
 
     $_ui_section "MCP Commands"
     echo ""
-    $_ui_dim "  /mcp                         Show status overview"
-    $_ui_dim "  /mcp on | off                Enable/disable MCP integration"
-    $_ui_dim "  /mcp add [name] [command]    Register a server (interactive if no args)"
-    $_ui_dim "  /mcp register               Interactive server registration"
-    $_ui_dim "  /mcp remove <name>           Unregister a server"
-    $_ui_dim "  /mcp list                    List registered servers"
-    $_ui_dim "  /mcp catalog                 Browse recommended servers"
-    $_ui_dim "  /mcp install <name>          Install from catalog"
-    $_ui_dim "  /mcp start <name>            Start a server"
-    $_ui_dim "  /mcp stop [name|all]         Stop server(s)"
-    $_ui_dim "  /mcp tools [name]            List available tools"
-    $_ui_dim "  /mcp call <srv> <tool> [{}]  Call an MCP tool"
-    $_ui_dim "  /mcp cache [clear]           View/clear tool cache"
-    $_ui_dim "  /mcp help                    This help"
+    $_ui_dim "  /mcp                         Show status overview" >&2
+    $_ui_dim "  /mcp on | off                Enable/disable MCP integration" >&2
+    $_ui_dim "  /mcp add [name] [command]    Register a server (interactive if no args)" >&2
+    $_ui_dim "  /mcp register               Interactive server registration" >&2
+    $_ui_dim "  /mcp remove <name>           Unregister a server" >&2
+    $_ui_dim "  /mcp list                    List registered servers" >&2
+    $_ui_dim "  /mcp catalog                 Browse recommended servers" >&2
+    $_ui_dim "  /mcp install <name>          Install from catalog" >&2
+    $_ui_dim "  /mcp start <name>            Start a server" >&2
+    $_ui_dim "  /mcp stop [name|all]         Stop server(s)" >&2
+    $_ui_dim "  /mcp tools [name]            List available tools" >&2
+    $_ui_dim "  /mcp call <srv> <tool> [{}]  Call an MCP tool" >&2
+    $_ui_dim "  /mcp cache [clear]           View/clear tool cache" >&2
+    $_ui_dim "  /mcp help                    This help" >&2
     echo ""
-    $_ui_dim "  When MCP is enabled, George uses MCP tools as the primary"
-    $_ui_dim "  path and falls back to native slash commands on failure."
+    $_ui_dim "  When MCP is enabled, George uses MCP tools as the primary" >&2
+    $_ui_dim "  path and falls back to native slash commands on failure." >&2
 }
 
 # ── Cleanup hook ───────────────────────────────────────────────
