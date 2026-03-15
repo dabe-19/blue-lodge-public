@@ -31,54 +31,55 @@ _MODELS_ACTIVE=""
 # Model Registry
 # ═══════════════════════════════════════════════════════════════
 # Each entry uses ^ as delimiter (NOT | — stop tokens like <|im_end|> contain pipes).
-# Format: key^friendly_name^base_image^role^has_thinking^nothink_method^stop_token^temperature^repeat_penalty^presence_penalty^num_ctx^num_predict^top_p^top_k^min_p^notes
+# Format: key^friendly_name^base_image^role^has_thinking^nothink_method^stop_token^temperature^repeat_penalty^presence_penalty^num_ctx^num_predict^top_p^top_k^min_p^notes^tier
 #
 # role: "thinking" or "instruct"
 # has_thinking: 1 = generates <think> blocks, 0 = no thinking
 # nothink_method: "qwen" = /no_think suffix, "none" = no mechanism, "system" = system prompt instruction
 # stop_token: model's native stop sequence
+# tier: "edge" (2-4B, phone/laptop), "central" (8B+, needs GPU server), "any" (runs anywhere)
 
 _MODELS_REGISTRY=(
     # ── Qwen3 family ──────────────────────────────────────────
     # Qwen3-Think: HF recommends temp=0.6, top_p=0.95, top_k=20, min_p=0,
     #   presence_penalty 0-2 (warns high values cause language mixing),
     #   num_predict 32768 (81920 for complex reasoning).
-    "qwen3-think^blue-lodge-qwen3-think:4b^hf.co/unsloth/Qwen3-4B-Thinking-2507-GGUF:UD-Q5_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.3^0.8^32768^32768^0.95^20^0.0^Qwen3 thinking. Extended reasoning with /no_think soft switch."
+    "qwen3-think^blue-lodge-qwen3-think:4b^hf.co/unsloth/Qwen3-4B-Thinking-2507-GGUF:UD-Q5_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.3^0.8^32768^32768^0.95^20^0.0^Qwen3 thinking. Extended reasoning with /no_think soft switch.^edge"
     # Qwen3-Inst: HF recommends temp=0.7, top_p=0.8, top_k=20, min_p=0,
     #   num_predict 16384 for instruct. We use temp=0.15 for faithful persona adherence.
-    "qwen3-inst^blue-lodge-qwen3-inst:4b^hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:UD-Q5_K_XL^instruct^0^none^<|im_end|>^0.15^1.0^0.0^32768^16384^0.8^20^0.0^Qwen3 instruct. Fast responses — no thinking phase."
+    "qwen3-inst^blue-lodge-qwen3-inst:4b^hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:UD-Q5_K_XL^instruct^0^none^<|im_end|>^0.15^1.0^0.0^32768^16384^0.8^20^0.0^Qwen3 instruct. Fast responses — no thinking phase.^edge"
 
     # ── Llama 3.2 family ──────────────────────────────────────
     # Llama 3.2: 128K native context, but 12GB ARM can only handle 32K safely.
     # Meta publishes no specific sampling recommendations.
-    "llama32^blue-lodge-llama32:3b^llama3.2:3b^thinking^0^none^<|eot_id|>^0.6^1.1^0.0^32768^8192^0.9^40^0.0^Meta Llama 3.2 3B. Strong general reasoning."
-    "llama32-inst^blue-lodge-llama32-inst:3b^hf.co/unsloth/Llama-3.2-3B-Instruct-GGUF:UD-Q5_K_XL^instruct^0^none^<|eot_id|>^0.15^1.1^0.0^32768^8192^0.9^40^0.0^Llama 3.2 3B Instruct (Unsloth quant). Fast responses."
+    "llama32^blue-lodge-llama32:3b^llama3.2:3b^thinking^0^none^<|eot_id|>^0.6^1.1^0.0^32768^8192^0.9^40^0.0^Meta Llama 3.2 3B. Strong general reasoning.^edge"
+    "llama32-inst^blue-lodge-llama32-inst:3b^hf.co/unsloth/Llama-3.2-3B-Instruct-GGUF:UD-Q5_K_XL^instruct^0^none^<|eot_id|>^0.15^1.1^0.0^32768^8192^0.9^40^0.0^Llama 3.2 3B Instruct (Unsloth quant). Fast responses.^edge"
 
     # ── Granite 4 family (IBM) ─────────────────────────────────
     # granite4:3b and granite4:3b-h are instruct-only (no thinking).
     # ibm/granite4.0-preview:tiny is the thinking variant (uses .thinking field).
     # Preview model emits <response>...</response> tags — stripped by llm.sh.
-    "granite4^blue-lodge-granite4:3b^granite4:3b^instruct^0^none^<|end_of_text|>^0.0^1.0^0.0^32768^8192^1.0^0^0.0^IBM Granite 4 Micro instruct. Fast structured output."
-    "granite4-h^blue-lodge-granite4-h:3b^granite4:3b-h^instruct^0^none^<|end_of_text|>^0.0^1.0^0.0^32768^8192^1.0^0^0.0^IBM Granite 4 hybrid quant. Smaller footprint (1.9GB vs 2.1GB)."
-    "granite4-preview^blue-lodge-granite4-preview:tiny^ibm/granite4.0-preview:tiny^thinking^1^system^<|end_of_text|>^0.6^1.0^0.0^32768^8192^1.0^0^0.0^IBM Granite 4 Preview. Extended thinking with concise output."
+    "granite4^blue-lodge-granite4:3b^granite4:3b^instruct^0^none^<|end_of_text|>^0.0^1.0^0.0^32768^8192^1.0^0^0.0^IBM Granite 4 Micro instruct. Fast structured output.^edge"
+    "granite4-h^blue-lodge-granite4-h:3b^granite4:3b-h^instruct^0^none^<|end_of_text|>^0.0^1.0^0.0^32768^8192^1.0^0^0.0^IBM Granite 4 hybrid quant. Smaller footprint (1.9GB vs 2.1GB).^edge"
+    "granite4-preview^blue-lodge-granite4-preview:tiny^ibm/granite4.0-preview:tiny^thinking^1^system^<|end_of_text|>^0.6^1.0^0.0^32768^8192^1.0^0^0.0^IBM Granite 4 Preview. Extended thinking with concise output.^edge"
 
     # ── Ministral family ──────────────────────────────────────
     # Reasoning model needs system prompt instruction for <think> tags (no native thinking template).
     # Mistral recommends: reasoning temp=0.7 top_p=0.95.
     # repeat_penalty=1.2 prevents catastrophic repetition spirals (1.0 = no penalty → model loops).
     # presence_penalty=0.3 adds light anti-repetition bias without degrading fluency.
-    "minist-think^blue-lodge-minist-think:4b^hf.co/unsloth/Ministral-3-3B-Reasoning-2512-GGUF:UD-Q5_K_XL^thinking^1^system^</s>^0.7^1.2^0.3^32768^8192^0.95^40^0.0^Default primary. Mistral reasoning with thinking via system prompt."
+    "minist-think^blue-lodge-minist-think:4b^hf.co/unsloth/Ministral-3-3B-Reasoning-2512-GGUF:UD-Q5_K_XL^thinking^1^system^</s>^0.7^1.2^0.3^32768^8192^0.95^40^0.0^Default primary. Mistral reasoning with thinking via system prompt.^edge"
     # Instruct model supports vision (multimodal). Mistral recommends: instruct temp=0.15.
     # All instruct models pinned to temp=0.15 — personality comes from prompt, not randomness.
-    "minist-inst^blue-lodge-minist-inst:4b^hf.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF:UD-Q5_K_XL^instruct^0^none^</s>^0.125^1.0^0.0^32768^16384^0.9^40^0.0^Default secondary. Mistral instruct with vision support."
+    "minist-inst^blue-lodge-minist-inst:4b^hf.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF:UD-Q5_K_XL^instruct^0^none^</s>^0.125^1.0^0.0^32768^16384^0.9^40^0.0^Default secondary. Mistral instruct with vision support.^edge"
 
     # ── Gemma 3 family (Google) ────────────────────────────────
     # Gemma 3: 128K native context (32K for 1B), multimodal (4B+ supports vision).
     # QAT (Quantization-Aware Trained) 4B variant preserves accuracy at lower precision.
     # Google publishes no specific sampling recommendations; we use conservative defaults.
     # Stop token: <end_of_turn>. Chat template: "gemma" (already mapped in _models_chat_template_name).
-    "gemma3-4b-inst^blue-lodge-gemma3-inst:4b^hf.co/unsloth/gemma-3-4b-it-qat-GGUF:UD-Q5_K_XL^instruct^0^none^<end_of_turn>^1.0^1.0^0.0^32768^8192^0.95^64^0.0^Google Gemma 3 4B QAT instruct. Vision-capable multimodal."
-    "gemma3-1b-inst^blue-lodge-gemma3-inst:1b^hf.co/unsloth/gemma-3-1b-it-GGUF:BF16^instruct^0^none^<end_of_turn>^1.0^1.0^0.0^32768^8192^0.95^64^0.0^Google Gemma 3 1B instruct. Ultra-lightweight text-only."
+    "gemma3-4b-inst^blue-lodge-gemma3-inst:4b^hf.co/unsloth/gemma-3-4b-it-qat-GGUF:UD-Q5_K_XL^instruct^0^none^<end_of_turn>^1.0^1.0^0.0^32768^8192^0.95^64^0.0^Google Gemma 3 4B QAT instruct. Vision-capable multimodal.^edge"
+    "gemma3-1b-inst^blue-lodge-gemma3-inst:1b^hf.co/unsloth/gemma-3-1b-it-GGUF:BF16^instruct^0^none^<end_of_turn>^1.0^1.0^0.0^32768^8192^0.95^64^0.0^Google Gemma 3 1B instruct. Ultra-lightweight text-only.^edge"
 
     # ── Qwen 3.5 family ───────────────────────────────────────
     # NOTE: As of July 2025, Qwen3.5 GGUFs do NOT work in Ollama.
@@ -89,13 +90,13 @@ _MODELS_REGISTRY=(
     # Non-thinking: temp=0.7 (general) / 1.0 (reasoning), top_p=0.8, top_k=20
     # Max context: 262,144 (256K). Has mmproj for vision.
     # Uses same ChatML format and /no_think mechanism as Qwen 3.
-    "qwen35-2b^blue-lodge-qwen35:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL^instruct^0^none^<|im_end|>^1.0^1.0^1.5^32768^16384^0.95^20^0.0^Qwen 3.5 2B instruct (UD-Q8). Downloaded via Ollama; usable by both backends."
-    "qwen35-2b-q8^blue-lodge-qwen35-q8:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:Q8_0^instruct^0^none^<|im_end|>^1.0^1.0^1.5^32768^16384^0.95^20^0.0^Qwen 3.5 2B instruct (Q8_0). Downloaded via Ollama; usable by both backends."
-    "qwen35-4b^blue-lodge-qwen35:4b^hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL^instruct^0^none^<|im_end|>^1.0^1.0^1.5^32768^16384^0.95^20^0.0^Qwen 3.5 4B instruct (UD-Q4). Downloaded via Ollama; usable by both backends."
+    "qwen35-2b^blue-lodge-qwen35:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL^instruct^0^none^<|im_end|>^1.0^1.0^1.5^32768^16384^0.95^20^0.0^Qwen 3.5 2B instruct (UD-Q8). Downloaded via Ollama; usable by both backends.^edge"
+    "qwen35-2b-q8^blue-lodge-qwen35-q8:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:Q8_0^instruct^0^none^<|im_end|>^1.0^1.0^1.5^32768^16384^0.95^20^0.0^Qwen 3.5 2B instruct (Q8_0). Downloaded via Ollama; usable by both backends.^edge"
+    "qwen35-4b^blue-lodge-qwen35:4b^hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL^instruct^0^none^<|im_end|>^1.0^1.0^1.5^32768^16384^0.95^20^0.0^Qwen 3.5 4B instruct (UD-Q4). Downloaded via Ollama; usable by both backends.^edge"
     # Thinking variants: enable reasoning on the same base weights.
     # These use the Qwen /no_think mechanism and higher temperature for exploration.
-    "qwen35-2b-think^blue-lodge-qwen35-think:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.0^0.0^32768^32768^0.95^20^0.0^Qwen 3.5 2B thinking. Thinking mode requires llama.cpp --chat-template-kwargs."
-    "qwen35-4b-think^blue-lodge-qwen35-think:4b^hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.0^1.5^32768^32768^0.95^20^0.0^Qwen 3.5 4B thinking. Thinking mode requires llama.cpp --chat-template-kwargs."
+    "qwen35-2b-think^blue-lodge-qwen35-think:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.0^0.0^32768^32768^0.95^20^0.0^Qwen 3.5 2B thinking. Thinking mode requires llama.cpp --chat-template-kwargs.^edge"
+    "qwen35-4b-think^blue-lodge-qwen35-think:4b^hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.0^1.5^32768^32768^0.95^20^0.0^Qwen 3.5 4B thinking. Thinking mode requires llama.cpp --chat-template-kwargs.^edge"
 
     # ── Phi-4 family (Microsoft) ───────────────────────────────
     # Phi-4 mini: 3.8B params, 128K context, MIT license.
@@ -103,8 +104,24 @@ _MODELS_REGISTRY=(
     # Instruct: general-purpose with function calling support.
     # Reasoning: math/logic-focused, trained on DeepSeek-R1 distillation.
     # Reasoning model uses temp=0.8, top_p=0.95 (per Microsoft).
-    "phi4-inst^blue-lodge-phi4-inst:4b^hf.co/unsloth/Phi-4-mini-instruct-GGUF:Q5_K_M^instruct^0^none^<|end|>^0.15^1.0^0.0^32768^8192^0.9^40^0.0^Microsoft Phi-4 mini instruct. Compact general-purpose."
-    "phi4-reason^blue-lodge-phi4-reason:4b^hf.co/unsloth/Phi-4-mini-reasoning-GGUF:UD-Q5_K_XL^thinking^1^system^<|end|>^0.8^1.0^0.0^32768^32768^0.95^40^0.0^Microsoft Phi-4 mini reasoning. Math/logic specialist."
+    "phi4-inst^blue-lodge-phi4-inst:4b^hf.co/unsloth/Phi-4-mini-instruct-GGUF:Q5_K_M^instruct^0^none^<|end|>^0.15^1.0^0.0^32768^8192^0.9^40^0.0^Microsoft Phi-4 mini instruct. Compact general-purpose.^edge"
+    "phi4-reason^blue-lodge-phi4-reason:4b^hf.co/unsloth/Phi-4-mini-reasoning-GGUF:UD-Q5_K_XL^thinking^1^system^<|end|>^0.8^1.0^0.0^32768^32768^0.95^40^0.0^Microsoft Phi-4 mini reasoning. Math/logic specialist.^edge"
+
+    # ── Central Tier (8B+, requires remote GPU) ────────────────
+    # These models need a GPU server (e.g., 5700 XT via Vulkan).
+    # Pulled via Ollama on remote, served via llama-server.
+    # George injects identity/thinking/sampling at request time — no Modelfiles needed remotely.
+
+    # Qwen3 8B: HF recommends temp=0.6, top_p=0.95, top_k=20 for thinking.
+    # Instruct: temp=0.15 for faithful persona adherence (same as edge Qwen3).
+    "qwen3-8b-think^blue-lodge-qwen3-think:8b^qwen3:8b^thinking^1^qwen^<|im_end|>^0.6^1.3^0.8^32768^32768^0.95^20^0.0^Qwen3 8B thinking. Central GPU tier.^central"
+    "qwen3-8b-inst^blue-lodge-qwen3-inst:8b^qwen3:8b^instruct^0^none^<|im_end|>^0.15^1.0^0.0^32768^16384^0.8^20^0.0^Qwen3 8B instruct. Central GPU tier.^central"
+
+    # Llama 3.1 8B: Proven at 60.57 tok/s on 5700 XT Vulkan (Q4_K_M, 33/33 layers).
+    "llama31-8b^blue-lodge-llama31:8b^llama3.1:8b^instruct^0^none^<|eot_id|>^0.6^1.1^0.0^32768^8192^0.9^40^0.0^Meta Llama 3.1 8B. Proven 60 tok/s on 5700 XT Vulkan.^central"
+
+    # Mistral Nemo 12B: Q4_K_M fits ~7GB VRAM on 5700 XT with headroom.
+    "mistral-nemo-12b^blue-lodge-mistral-nemo:12b^mistral-nemo:12b^instruct^0^none^</s>^0.15^1.1^0.0^32768^8192^0.9^40^0.0^Mistral Nemo 12B. Largest model fitting 5700 XT VRAM.^central"
 )
 
 # ═══════════════════════════════════════════════════════════════
@@ -398,12 +415,13 @@ _models_resolve_gguf() {
 # Usage: _models_parse_entry "entry_string"
 # Sets: _ME_KEY, _ME_NAME, _ME_BASE, _ME_ROLE, _ME_THINKS, _ME_NOTHINK,
 #       _ME_STOP, _ME_TEMP, _ME_REPEAT, _ME_PRESENCE, _ME_CTX, _ME_PREDICT,
-#       _ME_TOP_P, _ME_TOP_K, _ME_MIN_P, _ME_NOTES
+#       _ME_TOP_P, _ME_TOP_K, _ME_MIN_P, _ME_NOTES, _ME_TIER
 _models_parse_entry() {
     local entry="$1"
     IFS='^' read -r _ME_KEY _ME_NAME _ME_BASE _ME_ROLE _ME_THINKS _ME_NOTHINK \
         _ME_STOP _ME_TEMP _ME_REPEAT _ME_PRESENCE _ME_CTX _ME_PREDICT \
-        _ME_TOP_P _ME_TOP_K _ME_MIN_P _ME_NOTES <<< "$entry"
+        _ME_TOP_P _ME_TOP_K _ME_MIN_P _ME_NOTES _ME_TIER <<< "$entry"
+    _ME_TIER="${_ME_TIER:-any}"
 }
 
 # ── Look up a registry entry by key or friendly name ──────────

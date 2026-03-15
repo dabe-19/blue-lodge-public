@@ -58,6 +58,7 @@ source "$LODGE_DIR/lib/journal.sh"
 source "$LODGE_DIR/lib/security.sh"
 source "$LODGE_DIR/lib/cache.sh"
 source "$LODGE_DIR/lib/mcp.sh"
+source "$LODGE_DIR/lib/remote.sh"
 source "$LODGE_DIR/lib/recall.sh"
 source "$LODGE_DIR/lib/secrets.sh"
 source "$LODGE_DIR/lib/gsuite.sh"
@@ -4886,6 +4887,197 @@ _cmd_mqtt() {
     esac
 }
 
+# ── /remote — Remote inference management ──────────────────────
+_cmd_remote() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+    local arg2
+    arg2=$(echo "$args" | awk '{$1=""; print}' | sed 's/^[[:space:]]*//')
+
+    case "$action" in
+        ""|status)
+            ui_section "Remote Inference"
+            if _remote_tunnel_alive; then
+                remote_tunnel_status
+            else
+                local _fwd="${REMOTE_FORWARD_HOST:-localhost}"
+                printf "  %-22s %s\n" "Status:" "disconnected"
+                printf "  %-22s %s\n" "Target:" "${REMOTE_SSH_TARGET:-<not set>}"
+                printf "  %-22s %s\n" "Forward host:" "$_fwd"
+                printf "  %-22s %s\n" "Ollama URL:" "$OLLAMA_URL"
+                printf "  %-22s %s\n" "llama-server URL:" "$LLAMA_CPP_URL"
+            fi
+            echo ""
+            # Probe endpoints regardless of tunnel
+            ui_section "Endpoint Health"
+            local _o_status="unreachable"
+            if curl -sf --max-time 2 "$OLLAMA_URL/api/tags" &>/dev/null; then
+                _o_status="running"
+            fi
+            local _l_status="unreachable"
+            local _health
+            _health=$(curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null)
+            if [ $? -eq 0 ] && [ -n "$_health" ]; then
+                _l_status=$(echo "$_health" | jq -r '.status // "unknown"' 2>/dev/null)
+            fi
+            printf "  %-22s %s\n" "Ollama:" "$_o_status"
+            printf "  %-22s %s\n" "llama-server:" "$_l_status"
+            ;;
+        connect)
+            ui_info "Connecting to ${arg2:-${REMOTE_SSH_TARGET:-<not set>}}..."
+            if remote_connect "$arg2"; then
+                ui_ok "Tunnel established."
+            else
+                ui_err "Connection failed."
+            fi
+            ;;
+        disconnect)
+            remote_disconnect
+            ui_ok "Tunnel closed." ;;
+        setup)
+            remote_setup_ssh "$arg2" ;;
+        models)
+            ui_section "Remote Models"
+            local _tags
+            _tags=$(curl -sf --max-time 10 "$OLLAMA_URL/api/tags" 2>/dev/null)
+            if [ $? -ne 0 ] || [ -z "$_tags" ]; then
+                ui_err "Cannot reach Ollama at $OLLAMA_URL"
+                return 1
+            fi
+            printf "  ${_T_DIM}%-30s %-10s %-8s %-8s %s${_T_RESET}\n" "NAME" "PARAMS" "QUANT" "SIZE" "FAMILY"
+            echo "$_tags" | jq -r '.models[] | "\(.name)\t\(.details.parameter_size // "?")\t\(.details.quantization_level // "?")\t\(.size / 1073741824 | . * 100 | floor / 100)\t\(.details.family // "?")"' 2>/dev/null | \
+            while IFS=$'\t' read -r _n _p _q _s _f; do
+                printf "  %-30s %-10s %-8s %-7sGB %s\n" "$_n" "$_p" "$_q" "$_s" "$_f"
+            done
+            ;;
+        ps)
+            ui_section "Loaded Models"
+            local _ps
+            _ps=$(curl -sf --max-time 5 "$OLLAMA_URL/api/ps" 2>/dev/null)
+            if [ $? -ne 0 ] || [ -z "$_ps" ]; then
+                ui_err "Cannot reach Ollama at $OLLAMA_URL"
+                return 1
+            fi
+            local _count
+            _count=$(echo "$_ps" | jq '.models | length' 2>/dev/null)
+            if [ "${_count:-0}" -eq 0 ]; then
+                ui_dim "  No models currently loaded."
+            else
+                echo "$_ps" | jq -r '.models[] | "  \(.name)  size=\(.size / 1073741824 | . * 100 | floor / 100)GB  vram=\(.size_vram / 1073741824 | . * 100 | floor / 100)GB  quant=\(.details.quantization_level // "?")"' 2>/dev/null
+            fi
+            ;;
+        pull)
+            if [ -z "$arg2" ]; then
+                ui_err "Usage: /remote pull <model_tag>"
+                ui_dim "  Example: /remote pull qwen3:8b"
+                return 1
+            fi
+            ui_info "Pulling $arg2 on remote Ollama..."
+            local _result
+            _result=$(curl -sf --max-time 600 "$OLLAMA_URL/api/pull" \
+                -d "{\"name\":\"$arg2\",\"stream\":false}" 2>&1)
+            if [ $? -eq 0 ]; then
+                local _status
+                _status=$(echo "$_result" | jq -r '.status // "unknown"' 2>/dev/null)
+                ui_ok "Pull $arg2: $_status"
+            else
+                ui_err "Pull failed: $_result"
+            fi
+            ;;
+        load)
+            if [ -z "$arg2" ]; then
+                ui_err "Usage: /remote load <model_name>"
+                return 1
+            fi
+            ui_info "Loading $arg2 into memory..."
+            local _result
+            _result=$(curl -sf --max-time 120 "$OLLAMA_URL/api/generate" \
+                -d "{\"model\":\"$arg2\",\"prompt\":\"\",\"keep_alive\":\"5m\",\"stream\":false}" 2>&1)
+            if [ $? -eq 0 ]; then
+                ui_ok "Model $arg2 loaded."
+            else
+                ui_err "Load failed: $_result"
+            fi
+            ;;
+        url)
+            if [ -z "$arg2" ]; then
+                ui_info "Current remote URLs:"
+                ui_dim "  Ollama:       $OLLAMA_URL"
+                ui_dim "  llama-server: $LLAMA_CPP_URL"
+                ui_dim ""
+                ui_dim "  Usage: /remote url <ollama_url> [llamacpp_url]"
+            else
+                local _url3
+                _url3=$(echo "$args" | awk '{print $3}')
+                OLLAMA_URL="$arg2"
+                [ -n "$_url3" ] && LLAMA_CPP_URL="$_url3"
+                _LLM_BACKEND_CACHE=""
+                ui_ok "Remote URLs updated."
+                ui_dim "  Ollama:       $OLLAMA_URL"
+                ui_dim "  llama-server: $LLAMA_CPP_URL"
+            fi
+            ;;
+        forward)
+            if [ -z "$arg2" ]; then
+                ui_info "Forward host: ${REMOTE_FORWARD_HOST:-localhost}"
+                ui_dim "  This is the IP/hostname the SSH target forwards to."
+                ui_dim "  Use 'localhost' when the SSH target IS the GPU server."
+                ui_dim "  Use an IP when tunnelling through a jump host."
+                ui_dim ""
+                ui_dim "  Usage: /remote forward <host_or_ip>"
+            else
+                REMOTE_FORWARD_HOST="$arg2"
+                _remote_save_config
+                ui_ok "Forward host set to: $REMOTE_FORWARD_HOST"
+                ui_dim "  Tunnels will now forward to $REMOTE_FORWARD_HOST through the SSH target."
+            fi
+            ;;
+        benchmark)
+            ui_section "Remote Benchmark"
+            ui_info "Sending test prompt to llama-server..."
+            local _start _end _elapsed _response _tok_count
+            _start=$(date +%s%N)
+            _response=$(curl -sf --max-time 30 "$LLAMA_CPP_URL/v1/chat/completions" \
+                -H "Content-Type: application/json" \
+                -d '{"model":"test","messages":[{"role":"user","content":"Write a haiku about mountains."}],"max_tokens":64}' 2>/dev/null)
+            local _rc=$?
+            _end=$(date +%s%N)
+            if [ $_rc -ne 0 ] || [ -z "$_response" ]; then
+                ui_err "Benchmark failed: llama-server unreachable at $LLAMA_CPP_URL"
+                return 1
+            fi
+            _elapsed=$(( (_end - _start) / 1000000 ))  # ms
+            _tok_count=$(echo "$_response" | jq '.usage.completion_tokens // 0' 2>/dev/null)
+            local _tok_s="?"
+            if [ "${_tok_count:-0}" -gt 0 ] && [ "$_elapsed" -gt 0 ]; then
+                _tok_s=$(echo "scale=1; $_tok_count * 1000 / $_elapsed" | bc 2>/dev/null)
+            fi
+            printf "  %-22s %s\n" "Time:" "${_elapsed}ms"
+            printf "  %-22s %s\n" "Tokens:" "$_tok_count"
+            printf "  %-22s %s\n" "Speed:" "${_tok_s} tok/s"
+            # Show content
+            local _content
+            _content=$(echo "$_response" | jq -r '.choices[0].message.content // ""' 2>/dev/null)
+            [ -n "$_content" ] && ui_dim "\n  $_content"
+            ;;
+        *)
+            ui_info "Usage: /remote [status|connect|disconnect|setup|models|ps|pull|load|url|forward|benchmark]"
+            echo ""
+            ui_dim "  status              — Show tunnel status and endpoint health"
+            ui_dim "  connect [user@host] — Open SSH tunnel to remote GPU server"
+            ui_dim "  disconnect          — Close SSH tunnel"
+            ui_dim "  setup [user@host]   — Configure SSH keys for remote access"
+            ui_dim "  models              — List models on remote Ollama"
+            ui_dim "  ps                  — Show currently loaded model(s)"
+            ui_dim "  pull <tag>          — Pull a model to remote (e.g. qwen3:8b)"
+            ui_dim "  load <model>        — Pre-warm a model into memory"
+            ui_dim "  url [ollama] [llama]— Show/set remote endpoint URLs"
+            ui_dim "  forward [host]      — Show/set forward host (jump host topology)"
+            ui_dim "  benchmark           — Quick tok/s benchmark" ;;
+    esac
+}
+
 # ── /mcp — MCP (Model Context Protocol) integration ────────────
 _cmd_mcp() {
     mcp_command "$1"
@@ -4936,6 +5128,7 @@ _register_commands() {
     commands_register "config"   "Persistent settings — save/show/reset/edit" "_cmd_config"
     commands_register "backend"  "LLM backend — auto-detect, switch (ollama/llamacpp)" "_cmd_backend"
     commands_register "gpu"      "GPU layers — set offload layers for llama-server" "_cmd_gpu"
+    commands_register "remote"     "Remote GPU inference (tunnel, models, benchmark)" "_cmd_remote"
     commands_register "mcp"        "MCP server integration (Model Context Protocol)" "_cmd_mcp"
     commands_register "mqtt"       "MQTT pub/sub messaging (IoT, sensors, home automation)" "_cmd_mqtt"
     commands_register "transcript" "View task transcripts (list/last/path/show)" "_cmd_transcript"

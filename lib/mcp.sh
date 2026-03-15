@@ -317,9 +317,11 @@ mcp_start() {
         mkfifo "$rundir/in.fifo" || return 1
     }
 
-    # Start server: exec replaces the backgrounded subshell so $! tracks the
-    # real server PID (without exec, $! captures the intermediate subshell).
-    eval "exec $cmd" < "$rundir/in.fifo" >> "$rundir/responses.jsonl" 2>"$rundir/stderr.log" &
+    # Start server in a backgrounded subshell.  We use 'eval "$cmd"' (no exec)
+    # so that VAR=val prefixed command strings (e.g. PATH=... bash server.sh)
+    # are interpreted correctly by the shell.  $! gives the subshell PID which
+    # is fine for kill -0 checks and signal propagation.
+    eval "$cmd" < "$rundir/in.fifo" >> "$rundir/responses.jsonl" 2>"$rundir/stderr.log" &
     local server_pid=$!
     echo "$server_pid" > "$rundir/pid"
 
@@ -942,6 +944,37 @@ mcp_x_delete() {
     _mcp_try_server_tool "george-x" "x_delete" "$_args"
 }
 
+# ═══════════════════════════════════════════════════════════════
+# Inference MCP Wrappers (george-inference server)
+# ═══════════════════════════════════════════════════════════════
+
+mcp_inference_status() {
+    _mcp_try_server_tool "george-inference" "inference_status" '{}'
+}
+
+mcp_inference_models() {
+    _mcp_try_server_tool "george-inference" "inference_models" '{}'
+}
+
+mcp_inference_ps() {
+    _mcp_try_server_tool "george-inference" "inference_ps" '{}'
+}
+
+mcp_inference_pull() {
+    local model="$1"
+    local _args
+    _args=$(_mcp_jq -n -c --arg m "$model" '{"model":$m}')
+    _mcp_try_server_tool "george-inference" "inference_pull" "$_args"
+}
+
+mcp_inference_load() {
+    local model="$1"
+    local keep_alive="${2:-5m}"
+    local _args
+    _args=$(_mcp_jq -n -c --arg m "$model" --arg k "$keep_alive" '{"model":$m,"keep_alive":$k}')
+    _mcp_try_server_tool "george-inference" "inference_load" "$_args"
+}
+
 # ── MCP Dispatch Intercept ─────────────────────────────────────
 # When MCP is enabled, this function checks if an MCP server has
 # a tool that matches the slash command. If so, calls it FIRST.
@@ -1100,6 +1133,7 @@ _mcp_write_default_catalog() {
 george-fetch|bash $LODGE_DIR/lib/mcp_server_fetch.sh|Built-in web fetch (pure bash, no Node.js)
 george-git|bash $LODGE_DIR/lib/mcp_server_git.sh|Built-in git & GitHub operations (pure bash, no Node.js)
 george-x|bash $LODGE_DIR/lib/mcp_server_x.sh|Built-in X/Twitter integration (pure bash, no Node.js)
+george-inference|bash $LODGE_DIR/lib/mcp_server_inference.sh|Built-in remote GPU inference catalog & management
 fetch|npx -y @anthropic/mcp-server-fetch|Web content fetching (enhanced scraping)
 puppeteer|npx -y @anthropic/mcp-server-puppeteer|Browser automation for JS-rendered pages
 brave-search|npx -y @anthropic/mcp-server-brave-search|Web search via Brave API (needs BRAVE_API_KEY)
@@ -1485,23 +1519,23 @@ _mcp_show_help() {
 
     $_ui_section "MCP Commands"
     echo ""
-    $_ui_dim "  /mcp                         Show status overview" >&2
-    $_ui_dim "  /mcp on | off                Enable/disable MCP integration" >&2
-    $_ui_dim "  /mcp add [name] [command]    Register a server (interactive if no args)" >&2
-    $_ui_dim "  /mcp register               Interactive server registration" >&2
-    $_ui_dim "  /mcp remove <name>           Unregister a server" >&2
-    $_ui_dim "  /mcp list                    List registered servers" >&2
-    $_ui_dim "  /mcp catalog                 Browse recommended servers" >&2
-    $_ui_dim "  /mcp install <name>          Install from catalog" >&2
-    $_ui_dim "  /mcp start <name>            Start a server" >&2
-    $_ui_dim "  /mcp stop [name|all]         Stop server(s)" >&2
-    $_ui_dim "  /mcp tools [name]            List available tools" >&2
-    $_ui_dim "  /mcp call <srv> <tool> [{}]  Call an MCP tool" >&2
-    $_ui_dim "  /mcp cache [clear]           View/clear tool cache" >&2
-    $_ui_dim "  /mcp help                    This help" >&2
+    $_ui_dim "  /mcp                         Show status overview"
+    $_ui_dim "  /mcp on | off                Enable/disable MCP integration"
+    $_ui_dim "  /mcp add [name] [command]    Register a server (interactive if no args)"
+    $_ui_dim "  /mcp register               Interactive server registration"
+    $_ui_dim "  /mcp remove <name>           Unregister a server"
+    $_ui_dim "  /mcp list                    List registered servers"
+    $_ui_dim "  /mcp catalog                 Browse recommended servers"
+    $_ui_dim "  /mcp install <name>          Install from catalog"
+    $_ui_dim "  /mcp start <name>            Start a server"
+    $_ui_dim "  /mcp stop [name|all]         Stop server(s)"
+    $_ui_dim "  /mcp tools [name]            List available tools"
+    $_ui_dim "  /mcp call <srv> <tool> [{}]  Call an MCP tool"
+    $_ui_dim "  /mcp cache [clear]           View/clear tool cache"
+    $_ui_dim "  /mcp help                    This help"
     echo ""
-    $_ui_dim "  When MCP is enabled, George uses MCP tools as the primary" >&2
-    $_ui_dim "  path and falls back to native slash commands on failure." >&2
+    $_ui_dim "  When MCP is enabled, George uses MCP tools as the primary"
+    $_ui_dim "  path and falls back to native slash commands on failure."
 }
 
 # ── Cleanup hook ───────────────────────────────────────────────
