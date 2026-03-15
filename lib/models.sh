@@ -122,6 +122,9 @@ _MODELS_REGISTRY=(
 
     # Mistral Nemo 12B: Q4_K_M fits ~7GB VRAM on 5700 XT with headroom.
     "mistral-nemo-12b^blue-lodge-mistral-nemo:12b^mistral-nemo:12b^instruct^0^none^</s>^0.15^1.1^0.0^32768^8192^0.9^40^0.0^Mistral Nemo 12B. Largest model fitting 5700 XT VRAM.^central"
+
+        # Mistral Nemo 12B: Q4_K_M fits ~7GB VRAM on 5700 XT with headroom.
+    "ministral-3-8b-instruct^blue-lodge-ministral-3-instruct:8b^hf.co/unsloth/Ministral-3-8B-Instruct-2512-GGUF:Q4_K_M^instruct^0^none^</s>^0.125^1.0^0.0^32768^16384^0.9^40^0.0^Ministral 3 8B Instruct Unsloth quant.^central"
 )
 
 # ═══════════════════════════════════════════════════════════════
