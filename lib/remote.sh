@@ -334,7 +334,19 @@ remote_setup_ssh() {
         echo "SSH key exists: $REMOTE_SSH_KEY"
     fi
 
-    # Copy key to remote
+    # Test if key is already authorized on remote
+    echo "Testing existing key..."
+    if ssh -o BatchMode=yes -o ConnectTimeout=5 -p "$REMOTE_SSH_PORT" -i "$REMOTE_SSH_KEY" "$target" "echo ok" &>/dev/null; then
+        echo "SSH key already authorized on $target."
+        REMOTE_SSH_TARGET="$target"
+        _remote_save_config
+        echo "Saved target: $target"
+        echo ""
+        echo "Next: /remote connect"
+        return 0
+    fi
+
+    # Key not yet authorized — copy it to remote
     if command -v ssh-copy-id >/dev/null 2>&1; then
         echo "Copying key to $target..."
         ssh-copy-id -i "$REMOTE_SSH_KEY" -p "$REMOTE_SSH_PORT" "$target"

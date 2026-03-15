@@ -379,3 +379,131 @@ Fold 7 (192.168.86.x)  ──SSH──►  Hypervisor (192.168.86.18)  ──NAT
 
 The SSH tunnel `-L 8080:FORWARD_HOST:8080` adapts to either topology.
 The phone and all George code always talk to `127.0.0.1:8080`.
+
+---
+
+## Adding New Models (Step-by-Step Guide)
+
+You **only** need to edit one file: `lib/models.sh`.  Nothing in `agent.sh`,
+`llm.sh`, or anywhere else needs to change — those are model-agnostic.
+
+### The Registry Format
+
+Each model is a single `^`-delimited string in the `_MODELS_REGISTRY` array:
+
+```
+key^friendly_name^base_image^role^has_thinking^nothink_method^stop_token^temperature^repeat_penalty^presence_penalty^num_ctx^num_predict^top_p^top_k^min_p^notes^tier
+```
+
+| # | Field | What it is | Example |
+|---|-------|-----------|---------|
+| 1 | key | Internal lookup ID | `qwen3-8b-think` |
+| 2 | friendly_name | Ollama model name after `ollama create` | `blue-lodge-qwen3-think:8b` |
+| 3 | base_image | Upstream reference (HF, library, or Ollama tag) | `hf.co/unsloth/Qwen3-8B-GGUF:Q4_K_M` |
+| 4 | role | `thinking` or `instruct` | `thinking` |
+| 5 | has_thinking | `1` = emits `<think>` blocks, `0` = no | `1` |
+| 6 | nothink_method | How to suppress thinking: `qwen`, `system`, `none` | `qwen` |
+| 7 | stop_token | Model's EOS token | `<\|im_end\|>` |
+| 8 | temperature | Sampling temp | `0.6` |
+| 9 | repeat_penalty | Anti-repetition | `1.3` |
+| 10 | presence_penalty | Topic diversity | `0.8` |
+| 11 | num_ctx | Context window | `32768` |
+| 12 | num_predict | Max output tokens | `32768` |
+| 13 | top_p | Nucleus sampling | `0.95` |
+| 14 | top_k | Top-K sampling | `20` |
+| 15 | min_p | Min-P sampling | `0.0` |
+| 16 | notes | Human description | `Qwen3 8B thinking...` |
+| 17 | tier | `edge` (2-4B), `central` (8B+), `any` | `central` |
+
+### Example: Adding a 12B Unsloth Model
+
+Let's say you want to add **Mistral Nemo 12B** using Unsloth's GGUF quantization.
+
+#### Step 1: Find the Unsloth GGUF on HuggingFace
+
+Go to `https://huggingface.co/unsloth` and search for your model.
+Look for quantized GGUF files — common choices for 8GB VRAM:
+
+| Quant | VRAM (12B) | Quality | When to use |
+|-------|-----------|---------|-------------|
+| Q4_K_M | ~7 GB | Good | Fits 8GB GPU with headroom |
+| Q5_K_M | ~8.5 GB | Better | Tight fit on 8GB, good on 12GB |
+| UD-Q4_K_XL | ~7 GB | Best at size | Unsloth dynamic quant, preferred |
+
+The HF reference format is:
+```
+hf.co/unsloth/<ModelName>-GGUF:<QuantTag>
+```
+
+Example: `hf.co/unsloth/Mistral-Nemo-Instruct-2407-GGUF:Q4_K_M`
+
+#### Step 2: Identify the model's chat template and stop token
+
+| Model family | Stop token | nothink_method | Chat template |
+|-------------|-----------|----------------|---------------|
+| Qwen / Qwen3 / Qwen3.5 | `<\|im_end\|>` | `qwen` (thinking) / `none` (instruct) | ChatML |
+| Llama 3.x | `<\|eot_id\|>` | `none` | llama3 |
+| Mistral / Ministral | `</s>` | `system` (reasoning) / `none` (instruct) | mistral |
+| Phi-4 | `<\|end\|>` | `system` (reasoning) / `none` (instruct) | phi4 |
+| Gemma 3 | `<end_of_turn>` | `none` | gemma |
+| Granite 4 | `<\|end_of_text\|>` | `system` (preview) / `none` (instruct) | granite |
+
+#### Step 3: Choose sampling parameters
+
+Rules of thumb:
+- **Thinking models**: temp 0.6–0.8, top_p 0.95, higher num_predict (32768)
+- **Instruct models**: temp 0.15, top_p 0.8–0.9, lower num_predict (8192–16384)
+- **repeat_penalty**: 1.0–1.3 (higher for models that loop, e.g., Ministral needs 1.2)
+- **presence_penalty**: 0.0 for instruct, 0.3–0.8 for thinking/reasoning
+- Check the model card on HF for vendor-recommended sampling params
+
+#### Step 4: Add the entry to `_MODELS_REGISTRY`
+
+Open `lib/models.sh` and add your line in the `Central Tier` section:
+
+```bash
+    # ── Central Tier (8B+, requires remote GPU) ────────────────
+    # ... existing entries ...
+
+    # Mistral Nemo 12B (Unsloth Q4_K_M): instruct, fits 5700 XT (~7GB VRAM).
+    "mistral-nemo-12b-unsloth^blue-lodge-mistral-nemo-unsloth:12b^hf.co/unsloth/Mistral-Nemo-Instruct-2407-GGUF:Q4_K_M^instruct^0^none^</s>^0.15^1.1^0.0^32768^8192^0.9^40^0.0^Mistral Nemo 12B Unsloth quant. Fits 5700 XT VRAM.^central"
+```
+
+That's it. No other files to edit.
+
+#### Step 5: Pull it onto the remote GPU server
+
+```bash
+# From George:
+/remote pull hf.co/unsloth/Mistral-Nemo-Instruct-2407-GGUF:Q4_K_M
+
+# Or via the provisioning script:
+./scripts/inference-server-models.sh hf.co/unsloth/Mistral-Nemo-Instruct-2407-GGUF:Q4_K_M
+```
+
+Ollama will download the GGUF, and `inference-server-models.sh` resolves
+the blob path and starts llama-server with it.
+
+#### Step 6: Select it in George
+
+```bash
+# Set as primary (thinking/planning):
+/model primary blue-lodge-mistral-nemo-unsloth:12b
+
+# Or as secondary (fast/code):
+/model secondary blue-lodge-mistral-nemo-unsloth:12b
+```
+
+### Quick-Reference: Popular ~12B Unsloth Models
+
+| Model | HF base_image | Role | Stop | VRAM (Q4_K_M) |
+|-------|--------------|------|------|----------------|
+| Mistral Nemo 12B | `hf.co/unsloth/Mistral-Nemo-Instruct-2407-GGUF:Q4_K_M` | instruct | `</s>` | ~7 GB |
+| Qwen2.5 14B | `hf.co/unsloth/Qwen2.5-14B-Instruct-GGUF:Q4_K_M` | instruct | `<\|im_end\|>` | ~8 GB |
+| Llama 3.1 8B | `hf.co/unsloth/Meta-Llama-3.1-8B-Instruct-GGUF:Q5_K_M` | instruct | `<\|eot_id\|>` | ~5.5 GB |
+| Phi-4 14B | `hf.co/unsloth/phi-4-GGUF:Q4_K_M` | instruct | `<\|end\|>` | ~8 GB |
+| Gemma 3 12B | `hf.co/unsloth/gemma-3-12b-it-GGUF:Q4_K_M` | instruct | `<end_of_turn>` | ~7 GB |
+
+For thinking variants of the same model, change `role` to `thinking`,
+`has_thinking` to `1`, set `nothink_method` appropriately, bump temperature
+to 0.6–0.8, and increase `num_predict` to 32768.
