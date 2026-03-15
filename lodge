@@ -5074,8 +5074,9 @@ _cmd_remote() {
                     local _jump_target="$REMOTE_SSH_TARGET"
                     echo ""
                     ui_info "It looks like you're tunnelling through $_jump_target to reach $arg2."
-                    ui_dim "  For remote commands (detect GPU, restart llama-server, etc.) to"
-                    ui_dim "  run on the correct machine, George needs a ProxyJump hop."
+                    ui_dim "  The tunnel will SSH to the jump host and forward ports"
+                    ui_dim "  to the GPU server's address ($arg2) from there."
+                    ui_dim "  Remote commands (GPU detect, model switch) use ProxyJump."
                     echo ""
                     local _gpu_target=""
                     read -rp "  SSH user@host for the GPU server (e.g. dabe@${arg2}): " _gpu_target
@@ -5083,12 +5084,15 @@ _cmd_remote() {
                         ui_dim "  Skipped. You can configure manually:"
                         ui_dim "    /remote config REMOTE_JUMP_HOST $_jump_target"
                         ui_dim "    /remote config REMOTE_SSH_TARGET <user>@${arg2}"
+                        ui_dim "    /remote config REMOTE_FORWARD_HOST ${arg2}"
                     else
+                        local _gpu_host
+                        _gpu_host="${_gpu_target##*@}"
                         echo ""
                         ui_dim "  Proposed topology:"
-                        printf "    %-24s %s\n" "REMOTE_JUMP_HOST:" "$_jump_target  (SSH hop)"
-                        printf "    %-24s %s\n" "REMOTE_SSH_TARGET:" "$_gpu_target  (GPU server)"
-                        printf "    %-24s %s\n" "REMOTE_FORWARD_HOST:" "localhost  (tunnel resolves on GPU server)"
+                        printf "    %-24s %s\n" "REMOTE_JUMP_HOST:" "$_jump_target  (tunnel SSH target)"
+                        printf "    %-24s %s\n" "REMOTE_SSH_TARGET:" "$_gpu_target  (GPU server, for exec)"
+                        printf "    %-24s %s\n" "REMOTE_FORWARD_HOST:" "$_gpu_host  (resolved from jump host)"
                         echo ""
                         local _yn
                         read -rp "  Apply this topology? [Y/n] " _yn
@@ -5100,7 +5104,7 @@ _cmd_remote() {
                             *)
                                 REMOTE_JUMP_HOST="$_jump_target"
                                 REMOTE_SSH_TARGET="$_gpu_target"
-                                REMOTE_FORWARD_HOST="localhost"
+                                REMOTE_FORWARD_HOST="$_gpu_host"
                                 _remote_save_config
                                 echo ""
                                 ui_ok "Jump host topology configured:"
@@ -5108,9 +5112,9 @@ _cmd_remote() {
                                 printf "  %-26s %s\n" "REMOTE_SSH_TARGET:" "$REMOTE_SSH_TARGET"
                                 printf "  %-26s %s\n" "REMOTE_FORWARD_HOST:" "$REMOTE_FORWARD_HOST"
                                 echo ""
-                                ui_dim "  SSH commands now hop through $REMOTE_JUMP_HOST to reach $REMOTE_SSH_TARGET."
-                                ui_dim "  Next: /remote setup   (copies SSH key to GPU server via jump host)"
-                                ui_dim "  Then: /remote connect"
+                                ui_dim "  Tunnel: SSH to $REMOTE_JUMP_HOST, forwards to $REMOTE_FORWARD_HOST"
+                                ui_dim "  Exec:   SSH via ProxyJump to $REMOTE_SSH_TARGET"
+                                ui_dim "  Next: /remote connect"
                                 ;;
                         esac
                     fi

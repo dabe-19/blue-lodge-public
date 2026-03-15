@@ -24,9 +24,11 @@ REMOTE_OLLAMA_PORT="${REMOTE_OLLAMA_PORT:-11434}"
 REMOTE_LLAMACPP_PORT="${REMOTE_LLAMACPP_PORT:-8080}"
 REMOTE_LOCAL_OLLAMA_PORT="${REMOTE_LOCAL_OLLAMA_PORT:-11434}"
 REMOTE_LOCAL_LLAMACPP_PORT="${REMOTE_LOCAL_LLAMACPP_PORT:-8080}"
-# Forward host: final destination as seen from the SSH target.
-# "localhost" when the SSH target IS the GPU server.
-# An IP like "192.168.30.10" when tunnelling through a jump host.
+# Forward host: where the -L tunnels connect, as seen by the SSH
+# host that carries the tunnel.  When REMOTE_JUMP_HOST is set the
+# tunnel SSHes to the *jump host*, so REMOTE_FORWARD_HOST must be
+# the GPU server's address reachable from the jump box (e.g.
+# "192.168.30.10").  When there is no jump host, use "localhost".
 REMOTE_FORWARD_HOST="${REMOTE_FORWARD_HOST:-localhost}"
 # Jump host (SSH ProxyJump): when the GPU server is behind a NAT/firewall,
 # set this to user@jump-ip so SSH hops through it.  When set,
@@ -285,7 +287,32 @@ _remote_sweep_orphans() {
     return 0
 }
 
+# ── Resolve tunnel SSH target ──────────────────────────────────
+# When REMOTE_JUMP_HOST is set, the *tunnel* SSHes to the jump host
+# directly (single hop, key only needed on the jump box).  The -L
+# forwards are resolved from the jump host's perspective, reaching
+# the GPU server via REMOTE_FORWARD_HOST (the GPU server's LAN IP).
+# _remote_exec() is the only path that uses ProxyJump to actually
+# run commands on the GPU server (and needs a key there).
+_remote_tunnel_target() {
+    if [ -n "${REMOTE_JUMP_HOST:-}" ]; then
+        echo "$REMOTE_JUMP_HOST"
+    else
+        echo "$REMOTE_SSH_TARGET"
+    fi
+}
+
+# Extract the host part from a user@host string (or return as-is).
+_remote_host_of() {
+    local _spec="$1"
+    echo "${_spec##*@}"
+}
+
 # ── Build SSH args (shared by connect + watchdog) ─────────────
+# Tunnel SSH args — NOT the same as _remote_exec args.
+# When a jump host is configured the tunnel connects to the jump
+# host directly and uses REMOTE_FORWARD_HOST (GPU server LAN IP)
+# in the -L forwards.  No ProxyJump, no key needed on the GPU box.
 _remote_ssh_base_args() {
     local _fwd_host="${REMOTE_FORWARD_HOST:-localhost}"
     _REMOTE_SSH_ARGS=(-N -o BatchMode=yes -o ConnectTimeout=10
@@ -293,7 +320,8 @@ _remote_ssh_base_args() {
                       -o ExitOnForwardFailure=yes)
     _REMOTE_SSH_ARGS+=(-p "$REMOTE_SSH_PORT")
     [ -f "$REMOTE_SSH_KEY" ] && _REMOTE_SSH_ARGS+=(-i "$REMOTE_SSH_KEY")
-    [ -n "${REMOTE_JUMP_HOST:-}" ] && _REMOTE_SSH_ARGS+=(-J "$REMOTE_JUMP_HOST")
+    # NOTE: NO -J here.  The tunnel always connects to _remote_tunnel_target
+    # which is already the jump host when REMOTE_JUMP_HOST is set.
     _REMOTE_SSH_ARGS+=(-L "${REMOTE_LOCAL_OLLAMA_PORT}:${_fwd_host}:${REMOTE_OLLAMA_PORT}")
     _REMOTE_SSH_ARGS+=(-L "${REMOTE_LOCAL_LLAMACPP_PORT}:${_fwd_host}:${REMOTE_LLAMACPP_PORT}")
 }
@@ -302,14 +330,16 @@ _remote_ssh_base_args() {
 # Runs as a background loop.  Killed by remote_disconnect().
 _remote_watchdog() {
     local _target="$1"
+    local _tunnel_target
+    _tunnel_target=$(_remote_tunnel_target)
     while true; do
         # If tunnel process died, reopen it
         if ! _remote_tunnel_alive; then
             _remote_ssh_base_args
-            ssh -f "${_REMOTE_SSH_ARGS[@]}" "$_target" 2>/dev/null
+            ssh -f "${_REMOTE_SSH_ARGS[@]}" "$_tunnel_target" 2>/dev/null
             sleep 1
             local _pid
-            _pid=$(_remote_find_tunnel_pid "$_target")
+            _pid=$(_remote_find_tunnel_pid "$_tunnel_target")
             [ -n "$_pid" ] && echo "$_pid" > "$_REMOTE_PID_FILE"
         fi
         sleep 15
@@ -663,6 +693,8 @@ remote_connect() {
 
     _remote_ssh_base_args
     local _fwd_host="${REMOTE_FORWARD_HOST:-localhost}"
+    local _tunnel_target
+    _tunnel_target=$(_remote_tunnel_target)
     local _method="ssh"
 
     if command -v autossh >/dev/null 2>&1; then
@@ -671,20 +703,20 @@ remote_connect() {
         # -M 0 disables autossh's own monitoring; we rely on ServerAlive.
         local _ssh_err
         _ssh_err=$(mktemp "${TMPDIR:-/tmp}/remote-ssh-err.XXXXXX")
-        AUTOSSH_GATETIME=0 autossh -M 0 -f "${_REMOTE_SSH_ARGS[@]}" "$target" 2>"$_ssh_err"
+        AUTOSSH_GATETIME=0 autossh -M 0 -f "${_REMOTE_SSH_ARGS[@]}" "$_tunnel_target" 2>"$_ssh_err"
         _method="autossh"
     else
         # Plain ssh with -f (backgrounds after auth)
         local _ssh_err
         _ssh_err=$(mktemp "${TMPDIR:-/tmp}/remote-ssh-err.XXXXXX")
-        ssh -f "${_REMOTE_SSH_ARGS[@]}" "$target" 2>"$_ssh_err"
+        ssh -f "${_REMOTE_SSH_ARGS[@]}" "$_tunnel_target" 2>"$_ssh_err"
     fi
     local rc=$?
 
     if [ $rc -ne 0 ]; then
         echo "ERROR: SSH tunnel failed (exit $rc). Check:" >&2
         echo "  - SSH key: $REMOTE_SSH_KEY" >&2
-        echo "  - Target: $target:$REMOTE_SSH_PORT" >&2
+        echo "  - Tunnel target: $_tunnel_target:$REMOTE_SSH_PORT" >&2
         echo "  - Forward host: $_fwd_host" >&2
         [ -f "$_ssh_err" ] && [ -s "$_ssh_err" ] && echo "  - SSH error: $(cat "$_ssh_err")" >&2
         echo "  - Run /remote setup to configure SSH keys" >&2
@@ -696,7 +728,7 @@ remote_connect() {
     # autossh -f backgrounds; give it a moment to spawn the ssh child.
     sleep 2
     local _pid
-    _pid=$(_remote_find_tunnel_pid "$target")
+    _pid=$(_remote_find_tunnel_pid "$_tunnel_target")
     if [ -n "$_pid" ]; then
         mkdir -p "$GEORGE_DIR"
         echo "$_pid" > "$_REMOTE_PID_FILE"
@@ -704,7 +736,7 @@ remote_connect() {
 
     # Start bash watchdog when autossh is not available
     if [ "$_method" = "ssh" ]; then
-        _remote_watchdog "$target" &
+        _remote_watchdog "$_tunnel_target" &
         echo "$!" > "$_REMOTE_WATCHDOG_PID_FILE"
     fi
 
@@ -717,7 +749,8 @@ remote_connect() {
     LLAMA_CPP_URL="http://127.0.0.1:${REMOTE_LOCAL_LLAMACPP_PORT}"
 
     _REMOTE_CONNECTED=1
-    echo "Connected to $target (via $_method)"
+    echo "Connected via $_tunnel_target (via $_method)"
+    [ -n "${REMOTE_JUMP_HOST:-}" ] && echo "  Tunnel SSH:   $_tunnel_target (jump host)"
     [ "$_fwd_host" != "localhost" ] && echo "  Forward host: $_fwd_host"
     echo "  Ollama:       $OLLAMA_URL"
     echo "  llama-server: $LLAMA_CPP_URL"
@@ -739,12 +772,11 @@ remote_connect() {
         echo "  Diagnostics:" >&2
         [ -f "$_ssh_err" ] && [ -s "$_ssh_err" ] && echo "  SSH stderr: $(cat "$_ssh_err")" >&2
         if [ -n "${REMOTE_JUMP_HOST:-}" ]; then
-            echo "  Jump host topology: $REMOTE_JUMP_HOST → $target" >&2
-            echo "  Ensure your SSH key is authorized on $target:" >&2
-            echo "    /remote setup" >&2
+            echo "  Tunnel goes to jump host: $_tunnel_target" >&2
+            echo "  Forwards resolve on jump host to: $_fwd_host" >&2
         fi
         echo "  Try: /remote diagnose" >&2
-        echo "  Or manually: ssh -v -N ${REMOTE_JUMP_HOST:+-J $REMOTE_JUMP_HOST }-L ${REMOTE_LOCAL_OLLAMA_PORT}:${_fwd_host}:${REMOTE_OLLAMA_PORT} $target" >&2
+        echo "  Or manually: ssh -v -N -L ${REMOTE_LOCAL_OLLAMA_PORT}:${_fwd_host}:${REMOTE_OLLAMA_PORT} $_tunnel_target" >&2
     fi
 
     rm -f "$_ssh_err" 2>/dev/null
@@ -1017,6 +1049,8 @@ remote_probe_endpoints() {
 remote_diagnose() {
     local target="${REMOTE_SSH_TARGET:-}"
     local _fwd="${REMOTE_FORWARD_HOST:-localhost}"
+    local _tunnel_target
+    _tunnel_target=$(_remote_tunnel_target)
     local _ollama_port="${REMOTE_LOCAL_OLLAMA_PORT:-11434}"
     local _llamacpp_port="${REMOTE_LOCAL_LLAMACPP_PORT:-8080}"
     local _remote_ollama="${REMOTE_OLLAMA_PORT:-11434}"
@@ -1027,7 +1061,8 @@ remote_diagnose() {
 
     # 1. Config
     echo "── Configuration ──"
-    printf "  %-22s %s\n" "SSH target:" "${target:-<not set>}"
+    printf "  %-22s %s\n" "SSH target (exec):" "${target:-<not set>}"
+    printf "  %-22s %s\n" "Tunnel target:" "${_tunnel_target:-<not set>}"
     printf "  %-22s %s\n" "Jump host:" "${REMOTE_JUMP_HOST:-<direct>}"
     printf "  %-22s %s\n" "SSH port:" "${REMOTE_SSH_PORT:-22}"
     printf "  %-22s %s\n" "SSH key:" "$REMOTE_SSH_KEY"
@@ -1052,29 +1087,45 @@ remote_diagnose() {
     fi
     echo ""
 
-    # 3. SSH auth test
-    echo "── SSH Authentication ──"
-    if [ -z "$target" ]; then
+    # 3. SSH auth test — test the tunnel target (jump host if configured)
+    echo "── SSH Authentication (tunnel) ──"
+    if [ -z "$_tunnel_target" ]; then
         echo "  SKIP: No target configured. Run /remote setup user@host"
     else
         local _diag_ssh_args=(-v -o BatchMode=yes -o ConnectTimeout=10)
         _diag_ssh_args+=(-p "${REMOTE_SSH_PORT:-22}")
         [ -f "$REMOTE_SSH_KEY" ] && _diag_ssh_args+=(-i "$REMOTE_SSH_KEY")
-        [ -n "${REMOTE_JUMP_HOST:-}" ] && _diag_ssh_args+=(-J "$REMOTE_JUMP_HOST")
-        echo "  Testing: ssh ${_diag_ssh_args[*]} $target ..."
+        echo "  Testing tunnel path: ssh ${_diag_ssh_args[*]} $_tunnel_target ..."
         local _ssh_out
-        _ssh_out=$(ssh "${_diag_ssh_args[@]}" "$target" "echo __DIAGNOSE_OK__" 2>&1)
+        _ssh_out=$(ssh "${_diag_ssh_args[@]}" "$_tunnel_target" "echo __DIAGNOSE_OK__" 2>&1)
         if echo "$_ssh_out" | grep -q "__DIAGNOSE_OK__"; then
-            echo "  Auth: OK"
+            echo "  Tunnel auth: OK"
         else
-            echo "  Auth: FAILED"
+            echo "  Tunnel auth: FAILED"
             echo ""
             echo "  Verbose output (last 20 lines):"
             echo "$_ssh_out" | tail -20 | sed 's/^/    /'
             echo ""
-            echo "  Fix: Run /remote setup to copy your key."
-            [ -n "${REMOTE_JUMP_HOST:-}" ] && echo "  (Key will be copied through jump host: $REMOTE_JUMP_HOST)"
+            echo "  Fix: Run /remote setup to copy your key to the tunnel target."
             return 1
+        fi
+    fi
+    # Also test exec path (ProxyJump to GPU server) if jump host is set
+    if [ -n "${REMOTE_JUMP_HOST:-}" ] && [ -n "$target" ]; then
+        echo ""
+        echo "── SSH Authentication (exec / ProxyJump) ──"
+        local _exec_ssh_args=(-v -o BatchMode=yes -o ConnectTimeout=10)
+        _exec_ssh_args+=(-p "${REMOTE_SSH_PORT:-22}")
+        [ -f "$REMOTE_SSH_KEY" ] && _exec_ssh_args+=(-i "$REMOTE_SSH_KEY")
+        _exec_ssh_args+=(-J "$REMOTE_JUMP_HOST")
+        echo "  Testing exec path: ssh ${_exec_ssh_args[*]} $target ..."
+        local _exec_out
+        _exec_out=$(ssh "${_exec_ssh_args[@]}" "$target" "echo __DIAGNOSE_OK__" 2>&1)
+        if echo "$_exec_out" | grep -q "__DIAGNOSE_OK__"; then
+            echo "  Exec auth: OK (can run remote commands on GPU server)"
+        else
+            echo "  Exec auth: FAILED (tunnel will work but /remote model-switch, GPU detect will fail)"
+            echo "  Fix: ssh-copy-id -J $REMOTE_JUMP_HOST $target"
         fi
     fi
     echo ""
@@ -1139,17 +1190,17 @@ remote_diagnose() {
     echo ""
 
     # 7. Quick tunnel test (if target set, try a one-shot forwarded connection)
-    if [ -n "$target" ] && ! _remote_tunnel_alive; then
+    if [ -n "$_tunnel_target" ] && ! _remote_tunnel_alive; then
         echo "── Quick Tunnel Test ──"
         echo "  Attempting brief SSH tunnel to test forwarding..."
         local _test_ssh_args=(-v -o BatchMode=yes -o ConnectTimeout=10 -o ExitOnForwardFailure=yes)
         _test_ssh_args+=(-p "${REMOTE_SSH_PORT:-22}")
         [ -f "$REMOTE_SSH_KEY" ] && _test_ssh_args+=(-i "$REMOTE_SSH_KEY")
-        [ -n "${REMOTE_JUMP_HOST:-}" ] && _test_ssh_args+=(-J "$REMOTE_JUMP_HOST")
+        # Tunnel test: direct to tunnel target, no ProxyJump
         _test_ssh_args+=(-L "${_ollama_port}:${_fwd}:${_remote_ollama}")
         _test_ssh_args+=(-N)
         local _test_out
-        _test_out=$(ssh "${_test_ssh_args[@]}" "$target" 2>&1 &)
+        _test_out=$(ssh "${_test_ssh_args[@]}" "$_tunnel_target" 2>&1 &)
         local _test_pid=$!
         sleep 3
         if curl -sf --max-time 2 "http://127.0.0.1:${_ollama_port}/api/tags" &>/dev/null; then
