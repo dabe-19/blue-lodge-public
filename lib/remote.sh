@@ -602,11 +602,13 @@ _remote_restart_llamacpp() {
     local _has_systemd
     _has_systemd=$(_remote_exec "systemctl cat llama-server &>/dev/null && echo yes || echo no" 2>/dev/null)
 
-    # Check if passwordless sudo is available (required for systemd path)
+    # Check if passwordless sudo is available (required for systemd path).
+    # Test with daemon-reload (idempotent) rather than "sudo -n true",
+    # because the sudoers rule may only allow specific commands.
     local _has_sudo="no"
     if [ "$_has_systemd" = "yes" ]; then
         local _sudo_raw
-        _sudo_raw=$(_remote_exec "sudo -n true 2>/dev/null && echo SUDO_OK || echo SUDO_FAIL")
+        _sudo_raw=$(_remote_exec "sudo -n /bin/systemctl daemon-reload 2>/dev/null && echo SUDO_OK || echo SUDO_FAIL")
         if [[ "$_sudo_raw" == *SUDO_OK* ]]; then
             _has_sudo="yes"
         fi
