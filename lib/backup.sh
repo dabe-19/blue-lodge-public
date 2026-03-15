@@ -736,6 +736,7 @@ _BACKUP_AUTH_ITEMS=(
     "gpg-george.sh"
     "george_public.asc"
     "keys.conf"
+    "remote.conf"
     ".vault"
     "email.conf"
     "mastodon_instances.db"
