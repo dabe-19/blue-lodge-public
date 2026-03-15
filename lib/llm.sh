@@ -2577,7 +2577,9 @@ llm_chat() {
     _active_backend=$(_llm_detect_backend)
 
     # Ensure correct model is loaded for this scenario
-    models_ensure_for_scenario "${LLM_SCENARIO:-}"
+    if ! models_ensure_for_scenario "${LLM_SCENARIO:-}"; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] model switch failed, proceeding with current model"
+    fi
 
     # ── Identity fallback (llamacpp only) ──────────────────────
     # (see llm_generate for rationale — uses cached .system file)

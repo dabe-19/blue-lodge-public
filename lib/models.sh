@@ -870,12 +870,15 @@ _models_switch() {
 
     # Already correct model loaded — no-op
     if [ "$_MODELS_ACTIVE" = "$target" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] _models_switch: already active='$target', skip"
         return 0
     fi
 
     # Detect backend (defined in llm.sh, available at call time)
     local _backend
     _backend=$(_llm_detect_backend 2>/dev/null || echo "ollama")
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] _models_switch: target='$target' backend='$_backend' remote=${_REMOTE_CONNECTED:-0}"
 
     if [ "${_REMOTE_CONNECTED:-0}" -eq 1 ]; then
         # ── Remote mode: switch model on the remote server ─────
@@ -891,6 +894,7 @@ _models_switch() {
 
         if [ "$_backend" = "llamacpp" ]; then
             # llama-server on remote: SSH and restart with new model
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] remote llamacpp: declare -f _remote_restart_llamacpp = $(declare -f _remote_restart_llamacpp &>/dev/null && echo 'yes' || echo 'NO') base='${_remote_base:-}'"
             if declare -f _remote_restart_llamacpp &>/dev/null; then
                 ui_dim "Restarting remote llama-server with $target..."
                 if _remote_restart_llamacpp "$target" "$_remote_base"; then
@@ -999,6 +1003,8 @@ models_ensure_for_scenario() {
     local scenario="${1:-}"
     local target
     target=$(models_for_scenario "$scenario")
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] ensure_for_scenario: active='$_MODELS_ACTIVE' target='$target'"
 
     # Fast path: already correct
     if [ "$_MODELS_ACTIVE" = "$target" ]; then
