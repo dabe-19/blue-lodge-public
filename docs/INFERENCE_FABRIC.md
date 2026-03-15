@@ -119,7 +119,21 @@ when available; falls back to a bash watchdog.
 /remote pull mistral-nemo:12b
 ```
 
-### 6. Benchmark
+### 6. Switch Models
+
+Once connected, switch the active model on the remote llama-server:
+
+```bash
+/models single qwen3-8b-think
+```
+
+George resolves the GGUF from Ollama's blob store, restarts llama-server
+with the new model (via systemd override or nohup), waits for the health
+check, and confirms the switch.  Requires passwordless sudo if
+llama-server runs as a systemd service (see
+[Sudoers Setup](#sudoers-setup-for-model-switching)).
+
+### 7. Benchmark
 
 ```bash
 /remote benchmark
@@ -127,23 +141,56 @@ when available; falls back to a bash watchdog.
 
 ## How It Works
 
-### SSH Tunnel Transport (lib/remote.sh)
+### Dual-Path SSH Architecture (lib/remote.sh)
 
-The tunnel is the foundation. It uses standard SSH port forwarding.
+George uses a **dual-path** SSH design that separates the data plane
+(port-forwarded tunnel) from the control plane (remote command execution).
+
+#### Data Plane — SSH Tunnel
+
+The tunnel carries all HTTP traffic (Ollama API, llama-server prompts)
+over port-forwarded localhost connections.  It connects **one hop**
+to the nearest SSH host:
 
 **Direct topology** (SSH target = GPU server):
 ```
 ssh -N -f -L 8080:localhost:8080 user@gpu-server
 ```
 
-**Jump host topology** (SSH target = hypervisor, GPU server behind NAT):
+**Jump host topology** (tunnel to jump host, forward to GPU LAN IP):
 ```
-ssh -N -f -L 8080:10.0.0.100:8080 user@192.168.1.10
+ssh -N -f -L 8080:10.0.0.100:8080 user@jump-host
 ```
 
-The `REMOTE_FORWARD_HOST` config controls the middle part of `-L local:FORWARD_HOST:remote`.
+The tunnel target is chosen by `_remote_tunnel_target()`: when
+`REMOTE_JUMP_HOST` is set, the tunnel terminates at the jump host
+(NOT the GPU server).  The `-L` forwards resolve from the jump host's
+perspective via `REMOTE_FORWARD_HOST`.  There is **no `-J` ProxyJump**
+in the tunnel path — it's a single-hop SSH connection.
 
-All existing HTTP code in `lib/llm.sh` hits `http://127.0.0.1:PORT` — zero changes needed.
+`REMOTE_FORWARD_HOST` controls the middle part of `-L local:FORWARD_HOST:remote`.
+
+All HTTP code in `lib/llm.sh` hits `http://127.0.0.1:PORT` — zero changes needed.
+
+#### Control Plane — Remote Execution
+
+Commands that run on the GPU server (GPU detection, binary detection,
+model switching, systemd operations) use `_remote_exec()`, which
+connects to `REMOTE_SSH_TARGET` with `-J $REMOTE_JUMP_HOST` when a
+jump host is configured.  This gives each path its optimal route:
+
+```
+┌──────────────┐
+│  Data Plane  │  ssh -N -L ... jump-host        (one hop, no -J)
+│  (tunnel)    │  Carries: HTTP to Ollama + llama-server
+├──────────────┤
+│ Control Plane│  ssh -J jump-host gpu-server CMD (ProxyJump)
+│  (_remote_   │  Carries: systemctl, GPU probe, binary detect,
+│   exec)      │  GGUF resolution, model restart
+└──────────────┘
+```
+
+In direct topology (no jump host), both paths connect to the same host.
 
 #### Tunnel Resilience
 
@@ -156,6 +203,99 @@ All existing HTTP code in `lib/llm.sh` hits `http://127.0.0.1:PORT` — zero cha
   Killed cleanly by `/remote disconnect`.
 
 Both methods keep the tunnel alive without occupying a terminal session.
+
+#### Session Reattachment
+
+When lodge starts, `_remote_auto_reattach()` (called at module load time)
+checks whether a tunnel from a prior session is still alive.  If the PID
+file exists and the process is running, it silently restores
+`OLLAMA_URL`, `LLAMA_CPP_URL`, `_REMOTE_CONNECTED`, and clears the
+backend detection cache so the next LLM call re-probes the tunneled
+endpoints.  No user interaction needed — just restart lodge and you're
+back on the remote GPU.
+
+#### Backend Cache
+
+Both `remote_connect()` and `_remote_auto_reattach()` clear
+`_LLM_BACKEND_CACHE` after updating URLs.  This forces `_llm_detect_backend()`
+to re-probe whether the tunneled endpoint is Ollama or llama-server,
+preventing stale cache hits that pointed at the old local backend.
+
+### Remote Model Switching
+
+When connected to a remote llama-server, George can switch models
+automatically — no manual SSH required.
+
+#### How It Works
+
+1. **User selects a model**: `/models single ministral-3-8b-instruct`
+2. **Eager switch in main shell**: `models_select()` detects
+   `_REMOTE_CONNECTED=1` and backend `llamacpp`, then calls
+   `_remote_restart_llamacpp()` directly — in the main shell process,
+   not inside a subshell.  This is critical because bash subshells
+   (like `$(llm_stream ...)`) lose variable state on exit.
+3. **GGUF resolution**: The function resolves the model name to a GGUF
+   blob path on the GPU server.  It tries the Ollama API first
+   (`/api/show` → manifest → blob digest), then falls back to
+   `ollama show --modelfile` CLI output.
+4. **Restart llama-server**: Three strategies, tried in order:
+   - **Systemd override** (preferred): Writes a drop-in override at
+     `/etc/systemd/system/llama-server.service.d/model.conf` with a
+     new `ExecStart=` line pointing to the resolved GGUF, then runs
+     `systemctl daemon-reload && systemctl restart llama-server`.
+     Requires passwordless sudo (see [Sudoers Setup](#sudoers-setup-for-model-switching)).
+   - **Sudo unavailable**: If systemd exists but sudo needs a password,
+     prints the exact sudoers rule to add and returns an error.
+   - **Nohup fallback**: If llama-server isn't a systemd service,
+     kills the running process and spawns a new one via `nohup`.
+5. **Health check**: Polls `/health` on the tunneled endpoint for up to
+   60 seconds.  After getting `{"status":"ok"}`, additionally checks
+   `/v1/models` to verify a model is actually loaded (llama-server
+   returns healthy even with no model).
+6. **State update**: On success, sets `_MODELS_ACTIVE` and `LODGE_MODEL`
+   in the main shell.  Subsequent `models_ensure_for_scenario()` calls
+   short-circuit for remote llamacpp, trusting the eager switch.
+
+#### GPU-Aware Flags
+
+The restart command automatically includes GPU-specific flags based on
+`_remote_detect_gpu()` results:
+
+| Backend | Flags added to llama-server |
+|---------|----------------------------|
+| **CUDA** | `--flash-attn --cache-type-k q8_0 --cache-type-v q8_0` |
+| **Vulkan** | (none — defaults to f16 KV cache, no flash-attn) |
+| **CPU** | (none) |
+
+#### Example
+
+```bash
+/remote connect
+/models single ministral-3-8b-instruct
+# → "Restarting remote llama-server with blue-lodge-ministral-3-instruct:8b..."
+# → (waits for health + model load)
+# → "Remote model switched to blue-lodge-ministral-3-instruct:8b"
+/q What is the capital of France?
+# → response from remote GPU at ~60 tok/s
+```
+
+### llama-server Binary Detection
+
+George auto-detects the `llama-server` binary on the GPU server using
+5 strategies (tried in order, first match wins):
+
+1. `/proc/PID/exe` symlink of a running llama-server process
+2. `ps -eo args` parsing
+3. Common install paths: `~/llama.cpp/build/bin/`, `/usr/local/bin/`,
+   `/opt/llama.cpp/build/bin/`, `/usr/bin/`
+4. `command -v llama-server`
+5. `find /home /usr/local /opt` (slow, last resort)
+
+Once found, the path is saved in `REMOTE_LLAMACPP_BIN` in `remote.conf`
+so subsequent sessions skip detection.  Override manually:
+```bash
+/remote config REMOTE_LLAMACPP_BIN /home/user/llama.cpp/build/bin/llama-server
+```
 
 ### Why No Modelfiles on Remote
 
@@ -255,7 +395,7 @@ Stored in `.george/remote.conf`:
 | `REMOTE_SSH_TARGET` | (none) | user@host for SSH tunnel |
 | `REMOTE_SSH_PORT` | 22 | SSH port |
 | `REMOTE_SSH_KEY` | ~/.ssh/id_ed25519 | Identity file path |
-| `REMOTE_JUMP_HOST` | (none) | user@host for SSH ProxyJump (`-J`). Set when the SSH target is a jump box, not the GPU server itself. |
+| `REMOTE_JUMP_HOST` | (none) | user@host for SSH ProxyJump. Used by `_remote_exec()` for control-plane commands (`-J`). The tunnel connects directly to this host instead (no `-J`). Set when the SSH target is behind a jump box. |
 | `REMOTE_FORWARD_HOST` | localhost | IP/hostname the SSH target forwards to |
 | `REMOTE_OLLAMA_PORT` | 11434 | Remote Ollama port |
 | `REMOTE_LLAMACPP_PORT` | 8080 | Remote llama-server port |
@@ -301,6 +441,7 @@ The remote VM needs:
 2. **llama-server**: Built with `-DGGML_VULKAN=ON` (or `-DGGML_CUDA=ON` for NVIDIA)
 3. **Ollama**: For model management (CPU-only on AMD gfx1010; GPU-accelerated on NVIDIA)
 4. **User in ollama group**: `sudo usermod -aG ollama $USER`
+5. **Passwordless sudo** for systemd model switching (see [Sudoers Setup](#sudoers-setup-for-model-switching))
 
 ### Provisioning Scripts
 
@@ -372,6 +513,36 @@ GGUF_PATH=~/.ollama/models/blobs/${GGUF//:/-}
 ./build/bin/llama-server -m "$GGUF_PATH" --jinja --port 8080 -ngl 99 --host 0.0.0.0
 ```
 
+### Sudoers Setup (for model switching)
+
+When llama-server runs as a systemd service, George needs passwordless
+sudo on the GPU server to restart it with a new model.  Without this,
+`/models single <key>` will print the required sudoers rule and fail.
+
+On the GPU server, create a sudoers drop-in:
+
+```bash
+sudo visudo -f /etc/sudoers.d/llama-server
+```
+
+Add one line (replace `dabe` with the SSH user):
+
+```
+dabe ALL=(ALL) NOPASSWD: /bin/systemctl restart llama-server, /bin/systemctl stop llama-server, /bin/systemctl daemon-reload, /bin/mkdir -p /etc/systemd/system/llama-server.service.d, /usr/bin/tee /etc/systemd/system/llama-server.service.d/*
+```
+
+This grants exactly the permissions George needs — systemd control and
+the ability to write the model override file — without full root access.
+
+Verify from the George device:
+```bash
+ssh -J jump-host user@gpu-server 'sudo -n systemctl status llama-server'
+```
+
+If llama-server is NOT a systemd service (e.g., started via `nohup`),
+sudoers is not needed — George falls back to killing and respawning the
+process directly.
+
 ## Troubleshooting
 
 **Tunnel dies silently**:
@@ -387,6 +558,32 @@ Expected on AMD gfx1010. ROCm doesn't support Navi 10. Use llama-server with Vul
 
 **VRAM exceeded**:
 The 5700 XT has 8GB. Q4_K_M fits: 8B (~4.5GB), 12B (~7GB). Larger models need more aggressive quantization.
+
+**Model switch fails — "sudo requires a password"**:
+llama-server is a systemd service but passwordless sudo isn't configured.
+Follow the [Sudoers Setup](#sudoers-setup-for-model-switching) instructions.
+George prints the exact sudoers rule to add.
+
+**Model switch fails — "Cannot resolve GGUF"**:
+The model hasn't been pulled via Ollama on the GPU server yet.
+Run `/remote pull <tag>` first, then retry the model switch.
+
+**llama-server healthy but no response**:
+llama-server returns `{"status":"ok"}` even with no model loaded.
+George checks `/v1/models` after health to verify.  If you see
+"started but not healthy after 60s", check `/tmp/llama-server.log`
+on the GPU server (nohup fallback) or `journalctl -u llama-server`
+(systemd path).
+
+**Stale backend after connect**:
+If `/remote connect` succeeds but queries still hit the local backend,
+the LLM backend cache may be stale.  This should auto-clear on connect.
+As a workaround: `/remote disconnect && /remote connect`.
+
+**Commands run on jump host instead of GPU server**:
+Set `REMOTE_JUMP_HOST` so `_remote_exec()` uses ProxyJump.
+Without it, commands execute on whatever host the tunnel connects to.
+See [ProxyJump topology](#proxyjump-george--jump-box--gpu-server-control--data-plane).
 
 ## Performance Reference (AMD RX 5700 XT)
 
@@ -418,22 +615,41 @@ The phone and all George code always talk to `127.0.0.1:8080`.
 
 ### ProxyJump: George → Jump Box → GPU Server (control + data plane)
 
-When the jump box and GPU server are **separate hosts**, both the tunnel
-(data plane) and remote commands (control plane) must reach the GPU server.
-`REMOTE_JUMP_HOST` adds SSH ProxyJump (`-J`) so that `_remote_exec`,
-`_remote_detect_llamacpp_bin`, `_remote_detect_gpu`, and SCP all execute
-on the correct machine:
+When the jump box and GPU server are **separate hosts**, George uses
+the **dual-path architecture** to route data and control traffic
+through different SSH paths:
 
+**Data plane (tunnel):** Connects to the jump host directly (no `-J`),
+forwards ports through to the GPU server's LAN IP:
 ```
-Termux (192.168.86.x)  ──SSH──►  Jump Box (192.168.86.18)  ──SSH -J──►  GPU Server (192.168.30.10)
-  REMOTE_SSH_TARGET=dabe@george-home
-  REMOTE_JUMP_HOST=dabe@192.168.86.18       ← ProxyJump hop
-  REMOTE_FORWARD_HOST=192.168.30.10         ← tunnel target
+autossh → jump-host -L 18080:192.168.30.10:8080 -L 21434:192.168.30.10:11434
+```
+
+**Control plane (exec):** Uses `-J` ProxyJump through the jump host to
+execute commands on the GPU server:
+```
+ssh -J dabe@192.168.86.18 dabe@george-home 'sudo systemctl restart llama-server'
+```
+
+Full topology:
+```
+Termux (192.168.86.x)
+  │
+  ├── Tunnel ──SSH──► Jump Box (192.168.86.18) ─L forward─► GPU (192.168.30.10)
+  │                   (one hop, no -J)           :8080, :11434
+  │
+  └── Exec ───SSH -J jump-box──────────────────► GPU (192.168.30.10)
+                     (ProxyJump)                  systemctl, detect, probe
+
+  REMOTE_SSH_TARGET=dabe@george-home         ← actual GPU server
+  REMOTE_JUMP_HOST=dabe@192.168.86.18        ← ProxyJump hop for exec
+  REMOTE_FORWARD_HOST=192.168.30.10          ← LAN IP for -L forwards
 ```
 
 Without `REMOTE_JUMP_HOST`, commands like `_remote_exec 'nvidia-smi'` run
-on the jump box — not the GPU server. The data plane (tunneled ports) would
-work, but control operations (restart, detect, GPU probe) would fail silently.
+on the jump box — not the GPU server.  The data plane (tunneled ports) would
+work, but control operations (model restart, GPU probe, binary detection)
+would fail silently.
 
 Configure with:
 ```bash

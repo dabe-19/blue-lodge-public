@@ -605,8 +605,12 @@ _remote_restart_llamacpp() {
     # Check if passwordless sudo is available (required for systemd path)
     local _has_sudo="no"
     if [ "$_has_systemd" = "yes" ]; then
-        _has_sudo=$(_remote_exec "sudo -n true 2>/dev/null && echo yes || echo no" 2>/dev/null)
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: systemd=$_has_systemd sudo=$_has_sudo" >&2
+        local _sudo_raw
+        _sudo_raw=$(_remote_exec "sudo -n true 2>/dev/null && echo SUDO_OK || echo SUDO_FAIL")
+        if [[ "$_sudo_raw" == *SUDO_OK* ]]; then
+            _has_sudo="yes"
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: systemd=$_has_systemd sudo=$_has_sudo (raw='$_sudo_raw')" >&2
     fi
 
     if [ "$_has_systemd" = "yes" ] && [ "$_has_sudo" = "yes" ]; then
