@@ -368,14 +368,27 @@ describe "GPU config persistence"
 # ── SSH base args with jump host ───────────────────────────────
 describe "_remote_ssh_base_args with REMOTE_JUMP_HOST"
 
-  it "includes -J flag when REMOTE_JUMP_HOST is set" && {
+  # Dual-path architecture: tunnel connects DIRECTLY to jump host (no -J).
+  # -L forwards use REMOTE_FORWARD_HOST as the destination.
+  # ProxyJump (-J) is only used by _remote_exec for exec path.
+
+  it "omits -J in tunnel args (tunnel connects to jump host directly)" && {
     _rt_setup
     REMOTE_JUMP_HOST="dabe@192.168.86.18"
     REMOTE_FORWARD_HOST="192.168.30.10"
     _remote_ssh_base_args
     _rt_args="${_REMOTE_SSH_ARGS[*]}"
-    assert_contains "$_rt_args" "-J"
-    assert_contains "$_rt_args" "dabe@192.168.86.18"
+    assert_not_contains "$_rt_args" "-J"
+    _rt_teardown
+  }
+
+  it "uses REMOTE_FORWARD_HOST in -L flags when jump host is set" && {
+    _rt_setup
+    REMOTE_JUMP_HOST="dabe@192.168.86.18"
+    REMOTE_FORWARD_HOST="192.168.30.10"
+    _remote_ssh_base_args
+    _rt_args="${_REMOTE_SSH_ARGS[*]}"
+    assert_contains "$_rt_args" "192.168.30.10"
     _rt_teardown
   }
 
@@ -388,14 +401,24 @@ describe "_remote_ssh_base_args with REMOTE_JUMP_HOST"
     _rt_teardown
   }
 
-  it "includes forward host AND jump host together" && {
+  it "includes forward host in -L flags with jump host topology" && {
     _rt_setup
     REMOTE_JUMP_HOST="user@jump-box"
     REMOTE_FORWARD_HOST="10.0.0.50"
     _remote_ssh_base_args
     _rt_args="${_REMOTE_SSH_ARGS[*]}"
-    assert_contains "$_rt_args" "user@jump-box"
     assert_contains "$_rt_args" "10.0.0.50"
+    assert_not_contains "$_rt_args" "user@jump-box"
+    _rt_teardown
+  }
+
+  it "tunnel target returns jump host when REMOTE_JUMP_HOST is set" && {
+    _rt_setup
+    REMOTE_JUMP_HOST="user@jump-box"
+    REMOTE_SSH_TARGET="user@gpu-server"
+    local _tt
+    _tt=$(_remote_tunnel_target)
+    assert_eq "$_tt" "user@jump-box"
     _rt_teardown
   }
 

@@ -538,10 +538,12 @@ _remote_restart_llamacpp() {
 
     # Auto-detect remote llama-server binary if not configured
     if [ -z "$REMOTE_LLAMACPP_BIN" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: detecting llama-server binary..." >&2
         _remote_detect_llamacpp_bin || {
             echo "ERROR: Cannot find llama-server on remote. Set REMOTE_LLAMACPP_BIN in /remote config." >&2
             return 1
         }
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: binary=$REMOTE_LLAMACPP_BIN" >&2
     fi
 
     # Resolve GGUF path on remote
@@ -549,12 +551,16 @@ _remote_restart_llamacpp() {
 
     # First try: resolve via Ollama API (model is pulled on remote)
     if [ -n "$_model_base" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: resolving GGUF for '$_model_base' via API..." >&2
         _remote_gguf=$(_remote_resolve_gguf "$_model_base")
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: API GGUF='${_remote_gguf:-<empty>}'" >&2
     fi
 
     # Fallback: ask the remote to find it via Ollama show CLI
     if [ -z "$_remote_gguf" ] && [ -n "$_model_base" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: trying ollama show CLI fallback..." >&2
         _remote_gguf=$(_remote_exec "ollama show --modelfile '$_model_base' 2>/dev/null | grep -oP '(?<=FROM\s)/\S+' | head -1" 2>/dev/null)
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: CLI GGUF='${_remote_gguf:-<empty>}'" >&2
     fi
 
     if [ -z "$_remote_gguf" ]; then
@@ -596,8 +602,16 @@ _remote_restart_llamacpp() {
     local _has_systemd
     _has_systemd=$(_remote_exec "systemctl cat llama-server &>/dev/null && echo yes || echo no" 2>/dev/null)
 
+    # Check if passwordless sudo is available (required for systemd path)
+    local _has_sudo="no"
     if [ "$_has_systemd" = "yes" ]; then
+        _has_sudo=$(_remote_exec "sudo -n true 2>/dev/null && echo yes || echo no" 2>/dev/null)
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: systemd=$_has_systemd sudo=$_has_sudo" >&2
+    fi
+
+    if [ "$_has_systemd" = "yes" ] && [ "$_has_sudo" = "yes" ]; then
         # Use systemd override to inject the model path, then restart
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: using systemd override to restart llama-server" >&2
         _restart_result=$(_remote_exec "
             sudo mkdir -p /etc/systemd/system/llama-server.service.d
             sudo tee /etc/systemd/system/llama-server.service.d/model.conf > /dev/null << 'EOF'
@@ -609,6 +623,11 @@ EOF
             sudo systemctl restart llama-server
             echo \$?
         " 2>/dev/null)
+    elif [ "$_has_systemd" = "yes" ] && [ "$_has_sudo" != "yes" ]; then
+        echo "WARNING: llama-server is a systemd service but sudo requires a password." >&2
+        echo "  Run on the GPU server: sudo visudo -f /etc/sudoers.d/llama-server" >&2
+        echo "  Add: $(echo "$REMOTE_SSH_TARGET" | cut -d@ -f1) ALL=(ALL) NOPASSWD: /bin/systemctl restart llama-server, /bin/systemctl stop llama-server, /bin/systemctl daemon-reload, /bin/mkdir -p /etc/systemd/system/llama-server.service.d, /usr/bin/tee /etc/systemd/system/llama-server.service.d/*" >&2
+        return 1
     else
         # No systemd — raw kill + nohup
         _restart_result=$(_remote_exec "
@@ -640,16 +659,27 @@ EOF
     # Wait for healthy status (model loading can take 10-30s on GPU)
     local _wait=0
     local _max_wait=60
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: waiting for llama-server health at $LLAMA_CPP_URL ..." >&2
     while [ "$_wait" -lt "$_max_wait" ]; do
         sleep 2
         _wait=$((_wait + 2))
         local _health
         _health=$(curl -sf --max-time 3 "$LLAMA_CPP_URL/health" 2>/dev/null)
         if echo "$_health" | grep -q '"ok"' 2>/dev/null; then
-            return 0
+            # Verify a model is actually loaded (not just an empty server)
+            local _model_check
+            _model_check=$(curl -sf --max-time 3 "$LLAMA_CPP_URL/v1/models" 2>/dev/null)
+            if echo "$_model_check" | grep -q '"id"' 2>/dev/null; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: llama-server healthy with model loaded (${_wait}s)" >&2
+                return 0
+            fi
+            # Health OK but no model yet — might still be loading
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: health OK but model not yet listed (${_wait}s)" >&2
+            continue
         fi
         # Still loading — keep waiting
         if echo "$_health" | grep -q '"loading"' 2>/dev/null; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ $((_wait % 10)) -eq 0 ] && echo "  [debug] remote: model loading... (${_wait}s)" >&2
             continue
         fi
     done
@@ -755,6 +785,11 @@ remote_connect() {
     LLAMA_CPP_URL="http://127.0.0.1:${REMOTE_LOCAL_LLAMACPP_PORT}"
 
     _REMOTE_CONNECTED=1
+
+    # Clear backend detection cache — the local llama-server was detected
+    # before connect, but now URLs point through the tunnel.
+    _LLM_BACKEND_CACHE=""
+
     echo "Connected via $_tunnel_target (via $_method)"
     [ -n "${REMOTE_JUMP_HOST:-}" ] && echo "  Tunnel SSH:   $_tunnel_target (jump host)"
     [ "$_fwd_host" != "localhost" ] && echo "  Forward host: $_fwd_host"
@@ -1241,5 +1276,6 @@ _remote_auto_reattach() {
     OLLAMA_URL="http://127.0.0.1:${_ollama_port}"
     LLAMA_CPP_URL="http://127.0.0.1:${_llama_port}"
     _REMOTE_CONNECTED=1
+    _LLM_BACKEND_CACHE=""  # Force re-detection through tunnel
 }
 _remote_auto_reattach

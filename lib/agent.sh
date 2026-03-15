@@ -4153,6 +4153,8 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         #
         # Also normalizes /web scrape → /web scrape-images (models
         # emit the shorter form which doesn't exist as a subcommand).
+        local _needs_single_url=0
+        local _url_cmd_prefix=""
         if [ "$cmd_is_slash" -eq 1 ]; then
             # ── /web scrape → /web scrape-images normalization ──
             if [[ "$cmd" == "/web scrape "* ]] && [[ "$cmd" != "/web scrape-images "* ]] && [[ "$cmd" != "/web scrapeimages "* ]]; then
@@ -4168,9 +4170,6 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
             # execution. See _agent_smart_route() for full logic.
             # Sets _SMART_ROUTE_REROUTED=1 on substitution.
             _agent_smart_route "$workdir" "$micro_file"
-
-            local _needs_single_url=0
-            local _url_cmd_prefix=""
             case "$cmd" in
                 "/web fetch "*)          _needs_single_url=1; _url_cmd_prefix="/web fetch" ;;
                 "/web scrape-images "*)   _needs_single_url=1; _url_cmd_prefix="/web scrape-images" ;;
@@ -4210,7 +4209,7 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
             # Strip everything after what looks like a valid URL for
             # URL-based commands (fetch, scrape-images, download).
             # /vision is excluded — it legitimately has a prompt after the URL.
-            if [ "$_needs_single_url" -eq 1 ] && [[ "$cmd" != "/vision "* ]]; then
+            if [ "${_needs_single_url:-0}" -eq 1 ] && [[ "$cmd" != "/vision "* ]]; then
                 local _sanitize_args="${cmd#$_url_cmd_prefix }"
                 local _sanitize_url
                 _sanitize_url=$(echo "$_sanitize_args" | grep -oE 'https?://[^ "'"'"']+' | head -1)
@@ -4228,7 +4227,7 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         # no TLD). Without this gate, the bad URL fails at execution,
         # wastes an escalation level, and gets retried indefinitely.
         # Convert to /web search with the domain name as query instead.
-        if [ "$_needs_single_url" -eq 1 ] && [[ "$cmd" != "/vision "* ]]; then
+        if [ "${_needs_single_url:-0}" -eq 1 ] && [[ "$cmd" != "/vision "* ]]; then
             local _val_url_raw="${cmd#$_url_cmd_prefix }"
             local _val_url
             _val_url=$(echo "$_val_url_raw" | grep -oE 'https?://[^ "'"'"']+' | head -1)

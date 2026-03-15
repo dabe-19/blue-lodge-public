@@ -870,7 +870,7 @@ _models_switch() {
 
     # Already correct model loaded — no-op
     if [ "$_MODELS_ACTIVE" = "$target" ]; then
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] _models_switch: already active='$target', skip"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] _models_switch: already active='$target', skip" >&2
         return 0
     fi
 
@@ -878,7 +878,7 @@ _models_switch() {
     local _backend
     _backend=$(_llm_detect_backend 2>/dev/null || echo "ollama")
 
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] _models_switch: target='$target' backend='$_backend' remote=${_REMOTE_CONNECTED:-0}"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] _models_switch: target='$target' backend='$_backend' remote=${_REMOTE_CONNECTED:-0}" >&2
 
     if [ "${_REMOTE_CONNECTED:-0}" -eq 1 ]; then
         # ── Remote mode: switch model on the remote server ─────
@@ -894,7 +894,7 @@ _models_switch() {
 
         if [ "$_backend" = "llamacpp" ]; then
             # llama-server on remote: SSH and restart with new model
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] remote llamacpp: declare -f _remote_restart_llamacpp = $(declare -f _remote_restart_llamacpp &>/dev/null && echo 'yes' || echo 'NO') base='${_remote_base:-}'"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote llamacpp: declare -f _remote_restart_llamacpp = $(declare -f _remote_restart_llamacpp &>/dev/null && echo 'yes' || echo 'NO') base='${_remote_base:-}'" >&2
             if declare -f _remote_restart_llamacpp &>/dev/null; then
                 ui_dim "Restarting remote llama-server with $target..."
                 if _remote_restart_llamacpp "$target" "$_remote_base"; then
@@ -1004,12 +1004,27 @@ models_ensure_for_scenario() {
     local target
     target=$(models_for_scenario "$scenario")
 
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] ensure_for_scenario: active='$_MODELS_ACTIVE' target='$target'"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] ensure_for_scenario: active='$_MODELS_ACTIVE' target='$target'" >&2
 
     # Fast path: already correct
     if [ "$_MODELS_ACTIVE" = "$target" ]; then
         LODGE_MODEL="$target"
         return 0
+    fi
+
+    # In remote llamacpp mode, the switch should have been done eagerly
+    # in models_select(). If we're here, it means either the eager switch
+    # failed or this is a scenario-based secondary→primary flip.
+    # Either way, in a subshell we can't persist _MODELS_ACTIVE, so
+    # just set LODGE_MODEL and return — the server already has the model.
+    if [ "${_REMOTE_CONNECTED:-0}" -eq 1 ]; then
+        local _be
+        _be=$(_llm_detect_backend 2>/dev/null || echo "ollama")
+        if [ "$_be" = "llamacpp" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] ensure_for_scenario: remote llamacpp — trusting eager switch" >&2
+            LODGE_MODEL="$target"
+            return 0
+        fi
     fi
 
     # Show a spinner during model switch (can take 5-15s on ARM)
@@ -1325,6 +1340,27 @@ models_select() {
         if ! ollama list 2>/dev/null | grep -q "$_ME_NAME"; then
             ui_info "Creating model $_ME_NAME..."
             models_create "$key"
+        fi
+    fi
+
+    # ── Eager remote model switch (main shell context) ─────────
+    # When remote is connected and backend is llamacpp, switch NOW.
+    # This avoids the subshell problem: llm_stream/llm_generate are
+    # called inside $() which loses _MODELS_ACTIVE on exit.
+    if [ "${_REMOTE_CONNECTED:-0}" -eq 1 ] && [ "$_backend" = "llamacpp" ]; then
+        if declare -f _remote_restart_llamacpp &>/dev/null; then
+            ui_dim "Restarting remote llama-server with $_ME_NAME..."
+            if _remote_restart_llamacpp "$_ME_NAME" "$_ME_BASE"; then
+                _MODELS_ACTIVE="$_ME_NAME"
+                LODGE_MODEL="$_ME_NAME"
+                ui_ok "Remote model switched to $_ME_NAME"
+                models_apply_defaults "$_ME_NAME"
+                return 0
+            else
+                ui_err "Remote llama-server restart failed for $_ME_NAME"
+                ui_dim "  Check /debug on output or test manually with:"
+                ui_dim "  ssh -J \$REMOTE_JUMP_HOST \$REMOTE_SSH_TARGET 'systemctl status llama-server'"
+            fi
         fi
     fi
 
