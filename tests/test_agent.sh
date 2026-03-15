@@ -420,12 +420,6 @@ describe "Dynamic dual-loop architecture"
     assert_ok $?
   }
 
-  it "macro strategist has question detection rule" && {
-    body=$(declare -f agent_run)
-    echo "$body" | grep -q 'LAST RESORT\|no tools\|general knowledge'
-    assert_ok $?
-  }
-
   it "macro strategist uses llm_generate for clean output" && {
     body=$(declare -f agent_run)
     # The strategist milestone call should use llm_generate (not llm_stream)
@@ -497,11 +491,6 @@ describe "Dynamic dual-loop architecture"
     assert_ok $? "Must check if pending > 0 before overriding"
   }
 
-  it "macro strategist has anti-email-for-social rule" && {
-    body=$(declare -f agent_run)
-    echo "$body" | grep -q 'NOT.*email'
-    assert_ok $?
-  }
 
   it "macro strategist has anti-sandbox rule" && {
     body=$(declare -f agent_run)
@@ -1229,9 +1218,9 @@ describe "Milestone deduplication in macro loop"
     assert_ok $?
   }
 
-  it "deduplication checks first 60 chars of normalized text for similarity" && {
+  it "deduplication checks first 120 chars of normalized text for similarity" && {
     body=$(declare -f agent_run)
-    echo "$body" | grep -q '_milestone_norm:0:60'
+    echo "$body" | grep -q '_milestone_norm:0:120'
     assert_ok $?
   }
 

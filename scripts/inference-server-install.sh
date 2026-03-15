@@ -50,7 +50,7 @@ LLAMA_CPP_PORT="${LLAMA_CPP_PORT:-8080}"
 OLLAMA_PORT="${OLLAMA_PORT:-11434}"
 GPU_BACKEND="${GPU_BACKEND:-auto}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
-INSTALL_SYSTEMD="${INSTALL_SYSTEMD:-0}"
+INSTALL_SYSTEMD="${INSTALL_SYSTEMD:-1}"
 
 printf "\n${C_BOLD}═══ George Remote Inference Node Setup ═══${C_RESET}\n"
 _dim "Target: $(hostname) ($(uname -m))"
@@ -248,8 +248,25 @@ _ok "Ollama models available: $_model_count"
 # Step 6: Optional systemd services
 # ═══════════════════════════════════════════════════════════════
 if [ "$INSTALL_SYSTEMD" = "1" ]; then
-    _step "6" "Installing systemd service for llama-server"
+    _step "6" "Installing systemd services"
 
+    # ── Ollama: ensure it binds to all interfaces via systemd override ──
+    if command -v systemctl &>/dev/null && systemctl cat ollama &>/dev/null 2>&1; then
+        _dim "Creating Ollama systemd override (bind 0.0.0.0:${OLLAMA_PORT})..."
+        $_SUDO mkdir -p /etc/systemd/system/ollama.service.d
+        $_SUDO tee /etc/systemd/system/ollama.service.d/override.conf > /dev/null << OLLAMA_OVERRIDE
+[Service]
+Environment="OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT}"
+OLLAMA_OVERRIDE
+        $_SUDO systemctl daemon-reload
+        $_SUDO systemctl enable ollama 2>/dev/null || true
+        $_SUDO systemctl restart ollama 2>/dev/null || true
+        _ok "Ollama override installed + restarted"
+    else
+        _warn "Ollama systemd service not found — override skipped"
+    fi
+
+    # ── llama-server: create service unit ──
     _SERVICE_FILE="/etc/systemd/system/llama-server.service"
     $_SUDO tee "$_SERVICE_FILE" > /dev/null << UNIT
 [Unit]
@@ -270,9 +287,9 @@ WantedBy=multi-user.target
 UNIT
 
     $_SUDO systemctl daemon-reload
-    _ok "Service installed: llama-server.service"
+    $_SUDO systemctl enable llama-server 2>/dev/null || true
+    _ok "Service installed + enabled: llama-server.service"
     _dim "Start with: sudo systemctl start llama-server"
-    _dim "Enable at boot: sudo systemctl enable llama-server"
     _dim "Note: Load a model via Ollama API or pass -m /path/to/model.gguf"
 else
     _step "6" "Skipping systemd install (set INSTALL_SYSTEMD=1 to enable)"

@@ -138,6 +138,8 @@ _lodge_cleanup() {
 # Kills orphan curl processes and cleans temp files so the phone
 # doesn't keep computing after Lodge exits (close Termux, /quit, etc.)
 _lodge_exit_cleanup() {
+    # Tear down remote SSH tunnel + watchdog so they don't outlive Lodge
+    declare -f remote_disconnect &>/dev/null && remote_disconnect 2>/dev/null
     # Kill any leftover curl → LLM processes
     pkill -f "curl.*v1/chat/completions" 2>/dev/null || true
     pkill -f "curl.*api/generate" 2>/dev/null || true
@@ -5125,8 +5127,37 @@ _cmd_remote() {
                 esac
             fi
             ;;
+        setup-services)
+            # Thin wrapper: copy inference-server-install.sh to the remote
+            # and run it with INSTALL_SYSTEMD=1 + SKIP_BUILD=1 (services only).
+            if [ -z "$REMOTE_SSH_TARGET" ]; then
+                ui_err "No remote target configured. Run /remote connect first."
+                return 1
+            fi
+            local _install_script="$LODGE_DIR/scripts/inference-server-install.sh"
+            if [ ! -f "$_install_script" ]; then
+                ui_err "Cannot find $LODGE_DIR/scripts/inference-server-install.sh"
+                return 1
+            fi
+            local _scp_args=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -P "${REMOTE_SSH_PORT:-22}")
+            [ -f "$REMOTE_SSH_KEY" ] && _scp_args+=(-i "$REMOTE_SSH_KEY")
+            ui_info "Copying install script to $REMOTE_SSH_TARGET..."
+            scp "${_scp_args[@]}" "$_install_script" "${REMOTE_SSH_TARGET}:inference-server-install.sh" 2>/dev/null || {
+                ui_err "SCP failed"; return 1
+            }
+            ui_info "Running setup with INSTALL_SYSTEMD=1 SKIP_BUILD=1 (services only)..."
+            _remote_exec "chmod +x inference-server-install.sh && INSTALL_SYSTEMD=1 SKIP_BUILD=1 bash inference-server-install.sh" 2>&1
+            local _rc=$?
+            if [ $_rc -eq 0 ]; then
+                ui_ok "Systemd services configured on remote."
+                ui_dim "  Check: /remote connect → then switch models normally."
+            else
+                ui_err "Remote setup-services failed (exit $_rc)."
+                ui_dim "  SSH into the remote and check: systemctl status ollama llama-server"
+            fi
+            ;;
         *)
-            ui_info "Usage: /remote [status|connect|disconnect|setup|secure|diagnose|config|models|ps|pull|load|url|forward|benchmark]"
+            ui_info "Usage: /remote [status|connect|disconnect|setup|setup-services|secure|diagnose|config|models|ps|pull|load|url|forward|benchmark]"
             echo ""
             ui_dim "  status              — Show tunnel status and endpoint health"
             ui_dim "  connect [user@host] — Open SSH tunnel to remote GPU server"
@@ -5135,6 +5166,7 @@ _cmd_remote() {
             ui_dim "  secure              — Add passphrase to SSH key + load into ssh-agent"
             ui_dim "  diagnose            — Run verbose connectivity diagnostics"
             ui_dim "  config [key val]    — Show/set remote llama-server configuration"
+            ui_dim "  setup-services      — Install systemd units for Ollama + llama-server on remote"
             ui_dim "  models              — List models on remote Ollama"
             ui_dim "  ps                  — Show currently loaded model(s)"
             ui_dim "  pull <tag>          — Pull a model to remote (e.g. qwen3:8b)"

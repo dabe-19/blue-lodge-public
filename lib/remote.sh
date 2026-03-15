@@ -250,19 +250,45 @@ _remote_exec() {
 }
 
 # ── Auto-detect remote llama-server binary path ───────────────
-# Probes common locations on the remote node.
+# Strategy 1: extract path from running process (most reliable).
+# Strategy 2: check common install locations via SSH.
+# Strategy 3: command -v (in PATH).
 _remote_detect_llamacpp_bin() {
     [ -n "$REMOTE_LLAMACPP_BIN" ] && return 0
     local _bin
-    _bin=$(_remote_exec "command -v llama-server 2>/dev/null || \
-        for p in \$HOME/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server /opt/llama.cpp/build/bin/llama-server; do \
-            [ -x \"\$p\" ] && echo \"\$p\" && break; \
+
+    # Strategy 1: parse running llama-server process on the remote
+    _bin=$(_remote_exec "ps -eo args 2>/dev/null | grep '[l]lama-server' | head -1 | awk '{print \$1}'" 2>/dev/null)
+    if [ -n "$_bin" ]; then
+        REMOTE_LLAMACPP_BIN="$_bin"
+        _remote_save_config
+        return 0
+    fi
+
+    # Strategy 2: probe common install paths (includes default from
+    # inference-server-models.sh: \$HOME/llama.cpp/build/bin/llama-server)
+    _bin=$(_remote_exec "
+        for p in \
+            \$HOME/llama.cpp/build/bin/llama-server \
+            /usr/local/bin/llama-server \
+            /opt/llama.cpp/build/bin/llama-server \
+            /usr/bin/llama-server; do
+            [ -x \"\$p\" ] && echo \"\$p\" && break
         done" 2>/dev/null)
     if [ -n "$_bin" ]; then
         REMOTE_LLAMACPP_BIN="$_bin"
         _remote_save_config
         return 0
     fi
+
+    # Strategy 3: command -v (binary in PATH)
+    _bin=$(_remote_exec "command -v llama-server 2>/dev/null" 2>/dev/null)
+    if [ -n "$_bin" ]; then
+        REMOTE_LLAMACPP_BIN="$_bin"
+        _remote_save_config
+        return 0
+    fi
+
     return 1
 }
 
@@ -373,27 +399,48 @@ _remote_restart_llamacpp() {
         _extra_args="--chat-template-kwargs '{\"enable_thinking\":true}'"
     fi
 
-    # Kill existing llama-server and start new one on the remote
+    # Kill existing llama-server and start new one on the remote.
+    # Prefer systemd restart when a service unit exists, so we don't
+    # fight the service manager.  Fall back to raw kill + nohup.
     local _restart_result
-    _restart_result=$(_remote_exec "
-        # Kill existing llama-server
-        _pid=\$(pgrep -f 'llama-server.*--port' 2>/dev/null | head -1)
-        if [ -n \"\$_pid\" ]; then
-            kill \"\$_pid\" 2>/dev/null
-            sleep 2
-            kill -9 \"\$_pid\" 2>/dev/null
-            wait \"\$_pid\" 2>/dev/null
-        fi
-        sleep 1
-        # Start new llama-server in background
-        nohup $_bin -m '$_remote_gguf' \\
-            --port $_port --host 0.0.0.0 \\
-            --jinja -ngl $_ngl -c $_ctx \\
-            --threads \$(nproc 2>/dev/null || echo 4) \\
-            --parallel 1 $_extra_args \\
-            > /tmp/llama-server.log 2>&1 &
-        echo \$!
-    " 2>/dev/null)
+    local _has_systemd
+    _has_systemd=$(_remote_exec "systemctl cat llama-server &>/dev/null && echo yes || echo no" 2>/dev/null)
+
+    if [ "$_has_systemd" = "yes" ]; then
+        # Use systemd override to inject the model path, then restart
+        _restart_result=$(_remote_exec "
+            sudo mkdir -p /etc/systemd/system/llama-server.service.d
+            sudo tee /etc/systemd/system/llama-server.service.d/model.conf > /dev/null << 'EOF'
+[Service]
+ExecStart=
+ExecStart=$_bin -m '$_remote_gguf' --port $_port --host 0.0.0.0 --jinja -ngl $_ngl -c $_ctx --threads \$(nproc 2>/dev/null || echo 4) --parallel 1 $_extra_args
+EOF
+            sudo systemctl daemon-reload
+            sudo systemctl restart llama-server
+            echo \$?
+        " 2>/dev/null)
+    else
+        # No systemd — raw kill + nohup
+        _restart_result=$(_remote_exec "
+            # Kill existing llama-server
+            _pid=\$(pgrep -f 'llama-server.*--port' 2>/dev/null | head -1)
+            if [ -n \"\$_pid\" ]; then
+                kill \"\$_pid\" 2>/dev/null
+                sleep 2
+                kill -9 \"\$_pid\" 2>/dev/null
+                wait \"\$_pid\" 2>/dev/null
+            fi
+            sleep 1
+            # Start new llama-server in background
+            nohup $_bin -m '$_remote_gguf' \\
+                --port $_port --host 0.0.0.0 \\
+                --jinja -ngl $_ngl -c $_ctx \\
+                --threads \$(nproc 2>/dev/null || echo 4) \\
+                --parallel 1 $_extra_args \\
+                > /tmp/llama-server.log 2>&1 &
+            echo \$!
+        " 2>/dev/null)
+    fi
 
     if [ -z "$_restart_result" ]; then
         echo "ERROR: Failed to restart llama-server on remote" >&2
@@ -433,10 +480,23 @@ remote_connect() {
         return 1
     fi
 
-    # Kill existing tunnel if any
+    # Kill existing tunnel if any (PID-file-based check)
     if _remote_tunnel_alive; then
         remote_disconnect 2>/dev/null
     fi
+
+    # Sweep orphaned SSH tunnels from prior sessions whose PID files
+    # were lost (e.g. Termux killed, lodge crash).  Pattern matches
+    # the -N (tunnel-only) flag we always pass.
+    local _orphan_pid
+    _orphan_pid=$(_remote_find_tunnel_pid "$target" 2>/dev/null)
+    if [ -n "$_orphan_pid" ]; then
+        kill "$_orphan_pid" 2>/dev/null
+        sleep 0.5
+        kill -9 "$_orphan_pid" 2>/dev/null
+    fi
+    # Also sweep any orphaned autossh for this target
+    pkill -f "autossh.*${target}" 2>/dev/null || true
 
     # Unlock passphrase-protected key via ssh-agent if needed
     _remote_ensure_agent || {

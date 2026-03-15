@@ -57,6 +57,18 @@ git config --global --unset commit.gpgsign 2>/dev/null || true
 git config --global --unset tag.gpgsign 2>/dev/null || true
 git config --global --unset gpg.program 2>/dev/null || true
 
+# Kill any active SSH tunnel left by /remote connect
+if [ -f "$LODGE_DIR/.george/remote-tunnel.pid" ]; then
+    _tpid=$(cat "$LODGE_DIR/.george/remote-tunnel.pid" 2>/dev/null)
+    [ -n "$_tpid" ] && kill "$_tpid" 2>/dev/null
+    rm -f "$LODGE_DIR/.george/remote-tunnel.pid"
+fi
+if [ -f "$LODGE_DIR/.george/remote-watchdog.pid" ]; then
+    _wpid=$(cat "$LODGE_DIR/.george/remote-watchdog.pid" 2>/dev/null)
+    [ -n "$_wpid" ] && kill "$_wpid" 2>/dev/null
+    rm -f "$LODGE_DIR/.george/remote-watchdog.pid"
+fi
+
 echo ""
 echo " ✓ Blue Lodge uninstalled."
 echo " Note: $LODGE_DIR/ source kept. Delete manually if desired:"

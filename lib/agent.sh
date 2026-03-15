@@ -685,7 +685,7 @@ _agent_honeydew_expand() {
 OBJECTIVE: $item_text
 
 $(cat << 'EXPAND_JSON'
-{"output":"numbered list ONLY (2-4 items)",
+{"output":"numbered list ONLY (1-2 items)",
  "each_item":"short imperative sentence — WHAT, not HOW",
  "never":["commands","URLs","tools","shell syntax","verification steps","cleanup steps"],
  "order":"by dependency (research→writing→sending)",
@@ -693,7 +693,7 @@ $(cat << 'EXPAND_JSON'
 EXPAND_JSON
 )"
 
-    local expand_sys="You are a task decomposition engine. Break ONE complex objective into 2-4 atomic sub-steps. Output ONLY a numbered list. No commands, no URLs, no explanation. Plain numbered list only."
+    local expand_sys="You are a task decomposition engine. Break ONE complex objective into 1-2 atomic sub-steps. Output ONLY a numbered list. No commands, no URLs, no explanation. Plain numbered list only."
 
     ui_think "Expanding honeydew item #${item_id} into sub-tasks..."
     local raw_list
@@ -5642,7 +5642,7 @@ MEMEOF
         # Prevents the strategist from regenerating failed milestones.
         local _milestone_history=""
         if [ ${#_attempted_milestones[@]} -gt 0 ]; then
-            _milestone_history="\n\nPREVIOUSLY ATTEMPTED MILESTONES (do NOT repeat failed ones):"
+            _milestone_history="\n\nPREVIOUSLY ATTEMPTED MILESTONES (do NOT repeat):"
             for _am in "${_attempted_milestones[@]}"; do
                 _milestone_history="${_milestone_history}\n- ${_am}"
             done

@@ -101,8 +101,8 @@ describe "Contradiction guard structure"
 # ══════════════════════════════════════════════════════════════
 describe "Milestone deduplication"
 
-  it "uses 60-char normalized comparison" && {
-    grep -q '_milestone_norm.*:0:60' "$LODGE_DIR/lib/agent.sh"
+  it "uses 120-char normalized comparison" && {
+    grep -q '_milestone_norm.*:0:120' "$LODGE_DIR/lib/agent.sh"
     assert_ok $?
   }
 

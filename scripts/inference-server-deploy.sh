@@ -107,7 +107,7 @@ _ok "Set executable permissions"
 if [ "$DO_INSTALL" -eq 1 ]; then
     _step "3" "Running install on $TARGET"
     _dim "This may take a while (building llama.cpp)..."
-    ssh "${_SSH_ARGS[@]}" -t "$TARGET" "bash inference-server-install.sh"
+    ssh "${_SSH_ARGS[@]}" -t "$TARGET" "INSTALL_SYSTEMD=1 bash inference-server-install.sh"
     _ok "Install complete"
 else
     _step "3" "Skipping install (use --install to run)"

@@ -35,7 +35,7 @@ describe "_models_parse_entry tier field"
         _models_parse_entry "$_entry"
         # Edge models are <8B (key doesn't contain 8b/12b)
         case "$_ME_KEY" in
-            *-8b*|*-12b*) continue ;;
+            *-8b*|*-12b*|*-9b*|*-7b*) continue ;;
             *)
                 if [ "$_ME_TIER" != "edge" ]; then
                     _all_ok=0
@@ -93,8 +93,8 @@ describe "registry field integrity"
     assert_eq "$_all_ok" "1"
   }
 
-  it "total registry has 23 entries (18 edge + 5 central)" && {
-    assert_eq "${#_MODELS_REGISTRY[@]}" "23"
+  it "total registry has 25 entries (18 edge + 7 central)" && {
+    assert_eq "${#_MODELS_REGISTRY[@]}" "25"
   }
 
 test_end
