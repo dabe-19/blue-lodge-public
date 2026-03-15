@@ -5106,6 +5106,9 @@ _cmd_remote() {
                 printf "  %-30s %s\n" "REMOTE_LLAMACPP_GPU_LAYERS:" "${REMOTE_LLAMACPP_GPU_LAYERS:-99}"
                 printf "  %-30s %s\n" "REMOTE_LLAMACPP_CTX_SIZE:" "${REMOTE_LLAMACPP_CTX_SIZE:-32768}"
                 printf "  %-30s %s\n" "REMOTE_OLLAMA_DATA:" "${REMOTE_OLLAMA_DATA:-/usr/share/ollama/.ollama}"
+                printf "  %-30s %s\n" "REMOTE_GPU_BACKEND:" "${REMOTE_GPU_BACKEND:-auto}"
+                printf "  %-30s %s\n" "REMOTE_KV_CACHE_TYPE:" "${REMOTE_KV_CACHE_TYPE:-auto}"
+                printf "  %-30s %s\n" "REMOTE_FLASH_ATTN:" "${REMOTE_FLASH_ATTN:-auto}"
                 echo ""
                 ui_dim "  Usage: /remote config <key> <value>"
                 ui_dim "  Example: /remote config REMOTE_LLAMACPP_BIN /home/dabe/llama.cpp/build/bin/llama-server"
@@ -5115,14 +5118,15 @@ _cmd_remote() {
                 _cfg_val=$(echo "$arg2" | awk '{$1=""; print}' | sed 's/^[[:space:]]*//')
                 case "$_cfg_key" in
                     REMOTE_LLAMACPP_BIN|REMOTE_LLAMACPP_GPU_LAYERS|\
-                    REMOTE_LLAMACPP_CTX_SIZE|REMOTE_OLLAMA_DATA)
+                    REMOTE_LLAMACPP_CTX_SIZE|REMOTE_OLLAMA_DATA|\
+                    REMOTE_GPU_BACKEND|REMOTE_KV_CACHE_TYPE|REMOTE_FLASH_ATTN)
                         printf -v "$_cfg_key" '%s' "$_cfg_val"
                         _remote_save_config
                         ui_ok "$_cfg_key set to: $_cfg_val"
                         ;;
                     *)
                         ui_err "Unknown config key: $_cfg_key"
-                        ui_dim "  Valid keys: REMOTE_LLAMACPP_BIN, REMOTE_LLAMACPP_GPU_LAYERS, REMOTE_LLAMACPP_CTX_SIZE, REMOTE_OLLAMA_DATA"
+                        ui_dim "  Valid keys: REMOTE_LLAMACPP_BIN, REMOTE_LLAMACPP_GPU_LAYERS, REMOTE_LLAMACPP_CTX_SIZE, REMOTE_OLLAMA_DATA, REMOTE_GPU_BACKEND, REMOTE_KV_CACHE_TYPE, REMOTE_FLASH_ATTN"
                         ;;
                 esac
             fi

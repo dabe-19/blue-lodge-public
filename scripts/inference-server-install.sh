@@ -268,6 +268,21 @@ OLLAMA_OVERRIDE
 
     # ── llama-server: create service unit ──
     _SERVICE_FILE="/etc/systemd/system/llama-server.service"
+
+    # GPU-specific performance flags
+    _SVC_PERF_ARGS=""
+    case "$GPU_BACKEND" in
+        cuda)
+            # CUDA: enable flash attention + quantized KV cache for lower VRAM usage
+            _SVC_PERF_ARGS="--flash-attn --cache-type-k q8_0 --cache-type-v q8_0"
+            _ok "CUDA perf flags: flash-attn + q8_0 KV cache"
+            ;;
+        vulkan)
+            # Vulkan: flash attention & quantized KV cache not supported
+            _dim "Vulkan: using default f16 KV cache (flash-attn not available)"
+            ;;
+    esac
+
     $_SUDO tee "$_SERVICE_FILE" > /dev/null << UNIT
 [Unit]
 Description=llama.cpp inference server (George remote node)
@@ -276,7 +291,7 @@ After=network.target ollama.service
 [Service]
 Type=simple
 User=$(whoami)
-ExecStart=${_LLAMA_BIN} --port ${LLAMA_CPP_PORT} --jinja -ngl 99 --host 0.0.0.0
+ExecStart=${_LLAMA_BIN} --port ${LLAMA_CPP_PORT} --jinja -ngl 99 --host 0.0.0.0 ${_SVC_PERF_ARGS}
 Restart=on-failure
 RestartSec=5
 # Model must be loaded separately via the API or a companion script.

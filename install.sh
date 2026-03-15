@@ -68,6 +68,14 @@ if [ -f /proc/ish/version ] || ([ -f /etc/os-release ] && grep -qi 'alpine' /etc
     IS_ISH=1
 fi
 
+# Detect macOS / Mac.
+# macOS can't run Ollama or llama-server locally in this Bash agent context,
+# but CAN use remote inference nodes (SSH tunnel to a GPU server or Ollama host).
+IS_MACOS=0
+if [ "$(uname -s)" = "Darwin" ]; then
+    IS_MACOS=1
+fi
+
 # ── Write shell config IMMEDIATELY after cleanup ─────────────
 # This MUST happen before any fallible step (Ollama, model, etc.)
 # so the config is never left in a stripped-but-not-rewritten state.
@@ -127,7 +135,9 @@ done
 echo ""
 printf " ${BOLD}⌂ George Installer${RESET}\n"
 if [ "$IS_ISH" -eq 1 ]; then
-    printf " ${DIM}Detected: iSH (Alpine Linux on iOS) — cloud-only mode${RESET}\n"
+    printf " ${DIM}Detected: iSH (Alpine Linux on iOS) — cloud/remote only${RESET}\n"
+elif [ "$IS_MACOS" -eq 1 ]; then
+    printf " ${DIM}Detected: macOS — cloud/remote inference mode${RESET}\n"
 elif [ "$IS_TERMUX" -eq 1 ]; then
     printf " ${DIM}Detected: Termux (native Android)${RESET}\n"
 fi
@@ -145,7 +155,15 @@ command -v sqlite3 &>/dev/null || MISSING+=("sqlite3")
 if [ ${#MISSING[@]} -gt 0 ]; then
     warn "Missing: ${MISSING[*]}"
     info "Installing..."
-    if [ "$IS_ISH" -eq 1 ] || command -v apk &>/dev/null; then
+    if [ "$IS_MACOS" -eq 1 ]; then
+        # macOS: use Homebrew
+        if command -v brew &>/dev/null; then
+            brew install "${MISSING[@]}" 2>/dev/null || warn "Some brew installs failed"
+        else
+            warn "Homebrew not found — install from https://brew.sh then run install.sh again"
+            warn "Or install manually: ${MISSING[*]}"
+        fi
+    elif [ "$IS_ISH" -eq 1 ] || command -v apk &>/dev/null; then
         # iSH / Alpine: use apk; sqlite3 package is 'sqlite'
         local_pkgs=()
         for dep in "${MISSING[@]}"; do
@@ -193,7 +211,9 @@ if ! command -v pdftotext &>/dev/null; then
     printf "  Install poppler-utils for better PDF support? [y/N] "
     read -r _install_poppler
     if [[ "$_install_poppler" =~ ^[Yy] ]]; then
-        if [ "$IS_ISH" -eq 1 ] || command -v apk &>/dev/null; then
+        if [ "$IS_MACOS" -eq 1 ] && command -v brew &>/dev/null; then
+            brew install poppler 2>/dev/null || warn "poppler install failed — will use fallback"
+        elif [ "$IS_ISH" -eq 1 ] || command -v apk &>/dev/null; then
             apk add --no-cache poppler-utils 2>/dev/null || warn "poppler-utils install failed — will use fallback"
         elif [ "$IS_PROOT" -eq 1 ] && command -v apt &>/dev/null; then
             # proot-distro Ubuntu: apt works, pkg does not
@@ -223,7 +243,9 @@ if ! command -v mosquitto_pub &>/dev/null; then
     printf "  Install mosquitto-clients for MQTT support? [y/N] "
     read -r _install_mqtt
     if [[ "$_install_mqtt" =~ ^[Yy] ]]; then
-        if [ "$IS_ISH" -eq 1 ] || command -v apk &>/dev/null; then
+        if [ "$IS_MACOS" -eq 1 ] && command -v brew &>/dev/null; then
+            brew install mosquitto 2>/dev/null || warn "mosquitto-clients install failed"
+        elif [ "$IS_ISH" -eq 1 ] || command -v apk &>/dev/null; then
             apk add --no-cache mosquitto-clients 2>/dev/null || warn "mosquitto-clients install failed"
         elif [ "$IS_PROOT" -eq 1 ] && command -v apt &>/dev/null; then
             apt install -y -qq mosquitto-clients 2>/dev/null || warn "mosquitto-clients install failed"
@@ -298,7 +320,11 @@ fi
 _OLLAMA_AVAILABLE=0
 if [ "$IS_ISH" -eq 1 ]; then
     info "iSH detected — skipping local LLM backend (Ollama/llama-server)"
-    info "George will use cloud providers for all inference"
+    info "George will use cloud providers or remote nodes for inference"
+elif [ "$IS_MACOS" -eq 1 ]; then
+    info "macOS detected — skipping local Ollama/llama-server install"
+    info "George will use cloud providers or a remote inference node"
+    info "  Set up remote: lodge /remote setup user@gpu-server"
 else
 info "Checking Ollama..."
 if ! command -v ollama &>/dev/null; then
@@ -327,7 +353,7 @@ else
     warn "Ollama not available — local models disabled"
     warn "Use cloud providers: export GEORGE_PROVIDER=google"
 fi
-fi  # end IS_ISH guard for Ollama
+fi  # end IS_ISH/IS_MACOS guard for Ollama
 
 # ── 2b. Cloud provider setup ─────────────────────────────────
 # If Ollama isn't available (or the user prefers cloud), offer to
@@ -402,11 +428,21 @@ _offer_cloud_setup() {
 }
 
 if [ "$IS_ISH" -eq 1 ]; then
-    info "Cloud provider required — iSH cannot run local models"
+    info "Cloud provider or remote node required — iSH cannot run local models"
     _offer_cloud_setup
     if [ -z "$_INSTALL_PROVIDER" ]; then
         warn "No provider configured — George will need one before it can run"
         warn "  Set later: lodge /provider use google"
+        warn "  Or connect to a remote GPU: lodge /remote setup user@gpu-server"
+    fi
+elif [ "$IS_MACOS" -eq 1 ]; then
+    info "Cloud provider or remote inference node recommended for macOS"
+    _offer_cloud_setup
+    if [ -z "$_INSTALL_PROVIDER" ]; then
+        echo ""
+        info "You can also use a remote GPU node instead of a cloud provider:"
+        info "  lodge /remote setup user@gpu-server"
+        info "  lodge /remote connect"
     fi
 elif [ "$_OLLAMA_AVAILABLE" -eq 0 ]; then
     warn "No local LLM backend — cloud provider required"
@@ -497,7 +533,8 @@ fi
 # memory overhead, and native GGUF support. Ollama manages GGUF
 # downloads and serves as the fallback backend.
 # Skip on iSH — no native binaries can run.
-if [ "$IS_ISH" -eq 1 ]; then
+# Skip on macOS — use remote inference instead.
+if [ "$IS_ISH" -eq 1 ] || [ "$IS_MACOS" -eq 1 ]; then
     _llama_server_found=0
 else
 info "Checking llama-server..."
@@ -530,7 +567,7 @@ if [ "$_llama_server_found" -eq 0 ]; then
     info "  cmake -B build && cmake --build build --config Release -j\$(nproc)"
     info "Then set LLAMA_CPP_SERVER_BIN in lodge.conf or your environment."
 fi
-fi  # end IS_ISH guard for llama-server
+fi  # end IS_ISH/IS_MACOS guard for llama-server
 
 # Source model library for model creation
 source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true

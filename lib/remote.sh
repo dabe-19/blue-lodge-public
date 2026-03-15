@@ -33,6 +33,10 @@ REMOTE_LLAMACPP_BIN="${REMOTE_LLAMACPP_BIN:-}"
 REMOTE_LLAMACPP_GPU_LAYERS="${REMOTE_LLAMACPP_GPU_LAYERS:-99}"
 REMOTE_LLAMACPP_CTX_SIZE="${REMOTE_LLAMACPP_CTX_SIZE:-32768}"
 REMOTE_OLLAMA_DATA="${REMOTE_OLLAMA_DATA:-/usr/share/ollama/.ollama}"
+# GPU backend + performance flags (auto-detected on first remote connect)
+REMOTE_GPU_BACKEND="${REMOTE_GPU_BACKEND:-auto}"          # auto|cuda|vulkan|cpu
+REMOTE_KV_CACHE_TYPE="${REMOTE_KV_CACHE_TYPE:-auto}"      # auto|f16|q8_0|q4_0
+REMOTE_FLASH_ATTN="${REMOTE_FLASH_ATTN:-auto}"            # auto|on|off
 
 # ── Internal State ─────────────────────────────────────────────
 _REMOTE_PID_FILE="${GEORGE_DIR}/remote-tunnel.pid"
@@ -55,7 +59,8 @@ _remote_load_config() {
             REMOTE_LOCAL_OLLAMA_PORT|REMOTE_LOCAL_LLAMACPP_PORT|\
             REMOTE_FORWARD_HOST|\
             REMOTE_LLAMACPP_BIN|REMOTE_LLAMACPP_GPU_LAYERS|\
-            REMOTE_LLAMACPP_CTX_SIZE|REMOTE_OLLAMA_DATA)
+            REMOTE_LLAMACPP_CTX_SIZE|REMOTE_OLLAMA_DATA|\
+            REMOTE_GPU_BACKEND|REMOTE_KV_CACHE_TYPE|REMOTE_FLASH_ATTN)
                 printf -v "$_key" '%s' "$_val"
                 ;;
         esac
@@ -80,6 +85,9 @@ REMOTE_LLAMACPP_BIN=${REMOTE_LLAMACPP_BIN}
 REMOTE_LLAMACPP_GPU_LAYERS=${REMOTE_LLAMACPP_GPU_LAYERS}
 REMOTE_LLAMACPP_CTX_SIZE=${REMOTE_LLAMACPP_CTX_SIZE}
 REMOTE_OLLAMA_DATA=${REMOTE_OLLAMA_DATA}
+REMOTE_GPU_BACKEND=${REMOTE_GPU_BACKEND}
+REMOTE_KV_CACHE_TYPE=${REMOTE_KV_CACHE_TYPE}
+REMOTE_FLASH_ATTN=${REMOTE_FLASH_ATTN}
 EOF
     chmod 600 "${GEORGE_DIR}/remote.conf"
 }
@@ -249,6 +257,53 @@ _remote_exec() {
         "$REMOTE_SSH_TARGET" "$_cmd"
 }
 
+# ── Auto-detect GPU backend on the remote node ────────────────
+# Sets REMOTE_GPU_BACKEND (cuda|vulkan|cpu) and resolves
+# REMOTE_KV_CACHE_TYPE / REMOTE_FLASH_ATTN when set to "auto".
+_remote_detect_gpu() {
+    [ "$REMOTE_GPU_BACKEND" != "auto" ] && [ "$REMOTE_KV_CACHE_TYPE" != "auto" ] \
+        && [ "$REMOTE_FLASH_ATTN" != "auto" ] && return 0
+
+    local _gpu_info
+    _gpu_info=$(_remote_exec "
+        if command -v nvidia-smi &>/dev/null; then
+            echo 'cuda'
+        elif command -v vulkaninfo &>/dev/null; then
+            echo 'vulkan'
+        elif lspci 2>/dev/null | grep -qi 'vga.*amd\|vga.*radeon'; then
+            echo 'vulkan'
+        elif lspci 2>/dev/null | grep -qi 'vga.*nvidia'; then
+            echo 'cuda'
+        else
+            echo 'cpu'
+        fi
+    " 2>/dev/null)
+
+    [ -z "$_gpu_info" ] && _gpu_info="cpu"
+
+    if [ "$REMOTE_GPU_BACKEND" = "auto" ]; then
+        REMOTE_GPU_BACKEND="$_gpu_info"
+    fi
+
+    # CUDA: enable flash attention + quantized KV cache (q8_0)
+    # Vulkan/CPU: flash attention NOT supported, KV cache stays f16
+    if [ "$REMOTE_FLASH_ATTN" = "auto" ]; then
+        case "$REMOTE_GPU_BACKEND" in
+            cuda)   REMOTE_FLASH_ATTN="on" ;;
+            *)      REMOTE_FLASH_ATTN="off" ;;
+        esac
+    fi
+    if [ "$REMOTE_KV_CACHE_TYPE" = "auto" ]; then
+        case "$REMOTE_GPU_BACKEND" in
+            cuda)   REMOTE_KV_CACHE_TYPE="q8_0" ;;
+            *)      REMOTE_KV_CACHE_TYPE="f16" ;;
+        esac
+    fi
+
+    _remote_save_config
+    return 0
+}
+
 # ── Auto-detect remote llama-server binary path ───────────────
 # Strategy 1: extract path from running process (most reliable).
 # Strategy 2: check common install locations via SSH.
@@ -392,12 +447,26 @@ _remote_restart_llamacpp() {
     local _ctx="${REMOTE_LLAMACPP_CTX_SIZE:-32768}"
     local _bin="$REMOTE_LLAMACPP_BIN"
 
+    # Auto-detect GPU capabilities for performance flags
+    _remote_detect_gpu 2>/dev/null
+
+    # Build performance flags based on detected GPU
+    local _perf_args=""
+    if [ "${REMOTE_FLASH_ATTN:-off}" = "on" ]; then
+        _perf_args+="--flash-attn "
+    fi
+    if [ -n "${REMOTE_KV_CACHE_TYPE:-}" ] && [ "${REMOTE_KV_CACHE_TYPE}" != "f16" ]; then
+        _perf_args+="--cache-type-k ${REMOTE_KV_CACHE_TYPE} --cache-type-v ${REMOTE_KV_CACHE_TYPE} "
+    fi
+
     # Determine chat template args based on model
     local _extra_args=""
     # Qwen 3.5 models need --chat-template-kwargs for thinking mode
     if [[ "$_model_name" =~ qwen35.*think ]]; then
         _extra_args="--chat-template-kwargs '{\"enable_thinking\":true}'"
     fi
+    # Append GPU performance flags
+    _extra_args="${_extra_args:+$_extra_args }${_perf_args}"
 
     # Kill existing llama-server and start new one on the remote.
     # Prefer systemd restart when a service unit exists, so we don't
