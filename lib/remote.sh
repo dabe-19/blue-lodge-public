@@ -252,18 +252,23 @@ _remote_port_in_use() {
 # and the old autossh is holding the tunneled port.
 _remote_sweep_orphans() {
     local _killed=0
+    local _pids=""
 
+    # Collect PIDs from BOTH methods (pgrep may return empty in proot
+    # even when it exits 0, so always also try ps aux | grep).
     # Pattern 1: any autossh process (we only ever run autossh for tunnels)
-    local _pids
-    _pids=$(pgrep -f 'autossh' 2>/dev/null) || \
-    _pids=$(ps aux 2>/dev/null | grep -E '[a]utossh' | awk '{print $2}')
+    _pids=$(pgrep -f 'autossh' 2>/dev/null)
+    _pids="$_pids $(ps aux 2>/dev/null | grep -E '[a]utossh' | awk '{print $2}')"
+    # Deduplicate
+    _pids=$(echo "$_pids" | tr ' ' '\n' | sort -u | grep -v '^$')
     for _p in $_pids; do
         kill "$_p" 2>/dev/null && _killed=1
     done
 
     # Pattern 2: ssh -N (tunnel-only) with port forwarding
-    _pids=$(pgrep -f 'ssh.*-N' 2>/dev/null) || \
-    _pids=$(ps aux 2>/dev/null | grep -E '[s]sh.*-N' | awk '{print $2}')
+    _pids=$(pgrep -f 'ssh.*-N' 2>/dev/null)
+    _pids="$_pids $(ps aux 2>/dev/null | grep -E '[s]sh.*-N' | awk '{print $2}')"
+    _pids=$(echo "$_pids" | tr ' ' '\n' | sort -u | grep -v '^$')
     for _p in $_pids; do
         kill "$_p" 2>/dev/null && _killed=1
     done
@@ -272,17 +277,17 @@ _remote_sweep_orphans() {
     if [ "$_killed" -eq 1 ]; then
         sleep 1
         # Force-kill anything still alive
-        for _p in $(pgrep -f 'autossh' 2>/dev/null) $(pgrep -f 'ssh.*-N' 2>/dev/null); do
+        local _stragglers
+        _stragglers=$(pgrep -f 'autossh' 2>/dev/null)
+        _stragglers="$_stragglers $(ps aux 2>/dev/null | grep -E '[a]utossh' | awk '{print $2}')"
+        _stragglers="$_stragglers $(pgrep -f 'ssh.*-N' 2>/dev/null)"
+        _stragglers="$_stragglers $(ps aux 2>/dev/null | grep -E '[s]sh.*-N' | awk '{print $2}')"
+        _stragglers=$(echo "$_stragglers" | tr ' ' '\n' | sort -u | grep -v '^$')
+        for _p in $_stragglers; do
             kill -9 "$_p" 2>/dev/null
         done
         sleep 0.5
     fi
-
-    # Force-kill stragglers
-    for _p in $(pgrep -f 'autossh.*-[NL]' 2>/dev/null) \
-              $(pgrep -f 'ssh.*-N.*-L' 2>/dev/null); do
-        kill -9 "$_p" 2>/dev/null
-    done
 
     return 0
 }
@@ -359,6 +364,7 @@ _remote_exec() {
     _ssh_args+=(-p "${REMOTE_SSH_PORT:-22}")
     [ -f "$REMOTE_SSH_KEY" ] && _ssh_args+=(-i "$REMOTE_SSH_KEY")
     [ -n "${REMOTE_JUMP_HOST:-}" ] && _ssh_args+=(-J "$REMOTE_JUMP_HOST")
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] _remote_exec: ssh ${_ssh_args[*]} $REMOTE_SSH_TARGET '${_cmd:0:80}...'" >&2
     ssh "${_ssh_args[@]}" "$REMOTE_SSH_TARGET" "$_cmd"
 }
 
