@@ -673,8 +673,13 @@ remote_connect() {
         echo "" >&2
         echo "  Diagnostics:" >&2
         [ -f "$_ssh_err" ] && [ -s "$_ssh_err" ] && echo "  SSH stderr: $(cat "$_ssh_err")" >&2
+        if [ -n "${REMOTE_JUMP_HOST:-}" ]; then
+            echo "  Jump host topology: $REMOTE_JUMP_HOST → $target" >&2
+            echo "  Ensure your SSH key is authorized on $target:" >&2
+            echo "    /remote setup" >&2
+        fi
         echo "  Try: /remote diagnose" >&2
-        echo "  Or manually: ssh -v -N -L ${REMOTE_LOCAL_OLLAMA_PORT}:${_fwd_host}:${REMOTE_OLLAMA_PORT} $target" >&2
+        echo "  Or manually: ssh -v -N ${REMOTE_JUMP_HOST:+-J $REMOTE_JUMP_HOST }-L ${REMOTE_LOCAL_OLLAMA_PORT}:${_fwd_host}:${REMOTE_OLLAMA_PORT} $target" >&2
     fi
 
     rm -f "$_ssh_err" 2>/dev/null
@@ -776,8 +781,10 @@ remote_tunnel_status() {
 
 # ── Setup: interactive SSH key configuration ───────────────────
 # Usage: remote_setup_ssh [user@host]
+# When REMOTE_JUMP_HOST is set, uses ProxyJump (-J) to reach the target
+# through the jump box.  Called without args, uses REMOTE_SSH_TARGET.
 remote_setup_ssh() {
-    local target="${1:-}"
+    local target="${1:-$REMOTE_SSH_TARGET}"
 
     if [ -z "$target" ]; then
         echo "Usage: /remote setup user@host"
@@ -789,6 +796,15 @@ remote_setup_ssh() {
     if ! command -v ssh-keygen >/dev/null 2>&1; then
         echo "ERROR: ssh-keygen not found. Install openssh-client." >&2
         return 1
+    fi
+
+    # Build common SSH args (port, key, ProxyJump)
+    local _setup_ssh_args=(-o ConnectTimeout=10 -p "$REMOTE_SSH_PORT")
+    [ -f "$REMOTE_SSH_KEY" ] && _setup_ssh_args+=(-i "$REMOTE_SSH_KEY")
+    [ -n "${REMOTE_JUMP_HOST:-}" ] && _setup_ssh_args+=(-J "$REMOTE_JUMP_HOST")
+
+    if [ -n "${REMOTE_JUMP_HOST:-}" ]; then
+        echo "Jump host: $REMOTE_JUMP_HOST → $target"
     fi
 
     # Generate key if it doesn't exist
@@ -806,7 +822,7 @@ remote_setup_ssh() {
 
     # Test if key is already authorized on remote
     echo "Testing existing key..."
-    if ssh -o BatchMode=yes -o ConnectTimeout=5 -p "$REMOTE_SSH_PORT" -i "$REMOTE_SSH_KEY" "$target" "echo ok" &>/dev/null; then
+    if ssh -o BatchMode=yes "${_setup_ssh_args[@]}" "$target" "echo ok" &>/dev/null; then
         echo "SSH key already authorized on $target."
         REMOTE_SSH_TARGET="$target"
         _remote_save_config
@@ -819,22 +835,32 @@ remote_setup_ssh() {
     # Key not yet authorized — copy it to remote
     if command -v ssh-copy-id >/dev/null 2>&1; then
         echo "Copying key to $target..."
-        ssh-copy-id -i "$REMOTE_SSH_KEY" -p "$REMOTE_SSH_PORT" "$target"
+        local _copy_args=(-i "$REMOTE_SSH_KEY" -p "$REMOTE_SSH_PORT")
+        [ -n "${REMOTE_JUMP_HOST:-}" ] && _copy_args+=(-o "ProxyJump=$REMOTE_JUMP_HOST")
+        ssh-copy-id "${_copy_args[@]}" "$target"
         local rc=$?
         if [ $rc -ne 0 ]; then
             echo "ERROR: ssh-copy-id failed. You may need to copy manually:" >&2
-            echo "  cat ${REMOTE_SSH_KEY}.pub | ssh -p $REMOTE_SSH_PORT $target 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys'" >&2
+            if [ -n "${REMOTE_JUMP_HOST:-}" ]; then
+                echo "  cat ${REMOTE_SSH_KEY}.pub | ssh -J $REMOTE_JUMP_HOST -p $REMOTE_SSH_PORT $target 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys'" >&2
+            else
+                echo "  cat ${REMOTE_SSH_KEY}.pub | ssh -p $REMOTE_SSH_PORT $target 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys'" >&2
+            fi
             return 1
         fi
     else
         echo "ssh-copy-id not found. Copy key manually:"
-        echo "  cat ${REMOTE_SSH_KEY}.pub | ssh -p $REMOTE_SSH_PORT $target 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys'"
+        if [ -n "${REMOTE_JUMP_HOST:-}" ]; then
+            echo "  cat ${REMOTE_SSH_KEY}.pub | ssh -J $REMOTE_JUMP_HOST -p $REMOTE_SSH_PORT $target 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys'"
+        else
+            echo "  cat ${REMOTE_SSH_KEY}.pub | ssh -p $REMOTE_SSH_PORT $target 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys'"
+        fi
         return 1
     fi
 
     # Test connection
     echo "Testing connection..."
-    if ssh -o BatchMode=yes -o ConnectTimeout=5 -p "$REMOTE_SSH_PORT" -i "$REMOTE_SSH_KEY" "$target" "echo ok" &>/dev/null; then
+    if ssh -o BatchMode=yes "${_setup_ssh_args[@]}" "$target" "echo ok" &>/dev/null; then
         echo "SSH connection successful."
         REMOTE_SSH_TARGET="$target"
         _remote_save_config
@@ -937,6 +963,7 @@ remote_diagnose() {
     # 1. Config
     echo "── Configuration ──"
     printf "  %-22s %s\n" "SSH target:" "${target:-<not set>}"
+    printf "  %-22s %s\n" "Jump host:" "${REMOTE_JUMP_HOST:-<direct>}"
     printf "  %-22s %s\n" "SSH port:" "${REMOTE_SSH_PORT:-22}"
     printf "  %-22s %s\n" "SSH key:" "$REMOTE_SSH_KEY"
     printf "  %-22s %s\n" "Forward host:" "$_fwd"
@@ -965,11 +992,13 @@ remote_diagnose() {
     if [ -z "$target" ]; then
         echo "  SKIP: No target configured. Run /remote setup user@host"
     else
-        echo "  Testing: ssh -o BatchMode=yes $target ..."
+        local _diag_ssh_args=(-v -o BatchMode=yes -o ConnectTimeout=10)
+        _diag_ssh_args+=(-p "${REMOTE_SSH_PORT:-22}")
+        [ -f "$REMOTE_SSH_KEY" ] && _diag_ssh_args+=(-i "$REMOTE_SSH_KEY")
+        [ -n "${REMOTE_JUMP_HOST:-}" ] && _diag_ssh_args+=(-J "$REMOTE_JUMP_HOST")
+        echo "  Testing: ssh ${_diag_ssh_args[*]} $target ..."
         local _ssh_out
-        _ssh_out=$(ssh -v -o BatchMode=yes -o ConnectTimeout=5 \
-            -p "${REMOTE_SSH_PORT:-22}" -i "$REMOTE_SSH_KEY" \
-            "$target" "echo __DIAGNOSE_OK__" 2>&1)
+        _ssh_out=$(ssh "${_diag_ssh_args[@]}" "$target" "echo __DIAGNOSE_OK__" 2>&1)
         if echo "$_ssh_out" | grep -q "__DIAGNOSE_OK__"; then
             echo "  Auth: OK"
         else
@@ -978,7 +1007,8 @@ remote_diagnose() {
             echo "  Verbose output (last 20 lines):"
             echo "$_ssh_out" | tail -20 | sed 's/^/    /'
             echo ""
-            echo "  Fix: Run /remote setup $target to copy your key."
+            echo "  Fix: Run /remote setup to copy your key."
+            [ -n "${REMOTE_JUMP_HOST:-}" ] && echo "  (Key will be copied through jump host: $REMOTE_JUMP_HOST)"
             return 1
         fi
     fi
@@ -1047,12 +1077,14 @@ remote_diagnose() {
     if [ -n "$target" ] && ! _remote_tunnel_alive; then
         echo "── Quick Tunnel Test ──"
         echo "  Attempting brief SSH tunnel to test forwarding..."
+        local _test_ssh_args=(-v -o BatchMode=yes -o ConnectTimeout=10 -o ExitOnForwardFailure=yes)
+        _test_ssh_args+=(-p "${REMOTE_SSH_PORT:-22}")
+        [ -f "$REMOTE_SSH_KEY" ] && _test_ssh_args+=(-i "$REMOTE_SSH_KEY")
+        [ -n "${REMOTE_JUMP_HOST:-}" ] && _test_ssh_args+=(-J "$REMOTE_JUMP_HOST")
+        _test_ssh_args+=(-L "${_ollama_port}:${_fwd}:${_remote_ollama}")
+        _test_ssh_args+=(-N)
         local _test_out
-        _test_out=$(ssh -v -o BatchMode=yes -o ConnectTimeout=5 \
-            -o ExitOnForwardFailure=yes \
-            -p "${REMOTE_SSH_PORT:-22}" -i "$REMOTE_SSH_KEY" \
-            -L "${_ollama_port}:${_fwd}:${_remote_ollama}" \
-            -N "$target" 2>&1 &)
+        _test_out=$(ssh "${_test_ssh_args[@]}" "$target" 2>&1 &)
         local _test_pid=$!
         sleep 3
         if curl -sf --max-time 2 "http://127.0.0.1:${_ollama_port}/api/tags" &>/dev/null; then
