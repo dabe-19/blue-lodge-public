@@ -28,6 +28,11 @@ REMOTE_LOCAL_LLAMACPP_PORT="${REMOTE_LOCAL_LLAMACPP_PORT:-8080}"
 # "localhost" when the SSH target IS the GPU server.
 # An IP like "192.168.30.10" when tunnelling through a jump host.
 REMOTE_FORWARD_HOST="${REMOTE_FORWARD_HOST:-localhost}"
+# Jump host (SSH ProxyJump): when the GPU server is behind a NAT/firewall,
+# set this to user@jump-ip so SSH hops through it.  When set,
+# REMOTE_SSH_TARGET should be the GPU server's address as seen from the
+# jump box (e.g. the internal IP or hostname that resolves only there).
+REMOTE_JUMP_HOST="${REMOTE_JUMP_HOST:-}"
 # Remote llama-server configuration (used for model switching via SSH)
 REMOTE_LLAMACPP_BIN="${REMOTE_LLAMACPP_BIN:-}"
 REMOTE_LLAMACPP_GPU_LAYERS="${REMOTE_LLAMACPP_GPU_LAYERS:-99}"
@@ -57,7 +62,7 @@ _remote_load_config() {
             REMOTE_SSH_TARGET|REMOTE_SSH_PORT|REMOTE_SSH_KEY|\
             REMOTE_OLLAMA_PORT|REMOTE_LLAMACPP_PORT|\
             REMOTE_LOCAL_OLLAMA_PORT|REMOTE_LOCAL_LLAMACPP_PORT|\
-            REMOTE_FORWARD_HOST|\
+            REMOTE_FORWARD_HOST|REMOTE_JUMP_HOST|\
             REMOTE_LLAMACPP_BIN|REMOTE_LLAMACPP_GPU_LAYERS|\
             REMOTE_LLAMACPP_CTX_SIZE|REMOTE_OLLAMA_DATA|\
             REMOTE_GPU_BACKEND|REMOTE_KV_CACHE_TYPE|REMOTE_FLASH_ATTN)
@@ -81,6 +86,7 @@ REMOTE_LLAMACPP_PORT=${REMOTE_LLAMACPP_PORT}
 REMOTE_LOCAL_OLLAMA_PORT=${REMOTE_LOCAL_OLLAMA_PORT}
 REMOTE_LOCAL_LLAMACPP_PORT=${REMOTE_LOCAL_LLAMACPP_PORT}
 REMOTE_FORWARD_HOST=${REMOTE_FORWARD_HOST}
+REMOTE_JUMP_HOST=${REMOTE_JUMP_HOST}
 REMOTE_LLAMACPP_BIN=${REMOTE_LLAMACPP_BIN}
 REMOTE_LLAMACPP_GPU_LAYERS=${REMOTE_LLAMACPP_GPU_LAYERS}
 REMOTE_LLAMACPP_CTX_SIZE=${REMOTE_LLAMACPP_CTX_SIZE}
@@ -222,6 +228,7 @@ _remote_ssh_base_args() {
                       -o ExitOnForwardFailure=yes)
     _REMOTE_SSH_ARGS+=(-p "$REMOTE_SSH_PORT")
     [ -f "$REMOTE_SSH_KEY" ] && _REMOTE_SSH_ARGS+=(-i "$REMOTE_SSH_KEY")
+    [ -n "${REMOTE_JUMP_HOST:-}" ] && _REMOTE_SSH_ARGS+=(-J "$REMOTE_JUMP_HOST")
     _REMOTE_SSH_ARGS+=(-L "${REMOTE_LOCAL_OLLAMA_PORT}:${_fwd_host}:${REMOTE_OLLAMA_PORT}")
     _REMOTE_SSH_ARGS+=(-L "${REMOTE_LOCAL_LLAMACPP_PORT}:${_fwd_host}:${REMOTE_LLAMACPP_PORT}")
 }
@@ -248,13 +255,16 @@ _remote_watchdog() {
 # Usage: _remote_exec "command string"
 # Returns the command's exit code, stdout goes to stdout.
 # Requires an active tunnel (REMOTE_SSH_TARGET set + key available).
+# When REMOTE_JUMP_HOST is set, uses ProxyJump (-J) to hop through
+# the jump box and run the command on the actual GPU server.
 _remote_exec() {
     local _cmd="$1"
     [ -z "$REMOTE_SSH_TARGET" ] && return 1
-    ssh -o BatchMode=yes -o ConnectTimeout=10 \
-        -p "${REMOTE_SSH_PORT:-22}" \
-        -i "$REMOTE_SSH_KEY" \
-        "$REMOTE_SSH_TARGET" "$_cmd"
+    local _ssh_args=(-o BatchMode=yes -o ConnectTimeout=10)
+    _ssh_args+=(-p "${REMOTE_SSH_PORT:-22}")
+    [ -f "$REMOTE_SSH_KEY" ] && _ssh_args+=(-i "$REMOTE_SSH_KEY")
+    [ -n "${REMOTE_JUMP_HOST:-}" ] && _ssh_args+=(-J "$REMOTE_JUMP_HOST")
+    ssh "${_ssh_args[@]}" "$REMOTE_SSH_TARGET" "$_cmd"
 }
 
 # ── Auto-detect GPU backend on the remote node ────────────────
@@ -305,39 +315,49 @@ _remote_detect_gpu() {
 }
 
 # ── Auto-detect remote llama-server binary path ───────────────
-# Strategy 1: extract path from running process (most reliable).
-# Strategy 2: check common install locations via SSH.
-# Strategy 3: command -v (in PATH).
+# Multi-strategy detection.  CRITICAL: use single-quoted strings
+# for _remote_exec so the local shell does NOT expand $variables —
+# they must be expanded by the REMOTE shell (on the GPU server).
 _remote_detect_llamacpp_bin() {
     [ -n "$REMOTE_LLAMACPP_BIN" ] && return 0
     local _bin
 
-    # Strategy 1: parse running llama-server process on the remote
-    _bin=$(_remote_exec "ps -eo args 2>/dev/null | grep '[l]lama-server' | head -1 | awk '{print \$1}'" 2>/dev/null)
+    # Strategy 1: read binary path from /proc for a running llama-server.
+    # /proc/PID/exe is a kernel symlink to the actual binary on disk.
+    _bin=$(_remote_exec 'pid=$(pgrep -o -f "llama-server" 2>/dev/null); [ -n "$pid" ] && readlink -f /proc/$pid/exe 2>/dev/null' 2>/dev/null)
+    if [ -n "$_bin" ] && [[ "$_bin" == *llama-server* ]]; then
+        REMOTE_LLAMACPP_BIN="$_bin"
+        _remote_save_config
+        return 0
+    fi
+
+    # Strategy 2: parse ps output (single-quoted — no local expansion)
+    _bin=$(_remote_exec 'ps -eo args 2>/dev/null | awk "/[l]lama-server/{print \$1; exit}"' 2>/dev/null)
+    if [ -n "$_bin" ] && [[ "$_bin" == /* ]]; then
+        REMOTE_LLAMACPP_BIN="$_bin"
+        _remote_save_config
+        return 0
+    fi
+
+    # Strategy 3: probe common install paths (single-quoted: $HOME
+    # is expanded by the REMOTE shell, not local)
+    _bin=$(_remote_exec 'for p in $HOME/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server /opt/llama.cpp/build/bin/llama-server /usr/bin/llama-server; do [ -x "$p" ] && echo "$p" && break; done' 2>/dev/null)
     if [ -n "$_bin" ]; then
         REMOTE_LLAMACPP_BIN="$_bin"
         _remote_save_config
         return 0
     fi
 
-    # Strategy 2: probe common install paths (includes default from
-    # inference-server-models.sh: \$HOME/llama.cpp/build/bin/llama-server)
-    _bin=$(_remote_exec "
-        for p in \
-            \$HOME/llama.cpp/build/bin/llama-server \
-            /usr/local/bin/llama-server \
-            /opt/llama.cpp/build/bin/llama-server \
-            /usr/bin/llama-server; do
-            [ -x \"\$p\" ] && echo \"\$p\" && break
-        done" 2>/dev/null)
+    # Strategy 4: command -v (binary in PATH)
+    _bin=$(_remote_exec 'command -v llama-server 2>/dev/null' 2>/dev/null)
     if [ -n "$_bin" ]; then
         REMOTE_LLAMACPP_BIN="$_bin"
         _remote_save_config
         return 0
     fi
 
-    # Strategy 3: command -v (binary in PATH)
-    _bin=$(_remote_exec "command -v llama-server 2>/dev/null" 2>/dev/null)
+    # Strategy 5: brute-force find (slow but catches unusual locations)
+    _bin=$(_remote_exec 'find /home /usr/local /opt -name llama-server -executable -type f 2>/dev/null | head -1' 2>/dev/null)
     if [ -n "$_bin" ]; then
         REMOTE_LLAMACPP_BIN="$_bin"
         _remote_save_config

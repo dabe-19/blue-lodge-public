@@ -5102,6 +5102,13 @@ _cmd_remote() {
         config)
             if [ -z "$arg2" ]; then
                 ui_section "Remote llama-server Config"
+                ui_section "Remote SSH Topology"
+                printf "  %-30s %s\n" "REMOTE_SSH_TARGET:" "${REMOTE_SSH_TARGET:-<not set>}"
+                printf "  %-30s %s\n" "REMOTE_JUMP_HOST:" "${REMOTE_JUMP_HOST:-<direct — no jump>}"
+                printf "  %-30s %s\n" "REMOTE_FORWARD_HOST:" "${REMOTE_FORWARD_HOST:-localhost}"
+                printf "  %-30s %s\n" "REMOTE_SSH_PORT:" "${REMOTE_SSH_PORT:-22}"
+                echo ""
+                ui_section "Remote llama-server Config"
                 printf "  %-30s %s\n" "REMOTE_LLAMACPP_BIN:" "${REMOTE_LLAMACPP_BIN:-<auto-detect>}"
                 printf "  %-30s %s\n" "REMOTE_LLAMACPP_GPU_LAYERS:" "${REMOTE_LLAMACPP_GPU_LAYERS:-99}"
                 printf "  %-30s %s\n" "REMOTE_LLAMACPP_CTX_SIZE:" "${REMOTE_LLAMACPP_CTX_SIZE:-32768}"
@@ -5112,6 +5119,7 @@ _cmd_remote() {
                 echo ""
                 ui_dim "  Usage: /remote config <key> <value>"
                 ui_dim "  Example: /remote config REMOTE_LLAMACPP_BIN /home/dabe/llama.cpp/build/bin/llama-server"
+                ui_dim "  Example: /remote config REMOTE_JUMP_HOST dabe@192.168.86.18"
             else
                 local _cfg_key _cfg_val
                 _cfg_key=$(echo "$arg2" | awk '{print $1}')
@@ -5119,14 +5127,15 @@ _cmd_remote() {
                 case "$_cfg_key" in
                     REMOTE_LLAMACPP_BIN|REMOTE_LLAMACPP_GPU_LAYERS|\
                     REMOTE_LLAMACPP_CTX_SIZE|REMOTE_OLLAMA_DATA|\
-                    REMOTE_GPU_BACKEND|REMOTE_KV_CACHE_TYPE|REMOTE_FLASH_ATTN)
+                    REMOTE_GPU_BACKEND|REMOTE_KV_CACHE_TYPE|REMOTE_FLASH_ATTN|\
+                    REMOTE_JUMP_HOST|REMOTE_FORWARD_HOST|REMOTE_SSH_PORT)
                         printf -v "$_cfg_key" '%s' "$_cfg_val"
                         _remote_save_config
                         ui_ok "$_cfg_key set to: $_cfg_val"
                         ;;
                     *)
                         ui_err "Unknown config key: $_cfg_key"
-                        ui_dim "  Valid keys: REMOTE_LLAMACPP_BIN, REMOTE_LLAMACPP_GPU_LAYERS, REMOTE_LLAMACPP_CTX_SIZE, REMOTE_OLLAMA_DATA, REMOTE_GPU_BACKEND, REMOTE_KV_CACHE_TYPE, REMOTE_FLASH_ATTN"
+                        ui_dim "  Valid keys: REMOTE_JUMP_HOST, REMOTE_FORWARD_HOST, REMOTE_SSH_PORT, REMOTE_LLAMACPP_BIN, REMOTE_LLAMACPP_GPU_LAYERS, REMOTE_LLAMACPP_CTX_SIZE, REMOTE_OLLAMA_DATA, REMOTE_GPU_BACKEND, REMOTE_KV_CACHE_TYPE, REMOTE_FLASH_ATTN"
                         ;;
                 esac
             fi
@@ -5145,6 +5154,7 @@ _cmd_remote() {
             fi
             local _scp_args=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -P "${REMOTE_SSH_PORT:-22}")
             [ -f "$REMOTE_SSH_KEY" ] && _scp_args+=(-i "$REMOTE_SSH_KEY")
+            [ -n "${REMOTE_JUMP_HOST:-}" ] && _scp_args+=(-J "$REMOTE_JUMP_HOST")
             ui_info "Copying install script to $REMOTE_SSH_TARGET..."
             scp "${_scp_args[@]}" "$_install_script" "${REMOTE_SSH_TARGET}:inference-server-install.sh" 2>/dev/null || {
                 ui_err "SCP failed"; return 1
