@@ -11,7 +11,7 @@ The SSH target may be the GPU server directly, or a **jump host**
 ```
 ┌─────────────────────┐     SSH Tunnel      ┌──────────────────┐      ┌─────────────────────────┐
 │   George Node       │ ──────────────────── │  Jump Host       │ ──── │  GPU Server (VM)        │
-│   Galaxy Fold /     │   localhost ports    │  192.168.86.18   │ NAT  │  192.168.30.10          │
+│   Phone / Laptop /  │   localhost ports    │  192.168.1.10    │ NAT  │  10.0.0.100             │
 │   Crostini / WSL    │                      │  (hypervisor)    │      │  AMD 5700 XT Vulkan     │
 │                     │                      └──────────────────┘      │                         │
 │   lib/llm.sh        │ ◄─── HTTP ────────────────────────────────────► │  llama-server :8080     │
@@ -22,7 +22,7 @@ The SSH target may be the GPU server directly, or a **jump host**
 ```
 
 When the SSH target IS the GPU server, set `REMOTE_FORWARD_HOST=localhost` (default).
-When tunnelling through a jump host, set `REMOTE_FORWARD_HOST=192.168.30.10`.
+When tunnelling through a jump host, set `REMOTE_FORWARD_HOST=10.0.0.100`.
 
 ## Tiers
 
@@ -63,7 +63,7 @@ If the remote machine doesn't have Ollama + llama-server yet, deploy from
 any George device:
 
 ```bash
-./scripts/inference-server-deploy.sh dabe@192.168.86.18 --install --models qwen3:8b
+./scripts/inference-server-deploy.sh user@192.168.1.10 --install --models qwen3:8b
 ```
 
 Or SSH in manually and run:
@@ -78,7 +78,7 @@ See [GPU Server Setup](#gpu-server-setup) for details.
 ### 1. Configure SSH Access (from George)
 
 ```bash
-/remote setup dabe@192.168.86.18
+/remote setup user@192.168.1.10
 ```
 
 Generates an ed25519 key (if needed), copies it to the remote, and tests the connection.
@@ -88,7 +88,7 @@ Generates an ed25519 key (if needed), copies it to the remote, and tests the con
 If the SSH target is a jump host (not the GPU server itself):
 
 ```bash
-/remote forward 192.168.30.10
+/remote forward 10.0.0.100
 ```
 
 Skip this step if the SSH target IS the GPU server.
@@ -133,12 +133,12 @@ The tunnel is the foundation. It uses standard SSH port forwarding.
 
 **Direct topology** (SSH target = GPU server):
 ```
-ssh -N -f -L 8080:localhost:8080 dabe@gpu-server
+ssh -N -f -L 8080:localhost:8080 user@gpu-server
 ```
 
 **Jump host topology** (SSH target = hypervisor, GPU server behind NAT):
 ```
-ssh -N -f -L 8080:192.168.30.10:8080 dabe@192.168.86.18
+ssh -N -f -L 8080:10.0.0.100:8080 user@192.168.1.10
 ```
 
 The `REMOTE_FORWARD_HOST` config controls the middle part of `-L local:FORWARD_HOST:remote`.
@@ -280,13 +280,13 @@ Three scripts handle the full lifecycle:
 
 ```bash
 # Copy scripts + run install + pull qwen3:8b + start llama-server:
-./scripts/inference-server-deploy.sh dabe@192.168.86.18 --install --models qwen3:8b
+./scripts/inference-server-deploy.sh user@192.168.1.10 --install --models qwen3:8b
 
 # Just copy scripts (manual install later):
-./scripts/inference-server-deploy.sh dabe@192.168.86.18
+./scripts/inference-server-deploy.sh user@192.168.1.10
 
 # Custom SSH port or key:
-./scripts/inference-server-deploy.sh dabe@192.168.86.18 --port 2222 --key ~/.ssh/gpu_key
+./scripts/inference-server-deploy.sh user@192.168.1.10 --port 2222 --key ~/.ssh/gpu_key
 ```
 
 ### What `inference-server-install.sh` does
@@ -364,17 +364,17 @@ The 5700 XT has 8GB. Q4_K_M fits: 8B (~4.5GB), 12B (~7GB). Larger models need mo
 ### Direct: George → GPU Server (same subnet)
 
 ```
-Fold 7 (192.168.86.50)  ──SSH──►  GPU Server (192.168.86.100)
-  REMOTE_SSH_TARGET=dabe@192.168.86.100
+Phone (192.168.1.50)  ──SSH──►  GPU Server (192.168.1.100)
+  REMOTE_SSH_TARGET=user@192.168.1.100
   REMOTE_FORWARD_HOST=localhost              ← default
 ```
 
 ### Jump Host: George → Hypervisor → GPU VM (different subnets)
 
 ```
-Fold 7 (192.168.86.x)  ──SSH──►  Hypervisor (192.168.86.18)  ──NAT──►  GPU VM (192.168.30.10)
-  REMOTE_SSH_TARGET=dabe@192.168.86.18
-  REMOTE_FORWARD_HOST=192.168.30.10         ← must be set
+Phone (192.168.1.x)  ──SSH──►  Hypervisor (192.168.1.10)  ──NAT──►  GPU VM (10.0.0.100)
+  REMOTE_SSH_TARGET=user@192.168.1.10
+  REMOTE_FORWARD_HOST=10.0.0.100            ← must be set
 ```
 
 The SSH tunnel `-L 8080:FORWARD_HOST:8080` adapts to either topology.

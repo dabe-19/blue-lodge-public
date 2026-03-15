@@ -148,6 +148,8 @@ User types "/ask How do I reverse a list in Python?"
 | `lib/wallet.sh` | Crypto wallet lookups | — |
 | `lib/gsuite.sh` | Google OAuth2 integration | — |
 | `lib/pgp.sh` | PGP key management | — |
+| `lib/remote.sh` | SSH tunnel, remote GPU inference | [Inference Fabric](INFERENCE_FABRIC.md) |
+| `lib/mcp_server_inference.sh` | MCP server for remote inference | [Inference Fabric](INFERENCE_FABRIC.md) |
 | `lib/container.sh` | proot-distro wrapper | — |
 
 ---
@@ -201,6 +203,8 @@ These existing docs cover additional topics:
 | [PGP_SIGNING.md](PGP_SIGNING.md) | PGP setup and signing |
 | [VITALS.md](VITALS.md) | System monitoring reference |
 | [TUNING.md](TUNING.md) | Performance tuning guide |
+| [INFERENCE_FABRIC.md](INFERENCE_FABRIC.md) | Remote GPU inference via SSH tunnel |
+| [PROXMOX_GPU_SETUP.md](PROXMOX_GPU_SETUP.md) | Proxmox GPU passthrough + VM setup |
 
 ---
 

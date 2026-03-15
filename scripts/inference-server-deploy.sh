@@ -7,9 +7,9 @@
 # (phone, laptop, Crostini, etc.).
 #
 # Usage:
-#   ./scripts/inference-server-deploy.sh dabe@192.168.86.18
-#   ./scripts/inference-server-deploy.sh dabe@192.168.86.18 --install
-#   ./scripts/inference-server-deploy.sh dabe@192.168.86.18 --install --models qwen3:8b
+#   ./scripts/inference-server-deploy.sh user@gpu-server
+#   ./scripts/inference-server-deploy.sh user@gpu-server --install
+#   ./scripts/inference-server-deploy.sh user@gpu-server --install --models qwen3:8b
 #
 # Flags:
 #   --install           Run inference-server-install.sh after copying
@@ -54,9 +54,9 @@ while [ $# -gt 0 ]; do
             _dim "--key <path>        SSH identity file"
             echo ""
             printf "Examples:\n"
-            _dim "$0 dabe@192.168.86.18"
-            _dim "$0 dabe@192.168.86.18 --install"
-            _dim "$0 dabe@192.168.86.18 --install --models qwen3:8b"
+            _dim "$0 user@gpu-server"
+            _dim "$0 user@gpu-server --install"
+            _dim "$0 user@gpu-server --install --models qwen3:8b"
             exit 0
             ;;
         -*)

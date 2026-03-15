@@ -101,7 +101,7 @@ fi
 ### A4. Install Blue Lodge
 
 ```bash
-git clone https://github.com/dabe-19/blue-lodge.git ~/blue-lodge
+git clone https://github.com/<your-fork>/blue-lodge.git ~/blue-lodge
 bash ~/blue-lodge/install.sh
 source ~/.bashrc
 ```
@@ -190,7 +190,7 @@ fi
 ### B4. Install Blue Lodge (inside Ubuntu)
 
 ```bash
-git clone https://github.com/dabe-19/blue-lodge.git ~/blue-lodge
+git clone https://github.com/<your-fork>/blue-lodge.git ~/blue-lodge
 bash ~/blue-lodge/install.sh
 source ~/.bashrc
 ```
@@ -275,7 +275,7 @@ proot-distro login ubuntu
 # Inside Ubuntu:
 apt update && apt upgrade -y
 apt install -y curl git jq sqlite3 gawk bc build-essential
-git clone https://github.com/dabe-19/blue-lodge.git ~/blue-lodge
+git clone https://github.com/<your-fork>/blue-lodge.git ~/blue-lodge
 bash ~/blue-lodge/install.sh
 source ~/.bashrc
 ```
@@ -383,7 +383,7 @@ curl -s http://127.0.0.1:11434/api/tags | jq .
 ### C4. Install Blue Lodge
 
 ```bash
-git clone https://github.com/dabe-19/blue-lodge.git ~/blue-lodge
+git clone https://github.com/<your-fork>/blue-lodge.git ~/blue-lodge
 bash ~/blue-lodge/install.sh
 source ~/.bashrc
 ```
