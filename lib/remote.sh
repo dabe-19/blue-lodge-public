@@ -181,17 +181,39 @@ _remote_check_port_conflicts() {
     # Check Ollama port
     if _remote_port_in_use "$_ollama_port"; then
         local _new_port=$(( _ollama_port + 10000 ))
-        echo "Port $_ollama_port in use (local Ollama?). Remapping tunnel to $_new_port." >&2
-        REMOTE_LOCAL_OLLAMA_PORT="$_new_port"
-        _remapped=1
+        # Verify the remapped port is also free
+        if _remote_port_in_use "$_new_port"; then
+            echo "Port $_ollama_port AND $_new_port both in use. Killing stale tunnels..." >&2
+            _remote_sweep_orphans
+        fi
+        # Re-check after sweep
+        if _remote_port_in_use "$_ollama_port"; then
+            if ! _remote_port_in_use "$_new_port"; then
+                echo "Port $_ollama_port in use (local Ollama?). Remapping tunnel to $_new_port." >&2
+                REMOTE_LOCAL_OLLAMA_PORT="$_new_port"
+                _remapped=1
+            else
+                echo "ERROR: Cannot bind Ollama tunnel — ports $_ollama_port and $_new_port both in use." >&2
+            fi
+        fi
     fi
 
     # Check llama-server port
     if _remote_port_in_use "$_llama_port"; then
         local _new_port=$(( _llama_port + 10000 ))
-        echo "Port $_llama_port in use. Remapping tunnel to $_new_port." >&2
-        REMOTE_LOCAL_LLAMACPP_PORT="$_new_port"
-        _remapped=1
+        if _remote_port_in_use "$_new_port"; then
+            echo "Port $_llama_port AND $_new_port both in use. Killing stale tunnels..." >&2
+            _remote_sweep_orphans
+        fi
+        if _remote_port_in_use "$_llama_port"; then
+            if ! _remote_port_in_use "$_new_port"; then
+                echo "Port $_llama_port in use. Remapping tunnel to $_new_port." >&2
+                REMOTE_LOCAL_LLAMACPP_PORT="$_new_port"
+                _remapped=1
+            else
+                echo "ERROR: Cannot bind llama-server tunnel — ports $_llama_port and $_new_port both in use." >&2
+            fi
+        fi
     fi
 
     if [ "$_remapped" -eq 1 ]; then
@@ -203,21 +225,64 @@ _remote_check_port_conflicts() {
 # Tries multiple methods for proot/Termux compatibility.
 _remote_port_in_use() {
     local _port="$1"
-    # Method 1: ss (fast, but needs /proc/net — fails in proot)
+    # Method 1: /dev/tcp (bash built-in, works in proot without netlink)
+    # This is the most reliable method in restricted environments.
+    (echo >/dev/tcp/127.0.0.1/"$_port") 2>/dev/null && return 0
+    # Method 2: ss (fast, needs /proc/net — fails in proot)
     if command -v ss >/dev/null 2>&1; then
         ss -tlnH "sport = :$_port" 2>/dev/null | grep -q "$_port" && return 0
     fi
-    # Method 2: netstat (may not be installed)
+    # Method 3: netstat (may not be installed)
     if command -v netstat >/dev/null 2>&1; then
         netstat -tln 2>/dev/null | grep -q ":$_port " && return 0
     fi
-    # Method 3: curl probe (most reliable in proot/Termux)
+    # Method 4: curl probe (works on HTTP ports; Ollama returns 200 on /)
     if command -v curl >/dev/null 2>&1; then
-        curl -sf --max-time 1 "http://127.0.0.1:$_port/" >/dev/null 2>&1 && return 0
+        curl -so /dev/null --max-time 1 "http://127.0.0.1:$_port/" 2>/dev/null && return 0
     fi
-    # Method 4: /dev/tcp (bash built-in, not available everywhere)
-    (echo >/dev/tcp/127.0.0.1/"$_port") 2>/dev/null && return 0
     return 1
+}
+
+# ── Sweep orphaned tunnel processes ────────────────────────────
+# Kills ALL autossh and ssh -N (tunnel-only) processes that look like
+# ours, regardless of which target they were started for.  This handles
+# the case where the SSH target changed (e.g. jump host reconfigured)
+# and the old autossh is holding the tunneled port.
+_remote_sweep_orphans() {
+    local _killed=0
+
+    # Pattern 1: any autossh process (we only ever run autossh for tunnels)
+    local _pids
+    _pids=$(pgrep -f 'autossh' 2>/dev/null) || \
+    _pids=$(ps aux 2>/dev/null | grep -E '[a]utossh' | awk '{print $2}')
+    for _p in $_pids; do
+        kill "$_p" 2>/dev/null && _killed=1
+    done
+
+    # Pattern 2: ssh -N (tunnel-only) with port forwarding
+    _pids=$(pgrep -f 'ssh.*-N' 2>/dev/null) || \
+    _pids=$(ps aux 2>/dev/null | grep -E '[s]sh.*-N' | awk '{print $2}')
+    for _p in $_pids; do
+        kill "$_p" 2>/dev/null && _killed=1
+    done
+
+    # Give processes time to die, then force-kill any survivors
+    if [ "$_killed" -eq 1 ]; then
+        sleep 1
+        # Force-kill anything still alive
+        for _p in $(pgrep -f 'autossh' 2>/dev/null) $(pgrep -f 'ssh.*-N' 2>/dev/null); do
+            kill -9 "$_p" 2>/dev/null
+        done
+        sleep 0.5
+    fi
+
+    # Force-kill stragglers
+    for _p in $(pgrep -f 'autossh.*-[NL]' 2>/dev/null) \
+              $(pgrep -f 'ssh.*-N.*-L' 2>/dev/null); do
+        kill -9 "$_p" 2>/dev/null
+    done
+
+    return 0
 }
 
 # ── Build SSH args (shared by connect + watchdog) ─────────────
@@ -574,18 +639,18 @@ remote_connect() {
         remote_disconnect 2>/dev/null
     fi
 
-    # Sweep orphaned SSH tunnels from prior sessions whose PID files
-    # were lost (e.g. Termux killed, lodge crash).  Pattern matches
-    # the -N (tunnel-only) flag we always pass.
-    local _orphan_pid
-    _orphan_pid=$(_remote_find_tunnel_pid "$target" 2>/dev/null)
-    if [ -n "$_orphan_pid" ]; then
-        kill "$_orphan_pid" 2>/dev/null
-        sleep 0.5
-        kill -9 "$_orphan_pid" 2>/dev/null
-    fi
-    # Also sweep any orphaned autossh for this target
-    pkill -f "autossh.*${target}" 2>/dev/null || true
+    # Sweep ALL orphaned SSH tunnels from prior sessions whose PID
+    # files were lost (e.g. Termux killed, lodge crash, target changed).
+    # Kill any autossh or ssh -N process with port-forwarding args,
+    # not just the current target — the target may have changed.
+    _remote_sweep_orphans
+
+    # Reset local ports to defaults before re-checking conflicts.
+    # Previous sessions may have remapped to offset ports (e.g. 21434)
+    # due to a local Ollama running at the time, but that situation
+    # may have changed.  Always start fresh.
+    REMOTE_LOCAL_OLLAMA_PORT=11434
+    REMOTE_LOCAL_LLAMACPP_PORT=8080
 
     # Unlock passphrase-protected key via ssh-agent if needed
     _remote_ensure_agent || {
@@ -714,10 +779,10 @@ remote_disconnect() {
         rm -f "$_REMOTE_PID_FILE"
     fi
 
-    # Also kill any lingering autossh if it was used
-    if [ -n "$REMOTE_SSH_TARGET" ]; then
-        pkill -f "autossh.*${REMOTE_SSH_TARGET}" 2>/dev/null
-    fi
+    # Kill ALL lingering autossh/ssh tunnel processes, not just the
+    # current target — handles cases where the target was reconfigured
+    # and stale processes from the old target are still running.
+    _remote_sweep_orphans
 
     _REMOTE_CONNECTED=0
 
