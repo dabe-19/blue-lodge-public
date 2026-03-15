@@ -616,14 +616,20 @@ _remote_restart_llamacpp() {
     fi
 
     if [ "$_has_systemd" = "yes" ] && [ "$_has_sudo" = "yes" ]; then
-        # Use systemd override to inject the model path, then restart
+        # Use systemd override to inject the model path, then restart.
+        # Resolve nproc BEFORE writing the unit file — systemd ExecStart
+        # does not support shell command substitution like $().
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: using systemd override to restart llama-server" >&2
+        local _threads
+        _threads=$(_remote_exec "nproc 2>/dev/null || echo 4" 2>/dev/null)
+        _threads="${_threads//[^0-9]/}"  # strip non-digits
+        [ -z "$_threads" ] && _threads=4
         _restart_result=$(_remote_exec "
             sudo mkdir -p /etc/systemd/system/llama-server.service.d
             sudo tee /etc/systemd/system/llama-server.service.d/model.conf > /dev/null << 'EOF'
 [Service]
 ExecStart=
-ExecStart=$_bin -m '$_remote_gguf' --port $_port --host 0.0.0.0 --jinja -ngl $_ngl -c $_ctx --threads \$(nproc 2>/dev/null || echo 4) --parallel 1 $_extra_args
+ExecStart=$_bin -m $_remote_gguf --port $_port --host 0.0.0.0 --jinja -ngl $_ngl -c $_ctx --threads $_threads --parallel 1 $_extra_args
 EOF
             sudo systemctl daemon-reload
             sudo systemctl restart llama-server
