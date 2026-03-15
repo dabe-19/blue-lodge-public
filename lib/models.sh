@@ -111,11 +111,16 @@ _MODELS_REGISTRY=(
     # These models need a GPU server (e.g., 5700 XT via Vulkan).
     # Pulled via Ollama on remote, served via llama-server.
     # George injects identity/thinking/sampling at request time — no Modelfiles needed remotely.
+    "granite4-tiny-7b^blue-lodge-granite4:7b^hf.co/unsloth/granite-4.0-h-tiny-GGUF:UD-Q6_K_XL^instruct^0^none^<|end_of_text|>^0.0^1.0^0.0^32768^8192^1.0^0^0.0^IBM Granite 4 Tiny instruct. Fast structured output.^central"
 
     # Qwen3 8B: HF recommends temp=0.6, top_p=0.95, top_k=20 for thinking.
     # Instruct: temp=0.15 for faithful persona adherence (same as edge Qwen3).
     "qwen3-8b-think^blue-lodge-qwen3-think:8b^qwen3:8b^thinking^1^qwen^<|im_end|>^0.6^1.3^0.8^32768^32768^0.95^20^0.0^Qwen3 8B thinking. Central GPU tier.^central"
     "qwen3-8b-inst^blue-lodge-qwen3-inst:8b^qwen3:8b^instruct^0^none^<|im_end|>^0.15^1.0^0.0^32768^16384^0.8^20^0.0^Qwen3 8B instruct. Central GPU tier.^central"
+
+    "qwen35-9b-inst^blue-lodge-qwen35-inst:9b^hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL^instruct^0^none^<|im_end|>^1.0^1.0^1.5^32768^16384^0.95^20^0.0^Qwen35 9B instruct. Central GPU tier.^central"
+
+    # Llama 3.1 8B: Proven at 60.57 tok/s on 5700 XT Vulkan (Q4_K_M, 33/33 layers).
 
     # Llama 3.1 8B: Proven at 60.57 tok/s on 5700 XT Vulkan (Q4_K_M, 33/33 layers).
     "llama31-8b^blue-lodge-llama31:8b^llama3.1:8b^instruct^0^none^<|eot_id|>^0.6^1.1^0.0^32768^8192^0.9^40^0.0^Meta Llama 3.1 8B. Proven 60 tok/s on 5700 XT Vulkan.^central"
