@@ -76,12 +76,50 @@ EOF
 # ── Load on source ─────────────────────────────────────────────
 _remote_load_config
 
+# ── Find tunnel PID using multiple methods ─────────────────────
+# pgrep often fails in proot (no /proc).  Try multiple approaches.
+_remote_find_tunnel_pid() {
+    local _target="$1"
+    local _pid
+
+    # Method 1: pgrep (works on full Linux, may fail in proot)
+    _pid=$(pgrep -n -f "ssh.*-N.*${_target}" 2>/dev/null)
+    [ -n "$_pid" ] && { echo "$_pid"; return 0; }
+
+    # Method 2: ps + grep (proot-compatible)
+    _pid=$(ps aux 2>/dev/null | grep "ssh.*-N.*${_target}" | grep -v grep | awk '{print $2}' | tail -1)
+    [ -n "$_pid" ] && { echo "$_pid"; return 0; }
+
+    # Method 3: ps -ef fallback (busybox/Alpine)
+    _pid=$(ps -ef 2>/dev/null | grep "ssh.*-N.*${_target}" | grep -v grep | awk '{print $2}' | tail -1)
+    [ -n "$_pid" ] && { echo "$_pid"; return 0; }
+
+    # Method 4: for autossh, find the autossh parent process
+    _pid=$(pgrep -n -f "autossh.*${_target}" 2>/dev/null)
+    [ -n "$_pid" ] && { echo "$_pid"; return 0; }
+    _pid=$(ps aux 2>/dev/null | grep "autossh.*${_target}" | grep -v grep | awk '{print $2}' | tail -1)
+    [ -n "$_pid" ] && { echo "$_pid"; return 0; }
+
+    return 1
+}
+
 # ── Check if SSH tunnel PID is alive ───────────────────────────
 _remote_tunnel_alive() {
     [ -f "$_REMOTE_PID_FILE" ] || return 1
     local _pid
     _pid=$(cat "$_REMOTE_PID_FILE" 2>/dev/null)
-    [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null
+    [ -n "$_pid" ] || return 1
+
+    # Try kill -0 first (standard)
+    kill -0 "$_pid" 2>/dev/null && return 0
+
+    # Fallback: check /proc (may work even when kill -0 doesn't in proot)
+    [ -d "/proc/$_pid" ] 2>/dev/null && return 0
+
+    # Fallback: ps check
+    ps -p "$_pid" >/dev/null 2>&1 && return 0
+
+    return 1
 }
 
 # ── Ensure ssh-agent is running and key is loaded ─────────────
@@ -136,17 +174,25 @@ _remote_check_port_conflicts() {
     fi
 }
 
-# Check if a TCP port is in use (bound by any process)
+# Check if a TCP port is in use (bound by any process).
+# Tries multiple methods for proot/Termux compatibility.
 _remote_port_in_use() {
     local _port="$1"
+    # Method 1: ss (fast, but needs /proc/net — fails in proot)
     if command -v ss >/dev/null 2>&1; then
-        ss -tlnH "sport = :$_port" 2>/dev/null | grep -q "$_port"
-    elif command -v netstat >/dev/null 2>&1; then
-        netstat -tln 2>/dev/null | grep -q ":$_port "
-    else
-        # Fallback: try to connect
-        (echo >/dev/tcp/127.0.0.1/"$_port") 2>/dev/null
+        ss -tlnH "sport = :$_port" 2>/dev/null | grep -q "$_port" && return 0
     fi
+    # Method 2: netstat (may not be installed)
+    if command -v netstat >/dev/null 2>&1; then
+        netstat -tln 2>/dev/null | grep -q ":$_port " && return 0
+    fi
+    # Method 3: curl probe (most reliable in proot/Termux)
+    if command -v curl >/dev/null 2>&1; then
+        curl -sf --max-time 1 "http://127.0.0.1:$_port/" >/dev/null 2>&1 && return 0
+    fi
+    # Method 4: /dev/tcp (bash built-in, not available everywhere)
+    (echo >/dev/tcp/127.0.0.1/"$_port") 2>/dev/null && return 0
+    return 1
 }
 
 # ── Build SSH args (shared by connect + watchdog) ─────────────
@@ -170,8 +216,9 @@ _remote_watchdog() {
         if ! _remote_tunnel_alive; then
             _remote_ssh_base_args
             ssh -f "${_REMOTE_SSH_ARGS[@]}" "$_target" 2>/dev/null
+            sleep 1
             local _pid
-            _pid=$(pgrep -n -f "ssh.*-N.*${_target}" 2>/dev/null)
+            _pid=$(_remote_find_tunnel_pid "$_target")
             [ -n "$_pid" ] && echo "$_pid" > "$_REMOTE_PID_FILE"
         fi
         sleep 15
@@ -229,9 +276,11 @@ remote_connect() {
         return 1
     fi
 
-    # Find the SSH tunnel PID (most recent ssh -N process to this target)
+    # Find the SSH tunnel PID.
+    # autossh -f backgrounds; give it a moment to spawn the ssh child.
+    sleep 1
     local _pid
-    _pid=$(pgrep -n -f "ssh.*-N.*${target}" 2>/dev/null)
+    _pid=$(_remote_find_tunnel_pid "$target")
     if [ -n "$_pid" ]; then
         mkdir -p "$GEORGE_DIR"
         echo "$_pid" > "$_REMOTE_PID_FILE"
