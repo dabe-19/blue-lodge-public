@@ -28,6 +28,11 @@ REMOTE_LOCAL_LLAMACPP_PORT="${REMOTE_LOCAL_LLAMACPP_PORT:-8080}"
 # "localhost" when the SSH target IS the GPU server.
 # An IP like "192.168.30.10" when tunnelling through a jump host.
 REMOTE_FORWARD_HOST="${REMOTE_FORWARD_HOST:-localhost}"
+# Remote llama-server configuration (used for model switching via SSH)
+REMOTE_LLAMACPP_BIN="${REMOTE_LLAMACPP_BIN:-}"
+REMOTE_LLAMACPP_GPU_LAYERS="${REMOTE_LLAMACPP_GPU_LAYERS:-99}"
+REMOTE_LLAMACPP_CTX_SIZE="${REMOTE_LLAMACPP_CTX_SIZE:-32768}"
+REMOTE_OLLAMA_DATA="${REMOTE_OLLAMA_DATA:-/usr/share/ollama/.ollama}"
 
 # ── Internal State ─────────────────────────────────────────────
 _REMOTE_PID_FILE="${GEORGE_DIR}/remote-tunnel.pid"
@@ -48,7 +53,9 @@ _remote_load_config() {
             REMOTE_SSH_TARGET|REMOTE_SSH_PORT|REMOTE_SSH_KEY|\
             REMOTE_OLLAMA_PORT|REMOTE_LLAMACPP_PORT|\
             REMOTE_LOCAL_OLLAMA_PORT|REMOTE_LOCAL_LLAMACPP_PORT|\
-            REMOTE_FORWARD_HOST)
+            REMOTE_FORWARD_HOST|\
+            REMOTE_LLAMACPP_BIN|REMOTE_LLAMACPP_GPU_LAYERS|\
+            REMOTE_LLAMACPP_CTX_SIZE|REMOTE_OLLAMA_DATA)
                 printf -v "$_key" '%s' "$_val"
                 ;;
         esac
@@ -69,6 +76,10 @@ REMOTE_LLAMACPP_PORT=${REMOTE_LLAMACPP_PORT}
 REMOTE_LOCAL_OLLAMA_PORT=${REMOTE_LOCAL_OLLAMA_PORT}
 REMOTE_LOCAL_LLAMACPP_PORT=${REMOTE_LOCAL_LLAMACPP_PORT}
 REMOTE_FORWARD_HOST=${REMOTE_FORWARD_HOST}
+REMOTE_LLAMACPP_BIN=${REMOTE_LLAMACPP_BIN}
+REMOTE_LLAMACPP_GPU_LAYERS=${REMOTE_LLAMACPP_GPU_LAYERS}
+REMOTE_LLAMACPP_CTX_SIZE=${REMOTE_LLAMACPP_CTX_SIZE}
+REMOTE_OLLAMA_DATA=${REMOTE_OLLAMA_DATA}
 EOF
     chmod 600 "${GEORGE_DIR}/remote.conf"
 }
@@ -223,6 +234,191 @@ _remote_watchdog() {
         fi
         sleep 15
     done
+}
+
+# ── Execute a command on the remote node via SSH ───────────────
+# Usage: _remote_exec "command string"
+# Returns the command's exit code, stdout goes to stdout.
+# Requires an active tunnel (REMOTE_SSH_TARGET set + key available).
+_remote_exec() {
+    local _cmd="$1"
+    [ -z "$REMOTE_SSH_TARGET" ] && return 1
+    ssh -o BatchMode=yes -o ConnectTimeout=10 \
+        -p "${REMOTE_SSH_PORT:-22}" \
+        -i "$REMOTE_SSH_KEY" \
+        "$REMOTE_SSH_TARGET" "$_cmd"
+}
+
+# ── Auto-detect remote llama-server binary path ───────────────
+# Probes common locations on the remote node.
+_remote_detect_llamacpp_bin() {
+    [ -n "$REMOTE_LLAMACPP_BIN" ] && return 0
+    local _bin
+    _bin=$(_remote_exec "command -v llama-server 2>/dev/null || \
+        for p in \$HOME/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server /opt/llama.cpp/build/bin/llama-server; do \
+            [ -x \"\$p\" ] && echo \"\$p\" && break; \
+        done" 2>/dev/null)
+    if [ -n "$_bin" ]; then
+        REMOTE_LLAMACPP_BIN="$_bin"
+        _remote_save_config
+        return 0
+    fi
+    return 1
+}
+
+# ── Resolve GGUF blob path on the remote via Ollama manifest ──
+# Ollama stores models as blobs referenced by sha256 digests in
+# manifests. This queries the remote Ollama's show API (through
+# the tunnel) to find the actual GGUF file path on disk.
+# Args: $1 — model base name (Ollama tag, e.g. "granite4:3b" or HF ref)
+# Returns: absolute path to GGUF file on the remote, or empty.
+_remote_resolve_gguf() {
+    local _model_ref="$1"
+    local _ollama_data="${REMOTE_OLLAMA_DATA:-/usr/share/ollama/.ollama}"
+
+    # Strategy 1: Use Ollama show API (through tunnel) to get the digest,
+    # then map to the blob path on the remote filesystem.
+    local _show_resp
+    _show_resp=$(curl -sf --max-time 10 "$OLLAMA_URL/api/show" \
+        -d "{\"name\":\"$_model_ref\"}" 2>/dev/null)
+    if [ -n "$_show_resp" ]; then
+        local _digest
+        _digest=$(echo "$_show_resp" | jq -r \
+            '.details.digest // .modelinfo["general.file_type"] // empty' 2>/dev/null)
+        # The modelfile FROM line contains the blob reference
+        local _from_blob
+        _from_blob=$(echo "$_show_resp" | jq -r '.modelfile // ""' 2>/dev/null \
+            | grep -oP '(?<=FROM\s)/\S+' | head -1)
+        if [ -n "$_from_blob" ]; then
+            echo "$_from_blob"
+            return 0
+        fi
+    fi
+
+    # Strategy 2: SSH and find the GGUF by searching Ollama's blob store
+    # for the model's manifest → extract the layer digest → resolve blob path.
+    local _gguf_path
+    _gguf_path=$(_remote_exec "
+        _data='${_ollama_data}'
+        # Try to find the manifest for the model
+        _ref='${_model_ref}'
+        # Normalize: 'hf.co/...' → search for the tag in manifests
+        for _manifest in \$(find \"\$_data/models/manifests\" -name '*' -type f 2>/dev/null | head -20); do
+            _layer=\$(jq -r '.layers[] | select(.mediaType | test(\"model\")) | .digest' \"\$_manifest\" 2>/dev/null | head -1)
+            if [ -n \"\$_layer\" ]; then
+                _blob=\"\$_data/models/blobs/\$(echo \"\$_layer\" | tr ':' '-')\"
+                if [ -f \"\$_blob\" ]; then
+                    echo \"\$_blob\"
+                    exit 0
+                fi
+            fi
+        done
+        # Strategy 3: Find by partial name match in blob filenames
+        _match=\$(find \"\$_data/models/blobs\" -type f -name 'sha256-*' -size +500M 2>/dev/null | head -1)
+        [ -n \"\$_match\" ] && echo \"\$_match\"
+    " 2>/dev/null)
+
+    [ -n "$_gguf_path" ] && echo "$_gguf_path"
+}
+
+# ── Restart llama-server on the remote node with a new model ──
+# Kills the existing llama-server and starts it with the new GGUF.
+# Args: $1 — model name/key from the registry
+# Returns 0 on success (remote server healthy), 1 on failure.
+_remote_restart_llamacpp() {
+    local _model_name="$1"
+    local _model_base="$2"  # Ollama tag or HF ref from registry
+
+    [ -z "$REMOTE_SSH_TARGET" ] && {
+        echo "ERROR: No remote SSH target configured" >&2
+        return 1
+    }
+
+    # Auto-detect remote llama-server binary if not configured
+    if [ -z "$REMOTE_LLAMACPP_BIN" ]; then
+        _remote_detect_llamacpp_bin || {
+            echo "ERROR: Cannot find llama-server on remote. Set REMOTE_LLAMACPP_BIN in /remote config." >&2
+            return 1
+        }
+    fi
+
+    # Resolve GGUF path on remote
+    local _remote_gguf=""
+
+    # First try: resolve via Ollama API (model is pulled on remote)
+    if [ -n "$_model_base" ]; then
+        _remote_gguf=$(_remote_resolve_gguf "$_model_base")
+    fi
+
+    # Fallback: ask the remote to find it via Ollama show CLI
+    if [ -z "$_remote_gguf" ] && [ -n "$_model_base" ]; then
+        _remote_gguf=$(_remote_exec "ollama show --modelfile '$_model_base' 2>/dev/null | grep -oP '(?<=FROM\s)/\S+' | head -1" 2>/dev/null)
+    fi
+
+    if [ -z "$_remote_gguf" ]; then
+        echo "ERROR: Cannot resolve GGUF for '$_model_name' on remote" >&2
+        echo "  Ensure the model is pulled on the remote: /remote pull $_model_base" >&2
+        return 1
+    fi
+
+    local _port="${REMOTE_LLAMACPP_PORT:-8080}"
+    local _ngl="${REMOTE_LLAMACPP_GPU_LAYERS:-99}"
+    local _ctx="${REMOTE_LLAMACPP_CTX_SIZE:-32768}"
+    local _bin="$REMOTE_LLAMACPP_BIN"
+
+    # Determine chat template args based on model
+    local _extra_args=""
+    # Qwen 3.5 models need --chat-template-kwargs for thinking mode
+    if [[ "$_model_name" =~ qwen35.*think ]]; then
+        _extra_args="--chat-template-kwargs '{\"enable_thinking\":true}'"
+    fi
+
+    # Kill existing llama-server and start new one on the remote
+    local _restart_result
+    _restart_result=$(_remote_exec "
+        # Kill existing llama-server
+        _pid=\$(pgrep -f 'llama-server.*--port' 2>/dev/null | head -1)
+        if [ -n \"\$_pid\" ]; then
+            kill \"\$_pid\" 2>/dev/null
+            sleep 2
+            kill -9 \"\$_pid\" 2>/dev/null
+            wait \"\$_pid\" 2>/dev/null
+        fi
+        sleep 1
+        # Start new llama-server in background
+        nohup $_bin -m '$_remote_gguf' \\
+            --port $_port --host 0.0.0.0 \\
+            --jinja -ngl $_ngl -c $_ctx \\
+            --threads \$(nproc 2>/dev/null || echo 4) \\
+            --parallel 1 $_extra_args \\
+            > /tmp/llama-server.log 2>&1 &
+        echo \$!
+    " 2>/dev/null)
+
+    if [ -z "$_restart_result" ]; then
+        echo "ERROR: Failed to restart llama-server on remote" >&2
+        return 1
+    fi
+
+    # Wait for healthy status (model loading can take 10-30s on GPU)
+    local _wait=0
+    local _max_wait=60
+    while [ "$_wait" -lt "$_max_wait" ]; do
+        sleep 2
+        _wait=$((_wait + 2))
+        local _health
+        _health=$(curl -sf --max-time 3 "$LLAMA_CPP_URL/health" 2>/dev/null)
+        if echo "$_health" | grep -q '"ok"' 2>/dev/null; then
+            return 0
+        fi
+        # Still loading — keep waiting
+        if echo "$_health" | grep -q '"loading"' 2>/dev/null; then
+            continue
+        fi
+    done
+
+    echo "WARNING: Remote llama-server started (PID $_restart_result) but not healthy after ${_max_wait}s" >&2
+    return 1
 }
 
 # ── Connect: open SSH tunnel ───────────────────────────────────

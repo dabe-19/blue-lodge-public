@@ -878,12 +878,40 @@ _models_switch() {
     _backend=$(_llm_detect_backend 2>/dev/null || echo "ollama")
 
     if [ "${_REMOTE_CONNECTED:-0}" -eq 1 ]; then
-        # ── Remote mode: model is on the remote server ─────────
-        # No local GGUF needed — the remote llama-server or Ollama
-        # already has the model loaded. Just update tracking.
-        _MODELS_ACTIVE="$target"
-        LODGE_MODEL="$target"
-        return 0
+        # ── Remote mode: switch model on the remote server ─────
+        # Resolve registry entry for the target model
+        local _remote_base=""
+        for entry in "${_MODELS_REGISTRY[@]}"; do
+            _models_parse_entry "$entry"
+            if [ "$_ME_NAME" = "$target" ] || [ "$_ME_KEY" = "$target" ]; then
+                _remote_base="$_ME_BASE"
+                break
+            fi
+        done
+
+        if [ "$_backend" = "llamacpp" ]; then
+            # llama-server on remote: SSH and restart with new model
+            if declare -f _remote_restart_llamacpp &>/dev/null; then
+                ui_dim "Restarting remote llama-server with $target..."
+                if _remote_restart_llamacpp "$target" "$_remote_base"; then
+                    _MODELS_ACTIVE="$target"
+                    LODGE_MODEL="$target"
+                    ui_ok "Remote model switched to $target"
+                    return 0
+                else
+                    ui_err "Remote llama-server restart failed for $target"
+                    return 1
+                fi
+            else
+                ui_err "Remote restart not available (remote.sh not loaded)"
+                return 1
+            fi
+        else
+            # Ollama on remote: API hot-swap works through the tunnel.
+            # Fall through to the Ollama path below — $OLLAMA_URL
+            # already points to the tunnel endpoint.
+            :
+        fi
     fi
 
     if [ "$_backend" = "llamacpp" ]; then

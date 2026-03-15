@@ -5097,8 +5097,36 @@ _cmd_remote() {
             remote_secure_key ;;
         diagnose)
             remote_diagnose ;;
+        config)
+            if [ -z "$arg2" ]; then
+                ui_section "Remote llama-server Config"
+                printf "  %-30s %s\n" "REMOTE_LLAMACPP_BIN:" "${REMOTE_LLAMACPP_BIN:-<auto-detect>}"
+                printf "  %-30s %s\n" "REMOTE_LLAMACPP_GPU_LAYERS:" "${REMOTE_LLAMACPP_GPU_LAYERS:-99}"
+                printf "  %-30s %s\n" "REMOTE_LLAMACPP_CTX_SIZE:" "${REMOTE_LLAMACPP_CTX_SIZE:-32768}"
+                printf "  %-30s %s\n" "REMOTE_OLLAMA_DATA:" "${REMOTE_OLLAMA_DATA:-/usr/share/ollama/.ollama}"
+                echo ""
+                ui_dim "  Usage: /remote config <key> <value>"
+                ui_dim "  Example: /remote config REMOTE_LLAMACPP_BIN /home/dabe/llama.cpp/build/bin/llama-server"
+            else
+                local _cfg_key _cfg_val
+                _cfg_key=$(echo "$arg2" | awk '{print $1}')
+                _cfg_val=$(echo "$arg2" | awk '{$1=""; print}' | sed 's/^[[:space:]]*//')
+                case "$_cfg_key" in
+                    REMOTE_LLAMACPP_BIN|REMOTE_LLAMACPP_GPU_LAYERS|\
+                    REMOTE_LLAMACPP_CTX_SIZE|REMOTE_OLLAMA_DATA)
+                        printf -v "$_cfg_key" '%s' "$_cfg_val"
+                        _remote_save_config
+                        ui_ok "$_cfg_key set to: $_cfg_val"
+                        ;;
+                    *)
+                        ui_err "Unknown config key: $_cfg_key"
+                        ui_dim "  Valid keys: REMOTE_LLAMACPP_BIN, REMOTE_LLAMACPP_GPU_LAYERS, REMOTE_LLAMACPP_CTX_SIZE, REMOTE_OLLAMA_DATA"
+                        ;;
+                esac
+            fi
+            ;;
         *)
-            ui_info "Usage: /remote [status|connect|disconnect|setup|secure|diagnose|models|ps|pull|load|url|forward|benchmark]"
+            ui_info "Usage: /remote [status|connect|disconnect|setup|secure|diagnose|config|models|ps|pull|load|url|forward|benchmark]"
             echo ""
             ui_dim "  status              — Show tunnel status and endpoint health"
             ui_dim "  connect [user@host] — Open SSH tunnel to remote GPU server"
@@ -5106,6 +5134,7 @@ _cmd_remote() {
             ui_dim "  setup [user@host]   — Configure SSH keys for remote access"
             ui_dim "  secure              — Add passphrase to SSH key + load into ssh-agent"
             ui_dim "  diagnose            — Run verbose connectivity diagnostics"
+            ui_dim "  config [key val]    — Show/set remote llama-server configuration"
             ui_dim "  models              — List models on remote Ollama"
             ui_dim "  ps                  — Show currently loaded model(s)"
             ui_dim "  pull <tag>          — Pull a model to remote (e.g. qwen3:8b)"

@@ -143,6 +143,16 @@ cmd_write() {
     # gets captured in the 2000-byte output and written to micro_memory.
     # This gives the LLM visibility into what it's overwriting, so the
     # strategist/specialist can decide to use /append or /edit next.
+    if _write_is_agent_mode; then
+        # Always show sibling files so the model knows what exists
+        local _dir_listing
+        _dir_listing=$(find "$(dirname "$fullpath")" -maxdepth 1 -type f -name '*.md' -o -name '*.json' -o -name '*.txt' -o -name '*.rs' -o -name '*.py' -o -name '*.sh' -o -name '*.toml' -o -name '*.yaml' -o -name '*.yml' 2>/dev/null | head -15 | sed "s|^$workdir/||")
+        if [ -n "$_dir_listing" ]; then
+            echo "EXISTING FILES in $(dirname "$filepath"):" >&2
+            echo "$_dir_listing" >&2
+            echo "---" >&2
+        fi
+    fi
     if [ "$existed" -eq 1 ] && _write_is_agent_mode; then
         local _existing_lines _existing_preview
         _existing_lines=$(wc -l < "$fullpath")
