@@ -107,6 +107,48 @@ _remote_ensure_agent() {
     ssh-add "$REMOTE_SSH_KEY"
 }
 
+# ── Detect and resolve local port conflicts ───────────────────
+# If local Ollama (or another process) is already bound to the tunnel's
+# local ports, the SSH -L bind will fail.  Auto-remap to offset ports.
+_remote_check_port_conflicts() {
+    local _ollama_port="${REMOTE_LOCAL_OLLAMA_PORT:-11434}"
+    local _llama_port="${REMOTE_LOCAL_LLAMACPP_PORT:-8080}"
+    local _remapped=0
+
+    # Check Ollama port
+    if _remote_port_in_use "$_ollama_port"; then
+        local _new_port=$(( _ollama_port + 10000 ))
+        echo "Port $_ollama_port in use (local Ollama?). Remapping tunnel to $_new_port." >&2
+        REMOTE_LOCAL_OLLAMA_PORT="$_new_port"
+        _remapped=1
+    fi
+
+    # Check llama-server port
+    if _remote_port_in_use "$_llama_port"; then
+        local _new_port=$(( _llama_port + 10000 ))
+        echo "Port $_llama_port in use. Remapping tunnel to $_new_port." >&2
+        REMOTE_LOCAL_LLAMACPP_PORT="$_new_port"
+        _remapped=1
+    fi
+
+    if [ "$_remapped" -eq 1 ]; then
+        _remote_save_config
+    fi
+}
+
+# Check if a TCP port is in use (bound by any process)
+_remote_port_in_use() {
+    local _port="$1"
+    if command -v ss >/dev/null 2>&1; then
+        ss -tlnH "sport = :$_port" 2>/dev/null | grep -q "$_port"
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -tln 2>/dev/null | grep -q ":$_port "
+    else
+        # Fallback: try to connect
+        (echo >/dev/tcp/127.0.0.1/"$_port") 2>/dev/null
+    fi
+}
+
 # ── Build SSH args (shared by connect + watchdog) ─────────────
 _remote_ssh_base_args() {
     local _fwd_host="${REMOTE_FORWARD_HOST:-localhost}"
@@ -158,6 +200,9 @@ remote_connect() {
         echo "ERROR: Cannot unlock SSH key. Run /remote secure to manage key passphrase." >&2
         return 1
     }
+
+    # Detect local port conflicts (e.g., local Ollama already on 11434)
+    _remote_check_port_conflicts
 
     _remote_ssh_base_args
     local _fwd_host="${REMOTE_FORWARD_HOST:-localhost}"
@@ -249,9 +294,12 @@ remote_disconnect() {
 
     _REMOTE_CONNECTED=0
 
-    # Restore default localhost URLs
+    # Restore default localhost URLs and reset remapped ports
+    REMOTE_LOCAL_OLLAMA_PORT="11434"
+    REMOTE_LOCAL_LLAMACPP_PORT="8080"
     OLLAMA_URL="http://127.0.0.1:11434"
     LLAMA_CPP_URL="http://127.0.0.1:8080"
+    _remote_save_config
 
     echo "Disconnected. URLs restored to localhost defaults."
     return 0
