@@ -259,11 +259,15 @@ remote_connect() {
         # autossh: handles reconnection natively.
         # AUTOSSH_GATETIME=0 lets it survive fast first-connect failures.
         # -M 0 disables autossh's own monitoring; we rely on ServerAlive.
-        AUTOSSH_GATETIME=0 autossh -M 0 -f "${_REMOTE_SSH_ARGS[@]}" "$target" 2>/dev/null
+        local _ssh_err
+        _ssh_err=$(mktemp "${TMPDIR:-/tmp}/remote-ssh-err.XXXXXX")
+        AUTOSSH_GATETIME=0 autossh -M 0 -f "${_REMOTE_SSH_ARGS[@]}" "$target" 2>"$_ssh_err"
         _method="autossh"
     else
         # Plain ssh with -f (backgrounds after auth)
-        ssh -f "${_REMOTE_SSH_ARGS[@]}" "$target" 2>/dev/null
+        local _ssh_err
+        _ssh_err=$(mktemp "${TMPDIR:-/tmp}/remote-ssh-err.XXXXXX")
+        ssh -f "${_REMOTE_SSH_ARGS[@]}" "$target" 2>"$_ssh_err"
     fi
     local rc=$?
 
@@ -272,13 +276,15 @@ remote_connect() {
         echo "  - SSH key: $REMOTE_SSH_KEY" >&2
         echo "  - Target: $target:$REMOTE_SSH_PORT" >&2
         echo "  - Forward host: $_fwd_host" >&2
+        [ -f "$_ssh_err" ] && [ -s "$_ssh_err" ] && echo "  - SSH error: $(cat "$_ssh_err")" >&2
         echo "  - Run /remote setup to configure SSH keys" >&2
+        rm -f "$_ssh_err" 2>/dev/null
         return 1
     fi
 
     # Find the SSH tunnel PID.
     # autossh -f backgrounds; give it a moment to spawn the ssh child.
-    sleep 1
+    sleep 2
     local _pid
     _pid=$(_remote_find_tunnel_pid "$target")
     if [ -n "$_pid" ]; then
@@ -305,6 +311,28 @@ remote_connect() {
     [ "$_fwd_host" != "localhost" ] && echo "  Forward host: $_fwd_host"
     echo "  Ollama:       $OLLAMA_URL"
     echo "  llama-server: $LLAMA_CPP_URL"
+
+    # Post-connect health check: verify tunnel is actually forwarding
+    local _tunnel_ok=0
+    if curl -sf --max-time 3 "$OLLAMA_URL/api/tags" &>/dev/null; then
+        _tunnel_ok=1
+    elif curl -sf --max-time 3 "$LLAMA_CPP_URL/health" &>/dev/null; then
+        _tunnel_ok=1
+    fi
+
+    if [ "$_tunnel_ok" -eq 0 ]; then
+        echo "" >&2
+        echo "WARNING: Tunnel process is running but remote endpoints are not responding." >&2
+        echo "  This usually means the SSH connection authenticated but port" >&2
+        echo "  forwarding isn't reaching the remote services." >&2
+        echo "" >&2
+        echo "  Diagnostics:" >&2
+        [ -f "$_ssh_err" ] && [ -s "$_ssh_err" ] && echo "  SSH stderr: $(cat "$_ssh_err")" >&2
+        echo "  Try: /remote diagnose" >&2
+        echo "  Or manually: ssh -v -N -L ${REMOTE_LOCAL_OLLAMA_PORT}:${_fwd_host}:${REMOTE_OLLAMA_PORT} $target" >&2
+    fi
+
+    rm -f "$_ssh_err" 2>/dev/null
     return 0
 }
 
@@ -546,4 +574,153 @@ remote_probe_endpoints() {
     fi
 
     echo -e "$_result"
+}
+
+# ── Diagnose: verbose connectivity check ───────────────────────
+# Runs through each layer of the tunnel to pinpoint failures.
+remote_diagnose() {
+    local target="${REMOTE_SSH_TARGET:-}"
+    local _fwd="${REMOTE_FORWARD_HOST:-localhost}"
+    local _ollama_port="${REMOTE_LOCAL_OLLAMA_PORT:-11434}"
+    local _llamacpp_port="${REMOTE_LOCAL_LLAMACPP_PORT:-8080}"
+    local _remote_ollama="${REMOTE_OLLAMA_PORT:-11434}"
+    local _remote_llamacpp="${REMOTE_LLAMACPP_PORT:-8080}"
+
+    echo "=== Remote Inference Diagnostics ==="
+    echo ""
+
+    # 1. Config
+    echo "── Configuration ──"
+    printf "  %-22s %s\n" "SSH target:" "${target:-<not set>}"
+    printf "  %-22s %s\n" "SSH port:" "${REMOTE_SSH_PORT:-22}"
+    printf "  %-22s %s\n" "SSH key:" "$REMOTE_SSH_KEY"
+    printf "  %-22s %s\n" "Forward host:" "$_fwd"
+    printf "  %-22s %s\n" "Local Ollama port:" "$_ollama_port"
+    printf "  %-22s %s\n" "Local llama port:" "$_llamacpp_port"
+    printf "  %-22s %s\n" "Remote Ollama port:" "$_remote_ollama"
+    printf "  %-22s %s\n" "Remote llama port:" "$_remote_llamacpp"
+    echo ""
+
+    # 2. SSH key exists?
+    echo "── SSH Key ──"
+    if [ -f "$REMOTE_SSH_KEY" ]; then
+        echo "  Key exists: $REMOTE_SSH_KEY"
+        local _fp
+        _fp=$(ssh-keygen -lf "$REMOTE_SSH_KEY" 2>/dev/null)
+        [ -n "$_fp" ] && echo "  Fingerprint: $_fp"
+    else
+        echo "  ERROR: Key not found: $REMOTE_SSH_KEY"
+        echo "  Run: /remote setup $target"
+        return 1
+    fi
+    echo ""
+
+    # 3. SSH auth test
+    echo "── SSH Authentication ──"
+    if [ -z "$target" ]; then
+        echo "  SKIP: No target configured. Run /remote setup user@host"
+    else
+        echo "  Testing: ssh -o BatchMode=yes $target ..."
+        local _ssh_out
+        _ssh_out=$(ssh -v -o BatchMode=yes -o ConnectTimeout=5 \
+            -p "${REMOTE_SSH_PORT:-22}" -i "$REMOTE_SSH_KEY" \
+            "$target" "echo __DIAGNOSE_OK__" 2>&1)
+        if echo "$_ssh_out" | grep -q "__DIAGNOSE_OK__"; then
+            echo "  Auth: OK"
+        else
+            echo "  Auth: FAILED"
+            echo ""
+            echo "  Verbose output (last 20 lines):"
+            echo "$_ssh_out" | tail -20 | sed 's/^/    /'
+            echo ""
+            echo "  Fix: Run /remote setup $target to copy your key."
+            return 1
+        fi
+    fi
+    echo ""
+
+    # 4. Tunnel process
+    echo "── Tunnel Process ──"
+    if _remote_tunnel_alive; then
+        local _pid
+        _pid=$(cat "$_REMOTE_PID_FILE" 2>/dev/null)
+        echo "  Tunnel PID: $_pid (alive)"
+    else
+        echo "  Tunnel: not running"
+    fi
+    # Show all SSH/autossh processes
+    echo "  SSH processes:"
+    ps aux 2>/dev/null | grep -E '[s]sh|[a]utossh' | grep -v grep | sed 's/^/    /' || \
+        ps -ef 2>/dev/null | grep -E '[s]sh|[a]utossh' | grep -v grep | sed 's/^/    /' || \
+        echo "    (cannot list processes)"
+    echo ""
+
+    # 5. Local port listeners
+    echo "── Local Ports ──"
+    for _p in "$_ollama_port" "$_llamacpp_port"; do
+        local _listening="unknown"
+        if command -v ss >/dev/null 2>&1; then
+            ss -tlnp 2>/dev/null | grep -q ":${_p} " && _listening="listening" || _listening="not listening"
+        elif command -v netstat >/dev/null 2>&1; then
+            netstat -tlnp 2>/dev/null | grep -q ":${_p} " && _listening="listening" || _listening="not listening"
+        else
+            # Curl probe
+            if curl -sf --max-time 1 "http://127.0.0.1:${_p}/" &>/dev/null; then
+                _listening="responding"
+            else
+                _listening="not responding (curl probe)"
+            fi
+        fi
+        printf "  Port %-6s %s\n" "$_p:" "$_listening"
+    done
+    echo ""
+
+    # 6. Endpoint health
+    echo "── Endpoint Probes ──"
+    echo "  Ollama (http://127.0.0.1:${_ollama_port}/api/tags):"
+    local _o_resp
+    _o_resp=$(curl -sf --max-time 3 "http://127.0.0.1:${_ollama_port}/api/tags" 2>&1)
+    if [ $? -eq 0 ] && [ -n "$_o_resp" ]; then
+        local _count
+        _count=$(echo "$_o_resp" | jq '.models | length' 2>/dev/null)
+        echo "    OK — ${_count:-0} models available"
+    else
+        echo "    UNREACHABLE"
+    fi
+
+    echo "  llama-server (http://127.0.0.1:${_llamacpp_port}/health):"
+    local _l_resp
+    _l_resp=$(curl -sf --max-time 3 "http://127.0.0.1:${_llamacpp_port}/health" 2>&1)
+    if [ $? -eq 0 ] && [ -n "$_l_resp" ]; then
+        echo "    OK — $(echo "$_l_resp" | jq -r '.status // "unknown"' 2>/dev/null)"
+    else
+        echo "    UNREACHABLE"
+    fi
+    echo ""
+
+    # 7. Quick tunnel test (if target set, try a one-shot forwarded connection)
+    if [ -n "$target" ] && ! _remote_tunnel_alive; then
+        echo "── Quick Tunnel Test ──"
+        echo "  Attempting brief SSH tunnel to test forwarding..."
+        local _test_out
+        _test_out=$(ssh -v -o BatchMode=yes -o ConnectTimeout=5 \
+            -o ExitOnForwardFailure=yes \
+            -p "${REMOTE_SSH_PORT:-22}" -i "$REMOTE_SSH_KEY" \
+            -L "${_ollama_port}:${_fwd}:${_remote_ollama}" \
+            -N "$target" 2>&1 &)
+        local _test_pid=$!
+        sleep 3
+        if curl -sf --max-time 2 "http://127.0.0.1:${_ollama_port}/api/tags" &>/dev/null; then
+            echo "  Tunnel forwarding: OK"
+        else
+            echo "  Tunnel forwarding: FAILED"
+            echo "  This means SSH connects but port forwarding isn't reaching the remote service."
+            echo "  Check that the forward host ($_fwd) is correct and services are running on the remote."
+        fi
+        kill "$_test_pid" 2>/dev/null
+        wait "$_test_pid" 2>/dev/null
+    fi
+
+    echo "=== End Diagnostics ==="
+    return 0
 }

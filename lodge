@@ -5063,14 +5063,17 @@ _cmd_remote() {
             ;;
         secure)
             remote_secure_key ;;
+        diagnose)
+            remote_diagnose ;;
         *)
-            ui_info "Usage: /remote [status|connect|disconnect|setup|secure|models|ps|pull|load|url|forward|benchmark]"
+            ui_info "Usage: /remote [status|connect|disconnect|setup|secure|diagnose|models|ps|pull|load|url|forward|benchmark]"
             echo ""
             ui_dim "  status              — Show tunnel status and endpoint health"
             ui_dim "  connect [user@host] — Open SSH tunnel to remote GPU server"
             ui_dim "  disconnect          — Close SSH tunnel"
             ui_dim "  setup [user@host]   — Configure SSH keys for remote access"
             ui_dim "  secure              — Add passphrase to SSH key + load into ssh-agent"
+            ui_dim "  diagnose            — Run verbose connectivity diagnostics"
             ui_dim "  models              — List models on remote Ollama"
             ui_dim "  ps                  — Show currently loaded model(s)"
             ui_dim "  pull <tag>          — Pull a model to remote (e.g. qwen3:8b)"
