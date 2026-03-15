@@ -1166,3 +1166,23 @@ remote_diagnose() {
     echo "=== End Diagnostics ==="
     return 0
 }
+
+# ── Auto-reattach: repoint URLs if tunnel survived a lodge restart ──
+# When lodge restarts, OLLAMA_URL defaults to http://127.0.0.1:11434
+# (local Ollama).  If an SSH tunnel from a prior session is still alive,
+# silently repoint OLLAMA_URL and LLAMA_CPP_URL to the tunneled ports
+# so all HTTP traffic goes through the remote, not the local instance.
+_remote_auto_reattach() {
+    # Only act when there's a configured target and the tunnel is alive
+    [ -z "${REMOTE_SSH_TARGET:-}" ] && return 0
+    _remote_tunnel_alive || return 0
+
+    local _ollama_port="${REMOTE_LOCAL_OLLAMA_PORT:-11434}"
+    local _llama_port="${REMOTE_LOCAL_LLAMACPP_PORT:-8080}"
+
+    # Repoint URLs to whatever port the tunnel is forwarding
+    OLLAMA_URL="http://127.0.0.1:${_ollama_port}"
+    LLAMA_CPP_URL="http://127.0.0.1:${_llama_port}"
+    _REMOTE_CONNECTED=1
+}
+_remote_auto_reattach
