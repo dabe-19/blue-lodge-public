@@ -93,8 +93,8 @@ describe "registry field integrity"
     assert_eq "$_all_ok" "1"
   }
 
-  it "total registry has 22 entries (18 edge + 4 central)" && {
-    assert_eq "${#_MODELS_REGISTRY[@]}" "22"
+  it "total registry has 23 entries (18 edge + 5 central)" && {
+    assert_eq "${#_MODELS_REGISTRY[@]}" "23"
   }
 
 test_end

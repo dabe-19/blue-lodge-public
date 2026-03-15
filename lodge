@@ -4974,15 +4974,47 @@ _cmd_remote() {
                 return 1
             fi
             ui_info "Pulling $arg2 on remote Ollama..."
-            local _result
-            _result=$(curl -sf --max-time 600 "$OLLAMA_URL/api/pull" \
-                -d "{\"name\":\"$arg2\",\"stream\":false}" 2>&1)
-            if [ $? -eq 0 ]; then
-                local _status
-                _status=$(echo "$_result" | jq -r '.status // "unknown"' 2>/dev/null)
-                ui_ok "Pull $arg2: $_status"
+            local _pull_ok=0 _last_status="" _last_pct=""
+            curl -sN --max-time 1800 "$OLLAMA_URL/api/pull" \
+                -d "{\"name\":\"$arg2\",\"stream\":true}" 2>/dev/null | \
+            while IFS= read -r _line; do
+                [ -z "$_line" ] && continue
+                local _status _completed _total _pct_str
+                _status=$(echo "$_line" | jq -r '.status // ""' 2>/dev/null)
+                _completed=$(echo "$_line" | jq -r '.completed // ""' 2>/dev/null)
+                _total=$(echo "$_line" | jq -r '.total // ""' 2>/dev/null)
+                [ -z "$_status" ] && continue
+
+                if [ -n "$_completed" ] && [ -n "$_total" ] && [ "$_total" != "0" ] && [ "$_total" != "null" ]; then
+                    # Show download progress with percentage
+                    _pct_str=$(( _completed * 100 / _total ))
+                    if [ "$_pct_str" != "$_last_pct" ]; then
+                        local _comp_mb=$(( _completed / 1048576 ))
+                        local _total_mb=$(( _total / 1048576 ))
+                        printf "\r  %s  %3d%%  (%d/%d MB)" "$_status" "$_pct_str" "$_comp_mb" "$_total_mb"
+                        _last_pct="$_pct_str"
+                    fi
+                elif [ "$_status" != "$_last_status" ]; then
+                    # Status changed — print on new line
+                    [ -n "$_last_status" ] && echo ""
+                    printf "  %s" "$_status"
+                    _last_status="$_status"
+                fi
+
+                # Check for success
+                if [ "$_status" = "success" ]; then
+                    echo ""
+                    _pull_ok=1
+                fi
+            done
+
+            # Check exit via subshell variable workaround
+            if echo "$_last_status" | grep -q "success" 2>/dev/null || \
+               curl -sf --max-time 5 "$OLLAMA_URL/api/tags" 2>/dev/null | jq -r '.models[].name' 2>/dev/null | grep -q "$arg2"; then
+                ui_ok "Pull $arg2: success"
             else
-                ui_err "Pull failed: $_result"
+                echo ""
+                ui_err "Pull may have failed — check /remote models"
             fi
             ;;
         load)

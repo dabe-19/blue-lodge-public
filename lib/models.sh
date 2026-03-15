@@ -872,6 +872,15 @@ _models_switch() {
     local _backend
     _backend=$(_llm_detect_backend 2>/dev/null || echo "ollama")
 
+    if [ "${_REMOTE_CONNECTED:-0}" -eq 1 ]; then
+        # ── Remote mode: model is on the remote server ─────────
+        # No local GGUF needed — the remote llama-server or Ollama
+        # already has the model loaded. Just update tracking.
+        _MODELS_ACTIVE="$target"
+        LODGE_MODEL="$target"
+        return 0
+    fi
+
     if [ "$_backend" = "llamacpp" ]; then
         # ── llama-server path: restart with new GGUF ───────────
         # Resolve target model name → registry key → GGUF blob
@@ -1246,7 +1255,21 @@ models_select() {
     local _backend
     _backend=$(_llm_detect_backend 2>/dev/null || echo "ollama")
 
-    if [ "$_backend" = "llamacpp" ]; then
+    if [ "${_REMOTE_CONNECTED:-0}" -eq 1 ]; then
+        # Remote mode: verify model exists on remote Ollama via API
+        local _remote_check
+        _remote_check=$(curl -sf --max-time 5 "$OLLAMA_URL/api/tags" 2>/dev/null)
+        if [ -n "$_remote_check" ]; then
+            local _found
+            _found=$(echo "$_remote_check" | jq -r '.models[].name' 2>/dev/null | grep -c "$_ME_BASE" || true)
+            if [ "${_found:-0}" -gt 0 ]; then
+                ui_dim "  Remote model available: $_ME_BASE"
+            else
+                ui_warn "Model not found on remote Ollama. Pull it first:"
+                ui_dim "  /remote pull $_ME_BASE"
+            fi
+        fi
+    elif [ "$_backend" = "llamacpp" ]; then
         # For llama-server: verify GGUF exists in Ollama's blob storage
         local _gguf
         _gguf=$(_models_resolve_gguf "$key")
