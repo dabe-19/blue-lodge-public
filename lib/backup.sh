@@ -59,6 +59,13 @@ backup_local() {
         count=$((count + 1))
     fi
 
+    # Remote inference config
+    if [ -f "$GEORGE_CONFIG_DIR/remote.conf" ]; then
+        cp "$GEORGE_CONFIG_DIR/remote.conf" "$backup_path/remote.conf"
+        chmod 600 "$backup_path/remote.conf"
+        count=$((count + 1))
+    fi
+
     # Collect all GEORGE.md files from known project locations
     local george_files=()
     # Current directory
@@ -178,6 +185,14 @@ backup_restore() {
         count=$((count + 1))
     fi
 
+    # Restore remote config
+    if [ -f "$backup_path/remote.conf" ]; then
+        cp "$backup_path/remote.conf" "$GEORGE_CONFIG_DIR/remote.conf"
+        chmod 600 "$GEORGE_CONFIG_DIR/remote.conf"
+        ui_dim "  Restored: remote.conf"
+        count=$((count + 1))
+    fi
+
     ui_ok "Restored $count files from backup $backup_name"
     ui_dim "Project GEORGE.md files are in: $backup_path/projects/"
     ui_dim "Restore those manually to your project directories if needed."
@@ -248,6 +263,11 @@ backup_git_save() {
     # Copy keys (user should use private repo or encrypt)
     if [ -f "$GEORGE_CONFIG_DIR/keys.conf" ]; then
         cp "$GEORGE_CONFIG_DIR/keys.conf" "$GEORGE_BACKUP_REPO/keys.conf"
+    fi
+
+    # Copy remote inference config
+    if [ -f "$GEORGE_CONFIG_DIR/remote.conf" ]; then
+        cp "$GEORGE_CONFIG_DIR/remote.conf" "$GEORGE_BACKUP_REPO/remote.conf"
     fi
 
     # Copy GEORGE.md files
