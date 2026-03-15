@@ -70,6 +70,7 @@ REMOTE_LOCAL_OLLAMA_PORT=${REMOTE_LOCAL_OLLAMA_PORT}
 REMOTE_LOCAL_LLAMACPP_PORT=${REMOTE_LOCAL_LLAMACPP_PORT}
 REMOTE_FORWARD_HOST=${REMOTE_FORWARD_HOST}
 EOF
+    chmod 600 "${GEORGE_DIR}/remote.conf"
 }
 
 # ── Load on source ─────────────────────────────────────────────
@@ -81,6 +82,29 @@ _remote_tunnel_alive() {
     local _pid
     _pid=$(cat "$_REMOTE_PID_FILE" 2>/dev/null)
     [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null
+}
+
+# ── Ensure ssh-agent is running and key is loaded ─────────────
+# Returns 0 if agent is available and key loaded (or key has no passphrase).
+# Returns 1 if a passphrase-protected key can't be unlocked (no agent).
+_remote_ensure_agent() {
+    [ ! -f "$REMOTE_SSH_KEY" ] && return 0
+
+    # If the key has no passphrase, no agent needed
+    ssh-keygen -y -P "" -f "$REMOTE_SSH_KEY" &>/dev/null && return 0
+
+    # Key is passphrase-protected — we need an agent
+    if [ -z "${SSH_AUTH_SOCK:-}" ]; then
+        # Start a new agent
+        eval "$(ssh-agent -s)" >/dev/null 2>&1
+    fi
+
+    # Check if key is already loaded
+    ssh-add -l 2>/dev/null | grep -q "$(ssh-keygen -lf "$REMOTE_SSH_KEY" 2>/dev/null | awk '{print $2}')" 2>/dev/null && return 0
+
+    # Prompt user to unlock
+    echo "SSH key is passphrase-protected. Unlocking..." >&2
+    ssh-add "$REMOTE_SSH_KEY"
 }
 
 # ── Build SSH args (shared by connect + watchdog) ─────────────
@@ -128,6 +152,12 @@ remote_connect() {
     if _remote_tunnel_alive; then
         remote_disconnect 2>/dev/null
     fi
+
+    # Unlock passphrase-protected key via ssh-agent if needed
+    _remote_ensure_agent || {
+        echo "ERROR: Cannot unlock SSH key. Run /remote secure to manage key passphrase." >&2
+        return 1
+    }
 
     _remote_ssh_base_args
     local _fwd_host="${REMOTE_FORWARD_HOST:-localhost}"
@@ -334,6 +364,47 @@ remote_setup_ssh() {
         return 1
     fi
     return 0
+}
+
+# ── Secure key: add/change passphrase + ensure ssh-agent ──────
+# Usage: remote_secure_key
+remote_secure_key() {
+    if [ ! -f "$REMOTE_SSH_KEY" ]; then
+        echo "No SSH key found at $REMOTE_SSH_KEY" >&2
+        echo "Run /remote setup first to generate one." >&2
+        return 1
+    fi
+
+    # Check if the key already has a passphrase
+    if ssh-keygen -y -P "" -f "$REMOTE_SSH_KEY" &>/dev/null; then
+        echo "Adding passphrase to SSH key: $REMOTE_SSH_KEY"
+        echo "You will be prompted to set a new passphrase."
+        ssh-keygen -p -f "$REMOTE_SSH_KEY"
+        local rc=$?
+        if [ $rc -ne 0 ]; then
+            echo "ERROR: Failed to set passphrase." >&2
+            return 1
+        fi
+        echo "Passphrase set."
+    else
+        echo "SSH key is already passphrase-protected."
+        echo "To change it, you'll need the current passphrase."
+        ssh-keygen -p -f "$REMOTE_SSH_KEY"
+    fi
+
+    # Start agent and load the key so the current session works
+    if [ -z "${SSH_AUTH_SOCK:-}" ]; then
+        eval "$(ssh-agent -s)" >/dev/null 2>&1
+        echo "Started ssh-agent (PID: $SSH_AGENT_PID)"
+    fi
+    echo "Loading key into ssh-agent..."
+    ssh-add "$REMOTE_SSH_KEY"
+    if [ $? -eq 0 ]; then
+        echo "Key loaded. You won't be prompted for the passphrase again this session."
+        echo ""
+        echo "Tip: To persist across terminal sessions, add to your shell profile:"
+        echo '  eval "$(ssh-agent -s)" && ssh-add '"$REMOTE_SSH_KEY"
+    fi
 }
 
 # ── Probe remote endpoints without tunnel (direct URL check) ──

@@ -243,4 +243,49 @@ describe "remote_setup_ssh"
     _rt_teardown
   }
 
+# ── _remote_ensure_agent ───────────────────────────────────────
+describe "_remote_ensure_agent"
+
+  it "succeeds when key has no passphrase" && {
+    _rt_setup
+    mkdir -p "$(dirname "$REMOTE_SSH_KEY")"
+    ssh-keygen -t ed25519 -f "$REMOTE_SSH_KEY" -N "" -q 2>/dev/null
+    _remote_ensure_agent
+    assert_ok $?
+    _rt_teardown
+  }
+
+  it "function is defined" && {
+    declare -f _remote_ensure_agent >/dev/null
+    assert_ok $?
+  }
+
+# ── remote_secure_key ─────────────────────────────────────────
+describe "remote_secure_key"
+
+  it "function is defined" && {
+    declare -f remote_secure_key >/dev/null
+    assert_ok $?
+  }
+
+  it "fails when no key exists" && {
+    _rt_setup
+    REMOTE_SSH_KEY="$_RT_TEST_DIR/nonexistent_key"
+    remote_secure_key >/dev/null 2>&1
+    assert_fail $?
+    _rt_teardown
+  }
+
+# ── Config file permissions ────────────────────────────────────
+describe "config file permissions"
+
+  it "remote.conf has 600 permissions" && {
+    _rt_setup
+    REMOTE_SSH_TARGET="test@host"
+    _remote_save_config
+    _perms=$(stat -c '%a' "$GEORGE_DIR/remote.conf" 2>/dev/null)
+    assert_eq "$_perms" "600"
+    _rt_teardown
+  }
+
 test_end

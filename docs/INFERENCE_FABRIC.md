@@ -36,6 +36,27 @@ When tunnelling through a jump host, set `REMOTE_FORWARD_HOST=192.168.30.10`.
 
 This walks through setting up remote GPU inference from scratch.
 
+### Prerequisites (George / edge device)
+
+The George device needs an SSH client and optionally `autossh` for
+auto-reconnecting tunnels:
+
+```bash
+# Debian / Ubuntu / Crostini / WSL:
+sudo apt install openssh-client autossh
+
+# Termux (Android / proot):
+pkg install openssh autossh
+
+# iSH (iPhone / iPad — Alpine Linux):
+apk add openssh-client autossh
+```
+
+`autossh` is **optional** — if it's not installed, George falls back to
+a bash watchdog that polls the tunnel every 15 seconds and respawns it.
+`autossh` is better because it detects drops instantly via
+`ServerAliveInterval` and reconnects without any polling delay.
+
 ### 0. Provision the GPU Server
 
 If the remote machine doesn't have Ollama + llama-server yet, deploy from

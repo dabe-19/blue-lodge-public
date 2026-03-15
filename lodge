@@ -4945,7 +4945,7 @@ _cmd_remote() {
                 ui_err "Cannot reach Ollama at $OLLAMA_URL"
                 return 1
             fi
-            printf "  ${_T_DIM}%-30s %-10s %-8s %-8s %s${_T_RESET}\n" "NAME" "PARAMS" "QUANT" "SIZE" "FAMILY"
+            printf "  ${C_DIM}%-30s %-10s %-8s %-8s %s${C_RESET}\n" "NAME" "PARAMS" "QUANT" "SIZE" "FAMILY"
             echo "$_tags" | jq -r '.models[] | "\(.name)\t\(.details.parameter_size // "?")\t\(.details.quantization_level // "?")\t\(.size / 1073741824 | . * 100 | floor / 100)\t\(.details.family // "?")"' 2>/dev/null | \
             while IFS=$'\t' read -r _n _p _q _s _f; do
                 printf "  %-30s %-10s %-8s %-7sGB %s\n" "$_n" "$_p" "$_q" "$_s" "$_f"
@@ -5061,13 +5061,16 @@ _cmd_remote() {
             _content=$(echo "$_response" | jq -r '.choices[0].message.content // ""' 2>/dev/null)
             [ -n "$_content" ] && ui_dim "\n  $_content"
             ;;
+        secure)
+            remote_secure_key ;;
         *)
-            ui_info "Usage: /remote [status|connect|disconnect|setup|models|ps|pull|load|url|forward|benchmark]"
+            ui_info "Usage: /remote [status|connect|disconnect|setup|secure|models|ps|pull|load|url|forward|benchmark]"
             echo ""
             ui_dim "  status              — Show tunnel status and endpoint health"
             ui_dim "  connect [user@host] — Open SSH tunnel to remote GPU server"
             ui_dim "  disconnect          — Close SSH tunnel"
             ui_dim "  setup [user@host]   — Configure SSH keys for remote access"
+            ui_dim "  secure              — Add passphrase to SSH key + load into ssh-agent"
             ui_dim "  models              — List models on remote Ollama"
             ui_dim "  ps                  — Show currently loaded model(s)"
             ui_dim "  pull <tag>          — Pull a model to remote (e.g. qwen3:8b)"
