@@ -31,6 +31,11 @@ _rt_setup() {
     REMOTE_LOCAL_OLLAMA_PORT="11434"
     REMOTE_LOCAL_LLAMACPP_PORT="8080"
     REMOTE_FORWARD_HOST="localhost"
+    REMOTE_JUMP_HOST=""
+    REMOTE_LLAMACPP_BIN=""
+    REMOTE_GPU_BACKEND="auto"
+    REMOTE_KV_CACHE_TYPE="auto"
+    REMOTE_FLASH_ATTN="auto"
     _REMOTE_CONNECTED=0
     _REMOTE_WATCHDOG_PID_FILE="$GEORGE_DIR/remote-watchdog.pid"
 }
@@ -285,6 +290,449 @@ describe "config file permissions"
     _remote_save_config
     _perms=$(stat -c '%a' "$GEORGE_DIR/remote.conf" 2>/dev/null)
     assert_eq "$_perms" "600"
+    _rt_teardown
+  }
+
+# ── REMOTE_JUMP_HOST config persistence ────────────────────────
+describe "REMOTE_JUMP_HOST config"
+
+  it "saves and loads REMOTE_JUMP_HOST" && {
+    _rt_setup
+    REMOTE_JUMP_HOST="dabe@192.168.86.18"
+    _remote_save_config
+    REMOTE_JUMP_HOST=""
+    _remote_load_config
+    assert_eq "$REMOTE_JUMP_HOST" "dabe@192.168.86.18"
+    _rt_teardown
+  }
+
+  it "defaults to empty when not set" && {
+    _rt_setup
+    _remote_save_config
+    _remote_load_config
+    assert_empty "$REMOTE_JUMP_HOST"
+    _rt_teardown
+  }
+
+  it "conf file contains REMOTE_JUMP_HOST line" && {
+    _rt_setup
+    REMOTE_JUMP_HOST="user@jump"
+    _remote_save_config
+    assert_contains "$(cat "$GEORGE_DIR/remote.conf")" "REMOTE_JUMP_HOST=user@jump"
+    _rt_teardown
+  }
+
+# ── GPU / flash-attn / KV cache config persistence ────────────
+describe "GPU config persistence"
+
+  it "saves and loads REMOTE_GPU_BACKEND" && {
+    _rt_setup
+    REMOTE_GPU_BACKEND="vulkan"
+    _remote_save_config
+    REMOTE_GPU_BACKEND="auto"
+    _remote_load_config
+    assert_eq "$REMOTE_GPU_BACKEND" "vulkan"
+    _rt_teardown
+  }
+
+  it "saves and loads REMOTE_KV_CACHE_TYPE" && {
+    _rt_setup
+    REMOTE_KV_CACHE_TYPE="q8_0"
+    _remote_save_config
+    REMOTE_KV_CACHE_TYPE="auto"
+    _remote_load_config
+    assert_eq "$REMOTE_KV_CACHE_TYPE" "q8_0"
+    _rt_teardown
+  }
+
+  it "saves and loads REMOTE_FLASH_ATTN" && {
+    _rt_setup
+    REMOTE_FLASH_ATTN="on"
+    _remote_save_config
+    REMOTE_FLASH_ATTN="auto"
+    _remote_load_config
+    assert_eq "$REMOTE_FLASH_ATTN" "on"
+    _rt_teardown
+  }
+
+  it "saves and loads REMOTE_LLAMACPP_BIN" && {
+    _rt_setup
+    REMOTE_LLAMACPP_BIN="/home/dabe/llama.cpp/build/bin/llama-server"
+    _remote_save_config
+    REMOTE_LLAMACPP_BIN=""
+    _remote_load_config
+    assert_eq "$REMOTE_LLAMACPP_BIN" "/home/dabe/llama.cpp/build/bin/llama-server"
+    _rt_teardown
+  }
+
+# ── SSH base args with jump host ───────────────────────────────
+describe "_remote_ssh_base_args with REMOTE_JUMP_HOST"
+
+  it "includes -J flag when REMOTE_JUMP_HOST is set" && {
+    _rt_setup
+    REMOTE_JUMP_HOST="dabe@192.168.86.18"
+    REMOTE_FORWARD_HOST="192.168.30.10"
+    _remote_ssh_base_args
+    _rt_args="${_REMOTE_SSH_ARGS[*]}"
+    assert_contains "$_rt_args" "-J"
+    assert_contains "$_rt_args" "dabe@192.168.86.18"
+    _rt_teardown
+  }
+
+  it "omits -J flag when REMOTE_JUMP_HOST is empty" && {
+    _rt_setup
+    REMOTE_JUMP_HOST=""
+    _remote_ssh_base_args
+    _rt_args="${_REMOTE_SSH_ARGS[*]}"
+    assert_not_contains "$_rt_args" "-J"
+    _rt_teardown
+  }
+
+  it "includes forward host AND jump host together" && {
+    _rt_setup
+    REMOTE_JUMP_HOST="user@jump-box"
+    REMOTE_FORWARD_HOST="10.0.0.50"
+    _remote_ssh_base_args
+    _rt_args="${_REMOTE_SSH_ARGS[*]}"
+    assert_contains "$_rt_args" "user@jump-box"
+    assert_contains "$_rt_args" "10.0.0.50"
+    _rt_teardown
+  }
+
+# ── _remote_exec with mock SSH ─────────────────────────────────
+describe "_remote_exec"
+
+  it "fails when REMOTE_SSH_TARGET is empty" && {
+    _rt_setup
+    REMOTE_SSH_TARGET=""
+    _remote_exec "echo hello" 2>/dev/null
+    assert_fail $?
+    _rt_teardown
+  }
+
+  it "passes -J to ssh when REMOTE_JUMP_HOST is set" && {
+    _rt_setup
+    # Mock ssh that records its args to a file
+    cat > "$_RT_MOCK_BIN/ssh" << 'MOCK'
+#!/bin/bash
+echo "$@" > /tmp/_rt_ssh_args_capture
+exit 0
+MOCK
+    chmod +x "$_RT_MOCK_BIN/ssh"
+    _old_path="$PATH"
+    PATH="$_RT_MOCK_BIN:$PATH"
+    REMOTE_SSH_TARGET="dabe@george-home"
+    REMOTE_JUMP_HOST="dabe@192.168.86.18"
+    _remote_exec "echo hello" 2>/dev/null
+    _captured=$(cat /tmp/_rt_ssh_args_capture 2>/dev/null)
+    assert_contains "$_captured" "-J"
+    assert_contains "$_captured" "dabe@192.168.86.18"
+    assert_contains "$_captured" "dabe@george-home"
+    PATH="$_old_path"
+    rm -f /tmp/_rt_ssh_args_capture
+    _rt_teardown
+  }
+
+  it "omits -J when REMOTE_JUMP_HOST is empty" && {
+    _rt_setup
+    cat > "$_RT_MOCK_BIN/ssh" << 'MOCK'
+#!/bin/bash
+echo "$@" > /tmp/_rt_ssh_args_capture
+exit 0
+MOCK
+    chmod +x "$_RT_MOCK_BIN/ssh"
+    _old_path="$PATH"
+    PATH="$_RT_MOCK_BIN:$PATH"
+    REMOTE_SSH_TARGET="dabe@direct-host"
+    REMOTE_JUMP_HOST=""
+    _remote_exec "echo hello" 2>/dev/null
+    _captured=$(cat /tmp/_rt_ssh_args_capture 2>/dev/null)
+    assert_not_contains "$_captured" "-J"
+    assert_contains "$_captured" "dabe@direct-host"
+    PATH="$_old_path"
+    rm -f /tmp/_rt_ssh_args_capture
+    _rt_teardown
+  }
+
+# ── _remote_detect_llamacpp_bin with mock SSH ──────────────────
+describe "_remote_detect_llamacpp_bin"
+
+  it "skips detection when REMOTE_LLAMACPP_BIN already set" && {
+    _rt_setup
+    REMOTE_LLAMACPP_BIN="/already/set/llama-server"
+    _remote_detect_llamacpp_bin
+    assert_ok $?
+    assert_eq "$REMOTE_LLAMACPP_BIN" "/already/set/llama-server"
+    _rt_teardown
+  }
+
+  it "detects binary via /proc/PID/exe (strategy 1)" && {
+    _rt_setup
+    # Mock ssh that simulates /proc/PID/exe readlink
+    cat > "$_RT_MOCK_BIN/ssh" << 'MOCK'
+#!/bin/bash
+# Return the fake binary path for strategy 1
+echo "/home/dabe/llama.cpp/build/bin/llama-server"
+exit 0
+MOCK
+    chmod +x "$_RT_MOCK_BIN/ssh"
+    _old_path="$PATH"
+    PATH="$_RT_MOCK_BIN:$PATH"
+    REMOTE_SSH_TARGET="dabe@george-home"
+    REMOTE_LLAMACPP_BIN=""
+    _remote_detect_llamacpp_bin
+    assert_ok $?
+    assert_eq "$REMOTE_LLAMACPP_BIN" "/home/dabe/llama.cpp/build/bin/llama-server"
+    PATH="$_old_path"
+    _rt_teardown
+  }
+
+  it "persists detected binary to remote.conf" && {
+    _rt_setup
+    cat > "$_RT_MOCK_BIN/ssh" << 'MOCK'
+#!/bin/bash
+echo "/opt/llama.cpp/build/bin/llama-server"
+exit 0
+MOCK
+    chmod +x "$_RT_MOCK_BIN/ssh"
+    _old_path="$PATH"
+    PATH="$_RT_MOCK_BIN:$PATH"
+    REMOTE_SSH_TARGET="dabe@george-home"
+    REMOTE_LLAMACPP_BIN=""
+    _remote_detect_llamacpp_bin
+    # Verify it was persisted
+    _saved=$(grep "REMOTE_LLAMACPP_BIN" "$GEORGE_DIR/remote.conf" 2>/dev/null)
+    assert_contains "$_saved" "/opt/llama.cpp/build/bin/llama-server"
+    PATH="$_old_path"
+    _rt_teardown
+  }
+
+  it "fails when all strategies return empty" && {
+    _rt_setup
+    # Mock ssh that returns nothing
+    cat > "$_RT_MOCK_BIN/ssh" << 'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+    chmod +x "$_RT_MOCK_BIN/ssh"
+    _old_path="$PATH"
+    PATH="$_RT_MOCK_BIN:$PATH"
+    REMOTE_SSH_TARGET="dabe@george-home"
+    REMOTE_LLAMACPP_BIN=""
+    _remote_detect_llamacpp_bin
+    assert_fail $?
+    assert_empty "$REMOTE_LLAMACPP_BIN"
+    PATH="$_old_path"
+    _rt_teardown
+  }
+
+  it "rejects non-absolute paths from strategy 2" && {
+    _rt_setup
+    # Mock ssh: strategy 1 returns empty, strategy 2 returns relative path
+    _rt_call_count=0
+    cat > "$_RT_MOCK_BIN/ssh" << 'MOCK'
+#!/bin/bash
+cmd="$*"
+# Strategy 1 (pgrep/readlink): return empty
+if echo "$cmd" | grep -q "pgrep"; then
+    exit 0
+fi
+# Strategy 2 (ps/awk): return relative path (should be rejected)
+if echo "$cmd" | grep -q "awk"; then
+    echo "llama-server"
+    exit 0
+fi
+# All others: empty
+exit 0
+MOCK
+    chmod +x "$_RT_MOCK_BIN/ssh"
+    _old_path="$PATH"
+    PATH="$_RT_MOCK_BIN:$PATH"
+    REMOTE_SSH_TARGET="dabe@george-home"
+    REMOTE_LLAMACPP_BIN=""
+    _remote_detect_llamacpp_bin
+    # It should have fallen through to later strategies (which also return empty)
+    # or found something — but the relative path should NOT be accepted
+    # If _bin was set, it should start with /
+    if [ -n "$REMOTE_LLAMACPP_BIN" ]; then
+        assert_match "$REMOTE_LLAMACPP_BIN" "^/"
+    fi
+    PATH="$_old_path"
+    _rt_teardown
+  }
+
+# ── _remote_detect_gpu with mock SSH ──────────────────────────
+describe "_remote_detect_gpu"
+
+  it "skips detection when all values already resolved" && {
+    _rt_setup
+    REMOTE_GPU_BACKEND="vulkan"
+    REMOTE_KV_CACHE_TYPE="f16"
+    REMOTE_FLASH_ATTN="off"
+    REMOTE_SSH_TARGET="dabe@host"
+    # No SSH mock needed — should return immediately
+    _remote_detect_gpu
+    assert_ok $?
+    assert_eq "$REMOTE_GPU_BACKEND" "vulkan"
+    _rt_teardown
+  }
+
+  it "detects CUDA and sets flash-attn on + q8_0 KV" && {
+    _rt_setup
+    cat > "$_RT_MOCK_BIN/ssh" << 'MOCK'
+#!/bin/bash
+echo "cuda"
+MOCK
+    chmod +x "$_RT_MOCK_BIN/ssh"
+    _old_path="$PATH"
+    PATH="$_RT_MOCK_BIN:$PATH"
+    REMOTE_SSH_TARGET="dabe@host"
+    REMOTE_GPU_BACKEND="auto"
+    REMOTE_KV_CACHE_TYPE="auto"
+    REMOTE_FLASH_ATTN="auto"
+    _remote_detect_gpu
+    assert_eq "$REMOTE_GPU_BACKEND" "cuda"
+    assert_eq "$REMOTE_FLASH_ATTN" "on"
+    assert_eq "$REMOTE_KV_CACHE_TYPE" "q8_0"
+    PATH="$_old_path"
+    _rt_teardown
+  }
+
+  it "detects Vulkan and sets flash-attn off + f16 KV" && {
+    _rt_setup
+    cat > "$_RT_MOCK_BIN/ssh" << 'MOCK'
+#!/bin/bash
+echo "vulkan"
+MOCK
+    chmod +x "$_RT_MOCK_BIN/ssh"
+    _old_path="$PATH"
+    PATH="$_RT_MOCK_BIN:$PATH"
+    REMOTE_SSH_TARGET="dabe@host"
+    REMOTE_GPU_BACKEND="auto"
+    REMOTE_KV_CACHE_TYPE="auto"
+    REMOTE_FLASH_ATTN="auto"
+    _remote_detect_gpu
+    assert_eq "$REMOTE_GPU_BACKEND" "vulkan"
+    assert_eq "$REMOTE_FLASH_ATTN" "off"
+    assert_eq "$REMOTE_KV_CACHE_TYPE" "f16"
+    PATH="$_old_path"
+    _rt_teardown
+  }
+
+  it "defaults to cpu when SSH returns empty" && {
+    _rt_setup
+    cat > "$_RT_MOCK_BIN/ssh" << 'MOCK'
+#!/bin/bash
+exit 1
+MOCK
+    chmod +x "$_RT_MOCK_BIN/ssh"
+    _old_path="$PATH"
+    PATH="$_RT_MOCK_BIN:$PATH"
+    REMOTE_SSH_TARGET="dabe@host"
+    REMOTE_GPU_BACKEND="auto"
+    REMOTE_KV_CACHE_TYPE="auto"
+    REMOTE_FLASH_ATTN="auto"
+    _remote_detect_gpu
+    assert_eq "$REMOTE_GPU_BACKEND" "cpu"
+    assert_eq "$REMOTE_FLASH_ATTN" "off"
+    assert_eq "$REMOTE_KV_CACHE_TYPE" "f16"
+    PATH="$_old_path"
+    _rt_teardown
+  }
+
+  it "persists GPU config to remote.conf" && {
+    _rt_setup
+    cat > "$_RT_MOCK_BIN/ssh" << 'MOCK'
+#!/bin/bash
+echo "cuda"
+MOCK
+    chmod +x "$_RT_MOCK_BIN/ssh"
+    _old_path="$PATH"
+    PATH="$_RT_MOCK_BIN:$PATH"
+    REMOTE_SSH_TARGET="dabe@host"
+    REMOTE_GPU_BACKEND="auto"
+    REMOTE_KV_CACHE_TYPE="auto"
+    REMOTE_FLASH_ATTN="auto"
+    _remote_detect_gpu
+    # Check persisted values
+    REMOTE_GPU_BACKEND="auto"
+    REMOTE_FLASH_ATTN="auto"
+    REMOTE_KV_CACHE_TYPE="auto"
+    _remote_load_config
+    assert_eq "$REMOTE_GPU_BACKEND" "cuda"
+    assert_eq "$REMOTE_FLASH_ATTN" "on"
+    assert_eq "$REMOTE_KV_CACHE_TYPE" "q8_0"
+    PATH="$_old_path"
+    _rt_teardown
+  }
+
+# ── Port conflict detection ────────────────────────────────────
+describe "_remote_port_in_use"
+
+  it "detects port not in use" && {
+    _rt_setup
+    # Use a high random port that should be free
+    _remote_port_in_use 59999
+    assert_fail $?
+    _rt_teardown
+  }
+
+# ── Config security: rejects unknown keys ──────────────────────
+describe "config security"
+
+  it "rejects injected config keys" && {
+    _rt_setup
+    REMOTE_SSH_TARGET="test@host"
+    _remote_save_config
+    # Inject a dangerous key
+    echo "PATH=/evil/bin" >> "$GEORGE_DIR/remote.conf"
+    echo "HOME=/evil" >> "$GEORGE_DIR/remote.conf"
+    _old_path="$PATH"
+    _remote_load_config
+    assert_eq "$PATH" "$_old_path"
+    assert_neq "$HOME" "/evil"
+    _rt_teardown
+  }
+
+  it "rejects REMOTE_JUMP_HOST-like typos" && {
+    _rt_setup
+    _remote_save_config
+    echo "REMOTE_JUMP=hacked@host" >> "$GEORGE_DIR/remote.conf"
+    _remote_load_config
+    assert_eq "${REMOTE_JUMP:-}" ""
+    _rt_teardown
+  }
+
+# ── Full round-trip: jump host topology config ─────────────────
+describe "jump host topology round-trip"
+
+  it "saves and restores full jump host config set" && {
+    _rt_setup
+    REMOTE_SSH_TARGET="dabe@george-home"
+    REMOTE_JUMP_HOST="dabe@192.168.86.18"
+    REMOTE_FORWARD_HOST="192.168.30.10"
+    REMOTE_LLAMACPP_BIN="/home/dabe/llama.cpp/build/bin/llama-server"
+    REMOTE_GPU_BACKEND="vulkan"
+    REMOTE_KV_CACHE_TYPE="f16"
+    REMOTE_FLASH_ATTN="off"
+    _remote_save_config
+    # Wipe all vars
+    REMOTE_SSH_TARGET=""
+    REMOTE_JUMP_HOST=""
+    REMOTE_FORWARD_HOST="localhost"
+    REMOTE_LLAMACPP_BIN=""
+    REMOTE_GPU_BACKEND="auto"
+    REMOTE_KV_CACHE_TYPE="auto"
+    REMOTE_FLASH_ATTN="auto"
+    # Reload
+    _remote_load_config
+    assert_eq "$REMOTE_SSH_TARGET" "dabe@george-home"
+    assert_eq "$REMOTE_JUMP_HOST" "dabe@192.168.86.18"
+    assert_eq "$REMOTE_FORWARD_HOST" "192.168.30.10"
+    assert_eq "$REMOTE_LLAMACPP_BIN" "/home/dabe/llama.cpp/build/bin/llama-server"
+    assert_eq "$REMOTE_GPU_BACKEND" "vulkan"
+    assert_eq "$REMOTE_KV_CACHE_TYPE" "f16"
+    assert_eq "$REMOTE_FLASH_ATTN" "off"
     _rt_teardown
   }
 

@@ -241,21 +241,57 @@ Central-tier models in registry:
 | `/remote load <model>` | Pre-warm model into memory |
 | `/remote url [ollama] [llama]` | Show/set remote endpoint URLs |
 | `/remote benchmark` | Quick tok/s benchmark |
+| `/remote config` | Show all remote config (SSH topology, GPU, server) |
+| `/remote config KEY VALUE` | Set a config key (e.g., `REMOTE_JUMP_HOST`) |
 
 ## Configuration
 
 Stored in `.george/remote.conf`:
+
+### SSH & Tunnel
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REMOTE_SSH_TARGET` | (none) | user@host for SSH tunnel |
 | `REMOTE_SSH_PORT` | 22 | SSH port |
 | `REMOTE_SSH_KEY` | ~/.ssh/id_ed25519 | Identity file path |
+| `REMOTE_JUMP_HOST` | (none) | user@host for SSH ProxyJump (`-J`). Set when the SSH target is a jump box, not the GPU server itself. |
 | `REMOTE_FORWARD_HOST` | localhost | IP/hostname the SSH target forwards to |
 | `REMOTE_OLLAMA_PORT` | 11434 | Remote Ollama port |
 | `REMOTE_LLAMACPP_PORT` | 8080 | Remote llama-server port |
 | `REMOTE_LOCAL_OLLAMA_PORT` | 11434 | Local bind port (Ollama) |
 | `REMOTE_LOCAL_LLAMACPP_PORT` | 8080 | Local bind port (llama-server) |
+
+### GPU & Performance
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REMOTE_LLAMACPP_BIN` | (auto-detected) | Absolute path to `llama-server` binary on the GPU server. Auto-detected via 5 strategies if not set. |
+| `REMOTE_GPU_BACKEND` | auto | GPU backend: `cuda`, `vulkan`, or `cpu`. `auto` probes via `nvidia-smi` / `vulkaninfo`. |
+| `REMOTE_KV_CACHE_TYPE` | auto | KV cache quantization: `q8_0` (CUDA), `f16` (Vulkan/CPU). `auto` resolves from GPU backend. |
+| `REMOTE_FLASH_ATTN` | auto | Flash attention: `on` (CUDA only), `off` (Vulkan/CPU). `auto` resolves from GPU backend. |
+
+## GPU Performance Flags
+
+When `REMOTE_GPU_BACKEND` is `auto` (default), George probes the remote
+server via `nvidia-smi` and `vulkaninfo` and resolves the optimal settings:
+
+| Backend | Flash Attention | KV Cache Type | Notes |
+|---------|----------------|---------------|-------|
+| **CUDA** (NVIDIA) | `--flash-attn` | `--cache-type-k q8_0 --cache-type-v q8_0` | Quantized KV cache saves VRAM; flash-attn improves throughput |
+| **Vulkan** (AMD/Intel) | off | `f16` (default) | Vulkan does not support quantized KV or flash attention |
+| **CPU** | off | `f16` (default) | No GPU acceleration |
+
+Override any auto-detected value:
+```bash
+/remote config REMOTE_FLASH_ATTN off      # disable flash attention even on CUDA
+/remote config REMOTE_KV_CACHE_TYPE f16    # force f16 KV cache
+/remote config REMOTE_GPU_BACKEND vulkan   # skip auto-detection
+```
+
+These flags are injected into the `llama-server` command line by
+`_remote_restart_llamacpp()` and into the systemd service by
+`inference-server-install.sh`.
 
 ## GPU Server Setup
 
@@ -379,6 +415,32 @@ Phone (192.168.1.x)  ──SSH──►  Hypervisor (192.168.1.10)  ──NAT─
 
 The SSH tunnel `-L 8080:FORWARD_HOST:8080` adapts to either topology.
 The phone and all George code always talk to `127.0.0.1:8080`.
+
+### ProxyJump: George → Jump Box → GPU Server (control + data plane)
+
+When the jump box and GPU server are **separate hosts**, both the tunnel
+(data plane) and remote commands (control plane) must reach the GPU server.
+`REMOTE_JUMP_HOST` adds SSH ProxyJump (`-J`) so that `_remote_exec`,
+`_remote_detect_llamacpp_bin`, `_remote_detect_gpu`, and SCP all execute
+on the correct machine:
+
+```
+Termux (192.168.86.x)  ──SSH──►  Jump Box (192.168.86.18)  ──SSH -J──►  GPU Server (192.168.30.10)
+  REMOTE_SSH_TARGET=dabe@george-home
+  REMOTE_JUMP_HOST=dabe@192.168.86.18       ← ProxyJump hop
+  REMOTE_FORWARD_HOST=192.168.30.10         ← tunnel target
+```
+
+Without `REMOTE_JUMP_HOST`, commands like `_remote_exec 'nvidia-smi'` run
+on the jump box — not the GPU server. The data plane (tunneled ports) would
+work, but control operations (restart, detect, GPU probe) would fail silently.
+
+Configure with:
+```bash
+/remote config REMOTE_JUMP_HOST dabe@192.168.86.18
+/remote config REMOTE_SSH_TARGET dabe@george-home
+/remote config REMOTE_FORWARD_HOST 192.168.30.10
+```
 
 ---
 

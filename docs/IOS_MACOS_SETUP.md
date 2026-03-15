@@ -1,8 +1,11 @@
 # iOS & macOS Setup Guide
 
-Run George on Apple devices using cloud LLM providers. This covers iSH (Alpine Linux on iOS/iPadOS) and macOS via Homebrew Bash.
+Run George on Apple devices using cloud providers or remote GPU inference. This covers iSH (Alpine Linux on iOS/iPadOS) and macOS via Homebrew Bash.
 
-> **Key constraint:** Apple devices cannot run Ollama or llama-server locally. George operates in **cloud-only mode** — all inference is routed through a cloud provider API (Google, Groq, OpenAI, etc.).
+> **Key constraint:** iSH cannot run Ollama or llama-server locally (i686 emulation). macOS *can* run Ollama natively. On both platforms, George supports two inference paths:
+>
+> 1. **Cloud providers** — route all LLM calls through a cloud API (Google, Groq, OpenAI, etc.)
+> 2. **Remote GPU inference** — SSH tunnel to your own GPU server via `/remote connect` (see [Inference Fabric](INFERENCE_FABRIC.md))
 
 ---
 
@@ -14,11 +17,12 @@ Run George on Apple devices using cloud LLM providers. This covers iSH (Alpine L
 | **Shell** | Bash via `apk add bash` | Bash 5+ via `brew install bash` |
 | **Local LLM** | No (i686 QEMU, too slow) | No¹ |
 | **Cloud providers** | All supported | All supported |
+| **Remote GPU inference** | Via SSH tunnel (`/remote connect`) | Via SSH tunnel (`/remote connect`) |
 | **Performance bottleneck** | API latency (~1-3s), not local parsing | API latency |
 | **Storage** | ~200MB (George + deps) | ~200MB (George + deps) |
 | **Recommended provider** | Google (free tier) or Groq (free, fast) | Any |
 
-¹ macOS *can* run Ollama natively, but this guide covers the cloud-only path. If you have Ollama on macOS, George will auto-detect it and you can skip the provider setup.
+¹ macOS *can* run Ollama natively, but this guide covers the cloud and remote-GPU paths. If you have Ollama on macOS, George will auto-detect it and you can skip the provider setup.
 
 ---
 
@@ -27,6 +31,34 @@ Run George on Apple devices using cloud LLM providers. This covers iSH (Alpine L
 When `GEORGE_PROVIDER` is set, George routes every LLM call through that provider's API instead of a local model. The entire local inference stack (Ollama, llama-server, model downloads) is bypassed. Everything else — slash commands, memory, recall, git, file writing, sandbox — works identically.
 
 Built-in rate limiting (`PROVIDER_CALL_DELAY=7s` default) with exponential backoff prevents hitting free-tier quotas. Google AI and Groq both offer generous free tiers that work well for interactive use.
+
+## Alternative: Remote GPU Inference
+
+If you have a GPU server on your home network (or reachable via SSH), you can use George's remote inference fabric instead of — or alongside — cloud providers. This gives you local-speed inference (~60 tok/s) without API costs or rate limits.
+
+### Quick Setup from macOS / iSH
+
+```bash
+# 1. Configure SSH access to your GPU server
+/remote setup user@gpu-server.local
+
+# 2. If connecting through a jump host / router:
+/remote config REMOTE_JUMP_HOST user@jump-box.local
+/remote config REMOTE_FORWARD_HOST 10.0.0.100
+
+# 3. Connect (opens SSH tunnel)
+/remote connect
+
+# 4. Check it works
+/remote status
+/remote models
+```
+
+Once connected, George automatically routes inference through the tunnel.
+All slash commands, the agent loop, and memory/recall work identically.
+
+See [Inference Fabric](INFERENCE_FABRIC.md) for full documentation including
+GPU server provisioning, ProxyJump topology, and performance tuning.
 
 ---
 
@@ -247,10 +279,10 @@ These features work identically on iOS, macOS, Android, and Linux:
 
 | Feature | Reason | Workaround |
 |---------|--------|------------|
-| Local LLM inference | No Ollama/llama-server on iSH (i686) | Use cloud providers |
+| Local LLM inference | No Ollama/llama-server on iSH (i686) | Cloud providers or `/remote connect` to a GPU server |
 | `/phone` commands | Requires Termux-API on Android | Not applicable on iOS/macOS |
-| GPU offloading | No GPU access in iSH | N/A (cloud handles inference) |
-| Vision (local) | Requires llama-server + mmproj | Some cloud providers support vision |
+| GPU offloading | No GPU access in iSH | Remote GPU via SSH tunnel or cloud providers |
+| Vision (local) | Requires llama-server + mmproj | Remote llama-server or cloud providers with vision support |
 
 ---
 
