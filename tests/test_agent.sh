@@ -3657,4 +3657,51 @@ describe "/grep agent integration"
     assert_ok $? "/grep must appear in exploration directive"
   }
 
+# ── /grep command hardening ──────────────────────────────────
+describe "/grep command hardening"
+
+  it "/grep is exempt from quote stripping" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '/grep.*skip_quote_strip\|/grep.*_skip_quote'
+    rc1=$?
+    # Also accept adjacent-line pattern (declare -f may split across lines)
+    if [ "$rc1" -ne 0 ]; then
+        echo "$body" | grep -A1 '/grep' | grep -q '_skip_quote_strip'
+        rc1=$?
+    fi
+    assert_ok $rc1 "/grep must bypass quote stripping"
+  }
+
+  it "AGENT_GREP_ALLOW_ABSOLUTE defaults to 0" && {
+    assert_eq "${AGENT_GREP_ALLOW_ABSOLUTE:-0}" "0"
+  }
+
+  it "AGENT_GREP_MAX_LINES defaults to 100" && {
+    assert_eq "${AGENT_GREP_MAX_LINES:-100}" "100"
+  }
+
+  it "/grep syntax card teaches quoted patterns" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'Pattern MUST be in double quotes'
+    assert_ok $? "syntax card must teach quoting requirement"
+  }
+
+  it "/grep syntax card teaches relative paths only" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'RELATIVE PATHS ONLY'
+    assert_ok $? "syntax card must enforce relative paths"
+  }
+
+  it "/grep syntax card teaches ERE not PCRE" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'NOT.*\\\\d.*\\\\w'
+    assert_ok $? "syntax card must warn about PCRE shorthand"
+  }
+
+  it "exploration directive uses quoted /grep syntax" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '/grep.*"<pattern>"'
+    assert_ok $? "exploration directive must show quoted /grep pattern"
+  }
+
 test_end

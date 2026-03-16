@@ -53,6 +53,8 @@ AGENT_TASK_MODE="${AGENT_TASK_MODE:-0}"                  # Task classifier overr
 AGENT_WEB_UNLOCK_ABSTRACT="${AGENT_WEB_UNLOCK_ABSTRACT:-99}"  # Milestones before /web unlocks for abstract tasks (99=effectively never)
 AGENT_WEB_UNLOCK_COMBINED="${AGENT_WEB_UNLOCK_COMBINED:-3}"   # Milestones before /web unlocks for combined tasks
 AGENT_OUTPUT_DIR="${AGENT_OUTPUT_DIR:-responses}"       # Parent directory for agent file writes (/write, /save, /append)
+AGENT_GREP_ALLOW_ABSOLUTE="${AGENT_GREP_ALLOW_ABSOLUTE:-0}"  # /grep path policy: 0=relative-only (force to workdir), 1=allow absolute paths
+AGENT_GREP_MAX_LINES="${AGENT_GREP_MAX_LINES:-100}"          # /grep output cap (lines shown before truncation)
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
 
@@ -3410,9 +3412,10 @@ SPEC
                 ;;
             grep)
                 cat << 'SPEC'
-{"cmd":"/grep","syntax":"/grep <pattern> [path] [| pipeline]","notes":"Extended regex search. Excludes .git, node_modules. Output capped at 200 lines. Pipe to head, tail, wc, sort, grep, awk, sed.",
-"format_only_ex":["/grep <pattern>","/grep <pattern> <path>","/grep <pattern> <path> | head"],
-"fill":{"<pattern>":"regex pattern to search for","<path>":"directory or file to search (default: current dir)"}}
+{"cmd":"/grep","syntax":"/grep [flags] \"<pattern>\" [relative_path] [| pipeline]",
+"rules":["Pattern MUST be in double quotes: /grep \"my pattern\"","RELATIVE PATHS ONLY (e.g. src/, docs/file.md) — NEVER absolute paths starting with /","If no path given, searches current directory recursively","Extended regex (ERE): use .* + ? | () [] {n,m} ^ $ — NOT \\d \\w \\b (use [0-9] [a-zA-Z0-9_] instead)","Multi-word patterns WITHOUT quotes will break — first word becomes pattern, second becomes path"],
+"format_only_ex":["/grep \"TODO\" src/","/grep \"hello world\" docs/","/grep -i \"error|warning\" logs/","/grep \"class [A-Z]\" . | wc -l"],
+"fill":{"\"<pattern>\"":"regex in double quotes (REQUIRED for multi-word)","[relative_path]":"file or directory to search (default: current dir)","[flags]":"-i (ignore case), -n (line numbers, default on), -l (files only)"}}
 SPEC
                 ;;
             read)
@@ -4205,6 +4208,11 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         # quoted phrases pass through to the search engine intact.
         local _skip_quote_strip=0
         if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" == /web\ search\ * ]] && [ "${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}" -eq 0 ]; then
+            _skip_quote_strip=1
+        fi
+        # /grep uses eval-based tokenization that relies on quotes to
+        # distinguish multi-word patterns from paths.  Always preserve.
+        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" == /grep\ * ]]; then
             _skip_quote_strip=1
         fi
         if [ "$cmd_is_slash" -eq 1 ] && [ "$_skip_quote_strip" -eq 0 ] && [[ "$cmd" == *'"'* ]]; then
@@ -5800,7 +5808,7 @@ MEMEOF
         if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ]; then
             _tool_summary="${_tool_summary}"',"/recall","/journal","/journal write","/grep","/ls","/cd","/read","/respond"],
 "FILES":["/edit","/append","/write","/save","/init","/build","/test","/fix","/download","/commit","/push"],
-"EXPLORE":["/journal show vivid","/journal show fading","/journal show sediment","/recall <keywords>","/grep <pattern> [path]","/ls [path]","/cd <path>","/read <filepath>"],
+"EXPLORE":["/journal show vivid","/journal show fading","/journal show sediment","/recall <keywords>","/grep \"<pattern>\" [path]","/ls [path]","/cd <path>","/read <filepath>"],
 "GIT":["/git search","/git fetch","/git clone","/git check","/git setup"],
 "SANDBOX":["/sandbox","/container"]'
             # When web is unlocked for abstract, append WEB AFTER SANDBOX
@@ -5988,7 +5996,7 @@ USER PREFERENCES ON FILE: ${_pref_n} stored. Use /recall before assuming user pr
 >>> EXPLORATION PRIORITY — this is an exploratory task <<<
 You MUST explore LOCAL sources using these commands:
   /recall <short keywords>  — search knowledge base (MAX 5 WORDS, e.g. "/recall journal memory tiers")
-  /grep <pattern> [path]    — regex search files (e.g. "/grep needle docs/")
+  /grep "<pattern>" [path]  — regex search files (e.g. /grep "needle" docs/)
   /journal show vivid       — read recent memory entries
   /journal show fading      — read older memory impressions
   /journal show sediment    — read deep memory deposits
@@ -6005,7 +6013,7 @@ Use /ls and /cd to explore the filesystem.
 >>> EXPLORATION NOTE — prefer local sources for this exploratory task <<<
 LOCAL sources should be checked first:
   /recall <short keywords>  — search knowledge base (MAX 5 WORDS)
-  /grep <pattern> [path]    — regex search files
+  /grep "<pattern>" [path]  — regex search files
   /journal show vivid|fading|sediment — read memory entries
   /ls [path] /cd <path> /read <filepath> — explore filesystem
 /web is available but prefer LOCAL commands when the information might exist locally.

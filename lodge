@@ -989,6 +989,31 @@ _cmd_limits() {
                     ui_err "web-unlock-combined expects a non-negative integer"
                 fi
             fi ;;
+        grep-max-lines|grep_max_lines|gml)
+            if [ -z "$value" ]; then
+                ui_info "Grep max lines: ${AGENT_GREP_MAX_LINES:-100}  (default: 100)"
+                ui_dim "  Maximum output lines before truncation in /grep results"
+            else
+                if [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -gt 0 ]; then
+                    AGENT_GREP_MAX_LINES="$value"
+                    ui_ok "Grep max lines set to $value"
+                else
+                    ui_err "grep-max-lines expects a positive integer"
+                fi
+            fi ;;
+        grep-allow-absolute|grep_allow_absolute|gaa)
+            if [ -z "$value" ]; then
+                local _gaa_show="off (relative-only)"
+                [ "${AGENT_GREP_ALLOW_ABSOLUTE:-0}" -eq 1 ] && _gaa_show="on (absolute paths allowed)"
+                ui_info "Grep allow absolute: $_gaa_show  (default: off)"
+                ui_dim "  When off, /grep strips leading / and searches relative to workdir"
+            else
+                case "$value" in
+                    on|1|yes|true) AGENT_GREP_ALLOW_ABSOLUTE=1; ui_ok "Grep: absolute paths allowed" ;;
+                    off|0|no|false) AGENT_GREP_ALLOW_ABSOLUTE=0; ui_ok "Grep: relative paths only (forced to workdir)" ;;
+                    *) ui_err "grep-allow-absolute: on|off" ;;
+                esac
+            fi ;;
         fast-route|fastroute|fast_route)
             if [ -z "$value" ]; then
                 local _fr_label="disabled"
@@ -1132,6 +1157,8 @@ _cmd_limits() {
             AGENT_WEB_UNLOCK_ABSTRACT=99
             AGENT_WEB_UNLOCK_COMBINED=2
             AGENT_FAST_ROUTE=1
+            AGENT_GREP_MAX_LINES=100
+            AGENT_GREP_ALLOW_ABSOLUTE=0
             AGENT_WEB_SEARCH_TIGHT_PARSING=0
             AGENT_WEB_SEARCH_MAX_LENGTH=160
             AGENT_WEB_SEARCH_MAX_OPERATORS=3
@@ -1389,6 +1416,10 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Task mode:" "$_tm_show (${AGENT_TASK_MODE:-0})  (default: 0 auto)"
             printf "  %-22s %s\n" "Web unlock abstract:" "${AGENT_WEB_UNLOCK_ABSTRACT:-99} milestones  (default: 99)"
             printf "  %-22s %s\n" "Web unlock combined:" "${AGENT_WEB_UNLOCK_COMBINED:-2} milestones  (default: 2)"
+            printf "  %-22s %s\n" "Grep max lines:" "${AGENT_GREP_MAX_LINES:-100}  (default: 100)"
+            local _gaa_disp="off"
+            [ "${AGENT_GREP_ALLOW_ABSOLUTE:-0}" -eq 1 ] && _gaa_disp="on"
+            printf "  %-22s %s\n" "Grep allow absolute:" "$_gaa_disp  (default: off)"
             local _ask_show="disabled"
             [ "${AGENT_ASK_USER:-1}" -eq 1 ] && _ask_show="enabled"
             printf "  %-22s %s\n" "Ask user (/ask):" "$_ask_show  (default: enabled)"
@@ -1443,6 +1474,8 @@ _cmd_limits() {
             ui_dim "    task-mode 0-3      — Task classifier: 0=auto 1=abstract 2=concrete 3=combined (current: ${AGENT_TASK_MODE:-0})"
             ui_dim "    web-unlock-abstract N — Milestones before /web visible for abstract tasks (current: ${AGENT_WEB_UNLOCK_ABSTRACT:-99})"
             ui_dim "    web-unlock-combined N — Milestones before /web visible for combined tasks (current: ${AGENT_WEB_UNLOCK_COMBINED:-2})"
+            ui_dim "    grep-max-lines N — /grep output line cap (current: ${AGENT_GREP_MAX_LINES:-100})"
+            ui_dim "    grep-allow-absolute on|off — Allow /grep to search absolute paths (current: $([ "${AGENT_GREP_ALLOW_ABSOLUTE:-0}" -eq 1 ] && echo on || echo off))"
             ui_dim "    ask on|off       — Allow George to /ask human questions (current: $([ "${AGENT_ASK_USER:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    brainstorm on|off — Allow George to /brainstorm (self-reason) (current: $([ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    file-expand on|off — Auto-expand file refs in /social /email /write (current: $([ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && echo on || echo off))"
@@ -2766,8 +2799,22 @@ _cmd_grep() {
         return 1
     fi
 
+    # ── PCRE → ERE compatibility transform ─────────────────────
+    # LLMs are trained on Python/JS regex and emit \d, \w, \s, \b.
+    # GNU grep -E (ERE) doesn't support these — silently convert.
+    pattern=$(printf '%s' "$pattern" | sed -e 's/\\d/[0-9]/g' -e 's/\\D/[^0-9]/g' -e 's/\\w/[a-zA-Z0-9_]/g' -e 's/\\W/[^a-zA-Z0-9_]/g' -e 's/\\s/[[:space:]]/g' -e 's/\\S/[^[:space:]]/g')
+
     # Default search path
     [ -z "$search_path" ] && search_path="."
+
+    # ── Path enforcement ───────────────────────────────────────
+    # Default: relative paths only (like /write). LLMs hallucinate
+    # absolute paths (/dev, /bin, /boot) that would search system
+    # dirs, hang on binary files, or flood the context window.
+    # AGENT_GREP_ALLOW_ABSOLUTE=1 unlocks absolute paths.
+    if [[ "$search_path" == /* ]] && [ "${AGENT_GREP_ALLOW_ABSOLUTE:-0}" -ne 1 ]; then
+        search_path="${search_path#/}"
+    fi
 
     # Resolve relative to workdir
     if [[ "$search_path" != /* ]]; then
@@ -2816,9 +2863,10 @@ _cmd_grep() {
                 ;;
         esac
     else
-        # Cap output at 200 lines to avoid flooding
+        # Cap output — controlled by AGENT_GREP_MAX_LINES (default 100)
+        local _grep_cap="${AGENT_GREP_MAX_LINES:-100}"
         local output
-        output=$("${cmd[@]}" 2>/dev/null | head -n 200)
+        output=$("${cmd[@]}" 2>/dev/null | head -n "$_grep_cap")
         local total
         total=$("${cmd[@]}" 2>/dev/null | wc -l)
 
@@ -2828,9 +2876,9 @@ _cmd_grep() {
         fi
 
         echo "$output"
-        if [ "$total" -gt 200 ]; then
+        if [ "$total" -gt "$_grep_cap" ]; then
             echo ""
-            ui_dim "  ... ($total total matches, showing first 200. Pipe to narrow: /grep pattern | tail -20)"
+            ui_dim "  ... ($total total matches, showing first $_grep_cap. Pipe to narrow: /grep \"pattern\" | tail -20)"
         fi
     fi
 }
