@@ -3515,4 +3515,146 @@ describe "Conditional strategist injection"
     assert_ok $? "COMMS section must be conditional on service configuration"
   }
 
+# ── Task classifier function ─────────────────────────────────
+describe "Task classifier function"
+
+  it "_agent_classify_task function exists" && {
+    declare -f _agent_classify_task &>/dev/null
+    assert_ok $? "_agent_classify_task must be defined"
+  }
+
+  it "AGENT_TASK_MODE defaults to 0 (auto)" && {
+    assert_eq "${AGENT_TASK_MODE:-0}" "0"
+  }
+
+  it "AGENT_TASK_MODE=1 forces abstract and returns early" && {
+    body=$(declare -f _agent_classify_task)
+    echo "$body" | grep -q 'AGENT_TASK_TYPE="abstract"'
+    assert_ok $? "mode 1 must set AGENT_TASK_TYPE to abstract"
+  }
+
+  it "AGENT_TASK_MODE=2 forces concrete" && {
+    body=$(declare -f _agent_classify_task)
+    echo "$body" | grep -q 'AGENT_TASK_TYPE="concrete"'
+    assert_ok $? "mode 2 must set AGENT_TASK_TYPE to concrete"
+  }
+
+  it "AGENT_TASK_MODE=3 forces combined" && {
+    body=$(declare -f _agent_classify_task)
+    echo "$body" | grep -q 'AGENT_TASK_TYPE="combined"'
+    assert_ok $? "mode 3 must set AGENT_TASK_TYPE to combined"
+  }
+
+  it "AGENT_TASK_MODE=0 falls through to LLM classification" && {
+    body=$(declare -f _agent_classify_task)
+    echo "$body" | grep -q 'llm_generate'
+    assert_ok $? "mode 0 must invoke LLM classifier"
+  }
+
+# ── Web masking system ───────────────────────────────────────
+describe "Web masking system"
+
+  it "AGENT_WEB_UNLOCK_ABSTRACT defaults to 99" && {
+    assert_eq "${AGENT_WEB_UNLOCK_ABSTRACT:-99}" "99"
+  }
+
+  it "AGENT_WEB_UNLOCK_COMBINED defaults to 2" && {
+    assert_eq "${AGENT_WEB_UNLOCK_COMBINED:-2}" "2"
+  }
+
+  it "agent_run computes _web_locked flag per macro iteration" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_web_locked'
+    assert_ok $? "agent_run must compute _web_locked flag"
+  }
+
+  it "_web_locked is exported as _AGENT_WEB_LOCKED" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'export _AGENT_WEB_LOCKED'
+    assert_ok $? "_AGENT_WEB_LOCKED must be exported for inner functions"
+  }
+
+  it "web lock checks AGENT_TASK_TYPE against thresholds" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'AGENT_WEB_UNLOCK_ABSTRACT\|WEB_UNLOCK_ABSTRACT'
+    assert_ok $? "web lock must reference abstract threshold"
+    echo "$body" | grep -q 'AGENT_WEB_UNLOCK_COMBINED\|WEB_UNLOCK_COMBINED'
+    assert_ok $? "web lock must reference combined threshold"
+  }
+
+  it "cached router variant strips /web lines" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_cached_router_sys_nweb'
+    assert_ok $? "web-stripped router cache must exist"
+  }
+
+  it "router selection switches on _AGENT_WEB_LOCKED" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_AGENT_WEB_LOCKED'
+    assert_ok $? "inner loop must check _AGENT_WEB_LOCKED"
+    echo "$body" | grep -q '_cached_router_sys_nweb'
+    assert_ok $? "router must have web-stripped variant available"
+  }
+
+  it "strategist tool summary conditionally omits WEB group" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_web_locked'
+    assert_ok $? "strategist section must reference web lock flag"
+    echo "$body" | grep -q '/vision'
+    assert_ok $? "vision must remain available when web is stripped"
+  }
+
+  it "exploration directive has web-locked variant without /web mention" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'EXPLORATION PRIORITY'
+    assert_ok $? "exploration directive must exist"
+    echo "$body" | grep -q '/grep'
+    assert_ok $? "exploration directive must include /grep"
+  }
+
+  it "specialist preamble conditionally omits /web from TOOLS" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q '_AGENT_WEB_LOCKED'
+    assert_ok $? "specialist TOOLS list must conditionally exclude /web"
+  }
+
+# ── /grep agent integration ──────────────────────────────────
+describe "/grep agent integration"
+
+  it "/grep is in lean router prompt" && {
+    body=$(declare -f _build_router_prompt)
+    echo "$body" | grep -q '/grep'
+    assert_ok $? "/grep must appear in lean router"
+  }
+
+  it "/grep is in full router prompt" && {
+    body=$(declare -f _build_router_prompt_full)
+    echo "$body" | grep -q '/grep'
+    assert_ok $? "/grep must appear in full router"
+  }
+
+  it "/grep has a specialist syntax card" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'grep)'
+    assert_ok $? "/grep must have a specialist syntax card case"
+  }
+
+  it "_fast_route matches grep keywords" && {
+    body=$(declare -f _fast_route)
+    echo "$body" | grep -q 'grep'
+    assert_ok $? "fast route must match grep keywords"
+  }
+
+  it "/grep appears in strategist tool summary" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '/grep'
+    assert_ok $? "/grep must be listed in strategist tool summary"
+  }
+
+  it "/grep appears in exploration directive" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '/grep.*pattern'
+    assert_ok $? "/grep must appear in exploration directive"
+  }
+
 test_end

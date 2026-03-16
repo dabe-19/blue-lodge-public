@@ -50,6 +50,8 @@ AGENT_DM_SCAN_CHARS="${AGENT_DM_SCAN_CHARS:-80}"          # Characters to scan f
 AGENT_PRE_ROUTE="${AGENT_PRE_ROUTE:-1}"                  # Pre-route: extract /cmd from milestone, skip router: 0=disabled, 1=enabled
 AGENT_FAST_ROUTE="${AGENT_FAST_ROUTE:-1}"                # Fast-route: 0=disabled, 1=keywords+lean, 2=fuzzy only (lean prompt, no keyword matching)
 AGENT_TASK_MODE="${AGENT_TASK_MODE:-0}"                  # Task classifier override: 0=auto (LLM), 1=abstract, 2=concrete, 3=combined
+AGENT_WEB_UNLOCK_ABSTRACT="${AGENT_WEB_UNLOCK_ABSTRACT:-99}"  # Milestones before /web unlocks for abstract tasks (99=effectively never)
+AGENT_WEB_UNLOCK_COMBINED="${AGENT_WEB_UNLOCK_COMBINED:-2}"   # Milestones before /web unlocks for combined tasks
 AGENT_OUTPUT_DIR="${AGENT_OUTPUT_DIR:-responses}"       # Parent directory for agent file writes (/write, /save, /append)
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
@@ -1018,6 +1020,11 @@ _fast_route() {
     # /download — download a URL
     if [[ "$_fr_text" =~ (download[[:space:]].*url|download[[:space:]].*http|download[[:space:]].*file[[:space:]]from) ]]; then
         echo "download"; return 0
+    fi
+
+    # /grep — regex file search
+    if [[ "$_fr_text" =~ (grep[[:space:]]|regex[[:space:]]search|search.*files[[:space:]]for|find.*pattern[[:space:]]in|find[[:space:]]in[[:space:]]files|search.*codebase|search.*source) ]]; then
+        echo "grep"; return 0
     fi
 
     # /gsuite — Google Workspace
@@ -2866,6 +2873,7 @@ Output ONLY a bare /command. No prose. Example: /web
 /append=add to end of file
 /read=read a file
 /ls=list files
+/grep=regex file search, find patterns
 /init=scaffold new project
 /build=build/compile project
 /test=run tests
@@ -2921,6 +2929,7 @@ TOOLS — gather info, execute work (these do NOT deliver results to the user):
 /fix         Diagnose and fix errors
 /read        Read a file
 /ls          List files as tree
+/grep        Regex search files for patterns (/grep <pattern> [path] [| pipeline])
 /web         Search web, fetch page, scrape page+images (/web search|fetch|scrape-images|images)
 /slash       Create/run custom commands (USE when no built-in fits)
 ${_brainstorm_line:+${_brainstorm_line}
@@ -3087,16 +3096,29 @@ _build_specialist_prompt() {
                 fi
                 ;;
         esac
-        cat << 'SPEC_PREAMBLE'
+        if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
+            cat << 'SPEC_PREAMBLE'
 OUTPUT FORMAT: exactly ONE slash command on its own line, starting with /
 FORBIDDEN: code fences, quotes on args, multiple commands per line, /sandbox for slash commands
 
 COMMAND TYPES:
-  TOOLS (gather info, do work): /git /pgp /phone /vision /journal /edit /append /sandbox /container /secret /init /recall /download /build /test /fix /read /ls /web /slash /vitals /backup bash
+  TOOLS (gather info, do work): /git /pgp /phone /vision /journal /edit /append /sandbox /container /secret /init /recall /download /build /test /fix /read /ls /grep /slash /vitals /backup bash
   DELIVERY (present output to user): /social /email /commit /push /write /save /respond
   NOTE: A full task may chain multiple DELIVERY commands across milestones (e.g. /write a report, then /social post it).
   DEFAULT: If the task does NOT explicitly need a file, post, or social delivery, use /respond to deliver the answer.
 SPEC_PREAMBLE
+        else
+            cat << 'SPEC_PREAMBLE'
+OUTPUT FORMAT: exactly ONE slash command on its own line, starting with /
+FORBIDDEN: code fences, quotes on args, multiple commands per line, /sandbox for slash commands
+
+COMMAND TYPES:
+  TOOLS (gather info, do work): /git /pgp /phone /vision /journal /edit /append /sandbox /container /secret /init /recall /download /build /test /fix /read /ls /grep /web /slash /vitals /backup bash
+  DELIVERY (present output to user): /social /email /commit /push /write /save /respond
+  NOTE: A full task may chain multiple DELIVERY commands across milestones (e.g. /write a report, then /social post it).
+  DEFAULT: If the task does NOT explicitly need a file, post, or social delivery, use /respond to deliver the answer.
+SPEC_PREAMBLE
+        fi
         echo "CRITICAL: Output the bare slash command. NO backticks. NO code fences. NO markdown formatting. Just the command."
         echo ""
         echo "═══════════════════════════════════════"
@@ -3384,6 +3406,13 @@ SPEC
 {"cmd":"/ls","syntax":"/ls [path] [depth]","notes":"Tree view, depth 1-8 (default 3).",
 "format_only_ex":["/ls","/ls <path> <depth>"],
 "fill":{"<path>":"directory path to list","<depth>":"tree depth 1-8"}}
+SPEC
+                ;;
+            grep)
+                cat << 'SPEC'
+{"cmd":"/grep","syntax":"/grep <pattern> [path] [| pipeline]","notes":"Extended regex search. Excludes .git, node_modules. Output capped at 200 lines. Pipe to head, tail, wc, sort, grep, awk, sed.",
+"format_only_ex":["/grep <pattern>","/grep <pattern> <path>","/grep <pattern> <path> | head"],
+"fill":{"<pattern>":"regex pattern to search for","<path>":"directory or file to search (default: current dir)"}}
 SPEC
                 ;;
             read)
@@ -3677,7 +3706,13 @@ agent_inner_loop() {
 
         if [ -z "$_fr_result" ]; then
         # ── LLM ROUTER: ambiguous commands only ───────────────
-        local router_sys="$_cached_router_sys"
+        # Use web-masked router when web is locked
+        local router_sys
+        if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
+            router_sys="$_cached_router_sys_nweb"
+        else
+            router_sys="$_cached_router_sys"
+        fi
         local _route_now
         _route_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
         local _router_context
@@ -3924,11 +3959,17 @@ agent_inner_loop() {
             # specialist prompt with ONLY the compact categorized command
             # list (~150 tokens vs ~2500-3500 for full catalog).
             # /respond is present but not amplified — the model picks freely.
-            local _compact_cmds='{"RESEARCH":["/web search","/web fetch","/web scrape","/recall","/git search","/git fetch"],
+            local _compact_cmds='{"RESEARCH":["WEBPLACEHOLDER"/recall","/git search","/git fetch"],
  "ANALYSIS":["/ask","/brainstorm","/vision"],
- "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
+ "FILES":["/write","/save","/edit","/append","/read","/ls","/grep","/init","/build","/test","/fix"],
  "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
  "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
+            # Strip /web entries from compact catalog when web is locked
+            if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
+                _compact_cmds=$(echo "$_compact_cmds" | sed 's/WEBPLACEHOLDER//')
+            else
+                _compact_cmds=$(echo "$_compact_cmds" | sed 's/WEBPLACEHOLDER/"\/web search","\/web fetch","\/web scrape",/')
+            fi
 
             # If /respond has been tried too many times without success, remove it
             if [ "$_respond_consec" -ge "${AGENT_RESPOND_CONSEC_MAX:-2}" ]; then
@@ -5629,6 +5670,10 @@ MEMEOF
     # state or action history.
     local _cached_router_sys
     _cached_router_sys=$(_build_router_prompt)
+    # Build web-masked variant: strip /web lines so web-locked iterations
+    # never expose /web to the LLM router.
+    local _cached_router_sys_nweb
+    _cached_router_sys_nweb=$(echo "$_cached_router_sys" | sed -e '/^\/web/d' -e 's/Example: \/web/Example: \/respond/')
 
     # ── Macro Loop: Milestone-by-milestone execution ──────────
     local macro_iterations=0
@@ -5726,6 +5771,19 @@ MEMEOF
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_svc_status" ] && ui_dim "  [debug] inject: strategist <- services status"
         fi
 
+        # ── Web Lock Gate ─────────────────────────────────
+        # Compute per-iteration whether /web is masked from all contexts.
+        # Abstract/combined tasks hide /web until the milestone threshold
+        # is reached, forcing the LLM to use local exploration commands.
+        local _web_locked=0
+        if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ] && [ "$completed_milestones" -lt "${AGENT_WEB_UNLOCK_ABSTRACT:-99}" ]; then
+            _web_locked=1
+        elif [ "${AGENT_TASK_TYPE:-concrete}" = "combined" ] && [ "$completed_milestones" -lt "${AGENT_WEB_UNLOCK_COMBINED:-2}" ]; then
+            _web_locked=1
+        fi
+        export _AGENT_WEB_LOCKED="$_web_locked"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ "$_web_locked" -eq 1 ] && ui_dim "  [debug] web locked: milestone $completed_milestones < threshold ($AGENT_TASK_TYPE)"
+
         # Lean command list for the strategist (~150 tokens vs ~200 prior).
         # The strategist only needs to ROUTE — the specialist handles syntax.
         # Removed: CONFIG (interactive setup), EXTENSION (edge case),
@@ -5735,19 +5793,32 @@ MEMEOF
 {"CORE":["/ask"';
         [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _tool_summary="${_tool_summary}"',"/brainstorm"'
         # For abstract tasks, exploration tools occupy primacy position
-        # so 4B models prefer /recall, /journal, /ls, /read over /web.
+        # so 4B models prefer /recall, /journal, /ls, /grep, /read over /web.
         if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ]; then
-            _tool_summary="${_tool_summary}"',"/recall","/journal","/journal write","/ls","/cd","/read","/respond"],
+            _tool_summary="${_tool_summary}"',"/recall","/journal","/journal write","/grep","/ls","/cd","/read","/respond"],
 "FILES":["/edit","/append","/write","/save","/init","/build","/test","/fix","/download","/commit","/push"],
-"EXPLORE":["/journal show vivid","/journal show fading","/journal show sediment","/recall <keywords>","/ls [path]","/cd <path>","/read <filepath>"],
+"EXPLORE":["/journal show vivid","/journal show fading","/journal show sediment","/recall <keywords>","/grep <pattern> [path]","/ls [path]","/cd <path>","/read <filepath>"],
 "GIT":["/git search","/git fetch","/git clone","/git check","/git setup"],
-"WEB":["/vision","/web search","/web fetch","/web scrape","/web images"],
 "SANDBOX":["/sandbox","/container"]'
+            # When web is unlocked for abstract, append WEB AFTER SANDBOX
+            # so it has lower positional precedence than exploration commands.
+            if [ "$_web_locked" -eq 0 ]; then
+                _tool_summary="${_tool_summary}"',"WEB":["/vision","/web search","/web fetch","/web scrape","/web images"]'
+            fi
         else
             _tool_summary="${_tool_summary}"',"/recall","/journal","/journal write","/respond"],
-"FILES":["/edit","/append","/write","/save","/read","/ls","/init","/build","/test","/fix","/download","/commit","/push","/cd"],
-"GIT":["/git search","/git fetch","/git clone","/git check","/git setup"],
-"WEB":["/vision","/web search","/web fetch","/web scrape","/web images"],
+"FILES":["/edit","/append","/write","/save","/read","/ls","/grep","/init","/build","/test","/fix","/download","/commit","/push","/cd"],
+"GIT":["/git search","/git fetch","/git clone","/git check","/git setup"]'
+            # Web group: omit entirely when web is locked (combined early milestones)
+            if [ "$_web_locked" -eq 0 ]; then
+                _tool_summary="${_tool_summary}"',
+"WEB":["/vision","/web search","/web fetch","/web scrape","/web images"]'
+            else
+                # Keep /vision in FILES even when web is locked
+                _tool_summary="${_tool_summary}"',
+"MEDIA":["/vision"]'
+            fi
+            _tool_summary="${_tool_summary}"',
 "SANDBOX":["/sandbox","/container"]'
         fi
         # Include COMMS only when social or email services are configured
@@ -5903,15 +5974,18 @@ USER PREFERENCES ON FILE: ${_pref_n} stored. Use /recall before assuming user pr
         # ── Exploration directive (abstract/combined tasks) ─────
         # When the task is exploratory, inject a priority directive
         # that teaches the strategist about exploration commands with
-        # their exact syntax. This addresses George's blind spot where
-        # he defaults to /web for everything and doesn't know how to
-        # use /recall, /journal, /ls, /cd, /read effectively.
+        # their exact syntax. When web is locked, NO mention of /web
+        # exists — this prevents information leakage where the model
+        # learns about /web from the directive itself.
         local _exploration_directive=""
         if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ] || [ "${AGENT_TASK_TYPE:-concrete}" = "combined" ]; then
-            _exploration_directive='
+            if [ "$_web_locked" -eq 1 ]; then
+                # Web-locked: no /web mention at all — pure local exploration
+                _exploration_directive='
 >>> EXPLORATION PRIORITY — this is an exploratory task <<<
-Before using /web search, you MUST first explore LOCAL sources:
+You MUST explore LOCAL sources using these commands:
   /recall <short keywords>  — search knowledge base (MAX 5 WORDS, e.g. "/recall journal memory tiers")
+  /grep <pattern> [path]    — regex search files (e.g. "/grep needle docs/")
   /journal show vivid       — read recent memory entries
   /journal show fading      — read older memory impressions
   /journal show sediment    — read deep memory deposits
@@ -5919,9 +5993,22 @@ Before using /web search, you MUST first explore LOCAL sources:
   /cd <path>                — change working directory
   /read <filepath>          — read a local file
 RULES: Use /recall with SHORT keyword queries (2-5 words). NEVER use long sentences.
-Use /ls and /cd to explore the filesystem BEFORE searching the web.
->>> Use LOCAL exploration commands FIRST. Only use /web when local sources are exhausted. <<<'
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- exploration directive ($AGENT_TASK_TYPE)"
+Use /grep to search for specific patterns in files.
+Use /ls and /cd to explore the filesystem.
+>>> ALL milestones must use LOCAL exploration commands listed above. <<<'
+            else
+                # Web unlocked: /web available but deprioritized for abstract tasks
+                _exploration_directive='
+>>> EXPLORATION NOTE — prefer local sources for this exploratory task <<<
+LOCAL sources should be checked first:
+  /recall <short keywords>  — search knowledge base (MAX 5 WORDS)
+  /grep <pattern> [path]    — regex search files
+  /journal show vivid|fading|sediment — read memory entries
+  /ls [path] /cd <path> /read <filepath> — explore filesystem
+/web is available but prefer LOCAL commands when the information might exist locally.
+>>> Check local sources FIRST. Use /web only when local sources cannot answer. <<<'
+            fi
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- exploration directive ($AGENT_TASK_TYPE, web_locked=$_web_locked)"
         fi
 
         local macro_sys="Strategic planning engine. Output the SINGLE next milestone. No markdown formatting (no ** or * markers). Plain text only.

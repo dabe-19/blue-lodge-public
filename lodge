@@ -965,6 +965,30 @@ _cmd_limits() {
                     ui_err "Task mode: 0=auto 1=abstract 2=concrete 3=combined (or name)"
                 fi
             fi ;;
+        web-unlock-abstract|web_unlock_abstract|wua)
+            if [ -z "$value" ]; then
+                ui_info "Web unlock (abstract): ${AGENT_WEB_UNLOCK_ABSTRACT:-99} milestones  (default: 99 = effectively never)"
+                ui_dim "  Milestones that must complete before /web is visible to abstract tasks"
+            else
+                if [[ "$value" =~ ^[0-9]+$ ]]; then
+                    AGENT_WEB_UNLOCK_ABSTRACT="$value"
+                    ui_ok "Web unlock (abstract) set to $value milestones"
+                else
+                    ui_err "web-unlock-abstract expects a non-negative integer"
+                fi
+            fi ;;
+        web-unlock-combined|web_unlock_combined|wuc)
+            if [ -z "$value" ]; then
+                ui_info "Web unlock (combined): ${AGENT_WEB_UNLOCK_COMBINED:-2} milestones  (default: 2)"
+                ui_dim "  Milestones that must complete before /web is visible to combined tasks"
+            else
+                if [[ "$value" =~ ^[0-9]+$ ]]; then
+                    AGENT_WEB_UNLOCK_COMBINED="$value"
+                    ui_ok "Web unlock (combined) set to $value milestones"
+                else
+                    ui_err "web-unlock-combined expects a non-negative integer"
+                fi
+            fi ;;
         fast-route|fastroute|fast_route)
             if [ -z "$value" ]; then
                 local _fr_label="disabled"
@@ -1105,6 +1129,8 @@ _cmd_limits() {
             AGENT_SMART_ROUTE=2
             AGENT_PRE_ROUTE=1
             AGENT_TASK_MODE=0
+            AGENT_WEB_UNLOCK_ABSTRACT=99
+            AGENT_WEB_UNLOCK_COMBINED=2
             AGENT_FAST_ROUTE=1
             AGENT_WEB_SEARCH_TIGHT_PARSING=0
             AGENT_WEB_SEARCH_MAX_LENGTH=160
@@ -1361,6 +1387,8 @@ _cmd_limits() {
             [ "${AGENT_TASK_MODE:-0}" -eq 2 ] && _tm_show="concrete"
             [ "${AGENT_TASK_MODE:-0}" -eq 3 ] && _tm_show="combined"
             printf "  %-22s %s\n" "Task mode:" "$_tm_show (${AGENT_TASK_MODE:-0})  (default: 0 auto)"
+            printf "  %-22s %s\n" "Web unlock abstract:" "${AGENT_WEB_UNLOCK_ABSTRACT:-99} milestones  (default: 99)"
+            printf "  %-22s %s\n" "Web unlock combined:" "${AGENT_WEB_UNLOCK_COMBINED:-2} milestones  (default: 2)"
             local _ask_show="disabled"
             [ "${AGENT_ASK_USER:-1}" -eq 1 ] && _ask_show="enabled"
             printf "  %-22s %s\n" "Ask user (/ask):" "$_ask_show  (default: enabled)"
@@ -1413,6 +1441,8 @@ _cmd_limits() {
             ui_dim "    smart-route 0-3|on|off — Smart routing: 0=off 1=reroute 2=fuzzy 3=combined (current: ${AGENT_SMART_ROUTE:-2})"
             ui_dim "    fast-route on|off  — Keyword filter before LLM router (current: $([ "${AGENT_FAST_ROUTE:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    task-mode 0-3      — Task classifier: 0=auto 1=abstract 2=concrete 3=combined (current: ${AGENT_TASK_MODE:-0})"
+            ui_dim "    web-unlock-abstract N — Milestones before /web visible for abstract tasks (current: ${AGENT_WEB_UNLOCK_ABSTRACT:-99})"
+            ui_dim "    web-unlock-combined N — Milestones before /web visible for combined tasks (current: ${AGENT_WEB_UNLOCK_COMBINED:-2})"
             ui_dim "    ask on|off       — Allow George to /ask human questions (current: $([ "${AGENT_ASK_USER:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    brainstorm on|off — Allow George to /brainstorm (self-reason) (current: $([ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    file-expand on|off — Auto-expand file refs in /social /email /write (current: $([ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && echo on || echo off))"
