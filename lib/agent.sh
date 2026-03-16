@@ -3088,7 +3088,7 @@ SPEC
   "scrape":"/web scrape <url> — alias for /web fetch. Downloads and extracts readable TEXT from a webpage.",
   "scrape-images":"/web scrape-images <url> — returns STRUCTURED JSON: {url, title, content, images:[]} with page text AND image URIs. Pass image URIs to /vision for analysis.",
   "images":"/web images <query> — searches for image URLs by keyword (Serper API). Returns image URLs only."},
-"rules":["search=QUERY (keywords), fetch/scrape/scrape-images=URL — NEVER swap","/web fetch (or /web scrape) returns TEXT only — use /web scrape-images when you need images","scrape-images returns {url,title,content,images[]} — pass images[] URLs to /vision","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples","LOCAL FILES: NEVER use /web fetch on local files or relative paths — use /read for text files, /vision for images"],
+"rules":["search=QUERY (keywords), fetch/scrape/scrape-images=URL — NEVER swap","/web fetch (or /web scrape) returns TEXT only — use /web scrape-images when you need images","scrape-images returns {url,title,content,images[]} — pass images[] URLs to /vision","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples","LOCAL FILES: NEVER use /web fetch on local files or relative paths — use /read for text files, /vision for images","ONE URL PER COMMAND — never put multiple URLs in one /web call. To fetch 3 pages, output 3 separate /web fetch lines across 3 steps.","The URL must be the LAST token on the line — nothing after it. No trailing text, no next command."],
 "search_tips":["3-5 keywords MAX — Google FAILS with long queries","Drop filler: the/a/for/including/regarding/comprehensive","NEVER paste entire milestone as search query","Extract keywords from TASK context only"],
 "FLOW CHAINS":["Text research: /web search -> /web fetch -> summarize","Scrape workflow: /web search -> /web scrape -> summarize","Image research: /web scrape-images <url> -> /vision <image_url_from_images[]>","Report: /web search -> /web fetch -> /write report"],
 "notes":["Do NOT fetch every URL. 1 search + 1-2 fetches enough","If scrape-images returns empty content, use /web fetch for same URL instead","/web fetch and /web scrape-images require a full https:// URL — for local files use /read or /vision instead"],
@@ -3917,7 +3917,7 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         # search_tips buried in the JSON card, so put it at the end
         # where recency bias makes it impossible to miss.
         if [[ "${selected_tool#/}" == "web" ]]; then
-            _spec_tail="Output ONLY the /web command WITH ARGUMENTS. For /web search: extract 3-5 keywords FROM THE MICRO OBJECTIVE above. Drop filler words (the, a, for, in, to, and, or, about, including, regarding, comprehensive, professional, community, organizations, associations). DO NOT copy examples — derive keywords from the objective. NEVER output just '/web search' without keywords."
+            _spec_tail="Output ONLY ONE /web command. ONE URL per command — the URL is the LAST thing on the line, nothing after it. For /web search: extract 3-5 keywords FROM THE MICRO OBJECTIVE above. Drop filler words (the, a, for, in, to, and, or, about, including, regarding, comprehensive, professional, community, organizations, associations). DO NOT copy examples — derive keywords from the objective. NEVER output just '/web search' without keywords. To fetch multiple pages, use separate steps — one /web fetch per step."
         fi
         local specialist_prompt="MICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\n${_spec_tail}"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist <- micro_memory action log ($(echo "$inner_context" | wc -l) lines)"
@@ -4020,6 +4020,24 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         # Skip entirely for direct respond — the text is prose content,
         # not LLM-generated command syntax.
         if [ "$_direct_respond" -ne 1 ]; then
+
+        # ── GLUED SLASH COMMAND SEPARATOR ─────────────────
+        # LLMs sometimes omit the space between the end of a URL and the
+        # next slash command, producing output like:
+        #   /web fetch https://example.com/path\/web fetch https://other.com
+        #   /web fetch https://example.com/web search query
+        # Detect [non-whitespace](/web|/Web) mid-string or backslash-web
+        # and inject a space so the multi-command splitter can work.
+        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" != *'\n'* ]]; then
+            # Case 1: \web or \/web glued (backslash before web command verb)
+            # Case 2: /web glued to a preceding non-space character (URL path)
+            local _glue_fixed
+            _glue_fixed=$(echo "$cmd" | sed -E 's#[\\][/]?[Ww]eb (fetch|search|scrape|read)# /web \1#gi; s#([^ ])/[Ww]eb (fetch|search|scrape|read)#\1 /web \2#gi')
+            if [ "$_glue_fixed" != "$cmd" ]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Fixed glued /web command: '${cmd:0:60}...' → '${_glue_fixed:0:60}...'"
+                cmd="$_glue_fixed"
+            fi
+        fi
 
         # ── MULTI-COMMAND SPLITTER ────────────────────────────
         # The LLM sometimes concatenates multiple slash commands on one line:

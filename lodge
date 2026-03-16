@@ -3398,6 +3398,21 @@ _cmd_web() {
     local rest
     rest=$(echo "$args" | sed 's/^[^ ]* *//')
 
+    # ── Defensive: extract only the first URL for URL-taking actions ──
+    # LLMs frequently concatenate multiple URLs or append trailing text
+    # (e.g. "https://example.com/path/web fetch https://other.com").
+    # For actions that expect a single URL, extract just the first one.
+    case "$action" in
+        fetch|read|scrape|scrape-images|scrapeimages|summary|links|title|ping)
+            if [[ "$rest" == http* ]]; then
+                # Grab first URL: everything up to the first whitespace
+                rest=$(echo "$rest" | awk '{print $1}')
+                # Strip trailing backslash (common LLM artifact)
+                rest="${rest%\\}"
+            fi
+            ;;
+    esac
+
     case "$action" in
         fetch|read|scrape)  web_fetch "$rest" ;;
         search)      web_search "$rest" ;;
