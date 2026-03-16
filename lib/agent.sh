@@ -466,6 +466,24 @@ TASK: $task
 
     local decompose_sys="You are a task decomposition engine. Output ONLY a numbered list of general objectives. Each item: short imperative sentence - no more than 10 words. Describe WHAT, not HOW. No commands, URLs, tools, or parenthetical details. Plain numbered list only."
 
+    # ── Task-type–aware decomposition ─────────────────────────
+    # For abstract/combined tasks, the first items MUST be internal
+    # exploration (recall, journal, filesystem) before external research.
+    if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ]; then
+        decompose_prompt="${decompose_prompt}
+
+{\"exploration_priority\":{
+ \"rule\":\"The FIRST 1-2 items MUST be internal exploration: recall stored memory, read local files, review journal entries\",
+ \"before_web\":\"Do NOT include web search items unless internal sources are explicitly exhausted\",
+ \"internal_actions\":[\"review stored memory and recall\",\"explore local files and directories\",\"check journal entries\"]}}"
+    elif [ "${AGENT_TASK_TYPE:-concrete}" = "combined" ]; then
+        decompose_prompt="${decompose_prompt}
+
+{\"exploration_priority\":{
+ \"rule\":\"The FIRST 1-2 items MUST be internal exploration: recall stored memory, read local files, review journal entries\",
+ \"then\":\"Follow with research and delivery items in order\"}}"
+    fi
+
     local raw_list
     local LLM_SCENARIO=strategist
     raw_list=$(llm_generate "$decompose_prompt" "$decompose_sys" "${LLM_STRATEGIST_TOKENS:-256}" "$LLM_BUDGET_AGENT")
@@ -528,6 +546,64 @@ _agent_honeydew_display() {
         "$hd_file" 2>/dev/null | while IFS= read -r line; do
         ui_info "$line"
     done
+}
+
+# ── Task Classifier ───────────────────────────────────────────
+# Determines whether a user task is abstract, concrete, or combined.
+# Sets the global AGENT_TASK_TYPE variable which drives:
+#   - Honeydew decomposition prompt (exploration-first for abstract)
+#   - Strategist prompt injection (exploration directive)
+#   - Fast-route bypass (forces LLM router for abstract)
+#   - Tool summary ordering (exploration tools first for abstract)
+#   - AGENT_OUTPUT_DIR (workspace for abstract, responses/ for concrete)
+#   - Research gate threshold (raised for abstract)
+#
+# Args: $1=task text
+# Output: exports AGENT_TASK_TYPE (abstract|concrete|combined)
+_agent_classify_task() {
+    local task="$1"
+
+    local classify_prompt="Classify this task as abstract, concrete, or combined.
+
+TASK: $task
+
+{\"definitions\":{
+ \"concrete\":\"Task has an identified deliverable: send email, write code, post message, build project, create file, deploy, scaffold\",
+ \"abstract\":\"Open-ended exploration: research, compare, recall, explore, investigate, analyze, review memory, examine, summarize findings\",
+ \"combined\":\"Research or exploration FOLLOWED BY a deliverable: research then write, compare then email, explore then build\"},
+ \"output\":\"JSON ONLY: {\\\"type\\\":\\\"abstract\\\"} or {\\\"type\\\":\\\"concrete\\\"} or {\\\"type\\\":\\\"combined\\\"}\",
+ \"rules\":[\"output ONLY the JSON object\",\"no prose\",\"no explanation\"]}"
+
+    local classify_sys="You are a task classifier. Output ONLY a JSON object with a single key 'type' whose value is 'abstract', 'concrete', or 'combined'. No other text."
+
+    local raw_type
+    local LLM_SCENARIO=strategist
+    raw_type=$(llm_generate "$classify_prompt" "$classify_sys" "${LLM_STRATEGIST_TOKENS:-256}" "$LLM_BUDGET_AGENT")
+
+    # Strip think blocks and whitespace
+    raw_type=$(echo "$raw_type" | _strip_think_blocks)
+    raw_type=$(echo "$raw_type" | tr -d '[:space:]')
+
+    # Parse JSON — extract "type" field
+    local parsed_type
+    parsed_type=$(echo "$raw_type" | jq -r '.type // empty' 2>/dev/null)
+
+    # Validate against enum; fallback to "concrete" on parse failure
+    case "$parsed_type" in
+        abstract|concrete|combined) ;;
+        *)
+            # Try bare-word extraction as last resort (model might output just "abstract")
+            raw_type=$(echo "$raw_type" | tr -d '"{}:' | tr '[:upper:]' '[:lower:]')
+            case "$raw_type" in
+                *abstract*) parsed_type="abstract" ;;
+                *combined*) parsed_type="combined" ;;
+                *)          parsed_type="concrete" ;;
+            esac
+            ;;
+    esac
+
+    export AGENT_TASK_TYPE="$parsed_type"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] task classified: $AGENT_TASK_TYPE"
 }
 
 # Mark a honeydew item as complete by matching item number.
@@ -3570,8 +3646,11 @@ agent_inner_loop() {
         # Deterministic keyword matching captures domain-specific
         # commands (~70% of routes). Only ambiguous tasks fall
         # through to the lean LLM router prompt (~100 tokens).
+        # BYPASS: For abstract tasks, skip fast-route so the LLM
+        # router sees the exploration directive and can choose
+        # /recall, /journal, /ls before defaulting to /web.
         local _fr_result=""
-        if [ "${AGENT_FAST_ROUTE:-1}" -eq 1 ]; then
+        if [ "${AGENT_FAST_ROUTE:-1}" -eq 1 ] && [ "${AGENT_TASK_TYPE:-concrete}" != "abstract" ]; then
             _fr_result=$(_fast_route "$micro_objective")
             if [ -n "$_fr_result" ]; then
                 selected_tool="$_fr_result"
@@ -4576,17 +4655,19 @@ INTERLOCK_JSON
             # Execute based on command type:
             #   Slash commands → commands_dispatch (proper command registry)
             #   Bash commands  → eval (direct shell execution)
-            # head -c 2000 : Reads only the first 2000 bytes to prevent
-            # context window overflow from massive stack traces.
+            # Capture full output, then truncate to 2000 chars via
+            # parameter expansion. Avoids | head pipe which causes
+            # SIGPIPE (exit 141) on verbose commands like /journal.
             local output
             local exit_code
             if [ "$cmd_is_slash" -eq 1 ] && declare -f commands_dispatch &>/dev/null; then
-                output=$(commands_dispatch "$cmd" "$workdir" 2>&1 | head -c 2000)
-                exit_code=${PIPESTATUS[0]}
+                output=$(commands_dispatch "$cmd" "$workdir" 2>&1)
+                exit_code=$?
             else
-                output=$(eval "$cmd" 2>&1 | head -c 2000)
-                exit_code=${PIPESTATUS[0]}
+                output=$(eval "$cmd" 2>&1)
+                exit_code=$?
             fi
+            output="${output:0:2000}"
 
             if [ $exit_code -eq 0 ]; then
                 # ── POST-INIT WORKDIR UPDATE ───────────────────
@@ -4957,14 +5038,19 @@ INTERLOCK_JSON
                 fi
                 ui_warn "Escalation L1: ${_l1_label}..."
                 sleep 1
+                local _l1_exit
                 if [[ "$_l1_cmd" == /* ]] && declare -f commands_dispatch &>/dev/null; then
-                    output=$(commands_dispatch "$_l1_cmd" "$workdir" 2>&1 | head -c 2000)
+                    output=$(commands_dispatch "$_l1_cmd" "$workdir" 2>&1)
+                    _l1_exit=$?
                 elif [ "$cmd_is_slash" -eq 1 ] && declare -f commands_dispatch &>/dev/null; then
-                    output=$(commands_dispatch "$_l1_cmd" "$workdir" 2>&1 | head -c 2000)
+                    output=$(commands_dispatch "$_l1_cmd" "$workdir" 2>&1)
+                    _l1_exit=$?
                 else
-                    output=$(eval "$_l1_cmd" 2>&1 | head -c 2000)
+                    output=$(eval "$_l1_cmd" 2>&1)
+                    _l1_exit=$?
                 fi
-                if [ ${PIPESTATUS[0]} -eq 0 ]; then
+                output="${output:0:2000}"
+                if [ $_l1_exit -eq 0 ]; then
                     _micro_add_action "$micro_file" "$_l1_cmd" "SUCCESS" 0 "$output" "L1_retry"
                     inner_attempts=$((inner_attempts + 1))
                     continue
@@ -5213,12 +5299,13 @@ Output a slash command line starting with / OR a bash code block."
             local final_output
             local final_exit
             if [ "$final_is_slash" -eq 1 ] && declare -f commands_dispatch &>/dev/null; then
-                final_output=$(commands_dispatch "$final_cmd" "$workdir" 2>&1 | head -c 2000)
-                final_exit=${PIPESTATUS[0]}
+                final_output=$(commands_dispatch "$final_cmd" "$workdir" 2>&1)
+                final_exit=$?
             else
-                final_output=$(eval "$final_cmd" 2>&1 | head -c 2000)
-                final_exit=${PIPESTATUS[0]}
+                final_output=$(eval "$final_cmd" 2>&1)
+                final_exit=$?
             fi
+            final_output="${final_output:0:2000}"
 
             if [ "$final_exit" -eq 0 ]; then
                 # ── Recovery Logging ───────────────────────────
@@ -5479,6 +5566,24 @@ MEMEOF
     echo "# Failures Log" > "$fail_file"
     echo "---" >> "$fail_file"
 
+    # ── Classify Task Type ────────────────────────────────────
+    # Determine if the task is abstract (exploration/research),
+    # concrete (specific deliverable), or combined (research→deliver).
+    # This drives conditional prompt injections, workspace enforcement,
+    # fast-route bypass, and research gate thresholds.
+    _agent_classify_task "$task"
+
+    # ── Dynamic Output Directory ──────────────────────────────
+    # Abstract and combined tasks route file writes to the task
+    # workspace so artifacts stay isolated per task. Concrete tasks
+    # keep the default responses/ directory.
+    if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ] || [ "${AGENT_TASK_TYPE:-concrete}" = "combined" ]; then
+        AGENT_OUTPUT_DIR="$AGENT_TASK_WORKSPACE_REL"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] output dir: $AGENT_OUTPUT_DIR ($AGENT_TASK_TYPE)"
+    else
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] output dir: $AGENT_OUTPUT_DIR (concrete)"
+    fi
+
     # ── Build Honeydew List ───────────────────────────────────
     # Decompose the user's task into a precedence-ranked checklist
     # BEFORE the first strategist call. This gives the evaluator
@@ -5613,11 +5718,22 @@ MEMEOF
         local _tool_summary='YOUR WORKING COMMANDS:
 {"CORE":["/ask"';
         [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _tool_summary="${_tool_summary}"',"/brainstorm"'
-        _tool_summary="${_tool_summary}"',"/recall","/journal","/journal write","/respond"],
+        # For abstract tasks, exploration tools occupy primacy position
+        # so 4B models prefer /recall, /journal, /ls, /read over /web.
+        if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ]; then
+            _tool_summary="${_tool_summary}"',"/recall","/journal","/journal write","/ls","/cd","/read","/respond"],
+"FILES":["/edit","/append","/write","/save","/init","/build","/test","/fix","/download","/commit","/push"],
+"EXPLORE":["/journal show vivid","/journal show fading","/journal show sediment","/recall <keywords>","/ls [path]","/cd <path>","/read <filepath>"],
+"GIT":["/git search","/git fetch","/git clone","/git check","/git setup"],
+"WEB":["/vision","/web search","/web fetch","/web scrape","/web images"],
+"SANDBOX":["/sandbox","/container"]'
+        else
+            _tool_summary="${_tool_summary}"',"/recall","/journal","/journal write","/respond"],
 "FILES":["/edit","/append","/write","/save","/read","/ls","/init","/build","/test","/fix","/download","/commit","/push","/cd"],
 "GIT":["/git search","/git fetch","/git clone","/git check","/git setup"],
 "WEB":["/vision","/web search","/web fetch","/web scrape","/web images"],
 "SANDBOX":["/sandbox","/container"]'
+        fi
         # Include COMMS only when social or email services are configured
         if echo "$_svc_status" | grep -qE 'CONFIGURED:.*(discord|telegram|mastodon|x/twitter|bluesky|email)'; then
             _tool_summary="${_tool_summary}"',"COMMS":["/social post","/social dm","/social read","/email send","/email inbox","/phone"]'
@@ -5728,12 +5844,16 @@ MEMEOF
         local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_sieve_hint}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
 
         # ── Research→Delivery Gate ────────────────────────────
-        # After 2+ consecutive research milestones, inject a hard
+        # After N consecutive research milestones, inject a hard
         # constraint forcing the strategist to use a delivery command.
         # This breaks the /web loop where the model endlessly searches
         # instead of producing output.
+        # For abstract tasks, research IS the task — raise threshold
+        # from 2 to 5 so exploration has room to breathe.
         local _research_gate=""
-        if [ "$_research_milestone_count" -ge 2 ]; then
+        local _research_gate_threshold=2
+        [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ] && _research_gate_threshold=5
+        if [ "$_research_milestone_count" -ge "$_research_gate_threshold" ]; then
             _research_gate="
 
 >>> RESEARCH PHASE FINISHED — you have done ${_research_milestone_count} consecutive research milestones. <<<
@@ -5764,9 +5884,33 @@ USER PREFERENCES ON FILE: ${_pref_n} stored. Use /recall before assuming user pr
             fi
         fi
 
+        # ── Exploration directive (abstract/combined tasks) ─────
+        # When the task is exploratory, inject a priority directive
+        # that teaches the strategist about exploration commands with
+        # their exact syntax. This addresses George's blind spot where
+        # he defaults to /web for everything and doesn't know how to
+        # use /recall, /journal, /ls, /cd, /read effectively.
+        local _exploration_directive=""
+        if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ] || [ "${AGENT_TASK_TYPE:-concrete}" = "combined" ]; then
+            _exploration_directive='
+>>> EXPLORATION PRIORITY — this is an exploratory task <<<
+Before using /web search, you MUST first explore LOCAL sources:
+  /recall <short keywords>  — search knowledge base (MAX 5 WORDS, e.g. "/recall journal memory tiers")
+  /journal show vivid       — read recent memory entries
+  /journal show fading      — read older memory impressions
+  /journal show sediment    — read deep memory deposits
+  /ls [path]                — list directory contents
+  /cd <path>                — change working directory
+  /read <filepath>          — read a local file
+RULES: Use /recall with SHORT keyword queries (2-5 words). NEVER use long sentences.
+Use /ls and /cd to explore the filesystem BEFORE searching the web.
+>>> Use LOCAL exploration commands FIRST. Only use /web when local sources are exhausted. <<<'
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- exploration directive ($AGENT_TASK_TYPE)"
+        fi
+
         local macro_sys="Strategic planning engine. Output the SINGLE next milestone. No markdown formatting (no ** or * markers). Plain text only.
 
-${_tool_summary}${_coding_card}
+${_tool_summary}${_coding_card}${_exploration_directive}
 
 SERVICES STATUS: ${_svc_status:-unknown}
 

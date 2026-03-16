@@ -2534,7 +2534,7 @@ describe "Research→Delivery state machine"
     body=$(declare -f agent_run)
     echo "$body" | grep -q 'RESEARCH PHASE FINISHED'
     assert_ok $? "Must inject research phase gate directive"
-    echo "$body" | grep -q '_research_milestone_count.*-ge 2'
+    echo "$body" | grep -q '_research_milestone_count.*-ge.*_research_gate_threshold'
     assert_ok $? "Must check for 2+ consecutive research milestones"
   }
 

@@ -300,11 +300,36 @@ mcp_start() {
 
     # Check if already running
     if mcp_status "$name" >/dev/null 2>&1; then
-        return 0
+        # Verify FIFO is intact — if missing, server is broken
+        if [ ! -p "$MCP_RUN_DIR/$name/in.fifo" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP server '$name' FIFO missing — restarting" >&2
+            mcp_stop "$name"
+        else
+            return 0
+        fi
     fi
 
     local rundir="$MCP_RUN_DIR/$name"
     mkdir -p "$rundir"
+
+    # ── Stale PID cleanup ──────────────────────────────────
+    # If Lodge was killed without the EXIT trap firing (SIGKILL,
+    # system crash, Termux force-close), stale PID files and
+    # orphaned processes may remain. Detect and clean them.
+    if [ -f "$rundir/pid" ]; then
+        local _stale_pid
+        _stale_pid=$(cat "$rundir/pid")
+        if ! kill -0 "$_stale_pid" 2>/dev/null; then
+            # Process is dead but runtime files remain — clean up
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && ui_dim "  [debug] MCP server '$name' stale PID $_stale_pid — cleaning up" >&2
+            rm -f "$rundir"/{in.fifo,pid,keeper_pid,ready,req_id,responses.jsonl,stderr.log}
+        else
+            # Process alive but mcp_status failed (no ready file?) — stop it
+            mcp_stop "$name"
+        fi
+    fi
+    # Also kill any orphaned mcp-server processes from previous sessions
+    pkill -f "mcp-server-$name" 2>/dev/null
 
     # Clean previous run artifacts
     rm -f "$rundir"/{in.fifo,responses.jsonl,stderr.log,pid,keeper_pid,ready,req_id,capabilities.json}
@@ -381,6 +406,15 @@ mcp_stop() {
         if kill -0 "$pid" 2>/dev/null; then
             pkill -P "$pid" 2>/dev/null
             kill "$pid" 2>/dev/null
+            # Aggressive cleanup for nested node instances spawned by npx.
+            # pkill -P only kills direct children; npx → node chains may
+            # leave orphaned processes holding ports and file descriptors.
+            pkill -f "mcp-server-$name" 2>/dev/null
+            # Brief wait for processes to exit, then SIGKILL if still alive
+            sleep 0.2
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null
+            fi
             wait "$pid" 2>/dev/null
         fi
     fi
