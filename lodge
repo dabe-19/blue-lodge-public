@@ -932,6 +932,39 @@ _cmd_limits() {
                     ui_err "Smart route: 0=off 1=reroute 2=fuzzy 3=combined (or on/off)"
                 fi
             fi ;;
+        task-mode|taskmode|task_mode)
+            if [ -z "$value" ]; then
+                local _tm_val="${AGENT_TASK_MODE:-0}"
+                local _tm_label="auto (LLM classifier)"
+                [ "$_tm_val" -eq 1 ] && _tm_label="abstract (forced)"
+                [ "$_tm_val" -eq 2 ] && _tm_label="concrete (forced)"
+                [ "$_tm_val" -eq 3 ] && _tm_label="combined (forced)"
+                ui_info "Task mode: $_tm_label ($_tm_val)  (default: 0 auto)"
+                ui_dim "  0=auto (LLM classifies each task)  1=abstract  2=concrete  3=combined"
+            else
+                if [[ "$value" =~ ^[0-3]$ ]]; then
+                    AGENT_TASK_MODE="$value"
+                    local _tm_desc="auto (LLM classifier)"
+                    [ "$value" -eq 1 ] && _tm_desc="abstract (forced)"
+                    [ "$value" -eq 2 ] && _tm_desc="concrete (forced)"
+                    [ "$value" -eq 3 ] && _tm_desc="combined (forced)"
+                    ui_ok "Task mode set to $value ($_tm_desc)"
+                elif [[ "$value" == "auto" ]]; then
+                    AGENT_TASK_MODE=0
+                    ui_ok "Task mode set to auto (LLM classifier)"
+                elif [[ "$value" == "abstract" ]]; then
+                    AGENT_TASK_MODE=1
+                    ui_ok "Task mode forced to abstract"
+                elif [[ "$value" == "concrete" ]]; then
+                    AGENT_TASK_MODE=2
+                    ui_ok "Task mode forced to concrete"
+                elif [[ "$value" == "combined" ]]; then
+                    AGENT_TASK_MODE=3
+                    ui_ok "Task mode forced to combined"
+                else
+                    ui_err "Task mode: 0=auto 1=abstract 2=concrete 3=combined (or name)"
+                fi
+            fi ;;
         fast-route|fastroute|fast_route)
             if [ -z "$value" ]; then
                 local _fr_label="disabled"
@@ -1071,6 +1104,7 @@ _cmd_limits() {
             AGENT_PRESSURE_RELIEF=2
             AGENT_SMART_ROUTE=2
             AGENT_PRE_ROUTE=1
+            AGENT_TASK_MODE=0
             AGENT_FAST_ROUTE=1
             AGENT_WEB_SEARCH_TIGHT_PARSING=0
             AGENT_WEB_SEARCH_MAX_LENGTH=160
@@ -1322,6 +1356,11 @@ _cmd_limits() {
             local _fr_show="disabled"
             [ "${AGENT_FAST_ROUTE:-1}" -eq 1 ] && _fr_show="enabled"
             printf "  %-22s %s\n" "Fast route:" "$_fr_show  (default: enabled)"
+            local _tm_show="auto"
+            [ "${AGENT_TASK_MODE:-0}" -eq 1 ] && _tm_show="abstract"
+            [ "${AGENT_TASK_MODE:-0}" -eq 2 ] && _tm_show="concrete"
+            [ "${AGENT_TASK_MODE:-0}" -eq 3 ] && _tm_show="combined"
+            printf "  %-22s %s\n" "Task mode:" "$_tm_show (${AGENT_TASK_MODE:-0})  (default: 0 auto)"
             local _ask_show="disabled"
             [ "${AGENT_ASK_USER:-1}" -eq 1 ] && _ask_show="enabled"
             printf "  %-22s %s\n" "Ask user (/ask):" "$_ask_show  (default: enabled)"
@@ -1373,6 +1412,7 @@ _cmd_limits() {
             ui_dim "    cross-sieve 0|1  — Cross-task memory sieve at task start: 0=off 1=on (current: ${AGENT_CROSS_TASK_SIEVE:-1})"
             ui_dim "    smart-route 0-3|on|off — Smart routing: 0=off 1=reroute 2=fuzzy 3=combined (current: ${AGENT_SMART_ROUTE:-2})"
             ui_dim "    fast-route on|off  — Keyword filter before LLM router (current: $([ "${AGENT_FAST_ROUTE:-1}" -eq 1 ] && echo on || echo off))"
+            ui_dim "    task-mode 0-3      — Task classifier: 0=auto 1=abstract 2=concrete 3=combined (current: ${AGENT_TASK_MODE:-0})"
             ui_dim "    ask on|off       — Allow George to /ask human questions (current: $([ "${AGENT_ASK_USER:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    brainstorm on|off — Allow George to /brainstorm (self-reason) (current: $([ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    file-expand on|off — Auto-expand file refs in /social /email /write (current: $([ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && echo on || echo off))"

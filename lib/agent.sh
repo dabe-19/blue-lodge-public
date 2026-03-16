@@ -49,6 +49,7 @@ AGENT_FILE_EXPAND="${AGENT_FILE_EXPAND:-1}"              # Auto-expand file refe
 AGENT_DM_SCAN_CHARS="${AGENT_DM_SCAN_CHARS:-80}"          # Characters to scan for recipient names from start of DM text
 AGENT_PRE_ROUTE="${AGENT_PRE_ROUTE:-1}"                  # Pre-route: extract /cmd from milestone, skip router: 0=disabled, 1=enabled
 AGENT_FAST_ROUTE="${AGENT_FAST_ROUTE:-1}"                # Fast-route: 0=disabled, 1=keywords+lean, 2=fuzzy only (lean prompt, no keyword matching)
+AGENT_TASK_MODE="${AGENT_TASK_MODE:-0}"                  # Task classifier override: 0=auto (LLM), 1=abstract, 2=concrete, 3=combined
 AGENT_OUTPUT_DIR="${AGENT_OUTPUT_DIR:-responses}"       # Parent directory for agent file writes (/write, /save, /append)
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
@@ -562,6 +563,21 @@ _agent_honeydew_display() {
 # Output: exports AGENT_TASK_TYPE (abstract|concrete|combined)
 _agent_classify_task() {
     local task="$1"
+
+    # ── Manual override via AGENT_TASK_MODE ───────────────────
+    # 0=auto (LLM classifies), 1=abstract, 2=concrete, 3=combined
+    # Set via /limits task-mode N for rigorous testing of each mode.
+    case "${AGENT_TASK_MODE:-0}" in
+        1) export AGENT_TASK_TYPE="abstract"
+           [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] task mode override: abstract"
+           return 0 ;;
+        2) export AGENT_TASK_TYPE="concrete"
+           [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] task mode override: concrete"
+           return 0 ;;
+        3) export AGENT_TASK_TYPE="combined"
+           [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] task mode override: combined"
+           return 0 ;;
+    esac
 
     local classify_prompt="Classify this task as abstract, concrete, or combined.
 
