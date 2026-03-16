@@ -23,12 +23,12 @@ AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-3}"        # Subtask recursion depth (3 = th
 AGENT_HONEYDEW_EXPAND="${AGENT_HONEYDEW_EXPAND:-1}"  # Subtask expansion: 0=disabled, 1=enabled
 AGENT_HONEYDEW_MAX_ITEMS="${AGENT_HONEYDEW_MAX_ITEMS:-8}"  # Max honeydew items before expansion is suppressed
 AGENT_HONEYDEW_REWRITE="${AGENT_HONEYDEW_REWRITE:-1}"    # Dynamic honeydew rewrite: 0=disabled, 1=enabled
-AGENT_HONEYDEW_REWRITE_ROUNDS="${AGENT_HONEYDEW_REWRITE_ROUNDS:-5}"  # Global honeydew rewrite limit (all paths: normal, pressure relief, auto-recovery)
+AGENT_HONEYDEW_REWRITE_ROUNDS="${AGENT_HONEYDEW_REWRITE_ROUNDS:-8}"  # Global honeydew rewrite limit (all paths: normal, pressure relief, auto-recovery)
 AGENT_HONEYDEW_REWRITE_CADENCE="${AGENT_HONEYDEW_REWRITE_CADENCE:-1}"  # Min new milestones between rewrites (0=every iteration)
 AGENT_FORCE_REWRITE="${AGENT_FORCE_REWRITE:-1}"          # Force honeydew rewrite in interlock/failure recovery (bypass Phase 1 router): 0=disabled, 1=enabled
 AGENT_WEB_SUFFICIENCY="${AGENT_WEB_SUFFICIENCY:-20}"  # Web actions before sufficiency signal
-AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-2}"  # Max times to retry same milestone
-AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-10}"               # Max milestones with same base command
+AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-20}"  # Max times to retry same milestone
+AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-20}"               # Max milestones with same base command
 AGENT_HONEYDEW_MATCH="${AGENT_HONEYDEW_MATCH:-3}"              # Min keyword score to auto-check honeydew item
 AGENT_HONEYDEW_INITIAL_COUNT="${AGENT_HONEYDEW_INITIAL_COUNT:-5}"  # Upper bound on initial honeydew items (prompt hint)
 AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto | interactive | disabled
@@ -38,11 +38,11 @@ AGENT_WEB_SEARCH_MAX_LENGTH="${AGENT_WEB_SEARCH_MAX_LENGTH:-160}"  # Max charact
 AGENT_WEB_SEARCH_MAX_OPERATORS="${AGENT_WEB_SEARCH_MAX_OPERATORS:-3}"  # Max AND/OR operators allowed in loose mode
 AGENT_RESPOND_CONSEC_MAX="${AGENT_RESPOND_CONSEC_MAX:-2}"        # Max consecutive /respond before removal from catalog
 AGENT_EVAL_VALIDATE="${AGENT_EVAL_VALIDATE:-1}"                  # Evaluator command validation: 0=disabled, 1=enabled
-AGENT_EVAL_REC_CHARS="${AGENT_EVAL_REC_CHARS:-120}"              # Max chars after a slash command in evaluator recommendations
-AGENT_EVAL_REC_INJECT="${AGENT_EVAL_REC_INJECT:-0}"            # Recommendation injection to honeydew rewriter: 0=off (current), 1=recommendation-only (high weight), 2=both (recommendation + full context)
+AGENT_EVAL_REC_CHARS="${AGENT_EVAL_REC_CHARS:-500}"              # Max chars after a slash command in evaluator recommendations
+AGENT_EVAL_REC_INJECT="${AGENT_EVAL_REC_INJECT:-1}"            # Recommendation injection to honeydew rewriter: 0=off (current), 1=recommendation-only (high weight), 2=both (recommendation + full context)
 AGENT_CROSS_TASK_SIEVE="${AGENT_CROSS_TASK_SIEVE:-1}"          # Cross-task memory sieve: 0=disabled, 1=keyword recall injection at task start
 AGENT_PRESSURE_RELIEF="${AGENT_PRESSURE_RELIEF:-2}"          # Consecutive milestone skips before pressure relief fires (0=disabled)
-AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-2}"              # Smart command routing: 0=disabled, 1=post-dispatch reroute only, 2=fuzzy keyword catalog injection only, 3=combined
+AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-3}"              # Smart command routing: 0=disabled, 1=post-dispatch reroute only, 2=fuzzy keyword catalog injection only, 3=combined
 AGENT_ASK_USER="${AGENT_ASK_USER:-1}"                    # Allow George to /ask the user questions during tasks: 0=disabled, 1=enabled
 AGENT_BRAINSTORM="${AGENT_BRAINSTORM:-1}"                  # Allow George to /brainstorm (self-reason) during tasks: 0=disabled, 1=enabled
 AGENT_FILE_EXPAND="${AGENT_FILE_EXPAND:-1}"              # Auto-expand file references in /social, /email, /write text: 0=disabled, 1=enabled
@@ -51,7 +51,7 @@ AGENT_PRE_ROUTE="${AGENT_PRE_ROUTE:-1}"                  # Pre-route: extract /c
 AGENT_FAST_ROUTE="${AGENT_FAST_ROUTE:-1}"                # Fast-route: 0=disabled, 1=keywords+lean, 2=fuzzy only (lean prompt, no keyword matching)
 AGENT_TASK_MODE="${AGENT_TASK_MODE:-0}"                  # Task classifier override: 0=auto (LLM), 1=abstract, 2=concrete, 3=combined
 AGENT_WEB_UNLOCK_ABSTRACT="${AGENT_WEB_UNLOCK_ABSTRACT:-99}"  # Milestones before /web unlocks for abstract tasks (99=effectively never)
-AGENT_WEB_UNLOCK_COMBINED="${AGENT_WEB_UNLOCK_COMBINED:-2}"   # Milestones before /web unlocks for combined tasks
+AGENT_WEB_UNLOCK_COMBINED="${AGENT_WEB_UNLOCK_COMBINED:-3}"   # Milestones before /web unlocks for combined tasks
 AGENT_OUTPUT_DIR="${AGENT_OUTPUT_DIR:-responses}"       # Parent directory for agent file writes (/write, /save, /append)
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
@@ -4184,8 +4184,11 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         # "second /command" pattern would incorrectly split content text.
         if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" != *'\n'* ]] && [[ "$cmd" =~ ^(/[a-z]+[[:space:]]) ]]; then
             # Check for a second embedded slash command (space-/cmd pattern)
+            # Only split on registered command names — bare slashes in file
+            # paths (e.g. /read /root/project/file.txt) must pass through.
             local _first_cmd
-            _first_cmd=$(echo "$cmd" | sed 's|  */|\n/|g' | head -1)
+            local _valid_cmds="web|social|recall|journal|ask|vitals|phone|pgp|backup|cd|build|test|fix|commit|push|clone|git|github|container|wallet|slash|secret|download|vision|sandbox|read|ls|grep|write|save|append|edit|respond|email|brainstorm|help"
+            _first_cmd=$(echo "$cmd" | sed -E "s# /(${_valid_cmds})( |\$)#\n/\1\2#g" | head -1)
             if [ "$_first_cmd" != "$cmd" ]; then
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Split multi-command: extracted '${_first_cmd:0:60}...'"
                 cmd="$_first_cmd"

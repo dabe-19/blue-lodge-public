@@ -2734,7 +2734,7 @@ _cmd_grep() {
             in_sq=$(( 1 - in_sq ))
         elif [ "$ch" = '"' ] && [ "$in_sq" -eq 0 ] && [ "$prev_ch" != "\\" ]; then
             in_dq=$(( 1 - in_dq ))
-        elif [ "$ch" = "|" ] && [ "$in_sq" -eq 0 ] && [ "$in_dq" -eq 0 ]; then
+        elif [ "$ch" = "|" ] && [ "$in_sq" -eq 0 ] && [ "$in_dq" -eq 0 ] && [ "$prev_ch" != "\\" ]; then
             pipe_part="${args:$((i+1))}"
             break
         fi

@@ -1181,8 +1181,8 @@ describe "Abort propagation from inner loop to macro loop"
 # ── Milestone Deduplication ────────────────────────────────────
 describe "Milestone deduplication in macro loop"
 
-  it "AGENT_MAX_MILESTONE_RETRIES defaults to 2" && {
-    assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "2"
+  it "AGENT_MAX_MILESTONE_RETRIES defaults to 20" && {
+    assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "20"
   }
 
   it "agent_run initializes _attempted_milestones array" && {
@@ -2553,8 +2553,8 @@ describe "Research→Delivery state machine"
 # ── Command-family dedup cap ──────────────────────────────────
 describe "Command-family dedup cap"
 
-  it "AGENT_MAX_CMD_FAMILY defaults to 10" && {
-    assert_eq "$AGENT_MAX_CMD_FAMILY" "10"
+  it "AGENT_MAX_CMD_FAMILY defaults to 20" && {
+    assert_eq "$AGENT_MAX_CMD_FAMILY" "20"
   }
 
   it "deduplication implements command-family strategy" && {
@@ -2699,9 +2699,9 @@ describe "Dynamic honeydew rewrite configuration"
     assert_ok $? "AGENT_HONEYDEW_REWRITE must default to 1"
   }
 
-  it "AGENT_HONEYDEW_REWRITE_ROUNDS defaults to 5" && {
-    grep -q 'AGENT_HONEYDEW_REWRITE_ROUNDS.*:-5' "$LODGE_DIR/lib/agent.sh"
-    assert_ok $? "AGENT_HONEYDEW_REWRITE_ROUNDS must default to 5"
+  it "AGENT_HONEYDEW_REWRITE_ROUNDS defaults to 8" && {
+    grep -q 'AGENT_HONEYDEW_REWRITE_ROUNDS.*:-8' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "AGENT_HONEYDEW_REWRITE_ROUNDS must default to 8"
   }
 
   it "AGENT_HONEYDEW_REWRITE_CADENCE defaults to 1" && {
@@ -2951,8 +2951,8 @@ describe "AGENT_OUTPUT_DIR enforcement"
 # ── Fuzzy keyword catalog matching ────────────────────────────
 describe "Fuzzy keyword catalog matching (_agent_fuzzy_catalog_match)"
 
-  it "AGENT_SMART_ROUTE defaults to 2 (fuzzy only)" && {
-    assert_eq "$AGENT_SMART_ROUTE" "2"
+  it "AGENT_SMART_ROUTE defaults to 3 (fuzzy only)" && {
+    assert_eq "$AGENT_SMART_ROUTE" "3"
   }
 
   it "function is defined" && {
@@ -3558,8 +3558,8 @@ describe "Web masking system"
     assert_eq "${AGENT_WEB_UNLOCK_ABSTRACT:-99}" "99"
   }
 
-  it "AGENT_WEB_UNLOCK_COMBINED defaults to 2" && {
-    assert_eq "${AGENT_WEB_UNLOCK_COMBINED:-2}" "2"
+  it "AGENT_WEB_UNLOCK_COMBINED defaults to 3" && {
+    assert_eq "${AGENT_WEB_UNLOCK_COMBINED:-3}" "3"
   }
 
   it "agent_run computes _web_locked flag per macro iteration" && {
