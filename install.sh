@@ -316,60 +316,159 @@ if [ "$IS_ISH" -eq 1 ]; then
     fi
 fi
 
-# ── 2. Check Ollama ──────────────────────────────────────────
+# ── 2. Backend Selection ─────────────────────────────────────
+# Present a unified menu of inference backend options based on
+# the detected platform. Users pick how George will run LLM calls.
 _OLLAMA_AVAILABLE=0
+_INSTALL_BACKEND=""      # local-ollama | local-llama | remote | cloud
+_REMOTE_SSH_INPUT=""     # user@host if remote chosen
+
+echo ""
+printf " ${BOLD}How should George run LLM inference?${RESET}\n"
+echo ""
+
 if [ "$IS_ISH" -eq 1 ]; then
-    info "iSH detected — skipping local LLM backend (Ollama/llama-server)"
-    info "George will use cloud providers or remote nodes for inference"
+    # iSH: no local binaries — remote or cloud only
+    printf "   ${BLUE}1)${RESET}  Cloud provider  ${DIM}(Google, Groq, OpenAI, etc. — free tiers available)${RESET}\n"
+    printf "   ${BLUE}2)${RESET}  Remote GPU node  ${DIM}(SSH tunnel to a server running Ollama/llama-server)${RESET}\n"
+    echo ""
+    printf " ${YELLOW}→${RESET} Choose [1-2, default: 1]: "
+    read -r _backend_choice
+    case "${_backend_choice:-1}" in
+        2) _INSTALL_BACKEND="remote" ;;
+        *) _INSTALL_BACKEND="cloud"  ;;
+    esac
 elif [ "$IS_MACOS" -eq 1 ]; then
-    # macOS can run Ollama natively — check if it's already installed
-    if command -v ollama &>/dev/null; then
-        _OLLAMA_AVAILABLE=1
-        ok "Ollama found (macOS native)"
-    else
-        info "macOS detected — Ollama not found"
-        printf " Install Ollama for local inference? (brew install ollama) [y/N] "
-        read -r _want_ollama
-        if [[ "$_want_ollama" =~ ^[Yy] ]]; then
+    # macOS: Ollama runs natively, remote and cloud also available
+    printf "   ${BLUE}1)${RESET}  Local Ollama     ${DIM}(runs natively on macOS — install via Homebrew)${RESET}\n"
+    printf "   ${BLUE}2)${RESET}  Cloud provider   ${DIM}(Google, Groq, OpenAI, etc. — free tiers available)${RESET}\n"
+    printf "   ${BLUE}3)${RESET}  Remote GPU node  ${DIM}(SSH tunnel to a server running Ollama/llama-server)${RESET}\n"
+    echo ""
+    # Pre-select if Ollama is already installed
+    _mac_default="2"
+    command -v ollama &>/dev/null && _mac_default="1"
+    printf " ${YELLOW}→${RESET} Choose [1-3, default: ${_mac_default}]: "
+    read -r _backend_choice
+    case "${_backend_choice:-$_mac_default}" in
+        1) _INSTALL_BACKEND="local-ollama" ;;
+        3) _INSTALL_BACKEND="remote" ;;
+        *) _INSTALL_BACKEND="cloud"  ;;
+    esac
+else
+    # Linux / Termux: full menu — local Ollama, llama-server, remote, cloud
+    printf "   ${BLUE}1)${RESET}  Local Ollama     ${DIM}(auto-install, manages GGUF models)${RESET}\n"
+    printf "   ${BLUE}2)${RESET}  Local llama.cpp  ${DIM}(faster startup, native GGUF — requires build)${RESET}\n"
+    printf "   ${BLUE}3)${RESET}  Cloud provider   ${DIM}(Google, Groq, OpenAI, etc. — free tiers available)${RESET}\n"
+    printf "   ${BLUE}4)${RESET}  Remote GPU node  ${DIM}(SSH tunnel to a server running Ollama/llama-server)${RESET}\n"
+    echo ""
+    # Pre-select based on what's already present
+    _linux_default="1"
+    command -v ollama &>/dev/null && _linux_default="1"
+    printf " ${YELLOW}→${RESET} Choose [1-4, default: ${_linux_default}]: "
+    read -r _backend_choice
+    case "${_backend_choice:-$_linux_default}" in
+        2) _INSTALL_BACKEND="local-llama" ;;
+        3) _INSTALL_BACKEND="cloud"  ;;
+        4) _INSTALL_BACKEND="remote" ;;
+        *) _INSTALL_BACKEND="local-ollama" ;;
+    esac
+fi
+
+# ── Execute backend selection ─────────────────────────────────
+case "$_INSTALL_BACKEND" in
+    local-ollama)
+        if command -v ollama &>/dev/null; then
+            _OLLAMA_AVAILABLE=1
+            ok "Ollama already installed"
+        elif [ "$IS_MACOS" -eq 1 ]; then
             if command -v brew &>/dev/null; then
+                info "Installing Ollama via Homebrew..."
                 brew install ollama && _OLLAMA_AVAILABLE=1 && ok "Ollama installed"
             else
-                info "Homebrew not found — install Ollama from https://ollama.com"
+                warn "Homebrew not found — install Ollama from https://ollama.com"
+                info "After installing, re-run this script."
             fi
+        elif [ "$IS_TERMUX" -eq 1 ]; then
+            info "Downloading Ollama for Termux (ARM64)..."
+            OLLAMA_VER=$(curl -sf https://api.github.com/repos/ollama/ollama/releases/latest | jq -r '.tag_name' 2>/dev/null || echo "v0.6.2")
+            OLLAMA_URL="https://github.com/ollama/ollama/releases/download/${OLLAMA_VER}/ollama-linux-arm64.tgz"
+            mkdir -p "$HOME/.local/bin"
+            curl -fSL "$OLLAMA_URL" | tar xz -C "$HOME/.local/bin/" 2>/dev/null \
+                || curl -fSL "https://github.com/ollama/ollama/releases/download/${OLLAMA_VER}/ollama-linux-arm64" -o "$HOME/.local/bin/ollama"
+            chmod +x "$HOME/.local/bin/ollama"
+            export PATH="$HOME/.local/bin:$PATH"
+            command -v ollama &>/dev/null && _OLLAMA_AVAILABLE=1 && ok "Ollama installed"
         else
-            info "Skipping Ollama — George will use cloud providers or a remote node"
-            info "  Set up remote: lodge /remote setup user@gpu-server"
+            info "Installing Ollama..."
+            curl -fsSL https://ollama.com/install.sh | sh || {
+                warn "Ollama install failed ($(uname -m) may not be supported)"
+            }
+            command -v ollama &>/dev/null && _OLLAMA_AVAILABLE=1 && ok "Ollama installed"
         fi
-    fi
-else
-info "Checking Ollama..."
-if ! command -v ollama &>/dev/null; then
-    warn "Ollama not found. Installing..."
-    if [ "$IS_TERMUX" -eq 1 ]; then
-        info "Downloading Ollama for Termux (ARM64)..."
-        # The install.sh from ollama.com expects systemd — use direct binary instead
-        OLLAMA_VER=$(curl -sf https://api.github.com/repos/ollama/ollama/releases/latest | jq -r '.tag_name' 2>/dev/null || echo "v0.6.2")
-        OLLAMA_URL="https://github.com/ollama/ollama/releases/download/${OLLAMA_VER}/ollama-linux-arm64.tgz"
-        mkdir -p "$HOME/.local/bin"
-        curl -fSL "$OLLAMA_URL" | tar xz -C "$HOME/.local/bin/" 2>/dev/null \
-            || curl -fSL "https://github.com/ollama/ollama/releases/download/${OLLAMA_VER}/ollama-linux-arm64" -o "$HOME/.local/bin/ollama"
-        chmod +x "$HOME/.local/bin/ollama"
-        export PATH="$HOME/.local/bin:$PATH"
-    else
-        curl -fsSL https://ollama.com/install.sh | sh || {
-            warn "Ollama install failed ($(uname -m) may not be supported)"
-            warn "George can run with cloud providers: lodge /provider use google"
-        }
-    fi
-fi
-if command -v ollama &>/dev/null; then
-    _OLLAMA_AVAILABLE=1
-    ok "Ollama installed"
-else
-    warn "Ollama not available — local models disabled"
-    warn "Use cloud providers: export GEORGE_PROVIDER=google"
-fi
-fi  # end IS_ISH/IS_MACOS guard for Ollama
+        [ "$_OLLAMA_AVAILABLE" -eq 0 ] && warn "Ollama not available — run: lodge /provider use google"
+        ;;
+
+    local-llama)
+        info "llama.cpp selected — Ollama will still be installed for model management."
+        # Install Ollama as GGUF model manager even when llama-server is the runtime
+        if ! command -v ollama &>/dev/null; then
+            if [ "$IS_TERMUX" -eq 1 ]; then
+                OLLAMA_VER=$(curl -sf https://api.github.com/repos/ollama/ollama/releases/latest | jq -r '.tag_name' 2>/dev/null || echo "v0.6.2")
+                OLLAMA_URL="https://github.com/ollama/ollama/releases/download/${OLLAMA_VER}/ollama-linux-arm64.tgz"
+                mkdir -p "$HOME/.local/bin"
+                curl -fSL "$OLLAMA_URL" | tar xz -C "$HOME/.local/bin/" 2>/dev/null \
+                    || curl -fSL "https://github.com/ollama/ollama/releases/download/${OLLAMA_VER}/ollama-linux-arm64" -o "$HOME/.local/bin/ollama"
+                chmod +x "$HOME/.local/bin/ollama"
+                export PATH="$HOME/.local/bin:$PATH"
+            else
+                curl -fsSL https://ollama.com/install.sh | sh || true
+            fi
+        fi
+        command -v ollama &>/dev/null && _OLLAMA_AVAILABLE=1
+        info "To build llama-server from source:"
+        info "  git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp"
+        info "  cmake -B build && cmake --build build --config Release -j\$(nproc)"
+        info "Then set LLAMA_CPP_SERVER_BIN in lodge.conf or your environment."
+        ;;
+
+    remote)
+        echo ""
+        printf " ${BOLD}Remote GPU Node Setup${RESET}\n"
+        printf " ${DIM}George will SSH-tunnel to a remote server running Ollama or llama-server.${RESET}\n"
+        printf " ${DIM}You can complete full setup later with: lodge /remote setup user@host${RESET}\n"
+        echo ""
+        printf " Enter the SSH target (user@host), or press Enter to configure later: "
+        read -r _REMOTE_SSH_INPUT
+        if [ -n "$_REMOTE_SSH_INPUT" ]; then
+            # Persist minimal remote config so lodge startup finds it
+            _IST_GEORGE_DIR="${GEORGE_CONFIG_DIR:-$LODGE_DIR/.george}"
+            mkdir -p "$_IST_GEORGE_DIR"
+            cat > "$_IST_GEORGE_DIR/remote.conf" << REMEOF
+# George remote inference config (initial setup)
+# Complete with: lodge /remote setup $_REMOTE_SSH_INPUT
+REMOTE_SSH_TARGET=${_REMOTE_SSH_INPUT}
+REMOTE_SSH_PORT=22
+REMOTE_SSH_KEY=
+REMOTE_OLLAMA_PORT=11434
+REMOTE_LLAMACPP_PORT=8080
+REMOTE_LOCAL_OLLAMA_PORT=11434
+REMOTE_LOCAL_LLAMACPP_PORT=8080
+REMOTE_FORWARD_HOST=localhost
+REMOTE_JUMP_HOST=
+REMEOF
+            chmod 600 "$_IST_GEORGE_DIR/remote.conf"
+            ok "Remote target saved: $_REMOTE_SSH_INPUT"
+            info "Complete setup after install: lodge /remote setup $_REMOTE_SSH_INPUT"
+        else
+            info "Skipped — configure later: lodge /remote setup user@gpu-server"
+        fi
+        ;;
+
+    cloud)
+        # Cloud provider setup — handled in section 2b below
+        info "Cloud provider selected — configuring next..."
+        ;;
+esac
 
 # ── 2b. Cloud provider setup ─────────────────────────────────
 # If Ollama isn't available (or the user prefers cloud), offer to
@@ -443,38 +542,33 @@ _offer_cloud_setup() {
     ok "Cloud provider: $_INSTALL_PROVIDER"
 }
 
-if [ "$IS_ISH" -eq 1 ]; then
-    info "Cloud provider or remote node required — iSH cannot run local models"
+if [ "$_INSTALL_BACKEND" = "cloud" ]; then
+    # Cloud was the primary choice — must configure
     _offer_cloud_setup
     if [ -z "$_INSTALL_PROVIDER" ]; then
         warn "No provider configured — George will need one before it can run"
         warn "  Set later: lodge /provider use google"
-        warn "  Or connect to a remote GPU: lodge /remote setup user@gpu-server"
     fi
-elif [ "$IS_MACOS" -eq 1 ]; then
-    info "Cloud provider or remote inference node recommended for macOS"
-    _offer_cloud_setup
-    if [ -z "$_INSTALL_PROVIDER" ]; then
-        echo ""
-        info "You can also use a remote GPU node instead of a cloud provider:"
-        info "  lodge /remote setup user@gpu-server"
-        info "  lodge /remote connect"
-    fi
-elif [ "$_OLLAMA_AVAILABLE" -eq 0 ]; then
-    warn "No local LLM backend — cloud provider required"
-    _offer_cloud_setup
-    if [ -z "$_INSTALL_PROVIDER" ]; then
-        warn "No provider configured — George will need one before it can run"
-        warn "  Set later: export GEORGE_PROVIDER=google && lodge"
-    fi
-else
+elif [ "$_INSTALL_BACKEND" = "remote" ]; then
+    # Remote was primary — optionally add cloud as fallback
     printf "\n"
-    printf " ${DIM}Want to also configure a cloud provider (for fallback or remote use)?${RESET}\n"
-    printf " Configure cloud provider? [y/N] "
+    printf " ${DIM}Also configure a cloud provider as fallback? [y/N]${RESET} "
+    read -r _want_cloud_too
+    if [[ "$_want_cloud_too" =~ ^[Yy] ]]; then
+        _offer_cloud_setup
+    fi
+elif [ "$_OLLAMA_AVAILABLE" -eq 1 ]; then
+    # Local Ollama works — optionally add cloud for fallback
+    printf "\n"
+    printf " ${DIM}Also configure a cloud provider (for fallback or remote use)? [y/N]${RESET} "
     read -r _want_cloud
     if [[ "$_want_cloud" =~ ^[Yy] ]]; then
         _offer_cloud_setup
     fi
+else
+    # Local was chosen but install failed — offer cloud as recovery
+    warn "Local backend not available — configuring a cloud provider instead"
+    _offer_cloud_setup
 fi
 
 # Write provider config to shell RC (append after the existing Blue Lodge block)

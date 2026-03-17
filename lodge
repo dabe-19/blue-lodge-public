@@ -2678,11 +2678,6 @@ _cmd_ls() {
     [ -z "$target" ] && target="."
     [ -z "$depth" ] && depth=3
 
-    # Resolve relative to workdir
-    if [[ "$target" != /* ]]; then
-        target="$workdir/$target"
-    fi
-
     # ── Path enforcement ────────────────────────────────────
     # Default: relative paths only (mirrors /grep). LLMs hallucinate
     # absolute paths (/, /dev, /usr) that scan the entire filesystem.
@@ -2695,6 +2690,11 @@ _cmd_ls() {
         else
             target="$workdir"
         fi
+    fi
+
+    # Resolve relative to workdir
+    if [[ "$target" != /* ]]; then
+        target="$workdir/$target"
     fi
 
     # Normalize (remove trailing slash, resolve ..)
