@@ -23,6 +23,7 @@ trap '_install_error $LINENO' ERR
 # Always use the script's actual directory (ignore stale LODGE_DIR from prior installs)
 _SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LODGE_DIR="$_SCRIPT_DIR"
+GEORGE_DIR="${GEORGE_DIR:-$LODGE_DIR/.george}"
 
 # ── Early cleanup: remove stale Blue Lodge config from ALL shell RC files ────
 # This MUST run before anything else — a stale LODGE_DIR in .bashrc/.zshrc
@@ -845,7 +846,7 @@ info "Indexing knowledge base (FTS5)..."
 if command -v sqlite3 &>/dev/null; then
     # Source the recall system and index all docs
     export LODGE_DIR
-    export GEORGE_DIR="${GEORGE_DIR:-$LODGE_DIR/.george}"
+    export GEORGE_DIR
     mkdir -p "$GEORGE_DIR"
     source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
     source "$LODGE_DIR/lib/recall.sh" 2>/dev/null
