@@ -24,10 +24,10 @@ AGENT_HONEYDEW_EXPAND="${AGENT_HONEYDEW_EXPAND:-1}"  # Subtask expansion: 0=disa
 AGENT_HONEYDEW_MAX_ITEMS="${AGENT_HONEYDEW_MAX_ITEMS:-12}"  # Max honeydew items before expansion is suppressed
 AGENT_HONEYDEW_REWRITE="${AGENT_HONEYDEW_REWRITE:-1}"    # Dynamic honeydew rewrite: 0=disabled, 1=enabled
 AGENT_HONEYDEW_REWRITE_ROUNDS="${AGENT_HONEYDEW_REWRITE_ROUNDS:-8}"  # Global honeydew rewrite limit (all paths: normal, pressure relief, auto-recovery)
-AGENT_HONEYDEW_REWRITE_CADENCE="${AGENT_HONEYDEW_REWRITE_CADENCE:-1}"  # Min new milestones between rewrites (0=every iteration)
+AGENT_HONEYDEW_REWRITE_CADENCE="${AGENT_HONEYDEW_REWRITE_CADENCE:-0}"  # Min new milestones between rewrites (0=every iteration)
 AGENT_FORCE_REWRITE="${AGENT_FORCE_REWRITE:-1}"          # Force honeydew rewrite in interlock/failure recovery (bypass Phase 1 router): 0=disabled, 1=enabled
 AGENT_WEB_SUFFICIENCY="${AGENT_WEB_SUFFICIENCY:-20}"  # Web actions before sufficiency signal
-AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-20}"  # Max times to retry same milestone
+AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-4}"  # Max times to retry same milestone
 AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-20}"               # Max milestones with same base command
 AGENT_HONEYDEW_MATCH="${AGENT_HONEYDEW_MATCH:-3}"              # Min keyword score to auto-check honeydew item
 AGENT_HONEYDEW_INITIAL_COUNT="${AGENT_HONEYDEW_INITIAL_COUNT:-5}"  # Upper bound on initial honeydew items (prompt hint)
@@ -51,11 +51,11 @@ AGENT_PRE_ROUTE="${AGENT_PRE_ROUTE:-1}"                  # Pre-route: extract /c
 AGENT_FAST_ROUTE="${AGENT_FAST_ROUTE:-1}"                # Fast-route: 0=disabled, 1=keywords+lean, 2=fuzzy only (lean prompt, no keyword matching)
 AGENT_TASK_MODE="${AGENT_TASK_MODE:-0}"                  # Task classifier override: 0=auto (LLM), 1=abstract, 2=concrete, 3=combined
 AGENT_WEB_UNLOCK_ABSTRACT="${AGENT_WEB_UNLOCK_ABSTRACT:-99}"  # Milestones before /web unlocks for abstract tasks (99=effectively never)
-AGENT_WEB_UNLOCK_COMBINED="${AGENT_WEB_UNLOCK_COMBINED:-3}"   # Milestones before /web unlocks for combined tasks
+AGENT_WEB_UNLOCK_COMBINED="${AGENT_WEB_UNLOCK_COMBINED:-6}"   # Milestones before /web unlocks for combined tasks
 AGENT_WEB_SEARCH_ONLY_ABSTRACT="${AGENT_WEB_SEARCH_ONLY_ABSTRACT:-1}"  # Milestones after web unlock where ONLY /web search is allowed (no fetch/scrape) for abstract tasks
 AGENT_WEB_SEARCH_ONLY_COMBINED="${AGENT_WEB_SEARCH_ONLY_COMBINED:-1}"  # Milestones after web unlock where ONLY /web search is allowed (no fetch/scrape) for combined tasks
 AGENT_GIT_UNLOCK_ABSTRACT="${AGENT_GIT_UNLOCK_ABSTRACT:-99}"  # Milestones before /git unlocks for abstract tasks (99=effectively never)
-AGENT_GIT_UNLOCK_COMBINED="${AGENT_GIT_UNLOCK_COMBINED:-3}"   # Milestones before /git unlocks for combined tasks
+AGENT_GIT_UNLOCK_COMBINED="${AGENT_GIT_UNLOCK_COMBINED:-6}"   # Milestones before /git unlocks for combined tasks
 AGENT_OUTPUT_DIR="${AGENT_OUTPUT_DIR:-responses}"       # Parent directory for agent file writes (/write, /save, /append)
 AGENT_GREP_ALLOW_ABSOLUTE="${AGENT_GREP_ALLOW_ABSOLUTE:-0}"  # /grep path policy: 0=relative-only (force to workdir), 1=allow absolute paths
 AGENT_GREP_MAX_LINES="${AGENT_GREP_MAX_LINES:-100}"          # /grep output cap (lines shown before truncation)
