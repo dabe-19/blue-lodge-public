@@ -33,6 +33,9 @@ cmd_edit() {
     # Strip trailing dashes from filepath
     filepath=$(echo "$filepath" | sed 's/--*$//')
 
+    # Expand tilde — LLMs emit ~/path which doesn't expand in quotes
+    declare -f tools_expand_tilde &>/dev/null && filepath=$(tools_expand_tilde "$filepath")
+
     # Sanitize filename
     if declare -f tools_sanitize_filename &>/dev/null; then
         filepath=$(tools_sanitize_filename "$filepath")

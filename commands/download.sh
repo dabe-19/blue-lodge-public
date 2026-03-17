@@ -32,6 +32,9 @@ cmd_download() {
         [ -z "$dest" ] || [ "$dest" = "/" ] && dest="downloaded_file"
     fi
 
+    # Expand tilde — LLMs emit ~/path which doesn't expand in quotes
+    declare -f tools_expand_tilde &>/dev/null && dest=$(tools_expand_tilde "$dest")
+
     # Sanitize destination filename — strip quotes, spaces, special chars
     if declare -f tools_sanitize_filename &>/dev/null; then
         dest=$(tools_sanitize_filename "$dest")

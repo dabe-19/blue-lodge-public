@@ -70,6 +70,9 @@ cmd_write() {
     # couldn't fully separate it (e.g., "tesla.md---#" as first token).
     filepath=$(echo "$filepath" | sed 's/--*$//')
 
+    # Expand tilde — LLMs emit ~/path which doesn't expand in quotes
+    declare -f tools_expand_tilde &>/dev/null && filepath=$(tools_expand_tilde "$filepath")
+
     # Sanitize filename — strip quotes, spaces, special chars
     if declare -f tools_sanitize_filename &>/dev/null; then
         filepath=$(tools_sanitize_filename "$filepath")

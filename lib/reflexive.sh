@@ -24,6 +24,7 @@ export REFLEXIVE_PROMPT_LEARN="${REFLEXIVE_PROMPT_LEARN:-0}"
 export REFLEXIVE_ADAPT_TOKENS="${REFLEXIVE_ADAPT_TOKENS:-0}"
 export REFLEXIVE_SPECULATE="${REFLEXIVE_SPECULATE:-0}"
 export REFLEXIVE_SELF_MODEL="${REFLEXIVE_SELF_MODEL:-0}"
+export REFLEXIVE_METACOG_LLM="${REFLEXIVE_METACOG_LLM:-0}"
 
 # ── Tuning knobs ──────────────────────────────────────────────
 export REFLEXIVE_SOUL_KEYWORDS="${REFLEXIVE_SOUL_KEYWORDS:-5}"
@@ -39,6 +40,108 @@ _REFLEXIVE_TOKEN_HISTORY=()
 _REFLEXIVE_LOOP_COUNTER=0
 _REFLEXIVE_METACOG_STATE=""
 _REFLEXIVE_SPECULATE_CACHE=""
+_REFLEXIVE_SOUL_REJECTIONS=0
+_REFLEXIVE_SPECULATE_HITS=0
+_REFLEXIVE_SPECULATE_MISSES=0
+_REFLEXIVE_TOTAL_COMMANDS=0
+_REFLEXIVE_SESSION_START="${_REFLEXIVE_SESSION_START:-$(date +%s)}"
+_REFLEXIVE_SAVE_COUNTER=0
+
+# ── Persistence ───────────────────────────────────────────────
+# Serialize internal state to $GEORGE_DIR/reflexive.json so
+# learning data survives across sessions. Load on source,
+# save on milestone events (debounced).
+
+_reflexive_state_file() {
+    echo "${GEORGE_DIR:-${GEORGE_CONFIG_DIR:-$HOME/.george}}/reflexive.json"
+}
+
+_reflexive_save_state() {
+    local _sf
+    _sf=$(_reflexive_state_file)
+    local _dir
+    _dir=$(dirname "$_sf")
+    [ -d "$_dir" ] || return 0
+    command -v jq &>/dev/null || return 0
+
+    # Serialize arrays as JSON
+    local _grades_json="[]"
+    if [ "${#_REFLEXIVE_PROMPT_GRADES[@]}" -gt 0 ]; then
+        _grades_json=$(printf '%s\n' "${_REFLEXIVE_PROMPT_GRADES[@]}" | jq -R . | jq -s .)
+    fi
+    local _tokens_json="[]"
+    if [ "${#_REFLEXIVE_TOKEN_HISTORY[@]}" -gt 0 ]; then
+        _tokens_json=$(printf '%s\n' "${_REFLEXIVE_TOKEN_HISTORY[@]}" | jq -R . | jq -s .)
+    fi
+
+    jq -n \
+        --argjson grades "$_grades_json" \
+        --argjson tokens "$_tokens_json" \
+        --arg loop "$_REFLEXIVE_LOOP_COUNTER" \
+        --arg metacog "$_REFLEXIVE_METACOG_STATE" \
+        --arg rejections "$_REFLEXIVE_SOUL_REJECTIONS" \
+        --arg spec_hits "$_REFLEXIVE_SPECULATE_HITS" \
+        --arg spec_misses "$_REFLEXIVE_SPECULATE_MISSES" \
+        --arg total_cmds "$_REFLEXIVE_TOTAL_COMMANDS" \
+        --arg session_start "$_REFLEXIVE_SESSION_START" \
+        --arg saved_at "$(date +%s)" \
+        '{
+            prompt_grades: $grades,
+            token_history: $tokens,
+            loop_counter: ($loop | tonumber),
+            metacog_state: $metacog,
+            soul_rejections: ($rejections | tonumber),
+            speculate_hits: ($spec_hits | tonumber),
+            speculate_misses: ($spec_misses | tonumber),
+            total_commands: ($total_cmds | tonumber),
+            session_start: ($session_start | tonumber),
+            saved_at: ($saved_at | tonumber)
+        }' > "$_sf" 2>/dev/null
+}
+
+_reflexive_load_state() {
+    local _sf
+    _sf=$(_reflexive_state_file)
+    [ -f "$_sf" ] || return 0
+    command -v jq &>/dev/null || return 0
+
+    local _json
+    _json=$(cat "$_sf" 2>/dev/null)
+    [ -z "$_json" ] && return 0
+    # Validate JSON
+    echo "$_json" | jq -e . &>/dev/null || return 0
+
+    # Restore arrays
+    _REFLEXIVE_PROMPT_GRADES=()
+    while IFS= read -r _entry; do
+        [ -n "$_entry" ] && _REFLEXIVE_PROMPT_GRADES+=("$_entry")
+    done < <(echo "$_json" | jq -r '.prompt_grades[]? // empty')
+
+    _REFLEXIVE_TOKEN_HISTORY=()
+    while IFS= read -r _entry; do
+        [ -n "$_entry" ] && _REFLEXIVE_TOKEN_HISTORY+=("$_entry")
+    done < <(echo "$_json" | jq -r '.token_history[]? // empty')
+
+    _REFLEXIVE_LOOP_COUNTER=$(echo "$_json" | jq -r '.loop_counter // 0')
+    _REFLEXIVE_METACOG_STATE=$(echo "$_json" | jq -r '.metacog_state // ""')
+    _REFLEXIVE_SOUL_REJECTIONS=$(echo "$_json" | jq -r '.soul_rejections // 0')
+    _REFLEXIVE_SPECULATE_HITS=$(echo "$_json" | jq -r '.speculate_hits // 0')
+    _REFLEXIVE_SPECULATE_MISSES=$(echo "$_json" | jq -r '.speculate_misses // 0')
+    _REFLEXIVE_TOTAL_COMMANDS=$(echo "$_json" | jq -r '.total_commands // 0')
+    _REFLEXIVE_SESSION_START=$(echo "$_json" | jq -r '.session_start // 0')
+    [ "$_REFLEXIVE_SESSION_START" -eq 0 ] && _REFLEXIVE_SESSION_START=$(date +%s)
+}
+
+# Debounced save — only writes every 5th call to avoid I/O churn
+_reflexive_save_debounced() {
+    _REFLEXIVE_SAVE_COUNTER=$((_REFLEXIVE_SAVE_COUNTER + 1))
+    if [ $((_REFLEXIVE_SAVE_COUNTER % 5)) -eq 0 ]; then
+        _reflexive_save_state
+    fi
+}
+
+# Load persisted state on source
+_reflexive_load_state
 
 
 # ══════════════════════════════════════════════════════════════
@@ -100,6 +203,7 @@ reflexive_soul_gate() {
     done
 
     if [ "$violations" -gt 0 ]; then
+        _REFLEXIVE_SOUL_REJECTIONS=$((_REFLEXIVE_SOUL_REJECTIONS + 1))
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] soul gate: %d violation(s) in proposed action\n' "$violations" >/dev/tty 2>/dev/null
         return 1
     fi
@@ -332,46 +436,59 @@ reflexive_speculate_next() {
     return 1
 }
 
-# Pre-fetch data for an anticipated command (background-safe)
-# Stores result in _REFLEXIVE_SPECULATE_CACHE
+# Pre-fetch data for an anticipated command (background-safe).
+# Writes to a temp file so results survive process boundaries
+# (backgrounded & or $() subshells cannot propagate variables).
+_reflexive_speculate_file() {
+    echo "${GEORGE_DIR:-${GEORGE_CONFIG_DIR:-$HOME/.george}}/.speculate_cache"
+}
+
 reflexive_speculate_prefetch() {
     [ "${REFLEXIVE_SPECULATE:-0}" -eq 0 ] && return 0
 
     local predicted_cmd="$1"
     local workdir="${2:-.}"
+    local _cache_file
+    _cache_file=$(_reflexive_speculate_file)
 
     case "$predicted_cmd" in
         fetch)
-            # Pre-warm: check if there's a URL in recent context
-            # This is speculative — if no URL is found, it's a no-op
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] speculate: pre-fetch hint for web fetch\n' >/dev/tty 2>/dev/null
-            _REFLEXIVE_SPECULATE_CACHE="prefetch_hint:web"
+            echo "prefetch_hint:web" > "$_cache_file" 2>/dev/null
             ;;
         build)
-            # Pre-check: look for build files
             if [ -f "$workdir/Makefile" ] || [ -f "$workdir/package.json" ] || [ -f "$workdir/Cargo.toml" ] || [ -f "$workdir/go.mod" ]; then
-                _REFLEXIVE_SPECULATE_CACHE="prefetch_hint:build_ready"
+                echo "prefetch_hint:build_ready" > "$_cache_file" 2>/dev/null
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] speculate: build system detected in %s\n' "$workdir" >/dev/tty 2>/dev/null
             fi
             ;;
         test)
-            # Pre-check: look for test infrastructure
             if [ -d "$workdir/tests" ] || [ -d "$workdir/test" ] || [ -f "$workdir/pytest.ini" ] || [ -f "$workdir/jest.config.js" ]; then
-                _REFLEXIVE_SPECULATE_CACHE="prefetch_hint:test_ready"
+                echo "prefetch_hint:test_ready" > "$_cache_file" 2>/dev/null
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] speculate: test infra detected in %s\n' "$workdir" >/dev/tty 2>/dev/null
             fi
             ;;
         *)
-            _REFLEXIVE_SPECULATE_CACHE=""
+            rm -f "$_cache_file" 2>/dev/null
             ;;
     esac
 }
 
 # Retrieve cached speculation result and clear it
 reflexive_speculate_consume() {
-    local cache="$_REFLEXIVE_SPECULATE_CACHE"
-    _REFLEXIVE_SPECULATE_CACHE=""
-    echo "$cache"
+    local _cache_file
+    _cache_file=$(_reflexive_speculate_file)
+    if [ -f "$_cache_file" ]; then
+        local cache
+        cache=$(cat "$_cache_file" 2>/dev/null)
+        rm -f "$_cache_file" 2>/dev/null
+        if [ -n "$cache" ]; then
+            _REFLEXIVE_SPECULATE_HITS=$((_REFLEXIVE_SPECULATE_HITS + 1))
+        fi
+        echo "$cache"
+    else
+        _REFLEXIVE_SPECULATE_MISSES=$((_REFLEXIVE_SPECULATE_MISSES + 1))
+    fi
 }
 
 
@@ -401,15 +518,17 @@ reflexive_metacog_tick() {
     return 1  # not yet
 }
 
-# Generate a metacognitive self-assessment (heuristic, no LLM)
-# Examines recent prompt grades, token usage, and loop count
-# to produce a status string
+# Generate a metacognitive self-assessment.
+# Phase 1 (always): heuristic check — zero-latency, pure arithmetic.
+# Phase 2 (opt-in): LLM self-assessment — tiny ~150 token call,
+#   gated by REFLEXIVE_METACOG_LLM=1 AND available llm_generate.
 reflexive_metacog_assess() {
     [ "${REFLEXIVE_SELF_MODEL:-0}" -eq 0 ] && return 0
 
     local assessment=""
     local loop_count="$_REFLEXIVE_LOOP_COUNTER"
 
+    # ── Phase 1: Heuristic assessment (always runs) ────────
     # Check for stuck loops (high retry count)
     if [ "$loop_count" -gt 12 ]; then
         assessment="WARNING: High iteration count ($loop_count). Possible stuck loop."
@@ -421,7 +540,6 @@ reflexive_metacog_assess() {
     if [ "${REFLEXIVE_PROMPT_LEARN:-0}" -eq 1 ] && [ "${#_REFLEXIVE_PROMPT_GRADES[@]}" -gt 2 ]; then
         local rate
         rate=$(reflexive_prompt_success_rate)
-        # Compare as integer (rate is like "0.50" → extract before dot)
         local rate_int="${rate%%.*}"
         if [ "${rate_int:-1}" -eq 0 ]; then
             local rate_frac="${rate##*.}"
@@ -448,6 +566,23 @@ reflexive_metacog_assess() {
         assessment="OK: Progress appears normal after $loop_count iterations."
     fi
 
+    # ── Phase 2: LLM self-assessment (opt-in) ──────────────
+    if [ "${REFLEXIVE_METACOG_LLM:-0}" -eq 1 ] && declare -f llm_generate &>/dev/null; then
+        local _mc_grades=""
+        if [ "${#_REFLEXIVE_PROMPT_GRADES[@]}" -gt 0 ]; then
+            _mc_grades=$(printf '%s\n' "${_REFLEXIVE_PROMPT_GRADES[@]: -5}")
+        fi
+        local _mc_prompt="Iteration: ${loop_count}\nHeuristic assessment: ${assessment}\nRecent prompt grades:\n${_mc_grades:-none}"
+        local _mc_sys="You are George's metacognition module. Given the iteration count, heuristic assessment, and recent prompt grades, assess: Am I stuck? Am I making progress? Am I repeating myself? Be brutally honest in 2-3 sentences."
+        local _mc_result
+        local LLM_SCENARIO=evaluator
+        _mc_result=$(llm_generate "$_mc_prompt" "$_mc_sys" 256 256 2>/dev/null)
+        if [ -n "$_mc_result" ]; then
+            _mc_result=$(echo "$_mc_result" | head -4 | tr '\n' ' ')
+            assessment="${assessment} | LLM: ${_mc_result}"
+        fi
+    fi
+
     _REFLEXIVE_METACOG_STATE="$assessment"
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] metacog: %s\n' "$assessment" >/dev/tty 2>/dev/null
     echo "$assessment"
@@ -463,6 +598,10 @@ reflexive_metacog_reset() {
     _REFLEXIVE_LOOP_COUNTER=0
     _REFLEXIVE_METACOG_STATE=""
     _REFLEXIVE_SPECULATE_CACHE=""
+    # Clean up stale speculation cache file
+    local _sf
+    _sf=$(_reflexive_speculate_file 2>/dev/null)
+    [ -n "$_sf" ] && rm -f "$_sf" 2>/dev/null
 }
 
 
@@ -537,11 +676,13 @@ reflexive_post_route() {
 }
 
 # Hook: called after command execution, before evaluator
-# Runs: token observation, prompt grading
+# Runs: token observation, prompt grading, save debounce
 reflexive_post_execute() {
     local response="$1"
     local exit_code="${2:-0}"
     local prompt_hint="${3:-}"
+
+    _REFLEXIVE_TOTAL_COMMANDS=$((_REFLEXIVE_TOTAL_COMMANDS + 1))
 
     # Observe response size for token budgeting
     if [ "${REFLEXIVE_ADAPT_TOKENS:-0}" -eq 1 ]; then
@@ -557,10 +698,13 @@ reflexive_post_execute() {
             reflexive_prompt_record "retry" "$prompt_hint"
         fi
     fi
+
+    # Debounced persistence
+    _reflexive_save_debounced
 }
 
 # Hook: called when a milestone completes
-# Runs: prompt success recording, metacog reset
+# Runs: prompt success recording, metacog reset, persist
 reflexive_milestone_complete() {
     local milestone="${1:-}"
 
@@ -571,6 +715,8 @@ reflexive_milestone_complete() {
 
     # Reset metacog for fresh milestone
     reflexive_metacog_reset
+    # Force save on milestone boundary
+    _reflexive_save_state
 }
 
 # Hook: called when a milestone fails / retries exhausted
@@ -582,6 +728,8 @@ reflexive_milestone_fail() {
     fi
 
     reflexive_metacog_reset
+    # Force save on milestone boundary
+    _reflexive_save_state
 }
 
 
@@ -604,6 +752,7 @@ reflexive_toggle() {
         tokens|adapt_tokens|adapt-tokens) var_name="REFLEXIVE_ADAPT_TOKENS" ;;
         speculate|prefetch|pre-fetch)    var_name="REFLEXIVE_SPECULATE" ;;
         metacog|self_model|self-model)   var_name="REFLEXIVE_SELF_MODEL" ;;
+        metacog-llm|metacog_llm|llm)     var_name="REFLEXIVE_METACOG_LLM" ;;
         all)
             # Toggle all at once
             local target="${state:-on}"
@@ -614,12 +763,13 @@ reflexive_toggle() {
             export REFLEXIVE_ADAPT_TOKENS="$val"
             export REFLEXIVE_SPECULATE="$val"
             export REFLEXIVE_SELF_MODEL="$val"
+            export REFLEXIVE_METACOG_LLM="$val"
             printf 'Reflexive: ALL subsystems %s\n' "$target"
             return 0
             ;;
         *)
             printf 'Unknown reflexive subsystem: %s\n' "$subsystem"
-            printf 'Available: soul, prompt, tokens, speculate, metacog, all\n'
+            printf 'Available: soul, prompt, tokens, speculate, metacog, metacog-llm, all\n'
             return 1
             ;;
     esac
@@ -653,18 +803,162 @@ reflexive_status() {
     local _off="${_T_DIM:-}OFF${_T_RESET:-}"
 
     printf 'Reflexive Intelligence Layer\n'
+    printf '\n'
+    printf '  ── Subsystems ──\n'
     printf '  Soul Gate:      %b\n' "$([ "${REFLEXIVE_SOUL_GATE:-0}" -eq 1 ] && echo "$_on" || echo "$_off")"
     printf '  Prompt Learn:   %b\n' "$([ "${REFLEXIVE_PROMPT_LEARN:-0}" -eq 1 ] && echo "$_on" || echo "$_off")"
     printf '  Adapt Tokens:   %b\n' "$([ "${REFLEXIVE_ADAPT_TOKENS:-0}" -eq 1 ] && echo "$_on" || echo "$_off")"
     printf '  Speculative:    %b\n' "$([ "${REFLEXIVE_SPECULATE:-0}" -eq 1 ] && echo "$_on" || echo "$_off")"
     printf '  Self-Model:     %b\n' "$([ "${REFLEXIVE_SELF_MODEL:-0}" -eq 1 ] && echo "$_on" || echo "$_off")"
+    printf '  Metacog LLM:    %b\n' "$([ "${REFLEXIVE_METACOG_LLM:-0}" -eq 1 ] && echo "$_on" || echo "$_off")"
 
-    if [ "${REFLEXIVE_PROMPT_LEARN:-0}" -eq 1 ] && [ "${#_REFLEXIVE_PROMPT_GRADES[@]}" -gt 0 ]; then
-        printf '  Success Rate:   %s (%d samples)\n' "$(reflexive_prompt_success_rate)" "${#_REFLEXIVE_PROMPT_GRADES[@]}"
+    printf '\n'
+    printf '  ── Tuning Knobs ──\n'
+    printf '  Soul Keywords:      %d  (1-20)\n' "${REFLEXIVE_SOUL_KEYWORDS:-5}"
+    printf '  Prompt History:     %d  (1-50)\n' "${REFLEXIVE_PROMPT_HISTORY:-8}"
+    printf '  Token Floor:        %d  (128-32768)\n' "${REFLEXIVE_TOKEN_FLOOR:-512}"
+    printf '  Token Ceiling:      %d  (512-65536)\n' "${REFLEXIVE_TOKEN_CEILING:-8192}"
+    printf '  Speculate Budget:   %d  (1-10)\n' "${REFLEXIVE_SPECULATE_BUDGET:-3}"
+    printf '  Metacog Interval:   %d  (1-20)\n' "${REFLEXIVE_METACOG_INTERVAL:-4}"
+
+    printf '\n'
+    printf '  ── Session Metrics ──\n'
+    # Session duration
+    local _now
+    _now=$(date +%s)
+    local _elapsed=$((_now - _REFLEXIVE_SESSION_START))
+    local _mins=$((_elapsed / 60))
+    local _secs=$((_elapsed % 60))
+    printf '  Session Duration:   %dm %ds\n' "$_mins" "$_secs"
+    printf '  Total Commands:     %d\n' "$_REFLEXIVE_TOTAL_COMMANDS"
+    printf '  Loop Counter:       %d\n' "$_REFLEXIVE_LOOP_COUNTER"
+
+    if [ "${#_REFLEXIVE_PROMPT_GRADES[@]}" -gt 0 ]; then
+        printf '  Success Rate:       %s (%d samples)\n' "$(reflexive_prompt_success_rate)" "${#_REFLEXIVE_PROMPT_GRADES[@]}"
+        # Trend indicator
+        if [ "${#_REFLEXIVE_PROMPT_GRADES[@]}" -ge 4 ]; then
+            local _recent_ok=0 _recent_total=0 _older_ok=0 _older_total=0
+            local _half=$(( ${#_REFLEXIVE_PROMPT_GRADES[@]} / 2 ))
+            local _i=0 _entry _outcome
+            for _entry in "${_REFLEXIVE_PROMPT_GRADES[@]}"; do
+                _outcome=$(printf '%s' "$_entry" | cut -d: -f2)
+                if [ "$_i" -lt "$_half" ]; then
+                    _older_total=$((_older_total + 1))
+                    [ "$_outcome" = "success" ] && _older_ok=$((_older_ok + 1))
+                else
+                    _recent_total=$((_recent_total + 1))
+                    [ "$_outcome" = "success" ] && _recent_ok=$((_recent_ok + 1))
+                fi
+                _i=$((_i + 1))
+            done
+            local _trend="stable"
+            if [ "$_older_total" -gt 0 ] && [ "$_recent_total" -gt 0 ]; then
+                local _older_pct=$((_older_ok * 100 / _older_total))
+                local _recent_pct=$((_recent_ok * 100 / _recent_total))
+                if [ "$_recent_pct" -gt $((_older_pct + 15)) ]; then
+                    _trend="improving"
+                elif [ "$_recent_pct" -lt $((_older_pct - 15)) ]; then
+                    _trend="declining"
+                fi
+            fi
+            printf '  Prompt Trend:       %s\n' "$_trend"
+        fi
     fi
-    if [ "${REFLEXIVE_ADAPT_TOKENS:-0}" -eq 1 ] && [ "${#_REFLEXIVE_TOKEN_HISTORY[@]}" -gt 0 ]; then
-        printf '  Token Budget:   %s (recommended)\n' "$(reflexive_tokens_recommend)"
+    if [ "${#_REFLEXIVE_TOKEN_HISTORY[@]}" -gt 0 ]; then
+        printf '  Token Budget:       %s (recommended)\n' "$(reflexive_tokens_recommend)"
     fi
-    printf '  Loop Counter:   %d\n' "$_REFLEXIVE_LOOP_COUNTER"
-    printf '  Metacog State:  %s\n' "$(reflexive_metacog_state)"
+    printf '  Soul Rejections:    %d\n' "$_REFLEXIVE_SOUL_REJECTIONS"
+    if [ "$((_REFLEXIVE_SPECULATE_HITS + _REFLEXIVE_SPECULATE_MISSES))" -gt 0 ]; then
+        printf '  Speculation:        %d hits / %d misses\n' "$_REFLEXIVE_SPECULATE_HITS" "$_REFLEXIVE_SPECULATE_MISSES"
+    fi
+    printf '  Metacog State:      %s\n' "$(reflexive_metacog_state)"
+}
+
+# Generate a deep analysis report with optional LLM summary
+reflexive_report() {
+    local report=""
+    report+="══════════════════════════════════════════════════════════════\n"
+    report+="REFLEXIVE INTELLIGENCE — SESSION REPORT\n"
+    report+="══════════════════════════════════════════════════════════════\n\n"
+
+    # Session info
+    local _now
+    _now=$(date +%s)
+    local _elapsed=$((_now - _REFLEXIVE_SESSION_START))
+    report+="Session Start:   $(date -d "@$_REFLEXIVE_SESSION_START" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -r "$_REFLEXIVE_SESSION_START" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$_REFLEXIVE_SESSION_START")\n"
+    report+="Duration:        $((_elapsed / 60))m $((_elapsed % 60))s\n"
+    report+="Total Commands:  $_REFLEXIVE_TOTAL_COMMANDS\n"
+    report+="Loop Iterations: $_REFLEXIVE_LOOP_COUNTER\n\n"
+
+    # Subsystem states
+    report+="── Subsystem States ──\n"
+    report+="  Soul Gate:    $([ "${REFLEXIVE_SOUL_GATE:-0}" -eq 1 ] && echo ON || echo OFF)  (rejections: $_REFLEXIVE_SOUL_REJECTIONS)\n"
+    report+="  Prompt Learn: $([ "${REFLEXIVE_PROMPT_LEARN:-0}" -eq 1 ] && echo ON || echo OFF)  (samples: ${#_REFLEXIVE_PROMPT_GRADES[@]})\n"
+    report+="  Adapt Tokens: $([ "${REFLEXIVE_ADAPT_TOKENS:-0}" -eq 1 ] && echo ON || echo OFF)  (observations: ${#_REFLEXIVE_TOKEN_HISTORY[@]})\n"
+    report+="  Speculative:  $([ "${REFLEXIVE_SPECULATE:-0}" -eq 1 ] && echo ON || echo OFF)  (hits: $_REFLEXIVE_SPECULATE_HITS, misses: $_REFLEXIVE_SPECULATE_MISSES)\n"
+    report+="  Self-Model:   $([ "${REFLEXIVE_SELF_MODEL:-0}" -eq 1 ] && echo ON || echo OFF)  (interval: ${REFLEXIVE_METACOG_INTERVAL:-4})\n"
+    report+="  Metacog LLM:  $([ "${REFLEXIVE_METACOG_LLM:-0}" -eq 1 ] && echo ON || echo OFF)\n\n"
+
+    # Prompt learning details
+    if [ "${#_REFLEXIVE_PROMPT_GRADES[@]}" -gt 0 ]; then
+        report+="── Prompt Learning ──\n"
+        report+="  Success Rate: $(reflexive_prompt_success_rate)\n"
+        report+="  Recent Grades:\n"
+        local _entry
+        for _entry in "${_REFLEXIVE_PROMPT_GRADES[@]}"; do
+            local _ts _outcome _hint
+            _ts=$(printf '%s' "$_entry" | cut -d: -f1)
+            _outcome=$(printf '%s' "$_entry" | cut -d: -f2)
+            _hint=$(printf '%s' "$_entry" | cut -d: -f3-)
+            local _time_str
+            _time_str=$(date -d "@$_ts" '+%H:%M:%S' 2>/dev/null || date -r "$_ts" '+%H:%M:%S' 2>/dev/null || echo "$_ts")
+            report+="    [$_time_str] $_outcome: $_hint\n"
+        done
+        report+="\n"
+    fi
+
+    # Token budget details
+    if [ "${#_REFLEXIVE_TOKEN_HISTORY[@]}" -gt 0 ]; then
+        report+="── Token Budget ──\n"
+        report+="  Recommended: $(reflexive_tokens_recommend)\n"
+        report+="  Floor: ${REFLEXIVE_TOKEN_FLOOR:-512}  Ceiling: ${REFLEXIVE_TOKEN_CEILING:-8192}\n"
+        local _sum=0 _count=0 _max=0 _val
+        for _val in "${_REFLEXIVE_TOKEN_HISTORY[@]}"; do
+            _sum=$((_sum + _val))
+            _count=$((_count + 1))
+            [ "$_val" -gt "$_max" ] && _max="$_val"
+        done
+        report+="  Avg Response: $((_sum / _count)) chars  Max: $_max chars\n\n"
+    fi
+
+    # Metacog state
+    report+="── Metacognition ──\n"
+    report+="  Current State: $(reflexive_metacog_state)\n\n"
+
+    # Tuning knobs
+    report+="── Current Tuning ──\n"
+    report+="  soul-keywords=${REFLEXIVE_SOUL_KEYWORDS:-5}  prompt-history=${REFLEXIVE_PROMPT_HISTORY:-8}\n"
+    report+="  token-floor=${REFLEXIVE_TOKEN_FLOOR:-512}  token-ceiling=${REFLEXIVE_TOKEN_CEILING:-8192}\n"
+    report+="  speculate-budget=${REFLEXIVE_SPECULATE_BUDGET:-3}  metacog-interval=${REFLEXIVE_METACOG_INTERVAL:-4}\n\n"
+
+    # LLM analysis
+    if declare -f llm_generate &>/dev/null; then
+        declare -f ui_spinner_start &>/dev/null && ui_spinner_start "Analyzing" >/dev/tty 2>/dev/null
+        local _analysis_prompt="Analyze this self-monitoring report from an AI agent named George:\n\n${report}\n\nSummarize patterns, flag concerns, and suggest optimizations for the tuning knobs. Be concise (4-6 sentences)."
+        local _analysis_sys="You are analyzing the self-monitoring telemetry of an AI agent. Focus on actionable insights: Is the agent performing well? Are there efficiency problems? What tuning changes would help? Plain text, no markdown."
+        local _analysis
+        local LLM_SCENARIO=evaluator
+        _analysis=$(llm_generate "$_analysis_prompt" "$_analysis_sys" 512 512 2>/dev/null)
+        declare -f ui_spinner_stop &>/dev/null && ui_spinner_stop 2>/dev/null
+        if [ -n "$_analysis" ]; then
+            # Strip think blocks if present
+            declare -f _strip_think_blocks &>/dev/null && _analysis=$(echo "$_analysis" | _strip_think_blocks)
+            _analysis=$(echo "$_analysis" | sed 's/\*\+//g' | head -8)
+            report+="── Analysis ──\n"
+            report+="$_analysis\n"
+        fi
+    fi
+
+    report+="\n══════════════════════════════════════════════════════════════\n"
+    printf '%b' "$report"
 }

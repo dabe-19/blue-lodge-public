@@ -15,6 +15,19 @@ LODGE_PERMISSION="${LODGE_PERMISSION:-1}"
 # ── Filename sanitization ──────────────────────────────────────
 # Strips quotes, replaces spaces, removes special characters.
 # Used everywhere a filename comes in from LLM output or user input.
+
+# Expand ~ and ~/ at the start of a path to $HOME.
+# Must be called BEFORE tools_sanitize_filename() which strips ~.
+# Safe: only expands leading tilde, never interior tildes.
+tools_expand_tilde() {
+    local p="$1"
+    case "$p" in
+        '~/'*)  echo "${HOME}${p:1}" ;;
+        '~')    echo "$HOME" ;;
+        *)      echo "$p" ;;
+    esac
+}
+
 tools_sanitize_filename() {
     local f="$1"
     # Strip leading/trailing whitespace

@@ -1182,8 +1182,8 @@ describe "Abort propagation from inner loop to macro loop"
 # ── Milestone Deduplication ────────────────────────────────────
 describe "Milestone deduplication in macro loop"
 
-  it "AGENT_MAX_MILESTONE_RETRIES defaults to 20" && {
-    assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "20"
+  it "AGENT_MAX_MILESTONE_RETRIES defaults to 4" && {
+    assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "4"
   }
 
   it "agent_run initializes _attempted_milestones array" && {
@@ -1424,8 +1424,8 @@ describe "Task completion evaluator"
     assert_ok $?
   }
 
-  it "LLM_EVALUATOR_TOKENS defaults to 512" && {
-    assert_eq "$LLM_EVALUATOR_TOKENS" "512"
+  it "LLM_EVALUATOR_TOKENS defaults to 4096" && {
+    assert_eq "$LLM_EVALUATOR_TOKENS" "4096"
   }
 
 # ── Macro memory enrichment: timestamps & command results ─────
@@ -2705,9 +2705,9 @@ describe "Dynamic honeydew rewrite configuration"
     assert_ok $? "AGENT_HONEYDEW_REWRITE_ROUNDS must default to 8"
   }
 
-  it "AGENT_HONEYDEW_REWRITE_CADENCE defaults to 1" && {
-    grep -q 'AGENT_HONEYDEW_REWRITE_CADENCE.*:-1' "$LODGE_DIR/lib/agent.sh"
-    assert_ok $? "AGENT_HONEYDEW_REWRITE_CADENCE must default to 1"
+  it "AGENT_HONEYDEW_REWRITE_CADENCE defaults to 0" && {
+    grep -q 'AGENT_HONEYDEW_REWRITE_CADENCE.*:-0' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "AGENT_HONEYDEW_REWRITE_CADENCE must default to 0"
   }
 
 describe "Dynamic honeydew rewrite function"
@@ -3559,8 +3559,8 @@ describe "Web masking system"
     assert_eq "${AGENT_WEB_UNLOCK_ABSTRACT:-99}" "99"
   }
 
-  it "AGENT_WEB_UNLOCK_COMBINED defaults to 3" && {
-    assert_eq "${AGENT_WEB_UNLOCK_COMBINED:-3}" "3"
+  it "AGENT_WEB_UNLOCK_COMBINED defaults to 6" && {
+    assert_eq "${AGENT_WEB_UNLOCK_COMBINED:-6}" "6"
   }
 
   it "agent_run computes _web_locked flag per macro iteration" && {
@@ -3626,8 +3626,8 @@ describe "Git masking system"
     assert_eq "${AGENT_GIT_UNLOCK_ABSTRACT:-99}" "99"
   }
 
-  it "AGENT_GIT_UNLOCK_COMBINED defaults to 3" && {
-    assert_eq "${AGENT_GIT_UNLOCK_COMBINED:-3}" "3"
+  it "AGENT_GIT_UNLOCK_COMBINED defaults to 6" && {
+    assert_eq "${AGENT_GIT_UNLOCK_COMBINED:-6}" "6"
   }
 
   it "agent_run computes _git_locked flag per macro iteration" && {

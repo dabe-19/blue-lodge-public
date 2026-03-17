@@ -425,6 +425,9 @@ _agent_complete_milestone() {
         printf '%s' "$_web_outputs" > "$george_dir/$RESEARCH_BUFFER_FILE"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] research buffer saved (%d chars)\n' "${#_web_outputs}" > /dev/tty 2>/dev/null
     fi
+
+    # ── Reflexive hook: milestone complete ─────────────────
+    declare -f reflexive_milestone_complete &>/dev/null && reflexive_milestone_complete "$micro_objective"
 }
 
 # ── Honeydew List System ──────────────────────────────────────
@@ -3786,6 +3789,9 @@ agent_inner_loop() {
             fi
         fi
 
+        # ── Reflexive hook: pre-route context injection ───────
+        declare -f reflexive_pre_route &>/dev/null && reflexive_pre_route "$micro_objective" "$inner_context"
+
         # ── PHASE 1: Fast Tool Routing ────────────────────────
         local selected_tool
         if [ -n "$_pre_route" ]; then
@@ -4186,6 +4192,15 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
                 ;;
         esac
 
+        # ── Reflexive adaptive token override ─────────────────
+        if [ "${REFLEXIVE_ADAPT_TOKENS:-0}" -eq 1 ] && declare -f reflexive_tokens_recommend &>/dev/null; then
+            local _reflex_tokens
+            _reflex_tokens=$(reflexive_tokens_recommend)
+            if [ -n "$_reflex_tokens" ] && [ "$_reflex_tokens" -gt 0 ] 2>/dev/null; then
+                _spec_tokens="$_reflex_tokens"
+            fi
+        fi
+
         # Use llm_generate (non-streaming) for the specialist. The output
         # is a single command line that will be displayed by "Running: ..."
         # below. Streaming it first wastes time showing the same text twice
@@ -4264,6 +4279,9 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         fi
 
         fi  # end direct_respond / specialist branch
+
+        # ── Reflexive hook: post-route soul gate ──────────────
+        declare -f reflexive_post_route &>/dev/null && reflexive_post_route "$cmd" "$selected_tool" "$action_plan"
 
         # ── SPECIALIST OUTPUT CLEANUP ─────────────────────────
         # These post-processing steps fix LLM artifacts in specialist
@@ -5120,6 +5138,9 @@ INTERLOCK_JSON
                     fi
                 fi
 
+                # ── Reflexive hook: post-execute learning ──────
+                declare -f reflexive_post_execute &>/dev/null && reflexive_post_execute "$output" "$exit_code" "${cmd:0:80}"
+
                 # ── EVALUATOR-BASED COMPLETION CHECK ───────────
                 # After each successful action, run the P1 milestone
                 # evaluator to determine if the micro-objective is met.
@@ -5150,6 +5171,9 @@ INTERLOCK_JSON
                 inner_attempts=$((inner_attempts + 1))
                 continue
             fi
+
+            # ── Reflexive hook: milestone failure ──────────────
+            declare -f reflexive_milestone_fail &>/dev/null && reflexive_milestone_fail "${micro_objective:0:80}"
 
             # ═══════════════════════════════════════════════════
             # FAILURE ESCALATION MATRIX

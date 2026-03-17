@@ -274,15 +274,18 @@ describe "Speculative Pre-fetch"
   }
 
   it "reflexive_speculate_consume clears cache after read" && {
-    _REFLEXIVE_SPECULATE_CACHE="prefetch_hint:web"
+    local _cache_file
+    _cache_file=$(_reflexive_speculate_file)
+    echo "prefetch_hint:web" > "$_cache_file"
     result=$(reflexive_speculate_consume)
     assert_eq "$result" "prefetch_hint:web"
-    # Cache is cleared in the subshell, but verify the function works
+    # Cache file should be removed after consume
+    [ ! -f "$_cache_file" ] || rm -f "$_cache_file"
   }
 
   # Reset
   REFLEXIVE_SPECULATE=0
-  _REFLEXIVE_SPECULATE_CACHE=""
+  rm -f "$(_reflexive_speculate_file 2>/dev/null)" 2>/dev/null
 
 # ══════════════════════════════════════════════════════════════
 # 5. Self-Model (Metacognition)
@@ -326,11 +329,16 @@ describe "Self-Model (Metacognition)"
   it "reflexive_metacog_reset clears state" && {
     _REFLEXIVE_LOOP_COUNTER=10
     _REFLEXIVE_METACOG_STATE="something"
-    _REFLEXIVE_SPECULATE_CACHE="cached"
+    # Write a speculation cache file to verify cleanup
+    local _cache_file
+    _cache_file=$(_reflexive_speculate_file)
+    echo "cached" > "$_cache_file" 2>/dev/null
     reflexive_metacog_reset
     assert_eq "$_REFLEXIVE_LOOP_COUNTER" "0"
     assert_empty "$_REFLEXIVE_METACOG_STATE"
-    assert_empty "$_REFLEXIVE_SPECULATE_CACHE"
+    # Speculation cache file should be removed
+    [ ! -f "$_cache_file" ]
+    assert_ok $?
   }
 
   # Reset

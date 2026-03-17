@@ -1550,6 +1550,97 @@ _cmd_limits() {
             ui_dim "  See also: /tuning — LLM tokens, budgets, provider rates, cache, web processing" ;;
     esac
 }
+
+# ── /reflexive — Reflexive intelligence layer ──────────────────
+_cmd_reflexive() {
+    local args="$1"
+    local action
+    action=$(echo "$args" | awk '{print $1}')
+
+    case "$action" in
+        ""|status)
+            reflexive_status ;;
+        report)
+            reflexive_report ;;
+        on)
+            local sub
+            sub=$(echo "$args" | awk '{print $2}')
+            if [ -z "$sub" ]; then
+                reflexive_toggle all on
+            else
+                reflexive_toggle "$sub" on
+            fi
+            _llm_save_config ;;
+        off)
+            local sub
+            sub=$(echo "$args" | awk '{print $2}')
+            if [ -z "$sub" ]; then
+                reflexive_toggle all off
+            else
+                reflexive_toggle "$sub" off
+            fi
+            _llm_save_config ;;
+        toggle)
+            local sub
+            sub=$(echo "$args" | awk '{print $2}')
+            if [ -z "$sub" ]; then
+                ui_info "Usage: /reflexive toggle <subsystem|all>"
+                return 0
+            fi
+            reflexive_toggle "$sub"
+            _llm_save_config ;;
+        set)
+            local knob val
+            knob=$(echo "$args" | awk '{print $2}')
+            val=$(echo "$args" | awk '{print $3}')
+            case "$knob" in
+                soul-keywords)    _limits_set REFLEXIVE_SOUL_KEYWORDS "$val" 1 20 ;;
+                prompt-history)   _limits_set REFLEXIVE_PROMPT_HISTORY "$val" 1 50 ;;
+                token-floor)      _limits_set REFLEXIVE_TOKEN_FLOOR "$val" 128 32768 ;;
+                token-ceiling)    _limits_set REFLEXIVE_TOKEN_CEILING "$val" 512 65536 ;;
+                speculate-budget) _limits_set REFLEXIVE_SPECULATE_BUDGET "$val" 1 10 ;;
+                metacog-interval) _limits_set REFLEXIVE_METACOG_INTERVAL "$val" 1 20 ;;
+                *)
+                    ui_err "Unknown knob: $knob"
+                    ui_dim "  Available: soul-keywords, prompt-history, token-floor, token-ceiling, speculate-budget, metacog-interval"
+                    return 1 ;;
+            esac
+            _llm_save_config ;;
+        reset)
+            export REFLEXIVE_SOUL_GATE=0
+            export REFLEXIVE_PROMPT_LEARN=0
+            export REFLEXIVE_ADAPT_TOKENS=0
+            export REFLEXIVE_SPECULATE=0
+            export REFLEXIVE_SELF_MODEL=0
+            export REFLEXIVE_METACOG_LLM=0
+            export REFLEXIVE_SOUL_KEYWORDS=5
+            export REFLEXIVE_PROMPT_HISTORY=8
+            export REFLEXIVE_TOKEN_FLOOR=512
+            export REFLEXIVE_TOKEN_CEILING=8192
+            export REFLEXIVE_SPECULATE_BUDGET=3
+            export REFLEXIVE_METACOG_INTERVAL=4
+            _llm_save_config
+            ui_ok "Reflexive settings reset to defaults" ;;
+        save)
+            _reflexive_save_state
+            ui_ok "Reflexive state saved" ;;
+        *)
+            ui_section "Reflexive Intelligence"
+            echo ""
+            ui_dim "  /reflexive              — Show status dashboard"
+            ui_dim "  /reflexive report       — Deep analysis report (with LLM summary)"
+            ui_dim "  /reflexive on [sub]     — Enable subsystem(s) (omit sub for all)"
+            ui_dim "  /reflexive off [sub]    — Disable subsystem(s)"
+            ui_dim "  /reflexive toggle <sub> — Toggle subsystem"
+            ui_dim "  /reflexive set <k> <v>  — Set tuning knob"
+            ui_dim "  /reflexive reset        — Reset all to defaults"
+            ui_dim "  /reflexive save         — Force-save state to disk"
+            echo ""
+            ui_dim "  Subsystems: soul, prompt, tokens, speculate, metacog, metacog-llm, all"
+            ui_dim "  Knobs:      soul-keywords, prompt-history, token-floor, token-ceiling,"
+            ui_dim "              speculate-budget, metacog-interval" ;;
+    esac
+}
 _cmd_tuning() {
     local args="$1"
     local action
@@ -2676,6 +2767,8 @@ _cmd_cleanup() {
 }
 _cmd_cd() {
     local target="$1"
+    # Expand tilde — LLMs emit ~/path which doesn't expand in quotes
+    declare -f tools_expand_tilde &>/dev/null && target=$(tools_expand_tilde "$target")
     if [ -d "$target" ]; then
         cd "$target" || return 1
         export LODGE_PROJECT="$(basename "$PWD")"
@@ -2707,6 +2800,9 @@ _cmd_ls() {
     # Defaults
     [ -z "$target" ] && target="."
     [ -z "$depth" ] && depth=3
+
+    # Expand tilde — LLMs emit ~/path which doesn't expand in quotes
+    declare -f tools_expand_tilde &>/dev/null && target=$(tools_expand_tilde "$target")
 
     # ── Path enforcement ────────────────────────────────────
     # Default: relative paths only (mirrors /grep). LLMs hallucinate
@@ -2806,6 +2902,8 @@ _cmd_files() {
 }
 _cmd_read() {
     local filepath="$1"
+    # Expand tilde — LLMs emit ~/path which doesn't expand in quotes
+    declare -f tools_expand_tilde &>/dev/null && filepath=$(tools_expand_tilde "$filepath")
     if [ -f "$filepath" ]; then
         tools_read_file "$filepath" 100
     else
@@ -2880,6 +2978,9 @@ _cmd_grep() {
 
     # Default search path
     [ -z "$search_path" ] && search_path="."
+
+    # Expand tilde — LLMs emit ~/path which doesn't expand in quotes
+    declare -f tools_expand_tilde &>/dev/null && search_path=$(tools_expand_tilde "$search_path")
 
     # ── Path enforcement ───────────────────────────────────────
     # Default: relative paths only (like /write). LLMs hallucinate
@@ -5522,6 +5623,7 @@ _register_commands() {
     commands_register "memory"   "Show GEORGE.md contents" "_cmd_memory"
     commands_register "soul"     "Toggle soul mode on/off (full personality)" "_cmd_soul"
     commands_register "limits"   "View/adjust agent planning limits" "_cmd_limits"
+    commands_register "reflexive" "Reflexive intelligence — self-monitoring & learning" "_cmd_reflexive"
     commands_register "tuning"   "LLM tokens, budgets, provider rates, cache & web processing" "_cmd_tuning"
     commands_register "model"    "View/adjust sampling parameters (temp, penalties)" "_cmd_model"
     commands_register "status"   "Show agent status" "_cmd_status"
