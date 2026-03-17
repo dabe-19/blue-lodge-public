@@ -407,11 +407,11 @@ describe "backup_auth_create"
   it "creates auth backup with SSH keys" && {
     _setup_backup
     backup_init
-    mkdir -p "$GEORGE_CONFIG_DIR/.ssh"
-    echo "ssh-rsa AAAA" > "$GEORGE_CONFIG_DIR/.ssh/id_rsa.pub"
+    mkdir -p "$GEORGE_CONFIG_DIR/ssh"
+    echo "ssh-rsa AAAA" > "$GEORGE_CONFIG_DIR/ssh/id_rsa.pub"
     backup_auth_create >/dev/null 2>&1
     auth_dir=$(ls -d "$GEORGE_BACKUP_DIR"/auth-* 2>/dev/null | head -1)
-    assert_dir_exists "$auth_dir/.ssh"
+    assert_dir_exists "$auth_dir/ssh"
     _teardown_backup
   }
 
@@ -581,19 +581,19 @@ describe "backup_auth_restore"
   it "restores auth items to .george" && {
     _setup_backup
     backup_init
-    mkdir -p "$GEORGE_CONFIG_DIR/.ssh"
-    echo "ssh-key" > "$GEORGE_CONFIG_DIR/.ssh/id_rsa"
+    mkdir -p "$GEORGE_CONFIG_DIR/ssh"
+    echo "ssh-key" > "$GEORGE_CONFIG_DIR/ssh/id_rsa"
     echo "API_KEY=abc" > "$GEORGE_CONFIG_DIR/keys.conf"
     backup_auth_create >/dev/null 2>&1
     # Nuke the originals
-    rm -rf "$GEORGE_CONFIG_DIR/.ssh"
+    rm -rf "$GEORGE_CONFIG_DIR/ssh"
     rm -f "$GEORGE_CONFIG_DIR/keys.conf"
     # Restore (auto-selects latest, auto-confirm via task mode)
     export _LODGE_IN_TASK=1
     backup_auth_restore 2>/dev/null
     export _LODGE_IN_TASK=0
     assert_file_exists "$GEORGE_CONFIG_DIR/keys.conf"
-    assert_dir_exists "$GEORGE_CONFIG_DIR/.ssh"
+    assert_dir_exists "$GEORGE_CONFIG_DIR/ssh"
     _teardown_backup
   }
 
@@ -626,14 +626,14 @@ describe "backup_auth_restore"
     _setup_backup
     backup_init
     echo "secret" > "$GEORGE_CONFIG_DIR/keys.conf"
-    mkdir -p "$GEORGE_CONFIG_DIR/.ssh"
-    echo "key" > "$GEORGE_CONFIG_DIR/.ssh/id_rsa"
+    mkdir -p "$GEORGE_CONFIG_DIR/ssh"
+    echo "key" > "$GEORGE_CONFIG_DIR/ssh/id_rsa"
     backup_auth_create >/dev/null 2>&1
-    rm -rf "$GEORGE_CONFIG_DIR/.ssh" "$GEORGE_CONFIG_DIR/keys.conf"
+    rm -rf "$GEORGE_CONFIG_DIR/ssh" "$GEORGE_CONFIG_DIR/keys.conf"
     export _LODGE_IN_TASK=1
     backup_auth_restore 2>/dev/null
     export _LODGE_IN_TASK=0
-    perms=$(stat -c '%a' "$GEORGE_CONFIG_DIR/.ssh" 2>/dev/null)
+    perms=$(stat -c '%a' "$GEORGE_CONFIG_DIR/ssh" 2>/dev/null)
     assert_eq "$perms" "700"
     perms=$(stat -c '%a' "$GEORGE_CONFIG_DIR/keys.conf" 2>/dev/null)
     assert_eq "$perms" "600"
@@ -675,9 +675,9 @@ describe "backup_auth_restore"
 
 describe "Auth backup — code structure"
 
-  it "_BACKUP_AUTH_ITEMS includes .ssh" && {
-    printf '%s\n' "${_BACKUP_AUTH_ITEMS[@]}" | grep -qx '.ssh'
-    assert_ok $? ".ssh must be in auth items"
+  it "_BACKUP_AUTH_ITEMS includes ssh" && {
+    printf '%s\n' "${_BACKUP_AUTH_ITEMS[@]}" | grep -qx 'ssh'
+    assert_ok $? "ssh must be in auth items"
   }
 
   it "_BACKUP_AUTH_ITEMS includes .gnupg" && {
@@ -795,13 +795,13 @@ describe "backup_auth_restore — custom directory"
     _setup_backup
     backup_init
     echo "API_KEY=custom_restore_test" > "$GEORGE_CONFIG_DIR/keys.conf"
-    mkdir -p "$GEORGE_CONFIG_DIR/.ssh"
-    echo "ssh-rsa TEST" > "$GEORGE_CONFIG_DIR/.ssh/id_rsa.pub"
+    mkdir -p "$GEORGE_CONFIG_DIR/ssh"
+    echo "ssh-rsa TEST" > "$GEORGE_CONFIG_DIR/ssh/id_rsa.pub"
     _custom_dir="$TMPDIR_BACKUP/restore-custom"
     backup_auth_create "$_custom_dir" >/dev/null 2>&1
     # Nuke originals
     rm -f "$GEORGE_CONFIG_DIR/keys.conf"
-    rm -rf "$GEORGE_CONFIG_DIR/.ssh"
+    rm -rf "$GEORGE_CONFIG_DIR/ssh"
     # Restore from custom dir (auto-selects latest)
     export _LODGE_IN_TASK=1
     backup_auth_restore "" "$_custom_dir" 2>/dev/null

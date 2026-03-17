@@ -193,6 +193,11 @@ backup_restore() {
         count=$((count + 1))
     fi
 
+    # Reload remote config into the running shell
+    if declare -f _remote_load_config >/dev/null 2>&1; then
+        _remote_load_config
+    fi
+
     ui_ok "Restored $count files from backup $backup_name"
     ui_dim "Project GEORGE.md files are in: $backup_path/projects/"
     ui_dim "Restore those manually to your project directories if needed."
@@ -704,7 +709,7 @@ backup_import() {
 # machine or recovering from a fresh install.
 #
 # What's included:
-#   .ssh/                   SSH keys
+#   ssh/                    SSH keys
 #   .gnupg/                 GPG/PGP keyring
 #   .keyring/               Vault encryption key (AES-256 signing.key)
 #   gpg-george.sh           GPG wrapper script
@@ -730,7 +735,7 @@ backup_import() {
 # Files and directories that belong in an auth/config backup.
 # Paths are relative to $GEORGE_CONFIG_DIR.
 _BACKUP_AUTH_ITEMS=(
-    ".ssh"
+    "ssh"
     ".gnupg"
     ".keyring"
     "gpg-george.sh"
@@ -962,9 +967,18 @@ backup_auth_restore() {
     [ -d "$GEORGE_CONFIG_DIR/.vault" ] && chmod 700 "$GEORGE_CONFIG_DIR/.vault"
     [ -d "$GEORGE_CONFIG_DIR/.keyring" ] && chmod 700 "$GEORGE_CONFIG_DIR/.keyring"
     [ -f "$GEORGE_CONFIG_DIR/.keyring/signing.key" ] && chmod 600 "$GEORGE_CONFIG_DIR/.keyring/signing.key"
-    [ -d "$GEORGE_CONFIG_DIR/.ssh" ] && chmod 700 "$GEORGE_CONFIG_DIR/.ssh"
+    [ -d "$GEORGE_CONFIG_DIR/ssh" ] && chmod 700 "$GEORGE_CONFIG_DIR/ssh"
     [ -d "$GEORGE_CONFIG_DIR/.gnupg" ] && chmod 700 "$GEORGE_CONFIG_DIR/.gnupg"
 
+    # Tear down stale tunnel so reconnect uses restored config
+    if declare -f remote_disconnect >/dev/null 2>&1; then
+        remote_disconnect 2>/dev/null
+    fi
+
+    # Reload remote config into the running shell
+    if declare -f _remote_load_config >/dev/null 2>&1; then
+        _remote_load_config
+    fi
+
     ui_ok "Restored $count auth/config items from $backup_name"
-    ui_dim "  Restart George to pick up changes: /quit then relaunch"
 }
