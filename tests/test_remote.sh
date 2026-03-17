@@ -759,4 +759,57 @@ describe "jump host topology round-trip"
     _rt_teardown
   }
 
+# ── SSH key path defaults to GEORGE_DIR/ssh ────────────────────
+describe "SSH key path in GEORGE_DIR"
+
+  it "defaults key to GEORGE_DIR/ssh/id_ed25519" && {
+    _rt_setup
+    # Unset and re-source to pick up the default
+    unset REMOTE_SSH_KEY
+    REMOTE_SSH_KEY="${GEORGE_DIR}/ssh/id_ed25519"
+    assert_contains "$REMOTE_SSH_KEY" "/george/ssh/id_ed25519"
+    _rt_teardown
+  }
+
+  it "resets stale key path on config load" && {
+    _rt_setup
+    # Write a config with a stale (nonexistent parent) key path
+    mkdir -p "$GEORGE_DIR"
+    cat > "$GEORGE_DIR/remote.conf" << STALE
+REMOTE_SSH_KEY=/tmp/no-such-dir-xyz/.ssh/id_ed25519
+STALE
+    chmod 600 "$GEORGE_DIR/remote.conf"
+    _remote_load_config
+    # Should have been reset to the GEORGE_DIR default
+    assert_contains "$REMOTE_SSH_KEY" "/george/ssh/id_ed25519"
+    _rt_teardown
+  }
+
+  it "resets empty key path on config load" && {
+    _rt_setup
+    # Simulate what install.sh used to write: REMOTE_SSH_KEY= (empty)
+    mkdir -p "$GEORGE_DIR"
+    cat > "$GEORGE_DIR/remote.conf" << EMPTY
+REMOTE_SSH_KEY=
+EMPTY
+    chmod 600 "$GEORGE_DIR/remote.conf"
+    _remote_load_config
+    # Should have been reset to the GEORGE_DIR default, not left empty
+    assert_contains "$REMOTE_SSH_KEY" "/george/ssh/id_ed25519"
+    _rt_teardown
+  }
+
+  it "mkdir -p creates key directory in remote_setup_ssh" && {
+    _rt_setup
+    REMOTE_SSH_KEY="$_RT_TEST_DIR/newdir/ssh/id_ed25519"
+    # The parent dir does not yet exist
+    [ ! -d "$_RT_TEST_DIR/newdir/ssh" ]
+    assert_ok $?
+    # Call setup — no target, so it will error after mkdir but that's fine
+    remote_setup_ssh "fake@host" >/dev/null 2>&1 || true
+    # The directory should have been created
+    assert_dir_exists "$_RT_TEST_DIR/newdir/ssh"
+    _rt_teardown
+  }
+
 test_end

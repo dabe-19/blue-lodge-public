@@ -19,7 +19,7 @@ GEORGE_DIR="${GEORGE_DIR:-${LODGE_DIR}/.george}"
 # ── Config Defaults ────────────────────────────────────────────
 REMOTE_SSH_TARGET="${REMOTE_SSH_TARGET:-}"
 REMOTE_SSH_PORT="${REMOTE_SSH_PORT:-22}"
-REMOTE_SSH_KEY="${REMOTE_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+REMOTE_SSH_KEY="${REMOTE_SSH_KEY:-$GEORGE_DIR/ssh/id_ed25519}"
 REMOTE_OLLAMA_PORT="${REMOTE_OLLAMA_PORT:-11434}"
 REMOTE_LLAMACPP_PORT="${REMOTE_LLAMACPP_PORT:-8080}"
 REMOTE_LOCAL_OLLAMA_PORT="${REMOTE_LOCAL_OLLAMA_PORT:-11434}"
@@ -72,6 +72,10 @@ _remote_load_config() {
                 ;;
         esac
     done < "$_cfg"
+    # Reject empty or stale key paths (e.g. install stub or leftover test temp dirs)
+    if [ -z "$REMOTE_SSH_KEY" ] || [ ! -d "$(dirname "$REMOTE_SSH_KEY")" ]; then
+        REMOTE_SSH_KEY="$GEORGE_DIR/ssh/id_ed25519"
+    fi
 }
 
 # ── Save remote config ────────────────────────────────────────
@@ -960,6 +964,7 @@ remote_setup_ssh() {
     # Generate key if it doesn't exist
     if [ ! -f "$REMOTE_SSH_KEY" ]; then
         echo "Generating SSH key: $REMOTE_SSH_KEY"
+        mkdir -p "$(dirname "$REMOTE_SSH_KEY")"
         ssh-keygen -t ed25519 -f "$REMOTE_SSH_KEY" -N "" -C "george@$(hostname)"
         if [ $? -ne 0 ]; then
             echo "ERROR: Key generation failed." >&2
