@@ -1004,6 +1004,30 @@ _cmd_limits() {
                     ui_err "web-unlock-combined expects a non-negative integer"
                 fi
             fi ;;
+        git-unlock-abstract|git_unlock_abstract|gua)
+            if [ -z "$value" ]; then
+                ui_info "Git unlock (abstract): ${AGENT_GIT_UNLOCK_ABSTRACT:-99} milestones  (default: 99 = effectively never)"
+                ui_dim "  Milestones that must complete before /git is visible to abstract tasks"
+            else
+                if [[ "$value" =~ ^[0-9]+$ ]]; then
+                    AGENT_GIT_UNLOCK_ABSTRACT="$value"
+                    ui_ok "Git unlock (abstract) set to $value milestones"
+                else
+                    ui_err "git-unlock-abstract expects a non-negative integer"
+                fi
+            fi ;;
+        git-unlock-combined|git_unlock_combined|guc)
+            if [ -z "$value" ]; then
+                ui_info "Git unlock (combined): ${AGENT_GIT_UNLOCK_COMBINED:-3} milestones  (default: 3)"
+                ui_dim "  Milestones that must complete before /git is visible to combined tasks"
+            else
+                if [[ "$value" =~ ^[0-9]+$ ]]; then
+                    AGENT_GIT_UNLOCK_COMBINED="$value"
+                    ui_ok "Git unlock (combined) set to $value milestones"
+                else
+                    ui_err "git-unlock-combined expects a non-negative integer"
+                fi
+            fi ;;
         grep-max-lines|grep_max_lines|gml)
             if [ -z "$value" ]; then
                 ui_info "Grep max lines: ${AGENT_GREP_MAX_LINES:-100}  (default: 100)"
@@ -1184,6 +1208,8 @@ _cmd_limits() {
             AGENT_TASK_MODE=0
             AGENT_WEB_UNLOCK_ABSTRACT=99
             AGENT_WEB_UNLOCK_COMBINED=2
+            AGENT_GIT_UNLOCK_ABSTRACT=99
+            AGENT_GIT_UNLOCK_COMBINED=3
             AGENT_FAST_ROUTE=1
             AGENT_GREP_MAX_LINES=100
             AGENT_GREP_ALLOW_ABSOLUTE=0
@@ -1444,6 +1470,8 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Task mode:" "$_tm_show (${AGENT_TASK_MODE:-0})  (default: 0 auto)"
             printf "  %-22s %s\n" "Web unlock abstract:" "${AGENT_WEB_UNLOCK_ABSTRACT:-99} milestones  (default: 99)"
             printf "  %-22s %s\n" "Web unlock combined:" "${AGENT_WEB_UNLOCK_COMBINED:-2} milestones  (default: 2)"
+            printf "  %-22s %s\n" "Git unlock abstract:" "${AGENT_GIT_UNLOCK_ABSTRACT:-99} milestones  (default: 99)"
+            printf "  %-22s %s\n" "Git unlock combined:" "${AGENT_GIT_UNLOCK_COMBINED:-3} milestones  (default: 3)"
             printf "  %-22s %s\n" "Grep max lines:" "${AGENT_GREP_MAX_LINES:-100}  (default: 100)"
             local _gaa_disp="off"
             [ "${AGENT_GREP_ALLOW_ABSOLUTE:-0}" -eq 1 ] && _gaa_disp="on"
@@ -1502,6 +1530,8 @@ _cmd_limits() {
             ui_dim "    task-mode 0-3      — Task classifier: 0=auto 1=abstract 2=concrete 3=combined (current: ${AGENT_TASK_MODE:-0})"
             ui_dim "    web-unlock-abstract N — Milestones before /web visible for abstract tasks (current: ${AGENT_WEB_UNLOCK_ABSTRACT:-99})"
             ui_dim "    web-unlock-combined N — Milestones before /web visible for combined tasks (current: ${AGENT_WEB_UNLOCK_COMBINED:-2})"
+            ui_dim "    git-unlock-abstract N — Milestones before /git visible for abstract tasks (current: ${AGENT_GIT_UNLOCK_ABSTRACT:-99})"
+            ui_dim "    git-unlock-combined N — Milestones before /git visible for combined tasks (current: ${AGENT_GIT_UNLOCK_COMBINED:-3})"
             ui_dim "    grep-max-lines N — /grep output line cap (current: ${AGENT_GREP_MAX_LINES:-100})"
             ui_dim "    grep-allow-absolute on|off — Allow /grep to search absolute paths (current: $([ "${AGENT_GREP_ALLOW_ABSOLUTE:-0}" -eq 1 ] && echo on || echo off))"
             ui_dim "    ask on|off       — Allow George to /ask human questions (current: $([ "${AGENT_ASK_USER:-1}" -eq 1 ] && echo on || echo off))"

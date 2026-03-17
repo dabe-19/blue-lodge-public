@@ -744,8 +744,8 @@ describe "Plan prompt uses configurable step limit"
     assert_ok $?
   }
 
-  it "AGENT_PLAN_STEPS defaults to 6" && {
-    assert_eq "$AGENT_PLAN_STEPS" "6"
+  it "AGENT_PLAN_STEPS defaults to 8" && {
+    assert_eq "$AGENT_PLAN_STEPS" "8"
   }
 
   it "AGENT_PLAN_STEPS is overridable" && {
@@ -756,8 +756,8 @@ describe "Plan prompt uses configurable step limit"
     assert_ok $?
   }
 
-  it "AGENT_INNER_LOOPS defaults to 6" && {
-    assert_eq "$AGENT_INNER_LOOPS" "6"
+  it "AGENT_INNER_LOOPS defaults to 8" && {
+    assert_eq "$AGENT_INNER_LOOPS" "8"
   }
 
   it "AGENT_INNER_LOOPS is overridable" && {
@@ -2952,8 +2952,8 @@ describe "AGENT_OUTPUT_DIR enforcement"
 # ── Fuzzy keyword catalog matching ────────────────────────────
 describe "Fuzzy keyword catalog matching (_agent_fuzzy_catalog_match)"
 
-  it "AGENT_SMART_ROUTE defaults to 3 (fuzzy only)" && {
-    assert_eq "$AGENT_SMART_ROUTE" "3"
+  it "AGENT_SMART_ROUTE defaults to 1 (post-dispatch reroute only)" && {
+    assert_eq "$AGENT_SMART_ROUTE" "1"
   }
 
   it "function is defined" && {
@@ -3617,6 +3617,75 @@ describe "Web masking system"
     body=$(declare -f _build_specialist_prompt)
     echo "$body" | grep -q '_AGENT_WEB_LOCKED'
     assert_ok $? "specialist TOOLS list must conditionally exclude /web"
+  }
+
+# ── Git masking system ────────────────────────────────────────
+describe "Git masking system"
+
+  it "AGENT_GIT_UNLOCK_ABSTRACT defaults to 99" && {
+    assert_eq "${AGENT_GIT_UNLOCK_ABSTRACT:-99}" "99"
+  }
+
+  it "AGENT_GIT_UNLOCK_COMBINED defaults to 3" && {
+    assert_eq "${AGENT_GIT_UNLOCK_COMBINED:-3}" "3"
+  }
+
+  it "agent_run computes _git_locked flag per macro iteration" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_git_locked'
+    assert_ok $? "agent_run must compute _git_locked flag"
+  }
+
+  it "_git_locked is exported as _AGENT_GIT_LOCKED" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'export _AGENT_GIT_LOCKED'
+    assert_ok $? "_AGENT_GIT_LOCKED must be exported for inner functions"
+  }
+
+  it "git lock checks AGENT_TASK_TYPE against thresholds" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'AGENT_GIT_UNLOCK_ABSTRACT\|GIT_UNLOCK_ABSTRACT'
+    assert_ok $? "git lock must reference abstract threshold"
+    echo "$body" | grep -q 'AGENT_GIT_UNLOCK_COMBINED\|GIT_UNLOCK_COMBINED'
+    assert_ok $? "git lock must reference combined threshold"
+  }
+
+  it "cached router variant strips /git lines" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_cached_router_sys_ngit'
+    assert_ok $? "git-stripped router cache must exist"
+  }
+
+  it "router selection switches on _AGENT_GIT_LOCKED" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_AGENT_GIT_LOCKED'
+    assert_ok $? "inner loop must check _AGENT_GIT_LOCKED"
+    echo "$body" | grep -q '_cached_router_sys_ngit'
+    assert_ok $? "router must have git-stripped variant available"
+  }
+
+  it "strategist tool summary conditionally omits GIT group" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_git_locked'
+    assert_ok $? "strategist section must reference git lock flag"
+  }
+
+  it "specialist preamble conditionally omits /git from TOOLS" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q '_AGENT_GIT_LOCKED'
+    assert_ok $? "specialist TOOLS list must conditionally exclude /git"
+  }
+
+  it "recommendation validation discards /git when locked" && {
+    body=$(declare -f _agent_evaluate_honeydew_item)
+    echo "$body" | grep -q '_AGENT_GIT_LOCKED'
+    assert_ok $? "evaluator must discard /git recommendations when locked"
+  }
+
+  it "compact catalog gates /git via GITPLACEHOLDER" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'GITPLACEHOLDER'
+    assert_ok $? "compact catalog must use GITPLACEHOLDER pattern"
   }
 
 # ── /grep agent integration ──────────────────────────────────

@@ -14,14 +14,14 @@ source "$LODGE_DIR/lib/journal.sh"
 
 # ── Config ─────────────────────────────────────────────────────
 AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-40}"       # Macro loop milestone ceiling
-AGENT_PLAN_STEPS="${AGENT_PLAN_STEPS:-6}"      # Max steps per plan/subtask
-AGENT_INNER_LOOPS="${AGENT_INNER_LOOPS:-6}"    # Inner loop escalation ceiling
+AGENT_PLAN_STEPS="${AGENT_PLAN_STEPS:-8}"      # Max steps per plan/subtask
+AGENT_INNER_LOOPS="${AGENT_INNER_LOOPS:-8}"    # Inner loop escalation ceiling
 AGENT_STEP_DELAY="${AGENT_STEP_DELAY:-1}"
 AGENT_MAX_CLARIFY="${AGENT_MAX_CLARIFY:-2}"
 AGENT_INTERACTIVE_PLANNING="${AGENT_INTERACTIVE_PLANNING:-0}"
 AGENT_MAX_DEPTH="${AGENT_MAX_DEPTH:-3}"        # Subtask recursion depth (3 = three levels of expansion)
 AGENT_HONEYDEW_EXPAND="${AGENT_HONEYDEW_EXPAND:-1}"  # Subtask expansion: 0=disabled, 1=enabled
-AGENT_HONEYDEW_MAX_ITEMS="${AGENT_HONEYDEW_MAX_ITEMS:-8}"  # Max honeydew items before expansion is suppressed
+AGENT_HONEYDEW_MAX_ITEMS="${AGENT_HONEYDEW_MAX_ITEMS:-12}"  # Max honeydew items before expansion is suppressed
 AGENT_HONEYDEW_REWRITE="${AGENT_HONEYDEW_REWRITE:-1}"    # Dynamic honeydew rewrite: 0=disabled, 1=enabled
 AGENT_HONEYDEW_REWRITE_ROUNDS="${AGENT_HONEYDEW_REWRITE_ROUNDS:-8}"  # Global honeydew rewrite limit (all paths: normal, pressure relief, auto-recovery)
 AGENT_HONEYDEW_REWRITE_CADENCE="${AGENT_HONEYDEW_REWRITE_CADENCE:-1}"  # Min new milestones between rewrites (0=every iteration)
@@ -42,7 +42,7 @@ AGENT_EVAL_REC_CHARS="${AGENT_EVAL_REC_CHARS:-500}"              # Max chars aft
 AGENT_EVAL_REC_INJECT="${AGENT_EVAL_REC_INJECT:-1}"            # Recommendation injection to honeydew rewriter: 0=off (current), 1=recommendation-only (high weight), 2=both (recommendation + full context)
 AGENT_CROSS_TASK_SIEVE="${AGENT_CROSS_TASK_SIEVE:-1}"          # Cross-task memory sieve: 0=disabled, 1=keyword recall injection at task start
 AGENT_PRESSURE_RELIEF="${AGENT_PRESSURE_RELIEF:-2}"          # Consecutive milestone skips before pressure relief fires (0=disabled)
-AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-3}"              # Smart command routing: 0=disabled, 1=post-dispatch reroute only, 2=fuzzy keyword catalog injection only, 3=combined
+AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-1}"              # Smart command routing: 0=disabled, 1=post-dispatch reroute only, 2=fuzzy keyword catalog injection only, 3=combined
 AGENT_ASK_USER="${AGENT_ASK_USER:-1}"                    # Allow George to /ask the user questions during tasks: 0=disabled, 1=enabled
 AGENT_BRAINSTORM="${AGENT_BRAINSTORM:-1}"                  # Allow George to /brainstorm (self-reason) during tasks: 0=disabled, 1=enabled
 AGENT_FILE_EXPAND="${AGENT_FILE_EXPAND:-1}"              # Auto-expand file references in /social, /email, /write text: 0=disabled, 1=enabled
@@ -52,12 +52,14 @@ AGENT_FAST_ROUTE="${AGENT_FAST_ROUTE:-1}"                # Fast-route: 0=disable
 AGENT_TASK_MODE="${AGENT_TASK_MODE:-0}"                  # Task classifier override: 0=auto (LLM), 1=abstract, 2=concrete, 3=combined
 AGENT_WEB_UNLOCK_ABSTRACT="${AGENT_WEB_UNLOCK_ABSTRACT:-99}"  # Milestones before /web unlocks for abstract tasks (99=effectively never)
 AGENT_WEB_UNLOCK_COMBINED="${AGENT_WEB_UNLOCK_COMBINED:-3}"   # Milestones before /web unlocks for combined tasks
+AGENT_GIT_UNLOCK_ABSTRACT="${AGENT_GIT_UNLOCK_ABSTRACT:-99}"  # Milestones before /git unlocks for abstract tasks (99=effectively never)
+AGENT_GIT_UNLOCK_COMBINED="${AGENT_GIT_UNLOCK_COMBINED:-3}"   # Milestones before /git unlocks for combined tasks
 AGENT_OUTPUT_DIR="${AGENT_OUTPUT_DIR:-responses}"       # Parent directory for agent file writes (/write, /save, /append)
 AGENT_GREP_ALLOW_ABSOLUTE="${AGENT_GREP_ALLOW_ABSOLUTE:-0}"  # /grep path policy: 0=relative-only (force to workdir), 1=allow absolute paths
 AGENT_GREP_MAX_LINES="${AGENT_GREP_MAX_LINES:-100}"          # /grep output cap (lines shown before truncation)
 AGENT_LS_ALLOW_ABSOLUTE="${AGENT_LS_ALLOW_ABSOLUTE:-0}"      # /ls path policy: 0=relative-only (force to workdir), 1=allow absolute paths
 
-LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
+LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-4096}"     # Max output tokens for evaluator
 
 # ── Context-aware memory injection for thinking models ─────────
 # Thinking models consume input context faster (need room for
@@ -1838,8 +1840,20 @@ _agent_evaluate_honeydew_item() {
     # When web is locked, exclude /web commands so the evaluator
     # cannot recommend them — prevents web gate bypass via eval.
     local _eval_commands
-    if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
+    if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ] && [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
+        _eval_commands='{"RESEARCH":["/recall"],
+ "ANALYSIS":["/ask","/brainstorm","/vision"],
+ "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
+ "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
+ "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
+    elif [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
         _eval_commands='{"RESEARCH":["/recall","/git search","/git fetch"],
+ "ANALYSIS":["/ask","/brainstorm","/vision"],
+ "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
+ "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
+ "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
+    elif [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
+        _eval_commands='{"RESEARCH":["/web search","/web fetch","/web scrape","/recall"],
  "ANALYSIS":["/ask","/brainstorm","/vision"],
  "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
  "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
@@ -1968,6 +1982,11 @@ ${_eval_commands}"
                 # Web-lock gate: discard /web recommendations when locked
                 if [ "$_rec_valid" -eq 1 ] && [ "$_rec_base_cmd" = "web" ] && [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew-eval recommendation '/web' discarded — web locked"
+                    _EVAL_HONEYDEW_RECOMMENDATION=""
+                fi
+                # Git-lock gate: discard /git recommendations when locked
+                if [ "$_rec_valid" -eq 1 ] && [ "$_rec_base_cmd" = "git" ] && [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew-eval recommendation '/git' discarded — git locked"
                     _EVAL_HONEYDEW_RECOMMENDATION=""
                 fi
             fi
@@ -3115,13 +3134,35 @@ _build_specialist_prompt() {
                 fi
                 ;;
         esac
-        if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
+        if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ] && [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
+            cat << 'SPEC_PREAMBLE'
+OUTPUT FORMAT: exactly ONE slash command on its own line, starting with /
+FORBIDDEN: code fences, quotes on args, multiple commands per line, /sandbox for slash commands
+
+COMMAND TYPES:
+  TOOLS (gather info, do work): /pgp /phone /vision /journal /edit /append /sandbox /container /secret /init /recall /download /build /test /fix /read /ls /grep /slash /vitals /backup bash
+  DELIVERY (present output to user): /social /email /commit /push /write /save /respond
+  NOTE: A full task may chain multiple DELIVERY commands across milestones (e.g. /write a report, then /social post it).
+  DEFAULT: If the task does NOT explicitly need a file, post, or social delivery, use /respond to deliver the answer.
+SPEC_PREAMBLE
+        elif [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
             cat << 'SPEC_PREAMBLE'
 OUTPUT FORMAT: exactly ONE slash command on its own line, starting with /
 FORBIDDEN: code fences, quotes on args, multiple commands per line, /sandbox for slash commands
 
 COMMAND TYPES:
   TOOLS (gather info, do work): /git /pgp /phone /vision /journal /edit /append /sandbox /container /secret /init /recall /download /build /test /fix /read /ls /grep /slash /vitals /backup bash
+  DELIVERY (present output to user): /social /email /commit /push /write /save /respond
+  NOTE: A full task may chain multiple DELIVERY commands across milestones (e.g. /write a report, then /social post it).
+  DEFAULT: If the task does NOT explicitly need a file, post, or social delivery, use /respond to deliver the answer.
+SPEC_PREAMBLE
+        elif [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
+            cat << 'SPEC_PREAMBLE'
+OUTPUT FORMAT: exactly ONE slash command on its own line, starting with /
+FORBIDDEN: code fences, quotes on args, multiple commands per line, /sandbox for slash commands
+
+COMMAND TYPES:
+  TOOLS (gather info, do work): /pgp /phone /vision /journal /edit /append /sandbox /container /secret /init /recall /download /build /test /fix /read /ls /grep /web /slash /vitals /backup bash
   DELIVERY (present output to user): /social /email /commit /push /write /save /respond
   NOTE: A full task may chain multiple DELIVERY commands across milestones (e.g. /write a report, then /social post it).
   DEFAULT: If the task does NOT explicitly need a file, post, or social delivery, use /respond to deliver the answer.
@@ -3726,10 +3767,14 @@ agent_inner_loop() {
 
         if [ -z "$_fr_result" ]; then
         # ── LLM ROUTER: ambiguous commands only ───────────────
-        # Use web-masked router when web is locked
+        # Use masked router when web/git are locked
         local router_sys
-        if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
+        if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ] && [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
+            router_sys="$_cached_router_sys_nwebgit"
+        elif [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
             router_sys="$_cached_router_sys_nweb"
+        elif [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
+            router_sys="$_cached_router_sys_ngit"
         else
             router_sys="$_cached_router_sys"
         fi
@@ -3979,7 +4024,7 @@ agent_inner_loop() {
             # specialist prompt with ONLY the compact categorized command
             # list (~150 tokens vs ~2500-3500 for full catalog).
             # /respond is present but not amplified — the model picks freely.
-            local _compact_cmds='{"RESEARCH":["WEBPLACEHOLDER"/recall","/git search","/git fetch"],
+            local _compact_cmds='{"RESEARCH":["WEBPLACEHOLDER"GITPLACEHOLDER"/recall"],
  "ANALYSIS":["/ask","/brainstorm","/vision"],
  "FILES":["/write","/save","/edit","/append","/read","/ls","/grep","/init","/build","/test","/fix"],
  "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
@@ -3989,6 +4034,12 @@ agent_inner_loop() {
                 _compact_cmds=$(echo "$_compact_cmds" | sed 's/WEBPLACEHOLDER//')
             else
                 _compact_cmds=$(echo "$_compact_cmds" | sed 's/WEBPLACEHOLDER/"\/web search","\/web fetch","\/web scrape",/')
+            fi
+            # Strip /git entries from compact catalog when git is locked
+            if [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
+                _compact_cmds=$(echo "$_compact_cmds" | sed 's/GITPLACEHOLDER//')
+            else
+                _compact_cmds=$(echo "$_compact_cmds" | sed 's/GITPLACEHOLDER/"\/git search","\/git fetch",/')
             fi
 
             # If /respond has been tried too many times without success, remove it
@@ -5716,6 +5767,13 @@ MEMEOF
     # never expose /web to the LLM router.
     local _cached_router_sys_nweb
     _cached_router_sys_nweb=$(echo "$_cached_router_sys" | sed -e '/^\/web/d' -e 's/Example: \/web/Example: \/respond/')
+    # Build git-masked variant: strip /git lines so git-locked iterations
+    # never expose /git to the LLM router.
+    local _cached_router_sys_ngit
+    _cached_router_sys_ngit=$(echo "$_cached_router_sys" | sed -e '/^\/git/d')
+    # Fully masked variant: both /web and /git stripped
+    local _cached_router_sys_nwebgit
+    _cached_router_sys_nwebgit=$(echo "$_cached_router_sys_nweb" | sed -e '/^\/git/d')
 
     # ── Macro Loop: Milestone-by-milestone execution ──────────
     local macro_iterations=0
@@ -5826,6 +5884,18 @@ MEMEOF
         export _AGENT_WEB_LOCKED="$_web_locked"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ "$_web_locked" -eq 1 ] && ui_dim "  [debug] web locked: milestone $completed_milestones < threshold ($AGENT_TASK_TYPE)"
 
+        # ── Git Lock Gate ──────────────────────────────────
+        # Same pattern as web lock: hide /git from abstract/combined
+        # tasks until milestone threshold is reached.
+        local _git_locked=0
+        if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ] && [ "$completed_milestones" -lt "${AGENT_GIT_UNLOCK_ABSTRACT:-99}" ]; then
+            _git_locked=1
+        elif [ "${AGENT_TASK_TYPE:-concrete}" = "combined" ] && [ "$completed_milestones" -lt "${AGENT_GIT_UNLOCK_COMBINED:-3}" ]; then
+            _git_locked=1
+        fi
+        export _AGENT_GIT_LOCKED="$_git_locked"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ "$_git_locked" -eq 1 ] && ui_dim "  [debug] git locked: milestone $completed_milestones < threshold ($AGENT_TASK_TYPE)"
+
         # Lean command list for the strategist (~150 tokens vs ~200 prior).
         # The strategist only needs to ROUTE — the specialist handles syntax.
         # Removed: CONFIG (interactive setup), EXTENSION (edge case),
@@ -5839,8 +5909,13 @@ MEMEOF
         if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ]; then
             _tool_summary="${_tool_summary}"',"/recall","/journal","/journal write","/grep","/ls","/cd","/read","/respond"],
 "FILES":["/edit","/append","/write","/save","/init","/build","/test","/fix","/download","/commit","/push"],
-"EXPLORE":["/journal show vivid","/journal show fading","/journal show sediment","/recall <keywords>","/grep \"<pattern>\" [path]","/ls [path]","/cd <path>","/read <filepath>"],
-"GIT":["/git search","/git fetch","/git clone","/git check","/git setup"],
+"EXPLORE":["/journal show vivid","/journal show fading","/journal show sediment","/recall <keywords>","/grep \"<pattern>\" [path]","/ls [path]","/cd <path>","/read <filepath>"]'
+            # GIT group: omit when git is locked (same gating as /web)
+            if [ "$_git_locked" -eq 0 ]; then
+                _tool_summary="${_tool_summary}"',
+"GIT":["/git search","/git fetch","/git clone","/git check","/git setup"]'
+            fi
+            _tool_summary="${_tool_summary}"',
 "SANDBOX":["/sandbox","/container"]'
             # When web is unlocked for abstract, append WEB AFTER SANDBOX
             # so it has lower positional precedence than exploration commands.
@@ -5849,8 +5924,12 @@ MEMEOF
             fi
         else
             _tool_summary="${_tool_summary}"',"/recall","/journal","/journal write","/respond"],
-"FILES":["/edit","/append","/write","/save","/read","/ls","/grep","/init","/build","/test","/fix","/download","/commit","/push","/cd"],
+"FILES":["/edit","/append","/write","/save","/read","/ls","/grep","/init","/build","/test","/fix","/download","/commit","/push","/cd"]'
+            # GIT group: omit when git is locked (combined early milestones)
+            if [ "$_git_locked" -eq 0 ]; then
+                _tool_summary="${_tool_summary}"',
 "GIT":["/git search","/git fetch","/git clone","/git check","/git setup"]'
+            fi
             # Web group: omit entirely when web is locked (combined early milestones)
             if [ "$_web_locked" -eq 0 ]; then
                 _tool_summary="${_tool_summary}"',
