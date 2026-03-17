@@ -1667,15 +1667,15 @@ _cmd_tuning() {
             fi ;;
         strat-tokens)
             if [ -z "$value" ]; then
-                ui_info "Strategist output tokens: $LLM_STRATEGIST_TOKENS (default: 512)"
+                ui_info "Strategist output tokens: $LLM_STRATEGIST_TOKENS (default: 4096)"
             else
-                _tuning_set LLM_STRATEGIST_TOKENS "Strategist tokens" "$value" 32 1024
+                _tuning_set LLM_STRATEGIST_TOKENS "Strategist tokens" "$value" 32 20480
             fi ;;
         eval-tokens)
             if [ -z "$value" ]; then
-                ui_info "Evaluator output tokens: $LLM_EVALUATOR_TOKENS (default: 512)"
+                ui_info "Evaluator output tokens: $LLM_EVALUATOR_TOKENS (default: 4096)"
             else
-                _tuning_set LLM_EVALUATOR_TOKENS "Evaluator tokens" "$value" 32 1024
+                _tuning_set LLM_EVALUATOR_TOKENS "Evaluator tokens" "$value" 32 20480
             fi ;;
         ask-tokens)
             if [ -z "$value" ]; then
@@ -1685,7 +1685,7 @@ _cmd_tuning() {
             fi ;;
         router-tokens)
             if [ -z "$value" ]; then
-                ui_info "Router output tokens: $LLM_ROUTER_TOKENS (default: 256)"
+                ui_info "Router output tokens: $LLM_ROUTER_TOKENS (default: 512)"
             else
                 _tuning_set LLM_ROUTER_TOKENS "Router tokens" "$value" 10 20480
             fi ;;
@@ -1697,37 +1697,37 @@ _cmd_tuning() {
             fi ;;
         budget|budget-tokens|think-tokens)
             if [ -z "$value" ]; then
-                ui_info "Think budget (global default): $LLM_BUDGET_TOKENS (default: 1024, 0=unlimited)"
+                ui_info "Think budget (global default): $LLM_BUDGET_TOKENS (default: 4096, 0=unlimited)"
             else
                 _tuning_set LLM_BUDGET_TOKENS "Think budget" "$value" 0 16384
             fi ;;
         budget-ask)
             if [ -z "$value" ]; then
-                ui_info "Think budget for /ask: $LLM_BUDGET_ASK (default: 1024, 0=unlimited)"
+                ui_info "Think budget for /ask: $LLM_BUDGET_ASK (default: 4096, 0=unlimited)"
             else
                 _tuning_set LLM_BUDGET_ASK "Ask think budget" "$value" 0 16384
             fi ;;
         budget-agent)
             if [ -z "$value" ]; then
-                ui_info "Think budget for strategist/specialist: $LLM_BUDGET_AGENT (default: 512, 0=unlimited)"
+                ui_info "Think budget for strategist/specialist: $LLM_BUDGET_AGENT (default: 4096, 0=unlimited)"
             else
                 _tuning_set LLM_BUDGET_AGENT "Agent think budget" "$value" 0 16384
             fi ;;
         budget-router)
             if [ -z "$value" ]; then
-                ui_info "Think budget for router: $LLM_BUDGET_ROUTER (default: 128, 0=unlimited)"
+                ui_info "Think budget for router: $LLM_BUDGET_ROUTER (default: 4096, 0=unlimited)"
             else
                 _tuning_set LLM_BUDGET_ROUTER "Router think budget" "$value" 0 16384
             fi ;;
         budget-journal)
             if [ -z "$value" ]; then
-                ui_info "Think budget for journal: $LLM_BUDGET_JOURNAL (default: 64, 0=unlimited)"
+                ui_info "Think budget for journal: $LLM_BUDGET_JOURNAL (default: 4096, 0=unlimited)"
             else
                 _tuning_set LLM_BUDGET_JOURNAL "Journal think budget" "$value" 0 16384
             fi ;;
         budget-tool)
             if [ -z "$value" ]; then
-                ui_info "Think budget for tools (commit, web, recall, slash): $LLM_BUDGET_TOOL (default: 256, 0=unlimited)"
+                ui_info "Think budget for tools (commit, web, recall, slash): $LLM_BUDGET_TOOL (default: 4096, 0=unlimited)"
             else
                 _tuning_set LLM_BUDGET_TOOL "Tool think budget" "$value" 0 16384
             fi ;;
@@ -1827,16 +1827,16 @@ _cmd_tuning() {
         reset)
             LLM_MAX_TOKENS=20480
             LLM_AGENT_TOKENS=20480
-            LLM_STRATEGIST_TOKENS=512
-            LLM_EVALUATOR_TOKENS=512
+            LLM_STRATEGIST_TOKENS=4096
+            LLM_EVALUATOR_TOKENS=4096
             LLM_ASK_TOKENS=20480
-            LLM_ROUTER_TOKENS=256
-            LLM_BUDGET_TOKENS=1024
-            LLM_BUDGET_ASK=1024
-            LLM_BUDGET_AGENT=512
-            LLM_BUDGET_ROUTER=128
-            LLM_BUDGET_JOURNAL=64
-            LLM_BUDGET_TOOL=256
+            LLM_ROUTER_TOKENS=512
+            LLM_BUDGET_TOKENS=4096
+            LLM_BUDGET_ASK=4096
+            LLM_BUDGET_AGENT=4096
+            LLM_BUDGET_ROUTER=4096
+            LLM_BUDGET_JOURNAL=4096
+            LLM_BUDGET_TOOL=4096
             PROVIDER_CALL_DELAY=7
             PROVIDER_MAX_RETRIES=4
             PROVIDER_INITIAL_BACKOFF=5
@@ -1853,18 +1853,18 @@ _cmd_tuning() {
             ui_section "Output Tokens (num_predict)"
             printf "  %-22s %s\n" "Max tokens:" "$LLM_MAX_TOKENS  (default: 20480)"
             printf "  %-22s %s\n" "Agent tokens:" "$LLM_AGENT_TOKENS  (default: 20480)"
-            printf "  %-22s %s\n" "Strategist tokens:" "$LLM_STRATEGIST_TOKENS  (default: 512)"
-            printf "  %-22s %s\n" "Evaluator tokens:" "$LLM_EVALUATOR_TOKENS  (default: 512)"
+            printf "  %-22s %s\n" "Strategist tokens:" "$LLM_STRATEGIST_TOKENS  (default: 4096)"
+            printf "  %-22s %s\n" "Evaluator tokens:" "$LLM_EVALUATOR_TOKENS  (default: 4096)"
             printf "  %-22s %s\n" "Ask tokens:" "$LLM_ASK_TOKENS  (default: 20480)"
-            printf "  %-22s %s\n" "Router tokens:" "$LLM_ROUTER_TOKENS  (default: 256)"
+            printf "  %-22s %s\n" "Router tokens:" "$LLM_ROUTER_TOKENS  (default: 512)"
             echo ""
             ui_section "Think Budgets (budget_tokens, 0=unlimited)"
-            printf "  %-22s %s\n" "Global default:" "$LLM_BUDGET_TOKENS  (default: 1024)"
-            printf "  %-22s %s\n" "Ask (/ask):" "$LLM_BUDGET_ASK  (default: 1024)"
-            printf "  %-22s %s\n" "Agent (strat/spec):" "$LLM_BUDGET_AGENT  (default: 512)"
-            printf "  %-22s %s\n" "Router:" "$LLM_BUDGET_ROUTER  (default: 128)"
-            printf "  %-22s %s\n" "Journal:" "$LLM_BUDGET_JOURNAL  (default: 64)"
-            printf "  %-22s %s\n" "Tools:" "$LLM_BUDGET_TOOL  (default: 256)"
+            printf "  %-22s %s\n" "Global default:" "$LLM_BUDGET_TOKENS  (default: 4096)"
+            printf "  %-22s %s\n" "Ask (/ask):" "$LLM_BUDGET_ASK  (default: 4096)"
+            printf "  %-22s %s\n" "Agent (strat/spec):" "$LLM_BUDGET_AGENT  (default: 4096)"
+            printf "  %-22s %s\n" "Router:" "$LLM_BUDGET_ROUTER  (default: 4096)"
+            printf "  %-22s %s\n" "Journal:" "$LLM_BUDGET_JOURNAL  (default: 4096)"
+            printf "  %-22s %s\n" "Tools:" "$LLM_BUDGET_TOOL  (default: 4096)"
             echo ""
             ui_section "Web Content Processing"
             local _wc_show="disabled"

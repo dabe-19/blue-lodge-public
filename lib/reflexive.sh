@@ -617,6 +617,7 @@ reflexive_metacog_reset() {
 # Runs: metacog tick, speculative consume
 # Returns context string to inject into router prompt (may be empty)
 reflexive_pre_route() {
+    local objective="${1:-}"
     local context=""
 
     # Metacog tick
@@ -642,6 +643,11 @@ reflexive_pre_route() {
         [ -n "$hint" ] && context="${context:+$context | }$hint"
     fi
 
+    if [ -n "$context" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] pre-route inject: %s\n' "${context:0:120}" >/dev/tty 2>/dev/null
+        declare -f transcript_log &>/dev/null && transcript_log "reflexive:pre-route" "$context"
+    fi
+
     echo "$context"
 }
 
@@ -659,8 +665,10 @@ reflexive_post_route() {
             local rec
             rec=$(reflexive_soul_recommend "$action_text")
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] soul gate REJECTED: %s\n' "$rec" >/dev/tty 2>/dev/null
+            declare -f transcript_log &>/dev/null && transcript_log "reflexive:soul-gate" "REJECTED /$selected_tool — $rec"
             return 1
         fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] soul gate APPROVED: /%s\n' "$selected_tool" >/dev/tty 2>/dev/null
     fi
 
     # Speculative pre-fetch for predicted next tool
@@ -669,6 +677,8 @@ reflexive_post_route() {
         predicted=$(reflexive_speculate_next "$selected_tool")
         if [ -n "$predicted" ]; then
             reflexive_speculate_prefetch "$predicted" "$workdir" &
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] speculate: prefetch /%s (background)\n' "$predicted" >/dev/tty 2>/dev/null
+            declare -f transcript_log &>/dev/null && transcript_log "reflexive:speculate" "prefetch /$predicted for /$selected_tool"
         fi
     fi
 
@@ -688,6 +698,7 @@ reflexive_post_execute() {
     if [ "${REFLEXIVE_ADAPT_TOKENS:-0}" -eq 1 ]; then
         local char_count=${#response}
         reflexive_tokens_observe "$char_count"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] post-execute: observed %d chars\n' "$char_count" >/dev/tty 2>/dev/null
     fi
 
     # Record prompt outcome for self-improving prompts
@@ -697,7 +708,10 @@ reflexive_post_execute() {
         else
             reflexive_prompt_record "retry" "$prompt_hint"
         fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] prompt-learn: exit=%d hint=%s\n' "$exit_code" "${prompt_hint:0:60}" >/dev/tty 2>/dev/null
     fi
+
+    declare -f transcript_log &>/dev/null && transcript_log "reflexive:post-execute" "cmd=$_REFLEXIVE_TOTAL_COMMANDS exit=$exit_code chars=${#response}"
 
     # Debounced persistence
     _reflexive_save_debounced
@@ -713,6 +727,9 @@ reflexive_milestone_complete() {
         reflexive_prompt_record "success" "milestone:${milestone:0:40}"
     fi
 
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] milestone COMPLETE: %s (cmds=%d loops=%d rejections=%d)\n' "${milestone:0:60}" "$_REFLEXIVE_TOTAL_COMMANDS" "$_REFLEXIVE_LOOP_COUNTER" "$_REFLEXIVE_SOUL_REJECTIONS" >/dev/tty 2>/dev/null
+    declare -f transcript_log &>/dev/null && transcript_log "reflexive:milestone" "COMPLETE: ${milestone:0:60} cmds=$_REFLEXIVE_TOTAL_COMMANDS loops=$_REFLEXIVE_LOOP_COUNTER"
+
     # Reset metacog for fresh milestone
     reflexive_metacog_reset
     # Force save on milestone boundary
@@ -726,6 +743,9 @@ reflexive_milestone_fail() {
     if [ "${REFLEXIVE_PROMPT_LEARN:-0}" -eq 1 ]; then
         reflexive_prompt_record "fail" "milestone:${milestone:0:40}"
     fi
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] milestone FAILED: %s (cmds=%d loops=%d rejections=%d)\n' "${milestone:0:60}" "$_REFLEXIVE_TOTAL_COMMANDS" "$_REFLEXIVE_LOOP_COUNTER" "$_REFLEXIVE_SOUL_REJECTIONS" >/dev/tty 2>/dev/null
+    declare -f transcript_log &>/dev/null && transcript_log "reflexive:milestone" "FAILED: ${milestone:0:60} cmds=$_REFLEXIVE_TOTAL_COMMANDS loops=$_REFLEXIVE_LOOP_COUNTER"
 
     reflexive_metacog_reset
     # Force save on milestone boundary

@@ -589,7 +589,7 @@ describe "Tuning command (tokens, budgets, provider, cache, web processing)"
   it "_cmd_tuning router-tokens sets LLM_ROUTER_TOKENS" && {
     _cmd_tuning "router-tokens 80" >/dev/null 2>&1
     assert_eq "$LLM_ROUTER_TOKENS" "80"
-    LLM_ROUTER_TOKENS=256  # restore
+    LLM_ROUTER_TOKENS=512  # restore
   }
 
   it "_cmd_tuning max-tokens sets LLM_MAX_TOKENS" && {
@@ -605,49 +605,49 @@ describe "Tuning command (tokens, budgets, provider, cache, web processing)"
 
   it "_cmd_tuning router-tokens rejects below min" && {
     _cmd_tuning "router-tokens 5" >/dev/null 2>&1
-    assert_eq "$LLM_ROUTER_TOKENS" "256"
+    assert_eq "$LLM_ROUTER_TOKENS" "512"
   }
 
   it "_cmd_tuning budget sets LLM_BUDGET_TOKENS" && {
     _cmd_tuning "budget 2048" >/dev/null 2>&1
     assert_eq "$LLM_BUDGET_TOKENS" "2048"
-    LLM_BUDGET_TOKENS=1024  # restore
+    LLM_BUDGET_TOKENS=4096  # restore
   }
 
   it "_cmd_tuning budget-ask sets LLM_BUDGET_ASK" && {
     _cmd_tuning "budget-ask 2048" >/dev/null 2>&1
     assert_eq "$LLM_BUDGET_ASK" "2048"
-    LLM_BUDGET_ASK=1024  # restore
+    LLM_BUDGET_ASK=4096  # restore
   }
 
   it "_cmd_tuning budget-agent sets LLM_BUDGET_AGENT" && {
     _cmd_tuning "budget-agent 1024" >/dev/null 2>&1
     assert_eq "$LLM_BUDGET_AGENT" "1024"
-    LLM_BUDGET_AGENT=512  # restore
+    LLM_BUDGET_AGENT=4096  # restore
   }
 
   it "_cmd_tuning budget-router sets LLM_BUDGET_ROUTER" && {
     _cmd_tuning "budget-router 256" >/dev/null 2>&1
     assert_eq "$LLM_BUDGET_ROUTER" "256"
-    LLM_BUDGET_ROUTER=128  # restore
+    LLM_BUDGET_ROUTER=4096  # restore
   }
 
   it "_cmd_tuning budget-journal sets LLM_BUDGET_JOURNAL" && {
     _cmd_tuning "budget-journal 128" >/dev/null 2>&1
     assert_eq "$LLM_BUDGET_JOURNAL" "128"
-    LLM_BUDGET_JOURNAL=64  # restore
+    LLM_BUDGET_JOURNAL=4096  # restore
   }
 
   it "_cmd_tuning budget-tool sets LLM_BUDGET_TOOL" && {
     _cmd_tuning "budget-tool 512" >/dev/null 2>&1
     assert_eq "$LLM_BUDGET_TOOL" "512"
-    LLM_BUDGET_TOOL=256  # restore
+    LLM_BUDGET_TOOL=4096  # restore
   }
 
   it "_cmd_tuning budget-tool allows zero (unlimited)" && {
     _cmd_tuning "budget-tool 0" >/dev/null 2>&1
     assert_eq "$LLM_BUDGET_TOOL" "0"
-    LLM_BUDGET_TOOL=256  # restore
+    LLM_BUDGET_TOOL=4096  # restore
   }
 
   it "_cmd_tuning api-delay sets PROVIDER_CALL_DELAY" && {
@@ -747,15 +747,15 @@ describe "Tuning command (tokens, budgets, provider, cache, web processing)"
     _cmd_tuning "reset" >/dev/null 2>&1
     assert_eq "$LLM_MAX_TOKENS" "20480"
     assert_eq "$LLM_AGENT_TOKENS" "20480"
-    assert_eq "$LLM_STRATEGIST_TOKENS" "512"
+    assert_eq "$LLM_STRATEGIST_TOKENS" "4096"
     assert_eq "$LLM_ASK_TOKENS" "20480"
-    assert_eq "$LLM_ROUTER_TOKENS" "256"
-    assert_eq "$LLM_BUDGET_TOKENS" "1024"
-    assert_eq "$LLM_BUDGET_ASK" "1024"
-    assert_eq "$LLM_BUDGET_AGENT" "512"
-    assert_eq "$LLM_BUDGET_ROUTER" "128"
-    assert_eq "$LLM_BUDGET_JOURNAL" "64"
-    assert_eq "$LLM_BUDGET_TOOL" "256"
+    assert_eq "$LLM_ROUTER_TOKENS" "512"
+    assert_eq "$LLM_BUDGET_TOKENS" "4096"
+    assert_eq "$LLM_BUDGET_ASK" "4096"
+    assert_eq "$LLM_BUDGET_AGENT" "4096"
+    assert_eq "$LLM_BUDGET_ROUTER" "4096"
+    assert_eq "$LLM_BUDGET_JOURNAL" "4096"
+    assert_eq "$LLM_BUDGET_TOOL" "4096"
     assert_eq "$PROVIDER_CALL_DELAY" "7"
     assert_eq "$PROVIDER_MAX_RETRIES" "4"
     assert_eq "$AGENT_WEB_CONDENSE" "1"

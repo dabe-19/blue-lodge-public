@@ -530,7 +530,7 @@ TASK: $task
 
     local raw_list
     local LLM_SCENARIO=strategist
-    raw_list=$(llm_generate "$decompose_prompt" "$decompose_sys" "${LLM_STRATEGIST_TOKENS:-256}" "$LLM_BUDGET_AGENT")
+    raw_list=$(llm_generate "$decompose_prompt" "$decompose_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
 
     # Clean think blocks
     raw_list=$(echo "$raw_list" | _strip_think_blocks)
@@ -627,7 +627,7 @@ TASK: $task
 
     local raw_type
     local LLM_SCENARIO=strategist
-    raw_type=$(llm_generate "$classify_prompt" "$classify_sys" "${LLM_STRATEGIST_TOKENS:-256}" "$LLM_BUDGET_AGENT")
+    raw_type=$(llm_generate "$classify_prompt" "$classify_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
 
     # Strip think blocks and whitespace
     raw_type=$(echo "$raw_type" | _strip_think_blocks)
@@ -823,7 +823,7 @@ EXPAND_JSON
     ui_think "Expanding honeydew item #${item_id} into sub-tasks..."
     local raw_list
     local LLM_SCENARIO=strategist
-    raw_list=$(llm_generate "$expand_prompt" "$expand_sys" "${LLM_STRATEGIST_TOKENS:-256}" "$LLM_BUDGET_AGENT")
+    raw_list=$(llm_generate "$expand_prompt" "$expand_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
 
     # Clean think blocks (same pipeline as _agent_honeydew_build)
     raw_list=$(echo "$raw_list" | _strip_think_blocks)
@@ -1526,7 +1526,7 @@ REWRITE_ROUTER_JSON
 
     local _router_verdict
     local LLM_SCENARIO=evaluator
-    _router_verdict=$(llm_generate "$router_prompt" "$router_sys" "${LLM_EVALUATOR_TOKENS:-256}" "$LLM_BUDGET_ROUTER")
+    _router_verdict=$(llm_generate "$router_prompt" "$router_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_ROUTER")
 
     # Clean think blocks
     _router_verdict=$(echo "$_router_verdict" | _strip_think_blocks)
@@ -1638,7 +1638,7 @@ REWRITE_JSON
 
     local _raw_rewrite
     local LLM_SCENARIO=strategist
-    _raw_rewrite=$(llm_generate "$rewrite_prompt" "$rewrite_sys" "${LLM_STRATEGIST_TOKENS:-256}" "$LLM_BUDGET_AGENT")
+    _raw_rewrite=$(llm_generate "$rewrite_prompt" "$rewrite_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
 
     # Clean think blocks (same pipeline as _agent_honeydew_build)
     _raw_rewrite=$(echo "$_raw_rewrite" | _strip_think_blocks)
@@ -1946,7 +1946,7 @@ _agent_evaluate_honeydew_item() {
     ui_think "Honeydew evaluator: checking item #${_next_id}..."
     local verdict
     local LLM_SCENARIO=evaluator
-    verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-256}" "$LLM_BUDGET_AGENT")
+    verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
 
     # ── DEBUG: Honeydew evaluator raw verdict ───────────────────
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
@@ -2138,7 +2138,7 @@ EVAL_P1_JSON
     ui_think "Evaluator (pass 1): assessing milestone completion..."
     local verdict
     local LLM_SCENARIO=evaluator
-    verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-256}" "$LLM_BUDGET_AGENT")
+    verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
 
     # ── DEBUG: Evaluator raw verdict ────────────────────────────
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
@@ -2356,7 +2356,7 @@ EVAL_P2_JSON
     ui_think "Evaluator (pass 2): assessing overall task completion..."
     local verdict
     local LLM_SCENARIO=evaluator
-    verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-512}" "$LLM_BUDGET_AGENT")
+    verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
 
     # ── DEBUG: Evaluator raw verdict ────────────────────────────
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p2 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
@@ -3790,7 +3790,10 @@ agent_inner_loop() {
         fi
 
         # ── Reflexive hook: pre-route context injection ───────
-        declare -f reflexive_pre_route &>/dev/null && reflexive_pre_route "$micro_objective" "$inner_context"
+        local _reflexive_context=""
+        if declare -f reflexive_pre_route &>/dev/null; then
+            _reflexive_context=$(reflexive_pre_route "$micro_objective")
+        fi
 
         # ── PHASE 1: Fast Tool Routing ────────────────────────
         local selected_tool
@@ -3836,7 +3839,7 @@ agent_inner_loop() {
         route_prompt="${route_prompt}\n$_router_context"
 
         local LLM_SCENARIO=router
-        selected_tool=$(llm_generate "$route_prompt" "$router_sys" "${LLM_ROUTER_TOKENS:-50}" "$LLM_BUDGET_ROUTER")
+        selected_tool=$(llm_generate "$route_prompt" "$router_sys" "${LLM_ROUTER_TOKENS:-512}" "$LLM_BUDGET_ROUTER")
 
         # Transcript: log router decision
         declare -f transcript_log &>/dev/null && transcript_log "router" "$selected_tool"
@@ -4177,6 +4180,11 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
             _spec_tail="Output ONLY ONE /web command. ONE URL per command — the URL is the LAST thing on the line, nothing after it. For /web search: extract 3-5 keywords FROM THE MICRO OBJECTIVE above. Drop filler words (the, a, for, in, to, and, or, about, including, regarding, comprehensive, professional, community, organizations, associations). DO NOT copy examples — derive keywords from the objective. NEVER output just '/web search' without keywords. To fetch multiple pages, use separate steps — one /web fetch per step."
         fi
         local specialist_prompt="MICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\n${_spec_tail}"
+        # Inject reflexive context if available
+        if [ -n "${_reflexive_context:-}" ]; then
+            specialist_prompt="${specialist_prompt}\n\nREFLEXIVE NOTES: ${_reflexive_context}"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist <- reflexive context (${#_reflexive_context} chars)"
+        fi
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist <- micro_memory action log ($(echo "$inner_context" | wc -l) lines)"
 
         # ── Per-command specialist token limit ─────────────────
@@ -4184,7 +4192,7 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         # token limits (full file contents). Short commands (/web,
         # /social, /recall, etc.) only need 1-2 lines — cap them
         # tight to prevent verbose rambling.
-        local _spec_tokens="${LLM_AGENT_TOKENS:-512}"
+        local _spec_tokens="${LLM_AGENT_TOKENS:-20480}"
         local _base_cmd="${selected_tool#/}"
         case "$_base_cmd" in
             web|social|recall|journal|ask|vitals|phone|pgp|backup|cd|build|test|fix|commit|push|clone|git|github|container|wallet|slash|secret|download|vision|sandbox)
@@ -4197,6 +4205,8 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
             local _reflex_tokens
             _reflex_tokens=$(reflexive_tokens_recommend)
             if [ -n "$_reflex_tokens" ] && [ "$_reflex_tokens" -gt 0 ] 2>/dev/null; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] reflexive: adaptive tokens $_spec_tokens → $_reflex_tokens"
+                declare -f transcript_log &>/dev/null && transcript_log "reflexive:tokens" "adaptive override: $_spec_tokens → $_reflex_tokens"
                 _spec_tokens="$_reflex_tokens"
             fi
         fi
@@ -4281,7 +4291,14 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         fi  # end direct_respond / specialist branch
 
         # ── Reflexive hook: post-route soul gate ──────────────
-        declare -f reflexive_post_route &>/dev/null && reflexive_post_route "$cmd" "$selected_tool" "$action_plan"
+        if declare -f reflexive_post_route &>/dev/null; then
+            if ! reflexive_post_route "$cmd" "$selected_tool" "$action_plan"; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] reflexive: soul gate rejected /$selected_tool — skipping execution"
+                declare -f transcript_log &>/dev/null && transcript_log "reflexive:soul-gate" "BLOCKED /$selected_tool — recording to micro_memory"
+                micro_memory="${micro_memory:+$micro_memory\n}[reflexive] soul gate rejected /$selected_tool — action conflicts with soul values"
+                continue
+            fi
+        fi
 
         # ── SPECIALIST OUTPUT CLEANUP ─────────────────────────
         # These post-processing steps fix LLM artifacts in specialist
@@ -5496,7 +5513,7 @@ Output a slash command line starting with / OR a bash code block."
         local guided_sys=$(_build_specialist_prompt "" "$workdir" "$micro_objective")
         local final_plan
         local LLM_SCENARIO=agent
-        final_plan=$(llm_stream "$guided_prompt" "$guided_sys" "${LLM_AGENT_TOKENS:-512}" "$LLM_BUDGET_AGENT")
+        final_plan=$(llm_stream "$guided_prompt" "$guided_sys" "${LLM_AGENT_TOKENS:-20480}" "$LLM_BUDGET_AGENT")
 
         # Extract slash command or bash command (same logic as main loop)
         local final_cmd=""
@@ -6282,7 +6299,7 @@ ${_last_eval_feedback}
         # Previously llm_stream showed it live, then ui_info showed it again,
         # then the specialist streamed it a third time — tripling the output.
         local LLM_SCENARIO=strategist
-        milestone=$(llm_generate "$macro_prompt" "$macro_sys" "${LLM_STRATEGIST_TOKENS:-512}" "$LLM_BUDGET_AGENT")
+        milestone=$(llm_generate "$macro_prompt" "$macro_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
 
         # ── MILESTONE CLEANUP ─────────────────────────────────
         # The strategist should output one imperative sentence, but

@@ -414,19 +414,117 @@ George right-sizes token budgets per command:
 
 | Command | Output tokens | Think budget | Why |
 |---------|--------------|-------------|-----|
-| `/ask` | 20,480 (`LLM_ASK_TOKENS`) | 1,024 (`LLM_BUDGET_ASK`) | Safety cap; model stops at `<\|im_end\|>` naturally |
-| `/plan` | 512 | 512 (`LLM_BUDGET_AGENT`) | Numbered lists, 1-N steps (AGENT_PLAN_STEPS) |
-| `/commit` | 128 | 256 (`LLM_BUDGET_TOOL`) | Single commit message line |
-| `/reflect` | 1,024 | 64 (`LLM_BUDGET_JOURNAL`) | Journal reflection entry |
-| `/web summary` | 256 | 256 (`LLM_BUDGET_TOOL`) | 3-5 bullet points |
-| `/ingest summarize` | 256 | 256 (`LLM_BUDGET_TOOL`) | Document summary |
-| Inner loop (router) | 256 (`LLM_ROUTER_TOKENS`) | 128 (`LLM_BUDGET_ROUTER`) | Tool selection (just pick a name) |
-| Inner loop (specialist) | 20,480 (`LLM_AGENT_TOKENS`) | 512 (`LLM_BUDGET_AGENT`) | Command generation |
-| Macro loop (strategist) | 512 (`LLM_STRATEGIST_TOKENS`) | 512 (`LLM_BUDGET_AGENT`) | Next milestone (one sentence) |
-| Journal quip | 512 | 64 (`LLM_BUDGET_JOURNAL`) | Background quip |
-| Journal decay | 512 | 64 (`LLM_BUDGET_JOURNAL`) | Sediment compression |
+| `/ask` | 20,480 (`LLM_ASK_TOKENS`) | 4,096 (`LLM_BUDGET_ASK`) | Safety cap; model stops at `<\|im_end\|>` naturally |
+| `/plan` | 512 | 4,096 (`LLM_BUDGET_AGENT`) | Numbered lists, 1-N steps (AGENT_PLAN_STEPS) |
+| `/commit` | 128 | 4,096 (`LLM_BUDGET_TOOL`) | Single commit message line |
+| `/reflect` | 1,024 | 4,096 (`LLM_BUDGET_JOURNAL`) | Journal reflection entry |
+| `/web summary` | 256 | 4,096 (`LLM_BUDGET_TOOL`) | 3-5 bullet points |
+| `/ingest summarize` | 256 | 4,096 (`LLM_BUDGET_TOOL`) | Document summary |
+| Inner loop (router) | 512 (`LLM_ROUTER_TOKENS`) | 4,096 (`LLM_BUDGET_ROUTER`) | Tool selection (just pick a name) |
+| Inner loop (specialist) | 20,480 (`LLM_AGENT_TOKENS`) | 4,096 (`LLM_BUDGET_AGENT`) | Command generation |
+| Macro loop (strategist) | 4,096 (`LLM_STRATEGIST_TOKENS`) | 4,096 (`LLM_BUDGET_AGENT`) | Next milestone (one sentence) |
+| Journal quip | 512 | 4,096 (`LLM_BUDGET_JOURNAL`) | Background quip |
+| Journal decay | 512 | 4,096 (`LLM_BUDGET_JOURNAL`) | Sediment compression |
 
 Output tokens and think budgets are hardcoded per call. To change output tokens, modify the third argument to `llm_generate` or `llm_stream` in the source. Think budgets can be overridden via environment variables (`LLM_BUDGET_ASK`, `LLM_BUDGET_AGENT`, `LLM_BUDGET_ROUTER`, `LLM_BUDGET_JOURNAL`, `LLM_BUDGET_TOOL`).
+
+---
+
+## Updating Default Budget & Token Values
+
+Budget and token defaults are referenced in multiple places. When changing a default, **all locations must be updated together** to avoid stale values surfacing in resets, UI displays, or tests.
+
+### Where defaults live
+
+| Location | What it controls | Role |
+|----------|-----------------|------|
+| `lib/llm.sh` — `_llm_save_config()` heredoc | Values written to `lodge.conf` | **Source of truth** for persistent config |
+| `lib/llm.sh` — runtime initializers (bottom of file) | Shell variable defaults on startup | **Source of truth** for runtime |
+| `lib/agent.sh` — inline fallbacks (`${VAR:-N}`) | Emergency fallback if config didn't load | Safety net (should match defaults) |
+| `lodge` — `_cmd_tuning` reset block | Values assigned by `/tuning reset` | Must match `lib/llm.sh` defaults |
+| `lodge` — `_cmd_tuning` UI info strings | `(default: N)` shown to operator | Display only (must match) |
+| `lodge` — `_cmd_tuning` printf display | `(default: N)` in status view | Display only (must match) |
+| `lodge` — `_cmd_tuning` `_tuning_set` ranges | Min/max bounds for `/tuning set` | Must allow the default value |
+| `tests/test_lodge.sh` — restore comments | Value restored after each test | Must match defaults |
+| `tests/test_lodge.sh` — reset assertions | Expected values after `/tuning reset` | Must match defaults |
+| `tests/test_llm.sh` — default assertions | Verify `lib/llm.sh` initializes correctly | Must match defaults |
+| `tests/test_agent.sh` — default assertions | Verify agent.sh initializes correctly | Must match defaults |
+| `docs/TUNING.md` — per-command table | Reference documentation | Must match defaults |
+
+### Step-by-step: changing a default
+
+Example: changing `LLM_BUDGET_AGENT` from 4096 to 8192.
+
+**1. Update `lib/llm.sh`** (the source of truth):
+
+```bash
+# In _llm_save_config() heredoc:
+LLM_BUDGET_AGENT=${LLM_BUDGET_AGENT:-8192}
+
+# In runtime initializer (bottom of file):
+LLM_BUDGET_AGENT="${LLM_BUDGET_AGENT:-8192}"
+```
+
+**2. Update `lib/agent.sh` inline fallbacks:**
+
+Search for `LLM_BUDGET_AGENT:-` and update any fallback values.
+
+**3. Update `lodge` reset block** (`_cmd_tuning` → `reset` case):
+
+```bash
+LLM_BUDGET_AGENT=8192
+```
+
+**4. Update `lodge` UI strings** (three places per variable):
+
+```bash
+# Info display:
+ui_info "... (default: 8192, 0=unlimited)"
+
+# Status printf:
+printf "  %-22s %s\n" "Agent (strat/spec):" "$LLM_BUDGET_AGENT  (default: 8192)"
+
+# _tuning_set range — ensure max >= new default:
+_tuning_set LLM_BUDGET_AGENT "Agent think budget" "$value" 0 16384
+```
+
+**5. Update tests:**
+
+```bash
+# tests/test_lodge.sh — restore lines:
+LLM_BUDGET_AGENT=8192  # restore
+
+# tests/test_lodge.sh — reset assertion:
+assert_eq "$LLM_BUDGET_AGENT" "8192"
+
+# tests/test_llm.sh — default assertion:
+assert_eq "$LLM_BUDGET_AGENT" "8192"
+```
+
+**6. Update `docs/TUNING.md`** per-command table.
+
+**7. Run tests:**
+
+```bash
+bash tests/run_all.sh
+```
+
+### Quick reference: current defaults
+
+| Variable | Default | Category |
+|----------|---------|----------|
+| `LLM_MAX_TOKENS` | 20480 | Output tokens |
+| `LLM_ASK_TOKENS` | 20480 | Output tokens |
+| `LLM_AGENT_TOKENS` | 20480 | Output tokens |
+| `LLM_STRATEGIST_TOKENS` | 4096 | Output tokens |
+| `LLM_EVALUATOR_TOKENS` | 4096 | Output tokens |
+| `LLM_ROUTER_TOKENS` | 512 | Output tokens |
+| `LLM_BUDGET_TOKENS` | 4096 | Think budget |
+| `LLM_BUDGET_ASK` | 4096 | Think budget |
+| `LLM_BUDGET_AGENT` | 4096 | Think budget |
+| `LLM_BUDGET_ROUTER` | 4096 | Think budget |
+| `LLM_BUDGET_JOURNAL` | 4096 | Think budget |
+| `LLM_BUDGET_TOOL` | 4096 | Think budget |
 
 ---
 

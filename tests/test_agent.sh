@@ -1424,8 +1424,8 @@ describe "Task completion evaluator"
     assert_ok $?
   }
 
-  it "LLM_EVALUATOR_TOKENS defaults to 4096" && {
-    assert_eq "$LLM_EVALUATOR_TOKENS" "4096"
+  it "LLM_EVALUATOR_TOKENS defaults to 512" && {
+    assert_eq "$LLM_EVALUATOR_TOKENS" "512"
   }
 
 # ── Macro memory enrichment: timestamps & command results ─────

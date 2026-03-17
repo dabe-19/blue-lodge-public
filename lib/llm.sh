@@ -87,17 +87,17 @@ LODGE_DEBUG=${LODGE_DEBUG:-0}
 LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-20480}
 LLM_ASK_TOKENS=${LLM_ASK_TOKENS:-20480}
 LLM_AGENT_TOKENS=${LLM_AGENT_TOKENS:-20480}
-LLM_STRATEGIST_TOKENS=${LLM_STRATEGIST_TOKENS:-4096}
-LLM_EVALUATOR_TOKENS=${LLM_EVALUATOR_TOKENS:-4096}
-LLM_ROUTER_TOKENS=${LLM_ROUTER_TOKENS:-512}
+LLM_STRATEGIST_TOKENS=${LLM_STRATEGIST_TOKENS:-512}
+LLM_EVALUATOR_TOKENS=${LLM_EVALUATOR_TOKENS:-512}
+LLM_ROUTER_TOKENS=${LLM_ROUTER_TOKENS:-256}
 
 # ── Thinking Budgets (max thinking tokens before responding) ───
-LLM_BUDGET_TOKENS=${LLM_BUDGET_TOKENS:-4096}
-LLM_BUDGET_ASK=${LLM_BUDGET_ASK:-4096}
-LLM_BUDGET_AGENT=${LLM_BUDGET_AGENT:-4096}
-LLM_BUDGET_ROUTER=${LLM_BUDGET_ROUTER:-4096}
-LLM_BUDGET_JOURNAL=${LLM_BUDGET_JOURNAL:-4096}
-LLM_BUDGET_TOOL=${LLM_BUDGET_TOOL:-4096}
+LLM_BUDGET_TOKENS=${LLM_BUDGET_TOKENS:-1024}
+LLM_BUDGET_ASK=${LLM_BUDGET_ASK:-1024}
+LLM_BUDGET_AGENT=${LLM_BUDGET_AGENT:-512}
+LLM_BUDGET_ROUTER=${LLM_BUDGET_ROUTER:-128}
+LLM_BUDGET_JOURNAL=${LLM_BUDGET_JOURNAL:-64}
+LLM_BUDGET_TOOL=${LLM_BUDGET_TOOL:-256}
 
 # ── Sampling Parameters ───────────────────────────────────────
 LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.15}
@@ -142,15 +142,15 @@ LODGE_MODEL="${LODGE_MODEL:-blue-lodge}"
 LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-20480}"   # Default max output tokens (matches Modelfile num_predict ceiling)
 LLM_ASK_TOKENS="${LLM_ASK_TOKENS:-20480}"   # Max output tokens for /ask (model stops at <|im_end|>; this is just a safety cap)
 LLM_AGENT_TOKENS="${LLM_AGENT_TOKENS:-20480}" # Max output tokens for agent specialist
-LLM_STRATEGIST_TOKENS="${LLM_STRATEGIST_TOKENS:-4096}" # Max output tokens for strategist (milestone description + thinking)
-LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-4096}"   # Max output tokens for evaluator (completion judge)
-LLM_ROUTER_TOKENS="${LLM_ROUTER_TOKENS:-512}" # Max output tokens for agent router (think ~200 + tool name + context)
-LLM_BUDGET_TOKENS="${LLM_BUDGET_TOKENS:-4096}" # Max thinking tokens before responding (0=unlimited)
-LLM_BUDGET_ASK="${LLM_BUDGET_ASK:-4096}"     # Think budget for /ask conversations (extended thinking useful)
-LLM_BUDGET_AGENT="${LLM_BUDGET_AGENT:-4096}"  # Think budget for strategist/specialist (needs room for rich milestone context)
-LLM_BUDGET_ROUTER="${LLM_BUDGET_ROUTER:-4096}" # Think budget for router (pick tool + brief reasoning)
-LLM_BUDGET_JOURNAL="${LLM_BUDGET_JOURNAL:-4096}" # Think budget for journal (background utility)
-LLM_BUDGET_TOOL="${LLM_BUDGET_TOOL:-4096}"    # Think budget for tools (commit, web, recall, slash)
+LLM_STRATEGIST_TOKENS="${LLM_STRATEGIST_TOKENS:-512}" # Max output tokens for strategist (milestone description + thinking)
+LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-512}"   # Max output tokens for evaluator (completion judge)
+LLM_ROUTER_TOKENS="${LLM_ROUTER_TOKENS:-256}" # Max output tokens for agent router (think ~200 + tool name + context)
+LLM_BUDGET_TOKENS="${LLM_BUDGET_TOKENS:-1024}" # Max thinking tokens before responding (0=unlimited)
+LLM_BUDGET_ASK="${LLM_BUDGET_ASK:-1024}"     # Think budget for /ask conversations (extended thinking useful)
+LLM_BUDGET_AGENT="${LLM_BUDGET_AGENT:-512}"  # Think budget for strategist/specialist (needs room for rich milestone context)
+LLM_BUDGET_ROUTER="${LLM_BUDGET_ROUTER:-128}" # Think budget for router (pick tool + brief reasoning)
+LLM_BUDGET_JOURNAL="${LLM_BUDGET_JOURNAL:-64}" # Think budget for journal (background utility)
+LLM_BUDGET_TOOL="${LLM_BUDGET_TOOL:-256}"    # Think budget for tools (commit, web, recall, slash)
 
 # ── Sampling parameters (per-scenario, override model defaults) ──
 # ── Sampling parameters ────────────────────────────────────────
@@ -2943,7 +2943,7 @@ llm_vision() {
     local image_path="$1"
     local prompt="${2:-Describe this image in detail. Note any text, objects, people, and relevant details.}"
     local system="${3:-}"
-    local max_tokens="${4:-${LLM_MAX_TOKENS:-4096}}"
+    local max_tokens="${4:-${LLM_MAX_TOKENS:-20480}}"
 
     if [ -z "$image_path" ]; then
         echo "ERROR: No image path provided"
