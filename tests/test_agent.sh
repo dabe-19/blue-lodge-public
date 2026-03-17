@@ -8,6 +8,7 @@ source "$LODGE_DIR/lib/llm.sh"
 source "$LODGE_DIR/lib/memory.sh"
 source "$LODGE_DIR/lib/tools.sh"
 source "$LODGE_DIR/lib/journal.sh"
+source "$LODGE_DIR/lib/providers.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/agent.sh"
 
 test_start "lib/agent.sh — Agent Loop"
@@ -3702,6 +3703,103 @@ describe "/grep command hardening"
     body=$(declare -f agent_run)
     echo "$body" | grep -q '/grep.*"<pattern>"'
     assert_ok $? "exploration directive must show quoted /grep pattern"
+  }
+
+# ── Phase 2: /cd evaluation flow ──────────────────────────────
+describe "/cd specialist loop fix"
+
+  it "/cd interception uses flag instead of continue" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_cd_intercepted=1'
+    assert_ok $? "/cd must set intercepted flag"
+  }
+
+  it "/cd guard closes before dispatch" && {
+    grep -q 'end _cd_intercepted guard' "$LODGE_DIR/lib/agent.sh"
+    assert_ok $? "dispatch must be wrapped in _cd_intercepted=0 guard"
+  }
+
+# ── Phase 3: Content stripping exemption ───────────────────────
+describe "Multi-command content preservation"
+
+  it "splitter skips content-bearing verbs" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'respond|write|save|append|edit|email|brainstorm|q'
+    assert_ok $? "splitter must exempt content-bearing verbs"
+  }
+
+# ── Phase 4: /ls path enforcement ─────────────────────────────
+describe "/ls root path enforcement"
+
+  it "AGENT_LS_ALLOW_ABSOLUTE defaults to 0" && {
+    assert_eq "${AGENT_LS_ALLOW_ABSOLUTE:-0}" "0"
+  }
+
+  it "/ls syntax card teaches relative paths" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'RELATIVE PATHS ONLY'
+    assert_ok $? "/ls syntax card must enforce relative paths"
+  }
+
+# ── Phase 5: Ctrl+C cancel-file in SSE loops ──────────────────
+describe "SSE loop cancel awareness"
+
+  it "generic SSE loop checks cancel file" && {
+    body=$(declare -f _provider_sse_loop)
+    echo "$body" | grep -q '_cancel_file'
+    assert_ok $? "generic SSE loop must reference cancel file"
+  }
+
+  it "Anthropic SSE loop checks cancel file" && {
+    body=$(declare -f _provider_anthropic_sse_loop)
+    echo "$body" | grep -q '_cancel_file'
+    assert_ok $? "Anthropic SSE loop must reference cancel file"
+  }
+
+  it "Google SSE loop checks cancel file" && {
+    body=$(declare -f _provider_google_sse_loop)
+    echo "$body" | grep -q '_cancel_file'
+    assert_ok $? "Google SSE loop must reference cancel file"
+  }
+
+  it "Cohere SSE loop checks cancel file" && {
+    body=$(declare -f _provider_cohere_sse_loop)
+    echo "$body" | grep -q '_cancel_file'
+    assert_ok $? "Cohere SSE loop must reference cancel file"
+  }
+
+# ── Phase 7: Web gate evaluator leak ──────────────────────────
+describe "Web gate evaluator filtering"
+
+  it "evaluator catalog filters /web when locked" && {
+    body=$(declare -f _agent_evaluate_honeydew_item)
+    echo "$body" | grep -q '_AGENT_WEB_LOCKED'
+    assert_ok $? "evaluator must check _AGENT_WEB_LOCKED for catalog"
+  }
+
+  it "recommendation validator blocks /web when locked" && {
+    body=$(declare -f _agent_evaluate_honeydew_item)
+    echo "$body" | grep -q 'web.*discarded.*web locked'
+    assert_ok $? "recommendation validator must block /web when locked"
+  }
+
+# ── Phase 8: Grep \\| ERE transform ──────────────────────────
+describe "Grep BRE-to-ERE transform"
+
+  it "/grep transforms backslash-pipe to pipe for ERE" && {
+    # The sed chain in _cmd_grep (lodge script) must include \| → | conversion.
+    # Since _cmd_grep is sourced from lodge (not agent.sh), check the file directly.
+    grep -q "s/\\\\\\\\|/|/g" "$LODGE_DIR/lodge"
+    assert_ok $? "PCRE→ERE sed chain must include backslash-pipe transform"
+  }
+
+# ── Phase 9: Journal debug quip leak ──────────────────────────
+describe "Journal debug suppression"
+
+  it "journal_write_quip suppresses LODGE_DEBUG" && {
+    body=$(declare -f journal_write_quip)
+    echo "$body" | grep -q 'LODGE_DEBUG=0'
+    assert_ok $? "quip writer must set LODGE_DEBUG=0"
   }
 
 test_end

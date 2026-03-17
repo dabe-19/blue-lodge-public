@@ -401,12 +401,15 @@ _provider_sse_loop() {
     local think_jq="${4:-}" done_match="${5:-[DONE]}"
     local _tty="/dev/tty"
     [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
 
     local _in_think=0 _think_banner=0
     local _got_content=0
     local _idle_timeout=45  # seconds — safety net if sentinel is missed
 
     while IFS= read -t "$_idle_timeout" -r line || [ -n "$line" ]; do
+        # Ctrl+C cancel check — break out of FIFO read immediately
+        [ -f "$_cancel_file" ] && break
         # Strip \r from CRLF line endings (common in HTTP SSE)
         line="${line%$'\r'}"
 
@@ -477,6 +480,7 @@ _provider_anthropic_sse_loop() {
     local fifo="$1" curl_pid="$2"
     local _tty="/dev/tty"
     [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
 
     local _in_think=0 _think_banner=0
     local _got_content=0
@@ -484,6 +488,8 @@ _provider_anthropic_sse_loop() {
     local _idle_timeout=45
 
     while IFS= read -t "$_idle_timeout" -r line || [ -n "$line" ]; do
+        # Ctrl+C cancel check — break out of FIFO read immediately
+        [ -f "$_cancel_file" ] && break
         # Strip \r from CRLF line endings (common in HTTP SSE)
         line="${line%$'\r'}"
 
@@ -558,9 +564,12 @@ _provider_google_sse_loop() {
     local _tty="/dev/tty"
     [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
     local _got_content=0
+    local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
     local _idle_timeout=45
 
     while IFS= read -t "$_idle_timeout" -r line || [ -n "$line" ]; do
+        # Ctrl+C cancel check
+        [ -f "$_cancel_file" ] && break
         # Strip \r from CRLF line endings (common in HTTP SSE)
         line="${line%$'\r'}"
 
@@ -590,9 +599,12 @@ _provider_cohere_sse_loop() {
     local _tty="/dev/tty"
     [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
     local _got_content=0
+    local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
     local _idle_timeout=45
 
     while IFS= read -t "$_idle_timeout" -r line || [ -n "$line" ]; do
+        # Ctrl+C cancel check
+        [ -f "$_cancel_file" ] && break
         # Strip \r from CRLF line endings
         line="${line%$'\r'}"
 

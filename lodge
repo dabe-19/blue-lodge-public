@@ -28,7 +28,17 @@ LODGE_CLOUD_ONLY=0
 if [ -f /proc/ish/version ] || ([ -f /etc/os-release ] && grep -qi 'alpine' /etc/os-release 2>/dev/null && [ "$(uname -m)" = "i686" ]); then
     LODGE_PLATFORM="ish"
     # iSH can't run Ollama/llama-server (i686 emulation, no native binaries)
-    [ -z "${GEORGE_PROVIDER:-}" ] && LODGE_CLOUD_ONLY=1
+    # But if a remote inference node is configured, skip cloud-only gating
+    if [ -z "${GEORGE_PROVIDER:-}" ] && [ -z "${REMOTE_SSH_TARGET:-}" ]; then
+        LODGE_CLOUD_ONLY=1
+    fi
+    # iSH doesn't persist /dev/fd across app restarts — re-create if missing.
+    # Bash process substitution (<(...)) requires it.
+    if [ ! -e /dev/fd ] && [ -d /proc/self/fd ]; then
+        ln -sf /proc/self/fd /dev/fd 2>/dev/null
+    fi
+elif [ "$(uname -s)" = "Darwin" ]; then
+    LODGE_PLATFORM="macos"
 elif [ -n "${TERMUX_VERSION:-}" ] || [ -d /data/data/com.termux ]; then
     LODGE_PLATFORM="termux"
 fi
@@ -87,6 +97,15 @@ _lodge_cleanup() {
     # Stop spinner if running (fast — just kill + clear line)
     ui_spinner_stop 2>/dev/null
 
+    # Restore terminal sanity — interrupted SSE streaming or curl
+    # may leave the terminal in raw/no-echo mode.
+    stty sane 2>/dev/null
+
+    # Clean up FIFO files BEFORE killing curl — prevents the
+    # while-read loop from blocking on a dead pipe.
+    rm -f "${TMPDIR:-/tmp}"/.lodge-fifo-*-$$ 2>/dev/null
+    rm -f "${TMPDIR:-/tmp}"/.lodge-provider-stream-$$ 2>/dev/null
+
     # Kill any curl processes talking to LLM backends (works through subshells)
     # This is the ONLY reliable way to kill curl inside nested $() captures.
     # MUST be non-blocking — no waiting, no HTTP calls.
@@ -112,10 +131,6 @@ _lodge_cleanup() {
     fi
     _LLM_CURL_PID=""
     _LLM_ACTIVE=0
-
-    # Clean up FIFO files left by interrupted streams
-    rm -f "${TMPDIR:-/tmp}"/.lodge-fifo-*-$$ 2>/dev/null
-    rm -f "${TMPDIR:-/tmp}"/.lodge-provider-stream-$$ 2>/dev/null
 
     if [ "$_LODGE_IN_TASK" -eq 1 ]; then
         _LODGE_CANCELLED=1
@@ -1012,6 +1027,19 @@ _cmd_limits() {
                     on|1|yes|true) AGENT_GREP_ALLOW_ABSOLUTE=1; ui_ok "Grep: absolute paths allowed" ;;
                     off|0|no|false) AGENT_GREP_ALLOW_ABSOLUTE=0; ui_ok "Grep: relative paths only (forced to workdir)" ;;
                     *) ui_err "grep-allow-absolute: on|off" ;;
+                esac
+            fi ;;
+        ls-allow-absolute|ls_allow_absolute|laa)
+            if [ -z "$value" ]; then
+                local _laa_show="off (relative-only)"
+                [ "${AGENT_LS_ALLOW_ABSOLUTE:-0}" -eq 1 ] && _laa_show="on (absolute paths allowed)"
+                ui_info "Ls allow absolute: $_laa_show  (default: off)"
+                ui_dim "  When off, /ls forces paths relative to workdir"
+            else
+                case "$value" in
+                    on|1|yes|true) AGENT_LS_ALLOW_ABSOLUTE=1; ui_ok "Ls: absolute paths allowed" ;;
+                    off|0|no|false) AGENT_LS_ALLOW_ABSOLUTE=0; ui_ok "Ls: relative paths only (forced to workdir)" ;;
+                    *) ui_err "ls-allow-absolute: on|off" ;;
                 esac
             fi ;;
         fast-route|fastroute|fast_route)
@@ -2655,6 +2683,20 @@ _cmd_ls() {
         target="$workdir/$target"
     fi
 
+    # ── Path enforcement ────────────────────────────────────
+    # Default: relative paths only (mirrors /grep). LLMs hallucinate
+    # absolute paths (/, /dev, /usr) that scan the entire filesystem.
+    # AGENT_LS_ALLOW_ABSOLUTE=1 unlocks absolute paths.
+    if [[ "$target" == /* ]] && [ "${AGENT_LS_ALLOW_ABSOLUTE:-0}" -ne 1 ]; then
+        # Strip leading / and resolve relative to workdir
+        local _stripped="${target#/}"
+        if [ -n "$_stripped" ] && [ -d "$workdir/$_stripped" ]; then
+            target="$workdir/$_stripped"
+        else
+            target="$workdir"
+        fi
+    fi
+
     # Normalize (remove trailing slash, resolve ..)
     target=$(cd "$target" 2>/dev/null && pwd || echo "$target")
 
@@ -2802,7 +2844,9 @@ _cmd_grep() {
     # ── PCRE → ERE compatibility transform ─────────────────────
     # LLMs are trained on Python/JS regex and emit \d, \w, \s, \b.
     # GNU grep -E (ERE) doesn't support these — silently convert.
-    pattern=$(printf '%s' "$pattern" | sed -e 's/\\d/[0-9]/g' -e 's/\\D/[^0-9]/g' -e 's/\\w/[a-zA-Z0-9_]/g' -e 's/\\W/[^a-zA-Z0-9_]/g' -e 's/\\s/[[:space:]]/g' -e 's/\\S/[^[:space:]]/g')
+    # Also convert BRE-style \| (alternation) to ERE bare | since
+    # grep -E treats \| as a literal backslash+pipe.
+    pattern=$(printf '%s' "$pattern" | sed -e 's/\\d/[0-9]/g' -e 's/\\D/[^0-9]/g' -e 's/\\w/[a-zA-Z0-9_]/g' -e 's/\\W/[^a-zA-Z0-9_]/g' -e 's/\\s/[[:space:]]/g' -e 's/\\S/[^[:space:]]/g' -e 's/\\|/|/g')
 
     # Default search path
     [ -z "$search_path" ] && search_path="."
@@ -5568,6 +5612,8 @@ main() {
         ui_err "No local LLM backend available on this platform ($LODGE_PLATFORM)."
         ui_dim "  Set a cloud provider first:"
         ui_dim "    export GEORGE_PROVIDER=google   # or groq, openai, anthropic"
+        ui_dim "  Or connect to a remote GPU node:"
+        ui_dim "    lodge /remote setup user@gpu-server"
         ui_dim "    lodge"
         exit 1
     else

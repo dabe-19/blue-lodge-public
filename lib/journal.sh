@@ -127,7 +127,10 @@ journal_write_quip() {
     # Background utility call: suppress tty output and limit thinking.
     # This runs with & — must not print thinking banners to tty (races
     # with foreground output) or kill foreground spinners.
+    # LODGE_DEBUG=0 prevents ui_dim debug lines (stdout) from being
+    # captured by $() and written as journal quip text.
     local LODGE_THINK=0
+    local LODGE_DEBUG=0
     local _SPINNER_PID=""
 
     # Truncate long responses so the summary prompt stays small

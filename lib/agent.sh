@@ -55,6 +55,7 @@ AGENT_WEB_UNLOCK_COMBINED="${AGENT_WEB_UNLOCK_COMBINED:-3}"   # Milestones befor
 AGENT_OUTPUT_DIR="${AGENT_OUTPUT_DIR:-responses}"       # Parent directory for agent file writes (/write, /save, /append)
 AGENT_GREP_ALLOW_ABSOLUTE="${AGENT_GREP_ALLOW_ABSOLUTE:-0}"  # /grep path policy: 0=relative-only (force to workdir), 1=allow absolute paths
 AGENT_GREP_MAX_LINES="${AGENT_GREP_MAX_LINES:-100}"          # /grep output cap (lines shown before truncation)
+AGENT_LS_ALLOW_ABSOLUTE="${AGENT_LS_ALLOW_ABSOLUTE:-0}"      # /ls path policy: 0=relative-only (force to workdir), 1=allow absolute paths
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-2048}"     # Max output tokens for evaluator
 
@@ -1834,11 +1835,22 @@ _agent_evaluate_honeydew_item() {
     # and router. Most-specific-first ordering within each category.
     # ~150 tokens — well within 4B budget. Ensures the evaluator
     # only recommends commands that actually exist.
-    local _eval_commands='{"RESEARCH":["/web search","/web fetch","/web scrape","/recall","/git search","/git fetch"],
+    # When web is locked, exclude /web commands so the evaluator
+    # cannot recommend them — prevents web gate bypass via eval.
+    local _eval_commands
+    if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
+        _eval_commands='{"RESEARCH":["/recall","/git search","/git fetch"],
  "ANALYSIS":["/ask","/brainstorm","/vision"],
  "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
  "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
  "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
+    else
+        _eval_commands='{"RESEARCH":["/web search","/web fetch","/web scrape","/recall","/git search","/git fetch"],
+ "ANALYSIS":["/ask","/brainstorm","/vision"],
+ "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
+ "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
+ "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
+    fi
 
     # Build eval instructions — cross-milestone language only when
     # prior milestone context is actually present.
@@ -1951,6 +1963,11 @@ ${_eval_commands}"
                 fi
                 if [ "$_rec_valid" -eq 0 ]; then
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew-eval recommendation '/$_rec_base_cmd' not a valid command — discarded"
+                    _EVAL_HONEYDEW_RECOMMENDATION=""
+                fi
+                # Web-lock gate: discard /web recommendations when locked
+                if [ "$_rec_valid" -eq 1 ] && [ "$_rec_base_cmd" = "web" ] && [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew-eval recommendation '/web' discarded — web locked"
                     _EVAL_HONEYDEW_RECOMMENDATION=""
                 fi
             fi
@@ -3405,9 +3422,9 @@ SPEC
                 ;;
             ls)
                 cat << 'SPEC'
-{"cmd":"/ls","syntax":"/ls [path] [depth]","notes":"Tree view, depth 1-8 (default 3).",
-"format_only_ex":["/ls","/ls <path> <depth>"],
-"fill":{"<path>":"directory path to list","<depth>":"tree depth 1-8"}}
+{"cmd":"/ls","syntax":"/ls [path] [depth]","notes":"Tree view of directory contents, depth 1-8 (default 3). RELATIVE PATHS ONLY — paths starting with / are resolved relative to workdir.",
+"format_only_ex":["/ls","/ls src 2","/ls docs"],
+"fill":{"<path>":"relative directory path to list (default: current dir)","<depth>":"tree depth 1-8"}}
 SPEC
                 ;;
             grep)
@@ -4185,7 +4202,16 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         # SKIP for multi-line commands (content body uses literal \n) — those
         # are content-bearing commands like /write, /save, /email where the
         # "second /command" pattern would incorrectly split content text.
-        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" != *'\n'* ]] && [[ "$cmd" =~ ^(/[a-z]+[[:space:]]) ]]; then
+        # Also SKIP for content-bearing verbs where the payload IS the text
+        # (e.g. /respond, /write, /brainstorm, /email) — even on a single
+        # line, embedded /slashes are prose, not separate commands.
+        local _skip_split=0
+        if [[ "$cmd" == *'\n'* ]]; then
+            _skip_split=1
+        elif [[ "$cmd" =~ ^/(respond|write|save|append|edit|email|brainstorm|q)[[:space:]] ]]; then
+            _skip_split=1
+        fi
+        if [ "$cmd_is_slash" -eq 1 ] && [ "$_skip_split" -eq 0 ] && [[ "$cmd" =~ ^(/[a-z]+[[:space:]]) ]]; then
             # Check for a second embedded slash command (space-/cmd pattern)
             # Only split on registered command names — bare slashes in file
             # paths (e.g. /read /root/project/file.txt) must pass through.
@@ -4693,6 +4719,7 @@ INTERLOCK_JSON
             # /cd and /init change directories but commands_dispatch
             # runs in a subshell ($(...)) so cd never propagates.
             # Handle these in the parent shell directly.
+            local _cd_intercepted=0
             if [[ "$cmd" == /cd\ * ]]; then
                 local _cd_target
                 _cd_target=$(echo "$cmd" | sed 's|^/cd *||')
@@ -4716,8 +4743,7 @@ INTERLOCK_JSON
                     _AGENT_WORKDIR_CHANGED="$workdir"
                 fi
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] workdir now: %s\n' "$workdir" > /dev/tty 2>/dev/null
-                inner_attempts=$((inner_attempts + 1))
-                continue
+                _cd_intercepted=1
             fi
 
             # Execute based on command type:
@@ -4726,6 +4752,9 @@ INTERLOCK_JSON
             # Capture full output, then truncate to 2000 chars via
             # parameter expansion. Avoids | head pipe which causes
             # SIGPIPE (exit 141) on verbose commands like /journal.
+            # /cd is intercepted above (parent shell) — skip dispatch
+            # but still fall through to the evaluator below.
+            if [ "$_cd_intercepted" -eq 0 ]; then
             local output
             local exit_code
             if [ "$cmd_is_slash" -eq 1 ] && declare -f commands_dispatch &>/dev/null; then
@@ -4736,6 +4765,7 @@ INTERLOCK_JSON
                 exit_code=$?
             fi
             output="${output:0:2000}"
+            fi  # end _cd_intercepted guard
 
             if [ $exit_code -eq 0 ]; then
                 # ── POST-INIT WORKDIR UPDATE ───────────────────
@@ -4877,12 +4907,13 @@ INTERLOCK_JSON
                 # thinking they're "drafting" the next step.  The
                 # evaluator then sees command text in the action log
                 # and marks the milestone complete — even though no
-                # command was actually dispatched.  Strip any lines
-                # that look like slash commands from brainstorm output
-                # before it enters the action log.
+                # command was actually dispatched.  Strip code fences
+                # that might contain embedded commands — but leave
+                # plain-text slash references intact since they may be
+                # part of legitimate brainstorm content.
                 if [[ "$cmd" == /brainstorm\ * ]] || [[ "$cmd" == /q\ * ]]; then
                     local _bs_clean
-                    _bs_clean=$(printf '%s\n' "$output" | sed '/^[[:space:]]*\/[a-z]\+[[:space:]]/d' | sed '/^[[:space:]]*```/,/^[[:space:]]*```/d')
+                    _bs_clean=$(printf '%s\n' "$output" | sed '/^[[:space:]]*```/,/^[[:space:]]*```/d')
                     if [ "${#_bs_clean}" -lt "${#output}" ]; then
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] brainstorm sanitizer: stripped embedded commands (%d -> %d chars)\n' "${#output}" "${#_bs_clean}" > /dev/tty 2>/dev/null
                         output="$_bs_clean"

@@ -322,9 +322,25 @@ if [ "$IS_ISH" -eq 1 ]; then
     info "iSH detected — skipping local LLM backend (Ollama/llama-server)"
     info "George will use cloud providers or remote nodes for inference"
 elif [ "$IS_MACOS" -eq 1 ]; then
-    info "macOS detected — skipping local Ollama/llama-server install"
-    info "George will use cloud providers or a remote inference node"
-    info "  Set up remote: lodge /remote setup user@gpu-server"
+    # macOS can run Ollama natively — check if it's already installed
+    if command -v ollama &>/dev/null; then
+        _OLLAMA_AVAILABLE=1
+        ok "Ollama found (macOS native)"
+    else
+        info "macOS detected — Ollama not found"
+        printf " Install Ollama for local inference? (brew install ollama) [y/N] "
+        read -r _want_ollama
+        if [[ "$_want_ollama" =~ ^[Yy] ]]; then
+            if command -v brew &>/dev/null; then
+                brew install ollama && _OLLAMA_AVAILABLE=1 && ok "Ollama installed"
+            else
+                info "Homebrew not found — install Ollama from https://ollama.com"
+            fi
+        else
+            info "Skipping Ollama — George will use cloud providers or a remote node"
+            info "  Set up remote: lodge /remote setup user@gpu-server"
+        fi
+    fi
 else
 info "Checking Ollama..."
 if ! command -v ollama &>/dev/null; then
