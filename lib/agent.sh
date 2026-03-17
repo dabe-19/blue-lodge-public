@@ -52,6 +52,8 @@ AGENT_FAST_ROUTE="${AGENT_FAST_ROUTE:-1}"                # Fast-route: 0=disable
 AGENT_TASK_MODE="${AGENT_TASK_MODE:-0}"                  # Task classifier override: 0=auto (LLM), 1=abstract, 2=concrete, 3=combined
 AGENT_WEB_UNLOCK_ABSTRACT="${AGENT_WEB_UNLOCK_ABSTRACT:-99}"  # Milestones before /web unlocks for abstract tasks (99=effectively never)
 AGENT_WEB_UNLOCK_COMBINED="${AGENT_WEB_UNLOCK_COMBINED:-3}"   # Milestones before /web unlocks for combined tasks
+AGENT_WEB_SEARCH_ONLY_ABSTRACT="${AGENT_WEB_SEARCH_ONLY_ABSTRACT:-1}"  # Milestones after web unlock where ONLY /web search is allowed (no fetch/scrape) for abstract tasks
+AGENT_WEB_SEARCH_ONLY_COMBINED="${AGENT_WEB_SEARCH_ONLY_COMBINED:-1}"  # Milestones after web unlock where ONLY /web search is allowed (no fetch/scrape) for combined tasks
 AGENT_GIT_UNLOCK_ABSTRACT="${AGENT_GIT_UNLOCK_ABSTRACT:-99}"  # Milestones before /git unlocks for abstract tasks (99=effectively never)
 AGENT_GIT_UNLOCK_COMBINED="${AGENT_GIT_UNLOCK_COMBINED:-3}"   # Milestones before /git unlocks for combined tasks
 AGENT_OUTPUT_DIR="${AGENT_OUTPUT_DIR:-responses}"       # Parent directory for agent file writes (/write, /save, /append)
@@ -1861,17 +1863,33 @@ _agent_evaluate_honeydew_item() {
  "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
  "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
     elif [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
-        _eval_commands='{"RESEARCH":["/web search","/web fetch","/web scrape","/recall"],
+        if [ "${_AGENT_WEB_SEARCH_ONLY:-0}" -eq 1 ]; then
+            _eval_commands='{"RESEARCH":["/web search","/recall"],
  "ANALYSIS":["/ask","/brainstorm","/vision"],
  "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
  "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
  "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
+        else
+            _eval_commands='{"RESEARCH":["/web search","/web fetch","/web scrape","/recall"],
+ "ANALYSIS":["/ask","/brainstorm","/vision"],
+ "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
+ "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
+ "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
+        fi
     else
-        _eval_commands='{"RESEARCH":["/web search","/web fetch","/web scrape","/recall","/git search","/git fetch"],
+        if [ "${_AGENT_WEB_SEARCH_ONLY:-0}" -eq 1 ]; then
+            _eval_commands='{"RESEARCH":["/web search","/recall","/git search","/git fetch"],
  "ANALYSIS":["/ask","/brainstorm","/vision"],
  "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
  "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
  "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
+        else
+            _eval_commands='{"RESEARCH":["/web search","/web fetch","/web scrape","/recall","/git search","/git fetch"],
+ "ANALYSIS":["/ask","/brainstorm","/vision"],
+ "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
+ "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
+ "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
+        fi
     fi
 
     # Build eval instructions — cross-milestone language only when
@@ -1881,27 +1899,45 @@ _agent_evaluate_honeydew_item() {
         _cross_inst="Judge whether this honeydew item has been accomplished by ANY work so far — either in the ACTION LOG above OR in the PRIOR COMPLETED MILESTONES. If a prior milestone already accomplished what this item asks for, that counts as SATISFIED. "
     fi
 
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nORIGINAL USER REQUEST:\n${_hd_original_request:-Unknown}\n\n${_prior_milestones:+PRIOR COMPLETED MILESTONES (already accomplished):\n${_prior_milestones}\n\n}MILESTONE ATTEMPTED:\n${milestone_text}\n\nACTION LOG (raw command outputs from current milestone):\n${eval_context:-No actions available.}\n\n---\n\nHONEYDEW ITEM TO EVALUATE (item #${_next_id}):\n${_next_task}\n\nIMPORTANT: ${_cross_inst}For the current milestone's actions, judge from the raw command outputs, not the milestone pass/fail status. A search that returns generic links without concrete details does NOT satisfy an item asking to identify specific things.\n\nApply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_HD_JSON'
-{"classify":"SATISFIED|UNSATISFIED",
- "scope":"did the action log accomplish this honeydew item?",
- "pragmatic":true,"exact_match_not_required":true,
- "requires_concrete_output":true,
- ${_prior_milestones:+"cross_milestone":"if a PRIOR milestone already did what this item asks, SATISFIED",}
- "relevance_check":{"dates":true,"topics":true,"scope":true,
-   "verify_against":"ORIGINAL USER REQUEST above",
-   "output_substance":"do outputs contain specific data the item asked for?"},
- "respond":"SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <slash command from AVAILABLE COMMANDS>",
- "if_unsatisfied":{"explain_why":true,
-   "recommend_next":"pick from AVAILABLE COMMANDS below (e.g. /web fetch <url>)"}}
-EVAL_HD_JSON
-)
+    # ── Task-type-aware eval schema ────────────────────────
+    # 3-tier: abstract=lenient (exploration/reflection suffices),
+    # combined=per-item (delivery items strict, exploration lenient),
+    # concrete=strict (requires concrete output artifacts).
+    local _eval_output_rule _eval_output_hint
+    case "${AGENT_TASK_TYPE:-concrete}" in
+        abstract)
+            _eval_output_rule='"requires_concrete_output":false,
+ "accepts_exploratory":true,
+ "exploration_counts":["recall results","journal entries","filesystem listings","reflective reasoning","command outputs with any exit code"],'
+            _eval_output_hint="Exploration and reflection count as progress — recall results, journal entries, command outputs, or reasoned analysis all qualify as SATISFIED. Concrete data artifacts are NOT required."
+            ;;
+        combined)
+            _eval_output_rule='"requires_concrete_output":"for delivery items only (write report, send email, create file)",
+ "accepts_exploratory":"for research and reflection items (explore, identify, recall, reflect)",
+ "judge_by_item_nature":true,'
+            _eval_output_hint="Judge by the NATURE of the individual item: delivery items (write, send, create) require concrete output; research/reflection items (explore, identify, recall, reflect) are SATISFIED by meaningful exploration, recall results, or reasoned analysis."
+            ;;
+        *)
+            _eval_output_rule='"requires_concrete_output":true,'
+            _eval_output_hint="SATISFIED requires concrete results matching what the item asked for."
+            ;;
+    esac
 
-AVAILABLE COMMANDS (RECOMMENDATION must be one of these):
-${_eval_commands}"
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nORIGINAL USER REQUEST:\n${_hd_original_request:-Unknown}\n\n${_prior_milestones:+PRIOR COMPLETED MILESTONES (already accomplished):\n${_prior_milestones}\n\n}MILESTONE ATTEMPTED:\n${milestone_text}\n\nACTION LOG (raw command outputs from current milestone):\n${eval_context:-No actions available.}\n\n---\n\nHONEYDEW ITEM TO EVALUATE (item #${_next_id}):\n${_next_task}\n\nIMPORTANT: ${_cross_inst}For the current milestone's actions, judge from the raw command outputs, not the milestone pass/fail status.\n\nApply the EVAL SCHEMA below.\n\n{\"classify\":\"SATISFIED|UNSATISFIED\",
+ \"scope\":\"did the action log accomplish this honeydew item?\",
+ \"pragmatic\":true,\"exact_match_not_required\":true,
+ ${_eval_output_rule}
+ ${_prior_milestones:+\"cross_milestone\":\"if a PRIOR milestone already did what this item asks, SATISFIED\",}
+ \"relevance_check\":{\"dates\":true,\"topics\":true,\"scope\":true,
+   \"verify_against\":\"ORIGINAL USER REQUEST above\",
+   \"output_substance\":\"do outputs contain specific data the item asked for?\"},
+ \"respond\":\"SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <slash command from AVAILABLE COMMANDS>\",
+ \"if_unsatisfied\":{\"explain_why\":true,
+   \"recommend_next\":\"pick from AVAILABLE COMMANDS below\"}}\n\nAVAILABLE COMMANDS (RECOMMENDATION must be one of these):\n${_eval_commands}"
 
     local _sys_cross=""
     [ -n "$_prior_milestones" ] && _sys_cross=" Judge whether this item was accomplished by ANY work so far — current action log OR prior completed milestones. If a prior milestone already did what the item asks, answer SATISFIED."
-    local eval_sys="Honeydew item evaluator.${_sys_cross} For current actions, judge from ACTUAL COMMAND OUTPUTS — ignore milestone pass/fail status. SATISFIED requires concrete results matching what the item asked for. Verify relevance to original request (dates, topics, scope). No markdown. Respond SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION must be one of the AVAILABLE COMMANDS listed in the prompt."
+    local eval_sys="Honeydew item evaluator.${_sys_cross} For current actions, judge from ACTUAL COMMAND OUTPUTS — ignore milestone pass/fail status. ${_eval_output_hint} Verify relevance to original request (dates, topics, scope). No markdown. Respond SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION must be one of the AVAILABLE COMMANDS listed in the prompt."
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew-eval <- item #${_next_id}: ${_next_task:0:80}"
     ui_think "Honeydew evaluator: checking item #${_next_id}..."
@@ -3270,7 +3306,7 @@ SPEC
   "scrape":"/web scrape <url> — alias for /web fetch. Downloads and extracts readable TEXT from a webpage.",
   "scrape-images":"/web scrape-images <url> — returns STRUCTURED JSON: {url, title, content, images:[]} with page text AND image URIs. Pass image URIs to /vision for analysis.",
   "images":"/web images <query> — searches for image URLs by keyword (Serper API). Returns image URLs only."},
-"rules":["search=QUERY (keywords), fetch/scrape/scrape-images=URL — NEVER swap","/web fetch (or /web scrape) returns TEXT only — use /web scrape-images when you need images","scrape-images returns {url,title,content,images[]} — pass images[] URLs to /vision","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples","LOCAL FILES: NEVER use /web fetch on local files or relative paths — use /read for text files, /vision for images","ONE URL PER COMMAND — never put multiple URLs in one /web call. To fetch 3 pages, output 3 separate /web fetch lines across 3 steps.","The URL must be the LAST token on the line — nothing after it. No trailing text, no next command."],
+"rules":["search=QUERY (keywords), fetch/scrape/scrape-images=URL — NEVER swap","/web fetch (or /web scrape) returns TEXT only — use /web scrape-images when you need images","scrape-images returns {url,title,content,images[]} — pass images[] URLs to /vision","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples","LOCAL FILES: NEVER use /web fetch on local files or relative paths — use /read for text files, /vision for images","ONE URL PER COMMAND — never put multiple URLs in one /web call. To fetch 3 pages, output 3 separate /web fetch lines across 3 steps.","The URL must be the LAST token on the line — nothing after it. No trailing text, no next command.","NEVER fabricate or guess URLs — ONLY use URLs that appeared in prior /web search results or were provided by the user. If you need a URL, run /web search first."],
 "search_tips":["3-5 keywords MAX — Google FAILS with long queries","Drop filler: the/a/for/including/regarding/comprehensive","NEVER paste entire milestone as search query","Extract keywords from TASK context only"],
 "FLOW CHAINS":["Text research: /web search -> /web fetch -> summarize","Scrape workflow: /web search -> /web scrape -> summarize","Image research: /web scrape-images <url> -> /vision <image_url_from_images[]>","Report: /web search -> /web fetch -> /write report"],
 "notes":["Do NOT fetch every URL. 1 search + 1-2 fetches enough","If scrape-images returns empty content, use /web fetch for same URL instead","/web fetch and /web scrape-images require a full https:// URL — for local files use /read or /vision instead"],
@@ -5904,6 +5940,29 @@ MEMEOF
         export _AGENT_GIT_LOCKED="$_git_locked"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ "$_git_locked" -eq 1 ] && ui_dim "  [debug] git locked: milestone $completed_milestones < threshold ($AGENT_TASK_TYPE)"
 
+        # ── Web Search-Only Gate ───────────────────────────
+        # After web unlocks, restrict to /web search only for N milestones.
+        # Prevents the model from immediately fixating on /web fetch with
+        # fabricated URLs before it has real search results to work from.
+        local _web_search_only=0
+        if [ "$_web_locked" -eq 0 ]; then
+            local _ws_unlock _ws_window
+            if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ]; then
+                _ws_unlock="${AGENT_WEB_UNLOCK_ABSTRACT:-99}"
+                _ws_window="${AGENT_WEB_SEARCH_ONLY_ABSTRACT:-1}"
+            elif [ "${AGENT_TASK_TYPE:-concrete}" = "combined" ]; then
+                _ws_unlock="${AGENT_WEB_UNLOCK_COMBINED:-3}"
+                _ws_window="${AGENT_WEB_SEARCH_ONLY_COMBINED:-1}"
+            else
+                _ws_unlock=0; _ws_window=0
+            fi
+            if [ "$_ws_window" -gt 0 ] && [ "$completed_milestones" -lt $((_ws_unlock + _ws_window)) ]; then
+                _web_search_only=1
+            fi
+        fi
+        export _AGENT_WEB_SEARCH_ONLY="$_web_search_only"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ "$_web_search_only" -eq 1 ] && ui_dim "  [debug] web search-only: milestone $completed_milestones < unlock+window ($AGENT_TASK_TYPE)"
+
         # Lean command list for the strategist (~150 tokens vs ~200 prior).
         # The strategist only needs to ROUTE — the specialist handles syntax.
         # Removed: CONFIG (interactive setup), EXTENSION (edge case),
@@ -5928,7 +5987,11 @@ MEMEOF
             # When web is unlocked for abstract, append WEB AFTER SANDBOX
             # so it has lower positional precedence than exploration commands.
             if [ "$_web_locked" -eq 0 ]; then
-                _tool_summary="${_tool_summary}"',"WEB":["/vision","/web search","/web fetch","/web scrape","/web images"]'
+                if [ "$_web_search_only" -eq 1 ]; then
+                    _tool_summary="${_tool_summary}"',"WEB":["/vision","/web search"]'
+                else
+                    _tool_summary="${_tool_summary}"',"WEB":["/vision","/web search","/web fetch","/web scrape","/web images"]'
+                fi
             fi
         else
             _tool_summary="${_tool_summary}"',"/recall","/journal","/journal write","/respond"],
@@ -5940,8 +6003,13 @@ MEMEOF
             fi
             # Web group: omit entirely when web is locked (combined early milestones)
             if [ "$_web_locked" -eq 0 ]; then
-                _tool_summary="${_tool_summary}"',
+                if [ "$_web_search_only" -eq 1 ]; then
+                    _tool_summary="${_tool_summary}"',
+"WEB":["/vision","/web search"]'
+                else
+                    _tool_summary="${_tool_summary}"',
 "WEB":["/vision","/web search","/web fetch","/web scrape","/web images"]'
+                fi
             else
                 # Keep /vision in FILES even when web is locked
                 _tool_summary="${_tool_summary}"',
@@ -6125,8 +6193,20 @@ RULES: Use /recall with SHORT keyword queries (2-5 words). NEVER use long senten
 Use /grep to search for specific patterns in files.
 Use /ls and /cd to explore the filesystem.
 >>> ALL milestones must use LOCAL exploration commands listed above. <<<'
+            elif [ "$_web_search_only" -eq 1 ]; then
+                # Web search-only window: /web search allowed, no fetch/scrape
+                _exploration_directive='
+>>> EXPLORATION PRIORITY — this is an exploratory task (web search-only window) <<<
+LOCAL sources should be checked first:
+  /recall <short keywords>  — search knowledge base (MAX 5 WORDS)
+  /grep "<pattern>" [path]  — regex search files
+  /journal show vivid|fading|sediment — read memory entries
+  /ls [path] /cd <path> /read <filepath> — explore filesystem
+/web search is available for finding URLs and snippets.
+>>> Do NOT use /web fetch or /web scrape yet. Use /web search to collect URLs first. <<<
+>>> Check local sources FIRST. Use /web search only when local sources cannot answer. <<<'
             else
-                # Web unlocked: /web available but deprioritized for abstract tasks
+                # Web fully unlocked: /web available but deprioritized for abstract tasks
                 _exploration_directive='
 >>> EXPLORATION NOTE — prefer local sources for this exploratory task <<<
 LOCAL sources should be checked first:

@@ -281,6 +281,33 @@ web_blacklist_disable() {
     ui_warn "Web blacklist disabled — blocked sites will be retried"
 }
 
+# ── DNS Pre-Check ─────────────────────────────────────────────
+# Fast hostname resolution check before attempting HTTP fetch.
+# Catches fabricated/hallucinated URLs without burning curl retries.
+# Returns 0 if hostname resolves, 1 if DNS fails.
+_web_dns_precheck() {
+    local url="$1"
+    local host
+    host=$(echo "$url" | sed 's|^https\?://||' | cut -d'/' -f1 | cut -d':' -f1)
+    [ -z "$host" ] && return 1
+    # Skip for localhost/IP addresses — they don't need DNS
+    case "$host" in
+        localhost|127.*|10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*|[0-9]*.[0-9]*.[0-9]*.[0-9]*) return 0 ;;
+    esac
+    # Try getent (POSIX, most systems), then host, then dig
+    if command -v getent >/dev/null 2>&1; then
+        getent ahosts "$host" >/dev/null 2>&1 && return 0
+    elif command -v host >/dev/null 2>&1; then
+        host -W 2 "$host" >/dev/null 2>&1 && return 0
+    elif command -v dig >/dev/null 2>&1; then
+        dig +short +time=2 "$host" 2>/dev/null | grep -q . && return 0
+    else
+        # No DNS tools available — skip pre-check, let curl handle it
+        return 0
+    fi
+    return 1
+}
+
 # ── URL Sanitization ──────────────────────────────────────────
 # Whitelist-based URL cleaner. Strips control characters, validates
 # the scheme, and truncates to a safe length. This prevents injection
@@ -1490,6 +1517,16 @@ web_fetch() {
         declare -f transcript_log &>/dev/null && transcript_log "mcp" "web_fetch MCP-first FAILED: url=${url:0:80} — falling back to curl"
     fi
 
+    # DNS pre-check: catch fabricated/hallucinated URLs before burning
+    # curl retries. Fails fast with a clear message.
+    if ! _web_dns_precheck "$url"; then
+        local _dns_host
+        _dns_host=$(echo "$url" | sed 's|^https\?://||' | cut -d'/' -f1 | cut -d':' -f1)
+        ui_err "DNS pre-check failed for $url — hostname '$_dns_host' does not resolve. URL may not exist. Use /web search to find real URLs." >&2
+        _web_blacklist_add "$url" "DNS_PRECHECK_FAIL" "DNS_FAIL"
+        return 1
+    fi
+
     # ── Pre-screen by URL extension for formats needing special fetch ──
     # PDF/binary need file-based download, not streaming through web_fetch_raw.
     local _url_guess
@@ -1871,6 +1908,15 @@ web_scrape_images() {
     clean_url=$(_web_sanitize_url "$url")
     if [ -z "$clean_url" ]; then
         ui_err "Invalid URL: $url"
+        return 1
+    fi
+
+    # DNS pre-check: catch fabricated URLs before burning fetch retries
+    if ! _web_dns_precheck "$clean_url"; then
+        local _dns_host
+        _dns_host=$(echo "$clean_url" | sed 's|^https\?://||' | cut -d'/' -f1 | cut -d':' -f1)
+        ui_err "DNS pre-check failed for $clean_url — hostname '$_dns_host' does not resolve. URL may not exist. Use /web search to find real URLs." >&2
+        _web_blacklist_add "$clean_url" "DNS_PRECHECK_FAIL" "DNS_FAIL"
         return 1
     fi
 
