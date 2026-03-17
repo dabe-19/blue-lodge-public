@@ -324,6 +324,27 @@ lodge /config provider_call_delay 10
 
 Or switch to a provider with higher limits.
 
+### /q hangs with spinner on iSH (remote llama-server)
+
+**Symptom:** After `/remote connect`, asking `/q What is 2+2?` shows a "Thinking" spinner that immediately freezes, requiring an iSH restart.
+
+**Cause:** The llamacpp streaming path uses named pipes (FIFOs) to decouple curl from the token read loop. iSH's QEMU-based scheduler cannot synchronise concurrent `open()` on both ends of a FIFO, causing a deadlock.
+
+**Fix (built-in):** George automatically detects `LODGE_PLATFORM=ish` and bypasses FIFO creation, using a regular pipe (`curl | while read`) instead. This gives the same real-time streaming without the deadlock.
+
+**If you still see the hang:**
+
+1. Run `/remote test` to check that streaming mode says "pipe (iSH safe)".
+2. Verify `GEORGE_PROVIDER` is unset — if a cloud provider is still active, calls route through it, not through the remote. Run `/provider use local` to switch.
+3. Confirm the remote endpoint is reachable: `/remote diagnose`.
+
+### Cloud provider works but remote server doesn't
+
+After using `/remote connect`, if `/q` still goes to the cloud:
+
+1. Check `/remote test` — if `GEORGE_PROVIDER` is set, calls route through the cloud provider.
+2. Run `/provider use local` to disable the cloud harness and use the SSH tunnel.
+
 ---
 
 ## Technical Reference: What Changed
@@ -430,3 +451,19 @@ When `LODGE_CLOUD_ONLY=1` and no provider is configured, George exits with a cle
 **Problem:** Two tests (`_llm_build_opts includes top_p`, `...min_p`) expected `jq` to output `1.0` and `0.0`, but `jq` versions before 1.7 output `1` and `0` for integer-valued floats.
 
 **Solution:** Added `awk` normalization (`printf "%.1f"`) before assertion so both `jq` versions produce `1.0`/`0.0`.
+
+### 7. FIFO Bypass for iSH Streaming (`lib/llm.sh`, `lib/providers.sh`)
+
+**Problem:** The llamacpp streaming path used named pipes (FIFOs) to decouple `curl` from the token read loop, enabling explicit PID tracking for Ctrl+C cancellation. On iSH, the QEMU i686 userspace scheduler cannot synchronise concurrent `open()` calls on both ends of a FIFO, causing a deadlock. The spinner would appear then freeze, hanging the session.
+
+**Solution:** Added `_llm_is_fifo_safe()` platform gate. When `LODGE_PLATFORM=ish`, all three llamacpp streaming functions (`llm_generate`, `llm_stream`, `llm_chat`) use a regular pipe (`curl ... | while read`) instead of FIFO + background curl. On non-iSH platforms, mkfifo failure also triggers the pipe fallback.
+
+**Trade-offs:**
+- Pipe mode loses explicit curl PID tracking — curl terminates via SIGPIPE when the read side closes, which achieves the same effect.
+- Variables updated inside the pipe loop (debug counters) are lost due to subshell. This is acceptable since they're diagnostic-only.
+
+**Files changed:**
+- `lib/llm.sh` — `_llm_is_fifo_safe()` helper; conditional FIFO/pipe in `llm_generate()`, `llm_stream()`, `llm_chat()`; defensive mkfifo error handling
+- `lib/providers.sh` — `provider_stream_chat()` falls back to synchronous `provider_chat()` on iSH or mkfifo failure
+- `lib/remote.sh` — `remote_connect()` warns when `GEORGE_PROVIDER` is set (routing confusion)
+- `lodge` — `/remote test` diagnostic command

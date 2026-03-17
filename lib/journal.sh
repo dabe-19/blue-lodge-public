@@ -61,8 +61,10 @@ journal_write() {
     local content="$2"
 
     # Guard: never write entries with empty content
-    local _trimmed
-    _trimmed=$(echo "$content" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    # (replaces: sed fork for whitespace trimming)
+    local _trimmed="$content"
+    _trimmed="${_trimmed#"${_trimmed%%[![:space:]]*}"}"
+    _trimmed="${_trimmed%"${_trimmed##*[![:space:]]}"}"
     [ -z "$_trimmed" ] && return 0
 
     # Strip ANSI escape codes — command output often contains terminal

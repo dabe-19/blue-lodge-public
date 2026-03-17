@@ -26,11 +26,11 @@ commands_dispatch() {
     local _dispatch_ts
     _dispatch_ts=$(date '+%Y-%m-%d %H:%M:%S')
     
-    # Parse: /command [args...]
-    local cmd
-    cmd=$(echo "$input" | awk '{print $1}' | sed 's|^/||')
-    local args
-    args=$(echo "$input" | sed 's|^/[^ ]* *||')
+    # Parse: /command [args...] — parameter expansion (replaces awk + 2 sed forks)
+    local _first_word="${input%% *}"
+    local cmd="${_first_word#/}"
+    local args="${input#"${_first_word}"}"
+    args="${args#"${args%%[![:space:]]*}"}"
 
     # Strip surrounding quotes from args — LLM wraps arguments in shell-style
     # quotes like /init python "pid loop tuning assistant" but slash commands

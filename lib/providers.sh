@@ -650,7 +650,14 @@ provider_stream_chat() {
     local _tmpdir="${TMPDIR:-/tmp}"
     local _fifo="$_tmpdir/.lodge-provider-stream-$$"
     rm -f "$_fifo"
-    mkfifo "$_fifo"
+    # On iSH (iOS QEMU) FIFOs deadlock — fall back to synchronous provider_chat.
+    # Cloud providers already work fine via the sync path on iSH.
+    if [[ "${LODGE_PLATFORM:-}" == "ish" ]] || ! mkfifo "$_fifo" 2>/dev/null; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] provider stream: FIFO bypass → sync fallback" >/dev/tty 2>/dev/null
+        rm -f "$_fifo"
+        provider_chat "$provider" "$message" "$model" "$system"
+        return $?
+    fi
 
     local curl_pid resp_text
 
@@ -1383,11 +1390,9 @@ provider_apply_suggested_limits() {
     local _pl_tmp
     _pl_tmp=$(mktemp "${TMPDIR:-/tmp}/lodge-limits.XXXXXX")
     provider_suggested_limits "$provider" > "$_pl_tmp"
-    while IFS= read -r _line; do
-        [ -z "$_line" ] && continue
-        local _key _val
-        _key=$(echo "$_line" | awk '{print $1}')
-        _val=$(echo "$_line" | awk '{print $2}')
+    local _key _val
+    while read -r _key _val; do
+        [ -z "$_key" ] && continue
         case "$_key" in
             api-delay)           PROVIDER_CALL_DELAY="$_val" ;;
             api-retries)         PROVIDER_MAX_RETRIES="$_val" ;;

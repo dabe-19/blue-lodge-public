@@ -2034,20 +2034,20 @@ describe "Honeydew list system"
 
   it "honeydew inline splitter requires 1-2 whitespace after period" && {
     body=$(declare -f _agent_honeydew_build)
-    # Splitter must require [[:space:]]{1,2} AFTER the period —
-    # 0 spaces = prose, 3+ spaces = end-of-sentence padding, both ignored.
-    echo "$body" | tr -d '\n' | grep -q '\[:space:\].*{1,2}'
+    # Splitter sed uses BRE escaping \{1,2\} — grep for the 1,2 quantifier
+    # near [:space:] to verify the whitespace constraint.
+    echo "$body" | tr -d '\n' | grep -q '\[:space:\].*1,2'
     assert_ok $? "Inline splitter must require 1-2 whitespace after period"
   }
 
   it "honeydew inline splitter limits to 1-2 digit item numbers" && {
     body=$(declare -f _agent_honeydew_build)
-    echo "$body" | tr -d '\n' | grep -q '\[0-9\].*{1,2}.*\[:space:\]'
+    echo "$body" | tr -d '\n' | grep -q '\[0-9\].*1,2.*\[:space:\]'
     assert_ok $? "Inline splitter must limit to 1-2 digit numbers"
   }
 
   it "honeydew parser limits to 1-2 digit item numbers" && {
-    body=$(declare -f _agent_honeydew_build)
+    body=$(declare -f _agent_parse_numbered_items)
     echo "$body" | grep 'BASH_REMATCH' -B5 | grep -q '{1,2}'
     assert_ok $? "Line parser must limit to 1-2 digit numbers"
   }

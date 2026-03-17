@@ -58,8 +58,10 @@ _remote_load_config() {
     while IFS='=' read -r _key _val; do
         [[ "$_key" =~ ^[[:space:]]*# ]] && continue
         [[ "$_key" =~ ^[[:space:]]*$ ]] && continue
-        _key=$(echo "$_key" | tr -d '[:space:]')
-        _val=$(echo "$_val" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        # Strip whitespace from key/val (replaces tr + sed forks)
+        _key="${_key//[[:space:]]/}"
+        _val="${_val#"${_val%%[![:space:]]*}"}"
+        _val="${_val%"${_val##*[![:space:]]}"}"
         case "$_key" in
             REMOTE_SSH_TARGET|REMOTE_SSH_PORT|REMOTE_SSH_KEY|\
             REMOTE_OLLAMA_PORT|REMOTE_LLAMACPP_PORT|\
@@ -837,6 +839,16 @@ remote_connect() {
     fi
 
     rm -f "$_ssh_err" 2>/dev/null
+
+    # Warn if a cloud provider is still active — LLM calls will route
+    # through the cloud, not the remote server, until the user switches.
+    if [ -n "${GEORGE_PROVIDER:-}" ]; then
+        echo "" >&2
+        echo "NOTE: Cloud provider active (GEORGE_PROVIDER=$GEORGE_PROVIDER)." >&2
+        echo "  LLM calls will route through the cloud provider, not this remote server." >&2
+        echo "  Run /provider use local  to switch to the remote backend." >&2
+    fi
+
     return 0
 }
 

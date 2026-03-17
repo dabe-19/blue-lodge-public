@@ -139,7 +139,10 @@ _security_load_user_allowlist() {
     local user_allowlist="$GEORGE_CONFIG_DIR/allowlist.conf"
     if [ -f "$user_allowlist" ]; then
         while IFS= read -r line; do
-            line=$(echo "$line" | sed 's/#.*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            # Strip comments + trim whitespace (replaces 2 sed forks)
+            line="${line%%#*}"
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
             [ -n "$line" ] && LODGE_COMMAND_ALLOWLIST+=("$line")
         done < "$user_allowlist"
     fi

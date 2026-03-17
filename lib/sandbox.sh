@@ -622,16 +622,13 @@ sandbox_status() {
         events=$(grep "\"name\":\"$name\"" "$SANDBOX_JOURNAL" | tail -5)
         if [ -n "$events" ]; then
             printf "\n  %bRecent activity:%b\n" "$C_DIM" "$C_RESET"
-            while IFS= read -r line; do
-                local ev ts detail rc
-                ev=$(echo "$line" | sed -n 's/.*"ev":"\([^"]*\)".*/\1/p')
-                ts=$(echo "$line" | sed -n 's/.*"ts":"\([^"]*\)".*/\1/p' | sed 's/T/ /;s/Z//')
-                detail=$(echo "$line" | sed -n 's/.*"detail":"\([^"]*\)".*/\1/p')
-                rc=$(echo "$line" | sed -n 's/.*"rc":\([0-9]*\).*/\1/p')
+            # Extract fields via jq once, then read as TSV (replaces 4 sed forks/line)
+            echo "$events" | jq -r '[.ev, (.ts | sub("T";" ") | sub("Z";"") // ""), .detail, (.rc // 0 | tostring)] | @tsv' 2>/dev/null | 
+            while IFS=$'\t' read -r ev ts detail rc; do
                 local rc_color="$C_GREEN"
                 [ "$rc" != "0" ] && rc_color="$C_RED"
                 printf "    %s  %b%-6s%b  %s  %brc=%s%b\n" "$ts" "$C_CYAN" "$ev" "$C_RESET" "${detail:0:40}" "$rc_color" "$rc" "$C_RESET"
-            done <<< "$events"
+            done
         fi
     fi
 }

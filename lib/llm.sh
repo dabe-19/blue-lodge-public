@@ -348,6 +348,17 @@ _llm_kill_curl() {
     _LLM_ACTIVE=0
 }
 
+# ── FIFO safety check ─────────────────────────────────────────
+# Named pipes (mkfifo) deadlock on iSH (iOS QEMU emulation) because
+# the userspace scheduler can't synchronise concurrent open() calls
+# on both ends of the FIFO. Pipe-based streaming works fine (kernel
+# sets up both endpoints in a single pipe() syscall before fork).
+# Returns 0 (true) when FIFOs are safe; 1 (false) when they aren't.
+_llm_is_fifo_safe() {
+    [[ "${LODGE_PLATFORM:-}" == "ish" ]] && return 1
+    return 0
+}
+
 # ── Backend detection ──────────────────────────────────────────
 # Returns "llamacpp" or "ollama". Caches result for the session
 # to avoid repeated network pings. Clear _LLM_BACKEND_CACHE to re-detect.
@@ -359,6 +370,9 @@ _llm_detect_backend() {
         echo "$_LLM_BACKEND_CACHE"
         return 0
     fi
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && [[ "${LODGE_PLATFORM:-}" == "ish" ]] && [ "${_REMOTE_CONNECTED:-0}" -eq 1 ] \
+        && ui_dim "  [debug] iSH + remote: pipe-based streaming (FIFO bypass)" >/dev/tty 2>/dev/null
 
     # Manual override — skip detection
     case "$LLM_BACKEND" in
@@ -1390,18 +1404,32 @@ llm_generate() {
         # Use a FIFO so we can track and kill the curl PID independently
         # of the read loop. Without this, curl survives `break` and keeps
         # llama-server's slot busy (phone stays hot).
+        # On iSH (iOS QEMU) FIFOs deadlock — fall back to a plain pipe.
         local _fifo="$_tmpdir/.lodge-fifo-gen-$$"
-        rm -f "$_fifo"
-        mkfifo "$_fifo"
+        local _use_fifo=1
+        if ! _llm_is_fifo_safe; then
+            _use_fifo=0
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate(llamacpp): FIFO bypass (platform=%s)\n" "${LODGE_PLATFORM:-}" > "$_tty" 2>/dev/null
+        elif ! (rm -f "$_fifo" && mkfifo "$_fifo") 2>/dev/null; then
+            _use_fifo=0
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate(llamacpp): mkfifo failed, falling back to pipe\n" > "$_tty" 2>/dev/null
+        fi
 
-        $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
-            "$LLAMA_CPP_URL/v1/chat/completions" \
-            -H "Content-Type: application/json" \
-            -d "$payload" > "$_fifo" 2>/dev/null &
-        local _bg_curl=$!
-        echo "$_bg_curl" > "$_curl_pid_file"
-        _LLM_CURL_PID="$_bg_curl"
+        if [ "$_use_fifo" -eq 1 ]; then
+            $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
+                "$LLAMA_CPP_URL/v1/chat/completions" \
+                -H "Content-Type: application/json" \
+                -d "$payload" > "$_fifo" 2>/dev/null &
+            local _bg_curl=$!
+            echo "$_bg_curl" > "$_curl_pid_file"
+            _LLM_CURL_PID="$_bg_curl"
+        fi
 
+        # _llm_gen_sse_loop: shared read loop body extracted as a function
+        # so the same token-processing code runs in both FIFO and pipe modes.
+        # In pipe mode the loop runs in a subshell (right side of |), so
+        # variable updates (_dbg_out etc.) are lost — acceptable trade-off.
+        _llm_gen_sse_loop() {
         while IFS= read -r line; do
             [ -f "$_cancel_file" ] && break
 
@@ -1577,14 +1605,24 @@ llm_generate() {
             fi
             [ -n "$token" ] && printf "%s" "$token"
             [ -n "$token" ] && _gen_tty "$token"
-        done < "$_fifo"
+        done
+        }  # end _llm_gen_sse_loop
 
-        # Kill curl immediately — closes the TCP connection so llama-server
-        # aborts the inference slot instead of computing tokens nobody reads.
-        kill "$_bg_curl" 2>/dev/null
-        wait "$_bg_curl" 2>/dev/null 2>&1 || true
-        _LLM_CURL_PID=""
-        rm -f "$_fifo" "$_curl_pid_file"
+        if [ "$_use_fifo" -eq 1 ]; then
+            _llm_gen_sse_loop < "$_fifo"
+            # Kill curl immediately — closes the TCP connection so llama-server
+            # aborts the inference slot instead of computing tokens nobody reads.
+            kill "$_bg_curl" 2>/dev/null
+            wait "$_bg_curl" 2>/dev/null 2>&1 || true
+            _LLM_CURL_PID=""
+            rm -f "$_fifo" "$_curl_pid_file"
+        else
+            # Pipe mode: curl terminates via SIGPIPE when loop exits.
+            $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
+                "$LLAMA_CPP_URL/v1/chat/completions" \
+                -H "Content-Type: application/json" \
+                -d "$payload" 2>/dev/null | _llm_gen_sse_loop
+        fi
 
         _LLM_ACTIVE=0
         if [ ! -f "$_got_tokens" ]; then
@@ -2018,17 +2056,30 @@ llm_stream() {
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream(llamacpp) think: _can_think=%s model=%s LODGE_THINK=%s\n" "$_can_think" "$LODGE_MODEL" "${LODGE_THINK:-0}" > "$_tty" 2>/dev/null
 
         # FIFO for curl → read loop decoupling (enables PID tracking)
+        # On iSH (iOS QEMU) FIFOs deadlock — fall back to a plain pipe.
         local _fifo="$_tmpdir/.lodge-fifo-stream-$$"
-        rm -f "$_fifo"
-        mkfifo "$_fifo"
+        local _use_fifo=1
+        if ! _llm_is_fifo_safe; then
+            _use_fifo=0
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream(llamacpp): FIFO bypass (platform=%s)\n" "${LODGE_PLATFORM:-}" > "$_tty" 2>/dev/null
+        elif ! (rm -f "$_fifo" && mkfifo "$_fifo") 2>/dev/null; then
+            _use_fifo=0
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream(llamacpp): mkfifo failed, falling back to pipe\n" > "$_tty" 2>/dev/null
+        fi
 
-        $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
-            "$LLAMA_CPP_URL/v1/chat/completions" \
-            -H "Content-Type: application/json" \
-            -d "$payload" > "$_fifo" 2>/dev/null &
-        local _bg_curl=$!
-        _LLM_CURL_PID="$_bg_curl"
+        if [ "$_use_fifo" -eq 1 ]; then
+            $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
+                "$LLAMA_CPP_URL/v1/chat/completions" \
+                -H "Content-Type: application/json" \
+                -d "$payload" > "$_fifo" 2>/dev/null &
+            local _bg_curl=$!
+            _LLM_CURL_PID="$_bg_curl"
+        fi
 
+        # _llm_stream_sse_loop: shared read loop body so the same token-processing
+        # code runs in both FIFO and pipe modes. In pipe mode the loop runs in a
+        # subshell — variable updates (_dbg_out etc.) are lost (acceptable).
+        _llm_stream_sse_loop() {
         while IFS= read -r line; do
             [ -f "$_cancel_file" ] && break
 
@@ -2203,13 +2254,23 @@ llm_stream() {
             fi
             [ -n "$token" ] && printf "%s" "$token"
             [ -n "$token" ] && printf "%s" "$token" > "$_tty" 2>/dev/null
-        done < "$_fifo"
+        done
+        }  # end _llm_stream_sse_loop
 
-        # Kill curl → closes TCP → llama-server aborts inference slot
-        kill "$_bg_curl" 2>/dev/null
-        wait "$_bg_curl" 2>/dev/null 2>&1 || true
-        _LLM_CURL_PID=""
-        rm -f "$_fifo"
+        if [ "$_use_fifo" -eq 1 ]; then
+            _llm_stream_sse_loop < "$_fifo"
+            # Kill curl → closes TCP → llama-server aborts inference slot
+            kill "$_bg_curl" 2>/dev/null
+            wait "$_bg_curl" 2>/dev/null 2>&1 || true
+            _LLM_CURL_PID=""
+            rm -f "$_fifo"
+        else
+            # Pipe mode: curl terminates via SIGPIPE when loop exits.
+            $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
+                "$LLAMA_CPP_URL/v1/chat/completions" \
+                -H "Content-Type: application/json" \
+                -d "$payload" 2>/dev/null | _llm_stream_sse_loop
+        fi
 
         ui_spinner_stop
         rm -f "$_llm_ft_file"
@@ -2675,17 +2736,27 @@ llm_chat() {
         rm -f "$_got_tokens"
 
         # FIFO for curl → read loop decoupling (enables PID tracking)
+        # On iSH (iOS QEMU) FIFOs deadlock — fall back to a plain pipe.
         local _fifo="$_tmpdir/.lodge-fifo-chat-$$"
-        rm -f "$_fifo"
-        mkfifo "$_fifo"
+        local _use_fifo=1
+        if ! _llm_is_fifo_safe; then
+            _use_fifo=0
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] chat(llamacpp): FIFO bypass (platform=%s)\n" "${LODGE_PLATFORM:-}" > /dev/stderr 2>/dev/null
+        elif ! (rm -f "$_fifo" && mkfifo "$_fifo") 2>/dev/null; then
+            _use_fifo=0
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] chat(llamacpp): mkfifo failed, falling back to pipe\n" > /dev/stderr 2>/dev/null
+        fi
 
-        $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
-            "$LLAMA_CPP_URL/v1/chat/completions" \
-            -H "Content-Type: application/json" \
-            -d "$payload" > "$_fifo" 2>/dev/null &
-        local _bg_curl=$!
-        _LLM_CURL_PID="$_bg_curl"
+        if [ "$_use_fifo" -eq 1 ]; then
+            $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
+                "$LLAMA_CPP_URL/v1/chat/completions" \
+                -H "Content-Type: application/json" \
+                -d "$payload" > "$_fifo" 2>/dev/null &
+            local _bg_curl=$!
+            _LLM_CURL_PID="$_bg_curl"
+        fi
 
+        _llm_chat_sse_loop() {
         while IFS= read -r line; do
 
             [[ "$line" == data:* ]] || continue
@@ -2698,13 +2769,23 @@ llm_chat() {
                 [ -f "$_got_tokens" ] || touch "$_got_tokens"
                 printf "%s" "$token"
             fi
-        done < "$_fifo"
+        done
+        }  # end _llm_chat_sse_loop
 
-        # Kill curl → closes TCP → server aborts inference
-        kill "$_bg_curl" 2>/dev/null
-        wait "$_bg_curl" 2>/dev/null 2>&1 || true
-        _LLM_CURL_PID=""
-        rm -f "$_fifo"
+        if [ "$_use_fifo" -eq 1 ]; then
+            _llm_chat_sse_loop < "$_fifo"
+            # Kill curl → closes TCP → server aborts inference
+            kill "$_bg_curl" 2>/dev/null
+            wait "$_bg_curl" 2>/dev/null 2>&1 || true
+            _LLM_CURL_PID=""
+            rm -f "$_fifo"
+        else
+            # Pipe mode: curl terminates via SIGPIPE when loop exits.
+            $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
+                "$LLAMA_CPP_URL/v1/chat/completions" \
+                -H "Content-Type: application/json" \
+                -d "$payload" 2>/dev/null | _llm_chat_sse_loop
+        fi
 
         _LLM_ACTIVE=0
         if [ ! -f "$_got_tokens" ]; then

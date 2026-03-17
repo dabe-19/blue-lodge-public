@@ -5360,6 +5360,59 @@ _cmd_remote() {
             remote_secure_key ;;
         diagnose)
             remote_diagnose ;;
+        test)
+            # Quick pre-flight check for iSH / remote streaming readiness
+            echo "=== Remote Streaming Pre-Flight ==="
+            echo ""
+            printf "  %-24s %s\n" "Platform:" "${LODGE_PLATFORM:-linux}"
+            printf "  %-24s %s\n" "Remote connected:" "${_REMOTE_CONNECTED:-0}"
+            printf "  %-24s %s\n" "GEORGE_PROVIDER:" "${GEORGE_PROVIDER:-<none>}"
+            printf "  %-24s %s\n" "LLM_BACKEND:" "${LLM_BACKEND:-auto}"
+            printf "  %-24s %s\n" "LLAMA_CPP_URL:" "$LLAMA_CPP_URL"
+            printf "  %-24s %s\n" "OLLAMA_URL:" "$OLLAMA_URL"
+            echo ""
+
+            # FIFO check
+            local _test_tmpdir="${TMPDIR:-/tmp}"
+            local _test_fifo="$_test_tmpdir/.lodge-fifo-test-$$"
+            rm -f "$_test_fifo"
+            if mkfifo "$_test_fifo" 2>/dev/null; then
+                printf "  %-24s %s\n" "FIFO (mkfifo):" "OK"
+                rm -f "$_test_fifo"
+            else
+                printf "  %-24s %s\n" "FIFO (mkfifo):" "FAILED (will use pipe fallback)"
+            fi
+
+            # _llm_is_fifo_safe
+            if _llm_is_fifo_safe; then
+                printf "  %-24s %s\n" "Streaming mode:" "FIFO (standard)"
+            else
+                printf "  %-24s %s\n" "Streaming mode:" "pipe (iSH safe)"
+            fi
+            echo ""
+
+            # Provider routing warning
+            if [ -n "${GEORGE_PROVIDER:-}" ]; then
+                echo "  WARNING: GEORGE_PROVIDER is set to '$GEORGE_PROVIDER'."
+                echo "  LLM calls will route through the cloud provider, not the remote server."
+                echo "  Run /provider use local  to use the remote backend."
+                echo ""
+            fi
+
+            # Endpoint health
+            echo "── Endpoint Probes ──"
+            if curl -sf --max-time 3 "$LLAMA_CPP_URL/health" 2>/dev/null | grep -q '"status"'; then
+                printf "  %-24s %s\n" "llama-server:" "OK"
+            else
+                printf "  %-24s %s\n" "llama-server:" "UNREACHABLE"
+            fi
+            if curl -sf --max-time 3 "$OLLAMA_URL/api/tags" &>/dev/null; then
+                printf "  %-24s %s\n" "Ollama:" "OK"
+            else
+                printf "  %-24s %s\n" "Ollama:" "UNREACHABLE"
+            fi
+            echo ""
+            ;;
         config)
             if [ -z "$arg2" ]; then
                 ui_section "Remote llama-server Config"

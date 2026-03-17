@@ -1272,4 +1272,85 @@ describe "Provider harness bypass"
     assert_ok $? "intercept must route through backoff wrapper"
   }
 
+# ── FIFO safety (iSH pipe fallback) ───────────────────────────
+describe "_llm_is_fifo_safe"
+
+  it "returns true (0) on non-iSH platforms" && {
+    (LODGE_PLATFORM="linux"; _llm_is_fifo_safe)
+    assert_ok $? "Linux should be FIFO-safe"
+  }
+
+  it "returns false (1) on iSH platform" && {
+    (LODGE_PLATFORM="ish"; _llm_is_fifo_safe)
+    assert_fail $? "iSH should NOT be FIFO-safe"
+  }
+
+  it "returns true when LODGE_PLATFORM is empty" && {
+    (LODGE_PLATFORM=""; _llm_is_fifo_safe)
+    assert_ok $? "empty platform should default to FIFO-safe"
+  }
+
+  it "returns true for macOS" && {
+    (LODGE_PLATFORM="macos"; _llm_is_fifo_safe)
+    assert_ok $? "macOS should be FIFO-safe"
+  }
+
+  it "returns true for termux" && {
+    (LODGE_PLATFORM="termux"; _llm_is_fifo_safe)
+    assert_ok $? "termux should be FIFO-safe"
+  }
+
+describe "FIFO/pipe dispatch in LLM functions"
+
+  it "llm_generate has _use_fifo conditional" && {
+    body=$(declare -f llm_generate)
+    echo "$body" | grep -q '_use_fifo'
+    assert_ok $? "llm_generate must have _use_fifo dispatch"
+  }
+
+  it "llm_stream has _use_fifo conditional" && {
+    body=$(declare -f llm_stream)
+    echo "$body" | grep -q '_use_fifo'
+    assert_ok $? "llm_stream must have _use_fifo dispatch"
+  }
+
+  it "llm_chat has _use_fifo conditional" && {
+    body=$(declare -f llm_chat)
+    echo "$body" | grep -q '_use_fifo'
+    assert_ok $? "llm_chat must have _use_fifo dispatch"
+  }
+
+  it "llm_generate checks _llm_is_fifo_safe" && {
+    body=$(declare -f llm_generate)
+    echo "$body" | grep -q '_llm_is_fifo_safe'
+    assert_ok $? "llm_generate must check _llm_is_fifo_safe"
+  }
+
+  it "llm_stream checks _llm_is_fifo_safe" && {
+    body=$(declare -f llm_stream)
+    echo "$body" | grep -q '_llm_is_fifo_safe'
+    assert_ok $? "llm_stream must check _llm_is_fifo_safe"
+  }
+
+  it "llm_chat checks _llm_is_fifo_safe" && {
+    body=$(declare -f llm_chat)
+    echo "$body" | grep -q '_llm_is_fifo_safe'
+    assert_ok $? "llm_chat must check _llm_is_fifo_safe"
+  }
+
+  it "llm_generate has pipe-mode curl fallback" && {
+    grep -q 'Pipe mode' "$LODGE_DIR/lib/llm.sh"
+    assert_ok $? "lib/llm.sh must have pipe-mode fallback comment"
+  }
+
+  it "llm_stream has pipe-mode curl fallback" && {
+    grep -q '_llm_stream_sse_loop' "$LODGE_DIR/lib/llm.sh"
+    assert_ok $? "lib/llm.sh must have _llm_stream_sse_loop function"
+  }
+
+  it "llm_chat has pipe-mode curl fallback" && {
+    grep -q '_llm_chat_sse_loop' "$LODGE_DIR/lib/llm.sh"
+    assert_ok $? "lib/llm.sh must have _llm_chat_sse_loop function"
+  }
+
 test_end

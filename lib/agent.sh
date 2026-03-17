@@ -448,6 +448,37 @@ HONEYDEW_FILE="honeydew.json"
 BRAINSTORM_FILE="brainstorm.json"
 RESEARCH_BUFFER_FILE="research_buffer.json"
 
+# ── Shared numbered-list parser (zero-fork per iteration) ─────
+# Parse an LLM-generated numbered list into a JSON array of honeydew items.
+# Reads raw text from stdin.  Uses parameter expansion instead of sed for
+# per-line whitespace trimming and checkbox stripping — eliminates 2 forks
+# per list item (significant on iSH / low-powered devices).
+# Args: $1=depth (integer), $2=nameref for JSON array, $3=nameref for count
+_agent_parse_numbered_items() {
+    local _depth="${1:-0}"
+    local -n _pni_json="$2"
+    local -n _pni_count="$3"
+    _pni_json='[]'
+    _pni_count=0
+    local _line _item
+    while IFS= read -r _line; do
+        # Strip leading whitespace (replaces: sed 's/^[[:space:]]*//')
+        _line="${_line#"${_line%%[![:space:]]*}"}"
+        if [[ "$_line" =~ ^[0-9]{1,2}[\.\)][[:space:]]*(.*) ]]; then
+            _pni_count=$((_pni_count + 1))
+            _item="${BASH_REMATCH[1]}"
+            # Strip checkbox prefix like [ ], [x], [✓]
+            # (replaces: sed 's/^\[[ x✓]*\][[:space:]]*//')
+            if [[ "$_item" =~ ^\[[\ x✓]*\][[:space:]]*(.*) ]]; then
+                _item="${BASH_REMATCH[1]}"
+            fi
+            _pni_json=$(echo "$_pni_json" | jq \
+                --argjson id "$_pni_count" --arg t "$_item" --argjson d "$_depth" \
+                '. += [{"id": $id, "task": $t, "status": "pending", "depth": $d}]')
+        fi
+    done
+}
+
 # Build the honeydew list from a user task via LLM decomposition.
 # Writes .george/honeydew.json with structured items.
 # Args: $1=task text, $2=workdir
@@ -512,19 +543,9 @@ TASK: $task
     raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\}\.[[:space:]]\{1,2\}\)/\1\n\2/g')
     raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\})[[:space:]]\{1,2\}\)/\1\n\2/g')
 
-    # Parse numbered lines into JSON array
-    local _items_json='[]'
-    local count=0
-    while IFS= read -r line; do
-        line=$(echo "$line" | sed 's/^[[:space:]]*//')
-        if [[ "$line" =~ ^[0-9]{1,2}[\.\)][[:space:]]*(.*) ]]; then
-            count=$((count + 1))
-            local item="${BASH_REMATCH[1]}"
-            item=$(echo "$item" | sed 's/^\[[ x✓]*\][[:space:]]*//')
-            _items_json=$(echo "$_items_json" | jq --argjson id "$count" --arg t "$item" \
-                '. += [{"id": $id, "task": $t, "status": "pending", "depth": 0}]')
-        fi
-    done <<< "$raw_list"
+    # Parse numbered lines into JSON array (shared helper — zero sed forks)
+    local _items_json count
+    _agent_parse_numbered_items 0 _items_json count <<< "$raw_list"
 
     # Fallback: if LLM gave no parseable items, create a single item
     if [ "$count" -eq 0 ]; then
@@ -807,19 +828,9 @@ EXPAND_JSON
     raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\}\.[[:space:]]\{1,2\}\)/\1\n\2/g')
     raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\})[[:space:]]\{1,2\}\)/\1\n\2/g')
 
-    # Parse numbered lines
-    local _sub_items='[]'
-    local sub_count=0
-    while IFS= read -r line; do
-        line=$(echo "$line" | sed 's/^[[:space:]]*//')
-        if [[ "$line" =~ ^[0-9]{1,2}[\.\)][[:space:]]*(.*) ]]; then
-            sub_count=$((sub_count + 1))
-            local sub_item="${BASH_REMATCH[1]}"
-            sub_item=$(echo "$sub_item" | sed 's/^\[[ x✓]*\][[:space:]]*//')
-            _sub_items=$(echo "$_sub_items" | jq --arg t "$sub_item" --argjson d "$sub_depth" \
-                '. += [{"task": $t, "status": "pending", "depth": $d}]')
-        fi
-    done <<< "$raw_list"
+    # Parse numbered lines (shared helper — zero sed forks)
+    local _sub_items sub_count
+    _agent_parse_numbered_items "$sub_depth" _sub_items sub_count <<< "$raw_list"
 
     # Need at least 2 sub-items for expansion to be worthwhile
     if [ "$sub_count" -lt 2 ]; then
@@ -1211,16 +1222,19 @@ _agent_smart_route() {
     esac
 
     # Strip surrounding quotes the model may wrap around paths
-    _sr_arg=$(echo "$_sr_arg" | sed 's/^["'"'"']//; s/["'"'"']$//')
+    # (replaces: sed fork for quote stripping)
+    _sr_arg="${_sr_arg#[\"\']}"
+    _sr_arg="${_sr_arg%[\"\']}"
     [ -z "$_sr_arg" ] && return 0
 
     # For /vision with a prompt, isolate the first token (path/URL)
+    # (replaces: awk + sed forks)
     local _sr_first_token="$_sr_arg"
     local _sr_trailing=""
     if [[ "$_sr_base" == "/vision" ]]; then
-        _sr_first_token=$(echo "$_sr_arg" | awk '{print $1}')
-        _sr_trailing=$(echo "$_sr_arg" | sed 's/^[^ ]* *//')
-        [ "$_sr_trailing" = "$_sr_first_token" ] && _sr_trailing=""
+        _sr_first_token="${_sr_arg%% *}"
+        _sr_trailing="${_sr_arg#* }"
+        [ "$_sr_trailing" = "$_sr_arg" ] && _sr_trailing=""
     fi
 
     # ── Classify the argument ──────────────────────────────
@@ -1517,7 +1531,11 @@ REWRITE_ROUTER_JSON
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew rewrite router verdict: %s\n' "$(echo "$_router_verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
 
     local _verdict_word
-    _verdict_word=$(echo "$_router_verdict" | head -1 | awk -F'[: \t]' '{print $1}' | sed 's/^[*_"\x27]\+//;s/[*_.,"\x27]\+$//')
+    # Extract first word from first line, strip decorators
+    # (replaces: head -1 | awk | sed — 3 forks)
+    _verdict_word="${_router_verdict%%$'\n'*}"
+    _verdict_word="${_verdict_word%%[: 	]*}"
+    _verdict_word="${_verdict_word//[*_.,\"\'\']/}"
 
     if [[ "$_verdict_word" != "REWRITE" ]]; then
         if [ "$force_rewrite" -eq 1 ]; then
@@ -1625,19 +1643,9 @@ REWRITE_JSON
     _raw_rewrite=$(echo "$_raw_rewrite" | sed 's/\([^0-9]\)\([0-9]\{1,2\}\.[[:space:]]\{1,2\}\)/\1\n\2/g')
     _raw_rewrite=$(echo "$_raw_rewrite" | sed 's/\([^0-9]\)\([0-9]\{1,2\})[[:space:]]\{1,2\}\)/\1\n\2/g')
 
-    # Parse numbered lines into JSON array
-    local _new_items='[]'
-    local _new_count=0
-    while IFS= read -r line; do
-        line=$(echo "$line" | sed 's/^[[:space:]]*//')
-        if [[ "$line" =~ ^[0-9]{1,2}[\.\)][[:space:]]*(.*) ]]; then
-            _new_count=$((_new_count + 1))
-            local _item_text="${BASH_REMATCH[1]}"
-            _item_text=$(echo "$_item_text" | sed 's/^\[[ x✓]*\][[:space:]]*//')
-            _new_items=$(echo "$_new_items" | jq --arg t "$_item_text" \
-                '. += [{"task": $t, "status": "pending", "depth": 0}]')
-        fi
-    done <<< "$_raw_rewrite"
+    # Parse numbered lines into JSON array (shared helper — zero sed forks)
+    local _new_items _new_count
+    _agent_parse_numbered_items 0 _new_items _new_count <<< "$_raw_rewrite"
 
     # Need at least 1 valid item to proceed with rewrite
     if [ "$_new_count" -eq 0 ]; then
