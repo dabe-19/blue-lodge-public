@@ -749,11 +749,6 @@ _llm_build_llamacpp_payload() {
     # When a grammar is provided, llama-server constrains token
     # sampling to only produce output matching the grammar rules.
     # This gives Layer 1 schema enforcement at the decoding level.
-    local _grammar_args=()
-    if [ -n "$grammar" ]; then
-        _grammar_args=(--arg grammar "$grammar")
-    fi
-
     if [ "$stream" = "true" ]; then
         jq -n \
             --argjson messages "$messages" \
@@ -765,8 +760,8 @@ _llm_build_llamacpp_payload() {
             --argjson top_k "$top_k" \
             --argjson min_p "$min_p" \
             --argjson stream "$stream" \
-            "${_grammar_args[@]}" \
-            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream, stream_options:{include_usage:true}} + if $grammar then {grammar:$grammar} else {} end'
+            --arg grammar "$grammar" \
+            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream, stream_options:{include_usage:true}} + if ($grammar | length) > 0 then {grammar:$grammar} else {} end'
     else
         jq -n \
             --argjson messages "$messages" \
@@ -778,8 +773,8 @@ _llm_build_llamacpp_payload() {
             --argjson top_k "$top_k" \
             --argjson min_p "$min_p" \
             --argjson stream "$stream" \
-            "${_grammar_args[@]}" \
-            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream} + if $grammar then {grammar:$grammar} else {} end'
+            --arg grammar "$grammar" \
+            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream} + if ($grammar | length) > 0 then {grammar:$grammar} else {} end'
     fi
 }
 
