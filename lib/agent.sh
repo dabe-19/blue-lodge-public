@@ -164,7 +164,9 @@ _agent_extract_json() {
     cleaned=$(echo "$raw" | _strip_think_blocks)
 
     # Step 2: Strip markdown code fences (```json ... ```)
-    cleaned=$(echo "$cleaned" | sed '/^```[a-z]*/d')
+    # The model may put the JSON on the same line as the fence marker
+    # (e.g. ```json{"type":"combined"}```) — strip markers, keep content.
+    cleaned=$(echo "$cleaned" | sed 's/^```[a-zA-Z]*//;s/```$//')
 
     # Step 3: Strip leading/trailing whitespace and asterisks
     cleaned=$(echo "$cleaned" | sed 's/\*\+//g' | sed '/^[[:space:]]*$/d' | \
