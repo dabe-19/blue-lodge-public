@@ -87,17 +87,17 @@ LODGE_DEBUG=${LODGE_DEBUG:-0}
 LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-20480}
 LLM_ASK_TOKENS=${LLM_ASK_TOKENS:-20480}
 LLM_AGENT_TOKENS=${LLM_AGENT_TOKENS:-20480}
-LLM_STRATEGIST_TOKENS=${LLM_STRATEGIST_TOKENS:-512}
-LLM_EVALUATOR_TOKENS=${LLM_EVALUATOR_TOKENS:-512}
-LLM_ROUTER_TOKENS=${LLM_ROUTER_TOKENS:-256}
+LLM_STRATEGIST_TOKENS=${LLM_STRATEGIST_TOKENS:-4096}
+LLM_EVALUATOR_TOKENS=${LLM_EVALUATOR_TOKENS:-4096}
+LLM_ROUTER_TOKENS=${LLM_ROUTER_TOKENS:-512}
 
 # ── Thinking Budgets (max thinking tokens before responding) ───
-LLM_BUDGET_TOKENS=${LLM_BUDGET_TOKENS:-1024}
-LLM_BUDGET_ASK=${LLM_BUDGET_ASK:-1024}
-LLM_BUDGET_AGENT=${LLM_BUDGET_AGENT:-512}
-LLM_BUDGET_ROUTER=${LLM_BUDGET_ROUTER:-128}
-LLM_BUDGET_JOURNAL=${LLM_BUDGET_JOURNAL:-64}
-LLM_BUDGET_TOOL=${LLM_BUDGET_TOOL:-256}
+LLM_BUDGET_TOKENS=${LLM_BUDGET_TOKENS:-4096}
+LLM_BUDGET_ASK=${LLM_BUDGET_ASK:-4096}
+LLM_BUDGET_AGENT=${LLM_BUDGET_AGENT:-4096}
+LLM_BUDGET_ROUTER=${LLM_BUDGET_ROUTER:-4096}
+LLM_BUDGET_JOURNAL=${LLM_BUDGET_JOURNAL:-4096}
+LLM_BUDGET_TOOL=${LLM_BUDGET_TOOL:-4096}
 
 # ── Sampling Parameters ───────────────────────────────────────
 LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.15}
@@ -142,15 +142,15 @@ LODGE_MODEL="${LODGE_MODEL:-blue-lodge}"
 LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-20480}"   # Default max output tokens (matches Modelfile num_predict ceiling)
 LLM_ASK_TOKENS="${LLM_ASK_TOKENS:-20480}"   # Max output tokens for /ask (model stops at <|im_end|>; this is just a safety cap)
 LLM_AGENT_TOKENS="${LLM_AGENT_TOKENS:-20480}" # Max output tokens for agent specialist
-LLM_STRATEGIST_TOKENS="${LLM_STRATEGIST_TOKENS:-512}" # Max output tokens for strategist (milestone description + thinking)
-LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-512}"   # Max output tokens for evaluator (completion judge)
-LLM_ROUTER_TOKENS="${LLM_ROUTER_TOKENS:-256}" # Max output tokens for agent router (think ~200 + tool name + context)
-LLM_BUDGET_TOKENS="${LLM_BUDGET_TOKENS:-1024}" # Max thinking tokens before responding (0=unlimited)
-LLM_BUDGET_ASK="${LLM_BUDGET_ASK:-1024}"     # Think budget for /ask conversations (extended thinking useful)
-LLM_BUDGET_AGENT="${LLM_BUDGET_AGENT:-512}"  # Think budget for strategist/specialist (needs room for rich milestone context)
-LLM_BUDGET_ROUTER="${LLM_BUDGET_ROUTER:-128}" # Think budget for router (pick tool + brief reasoning)
-LLM_BUDGET_JOURNAL="${LLM_BUDGET_JOURNAL:-64}" # Think budget for journal (background utility)
-LLM_BUDGET_TOOL="${LLM_BUDGET_TOOL:-256}"    # Think budget for tools (commit, web, recall, slash)
+LLM_STRATEGIST_TOKENS="${LLM_STRATEGIST_TOKENS:-4096}" # Max output tokens for strategist (milestone description + thinking)
+LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-4096}"   # Max output tokens for evaluator (completion judge)
+LLM_ROUTER_TOKENS="${LLM_ROUTER_TOKENS:-512}" # Max output tokens for agent router (think ~200 + tool name + context)
+LLM_BUDGET_TOKENS="${LLM_BUDGET_TOKENS:-4096}" # Max thinking tokens before responding (0=unlimited)
+LLM_BUDGET_ASK="${LLM_BUDGET_ASK:-4096}"     # Think budget for /ask conversations (extended thinking useful)
+LLM_BUDGET_AGENT="${LLM_BUDGET_AGENT:-4096}"  # Think budget for strategist/specialist (needs room for rich milestone context)
+LLM_BUDGET_ROUTER="${LLM_BUDGET_ROUTER:-4096}" # Think budget for router (pick tool + brief reasoning)
+LLM_BUDGET_JOURNAL="${LLM_BUDGET_JOURNAL:-4096}" # Think budget for journal (background utility)
+LLM_BUDGET_TOOL="${LLM_BUDGET_TOOL:-4096}"    # Think budget for tools (commit, web, recall, slash)
 
 # ── Sampling parameters (per-scenario, override model defaults) ──
 # ── Sampling parameters ────────────────────────────────────────
@@ -710,13 +710,14 @@ _llm_repeat_to_freq() {
 # ── Build llama.cpp payload ────────────────────────────────────
 # Translates Blue Lodge parameters into OpenAI-compatible payload
 # for llama-server's /v1/chat/completions endpoint.
-# Usage: _llm_build_llamacpp_payload "prompt" "system" "opts_json" "max_tokens" [stream]
+# Usage: _llm_build_llamacpp_payload "prompt" "system" "opts_json" "max_tokens" [stream] [grammar]
 _llm_build_llamacpp_payload() {
     local prompt="$1"
     local system="${2:-}"
     local opts_json="$3"
     local max_tokens="$4"
     local stream="${5:-true}"
+    local grammar="${6:-}"
 
     # Extract all sampling params in a single jq call (6→1).
     # Each jq invocation costs ~20-50ms on ARM (process spawn + parse).
@@ -744,6 +745,15 @@ _llm_build_llamacpp_payload() {
     # top_p is standard OpenAI; top_k and min_p are llama-server extensions
     # stream_options.include_usage tells llama-server to emit token counts
     # in the final SSE chunk before [DONE] (prompt_tokens + completion_tokens).
+    # ── Optional GBNF grammar for constrained decoding ──────
+    # When a grammar is provided, llama-server constrains token
+    # sampling to only produce output matching the grammar rules.
+    # This gives Layer 1 schema enforcement at the decoding level.
+    local _grammar_args=()
+    if [ -n "$grammar" ]; then
+        _grammar_args=(--arg grammar "$grammar")
+    fi
+
     if [ "$stream" = "true" ]; then
         jq -n \
             --argjson messages "$messages" \
@@ -755,7 +765,8 @@ _llm_build_llamacpp_payload() {
             --argjson top_k "$top_k" \
             --argjson min_p "$min_p" \
             --argjson stream "$stream" \
-            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream, stream_options:{include_usage:true}}'
+            "${_grammar_args[@]}" \
+            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream, stream_options:{include_usage:true}} + if $grammar then {grammar:$grammar} else {} end'
     else
         jq -n \
             --argjson messages "$messages" \
@@ -767,7 +778,8 @@ _llm_build_llamacpp_payload() {
             --argjson top_k "$top_k" \
             --argjson min_p "$min_p" \
             --argjson stream "$stream" \
-            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream}'
+            "${_grammar_args[@]}" \
+            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream} + if $grammar then {grammar:$grammar} else {} end'
     fi
 }
 
@@ -1286,11 +1298,42 @@ llm_debug_summary() {
 # connection alive. Response tokens go to stdout (captured by
 # the caller's $()). Thinking tokens go to /dev/tty when enabled.
 # Usage: llm_generate "prompt" [system_prompt] [max_tokens] [budget_tokens]
+# ── Grammar cache ──────────────────────────────────────────────
+# Avoids re-reading .gbnf files from disk on every LLM call.
+# Each grammar is ~200-500 bytes; caching saves ~5ms per call on ARM.
+declare -gA _LLM_GRAMMAR_CACHE 2>/dev/null || true
+
+# Load a GBNF grammar by schema name, using cache.
+# Usage: _llm_load_grammar "p1-evaluator" → grammar string on stdout
+_llm_load_grammar() {
+    local schema_name="$1"
+    [ -z "$schema_name" ] && return 1
+
+    # Return from cache if available
+    if [ -n "${_LLM_GRAMMAR_CACHE[$schema_name]+x}" ]; then
+        echo "${_LLM_GRAMMAR_CACHE[$schema_name]}"
+        return 0
+    fi
+
+    # Locate grammar file relative to LODGE_DIR
+    local grammar_file="${LODGE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/grammars/${schema_name}.gbnf"
+    if [ ! -f "$grammar_file" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] grammar file not found: $grammar_file" 2>/dev/null
+        return 1
+    fi
+
+    local grammar_text
+    grammar_text=$(cat "$grammar_file") || return 1
+    _LLM_GRAMMAR_CACHE["$schema_name"]="$grammar_text"
+    echo "$grammar_text"
+}
+
 llm_generate() {
     local prompt="$1"
     local system="${2:-}"
     local max_tokens="${3:-$LLM_MAX_TOKENS}"
     local budget="${4:-$LLM_BUDGET_TOKENS}"
+    local schema_name="${5:-}"
     local payload
 
     # ── Provider harness intercept ─────────────────────────────
@@ -1369,12 +1412,19 @@ llm_generate() {
     local _opts
     _opts=$(_llm_build_opts "$max_tokens")
 
+    # ── Load GBNF grammar for constrained decoding (Layer 1) ──
+    local _grammar=""
+    if [ -n "$schema_name" ] && [ "$_active_backend" = "llamacpp" ]; then
+        _grammar=$(_llm_load_grammar "$schema_name" 2>/dev/null) || true
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_grammar" ] && ui_dim "  [debug] grammar: loaded ${schema_name}.gbnf (${#_grammar} chars)" 2>/dev/null
+    fi
+
     # ── llama.cpp path (OpenAI-compatible) ─────────────────────
     # Early-return branch: avoids touching Ollama's thinking-token
     # parsing. llama-server has no thinking API — all output is
     # content tokens via SSE /v1/chat/completions.
     if [ "$_active_backend" = "llamacpp" ]; then
-        payload=$(_llm_build_llamacpp_payload "$prompt" "$system" "$_opts" "$max_tokens" true)
+        payload=$(_llm_build_llamacpp_payload "$prompt" "$system" "$_opts" "$max_tokens" true "$_grammar")
 
         local curl_timeout="${LLM_TIMEOUT:-600}"
         local timeout_cmd=""
@@ -2943,7 +2993,7 @@ llm_vision() {
     local image_path="$1"
     local prompt="${2:-Describe this image in detail. Note any text, objects, people, and relevant details.}"
     local system="${3:-}"
-    local max_tokens="${4:-${LLM_MAX_TOKENS:-20480}}"
+    local max_tokens="${4:-${LLM_MAX_TOKENS:-4096}}"
 
     if [ -z "$image_path" ]; then
         echo "ERROR: No image path provided"

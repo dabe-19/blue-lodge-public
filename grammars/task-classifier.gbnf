@@ -1,0 +1,9 @@
+# Task Classifier — abstract / concrete / combined
+# Used by _agent_classify_task() in lib/agent.sh
+# Layer 1 constrained decoding for llama-server grammar param
+
+root      ::= "{" ws "\"type\":" ws type_enum ws "}"
+
+type_enum ::= "\"abstract\"" | "\"concrete\"" | "\"combined\""
+
+ws        ::= [ \t\n]*

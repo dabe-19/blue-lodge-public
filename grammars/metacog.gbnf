@@ -1,0 +1,30 @@
+# Reflexive Metacognition — self-assessment
+# Used by reflexive_metacog_assess() Phase 2 in lib/reflexive.sh
+# Layer 1 constrained decoding for llama-server grammar param
+#
+# Fields:
+#   stuck      — boolean: is the agent in a loop?
+#   progress   — enum: none / slow / normal / regressing
+#   assessment — free text: LLM's 2-3 sentence self-assessment
+
+root          ::= "{" ws
+                  "\"stuck\":" ws bool_val "," ws
+                  "\"progress\":" ws progress_enum "," ws
+                  "\"assessment\":" ws string
+                  ws "}"
+
+bool_val      ::= "true" | "false"
+
+progress_enum ::= "\"none\"" | "\"slow\"" | "\"normal\"" | "\"regressing\""
+
+# ── String rule: quote-preserving (default) ────────────────
+# Allows escaped quotes, backslashes, and standard JSON escapes
+# inside string values. Use this when field values may contain
+# quoted text from command outputs or user input.
+char          ::= [^"\\] | "\\" ["\\/bfnrt]
+string        ::= "\"" char* "\""
+# ── String rule: quote-stripping (swap in if quotes unwanted) ──
+# char        ::= [^"\\]
+# string      ::= "\"" char* "\""
+
+ws            ::= [ \t\n]*

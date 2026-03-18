@@ -1,0 +1,25 @@
+# Honeydew Evaluator — SATISFIED / UNSATISFIED verdict + reason + recommendation
+# Used by _agent_evaluate_honeydew_item() in lib/agent.sh
+# Layer 1 constrained decoding for llama-server grammar param
+#
+# The recommendation field is always present in the schema.
+# For SATISFIED verdicts the model will produce an empty or "none"
+# recommendation — callers ignore it on the SATISFIED path.
+# For UNSATISFIED verdicts it should contain a slash command
+# from the AVAILABLE COMMANDS list (e.g. "/write report.md").
+
+root        ::= "{" ws "\"verdict\":" ws verdict_val "," ws "\"reason\":" ws string "," ws "\"recommendation\":" ws string ws "}"
+
+verdict_val ::= "\"SATISFIED\"" | "\"UNSATISFIED\""
+
+# ── String rule: quote-preserving (default) ────────────────
+# Allows escaped quotes, backslashes, and standard JSON escapes
+# inside string values. Use this when field values may contain
+# quoted text from command outputs or user input.
+char        ::= [^"\\] | "\\" ["\\/bfnrt]
+string      ::= "\"" char* "\""
+# ── String rule: quote-stripping (swap in if quotes unwanted) ──
+# char      ::= [^"\\]
+# string    ::= "\"" char* "\""
+
+ws          ::= [ \t\n]*

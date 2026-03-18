@@ -143,6 +143,79 @@ _strip_think_blocks() {
     }'
 }
 
+# ── JSON Extraction Helper (Layer 2) ───────────────────────────
+# Extracts and validates structured JSON from raw LLM output.
+# Handles think blocks, markdown code fences, and surrounding prose.
+#
+# Usage: _agent_extract_json "$raw_output" "field1" "field2" ...
+#   - Positional args after $1 are required field names.
+#   - Outputs clean JSON to stdout on success (exit 0).
+#   - Returns exit 1 on parse failure (caller falls back to Layer 3).
+#
+# Pipeline: strip think blocks → strip markdown → extract first
+# {...} → validate with jq (parse + required fields check).
+_agent_extract_json() {
+    local raw="$1"
+    shift
+    local -a required_fields=("$@")
+
+    # Step 1: Strip think blocks (reuse existing helper)
+    local cleaned
+    cleaned=$(echo "$raw" | _strip_think_blocks)
+
+    # Step 2: Strip markdown code fences (```json ... ```)
+    cleaned=$(echo "$cleaned" | sed '/^```[a-z]*/d')
+
+    # Step 3: Strip leading/trailing whitespace and asterisks
+    cleaned=$(echo "$cleaned" | sed 's/\*\+//g' | sed '/^[[:space:]]*$/d' | \
+              sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+    # Step 4: Extract the first JSON object {...}
+    # Use awk to find balanced braces — handles nested objects
+    local json_obj
+    json_obj=$(echo "$cleaned" | awk '
+        BEGIN { depth=0; capturing=0; output="" }
+        {
+            for (i=1; i<=length($0); i++) {
+                c = substr($0, i, 1)
+                if (c == "{" && !capturing) {
+                    capturing = 1
+                    depth = 1
+                    output = c
+                } else if (capturing) {
+                    output = output c
+                    if (c == "{") depth++
+                    else if (c == "}") {
+                        depth--
+                        if (depth == 0) {
+                            print output
+                            exit 0
+                        }
+                    }
+                }
+            }
+            if (capturing) output = output "\n"
+        }
+    ')
+
+    [ -z "$json_obj" ] && return 1
+
+    # Step 5: Validate JSON with jq
+    local validated
+    validated=$(echo "$json_obj" | jq -e '.' 2>/dev/null) || return 1
+
+    # Step 6: Check required fields exist (non-null)
+    local field
+    for field in "${required_fields[@]}"; do
+        if ! echo "$validated" | jq -e --arg f "$field" '.[$f] // empty' &>/dev/null; then
+            return 1
+        fi
+    done
+
+    echo "$validated"
+    return 0
+}
+
 # ── JSON Memory Helpers ─────────────────────────────────────────
 # Micro and macro memory use structured JSON for inter-agent context.
 # jq handles all read/modify/write operations to ensure valid JSON
@@ -494,11 +567,11 @@ _agent_honeydew_build() {
     local hd_file="$george_dir/$HONEYDEW_FILE"
     mkdir -p "$george_dir"
 
-    local decompose_prompt="Break this task into a numbered checklist of GENERAL objectives in execution order.
+    local decompose_prompt="Break this task into a checklist of GENERAL objectives in execution order.
 
 TASK: $task
 
-{\"output\":\"numbered list ONLY\",
+{\"output\":\"JSON object: {\\\"items\\\":[{\\\"task\\\":\\\"short imperative sentence\\\"},...]} OR numbered list\",
  \"each_item\":\"short imperative sentence — WHAT to achieve, not HOW\",
  \"describe\":\"GOAL only — never tools, commands, URLs, shell syntax\",
  \"good\":\"Identify the key objectives for the project\",
@@ -508,7 +581,7 @@ TASK: $task
  \"no_redundancy\":\"each item must be DISTINCT — never two items that describe the same work differently (e.g. 'summarize X' and 'present X concisely' are the SAME item — merge them)\",
  \"never\":[\"verification steps\",\"confirmation steps\",\"cleanup steps\",\"checkboxes\",\"redundant items that overlap with other items\"]}"
 
-    local decompose_sys="You are a task decomposition engine. Output ONLY a numbered list of general objectives. Each item: short imperative sentence - no more than 10 words. Describe WHAT, not HOW. No commands, URLs, tools, or parenthetical details. Plain numbered list only."
+    local decompose_sys="You are a task decomposition engine. Output a JSON object: {\"items\":[{\"task\":\"short imperative sentence\"},...]}. Each item: short imperative sentence - no more than 10 words. Describe WHAT, not HOW. No commands, URLs, tools, or parenthetical details."
 
     # ── Task-type–aware decomposition ─────────────────────────
     # For abstract/combined tasks, the first items MUST be internal
@@ -530,27 +603,35 @@ TASK: $task
 
     local raw_list
     local LLM_SCENARIO=strategist
-    raw_list=$(llm_generate "$decompose_prompt" "$decompose_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
+    raw_list=$(llm_generate "$decompose_prompt" "$decompose_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "honeydew-items")
 
-    # Clean think blocks
-    raw_list=$(echo "$raw_list" | _strip_think_blocks)
-    raw_list=$(echo "$raw_list" | sed '/^[[:space:]]*$/d')
+    # ── Layer 2: Try structured JSON extraction ─────────────────
+    local _json_items="" _items_json="" count=0
+    if _json_items=$(_agent_extract_json "$raw_list" "items"); then
+        # Build items with id/status/depth from the JSON tasks array
+        _items_json=$(echo "$_json_items" | jq '[.items | to_entries[] | {id: (.key + 1), task: .value.task, status: "pending", depth: 0}]')
+        count=$(echo "$_items_json" | jq 'length')
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew json extract: %d items\n' "$count" > /dev/tty 2>/dev/null
+    fi
 
-    # ── INLINE LIST SPLITTING ─────────────────────────────────
-    # Some models (gemma, granite) output all items on one line:
-    #   "1. Do thing one  2. Do thing two  3. Do thing three"
-    # Split these into separate lines BEFORE the line-by-line parser.
-    # Require exactly 1-2 whitespace chars AFTER the period/paren:
-    #   - 0 spaces → prose number ("in 2026.The")  → no split
-    #   - 1-2 spaces → real list item ("3. Do" / "3.  Do") → split
-    #   - 3+ spaces → end-of-sentence padding, not a list item → no split
-    # Also limit to 1-2 digit numbers to guard against years/prices.
-    raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\}\.[[:space:]]\{1,2\}\)/\1\n\2/g')
-    raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\})[[:space:]]\{1,2\}\)/\1\n\2/g')
+    # ── Layer 3: Legacy fallback — numbered list parsing ────────
+    if [ "$count" -eq 0 ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew: JSON extraction failed, falling back to numbered list parsing"
 
-    # Parse numbered lines into JSON array (shared helper — zero sed forks)
-    local _items_json count
-    _agent_parse_numbered_items 0 _items_json count <<< "$raw_list"
+        # Clean think blocks
+        raw_list=$(echo "$raw_list" | _strip_think_blocks)
+        raw_list=$(echo "$raw_list" | sed '/^[[:space:]]*$/d')
+
+        # ── INLINE LIST SPLITTING ─────────────────────────────────
+        # Some models (gemma, granite) output all items on one line:
+        #   "1. Do thing one  2. Do thing two  3. Do thing three"
+        # Split these into separate lines BEFORE the line-by-line parser.
+        raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\}\.[[:space:]]\{1,2\}\)/\1\n\2/g')
+        raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\})[[:space:]]\{1,2\}\)/\1\n\2/g')
+
+        # Parse numbered lines into JSON array (shared helper — zero sed forks)
+        _agent_parse_numbered_items 0 _items_json count <<< "$raw_list"
+    fi
 
     # Fallback: if LLM gave no parseable items, create a single item
     if [ "$count" -eq 0 ]; then
@@ -627,15 +708,21 @@ TASK: $task
 
     local raw_type
     local LLM_SCENARIO=strategist
-    raw_type=$(llm_generate "$classify_prompt" "$classify_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
+    raw_type=$(llm_generate "$classify_prompt" "$classify_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "task-classifier")
 
-    # Strip think blocks and whitespace
-    raw_type=$(echo "$raw_type" | _strip_think_blocks)
-    raw_type=$(echo "$raw_type" | tr -d '[:space:]')
-
-    # Parse JSON — extract "type" field
-    local parsed_type
-    parsed_type=$(echo "$raw_type" | jq -r '.type // empty' 2>/dev/null)
+    # ── Layer 2: Try structured JSON extraction ─────────────────
+    local _json_classify=""
+    local parsed_type=""
+    if _json_classify=$(_agent_extract_json "$raw_type" "type"); then
+        parsed_type=$(echo "$_json_classify" | jq -r '.type // empty')
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] classify json extract: type=%s\n' "$parsed_type" > /dev/tty 2>/dev/null
+    else
+        # ── Layer 3: Legacy fallback parsing ────────────────────
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] classify: JSON extraction failed, falling back to text parsing"
+        raw_type=$(echo "$raw_type" | _strip_think_blocks)
+        raw_type=$(echo "$raw_type" | tr -d '[:space:]')
+        parsed_type=$(echo "$raw_type" | jq -r '.type // empty' 2>/dev/null)
+    fi
 
     # Validate against enum; fallback to "concrete" on parse failure
     case "$parsed_type" in
@@ -1934,117 +2021,145 @@ _agent_evaluate_honeydew_item() {
  \"relevance_check\":{\"dates\":true,\"topics\":true,\"scope\":true,
    \"verify_against\":\"ORIGINAL USER REQUEST above\",
    \"output_substance\":\"do outputs contain specific data the item asked for?\"},
- \"respond\":\"SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION: <slash command from AVAILABLE COMMANDS>\",
+ \"respond\":\"JSON object: {\\\"verdict\\\":\\\"SATISFIED\\\" or \\\"UNSATISFIED\\\", \\\"reason\\\":\\\"brief reason\\\", \\\"recommendation\\\":\\\"slash command from AVAILABLE COMMANDS, or empty if SATISFIED\\\"}\",
  \"if_unsatisfied\":{\"explain_why\":true,
-   \"recommend_next\":\"pick from AVAILABLE COMMANDS below\"}}\n\nAVAILABLE COMMANDS (RECOMMENDATION must be one of these):\n${_eval_commands}"
+   \"recommendation_required\":\"must be a /command from AVAILABLE COMMANDS below\"}}\n\nAVAILABLE COMMANDS (recommendation must be one of these):\n${_eval_commands}"
 
     local _sys_cross=""
     [ -n "$_prior_milestones" ] && _sys_cross=" Judge whether this item was accomplished by ANY work so far — current action log OR prior completed milestones. If a prior milestone already did what the item asks, answer SATISFIED."
-    local eval_sys="Honeydew item evaluator.${_sys_cross} For current actions, judge from ACTUAL COMMAND OUTPUTS — ignore milestone pass/fail status. ${_eval_output_hint} Verify relevance to original request (dates, topics, scope). No markdown. Respond SATISFIED or UNSATISFIED: <reason>. RECOMMENDATION must be one of the AVAILABLE COMMANDS listed in the prompt."
+    local eval_sys="Honeydew item evaluator.${_sys_cross} For current actions, judge from ACTUAL COMMAND OUTPUTS — ignore milestone pass/fail status. ${_eval_output_hint} Verify relevance to original request (dates, topics, scope). No markdown. Respond with JSON: {\"verdict\":\"SATISFIED\" or \"UNSATISFIED\", \"reason\":\"brief reason\", \"recommendation\":\"slash command or empty\"}. If UNSATISFIED, recommendation must be a /command from the AVAILABLE COMMANDS list."
+
+    # ── Inject reflexive context into honeydew evaluator ─────
+    # When metacog reports stuck/saturated or soul gate rejections,
+    # note it in the eval prompt so the evaluator can adjust.
+    if [ "${REFLEXIVE_SELF_MODEL:-0}" -eq 1 ] && declare -f reflexive_metacog_state &>/dev/null; then
+        local _hd_mc_state
+        _hd_mc_state=$(reflexive_metacog_state 2>/dev/null)
+        if [ -n "$_hd_mc_state" ] && [ "$_hd_mc_state" != "OK" ]; then
+            eval_prompt="${eval_prompt}\n\nREFLEXIVE CONTEXT: ${_hd_mc_state:0:300}"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew-eval <- reflexive metacog"
+        fi
+    fi
+    if [ "${REFLEXIVE_SOUL_GATE:-0}" -eq 1 ] && [ "${_REFLEXIVE_SOUL_REJECTIONS:-0}" -gt 0 ]; then
+        eval_prompt="${eval_prompt}\n\nNOTE: ${_REFLEXIVE_SOUL_REJECTIONS} command(s) were blocked by the soul gate this session."
+    fi
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew-eval <- item #${_next_id}: ${_next_task:0:80}"
     ui_think "Honeydew evaluator: checking item #${_next_id}..."
     local verdict
     local LLM_SCENARIO=evaluator
-    verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
+    verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "honeydew-evaluator")
 
     # ── DEBUG: Honeydew evaluator raw verdict ───────────────────
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
 
-    # Clean up LLM output
-    verdict=$(echo "$verdict" | _strip_think_blocks)
-    verdict=$(echo "$verdict" | sed 's/\*\+//g')
-    verdict=$(echo "$verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-
-    local first_line
-    first_line=$(echo "$verdict" | head -1)
-    local verdict_word
-    # Extract just the verdict keyword — strip punctuation, quotes, AND handle
-    # "UNSATISFIED:reason" (no space after colon) by splitting on colon first.
-    # NOTE: Small models (4B) often echo the JSON schema back with the verdict
-    # wrapped in double quotes (e.g., '"SATISFIED"') — strip those too.
-    verdict_word=$(echo "$first_line" | awk -F'[: \t]' '{print $1}' | sed 's/^[*_"\x27]\+//;s/[*_.,"\x27]\+$//')
-
+    # ── Layer 2: Try structured JSON extraction ─────────────────
+    local _json_hd_verdict=""
+    local verdict_word=""
     _EVAL_HONEYDEW_REASON=""
     _EVAL_HONEYDEW_RECOMMENDATION=""
+
+    if _json_hd_verdict=$(_agent_extract_json "$verdict" "verdict" "reason" "recommendation"); then
+        verdict_word=$(echo "$_json_hd_verdict" | jq -r '.verdict // empty')
+        _EVAL_HONEYDEW_REASON=$(echo "$_json_hd_verdict" | jq -r '.reason // empty')
+        _EVAL_HONEYDEW_RECOMMENDATION=$(echo "$_json_hd_verdict" | jq -r '.recommendation // empty')
+        # Normalize empty/none recommendations
+        [[ "$_EVAL_HONEYDEW_RECOMMENDATION" == "none" || "$_EVAL_HONEYDEW_RECOMMENDATION" == "None" || "$_EVAL_HONEYDEW_RECOMMENDATION" == "N/A" ]] && _EVAL_HONEYDEW_RECOMMENDATION=""
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval json extract: verdict=%s reason=%s rec=%s\n' "$verdict_word" "${_EVAL_HONEYDEW_REASON:0:80}" "${_EVAL_HONEYDEW_RECOMMENDATION:0:80}" > /dev/tty 2>/dev/null
+    else
+        # ── Layer 3: Legacy fallback parsing ────────────────────
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew-eval: JSON extraction failed, falling back to text parsing"
+
+        verdict=$(echo "$verdict" | _strip_think_blocks)
+        verdict=$(echo "$verdict" | sed 's/\*\+//g')
+        verdict=$(echo "$verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+        local first_line
+        first_line=$(echo "$verdict" | head -1)
+        verdict_word=$(echo "$first_line" | awk -F'[: \t]' '{print $1}' | sed 's/^[*_"\x27]\+//;s/[*_.,"\x27]\+$//')
+
+        if [[ "$verdict_word" != "SATISFIED" ]]; then
+            if [[ "$first_line" == *":"* ]]; then
+                _EVAL_HONEYDEW_REASON=$(echo "$first_line" | sed 's/^[^:]*:[[:space:]]*//')
+            elif [ "$(echo "$first_line" | wc -w)" -gt 1 ]; then
+                _EVAL_HONEYDEW_REASON=$(echo "$first_line" | sed 's/^[^ ]* *//')
+            fi
+            # Multi-line verdicts: append lines 2-4 for richer context
+            local _extra_lines
+            _extra_lines=$(echo "$verdict" | sed -n '2,4p' | sed '/^[[:space:]]*$/d')
+            if [ -n "$_extra_lines" ]; then
+                _EVAL_HONEYDEW_REASON="${_EVAL_HONEYDEW_REASON:+${_EVAL_HONEYDEW_REASON} }$(echo "$_extra_lines" | tr '\n' ' ')"
+            fi
+        fi
+    fi
+
     if [[ "$verdict_word" == "SATISFIED" ]]; then
         ui_ok "Honeydew evaluator: item #${_next_id} satisfied"
         return 0
-    else
-        if [[ "$first_line" == *":"* ]]; then
-            _EVAL_HONEYDEW_REASON=$(echo "$first_line" | sed 's/^[^:]*:[[:space:]]*//')
-        elif [ "$(echo "$first_line" | wc -w)" -gt 1 ]; then
-            _EVAL_HONEYDEW_REASON=$(echo "$first_line" | sed 's/^[^ ]* *//')
-        fi
-        # Multi-line verdicts: append lines 2-4 for richer context
-        local _extra_lines
-        _extra_lines=$(echo "$verdict" | sed -n '2,4p' | sed '/^[[:space:]]*$/d')
-        if [ -n "$_extra_lines" ]; then
-            _EVAL_HONEYDEW_REASON="${_EVAL_HONEYDEW_REASON:+${_EVAL_HONEYDEW_REASON} }$(echo "$_extra_lines" | tr '\n' ' ')"
-        fi
+    fi
 
-        # ── Parse RECOMMENDATION with slash command extraction ──
-        # Look for RECOMMEND/RECOMMENDATION in the verdict text and
-        # extract the first slash command plus a capped number of
-        # following characters. This gives the strategist a focused,
-        # actionable recommendation without verbose prose.
+    # ── UNSATISFIED path: recommendation from Layer 3 fallback ───
+    # If Layer 2 already extracted recommendation from JSON, skip
+    # the regex extraction. Layer 3 falls back to regex parsing.
+    if [ -z "$_EVAL_HONEYDEW_RECOMMENDATION" ] && [ -z "$_json_hd_verdict" ]; then
         local _full_verdict_text
         _full_verdict_text=$(echo "$verdict" | tr '\n' ' ')
         local _rec_text=""
-        # Look for RECOMMEND: or RECOMMENDATION: prefix
         if [[ "$_full_verdict_text" =~ [Rr][Ee][Cc][Oo][Mm][Mm][Ee][Nn][Dd]([Aa][Tt][Ii][Oo][Nn])?:?[[:space:]]*(.*) ]]; then
             _rec_text="${BASH_REMATCH[2]}"
         fi
-        # Extract the first slash command from the recommendation (or full text)
         local _rec_source="${_rec_text:-$_full_verdict_text}"
         local _rec_chars="${AGENT_EVAL_REC_CHARS:-120}"
         if [[ "$_rec_source" =~ (/[a-z]+[[:space:]][^.]*) ]]; then
             local _slash_snippet="${BASH_REMATCH[1]}"
             _EVAL_HONEYDEW_RECOMMENDATION="${_slash_snippet:0:$_rec_chars}"
         elif [ -n "$_rec_text" ]; then
-            # Recommendation exists but no slash command — use capped text
             _EVAL_HONEYDEW_RECOMMENDATION="${_rec_text:0:$_rec_chars}"
         fi
+    fi
 
-        # ── Validate recommendation against real commands ──────
-        # Hard gate: if the evaluator hallucinated a command that
-        # doesn't exist (e.g. /summarize), discard it before it can
-        # reach the strategist feedback and create a stuck loop.
-        if [ "${AGENT_EVAL_VALIDATE:-1}" -eq 1 ] && [ -n "$_EVAL_HONEYDEW_RECOMMENDATION" ]; then
-            local _rec_base_cmd
-            _rec_base_cmd=$(echo "$_EVAL_HONEYDEW_RECOMMENDATION" | grep -oE '/[a-z]+' | head -1 | sed 's|^/||')
-            if [ -n "$_rec_base_cmd" ]; then
-                local _rec_valid=0
-                if [ "$_rec_base_cmd" = "bash" ]; then
-                    _rec_valid=1
-                elif declare -p CMD_REGISTRY &>/dev/null && [[ -n "${CMD_REGISTRY[$_rec_base_cmd]+x}" ]]; then
-                    _rec_valid=1
-                elif [ -f "${LODGE_COMMANDS_DIR:-$LODGE_DIR/commands}/${_rec_base_cmd}.sh" ]; then
-                    _rec_valid=1
-                fi
-                if [ "$_rec_valid" -eq 0 ]; then
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew-eval recommendation '/$_rec_base_cmd' not a valid command — discarded"
-                    _EVAL_HONEYDEW_RECOMMENDATION=""
-                fi
-                # Web-lock gate: discard /web recommendations when locked
-                if [ "$_rec_valid" -eq 1 ] && [ "$_rec_base_cmd" = "web" ] && [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew-eval recommendation '/web' discarded — web locked"
-                    _EVAL_HONEYDEW_RECOMMENDATION=""
-                fi
-                # Git-lock gate: discard /git recommendations when locked
-                if [ "$_rec_valid" -eq 1 ] && [ "$_rec_base_cmd" = "git" ] && [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew-eval recommendation '/git' discarded — git locked"
-                    _EVAL_HONEYDEW_RECOMMENDATION=""
-                fi
+    # Cap recommendation length
+    local _rec_chars="${AGENT_EVAL_REC_CHARS:-120}"
+    _EVAL_HONEYDEW_RECOMMENDATION="${_EVAL_HONEYDEW_RECOMMENDATION:0:$_rec_chars}"
+
+    # ── Validate recommendation against real commands ──────
+    # Hard gate: if the evaluator hallucinated a command that
+    # doesn't exist (e.g. /summarize), discard it before it can
+    # reach the strategist feedback and create a stuck loop.
+    if [ "${AGENT_EVAL_VALIDATE:-1}" -eq 1 ] && [ -n "$_EVAL_HONEYDEW_RECOMMENDATION" ]; then
+        local _rec_base_cmd
+        _rec_base_cmd=$(echo "$_EVAL_HONEYDEW_RECOMMENDATION" | grep -oE '/[a-z]+' | head -1 | sed 's|^/||')
+        if [ -n "$_rec_base_cmd" ]; then
+            local _rec_valid=0
+            if [ "$_rec_base_cmd" = "bash" ]; then
+                _rec_valid=1
+            elif declare -p CMD_REGISTRY &>/dev/null && [[ -n "${CMD_REGISTRY[$_rec_base_cmd]+x}" ]]; then
+                _rec_valid=1
+            elif [ -f "${LODGE_COMMANDS_DIR:-$LODGE_DIR/commands}/${_rec_base_cmd}.sh" ]; then
+                _rec_valid=1
+            fi
+            if [ "$_rec_valid" -eq 0 ]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew-eval recommendation '/$_rec_base_cmd' not a valid command — discarded"
+                _EVAL_HONEYDEW_RECOMMENDATION=""
+            fi
+            # Web-lock gate: discard /web recommendations when locked
+            if [ "$_rec_valid" -eq 1 ] && [ "$_rec_base_cmd" = "web" ] && [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew-eval recommendation '/web' discarded — web locked"
+                _EVAL_HONEYDEW_RECOMMENDATION=""
+            fi
+            # Git-lock gate: discard /git recommendations when locked
+            if [ "$_rec_valid" -eq 1 ] && [ "$_rec_base_cmd" = "git" ] && [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew-eval recommendation '/git' discarded — git locked"
+                _EVAL_HONEYDEW_RECOMMENDATION=""
             fi
         fi
-
-        local _reason_display="${_EVAL_HONEYDEW_REASON:+(${_EVAL_HONEYDEW_REASON:0:200})}"
-        ui_info "Honeydew evaluator: item #${_next_id} not yet satisfied ${_reason_display}"
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval full verdict:\n%s\n' "$verdict" > /dev/tty 2>/dev/null
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_EVAL_HONEYDEW_RECOMMENDATION" ] && printf '  [debug] honeydew-eval recommendation: %s\n' "$_EVAL_HONEYDEW_RECOMMENDATION" > /dev/tty 2>/dev/null
-        return 1
     fi
+
+    local _reason_display="${_EVAL_HONEYDEW_REASON:+(${_EVAL_HONEYDEW_REASON:0:200})}"
+    ui_info "Honeydew evaluator: item #${_next_id} not yet satisfied ${_reason_display}"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval full verdict:\n%s\n' "$verdict" > /dev/tty 2>/dev/null
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_EVAL_HONEYDEW_RECOMMENDATION" ] && printf '  [debug] honeydew-eval recommendation: %s\n' "$_EVAL_HONEYDEW_RECOMMENDATION" > /dev/tty 2>/dev/null
+    return 1
 }
 
 # ── Dual Evaluator System ─────────────────────────────────────
@@ -2129,43 +2244,56 @@ _agent_evaluate_milestone() {
    "build":"/build exit_0 required — /write alone NOT enough",
    "web_only":"INCOMPLETE",
    "reject":["todo","unimplemented","placeholder","stub","panic!()","empty body"]},
- "respond":"COMPLETE or INCOMPLETE: <reason>"}
+ "respond":"JSON object: {\"verdict\":\"COMPLETE\" or \"INCOMPLETE\", \"reason\":\"brief reason\"}"}
 EVAL_P1_JSON
 )"
 
-    local eval_sys="You are a pragmatic milestone evaluator. Judge by the MOST RECENT action in the log — earlier failed attempts do not invalidate a later success. exit_0 = success. Empty output = normal. No markdown formatting. Output ONLY the word COMPLETE or INCOMPLETE followed by a colon and brief reason. Do NOT echo or repeat the evaluation schema."
+    local eval_sys="You are a pragmatic milestone evaluator. Judge by the MOST RECENT action in the log — earlier failed attempts do not invalidate a later success. exit_0 = success. Empty output = normal. No markdown formatting. Respond with a JSON object: {\"verdict\":\"COMPLETE\" or \"INCOMPLETE\", \"reason\":\"brief reason\"}. Do NOT echo or repeat the evaluation schema."
 
     ui_think "Evaluator (pass 1): assessing milestone completion..."
     local verdict
     local LLM_SCENARIO=evaluator
-    verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
+    verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "p1-evaluator")
 
     # ── DEBUG: Evaluator raw verdict ────────────────────────────
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
 
-    # Clean up LLM output — strip think blocks, markdown, whitespace
-    verdict=$(echo "$verdict" | _strip_think_blocks)
-    # Strip markdown bold/italic — prevents contamination when verdict
-    # is re-injected into strategist as _last_eval_feedback.
-    verdict=$(echo "$verdict" | sed 's/\*\+//g')
-    verdict=$(echo "$verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-
-    local first_line
-    first_line=$(echo "$verdict" | head -1)
-    local verdict_word
-    verdict_word=$(echo "$first_line" | awk '{print $1}' | sed 's/^[*_"\x27]\+//;s/[*_:.,"\x27]\+$//')
-
-    # Parse INCOMPLETE reason
+    # ── Layer 2: Try structured JSON extraction ─────────────────
+    local _json_verdict=""
+    local verdict_word=""
     _EVAL_MILESTONE_REASON=""
+
+    if _json_verdict=$(_agent_extract_json "$verdict" "verdict" "reason"); then
+        verdict_word=$(echo "$_json_verdict" | jq -r '.verdict // empty')
+        _EVAL_MILESTONE_REASON=$(echo "$_json_verdict" | jq -r '.reason // empty')
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 json extract: verdict=%s reason=%s\n' "$verdict_word" "${_EVAL_MILESTONE_REASON:0:80}" > /dev/tty 2>/dev/null
+    else
+        # ── Layer 3: Legacy fallback parsing ────────────────────
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval-p1: JSON extraction failed, falling back to text parsing"
+
+        # Clean up LLM output — strip think blocks, markdown, whitespace
+        verdict=$(echo "$verdict" | _strip_think_blocks)
+        verdict=$(echo "$verdict" | sed 's/\*\+//g')
+        verdict=$(echo "$verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+        local first_line
+        first_line=$(echo "$verdict" | head -1)
+        verdict_word=$(echo "$first_line" | awk '{print $1}' | sed 's/^[*_"\x27]\+//;s/[*_:.,"\x27]\+$//')
+
+        if [[ "$verdict_word" != "COMPLETE" ]]; then
+            if [[ "$first_line" == *":"* ]]; then
+                _EVAL_MILESTONE_REASON=$(echo "$first_line" | sed 's/^[^:]*:[[:space:]]*//')
+            elif [ "$(echo "$first_line" | wc -w)" -gt 1 ]; then
+                _EVAL_MILESTONE_REASON=$(echo "$first_line" | sed 's/^[^ ]* *//')
+            fi
+            if [ -z "$_EVAL_MILESTONE_REASON" ] && [ "$(echo "$verdict" | wc -l)" -gt 1 ]; then
+                _EVAL_MILESTONE_REASON=$(echo "$verdict" | head -3)
+            fi
+        fi
+    fi
+
+    # ── INCOMPLETE verdict handling ───────────────────────────────
     if [[ "$verdict_word" != "COMPLETE" ]]; then
-        if [[ "$first_line" == *":"* ]]; then
-            _EVAL_MILESTONE_REASON=$(echo "$first_line" | sed 's/^[^:]*:[[:space:]]*//')
-        elif [ "$(echo "$first_line" | wc -w)" -gt 1 ]; then
-            _EVAL_MILESTONE_REASON=$(echo "$first_line" | sed 's/^[^ ]* *//')
-        fi
-        if [ -z "$_EVAL_MILESTONE_REASON" ] && [ "$(echo "$verdict" | wc -l)" -gt 1 ]; then
-            _EVAL_MILESTONE_REASON=$(echo "$verdict" | head -3)
-        fi
         local _reason_display="${_EVAL_MILESTONE_REASON:+(${_EVAL_MILESTONE_REASON:0:80})}"
         ui_info "Milestone evaluator: not complete ${_reason_display}"
         return 1
@@ -2185,11 +2313,9 @@ EVAL_P1_JSON
     #
     # Replaced fragile multi-layer regex with simple case keyword
     # matching — more readable, fewer false positives, zero forks.
-    if [[ "$first_line" == *":"* ]]; then
-        local _complete_reason
-        _complete_reason=$(echo "$first_line" | sed 's/^[^:]*:[[:space:]]*//')
+    if [ -n "${_EVAL_MILESTONE_REASON:-}" ]; then
         local _reason_lower
-        _reason_lower=$(echo "$_complete_reason" | tr '[:upper:]' '[:lower:]')
+        _reason_lower=$(echo "$_EVAL_MILESTONE_REASON" | tr '[:upper:]' '[:lower:]')
 
         local _contradiction=0
 
@@ -2220,7 +2346,6 @@ EVAL_P1_JSON
         fi
 
         if [ "$_contradiction" -eq 1 ]; then
-            _EVAL_MILESTONE_REASON="$_complete_reason"
             local _reason_display="${_EVAL_MILESTONE_REASON:+(${_EVAL_MILESTONE_REASON:0:80})}"
             ui_warn "Milestone evaluator: overrode contradictory COMPLETE ${_reason_display}"
             return 1
@@ -6166,7 +6291,21 @@ MEMEOF
             fi
         fi
 
-        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_sieve_hint}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
+        # ── Inject reflexive metacog into strategist ──────────
+        # When reflexive self-model is enabled, surface the metacog
+        # assessment so the strategist can see stuck loops, low
+        # success rates, and soul gate rejections.
+        local _strat_reflexive=""
+        if [ "${REFLEXIVE_SELF_MODEL:-0}" -eq 1 ] && declare -f reflexive_metacog_state &>/dev/null; then
+            local _mc_state
+            _mc_state=$(reflexive_metacog_state 2>/dev/null)
+            if [ -n "$_mc_state" ] && [ "$_mc_state" != "OK" ]; then
+                _strat_reflexive="\n\n>>> REFLEXIVE INSIGHT <<<\n${_mc_state:0:400}\n>>> Factor this self-assessment into your milestone choice. If stuck, try a different approach. <<<"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- reflexive metacog"
+            fi
+        fi
+
+        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_sieve_hint}${_strat_reflexive}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
 
         # ── Research→Delivery Gate ────────────────────────────
         # After N consecutive research milestones, inject a hard

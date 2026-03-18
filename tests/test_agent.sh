@@ -1424,8 +1424,8 @@ describe "Task completion evaluator"
     assert_ok $?
   }
 
-  it "LLM_EVALUATOR_TOKENS defaults to 512" && {
-    assert_eq "$LLM_EVALUATOR_TOKENS" "512"
+  it "LLM_EVALUATOR_TOKENS defaults to 4096" && {
+    assert_eq "$LLM_EVALUATOR_TOKENS" "4096"
   }
 
 # ── Macro memory enrichment: timestamps & command results ─────
@@ -3869,6 +3869,184 @@ describe "Journal debug suppression"
     body=$(declare -f journal_write_quip)
     echo "$body" | grep -q 'LODGE_DEBUG=0'
     assert_ok $? "quip writer must set LODGE_DEBUG=0"
+  }
+
+# ── Phase 10: JSON schema enforcement infrastructure ──────────
+describe "_agent_extract_json helper"
+
+  it "_agent_extract_json is defined" && {
+    declare -f _agent_extract_json &>/dev/null
+    assert_ok $?
+  }
+
+  it "extracts clean JSON with required fields" && {
+    _t_result=$(_agent_extract_json '{"verdict":"COMPLETE","reason":"all done"}' "verdict" "reason") || true
+    _t_v=$(echo "${_t_result:-}" | jq -r '.verdict' 2>/dev/null) || true
+    assert_eq "${_t_v:-}" "COMPLETE"
+  }
+
+  it "extracts JSON wrapped in think blocks" && {
+    _t_input=$(printf '<think>some reasoning</think>\n{"verdict":"INCOMPLETE","reason":"not finished"}')
+    _t_result=$(_agent_extract_json "$_t_input" "verdict" "reason") || true
+    _t_v=$(echo "${_t_result:-}" | jq -r '.verdict' 2>/dev/null) || true
+    assert_eq "${_t_v:-}" "INCOMPLETE"
+  }
+
+  it "extracts JSON wrapped in markdown code fences" && {
+    _t_input=$(printf '```json\n{"verdict":"SATISFIED","reason":"done","recommendation":"/write summary"}\n```')
+    _t_result=$(_agent_extract_json "$_t_input" "verdict" "reason") || true
+    _t_v=$(echo "${_t_result:-}" | jq -r '.verdict' 2>/dev/null) || true
+    assert_eq "${_t_v:-}" "SATISFIED"
+  }
+
+  it "returns exit 1 on missing required field" && {
+    _agent_extract_json '{"verdict":"COMPLETE"}' "verdict" "reason" >/dev/null 2>&1 || _t_exit=$?
+    assert_fail "${_t_exit:-0}"
+  }
+
+  it "returns exit 1 on invalid JSON" && {
+    _agent_extract_json 'not json at all' "verdict" >/dev/null 2>&1 || _t_exit=$?
+    assert_fail "${_t_exit:-0}"
+  }
+
+  it "handles JSON with trailing text after closing brace" && {
+    _t_result=$(_agent_extract_json '{"type":"abstract"} some extra text the model wrote' "type") || true
+    _t_v=$(echo "${_t_result:-}" | jq -r '.type' 2>/dev/null) || true
+    assert_eq "${_t_v:-}" "abstract"
+  }
+
+describe "GBNF grammar files"
+
+  it "grammars/ directory exists" && {
+    assert_dir_exists "$LODGE_DIR/grammars"
+  }
+
+  it "p1-evaluator.gbnf exists and has root rule" && {
+    assert_file_exists "$LODGE_DIR/grammars/p1-evaluator.gbnf"
+    grep -q 'root' "$LODGE_DIR/grammars/p1-evaluator.gbnf"
+    assert_ok $?
+  }
+
+  it "task-classifier.gbnf exists and has type_enum" && {
+    assert_file_exists "$LODGE_DIR/grammars/task-classifier.gbnf"
+    grep -q 'type_enum' "$LODGE_DIR/grammars/task-classifier.gbnf"
+    assert_ok $?
+  }
+
+  it "honeydew-items.gbnf exists and has item_list" && {
+    assert_file_exists "$LODGE_DIR/grammars/honeydew-items.gbnf"
+    grep -q 'item_list' "$LODGE_DIR/grammars/honeydew-items.gbnf"
+    assert_ok $?
+  }
+
+  it "honeydew-evaluator.gbnf has recommendation field" && {
+    assert_file_exists "$LODGE_DIR/grammars/honeydew-evaluator.gbnf"
+    grep -q 'recommendation' "$LODGE_DIR/grammars/honeydew-evaluator.gbnf"
+    assert_ok $?
+  }
+
+  it "metacog.gbnf exists and has progress_enum" && {
+    assert_file_exists "$LODGE_DIR/grammars/metacog.gbnf"
+    grep -q 'progress_enum' "$LODGE_DIR/grammars/metacog.gbnf"
+    assert_ok $?
+  }
+
+describe "Grammar integration in llm.sh"
+
+  it "_llm_load_grammar loads grammar from file" && {
+    declare -f _llm_load_grammar &>/dev/null
+    assert_ok $?
+  }
+
+  it "_llm_load_grammar returns grammar text for valid schema" && {
+    _LLM_GRAMMAR_CACHE=()
+    _t_g=$(_llm_load_grammar "p1-evaluator") || true
+    assert_contains "${_t_g:-}" "verdict_val"
+  }
+
+  it "_llm_load_grammar returns empty for unknown schema" && {
+    _LLM_GRAMMAR_CACHE=()
+    _t_g=$(_llm_load_grammar "nonexistent-grammar" 2>/dev/null) || true
+    assert_empty "${_t_g:-}"
+  }
+
+  it "_llm_load_grammar caches on second call" && {
+    _LLM_GRAMMAR_CACHE=()
+    _llm_load_grammar "task-classifier" >/dev/null
+    # Cache key should exist now
+    assert_not_empty "${_LLM_GRAMMAR_CACHE[task-classifier]:-}"
+  }
+
+describe "Schema enforcement wiring"
+
+  it "P1 evaluator passes p1-evaluator schema_name" && {
+    body=$(declare -f _agent_evaluate_milestone)
+    echo "$body" | grep -q '"p1-evaluator"'
+    assert_ok $? "P1 evaluator must pass p1-evaluator to llm_generate"
+  }
+
+  it "task classifier passes task-classifier schema_name" && {
+    body=$(declare -f _agent_classify_task)
+    echo "$body" | grep -q '"task-classifier"'
+    assert_ok $? "task classifier must pass task-classifier to llm_generate"
+  }
+
+  it "honeydew builder passes honeydew-items schema_name" && {
+    body=$(declare -f _agent_honeydew_build)
+    echo "$body" | grep -q '"honeydew-items"'
+    assert_ok $? "honeydew builder must pass honeydew-items to llm_generate"
+  }
+
+  it "honeydew evaluator passes honeydew-evaluator schema_name" && {
+    body=$(declare -f _agent_evaluate_honeydew_item)
+    echo "$body" | grep -q '"honeydew-evaluator"'
+    assert_ok $? "honeydew evaluator must pass honeydew-evaluator to llm_generate"
+  }
+
+  it "honeydew evaluator extracts recommendation from JSON" && {
+    body=$(declare -f _agent_evaluate_honeydew_item)
+    echo "$body" | grep -q '\.recommendation'
+    assert_ok $? "honeydew evaluator must extract .recommendation from JSON"
+  }
+
+describe "Reflexive integration"
+
+  it "strategist prompt includes reflexive metacog injection" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'REFLEXIVE INSIGHT'
+    assert_ok $? "strategist must have REFLEXIVE INSIGHT injection block"
+  }
+
+  it "strategist reflexive injection is guarded by REFLEXIVE_SELF_MODEL" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'REFLEXIVE_SELF_MODEL'
+    assert_ok $? "strategist reflexive must be gated by REFLEXIVE_SELF_MODEL"
+  }
+
+  it "honeydew evaluator includes reflexive context injection" && {
+    body=$(declare -f _agent_evaluate_honeydew_item)
+    echo "$body" | grep -q 'REFLEXIVE CONTEXT'
+    assert_ok $? "honeydew evaluator must inject reflexive context"
+  }
+
+  it "honeydew evaluator reflexive is guarded by REFLEXIVE_SELF_MODEL" && {
+    body=$(declare -f _agent_evaluate_honeydew_item)
+    echo "$body" | grep -q 'REFLEXIVE_SELF_MODEL'
+    assert_ok $? "evaluator reflexive must be gated by REFLEXIVE_SELF_MODEL"
+  }
+
+  it "metacog LLM call passes metacog schema_name" && {
+    source "$LODGE_DIR/lib/reflexive.sh"
+    body=$(declare -f reflexive_metacog_assess)
+    echo "$body" | grep -q '"metacog"'
+    assert_ok $? "metacog assess must pass metacog schema to llm_generate"
+  }
+
+  it "metacog uses _agent_extract_json for JSON parsing" && {
+    source "$LODGE_DIR/lib/reflexive.sh"
+    body=$(declare -f reflexive_metacog_assess)
+    echo "$body" | grep -q '_agent_extract_json'
+    assert_ok $? "metacog assess must use _agent_extract_json for Layer 2"
   }
 
 test_end

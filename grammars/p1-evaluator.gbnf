@@ -1,0 +1,19 @@
+# P1 Milestone Evaluator — COMPLETE / INCOMPLETE verdict
+# Used by _agent_evaluate_milestone() in lib/agent.sh
+# Layer 1 constrained decoding for llama-server grammar param
+
+root        ::= "{" ws "\"verdict\":" ws verdict_val "," ws "\"reason\":" ws string ws "}"
+
+verdict_val ::= "\"COMPLETE\"" | "\"INCOMPLETE\""
+
+# ── String rule: quote-preserving (default) ────────────────
+# Allows escaped quotes, backslashes, and standard JSON escapes
+# inside string values. Use this when field values may contain
+# quoted text from command outputs or user input.
+char        ::= [^"\\] | "\\" ["\\/bfnrt]
+string      ::= "\"" char* "\""
+# ── String rule: quote-stripping (swap in if quotes unwanted) ──
+# char      ::= [^"\\]
+# string    ::= "\"" char* "\""
+
+ws          ::= [ \t\n]*

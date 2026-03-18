@@ -573,13 +573,24 @@ reflexive_metacog_assess() {
             _mc_grades=$(printf '%s\n' "${_REFLEXIVE_PROMPT_GRADES[@]: -5}")
         fi
         local _mc_prompt="Iteration: ${loop_count}\nHeuristic assessment: ${assessment}\nRecent prompt grades:\n${_mc_grades:-none}"
-        local _mc_sys="You are George's metacognition module. Given the iteration count, heuristic assessment, and recent prompt grades, assess: Am I stuck? Am I making progress? Am I repeating myself? Be brutally honest in 2-3 sentences."
+        local _mc_sys="You are George's metacognition module. Given the iteration count, heuristic assessment, and recent prompt grades, respond with JSON: {\"stuck\":true/false, \"progress\":\"none\"|\"slow\"|\"normal\"|\"regressing\", \"assessment\":\"2-3 sentence analysis\"}. Be brutally honest."
         local _mc_result
         local LLM_SCENARIO=evaluator
-        _mc_result=$(llm_generate "$_mc_prompt" "$_mc_sys" 256 256 2>/dev/null)
+        _mc_result=$(llm_generate "$_mc_prompt" "$_mc_sys" 256 256 "metacog" 2>/dev/null)
         if [ -n "$_mc_result" ]; then
-            _mc_result=$(echo "$_mc_result" | head -4 | tr '\n' ' ')
-            assessment="${assessment} | LLM: ${_mc_result}"
+            # Layer 2: try structured JSON extraction
+            local _mc_json
+            if declare -f _agent_extract_json &>/dev/null && _mc_json=$(_agent_extract_json "$_mc_result" "stuck" "progress" "assessment"); then
+                local _mc_stuck _mc_progress _mc_assess_text
+                _mc_stuck=$(echo "$_mc_json" | jq -r '.stuck // false')
+                _mc_progress=$(echo "$_mc_json" | jq -r '.progress // "normal"')
+                _mc_assess_text=$(echo "$_mc_json" | jq -r '.assessment // empty')
+                assessment="${assessment} | LLM: stuck=${_mc_stuck} progress=${_mc_progress} ${_mc_assess_text}"
+            else
+                # Layer 3: fallback to raw text cleanup
+                _mc_result=$(echo "$_mc_result" | head -4 | tr '\n' ' ')
+                assessment="${assessment} | LLM: ${_mc_result}"
+            fi
         fi
     fi
 
