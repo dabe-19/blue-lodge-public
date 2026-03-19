@@ -3267,10 +3267,25 @@ _build_specialist_prompt() {
     #   (eval handles execution)
 
     if [ "$cmd_name" != "bash" ]; then
-        # Inject task context at the TOP of the system prompt so it
-        # occupies the primacy position. On 4B models, early system
-        # content outweighs everything else. Without this, syntax card
-        # examples in the "ex" field dominate the model's attention.
+        # ── RULES BLOCK (PRIMACY POSITION) ────────────────────
+        # Behavioral rules injected FIRST — absolute top of system
+        # prompt. On 3-4B models, content at the start (primacy) and
+        # end (recency) of the context gets strongest attention. Rules
+        # in the middle get ignored ("lost in the middle" effect).
+        # Previously these rules were buried in SPEC_PREAMBLE after
+        # the TASK block, right in the attention dead zone.
+        cat << 'SPEC_RULES'
+RULES (OBEY THESE — they override everything below):
+1. Output exactly ONE slash command on its own line, starting with /
+2. FORBIDDEN: NO backticks. NO code fences. NO --flags on slash commands. NO quotes on args. NO multiple commands per line.
+3. Slash commands use POSITIONAL args only. NEVER add --limit, --output, --source, --date, --format, or ANY --flag.
+4. Output the bare slash command. NO markdown formatting. Just: /command arg1 arg2
+SPEC_RULES
+        echo ""
+
+        # Inject task context after rules — still near the top
+        # (primacy region). TASK occupies position 2, close enough
+        # to rules that the model sees both in its attention window.
         if [ -n "$micro_objective" ]; then
             echo "TASK: $micro_objective"
             echo "Generate the command WITH REAL ARGUMENTS derived from the TASK above."
@@ -3319,55 +3334,9 @@ _build_specialist_prompt() {
                 fi
                 ;;
         esac
-        if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ] && [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
-            cat << 'SPEC_PREAMBLE'
-OUTPUT FORMAT: exactly ONE slash command on its own line, starting with /
-FORBIDDEN: code fences, quotes on args, multiple commands per line, /sandbox for slash commands
 
-COMMAND TYPES:
-  TOOLS (gather info, do work): /pgp /phone /vision /journal /edit /append /sandbox /container /secret /init /recall /download /build /test /fix /read /ls /grep /slash /vitals /backup bash
-  DELIVERY (present output to user): /social /email /commit /push /write /save /respond
-  NOTE: A full task may chain multiple DELIVERY commands across milestones (e.g. /write a report, then /social post it).
-  DEFAULT: If the task does NOT explicitly need a file, post, or social delivery, use /respond to deliver the answer.
-SPEC_PREAMBLE
-        elif [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
-            cat << 'SPEC_PREAMBLE'
-OUTPUT FORMAT: exactly ONE slash command on its own line, starting with /
-FORBIDDEN: code fences, quotes on args, multiple commands per line, /sandbox for slash commands
-
-COMMAND TYPES:
-  TOOLS (gather info, do work): /git /pgp /phone /vision /journal /edit /append /sandbox /container /secret /init /recall /download /build /test /fix /read /ls /grep /slash /vitals /backup bash
-  DELIVERY (present output to user): /social /email /commit /push /write /save /respond
-  NOTE: A full task may chain multiple DELIVERY commands across milestones (e.g. /write a report, then /social post it).
-  DEFAULT: If the task does NOT explicitly need a file, post, or social delivery, use /respond to deliver the answer.
-SPEC_PREAMBLE
-        elif [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
-            cat << 'SPEC_PREAMBLE'
-OUTPUT FORMAT: exactly ONE slash command on its own line, starting with /
-FORBIDDEN: code fences, quotes on args, multiple commands per line, /sandbox for slash commands
-
-COMMAND TYPES:
-  TOOLS (gather info, do work): /pgp /phone /vision /journal /edit /append /sandbox /container /secret /init /recall /download /build /test /fix /read /ls /grep /web /slash /vitals /backup bash
-  DELIVERY (present output to user): /social /email /commit /push /write /save /respond
-  NOTE: A full task may chain multiple DELIVERY commands across milestones (e.g. /write a report, then /social post it).
-  DEFAULT: If the task does NOT explicitly need a file, post, or social delivery, use /respond to deliver the answer.
-SPEC_PREAMBLE
-        else
-            cat << 'SPEC_PREAMBLE'
-OUTPUT FORMAT: exactly ONE slash command on its own line, starting with /
-FORBIDDEN: code fences, quotes on args, multiple commands per line, /sandbox for slash commands
-
-COMMAND TYPES:
-  TOOLS (gather info, do work): /git /pgp /phone /vision /journal /edit /append /sandbox /container /secret /init /recall /download /build /test /fix /read /ls /grep /web /slash /vitals /backup bash
-  DELIVERY (present output to user): /social /email /commit /push /write /save /respond
-  NOTE: A full task may chain multiple DELIVERY commands across milestones (e.g. /write a report, then /social post it).
-  DEFAULT: If the task does NOT explicitly need a file, post, or social delivery, use /respond to deliver the answer.
-SPEC_PREAMBLE
-        fi
-        echo "CRITICAL: Output the bare slash command. NO backticks. NO code fences. NO markdown formatting. Just the command."
-        echo ""
         echo "═══════════════════════════════════════"
-        echo "END OF INSTRUCTIONS — SYNTAX REFERENCE FOLLOWS"
+        echo "SYNTAX REFERENCE FOLLOWS"
         echo "═══════════════════════════════════════"
 
         # Docs injection is SKIPPED for the specialist. The syntax card
@@ -3447,7 +3416,7 @@ SPEC
   "scrape":"/web scrape <url> — alias for /web fetch. Downloads and extracts readable TEXT from a webpage.",
   "scrape-images":"/web scrape-images <url> — returns STRUCTURED JSON: {url, title, content, images:[]} with page text AND image URIs. Pass image URIs to /vision for analysis.",
   "images":"/web images <query> — searches for image URLs by keyword (Serper API). Returns image URLs only."},
-"rules":["search=QUERY (keywords), fetch/scrape/scrape-images=URL — NEVER swap","/web fetch (or /web scrape) returns TEXT only — use /web scrape-images when you need images","scrape-images returns {url,title,content,images[]} — pass images[] URLs to /vision","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples","LOCAL FILES: NEVER use /web fetch on local files or relative paths — use /read for text files, /vision for images","ONE URL PER COMMAND — never put multiple URLs in one /web call. To fetch 3 pages, output 3 separate /web fetch lines across 3 steps.","The URL must be the LAST token on the line — nothing after it. No trailing text, no next command.","NEVER fabricate or guess URLs — ONLY use URLs that appeared in prior /web search results or were provided by the user. If you need a URL, run /web search first."],
+"rules":["NO FLAGS: /web does NOT support --limit, --output, --source, --date, or ANY --flag. Use ONLY positional args: /web search <keywords> or /web fetch <url>","search=QUERY (keywords), fetch/scrape/scrape-images=URL — NEVER swap","/web fetch (or /web scrape) returns TEXT only — use /web scrape-images when you need images","scrape-images returns {url,title,content,images[]} — pass images[] URLs to /vision","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples","LOCAL FILES: NEVER use /web fetch on local files or relative paths — use /read for text files, /vision for images","ONE URL PER COMMAND — never put multiple URLs in one /web call. To fetch 3 pages, output 3 separate /web fetch lines across 3 steps.","The URL must be the LAST token on the line — nothing after it. No trailing text, no next command.","NEVER fabricate or guess URLs — ONLY use URLs that appeared in prior /web search results or were provided by the user. If you need a URL, run /web search first."],
 "search_tips":["3-5 keywords MAX — Google FAILS with long queries","Drop filler: the/a/for/including/regarding/comprehensive","NEVER paste entire milestone as search query","Extract keywords from TASK context only"],
 "FLOW CHAINS":["Text research: /web search -> /web fetch -> summarize","Scrape workflow: /web search -> /web scrape -> summarize","Image research: /web scrape-images <url> -> /vision <image_url_from_images[]>","Report: /web search -> /web fetch -> /write report"],
 "notes":["Do NOT fetch every URL. 1 search + 1-2 fetches enough","If scrape-images returns empty content, use /web fetch for same URL instead","/web fetch and /web scrape-images require a full https:// URL — for local files use /read or /vision instead"],
@@ -3681,6 +3650,22 @@ SPEC
                 echo "- /$base_cmd (no specific syntax card)"
                 ;;
         esac
+
+        # ── COMMAND TYPES (reference, after syntax card) ──────
+        # Moved from the old SPEC_PREAMBLE. This is reference material
+        # (which commands exist), not behavioral rules, so middle-of-
+        # prompt position is acceptable. The behavioral rules (OUTPUT
+        # FORMAT, FORBIDDEN) are at the TOP in the RULES block.
+        # Dynamic TOOLS list — single block handles web/git locking
+        # instead of four separate heredocs.
+        local _tools_list="/pgp /phone /vision /journal /edit /append /sandbox /container /secret /init /recall /download /build /test /fix /read /ls /grep /slash /vitals /backup bash"
+        [ "${_AGENT_WEB_LOCKED:-0}" -eq 0 ] && _tools_list="/web ${_tools_list}"
+        [ "${_AGENT_GIT_LOCKED:-0}" -eq 0 ] && _tools_list="/git ${_tools_list}"
+        echo ""
+        echo "AVAILABLE COMMANDS:"
+        echo "  TOOLS: ${_tools_list}"
+        echo "  DELIVERY: /social /email /commit /push /write /save /respond"
+        echo "  DEFAULT: If no file/post/social delivery needed, use /respond."
 
         # Inject per-command API key availability so the specialist
         # knows which services are configured and can avoid commands
@@ -4325,12 +4310,12 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         # prior outputs, created files, and error history. Without this,
         # multi-step objectives fail because the specialist can't adapt.
         # Uses inner_context cached above (same iteration, no mutations yet).
-        local _spec_tail="Write the COMPLETE command with all required arguments filled in from the MICRO OBJECTIVE. NEVER output a bare command name without arguments."
+        local _spec_tail="Write the COMPLETE command with all required arguments filled in from the MICRO OBJECTIVE. NEVER output a bare command name without arguments.\nRULES: ONE command, starting with /. NO --flags. NO code fences. Positional args only."
         # /web search gets a focused constraint — the model ignores
         # search_tips buried in the JSON card, so put it at the end
         # where recency bias makes it impossible to miss.
         if [[ "${selected_tool#/}" == "web" ]]; then
-            _spec_tail="Output ONLY ONE /web command. ONE URL per command — the URL is the LAST thing on the line, nothing after it. For /web search: extract 3-5 keywords FROM THE MICRO OBJECTIVE above. Drop filler words (the, a, for, in, to, and, or, about, including, regarding, comprehensive, professional, community, organizations, associations). DO NOT copy examples — derive keywords from the objective. NEVER output just '/web search' without keywords. To fetch multiple pages, use separate steps — one /web fetch per step."
+            _spec_tail="Output ONLY ONE /web command. ONE URL per command — the URL is the LAST thing on the line, nothing after it. For /web search: extract 3-5 keywords FROM THE MICRO OBJECTIVE above. Drop filler words (the, a, for, in, to, and, or, about, including, regarding, comprehensive, professional, community, organizations, associations). DO NOT copy examples — derive keywords from the objective. NEVER output just '/web search' without keywords. To fetch multiple pages, use separate steps — one /web fetch per step.\nRULES: NO --limit, --source, --date, --output, or ANY --flag. Positional args only: /web search <keywords> or /web fetch <url>"
         fi
         local specialist_prompt="MICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\n${_spec_tail}"
         # Inject reflexive context if available

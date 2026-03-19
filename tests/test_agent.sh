@@ -3398,7 +3398,7 @@ describe "Git/GitHub unification"
 
   it "specialist TOOLS list omits /github and /clone as separate entries" && {
     body=$(declare -f _build_specialist_prompt)
-    tools_line=$(echo "$body" | grep 'TOOLS (gather info')
+    tools_line=$(echo "$body" | grep '_tools_list=')
     echo "$tools_line" | grep -q '/github '
     assert_fail $? "specialist TOOLS list must NOT list /github separately"
     echo "$tools_line" | grep -q '/clone'
@@ -3407,8 +3407,7 @@ describe "Git/GitHub unification"
 
   it "specialist TOOLS list includes /git" && {
     body=$(declare -f _build_specialist_prompt)
-    tools_line=$(echo "$body" | grep 'TOOLS (gather info')
-    echo "$tools_line" | grep -q '/git '
+    echo "$body" | grep -q '_tools_list="/git '
     assert_ok $? "specialist TOOLS list must include /git"
   }
 

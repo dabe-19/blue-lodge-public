@@ -246,6 +246,30 @@ describe "commands_catalog"
     assert_contains "$_qt_out" "ARGS:hello world"
   }
 
+  it "dispatch strips hallucinated --flags from args" && {
+    _flag_handler() { echo "ARGS:$1"; }
+    commands_register "flagtest" "test" "_flag_handler"
+    _fl_out=$(commands_dispatch "/flagtest search top news --limit 5 --source cnn" 2>&1)
+    assert_contains "$_fl_out" "ARGS:search top news"
+  }
+
+  it "dispatch preserves URLs when stripping flags" && {
+    _fl_out=$(commands_dispatch "/flagtest fetch https://example.com --output json" 2>&1)
+    assert_contains "$_fl_out" "https://example.com"
+  }
+
+  it "dispatch skips flag stripping for content commands" && {
+    _content_handler() { echo "ARGS:$1"; }
+    commands_register "edit" "test" "_content_handler"
+    _fl_out=$(commands_dispatch "/edit file.py s/--old/--new/g" 2>&1)
+    assert_contains "$_fl_out" "ARGS:file.py s/--old/--new/g"
+  }
+
+  it "dispatch passes through clean args unchanged" && {
+    _fl_out=$(commands_dispatch "/flagtest search breaking news" 2>&1)
+    assert_contains "$_fl_out" "ARGS:search breaking news"
+  }
+
   it "plan catalog contains task freedom section" && {
     _plan_out=$(commands_catalog_plan)
     assert_contains "$_plan_out" "TASK FREEDOM"

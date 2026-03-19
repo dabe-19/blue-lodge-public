@@ -47,6 +47,33 @@ commands_dispatch() {
         args=$(tools_fix_llm_spacing "$args")
     fi
 
+    # ── Strip hallucinated --flags from slash command args ──────────
+    # Small LLMs hallucinate bash-style flags (--limit, --output, etc.)
+    # on slash commands. No slash command accepts --flags — they use
+    # positional args only. Content commands are skipped because their
+    # freeform text args may legitimately contain double-dashes.
+    case "$cmd" in
+        edit|respond|write|append|save|social|email|commit|fix) ;;
+        *)
+            local _cleaned=() _skip_next=0 _stripped_any=0
+            for _tok in $args; do
+                if [ "$_skip_next" -eq 1 ]; then
+                    _skip_next=0
+                    [[ "$_tok" == --* || "$_tok" == http* || "$_tok" == /* ]] || continue
+                fi
+                if [[ "$_tok" =~ ^--[a-zA-Z] ]]; then
+                    _skip_next=1; _stripped_any=1; continue
+                fi
+                _cleaned+=("$_tok")
+            done
+            if [ "$_stripped_any" -eq 1 ]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+                    ui_dim "  [debug] commands_dispatch: stripped flags from /$cmd: ${args} → ${_cleaned[*]}"
+                args="${_cleaned[*]}"
+            fi
+            ;;
+    esac
+
     # ── MCP intercept — when MCP is enabled and has a matching tool,
     # try it first. Falls through to normal dispatch on failure.
     if declare -f _mcp_dispatch_intercept &>/dev/null; then
@@ -311,7 +338,7 @@ commands_catalog() {
     # Commands split into TOOLS (gather/execute) and DELIVERY (output to user).
     cat << CATALOG
 {"SYSTEM CAPABILITIES & TOOLS":{"time":"${_catalog_ts}",
-"note":"Do NOT quote arguments (parsed by whitespace). Never guess syntax; use /recall <cmd>.",
+"note":"Do NOT quote arguments (parsed by whitespace). Slash commands do NOT accept --flags (no --limit, --output, --source, --date). ONLY positional args as shown in syntax. Never guess syntax; use /recall <cmd>.",
 "CORE WORKFLOW":["READ: /recall or source","GATHER: /web, /secret get","INGEST: /journal write","RESPOND: execute"],
 "DEFAULT RULE":"If the task does NOT explicitly require /write, /append, /edit, /save, /email, /social, /commit, or /push, use /respond to deliver the answer.",
 "commands":{
