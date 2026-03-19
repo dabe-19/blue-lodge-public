@@ -1411,7 +1411,6 @@ llm_generate() {
     local _grammar=""
     if [ -n "$schema_name" ] && [ "$_active_backend" = "llamacpp" ]; then
         _grammar=$(_llm_load_grammar "$schema_name" 2>/dev/null) || true
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_grammar" ] && ui_dim "  [debug] grammar: loaded ${schema_name}.gbnf (${#_grammar} chars)" 2>/dev/null
     fi
 
     # ── llama.cpp path (OpenAI-compatible) ─────────────────────
@@ -1440,6 +1439,7 @@ llm_generate() {
         local _dbg_in=0
 
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] generate (llamacpp): url=%s max_tokens=%s\n" "$LLAMA_CPP_URL" "$max_tokens" > "$_tty" 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_grammar" ] && printf " [debug] grammar: %s.gbnf (%d chars) → payload\n" "$schema_name" "${#_grammar}" > "$_tty" 2>/dev/null
 
         # ── Think-tag state machine for llamacpp ─────────────────
         # Reuses the same per-token inline-tag parsing infrastructure

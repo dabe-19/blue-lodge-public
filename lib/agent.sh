@@ -2207,14 +2207,22 @@ _agent_evaluate_milestone() {
     local eval_context=""
     if [ -n "$micro_file" ] && [ -f "$micro_file" ]; then
         local _eval_max_actions=10
+        local _failure_summary=""
         if [ "$skip_prior" -gt 0 ]; then
             local _total_actions
             _total_actions=$(_micro_action_count "$micro_file")
             _eval_max_actions=$((_total_actions - skip_prior))
             [ "$_eval_max_actions" -lt 1 ] && _eval_max_actions=1
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval context trim: $skip_prior prior INCOMPLETE actions skipped (showing last $_eval_max_actions of $_total_actions)"
+            # Build condensed summary of skipped attempts so evaluator
+            # knows what was tried without full context poisoning
+            _failure_summary="[${skip_prior} prior attempt(s) returned INCOMPLETE — now showing only the latest attempt]"
         fi
         eval_context=$(_micro_serialize_eval "$micro_file" "$_eval_max_actions")
+        # Prepend failure summary if we skipped prior attempts
+        if [ -n "$_failure_summary" ]; then
+            eval_context="${_failure_summary}\n${eval_context}"
+        fi
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: milestone-eval <- micro_memory action_log ($(echo "$eval_context" | wc -l) lines)"
     else
         ui_info "Milestone evaluator: no micro_memory available"
@@ -2296,7 +2304,10 @@ EVAL_P1_JSON
 
     # ── INCOMPLETE verdict handling ───────────────────────────────
     if [[ "$verdict_word" != "COMPLETE" ]]; then
-        local _reason_display="${_EVAL_MILESTONE_REASON:+(${_EVAL_MILESTONE_REASON:0:80})}"
+        # Word-boundary truncation: cut at 200 chars, trim to last space
+        local _reason_trunc="${_EVAL_MILESTONE_REASON:0:200}"
+        [ "${#_EVAL_MILESTONE_REASON}" -gt 200 ] && _reason_trunc="${_reason_trunc% *}…"
+        local _reason_display="${_reason_trunc:+(${_reason_trunc})}"
         ui_info "Milestone evaluator: not complete ${_reason_display}"
         return 1
     fi
@@ -3657,6 +3668,15 @@ SPEC
 "fill":{"<filepath>":"path to file to read"}}
 SPEC
                 ;;
+            soul)
+                cat << 'SPEC'
+{"cmd":"/soul","syntax":["/soul condensed","/soul reflect <topic>","/soul values"],
+"notes":["/soul condensed: returns a compact identity summary (NO arguments)","/soul reflect: reflect on a topic using soul values","/soul values: list core values"],
+"IMPORTANT":"'/soul condensed' takes NO arguments. Do NOT append text after 'condensed'.",
+"format_only_ex":["/soul condensed","/soul reflect <topic>"],
+"fill":{"<topic>":"topic to reflect on (only for /soul reflect)"}}
+SPEC
+                ;;
             *)
                 echo "- /$base_cmd (no specific syntax card)"
                 ;;
@@ -3839,6 +3859,8 @@ agent_inner_loop() {
     local _respond_consec=0        # Consecutive /respond counter (reset on non-respond)
     local _p1_incomplete_consec=0  # Consecutive P1 INCOMPLETE verdicts (pre-route breaker)
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
+    local -a _inner_cmd_history=() # Track commands for failure pattern detection
+    local -a _blocked_cmds=()      # Commands blocked after 3 consecutive failures
 
     while [ "$inner_attempts" -lt "$max_inner_loops" ]; do
         # ── CANCELLATION CHECK: Break immediately on Ctrl+C ─────
@@ -3964,6 +3986,10 @@ agent_inner_loop() {
         _router_context=$(_micro_serialize_lean "$micro_file")
         local route_prompt="Current date/time: ${_route_now}\nRoute the next action.\n"
         route_prompt="${route_prompt}\n$_router_context"
+        # Inject evaluator feedback so the router can avoid repeating failed commands
+        if [ -n "${_last_eval_feedback:-}" ]; then
+            route_prompt="${route_prompt}\n\n>>> EVALUATOR FEEDBACK <<<\n${_last_eval_feedback}\n>>> Pick a DIFFERENT command than what failed above. <<<"
+        fi
 
         local LLM_SCENARIO=router
         selected_tool=$(llm_generate "$route_prompt" "$router_sys" "${LLM_ROUTER_TOKENS:-512}" "$LLM_BUDGET_ROUTER")
@@ -4323,7 +4349,7 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         local _base_cmd="${selected_tool#/}"
         case "$_base_cmd" in
             web|social|recall|journal|ask|vitals|phone|pgp|backup|cd|build|test|fix|commit|push|clone|git|github|container|wallet|slash|secret|download|vision|sandbox)
-                _spec_tokens="${LLM_SPECIALIST_SHORT_TOKENS:-128}"
+                _spec_tokens="${LLM_SPECIALIST_SHORT_TOKENS:-1024}"
                 ;;
         esac
 
@@ -4936,6 +4962,38 @@ INTERLOCK_JSON
         fi
 
         if [ -n "$cmd" ]; then
+            # ── 3-STRIKE DUPLICATE COMMAND BLOCKER ──────────
+            # If the same base command has failed 3+ consecutive times,
+            # block it and force the router/specialist to pick something else.
+            if [ "$cmd_is_slash" -eq 1 ]; then
+                local _dup_base="${cmd%% *}"
+                _dup_base="${_dup_base#/}"
+                # Check if this command is in the blocked list
+                local _is_blocked=0
+                local _blk
+                for _blk in "${_blocked_cmds[@]}"; do
+                    [ "$_blk" = "$_dup_base" ] && _is_blocked=1 && break
+                done
+                if [ "$_is_blocked" -eq 1 ]; then
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] BLOCKED: /$_dup_base (3-strike rule)"
+                    _micro_add_warning "$micro_file" "BLOCKED: /$_dup_base has failed 3+ times in a row. Use a DIFFERENT command."
+                    inner_attempts=$((inner_attempts + 1))
+                    continue
+                fi
+                # Count consecutive occurrences of this base command at the tail
+                local _consec=0 _hc
+                for (( _hc=${#_inner_cmd_history[@]}-1; _hc>=0; _hc-- )); do
+                    [[ "${_inner_cmd_history[$_hc]}" == "/$_dup_base"* ]] && _consec=$((_consec + 1)) || break
+                done
+                if [ "$_consec" -ge 3 ]; then
+                    _blocked_cmds+=("$_dup_base")
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] /$_dup_base added to blocked list after $_consec consecutive failures"
+                    _micro_add_warning "$micro_file" "BLOCKED: /$_dup_base has failed $_consec times in a row. Use a DIFFERENT command."
+                    inner_attempts=$((inner_attempts + 1))
+                    continue
+                fi
+            fi
+
             # ── AGENT OUTPUT DIR ENFORCEMENT ────────────────
             # Force /write, /save, /append to save under AGENT_OUTPUT_DIR
             # so that all agent output lands in one predictable location.
@@ -5023,6 +5081,9 @@ INTERLOCK_JSON
             fi
             output="${output:0:2000}"
             fi  # end _cd_intercepted guard
+
+            # Track all executed commands for failure pattern analysis
+            _inner_cmd_history+=("$cmd")
 
             if [ $exit_code -eq 0 ]; then
                 # ── POST-INIT WORKDIR UPDATE ───────────────────
@@ -5271,14 +5332,24 @@ INTERLOCK_JSON
                 # Some commands return usage/help text on exit 0 when
                 # called with missing or wrong arguments. The P1 evaluator
                 # can't distinguish "usage printed" from "work done".
-                # Detect common usage patterns and inject a warning.
+                # Detect common usage patterns and inject warning + syntax card.
                 if [ -n "$output" ] && [ "${#output}" -lt 2000 ]; then
                     local _out_lower
                     _out_lower=$(echo "$output" | tr '[:upper:]' '[:lower:]')
                     if [[ "$_out_lower" =~ (^usage:|^usage |subcommands:|commands:|options:|synopsis:) ]] || \
                        [[ "$_out_lower" =~ (^[[:space:]]*\/[a-z]+[[:space:]]+(search|fetch|post|send|read|write|new|build|test|run)[[:space:]]) && "$_out_lower" =~ (description|help|available) ]]; then
-                        _micro_add_warning "$micro_file" "Command returned USAGE/HELP text, not actual work output. The command was likely called with wrong or missing arguments. Retry with correct arguments."
-                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] usage/help output detected — warning injected"
+                        # Extract base command and look up its syntax card
+                        local _usage_base="${cmd%% *}"
+                        _usage_base="${_usage_base#/}"
+                        local _usage_card=""
+                        _usage_card=$(_build_specialist_prompt "/$_usage_base" 2>/dev/null | sed -n '/^SYNTAX CARD:/,/^$/{ /^SYNTAX CARD:/d; /^$/d; p; }' | head -20)
+                        local _usage_warning="Command returned USAGE/HELP text, not actual work output. The command was likely called with wrong or missing arguments."
+                        if [ -n "$_usage_card" ]; then
+                            _usage_warning="${_usage_warning} CORRECT SYNTAX: ${_usage_card}"
+                        fi
+                        _usage_warning="${_usage_warning} Retry with correct arguments."
+                        _micro_add_warning "$micro_file" "$_usage_warning"
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] usage/help output detected — warning + syntax card injected"
                     fi
                 fi
 
@@ -5305,8 +5376,33 @@ INTERLOCK_JSON
                         # LLM router can pick a different tool instead
                         # of hammering the same command in a loop.
                         _p1_incomplete_consec=$((_p1_incomplete_consec + 1))
+
+                        # ── Build failure-aware feedback ──────────
                         if [ -n "${_EVAL_MILESTONE_REASON:-}" ]; then
-                            _micro_add_note "$micro_file" "EVAL_FEEDBACK: Milestone NOT complete — ${_EVAL_MILESTONE_REASON}. Try a different approach or tool."
+                            local _fb_msg="EVAL_FEEDBACK: Milestone NOT complete (attempt ${_p1_incomplete_consec}/${max_inner_loops}) — ${_EVAL_MILESTONE_REASON}."
+                            # At 3+ failures, add command pattern analysis
+                            if [ "$_p1_incomplete_consec" -ge 3 ]; then
+                                # Count occurrences of each base command
+                                local _fb_pattern=""
+                                local _fb_cmd _fb_base _fb_seen=""
+                                for _fb_cmd in "${_inner_cmd_history[@]}"; do
+                                    _fb_base="${_fb_cmd%% *}"
+                                    _fb_base="${_fb_base#/}"
+                                    [[ " $_fb_seen " == *" $_fb_base "* ]] && continue
+                                    _fb_seen="$_fb_seen $_fb_base"
+                                    local _fb_count=0
+                                    for _fb_c2 in "${_inner_cmd_history[@]}"; do
+                                        [[ "${_fb_c2%% *}" == *"$_fb_base"* ]] && _fb_count=$((_fb_count + 1))
+                                    done
+                                    [ "$_fb_count" -ge 2 ] && _fb_pattern="${_fb_pattern}/${_fb_base} (${_fb_count}x), "
+                                done
+                                _fb_pattern="${_fb_pattern%, }"
+                                [ -n "$_fb_pattern" ] && _fb_msg="${_fb_msg} WARNING: Same approach has failed repeatedly. Previous attempts: ${_fb_pattern}."
+                                _fb_msg="${_fb_msg} MUST use a DIFFERENT command or approach."
+                            else
+                                _fb_msg="${_fb_msg} Try a different approach or tool."
+                            fi
+                            _micro_add_note "$micro_file" "$_fb_msg"
                         fi
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] P1 INCOMPLETE (${_p1_incomplete_consec} consecutive) — feedback injected"
                     fi
@@ -5884,6 +5980,24 @@ MEMEOF
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] auto-created GEORGE.md in $workdir"
     fi
 
+    # ── Populate workspace layout in GEORGE.md ────────────────
+    # Give the agent visibility into the project's file structure
+    # so it doesn't have to /ls blindly. Only updates if the section
+    # is still the placeholder text.
+    local _ws_section
+    _ws_section=$(memory_get_section "Workspace Layout" "$workdir" 2>/dev/null)
+    if [ -z "$_ws_section" ] || [[ "$_ws_section" == *"auto-populated"* ]] || [[ "$_ws_section" == *"(none)"* ]]; then
+        local _ws_layout=""
+        if [ -d "$workdir" ]; then
+            _ws_layout=$(find "$workdir" -maxdepth 2 -not -path '*/.george/*' -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -name '.*' 2>/dev/null \
+                | sort | head -30 | sed "s|^$workdir/||" | sed '/^$/d')
+        fi
+        if [ -n "$_ws_layout" ] && declare -f memory_update_section &>/dev/null; then
+            memory_update_section "Workspace Layout" "$_ws_layout" "$workdir"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] populated workspace layout in GEORGE.md"
+        fi
+    fi
+
     # ── Flush stale memory from previous task ──────────────────
     # Previous task's memory files are preserved for review after
     # the task completes (they've already been summarized to journal).
@@ -6290,6 +6404,14 @@ MEMEOF
             if [ -n "$_has_prior_ctx" ] && [ "$_has_prior_ctx" != "null" ] && [ "$_has_prior_ctx" != "[]" ]; then
                 _sieve_hint='\n\n>>> PRIOR KNOWLEDGE AVAILABLE — your task memory already contains prior_context from previous tasks. Use /recall or /journal to retrieve details BEFORE resorting to /web search. <<<'
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- prior-context sieve hint"
+            else
+                # No prior context found — tell strategist to skip /recall
+                local _has_prior_note
+                _has_prior_note=$(jq -r '.prior_context_note // empty' "$macro_file" 2>/dev/null)
+                if [ -n "$_has_prior_note" ]; then
+                    _sieve_hint='\n\n>>> NO PRIOR KNOWLEDGE — recall DB was searched and found nothing relevant. Do NOT use /recall. Start with /web search or direct action. <<<'
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- no-prior-context sieve hint"
+                fi
             fi
         fi
 
@@ -6307,7 +6429,7 @@ MEMEOF
             fi
         fi
 
-        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_sieve_hint}${_strat_reflexive}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
+        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_sieve_hint}${_strat_reflexive}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_last_eval_feedback:+\n\n>>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<\n${_last_eval_feedback}\n>>> You MUST change your approach based on the above. Do NOT repeat the same command. <<<}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
 
         # ── Research→Delivery Gate ────────────────────────────
         # After N consecutive research milestones, inject a hard
@@ -6427,11 +6549,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
    \"max_consecutive\":2,\"then\":\"MUST use delivery command (\/respond,\/write,\/email,\/save,\/social,\/build)\"},
  \"failure\":{\"no_repeat\":true,\"advance_next_part\":true},
  \"honeydew\":{\"pick\":\"FIRST [ ] item by number — do NOT skip items\"},
- \"multi_delivery\":\"Different honeydew items may each need their own DELIVERY command (e.g. item 2=\/write report, item 3=\/email report). This is normal — chain them across milestones.\"}}${_research_gate}${_pref_hint}${_milestone_history}${_last_eval_feedback:+
-
->>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<
-${_last_eval_feedback}
->>> You MUST address the above feedback in your next milestone. <<<}"
+ \"multi_delivery\":\"Different honeydew items may each need their own DELIVERY command (e.g. item 2=\/write report, item 3=\/email report). This is normal — chain them across milestones.\"}}${_research_gate}${_pref_hint}${_milestone_history}"
 
         ui_think "Strategist: determining next milestone..."
         local milestone
@@ -6793,6 +6911,8 @@ ${_last_eval_feedback}
                     # ── Honeydew item evaluation ──────────────
                     if _agent_evaluate_honeydew_item "$macro_file" "$george_dir/micro_memory.json" "$milestone" "$workdir"; then
                         # Honeydew item satisfied — mark it done
+                        # Reset blocked commands — new task may need previously-blocked tools
+                        _blocked_cmds=()
                         if [ -n "${_EVAL_HONEYDEW_ITEM_NUM:-}" ]; then
                             _agent_honeydew_mark "$_EVAL_HONEYDEW_ITEM_NUM" "$workdir"
                             # Reprint full honeydew checklist with [x] marks
