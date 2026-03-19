@@ -701,10 +701,10 @@ TASK: $task
 
 {\"definitions\":{
  \"concrete\":\"Task has an identified deliverable: send email, write code, post message, build project, create file, deploy, scaffold\",
- \"abstract\":\"Open-ended exploration: research, compare, recall, explore, investigate, analyze, review memory, examine, summarize findings\",
- \"combined\":\"Research or exploration FOLLOWED BY a deliverable: research then write, compare then email, explore then build\"},
+ \"abstract\":\"Open-ended LOCAL exploration using only internal data: recall, review memory, examine local files, analyze existing code, explore project structure, reflect on past work\",
+ \"combined\":\"Task requires OUTSIDE information OR research FOLLOWED BY a deliverable. Anything needing web search, current events, news, weather, prices, live data, external APIs, or real-time information is combined. Also: research then write, compare then email, explore then summarize external topics\"},
  \"output\":\"JSON ONLY: {\\\"type\\\":\\\"abstract\\\"} or {\\\"type\\\":\\\"concrete\\\"} or {\\\"type\\\":\\\"combined\\\"}\",
- \"rules\":[\"output ONLY the JSON object\",\"no prose\",\"no explanation\"]}"
+ \"rules\":[\"output ONLY the JSON object\",\"no prose\",\"no explanation\",\"if the task needs ANY outside or external information, classify as combined, NOT abstract\"]}"
 
     local classify_sys="You are a task classifier. Output ONLY a JSON object with a single key 'type' whose value is 'abstract', 'concrete', or 'combined'. No other text."
 
