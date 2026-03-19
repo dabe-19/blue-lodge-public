@@ -53,9 +53,8 @@ build: $build_cmd
 test: $test_cmd
 
 ## Agent Capabilities
-Available commands: /web search|fetch, /recall, /journal, /write, /save, /append, /edit, /build, /test, /fix, /commit, /push, /clone, /git, /social, /email, /phone, /download, /vision, /container, /sandbox
+Available commands: /recall, /journal, /write, /save, /append, /edit, /build, /test, /fix, /commit, /push, /clone, /git, /social, /email, /phone, /download, /vision, /container, /sandbox
 Use /recall to retrieve prior task data before starting new work.
-Use /web search <keywords> to research topics. Use /web fetch <url> to read pages.
 Use /write <path> <content> to create files. Use /edit <path> to modify files.
 
 ## Workspace Layout

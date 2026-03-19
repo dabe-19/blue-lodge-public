@@ -4946,6 +4946,27 @@ INTERLOCK_JSON
                 inner_attempts=$((inner_attempts + 1))
                 continue
             fi
+
+            # ── SPECIALIST TOOL MISMATCH CHECK ─────────────────
+            # The router selected a specific tool, but the specialist
+            # may ignore it and output a different command. When the
+            # specialist's command doesn't match the router's selection,
+            # reject it to prevent loops where the specialist fixates
+            # on a blocked/wrong tool. Skip for bash and content-bearing
+            # commands where the specialist has discretion.
+            if [ -n "${selected_tool:-}" ] && [ "$selected_tool" != "bash" ]; then
+                local _routed_base="${selected_tool#/}"
+                if [ "$_spec_cmd_name" != "$_routed_base" ]; then
+                    # Allow sub-commands (e.g. router="web", specialist="web search")
+                    # by checking if the specialist's command starts with the routed tool
+                    if [[ "$_spec_cmd_name" != "$_routed_base" ]] && [[ "$cmd" != "/${_routed_base} "* ]] && [[ "$cmd" != "/${_routed_base}" ]]; then
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Specialist tool mismatch: router=/$_routed_base specialist=/$_spec_cmd_name — rejecting"
+                        _micro_add_warning "$micro_file" "TOOL MISMATCH: Router selected /$_routed_base but specialist output /$_spec_cmd_name. You MUST use /$_routed_base for this action."
+                        inner_attempts=$((inner_attempts + 1))
+                        continue
+                    fi
+                fi
+            fi
         fi
 
         # ── EMPTY COMMAND HANDLER ──────────────────────────────
@@ -6409,7 +6430,11 @@ MEMEOF
                 local _has_prior_note
                 _has_prior_note=$(jq -r '.prior_context_note // empty' "$macro_file" 2>/dev/null)
                 if [ -n "$_has_prior_note" ]; then
-                    _sieve_hint='\n\n>>> NO PRIOR KNOWLEDGE — recall DB was searched and found nothing relevant. Do NOT use /recall. Start with /web search or direct action. <<<'
+                    if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
+                        _sieve_hint='\n\n>>> NO PRIOR KNOWLEDGE — recall DB was searched and found nothing relevant. Do NOT use /recall. Use /grep, /journal, /ls, or /read to explore local sources. <<<'
+                    else
+                        _sieve_hint='\n\n>>> NO PRIOR KNOWLEDGE — recall DB was searched and found nothing relevant. Do NOT use /recall. Start with /web search or direct action. <<<'
+                    fi
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- no-prior-context sieve hint"
                 fi
             fi
@@ -6545,7 +6570,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
    \"no_prefix\":true,\"no_intro\":true,
    \"only_configured\":true},
  \"research\":{\"when\":\"missing info (keys,URLs,packages,specs) OR need to generate ideas\/reason through options\",
-   \"tools\":[\"\/web search\",\"\/recall\"${_brainstorm_rule:+,\"\/brainstorm\"},\"\/web fetch\",\"\/web scrape\",\"\/web scrape-images\",\"\/social discord read\",\"\/secret get\"${_ask_rule:+,\"\/ask\"}],
+   \"tools\":[\"\/recall\"${_brainstorm_rule:+,\"\/brainstorm\"}$([ "${_AGENT_WEB_LOCKED:-0}" -ne 1 ] && echo ',\"\/web search\",\"\/web fetch\",\"\/web scrape\",\"\/web scrape-images\"'),\"\/social discord read\",\"\/secret get\"${_ask_rule:+,\"\/ask\"}],
    \"max_consecutive\":2,\"then\":\"MUST use delivery command (\/respond,\/write,\/email,\/save,\/social,\/build)\"},
  \"failure\":{\"no_repeat\":true,\"advance_next_part\":true},
  \"honeydew\":{\"pick\":\"FIRST [ ] item by number — do NOT skip items\"},
