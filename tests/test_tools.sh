@@ -997,10 +997,98 @@ describe "tools_expand_file_refs — auto file reference expansion"
     _teardown_tools
   }
 
+# ── tools_expand_file_refs — max_chars truncation ──────────────
+describe "tools_expand_file_refs — max_chars parameter"
+
+  it "truncates expanded content to max_chars limit" && {
+    _setup_tools
+    # Create a file with 2000 chars of content
+    python3 -c "print('A' * 2000)" > "$TMPDIR_TOOLS/big.txt"
+    result=$(tools_expand_file_refs "$TMPDIR_TOOLS/big.txt" "." 500)
+    assert_contains "$result" "AAAA"
+    assert_contains "$result" "chars truncated"
+    _teardown_tools
+  }
+
+  it "does not truncate when content is under max_chars" && {
+    _setup_tools
+    echo "short content" > "$TMPDIR_TOOLS/small.txt"
+    result=$(tools_expand_file_refs "$TMPDIR_TOOLS/small.txt" "." 500)
+    assert_contains "$result" "short content"
+    assert_not_contains "$result" "truncated"
+    _teardown_tools
+  }
+
+  it "does not truncate when max_chars is 0 (unlimited)" && {
+    _setup_tools
+    python3 -c "print('B' * 2000)" > "$TMPDIR_TOOLS/big2.txt"
+    result=$(tools_expand_file_refs "$TMPDIR_TOOLS/big2.txt" "." 0)
+    assert_contains "$result" "BBBB"
+    assert_not_contains "$result" "truncated"
+    _teardown_tools
+  }
+
+  it "does not truncate when max_chars is empty (unlimited)" && {
+    _setup_tools
+    python3 -c "print('C' * 2000)" > "$TMPDIR_TOOLS/big3.txt"
+    result=$(tools_expand_file_refs "$TMPDIR_TOOLS/big3.txt" "." "")
+    assert_contains "$result" "CCCC"
+    assert_not_contains "$result" "truncated"
+    _teardown_tools
+  }
+
+  it "truncation message shows correct remaining chars" && {
+    _setup_tools
+    python3 -c "print('D' * 1500)" > "$TMPDIR_TOOLS/med.txt"
+    result=$(tools_expand_file_refs "$TMPDIR_TOOLS/med.txt" "." 1000)
+    assert_contains "$result" "truncated"
+    # 1501 total (1500 D + newline), capped at 1000 = ~501 truncated
+    assert_match "$result" "[0-9]+ chars truncated"
+    _teardown_tools
+  }
+
+# ── tools_expand_file_refs — LODGE_DIR path resolution ─────────
+describe "tools_expand_file_refs — LODGE_DIR-aware path resolution"
+
+  it "resolves LODGE_DIR-prefixed paths as fully qualified" && {
+    _setup_tools
+    _saved_lodge_dir="$LODGE_DIR"
+    LODGE_DIR="$TMPDIR_TOOLS/lodge"
+    mkdir -p "$LODGE_DIR"
+    echo "lodge content" > "$LODGE_DIR/notes.md"
+    result=$(tools_expand_file_refs "$LODGE_DIR/notes.md" "/some/other/workdir")
+    assert_contains "$result" "lodge content"
+    LODGE_DIR="$_saved_lodge_dir"
+    _teardown_tools
+  }
+
+# ── tools_expand_file_refs — workspace path resolution ─────────
+describe "tools_expand_file_refs — /write-style workspace resolution"
+
+  it "strips leading / and resolves relative to workdir" && {
+    _setup_tools
+    mkdir -p "$TMPDIR_TOOLS/responses"
+    echo "workspace file" > "$TMPDIR_TOOLS/responses/out.md"
+    result=$(tools_expand_file_refs "/responses/out.md" "$TMPDIR_TOOLS")
+    assert_contains "$result" "workspace file"
+    _teardown_tools
+  }
+
+  it "does not resolve absolute path outside workdir" && {
+    result=$(tools_expand_file_refs "/nonexistent/abs/path/file.txt" "/tmp")
+    assert_contains "$result" "/nonexistent/abs/path/file.txt"
+    assert_not_contains "$result" "truncated"
+  }
+
+# ── tools_expand_file_refs — AGENT_FILE_EXPAND toggle ──────────
 describe "tools_expand_file_refs — AGENT_FILE_EXPAND toggle"
 
   it "file expand is enabled by default" && {
     assert_eq "${AGENT_FILE_EXPAND:-1}" "1"
+  }
+
+  it "AGENT_FILE_EXPAND_CHARS defaults to 1000" && {
+    assert_eq "${AGENT_FILE_EXPAND_CHARS:-1000}" "1000"
   }
 
 test_end

@@ -436,6 +436,24 @@ describe "Limits command"
     AGENT_FILE_EXPAND=1  # restore
   }
 
+  it "_cmd_limits file-expand-chars sets AGENT_FILE_EXPAND_CHARS" && {
+    _cmd_limits "file-expand-chars 500" >/dev/null 2>&1
+    assert_eq "$AGENT_FILE_EXPAND_CHARS" "500"
+    AGENT_FILE_EXPAND_CHARS=1000  # restore
+  }
+
+  it "_cmd_limits file-expand-chars rejects out-of-range values" && {
+    AGENT_FILE_EXPAND_CHARS=1000
+    _cmd_limits "file-expand-chars 99999" >/dev/null 2>&1
+    assert_eq "$AGENT_FILE_EXPAND_CHARS" "1000"
+  }
+
+  it "_cmd_limits file-expand-chars accepts 0 for unlimited" && {
+    _cmd_limits "file-expand-chars 0" >/dev/null 2>&1
+    assert_eq "$AGENT_FILE_EXPAND_CHARS" "0"
+    AGENT_FILE_EXPAND_CHARS=1000  # restore
+  }
+
   it "_cmd_limits dm-scan-chars sets AGENT_DM_SCAN_CHARS" && {
     _cmd_limits "dm-scan-chars 120" >/dev/null 2>&1
     assert_eq "$AGENT_DM_SCAN_CHARS" "120"

@@ -217,12 +217,17 @@ _cmd_ask() {
 }
 _cmd_respond() {
     local text="$1"
+    local workdir="${2:-.}"
     if [ -z "$text" ]; then
         ui_err "Nothing to respond with"
         return 1
     fi
     # Expand LLM escape sequences (\n → newline, etc.)
     text=$(ui_expand_escapes "$text")
+    # Auto-expand file references so operator sees file contents inline
+    if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then
+        text=$(tools_expand_file_refs "$text" "$workdir" "${AGENT_FILE_EXPAND_CHARS:-1000}")
+    fi
     echo "" >/dev/tty 2>/dev/null
     # Render with markdown-lite formatting directly to TTY so the user
     # sees it even when the agent loop captures stdout for the action log.
@@ -1142,6 +1147,13 @@ _cmd_limits() {
                     ui_err "File expand must be 'on' or 'off' (or 1/0, enable/disable)"
                 fi
             fi ;;
+        file-expand-chars|fileexpandchars|file_expand_chars)
+            if [ -z "$value" ]; then
+                ui_info "File expand max chars: ${AGENT_FILE_EXPAND_CHARS:-1000} (default: 1000)"
+                ui_dim "Max characters per expanded file in command content (0=unlimited)"
+            else
+                _limits_set AGENT_FILE_EXPAND_CHARS "File expand max chars" "$value" 0 50000
+            fi ;;
         dm-scan-chars|dmscan|dm-scan)
             if [ -z "$value" ]; then
                 ui_info "DM scan chars: ${AGENT_DM_SCAN_CHARS:-80} (default: 80)"
@@ -1184,6 +1196,7 @@ _cmd_limits() {
             AGENT_MAX_STEPS=40
             AGENT_MAX_DEPTH=3
             AGENT_FILE_EXPAND=1
+            AGENT_FILE_EXPAND_CHARS=1000
             AGENT_DM_SCAN_CHARS=80
             AGENT_HONEYDEW_EXPAND=1
             AGENT_HONEYDEW_REWRITE=1

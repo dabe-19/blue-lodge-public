@@ -46,6 +46,7 @@ AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-1}"              # Smart command routing
 AGENT_ASK_USER="${AGENT_ASK_USER:-1}"                    # Allow George to /ask the user questions during tasks: 0=disabled, 1=enabled
 AGENT_BRAINSTORM="${AGENT_BRAINSTORM:-1}"                  # Allow George to /brainstorm (self-reason) during tasks: 0=disabled, 1=enabled
 AGENT_FILE_EXPAND="${AGENT_FILE_EXPAND:-1}"              # Auto-expand file references in /social, /email, /write text: 0=disabled, 1=enabled
+AGENT_FILE_EXPAND_CHARS="${AGENT_FILE_EXPAND_CHARS:-1000}"  # Max chars per expanded file in specialist output (0=unlimited)
 AGENT_DM_SCAN_CHARS="${AGENT_DM_SCAN_CHARS:-80}"          # Characters to scan for recipient names from start of DM text
 AGENT_PRE_ROUTE="${AGENT_PRE_ROUTE:-1}"                  # Pre-route: extract /cmd from milestone, skip router: 0=disabled, 1=enabled
 AGENT_FAST_ROUTE="${AGENT_FAST_ROUTE:-1}"                # Fast-route: 0=disabled, 1=keywords+lean, 2=fuzzy only (lean prompt, no keyword matching)
@@ -3632,7 +3633,7 @@ SPEC
                 ;;
             read)
                 cat << 'SPEC'
-{"cmd":"/read","syntax":"/read <file>","notes":"Read first 100 lines of file.",
+{"cmd":"/read","syntax":"/read <file>","notes":"Read first 100 lines of file. Tip: file paths in /write, /social, /email, /respond args auto-expand to contents — use /read only to inspect a file before deciding next steps.",
 "format_only_ex":["/read <filepath>"],
 "fill":{"<filepath>":"path to file to read"}}
 SPEC
@@ -5035,6 +5036,31 @@ INTERLOCK_JSON
                 _cmd_display="$cmd"
             fi
             ui_step "Running: $_cmd_display"
+
+            # ── FILE REF EXPANSION IN COMMAND CONTENT ────────
+            # For content-bearing commands, auto-expand file path
+            # tokens to file contents before dispatch. Runs AFTER
+            # ui_step so operator sees clean filenames in "Running:".
+            # /respond is handled inside its own handler instead.
+            if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && [ "$cmd_is_slash" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then
+                case "$cmd" in
+                    /write\ *|/append\ *|/social\ *|/email\ *)
+                        local _fe_verb _fe_rest _fe_first _fe_content _fe_expanded
+                        _fe_verb=${cmd%% *}
+                        _fe_rest=${cmd#* }
+                        _fe_first=${_fe_rest%% *}
+                        _fe_content=${_fe_rest#"$_fe_first"}
+                        _fe_content=${_fe_content# }
+                        if [ -n "$_fe_content" ]; then
+                            _fe_expanded=$(tools_expand_file_refs "$_fe_content" "$workdir" "${AGENT_FILE_EXPAND_CHARS:-1000}")
+                            if [ "$_fe_expanded" != "$_fe_content" ]; then
+                                cmd="${_fe_verb} ${_fe_first} ${_fe_expanded}"
+                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] file-expand: expanded refs in %s content\n' "$_fe_verb" > /dev/tty 2>/dev/null
+                            fi
+                        fi
+                        ;;
+                esac
+            fi
 
             # ── DIRECTORY CHANGE INTERCEPTION ─────────────────
             # /cd and /init change directories but commands_dispatch
@@ -6503,6 +6529,7 @@ You MUST explore LOCAL sources using these commands:
   /ls [path]                — list directory contents
   /cd <path>                — change working directory
   /read <filepath>          — read a local file
+File paths in command arguments auto-expand to file contents.
 RULES: Use /recall with SHORT keyword queries (2-5 words). NEVER use long sentences.
 Use /grep to search for specific patterns in files.
 Use /ls and /cd to explore the filesystem.

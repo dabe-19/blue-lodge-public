@@ -877,10 +877,12 @@ ${_after}"
 #   .ts .go .rb .c .h .cpp .hpp .java .kt .sql .graphql .tex
 #   .org .diff .patch
 #
-# Usage: expanded=$(tools_expand_file_refs "$text" "$workdir")
+# Usage: expanded=$(tools_expand_file_refs "$text" "$workdir" [max_chars])
+#   max_chars: if >0, truncate each expanded file to N chars (0 or empty=unlimited)
 tools_expand_file_refs() {
     local text="$1"
     local workdir="${2:-.}"
+    local max_chars="${3:-}"
     local changed=0
 
     # Quick bail — no dots means no file extensions
@@ -960,12 +962,22 @@ tools_expand_file_refs() {
             fpath="${fpath#(}"
             fpath="${fpath%)}"
 
-            # Try: as-is, then relative to workdir
+            # Try: LODGE_DIR-qualified, as-is, workspace-relative, then /write-style sandbox
             local resolved=""
-            if [ -f "$fpath" ]; then
+            if [[ "$fpath" == "${LODGE_DIR:-$HOME/blue-lodge}"/* ]] && [ -f "$fpath" ]; then
+                # Fully qualified path within LODGE_DIR — use as-is
+                resolved="$fpath"
+            elif [ -f "$fpath" ]; then
                 resolved="$fpath"
             elif [ -f "$workdir/$fpath" ]; then
                 resolved="$workdir/$fpath"
+            elif [[ "$fpath" == /* ]]; then
+                # Absolute path not found as-is — strip leading /
+                # and resolve relative to workdir (/write-style sandboxing)
+                local _rel="${fpath#/}"
+                if [ -f "$workdir/$_rel" ]; then
+                    resolved="$workdir/$_rel"
+                fi
             fi
 
             if [ -n "$resolved" ]; then
@@ -991,7 +1003,16 @@ tools_expand_file_refs() {
                 fi
 
                 if [ -n "$_content" ]; then
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] file-ref expand: %s (%d bytes)\n' "$resolved" "${#_content}" > /dev/tty 2>/dev/null
+                    # Truncate to max_chars if set
+                    local _truncated=0
+                    if [ -n "$max_chars" ] && [ "$max_chars" -gt 0 ] 2>/dev/null && [ "${#_content}" -gt "$max_chars" ]; then
+                        local _orig_len=${#_content}
+                        _content="${_content:0:$max_chars}"
+                        _content="${_content}
+... ($((_orig_len - max_chars)) chars truncated)"
+                        _truncated=1
+                    fi
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] file-ref expand: %s (%d chars%s)\n' "$resolved" "${#_content}" "$([ $_truncated -eq 1 ] && echo ", capped at $max_chars")" > /dev/tty 2>/dev/null
 
                     # Preserve any trailing punctuation that was stripped
                     local suffix="${token#"$clean"}"
