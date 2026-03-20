@@ -4048,4 +4048,85 @@ describe "Reflexive integration"
     assert_ok $? "metacog assess must use _agent_extract_json for Layer 2"
   }
 
+# ── Written file path tracking ───────────────────────────────
+describe "Written file path tracking"
+
+  it "_AGENT_WRITTEN_FILES array is declared in agent_run" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_AGENT_WRITTEN_FILES=()'
+    assert_ok $? "_AGENT_WRITTEN_FILES must be declared as empty array"
+  }
+
+  it "successful /write commands are tracked in _AGENT_WRITTEN_FILES" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_AGENT_WRITTEN_FILES'
+    assert_ok $? "inner loop must reference _AGENT_WRITTEN_FILES"
+    echo "$body" | grep -q '_wf_rest'
+    assert_ok $? "must extract rest of command for path"
+  }
+
+  it "file path is extracted from first word after verb" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_wf_path'
+    assert_ok $? "must have _wf_path variable"
+    echo "$body" | grep -q 'awk.*print \$1'
+    assert_ok $? "must extract first word as path via awk"
+  }
+
+  it "duplicate file paths are not added twice" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_wf_dup=0'
+    assert_ok $? "must have deduplication check"
+    echo "$body" | grep -q '_wf_dup=1'
+    assert_ok $? "must flag duplicates"
+  }
+
+  it "operator-guided writes are also tracked" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_wfg_path'
+    assert_ok $? "operator-guided path extraction must exist"
+    echo "$body" | grep -q 'operator_guided'
+    assert_ok $? "operator_guided source tag must exist"
+  }
+
+  it "specialist prompt injects CREATED FILES when array is populated" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'CREATED FILES (this task)'
+    assert_ok $? "specialist must inject CREATED FILES header"
+    echo "$body" | grep -q 'Reference these EXACT paths'
+    assert_ok $? "specialist must instruct to use exact paths"
+  }
+
+  it "specialist CREATED FILES injection is guarded by array length" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q '#_AGENT_WRITTEN_FILES\[@\]'
+    assert_ok $? "must check array length before injecting"
+  }
+
+  it "strategist prompt injects created files when present" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_strat_written_files'
+    assert_ok $? "strategist must have _strat_written_files variable"
+    echo "$body" | grep -q 'CREATED FILES (this task)'
+    assert_ok $? "strategist must inject CREATED FILES header"
+  }
+
+  it "strategist created files injection is included in macro_prompt" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'strat_written_files'
+    assert_ok $? "macro_prompt must include _strat_written_files"
+  }
+
+  it "written-files debug logging is present" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'written-files: tracked'
+    assert_ok $? "must debug-log when a file path is tracked"
+    body_spec=$(declare -f _build_specialist_prompt)
+    echo "$body_spec" | grep -q 'specialist <- created files'
+    assert_ok $? "must debug-log specialist injection"
+    body_strat=$(declare -f agent_run)
+    echo "$body_strat" | grep -q 'strategist <- created files'
+    assert_ok $? "must debug-log strategist injection"
+  }
+
 test_end

@@ -3336,6 +3336,21 @@ SPEC_RULES
                 ;;
         esac
 
+        # ── CREATED FILES INJECTION ───────────────────────────
+        # When files have been written during this task, inject their
+        # exact paths so the specialist uses correct paths instead of
+        # hallucinating plausible but wrong locations.
+        if declare -p _AGENT_WRITTEN_FILES &>/dev/null && [ "${#_AGENT_WRITTEN_FILES[@]}" -gt 0 ]; then
+            echo "CREATED FILES (this task):"
+            local _wf_entry
+            for _wf_entry in "${_AGENT_WRITTEN_FILES[@]}"; do
+                echo "  - $_wf_entry"
+            done
+            echo "Reference these EXACT paths. Do NOT guess or modify them."
+            echo ""
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- created files (%d entries)\n' "${#_AGENT_WRITTEN_FILES[@]}" > /dev/tty 2>/dev/null
+        fi
+
         echo "═══════════════════════════════════════"
         echo "SYNTAX REFERENCE FOLLOWS"
         echo "═══════════════════════════════════════"
@@ -5288,6 +5303,29 @@ INTERLOCK_JSON
 
                 _micro_add_action "$micro_file" "$cmd" "SUCCESS" 0 "$output" "specialist"
 
+                # ── WRITTEN FILE TRACKING ──────────────────────
+                # Accumulate file paths from successful /write, /save,
+                # /append so the strategist and specialist can reference
+                # exact paths in later milestones.
+                case "$cmd" in
+                    /write\ *|/save\ *|/append\ *)
+                        local _wf_rest="${cmd#* }"
+                        local _wf_path
+                        _wf_path=$(printf '%s' "$_wf_rest" | awk '{print $1}')
+                        if [ -n "$_wf_path" ]; then
+                            local _wf_dup=0
+                            local _wf_existing
+                            for _wf_existing in "${_AGENT_WRITTEN_FILES[@]}"; do
+                                [ "$_wf_existing" = "$_wf_path" ] && { _wf_dup=1; break; }
+                            done
+                            if [ "$_wf_dup" -eq 0 ]; then
+                                _AGENT_WRITTEN_FILES+=("$_wf_path")
+                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] written-files: tracked %s (%d total)\n' "$_wf_path" "${#_AGENT_WRITTEN_FILES[@]}" > /dev/tty 2>/dev/null
+                            fi
+                        fi
+                        ;;
+                esac
+
                 # ── /ask USER INPUT: special memory handling ───
                 # When the agent uses /ask to get info from the user,
                 # tag the action as user_input and inject the answer
@@ -5811,6 +5849,22 @@ Output a slash command line starting with / OR a bash code block."
                 } >> "$fail_file"
                 local summary="Completed with operator guidance"
                 _micro_add_action "$micro_file" "$final_cmd" "SUCCESS" 0 "$final_output" "operator_guided"
+                # Track operator-guided file writes
+                case "$final_cmd" in
+                    /write\ *|/save\ *|/append\ *)
+                        local _wfg_rest="${final_cmd#* }"
+                        local _wfg_path
+                        _wfg_path=$(printf '%s' "$_wfg_rest" | awk '{print $1}')
+                        if [ -n "$_wfg_path" ]; then
+                            local _wfg_dup=0
+                            local _wfg_existing
+                            for _wfg_existing in "${_AGENT_WRITTEN_FILES[@]}"; do
+                                [ "$_wfg_existing" = "$_wfg_path" ] && { _wfg_dup=1; break; }
+                            done
+                            [ "$_wfg_dup" -eq 0 ] && _AGENT_WRITTEN_FILES+=("$_wfg_path")
+                        fi
+                        ;;
+                esac
                 _micro_set_result "$micro_file" "COMPLETE" "$summary"
                 _macro_add_milestone "$macro_file" "$micro_objective" "$summary" "$final_cmd" "ACTION"
                 return 0
@@ -6143,6 +6197,10 @@ MEMEOF
     # strategist doesn't regenerate the same failed milestone in a
     # loop. Each entry is "status|milestone_text".
     local -a _attempted_milestones=()
+    # Accumulate file paths from successful /write, /save, /append
+    # across all milestones so strategist and specialist can reference
+    # exact paths instead of hallucinating plausible ones.
+    local -a _AGENT_WRITTEN_FILES=()
     # Track consecutive research-only milestones (web/recall) so
     # the strategist is forced toward delivery after saturation.
     local _research_milestone_count=0
@@ -6465,7 +6523,22 @@ MEMEOF
             fi
         fi
 
-        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_sieve_hint}${_strat_reflexive}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_last_eval_feedback:+\n\n>>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<\n${_last_eval_feedback}\n>>> You MUST change your approach based on the above. Do NOT repeat the same command. <<<}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
+        # ── Inject created file paths into strategist ─────────
+        # Surface exact file paths of files written during this task
+        # so the strategist references correct paths in milestones
+        # instead of hallucinating plausible but wrong locations.
+        local _strat_written_files=""
+        if [ "${#_AGENT_WRITTEN_FILES[@]}" -gt 0 ]; then
+            _strat_written_files="\n\nCREATED FILES (this task):"
+            local _swf_entry
+            for _swf_entry in "${_AGENT_WRITTEN_FILES[@]}"; do
+                _strat_written_files="${_strat_written_files}\n  - ${_swf_entry}"
+            done
+            _strat_written_files="${_strat_written_files}\nReference these EXACT paths in milestones. Do NOT guess paths."
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- created files (${#_AGENT_WRITTEN_FILES[@]} entries)"
+        fi
+
+        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_last_eval_feedback:+\n\n>>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<\n${_last_eval_feedback}\n>>> You MUST change your approach based on the above. Do NOT repeat the same command. <<<}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
 
         # ── Research→Delivery Gate ────────────────────────────
         # After N consecutive research milestones, inject a hard
