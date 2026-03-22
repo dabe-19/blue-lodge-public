@@ -2063,6 +2063,67 @@ describe "Honeydew list system"
     assert_ok $? "Inner loop must inject honeydew status"
   }
 
+# ── Honeydew JSON resilience (Granite format) ─────────────────
+describe "Honeydew JSON resilience"
+
+  it "honeydew jq handles Granite string-array format" && {
+    # Granite outputs: {"items":["task one","task two"]} instead of {"items":[{"task":"text"}]}
+    _input='{"items":["Review 2025 Packers draft class.","Identify top QB prospects.","Analyze needs."]}'
+    _result=$(echo "$_input" | jq '[.items | to_entries[] | {id: (.key + 1), task: (if (.value | type) == "string" then .value else .value.task end), status: "pending", depth: 0}]' 2>/dev/null)
+    _count=$(echo "${_result:-[]}" | jq 'length' 2>/dev/null)
+    _count="${_count:-0}"
+    assert_eq "$_count" "3" "Should parse 3 items from string array"
+  }
+
+  it "honeydew jq still handles standard object format" && {
+    # Standard grammar-enforced format: {"items":[{"task":"text"}]}
+    _input='{"items":[{"task":"Review draft."},{"task":"Identify prospects."}]}'
+    _result=$(echo "$_input" | jq '[.items | to_entries[] | {id: (.key + 1), task: (if (.value | type) == "string" then .value else .value.task end), status: "pending", depth: 0}]' 2>/dev/null)
+    _count=$(echo "${_result:-[]}" | jq 'length' 2>/dev/null)
+    _count="${_count:-0}"
+    assert_eq "$_count" "2" "Should parse 2 items from object array"
+  }
+
+  it "honeydew jq extracts correct task text from string array" && {
+    _input='{"items":["First task","Second task"]}'
+    _result=$(echo "$_input" | jq '[.items | to_entries[] | {id: (.key + 1), task: (if (.value | type) == "string" then .value else .value.task end), status: "pending", depth: 0}]' 2>/dev/null)
+    _task1=$(echo "$_result" | jq -r '.[0].task')
+    assert_eq "$_task1" "First task"
+    _task2=$(echo "$_result" | jq -r '.[1].task')
+    assert_eq "$_task2" "Second task"
+  }
+
+  it "honeydew jq assigns sequential IDs from string array" && {
+    _input='{"items":["A","B","C"]}'
+    _result=$(echo "$_input" | jq '[.items | to_entries[] | {id: (.key + 1), task: (if (.value | type) == "string" then .value else .value.task end), status: "pending", depth: 0}]' 2>/dev/null)
+    _id1=$(echo "$_result" | jq '.[0].id')
+    _id3=$(echo "$_result" | jq '.[2].id')
+    assert_eq "$_id1" "1"
+    assert_eq "$_id3" "3"
+  }
+
+  it "honeydew count guard defaults to 0 on empty jq output" && {
+    _items_json=""
+    _count=$(echo "${_items_json:-[]}" | jq 'length' 2>/dev/null)
+    _count="${_count:-0}"
+    assert_eq "$_count" "0" "Empty jq output must default to 0"
+  }
+
+# ── Output-dir enforcement spacing ────────────────────────────
+describe "Output-dir enforcement spacing"
+
+  it "output-dir enforcement code calls tools_fix_ext_spacing" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'tools_fix_ext_spacing'
+    assert_ok $? "Output-dir enforcement must call tools_fix_ext_spacing"
+  }
+
+  it "write syntax card includes spacing rule" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q 'SPACE between filepath and content'
+    assert_ok $? "Write syntax card must emphasize space between filepath and content"
+  }
+
 # ── Honeydew subtask decomposition ────────────────────────────
 describe "Honeydew subtask decomposition"
 
@@ -4445,6 +4506,49 @@ describe "Reflexive metacog in honeydew rewrite router"
     body=$(declare -f _agent_honeydew_rewrite)
     echo "$body" | grep -q 'honeydew-rewrite-router <- reflexive metacog'
     assert_ok $? "must debug-log reflexive injection into rewrite router"
+  }
+
+# ── Configurable milestone char limit ─────────────────────────
+describe "Configurable milestone character limit"
+
+  it "AGENT_MILESTONE_CHARS config variable has default 200" && {
+    assert_match "${AGENT_MILESTONE_CHARS}" "200" "AGENT_MILESTONE_CHARS must default to 200"
+  }
+
+  it "macro loop uses AGENT_MILESTONE_CHARS for truncation" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'AGENT_MILESTONE_CHARS'
+    assert_ok $? "macro loop must reference AGENT_MILESTONE_CHARS"
+  }
+
+  it "macro loop stores full text in _STRATEGIST_FULL_OUTPUT before truncating" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_STRATEGIST_FULL_OUTPUT="$milestone"'
+    assert_ok $? "must store full milestone in _STRATEGIST_FULL_OUTPUT"
+  }
+
+  it "macro loop passes _STRATEGIST_FULL_OUTPUT to agent_inner_loop" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_STRATEGIST_FULL_OUTPUT'
+    assert_ok $? "agent_inner_loop call must include _STRATEGIST_FULL_OUTPUT"
+  }
+
+  it "agent_inner_loop accepts strategist full text as third parameter" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '_strategist_full'
+    assert_ok $? "inner loop must declare _strategist_full variable"
+  }
+
+  it "specialist prompt injects FULL STRATEGIST DIRECTIVE when truncated" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'FULL STRATEGIST DIRECTIVE'
+    assert_ok $? "specialist prompt must include FULL STRATEGIST DIRECTIVE injection"
+  }
+
+  it "strategist directive injection is conditional on length difference" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q '#_strategist_full.*-gt.*#micro_objective'
+    assert_ok $? "injection must compare _strategist_full length to micro_objective"
   }
 
 test_end

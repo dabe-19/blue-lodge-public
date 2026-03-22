@@ -63,6 +63,7 @@ AGENT_OUTPUT_DIR="${AGENT_OUTPUT_DIR:-responses}"       # Parent directory for a
 AGENT_GREP_ALLOW_ABSOLUTE="${AGENT_GREP_ALLOW_ABSOLUTE:-0}"  # /grep path policy: 0=relative-only (force to workdir), 1=allow absolute paths
 AGENT_GREP_MAX_LINES="${AGENT_GREP_MAX_LINES:-100}"          # /grep output cap (lines shown before truncation)
 AGENT_LS_ALLOW_ABSOLUTE="${AGENT_LS_ALLOW_ABSOLUTE:-0}"      # /ls path policy: 0=relative-only (force to workdir), 1=allow absolute paths
+AGENT_MILESTONE_CHARS="${AGENT_MILESTONE_CHARS:-200}"        # Max chars for milestone text before truncation (full text still passed to specialist)
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-4096}"     # Max output tokens for evaluator
 
@@ -655,14 +656,18 @@ TASK: $task
     # ── Layer 2: Try structured JSON extraction ─────────────────
     local _json_items="" _items_json="" count=0
     if _json_items=$(_agent_extract_json "$raw_list" "items"); then
-        # Build items with id/status/depth from the JSON tasks array
-        _items_json=$(echo "$_json_items" | jq '[.items | to_entries[] | {id: (.key + 1), task: .value.task, status: "pending", depth: 0}]')
-        count=$(echo "$_items_json" | jq 'length')
+        # Build items with id/status/depth from the JSON tasks array.
+        # Handle TWO formats that models emit:
+        #   A) {"items":[{"task":"text"}, ...]}  — grammar-enforced (expected)
+        #   B) {"items":["text", ...]}            — Granite/plain string arrays
+        _items_json=$(echo "$_json_items" | jq '[.items | to_entries[] | {id: (.key + 1), task: (if (.value | type) == "string" then .value else .value.task end), status: "pending", depth: 0}]' 2>/dev/null)
+        count=$(echo "${_items_json:-[]}" | jq 'length' 2>/dev/null)
+        count="${count:-0}"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew json extract: %d items\n' "$count" > /dev/tty 2>/dev/null
     fi
 
     # ── Layer 3: Legacy fallback — numbered list parsing ────────
-    if [ "$count" -eq 0 ]; then
+    if [ "${count:-0}" -eq 0 ]; then
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew: JSON extraction failed, falling back to numbered list parsing"
 
         # Clean think blocks
@@ -681,7 +686,7 @@ TASK: $task
     fi
 
     # Fallback: if LLM gave no parseable items, create a single item
-    if [ "$count" -eq 0 ]; then
+    if [ "${count:-0}" -eq 0 ]; then
         _items_json=$(jq -n --arg t "$task" '[{"id": 1, "task": $t, "status": "pending", "depth": 0}]')
         count=1
     fi
@@ -3466,7 +3471,7 @@ SPEC
                 cat << 'SPEC'
 {"cmd":"/write","syntax":"/write <filepath> <content>",
 "desc":"Write COMPLETE file contents. Creates or overwrites.",
-"rules":["RELATIVE PATHS ONLY (e.g. report.md, src/main.rs) — NEVER start with /","Use \\n for newlines (NEVER literal line breaks)","COMPLETE source for code files","JSON: matching braces, quoted keys","To ADD to a file, use /append instead","To change one line, use /edit instead","BEFORE writing, check if a file already exists with /read — prefer /append or /edit over overwriting"],
+"rules":["RELATIVE PATHS ONLY (e.g. report.md, src/main.rs) — NEVER start with /","ALWAYS include a SPACE between filepath and content (e.g. report.md Content here)","Use \\n for newlines (NEVER literal line breaks)","COMPLETE source for code files","JSON: matching braces, quoted keys","To ADD to a file, use /append instead","To change one line, use /edit instead","BEFORE writing, check if a file already exists with /read — prefer /append or /edit over overwriting"],
 "format_only_ex":["/write <relative-filepath> <complete file content with \\n for newlines>"]}
 SPEC
                 ;;
@@ -3818,6 +3823,7 @@ SPEC
 agent_inner_loop() {
     local micro_objective="$1"
     local workdir="${2:-.}"
+    local _strategist_full="${3:-}"
     local george_dir="$workdir/.george"
     local micro_file="$george_dir/micro_memory.json"
     local macro_file="$george_dir/macro_memory.json"
@@ -4404,6 +4410,10 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
             _spec_tail="Output ONLY ONE /web command. ONE URL per command — the URL is the LAST thing on the line, nothing after it. For /web search: extract 3-5 keywords FROM THE MICRO OBJECTIVE above. Drop filler words (the, a, for, in, to, and, or, about, including, regarding, comprehensive, professional, community, organizations, associations). DO NOT copy examples — derive keywords from the objective. NEVER output just '/web search' without keywords. To fetch multiple pages, use separate steps — one /web fetch per step.\nRULES: NO --limit, --source, --date, --output, or ANY --flag. Positional args only: /web search <keywords> or /web fetch <url>"
         fi
         local specialist_prompt="MICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\n${_spec_tail}"
+        # Inject full strategist output when milestone was truncated
+        if [ -n "${_strategist_full:-}" ] && [ "${#_strategist_full}" -gt "${#micro_objective}" ]; then
+            specialist_prompt="FULL STRATEGIST DIRECTIVE: ${_strategist_full}\n\nMICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\n${_spec_tail}"
+        fi
         # Inject reflexive context if available
         if [ -n "${_reflexive_context:-}" ]; then
             specialist_prompt="${specialist_prompt}\n\nREFLEXIVE NOTES: ${_reflexive_context}"
@@ -5121,6 +5131,9 @@ INTERLOCK_JSON
                         local _aod_verb _aod_rest _aod_path _aod_content
                         _aod_verb=${cmd%% *}
                         _aod_rest=${cmd#* }
+                        # Fix missing space between filename and content
+                        # e.g. "file.txtContent" → "file.txt Content"
+                        declare -f tools_fix_ext_spacing &>/dev/null && _aod_rest=$(tools_fix_ext_spacing "$_aod_rest")
                         _aod_path=$(printf '%s' "$_aod_rest" | awk '{print $1}')
                         _aod_content=${_aod_rest#"$_aod_path"}
                         _aod_content=${_aod_content# }
@@ -6825,8 +6838,11 @@ SERVICES STATUS: ${_svc_status:-unknown}
         # 8. Synonym remap: /draft → /write (models love "draft")
         milestone="${milestone//\/draft /\/write }"
         milestone="${milestone//\/draft$/\/write}"
-        # 9. Truncate to 200 chars max (prevents context bloat)
-        milestone="${milestone:0:200}"
+        # 9. Truncate for display/downstream conciseness.
+        # Full text preserved in _STRATEGIST_FULL_OUTPUT for the specialist
+        # so content-bearing milestones (e.g. /social post) aren't lost.
+        _STRATEGIST_FULL_OUTPUT="$milestone"
+        milestone="${milestone:0:${AGENT_MILESTONE_CHARS:-200}}"
 
         # Transcript: log strategist milestone
         declare -f transcript_log &>/dev/null && transcript_log "strategist" "$milestone"
@@ -7048,7 +7064,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
         # Reset workdir-change signal before each milestone
         _AGENT_WORKDIR_CHANGED=""
 
-        if agent_inner_loop "$milestone" "$workdir"; then
+        if agent_inner_loop "$milestone" "$workdir" "${_STRATEGIST_FULL_OUTPUT:-}"; then
             completed_milestones=$((completed_milestones + 1))
             _consecutive_skips=0  # Reset: actual progress breaks the skip cycle
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — OK\n"

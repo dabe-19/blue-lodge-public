@@ -844,6 +844,13 @@ _cmd_limits() {
             else
                 _limits_set AGENT_MAX_MILESTONE_RETRIES "Milestone retries" "$value" 1 30
             fi ;;
+        milestone-chars|milestone_chars)
+            if [ -z "$value" ]; then
+                ui_info "Milestone char limit: ${AGENT_MILESTONE_CHARS:-200} (default: 200)"
+                ui_dim "  Max characters for milestone text. Full text still passed to specialist."
+            else
+                _limits_set AGENT_MILESTONE_CHARS "Milestone chars" "$value" 50 2000
+            fi ;;
         cmd-family)
             if [ -z "$value" ]; then
                 ui_info "Command family cap: $AGENT_MAX_CMD_FAMILY (default: 10)"
@@ -1266,6 +1273,7 @@ _cmd_limits() {
             AGENT_EVAL_CONTEXT_LINES=50
             AGENT_WEB_SUFFICIENCY=20
             AGENT_MAX_MILESTONE_RETRIES=2
+            AGENT_MILESTONE_CHARS=200
             AGENT_MAX_CMD_FAMILY=10
             AGENT_HONEYDEW_MATCH=3
             AGENT_HONEYDEW_INITIAL_COUNT=5
@@ -1512,6 +1520,7 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Eval context lines:" "${AGENT_EVAL_CONTEXT_LINES:-50}  (default: 50)"
             printf "  %-22s %s\n" "Web sufficiency:" "$AGENT_WEB_SUFFICIENCY  (default: 20)"
             printf "  %-22s %s\n" "Milestone retries:" "$AGENT_MAX_MILESTONE_RETRIES  (default: 2)"
+            printf "  %-22s %s\n" "Milestone chars:" "${AGENT_MILESTONE_CHARS:-200}  (default: 200)"
             printf "  %-22s %s\n" "Command family cap:" "$AGENT_MAX_CMD_FAMILY  (default: 10)"
             printf "  %-22s %s\n" "Honeydew match score:" "$AGENT_HONEYDEW_MATCH  (default: 3)"
             printf "  %-22s %s\n" "Web search repeat:" "${AGENT_WEB_SEARCH_CONSEC_MAX:-20}  (default: 20)"
@@ -1597,6 +1606,7 @@ _cmd_limits() {
             ui_dim "    eval-context N  — Max action log lines for evaluator (current: ${AGENT_EVAL_CONTEXT_LINES:-50})"
             ui_dim "    web-sufficiency N — Web actions before sufficiency signal (current: $AGENT_WEB_SUFFICIENCY)"
             ui_dim "    milestone-retries N — Max retries of same milestone (current: $AGENT_MAX_MILESTONE_RETRIES)"
+            ui_dim "    milestone-chars N  — Max milestone text length, full text still reaches specialist (current: ${AGENT_MILESTONE_CHARS:-200})"
             ui_dim "    cmd-family N     — Max milestones with same base command (current: $AGENT_MAX_CMD_FAMILY)"
             ui_dim "    honeydew-match N — Min keyword score for honeydew auto-check (current: $AGENT_HONEYDEW_MATCH)"
             ui_dim "    honeydew-count N — Upper bound on initial honeydew items (current: $AGENT_HONEYDEW_INITIAL_COUNT)"
