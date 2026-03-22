@@ -1456,4 +1456,25 @@ describe "/recall REPL subcommands"
     assert_ok $? "help must show /recall prune usage"
   }
 
+# ── /limits context-files lever ───────────────────────────
+describe "/limits context-files lever"
+
+  it "/limits case handles context-files" && {
+    body=$(declare -f _cmd_limits)
+    echo "$body" | grep -q 'context-files'
+    assert_ok $? "/limits must handle context-files lever"
+  }
+
+  it "/limits context-files references AGENT_CONTEXT_FILES_MAX" && {
+    body=$(declare -f _cmd_limits)
+    echo "$body" | grep -q 'AGENT_CONTEXT_FILES_MAX'
+    assert_ok $? "/limits context-files must use AGENT_CONTEXT_FILES_MAX"
+  }
+
+  it "/limits reset includes AGENT_CONTEXT_FILES_MAX" && {
+    body=$(declare -f _cmd_limits)
+    echo "$body" | grep -q 'AGENT_CONTEXT_FILES_MAX=10'
+    assert_ok $? "/limits reset must set AGENT_CONTEXT_FILES_MAX=10"
+  }
+
 test_end

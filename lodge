@@ -1190,6 +1190,13 @@ _cmd_limits() {
             else
                 _limits_set AGENT_CROSS_TASK_SIEVE "Cross-task sieve" "$value" 0 1
             fi ;;
+        context-files)
+            if [ -z "$value" ]; then
+                ui_info "Context files max: ${AGENT_CONTEXT_FILES_MAX:-10} (default: 10)"
+                ui_dim "  Max number of prior task file entries persisted across tasks (0=disabled)"
+            else
+                _limits_set AGENT_CONTEXT_FILES_MAX "Context files max" "$value" 0 50
+            fi ;;
         reset)
             AGENT_PLAN_STEPS=6
             AGENT_INNER_LOOPS=6
@@ -1215,6 +1222,7 @@ _cmd_limits() {
             AGENT_EVAL_REC_CHARS=120
             AGENT_EVAL_REC_INJECT=0
             AGENT_CROSS_TASK_SIEVE=1
+            AGENT_CONTEXT_FILES_MAX=10
             AGENT_PRESSURE_RELIEF=2
             AGENT_SMART_ROUTE=2
             AGENT_PRE_ROUTE=1

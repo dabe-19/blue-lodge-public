@@ -4129,4 +4129,201 @@ describe "Written file path tracking"
     assert_ok $? "must debug-log strategist injection"
   }
 
+# ── Issue 1: Pre-LLM keyword gate for external-info tasks ──────
+describe "Task classifier keyword gate"
+
+  it "classifies news tasks as combined via keyword gate" && {
+    body=$(declare -f _agent_classify_task)
+    echo "$body" | grep -q 'news'
+    assert_ok $? "keyword gate must match 'news'"
+    echo "$body" | grep -q 'keyword gate'
+    assert_ok $? "debug output must mention keyword gate"
+  }
+
+  it "classifies weather tasks as combined via keyword gate" && {
+    body=$(declare -f _agent_classify_task)
+    echo "$body" | grep -q 'weather'
+    assert_ok $? "keyword gate must match 'weather'"
+  }
+
+  it "classifies latest tasks as combined via keyword gate" && {
+    body=$(declare -f _agent_classify_task)
+    echo "$body" | grep -q 'latest'
+    assert_ok $? "keyword gate must match 'latest'"
+  }
+
+  it "classifies trending tasks as combined via keyword gate" && {
+    body=$(declare -f _agent_classify_task)
+    echo "$body" | grep -q 'trending'
+    assert_ok $? "keyword gate must match 'trending'"
+  }
+
+  it "keyword gate returns before LLM call" && {
+    body=$(declare -f _agent_classify_task)
+    # The keyword gate block must have 'return 0' before the classify_prompt
+    gate_line=$(echo "$body" | grep -n 'keyword gate' | head -1 | cut -d: -f1)
+    prompt_line=$(echo "$body" | grep -n 'classify_prompt' | head -1 | cut -d: -f1)
+    [ -n "$gate_line" ] && [ -n "$prompt_line" ] && [ "$gate_line" -lt "$prompt_line" ]
+    assert_ok $? "keyword gate must appear before LLM classify_prompt"
+  }
+
+# ── Issue 2: Hallucinated command tracking ───────────────────
+describe "Hallucinated command tracking in inner loop"
+
+  it "hallucinated commands are added to _inner_cmd_history" && {
+    body=$(declare -f agent_inner_loop)
+    # After the hallucination rejection block, _inner_cmd_history should be updated
+    echo "$body" | grep -A15 'Specialist hallucinated' | grep -q '_inner_cmd_history'
+    assert_ok $? "hallucinated command rejection must track in _inner_cmd_history"
+  }
+
+# ── Issue 3: Sieve-aware honeydew decomposition ─────────────
+describe "Honeydew build recall-first relaxation"
+
+  it "honeydew build checks prior_context from macro_memory" && {
+    body=$(declare -f _agent_honeydew_build)
+    echo "$body" | grep -q 'prior_context'
+    assert_ok $? "honeydew_build must check macro_memory for prior_context"
+  }
+
+  it "honeydew build checks prior_context_note from macro_memory" && {
+    body=$(declare -f _agent_honeydew_build)
+    echo "$body" | grep -q 'prior_context_note'
+    assert_ok $? "honeydew_build must check macro_memory for prior_context_note"
+  }
+
+  it "honeydew build skips recall-first when sieve injected context" && {
+    body=$(declare -f _agent_honeydew_build)
+    echo "$body" | grep -q 'skipping recall-first (sieve injected prior_context)'
+    assert_ok $? "must log skip when sieve injected prior_context"
+  }
+
+  it "honeydew build skips recall-first when sieve found nothing" && {
+    body=$(declare -f _agent_honeydew_build)
+    echo "$body" | grep -q 'skipping recall-first (sieve found nothing)'
+    assert_ok $? "must log skip when sieve found nothing"
+  }
+
+  it "honeydew build uses SHOULD not MUST for abstract tasks" && {
+    body=$(declare -f _agent_honeydew_build)
+    # Check that abstract path uses SHOULD
+    echo "$body" | grep 'abstract' -A10 | grep -q 'SHOULD'
+    assert_ok $? "abstract exploration_priority must use SHOULD not MUST"
+  }
+
+  it "honeydew build uses SHOULD not MUST for combined fallback" && {
+    body=$(declare -f _agent_honeydew_build)
+    # The combined fallback block has "Follow with research" — check SHOULD there
+    echo "$body" | grep -B3 'Follow with research' | grep -q 'SHOULD'
+    assert_ok $? "combined fallback exploration_priority must use SHOULD not MUST"
+  }
+
+# ── Issue 4: Combined evaluator flexibility ─────────────────
+describe "Honeydew evaluator combined-task flexibility"
+
+  it "combined eval schema includes partial_progress" && {
+    body=$(declare -f _agent_evaluate_honeydew_item)
+    echo "$body" | grep -q 'partial_progress'
+    assert_ok $? "combined eval_output_rule must include partial_progress"
+  }
+
+  it "combined eval schema includes pragmatic_threshold" && {
+    body=$(declare -f _agent_evaluate_honeydew_item)
+    echo "$body" | grep -q 'pragmatic_threshold'
+    assert_ok $? "combined eval_output_rule must include pragmatic_threshold"
+  }
+
+  it "combined eval hint says lean toward SATISFIED" && {
+    body=$(declare -f _agent_evaluate_honeydew_item)
+    echo "$body" | grep -q 'lean toward SATISFIED'
+    assert_ok $? "combined eval_output_hint must say lean toward SATISFIED"
+  }
+
+  it "eval prompt uses meaningfully address not contain specific data" && {
+    body=$(declare -f _agent_evaluate_honeydew_item)
+    echo "$body" | grep -q 'meaningfully address'
+    assert_ok $? "eval prompt output_substance must use 'meaningfully address'"
+    echo "$body" | grep -q 'contain specific data' && status=1 || status=0
+    assert_ok $status "eval prompt must NOT contain old 'contain specific data' wording"
+  }
+
+# ── Issue 5: Cross-task file persistence ───────────────────
+describe "Cross-task file persistence via GEORGE.md"
+
+  it "AGENT_CONTEXT_FILES_MAX defaults to 10" && {
+    assert_eq "${AGENT_CONTEXT_FILES_MAX}" "10"
+  }
+
+  it "agent_run persists written files to Context Files section" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'Context Files'
+    assert_ok $? "agent_run must update Context Files section in GEORGE.md"
+  }
+
+  it "agent_run reads existing context files before appending" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'existing_cf'
+    assert_ok $? "agent_run must read existing context files"
+  }
+
+  it "context files trimmed to AGENT_CONTEXT_FILES_MAX" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'AGENT_CONTEXT_FILES_MAX'
+    assert_ok $? "agent_run must reference AGENT_CONTEXT_FILES_MAX for trimming"
+  }
+
+# ── Issue 5b: Prior task files injected into strategist ──────
+describe "Prior task files strategist injection"
+
+  it "strategist injects prior task files from GEORGE.md" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q 'PRIOR TASK FILES'
+    assert_ok $? "strategist must inject PRIOR TASK FILES section"
+  }
+
+  it "prior task files injection prunes non-existent files" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '\-f.*_cf_path'
+    assert_ok $? "prior files injection must check file existence"
+  }
+
+  it "macro_prompt includes _strat_prior_files" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q '_strat_prior_files'
+    assert_ok $? "macro_prompt must include _strat_prior_files"
+  }
+
+# ── Issue 6: Reflexive awareness in rewrite router ──────────
+describe "Reflexive metacog in honeydew rewrite router"
+
+  it "rewrite router injects reflexive metacog state" && {
+    body=$(declare -f _agent_honeydew_rewrite)
+    echo "$body" | grep -q 'reflexive_metacog_state'
+    assert_ok $? "rewrite router must call reflexive_metacog_state"
+  }
+
+  it "rewrite router has reflexive context variable" && {
+    body=$(declare -f _agent_honeydew_rewrite)
+    echo "$body" | grep -q '_router_reflexive'
+    assert_ok $? "rewrite router must have _router_reflexive variable"
+  }
+
+  it "rewrite router reflexive injection suggests restructuring" && {
+    body=$(declare -f _agent_honeydew_rewrite)
+    echo "$body" | grep -q 'need restructuring'
+    assert_ok $? "rewrite router reflexive must suggest restructuring"
+  }
+
+  it "rewrite router injects reflexive into router_prompt" && {
+    body=$(declare -f _agent_honeydew_rewrite)
+    echo "$body" | grep -q '_router_reflexive'
+    assert_ok $? "router_prompt must include _router_reflexive"
+  }
+
+  it "rewrite router debug logs reflexive injection" && {
+    body=$(declare -f _agent_honeydew_rewrite)
+    echo "$body" | grep -q 'honeydew-rewrite-router <- reflexive metacog'
+    assert_ok $? "must debug-log reflexive injection into rewrite router"
+  }
+
 test_end

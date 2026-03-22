@@ -39,6 +39,12 @@ recall_available() {
     if sqlite3 "$test_db" "CREATE VIRTUAL TABLE _t USING fts5(c); DROP TABLE _t;" 2>/dev/null; then
         rm -f "$test_db"
         _RECALL_FTS5_OK=1
+        # Check JSON1 support (json_group_array, json_object)
+        if sqlite3 ':memory:' "SELECT json('{}');" &>/dev/null; then
+            _RECALL_JSON1_OK=1
+        else
+            _RECALL_JSON1_OK=0
+        fi
         return 0
     fi
     rm -f "$test_db"
@@ -524,19 +530,76 @@ SQL
     # JSON array output — compact, matches micro_memory/syntax card patterns.
     # Small 2-4B models parse uniform JSON far more reliably than mixed
     # free-text-inside-JSON. Each result is {src, sec, body}.
-    # Uses jq for proper JSON encoding — manual printf escaping missed
-    # tabs, carriage returns, and control chars, causing --argjson failures.
     local _rsc_json='[]'
-    local _rsc_arr='[]'
-    while IFS='|' read -r source section body; do
-        [ -z "$source" ] && continue
-        _rsc_arr=$(jq -c \
-            --arg src "$source" \
-            --arg sec "$section" \
-            --arg body "$body" \
-            '. + [{"src":$src,"sec":$sec,"body":$body}]' <<< "$_rsc_arr")
-    done <<< "$results"
-    _rsc_json="$_rsc_arr"
+
+    if [[ "${_RECALL_JSON1_OK:-0}" == "1" ]]; then
+        # ── Fast path: sqlite3 JSON functions ─────────────────
+        # json_group_array + json_object produce a single valid JSON
+        # string with proper escaping of newlines, quotes, and control
+        # chars. Eliminates the pipe-delimited read loop that broke on
+        # multi-line content (embedded newlines in body split records
+        # across lines, corrupting field assignments).
+        _rsc_json=$(sqlite3 "$RECALL_DB" <<SQL
+SELECT json_group_array(
+    json_object('src', source, 'sec', section, 'body', body))
+FROM (
+    SELECT
+        c.source,
+        c.section,
+        CASE WHEN length(c.content) <= $max_chars
+             THEN c.content
+             ELSE substr(c.content, 1, $max_chars) || '...'
+        END AS body
+    FROM chunks_fts
+    JOIN chunks c ON chunks_fts.rowid = c.id
+    WHERE chunks_fts MATCH '$safe_query'
+    ORDER BY bm25(chunks_fts, 5.0, 10.0, 1.0)
+    LIMIT $limit
+);
+SQL
+        )
+        # json_group_array returns '[]' when subquery is empty — handled below
+        if [ -z "$_rsc_json" ]; then
+            # OR fallback with JSON path
+            local or_query_j
+            or_query_j=$(_recall_sanitize_query "$query" "OR")
+            if [ -n "$or_query_j" ]; then
+                _rsc_json=$(sqlite3 "$RECALL_DB" <<SQL
+SELECT json_group_array(
+    json_object('src', source, 'sec', section, 'body', body))
+FROM (
+    SELECT
+        c.source,
+        c.section,
+        CASE WHEN length(c.content) <= $max_chars
+             THEN c.content
+             ELSE substr(c.content, 1, $max_chars) || '...'
+        END AS body
+    FROM chunks_fts
+    JOIN chunks c ON chunks_fts.rowid = c.id
+    WHERE chunks_fts MATCH '$or_query_j'
+    ORDER BY bm25(chunks_fts, 5.0, 10.0, 1.0)
+    LIMIT $limit
+);
+SQL
+                )
+            fi
+        fi
+    else
+        # ── Legacy fallback: pipe-delimited parsing ───────────
+        # For sqlite3 without JSON1 (pre-3.9.0). Susceptible to
+        # broken output when body content contains embedded newlines.
+        local _rsc_arr='[]'
+        while IFS='|' read -r source section body; do
+            [ -z "$source" ] && continue
+            _rsc_arr=$(jq -c \
+                --arg src "$source" \
+                --arg sec "$section" \
+                --arg body "$body" \
+                '. + [{"src":$src,"sec":$sec,"body":$body}]' <<< "$_rsc_arr")
+        done <<< "$results"
+        _rsc_json="$_rsc_arr"
+    fi
 
     # Store in LRU cache for subsequent turns
     if declare -f cache_put &>/dev/null && [ -n "$_rsc_json" ] && [ "$_rsc_json" != "[]" ]; then

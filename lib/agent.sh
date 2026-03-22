@@ -41,6 +41,7 @@ AGENT_EVAL_VALIDATE="${AGENT_EVAL_VALIDATE:-1}"                  # Evaluator com
 AGENT_EVAL_REC_CHARS="${AGENT_EVAL_REC_CHARS:-500}"              # Max chars after a slash command in evaluator recommendations
 AGENT_EVAL_REC_INJECT="${AGENT_EVAL_REC_INJECT:-1}"            # Recommendation injection to honeydew rewriter: 0=off (current), 1=recommendation-only (high weight), 2=both (recommendation + full context)
 AGENT_CROSS_TASK_SIEVE="${AGENT_CROSS_TASK_SIEVE:-1}"          # Cross-task memory sieve: 0=disabled, 1=keyword recall injection at task start
+AGENT_CONTEXT_FILES_MAX="${AGENT_CONTEXT_FILES_MAX:-10}"      # Max context file entries persisted across tasks (0=disabled)
 AGENT_PRESSURE_RELIEF="${AGENT_PRESSURE_RELIEF:-2}"          # Consecutive milestone skips before pressure relief fires (0=disabled)
 AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-1}"              # Smart command routing: 0=disabled, 1=post-dispatch reroute only, 2=fuzzy keyword catalog injection only, 3=combined
 AGENT_ASK_USER="${AGENT_ASK_USER:-1}"                    # Allow George to /ask the user questions during tasks: 0=disabled, 1=enabled
@@ -587,21 +588,46 @@ TASK: $task
     local decompose_sys="You are a task decomposition engine. Output a JSON object: {\"items\":[{\"task\":\"short imperative sentence\"},...]}. Each item: short imperative sentence - no more than 10 words. Describe WHAT, not HOW. No commands, URLs, tools, or parenthetical details."
 
     # ── Task-type–aware decomposition ─────────────────────────
-    # For abstract/combined tasks, the first items MUST be internal
-    # exploration (recall, journal, filesystem) before external research.
+    # Conditionally guide first honeydew items based on what the
+    # cross-task sieve already found. If the sieve pre-searched
+    # recall and injected results (or found nothing), there's no
+    # point forcing the model to start with /recall.
+    local _macro_file="$george_dir/macro_memory.json"
+    local _has_sieve_ctx="" _has_sieve_note=""
+    if [ -f "$_macro_file" ]; then
+        _has_sieve_ctx=$(jq -r '.prior_context // empty' "$_macro_file" 2>/dev/null)
+        [ "$_has_sieve_ctx" = "null" ] || [ "$_has_sieve_ctx" = "[]" ] && _has_sieve_ctx=""
+        _has_sieve_note=$(jq -r '.prior_context_note // empty' "$_macro_file" 2>/dev/null)
+    fi
+
     if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ]; then
+        # Abstract: soften from MUST to SHOULD — give model freedom
         decompose_prompt="${decompose_prompt}
 
 {\"exploration_priority\":{
- \"rule\":\"The FIRST 1-2 items MUST be internal exploration: recall stored memory, read local files, review journal entries\",
+ \"rule\":\"The FIRST 1-2 items SHOULD be internal exploration: recall stored memory, read local files, review journal entries\",
  \"before_web\":\"Do NOT include web search items unless internal sources are explicitly exhausted\",
  \"internal_actions\":[\"review stored memory and recall\",\"explore local files and directories\",\"check journal entries\"]}}"
     elif [ "${AGENT_TASK_TYPE:-concrete}" = "combined" ]; then
-        decompose_prompt="${decompose_prompt}
+        if [ -n "$_has_sieve_ctx" ]; then
+            # Sieve found prior context — it's already in macro_memory.
+            # Skip exploration_priority entirely: data is available.
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew-build: skipping recall-first (sieve injected prior_context)"
+        elif [ -n "$_has_sieve_note" ]; then
+            # Sieve searched recall and found nothing — don't waste
+            # a honeydew item on /recall that will return empty.
+            decompose_prompt="${decompose_prompt}
+
+{\"exploration_note\":{\"skip_recall\":\"recall DB was already searched and found nothing relevant — do NOT start with recall or memory review\",\"start_with\":\"web search, direct research, or delivery\"}}"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew-build: skipping recall-first (sieve found nothing)"
+        else
+            # Sieve didn't run (recall unavailable) — soft guidance
+            decompose_prompt="${decompose_prompt}
 
 {\"exploration_priority\":{
- \"rule\":\"The FIRST 1-2 items MUST be internal exploration: recall stored memory, read local files, review journal entries\",
+ \"rule\":\"The FIRST 1-2 items SHOULD be internal exploration: recall stored memory, read local files, review journal entries\",
  \"then\":\"Follow with research and delivery items in order\"}}"
+        fi
     fi
 
     local raw_list
@@ -695,6 +721,17 @@ _agent_classify_task() {
            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] task mode override: combined"
            return 0 ;;
     esac
+
+    # ── Pre-LLM keyword gate ──────────────────────────────────
+    # High-confidence external-info keywords skip the LLM entirely.
+    # Small models frequently misclassify "news", "weather", etc.
+    # as abstract when they clearly require outside information.
+    local _task_lower="${task,,}"
+    if [[ "$_task_lower" =~ (\bnews\b|\bweather\b|\bforecast\b|\bstock\b|\bprice[sd]?\b|\bcurrent events\b|\blatest\b|\btoday\'?s\b|\btrending\b|\breal-time\b|\breal time\b|\bbreaking\b|\alive (data|scores?|updates?)\b) ]]; then
+        export AGENT_TASK_TYPE="combined"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] task classified: combined (keyword gate: ${BASH_REMATCH[0]})"
+        return 0
+    fi
 
     local classify_prompt="Classify this task as abstract, concrete, or combined.
 
@@ -1578,6 +1615,19 @@ _agent_honeydew_rewrite() {
         _router_rec_section="\n\nEVALUATOR RECOMMENDATION (the honeydew evaluator recommended this action after the last milestone failed to satisfy the current item):\n${_EVAL_HONEYDEW_RECOMMENDATION}"
     fi
 
+    # ── Inject reflexive metacog into rewrite router ──────────
+    # When metacog reports stuck/saturated, the router should factor
+    # repeated failure patterns into its REWRITE/KEEP decision.
+    local _router_reflexive=""
+    if [ "${REFLEXIVE_SELF_MODEL:-0}" -eq 1 ] && declare -f reflexive_metacog_state &>/dev/null; then
+        local _router_mc_state
+        _router_mc_state=$(reflexive_metacog_state 2>/dev/null)
+        if [ -n "$_router_mc_state" ] && [ "$_router_mc_state" != "OK" ]; then
+            _router_reflexive="\n\nREFLEXIVE CONTEXT (self-assessment of current execution):\n${_router_mc_state:0:300}\nThe reflexive system has detected repeated failures — consider whether pending items need restructuring."
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew-rewrite-router <- reflexive metacog"
+        fi
+    fi
+
     local router_prompt="CURRENT DATE/TIME: ${_rewrite_now}
 
 ORIGINAL TASK (PRIMARY OBJECTIVE):
@@ -1587,7 +1637,7 @@ CURRENT HONEYDEW LIST:
 ${_current_list}
 
 MILESTONE CONTEXT (what has been accomplished so far):
-${_milestone_ctx}${_failure_section}${_router_rec_section}
+${_milestone_ctx}${_failure_section}${_router_rec_section}${_router_reflexive}
 
 Based on what the completed milestones have revealed (and any failure data above), should the PENDING (non-completed) honeydew items be rewritten to better serve the original task?
 
@@ -2007,8 +2057,10 @@ _agent_evaluate_honeydew_item() {
         combined)
             _eval_output_rule='"requires_concrete_output":"for delivery items only (write report, send email, create file)",
  "accepts_exploratory":"for research and reflection items (explore, identify, recall, reflect)",
- "judge_by_item_nature":true,'
-            _eval_output_hint="Judge by the NATURE of the individual item: delivery items (write, send, create) require concrete output; research/reflection items (explore, identify, recall, reflect) are SATISFIED by meaningful exploration, recall results, or reasoned analysis."
+ "judge_by_item_nature":true,
+ "partial_progress":"meaningful progress toward the items goal counts as SATISFIED even if incomplete",
+ "pragmatic_threshold":"judge the SPIRIT of the item, not literal keyword matching — a good-faith effort that covers the core intent counts as SATISFIED",'
+            _eval_output_hint="Judge by the NATURE of the individual item: delivery items (write, send, create) require concrete output; research/reflection items (explore, identify, recall, reflect) are SATISFIED by meaningful exploration, recall results, or reasoned analysis. When outputs address the core intent of the item, lean toward SATISFIED even if minor details are missing."
             ;;
         *)
             _eval_output_rule='"requires_concrete_output":true,'
@@ -2023,7 +2075,7 @@ _agent_evaluate_honeydew_item() {
  ${_prior_milestones:+\"cross_milestone\":\"if a PRIOR milestone already did what this item asks, SATISFIED\",}
  \"relevance_check\":{\"dates\":true,\"topics\":true,\"scope\":true,
    \"verify_against\":\"ORIGINAL USER REQUEST above\",
-   \"output_substance\":\"do outputs contain specific data the item asked for?\"},
+   \"output_substance\":\"do outputs meaningfully address what the item asked for?\"},
  \"respond\":\"JSON object: {\\\"verdict\\\":\\\"SATISFIED\\\" or \\\"UNSATISFIED\\\", \\\"reason\\\":\\\"brief reason\\\", \\\"recommendation\\\":\\\"slash command from AVAILABLE COMMANDS, or empty if SATISFIED\\\"}\",
  \"if_unsatisfied\":{\"explain_why\":true,
    \"recommendation_required\":\"must be a /command from AVAILABLE COMMANDS below\"}}\n\nAVAILABLE COMMANDS (recommendation must be one of these):\n${_eval_commands}"
@@ -4944,6 +4996,9 @@ INTERLOCK_JSON
                     _valid_cmds=$(echo "${!CMD_REGISTRY[@]}" | tr ' ' '\n' | sort | sed 's/^/\//' | tr '\n' ', ')
                     _micro_add_note "$micro_file" "SYSTEM: /$_spec_cmd_name is not a valid command. Valid commands: ${_valid_cmds%. }"
                 fi
+                # Track in command history so 3-strike blocker fires
+                # on repeated hallucinations of the same command
+                _inner_cmd_history+=("$cmd")
                 inner_attempts=$((inner_attempts + 1))
                 continue
             fi
@@ -6538,7 +6593,35 @@ MEMEOF
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- created files (${#_AGENT_WRITTEN_FILES[@]} entries)"
         fi
 
-        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_last_eval_feedback:+\n\n>>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<\n${_last_eval_feedback}\n>>> You MUST change your approach based on the above. Do NOT repeat the same command. <<<}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
+        # ── Inject prior task files from GEORGE.md ─────────────
+        # Surface files created by recent prior tasks so the strategist
+        # can reference them in follow-up queries. Only includes files
+        # that still exist on disk.
+        local _strat_prior_files=""
+        if [ "${AGENT_CONTEXT_FILES_MAX:-10}" -gt 0 ] && declare -f memory_read_project &>/dev/null; then
+            local _cf_section
+            _cf_section=$(awk '/^## Context Files/{getline; p=1} /^## /{if(p)exit} p' "$workdir/GEORGE.md" 2>/dev/null)
+            if [ -n "$_cf_section" ] && [ "$_cf_section" != "(none)" ]; then
+                local _valid_cf=""
+                local _cf_line _cf_path
+                while IFS= read -r _cf_line; do
+                    [ -z "$_cf_line" ] && continue
+                    # Extract path from "- [timestamp] path/to/file"
+                    _cf_path=$(echo "$_cf_line" | sed 's/^- \[[^]]*\] //')
+                    [ -z "$_cf_path" ] && continue
+                    # Check if file still exists (relative to workdir or as-is)
+                    if [ -f "$workdir/$_cf_path" ] || [ -f "$_cf_path" ]; then
+                        _valid_cf="${_valid_cf}\n  ${_cf_line}"
+                    fi
+                done <<< "$_cf_section"
+                if [ -n "$_valid_cf" ]; then
+                    _strat_prior_files="\n\nPRIOR TASK FILES (from recent tasks — these files exist in the workspace):${_valid_cf}\nYou can reference these files by their exact paths."
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- prior task files from GEORGE.md"
+                fi
+            fi
+        fi
+
+        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_strat_prior_files}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_last_eval_feedback:+\n\n>>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<\n${_last_eval_feedback}\n>>> You MUST change your approach based on the above. Do NOT repeat the same command. <<<}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
 
         # ── Research→Delivery Gate ────────────────────────────
         # After N consecutive research milestones, inject a hard
@@ -7230,6 +7313,44 @@ SERVICES STATUS: ${_svc_status:-unknown}
         if declare -f memory_update_section &>/dev/null; then
             memory_update_section "Active Task" "(none — last task: ${task:0:80})" "$workdir" 2>/dev/null
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] GEORGE.md updated: task complete"
+        fi
+
+        # ── Persist written files to Context Files ───────────
+        # Save _AGENT_WRITTEN_FILES to GEORGE.md so follow-up tasks
+        # know about files created by this task. Entries include a
+        # timestamp for recency ordering.
+        if declare -f memory_update_section &>/dev/null && declare -p _AGENT_WRITTEN_FILES &>/dev/null 2>&1 && [ "${#_AGENT_WRITTEN_FILES[@]}" -gt 0 ] && [ "${AGENT_CONTEXT_FILES_MAX:-10}" -gt 0 ]; then
+            local _george_file="$workdir/GEORGE.md"
+            if [ -f "$_george_file" ]; then
+                local _cf_ts
+                _cf_ts=$(date '+%Y-%m-%d %H:%M')
+                # Read existing context files (skip "(none)")
+                local _existing_cf
+                _existing_cf=$(awk '/^## Context Files/{getline; p=1} /^## /{if(p)exit} p' "$_george_file" 2>/dev/null)
+                [ "$_existing_cf" = "(none)" ] && _existing_cf=""
+
+                # Build new entries from this task
+                local _new_cf=""
+                local _cf_entry
+                for _cf_entry in "${_AGENT_WRITTEN_FILES[@]}"; do
+                    _new_cf="${_new_cf:+${_new_cf}\n}- [${_cf_ts}] ${_cf_entry}"
+                done
+
+                # Combine existing + new, then trim to max
+                local _combined_cf
+                if [ -n "$_existing_cf" ]; then
+                    _combined_cf="${_existing_cf}\n${_new_cf}"
+                else
+                    _combined_cf="$_new_cf"
+                fi
+
+                # Trim to AGENT_CONTEXT_FILES_MAX most recent entries
+                local _cf_max="${AGENT_CONTEXT_FILES_MAX:-10}"
+                _combined_cf=$(printf '%b' "$_combined_cf" | tail -n "$_cf_max")
+
+                memory_update_section "Context Files" "$_combined_cf" "$workdir" 2>/dev/null
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] GEORGE.md updated: ${#_AGENT_WRITTEN_FILES[@]} context file(s) persisted"
+            fi
         fi
 
         # ── Single journal entry (reflect only) ───────────────

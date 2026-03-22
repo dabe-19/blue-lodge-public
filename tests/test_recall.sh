@@ -1015,4 +1015,72 @@ describe "recall_search_pretty user_pref label"
     assert_ok $? "recall_search_pretty must handle user_pref source"
   }
 
+# ── Issue 7: recall_available JSON1 check ───────────────────
+describe "recall_available JSON1 support check"
+
+  it "recall_available checks for JSON1 support" && {
+    body=$(declare -f recall_available)
+    echo "$body" | grep -q '_RECALL_JSON1_OK'
+    assert_ok $? "recall_available must set _RECALL_JSON1_OK"
+  }
+
+  it "recall_available tests json function" && {
+    body=$(declare -f recall_available)
+    echo "$body" | grep -q "json('{}')" || echo "$body" | grep -q 'json('
+    assert_ok $? "recall_available must test sqlite3 json() function"
+  }
+
+# ── Issue 7: recall_search_context JSON path ───────────────
+describe "recall_search_context JSON1 fast path"
+
+  it "recall_search_context uses json_group_array when available" && {
+    body=$(declare -f recall_search_context)
+    echo "$body" | grep -q 'json_group_array'
+    assert_ok $? "recall_search_context must use json_group_array SQL function"
+  }
+
+  it "recall_search_context uses json_object when available" && {
+    body=$(declare -f recall_search_context)
+    echo "$body" | grep -q 'json_object'
+    assert_ok $? "recall_search_context must use json_object SQL function"
+  }
+
+  it "recall_search_context has legacy pipe-delimited fallback" && {
+    body=$(declare -f recall_search_context)
+    echo "$body" | grep -q 'IFS='
+    assert_ok $? "recall_search_context must have pipe-delimited IFS fallback"
+  }
+
+  it "recall_search_context checks _RECALL_JSON1_OK flag" && {
+    body=$(declare -f recall_search_context)
+    echo "$body" | grep -q '_RECALL_JSON1_OK'
+    assert_ok $? "recall_search_context must check _RECALL_JSON1_OK flag"
+  }
+
+  it "recall_search_context JSON path produces valid JSON" && {
+    if [[ "$_HAS_SQLITE" != "1" ]]; then skip "sqlite3/FTS5 not available"; else
+    _setup_recall
+    recall_init
+    # Insert test content with embedded newlines
+    sqlite3 "$RECALL_DB" <<'EOSQL'
+INSERT INTO chunks (source, section, content, filepath, indexed_at) VALUES
+    ('test', 'Multi-line Section', 'Line 1
+Line 2 with "quotes"
+Line 3 with pipe|char', '/tmp/test-recall.md', '2025-01-01T00:00:00');
+EOSQL
+    # Rebuild FTS index
+    sqlite3 "$RECALL_DB" "INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild');"
+    _RECALL_JSON1_OK=1
+    result=$(recall_search_context "Multi-line Section" 3 500 2>/dev/null)
+    # Validate JSON
+    if [ -n "$result" ] && [ "$result" != "[]" ]; then
+        jq empty <<< "$result" 2>/dev/null
+        assert_ok $? "JSON path must produce valid JSON even with embedded newlines and pipes"
+    else
+        skip "no recall results returned"
+    fi
+    _teardown_recall
+    fi
+  }
+
 test_end
