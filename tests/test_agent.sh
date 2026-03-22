@@ -3355,6 +3355,127 @@ describe "Fast route keyword filter"
     assert_eq "$result" "social"
   }
 
+# ── Routing pipeline fixes ────────────────────────────────────
+describe "Pre-route decoupling"
+
+  it "pre-route works when smart-route is 0" && {
+    AGENT_SMART_ROUTE=0
+    AGENT_PRE_ROUTE=1
+    assert_eq "${AGENT_PRE_ROUTE}" "1" "pre-route must be independent of smart-route"
+  }
+
+  it "pre-route can be disabled independently of smart-route" && {
+    AGENT_SMART_ROUTE=2
+    AGENT_PRE_ROUTE=0
+    assert_eq "${AGENT_PRE_ROUTE}" "0" "pre-route disabled while smart-route=2"
+    assert_eq "${AGENT_SMART_ROUTE}" "2" "smart-route remains active"
+    AGENT_PRE_ROUTE=1
+  }
+
+describe "AGENT_ROUTING presets"
+
+  it "routing preset 0 disables all routing shortcuts" && {
+    AGENT_ROUTING=0
+    _agent_routing_apply
+    assert_eq "${AGENT_PRE_ROUTE}" "0"
+    assert_eq "${AGENT_FAST_ROUTE}" "0"
+    assert_eq "${AGENT_SMART_ROUTE}" "0"
+    AGENT_ROUTING=""
+  }
+
+  it "routing preset 1 enables standard routing" && {
+    AGENT_ROUTING=1
+    _agent_routing_apply
+    assert_eq "${AGENT_PRE_ROUTE}" "1"
+    assert_eq "${AGENT_FAST_ROUTE}" "1"
+    assert_eq "${AGENT_SMART_ROUTE}" "1"
+    AGENT_ROUTING=""
+  }
+
+  it "routing preset 2 uses full-llm (no fast-route)" && {
+    AGENT_ROUTING=2
+    _agent_routing_apply
+    assert_eq "${AGENT_PRE_ROUTE}" "1"
+    assert_eq "${AGENT_FAST_ROUTE}" "0"
+    assert_eq "${AGENT_SMART_ROUTE}" "1"
+    AGENT_ROUTING=""
+  }
+
+  it "routing preset 3 enables enhanced routing" && {
+    AGENT_ROUTING=3
+    _agent_routing_apply
+    assert_eq "${AGENT_PRE_ROUTE}" "1"
+    assert_eq "${AGENT_FAST_ROUTE}" "1"
+    assert_eq "${AGENT_SMART_ROUTE}" "3"
+    AGENT_ROUTING=""
+  }
+
+  it "empty AGENT_ROUTING does not change settings" && {
+    AGENT_PRE_ROUTE=1
+    AGENT_FAST_ROUTE=1
+    AGENT_SMART_ROUTE=2
+    AGENT_ROUTING=""
+    _agent_routing_apply
+    assert_eq "${AGENT_PRE_ROUTE}" "1"
+    assert_eq "${AGENT_FAST_ROUTE}" "1"
+    assert_eq "${AGENT_SMART_ROUTE}" "2"
+  }
+
+describe "Fast-route pattern narrowing"
+
+  it "routes 'synthesize findings into journal' to journal not recall" && {
+    result=$(_fast_route "synthesize findings into journal entry")
+    assert_eq "$result" "journal"
+  }
+
+  it "routes 'write journal entry about themes' to journal" && {
+    result=$(_fast_route "write journal entry about key themes")
+    assert_eq "$result" "journal"
+  }
+
+  it "routes 'capture insights in daily review' to journal" && {
+    result=$(_fast_route "capture insights from the daily review")
+    assert_eq "$result" "journal"
+  }
+
+  it "does not route 'based on your previous research' to recall" && {
+    result=$(_fast_route "based on your previous research, write a summary")
+    assert_neq "$result" "recall" "broad phrases must not steal routes to recall"
+  }
+
+  it "does not route 'from your earlier analysis' to recall" && {
+    result=$(_fast_route "from your earlier analysis, compile notes")
+    assert_neq "$result" "recall" "broad phrases must not steal routes to recall"
+  }
+
+  it "still routes 'search knowledge base' to recall" && {
+    result=$(_fast_route "search knowledge base for prior findings")
+    assert_eq "$result" "recall"
+  }
+
+  it "still routes 'recall search' to recall" && {
+    result=$(_fast_route "recall search for deployment notes")
+    assert_eq "$result" "recall"
+  }
+
+describe "Lean router /journal entry"
+
+  it "lean router prompt includes /journal" && {
+    AGENT_FAST_ROUTE=1
+    prompt=$(_build_router_prompt)
+    echo "$prompt" | grep -q '/journal'
+    assert_ok $? "lean router prompt must include /journal"
+    AGENT_FAST_ROUTE=1
+  }
+
+  it "lean router /journal mentions journal entries" && {
+    AGENT_FAST_ROUTE=1
+    prompt=$(_build_router_prompt)
+    echo "$prompt" | grep '/journal' | grep -qi 'journal entries'
+    assert_ok $? "lean router /journal line must mention journal entries"
+    AGENT_FAST_ROUTE=1
+  }
+
 # ── Git/GitHub unification ────────────────────────────────────
 describe "Git/GitHub unification"
 

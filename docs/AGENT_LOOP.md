@@ -298,6 +298,45 @@ Milestone: "Create a new Rust project"
 
 This saves two LLM calls when the honeydew item is already precise.
 
+> **Note:** Pre-route is controlled by `AGENT_PRE_ROUTE` (default: 1) and is
+> independent of `AGENT_SMART_ROUTE`. Disabling smart-route does not
+> disable pre-route.
+
+---
+
+## Routing Configuration
+
+### `AGENT_ROUTING` (consolidated preset)
+
+Sets `AGENT_PRE_ROUTE`, `AGENT_FAST_ROUTE`, and `AGENT_SMART_ROUTE` as
+a single value. When set, individual settings are overridden:
+
+| Preset | Label | PRE_ROUTE | FAST_ROUTE | SMART_ROUTE |
+|--------|-------|-----------|------------|-------------|
+| 0 | minimal | 0 | 0 | 0 |
+| 1 | standard | 1 | 1 | 1 |
+| 2 | full-llm | 1 | 0 | 1 |
+| 3 | enhanced | 1 | 1 | 3 |
+
+When `AGENT_ROUTING` is unset (empty string), the individual variables
+are used as-is. Use `/limits routing <0-3>` to set the preset.
+
+### Specialist Tool Mismatch Recovery
+
+When the router picks one command but the specialist outputs a different
+one, the mismatch check intervenes:
+
+1. **Milestone-authoritative override:** If the milestone text itself
+   contains the specialist's command (e.g. milestone says "Use /journal
+   write..." and specialist outputs `/journal write ...`), the specialist
+   is trusted over the router.
+
+2. **Retry cap (2):** After 2 consecutive mismatches without an override,
+   the specialist is trusted to break the deadlock.
+
+3. **Feedback injection:** On rejection, mismatch context is injected into
+   `_last_eval_feedback` so the router can self-correct on the next attempt.
+
 ---
 
 ## Smart Command Routing

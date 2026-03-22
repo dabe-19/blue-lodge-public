@@ -51,6 +51,7 @@ AGENT_FILE_EXPAND_CHARS="${AGENT_FILE_EXPAND_CHARS:-1000}"  # Max chars per expa
 AGENT_DM_SCAN_CHARS="${AGENT_DM_SCAN_CHARS:-80}"          # Characters to scan for recipient names from start of DM text
 AGENT_PRE_ROUTE="${AGENT_PRE_ROUTE:-1}"                  # Pre-route: extract /cmd from milestone, skip router: 0=disabled, 1=enabled
 AGENT_FAST_ROUTE="${AGENT_FAST_ROUTE:-1}"                # Fast-route: 0=disabled, 1=keywords+lean, 2=fuzzy only (lean prompt, no keyword matching)
+AGENT_ROUTING="${AGENT_ROUTING:-}"                       # Consolidated routing preset: 0=minimal, 1=standard, 2=full-llm, 3=enhanced (empty=use individual vars)
 AGENT_TASK_MODE="${AGENT_TASK_MODE:-0}"                  # Task classifier override: 0=auto (LLM), 1=abstract, 2=concrete, 3=combined
 AGENT_WEB_UNLOCK_ABSTRACT="${AGENT_WEB_UNLOCK_ABSTRACT:-99}"  # Milestones before /web unlocks for abstract tasks (99=effectively never)
 AGENT_WEB_UNLOCK_COMBINED="${AGENT_WEB_UNLOCK_COMBINED:-6}"   # Milestones before /web unlocks for combined tasks
@@ -64,6 +65,23 @@ AGENT_GREP_MAX_LINES="${AGENT_GREP_MAX_LINES:-100}"          # /grep output cap 
 AGENT_LS_ALLOW_ABSOLUTE="${AGENT_LS_ALLOW_ABSOLUTE:-0}"      # /ls path policy: 0=relative-only (force to workdir), 1=allow absolute paths
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-4096}"     # Max output tokens for evaluator
+
+# ── Consolidated Routing Preset ────────────────────────────────
+# Maps AGENT_ROUTING preset to individual routing variables.
+# Called at startup if AGENT_ROUTING is set, and by /limits routing.
+# Presets: 0=minimal, 1=standard, 2=full-llm, 3=enhanced
+_agent_routing_apply() {
+    local mode="${1:-${AGENT_ROUTING:-}}"
+    [ -z "$mode" ] && return 0
+    case "$mode" in
+        0) AGENT_PRE_ROUTE=0; AGENT_FAST_ROUTE=0; AGENT_SMART_ROUTE=0 ;;
+        1) AGENT_PRE_ROUTE=1; AGENT_FAST_ROUTE=1; AGENT_SMART_ROUTE=1 ;;
+        2) AGENT_PRE_ROUTE=1; AGENT_FAST_ROUTE=0; AGENT_SMART_ROUTE=1 ;;
+        3) AGENT_PRE_ROUTE=1; AGENT_FAST_ROUTE=1; AGENT_SMART_ROUTE=3 ;;
+    esac
+}
+# Apply preset if AGENT_ROUTING was set via environment
+_agent_routing_apply
 
 # ── Context-aware memory injection for thinking models ─────────
 # Thinking models consume input context faster (need room for
@@ -1116,8 +1134,8 @@ _fast_route() {
         echo "vision"; return 0
     fi
 
-    # /journal — journal read/write
-    if [[ "$_fr_text" =~ (journal[[:space:]]|diary[[:space:]]|daily[[:space:]]log|log[[:space:]]entry|morning[[:space:]]entry|evening[[:space:]]entry) ]]; then
+    # /journal — journal read/write, synthesis, reflection
+    if [[ "$_fr_text" =~ (journal[[:space:]]|diary[[:space:]]|daily[[:space:]]log|log[[:space:]]entry|morning[[:space:]]entry|evening[[:space:]]entry|synthesize.*findings|synthesize.*themes|write.*journal|journal.*entry|capture.*insights|write.*reflection|daily[[:space:]]review|evening[[:space:]]review|morning[[:space:]]review) ]]; then
         echo "journal"; return 0
     fi
 
@@ -1156,12 +1174,10 @@ _fast_route() {
         echo "mqtt"; return 0
     fi
 
-    # /recall — knowledge base search + memory-retrieval signals
-    # Matches explicit recall keywords AND phrases that imply
-    # "use what you already know" — previous search results,
-    # prior task findings, etc. Without this, 4B models default
-    # to /web search even when the data is already in recall/journal.
-    if [[ "$_fr_text" =~ (recall[[:space:]]|search.*knowledge|knowledge[[:space:]]base|fts5|look[[:space:]]up.*in[[:space:]]memory|previous[[:space:]]search|prior[[:space:]]search|earlier[[:space:]]search|from[[:space:]]before|you[[:space:]]found|you[[:space:]]searched|you[[:space:]]identified|identified[[:space:]]in[[:space:]]your|results[[:space:]]from[[:space:]]your|from[[:space:]]your[[:space:]]previous|from[[:space:]]your[[:space:]]earlier|based[[:space:]]on[[:space:]]your[[:space:]]previous|websites[[:space:]]identified|urls[[:space:]]found) ]]; then
+    # /recall — knowledge base search + explicit memory-retrieval signals
+    # Narrowed to avoid stealing /journal write tasks. Only match
+    # phrases that unambiguously mean "search existing memory/KB".
+    if [[ "$_fr_text" =~ (recall[[:space:]]|search.*knowledge|knowledge[[:space:]]base|fts5|look[[:space:]]up.*in[[:space:]]memory|previous[[:space:]]search|prior[[:space:]]search|earlier[[:space:]]search|from[[:space:]]before|you[[:space:]]found|you[[:space:]]searched|you[[:space:]]identified|results[[:space:]]from[[:space:]]your) ]]; then
         echo "recall"; return 0
     fi
 
@@ -3148,6 +3164,7 @@ Output ONLY a bare /command. No prose. Example: /web
 /edit=small file change (sed, max 200 chars)
 /append=add to end of file
 /read=read a file
+/journal=read/write journal entries, synthesis, reflection
 /ls=list files
 /grep=regex file search, find patterns
 /init=scaffold new project
@@ -3911,6 +3928,7 @@ agent_inner_loop() {
     local _web_search_consec=0     # Consecutive /web search counter (reset on non-search)
     local _respond_consec=0        # Consecutive /respond counter (reset on non-respond)
     local _p1_incomplete_consec=0  # Consecutive P1 INCOMPLETE verdicts (pre-route breaker)
+    local _mismatch_count=0        # Specialist-router mismatch counter (cap at 2)
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
     local -a _inner_cmd_history=() # Track commands for failure pattern detection
     local -a _blocked_cmds=()      # Commands blocked after 3 consecutive failures
@@ -3937,7 +3955,7 @@ agent_inner_loop() {
         # Regex anchors to space or start-of-string to avoid matching
         # URL path segments (e.g. https://example.com/api → "api").
         local _pre_route=""
-        if [ "${AGENT_PRE_ROUTE:-1}" -eq 1 ] && [ "${AGENT_SMART_ROUTE:-2}" -ge 1 ] && [ "$_p1_incomplete_consec" -lt 2 ] && [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
+        if [ "${AGENT_PRE_ROUTE:-1}" -eq 1 ] && [ "$_p1_incomplete_consec" -lt 2 ] && [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
             local _pre_cmd="${BASH_REMATCH[2]}"
             # Synonym remap: models love "/draft" — treat as /write
             [ "$_pre_cmd" = "draft" ] && _pre_cmd="write"
@@ -5007,19 +5025,41 @@ INTERLOCK_JSON
             # The router selected a specific tool, but the specialist
             # may ignore it and output a different command. When the
             # specialist's command doesn't match the router's selection,
-            # reject it to prevent loops where the specialist fixates
-            # on a blocked/wrong tool. Skip for bash and content-bearing
-            # commands where the specialist has discretion.
+            # reject it — UNLESS the milestone itself names the specialist's
+            # command (milestone-authoritative override), or the mismatch
+            # cap (2) has been reached.
             if [ -n "${selected_tool:-}" ] && [ "$selected_tool" != "bash" ]; then
                 local _routed_base="${selected_tool#/}"
                 if [ "$_spec_cmd_name" != "$_routed_base" ]; then
                     # Allow sub-commands (e.g. router="web", specialist="web search")
                     # by checking if the specialist's command starts with the routed tool
                     if [[ "$_spec_cmd_name" != "$_routed_base" ]] && [[ "$cmd" != "/${_routed_base} "* ]] && [[ "$cmd" != "/${_routed_base}" ]]; then
-                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Specialist tool mismatch: router=/$_routed_base specialist=/$_spec_cmd_name — rejecting"
-                        _micro_add_warning "$micro_file" "TOOL MISMATCH: Router selected /$_routed_base but specialist output /$_spec_cmd_name. You MUST use /$_routed_base for this action."
-                        inner_attempts=$((inner_attempts + 1))
-                        continue
+                        # ── Milestone-authoritative override ──────────
+                        # If the milestone text itself names the specialist's
+                        # command, trust the specialist over the router.
+                        # e.g. milestone="Use /journal write to..." specialist=/journal
+                        local _milestone_cmd=""
+                        if [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
+                            _milestone_cmd="${BASH_REMATCH[2]}"
+                        fi
+                        if [ "$_spec_cmd_name" = "$_milestone_cmd" ] || [[ "$cmd" == "/${_milestone_cmd} "* ]]; then
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] milestone-authoritative override: trusting specialist /$_spec_cmd_name over router /$_routed_base"
+                            _mismatch_count=0
+                        elif [ "$_mismatch_count" -ge 2 ]; then
+                            # ── Mismatch cap reached ─────────────────
+                            # After 2 mismatches, stop fighting and trust
+                            # the specialist to break the deadlock.
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] mismatch cap reached (2), trusting specialist /$_spec_cmd_name"
+                            _mismatch_count=0
+                        else
+                            _mismatch_count=$((_mismatch_count + 1))
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Specialist tool mismatch: router=/$_routed_base specialist=/$_spec_cmd_name — rejecting ($_mismatch_count/2)"
+                            _micro_add_warning "$micro_file" "TOOL MISMATCH: Router selected /$_routed_base but specialist output /$_spec_cmd_name. You MUST use /$_routed_base for this action."
+                            # Inject feedback so the router can self-correct on retry
+                            _last_eval_feedback="MISMATCH: You selected /$_routed_base but the milestone specifies /$_spec_cmd_name. Use /$_spec_cmd_name instead."
+                            inner_attempts=$((inner_attempts + 1))
+                            continue
+                        fi
                     fi
                 fi
             fi

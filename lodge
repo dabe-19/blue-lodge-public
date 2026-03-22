@@ -918,6 +918,64 @@ _cmd_limits() {
             else
                 _limits_set AGENT_WEB_SEARCH_MAX_OPERATORS "Web search max operators" "$value" 0 20
             fi ;;
+        routing|route|routing-mode)
+            if [ -z "$value" ]; then
+                local _rt_val="${AGENT_ROUTING:-}"
+                if [ -z "$_rt_val" ]; then
+                    ui_info "Routing mode: custom (individual settings)  (default: unset)"
+                else
+                    local _rt_label="unknown"
+                    [ "$_rt_val" -eq 0 ] && _rt_label="minimal (pre=0 fast=0 smart=0)"
+                    [ "$_rt_val" -eq 1 ] && _rt_label="standard (pre=1 fast=1 smart=1)"
+                    [ "$_rt_val" -eq 2 ] && _rt_label="full-llm (pre=1 fast=0 smart=1)"
+                    [ "$_rt_val" -eq 3 ] && _rt_label="enhanced (pre=1 fast=1 smart=3)"
+                    ui_info "Routing mode: $_rt_label ($AGENT_ROUTING)"
+                fi
+                ui_dim "  0=minimal  1=standard  2=full-llm  3=enhanced  (blank=custom)"
+            else
+                if [[ "$value" =~ ^[0-3]$ ]]; then
+                    AGENT_ROUTING="$value"
+                    _agent_routing_apply
+                    local _rt_d="unknown"
+                    [ "$value" -eq 0 ] && _rt_d="minimal"
+                    [ "$value" -eq 1 ] && _rt_d="standard"
+                    [ "$value" -eq 2 ] && _rt_d="full-llm"
+                    [ "$value" -eq 3 ] && _rt_d="enhanced"
+                    ui_ok "Routing mode set to $value ($_rt_d)"
+                    ui_dim "  pre-route=${AGENT_PRE_ROUTE} fast-route=${AGENT_FAST_ROUTE} smart-route=${AGENT_SMART_ROUTE}"
+                elif [[ "$value" == "off" || "$value" == "minimal" ]]; then
+                    AGENT_ROUTING=0; _agent_routing_apply
+                    ui_ok "Routing set to minimal (all routing shortcuts disabled)"
+                elif [[ "$value" == "on" || "$value" == "standard" ]]; then
+                    AGENT_ROUTING=1; _agent_routing_apply
+                    ui_ok "Routing set to standard"
+                elif [[ "$value" == "full" || "$value" == "full-llm" ]]; then
+                    AGENT_ROUTING=2; _agent_routing_apply
+                    ui_ok "Routing set to full-llm (no fast-route, all LLM)"
+                elif [[ "$value" == "enhanced" ]]; then
+                    AGENT_ROUTING=3; _agent_routing_apply
+                    ui_ok "Routing set to enhanced (combined reroute + fuzzy)"
+                else
+                    ui_err "Routing: 0=minimal 1=standard 2=full-llm 3=enhanced (or on/off)"
+                fi
+            fi ;;
+        pre-route|preroute|pre_route)
+            if [ -z "$value" ]; then
+                local _pr_show="disabled"
+                [ "${AGENT_PRE_ROUTE:-1}" -eq 1 ] && _pr_show="enabled"
+                ui_info "Pre-route: $_pr_show (${AGENT_PRE_ROUTE:-1})  (default: 1)"
+                ui_dim "  Pre-route extracts /command from strategist milestone text before routing."
+            else
+                if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
+                    AGENT_PRE_ROUTE=1
+                    ui_ok "Pre-route enabled"
+                elif [[ "$value" == "off" || "$value" == "0" || "$value" == "disable" || "$value" == "disabled" ]]; then
+                    AGENT_PRE_ROUTE=0
+                    ui_ok "Pre-route disabled"
+                else
+                    ui_err "Pre-route: on|off (0|1)"
+                fi
+            fi ;;
         smart-route)
             if [ -z "$value" ]; then
                 local _sr_val="${AGENT_SMART_ROUTE:-2}"
@@ -930,19 +988,12 @@ _cmd_limits() {
             else
                 if [[ "$value" == "off" || "$value" == "disable" || "$value" == "disabled" ]]; then
                     AGENT_SMART_ROUTE=0
-                    AGENT_PRE_ROUTE=0
                     ui_ok "Smart command routing disabled"
                 elif [[ "$value" == "on" || "$value" == "enable" || "$value" == "enabled" ]]; then
                     AGENT_SMART_ROUTE=2
-                    AGENT_PRE_ROUTE=1
                     ui_ok "Smart command routing enabled (fuzzy catalog mode)"
                 elif [[ "$value" =~ ^[0-3]$ ]]; then
                     AGENT_SMART_ROUTE="$value"
-                    if [ "$value" -eq 0 ]; then
-                        AGENT_PRE_ROUTE=0
-                    else
-                        AGENT_PRE_ROUTE=1
-                    fi
                     local _sr_desc="disabled"
                     [ "$value" -eq 1 ] && _sr_desc="reroute only"
                     [ "$value" -eq 2 ] && _sr_desc="fuzzy catalog only"
@@ -1226,6 +1277,7 @@ _cmd_limits() {
             AGENT_PRESSURE_RELIEF=2
             AGENT_SMART_ROUTE=2
             AGENT_PRE_ROUTE=1
+            AGENT_ROUTING=""
             AGENT_TASK_MODE=0
             AGENT_WEB_UNLOCK_ABSTRACT=99
             AGENT_WEB_UNLOCK_COMBINED=2
@@ -1476,6 +1528,17 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Tight parsing:" "$_tp_show  (default: disabled)"
             printf "  %-22s %s\n" "Web search length:" "${AGENT_WEB_SEARCH_MAX_LENGTH:-160}  (default: 160)"
             printf "  %-22s %s\n" "Web search operators:" "${AGENT_WEB_SEARCH_MAX_OPERATORS:-3}  (default: 3)"
+            local _rt_disp="custom"
+            if [ -n "${AGENT_ROUTING:-}" ]; then
+                [ "${AGENT_ROUTING}" -eq 0 ] && _rt_disp="minimal (0)"
+                [ "${AGENT_ROUTING}" -eq 1 ] && _rt_disp="standard (1)"
+                [ "${AGENT_ROUTING}" -eq 2 ] && _rt_disp="full-llm (2)"
+                [ "${AGENT_ROUTING}" -eq 3 ] && _rt_disp="enhanced (3)"
+            fi
+            printf "  %-22s %s\n" "Routing mode:" "$_rt_disp"
+            local _pr_show="disabled"
+            [ "${AGENT_PRE_ROUTE:-1}" -eq 1 ] && _pr_show="enabled"
+            printf "  %-22s %s\n" "Pre-route:" "$_pr_show (${AGENT_PRE_ROUTE:-1})  (default: 1)"
             local _sr_show="disabled"
             [ "${AGENT_SMART_ROUTE:-2}" -eq 1 ] && _sr_show="reroute only"
             [ "${AGENT_SMART_ROUTE:-2}" -eq 2 ] && _sr_show="fuzzy only"
@@ -1546,6 +1609,8 @@ _cmd_limits() {
             ui_dim "    rec-chars N      — Max chars in evaluator recommendation to strategist (current: ${AGENT_EVAL_REC_CHARS:-120})"
             ui_dim "    rec-inject 0-2   — Recommendation injection to rewriter: 0=off 1=rec-only 2=both (current: ${AGENT_EVAL_REC_INJECT:-0})"
             ui_dim "    cross-sieve 0|1  — Cross-task memory sieve at task start: 0=off 1=on (current: ${AGENT_CROSS_TASK_SIEVE:-1})"
+            ui_dim "    routing 0-3        — Consolidated routing preset: 0=minimal 1=standard 2=full-llm 3=enhanced (current: ${AGENT_ROUTING:-custom})"
+            ui_dim "    pre-route on|off   — Pre-route command extraction from milestone text (current: $([ "${AGENT_PRE_ROUTE:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    smart-route 0-3|on|off — Smart routing: 0=off 1=reroute 2=fuzzy 3=combined (current: ${AGENT_SMART_ROUTE:-2})"
             ui_dim "    fast-route on|off  — Keyword filter before LLM router (current: $([ "${AGENT_FAST_ROUTE:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    task-mode 0-3      — Task classifier: 0=auto 1=abstract 2=concrete 3=combined (current: ${AGENT_TASK_MODE:-0})"
