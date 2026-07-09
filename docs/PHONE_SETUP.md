@@ -309,7 +309,7 @@ path to `/data/data/com.termux/files/home/llama.cpp/build/bin/llama-server`:
 ```bash
 # Inside proot Ubuntu:
 lodge
-/backend start qwen3:8b    # Starts llama-server using Termux's binary + Ollama's GGUF
+/backend start blue-lodge-gemma4-inst:4b  # Starts llama-server using Termux's binary + Ollama's GGUF
 ```
 
 See [BACKEND_VALIDATION.md](BACKEND_VALIDATION.md) for validation and

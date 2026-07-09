@@ -17,6 +17,20 @@ GEORGE_CACHE_DIR="$GEORGE_CONFIG_DIR/cache"
 API_USER_AGENT="George/0.1 (Blue Lodge Coding Agent)"
 API_DEFAULT_TIMEOUT="${API_DEFAULT_TIMEOUT:-30}"
 
+_api_valid_key_name() {
+    local key_name="$1"
+    [[ "$key_name" =~ ^[A-Z][A-Z0-9_]*$ ]]
+}
+
+_api_value_is_safe() {
+    local value="$1"
+    # keys.conf is line-oriented; reject control chars to prevent breakout.
+    if printf '%s' "$value" | grep -q '[[:cntrl:]]'; then
+        return 1
+    fi
+    return 0
+}
+
 # ── Ensure config dir exists ──────────────────────────────────
 api_init() {
     mkdir -p "$GEORGE_CONFIG_DIR" "$GEORGE_COOKIES_DIR" "$GEORGE_CACHE_DIR"
@@ -66,11 +80,23 @@ EOF
 # ── Load a key from config ─────────────────────────────────────
 api_get_key() {
     local key_name="$1"
+    if ! _api_valid_key_name "$key_name"; then
+        return 1
+    fi
     if [ ! -f "$GEORGE_KEYS_FILE" ]; then
         return 1
     fi
     local value
-    value=$(grep "^${key_name}=" "$GEORGE_KEYS_FILE" 2>/dev/null | head -1 | cut -d= -f2-)
+    value=$(awk -F= -v key="$key_name" '
+        $1 == key {
+            print substr($0, index($0, "=") + 1)
+            found = 1
+            exit
+        }
+        END {
+            if (!found) exit 1
+        }
+    ' "$GEORGE_KEYS_FILE" 2>/dev/null)
     if [ -z "$value" ]; then
         return 1
     fi
@@ -81,15 +107,26 @@ api_get_key() {
 api_set_key() {
     local key_name="$1"
     local value="$2"
-    api_init
-    # Remove existing line if present, then append
-    if grep -q "^${key_name}=" "$GEORGE_KEYS_FILE" 2>/dev/null; then
-        local tmpfile
-        tmpfile=$(mktemp)
-        grep -v "^${key_name}=" "$GEORGE_KEYS_FILE" > "$tmpfile"
-        mv "$tmpfile" "$GEORGE_KEYS_FILE"
+
+    if ! _api_valid_key_name "$key_name"; then
+        ui_err "Invalid key name '$key_name' (expected: A-Z, 0-9, _)"
+        return 1
     fi
-    echo "${key_name}=${value}" >> "$GEORGE_KEYS_FILE"
+
+    if ! _api_value_is_safe "$value"; then
+        ui_err "Refusing to persist key '$key_name' with control characters"
+        return 1
+    fi
+
+    api_init
+
+    local tmpfile
+    tmpfile=$(mktemp)
+
+    # Remove existing line if present, then append
+    awk -F= -v key="$key_name" '$1 != key { print $0 }' "$GEORGE_KEYS_FILE" > "$tmpfile"
+    printf '%s=%s\n' "$key_name" "$value" >> "$tmpfile"
+    mv "$tmpfile" "$GEORGE_KEYS_FILE"
     chmod 600 "$GEORGE_KEYS_FILE"
 }
 
@@ -245,6 +282,110 @@ api_json_get() {
     echo "$json" | jq -r "$field" 2>/dev/null
 }
 
+# ── Model Source Normalization Helpers ───────────────────────
+# Integration-layer utility for catalog/provisioning code paths.
+# Returns stable caveat fields so core registry logic can consume
+# external-source assumptions without hardcoding family specifics.
+
+api_model_source_kind() {
+    local source_ref="$1"
+    local ref_lc
+    ref_lc=$(printf '%s' "$source_ref" | tr '[:upper:]' '[:lower:]')
+
+    if [[ "$ref_lc" == hf.co/* ]]; then
+        echo "hf_ollama_registry"
+    elif [[ "$ref_lc" =~ ^https?://.*\.gguf([?#].*)?$ ]]; then
+        echo "gguf_url"
+    elif [[ "$ref_lc" == *.gguf ]]; then
+        echo "gguf_file"
+    elif [[ "$ref_lc" =~ ^[a-z0-9._-]+/[a-z0-9._-]+:[a-z0-9._-]+$ ]]; then
+        echo "ollama_namespaced"
+    elif [[ "$ref_lc" =~ ^[a-z0-9._-]+:[a-z0-9._-]+$ ]]; then
+        echo "ollama_library"
+    else
+        echo "unknown"
+    fi
+}
+
+# Output format: key=value (one pair per line)
+api_model_source_caveats() {
+    local source_ref="$1"
+    local family_hint="${2:-}"
+    local role_hint="${3:-}"
+    local ref_lc family_lc role_lc kind
+    ref_lc=$(printf '%s' "$source_ref" | tr '[:upper:]' '[:lower:]')
+    family_lc=$(printf '%s' "$family_hint" | tr '[:upper:]' '[:lower:]')
+    role_lc=$(printf '%s' "$role_hint" | tr '[:upper:]' '[:lower:]')
+    kind=$(api_model_source_kind "$source_ref")
+
+    local pull_method="unknown"
+    local runtime_compat="unknown"
+    local multimodal="unknown"
+    local thinking_behavior="none"
+    local mobile_footprint="unknown"
+    local notes=""
+
+    case "$kind" in
+        hf_ollama_registry)
+            pull_method="ollama_pull_hf"
+            runtime_compat="llama.cpp-capable"
+            notes="hf.co GGUF pulled via Ollama manifests"
+            ;;
+        gguf_url|gguf_file)
+            pull_method="direct_gguf"
+            runtime_compat="llama.cpp-capable"
+            notes="direct GGUF source"
+            ;;
+        ollama_namespaced|ollama_library)
+            pull_method="ollama_pull"
+            runtime_compat="ollama-only"
+            notes="non-GGUF source metadata"
+            ;;
+    esac
+
+    # Family/source overrides
+    if [[ "$ref_lc" == *"unsloth"* ]] && [[ "$ref_lc" == *"gemma"* ]] && [[ "$ref_lc" == *"e4b"* ]] && [[ "$ref_lc" == *"qat"* ]]; then
+        mobile_footprint="mobile-low-memory"
+        multimodal="vision-capable"
+        notes="${notes};unsloth gemma4 e4b qat profile"
+    fi
+
+    if [[ "$ref_lc" == *"qwen3.5"* ]] || [[ "$family_lc" == *"qwen35"* ]]; then
+        thinking_behavior="template_kwargs-enable_thinking"
+        runtime_compat="llama.cpp-capable"
+        notes="${notes};thinking tokens require chat-template kwargs"
+    elif [[ "$role_lc" == *"think"* ]] || [[ "$family_lc" == *"reason"* ]]; then
+        thinking_behavior="native_or_prompt_emulated"
+    fi
+
+    if [[ "$ref_lc" == *"ministral"* ]] || [[ "$family_lc" == *"ministral"* ]]; then
+        multimodal="vision-capable"
+    elif [[ "$ref_lc" == *"gemma-3-4b"* ]] || [[ "$family_lc" == *"gemma"* ]]; then
+        multimodal="vision-capable"
+    elif [[ "$ref_lc" == *"gemma-3-1b"* ]]; then
+        multimodal="text-only"
+        mobile_footprint="ultra-light"
+    fi
+
+    if [ "$mobile_footprint" = "unknown" ]; then
+        if [[ "$ref_lc" == *":1b"* ]] || [[ "$ref_lc" == *"-1b"* ]]; then
+            mobile_footprint="ultra-light"
+        elif [[ "$ref_lc" == *":2b"* ]] || [[ "$ref_lc" == *":3b"* ]] || [[ "$ref_lc" == *":4b"* ]] || [[ "$ref_lc" == *"-2b"* ]] || [[ "$ref_lc" == *"-3b"* ]] || [[ "$ref_lc" == *"-4b"* ]]; then
+            mobile_footprint="light"
+        elif [[ "$ref_lc" == *":7b"* ]] || [[ "$ref_lc" == *":8b"* ]] || [[ "$ref_lc" == *":9b"* ]] || [[ "$ref_lc" == *"-7b"* ]] || [[ "$ref_lc" == *"-8b"* ]] || [[ "$ref_lc" == *"-9b"* ]]; then
+            mobile_footprint="medium"
+        fi
+    fi
+
+    printf 'source_kind=%s\n' "$kind"
+    printf 'pull_method=%s\n' "$pull_method"
+    printf 'runtime_compat=%s\n' "$runtime_compat"
+    printf 'multimodal=%s\n' "$multimodal"
+    printf 'thinking_behavior=%s\n' "$thinking_behavior"
+    printf 'mobile_footprint=%s\n' "$mobile_footprint"
+    printf 'notes=%s\n' "${notes#;}"
+}
+
 # ── Auth header builders ──────────────────────────────────────
 api_bearer_header() {
     local token="$1"
@@ -285,6 +426,62 @@ api_retry() {
         fi
     done
     return 1
+}
+
+# ── External availability probes (silent) ───────────────────
+# These helpers are routing-safe: no UI output, deterministic
+# return codes, and no dependency on provider-specific callers.
+api_network_state() {
+    local timeout="${1:-3}"
+
+    if [ "${AGENT_FORCE_OFFLINE:-0}" -eq 1 ]; then
+        echo "forced_offline"
+        return 0
+    fi
+
+    if declare -f vitals_net_reachable &>/dev/null; then
+        if vitals_net_reachable &>/dev/null; then
+            echo "online"
+        else
+            echo "offline"
+        fi
+        return 0
+    fi
+
+    if command -v curl &>/dev/null; then
+        if curl -fsSI --connect-timeout 2 --max-time "$timeout" https://example.com >/dev/null 2>&1; then
+            echo "online"
+        else
+            echo "offline"
+        fi
+        return 0
+    fi
+
+    echo "unknown"
+}
+
+api_network_reachable() {
+    [ "$(api_network_state "${1:-3}")" = "online" ]
+}
+
+api_endpoint_reachable() {
+    local url="$1"
+    local timeout="${2:-5}"
+
+    [ -n "$url" ] || return 1
+    command -v curl &>/dev/null || return 1
+
+    local code
+    code=$(curl -sI --connect-timeout 2 --max-time "$timeout" -o /dev/null -w "%{http_code}" "$url" 2>/dev/null)
+
+    case "$code" in
+        2[0-9][0-9]|3[0-9][0-9]|401|403|405|429)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 # ── Require a key or fail with setup instructions ─────────────

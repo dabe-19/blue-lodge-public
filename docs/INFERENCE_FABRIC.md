@@ -28,9 +28,9 @@ When tunnelling through a jump host, set `REMOTE_FORWARD_HOST=10.0.0.100`.
 
 | Tier | Models | Where | Speed |
 |------|--------|-------|-------|
-| **Central** | 8B-12B (Qwen3-8B, Llama-3.1-8B, Mistral-Nemo-12B) | GPU VM via SSH tunnel | ~60 tok/s |
+| **Central** | 8B-12B (`qwen35-9b-inst`, `granite41-8b-inst`, `gemma4-12b-inst`) | GPU VM via SSH tunnel | ~60 tok/s |
 | **Cloud** | Provider-dependent | Free-tier APIs | Varies |
-| **Edge** | 2-4B (Qwen3-4B, Ministral-3B, Phi-4-mini) | On device | ~10-15 tok/s |
+| **Edge** | 2-4B (`gemma4-e2b-inst`, `gemma4-e4b-inst`, `qwen35-4b-think`) | On device | ~10-15 tok/s |
 
 ## Quick Start
 
@@ -63,14 +63,14 @@ If the remote machine doesn't have Ollama + llama-server yet, deploy from
 any George device:
 
 ```bash
-./scripts/inference-server-deploy.sh user@192.168.1.10 --install --models qwen3:8b
+./scripts/inference-server-deploy.sh user@192.168.1.10 --install --models blue-lodge-gemma4-inst:4b
 ```
 
 Or SSH in manually and run:
 
 ```bash
 bash inference-server-install.sh            # one-time: deps, Vulkan, Ollama, build llama.cpp
-bash inference-server-models.sh qwen3:8b    # pull model + start llama-server on GPU
+bash inference-server-models.sh blue-lodge-gemma4-inst:4b    # resolve model + start llama-server on GPU
 ```
 
 See [GPU Server Setup](#gpu-server-setup) for details.
@@ -114,9 +114,9 @@ when available; falls back to a bash watchdog.
 ### 5. Pull Models
 
 ```bash
-/remote pull qwen3:8b
-/remote pull llama3.1:8b
-/remote pull mistral-nemo:12b
+/remote pull blue-lodge-gemma4-inst:4b
+/remote pull blue-lodge-qwen35-inst:9b
+/remote pull blue-lodge-granite41-inst:8b
 ```
 
 ### 6. Switch Models
@@ -124,7 +124,7 @@ when available; falls back to a bash watchdog.
 Once connected, switch the active model on the remote llama-server:
 
 ```bash
-/models single qwen3-8b-think
+/models single qwen35-9b-inst
 ```
 
 George resolves the GGUF from Ollama's blob store, restarts llama-server
@@ -228,7 +228,7 @@ automatically — no manual SSH required.
 
 #### How It Works
 
-1. **User selects a model**: `/models single ministral-3-8b-instruct`
+1. **User selects a model**: `/models single qwen35-9b-inst`
 2. **Eager switch in main shell**: `models_select()` detects
    `_REMOTE_CONNECTED=1` and backend `llamacpp`, then calls
    `_remote_restart_llamacpp()` directly — in the main shell process,
@@ -271,10 +271,10 @@ The restart command automatically includes GPU-specific flags based on
 
 ```bash
 /remote connect
-/models single ministral-3-8b-instruct
-# → "Restarting remote llama-server with blue-lodge-ministral-3-instruct:8b..."
+/models single qwen35-9b-inst
+# → "Restarting remote llama-server with blue-lodge-qwen35-inst:9b..."
 # → (waits for health + model load)
-# → "Remote model switched to blue-lodge-ministral-3-instruct:8b"
+# → "Remote model switched to blue-lodge-qwen35-inst:9b"
 /q What is the capital of France?
 # → response from remote GPU at ~60 tok/s
 ```
@@ -313,9 +313,9 @@ The remote node runs two services with separate roles:
 #### How models flow: Ollama → GGUF blob → llama-server
 
 ```
-ollama pull qwen3:8b
+ollama ls | grep blue-lodge-gemma4-inst:4b
     ↓
-~/.ollama/models/manifests/registry.ollama.ai/library/qwen3/8b
+~/.ollama/models/manifests/.../blue-lodge-gemma4-inst/4b
     ↓  (jq: extract digest for mediaType "application/vnd.ollama.image.model")
 ~/.ollama/models/blobs/sha256-XXXXX   ← this is the raw GGUF file
     ↓
@@ -362,9 +362,9 @@ Field 17 in `_MODELS_REGISTRY[]` (^-delimited):
 - `any` — runs anywhere (backward compat default)
 
 Central-tier models in registry:
-- `qwen3-8b-think` / `qwen3-8b-inst` — Qwen3 8B
-- `llama31-8b` — Llama 3.1 8B (proven 60 tok/s on 5700 XT)
-- `mistral-nemo-12b` — Mistral Nemo 12B (~7GB VRAM)
+- `gemma4-12b-inst` — Gemma 4 12B central quality tier
+- `qwen35-9b-inst` — Qwen 3.5 9B central coding tier
+- `granite41-8b-inst` — Granite 4.1 8B structured central tier
 
 ## /remote Command Reference
 
@@ -456,8 +456,8 @@ Three scripts handle the full lifecycle:
 ### Deploy from George device
 
 ```bash
-# Copy scripts + run install + pull qwen3:8b + start llama-server:
-./scripts/inference-server-deploy.sh user@192.168.1.10 --install --models qwen3:8b
+# Copy scripts + run install + load blue-lodge-gemma4-inst:4b + start llama-server:
+./scripts/inference-server-deploy.sh user@192.168.1.10 --install --models blue-lodge-gemma4-inst:4b
 
 # Just copy scripts (manual install later):
 ./scripts/inference-server-deploy.sh user@192.168.1.10
@@ -487,7 +487,7 @@ Three scripts handle the full lifecycle:
 Also supports:
 ```bash
 bash inference-server-models.sh --list            # show all models + GGUF resolution status
-bash inference-server-models.sh --resolve qwen3:8b # print the GGUF blob path
+bash inference-server-models.sh --resolve blue-lodge-gemma4-inst:4b # print the GGUF blob path
 bash inference-server-models.sh --stop             # stop running llama-server
 ```
 
@@ -502,11 +502,12 @@ curl -fsSL https://ollama.com/install.sh | sh
 sudo usermod -aG ollama $USER
 
 # Pull a model:
-ollama pull qwen3:8b
+ollama ls | grep blue-lodge-gemma4-inst:4b
 
 # Find the GGUF blob:
+MANIFEST=~/.ollama/models/manifests/.../<your-model-path>
 GGUF=$(jq -r '.layers[] | select(.mediaType=="application/vnd.ollama.image.model") | .digest' \
-  ~/.ollama/models/manifests/registry.ollama.ai/library/qwen3/8b)
+  "$MANIFEST")
 GGUF_PATH=~/.ollama/models/blobs/${GGUF//:/-}
 
 # Start llama-server:
@@ -675,9 +676,9 @@ key^friendly_name^base_image^role^has_thinking^nothink_method^stop_token^tempera
 
 | # | Field | What it is | Example |
 |---|-------|-----------|---------|
-| 1 | key | Internal lookup ID | `qwen3-8b-think` |
-| 2 | friendly_name | Ollama model name after `ollama create` | `blue-lodge-qwen3-think:8b` |
-| 3 | base_image | Upstream reference (HF, library, or Ollama tag) | `hf.co/unsloth/Qwen3-8B-GGUF:Q4_K_M` |
+| 1 | key | Internal lookup ID | `qwen35-9b-inst` |
+| 2 | friendly_name | Ollama model name after `ollama create` | `blue-lodge-qwen35-inst:9b` |
+| 3 | base_image | Upstream reference (HF, library, or Ollama tag) | `hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL` |
 | 4 | role | `thinking` or `instruct` | `thinking` |
 | 5 | has_thinking | `1` = emits `<think>` blocks, `0` = no | `1` |
 | 6 | nothink_method | How to suppress thinking: `qwen`, `system`, `none` | `qwen` |
@@ -690,12 +691,12 @@ key^friendly_name^base_image^role^has_thinking^nothink_method^stop_token^tempera
 | 13 | top_p | Nucleus sampling | `0.95` |
 | 14 | top_k | Top-K sampling | `20` |
 | 15 | min_p | Min-P sampling | `0.0` |
-| 16 | notes | Human description | `Qwen3 8B thinking...` |
+| 16 | notes | Human description | `Qwen 3.5 9B instruct...` |
 | 17 | tier | `edge` (2-4B), `central` (8B+), `any` | `central` |
 
-### Example: Adding a 12B Unsloth Model
+### Example: Adding A Central-Tier Unsloth Model
 
-Let's say you want to add **Mistral Nemo 12B** using Unsloth's GGUF quantization.
+Let's say you want to add **Gemma 4 12B** using Unsloth's GGUF quantization.
 
 #### Step 1: Find the Unsloth GGUF on HuggingFace
 
@@ -713,25 +714,24 @@ The HF reference format is:
 hf.co/unsloth/<ModelName>-GGUF:<QuantTag>
 ```
 
-Example: `hf.co/unsloth/Mistral-Nemo-Instruct-2407-GGUF:Q4_K_M`
+Example: `hf.co/unsloth/gemma-4-12B-it-qat-GGUF:UD-Q4_K_XL`
 
 #### Step 2: Identify the model's chat template and stop token
 
 | Model family | Stop token | nothink_method | Chat template |
 |-------------|-----------|----------------|---------------|
-| Qwen / Qwen3 / Qwen3.5 | `<\|im_end\|>` | `qwen` (thinking) / `none` (instruct) | ChatML |
+| Qwen 3.5 | `<\|im_end\|>` | `qwen` (thinking) / `none` (instruct) | ChatML |
+| Gemma 4 | `<end_of_turn>` | `none` | gemma |
+| Granite 4.1 | `<\|end_of_text\|>` | `none` | granite |
+| Nemotron 3 | `<\|eot_id\|>` | `none` | llama3-style |
 | Llama 3.x | `<\|eot_id\|>` | `none` | llama3 |
-| Mistral / Ministral | `</s>` | `system` (reasoning) / `none` (instruct) | mistral |
-| Phi-4 | `<\|end\|>` | `system` (reasoning) / `none` (instruct) | phi4 |
-| Gemma 3 | `<end_of_turn>` | `none` | gemma |
-| Granite 4 | `<\|end_of_text\|>` | `system` (preview) / `none` (instruct) | granite |
 
 #### Step 3: Choose sampling parameters
 
 Rules of thumb:
 - **Thinking models**: temp 0.6–0.8, top_p 0.95, higher num_predict (32768)
 - **Instruct models**: temp 0.15, top_p 0.8–0.9, lower num_predict (8192–16384)
-- **repeat_penalty**: 1.0–1.3 (higher for models that loop, e.g., Ministral needs 1.2)
+- **repeat_penalty**: 1.0–1.3 (raise it for models that loop or self-repeat)
 - **presence_penalty**: 0.0 for instruct, 0.3–0.8 for thinking/reasoning
 - Check the model card on HF for vendor-recommended sampling params
 
@@ -743,8 +743,8 @@ Open `lib/models.sh` and add your line in the `Central Tier` section:
     # ── Central Tier (8B+, requires remote GPU) ────────────────
     # ... existing entries ...
 
-    # Mistral Nemo 12B (Unsloth Q4_K_M): instruct, fits 5700 XT (~7GB VRAM).
-    "mistral-nemo-12b-unsloth^blue-lodge-mistral-nemo-unsloth:12b^hf.co/unsloth/Mistral-Nemo-Instruct-2407-GGUF:Q4_K_M^instruct^0^none^</s>^0.15^1.1^0.0^32768^8192^0.9^40^0.0^Mistral Nemo 12B Unsloth quant. Fits 5700 XT VRAM.^central"
+    # Gemma 4 12B (Unsloth UD-Q4_K_XL): instruct, central GPU quality tier.
+    "gemma4-12b-inst^blue-lodge-gemma4-inst:12b^hf.co/unsloth/gemma-4-12B-it-qat-GGUF:UD-Q4_K_XL^instruct^0^none^<end_of_turn>^0.2^1.0^0.0^32768^16384^0.9^40^0.0^Gemma 4 12B QAT instruct. Central GPU quality tier.^central"
 ```
 
 That's it. No other files to edit.
@@ -753,10 +753,10 @@ That's it. No other files to edit.
 
 ```bash
 # From George:
-/remote pull hf.co/unsloth/Mistral-Nemo-Instruct-2407-GGUF:Q4_K_M
+/remote pull hf.co/unsloth/gemma-4-12B-it-qat-GGUF:UD-Q4_K_XL
 
 # Or via the provisioning script:
-./scripts/inference-server-models.sh hf.co/unsloth/Mistral-Nemo-Instruct-2407-GGUF:Q4_K_M
+./scripts/inference-server-models.sh hf.co/unsloth/gemma-4-12B-it-qat-GGUF:UD-Q4_K_XL
 ```
 
 Ollama will download the GGUF, and `inference-server-models.sh` resolves
@@ -765,22 +765,22 @@ the blob path and starts llama-server with it.
 #### Step 6: Select it in George
 
 ```bash
-# Set as primary (thinking/planning):
-/model primary blue-lodge-mistral-nemo-unsloth:12b
+# Set as primary:
+/models select primary gemma4-12b-inst
 
-# Or as secondary (fast/code):
-/model secondary blue-lodge-mistral-nemo-unsloth:12b
+# Or keep it in single-model mode on the remote path:
+/models single gemma4-12b-inst
 ```
 
-### Quick-Reference: Popular ~12B Unsloth Models
+### Quick Reference: Popular Central-Tier Curated Models
 
-| Model | HF base_image | Role | Stop | VRAM (Q4_K_M) |
-|-------|--------------|------|------|----------------|
-| Mistral Nemo 12B | `hf.co/unsloth/Mistral-Nemo-Instruct-2407-GGUF:Q4_K_M` | instruct | `</s>` | ~7 GB |
-| Qwen2.5 14B | `hf.co/unsloth/Qwen2.5-14B-Instruct-GGUF:Q4_K_M` | instruct | `<\|im_end\|>` | ~8 GB |
-| Llama 3.1 8B | `hf.co/unsloth/Meta-Llama-3.1-8B-Instruct-GGUF:Q5_K_M` | instruct | `<\|eot_id\|>` | ~5.5 GB |
-| Phi-4 14B | `hf.co/unsloth/phi-4-GGUF:Q4_K_M` | instruct | `<\|end\|>` | ~8 GB |
-| Gemma 3 12B | `hf.co/unsloth/gemma-3-12b-it-GGUF:Q4_K_M` | instruct | `<end_of_turn>` | ~7 GB |
+| Model | HF base_image | Role | Stop | Tier |
+|-------|--------------|------|------|------|
+| Gemma 4 12B | `hf.co/unsloth/gemma-4-12B-it-qat-GGUF:UD-Q4_K_XL` | instruct | `<end_of_turn>` | central |
+| Qwen 3.5 9B | `hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL` | instruct | `<\|im_end\|>` | central |
+| Granite 4.1 8B | `hf.co/unsloth/granite-4.1-8b-GGUF:Q4_K_M` | instruct | `<\|end_of_text\|>` | central |
+| Gemma 4 E4B | `hf.co/unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL` | instruct | `<end_of_turn>` | edge |
+| Qwen 3.5 4B think | `hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL` | thinking | `<\|im_end\|>` | edge |
 
 For thinking variants of the same model, change `role` to `thinking`,
 `has_thinking` to `1`, set `nothink_method` appropriately, bump temperature

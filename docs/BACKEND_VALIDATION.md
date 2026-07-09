@@ -32,7 +32,7 @@ curl -s http://127.0.0.1:11434/api/tags | jq .
 # Is a model loaded in memory?
 curl -s http://127.0.0.1:11434/api/ps | jq .
 
-# Expected: {"models":[{"name":"qwen3:8b",...}]} if loaded
+# Expected: {"models":[{"name":"blue-lodge-gemma4-inst:4b",...}]} if loaded
 ```
 
 ### llama-server
@@ -68,7 +68,7 @@ This shows health of both backends simultaneously.
 # Simple completion (non-streaming)
 curl -s http://127.0.0.1:11434/api/generate \
   -H "Content-Type: application/json" \
-  -d '{"model":"qwen3:8b","prompt":"Say hello in one word.","stream":false,"options":{"num_predict":10}}' \
+  -d '{"model":"blue-lodge-gemma4-inst:4b","prompt":"Say hello in one word.","stream":false,"options":{"num_predict":10}}' \
   | jq '{response, eval_count, eval_duration, prompt_eval_count}'
 ```
 
@@ -155,7 +155,7 @@ ollama ps
 
 # Expected (GPU):
 # NAME        ID            SIZE     PROCESSOR    UNTIL
-# qwen3:8b    abc123...     5.2 GB   100% GPU     4 minutes from now
+# blue-lodge-gemma4-inst:4b abc123... 3.4 GB 100% GPU 4 minutes from now
 
 # If CPU:
 # PROCESSOR column will show "100% CPU" or "CPU"
@@ -165,7 +165,7 @@ Also check the Ollama model details:
 
 ```bash
 curl -s http://127.0.0.1:11434/api/show \
-  -d '{"name":"qwen3:8b"}' | jq '.details'
+  -d '{"name":"blue-lodge-gemma4-inst:4b"}' | jq '.details'
 ```
 
 ### llama-server — GPU Verification
@@ -244,7 +244,7 @@ instances.
 ### Prerequisites
 
 - llama-server binary built with Vulkan (see [ADRENO_GPU_SETUP.md](ADRENO_GPU_SETUP.md))
-- At least one model pulled via Ollama (`ollama pull qwen3:8b`) or a direct GGUF file
+- At least one model available through Ollama (for example `blue-lodge-gemma4-inst:4b`) or a direct GGUF file
 - `jq` installed (comes with Termux by default)
 
 ### Quickstart — Using Ollama Model Names
@@ -256,12 +256,12 @@ the model name directly to the script.
 # Step 1: See what models are available
 $ ollama ls
 NAME                  ID            SIZE     MODIFIED
-qwen3:8b              abc123...     4.9 GB   2 hours ago
-minist-think:latest   def456...     4.7 GB   1 day ago
-granite3.3:8b         789abc...     4.8 GB   3 days ago
+blue-lodge-gemma4-inst:4b   abc123...     3.4 GB   2 hours ago
+blue-lodge-qwen35-think:4b  def456...     3.7 GB   1 day ago
+blue-lodge-granite41-inst:8b 789abc...    5.1 GB   3 days ago
 
 # Step 2: Run validation with any model name from that list
-$ ./scripts/validate-gpu.sh qwen3:8b
+$ ./scripts/validate-gpu.sh blue-lodge-gemma4-inst:4b
 ```
 
 The script resolves the Ollama model name to its underlying GGUF blob
@@ -271,8 +271,8 @@ automatically — no need to know the blob path.
 
 | Method | Example | When to Use |
 |--------|---------|-------------|
-| Ollama model name | `./scripts/validate-gpu.sh qwen3:8b` | Most common — use names from `ollama ls` |
-| Registry key | `./scripts/validate-gpu.sh minist-inst` | Blue Lodge registry keys (shorter aliases) |
+| Ollama model name | `./scripts/validate-gpu.sh blue-lodge-gemma4-inst:4b` | Most common — use names from `ollama ls` |
+| Registry key | `./scripts/validate-gpu.sh gemma4-e4b-inst` | Blue Lodge registry keys (shorter aliases) |
 | Direct GGUF path | `./scripts/validate-gpu.sh /path/to/model.gguf` | Testing a GGUF not managed by Ollama |
 | Interactive picker | `./scripts/validate-gpu.sh` | No argument — shows a numbered menu |
 
@@ -328,8 +328,8 @@ Prints a results table and overall verdict:
 ═══ llama.cpp GPU Offload Validation ═══
 
 [1] Resolving model
-  ✓ Resolved: qwen3:8b (ollama)
-    GGUF: /home/.ollama/models/blobs/sha256-abc123... (4.9G)
+  ✓ Resolved: blue-lodge-gemma4-inst:4b (ollama)
+    GGUF: /home/.ollama/models/blobs/sha256-abc123... (3.4G)
 
 [2] Checking llama-server binary
   ✓ Binary: /home/llama.cpp/build/bin/llama-server
@@ -367,8 +367,8 @@ Prints a results table and overall verdict:
 
 ═══ Validation Summary ═══
 
-  Model:                qwen3:8b (ollama)
-  GGUF size:            4.9G
+  Model:                blue-lodge-gemma4-inst:4b (ollama)
+  GGUF size:            3.4G
   GPU offload:          YES (33 layers)
   GPU backend:          Vulkan
   Response tokens:      9
@@ -403,10 +403,10 @@ $ ./scripts/validate-gpu.sh
 
   #    MODEL                               SIZE
   ---  -----------------------------------  ------
-  1    minist-inst (specialist)             4.7G
-  2    minist-think (thinking)              4.7G
-  3    qwen3:8b (ollama)                    4.9G
-  4    granite3.3:8b (ollama)               4.8G
+  1    gemma4-e4b-inst (default edge)       3.4G
+  2    qwen35-4b-think (thinking)           3.7G
+  3    granite41-3b-inst (structured)       2.8G
+  4    blue-lodge-granite41-inst:8b         5.1G
 
   Select model [1-4]: _
 ```
@@ -441,7 +441,7 @@ echo "═══ Ollama ═══"
 if curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
     START=$(date +%s%N)
     RESULT=$(curl -s http://127.0.0.1:11434/api/generate \
-        -d "{\"model\":\"qwen3:8b\",\"prompt\":\"$PROMPT\",\"stream\":false,\"options\":{\"num_predict\":$TOKENS}}")
+        -d "{\"model\":\"blue-lodge-gemma4-inst:4b\",\"prompt\":\"$PROMPT\",\"stream\":false,\"options\":{\"num_predict\":$TOKENS}}")
     END=$(date +%s%N)
     ELAPSED=$(echo "scale=2; ($END - $START) / 1000000000" | bc)
     EVAL_COUNT=$(echo "$RESULT" | jq -r '.eval_count // 0')
@@ -541,11 +541,14 @@ identical sampling configuration.
 
 ### The Modelfile Edge Case: Custom TEMPLATE Overrides
 
-Some Blue Lodge Modelfiles override the GGUF's built-in chat template:
+Some older compatibility Modelfiles in the repository override the
+GGUF's built-in chat template. They use project-specific `TEMPLATE`
+directives as a fallback for Ollama when a model family benefits from a
+more explicit prompt wrapper.
 
-- **Ministral models** (`minist-think.Modelfile`): Uses a custom Mistral
-  v7 template (`[SYSTEM_PROMPT]...[INST]...`) via the `TEMPLATE` directive.
-- **Granite4-preview**: Uses a custom IBM Go template.
+These overrides belong to older, non-curated compatibility paths that
+remain in the repo for experimentation. The current curated 2026 menu
+primarily relies on the GGUF-embedded chat template.
 
 These `TEMPLATE` overrides only work in Ollama. When llama-server loads
 the same GGUF, it uses the template baked into the GGUF metadata instead.
@@ -755,7 +758,7 @@ From inside a lodge session, the fastest way to validate everything:
 
 ```
 /backend status          # See which backend is active + health
-/backend start qwen3:8b  # Start llama-server with Ollama's GGUF
+/backend start blue-lodge-gemma4-inst:4b  # Start llama-server with Ollama's GGUF
 /ask "Say hello"         # Test a quick generation
 /debug on                # Enable timing info
 /ask "Count to 10"       # See tok/s in debug output

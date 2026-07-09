@@ -2,17 +2,21 @@
 
 > Generated 2026-02-27 from code audit of `lib/agent.sh`, `lib/llm.sh`, `lib/memory.sh`, `lib/models.sh`, `lodge`
 
-These diagrams trace every LLM call, what gets injected into each prompt layer, and how calls chain together for key slash commands.
+These diagrams trace every LLM call, what gets injected into each prompt
+layer, and how calls chain together for key slash commands.
 
-**Current configuration** (HEAD on `issue/model_degradation`):
-- `LODGE_SINGLE_MODEL=1` → all scenarios use **minist-think:4b** (reasoning model)
-- `LLM_TEMP_ASK=` (empty → falls through to model registry = **0.7**)
-- `LLM_TEMP_AGENT=` (empty → **0.7**)
+The audit findings are preserved here as a 2026-02-27 runtime snapshot,
+but the examples below are normalized to the current menu naming. For
+the active menu and default slots, see [MODELS.md](MODELS.md).
+
+**Current configuration** (2026 curated menu baseline):
+- `LODGE_SINGLE_MODEL=1` → all scenarios use **blue-lodge-gemma4-inst:4b** by default
+- `LLM_TEMP_ASK=` (empty → falls through to model registry = **0.2**)
+- `LLM_TEMP_AGENT=` (empty → **0.2**)
 - `LLM_TEMP_ROUTER=0.1`
-- `LLM_TEMP_TOOL=` (empty → **0.7**)
-- `repeat_penalty=1.2`, `presence_penalty=0.3` (model registry defaults)
-- `models_thinking_directive()` returns **~250 tokens** (Unsloth preamble + George identity) for minist-think
-- Modelfile SYSTEM already contains the **same ~250 tokens** baked in
+- `LLM_TEMP_TOOL=` (empty → **0.2**)
+- `repeat_penalty=1.0`, `presence_penalty=0.0` (Gemma 4 registry defaults)
+- `models_thinking_directive()` is empty for the Gemma 4 default because it is an instruct model, not a dedicated thinker
 
 ---
 
@@ -52,7 +56,7 @@ sequenceDiagram
 
     Note over LLM: === INJECTION LAYER (llm_stream) ===
     LLM->>LLM: models_ensure_for_scenario("ask")
-    Note over LLM: SINGLE_MODEL=1 → minist-think:4b
+    Note over LLM: SINGLE_MODEL=1 → active primary model
 
     LLM->>LLM: models_nothink_suffix() → empty (LODGE_NOTHINK=0)
 
@@ -68,7 +72,7 @@ sequenceDiagram
     Note over LLM: scenario=ask<br/>LLM_TEMP_ASK="" → model_temp=0.7<br/>repeat=1.2, presence=0.3
 
     LLM->>LLM: models_supports_think_flag() → false
-    Note over LLM: Ministral: think:true NOT sent
+    Note over LLM: Active model in this trace: think:true NOT sent
 
     LLM->>O: POST /api/generate {model, prompt, system, options, budget_tokens:1024}
 
@@ -116,7 +120,7 @@ OUTPUT FORMAT: You are answering a direct question...      ← format directive 
 
 | Parameter | Value | Source | Good-commit value |
 |---|---|---|---|
-| model | minist-think:4b | SINGLE_MODEL=1 | minist-think:4b |
+| model | active primary model | SINGLE_MODEL=1 | active primary model |
 | temperature | **0.7** | LLM_TEMP_ASK="" → registry | **0.5** |
 | repeat_penalty | 1.2 | LLM_REPEAT_ASK=1.2 | 1.3 |
 | presence_penalty | 0.3 | LLM_PRESENCE_ASK=0.3 | 0.8 |
@@ -166,7 +170,7 @@ sequenceDiagram
 
         AR->>S: llm_generate(macro_prompt, macro_sys, 512, 512)
         Note over S: models_ensure_for_scenario("strategist")
-        Note over S: SINGLE_MODEL=1 → minist-think:4b
+        Note over S: SINGLE_MODEL=1 → active primary model
 
         rect rgb(255, 220, 220)
             Note over S: ⚠ THINKING DIRECTIVE INJECTION
@@ -193,7 +197,7 @@ sequenceDiagram
 
         IL->>R: llm_generate(route_prompt, router_sys, 256, 128)
         Note over R: models_ensure_for_scenario("router")
-        Note over R: SINGLE_MODEL=1 → minist-think:4b
+        Note over R: SINGLE_MODEL=1 → active primary model
 
         Note over R: ✅ Router SKIPPED by thinking directive injection<br/>(LLM_SCENARIO=router check passes)
         R->>R: _llm_build_opts(256)
@@ -211,7 +215,7 @@ sequenceDiagram
 
         IL->>SP: llm_generate(specialist_prompt, specialist_sys, 20480, 512)
         Note over SP: models_ensure_for_scenario("agent")
-        Note over SP: SINGLE_MODEL=1 → minist-think:4b
+        Note over SP: SINGLE_MODEL=1 → active primary model
 
         rect rgb(255, 220, 220)
             Note over SP: ⚠ THINKING DIRECTIVE INJECTION
@@ -261,11 +265,11 @@ sequenceDiagram
 
 | # | Role | Function | Scenario | Model | Temp | System Tokens | Directive Injected? | Budget |
 |---|---|---|---|---|---|---|---|---|
-| 1 | Strategist | llm_generate | strategist | minist-think | **0.7** | **~850** | **YES (+250)** | 512 |
-| 2 | Router | llm_generate | router | minist-think | 0.1 | ~350 | NO (skipped) | 128 |
-| 3 | Specialist | llm_generate | agent | minist-think | **0.7** | **~650** | **YES (+250)** | 512 |
-| 4 | Router | llm_generate | router | minist-think | 0.1 | ~350 | NO | 128 |
-| 5 | Strategist | llm_generate | strategist | minist-think | **0.7** | **~850** | **YES (+250)** | 512 |
+| 1 | Strategist | llm_generate | strategist | active primary model | **0.7** | **~850** | **YES (+250)** | 512 |
+| 2 | Router | llm_generate | router | active primary model | 0.1 | ~350 | NO (skipped) | 128 |
+| 3 | Specialist | llm_generate | agent | active primary model | **0.7** | **~650** | **YES (+250)** | 512 |
+| 4 | Router | llm_generate | router | active primary model | 0.1 | ~350 | NO | 128 |
+| 5 | Strategist | llm_generate | strategist | active primary model | **0.7** | **~850** | **YES (+250)** | 512 |
 
 **Total LLM calls for simple social post: 5** (min case: success on first try)
 
@@ -479,9 +483,9 @@ The web path is the most LLM-call-intensive because:
 
 ## 5. Comparative Summary
 
-### 5.1 What Changed Since Good Commit (3198759)
+### 5.1 What Changed In The Audited Snapshot Since Good Commit (3198759)
 
-| Dimension | Good Commit | Current HEAD | Impact |
+| Dimension | Good Commit | Audited Snapshot | Impact |
 |---|---|---|---|
 | **Ask temp** | 0.5 | 0.7 (+0.2) | More random answers |
 | **Agent/Specialist temp** | 0.3 | 0.7 (+0.4) | Command syntax hallucination |
@@ -491,13 +495,13 @@ The web path is the most LLM-call-intensive because:
 | **Modelfile SYSTEM** | ~85 tok (lean) | ~220 tok (Unsloth preamble) | Larger base |
 | **repeat_penalty** | 1.0 (think), 1.3 (global) | 1.2 (think+global) | Vocabulary suppression |
 | **presence_penalty** | 0.0 (think), 0.8 (global) | 0.3 (think+global) | Less anti-repetition |
-| **think:true flag** | Sent to all thinkers | Only qwen3/granite4 | Ministral thinking changes |
-| **Model routing** | Dual (think+inst) | Single (think only) | No fast instruct path |
+| **think:true flag** | Sent to all thinkers | Only select thinking-capable families | Thinking-path behavior changed |
+| **Model routing** | Dual (think+inst) | Single (audited primary path) | No fast instruct path in that snapshot |
 
 ### 5.2 Token Budget Per Call (System Prompt)
 
 ```
-GOOD COMMIT:                          CURRENT HEAD:
+GOOD COMMIT:                          AUDITED SNAPSHOT:
 ┌──────────────────────┐              ┌──────────────────────┐
 │ /ask system: ~430 tok│              │ /ask system: ~680 tok│
 │  • time         (10) │              │  • directive   (250) │ ← NEW

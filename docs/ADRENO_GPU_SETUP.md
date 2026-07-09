@@ -89,10 +89,10 @@ If it says `Vulkan: not found`, the driver copy in step 2 didn't work.
 ## 4. Download a GGUF Model
 
 ```bash
-# Example: Qwen3 8B Q4_K_M (good balance of quality and speed)
+# Example: an 8B-class GGUF with a Q4-style quant (good balance of quality and speed)
 mkdir -p ~/models
 cd ~/models
-curl -LO https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/qwen3-8b-q4_k_m.gguf
+# Download your chosen GGUF here, for example as: model-8b-q4_k_m.gguf
 ```
 
 Common quantizations for mobile:
@@ -108,7 +108,7 @@ Common quantizations for mobile:
 From **Termux native**:
 ```bash
 ~/llama.cpp/build/bin/llama-server \
-    -m ~/models/qwen3-8b-q4_k_m.gguf \
+    -m ~/models/model-8b-q4_k_m.gguf \
     --port 8080 \
     -ngl 99 \
     -c 8192 \
@@ -233,7 +233,7 @@ sleep 5
 # Config — adjust these for your setup
 LLAMA_SERVER="$HOME/llama.cpp/build/bin/llama-server"
 MODEL=""  # Set to GGUF path, or leave empty + set DEFAULT_MODEL below
-DEFAULT_MODEL="minist-inst"  # Registry key or Ollama model name (resolved at runtime)
+DEFAULT_MODEL="gemma4-e4b-inst"  # Current curated default edge key or Ollama model name
 PORT=8080
 GPU_LAYERS=99
 CTX_SIZE=8192

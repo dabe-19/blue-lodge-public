@@ -39,6 +39,14 @@ describe "Configuration defaults"
     assert_eq "$LLM_ROUTER_TOKENS" "512"
   }
 
+  it "LLAMA_CPP_USE_HF defaults to 0" && {
+    assert_eq "$LLAMA_CPP_USE_HF" "0"
+  }
+
+  it "LLAMA_CPP_FA defaults to auto" && {
+    assert_eq "$LLAMA_CPP_FA" "auto"
+  }
+
   it "LLM_BUDGET_TOKENS defaults to 4096" && {
     assert_eq "$LLM_BUDGET_TOKENS" "4096"
   }
@@ -68,7 +76,8 @@ describe "Sampling parameter defaults"
 
   it "LLM_TEMPERATURE defaults to model registry value" && {
     # After models_init(), globals are set from the active model's registry.
-    # Default primary is minist-inst: temp=0.15
+    # Startup baseline defaults remain 0.15/1.2/0.3 until an explicit
+    # models_apply_defaults call rebases them from the selected model.
     assert_eq "$LLM_TEMPERATURE" "0.15"
   }
 
@@ -125,7 +134,7 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     unset LLM_SCENARIO
     result=$(_llm_build_opts 1024)
     temp=$(echo "$result" | jq -r '.temperature')
-    # No scenario → uses model registry temp (minist-inst: 0.15)
+    # No scenario → uses current baseline default temp
     assert_eq "$temp" "0.15"
   }
 
@@ -134,7 +143,7 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     result=$(_llm_build_opts 512)
     unset LLM_SCENARIO
     temp=$(echo "$result" | jq -r '.temperature')
-    # Ask has no override — falls through to model default 0.15
+    # Ask has no override — falls through to baseline default 0.15
     assert_eq "$temp" "0.15"
   }
 
@@ -143,7 +152,7 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     result=$(_llm_build_opts 50)
     unset LLM_SCENARIO
     temp=$(echo "$result" | jq -r '.temperature')
-    # Router has no override — inherits model default 0.15
+    # Router has no override — inherits baseline default 0.15
     assert_eq "$temp" "0.15"
   }
 
@@ -166,32 +175,32 @@ describe "Sampling parameter resolver (_llm_build_opts)"
     result=$(_llm_build_opts 512)
     unset LLM_SCENARIO
     pp=$(echo "$result" | jq -r '.presence_penalty')
-    # Journal has no override — inherits model default (minist-inst: 0.3)
+    # Journal has no override — inherits baseline default presence penalty 0.3.
     [[ "$pp" == "0.3" ]]
     assert_ok $?
   }
 
   it "_llm_build_opts includes top_p from model registry" && {
     unset LLM_SCENARIO
-    # Switch to granite4 which has top_p=1.0
+    # Switch to granite41 which has top_p=0.9
     _saved_model="$LODGE_MODEL"
-    LODGE_MODEL="blue-lodge-granite4:3b"
+    LODGE_MODEL="blue-lodge-granite41-inst:3b"
     _result=$(_llm_build_opts 512)
     LODGE_MODEL="$_saved_model"
     _tp=$(echo "$_result" | jq -r '.top_p')
-    # jq <1.7 drops .0 from integers (1.0→1); normalize for comparison
+    # Normalize float formatting for comparison.
     _tp=$(awk "BEGIN{printf \"%.1f\", $_tp}")
-    assert_eq "$_tp" "1.0"
+    assert_eq "$_tp" "0.9"
   }
 
   it "_llm_build_opts includes top_k from model registry" && {
     unset LLM_SCENARIO
     _saved_model="$LODGE_MODEL"
-    LODGE_MODEL="blue-lodge-granite4:3b"
+    LODGE_MODEL="blue-lodge-granite41-inst:3b"
     _result=$(_llm_build_opts 512)
     LODGE_MODEL="$_saved_model"
     _tk=$(echo "$_result" | jq -r '.top_k')
-    assert_eq "$_tk" "0"
+    assert_eq "$_tk" "20"
   }
 
   it "_llm_build_opts includes min_p from model registry" && {
@@ -219,8 +228,8 @@ describe "Sampling parameter resolver (_llm_build_opts)"
 describe "Per-scenario overrides are absolute (not additive)"
 
   it "scenario override replaces model default (not added to it)" && {
-    # minist-inst model default temp is 0.15
-    # Setting LLM_TEMP_ASK=0.5 should yield temp=0.5, NOT 0.15+0.5
+    # gemma4-e4b-inst model default temp is 0.2
+    # Setting LLM_TEMP_ASK=0.5 should yield temp=0.5, NOT 0.2+0.5
     LLM_TEMP_ASK=0.5
     LLM_SCENARIO=ask
     result=$(_llm_build_opts 512)
@@ -236,7 +245,7 @@ describe "Per-scenario overrides are absolute (not additive)"
     result=$(_llm_build_opts 512)
     unset LLM_SCENARIO
     temp=$(echo "$result" | jq -r '.temperature')
-    # Should be model default (0.15), not some other value
+    # Should be baseline default (0.15), not some other value
     assert_eq "$temp" "0.15"
   }
 
@@ -249,44 +258,44 @@ describe "models_apply_defaults"
   }
 
   it "models_apply_defaults sets globals from model registry" && {
-    models_apply_defaults "blue-lodge-minist-inst:4b" 2>/dev/null
-    assert_eq "$LLM_TEMPERATURE" "0.125"
+    models_apply_defaults "blue-lodge-gemma4-inst:4b" 2>/dev/null
+    assert_eq "$LLM_TEMPERATURE" "0.2"
     assert_eq "$LLM_REPEAT_PENALTY" "1.0"
     assert_eq "$LLM_PRESENCE_PENALTY" "0.0"
   }
 
   it "models_apply_defaults sets top_p/top_k/min_p globals" && {
-    models_apply_defaults "blue-lodge-minist-inst:4b" 2>/dev/null
+    models_apply_defaults "blue-lodge-gemma4-inst:4b" 2>/dev/null
     assert_eq "$LLM_TOP_P" "0.9"
     assert_eq "$LLM_TOP_K" "40"
     assert_eq "$LLM_MIN_P" "0.0"
   }
 
   it "models_apply_defaults top_p/top_k track model switch" && {
-    models_apply_defaults "blue-lodge-granite4:3b" 2>/dev/null
-    assert_eq "$LLM_TOP_P" "1.0"
-    assert_eq "$LLM_TOP_K" "0"
+    models_apply_defaults "blue-lodge-granite41-inst:3b" 2>/dev/null
+    assert_eq "$LLM_TOP_P" "0.9"
+    assert_eq "$LLM_TOP_K" "20"
     # Restore
-    models_apply_defaults "blue-lodge-minist-inst:4b" 2>/dev/null
+    models_apply_defaults "blue-lodge-gemma4-inst:4b" 2>/dev/null
   }
 
   it "models_apply_defaults clears per-scenario overrides" && {
     LLM_TEMP_ASK=0.9
     LLM_REPEAT_ROUTER=2.0
     LLM_PRESENCE_TOOL=1.5
-    models_apply_defaults "blue-lodge-minist-inst:4b" 2>/dev/null
+    models_apply_defaults "blue-lodge-gemma4-inst:4b" 2>/dev/null
     assert_eq "$LLM_TEMP_ASK" ""
     assert_eq "$LLM_REPEAT_ROUTER" ""
     assert_eq "$LLM_PRESENCE_TOOL" ""
   }
 
   it "models_apply_defaults updates when switching to different model" && {
-    models_apply_defaults "blue-lodge-minist-think:4b" 2>/dev/null
-    assert_eq "$LLM_TEMPERATURE" "0.7"
-    assert_eq "$LLM_REPEAT_PENALTY" "1.2"
-    assert_eq "$LLM_PRESENCE_PENALTY" "0.3"
+    models_apply_defaults "blue-lodge-qwen35-think:4b" 2>/dev/null
+    assert_eq "$LLM_TEMPERATURE" "0.6"
+    assert_eq "$LLM_REPEAT_PENALTY" "1.0"
+    assert_eq "$LLM_PRESENCE_PENALTY" "1.2"
     # Restore to default model
-    models_apply_defaults "blue-lodge-minist-inst:4b" 2>/dev/null
+    models_apply_defaults "blue-lodge-gemma4-inst:4b" 2>/dev/null
   }
 
   it "thinking directive skipped for router scenario" && {
@@ -395,6 +404,34 @@ describe "Core LLM functions"
     _body=$(declare -f _llm_start_llamacpp_server 2>/dev/null || echo "")
     echo "$_body" | grep -q 'Unexpected GPU activity'
     assert_ok $? "must warn if GPU activity detected when GPU_LAYERS=0"
+  }
+
+  it "_llm_start_llamacpp_server supports optional -hf launch mode" && {
+    _body=$(declare -f _llm_start_llamacpp_server 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'Model source: -hf'
+    assert_ok $? "must support llama.cpp -hf startup when configured"
+  }
+
+  it "_llm_start_llamacpp_server supports optional flash attention toggle" && {
+    _body=$(declare -f _llm_start_llamacpp_server 2>/dev/null || echo "")
+    echo "$_body" | grep -q 'LLAMA_CPP_FA'
+    assert_ok $? "must parse LLAMA_CPP_FA for -fa on/off"
+  }
+
+  it "_llm_start_llamacpp_server includes BF16 to F16 fallback mapping for -hf" && {
+    _body=$(declare -f _llm_start_llamacpp_server 2>/dev/null || echo "")
+    echo "$_body" | grep -q '_hf_fallback_ref='
+    assert_ok $? "must detect BF16 HF refs for fallback"
+    echo "$_body" | grep -q ':F16"'
+    assert_ok $? "must map BF16 HF refs to F16 fallback"
+  }
+
+  it "_llm_start_llamacpp_server retries once with fallback HF ref" && {
+    _body=$(declare -f _llm_start_llamacpp_server 2>/dev/null || echo "")
+    echo "$_body" | grep -q '_LLM_HF_FALLBACK_TRIED'
+    assert_ok $? "must guard fallback retry to one attempt"
+    echo "$_body" | grep -q 'fallback HF ref'
+    assert_ok $? "must log fallback retry reason"
   }
 
 # ── Ollama → OpenAI penalty conversion ─────────────────────────
@@ -841,26 +878,24 @@ describe "Thinking mode configuration (thinking-only model)"
 # ── Model Families ─────────────────────────────────────────────
 describe "Model family system"
 
-  it "_MODELS_FAMILIES has 7 families" && {
-    assert_eq "${#_MODELS_FAMILIES[@]}" "7"
+  it "model family list has 4 families" && {
+    _count=$(models_family_list | wc -l)
+    assert_eq "$_count" "4"
   }
 
   it "models_family_list returns all family names" && {
     fams=$(models_family_list)
-    assert_contains "$fams" "qwen"
-    assert_contains "$fams" "llama"
-    assert_contains "$fams" "granite"
-    assert_contains "$fams" "ministral"
-    assert_contains "$fams" "gemma"
+    assert_contains "$fams" "gemma4"
     assert_contains "$fams" "qwen35"
-    assert_contains "$fams" "phi4"
+    assert_contains "$fams" "granite41"
+    assert_contains "$fams" "nemotron3"
   }
 
-  it "_models_family_lookup finds qwen family" && {
-    entry=$(_models_family_lookup "qwen")
+  it "_models_family_lookup finds qwen35 family" && {
+    entry=$(_models_family_lookup "qwen35")
     assert_ok $?
-    assert_contains "$entry" "qwen3-think"
-    assert_contains "$entry" "qwen3-inst"
+    assert_contains "$entry" "qwen35-4b-think"
+    assert_contains "$entry" "qwen35-4b-inst"
   }
 
   it "_models_family_lookup fails for unknown family" && {
@@ -868,19 +903,18 @@ describe "Model family system"
     assert_fail $?
   }
 
-  it "_models_family_keys returns correct keys for qwen" && {
-    entry=$(_models_family_lookup "qwen")
+  it "_models_family_keys returns correct keys for qwen35" && {
+    entry=$(_models_family_lookup "qwen35")
     keys=$(_models_family_keys "$entry")
-    assert_contains "$keys" "qwen3-think"
-    assert_contains "$keys" "qwen3-inst"
+    assert_contains "$keys" "qwen35-2b-inst"
+    assert_contains "$keys" "qwen35-4b-think"
   }
 
-  it "_models_family_keys returns correct keys for granite" && {
-    entry=$(_models_family_lookup "granite")
+  it "_models_family_keys returns correct keys for granite41" && {
+    entry=$(_models_family_lookup "granite41")
     keys=$(_models_family_keys "$entry")
-    assert_contains "$keys" "granite4"
-    assert_contains "$keys" "granite4-h"
-    assert_contains "$keys" "granite4-preview"
+    assert_contains "$keys" "granite41-3b-inst"
+    assert_contains "$keys" "granite41-8b-inst"
   }
 
   it "models_create_family rejects unknown family" && {
@@ -891,40 +925,33 @@ describe "Model family system"
   it "stop tokens with pipe chars parse correctly (delimiter fix)" && {
     # This was the root cause of 'invalid float value [im_end]' —
     # IFS='|' split <|im_end|> into 3 fields, corrupting everything.
-    models_info "qwen3-think"
-    assert_eq "$_ME_STOP" '<|im_end|>' "qwen3-think stop token"
-    assert_eq "$_ME_TEMP" "0.6" "qwen3-think temp (not 'im_end')"
+    models_info "qwen35-4b-think"
+    assert_eq "$_ME_STOP" '<|im_end|>' "qwen35-4b-think stop token"
+    assert_eq "$_ME_TEMP" "0.6" "qwen35-4b-think temp (not 'im_end')"
 
-    models_info "granite4"
+    models_info "granite41-3b-inst"
     assert_eq "$_ME_STOP" '<|end_of_text|>' "granite4 stop token"
-    assert_eq "$_ME_TEMP" "0.0" "granite4 temp"
+    assert_eq "$_ME_TEMP" "0.1" "granite41 temp"
 
-    models_info "llama32"
+    models_info "nemotron3-nano-4b-inst"
     assert_eq "$_ME_STOP" '<|eot_id|>' "llama32 stop token"
 
-    models_info "minist-think"
-    assert_eq "$_ME_STOP" '</s>' "ministral stop token"
+    models_info "gemma4-e4b-inst"
+    assert_eq "$_ME_STOP" '<end_of_turn>' "gemma4 stop token"
   }
 
-  it "granite4 is instruct (not thinking)" && {
-    models_info "granite4"
-    assert_eq "$_ME_ROLE" "instruct" "granite4 role"
-    assert_eq "$_ME_THINKS" "0" "granite4 has_thinking"
+  it "granite41-3b-inst is instruct (not thinking)" && {
+    models_info "granite41-3b-inst"
+    assert_eq "$_ME_ROLE" "instruct" "granite41 role"
+    assert_eq "$_ME_THINKS" "0" "granite41 has_thinking"
   }
 
-  it "granite4-preview is the thinking variant" && {
-    models_info "granite4-preview"
+  it "qwen35-4b-think is the thinking variant" && {
+    models_info "qwen35-4b-think"
     assert_ok $?
-    assert_eq "$_ME_BASE" "ibm/granite4.0-preview:tiny" "granite4-preview base"
-    assert_eq "$_ME_ROLE" "thinking" "granite4-preview role"
-    assert_eq "$_ME_THINKS" "1" "granite4-preview has_thinking"
-  }
-
-  it "granite4-h registry entry exists and uses 3b-h base" && {
-    models_info "granite4-h"
-    assert_ok $?
-    assert_eq "$_ME_BASE" "granite4:3b-h"
-    assert_eq "$_ME_ROLE" "instruct" "granite4-h role"
+    assert_contains "$_ME_BASE" "Qwen3.5-4B-GGUF"
+    assert_eq "$_ME_ROLE" "thinking" "qwen35-think role"
+    assert_eq "$_ME_THINKS" "1" "qwen35-think has_thinking"
   }
 
   it "response tag stripping is in llm_generate" && {
@@ -1114,13 +1141,13 @@ describe "Chat template — GGUF-embedded Jinja2 via --jinja"
     assert_ok $? "Must support --chat-template-file for explicit template override"
   }
 
-  it "_models_chat_template_name still maps Ministral → mistral-v7" && {
-    _result=$(_models_chat_template_name "hf.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF:UD-Q5_K_XL")
-    assert_eq "$_result" "mistral-v7"
+  it "_models_chat_template_name maps Gemma 4 → gemma" && {
+    _result=$(_models_chat_template_name "hf.co/unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL")
+    assert_eq "$_result" "gemma"
   }
 
-  it "_models_chat_template_name still maps Qwen3 → chatml" && {
-    _result=$(_models_chat_template_name "hf.co/unsloth/Qwen3-4B-Thinking-2507-GGUF:UD-Q5_K_XL")
+  it "_models_chat_template_name maps Qwen 3.5 → chatml" && {
+    _result=$(_models_chat_template_name "hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL")
     assert_eq "$_result" "chatml"
   }
 
@@ -1129,9 +1156,14 @@ describe "Chat template — GGUF-embedded Jinja2 via --jinja"
     assert_eq "$_result" "llama3"
   }
 
-  it "_models_chat_template_name still maps Granite → granite" && {
-    _result=$(_models_chat_template_name "granite4:3b")
+  it "_models_chat_template_name maps Granite 4.1 → granite" && {
+    _result=$(_models_chat_template_name "hf.co/unsloth/granite-4.1-3b-GGUF:Q4_K_M")
     assert_eq "$_result" "granite"
+  }
+
+  it "_models_chat_template_name maps Nemotron 3 → llama3" && {
+    _result=$(_models_chat_template_name "hf.co/unsloth/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M")
+    assert_eq "$_result" "llama3"
   }
 
   it "auto-start path uses --jinja (not template name resolution)" && {
@@ -1180,13 +1212,13 @@ describe "Vision projector (mmproj) support"
     assert_ok $? "Launch args must include mmproj support"
   }
 
-  it "models_has_vision recognizes minist-inst" && {
-    result=$(models_has_vision "blue-lodge-minist-inst:4b" && echo "yes" || echo "no")
+  it "models_has_vision recognizes gemma4-e4b-inst" && {
+    result=$(models_has_vision "blue-lodge-gemma4-inst:4b" && echo "yes" || echo "no")
     assert_eq "$result" "yes"
   }
 
   it "models_has_vision rejects non-vision models" && {
-    result=$(models_has_vision "blue-lodge-minist-think:4b" && echo "yes" || echo "no")
+    result=$(models_has_vision "blue-lodge-qwen35-inst:4b" && echo "yes" || echo "no")
     assert_eq "$result" "no"
   }
 

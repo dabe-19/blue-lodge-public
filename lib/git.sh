@@ -26,6 +26,22 @@ GEORGE_GIT_CONFIG="${GEORGE_GIT_CONFIG:-$GEORGE_CONFIG_DIR/gitconfig}"
 # SSH resolves github.com-george → github.com via HostName in the config.
 GEORGE_GIT_HOST="${GEORGE_GIT_HOST:-github.com-george}"
 
+_git_valid_host_alias() {
+    local host_alias="$1"
+    [[ -n "$host_alias" ]] || return 1
+    [[ "$host_alias" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || return 1
+    [[ "$host_alias" == *".."* ]] && return 1
+    return 0
+}
+
+_git_valid_identity_path() {
+    local identity_path="$1"
+    [[ -n "$identity_path" ]] || return 1
+    [[ "$identity_path" == -* ]] && return 1
+    printf '%s' "$identity_path" | grep -q '[[:cntrl:]]' && return 1
+    return 0
+}
+
 # ═══════════════════════════════════════════════════════════════
 # Git Identity
 # ═══════════════════════════════════════════════════════════════
@@ -73,6 +89,16 @@ git_show_identity() {
 git_write_ssh_config() {
     if ! declare -f ssh_has_key &>/dev/null || ! ssh_has_key; then
         ui_err "No SSH key. Generate one first: /git ssh-keygen"
+        return 1
+    fi
+
+    if ! _git_valid_host_alias "$GEORGE_GIT_HOST"; then
+        ui_err "Unsafe GEORGE_GIT_HOST '$GEORGE_GIT_HOST' — refusing to write SSH config"
+        return 1
+    fi
+
+    if ! _git_valid_identity_path "$GEORGE_SSH_KEY"; then
+        ui_err "Unsafe GEORGE_SSH_KEY path — refusing to write SSH config"
         return 1
     fi
 

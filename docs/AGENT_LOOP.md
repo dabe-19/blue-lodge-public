@@ -30,7 +30,7 @@
 The agent is built around a **deterministic outer loop with LLM inner intelligence** model. Rather than letting the LLM freely decide what to do next, the agent constrains it:
 
 1. **Structured decomposition** — Tasks are broken into a numbered checklist (honeydew list) before any execution begins
-2. **Narrow routing** — Each step goes through a router that picks ONE command from a known catalog
+2. **Narrow routing** — Each step goes through a deterministic eligibility pass, then a router bounded to a 3-5 command shortlist
 3. **Bounded execution** — Each milestone has a fixed number of retry rounds before escalation
 4. **Dual evaluation** — Both milestone-level and task-level evaluators gate progress
 5. **File-based memory** — All state persists in JSON files, surviving subshells and crashes
@@ -61,11 +61,12 @@ User Request: "Build a REST API server in Rust"
 ┌─ Macro Loop ─────────────────────────────────────────────────┐
 │  For each honeydew item:                                      │
 │  ┌─ Inner Loop ──────────────────────────────────────────┐   │
-│  │  1. Router → picks /sandbox new myapi rust            │   │
-│  │  2. Specialist → generates exact command syntax       │   │
-│  │  3. Execute → run command, capture output             │   │
-│  │  4. Evaluate milestone → COMPLETE or INCOMPLETE       │   │
-│  │  5. If INCOMPLETE → escalate (retry/recall/web)       │   │
+│  │  1. Eligibility pass → legal commands + shortlist     │   │
+│  │  2. Router → picks one shortlisted command            │   │
+│  │  3. Specialist → generates exact command syntax       │   │
+│  │  4. Execute → run command, capture output             │   │
+│  │  5. Evaluate milestone → COMPLETE or INCOMPLETE       │   │
+│  │  6. If INCOMPLETE → escalate (retry/recall/web)       │   │
 │  └───────────────────────────────────────────────────────┘   │
 │  Mark honeydew item done ✓                                    │
 │  Evaluate overall → more items? continue                      │
@@ -248,18 +249,16 @@ agent_inner_loop() {
 
     local level=0
     while (( level < AGENT_INNER_LOOPS )); do
-        # Phase 0: Pre-Route (extract explicit /cmd from milestone text)
-        if (( AGENT_PRE_ROUTE )) && _agent_pre_route_extract "$objective"; then
-            cmd="$_PRE_ROUTE_CMD"
-        else
-            # Phase 1: Router (LLM picks a command)
-            cmd=$(_agent_route "$objective")
+        # Phase 0: Eligibility pass (legal commands + shortlist)
+        eligibility=$(_agent_router_eligibility_pass "$objective" "$PWD" "$svc_status")
 
-            # Phase 2: Specialist (LLM generates exact syntax)
-            cmd=$(_agent_specialize "$cmd" "$objective")
-        fi
+        # Phase 1: Pre-route / fast-route / shortlist router
+        selected_tool=$(_agent_route_with_shortlist "$objective" "$eligibility")
 
-        # Phase 3: Smart Route (fix LLM errors)
+        # Phase 2: Specialist (generate exact syntax for selected tool)
+        cmd=$(_agent_specialize "$selected_tool" "$objective")
+
+        # Phase 3: Smart Route (fix syntax-level routing errors)
         cmd=$(_agent_smart_route "$cmd")
 
         # Phase 4: Execute (MCP dispatch intercept → normal routing → MCP-first lib calls)
@@ -290,13 +289,13 @@ Before calling the LLM, check if the milestone text already contains an explicit
 
 ```
 Milestone: "/sandbox new myapi rust"
-→ Pre-route extracts: /sandbox new myapi rust (skip router + specialist)
+→ Pre-route extracts: /sandbox new myapi rust (skip router, keep specialist syntax generation)
 
 Milestone: "Create a new Rust project"
 → No command found, proceed to router
 ```
 
-This saves two LLM calls when the honeydew item is already precise.
+This saves the router LLM call when the honeydew item is already precise.
 
 > **Note:** Pre-route is controlled by `AGENT_PRE_ROUTE` (default: 1) and is
 > independent of `AGENT_SMART_ROUTE`. Disabling smart-route does not
@@ -341,6 +340,31 @@ one, the mismatch check intervenes:
 
 ## Smart Command Routing
 
+### Deterministic Eligibility Pass
+
+Before pre-route, fast-route, or the router LLM can pick a tool, the inner loop calls `_agent_router_eligibility_pass()`.
+This pass is deterministic and cheap: it inspects the micro-objective text, checks command locks, probes network reachability, and consumes `commands_services_status()`.
+
+What it produces for each milestone:
+
+- An `eligible` set of legal commands for the current task stage
+- A `shortlist` capped by `AGENT_ROUTER_SHORTLIST_MIN` and `AGENT_ROUTER_SHORTLIST_MAX` (default 3-5 commands)
+- `negative_guidance` that explicitly blocks common misroutes such as `/web` for local files or `/recall` for live internet facts
+- An `offline_fallback` flag with an `offline_reason` when web research is requested but network/provider state makes `/web` ineligible
+
+The pass also persists compact trace events to `.george/routing_trace.jsonl` so classifier → eligibility → shortlist → routed-command flows can be audited after a run.
+
+Typical offline fallback shortlist:
+
+```json
+{
+    "web_allowed": false,
+    "offline_fallback": true,
+    "offline_reason": "web-search provider not configured",
+    "shortlist": ["recall", "ls", "journal", "respond"]
+}
+```
+
 ### `_agent_smart_route()`
 
 A heuristic fixer that catches common LLM routing errors **without** another LLM call:
@@ -361,6 +385,7 @@ The cascading priority:
 ```
 
 The `_SMART_ROUTE_REROUTED` flag lets the evaluator know a correction was made, so it can retry the original if the correction fails.
+This happens after the deterministic eligibility pass, so smart-route fixes do not widen the set of commands the router was allowed to choose from.
 
 ---
 
@@ -468,44 +493,49 @@ backend, not the entry point.
 
 ### Phase 1: Router
 
-The router is a **fast, low-temperature** LLM call that picks ONE command from the catalog:
+The routing phase is now staged. George does not hand the router a broad command catalog and hope for the best.
+Instead, the inner loop narrows the decision space before any LLM routing call runs.
 
 ```bash
-_agent_route() {
-    local objective="$1"
+_eligibility_json=$(_agent_router_eligibility_pass "$micro_objective" "$workdir" "$svc_status")
 
-    local prompt
-    prompt=$(_build_router_prompt "$objective")
+# 1. Pre-route: honor explicit /cmd in the milestone text when eligible
+# 2. Fast-route: use keyword routing only if the result is in the shortlist
+# 3. LLM router: choose exactly one command from the shortlist or /respond
 
-    # Low temperature for deterministic selection
-    LLM_SCENARIO=router  # temp=0.1
-    local choice
-    choice=$(llm_generate "$prompt" "$objective")
+route_prompt="ROUTER SHORTLIST (choose ONLY one):\n${_shortlist_block}"
+route_prompt+="\nABSTAIN RULE: if confidence is low, use /respond."
+route_prompt+="\nNEGATIVE GUIDANCE:\n${_negative_guidance}"
 
-    # Validate: must be a known command
-    local cmd_name="${choice%% *}"
-    if ! commands_is_known_name "${cmd_name#/}"; then
-        ui_warn "Router hallucinated unknown command: $cmd_name"
-        return 1
-    fi
-
-    echo "$choice"
-}
+selected_tool=$(llm_generate "$route_prompt" "$router_sys")
 ```
 
-The router prompt is a compact catalog (~400 tokens):
+The hard bounds around this phase are what changed materially:
+
+- Pre-route is rejected if the extracted command is not in the `eligible` set
+- Fast-route is rejected if the keyword match is not in the `shortlist`
+- The LLM router is instructed to choose from the shortlist only and to abstain with `/respond` when uncertain
+- If the router still emits a tool outside the shortlist, George deterministically falls back to the first shortlist entry and records `router_shortlist_fallback` in `.george/routing_trace.jsonl`
+- If offline fallback is active, internet-dependent commands such as `/web`, `/git`, `/social`, `/email`, and `/download` are remapped to `/recall`
+
+The router prompt is now a shortlist prompt, not a full-catalog prompt:
 
 ```
-Available commands (pick ONE):
-/web search|fetch|scrape-images QUERY — web research
-/save FILEPATH CONTENT — write files
-/read FILEPATH — read local files
-/sandbox new|build|test|run NAME — project management
-/email send TO SUBJECT BODY — send email
-...
+Route the next action using the deterministic shortlist below.
 
-Objective: Create a new Rust project
-Output: /sandbox new myapi rust
+ROUTER SHORTLIST (choose ONLY one):
+/read
+/grep
+/respond
+
+ABSTAIN RULE: if confidence is low, use /respond.
+
+NEGATIVE GUIDANCE:
+- NEVER use /web for local file reading, local repo inspection, or memory retrieval.
+- NEVER use /recall for live internet facts.
+
+Objective: inspect the file contents and report the answer
+Output: /read
 ```
 
 ### Phase 2: Specialist
@@ -541,6 +571,8 @@ The specialist prompt includes a **syntax card** for the selected command:
   "rules": ["Name must be lowercase alphanumeric", "Type determines build tool"]
 }
 ```
+
+The specialist no longer gets to re-broaden the router's decision during the normal path. Once routing has selected `/read`, `/grep`, `/web`, or another command, the specialist gets that command's syntax card and generates concrete arguments. The only time George reopens command choice inside the specialist path is hallucination recovery, where the router produced an invalid command and the system falls back to a compact re-route catalog.
 
 ### Task-First Injection (Primacy Bias)
 
@@ -988,8 +1020,9 @@ _agent_validate_plan() {
 
 | Function | Purpose |
 |----------|---------|
+| `_agent_router_eligibility_pass()` | Deterministic legal-command set, shortlist, offline fallback, negative guidance |
+| `_agent_routing_trace()` | Persist eligibility, reroute, and final-selection events to `.george/routing_trace.jsonl` |
 | `_agent_smart_route()` | Heuristic fix for LLM routing errors |
-| `_build_router_prompt()` | Compact command catalog for router |
 | `_build_specialist_prompt()` | Per-command syntax card for specialist |
 | `_agent_validate_plan()` | Pre-execution linting of honeydew |
 

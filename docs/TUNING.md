@@ -105,10 +105,10 @@ George uses a **dual-model architecture** with a model library. See [MODELS.md](
 
 ```bash
 # Which models to use (set by install.sh, persisted in shell profile)
-export LODGE_MODEL_PRIMARY="blue-lodge-minist-think:4b"   # Reasoning/planning
-export LODGE_MODEL_SECONDARY="blue-lodge-minist-inst:4b"  # Fast utility tasks
+export LODGE_MODEL_PRIMARY="blue-lodge-gemma4-inst:4b"   # Current default boot model
+export LODGE_MODEL_SECONDARY="blue-lodge-gemma4-inst:4b" # Same default when dual slots are enabled
 
-# Single-model mode (no switching)
+# Single-model mode (enabled by default)
 export LODGE_SINGLE_MODEL=1
 
 # Ollama API endpoint (default: local)
@@ -118,9 +118,9 @@ export OLLAMA_URL=http://127.0.0.1:11434
 Runtime model switching via `/models`:
 
 ```bash
-george> /models select primary granite4
-george> /models select secondary minist-inst
-george> /models single qwen3-think
+george> /models select primary qwen35-4b-think
+george> /models select secondary granite41-3b-inst
+george> /models single gemma4-e4b-inst
 george> /models dual
 ```
 
@@ -158,7 +158,7 @@ ollama create blue-lodge -f ~/blue-lodge/Modelfile
 
 | Parameter | Default | Description | Tuning guidance |
 |-----------|---------|-------------|-----------------|
-| `num_ctx` | 32768 | Context window (tokens). All input + output must fit. | KV cache ≈ 144KB/token for Qwen3-4B. 32768 uses ~4.5GB. Reduce to 20480 (~2.81GB) on tight RAM. |
+| `num_ctx` | 32768 | Context window (tokens). All input + output must fit. | KV cache scales with model architecture; a 4B-class thinking model often lands around 4-5GB at 32768. Reduce to 20480 on tight RAM. |
 | `num_predict` | 32768 | Max output tokens (overridden per-call by env vars). | Modelfile-level ceiling. Per-call overrides (`LLM_MAX_TOKENS`, `LLM_ASK_TOKENS`) take precedence. Thinking model needs generous budget (think tokens + response). |
 | `num_thread` | 8 | CPU threads for inference. | Match your physical core count. 8 for Snapdragon 8 Elite, 4 for typical laptops. |
 | `num_gpu` | 0 | GPU layers to offload. 0 = pure CPU. | Set to 99 (all layers) if you have a GPU. Partial offload: try 20-40. |
@@ -256,20 +256,20 @@ PARAMETER num_predict 256
 
 ## Using Custom Models
 
-> **Model Library:** George ships with 18 pre-configured models across 7 families. Before creating a custom model from scratch, check whether [MODELS.md](MODELS.md) already covers your use case. The model library handles stop tokens, sampling, nothink mechanisms, and dual-model routing automatically.
+> **Model Library:** George ships with 10 curated models across 4 families. Before creating a custom model from scratch, check whether [MODELS.md](MODELS.md) already covers your use case. The model library handles stop tokens, sampling, nothink mechanisms, and dual-model routing automatically.
 
 ### Step 1: Choose a model
 
-George works with any Ollama-compatible model. The model library covers 18 models — for custom models beyond those, tested recommendations:
+George works with any Ollama-compatible model. The model library covers 10 curated models — for custom setups beyond those, start from a current family that matches the role you need:
 
 | Model | Size | RAM needed | Context | Notes |
 |-------|------|-----------|---------|-------|
-| Ministral-3-3B-Reasoning-2512 UD-Q5_K_XL | ~2.5GB | 7-10GB | 32K | **Default primary.** Thinking/reasoning. Best mobile perf. |
-| Ministral-3-3B-Instruct-2512 UD-Q5_K_XL | ~2.5GB | 7-10GB | 32K | **Default secondary.** Fast instruct + vision. |
-| Qwen3-4B-Thinking-2507 UD-Q5_K_XL | ~3.5GB | 8-12GB | 32K | Strongest nothink support (`/no_think`). |
-| Qwen3.5-4B UD-Q4_K_XL | ~3.0GB | 7-10GB | 32K | Newest generation. 256K native. |
-| Gemma 3 4B QAT UD-Q5_K_XL | ~3.0GB | 7-10GB | 32K | Google multimodal. Vision. |
-| Phi-4 mini reasoning UD-Q5_K_XL | ~2.5GB | 7-10GB | 32K | Microsoft math/logic. MIT. |
+| `gemma4-e4b-inst` | ~3-4GB | 7-10GB | 32K | Default phone-class instruct path. Best balance for general work. |
+| `qwen35-4b-think` | ~3-4GB | 8-12GB | 32K | Strongest native `/no_think` support in the curated menu. |
+| `granite41-3b-inst` | ~2-3GB | 6-9GB | 32K | Most deterministic small structured-output option. |
+| `nemotron3-nano-4b-inst` | ~3-4GB | 7-10GB | 32K | Current NVIDIA edge option. |
+| `gemma4-12b-inst` | ~7-8GB | Remote GPU | 32K | Central quality tier for remote inference. |
+| `qwen35-9b-inst` | ~5-6GB | Remote GPU | 32K | Central coding and ops tier. |
 
 ### Step 2: Create a custom Modelfile
 
@@ -283,7 +283,7 @@ Edit `Modelfile.custom`:
 
 ```dockerfile
 # Change the base model
-FROM llama3.1:8b-instruct-q4_K_M
+FROM blue-lodge-gemma4-inst:4b
 
 # Adjust for your hardware
 PARAMETER num_ctx 32768    # Llama 3.1 supports 128K, but 32K is practical
@@ -292,7 +292,7 @@ PARAMETER num_gpu 99       # Offload all layers to GPU (if available)
 PARAMETER num_predict 1024 # Higher budget for larger context
 PARAMETER temperature 0.2
 PARAMETER top_p 0.9
-PARAMETER stop <|eot_id|>  # Llama 3's stop token (NOT <|im_end|>)
+PARAMETER stop <end_of_turn>  # Gemma 4's stop token
 PARAMETER repeat_penalty 1.1
 
 # Keep George's personality (or customize it)
@@ -338,12 +338,11 @@ Different model families use different stop tokens. Using the wrong one makes th
 
 | Model family | Stop token |
 |-------------|------------|
-| Qwen3 / Qwen 3.5 | `<\|im_end\|>` |
+| Qwen 3.5 | `<\|im_end\|>` |
+| Gemma 4 | `<end_of_turn>` |
+| Granite 4.1 | `<\|end_of_text\|>` |
+| Nemotron 3 | `<\|eot_id\|>` |
 | Llama 3.x | `<\|eot_id\|>` |
-| Phi-4 | `<\|end\|>` |
-| Gemma 3 | `<end_of_turn>` |
-| Granite 4 | `<\|end_of_text\|>` |
-| Ministral | `</s>` |
 
 If the model produces runaway output, check your stop token first.
 
@@ -351,7 +350,7 @@ If the model produces runaway output, check your stop token first.
 
 ## Performance Tuning for Mobile
 
-George's default configuration targets the Galaxy Fold 7 (Snapdragon 8 Elite, 12GB RAM, 100% CPU inference) with a **32K context window** (`num_ctx=32768`). The thinking model (Ministral-3-3B-Reasoning-2512 UD-Q5_K_XL) weighs ~2.5GB with ~4.5GB KV cache (144KB/token), totaling ~7.0GB loaded — leaving ~5GB free for multitasking. Here's how to squeeze better performance:
+George's default configuration targets the Galaxy Fold 7 (Snapdragon 8 Elite, 12GB RAM, 100% CPU inference) with a **32K context window** (`num_ctx=32768`). The default boot model is `blue-lodge-gemma4-inst:4b`, and 32K contexts on 4B-class models can still push the total working set into the 7-9GB range once the KV cache fills. Here's how to squeeze better performance:
 
 ### Reduce prefill time (prompt processing)
 
@@ -536,12 +535,12 @@ Reference numbers for common hardware configurations. Use these to gauge whether
 
 | Hardware | Model | num_ctx | Prompt eval (tok/s) | Generation (tok/s) | Wall-clock /ask | Notes |
 |----------|-------|---------|--------------------|--------------------|-----------------|-------|
-| Snapdragon 8 Elite (12GB) | minist-think Q5 | 32K | ~80-120 | 15-30 | 3-15s | Primary target. CPU only. |
-| Snapdragon 8 Elite + Vulkan | minist-think Q5 | 32K | ~150-200 | 20-40 | 2-10s | llama.cpp with Adreno GPU |
-| Desktop i7/Ryzen (32GB) | minist-think Q5 | 32K | ~200-400 | 25-50 | 1-5s | CPU inference |
-| Desktop + NVIDIA GPU | minist-think Q5 | 32K | ~500+ | 40-80 | <2s | num_gpu=99 |
-| Raspberry Pi 5 (8GB) | minist-think Q5 | 16K | ~30-60 | 5-10 | 10-30s | Reduce num_ctx |
-| Chromebook ARM (8GB) | minist-think Q5 | 16K | ~50-80 | 8-15 | 5-20s | Via Crostini/Debian |
+| Snapdragon 8 Elite (12GB) | 4B edge instruct (for example `gemma4-e4b-inst`) | 32K | ~80-120 | 15-30 | 3-15s | Primary target. CPU only. |
+| Snapdragon 8 Elite + Vulkan | 4B edge instruct (for example `gemma4-e4b-inst`) | 32K | ~150-200 | 20-40 | 2-10s | llama.cpp with Adreno GPU |
+| Desktop i7/Ryzen (32GB) | 4B edge thinking (for example `qwen35-4b-think`) | 32K | ~200-400 | 25-50 | 1-5s | CPU inference |
+| Desktop + NVIDIA GPU | 9B central instruct (for example `qwen35-9b-inst`) | 32K | ~500+ | 40-80 | <2s | num_gpu=99 |
+| Raspberry Pi 5 (8GB) | 2B edge instruct (for example `gemma4-e2b-inst`) | 16K | ~30-60 | 5-10 | 10-30s | Reduce num_ctx |
+| Chromebook ARM (8GB) | 2B-4B edge model | 16K | ~50-80 | 8-15 | 5-20s | Via Crostini/Debian |
 
 > **Why reported tok/s looks low:** The wall-clock time includes model loading (5-15s on ARM, 1-3s on SSD). Once loaded, generation runs at the "Generation (tok/s)" rate. During sustained multi-step agent runs, the model stays loaded and you see true throughput. **The bottleneck is I/O (loading weights), not compute (generating tokens).**
 
@@ -549,27 +548,27 @@ Reference numbers for common hardware configurations. Use these to gauge whether
 
 | Model | num_ctx | Weights | KV Cache | Overhead | Total | Free on 12GB |
 |-------|---------|---------|----------|----------|-------|-------------|
-| minist-think Q5 | 32K | ~2.5 GB | ~4.5 GB | ~0.5 GB | ~7.5 GB | ~4.5 GB |
-| minist-think Q5 | 16K | ~2.5 GB | ~2.3 GB | ~0.5 GB | ~5.3 GB | ~6.7 GB |
-| qwen3-think Q5 | 32K | ~3.5 GB | ~5.0 GB | ~0.5 GB | ~9.0 GB | ~3.0 GB |
-| gemma3-1b BF16 | 32K | ~0.6 GB | ~2.0 GB | ~0.5 GB | ~3.1 GB | ~8.9 GB |
+| 4B edge thinking model | 32K | ~2.5-3.5 GB | ~4.5-5.0 GB | ~0.5 GB | ~7.5-9.0 GB | ~3.0-4.5 GB |
+| 4B edge thinking model | 16K | ~2.5-3.5 GB | ~2.3-2.5 GB | ~0.5 GB | ~5.3-6.5 GB | ~5.5-6.7 GB |
+| 4B edge instruct model | 32K | ~2.5-3.5 GB | ~4.0-4.8 GB | ~0.5 GB | ~7.0-8.8 GB | ~3.2-5.0 GB |
+| 2B edge instruct model | 32K | ~1.5-2.5 GB | ~2.0-3.0 GB | ~0.5 GB | ~4.0-6.0 GB | ~6.0-8.0 GB |
 
 ### Tuning Recipes
 
 **"George is too slow for simple questions"**
-→ Use dual-model mode (default). The instruct model handles routing/tools at 2-5x the speed of the thinking model. If you're in single-model mode with a thinking model, that's why.
+→ Consider dual-model mode if you want faster routing/tool calls. The instruct model handles routing/tools at 2-5x the speed of a thinking model. The shipped default remains single-model mode for simplicity.
 
 **"I see lots of model swap messages"**
-→ This is expected in dual-model mode during agent tasks. Each swap costs 5-15s on ARM. If it's too much, use `/models single minist-think` to trade speed variability for consistency.
+→ This is expected in dual-model mode during agent tasks. Each swap costs 5-15s on ARM. If it's too much, use `/models single qwen35-4b-think` or keep the default single-model setup for consistency.
 
 **"George runs out of RAM during builds"**
 → Set `export LLM_KEEP_ALIVE=0` to unload the model (~4GB freed) immediately after each LLM call. Or reduce `num_ctx` to 16K.
 
 **"Thinking models waste tokens on simple tasks"**
-→ This is by design — thinking tokens help with planning. For tasks that don't need it, the dual-model system routes to the instruct model automatically. You can also use `/think nothink` to suppress reasoning on Qwen3 models (architecturally enforced) or via system prompt instruction on others.
+→ This is by design — thinking tokens help with planning. For tasks that don't need it, dual-model setups can route to an instruct model automatically. You can also use `/think nothink` to suppress reasoning on the Qwen 3.5 thinking variant where supported.
 
 **"I want faster startup"**
-→ Reduce the knowledge base size (fewer ingested docs), or pre-warm the model: `curl -s http://localhost:11434/api/generate -d '{"model":"blue-lodge-minist-think:4b","prompt":"hi","stream":false,"options":{"num_predict":1}}'`
+→ Reduce the knowledge base size (fewer ingested docs), or pre-warm the model: `curl -s http://localhost:11434/api/generate -d '{"model":"blue-lodge-gemma4-inst:4b","prompt":"hi","stream":false,"options":{"num_predict":1}}'`
 
 ---
 
@@ -610,15 +609,15 @@ LODGE_DEBUG=1 lodge /ask "hello"
 
 # Warm up the model manually
 curl -s http://localhost:11434/api/generate \
-  -d '{"model":"blue-lodge-qwen3-think:4b","prompt":"hi","stream":false,"options":{"num_predict":1}}'
+  -d '{"model":"blue-lodge-gemma4-inst:4b","prompt":"hi","stream":false,"options":{"num_predict":1}}'
 
 # Check model info
-curl -s http://localhost:11434/api/show -d '{"name":"blue-lodge-qwen3-think:4b"}' | jq .details
+curl -s http://localhost:11434/api/show -d '{"name":"blue-lodge-gemma4-inst:4b"}' | jq .details
 
-# Recreate model after Modelfile changes
-ollama create blue-lodge-qwen3-think:4b -f ~/blue-lodge/models/qwen3-think.Modelfile
+# Recreate a test model after Modelfile changes
+ollama create blue-lodge-test-model -f ~/blue-lodge/Modelfile
 
 # Switch models at runtime (see docs/MODELS.md for full reference)
-george> /models select primary granite4
-george> /models single qwen3-think
+george> /models select primary granite41-3b-inst
+george> /models single qwen35-4b-think
 ```

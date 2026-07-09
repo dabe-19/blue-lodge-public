@@ -295,6 +295,53 @@ email_get_provider() {
     echo "${EMAIL_PROVIDER:-none}"
 }
 
+email_provider_reachable() {
+    local provider="$1"
+
+    case "$provider" in
+        protonmail)
+            declare -f bridge_is_reachable &>/dev/null && bridge_is_reachable
+            ;;
+        gmail)
+            api_network_reachable 3
+            ;;
+        zoho)
+            api_network_reachable 3
+            ;;
+        disposable)
+            api_network_reachable 3 && api_endpoint_reachable "https://api.guerrillamail.com/ajax.php?f=get_email_address" 4
+            ;;
+        tutanota)
+            return 1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+email_availability_summary() {
+    local provider="${1:-}"
+    local enabled="yes"
+    local configured="no"
+    local reachable="no"
+
+    email_init "$provider"
+    if [ -n "$EMAIL_PROVIDER" ]; then
+        configured="yes"
+        provider="$EMAIL_PROVIDER"
+        email_provider_reachable "$EMAIL_PROVIDER" && reachable="yes"
+    else
+        provider="none"
+    fi
+
+    echo "EMAIL_ENABLED: $enabled"
+    echo "EMAIL_CONFIGURED: $configured"
+    echo "EMAIL_REACHABLE: $reachable"
+    echo "EMAIL_PROVIDER: $provider"
+    echo "EMAIL_NETWORK: $(api_network_state 3)"
+}
+
 # ── Send an email ─────────────────────────────────────────────
 # Usage: email_send <provider> <to> <subject> <body> [attachment_path]
 email_send() {
@@ -330,6 +377,19 @@ email_send() {
         ui_err "Provider '$provider' not configured. Run: /email setup $provider"
         return 1
     fi
+
+    case "$EMAIL_PROVIDER" in
+        protonmail)
+            if ! email_provider_reachable "protonmail"; then
+                ui_err "ProtonMail Bridge is not reachable. Start/configure bridge first."
+                return 1
+            fi ;;
+        gmail|zoho)
+            if ! email_provider_reachable "$EMAIL_PROVIDER"; then
+                ui_err "Email provider '$EMAIL_PROVIDER' is unreachable (offline network)"
+                return 1
+            fi ;;
+    esac
 
     case "$EMAIL_PROVIDER" in
         protonmail) _email_send_smtp "$to" "$subject" "$body" "127.0.0.1" "1025" "$attachment" ;;
@@ -477,6 +537,19 @@ email_inbox() {
         ui_err "Provider '$provider' not configured. Run: /email setup $provider"
         return 1
     fi
+
+    case "$EMAIL_PROVIDER" in
+        protonmail)
+            if ! email_provider_reachable "protonmail"; then
+                ui_err "ProtonMail Bridge is not reachable. Start/configure bridge first."
+                return 1
+            fi ;;
+        gmail|zoho|disposable)
+            if ! email_provider_reachable "$EMAIL_PROVIDER"; then
+                ui_err "Email inbox unavailable for '$EMAIL_PROVIDER' (offline or provider unreachable)"
+                return 1
+            fi ;;
+    esac
 
     case "$EMAIL_PROVIDER" in
         protonmail) _email_inbox_imap "127.0.0.1" "1143" "$count" ;;

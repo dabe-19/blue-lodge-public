@@ -17,7 +17,7 @@ describe "_models_parse_entry tier field"
   }
 
   it "parses central tier from central entry" && {
-    _entry=$(_models_lookup "qwen3-8b-think")
+    _entry=$(_models_lookup "gemma4-12b-inst")
     _models_parse_entry "$_entry"
     assert_eq "$_ME_TIER" "central"
   }
@@ -33,9 +33,9 @@ describe "_models_parse_entry tier field"
     _all_ok=1
     for _entry in "${_MODELS_REGISTRY[@]}"; do
         _models_parse_entry "$_entry"
-        # Edge models are <8B (key doesn't contain 8b/12b)
+        # Central models are the explicitly provisioned remote tier.
         case "$_ME_KEY" in
-            *-8b*|*-12b*|*-9b*|*-7b*) continue ;;
+          gemma4-12b-inst|qwen35-9b-inst|granite41-8b-inst) continue ;;
             *)
                 if [ "$_ME_TIER" != "edge" ]; then
                     _all_ok=0
@@ -49,33 +49,31 @@ describe "_models_parse_entry tier field"
 # ── Central tier models ───────────────────────────────────────
 describe "central tier registry entries"
 
-  it "qwen3-8b-think is in registry" && {
-    _entry=$(_models_lookup "qwen3-8b-think")
+  it "gemma4-12b-inst is in registry" && {
+    _entry=$(_models_lookup "gemma4-12b-inst")
     assert_not_empty "$_entry"
   }
 
-  it "qwen3-8b-inst is in registry" && {
-    _entry=$(_models_lookup "qwen3-8b-inst")
+  it "qwen35-9b-inst is in registry" && {
+    _entry=$(_models_lookup "qwen35-9b-inst")
     assert_not_empty "$_entry"
   }
 
-  it "llama31-8b is in registry" && {
-    _entry=$(_models_lookup "llama31-8b")
-    assert_not_empty "$_entry"
-  }
-
-  it "mistral-nemo-12b is in registry" && {
-    _entry=$(_models_lookup "mistral-nemo-12b")
+  it "granite41-8b-inst is in registry" && {
+    _entry=$(_models_lookup "granite41-8b-inst")
     assert_not_empty "$_entry"
   }
 
   it "central models have correct base_image format" && {
-    _entry=$(_models_lookup "qwen3-8b-think")
+    _entry=$(_models_lookup "gemma4-12b-inst")
     _models_parse_entry "$_entry"
-    assert_eq "$_ME_BASE" "qwen3:8b"
-    _entry=$(_models_lookup "llama31-8b")
+    echo "$_ME_BASE" | grep -q "gemma-4-12B-it-qat-GGUF"
+    assert_ok $?
+
+    _entry=$(_models_lookup "qwen35-9b-inst")
     _models_parse_entry "$_entry"
-    assert_eq "$_ME_BASE" "llama3.1:8b"
+    echo "$_ME_BASE" | grep -q "Qwen3.5-9B-GGUF"
+    assert_ok $?
   }
 
 # ── Field integrity ───────────────────────────────────────────
@@ -93,8 +91,8 @@ describe "registry field integrity"
     assert_eq "$_all_ok" "1"
   }
 
-  it "total registry has 25 entries (18 edge + 7 central)" && {
-    assert_eq "${#_MODELS_REGISTRY[@]}" "25"
+  it "total registry has 10 entries (7 edge + 3 central)" && {
+    assert_eq "${#_MODELS_REGISTRY[@]}" "10"
   }
 
 test_end

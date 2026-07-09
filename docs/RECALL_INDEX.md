@@ -559,7 +559,7 @@ L3: syntax permutation, L4: history recall, L5: guided retry).
 /limits budget-router N — router think budget (default: 128).
 /limits budget-journal N — journal think budget (default: 64).
 /limits budget-tool N — tools think budget (default: 256).
-Note: budget_tokens is advisory for Qwen3 — num_predict is the hard cap.
+Note: budget_tokens is advisory on some thinking-capable backends — num_predict is the hard cap.
 
 ## Model Sampling Parameters Temperature Penalty
 
@@ -581,17 +581,17 @@ Tool: temp 0.3, repeat 1.3, presence 0.8 (commit, web, recall, slash).
 
 ## Model Library Dual-Model Architecture
 
-George ships with 9 models across 4 families. Dual-model mode: primary for reasoning, secondary for fast utility.
+George ships with 10 curated models across 4 families. Dual-model mode: primary for main task work, secondary for fast utility.
 /models — show status + full model list.
 /models list — list all available models.
 /models select primary <key> — set primary model (ask, agent).
 /models select secondary <key> — set secondary model (router, tool, journal).
 /models single <key> — single-model mode (no hot-swap overhead).
 /models dual — back to dual-model mode.
-Keys: qwen3-think, qwen3-inst, llama32, llama32-inst, granite4, granite4-h, granite4-preview, minist-think, minist-inst.
-Families: qwen (think+inst), llama (base+inst), granite (inst+hybrid+preview), ministral (think+inst).
-Thinking models: qwen3-think, granite4-preview, minist-think.
-Instruct models: qwen3-inst, llama32-inst, granite4, granite4-h, minist-inst.
+Keys: gemma4-e2b-inst, gemma4-e4b-inst, gemma4-12b-inst, qwen35-2b-inst, qwen35-4b-inst, qwen35-4b-think, qwen35-9b-inst, granite41-3b-inst, granite41-8b-inst, nemotron3-nano-4b-inst.
+Families: gemma4, qwen35, granite41, nemotron3.
+Thinking models: qwen35-4b-think.
+Instruct models: all remaining keys in the curated menu.
 Hot-swap: only one model loaded at a time. Switch takes 5-15s on ARM.
 Per-model sampling: each model has registry defaults for temp, penalties, context.
 Per-model overrides: models_set_param, models_get_param, models_show_params.
@@ -599,19 +599,19 @@ Per-model overrides: models_set_param, models_get_param, models_show_params.
 ## Model Tuning Modelfile Parameters
 
 Modelfile: ~/blue-lodge/Modelfile
-Model: Qwen3-4B-Thinking-2507 UD-Q5_K_XL (~3.5GB).
-Parameters: temperature 0.6, top_p 0.95, top_k 20, min_p 0.0.
-Penalties: repeat_penalty 1.3, presence_penalty 0.8.
-Context: num_ctx 32768, num_predict 32768, num_thread 8, num_gpu 0.
-KV cache: ~144KB/token. 32K ctx = ~4.5GB KV cache.
+Model: blue-lodge-gemma4-inst:4b (~3-4GB class).
+Parameters: temperature 0.2, top_p 0.9, top_k 40, min_p 0.0.
+Penalties: repeat_penalty 1.0, presence_penalty 0.0.
+Context: num_ctx 32768, num_predict 16384, num_thread 8, num_gpu 0.
+KV cache: 32K contexts on 4B-class models can still consume several GB of RAM.
 Stop token: <|im_end|>. LLM_KEEP_ALIVE: 30m (time model stays loaded).
 
 ## Model Environment Variables Configuration
 
 OLLAMA_URL=http://127.0.0.1:11434 (Ollama API endpoint).
-LODGE_MODEL_PRIMARY=blue-lodge-minist-think:4b (primary model).
-LODGE_MODEL_SECONDARY=blue-lodge-minist-inst:4b (secondary model).
-LODGE_SINGLE_MODEL=0 (dual-model mode by default).
+LODGE_MODEL_PRIMARY=blue-lodge-gemma4-inst:4b (primary model).
+LODGE_MODEL_SECONDARY=blue-lodge-gemma4-inst:4b (secondary model).
+LODGE_SINGLE_MODEL=1 (single-model mode by default).
 LLM_MAX_TOKENS=20480 (max output tokens per call).
 LLM_TIMEOUT=600 (safety net timeout seconds).
 LLM_KEEP_ALIVE=30m (model stay-loaded duration).
@@ -634,7 +634,7 @@ Condensed: identity + output format + practical craft only.
 /think bright — show thinking prominently (cyan).
 /think dim — show thinking in dim text (default when on).
 /think hide — think but don't display.
-/think nothink — suppress reasoning entirely (Qwen3: /no_think, Granite preview: system prompt).
+/think nothink — suppress reasoning entirely (native think-flag where supported, otherwise system-prompt instruction).
 The model always thinks unless /think nothink is set.
 
 ## Workspace Files Status Memory

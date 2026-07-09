@@ -413,7 +413,7 @@ The journal (`$LODGE_DIR/journal.md`) is George's experiential memory — reflec
 
 ```markdown
 ## 2026-03-08 14:30 — learning
-Discovered that Qwen3 needs explicit /no_think suffix to suppress reasoning.
+Discovered that the Qwen 3.5 thinking variant needs an explicit /no_think suffix to suppress reasoning.
 
 ## 2026-03-07 09:15 — reflection
 The web scraping task revealed that many sites now block automated access.

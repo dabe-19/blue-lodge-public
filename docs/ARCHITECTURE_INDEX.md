@@ -21,7 +21,7 @@ For new contributors, read in this order:
 | 1 | **[Streaming Pipeline](STREAMING_PIPELINE.md)** | How LLM responses flow from curl to screen — FIFOs, NDJSON/SSE parsing, the thinking-tag state machine, and the /dev/tty trick for concurrent spinner output |
 | 2 | **[Response Parsing](RESPONSE_PARSING.md)** | Post-stream processing — spacing fixers, code block extraction, file write detection, slash command extraction, and the smart routing system |
 | 3 | **[API & Providers](API_AND_PROVIDERS.md)** | HTTP layer, 10 cloud providers, SSE parsing variants per provider, metering, retry/backoff, and how to add a new provider |
-| 4 | **[Agent Loop](AGENT_LOOP.md)** | The two-loop system — macro (honeydew task list) and inner (5-level failure escalation per milestone), router-specialist pipeline, dual evaluator |
+| 4 | **[Agent Loop](AGENT_LOOP.md)** | The two-loop system — macro (honeydew task list) and inner (deterministic eligibility, 3-5 command shortlist, router-specialist pipeline, dual evaluator) |
 | 5 | **[Command Dispatch](COMMAND_DISPATCH.md)** | Associative array registry, dispatch pipeline, auto-route detection, the REPL, and user-created slash extensions |
 | 6 | **[Memory, Recall & Journal](MEMORY_AND_RECALL.md)** | GEORGE.md project memory, system prompt construction (3 modes), SQLite FTS5 recall database, journal with temporal decay |
 | 7 | **[UI & Terminal Rendering](UI_AND_TERMINAL.md)** | ANSI 256-color system, spinner architecture, markdown-lite rendering, interactive prompts, transcript hooks |
@@ -75,6 +75,8 @@ For new contributors, read in this order:
 └─────────────────────────────────────────────────────────────┘
 ```
 
+The inner loop now performs a deterministic eligibility pass before any router LLM call. That pass narrows the router to a 3-5 command shortlist, injects negative guidance for high-confusion tools such as `/web` and `/recall`, and records compact routing events in `.george/routing_trace.jsonl` for post-run debugging.
+
 ---
 
 ## Data Flow: User Question → Response
@@ -126,7 +128,7 @@ User types "/ask How do I reverse a list in Python?"
 | `lib/api.sh` | HTTP wrapper, key storage, rate limiting | [API & Providers](API_AND_PROVIDERS.md) |
 | `lib/providers.sh` | Cloud AI providers, SSE parsing, metering | [API & Providers](API_AND_PROVIDERS.md) |
 | `lib/models.sh` | Model registry, GGUF resolution, hot-swap | [Streaming Pipeline](STREAMING_PIPELINE.md) |
-| `lib/agent.sh` | Two-loop agent, honeydew, evaluator | [Agent Loop](AGENT_LOOP.md) |
+| `lib/agent.sh` | Two-loop agent, deterministic router shortlist, evaluator, routing traces | [Agent Loop](AGENT_LOOP.md) |
 | `lib/commands.sh` | Command registration and dispatch | [Command Dispatch](COMMAND_DISPATCH.md) |
 | `lib/memory.sh` | GEORGE.md, system prompts | [Memory & Recall](MEMORY_AND_RECALL.md) |
 | `lib/recall.sh` | SQLite FTS5, chunking, search | [Memory & Recall](MEMORY_AND_RECALL.md) |

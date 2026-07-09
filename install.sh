@@ -102,8 +102,8 @@ _lodge_shell_block() {
 
 # ── Blue Lodge ─────────────────────────────────────────────
 export LODGE_DIR="$LODGE_DIR"
-export LODGE_MODEL_PRIMARY="blue-lodge-minist-inst:4b"
-export LODGE_MODEL_SECONDARY="blue-lodge-minist-inst:4b"
+export LODGE_MODEL_PRIMARY="blue-lodge-gemma4-inst:4b"
+export LODGE_MODEL_SECONDARY="blue-lodge-gemma4-inst:4b"
 export PATH="\$HOME/.local/bin:\$PATH"
 $termux_line
 $ollama_models_line
@@ -414,6 +414,10 @@ case "$_INSTALL_BACKEND" in
         echo ""
         printf " Enter the SSH target (user@host), or press Enter to configure later: "
         read -r _REMOTE_SSH_INPUT
+        if [ -n "$_REMOTE_SSH_INPUT" ] && ! _install_is_valid_ssh_target "$_REMOTE_SSH_INPUT"; then
+            warn "Invalid SSH target format. Expected user@host — skipping remote config"
+            _REMOTE_SSH_INPUT=""
+        fi
         if [ -n "$_REMOTE_SSH_INPUT" ]; then
             # Persist minimal remote config so lodge startup finds it
             mkdir -p "$GEORGE_DIR"
@@ -453,6 +457,10 @@ if [ "$_INSTALL_BACKEND" = "standard" ] || [ "$_INSTALL_BACKEND" = "local-ollama
     if [[ "$_want_remote" =~ ^[Yy] ]]; then
         printf " Enter the SSH target (user@host): "
         read -r _REMOTE_SSH_INPUT
+        if [ -n "$_REMOTE_SSH_INPUT" ] && ! _install_is_valid_ssh_target "$_REMOTE_SSH_INPUT"; then
+            warn "Invalid SSH target format. Expected user@host — skipping remote config"
+            _REMOTE_SSH_INPUT=""
+        fi
         if [ -n "$_REMOTE_SSH_INPUT" ]; then
             mkdir -p "$GEORGE_DIR"
             cat > "$GEORGE_DIR/remote.conf" << REMEOF
@@ -481,6 +489,37 @@ fi
 _INSTALL_PROVIDER=""
 _INSTALL_PROVIDER_KEY_NAME=""
 _INSTALL_PROVIDER_KEY_VALUE=""
+
+_install_quote_sh() {
+    local value="$1"
+    printf "%q" "$value"
+}
+
+_install_is_safe_single_line() {
+    local value="$1"
+    [[ "$value" != *[[:cntrl:]]* ]]
+}
+
+_install_read_provider_env_key() {
+    local key_name="$1"
+    case "$key_name" in
+        GOOGLE_AI_API_KEY) printf '%s' "${GOOGLE_AI_API_KEY:-}" ;;
+        GROQ_API_KEY) printf '%s' "${GROQ_API_KEY:-}" ;;
+        OPENAI_API_KEY) printf '%s' "${OPENAI_API_KEY:-}" ;;
+        ANTHROPIC_API_KEY) printf '%s' "${ANTHROPIC_API_KEY:-}" ;;
+        MISTRAL_API_KEY) printf '%s' "${MISTRAL_API_KEY:-}" ;;
+        DEEPSEEK_API_KEY) printf '%s' "${DEEPSEEK_API_KEY:-}" ;;
+        TOGETHER_API_KEY) printf '%s' "${TOGETHER_API_KEY:-}" ;;
+        XAI_API_KEY) printf '%s' "${XAI_API_KEY:-}" ;;
+        COHERE_API_KEY) printf '%s' "${COHERE_API_KEY:-}" ;;
+        *) printf '' ;;
+    esac
+}
+
+_install_is_valid_ssh_target() {
+    local target="$1"
+    [[ "$target" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._:-]+$ ]]
+}
 
 _offer_cloud_setup() {
     echo ""
@@ -521,7 +560,7 @@ _offer_cloud_setup() {
     esac
 
     # Check if the API key is already in the environment
-    eval "_existing_key=\${${_INSTALL_PROVIDER_KEY_NAME}:-}"
+    _existing_key=$(_install_read_provider_env_key "$_INSTALL_PROVIDER_KEY_NAME")
     if [ -n "$_existing_key" ]; then
         ok "$_INSTALL_PROVIDER_KEY_NAME already set"
         _INSTALL_PROVIDER_KEY_VALUE="$_existing_key"
@@ -539,6 +578,12 @@ _offer_cloud_setup() {
 
         if [ -z "$_INSTALL_PROVIDER_KEY_VALUE" ]; then
             warn "No API key entered — skipping cloud setup"
+            _INSTALL_PROVIDER=""
+            return 0
+        fi
+
+        if ! _install_is_safe_single_line "$_INSTALL_PROVIDER_KEY_VALUE"; then
+            warn "API key contains invalid control characters — skipping cloud setup"
             _INSTALL_PROVIDER=""
             return 0
         fi
@@ -575,8 +620,10 @@ if [ -n "$_INSTALL_PROVIDER" ]; then
 # ── Blue Lodge Cloud Provider ──────────────────────────────
 PROVEOF
     )
-    _provider_block+=$'\n'"export GEORGE_PROVIDER='$_INSTALL_PROVIDER'"
-    _provider_block+=$'\n'"export $_INSTALL_PROVIDER_KEY_NAME='$_INSTALL_PROVIDER_KEY_VALUE'"
+    _escaped_provider=$(_install_quote_sh "$_INSTALL_PROVIDER")
+    _escaped_key=$(_install_quote_sh "$_INSTALL_PROVIDER_KEY_VALUE")
+    _provider_block+=$'\n'"export GEORGE_PROVIDER=$_escaped_provider"
+    _provider_block+=$'\n'"export $_INSTALL_PROVIDER_KEY_NAME=$_escaped_key"
 
     for _rc_file in "$HOME/.zshrc" "$HOME/.bashrc"; do
         if [ -f "$_rc_file" ] && grep -q '# ── Blue Lodge' "$_rc_file" 2>/dev/null; then
@@ -683,7 +730,7 @@ source "$LODGE_DIR/lib/models.sh" 2>/dev/null || true
 # ── 4. Create models ────────────────────────────────────────
 # Check which model families are already created, then offer to
 # download any that are missing. Pressing Enter with no input
-# installs only the default Qwen family.
+# installs only the default model.
 if [ "$_OLLAMA_AVAILABLE" -eq 0 ]; then
     warn "Skipping model setup — Ollama not available"
 else
@@ -694,8 +741,8 @@ _install_missing_families=()
 _install_ready_families=()
 _install_partial_families=()
 
-for _fam_entry in "${_MODELS_FAMILIES[@]}"; do
-    _fam_name="${_fam_entry%%|*}"
+for _fam_name in $(models_family_list); do
+    _fam_entry=$(_models_family_lookup "$_fam_name") || continue
     IFS='|' read -r _ _fam_desc _fam_keys <<< "$_fam_entry"
     _fam_status=$(models_family_status "$_fam_name")
     case "$_fam_status" in
@@ -710,19 +757,30 @@ for _fam_entry in "${_MODELS_FAMILIES[@]}"; do
     esac
 done
 
-# If there are non-default families missing, offer to download them
-# Ministral is handled separately below (required for George to start).
+# If there are non-default families missing, offer to download them.
+# Gemma 4 is handled separately below (required default for first boot).
 _extra_missing=()
 for _fm in "${_install_missing_families[@]}"; do
-    [ "$_fm" = "ministral" ] && continue
+    [ "$_fm" = "gemma4" ] && continue
     _extra_missing+=("$_fm")
 done
 for _fm in "${_install_partial_families[@]}"; do
-    [ "$_fm" = "ministral" ] && continue
+    [ "$_fm" = "gemma4" ] && continue
     _extra_missing+=("$_fm")
 done
 
 if [ ${#_extra_missing[@]} -gt 0 ]; then
+    # Curated set for phone-class devices: small, current families.
+    _recommended_families=(qwen35 granite41 nemotron3)
+    _recommended_available=()
+    for _rf in "${_recommended_families[@]}"; do
+        for _fm in "${_extra_missing[@]}"; do
+            if [ "$_rf" = "$_fm" ]; then
+                _recommended_available+=("$_rf")
+            fi
+        done
+    done
+
     echo ""
     printf " ${BOLD}Available model families (not yet installed):${RESET}\n"
     for _fm in "${_extra_missing[@]}"; do
@@ -734,13 +792,18 @@ if [ ${#_extra_missing[@]} -gt 0 ]; then
     echo ""
     printf " Would you like to download additional model families?\n"
     printf " ${DIM}Enter family names separated by spaces, or press Enter to skip.${RESET}\n"
-    printf " ${DIM}Enter 'all' to download everything (~3GB per family).${RESET}\n"
+    if [ ${#_recommended_available[@]} -gt 0 ]; then
+        printf " ${DIM}Enter 'recommended' for a phone-friendly set: %s.${RESET}\n" "${_recommended_available[*]}"
+    fi
+    printf " ${DIM}Enter 'all' to download everything (~3-7 GB per family, depending on central-tier models).${RESET}\n"
     printf " ${YELLOW}→${RESET} "
     read -r _user_families
 
     if [ -n "$_user_families" ]; then
         if [ "$_user_families" = "all" ]; then
             _families_to_create=("${_extra_missing[@]}")
+        elif [ "$_user_families" = "recommended" ]; then
+            _families_to_create=("${_recommended_available[@]}")
         else
             _families_to_create=()
             for _uf in $_user_families; do
@@ -766,28 +829,28 @@ if [ ${#_extra_missing[@]} -gt 0 ]; then
 fi
 
 
-# ── Default model: Ministral 3 Instruct ──────────────────────
-# Ministral 3 Instruct is the default model for George. Both the primary
+# ── Default model: Gemma 4 E4B Instruct ───────────────────────
+# Gemma 4 E4B Instruct is the default model for George. Both the primary
 # and secondary model slots point to it out of the box. If it is already
 # installed we skip ahead; otherwise we ask the user before downloading.
 echo ""
-_minist_installed=0
+_default_model_installed=0
 if ollama list 2>/dev/null | grep -q "$LODGE_MODEL_PRIMARY"; then
     ok "Default model '$LODGE_MODEL_PRIMARY' already installed"
-    _minist_installed=1
+    _default_model_installed=1
 fi
 
 if [ "$LODGE_MODEL_PRIMARY" != "$LODGE_MODEL_SECONDARY" ] \
    && ollama list 2>/dev/null | grep -q "$LODGE_MODEL_SECONDARY"; then
     ok "Secondary model '$LODGE_MODEL_SECONDARY' already installed"
-elif [ "$LODGE_MODEL_PRIMARY" = "$LODGE_MODEL_SECONDARY" ] && [ "$_minist_installed" -eq 1 ]; then
+elif [ "$LODGE_MODEL_PRIMARY" = "$LODGE_MODEL_SECONDARY" ] && [ "$_default_model_installed" -eq 1 ]; then
     true  # single-model mode, already reported above
 fi
 
-if [ "$_minist_installed" -eq 0 ]; then
+if [ "$_default_model_installed" -eq 0 ]; then
     echo ""
-    printf " ${BOLD}Ministral 3 Instruct${RESET} is configured as the default model for George.\n"
-    printf " ${DIM}It is a small (~3 GB) general-purpose model that works well out of the box.${RESET}\n"
+    printf " ${BOLD}Gemma 4 E4B Instruct${RESET} is configured as the default model for George.\n"
+    printf " ${DIM}It is a modern low-memory model that performs well on phone-class hardware.${RESET}\n"
     printf " ${DIM}You can change the default later in lodge.conf.${RESET}\n"
     echo ""
     printf " Install the default model now? ${DIM}[Y/n]${RESET} "
@@ -796,21 +859,24 @@ if [ "$_minist_installed" -eq 0 ]; then
     if [ -z "$_install_default" ] || [[ "$_install_default" =~ ^[Yy] ]]; then
         if [ "$LODGE_MODEL_PRIMARY" = "$LODGE_MODEL_SECONDARY" ]; then
             info "Creating model: $LODGE_MODEL_PRIMARY (first run downloads ~3 GB)..."
-            _mf=$(models_generate_modelfile "minist-inst")
+            _key=$(_models_key_from_query "$LODGE_MODEL_PRIMARY" 2>/dev/null || echo "gemma4-e4b-inst")
+            _mf=$(models_generate_modelfile "$_key")
             ollama create "$LODGE_MODEL_PRIMARY" -f "$_mf"
             ok "Default model created"
         else
             info "Creating primary model: $LODGE_MODEL_PRIMARY (first run downloads ~3 GB)..."
-            _mf=$(models_generate_modelfile "minist-think")
+            _key_primary=$(_models_key_from_query "$LODGE_MODEL_PRIMARY" 2>/dev/null || echo "gemma4-e4b-inst")
+            _mf=$(models_generate_modelfile "$_key_primary")
             ollama create "$LODGE_MODEL_PRIMARY" -f "$_mf"
             ok "Primary model created"
 
             info "Creating secondary model: $LODGE_MODEL_SECONDARY..."
-            _mf=$(models_generate_modelfile "minist-inst")
+            _key_secondary=$(_models_key_from_query "$LODGE_MODEL_SECONDARY" 2>/dev/null || echo "gemma4-e4b-inst")
+            _mf=$(models_generate_modelfile "$_key_secondary")
             ollama create "$LODGE_MODEL_SECONDARY" -f "$_mf"
             ok "Secondary model created"
         fi
-        _minist_installed=1
+        _default_model_installed=1
     else
         warn "Skipped default model — George will not work until a model is configured"
     fi
@@ -824,7 +890,7 @@ fi  # end _OLLAMA_AVAILABLE gate for steps 4 + default model
 # for the keep_alive window and interfere with lodge's first run.
 if [ "$_OLLAMA_AVAILABLE" -eq 0 ]; then
     info "Skipping API check — Ollama not available"
-elif [ "${_minist_installed:-0}" -eq 0 ]; then
+elif [ "${_default_model_installed:-0}" -eq 0 ]; then
     warn "Skipping API check — no default model installed"
 else
     info "Verifying Ollama API..."

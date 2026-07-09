@@ -61,7 +61,7 @@ George uses **scenario-routed prompts** — different prompt shapes for differen
 | Planning (light) | ~700 tokens | Identity + lean command catalog |
 | Planning (dense) | ~5,000 tokens | Full soul + catalog + recall chunks |
 | Task execution | ~3,500 tokens | Identity + full catalog + memory + recall |
-| Tool routing | ~150 tokens | Just the tool list |
+| Tool routing | ~150-300 tokens | Eligibility result + 3-5 command shortlist + negative guidance |
 
 A 3-4B model with a 700-token prompt performs significantly better than the same model with an 8K-token prompt. Less noise, more signal. Whether this is a "design advantage" or just "the only way to make small models work" is a matter of perspective — but the result is that George can actually do useful things on hardware that cloud agents can't even start on.
 
@@ -107,9 +107,6 @@ George isn't trying to compete with frontier-model cloud agents. The tradeoffs a
 Because bash is everywhere. Every Linux box, every Android phone running Termux, every Chromebook, every WSL instance, every Raspberry Pi — bash is already there. No package manager, no build step, no virtual environment, no container runtime. `git clone` and `source`. That's the entire dependency chain for the core.
 
 The tradeoff is real: bash is harder to write, harder to maintain, and harder to debug than Python or TypeScript. I would not necessarily recommend bash for a project like this. But it does mean George runs on any POSIX system with four binaries, and that constraint turned out to be worth it for the target use case (a phone in Termux).
-| Tool routing | ~150 tokens | Just the tool list |
-
-A 3-4B model with a 700-token prompt performs significantly better than the same model with an 8K-token prompt. Less noise, more signal.
 
 ### The Agent Loop
 
@@ -131,8 +128,8 @@ User Task
 │                                                   │
 │  For each milestone:                              │
 │  ┌─────────────────────────────────────────────┐  │
-│  │  INNER LOOP (Router → Specialist → Eval)    │  │
-│  │  Router picks tool (SECONDARY model, fast)  │  │
+│  │  INNER LOOP (Eligibility → Router → Spec → Eval) │  │
+│  │  Deterministic shortlist bounds router      │  │
 │  │  Specialist executes (PRIMARY model)        │  │
 │  │  P1 Evaluator: did milestone succeed?       │  │
 │  │  Honeydew Evaluator: did item get satisfied?│  │
@@ -147,6 +144,8 @@ User Task
 The **honeydew list** is George's task decomposition — a numbered list of concrete deliverables derived from the user's request. After each milestone, the honeydew evaluator checks whether items have been satisfied, and the list dynamically rewrites itself based on what was discovered. This means George adapts his plan as he works, not just at the start.
 
 The thinking model handles planning and execution. The instruct model handles fast routing decisions. Only one model is in memory at a time — George hot-swaps between them automatically.
+
+Before the router LLM runs, George now does a deterministic eligibility pass. That pass checks command locks, network reachability, and service configuration, then builds a 3-5 command shortlist with explicit negative guidance. If `/web` is unavailable or inappropriate, the inner loop falls back to local commands such as `/recall`, `/ls`, `/journal`, or `/respond` instead of looping on dead external actions. Each milestone also writes compact routing events to `.george/routing_trace.jsonl` so misroutes can be debugged after the fact.
 
 ### Every Session Is a Training Dataset
 
@@ -223,11 +222,15 @@ These features exist and are tested. "Tested" means the plumbing works — the s
 
 ### Agent Intelligence
 - **Honeydew list** — LLM-generated task decomposition with dynamic replanning after each milestone
+- **Deterministic routing gate** — eligibility pass computes legal/useful commands before the router LLM runs
+- **Shortlist-bounded router** — the fast router chooses from 3-5 commands instead of the full catalog, with `/respond` as the abstain path
 - **Three-tier evaluation** — milestone evaluator (P1), honeydew item evaluator, overall task evaluator (P2)
 - **Auto-recovery** — when stuck, George rewrites the honeydew list and retries from a fresh angle
 - **Brainstorm mode** — `/brainstorm` for self-reasoning without human input (toggleable via `AGENT_BRAINSTORM`)
 - **Human-in-the-loop** — `/ask` lets George ask the user questions during task execution (toggleable via `AGENT_ASK_USER`)
 - **Interlock protection** — detects repeated identical failed commands and forces regeneration
+- **Offline-aware fallback** — internet-dependent routes are remapped to local research/delivery commands when network or provider state blocks `/web`
+- **Routing traces** — classifier, eligibility, shortlist, reroutes, and final tool choice are persisted per milestone under `.george/`
 - **Provider fallback** — optionally route complex queries through cloud providers when local models aren't enough
 
 ### Memory & Knowledge
@@ -624,28 +627,30 @@ pkg install -y poppler openssl-tool gnupg w3m lynx python pandoc make nodejs pro
 
 ## Models
 
-Ships with a model library of pre-configured models across 7 families. Default pair:
+Ships with a curated 2026 model library of 10 models across 4 families.
+Current defaults:
 
-- **Primary:** Ministral-3-3B-Reasoning — deep reasoning, planning, and code generation
-- **Secondary:** Ministral-3-3B-Instruct — fast tool routing, commit messages, web summaries (+ vision)
+- **Primary:** Gemma 4 E4B instruct (`blue-lodge-gemma4-inst:4b`)
+- **Secondary:** Gemma 4 E4B instruct (`blue-lodge-gemma4-inst:4b`)
+- **Single-model mode:** enabled by default (`LODGE_SINGLE_MODEL=1`)
 
-All models are 1-4B parameters at Q4-Q8 quantization. Only one is loaded at a time. George hot-swaps automatically — consecutive same-model calls are free, swaps happen only at scenario boundaries.
+You can switch to the thinking variant at any time, for example:
+`lodge /models select primary qwen35-4b-think`
+
+The menu is split into edge and central tiers. Edge models are tuned for phone- and laptop-class local use; central models are larger options for stronger hosts. Only one model is loaded at a time. George hot-swaps automatically when dual-model mode is enabled.
 
 | Family | Strengths |
 |--------|-----------|
-| **Ministral** | Default pair. Strong reasoning + fast utility. Vision on instruct. |
-| **Qwen3** | Best nothink support. Good multilingual. |
-| **Qwen 3.5** | Newest generation. 256K native context. |
-| **Llama 3.2** | Meta's flagship small model. 128K native context. |
-| **Granite 4** | IBM's code-tuned family. Hybrid saves ~200MB. |
-| **Gemma 3** | Google multimodal. 4B has vision. 1B ultra-lightweight. |
-| **Phi-4** | Microsoft. Math/logic specialist. MIT license. |
+| **Gemma 4** | Default boot family. E2B/E4B edge options plus 12B central tier. Vision on E4B and 12B. |
+| **Qwen 3.5** | Broadest menu. 2B/4B edge instruct, 4B thinking variant, and 9B central tier. |
+| **Granite 4.1** | Deterministic structured-output family. 3B edge and 8B central. |
+| **Nemotron 3** | NVIDIA edge instruct option for modern small-model experiments. |
 
 ```bash
 lodge /models list                          # Show all models
-lodge /models select primary granite4       # Switch primary model
-lodge /models select secondary qwen35-2b    # Switch secondary
-lodge /models single minist-think           # Single-model mode
+lodge /models select primary qwen35-4b-think
+lodge /models select secondary granite41-3b-inst
+lodge /models single gemma4-e4b-inst
 lodge /models dual                          # Back to dual-model
 ```
 

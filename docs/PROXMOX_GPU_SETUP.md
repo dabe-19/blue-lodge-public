@@ -460,21 +460,17 @@ Verify:
 
 ### llama-server as a Service
 
-llama-server needs a GGUF model file to start. First pull one via Ollama,
-then find the blob path:
+llama-server needs a GGUF model file to start. First make sure one of the
+current Blue Lodge Ollama models is available, then resolve the blob path:
 
 ```bash
-# Pull a model:
-ollama pull qwen3:8b
+MODEL_REF=blue-lodge-gemma4-inst:4b
 
-# Find the GGUF blob:
-MANIFEST=~/.ollama/models/manifests/registry.ollama.ai/library/qwen3/8b
-# Or for system-wide Ollama:
-MANIFEST=/usr/share/ollama/.ollama/models/manifests/registry.ollama.ai/library/qwen3/8b
+# Confirm the model is present in Ollama:
+ollama ls | grep "$MODEL_REF"
 
-DIGEST=$(jq -r '.layers[] | select(.mediaType=="application/vnd.ollama.image.model") | .digest' "$MANIFEST")
-OLLAMA_DIR=$(dirname "$(dirname "$(dirname "$(dirname "$MANIFEST")")")")
-GGUF_PATH="${OLLAMA_DIR}/blobs/${DIGEST//:/-}"
+# Resolve the GGUF blob:
+GGUF_PATH=$(bash inference-server-models.sh --resolve "$MODEL_REF")
 
 echo "GGUF: $GGUF_PATH"
 ls -lh "$GGUF_PATH"
@@ -525,8 +521,7 @@ To switch models, update the service file's `-m` path and restart:
 
 ```bash
 # Find a different GGUF:
-ollama pull mistral-nemo:12b
-# Resolve the blob path (same jq technique above)
+GGUF_PATH=$(bash inference-server-models.sh --resolve blue-lodge-qwen35-inst:9b)
 
 # Update service:
 sudo systemctl edit llama-server
@@ -537,7 +532,7 @@ sudo systemctl restart llama-server
 
 Or use George's provisioning script from any device:
 ```bash
-./scripts/inference-server-models.sh qwen3:8b    # resolves blob + restarts llama-server
+./scripts/inference-server-models.sh blue-lodge-gemma4-inst:4b    # resolves blob + restarts llama-server
 ```
 
 ---
@@ -683,7 +678,7 @@ echo -e '[Service]\nEnvironment="OLLAMA_HOST=0.0.0.0:11434"' | \
 If llama-server fails to start after an Ollama update, the blob hash may
 have changed. Re-resolve:
 ```bash
-ollama pull qwen3:8b    # re-download if needed
+bash inference-server-models.sh --resolve blue-lodge-gemma4-inst:4b
 # Re-run the GGUF resolution and update the service file
 ```
 
@@ -695,18 +690,18 @@ ollama pull qwen3:8b    # re-download if needed
 
 | Model | Quant | VRAM | Gen tok/s | Prompt tok/s |
 |-------|-------|------|-----------|--------------|
-| Llama 3.1 8B | Q4_K_M | ~4.5 GB | ~60 | ~114 |
-| Qwen3 8B | Q4_K_M | ~4.5 GB | ~55 | ~100 |
-| Ministral 3B | Q4_K_M | ~2.2 GB | ~90 | ~200 |
-| 12B model | Q4_K_M | ~7 GB | ~40 | ~70 |
+| Granite 4.1 3B | Q4_K_M | ~2.2 GB | ~90 | ~200 |
+| Gemma 4 E4B | UD-Q4_K_XL | ~3.4 GB | ~75 | ~150 |
+| Qwen 3.5 9B | UD-Q4_K_XL | ~5.5 GB | ~55 | ~100 |
+| Gemma 4 12B | UD-Q4_K_XL | ~7 GB | ~40 | ~70 |
 
 ### VRAM Budget
 
 | GPU VRAM | Max Model Size (Q4_K_M) | Examples |
 |----------|------------------------|----------|
-| 4 GB | ~4B params | Ministral 3B, Phi-4-mini 3.8B |
-| 6 GB | ~8B params | Qwen3 8B, Llama 3.1 8B |
-| 8 GB | ~12B params | Mistral Nemo 12B, Qwen2.5 14B (tight) |
+| 4 GB | ~4B params | Gemma 4 E2B, Granite 4.1 3B |
+| 6 GB | ~8B params | Gemma 4 E4B, Qwen 3.5 4B |
+| 8 GB | ~12B params | Granite 4.1 8B, Qwen 3.5 9B, Gemma 4 12B (tight) |
 | 12 GB | ~20B params | Larger models with room to spare |
 | 24 GB | ~70B params | Llama 3.1 70B Q4_K_M |
 
@@ -730,7 +725,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now ollama
 git clone --depth 1 https://github.com/ggerganov/llama.cpp.git ~/llama.cpp
 cd ~/llama.cpp && cmake -B build -DGGML_VULKAN=ON && cmake --build build -j$(nproc) -- llama-server
 
-ollama pull qwen3:8b
+bash inference-server-models.sh blue-lodge-gemma4-inst:4b
 # Resolve GGUF blob, create llama-server.service, enable + start
 
 # === On George device (each session) ===

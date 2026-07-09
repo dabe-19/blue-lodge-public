@@ -381,7 +381,6 @@ Example output for `/limits models groq`:
   ──────────────────────────────────────── ────── ──────── ──────── ────────
   ▸ llama-3.3-70b-versatile                   30     1000    12000   100000
     llama-3.1-8b-instant                      30    14400     6000   500000
-    qwen/qwen3-32b                            60     1000     6000   500000
     moonshotai/kimi-k2-instruct               60     1000    10000   300000
     ...
 ```

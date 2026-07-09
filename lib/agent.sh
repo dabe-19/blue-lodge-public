@@ -64,6 +64,10 @@ AGENT_GREP_ALLOW_ABSOLUTE="${AGENT_GREP_ALLOW_ABSOLUTE:-0}"  # /grep path policy
 AGENT_GREP_MAX_LINES="${AGENT_GREP_MAX_LINES:-100}"          # /grep output cap (lines shown before truncation)
 AGENT_LS_ALLOW_ABSOLUTE="${AGENT_LS_ALLOW_ABSOLUTE:-0}"      # /ls path policy: 0=relative-only (force to workdir), 1=allow absolute paths
 AGENT_MILESTONE_CHARS="${AGENT_MILESTONE_CHARS:-200}"        # Max chars for milestone text before truncation (full text still passed to specialist)
+AGENT_ROUTER_SHORTLIST_MIN="${AGENT_ROUTER_SHORTLIST_MIN:-3}"  # Router shortlist floor (commands)
+AGENT_ROUTER_SHORTLIST_MAX="${AGENT_ROUTER_SHORTLIST_MAX:-5}"  # Router shortlist ceiling (commands)
+AGENT_SPECIALIST_STRICT="${AGENT_SPECIALIST_STRICT:-1}"      # Specialist boundary: 1=primary command only, 0=broad catalog
+AGENT_FORCE_OFFLINE="${AGENT_FORCE_OFFLINE:-0}"              # Force deterministic offline routing fallback
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-4096}"     # Max output tokens for evaluator
 
@@ -314,6 +318,177 @@ _micro_set_prior_milestones() {
     local file="$1" milestones_json="$2"
     local tmp="${file}.tmp"
     jq --argjson m "$milestones_json" '.prior_milestones = $m' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+# ── Routing Trace + Eligibility Helpers ───────────────────────
+# Persist compact router traces under .george for deterministic
+# debugging of classifier -> eligibility -> shortlist -> route flow.
+_agent_routing_trace() {
+    local workdir="$1" event="$2" payload="${3:-{}}"
+    [ -z "$workdir" ] && return 0
+    local george_dir="$workdir/.george"
+    local trace_file="$george_dir/routing_trace.jsonl"
+    mkdir -p "$george_dir" 2>/dev/null || return 0
+
+    local payload_json
+    if ! payload_json=$(echo "$payload" | jq -c '.' 2>/dev/null); then
+        payload_json=$(jq -cn --arg raw "$payload" '{raw:$raw}')
+    fi
+
+    jq -cn \
+        --arg ts "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+        --arg ev "$event" \
+        --argjson data "$payload_json" \
+        '{ts:$ts,event:$ev,data:$data}' >> "$trace_file" 2>/dev/null || true
+}
+
+_agent_router_add_unique() {
+    local -n _arr_ref="$1"
+    local _value="$2"
+    local _item
+    for _item in "${_arr_ref[@]}"; do
+        [ "$_item" = "$_value" ] && return 0
+    done
+    _arr_ref+=("$_value")
+}
+
+_agent_router_probe_network() {
+    [ "${AGENT_FORCE_OFFLINE:-0}" -eq 1 ] && return 1
+
+    # Prefer the shared vitals probe when loaded by the shell.
+    if declare -f vitals_net_reachable &>/dev/null; then
+        vitals_net_reachable &>/dev/null && return 0
+        return 1
+    fi
+
+    # Fallback probe: cheap HTTPS head request with hard timeout.
+    if command -v curl &>/dev/null; then
+        curl -fsSI --connect-timeout 2 --max-time 3 https://example.com >/dev/null 2>&1 && return 0
+        return 1
+    fi
+
+    # If we cannot probe, default to online to avoid false locks.
+    return 0
+}
+
+_agent_router_cmd_in_list() {
+    local cmd="$1"
+    shift
+    local _x
+    for _x in "$@"; do
+        [ "$cmd" = "$_x" ] && return 0
+    done
+    return 1
+}
+
+# Deterministic pre-router eligibility pass.
+# Outputs compact JSON consumed by the router call site.
+_agent_router_eligibility_pass() {
+    local objective="$1"
+    local workdir="${2:-.}"
+    local svc_status="${3:-}"
+    local task_type="${4:-${AGENT_TASK_TYPE:-concrete}}"
+
+    local lower
+    lower=$(echo "$objective" | tr '[:upper:]' '[:lower:]')
+
+    local net_ok=1
+    _agent_router_probe_network || net_ok=0
+
+    local web_cfg=0
+    [[ "$svc_status" == *"web-search"* ]] && web_cfg=1
+
+    local web_allowed=1
+    [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ] && web_allowed=0
+    [ "$web_cfg" -eq 0 ] && web_allowed=0
+    [ "$net_ok" -eq 0 ] && web_allowed=0
+
+    local git_allowed=1
+    [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ] && git_allowed=0
+    [ "$net_ok" -eq 0 ] && git_allowed=0
+
+    local need_web=0 need_recall=0 need_ls=0 need_grep=0 need_read=0 need_journal=0 need_delivery=0 need_git=0
+    [[ "$lower" =~ (web|search|google|lookup|look[[:space:]]up|latest|current|today|news|weather|price|stock|internet|online|http|https|url|website) ]] && need_web=1
+    [[ "$lower" =~ (recall|remember|prior|previous|earlier|from[[:space:]]before|already[[:space:]]found|memory|knowledge[[:space:]]base) ]] && need_recall=1
+    [[ "$lower" =~ (list|tree|directory|directories|folders|files|workspace[[:space:]]layout) ]] && need_ls=1
+    [[ "$lower" =~ (grep|regex|pattern|search[[:space:]]files|find[[:space:]].*file|search[[:space:]]codebase) ]] && need_grep=1
+    [[ "$lower" =~ (read|open|inspect|view|show[[:space:]]file|file[[:space:]]content) ]] && need_read=1
+    [[ "$lower" =~ (journal|reflect|reflection|daily[[:space:]]log|entry|synthesize) ]] && need_journal=1
+    [[ "$lower" =~ (respond|answer|summarize|summary|explain|deliver|report|final) ]] && need_delivery=1
+    [[ "$lower" =~ (github|git[[:space:]]|repo|repository|pull[[:space:]]request|clone|commit|push) ]] && need_git=1
+
+    local -a eligible=() shortlist=()
+
+    # Local-safe defaults are always eligible.
+    eligible=(respond read grep ls recall journal edit append write save init build test fix slash)
+    [ "${AGENT_ASK_USER:-1}" -eq 1 ] && eligible+=(ask)
+    [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && eligible+=(brainstorm)
+    [ "$web_allowed" -eq 1 ] && eligible+=(web)
+    [ "$git_allowed" -eq 1 ] && eligible+=(git)
+
+    # Deterministic shortlist ordering by intent signal strength.
+    [ "$need_git" -eq 1 ] && [ "$git_allowed" -eq 1 ] && _agent_router_add_unique shortlist "git"
+    [ "$need_web" -eq 1 ] && [ "$web_allowed" -eq 1 ] && _agent_router_add_unique shortlist "web"
+    [ "$need_recall" -eq 1 ] && _agent_router_add_unique shortlist "recall"
+    [ "$need_journal" -eq 1 ] && _agent_router_add_unique shortlist "journal"
+    [ "$need_ls" -eq 1 ] && _agent_router_add_unique shortlist "ls"
+    [ "$need_grep" -eq 1 ] && _agent_router_add_unique shortlist "grep"
+    [ "$need_read" -eq 1 ] && _agent_router_add_unique shortlist "read"
+    [ "$need_delivery" -eq 1 ] && _agent_router_add_unique shortlist "respond"
+
+    local offline_fallback=0
+    local offline_reason=""
+    if [ "$need_web" -eq 1 ] && [ "$web_allowed" -ne 1 ]; then
+        offline_fallback=1
+        if [ "$net_ok" -eq 0 ] || [ "${AGENT_FORCE_OFFLINE:-0}" -eq 1 ]; then
+            offline_reason="network offline"
+        elif [ "$web_cfg" -ne 1 ]; then
+            offline_reason="web-search provider not configured"
+        else
+            offline_reason="web command locked by task stage"
+        fi
+        _agent_router_add_unique shortlist "recall"
+        _agent_router_add_unique shortlist "ls"
+        _agent_router_add_unique shortlist "journal"
+        _agent_router_add_unique shortlist "respond"
+    fi
+
+    # Backfill shortlist to configured min/max bounds.
+    local min_n="${AGENT_ROUTER_SHORTLIST_MIN:-3}"
+    local max_n="${AGENT_ROUTER_SHORTLIST_MAX:-5}"
+    local _candidate
+    for _candidate in respond read grep recall ls journal slash; do
+        [ "${#shortlist[@]}" -ge "$min_n" ] && break
+        _agent_router_add_unique shortlist "$_candidate"
+    done
+
+    if [ "${#shortlist[@]}" -gt "$max_n" ]; then
+        shortlist=("${shortlist[@]:0:$max_n}")
+    fi
+
+    local negative_guidance="- NEVER use /web for local file reading, local repo inspection, or memory retrieval.\n"
+    negative_guidance+="- NEVER use /recall for live internet facts (news, prices, current events).\n"
+    negative_guidance+="- NEVER use /ls for content search; use /grep or /read when content is needed.\n"
+    negative_guidance+="- NEVER use /journal unless the objective explicitly asks for journal memory or reflection."
+    if [ "$web_allowed" -ne 1 ]; then
+        negative_guidance+="\n- /web is currently ineligible: ${offline_reason:-not available}."
+    fi
+
+    local eligible_json shortlist_json
+    eligible_json=$(printf '%s\n' "${eligible[@]}" | awk 'NF {print}' | jq -R . | jq -s .)
+    shortlist_json=$(printf '%s\n' "${shortlist[@]}" | awk 'NF {print}' | jq -R . | jq -s .)
+
+    jq -cn \
+        --argjson online "$net_ok" \
+        --argjson web_allowed "$web_allowed" \
+        --argjson git_allowed "$git_allowed" \
+        --argjson offline_fallback "$offline_fallback" \
+        --arg offline_reason "$offline_reason" \
+        --arg task_type "$task_type" \
+        --arg neg "$negative_guidance" \
+        --argjson eligible "$eligible_json" \
+        --argjson shortlist "$shortlist_json" \
+        '{online:$online,web_allowed:$web_allowed,git_allowed:$git_allowed,offline_fallback:$offline_fallback,offline_reason:$offline_reason,task_type:$task_type,eligible:$eligible,shortlist:$shortlist,negative_guidance:$neg}'
 }
 
 # Count actions matching an optional regex on the action field
@@ -3177,6 +3352,12 @@ Output ONLY a bare /command. No prose. Example: /web
 /test=run tests
 /fix=diagnose/fix errors
 /slash=create custom command (nothing else fits)
+
+NEGATIVE GUIDANCE:
+- NEVER use /web for local files, local repository inspection, or memory retrieval.
+- NEVER use /recall for live internet facts (news, prices, current events).
+- NEVER use /ls when the objective needs file CONTENTS; use /read or /grep.
+- NEVER use /journal unless the objective explicitly asks for journal memory/reflection.
 LEAN_ROUTER
     # Conditional commands (outside heredoc to avoid substitution issues)
     [ -n "$_ask_line" ] && echo "$_ask_line"
@@ -3270,6 +3451,10 @@ ${_ask_line:+<need user preferences or clarification> → /ask
 RULES:
 - SPECIFICITY: prefer domain commands over /web — /git for GitHub+git ops (including repo scraping via /git fetch), /social for social, /email for email, /phone for phone
 - /web for time-sensitive queries (weather, dates, scores, events, prices, news) and general searches — NOT when a domain command fits
+- NEVER use /web for local files, local repository inspection, or memory retrieval
+- NEVER use /recall for live internet facts (news, prices, current events)
+- NEVER use /ls for content search — use /grep or /read when content is needed
+- NEVER use /journal unless the objective explicitly asks for journal memory/reflection
 - /post or "post to" = /social (Discord/Telegram/X/Mastodon)
 - /slash to CREATE a custom tool when no built-in command fits
 - /sandbox NEVER for slash commands
@@ -3741,21 +3926,25 @@ SPEC
                 ;;
         esac
 
-        # ── COMMAND TYPES (reference, after syntax card) ──────
-        # Moved from the old SPEC_PREAMBLE. This is reference material
-        # (which commands exist), not behavioral rules, so middle-of-
-        # prompt position is acceptable. The behavioral rules (OUTPUT
-        # FORMAT, FORBIDDEN) are at the TOP in the RULES block.
-        # Dynamic TOOLS list — single block handles web/git locking
-        # instead of four separate heredocs.
-        local _tools_list="/pgp /phone /vision /journal /edit /append /sandbox /container /secret /init /recall /download /build /test /fix /read /ls /grep /slash /vitals /backup bash"
-        [ "${_AGENT_WEB_LOCKED:-0}" -eq 0 ] && _tools_list="/web ${_tools_list}"
-        [ "${_AGENT_GIT_LOCKED:-0}" -eq 0 ] && _tools_list="/git ${_tools_list}"
+        # ── COMMAND BOUNDARY ───────────────────────────────────
+        # Keep specialist focused on the routed command. A broad
+        # available-command block causes small models to immediately
+        # re-route themselves away from the selected tool.
         echo ""
-        echo "AVAILABLE COMMANDS:"
-        echo "  TOOLS: ${_tools_list}"
-        echo "  DELIVERY: /social /email /commit /push /write /save /respond"
-        echo "  DEFAULT: If no file/post/social delivery needed, use /respond."
+        if [ "${AGENT_SPECIALIST_STRICT:-1}" -eq 1 ]; then
+            echo "AVAILABLE COMMANDS (STRICT BOUNDARY):"
+            echo "  PRIMARY: /${base_cmd}"
+            echo "  FALLBACK: /respond (only if the objective is pure final answer delivery)"
+            echo "  Do NOT switch to /web, /recall, /ls, or /journal unless PRIMARY is exactly that command."
+        else
+            local _tools_list="/pgp /phone /vision /journal /edit /append /sandbox /container /secret /init /recall /download /build /test /fix /read /ls /grep /slash /vitals /backup bash"
+            [ "${_AGENT_WEB_LOCKED:-0}" -eq 0 ] && _tools_list="/web ${_tools_list}"
+            [ "${_AGENT_GIT_LOCKED:-0}" -eq 0 ] && _tools_list="/git ${_tools_list}"
+            echo "AVAILABLE COMMANDS:"
+            echo "  TOOLS: ${_tools_list}"
+            echo "  DELIVERY: /social /email /commit /push /write /save /respond"
+            echo "  DEFAULT: If no file/post/social delivery needed, use /respond."
+        fi
 
         # Inject per-command API key availability so the specialist
         # knows which services are configured and can avoid commands
@@ -3805,6 +3994,28 @@ SPEC
         echo "Use standard bash. Do not use interactive commands (like nano or vim)."
         echo "Do not output slash commands — use only shell builtins and system utilities."
     fi
+}
+
+# Run bash commands in an isolated shell at the requested workdir.
+# Avoid eval in the parent shell to reduce expansion/injection risk.
+_agent_exec_bash_command() {
+    local cmd="$1"
+    local workdir="${2:-.}"
+
+    case "$cmd" in
+        *$'\r'*|*$'\0'*)
+            printf 'Refused to execute command with control characters\n' >&2
+            return 2
+            ;;
+    esac
+
+    (
+        cd "$workdir" 2>/dev/null || {
+            printf 'Workdir not found: %s\n' "$workdir" >&2
+            exit 1
+        }
+        bash -lc "$cmd"
+    )
 }
 
 # ── Execute a single micro-objective (The Tactician) ──────────
@@ -3953,6 +4164,27 @@ agent_inner_loop() {
         # + disk read per inner loop iteration).
         local inner_context=$(_micro_serialize "$micro_file")
 
+        # ── Deterministic Eligibility Pass (pre-router) ───────
+        # Compute legal/useful commands BEFORE pre-route/fast-route/LLM.
+        local _svc_status_router=""
+        if declare -f commands_services_status &>/dev/null; then
+            _svc_status_router=$(commands_services_status 2>/dev/null)
+        fi
+        local _eligibility_json
+        _eligibility_json=$(_agent_router_eligibility_pass "$micro_objective" "$workdir" "$_svc_status_router" "${AGENT_TASK_TYPE:-concrete}")
+        local _negative_guidance
+        _negative_guidance=$(echo "$_eligibility_json" | jq -r '.negative_guidance')
+        local _offline_fallback
+        _offline_fallback=$(echo "$_eligibility_json" | jq -r '.offline_fallback')
+        local _offline_reason
+        _offline_reason=$(echo "$_eligibility_json" | jq -r '.offline_reason')
+        local _shortlist_count
+        _shortlist_count=$(echo "$_eligibility_json" | jq '.shortlist | length')
+        local _shortlist_block
+        _shortlist_block=$(echo "$_eligibility_json" | jq -r '.shortlist[] | "/" + .')
+
+        _agent_routing_trace "$workdir" "eligibility" "$(echo "$_eligibility_json" | jq -c '{task_type:.task_type,online:.online,web_allowed:.web_allowed,git_allowed:.git_allowed,offline_fallback:.offline_fallback,offline_reason:.offline_reason,eligible:.eligible,shortlist:.shortlist}')"
+
         # ── PRE-ROUTE: Extract explicit slash command from milestone ──
         # When the strategist milestone already names a specific command
         # (e.g. "Use /respond to present findings"), skip the LLM router
@@ -4000,18 +4232,27 @@ agent_inner_loop() {
                 _pre_valid=1
             fi
             if [ "$_pre_valid" -eq 1 ]; then
-                _pre_route="$_pre_cmd"
+                local _pre_eligible
+                _pre_eligible=$(echo "$_eligibility_json" | jq -r --arg c "$_pre_cmd" 'if (.eligible | index($c)) == null then "0" else "1" end')
+                if [ "$_pre_eligible" -eq 1 ]; then
+                    _pre_route="$_pre_cmd"
+                else
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route rejected by eligibility pass: /$_pre_cmd"
+                    _agent_routing_trace "$workdir" "pre_route_rejected" "$(jq -cn --arg cmd "$_pre_cmd" --arg reason "not in eligible set" '{cmd:$cmd,reason:$reason}')"
+                fi
                 # ── SAFETY: Rewrite bare-command milestones ────────
                 # If the milestone IS a raw slash command (starts with
                 # /cmd), rewrite micro_objective into natural language
                 # so the specialist generates a real command instead
                 # of parroting the milestone verbatim.
                 # "/write a summary" → "Use /write to a summary"
-                if [[ "$micro_objective" =~ ^/[a-z]+[[:space:]] ]]; then
+                if [ -n "$_pre_route" ] && [[ "$micro_objective" =~ ^/[a-z]+[[:space:]] ]]; then
                     micro_objective="Use /${_pre_cmd} to ${micro_objective#/"$_pre_cmd" }"
                 fi
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-routed from milestone: /$_pre_route (skipping LLM router)"
-                declare -f transcript_log &>/dev/null && transcript_log "router" "/$_pre_route (pre-routed)"
+                if [ -n "$_pre_route" ]; then
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-routed from milestone: /$_pre_route (skipping LLM router)"
+                    declare -f transcript_log &>/dev/null && transcript_log "router" "/$_pre_route (pre-routed)"
+                fi
             fi
         fi
 
@@ -4038,15 +4279,24 @@ agent_inner_loop() {
         if [ "${AGENT_FAST_ROUTE:-1}" -eq 1 ] && [ "${AGENT_TASK_TYPE:-concrete}" != "abstract" ]; then
             _fr_result=$(_fast_route "$micro_objective")
             if [ -n "$_fr_result" ]; then
-                selected_tool="$_fr_result"
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Fast-routed: /$_fr_result (keyword match, skipping LLM router)"
-                declare -f transcript_log &>/dev/null && transcript_log "router" "/$_fr_result (fast-routed)"
+                local _fr_in_shortlist
+                _fr_in_shortlist=$(echo "$_eligibility_json" | jq -r --arg c "$_fr_result" 'if (.shortlist | index($c)) == null then "0" else "1" end')
+                if [ "$_fr_in_shortlist" -eq 1 ]; then
+                    selected_tool="$_fr_result"
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Fast-routed: /$_fr_result (keyword match, skipping LLM router)"
+                    declare -f transcript_log &>/dev/null && transcript_log "router" "/$_fr_result (fast-routed)"
+                else
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Fast-route /$_fr_result rejected (not in shortlist)"
+                    _fr_result=""
+                fi
             fi
         fi
 
         if [ -z "$_fr_result" ]; then
         # ── LLM ROUTER: ambiguous commands only ───────────────
-        # Use masked router when web/git are locked
+        # Keep cached router variants in play for compatibility with
+        # existing lock-mask behavior and tests, then layer shortlist
+        # constraints in the same system prompt.
         local router_sys
         if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ] && [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
             router_sys="$_cached_router_sys_nwebgit"
@@ -4057,11 +4307,20 @@ agent_inner_loop() {
         else
             router_sys="$_cached_router_sys"
         fi
+        router_sys="${router_sys}
+
+SHORTLIST OVERRIDE: Choose exactly ONE slash command from ROUTER SHORTLIST only. If uncertain, output /respond."
         local _route_now
         _route_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
         local _router_context
         _router_context=$(_micro_serialize_lean "$micro_file")
-        local route_prompt="Current date/time: ${_route_now}\nRoute the next action.\n"
+        local route_prompt="Current date/time: ${_route_now}\nRoute the next action using the deterministic shortlist below.\n"
+        route_prompt="${route_prompt}\nROUTER SHORTLIST (choose ONLY one):\n${_shortlist_block}"
+        route_prompt="${route_prompt}\n\nABSTAIN RULE: if confidence is low, use /respond."
+        route_prompt="${route_prompt}\n\nNEGATIVE GUIDANCE:\n${_negative_guidance}"
+        if [ "$_offline_fallback" -eq 1 ]; then
+            route_prompt="${route_prompt}\n\nOFFLINE FALLBACK ACTIVE: internet-dependent commands are blocked (${_offline_reason}). Prefer /recall, /ls, /journal, /respond."
+        fi
         route_prompt="${route_prompt}\n$_router_context"
         # Inject evaluator feedback so the router can avoid repeating failed commands
         if [ -n "${_last_eval_feedback:-}" ]; then
@@ -4174,6 +4433,17 @@ agent_inner_loop() {
             selected_tool=$(echo "$selected_tool" | head -1 | awk '{print $1}' | sed 's|^/||; s|^/||')
         fi
 
+        # Hard bound: the router must stay inside the deterministic shortlist.
+        local _selected_in_shortlist
+        _selected_in_shortlist=$(echo "$_eligibility_json" | jq -r --arg c "$selected_tool" 'if (.shortlist | index($c)) == null then "0" else "1" end')
+        if [ "$_selected_in_shortlist" -ne 1 ]; then
+            local _fallback_cmd
+            _fallback_cmd=$(echo "$_eligibility_json" | jq -r '.shortlist[0] // "respond"')
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router /$selected_tool outside shortlist — fallback /$_fallback_cmd"
+            _agent_routing_trace "$workdir" "router_shortlist_fallback" "$(jq -cn --arg selected "$selected_tool" --arg fallback "$_fallback_cmd" --argjson shortlist "$(echo "$_eligibility_json" | jq -c '.shortlist')" '{selected:$selected,fallback:$fallback,shortlist:$shortlist}')"
+            selected_tool="$_fallback_cmd"
+        fi
+
         # ── SEARCH/RESEARCH REMAP ─────────────────────────────
         # Small models hallucinate /research or /search — these don't
         # exist. Remap to /web so the specialist generates a proper
@@ -4201,6 +4471,17 @@ agent_inner_loop() {
                 # so the specialist generates the right command syntax
                 micro_objective="${micro_objective//\/respond/\/social}"
             fi
+        fi
+
+        # Deterministic offline fallback for internet-dependent commands.
+        if [ "$_offline_fallback" -eq 1 ]; then
+            case "$selected_tool" in
+                web|git|social|email|download)
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Offline fallback: /$selected_tool -> /recall (${_offline_reason:-network unavailable})"
+                    _agent_routing_trace "$workdir" "offline_fallback" "$(jq -cn --arg from "$selected_tool" --arg to "recall" --arg reason "${_offline_reason:-network unavailable}" '{from:$from,to:$to,reason:$reason}')"
+                    selected_tool="recall"
+                    ;;
+            esac
         fi
 
         # ── TOOL VALIDATION: Reject hallucinated commands ─────
@@ -4292,7 +4573,10 @@ agent_inner_loop() {
             cmd="/respond $_router_full_text"
             cmd_is_slash=1
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Direct respond bypass — skipping specialist"
+            _agent_routing_trace "$workdir" "router_selected" "$(jq -cn --arg routed "respond" --arg mode "direct_respond" '{routed:$routed,mode:$mode}')"
         else
+
+        _agent_routing_trace "$workdir" "router_selected" "$(jq -cn --arg routed "$selected_tool" --argjson shortlist "$(echo "$_eligibility_json" | jq -c '.shortlist')" '{routed:$routed,shortlist:$shortlist}')"
 
         # Re-prefix for specialist lookup
         [ "$selected_tool" != "bash" ] && [ "$selected_tool" != "_hallucinated" ] && selected_tool="/$selected_tool"
@@ -5054,12 +5338,14 @@ INTERLOCK_JSON
                         fi
                         if [ "$_spec_cmd_name" = "$_milestone_cmd" ] || [[ "$cmd" == "/${_milestone_cmd} "* ]]; then
                             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] milestone-authoritative override: trusting specialist /$_spec_cmd_name over router /$_routed_base"
+                            _agent_routing_trace "$workdir" "specialist_override" "$(jq -cn --arg reason "milestone_authoritative" --arg router "$_routed_base" --arg specialist "$_spec_cmd_name" '{reason:$reason,router:$router,specialist:$specialist}')"
                             _mismatch_count=0
                         elif [ "$_mismatch_count" -ge 2 ]; then
                             # ── Mismatch cap reached ─────────────────
                             # After 2 mismatches, stop fighting and trust
                             # the specialist to break the deadlock.
                             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] mismatch cap reached (2), trusting specialist /$_spec_cmd_name"
+                            _agent_routing_trace "$workdir" "specialist_override" "$(jq -cn --arg reason "mismatch_cap" --arg router "$_routed_base" --arg specialist "$_spec_cmd_name" '{reason:$reason,router:$router,specialist:$specialist}')"
                             _mismatch_count=0
                         else
                             _mismatch_count=$((_mismatch_count + 1))
@@ -5218,7 +5504,7 @@ INTERLOCK_JSON
 
             # Execute based on command type:
             #   Slash commands → commands_dispatch (proper command registry)
-            #   Bash commands  → eval (direct shell execution)
+            #   Bash commands  → isolated bash helper (non-eval path)
             # Capture full output, then truncate to 2000 chars via
             # parameter expansion. Avoids | head pipe which causes
             # SIGPIPE (exit 141) on verbose commands like /journal.
@@ -5231,7 +5517,7 @@ INTERLOCK_JSON
                 output=$(commands_dispatch "$cmd" "$workdir" 2>&1)
                 exit_code=$?
             else
-                output=$(eval "$cmd" 2>&1)
+                output=$(_agent_exec_bash_command "$cmd" "$workdir" 2>&1)
                 exit_code=$?
             fi
             output="${output:0:2000}"
@@ -5682,7 +5968,7 @@ INTERLOCK_JSON
                     output=$(commands_dispatch "$_l1_cmd" "$workdir" 2>&1)
                     _l1_exit=$?
                 else
-                    output=$(eval "$_l1_cmd" 2>&1)
+                    output=$(_agent_exec_bash_command "$_l1_cmd" "$workdir" 2>&1)
                     _l1_exit=$?
                 fi
                 output="${output:0:2000}"
@@ -5938,7 +6224,7 @@ Output a slash command line starting with / OR a bash code block."
                 final_output=$(commands_dispatch "$final_cmd" "$workdir" 2>&1)
                 final_exit=$?
             else
-                final_output=$(eval "$final_cmd" 2>&1)
+                final_output=$(_agent_exec_bash_command "$final_cmd" "$workdir" 2>&1)
                 final_exit=$?
             fi
             final_output="${final_output:0:2000}"
@@ -6242,6 +6528,7 @@ MEMEOF
     # This drives conditional prompt injections, workspace enforcement,
     # fast-route bypass, and research gate thresholds.
     _agent_classify_task "$task"
+    _agent_routing_trace "$workdir" "task_classifier" "$(jq -cn --arg task_type "${AGENT_TASK_TYPE:-concrete}" '{task_type:$task_type}')"
 
     # ── Dynamic Output Directory ──────────────────────────────
     # Abstract and combined tasks route file writes to the task

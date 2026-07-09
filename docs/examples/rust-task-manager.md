@@ -250,7 +250,7 @@ The `Cargo.toml` includes mobile-optimized release settings: `lto = "thin"`, `st
 
 ## Pro Tips for Longer Projects
 
-- **Switch models mid-project** — Use `/models set phi4-reason` if you want stronger reasoning during debugging, then switch back to a faster model for boilerplate generation.
+- **Switch models mid-project** — Use `/models select primary qwen35-4b-think` if you want stronger reasoning during debugging, then switch back to a faster instruct model for boilerplate generation.
 - **Ingest Rust docs** — `/ingest add ~/docs/rust-book.pdf` makes the Rust book searchable. Then ask: `What's the difference between &str and String?` and George pulls the relevant section.
 - **Journal your progress** — `/journal write "Got the CLI parsing working, next: add SQLite persistence"` — George reads this next session and picks up where you left off.
 - **Automate your workflow** — `/slash create build-test "Run /build, then /test, then /commit if tests pass"` chains your whole cycle into one command.

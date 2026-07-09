@@ -39,6 +39,12 @@ MCP_CACHE_NS="mcp"               # LRU cache namespace
 MCP_SERVERS_FILE="${MCP_CONFIG_DIR}/servers.conf"
 MCP_CATALOG_FILE="${MCP_CONFIG_DIR}/catalog.conf"
 
+# Test-mode timing knobs (optional env overrides).
+# Defaults preserve existing production behavior exactly.
+MCP_STARTUP_WAIT_SECONDS="${MCP_STARTUP_WAIT_SECONDS:-0.5}"      # Wait after spawning server before liveness check
+MCP_HANDSHAKE_DRAIN_SECONDS="${MCP_HANDSHAKE_DRAIN_SECONDS:-0.3}" # Drain async notifications after initialized
+MCP_RECV_POLL_SECONDS="${MCP_RECV_POLL_SECONDS:-0.1}"            # Poll interval while waiting for JSON-RPC responses
+
 # ── jq is a hard dependency (enforced by install.sh + lodge main) ──
 _MCP_JQ_CMD=jq
 
@@ -231,7 +237,7 @@ _mcp_recv() {
                 last_size=$((last_size + _complete_bytes))
             fi
         fi
-        sleep 0.1
+        sleep "$MCP_RECV_POLL_SECONDS"
     done
 
     return 1
@@ -281,7 +287,7 @@ _mcp_handshake() {
 
     # Post-handshake drain — wait for async notifications to clear
     # This fixes cold-start empty responses with real MCP servers
-    sleep 0.3
+    sleep "$MCP_HANDSHAKE_DRAIN_SECONDS"
 
     return 0
 }
@@ -342,11 +348,10 @@ mcp_start() {
         mkfifo "$rundir/in.fifo" || return 1
     }
 
-    # Start server in a backgrounded subshell.  We use 'eval "$cmd"' (no exec)
-    # so that VAR=val prefixed command strings (e.g. PATH=... bash server.sh)
-    # are interpreted correctly by the shell.  $! gives the subshell PID which
-    # is fine for kill -0 checks and signal propagation.
-    eval "$cmd" < "$rundir/in.fifo" >> "$rundir/responses.jsonl" 2>"$rundir/stderr.log" &
+    # Start server in a backgrounded subshell via bash -lc so VAR=val
+    # prefixed command strings are interpreted correctly without eval
+    # in the current shell. $! is the child shell PID for liveness checks.
+    bash -lc "$cmd" < "$rundir/in.fifo" >> "$rundir/responses.jsonl" 2>"$rundir/stderr.log" &
     local server_pid=$!
     echo "$server_pid" > "$rundir/pid"
 
@@ -358,7 +363,7 @@ mcp_start() {
     echo "$keeper_pid" > "$rundir/keeper_pid"
 
     # Wait for server process to start
-    sleep 0.5
+    sleep "$MCP_STARTUP_WAIT_SECONDS"
 
     # Verify server is still alive
     if ! kill -0 "$server_pid" 2>/dev/null; then

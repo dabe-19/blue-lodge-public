@@ -25,7 +25,7 @@
 The command system is designed around two principles:
 
 1. **Convention over configuration** — Commands follow a naming convention (`cmd_${name}()` in `${name}.sh`) that makes registration automatic
-2. **LLM-friendly catalog** — The command list is serialized into a compact JSON format that fits in a 4B model's context window (~900 tokens)
+2. **Structured catalog plus bounded routing** — The full command list is serialized into JSON for strategist/specialist prompts, while the hot-path router now sees only a deterministic 3-5 command shortlist derived from that catalog
 
 The system supports three command sources:
 - **Built-in** commands (registered via `commands_register()` in lib files)
@@ -245,22 +245,27 @@ Returns a JSON structure with all command syntax, designed for LLM injection:
 }
 ```
 
-This catalog is ~900 tokens — compact enough for a 4B model's context window while comprehensive enough for accurate routing.
+This catalog is still the authoritative structured reference for planners, specialists, and recovery paths.
+It is no longer the router's first-line prompt surface for milestone execution.
+The inner loop now runs `_agent_router_eligibility_pass()` first, then hands the router only a 3-5 command shortlist plus negative guidance.
 
 ### Dynamic Service Splicing
 
-The catalog dynamically includes configured services:
+The catalog dynamically includes live service state, and the same status block is also consumed by the deterministic eligibility pass:
 
 ```bash
 commands_catalog() {
     local catalog="..."
     local services
     services=$(commands_services_status)
-    # Splice service availability into catalog
+    # Splice service availability into strategist/specialist catalog
     catalog="${catalog/SERVICES_STATUS/$services}"
     echo "$catalog"
 }
 ```
+
+That means configured services are no longer just advisory text for the LLM.
+They now participate in hard gating for commands like `/web` and `/git` before the router gets a vote.
 
 ---
 
@@ -268,34 +273,25 @@ commands_catalog() {
 
 ### `commands_services_status()`
 
-Returns a compact string telling the LLM which services are configured:
+Returns a compact status block telling the agent which services are configured and whether web research is actually reachable:
 
 ```bash
 commands_services_status() {
-    local configured="" not_configured=""
-
-    # Check each service key
-    [[ -n "$(api_get_key DISCORD_BOT_TOKEN 2>/dev/null)" ]] && \
-        configured+="discord, " || not_configured+="discord, "
-
-    [[ -n "$(api_get_key TELEGRAM_BOT_TOKEN 2>/dev/null)" ]] && \
-        configured+="telegram, " || not_configured+="telegram, "
-
-    # ... check X, Mastodon, email, etc ...
-
-    # Mastodon: query SQLite directly (no UI output)
-    if sqlite3 "$MASTODON_DB" "SELECT COUNT(*) FROM instances" 2>/dev/null | grep -q '[1-9]'; then
-        configured+="mastodon, "
-    else
-        not_configured+="mastodon, "
-    fi
-
-    echo "CONFIGURED: ${configured%, }"
-    echo "NOT CONFIGURED: ${not_configured%, }"
+    echo "NETWORK: online|offline|unknown"
+    echo "WEB_SEARCH_REACHABLE: yes|no"
+    echo "CONFIGURED: discord,telegram,web-search,..."
+    echo "NOT CONFIGURED: email,mastodon,..."
 }
 ```
 
-**Why this matters**: Without service status, the router might pick `/social x post "hello"` when X isn't configured, wasting an LLM call and an execution attempt. By injecting availability into the router prompt, the LLM avoids unconfigured services.
+The important distinction is that `configured` is not the same thing as `reachable`.
+`commands_services_status()` now carries both:
+
+- `NETWORK` reflects the live reachability probe used by the router gate
+- `WEB_SEARCH_REACHABLE` is only `yes` when network is online and a web-search provider is configured
+- `CONFIGURED` and `NOT CONFIGURED` remain the human- and model-readable service inventory
+
+**Why this matters**: without this distinction, the router can still over-select `/web` just because web search exists in the catalog. With the new status block, the deterministic gate can exclude `/web` up front and push the router toward `/recall`, `/ls`, `/journal`, or `/respond` instead of wasting a round on unreachable external work.
 
 ---
 

@@ -2004,6 +2004,16 @@ web_search() {
             ui_dim "  [debug] web_search: MCP failed — falling through to direct providers"
     fi
 
+    if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
+        ui_err "Web search disabled by routing policy"
+        return 1
+    fi
+
+    if ! api_network_reachable 3; then
+        ui_err "Web search unavailable: network is offline or unreachable"
+        return 1
+    fi
+
     # Try Serper first (better results)
     local serper_key
     serper_key=$(api_get_key "SERPER_API_KEY" 2>/dev/null)
@@ -2228,6 +2238,16 @@ web_images() {
             ui_dim "  [debug] web_images: MCP failed — falling through to direct providers"
     fi
 
+    if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
+        ui_err "Web image search disabled by routing policy"
+        return 1
+    fi
+
+    if ! api_network_reachable 3; then
+        ui_err "Image search unavailable: network is offline or unreachable"
+        return 1
+    fi
+
     # Try Serper image search
     local serper_key
     serper_key=$(api_get_key "SERPER_API_KEY" 2>/dev/null)
@@ -2340,6 +2360,16 @@ web_download() {
     local url="$1"
     local output="${2:-$(basename "$url")}"
 
+    if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
+        ui_err "Web actions are currently disabled by routing policy"
+        return 1
+    fi
+
+    if ! api_network_reachable 3; then
+        ui_err "Web download unavailable: network is offline or unreachable"
+        return 1
+    fi
+
     ui_step "Downloading: $url"
     curl -sL --max-time 60 \
         -H "User-Agent: $API_USER_AGENT" \
@@ -2354,6 +2384,61 @@ web_download() {
         ui_err "Download failed"
         return 1
     fi
+}
+
+web_enabled() {
+    [ "${_AGENT_WEB_LOCKED:-0}" -ne 1 ]
+}
+
+web_configured() {
+    if api_get_key "SERPER_API_KEY" &>/dev/null; then
+        return 0
+    fi
+    if api_get_key "PERPLEXITY_API_KEY" &>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+web_reachable() {
+    web_enabled || return 1
+    api_network_reachable 3 || return 1
+
+    local serper_key
+    serper_key=$(api_get_key "SERPER_API_KEY" 2>/dev/null)
+    if [ -n "$serper_key" ]; then
+        api_endpoint_reachable "https://google.serper.dev/search" 4 && return 0
+    fi
+
+    local pplx_key
+    pplx_key=$(api_get_key "PERPLEXITY_API_KEY" 2>/dev/null)
+    if [ -n "$pplx_key" ]; then
+        api_endpoint_reachable "https://api.perplexity.ai/chat/completions" 4 && return 0
+    fi
+
+    api_endpoint_reachable "https://lite.duckduckgo.com/lite/" 4
+}
+
+web_availability_summary() {
+    local enabled="no"
+    local configured="no"
+    local reachable="no"
+    local provider="ddg"
+
+    web_enabled && enabled="yes"
+    web_configured && configured="yes"
+    web_reachable && reachable="yes"
+
+    if api_get_key "SERPER_API_KEY" &>/dev/null; then
+        provider="serper"
+    elif api_get_key "PERPLEXITY_API_KEY" &>/dev/null; then
+        provider="perplexity"
+    fi
+
+    echo "WEB_ENABLED: $enabled"
+    echo "WEB_CONFIGURED: $configured"
+    echo "WEB_REACHABLE: $reachable"
+    echo "WEB_PROVIDER: $provider"
 }
 
 # ── Check if a URL is reachable ───────────────────────────────
@@ -2387,6 +2472,16 @@ web_search_github() {
 
     if [ -z "$query" ]; then
         ui_err "Usage: web_search_github <query> [count]"
+        return 1
+    fi
+
+    if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
+        ui_err "GitHub web search disabled by routing policy"
+        return 1
+    fi
+
+    if ! api_network_reachable 3; then
+        ui_err "GitHub search unavailable: network is offline or unreachable"
         return 1
     fi
 
@@ -2462,6 +2557,12 @@ web_github_repo_exists() {
     if [[ ! "$repo" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]]; then
         return 1
     fi
+
+    if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
+        return 1
+    fi
+
+    api_network_reachable 3 || return 1
 
     local status
     status=$(curl -sI --max-time 5 \

@@ -9,7 +9,7 @@
 
 ## How to Use
 
-1. Run George with the model under test (e.g., `minist-think:4b`, `qwen3:4b`)
+1. Run George with the model under test (e.g., `qwen35-4b-think`, `gemma4-e4b-inst`)
 2. Enter the **User Prompt** verbatim
 3. Compare the actual trace against the **Expected Trace**
 4. Score using the **Pass/Fail Criteria**
@@ -331,7 +331,7 @@ Find the current top 5 most mass-produced programming languages and write a Rust
 ```json
 {
   "workout_id": "fizzbuzz_rust_v1",
-  "model": "minist-think:4b",
+  "model": "qwen35-4b-think",
   "timestamp": "2026-03-09T15:00:00Z",
   "turns": [
     {

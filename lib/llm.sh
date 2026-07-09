@@ -26,6 +26,26 @@ LLAMA_CPP_MODEL="${LLAMA_CPP_MODEL:-}"
 LLAMA_CPP_GPU_LAYERS="${LLAMA_CPP_GPU_LAYERS:-0}"
 # Context size for llama-server
 LLAMA_CPP_CTX_SIZE="${LLAMA_CPP_CTX_SIZE:-8192}"
+# KV cache precision for llama.cpp. "auto" keeps llama.cpp defaults.
+# Valid explicit examples: f16, q8_0, q5_0, q4_0.
+LLAMA_CPP_KV_CACHE_TYPE="${LLAMA_CPP_KV_CACHE_TYPE:-auto}"
+# Prompt cache controls (local llama.cpp server only).
+# Keeping this enabled improves repeat prompt prefill latency in agent loops.
+LLAMA_CPP_PROMPT_CACHE="${LLAMA_CPP_PROMPT_CACHE:-1}"
+LLAMA_CPP_PROMPT_CACHE_ALL="${LLAMA_CPP_PROMPT_CACHE_ALL:-1}"
+LLAMA_CPP_PROMPT_CACHE_FILE="${LLAMA_CPP_PROMPT_CACHE_FILE:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/llama-prompt-cache.bin}"
+# Optional Hugging Face startup path for llama-server (-hf ...).
+# Default stays local GGUF (-m ...) resolved from Ollama blobs.
+LLAMA_CPP_USE_HF="${LLAMA_CPP_USE_HF:-0}"
+LLAMA_CPP_HF_REF="${LLAMA_CPP_HF_REF:-}"
+# Optional speculative decoding with MTP drafter.
+# Note: -hf auto-discovery is not used on the Ollama-resolved -m path.
+# Set LLAMA_CPP_DRAFT_MODEL to a local drafter GGUF to enable draft model usage.
+LLAMA_CPP_SPEC_MTP="${LLAMA_CPP_SPEC_MTP:-0}"
+LLAMA_CPP_SPEC_DRAFT_N_MAX="${LLAMA_CPP_SPEC_DRAFT_N_MAX:-4}"
+LLAMA_CPP_DRAFT_MODEL="${LLAMA_CPP_DRAFT_MODEL:-}"
+# Flash attention control (llama.cpp -fa). Keep "auto" unless explicitly set.
+LLAMA_CPP_FA="${LLAMA_CPP_FA:-auto}"
 # Backend preference: llamacpp (default — auto-starts when needed), ollama, auto
 # Persisted to .george/lodge.conf along with token limits, budgets, sampling
 # params, and debug mode so they survive sessions.
@@ -79,6 +99,18 @@ _llm_save_config() {
 
 # ── Backend ────────────────────────────────────────────────────
 LLM_BACKEND=${LLM_BACKEND:-llamacpp}
+LLAMA_CPP_GPU_LAYERS=${LLAMA_CPP_GPU_LAYERS:-0}
+LLAMA_CPP_CTX_SIZE=${LLAMA_CPP_CTX_SIZE:-8192}
+LLAMA_CPP_KV_CACHE_TYPE=${LLAMA_CPP_KV_CACHE_TYPE:-auto}
+LLAMA_CPP_PROMPT_CACHE=${LLAMA_CPP_PROMPT_CACHE:-1}
+LLAMA_CPP_PROMPT_CACHE_ALL=${LLAMA_CPP_PROMPT_CACHE_ALL:-1}
+LLAMA_CPP_PROMPT_CACHE_FILE=${LLAMA_CPP_PROMPT_CACHE_FILE:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/llama-prompt-cache.bin}
+LLAMA_CPP_USE_HF=${LLAMA_CPP_USE_HF:-0}
+LLAMA_CPP_HF_REF=${LLAMA_CPP_HF_REF:-}
+LLAMA_CPP_SPEC_MTP=${LLAMA_CPP_SPEC_MTP:-0}
+LLAMA_CPP_SPEC_DRAFT_N_MAX=${LLAMA_CPP_SPEC_DRAFT_N_MAX:-4}
+LLAMA_CPP_DRAFT_MODEL=${LLAMA_CPP_DRAFT_MODEL:-}
+LLAMA_CPP_FA=${LLAMA_CPP_FA:-auto}
 
 # ── Debug ──────────────────────────────────────────────────────
 LODGE_DEBUG=${LODGE_DEBUG:-0}
@@ -511,17 +543,47 @@ _llm_stop_llamacpp_server() {
 }
 
 # Start llama-server with the given GGUF model path.
-# Args: model_path [--quiet]
+# Args: model_path [--quiet] [chat_template_file]
 # Returns 0 when server is healthy, 1 on failure.
 _llm_start_llamacpp_server() {
     local model_path="$1"
     local quiet="${2:-}"
     local chat_template_file="${3:-}"   # optional path to .jinja template file override
+    local _hf_ref=""
+    local _hf_fallback_ref=""
+    local _launch_mode="model"
+
+    # Optional -hf startup path. This can enable llama.cpp auto-discovery
+    # for repo-root MTP drafters on compatible model repos.
+    if [ "${LLAMA_CPP_USE_HF:-0}" = "1" ]; then
+        if [ -n "${LLAMA_CPP_HF_REF:-}" ]; then
+            _hf_ref="$LLAMA_CPP_HF_REF"
+        elif [ -n "${LODGE_MODEL:-}" ] && declare -f _models_lookup &>/dev/null && declare -f _models_parse_entry &>/dev/null; then
+            local _entry
+            _entry=$(_models_lookup "$LODGE_MODEL" 2>/dev/null)
+            if [ -n "$_entry" ]; then
+                _models_parse_entry "$_entry"
+                if [[ "${_ME_BASE:-}" == hf.co/* ]]; then
+                    _hf_ref="$_ME_BASE"
+                fi
+            fi
+        fi
+        if [ -n "$_hf_ref" ]; then
+            _launch_mode="hf"
+            # Startup fallback for quantized HF refs: BF16 -> F16.
+            # This is useful on devices/backends where BF16 startup fails.
+            if [[ "$_hf_ref" =~ :[Bb][Ff]16$ ]]; then
+                _hf_fallback_ref="${_hf_ref%:*}:F16"
+            fi
+        fi
+    fi
 
     # Validate
-    if [ ! -f "$model_path" ]; then
-        [ "$quiet" != "--quiet" ] && ui_err "Model file not found: $model_path"
-        return 1
+    if [ "$_launch_mode" = "model" ]; then
+        if [ ! -f "$model_path" ]; then
+            [ "$quiet" != "--quiet" ] && ui_err "Model file not found: $model_path"
+            return 1
+        fi
     fi
     if [ ! -x "$LLAMA_CPP_SERVER_BIN" ]; then
         [ "$quiet" != "--quiet" ] && ui_err "llama-server not found: $LLAMA_CPP_SERVER_BIN"
@@ -610,13 +672,74 @@ _llm_start_llamacpp_server() {
 
     # Build launch args
     local _launch_args=(
-        -m "$model_path"
         --port "$_port"
         -ngl "$LLAMA_CPP_GPU_LAYERS"
         -c "$LLAMA_CPP_CTX_SIZE"
         --threads "$(nproc 2>/dev/null || echo 4)"
         --parallel 1    # single slot — saves RAM on phones; lodge uses sequential calls
     )
+
+    if [ "$_launch_mode" = "hf" ]; then
+        _launch_args=(-hf "$_hf_ref" "${_launch_args[@]}")
+        [ "$quiet" != "--quiet" ] && ui_dim "Model source: -hf $_hf_ref"
+    else
+        _launch_args=(-m "$model_path" "${_launch_args[@]}")
+        [ "$quiet" != "--quiet" ] && ui_dim "Model source: -m $model_path"
+    fi
+
+    # KV cache precision tuning: apply only when explicitly requested.
+    # On mobile devices q8_0 can cut memory traffic while preserving quality.
+    if [ -n "${LLAMA_CPP_KV_CACHE_TYPE:-}" ] && [ "${LLAMA_CPP_KV_CACHE_TYPE}" != "auto" ]; then
+        case "${LLAMA_CPP_KV_CACHE_TYPE}" in
+            f16|bf16|q8_0|q6_K|q5_0|q5_1|q5_K|q4_0|q4_1|q4_K)
+                _launch_args+=(--cache-type-k "$LLAMA_CPP_KV_CACHE_TYPE" --cache-type-v "$LLAMA_CPP_KV_CACHE_TYPE")
+                [ "$quiet" != "--quiet" ] && ui_dim "KV cache type: ${LLAMA_CPP_KV_CACHE_TYPE}"
+                ;;
+            *)
+                [ "$quiet" != "--quiet" ] && ui_warn "Ignoring unsupported LLAMA_CPP_KV_CACHE_TYPE='$LLAMA_CPP_KV_CACHE_TYPE' (using llama.cpp default)"
+                ;;
+        esac
+    fi
+
+    # Prompt cache: reuses prompt prefill across repeated/system-heavy calls.
+    # This helps agent loops that send similar system + context prefixes.
+    if [ "${LLAMA_CPP_PROMPT_CACHE:-1}" = "1" ]; then
+        local _pc_file="${LLAMA_CPP_PROMPT_CACHE_FILE:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/llama-prompt-cache.bin}"
+        mkdir -p "$(dirname "$_pc_file")" 2>/dev/null
+        _launch_args+=(--prompt-cache "$_pc_file")
+        [ "${LLAMA_CPP_PROMPT_CACHE_ALL:-1}" = "1" ] && _launch_args+=(--prompt-cache-all)
+        [ "$quiet" != "--quiet" ] && ui_dim "Prompt cache: $_pc_file"
+    fi
+
+    # Flash attention toggle for mobile stability/perf experiments.
+    case "${LLAMA_CPP_FA:-auto}" in
+        on|off)
+            _launch_args+=(-fa "${LLAMA_CPP_FA}")
+            [ "$quiet" != "--quiet" ] && ui_dim "Flash attention: ${LLAMA_CPP_FA}"
+            ;;
+        auto|"") ;;
+        *)
+            [ "$quiet" != "--quiet" ] && ui_warn "Ignoring invalid LLAMA_CPP_FA='${LLAMA_CPP_FA}' (expected auto|on|off)"
+            ;;
+    esac
+
+    # Optional speculative decoding (MTP draft).
+    # With Ollama-resolved GGUF (-m path), llama.cpp cannot auto-discover the
+    # repo-root MTP draft from -hf metadata, so support explicit local draft file.
+    if [ "${LLAMA_CPP_SPEC_MTP:-0}" = "1" ]; then
+        _launch_args+=(--spec-type draft-mtp --spec-draft-n-max "${LLAMA_CPP_SPEC_DRAFT_N_MAX:-4}")
+        if [ "$_launch_mode" = "hf" ] && [ -z "${LLAMA_CPP_DRAFT_MODEL:-}" ]; then
+            [ "$quiet" != "--quiet" ] && ui_dim "MTP: using llama.cpp -hf auto-discovery for repo draft model"
+        fi
+        if [ -n "${LLAMA_CPP_DRAFT_MODEL:-}" ]; then
+            if [ -f "$LLAMA_CPP_DRAFT_MODEL" ]; then
+                _launch_args+=(--model-draft "$LLAMA_CPP_DRAFT_MODEL")
+                [ "$quiet" != "--quiet" ] && ui_dim "MTP draft model: $LLAMA_CPP_DRAFT_MODEL"
+            else
+                [ "$quiet" != "--quiet" ] && ui_warn "LLAMA_CPP_DRAFT_MODEL not found: $LLAMA_CPP_DRAFT_MODEL (using target-only verify path)"
+            fi
+        fi
+    fi
 
     # Vision projector: if the model has an mmproj blob (e.g., Ministral-3B-Instruct),
     # pass it to llama-server so /vision can send images.
@@ -680,6 +803,11 @@ _llm_start_llamacpp_server() {
             [ "$quiet" != "--quiet" ] && ui_err "llama-server died during startup"
             [ "$quiet" != "--quiet" ] && tail -5 "${TMPDIR:-/tmp}/lodge-llama-server.log" 2>/dev/null | while IFS= read -r _line; do ui_dim "  $_line"; done
             rm -f "$_LLAMA_CPP_PID_FILE"
+            if [ "$_launch_mode" = "hf" ] && [ -n "$_hf_fallback_ref" ] && [ -z "${_LLM_HF_FALLBACK_TRIED:-}" ]; then
+                [ "$quiet" != "--quiet" ] && ui_warn "Retrying llama.cpp with fallback HF ref: $_hf_fallback_ref"
+                LLAMA_CPP_HF_REF="$_hf_fallback_ref" _LLM_HF_FALLBACK_TRIED=1 _llm_start_llamacpp_server "$model_path" "$quiet" "$chat_template_file"
+                return $?
+            fi
             return 1
         fi
         _tries=$((_tries + 1))
@@ -690,6 +818,11 @@ _llm_start_llamacpp_server() {
     [ "$quiet" != "--quiet" ] && ui_dim "  Log: ${TMPDIR:-/tmp}/lodge-llama-server.log"
     kill "$_pid" 2>/dev/null
     rm -f "$_LLAMA_CPP_PID_FILE"
+    if [ "$_launch_mode" = "hf" ] && [ -n "$_hf_fallback_ref" ] && [ -z "${_LLM_HF_FALLBACK_TRIED:-}" ]; then
+        [ "$quiet" != "--quiet" ] && ui_warn "Retrying llama.cpp with fallback HF ref: $_hf_fallback_ref"
+        LLAMA_CPP_HF_REF="$_hf_fallback_ref" _LLM_HF_FALLBACK_TRIED=1 _llm_start_llamacpp_server "$model_path" "$quiet" "$chat_template_file"
+        return $?
+    fi
     return 1
 }
 

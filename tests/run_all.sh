@@ -17,6 +17,33 @@ TESTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 LODGE_DIR="$(cd "$TESTS_DIR/.." && pwd)"
 export LODGE_DIR
 
+# ── Process guard (no lockfile) ───────────────────────────────
+# Prevent overlapping full-suite runs in the same workspace. A timed-out
+# foreground run can continue in the background; starting another run_all
+# in that window doubles load and makes MCP suites look "stuck".
+if [ "${RUN_ALL_ALLOW_CONCURRENT:-0}" != "1" ]; then
+    _existing_pid=$(ps -eo pid=,etimes=,args= | awk -v self="$$" -v script="$TESTS_DIR/run_all.sh" '
+        {
+            pid=$1
+            age=$2
+            line=$0
+            if (pid == self) next
+            if (age < 2) next
+            if (index(line, script) > 0 || line ~ /(^|[[:space:]])tests\/run_all\.sh([[:space:]]|$)/) {
+                print pid
+                exit
+            }
+        }
+    ')
+
+    if [ -n "${_existing_pid:-}" ]; then
+        echo ""
+        echo "Another test suite run is already active (pid $_existing_pid)."
+        echo "Refusing to start a second concurrent run_all.sh."
+        echo "If you intentionally want overlap, set RUN_ALL_ALLOW_CONCURRENT=1."
+        exit 2
+    fi
+fi
 # ── Colors ─────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'

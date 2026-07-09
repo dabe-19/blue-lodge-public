@@ -1409,6 +1409,85 @@ social_post() {
     fi
 }
 
+social_provider_configured() {
+    local platform="$1"
+
+    case "$platform" in
+        x|twitter)
+            api_get_key "X_BEARER_TOKEN" &>/dev/null
+            ;;
+        mastodon|masto)
+            local _masto_token
+            _masto_token=$(_mastodon_instance_token "" 2>/dev/null)
+            [ -n "$_masto_token" ] || api_get_key "MASTODON_ACCESS_TOKEN" &>/dev/null
+            ;;
+        bluesky|bsky)
+            api_get_key "BLUESKY_APP_PASSWORD" &>/dev/null && api_get_key "BLUESKY_HANDLE" &>/dev/null
+            ;;
+        discord)
+            api_get_key "DISCORD_WEBHOOK_URL" &>/dev/null || api_get_key "DISCORD_BOT_TOKEN" &>/dev/null
+            ;;
+        telegram|tg)
+            api_get_key "TELEGRAM_BOT_TOKEN" &>/dev/null && api_get_key "TELEGRAM_CHAT_ID" &>/dev/null
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+social_provider_reachable() {
+    local platform="$1"
+
+    social_provider_configured "$platform" || return 1
+    api_network_reachable 3 || return 1
+
+    case "$platform" in
+        x|twitter)
+            api_endpoint_reachable "https://api.x.com/2/tweets" 4
+            ;;
+        mastodon|masto)
+            local _base
+            _base=$(_mastodon_base 2>/dev/null)
+            [ -n "$_base" ] || return 1
+            api_endpoint_reachable "${_base}/api/v1/instance" 4
+            ;;
+        bluesky|bsky)
+            api_endpoint_reachable "https://bsky.social/xrpc/com.atproto.server.describeServer" 4
+            ;;
+        discord)
+            api_endpoint_reachable "https://discord.com/api/v10/users/@me" 4
+            ;;
+        telegram|tg)
+            api_endpoint_reachable "https://api.telegram.org" 4
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+social_availability_summary() {
+    local enabled="yes"
+    local configured=()
+    local reachable=()
+    local p
+
+    for p in x mastodon bluesky discord telegram; do
+        if social_provider_configured "$p"; then
+            configured+=("$p")
+            if social_provider_reachable "$p"; then
+                reachable+=("$p")
+            fi
+        fi
+    done
+
+    echo "SOCIAL_ENABLED: $enabled"
+    echo "SOCIAL_CONFIGURED: ${configured[*]:-none}" | sed 's/ /,/g'
+    echo "SOCIAL_REACHABLE: ${reachable[*]:-none}" | sed 's/ /,/g'
+    echo "SOCIAL_NETWORK: $(api_network_state 3)"
+}
+
 # ── Show social status ────────────────────────────────────────
 social_status() {
     ui_section "Social Integrations"

@@ -115,8 +115,8 @@ The `${mmproj:+--mmproj "$mmproj"}` pattern is a **conditional parameter expansi
 When resolving an Ollama model reference to a GGUF blob path:
 
 ```
-"blue-lodge-qwen3-think:4b"
-  → Parse as Ollama tag: library/blue-lodge-qwen3-think:4b
+"blue-lodge-qwen35-think:4b"
+    → Parse as Ollama tag: library/blue-lodge-qwen35-think:4b
   → Read manifest: ~/.ollama/models/manifests/registry.ollama.ai/library/...
   → Extract layer digest for application/vnd.ollama.image.model
   → Resolve to blob: ~/.ollama/models/blobs/sha256-<digest>
@@ -194,9 +194,9 @@ This is the key insight that makes the entire streaming architecture work inside
 Ollama streams newline-delimited JSON (one object per line):
 
 ```json
-{"model":"qwen3","response":"Hello","done":false}
-{"model":"qwen3","response":" world","done":false}
-{"model":"qwen3","response":"","done":true,"total_duration":1234567890}
+{"model":"blue-lodge-gemma4-inst:4b","response":"Hello","done":false}
+{"model":"blue-lodge-gemma4-inst:4b","response":" world","done":false}
+{"model":"blue-lodge-gemma4-inst:4b","response":"","done":true,"total_duration":1234567890}
 ```
 
 Parsing is straightforward — extract `.response` (for `/api/generate`) or `.message.content` (for `/api/chat`):
@@ -212,8 +212,8 @@ The `// empty` jq operator returns nothing (instead of `null`) when the field is
 Modern Ollama (with `think: true` in the request) provides a separate `.thinking` field:
 
 ```json
-{"model":"qwen3","thinking":"Let me analyze...","response":"","done":false}
-{"model":"qwen3","thinking":"","response":"The answer is 4","done":false}
+{"model":"blue-lodge-qwen35-think:4b","thinking":"Let me analyze...","response":"","done":false}
+{"model":"blue-lodge-qwen35-think:4b","thinking":"","response":"The answer is 4","done":false}
 ```
 
 When this field is present, no state machine is needed — thinking and response content are already separated by the API.
@@ -259,7 +259,7 @@ When this field is present, the streaming loop bypasses the inline tag state mac
 
 ### The Problem
 
-Thinking models (Qwen3, Ministral, Granite4) emit reasoning tokens before the actual response. These tokens appear as inline XML-like tags:
+Reasoning-capable models, most notably `qwen35-4b-think`, can emit reasoning tokens before the actual response. These tokens appear as inline XML-like tags:
 
 ```
 <think>

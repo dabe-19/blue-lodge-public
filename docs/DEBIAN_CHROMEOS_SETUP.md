@@ -143,7 +143,7 @@ lodge               # Start George
 | **RAM** | 16 GB DDR3 (shared with Chrome OS host) |
 | **GPU** | Intel HD Graphics 530 (Vulkan passthrough unreliable in Crostini) |
 | **Backend** | CPU inference recommended (`llama-server` or Ollama) |
-| **Models** | 4B parameter models (Granite 4, Qwen 3, Phi-4 Mini) run well at ~3-5 tok/s |
+| **Models** | 4B-class models (Gemma 4 E4B, Qwen 3.5 4B, Nemotron 3 Nano 4B) run well at ~3-5 tok/s |
 
 ### Crostini-Specific Gotchas
 

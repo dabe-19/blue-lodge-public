@@ -205,7 +205,7 @@ IMAGE WORKFLOW (finding + describing images):
   Do NOT use /web fetch on image URLs (that's for webpages, not images).
 
 VISION NOTE: /vision requires a vision-capable model. If current model lacks vision:
-  Switch first: /models single minist-inst
+  Switch first: /models single gemma4-e4b-inst
   Then: /vision <image_url> [prompt]
 
 Examples:
@@ -361,7 +361,7 @@ Never web-search for info from a social channel. Read the source.
 
 ## Tuning Model Parameters
 
-George uses a dual-model architecture with 9 models across 4 families.
+George uses a model library of 10 curated models across 4 families.
 Primary model handles /ask and agent tasks. Secondary handles routing, tools, journal.
 Use /models to switch. Use /model to adjust sampling.
 Global defaults: temperature 0.6, repeat_penalty 1.3, presence_penalty 0.8.
@@ -379,14 +379,14 @@ Full soul includes moral philosophy, humor, ethics.
 ## Model Library Management
 
 /models — show status + full model list.
-/models list — list all 9 available models.
+/models list — list all 10 available models.
 /models status — show current mode, slots, details.
 /models select primary <key> — set primary model.
 /models select secondary <key> — set secondary model.
 /models single <key> — single-model mode.
 /models dual — back to dual-model mode.
-Families: qwen (think+inst), llama (base+inst), granite (inst+hybrid+preview), ministral (think+inst).
-Models: qwen3-think, qwen3-inst, llama32, llama32-inst, granite4, granite4-h, granite4-preview, minist-think, minist-inst.
+Families: gemma4, qwen35, granite41, nemotron3.
+Models: gemma4-e2b-inst, gemma4-e4b-inst, gemma4-12b-inst, qwen35-2b-inst, qwen35-4b-inst, qwen35-4b-think, qwen35-9b-inst, granite41-3b-inst, granite41-8b-inst, nemotron3-nano-4b-inst.
 
 ## Thinking Mode Display
 
@@ -398,7 +398,7 @@ The model always thinks internally. `/think` controls visibility:
 /think bright — show thinking prominently.
 /think dim — show thinking in dim text.
 /think hide — think but don't display.
-/think nothink — suppress reasoning entirely (Qwen3: /no_think suffix, Granite preview: system prompt, Ministral: no effect).
+/think nothink — suppress reasoning entirely (Qwen 3.5 thinking variant has native support; most instruct models ignore it).
 
 ## Agent Task Execution
 

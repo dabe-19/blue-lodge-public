@@ -253,6 +253,15 @@ commands_help_topic() {
 # choosing unconfigured services (e.g. /email when email isn't set up).
 commands_services_status() {
     local _configured="" _unconfigured=""
+  local _network="unknown"
+  if [ "${AGENT_FORCE_OFFLINE:-0}" -eq 1 ]; then
+    _network="offline"
+  elif declare -f vitals_net_reachable &>/dev/null; then
+    vitals_net_reachable &>/dev/null && _network="online" || _network="offline"
+  elif command -v curl &>/dev/null; then
+    curl -fsSI --connect-timeout 2 --max-time 3 https://example.com >/dev/null 2>&1 && _network="online" || _network="offline"
+  fi
+
     if declare -f api_get_key &>/dev/null; then
         api_get_key "DISCORD_BOT_TOKEN" &>/dev/null && _configured="${_configured}discord," || _unconfigured="${_unconfigured}discord,"
         api_get_key "DISCORD_WEBHOOK_URL" &>/dev/null && _configured="${_configured}discord-webhook,"
@@ -293,6 +302,12 @@ commands_services_status() {
     # Strip trailing commas
     _configured="${_configured%,}"
     _unconfigured="${_unconfigured%,}"
+    local _web_reachable="no"
+    if [ "$_network" = "online" ] && [[ "${_configured}," == *"web-search,"* ]]; then
+      _web_reachable="yes"
+    fi
+    echo "NETWORK: ${_network}"
+    echo "WEB_SEARCH_REACHABLE: ${_web_reachable}"
     echo "CONFIGURED: ${_configured:-none}"
     echo "NOT CONFIGURED: ${_unconfigured:-unknown}"
 }
@@ -463,7 +478,7 @@ commands_catalog() {
   "SYSTEM CONTROLS & META":{
     "/ls":{"syntax":"/ls [path] [depth]","desc":"Tree view of files (depth 1-8, default 3)"},
     "/cd":{"syntax":"/cd <dir>","desc":"Change working directory"},
-    "/models":{"syntax":"/models <list|status|select|single|dual|param>","desc":"Model management"},
+    "/models":{"syntax":"/models <list|status|select|single|dual|param>","desc":"Curated model catalog and runtime selection"},
     "/model":{"syntax":"/model <param>[-scenario] <val>","desc":"Tune sampling hyper-parameters",
       "actions":{"temp":"/model temp[-ask|-agent|-router|-journal|-tool] <val>","repeat":"/model repeat[-scenario] <val>","presence":"/model presence[-scenario] <val>","reset":"/model reset","write-mode":"/model write-mode <confirm|append|dangerous>"},
       "format_only_ex":["/model <param> <value>"],
