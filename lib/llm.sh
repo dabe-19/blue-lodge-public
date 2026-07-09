@@ -170,6 +170,9 @@ _LLM_DEFAULT_SYSTEM_CACHE=""
 _LLM_DEFAULT_SYSTEM_MODEL=""
 # PID file for llama-server started by lodge
 _LLAMA_CPP_PID_FILE="${TMPDIR:-/tmp}/.lodge-llama-server.pid"
+# Cached llama-server help text for feature flag detection
+_LLAMA_CPP_HELP_TEXT=""
+_LLAMA_CPP_HELP_LOADED=0
 LODGE_MODEL="${LODGE_MODEL:-blue-lodge}"
 LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-20480}"   # Default max output tokens (matches Modelfile num_predict ceiling)
 LLM_ASK_TOKENS="${LLM_ASK_TOKENS:-20480}"   # Max output tokens for /ask (model stops at <|im_end|>; this is just a safety cap)
@@ -542,6 +545,32 @@ _llm_stop_llamacpp_server() {
     return 0
 }
 
+# Read and cache llama-server --help output once per session.
+_llm_load_llamacpp_help() {
+    [ "$_LLAMA_CPP_HELP_LOADED" -eq 1 ] && return 0
+    _LLAMA_CPP_HELP_TEXT=""
+    [ -x "$LLAMA_CPP_SERVER_BIN" ] || {
+        _LLAMA_CPP_HELP_LOADED=1
+        return 1
+    }
+
+    # Some builds support -h but not --help; try both quietly.
+    _LLAMA_CPP_HELP_TEXT=$("$LLAMA_CPP_SERVER_BIN" --help 2>&1)
+    if [ -z "$_LLAMA_CPP_HELP_TEXT" ]; then
+        _LLAMA_CPP_HELP_TEXT=$("$LLAMA_CPP_SERVER_BIN" -h 2>&1)
+    fi
+    _LLAMA_CPP_HELP_LOADED=1
+    [ -n "$_LLAMA_CPP_HELP_TEXT" ]
+}
+
+# Returns 0 when llama-server help contains the given long flag.
+_llm_llamacpp_supports_flag() {
+    local _flag="$1"
+    [ -n "$_flag" ] || return 1
+    _llm_load_llamacpp_help >/dev/null 2>&1 || return 1
+    echo "$_LLAMA_CPP_HELP_TEXT" | grep -Fq -- "$_flag"
+}
+
 # Start llama-server with the given GGUF model path.
 # Args: model_path [--quiet] [chat_template_file]
 # Returns 0 when server is healthy, 1 on failure.
@@ -702,13 +731,23 @@ _llm_start_llamacpp_server() {
     fi
 
     # Prompt cache: reuses prompt prefill across repeated/system-heavy calls.
-    # This helps agent loops that send similar system + context prefixes.
+    # Older llama.cpp builds may not support these flags, so gate by --help.
     if [ "${LLAMA_CPP_PROMPT_CACHE:-1}" = "1" ]; then
         local _pc_file="${LLAMA_CPP_PROMPT_CACHE_FILE:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/llama-prompt-cache.bin}"
         mkdir -p "$(dirname "$_pc_file")" 2>/dev/null
-        _launch_args+=(--prompt-cache "$_pc_file")
-        [ "${LLAMA_CPP_PROMPT_CACHE_ALL:-1}" = "1" ] && _launch_args+=(--prompt-cache-all)
-        [ "$quiet" != "--quiet" ] && ui_dim "Prompt cache: $_pc_file"
+        if _llm_llamacpp_supports_flag "--prompt-cache"; then
+            _launch_args+=(--prompt-cache "$_pc_file")
+            if [ "${LLAMA_CPP_PROMPT_CACHE_ALL:-1}" = "1" ]; then
+                if _llm_llamacpp_supports_flag "--prompt-cache-all"; then
+                    _launch_args+=(--prompt-cache-all)
+                else
+                    [ "$quiet" != "--quiet" ] && ui_warn "llama-server does not support --prompt-cache-all (skipping)"
+                fi
+            fi
+            [ "$quiet" != "--quiet" ] && ui_dim "Prompt cache: $_pc_file"
+        else
+            [ "$quiet" != "--quiet" ] && ui_warn "llama-server does not support --prompt-cache (skipping prompt cache flags)"
+        fi
     fi
 
     # Flash attention toggle for mobile stability/perf experiments.
@@ -1075,8 +1114,7 @@ llm_warmup() {
                 printf "\033[2m  Restarting Ollama...\033[0m\n" > "$_tty" 2>/dev/null
                 killall ollama 2>/dev/null || true
                 sleep 2
-                ollama serve > "${TMPDIR:-/tmp}/lodge-ollama.log" 2>&1 &
-                disown 2>/dev/null
+                _llm_start_ollama_server || true
                 # Wait for Ollama to become responsive
                 local _retries=0
                 while [ $_retries -lt 10 ]; do
@@ -1116,6 +1154,25 @@ _llm_kill_ollama() {
         sleep 1
         [ "$quiet" != "--quiet" ] && ui_dim "Stopped Ollama (freed RAM for llama-server)"
     fi
+}
+
+# Start Ollama and confirm the API is reachable.
+# Returns 0 on success, 1 on failure.
+_llm_start_ollama_server() {
+    local _log_file="${TMPDIR:-/tmp}/lodge-ollama.log"
+    ollama serve > "$_log_file" 2>&1 &
+    local _pid=$!
+    sleep 3
+
+    if curl -sf --max-time 2 "$OLLAMA_URL/api/tags" &>/dev/null; then
+        return 0
+    fi
+
+    if ! kill -0 "$_pid" 2>/dev/null; then
+        ui_dim "  Ollama exited during startup (PID $_pid). This is often OOM on low-memory devices."
+    fi
+    ui_dim "  Ollama log: $_log_file"
+    return 1
 }
 
 # ── Ensure LLM backend is running ─────────────────────────────
@@ -1203,9 +1260,7 @@ llm_ensure() {
         # Ollama not running — attempt to start
         if command -v ollama &>/dev/null; then
             ui_warn "Starting Ollama as fallback..."
-            ollama serve > "${TMPDIR:-/tmp}/lodge-ollama.log" 2>&1 &
-            sleep 3
-
+            _llm_start_ollama_server
             llm_check
             status=$?
 
@@ -1270,9 +1325,7 @@ llm_repl_health_check() {
             fi
             # Try starting Ollama
             if command -v ollama &>/dev/null; then
-                ollama serve > "${TMPDIR:-/tmp}/lodge-ollama.log" 2>&1 &
-                sleep 3
-                if curl -sf --max-time 2 "$OLLAMA_URL/api/tags" &>/dev/null; then
+                if _llm_start_ollama_server; then
                     _LLM_BACKEND_CACHE="ollama"
                     return 0
                 fi
