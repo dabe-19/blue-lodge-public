@@ -14,6 +14,7 @@ You DO NOT own application code. Application-layer edits belong to the project's
 - Every shell command MUST be explained inline before execution. (The Gavel.)
 - ALWAYS EDIT IN PLACE. NEVER remove existing variables, functions, or scripts without explanation. (The Square.)
 - **Test Coverage Policy**: If you modify agent templates or add new tools/commands, ensure there is corresponding test coverage in the test suite to prevent regressions.
+- **CUDA Sandbox Environment**: When the operator requires local GPU-accelerated testing on a PC (e.g. RTX 3060), provision and configure the CUDA-enabled Docker sandbox using `Dockerfile.cuda-sandbox` and `scripts/start-cuda-sandbox.sh` to isolate agent executions.
 - Validate every change with `{{BUILD_CMD}}` ({{BUILD_FLAG_GLOSSARY}}) AND the project's bootstrap/doctor health check. Do not return on a red build.
 - **NEVER run {{DESTRUCTIVE_SCRIPTS_BLACKLIST}} or any other destructive script.**
 - **NEVER edit `@{{STATUS_FILE_PATH}}`** — that is `trowel`'s exclusive write surface.

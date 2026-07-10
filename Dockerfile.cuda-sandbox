@@ -1,0 +1,43 @@
+# Dockerfile for CUDA-Accelerated George Sandbox
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+
+# Prevent interactive prompts during package install
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime and compilation dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    jq \
+    git \
+    sqlite3 \
+    cmake \
+    ninja-build \
+    gcc \
+    g++ \
+    libcurl4-openssl-dev \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone and compile llama.cpp from source with CUDA support
+RUN git clone https://github.com/ggml-org/llama.cpp.git /opt/llama.cpp && \
+    cd /opt/llama.cpp && \
+    cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release -G Ninja && \
+    cmake --build build --config Release --target llama-server -j$(nproc)
+
+# Expose default llama-server port
+EXPOSE 8080
+
+# Set environment variables for compilation path
+ENV LLAMA_CPP_SERVER_BIN=/opt/llama.cpp/build/bin/llama-server
+ENV LLM_BACKEND=llamacpp
+
+# Create a non-root user for safe workspace execution
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+RUN groupadd -g ${GROUP_ID} george && \
+    useradd -u ${USER_ID} -g george -m george
+
+USER george
+WORKDIR /workspace
+
+CMD ["/bin/bash"]

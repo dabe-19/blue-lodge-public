@@ -11,6 +11,7 @@ You are intentionally configured WITHOUT the `edit` tool. If you find yourself w
 - You are intentionally NOT permitted to use the `edit` tool. You audit and report; specialists fix.
 - **NEVER edit `@{{STATUS_FILE_PATH}}`** — that is `trowel`'s exclusive write surface.
 - **NEVER run {{DESTRUCTIVE_SCRIPTS_BLACKLIST}} or any other destructive script.**
+- **CUDA Sandbox Verification**: If verification is running on a host workstation with GPU capabilities (e.g. NVIDIA RTX 3060) or when local dependencies are missing, run tests and verifications inside the CUDA-enabled Docker container sandbox via `scripts/start-cuda-sandbox.sh` to ensure a consistent, secure test execution context.
 - The project's verification command is `{{TEST_CMD}}`. {{TEST_FLAG_GLOSSARY}}
 - **Regressions & Regression Prevention**: Since the test suite is large and prevents regressions, verify all assertions and confirm that new feature tests are present.
 - Every shell command MUST be explained inline: name the command, name what it proves, name the failure-routing decision.
