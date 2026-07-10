@@ -889,7 +889,7 @@ _llm_repeat_to_freq() {
 # ── Build llama.cpp payload ────────────────────────────────────
 # Translates Blue Lodge parameters into OpenAI-compatible payload
 # for llama-server's /v1/chat/completions endpoint.
-# Usage: _llm_build_llamacpp_payload "prompt" "system" "opts_json" "max_tokens" [stream] [grammar]
+# Usage: _llm_build_llamacpp_payload "prompt" "system" "opts_json" "max_tokens" [stream] [grammar] [stop_token]
 _llm_build_llamacpp_payload() {
     local prompt="$1"
     local system="${2:-}"
@@ -897,6 +897,7 @@ _llm_build_llamacpp_payload() {
     local max_tokens="$4"
     local stream="${5:-true}"
     local grammar="${6:-}"
+    local stop_token="${7:-}"
 
     # Extract all sampling params in a single jq call (6→1).
     # Each jq invocation costs ~20-50ms on ARM (process spawn + parse).
@@ -940,7 +941,8 @@ _llm_build_llamacpp_payload() {
             --argjson min_p "$min_p" \
             --argjson stream "$stream" \
             --arg grammar "$grammar" \
-            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream, stream_options:{include_usage:true}} + if ($grammar | length) > 0 then {grammar:$grammar} else {} end'
+            --arg stop "$stop_token" \
+            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream, stream_options:{include_usage:true}} + (if ($grammar | length) > 0 then {grammar:$grammar} else {} end) + (if ($stop | length) > 0 then {stop:[$stop]} else {} end)'
     else
         jq -n \
             --argjson messages "$messages" \
@@ -953,7 +955,8 @@ _llm_build_llamacpp_payload() {
             --argjson min_p "$min_p" \
             --argjson stream "$stream" \
             --arg grammar "$grammar" \
-            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream} + if ($grammar | length) > 0 then {grammar:$grammar} else {} end'
+            --arg stop "$stop_token" \
+            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream} + (if ($grammar | length) > 0 then {grammar:$grammar} else {} end) + (if ($stop | length) > 0 then {stop:[$stop]} else {} end)'
     fi
 }
 
@@ -1613,7 +1616,12 @@ llm_generate() {
     # parsing. llama-server has no thinking API — all output is
     # content tokens via SSE /v1/chat/completions.
     if [ "$_active_backend" = "llamacpp" ]; then
-        payload=$(_llm_build_llamacpp_payload "$prompt" "$system" "$_opts" "$max_tokens" true "$_grammar")
+        local _stop=""
+        if declare -f models_info &>/dev/null; then
+            local _ME_STOP=""
+            models_info "$LODGE_MODEL" 2>/dev/null && _stop="$_ME_STOP"
+        fi
+        payload=$(_llm_build_llamacpp_payload "$prompt" "$system" "$_opts" "$max_tokens" true "$_grammar" "$_stop")
 
         local curl_timeout="${LLM_TIMEOUT:-600}"
         local timeout_cmd=""
@@ -2269,7 +2277,12 @@ llm_stream() {
     # PID and kill it on break/cancel — otherwise the TCP connection
     # stays open and llama-server keeps computing (phone stays hot).
     if [ "$_active_backend" = "llamacpp" ]; then
-        payload=$(_llm_build_llamacpp_payload "$prompt" "$system" "$_opts" "$max_tokens" true)
+        local _stop=""
+        if declare -f models_info &>/dev/null; then
+            local _ME_STOP=""
+            models_info "$LODGE_MODEL" 2>/dev/null && _stop="$_ME_STOP"
+        fi
+        payload=$(_llm_build_llamacpp_payload "$prompt" "$system" "$_opts" "$max_tokens" true "" "$_stop")
 
         local curl_timeout="${LLM_TIMEOUT:-300}"
         local timeout_cmd=""
