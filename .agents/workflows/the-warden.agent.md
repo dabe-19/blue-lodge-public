@@ -78,5 +78,5 @@ Return in this template:
 ```
 
 ## 5. Return
-Return your report to the calling agent (george). You do NOT route to layer specialists yourself.
+Write your style report to the workspace. When complete, read `.agents/workflows/george.agent.md` using `view_file` to adopt its persona, rules, and workflow, and return to the audit phase.
 </workflow>

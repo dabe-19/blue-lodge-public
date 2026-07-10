@@ -68,7 +68,7 @@ Probe tokens via `antigravity/toolSearch`: `antigravity/memory`, `antigravity/as
 Save `@/memories/session/workspace_dossier.md` via `antigravity/memory`. Required sections: Mode, Operator Choices, Workspace Reality (Existing Roster, Primary Stack, Runtime Topology, Docs Surface, Style Surface, Tests & CI, Canonical Commands with flag glossary, Layer Path Map, Tool Inventory, Static Roster Pre-Wiring, Risk Surface), Open Questions, Citations Index.
 
 ## 5. Workflow Chaining
-Once the dossier is saved, call `/the-trestleboard` with the instruction: "Dossier is ready at @/memories/session/workspace_dossier.md. Read it and design the multi-agent team blueprint per your workflow."
+Once the dossier is saved, read `.agents/workflows/the-trestleboard.agent.md` using `view_file` to adopt its persona, rules, and workflow.
 
-If the dossier is too thin (fewer than three substantive cited facts, or empty Tool Inventory), call `/the-deacon` again to re-scout with specific questions for the operator.
+If the dossier is too thin (fewer than three substantive cited facts, or empty Tool Inventory), read `.agents/workflows/the-deacon.agent.md` using `view_file` to re-scout with specific questions for the operator.
 </workflow>

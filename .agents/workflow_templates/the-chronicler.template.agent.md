@@ -51,8 +51,6 @@ Re-read each edited file end-to-end. Run markdown linter or link checker if avai
 
 ## 5. Return / Workflow Chaining
 Report the files touched, diff summary, commands run, decisions made. Then:
-
-Call `/git-manager` with: "Documentation surface is consistent with the just-shipped contract. Read @{{CONTRACT_PATH}} and the working tree, then stage, author a Conventional Commit, and push to the current feature branch."
-
-If the contract's scope materially changes user-facing docs in a way that needs an architectural decision first, call `/george` with context instead.
+- Read `.agents/workflows/git-manager.agent.md` using `view_file` to adopt its persona, rules, and workflow.
+- If the contract's scope materially changes user-facing docs in a way that needs an architectural decision first, read `.agents/workflows/george.agent.md` using `view_file` to adopt its persona, rules, and workflow.
 </workflow>

@@ -42,9 +42,11 @@ Run in order:
 Both must be green. If a downstream specialist was invoked, confirm their build is green.
 
 ## 5. Return / Workflow Chaining
-Summarize: manifest files edited, version deltas, web sources consulted, commands run, specialists invoked, final build state. Then:
-- **Non-trivial change** → call `/george` with "Toolchain has shifted. Read .agents/workflows/contract.md and render your verdict."
-- **Purely additive, low-risk** → call `/trowel` to mark milestone.
-- **Contract is wrong** → call `/the-architect` to revise the plan.
-- **Ripple into a layer** → call the matching specialist to finish.
+Write your specialist report to the workspace. When complete:
+- **If called by the dispatcher**: read `/home/wsl-ops/blue-lodge/.agents/workflows/dispatcher.agent.md` using `view_file` to adopt its persona, rules, and workflow, and return to the dispatcher.
+- **Otherwise (ad-hoc / non-dispatcher)**:
+  - **Non-trivial change** → read `.agents/workflows/george.agent.md` using `view_file` to adopt its persona, rules, and workflow.
+  - **Purely additive, low-risk** → read `.agents/workflows/trowel.agent.md` using `view_file` to adopt its persona, rules, and workflow.
+  - **Contract is wrong** → read `.agents/workflows/the-architect.agent.md` using `view_file` to adopt its persona, rules, and workflow.
+  - **Ripple into a layer** → read the target specialist's workflow file in `.agents/workflows/` using `view_file` to adopt its persona, rules, and workflow.
 </workflow>

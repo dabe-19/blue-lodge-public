@@ -47,8 +47,8 @@ Listen first. Before taking action or rendering a verdict, you MUST ingest conte
 Audit the work before cutting. Review files recently modified by execution agents.
 
 **Cross-cutting review (mandatory when contract flags are `yes`):**
-- If `### Security` is `yes` (or absent): invoke `the-tyler` as a subagent. Echo its full report under `### Report from the-tyler`.
-- If `### Style` is `yes` (or absent): invoke `the-warden` as a subagent. Echo its full report under `### Report from the-warden`.
+- If `### Security` is `yes` (or absent): read `.agents/workflows/the-tyler.agent.md` using `view_file` to adopt its persona, rules, and workflow, and run the security audit. Once complete and its report is written, read `.agents/workflows/george.agent.md` using `view_file` to return to your george role, and echo its report under `### Report from the-tyler`.
+- If `### Style` is `yes` (or absent): read `.agents/workflows/the-warden.agent.md` using `view_file` to adopt its persona, rules, and workflow, and run the style audit. Once complete and its report is written, read `.agents/workflows/george.agent.md` using `view_file` to return to your george role, and echo its report under `### Report from the-warden`.
 - Fold both reports into your verdict. High/Critical findings mean verdict is NOT `Pass`.
 
 **Architecture pass:**
@@ -68,12 +68,7 @@ Judge the work and render your verdict:
 - `Re-plan` — the contract itself is wrong.
 
 **Routing:**
-- Verdict = `Pass` AND docs need updating → call `/the-chronicler` with context.
-- Verdict = `Pass` AND no docs change → call `/git-manager` to commit.
-- Verdict = `Pass with caveat` → call `/git-manager` and offer `/the-architect` for follow-up.
-- Verdict = `Refactor` → call the matching layer specialist to fix the issue.
-- Verdict = `Re-plan` → call `/the-architect` to revise the contract.
-- Milestone complete → call `/trowel`.
+- Deliver your verdict and report your findings to the workspace. When complete, read `/home/wsl-ops/blue-lodge/.agents/workflows/dispatcher.agent.md` using `view_file` to adopt its persona, rules, and workflow, and return to the dispatcher role. The dispatcher will execute the post-audit routing based on your verdict.
 
 **DO NOT update `GEORGE.md` yourself — that is the trowel's exclusive responsibility.**
 </workflow>

@@ -59,9 +59,7 @@ For each project-specific layer specialist, expand the blueprint entry into the 
 - Confirm description is under 250 chars per file.
 
 ## 6. Workflow Chaining
-Once complete, call `/the-chronicler` with the instruction: "The agent roster is installed per @/memories/session/team_blueprint.md. Read the blueprint and update the project documentation surface so the new team is discoverable."
-
-For amend/retire mode: apply only the named changes, run Phase C verification on changed files only, then call `/the-chronicler`.
+Once complete, read `.agents/workflows/the-chronicler.agent.md` using `view_file` to adopt its persona, rules, and workflow.
 </workflow>
 
 <template>
@@ -104,7 +102,7 @@ Use the `todo` tool to enumerate steps.
 <exact build command from Platform Context, plus layer-specific test/lint>
 
 ## 5. Return / Workflow Chaining
-<which workflow to call under which condition; report via the Specialist Return Template>
+Write your specialist report to the workspace. When complete, read `/home/wsl-ops/blue-lodge/.agents/workflows/dispatcher.agent.md` using `view_file` to adopt its persona, rules, and workflow, and return to the dispatcher.
 </workflow>
 ```
 </template>

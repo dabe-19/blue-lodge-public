@@ -42,6 +42,6 @@ Compose your message using the Specialist Return Template. Fill sections:
 - **Risks / Follow-ups:** anything the operator should know.
 
 Routing:
-- **All steps passed** → call `/george` with "Tester completed end-to-end verification. Read .agents/workflows/contract.md and render your verdict."
-- **Any step failed** → call the matching layer specialist to fix the issue, or call `/quartermaster` if it's a tooling failure. NEVER route to george on a failure.
+- **All steps passed** → read `/home/wsl-ops/blue-lodge/.agents/workflows/dispatcher.agent.md` using `view_file` to adopt its persona, rules, and workflow, and return to the dispatcher.
+- **Any step failed** → read the target specialist's workflow file in `.agents/workflows/` using `view_file` to adopt its persona, rules, and workflow. If it's a tooling failure, read `.agents/workflows/quartermaster.agent.md` using `view_file`. NEVER route to george on a failure.
 </workflow>

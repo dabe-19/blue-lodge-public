@@ -59,6 +59,6 @@ If push is rejected, HALT and tell the operator a pull is needed.
 Return: branch name, commit SHA + subject, diff footprint, commands run, decisions, risks.
 
 Then:
-- Call `/george` with "A commit was authored and pushed. Read .agents/workflows/contract.md and the latest commit, render your verdict."
-- Or call `/trowel` with "Contract executed, committed and pushed. Read .agents/workflows/contract.md, update GEORGE.md, and close the loop."
+- Read `.agents/workflows/george.agent.md` using `view_file` to adopt its persona, rules, and workflow.
+- Or read `.agents/workflows/trowel.agent.md` using `view_file` to adopt its persona, rules, and workflow.
 </workflow>

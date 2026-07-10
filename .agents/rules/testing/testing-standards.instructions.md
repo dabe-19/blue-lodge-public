@@ -1,6 +1,6 @@
 ---
 trigger: glob
-globs:**/{*{test,spec}*.{py,ts,tsx,js,jsx,go,rs,cs,java,kt,cpp,rb},{test,tests,__tests__}/**/*}
+globs: **/{*{test,spec}*.{py,ts,tsx,js,jsx,go,rs,cs,java,kt,cpp,rb,sh},{test,tests,__tests__}/**/*}
 ---
 
 # Testing Standards

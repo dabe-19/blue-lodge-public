@@ -64,7 +64,5 @@ Before saving: all 10 canonical names appear verbatim; cross-cutting reviewers a
 Save `@/memories/session/team_blueprint.md` via `antigravity/memory` with sections: Operator Inputs, Roster (Canonical Core), Roster (Project-Specific Layer Specialists), Contract Schema, Fixed-Order Pipeline, Cross-Cutting Wiring, Placeholder Resolutions, Cross-Check Results, Amendment Log.
 
 ## 6. Workflow Chaining
-Call `/the-secretary` with the instruction: "Blueprint is approved at @/memories/session/team_blueprint.md. Read it and render the .agent.md files into the operator-chosen output folder. For each canonical-core agent, copy the matching template and substitute every {{PLACEHOLDER}}. For each project-specific layer specialist, expand the blueprint's Platform Context block. Verify zero `{{` tokens remain."
-
-For amend-team mode, call `/the-secretary` with explicit instructions naming which file(s) to add, modify, or delete.
+Read `.agents/workflows/the-secretary.agent.md` using `view_file` to adopt its persona, rules, and workflow.
 </workflow>
