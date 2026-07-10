@@ -73,6 +73,53 @@ ui_think() { printf " %b%s %b%s%b\n" "$C_PURPLE" "$SYM_THINK" "$C_GRAY" "$1" "$C
 ui_dim()   { printf " %b  %s%b\n" "$C_DIM" "$1" "$C_RESET"; _transcript_ui dim "$1"; }
 ui_code()  { printf " %b  %s%b\n" "$C_GRAY" "$1" "$C_RESET"; _transcript_ui code "$1"; }
 
+# ── Limitation Messaging ─────────────────────────────────────
+# Track one prompt per infeasibility episode key.
+_UI_LIMITATION_EPISODE_KEY=""
+_UI_LIMITATION_PROMPT_SHOWN=0
+
+ui_limitation_block() {
+    local constraint="$1"
+    local tried="$2"
+    local choices="$3"
+    local outcome="$4"
+    local episode_key="${5:-$constraint}"
+
+    if [ "$episode_key" != "$_UI_LIMITATION_EPISODE_KEY" ]; then
+        _UI_LIMITATION_EPISODE_KEY="$episode_key"
+        _UI_LIMITATION_PROMPT_SHOWN=0
+    fi
+
+    if [ "$outcome" = "limitation_prompt_pending" ] && [ "$_UI_LIMITATION_PROMPT_SHOWN" -eq 1 ]; then
+        return 0
+    fi
+
+    [ "$outcome" = "limitation_prompt_pending" ] && _UI_LIMITATION_PROMPT_SHOWN=1
+
+    ui_warn "Constraint: $constraint"
+    ui_info "What George tried: $tried"
+    if [ "$outcome" = "limitation_prompt_pending" ]; then
+        ui_step "Available next choices: RESCOPE | ALT_PATH | TERMINATE"
+        ui_dim "  Decision token required: RESCOPE | ALT_PATH | TERMINATE"
+    else
+        ui_step "Available next choices: $choices"
+    fi
+    ui_dim "  Outcome state: $outcome"
+}
+
+ui_respond_outcome_class() {
+    local text="$1"
+    local lower
+    lower=$(echo "$text" | tr '[:upper:]' '[:lower:]')
+
+    if [[ "$lower" =~ (graceful[[:space:]]termination|blocked_by_capability|blocked_by_policy|user_terminated|cannot[[:space:]]proceed|constraint[[:space:]]detected|constraint[[:space:]]unavailable) ]]; then
+        echo "graceful_termination_due_to_constraints"
+        return 0
+    fi
+
+    echo "successful_completion"
+}
+
 # ── Structured Output ──────────────────────────────────────────
 ui_header() {
     local title="$1"
@@ -235,6 +282,16 @@ ui_select() {
 # ── Render LLM Response (markdown-lite) ────────────────────────
 ui_render_response() {
     local text="$1"
+    local outcome_class
+    outcome_class=$(ui_respond_outcome_class "$text")
+
+    if [ "$outcome_class" = "graceful_termination_due_to_constraints" ]; then
+        ui_warn "Response outcome: graceful termination due to constraints"
+    else
+        ui_ok "Response outcome: successful completion"
+    fi
+    _transcript_ui respond_outcome "$outcome_class"
+
     local in_code=0
     local lang=""
     while IFS= read -r line; do

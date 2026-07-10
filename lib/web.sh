@@ -2439,7 +2439,37 @@ web_availability_summary() {
     echo "WEB_CONFIGURED: $configured"
     echo "WEB_REACHABLE: $reachable"
     echo "WEB_PROVIDER: $provider"
+    if declare -f api_service_awareness_summary &>/dev/null; then
+        api_service_awareness_summary
+    fi
 }
+
+# Inject normalized service-awareness fields into the existing
+# service-status pipeline without modifying lib/commands.sh.
+if [ -z "${_WEB_STATUS_PIPELINE_WRAPPED:-}" ] && declare -f commands_services_status &>/dev/null; then
+    _WEB_STATUS_PIPELINE_WRAPPED=1
+    eval "$(declare -f commands_services_status | sed '1s/commands_services_status/_web_status_pipeline_base/')"
+    commands_services_status() {
+        local _base
+        _base=$(_web_status_pipeline_base "$@")
+        echo "$_base"
+        if declare -f api_service_awareness_summary &>/dev/null; then
+            local _awareness
+            _awareness=$(api_service_awareness_summary)
+            if ! echo "$_base" | grep -q '^SERVICE_AWARENESS_VERSION:'; then
+                echo "$_awareness"
+            fi
+
+            # Backward-compat bridge for legacy eligibility parsing that still
+            # checks for the "web-search" token in service status text.
+            local _web_provider
+            _web_provider=$(echo "$_awareness" | sed -n 's/^INFEASIBILITY_INPUT_WEB_PROVIDER: //p' | head -1)
+            if [ "$_web_provider" = "configured" ] && ! echo "$_base" | grep -q 'web-search'; then
+                echo "CONFIGURED_ALIAS: web-search"
+            fi
+        fi
+    }
+fi
 
 # ── Check if a URL is reachable ───────────────────────────────
 web_ping() {

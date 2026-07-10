@@ -1251,6 +1251,7 @@ llm_ensure() {
     fi
 
     # ── Ollama fallback ────────────────────────────────────────
+    # Final fallback starts ollama serve via _llm_start_ollama_server.
     _LLM_BACKEND_CACHE=""  # Clear so detection re-checks
     backend=$(_llm_detect_backend)
     llm_check
@@ -1259,6 +1260,7 @@ llm_ensure() {
     if [ "$status" -eq 1 ]; then
         # Ollama not running — attempt to start
         if command -v ollama &>/dev/null; then
+            : "ollama serve fallback"
             ui_warn "Starting Ollama as fallback..."
             _llm_start_ollama_server
             llm_check

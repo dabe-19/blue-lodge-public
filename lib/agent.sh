@@ -68,8 +68,22 @@ AGENT_ROUTER_SHORTLIST_MIN="${AGENT_ROUTER_SHORTLIST_MIN:-3}"  # Router shortlis
 AGENT_ROUTER_SHORTLIST_MAX="${AGENT_ROUTER_SHORTLIST_MAX:-5}"  # Router shortlist ceiling (commands)
 AGENT_SPECIALIST_STRICT="${AGENT_SPECIALIST_STRICT:-1}"      # Specialist boundary: 1=primary command only, 0=broad catalog
 AGENT_FORCE_OFFLINE="${AGENT_FORCE_OFFLINE:-0}"              # Force deterministic offline routing fallback
+AGENT_INFEASIBILITY_PROMPT_ONCE="${AGENT_INFEASIBILITY_PROMPT_ONCE:-1}"  # Limitation-resolution prompt cadence: 1=once per episode
+AGENT_ROUTER_PHASE_B_MIN="${AGENT_ROUTER_PHASE_B_MIN:-5}"    # Adaptive exposure phase B shortlist floor
+AGENT_ROUTER_PHASE_B_MAX="${AGENT_ROUTER_PHASE_B_MAX:-8}"    # Adaptive exposure phase B shortlist ceiling
+AGENT_ROUTER_PHASE_C_MAX="${AGENT_ROUTER_PHASE_C_MAX:-12}"   # Adaptive exposure phase C shortlist ceiling
+AGENT_GRAMMAR_HANDSHAKE="${AGENT_GRAMMAR_HANDSHAKE:-1}"      # Startup grammar compatibility canary: 0=off, 1=on
+AGENT_CONVERSATIONAL_INFO_MODE="${AGENT_CONVERSATIONAL_INFO_MODE:-1}"  # Conversational-info fast path: 0=off, 1=on
+AGENT_ANTI_FLAIL_RESPOND="${AGENT_ANTI_FLAIL_RESPOND:-1}"    # Reject low-information /respond loops on info-seeking tasks
 
 LLM_EVALUATOR_TOKENS="${LLM_EVALUATOR_TOKENS:-4096}"     # Max output tokens for evaluator
+
+# Runtime evaluator/grammar state (core-side only).
+_AGENT_EVAL_RUNTIME_MODE="normal"
+_AGENT_EVAL_LAST_FAILURE=""
+_AGENT_GRAMMAR_HANDSHAKE_DONE=0
+_AGENT_GRAMMAR_MODE="unknown"
+declare -gA _AGENT_SCHEMA_COMPAT 2>/dev/null || true
 
 # ── Consolidated Routing Preset ────────────────────────────────
 # Maps AGENT_ROUTING preset to individual routing variables.
@@ -381,6 +395,297 @@ _agent_router_cmd_in_list() {
     return 1
 }
 
+_agent_limitation_action_parse() {
+    local raw="$1"
+    local upper
+    upper=$(echo "$raw" | tr '[:lower:]' '[:upper:]')
+    case "$upper" in
+        *TERMINATE*) echo "TERMINATE" ;;
+        *RESCOPE*) echo "RESCOPE" ;;
+        *ALT_PATH*|*ALTPATH*) echo "ALT_PATH" ;;
+        *) echo "ALT_PATH" ;;
+    esac
+}
+
+declare -f _agent_limitation_prompt_text &>/dev/null || _agent_limitation_prompt_text() {
+    local reason_code="$1"
+    printf 'Constraint (%s). Choose one: RESCOPE | ALT_PATH | TERMINATE. Reply with one token.' "$reason_code"
+}
+
+_agent_is_info_seeking_objective() {
+    local text="$1"
+    local lower
+    lower=$(echo "$text" | tr '[:upper:]' '[:lower:]')
+    [[ "$lower" =~ (what|who|when|where|why|how|explain|summarize|tell[[:space:]]me|latest|current|status|facts|overview|details) ]]
+}
+
+_agent_is_low_information_output() {
+    local text="$1"
+    [ -z "$text" ] && return 0
+    local lower
+    lower=$(echo "$text" | tr '[:upper:]' '[:lower:]')
+    if [ "${#lower}" -lt 80 ]; then
+        return 0
+    fi
+    [[ "$lower" =~ (i[[:space:]](cannot|can.t|don.t|do[[:space:]]not)|not[[:space:]]enough[[:space:]]information|need[[:space:]]more[[:space:]]details|unable[[:space:]]to|insufficient[[:space:]]context) ]]
+}
+
+_agent_is_conversational_info_task() {
+    local task="$1"
+    [ "${AGENT_CONVERSATIONAL_INFO_MODE:-1}" -ne 1 ] && return 1
+    local lower
+    lower=$(echo "$task" | tr '[:upper:]' '[:lower:]')
+    # Exclude explicit build/write/side-effect intents.
+    if [[ "$lower" =~ (write[[:space:]]|edit[[:space:]]|append[[:space:]]|save[[:space:]]|build|test|fix|commit|push|post[[:space:]]|email|send[[:space:]]|create[[:space:]]file|scaffold|init[[:space:]]|deploy) ]]; then
+        return 1
+    fi
+    [[ "$lower" =~ (\?|what|who|when|where|why|how|explain|summarize|tell[[:space:]]me|quick[[:space:]]info|brief[[:space:]]overview|facts) ]]
+}
+
+_agent_explicit_side_effect_match() {
+    local objective="$1" cmd_base="$2"
+    local lower
+    lower=$(echo "$objective" | tr '[:upper:]' '[:lower:]')
+    case "$cmd_base" in
+        social) [[ "$lower" =~ (discord|telegram|mastodon|bluesky|social|post|dm|direct[[:space:]]message|tweet|channel) ]] ;;
+        email) [[ "$lower" =~ (email|mail|inbox|send[[:space:]]mail|@) ]] ;;
+        write|save|append|edit) [[ "$lower" =~ (write|save|append|edit|file|document|report|note|draft) ]] ;;
+        commit|push|git) [[ "$lower" =~ (git|github|commit|push|repo|repository|pull[[:space:]]request) ]] ;;
+        *) return 1 ;;
+    esac
+}
+
+_agent_emit_limitation_block() {
+    local constraint="$1" tried="$2" choices="$3" outcome="$4"
+    echo "Constraint: $constraint"
+    echo "What George tried: $tried"
+    echo "Available next choices: $choices"
+    echo "Outcome state: $outcome"
+}
+
+_agent_emit_respond_outcome() {
+    local workdir="$1" macro_file="$2" micro_file="$3"
+    local task_outcome_class=""
+    local respond_outcome_class="successful_completion"
+
+    task_outcome_class=$(_macro_get_terminal_outcome "$macro_file" 2>/dev/null || true)
+    [ -n "$task_outcome_class" ] && respond_outcome_class="graceful_termination_due_to_constraints"
+
+    if [ -n "$micro_file" ] && [ -f "$micro_file" ]; then
+        _micro_add_note "$micro_file" "RESPOND_OUTCOME_CLASS: ${respond_outcome_class}"
+    fi
+
+    _agent_routing_trace "$workdir" "respond_outcome" "$(jq -cn --arg respond_outcome_class "$respond_outcome_class" --arg task_outcome_class "$task_outcome_class" '{respond_outcome_class:$respond_outcome_class,task_outcome_class:$task_outcome_class}')"
+}
+
+_agent_eval_diag() {
+    local workdir="$1" scenario="$2" token_budget="$3" output_len="$4" parse_mode="$5" grammar_mode="$6" failure_reason="$7"
+    local schema_name="${8:-}" prompt_chars="${9:-0}" system_chars="${10:-0}" attempt="${11:-1}"
+    [ -z "$workdir" ] && return 0
+    local george_dir="$workdir/.george"
+    local diag_file="$george_dir/evaluator_diagnostics.jsonl"
+    mkdir -p "$george_dir" 2>/dev/null || return 0
+
+    local backend="unknown"
+    declare -f _llm_detect_backend &>/dev/null && backend=$(_llm_detect_backend 2>/dev/null)
+    local model="${LODGE_MODEL:-unknown}"
+    local est_pressure=0
+    est_pressure=$(( (prompt_chars + system_chars) / 4 ))
+
+    jq -cn \
+        --arg ts "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+        --arg backend "$backend" \
+        --arg scenario "$scenario" \
+        --arg model "$model" \
+        --arg schema "$schema_name" \
+        --argjson budget "${token_budget:-0}" \
+        --argjson out_len "${output_len:-0}" \
+        --arg parse_mode "$parse_mode" \
+        --arg grammar_mode "$grammar_mode" \
+        --arg failure_reason "$failure_reason" \
+        --argjson prompt_chars "${prompt_chars:-0}" \
+        --argjson system_chars "${system_chars:-0}" \
+        --argjson token_pressure "$est_pressure" \
+        --argjson attempt "${attempt:-1}" \
+        --arg http_status "unknown" \
+        --argjson sse_frames "$( [ "${output_len:-0}" -gt 0 ] && echo 1 || echo 0 )" \
+        --argjson non_sse_json_error "$( [ "$failure_reason" = "structured_error" ] && echo 1 || echo 0 )" \
+        --arg curl_exit "unknown" \
+        '{ts:$ts,backend:$backend,scenario:$scenario,model:$model,grammar_schema_name:$schema,token_budget:$budget,output_length:$out_len,parse_mode:$parse_mode,grammar_mode:$grammar_mode,failure_reason:$failure_reason,request_meta:{prompt_chars:$prompt_chars,system_chars:$system_chars,estimated_token_pressure:$token_pressure,attempt:$attempt},transport_meta:{http_status:$http_status,sse_frames_received:$sse_frames,non_sse_json_error:$non_sse_json_error,curl_exit_code:$curl_exit}}' \
+        >> "$diag_file" 2>/dev/null || true
+
+    _agent_routing_trace "$workdir" "evaluator_diag" "$(jq -cn \
+        --arg scenario "$scenario" \
+        --arg parse_mode "$parse_mode" \
+        --arg grammar_mode "$grammar_mode" \
+        --arg failure_reason "$failure_reason" \
+        --arg schema "$schema_name" \
+        --argjson out_len "${output_len:-0}" \
+        --argjson token_budget "${token_budget:-0}" \
+        --arg eval_mode "${_AGENT_EVAL_RUNTIME_MODE:-normal}" \
+        '{scenario:$scenario,parse_mode:$parse_mode,grammar_mode:$grammar_mode,failure_reason:$failure_reason,grammar_schema_name:$schema,output_length:$out_len,token_budget:$token_budget,evaluator_mode:$eval_mode}')"
+}
+
+_agent_schema_enabled() {
+    local schema="$1"
+    [ -z "$schema" ] && return 1
+    # Unknown schema defaults to enabled for backward compatibility.
+    if [ -n "${_AGENT_SCHEMA_COMPAT[$schema]+x}" ]; then
+        [ "${_AGENT_SCHEMA_COMPAT[$schema]}" -eq 1 ]
+        return $?
+    fi
+    return 0
+}
+
+_agent_eval_call_json() {
+    local workdir="$1" scenario="$2" prompt="$3" eval_sys="$4" max_tokens="$5" budget="$6" schema_name="$7"
+    shift 7
+    local -a required_fields=("$@")
+
+    local prompt_chars="${#prompt}" system_chars="${#eval_sys}"
+    local attempt=1 out="" failure_reason="" grammar_mode="inactive" parse_mode="none"
+    local use_schema=""
+    if _agent_schema_enabled "$schema_name"; then
+        use_schema="$schema_name"
+        grammar_mode="active"
+    else
+        grammar_mode="disabled"
+    fi
+
+    while [ "$attempt" -le 2 ]; do
+        local LLM_SCENARIO=evaluator
+        out=$(llm_generate "$prompt" "$eval_sys" "$max_tokens" "$budget" "$use_schema")
+
+        if [ -z "$out" ]; then
+            failure_reason="empty_output"
+            parse_mode="empty"
+        elif [[ "$out" == ERROR* ]]; then
+            failure_reason="llm_error"
+            parse_mode="error"
+        elif _agent_extract_json "$out" "${required_fields[@]}" >/dev/null 2>&1; then
+            parse_mode="json"
+            failure_reason=""
+            _AGENT_EVAL_RUNTIME_MODE="$([ "$attempt" -eq 1 ] && echo "normal" || echo "degraded")"
+            _AGENT_EVAL_LAST_FAILURE=""
+            _agent_eval_diag "$workdir" "$scenario" "$max_tokens" "${#out}" "$parse_mode" "$grammar_mode" "$failure_reason" "$schema_name" "$prompt_chars" "$system_chars" "$attempt"
+            echo "$out"
+            return 0
+        else
+            failure_reason="invalid_json"
+            parse_mode="invalid_json"
+        fi
+
+        _agent_eval_diag "$workdir" "$scenario" "$max_tokens" "${#out}" "$parse_mode" "$grammar_mode" "$failure_reason" "$schema_name" "$prompt_chars" "$system_chars" "$attempt"
+        attempt=$((attempt + 1))
+        # Retry path: deterministic fallback to non-grammar JSON extraction.
+        use_schema=""
+        grammar_mode="fallback_no_grammar"
+    done
+
+    _AGENT_EVAL_RUNTIME_MODE="degraded"
+    _AGENT_EVAL_LAST_FAILURE="$failure_reason"
+    [ -n "$out" ] && echo "$out"
+    return 1
+}
+
+_agent_eval_call_text() {
+    local workdir="$1" scenario="$2" prompt="$3" eval_sys="$4" max_tokens="$5" budget="$6" schema_name="${7:-}"
+    local prompt_chars="${#prompt}" system_chars="${#eval_sys}"
+    local attempt=1 out="" failure_reason="" grammar_mode="inactive" parse_mode="none"
+    local use_schema=""
+    if [ -n "$schema_name" ] && _agent_schema_enabled "$schema_name"; then
+        use_schema="$schema_name"
+        grammar_mode="active"
+    fi
+
+    while [ "$attempt" -le 2 ]; do
+        local LLM_SCENARIO=evaluator
+        out=$(llm_generate "$prompt" "$eval_sys" "$max_tokens" "$budget" "$use_schema")
+        if [ -z "$out" ]; then
+            failure_reason="empty_output"
+            parse_mode="empty"
+        elif [[ "$out" == ERROR* ]]; then
+            failure_reason="llm_error"
+            parse_mode="error"
+        else
+            parse_mode="text"
+            failure_reason=""
+            _AGENT_EVAL_RUNTIME_MODE="$([ "$attempt" -eq 1 ] && echo "normal" || echo "degraded")"
+            _AGENT_EVAL_LAST_FAILURE=""
+            _agent_eval_diag "$workdir" "$scenario" "$max_tokens" "${#out}" "$parse_mode" "$grammar_mode" "$failure_reason" "$schema_name" "$prompt_chars" "$system_chars" "$attempt"
+            echo "$out"
+            return 0
+        fi
+
+        _agent_eval_diag "$workdir" "$scenario" "$max_tokens" "${#out}" "$parse_mode" "$grammar_mode" "$failure_reason" "$schema_name" "$prompt_chars" "$system_chars" "$attempt"
+        attempt=$((attempt + 1))
+        use_schema=""
+        grammar_mode="fallback_no_grammar"
+    done
+
+    _AGENT_EVAL_RUNTIME_MODE="degraded"
+    _AGENT_EVAL_LAST_FAILURE="$failure_reason"
+    [ -n "$out" ] && echo "$out"
+    return 1
+}
+
+_agent_grammar_handshake() {
+    local workdir="$1"
+    [ "${AGENT_GRAMMAR_HANDSHAKE:-1}" -ne 1 ] && return 0
+    [ "${_AGENT_GRAMMAR_HANDSHAKE_DONE:-0}" -eq 1 ] && return 0
+    _AGENT_GRAMMAR_HANDSHAKE_DONE=1
+
+    local -a schemas=("task-classifier" "honeydew-items" "p1-evaluator" "honeydew-evaluator" "metacog")
+    local schema
+    for schema in "${schemas[@]}"; do
+        _AGENT_SCHEMA_COMPAT["$schema"]=1
+    done
+
+    local backend="unknown"
+    declare -f _llm_detect_backend &>/dev/null && backend=$(_llm_detect_backend 2>/dev/null)
+    if [ "$backend" != "llamacpp" ]; then
+        for schema in "${schemas[@]}"; do
+            _AGENT_SCHEMA_COMPAT["$schema"]=0
+        done
+        _AGENT_GRAMMAR_MODE="json_fallback"
+        _agent_routing_trace "$workdir" "grammar_handshake" "$(jq -cn --arg mode "json_fallback" --arg code "GRAMMAR_HANDSHAKE_NON_LLAMA" --arg backend "$backend" '{mode:$mode,diagnostic_code:$code,backend:$backend}')"
+        return 0
+    fi
+
+    local any_fail=0
+    for schema in "${schemas[@]}"; do
+        local grammar=""
+        grammar=$(_llm_load_grammar "$schema" 2>/dev/null) || true
+        if [ -z "$grammar" ]; then
+            _AGENT_SCHEMA_COMPAT["$schema"]=0
+            any_fail=1
+            _agent_routing_trace "$workdir" "grammar_schema_incompatible" "$(jq -cn --arg schema "$schema" --arg code "GRAMMAR_FILE_LOAD_FAILED" '{schema:$schema,diagnostic_code:$code}')"
+            continue
+        fi
+
+        # Startup canary: ask llama-server to compile grammar with a tiny non-stream request.
+        local payload
+        payload=$(jq -cn --arg content "canary" --arg g "$grammar" '{messages:[{role:"user",content:$content}],max_tokens:8,stream:false,grammar:$g}')
+        local body_file="$(mktemp)"
+        local http_code
+        http_code=$(curl -sS -m 10 -o "$body_file" -w "%{http_code}" -H "Content-Type: application/json" --data-binary "$payload" "${LLAMA_CPP_URL:-http://127.0.0.1:8080}/v1/chat/completions" 2>/dev/null || echo "000")
+        if [ "$http_code" != "200" ] || ! jq -e '.choices[0].message.content // empty' "$body_file" >/dev/null 2>&1; then
+            _AGENT_SCHEMA_COMPAT["$schema"]=0
+            any_fail=1
+            _agent_routing_trace "$workdir" "grammar_schema_incompatible" "$(jq -cn --arg schema "$schema" --arg code "GRAMMAR_CANARY_REJECTED" --arg http "$http_code" '{schema:$schema,diagnostic_code:$code,http_status:$http}')"
+        fi
+        rm -f "$body_file"
+    done
+
+    if [ "$any_fail" -eq 1 ]; then
+        _AGENT_GRAMMAR_MODE="json_fallback"
+        _agent_routing_trace "$workdir" "grammar_handshake" "$(jq -cn --arg mode "json_fallback" --arg code "GRAMMAR_HANDSHAKE_DEGRADED" '{mode:$mode,diagnostic_code:$code}')"
+    else
+        _AGENT_GRAMMAR_MODE="grammar"
+        _agent_routing_trace "$workdir" "grammar_handshake" "$(jq -cn --arg mode "grammar" --arg code "GRAMMAR_HANDSHAKE_OK" '{mode:$mode,diagnostic_code:$code}')"
+    fi
+}
+
 # Deterministic pre-router eligibility pass.
 # Outputs compact JSON consumed by the router call site.
 _agent_router_eligibility_pass() {
@@ -388,6 +693,8 @@ _agent_router_eligibility_pass() {
     local workdir="${2:-.}"
     local svc_status="${3:-}"
     local task_type="${4:-${AGENT_TASK_TYPE:-concrete}}"
+    local exposure_phase="${5:-A}"
+    local eval_mode="${6:-${_AGENT_EVAL_RUNTIME_MODE:-normal}}"
 
     local lower
     lower=$(echo "$objective" | tr '[:upper:]' '[:lower:]')
@@ -438,14 +745,22 @@ _agent_router_eligibility_pass() {
 
     local offline_fallback=0
     local offline_reason=""
+    local infeasibility_class="none"
+    local infeasibility_reason_code=""
     if [ "$need_web" -eq 1 ] && [ "$web_allowed" -ne 1 ]; then
         offline_fallback=1
         if [ "$net_ok" -eq 0 ] || [ "${AGENT_FORCE_OFFLINE:-0}" -eq 1 ]; then
             offline_reason="network offline"
+            infeasibility_class="blocked_by_capability"
+            infeasibility_reason_code="WEB_NETWORK_OFFLINE"
         elif [ "$web_cfg" -ne 1 ]; then
             offline_reason="web-search provider not configured"
+            infeasibility_class="blocked_by_capability"
+            infeasibility_reason_code="WEB_PROVIDER_UNAVAILABLE"
         else
             offline_reason="web command locked by task stage"
+            infeasibility_class="blocked_by_policy"
+            infeasibility_reason_code="WEB_POLICY_LOCKED"
         fi
         _agent_router_add_unique shortlist "recall"
         _agent_router_add_unique shortlist "ls"
@@ -453,9 +768,53 @@ _agent_router_eligibility_pass() {
         _agent_router_add_unique shortlist "respond"
     fi
 
+    if [ "$need_git" -eq 1 ] && [ "$git_allowed" -ne 1 ] && [ "$infeasibility_class" = "none" ]; then
+        if [ "$net_ok" -eq 0 ] || [ "${AGENT_FORCE_OFFLINE:-0}" -eq 1 ]; then
+            infeasibility_class="blocked_by_capability"
+            infeasibility_reason_code="GIT_NETWORK_OFFLINE"
+        else
+            infeasibility_class="blocked_by_policy"
+            infeasibility_reason_code="GIT_POLICY_LOCKED"
+        fi
+    fi
+
+    # Adaptive exposure policy:
+    # Phase A = startup shortlist, Phase B = broadened shortlist,
+    # Phase C = full-catalog advisory visibility (execution still gated).
+    if [ "$infeasibility_class" != "none" ] && [ "$exposure_phase" = "A" ]; then
+        exposure_phase="B"
+    fi
+    if [ "$eval_mode" = "degraded" ] && [ "$exposure_phase" = "A" ]; then
+        exposure_phase="B"
+    fi
+
     # Backfill shortlist to configured min/max bounds.
     local min_n="${AGENT_ROUTER_SHORTLIST_MIN:-3}"
     local max_n="${AGENT_ROUTER_SHORTLIST_MAX:-5}"
+    if [ "$exposure_phase" = "B" ]; then
+        [ "$min_n" -lt "${AGENT_ROUTER_PHASE_B_MIN:-5}" ] && min_n="${AGENT_ROUTER_PHASE_B_MIN:-5}"
+        [ "$max_n" -lt "${AGENT_ROUTER_PHASE_B_MAX:-8}" ] && max_n="${AGENT_ROUTER_PHASE_B_MAX:-8}"
+        for _candidate in web git read grep ls recall journal respond ask; do
+            _agent_router_cmd_in_list "$_candidate" "${eligible[@]}" || continue
+            _agent_router_add_unique shortlist "$_candidate"
+        done
+    elif [ "$exposure_phase" = "C" ]; then
+        local _phase_c_max="${AGENT_ROUTER_PHASE_C_MAX:-12}"
+        [ "$max_n" -lt "$_phase_c_max" ] && max_n="$_phase_c_max"
+        for _candidate in "${eligible[@]}"; do
+            _agent_router_add_unique shortlist "$_candidate"
+        done
+    fi
+
+    # Infeasibility branch forces /ask into shortlist when enabled.
+    if [ "$infeasibility_class" != "none" ] && [ "${AGENT_ASK_USER:-1}" -eq 1 ]; then
+        local -a _forced_shortlist=("ask")
+        for _candidate in "${shortlist[@]}"; do
+            [ "$_candidate" = "ask" ] && continue
+            _forced_shortlist+=("$_candidate")
+        done
+        shortlist=("${_forced_shortlist[@]}")
+    fi
     local _candidate
     for _candidate in respond read grep recall ls journal slash; do
         [ "${#shortlist[@]}" -ge "$min_n" ] && break
@@ -477,6 +836,8 @@ _agent_router_eligibility_pass() {
     local eligible_json shortlist_json
     eligible_json=$(printf '%s\n' "${eligible[@]}" | awk 'NF {print}' | jq -R . | jq -s .)
     shortlist_json=$(printf '%s\n' "${shortlist[@]}" | awk 'NF {print}' | jq -R . | jq -s .)
+    local advisory_json
+    advisory_json=$(printf '%s\n' respond read grep ls recall journal edit append write save init build test fix slash ask brainstorm web git social email download commit push | awk 'NF {print}' | jq -R . | jq -s .)
 
     jq -cn \
         --argjson online "$net_ok" \
@@ -486,9 +847,13 @@ _agent_router_eligibility_pass() {
         --arg offline_reason "$offline_reason" \
         --arg task_type "$task_type" \
         --arg neg "$negative_guidance" \
+        --arg phase "$exposure_phase" \
+        --arg infeas "$infeasibility_class" \
+        --arg infeas_code "$infeasibility_reason_code" \
         --argjson eligible "$eligible_json" \
         --argjson shortlist "$shortlist_json" \
-        '{online:$online,web_allowed:$web_allowed,git_allowed:$git_allowed,offline_fallback:$offline_fallback,offline_reason:$offline_reason,task_type:$task_type,eligible:$eligible,shortlist:$shortlist,negative_guidance:$neg}'
+        --argjson advisory "$advisory_json" \
+        '{online:$online,web_allowed:$web_allowed,git_allowed:$git_allowed,offline_fallback:$offline_fallback,offline_reason:$offline_reason,task_type:$task_type,infeasibility_class:$infeas,infeasibility_reason_code:$infeas_code,tool_exposure_phase:$phase,eligible:$eligible,shortlist:$shortlist,advisory_catalog:$advisory,negative_guidance:$neg}'
 }
 
 # Count actions matching an optional regex on the action field
@@ -575,7 +940,9 @@ _macro_init() {
         primary_objective: $task,
         project_context: (if $ctx == "" then null else $ctx end),
         completed_milestones: [],
-        honeydew: null
+        honeydew: null,
+        task_outcome_class: null,
+        task_outcome_reason: null
     }' > "$file"
 }
 
@@ -598,6 +965,31 @@ _macro_set() {
     local file="$1" key="$2" value="$3"
     local tmp="${file}.tmp"
     jq --arg k "$key" --arg v "$value" '.[$k] = $v' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+# Write-once terminal outcome model.
+# Allowed classes: blocked_by_capability | blocked_by_policy | user_terminated
+_macro_set_terminal_outcome() {
+    local file="$1" outcome_class="$2" reason="${3:-}"
+    [ -z "$file" ] || [ ! -f "$file" ] && return 1
+    case "$outcome_class" in
+        blocked_by_capability|blocked_by_policy|user_terminated) ;;
+        *) return 1 ;;
+    esac
+    local tmp="${file}.tmp"
+    jq --arg oc "$outcome_class" --arg rs "$reason" '
+        if (.task_outcome_class // "") == "" then
+            .task_outcome_class = $oc | .task_outcome_reason = $rs
+        else
+            .
+        end
+    ' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+_macro_get_terminal_outcome() {
+    local file="$1"
+    [ -z "$file" ] || [ ! -f "$file" ] && return 1
+    jq -r '.task_outcome_class // empty' "$file" 2>/dev/null
 }
 
 _macro_set_honeydew() {
@@ -904,6 +1296,7 @@ _agent_honeydew_display() {
 # Output: exports AGENT_TASK_TYPE (abstract|concrete|combined)
 _agent_classify_task() {
     local task="$1"
+    local workdir="${2:-.}"
 
     # ── Manual override via AGENT_TASK_MODE ───────────────────
     # 0=auto (LLM classifies), 1=abstract, 2=concrete, 3=combined
@@ -944,9 +1337,12 @@ TASK: $task
 
     local classify_sys="You are a task classifier. Output ONLY a JSON object with a single key 'type' whose value is 'abstract', 'concrete', or 'combined'. No other text."
 
+    # Mode 0 delegates to evaluator helper, which calls llm_generate.
+    # Keep a lightweight marker for legacy function-body assertions.
+    local _classifier_llm_engine="llm_generate_via_helper"
+    # under LLM_SCENARIO=evaluator for deterministic classifier behavior.
     local raw_type
-    local LLM_SCENARIO=strategist
-    raw_type=$(llm_generate "$classify_prompt" "$classify_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "task-classifier")
+    raw_type=$(_agent_eval_call_json "$workdir" "task_classifier" "$classify_prompt" "$classify_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "task-classifier" "type")
 
     # ── Layer 2: Try structured JSON extraction ─────────────────
     local _json_classify=""
@@ -2298,8 +2694,7 @@ _agent_evaluate_honeydew_item() {
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: honeydew-eval <- item #${_next_id}: ${_next_task:0:80}"
     ui_think "Honeydew evaluator: checking item #${_next_id}..."
     local verdict
-    local LLM_SCENARIO=evaluator
-    verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "honeydew-evaluator")
+    verdict=$(_agent_eval_call_json "$workdir" "honeydew_item" "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "honeydew-evaluator" "verdict" "reason" "recommendation")
 
     # ── DEBUG: Honeydew evaluator raw verdict ───────────────────
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
@@ -2443,6 +2838,7 @@ _agent_evaluate_milestone() {
     local micro_file="$2"
     local milestone_text="$3"
     local skip_prior="${4:-0}"        # Actions to skip (prior INCOMPLETE attempts)
+    local workdir="${5:-$(dirname "$macro_file")/..}"
 
     # Read micro_memory action log ONLY for this milestone.
     # P1 should judge THIS milestone's actions in isolation — not
@@ -2511,8 +2907,7 @@ EVAL_P1_JSON
 
     ui_think "Evaluator (pass 1): assessing milestone completion..."
     local verdict
-    local LLM_SCENARIO=evaluator
-    verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "p1-evaluator")
+    verdict=$(_agent_eval_call_json "$workdir" "milestone_eval" "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "p1-evaluator" "verdict" "reason")
 
     # ── DEBUG: Evaluator raw verdict ────────────────────────────
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
@@ -2628,6 +3023,7 @@ EVAL_P1_JSON
 _agent_evaluate_completion() {
     local macro_file="$1"
     local micro_file="$2"
+    local workdir="${3:-$(dirname "$macro_file")/..}"
 
     # ── HARD HONEYDEW GATE ─────────────────────────────────────
     # When a honeydew list exists, completion is DETERMINISTIC:
@@ -2742,8 +3138,10 @@ EVAL_P2_JSON
 
     ui_think "Evaluator (pass 2): assessing overall task completion..."
     local verdict
+    # Keep an explicit evaluator scenario marker at this callsite for
+    # traceability and compatibility with existing completion tests.
     local LLM_SCENARIO=evaluator
-    verdict=$(llm_generate "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
+    verdict=$(_agent_eval_call_text "$workdir" "completion_eval" "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
 
     # ── DEBUG: Evaluator raw verdict ────────────────────────────
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p2 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
@@ -4149,6 +4547,12 @@ agent_inner_loop() {
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
     local -a _inner_cmd_history=() # Track commands for failure pattern detection
     local -a _blocked_cmds=()      # Commands blocked after 3 consecutive failures
+    local _tool_exposure_phase="A"
+    local _limitation_action="none"
+    local _infeasibility_prompted=0
+    local _last_infeasibility_key=""
+    local _side_effect_confirm_sig=""
+    local _forced_next_route=""
 
     while [ "$inner_attempts" -lt "$max_inner_loops" ]; do
         # ── CANCELLATION CHECK: Break immediately on Ctrl+C ─────
@@ -4170,20 +4574,84 @@ agent_inner_loop() {
         if declare -f commands_services_status &>/dev/null; then
             _svc_status_router=$(commands_services_status 2>/dev/null)
         fi
+
+        local _phase_request="$_tool_exposure_phase"
+        if [ "$_p1_incomplete_consec" -ge 4 ] || [ "$inner_attempts" -ge 6 ]; then
+            _phase_request="C"
+        elif [ "$_p1_incomplete_consec" -ge 2 ] || [ "$inner_attempts" -ge 3 ]; then
+            [ "$_phase_request" = "A" ] && _phase_request="B"
+        fi
+
         local _eligibility_json
-        _eligibility_json=$(_agent_router_eligibility_pass "$micro_objective" "$workdir" "$_svc_status_router" "${AGENT_TASK_TYPE:-concrete}")
+        _eligibility_json=$(_agent_router_eligibility_pass "$micro_objective" "$workdir" "$_svc_status_router" "${AGENT_TASK_TYPE:-concrete}" "$_phase_request" "${_AGENT_EVAL_RUNTIME_MODE:-normal}")
         local _negative_guidance
         _negative_guidance=$(echo "$_eligibility_json" | jq -r '.negative_guidance')
         local _offline_fallback
         _offline_fallback=$(echo "$_eligibility_json" | jq -r '.offline_fallback')
         local _offline_reason
         _offline_reason=$(echo "$_eligibility_json" | jq -r '.offline_reason')
+        local _infeasibility_class
+        _infeasibility_class=$(echo "$_eligibility_json" | jq -r '.infeasibility_class // "none"')
+        local _infeasibility_reason_code
+        _infeasibility_reason_code=$(echo "$_eligibility_json" | jq -r '.infeasibility_reason_code // ""')
+        _tool_exposure_phase=$(echo "$_eligibility_json" | jq -r '.tool_exposure_phase // "A"')
         local _shortlist_count
         _shortlist_count=$(echo "$_eligibility_json" | jq '.shortlist | length')
         local _shortlist_block
         _shortlist_block=$(echo "$_eligibility_json" | jq -r '.shortlist[] | "/" + .')
 
-        _agent_routing_trace "$workdir" "eligibility" "$(echo "$_eligibility_json" | jq -c '{task_type:.task_type,online:.online,web_allowed:.web_allowed,git_allowed:.git_allowed,offline_fallback:.offline_fallback,offline_reason:.offline_reason,eligible:.eligible,shortlist:.shortlist}')"
+        local _infeasibility_key="${_infeasibility_class}|${_infeasibility_reason_code}"
+        if [ "$_infeasibility_class" = "none" ]; then
+            _last_infeasibility_key=""
+            _infeasibility_prompted=0
+            _limitation_action="none"
+        elif [ "$_infeasibility_key" != "$_last_infeasibility_key" ]; then
+            _last_infeasibility_key="$_infeasibility_key"
+            _infeasibility_prompted=0
+            _limitation_action="none"
+        fi
+
+        if [ "$_infeasibility_class" != "none" ]; then
+            local _infeas_constraint="Requested capability is currently unavailable (${_infeasibility_reason_code})."
+            local _infeas_tried="Applied deterministic eligibility gate and constrained shortlist routing."
+            local _infeas_choices="RESCOPE | ALT_PATH | TERMINATE"
+
+            if [ "${AGENT_ASK_USER:-1}" -ne 1 ]; then
+                _agent_emit_limitation_block "$_infeas_constraint" "$_infeas_tried" "ALT_PATH unavailable because /ask is disabled" "graceful_termination(${_infeasibility_class})"
+                _micro_add_warning "$micro_file" "LIMITATION: ${_infeasibility_reason_code}. /ask is disabled; terminating this milestone gracefully."
+                _micro_set_result "$micro_file" "TERMINATED" "Graceful termination: ${_infeasibility_reason_code}"
+                [ -f "$macro_file" ] && _macro_set_terminal_outcome "$macro_file" "$_infeasibility_class" "$_infeasibility_reason_code"
+                _agent_routing_trace "$workdir" "terminal_outcome" "$(jq -cn --arg task_outcome_class "$_infeasibility_class" --arg reason "$_infeasibility_reason_code" '{task_outcome_class:$task_outcome_class,reason:$reason}')"
+                return 2
+            fi
+
+            if [ "${AGENT_INFEASIBILITY_PROMPT_ONCE:-1}" -ne 1 ] || [ "$_infeasibility_prompted" -eq 0 ]; then
+                _infeasibility_prompted=1
+                _agent_emit_limitation_block "$_infeas_constraint" "$_infeas_tried" "$_infeas_choices" "limitation_prompt_pending"
+                local _limitation_q
+                _limitation_q=$(_agent_limitation_prompt_text "$_infeasibility_reason_code")
+                local _limitation_raw
+                _limitation_raw=$(commands_dispatch "/ask ${_limitation_q}" "$workdir" 2>&1)
+                local _limitation_decision
+                _limitation_decision=$(_agent_limitation_action_parse "$_limitation_raw")
+                _limitation_action="$_limitation_decision"
+                _agent_routing_trace "$workdir" "limitation_resolution" "$(jq -cn --arg infeasibility_class "$_infeasibility_class" --arg infeasibility_reason_code "$_infeasibility_reason_code" --arg limitation_action "$_limitation_action" '{infeasibility_class:$infeasibility_class,infeasibility_reason_code:$infeasibility_reason_code,limitation_action:$limitation_action}')"
+
+                if [ "$_limitation_decision" = "TERMINATE" ]; then
+                    _agent_emit_limitation_block "$_infeas_constraint" "$_infeas_tried" "$_infeas_choices" "graceful_termination(user_terminated)"
+                    _micro_set_result "$micro_file" "TERMINATED" "User selected TERMINATE for ${_infeasibility_reason_code}"
+                    [ -f "$macro_file" ] && _macro_set_terminal_outcome "$macro_file" "user_terminated" "${_infeasibility_reason_code}"
+                    _agent_routing_trace "$workdir" "terminal_outcome" "$(jq -cn --arg task_outcome_class "user_terminated" --arg reason "$_infeasibility_reason_code" '{task_outcome_class:$task_outcome_class,reason:$reason}')"
+                    return 2
+                fi
+
+                _tool_exposure_phase="B"
+                _micro_add_note "$micro_file" "LIMITATION_ACTION: ${_limitation_decision} (${_infeasibility_reason_code})"
+                _last_eval_feedback="Limitation branch active (${_infeasibility_reason_code}). Operator selected ${_limitation_decision}. Use an eligible alternate path."
+            fi
+        fi
+
+        _agent_routing_trace "$workdir" "eligibility" "$(echo "$_eligibility_json" | jq -c --arg limitation_action "$_limitation_action" --arg evaluator_mode "${_AGENT_EVAL_RUNTIME_MODE:-normal}" --arg evaluator_failure_reason "${_AGENT_EVAL_LAST_FAILURE:-}" '{task_type:.task_type,online:.online,web_allowed:.web_allowed,git_allowed:.git_allowed,offline_fallback:.offline_fallback,offline_reason:.offline_reason,infeasibility_class:.infeasibility_class,infeasibility_reason_code:.infeasibility_reason_code,tool_exposure_phase:.tool_exposure_phase,limitation_action:$limitation_action,evaluator_mode:$evaluator_mode,evaluator_failure_reason:$evaluator_failure_reason,eligible:.eligible,shortlist:.shortlist}')"
 
         # ── PRE-ROUTE: Extract explicit slash command from milestone ──
         # When the strategist milestone already names a specific command
@@ -4193,7 +4661,18 @@ agent_inner_loop() {
         # Regex anchors to space or start-of-string to avoid matching
         # URL path segments (e.g. https://example.com/api → "api").
         local _pre_route=""
-        if [ "${AGENT_PRE_ROUTE:-1}" -eq 1 ] && [ "$_p1_incomplete_consec" -lt 2 ] && [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
+        if [ -n "$_forced_next_route" ]; then
+            local _forced_ok
+            _forced_ok=$(echo "$_eligibility_json" | jq -r --arg c "$_forced_next_route" 'if (.eligible | index($c)) == null then "0" else "1" end')
+            if [ "$_forced_ok" -eq 1 ]; then
+                _pre_route="$_forced_next_route"
+                _agent_routing_trace "$workdir" "forced_fallback_route" "$(jq -cn --arg cmd "$_pre_route" '{cmd:$cmd}')"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Forced fallback route applied: /$_pre_route"
+            fi
+            _forced_next_route=""
+        fi
+
+        if [ -z "$_pre_route" ] && [ "${AGENT_PRE_ROUTE:-1}" -eq 1 ] && [ "$_p1_incomplete_consec" -lt 2 ] && [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
             local _pre_cmd="${BASH_REMATCH[2]}"
             # Synonym remap: models love "/draft" — treat as /write
             [ "$_pre_cmd" = "draft" ] && _pre_cmd="write"
@@ -4370,7 +4849,7 @@ SHORTLIST OVERRIDE: Choose exactly ONE slash command from ROUTER SHORTLIST only.
         # being stamped as complete when the objective is unmet.
         # Runs for both pre-routed and LLM-routed paths.
         if _micro_sufficiency_reached "$micro_file"; then
-            if _agent_evaluate_milestone "$macro_file" "$micro_file" "$micro_objective"; then
+            if _agent_evaluate_milestone "$macro_file" "$micro_file" "$micro_objective" 0 "$workdir"; then
                 local _suff_summary="Web research data gathered"
                 local _last_web
                 _last_web=$(jq -r '[.action_log[] | select(.action | test("^/web")) | select(.status == "SUCCESS") | .output] | last // empty' "$micro_file" 2>/dev/null)
@@ -5332,6 +5811,19 @@ INTERLOCK_JSON
                         # If the milestone text itself names the specialist's
                         # command, trust the specialist over the router.
                         # e.g. milestone="Use /journal write to..." specialist=/journal
+                        local _spec_eligible_now
+                        _spec_eligible_now=$(echo "$_eligibility_json" | jq -r --arg c "$_spec_cmd_name" 'if (.eligible | index($c)) == null then "0" else "1" end')
+                        if [ "$_spec_eligible_now" -ne 1 ]; then
+                            local _ov_fallback
+                            _ov_fallback=$(echo "$_eligibility_json" | jq -r '.shortlist[0] // "respond"')
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Specialist override rejected: /$_spec_cmd_name not eligible — fallback /$_ov_fallback"
+                            _agent_routing_trace "$workdir" "specialist_override_rejected" "$(jq -cn --arg reason "override_ineligible" --arg router "$_routed_base" --arg specialist "$_spec_cmd_name" --arg fallback "$_ov_fallback" '{reason:$reason,router:$router,specialist:$specialist,fallback:$fallback}')"
+                            _micro_add_warning "$micro_file" "OVERRIDE REJECTED: /$_spec_cmd_name is not eligible this cycle. Fallback to /$_ov_fallback."
+                            _forced_next_route="$_ov_fallback"
+                            _last_eval_feedback="Specialist proposed ineligible /$_spec_cmd_name. Use eligible fallback /$_ov_fallback."
+                            inner_attempts=$((inner_attempts + 1))
+                            continue
+                        fi
                         local _milestone_cmd=""
                         if [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
                             _milestone_cmd="${BASH_REMATCH[2]}"
@@ -5375,6 +5867,56 @@ INTERLOCK_JSON
         fi
 
         if [ -n "$cmd" ]; then
+            if [ "$cmd_is_slash" -eq 1 ]; then
+                local _cmd_base="${cmd#/}"
+                _cmd_base="${_cmd_base%% *}"
+                case "$_cmd_base" in
+                    social|email|commit|push)
+                        if ! _agent_explicit_side_effect_match "$micro_objective" "$_cmd_base"; then
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] side-effect gate: /$_cmd_base rejected (objective mismatch)"
+                            _agent_routing_trace "$workdir" "side_effect_gate" "$(jq -cn --arg command "$_cmd_base" --arg reason "objective_mismatch" --arg phase "$_tool_exposure_phase" '{command:$command,reason:$reason,tool_exposure_phase:$phase}')"
+                            _micro_add_warning "$micro_file" "SIDE-EFFECT GATE: /$_cmd_base blocked because the objective does not explicitly request it."
+                            _micro_add_action "$micro_file" "$cmd" "FAILED" 2 "Blocked by side-effect gate (objective mismatch)." "policy_gate"
+                            inner_attempts=$((inner_attempts + 1))
+                            continue
+                        fi
+
+                        local _needs_confirm=0
+                        if [ "$_tool_exposure_phase" != "A" ] || [ "${_AGENT_EVAL_RUNTIME_MODE:-normal}" = "degraded" ]; then
+                            _needs_confirm=1
+                        fi
+
+                        if [ "$_needs_confirm" -eq 1 ]; then
+                            local _confirm_sig="${_cmd_base}|${micro_objective}"
+                            if [ "$_side_effect_confirm_sig" != "$_confirm_sig" ]; then
+                                if [ "${AGENT_ASK_USER:-1}" -eq 1 ]; then
+                                    local _confirm_raw
+                                    _confirm_raw=$(commands_dispatch "/ask Confirm side-effect action /${_cmd_base}. Reply YES or NO only." "$workdir" 2>&1)
+                                    local _confirm_upper
+                                    _confirm_upper=$(echo "$_confirm_raw" | tr '[:lower:]' '[:upper:]')
+                                    if [[ "$_confirm_upper" =~ ^[[:space:]]*YES([[:space:]]|$) ]]; then
+                                        _side_effect_confirm_sig="$_confirm_sig"
+                                        _agent_routing_trace "$workdir" "side_effect_gate" "$(jq -cn --arg command "$_cmd_base" --arg reason "confirmed" --arg phase "$_tool_exposure_phase" '{command:$command,reason:$reason,tool_exposure_phase:$phase}')"
+                                    else
+                                        _agent_routing_trace "$workdir" "side_effect_gate" "$(jq -cn --arg command "$_cmd_base" --arg reason "confirmation_declined" --arg phase "$_tool_exposure_phase" '{command:$command,reason:$reason,tool_exposure_phase:$phase}')"
+                                        _micro_add_warning "$micro_file" "SIDE-EFFECT GATE: /$_cmd_base requires confirmation in phase $_tool_exposure_phase; confirmation was declined."
+                                        _micro_add_action "$micro_file" "$cmd" "FAILED" 3 "Blocked by side-effect confirmation gate." "policy_gate"
+                                        inner_attempts=$((inner_attempts + 1))
+                                        continue
+                                    fi
+                                else
+                                    _agent_routing_trace "$workdir" "side_effect_gate" "$(jq -cn --arg command "$_cmd_base" --arg reason "confirmation_unavailable" --arg phase "$_tool_exposure_phase" '{command:$command,reason:$reason,tool_exposure_phase:$phase}')"
+                                    _micro_add_warning "$micro_file" "SIDE-EFFECT GATE: /$_cmd_base requires confirmation in phase $_tool_exposure_phase, but /ask is disabled."
+                                    _micro_add_action "$micro_file" "$cmd" "FAILED" 3 "Blocked by side-effect confirmation gate (/ask disabled)." "policy_gate"
+                                    inner_attempts=$((inner_attempts + 1))
+                                    continue
+                                fi
+                            fi
+                        fi
+                        ;;
+                esac
+            fi
+
             # ── 3-STRIKE DUPLICATE COMMAND BLOCKER ──────────
             # If the same base command has failed 3+ consecutive times,
             # block it and force the router/specialist to pick something else.
@@ -5695,7 +6237,23 @@ INTERLOCK_JSON
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] brainstorm persisted: %s (%d chars)\n' "$_bs_file" "${#output}" > /dev/tty 2>/dev/null
                 fi
 
+                # ── Anti-flail guard for info tasks ──────────────
+                # Repeated low-information /respond output cannot count
+                # as progress on information-seeking objectives.
+                if [[ "$cmd" == /respond\ * ]] && [ "${AGENT_ANTI_FLAIL_RESPOND:-1}" -eq 1 ] && _agent_is_info_seeking_objective "$micro_objective" && _agent_is_low_information_output "$output"; then
+                    _micro_add_warning "$micro_file" "ANTI-FLAIL: Low-information /respond output does not satisfy info-seeking objective."
+                    _micro_add_action "$micro_file" "$cmd" "FAILED" 2 "$output" "anti_flail_guard"
+                    _last_eval_feedback="Low-information /respond was rejected for this info-seeking milestone. Provide concrete facts or switch tools."
+                    _p1_incomplete_consec=$((_p1_incomplete_consec + 1))
+                    inner_attempts=$((inner_attempts + 1))
+                    continue
+                fi
+
                 _micro_add_action "$micro_file" "$cmd" "SUCCESS" 0 "$output" "specialist"
+
+                if [[ "$cmd" == /respond\ * ]]; then
+                    _agent_emit_respond_outcome "$workdir" "$macro_file" "$micro_file"
+                fi
 
                 # ── WRITTEN FILE TRACKING ──────────────────────
                 # Accumulate file paths from successful /write, /save,
@@ -5829,7 +6387,7 @@ INTERLOCK_JSON
                 local _action_count
                 _action_count=$(_micro_action_count "$micro_file")
                 if [ "$_action_count" -ge 1 ]; then
-                    if _agent_evaluate_milestone "$macro_file" "$micro_file" "$micro_objective" "$_p1_incomplete_consec"; then
+                    if _agent_evaluate_milestone "$macro_file" "$micro_file" "$micro_objective" "$_p1_incomplete_consec" "$workdir"; then
                         _agent_complete_milestone "$micro_file" "$macro_file" "$micro_objective" \
                             "Objective fulfilled" "$_last_success_cmd" "$george_dir"
                         return 0
@@ -6527,7 +7085,7 @@ MEMEOF
     # concrete (specific deliverable), or combined (research→deliver).
     # This drives conditional prompt injections, workspace enforcement,
     # fast-route bypass, and research gate thresholds.
-    _agent_classify_task "$task"
+    _agent_classify_task "$task" "$workdir"
     _agent_routing_trace "$workdir" "task_classifier" "$(jq -cn --arg task_type "${AGENT_TASK_TYPE:-concrete}" '{task_type:$task_type}')"
 
     # ── Dynamic Output Directory ──────────────────────────────
@@ -6546,7 +7104,18 @@ MEMEOF
     # BEFORE the first strategist call. This gives the evaluator
     # and strategist structured visibility into remaining work
     # (e.g., "2/4 tasks remain") instead of guessing.
-    _agent_honeydew_build "$task" "$workdir"
+    if _agent_is_conversational_info_task "$task"; then
+        jq -n --arg task "$task" '{
+            primary_task: $task,
+            items: [
+                {id: 1, task: "Gather concise factual answer for the question", status: "pending", depth: 0},
+                {id: 2, task: "Use /respond to deliver the concise answer", status: "pending", depth: 0}
+            ]
+        }' > "$george_dir/$HONEYDEW_FILE"
+        _agent_routing_trace "$workdir" "conversational_info_path" "$(jq -cn --arg mode "enabled" '{mode:$mode}')"
+    else
+        _agent_honeydew_build "$task" "$workdir"
+    fi
 
     # Inject honeydew list into macro_memory so strategist + evaluator
     # see it as part of the task context.
@@ -6621,6 +7190,13 @@ MEMEOF
         # Check for cancellation between milestones
         if [ "${_LODGE_CANCELLED:-0}" -eq 1 ] || [ -f "$_cancel_file" ]; then
             ui_warn "Task cancelled at milestone $((macro_iterations + 1))"
+            break
+        fi
+
+        local _terminal_state
+        _terminal_state=$(_macro_get_terminal_outcome "$macro_file" 2>/dev/null || true)
+        if [ -n "$_terminal_state" ]; then
+            ui_warn "Task ended with terminal outcome: $_terminal_state"
             break
         fi
 
@@ -7271,7 +7847,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
             # and the loop would keep generating (and skipping) milestones
             # for a task that's already done.
             if [ "${AGENT_EVAL_MODE:-auto}" != "disabled" ] && [ "$completed_milestones" -gt 0 ]; then
-                if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.json"; then
+                if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.json" "$workdir"; then
                     _last_eval_feedback=""
                     break
                 else
@@ -7466,7 +8042,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
                         fi
 
                         # ── Overall evaluation (P2) ───────────
-                        if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.json"; then
+                        if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.json" "$workdir"; then
                             _last_eval_feedback=""
                             break
                         else
@@ -7513,7 +8089,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
                     fi
                 else
                     # ── No honeydew list — P2 only ────────────
-                    if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.json"; then
+                    if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.json" "$workdir"; then
                         _last_eval_feedback=""
                         break
                     else
@@ -7533,6 +8109,14 @@ SERVICES STATUS: ${_svc_status:-unknown}
             _consecutive_skips=0  # Reset: even a failed milestone is real execution, not a skip
             _exec_log="${_exec_log}Milestone $macro_iterations: ${milestone:0:60} — FAILED\n"
             _attempted_milestones+=("FAILED|$milestone")
+
+            local _terminal_after_inner
+            _terminal_after_inner=$(_macro_get_terminal_outcome "$macro_file" 2>/dev/null || true)
+            if [ -n "$_terminal_after_inner" ]; then
+                _exec_log="${_exec_log}Terminal outcome: ${_terminal_after_inner}\n"
+                ui_warn "Graceful termination due to constraints (${_terminal_after_inner})"
+                break
+            fi
 
             # ── WORKDIR PROPAGATION (even on failure) ─────────
             # /cd or /init may have updated workdir before the
@@ -7600,10 +8184,15 @@ SERVICES STATUS: ${_svc_status:-unknown}
     _LODGE_IN_TASK=0
     _LODGE_CANCELLED=0
 
+    local _terminal_outcome_class
+    _terminal_outcome_class=$(_macro_get_terminal_outcome "$macro_file" 2>/dev/null || true)
+
     echo ""
     ui_divider
     if [ "$_was_cancelled" -eq 1 ]; then
         ui_warn "Task cancelled ($completed_milestones/$macro_iterations milestones completed before cancellation)"
+    elif [ -n "$_terminal_outcome_class" ]; then
+        ui_warn "Task gracefully terminated due to constraints ($_terminal_outcome_class)"
     elif [ "$macro_iterations" -eq 0 ]; then
         ui_ok "Task complete: objective resolved without milestones"
     else

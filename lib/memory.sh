@@ -579,3 +579,172 @@ memory_snapshot() {
     cp "$file" "$archive_dir/GEORGE_${timestamp}.md"
     ui_ok "Memory snapshot saved"
 }
+
+# ── Data-layer persistence wrappers (routing/evaluator artifacts) ─
+
+_memory_now_iso() {
+    date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S'
+}
+
+_memory_json_or_empty() {
+    local value="$1"
+    command -v jq >/dev/null 2>&1 || { echo '{}'; return 0; }
+    if [ -z "$value" ]; then
+        echo '{}'
+        return 0
+    fi
+    if jq -e . >/dev/null 2>&1 <<< "$value"; then
+        jq -c . <<< "$value"
+    else
+        echo '{}'
+    fi
+}
+
+_memory_redact_text() {
+    local value="$1"
+    value=$(printf '%s' "$value" | sed -E \
+        -e 's#https?://[^[:space:]]+#[REDACTED_ENDPOINT]#g' \
+        -e 's#\b(Bearer|bearer)[[:space:]]+[A-Za-z0-9._-]+#\1 [REDACTED_TOKEN]#g' \
+        -e 's#\b(sk|tok|token|api[_-]?key|apikey|authorization|auth)[=:][^[:space:]]+#\1=[REDACTED]#gi')
+    if [ "${#value}" -gt 256 ]; then
+        value="${value:0:256}...[truncated]"
+    fi
+    printf '%s' "$value"
+}
+
+_memory_task_artifact_dir() {
+    local workdir="${1:-.}"
+    local task_boundary="${2:-}"
+    local george_dir="$workdir/.george"
+    local safe_task
+
+    safe_task=$(printf '%s' "${task_boundary:-task}" | tr -cs 'A-Za-z0-9._-' '_')
+    [ -n "$safe_task" ] || safe_task="task"
+    printf '%s\n' "$george_dir/tasks/$safe_task"
+}
+
+memory_record_allowlisted_trace() {
+    local task_boundary="$1"
+    local payload_json="$2"
+
+    [ -n "$task_boundary" ] || return 1
+    payload_json=$(_memory_json_or_empty "$payload_json")
+
+    if declare -f recall_trace_record_allowlisted >/dev/null; then
+        recall_trace_record_allowlisted "$task_boundary" "$payload_json"
+    else
+        return 1
+    fi
+}
+
+memory_record_terminal_outcome() {
+    local task_boundary="$1"
+    local outcome_class="$2"
+    local reason_code="${3:-}"
+
+    [ -n "$task_boundary" ] || return 1
+    [ -n "$outcome_class" ] || return 1
+    reason_code=$(_memory_redact_text "$reason_code")
+
+    if declare -f recall_record_terminal_outcome >/dev/null; then
+        recall_record_terminal_outcome "$task_boundary" "$outcome_class" "$reason_code"
+    else
+        return 1
+    fi
+}
+
+memory_persist_evaluator_snapshot() {
+    local workdir="${1:-.}"
+    local task_boundary="$2"
+    local payload_json="$3"
+
+    [ -n "$task_boundary" ] || return 1
+    payload_json=$(_memory_json_or_empty "$payload_json")
+
+    if ! command -v jq >/dev/null 2>&1; then
+        return 1
+    fi
+
+    local redacted_payload
+    redacted_payload=$(jq -c '
+        .backend = (
+            (.backend // "")
+            | ascii_downcase
+            | if test("llama|ollama|local|inference") then "local_inference"
+              elif test("openai|anthropic|google|cohere|groq|mistral|together|azure|vertex") then "external_provider"
+              else . end
+        )
+        | .selected_model = ((.selected_model // "") | split("/") | last | split(":") | last)
+        | .scenario = (.scenario // "")
+        | .failure_reason = ((.failure_reason // .evaluator_failure_reason // "")
+            | gsub("https?://[^[:space:]]+";"[REDACTED_ENDPOINT]")
+            | gsub("(?i)(api[_-]?key|apikey|token|authorization|auth)[=:][^[:space:]]+";"secret=[REDACTED]")
+        )
+        | .envelope_error_message = ((.envelope_error_message // "")
+            | gsub("https?://[^[:space:]]+";"[REDACTED_ENDPOINT]")
+            | gsub("(?i)(api[_-]?key|apikey|token|authorization|auth)[=:][^[:space:]]+";"secret=[REDACTED]")
+        )
+        | .raw_payload = null
+        | .request_payload = null
+        | .response_payload = null
+        | .response_body = null
+        | .headers = null
+    ' <<< "$payload_json")
+
+    if declare -f recall_record_evaluator_snapshot >/dev/null; then
+        recall_record_evaluator_snapshot "$task_boundary" "$redacted_payload" >/dev/null || return 1
+    else
+        return 1
+    fi
+
+    local artifact_dir snapshot_file now
+    artifact_dir=$(_memory_task_artifact_dir "$workdir" "$task_boundary")
+    mkdir -p "$artifact_dir"
+    now=$(_memory_now_iso)
+    snapshot_file="$artifact_dir/evaluator_snapshot_$(date +%Y%m%d_%H%M%S).json"
+
+    jq -cn \
+        --arg ts "$now" \
+        --arg task_boundary "$task_boundary" \
+        --argjson snapshot "$redacted_payload" \
+        '{ts:$ts, task_boundary:$task_boundary, snapshot:$snapshot}' > "$snapshot_file"
+
+    printf '%s\n' "$snapshot_file"
+}
+
+memory_set_schema_compatibility() {
+    local schema_name="$1"
+    local status="$2"
+    local stream_true_ok="${3:-0}"
+    local stream_false_ok="${4:-0}"
+    local repeated_runs="${5:-0}"
+    local diagnostic_code="${6:-}"
+    local notes="${7:-}"
+
+    [ -n "$schema_name" ] || return 1
+
+    if declare -f recall_schema_compat_set >/dev/null; then
+        recall_schema_compat_set "$schema_name" "$status" "$stream_true_ok" "$stream_false_ok" "$repeated_runs" "$diagnostic_code" "$notes"
+    else
+        return 1
+    fi
+}
+
+memory_get_schema_compatibility() {
+    local schema_name="$1"
+    [ -n "$schema_name" ] || return 1
+
+    if declare -f recall_schema_compat_get >/dev/null; then
+        recall_schema_compat_get "$schema_name"
+    else
+        return 1
+    fi
+}
+
+memory_schema_compatibility_map_json() {
+    if declare -f recall_schema_compat_map_json >/dev/null; then
+        recall_schema_compat_map_json
+    else
+        echo '{}'
+    fi
+}

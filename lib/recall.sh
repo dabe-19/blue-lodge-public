@@ -98,6 +98,75 @@ CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
     INSERT INTO chunks_fts(rowid, source, section, content)
     VALUES (new.id, new.source, new.section, new.content);
 END;
+
+-- Routing/evaluation trace (strict allowlist fields)
+CREATE TABLE IF NOT EXISTS routing_eval_trace (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_boundary TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    infeasibility_class TEXT NOT NULL DEFAULT '',
+    infeasibility_reason_code TEXT NOT NULL DEFAULT '',
+    limitation_action TEXT NOT NULL DEFAULT '',
+    tool_exposure_phase TEXT NOT NULL DEFAULT '',
+    evaluator_mode TEXT NOT NULL DEFAULT 'normal',
+    evaluator_failure_reason TEXT NOT NULL DEFAULT '',
+    task_outcome_class TEXT NOT NULL DEFAULT '',
+    redacted_diagnostic TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_routing_eval_trace_task
+    ON routing_eval_trace(task_boundary, recorded_at);
+
+-- Authoritative write-once terminal outcome per task boundary.
+CREATE TABLE IF NOT EXISTS task_terminal_outcomes (
+    task_boundary TEXT PRIMARY KEY,
+    outcome_class TEXT NOT NULL,
+    reason_code TEXT NOT NULL DEFAULT '',
+    recorded_at TEXT NOT NULL
+);
+
+-- Evaluator diagnostic snapshots (redaction-safe, reproducible).
+CREATE TABLE IF NOT EXISTS evaluator_diag_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_boundary TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    evaluator_mode TEXT NOT NULL DEFAULT 'normal',
+    evaluator_failure_reason TEXT NOT NULL DEFAULT '',
+    backend TEXT NOT NULL DEFAULT '',
+    scenario TEXT NOT NULL DEFAULT '',
+    token_budget INTEGER NOT NULL DEFAULT 0,
+    output_length INTEGER NOT NULL DEFAULT 0,
+    parse_mode TEXT NOT NULL DEFAULT '',
+    grammar_mode TEXT NOT NULL DEFAULT '',
+    selected_model TEXT NOT NULL DEFAULT '',
+    grammar_schema_name TEXT NOT NULL DEFAULT '',
+    prompt_char_count INTEGER NOT NULL DEFAULT 0,
+    system_char_count INTEGER NOT NULL DEFAULT 0,
+    estimated_token_pressure INTEGER NOT NULL DEFAULT 0,
+    http_status INTEGER NOT NULL DEFAULT 0,
+    received_sse_data INTEGER NOT NULL DEFAULT 0,
+    received_non_sse_json_error INTEGER NOT NULL DEFAULT 0,
+    curl_exit_code INTEGER NOT NULL DEFAULT 0,
+    envelope_kind TEXT NOT NULL DEFAULT '',
+    envelope_error_code TEXT NOT NULL DEFAULT '',
+    envelope_error_message TEXT NOT NULL DEFAULT '',
+    diagnostic_code TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_eval_diag_snapshots_task
+    ON evaluator_diag_snapshots(task_boundary, recorded_at);
+
+-- Grammar schema compatibility map used by runtime loop.
+CREATE TABLE IF NOT EXISTS grammar_schema_compatibility (
+    schema_name TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'unknown',
+    stream_true_ok INTEGER NOT NULL DEFAULT 0,
+    stream_false_ok INTEGER NOT NULL DEFAULT 0,
+    repeated_runs INTEGER NOT NULL DEFAULT 0,
+    diagnostic_code TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    checked_at TEXT NOT NULL
+);
 SQL
 
     return 0
@@ -369,7 +438,8 @@ recall_search() {
         return 1
     fi
 
-    recall_ensure_indexed
+    # Context mode must emit JSON only; suppress index refresh chatter.
+    recall_ensure_indexed >/dev/null 2>&1
 
     local safe_query
     safe_query=$(_recall_sanitize_query "$query")
@@ -477,7 +547,8 @@ recall_search_context() {
         fi
     fi
 
-    recall_ensure_indexed
+    # Context mode must emit JSON only; suppress index refresh chatter.
+    recall_ensure_indexed >/dev/null 2>&1
 
     local safe_query
     safe_query=$(_recall_sanitize_query "$query")
@@ -1190,4 +1261,505 @@ recall_clear_user_prefs() {
 recall_user_pref_count() {
     [ ! -f "$RECALL_DB" ] && { echo "0"; return; }
     sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='user_pref';" 2>/dev/null || echo "0"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# Data & Memory Hooks — Trace, Outcomes, Diagnostics, Compatibility
+# ═══════════════════════════════════════════════════════════════
+
+_recall_now_iso() {
+    date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S'
+}
+
+_recall_sql_escape() {
+    local value="$1"
+    printf '%s' "${value//\'/\'\'}"
+}
+
+_recall_sanitize_int() {
+    local value="$1"
+    [[ "$value" =~ ^-?[0-9]+$ ]] || { echo "0"; return; }
+    echo "$value"
+}
+
+_recall_sanitize_bool_int() {
+    local value="${1:-0}"
+    case "${value,,}" in
+        1|true|yes|y) echo "1" ;;
+        *) echo "0" ;;
+    esac
+}
+
+_recall_redact_text() {
+    local value="$1"
+    value=$(printf '%s' "$value" | sed -E \
+        -e 's#https?://[^[:space:]]+#[REDACTED_ENDPOINT]#g' \
+        -e 's#\b(Bearer|bearer)[[:space:]]+[A-Za-z0-9._-]+#\1 [REDACTED_TOKEN]#g' \
+        -e 's#\b(sk|tok|token|api[_-]?key|apikey|authorization|auth)[=:][^[:space:]]+#\1=[REDACTED]#gi')
+    if [ "${#value}" -gt 256 ]; then
+        value="${value:0:256}...[truncated]"
+    fi
+    printf '%s' "$value"
+}
+
+_recall_redact_model_name() {
+    local model="$1"
+    if [[ "$model" == */* ]]; then
+        model="${model##*/}"
+    fi
+    if [[ "$model" == *:* ]]; then
+        model="${model##*:}"
+    fi
+    _recall_redact_text "$model"
+}
+
+_recall_redact_backend() {
+    local backend="${1,,}"
+    case "$backend" in
+        *llama*|*ollama*|*local*|*inference*server*)
+            echo "local_inference"
+            ;;
+        *openai*|*anthropic*|*google*|*cohere*|*groq*|*mistral*|*together*|*azure*|*vertex*)
+            echo "external_provider"
+            ;;
+        "")
+            echo ""
+            ;;
+        *)
+            _recall_redact_text "$backend"
+            ;;
+    esac
+}
+
+_recall_allowed_infeasibility_class() {
+    case "$1" in
+        none|blocked_by_capability|blocked_by_policy) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+_recall_allowed_limitation_action() {
+    case "$1" in
+        RESCOPE|ALT_PATH|TERMINATE|"") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+_recall_allowed_tool_exposure_phase() {
+    case "$1" in
+        A|B|C|"") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+_recall_allowed_evaluator_mode() {
+    case "$1" in
+        normal|degraded) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+_recall_allowed_task_outcome_class() {
+    case "$1" in
+        successful|blocked_by_capability|blocked_by_policy|user_terminated|"") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Persist a strict-allowlist trace row.
+# Usage: recall_trace_record_allowlisted "task-id" '{"infeasibility_class":"none",...}'
+recall_trace_record_allowlisted() {
+    local task_boundary="$1"
+    local payload_json="$2"
+
+    [ -n "$task_boundary" ] || return 1
+    [ -n "$payload_json" ] || payload_json='{}'
+    recall_init || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    local infeasibility_class infeasibility_reason_code limitation_action
+    local tool_exposure_phase evaluator_mode evaluator_failure_reason task_outcome_class
+    local redacted_diagnostic now
+
+    infeasibility_class=$(jq -r '.infeasibility_class // ""' <<< "$payload_json" 2>/dev/null)
+    infeasibility_reason_code=$(jq -r '.infeasibility_reason_code // ""' <<< "$payload_json" 2>/dev/null)
+    limitation_action=$(jq -r '.limitation_action // ""' <<< "$payload_json" 2>/dev/null)
+    tool_exposure_phase=$(jq -r '.tool_exposure_phase // ""' <<< "$payload_json" 2>/dev/null)
+    evaluator_mode=$(jq -r '.evaluator_mode // "normal"' <<< "$payload_json" 2>/dev/null)
+    evaluator_failure_reason=$(jq -r '.evaluator_failure_reason // ""' <<< "$payload_json" 2>/dev/null)
+    task_outcome_class=$(jq -r '.task_outcome_class // ""' <<< "$payload_json" 2>/dev/null)
+    redacted_diagnostic=$(jq -r '.redacted_diagnostic // ""' <<< "$payload_json" 2>/dev/null)
+
+    _recall_allowed_infeasibility_class "$infeasibility_class" || infeasibility_class="none"
+    _recall_allowed_limitation_action "$limitation_action" || limitation_action=""
+    _recall_allowed_tool_exposure_phase "$tool_exposure_phase" || tool_exposure_phase=""
+    _recall_allowed_evaluator_mode "$evaluator_mode" || evaluator_mode="normal"
+    _recall_allowed_task_outcome_class "$task_outcome_class" || task_outcome_class=""
+
+    infeasibility_reason_code=$(_recall_redact_text "$infeasibility_reason_code")
+    evaluator_failure_reason=$(_recall_redact_text "$evaluator_failure_reason")
+    redacted_diagnostic=$(_recall_redact_text "$redacted_diagnostic")
+    now=$(_recall_now_iso)
+
+    sqlite3 "$RECALL_DB" "INSERT INTO routing_eval_trace (
+        task_boundary, recorded_at, infeasibility_class, infeasibility_reason_code,
+        limitation_action, tool_exposure_phase, evaluator_mode, evaluator_failure_reason,
+        task_outcome_class, redacted_diagnostic
+    ) VALUES (
+        '$(_recall_sql_escape "$task_boundary")',
+        '$(_recall_sql_escape "$now")',
+        '$(_recall_sql_escape "$infeasibility_class")',
+        '$(_recall_sql_escape "$infeasibility_reason_code")',
+        '$(_recall_sql_escape "$limitation_action")',
+        '$(_recall_sql_escape "$tool_exposure_phase")',
+        '$(_recall_sql_escape "$evaluator_mode")',
+        '$(_recall_sql_escape "$evaluator_failure_reason")',
+        '$(_recall_sql_escape "$task_outcome_class")',
+        '$(_recall_sql_escape "$redacted_diagnostic")'
+    );"
+
+    jq -cn \
+        --arg ts "$now" \
+        --arg task_boundary "$task_boundary" \
+        --arg infeasibility_class "$infeasibility_class" \
+        --arg infeasibility_reason_code "$infeasibility_reason_code" \
+        --arg limitation_action "$limitation_action" \
+        --arg tool_exposure_phase "$tool_exposure_phase" \
+        --arg evaluator_mode "$evaluator_mode" \
+        --arg evaluator_failure_reason "$evaluator_failure_reason" \
+        --arg task_outcome_class "$task_outcome_class" \
+        --arg redacted_diagnostic "$redacted_diagnostic" \
+        '{
+            ts:$ts,
+            task_boundary:$task_boundary,
+            infeasibility_class:$infeasibility_class,
+            infeasibility_reason_code:$infeasibility_reason_code,
+            limitation_action:$limitation_action,
+            tool_exposure_phase:$tool_exposure_phase,
+            evaluator_mode:$evaluator_mode,
+            evaluator_failure_reason:$evaluator_failure_reason,
+            task_outcome_class:$task_outcome_class,
+            redacted_diagnostic:$redacted_diagnostic
+        }'
+}
+
+# Authoritative terminal outcome model.
+# Write-once: non-terminal -> terminal only, terminal is immutable.
+recall_record_terminal_outcome() {
+    local task_boundary="$1"
+    local outcome_class="$2"
+    local reason_code="${3:-}"
+
+    [ -n "$task_boundary" ] || return 1
+    _recall_allowed_task_outcome_class "$outcome_class" || return 1
+    [ -n "$outcome_class" ] || return 1
+    recall_init || return 1
+
+    local existing
+    existing=$(sqlite3 "$RECALL_DB" "SELECT outcome_class FROM task_terminal_outcomes WHERE task_boundary='$(_recall_sql_escape "$task_boundary")' LIMIT 1;" 2>/dev/null)
+
+    if [ -n "$existing" ]; then
+        # Immutable terminal state: allow exact idempotent replay only.
+        [ "$existing" = "$outcome_class" ] && return 0
+        return 1
+    fi
+
+    reason_code=$(_recall_redact_text "$reason_code")
+    local now
+    now=$(_recall_now_iso)
+
+    sqlite3 "$RECALL_DB" "INSERT INTO task_terminal_outcomes (task_boundary, outcome_class, reason_code, recorded_at)
+        VALUES (
+            '$(_recall_sql_escape "$task_boundary")',
+            '$(_recall_sql_escape "$outcome_class")',
+            '$(_recall_sql_escape "$reason_code")',
+            '$(_recall_sql_escape "$now")'
+        );"
+}
+
+recall_get_terminal_outcome() {
+    local task_boundary="$1"
+    [ -n "$task_boundary" ] || return 1
+    [ -f "$RECALL_DB" ] || return 1
+
+    command -v jq >/dev/null 2>&1 || return 1
+    local row
+    row=$(sqlite3 -separator '|' "$RECALL_DB" "SELECT task_boundary, outcome_class, reason_code, recorded_at
+        FROM task_terminal_outcomes WHERE task_boundary='$(_recall_sql_escape "$task_boundary")' LIMIT 1;" 2>/dev/null)
+    [ -n "$row" ] || return 1
+
+    local b o r t
+    IFS='|' read -r b o r t <<< "$row"
+    jq -cn --arg task_boundary "$b" --arg outcome_class "$o" --arg reason_code "$r" --arg recorded_at "$t" \
+        '{task_boundary:$task_boundary, outcome_class:$outcome_class, reason_code:$reason_code, recorded_at:$recorded_at}'
+}
+
+# Persist evaluator diagnostic snapshots (redaction-safe allowlist only).
+# Usage: recall_record_evaluator_snapshot "task-id" '{...}'
+recall_record_evaluator_snapshot() {
+    local task_boundary="$1"
+    local payload_json="$2"
+
+    [ -n "$task_boundary" ] || return 1
+    [ -n "$payload_json" ] || payload_json='{}'
+    recall_init || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    local evaluator_mode evaluator_failure_reason backend scenario token_budget
+    local output_length parse_mode grammar_mode selected_model grammar_schema_name
+    local prompt_char_count system_char_count estimated_token_pressure http_status
+    local received_sse_data received_non_sse_json_error curl_exit_code envelope_kind
+    local envelope_error_code envelope_error_message diagnostic_code now
+
+    evaluator_mode=$(jq -r '.evaluator_mode // "normal"' <<< "$payload_json" 2>/dev/null)
+    evaluator_failure_reason=$(jq -r '.failure_reason // .evaluator_failure_reason // ""' <<< "$payload_json" 2>/dev/null)
+    backend=$(jq -r '.backend // ""' <<< "$payload_json" 2>/dev/null)
+    scenario=$(jq -r '.scenario // ""' <<< "$payload_json" 2>/dev/null)
+    token_budget=$(jq -r '.token_budget // 0' <<< "$payload_json" 2>/dev/null)
+    output_length=$(jq -r '.output_length // 0' <<< "$payload_json" 2>/dev/null)
+    parse_mode=$(jq -r '.parse_mode // ""' <<< "$payload_json" 2>/dev/null)
+    grammar_mode=$(jq -r '.grammar_mode // ""' <<< "$payload_json" 2>/dev/null)
+    selected_model=$(jq -r '.selected_model // ""' <<< "$payload_json" 2>/dev/null)
+    grammar_schema_name=$(jq -r '.grammar_schema_name // ""' <<< "$payload_json" 2>/dev/null)
+    prompt_char_count=$(jq -r '.prompt_char_count // 0' <<< "$payload_json" 2>/dev/null)
+    system_char_count=$(jq -r '.system_char_count // 0' <<< "$payload_json" 2>/dev/null)
+    estimated_token_pressure=$(jq -r '.estimated_token_pressure // 0' <<< "$payload_json" 2>/dev/null)
+    http_status=$(jq -r '.http_status // 0' <<< "$payload_json" 2>/dev/null)
+    received_sse_data=$(jq -r '.received_sse_data // .received_sse_frames // 0' <<< "$payload_json" 2>/dev/null)
+    received_non_sse_json_error=$(jq -r '.received_non_sse_json_error // 0' <<< "$payload_json" 2>/dev/null)
+    curl_exit_code=$(jq -r '.curl_exit_code // .curl_code // 0' <<< "$payload_json" 2>/dev/null)
+    envelope_kind=$(jq -r '.envelope_kind // ""' <<< "$payload_json" 2>/dev/null)
+    envelope_error_code=$(jq -r '.envelope_error_code // ""' <<< "$payload_json" 2>/dev/null)
+    envelope_error_message=$(jq -r '.envelope_error_message // ""' <<< "$payload_json" 2>/dev/null)
+    diagnostic_code=$(jq -r '.diagnostic_code // ""' <<< "$payload_json" 2>/dev/null)
+
+    _recall_allowed_evaluator_mode "$evaluator_mode" || evaluator_mode="normal"
+    backend=$(_recall_redact_backend "$backend")
+    scenario=$(_recall_redact_text "$scenario")
+    evaluator_failure_reason=$(_recall_redact_text "$evaluator_failure_reason")
+    parse_mode=$(_recall_redact_text "$parse_mode")
+    grammar_mode=$(_recall_redact_text "$grammar_mode")
+    selected_model=$(_recall_redact_model_name "$selected_model")
+    grammar_schema_name=$(_recall_redact_text "$grammar_schema_name")
+    envelope_kind=$(_recall_redact_text "$envelope_kind")
+    envelope_error_code=$(_recall_redact_text "$envelope_error_code")
+    envelope_error_message=$(_recall_redact_text "$envelope_error_message")
+    diagnostic_code=$(_recall_redact_text "$diagnostic_code")
+
+    token_budget=$(_recall_sanitize_int "$token_budget")
+    output_length=$(_recall_sanitize_int "$output_length")
+    prompt_char_count=$(_recall_sanitize_int "$prompt_char_count")
+    system_char_count=$(_recall_sanitize_int "$system_char_count")
+    estimated_token_pressure=$(_recall_sanitize_int "$estimated_token_pressure")
+    http_status=$(_recall_sanitize_int "$http_status")
+    received_sse_data=$(_recall_sanitize_bool_int "$received_sse_data")
+    received_non_sse_json_error=$(_recall_sanitize_bool_int "$received_non_sse_json_error")
+    curl_exit_code=$(_recall_sanitize_int "$curl_exit_code")
+    now=$(_recall_now_iso)
+
+    sqlite3 "$RECALL_DB" "INSERT INTO evaluator_diag_snapshots (
+        task_boundary, recorded_at, evaluator_mode, evaluator_failure_reason,
+        backend, scenario, token_budget, output_length, parse_mode, grammar_mode,
+        selected_model, grammar_schema_name, prompt_char_count, system_char_count,
+        estimated_token_pressure, http_status, received_sse_data,
+        received_non_sse_json_error, curl_exit_code, envelope_kind,
+        envelope_error_code, envelope_error_message, diagnostic_code
+    ) VALUES (
+        '$(_recall_sql_escape "$task_boundary")',
+        '$(_recall_sql_escape "$now")',
+        '$(_recall_sql_escape "$evaluator_mode")',
+        '$(_recall_sql_escape "$evaluator_failure_reason")',
+        '$(_recall_sql_escape "$backend")',
+        '$(_recall_sql_escape "$scenario")',
+        $token_budget,
+        $output_length,
+        '$(_recall_sql_escape "$parse_mode")',
+        '$(_recall_sql_escape "$grammar_mode")',
+        '$(_recall_sql_escape "$selected_model")',
+        '$(_recall_sql_escape "$grammar_schema_name")',
+        $prompt_char_count,
+        $system_char_count,
+        $estimated_token_pressure,
+        $http_status,
+        $received_sse_data,
+        $received_non_sse_json_error,
+        $curl_exit_code,
+        '$(_recall_sql_escape "$envelope_kind")',
+        '$(_recall_sql_escape "$envelope_error_code")',
+        '$(_recall_sql_escape "$envelope_error_message")',
+        '$(_recall_sql_escape "$diagnostic_code")'
+    );"
+
+    jq -cn \
+        --arg ts "$now" \
+        --arg task_boundary "$task_boundary" \
+        --arg evaluator_mode "$evaluator_mode" \
+        --arg evaluator_failure_reason "$evaluator_failure_reason" \
+        --arg backend "$backend" \
+        --arg scenario "$scenario" \
+        --arg parse_mode "$parse_mode" \
+        --arg grammar_mode "$grammar_mode" \
+        --arg selected_model "$selected_model" \
+        --arg grammar_schema_name "$grammar_schema_name" \
+        --arg envelope_kind "$envelope_kind" \
+        --arg envelope_error_code "$envelope_error_code" \
+        --arg envelope_error_message "$envelope_error_message" \
+        --arg diagnostic_code "$diagnostic_code" \
+        --argjson token_budget "$token_budget" \
+        --argjson output_length "$output_length" \
+        --argjson prompt_char_count "$prompt_char_count" \
+        --argjson system_char_count "$system_char_count" \
+        --argjson estimated_token_pressure "$estimated_token_pressure" \
+        --argjson http_status "$http_status" \
+        --argjson received_sse_data "$received_sse_data" \
+        --argjson received_non_sse_json_error "$received_non_sse_json_error" \
+        --argjson curl_exit_code "$curl_exit_code" \
+        '{
+            ts:$ts,
+            task_boundary:$task_boundary,
+            evaluator_mode:$evaluator_mode,
+            evaluator_failure_reason:$evaluator_failure_reason,
+            backend:$backend,
+            scenario:$scenario,
+            token_budget:$token_budget,
+            output_length:$output_length,
+            parse_mode:$parse_mode,
+            grammar_mode:$grammar_mode,
+            selected_model:$selected_model,
+            grammar_schema_name:$grammar_schema_name,
+            prompt_char_count:$prompt_char_count,
+            system_char_count:$system_char_count,
+            estimated_token_pressure:$estimated_token_pressure,
+            http_status:$http_status,
+            received_sse_data:$received_sse_data,
+            received_non_sse_json_error:$received_non_sse_json_error,
+            curl_exit_code:$curl_exit_code,
+            envelope_kind:$envelope_kind,
+            envelope_error_code:$envelope_error_code,
+            envelope_error_message:$envelope_error_message,
+            diagnostic_code:$diagnostic_code
+        }'
+}
+
+# Upsert schema compatibility record used by grammar validation paths.
+recall_schema_compat_set() {
+    local schema_name="$1"
+    local status="$2"
+    local stream_true_ok="${3:-0}"
+    local stream_false_ok="${4:-0}"
+    local repeated_runs="${5:-0}"
+    local diagnostic_code="${6:-}"
+    local notes="${7:-}"
+
+    [ -n "$schema_name" ] || return 1
+    recall_init || return 1
+
+    case "$status" in
+        compatible|incompatible|unknown) ;;
+        *) status="unknown" ;;
+    esac
+
+    stream_true_ok=$(_recall_sanitize_bool_int "$stream_true_ok")
+    stream_false_ok=$(_recall_sanitize_bool_int "$stream_false_ok")
+    repeated_runs=$(_recall_sanitize_int "$repeated_runs")
+    [ "$repeated_runs" -lt 0 ] && repeated_runs=0
+
+    diagnostic_code=$(_recall_redact_text "$diagnostic_code")
+    notes=$(_recall_redact_text "$notes")
+    local checked_at
+    checked_at=$(_recall_now_iso)
+
+    sqlite3 "$RECALL_DB" "INSERT INTO grammar_schema_compatibility (
+        schema_name, status, stream_true_ok, stream_false_ok, repeated_runs,
+        diagnostic_code, notes, checked_at
+    ) VALUES (
+        '$(_recall_sql_escape "$schema_name")',
+        '$(_recall_sql_escape "$status")',
+        $stream_true_ok,
+        $stream_false_ok,
+        $repeated_runs,
+        '$(_recall_sql_escape "$diagnostic_code")',
+        '$(_recall_sql_escape "$notes")',
+        '$(_recall_sql_escape "$checked_at")'
+    )
+    ON CONFLICT(schema_name) DO UPDATE SET
+        status=excluded.status,
+        stream_true_ok=excluded.stream_true_ok,
+        stream_false_ok=excluded.stream_false_ok,
+        repeated_runs=excluded.repeated_runs,
+        diagnostic_code=excluded.diagnostic_code,
+        notes=excluded.notes,
+        checked_at=excluded.checked_at;"
+}
+
+recall_schema_compat_get() {
+    local schema_name="$1"
+    [ -n "$schema_name" ] || return 1
+    [ -f "$RECALL_DB" ] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    local row
+    row=$(sqlite3 -separator '|' "$RECALL_DB" "SELECT schema_name, status, stream_true_ok, stream_false_ok, repeated_runs,
+        diagnostic_code, notes, checked_at
+        FROM grammar_schema_compatibility
+        WHERE schema_name='$(_recall_sql_escape "$schema_name")' LIMIT 1;" 2>/dev/null)
+    [ -n "$row" ] || return 1
+
+    local s status st sf rr dc notes checked
+    IFS='|' read -r s status st sf rr dc notes checked <<< "$row"
+    jq -cn \
+        --arg schema_name "$s" \
+        --arg status "$status" \
+        --arg diagnostic_code "$dc" \
+        --arg notes "$notes" \
+        --arg checked_at "$checked" \
+        --argjson stream_true_ok "$st" \
+        --argjson stream_false_ok "$sf" \
+        --argjson repeated_runs "$rr" \
+        '{
+            schema_name:$schema_name,
+            status:$status,
+            stream_true_ok:$stream_true_ok,
+            stream_false_ok:$stream_false_ok,
+            repeated_runs:$repeated_runs,
+            diagnostic_code:$diagnostic_code,
+            notes:$notes,
+            checked_at:$checked_at
+        }'
+}
+
+recall_schema_compat_map_json() {
+    [ -f "$RECALL_DB" ] || { echo '{}'; return 0; }
+    command -v jq >/dev/null 2>&1 || return 1
+
+    local rows out
+    rows=$(sqlite3 -separator '|' "$RECALL_DB" "SELECT schema_name, status, stream_true_ok, stream_false_ok, repeated_runs,
+        diagnostic_code, notes, checked_at
+        FROM grammar_schema_compatibility
+        ORDER BY schema_name ASC;" 2>/dev/null)
+    out='{}'
+
+    while IFS='|' read -r s status st sf rr dc notes checked; do
+        [ -n "$s" ] || continue
+        out=$(jq -c \
+            --arg schema "$s" \
+            --arg status "$status" \
+            --arg diagnostic_code "$dc" \
+            --arg notes "$notes" \
+            --arg checked_at "$checked" \
+            --argjson stream_true_ok "$st" \
+            --argjson stream_false_ok "$sf" \
+            --argjson repeated_runs "$rr" \
+            '. + {($schema): {
+                status:$status,
+                stream_true_ok:$stream_true_ok,
+                stream_false_ok:$stream_false_ok,
+                repeated_runs:$repeated_runs,
+                diagnostic_code:$diagnostic_code,
+                notes:$notes,
+                checked_at:$checked_at
+            }}' <<< "$out")
+    done <<< "$rows"
+
+    printf '%s\n' "$out"
 }

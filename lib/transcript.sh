@@ -195,3 +195,19 @@ transcript_last() {
     local dir="$workdir/.george/transcripts"
     ls -1t "$dir"/*.md 2>/dev/null | head -1
 }
+
+# ── UI integration overrides (loaded after lib/ui.sh and lib/agent.sh) ─
+# Keep agent core untouched: when available, route limitation rendering
+# through standardized UI blocks and concise enum-only prompt text.
+if declare -f ui_limitation_block &>/dev/null; then
+    _agent_emit_limitation_block() {
+        local constraint="$1" tried="$2" choices="$3" outcome="$4"
+        local episode_key="${constraint}|${outcome}"
+        ui_limitation_block "$constraint" "$tried" "$choices" "$outcome" "$episode_key"
+    }
+fi
+
+_agent_limitation_prompt_text() {
+    local reason_code="$1"
+    printf 'Constraint (%s). Choose one: RESCOPE | ALT_PATH | TERMINATE. Reply with one token.' "$reason_code"
+}

@@ -484,6 +484,47 @@ api_endpoint_reachable() {
     esac
 }
 
+# ── Coarse service-awareness normalization (integration layer) ─────────
+# Emits stable, provider-agnostic inputs for infeasibility classification.
+# Output format is line-oriented key/value so existing status pipelines can
+# append this block without changing their current human-readable sections.
+api_service_awareness_summary() {
+    local network_state
+    network_state=$(api_network_state 3)
+
+    local web_provider_configured="unconfigured"
+    if api_get_key "SERPER_API_KEY" &>/dev/null || api_get_key "PERPLEXITY_API_KEY" &>/dev/null; then
+        web_provider_configured="configured"
+    fi
+
+    local web_policy_state="unlocked"
+    [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ] && web_policy_state="locked"
+
+    local web_capability_state="unavailable"
+    if [ "$network_state" = "online" ] && [ "$web_provider_configured" = "configured" ] && [ "$web_policy_state" = "unlocked" ]; then
+        web_capability_state="available"
+    fi
+
+    # Git uses built-in local tooling; there is no external provider key.
+    local git_provider_configured="configured"
+    local git_policy_state="unlocked"
+    [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ] && git_policy_state="locked"
+
+    local git_capability_state="unavailable"
+    if [ "$network_state" = "online" ] && [ "$git_policy_state" = "unlocked" ]; then
+        git_capability_state="available"
+    fi
+
+    echo "SERVICE_AWARENESS_VERSION: v1"
+    echo "INFEASIBILITY_INPUT_NETWORK: $network_state"
+    echo "INFEASIBILITY_INPUT_WEB_CAPABILITY: $web_capability_state"
+    echo "INFEASIBILITY_INPUT_WEB_PROVIDER: $web_provider_configured"
+    echo "INFEASIBILITY_INPUT_WEB_POLICY: $web_policy_state"
+    echo "INFEASIBILITY_INPUT_GIT_CAPABILITY: $git_capability_state"
+    echo "INFEASIBILITY_INPUT_GIT_PROVIDER: $git_provider_configured"
+    echo "INFEASIBILITY_INPUT_GIT_POLICY: $git_policy_state"
+}
+
 # ── Require a key or fail with setup instructions ─────────────
 api_require_key() {
     local key_name="$1"
