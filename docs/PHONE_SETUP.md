@@ -30,6 +30,23 @@ Four installation paths depending on your needs and Termux source.
 - ~5-8GB free storage (Ollama + model + optional Ubuntu)
 - A keyboard is recommended (Bluetooth or Samsung DeX)
 
+## Maintenance Refresh (Returning After A Gap)
+
+If your setup is a few months old and model loads start failing, run this in
+native Termux before deeper debugging:
+
+```bash
+pkg update && pkg upgrade -y
+pkg reinstall -y ollama
+pkg install -y spirv-headers
+
+cd ~/llama.cpp
+git pull --ff-only
+rm -rf build
+cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release -G Ninja
+cmake --build build --config Release -j4
+```
+
 ## Step 1: Install Termux (Options A, B, B+)
 
 The **F-Droid** version of Termux is actively maintained and supports
@@ -63,17 +80,14 @@ pkg install -y git curl jq sqlite gawk procps bc termux-api
 > `gawk` replaces mawk (which has compatibility issues). `procps`
 > provides `free` for system vitals. `termux-api` enables `/phone` commands.
 
-### A2. Install Ollama
+### A2. Install Or Refresh Ollama
 
 ```bash
-# Download the ARM64 binary directly
-curl -fSL https://github.com/ollama/ollama/releases/latest/download/ollama-linux-arm64.tgz \
-    | tar xz -C $PREFIX/bin/ 2>/dev/null \
-    || {
-        curl -fSL https://github.com/ollama/ollama/releases/latest/download/ollama-linux-arm64 \
-            -o $PREFIX/bin/ollama
-        chmod +x $PREFIX/bin/ollama
-    }
+# Preferred on current Termux builds
+pkg install -y ollama
+
+# If upgrades leave runner path issues (e.g. ollama.dpkg-tmp)
+pkg reinstall -y ollama
 
 # Start Ollama
 ollama serve &
@@ -83,8 +97,8 @@ sleep 3
 curl -s http://127.0.0.1:11434/api/tags | jq .
 ```
 
-> **Note:** The `ollama.com/install.sh` script expects systemd, which
-> Termux doesn't have. Use the direct binary download above instead.
+> If your Termux mirror does not provide a working `ollama` package yet,
+> use the direct ARM64 binary fallback from release assets.
 
 ### A3. Auto-start Ollama
 
@@ -238,27 +252,28 @@ share `127.0.0.1` so the LLM API calls cross the boundary seamlessly.
 From **Termux native** (not inside proot):
 
 ```bash
-# Install Ollama
-curl -fSL https://github.com/ollama/ollama/releases/latest/download/ollama-linux-arm64.tgz \
-    | tar xz -C $PREFIX/bin/ 2>/dev/null \
-    || {
-        curl -fSL https://github.com/ollama/ollama/releases/latest/download/ollama-linux-arm64 \
-            -o $PREFIX/bin/ollama
-        chmod +x $PREFIX/bin/ollama
-    }
+# Install or refresh Ollama package
+pkg install -y ollama
+pkg reinstall -y ollama
 
 # Start Ollama and auto-start on new sessions
 ollama serve &
 sleep 3
-echo '
+cat >> ~/.bashrc <<BASHRC
 if ! curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
     ollama serve > $TMPDIR/ollama.log 2>&1 &
     sleep 2
-fi' >> ~/.bashrc
+fi
+BASHRC
 ```
 
-Optionally build llama-server for GPU acceleration — see
-[ADRENO_GPU_SETUP.md](ADRENO_GPU_SETUP.md).
+Optional: refresh llama.cpp toolchain before rebuilding
+```bash
+pkg install -y cmake ninja clang vulkan-headers spirv-headers vulkan-loader-android vulkan-tools
+cd ~/llama.cpp && git pull --ff-only
+```
+
+For full Vulkan build steps, see [ADRENO_GPU_SETUP.md](ADRENO_GPU_SETUP.md).
 
 ### B+2. Set up proot Ubuntu (George)
 
@@ -362,18 +377,13 @@ pkg update && pkg upgrade -y
 pkg install -y git curl jq sqlite gawk procps bc termux-api
 ```
 
-### C3. Install Ollama
+### C3. Install Or Refresh Ollama
 
-Same as Option A step A2:
+Use the same package flow as Option A:
 
 ```bash
-curl -fSL https://github.com/ollama/ollama/releases/latest/download/ollama-linux-arm64.tgz \
-    | tar xz -C $PREFIX/bin/ 2>/dev/null \
-    || {
-        curl -fSL https://github.com/ollama/ollama/releases/latest/download/ollama-linux-arm64 \
-            -o $PREFIX/bin/ollama
-        chmod +x $PREFIX/bin/ollama
-    }
+pkg install -y ollama
+pkg reinstall -y ollama
 
 ollama serve &
 sleep 3

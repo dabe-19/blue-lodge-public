@@ -615,11 +615,16 @@ the correct template.
 
 4. **Rebuild after fixing Vulkan (run from Termux native):**
    ```bash
+  pkg install -y spirv-headers
    cd ~/llama.cpp
+  git pull --ff-only
    rm -rf build
    cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release -G Ninja
-   cmake --build build --config Release -j$(nproc)
+  cmake --build build --config Release -j4
    ```
+
+  The current Fold 7 Termux path was validated with `-j4`.
+  If needed, tune job count for your device thermals.
 
 ### Problem: Vulkan works but low tok/s
 
@@ -720,6 +725,25 @@ export PATH="/data/data/com.termux/files/home/llama.cpp/build/bin:$PATH"
 Ollama's Termux support is unofficial and often **CPU-only**. This is a
 primary reason for using llama.cpp directly — it gives you explicit
 Vulkan GPU control that Ollama on Termux may not provide.
+
+### Problem: `error starting runner: .../ollama.dpkg-tmp: no such file or directory`
+
+This indicates a broken/incomplete Ollama package upgrade in Termux.
+
+```bash
+pkill -f "ollama serve" || true
+pkg update && pkg upgrade -y
+pkg reinstall -y ollama
+hash -r
+ollama --version
+```
+
+If `pkg reinstall` fails, do a clean reinstall:
+
+```bash
+pkg uninstall -y ollama
+pkg install -y ollama
+```
 
 ---
 

@@ -607,8 +607,13 @@ sudo apt install -y poppler-utils openssl gnupg w3m lynx python3 python3-venv pa
 ```bash
 # Required (auto-installed by install.sh)
 pkg install -y curl jq git sqlite gawk procps bc
-# Ollama (auto-installed by install.sh)
-curl -fsSL https://ollama.com/install.sh | sh
+# Ollama package (recommended on Termux)
+pkg install -y ollama
+# If runner path looks broken after upgrades (e.g. ollama.dpkg-tmp)
+pkg reinstall -y ollama
+# Optional: prerequisites for local llama.cpp Vulkan builds
+pkg install -y cmake ninja clang vulkan-headers spirv-headers \
+    vulkan-loader-android vulkan-tools
 # Optional
 pkg install -y poppler openssl-tool gnupg w3m lynx python pandoc make nodejs proot proot-distro termux-api
 ```

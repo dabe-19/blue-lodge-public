@@ -33,8 +33,22 @@ path configuration needed when using `/backend` commands.
 
 ```bash
 pkg update && pkg upgrade -y
-pkg install -y git cmake ninja clang vulkan-headers \
+pkg install -y git cmake ninja clang vulkan-headers spirv-headers \
     vulkan-loader-android vulkan-tools jq curl
+```
+
+### Returning After A Long Gap (Refresh First)
+
+If your setup is a few months old, refresh both Ollama and llama.cpp
+before debugging model-load failures:
+
+```bash
+# Refresh Ollama package in Termux
+pkg reinstall -y ollama
+
+# Update llama.cpp source before rebuilding
+cd ~/llama.cpp
+git pull --ff-only
 ```
 
 ## 2. Copy Vulkan Driver (Required)
@@ -57,22 +71,30 @@ vulkaninfo --summary 2>/dev/null | head -20
 
 If `vulkaninfo` shows your GPU (e.g., "Adreno (TM) 830"), you're good.
 
-## 3. Clone and Build llama.cpp
+## 3. Clone/Update and Build llama.cpp
 
 > **Run from Termux native.** cmake/ninja/clang are Termux packages.
 
 ```bash
 cd ~
-git clone https://github.com/ggerganov/llama.cpp.git
+if [ -d ~/llama.cpp/.git ]; then
+    git -C ~/llama.cpp pull --ff-only
+else
+    git clone https://github.com/ggml-org/llama.cpp.git
+fi
 cd llama.cpp
 
+rm -rf build
 cmake -B build \
     -DGGML_VULKAN=ON \
     -DCMAKE_BUILD_TYPE=Release \
     -G Ninja
 
-cmake --build build --config Release -j$(nproc)
+cmake --build build --config Release -j4
 ```
+
+`-j4` was validated on the current Fold 7 Termux setup. If your device
+has a different thermal/performance profile, adjust the job count.
 
 Build should complete with `[xxx/xxx] Linking CXX executable bin/llama-server`.
 
