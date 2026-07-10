@@ -46,6 +46,10 @@ LLAMA_CPP_SPEC_DRAFT_N_MAX="${LLAMA_CPP_SPEC_DRAFT_N_MAX:-4}"
 LLAMA_CPP_DRAFT_MODEL="${LLAMA_CPP_DRAFT_MODEL:-}"
 # Flash attention control (llama.cpp -fa). Keep "auto" unless explicitly set.
 LLAMA_CPP_FA="${LLAMA_CPP_FA:-auto}"
+# Global constrained-decoding toggle.
+# 0 = disable all GBNF grammar attachment (default)
+# 1 = enable schema grammar loading/attachment when a schema is requested
+LLM_GRAMMAR_ENABLED="${LLM_GRAMMAR_ENABLED:-0}"
 # Backend preference: llamacpp (default — auto-starts when needed), ollama, auto
 # Persisted to .george/lodge.conf along with token limits, budgets, sampling
 # params, and debug mode so they survive sessions.
@@ -130,6 +134,9 @@ LLM_BUDGET_AGENT=${LLM_BUDGET_AGENT:-4096}
 LLM_BUDGET_ROUTER=${LLM_BUDGET_ROUTER:-4096}
 LLM_BUDGET_JOURNAL=${LLM_BUDGET_JOURNAL:-4096}
 LLM_BUDGET_TOOL=${LLM_BUDGET_TOOL:-4096}
+
+# ── Grammar ───────────────────────────────────────────────────
+LLM_GRAMMAR_ENABLED=${LLM_GRAMMAR_ENABLED:-0}
 
 # ── Sampling Parameters ───────────────────────────────────────
 LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.15}
@@ -1597,7 +1604,7 @@ llm_generate() {
 
     # ── Load GBNF grammar for constrained decoding (Layer 1) ──
     local _grammar=""
-    if [ -n "$schema_name" ] && [ "$_active_backend" = "llamacpp" ]; then
+    if [ "${LLM_GRAMMAR_ENABLED:-0}" -eq 1 ] && [ -n "$schema_name" ] && [ "$_active_backend" = "llamacpp" ]; then
         _grammar=$(_llm_load_grammar "$schema_name" 2>/dev/null) || true
     fi
 

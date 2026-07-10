@@ -529,6 +529,7 @@ _agent_eval_diag() {
 _agent_schema_enabled() {
     local schema="$1"
     [ -z "$schema" ] && return 1
+    [ "${LLM_GRAMMAR_ENABLED:-0}" -eq 1 ] || return 1
     # Unknown schema defaults to enabled for backward compatibility.
     if [ -n "${_AGENT_SCHEMA_COMPAT[$schema]+x}" ]; then
         [ "${_AGENT_SCHEMA_COMPAT[$schema]}" -eq 1 ]
@@ -631,6 +632,11 @@ _agent_eval_call_text() {
 
 _agent_grammar_handshake() {
     local workdir="$1"
+    if [ "${LLM_GRAMMAR_ENABLED:-0}" -ne 1 ]; then
+        _AGENT_GRAMMAR_MODE="disabled"
+        _agent_routing_trace "$workdir" "grammar_handshake" "$(jq -cn --arg mode "disabled" --arg code "GRAMMAR_DISABLED" '{mode:$mode,diagnostic_code:$code}')"
+        return 0
+    fi
     [ "${AGENT_GRAMMAR_HANDSHAKE:-1}" -ne 1 ] && return 0
     [ "${_AGENT_GRAMMAR_HANDSHAKE_DONE:-0}" -eq 1 ] && return 0
     _AGENT_GRAMMAR_HANDSHAKE_DONE=1
