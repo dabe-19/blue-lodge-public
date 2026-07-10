@@ -108,6 +108,35 @@ describe "api_set_key / api_get_key"
     _teardown_api
   }
 
+  it "retrieves key from environment variable when not in keys.conf" && {
+    _setup_api
+    api_init 2>/dev/null
+    export TEST_ENV_KEY="env_secret_456"
+    result=$(api_get_key "TEST_ENV_KEY")
+    assert_eq "$result" "env_secret_456"
+    unset TEST_ENV_KEY
+    _teardown_api
+  }
+
+  it "retrieves SERPER_API_KEY from environment variable SERPER_API as fallback" && {
+    _setup_api
+    api_init 2>/dev/null
+    export SERPER_API="fallback_serper_val_env"
+    result=$(api_get_key "SERPER_API_KEY")
+    assert_eq "$result" "fallback_serper_val_env"
+    unset SERPER_API
+    _teardown_api
+  }
+
+  it "retrieves SERPER_API_KEY from keys.conf SERPER_API entry as fallback" && {
+    _setup_api
+    api_init 2>/dev/null
+    api_set_key "SERPER_API" "fallback_serper_val_conf"
+    result=$(api_get_key "SERPER_API_KEY")
+    assert_eq "$result" "fallback_serper_val_conf"
+    _teardown_api
+  }
+
 # ── api_list_keys ──────────────────────────────────────────────
 describe "api_list_keys"
 

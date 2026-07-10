@@ -83,24 +83,67 @@ api_get_key() {
     if ! _api_valid_key_name "$key_name"; then
         return 1
     fi
-    if [ ! -f "$GEORGE_KEYS_FILE" ]; then
-        return 1
+
+    # 1. Fallback: Environment variable check first
+    local env_val
+    if env | grep -q "^${key_name}="; then
+        env_val=$(eval echo "\${$key_name:-}")
+        if [ -n "$env_val" ]; then
+            echo "$env_val"
+            return 0
+        fi
     fi
-    local value
-    value=$(awk -F= -v key="$key_name" '
-        $1 == key {
-            print substr($0, index($0, "=") + 1)
-            found = 1
-            exit
-        }
-        END {
-            if (!found) exit 1
-        }
-    ' "$GEORGE_KEYS_FILE" 2>/dev/null)
-    if [ -z "$value" ]; then
-        return 1
+
+    # 2. Fallback: If requesting SERPER_API_KEY, check environment for SERPER_API
+    if [ "$key_name" = "SERPER_API_KEY" ]; then
+        if env | grep -q "^SERPER_API="; then
+            env_val=$(eval echo "\${SERPER_API:-}")
+            if [ -n "$env_val" ]; then
+                echo "$env_val"
+                return 0
+            fi
+        fi
     fi
-    echo "$value"
+
+    # 3. Read from keys.conf
+    if [ -f "$GEORGE_KEYS_FILE" ]; then
+        local value
+        value=$(awk -F= -v key="$key_name" '
+            $1 == key {
+                print substr($0, index($0, "=") + 1)
+                found = 1
+                exit
+            }
+            END {
+                if (!found) exit 1
+            }
+        ' "$GEORGE_KEYS_FILE" 2>/dev/null)
+        if [ -n "$value" ]; then
+            echo "$value"
+            return 0
+        fi
+    fi
+
+    # 4. Fallback: If requesting SERPER_API_KEY, check keys.conf for SERPER_API
+    if [ "$key_name" = "SERPER_API_KEY" ] && [ -f "$GEORGE_KEYS_FILE" ]; then
+        local value
+        value=$(awk -F= -v key="SERPER_API" '
+            $1 == key {
+                print substr($0, index($0, "=") + 1)
+                found = 1
+                exit
+            }
+            END {
+                if (!found) exit 1
+            }
+        ' "$GEORGE_KEYS_FILE" 2>/dev/null)
+        if [ -n "$value" ]; then
+            echo "$value"
+            return 0
+        fi
+    fi
+
+    return 1
 }
 
 # ── Set a key in config ───────────────────────────────────────

@@ -7433,6 +7433,14 @@ MEMEOF
                 _strat_hd_done=$(jq '[.items[] | select(.status == "done")] | length' "$_strat_hd_file" 2>/dev/null || echo 0)
                 _strat_honeydew="\n\n>>> HONEYDEW LIST (${_strat_hd_done}/${_strat_hd_total} complete) — YOUR DRIVING OBJECTIVES <<<\n${_strat_hd_content}\n>>> Pick the FIRST [ ] item by number. Do NOT skip items. Do NOT re-derive objectives from memory. <<<"
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- honeydew list (${_strat_hd_done}/${_strat_hd_total})"
+                
+                # Active objective sequential constraint injection
+                local _active_id _active_task
+                _active_id=$(jq -r '[.items[] | select(.status == "pending")][0].id // empty' "$_strat_hd_file" 2>/dev/null)
+                _active_task=$(jq -r '[.items[] | select(.status == "pending")][0].task // empty' "$_strat_hd_file" 2>/dev/null)
+                if [ -n "$_active_id" ]; then
+                    _strat_honeydew="${_strat_honeydew}\n\n>>> ACTIVE OBJECTIVE — YOU MUST WORK ON THIS STEP NOW <<<\nActive Step: #${_active_id}. ${_active_task}\n\nRULES:\n1. Your next milestone MUST address ONLY this Active Step.\n2. Do NOT jump ahead to future objectives (e.g. do NOT use /respond to deliver the final answer until all research/gathering steps are complete).\n3. Keep your focus strictly on this step."
+                fi
             fi
         fi
 
@@ -7663,7 +7671,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
    \"tools\":[\"\/recall\"${_brainstorm_rule:+,\"\/brainstorm\"}$([ "${_AGENT_WEB_LOCKED:-0}" -ne 1 ] && echo ',\"\/web search\",\"\/web fetch\",\"\/web scrape\",\"\/web scrape-images\"'),\"\/social discord read\",\"\/secret get\"${_ask_rule:+,\"\/ask\"}],
    \"max_consecutive\":2,\"then\":\"MUST use delivery command (\/respond,\/write,\/email,\/save,\/social,\/build)\"},
  \"failure\":{\"no_repeat\":true,\"advance_next_part\":true},
- \"honeydew\":{\"pick\":\"FIRST [ ] item by number — do NOT skip items\"},
+ \"honeydew\":{\"pick\":\"You MUST work ONLY on the ACTIVE OBJECTIVE specified. Do NOT skip or jump ahead to future objectives.\"},
  \"multi_delivery\":\"Different honeydew items may each need their own DELIVERY command (e.g. item 2=\/write report, item 3=\/email report). This is normal — chain them across milestones.\"}}${_research_gate}${_pref_hint}${_milestone_history}"
 
         ui_think "Strategist: determining next milestone..."
