@@ -721,14 +721,22 @@ _agent_router_eligibility_pass() {
     [ "$net_ok" -eq 0 ] && git_allowed=0
 
     local need_web=0 need_recall=0 need_ls=0 need_grep=0 need_read=0 need_journal=0 need_delivery=0 need_git=0
-    [[ "$lower" =~ (web|search|google|lookup|look[[:space:]]up|latest|current|today|news|weather|price|stock|internet|online|http|https|url|website) ]] && need_web=1
-    [[ "$lower" =~ (recall|remember|prior|previous|earlier|from[[:space:]]before|already[[:space:]]found|memory|knowledge[[:space:]]base) ]] && need_recall=1
-    [[ "$lower" =~ (list|tree|directory|directories|folders|files|workspace[[:space:]]layout) ]] && need_ls=1
-    [[ "$lower" =~ (grep|regex|pattern|search[[:space:]]files|find[[:space:]].*file|search[[:space:]]codebase) ]] && need_grep=1
-    [[ "$lower" =~ (read|open|inspect|view|show[[:space:]]file|file[[:space:]]content) ]] && need_read=1
-    [[ "$lower" =~ (journal|reflect|reflection|daily[[:space:]]log|entry|synthesize) ]] && need_journal=1
-    [[ "$lower" =~ (respond|answer|summarize|summary|explain|deliver|report|final) ]] && need_delivery=1
-    [[ "$lower" =~ (github|git[[:space:]]|repo|repository|pull[[:space:]]request|clone|commit|push) ]] && need_git=1
+    local _web_pat="\b(web|search|google|lookup|look[[:space:]]+up|latest|current|today|news|weather|price|stock|internet|online|http|https|url|website)\b"
+    local _recall_pat="\b(recall|remember|prior|previous|earlier|from[[:space:]]+before|already[[:space:]]+found|memory|knowledge[[:space:]]+base)\b"
+    local _ls_pat="\b(list|tree|directory|directories|folders|files|workspace[[:space:]]+layout)\b"
+    local _grep_pat="\b(grep|regex|pattern|search[[:space:]]+files|find[[:space:]]+.*file|search[[:space:]]+codebase)\b"
+    local _read_pat="\b(read|open|inspect|view|show[[:space:]]+file|file[[:space:]]+content)\b"
+    local _journal_pat="\b(journal|reflect|reflection|daily[[:space:]]+log|entry|synthesize)\b"
+    local _delivery_pat="\b(respond|answer|summarize|summary|explain|deliver|report|final)\b"
+    local _git_pat="\b(github|git|repo|repository|pull[[:space:]]+request|clone|commit|push)\b"
+    [[ "$lower" =~ $_web_pat ]] && need_web=1
+    [[ "$lower" =~ $_recall_pat ]] && need_recall=1
+    [[ "$lower" =~ $_ls_pat ]] && need_ls=1
+    [[ "$lower" =~ $_grep_pat ]] && need_grep=1
+    [[ "$lower" =~ $_read_pat ]] && need_read=1
+    [[ "$lower" =~ $_journal_pat ]] && need_journal=1
+    [[ "$lower" =~ $_delivery_pat ]] && need_delivery=1
+    [[ "$lower" =~ $_git_pat ]] && need_git=1
 
     local -a eligible=() shortlist=()
 
@@ -2624,26 +2632,26 @@ _agent_evaluate_honeydew_item() {
         _eval_commands='{"RESEARCH":["/recall"],
  "ANALYSIS":["/ask","/brainstorm","/vision"],
  "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
- "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
+ "DELIVERY":["/respond","/email send","/social post","/social discord dm","/commit","/push"],
  "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
     elif [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
         _eval_commands='{"RESEARCH":["/recall","/git search","/git fetch"],
  "ANALYSIS":["/ask","/brainstorm","/vision"],
  "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
- "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
+ "DELIVERY":["/respond","/email send","/social post","/social discord dm","/commit","/push"],
  "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
     elif [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
         if [ "${_AGENT_WEB_SEARCH_ONLY:-0}" -eq 1 ]; then
             _eval_commands='{"RESEARCH":["/web search","/recall"],
  "ANALYSIS":["/ask","/brainstorm","/vision"],
  "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
- "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
+ "DELIVERY":["/respond","/email send","/social post","/social discord dm","/commit","/push"],
  "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
         else
             _eval_commands='{"RESEARCH":["/web search","/web fetch","/web scrape","/recall"],
  "ANALYSIS":["/ask","/brainstorm","/vision"],
  "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
- "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
+ "DELIVERY":["/respond","/email send","/social post","/social discord dm","/commit","/push"],
  "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
         fi
     else
@@ -2651,13 +2659,13 @@ _agent_evaluate_honeydew_item() {
             _eval_commands='{"RESEARCH":["/web search","/recall","/git search","/git fetch"],
  "ANALYSIS":["/ask","/brainstorm","/vision"],
  "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
- "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
+ "DELIVERY":["/respond","/email send","/social post","/social discord dm","/commit","/push"],
  "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
         else
             _eval_commands='{"RESEARCH":["/web search","/web fetch","/web scrape","/recall","/git search","/git fetch"],
  "ANALYSIS":["/ask","/brainstorm","/vision"],
  "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
- "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
+ "DELIVERY":["/respond","/email send","/social post","/social discord dm","/commit","/push"],
  "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
         fi
     fi
@@ -4089,7 +4097,7 @@ SPEC_RULES
         case "$base_cmd" in
             social)
                 cat << 'SPEC'
-{"cmd":"/social","syntax":["/social post discord <channel> <text>","/social post telegram <text>","/social post x <text>","/social post mastodon <text>","/social discord dm <user> <text>","/social discord read <channel>"],
+{"cmd":"/social","syntax":["/social post discord <channel> <text>","/social post telegram <text>","/social post x <text>","/social post mastodon <text>","/social discord dm <user> <text>","/social discord read <channel>","/social discord channels sync","/social discord users sync"],
 "rules":["ALWAYS include channel name","@DisplayName auto-resolved to <@user_id>","Channel goes BEFORE text","No quotes on args"],
 "format_only_ex":["/social post discord <channel> <text>","/social discord dm <user> <text>"],
 "fill":{"<channel>":"Discord channel name without #","<text>":"Your message content","<user>":"Discord username"}}
@@ -5151,7 +5159,7 @@ SHORTLIST OVERRIDE: Choose exactly ONE slash command from ROUTER SHORTLIST only.
             local _compact_cmds='{"RESEARCH":["WEBPLACEHOLDER"GITPLACEHOLDER"/recall"],
  "ANALYSIS":["/ask","/brainstorm","/vision"],
  "FILES":["/write","/save","/edit","/append","/read","/ls","/grep","/init","/build","/test","/fix"],
- "DELIVERY":["/respond","/email send","/social post","/commit","/push"],
+ "DELIVERY":["/respond","/email send","/social post","/social discord dm","/commit","/push"],
  "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
             # Strip /web entries from compact catalog when web is locked
             if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
@@ -7472,6 +7480,9 @@ MEMEOF
             _tool_summary="${_tool_summary}"'
   "/social post <channel> <text>":"post to social channels (Discord, Telegram, X, Mastodon).",
   "/social read <channel>":"read social channel messages.",
+  "/social discord dm <user> <text>":"send a direct message (DM) to a Discord user.",
+  "/social discord channels sync":"sync/import Discord channels.",
+  "/social discord users sync":"sync/import Discord users.",
   "/email send <provider> <recipient> subject=<subj> body=<body>":"send an actual email.",'
         fi
         _tool_summary="${_tool_summary}"'
@@ -7780,7 +7791,9 @@ SERVICES STATUS: ${_svc_status:-unknown}
    ${_ask_rule}
    ${_brainstorm_rule}
    \"\/social\":\"Discord\/Telegram\/X\/Mastodon — DEFAULT for social delivery\",
-   \"\/email\":\"actual email ONLY — use ONLY when user explicitly says 'email' or gives an email address\",\"\/sandbox\":\"NEVER for slash commands\"},
+   \"\/email\":\"actual email ONLY — use ONLY when user explicitly says 'email' or gives an email address\",\"\/sandbox\":\"NEVER for slash commands\",
+   \"file_references\":\"File paths (e.g., report.md) in \\/social, \\/email, \\/respond arguments auto-expand to contents. Use this to post compiled reports instead of writing the full text inline.\",
+   \"discord_sync\":\"Before posting to channels or sending DMs by human-readable names (e.g. general, dabe) for the first time, you must sync them first using \\/social discord channels sync and \\/social discord users sync.\"},
  \"milestones\":{\"source\":\"YOUR WORKING COMMANDS only\",
    \"NEVER_hallucinate_commands\":\"Use ONLY commands from YOUR WORKING COMMANDS above. If evaluator feedback recommends a command not in your list, map it to the closest available command.\",
    \"format\":\"single imperative sentence starting with a verb\",
