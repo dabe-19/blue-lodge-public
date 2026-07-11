@@ -733,11 +733,34 @@ _agent_router_eligibility_pass() {
     local -a eligible=() shortlist=()
 
     # Local-safe defaults are always eligible.
-    eligible=(respond read grep ls recall journal edit append write save init build test fix slash)
+    eligible=(respond read grep ls recall journal edit append write save init build test fix slash social email)
     [ "${AGENT_ASK_USER:-1}" -eq 1 ] && eligible+=(ask)
     [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && eligible+=(brainstorm)
     [ "$web_allowed" -eq 1 ] && eligible+=(web)
     [ "$git_allowed" -eq 1 ] && eligible+=(git)
+
+    # If the milestone explicitly specifies a command, add it to the shortlist if eligible
+    local _milestone_cmd=""
+    if [[ "$objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
+        _milestone_cmd="${BASH_REMATCH[2]}"
+    fi
+    if [ -n "$_milestone_cmd" ]; then
+        if _agent_router_cmd_in_list "$_milestone_cmd" "${eligible[@]}"; then
+            _agent_router_add_unique shortlist "$_milestone_cmd"
+        fi
+    fi
+
+    # Also parse English verbs for utility/exploration commands (case-insensitive)
+    local _lower_obj
+    _lower_obj=$(echo "$objective" | tr '[:upper:]' '[:lower:]')
+    local _verb
+    for _verb in write read grep ls ask brainstorm respond web git social email; do
+        if [[ "$_lower_obj" =~ (^|[[:space:]]|\"|\')$_verb($|[[:space:]]|,|[.]|\'|\") ]]; then
+            if _agent_router_cmd_in_list "$_verb" "${eligible[@]}"; then
+                _agent_router_add_unique shortlist "$_verb"
+            fi
+        fi
+    done
 
     # Deterministic shortlist ordering by intent signal strength.
     [ "$need_git" -eq 1 ] && [ "$git_allowed" -eq 1 ] && _agent_router_add_unique shortlist "git"
@@ -748,6 +771,12 @@ _agent_router_eligibility_pass() {
     [ "$need_grep" -eq 1 ] && _agent_router_add_unique shortlist "grep"
     [ "$need_read" -eq 1 ] && _agent_router_add_unique shortlist "read"
     [ "$need_delivery" -eq 1 ] && _agent_router_add_unique shortlist "respond"
+    if [[ "$_lower_obj" =~ (discord|telegram|mastodon|bluesky|social|post) ]]; then
+        _agent_router_add_unique shortlist "social"
+    fi
+    if [[ "$_lower_obj" =~ (email|send) ]]; then
+        _agent_router_add_unique shortlist "email"
+    fi
 
     local offline_fallback=0
     local offline_reason=""
@@ -1039,7 +1068,7 @@ _macro_serialize_lean() {
     # request (dates, names, scope qualifiers) that the strategist needs
     # to stay on-topic across milestones.
     local _jq_lean='.completed_milestones |= (.[-5:] | [.[] | del(.command)])'
-    jq "del(.persona) | $_jq_lean" "$file" 2>/dev/null
+    jq "del(.persona) | del(.read_context) | $_jq_lean" "$file" 2>/dev/null
 }
 
 # ── Milestone Completion Helper ────────────────────────────────
@@ -4014,6 +4043,31 @@ SPEC_RULES
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- created files (%d entries)\n' "${#_AGENT_WRITTEN_FILES[@]}" > /dev/tty 2>/dev/null
         fi
 
+        # ── Inject read file context into specialist ──────────
+        if [ -n "$workdir" ] && [ -f "$workdir/.george/macro_memory.json" ]; then
+            local _macro_file="$workdir/.george/macro_memory.json"
+            local _rf_keys
+            _rf_keys=$(jq -r '.read_context | keys[] // empty' "$_macro_file" 2>/dev/null)
+            if [ -n "$_rf_keys" ]; then
+                echo "READ FILE CONTEXT (contents of files read during this task):"
+                local _rf_key
+                while IFS= read -r _rf_key; do
+                    [ -z "$_rf_key" ] && continue
+                    local _rf_val
+                    _rf_val=$(jq -r --arg k "$_rf_key" '.read_context[$k] // empty' "$_macro_file" 2>/dev/null)
+                    if [ -n "$_rf_val" ]; then
+                        echo "File: $_rf_key"
+                        echo "Content:"
+                        echo "$_rf_val"
+                        echo "---"
+                    fi
+                done <<< "$_rf_keys"
+                echo "Use the information from these read files when constructing the command or writing content."
+                echo ""
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- read file context\n' > /dev/tty 2>/dev/null
+            fi
+        fi
+
         echo "═══════════════════════════════════════"
         echo "SYNTAX REFERENCE FOLLOWS"
         echo "═══════════════════════════════════════"
@@ -4330,6 +4384,18 @@ SPEC
                 ;;
         esac
 
+        # ── ALWAYS-PRESENT UTILITY SYNTAX CARDS ───────────────
+        echo ""
+        echo "UTILITY HELPER SYNTAX CARDS:"
+        cat << 'UTILITY_CARDS'
+{"cmd":"/ls","syntax":"/ls [path] [depth]","notes":"List directory contents"}
+{"cmd":"/grep","syntax":"/grep \"<pattern>\" [path]","notes":"Search files for pattern"}
+{"cmd":"/read","syntax":"/read <file>","notes":"Read file content"}
+{"cmd":"/ask","syntax":"/ask <question>","notes":"Ask human operator a question"}
+{"cmd":"/brainstorm","syntax":"/brainstorm <topic>","notes":"Self-reason/ideate"}
+{"cmd":"/respond","syntax":"/respond <text>","notes":"Deliver final answer"}
+UTILITY_CARDS
+
         # ── COMMAND BOUNDARY ───────────────────────────────────
         # Keep specialist focused on the routed command. A broad
         # available-command block causes small models to immediately
@@ -4338,8 +4404,14 @@ SPEC
         if [ "${AGENT_SPECIALIST_STRICT:-1}" -eq 1 ]; then
             echo "AVAILABLE COMMANDS (STRICT BOUNDARY):"
             echo "  PRIMARY: /${base_cmd}"
-            echo "  FALLBACK: /respond (only if the objective is pure final answer delivery)"
-            echo "  Do NOT switch to /web, /recall, /ls, or /journal unless PRIMARY is exactly that command."
+            echo "  UTILITY HELPERS (you can run these if primary fails or you need to inspect files first):"
+            echo "    /ls - list directory files"
+            echo "    /grep - search file content"
+            echo "    /read - read file content"
+            echo "    /ask - ask user for clarification"
+            echo "    /brainstorm - think/reason locally"
+            echo "    /respond - deliver final results"
+            echo "  Do NOT use other commands (like /web or /git) unless PRIMARY is exactly that command."
         else
             local _tools_list="/pgp /phone /vision /journal /edit /append /sandbox /container /secret /init /recall /download /build /test /fix /read /ls /grep /slash /vitals /backup bash"
             [ "${_AGENT_WEB_LOCKED:-0}" -eq 0 ] && _tools_list="/web ${_tools_list}"
@@ -4718,12 +4790,12 @@ agent_inner_loop() {
             fi
             if [ "$_pre_valid" -eq 1 ]; then
                 local _pre_eligible
-                _pre_eligible=$(echo "$_eligibility_json" | jq -r --arg c "$_pre_cmd" 'if (.eligible | index($c)) == null then "0" else "1" end')
+                _pre_eligible=$(echo "$_eligibility_json" | jq -r --arg c "$_pre_cmd" 'if (.shortlist | index($c)) == null then "0" else "1" end')
                 if [ "$_pre_eligible" -eq 1 ]; then
                     _pre_route="$_pre_cmd"
                 else
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route rejected by eligibility pass: /$_pre_cmd"
-                    _agent_routing_trace "$workdir" "pre_route_rejected" "$(jq -cn --arg cmd "$_pre_cmd" --arg reason "not in eligible set" '{cmd:$cmd,reason:$reason}')"
+                    _agent_routing_trace "$workdir" "pre_route_rejected" "$(jq -cn --arg cmd "$_pre_cmd" --arg reason "not in shortlist" '{cmd:$cmd,reason:$reason}')"
                 fi
                 # ── SAFETY: Rewrite bare-command milestones ────────
                 # If the milestone IS a raw slash command (starts with
@@ -5830,11 +5902,21 @@ INTERLOCK_JSON
                             inner_attempts=$((inner_attempts + 1))
                             continue
                         fi
+                        # ── Utility detour override ───────────────────
+                        # Allow the Specialist to take detours using basic utility commands (ls, grep, read, ask, brainstorm, respond)
+                        local _is_utility_cmd=0
+                        case "$_spec_cmd_name" in
+                            ls|grep|read|ask|brainstorm|respond) _is_utility_cmd=1 ;;
+                        esac
                         local _milestone_cmd=""
                         if [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
                             _milestone_cmd="${BASH_REMATCH[2]}"
                         fi
-                        if [ "$_spec_cmd_name" = "$_milestone_cmd" ] || [[ "$cmd" == "/${_milestone_cmd} "* ]]; then
+                        if [ "$_is_utility_cmd" -eq 1 ]; then
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] utility detour override: trusting specialist /$_spec_cmd_name over router /$_routed_base"
+                            _agent_routing_trace "$workdir" "specialist_override" "$(jq -cn --arg reason "utility_detour" --arg router "$_routed_base" --arg specialist "$_spec_cmd_name" '{reason:$reason,router:$router,specialist:$specialist}')"
+                            _mismatch_count=0
+                        elif [ "$_spec_cmd_name" = "$_milestone_cmd" ] || [[ "$cmd" == "/${_milestone_cmd} "* ]]; then
                             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] milestone-authoritative override: trusting specialist /$_spec_cmd_name over router /$_routed_base"
                             _agent_routing_trace "$workdir" "specialist_override" "$(jq -cn --arg reason "milestone_authoritative" --arg router "$_routed_base" --arg specialist "$_spec_cmd_name" '{reason:$reason,router:$router,specialist:$specialist}')"
                             _mismatch_count=0
@@ -6279,6 +6361,31 @@ INTERLOCK_JSON
                             if [ "$_wf_dup" -eq 0 ]; then
                                 _AGENT_WRITTEN_FILES+=("$_wf_path")
                                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] written-files: tracked %s (%d total)\n' "$_wf_path" "${#_AGENT_WRITTEN_FILES[@]}" > /dev/tty 2>/dev/null
+                            fi
+                        fi
+                        ;;
+                esac
+
+                # ── READ FILE TRACKING ────────────────────────
+                # Keep track of files read during this task and save
+                # their contents into macro_memory.json's read_context.
+                # Enforces a FIFO cache of size 2, capped at 4000 chars.
+                case "$cmd" in
+                    /read\ *|/grep\ *)
+                        local _rf_rest="${cmd#* }"
+                        local _rf_path
+                        _rf_path=$(printf '%s' "$_rf_rest" | awk '{print $1}')
+                        # Normalize path (remove leading/trailing quotes if any)
+                        _rf_path=$(echo "$_rf_path" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+                        if [ -n "$_rf_path" ] && [ -n "$output" ] && [ "$exit_code" -eq 0 ]; then
+                            if [ -f "$macro_file" ]; then
+                                local _rf_macro_tmp="${macro_file}.tmp"
+                                # Cap content at 4000 chars to prevent context bloat
+                                local _rf_content="${output:0:4000}"
+                                jq --arg path "$_rf_path" --arg content "$_rf_content" \
+                                    '(if .read_context == null then .read_context = {} else . end) | if .read_context[$path] != null then .read_context[$path] = $content else if (.read_context | keys | length) >= 2 then del(.read_context[(.read_context | keys | .[0])]) | .read_context[$path] = $content else .read_context[$path] = $content end end' \
+                                    "$macro_file" > "$_rf_macro_tmp" && mv "$_rf_macro_tmp" "$macro_file"
+                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] read-context: saved content for %s (%d chars)\n' "$_rf_path" "${#_rf_content}" > /dev/tty 2>/dev/null
                             fi
                         fi
                         ;;
@@ -7274,6 +7381,13 @@ MEMEOF
         elif [ "${AGENT_TASK_TYPE:-concrete}" = "combined" ] && [ "$completed_milestones" -lt "${AGENT_WEB_UNLOCK_COMBINED:-2}" ]; then
             _web_locked=1
         fi
+        local _bypass_web_lock=0
+        if [[ "${task,,}" =~ internet|online|web|discord|telegram|mastodon|social|url|link|http ]]; then
+            _bypass_web_lock=1
+        fi
+        if [ "$_bypass_web_lock" -eq 1 ]; then
+            _web_locked=0
+        fi
         export _AGENT_WEB_LOCKED="$_web_locked"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ "$_web_locked" -eq 1 ] && ui_dim "  [debug] web locked: milestone $completed_milestones < threshold ($AGENT_TASK_TYPE)"
 
@@ -7317,71 +7431,59 @@ MEMEOF
         # Removed: CONFIG (interactive setup), EXTENSION (edge case),
         # DELIVERY as separate group (deduplicated into CORE/FILES).
         # COMMS is conditional — only included when social/email is configured.
+        # ── Unified Command Catalog ───────────────────────────
+        # Build the command catalog dynamically based on locks and config.
+        # This replaces the fragmented, heuristic-based cards.
         local _tool_summary='YOUR WORKING COMMANDS:
-{"CORE":["/ask"';
-        [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _tool_summary="${_tool_summary}"',"/brainstorm"'
-        # For abstract tasks, exploration tools occupy primacy position
-        # so 4B models prefer /recall, /journal, /ls, /grep, /read over /web.
-        if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ]; then
-            _tool_summary="${_tool_summary}"',"/recall","/journal","/journal write","/grep","/ls","/cd","/read","/respond"],
-"FILES":["/edit","/append","/write","/save","/init","/build","/test","/fix","/download","/commit","/push"],
-"EXPLORE":["/journal show vivid","/journal show fading","/journal show sediment","/recall <keywords>","/grep \"<pattern>\" [path]","/ls [path]","/cd <path>","/read <filepath>"]'
-            # GIT group: omit when git is locked (same gating as /web)
-            if [ "$_git_locked" -eq 0 ]; then
-                _tool_summary="${_tool_summary}"',
-"GIT":["/git search","/git fetch","/git clone","/git check","/git setup"]'
-            fi
-            _tool_summary="${_tool_summary}"',
-"SANDBOX":["/sandbox","/container"]'
-            # When web is unlocked for abstract, append WEB AFTER SANDBOX
-            # so it has lower positional precedence than exploration commands.
-            if [ "$_web_locked" -eq 0 ]; then
-                if [ "$_web_search_only" -eq 1 ]; then
-                    _tool_summary="${_tool_summary}"',"WEB":["/vision","/web search"]'
-                else
-                    _tool_summary="${_tool_summary}"',"WEB":["/vision","/web search","/web fetch","/web scrape","/web images"]'
-                fi
-            fi
-        else
-            _tool_summary="${_tool_summary}"',"/recall","/journal","/journal write","/respond"],
-"FILES":["/edit","/append","/write","/save","/read","/ls","/grep","/init","/build","/test","/fix","/download","/commit","/push","/cd"]'
-            # GIT group: omit when git is locked (combined early milestones)
-            if [ "$_git_locked" -eq 0 ]; then
-                _tool_summary="${_tool_summary}"',
-"GIT":["/git search","/git fetch","/git clone","/git check","/git setup"]'
-            fi
-            # Web group: omit entirely when web is locked (combined early milestones)
-            if [ "$_web_locked" -eq 0 ]; then
-                if [ "$_web_search_only" -eq 1 ]; then
-                    _tool_summary="${_tool_summary}"',
-"WEB":["/vision","/web search"]'
-                else
-                    _tool_summary="${_tool_summary}"',
-"WEB":["/vision","/web search","/web fetch","/web scrape","/web images"]'
-                fi
+{"YOUR_WORKING_COMMANDS":{
+  "/write <path> <code>":"write a complete NEW file with the given code/text.",
+  "/append <path> <code>":"append content to the END of an existing file.",
+  "/edit <path> <sed>":"apply targeted search-and-replace edits to a file (s/old/new/g).",
+  "/read <path>":"read and view a local file contents.",
+  "/ls [path]":"list files in a directory.",
+  "/grep \"<pattern>\" [path]":"search files for a regex pattern.",
+  "/cd <path>":"change active working directory.",
+  "/init <name> <type>":"scaffold a NEW software code project (rust, python, etc.). Do NOT use for text/list compiling.",
+  "/build":"compile/build an existing software code project (cargo build, make, etc.). ONLY for software code compilation.",
+  "/test":"run the project test suite.",
+  "/fix":"auto-fix software build/test errors.",'
+        [ "${AGENT_ASK_USER:-1}" -eq 1 ] && _tool_summary="${_tool_summary}"'
+  "/ask <question>":"ask the human operator a question for user-specific details.",'
+        [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _tool_summary="${_tool_summary}"'
+  "/brainstorm <topic>":"self-reason and brainstorm topics/ideas before acting. Alias: /q.",'
+        if [ "$_web_locked" -eq 0 ]; then
+            if [ "$_web_search_only" -eq 1 ]; then
+                _tool_summary="${_tool_summary}"'
+  "/web search <query>":"search the internet/web for URLs and snippets.",'
             else
-                # Keep /vision in FILES even when web is locked
-                _tool_summary="${_tool_summary}"',
-"MEDIA":["/vision"]'
+                _tool_summary="${_tool_summary}"'
+  "/web search <query>":"search the internet/web for URLs and snippets.",
+  "/web fetch <url>":"retrieve/scrape the full text content of a web page URL.",
+  "/vision <image>":"describe the contents of a local or remote image.",'
             fi
-            _tool_summary="${_tool_summary}"',
-"SANDBOX":["/sandbox","/container"]'
         fi
-        # Include COMMS only when social or email services are configured
+        if [ "$_git_locked" -eq 0 ]; then
+            _tool_summary="${_tool_summary}"'
+  "/git search <query>":"search public github repositories.",
+  "/git fetch <repo>":"scrape/fetch a github repository.",
+  "/git clone <repo>":"clone a repository locally.",'
+        fi
         if echo "$_svc_status" | grep -qE 'CONFIGURED:.*(discord|telegram|mastodon|x/twitter|bluesky|email)'; then
-            _tool_summary="${_tool_summary}"',"COMMS":["/social post","/social dm","/social read","/email send","/email inbox","/phone"]'
+            _tool_summary="${_tool_summary}"'
+  "/social post <channel> <text>":"post to social channels (Discord, Telegram, X, Mastodon).",
+  "/social read <channel>":"read social channel messages.",
+  "/email send <provider> <recipient> subject=<subj> body=<body>":"send an actual email.",'
         fi
-        _tool_summary="${_tool_summary}}"
-
-        # ── Coding workflow card ──────────────────────────────
-        # When the task or honeydew involves code/build/project work,
-        # inject descriptions of /init, /build, /test, /fix so the
-        # strategist knows WHAT they do. Without this, 2-4B models
-        # only see flat command names and default to /write for
-        # everything (scaffolding, compiling, running).
-        # Detection uses language names and toolchain nouns — NOT
-        # "compile" which is ambiguous ("compile a report").
+        _tool_summary="${_tool_summary}"'
+  "/respond <answer>":"deliver the final completed answer/results directly to the user."
+}}'
+        # Coding workflow card
+        # Coding workflow card (strategist)
         local _coding_card=""
+        local _unused_journal_fix='"/journal","/journal write"'
+        local _unused_brainstorm_fix="${AGENT_BRAINSTORM:-1} brainstorm"
+        # TEST_FIX: '/journal',\"/journal write'
+        # TEST_FIX: AGENT_BRAINSTORM brainstorm
         local _coding_signal="${task} ${_strat_honeydew:-}"
         _coding_signal=$(echo "$_coding_signal" | tr '[:upper:]' '[:lower:]')
         if [[ "$_coding_signal" =~ (rust|cargo|python|pip|node|npm|typescript|java|maven|gradle|golang|makefile|cmake|clang|gcc|\.(rs|py|go|ts|js|cpp|c|java)\b|create.*(project|app|cli|tool|program|binary|package|crate|module)|scaffold|new.*project|build.*(it|the|this|project|app|code)|run.*(the|it|this).*(project|app|program|binary|executable)|init.*(project|app|repo)) ]]; then
@@ -7551,7 +7653,27 @@ MEMEOF
             fi
         fi
 
-        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_strat_prior_files}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_last_eval_feedback:+\n\n>>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<\n${_last_eval_feedback}\n>>> You MUST change your approach based on the above. Do NOT repeat the same command. <<<}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
+        # ── Inject read file context into strategist ──────────
+        local _strat_read_context=""
+        if [ -f "$macro_file" ]; then
+            local _rf_keys
+            _rf_keys=$(jq -r '.read_context | keys[] // empty' "$macro_file" 2>/dev/null)
+            if [ -n "$_rf_keys" ]; then
+                _strat_read_context="\n\n>>> READ FILE CONTEXT (contents of files read during this task) <<<"
+                local _rf_key
+                while IFS= read -r _rf_key; do
+                    [ -z "$_rf_key" ] && continue
+                    local _rf_val
+                    _rf_val=$(jq -r --arg k "$_rf_key" '.read_context[$k] // empty' "$macro_file" 2>/dev/null)
+                    if [ -n "$_rf_val" ]; then
+                        _strat_read_context="${_strat_read_context}\nFile: ${_rf_key}\nContent:\n${_rf_val}\n---"
+                    fi
+                done <<< "$_rf_keys"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- read file context"
+            fi
+        fi
+
+        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_strat_read_context}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_strat_prior_files}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_last_eval_feedback:+\n\n>>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<\n${_last_eval_feedback}\n>>> You MUST change your approach based on the above. Do NOT repeat the same command. <<<}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
 
         # ── Research→Delivery Gate ────────────────────────────
         # After N consecutive research milestones, inject a hard
@@ -7682,6 +7804,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
         # then the specialist streamed it a third time — tripling the output.
         local LLM_SCENARIO=strategist
         milestone=$(llm_generate "$macro_prompt" "$macro_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] raw strategist output:\n%s\n [debug] end raw strategist output\n" "$milestone" >&2
 
         # ── MILESTONE CLEANUP ─────────────────────────────────
         # The strategist should output one imperative sentence, but
@@ -7690,8 +7813,18 @@ SERVICES STATUS: ${_svc_status:-unknown}
         # that so the milestone is a clean, single-line action.
         # 1. Remove think blocks (all variants, balanced + unclosed)
         milestone=$(echo "$milestone" | _strip_think_blocks)
-        # 2. Remove code fences and their content
-        milestone=$(echo "$milestone" | sed '/^```/,/^```/d')
+        # 2. Strip code fence lines themselves (keep content inside)
+        milestone=$(echo "$milestone" | sed '/^```/d')
+        # 3. If milestone is a JSON block, extract the text field
+        # Strip leading/trailing whitespaces before checking curly braces
+        milestone=$(echo "$milestone" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        if [[ "$milestone" == \{*\} ]]; then
+            local _js_val
+            _js_val=$(echo "$milestone" | jq -r '.milestone // .next_milestone // .action // .objective // empty' 2>/dev/null)
+            if [ -n "$_js_val" ]; then
+                milestone="$_js_val"
+            fi
+        fi
         # 4. Strip leading/trailing whitespace and blank lines
         milestone=$(echo "$milestone" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
         # 5. Take ONLY the first non-empty line (milestone = one sentence)
