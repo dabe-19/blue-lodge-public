@@ -19,9 +19,14 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Clone and compile llama.cpp from source with CUDA support
+ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs
+RUN ln -s libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
 RUN git clone https://github.com/ggml-org/llama.cpp.git /opt/llama.cpp && \
     cd /opt/llama.cpp && \
-    cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release -G Ninja && \
+    cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" \
+        -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" \
+        -G Ninja && \
     cmake --build build --config Release --target llama-server -j$(nproc)
 
 # Expose default llama-server port

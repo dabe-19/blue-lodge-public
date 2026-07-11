@@ -1,0 +1,23 @@
+{
+  "primary_task": "build a shopping list from the 7 day meal plan we created earlier and saved to a workspace in your local directory.",
+  "items": [
+    {
+      "id": 1,
+      "task": "Extract all ingredients from the meal plan.",
+      "status": "done",
+      "depth": 0
+    },
+    {
+      "id": 2,
+      "task": "Compile the final shopping list from the ingredients.",
+      "status": "pending",
+      "depth": 0
+    },
+    {
+      "id": 3,
+      "task": "Save the compiled shopping list to the local directory.",
+      "status": "pending",
+      "depth": 0
+    }
+  ]
+}

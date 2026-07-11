@@ -188,8 +188,7 @@ ui_progress() {
 # ── Spinner ────────────────────────────────────────────────────
 _SPINNER_PID=""
 # Detect best output target: /dev/tty if available, else stderr
-_SPINNER_TTY="/dev/tty"
-[ -w /dev/tty ] 2>/dev/null || _SPINNER_TTY="/dev/stderr"
+[ -t 2 ] && [ -w /dev/tty ] && _SPINNER_TTY="/dev/tty" || _SPINNER_TTY="/dev/stderr"
 
 ui_spinner_start() {
     local msg="${1:-Thinking}"

@@ -1224,7 +1224,7 @@ llm_ensure() {
     fi
 
     # ── Try to auto-start llama-server (preferred backend) ─────
-    if [ -x "$LLAMA_CPP_SERVER_BIN" ]; then
+    if [ "${LLM_BACKEND:-}" != "ollama" ] && [ -x "$LLAMA_CPP_SERVER_BIN" ]; then
         if [ "$backend" != "llamacpp" ] || ! curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null | grep -q '"status"'; then
             ui_dim "llama-server available — starting..."
             # Resolve GGUF model to load
@@ -1937,8 +1937,7 @@ llm_generate() {
 
     _LLM_ACTIVE=1
 
-    local _tty="/dev/tty"
-    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    local _tty; [ -t 2 ] && [ -w /dev/tty ] && _tty="/dev/tty" || _tty="/dev/stderr"
 
     # Marker file: touched inside the pipe subshell when first token
     # arrives. If missing after the pipe, the request failed entirely.
