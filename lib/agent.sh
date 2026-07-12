@@ -4153,7 +4153,8 @@ SPEC_RULES
 {"cmd":"/social","syntax":["/social post discord <channel> <text>","/social post telegram <text>","/social post x <text>","/social post mastodon <text>","/social discord dm <user> <text>","/social discord read <channel>","/social discord channels sync","/social discord users sync"],
 "rules":["ALWAYS include channel name","@DisplayName auto-resolved to <@user_id>","Channel goes BEFORE text","No quotes on args"],
 "format_only_ex":["/social post discord <channel> <text>","/social discord dm <user> <text>"],
-"fill":{"<channel>":"Discord channel name without #","<text>":"Your message content","<user>":"Discord username"}}
+"fill":{"<channel>":"Discord channel name without #","<text>":"Your message content (or filename to auto-expand to file contents)","<user>":"Discord username"},
+"notes":["Tip: passing a filename like 'shield_status.md' as <text> will auto-expand to the file's contents."]}
 SPEC
                 ;;
             init)
