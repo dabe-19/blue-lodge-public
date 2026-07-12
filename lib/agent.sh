@@ -6095,8 +6095,8 @@ INTERLOCK_JSON
                 case "$_cmd_base" in
                     social|email|commit|push)
                         local _primary_obj=""
-                        if [ -f "$micro_file" ]; then
-                            _primary_obj=$(jq -r '.primary_objective // empty' "$micro_file" 2>/dev/null)
+                        if [ -f "$macro_file" ]; then
+                            _primary_obj=$(_macro_get "$macro_file" "primary_objective")
                         fi
                         if ! _agent_explicit_side_effect_match "$micro_objective" "$_cmd_base" && \
                            ! _agent_explicit_side_effect_match "$_primary_obj" "$_cmd_base"; then
