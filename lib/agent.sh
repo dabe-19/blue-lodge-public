@@ -4963,6 +4963,8 @@ SHORTLIST OVERRIDE: Choose exactly ONE slash command from ROUTER SHORTLIST only.
         if [ -n "${_last_eval_feedback:-}" ]; then
             route_prompt="${route_prompt}\n\n>>> EVALUATOR FEEDBACK <<<\n${_last_eval_feedback}\n>>> Pick a DIFFERENT command than what failed above. <<<"
         fi
+        # Force strict single-tool command output at the end of the prompt context
+        route_prompt="${route_prompt}\n\n[INSTRUCTION] Output ONLY the slash command name from the shortlist (e.g. /read or /write) and absolutely nothing else. Do not include preamble, explanations, markdown formatting, or notes. Start your response directly with the slash command."
 
         local LLM_SCENARIO=router
         selected_tool=$(llm_generate "$route_prompt" "$router_sys" "${LLM_ROUTER_TOKENS:-512}" "$LLM_BUDGET_ROUTER")
