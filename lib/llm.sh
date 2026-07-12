@@ -1917,7 +1917,7 @@ llm_generate() {
     fi
 
     # Inject budget_tokens at top level (Ollama ignores it inside options)
-    if [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
+    if models_current_has_thinking 2>/dev/null && [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
         payload=$(echo "$payload" | jq --argjson bt "$budget" '. + {budget_tokens: $bt}')
     fi
 
@@ -2569,7 +2569,7 @@ llm_stream() {
     fi
 
     # Inject budget_tokens at top level (Ollama ignores it inside options)
-    if [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
+    if models_current_has_thinking 2>/dev/null && [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
         payload=$(echo "$payload" | jq --argjson bt "$budget" '. + {budget_tokens: $bt}')
     fi
 
@@ -3084,7 +3084,7 @@ llm_chat() {
     fi
 
     # Inject budget_tokens at top level (Ollama ignores it inside options)
-    if [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
+    if models_current_has_thinking 2>/dev/null && [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
         payload=$(echo "$payload" | jq --argjson bt "$budget" '. + {budget_tokens: $bt}')
     fi
 
