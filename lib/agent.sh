@@ -721,22 +721,23 @@ _agent_router_eligibility_pass() {
     [ "$net_ok" -eq 0 ] && git_allowed=0
 
     local need_web=0 need_recall=0 need_ls=0 need_grep=0 need_read=0 need_journal=0 need_delivery=0 need_git=0
-    local _web_pat="\b(web|search|google|lookup|look[[:space:]]+up|latest|current|today|news|weather|price|stock|internet|online|http|https|url|website)\b"
-    local _recall_pat="\b(recall|remember|prior|previous|earlier|from[[:space:]]+before|already[[:space:]]+found|memory|knowledge[[:space:]]+base)\b"
-    local _ls_pat="\b(list|tree|directory|directories|folders|files|workspace[[:space:]]+layout)\b"
-    local _grep_pat="\b(grep|regex|pattern|search[[:space:]]+files|find[[:space:]]+.*file|search[[:space:]]+codebase)\b"
-    local _read_pat="\b(read|open|inspect|view|show[[:space:]]+file|file[[:space:]]+content)\b"
-    local _journal_pat="\b(journal|reflect|reflection|daily[[:space:]]+log|entry|synthesize)\b"
-    local _delivery_pat="\b(respond|answer|summarize|summary|explain|deliver|report|final)\b"
-    local _git_pat="\b(github|git|repo|repository|pull[[:space:]]+request|clone|commit|push)\b"
-    [[ "$lower" =~ $_web_pat ]] && need_web=1
-    [[ "$lower" =~ $_recall_pat ]] && need_recall=1
-    [[ "$lower" =~ $_ls_pat ]] && need_ls=1
-    [[ "$lower" =~ $_grep_pat ]] && need_grep=1
-    [[ "$lower" =~ $_read_pat ]] && need_read=1
-    [[ "$lower" =~ $_journal_pat ]] && need_journal=1
-    [[ "$lower" =~ $_delivery_pat ]] && need_delivery=1
-    [[ "$lower" =~ $_git_pat ]] && need_git=1
+    local _spaced=" ${lower} "
+    local _web_pat="[^a-zA-Z0-9_-](web|search|google|lookup|look[[:space:]]+up|latest|current|today|news|weather|price|stock|internet|online|http|https|url|website)[^a-zA-Z0-9_-]"
+    local _recall_pat="[^a-zA-Z0-9_-](recall|remember|prior|previous|earlier|from[[:space:]]+before|already[[:space:]]+found|memory|knowledge[[:space:]]+base)[^a-zA-Z0-9_-]"
+    local _ls_pat="[^a-zA-Z0-9_-](list|tree|directory|directories|folders|files|workspace[[:space:]]+layout)[^a-zA-Z0-9_-]"
+    local _grep_pat="[^a-zA-Z0-9_-](grep|regex|pattern|search[[:space:]]+files|find[[:space:]]+.*file|search[[:space:]]+codebase)[^a-zA-Z0-9_-]"
+    local _read_pat="[^a-zA-Z0-9_-](read|open|inspect|view|show[[:space:]]+file|file[[:space:]]+content)[^a-zA-Z0-9_-]"
+    local _journal_pat="[^a-zA-Z0-9_-](journal|reflect|reflection|daily[[:space:]]+log|entry|synthesize)[^a-zA-Z0-9_-]"
+    local _delivery_pat="[^a-zA-Z0-9_-](respond|answer|summarize|summary|explain|deliver|report|final)[^a-zA-Z0-9_-]"
+    local _git_pat="[^a-zA-Z0-9_-](github|git|repo|repository|pull[[:space:]]+request|clone|commit|push)[^a-zA-Z0-9_-]"
+    [[ "$_spaced" =~ $_web_pat ]] && need_web=1
+    [[ "$_spaced" =~ $_recall_pat ]] && need_recall=1
+    [[ "$_spaced" =~ $_ls_pat ]] && need_ls=1
+    [[ "$_spaced" =~ $_grep_pat ]] && need_grep=1
+    [[ "$_spaced" =~ $_read_pat ]] && need_read=1
+    [[ "$_spaced" =~ $_journal_pat ]] && need_journal=1
+    [[ "$_spaced" =~ $_delivery_pat ]] && need_delivery=1
+    [[ "$_spaced" =~ $_git_pat ]] && need_git=1
 
     local -a eligible=() shortlist=()
 
@@ -771,23 +772,24 @@ _agent_router_eligibility_pass() {
     done
 
     # Semantic mapping of abstract verbs to concrete command verbs
-    if [[ "$_lower_obj" =~ \b(implement|create|develop|code|generate|produce)\b ]]; then
+    local _spaced_obj=" ${_lower_obj} "
+    if [[ "$_spaced_obj" =~ [^a-zA-Z0-9_-](implement|create|develop|code|generate|produce)[^a-zA-Z0-9_-] ]]; then
         _agent_router_add_unique shortlist "write"
         _agent_router_add_unique shortlist "edit"
         _agent_router_add_unique shortlist "save"
     fi
-    if [[ "$_lower_obj" =~ \b(modify|change|update|fix|repair)\b ]]; then
+    if [[ "$_spaced_obj" =~ [^a-zA-Z0-9_-](modify|change|update|fix|repair)[^a-zA-Z0-9_-] ]]; then
         _agent_router_add_unique shortlist "edit"
         _agent_router_add_unique shortlist "write"
     fi
-    if [[ "$_lower_obj" =~ \b(send|post|share|message|dm|distribute|deliver)\b ]]; then
+    if [[ "$_spaced_obj" =~ [^a-zA-Z0-9_-](send|post|share|message|dm|distribute|deliver)[^a-zA-Z0-9_-] ]]; then
         _agent_router_add_unique shortlist "social"
         _agent_router_add_unique shortlist "email"
     fi
-    if [[ "$_lower_obj" =~ \b(scaffold|setup|start|initialize)\b ]]; then
+    if [[ "$_spaced_obj" =~ [^a-zA-Z0-9_-](scaffold|setup|start|initialize)[^a-zA-Z0-9_-] ]]; then
         _agent_router_add_unique shortlist "init"
     fi
-    if [[ "$_lower_obj" =~ \b(execute|run|build|compile|test)\b ]]; then
+    if [[ "$_spaced_obj" =~ [^a-zA-Z0-9_-](execute|run|build|compile|test)[^a-zA-Z0-9_-] ]]; then
         _agent_router_add_unique shortlist "build"
         _agent_router_add_unique shortlist "test"
     fi
