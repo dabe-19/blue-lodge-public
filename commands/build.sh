@@ -7,9 +7,25 @@ source "$LODGE_DIR/lib/ui.sh"
 source "$LODGE_DIR/lib/memory.sh"
 
 cmd_build() {
-    local args="$1"
-    local workdir="${2:-.}"
-    
+    # Auto-detect project subdirectory from arguments (directory or file path)
+    if [ -n "$args" ]; then
+        local target_dir=""
+        if [ -d "$workdir/$args" ]; then
+            target_dir="$workdir/$args"
+            args=""
+        else
+            local parent_dir
+            parent_dir=$(dirname "$args")
+            if [ "$parent_dir" != "." ] && [ -d "$workdir/$parent_dir" ]; then
+                target_dir="$workdir/$parent_dir"
+            fi
+        fi
+        if [ -n "$target_dir" ]; then
+            workdir="$target_dir"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Auto-detected project subdirectory from args: $workdir"
+        fi
+    fi
+
     cd "$workdir"
     
     local build_cmd
@@ -21,7 +37,7 @@ cmd_build() {
     if [ -z "$build_cmd" ]; then
         # Search subdirectories for GEORGE.md containing a Build section
         local sub_george
-        sub_george=$(find "$workdir" -maxdepth 3 -name "GEORGE.md" 2>/dev/null | grep -v "/\.george/" | head -1)
+        sub_george=$(find "$workdir" -mindepth 2 -maxdepth 3 -name "GEORGE.md" 2>/dev/null | grep -v "/\.george/" | head -1)
         if [ -n "$sub_george" ]; then
             local sub_dir
             sub_dir=$(dirname "$sub_george")
