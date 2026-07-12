@@ -34,7 +34,7 @@ cmd_save() {
     fi
 
     local filepath content
-    filepath=$(echo "$args" | awk '{print $1}')
+    filepath=$(echo "$args" | head -1 | awk '{print $1}')
     content=$(echo "$args" | sed 's/^[^ ]* *//')
 
     # Expand tilde — LLMs emit ~/path which doesn't expand in quotes

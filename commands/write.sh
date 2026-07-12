@@ -62,7 +62,7 @@ cmd_write() {
     fi
 
     local filepath content
-    filepath=$(echo "$args" | awk '{print $1}')
+    filepath=$(echo "$args" | head -1 | awk '{print $1}')
     content=$(echo "$args" | sed 's/^[^ ]* *//')
 
     # Strip trailing dashes from filepath — catches edge case where
