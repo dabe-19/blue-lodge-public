@@ -1048,7 +1048,7 @@ _models_switch() {
         '{model: $model, prompt: "", keep_alive: $keep_alive}')
 
     local _switch_resp
-    _switch_resp=$(curl -s --max-time 120 "$OLLAMA_URL/api/generate" \
+    _switch_resp=$(curl -s --max-time 600 "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
         -d "$payload" 2>/dev/null)
     local _switch_err

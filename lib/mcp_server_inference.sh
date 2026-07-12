@@ -263,7 +263,7 @@ _handle_tool_call() {
 
             # Pre-warm: send a minimal generate request with keep_alive
             local _load_result
-            _load_result=$(curl -sf --max-time 120 "$OLLAMA_URL/api/generate" \
+            _load_result=$(curl -sf --max-time 600 "$OLLAMA_URL/api/generate" \
                 -d "{\"model\":\"$_model\",\"prompt\":\"\",\"keep_alive\":\"$_keep_alive\",\"stream\":false}" 2>&1)
             local _rc=$?
 
