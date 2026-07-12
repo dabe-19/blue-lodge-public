@@ -8165,7 +8165,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
                 # so task context (persona, objective, milestones) survives
                 # the directory switch. Without this, jq errors on missing file.
                 if [ -d "$_old_george_dir" ] && [ "$_old_george_dir" != "$george_dir" ]; then
-                    for _carry_file in macro_memory.json honeydew.json; do
+                    for _carry_file in macro_memory.json honeydew.json micro_memory.json; do
                         if [ -f "$_old_george_dir/$_carry_file" ] && [ ! -f "$george_dir/$_carry_file" ]; then
                             cp "$_old_george_dir/$_carry_file" "$george_dir/$_carry_file"
                         fi
@@ -8347,7 +8347,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
                 mkdir -p "$george_dir"
                 # Carry forward macro_memory and honeydew from old workdir
                 if [ -d "$_old_george_dir" ] && [ "$_old_george_dir" != "$george_dir" ]; then
-                    for _carry_file in macro_memory.json honeydew.json; do
+                    for _carry_file in macro_memory.json honeydew.json micro_memory.json; do
                         if [ -f "$_old_george_dir/$_carry_file" ] && [ ! -f "$george_dir/$_carry_file" ]; then
                             cp "$_old_george_dir/$_carry_file" "$george_dir/$_carry_file"
                         fi
