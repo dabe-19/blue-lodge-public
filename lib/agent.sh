@@ -6311,7 +6311,8 @@ INTERLOCK_JSON
                         _primary_for_condense=$(_macro_get "$macro_file" "primary_objective")
                         [ -n "$_primary_for_condense" ] && _condense_prompt="OVERALL GOAL: $_primary_for_condense\nCURRENT STEP: $micro_objective"
                     fi
-                    _condense_prompt="${_condense_prompt}\n\nWEB CONTENT (from: $cmd):\n${output}\n\nIn 3-5 sentences, summarize useful information. Preserve specific facts, names, numbers, URLs, and data points relevant to the task. Only say JUNK: <brief reason> if the content is ENTIRELY useless (login/paywall walls with zero real content, completely empty pages, or pure ad/cookie text with no article body). Noisy pages that still contain some real content should be summarized — extract what matters and note what was missing."
+                    local _truncated_output="${output:0:8000}"
+                    _condense_prompt="${_condense_prompt}\n\nWEB CONTENT (from: $cmd):\n${_truncated_output}\n\nIn 3-5 sentences, summarize useful information. Preserve specific facts, names, numbers, URLs, and data points relevant to the task. Only say JUNK: <brief reason> if the content is ENTIRELY useless (login/paywall walls with zero real content, completely empty pages, or pure ad/cookie text with no article body). Noisy pages that still contain some real content should be summarized — extract what matters and note what was missing."
                     local _condense_sys="You are a concise factual summarizer. No personality. Preserve URLs, names, numbers. 3-5 sentences max."
                     local LLM_SCENARIO=evaluator
                     _condensed=$(llm_generate "$_condense_prompt" "$_condense_sys" "${LLM_WEB_CONDENSE_TOKENS:-200}" "$LLM_BUDGET_AGENT" 2>/dev/null)
