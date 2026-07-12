@@ -1826,6 +1826,11 @@ _fast_route() {
         echo "backup"; return 0
     fi
 
+    # /build — compile, run, build, execute scripts/projects
+    if [[ "$_fr_text" =~ (build|compile|run[[:space:]].*script|run[[:space:]].*main|execute[[:space:]].*script|execute[[:space:]].*main|run[[:space:]]main\.sh) ]]; then
+        echo "build"; return 0
+    fi
+
     # /vitals — system dashboard
     if [[ "$_fr_text" =~ (vitals|system[[:space:]]dashboard|system[[:space:]]status|health[[:space:]]check|disk[[:space:]]space|memory[[:space:]]usage|cpu[[:space:]]usage) ]]; then
         echo "vitals"; return 0
