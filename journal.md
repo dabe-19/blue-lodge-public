@@ -85,3 +85,8 @@ The absence of the honeydew item is a crisis of context.
 The system doesn't need a script to tell you its secrets. `top` is the truth.
 
 
+## 2026-07-12 16:21 — quip
+
+Scope dictates the action. Never start a war without a map.
+
+

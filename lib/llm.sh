@@ -1944,6 +1944,7 @@ llm_generate() {
     # arrives. If missing after the pipe, the request failed entirely.
     local _tmpdir="${TMPDIR:-/tmp}"
     local _got_tokens="$_tmpdir/.lodge-gen-tok-$RANDOM-$BASHPID"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] llm_generate: marker file path is %s\n" "$_got_tokens" > "$_tty" 2>/dev/null
     rm -f "$_got_tokens"
 
     # Cancel file for cooperative cancellation from agent loops
@@ -1974,6 +1975,7 @@ llm_generate() {
     }
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] generate think: _can_think=%s model=%s\n" "$_can_think" "$LODGE_MODEL" > "$_tty" 2>/dev/null
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] llm_generate: payload='%s'\n" "$payload" > "$_tty" 2>/dev/null
 
     $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/generate" \
@@ -1998,6 +2000,7 @@ llm_generate() {
         local think_token token
         think_token=$(echo "$line" | jq -r '.thinking // empty' 2>/dev/null)
         token=$(echo "$line" | jq -r '.response // empty' 2>/dev/null)
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] llm_generate: line='%s' think_token='%s' token='%s'\n" "$line" "$think_token" "$token" > "$_tty" 2>/dev/null
 
         # Strip <response>...</response> wrapper tags (Granite preview emits these)
         token="${token//<response>/}"
@@ -2036,6 +2039,7 @@ llm_generate() {
 
         # ── Handle .response field ───────────────────────────────
         if [ -n "$token" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] llm_generate: touching %s\n" "$_got_tokens" > "$_tty" 2>/dev/null
             [ -f "$_got_tokens" ] || touch "$_got_tokens"
             # Kill any external spinner on first response token
             if [ -n "$_SPINNER_PID" ] && kill -0 "$_SPINNER_PID" 2>/dev/null; then
@@ -2187,6 +2191,7 @@ llm_generate() {
     _LLM_ACTIVE=0
 
     # Check if we received any tokens at all
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] llm_generate: final check if %s exists: %s\n" "$_got_tokens" "$([ -f "$_got_tokens" ] && echo 'yes' || echo 'no')" > "$_tty" 2>/dev/null
     if [ ! -f "$_got_tokens" ]; then
         rm -f "$_got_tokens"
         echo "ERROR: LLM request failed or returned no tokens"

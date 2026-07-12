@@ -41,8 +41,8 @@ _MODELS_ACTIVE=""
 
 _MODELS_REGISTRY=(
     # ── Gemma 4 family (Google, 2026) ─────────────────────────
-    "gemma4-e2b-inst^blue-lodge-gemma4-inst:2b^hf.co/unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL^instruct^0^none^<end_of_turn>^0.2^1.0^0.0^32768^16384^0.9^40^0.0^Gemma 4 E2B QAT instruct. Smallest modern default candidate.^edge"
-    "gemma4-e4b-inst^blue-lodge-gemma4-inst:4b^hf.co/unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL^instruct^0^none^<end_of_turn>^0.2^1.0^0.0^32768^16384^0.9^40^0.0^Gemma 4 E4B QAT instruct. Strong phone-class balance.^edge"
+    "gemma4-e2b-inst^blue-lodge-gemma4-inst:2b^hf.co/unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL^instruct^1^system^<end_of_turn>^0.2^1.0^0.0^32768^16384^0.9^40^0.0^Gemma 4 E2B QAT instruct. Smallest modern default candidate.^edge"
+    "gemma4-e4b-inst^blue-lodge-gemma4-inst:4b^hf.co/unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL^instruct^1^system^<end_of_turn>^0.2^1.0^0.0^32768^16384^0.9^40^0.0^Gemma 4 E4B QAT instruct. Strong phone-class balance.^edge"
 
     # ── Qwen 3.5 family (2026 refresh) ────────────────────────
     "qwen35-2b-inst^blue-lodge-qwen35-inst:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL^instruct^0^none^<|im_end|>^0.2^1.0^0.0^32768^16384^0.9^20^0.0^Qwen 3.5 2B instruct. Low-memory utility model.^edge"
@@ -56,7 +56,7 @@ _MODELS_REGISTRY=(
     "nemotron3-nano-4b-inst^blue-lodge-nemotron3-inst:4b^hf.co/unsloth/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M^instruct^0^none^<|eot_id|>^0.2^1.0^0.0^32768^16384^0.9^40^0.0^NVIDIA Nemotron 3 Nano 4B instruct. Modern edge model.^edge"
 
     # ── Central Tier (remote GPU) ──────────────────────────────
-    "gemma4-12b-inst^blue-lodge-gemma4-inst:12b^hf.co/unsloth/gemma-4-12B-it-qat-GGUF:UD-Q4_K_XL^instruct^0^none^<end_of_turn>^0.2^1.0^0.0^32768^16384^0.9^40^0.0^Gemma 4 12B QAT instruct. Central GPU quality tier.^central"
+    "gemma4-12b-inst^blue-lodge-gemma4-inst:12b^hf.co/unsloth/gemma-4-12B-it-qat-GGUF:UD-Q4_K_XL^instruct^1^system^<end_of_turn>^0.2^1.0^0.0^32768^16384^0.9^40^0.0^Gemma 4 12B QAT instruct. Central GPU quality tier.^central"
     "qwen35-9b-inst^blue-lodge-qwen35-inst:9b^hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL^instruct^0^none^<|im_end|>^0.2^1.0^0.0^32768^16384^0.9^20^0.0^Qwen 3.5 9B instruct. Strong central coding tier.^central"
     "granite41-8b-inst^blue-lodge-granite41-inst:8b^hf.co/unsloth/granite-4.1-8b-GGUF:Q4_K_M^instruct^0^none^<|end_of_text|>^0.1^1.0^0.0^32768^12288^0.9^20^0.0^IBM Granite 4.1 8B instruct. Central structured reasoning tier.^central"
 )
@@ -146,6 +146,9 @@ declare -A _MODELS_CHAT_TEMPLATE_BY_KEY=(
 
 declare -A _MODELS_THINK_FLAG_BY_KEY=(
     [qwen35-4b-think]=1
+    [gemma4-e2b-inst]=1
+    [gemma4-e4b-inst]=1
+    [gemma4-12b-inst]=1
 )
 
 declare -A _MODELS_VISION_BY_KEY=(
