@@ -335,9 +335,7 @@ ui_render_response() {
 ui_expand_escapes() {
     local text="$1"
     [ -z "$text" ] && return 0
-    if [[ "$text" != *$'\n'* ]]; then
-        text=$(printf '%b' "$text")
-    elif [[ "$text" == *'\n'* ]] || [[ "$text" == *'\t'* ]]; then
+    if [[ "$text" == *'\n'* ]] || [[ "$text" == *'\t'* ]]; then
         text=$(printf '%s' "$text" | ui_unescape_literals)
     fi
     printf '%s' "$text"
