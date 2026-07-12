@@ -1212,6 +1212,7 @@ TASK: $task
  \"count\":\"2-${AGENT_HONEYDEW_INITIAL_COUNT} items (simple tasks: 2-3)\",
  \"order\":\"by dependency (research→writing→sending)\",
  \"no_redundancy\":\"each item must be DISTINCT — never two items that describe the same work differently (e.g. 'summarize X' and 'present X concisely' are the SAME item — merge them)\",
+ \"research_split\":\"If the task involves research, you MUST break it down into at least two distinct steps: 1) Search to find sources, and 2) Fetch or scrape specific URLs from the search results to collect detailed information.\",
  \"never\":[\"verification steps\",\"confirmation steps\",\"cleanup steps\",\"checkboxes\",\"redundant items that overlap with other items\"]}"
 
     local decompose_sys="You are a task decomposition engine. Output a JSON object: {\"items\":[{\"task\":\"short imperative sentence\"},...]}. Each item: short imperative sentence - no more than 10 words. Describe WHAT, not HOW. No commands, URLs, tools, or parenthetical details."
