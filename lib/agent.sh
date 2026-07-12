@@ -3996,10 +3996,10 @@ _build_specialist_prompt() {
         # the TASK block, right in the attention dead zone.
         cat << 'SPEC_RULES'
 RULES (OBEY THESE — they override everything below):
-1. Output exactly ONE slash command on its own line, starting with /
+1. Output exactly ONE primary slash command starting with /
 2. FORBIDDEN: NO backticks. NO code fences. NO --flags on slash commands. NO quotes on args. NO multiple commands per line.
 3. Slash commands use POSITIONAL args only. NEVER add --limit, --output, --source, --date, --format, or ANY --flag.
-4. Output the bare slash command. NO markdown formatting. Just: /command arg1 arg2
+4. Output the bare slash command. NO markdown formatting. For content-bearing commands (/write, /save, /append, /edit, /social, /email), put all multi-line content/code on subsequent lines.
 SPEC_RULES
         echo ""
 
