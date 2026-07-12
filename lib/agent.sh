@@ -1128,8 +1128,20 @@ _agent_complete_milestone() {
     local _web_outputs
     _web_outputs=$(_micro_web_outputs "$micro_file")
     if [ -n "$_web_outputs" ] && [ "$_web_outputs" != "[]" ]; then
-        printf '%s' "$_web_outputs" > "$george_dir/$RESEARCH_BUFFER_FILE"
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] research buffer saved (%d chars)\n' "${#_web_outputs}" > /dev/tty 2>/dev/null
+        local _rb_file="$george_dir/$RESEARCH_BUFFER_FILE"
+        if [ -f "$_rb_file" ]; then
+            # Merge new outputs with existing outputs
+            local _merged
+            _merged=$(jq -s '.[0] + .[1]' "$_rb_file" <(echo "$_web_outputs") 2>/dev/null)
+            if [ -n "$_merged" ]; then
+                echo "$_merged" > "$_rb_file"
+            else
+                printf '%s' "$_web_outputs" > "$_rb_file"
+            fi
+        else
+            printf '%s' "$_web_outputs" > "$_rb_file"
+        fi
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] research buffer updated/merged\n' > /dev/tty 2>/dev/null
     fi
 
     # ── Reflexive hook: milestone complete ─────────────────
@@ -4590,7 +4602,6 @@ agent_inner_loop() {
                 jq --argjson rc "$_rb_json" '.research_context = {results: $rc}' "$micro_file" > "$_rb_tmp" && mv "$_rb_tmp" "$micro_file"
             fi
         fi
-        rm -f "$_research_buf"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: research buffer -> micro_memory (JSON)"
     fi
 
@@ -7704,7 +7715,19 @@ MEMEOF
             fi
         fi
 
-        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_strat_read_context}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_strat_prior_files}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_last_eval_feedback:+\n\n>>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<\n${_last_eval_feedback}\n>>> You MUST change your approach based on the above. Do NOT repeat the same command. <<<}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
+        # ── Inject persistent research buffer into strategist ────
+        local _strat_rb=""
+        local _rb_file="$george_dir/$RESEARCH_BUFFER_FILE"
+        if [ -f "$_rb_file" ] && [ -s "$_rb_file" ]; then
+            local _rb_data
+            _rb_data=$(jq -r '.[] | "\(.action):\n\(.output)\n"' "$_rb_file" 2>/dev/null)
+            if [ -n "$_rb_data" ]; then
+                _strat_rb="\n\n>>> RESEARCH FINDINGS DATA (gathered so far) <<<\n${_rb_data}"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- research findings data"
+            fi
+        fi
+
+        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_strat_read_context}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_strat_prior_files}${_strat_rb}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_last_eval_feedback:+\n\n>>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<\n${_last_eval_feedback}\n>>> You MUST change your approach based on the above. Do NOT repeat the same command. <<<}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
 
         # ── Research→Delivery Gate ────────────────────────────
         # After N consecutive research milestones, inject a hard
