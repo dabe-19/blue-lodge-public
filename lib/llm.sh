@@ -234,9 +234,9 @@ LLM_PRESENCE_TOOL="${LLM_PRESENCE_TOOL:-}"
 
 LLM_TIMEOUT="${LLM_TIMEOUT:-600}"           # Safety net: 600s max per request (thinking models on ARM need headroom; Ctrl+C also works)
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
-LODGE_THINK="${LODGE_THINK:-1}"               # 1=show thinking tokens dimmed (default), 0=hide thinking tokens (model always thinks)
+LODGE_THINK="${LODGE_THINK:-0}"               # 1=show thinking tokens dimmed, 0=hide thinking tokens (default)
 LODGE_THINK_STREAM="${LODGE_THINK_STREAM:-1}"  # When LODGE_THINK=1: 0=hide thinking, 1=show dimmed, 2=show bright (cyan)
-LODGE_NOTHINK="${LODGE_NOTHINK:-0}"             # 0=model thinks normally, 1=suppress reasoning (model-specific: /no_think for Qwen, system prompt for Granite)
+LODGE_NOTHINK="${LODGE_NOTHINK:-1}"             # 0=model thinks normally, 1=suppress reasoning (default)
 LODGE_DEBUG="${LODGE_DEBUG:-0}"                 # 0=normal, 1=show timers + token counts per LLM call
 
 # ── Thinking model token multiplier ────────────────────────────
