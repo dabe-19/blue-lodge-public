@@ -1128,19 +1128,20 @@ _agent_complete_milestone() {
     local _web_outputs
     _web_outputs=$(_micro_web_outputs "$micro_file")
     if [ -n "$_web_outputs" ] && [ "$_web_outputs" != "[]" ]; then
-        local _rb_file="$george_dir/$RESEARCH_BUFFER_FILE"
-        if [ -f "$_rb_file" ]; then
+        local _accum_file="$george_dir/accumulated_research.json"
+        if [ -f "$_accum_file" ]; then
             # Merge new outputs with existing outputs
             local _merged
-            _merged=$(jq -s '.[0] + .[1]' "$_rb_file" <(echo "$_web_outputs") 2>/dev/null)
+            _merged=$(jq -s '.[0] + .[1]' "$_accum_file" <(echo "$_web_outputs") 2>/dev/null)
             if [ -n "$_merged" ]; then
-                echo "$_merged" > "$_rb_file"
+                echo "$_merged" > "$_accum_file"
             else
-                printf '%s' "$_web_outputs" > "$_rb_file"
+                printf '%s' "$_web_outputs" > "$_accum_file"
             fi
         else
-            printf '%s' "$_web_outputs" > "$_rb_file"
+            printf '%s' "$_web_outputs" > "$_accum_file"
         fi
+        cp "$_accum_file" "$george_dir/$RESEARCH_BUFFER_FILE"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] research buffer updated/merged\n' > /dev/tty 2>/dev/null
     fi
 
@@ -2490,7 +2491,7 @@ REWRITE_JSON
     fi
 
     # Clear research buffer (old research applies to old targets)
-    rm -f "$_rb_file" 2>/dev/null
+    rm -f "$_rb_file" "$_george_dir/accumulated_research.json" 2>/dev/null
 
     # Reset micro_memory research_context (injected from prior milestone)
     if [ -f "$micro_file" ]; then
@@ -4544,6 +4545,12 @@ agent_inner_loop() {
 
     mkdir -p "$george_dir"
 
+    # Copy accumulated_research.json to research_buffer.json before initialization
+    local _accum_buf="$george_dir/accumulated_research.json"
+    if [ -f "$_accum_buf" ]; then
+        cp "$_accum_buf" "$george_dir/$RESEARCH_BUFFER_FILE"
+    fi
+
     # STRICT OVERWRITE: Wipe micro memory clean for the new objective.
     # This is not appended — it is destroyed and recreated on every
     # handoff from the Macro loop. JSON format for structured context.
@@ -4602,6 +4609,7 @@ agent_inner_loop() {
                 jq --argjson rc "$_rb_json" '.research_context = {results: $rc}' "$micro_file" > "$_rb_tmp" && mv "$_rb_tmp" "$micro_file"
             fi
         fi
+        rm -f "$_research_buf"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: research buffer -> micro_memory (JSON)"
     fi
 
