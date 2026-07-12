@@ -290,7 +290,7 @@ _micro_init() {
 _micro_set() {
     local file="$1" key="$2" value="$3"
     local tmp="${file}.tmp"
-    jq --arg k "$key" --arg v "$value" '.[$k] = $v' "$file" > "$tmp" && mv "$tmp" "$file"
+    jq --arg k "$key" --arg v "$value" '.[$k] = $v' "$file" > "$tmp" && memory_json_commit "$tmp" "$file"
 }
 
 _micro_add_action() {
@@ -299,19 +299,19 @@ _micro_add_action() {
     jq --arg a "$action" --arg s "$status" --argjson e "$exit_code" \
        --arg o "${output:0:2000}" --arg src "$source" \
        '.action_log += [{"action": $a, "status": $s, "exit_code": $e, "output": $o, "source": $src}]' \
-       "$file" > "$tmp" && mv "$tmp" "$file"
+       "$file" > "$tmp" && memory_json_commit "$tmp" "$file"
 }
 
 _micro_add_warning() {
     local file="$1" warning="$2"
     local tmp="${file}.tmp"
-    jq --arg w "$warning" '.warnings += [$w]' "$file" > "$tmp" && mv "$tmp" "$file"
+    jq --arg w "$warning" '.warnings += [$w]' "$file" > "$tmp" && memory_json_commit "$tmp" "$file"
 }
 
 _micro_add_note() {
     local file="$1" note="$2"
     local tmp="${file}.tmp"
-    jq --arg n "$note" '.system_notes += [$n]' "$file" > "$tmp" && mv "$tmp" "$file"
+    jq --arg n "$note" '.system_notes += [$n]' "$file" > "$tmp" && memory_json_commit "$tmp" "$file"
 }
 
 _micro_set_result() {
@@ -319,19 +319,19 @@ _micro_set_result() {
     local tmp="${file}.tmp"
     jq --arg s "$status" --arg sum "$summary" \
        '.milestone_result = {"status": $s, "summary": $sum}' \
-       "$file" > "$tmp" && mv "$tmp" "$file"
+       "$file" > "$tmp" && memory_json_commit "$tmp" "$file"
 }
 
 _micro_set_sufficiency() {
     local file="$1"
     local tmp="${file}.tmp"
-    jq '.sufficiency_reached = true' "$file" > "$tmp" && mv "$tmp" "$file"
+    jq '.sufficiency_reached = true' "$file" > "$tmp" && memory_json_commit "$tmp" "$file"
 }
 
 _micro_set_prior_milestones() {
     local file="$1" milestones_json="$2"
     local tmp="${file}.tmp"
-    jq --argjson m "$milestones_json" '.prior_milestones = $m' "$file" > "$tmp" && mv "$tmp" "$file"
+    jq --argjson m "$milestones_json" '.prior_milestones = $m' "$file" > "$tmp" && memory_json_commit "$tmp" "$file"
 }
 
 # ── Routing Trace + Eligibility Helpers ───────────────────────
@@ -951,9 +951,9 @@ _micro_sufficiency_reached() {
 
 # Serialize for LLM injection — last N actions with output capped
 _micro_serialize() {
-    local file="$1" max_actions="${2:-10}"
-    jq --argjson n "$max_actions" '
-        .action_log = (.action_log | .[-$n:] | map(.output = .output[:1024]))
+    local file="$1" max_actions="${2:-10}" max_output="${3:-1024}"
+    jq --argjson n "$max_actions" --argjson m "$max_output" '
+        .action_log = (.action_log | .[-$n:] | map(.output = .output[:$m]))
     ' "$file" 2>/dev/null
 }
 
@@ -1020,7 +1020,7 @@ _macro_add_milestone() {
        --arg obj "$objective" --arg sum "$summary" \
        --arg cmd "$command" --arg ac "$action_class" --arg st "$status" \
        '.completed_milestones += [{"timestamp": $ts, "objective": $obj, "summary": $sum, "command": $cmd, "action_class": $ac, "status": $st}]' \
-       "$file" > "$tmp" && mv "$tmp" "$file"
+       "$file" > "$tmp" && memory_json_commit "$tmp" "$file"
 }
 
 _macro_get() {
@@ -1031,7 +1031,7 @@ _macro_get() {
 _macro_set() {
     local file="$1" key="$2" value="$3"
     local tmp="${file}.tmp"
-    jq --arg k "$key" --arg v "$value" '.[$k] = $v' "$file" > "$tmp" && mv "$tmp" "$file"
+    jq --arg k "$key" --arg v "$value" '.[$k] = $v' "$file" > "$tmp" && memory_json_commit "$tmp" "$file"
 }
 
 # Write-once terminal outcome model.
@@ -1050,7 +1050,7 @@ _macro_set_terminal_outcome() {
         else
             .
         end
-    ' "$file" > "$tmp" && mv "$tmp" "$file"
+    ' "$file" > "$tmp" && memory_json_commit "$tmp" "$file"
 }
 
 _macro_get_terminal_outcome() {
@@ -1062,7 +1062,7 @@ _macro_get_terminal_outcome() {
 _macro_set_honeydew() {
     local file="$1" honeydew_text="$2"
     local tmp="${file}.tmp"
-    jq --arg hd "$honeydew_text" '.honeydew = $hd' "$file" > "$tmp" && mv "$tmp" "$file"
+    jq --arg hd "$honeydew_text" '.honeydew = $hd' "$file" > "$tmp" && memory_json_commit "$tmp" "$file"
 }
 
 _macro_milestone_count() {
@@ -4717,7 +4717,14 @@ agent_inner_loop() {
         # specialist within this iteration. Re-serialized only after a
         # command executes and modifies micro_memory (saves 1 jq call
         # + disk read per inner loop iteration).
-        local inner_context=$(_micro_serialize "$micro_file")
+        local _max_act=10
+        local _max_out=1024
+        if [ "${_p1_incomplete_consec:-0}" -ge 3 ] || [ "${_fail_count:-0}" -ge 3 ]; then
+            _max_act=3
+            _max_out=256
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] L2/L3 Escalation: Compacting action log to last 3 entries, max output 256 chars"
+        fi
+        local inner_context=$(_micro_serialize "$micro_file" "$_max_act" "$_max_out")
 
         # ── Deterministic Eligibility Pass (pre-router) ───────
         # Compute legal/useful commands BEFORE pre-route/fast-route/LLM.

@@ -153,6 +153,12 @@ _lodge_cleanup() {
 # Kills orphan curl processes and cleans temp files so the phone
 # doesn't keep computing after Lodge exits (close Termux, /quit, etc.)
 _lodge_exit_cleanup() {
+    # Remove concurrency lockfile
+    local lockfile="${GEORGE_CONFIG_DIR:-$PWD/.george}/.lodge.lock"
+    if [ -f "$lockfile" ] && [ "$(cat "$lockfile" 2>/dev/null)" = "$$" ]; then
+        rm -f "$lockfile" 2>/dev/null
+    fi
+
     # Tear down remote SSH tunnel + watchdog so they don't outlive Lodge
     declare -f remote_disconnect &>/dev/null && remote_disconnect 2>/dev/null
     # Kill any leftover curl → LLM processes
@@ -6000,6 +6006,20 @@ main() {
     journal_apply_decay 2>/dev/null
     
     if [ $# -eq 0 ]; then
+        # Concurrency Lock Gating
+        local lockfile="${GEORGE_CONFIG_DIR:-$PWD/.george}/.lodge.lock"
+        mkdir -p "$(dirname "$lockfile")" 2>/dev/null
+        if [ -f "$lockfile" ]; then
+            local lock_pid
+            lock_pid=$(cat "$lockfile" 2>/dev/null)
+            if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null && [ "$lock_pid" -ne "$$" ]; then
+                ui_err "Another lodge process (PID $lock_pid) is already running in this workspace."
+                ui_dim "If this is a stale lock, run: rm -f $lockfile"
+                exit 1
+            fi
+        fi
+        echo "$$" > "$lockfile" 2>/dev/null
+
         # Interactive mode
         local _model_info="Model: $LODGE_MODEL"
         [ "${LODGE_SINGLE_MODEL:-0}" -eq 0 ] && _model_info="Primary: $(models_info "$LODGE_MODEL_PRIMARY" 2>/dev/null && echo "$_ME_KEY" || echo "$LODGE_MODEL_PRIMARY")"
@@ -6023,6 +6043,20 @@ main() {
         # Slash command mode
         commands_dispatch "$*" "$PWD"
     else
+        # Concurrency Lock Gating
+        local lockfile="${GEORGE_CONFIG_DIR:-$PWD/.george}/.lodge.lock"
+        mkdir -p "$(dirname "$lockfile")" 2>/dev/null
+        if [ -f "$lockfile" ]; then
+            local lock_pid
+            lock_pid=$(cat "$lockfile" 2>/dev/null)
+            if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null && [ "$lock_pid" -ne "$$" ]; then
+                ui_err "Another lodge process (PID $lock_pid) is already running in this workspace."
+                ui_dim "If this is a stale lock, run: rm -f $lockfile"
+                exit 1
+            fi
+        fi
+        echo "$$" > "$lockfile" 2>/dev/null
+
         # One-shot task mode
         agent_run "$*" "$PWD"
     fi

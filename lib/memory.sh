@@ -764,3 +764,18 @@ memory_schema_compatibility_map_json() {
         echo '{}'
     fi
 }
+
+# Validates that a temp file contains valid JSON, then moves it to the target file
+memory_json_commit() {
+    local tmp="$1"
+    local file="$2"
+    if [ -s "$tmp" ] && command -v jq >/dev/null && jq -e . >/dev/null 2>&1 < "$tmp"; then
+        mv "$tmp" "$file"
+        return 0
+    else
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "  [debug] memory_json_commit: validation failed for %s. Preserving original.\n" "$file" >&2
+        rm -f "$tmp"
+        return 1
+    fi
+}
+
