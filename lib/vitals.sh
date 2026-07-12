@@ -36,10 +36,47 @@ _VITALS_CACHE_BATTERY_STATUS=""
 _VITALS_CACHE_WIFI_SSID=""
 _VITALS_CACHE_WIFI_RSSI=""
 _VITALS_CACHE_CELL_SIGNAL=""
+_VITALS_CACHE_CPU_PCT=""
 
 # ═══════════════════════════════════════════════════════════════
 # Raw Sensors
 # ═══════════════════════════════════════════════════════════════
+
+# ── CPU usage percentage ──────────────────────────────────────
+vitals_cpu_pct() {
+    local val
+    if [ -f /proc/stat ]; then
+        local stat1 stat2
+        stat1=$(grep '^cpu ' /proc/stat)
+        sleep 0.2
+        stat2=$(grep '^cpu ' /proc/stat)
+        
+        local user1 nice1 sys1 idle1 iow1 irq1 soft1
+        read -r _ user1 nice1 sys1 idle1 iow1 irq1 soft1 _ <<< "$stat1"
+        local user2 nice2 sys2 idle2 iow2 irq2 soft2
+        read -r _ user2 nice2 sys2 idle2 iow2 irq2 soft2 _ <<< "$stat2"
+        
+        local prev_idle=$((idle1 + iow1))
+        local idle=$((idle2 + iow2))
+        
+        local prev_non_idle=$((user1 + nice1 + sys1 + irq1 + soft1))
+        local non_idle=$((user2 + nice2 + sys2 + irq2 + soft2))
+        
+        local prev_total=$((prev_idle + prev_non_idle))
+        local total=$((idle + non_idle))
+        
+        local total_diff=$((total - prev_total))
+        local idle_diff=$((idle - prev_idle))
+        
+        if [ "$total_diff" -gt 0 ]; then
+            val=$(( (total_diff - idle_diff) * 100 / total_diff ))
+        fi
+    fi
+    if [ -z "${val:-}" ]; then
+        val=$(top -bn1 2>/dev/null | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print 100 - $1}')
+    fi
+    echo "${val:-?}"
+}
 
 # ── Disk free space (MB) on the main filesystem ───────────────
 vitals_disk_free_mb() {
@@ -197,6 +234,7 @@ _vitals_refresh_cache() {
     _VITALS_CACHE_WIFI_SSID=$(vitals_wifi_ssid)
     _VITALS_CACHE_WIFI_RSSI=$(vitals_wifi_rssi)
     _VITALS_CACHE_CELL_SIGNAL=$(vitals_cell_signal)
+    _VITALS_CACHE_CPU_PCT=$(vitals_cpu_pct)
     _VITALS_CACHE_TIME=$now
 }
 
@@ -462,6 +500,12 @@ vitals_context() {
         parts+=("$ram_tag")
     fi
 
+    # CPU — always include
+    local cpu_val="${_VITALS_CACHE_CPU_PCT:-?}"
+    if [ -n "$cpu_val" ]; then
+        parts+=("CPU ${cpu_val}%")
+    fi
+
     # Battery — include if available
     local batt="${_VITALS_CACHE_BATTERY_PCT:-}"
     if [ -n "$batt" ]; then
@@ -579,6 +623,17 @@ vitals_dashboard() {
     [ "$ram_st" = "critical" ] && ram_color="$C_RED"
     printf "  %bRAM:%b      %b%s MB available%b / %s MB total (%s MB used)\n" \
         "$C_CYAN" "$C_RESET" "$ram_color" "$ram_free" "$C_RESET" "$ram_total" "$ram_used"
+
+    # ── CPU ────────────────────────────────────────────────────
+    local cpu_pct
+    cpu_pct="${_VITALS_CACHE_CPU_PCT:-?}"
+    local cpu_color="$C_GREEN"
+    if [ "$cpu_pct" != "?" ] 2>/dev/null; then
+        [ "$cpu_pct" -gt 90 ] && cpu_color="$C_RED"
+        [ "$cpu_pct" -gt 75 ] && [ "$cpu_pct" -le 90 ] && cpu_color="$C_YELLOW"
+    fi
+    printf "  %bCPU:%b      %b%s%% used%b\n" \
+        "$C_CYAN" "$C_RESET" "$cpu_color" "$cpu_pct" "$C_RESET"
 
     # ── Battery ────────────────────────────────────────────────
     local batt_pct batt_status batt_st

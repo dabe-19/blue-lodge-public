@@ -741,7 +741,7 @@ _agent_router_eligibility_pass() {
     local -a eligible=() shortlist=()
 
     # Local-safe defaults are always eligible.
-    eligible=(respond read grep ls recall journal edit append write save init build test fix slash social email)
+    eligible=(respond read grep ls recall journal edit append write save init build test fix slash social email vitals)
     [ "${AGENT_ASK_USER:-1}" -eq 1 ] && eligible+=(ask)
     [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && eligible+=(brainstorm)
     [ "$web_allowed" -eq 1 ] && eligible+=(web)
@@ -762,7 +762,7 @@ _agent_router_eligibility_pass() {
     local _lower_obj
     _lower_obj=$(echo "$objective" | tr '[:upper:]' '[:lower:]')
     local _verb
-    for _verb in write read grep ls ask brainstorm respond web git social email; do
+    for _verb in write read grep ls ask brainstorm respond web git social email vitals; do
         if [[ "$_lower_obj" =~ (^|[[:space:]]|\"|\')$_verb($|[[:space:]]|,|[.]|\'|\") ]]; then
             if _agent_router_cmd_in_list "$_verb" "${eligible[@]}"; then
                 _agent_router_add_unique shortlist "$_verb"
