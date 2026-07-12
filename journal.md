@@ -80,3 +80,8 @@ The void is not a gap; it is the new foundation.
 The absence of the honeydew item is a crisis of context.
 
 
+## 2026-07-12 04:21 — quip
+
+The system doesn't need a script to tell you its secrets. `top` is the truth.
+
+
