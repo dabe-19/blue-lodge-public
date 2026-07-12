@@ -1916,9 +1916,14 @@ llm_generate() {
             '{model: $model, prompt: $prompt, stream: true, keep_alive: $keep_alive, options: $options}')
     fi
 
+    local _effective_nothink="${LODGE_NOTHINK:-0}"
+    case "${LLM_SCENARIO:-}" in
+        strategist|evaluator|ask) _effective_nothink=0 ;;
+    esac
+
     # Inject budget_tokens at top level (Ollama ignores it inside options)
     local _inject_budget="${budget:-0}"
-    if [ "${LODGE_NOTHINK:-0}" -eq 1 ] && models_has_thinking "$LODGE_MODEL" 2>/dev/null; then
+    if [ "$_effective_nothink" -eq 1 ] && models_has_thinking "$LODGE_MODEL" 2>/dev/null; then
         _inject_budget=1
     fi
     if [ "$_inject_budget" -gt 0 ]; then
@@ -1928,7 +1933,7 @@ llm_generate() {
     # Inject think:true for models with native thinking template support
     # Required for granite4-preview (Ollama .thinking field), improves Qwen3 (separate field vs inline tags)
     # NOT sent to system-prompt thinkers (Ministral) — causes Ollama to malform response stream
-    if [ "${LODGE_NOTHINK:-0}" -eq 0 ] && models_supports_think_flag "$LODGE_MODEL" 2>/dev/null; then
+    if [ "$_effective_nothink" -eq 0 ] && models_supports_think_flag "$LODGE_MODEL" 2>/dev/null; then
         payload=$(echo "$payload" | jq '. + {think: true}')
     fi
 
@@ -2572,9 +2577,14 @@ llm_stream() {
             '{model: $model, prompt: $prompt, stream: true, keep_alive: $keep_alive, options: $options}')
     fi
 
+    local _effective_nothink="${LODGE_NOTHINK:-0}"
+    case "${LLM_SCENARIO:-}" in
+        strategist|evaluator|ask) _effective_nothink=0 ;;
+    esac
+
     # Inject budget_tokens at top level (Ollama ignores it inside options)
     local _inject_budget="${budget:-0}"
-    if [ "${LODGE_NOTHINK:-0}" -eq 1 ] && models_has_thinking "$LODGE_MODEL" 2>/dev/null; then
+    if [ "$_effective_nothink" -eq 1 ] && models_has_thinking "$LODGE_MODEL" 2>/dev/null; then
         _inject_budget=1
     fi
     if [ "$_inject_budget" -gt 0 ]; then
@@ -2583,7 +2593,7 @@ llm_stream() {
 
     # Inject think:true for models with native thinking template support
     # NOT sent to system-prompt thinkers (Ministral)
-    if [ "${LODGE_NOTHINK:-0}" -eq 0 ] && models_supports_think_flag "$LODGE_MODEL" 2>/dev/null; then
+    if [ "$_effective_nothink" -eq 0 ] && models_supports_think_flag "$LODGE_MODEL" 2>/dev/null; then
         payload=$(echo "$payload" | jq '. + {think: true}')
     fi
 
@@ -3091,9 +3101,14 @@ llm_chat() {
             '{model: $model, messages: $messages, stream: true, keep_alive: $keep_alive, options: $options}')
     fi
 
+    local _effective_nothink="${LODGE_NOTHINK:-0}"
+    case "${LLM_SCENARIO:-}" in
+        strategist|evaluator|ask) _effective_nothink=0 ;;
+    esac
+
     # Inject budget_tokens at top level (Ollama ignores it inside options)
     local _inject_budget="${budget:-0}"
-    if [ "${LODGE_NOTHINK:-0}" -eq 1 ] && models_has_thinking "$LODGE_MODEL" 2>/dev/null; then
+    if [ "$_effective_nothink" -eq 1 ] && models_has_thinking "$LODGE_MODEL" 2>/dev/null; then
         _inject_budget=1
     fi
     if [ "$_inject_budget" -gt 0 ]; then
@@ -3102,7 +3117,7 @@ llm_chat() {
 
     # Inject think:true for models with native thinking template support
     # NOT sent to system-prompt thinkers (Ministral)
-    if [ "${LODGE_NOTHINK:-0}" -eq 0 ] && models_supports_think_flag "$LODGE_MODEL" 2>/dev/null; then
+    if [ "$_effective_nothink" -eq 0 ] && models_supports_think_flag "$LODGE_MODEL" 2>/dev/null; then
         payload=$(echo "$payload" | jq '. + {think: true}')
     fi
 

@@ -1120,6 +1120,11 @@ models_nothink_suffix() {
     # LODGE_NOTHINK must be enabled
     [ "${LODGE_NOTHINK:-0}" -eq 1 ] || return
 
+    # Skip nothink suffix for strategist, evaluator, ask scenarios to allow full reasoning
+    case "${LLM_SCENARIO:-}" in
+        strategist|evaluator|ask) return ;;
+    esac
+
     local method
     method=$(models_nothink_method "$model")
 
@@ -1151,8 +1156,15 @@ models_nothink_suffix() {
 models_thinking_directive() {
     local model="${1:-$LODGE_MODEL}"
 
-    # If nothink is active, suppress the directive
-    [ "${LODGE_NOTHINK:-0}" -eq 1 ] && return
+    local _skip_nothink=0
+    case "${LLM_SCENARIO:-}" in
+        strategist|evaluator|ask) _skip_nothink=1 ;;
+    esac
+
+    # If nothink is active, suppress the directive (unless bypassed)
+    if [ "${LODGE_NOTHINK:-0}" -eq 1 ] && [ "$_skip_nothink" -eq 0 ]; then
+        return
+    fi
 
     # All thinking models need the directive injected into the
     # system prompt — the Modelfile SYSTEM gets replaced at runtime.

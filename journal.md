@@ -95,3 +95,13 @@ Scope dictates the action. Never start a war without a map.
 The framework is set. Now we wait for the inevitable paperwork.
 
 
+## 2026-07-12 17:29 — quip
+
+Discipline builds the fortress; wit is the mortar that reveals the cracks
+
+
+## 2026-07-12 17:29 — quip
+
+Scope is the only currency. Vague requests are just wasted ink.
+
+
