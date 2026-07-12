@@ -5311,6 +5311,8 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
             _spec_tail="Output ONLY ONE /web command. ONE URL per command — the URL is the LAST thing on the line, nothing after it. For /web search: extract 3-5 keywords FROM THE MICRO OBJECTIVE above. Drop filler words (the, a, for, in, to, and, or, about, including, regarding, comprehensive, professional, community, organizations, associations). DO NOT copy examples — derive keywords from the objective. NEVER output just '/web search' without keywords. To fetch multiple pages, use separate steps — one /web fetch per step.\nRULES: NO --limit, --source, --date, --output, or ANY --flag. Positional args only: /web search <keywords> or /web fetch <url>"
         elif [[ "${selected_tool#/}" == "social" ]]; then
             _spec_tail="Write the COMPLETE /social command. If a file path is mentioned in the objective, use ONLY that file path as the message argument (do NOT write the file contents inline). Positional args only: /social discord dm <user> <message_or_filepath> or /social post discord <channel> <message_or_filepath>."
+        elif [[ "${selected_tool#/}" =~ ^(write|save|append|edit)$ ]]; then
+            _spec_tail="Write the COMPLETE command with all arguments. You MUST use \\n characters to represent newlines in the file content, and output the entire command on exactly ONE line. Do NOT use literal line breaks. Example: /write file.txt Line 1\\\\nLine 2"
         fi
         local _spec_research="" _spec_brainstorm=""
         if [ -f "$micro_file" ]; then
