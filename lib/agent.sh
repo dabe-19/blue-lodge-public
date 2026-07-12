@@ -5062,6 +5062,18 @@ SHORTLIST OVERRIDE: Choose exactly ONE slash command from ROUTER SHORTLIST only.
         local _router_full_text="$selected_tool"
         local _direct_respond=0
 
+        # Explicitly handle LLM generation failures (returned as ERROR: ...)
+        # to prevent them from falling back to random commands silently.
+        if [[ "$selected_tool" == ERROR:* ]] || [[ "$selected_tool" == ERROR ]]; then
+            local _err_reason="${selected_tool#ERROR: }"
+            [ "$_err_reason" = "$selected_tool" ] && _err_reason="LLM generation failed or timed out"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_warn "  [debug] Router: LLM call failed with error: $_err_reason"
+            _micro_add_action "$micro_file" "(router_failure)" "FAILED" 1 \
+                "Router LLM generation failed: $_err_reason" "llm_router"
+            inner_attempts=$((inner_attempts + 1))
+            continue
+        fi
+
         if [ -n "$_extracted_cmd" ]; then
             selected_tool="$_extracted_cmd"
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router: extracted /$_extracted_cmd from prose output"
