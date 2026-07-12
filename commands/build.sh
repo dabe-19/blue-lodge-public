@@ -19,6 +19,23 @@ cmd_build() {
     [[ "$build_cmd" == "N/A" ]] && build_cmd=""
     
     if [ -z "$build_cmd" ]; then
+        # Search subdirectories for GEORGE.md containing a Build section
+        local sub_george
+        sub_george=$(find "$workdir" -maxdepth 3 -name "GEORGE.md" 2>/dev/null | grep -v "/\.george/" | head -1)
+        if [ -n "$sub_george" ]; then
+            local sub_dir
+            sub_dir=$(dirname "$sub_george")
+            if [ "$sub_dir" != "$workdir" ]; then
+                workdir="$sub_dir"
+                cd "$workdir"
+                build_cmd=$(memory_get_section "Build" "$workdir" | grep '^build:' | sed 's/^build:[[:space:]]*//' | head -1)
+                [[ "$build_cmd" == "N/A" ]] && build_cmd=""
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Auto-detected project subdirectory via GEORGE.md: $workdir"
+            fi
+        fi
+    fi
+    
+    if [ -z "$build_cmd" ]; then
         if [ -f "Cargo.toml" ]; then
             build_cmd="cargo build"
         elif [ -f "pyproject.toml" ]; then
@@ -37,10 +54,10 @@ cmd_build() {
     fi
 
     # Concrete task redirection: run the agent-generated version if it exists
-    if [[ "$build_cmd" == *"main.sh"* ]] && [ -f "responses/system_shield/main.sh" ]; then
-        build_cmd="bash responses/system_shield/main.sh"
-    elif [[ "$build_cmd" == *"main.sh"* ]] && [ -f "responses/main.sh" ]; then
-        build_cmd="bash responses/main.sh"
+    if [[ "$build_cmd" == *"main.sh"* ]] && [ -f "${LODGE_DIR}/responses/system_shield/main.sh" ]; then
+        build_cmd="bash ${LODGE_DIR}/responses/system_shield/main.sh"
+    elif [[ "$build_cmd" == *"main.sh"* ]] && [ -f "${LODGE_DIR}/responses/main.sh" ]; then
+        build_cmd="bash ${LODGE_DIR}/responses/main.sh"
     fi
     
     ui_step "Running: $build_cmd"
