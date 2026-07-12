@@ -1143,6 +1143,11 @@ _agent_complete_milestone() {
     _macro_add_milestone "$macro_file" "$micro_objective" \
         "$_milestone_summary" "${last_success_cmd:-}" "$_action_class"
 
+    # Archive the completed milestone into FTS database
+    if declare -f recall_archive_milestone &>/dev/null; then
+        recall_archive_milestone "$micro_objective" "$_milestone_summary" "${last_success_cmd:-}"
+    fi
+
     if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
         printf '  [debug] macro_memory <- milestone: %s\n' "${_milestone_summary:0:120}" > /dev/tty 2>/dev/null
         printf '  [debug] micro_memory <- COMPLETE: %s\n' "${summary:0:80}" > /dev/tty 2>/dev/null
@@ -7123,6 +7128,17 @@ _agent_cross_task_sieve() {
     jq --argjson ctx "$_sieve_results" '.prior_context = $ctx' "$_sieve_macro" > "$_sieve_tmp" && mv "$_sieve_tmp" "$_sieve_macro"
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] cross-task sieve: injected prior context from recall"
+
+    # Search recall for relevant archived milestones (top 3)
+    if declare -f recall_search_milestones &>/dev/null; then
+        local _sieve_ms
+        _sieve_ms=$(recall_search_milestones "$_sieve_task" 3 400 2>/dev/null)
+        if [ -n "$_sieve_ms" ] && [ "$_sieve_ms" != "[]" ] && jq empty <<< "$_sieve_ms" 2>/dev/null; then
+            local _sieve_ms_tmp="${_sieve_macro}.tmp"
+            jq --argjson ms "$_sieve_ms" '.prior_milestones = $ms' "$_sieve_macro" > "$_sieve_ms_tmp" && mv "$_sieve_ms_tmp" "$_sieve_macro"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] cross-task sieve: injected prior milestones from archive"
+        fi
+    fi
     return 0
 }
 
@@ -7773,7 +7789,22 @@ MEMEOF
             fi
         fi
 
-        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_strat_read_context}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_strat_prior_files}${_strat_rb}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_last_eval_feedback:+\n\n>>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<\n${_last_eval_feedback}\n>>> You MUST change your approach based on the above. Do NOT repeat the same command. <<<}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
+        # ── Inject prior archived milestones into strategist ─────
+        local _strat_prior_ms=""
+        if [ -f "$macro_file" ]; then
+            local _has_prior_ms
+            _has_prior_ms=$(jq -r '.prior_milestones // empty' "$macro_file" 2>/dev/null)
+            if [ -n "$_has_prior_ms" ] && [ "$_has_prior_ms" != "null" ] && [ "$_has_prior_ms" != "[]" ]; then
+                _strat_prior_ms="\n\n>>> RELEVANT ARCHIVED MILESTONES (Lexical Recall) <<<"
+                while IFS='|' read -r title summary ts; do
+                    [ -z "$title" ] && continue
+                    _strat_prior_ms="${_strat_prior_ms}\n- [${ts:0:10}] ${title}: ${summary}"
+                done <<< $(jq -r '.prior_milestones[] | "\(.title)|\(.summary)|\(.ts)"' "$macro_file" 2>/dev/null)
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- prior milestones context"
+            fi
+        fi
+
+        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_strat_read_context}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_strat_prior_files}${_strat_rb}${_strat_prior_ms}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_last_eval_feedback:+\n\n>>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<\n${_last_eval_feedback}\n>>> You MUST change your approach based on the above. Do NOT repeat the same command. <<<}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
 
         # ── Research→Delivery Gate ────────────────────────────
         # After N consecutive research milestones, inject a hard

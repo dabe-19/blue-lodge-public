@@ -523,6 +523,22 @@ memory_compact() {
     # 1. Compact completed milestones: keep last 5, summarize older
     local completed
     completed=$(memory_get_section "Completed Milestones" "$dir")
+    
+    # Pre-archive any live milestones in GEORGE.md before compaction
+    if [ -n "$completed" ] && declare -f recall_archive_milestone &>/dev/null; then
+        local line
+        while IFS= read -r line || [ -n "$line" ]; do
+            # Strip leading "- "
+            local clean_line="${line#-[[:space:]]}"
+            [ -z "$clean_line" ] && continue
+            # If it starts with [oldest milestones archived] or is a placeholder, skip
+            [[ "$clean_line" == \[*milestones\ archived\]* ]] && continue
+            [[ "$clean_line" == "(none)" ]] && continue
+            
+            recall_archive_milestone "$clean_line" "Archived milestone from project history" "GEORGE.md"
+        done <<< "$completed"
+    fi
+
     local line_count
     line_count=$(echo "$completed" | wc -l)
     

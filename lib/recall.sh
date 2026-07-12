@@ -1763,3 +1763,132 @@ recall_schema_compat_map_json() {
 
     printf '%s\n' "$out"
 }
+
+# ── Archive a completed milestone into FTS5 ────────────────────
+# Usage: recall_archive_milestone "title" "summary" [filepath]
+recall_archive_milestone() {
+    local title="$1"
+    local content="$2"
+    local fpath="${3:-}"
+
+    # Gate: recall database must be initialized/available
+    recall_available || return 0
+    recall_init || return 0
+
+    local now
+    now=$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S')
+
+    local title_safe content_safe fpath_safe
+    title_safe="${title//\'/\'\'}"
+    content_safe="${content//\'/\'\'}"
+    fpath_safe="${fpath//\'/\'\'}"
+
+    # Avoid duplicate archiving for the exact same milestone title and content
+    local dup
+    dup=$(sqlite3 "$RECALL_DB" "SELECT COUNT(*) FROM chunks WHERE source='milestone_archive' AND section='$title_safe' AND content='$content_safe';" 2>/dev/null || echo "0")
+    if [ "$dup" -gt 0 ] 2>/dev/null; then
+        return 0
+    fi
+
+    sqlite3 "$RECALL_DB" \
+        "INSERT INTO chunks (source, section, content, filepath, indexed_at)
+         VALUES ('milestone_archive', '$title_safe', '$content_safe', '$fpath_safe', '$now');"
+}
+
+# ── Search archived milestones using FTS5 ──────────────────────
+# Usage: recall_search_milestones "query" [limit] [max_chars]
+recall_search_milestones() {
+    local query="$1"
+    local limit="${2:-3}"
+    local max_chars="${3:-400}"
+
+    recall_available || return 0
+    [ -f "$RECALL_DB" ] || return 0
+
+    local safe_query
+    safe_query=$(_recall_sanitize_query "$query")
+    [ -z "$safe_query" ] && return 0
+
+    local results
+    results=$(sqlite3 -separator '|' "$RECALL_DB" <<SQL
+SELECT
+    c.section,
+    CASE WHEN length(c.content) <= $max_chars
+         THEN c.content
+         ELSE substr(c.content, 1, $max_chars) || '...'
+    END AS body,
+    c.indexed_at
+FROM chunks_fts
+JOIN chunks c ON chunks_fts.rowid = c.id
+WHERE c.source = 'milestone_archive' AND chunks_fts MATCH '$safe_query'
+ORDER BY bm25(chunks_fts, 5.0, 10.0, 1.0)
+LIMIT $limit;
+SQL
+    )
+
+    # OR fallback if AND produced no results
+    if [ -z "$results" ]; then
+        local or_query
+        or_query=$(_recall_sanitize_query "$query" "OR")
+        if [ -n "$or_query" ]; then
+            results=$(sqlite3 -separator '|' "$RECALL_DB" <<SQL
+SELECT
+    c.section,
+    CASE WHEN length(c.content) <= $max_chars
+         THEN c.content
+         ELSE substr(c.content, 1, $max_chars) || '...'
+    END AS body,
+    c.indexed_at
+FROM chunks_fts
+JOIN chunks c ON chunks_fts.rowid = c.id
+WHERE c.source = 'milestone_archive' AND chunks_fts MATCH '$or_query'
+ORDER BY bm25(chunks_fts, 5.0, 10.0, 1.0)
+LIMIT $limit;
+SQL
+            )
+        fi
+    fi
+
+    [ -z "$results" ] && return 0
+
+    # Format as JSON array of objects
+    local _rm_json='[]'
+    if [[ "${_RECALL_JSON1_OK:-0}" == "1" ]]; then
+        _rm_json=$(sqlite3 "$RECALL_DB" <<SQL
+SELECT json_group_array(
+    json_object('title', section, 'summary', body, 'ts', indexed_at))
+FROM (
+    SELECT
+        c.section,
+        CASE WHEN length(c.content) <= $max_chars
+             THEN c.content
+             ELSE substr(c.content, 1, $max_chars) || '...'
+        END AS body,
+        c.indexed_at
+    FROM chunks_fts
+    JOIN chunks c ON chunks_fts.rowid = c.id
+    WHERE c.source = 'milestone_archive' AND chunks_fts MATCH '$safe_query'
+    ORDER BY bm25(chunks_fts, 5.0, 10.0, 1.0)
+    LIMIT $limit
+);
+SQL
+        )
+    else
+        # Fallback manual JSON assembly
+        local first=1
+        _rm_json='['
+        while IFS='|' read -r sec body ts; do
+            [ -z "$sec" ] && continue
+            [ "$first" -eq 0 ] && _rm_json="${_rm_json},"
+            first=0
+            local escaped_sec escaped_body
+            escaped_sec=$(echo "$sec" | jq -aR .)
+            escaped_body=$(echo "$body" | jq -aR .)
+            _rm_json="${_rm_json}{\"title\":${escaped_sec},\"summary\":${escaped_body},\"ts\":\"$ts\"}"
+        done <<< "$results"
+        _rm_json="${_rm_json}]"
+    fi
+
+    printf '%s\n' "$_rm_json"
+}
+

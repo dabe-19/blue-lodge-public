@@ -1,30 +1,38 @@
-# Contract: Fix Gemma 4 <unused25> Token Issue
+### Feature Overview
+Implement a tiered memory management system for George consisting of a live completed milestone LRU cache inside `GEORGE.md` and a long-term SQLite FTS5 milestone archive inside the recall database to prevent context window saturation while maintaining historical continuity.
 
-## Feature Overview
-Implement API-level stop token enforcement for the `llamacpp` backend to act as a safety net against model tokenizer loop failures, and provide instructions to recompile/update `llama-server` to fix the Gemma 4 vocab compatibility bug.
+### Layer Changes
 
-## Layer Changes
+#### Core Engine (`lib/memory.sh`, `lib/recall.sh`)
+- Register `milestone_archive` in `recall.sh` as a dynamic source.
+- Add `recall_archive_milestone()` to persist completed milestones directly into the SQLite database.
+- Add `recall_search_milestones()` to search the archived milestones using BM25 ranking.
+- Modify `memory_compact()` to trim milestones exceeding the configured limit (e.g., last 5) from `GEORGE.md` without losing them (already saved in SQLite).
 
-### Core Engine Layer
-- **[llm.sh](file:///home/wsl-ops/blue-lodge/lib/llm.sh)**: Update payload builder and API calls to pass the active model's `stop` token in the request payload.
+#### Agent Loop (`lib/agent.sh`)
+- Modify the cross-task sieve to query `milestone_archive` in SQLite at task start or milestone planning.
+- Inject matched archived milestones directly into the strategist's context prompt as a dedicated prior-context block.
 
-### Tooling Layer
-- **[quartermaster.agent.md](file:///home/wsl-ops/blue-lodge/.agents/workflows/quartermaster.agent.md)**: Document/implement environment validation and re-build steps for `llama-server`.
+#### Verification/Tests (`tests/`)
+- Add a new unit test suite `tests/test_memory_tier.sh` to verify archiving, compaction, and search-based injection.
 
-## Touched Layers (Handoff Routing)
-- **core-specialist**: yes — implement stop token passing in `lib/llm.sh`.
-- **commands-specialist**: no
-- **ui-specialist**: no
-- **tests-specialist**: no
+### Scope Boundaries
+This feature focuses strictly on archiving completed milestones and retrieving them lexically. It does not introduce semantic vector embeddings or external database dependencies.
 
-## Tooling Layer (Provisioning)
-- **Tooling**: yes — recompile/update `llama-server` to resolve vocab bugs.
+### Touched Layers (Handoff Routing)
+- **core-specialist**: yes — implementing memory compaction and SQLite FTS milestone archiving.
+- **commands-specialist**: no — no slash command parser modifications.
+- **ui-specialist**: no — no UI rendering modifications.
+- **tests-specialist**: yes — creating automated test suite for memory tiers.
 
-## Functional Verification
-- **Verification**: yes — run `scripts/validate-gpu.sh` on `gemma4-e4b-inst` and verify test suite passes.
+### Tooling Layer (Provisioning)
+- **Tooling**: no
 
-## Security
+### Functional Verification
+- **Verification**: yes — test run via `tests/run_all.sh`.
+
+### Security
 - **Security**: no
 
-## Style
+### Style
 - **Style**: no
