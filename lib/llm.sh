@@ -3301,29 +3301,26 @@ llm_vision() {
             *.webp) mime_type="image/webp" ;;
         esac
 
-        # Build multimodal messages payload
-        local messages
-        if [ -n "$system" ]; then
-            messages=$(jq -n \
-                --arg sys "$system" \
-                --arg prompt "$prompt" \
-                --arg img "data:${mime_type};base64,${img_base64}" \
-                '[{role:"system",content:$sys},{role:"user",content:[{type:"text",text:$prompt},{type:"image_url",image_url:{url:$img}}]}]')
-        else
-            messages=$(jq -n \
-                --arg prompt "$prompt" \
-                --arg img "data:${mime_type};base64,${img_base64}" \
-                '[{role:"user",content:[{type:"text",text:$prompt},{type:"image_url",image_url:{url:$img}}]}]')
-        fi
-
-        payload=$(jq -n \
-            --argjson messages "$messages" \
+        # Build multimodal messages payload directly to avoid command line limits
+        payload=$(printf '%s' "$img_base64" | jq -R -s \
+            --arg sys "${system:-}" \
+            --arg prompt "$prompt" \
+            --arg mime "$mime_type" \
             --argjson max_tokens "$max_tok" \
             --argjson temperature "$temp" \
             --argjson top_p "$top_p" \
             --argjson top_k "$top_k" \
             --argjson min_p "$min_p" \
-            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:true}')
+            '
+            ("data:" + $mime + ";base64," + .) as $img_url |
+            [{type: "text", text: $prompt}, {type: "image_url", image_url: {url: $img_url}}] as $user_content |
+            (if $sys != "" then
+                [{role: "system", content: $sys}, {role: "user", content: $user_content}]
+             else
+                [{role: "user", content: $user_content}]
+             end) as $messages |
+            {messages: $messages, max_tokens: $max_tokens, temperature: $temperature, top_p: $top_p, top_k: $top_k, min_p: $min_p, stream: true}
+            ')
 
         local curl_timeout="${LLM_TIMEOUT:-600}"
         local timeout_cmd=""
@@ -3341,10 +3338,10 @@ llm_vision() {
         local _spinner_pid="$_SPINNER_PID"
         local _first_token=0
 
-        $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
+        printf '%s' "$payload" | $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
             "$LLAMA_CPP_URL/v1/chat/completions" \
             -H "Content-Type: application/json" \
-            -d "$payload" 2>/dev/null | while IFS= read -r line; do
+            -d @- 2>/tmp/lodge-vision-curl.err | while IFS= read -r line; do
 
             [[ "$line" == data:* ]] || continue
             local json="${line#data: }"
@@ -3352,16 +3349,18 @@ llm_vision() {
                 echo ""
                 break
             fi
-            local token
+            local token _rc
             token=$(echo "$json" | jq -r '.choices[0].delta.content // empty' 2>/dev/null)
-            if [ -n "$token" ]; then
+            _rc=$(echo "$json" | jq -r '.choices[0].delta.reasoning_content // empty' 2>/dev/null)
+            if [ -n "$token" ] || [ -n "$_rc" ]; then
                 if [ "$_first_token" -eq 0 ]; then
                     _first_token=1
                     touch "$_got_tokens"
                     kill "$_spinner_pid" 2>/dev/null; wait "$_spinner_pid" 2>/dev/null
                     printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
                 fi
-                printf "%s" "$token"
+                [ -n "$_rc" ] && printf "%s" "$_rc"
+                [ -n "$token" ] && printf "%s" "$token"
             fi
         done
 
@@ -3380,25 +3379,22 @@ llm_vision() {
 
     # ── Ollama path (original) ─────────────────────────────────
 
-    local payload
-    if [ -n "$system" ]; then
-        payload=$(jq -n \
-            --arg model "$LODGE_MODEL" \
-            --arg prompt "$prompt" \
-            --arg system "$system" \
-            --arg img "$img_base64" \
-            --arg keep_alive "$LLM_KEEP_ALIVE" \
-            --argjson options "$_opts" \
-            '{model: $model, prompt: $prompt, system: $system, images: [$img], stream: true, keep_alive: $keep_alive, options: $options}')
-    else
-        payload=$(jq -n \
-            --arg model "$LODGE_MODEL" \
-            --arg prompt "$prompt" \
-            --arg img "$img_base64" \
-            --arg keep_alive "$LLM_KEEP_ALIVE" \
-            --argjson options "$_opts" \
-            '{model: $model, prompt: $prompt, images: [$img], stream: true, keep_alive: $keep_alive, options: $options}')
-    fi
+    payload=$(printf '%s' "$img_base64" | jq -R -s \
+        --arg model "$LODGE_MODEL" \
+        --arg prompt "$prompt" \
+        --arg sys "${system:-}" \
+        --arg keep_alive "$LLM_KEEP_ALIVE" \
+        --argjson options "$_opts" \
+        '
+        {
+          model: $model,
+          prompt: $prompt,
+          images: [ . ],
+          stream: true,
+          keep_alive: $keep_alive,
+          options: $options
+        } + (if $sys != "" then {system: $sys} else {} end)
+        ')
 
     local curl_timeout="${LLM_TIMEOUT:-600}"
     local timeout_cmd=""
@@ -3420,10 +3416,10 @@ llm_vision() {
     local _spinner_pid="$_SPINNER_PID"
     local _first_token=0
 
-    $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
+    printf '%s' "$payload" | $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
         "$OLLAMA_URL/api/generate" \
         -H "Content-Type: application/json" \
-        -d "$payload" 2>/dev/null | while IFS= read -r line; do
+        -d @- 2>/dev/null | while IFS= read -r line; do
 
         # Check for Ollama error response
         local _ollama_err

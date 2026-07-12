@@ -73,6 +73,6 @@ cmd_vision() {
         source "$LODGE_DIR/lib/llm.sh"
     fi
 
-    local LLM_SCENARIO=ask
+    local LLM_SCENARIO=vision
     llm_vision "$image" "$prompt"
 }

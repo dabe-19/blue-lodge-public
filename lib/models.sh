@@ -53,7 +53,7 @@ _MODELS_REGISTRY=(
     "granite41-3b-inst^blue-lodge-granite41-inst:3b^hf.co/unsloth/granite-4.1-3b-GGUF:Q4_K_M^instruct^0^none^<|end_of_text|>^0.1^1.0^0.0^32768^12288^0.9^20^0.0^IBM Granite 4.1 3B instruct. Structured and deterministic output.^edge"
 
     # ── Nemotron 3 family (NVIDIA, 2026) ──────────────────────
-    "nemotron3-nano-4b-inst^blue-lodge-nemotron3-inst:4b^hf.co/unsloth/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M^instruct^0^none^<|eot_id|>^0.2^1.0^0.0^32768^16384^0.9^40^0.0^NVIDIA Nemotron 3 Nano 4B instruct. Modern edge model.^edge"
+    "nemotron3-nano-4b-inst^blue-lodge-nemotron3-inst:4b^hf.co/unsloth/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M^instruct^0^none^<|im_end|>^0.2^1.0^0.0^32768^16384^0.9^40^0.0^NVIDIA Nemotron 3 Nano 4B instruct. Modern edge model.^edge"
 
     # ── Central Tier (remote GPU) ──────────────────────────────
     "gemma4-12b-inst^blue-lodge-gemma4-inst:12b^hf.co/unsloth/gemma-4-12B-it-qat-GGUF:UD-Q4_K_XL^instruct^1^system^<end_of_turn>^0.2^1.0^0.0^32768^16384^0.9^40^0.0^Gemma 4 12B QAT instruct. Central GPU quality tier.^central"
@@ -141,7 +141,7 @@ declare -A _MODELS_CHAT_TEMPLATE_BY_KEY=(
     [qwen35-9b-inst]="chatml"
     [granite41-3b-inst]="granite"
     [granite41-8b-inst]="granite"
-    [nemotron3-nano-4b-inst]="llama3"
+    [nemotron3-nano-4b-inst]="chatml"
 )
 
 declare -A _MODELS_THINK_FLAG_BY_KEY=(
@@ -409,7 +409,8 @@ _models_chat_template_name() {
     case "$lower" in
         *minist*|*mistral*)     echo "mistral-v7"  ;;
         *qwen3*|*qwen2.5*)     echo "chatml"       ;;  # Qwen 3, 3.5, 2.5 all use ChatML
-        *llama*3*|*nemotron*3*) echo "llama3"       ;;
+        *llama*3*)              echo "llama3"       ;;
+        *nemotron*3*)           echo "chatml"       ;; # Nemotron 3 uses ChatML
         *granite*)              echo "granite"      ;;
         *phi-4*|*phi4*)         echo "phi4"         ;;
         *phi-3*|*phi3*)         echo "phi3"         ;;
@@ -915,6 +916,20 @@ models_create() {
 #   Secondary (fast):    router, tool, journal, commit
 models_for_scenario() {
     local scenario="${1:-}"
+
+    # Handle vision scenario routing based on vision capability
+    case "$scenario" in
+        vision)
+            if models_has_vision "$LODGE_MODEL_PRIMARY"; then
+                echo "$LODGE_MODEL_PRIMARY"
+            elif [ "${LODGE_SINGLE_MODEL:-0}" -eq 0 ] && models_has_vision "$LODGE_MODEL_SECONDARY"; then
+                echo "$LODGE_MODEL_SECONDARY"
+            else
+                echo "blue-lodge-gemma4-inst:4b"
+            fi
+            return
+            ;;
+    esac
 
     # Single-model mode: always primary
     if [ "${LODGE_SINGLE_MODEL:-0}" -eq 1 ]; then

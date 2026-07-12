@@ -1547,8 +1547,33 @@ web_fetch() {
             return 0
             ;;
         binary)
-            ui_err "Cannot extract text from binary file: $url" >&2
-            return 1
+            local _filename
+            _filename=$(basename "$url" | sed 's/[?#].*//')
+            [ -z "$_filename" ] || [ "$_filename" = "/" ] && _filename="downloaded_binary"
+            if declare -f tools_sanitize_filename &>/dev/null; then
+                _filename=$(tools_sanitize_filename "$_filename")
+            else
+                _filename=$(echo "$_filename" | sed 's/["'"'"'`]//g' | tr ' ' '-' | sed 's/[^a-zA-Z0-9_./-]//g')
+            fi
+            local _dest="./$_filename"
+            ui_info "Detected binary file. Downloading to $_dest..." >&2
+            if curl -fsSL -o "$_dest" "$url" 2>&1; then
+                local _size
+                _size=$(wc -c < "$_dest" 2>/dev/null || echo "0")
+                ui_ok "Successfully downloaded binary file to $_dest ($_size bytes)" >&2
+                case "$_filename" in
+                    *.jpg|*.jpeg|*.png|*.gif|*.webp|*.bmp|*.ico)
+                        echo "Downloaded image file to $_dest. Use the /vision command to analyze it: /vision $_dest"
+                        ;;
+                    *)
+                        echo "Downloaded binary file to $_dest."
+                        ;;
+                esac
+                return 0
+            else
+                ui_err "Failed to download binary file: $url" >&2
+                return 1
+            fi
             ;;
     esac
 
@@ -1716,8 +1741,36 @@ web_fetch_json() {
             return 0
             ;;
         binary)
-            ui_err "Cannot extract text from binary file: $clean_url" >&2
-            return 1
+            local _filename
+            _filename=$(basename "$clean_url" | sed 's/[?#].*//')
+            [ -z "$_filename" ] || [ "$_filename" = "/" ] && _filename="downloaded_binary"
+            if declare -f tools_sanitize_filename &>/dev/null; then
+                _filename=$(tools_sanitize_filename "$_filename")
+            else
+                _filename=$(echo "$_filename" | sed 's/["'"'"'`]//g' | tr ' ' '-' | sed 's/[^a-zA-Z0-9_./-]//g')
+            fi
+            local _dest="./$_filename"
+            ui_info "Detected binary file (structured). Downloading to $_dest..." >&2
+            if curl -fsSL -o "$_dest" "$clean_url" 2>&1; then
+                local _size
+                _size=$(wc -c < "$_dest" 2>/dev/null || echo "0")
+                ui_ok "Successfully downloaded binary file to $_dest ($_size bytes)" >&2
+                local _desc="Downloaded binary file to $_dest."
+                case "$_filename" in
+                    *.jpg|*.jpeg|*.png|*.gif|*.webp|*.bmp|*.ico)
+                        _desc="Downloaded image file to $_dest. Use the /vision command to analyze it: /vision $_dest"
+                        ;;
+                esac
+                jq -n \
+                    --arg url "$clean_url" \
+                    --arg title "$_filename" \
+                    --arg content "$_desc" \
+                    '{"url":$url,"title":$title,"content":$content,"images":[]}'
+                return 0
+            else
+                ui_err "Failed to download binary file: $clean_url" >&2
+                return 1
+            fi
             ;;
     esac
 

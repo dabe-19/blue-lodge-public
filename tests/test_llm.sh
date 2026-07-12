@@ -791,8 +791,8 @@ describe "Debug instrumentation"
 # ── Thinking mode ─────────────────────────────────────────────
 describe "Thinking mode configuration (thinking-only model)"
 
-  it "LODGE_THINK defaults to 1" && {
-    assert_eq "$LODGE_THINK" "1"
+  it "LODGE_THINK defaults to 0" && {
+    assert_eq "$LODGE_THINK" "0"
   }
 
   it "LODGE_THINK_STREAM defaults to 1" && {
@@ -934,7 +934,7 @@ describe "Model family system"
     assert_eq "$_ME_TEMP" "0.1" "granite41 temp"
 
     models_info "nemotron3-nano-4b-inst"
-    assert_eq "$_ME_STOP" '<|eot_id|>' "llama32 stop token"
+    assert_eq "$_ME_STOP" '<|im_end|>' "nemotron3 stop token"
 
     models_info "gemma4-e4b-inst"
     assert_eq "$_ME_STOP" '<end_of_turn>' "gemma4 stop token"
@@ -1161,9 +1161,9 @@ describe "Chat template — GGUF-embedded Jinja2 via --jinja"
     assert_eq "$_result" "granite"
   }
 
-  it "_models_chat_template_name maps Nemotron 3 → llama3" && {
+  it "_models_chat_template_name maps Nemotron 3 → chatml" && {
     _result=$(_models_chat_template_name "hf.co/unsloth/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M")
-    assert_eq "$_result" "llama3"
+    assert_eq "$_result" "chatml"
   }
 
   it "auto-start path uses --jinja (not template name resolution)" && {

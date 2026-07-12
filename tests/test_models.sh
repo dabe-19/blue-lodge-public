@@ -499,11 +499,11 @@ describe "Chat Template Mapping — 2026 models"
     assert_eq "$_tmpl" "granite"
   }
 
-  it "Nemotron maps to llama3 template" && {
+  it "Nemotron maps to chatml template" && {
     _entry=$(_models_lookup "nemotron3-nano-4b-inst")
     _models_parse_entry "$_entry"
     _tmpl=$(_models_chat_template_name "$_ME_BASE")
-    assert_eq "$_tmpl" "llama3"
+    assert_eq "$_tmpl" "chatml"
   }
 
 # ════════════════════════════════════════════════════════════════
