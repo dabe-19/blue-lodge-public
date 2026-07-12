@@ -47,7 +47,7 @@ AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-1}"              # Smart command routing
 AGENT_ASK_USER="${AGENT_ASK_USER:-1}"                    # Allow George to /ask the user questions during tasks: 0=disabled, 1=enabled
 AGENT_BRAINSTORM="${AGENT_BRAINSTORM:-1}"                  # Allow George to /brainstorm (self-reason) during tasks: 0=disabled, 1=enabled
 AGENT_FILE_EXPAND="${AGENT_FILE_EXPAND:-1}"              # Auto-expand file references in /social, /email, /write text: 0=disabled, 1=enabled
-AGENT_FILE_EXPAND_CHARS="${AGENT_FILE_EXPAND_CHARS:-1000}"  # Max chars per expanded file in specialist output (0=unlimited)
+AGENT_FILE_EXPAND_CHARS="${AGENT_FILE_EXPAND_CHARS:-10000}"  # Max chars per expanded file in specialist output (0=unlimited)
 AGENT_DM_SCAN_CHARS="${AGENT_DM_SCAN_CHARS:-80}"          # Characters to scan for recipient names from start of DM text
 AGENT_PRE_ROUTE="${AGENT_PRE_ROUTE:-1}"                  # Pre-route: extract /cmd from milestone, skip router: 0=disabled, 1=enabled
 AGENT_FAST_ROUTE="${AGENT_FAST_ROUTE:-1}"                # Fast-route: 0=disabled, 1=keywords+lean, 2=fuzzy only (lean prompt, no keyword matching)
@@ -6099,7 +6099,7 @@ INTERLOCK_JSON
                         _fe_content=${_fe_rest#"$_fe_first"}
                         _fe_content=${_fe_content# }
                         if [ -n "$_fe_content" ]; then
-                            _fe_expanded=$(tools_expand_file_refs "$_fe_content" "$workdir" "${AGENT_FILE_EXPAND_CHARS:-1000}")
+                            _fe_expanded=$(tools_expand_file_refs "$_fe_content" "$workdir" "${AGENT_FILE_EXPAND_CHARS:-10000}")
                             if [ "$_fe_expanded" != "$_fe_content" ]; then
                                 cmd="${_fe_verb} ${_fe_first} ${_fe_expanded}"
                                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] file-expand: expanded refs in %s content\n' "$_fe_verb" > /dev/tty 2>/dev/null
@@ -7793,6 +7793,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
    \"\/social\":\"Discord\/Telegram\/X\/Mastodon — DEFAULT for social delivery\",
    \"\/email\":\"actual email ONLY — use ONLY when user explicitly says 'email' or gives an email address\",\"\/sandbox\":\"NEVER for slash commands\",
    \"file_references\":\"File paths (e.g., report.md) in \\/social, \\/email, \\/respond arguments auto-expand to contents. Use this to post compiled reports instead of writing the full text inline.\",
+   \"discord_dm\":\"Use \\/social discord dm <user> <text> to send DMs to individuals on Discord (do NOT use \\/social post for DMs).\",
    \"discord_sync\":\"Before posting to channels or sending DMs by human-readable names (e.g. general, dabe) for the first time, you must sync them first using \\/social discord channels sync and \\/social discord users sync.\"},
  \"milestones\":{\"source\":\"YOUR WORKING COMMANDS only\",
    \"NEVER_hallucinate_commands\":\"Use ONLY commands from YOUR WORKING COMMANDS above. If evaluator feedback recommends a command not in your list, map it to the closest available command.\",

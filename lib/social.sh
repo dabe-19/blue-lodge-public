@@ -994,6 +994,16 @@ discord_user_resolve() {
     # 4. Prefix match on display_name
     uid=$(sqlite3 "$DISCORD_USERS_DB" \
         "SELECT user_id FROM users WHERE display_name LIKE '$_safe%' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
+    if [ -n "$uid" ]; then echo "$uid"; return 0; fi
+
+    # 5. Substring match on username
+    uid=$(sqlite3 "$DISCORD_USERS_DB" \
+        "SELECT user_id FROM users WHERE username LIKE '%$_safe%' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
+    if [ -n "$uid" ]; then echo "$uid"; return 0; fi
+
+    # 6. Substring match on display_name
+    uid=$(sqlite3 "$DISCORD_USERS_DB" \
+        "SELECT user_id FROM users WHERE display_name LIKE '%$_safe%' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
     [ -n "$uid" ] && echo "$uid"
 }
 
@@ -1020,6 +1030,15 @@ discord_dm_parse_recipients() {
         # Buffer connector words — only consume if followed by a resolved name
         case "${_word,,}" in
             and|"&"|","|"+") _pending_connectors=$((_pending_connectors + 1)); continue ;;
+        esac
+
+        # Skip common stop words to prevent false name resolution
+        local _clean_word
+        _clean_word=$(echo "${_word,,}" | tr -d '"@,;:!?.' | tr -d "'")
+        case "$_clean_word" in
+            the|a|an|to|for|of|in|on|at|with|by|as|from|into|about|like|this|that|it|its|they|them|he|him|she|her|you|your|me|my|we|us|our|is|am|are|was|were|be|been|have|has|had|do|does|did|will|would|shall|should|can|could|may|might|must|send|write|report|contents|file|message|text|here)
+                break
+                ;;
         esac
 
         # Try to resolve as a Discord user
@@ -1208,6 +1227,16 @@ discord_dm() {
         if [ -z "$resolved" ]; then
             ui_err "Unknown user: $user_id"
             ui_dim "Sync users: /social discord users sync"
+            if [ -f "$DISCORD_USERS_DB" ]; then
+                local _matched_users
+                _matched_users=$(sqlite3 "$DISCORD_USERS_DB" "SELECT username, display_name FROM users LIMIT 10;" 2>/dev/null)
+                if [ -n "$_matched_users" ]; then
+                    ui_dim "Currently synced users (up to 10):"
+                    echo "$_matched_users" | while IFS='|' read -r _uname _dname; do
+                        ui_dim "  - $_uname ($_dname)"
+                    done
+                fi
+            fi
             return 1
         fi
         user_id="$resolved"
