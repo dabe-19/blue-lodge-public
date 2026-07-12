@@ -3330,10 +3330,17 @@ _cmd_social() {
 
     case "$action" in
         post)
-            local platform
-            platform=$(echo "$rest" | awk '{print $1}')
-            local after_platform
-            after_platform=$(echo "$rest" | sed 's/^[^ ]* *//')
+            local platform _first_line_rest _other_lines after_platform
+            read -r platform _first_line_rest <<< "$rest"
+            _other_lines=$(echo "$rest" | tail -n +2)
+            if [ -n "$_first_line_rest" ] && [ -n "$_other_lines" ]; then
+                after_platform="${_first_line_rest}"$'\n'"${_other_lines}"
+            elif [ -n "$_first_line_rest" ]; then
+                after_platform="${_first_line_rest}"
+            else
+                after_platform="${_other_lines}"
+            fi
+
             case "$platform" in
                 x|twitter)
                     if [ -z "$after_platform" ] || [ "$after_platform" = "$platform" ]; then
@@ -3361,8 +3368,8 @@ _cmd_social() {
                     social_post "$after_platform" "bluesky" ;;
                 discord)
                     # /social post discord [channel] <text>
-                    local _first_arg _chan_msg
-                    _first_arg=$(echo "$after_platform" | awk '{print $1}')
+                    local _first_arg _chan_msg_first_line _chan_msg_other _chan_msg
+                    read -r _first_arg _chan_msg_first_line <<< "$after_platform"
                     _first_arg=$(echo "$_first_arg" | sed "s/^[\"']//; s/[\"']$//")
 
                     if [ -z "$_first_arg" ] || [ "$after_platform" = "$platform" ]; then
@@ -3379,9 +3386,19 @@ _cmd_social() {
                         _resolved=$(discord_channel_resolve "$_first_arg" 2>/dev/null)
                     fi
 
+                    # Reconstruct the message body safely preserving newlines
+                    _chan_msg_other=$(echo "$after_platform" | tail -n +2)
+                    if [ -n "$_chan_msg_first_line" ] && [ -n "$_chan_msg_other" ]; then
+                        _chan_msg="${_chan_msg_first_line}"$'\n'"${_chan_msg_other}"
+                    elif [ -n "$_chan_msg_first_line" ]; then
+                        _chan_msg="${_chan_msg_first_line}"
+                    else
+                        _chan_msg="${_chan_msg_other}"
+                    fi
+                    _chan_msg=$(echo "$_chan_msg" | sed "s/^[\"']//; s/[\"']$//")
+
                     if [ -n "$_resolved" ]; then
                         # First arg is a channel — rest is the message
-                        _chan_msg=$(echo "$after_platform" | sed 's/^[^ ]* *//' | sed "s/^[\"']//; s/[\"']$//")
                         if [ -z "$_chan_msg" ] || [ "$_chan_msg" = "$_first_arg" ]; then
                             ui_info "Usage: /social post discord <channel> <text>"
                             return 1
@@ -3511,8 +3528,8 @@ _cmd_social() {
             case "$sub" in
                 post)
                     # /social discord post [channel] <text> — redirect to canonical form
-                    local _first_arg
-                    _first_arg=$(echo "$dargs" | awk '{print $1}')
+                    local _first_arg _chan_msg_first_line _chan_msg_other _chan_msg
+                    read -r _first_arg _chan_msg_first_line <<< "$dargs"
                     _first_arg=$(echo "$_first_arg" | sed "s/^[\"']//; s/[\"']$//")
                     if [ -z "$_first_arg" ]; then
                         ui_info "Usage: /social discord post [channel] <text>"
@@ -3526,9 +3543,18 @@ _cmd_social() {
                         _resolved=$(discord_channel_resolve "$_first_arg" 2>/dev/null)
                     fi
 
+                    # Reconstruct message body safely preserving newlines
+                    _chan_msg_other=$(echo "$dargs" | tail -n +2)
+                    if [ -n "$_chan_msg_first_line" ] && [ -n "$_chan_msg_other" ]; then
+                        _chan_msg="${_chan_msg_first_line}"$'\n'"${_chan_msg_other}"
+                    elif [ -n "$_chan_msg_first_line" ]; then
+                        _chan_msg="${_chan_msg_first_line}"
+                    else
+                        _chan_msg="${_chan_msg_other}"
+                    fi
+                    _chan_msg=$(echo "$_chan_msg" | sed "s/^[\"']//; s/[\"']$//")
+
                     if [ -n "$_resolved" ]; then
-                        local _chan_msg
-                        _chan_msg=$(echo "$dargs" | sed 's/^[^ ]* *//' | sed "s/^[\"']//; s/[\"']$//")
                         if [ -z "$_chan_msg" ] || [ "$_chan_msg" = "$_first_arg" ]; then
                             ui_info "Usage: /social discord post <channel> <text>"
                             return 1

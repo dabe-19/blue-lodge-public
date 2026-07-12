@@ -6292,6 +6292,23 @@ INTERLOCK_JSON
             output="${output:0:2000}"
             fi  # end _cd_intercepted guard
 
+            # ── DEBUG: Command output to TTY ──────────────
+            # Print command result to TTY so operator can see
+            # what the agent is receiving as feedback. Shows
+            # a truncated preview.
+            if [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ "$_cd_intercepted" -eq 0 ]; then
+                local _out_lines _out_preview
+                _out_lines=$(echo "$output" | wc -l)
+                if [ "$_out_lines" -le 10 ]; then
+                    _out_preview="$output"
+                else
+                    _out_preview=$(echo "$output" | head -8)
+                    _out_preview="${_out_preview}"$'\n'"  ... (${_out_lines} lines total)"
+                fi
+                [ -n "$output" ] && printf '  [debug] cmd output (exit %d, %d lines):\n%s\n' "$exit_code" "$_out_lines" "$_out_preview" > /dev/tty 2>/dev/null
+                [ -z "$output" ] && printf '  [debug] cmd output: (empty, exit %d)\n' "$exit_code" > /dev/tty 2>/dev/null
+            fi
+
             # Track all executed commands for failure pattern analysis
             _inner_cmd_history+=("$cmd")
 
@@ -6555,25 +6572,6 @@ INTERLOCK_JSON
 
                 # Transcript: log command execution result
                 declare -f transcript_log_block &>/dev/null && transcript_log_block "output (exit 0)" "$cmd\n${output:0:3000}"
-
-                # ── DEBUG: Command output to TTY ──────────────
-                # Print command result to TTY so operator can see
-                # what the agent is receiving as feedback. Shows
-                # a truncated preview (no risk of model contamination
-                # since this goes to /dev/tty, not stdout).
-                if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
-                    local _out_lines _out_preview
-                    _out_lines=$(echo "$output" | wc -l)
-                    if [ "$_out_lines" -le 10 ]; then
-                        _out_preview="$output"
-                    else
-                        _out_preview=$(echo "$output" | head -8)
-                        _out_preview="${_out_preview}
-  ... (${_out_lines} lines total)"
-                    fi
-                    [ -n "$output" ] && printf '  [debug] cmd output (exit %d, %d lines):\n%s\n' "$exit_code" "$_out_lines" "$_out_preview" > /dev/tty 2>/dev/null
-                    [ -z "$output" ] && printf '  [debug] cmd output: (empty, exit 0)\n' > /dev/tty 2>/dev/null
-                fi
 
                 # ── WEB SUFFICIENCY GATE ───────────────────────
                 # After N successful web actions, mark sufficiency
