@@ -3998,7 +3998,7 @@ _build_specialist_prompt() {
 RULES (OBEY THESE — they override everything below):
 1. Output exactly ONE command starting with /.
 2. For /write, /save, /append, /edit, /social, and /email, put the command and filepath on the first line, and put all code/content on subsequent lines with real newlines.
-3. FORBIDDEN: NO backticks. NO code fences. NO --flags on slash commands. NO quotes on args.
+3. FORBIDDEN: NO backticks. NO code fences. NO --flags on slash commands. NO quotes on args. NO multiple commands per line.
 SPEC_RULES
         echo ""
 
