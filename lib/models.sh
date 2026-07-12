@@ -1036,11 +1036,23 @@ _models_switch() {
     fi
 
     # ── Ollama path (original) ─────────────────────────────────
-    # Unload current model if one is loaded
-    if [ -n "$_MODELS_ACTIVE" ]; then
-        curl -sf --max-time 10 "$OLLAMA_URL/api/generate" \
-            -H "Content-Type: application/json" \
-            -d "{\"model\": \"$_MODELS_ACTIVE\", \"prompt\": \"\", \"keep_alive\": 0}" &>/dev/null
+    # Unload any currently loaded models to clear VRAM
+    local _ps_resp
+    _ps_resp=$(curl -sf --max-time 5 "$OLLAMA_URL/api/ps" 2>/dev/null)
+    if [ $? -eq 0 ] && [ -n "$_ps_resp" ]; then
+        local _active_models
+        _active_models=$(echo "$_ps_resp" | jq -r '.models[].name' 2>/dev/null || echo "")
+        if [ -n "$_active_models" ]; then
+            local _am
+            for _am in $_active_models; do
+                [ -z "$_am" ] && continue
+                [ "$_am" = "$target" ] && continue  # don't unload the target if it is somehow already loaded
+                curl -sf --max-time 10 "$OLLAMA_URL/api/generate" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"model\": \"$_am\", \"prompt\": \"\", \"keep_alive\": 0}" &>/dev/null
+            done
+            sleep 1
+        fi
     fi
 
     # Load target model

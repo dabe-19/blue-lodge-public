@@ -1057,11 +1057,23 @@ llm_unload() {
         return 0
     fi
 
-    if llm_is_loaded; then
-        curl -sf --max-time 10 "$OLLAMA_URL/api/generate" \
-            -H "Content-Type: application/json" \
-            -d "{\"model\": \"$LODGE_MODEL\", \"prompt\": \"\", \"keep_alive\": 0}" &>/dev/null
-        ui_dim "Model unloaded from memory"
+    local resp
+    resp=$(curl -sf --max-time 5 "$OLLAMA_URL/api/ps" 2>/dev/null)
+    if [ $? -eq 0 ] && [ -n "$resp" ]; then
+        local loaded_models
+        loaded_models=$(echo "$resp" | jq -r '.models[].name' 2>/dev/null || echo "")
+        if [ -n "$loaded_models" ]; then
+            local m
+            for m in $loaded_models; do
+                [ -z "$m" ] && continue
+                ui_dim "Unloading model $m from memory..."
+                curl -sf --max-time 10 "$OLLAMA_URL/api/generate" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"model\": \"$m\", \"prompt\": \"\", \"keep_alive\": 0}" &>/dev/null
+            done
+            sleep 1
+            ui_dim "All Ollama models unloaded from memory"
+        fi
     fi
 }
 

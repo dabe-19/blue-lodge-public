@@ -540,7 +540,7 @@ describe "Vision and think support"
     _method_qwen=$(models_nothink_method "blue-lodge-qwen35-think:4b")
     _method_gemma=$(models_nothink_method "blue-lodge-gemma4-inst:4b")
     assert_eq "$_method_qwen" "qwen"
-    assert_eq "$_method_gemma" "none"
+    assert_eq "$_method_gemma" "system"
   }
 
 # ════════════════════════════════════════════════════════════════
