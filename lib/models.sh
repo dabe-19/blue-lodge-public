@@ -1264,12 +1264,6 @@ models_default_system() {
 # Used by llm.sh to decide whether to parse <think> tags
 models_current_has_thinking() {
     local model="${1:-$LODGE_MODEL}"
-    # If nothink is active and the model respects it, no thinking expected
-    if [ "${LODGE_NOTHINK:-0}" -eq 1 ]; then
-        local method
-        method=$(models_nothink_method "$model")
-        [ "$method" != "none" ] && return 1  # thinking suppressed
-    fi
     models_has_thinking "$model"
 }
 

@@ -90,3 +90,8 @@ The system doesn't need a script to tell you its secrets. `top` is the truth.
 Scope dictates the action. Never start a war without a map.
 
 
+## 2026-07-12 17:11 — quip
+
+The framework is set. Now we wait for the inevitable paperwork.
+
+
