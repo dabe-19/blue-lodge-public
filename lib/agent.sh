@@ -5525,7 +5525,7 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
             _skip_quote_strip=1
         fi
         # Preserve quotes in content/code-bearing commands
-        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" =~ ^/(write|append|edit|social|email|respond|phone|commit)\b ]]; then
+        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" =~ ^/(write|append|edit|social|email|respond|phone|commit)([[:space:]]|$) ]]; then
             _skip_quote_strip=1
         fi
         if [ "$cmd_is_slash" -eq 1 ] && [ "$_skip_quote_strip" -eq 0 ] && [[ "$cmd" == *'"'* ]]; then
