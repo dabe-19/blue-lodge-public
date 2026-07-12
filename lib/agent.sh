@@ -770,6 +770,24 @@ _agent_router_eligibility_pass() {
         fi
     done
 
+    # Semantic mapping of abstract verbs to concrete command verbs
+    if [[ "$_lower_obj" =~ \b(implement|create|develop|code|generate|produce)\b ]]; then
+        _agent_router_add_unique shortlist "write"
+        _agent_router_add_unique shortlist "edit"
+        _agent_router_add_unique shortlist "save"
+    fi
+    if [[ "$_lower_obj" =~ \b(modify|change|update|fix|repair)\b ]]; then
+        _agent_router_add_unique shortlist "edit"
+        _agent_router_add_unique shortlist "write"
+    fi
+    if [[ "$_lower_obj" =~ \b(send|post|share|message|dm|distribute|deliver)\b ]]; then
+        _agent_router_add_unique shortlist "social"
+        _agent_router_add_unique shortlist "email"
+    fi
+    if [[ "$_lower_obj" =~ \b(scaffold|setup|start|initialize)\b ]]; then
+        _agent_router_add_unique shortlist "init"
+    fi
+
     # Deterministic shortlist ordering by intent signal strength.
     [ "$need_git" -eq 1 ] && [ "$git_allowed" -eq 1 ] && _agent_router_add_unique shortlist "git"
     [ "$need_web" -eq 1 ] && [ "$web_allowed" -eq 1 ] && _agent_router_add_unique shortlist "web"
