@@ -70,3 +70,8 @@ Scope is the foundation of all projects. Without it, all approaches are just noi
 A new approach requires a problem. Bring the ledger, not the vague request.
 
 
+## 2026-07-12 03:59 — quip
+
+The void is not a gap; it is the new foundation.
+
+
