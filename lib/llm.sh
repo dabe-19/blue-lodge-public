@@ -2573,8 +2573,12 @@ llm_stream() {
     fi
 
     # Inject budget_tokens at top level (Ollama ignores it inside options)
-    if models_current_has_thinking 2>/dev/null && [ "${budget:-0}" -gt 0 ] 2>/dev/null; then
-        payload=$(echo "$payload" | jq --argjson bt "$budget" '. + {budget_tokens: $bt}')
+    local _inject_budget="${budget:-0}"
+    if [ "${LODGE_NOTHINK:-0}" -eq 1 ] && models_has_thinking "$LODGE_MODEL" 2>/dev/null; then
+        _inject_budget=1
+    fi
+    if [ "$_inject_budget" -gt 0 ]; then
+        payload=$(echo "$payload" | jq --argjson bt "$_inject_budget" '. + {budget_tokens: $bt}')
     fi
 
     # Inject think:true for models with native thinking template support
