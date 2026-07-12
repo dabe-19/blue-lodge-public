@@ -35,6 +35,13 @@ cmd_build() {
     if [[ "$args" == *"release"* ]] && [[ "$build_cmd" == *"cargo"* ]]; then
         build_cmd="$build_cmd --release"
     fi
+
+    # Concrete task redirection: run the agent-generated version if it exists
+    if [[ "$build_cmd" == *"main.sh"* ]] && [ -f "responses/system_shield/main.sh" ]; then
+        build_cmd="bash responses/system_shield/main.sh"
+    elif [[ "$build_cmd" == *"main.sh"* ]] && [ -f "responses/main.sh" ]; then
+        build_cmd="bash responses/main.sh"
+    fi
     
     ui_step "Running: $build_cmd"
     echo ""
