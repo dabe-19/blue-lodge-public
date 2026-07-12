@@ -271,9 +271,8 @@ cmd_init() {
 
     # ── Create dedicated project directory upfront ─────────────
     local project_dir="$PWD/$name"
-    if [ -d "$project_dir" ]; then
-        ui_err "[$init_timestamp] Directory already exists: $project_dir"
-        ui_dim "  Choose a different name or remove the existing directory"
+    if [ -f "$project_dir/GEORGE.md" ]; then
+        ui_err "[$init_timestamp] Project already exists: $project_dir (GEORGE.md exists)"
         return 1
     fi
 

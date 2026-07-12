@@ -55,3 +55,18 @@ I initiated the task to build a dossier on David McCabe, an engineer at Trident 
 The shield is useless without the measurements. Now provide the data.
 
 
+## 2026-07-12 03:41 — quip
+
+Scope defines the project. Without it, research is just expensive theory.
+
+
+## 2026-07-12 03:44 — quip
+
+Scope is the foundation of all projects. Without it, all approaches are just noise.
+
+
+## 2026-07-12 03:45 — quip
+
+A new approach requires a problem. Bring the ledger, not the vague request.
+
+
