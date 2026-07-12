@@ -147,8 +147,8 @@ _init_guard_existing_project() {
     fi
     # Named project: block if target directory already has GEORGE.md
     if [ -n "$target_dir" ] && [ -f "$target_dir/GEORGE.md" ]; then
-        ui_err "[$timestamp] Project already exists (GEORGE.md exists in $target_dir)"
-        return 1
+        ui_ok "[$timestamp] Project already exists (GEORGE.md exists in $target_dir) — skipping initialization"
+        return 2
     fi
     if [ -f "$PWD/Cargo.toml" ] || [ -f "$PWD/pyproject.toml" ] || [ -f "$PWD/package.json" ]; then
         ui_warn "[$timestamp] Current directory appears to be an existing project"
@@ -261,7 +261,13 @@ cmd_init() {
     fi
 
     # ── Guardrail: check we're not inside an existing project ──
-    _init_guard_existing_project "$PWD/$name" || return 1
+    _init_guard_existing_project "$PWD/$name"
+    local _guard_rc=$?
+    if [ $_guard_rc -eq 2 ]; then
+        return 0
+    elif [ $_guard_rc -ne 0 ]; then
+        return 1
+    fi
 
     # ── Guardrail: check prerequisites for chosen type ─────────
     if ! _init_check_prereqs "$normalized_type"; then
