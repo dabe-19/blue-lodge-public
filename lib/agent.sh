@@ -12,6 +12,28 @@ source "$LODGE_DIR/lib/memory.sh"
 source "$LODGE_DIR/lib/tools.sh"
 source "$LODGE_DIR/lib/journal.sh"
 
+# ── Web Fetch Cascade Helpers ──────────────────────────────────
+_agent_extract_urls_from_search() {
+    local search_output="$1"
+    # Extract lines starting with http:// or https:// (after trimming whitespace)
+    echo "$search_output" | grep -oE 'https?://[^ ]+' | sed -E 's/[])}'"'"'"]+$//' | sort -u | head -n 4
+}
+
+_is_junk_output() {
+    local out="$1"
+    [ -z "$out" ] && return 0
+    # Match common error patterns (case-insensitive)
+    local out_lower
+    out_lower=$(echo "$out" | tr '[:upper:]' '[:lower:]')
+    if [[ "$out_lower" == *"access denied"* ]] || \
+       [[ "$out_lower" == *"403 forbidden"* ]] || \
+       [[ "$out_lower" == *"cloudflare"* ]] || \
+       [[ "$out_lower" == *"503 service temporarily unavailable"* ]]; then
+        return 0
+    fi
+    return 1
+}
+
 # ── Config ─────────────────────────────────────────────────────
 AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-40}"       # Macro loop milestone ceiling
 AGENT_PLAN_STEPS="${AGENT_PLAN_STEPS:-8}"      # Max steps per plan/subtask
@@ -33,6 +55,7 @@ AGENT_HONEYDEW_MATCH="${AGENT_HONEYDEW_MATCH:-3}"              # Min keyword sco
 AGENT_HONEYDEW_INITIAL_COUNT="${AGENT_HONEYDEW_INITIAL_COUNT:-5}"  # Upper bound on initial honeydew items (prompt hint)
 AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto | interactive | disabled
 AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-20}"  # Max consecutive /web search before fallback to fetch/scrape
+AGENT_WEB_FETCH_CASCADE="${AGENT_WEB_FETCH_CASCADE:-1}"          # Auto-fetch top search results: 0=disabled, 1=enabled
 AGENT_WEB_SEARCH_TIGHT_PARSING="${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}"  # Tight web query parsing: 0=loose (keep quotes/negations/operators), 1=strict (strip all)
 AGENT_WEB_SEARCH_MAX_LENGTH="${AGENT_WEB_SEARCH_MAX_LENGTH:-160}"  # Max character length for /web search queries
 AGENT_WEB_SEARCH_MAX_OPERATORS="${AGENT_WEB_SEARCH_MAX_OPERATORS:-3}"  # Max AND/OR operators allowed in loose mode
@@ -6285,6 +6308,55 @@ INTERLOCK_JSON
             if [ "$cmd_is_slash" -eq 1 ] && declare -f commands_dispatch &>/dev/null; then
                 output=$(commands_dispatch "$cmd" "$workdir" 2>&1)
                 exit_code=$?
+                
+                # ── WEB SEARCH URL QUEUE POPULATION ──────────
+                if [[ "$cmd" == /web\ search\ * ]] && [ "$exit_code" -eq 0 ]; then
+                    local _queue_file="$AGENT_TASK_WORKSPACE/web_fetch_queue.txt"
+                    if [ -n "${AGENT_TASK_WORKSPACE:-}" ]; then
+                        mkdir -p "$AGENT_TASK_WORKSPACE"
+                        _agent_extract_urls_from_search "$output" > "$_queue_file" 2>/dev/null
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web_search: extracted %d URLs to queue\n' "$(wc -l < "$_queue_file" 2>/dev/null || echo 0)" > /dev/tty 2>/dev/null
+                    fi
+                fi
+                
+                # ── WEB FETCH CASCADE RETRY ──────────────────
+                if [[ "$cmd" == /web\ fetch\ * ]] && [ "${AGENT_WEB_FETCH_CASCADE:-1}" -eq 1 ]; then
+                    local _primary_url
+                    _primary_url=$(echo "$cmd" | sed 's|^/web fetch *||' | awk '{print $1}')
+                    if [ "$exit_code" -ne 0 ] || _is_junk_output "$output"; then
+                        local _queue_file="$AGENT_TASK_WORKSPACE/web_fetch_queue.txt"
+                        if [ -f "$_queue_file" ]; then
+                            local _fallback_urls=() _fb_url
+                            while IFS= read -r _fb_url || [ -n "$_fb_url" ]; do
+                                [ -n "$_fb_url" ] && _fallback_urls+=("$_fb_url")
+                            done < "$_queue_file"
+                            
+                            for _fb_url in "${_fallback_urls[@]}"; do
+                                if [ "$_fb_url" = "$_primary_url" ]; then
+                                    grep -vF "$_fb_url" "$_queue_file" > "${_queue_file}.tmp" 2>/dev/null && mv "${_queue_file}.tmp" "$_queue_file"
+                                    continue
+                                fi
+                                
+                                ui_warn "Primary fetch failed. Cascading to fallback: $_fb_url"
+                                local _fb_cmd="/web fetch $_fb_url"
+                                local _fb_output
+                                local _fb_exit
+                                _fb_output=$(commands_dispatch "$_fb_cmd" "$workdir" 2>&1)
+                                _fb_exit=$?
+                                
+                                grep -vF "$_fb_url" "$_queue_file" > "${_queue_file}.tmp" 2>/dev/null && mv "${_queue_file}.tmp" "$_queue_file"
+                                
+                                if [ "$_fb_exit" -eq 0 ] && ! _is_junk_output "$_fb_output"; then
+                                    output="$_fb_output"
+                                    exit_code=0
+                                    cmd="$_fb_cmd"
+                                    ui_ok "Cascade fetch succeeded!"
+                                    break
+                                fi
+                            done
+                        fi
+                    fi
+                fi
             else
                 output=$(_agent_exec_bash_command "$cmd" "$workdir" 2>&1)
                 exit_code=$?

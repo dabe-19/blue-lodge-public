@@ -755,6 +755,22 @@ _cmd_limits() {
                     ui_err "Expand must be 'on' or 'off' (or 1/0, enable/disable)"
                 fi
             fi ;;
+        fetch-cascade|cascade)
+            if [ -z "$value" ]; then
+                local _cascade_label="disabled"
+                [ "${AGENT_WEB_FETCH_CASCADE:-1}" -eq 1 ] && _cascade_label="enabled"
+                ui_info "Web fetch cascade: $_cascade_label (default: enabled)"
+            else
+                if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
+                    AGENT_WEB_FETCH_CASCADE=1
+                    ui_ok "Web fetch cascade enabled"
+                elif [[ "$value" == "off" || "$value" == "0" || "$value" == "disable" || "$value" == "disabled" ]]; then
+                    AGENT_WEB_FETCH_CASCADE=0
+                    ui_ok "Web fetch cascade disabled"
+                else
+                    ui_err "Fetch cascade must be 'on' or 'off' (or 1/0, enable/disable)"
+                fi
+            fi ;;
         rewrite)
             if [ -z "$value" ]; then
                 local _rewrite_label="disabled"
@@ -1287,6 +1303,7 @@ _cmd_limits() {
             AGENT_FILE_EXPAND_CHARS=1000
             AGENT_DM_SCAN_CHARS=80
             AGENT_HONEYDEW_EXPAND=1
+            AGENT_WEB_FETCH_CASCADE=1
             AGENT_HONEYDEW_REWRITE=1
             AGENT_HONEYDEW_REWRITE_ROUNDS=5
             AGENT_HONEYDEW_REWRITE_CADENCE=1
@@ -1548,6 +1565,9 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Command family cap:" "$AGENT_MAX_CMD_FAMILY  (default: 10)"
             printf "  %-22s %s\n" "Honeydew match score:" "$AGENT_HONEYDEW_MATCH  (default: 3)"
             printf "  %-22s %s\n" "Web search repeat:" "${AGENT_WEB_SEARCH_CONSEC_MAX:-20}  (default: 20)"
+            local _cas_show="disabled"
+            [ "${AGENT_WEB_FETCH_CASCADE:-1}" -eq 1 ] && _cas_show="enabled"
+            printf "  %-22s %s\n" "Web fetch cascade:" "$_cas_show  (default: enabled)"
             printf "  %-22s %s\n" "Recommendation chars:" "${AGENT_EVAL_REC_CHARS:-120}  (default: 120)"
             local _ri_show="off"
             [ "${AGENT_EVAL_REC_INJECT:-0}" -eq 1 ] && _ri_show="recommendation-only"
@@ -1638,6 +1658,7 @@ _cmd_limits() {
             ui_dim "    honeydew-match N — Min keyword score for honeydew auto-check (current: $AGENT_HONEYDEW_MATCH)"
             ui_dim "    honeydew-count N — Upper bound on initial honeydew items (current: $AGENT_HONEYDEW_INITIAL_COUNT)"
             ui_dim "    web-search-repeat N — Max consecutive /web search before forced fetch (current: ${AGENT_WEB_SEARCH_CONSEC_MAX:-20})"
+            ui_dim "    fetch-cascade on|off — Auto-fetch top search results (current: $([ "${AGENT_WEB_FETCH_CASCADE:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    tight-parsing on|off — Web search query cleaning mode: off=loose, on=strict (current: $([ "${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}" -eq 1 ] && echo on || echo off))"
             ui_dim "    grammar on|off    — Enable/disable GBNF constrained decoding (current: $([ "${LLM_GRAMMAR_ENABLED:-0}" -eq 1 ] && echo on || echo off))"
             ui_dim "    respond-repeat N — Max consecutive /respond before removal from catalog (current: ${AGENT_RESPOND_CONSEC_MAX:-2})"
