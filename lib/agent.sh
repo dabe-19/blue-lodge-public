@@ -762,7 +762,7 @@ _agent_router_eligibility_pass() {
     local _lower_obj
     _lower_obj=$(echo "$objective" | tr '[:upper:]' '[:lower:]')
     local _verb
-    for _verb in write read grep ls ask brainstorm respond web git social email vitals; do
+    for _verb in "${eligible[@]}"; do
         if [[ "$_lower_obj" =~ (^|[[:space:]]|\"|\')$_verb($|[[:space:]]|,|[.]|\'|\") ]]; then
             if _agent_router_cmd_in_list "$_verb" "${eligible[@]}"; then
                 _agent_router_add_unique shortlist "$_verb"
