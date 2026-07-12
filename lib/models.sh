@@ -841,6 +841,11 @@ From the rough ashlar to the perfect — this is the work."
             ;;
     esac
 
+    local _num_gpu="0"
+    if [ "${LODGE_PLATFORM:-}" != "termux" ] && [ "${LODGE_PLATFORM:-}" != "ish" ]; then
+        _num_gpu="99"
+    fi
+
     cat > "$mf" << MODELFILE
 # Auto-generated Modelfile for ${_ME_NAME}
 # Base: ${_ME_BASE}
@@ -863,7 +868,7 @@ PARAMETER num_predict ${_ME_PREDICT}
 
 # Hardware (tuned for mobile ARM / 12GB)
 PARAMETER num_thread 8
-PARAMETER num_gpu 0
+PARAMETER num_gpu ${_num_gpu}
 PARAMETER stop ${_ME_STOP}
 ${template_block}
 SYSTEM """${system_content}"""
