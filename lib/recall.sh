@@ -630,7 +630,7 @@ FROM (
 SQL
         )
         # json_group_array returns '[]' when subquery is empty — handled below
-        if [ -z "$_rsc_json" ]; then
+        if [ -z "$_rsc_json" ] || [ "$_rsc_json" = "[]" ] || [ "$_rsc_json" = "null" ]; then
             # OR fallback with JSON path
             local or_query_j
             or_query_j=$(_recall_sanitize_query "$query" "OR")
@@ -1873,6 +1873,31 @@ FROM (
 );
 SQL
         )
+        if [ -z "$_rm_json" ] || [ "$_rm_json" = "[]" ] || [ "$_rm_json" = "null" ]; then
+            local or_query_m
+            or_query_m=$(_recall_sanitize_query "$query" "OR")
+            if [ -n "$or_query_m" ]; then
+                _rm_json=$(sqlite3 "$RECALL_DB" <<SQL
+SELECT json_group_array(
+    json_object('title', section, 'summary', body, 'ts', indexed_at))
+FROM (
+    SELECT
+        c.section,
+        CASE WHEN length(c.content) <= $max_chars
+             THEN c.content
+             ELSE substr(c.content, 1, $max_chars) || '...'
+        END AS body,
+        c.indexed_at
+    FROM chunks_fts
+    JOIN chunks c ON chunks_fts.rowid = c.id
+    WHERE c.source = 'milestone_archive' AND chunks_fts MATCH '$or_query_m'
+    ORDER BY bm25(chunks_fts, 5.0, 10.0, 1.0)
+    LIMIT $limit
+);
+SQL
+                )
+            fi
+        fi
     else
         # Fallback manual JSON assembly
         local first=1

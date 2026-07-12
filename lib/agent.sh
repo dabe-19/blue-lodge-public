@@ -4858,12 +4858,12 @@ agent_inner_loop() {
             fi
             if [ "$_pre_valid" -eq 1 ]; then
                 local _pre_eligible
-                _pre_eligible=$(echo "$_eligibility_json" | jq -r --arg c "$_pre_cmd" 'if (.shortlist | index($c)) == null then "0" else "1" end')
+                _pre_eligible=$(echo "$_eligibility_json" | jq -r --arg c "$_pre_cmd" 'if (.eligible | index($c)) == null then "0" else "1" end')
                 if [ "$_pre_eligible" -eq 1 ]; then
                     _pre_route="$_pre_cmd"
                 else
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route rejected by eligibility pass: /$_pre_cmd"
-                    _agent_routing_trace "$workdir" "pre_route_rejected" "$(jq -cn --arg cmd "$_pre_cmd" --arg reason "not in shortlist" '{cmd:$cmd,reason:$reason}')"
+                    _agent_routing_trace "$workdir" "pre_route_rejected" "$(jq -cn --arg cmd "$_pre_cmd" --arg reason "not eligible" '{cmd:$cmd,reason:$reason}')"
                 fi
                 # ── SAFETY: Rewrite bare-command milestones ────────
                 # If the milestone IS a raw slash command (starts with
@@ -4905,13 +4905,13 @@ agent_inner_loop() {
             _fr_result=$(_fast_route "$micro_objective")
             if [ -n "$_fr_result" ]; then
                 local _fr_in_shortlist
-                _fr_in_shortlist=$(echo "$_eligibility_json" | jq -r --arg c "$_fr_result" 'if (.shortlist | index($c)) == null then "0" else "1" end')
+                _fr_in_shortlist=$(echo "$_eligibility_json" | jq -r --arg c "$_fr_result" 'if (.eligible | index($c)) == null then "0" else "1" end')
                 if [ "$_fr_in_shortlist" -eq 1 ]; then
                     selected_tool="$_fr_result"
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Fast-routed: /$_fr_result (keyword match, skipping LLM router)"
                     declare -f transcript_log &>/dev/null && transcript_log "router" "/$_fr_result (fast-routed)"
                 else
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Fast-route /$_fr_result rejected (not in shortlist)"
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Fast-route /$_fr_result rejected (not eligible)"
                     _fr_result=""
                 fi
             fi
@@ -5058,13 +5058,13 @@ SHORTLIST OVERRIDE: Choose exactly ONE slash command from ROUTER SHORTLIST only.
             selected_tool=$(echo "$selected_tool" | head -1 | awk '{print $1}' | sed 's|^/||; s|^/||')
         fi
 
-        # Hard bound: the router must stay inside the deterministic shortlist.
+        # Hard bound: the router must stay inside the deterministic eligible tools.
         local _selected_in_shortlist
-        _selected_in_shortlist=$(echo "$_eligibility_json" | jq -r --arg c "$selected_tool" 'if (.shortlist | index($c)) == null then "0" else "1" end')
+        _selected_in_shortlist=$(echo "$_eligibility_json" | jq -r --arg c "$selected_tool" 'if (.eligible | index($c)) == null then "0" else "1" end')
         if [ "$_selected_in_shortlist" -ne 1 ]; then
             local _fallback_cmd
             _fallback_cmd=$(echo "$_eligibility_json" | jq -r '.shortlist[0] // "respond"')
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router /$selected_tool outside shortlist — fallback /$_fallback_cmd"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router /$selected_tool outside eligible list — fallback /$_fallback_cmd"
             _agent_routing_trace "$workdir" "router_shortlist_fallback" "$(jq -cn --arg selected "$selected_tool" --arg fallback "$_fallback_cmd" --argjson shortlist "$(echo "$_eligibility_json" | jq -c '.shortlist')" '{selected:$selected,fallback:$fallback,shortlist:$shortlist}')"
             selected_tool="$_fallback_cmd"
         fi
@@ -5972,7 +5972,11 @@ INTERLOCK_JSON
                 if [ "$_spec_cmd_name" != "$_routed_base" ]; then
                     # Allow sub-commands (e.g. router="web", specialist="web search")
                     # by checking if the specialist's command starts with the routed tool
-                    if [[ "$_spec_cmd_name" != "$_routed_base" ]] && [[ "$cmd" != "/${_routed_base} "* ]] && [[ "$cmd" != "/${_routed_base}" ]]; then
+                    local _is_file_tool_match=0
+                    if [[ "$_routed_base" =~ ^(write|edit|append|save)$ ]] && [[ "$_spec_cmd_name" =~ ^(write|edit|append|save)$ ]]; then
+                        _is_file_tool_match=1
+                    fi
+                    if [[ "$_spec_cmd_name" != "$_routed_base" ]] && [[ "$cmd" != "/${_routed_base} "* ]] && [[ "$cmd" != "/${_routed_base}" ]] && [ "$_is_file_tool_match" -ne 1 ]; then
                         # ── Milestone-authoritative override ──────────
                         # If the milestone text itself names the specialist's
                         # command, trust the specialist over the router.
