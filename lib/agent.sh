@@ -6092,7 +6092,12 @@ INTERLOCK_JSON
                 _cmd_base="${_cmd_base%% *}"
                 case "$_cmd_base" in
                     social|email|commit|push)
-                        if ! _agent_explicit_side_effect_match "$micro_objective" "$_cmd_base"; then
+                        local _primary_obj=""
+                        if [ -f "$micro_file" ]; then
+                            _primary_obj=$(jq -r '.primary_objective // empty' "$micro_file" 2>/dev/null)
+                        fi
+                        if ! _agent_explicit_side_effect_match "$micro_objective" "$_cmd_base" && \
+                           ! _agent_explicit_side_effect_match "$_primary_obj" "$_cmd_base"; then
                             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] side-effect gate: /$_cmd_base rejected (objective mismatch)"
                             _agent_routing_trace "$workdir" "side_effect_gate" "$(jq -cn --arg command "$_cmd_base" --arg reason "objective_mismatch" --arg phase "$_tool_exposure_phase" '{command:$command,reason:$reason,tool_exposure_phase:$phase}')"
                             _micro_add_warning "$micro_file" "SIDE-EFFECT GATE: /$_cmd_base blocked because the objective does not explicitly request it."
