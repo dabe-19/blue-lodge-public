@@ -3300,10 +3300,18 @@ _cmd_api() {
 }
 _cmd_social() {
     local args="$1"
-    local action
-    action=$(echo "$args" | awk '{print $1}')
+    local action _first_line_rest
+    read -r action _first_line_rest <<< "$args"
     local rest
-    rest=$(echo "$args" | sed 's/^[^ ]* *//')
+    local _other_lines
+    _other_lines=$(echo "$args" | tail -n +2)
+    if [ -n "$_first_line_rest" ] && [ -n "$_other_lines" ]; then
+        rest="${_first_line_rest}"$'\n'"${_other_lines}"
+    elif [ -n "$_first_line_rest" ]; then
+        rest="${_first_line_rest}"
+    else
+        rest="${_other_lines}"
+    fi
 
     case "$action" in
         post)
@@ -3473,10 +3481,18 @@ _cmd_social() {
                 *)        ui_info "Usage: /social bluesky <post|timeline|search>" ;;
             esac ;;
         discord)
-            local sub
-            sub=$(echo "$rest" | awk '{print $1}')
+            local sub _first_line_rest
+            read -r sub _first_line_rest <<< "$rest"
             local dargs
-            dargs=$(echo "$rest" | sed 's/^[^ ]* *//')
+            local _other_lines
+            _other_lines=$(echo "$rest" | tail -n +2)
+            if [ -n "$_first_line_rest" ] && [ -n "$_other_lines" ]; then
+                dargs="${_first_line_rest}"$'\n'"${_other_lines}"
+            elif [ -n "$_first_line_rest" ]; then
+                dargs="${_first_line_rest}"
+            else
+                dargs="${_other_lines}"
+            fi
             case "$sub" in
                 post)
                     # /social discord post [channel] <text> — redirect to canonical form
@@ -3559,10 +3575,18 @@ _cmd_social() {
                         fi
                     else
                         # Fallback: single-user DM (original behavior)
-                        local _dm_user _dm_text
-                        _dm_user=$(echo "$dargs" | awk '{print $1}')
-                        _dm_text=$(echo "$dargs" | sed 's/^[^ ]* *//')
-                        if [ -z "$_dm_user" ] || [ -z "$_dm_text" ] || [ "$_dm_text" = "$_dm_user" ]; then
+                        local _dm_user _dm_text _dm_first_line_rest
+                        read -r _dm_user _dm_first_line_rest <<< "$dargs"
+                        local _dm_other_lines
+                        _dm_other_lines=$(echo "$dargs" | tail -n +2)
+                        if [ -n "$_dm_first_line_rest" ] && [ -n "$_dm_other_lines" ]; then
+                            _dm_text="${_dm_first_line_rest}"$'\n'"${_dm_other_lines}"
+                        elif [ -n "$_dm_first_line_rest" ]; then
+                            _dm_text="${_dm_first_line_rest}"
+                        else
+                            _dm_text="${_dm_other_lines}"
+                        fi
+                        if [ -z "$_dm_user" ] || [ -z "$_dm_text" ]; then
                             ui_info "Usage: /social discord dm <user_id_or_name> <message>"
                             ui_dim "  Sync users first: /social discord users sync"
                             return 1

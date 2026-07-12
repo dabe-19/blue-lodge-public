@@ -5257,8 +5257,22 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         # where recency bias makes it impossible to miss.
         if [[ "${selected_tool#/}" == "web" ]]; then
             _spec_tail="Output ONLY ONE /web command. ONE URL per command — the URL is the LAST thing on the line, nothing after it. For /web search: extract 3-5 keywords FROM THE MICRO OBJECTIVE above. Drop filler words (the, a, for, in, to, and, or, about, including, regarding, comprehensive, professional, community, organizations, associations). DO NOT copy examples — derive keywords from the objective. NEVER output just '/web search' without keywords. To fetch multiple pages, use separate steps — one /web fetch per step.\nRULES: NO --limit, --source, --date, --output, or ANY --flag. Positional args only: /web search <keywords> or /web fetch <url>"
+        elif [[ "${selected_tool#/}" == "social" ]]; then
+            _spec_tail="Write the COMPLETE /social command. If a file path is mentioned in the objective, use ONLY that file path as the message argument (do NOT write the file contents inline). Positional args only: /social discord dm <user> <message_or_filepath> or /social post discord <channel> <message_or_filepath>."
         fi
-        local specialist_prompt="MICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\n${_spec_tail}"
+        local _spec_research="" _spec_brainstorm=""
+        if [ -f "$micro_file" ]; then
+            local _rc_data _bs_data
+            _rc_data=$(jq -r '.research_context.results // empty' "$micro_file" 2>/dev/null)
+            _bs_data=$(jq -r '.brainstorm_context.response // empty' "$micro_file" 2>/dev/null)
+            if [ -n "$_rc_data" ] && [ "$_rc_data" != "null" ]; then
+                _spec_research="\n\nRESEARCH FINDINGS (use this data to write reports or content):\n$(echo "$_rc_data" | jq -r 'map("- \(.action): \(.output[:2000])") | join("\n")' 2>/dev/null || echo "$_rc_data")"
+            fi
+            if [ -n "$_bs_data" ] && [ "$_bs_data" != "null" ]; then
+                _spec_brainstorm="\n\nBRAINSTORM ANALYSIS:\n$_bs_data"
+            fi
+        fi
+        local specialist_prompt="MICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context${_spec_research}${_spec_brainstorm}\n\n${_spec_tail}"
         # Inject full strategist output when milestone was truncated
         if [ -n "${_strategist_full:-}" ] && [ "${#_strategist_full}" -gt "${#micro_objective}" ]; then
             specialist_prompt="FULL STRATEGIST DIRECTIVE: ${_strategist_full}\n\nMICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\n${_spec_tail}"
@@ -7794,6 +7808,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
    \"\/email\":\"actual email ONLY — use ONLY when user explicitly says 'email' or gives an email address\",\"\/sandbox\":\"NEVER for slash commands\",
    \"file_references\":\"File paths (e.g., report.md) in \\/social, \\/email, \\/respond arguments auto-expand to contents. Use this to post compiled reports instead of writing the full text inline.\",
    \"discord_dm\":\"Use \\/social discord dm <user> <text> to send DMs to individuals on Discord (do NOT use \\/social post for DMs).\",
+   \"research_flow\":\"When researching a topic, you must follow up a \\/web search by fetching or scraping at least one relevant URL from the search results using \\/web fetch <url> or \\/web scrape <url> to gather deep details before compiling the report.\",
    \"discord_sync\":\"Before posting to channels or sending DMs by human-readable names (e.g. general, dabe) for the first time, you must sync them first using \\/social discord channels sync and \\/social discord users sync.\"},
  \"milestones\":{\"source\":\"YOUR WORKING COMMANDS only\",
    \"NEVER_hallucinate_commands\":\"Use ONLY commands from YOUR WORKING COMMANDS above. If evaluator feedback recommends a command not in your list, map it to the closest available command.\",
