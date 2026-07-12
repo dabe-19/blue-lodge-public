@@ -369,7 +369,8 @@ _llm_build_opts() {
         --argjson top_p "$top_p" \
         --argjson top_k "$top_k" \
         --argjson min_p "$min_p" \
-        '{num_predict:$np, temperature:$temp, repeat_penalty:$rep, presence_penalty:$pres, top_p:$top_p, top_k:$top_k, min_p:$min_p}'
+        --argjson num_ctx "${LLM_CONTEXT_WINDOW:-16384}" \
+        '{num_predict:$np, temperature:$temp, repeat_penalty:$rep, presence_penalty:$pres, top_p:$top_p, top_k:$top_k, min_p:$min_p, num_ctx:$num_ctx}'
 }
 
 # ── Debug tracking state ───────────────────────────────────────
