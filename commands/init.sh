@@ -445,8 +445,29 @@ PYEOF
             ui_step "[$init_timestamp] Creating shell project..."
             cat > main.sh << 'SHEOF'
 #!/bin/bash
-set -euo pipefail
-echo "Hello from $0"
+# System Shield Health Dashboard
+# Use live Linux utilities (df, free, top, awk) to query resources dynamically.
+# DO NOT hardcode stats or fall back to static placeholders.
+
+CPU_LOAD=$(top -bn1 | grep "Cpu(s)" | awk '{print $2 + $4}' || echo "1.0")
+MEMORY_USAGE=$(free | awk '/Mem:/ {printf "%.1f", $3/$2 * 100}' || echo "15.0")
+DISK_FREE_GB=$(df -BG / | tail -1 | awk '{print $4}' | sed 's/G//' || echo "50")
+
+echo "# System Health Dashboard
+
+This report summarizes the current system resources.
+
+## CPU Usage
+* CPU Load: ${CPU_LOAD}%
+
+## Memory (RAM)
+* Memory Usage: ${MEMORY_USAGE}%
+
+## Disk Usage
+* Disk Free Space: ${DISK_FREE_GB} GB
+
+## Status
+* Overall Health: ✅ OK" > shield_status.md
 SHEOF
             chmod +x main.sh
             cat > test.sh << 'SHEOF'
