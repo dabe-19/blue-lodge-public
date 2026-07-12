@@ -7494,7 +7494,8 @@ MEMEOF
   "/init <name> <type>":"scaffold a NEW software code project (rust, python, etc.). Do NOT use for text/list compiling.",
   "/build":"compile/build an existing software code project (cargo build, make, etc.). ONLY for software code compilation.",
   "/test":"run the project test suite.",
-  "/fix":"auto-fix software build/test errors.",'
+  "/fix":"auto-fix software build/test errors.",
+  "/vitals [context]":"query live system resource usage (RAM, disk space, battery status).",'
         [ "${AGENT_ASK_USER:-1}" -eq 1 ] && _tool_summary="${_tool_summary}"'
   "/ask <question>":"ask the human operator a question for user-specific details.",'
         [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _tool_summary="${_tool_summary}"'
