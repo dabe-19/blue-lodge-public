@@ -48,6 +48,9 @@ cmd_save() {
         filepath=$(echo "$filepath" | sed 's/["'"'"'`]//g' | tr ' ' '-' | sed 's/[^a-zA-Z0-9_./-]//g')
     fi
 
+    # Clean redundant project workdir prefix
+    filepath=$(ui_clean_path_prefix "$filepath" "$workdir")
+
     # If content equals filepath (no content provided), clear it
     if [ "$content" = "$filepath" ]; then
         content=""

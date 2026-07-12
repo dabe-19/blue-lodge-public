@@ -3020,10 +3020,19 @@ _cmd_files() {
 }
 _cmd_read() {
     local filepath="$1"
+    local workdir="${2:-.}"
+    # Clean redundant project workdir prefix
+    filepath=$(ui_clean_path_prefix "$filepath" "$workdir")
     # Expand tilde — LLMs emit ~/path which doesn't expand in quotes
     declare -f tools_expand_tilde &>/dev/null && filepath=$(tools_expand_tilde "$filepath")
-    if [ -f "$filepath" ]; then
-        tools_read_file "$filepath" 100
+
+    local fullpath="$filepath"
+    if [[ "$filepath" != /* ]]; then
+        fullpath="$workdir/$filepath"
+    fi
+
+    if [ -f "$fullpath" ]; then
+        tools_read_file "$fullpath" 100
     else
         ui_err "File not found: $filepath"
     fi

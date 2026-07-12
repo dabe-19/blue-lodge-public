@@ -351,3 +351,25 @@ ui_expand_escapes() {
 ui_unescape_literals() {
     sed -e 's/\\\\/\x00/g' -e 's/\\n/\n/g' -e 's/\\t/\t/g' -e 's/\x00/\\/g'
 }
+
+# ── Clean path prefix ─────────────────────────────────────────
+# Cleans paths to remove redundant workdir/project folder prefixes.
+# E.g., if workdir=/workspace/system_shield and filepath=system_shield/main.sh,
+# this strips the redundant prefix to return "main.sh".
+ui_clean_path_prefix() {
+    local filepath="$1"
+    local workdir="$2"
+    [ -z "$filepath" ] && return 0
+    [ -z "$workdir" ] && { echo "$filepath"; return 0; }
+
+    local wd_base
+    wd_base=$(basename "$workdir")
+    
+    # Strip leading workdir basename if present
+    if [[ "$filepath" == "$wd_base/"* ]]; then
+        filepath="${filepath#$wd_base/}"
+    elif [[ "$filepath" == "$wd_base" ]]; then
+        filepath="."
+    fi
+    echo "$filepath"
+}
