@@ -7729,9 +7729,9 @@ MEMEOF
         local _rb_file="$george_dir/$RESEARCH_BUFFER_FILE"
         if [ -f "$_rb_file" ] && [ -s "$_rb_file" ]; then
             local _rb_data
-            _rb_data=$(jq -r '.[] | "\(.action):\n\(.output)\n"' "$_rb_file" 2>/dev/null)
+            _rb_data=$(jq -r '.[-4:] | .[] | "\(.action):\n\(.output)\n"' "$_rb_file" 2>/dev/null)
             if [ -n "$_rb_data" ]; then
-                _strat_rb="\n\n>>> RESEARCH FINDINGS DATA (gathered so far) <<<\n${_rb_data}"
+                _strat_rb="\n\n>>> RESEARCH FINDINGS DATA (recent findings) <<<\n${_rb_data}"
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- research findings data"
             fi
         fi
