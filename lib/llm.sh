@@ -1633,7 +1633,7 @@ llm_generate() {
         local _tty="/dev/tty"
         [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
         local _tmpdir="${TMPDIR:-/tmp}"
-        local _got_tokens="$_tmpdir/.lodge-gen-tok-$$"
+        local _got_tokens="$_tmpdir/.lodge-gen-tok-$RANDOM-$BASHPID"
         local _cancel_file="$_tmpdir/.lodge-cancel-$$"
         local _curl_pid_file="$_tmpdir/.lodge-curl-pid-$$"
         rm -f "$_got_tokens" "$_curl_pid_file"
@@ -1942,7 +1942,7 @@ llm_generate() {
     # Marker file: touched inside the pipe subshell when first token
     # arrives. If missing after the pipe, the request failed entirely.
     local _tmpdir="${TMPDIR:-/tmp}"
-    local _got_tokens="$_tmpdir/.lodge-gen-tok-$$"
+    local _got_tokens="$_tmpdir/.lodge-gen-tok-$RANDOM-$BASHPID"
     rm -f "$_got_tokens"
 
     # Cancel file for cooperative cancellation from agent loops
@@ -2998,7 +2998,7 @@ llm_chat() {
 
         _LLM_ACTIVE=1
         local _tmpdir="${TMPDIR:-/tmp}"
-        local _got_tokens="$_tmpdir/.lodge-chat-tok-$$"
+        local _got_tokens="$_tmpdir/.lodge-chat-tok-$RANDOM-$BASHPID"
         rm -f "$_got_tokens"
 
         # FIFO for curl → read loop decoupling (enables PID tracking)
@@ -3104,7 +3104,7 @@ llm_chat() {
     _LLM_ACTIVE=1
 
     local _tmpdir="${TMPDIR:-/tmp}"
-    local _got_tokens="$_tmpdir/.lodge-chat-tok-$$"
+    local _got_tokens="$_tmpdir/.lodge-chat-tok-$RANDOM-$BASHPID"
     rm -f "$_got_tokens"
 
     # Chat API uses .message.thinking and .message.content
@@ -3294,7 +3294,7 @@ llm_vision() {
         _LLM_ACTIVE=1
         local _tty="/dev/tty"
         [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
-        local _got_tokens="$_tmpdir/.lodge-vision-tok-$$"
+        local _got_tokens="$_tmpdir/.lodge-vision-tok-$RANDOM-$BASHPID"
         rm -f "$_got_tokens"
 
         ui_spinner_start "Analyzing image"
@@ -3373,7 +3373,7 @@ llm_vision() {
     local _tty="/dev/tty"
     [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
 
-    local _got_tokens="$_tmpdir/.lodge-vision-tok-$$"
+    local _got_tokens="$_tmpdir/.lodge-vision-tok-$RANDOM-$BASHPID"
     rm -f "$_got_tokens"
 
     ui_spinner_start "Analyzing image"
