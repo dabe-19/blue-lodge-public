@@ -6023,10 +6023,10 @@ INTERLOCK_JSON
                             continue
                         fi
                         # ── Utility detour override ───────────────────
-                        # Allow the Specialist to take detours using basic utility commands (ls, grep, read, ask, brainstorm, respond)
+                        # Allow the Specialist to take detours using basic utility commands (ls, grep, read, ask, brainstorm, respond, social)
                         local _is_utility_cmd=0
                         case "$_spec_cmd_name" in
-                            ls|grep|read|ask|brainstorm|respond) _is_utility_cmd=1 ;;
+                            ls|grep|read|ask|brainstorm|respond|social) _is_utility_cmd=1 ;;
                         esac
                         local _milestone_cmd=""
                         if [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
