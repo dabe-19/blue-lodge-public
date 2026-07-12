@@ -5850,6 +5850,22 @@ INTERLOCK_JSON
             ui_warn "Interlock Triggered: Identical failed command. Forcing regeneration."
             _micro_add_note "$micro_file" "System interlock: Command '$cmd' rejected (identical to previous failure)"
 
+            # Skip honeydew plan rewriting for code commands — escalate directly to the macro loop
+            # so the strategist can plan a code fix instead of abandoning the step.
+            local _il_is_code_cmd=0
+            if [[ "$cmd" == /build* ]] || [[ "$cmd" == /test* ]] || [[ "$cmd" == /fix* ]]; then
+                _il_is_code_cmd=1
+            fi
+
+            if [ "$_il_is_code_cmd" -eq 1 ]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Interlock: code command failed. Escalating to macro loop without rewriting plan."
+                _macro_add_milestone "$macro_file" "$micro_objective" \
+                    "Interlock: identical code command failed" \
+                    "$cmd" "UNKNOWN" "FAILED"
+                _AGENT_AUTO_RECOVERED=1
+                return 1
+            fi
+
             # Auto-recovery: honeydew rewrite on interlock
             local _il_max_rewrite="${AGENT_HONEYDEW_REWRITE_ROUNDS:-3}"
             if [ "${_honeydew_rewrite_rounds_used:-0}" -lt "$_il_max_rewrite" ] && declare -f _agent_honeydew_rewrite &>/dev/null; then
