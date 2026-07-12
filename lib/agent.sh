@@ -787,6 +787,10 @@ _agent_router_eligibility_pass() {
     if [[ "$_lower_obj" =~ \b(scaffold|setup|start|initialize)\b ]]; then
         _agent_router_add_unique shortlist "init"
     fi
+    if [[ "$_lower_obj" =~ \b(execute|run|build|compile|test)\b ]]; then
+        _agent_router_add_unique shortlist "build"
+        _agent_router_add_unique shortlist "test"
+    fi
 
     # Deterministic shortlist ordering by intent signal strength.
     [ "$need_git" -eq 1 ] && [ "$git_allowed" -eq 1 ] && _agent_router_add_unique shortlist "git"
