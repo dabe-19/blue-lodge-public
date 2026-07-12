@@ -980,6 +980,15 @@ tools_expand_file_refs() {
                 fi
             fi
 
+            # Try newest workspace directory fallback (resolves write-sandboxed files)
+            if [ -z "$resolved" ]; then
+                local _newest_ws
+                _newest_ws=$(ls -td "$workdir/.george/workspaces"/*/ 2>/dev/null | head -1)
+                if [ -n "$_newest_ws" ] && [ -f "${_newest_ws}${fpath}" ]; then
+                    resolved="${_newest_ws}${fpath}"
+                fi
+            fi
+
             if [ -n "$resolved" ]; then
                 # Dedup: skip files already expanded in this call
                 if [ -n "${_ef_seen[$resolved]:-}" ]; then
