@@ -989,6 +989,13 @@ tools_expand_file_refs() {
                 fi
             fi
 
+            # Try AGENT_OUTPUT_DIR directory fallback
+            if [ -z "$resolved" ] && [ -n "${AGENT_OUTPUT_DIR:-}" ]; then
+                if [ -f "$workdir/${AGENT_OUTPUT_DIR}/${fpath}" ]; then
+                    resolved="$workdir/${AGENT_OUTPUT_DIR}/${fpath}"
+                fi
+            fi
+
             if [ -n "$resolved" ]; then
                 # Dedup: skip files already expanded in this call
                 if [ -n "${_ef_seen[$resolved]:-}" ]; then
