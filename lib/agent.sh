@@ -6025,6 +6025,20 @@ INTERLOCK_JSON
                 continue
             fi
 
+            # ── 3-STRIKE BLOCKED CHECK FOR SPECIALIST OUTPUT ──
+            local _spec_is_blocked=0
+            local _blk
+            for _blk in "${_blocked_cmds[@]}"; do
+                [ "$_blk" = "$_spec_cmd_name" ] && _spec_is_blocked=1 && break
+            done
+            if [ "$_spec_is_blocked" -eq 1 ]; then
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] BLOCKED: /$_spec_cmd_name (3-strike rule)"
+                _micro_add_warning "$micro_file" "BLOCKED: /$_spec_cmd_name has failed 3+ times in a row. Use a DIFFERENT command."
+                _inner_cmd_history+=("$cmd")
+                inner_attempts=$((inner_attempts + 1))
+                continue
+            fi
+
             # ── SPECIALIST TOOL MISMATCH CHECK ─────────────────
             # The router selected a specific tool, but the specialist
             # may ignore it and output a different command. When the
