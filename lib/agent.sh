@@ -1533,7 +1533,7 @@ _agent_honeydew_needs_expansion() {
     fi
 
     # 6. Research or scrape goals — needs search + fetch/scrape steps
-    if [[ "$lower" =~ (research|scrape|gather|find|analyze) ]]; then
+    if [[ "$lower" =~ (research|scrape) ]]; then
         return 0
     fi
 
