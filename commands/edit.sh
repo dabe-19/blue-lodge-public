@@ -69,6 +69,18 @@ cmd_edit() {
         return 1
     fi
 
+    # Auto-heal missing trailing delimiter for 's' commands
+    if [[ "$content" =~ ^s([/\|,\#]) ]]; then
+        local delim="${BASH_REMATCH[1]}"
+        local temp="${content//\\$delim/_}"
+        local count
+        count=$(echo -n "$temp" | tr -cd "$delim" | wc -c)
+        if [ "$count" -eq 2 ]; then
+            content="${content}${delim}"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Auto-healed missing trailing sed delimiter: $content"
+        fi
+    fi
+
     # Guard: reject content that's clearly NOT a sed expression
     local _sed_ok=0
     if [[ "$content" =~ ^s[/\|,\#] ]]; then
