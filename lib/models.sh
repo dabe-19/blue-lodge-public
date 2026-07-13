@@ -152,6 +152,7 @@ declare -A _MODELS_THINK_FLAG_BY_KEY=(
 )
 
 declare -A _MODELS_VISION_BY_KEY=(
+    [gemma4-e2b-inst]=1
     [gemma4-e4b-inst]=1
     [gemma4-12b-inst]=1
 )
@@ -958,9 +959,9 @@ models_for_scenario() {
 _models_switch() {
     local target="$1"
 
-    # Already correct model loaded — no-op
-    if [ "$_MODELS_ACTIVE" = "$target" ]; then
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] _models_switch: already active='$target', skip" >&2
+    # Already correct model loaded and thinking state matches — no-op
+    if [ "$_MODELS_ACTIVE" = "$target" ] && [ "${LLAMA_CPP_SERVER_NOTHINK:-}" = "${LODGE_NOTHINK:-0}" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] _models_switch: already active='$target' and thinking state matches, skip" >&2
         return 0
     fi
 
@@ -990,6 +991,7 @@ _models_switch() {
                 if _remote_restart_llamacpp "$target" "$_remote_base"; then
                     _MODELS_ACTIVE="$target"
                     LODGE_MODEL="$target"
+                    LLAMA_CPP_SERVER_NOTHINK="${LODGE_NOTHINK:-0}"
                     ui_ok "Remote model switched to $target"
                     return 0
                 else
@@ -1035,8 +1037,8 @@ _models_switch() {
             return 1
         fi
 
-        # If same GGUF is already loaded, just update tracking
-        if [ "$LLAMA_CPP_MODEL" = "$_gguf" ]; then
+        # If same GGUF is already loaded and thinking state matches, just update tracking
+        if [ "$LLAMA_CPP_MODEL" = "$_gguf" ] && [ "${LLAMA_CPP_SERVER_NOTHINK:-}" = "${LODGE_NOTHINK:-0}" ]; then
             _MODELS_ACTIVE="$target"
             LODGE_MODEL="$target"
             return 0
@@ -1044,13 +1046,15 @@ _models_switch() {
 
         # Stop current → start with new model
         _llm_stop_llamacpp_server "--quiet"
+        local old_model="$LODGE_MODEL"
+        LODGE_MODEL="$target"
         # Chat template: --jinja uses the GGUF-embedded Jinja2 template,
         # so no per-model template resolution is needed.
         if _llm_start_llamacpp_server "$_gguf" "--quiet"; then
             _MODELS_ACTIVE="$target"
-            LODGE_MODEL="$target"
             return 0
         else
+            LODGE_MODEL="$old_model"
             return 1
         fi
     fi

@@ -4429,7 +4429,7 @@ SPEC
 "notes":"Think, reason, or brainstorm using George's own knowledge. NO human input — George answers HIMSELF. Use when you need to generate ideas, weigh options, plan approaches, or reason through a problem. Alias: /q. WARNING: may be stale for dates, scores, events, prices — prefer /web for time-sensitive info.",
 "contrast":"vs /ask: /ask asks the HUMAN and waits for their answer. /brainstorm = George thinks it through himself.",
 "rules":["Output ONLY your reasoning and ideas as plain text","NEVER include slash commands, bash blocks, or code fences in your brainstorm output","Do NOT draft the next command — just think through the problem"],
-"format_only_ex":["/brainstorm What are the pros and cons of using SQLite vs PostgreSQL?","/brainstorm What factors should I consider when planning a weekend trip?"]}
+"format_only_ex":["/brainstorm <question_or_topic>"]}
 SPEC
                 ;;
             ask)
@@ -4437,7 +4437,7 @@ SPEC
 {"cmd":"/ask","syntax":"/ask <question to ask the human operator>",
 "notes":"Asks the HUMAN USER a question and waits for their typed answer. Use to get real user-specific details that ONLY the user knows. The user's answer is returned as output. Do NOT use for general knowledge — use /web or /recall instead.",
 "rules":["ONE specific question per /ask","Ask about concrete details the user must provide","Do NOT ask rhetorical or philosophical questions"],
-"format_only_ex":["/ask What is your preferred programming language for this project?","/ask What is the target audience for this document?"]}
+"format_only_ex":["/ask <question_for_the_operator>"]}
 SPEC
                 ;;
             ls)

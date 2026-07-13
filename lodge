@@ -2137,12 +2137,69 @@ _cmd_models() {
                     fi
                 fi
             fi ;;
+        spec|speculative)
+            if [ -z "$arg2" ]; then
+                ui_section "Speculative Decoding / MTP Settings"
+                if [ "${LLAMA_CPP_SPEC_MTP:-0}" = "1" ]; then
+                    printf "  %bSpeculative Decoding (MTP):%b %benabled%b\n" "${C_CYAN:-}" "${C_RESET:-}" "${C_GREEN:-}" "${C_RESET:-}"
+                else
+                    printf "  %bSpeculative Decoding (MTP):%b %bdisabled%b\n" "${C_CYAN:-}" "${C_RESET:-}" "${C_DIM:-}" "${C_RESET:-}"
+                fi
+                printf "  %bDraft Token Max (spec-draft-n-max):%b %s\n" "${C_CYAN:-}" "${C_RESET:-}" "${LLAMA_CPP_SPEC_DRAFT_N_MAX:-4}"
+                if [ -n "${LLAMA_CPP_DRAFT_MODEL:-}" ]; then
+                    printf "  %bDraft Model Path:%b %s\n" "${C_CYAN:-}" "${C_RESET:-}" "${LLAMA_CPP_DRAFT_MODEL}"
+                else
+                    printf "  %bDraft Model Path:%b %b(not set; using GGUF-embedded MTP or HF auto-discovery)%b\n" "${C_CYAN:-}" "${C_RESET:-}" "${C_DIM:-}" "${C_RESET:-}"
+                fi
+                echo ""
+                ui_dim "Usage: /models spec [on|off]"
+                ui_dim "       /models spec tokens <num>"
+                ui_dim "       /models spec draft <path|clear>"
+            else
+                case "$arg2" in
+                    on|enable)
+                        LLAMA_CPP_SPEC_MTP=1
+                        _llm_save_config
+                        ui_ok "Speculative decoding (MTP) enabled"
+                        ;;
+                    off|disable)
+                        LLAMA_CPP_SPEC_MTP=0
+                        _llm_save_config
+                        ui_ok "Speculative decoding (MTP) disabled"
+                        ;;
+                    tokens)
+                        if [ -z "$arg3" ]; then
+                            ui_err "Usage: /models spec tokens <number>"
+                        else
+                            LLAMA_CPP_SPEC_DRAFT_N_MAX="$arg3"
+                            _llm_save_config
+                            ui_ok "Set speculative draft token limit to $arg3"
+                        fi
+                        ;;
+                    draft)
+                        if [ -z "$arg3" ]; then
+                            ui_err "Usage: /models spec draft <path|clear>"
+                        elif [ "$arg3" = "clear" ]; then
+                            LLAMA_CPP_DRAFT_MODEL=""
+                            _llm_save_config
+                            ui_ok "Cleared speculative draft model override"
+                        else
+                            LLAMA_CPP_DRAFT_MODEL="$arg3"
+                            _llm_save_config
+                            ui_ok "Set speculative draft model to $arg3"
+                        fi
+                        ;;
+                    *)
+                        ui_err "Unknown speculative action: $arg2"
+                        ;;
+                esac
+            fi ;;
         "")
             models_status
             echo ""
             models_list ;;
         *)
-            ui_info "Usage: /models [list|status|select|single|dual|param]"
+            ui_info "Usage: /models [list|status|select|single|dual|param|spec]"
             ui_dim "  list               — show available models"
             ui_dim "  status             — show current configuration"
             ui_dim "  select primary <key>  — set primary model"
@@ -2152,6 +2209,7 @@ _cmd_models() {
             ui_dim "  param [key]        — show model parameters"
             ui_dim "  param <key> <p> <v> — set a parameter override"
             ui_dim "  param <key> clear [p] — clear overrides"
+            ui_dim "  spec [on|off|tokens|draft] — manage speculative decoding (MTP)"
             ui_dim "  (no arg)           — show status + model list" ;;
     esac
 }

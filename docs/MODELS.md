@@ -81,6 +81,7 @@ lodge /models single gemma4-e4b-inst
 
 - Native think-flag support is enabled for `qwen35-4b-think`.
 - Gemma 4 vision capability is enabled for:
+  - `gemma4-e2b-inst`
   - `gemma4-e4b-inst`
   - `gemma4-12b-inst`
 - All other models in this catalog are treated as text-only.
@@ -90,3 +91,28 @@ lodge /models single gemma4-e4b-inst
 Legacy pre-2026 model keys were intentionally removed from the curated menu.
 
 If you have old `LODGE_MODEL_*` values in your shell profile, update them to one of the keys listed above.
+
+## Speculative Decoding & Multi-Token Prediction (MTP)
+
+Gemma 4 models (and other compatible edge architectures) support **Multi-Token Prediction (MTP)** speculative decoding in `llama-server`, which can speed up inference by 1.4x to 2.2x without any quality loss.
+
+### 1. Embedded MTP vs. Separate Draft Models
+- **Embedded MTP (Gemma 4)**: Unsloth's QAT Gemma 4 GGUFs (such as E4B and 12B) have the MTP draft heads embedded inside the same model file. You do **not** need a separate draft model. Simply enabling MTP will prompt `llama-server` to leverage these embedded heads.
+- **Separate Draft Models**: For other models, you can download a smaller compatible assistant/draft model and configure its path explicitly.
+
+### 2. Environment Variables
+You can configure speculative decoding by exporting the following variables before launching `lodge`:
+- `LLAMA_CPP_SPEC_MTP`: Set to `1` to enable speculative decoding, or `0` to disable (default: `0`).
+- `LLAMA_CPP_SPEC_DRAFT_N_MAX`: The maximum number of draft tokens to predict per iteration (default: `4`).
+- `LLAMA_CPP_DRAFT_MODEL`: The local file path to a separate draft GGUF model (optional; leave unset to use embedded MTP/auto-discovery).
+
+### 3. REPL Subcommands
+You can view and modify these settings in real-time within the George REPL using the `/models spec` command:
+- `/models spec` — Display the current speculative decoding status and values.
+- `/models spec on` — Enable speculative decoding.
+- `/models spec off` — Disable speculative decoding.
+- `/models spec tokens <num>` — Set the maximum draft tokens (`spec-draft-n-max`) to predict.
+- `/models spec draft <path>` — Set the draft model GGUF path.
+- `/models spec draft clear` — Clear the draft model path override to use embedded MTP.
+
+Configuration changes made in the REPL are automatically saved to `.george/lodge.conf` and will persist across sessions.

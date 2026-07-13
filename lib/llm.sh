@@ -657,6 +657,7 @@ _llm_start_llamacpp_server() {
             [ "$quiet" != "--quiet" ] && ui_ok "llama-server already running on port $_port_check (adopted)"
             _LLM_BACKEND_CACHE=""
             LLAMA_CPP_MODEL="$model_path"
+            LLAMA_CPP_SERVER_NOTHINK="${LODGE_NOTHINK:-0}"
             return 0
         fi
     fi
@@ -672,6 +673,7 @@ _llm_start_llamacpp_server() {
                 [ "$quiet" != "--quiet" ] && ui_ok "llama-server ready (adopted after ${_wait}s)"
                 _LLM_BACKEND_CACHE=""
                 LLAMA_CPP_MODEL="$model_path"
+                LLAMA_CPP_SERVER_NOTHINK="${LODGE_NOTHINK:-0}"
                 return 0
             fi
             _wait=$((_wait + 1))
@@ -812,6 +814,22 @@ _llm_start_llamacpp_server() {
         [ "$quiet" != "--quiet" ] && ui_dim "Chat template: GGUF-embedded (--jinja)"
     fi
 
+    # Optional chat template kwargs for thinking/reasoning control (e.g. Gemma 4, Qwen 3.5)
+    local _chat_template_kwargs=""
+    if declare -f models_supports_think_flag &>/dev/null && models_supports_think_flag "$LODGE_MODEL" 2>/dev/null; then
+        if [ "${LODGE_NOTHINK:-0}" -eq 1 ]; then
+            _chat_template_kwargs='{"enable_thinking":false}'
+        else
+            _chat_template_kwargs='{"enable_thinking":true}'
+        fi
+    fi
+    if [ -n "$_chat_template_kwargs" ]; then
+        if _llm_llamacpp_supports_flag "--chat-template-kwargs"; then
+            _launch_args+=(--chat-template-kwargs "$_chat_template_kwargs")
+            [ "$quiet" != "--quiet" ] && ui_dim "Chat template kwargs: $_chat_template_kwargs"
+        fi
+    fi
+
     # When GPU_LAYERS=0, prevent llama.cpp from even initializing the
     # Vulkan backend.  On Adreno 830 (Snapdragon 8 Elite), Vulkan init
     # alone can corrupt GPU state — especially through proot's syscall
@@ -834,6 +852,7 @@ _llm_start_llamacpp_server() {
         if curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null | grep -q '"status"'; then
             _LLM_BACKEND_CACHE=""
             LLAMA_CPP_MODEL="$model_path"
+            LLAMA_CPP_SERVER_NOTHINK="${LODGE_NOTHINK:-0}"
             [ "$quiet" != "--quiet" ] && ui_ok "llama-server started (PID $_pid)"
             # Verify no unexpected GPU offload
             local _log_file="${TMPDIR:-/tmp}/lodge-llama-server.log"
@@ -1206,6 +1225,11 @@ llm_ensure() {
     # Provider harness: no local backend needed
     [ -n "${GEORGE_PROVIDER:-}" ] && return 0
 
+    # Ensure active model reflects LODGE_MODEL_PRIMARY for checks/resolving
+    if [ -n "${LODGE_MODEL_PRIMARY:-}" ]; then
+        LODGE_MODEL="$LODGE_MODEL_PRIMARY"
+    fi
+
     local backend
     backend=$(_llm_detect_backend)
 
@@ -1214,8 +1238,13 @@ llm_ensure() {
         llm_check
         local status=$?
         if [ "$status" -eq 0 ]; then
-            _llm_kill_ollama --quiet
-            return 0
+            if declare -f models_supports_think_flag &>/dev/null && models_supports_think_flag "$LODGE_MODEL" 2>/dev/null && [ "${LLAMA_CPP_SERVER_NOTHINK:-}" != "${LODGE_NOTHINK:-0}" ]; then
+                ui_dim "llama-server thinking mode changed — restarting..."
+                _llm_stop_llamacpp_server --quiet
+            else
+                _llm_kill_ollama --quiet
+                return 0
+            fi
         fi
         # Server exists but still loading — wait for it
         if [ "$status" -eq 2 ]; then
@@ -1275,6 +1304,7 @@ llm_ensure() {
 
     # ── Ollama fallback ────────────────────────────────────────
     # Final fallback starts ollama serve via _llm_start_ollama_server.
+    LLM_BACKEND="ollama"
     _LLM_BACKEND_CACHE=""  # Clear so detection re-checks
     backend=$(_llm_detect_backend)
     llm_check
@@ -1286,6 +1316,7 @@ llm_ensure() {
             : "ollama serve fallback"
             ui_warn "Starting Ollama as fallback..."
             _llm_start_ollama_server
+            _LLM_BACKEND_CACHE=""
             llm_check
             status=$?
 
@@ -3301,10 +3332,16 @@ llm_vision() {
             *.webp) mime_type="image/webp" ;;
         esac
 
+        # Ensure the prompt contains <image> placeholder for llama.cpp multimodal models
+        local _effective_prompt="$prompt"
+        if [[ "$_effective_prompt" != *"<image>"* ]]; then
+            _effective_prompt="<image>\n$_effective_prompt"
+        fi
+
         # Build multimodal messages payload directly to avoid command line limits
         payload=$(printf '%s' "$img_base64" | jq -R -s \
             --arg sys "${system:-}" \
-            --arg prompt "$prompt" \
+            --arg prompt "$_effective_prompt" \
             --arg mime "$mime_type" \
             --argjson max_tokens "$max_tok" \
             --argjson temperature "$temp" \

@@ -592,11 +592,14 @@ _remote_restart_llamacpp() {
         _perf_args+="--cache-type-k ${REMOTE_KV_CACHE_TYPE} --cache-type-v ${REMOTE_KV_CACHE_TYPE} "
     fi
 
-    # Determine chat template args based on model
+    # Determine chat template args based on model and LODGE_NOTHINK
     local _extra_args=""
-    # Qwen 3.5 models need --chat-template-kwargs for thinking mode
-    if [[ "$_model_name" =~ qwen35.*think ]]; then
-        _extra_args="--chat-template-kwargs '{\"enable_thinking\":true}'"
+    if declare -f models_supports_think_flag &>/dev/null && models_supports_think_flag "$_model_name" 2>/dev/null; then
+        if [ "${LODGE_NOTHINK:-0}" -eq 1 ]; then
+            _extra_args="--chat-template-kwargs '{\"enable_thinking\":false}'"
+        else
+            _extra_args="--chat-template-kwargs '{\"enable_thinking\":true}'"
+        fi
     fi
     # Append GPU performance flags
     _extra_args="${_extra_args:+$_extra_args }${_perf_args}"
@@ -689,6 +692,7 @@ EOF
             _model_check=$(curl -sf --max-time 3 "$LLAMA_CPP_URL/v1/models" 2>/dev/null)
             if echo "$_model_check" | grep -q '"id"' 2>/dev/null; then
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: llama-server healthy with model loaded (${_wait}s)" >&2
+                LLAMA_CPP_SERVER_NOTHINK="${LODGE_NOTHINK:-0}"
                 return 0
             fi
             # Health OK but no model yet — might still be loading
