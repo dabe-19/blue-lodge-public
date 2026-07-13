@@ -387,10 +387,10 @@ api_model_source_caveats() {
     esac
 
     # Family/source overrides
-    if [[ "$ref_lc" == *"unsloth"* ]] && [[ "$ref_lc" == *"gemma"* ]] && [[ "$ref_lc" == *"e4b"* ]] && [[ "$ref_lc" == *"qat"* ]]; then
+    if [[ "$ref_lc" == *"unsloth"* ]] && [[ "$ref_lc" == *"gemma"* ]] && ( [[ "$ref_lc" == *"e4b"* ]] || [[ "$ref_lc" == *"e2b"* ]] ) && [[ "$ref_lc" == *"qat"* ]]; then
         mobile_footprint="mobile-low-memory"
         multimodal="vision-capable"
-        notes="${notes};unsloth gemma4 e4b qat profile"
+        notes="${notes};unsloth gemma4 e2b/e4b qat profile"
     fi
 
     if [[ "$ref_lc" == *"qwen3.5"* ]] || [[ "$family_lc" == *"qwen35"* ]]; then

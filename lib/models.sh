@@ -20,8 +20,8 @@ LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 
 # ── Model Slots ────────────────────────────────────────────────
 # These are the Ollama model names (e.g., "blue-lodge-minist-think:4b")
-LODGE_MODEL_PRIMARY="${LODGE_MODEL_PRIMARY:-blue-lodge-gemma4-inst:4b}"
-LODGE_MODEL_SECONDARY="${LODGE_MODEL_SECONDARY:-blue-lodge-gemma4-inst:4b}"
+LODGE_MODEL_PRIMARY="${LODGE_MODEL_PRIMARY:-blue-lodge-gemma4-inst:2b}"
+LODGE_MODEL_SECONDARY="${LODGE_MODEL_SECONDARY:-blue-lodge-gemma4-inst:2b}"
 LODGE_SINGLE_MODEL="${LODGE_SINGLE_MODEL:-1}"   # 1=single model mode (primary only, default), 0=dual model hot-swap
 
 # Track which model is currently loaded (set by _models_switch)
@@ -65,12 +65,12 @@ _MODELS_REGISTRY=(
 # Keep registry entries focused on runtime behavior while menu/family
 # presentation and capability hints live in dedicated metadata maps.
 _MODELS_CURATED_ORDER=(
-    "gemma4-e4b-inst"
+    "gemma4-e2b-inst"
     "qwen35-4b-inst"
     "qwen35-4b-think"
     "granite41-3b-inst"
     "nemotron3-nano-4b-inst"
-    "gemma4-e2b-inst"
+    "gemma4-e4b-inst"
     "qwen35-2b-inst"
     "gemma4-12b-inst"
     "qwen35-9b-inst"
@@ -926,7 +926,7 @@ models_for_scenario() {
             elif [ "${LODGE_SINGLE_MODEL:-0}" -eq 0 ] && models_has_vision "$LODGE_MODEL_SECONDARY"; then
                 echo "$LODGE_MODEL_SECONDARY"
             else
-                echo "blue-lodge-gemma4-inst:4b"
+                echo "blue-lodge-gemma4-inst:2b"
             fi
             return
             ;;

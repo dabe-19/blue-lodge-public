@@ -1212,6 +1212,11 @@ describe "Vision projector (mmproj) support"
     assert_ok $? "Launch args must include mmproj support"
   }
 
+  it "models_has_vision recognizes gemma4-e2b-inst" && {
+    result=$(models_has_vision "blue-lodge-gemma4-inst:2b" && echo "yes" || echo "no")
+    assert_eq "$result" "yes"
+  }
+
   it "models_has_vision recognizes gemma4-e4b-inst" && {
     result=$(models_has_vision "blue-lodge-gemma4-inst:4b" && echo "yes" || echo "no")
     assert_eq "$result" "yes"

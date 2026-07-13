@@ -401,6 +401,15 @@ describe "Cross-file consistency"
 # ════════════════════════════════════════════════════════════════
 describe "Model Registry — 2026 entries"
 
+  it "gemma4-e2b-inst is registered with Gemma 4 base" && {
+    _entry=$(_models_lookup "gemma4-e2b-inst")
+    _models_parse_entry "$_entry"
+    assert_not_empty "$_entry"
+    echo "$_ME_BASE" | grep -q "gemma-4-E2B-it-qat-GGUF"
+    assert_ok $? "Gemma 4 E2B must use 2026 base"
+    assert_eq "$_ME_ROLE" "instruct"
+  }
+
   it "gemma4-e4b-inst is registered with Gemma 4 base" && {
     _entry=$(_models_lookup "gemma4-e4b-inst")
     _models_parse_entry "$_entry"
@@ -510,6 +519,11 @@ describe "Chat Template Mapping — 2026 models"
 # Vision + thinking capabilities
 # ════════════════════════════════════════════════════════════════
 describe "Vision and think support"
+
+  it "gemma4-e2b-inst has vision support" && {
+    models_has_vision "blue-lodge-gemma4-inst:2b"
+    assert_ok $?
+  }
 
   it "gemma4-e4b-inst has vision support" && {
     models_has_vision "blue-lodge-gemma4-inst:4b"

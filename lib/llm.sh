@@ -792,7 +792,16 @@ _llm_start_llamacpp_server() {
     # Optional speculative decoding (MTP draft).
     # With Ollama-resolved GGUF (-m path), llama.cpp cannot auto-discover the
     # repo-root MTP draft from -hf metadata, so support explicit local draft file.
-    if [ "${LLAMA_CPP_SPEC_MTP:-0}" = "1" ]; then
+    local _spec_mtp="${LLAMA_CPP_SPEC_MTP:-}"
+    if [ -z "$_spec_mtp" ]; then
+        if [[ "${LODGE_MODEL:-}" == "gemma4-e2b-inst" ]]; then
+            _spec_mtp=1
+        else
+            _spec_mtp=0
+        fi
+    fi
+
+    if [ "$_spec_mtp" = "1" ]; then
         _launch_args+=(--spec-type draft-mtp --spec-draft-n-max "${LLAMA_CPP_SPEC_DRAFT_N_MAX:-4}")
         
         # Resolve MTP draft model HF reference or local file

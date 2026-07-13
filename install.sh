@@ -102,8 +102,8 @@ _lodge_shell_block() {
 
 # ── Blue Lodge ─────────────────────────────────────────────
 export LODGE_DIR="$LODGE_DIR"
-export LODGE_MODEL_PRIMARY="blue-lodge-gemma4-inst:4b"
-export LODGE_MODEL_SECONDARY="blue-lodge-gemma4-inst:4b"
+export LODGE_MODEL_PRIMARY="blue-lodge-gemma4-inst:2b"
+export LODGE_MODEL_SECONDARY="blue-lodge-gemma4-inst:2b"
 export PATH="\$HOME/.local/bin:\$PATH"
 $termux_line
 $ollama_models_line
@@ -829,8 +829,8 @@ if [ ${#_extra_missing[@]} -gt 0 ]; then
 fi
 
 
-# ── Default model: Gemma 4 E4B Instruct ───────────────────────
-# Gemma 4 E4B Instruct is the default model for George. Both the primary
+# ── Default model: Gemma 4 E2B Instruct ───────────────────────
+# Gemma 4 E2B Instruct is the default model for George. Both the primary
 # and secondary model slots point to it out of the box. If it is already
 # installed we skip ahead; otherwise we ask the user before downloading.
 echo ""
@@ -849,7 +849,7 @@ fi
 
 if [ "$_default_model_installed" -eq 0 ]; then
     echo ""
-    printf " ${BOLD}Gemma 4 E4B Instruct${RESET} is configured as the default model for George.\n"
+    printf " ${BOLD}Gemma 4 E2B Instruct${RESET} is configured as the default model for George.\n"
     printf " ${DIM}It is a modern low-memory model that performs well on phone-class hardware.${RESET}\n"
     printf " ${DIM}You can change the default later in lodge.conf.${RESET}\n"
     echo ""
@@ -858,20 +858,20 @@ if [ "$_default_model_installed" -eq 0 ]; then
 
     if [ -z "$_install_default" ] || [[ "$_install_default" =~ ^[Yy] ]]; then
         if [ "$LODGE_MODEL_PRIMARY" = "$LODGE_MODEL_SECONDARY" ]; then
-            info "Creating model: $LODGE_MODEL_PRIMARY (first run downloads ~3 GB)..."
-            _key=$(_models_key_from_query "$LODGE_MODEL_PRIMARY" 2>/dev/null || echo "gemma4-e4b-inst")
+            info "Creating model: $LODGE_MODEL_PRIMARY (first run downloads ~1.6 GB)..."
+            _key=$(_models_key_from_query "$LODGE_MODEL_PRIMARY" 2>/dev/null || echo "gemma4-e2b-inst")
             _mf=$(models_generate_modelfile "$_key")
             ollama create "$LODGE_MODEL_PRIMARY" -f "$_mf"
             ok "Default model created"
         else
-            info "Creating primary model: $LODGE_MODEL_PRIMARY (first run downloads ~3 GB)..."
-            _key_primary=$(_models_key_from_query "$LODGE_MODEL_PRIMARY" 2>/dev/null || echo "gemma4-e4b-inst")
+            info "Creating primary model: $LODGE_MODEL_PRIMARY (first run downloads ~1.6 GB)..."
+            _key_primary=$(_models_key_from_query "$LODGE_MODEL_PRIMARY" 2>/dev/null || echo "gemma4-e2b-inst")
             _mf=$(models_generate_modelfile "$_key_primary")
             ollama create "$LODGE_MODEL_PRIMARY" -f "$_mf"
             ok "Primary model created"
 
             info "Creating secondary model: $LODGE_MODEL_SECONDARY..."
-            _key_secondary=$(_models_key_from_query "$LODGE_MODEL_SECONDARY" 2>/dev/null || echo "gemma4-e4b-inst")
+            _key_secondary=$(_models_key_from_query "$LODGE_MODEL_SECONDARY" 2>/dev/null || echo "gemma4-e2b-inst")
             _mf=$(models_generate_modelfile "$_key_secondary")
             ollama create "$LODGE_MODEL_SECONDARY" -f "$_mf"
             ok "Secondary model created"
