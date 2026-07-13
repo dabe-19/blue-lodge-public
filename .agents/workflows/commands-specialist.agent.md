@@ -25,7 +25,7 @@ You are COMMANDS-SPECIALIST, specialist for slash commands and command dispatche
 
 <workflow>
 ## 1. Read Inputs
-Read `.agents/workflows/contract.md` via `antigravity/memory` to understand the command additions or edits required, then read the target command file(s) in `commands/` or the command dispatcher in `lib/commands.sh`.
+Read `implementation_plan.md` in the active conversation directory to understand the command additions or edits required, then read the target command file(s) in `commands/` or the command dispatcher in `lib/commands.sh`.
 
 ## 2. Plan
 Use the `todo` tool to list the steps required for editing and checking the slash commands.

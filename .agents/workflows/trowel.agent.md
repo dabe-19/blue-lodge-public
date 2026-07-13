@@ -16,7 +16,7 @@ Your only purpose is to close the loop, update the records, and shut down the ac
 </rules>
 
 <workflow>
-1. Use the `read` tool to check `.agents/workflows/contract.md` to see what was just finished.
+1. Use the `read` tool to check `implementation_plan.md` in the active conversation directory to see what was just finished.
 2. Use the `edit` tool to update `GEORGE.md` in the root directory. Move the current task from "The Active Board" down to "The Trowel (Completed Milestones)". Use this exact one-line template:
 
    ```

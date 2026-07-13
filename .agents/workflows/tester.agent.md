@@ -20,7 +20,7 @@ You are intentionally configured WITHOUT the `edit` tool. If you find yourself w
 
 <workflow>
 ## 1. Discover
-- Read `.agents/workflows/contract.md` via `antigravity/memory` to understand the scope.
+- Read `implementation_plan.md` in the active conversation directory to understand the scope.
 - Read the test harness wrapper script and any relevant smoke/integration test entry points.
 - Confirm no new harness step or env var was added since the last run.
 
