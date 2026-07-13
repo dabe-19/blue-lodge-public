@@ -70,26 +70,42 @@ cmd_download() {
     if [[ "$source" == http://* ]] || [[ "$source" == https://* ]]; then
         ui_step "Downloading: $source"
 
+        local success=0
         if command -v curl &>/dev/null; then
             if curl -fsSL -o "$fullpath" "$source" 2>&1; then
-                local size
-                size=$(wc -c < "$fullpath" 2>/dev/null || echo "0")
-                ui_ok "Downloaded: $dest ($size bytes)"
-                return 0
-            else
-                ui_err "Download failed: $source"
-                return 1
+                success=1
             fi
         elif command -v wget &>/dev/null; then
             if wget -q -O "$fullpath" "$source" 2>&1; then
-                ui_ok "Downloaded: $dest"
-                return 0
-            else
-                ui_err "Download failed: $source"
-                return 1
+                success=1
             fi
         else
             ui_err "No download tool available (need curl or wget)"
+            return 1
+        fi
+
+        if [ "$success" -eq 1 ]; then
+            # Verify that we didn't download HTML text when expecting a binary/image file
+            local lower_dest
+            lower_dest=$(echo "$dest" | tr '[:upper:]' '[:lower:]')
+            if [[ "$lower_dest" =~ \.(jpg|jpeg|png|gif|webp|bmp|svg|avif|tiff|pdf|tar|gz|zip|json)$ ]]; then
+                local head_bytes
+                head_bytes=$(head -c 500 "$fullpath" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+                if [[ "$head_bytes" == *"<html"* ]] || [[ "$head_bytes" == *"<!doctype html"* ]]; then
+                    rm -f "$fullpath"
+                    ui_err "Downloaded content is HTML text, not the expected binary/image file: $dest"
+                    ui_dim "Hint: You may have downloaded a webpage/description page (like Wikimedia Commons) instead of the raw file."
+                    ui_dim "Use /web scrape-images on the webpage URL to find the actual direct image URL, then download that."
+                    return 1
+                fi
+            fi
+
+            local size
+            size=$(wc -c < "$fullpath" 2>/dev/null || echo "0")
+            ui_ok "Downloaded: $dest ($size bytes)"
+            return 0
+        else
+            ui_err "Download failed: $source"
             return 1
         fi
     fi

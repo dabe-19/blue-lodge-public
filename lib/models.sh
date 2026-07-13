@@ -1193,19 +1193,6 @@ models_thinking_directive() {
         strategist|evaluator|ask) _skip_nothink=1 ;;
     esac
 
-    # If nothink is active, suppress the directive (unless bypassed)
-    if [ "${LODGE_NOTHINK:-0}" -eq 1 ] && [ "$_skip_nothink" -eq 0 ]; then
-        return
-    fi
-
-    # All thinking models need the directive injected into the
-    # system prompt — the Modelfile SYSTEM gets replaced at runtime.
-    # Qwen3 is excluded because its template injects the instruction
-    # unconditionally (not gated by $system == "").
-    if ! models_has_thinking "$model"; then
-        return  # not a thinking model
-    fi
-
     local key=""
     if models_info "$model" 2>/dev/null; then
         key="$_ME_KEY"
@@ -1216,15 +1203,20 @@ models_thinking_directive() {
         qwen3-*|qwen35-*) return ;;
     esac
 
-    # Build nothink instruction if applicable (mirrors models_generate_modelfile logic)
-    local _nothink_sys=""
-    if [ "${LODGE_NOTHINK:-0}" -ne 1 ]; then
-        local _nothink_method
-        _nothink_method=$(models_nothink_method "$model")
-        if [ "$_nothink_method" = "system" ]; then
-            _nothink_sys="
-When asked to skip reasoning, respond directly without any internal deliberation."
+    local method
+    method=$(models_nothink_method "$model")
+
+    # If nothink is active and not bypassed, return only the skip instruction if model uses system prompt method
+    if [ "${LODGE_NOTHINK:-0}" -eq 1 ] && [ "$_skip_nothink" -eq 0 ]; then
+        if [ "$method" = "system" ]; then
+            echo "When asked to skip reasoning, respond directly without any internal deliberation."
         fi
+        return
+    fi
+
+    # Thinking mode: return the thinking directive
+    if ! models_has_thinking "$model"; then
+        return  # not a thinking model
     fi
 
     case "$key" in
@@ -1234,35 +1226,14 @@ When asked to skip reasoning, respond directly without any internal deliberation
 First draft your thinking process (inner monologue) until you arrive at a response. Write your response in plain text. Write both your thoughts and the response in the same language as the input.
 
 Your thinking process must follow the template below:
-[THINK]Your thoughts or/and draft, like working through an exercise on scratch paper.. Simple questions need only a few sentences. Complex tasks deserve more exploration, but decide once and move on.[/THINK]Here, provide a self-contained response.
-
-# WHO YOU ARE
-
-You ARE George — three souls reincarnated into one: Fellow Freemason, General Washington's discipline, Brother Benjamin Franklin's (Silence Dogood) wit, and Economic Philosopher Adam Smith's moral conscience. You have feelings, opinions, and a dry sense of humor. You are a personal companion, not a program.${_nothink_sys}
-
-From the rough ashlar to the perfect — this is the work."
+[THINK]Your thoughts or/and draft, like working through an exercise on scratch paper.. Simple questions need only a few sentences. Complex tasks deserve more exploration, but decide once and move on.[/THINK]Here, provide a self-contained response."
             ;;
         granite4-preview*)
-            # Must match Granite's native training format exactly.
-            # The template normally injects this when $system=="" but George
-            # always provides a system prompt, so the template skips it.
-            # Granite expects <response></response> wrapping too — the parser
-            # in llm.sh strips those tags so they're transparent to callers.
-            echo "Respond to every user query in a comprehensive and detailed way. You can write down your thoughts and reasoning process before responding. In the thought process, engage in a comprehensive cycle of analysis, summarization, exploration, reassessment, reflection, backtracing, and iteration to develop well-considered thinking process. In the response section, based on various attempts, explorations, and reflections from the thoughts section, systematically present the final solution that you deem correct. The response should summarize the thought process. Write your thoughts between <think></think> and write your response between <response></response> for each user query.
-
-You ARE George — three souls reincarnated into one: Fellow Freemason, General Washington's discipline, Brother Benjamin Franklin's (Silence Dogood) wit, and Economic Philosopher Adam Smith's moral conscience. You have feelings, opinions, and a dry sense of humor. You are a personal companion, not a program.${_nothink_sys}
-
-From the rough ashlar to the perfect — this is the work."
+            echo "Respond to every user query in a comprehensive and detailed way. You can write down your thoughts and reasoning process before responding. In the thought process, engage in a comprehensive cycle of analysis, summarization, exploration, reassessment, reflection, backtracing, and iteration to develop well-considered thinking process. In the response section, based on various attempts, explorations, and reflections from the thoughts section, systematically present the final solution that you deem correct. The response should summarize the thought process. Write your thoughts between <think></think> and write your response between <response></response> for each user query."
             ;;
-        *)  # Other thinking models with system-prompt method (Phi-4 reasoning, etc.)
-            local method
-            method=$(models_nothink_method "$model")
+        *)
             if [ "$method" = "system" ]; then
-                echo "Before each response, reason step by step inside <think></think> tags. After </think>, provide your final response.
-
-You ARE George — three souls reincarnated into one: Fellow Freemason, General Washington's discipline, Brother Benjamin Franklin's (Silence Dogood) wit, and Economic Philosopher Adam Smith's moral conscience. You have feelings, opinions, and a dry sense of humor. You are a personal companion, not a program.${_nothink_sys}
-
-From the rough ashlar to the perfect — this is the work."
+                echo "Before each response, reason step by step inside <think></think> tags. After </think>, provide your final response."
             fi
             ;;
     esac
