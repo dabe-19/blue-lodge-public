@@ -21,7 +21,7 @@ export LODGE_DIR
 # Prevent overlapping full-suite runs in the same workspace. A timed-out
 # foreground run can continue in the background; starting another run_all
 # in that window doubles load and makes MCP suites look "stuck".
-if [ "${RUN_ALL_ALLOW_CONCURRENT:-0}" != "1" ]; then
+if [ "${RUN_ALL_ALLOW_CONCURRENT:-1}" != "1" ]; then
     _existing_pid=$(ps -eo pid=,etimes=,args= | awk -v self="$$" -v script="$TESTS_DIR/run_all.sh" '
         {
             pid=$1

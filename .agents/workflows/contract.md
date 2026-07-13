@@ -1,41 +1,41 @@
 ### Feature Overview
-Optimize the LLM harness for NVIDIA Nemotron 3 Nano GGUF model and enable dynamic model-switching fallback for vision scenarios:
-1. **Nemotron 3 Configuration Fix**: Update the GGUF stop token from `<|eot_id|>` to `<|im_end|>` and map the chat template to `chatml` (matching the model's native format).
-2. **Scenario-Based Vision Fallback**: Add a custom `vision` scenario to `models_for_scenario` that dynamically resolves to a vision-capable model (e.g. `gemma4-e4b-inst`) when the active primary model is text-only.
-3. **Vision Scenario Dispatch**: Modify `/vision` to execute under `LLM_SCENARIO=vision` instead of `ask`.
-4. **Unit Test Updates**: Update assertions in `tests/test_models.sh` and `tests/test_llm.sh` to match the corrected template/token mappings.
+Improve the test runner concurrency and the agent's image acquisition/analysis capabilities by:
+1. **Enabling Test Concurrency by Default**: Modify `tests/run_all.sh` to allow overlapping runs by default (setting `RUN_ALL_ALLOW_CONCURRENT` default to `1`), avoiding blocking locks during rapid iterations.
+2. **Correcting Router Command Eligibility**: Add `download`, `vision`, and other registered commands to the `eligible` command array in `_agent_router_eligibility_pass` in `lib/agent.sh`. This ensures they can be shortlisted and selected by the LLM and fast-route routers instead of being gated out.
+3. **Optimizing Image Acquisition and Analysis Guidance**:
+   * Add `vision` to the `advisory` catalog returned by the eligibility pass.
+   * Standardize and correct the `/vision` syntax spec in `lib/agent.sh` to use consistent placeholder names.
+   * Add explicit guidance and clear flow chain examples in both `lib/agent.sh` and `lib/commands.sh` detailing how to use `/download` to fetch web images locally and run `/vision` on them, or run `/vision` directly on the URL.
 
 ### Layer Changes
 
-#### [MODIFY] [lib/models.sh](file:///home/wsl-ops/blue-lodge/lib/models.sh)
-- Update `nemotron3-nano-4b-inst` entry in `_MODELS_REGISTRY` to use `<|im_end|>` stop token.
-- Update `_MODELS_CHAT_TEMPLATE_BY_KEY[nemotron3-nano-4b-inst]` to `"chatml"`.
-- Update `_models_chat_template_name` to map `*nemotron*3*` to `"chatml"`.
-- Update `models_for_scenario` to resolve `vision` scenario with fallback to `blue-lodge-gemma4-inst:4b`.
+#### [MODIFY] [tests/run_all.sh](file:///home/wsl-ops/blue-lodge/tests/run_all.sh)
+* Change the default value check for `RUN_ALL_ALLOW_CONCURRENT` from `0` to `1` so concurrent test executions are permitted by default.
 
-#### [MODIFY] [commands/vision.sh](file:///home/wsl-ops/blue-lodge/commands/vision.sh)
-- Change `LLM_SCENARIO=ask` to `LLM_SCENARIO=vision`.
+#### [MODIFY] [lib/agent.sh](file:///home/wsl-ops/blue-lodge/lib/agent.sh)
+* Add `download`, `vision`, `pgp`, `phone`, `container`, `sandbox`, `wallet`, `backup`, `secret`, and `gsuite` to the `eligible` commands array in `_agent_router_eligibility_pass`.
+* Add `vision` to `advisory_json` list.
+* Align syntax placeholder `<image>` to `<image_path_or_url>` in the `vision` command prompt card.
+* Update prompt examples and flow chains to explicitly highlight the image acquisition flow: `/web scrape-images <url>` -> `/download <image_url>` -> `/vision <local_image_path>`.
 
-#### [MODIFY] [tests/test_models.sh](file:///home/wsl-ops/blue-lodge/tests/test_models.sh)
-- Update Nemotron chat template assertion to expect `chatml`.
-
-#### [MODIFY] [tests/test_llm.sh](file:///home/wsl-ops/blue-lodge/tests/test_llm.sh)
-- Update Nemotron chat template name and stop token assertions.
+#### [MODIFY] [lib/commands.sh](file:///home/wsl-ops/blue-lodge/lib/commands.sh)
+* Update flow chain documentation and help notes to emphasize the download and local vision analysis workflow.
 
 ### Scope Boundaries
-Focuses strictly on model catalog correction and `/vision` command scenario routing. No inference servers or provider endpoints are modified.
+* Focuses strictly on `tests/run_all.sh` concurrency guard defaults and `lib/agent.sh` / `lib/commands.sh` routing eligibility and prompt catalog mappings.
+* No changes to underlying tool implementations.
 
 ### Touched Layers (Handoff Routing)
-- **core-specialist**: yes — update `lib/models.sh` catalog and routing.
-- **commands-specialist**: yes — update `commands/vision.sh` scenario.
+- **core-specialist**: yes — update `lib/agent.sh` and `lib/commands.sh` eligibility, specs, and prompts.
+- **commands-specialist**: no — no changes to command behavior scripts.
 - **ui-specialist**: no — no UI updates.
-- **tests-specialist**: yes — update unit test assertions.
+- **tests-specialist**: yes — update `tests/run_all.sh` process guard default.
 
 ### Tooling Layer (Provisioning)
 - **Tooling**: no
 
 ### Functional Verification
-- **Verification**: yes — run the test suite inside the container.
+- **Verification**: yes — run the unit tests inside the CUDA sandbox.
 
 ### Security
 - **Security**: no

@@ -149,46 +149,46 @@ _agent_thinking_context_limit() {
 #
 # Usage: cleaned=$(echo "$raw" | _strip_think_blocks)
 _strip_think_blocks() {
-    awk 'BEGIN { IGNORECASE=1; skip=0 }
+    awk 'BEGIN { skip=0 }
     {
         # Remove complete balanced blocks on a single line first
-        gsub(/<think>[^<]*<\/think>/, "")
-        gsub(/\[THINK\][^\[]*\[\/THINK\]/, "")
-        gsub(/\[THOUGHT\][^\[]*\[\/THOUGHT\]/, "")
+        gsub(/<[tT][hH][iI][nN][kK]>[^<]*<\/[tT][hH][iI][nN][kK]>/, "")
+        gsub(/\[[tT][hH][iI][nN][kK]\][^\[]*\[\/[tT][hH][iI][nN][kK]\]/, "")
+        gsub(/\[[tT][hH][oO][uU][gG][hH][tT]\][^\[]*\[\/[tT][hH][oO][uU][gG][hH][tT]\]/, "")
 
         # Multi-line block detection: opening tag starts skip mode
-        if (match($0, /<think>/)) {
-            sub(/<think>.*/, "", $0)
+        if (match($0, /<[tT][hH][iI][nN][kK]>/)) {
+            sub(/<[tT][hH][iI][nN][kK]>.*/, "", $0)
             if (length($0) > 0) print $0
             skip=1; next
         }
-        if (match($0, /\[THINK\]/)) {
-            sub(/\[THINK\].*/, "", $0)
+        if (match($0, /\[[tT][hH][iI][nN][kK]\]/)) {
+            sub(/\[[tT][hH][iI][nN][kK]\].*/, "", $0)
             if (length($0) > 0) print $0
             skip=1; next
         }
-        if (match($0, /\[THOUGHT\]/)) {
-            sub(/\[THOUGHT\].*/, "", $0)
+        if (match($0, /\[[tT][hH][oO][uU][gG][hH][tT]\]/)) {
+            sub(/\[[tT][hH][oO][uU][gG][hH][tT]\].*/, "", $0)
             if (length($0) > 0) print $0
             skip=1; next
         }
 
         # Closing tags end skip mode
         if (skip) {
-            if (match($0, /<\/think>/)) {
-                sub(/.*<\/think>/, "", $0)
+            if (match($0, /<\/[tT][hH][iI][nN][kK]>/)) {
+                sub(/.*<\/[tT][hH][iI][nN][kK]>/, "", $0)
                 skip=0
                 if (length($0) > 0) print $0
                 next
             }
-            if (match($0, /\[\/THINK\]/)) {
-                sub(/.*\[\/THINK\]/, "", $0)
+            if (match($0, /\[\/[tT][hH][iI][nN][kK]\]/)) {
+                sub(/.*\[\/[tT][hH][iI][nN][kK]\]/, "", $0)
                 skip=0
                 if (length($0) > 0) print $0
                 next
             }
-            if (match($0, /\[\/THOUGHT\]/)) {
-                sub(/.*\[\/THOUGHT\]/, "", $0)
+            if (match($0, /\[\/[tT][hH][oO][uU][gG][hH][tT]\]/)) {
+                sub(/.*\[\/[tT][hH][oO][uU][gG][hH][tT]\]/, "", $0)
                 skip=0
                 if (length($0) > 0) print $0
                 next
@@ -197,9 +197,9 @@ _strip_think_blocks() {
         }
 
         # Strip stray opening/closing tags (orphaned fragments)
-        gsub(/<\/?think>/, "")
-        gsub(/\[\/?THINK\]/, "")
-        gsub(/\[\/?THOUGHT\]/, "")
+        gsub(/<\/?[tT][hH][iI][nN][kK]>/, "")
+        gsub(/\[\/?[tT][hH][iI][nN][kK]\]/, "")
+        gsub(/\[\/?[tT][hH][oO][uU][gG][hH][tT]\]/, "")
 
         if (length($0) > 0) print $0
     }'
@@ -765,7 +765,7 @@ _agent_router_eligibility_pass() {
     local -a eligible=() shortlist=()
 
     # Local-safe defaults are always eligible.
-    eligible=(respond read grep ls recall journal edit append write save init build test fix slash social email vitals)
+    eligible=(respond read grep ls recall journal edit append write save init build test fix slash social email vitals download vision pgp phone container sandbox wallet backup secret gsuite)
     [ "${AGENT_ASK_USER:-1}" -eq 1 ] && eligible+=(ask)
     [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && eligible+=(brainstorm)
     [ "$web_allowed" -eq 1 ] && eligible+=(web)
@@ -927,7 +927,7 @@ _agent_router_eligibility_pass() {
     eligible_json=$(printf '%s\n' "${eligible[@]}" | awk 'NF {print}' | jq -R . | jq -s .)
     shortlist_json=$(printf '%s\n' "${shortlist[@]}" | awk 'NF {print}' | jq -R . | jq -s .)
     local advisory_json
-    advisory_json=$(printf '%s\n' respond read grep ls recall journal edit append write save init build test fix slash ask brainstorm web git social email download commit push | awk 'NF {print}' | jq -R . | jq -s .)
+    advisory_json=$(printf '%s\n' respond read grep ls recall journal edit append write save init build test fix slash ask brainstorm web git social email download vision commit push | awk 'NF {print}' | jq -R . | jq -s .)
 
     jq -cn \
         --argjson online "$net_ok" \
@@ -4241,7 +4241,7 @@ SPEC
   "images":"/web images <query> — searches for image URLs by keyword (Serper API). Returns image URLs only."},
 "rules":["NO FLAGS: /web does NOT support --limit, --output, --source, --date, or ANY --flag. Use ONLY positional args: /web search <keywords> or /web fetch <url>","search=QUERY (keywords), fetch/scrape/scrape-images=URL — NEVER swap","/web fetch (or /web scrape) returns TEXT only — use /web scrape-images when you need images","scrape-images returns {url,title,content,images[]} — pass images[] URLs to /vision","AVOID redundant searches — 1 search + 1-2 fetches enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples","LOCAL FILES: NEVER use /web fetch on local files or relative paths — use /read for text files, /vision for images","ONE URL PER COMMAND — never put multiple URLs in one /web call. To fetch 3 pages, output 3 separate /web fetch lines across 3 steps.","The URL must be the LAST token on the line — nothing after it. No trailing text, no next command.","NEVER fabricate or guess URLs — ONLY use URLs that appeared in prior /web search results or were provided by the user. If you need a URL, run /web search first."],
 "search_tips":["3-5 keywords MAX — Google FAILS with long queries","Drop filler: the/a/for/including/regarding/comprehensive","NEVER paste entire milestone as search query","Extract keywords from TASK context only"],
-"FLOW CHAINS":["Text research: /web search -> /web fetch -> summarize","Scrape workflow: /web search -> /web scrape -> summarize","Image research: /web scrape-images <url> -> /vision <image_url_from_images[]>","Report: /web search -> /web fetch -> /write report"],
+"FLOW CHAINS":["Text research: /web search -> /web fetch -> summarize","Scrape workflow: /web search -> /web scrape -> summarize","Image research (direct): /web scrape-images <url> -> /vision <image_url_from_images[]>","Image download workflow: /web scrape-images <url> -> /download <image_url_from_images[]> [destination] -> /vision <destination>","Report: /web search -> /web fetch -> /write report"],
 "notes":["Do NOT fetch every URL. 1 search + 1-2 fetches enough","If scrape-images returns empty content, use /web fetch for same URL instead","/web fetch and /web scrape-images require a full https:// URL — for local files use /read or /vision instead"],
 "format_only_ex":["/web search <keywords>","/web fetch <url>","/web scrape <url>","/web scrape-images <url>","/web images <keywords>"],
 "fill":{"<keywords>":"3-5 search terms derived from the TASK","<url>":"full https:// URL from search results or task — NEVER a local file path"}}
@@ -4250,7 +4250,9 @@ SPEC
             download)
                 cat << 'SPEC'
 {"cmd":"/download","syntax":"/download <url_or_path> [destination]",
-"format_only_ex":["/download <url> [destination-path]"]}
+"notes":["Downloads a file from a URL or copies a local file to the workspace.","Useful to download images or data files before analyzing them locally."],
+"format_only_ex":["/download <url> [destination-path]"],
+"fill":{"<url_or_path>":"URL (http/https) or local file path to retrieve","[destination]":"optional destination file path (defaults to source filename)"}}
 SPEC
                 ;;
             sandbox)
@@ -4382,10 +4384,10 @@ SPEC
                 ;;
             vision)
                 cat << 'SPEC'
-{"cmd":"/vision","syntax":"/vision <image_path_or_url> [prompt]",
-"notes":["Supports jpg/png/gif/webp/bmp","Accepts image URLs directly (no /download needed)","Requires vision model: /models single minist-inst","Pair with /web scrape-images: scrape a page, then pass image URLs from images[] array to /vision","Returns detailed text description of image contents"],
+{"cmd":"/vision","syntax":"/vision <image> [prompt]",
+"notes":["Supports jpg/png/gif/webp/bmp","Accepts image URLs directly (no /download needed) or local image file paths.","Requires vision model: /models single minist-inst","Pair with /web scrape-images: scrape a page, then pass image URLs from images[] array to /vision","Returns detailed text description of image contents"],
 "format_only_ex":["/vision <image> <prompt>"],
-"fill":{"<image>":"URL or local path to image file (e.g. URL from /web scrape-images images[] output)","<prompt>":"what to analyze or describe about the image"}}
+"fill":{"<image>":"URL or local path to image file (e.g. local path downloaded via /download, or direct URL from /web scrape-images images[] output)","<prompt>":"what to analyze or describe about the image"}}
 SPEC
                 ;;
             container)
