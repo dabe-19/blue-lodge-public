@@ -13,6 +13,8 @@
 
 [ -n "${_LIB_GIT_LOADED:-}" ] && return 0; _LIB_GIT_LOADED=1
 
+export GIT_TERMINAL_PROMPT=0
+
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 
