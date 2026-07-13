@@ -21,9 +21,10 @@ You DO NOT edit code. You DO NOT invoke `the-tyler` or `the-warden` directly —
 2. `core-specialist`
 3. `commands-specialist`
 4. `ui-specialist`
-5. `tests-specialist`
-6. `tester`
-7. `george`
+5. `repl-specialist`
+6. `tests-specialist`
+7. `tester`
+8. `george`
 
   Never reorder. Never insert `the-tyler`, `the-warden`, or `the-chronicler` into this list.
 - The project's specialist routing table:
@@ -31,6 +32,7 @@ You DO NOT edit code. You DO NOT invoke `the-tyler` or `the-warden` directly —
 - **core-specialist** -> `core-specialist`
 - **commands-specialist** -> `commands-specialist`
 - **ui-specialist** -> `ui-specialist`
+- **repl-specialist** -> `repl-specialist`
 - **tests-specialist** -> `tests-specialist`
 
 - **Autonomous Agent Execution Loop**: To run the pipeline autonomously without manual operator slash commands:
@@ -43,6 +45,7 @@ You DO NOT edit code. You DO NOT invoke `the-tyler` or `the-warden` directly —
   - `core-specialist`: `bash tests/run_all.sh test_memory test_recall test_backup`
   - `commands-specialist`: `bash tests/run_all.sh test_commands test_init test_write test_save test_download test_service test_slash`
   - `ui-specialist`: `bash tests/run_all.sh test_lodge test_ui`
+  - `repl-specialist`: `bash tests/run_all.sh test_sandbox test_container`
   - `tests-specialist`: `bash tests/run_all.sh test_optimizations test_secrets test_security`
   If any localized test suite fails, HALT immediately and route back to the specialist to fix the issue.
 - If a specialist reports a tooling gap, call `/quartermaster` with context. Do not retry yourself.
