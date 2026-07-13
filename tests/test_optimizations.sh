@@ -24,6 +24,11 @@ describe "_strip_think_blocks"
     assert_eq "$result" "Hello  world"
   }
 
+  it "removes Gemma 4 <|channel>thought...<channel|> inline block" && {
+    result=$(echo 'Hello <|channel>thoughtinner thought<channel|> world' | _strip_think_blocks)
+    assert_eq "$result" "Hello  world"
+  }
+
   it "removes [THINK]...[/THINK] inline block" && {
     result=$(echo 'Before [THINK]thinking here[/THINK] after' | _strip_think_blocks)
     assert_eq "$result" "Before  after"

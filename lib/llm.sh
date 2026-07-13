@@ -277,6 +277,8 @@ _llm_normalize_think() {
     _ntref="${_ntref//\[\/THOUGHT\]/<\/think>}"
     _ntref="${_ntref//\[thought\]/<think>}"
     _ntref="${_ntref//\[\/thought\]/<\/think>}"
+    _ntref="${_ntref//<|channel>thought/<think>}"
+    _ntref="${_ntref//<channel|>/<\/think>}"
 }
 
 # ── Think display helpers ──────────────────────────────────────

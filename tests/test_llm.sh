@@ -937,7 +937,7 @@ describe "Model family system"
     assert_eq "$_ME_STOP" '<|im_end|>' "nemotron3 stop token"
 
     models_info "gemma4-e4b-inst"
-    assert_eq "$_ME_STOP" '<end_of_turn>' "gemma4 stop token"
+    assert_eq "$_ME_STOP" '<turn|>' "gemma4 stop token"
   }
 
   it "granite41-3b-inst is instruct (not thinking)" && {

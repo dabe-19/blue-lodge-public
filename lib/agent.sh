@@ -151,6 +151,10 @@ _agent_thinking_context_limit() {
 _strip_think_blocks() {
     awk 'BEGIN { skip=0 }
     {
+        # Normalize Gemma 4 reasoning channel tags to standard think tags
+        gsub(/<\|channel>thought/, "<think>")
+        gsub(/<channel\|>/, "</think>")
+
         # Remove complete balanced blocks on a single line first
         gsub(/<[tT][hH][iI][nN][kK]>[^<]*<\/[tT][hH][iI][nN][kK]>/, "")
         gsub(/\[[tT][hH][iI][nN][kK]\][^\[]*\[\/[tT][hH][iI][nN][kK]\]/, "")
