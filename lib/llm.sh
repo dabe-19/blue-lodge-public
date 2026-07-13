@@ -38,12 +38,19 @@ LLAMA_CPP_PROMPT_CACHE_FILE="${LLAMA_CPP_PROMPT_CACHE_FILE:-${GEORGE_CONFIG_DIR:
 # Default stays local GGUF (-m ...) resolved from Ollama blobs.
 LLAMA_CPP_USE_HF="${LLAMA_CPP_USE_HF:-0}"
 LLAMA_CPP_HF_REF="${LLAMA_CPP_HF_REF:-}"
+# Memory mapping (mmap) control: disable in virtualized/PRoot environments to prevent SIGBUS/Aborted crashes.
+if [ -d "/data/data/com.termux/files/home" ] && [ "$HOME" != "/data/data/com.termux/files/home" ]; then
+    LLAMA_CPP_NO_MMAP="${LLAMA_CPP_NO_MMAP:-1}"
+else
+    LLAMA_CPP_NO_MMAP="${LLAMA_CPP_NO_MMAP:-0}"
+fi
 # Optional speculative decoding with MTP drafter.
 # Note: -hf auto-discovery is not used on the Ollama-resolved -m path.
 # Set LLAMA_CPP_DRAFT_MODEL to a local drafter GGUF to enable draft model usage.
 LLAMA_CPP_SPEC_MTP="${LLAMA_CPP_SPEC_MTP:-0}"
 LLAMA_CPP_SPEC_DRAFT_N_MAX="${LLAMA_CPP_SPEC_DRAFT_N_MAX:-4}"
 LLAMA_CPP_DRAFT_MODEL="${LLAMA_CPP_DRAFT_MODEL:-}"
+LLAMA_CPP_SPEC_DRAFT_HF="${LLAMA_CPP_SPEC_DRAFT_HF:-}"
 # Flash attention control (llama.cpp -fa). Keep "auto" unless explicitly set.
 LLAMA_CPP_FA="${LLAMA_CPP_FA:-auto}"
 # Global constrained-decoding toggle.
@@ -451,8 +458,11 @@ _llm_detect_backend() {
                             fi
                         done
                         [ -n "$_key" ] && _gguf=$(_models_resolve_gguf "$_key" 2>/dev/null)
+                        if [ -z "$_gguf" ] && [ "${LLAMA_CPP_USE_HF:-0}" = "1" ]; then
+                            _gguf="hf-harness-auto-resolved"
+                        fi
                     fi
-                    if [ -n "$_gguf" ] && [ -f "$_gguf" ]; then
+                    if [ -n "$_gguf" ] && { [ -f "$_gguf" ] || [ "${LLAMA_CPP_USE_HF:-0}" = "1" ]; }; then
                         _llm_kill_ollama --quiet 2>/dev/null
                         _llm_start_llamacpp_server "$_gguf" "--quiet" 2>/dev/null
                     fi
@@ -601,7 +611,7 @@ _llm_start_llamacpp_server() {
             if [ -n "$_entry" ]; then
                 _models_parse_entry "$_entry"
                 if [[ "${_ME_BASE:-}" == hf.co/* ]]; then
-                    _hf_ref="$_ME_BASE"
+                    _hf_ref="${_ME_BASE#hf.co/}"
                 fi
             fi
         fi
@@ -718,6 +728,13 @@ _llm_start_llamacpp_server() {
         --parallel 1    # single slot — saves RAM on phones; lodge uses sequential calls
     )
 
+    if [ "${LLAMA_CPP_NO_MMAP:-0}" = "1" ]; then
+        if _llm_llamacpp_supports_flag "--no-mmap"; then
+            _launch_args+=(--no-mmap)
+            [ "$quiet" != "--quiet" ] && ui_dim "Memory mapping: disabled (--no-mmap)"
+        fi
+    fi
+
     if [ "$_launch_mode" = "hf" ]; then
         _launch_args=(-hf "$_hf_ref" "${_launch_args[@]}")
         [ "$quiet" != "--quiet" ] && ui_dim "Model source: -hf $_hf_ref"
@@ -777,16 +794,71 @@ _llm_start_llamacpp_server() {
     # repo-root MTP draft from -hf metadata, so support explicit local draft file.
     if [ "${LLAMA_CPP_SPEC_MTP:-0}" = "1" ]; then
         _launch_args+=(--spec-type draft-mtp --spec-draft-n-max "${LLAMA_CPP_SPEC_DRAFT_N_MAX:-4}")
-        if [ "$_launch_mode" = "hf" ] && [ -z "${LLAMA_CPP_DRAFT_MODEL:-}" ]; then
-            [ "$quiet" != "--quiet" ] && ui_dim "MTP: using llama.cpp -hf auto-discovery for repo draft model"
+        
+        # Resolve MTP draft model HF reference or local file
+        local _spec_draft_hf=""
+        if [ -n "${LLAMA_CPP_SPEC_DRAFT_HF:-}" ]; then
+            _spec_draft_hf="$LLAMA_CPP_SPEC_DRAFT_HF"
+        elif [ "$_launch_mode" = "hf" ] && [ -n "$_hf_ref" ]; then
+            # If main model is gemma-4 E2B, auto-specify the MTP draft reference
+            if [[ "$_hf_ref" == unsloth/gemma-4-E2B-it-qat-GGUF* ]]; then
+                local _repo_only="${_hf_ref%:*}"
+                _spec_draft_hf="${_repo_only}:mtp-gemma-4-E2B-it"
+            fi
+        elif [ "$_launch_mode" = "model" ] && [ -z "${LLAMA_CPP_DRAFT_MODEL:-}" ]; then
+            # If main model is local GGUF, but is Gemma-4 E2B, load draft from HF
+            if [[ "${LODGE_MODEL:-}" == "gemma4-e2b-inst" ]]; then
+                _spec_draft_hf="unsloth/gemma-4-E2B-it-qat-GGUF:mtp-gemma-4-E2B-it"
+            fi
         fi
-        if [ -n "${LLAMA_CPP_DRAFT_MODEL:-}" ]; then
+
+        # If spec-draft-hf is determined, we must pre-download it because llama.cpp
+        # does not support concurrent Hugging Face downloads for main + draft models.
+        if [ -n "$_spec_draft_hf" ]; then
+            local _d_repo="${_spec_draft_hf%%:*}"
+            local _d_tag="${_spec_draft_hf#*:}"
+            [ "$_d_tag" = "$_d_repo" ] && _d_tag="mtp-gemma-4-E2B-it"
+            
+            local _d_filename="${_d_tag##*/}.gguf"
+            local _d_dir="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/models"
+            local _d_local_path="${_d_dir}/${_d_filename}"
+            
+            if [ ! -f "$_d_local_path" ]; then
+                mkdir -p "$_d_dir" 2>/dev/null
+                [ "$quiet" != "--quiet" ] && ui_dim "Downloading MTP draft model to $_d_local_path..."
+                local _d_url="https://huggingface.co/${_d_repo}/resolve/main/${_d_tag}.gguf"
+                if ! curl -sSL --connect-timeout 10 -o "$_d_local_path" "$_d_url"; then
+                    rm -f "$_d_local_path"
+                    [ "$quiet" != "--quiet" ] && ui_warn "Failed to download MTP draft model from $_d_url (speculative decoding disabled)"
+                    _spec_draft_hf=""
+                fi
+            fi
+            
+            if [ -f "$_d_local_path" ]; then
+                LLAMA_CPP_DRAFT_MODEL="$_d_local_path"
+                _spec_draft_hf="" # disable HF draft mode, use local model-draft instead
+            fi
+        fi
+
+        if [ -n "$_spec_draft_hf" ]; then
+            if _llm_llamacpp_supports_flag "--spec-draft-hf"; then
+                _launch_args+=(--spec-draft-hf "$_spec_draft_hf")
+                [ "$quiet" != "--quiet" ] && ui_dim "MTP draft HF: $_spec_draft_hf"
+            elif _llm_llamacpp_supports_flag "--hf-repo-draft"; then
+                _launch_args+=(--hf-repo-draft "$_spec_draft_hf")
+                [ "$quiet" != "--quiet" ] && ui_dim "MTP draft HF: $_spec_draft_hf"
+            else
+                [ "$quiet" != "--quiet" ] && ui_warn "llama-server does not support --spec-draft-hf (skipping MTP draft)"
+            fi
+        elif [ -n "${LLAMA_CPP_DRAFT_MODEL:-}" ]; then
             if [ -f "$LLAMA_CPP_DRAFT_MODEL" ]; then
                 _launch_args+=(--model-draft "$LLAMA_CPP_DRAFT_MODEL")
                 [ "$quiet" != "--quiet" ] && ui_dim "MTP draft model: $LLAMA_CPP_DRAFT_MODEL"
             else
                 [ "$quiet" != "--quiet" ] && ui_warn "LLAMA_CPP_DRAFT_MODEL not found: $LLAMA_CPP_DRAFT_MODEL (using target-only verify path)"
             fi
+        elif [ "$_launch_mode" = "hf" ]; then
+            [ "$quiet" != "--quiet" ] && ui_dim "MTP: using llama.cpp -hf auto-discovery for repo draft model"
         fi
     fi
 
@@ -1283,9 +1355,12 @@ llm_ensure() {
                 done
                 if [ -n "$_key" ]; then
                     _gguf=$(_models_resolve_gguf "$_key" 2>/dev/null)
+                    if [ -z "$_gguf" ] && [ "${LLAMA_CPP_USE_HF:-0}" = "1" ]; then
+                        _gguf="hf-harness-auto-resolved"
+                    fi
                 fi
             fi
-            if [ -n "$_gguf" ] && [ -f "$_gguf" ]; then
+            if [ -n "$_gguf" ] && { [ -f "$_gguf" ] || [ "${LLAMA_CPP_USE_HF:-0}" = "1" ]; }; then
                 # Kill Ollama first — frees RAM and avoids port conflicts
                 _llm_kill_ollama --quiet
                 if _llm_start_llamacpp_server "$_gguf"; then

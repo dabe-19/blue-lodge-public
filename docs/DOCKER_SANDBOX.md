@@ -50,44 +50,136 @@ To run the GPU-accelerated container, your host workstation must have:
 
 ---
 
-## Building the Sandbox Image
+## Building and Running the Sandbox
 
-The sandbox builds a native compilation of `llama.cpp` (`llama-server`) with GPU support.
+The sandbox provides three runtime and compilation profiles depending on your hardware capability: **CUDA** (default for RTX GPUs), **Vulkan** (for integrated AMD/Intel graphics cards), and **CPU-only** (generic fallback).
 
-### The Build Command
-From the root of the `blue-lodge` repository, run:
+### The Easy Way: Using the Helper Script
+
+The repository includes a helper script `scripts/start-cuda-sandbox.sh` that automatically detects your hardware and boots the appropriate sandbox profile:
+
 ```bash
-# Build the NVIDIA CUDA enabled sandbox image
-docker build \
-  --build-arg USER_ID="$(id -u)" \
-  --build-arg GROUP_ID="$(id -g)" \
-  -f Dockerfile.cuda-sandbox \
-  -t george-cuda-sandbox .
+# Build & start container interactively with auto-detected profile:
+# (If NVIDIA Container Toolkit is not responding, it falls back to Vulkan if /dev/dri exists, or CPU-only).
+./scripts/start-cuda-sandbox.sh
 ```
 
-> [!NOTE]
-> **Linker Stub Symlink Resolution:** During image creation, Docker does not bridge physical GPU devices. As a result, the linker fails to resolve transitive dynamic dependencies (like `libcuda.so.1`) needed by `libggml-cuda.so`. 
-> 
-> The Dockerfile resolves this by setting `ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs`, symlinking `libcuda.so.1` to the unversioned stub `libcuda.so`, and passing the `-Wl,-rpath-link,/usr/local/cuda/lib64/stubs` flag to CMake. At runtime, the real host GPU driver overrides this stub.
+You can also explicitly force a profile using command-line arguments:
+
+```bash
+# Force CPU-only mode (great for portability on laptops without RTX cards)
+./scripts/start-cuda-sandbox.sh --cpu
+
+# Force Vulkan acceleration (bridges the host GPU DRI device nodes)
+./scripts/start-cuda-sandbox.sh --vulkan
+
+# Force ROCm acceleration (bridges the host AMD GPU device nodes)
+./scripts/start-cuda-sandbox.sh --rocm
+
+# Force CUDA acceleration (requires NVIDIA hardware and container toolkit)
+./scripts/start-cuda-sandbox.sh --cuda
+```
 
 ---
 
-## Running the Sandbox Container
+## Manual Build and Run Configurations
 
-To run the container persistently in the background (as a daemon) with GPU bridge access, active project directories mounted, and configuration files linked:
+If you prefer to build and run the Docker containers manually, use the build arguments (`BASE_IMAGE` and `BACKEND`) and run flags mapped below:
 
-### 1. Launch the Container
-```bash
-# Start container with CUDA bridging, workspace mount, and local configuration mount
-docker run -d -t --name george-sandbox \
-    --gpus all \
-    -v ta_notebookrag_ollama_data:/home/george/.ollama \
-    -v "$PWD:/workspace" \
-    -v "$HOME/.george:/home/george/.george" \
-    -p 8080:8080 \
-    -e LLAMA_CPP_GPU_LAYERS=99 \
-    george-cuda-sandbox tail -f /dev/null
-```
+### 1. CUDA Profile (Default NVIDIA)
+* **Build Command:**
+  ```bash
+  docker build \
+    --build-arg USER_ID="$(id -u)" \
+    --build-arg GROUP_ID="$(id -g)" \
+    --build-arg BASE_IMAGE="nvidia/cuda:12.4.1-devel-ubuntu22.04" \
+    --build-arg BACKEND="cuda" \
+    -f Dockerfile.cuda-sandbox \
+    -t george-cuda-sandbox .
+  ```
+* **Run Command:**
+  ```bash
+  docker run -d -t --name george-sandbox \
+      --gpus all \
+      -v ta_notebookrag_ollama_data:/home/george/.ollama \
+      -v "$PWD:/workspace" \
+      -v "$HOME/.george:/home/george/.george" \
+      -p 8080:8080 \
+      -e LLAMA_CPP_GPU_LAYERS=99 \
+      george-cuda-sandbox tail -f /dev/null
+  ```
+
+> [!NOTE]
+> **Linker Stub Symlink Resolution:** During image creation for the CUDA backend, Docker does not bridge physical GPU devices. As a result, the linker fails to resolve transitive dynamic dependencies (like `libcuda.so.1`) needed by `libggml-cuda.so`.
+> The Dockerfile resolves this by setting `ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs` and symlinking `libcuda.so.1` to the unversioned stub `libcuda.so`. At runtime, the real host GPU driver overrides this stub.
+
+### 2. Vulkan Profile (AMD/Intel Integrated Graphics)
+* **Build Command:**
+  ```bash
+  docker build \
+    --build-arg USER_ID="$(id -u)" \
+    --build-arg GROUP_ID="$(id -g)" \
+    --build-arg BASE_IMAGE="ubuntu:22.04" \
+    --build-arg BACKEND="vulkan" \
+    -f Dockerfile.cuda-sandbox \
+    -t george-cuda-sandbox .
+  ```
+* **Run Command:**
+  ```bash
+  docker run -d -t --name george-sandbox \
+      --device /dev/dri \
+      -v ta_notebookrag_ollama_data:/home/george/.ollama \
+      -v "$PWD:/workspace" \
+      -v "$HOME/.george:/home/george/.george" \
+      -p 8080:8080 \
+      -e LLAMA_CPP_GPU_LAYERS=99 \
+      george-cuda-sandbox tail -f /dev/null
+  ```
+
+### 3. ROCm Profile (AMD Dedicated GPUs)
+* **Build Command:**
+  ```bash
+  docker build \
+    --build-arg USER_ID="$(id -u)" \
+    --build-arg GROUP_ID="$(id -g)" \
+    --build-arg BASE_IMAGE="rocm/dev-ubuntu-22.04" \
+    --build-arg BACKEND="rocm" \
+    -f Dockerfile.cuda-sandbox \
+    -t george-cuda-sandbox .
+  ```
+* **Run Command:**
+  ```bash
+  docker run -d -t --name george-sandbox \
+      --device /dev/kfd --device /dev/dri \
+      -v ta_notebookrag_ollama_data:/home/george/.ollama \
+      -v "$PWD:/workspace" \
+      -v "$HOME/.george:/home/george/.george" \
+      -p 8080:8080 \
+      -e LLAMA_CPP_GPU_LAYERS=99 \
+      george-cuda-sandbox tail -f /dev/null
+  ```
+
+### 4. CPU-Only Profile (Fallback/Portability)
+* **Build Command:**
+  ```bash
+  docker build \
+    --build-arg USER_ID="$(id -u)" \
+    --build-arg GROUP_ID="$(id -g)" \
+    --build-arg BASE_IMAGE="ubuntu:22.04" \
+    --build-arg BACKEND="cpu" \
+    -f Dockerfile.cuda-sandbox \
+    -t george-cuda-sandbox .
+  ```
+* **Run Command:**
+  ```bash
+  docker run -d -t --name george-sandbox \
+      -v ta_notebookrag_ollama_data:/home/george/.ollama \
+      -v "$PWD:/workspace" \
+      -v "$HOME/.george:/home/george/.george" \
+      -p 8080:8080 \
+      -e LLAMA_CPP_GPU_LAYERS=0 \
+      george-cuda-sandbox tail -f /dev/null
+  ```
 *   `--gpus all`: Bridged access to all host NVIDIA GPUs.
 *   `-v ta_notebookrag_ollama_data:/home/george/.ollama`: Mounts the persistent Ollama model blobs storage volume.
 *   `-v "$PWD:/workspace"`: Mounts the current repository code directly inside `/workspace`.

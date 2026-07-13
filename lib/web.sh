@@ -32,7 +32,7 @@ WEB_BLACKLIST_DOMAINS="${WEB_BLACKLIST_DOMAINS:-linkedin.com,facebook.com,instag
 #   - Cookie jar (prevents cookie-wall and CF challenge failures)
 #   - Accept-Language
 # Override WEB_USER_AGENT in env or .george/config to customize.
-WEB_USER_AGENT="${WEB_USER_AGENT:-Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.150 Mobile Safari/537.36}"
+WEB_USER_AGENT="${WEB_USER_AGENT:-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36}"
 _WEB_COOKIE_JAR="${TMPDIR:-/tmp}/.lodge-web-cookies-$$.jar"
 
 _web_curl() {
@@ -2207,7 +2207,9 @@ _web_search_ddg() {
         while IFS='|' read -r url title; do
             # Decode DDG redirect URLs (uddg= parameter)
             if [[ "$url" == *"uddg="* ]]; then
-                url=$(echo "$url" | sed -n 's/.*uddg=\([^&]*\).*/\1/p' | python3 -c 'import sys,urllib.parse;print(urllib.parse.unquote(sys.stdin.read().strip()))' 2>/dev/null || echo "$url")
+                local raw_url
+                raw_url=$(echo "$url" | sed -n 's/.*uddg=\([^&]*\).*/\1/p')
+                url=$(printf '%b' "${raw_url//%/\\x}" 2>/dev/null || echo "$raw_url")
             fi
 
             # Skip ad/tracking URLs
@@ -2444,13 +2446,8 @@ web_enabled() {
 }
 
 web_configured() {
-    if api_get_key "SERPER_API_KEY" &>/dev/null; then
-        return 0
-    fi
-    if api_get_key "PERPLEXITY_API_KEY" &>/dev/null; then
-        return 0
-    fi
-    return 1
+    # DuckDuckGo is a built-in default provider requiring no API keys
+    return 0
 }
 
 web_reachable() {

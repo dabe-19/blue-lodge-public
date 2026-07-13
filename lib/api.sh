@@ -535,10 +535,8 @@ api_service_awareness_summary() {
     local network_state
     network_state=$(api_network_state 3)
 
-    local web_provider_configured="unconfigured"
-    if api_get_key "SERPER_API_KEY" &>/dev/null || api_get_key "PERPLEXITY_API_KEY" &>/dev/null; then
-        web_provider_configured="configured"
-    fi
+    # DuckDuckGo is a built-in default provider requiring no API keys
+    local web_provider_configured="configured"
 
     local web_policy_state="unlocked"
     [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ] && web_policy_state="locked"

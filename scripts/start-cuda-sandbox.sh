@@ -15,31 +15,102 @@ if ! command -v docker &>/dev/null; then
     exit 1
 fi
 
-# Check for nvidia-container-toolkit (optional warning)
-if ! docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi &>/dev/null; then
-    echo "[!] Warning: NVIDIA Container Toolkit is not responding on '--gpus all'." >&2
-    echo "    Confirm your driver and docker integration are configured." >&2
-    echo "    We will attempt to start the container anyway." >&2
+# Default backend auto-detection
+BACKEND="cuda"
+BASE_IMAGE="nvidia/cuda:12.4.1-devel-ubuntu22.04"
+DOCKER_RUN_FLAGS=""
+GPU_LAYERS=99
+
+# Parse command line flags
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --cuda)
+            BACKEND="cuda"
+            shift
+            ;;
+        --vulkan)
+            BACKEND="vulkan"
+            shift
+            ;;
+        --rocm)
+            BACKEND="rocm"
+            shift
+            ;;
+        --cpu)
+            BACKEND="cpu"
+            shift
+            ;;
+        *)
+            echo "[-] Error: Unknown option: $1" >&2
+            echo "Usage: $0 [--cuda|--vulkan|--rocm|--cpu]" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# If backend is cuda (or default), verify NVIDIA Container Toolkit is functional
+if [ "$BACKEND" = "cuda" ]; then
+    if ! docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi &>/dev/null; then
+        echo "[!] Warning: NVIDIA Container Toolkit is not responding on '--gpus all'." >&2
+        echo "    Looking for Vulkan direct rendering nodes (/dev/dri) as fallback..." >&2
+        if [ -e "/dev/dri" ]; then
+            BACKEND="vulkan"
+            echo "[+] Vulkan device nodes found. Falling back to Vulkan backend." >&2
+        else
+            BACKEND="cpu"
+            echo "[+] No GPU acceleration options available. Falling back to CPU backend." >&2
+        fi
+    fi
 fi
 
-echo "[+] Building Docker image george-cuda-sandbox..."
+# Set backend-specific variables
+if [ "$BACKEND" = "cuda" ]; then
+    BASE_IMAGE="nvidia/cuda:12.4.1-devel-ubuntu22.04"
+    DOCKER_RUN_FLAGS="--gpus all"
+    GPU_LAYERS=99
+elif [ "$BACKEND" = "vulkan" ]; then
+    BASE_IMAGE="ubuntu:22.04"
+    DOCKER_RUN_FLAGS="--device /dev/dri"
+    GPU_LAYERS=99
+elif [ "$BACKEND" = "rocm" ]; then
+    BASE_IMAGE="rocm/dev-ubuntu-22.04"
+    DOCKER_RUN_FLAGS="--device /dev/kfd --device /dev/dri"
+    GPU_LAYERS=99
+else
+    # cpu
+    BASE_IMAGE="ubuntu:22.04"
+    DOCKER_RUN_FLAGS=""
+    GPU_LAYERS=0
+fi
+
+echo "[+] Building Docker image george-cuda-sandbox (Backend: $BACKEND)..."
 docker build \
     --build-arg USER_ID="$(id -u)" \
     --build-arg GROUP_ID="$(id -g)" \
+    --build-arg BASE_IMAGE="$BASE_IMAGE" \
+    --build-arg BACKEND="$BACKEND" \
     -f Dockerfile.cuda-sandbox \
     -t george-cuda-sandbox .
 
-echo "[+] Starting CUDA-enabled George Sandbox container..."
+echo "[+] Starting George Sandbox container (Backend: $BACKEND)..."
 echo "    Workspace mounted to /workspace"
-echo "    Host GPU RTX 3060 bridged to container"
+if [ "$BACKEND" = "cuda" ]; then
+    echo "    Host GPU bridged to container via --gpus all"
+elif [ "$BACKEND" = "vulkan" ]; then
+    echo "    Host GPU bridged to container via --device /dev/dri"
+elif [ "$BACKEND" = "rocm" ]; then
+    echo "    Host AMD GPU bridged to container via --device /dev/kfd --device /dev/dri"
+else
+    echo "    Running in CPU-only mode"
+fi
 
 # Create host directory if it doesn't exist
 mkdir -p "$HOME/.george" 2>/dev/null
 
 docker run -it --rm \
-    --gpus all \
+    $DOCKER_RUN_FLAGS \
     -v "$LODGE_ROOT:/workspace" \
     -v "$HOME/.george:/home/george/.george" \
     -p 8080:8080 \
-    -e LLAMA_CPP_GPU_LAYERS=99 \
+    -e LLAMA_CPP_GPU_LAYERS=$GPU_LAYERS \
     george-cuda-sandbox bash

@@ -1,8 +1,12 @@
 # Dockerfile for CUDA-Accelerated George Sandbox
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+ARG BASE_IMAGE=nvidia/cuda:12.4.1-devel-ubuntu22.04
+FROM ${BASE_IMAGE}
 
 # Prevent interactive prompts during package install
 ENV DEBIAN_FRONTEND=noninteractive
+
+# Backend type: cuda, vulkan, or cpu
+ARG BACKEND=cuda
 
 # Install runtime and compilation dependencies
 RUN apt-get update && apt-get install -y \
@@ -15,18 +19,36 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     libcurl4-openssl-dev \
+    libssl-dev \
     procps \
+    && if [ "$BACKEND" = "vulkan" ]; then \
+        sed -i 's/main/main universe/g' /etc/apt/sources.list && \
+        apt-get update && \
+        apt-get install -y ca-certificates gnupg2 && \
+        curl -fsSL https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc && \
+        curl -fsSL -o /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list && \
+        apt-get update && \
+        apt-get install -y libvulkan-dev vulkan-tools spirv-headers vulkan-sdk; \
+    fi \
     && rm -rf /var/lib/apt/lists/*
 
-# Clone and compile llama.cpp from source with CUDA support
-ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs
-RUN ln -s libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
+# Clone and compile llama.cpp from source
 RUN git clone https://github.com/ggml-org/llama.cpp.git /opt/llama.cpp && \
     cd /opt/llama.cpp && \
-    cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" \
-        -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" \
-        -G Ninja && \
+    if [ "$BACKEND" = "cuda" ]; then \
+        ln -s libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 || true && \
+        export LIBRARY_PATH=/usr/local/cuda/lib64/stubs && \
+        cmake -B build -DGGML_CUDA=ON -DLLAMA_CURL=ON -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" \
+            -G Ninja; \
+    elif [ "$BACKEND" = "vulkan" ]; then \
+        cmake -B build -DGGML_VULKAN=ON -DLLAMA_CURL=ON -DCMAKE_BUILD_TYPE=Release -G Ninja; \
+    elif [ "$BACKEND" = "rocm" ]; then \
+        cmake -B build -DGGML_HIPBLAS=ON -DLLAMA_CURL=ON -DCMAKE_BUILD_TYPE=Release -G Ninja; \
+    else \
+        cmake -B build -DLLAMA_CURL=ON -DCMAKE_BUILD_TYPE=Release -G Ninja; \
+    fi && \
     cmake --build build --config Release --target llama-server -j$(nproc)
 
 # Expose default llama-server port

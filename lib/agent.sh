@@ -3022,7 +3022,7 @@ _agent_evaluate_milestone() {
 EVAL_P1_JSON
 )"
 
-    local eval_sys="You are a pragmatic milestone evaluator. Judge by the MOST RECENT action in the log — earlier failed attempts do not invalidate a later success. exit_0 = success. Empty output = normal. No markdown formatting. Respond with a JSON object: {\"verdict\":\"COMPLETE\" or \"INCOMPLETE\", \"reason\":\"brief reason\"}. Do NOT echo or repeat the evaluation schema."
+    local eval_sys="You are a pragmatic milestone evaluator. Judge by the MOST RECENT action in the log — earlier failed attempts do not invalidate a later success. exit_0 = success. Empty output = normal. A milestone is COMPLETE if the action in the log executed the requested command and returned a non-empty result (e.g. running /web search is COMPLETE if the search returned links, even if those links have not been fetched yet). No markdown formatting. Respond with a JSON object: {\"verdict\":\"COMPLETE\" or \"INCOMPLETE\", \"reason\":\"brief reason\"}. Do NOT echo or repeat the evaluation schema."
 
     ui_think "Evaluator (pass 1): assessing milestone completion..."
     local verdict
@@ -6472,13 +6472,23 @@ INTERLOCK_JSON
                   # the content with jq -r so downstream consumers
                   # (condenser, action log, evaluator) see clean text
                   # instead of a JSON blob with literal \n sequences.
-                  if [[ "$output" == \{* ]] && echo "$output" | jq -e '.content' &>/dev/null; then
-                    local _wj_title _wj_content _wj_imgs
-                    _wj_title=$(echo "$output" | jq -r '.title // ""' 2>/dev/null)
-                    _wj_content=$(echo "$output" | jq -r '.content // ""' 2>/dev/null)
-                    _wj_imgs=$(echo "$output" | jq -r '.images // [] | length' 2>/dev/null)
-                    output="${_wj_title:+Title: $_wj_title$'\n'}${_wj_content}"
-                    [ "${_wj_imgs:-0}" -gt 0 ] && output="${output}"$'\n'"(${_wj_imgs} images found)"
+                  local _clean_json="$output"
+                  if [[ "$_clean_json" == *\{* ]]; then
+                      _clean_json="{${_clean_json#*\{}"
+                  fi
+                  if echo "$_clean_json" | jq -e '.content' &>/dev/null; then
+                    local _wj_title _wj_content _wj_imgs _wj_img_list
+                    _wj_title=$(echo "$_clean_json" | jq -r '.title // ""' 2>/dev/null)
+                    _wj_content=$(echo "$_clean_json" | jq -r '.content // ""' 2>/dev/null)
+                    _wj_imgs=$(echo "$_clean_json" | jq -r '.images // [] | length' 2>/dev/null)
+                    _wj_img_list=$(echo "$_clean_json" | jq -r '.images[] // empty' 2>/dev/null)
+                    
+                    if [[ "$cmd" == *scrape-images* ]] || [[ "$cmd" == *images* ]]; then
+                        output="Title: $_wj_title"$'\n'"Images found ($_wj_imgs):"$'\n'"$_wj_img_list"$'\n\n'"Content excerpt:"$'\n'"${_wj_content:0:2000}"
+                    else
+                        output="${_wj_title:+Title: $_wj_title$'\n'}${_wj_content}"
+                        [ "${_wj_imgs:-0}" -gt 0 ] && output="${output}"$'\n'"(${_wj_imgs} images found)"
+                    fi
                   fi
                   # ── RESOLVE LITERAL ESCAPES ──────────────────
                   # Web content and small-model output may contain
@@ -6494,7 +6504,7 @@ INTERLOCK_JSON
                     output="[Web Fetch: Empty] Page returned no usable content (<20 chars)."
                     _micro_add_warning "$micro_file" "Empty web fetch: $cmd returned <20 chars"
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web fetch empty guard: <20 chars"
-                  elif [ "${#output}" -gt 300 ] && [ "${AGENT_WEB_CONDENSE:-1}" -eq 1 ]; then
+                  elif [ "${#output}" -gt 300 ] && [ "${AGENT_WEB_CONDENSE:-1}" -eq 1 ] && [[ "$cmd" != *scrape-images* ]] && [[ "$cmd" != *images* ]]; then
                     local _condense_prompt _condensed
                     # Build context-aware condense prompt
                     _condense_prompt="TASK: $micro_objective"
@@ -8053,6 +8063,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
    \"file_references\":\"File paths (e.g., report.md) in \\/social, \\/email, \\/respond arguments auto-expand to contents. Use this to post compiled reports instead of writing the full text inline.\",
    \"discord_dm\":\"Use \\/social discord dm <user> <text> to send DMs to individuals on Discord (do NOT use \\/social post for DMs).\",
    \"research_flow\":\"When researching a topic, you must follow up a \\/web search by fetching or scraping at least one relevant URL from the search results using \\/web fetch <url> or \\/web scrape <url> to gather deep details before compiling the report.\",
+   \"image_flow\":\"When the task involves finding or describing an image\\/logo from a website: 1. Use \\/web scrape-images <url> to extract the image URLs. 2. If a download is explicitly requested, use \\/download <image_url> [destination], then analyze with \\/vision <destination>. Otherwise, you can analyze the image URL directly using \\/vision <image_url>. 3. If the website URL is already provided in the task, do NOT search for the website; proceed directly to scrape-images on that URL.\",
    \"discord_sync\":\"Before posting to channels or sending DMs by human-readable names (e.g. general, dabe) for the first time, you must sync them first using \\/social discord channels sync and \\/social discord users sync.\",
    \"run_code\":\"After creating or modifying a code script (e.g. main.sh, main.py) that is designed to generate an output or build an application, you MUST run the code first using \\/build or \\/test to generate the outputs and verify correctness BEFORE attempting to distribute the output file or completing the task.\"},
  \"milestones\":{\"source\":\"YOUR WORKING COMMANDS only\",

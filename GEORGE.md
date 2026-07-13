@@ -6,6 +6,7 @@ None.
 
 ## The Trowel (Completed Milestones)
 
+- **[2026-07-13]** Shipped portable Docker Sandbox configuration supporting CPU-only and Vulkan profiles for non-RTX development computers. Trowel applied.
 - **[2026-07-13]** Shipped fix for gemma-e2b system thinking directive logical inversion and prompt contamination. Trowel applied.
 - **[2026-07-10]** Shipped llamacpp backend stop token integration and CUDA-enabled Docker sandbox configurations. Trowel applied.
 - **[2026-07-08]** Shipped deterministic agent routing with eligibility gating, shortlist enforcement, offline fallback, routing traces, and refreshed public docs. Trowel applied.
