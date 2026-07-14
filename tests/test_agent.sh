@@ -4561,4 +4561,37 @@ describe "Configurable milestone character limit"
     assert_ok $? "injection must compare _strategist_full length to micro_objective"
   }
 
+# ── Image Scrape Queue & Prompt Injection ─────────────────────
+describe "Image Scrape Queue and Prompt Injection"
+
+  it "extracts image URLs from scrape JSON output" && {
+    json_data='{"title":"Test Page","images":["https://example.com/logo.png","https://example.com/hero.jpg"],"content":"Hello"}'
+    results=$(_agent_extract_images_from_scrape "$json_data")
+    assert_contains "$results" "https://example.com/logo.png"
+    assert_contains "$results" "https://example.com/hero.jpg"
+  }
+
+  it "extracts image URLs from raw scrape text fallback" && {
+    text_data="Here is an image: https://example.com/image.png and another: https://example.com/pic.jpg"
+    results=$(_agent_extract_images_from_scrape "$text_data")
+    assert_contains "$results" "https://example.com/image.png"
+    assert_contains "$results" "https://example.com/pic.jpg"
+  }
+
+  it "injects discovered image URLs into specialist prompt" && {
+    temp_ws="./george_test_ws_$$"
+    mkdir -p "$temp_ws"
+    echo "https://example.com/logo.png" > "$temp_ws/web_image_queue.txt"
+    echo "https://example.com/banner.jpg" >> "$temp_ws/web_image_queue.txt"
+    
+    out=""
+    AGENT_TASK_WORKSPACE="$temp_ws" out=$(_build_specialist_prompt "/download" "$temp_ws" "Download logo")
+    rm -rf "$temp_ws"
+    
+    echo "$out" | grep -q "DISCOVERED IMAGE URLS"
+    assert_ok $? "Must inject DISCOVERED IMAGE URLS section"
+    echo "$out" | grep -q "https://example.com/logo.png"
+    assert_ok $? "Must contain logo.png URL"
+  }
+
 test_end

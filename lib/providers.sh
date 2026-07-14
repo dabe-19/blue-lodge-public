@@ -128,7 +128,7 @@ provider_clear_model() {
 _provider_countdown() {
     local secs="$1" label="${2:-Waiting}"
     local _tty="/dev/tty"
-    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    { true >/dev/tty; } 2>/dev/null || _tty="/dev/stderr"
     if [ "$secs" -le 0 ] 2>/dev/null; then return; fi
 
     # Pause any active spinner so it doesn't fight for the terminal line
@@ -400,7 +400,7 @@ _provider_sse_loop() {
     local fifo="$1" curl_pid="$2" content_jq="$3"
     local think_jq="${4:-}" done_match="${5:-[DONE]}"
     local _tty="/dev/tty"
-    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    { true >/dev/tty; } 2>/dev/null || _tty="/dev/stderr"
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
 
     local _in_think=0 _think_banner=0
@@ -479,7 +479,7 @@ _provider_sse_loop() {
 _provider_anthropic_sse_loop() {
     local fifo="$1" curl_pid="$2"
     local _tty="/dev/tty"
-    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    { true >/dev/tty; } 2>/dev/null || _tty="/dev/stderr"
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
 
     local _in_think=0 _think_banner=0
@@ -562,7 +562,7 @@ _provider_anthropic_sse_loop() {
 _provider_google_sse_loop() {
     local fifo="$1" curl_pid="$2"
     local _tty="/dev/tty"
-    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    { true >/dev/tty; } 2>/dev/null || _tty="/dev/stderr"
     local _got_content=0
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
     local _idle_timeout=45
@@ -597,7 +597,7 @@ _provider_google_sse_loop() {
 _provider_cohere_sse_loop() {
     local fifo="$1" curl_pid="$2"
     local _tty="/dev/tty"
-    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    { true >/dev/tty; } 2>/dev/null || _tty="/dev/stderr"
     local _got_content=0
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
     local _idle_timeout=45

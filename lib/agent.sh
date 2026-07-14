@@ -19,6 +19,18 @@ _agent_extract_urls_from_search() {
     echo "$search_output" | grep -oE 'https?://[^ ]+' | sed -E 's/[])}'"'"'"]+$//' | sort -u | head -n 4
 }
 
+_agent_extract_images_from_scrape() {
+    local scrape_output="$1"
+    if [[ "$scrape_output" == *\{* ]]; then
+        local _clean_json="{${scrape_output#*\{}"
+        if echo "$_clean_json" | jq -e '.images' &>/dev/null; then
+            echo "$_clean_json" | jq -r '.images[] // empty' 2>/dev/null | sort -u
+            return 0
+        fi
+    fi
+    echo "$scrape_output" | grep -oE 'https?://[^ ]+\.(jpg|jpeg|png|gif|webp|bmp|svg|avif|tiff)[^ ]*' | sed -E 's/[])}'"'"'"]+$//' | sort -u
+}
+
 _is_junk_output() {
     local out="$1"
     [ -z "$out" ] && return 0
@@ -1187,8 +1199,8 @@ _agent_complete_milestone() {
     fi
 
     if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
-        printf '  [debug] macro_memory <- milestone: %s\n' "${_milestone_summary:0:120}" > /dev/tty 2>/dev/null
-        printf '  [debug] micro_memory <- COMPLETE: %s\n' "${summary:0:80}" > /dev/tty 2>/dev/null
+        printf '  [debug] macro_memory <- milestone: %s\n' "${_milestone_summary:0:120}" >&2
+        printf '  [debug] micro_memory <- COMPLETE: %s\n' "${summary:0:80}" >&2
     fi
 
     # ── RESEARCH BUFFER: Carry forward web data ────────────
@@ -1209,7 +1221,7 @@ _agent_complete_milestone() {
             printf '%s' "$_web_outputs" > "$_accum_file"
         fi
         cp "$_accum_file" "$george_dir/$RESEARCH_BUFFER_FILE"
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] research buffer updated/merged\n' > /dev/tty 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] research buffer updated/merged\n' >&2
     fi
 
     # ── Reflexive hook: milestone complete ─────────────────
@@ -1354,7 +1366,7 @@ TASK: $task
         _items_json=$(echo "$_json_items" | jq '[.items | to_entries[] | {id: (.key + 1), task: (if (.value | type) == "string" then .value else .value.task end), status: "pending", depth: 0}]' 2>/dev/null)
         count=$(echo "${_items_json:-[]}" | jq 'length' 2>/dev/null)
         count="${count:-0}"
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew json extract: %d items\n' "$count" > /dev/tty 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew json extract: %d items\n' "$count" >&2
     fi
 
     # ── Layer 3: Legacy fallback — numbered list parsing ────────
@@ -1473,7 +1485,7 @@ TASK: $task
     local parsed_type=""
     if _json_classify=$(_agent_extract_json "$raw_type" "type"); then
         parsed_type=$(echo "$_json_classify" | jq -r '.type // empty')
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] classify json extract: type=%s\n' "$parsed_type" > /dev/tty 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] classify json extract: type=%s\n' "$parsed_type" >&2
     else
         # ── Layer 3: Legacy fallback parsing ────────────────────
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] classify: JSON extraction failed, falling back to text parsing"
@@ -2400,7 +2412,7 @@ REWRITE_ROUTER_JSON
     _router_verdict=$(echo "$_router_verdict" | sed 's/\*\+//g')
     _router_verdict=$(echo "$_router_verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew rewrite router verdict: %s\n' "$(echo "$_router_verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew rewrite router verdict: %s\n' "$(echo "$_router_verdict" | tr '\n' ' ' | head -c 200)" >&2
 
     local _verdict_word
     # Extract first word from first line, strip decorators
@@ -2832,7 +2844,7 @@ _agent_evaluate_honeydew_item() {
     verdict=$(_agent_eval_call_json "$workdir" "honeydew_item" "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "honeydew-evaluator" "verdict" "reason" "recommendation")
 
     # ── DEBUG: Honeydew evaluator raw verdict ───────────────────
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" >&2
 
     # ── Layer 2: Try structured JSON extraction ─────────────────
     local _json_hd_verdict=""
@@ -2846,7 +2858,7 @@ _agent_evaluate_honeydew_item() {
         _EVAL_HONEYDEW_RECOMMENDATION=$(echo "$_json_hd_verdict" | jq -r '.recommendation // empty')
         # Normalize empty/none recommendations
         [[ "$_EVAL_HONEYDEW_RECOMMENDATION" == "none" || "$_EVAL_HONEYDEW_RECOMMENDATION" == "None" || "$_EVAL_HONEYDEW_RECOMMENDATION" == "N/A" ]] && _EVAL_HONEYDEW_RECOMMENDATION=""
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval json extract: verdict=%s reason=%s rec=%s\n' "$verdict_word" "${_EVAL_HONEYDEW_REASON:0:80}" "${_EVAL_HONEYDEW_RECOMMENDATION:0:80}" > /dev/tty 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval json extract: verdict=%s reason=%s rec=%s\n' "$verdict_word" "${_EVAL_HONEYDEW_REASON:0:80}" "${_EVAL_HONEYDEW_RECOMMENDATION:0:80}" >&2
     else
         # ── Layer 3: Legacy fallback parsing ────────────────────
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew-eval: JSON extraction failed, falling back to text parsing"
@@ -2938,8 +2950,8 @@ _agent_evaluate_honeydew_item() {
 
     local _reason_display="${_EVAL_HONEYDEW_REASON:+(${_EVAL_HONEYDEW_REASON:0:200})}"
     ui_info "Honeydew evaluator: item #${_next_id} not yet satisfied ${_reason_display}"
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval full verdict:\n%s\n' "$verdict" > /dev/tty 2>/dev/null
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_EVAL_HONEYDEW_RECOMMENDATION" ] && printf '  [debug] honeydew-eval recommendation: %s\n' "$_EVAL_HONEYDEW_RECOMMENDATION" > /dev/tty 2>/dev/null
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval full verdict:\n%s\n' "$verdict" >&2
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_EVAL_HONEYDEW_RECOMMENDATION" ] && printf '  [debug] honeydew-eval recommendation: %s\n' "$_EVAL_HONEYDEW_RECOMMENDATION" >&2
     return 1
 }
 
@@ -3045,7 +3057,7 @@ EVAL_P1_JSON
     verdict=$(_agent_eval_call_json "$workdir" "milestone_eval" "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "p1-evaluator" "verdict" "reason")
 
     # ── DEBUG: Evaluator raw verdict ────────────────────────────
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" >&2
 
     # ── Layer 2: Try structured JSON extraction ─────────────────
     local _json_verdict=""
@@ -3055,7 +3067,7 @@ EVAL_P1_JSON
     if _json_verdict=$(_agent_extract_json "$verdict" "verdict" "reason"); then
         verdict_word=$(echo "$_json_verdict" | jq -r '.verdict // empty')
         _EVAL_MILESTONE_REASON=$(echo "$_json_verdict" | jq -r '.reason // empty')
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 json extract: verdict=%s reason=%s\n' "$verdict_word" "${_EVAL_MILESTONE_REASON:0:80}" > /dev/tty 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 json extract: verdict=%s reason=%s\n' "$verdict_word" "${_EVAL_MILESTONE_REASON:0:80}" >&2
     else
         # ── Layer 3: Legacy fallback parsing ────────────────────
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval-p1: JSON extraction failed, falling back to text parsing"
@@ -3279,7 +3291,7 @@ EVAL_P2_JSON
     verdict=$(_agent_eval_call_text "$workdir" "completion_eval" "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
 
     # ── DEBUG: Evaluator raw verdict ────────────────────────────
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p2 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" > /dev/tty 2>/dev/null
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p2 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" >&2
 
     # Clean up LLM output — strip think blocks, markdown, whitespace
     verdict=$(echo "$verdict" | _strip_think_blocks)
@@ -4128,10 +4140,28 @@ SPEC_RULES
                     echo "PROJECT CONTEXT:"
                     echo "$_pctx"
                     echo ""
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- project context card (%s)\n' "${_proj_name:-?}" > /dev/tty 2>/dev/null
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- project context card (%s)\n' "${_proj_name:-?}" >&2
                 fi
                 ;;
         esac
+
+        # ── DISCOVERED IMAGES INJECTION ───────────────────────
+        # If image URLs have been extracted from web scrapes, inject them
+        # so the specialist knows which image URLs are available to download
+        # or analyze with /vision.
+        if [ -n "${AGENT_TASK_WORKSPACE:-}" ] && [ -f "$AGENT_TASK_WORKSPACE/web_image_queue.txt" ]; then
+            local _img_queue_file="$AGENT_TASK_WORKSPACE/web_image_queue.txt"
+            if [ -s "$_img_queue_file" ]; then
+                echo "DISCOVERED IMAGE URLS (this task):"
+                local _img_url
+                while IFS= read -r _img_url || [ -n "$_img_url" ]; do
+                    [ -n "$_img_url" ] && echo "  - $_img_url"
+                done < "$_img_queue_file" | head -10
+                echo "Use these direct URLs for /download or /vision commands."
+                echo ""
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- discovered image URLs (%d entries)\n' "$(wc -l < "$_img_queue_file" 2>/dev/null || echo 0)" >&2
+            fi
+        fi
 
         # ── CREATED FILES INJECTION ───────────────────────────
         # When files have been written during this task, inject their
@@ -4145,7 +4175,7 @@ SPEC_RULES
             done
             echo "Reference these EXACT paths. Do NOT guess or modify them."
             echo ""
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- created files (%d entries)\n' "${#_AGENT_WRITTEN_FILES[@]}" > /dev/tty 2>/dev/null
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- created files (%d entries)\n' "${#_AGENT_WRITTEN_FILES[@]}" >&2
         fi
 
         # ── Inject read file context into specialist ──────────
@@ -4169,7 +4199,7 @@ SPEC_RULES
                 done <<< "$_rf_keys"
                 echo "Use the information from these read files when constructing the command or writing content."
                 echo ""
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- read file context\n' > /dev/tty 2>/dev/null
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- read file context\n' >&2
             fi
         fi
 
@@ -5452,7 +5482,7 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
             local _spec_lines
             _spec_lines=$(echo "$action_plan" | wc -l)
-            printf '  [debug] specialist response (%d lines): %s\n' "$_spec_lines" "$(echo "$action_plan" | head -3 | tr '\n' ' ' | head -c 120)" > /dev/tty 2>/dev/null
+            printf '  [debug] specialist response (%d lines): %s\n' "$_spec_lines" "$(echo "$action_plan" | head -3 | tr '\n' ' ' | head -c 120)" >&2
         fi
 
         # Cancel check after specialist LLM call
@@ -6251,7 +6281,7 @@ INTERLOCK_JSON
                         if [[ "$_aod_path" != "${AGENT_OUTPUT_DIR}"/* ]] && [[ "$_aod_path" != "${AGENT_OUTPUT_DIR}" ]]; then
                             _aod_path="${AGENT_OUTPUT_DIR}/${_aod_path}"
                             cmd="${_aod_verb} ${_aod_path}${_aod_content:+ }${_aod_content}"
-                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] output-dir enforced: %s\n' "$_aod_path" > /dev/tty 2>/dev/null
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] output-dir enforced: %s\n' "$_aod_path" >&2
                         fi
                         ;;
                 esac
@@ -6288,7 +6318,7 @@ INTERLOCK_JSON
                             _fe_expanded=$(tools_expand_file_refs "$_fe_content" "$workdir" "${AGENT_FILE_EXPAND_CHARS:-10000}")
                             if [ "$_fe_expanded" != "$_fe_content" ]; then
                                 cmd="${_fe_verb} ${_fe_first} ${_fe_expanded}"
-                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] file-expand: expanded refs in %s content\n' "$_fe_verb" > /dev/tty 2>/dev/null
+                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] file-expand: expanded refs in %s content\n' "$_fe_verb" >&2
                             fi
                         fi
                         ;;
@@ -6322,7 +6352,7 @@ INTERLOCK_JSON
                 if [ $exit_code -eq 0 ]; then
                     _AGENT_WORKDIR_CHANGED="$workdir"
                 fi
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] workdir now: %s\n' "$workdir" > /dev/tty 2>/dev/null
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] workdir now: %s\n' "$workdir" >&2
                 _cd_intercepted=1
             fi
 
@@ -6347,7 +6377,25 @@ INTERLOCK_JSON
                     if [ -n "${AGENT_TASK_WORKSPACE:-}" ]; then
                         mkdir -p "$AGENT_TASK_WORKSPACE"
                         _agent_extract_urls_from_search "$output" > "$_queue_file" 2>/dev/null
-                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web_search: extracted %d URLs to queue\n' "$(wc -l < "$_queue_file" 2>/dev/null || echo 0)" > /dev/tty 2>/dev/null
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web_search: extracted %d URLs to queue\n' "$(wc -l < "$_queue_file" 2>/dev/null || echo 0)" >&2
+                    fi
+                fi
+
+                # ── WEB IMAGES QUEUE POPULATION ──────────────
+                if { [[ "$cmd" == /web\ scrape-images\ * ]] || [[ "$cmd" == /web\ scrapeimages\ * ]] || [[ "$cmd" == /web\ fetch\ * ]]; } && [ "$exit_code" -eq 0 ]; then
+                    local _image_queue_file="$AGENT_TASK_WORKSPACE/web_image_queue.txt"
+                    if [ -n "${AGENT_TASK_WORKSPACE:-}" ]; then
+                        mkdir -p "$AGENT_TASK_WORKSPACE"
+                        local _extracted_imgs
+                        _extracted_imgs=$(_agent_extract_images_from_scrape "$output" 2>/dev/null)
+                        if [ -n "$_extracted_imgs" ]; then
+                            if [ -f "$_image_queue_file" ]; then
+                                (cat "$_image_queue_file"; echo "$_extracted_imgs") | sort -u > "${_image_queue_file}.tmp" 2>/dev/null && mv "${_image_queue_file}.tmp" "$_image_queue_file"
+                            else
+                                echo "$_extracted_imgs" > "$_image_queue_file" 2>/dev/null
+                            fi
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web_scrape: extracted %d image URLs to queue\n' "$(wc -l < "$_image_queue_file" 2>/dev/null || echo 0)" >&2
+                        fi
                     fi
                 fi
                 
@@ -6409,8 +6457,8 @@ INTERLOCK_JSON
                     _out_preview=$(echo "$output" | head -8)
                     _out_preview="${_out_preview}"$'\n'"  ... (${_out_lines} lines total)"
                 fi
-                [ -n "$output" ] && printf '  [debug] cmd output (exit %d, %d lines):\n%s\n' "$exit_code" "$_out_lines" "$_out_preview" > /dev/tty 2>/dev/null
-                [ -z "$output" ] && printf '  [debug] cmd output: (empty, exit %d)\n' "$exit_code" > /dev/tty 2>/dev/null
+                [ -n "$output" ] && printf '  [debug] cmd output (exit %d, %d lines):\n%s\n' "$exit_code" "$_out_lines" "$_out_preview" >&2
+                [ -z "$output" ] && printf '  [debug] cmd output: (empty, exit %d)\n' "$exit_code" >&2
             fi
 
             # Track all executed commands for failure pattern analysis
@@ -6438,7 +6486,7 @@ INTERLOCK_JSON
                     if [ -n "$_init_name" ] && [ -d "$workdir/$_init_name" ]; then
                         workdir="$workdir/$_init_name"
                         _AGENT_WORKDIR_CHANGED="$workdir"
-                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] post-init workdir: %s\n' "$workdir" > /dev/tty 2>/dev/null
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] post-init workdir: %s\n' "$workdir" >&2
                     fi
                 fi
                 _last_success_cmd="$cmd"
@@ -6556,7 +6604,7 @@ INTERLOCK_JSON
                         else
                             output="[Web Summary] $_condensed"
                         fi
-                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web condenser: %d chars -> %d chars\n' "${#output}" "${#_condensed}" > /dev/tty 2>/dev/null
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web condenser: %d chars -> %d chars\n' "${#output}" "${#_condensed}" >&2
                     fi
                   fi
                 fi
@@ -6575,7 +6623,7 @@ INTERLOCK_JSON
                     local _bs_clean
                     _bs_clean=$(printf '%s\n' "$output" | sed '/^[[:space:]]*```/,/^[[:space:]]*```/d')
                     if [ "${#_bs_clean}" -lt "${#output}" ]; then
-                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] brainstorm sanitizer: stripped embedded commands (%d -> %d chars)\n' "${#output}" "${#_bs_clean}" > /dev/tty 2>/dev/null
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] brainstorm sanitizer: stripped embedded commands (%d -> %d chars)\n' "${#output}" "${#_bs_clean}" >&2
                         output="$_bs_clean"
                     fi
 
@@ -6593,7 +6641,7 @@ INTERLOCK_JSON
                     jq -n --arg q "$_bs_query" --arg r "${output:0:3000}" \
                           --arg ts "$(date '+%Y-%m-%d %H:%M:%S %Z')" \
                        '{query: $q, response: $r, timestamp: $ts}' > "$_bs_file"
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] brainstorm persisted: %s (%d chars)\n' "$_bs_file" "${#output}" > /dev/tty 2>/dev/null
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] brainstorm persisted: %s (%d chars)\n' "$_bs_file" "${#output}" >&2
                 fi
 
                 # ── Anti-flail guard for info tasks ──────────────
@@ -6631,7 +6679,7 @@ INTERLOCK_JSON
                             done
                             if [ "$_wf_dup" -eq 0 ]; then
                                 _AGENT_WRITTEN_FILES+=("$_wf_path")
-                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] written-files: tracked %s (%d total)\n' "$_wf_path" "${#_AGENT_WRITTEN_FILES[@]}" > /dev/tty 2>/dev/null
+                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] written-files: tracked %s (%d total)\n' "$_wf_path" "${#_AGENT_WRITTEN_FILES[@]}" >&2
                             fi
                         fi
                         ;;
@@ -6656,7 +6704,7 @@ INTERLOCK_JSON
                                 jq --arg path "$_rf_path" --arg content "$_rf_content" \
                                     '(if .read_context == null then .read_context = {} else . end) | if .read_context[$path] != null then .read_context[$path] = $content else if (.read_context | keys | length) >= 2 then del(.read_context[(.read_context | keys | .[0])]) | .read_context[$path] = $content else .read_context[$path] = $content end end' \
                                     "$macro_file" > "$_rf_macro_tmp" && mv "$_rf_macro_tmp" "$macro_file"
-                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] read-context: saved content for %s (%d chars)\n' "$_rf_path" "${#_rf_content}" > /dev/tty 2>/dev/null
+                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] read-context: saved content for %s (%d chars)\n' "$_rf_path" "${#_rf_content}" >&2
                             fi
                         fi
                         ;;
@@ -6853,7 +6901,7 @@ INTERLOCK_JSON
                 if [ "$_prior_web_ok" -gt 0 ]; then
                     _micro_add_action "$micro_file" "$cmd" "FAILED" "$exit_code" "${output:0:300}" "specialist_soft_fail"
                     _micro_add_note "$micro_file" "Web fetch failed, but $_prior_web_ok prior web action(s) succeeded. Use existing data or try a different URL."
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] Web soft-failure: %d prior successes, skipping escalation\n' "$_prior_web_ok" > /dev/tty 2>/dev/null
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] Web soft-failure: %d prior successes, skipping escalation\n' "$_prior_web_ok" >&2
                     inner_attempts=$((inner_attempts + 1))
                     continue
                 fi
@@ -6879,7 +6927,7 @@ INTERLOCK_JSON
                     local _scrape_url="${cmd##* }"
                     _l1_cmd="/web fetch $_scrape_url"
                     _l1_label="Fallback: scrape-images→fetch"
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] L1: scrape-images fallback -> /web fetch %s\n' "$_scrape_url" > /dev/tty 2>/dev/null
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] L1: scrape-images fallback -> /web fetch %s\n' "$_scrape_url" >&2
                 fi
                 ui_warn "Escalation L1: ${_l1_label}..."
                 sleep 1
@@ -8907,7 +8955,7 @@ ${full_question}"
             printf "  %b/brainstorm:%b\n" "$C_DIM" "$C_RESET"
             ui_render_response "$response"
             echo ""
-        } > /dev/tty 2>/dev/null
+        } >&2
         echo "$response"
     fi
 

@@ -1079,6 +1079,8 @@ _html_score_blocks() {
 # ── Extract image URLs from HTML (content areas only) ──────────
 _html_extract_images() {
     local base_url="$1"
+    local html
+    html=$(cat)
     # Accepted image types — kept as a variable so tests can verify coverage.
     local _img_exts='jpg|jpeg|png|gif|webp|bmp|svg|avif|tiff'
     # Pull image URLs from:
@@ -1088,15 +1090,15 @@ _html_extract_images() {
     #  4) <link rel="image_src" href="...">
     {
         # <img> tags — src, data-src, data-lazy-src attributes
-        grep -oiE '<img[^>]*>' | grep -oE '(src|data-src|data-lazy-src)="[^"]+"' | sed 's/^[^"]*"//;s/"$//'
+        echo "$html" | grep -oiE '<img[^>]*>' | grep -oE '(src|data-src|data-lazy-src)="[^"]+"' | sed 's/^[^"]*"//;s/"$//'
         # <img> srcset — extract individual URLs from comma-separated entries
-        grep -oiE '<img[^>]*>' | grep -oE 'srcset="[^"]+"' | sed 's/^srcset="//;s/"$//' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/ [0-9]*[wx].*$//'
+        echo "$html" | grep -oiE '<img[^>]*>' | grep -oE 'srcset="[^"]+"' | sed 's/^srcset="//;s/"$//' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/ [0-9]*[wx].*$//'
         # <picture><source> srcset — responsive image sources
-        grep -oiE '<source[^>]*>' | grep -oE 'srcset="[^"]+"' | sed 's/^srcset="//;s/"$//' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/ [0-9]*[wx].*$//'
+        echo "$html" | grep -oiE '<source[^>]*>' | grep -oE 'srcset="[^"]+"' | sed 's/^srcset="//;s/"$//' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/ [0-9]*[wx].*$//'
         # Open Graph and Twitter Card meta images
-        grep -oiE '<meta[^>]+(og:image|twitter:image)[^>]*>' | grep -oE 'content="[^"]+"' | sed 's/^content="//;s/"$//'
+        echo "$html" | grep -oiE '<meta[^>]+(og:image|twitter:image)[^>]*>' | grep -oE 'content="[^"]+"' | sed 's/^content="//;s/"$//'
         # <link rel="image_src">
-        grep -oiE '<link[^>]+rel="image_src"[^>]*>' | grep -oE 'href="[^"]+"' | sed 's/^href="//;s/"$//'
+        echo "$html" | grep -oiE '<link[^>]+rel="image_src"[^>]*>' | grep -oE 'href="[^"]+"' | sed 's/^href="//;s/"$//'
     } | sort -u | \
     while IFS= read -r img_url; do
         [ -z "$img_url" ] && continue

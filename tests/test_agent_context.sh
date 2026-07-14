@@ -60,8 +60,8 @@ describe "_macro_set"
     body=$(declare -f _macro_set)
     echo "$body" | grep -q '\.tmp'
     assert_ok $? "Must use tmp file for atomic write"
-    echo "$body" | grep -q 'mv'
-    assert_ok $? "Must mv tmp to target"
+    echo "$body" | grep -E -q 'mv|memory_json_commit'
+    assert_ok $? "Must mv tmp to target or use memory_json_commit"
   }
 
   it "sets project_context field (used by workdir propagation)" && {

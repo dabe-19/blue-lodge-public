@@ -810,18 +810,18 @@ tools_expand_inline_read() {
     fi
 
     if [ ! -f "$_read_path" ]; then
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inline /read: file not found: %s\n' "$_read_path" > /dev/tty 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inline /read: file not found: %s\n' "$_read_path" >&2
         echo "$text"
         return 0
     fi
 
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inline /read: expanding %s\n' "$_read_path" > /dev/tty 2>/dev/null
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inline /read: expanding %s\n' "$_read_path" >&2
 
     local _file_content
 
     # ── PDF handling ─────────────────────────────────────────
     if [[ "${_read_path,,}" == *.pdf ]]; then
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inline /read: PDF detected, extracting text\n' > /dev/tty 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inline /read: PDF detected, extracting text\n' >&2
         if declare -f _web_extract_pdf &>/dev/null; then
             _file_content=$(_web_extract_pdf "$_read_path")
         elif command -v pdftotext &>/dev/null; then
@@ -830,7 +830,7 @@ tools_expand_inline_read() {
             _file_content=$(strings "$_read_path" 2>/dev/null | grep -E '[a-zA-Z]{3,}' | head -1000)
         fi
         if [ -z "$_file_content" ]; then
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inline /read: PDF text extraction failed for %s\n' "$_read_path" > /dev/tty 2>/dev/null
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inline /read: PDF text extraction failed for %s\n' "$_read_path" >&2
             echo "$text"
             return 0
         fi
@@ -1028,7 +1028,7 @@ tools_expand_file_refs() {
 ... ($((_orig_len - max_chars)) chars truncated)"
                         _truncated=1
                     fi
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] file-ref expand: %s (%d chars%s)\n' "$resolved" "${#_content}" "$([ $_truncated -eq 1 ] && echo ", capped at $max_chars")" > /dev/tty 2>/dev/null
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] file-ref expand: %s (%d chars%s)\n' "$resolved" "${#_content}" "$([ $_truncated -eq 1 ] && echo ", capped at $max_chars")" >&2
 
                     # Preserve any trailing punctuation that was stripped
                     local suffix="${token#"$clean"}"

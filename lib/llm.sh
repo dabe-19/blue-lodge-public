@@ -288,7 +288,7 @@ _llm_normalize_think() {
 # Bright (2) = cyan, Dimmed (1) = gray (SGR 90, widely supported).
 _llm_think_tty() {
     local _t="/dev/tty"
-    [ -w /dev/tty ] 2>/dev/null || _t="/dev/stderr"
+    { true >/dev/tty; } 2>/dev/null || _t="/dev/stderr"
     echo "$_t"
 }
 _llm_think_color() {
@@ -1227,7 +1227,7 @@ llm_warmup() {
     _warmup_err=$(echo "$_warmup_resp" | jq -r '.error // empty' 2>/dev/null)
     if [ -n "$_warmup_err" ]; then
         local _tty="/dev/tty"
-        [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+        { true >/dev/tty; } 2>/dev/null || _tty="/dev/stderr"
 
         # Detect stale Ollama binary from package-manager update (dpkg/apt).
         # When Ollama is updated while running, the daemon caches the old
@@ -1529,7 +1529,7 @@ llm_create_model() {
 _llm_debug_print() {
     [ "${LODGE_DEBUG:-0}" -eq 0 ] && return
     local _tty="/dev/tty"
-    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    { true >/dev/tty; } 2>/dev/null || _tty="/dev/stderr"
     printf " %b  [debug] %s%b\n" "$C_DIM" "$1" "$C_RESET" > "$_tty" 2>/dev/null
 }
 
@@ -1598,7 +1598,7 @@ llm_debug_summary() {
         _agg_tok_s=$(awk "BEGIN{printf \"%.1f\", ($_total_out / ($_total_ms / 1000.0))}")
     fi
     local _tty="/dev/tty"
-    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    { true >/dev/tty; } 2>/dev/null || _tty="/dev/stderr"
     printf "\n %b── Debug Summary ──────────────────────────────%b\n" "$C_DIM" "$C_RESET" > "$_tty" 2>/dev/null
     printf " %b  LLM calls:     %d%b\n" "$C_DIM" "$_calls" "$C_RESET" > "$_tty" 2>/dev/null
     printf " %b  Total input:   %d tokens%b\n" "$C_DIM" "$_total_in" "$C_RESET" > "$_tty" 2>/dev/null
@@ -1761,7 +1761,7 @@ llm_generate() {
 
         _LLM_ACTIVE=1
         local _tty="/dev/tty"
-        [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+        { true >/dev/tty; } 2>/dev/null || _tty="/dev/stderr"
         local _tmpdir="${TMPDIR:-/tmp}"
         local _got_tokens="$_tmpdir/.lodge-gen-tok-$RANDOM-$BASHPID"
         local _cancel_file="$_tmpdir/.lodge-cancel-$$"
@@ -2076,7 +2076,7 @@ llm_generate() {
 
     _LLM_ACTIVE=1
 
-    local _tty; [ -t 2 ] && [ -w /dev/tty ] && _tty="/dev/tty" || _tty="/dev/stderr"
+    local _tty; [ -t 2 ] && { true >/dev/tty; } 2>/dev/null && _tty="/dev/tty" || _tty="/dev/stderr"
 
     # Marker file: touched inside the pipe subshell when first token
     # arrives. If missing after the pipe, the request failed entirely.
@@ -2439,7 +2439,7 @@ llm_stream() {
         _llm_spinner_pid="$_SPINNER_PID"
 
         local _tty="/dev/tty"
-        [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+        { true >/dev/tty; } 2>/dev/null || _tty="/dev/stderr"
 
         local _dbg_out=0
         local _dbg_in=0
@@ -2751,7 +2751,7 @@ llm_stream() {
 
     # Determine TTY for visible output (even inside $() captures)
     local _tty="/dev/tty"
-    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    { true >/dev/tty; } 2>/dev/null || _tty="/dev/stderr"
 
     # ── Think display helpers ─────────────────────────────────────
     # Both modes get the same ┌─ thinking ─ / └──────────── structure.
@@ -3453,7 +3453,7 @@ llm_vision() {
 
         _LLM_ACTIVE=1
         local _tty="/dev/tty"
-        [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+        { true >/dev/tty; } 2>/dev/null || _tty="/dev/stderr"
         local _got_tokens="$_tmpdir/.lodge-vision-tok-$RANDOM-$BASHPID"
         rm -f "$_got_tokens"
 
@@ -3530,7 +3530,7 @@ llm_vision() {
     _LLM_ACTIVE=1
 
     local _tty="/dev/tty"
-    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    { true >/dev/tty; } 2>/dev/null || _tty="/dev/stderr"
 
     local _got_tokens="$_tmpdir/.lodge-vision-tok-$RANDOM-$BASHPID"
     rm -f "$_got_tokens"

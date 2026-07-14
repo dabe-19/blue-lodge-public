@@ -699,6 +699,27 @@ describe "web_scrape_images"
     _teardown_web
   }
 
+  it "behaviorally extracts multiple images from stdin HTML" && {
+    _setup_web
+    html="<html>
+      <body>
+        <img src=\"/images/logo.png\" />
+        <picture>
+          <source srcset=\"/images/hero.webp\" />
+          <img src=\"/images/hero.jpg\" />
+        </picture>
+        <meta property=\"og:image\" content=\"https://example.com/og.png\" />
+      </body>
+    </html>"
+    results=$(echo "$html" | _html_extract_images "https://example.com")
+    
+    assert_contains "$results" "https://example.com/images/logo.png"
+    assert_contains "$results" "https://example.com/images/hero.webp"
+    assert_contains "$results" "https://example.com/images/hero.jpg"
+    assert_contains "$results" "https://example.com/og.png"
+    _teardown_web
+  }
+
 describe "web blacklist helpers"
 
   it "blacklist helper functions are defined" && {
