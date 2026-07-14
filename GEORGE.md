@@ -6,6 +6,7 @@ None.
 
 ## The Trowel (Completed Milestones)
 
+- **[2026-07-13]** Shipped the repl-specialist agent workflow, and resolved the false-positive eligibility gating issues on slash-command milestones. Trowel applied.
 - **[2026-07-13]** Shipped default transition to Gemma 4 E2B with speculative MTP decoding, including turn stop tokens (<turn|>) and thinking channel tag normalizations. Trowel applied.
 - **[2026-07-13]** Shipped portable Docker Sandbox configuration supporting CPU-only and Vulkan profiles for non-RTX development computers. Trowel applied.
 - **[2026-07-13]** Shipped fix for gemma-e2b system thinking directive logical inversion and prompt contamination. Trowel applied.
