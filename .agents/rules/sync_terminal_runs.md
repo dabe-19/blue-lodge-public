@@ -1,4 +1,4 @@
 ### ⚠️ CRITICAL: Synchronous Terminal Execution
 
-**1. Force Synchronous Output Monitoring**
-Whenever you run shell/terminal commands using the `run_command` tool, you MUST set the `WaitMsBeforeAsync` parameter to `10000` (the maximum allowed synchronous limit of 10 seconds) to ensure that command outputs are rendered inline in the chat interface for live monitoring. Do not run commands in the background or asynchronously unless they are daemon/server processes.
+**1. Force Live Terminal Streaming**
+Whenever you execute terminal commands using the `run_command` tool, you MUST set the `RunPersistent` parameter to `true` (and specify a `RequestedTerminalID` to reuse a terminal if applicable). This ensures that the command executes in the user's interactive login shell (with `oh-my-zsh` and custom styling loaded) and streams the colored output live directly in the chat/terminal pane instead of running in a silent headless subshell.
