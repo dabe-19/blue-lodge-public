@@ -295,21 +295,47 @@ _llm_think_color() {
     [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && printf "\033[36m" || printf "\033[90m"
 }
 _llm_think_open() {
-    [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ] || return
-    local _t; _t=$(_llm_think_tty)
-    local _c; _c=$(_llm_think_color)
-    printf "\n%s┌─ thinking ─\033[0m\n%s" "$_c" "$_c" > "$_t" 2>/dev/null
+    # Keep output conditional on settings
+    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+        local _t; _t=$(_llm_think_tty)
+        local _c; _c=$(_llm_think_color)
+        printf "\n%s┌─ thinking ─\033[0m\n%s" "$_c" "$_c" > "$_t" 2>/dev/null
+    fi
 }
 _llm_think_close() {
-    [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ] || return
-    local _t; _t=$(_llm_think_tty)
-    local _c; _c=$(_llm_think_color)
-    printf "\033[0m\n%s└────────────\033[0m\n" "$_c" > "$_t" 2>/dev/null
+    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+        local _t; _t=$(_llm_think_tty)
+        local _c; _c=$(_llm_think_color)
+        printf "\033[0m\n%s└────────────\033[0m\n" "$_c" > "$_t" 2>/dev/null
+    fi
 }
 _llm_think_show() {
-    [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ] || return
-    local _t; _t=$(_llm_think_tty)
-    printf "%s" "$1" > "$_t" 2>/dev/null
+    # Unconditionally write thinking tokens to the log file on disk if active
+    if [ -n "${_think_log_file:-}" ]; then
+        printf "%s" "$1" >> "$_think_log_file"
+    fi
+    # Only stream/output to TTY if settings dictate
+    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+        local _t; _t=$(_llm_think_tty)
+        printf "%s" "$1" > "$_t" 2>/dev/null
+    fi
+}
+_llm_think_log_start() {
+    local _tmpdir="${TMPDIR:-/tmp}"
+    _think_log_file="$_tmpdir/.lodge-think-log-$RANDOM-$BASHPID"
+    rm -f "$_think_log_file"
+    touch "$_think_log_file"
+}
+_llm_think_log_end() {
+    if [ -f "${_think_log_file:-}" ]; then
+        if [ -s "$_think_log_file" ] && [ -n "${_TRANSCRIPT_FILE:-}" ] && [ -f "$_TRANSCRIPT_FILE" ]; then
+            # Format and append thinking block to transcript markdown file
+            printf "\n**model-think:**\n\`\`\`\n" >> "$_TRANSCRIPT_FILE"
+            cat "$_think_log_file" >> "$_TRANSCRIPT_FILE"
+            printf "\n\`\`\`\n" >> "$_TRANSCRIPT_FILE"
+        fi
+        rm -f "$_think_log_file"
+    fi
 }
 
 # ── Sampling parameter resolver ────────────────────────────────
@@ -1676,6 +1702,10 @@ llm_generate() {
         return $_rc
     fi
 
+    # Capture thinking tokens dynamically for the transcript
+    local _think_log_file=""
+    _llm_think_log_start
+
     # Thinking model 4x multiplier: thinking models emit <think> blocks
     # before the response, so token budgets must be larger to avoid
     # truncating mid-think (which causes unclosed [THINK] tags).
@@ -1874,13 +1904,9 @@ llm_generate() {
                 if [ "$_think_banner_open" -eq 0 ] && [ "$_can_think" -eq 1 ]; then
                     _think_banner_open=1
                     _in_think_block=1
-                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                        _llm_think_open "$_tty"
-                    fi
+                    _llm_think_open "$_tty"
                 fi
-                if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                    _llm_think_show "$_rc" "$_tty"
-                fi
+                _llm_think_show "$_rc" "$_tty"
                 _response_pending=""
                 continue
             fi
@@ -1888,9 +1914,7 @@ llm_generate() {
             if [ "$_in_think_block" -eq 1 ] && [ -n "$token" ] && [ "$_think_banner_open" -eq 1 ]; then
                 _think_banner_open=0
                 _in_think_block=0
-                if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                    _llm_think_close "$_tty"
-                fi
+                _llm_think_close "$_tty"
                 _response_pending=""
                 _can_think=0  # disable inline detection — server handles it
             fi
@@ -1929,10 +1953,8 @@ llm_generate() {
                     [ -n "$_before" ] && printf "%s" "$_before"
                     [ -n "$_before" ] && _gen_tty "$_before"
                     _response_pending=""
-                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                        _think_banner_open=1
-                        _llm_think_open "$_tty"
-                    fi
+                    _think_banner_open=1
+                    _llm_think_open "$_tty"
                 elif [ ${#_response_pending} -ge $_think_detect_limit ]; then
                     # No <think> found in preamble buffer — flush and disable
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate(llamacpp): no <think> in %d chars, flushing\n" "$_think_detect_limit" > "$_tty" 2>/dev/null
@@ -1953,11 +1975,9 @@ llm_generate() {
                     local _think_before="${_think_pending%%</think>*}"
                     local _after_think="${_think_pending#*</think>}"
                     _after_think="${_after_think//<\/think>/}"
-                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                        _llm_think_show "$_think_before" "$_tty"
-                        _think_banner_open=0
-                        _llm_think_close "$_tty"
-                    fi
+                    _llm_think_show "$_think_before" "$_tty"
+                    _think_banner_open=0
+                    _llm_think_close "$_tty"
                     _in_think_block=0
                     _think_pending=""
                     [ -n "$_after_think" ] && printf "%s" "$_after_think"
@@ -1970,9 +1990,7 @@ llm_generate() {
                     local _flen=$((_plen - 7))
                     local _ftxt="${_think_pending:0:_flen}"
                     _think_pending="${_think_pending:_flen}"
-                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                        _llm_think_show "$_ftxt" "$_tty"
-                    fi
+                    _llm_think_show "$_ftxt" "$_tty"
                 fi
                 continue
             fi
@@ -1988,10 +2006,8 @@ llm_generate() {
                 _in_think_block=1
                 _can_think=1
                 _think_pending="${token#*<think>}"
-                if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                    _think_banner_open=1
-                    _llm_think_open "$_tty"
-                fi
+                _think_banner_open=1
+                _llm_think_open "$_tty"
                 continue
             fi
             [ -n "$token" ] && printf "%s" "$token"
@@ -2019,9 +2035,11 @@ llm_generate() {
         if [ ! -f "$_got_tokens" ]; then
             rm -f "$_got_tokens"
             echo "ERROR: LLM request failed or returned no tokens (llamacpp)"
+            _llm_think_log_end
             return 1
         fi
         rm -f "$_got_tokens"
+        _llm_think_log_end
         return 0
     fi
 
@@ -2160,15 +2178,11 @@ llm_generate() {
                 kill "$_SPINNER_PID" 2>/dev/null
                 printf "\r%*s\r" 60 "" > "$_tty" 2>/dev/null
             fi
-            # Show thinking to tty (never captured to stdout)
-            if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                if [ "$_think_banner_open" -eq 0 ]; then
-                    _think_banner_open=1
-                    local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
-                    printf "\n%b┌─ thinking ─\033[0m\n%b" "$_c" "$_c" > "$_tty" 2>/dev/null
-                fi
-                printf "%s" "$think_token" > "$_tty" 2>/dev/null
+            if [ "$_think_banner_open" -eq 0 ]; then
+                _think_banner_open=1
+                _llm_think_open "$_tty"
             fi
+            _llm_think_show "$think_token" "$_tty"
         fi
 
         # ── Handle .response field ───────────────────────────────
@@ -2184,10 +2198,7 @@ llm_generate() {
                 # ── Separate-field mode: .response is clean content ──
                 if [ "$_think_banner_open" -eq 1 ]; then
                     _think_banner_open=0
-                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                        local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
-                        printf "\033[0m\n%b└────────────\033[0m\n" "$_c" > "$_tty" 2>/dev/null
-                    fi
+                    _llm_think_close "$_tty"
                 fi
                 # Emit response to stdout (captured by caller's $())
                 printf "%s" "$token"
@@ -2211,11 +2222,8 @@ llm_generate() {
                         [ -n "$_before" ] && printf "%s" "$_before"
                         [ -n "$_before" ] && _gen_tty "$_before"
                         _response_pending=""
-                        if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                            _think_banner_open=1
-                            local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
-                            printf "\n%b┌─ thinking ─\033[0m\n%b" "$_c" "$_c" > "$_tty" 2>/dev/null
-                        fi
+                        _think_banner_open=1
+                        _llm_think_open "$_tty"
                     elif [ ${#_response_pending} -ge $_think_detect_limit ]; then
                         # Buffer overflow guard — no <think> found in buffer
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate: no <think> in %d chars, flushing buffer\n" "$_think_detect_limit" > "$_tty" 2>/dev/null
@@ -2236,12 +2244,9 @@ llm_generate() {
                         local _think_before="${_think_pending%%</think>*}"
                         local _after_think="${_think_pending#*</think>}"
                         _after_think="${_after_think//<\/think>/}"
-                        if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                            [ -n "$_think_before" ] && printf "%s" "$_think_before" > "$_tty" 2>/dev/null
-                            _think_banner_open=0
-                            local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
-                            printf "\033[0m\n%b└────────────\033[0m\n" "$_c" > "$_tty" 2>/dev/null
-                        fi
+                        _llm_think_show "$_think_before" "$_tty"
+                        _think_banner_open=0
+                        _llm_think_close "$_tty"
                         _in_think_block=0
                         _think_pending=""
                         [ -n "$_after_think" ] && printf "%s" "$_after_think"
@@ -2254,9 +2259,7 @@ llm_generate() {
                         local _flen=$((_plen - 7))
                         local _ftxt="${_think_pending:0:_flen}"
                         _think_pending="${_think_pending:_flen}"
-                        if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                            [ -n "$_ftxt" ] && printf "%s" "$_ftxt" > "$_tty" 2>/dev/null
-                        fi
+                        _llm_think_show "$_ftxt" "$_tty"
                     fi
                     continue
                 fi
@@ -2271,11 +2274,8 @@ llm_generate() {
                     _in_think_block=1
                     _can_think=1
                     _think_pending="${token#*<think>}"
-                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                        _think_banner_open=1
-                        local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
-                        printf "\n%b┌─ thinking ─\033[0m\n%b" "$_c" "$_c" > "$_tty" 2>/dev/null
-                    fi
+                    _think_banner_open=1
+                    _llm_think_open "$_tty"
                     continue
                 fi
                 [ -n "$token" ] && printf "%s" "$token"
@@ -2289,10 +2289,7 @@ llm_generate() {
         if [ "$done_flag" = "true" ]; then
             # Close thinking banner if still open
             if [ "$_think_banner_open" -eq 1 ]; then
-                if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                    local _c; [ "${LODGE_THINK_STREAM:-1}" -eq 2 ] && _c="\033[36m" || _c="\033[90m"
-                    printf "\033[0m\n%b└────────────\033[0m\n" "$_c" > "$_tty" 2>/dev/null
-                fi
+                _llm_think_close "$_tty"
             fi
             # Flush any response_pending buffer (very short response, never reached 7 chars)
             if [ -n "$_response_pending" ]; then
@@ -2327,9 +2324,11 @@ llm_generate() {
     if [ ! -f "$_got_tokens" ]; then
         rm -f "$_got_tokens"
         echo "ERROR: LLM request failed or returned no tokens"
+        _llm_think_log_end
         return 1
     fi
     rm -f "$_got_tokens"
+    _llm_think_log_end
 }
 
 # ── Generate with streaming (live output) ──────────────────────
@@ -2402,6 +2401,10 @@ llm_stream() {
             system="${_think_dir}\n\n${system}"
         fi
     fi
+
+    # Capture thinking tokens dynamically for the transcript
+    local _think_log_file=""
+    _llm_think_log_start
 
     # Build options with per-scenario sampling parameters
     local _opts
@@ -2681,8 +2684,10 @@ llm_stream() {
         _LLM_ACTIVE=0
 
         if [ -f "$_cancel_file" ]; then
+            _llm_think_log_end
             return 1
         fi
+        _llm_think_log_end
         return 0
     fi
 
@@ -3001,15 +3006,14 @@ llm_stream() {
         _LLM_ACTIVE=0
         printf "\033[33m⚠ No response from model — check Ollama status (ollama ps)\033[0m\n" > "$_tty" 2>/dev/null
         echo "ERROR: LLM stream failed or returned no tokens"
+        _llm_think_log_end
         return 1
     fi
 
     rm -f "$_llm_ft_file"
     _LLM_ACTIVE=0
 
-    # Propagate cancellation: if the cancel file exists, return error so
-    # the calling loop (agent_inner_loop) can detect and break immediately
-    # instead of treating truncated output as a valid LLM response.
+    _llm_think_log_end
     if [ -f "$_cancel_file" ]; then
         return 1
     fi
