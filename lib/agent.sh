@@ -747,24 +747,40 @@ _agent_router_eligibility_pass() {
     [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ] && git_allowed=0
     [ "$net_ok" -eq 0 ] && git_allowed=0
 
+    local _milestone_cmd=""
+    if [[ "$objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
+        _milestone_cmd="${BASH_REMATCH[2]}"
+    fi
+
     local need_web=0 need_recall=0 need_ls=0 need_grep=0 need_read=0 need_journal=0 need_delivery=0 need_git=0
-    local _spaced=" ${lower} "
-    local _web_pat="[^a-zA-Z0-9_-](web|search|google|lookup|look[[:space:]]+up|latest|current|today|news|weather|price|stock|internet|online|http|https|url|website)[^a-zA-Z0-9_-]"
-    local _recall_pat="[^a-zA-Z0-9_-](recall|remember|prior|previous|earlier|from[[:space:]]+before|already[[:space:]]+found|memory|knowledge[[:space:]]+base)[^a-zA-Z0-9_-]"
-    local _ls_pat="[^a-zA-Z0-9_-](list|tree|directory|directories|folders|files|workspace[[:space:]]+layout)[^a-zA-Z0-9_-]"
-    local _grep_pat="[^a-zA-Z0-9_-](grep|regex|pattern|search[[:space:]]+files|find[[:space:]]+.*file|search[[:space:]]+codebase)[^a-zA-Z0-9_-]"
-    local _read_pat="[^a-zA-Z0-9_-](read|open|inspect|view|show[[:space:]]+file|file[[:space:]]+content)[^a-zA-Z0-9_-]"
-    local _journal_pat="[^a-zA-Z0-9_-](journal|reflect|reflection|daily[[:space:]]+log|entry|synthesize)[^a-zA-Z0-9_-]"
-    local _delivery_pat="[^a-zA-Z0-9_-](respond|answer|summarize|summary|explain|deliver|report|final)[^a-zA-Z0-9_-]"
-    local _git_pat="[^a-zA-Z0-9_-](github|git|repo|repository|pull[[:space:]]+request|clone|commit|push)[^a-zA-Z0-9_-]"
-    [[ "$_spaced" =~ $_web_pat ]] && need_web=1
-    [[ "$_spaced" =~ $_recall_pat ]] && need_recall=1
-    [[ "$_spaced" =~ $_ls_pat ]] && need_ls=1
-    [[ "$_spaced" =~ $_grep_pat ]] && need_grep=1
-    [[ "$_spaced" =~ $_read_pat ]] && need_read=1
-    [[ "$_spaced" =~ $_journal_pat ]] && need_journal=1
-    [[ "$_spaced" =~ $_delivery_pat ]] && need_delivery=1
-    [[ "$_spaced" =~ $_git_pat ]] && need_git=1
+    if [ -n "$_milestone_cmd" ]; then
+        [ "$_milestone_cmd" = "web" ] && need_web=1
+        [ "$_milestone_cmd" = "recall" ] && need_recall=1
+        [ "$_milestone_cmd" = "ls" ] && need_ls=1
+        [ "$_milestone_cmd" = "grep" ] && need_grep=1
+        [ "$_milestone_cmd" = "read" ] && need_read=1
+        [ "$_milestone_cmd" = "journal" ] && need_journal=1
+        [ "$_milestone_cmd" = "respond" ] && need_delivery=1
+        [ "$_milestone_cmd" = "git" ] && need_git=1
+    else
+        local _spaced=" ${lower} "
+        local _web_pat="[^a-zA-Z0-9_-](web|search|google|lookup|look[[:space:]]+up|latest|current|today|news|weather|price|stock|internet|online|http|https|url|website)[^a-zA-Z0-9_-]"
+        local _recall_pat="[^a-zA-Z0-9_-](recall|remember|prior|previous|earlier|from[[:space:]]+before|already[[:space:]]+found|memory|knowledge[[:space:]]+base)[^a-zA-Z0-9_-]"
+        local _ls_pat="[^a-zA-Z0-9_-](list|tree|directory|directories|folders|files|workspace[[:space:]]+layout)[^a-zA-Z0-9_-]"
+        local _grep_pat="[^a-zA-Z0-9_-](grep|regex|pattern|search[[:space:]]+files|find[[:space:]]+.*file|search[[:space:]]+codebase)[^a-zA-Z0-9_-]"
+        local _read_pat="[^a-zA-Z0-9_-](read|open|inspect|view|show[[:space:]]+file|file[[:space:]]+content)[^a-zA-Z0-9_-]"
+        local _journal_pat="[^a-zA-Z0-9_-](journal|reflect|reflection|daily[[:space:]]+log|entry|synthesize)[^a-zA-Z0-9_-]"
+        local _delivery_pat="[^a-zA-Z0-9_-](respond|answer|summarize|summary|explain|deliver|report|final)[^a-zA-Z0-9_-]"
+        local _git_pat="[^a-zA-Z0-9_-](github|git|repo|repository|pull[[:space:]]+request|clone|commit|push)[^a-zA-Z0-9_-]"
+        [[ "$_spaced" =~ $_web_pat ]] && need_web=1
+        [[ "$_spaced" =~ $_recall_pat ]] && need_recall=1
+        [[ "$_spaced" =~ $_ls_pat ]] && need_ls=1
+        [[ "$_spaced" =~ $_grep_pat ]] && need_grep=1
+        [[ "$_spaced" =~ $_read_pat ]] && need_read=1
+        [[ "$_spaced" =~ $_journal_pat ]] && need_journal=1
+        [[ "$_spaced" =~ $_delivery_pat ]] && need_delivery=1
+        [[ "$_spaced" =~ $_git_pat ]] && need_git=1
+    fi
 
     local -a eligible=() shortlist=()
 
@@ -775,11 +791,6 @@ _agent_router_eligibility_pass() {
     [ "$web_allowed" -eq 1 ] && eligible+=(web)
     [ "$git_allowed" -eq 1 ] && eligible+=(git)
 
-    # If the milestone explicitly specifies a command, add it to the shortlist if eligible
-    local _milestone_cmd=""
-    if [[ "$objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
-        _milestone_cmd="${BASH_REMATCH[2]}"
-    fi
     if [ -n "$_milestone_cmd" ]; then
         if _agent_router_cmd_in_list "$_milestone_cmd" "${eligible[@]}"; then
             _agent_router_add_unique shortlist "$_milestone_cmd"
@@ -1854,7 +1865,8 @@ _fast_route() {
     fi
 
     # /build — compile, run, build, execute scripts/projects
-    if [[ "$_fr_text" =~ (build|compile|run[[:space:]].*script|run[[:space:]].*main|execute[[:space:]].*script|execute[[:space:]].*main|run[[:space:]]main\.sh) ]]; then
+    if [[ "$_fr_text" =~ (build|compile|run[[:space:]].*script|run[[:space:]].*main|execute[[:space:]].*script|execute[[:space:]].*main|run[[:space:]]main\.sh) ]] \
+       && [[ ! "$_fr_text" =~ (fix|repair) ]]; then
         echo "build"; return 0
     fi
 

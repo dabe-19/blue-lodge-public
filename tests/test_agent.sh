@@ -600,6 +600,16 @@ describe "Router smart command extraction"
 # ── Router heuristics: remap and direct respond ───────────────
 describe "Router heuristics"
 
+  it "router eligibility pass respects slash command in milestone and bypasses loose matching" && (
+    _agent_router_probe_network() { return 0; }
+    local out
+    _AGENT_WEB_LOCKED=1 _AGENT_GIT_LOCKED=1 out=$(_agent_router_eligibility_pass "Use /journal to search for self-description" "." "web-search" "combined" "A" "normal")
+    echo "$out" | grep -q '"shortlist":\[.*"journal".*\]'
+    assert_ok $? "Shortlist must contain journal"
+    echo "$out" | grep -q '"infeasibility_class":"none"'
+    assert_ok $? "Must not trigger policy/capability lock for web"
+  )
+
   it "remaps /research to /web" && {
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'selected_tool.*==.*"research"'
