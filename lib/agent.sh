@@ -4325,11 +4325,11 @@ SPEC
                 cat << 'SPEC'
 {"cmd":"/web","syntax":{
   "search":"/web search <query> — returns URLs + text snippets from search engines",
-  "fetch":"/web fetch <url> — downloads and extracts readable TEXT from a webpage (HTML/PDF/JSON). Returns plain text only, NO images.",
-  "scrape":"/web scrape <url> — returns STRUCTURED JSON: {url, title, content, images:[], links:[]} with page text, image URIs, and links. Pass image URIs to /vision for analysis.",
-  "scrape-images":"/web scrape-images <url> — legacy alias for /web scrape. Returns structured JSON with text, images, and links.",
+  "fetch":"/web fetch <url> — downloads and extracts structured JSON: {url, title, content, images:[], links:[]} with page text, images, and links. Pass image URIs to /vision for analysis.",
+  "scrape":"/web scrape <url> — returns structured JSON: {url, title, content, images:[], links:[]} with page text, image URIs, and links. Pass image URIs to /vision for analysis.",
+  "scrape-images":"/web scrape-images <url> — alias for /web fetch / scrape. Returns structured JSON with text, images, and links.",
   "images":"/web images <query> — searches for image URLs by keyword (Serper API). Returns image URLs only."},
-"rules":["NO FLAGS: /web does NOT support --limit, --output, --source, --date, or ANY --flag. Use ONLY positional args: /web search <keywords> or /web fetch <url>","search=QUERY (keywords), fetch/scrape=URL — NEVER swap","/web fetch returns TEXT only — use /web scrape when you need images or links","scrape returns {url,title,content,images[],links[]} — pass images[] URLs to /vision","AVOID redundant searches — 1 search + 1-2 fetches/scrapes enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples","LOCAL FILES: NEVER use /web fetch or /web scrape on local files or relative paths — use /read for text files, /vision for images","ONE URL PER COMMAND — never put multiple URLs in one /web call. To fetch/scrape 3 pages, output 3 separate /web fetch/scrape lines across 3 steps.","The URL must be the LAST token on the line — nothing after it. No trailing text, no next command.","NEVER fabricate or guess URLs — ONLY use URLs that appeared in prior /web search results or were provided by the user. If you need a URL, run /web search first.","For Wikimedia Commons pages: NEVER guess the raw upload.wikimedia.org file URL. Download the PNG/JPG thumbnail URL from the images[] list directly (which is valid), or search for a direct image URL elsewhere."],
+"rules":["NO FLAGS: /web does NOT support --limit, --output, --source, --date, or ANY --flag. Use ONLY positional args: /web search <keywords> or /web fetch <url>","search=QUERY (keywords), fetch/scrape=URL — NEVER swap","/web fetch and scrape both return structured JSON with content text, images[], and links[]","scrape/fetch returns {url,title,content,images[],links[]} — pass images[] URLs to /vision","AVOID redundant searches — 1 search + 1-2 fetches/scrapes enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples","LOCAL FILES: NEVER use /web fetch or /web scrape on local files or relative paths — use /read for text files, /vision for images","ONE URL PER COMMAND — never put multiple URLs in one /web call. To fetch/scrape 3 pages, output 3 separate /web fetch/scrape lines across 3 steps.","The URL must be the LAST token on the line — nothing after it. No trailing text, no next command.","NEVER fabricate or guess URLs — ONLY use URLs that appeared in prior /web search results or were provided by the user. If you need a URL, run /web search first.","For Wikimedia Commons pages: NEVER guess the raw upload.wikimedia.org file URL. Download the PNG/JPG thumbnail URL from the images[] list directly (which is valid), or search for a direct image URL elsewhere."],
 "search_tips":["3-5 keywords MAX — Google FAILS with long queries","Drop filler: the/a/for/including/regarding/comprehensive","NEVER paste entire milestone as search query","Extract keywords from TASK context only"],
 "FLOW CHAINS":["Text research: /web search -> /web fetch -> summarize","Scrape workflow: /web search -> /web scrape -> summarize","Image research (direct): /web scrape <url> -> /vision <image_url_from_images[]>","Image download workflow: /web scrape <url> -> /download <image_url_from_images[]> [destination] -> /vision <destination>","Report: /web search -> /web fetch -> /write report"],
 "notes":["Do NOT fetch every URL. 1 search + 1-2 fetches/scrapes enough","If scrape-images returns empty content, use /web fetch for same URL instead","/web fetch and /web scrape require a full https:// URL — for local files use /read or /vision instead"],
@@ -5945,9 +5945,9 @@ $(cat << 'INTERLOCK_JSON'
  "output":"exactly ONE /web command on its own line",
  "forbidden":"/web search",
  "commands":{
-   "/web fetch <url>":"extract readable TEXT (HTML/PDF/JSON)",
-   "/web scrape <url>":"structured JSON {url,title,content,images[],links[]} — use when images or links are needed"},
- "rules":["pick MOST RELEVANT URL from results","fetch=text, scrape=images/links","ONE command, full https:// URL","NEVER /web search"]}
+   "/web fetch <url>":"structured JSON with text content, images[], and links[]",
+   "/web scrape <url>":"structured JSON with text content, images[], and links[]"},
+ "rules":["pick MOST RELEVANT URL from results","fetch and scrape both return structured JSON containing text, images, and links","ONE command, full https:// URL","NEVER /web search"]}
 INTERLOCK_JSON
 )"
 
@@ -6455,7 +6455,7 @@ INTERLOCK_JSON
                 fi
 
                 # ── WEB SCRAPE LINKS QUEUE POPULATION ────────
-                if { [[ "$cmd" == /web\ scrape\ * ]] || [[ "$cmd" == /web\ scrape-images\ * ]] || [[ "$cmd" == /web\ scrapeimages\ * ]]; } && [ "$exit_code" -eq 0 ]; then
+                if { [[ "$cmd" == /web\ scrape\ * ]] || [[ "$cmd" == /web\ scrape-images\ * ]] || [[ "$cmd" == /web\ scrapeimages\ * ]] || [[ "$cmd" == /web\ fetch\ * ]]; } && [ "$exit_code" -eq 0 ]; then
                     local _queue_file="$AGENT_TASK_WORKSPACE/web_fetch_queue.txt"
                     if [ -n "${AGENT_TASK_WORKSPACE:-}" ]; then
                         mkdir -p "$AGENT_TASK_WORKSPACE"
@@ -7874,7 +7874,7 @@ MEMEOF
             else
                 _tool_summary="${_tool_summary}"'
   "/web search <query>":"search the internet/web for URLs and snippets.",
-  "/web fetch <url>":"retrieve/scrape the full text content of a web page URL.",
+  "/web fetch <url>":"retrieve/scrape structured JSON containing content, images[], and links[] from a URL.",
   "/vision <image>":"describe the contents of a local or remote image.",'
             fi
         fi

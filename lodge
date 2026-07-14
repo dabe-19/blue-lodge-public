@@ -3969,10 +3969,9 @@ _cmd_web() {
     esac
 
     case "$action" in
-        fetch|read)  web_fetch "$rest" ;;
         search)      web_search "$rest" ;;
         images)      web_images "$rest" ;;
-        scrape|scrape-images|scrapeimages)
+        fetch|read|scrape|scrape-images|scrapeimages)
                      local _sj
                      _sj=$(web_scrape "$rest")
                      [ -z "$_sj" ] && return 1

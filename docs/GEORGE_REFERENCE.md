@@ -193,16 +193,16 @@ Creates sandbox, clones, writes GEORGE.md.
 ## Web Search Fetch Images
 
 /web search <query> — search the web via Serper API. Returns URLs + snippets.
-/web fetch <url> — read a webpage's text content. Needs a URL (NOT a query).
+/web fetch <url> — extracts page text, image URLs, and links as structured JSON. Needs a URL (NOT a query).
 /web images <query> — image search via Serper (returns direct image URLs). Key: SERPER_API_KEY.
-/web scrape-images <url> — extract image URLs embedded in a page (no API key needed).
+/web scrape-images <url> — alias for /web fetch / scrape. Extracts structured JSON with text, images, and links.
 Key: /api keys set SERPER_API_KEY <key>
 
 IMAGE WORKFLOW (finding + describing images):
-  Step 1: Find image URLs → /web search <topic> OR /web scrape-images <page_url>
+  Step 1: Find image URLs → /web fetch <page_url> OR /web scrape-images <page_url> (both return structured JSON containing the images[] list)
   Step 2: Analyze image   → /vision <image_url> [prompt]
   /vision accepts image URLs directly — NO /download step needed.
-  Do NOT use /web fetch on image URLs (that's for webpages, not images).
+  Do NOT use /web fetch/scrape on image URLs directly (use /vision instead).
 
 VISION NOTE: /vision requires a vision-capable model. If current model lacks vision:
   Switch first: /models single gemma4-e4b-inst

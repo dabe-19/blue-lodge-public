@@ -660,7 +660,7 @@ Requires OAuth2 setup with Google API credentials.
 ## Web Search Fetch Browse URL
 
 /web search <query> — search the web via Serper API.
-/web fetch <url> — fetch and extract content from a URL.
+/web fetch <url> — fetch and extract structured JSON (content, images[], links[]) from a URL.
 /web section <url> <heading> — extract specific page section.
 All slash commands use positional args ONLY. No --flags (no --limit, --source, --date, --output).
 Key: /api keys set SERPER_API_KEY <key>
