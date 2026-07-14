@@ -1192,8 +1192,8 @@ describe "Abort propagation from inner loop to macro loop"
 # ── Milestone Deduplication ────────────────────────────────────
 describe "Milestone deduplication in macro loop"
 
-  it "AGENT_MAX_MILESTONE_RETRIES defaults to 4" && {
-    assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "4"
+  it "AGENT_MAX_MILESTONE_RETRIES defaults to 3" && {
+    assert_eq "$AGENT_MAX_MILESTONE_RETRIES" "3"
   }
 
   it "agent_run initializes _attempted_milestones array" && {
@@ -2625,8 +2625,8 @@ describe "Research→Delivery state machine"
 # ── Command-family dedup cap ──────────────────────────────────
 describe "Command-family dedup cap"
 
-  it "AGENT_MAX_CMD_FAMILY defaults to 20" && {
-    assert_eq "$AGENT_MAX_CMD_FAMILY" "20"
+  it "AGENT_MAX_CMD_FAMILY defaults to 5" && {
+    assert_eq "$AGENT_MAX_CMD_FAMILY" "5"
   }
 
   it "deduplication implements command-family strategy" && {
@@ -2944,8 +2944,8 @@ describe "Web search tight-parsing configuration"
     assert_eq "${AGENT_WEB_SEARCH_MAX_OPERATORS:-3}" "3"
   }
 
-  it "AGENT_WEB_SEARCH_CONSEC_MAX defaults to 20" && {
-    assert_eq "${AGENT_WEB_SEARCH_CONSEC_MAX:-20}" "20"
+  it "AGENT_WEB_SEARCH_CONSEC_MAX defaults to 2" && {
+    assert_eq "${AGENT_WEB_SEARCH_CONSEC_MAX:-2}" "2"
   }
 
   it "agent.sh config section declares AGENT_WEB_SEARCH_TIGHT_PARSING" && {
@@ -3023,8 +3023,8 @@ describe "AGENT_OUTPUT_DIR enforcement"
 # ── Fuzzy keyword catalog matching ────────────────────────────
 describe "Fuzzy keyword catalog matching (_agent_fuzzy_catalog_match)"
 
-  it "AGENT_SMART_ROUTE defaults to 1 (post-dispatch reroute only)" && {
-    assert_eq "$AGENT_SMART_ROUTE" "1"
+  it "AGENT_SMART_ROUTE defaults to 3 (combined)" && {
+    assert_eq "$AGENT_SMART_ROUTE" "3"
   }
 
   it "function is defined" && {
@@ -3746,12 +3746,12 @@ describe "Task classifier function"
 # ── Web masking system ───────────────────────────────────────
 describe "Web masking system"
 
-  it "AGENT_WEB_UNLOCK_ABSTRACT defaults to 99" && {
-    assert_eq "${AGENT_WEB_UNLOCK_ABSTRACT:-99}" "99"
+  it "AGENT_WEB_UNLOCK_ABSTRACT defaults to 1" && {
+    assert_eq "${AGENT_WEB_UNLOCK_ABSTRACT:-1}" "1"
   }
 
-  it "AGENT_WEB_UNLOCK_COMBINED defaults to 6" && {
-    assert_eq "${AGENT_WEB_UNLOCK_COMBINED:-6}" "6"
+  it "AGENT_WEB_UNLOCK_COMBINED defaults to 0" && {
+    assert_eq "${AGENT_WEB_UNLOCK_COMBINED:-0}" "0"
   }
 
   it "agent_run computes _web_locked flag per macro iteration" && {
@@ -3813,12 +3813,12 @@ describe "Web masking system"
 # ── Git masking system ────────────────────────────────────────
 describe "Git masking system"
 
-  it "AGENT_GIT_UNLOCK_ABSTRACT defaults to 99" && {
-    assert_eq "${AGENT_GIT_UNLOCK_ABSTRACT:-99}" "99"
+  it "AGENT_GIT_UNLOCK_ABSTRACT defaults to 1" && {
+    assert_eq "${AGENT_GIT_UNLOCK_ABSTRACT:-1}" "1"
   }
 
-  it "AGENT_GIT_UNLOCK_COMBINED defaults to 6" && {
-    assert_eq "${AGENT_GIT_UNLOCK_COMBINED:-6}" "6"
+  it "AGENT_GIT_UNLOCK_COMBINED defaults to 1" && {
+    assert_eq "${AGENT_GIT_UNLOCK_COMBINED:-1}" "1"
   }
 
   it "agent_run computes _git_locked flag per macro iteration" && {

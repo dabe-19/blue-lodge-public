@@ -73,12 +73,12 @@ AGENT_HONEYDEW_REWRITE_ROUNDS="${AGENT_HONEYDEW_REWRITE_ROUNDS:-8}"  # Global ho
 AGENT_HONEYDEW_REWRITE_CADENCE="${AGENT_HONEYDEW_REWRITE_CADENCE:-0}"  # Min new milestones between rewrites (0=every iteration)
 AGENT_FORCE_REWRITE="${AGENT_FORCE_REWRITE:-1}"          # Force honeydew rewrite in interlock/failure recovery (bypass Phase 1 router): 0=disabled, 1=enabled
 AGENT_WEB_SUFFICIENCY="${AGENT_WEB_SUFFICIENCY:-20}"  # Web actions before sufficiency signal
-AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-4}"  # Max times to retry same milestone
-AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-20}"               # Max milestones with same base command
+AGENT_MAX_MILESTONE_RETRIES="${AGENT_MAX_MILESTONE_RETRIES:-3}"  # Max times to retry same milestone
+AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-5}"               # Max milestones with same base command
 AGENT_HONEYDEW_MATCH="${AGENT_HONEYDEW_MATCH:-3}"              # Min keyword score to auto-check honeydew item
 AGENT_HONEYDEW_INITIAL_COUNT="${AGENT_HONEYDEW_INITIAL_COUNT:-5}"  # Upper bound on initial honeydew items (prompt hint)
 AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto | interactive | disabled
-AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-20}"  # Max consecutive /web search before fallback to fetch/scrape
+AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-2}"  # Max consecutive /web search before fallback to fetch/scrape
 AGENT_WEB_FETCH_CASCADE="${AGENT_WEB_FETCH_CASCADE:-1}"          # Auto-fetch top search results: 0=disabled, 1=enabled
 AGENT_WEB_SEARCH_TIGHT_PARSING="${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}"  # Tight web query parsing: 0=loose (keep quotes/negations/operators), 1=strict (strip all)
 AGENT_WEB_SEARCH_MAX_LENGTH="${AGENT_WEB_SEARCH_MAX_LENGTH:-160}"  # Max character length for /web search queries
@@ -90,7 +90,7 @@ AGENT_EVAL_REC_INJECT="${AGENT_EVAL_REC_INJECT:-1}"            # Recommendation 
 AGENT_CROSS_TASK_SIEVE="${AGENT_CROSS_TASK_SIEVE:-1}"          # Cross-task memory sieve: 0=disabled, 1=keyword recall injection at task start
 AGENT_CONTEXT_FILES_MAX="${AGENT_CONTEXT_FILES_MAX:-10}"      # Max context file entries persisted across tasks (0=disabled)
 AGENT_PRESSURE_RELIEF="${AGENT_PRESSURE_RELIEF:-2}"          # Consecutive milestone skips before pressure relief fires (0=disabled)
-AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-1}"              # Smart command routing: 0=disabled, 1=post-dispatch reroute only, 2=fuzzy keyword catalog injection only, 3=combined
+AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-3}"              # Smart command routing: 0=disabled, 1=post-dispatch reroute only, 2=fuzzy keyword catalog injection only, 3=combined
 AGENT_ASK_USER="${AGENT_ASK_USER:-1}"                    # Allow George to /ask the user questions during tasks: 0=disabled, 1=enabled
 AGENT_BRAINSTORM="${AGENT_BRAINSTORM:-1}"                  # Allow George to /brainstorm (self-reason) during tasks: 0=disabled, 1=enabled
 AGENT_FILE_EXPAND="${AGENT_FILE_EXPAND:-1}"              # Auto-expand file references in /social, /email, /write text: 0=disabled, 1=enabled
@@ -100,12 +100,12 @@ AGENT_PRE_ROUTE="${AGENT_PRE_ROUTE:-1}"                  # Pre-route: extract /c
 AGENT_FAST_ROUTE="${AGENT_FAST_ROUTE:-1}"                # Fast-route: 0=disabled, 1=keywords+lean, 2=fuzzy only (lean prompt, no keyword matching)
 AGENT_ROUTING="${AGENT_ROUTING:-}"                       # Consolidated routing preset: 0=minimal, 1=standard, 2=full-llm, 3=enhanced (empty=use individual vars)
 AGENT_TASK_MODE="${AGENT_TASK_MODE:-0}"                  # Task classifier override: 0=auto (LLM), 1=abstract, 2=concrete, 3=combined
-AGENT_WEB_UNLOCK_ABSTRACT="${AGENT_WEB_UNLOCK_ABSTRACT:-99}"  # Milestones before /web unlocks for abstract tasks (99=effectively never)
-AGENT_WEB_UNLOCK_COMBINED="${AGENT_WEB_UNLOCK_COMBINED:-6}"   # Milestones before /web unlocks for combined tasks
+AGENT_WEB_UNLOCK_ABSTRACT="${AGENT_WEB_UNLOCK_ABSTRACT:-1}"  # Milestones before /web unlocks for abstract tasks (99=effectively never)
+AGENT_WEB_UNLOCK_COMBINED="${AGENT_WEB_UNLOCK_COMBINED:-0}"   # Milestones before /web unlocks for combined tasks
 AGENT_WEB_SEARCH_ONLY_ABSTRACT="${AGENT_WEB_SEARCH_ONLY_ABSTRACT:-1}"  # Milestones after web unlock where ONLY /web search is allowed (no fetch/scrape) for abstract tasks
 AGENT_WEB_SEARCH_ONLY_COMBINED="${AGENT_WEB_SEARCH_ONLY_COMBINED:-1}"  # Milestones after web unlock where ONLY /web search is allowed (no fetch/scrape) for combined tasks
-AGENT_GIT_UNLOCK_ABSTRACT="${AGENT_GIT_UNLOCK_ABSTRACT:-99}"  # Milestones before /git unlocks for abstract tasks (99=effectively never)
-AGENT_GIT_UNLOCK_COMBINED="${AGENT_GIT_UNLOCK_COMBINED:-6}"   # Milestones before /git unlocks for combined tasks
+AGENT_GIT_UNLOCK_ABSTRACT="${AGENT_GIT_UNLOCK_ABSTRACT:-1}"  # Milestones before /git unlocks for abstract tasks (99=effectively never)
+AGENT_GIT_UNLOCK_COMBINED="${AGENT_GIT_UNLOCK_COMBINED:-1}"   # Milestones before /git unlocks for combined tasks
 AGENT_OUTPUT_DIR="${AGENT_OUTPUT_DIR:-responses}"       # Parent directory for agent file writes (/write, /save, /append)
 AGENT_GREP_ALLOW_ABSOLUTE="${AGENT_GREP_ALLOW_ABSOLUTE:-0}"  # /grep path policy: 0=relative-only (force to workdir), 1=allow absolute paths
 AGENT_GREP_MAX_LINES="${AGENT_GREP_MAX_LINES:-100}"          # /grep output cap (lines shown before truncation)
