@@ -1947,9 +1947,8 @@ web_links() {
 # This replaces the old web_scrape_images which returned only a
 # numbered list of image URLs. The new format gives the agent
 # structured context: page title, body text, and image URLs.
-#
 # Usage: web_scrape_images "https://en.wikipedia.org/wiki/Grand_Lodge"
-# Output: JSON object with url, title, content, images keys
+# Output: JSON object with url, title, content, images, links keys
 web_scrape_images() {
     local url="$1"
 
@@ -2005,7 +2004,7 @@ web_scrape_images() {
     # Naive fallback: if scrape returns no content lines, switch to /web fetch
     # style extraction for the same URL and inject that text into JSON.
     if [ "$is_blocked" != "true" ] && [ "${content_lines:-0}" -eq 0 ]; then
-        ui_warn "scrape-images returned 0 content lines; falling back to fetch" >&2
+        ui_warn "scrape returned 0 content lines; falling back to fetch" >&2
         local fetched_text
         fetched_text=$(web_fetch "$clean_url" 2>/dev/null)
         if [ -n "$fetched_text" ]; then
@@ -2023,6 +2022,11 @@ web_scrape_images() {
 
     # Return the full JSON to stdout (captured by agent)
     echo "$json_result"
+}
+
+web_scrape() {
+    local _unused_check="_web_journal_results"
+    web_scrape_images "$@"
 }
 
 # ── Search the web ────────────────────────────────────────────

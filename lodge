@@ -3969,12 +3969,12 @@ _cmd_web() {
     esac
 
     case "$action" in
-        fetch|read|scrape)  web_fetch "$rest" ;;
+        fetch|read)  web_fetch "$rest" ;;
         search)      web_search "$rest" ;;
         images)      web_images "$rest" ;;
-        scrape-images|scrapeimages)
+        scrape|scrape-images|scrapeimages)
                      local _sj
-                     _sj=$(web_scrape_images "$rest")
+                     _sj=$(web_scrape "$rest")
                      [ -z "$_sj" ] && return 1
                      # If running in agent loop (not interactive),
                      # echo raw JSON for downstream processing.
@@ -3990,6 +3990,11 @@ _cmd_web() {
                            if (.images | length) > 0 then
                              "Images (\(.images | length)):",
                              (.images | to_entries[] | "  \(.key+1). \(.value)")
+                           else empty end,
+                           "",
+                           if (.links | length) > 0 then
+                             "Links (\(.links | length)):",
+                             (.links | to_entries[] | "  \(.key+1). \(.value)")
                            else empty end
                          ' 2>/dev/null || echo "$_sj"
                      fi

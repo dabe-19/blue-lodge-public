@@ -119,33 +119,81 @@ passed_files=0
 failed_files=0
 failed_names=()
 
+# Determine concurrency limit: default to nproc (clamped 4-16) unless RUN_ALL_CONCURRENT=0
+if [ "${RUN_ALL_CONCURRENT:-1}" = "0" ]; then
+    concurrency=1
+else
+    concurrency=$(nproc 2>/dev/null || echo 4)
+    [ "$concurrency" -lt 4 ] && concurrency=4
+    [ "$concurrency" -gt 16 ] && concurrency=16
+fi
+
 total_start=$(date +%s)
 
+# Create a temporary directory to store output from concurrent runs
+tmp_results_dir=$(mktemp -d -t george-run-all-XXXXXX)
+trap 'rm -rf "$tmp_results_dir"' EXIT
+
+run_one_test() {
+    local t_file="$1"
+    local t_name="$2"
+    local out_file="$tmp_results_dir/$t_name.out"
+    local code_file="$tmp_results_dir/$t_name.code"
+    local start_ts end_ts
+    
+    start_ts=$(date +%s)
+    if [ "$VERBOSE" -eq 1 ]; then
+        # Direct output to stdout, but still copy to out_file for final summary
+        bash "$t_file" > >(tee "$out_file") 2>&1
+        echo "$?" > "$code_file"
+    else
+        bash "$t_file" > "$out_file" 2>&1
+        echo "$?" > "$code_file"
+    fi
+    end_ts=$(date +%s)
+    echo "$((end_ts - start_ts))" > "$tmp_results_dir/$t_name.time"
+}
+
+# Run tests (either concurrently or sequentially)
+if [ "$concurrency" -gt 1 ]; then
+    echo -e "${CYAN}  Running tests concurrently with up to ${concurrency} parallel jobs...${RESET}"
+    echo ""
+    for test_file in "${test_files[@]}"; do
+        name=$(basename "$test_file" .sh)
+        # Simple job pool throttle: wait if active background jobs >= concurrency
+        while [ "$(jobs -r -p | wc -l)" -ge "$concurrency" ]; do
+            sleep 0.1
+        done
+        run_one_test "$test_file" "$name" &
+    done
+    wait
+else
+    for test_file in "${test_files[@]}"; do
+        name=$(basename "$test_file" .sh)
+        run_one_test "$test_file" "$name"
+    done
+fi
+
+# ── Report results ─────────────────────────────────────────────
 for test_file in "${test_files[@]}"; do
     name=$(basename "$test_file" .sh)
     total_files=$((total_files + 1))
     
+    out_file="$tmp_results_dir/$name.out"
+    code_file="$tmp_results_dir/$name.code"
+    time_file="$tmp_results_dir/$name.time"
+    
+    result=1
+    [ -f "$code_file" ] && result=$(cat "$code_file")
+    file_elapsed=0
+    [ -f "$time_file" ] && file_elapsed=$(cat "$time_file")
+    output=""
+    [ -f "$out_file" ] && output=$(cat "$out_file")
+    
     echo -e "${BOLD}── ${name} ──${RESET}"
-    
-    file_start=$(date +%s)
-    
-    if [ "$VERBOSE" -eq 1 ]; then
-        # Show all output
-        bash "$test_file"
-        result=$?
-    else
-        # Capture output, show only on failure or summary line
-        output=$(bash "$test_file" 2>&1)
-        result=$?
-    fi
-    
-    file_end=$(date +%s)
-    file_elapsed=$((file_end - file_start))
-    
     if [ "$result" -eq 0 ]; then
         passed_files=$((passed_files + 1))
         if [ "$VERBOSE" -eq 0 ]; then
-            # Show just the summary line from the test output
             summary=$(echo "$output" | grep -E '^[[:space:]]*(PASS|✓|Tests:)' | tail -1)
             if [ -n "$summary" ]; then
                 echo -e "  ${GREEN}✓${RESET} $summary ${DIM}(${file_elapsed}s)${RESET}"
@@ -159,12 +207,10 @@ for test_file in "${test_files[@]}"; do
         failed_files=$((failed_files + 1))
         failed_names+=("$name")
         if [ "$VERBOSE" -eq 0 ]; then
-            # Show all output on failure so user can debug
             echo "$output"
         fi
         echo -e "  ${RED}✗ FAILED${RESET} ${DIM}(${file_elapsed}s)${RESET}"
     fi
-    
     echo ""
 done
 

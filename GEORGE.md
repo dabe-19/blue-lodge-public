@@ -6,6 +6,7 @@ None.
 
 ## The Trowel (Completed Milestones)
 
+- **[2026-07-14]** Shipped consolidated /web scrape and /web scrape-images commands returning structured JSON, cleaned up strategist system prompt with Markdown guidelines, expanded utility detours to support vision workflows, and implemented concurrent test execution. Trowel applied.
 - **[2026-07-14]** Shipped /ask unbound variable crash fix for non-TTY environments and MCP FIFO write timeout guard to prevent E2E test suite hangs. Trowel applied.
 - **[2026-07-14]** Shipped process group isolation for llama-server and ollama to prevent signal aborts and suppress job control logs. Trowel applied.
 - **[2026-07-14]** Shipped web image scraping, workspace queue archiving, specialist prompt injection, TTY-less log visibility, and parser leniency fixes. Trowel applied.

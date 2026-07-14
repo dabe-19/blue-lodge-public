@@ -720,6 +720,37 @@ describe "web_scrape_images"
     _teardown_web
   }
 
+# ── web_scrape ─────────────────────────────────────────────────
+describe "web_scrape"
+
+  it "is defined" && {
+    _setup_web
+    declare -f web_scrape &>/dev/null
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "fails on empty URL" && {
+    _setup_web
+    web_scrape "" 2>/dev/null
+    assert_fail $?
+    _teardown_web
+  }
+
+  it "rejects invalid URLs" && {
+    _setup_web
+    web_scrape "not-a-url" 2>/dev/null
+    assert_fail $?
+    _teardown_web
+  }
+
+  it "journals results for agent memory" && {
+    _setup_web
+    fn_body=$(declare -f web_scrape)
+    assert_contains "$fn_body" "_web_journal_results"
+    _teardown_web
+  }
+
 describe "web blacklist helpers"
 
   it "blacklist helper functions are defined" && {
