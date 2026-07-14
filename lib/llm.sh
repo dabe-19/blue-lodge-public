@@ -923,9 +923,8 @@ _llm_start_llamacpp_server() {
         [ "$quiet" != "--quiet" ] && ui_dim "Vulkan disabled (GPU layers = 0)"
     fi
 
-    "${_server_env[@]}" "$LLAMA_CPP_SERVER_BIN" "${_launch_args[@]}" \
-        > "${TMPDIR:-/tmp}/lodge-llama-server.log" 2>&1 &
-    local _pid=$!
+    local _pid
+    _pid=$( ( set -m; "${_server_env[@]}" "$LLAMA_CPP_SERVER_BIN" "${_launch_args[@]}" > "${TMPDIR:-/tmp}/lodge-llama-server.log" 2>&1 & echo $! ) 2>/dev/null )
     echo "$_pid" > "$_LLAMA_CPP_PID_FILE"
 
     # Wait for healthy (up to 30s)
@@ -1285,8 +1284,8 @@ _llm_kill_ollama() {
 # Returns 0 on success, 1 on failure.
 _llm_start_ollama_server() {
     local _log_file="${TMPDIR:-/tmp}/lodge-ollama.log"
-    ollama serve > "$_log_file" 2>&1 &
-    local _pid=$!
+    local _pid
+    _pid=$( ( set -m; ollama serve > "$_log_file" 2>&1 & echo $! ) 2>/dev/null )
     sleep 3
 
     if curl -sf --max-time 2 "$OLLAMA_URL/api/tags" &>/dev/null; then
