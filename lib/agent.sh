@@ -1834,6 +1834,23 @@ _fast_route() {
     local _fr_text
     _fr_text=$(echo "$1" | tr '[:upper:]' '[:lower:]')
 
+    # If the milestone explicitly contains a slash command, extract and route to it
+    if [[ "$_fr_text" =~ (^|[[:space:]])/([a-z]+) ]]; then
+        local _explicit_cmd="${BASH_REMATCH[2]}"
+        local _pre_valid=0
+        if [ "$_explicit_cmd" = "bash" ]; then
+            _pre_valid=1
+        elif declare -p CMD_REGISTRY &>/dev/null && [[ -n "${CMD_REGISTRY[$_explicit_cmd]+x}" ]]; then
+            _pre_valid=1
+        elif [ -f "${LODGE_COMMANDS_DIR:-$LODGE_DIR/commands}/${_explicit_cmd}.sh" ]; then
+            _pre_valid=1
+        fi
+        if [ "$_pre_valid" -eq 1 ]; then
+            echo "$_explicit_cmd"
+            return 0
+        fi
+    fi
+
     # ── DOMAIN COMMANDS (high-signal keywords) ──────────
     # Each pattern tests for keywords that strongly correlate
     # with exactly one command. Ordered by frequency of use.
@@ -2540,7 +2557,7 @@ $(cat << 'REWRITE_JSON'
 REWRITE_JSON
 )"
 
-    local rewrite_sys="You are a task decomposition rewrite engine. Rewrite ONLY the pending honeydew items to better align with the original task based on milestone discoveries. Output ONLY a numbered list. Each item: short imperative sentence (max 10-12 words). WHAT, not HOW. No commands, URLs, or parenthetical details."
+    local rewrite_sys="You are a task decomposition rewrite engine. Rewrite ONLY the pending honeydew items to better align with the original task based on milestone discoveries. If prior milestones or commands failed, you must pivot and rewrite the pending items to work around the failure (e.g. if a specific URL, path, or tool is blocked/fails, rewrite items to find another source, use local tools, or try a different path). Output ONLY a numbered list. Each item: short imperative sentence (max 10-12 words). WHAT, not HOW. No commands, URLs, or parenthetical details."
 
     local _raw_rewrite
     local LLM_SCENARIO=strategist
@@ -6483,9 +6500,8 @@ INTERLOCK_JSON
                                 grep -vF "$_fb_url" "$_queue_file" > "${_queue_file}.tmp" 2>/dev/null && mv "${_queue_file}.tmp" "$_queue_file"
                                 
                                 if [ "$_fb_exit" -eq 0 ] && ! _is_junk_output "$_fb_output"; then
-                                    output="$_fb_output"
+                                    output="[CASCADE FALLBACK] Primary fetch to $_primary_url failed (or was blacklisted). Fell back to $_fb_url.\n\n$_fb_output"
                                     exit_code=0
-                                    cmd="$_fb_cmd"
                                     ui_ok "Cascade fetch succeeded!"
                                     break
                                 fi
@@ -8129,7 +8145,18 @@ MEMEOF
             _strat_last_eval_feedback="\n\n>>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<\n${_last_eval_feedback}\n>>> You MUST change your approach based on the above. Do NOT repeat the same command. <<<"
         fi
 
-        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_strat_read_context}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_strat_prior_files}${_strat_discovered_images}${_strat_discovered_links}${_strat_rb}${_strat_prior_ms}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_strat_last_eval_feedback}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
+        local _strat_failures=""
+        local _fail_file="$george_dir/failures_log.md"
+        if [ -f "$_fail_file" ] && [ -s "$_fail_file" ]; then
+            local _fail_context
+            _fail_context=$(tail -n 20 "$_fail_file" 2>/dev/null)
+            if [ -n "$_fail_context" ]; then
+                _strat_failures="\n\n>>> RECENT EXECUTION FAILURES (Use this context to pivot) <<<\n${_fail_context}"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- recent execution failures"
+            fi
+        fi
+
+        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_strat_read_context}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_strat_prior_files}${_strat_discovered_images}${_strat_discovered_links}${_strat_rb}${_strat_prior_ms}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_strat_last_eval_feedback}${_strat_failures}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
 
         # ── Research→Delivery Gate ────────────────────────────
         # After N consecutive research milestones, inject a hard
@@ -8244,6 +8271,10 @@ SERVICES STATUS: ${_svc_status:-unknown}
   - Image Flow: To find or describe an image/logo from a website, first scrape the page using '/web scrape <url>'. If direct image URLs are found in 'web_image_queue.txt' or returned, analyze them directly with '/vision <image_url>'. Only use '/download' if explicitly requested.
   - Discord Sync: Sync channels and users before posting to channel names for the first time.
   - Run Code: Always verify newly created/modified scripts using /build or /test before distributing outputs or concluding.
+* Pivoting & Error Adaptability:
+  - If a prior milestone fails, returns an error/JUNK, or succeeds only via a fallback/alternative route, you must treat the original specific path, file, or resource as blocked or unusable.
+  - DO NOT repeat the failed command or attempt to access the blocked resource again.
+  - Adapt: pivot to alternative approaches, search for different sources/queries, try different command tools, or rewrite/restructure the remaining milestones.
 * Milestones:
   - Use ONLY commands from the catalog. Map evaluator recommendations to the closest available commands.
   - Must be a single imperative sentence starting with a verb (e.g. 'Use /write to create a summary').
