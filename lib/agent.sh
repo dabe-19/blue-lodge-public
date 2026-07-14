@@ -1187,14 +1187,14 @@ _agent_complete_milestone() {
     local _micro_content _milestone_summary
     _micro_content=$(cat "$micro_file" 2>/dev/null)
     if [ -n "$_micro_content" ]; then
-        local _ms_prompt="In no more than 6 sentences, summarize this milestone execution log. Include the command(s) run, their outcomes, and whether the objective was met. If web search, fetch, or vision analysis results contain factual data or image descriptions (names, prices, specs, dates, descriptions, image contents, URLs, key findings), you MUST INCLUDE those specific facts and details verbatim — they will be needed by subsequent milestones. If a draft email, post, or message body was composed, include its key points. Generic summaries like 'Web research data gathered' are USELESS. Be specific.\n\n${_micro_content}"
-        local _ms_sys="You are a concise summarizer. In no more than 6 factual sentences, write your output. PRESERVE specific facts (names, numbers, URLs). No personality. No markdown formatting (no ** or * markers). Plain text only."
+        local _ms_prompt="Write a brief, focused summary of this milestone execution log. Include the command(s) run, their outcomes, and whether the objective was met. If web search, fetch, or vision analysis results contain factual data or image descriptions (names, prices, specs, dates, descriptions, image contents, URLs, key findings), you MUST INCLUDE those specific facts and details verbatim — they will be needed by subsequent milestones. If a draft email, post, or message body was composed, include its key points. Generic summaries like 'Web research data gathered' are USELESS. Be specific.\n\n${_micro_content}"
+        local _ms_sys="You are a concise summarizer. Write a brief, factual summary. PRESERVE specific facts (names, numbers, URLs). No personality. No markdown formatting (no ** or * markers). Plain text only."
         local LLM_SCENARIO=evaluator
         _milestone_summary=$(llm_generate "$_ms_prompt" "$_ms_sys" 512 "$LLM_BUDGET_AGENT" 2>/dev/null)
         _milestone_summary=$(echo "$_milestone_summary" | _strip_think_blocks)
         # Strip markdown bold/italic from summary before storing in macro_memory
         _milestone_summary=$(echo "$_milestone_summary" | sed 's/\*\+//g')
-        _milestone_summary=$(echo "$_milestone_summary" | sed '/^[[:space:]]*$/d' | head -6)
+        _milestone_summary=$(echo "$_milestone_summary" | sed '/^[[:space:]]*$/d' | head -10)
     fi
     [ -z "$_milestone_summary" ] && _milestone_summary="$summary"
 
@@ -2190,12 +2190,20 @@ _agent_smart_route() {
 
     if [ "$_sr_has_web_prefix" -eq 1 ]; then
         # ── CONFIRMED URL ──────────────────────────────────
-        # Only intervene when a URL was given to a local-only command
-        case "$_sr_base" in
-            "/read")
-                _sr_new="/web fetch $_sr_arg"
-                _sr_reason="URL detected in /read — rerouting to /web fetch" ;;
-        esac
+        if [ "$_sr_is_image" -eq 1 ]; then
+            case "$_sr_base" in
+                "/web fetch"|"/web scrape"|"/web scrape-images"|"/web scrapeimages")
+                    _sr_new="/vision $_sr_arg"
+                    _sr_reason="image URL detected — rerouting web command directly to /vision" ;;
+            esac
+        else
+            # Only intervene when a URL was given to a local-only command
+            case "$_sr_base" in
+                "/read")
+                    _sr_new="/web fetch $_sr_arg"
+                    _sr_reason="URL detected in /read — rerouting to /web fetch" ;;
+            esac
+        fi
 
     elif [ "$_sr_file_exists" -eq 1 ]; then
         # ── LOCAL FILE FOUND ───────────────────────────────
@@ -6631,8 +6639,8 @@ INTERLOCK_JSON
                         [ -n "$_primary_for_condense" ] && _condense_prompt="OVERALL GOAL: $_primary_for_condense\nCURRENT STEP: $micro_objective"
                     fi
                     local _truncated_output="${output:0:8000}"
-                    _condense_prompt="${_condense_prompt}\n\nWEB CONTENT (from: $cmd):\n${_truncated_output}\n\nIn 3-5 sentences, summarize useful information. Preserve specific facts, names, numbers, URLs, and data points relevant to the task. Only say JUNK: <brief reason> if the content is ENTIRELY useless (login/paywall walls with zero real content, completely empty pages, or pure ad/cookie text with no article body). Noisy pages that still contain some real content should be summarized — extract what matters and note what was missing."
-                    local _condense_sys="You are a concise factual summarizer. No personality. Preserve URLs, names, numbers. 3-5 sentences max."
+                    _condense_prompt="${_condense_prompt}\n\nWEB CONTENT (from: $cmd):\n${_truncated_output}\n\nWrite a brief summary of the useful information. Preserve specific facts, names, numbers, URLs, and data points relevant to the task. Only say JUNK: <brief reason> if the content is ENTIRELY useless (login/paywall walls with zero real content, completely empty pages, or pure ad/cookie text with no article body). Noisy pages that still contain some real content should be summarized — extract what matters and note what was missing."
+                    local _condense_sys="You are a concise factual summarizer. No personality. Preserve URLs, names, numbers. Keep your response brief and focused on the key data."
                     local LLM_SCENARIO=evaluator
                     _condensed=$(llm_generate "$_condense_prompt" "$_condense_sys" "${LLM_WEB_CONDENSE_TOKENS:-200}" "$LLM_BUDGET_AGENT" 2>/dev/null)
                     # Strip think blocks from summary
@@ -6712,8 +6720,8 @@ INTERLOCK_JSON
 
                 # ── WRITTEN FILE TRACKING ──────────────────────
                 # Accumulate file paths from successful /write, /save,
-                # /append so the strategist and specialist can reference
-                # exact paths in later milestones.
+                # /append, /download, /web download so the strategist and
+                # specialist can reference exact paths in later milestones.
                 case "$cmd" in
                     /write\ *|/save\ *|/append\ *)
                         local _wf_rest="${cmd#* }"
@@ -6728,6 +6736,28 @@ INTERLOCK_JSON
                             if [ "$_wf_dup" -eq 0 ]; then
                                 _AGENT_WRITTEN_FILES+=("$_wf_path")
                                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] written-files: tracked %s (%d total)\n' "$_wf_path" "${#_AGENT_WRITTEN_FILES[@]}" >&2
+                            fi
+                        fi
+                        ;;
+                    /download\ *|/web\ download\ *)
+                        if [ "$exit_code" -eq 0 ]; then
+                            local _wf_path=""
+                            if echo "$output" | grep -q "Downloaded:"; then
+                                _wf_path=$(echo "$output" | sed -n 's/.*Downloaded: \([^ ]*\).*/\1/p')
+                            elif echo "$output" | grep -q "Copied:"; then
+                                _wf_path=$(echo "$output" | sed -n 's/.*Copied: \([^ ]*\).*/\1/p')
+                            fi
+                            _wf_path=$(echo "$_wf_path" | awk '{print $1}')
+                            if [ -n "$_wf_path" ]; then
+                                local _wf_dup=0
+                                local _wf_existing
+                                for _wf_existing in "${_AGENT_WRITTEN_FILES[@]}"; do
+                                    [ "$_wf_existing" = "$_wf_path" ] && { _wf_dup=1; break; }
+                                done
+                                if [ "$_wf_dup" -eq 0 ]; then
+                                    _AGENT_WRITTEN_FILES+=("$_wf_path")
+                                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] written-files: tracked downloaded file %s (%d total)\n' "$_wf_path" "${#_AGENT_WRITTEN_FILES[@]}" >&2
+                                fi
                             fi
                         fi
                         ;;

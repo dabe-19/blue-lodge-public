@@ -42,22 +42,38 @@ cmd_download() {
         dest=$(echo "$dest" | sed 's/["'"'"'`]//g' | tr ' ' '-' | sed 's/[^a-zA-Z0-9_./-]//g')
     fi
 
-    # Resolve destination relative to workdir
-    # SECURITY: Never allow writes outside the workdir tree.
+    # Resolve destination relative to AGENT_TASK_WORKSPACE if set
     local fullpath
-    if [[ "$dest" == /* ]]; then
-        # Absolute path: use directly if already under workdir,
-        # otherwise strip leading slash to sandbox it under workdir.
-        local _real_workdir
-        _real_workdir=$(cd "$workdir" 2>/dev/null && pwd -P)
-        if [[ "$dest" == "$_real_workdir"/* ]] || [[ "$dest" == "$workdir"/* ]]; then
-            fullpath="$dest"
+    local log_dest
+    if [ -n "${AGENT_TASK_WORKSPACE:-}" ]; then
+        # Ensure AGENT_TASK_WORKSPACE exists
+        mkdir -p "$AGENT_TASK_WORKSPACE" 2>/dev/null
+        if [[ "$dest" == /* ]]; then
+            if [[ "$dest" == "$AGENT_TASK_WORKSPACE"/* ]]; then
+                fullpath="$dest"
+            else
+                dest="${dest#/}"
+                fullpath="$AGENT_TASK_WORKSPACE/$dest"
+            fi
         else
-            dest="${dest#/}"
+            fullpath="$AGENT_TASK_WORKSPACE/$dest"
+        fi
+        log_dest="${AGENT_TASK_WORKSPACE_REL:-.george/workspaces}/${dest}"
+    else
+        # Fallback to standard workdir-relative if AGENT_TASK_WORKSPACE is not set
+        if [[ "$dest" == /* ]]; then
+            local _real_workdir
+            _real_workdir=$(cd "$workdir" 2>/dev/null && pwd -P)
+            if [[ "$dest" == "$_real_workdir"/* ]] || [[ "$dest" == "$workdir"/* ]]; then
+                fullpath="$dest"
+            else
+                dest="${dest#/}"
+                fullpath="$workdir/$dest"
+            fi
+        else
             fullpath="$workdir/$dest"
         fi
-    else
-        fullpath="$workdir/$dest"
+        log_dest="$dest"
     fi
 
     # Create parent directories
@@ -102,7 +118,7 @@ cmd_download() {
 
             local size
             size=$(wc -c < "$fullpath" 2>/dev/null || echo "0")
-            ui_ok "Downloaded: $dest ($size bytes)"
+            ui_ok "Downloaded: $log_dest ($size bytes)"
             return 0
         else
             ui_err "Download failed: $source"
@@ -119,7 +135,7 @@ cmd_download() {
             cp "$source" "$fullpath"
         fi
         if [ $? -eq 0 ]; then
-            ui_ok "Copied: $dest"
+            ui_ok "Copied: $log_dest"
             return 0
         else
             ui_err "Copy failed: $source → $dest"

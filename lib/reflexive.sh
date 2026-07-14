@@ -975,7 +975,7 @@ reflexive_report() {
     # LLM analysis
     if declare -f llm_generate &>/dev/null; then
         declare -f ui_spinner_start &>/dev/null && ui_spinner_start "Analyzing" >/dev/tty 2>/dev/null
-        local _analysis_prompt="Analyze this self-monitoring report from an AI agent named George:\n\n${report}\n\nSummarize patterns, flag concerns, and suggest optimizations for the tuning knobs. Be concise (4-6 sentences)."
+        local _analysis_prompt="Analyze this self-monitoring report from an AI agent named George:\n\n${report}\n\nSummarize patterns, flag concerns, and suggest optimizations for the tuning knobs. Be concise and focused."
         local _analysis_sys="You are analyzing the self-monitoring telemetry of an AI agent. Focus on actionable insights: Is the agent performing well? Are there efficiency problems? What tuning changes would help? Plain text, no markdown."
         local _analysis
         local LLM_SCENARIO=evaluator

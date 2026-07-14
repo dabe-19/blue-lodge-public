@@ -2421,7 +2421,7 @@ web_section() {
 # ── Download a file ───────────────────────────────────────────
 web_download() {
     local url="$1"
-    local output="${2:-$(basename "$url")}"
+    local dest="${2:-$(basename "$url")}"
 
     if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
         ui_err "Web actions are currently disabled by routing policy"
@@ -2433,16 +2433,36 @@ web_download() {
         return 1
     fi
 
+    local fullpath
+    local log_dest
+    if [ -n "${AGENT_TASK_WORKSPACE:-}" ]; then
+        mkdir -p "$AGENT_TASK_WORKSPACE" 2>/dev/null
+        if [[ "$dest" == /* ]]; then
+            if [[ "$dest" == "$AGENT_TASK_WORKSPACE"/* ]]; then
+                fullpath="$dest"
+            else
+                dest="${dest#/}"
+                fullpath="$AGENT_TASK_WORKSPACE/$dest"
+            fi
+        else
+            fullpath="$AGENT_TASK_WORKSPACE/$dest"
+        fi
+        log_dest="${AGENT_TASK_WORKSPACE_REL:-.george/workspaces}/${dest}"
+    else
+        fullpath="$dest"
+        log_dest="$dest"
+    fi
+
     ui_step "Downloading: $url"
     curl -sL --max-time 60 \
         -H "User-Agent: $API_USER_AGENT" \
-        -o "$output" \
+        -o "$fullpath" \
         "$url" 2>/dev/null
 
-    if [ $? -eq 0 ] && [ -f "$output" ]; then
+    if [ $? -eq 0 ] && [ -f "$fullpath" ]; then
         local size
-        size=$(du -h "$output" | cut -f1)
-        ui_ok "Downloaded: $output ($size)"
+        size=$(du -h "$fullpath" | cut -f1)
+        ui_ok "Downloaded: $log_dest ($size)"
     else
         ui_err "Download failed"
         return 1
