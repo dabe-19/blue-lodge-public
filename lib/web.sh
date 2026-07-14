@@ -2022,6 +2022,9 @@ web_scrape_images() {
 
     # Return the full JSON to stdout (captured by agent)
     echo "$json_result"
+    if [ "$is_blocked" = "true" ]; then
+        return 1
+    fi
 }
 
 web_scrape() {

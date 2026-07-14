@@ -7164,6 +7164,7 @@ INTERLOCK_JSON
             fi
             AGENT_HONEYDEW_REWRITE="$_saved_rewrite_toggle"
             _AGENT_AUTO_RECOVERED=1
+            _blocked_cmds=()
             ui_ok "Auto-recovery complete — honeydew rewritten. Returning to strategist."
 
             # Record the failed milestone with auto-recovery outcome.
@@ -8524,17 +8525,23 @@ ${_research_gate}${_pref_hint}${_milestone_history}"
                     done <<< "$_skip_urls"
                 fi
 
+                local _fail_summary=""
+                if [ -f "$fail_file" ]; then
+                    _fail_summary=$(tail -30 "$fail_file" 2>/dev/null)
+                fi
+
                 # Force honeydew rewrite — temporarily override the
                 # toggle so the rewrite runs even when disabled.
                 local _saved_rewrite_toggle="${AGENT_HONEYDEW_REWRITE:-0}"
                 AGENT_HONEYDEW_REWRITE=1
-                if _agent_honeydew_rewrite "$macro_file" "$george_dir/micro_memory.json" "$workdir" "" "${AGENT_FORCE_REWRITE:-1}"; then
+                if _agent_honeydew_rewrite "$macro_file" "$george_dir/micro_memory.json" "$workdir" "$_fail_summary" "${AGENT_FORCE_REWRITE:-1}"; then
                     local _hd_relief
                     _hd_relief=$(_agent_honeydew_read "$workdir" 2>/dev/null)
                     if [ -n "$_hd_relief" ] && [ -f "$macro_file" ]; then
                         _macro_set_honeydew "$macro_file" "$_hd_relief"
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] macro_memory refreshed after pressure relief rewrite"
                     fi
+                    _blocked_cmds=()
                     _last_eval_feedback="System was stuck in a skip loop. Honeydew list has been rewritten. Address the updated first pending item using a NEW approach — do NOT repeat /web fetch on the same URLs."
                 else
                     # Rewrite declined (router said KEEP) or failed.
