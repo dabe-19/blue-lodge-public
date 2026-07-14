@@ -756,6 +756,11 @@ _agent_router_eligibility_pass() {
     local lower
     lower=$(echo "$objective" | tr '[:upper:]' '[:lower:]')
 
+    local _milestone_cmd=""
+    if [[ "$objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
+        _milestone_cmd="${BASH_REMATCH[2]}"
+    fi
+
     local net_ok=1
     _agent_router_probe_network || net_ok=0
 
@@ -763,18 +768,20 @@ _agent_router_eligibility_pass() {
     [[ "$svc_status" == *"web-search"* ]] && web_cfg=1
 
     local web_allowed=1
-    [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ] && web_allowed=0
+    if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
+        # Web search (via DDG) is always allowed and not gated
+        if [ "$_milestone_cmd" = "web" ] || [[ "$objective" =~ (search|find|lookup|query) ]]; then
+            web_allowed=1
+        else
+            web_allowed=0
+        fi
+    fi
     [ "$web_cfg" -eq 0 ] && web_allowed=0
     [ "$net_ok" -eq 0 ] && web_allowed=0
 
     local git_allowed=1
     [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ] && git_allowed=0
     [ "$net_ok" -eq 0 ] && git_allowed=0
-
-    local _milestone_cmd=""
-    if [[ "$objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
-        _milestone_cmd="${BASH_REMATCH[2]}"
-    fi
 
     local need_web=0 need_recall=0 need_ls=0 need_grep=0 need_read=0 need_journal=0 need_delivery=0 need_git=0
     if [ -n "$_milestone_cmd" ]; then
