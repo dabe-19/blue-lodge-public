@@ -190,8 +190,12 @@ _mcp_send() {
     [ -p "$fifo" ] || return 1
 
     # Atomic write to FIFO — server reads immediately
-    # Safe from subshells: we only WRITE to the FIFO, never READ
-    printf '%s\n' "$json" > "$fifo"
+    # Use timeout to prevent hanging if there is no reader (e.g. server died)
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 5 sh -c 'printf "%s\n" "$1" > "$2"' -- "$json" "$fifo" 2>/dev/null
+    else
+        printf '%s\n' "$json" > "$fifo"
+    fi
 }
 
 _mcp_recv() {

@@ -3824,8 +3824,8 @@ ${base_rules}"
                 printf "  %b%s%b\n" "$C_CYAN" "$question" "$C_RESET"
                 echo ""
                 printf "  %b> %b" "$C_BOLD" "$C_RESET"
-                local answer
-                read -r answer < /dev/tty
+                local answer=""
+                read -r answer < /dev/tty 2>/dev/null || read -r answer 2>/dev/null || true
                 if [ -z "$answer" ]; then
                     ui_dim "  No answer — proceeding with available info."
                     # Force plan on next round
@@ -7131,8 +7131,8 @@ INTERLOCK_JSON
         echo ""
     fi
     printf "  %bGeorge needs help. Provide a command, explanation, or 'abort': %b" "$C_BOLD" "$C_RESET"
-    local guidance
-    read -r guidance < /dev/tty
+    local guidance=""
+    read -r guidance < /dev/tty 2>/dev/null || read -r guidance 2>/dev/null || true
 
     # ── ABORT PROPAGATION ─────────────────────────────────────
     # When the operator types 'abort', propagate cancellation to the
