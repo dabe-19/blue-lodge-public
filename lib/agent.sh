@@ -8058,6 +8058,27 @@ MEMEOF
             fi
         fi
 
+        # ── Discovered Image & Link Queues Injection for Strategist ──
+        local _strat_discovered_images=""
+        if [ -n "${AGENT_TASK_WORKSPACE:-}" ] && [ -f "$AGENT_TASK_WORKSPACE/web_image_queue.txt" ] && [ -s "$AGENT_TASK_WORKSPACE/web_image_queue.txt" ]; then
+            _strat_discovered_images="\n\n>>> DISCOVERED IMAGE URLS (Use /vision on these) <<<"
+            local _img_url
+            while IFS= read -r _img_url || [ -n "$_img_url" ]; do
+                [ -n "$_img_url" ] && _strat_discovered_images="${_strat_discovered_images}\n- $_img_url"
+            done < "$AGENT_TASK_WORKSPACE/web_image_queue.txt" | head -10
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- discovered image URLs"
+        fi
+
+        local _strat_discovered_links=""
+        if [ -n "${AGENT_TASK_WORKSPACE:-}" ] && [ -f "$AGENT_TASK_WORKSPACE/web_fetch_queue.txt" ] && [ -s "$AGENT_TASK_WORKSPACE/web_fetch_queue.txt" ]; then
+            _strat_discovered_links="\n\n>>> DISCOVERED WEB LINKS (Use /web fetch/scrape on these) <<<"
+            local _link_url
+            while IFS= read -r _link_url || [ -n "$_link_url" ]; do
+                [ -n "$_link_url" ] && _strat_discovered_links="${_strat_discovered_links}\n- $_link_url"
+            done < "$AGENT_TASK_WORKSPACE/web_fetch_queue.txt" | head -10
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- discovered links"
+        fi
+
         # ── Inject prior archived milestones into strategist ─────
         local _strat_prior_ms=""
         if [ -f "$macro_file" ]; then
@@ -8078,7 +8099,7 @@ MEMEOF
             _strat_last_eval_feedback="\n\n>>> EVALUATOR FEEDBACK (from the last milestone — address this NOW) <<<\n${_last_eval_feedback}\n>>> You MUST change your approach based on the above. Do NOT repeat the same command. <<<"
         fi
 
-        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_strat_read_context}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_strat_prior_files}${_strat_rb}${_strat_prior_ms}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_strat_last_eval_feedback}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
+        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_strat_read_context}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_strat_prior_files}${_strat_discovered_images}${_strat_discovered_links}${_strat_rb}${_strat_prior_ms}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_strat_last_eval_feedback}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
 
         # ── Research→Delivery Gate ────────────────────────────
         # After N consecutive research milestones, inject a hard
