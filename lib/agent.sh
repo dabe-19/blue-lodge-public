@@ -5520,7 +5520,12 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
             cmd=$(echo "$_clean_plan" | awk '
                 /^```/ { in_block = !in_block; next }
                 in_block { next }
-                !found && /^\/[a-z]/ { found=1; cmd=$0; next }
+                !found && /\/[a-z]/ {
+                    found=1;
+                    match($0, /\/[a-z][a-z0-9_-]*/);
+                    cmd=substr($0, RSTART);
+                    next
+                }
                 found && /^\/[a-z]/ { exit }
                 found && /^```/ { exit }
                 found && /^\*\(/ { exit }
