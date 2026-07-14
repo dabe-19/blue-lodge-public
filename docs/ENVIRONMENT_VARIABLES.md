@@ -225,7 +225,7 @@ If you run model inference on a remote server, Blue Lodge can launch backends, f
 - **Default**: `8080`
 
 ### `REMOTE_LOCAL_LLAMACPP_PORT`
-- **Description**: The local forward port on the client client side where the SSH tunnel will expose the remote `llama-server`.
+- **Description**: The local forward port on the client side where the SSH tunnel will expose the remote `llama-server`.
 - **Type**: Integer
 - **Default**: `8080`
 
@@ -311,7 +311,151 @@ When local execution is bypassed, Blue Lodge can route queries directly to cloud
 
 ---
 
-## 8. Programmatic Invocation Examples
+## 8. Reflexive Intelligence Settings
+
+These variables control George's inner self-assessment and meta-cognition hooks.
+
+### `REFLEXIVE_SOUL_GATE`
+- **Description**: Enable or disable the post-route soul gate validator. When active, it monitors generated slash commands and blocks execution of commands that conflict with George's core values or violate safety constraints.
+- **Type**: Boolean (`0` or `1`)
+- **Default**: `0`
+- **Usage Example**:
+  ```bash
+  REFLEXIVE_SOUL_GATE=1 ./lodge run "Search and analyze"
+  ```
+
+### `REFLEXIVE_PROMPT_LEARN`
+- **Description**: Enables dynamic system prompt adjustment and self-learning loops based on success/failure histories of commands.
+- **Type**: Boolean (`0` or `1`)
+- **Default**: `0`
+
+### `REFLEXIVE_ADAPT_TOKENS`
+- **Description**: Automatically adjusts token budget sizes dynamically between floor and ceiling values based on target task complexity.
+- **Type**: Boolean (`0` or `1`)
+- **Default**: `0`
+
+### `REFLEXIVE_SPECULATE`
+- **Description**: Enables speculative multi-step future reasoning steps during milestone formulation.
+- **Type**: Boolean (`0` or `1`)
+- **Default**: `0`
+
+### `REFLEXIVE_SELF_MODEL`
+- **Description**: Inject self-assessment context, failure loops warnings, and reflexive insights into the strategist and rewrite-router prompts.
+- **Type**: Boolean (`0` or `1`)
+- **Default**: `0`
+
+### `REFLEXIVE_METACOG_LLM`
+- **Description**: Routes meta-cognition check evaluations through a separate model/LLM scenario rather than compiling them rule-based.
+- **Type**: Boolean (`0` or `1`)
+- **Default**: `0`
+
+### `REFLEXIVE_SOUL_KEYWORDS`
+- **Description**: Limit on the maximum number of key terms verified during the soul-gate block scan.
+- **Type**: Integer
+- **Default**: `5`
+
+### `REFLEXIVE_PROMPT_HISTORY`
+- **Description**: Number of steps back to persist and analyze in the adaptive prompt learning history logs.
+- **Type**: Integer
+- **Default**: `8`
+
+### `REFLEXIVE_TOKEN_FLOOR` / `REFLEXIVE_TOKEN_CEILING`
+- **Description**: Floor and ceiling boundaries for adaptive output token scaling.
+- **Type**: Integer
+- **Defaults**: `512` (floor), `8192` (ceiling)
+
+### `REFLEXIVE_SPECULATE_BUDGET`
+- **Description**: Maximum allowable speculation sub-steps before halting reasoning.
+- **Type**: Integer
+- **Default**: `3`
+
+### `REFLEXIVE_METACOG_INTERVAL`
+- **Description**: Run the meta-cognition self-audit evaluation loop once every N milestones.
+- **Type**: Integer
+- **Default**: `4`
+
+---
+
+## 9. Advanced Agent & Planner Settings
+
+### `AGENT_PLAN_STEPS`
+- **Description**: Maximum planned subtask steps that can be registered in a single planning cycle.
+- **Type**: Integer
+- **Default**: `8`
+
+### `AGENT_INNER_LOOPS`
+- **Description**: Ceiling limit for inner loop execution retries before escalating or halting.
+- **Type**: Integer
+- **Default**: `8`
+
+### `AGENT_MAX_DEPTH`
+- **Description**: Subtask recursion depth limit for honeydew list hierarchical expansions.
+- **Type**: Integer
+- **Default**: `3`
+
+### `AGENT_HONEYDEW_EXPAND`
+- **Description**: Toggle recursive subtask expansions.
+- **Type**: Boolean (`0` or `1`)
+- **Default**: `1` (enabled)
+
+### `AGENT_HONEYDEW_REWRITE`
+- **Description**: Enable dynamic adjustments of target honeydew lists as milestones fail or yield new information.
+- **Type**: Boolean (`0` or `1`)
+- **Default**: `1` (enabled)
+
+### `AGENT_FILE_EXPAND`
+- **Description**: Automatically expand file pathways in slash command arguments to pass their full text directly in prompts.
+- **Type**: Boolean (`0` or `1`)
+- **Default**: `1` (enabled)
+
+### `AGENT_WEB_CONDENSE`
+- **Description**: Use a summarizer model to compress long `/web fetch` texts into 3-5 key sentences to prevent attention dilution.
+- **Type**: Boolean (`0` or `1`)
+- **Default**: `1` (enabled)
+
+---
+
+## 10. LLM Parameters & Samplers
+
+These control token generation behaviors on Ollama/llama-server.
+
+| Variable Name | Description | Default Value |
+|---|---|---|
+| `LLM_TEMPERATURE` | Controls sampling randomness (lower is more deterministic) | `0.15` |
+| `LLM_REPEAT_PENALTY` | Penalty factor applied to duplicate tokens | `1.2` |
+| `LLM_PRESENCE_PENALTY` | Penalty factor for repeating already present vocabulary | `0.3` |
+| `LLM_TOP_P` | Nucleus sampling range threshold | `0.9` |
+| `LLM_TOP_K` | Limits pool of tokens to top K | `40` |
+| `LLM_MIN_P` | Minimal probability threshold filter | `0.0` |
+| `LLM_GRAMMAR_ENABLED` | Force structural grammar checking on output JSONs | `0` (disabled) |
+| `MCP_ENABLED` | Enable Model Context Protocol server hooks | `0` (disabled) |
+
+---
+
+## 11. Communication & Path Configurations
+
+### `GEORGE_CONFIG_DIR`
+- **Description**: Global home directory location for George state, logs, and configurations.
+- **Type**: String (directory path)
+- **Default**: `$LODGE_DIR/.george`
+
+### `GEORGE_KEYS_FILE`
+- **Description**: Sourced configuration database file where API credentials are kept.
+- **Type**: String (file path)
+- **Default**: `$GEORGE_CONFIG_DIR/keys.conf`
+
+### `DISCORD_BOT_TOKEN` / `DISCORD_WEBHOOK_URL`
+- **Description**: Credentials used to read, send, or notify Discord servers.
+- **Type**: String
+
+### `MQTT_BROKER` / `MQTT_PORT`
+- **Description**: Broker host target and port for MQTT message publishing.
+- **Type**: String / Integer
+- **Defaults**: Unset (broker), `1883` (port)
+
+---
+
+## 12. Programmatic Invocation Examples
 
 ### Example A: Fully Local & Token-Saver Mode
 - Forces abstract local mode, disables web access, limits thinking depth, and restricts step size to save local GPU compute.
