@@ -200,6 +200,17 @@ LLM_BUDGET_AGENT="${LLM_BUDGET_AGENT:-4096}"  # Think budget for strategist/spec
 LLM_BUDGET_ROUTER="${LLM_BUDGET_ROUTER:-4096}" # Think budget for router (pick tool + brief reasoning)
 LLM_BUDGET_JOURNAL="${LLM_BUDGET_JOURNAL:-4096}" # Think budget for journal (background utility)
 LLM_BUDGET_TOOL="${LLM_BUDGET_TOOL:-4096}"    # Think budget for tools (commit, web, recall, slash)
+LODGE_THINK_LEVEL="${LODGE_THINK_LEVEL:-2}" # Configurable thinking depth: 1=low, 2=medium, 3=high
+
+_llm_resolve_think_budget() {
+    local base_budget="$1"
+    case "${LODGE_THINK_LEVEL}" in
+        low|1) echo 1024 ;;
+        medium|2) echo 4096 ;;
+        high|3) echo 16384 ;;
+        *) echo "$base_budget" ;;
+    esac
+}
 
 # ── Sampling parameters (per-scenario, override model defaults) ──
 # ── Sampling parameters ────────────────────────────────────────
@@ -1681,6 +1692,7 @@ llm_generate() {
     local system="${2:-}"
     local max_tokens="${3:-$LLM_MAX_TOKENS}"
     local budget="${4:-$LLM_BUDGET_TOKENS}"
+    budget=$(_llm_resolve_think_budget "$budget")
     local schema_name="${5:-}"
     local payload
 
@@ -2338,6 +2350,7 @@ llm_stream() {
     local system="${2:-}"
     local max_tokens="${3:-$LLM_MAX_TOKENS}"
     local budget="${4:-$LLM_BUDGET_TOKENS}"
+    budget=$(_llm_resolve_think_budget "$budget")
     local payload
     local full_response=""
 
@@ -3029,6 +3042,7 @@ llm_chat() {
     local messages="$1"
     local system="${2:-}"
     local budget="${3:-$LLM_BUDGET_TOKENS}"
+    budget=$(_llm_resolve_think_budget "$budget")
     local payload
 
     # ── Provider harness intercept ─────────────────────────────

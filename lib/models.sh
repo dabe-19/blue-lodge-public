@@ -1204,7 +1204,11 @@ models_thinking_directive() {
 
     # Qwen3 and Qwen3.5: template handles thinking natively regardless of system prompt
     case "$key" in
-        qwen3-*|qwen35-*) return ;;
+        qwen3-*|qwen35-*)
+            if [ "${LODGE_THINK_LEVEL:-2}" = "medium" ] || [ "${LODGE_THINK_LEVEL:-2}" = "2" ]; then
+                return
+            fi
+            ;;
     esac
 
     local method
@@ -1239,6 +1243,16 @@ Your thinking process must follow the template below:
             if [ "$method" = "system" ]; then
                 echo "Before each response, reason step by step inside <think></think> tags. After </think>, provide your final response."
             fi
+            ;;
+    esac
+
+    # Dynamic prompt suffix injection based on requested thinking level
+    case "${LODGE_THINK_LEVEL:-2}" in
+        low|1)
+            echo "Respond directly and concisely. Do not output a thinking block or reason step-by-step."
+            ;;
+        high|3)
+            echo "Reason exhaustively. Analyze edge cases, explore alternative solutions, check for hidden assumptions, and think through every step in detail."
             ;;
     esac
 }
