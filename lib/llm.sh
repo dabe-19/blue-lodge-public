@@ -1967,6 +1967,23 @@ llm_generate() {
                     _response_pending=""
                     _think_banner_open=1
                     _llm_think_open "$_tty"
+                elif [[ "$_response_pending" == *"</think>"* ]]; then
+                    # Implicit start of think block at character 0, ending now
+                    local _think_before="${_response_pending%%</think>*}"
+                    local _after_think="${_response_pending#*</think>}"
+                    _after_think="${_after_think//<\/think>/}"
+                    if [ "$_can_think" -eq 1 ]; then
+                        _llm_think_open "$_tty"
+                        _llm_think_show "$_think_before" "$_tty"
+                        _llm_think_close "$_tty"
+                    fi
+                    _in_think_block=0
+                    _can_think=0
+                    _response_pending=""
+                    if [ -n "$_after_think" ]; then
+                        printf "%s" "$_after_think"
+                        _gen_tty "$_after_think"
+                    fi
                 elif [ ${#_response_pending} -ge $_think_detect_limit ]; then
                     # No <think> found in preamble buffer — flush and disable
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate(llamacpp): no <think> in %d chars, flushing\n" "$_think_detect_limit" > "$_tty" 2>/dev/null
@@ -2236,6 +2253,23 @@ llm_generate() {
                         _response_pending=""
                         _think_banner_open=1
                         _llm_think_open "$_tty"
+                    elif [[ "$_response_pending" == *"</think>"* ]]; then
+                        # Implicit start of think block at character 0, ending now
+                        local _think_before="${_response_pending%%</think>*}"
+                        local _after_think="${_response_pending#*</think>}"
+                        _after_think="${_after_think//<\/think>/}"
+                        if [ "$_can_think" -eq 1 ]; then
+                            _llm_think_open "$_tty"
+                            _llm_think_show "$_think_before" "$_tty"
+                            _llm_think_close "$_tty"
+                        fi
+                        _in_think_block=0
+                        _can_think=0
+                        _response_pending=""
+                        if [ -n "$_after_think" ]; then
+                            printf "%s" "$_after_think"
+                            _gen_tty "$_after_think"
+                        fi
                     elif [ ${#_response_pending} -ge $_think_detect_limit ]; then
                         # Buffer overflow guard — no <think> found in buffer
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate: no <think> in %d chars, flushing buffer\n" "$_think_detect_limit" > "$_tty" 2>/dev/null
@@ -2596,34 +2630,51 @@ llm_stream() {
 
             # ── Inline-tag state machine (mirrors Ollama path) ─────
             # Phase 1: Preamble buffering — detect <think> in early tokens
-            if [ "$_can_think" -eq 1 ] && [ "$_in_think_block" -eq 0 ]; then
-                _response_pending+="$token"
-                _llm_normalize_think _response_pending
-                if [[ "$_response_pending" == *"<think>"* ]]; then
-                    _in_think_block=1
-                    _think_pending="${_response_pending#*<think>}"
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream(llamacpp): <think> detected inline (at %d chars)\n" "${#_response_pending}" > "$_tty" 2>/dev/null
-                    # Output anything before <think> as response (preamble)
-                    local _before="${_response_pending%%<think>*}"
-                    _before="${_before//<\/think>/}"
-                    if [ -n "$_before" ]; then
-                        printf "%s" "$_before"
-                        printf "%s" "$_before" > "$_tty" 2>/dev/null
-                    fi
-                    _response_pending=""
-                    _think_banner_open=1
-                    _llm_think_open "$_tty"
-                elif [ ${#_response_pending} -ge $_think_detect_limit ]; then
-                    # No <think> found in preamble buffer — flush and disable
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream(llamacpp): no <think> in %d chars, flushing\n" "$_think_detect_limit" > "$_tty" 2>/dev/null
-                    _response_pending="${_response_pending//<\/think>/}"
-                    printf "%s" "$_response_pending"
-                    printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
-                    _response_pending=""
-                    _can_think=0
-                fi
-                continue
-            fi
+             if [ "$_can_think" -eq 1 ] && [ "$_in_think_block" -eq 0 ]; then
+                 _response_pending+="$token"
+                 _llm_normalize_think _response_pending
+                 if [[ "$_response_pending" == *"<think>"* ]]; then
+                     _in_think_block=1
+                     _think_pending="${_response_pending#*<think>}"
+                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream(llamacpp): <think> detected inline (at %d chars)\n" "${#_response_pending}" > "$_tty" 2>/dev/null
+                     # Output anything before <think> as response (preamble)
+                     local _before="${_response_pending%%<think>*}"
+                     _before="${_before//<\/think>/}"
+                     if [ -n "$_before" ]; then
+                         printf "%s" "$_before"
+                         printf "%s" "$_before" > "$_tty" 2>/dev/null
+                     fi
+                     _response_pending=""
+                     _think_banner_open=1
+                     _llm_think_open "$_tty"
+                 elif [[ "$_response_pending" == *"</think>"* ]]; then
+                     # Implicit start of think block at character 0, ending now
+                     local _think_before="${_response_pending%%</think>*}"
+                     local _after_think="${_response_pending#*</think>}"
+                     _after_think="${_after_think//<\/think>/}"
+                     if [ "$_can_think" -eq 1 ]; then
+                         _llm_think_open "$_tty"
+                         _llm_think_show "$_think_before" "$_tty"
+                         _llm_think_close "$_tty"
+                     fi
+                     _in_think_block=0
+                     _can_think=0
+                     _response_pending=""
+                     if [ -n "$_after_think" ]; then
+                         printf "%s" "$_after_think"
+                         printf "%s" "$_after_think" > "$_tty" 2>/dev/null
+                     fi
+                 elif [ ${#_response_pending} -ge $_think_detect_limit ]; then
+                     # No <think> found in preamble buffer — flush and disable
+                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream(llamacpp): no <think> in %d chars, flushing\n" "$_think_detect_limit" > "$_tty" 2>/dev/null
+                     _response_pending="${_response_pending//<\/think>/}"
+                     printf "%s" "$_response_pending"
+                     printf "%s" "$_response_pending" > "$_tty" 2>/dev/null
+                     _response_pending=""
+                     _can_think=0
+                 fi
+                 continue
+             fi
 
             # Phase 2: Inside think block — look for </think>
             if [ "$_in_think_block" -eq 1 ]; then
@@ -2906,6 +2957,23 @@ llm_stream() {
                         _response_pending=""
                         _think_banner_open=1
                         _think_open
+                    elif [[ "$_response_pending" == *"</think>"* ]]; then
+                        # Implicit start of think block at character 0, ending now
+                        local _think_before="${_response_pending%%</think>*}"
+                        local _after_think="${_response_pending#*</think>}"
+                        _after_think="${_after_think//<\/think>/}"
+                        if [ "$_can_think" -eq 1 ]; then
+                            _think_open
+                            _think_show "$_think_before"
+                            _think_close
+                        fi
+                        _in_think_block=0
+                        _can_think=0
+                        _response_pending=""
+                        if [ -n "$_after_think" ]; then
+                            printf "%s" "$_after_think"
+                            printf "%s" "$_after_think" > "$_tty" 2>/dev/null
+                        fi
                     elif [ ${#_response_pending} -ge $_think_detect_limit ]; then
                         # Buffer overflow guard — no <think> found in buffer
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream: no <think> in %d chars, flushing buffer\n" "$_think_detect_limit" > "$_tty" 2>/dev/null
