@@ -2425,9 +2425,9 @@ describe "Web flow chain examples in specialist"
     body=$(declare -f _build_specialist_prompt)
     echo "$body" | grep -q 'search_tips'
     assert_ok $? "Must include search_tips section"
-    echo "$body" | grep -q '3-5 keywords MAX'
-    assert_ok $? "Must limit search queries to 3-5 keywords"
-    echo "$body" | grep -q 'NEVER paste entire milestone'
+    echo "$body" | grep -q 'Use precise keywords'
+    assert_ok $? "Must encourage precise keywords"
+    echo "$body" | grep -q 'NEVER paste the entire milestone'
     assert_ok $? "Must warn against pasting milestone as query"
   }
 
@@ -2944,8 +2944,8 @@ describe "Web search tight-parsing configuration"
     assert_eq "${AGENT_WEB_SEARCH_MAX_OPERATORS:-3}" "3"
   }
 
-  it "AGENT_WEB_SEARCH_CONSEC_MAX defaults to 2" && {
-    assert_eq "${AGENT_WEB_SEARCH_CONSEC_MAX:-2}" "2"
+  it "AGENT_WEB_SEARCH_CONSEC_MAX defaults to 1" && {
+    assert_eq "${AGENT_WEB_SEARCH_CONSEC_MAX:-1}" "1"
   }
 
   it "agent.sh config section declares AGENT_WEB_SEARCH_TIGHT_PARSING" && {

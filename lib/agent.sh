@@ -16,7 +16,7 @@ source "$LODGE_DIR/lib/journal.sh"
 _agent_extract_urls_from_search() {
     local search_output="$1"
     # Extract lines starting with http:// or https:// (after trimming whitespace)
-    echo "$search_output" | grep -oE 'https?://[^ ]+' | sed -E 's/[])}'"'"'"]+$//' | sort -u | head -n 4
+    echo "$search_output" | grep -oE 'https?://[^ ]+' | sed -E 's/[],)}'"'"'"]+$//' | sort -u | head -n 4
 }
 
 _agent_extract_images_from_scrape() {
@@ -28,7 +28,7 @@ _agent_extract_images_from_scrape() {
             return 0
         fi
     fi
-    echo "$scrape_output" | grep -oE 'https?://[^ ]+\.(jpg|jpeg|png|gif|webp|bmp|svg|avif|tiff)[^ ]*' | sed -E 's/[])}'"'"'"]+$//' | sort -u
+    echo "$scrape_output" | grep -oE 'https?://[^ ]+\.(jpg|jpeg|png|gif|webp|bmp|svg|avif|tiff)[^ ]*' | sed -E 's/[],)}'"'"'"]+$//' | sort -u
 }
 
 _agent_extract_links_from_scrape() {
@@ -40,18 +40,30 @@ _agent_extract_links_from_scrape() {
             return 0
         fi
     fi
-    echo "$scrape_output" | grep -oE 'https?://[^ ]+' | grep -vE '\.(jpg|jpeg|png|gif|webp|bmp|svg|avif|tiff)($|\?)' | sed -E 's/[])}'"'"'"]+$//' | sort -u
+    echo "$scrape_output" | grep -oE 'https?://[^ ]+' | grep -vE '\.(jpg|jpeg|png|gif|webp|bmp|svg|avif|tiff)($|\?)' | sed -E 's/[],)}'"'"'"]+$//' | sort -u
 }
 
 _is_junk_output() {
     local out="$1"
     [ -z "$out" ] && return 0
+    # Trim whitespaces
+    local clean_out
+    clean_out=$(echo "$out" | tr -d '[:space:]')
+    [ -z "$clean_out" ] && return 0
+
     # Match common error patterns (case-insensitive)
     local out_lower
     out_lower=$(echo "$out" | tr '[:upper:]' '[:lower:]')
     if [[ "$out_lower" == *"access denied"* ]] || \
        [[ "$out_lower" == *"403 forbidden"* ]] || \
        [[ "$out_lower" == *"cloudflare"* ]] || \
+       [[ "$out_lower" == *"[web fetch: empty]"* ]] || \
+       [[ "$out_lower" == *"page returned no usable content"* ]] || \
+       [[ "$out_lower" == *"empty result"* ]] || \
+       [[ "$out_lower" == *"blacklisted"* ]] || \
+       [[ "$out_lower" == *"site blocked"* ]] || \
+       [[ "$out_lower" == *"\"blocked\": true"* ]] || \
+       [[ "$out_lower" == *"\"blocked\":true"* ]] || \
        [[ "$out_lower" == *"503 service temporarily unavailable"* ]]; then
         return 0
     fi
@@ -78,7 +90,7 @@ AGENT_MAX_CMD_FAMILY="${AGENT_MAX_CMD_FAMILY:-5}"               # Max milestones
 AGENT_HONEYDEW_MATCH="${AGENT_HONEYDEW_MATCH:-3}"              # Min keyword score to auto-check honeydew item
 AGENT_HONEYDEW_INITIAL_COUNT="${AGENT_HONEYDEW_INITIAL_COUNT:-5}"  # Upper bound on initial honeydew items (prompt hint)
 AGENT_EVAL_MODE="${AGENT_EVAL_MODE:-auto}"              # Evaluator mode: auto | interactive | disabled
-AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-2}"  # Max consecutive /web search before fallback to fetch/scrape
+AGENT_WEB_SEARCH_CONSEC_MAX="${AGENT_WEB_SEARCH_CONSEC_MAX:-1}"  # Max consecutive /web search before fallback to fetch/scrape
 AGENT_WEB_FETCH_CASCADE="${AGENT_WEB_FETCH_CASCADE:-1}"          # Auto-fetch top search results: 0=disabled, 1=enabled
 AGENT_WEB_SEARCH_TIGHT_PARSING="${AGENT_WEB_SEARCH_TIGHT_PARSING:-0}"  # Tight web query parsing: 0=loose (keep quotes/negations/operators), 1=strict (strip all)
 AGENT_WEB_SEARCH_MAX_LENGTH="${AGENT_WEB_SEARCH_MAX_LENGTH:-160}"  # Max character length for /web search queries
@@ -1315,18 +1327,18 @@ _agent_honeydew_build() {
 
 TASK: $task
 
-{\"output\":\"JSON object: {\\\"items\\\":[{\\\"task\\\":\\\"short imperative sentence\\\"},...]} OR numbered list\",
- \"each_item\":\"short imperative sentence — WHAT to achieve, not HOW\",
- \"describe\":\"GOAL only — never tools, commands, URLs, shell syntax\",
- \"good\":\"Identify the key objectives for the project\",
- \"bad\":[\"Run curl -s https://...\",\"Use /web search to find...\"],
+{\"output\":\"JSON object: {\\\"items\\\":[{\\\"task\\\":\\\"imperative sentence\\\"},...]} OR numbered list\",
+ \"each_item\":\"imperative sentence preserving key context from the original task (such as names, projects, files, or specific targets) — WHAT to achieve, not HOW\",
+ \"describe\":\"GOAL only — include key entities, but never tools, commands, URLs, shell syntax\",
+ \"good\":\"Find an image of Intellopy author JJ Kelly\",
+ \"bad\":[\"Run curl -s https://...\",\"Use /web search to find...\",\"Find the image\"],
  \"count\":\"2-${AGENT_HONEYDEW_INITIAL_COUNT} items (simple tasks: 2-3)\",
  \"order\":\"by dependency (research→writing→sending)\",
  \"no_redundancy\":\"each item must be DISTINCT — never two items that describe the same work differently (e.g. 'summarize X' and 'present X concisely' are the SAME item — merge them)\",
  \"research_split\":\"If the task involves research, you MUST break it down into at least two distinct steps: 1) Search to find sources, and 2) Fetch or scrape specific URLs from the search results to collect detailed information.\",
  \"never\":[\"verification steps\",\"confirmation steps\",\"cleanup steps\",\"checkboxes\",\"redundant items that overlap with other items\"]}"
 
-    local decompose_sys="You are a task decomposition engine. Output a JSON object: {\"items\":[{\"task\":\"short imperative sentence\"},...]}. Each item: short imperative sentence - no more than 10 words. Describe WHAT, not HOW. No commands, URLs, tools, or parenthetical details."
+    local decompose_sys="You are a task decomposition engine. Output a JSON object: {\"items\":[{\"task\":\"imperative sentence\"},...]}. Each item: imperative sentence preserving key context from the original task (e.g., names, files, topics). Describe WHAT, not HOW. No commands, URLs, or tools."
 
     # ── Task-type–aware decomposition ─────────────────────────
     # Conditionally guide first honeydew items based on what the
@@ -2279,6 +2291,18 @@ _agent_smart_route() {
         esac
     fi
 
+    # ── Image search optimization ──────────────────────────
+    # If it is a web search and the query contains image-related keywords,
+    # reroute directly to /web images.
+    if [ "$_sr_base" = "/web search" ]; then
+        local _sr_lower_arg
+        _sr_lower_arg=$(echo "$_sr_arg" | tr '[:upper:]' '[:lower:]')
+        if [[ "$_sr_lower_arg" =~ (image|photo|picture|portrait|logo|avatar) ]]; then
+            _sr_new="/web images $_sr_arg"
+            _sr_reason="image-related search query — rerouting to /web images"
+        fi
+    fi
+
     # ── Apply substitution ─────────────────────────────────
     if [ -n "$_sr_new" ]; then
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] smart-route: $_sr_base -> ${_sr_new%% *} | $_sr_reason"
@@ -2546,9 +2570,9 @@ IMPORTANT: Consolidate redundant or overlapping items. If two pending items desc
 
 $(cat << 'REWRITE_JSON'
 {"output":"numbered list ONLY of replacement pending items",
- "each_item":"short imperative sentence (max 10-12 words) — WHAT to achieve, not HOW",
- "describe":"GOAL only — never tools, commands, URLs, shell syntax",
- "brevity":"keep items general and achievable — one clear verb + object, no sub-clauses or parenthetical details",
+ "each_item":"imperative sentence preserving key context from the original task (such as names, projects, files, or specific targets) — WHAT to achieve, not HOW",
+ "describe":"GOAL only — include key entities, but never tools, commands, URLs, shell syntax",
+ "context":"ensure key context and entities are preserved (e.g. 'poetically describe the image of JJ Kelly' instead of just 'poetically describe the image')",
  "preserve":"completed items are untouched — only rewrite pending",
  "consolidate":"merge overlapping or redundant items into fewer focused items",
  "count":"same count or fewer — REDUCE count when items overlap",
@@ -2557,7 +2581,7 @@ $(cat << 'REWRITE_JSON'
 REWRITE_JSON
 )"
 
-    local rewrite_sys="You are a task decomposition rewrite engine. Rewrite ONLY the pending honeydew items to better align with the original task based on milestone discoveries. If prior milestones or commands failed, you must pivot and rewrite the pending items to work around the failure (e.g. if a specific URL, path, or tool is blocked/fails, rewrite items to find another source, use local tools, or try a different path). Output ONLY a numbered list. Each item: short imperative sentence (max 10-12 words). WHAT, not HOW. No commands, URLs, or parenthetical details."
+    local rewrite_sys="You are a task decomposition rewrite engine. Rewrite ONLY the pending honeydew items to better align with the original task based on milestone discoveries. If prior milestones or commands failed, you must pivot and rewrite the pending items to work around the failure (e.g. if a specific URL, path, or tool is blocked/fails, rewrite items to find another source, use local tools, or try a different path). Output ONLY a numbered list. Each item: imperative sentence preserving key context from the original task (e.g., names, files, topics). Describe WHAT, not HOW. No commands, URLs, or tools."
 
     local _raw_rewrite
     local LLM_SCENARIO=strategist
@@ -2856,7 +2880,9 @@ _agent_evaluate_honeydew_item() {
  \"pragmatic\":true,\"exact_match_not_required\":true,
  ${_eval_output_rule}
  ${_prior_milestones:+\"cross_milestone\":\"if a PRIOR milestone already did what this item asks, SATISFIED\",}
- \"relevance_check\":{\"dates\":true,\"topics\":true,\"scope\":true,
+          \"image_requirement\":\"If the action log command is '/web search', it is search-only and is SATISFIED if it returned links; it does NOT need to return image URLs. If the command is '/web fetch', '/web scrape', or '/download', the item is UNSATISFIED if no image URLs were found or if the scraped 'images' list was empty. For '/vision', it is SATISFIED if it returned descriptive details or analysis of the image (even if accompanied by a disclaimer or request for the image).\",
+          \"cascade_fallback\":\"If the action log starts with '[CASCADE FALLBACK]', this indicates a fallback scrape occurred. In this case, you MUST ignore any URL mismatch between the honeydew item/milestone text and the fallback URL. Evaluate the output of the fallback URL instead. If the fallback fetch/scrape successfully captured content or images, the item is SATISFIED.\",
+  \"relevance_check\":{\"dates\":true,\"topics\":true,\"scope\":true,
    \"verify_against\":\"ORIGINAL USER REQUEST above\",
    \"output_substance\":\"do outputs meaningfully address what the item asked for?\"},
  \"respond\":\"JSON object: {\\\"verdict\\\":\\\"SATISFIED\\\" or \\\"UNSATISFIED\\\", \\\"reason\\\":\\\"brief reason\\\", \\\"recommendation\\\":\\\"slash command from AVAILABLE COMMANDS, or empty if SATISFIED\\\"}\",
@@ -3090,6 +3116,8 @@ _agent_evaluate_milestone() {
    "build":"/build exit_0 required — /write alone NOT enough",
    "web_only":"INCOMPLETE",
    "reject":["todo","unimplemented","placeholder","stub","panic!()","empty body"]},
+ "image_requirement":"If the command run is '/web search', it is search-only and is COMPLETE if it returned links; it does NOT need to return image URLs. If the command is '/web fetch', '/web scrape', or '/download', it is INCOMPLETE if no image URLs were found or if the scraped 'images' list was empty. For '/vision', it is COMPLETE if it returned descriptive details or analysis of the image (even if accompanied by a disclaimer or request for the image).",
+ "cascade_fallback":"If the action log starts with '[CASCADE FALLBACK]', this indicates a fallback scrape occurred. In this case, you MUST ignore any URL mismatch between the milestone text and the fallback URL. Evaluate the output of the fallback URL instead. If the fallback fetch/scrape successfully captured content or images, the milestone is COMPLETE.",
  "respond":"JSON object: {\"verdict\":\"COMPLETE\" or \"INCOMPLETE\", \"reason\":\"brief reason\"}"}
 EVAL_P1_JSON
 )"
@@ -4330,8 +4358,8 @@ SPEC
   "scrape-images":"/web scrape-images <url> — alias for /web fetch / scrape. Returns structured JSON with text, images, and links.",
   "images":"/web images <query> — searches for image URLs by keyword (Serper API). Returns image URLs only."},
 "rules":["NO FLAGS: /web does NOT support --limit, --output, --source, --date, or ANY --flag. Use ONLY positional args: /web search <keywords> or /web fetch <url>","search=QUERY (keywords), fetch/scrape=URL — NEVER swap","/web fetch and scrape both return structured JSON with content text, images[], and links[]","scrape/fetch returns {url,title,content,images[],links[]} — pass images[] URLs to /vision","AVOID redundant searches — 1 search + 1-2 fetches/scrapes enough","For CODING: prefer /write,/build,/test over web research","ALWAYS derive search keywords from the TASK above — never from examples","LOCAL FILES: NEVER use /web fetch or /web scrape on local files or relative paths — use /read for text files, /vision for images","ONE URL PER COMMAND — never put multiple URLs in one /web call. To fetch/scrape 3 pages, output 3 separate /web fetch/scrape lines across 3 steps.","The URL must be the LAST token on the line — nothing after it. No trailing text, no next command.","NEVER fabricate or guess URLs — ONLY use URLs that appeared in prior /web search results or were provided by the user. If you need a URL, run /web search first.","For Wikimedia Commons pages: NEVER guess the raw upload.wikimedia.org file URL. Download the PNG/JPG thumbnail URL from the images[] list directly (which is valid), or search for a direct image URL elsewhere."],
-"search_tips":["3-5 keywords MAX — Google FAILS with long queries","Drop filler: the/a/for/including/regarding/comprehensive","NEVER paste entire milestone as search query","Extract keywords from TASK context only"],
-"FLOW CHAINS":["Text research: /web search -> /web fetch -> summarize","Scrape workflow: /web search -> /web scrape -> summarize","Image research (direct): /web scrape <url> -> /vision <image_url_from_images[]>","Image download workflow: /web scrape <url> -> /download <image_url_from_images[]> [destination] -> /vision <destination>","Report: /web search -> /web fetch -> /write report"],
+"search_tips":["Use precise keywords with unique identifying context (e.g. project/author/topic name like 'JJ Kelly Intellopy author' instead of just 'JJ Kelly')","Drop generic filler: the/a/for/including/regarding/comprehensive","NEVER paste the entire milestone verbatim as a search query","Extract keywords from TASK context only"],
+"FLOW CHAINS":["Text research: /web search -> /web fetch -> summarize","Scrape workflow: /web search -> /web scrape -> summarize","Image search & analyze: /web images <query> -> /vision <image_url>","Image research (direct): /web scrape <url> -> /vision <image_url_from_images[]>","Image download workflow: /web scrape <url> -> /download <image_url_from_images[]> [destination] -> /vision <destination>","Report: /web search -> /web fetch -> /write report"],
 "notes":["Do NOT fetch every URL. 1 search + 1-2 fetches/scrapes enough","If scrape-images returns empty content, use /web fetch for same URL instead","/web fetch and /web scrape require a full https:// URL — for local files use /read or /vision instead"],
 "format_only_ex":["/web search <keywords>","/web fetch <url>","/web scrape <url>","/web scrape-images <url>","/web images <keywords>"],
 "fill":{"<keywords>":"3-5 search terms derived from the TASK","<url>":"full https:// URL from search results or task — NEVER a local file path"}}
@@ -6437,7 +6465,7 @@ INTERLOCK_JSON
                 fi
 
                 # ── WEB IMAGES QUEUE POPULATION ──────────────
-                if { [[ "$cmd" == /web\ scrape\ * ]] || [[ "$cmd" == /web\ scrape-images\ * ]] || [[ "$cmd" == /web\ scrapeimages\ * ]] || [[ "$cmd" == /web\ fetch\ * ]]; } && [ "$exit_code" -eq 0 ]; then
+                if { [[ "$cmd" == /web\ scrape\ * ]] || [[ "$cmd" == /web\ scrape-images\ * ]] || [[ "$cmd" == /web\ scrapeimages\ * ]] || [[ "$cmd" == /web\ fetch\ * ]] || [[ "$cmd" == /web\ images\ * ]]; } && [ "$exit_code" -eq 0 ]; then
                     local _image_queue_file="$AGENT_TASK_WORKSPACE/web_image_queue.txt"
                     if [ -n "${AGENT_TASK_WORKSPACE:-}" ]; then
                         mkdir -p "$AGENT_TASK_WORKSPACE"
@@ -6473,9 +6501,13 @@ INTERLOCK_JSON
                 fi
                 
                 # ── WEB FETCH CASCADE RETRY ──────────────────
-                if [[ "$cmd" == /web\ fetch\ * ]] && [ "${AGENT_WEB_FETCH_CASCADE:-1}" -eq 1 ]; then
-                    local _primary_url
-                    _primary_url=$(echo "$cmd" | sed 's|^/web fetch *||' | awk '{print $1}')
+                if { [[ "$cmd" == /web\ fetch\ * ]] || [[ "$cmd" == /web\ scrape\ * ]] || [[ "$cmd" == /web\ read\ * ]] || [[ "$cmd" == /web\ scrape-images\ * ]]; } && [ "${AGENT_WEB_FETCH_CASCADE:-1}" -eq 1 ]; then
+                    local _primary_url _cmd_prefix
+                    _cmd_prefix=$(echo "$cmd" | awk '{print $1 " " $2}')
+                    if [[ "$_cmd_prefix" == "/web fetch" ]] || [[ "$_cmd_prefix" == "/web scrape" ]] || [[ "$_cmd_prefix" == "/web scrape-images" ]]; then
+                        _cmd_prefix="/web scrape"
+                    fi
+                    _primary_url=$(echo "$cmd" | sed -E 's#^/web (fetch|scrape|read|scrape-images) *##' | awk '{print $1}')
                     if [ "$exit_code" -ne 0 ] || _is_junk_output "$output"; then
                         local _queue_file="$AGENT_TASK_WORKSPACE/web_fetch_queue.txt"
                         if [ -f "$_queue_file" ]; then
@@ -6491,7 +6523,7 @@ INTERLOCK_JSON
                                 fi
                                 
                                 ui_warn "Primary fetch failed. Cascading to fallback: $_fb_url"
-                                local _fb_cmd="/web fetch $_fb_url"
+                                local _fb_cmd="$_cmd_prefix $_fb_url"
                                 local _fb_output
                                 local _fb_exit
                                 _fb_output=$(commands_dispatch "$_fb_cmd" "$workdir" 2>&1)
@@ -8269,10 +8301,11 @@ SERVICES STATUS: ${_svc_status:-unknown}
   - /sandbox: Use to isolate testing/building of code. Never run slash commands inside it.
   - File References: File paths (e.g. report.md) in /social, /email, /respond arguments are automatically expanded to their contents.
   - Research Flow: Follow up a /web search by fetching/scraping relevant URLs using '/web fetch' or '/web scrape' to gather details.
-  - Image Flow: To find or describe an image/logo from a website, first scrape the page using '/web scrape <url>'. If direct image URLs are found in 'web_image_queue.txt' or returned, analyze them directly with '/vision <image_url>'. Only use '/download' if explicitly requested.
+  - Image Flow: To find or describe an image/logo of a person, object, or topic, first search for image URLs directly using '/web images <query>'. If you need to find an image from a specific website, scrape the page using '/web scrape <url>'. Once you have image URLs (from /web images, /web scrape, or queue), analyze them directly with '/vision <image_url>'. Only use '/download' if explicitly requested.
   - Discord Sync: Sync channels and users before posting to channel names for the first time.
   - Run Code: Always verify newly created/modified scripts using /build or /test before distributing outputs or concluding.
 * Pivoting & Error Adaptability:
+  - If a /web fetch or /web scrape fails, returns empty/blocked content, or is blacklisted, you MUST treat that URL as blocked and unusable. Choose a DIFFERENT URL from the search results or queue instead. DO NOT repeat the failed URL.
   - If a prior milestone fails, returns an error/JUNK, or succeeds only via a fallback/alternative route, you must treat the original specific path, file, or resource as blocked or unusable.
   - DO NOT repeat the failed command or attempt to access the blocked resource again.
   - Adapt: pivot to alternative approaches, search for different sources/queries, try different command tools, or rewrite/restructure the remaining milestones.
