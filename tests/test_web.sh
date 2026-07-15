@@ -606,12 +606,12 @@ describe "web_images"
     _teardown_web
   }
 
-  it "returns error without SERPER_API_KEY" && {
+  it "falls back to _web_search_ddg_images without SERPER_API_KEY" && {
     _setup_web
-    # Ensure no key is set
     unset SERPER_API_KEY 2>/dev/null
-    web_images "test query" 2>/dev/null
-    assert_fail $?
+    _web_search_ddg_images() { return 99; }
+    web_images "test query"
+    assert_eq "$?" "99"
     _teardown_web
   }
 

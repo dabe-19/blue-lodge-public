@@ -1825,7 +1825,7 @@ llm_generate() {
         models_current_has_thinking && _can_think=1
         local _think_pending=""
         local _response_pending=""
-        local _think_detect_limit=200
+        local _think_detect_limit=4000
 
         # Debug tty echo helper (same as Ollama path)
         _gen_tty() {
@@ -2147,7 +2147,7 @@ llm_generate() {
     local _response_pending=""    # buffer to detect <think> at start of response
     # Ministral needs a larger buffer — it may emit a few words of preamble
     # before starting <think> tags. 200 chars catches most cases.
-    local _think_detect_limit=200
+    local _think_detect_limit=4000
 
     # ── Debug tty echo helper ─────────────────────────────────
     # When LODGE_DEBUG=1, echo response tokens to tty (dimmed) so
@@ -2505,7 +2505,7 @@ llm_stream() {
         models_current_has_thinking && _can_think=1
         local _think_pending=""
         local _response_pending=""
-        local _think_detect_limit=200
+        local _think_detect_limit=4000
 
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream(llamacpp) think: _can_think=%s model=%s LODGE_THINK=%s\n" "$_can_think" "$LODGE_MODEL" "${LODGE_THINK:-0}" > "$_tty" 2>/dev/null
 
@@ -2848,7 +2848,7 @@ llm_stream() {
     local _think_pending=""       # fallback mode: buffer for split </think>
     local _response_pending=""    # buffer to detect <think> at start of response
     # Ministral needs a larger buffer — it may emit preamble before <think>.
-    local _think_detect_limit=200
+    local _think_detect_limit=4000
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] stream think: _can_think=%s model=%s LODGE_THINK=%s\n" "$_can_think" "$LODGE_MODEL" "${LODGE_THINK:-0}" > "$_tty" 2>/dev/null
 

@@ -2324,8 +2324,64 @@ web_images() {
         return $?
     fi
 
-    ui_err "Image search requires SERPER_API_KEY. Set with: /secret set SERPER_API_KEY <key>"
-    return 1
+    # Fallback to DuckDuckGo Images search
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+        ui_dim "  [debug] web_images: Serper key missing — falling back to DuckDuckGo Images" >&2
+    _web_search_ddg_images "$query" "$count"
+    return $?
+}
+
+_web_search_ddg_images() {
+    local query="$1"
+    local count="$2"
+
+    local encoded
+    encoded=$(printf '%s' "$query" | jq -sRr @uri)
+
+    local html
+    html=$(curl -sL --connect-timeout 5 --max-time 10 \
+        -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36" \
+        -H "Referer: https://duckduckgo.com/" \
+        "https://duckduckgo.com/?q=$encoded" 2>/dev/null)
+    
+    local vqd
+    vqd=$(echo "$html" | grep -o 'vqd=[^&]*' | head -1 | cut -d= -f2 | tr -d '"' | cut -d, -f1)
+    if [ -z "$vqd" ]; then
+        ui_warn "Failed to retrieve DuckDuckGo security token (vqd)"
+        return 1
+    fi
+
+    local resp
+    resp=$(curl -sL --connect-timeout 5 --max-time 10 \
+        -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36" \
+        -H "Referer: https://duckduckgo.com/" \
+        "https://duckduckgo.com/i.js?q=$encoded&vqd=$vqd&o=json" 2>/dev/null)
+
+    local raw_results
+    raw_results=$(echo "$resp" | jq -r --argjson limit "$count" '.results[0:$limit][]? | "\(.title)|\(.image)|\(.width)x\(.height)|\(.url)"' 2>/dev/null)
+
+    if [ -z "$raw_results" ]; then
+        ui_warn "No image results for: $query"
+        return 1
+    fi
+
+    local output=""
+    local i=1
+    while IFS='|' read -r title image_url dimensions source_url; do
+        # Sanitize the image URL
+        local clean_url
+        clean_url=$(_web_sanitize_url "$image_url")
+        [ -z "$clean_url" ] && continue
+
+        local entry
+        entry=$(printf '[%d] %s\n    %s (%s)\n    Source: %s\n' "$i" "$title" "$clean_url" "$dimensions" "$source_url")
+        output="${output}${entry}\n"
+        printf '[%d] %s\n    %s (%s)\n    Source: %s\n\n' "$i" "$title" "$clean_url" "$dimensions" "$source_url"
+        i=$((i + 1))
+    done <<< "$raw_results"
+
+    # Journal the image results for agent memory
+    _web_journal_results "$query" "$output" "ddg-images"
 }
 
 _web_search_serper_images() {
