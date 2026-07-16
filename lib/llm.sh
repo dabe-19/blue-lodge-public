@@ -1962,7 +1962,6 @@ ${prompt}"
         fi
 
         if [ "$_use_fifo" -eq 1 ]; then
-            echo "$payload" > "/workspace/.george/payload.json"
             $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
                 "$LLAMA_CPP_URL/v1/chat/completions" \
                 -H "Content-Type: application/json" \
