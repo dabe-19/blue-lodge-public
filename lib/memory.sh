@@ -310,15 +310,15 @@ $_ask_journal"
 
 Files: $_ask_files"
 
-        # Add 1 recall chunk if available (not 3)
+        # Add up to 2 recall chunks if available for conversational context
         if [ -n "$task_hint" ] && declare -f recall_search_context &>/dev/null; then
             local recall_ctx
-            recall_ctx=$(recall_search_context "$task_hint" 1 2>/dev/null)
+            recall_ctx=$(recall_search_context "$task_hint" 2 500 2>/dev/null)
             if [ -n "$recall_ctx" ]; then
-                # Cap recall to ~200 chars
                 prompt="$prompt
 
-${recall_ctx:0:200}"
+[Recalled Context]
+$recall_ctx"
             fi
         fi
 

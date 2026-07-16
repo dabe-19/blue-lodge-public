@@ -56,7 +56,7 @@ LLAMA_CPP_FA="${LLAMA_CPP_FA:-auto}"
 # Global constrained-decoding toggle.
 # 0 = disable all GBNF grammar attachment (default)
 # 1 = enable schema grammar loading/attachment when a schema is requested
-LLM_GRAMMAR_ENABLED="${LLM_GRAMMAR_ENABLED:-1}"
+LLM_GRAMMAR_ENABLED="${LLM_GRAMMAR_ENABLED:-0}"
 # Backend preference: llamacpp (default — auto-starts when needed), ollama, auto
 # Persisted to .george/lodge.conf along with token limits, budgets, sampling
 # params, and debug mode so they survive sessions.
@@ -200,7 +200,7 @@ LLM_BUDGET_AGENT="${LLM_BUDGET_AGENT:-4096}"  # Think budget for strategist/spec
 LLM_BUDGET_ROUTER="${LLM_BUDGET_ROUTER:-4096}" # Think budget for router (pick tool + brief reasoning)
 LLM_BUDGET_JOURNAL="${LLM_BUDGET_JOURNAL:-4096}" # Think budget for journal (background utility)
 LLM_BUDGET_TOOL="${LLM_BUDGET_TOOL:-4096}"    # Think budget for tools (commit, web, recall, slash)
-LODGE_THINK_LEVEL="${LODGE_THINK_LEVEL:-2}" # Configurable thinking depth: 1=low, 2=medium, 3=high
+LODGE_THINK_LEVEL="${LODGE_THINK_LEVEL:-1}" # Configurable thinking depth: 1=low, 2=medium, 3=high
 
 _llm_resolve_think_budget() {
     local base_budget="$1"
@@ -254,7 +254,7 @@ LLM_TIMEOUT="${LLM_TIMEOUT:-600}"           # Safety net: 600s max per request (
 LLM_KEEP_ALIVE="${LLM_KEEP_ALIVE:-30m}"     # How long model stays loaded after last request
 LODGE_THINK="${LODGE_THINK:-0}"               # 1=show thinking tokens dimmed, 0=hide thinking tokens (default)
 LODGE_THINK_STREAM="${LODGE_THINK_STREAM:-1}"  # When LODGE_THINK=1: 0=hide thinking, 1=show dimmed, 2=show bright (cyan)
-LODGE_NOTHINK="${LODGE_NOTHINK:-1}"             # 0=model thinks normally, 1=suppress reasoning (default)
+LODGE_NOTHINK="${LODGE_NOTHINK:-0}"             # 0=model thinks normally, 1=suppress reasoning (default)
 LODGE_DEBUG="${LODGE_DEBUG:-0}"                 # 0=normal, 1=show timers + token counts per LLM call
 
 # ── Thinking model token multiplier ────────────────────────────
@@ -1923,6 +1923,7 @@ llm_generate() {
         # In pipe mode the loop runs in a subshell (right side of |), so
         # variable updates (_dbg_out etc.) are lost — acceptable trade-off.
         _llm_gen_sse_loop() {
+        local _reasoning_content_active=0
         while IFS= read -r line; do
             [ -f "$_cancel_file" ] && break
 
@@ -1994,6 +1995,7 @@ llm_generate() {
             fi
 
             if [ -n "$_rc" ]; then
+                _reasoning_content_active=1
                 [ -f "$_got_tokens" ] || touch "$_got_tokens"
                 _dbg_out=$((_dbg_out + 1))
                 if [ "$_think_banner_open" -eq 0 ] && [ "$_can_think" -eq 1 ]; then
@@ -2006,12 +2008,13 @@ llm_generate() {
                 continue
             fi
             # Close think banner when switching from reasoning to content
-            if [ "$_in_think_block" -eq 1 ] && [ -n "$token" ] && [ "$_think_banner_open" -eq 1 ]; then
+            if [ "$_in_think_block" -eq 1 ] && [ -n "$token" ] && [ "$_think_banner_open" -eq 1 ] && [ "$_reasoning_content_active" -eq 1 ]; then
                 _think_banner_open=0
                 _in_think_block=0
                 _llm_think_close "$_tty"
                 _response_pending=""
                 _can_think=0  # disable inline detection — server handles it
+                _reasoning_content_active=0
             fi
 
             # ── Capture usage stats from SSE chunks ──────────────

@@ -2,13 +2,13 @@
 # Used by _agent_honeydew_rewrite() in lib/agent.sh
 # Layer 1 constrained decoding for llama-server grammar param
 
-root          ::= reasoning_block ws resp_root | ws resp_root
+root          ::= thinking ws response | ws response
 
-resp_root     ::= "<response>" ws json_root ws "</response>" | json_root
+response      ::= "<response>" ws json ws "</response>" | json
 
-json_root     ::= "{" ws "\"classify\":" ws verdict_val "," ws "\"reason\":" ws string ws "}"
+json          ::= "{" ws "\"classify\":" ws verdict "," ws "\"reason\":" ws string ws "}"
 
-verdict_val   ::= "\"REWRITE\"" | "\"KEEP\""
+verdict       ::= "\"REWRITE\"" | "\"KEEP\""
 
 # ── String rule: quote-preserving (default) ────────────────
 # Allows escaped quotes, backslashes, and standard JSON escapes
@@ -16,16 +16,9 @@ verdict_val   ::= "\"REWRITE\"" | "\"KEEP\""
 char          ::= [^"\\] | "\\" ["\\/bfnrt]
 string        ::= "\"" char* "\""
 
-reasoning_block ::= "<think>" reasoning_text "</think>"
-                  | reasoning_text "</think>"
-                  | "<|channel>thought" reasoning_text "<channel|>"
-                  | reasoning_text "<channel|>"
-                  | "[" [tT][hH][iI][nN][kK] "]" reasoning_text_bracket "[/" [tT][hH][iI][nN][kK] "]"
-                  | reasoning_text_bracket "[/" [tT][hH][iI][nN][kK] "]"
-                  | "[" [tT][hH][oO][uU][gG][hH][tT] "]" reasoning_text_bracket "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
-                  | reasoning_text_bracket "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
+thinking      ::= "<think>" inner "</think>" | "<|channel>thought" inner "<channel|>" | "[" [tT][hH][iI][nN][kK] "]" bracketed "[/" [tT][hH][iI][nN][kK] "]" | "[" [tT][hH][oO][uU][gG][hH][tT] "]" bracketed "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
 
-reasoning_text    ::= [^<]*
-reasoning_text_bracket ::= [^\[]*
+inner         ::= [^<]*
+bracketed     ::= [^\[]*
 
 ws            ::= [ \t\n]*

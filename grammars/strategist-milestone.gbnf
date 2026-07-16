@@ -2,21 +2,14 @@
 # Used by macro loop in lib/agent.sh
 # Layer 1 constrained decoding for llama-server grammar param
 
-root          ::= reasoning_block ws milestone_text | ws milestone_text
+root          ::= thinking ws milestone | ws milestone
 
 # Allow any characters except braces, angle brackets, and backticks to prevent JSON/HTML/code leakage
-milestone_text ::= [^{}<>`\t\n\r]+
+milestone     ::= [^{}<>`\t\n\r]+
 
-reasoning_block ::= "<think>" reasoning_text "</think>"
-                  | reasoning_text "</think>"
-                  | "<|channel>thought" reasoning_text "<channel|>"
-                  | reasoning_text "<channel|>"
-                  | "[" [tT][hH][iI][nN][kK] "]" reasoning_text_bracket "[/" [tT][hH][iI][nN][kK] "]"
-                  | reasoning_text_bracket "[/" [tT][hH][iI][nN][kK] "]"
-                  | "[" [tT][hH][oO][uU][gG][hH][tT] "]" reasoning_text_bracket "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
-                  | reasoning_text_bracket "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
+thinking      ::= "<think>" inner "</think>" | inner "</think>" | "<|channel>thought" inner "<channel|>" | inner "<channel|>" | "[" [tT][hH][iI][nN][kK] "]" bracketed "[/" [tT][hH][iI][nN][kK] "]" | bracketed "[/" [tT][hH][iI][nN][kK] "]" | "[" [tT][hH][oO][uU][gG][hH][tT] "]" bracketed "[/" [tT][hH][oO][uU][gG][hH][tT] "]" | bracketed "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
 
-reasoning_text    ::= ( [^<] | "<" [^/c|t] )*
-reasoning_text_bracket ::= ( [^\[] | "[" [^/] )*
+inner         ::= [^<]*
+bracketed     ::= [^\[]*
 
 ws            ::= [ \t\n]*

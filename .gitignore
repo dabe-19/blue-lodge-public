@@ -8,4 +8,8 @@
 /responses/
 /system_shield/
 models/*.gguf
+/GEORGE.md
+/journal.md
+/journal.md.sig 
+
 

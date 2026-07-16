@@ -185,7 +185,16 @@ _agent_thinking_context_limit() {
 #
 # Usage: cleaned=$(echo "$raw" | _strip_think_blocks)
 _strip_think_blocks() {
-    awk 'BEGIN { skip=0 }
+    local input
+    input=$(cat)
+    if [[ "$input" == *"</think>"* && "$input" != *"<think>"* ]]; then
+        input="${input#*</think>}"
+    elif [[ "$input" == *"[/think]"* && "$input" != *"[think]"* ]]; then
+        input="${input#*[/think]}"
+    elif [[ "$input" == *"[/thought]"* && "$input" != *"[thought]"* ]]; then
+        input="${input#*[/thought]}"
+    fi
+    echo "$input" | awk 'BEGIN { skip=0 }
     {
         # Normalize Gemma 4 reasoning channel tags to standard think tags
         gsub(/<\|channel>thought/, "<think>")
@@ -222,12 +231,24 @@ _strip_think_blocks() {
                 next
             }
             if (match($0, /\[\/[tT][hH][iI][nN][kK]\]/)) {
+                if (match($0, /:[[:space:]]*\[\/[tT][hH][iI][nN][kK]\]/)) {
+                    sub(/\[\/[tT][hH][iI][nN][kK]\]/, "[", $0)
+                    skip=0
+                    if (length($0) > 0) print $0
+                    next
+                }
                 sub(/.*\[\/[tT][hH][iI][nN][kK]\]/, "", $0)
                 skip=0
                 if (length($0) > 0) print $0
                 next
             }
             if (match($0, /\[\/[tT][hH][oO][uU][gG][hH][tT]\]/)) {
+                if (match($0, /:[[:space:]]*\[\/[tT][hH][oO][uU][gG][hH][tT]\]/)) {
+                    sub(/\[\/[tT][hH][oO][uU][gG][hH][tT]\]/, "[", $0)
+                    skip=0
+                    if (length($0) > 0) print $0
+                    next
+                }
                 sub(/.*\[\/[tT][hH][oO][uU][gG][hH][tT]\]/, "", $0)
                 skip=0
                 if (length($0) > 0) print $0
@@ -281,31 +302,30 @@ _agent_extract_json() {
     cleaned=$(echo "$cleaned" | sed 's/\*\+//g' | sed '/^[[:space:]]*$/d' | \
               sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
-    # Step 4: Extract the first JSON object {...}
-    # Use awk to find balanced braces — handles nested objects
+    # Step 4: Extract the first balanced JSON object {...} starting from any '{'
     local json_obj
     json_obj=$(echo "$cleaned" | awk '
-        BEGIN { depth=0; capturing=0; output="" }
+        BEGIN { RS="^$" }
         {
-            for (i=1; i<=length($0); i++) {
-                c = substr($0, i, 1)
-                if (c == "{" && !capturing) {
-                    capturing = 1
-                    depth = 1
-                    output = c
-                } else if (capturing) {
-                    output = output c
-                    if (c == "{") depth++
-                    else if (c == "}") {
-                        depth--
-                        if (depth == 0) {
-                            print output
-                            exit 0
+            for (start_pos = 1; start_pos <= length($0); start_pos++) {
+                if (substr($0, start_pos, 1) == "{") {
+                    depth = 0
+                    output = ""
+                    for (i = start_pos; i <= length($0); i++) {
+                        c = substr($0, i, 1)
+                        output = output c
+                        if (c == "{") {
+                            depth++
+                        } else if (c == "}") {
+                            depth--
+                            if (depth == 0) {
+                                print output
+                                exit 0
+                            }
                         }
                     }
                 }
             }
-            if (capturing) output = output "\n"
         }
     ')
 
@@ -1679,6 +1699,11 @@ _agent_honeydew_needs_expansion() {
         return 0
     fi
 
+    # 7. Conditional tasks — needs branching/explicit check steps
+    if [[ "$lower" =~ (if|else|otherwise|check|verify|whether) ]]; then
+        return 0
+    fi
+
     return 1
 }
 
@@ -2321,6 +2346,19 @@ _agent_smart_route() {
         fi
     fi
 
+    # ── Download to Vision smart-routing ───────────────────
+    # If the command is /download and the argument points to an image file
+    # or an image URL (e.g. ending in jpg, png, etc.), reroute to /vision
+    # to automatically download and analyze it in one go.
+    if [ "$_sr_base" = "/download" ]; then
+        local _sr_lower_arg
+        _sr_lower_arg=$(echo "$_sr_arg" | tr '[:upper:]' '[:lower:]')
+        if [[ "$_sr_lower_arg" =~ \.(jpg|jpeg|png|gif|webp|bmp)$ ]] || [[ "$_sr_lower_arg" =~ /images/ ]] || [[ "$_sr_lower_arg" =~ /photos/ ]]; then
+            _sr_new="/vision $_sr_arg"
+            _sr_reason="image target detected — auto-routing /download to /vision for direct analysis"
+        fi
+    fi
+
     # ── Apply substitution ─────────────────────────────────
     if [ -n "$_sr_new" ]; then
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] smart-route: $_sr_base -> ${_sr_new%% *} | $_sr_reason"
@@ -2577,6 +2615,8 @@ Rewrite ONLY the pending items to better serve the original task based on what t
 
 IMPORTANT: Consolidate redundant or overlapping items. If two pending items describe essentially the same work (e.g., 'summarize events' and 'present information concisely'), merge them into ONE clear item. Fewer focused items are always better than many overlapping ones.
 
+IF/ELSE BRANCHING: If the completed milestones reveal that a primary path is blocked or failed (e.g., file not found, service down, or check returned negative), rewrite the pending items to execute the alternative fallback branch or recovery steps. Avoid planning for the failed branch.
+
 $(cat << 'REWRITE_JSON'
 {"output":"JSON object: {\"items\":[{\"task\":\"imperative sentence\"},...]} OR numbered list",
  "each_item":"imperative sentence preserving key context from the original task (such as names, projects, files, or specific targets) — WHAT to achieve, not HOW",
@@ -2800,7 +2840,7 @@ _agent_evaluate_honeydew_item() {
     # Small local models (4B) get context-poisoned by the extra text
     # and start hallucinating satisfaction where there is none.
     local _prior_milestones=""
-    if [ -n "${GEORGE_PROVIDER:-}" ] && [ -n "$macro_file" ] && [ -f "$macro_file" ]; then
+    if [ -n "$macro_file" ] && [ -f "$macro_file" ]; then
         _prior_milestones=$(_macro_milestones_json "$macro_file" 5 | \
             jq -r '.[] | "[\(.status // "DONE")] \(.objective // "?"): \(.summary // "no summary")"' 2>/dev/null)
     fi
@@ -2912,7 +2952,7 @@ _agent_evaluate_honeydew_item() {
 
     local _sys_cross=""
     [ -n "$_prior_milestones" ] && _sys_cross=" Judge whether this item was accomplished by ANY work so far — current action log OR prior completed milestones. If a prior milestone already did what the item asks, answer SATISFIED."
-    local eval_sys="Honeydew item evaluator.${_sys_cross} For current actions, judge from ACTUAL COMMAND OUTPUTS — ignore milestone pass/fail status. ${_eval_output_hint} Verify relevance to original request (dates, topics, scope). No markdown. Respond with JSON: {\"verdict\":\"SATISFIED\" or \"UNSATISFIED\", \"reason\":\"brief reason\", \"recommendation\":\"slash command or empty\"}. If UNSATISFIED, recommendation must be a /command from the AVAILABLE COMMANDS list."
+    local eval_sys="You are a strict Honeydew Item Evaluator. Evaluate ONLY the specific HONEYDEW ITEM TO EVALUATE below. Do NOT require the entire ORIGINAL USER REQUEST to be finished to mark this item SATISFIED. If the narrow task asked for in the honeydew item has been done (either by the current action log or a prior milestone), verdict MUST be SATISFIED.${_sys_cross} For current actions, judge from ACTUAL COMMAND OUTPUTS — ignore milestone pass/fail status. ${_eval_output_hint} Verify relevance to original request (dates, topics, scope). No markdown. Respond with JSON: {\"verdict\":\"SATISFIED\" or \"UNSATISFIED\", \"reason\":\"brief reason\", \"recommendation\":\"slash command or empty\"}. If UNSATISFIED, recommendation must be a /command from the AVAILABLE COMMANDS list."
 
     # ── Inject reflexive context into honeydew evaluator ─────
     # When metacog reports stuck/saturated or soul gate rejections,
@@ -3137,7 +3177,7 @@ _agent_evaluate_milestone() {
    "build":"/build exit_0 required — /write alone NOT enough",
    "web_only":"INCOMPLETE",
    "reject":["todo","unimplemented","placeholder","stub","panic!()","empty body"]},
- "image_requirement":"If the command run is '/web search', it is search-only and is COMPLETE if it returned links; it does NOT need to return image URLs. If the command is '/web fetch', '/web scrape', or '/download', it is INCOMPLETE if no image URLs were found or if the scraped 'images' list was empty. For '/vision', it is COMPLETE if it returned descriptive details or analysis of the image (even if accompanied by a disclaimer or request for the image).",
+ "image_requirement":"If the command run is '/web search', it is search-only and is COMPLETE if it returned links; it does NOT need to return image URLs. If the command is '/web fetch', '/web scrape', or '/download', it is INCOMPLETE if no image URLs were found or if the scraped 'images' list was empty. For '/vision', it is COMPLETE if it returned descriptive details or analysis of the image (even if accompanied by a disclaimer or request for the image). If the milestone requested a download, and the action log shows a successful /vision command on that target image, it is COMPLETE (since vision automatically downloads and processes the image).",
  "cascade_fallback":"If the action log starts with '[CASCADE FALLBACK]', this indicates a fallback scrape occurred. In this case, you MUST ignore any URL mismatch between the milestone text and the fallback URL. Evaluate the output of the fallback URL instead. If the fallback fetch/scrape successfully captured content or images, the milestone is COMPLETE.",
  "respond":"JSON object: {\"verdict\":\"COMPLETE\" or \"INCOMPLETE\", \"reason\":\"brief reason\"}"}
 EVAL_P1_JSON
@@ -4152,7 +4192,63 @@ _specialist_key_status() {
     [ -n "$parts" ] && echo "KEYS: $parts"
 }
 
+_format_syntax_cards() {
+    local line buffer="" in_json=0
+    while IFS= read -r line; do
+        if [ "$in_json" -eq 1 ]; then
+            buffer+="$line"$'\n'
+            if echo "$buffer" | jq -e . >/dev/null 2>&1; then
+                echo "$buffer" | jq -r '
+                  to_entries | 
+                  map(
+                    "  " + (.key | ascii_upcase) + ": " + 
+                    if (.value | type) == "array" then
+                      "\n" + (.value | map("    - " + .) | join("\n"))
+                    elif (.value | type) == "object" then
+                      "\n" + (.value | to_entries | map("    - " + .key + ": " + .value) | join("\n"))
+                    else
+                      (.value | tostring)
+                    end
+                  ) | join("\n")
+                ' 2>/dev/null || echo "$buffer"
+                buffer=""
+                in_json=0
+            fi
+        elif [[ "$line" == \{* ]]; then
+            buffer="$line"$'\n'
+            if echo "$buffer" | jq -e . >/dev/null 2>&1; then
+                echo "$buffer" | jq -r '
+                  to_entries | 
+                  map(
+                    "  " + (.key | ascii_upcase) + ": " + 
+                    if (.value | type) == "array" then
+                      "\n" + (.value | map("    - " + .) | join("\n"))
+                    elif (.value | type) == "object" then
+                      "\n" + (.value | to_entries | map("    - " + .key + ": " + .value) | join("\n"))
+                    else
+                      (.value | tostring)
+                    end
+                  ) | join("\n")
+                ' 2>/dev/null || echo "$buffer"
+                buffer=""
+            else
+                in_json=1
+            fi
+        else
+            echo "$line"
+        fi
+    done
+    if [ -n "$buffer" ]; then
+        echo -n "$buffer"
+    fi
+}
+
+
 _build_specialist_prompt() {
+    _build_specialist_prompt_raw "$@" | _format_syntax_cards
+}
+
+_build_specialist_prompt_raw() {
     local cmd_name="$1"
     local workdir="$2"
     local micro_objective="$3"  # Optional: used to rerank docs by objective keywords
@@ -5508,7 +5604,7 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         if [[ "${selected_tool#/}" == "web" ]]; then
             _spec_tail="Output ONLY ONE /web command. ONE URL per command — the URL is the LAST thing on the line, nothing after it. For /web search: extract 3-5 keywords FROM THE MICRO OBJECTIVE above. Drop filler words (the, a, for, in, to, and, or, about, including, regarding, comprehensive, professional, community, organizations, associations). DO NOT copy examples — derive keywords from the objective. NEVER output just '/web search' without keywords. To fetch multiple pages, use separate steps — one /web fetch per step.\nRULES: NO --limit, --source, --date, --output, or ANY --flag. Positional args only: /web search <keywords> or /web fetch <url>"
         elif [[ "${selected_tool#/}" == "social" ]]; then
-            _spec_tail="Write the COMPLETE /social command. If a file path is mentioned in the objective, use ONLY that file path as the message argument (do NOT write the file contents inline). Positional args only: /social discord dm <user> <message_or_filepath> or /social post discord <channel> <message_or_filepath>."
+            _spec_tail="Write the COMPLETE /social command. CRITICAL: Pull the FULL, UNABRIDGED description or message content from the ACTION LOG above. Do NOT truncate, summarize, or abbreviate the text — include EVERY word and sentence from the original source (e.g. /vision output, /web fetch result, or brainstorm). If a file path is mentioned in the objective, use ONLY that file path as the message argument (file contents auto-expand). For long content (3+ sentences), prefer: /write description.md <full content> first, then /social ... description.md. Positional args only: /social discord dm <user> <message_or_filepath> or /social post discord <channel> <message_or_filepath>."
         elif [[ "${selected_tool#/}" =~ ^(write|save|append|edit)$ ]]; then
             _spec_tail="Write the COMPLETE command with all arguments. You MUST use \\n characters to represent newlines in the file content, and output the entire command on exactly ONE line. Do NOT use literal line breaks. Example: /write file.txt Line 1\\\\nLine 2"
         fi
@@ -5567,6 +5663,7 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         local action_plan
         local LLM_SCENARIO=agent
         action_plan=$(llm_generate "$specialist_prompt" "$specialist_sys" "$_spec_tokens" "$LLM_BUDGET_AGENT")
+        action_plan=$(echo "$action_plan" | _strip_think_blocks)
 
         # Transcript: log specialist response
         declare -f transcript_log_block &>/dev/null && transcript_log_block "specialist" "$action_plan"
@@ -7914,52 +8011,50 @@ MEMEOF
         # Build the command catalog dynamically based on locks and config.
         # This replaces the fragmented, heuristic-based cards.
         local _tool_summary='YOUR WORKING COMMANDS:
-{"YOUR_WORKING_COMMANDS":{
-  "/write <path> <code>":"write a complete NEW file with the given code/text.",
-  "/append <path> <code>":"append content to the END of an existing file.",
-  "/edit <path> <sed>":"apply targeted search-and-replace edits to a file (s/old/new/g).",
-  "/read <path>":"read and view a local file contents.",
-  "/ls [path]":"list files in a directory.",
-  "/grep \"<pattern>\" [path]":"search files for a regex pattern.",
-  "/cd <path>":"change active working directory.",
-  "/init <name> <type>":"scaffold a NEW software code project (rust, python, etc.). Do NOT use for text/list compiling.",
-  "/build":"compile/build an existing software code project (cargo build, make, etc.). ONLY for software code compilation.",
-  "/test":"run the project test suite.",
-  "/fix":"auto-fix software build/test errors.",
-  "/vitals [context]":"query live system resource usage (RAM, disk space, battery status).",'
-        [ "${AGENT_ASK_USER:-1}" -eq 1 ] && _tool_summary="${_tool_summary}"'
-  "/ask <question>":"ask the human operator a question for user-specific details.",'
-        [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _tool_summary="${_tool_summary}"'
-  "/brainstorm <topic>":"self-reason and brainstorm topics/ideas before acting. Alias: /q.",'
+  /write <path> <code>: write a complete NEW file with the given code/text.
+  /append <path> <code>: append content to the END of an existing file.
+  /edit <path> <sed>: apply targeted search-and-replace edits to a file (s/old/new/g).
+  /read <path>: read and view a local file contents.
+  /ls [path]: list files in a directory.
+  /grep "<pattern>" [path]: search files for a regex pattern.
+  /cd <path>: change active working directory.
+  /init <name> <type>: scaffold a NEW software code project (rust, python, etc.). Do NOT use for text/list compiling.
+  /build: compile/build an existing software code project (cargo build, make, etc.). ONLY for software code compilation.
+  /test: run the project test suite.
+  /fix: auto-fix software build/test errors.
+  /vitals [context]: query live system resource usage (RAM, disk space, battery status).'
+        [ "${AGENT_ASK_USER:-1}" -eq 1 ] && _tool_summary="${_tool_summary}
+  /ask <question>: ask the human operator a question for user-specific details."
+        [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _tool_summary="${_tool_summary}
+  /brainstorm <topic>: self-reason and brainstorm topics/ideas before acting. Alias: /q."
         if [ "$_web_locked" -eq 0 ]; then
             if [ "$_web_search_only" -eq 1 ]; then
-                _tool_summary="${_tool_summary}"'
-  "/web search <query>":"search the internet/web for URLs and snippets.",'
+                _tool_summary="${_tool_summary}
+  /web search <query>: search the internet/web for URLs and snippets."
             else
-                _tool_summary="${_tool_summary}"'
-  "/web search <query>":"search the internet/web for URLs and snippets.",
-  "/web fetch <url>":"retrieve/scrape structured JSON containing content, images[], and links[] from a URL.",
-  "/vision <image>":"describe the contents of a local or remote image.",'
+                _tool_summary="${_tool_summary}
+  /web search <query>: search the internet/web for URLs and snippets.
+  /web fetch <url>: retrieve/scrape structured JSON containing content, images[], and links[] from a URL.
+  /vision <image>: describe the contents of a local or remote image."
             fi
         fi
         if [ "$_git_locked" -eq 0 ]; then
-            _tool_summary="${_tool_summary}"'
-  "/git search <query>":"search public github repositories.",
-  "/git fetch <repo>":"scrape/fetch a github repository.",
-  "/git clone <repo>":"clone a repository locally.",'
+            _tool_summary="${_tool_summary}
+  /git search <query>: search public github repositories.
+  /git fetch <repo>: scrape/fetch a github repository.
+  /git clone <repo>: clone a repository locally."
         fi
         if echo "$_svc_status" | grep -qE 'CONFIGURED:.*(discord|telegram|mastodon|x/twitter|bluesky|email)'; then
-            _tool_summary="${_tool_summary}"'
-  "/social post <channel> <text>":"post to social channels (Discord, Telegram, X, Mastodon).",
-  "/social read <channel>":"read social channel messages.",
-  "/social discord dm <user> <text>":"send a direct message (DM) to a Discord user.",
-  "/social discord channels sync":"sync/import Discord channels.",
-  "/social discord users sync":"sync/import Discord users.",
-  "/email send <provider> <recipient> subject=<subj> body=<body>":"send an actual email.",'
+            _tool_summary="${_tool_summary}
+  /social post <platform> <channel> <text>: post to social platform (e.g. discord) channel.
+  /social read <channel>: read social channel messages.
+  /social discord dm <user> <text>: send a direct message (DM) to a Discord user.
+  /social discord channels sync: sync/import Discord channels.
+  /social discord users sync: sync/import Discord users.
+  /email send <provider> <recipient> subject=<subj> body=<body>: send an actual email."
         fi
-        _tool_summary="${_tool_summary}"'
-  "/respond <answer>":"deliver the final completed answer/results directly to the user."
-}}'
+        _tool_summary="${_tool_summary}
+  /respond <answer>: deliver the final completed answer/results directly to the user."
         # Coding workflow card
         # Coding workflow card (strategist)
         local _coding_card=""
@@ -8340,6 +8435,8 @@ SERVICES STATUS: ${_svc_status:-unknown}
   - If a prior milestone fails, returns an error/JUNK, or succeeds only via a fallback/alternative route, you must treat the original specific path, file, or resource as blocked or unusable.
   - DO NOT repeat the failed command or attempt to access the blocked resource again.
   - Adapt: pivot to alternative approaches, search for different sources/queries, try different command tools, or rewrite/restructure the remaining milestones.
+* Resource & Cache Reuse:
+  - ALWAYS inspect the \"CREATED FILES\" and \"PRIOR TASK FILES\" lists before planning. If the requested content, URL source, or image is already present in the workspace as a file, DO NOT re-search, re-fetch, or re-download it. Route directly to the processing/delivery command (e.g. /vision or /respond) using the local file path.
 * Milestones:
   - Use ONLY commands from the catalog. Map evaluator recommendations to the closest available commands.
   - Must be a single imperative sentence starting with a verb (e.g. 'Use /write to create a summary').
@@ -8382,10 +8479,11 @@ ${_research_gate}${_pref_hint}${_milestone_history}"
                 milestone="$_js_val"
             fi
         fi
-        # 4. Strip leading/trailing whitespace and blank lines
-        milestone=$(echo "$milestone" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-        # 5. Take ONLY the first non-empty line (milestone = one sentence)
-        milestone=$(echo "$milestone" | head -1)
+        # 4. Strip leading/trailing whitespace, curlies, and blank lines
+        milestone=$(echo "$milestone" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]{}]*//' -e 's/[[:space:]{}]*$//')
+        # 5. Join all lines with spaces to prevent truncation of wrapped paragraphs,
+        # then take the resulting single line.
+        milestone=$(echo "$milestone" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g')
         # 6. Strip markdown bold/italic markers (**, *, _) — prevents
         # formatting contamination when milestone text is re-injected
         # into specialist and evaluator prompts as micro_objective.
@@ -8409,7 +8507,7 @@ ${_research_gate}${_pref_hint}${_milestone_history}"
         # Full text preserved in _STRATEGIST_FULL_OUTPUT for the specialist
         # so content-bearing milestones (e.g. /social post) aren't lost.
         _STRATEGIST_FULL_OUTPUT="$milestone"
-        milestone="${milestone:0:${AGENT_MILESTONE_CHARS:-200}}"
+        milestone="${milestone:0:${AGENT_MILESTONE_CHARS:-1000}}"
 
         # Transcript: log strategist milestone
         declare -f transcript_log &>/dev/null && transcript_log "strategist" "$milestone"
@@ -8731,25 +8829,36 @@ ${_research_gate}${_pref_hint}${_milestone_history}"
                 local _hd_eval_file="$george_dir/$HONEYDEW_FILE"
                 if [ -f "$_hd_eval_file" ]; then
                     # ── Honeydew item evaluation ──────────────
-                    if _agent_evaluate_honeydew_item "$macro_file" "$george_dir/micro_memory.json" "$milestone" "$workdir"; then
-                        # Honeydew item satisfied — mark it done
-                        # Reset blocked commands — new task may need previously-blocked tools
-                        _blocked_cmds=()
-                        if [ -n "${_EVAL_HONEYDEW_ITEM_NUM:-}" ]; then
-                            _agent_honeydew_mark "$_EVAL_HONEYDEW_ITEM_NUM" "$workdir"
-                            # Reprint full honeydew checklist with [x] marks
-                            local _hd_eval_display_file="$george_dir/$HONEYDEW_FILE"
-                            [ -f "$_hd_eval_display_file" ] && _agent_honeydew_display "$_hd_eval_display_file"
-                            local _hd_status
-                            _hd_status=$(_agent_honeydew_status "$workdir" 2>/dev/null)
-                            [ -n "$_hd_status" ] && ui_dim "  Honeydew: $_hd_status"
-                            # Refresh honeydew in macro_memory
-                            local _hd_updated
-                            _hd_updated=$(_agent_honeydew_read "$workdir" 2>/dev/null)
-                            if [ -n "$_hd_updated" ] && [ -f "$macro_file" ]; then
-                                _macro_set_honeydew "$macro_file" "$_hd_updated"
+                    # Keep checking and marking off pending items as long as they are satisfied.
+                    # This allows a single milestone to satisfy multiple pending items in one loop step.
+                    local _hd_checked_any=0
+                    while true; do
+                        _EVAL_HONEYDEW_ITEM_NUM=""
+                        if _agent_evaluate_honeydew_item "$macro_file" "$george_dir/micro_memory.json" "$milestone" "$workdir"; then
+                            if [ -n "${_EVAL_HONEYDEW_ITEM_NUM:-}" ]; then
+                                _agent_honeydew_mark "$_EVAL_HONEYDEW_ITEM_NUM" "$workdir"
+                                _blocked_cmds=()
+                                _hd_checked_any=1
+                                # Refresh honeydew in macro_memory
+                                local _hd_updated
+                                _hd_updated=$(_agent_honeydew_read "$workdir" 2>/dev/null)
+                                if [ -n "$_hd_updated" ] && [ -f "$macro_file" ]; then
+                                    _macro_set_honeydew "$macro_file" "$_hd_updated"
+                                fi
+                                # Continue checking the next pending item
+                                continue
                             fi
                         fi
+                        break
+                    done
+
+                    if [ "$_hd_checked_any" -eq 1 ]; then
+                        # Reprint checklist once after all satisfied items are marked
+                        local _hd_eval_display_file="$george_dir/$HONEYDEW_FILE"
+                        [ -f "$_hd_eval_display_file" ] && _agent_honeydew_display "$_hd_eval_display_file"
+                        local _hd_status
+                        _hd_status=$(_agent_honeydew_status "$workdir" 2>/dev/null)
+                        [ -n "$_hd_status" ] && ui_dim "  Honeydew: $_hd_status"
 
                         # ── Overall evaluation (P2) ───────────
                         if _agent_evaluate_completion "$macro_file" "$george_dir/micro_memory.json" "$workdir"; then

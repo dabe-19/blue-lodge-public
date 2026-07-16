@@ -1268,9 +1268,20 @@ Your thinking process must follow the template below:
     esac
 
     # Dynamic prompt suffix injection based on requested thinking level
-    case "${LODGE_THINK_LEVEL:-2}" in
+    case "${LODGE_THINK_LEVEL:-1}" in
         low|1)
-            echo "Respond directly and concisely. Do not output a thinking block or reason step-by-step."
+            case "$key" in
+                minist-*)
+                    echo "Keep your thinking process inside [THINK][/THINK] extremely short (1-2 sentences only)."
+                    ;;
+                *)
+                    if [ "$method" = "system" ]; then
+                        echo "Reason briefly inside <think></think> tags. Keep your thinking process extremely short and direct (1-3 sentences only)."
+                    else
+                        echo "Respond directly and concisely. Do not output a thinking block or reason step-by-step."
+                    fi
+                    ;;
+            esac
             ;;
         high|3)
             echo "Reason exhaustively. Analyze edge cases, explore alternative solutions, check for hidden assumptions, and think through every step in detail."
