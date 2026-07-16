@@ -30,6 +30,9 @@
 
 set -uo pipefail
 
+# Prevent MCP recursion when running inside the fetch server
+export _WEB_FETCH_STRUCTURED_ACTIVE=1
+
 # ── Bootstrap George libraries ─────────────────────────────────
 # Resolve LODGE_DIR from script location or environment.
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

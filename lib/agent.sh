@@ -2815,6 +2815,29 @@ _agent_evaluate_honeydew_item() {
 
     _EVAL_HONEYDEW_ITEM_NUM="$_next_id"
 
+    # ── IDENTICALITY OPTIMIZATION ──────────────────────────────────
+    # If the normalized milestone text is identical to the normalized
+    # honeydew item, they represent the exact same objective.
+    # Since the milestone evaluator (P1) already returned COMPLETE
+    # (which is why the outer loop reached this block), we can safely
+    # mark this honeydew item satisfied without a redundant LLM call.
+    # This prevents duplicate/wasteful token consumption.
+    local _norm_ms _norm_hd
+    _norm_ms=$(echo "$milestone_text" | tr '[:upper:]' '[:lower:]' | \
+        sed -E 's/^(use|run|execute|perform|complete|accomplish) \/?[a-z0-9_-]+([[:space:]]+[a-z0-9_-]+)? to //g' | \
+        sed -E 's/^\/?[a-z0-9_-]+([[:space:]]+[a-z0-9_-]+)?[[:space:]]+//g' | \
+        sed 's/[[:punct:]]//g' | tr -d '[:space:]')
+    _norm_hd=$(echo "$_next_task" | tr '[:upper:]' '[:lower:]' | \
+        sed -E 's/^(use|run|execute|perform|complete|accomplish) \/?[a-z0-9_-]+([[:space:]]+[a-z0-9_-]+)? to //g' | \
+        sed -E 's/^\/?[a-z0-9_-]+([[:space:]]+[a-z0-9_-]+)?[[:space:]]+//g' | \
+        sed 's/[[:punct:]]//g' | tr -d '[:space:]')
+
+    if [ -n "$_norm_ms" ] && [ "$_norm_ms" = "$_norm_hd" ]; then
+        ui_ok "Honeydew evaluator: item #${_next_id} satisfied (inherited from completed milestone)"
+        return 0
+    fi
+
+
     # Build context from the raw action log — NOT the milestone's own
     # self-assessment.  The milestone evaluator (P1) already judged
     # success from the milestone's perspective, but that verdict often
