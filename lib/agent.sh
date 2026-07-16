@@ -5629,7 +5629,7 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         elif [[ "${selected_tool#/}" == "social" ]]; then
             _spec_tail="Write the COMPLETE /social command. CRITICAL: Pull the FULL, UNABRIDGED description or message content from the ACTION LOG above. Do NOT truncate, summarize, or abbreviate the text — include EVERY word and sentence from the original source (e.g. /vision output, /web fetch result, or brainstorm). If a file path is mentioned in the objective, use ONLY that file path as the message argument (file contents auto-expand). For long content (3+ sentences), prefer: /write description.md <full content> first, then /social ... description.md. Positional args only: /social discord dm <user> <message_or_filepath> or /social post discord <channel> <message_or_filepath>."
         elif [[ "${selected_tool#/}" =~ ^(write|save|append|edit)$ ]]; then
-            _spec_tail="Write the COMPLETE command with all arguments. You MUST use \\n characters to represent newlines in the file content, and output the entire command on exactly ONE line. Do NOT use literal line breaks. Example: /write file.txt Line 1\\\\nLine 2"
+            _spec_tail="Write the COMPLETE command with all arguments. You MUST use \\n characters to represent newlines in the file content, and output the entire command on exactly ONE line. Do NOT use literal line breaks. CRITICAL: Use ONLY \\n (backslash + n) as the newline separator — NEVER use \"}}], or any JSON/SSE punctuation between lines. Example: /write file.txt Line 1\\\\nLine 2\\\\nLine 3"
         fi
         local _spec_research="" _spec_brainstorm=""
         if [ -f "$micro_file" ]; then
@@ -5687,6 +5687,24 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         local LLM_SCENARIO=agent
         action_plan=$(llm_generate "$specialist_prompt" "$specialist_sys" "$_spec_tokens" "$LLM_BUDGET_AGENT")
         action_plan=$(echo "$action_plan" | _strip_think_blocks)
+
+        # ── Strip SSE frame artifacts from specialist output ────
+        # Some models (Qwen3, small fine-tunes) confuse SSE JSON
+        # chunk suffixes ("}}],\n) with the \n newline escape,
+        # producing output like:
+        #   /write poem.txt Line 1"}}],nLine 2"}}],nLine 3
+        # Replace the artifact with a proper \n separator so
+        # /write and /respond receive clean multi-line content.
+        # Patterns covered:
+        #   "}}],n   → \n  (most common: comma + n)
+        #   "}}],\n  → \n  (real newline after the artifact)
+        #   "}}]\n   → \n  (no comma variant)
+        if [[ "$action_plan" == *'"}}]'* ]]; then
+            action_plan=$(printf '%s' "$action_plan" | \
+                sed 's/"}}],[[:space:]]*n/\n/g; s/"}}][[:space:]]*n/\n/g')
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && \
+                printf '  [debug] specialist: stripped SSE frame artifacts from action_plan\n' >&2
+        fi
 
         # Transcript: log specialist response
         declare -f transcript_log_block &>/dev/null && transcript_log_block "specialist" "$action_plan"
@@ -5854,6 +5872,17 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         fi
         if [ "$cmd_is_slash" -eq 1 ] && [ "$_skip_quote_strip" -eq 0 ] && [[ "$cmd" == *"'"* ]]; then
             cmd=$(echo "$cmd" | sed "s/'//g")
+        fi
+
+        # ── SSE artifact cleanup on extracted cmd ──────────────
+        # Second-pass sanitization in case artifacts survived the
+        # action_plan cleanup above (e.g., hidden in continuation
+        # lines joined by awk before sanitization ran).
+        if [[ "$cmd" == *'"}}]'* ]]; then
+            cmd=$(printf '%s' "$cmd" | \
+                sed 's/"}}],[[:space:]]*n/\n/g; s/"}}][[:space:]]*n/\n/g')
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && \
+                printf '  [debug] cmd cleanup: stripped SSE frame artifacts\n' >&2
         fi
 
         # ── WEB SEARCH QUERY TRIMMER ──────────────────────────
