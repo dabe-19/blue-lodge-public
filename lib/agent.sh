@@ -1371,7 +1371,7 @@ TASK: $task
  \"good\":\"Find an image of Intellopy author JJ Kelly\",
  \"bad\":[\"Run curl -s https://...\",\"Use /web search to find...\",\"Find the image\"],
  \"count\":\"2-${AGENT_HONEYDEW_INITIAL_COUNT} items (simple tasks: 2-3)\",
- \"order\":\"by dependency (research→writing→sending)\",
+ \"order\":\"by dependency (research -> writing -> sending)\",
  \"no_redundancy\":\"each item must be DISTINCT — never two items that describe the same work differently (e.g. 'summarize X' and 'present X concisely' are the SAME item — merge them)\",
  \"research_split\":\"If the task involves research, you MUST break it down into at least two distinct steps: 1) Search to find sources, and 2) Fetch or scrape specific URLs from the search results to collect detailed information.\",
  \"never\":[\"verification steps\",\"confirmation steps\",\"cleanup steps\",\"checkboxes\",\"redundant items that overlap with other items\"]}"
@@ -1750,7 +1750,7 @@ $(cat << 'EXPAND_JSON'
 {"output":"numbered list ONLY (1-2 items)",
  "each_item":"short imperative sentence — WHAT, not HOW",
  "never":["commands","URLs","tools","shell syntax","verification steps","cleanup steps"],
- "order":"by dependency (research→writing→sending)",
+ "order":"by dependency (research -> writing -> sending)",
  "atomic":true}
 EXPAND_JSON
 )"

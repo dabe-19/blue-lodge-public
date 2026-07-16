@@ -591,6 +591,8 @@ _cmd_backend() {
             fi ;;
         stop)
             _llm_stop_llamacpp_server ;;
+        restart)
+            llm_backend_restart ;;
         model)
             # Show or set the GGUF model path
             if [ -z "$arg2" ]; then
@@ -687,6 +689,7 @@ _cmd_gpu() {
 
     local old_layers="$LLAMA_CPP_GPU_LAYERS"
     LLAMA_CPP_GPU_LAYERS="$new_layers"
+    _llm_save_config
     ui_ok "GPU layers: $old_layers → $new_layers"
 
     # If llama-server is running, restart it with new setting
@@ -792,6 +795,34 @@ _cmd_limits() {
                 ui_info "Subtask recursion depth: $AGENT_MAX_DEPTH (default: 3)"
             else
                 _limits_set AGENT_MAX_DEPTH "Recursion depth" "$value" 1 10
+            fi ;;
+        slots|parallel)
+            if [ -z "$value" ]; then
+                ui_info "Llama.cpp parallel execution slots: ${LLAMA_CPP_SLOTS:-1} (default: 1)"
+            else
+                if _limits_set LLAMA_CPP_SLOTS "Parallel slots" "$value" 1 16; then
+                    _llm_save_config
+                    if [ "$LLM_BACKEND" = "llamacpp" ]; then
+                        declare -f ui_info &>/dev/null && ui_info "Restarting llama.cpp backend to apply $value parallel slots..." || echo "Restarting llama.cpp backend to apply $value parallel slots..."
+                        llm_backend_restart
+                    else
+                        declare -f ui_info &>/dev/null && ui_info "Slots setting updated. It will apply when llama.cpp is started." || echo "Slots setting updated. It will apply when llama.cpp is started."
+                    fi
+                fi
+            fi ;;
+        ctx|context)
+            if [ -z "$value" ]; then
+                ui_info "Llama.cpp context size per slot: ${LLAMA_CPP_CTX_SIZE:-8192} (default: 8192)"
+            else
+                if _limits_set LLAMA_CPP_CTX_SIZE "Context size" "$value" 512 32768; then
+                    _llm_save_config
+                    if [ "$LLM_BACKEND" = "llamacpp" ]; then
+                        declare -f ui_info &>/dev/null && ui_info "Restarting llama.cpp backend to apply $value context size per slot..." || echo "Restarting llama.cpp backend to apply $value context size per slot..."
+                        llm_backend_restart
+                    else
+                        declare -f ui_info &>/dev/null && ui_info "Context size updated. It will apply when llama.cpp is started." || echo "Context size updated. It will apply when llama.cpp is started."
+                    fi
+                fi
             fi ;;
         expand)
             if [ -z "$value" ]; then
@@ -1387,6 +1418,8 @@ _cmd_limits() {
             AGENT_GIT_UNLOCK_ABSTRACT=99
             AGENT_GIT_UNLOCK_COMBINED=3
             AGENT_FAST_ROUTE=1
+            LLAMA_CPP_SLOTS=2
+            LLAMA_CPP_CTX_SIZE=8192
             AGENT_GREP_MAX_LINES=100
             AGENT_GREP_ALLOW_ABSOLUTE=0
             AGENT_WEB_SEARCH_TIGHT_PARSING=0
@@ -1693,6 +1726,8 @@ _cmd_limits() {
             echo ""
             ui_dim "  Agent loop:"
             ui_dim "    steps N         — Max steps per plan/subtask (current: $AGENT_PLAN_STEPS)"
+            ui_dim "    slots N         — Llama.cpp parallel execution slots (current: ${LLAMA_CPP_SLOTS:-1})"
+            ui_dim "    ctx N           — Llama.cpp context size per slot (current: ${LLAMA_CPP_CTX_SIZE:-8192})"
             ui_dim "    expand on|off   — Honeydew subtask expansion (current: $([ "${AGENT_HONEYDEW_EXPAND:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    rewrite on|off  — Dynamic honeydew rewrite after milestones (current: $([ "${AGENT_HONEYDEW_REWRITE:-0}" -eq 1 ] && echo on || echo off))"
             ui_dim "    rewrite-rounds N — Max honeydew rewrite rounds per task (current: ${AGENT_HONEYDEW_REWRITE_ROUNDS:-5})"

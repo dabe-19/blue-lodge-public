@@ -26,9 +26,11 @@ LLAMA_CPP_MODEL="${LLAMA_CPP_MODEL:-}"
 LLAMA_CPP_GPU_LAYERS="${LLAMA_CPP_GPU_LAYERS:-0}"
 # Context size for llama-server
 LLAMA_CPP_CTX_SIZE="${LLAMA_CPP_CTX_SIZE:-8192}"
+# Parallel execution slots for llama-server
+LLAMA_CPP_SLOTS="${LLAMA_CPP_SLOTS:-2}"
 # KV cache precision for llama.cpp. "auto" keeps llama.cpp defaults.
 # Valid explicit examples: f16, q8_0, q5_0, q4_0.
-LLAMA_CPP_KV_CACHE_TYPE="${LLAMA_CPP_KV_CACHE_TYPE:-auto}"
+LLAMA_CPP_KV_CACHE_TYPE="${LLAMA_CPP_KV_CACHE_TYPE:-q4_0}"
 # Prompt cache controls (local llama.cpp server only).
 # Keeping this enabled improves repeat prompt prefill latency in agent loops.
 LLAMA_CPP_PROMPT_CACHE="${LLAMA_CPP_PROMPT_CACHE:-1}"
@@ -112,7 +114,8 @@ _llm_save_config() {
 LLM_BACKEND=${LLM_BACKEND:-llamacpp}
 LLAMA_CPP_GPU_LAYERS=${LLAMA_CPP_GPU_LAYERS:-0}
 LLAMA_CPP_CTX_SIZE=${LLAMA_CPP_CTX_SIZE:-8192}
-LLAMA_CPP_KV_CACHE_TYPE=${LLAMA_CPP_KV_CACHE_TYPE:-auto}
+LLAMA_CPP_SLOTS=${LLAMA_CPP_SLOTS:-2}
+LLAMA_CPP_KV_CACHE_TYPE=${LLAMA_CPP_KV_CACHE_TYPE:-q4_0}
 LLAMA_CPP_PROMPT_CACHE=${LLAMA_CPP_PROMPT_CACHE:-1}
 LLAMA_CPP_PROMPT_CACHE_ALL=${LLAMA_CPP_PROMPT_CACHE_ALL:-1}
 LLAMA_CPP_PROMPT_CACHE_FILE=${LLAMA_CPP_PROMPT_CACHE_FILE:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/llama-prompt-cache.bin}
@@ -602,6 +605,22 @@ _llm_stop_llamacpp_server() {
     return 0
 }
 
+# Restart the llama.cpp backend if it is running.
+llm_backend_restart() {
+    local _backend
+    _backend=$(_llm_detect_backend 2>/dev/null)
+    if [ "$_backend" = "llamacpp" ]; then
+        if curl -sf --max-time 2 "$LLAMA_CPP_URL/health" &>/dev/null; then
+            declare -f ui_info &>/dev/null && ui_info "Stopping llama-server..." || echo "Stopping llama-server..."
+            _llm_stop_llamacpp_server
+            # Clear active model tracking to force reload
+            _MODELS_ACTIVE=""
+            # Switch back to the active model to restart the server
+            _models_switch "$LODGE_MODEL"
+        fi
+    fi
+}
+
 # Read and cache llama-server --help output once per session.
 _llm_load_llamacpp_help() {
     [ "$_LLAMA_CPP_HELP_LOADED" -eq 1 ] && return 0
@@ -791,9 +810,9 @@ _llm_start_llamacpp_server() {
     local _launch_args=(
         --port "$_port"
         -ngl "$LLAMA_CPP_GPU_LAYERS"
-        -c "$LLAMA_CPP_CTX_SIZE"
+        -c "$((LLAMA_CPP_CTX_SIZE * LLAMA_CPP_SLOTS))"
         --threads "$(nproc 2>/dev/null || echo 4)"
-        --parallel 1    # single slot — saves RAM on phones; lodge uses sequential calls
+        --parallel "$LLAMA_CPP_SLOTS"
     )
 
     if [ "${LLAMA_CPP_NO_MMAP:-0}" = "1" ]; then
@@ -1778,16 +1797,50 @@ llm_generate() {
     local _think_log_file=""
     _llm_think_log_start
 
+    # Detect active backend
+    local _active_backend
+    _active_backend=$(_llm_detect_backend)
+
     # Thinking model 4x multiplier: thinking models emit <think> blocks
     # before the response, so token budgets must be larger to avoid
     # truncating mid-think (which causes unclosed [THINK] tags).
     max_tokens=$(_llm_apply_thinking_multiplier "$max_tokens")
 
+    # Cap max_tokens to prevent llama-server context limit failures
+    if [ "$_active_backend" = "llamacpp" ]; then
+        local approx_prompt_tokens=$(( ( ${#prompt} + ${#system} ) / 3 ))
+        local max_possible_output=$(( LLAMA_CPP_CTX_SIZE - approx_prompt_tokens - 32 ))
+        if [ "$max_possible_output" -lt 16 ]; then
+            max_possible_output=16
+        fi
+        if [ "$max_tokens" -gt "$max_possible_output" ]; then
+            max_tokens=$max_possible_output
+        fi
+    fi
+
     _llm_debug_start_timer
 
-    # Detect active backend
-    local _active_backend
-    _active_backend=$(_llm_detect_backend)
+    # Optimize system prompt for KV cache reuse in llama-server
+    if [ "$_active_backend" = "llamacpp" ] && [ "${LLAMA_CPP_PROMPT_CACHE:-1}" = "1" ] && [ -n "$system" ]; then
+        if [[ "$system" == *"[Current time:"* ]]; then
+            local _time_line
+            _time_line=$(echo "$system" | grep -o '^\[Current time: [^]]*\]' | head -1)
+            if [ -n "$_time_line" ]; then
+                system=$(echo "$system" | grep -F -v "$_time_line")
+                prompt="${_time_line}
+${prompt}"
+            fi
+        fi
+        if [[ "$system" == *"[Vitals:"* ]]; then
+            local _vitals_line
+            _vitals_line=$(echo "$system" | grep -o '^\[Vitals: [^]]*\]' | head -1)
+            if [ -n "$_vitals_line" ]; then
+                system=$(echo "$system" | grep -F -v "$_vitals_line")
+                prompt="${_vitals_line}
+${prompt}"
+            fi
+        fi
+    fi
 
     # Ensure correct model is loaded for this scenario
     if ! models_ensure_for_scenario "${LLM_SCENARIO:-}"; then
@@ -1909,6 +1962,7 @@ llm_generate() {
         fi
 
         if [ "$_use_fifo" -eq 1 ]; then
+            echo "$payload" > "/workspace/.george/payload.json"
             $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
                 "$LLAMA_CPP_URL/v1/chat/completions" \
                 -H "Content-Type: application/json" \
@@ -2498,14 +2552,48 @@ llm_stream() {
         return $_rc
     fi
 
-    # Thinking model 4x multiplier (see llm_generate for rationale)
-    max_tokens=$(_llm_apply_thinking_multiplier "$max_tokens")
-
-    _llm_debug_start_timer
-
     # Detect active backend
     local _active_backend
     _active_backend=$(_llm_detect_backend)
+
+    # Thinking model 4x multiplier (see llm_generate for rationale)
+    max_tokens=$(_llm_apply_thinking_multiplier "$max_tokens")
+
+    # Cap max_tokens to prevent llama-server context limit failures
+    if [ "$_active_backend" = "llamacpp" ]; then
+        local approx_prompt_tokens=$(( ( ${#prompt} + ${#system} ) / 3 ))
+        local max_possible_output=$(( LLAMA_CPP_CTX_SIZE - approx_prompt_tokens - 32 ))
+        if [ "$max_possible_output" -lt 16 ]; then
+            max_possible_output=16
+        fi
+        if [ "$max_tokens" -gt "$max_possible_output" ]; then
+            max_tokens=$max_possible_output
+        fi
+    fi
+
+    _llm_debug_start_timer
+
+    # Optimize system prompt for KV cache reuse in llama-server
+    if [ "$_active_backend" = "llamacpp" ] && [ "${LLAMA_CPP_PROMPT_CACHE:-1}" = "1" ] && [ -n "$system" ]; then
+        if [[ "$system" == *"[Current time:"* ]]; then
+            local _time_line
+            _time_line=$(echo "$system" | grep -o '^\[Current time: [^]]*\]' | head -1)
+            if [ -n "$_time_line" ]; then
+                system=$(echo "$system" | grep -F -v "$_time_line")
+                prompt="${_time_line}
+${prompt}"
+            fi
+        fi
+        if [[ "$system" == *"[Vitals:"* ]]; then
+            local _vitals_line
+            _vitals_line=$(echo "$system" | grep -o '^\[Vitals: [^]]*\]' | head -1)
+            if [ -n "$_vitals_line" ]; then
+                system=$(echo "$system" | grep -F -v "$_vitals_line")
+                prompt="${_vitals_line}
+${prompt}"
+            fi
+        fi
+    fi
 
     # Ensure correct model is loaded for this scenario
     if ! models_ensure_for_scenario "${LLM_SCENARIO:-}"; then
