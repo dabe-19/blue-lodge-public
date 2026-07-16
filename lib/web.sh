@@ -749,8 +749,8 @@ _web_strip_boilerplate() {
     /^By (continuing|using this)/ && /cookies/ { next }
 
     # Footer boilerplate
-    /^[©Ⓒ] [0-9]{4}/ { next }
-    /^Copyright [0-9]{4}/ { next }
+    /^(©|Ⓒ) [0-9][0-9][0-9][0-9]/ { next }
+    /^Copyright [0-9][0-9][0-9][0-9]/ { next }
     /^All rights reserved/ { next }
     /^Terms (of (Service|Use)|and Conditions)/ && length($0) < 60 { next }
     /^Privacy Policy$/ { next }
@@ -824,8 +824,13 @@ _html_extract_title() {
 # Strips script/style/nav/header/footer/aside before extracting,
 # then decodes entities and emits clean text lines.
 _html_extract_content() {
-    local _raw
-    _raw=$(sed 's/>/>\n/g')
+    _raw=$(sed 's/>/>\n/g' | awk '
+        BEGIN { skip = 0 }
+        tolower($0) ~ /<(script|style|noscript)/ { skip = 1 }
+        tolower($0) ~ /<\/(script|style|noscript)>/ { skip = 0; next }
+        skip { next }
+        { print }
+    ')
 
     # Tier 1: <article> (but only if there's exactly one — multiple
     # <article> tags usually means a listing page with preview cards)

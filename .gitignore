@@ -11,5 +11,4 @@ models/*.gguf
 /GEORGE.md
 /journal.md
 /journal.md.sig 
-
-
+/memories/
