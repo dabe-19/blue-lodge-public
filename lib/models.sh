@@ -959,9 +959,12 @@ models_for_scenario() {
 _models_switch() {
     local target="$1"
 
-    # Already correct model loaded and thinking state matches — no-op
-    if [ "$_MODELS_ACTIVE" = "$target" ] && [ "${LLAMA_CPP_SERVER_NOTHINK:-}" = "${LODGE_NOTHINK:-0}" ]; then
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] _models_switch: already active='$target' and thinking state matches, skip" >&2
+    # Already correct model loaded, thinking state and speculative decoding state match — no-op
+    if [ "$_MODELS_ACTIVE" = "$target" ] && \
+       [ "${LLAMA_CPP_SERVER_NOTHINK:-}" = "${LODGE_NOTHINK:-0}" ] && \
+       [ "${LLAMA_CPP_SERVER_SPEC_MTP:-0}" = "${LLAMA_CPP_SPEC_MTP:-0}" ] && \
+       [ "${LLAMA_CPP_SERVER_DRAFT_MODEL:-}" = "${LLAMA_CPP_DRAFT_MODEL:-}" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] _models_switch: already active='$target', thinking state, and speculative state matches, skip" >&2
         return 0
     fi
 
@@ -1037,8 +1040,11 @@ _models_switch() {
             return 1
         fi
 
-        # If same GGUF is already loaded and thinking state matches, just update tracking
-        if [ "$LLAMA_CPP_MODEL" = "$_gguf" ] && [ "${LLAMA_CPP_SERVER_NOTHINK:-}" = "${LODGE_NOTHINK:-0}" ]; then
+        # If same GGUF is already loaded, thinking state and speculative decoding state match, just update tracking
+        if [ "$LLAMA_CPP_MODEL" = "$_gguf" ] && \
+           [ "${LLAMA_CPP_SERVER_NOTHINK:-}" = "${LODGE_NOTHINK:-0}" ] && \
+           [ "${LLAMA_CPP_SERVER_SPEC_MTP:-0}" = "${LLAMA_CPP_SPEC_MTP:-0}" ] && \
+           [ "${LLAMA_CPP_SERVER_DRAFT_MODEL:-}" = "${LLAMA_CPP_DRAFT_MODEL:-}" ]; then
             _MODELS_ACTIVE="$target"
             LODGE_MODEL="$target"
             return 0
@@ -1060,22 +1066,27 @@ _models_switch() {
     fi
 
     # ── Ollama path (original) ─────────────────────────────────
+    # Stop llama-server to free Vulkan/GPU VRAM before Ollama loads the model.
+    _llm_stop_llamacpp_server "--quiet"
+
     # Unload any currently loaded models to clear VRAM
-    local _ps_resp
-    _ps_resp=$(curl -sf --max-time 5 "$OLLAMA_URL/api/ps" 2>/dev/null)
-    if [ $? -eq 0 ] && [ -n "$_ps_resp" ]; then
-        local _active_models
-        _active_models=$(echo "$_ps_resp" | jq -r '.models[].name' 2>/dev/null || echo "")
-        if [ -n "$_active_models" ]; then
-            local _am
-            for _am in $_active_models; do
-                [ -z "$_am" ] && continue
-                [ "$_am" = "$target" ] && continue  # don't unload the target if it is somehow already loaded
-                curl -sf --max-time 10 "$OLLAMA_URL/api/generate" \
-                    -H "Content-Type: application/json" \
-                    -d "{\"model\": \"$_am\", \"prompt\": \"\", \"keep_alive\": 0}" &>/dev/null
-            done
-            sleep 1
+    if _llm_ollama_responding; then
+        local _ps_resp
+        _ps_resp=$(curl -sf --max-time 5 "$OLLAMA_URL/api/ps" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$_ps_resp" ]; then
+            local _active_models
+            _active_models=$(echo "$_ps_resp" | jq -r '.models[].name' 2>/dev/null || echo "")
+            if [ -n "$_active_models" ]; then
+                local _am
+                for _am in $_active_models; do
+                    [ -z "$_am" ] && continue
+                    [ "$_am" = "$target" ] && continue  # don't unload the target if it is somehow already loaded
+                    curl -sf --max-time 10 "$OLLAMA_URL/api/generate" \
+                        -H "Content-Type: application/json" \
+                        -d "{\"model\": \"$_am\", \"prompt\": \"\", \"keep_alive\": 0}" &>/dev/null
+                done
+                sleep 1
+            fi
         fi
     fi
 
@@ -1112,8 +1123,18 @@ models_ensure_for_scenario() {
 
     [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] ensure_for_scenario: active='$_MODELS_ACTIVE' target='$target'" >&2
 
-    # Fast path: already correct
-    if [ "$_MODELS_ACTIVE" = "$target" ]; then
+    # Fast path: already correct (check target model, thinking state, and speculative state)
+    local _be_match=1
+    local _be; _be=$(_llm_detect_backend 2>/dev/null || echo "ollama")
+    if [ "$_be" = "llamacpp" ]; then
+        if [ "${LLAMA_CPP_SERVER_NOTHINK:-}" != "${LODGE_NOTHINK:-0}" ] || \
+           [ "${LLAMA_CPP_SERVER_SPEC_MTP:-0}" != "${LLAMA_CPP_SPEC_MTP:-0}" ] || \
+           [ "${LLAMA_CPP_SERVER_DRAFT_MODEL:-}" != "${LLAMA_CPP_DRAFT_MODEL:-}" ]; then
+            _be_match=0
+        fi
+    fi
+
+    if [ "$_MODELS_ACTIVE" = "$target" ] && [ "$_be_match" -eq 1 ]; then
         LODGE_MODEL="$target"
         return 0
     fi

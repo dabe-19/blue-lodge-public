@@ -7,7 +7,11 @@
 #   progress   — enum: none / slow / normal / regressing
 #   assessment — free text: LLM's 2-3 sentence self-assessment
 
-root          ::= "{" ws
+root          ::= reasoning_block ws resp_root | ws resp_root
+
+resp_root     ::= "<response>" ws json_root ws "</response>" | json_root
+
+json_root     ::= "{" ws
                   "\"stuck\":" ws bool_val "," ws
                   "\"progress\":" ws progress_enum "," ws
                   "\"assessment\":" ws string
@@ -23,8 +27,17 @@ progress_enum ::= "\"none\"" | "\"slow\"" | "\"normal\"" | "\"regressing\""
 # quoted text from command outputs or user input.
 char          ::= [^"\\] | "\\" ["\\/bfnrt]
 string        ::= "\"" char* "\""
-# ── String rule: quote-stripping (swap in if quotes unwanted) ──
-# char        ::= [^"\\]
-# string      ::= "\"" char* "\""
+
+reasoning_block ::= "<think>" reasoning_text "</think>"
+                  | reasoning_text "</think>"
+                  | "<|channel>thought" reasoning_text "<channel|>"
+                  | reasoning_text "<channel|>"
+                  | "[" [tT][hH][iI][nN][kK] "]" reasoning_text_bracket "[/" [tT][hH][iI][nN][kK] "]"
+                  | reasoning_text_bracket "[/" [tT][hH][iI][nN][kK] "]"
+                  | "[" [tT][hH][oO][uU][gG][hH][tT] "]" reasoning_text_bracket "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
+                  | reasoning_text_bracket "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
+
+reasoning_text    ::= [^<]*
+reasoning_text_bracket ::= [^\[]*
 
 ws            ::= [ \t\n]*

@@ -285,4 +285,29 @@ describe "Soul.md Trowel landmark"
     assert_contains "$line" "Finish what you start"
   }
 
+# ══════════════════════════════════════════════════════════════
+# Inline list splitting
+# ══════════════════════════════════════════════════════════════
+describe "Inline list splitting"
+
+  it "splits standard inline numbered list" && {
+    test_input="1. Do thing one  2. Do thing two  3. Do thing three"
+    test_result=$(echo "$test_input" | sed 's/\([^0-9]\)\([0-9]\{1,2\}[\.\)][[:space:]]*[^0-9]\)/\1\n\2/g')
+    test_expected=$'1. Do thing one  \n2. Do thing two  \n3. Do thing three'
+    assert_eq "$test_result" "$test_expected"
+  }
+
+  it "splits run-in numbered list where sentence runs into number" && {
+    test_input="here is a milestone.3. here is the next milestone"
+    test_result=$(echo "$test_input" | sed 's/\([^0-9]\)\([0-9]\{1,2\}[\.\)][[:space:]]*[^0-9]\)/\1\n\2/g')
+    test_expected=$'here is a milestone.\n3. here is the next milestone'
+    assert_eq "$test_result" "$test_expected"
+  }
+
+  it "does not split decimal/version numbers" && {
+    test_input="version 1.2 is great. Pi is 3.1415."
+    test_result=$(echo "$test_input" | sed 's/\([^0-9]\)\([0-9]\{1,2\}[\.\)][[:space:]]*[^0-9]\)/\1\n\2/g')
+    assert_eq "$test_result" "$test_input"
+  }
+
 test_end

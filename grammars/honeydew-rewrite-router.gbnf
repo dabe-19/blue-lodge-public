@@ -1,21 +1,18 @@
-# Honeydew Items — decomposed task list
-# Used by _agent_honeydew_build() in lib/agent.sh
+# Honeydew Rewrite Router — REWRITE / KEEP verdict + reason
+# Used by _agent_honeydew_rewrite() in lib/agent.sh
 # Layer 1 constrained decoding for llama-server grammar param
 
 root          ::= reasoning_block ws resp_root | ws resp_root
 
 resp_root     ::= "<response>" ws json_root ws "</response>" | json_root
 
-json_root     ::= "{" ws "\"items\":" ws "[" ws item_list ws "]" ws "}"
+json_root     ::= "{" ws "\"classify\":" ws verdict_val "," ws "\"reason\":" ws string ws "}"
 
-item_list     ::= item ("," ws item)*
-
-item          ::= "{" ws "\"task\":" ws string ws "}"
+verdict_val   ::= "\"REWRITE\"" | "\"KEEP\""
 
 # ── String rule: quote-preserving (default) ────────────────
 # Allows escaped quotes, backslashes, and standard JSON escapes
-# inside string values. Use this when field values may contain
-# quoted text from command outputs or user input.
+# inside string values.
 char          ::= [^"\\] | "\\" ["\\/bfnrt]
 string        ::= "\"" char* "\""
 

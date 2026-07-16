@@ -56,7 +56,7 @@ LLAMA_CPP_FA="${LLAMA_CPP_FA:-auto}"
 # Global constrained-decoding toggle.
 # 0 = disable all GBNF grammar attachment (default)
 # 1 = enable schema grammar loading/attachment when a schema is requested
-LLM_GRAMMAR_ENABLED="${LLM_GRAMMAR_ENABLED:-0}"
+LLM_GRAMMAR_ENABLED="${LLM_GRAMMAR_ENABLED:-1}"
 # Backend preference: llamacpp (default — auto-starts when needed), ollama, auto
 # Persisted to .george/lodge.conf along with token limits, budgets, sampling
 # params, and debug mode so they survive sessions.
@@ -143,7 +143,7 @@ LLM_BUDGET_JOURNAL=${LLM_BUDGET_JOURNAL:-4096}
 LLM_BUDGET_TOOL=${LLM_BUDGET_TOOL:-4096}
 
 # ── Grammar ───────────────────────────────────────────────────
-LLM_GRAMMAR_ENABLED=${LLM_GRAMMAR_ENABLED:-0}
+LLM_GRAMMAR_ENABLED=${LLM_GRAMMAR_ENABLED:-1}
 
 # ── Sampling Parameters ───────────────────────────────────────
 LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.15}
@@ -707,6 +707,8 @@ _llm_start_llamacpp_server() {
             _LLM_BACKEND_CACHE=""
             LLAMA_CPP_MODEL="$model_path"
             LLAMA_CPP_SERVER_NOTHINK="${LODGE_NOTHINK:-0}"
+            LLAMA_CPP_SERVER_SPEC_MTP="${LLAMA_CPP_SPEC_MTP:-0}"
+            LLAMA_CPP_SERVER_DRAFT_MODEL="${LLAMA_CPP_DRAFT_MODEL:-}"
             return 0
         fi
     fi
@@ -723,6 +725,8 @@ _llm_start_llamacpp_server() {
                 _LLM_BACKEND_CACHE=""
                 LLAMA_CPP_MODEL="$model_path"
                 LLAMA_CPP_SERVER_NOTHINK="${LODGE_NOTHINK:-0}"
+                LLAMA_CPP_SERVER_SPEC_MTP="${LLAMA_CPP_SPEC_MTP:-0}"
+                LLAMA_CPP_SERVER_DRAFT_MODEL="${LLAMA_CPP_DRAFT_MODEL:-}"
                 return 0
             fi
             _wait=$((_wait + 1))
@@ -750,6 +754,31 @@ _llm_start_llamacpp_server() {
         kill -9 "$_orphan_pid" 2>/dev/null
         wait "$_orphan_pid" 2>/dev/null
         sleep 1
+    fi
+
+    # Unload Ollama models to free GPU VRAM before starting llama-server.
+    # This prevents Out Of Memory crashes on Termux.
+    if _llm_ollama_responding; then
+        local _ps_resp
+        _ps_resp=$(curl -sf --max-time 3 "$OLLAMA_URL/api/ps" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$_ps_resp" ]; then
+            local _active_models
+            _active_models=$(echo "$_ps_resp" | jq -r '.models[].name' 2>/dev/null || echo "")
+            if [ -n "$_active_models" ]; then
+                local _am _unloaded=0
+                for _am in $_active_models; do
+                    [ -z "$_am" ] && continue
+                    [ "$quiet" != "--quiet" ] && [ "$_unloaded" -eq 0 ] && ui_dim "Unloading Ollama models to free GPU VRAM..."
+                    curl -sf --max-time 5 "$OLLAMA_URL/api/generate" \
+                        -H "Content-Type: application/json" \
+                        -d "{\"model\": \"$_am\", \"prompt\": \"\", \"keep_alive\": 0}" &>/dev/null
+                    _unloaded=1
+                done
+                if [ "$_unloaded" -eq 1 ]; then
+                    sleep 2 # cooling period to let GPU driver recycle allocations
+                fi
+            fi
+        fi
     fi
 
     local _port
@@ -841,8 +870,6 @@ _llm_start_llamacpp_server() {
     fi
 
     if [ "$_spec_mtp" = "1" ]; then
-        _launch_args+=(--spec-type draft-mtp --spec-draft-n-max "${LLAMA_CPP_SPEC_DRAFT_N_MAX:-4}")
-        
         # Resolve MTP draft model HF reference or local file
         local _spec_draft_hf=""
         if [ -n "${LLAMA_CPP_SPEC_DRAFT_HF:-}" ]; then
@@ -857,8 +884,22 @@ _llm_start_llamacpp_server() {
             # If main model is local GGUF, but is Gemma-4 E2B, load draft from HF
             if [[ "${LODGE_MODEL:-}" == "gemma4-e2b-inst" ]]; then
                 _spec_draft_hf="unsloth/gemma-4-E2B-it-qat-GGUF:mtp-gemma-4-E2B-it"
+            elif [[ "${LODGE_MODEL:-}" == gemma4-* ]]; then
+                # Embedded MTP models: use the main model GGUF path itself
+                LLAMA_CPP_DRAFT_MODEL="$model_path"
             fi
         fi
+
+        # Safety Check: If no draft GGUF was resolved/configured, and we are not in HF auto-discovery mode,
+        # disable speculative decoding to prevent llama-server from crashing.
+        if [ -z "${LLAMA_CPP_DRAFT_MODEL:-}" ] && [ -z "$_spec_draft_hf" ] && [ "$_launch_mode" = "model" ]; then
+            [ "$quiet" != "--quiet" ] && ui_warn "No speculative draft GGUF configured/resolved for $LODGE_MODEL. Disabling speculation."
+            _spec_mtp=0
+        fi
+    fi
+
+    if [ "$_spec_mtp" = "1" ]; then
+        _launch_args+=(--spec-type draft-mtp --spec-draft-n-max "${LLAMA_CPP_SPEC_DRAFT_N_MAX:-4}")
 
         # If spec-draft-hf is determined, we must pre-download it because llama.cpp
         # does not support concurrent Hugging Face downloads for main + draft models.
@@ -972,6 +1013,8 @@ _llm_start_llamacpp_server() {
             _LLM_BACKEND_CACHE=""
             LLAMA_CPP_MODEL="$model_path"
             LLAMA_CPP_SERVER_NOTHINK="${LODGE_NOTHINK:-0}"
+            LLAMA_CPP_SERVER_SPEC_MTP="${LLAMA_CPP_SPEC_MTP:-0}"
+            LLAMA_CPP_SERVER_DRAFT_MODEL="${LLAMA_CPP_DRAFT_MODEL:-}"
             [ "$quiet" != "--quiet" ] && ui_ok "llama-server started (PID $_pid)"
             # Verify no unexpected GPU offload
             local _log_file="${TMPDIR:-/tmp}/lodge-llama-server.log"
@@ -1302,6 +1345,23 @@ llm_warmup() {
         fi
 
         printf "\033[33m⚠ Warmup failed: %s\033[0m\n" "$_warmup_err" > "$_tty" 2>/dev/null
+        return 1
+    fi
+}
+
+# Check if Ollama is running and responding (cache result to prevent repeated timeout delays)
+_llm_ollama_responding() {
+    if [ "${_LLM_OLLAMA_RESPONDING_CACHE:-}" = "1" ]; then
+        return 0
+    elif [ "${_LLM_OLLAMA_RESPONDING_CACHE:-}" = "0" ]; then
+        return 1
+    fi
+
+    if curl -sf --max-time 1 "$OLLAMA_URL/api/tags" &>/dev/null; then
+        _LLM_OLLAMA_RESPONDING_CACHE=1
+        return 0
+    else
+        _LLM_OLLAMA_RESPONDING_CACHE=0
         return 1
     fi
 }
@@ -1899,8 +1959,19 @@ llm_generate() {
                 break
             fi
 
-            local token
-            token=$(echo "$json" | jq -r '.choices[0].delta.content // empty' 2>/dev/null)
+            local token=""
+            if [[ "$json" == *"\"content\":"* ]]; then
+                local tmp="${json#*\"content\":\"}"
+                if [[ "$tmp" =~ ^(([^\"]|\\\")*)\" ]]; then
+                    token="${BASH_REMATCH[1]}"
+                    token="${token//\\n/$'\n'}"
+                    token="${token//\\t/$'\t'}"
+                    token="${token//\\\"/\"}"
+                    token="${token//\\\\/\\}"
+                else
+                    token=$(echo "$json" | jq -r '.choices[0].delta.content // empty' 2>/dev/null)
+                fi
+            fi
 
             # ── reasoning_content support (llama-server ≥ b4000) ──
             # When the model's chat template has <think> support,
@@ -1909,7 +1980,19 @@ llm_generate() {
             #   .choices[0].delta.content            = response tokens
             # This bypasses the inline-tag state machine entirely.
             local _rc=""
-            _rc=$(echo "$json" | jq -r '.choices[0].delta.reasoning_content // empty' 2>/dev/null)
+            if [[ "$json" == *"\"reasoning_content\":"* ]]; then
+                local tmp="${json#*\"reasoning_content\":\"}"
+                if [[ "$tmp" =~ ^(([^\"]|\\\")*)\" ]]; then
+                    _rc="${BASH_REMATCH[1]}"
+                    _rc="${_rc//\\n/$'\n'}"
+                    _rc="${_rc//\\t/$'\t'}"
+                    _rc="${_rc//\\\"/\"}"
+                    _rc="${_rc//\\\\/\\}"
+                else
+                    _rc=$(echo "$json" | jq -r '.choices[0].delta.reasoning_content // empty' 2>/dev/null)
+                fi
+            fi
+
             if [ -n "$_rc" ]; then
                 [ -f "$_got_tokens" ] || touch "$_got_tokens"
                 _dbg_out=$((_dbg_out + 1))
@@ -1935,8 +2018,15 @@ llm_generate() {
             # llama-server emits usage in the final content chunk
             # (with finish_reason) when stream_options.include_usage
             # is set. Capture on every line; last value wins.
-            local _usage_pt
-            _usage_pt=$(echo "$json" | jq -r '.usage.prompt_tokens // empty' 2>/dev/null)
+            local _usage_pt=""
+            if [[ "$json" == *"\"prompt_tokens\":"* ]]; then
+                local tmp="${json#*\"prompt_tokens\":}"
+                if [[ "$tmp" =~ ^([0-9]+) ]]; then
+                    _usage_pt="${BASH_REMATCH[1]}"
+                else
+                    _usage_pt=$(echo "$json" | jq -r '.usage.prompt_tokens // empty' 2>/dev/null)
+                fi
+            fi
             [ -n "$_usage_pt" ] && _dbg_in="$_usage_pt"
 
             [ -n "$token" ] || continue

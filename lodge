@@ -209,12 +209,26 @@ _cmd_ask() {
     # When invoked from the inner loop, the question is the argument.
     # Read the user's answer from /dev/tty and emit it on stdout
     # so commands_dispatch captures it in the action log.
-    echo ""
-    printf "  %b George asks: %b%s%b\n" "$C_LODGE" "$C_CYAN" "$1" "$C_RESET" > /dev/tty 2>/dev/null
-    echo "" > /dev/tty 2>/dev/null
-    printf "  %b> %b" "$C_BOLD" "$C_RESET" > /dev/tty 2>/dev/null
-    local answer=""
-    read -r answer < /dev/tty 2>/dev/null || read -r answer 2>/dev/null || true
+    local _tty=""
+    if { true >/dev/tty; } 2>/dev/null; then
+        _tty="/dev/tty"
+    fi
+
+    if [ -n "$_tty" ]; then
+        echo ""
+        printf "  %b George asks: %b%s%b\n" "$C_LODGE" "$C_CYAN" "$1" "$C_RESET" > "$_tty" 2>/dev/null
+        echo "" > "$_tty" 2>/dev/null
+        printf "  %b> %b" "$C_BOLD" "$C_RESET" > "$_tty" 2>/dev/null
+        local answer=""
+        read -r answer < "$_tty" 2>/dev/null || read -r answer 2>/dev/null || true
+    else
+        printf "  %b George asks: %b%s%b\n" "$C_LODGE" "$C_CYAN" "$1" "$C_RESET" >&2
+        echo "" >&2
+        printf "  %b> %b" "$C_BOLD" "$C_RESET" >&2
+        local answer=""
+        read -r answer 2>/dev/null || true
+    fi
+
     if [ -z "$answer" ]; then
         echo "(no answer provided)"
         return 0
@@ -234,11 +248,19 @@ _cmd_respond() {
     if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then
         text=$(tools_expand_file_refs "$text" "$workdir" "${AGENT_FILE_EXPAND_CHARS:-1000}")
     fi
-    echo "" >/dev/tty 2>/dev/null
-    # Render with markdown-lite formatting directly to TTY so the user
-    # sees it even when the agent loop captures stdout for the action log.
-    ui_render_response "$text" >/dev/tty 2>/dev/null
-    echo "" >/dev/tty 2>/dev/null
+
+    local _tty=""
+    if { true >/dev/tty; } 2>/dev/null; then
+        _tty="/dev/tty"
+    fi
+
+    if [ -n "$_tty" ]; then
+        echo "" >"$_tty" 2>/dev/null
+        # Render with markdown-lite formatting directly to TTY so the user
+        # sees it even when the agent loop captures stdout for the action log.
+        ui_render_response "$text" >"$_tty" 2>/dev/null
+        echo "" >"$_tty" 2>/dev/null
+    fi
     # Emit raw text to stdout so agent inner loop captures it in action log
     echo "$text"
 }
@@ -249,26 +271,56 @@ _cmd_think() {
             LODGE_NOTHINK=0
             LODGE_THINK=1
             LODGE_THINK_STREAM=1
-            ui_ok "Thinking ON — reasoning enabled, dimmed stream" ;;
+            ui_ok "Thinking ON — reasoning enabled, dimmed stream"
+            local _be; _be=$(_llm_detect_backend 2>/dev/null)
+            if [ "$_be" = "llamacpp" ]; then
+                ui_dim "Re-starting LLM server to apply changes..."
+                _models_switch "$LODGE_MODEL"
+            fi
+            ;;
         off|0|disable|nothink|skip)
             LODGE_NOTHINK=1
             LODGE_THINK=0
-            ui_ok "Thinking OFF — reasoning disabled (/no_think injected)" ;;
+            ui_ok "Thinking OFF — reasoning disabled (/no_think injected)"
+            local _be; _be=$(_llm_detect_backend 2>/dev/null)
+            if [ "$_be" = "llamacpp" ]; then
+                ui_dim "Re-starting LLM server to apply changes..."
+                _models_switch "$LODGE_MODEL"
+            fi
+            ;;
         bright|loud|2)
             LODGE_NOTHINK=0
             LODGE_THINK=1
             LODGE_THINK_STREAM=2
-            ui_ok "Thinking ON — bright stream (cyan)" ;;
+            ui_ok "Thinking ON — bright stream (cyan)"
+            local _be; _be=$(_llm_detect_backend 2>/dev/null)
+            if [ "$_be" = "llamacpp" ]; then
+                ui_dim "Re-starting LLM server to apply changes..."
+                _models_switch "$LODGE_MODEL"
+            fi
+            ;;
         dim|dimmed|quiet)
             LODGE_NOTHINK=0
             LODGE_THINK=1
             LODGE_THINK_STREAM=1
-            ui_ok "Thinking ON — dimmed stream" ;;
+            ui_ok "Thinking ON — dimmed stream"
+            local _be; _be=$(_llm_detect_backend 2>/dev/null)
+            if [ "$_be" = "llamacpp" ]; then
+                ui_dim "Re-starting LLM server to apply changes..."
+                _models_switch "$LODGE_MODEL"
+            fi
+            ;;
         hide|hidden|silent)
             LODGE_NOTHINK=0
             LODGE_THINK=1
             LODGE_THINK_STREAM=0
-            ui_ok "Thinking ON — hidden (reasoning happens, not shown)" ;;
+            ui_ok "Thinking ON — hidden (reasoning happens, not shown)"
+            local _be; _be=$(_llm_detect_backend 2>/dev/null)
+            if [ "$_be" = "llamacpp" ]; then
+                ui_dim "Re-starting LLM server to apply changes..."
+                _models_switch "$LODGE_MODEL"
+            fi
+            ;;
         test|diag|diagnose|debug)
             ui_info "Think display diagnostics"
             ui_dim "  LODGE_THINK=$LODGE_THINK  LODGE_THINK_STREAM=$LODGE_THINK_STREAM  LODGE_NOTHINK=$LODGE_NOTHINK"
@@ -453,7 +505,9 @@ _cmd_backend() {
             _llm_save_config
             local new_backend
             new_backend=$(_llm_detect_backend 2>/dev/null)
-            ui_ok "Backend preference set to '$action' → active: $new_backend" ;;
+            ui_ok "Backend preference set to '$action' → active: $new_backend"
+            _models_switch "$LODGE_MODEL"
+            ;;
         url)
             if [ -z "$arg2" ]; then
                 ui_info "Current URLs:"
@@ -2156,16 +2210,30 @@ _cmd_models() {
                 ui_dim "       /models spec tokens <num>"
                 ui_dim "       /models spec draft <path|clear>"
             else
-                case "$arg2" in
+                 case "$arg2" in
                     on|enable)
                         LLAMA_CPP_SPEC_MTP=1
                         _llm_save_config
                         ui_ok "Speculative decoding (MTP) enabled"
+                        local _be; _be=$(_llm_detect_backend 2>/dev/null)
+                        if [ "$_be" = "ollama" ]; then
+                            ui_dim "Speculative decoding requires llama-server. Automatically switching backend..."
+                            LLM_BACKEND="llamacpp"
+                            _LLM_BACKEND_CACHE=""
+                            _llm_save_config
+                        fi
+                        # Trigger eager hot-swap restart to apply speculative settings
+                        _models_switch "$LODGE_MODEL"
                         ;;
                     off|disable)
                         LLAMA_CPP_SPEC_MTP=0
                         _llm_save_config
                         ui_ok "Speculative decoding (MTP) disabled"
+                        local _be; _be=$(_llm_detect_backend 2>/dev/null)
+                        if [ "$_be" = "llamacpp" ]; then
+                            ui_dim "Re-starting LLM server to apply changes..."
+                            _models_switch "$LODGE_MODEL"
+                        fi
                         ;;
                     tokens)
                         if [ -z "$arg3" ]; then
@@ -2174,6 +2242,11 @@ _cmd_models() {
                             LLAMA_CPP_SPEC_DRAFT_N_MAX="$arg3"
                             _llm_save_config
                             ui_ok "Set speculative draft token limit to $arg3"
+                            local _be; _be=$(_llm_detect_backend 2>/dev/null)
+                            if [ "$_be" = "llamacpp" ] && [ "${LLAMA_CPP_SPEC_MTP:-0}" = "1" ]; then
+                                ui_dim "Re-starting LLM server to apply changes..."
+                                _models_switch "$LODGE_MODEL"
+                            fi
                         fi
                         ;;
                     draft)
@@ -2183,10 +2256,20 @@ _cmd_models() {
                             LLAMA_CPP_DRAFT_MODEL=""
                             _llm_save_config
                             ui_ok "Cleared speculative draft model override"
+                            local _be; _be=$(_llm_detect_backend 2>/dev/null)
+                            if [ "$_be" = "llamacpp" ] && [ "${LLAMA_CPP_SPEC_MTP:-0}" = "1" ]; then
+                                ui_dim "Re-starting LLM server to apply changes..."
+                                _models_switch "$LODGE_MODEL"
+                            fi
                         else
                             LLAMA_CPP_DRAFT_MODEL="$arg3"
                             _llm_save_config
                             ui_ok "Set speculative draft model to $arg3"
+                            local _be; _be=$(_llm_detect_backend 2>/dev/null)
+                            if [ "$_be" = "llamacpp" ] && [ "${LLAMA_CPP_SPEC_MTP:-0}" = "1" ]; then
+                                ui_dim "Re-starting LLM server to apply changes..."
+                                _models_switch "$LODGE_MODEL"
+                            fi
                         fi
                         ;;
                     *)
@@ -6151,6 +6234,9 @@ main() {
     elif [[ "$1" == /* ]]; then
         # Slash command mode
         commands_dispatch "$*" "$PWD"
+    elif commands_is_safe_auto_route "$*"; then
+        # Auto-route slashless commands (e.g. `./lodge status` -> `/status`)
+        commands_dispatch "/$*" "$PWD"
     else
         # Concurrency Lock Gating
         local lockfile="${GEORGE_CONFIG_DIR:-$PWD/.george}/.lodge.lock"

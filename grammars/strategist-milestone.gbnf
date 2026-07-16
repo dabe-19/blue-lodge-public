@@ -1,14 +1,11 @@
-# Task Classifier — abstract / concrete / combined
-# Used by _agent_classify_task() in lib/agent.sh
+# Strategist Milestone — plain text milestone sentence
+# Used by macro loop in lib/agent.sh
 # Layer 1 constrained decoding for llama-server grammar param
 
-root          ::= reasoning_block ws resp_root | ws resp_root
+root          ::= reasoning_block ws milestone_text | ws milestone_text
 
-resp_root     ::= "<response>" ws json_root ws "</response>" | json_root
-
-json_root     ::= "{" ws "\"type\":" ws type_enum ws "}"
-
-type_enum     ::= "\"abstract\"" | "\"concrete\"" | "\"combined\""
+# Allow any characters except braces, angle brackets, and backticks to prevent JSON/HTML/code leakage
+milestone_text ::= [^{}<>`\t\n\r]+
 
 reasoning_block ::= "<think>" reasoning_text "</think>"
                   | reasoning_text "</think>"
@@ -19,7 +16,7 @@ reasoning_block ::= "<think>" reasoning_text "</think>"
                   | "[" [tT][hH][oO][uU][gG][hH][tT] "]" reasoning_text_bracket "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
                   | reasoning_text_bracket "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
 
-reasoning_text    ::= [^<]*
-reasoning_text_bracket ::= [^\[]*
+reasoning_text    ::= ( [^<] | "<" [^/c|t] )*
+reasoning_text_bracket ::= ( [^\[] | "[" [^/] )*
 
 ws            ::= [ \t\n]*

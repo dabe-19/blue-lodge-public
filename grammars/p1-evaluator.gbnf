@@ -2,18 +2,31 @@
 # Used by _agent_evaluate_milestone() in lib/agent.sh
 # Layer 1 constrained decoding for llama-server grammar param
 
-root        ::= "{" ws "\"verdict\":" ws verdict_val "," ws "\"reason\":" ws string ws "}"
+root          ::= reasoning_block ws resp_root | ws resp_root
 
-verdict_val ::= "\"COMPLETE\"" | "\"INCOMPLETE\""
+resp_root     ::= "<response>" ws json_root ws "</response>" | json_root
+
+json_root     ::= "{" ws "\"verdict\":" ws verdict_val "," ws "\"reason\":" ws string ws "}"
+
+verdict_val   ::= "\"COMPLETE\"" | "\"INCOMPLETE\""
 
 # ── String rule: quote-preserving (default) ────────────────
 # Allows escaped quotes, backslashes, and standard JSON escapes
 # inside string values. Use this when field values may contain
 # quoted text from command outputs or user input.
-char        ::= [^"\\] | "\\" ["\\/bfnrt]
-string      ::= "\"" char* "\""
-# ── String rule: quote-stripping (swap in if quotes unwanted) ──
-# char      ::= [^"\\]
-# string    ::= "\"" char* "\""
+char          ::= [^"\\] | "\\" ["\\/bfnrt]
+string        ::= "\"" char* "\""
 
-ws          ::= [ \t\n]*
+reasoning_block ::= "<think>" reasoning_text "</think>"
+                  | reasoning_text "</think>"
+                  | "<|channel>thought" reasoning_text "<channel|>"
+                  | reasoning_text "<channel|>"
+                  | "[" [tT][hH][iI][nN][kK] "]" reasoning_text_bracket "[/" [tT][hH][iI][nN][kK] "]"
+                  | reasoning_text_bracket "[/" [tT][hH][iI][nN][kK] "]"
+                  | "[" [tT][hH][oO][uU][gG][hH][tT] "]" reasoning_text_bracket "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
+                  | reasoning_text_bracket "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
+
+reasoning_text    ::= [^<]*
+reasoning_text_bracket ::= [^\[]*
+
+ws            ::= [ \t\n]*

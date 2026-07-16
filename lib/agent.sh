@@ -245,6 +245,13 @@ _strip_think_blocks() {
     }'
 }
 
+# Splits inline lists formatted like "item1.2. item2" or "item1. 2) item2" into newlines.
+_agent_split_inline_lists() {
+    sed 's/\([^0-9]\)\([0-9]\{1,2\}\.[[:space:]]\{1,2\}\)/\1\n\2/g' | \
+    sed 's/\([^0-9]\)\([0-9]\{1,2\})[[:space:]]\{1,2\}\)/\1\n\2/g' | \
+    sed 's/\([^0-9]\)\([0-9]\{1,2\}\.[^[:space:]0-9]\)/\1\n\2/g'
+}
+
 # ── JSON Extraction Helper (Layer 2) ───────────────────────────
 # Extracts and validates structured JSON from raw LLM output.
 # Handles think blocks, markdown code fences, and surrounding prose.
@@ -498,11 +505,22 @@ _agent_is_conversational_info_task() {
     [ "${AGENT_CONVERSATIONAL_INFO_MODE:-1}" -ne 1 ] && return 1
     local lower
     lower=$(echo "$task" | tr '[:upper:]' '[:lower:]')
-    # Exclude explicit build/write/side-effect intents.
-    if [[ "$lower" =~ (write[[:space:]]|edit[[:space:]]|append[[:space:]]|save[[:space:]]|build|test|fix|commit|push|post[[:space:]]|email|send[[:space:]]|create[[:space:]]file|scaffold|init[[:space:]]|deploy) ]]; then
+
+    # 1. Exclude explicit task/action verbs
+    if [[ "$lower" =~ \b(write|edit|append|save|build|test|fix|commit|push|post|email|send|create|scaffold|init|deploy|compile|run|execute|lint|format|delete|remove|modify|update|add|find|search|show|get|fetch|scrape|download)\b ]]; then
         return 1
     fi
-    [[ "$lower" =~ (\?|what|who|when|where|why|how|explain|summarize|tell[[:space:]]me|quick[[:space:]]info|brief[[:space:]]overview|facts) ]]
+
+    # 2. Exclude file paths, extensions, or command domains (requires macro loop)
+    if [[ "$lower" =~ ([a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+|\b[a-zA-Z0-9_-]+\.(sh|py|rs|md|json|txt|js|ts|go|c|cpp|h|toml|yaml|yml|lock|conf)\b) ]]; then
+        return 1
+    fi
+    if [[ "$lower" =~ \b(sandbox|container|phone|git|backend|service|vitals|cleanup|model|journal|reflect|backup|secrets|recall)\b ]]; then
+        return 1
+    fi
+
+    # 3. Match pure conversational markers, WH-questions, and greetings
+    [[ "$lower" =~ (\?|\b(what|who|when|where|why|how|which|explain|summarize|clarify|define|help|info|facts|hello|hi|hey|yo|greetings)\b|tell[[:space:]]me|can[[:space:]]you|could[[:space:]]you|do[[:space:]]you[[:space:]]know) ]]
 }
 
 _agent_explicit_side_effect_match() {
@@ -704,7 +722,7 @@ _agent_grammar_handshake() {
     [ "${_AGENT_GRAMMAR_HANDSHAKE_DONE:-0}" -eq 1 ] && return 0
     _AGENT_GRAMMAR_HANDSHAKE_DONE=1
 
-    local -a schemas=("task-classifier" "honeydew-items" "p1-evaluator" "honeydew-evaluator" "metacog")
+    local -a schemas=("task-classifier" "honeydew-items" "p1-evaluator" "honeydew-evaluator" "metacog" "honeydew-rewrite-router" "strategist-milestone")
     local schema
     for schema in "${schemas[@]}"; do
         _AGENT_SCHEMA_COMPAT["$schema"]=1
@@ -1414,6 +1432,7 @@ TASK: $task
         # Split these into separate lines BEFORE the line-by-line parser.
         raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\}\.[[:space:]]\{1,2\}\)/\1\n\2/g')
         raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\})[[:space:]]\{1,2\}\)/\1\n\2/g')
+        raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\}\.[^[:space:]0-9]\)/\1\n\2/g')
 
         # Parse numbered lines into JSON array (shared helper — zero sed forks)
         _agent_parse_numbered_items 0 _items_json count <<< "$raw_list"
@@ -1723,8 +1742,7 @@ EXPAND_JSON
     raw_list=$(echo "$raw_list" | sed '/^[[:space:]]*$/d')
 
     # Inline list splitting (same as _agent_honeydew_build)
-    raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\}\.[[:space:]]\{1,2\}\)/\1\n\2/g')
-    raw_list=$(echo "$raw_list" | sed 's/\([^0-9]\)\([0-9]\{1,2\})[[:space:]]\{1,2\}\)/\1\n\2/g')
+    raw_list=$(echo "$raw_list" | _agent_split_inline_lists)
 
     # Parse numbered lines (shared helper — zero sed forks)
     local _sub_items sub_count
@@ -2472,22 +2490,13 @@ REWRITE_ROUTER_JSON
     ui_think "Honeydew rewrite router: evaluating list quality..."
 
     local _router_verdict
-    local LLM_SCENARIO=evaluator
-    _router_verdict=$(llm_generate "$router_prompt" "$router_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_ROUTER")
+    # Call JSON evaluator with honeydew-rewrite-router GBNF grammar to guarantee correct response formatting
+    _router_verdict=$(_agent_eval_call_json "$workdir" "honeydew_rewrite_router" "$router_prompt" "$router_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_ROUTER" "honeydew-rewrite-router" "classify" "reason")
 
-    # Clean think blocks
-    _router_verdict=$(echo "$_router_verdict" | _strip_think_blocks)
-    _router_verdict=$(echo "$_router_verdict" | sed 's/\*\+//g')
-    _router_verdict=$(echo "$_router_verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew rewrite router verdict: %s\n' "$(echo "$_router_verdict" | tr '\n' ' ' | head -c 200)" >&2
-
-    local _verdict_word
-    # Extract first word from first line, strip decorators
-    # (replaces: head -1 | awk | sed — 3 forks)
-    _verdict_word="${_router_verdict%%$'\n'*}"
-    _verdict_word="${_verdict_word%%[: 	]*}"
-    _verdict_word="${_verdict_word//[*_.,\"\'\']/}"
+    local _verdict_word="KEEP"
+    if _agent_extract_json "$_router_verdict" "classify" >/dev/null 2>&1; then
+        _verdict_word=$(echo "$_router_verdict" | jq -r '.classify // "KEEP"' 2>/dev/null)
+    fi
 
     if [[ "$_verdict_word" != "REWRITE" ]]; then
         if [ "$force_rewrite" -eq 1 ]; then
@@ -2569,7 +2578,7 @@ Rewrite ONLY the pending items to better serve the original task based on what t
 IMPORTANT: Consolidate redundant or overlapping items. If two pending items describe essentially the same work (e.g., 'summarize events' and 'present information concisely'), merge them into ONE clear item. Fewer focused items are always better than many overlapping ones.
 
 $(cat << 'REWRITE_JSON'
-{"output":"numbered list ONLY of replacement pending items",
+{"output":"JSON object: {\"items\":[{\"task\":\"imperative sentence\"},...]} OR numbered list",
  "each_item":"imperative sentence preserving key context from the original task (such as names, projects, files, or specific targets) — WHAT to achieve, not HOW",
  "describe":"GOAL only — include key entities, but never tools, commands, URLs, shell syntax",
  "context":"ensure key context and entities are preserved (e.g. 'poetically describe the image of JJ Kelly' instead of just 'poetically describe the image')",
@@ -2581,23 +2590,35 @@ $(cat << 'REWRITE_JSON'
 REWRITE_JSON
 )"
 
-    local rewrite_sys="You are a task decomposition rewrite engine. Rewrite ONLY the pending honeydew items to better align with the original task based on milestone discoveries. If prior milestones or commands failed, you must pivot and rewrite the pending items to work around the failure (e.g. if a specific URL, path, or tool is blocked/fails, rewrite items to find another source, use local tools, or try a different path). Output ONLY a numbered list. Each item: imperative sentence preserving key context from the original task (e.g., names, files, topics). Describe WHAT, not HOW. No commands, URLs, or tools."
+    local rewrite_sys="You are a task decomposition rewrite engine. Rewrite ONLY the pending honeydew items to better align with the original task based on milestone discoveries. If prior milestones or commands failed, you must pivot and rewrite the pending items to work around the failure (e.g. if a specific URL, path, or tool is blocked/fails, rewrite items to find another source, use local tools, or try a different path). Output a JSON object: {\"items\":[{\"task\":\"imperative sentence\"},...]} OR a numbered list. Each item: imperative sentence preserving key context from the original task (e.g., names, files, topics). Describe WHAT, not HOW. No commands, URLs, or tools."
 
     local _raw_rewrite
     local LLM_SCENARIO=strategist
-    _raw_rewrite=$(llm_generate "$rewrite_prompt" "$rewrite_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
+    _raw_rewrite=$(llm_generate "$rewrite_prompt" "$rewrite_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "honeydew-items")
 
-    # Clean think blocks (same pipeline as _agent_honeydew_build)
-    _raw_rewrite=$(echo "$_raw_rewrite" | _strip_think_blocks)
-    _raw_rewrite=$(echo "$_raw_rewrite" | sed '/^[[:space:]]*$/d')
+    # ── Layer 2: Try structured JSON extraction ─────────────────
+    local _json_items="" _new_items="" _new_count=0
+    if _json_items=$(_agent_extract_json "$_raw_rewrite" "items"); then
+        _new_items=$(echo "$_json_items" | jq '[.items | to_entries[] | {id: (.key + 1), task: (if (.value | type) == "string" then .value else .value.task end), status: "pending", depth: 0}]' 2>/dev/null)
+        _new_count=$(echo "${_new_items:-[]}" | jq 'length' 2>/dev/null)
+        _new_count="${_new_count:-0}"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew rewrite json extract: %d items\n' "$_new_count" >&2
+    fi
 
-    # Inline list splitting
-    _raw_rewrite=$(echo "$_raw_rewrite" | sed 's/\([^0-9]\)\([0-9]\{1,2\}\.[[:space:]]\{1,2\}\)/\1\n\2/g')
-    _raw_rewrite=$(echo "$_raw_rewrite" | sed 's/\([^0-9]\)\([0-9]\{1,2\})[[:space:]]\{1,2\}\)/\1\n\2/g')
+    # ── Layer 3: Legacy fallback — numbered list parsing ────────
+    if [ "${_new_count:-0}" -eq 0 ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew rewrite: JSON extraction failed, falling back to numbered list parsing"
 
-    # Parse numbered lines into JSON array (shared helper — zero sed forks)
-    local _new_items _new_count
-    _agent_parse_numbered_items 0 _new_items _new_count <<< "$_raw_rewrite"
+        # Clean think blocks (same pipeline as _agent_honeydew_build)
+        _raw_rewrite=$(echo "$_raw_rewrite" | _strip_think_blocks)
+        _raw_rewrite=$(echo "$_raw_rewrite" | sed '/^[[:space:]]*$/d')
+
+        # Inline list splitting
+        _raw_rewrite=$(echo "$_raw_rewrite" | _agent_split_inline_lists)
+
+        # Parse numbered lines into JSON array (shared helper — zero sed forks)
+        _agent_parse_numbered_items 0 _new_items _new_count <<< "$_raw_rewrite"
+    fi
 
     # Need at least 1 valid item to proceed with rewrite
     if [ "$_new_count" -eq 0 ]; then
@@ -7536,6 +7557,15 @@ agent_run() {
         fi
     fi
 
+    # ── Conversational Info Fast Path ─────────────────────────
+    # If the task is purely conversational/info, bypass the macro
+    # loop and classification entirely and route directly to agent_ask (quick single-shot).
+    if _agent_is_conversational_info_task "$task"; then
+        agent_ask "$task" "$workdir"
+        _LODGE_IN_TASK=0
+        return 0
+    fi
+
     # ── Initialize Memory Architecture ────────────────────────
     local george_dir="$workdir/.george"
     local macro_file="$george_dir/macro_memory.json"
@@ -7648,6 +7678,7 @@ MEMEOF
     # fast-route bypass, and research gate thresholds.
     _agent_classify_task "$task" "$workdir"
     _agent_routing_trace "$workdir" "task_classifier" "$(jq -cn --arg task_type "${AGENT_TASK_TYPE:-concrete}" '{task_type:$task_type}')"
+
 
     # ── Dynamic Output Directory ──────────────────────────────
     # Abstract and combined tasks route file writes to the task
@@ -8329,7 +8360,7 @@ ${_research_gate}${_pref_hint}${_milestone_history}"
         # Previously llm_stream showed it live, then ui_info showed it again,
         # then the specialist streamed it a third time — tripling the output.
         local LLM_SCENARIO=strategist
-        milestone=$(llm_generate "$macro_prompt" "$macro_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
+        milestone=$(llm_generate "$macro_prompt" "$macro_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "strategist-milestone")
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] raw strategist output:\n%s\n [debug] end raw strategist output\n" "$milestone" >&2
 
         # ── MILESTONE CLEANUP ─────────────────────────────────
