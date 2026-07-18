@@ -204,6 +204,36 @@ describe "cmd_edit"
     rm -rf "$_tmpdir"
   }
 
+  it "supports blockless query mode and outputs line numbers" && {
+    _tmpdir=$(test_tmpdir)
+    echo -e "first\nsecond" > "$_tmpdir/query.txt"
+    _out=$(cmd_edit "query.txt" "$_tmpdir" 2>&1)
+    assert_ok $?
+    assert_contains "$_out" "1: first"
+    assert_contains "$_out" "2: second"
+    rm -rf "$_tmpdir"
+  }
+
+  it "automatically strips line number prefixes from search/replace patterns" && {
+    _tmpdir=$(test_tmpdir)
+    echo -e "line a\nline b\nline c" > "$_tmpdir/strip.txt"
+    _out=$(cmd_edit $'strip.txt\n<<<<<<<\n2: line b\n=======\n2: line b modified\n>>>>>>>' "$_tmpdir" 2>&1)
+    assert_ok $?
+    _content=$(cat "$_tmpdir/strip.txt")
+    assert_contains "$_content" "line b modified"
+    assert_not_contains "$_content" "2: "
+    rm -rf "$_tmpdir"
+  }
+
+  it "correctly unescapes literal \\n sequences passed through commands_dispatch for /edit" && {
+    _tmpdir=$(test_tmpdir)
+    echo "original_text" > "$_tmpdir/nl_edit.txt"
+    commands_dispatch '/edit nl_edit.txt\n<<<<<<<\noriginal_text\n=======\nreplaced_text\n>>>>>>>' "$_tmpdir" 2>/dev/null
+    _content=$(cat "$_tmpdir/nl_edit.txt")
+    assert_contains "$_content" "replaced_text"
+    rm -rf "$_tmpdir"
+  }
+
 # ══════════════════════════════════════════════════════════════
 # Bug 2: /write backward compatibility (--append/--edit redirect)
 # ══════════════════════════════════════════════════════════════

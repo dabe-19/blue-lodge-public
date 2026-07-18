@@ -21,7 +21,11 @@ cmd_append() {
 
     # Parse: first token is filepath, rest is content
     if declare -f tools_fix_llm_spacing &>/dev/null; then
-        args=$(tools_fix_llm_spacing "$args")
+        local _first_arg="${args%%[[:space:]]*}"
+        local _rest_args="${args#*"$_first_arg"}"
+        local _fixed_first
+        _fixed_first=$(tools_fix_llm_spacing "$_first_arg")
+        args="${_fixed_first}${_rest_args}"
     fi
 
     local filepath content

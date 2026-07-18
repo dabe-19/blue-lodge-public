@@ -23,7 +23,11 @@ cmd_edit() {
 
     # Parse: first token is filepath, rest is sed expression
     if declare -f tools_fix_llm_spacing &>/dev/null; then
-        args=$(tools_fix_llm_spacing "$args")
+        local _first_arg="${args%%[[:space:]]*}"
+        local _rest_args="${args#*"$_first_arg"}"
+        local _fixed_first
+        _fixed_first=$(tools_fix_llm_spacing "$_first_arg")
+        args="${_fixed_first}${_rest_args}"
     fi
 
     local filepath content
@@ -64,12 +68,6 @@ cmd_edit() {
         content=""
     fi
 
-    if [ -z "$content" ]; then
-        ui_err "No search/replace block provided"
-        ui_dim "Provide a search/replace block after the filepath"
-        return 1
-    fi
-
     # Resolve path relative to workdir (security: no absolute paths)
     local fullpath
     if [[ "$filepath" == /* ]]; then
@@ -77,70 +75,121 @@ cmd_edit() {
     fi
     fullpath="$workdir/$filepath"
 
-    if [ ! -f "$fullpath" ]; then
-        ui_err "Cannot edit — file does not exist: $filepath"
-        return 1
+    if [ -z "$content" ]; then
+        if [ -f "$fullpath" ]; then
+            ui_info "File loaded. Line numbers (e.g., '14:') are reference metadata ONLY — do NOT include them in your search/replace patterns."
+            echo "--- start of $filepath ---"
+            awk '{print NR ": " $0}' "$fullpath"
+            echo "--- end of $filepath ---"
+            return 0
+        else
+            ui_err "No search/replace block provided and file does not exist: $filepath"
+            return 1
+        fi
     fi
 
-    # Parse search pattern and replacement pattern from content
-    local search_pattern replacement_pattern
-    search_pattern=$(echo "$content" | awk '
-        /^<<<<<<</ { inside=1; next }
-        /^=======/ { inside=0; exit }
-        inside { print }
-    ')
-    replacement_pattern=$(echo "$content" | awk '
-        /^=======/ { inside=1; next }
-        /^>>>>>>>/ { inside=0; exit }
-        inside { print }
-    ')
-
-    if [ -z "$search_pattern" ]; then
-        ui_err "Edit rejected — invalid block-replace format"
-        ui_dim "Use the following format:"
-        ui_dim "  /edit <filepath>"
-        ui_dim "  <<<<<<<"
-        ui_dim "  <search_lines>"
-        ui_dim "  ======="
-        ui_dim "  <replace_lines>"
-        ui_dim "  >>>>>>>"
+    if [ ! -f "$fullpath" ]; then
+        ui_err "Cannot edit — file does not exist: $filepath"
         return 1
     fi
 
     local before_lines after_lines
     before_lines=$(wc -l < "$fullpath")
 
-    export SEARCH_PAT="$search_pattern"
-    export REPLACE_PAT="$replacement_pattern"
+    export CONTENT="$content"
 
     local py_err
     py_err=$(python3 -c '
 import sys, os
 fullpath = sys.argv[1]
+content_str = os.environ.get("CONTENT", "")
+
+# Parse blocks
+blocks = []
+current_search = []
+current_replace = []
+state = "outside"
+
+for line in content_str.split("\n"):
+    line = line.rstrip("\r")
+    if line.startswith("<<<<<<<"):
+        state = "in_search"
+        current_search = []
+    elif line.startswith("======="):
+        state = "in_replace"
+        current_replace = []
+    elif line.startswith(">>>>>>>"):
+        if state == "in_replace":
+            blocks.append(("\n".join(current_search), "\n".join(current_replace)))
+        state = "outside"
+    else:
+        if state == "in_search":
+            current_search.append(line)
+        elif state == "in_replace":
+            current_replace.append(line)
+        elif state == "outside" and line.strip():
+            state = "in_search"
+            current_search = [line]
+
+if not blocks:
+    print("Error: Edit rejected — invalid block-replace format. Could not parse any search/replace blocks.", file=sys.stderr)
+    sys.exit(1)
+
+import re
 with open(fullpath, "r", encoding="utf-8") as f:
-    content = f.read()
-search = os.environ.get("SEARCH_PAT", "")
-replace = os.environ.get("REPLACE_PAT", "")
-if not search:
-    print("Error: Empty search pattern", file=sys.stderr)
-    sys.exit(1)
-if search not in content:
-    print("Error: Search pattern not found in target file.", file=sys.stderr)
-    sys.exit(1)
-if content.count(search) > 1:
-    print("Error: Search pattern is not unique (found multiple matches).", file=sys.stderr)
-    sys.exit(1)
-new_content = content.replace(search, replace)
+    file_content = f.read()
+
+def strip_line_numbers(text):
+    lines = text.split("\n")
+    cleaned_lines = []
+    for line in lines:
+        m = re.match(r"^\s*\d+:\s?(.*)", line)
+        if m:
+            cleaned_lines.append(m.group(1))
+        else:
+            cleaned_lines.append(line)
+    return "\n".join(cleaned_lines)
+
+# Clean and verify blocks
+cleaned_blocks = []
+for idx, (search, replace) in enumerate(blocks):
+    if not search:
+        print(f"Error: Empty search pattern in block {idx+1}.", file=sys.stderr)
+        sys.exit(1)
+    
+    cleaned_search = search
+    cleaned_replace = replace
+    if search not in file_content:
+        candidate_search = strip_line_numbers(search)
+        if candidate_search in file_content:
+            cleaned_search = candidate_search
+            cleaned_replace = strip_line_numbers(replace)
+
+    if cleaned_search not in file_content:
+        print(f"Error: Search pattern not found in target file (block {idx+1}).", file=sys.stderr)
+        sys.exit(1)
+    if file_content.count(cleaned_search) > 1:
+        print(f"Error: Search pattern is not unique (found multiple matches) in block {idx+1}.", file=sys.stderr)
+        sys.exit(1)
+    cleaned_blocks.append((cleaned_search, cleaned_replace))
+
+# Apply all replacements
+new_content = file_content
+for search, replace in cleaned_blocks:
+    new_content = new_content.replace(search, replace)
+
 with open(fullpath, "w", encoding="utf-8") as f:
     f.write(new_content)
+
+print(f"Applied {len(cleaned_blocks)} block edits.")
 ' "$fullpath" 2>&1)
     local py_rc=$?
 
-    unset SEARCH_PAT REPLACE_PAT
+    unset CONTENT
 
     if [ "$py_rc" -eq 0 ]; then
         after_lines=$(wc -l < "$fullpath")
-        ui_ok "Edited: $filepath ($before_lines → $after_lines lines)"
+        ui_ok "Edited: $filepath ($before_lines → $after_lines lines) - $py_err"
         return 0
     else
         ui_err "Edit failed: $py_err"

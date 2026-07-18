@@ -3193,10 +3193,38 @@ _agent_evaluate_milestone() {
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] milestone-eval context truncated: $_ctx_total -> $_max_ctx_lines lines"
     fi
 
+    # ATTROLLER CHECK: Detect web research milestones (search/fetch/scrape)
+    local _is_web_milestone=0
+    if [[ "$milestone_text" =~ /web([[:space:]]|$) || "$milestone_text" == *search* || "$milestone_text" == *scrape* || "$milestone_text" == *fetch* ]]; then
+        _is_web_milestone=1
+    fi
+
+    # Retrieve primary objective for overarching relevance context
+    local _primary_obj=""
+    if [ -f "$macro_file" ]; then
+        _primary_obj=$(jq -r '.primary_objective // empty' "$macro_file" 2>/dev/null)
+    fi
+
     # ATTENTION REORDER: Action log FIRST, milestone LAST (recency bias)
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions above accomplish this milestone? Apply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_P1_TEXT'
+    local eval_prompt="" eval_sys=""
+    if [ "$_is_web_milestone" -eq 1 ]; then
+        eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nPRIMARY OBJECTIVE (the original user request):\n${_primary_obj}\n\nACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions above accomplish this milestone? Apply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_P1_TEXT'
+EVAL SCHEMA:
+- Classify: Either COMPLETE or INCOMPLETE.
+- Scope: Evaluate relevance against BOTH the narrow milestone and the overarching PRIMARY OBJECTIVE (the original user request).
+- Recency: Judge by the LAST action in the log — earlier failed attempts do NOT invalidate a later success.
+- Web Relevance Check (Mandatory for Search/Scrape):
+  - Do NOT just verify that the command ran successfully. You MUST inspect the actual search results or page content returned in the ACTION LOG.
+  - If the retrieved information is empty, irrelevant to the primary objective, blocked/captcha, or fails to contain the specific data needed to fulfill the original user request (e.g. searching for a book returns no info about the book, or a fetch returned an empty/blocked page), you MUST classify the verdict as INCOMPLETE.
+  - If INCOMPLETE, you must formulate a new suggested milestone that would get the correct information (e.g. 'Use /web search with different criteria...', 'Use /web fetch on <another_url>...', or a custom action) and return it in the "recommendation" field of the JSON.
+- Response Format: Respond with a JSON object ONLY: {"verdict":"COMPLETE" or "INCOMPLETE", "reason":"brief reason", "recommendation":"new suggested milestone or empty"}. Do NOT include any markdown block formatting or additional text.
+EVAL_P1_TEXT
+)"
+        eval_sys="You are a pragmatic milestone evaluator. Judge by the MOST RECENT action in the log — earlier failed attempts do not invalidate a later success. For web research milestones: inspect the actual search results or webpage contents for relevance to the original user request; if irrelevant or empty, verdict is INCOMPLETE, and suggest a better next action in the 'recommendation' field of the JSON. No markdown formatting. Respond with a JSON object: {\"verdict\":\"COMPLETE\" or \"INCOMPLETE\", \"reason\":\"brief reason\", \"recommendation\":\"new suggested milestone or empty\"}. Do NOT echo or repeat the evaluation schema."
+    else
+        eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nPRIMARY OBJECTIVE (the original user request):\n${_primary_obj}\n\nACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions above accomplish this milestone? Apply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_P1_TEXT'
 EVAL SCHEMA:
 - Classify: Either COMPLETE or INCOMPLETE.
 - Scope: Evaluate THIS milestone only (do not judge by future/past objectives).
@@ -3211,26 +3239,37 @@ EVAL SCHEMA:
 - Response Format: Respond with a JSON object ONLY: {"verdict":"COMPLETE" or "INCOMPLETE", "reason":"brief reason"}. Do NOT include any markdown block formatting or additional text.
 EVAL_P1_TEXT
 )"
-
-    local eval_sys="You are a pragmatic milestone evaluator. Judge by the MOST RECENT action in the log — earlier failed attempts do not invalidate a later success. exit_0 = success. Empty output = normal. A milestone is COMPLETE if the action in the log executed the requested command and returned a non-empty result (e.g. running /web search is COMPLETE if the search returned links, even if those links have not been fetched yet). No markdown formatting. Respond with a JSON object: {\"verdict\":\"COMPLETE\" or \"INCOMPLETE\", \"reason\":\"brief reason\"}. Do NOT echo or repeat the evaluation schema."
+        eval_sys="You are a pragmatic milestone evaluator. Judge by the MOST RECENT action in the log — earlier failed attempts do not invalidate a later success. exit_0 = success. Empty output = normal. A milestone is COMPLETE if the action in the log executed the requested command and returned a non-empty result (e.g. running /web search is COMPLETE if the search returned links, even if those links have not been fetched yet). No markdown formatting. Respond with a JSON object: {\"verdict\":\"COMPLETE\" or \"INCOMPLETE\", \"reason\":\"brief reason\"}. Do NOT echo or repeat the evaluation schema."
+    fi
 
     ui_think "Evaluator (pass 1): assessing milestone completion..."
     local verdict
-    verdict=$(_agent_eval_call_json "$workdir" "milestone_eval" "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "p1-evaluator" "verdict" "reason")
-
-    # ── DEBUG: Evaluator raw verdict ────────────────────────────
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" 2>/dev/null >/dev/tty
-
-    # ── Layer 2: Try structured JSON extraction ─────────────────
+    _EVAL_MILESTONE_REASON=""
+    _EVAL_MILESTONE_RECOMMENDATION=""
     local _json_verdict=""
     local verdict_word=""
-    _EVAL_MILESTONE_REASON=""
 
-    if _json_verdict=$(_agent_extract_json "$verdict" "verdict" "reason"); then
-        verdict_word=$(echo "$_json_verdict" | jq -r '.verdict // empty')
-        _EVAL_MILESTONE_REASON=$(echo "$_json_verdict" | jq -r '.reason // empty')
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 json extract: verdict=%s reason=%s\n' "$verdict_word" "${_EVAL_MILESTONE_REASON:0:80}" 2>/dev/null >/dev/tty
+    if [ "$_is_web_milestone" -eq 1 ]; then
+        verdict=$(_agent_eval_call_json "$workdir" "milestone_eval" "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "p1-evaluator" "verdict" "reason" "recommendation")
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 raw verdict (web): %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" 2>/dev/null >/dev/tty
+        if _json_verdict=$(_agent_extract_json "$verdict" "verdict" "reason" "recommendation"); then
+            verdict_word=$(echo "$_json_verdict" | jq -r '.verdict // empty')
+            _EVAL_MILESTONE_REASON=$(echo "$_json_verdict" | jq -r '.reason // empty')
+            _EVAL_MILESTONE_RECOMMENDATION=$(echo "$_json_verdict" | jq -r '.recommendation // empty')
+            [[ "$_EVAL_MILESTONE_RECOMMENDATION" == "none" || "$_EVAL_MILESTONE_RECOMMENDATION" == "None" || "$_EVAL_MILESTONE_RECOMMENDATION" == "N/A" ]] && _EVAL_MILESTONE_RECOMMENDATION=""
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 json extract (web): verdict=%s reason=%s rec=%s\n' "$verdict_word" "${_EVAL_MILESTONE_REASON:0:80}" "${_EVAL_MILESTONE_RECOMMENDATION:0:80}" 2>/dev/null >/dev/tty
+        fi
     else
+        verdict=$(_agent_eval_call_json "$workdir" "milestone_eval" "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "p1-evaluator" "verdict" "reason")
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" 2>/dev/null >/dev/tty
+        if _json_verdict=$(_agent_extract_json "$verdict" "verdict" "reason"); then
+            verdict_word=$(echo "$_json_verdict" | jq -r '.verdict // empty')
+            _EVAL_MILESTONE_REASON=$(echo "$_json_verdict" | jq -r '.reason // empty')
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 json extract: verdict=%s reason=%s\n' "$verdict_word" "${_EVAL_MILESTONE_REASON:0:80}" 2>/dev/null >/dev/tty
+        fi
+    fi
+
+    if [ -z "$_json_verdict" ]; then
         # ── Layer 3: Legacy fallback parsing ────────────────────
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval-p1: JSON extraction failed, falling back to text parsing"
 
@@ -4300,6 +4339,7 @@ RULES (OBEY THESE — they override everything below):
 1. Output exactly ONE command starting with /.
 2. For commands with large multi-line content (/write, /save, /append, /respond, /social, /email), put the command and target path on the first line, then write the content on subsequent lines with literal newlines.
 3. FORBIDDEN: NO backticks. NO code fences. NO --flags on slash commands. NO quotes on args. NO multiple commands per line.
+4. FILE EXPANSION: In /social and /email, any filename in the message text or body= (e.g. report.md) is auto-expanded to its file contents. When sending reports, summaries, or drafts, ALWAYS /write the content to a file first, then reference that file path in your message/body (e.g. /social discord dm dabe report.md).
 SPEC_RULES
         echo ""
 
@@ -4440,7 +4480,7 @@ SPEC_RULES
             social)
                 cat << 'SPEC'
 {"cmd":"/social","syntax":["/social post discord <channel> <text>","/social post telegram <text>","/social post x <text>","/social post mastodon <text>","/social discord dm <user> <text>","/social discord read <channel>","/social discord channels sync","/social discord users sync"],
-"rules":["ALWAYS include channel name","@DisplayName auto-resolved to <@user_id>","Channel goes BEFORE text","No quotes on args"],
+"rules":["ALWAYS include channel name","@DisplayName auto-resolved to <@user_id>","Channel goes BEFORE text","No quotes on args","Use filename (e.g., report.md) in <text> to automatically attach/expand file contents"],
 "format_only_ex":["/social post discord <channel> <text>","/social discord dm <user> <text>"],
 "fill":{"<channel>":"Discord channel name without #","<text>":"Your message content (or filename to auto-expand to file contents)","<user>":"Discord username"},
 "notes":["Tip: passing a filename like 'shield_status.md' as <text> will auto-expand to the file's contents."]}
@@ -4867,7 +4907,7 @@ _agent_capture_diff_pre() {
     verb=${cmd%% *}
     [[ ! "$verb" =~ ^/(write|save|append|edit)$ ]] && return 0
     
-    filepath=$(echo "$cmd" | sed 's/^[^ ]* *//' | awk '{print $1}')
+    filepath=$(echo "$cmd" | head -n 1 | sed 's/^[^ ]* *//' | awk '{print $1}')
     # Expand tilde and clean path prefix
     declare -f tools_expand_tilde &>/dev/null && filepath=$(tools_expand_tilde "$filepath")
     filepath=$(ui_clean_path_prefix "$filepath" "$workdir")
@@ -5387,6 +5427,11 @@ SHORTLIST OVERRIDE: Choose exactly ONE slash command from ROUTER SHORTLIST only.
             else
                 # Inject eval reason into micro_memory so the router/specialist
                 # can see WHY the previous attempt was judged INCOMPLETE and adapt.
+                if [ -n "${_EVAL_MILESTONE_RECOMMENDATION:-}" ]; then
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Milestone evaluator redirected objective to: ${_EVAL_MILESTONE_RECOMMENDATION}"
+                    micro_objective="${_EVAL_MILESTONE_RECOMMENDATION}"
+                    _micro_set "$micro_file" "objective" "${_EVAL_MILESTONE_RECOMMENDATION}"
+                fi
                 if [ -n "${_EVAL_MILESTONE_REASON:-}" ]; then
                     _micro_add_note "$micro_file" "EVAL_FEEDBACK: Milestone NOT complete — ${_EVAL_MILESTONE_REASON}. Try a different approach or tool."
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Sufficiency reached but evaluator says INCOMPLETE — injecting feedback into micro_memory"
@@ -5727,7 +5772,7 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         local specialist_prompt="MICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context${_spec_research}${_spec_brainstorm}\n\n${_spec_tail}"
         # Inject full strategist output when milestone was truncated
         if [ -n "${_strategist_full:-}" ] && [ "${#_strategist_full}" -gt "${#micro_objective}" ]; then
-            specialist_prompt="FULL STRATEGIST DIRECTIVE: ${_strategist_full}\n\nMICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context\n\n${_spec_tail}"
+            specialist_prompt="FULL STRATEGIST DIRECTIVE: ${_strategist_full}\n\nMICRO OBJECTIVE: $micro_objective\n\nACTION LOG:\n$inner_context${_spec_research}${_spec_brainstorm}\n\n${_spec_tail}"
         fi
         # Inject reflexive context if available
         if [ -n "${_reflexive_context:-}" ]; then
@@ -5863,6 +5908,14 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
 
         fi  # end direct_respond / specialist branch
 
+        # Unescape literal \n and \r sequences in $cmd so the parent shell operates on actual newlines
+        if [[ "$cmd" == *'\n'* ]]; then
+            cmd="${cmd//'\n'/$'\n'}"
+        fi
+        if [[ "$cmd" == *'\r'* ]]; then
+            cmd="${cmd//'\r'/$'\r'}"
+        fi
+
         # ── Reflexive hook: post-route soul gate ──────────────
         if declare -f reflexive_post_route &>/dev/null; then
             if ! reflexive_post_route "$cmd" "$selected_tool" "$action_plan"; then
@@ -5887,7 +5940,7 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         #   /web fetch https://example.com/web search query
         # Detect [non-whitespace](/web|/Web) mid-string or backslash-web
         # and inject a space so the multi-command splitter can work.
-        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" != *'\n'* ]]; then
+        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" != *$'\n'* ]]; then
             # Case 1: \web or \/web glued (backslash before web command verb)
             # Case 2: /web glued to a preceding non-space character (URL path)
             local _glue_fixed
@@ -5909,7 +5962,7 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         # (e.g. /respond, /write, /brainstorm, /email) — even on a single
         # line, embedded /slashes are prose, not separate commands.
         local _skip_split=0
-        if [[ "$cmd" == *'\n'* ]]; then
+        if [[ "$cmd" == *$'\n'* ]]; then
             _skip_split=1
         elif [[ "$cmd" =~ ^/(respond|write|save|append|edit|email|brainstorm|q)[[:space:]] ]]; then
             _skip_split=1
@@ -6187,7 +6240,7 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
                 fi
                 if [ -n "$_embed_match" ]; then
                     local _wrapper_cmd
-                    _wrapper_cmd=$(echo "$cmd" | awk '{print $1}')
+                    _wrapper_cmd=$(echo "$cmd" | head -n 1 | awk '{print $1}')
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] embedded-cmd: extracted '${_embed_match:0:60}' from $_wrapper_cmd body"
                     ui_info "Embedded command detected in $_wrapper_cmd — promoting to primary command"
                     cmd="$_embed_match"
@@ -6344,8 +6397,10 @@ INTERLOCK_JSON
         # a known command name followed by a non-space character.
         # If so, inject a space so the command can dispatch normally.
         if [ "$cmd_is_slash" -eq 1 ] && [ -n "$cmd" ]; then
+            local _ms_first_line
+            _ms_first_line=$(echo "$cmd" | head -1)
             local _ms_first_word
-            _ms_first_word=$(echo "$cmd" | awk '{print $1}' | sed 's|^/||')
+            _ms_first_word=$(echo "$_ms_first_line" | awk '{print $1}' | sed 's|^/||')
             local _ms_matched=""
             # Only attempt repair if the first word is NOT already a valid command
             if ! { declare -p CMD_REGISTRY &>/dev/null && [[ -n "${CMD_REGISTRY[$_ms_first_word]+x}" ]]; } \
@@ -6364,9 +6419,15 @@ INTERLOCK_JSON
                 done
                 if [ -n "$_ms_matched" ]; then
                     local _ms_remainder="${_ms_first_word#"$_ms_matched"}"
-                    local _ms_rest
-                    _ms_rest=$(echo "$cmd" | sed 's|^/[^ ]*||')
-                    cmd="/${_ms_matched} ${_ms_remainder}${_ms_rest}"
+                    local _ms_rest_first_line="${_ms_first_line#"/${_ms_matched}${_ms_remainder}"}"
+                    _ms_rest_first_line="${_ms_rest_first_line# }"
+                    local _ms_rest_lines
+                    _ms_rest_lines=$(echo "$cmd" | tail -n +2)
+                    if [ -n "$_ms_rest_lines" ]; then
+                        cmd="/${_ms_matched} ${_ms_remainder}${_ms_rest_first_line:+ }${_ms_rest_first_line}"$'\n'"$_ms_rest_lines"
+                      else
+                        cmd="/${_ms_matched} ${_ms_remainder}${_ms_rest_first_line:+ }${_ms_rest_first_line}"
+                    fi
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Missing-space repair: /${_ms_first_word} → /${_ms_matched} ${_ms_remainder}..."
                 fi
             fi
@@ -6383,7 +6444,7 @@ INTERLOCK_JSON
         # next iteration's specialist has visibility into real tools.
         if [ "$cmd_is_slash" -eq 1 ] && [ -n "$cmd" ]; then
             local _spec_cmd_name
-            _spec_cmd_name=$(echo "$cmd" | awk '{print $1}' | sed 's|^/||')
+            _spec_cmd_name=$(echo "$cmd" | head -n 1 | awk '{print $1}' | sed 's|^/||')
             local _spec_cmd_valid=0
             if declare -p CMD_REGISTRY &>/dev/null && [[ -n "${CMD_REGISTRY[$_spec_cmd_name]+x}" ]]; then
                 _spec_cmd_valid=1
@@ -6608,7 +6669,7 @@ INTERLOCK_JSON
                         # Fix missing space between filename and content
                         # e.g. "file.txtContent" → "file.txt Content"
                         declare -f tools_fix_ext_spacing &>/dev/null && _aod_rest=$(tools_fix_ext_spacing "$_aod_rest")
-                        _aod_path=$(printf '%s' "$_aod_rest" | awk '{print $1}')
+                        _aod_path=$(printf '%s' "$_aod_rest" | head -n 1 | awk '{print $1}')
                         _aod_content=${_aod_rest#"$_aod_path"}
                         _aod_content=${_aod_content# }
                         # Skip if path already starts with the output dir
@@ -6623,11 +6684,11 @@ INTERLOCK_JSON
 
             # Display a truncated version for multi-line commands
             local _cmd_display
-            if [[ "$cmd" == *'\n'* ]]; then
+            if [[ "$cmd" == *$'\n'* ]]; then
                 # Show first line + indicator that content follows
                 _cmd_display=$(echo "$cmd" | head -1)
                 local _cmd_lines
-                _cmd_lines=$(echo "$cmd" | awk -F'\\\\n' '{print NF}')
+                _cmd_lines=$(echo "$cmd" | wc -l)
                 _cmd_display="${_cmd_display:0:120} (+${_cmd_lines} lines)"
             else
                 _cmd_display="$cmd"
@@ -6729,7 +6790,7 @@ INTERLOCK_JSON
                     if [[ "$_cmd_prefix" == "/web fetch" ]] || [[ "$_cmd_prefix" == "/web scrape" ]] || [[ "$_cmd_prefix" == "/web scrape-images" ]]; then
                         _cmd_prefix="/web scrape"
                     fi
-                    _primary_url=$(echo "$cmd" | sed -E 's#^/web (fetch|scrape|read|scrape-images) *##' | awk '{print $1}')
+                    _primary_url=$(echo "$cmd" | head -n 1 | sed -E 's#^/web (fetch|scrape|read|scrape-images) *##' | awk '{print $1}')
                     if [ "$exit_code" -ne 0 ] || _is_junk_output "$output"; then
                         local _queue_file="$AGENT_TASK_WORKSPACE/web_fetch_queue.txt"
                         if [ -f "$_queue_file" ]; then
@@ -6996,7 +7057,7 @@ INTERLOCK_JSON
                     /write\ *|/save\ *|/append\ *)
                         local _wf_rest="${cmd#* }"
                         local _wf_path
-                        _wf_path=$(printf '%s' "$_wf_rest" | awk '{print $1}')
+                        _wf_path=$(printf '%s' "$_wf_rest" | head -n 1 | awk '{print $1}')
                         if [ -n "$_wf_path" ]; then
                             local _wf_dup=0
                             local _wf_existing
@@ -7020,7 +7081,7 @@ INTERLOCK_JSON
                     /read\ *|/grep\ *|/vision\ *)
                         local _rf_rest="${cmd#* }"
                         local _rf_path
-                        _rf_path=$(printf '%s' "$_rf_rest" | awk '{print $1}')
+                        _rf_path=$(printf '%s' "$_rf_rest" | head -n 1 | awk '{print $1}')
                         # Normalize path (remove leading/trailing quotes if any)
                         _rf_path=$(echo "$_rf_path" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
                         if [ -n "$_rf_path" ] && [ -n "$output" ] && [ "$exit_code" -eq 0 ]; then
@@ -7132,6 +7193,11 @@ INTERLOCK_JSON
                             "Objective fulfilled" "$_last_success_cmd" "$george_dir"
                         return 0
                     else
+                        if [ -n "${_EVAL_MILESTONE_RECOMMENDATION:-}" ]; then
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Milestone evaluator redirected objective to: ${_EVAL_MILESTONE_RECOMMENDATION}"
+                            micro_objective="${_EVAL_MILESTONE_RECOMMENDATION}"
+                            _micro_set "$micro_file" "objective" "${_EVAL_MILESTONE_RECOMMENDATION}"
+                        fi
                         # ── PRE-ROUTE BREAKER ────────────────────
                         # Track consecutive P1 INCOMPLETE verdicts.
                         # After 2, the pre-route is disabled so the
@@ -7289,7 +7355,7 @@ INTERLOCK_JSON
             if [ "$_fail_count" -le 2 ]; then
                 if declare -f recall_search_context &>/dev/null; then
                     local base_cmd
-                    base_cmd=$(echo "$cmd" | awk '{print $1}')
+                    base_cmd=$(echo "$cmd" | head -n 1 | awk '{print $1}')
                     ui_warn "Escalation L2: Forced recall for '$base_cmd'..."
                     local recall_result
                     recall_result=$(recall_search_context "$base_cmd" 3 2>/dev/null)
@@ -7332,7 +7398,7 @@ INTERLOCK_JSON
                 local stderr_tail
                 stderr_tail=$(echo "$output" | tail -n 5)
                 local base_cmd
-                base_cmd=$(echo "$cmd" | awk '{print $1}')
+                base_cmd=$(echo "$cmd" | head -n 1 | awk '{print $1}')
                 ui_warn "Escalation L5: Web search for error..."
                 local web_result
                 web_result=$(web_search "error: $stderr_tail $base_cmd" 3 2>/dev/null)
@@ -7547,7 +7613,7 @@ Output a slash command line starting with / OR a bash code block."
                     /write\ *|/save\ *|/append\ *)
                         local _wfg_rest="${final_cmd#* }"
                         local _wfg_path
-                        _wfg_path=$(printf '%s' "$_wfg_rest" | awk '{print $1}')
+                        _wfg_path=$(printf '%s' "$_wfg_rest" | head -n 1 | awk '{print $1}')
                         if [ -n "$_wfg_path" ]; then
                             local _wfg_dup=0
                             local _wfg_existing
@@ -7620,13 +7686,19 @@ _agent_cross_task_sieve() {
     # Extract keywords from task using recall's own sanitizer.
     # Use OR mode for broad matching — the task description is
     # short so we want any hit, not all-words-match.
+    #
+    # Remove delivery channels, recipients, and general delivery verbs to prevent context crossover/overlap
+    local _sieve_task_clean
+    _sieve_task_clean=$(echo "$_sieve_task" | tr '[:upper:]' '[:lower:]')
+    _sieve_task_clean=$(echo "$_sieve_task_clean" | sed -E 's/\b(dm|discord|email|social|post|channel|server|slack|twitter|telegram|phone|sms|message|send|write|save|respond|mail|gmail|outlook|recipient)\b/ /g')
+
     local _sieve_query
-    _sieve_query=$(_recall_sanitize_query "$_sieve_task" "OR")
+    _sieve_query=$(_recall_sanitize_query "$_sieve_task_clean" "OR")
     [ -z "$_sieve_query" ] && return 0
 
     # Search recall for relevant prior context (top 4, 400 chars each)
     local _sieve_results
-    _sieve_results=$(recall_search_context "$_sieve_task" 4 400 2>/dev/null)
+    _sieve_results=$(recall_search_context "$_sieve_task_clean" 4 400 2>/dev/null)
 
     # Nothing found — inject "no prior context" hint so the strategist
     # doesn't waste the first milestone on /recall.
@@ -7672,7 +7744,7 @@ _agent_cross_task_sieve() {
     # Search recall for relevant archived milestones (top 3)
     if declare -f recall_search_milestones &>/dev/null; then
         local _sieve_ms
-        _sieve_ms=$(recall_search_milestones "$_sieve_task" 3 400 2>/dev/null)
+        _sieve_ms=$(recall_search_milestones "$_sieve_task_clean" 3 400 2>/dev/null)
         if [ -n "$_sieve_ms" ] && [ "$_sieve_ms" != "[]" ] && jq empty <<< "$_sieve_ms" 2>/dev/null; then
             local _sieve_ms_tmp="${_sieve_macro}.tmp"
             jq --argjson ms "$_sieve_ms" '.prior_milestones = $ms' "$_sieve_macro" > "$_sieve_ms_tmp" && mv "$_sieve_ms_tmp" "$_sieve_macro"
@@ -8517,6 +8589,7 @@ SERVICES STATUS: ${_svc_status:-unknown}
   - /email: Use ONLY when email is explicitly requested.
   - /sandbox: Use to isolate testing/building of code. Never run slash commands inside it.
   - File References: File paths (e.g. report.md) in /social, /email, /respond arguments are automatically expanded to their contents.
+  - File Delivery Rule: When the task asks to send or deliver a report, summary, draft, or written artifact via /social or /email, the milestone MUST specify the filename (e.g., report.md) in the message text. Do NOT output a bare message (like 'Here is the report') without the filename, as the filename is required to trigger the file expansion feature and actually send the report content.
   - Research Flow: Follow up a /web search by fetching/scraping relevant URLs using '/web fetch' or '/web scrape' to gather details.
   - Image Flow: To find or describe an image/logo of a person, object, or topic, first search for image URLs directly using '/web images <query>'. If you need to find an image from a specific website, scrape the page using '/web scrape <url>'. Once you have image URLs (from /web images, /web scrape, or queue), analyze them directly with '/vision <image_url>'. Only use '/download' if explicitly requested.
   - Discord Sync: Sync channels and users before posting to channel names for the first time.

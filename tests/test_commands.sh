@@ -85,6 +85,15 @@ describe "commands_dispatch"
     assert_eq $? 127
   }
 
+  it "unescapes literal \\n backslash sequences into actual newlines" && {
+    _dispatch_nl_handler() {
+      echo "$1"
+    }
+    commands_register "nltest" "newline test" "_dispatch_nl_handler"
+    out=$(commands_dispatch $'/nltest first\\nsecond' ".")
+    assert_contains "$out" $'first\nsecond'
+  }
+
 # ── commands_help ──────────────────────────────────────────────
 describe "commands_help"
 

@@ -65,7 +65,7 @@ _TOOLS_EXTENSIONS=(
     # 4-char extensions
     .json .yaml .toml .lock .bash .fish .conf .diff .spec .avif
     .html .scss .sass .less .wasm .http .jpeg .tiff .webp .webm
-    .java .rust .dart .perl .ruby .lisp .hurl
+    .java .rust .dart .perl .ruby .lisp .hurl .text
     .make .flac .opus .epub .xlsx .docx .pptx
     # 3-char extensions (longer variants like .tsx before .ts, .jsx before .js)
     .tsx .jsx .cpp .hpp .cxx .hxx .zig .nim .lua .vim .sql .vue .svx
@@ -981,6 +981,9 @@ tools_expand_file_refs() {
             fi
 
             # Try newest workspace directory fallback (resolves write-sandboxed files)
+            if [ -z "$resolved" ] && [ -f "$workdir/.george/workspaces/$fpath" ]; then
+                resolved="$workdir/.george/workspaces/$fpath"
+            fi
             if [ -z "$resolved" ]; then
                 local _newest_ws
                 _newest_ws=$(ls -td "$workdir/.george/workspaces"/*/ 2>/dev/null | head -1)

@@ -222,7 +222,13 @@ if ! command -v pdftotext &>/dev/null; then
         elif [ "$IS_TERMUX" -eq 1 ] && [ "$IS_PROOT" -eq 0 ]; then
             pkg install -y poppler 2>/dev/null || warn "poppler install failed — will use fallback"
         elif command -v apt &>/dev/null; then
-            sudo apt install -y -qq poppler-utils 2>/dev/null || warn "poppler-utils install failed — will use fallback"
+            if [ "$(id -u)" = "0" ]; then
+                apt install -y -qq poppler-utils 2>/dev/null || warn "poppler-utils install failed — will use fallback"
+            elif command -v sudo &>/dev/null; then
+                sudo apt install -y -qq poppler-utils 2>/dev/null || warn "poppler-utils install failed — will use fallback"
+            else
+                warn "poppler-utils install failed — no root/sudo privileges"
+            fi
         elif command -v pkg &>/dev/null; then
             pkg install -y poppler-utils 2>/dev/null || warn "poppler-utils install failed — will use fallback"
         else
@@ -253,7 +259,13 @@ if ! command -v mosquitto_pub &>/dev/null; then
         elif [ "$IS_TERMUX" -eq 1 ] && [ "$IS_PROOT" -eq 0 ]; then
             pkg install -y mosquitto 2>/dev/null || warn "mosquitto install failed"
         elif command -v apt &>/dev/null; then
-            sudo apt install -y -qq mosquitto-clients 2>/dev/null || warn "mosquitto-clients install failed"
+            if [ "$(id -u)" = "0" ]; then
+                apt install -y -qq mosquitto-clients 2>/dev/null || warn "mosquitto-clients install failed"
+            elif command -v sudo &>/dev/null; then
+                sudo apt install -y -qq mosquitto-clients 2>/dev/null || warn "mosquitto-clients install failed"
+            else
+                warn "mosquitto-clients install failed — no root/sudo privileges"
+            fi
         elif command -v pkg &>/dev/null; then
             pkg install -y mosquitto-clients 2>/dev/null || warn "mosquitto-clients install failed"
         else

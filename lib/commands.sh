@@ -23,6 +23,15 @@ commands_register() {
 commands_dispatch() {
     local input="$1"
     local workdir="${2:-.}"
+
+    # Replace literal \n and \r escape sequences with actual newlines/carriage returns
+    if [[ "$input" == *'\n'* ]]; then
+        input="${input//'\n'/$'\n'}"
+    fi
+    if [[ "$input" == *'\r'* ]]; then
+        input="${input//'\r'/$'\r'}"
+    fi
+
     local _dispatch_ts
     _dispatch_ts=$(date '+%Y-%m-%d %H:%M:%S')
     
@@ -44,7 +53,19 @@ commands_dispatch() {
 
     # Fix missing spaces in LLM output — file extensions, code fences, asterisks.
     if declare -f tools_fix_llm_spacing &>/dev/null; then
-        args=$(tools_fix_llm_spacing "$args")
+        case "$cmd" in
+            write|save|append|edit)
+                # Scope to first token ONLY for content-writing commands to avoid corrupting payload code
+                local _first_arg="${args%%[[:space:]]*}"
+                local _rest_args="${args#*"$_first_arg"}"
+                local _fixed_first
+                _fixed_first=$(tools_fix_llm_spacing "$_first_arg")
+                args="${_fixed_first}${_rest_args}"
+                ;;
+            *)
+                args=$(tools_fix_llm_spacing "$args")
+                ;;
+        esac
     fi
 
     # ── Strip hallucinated --flags from slash command args ──────────

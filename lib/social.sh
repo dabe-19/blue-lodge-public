@@ -613,6 +613,10 @@ discord_send() {
         done
         if [ "$_chunk_ok" -eq "$_chunk_count" ]; then
             ui_ok "Sent to Discord (channel: $channel_id) — ${_chunk_count} parts"
+            sleep 1
+            echo "--- Channel Readback ---"
+            discord_read "$channel_id" 5 | tac 2>/dev/null || discord_read "$channel_id" 5
+            echo "------------------------"
         else
             ui_warn "Discord: ${_chunk_ok}/${_chunk_count} message parts sent (channel: $channel_id)"
         fi
@@ -628,6 +632,10 @@ discord_send() {
 
     if [ $status -eq 0 ]; then
         ui_ok "Sent to Discord (channel: $channel_id)"
+        sleep 1
+        echo "--- Channel Readback ---"
+        discord_read "$channel_id" 5 | tac 2>/dev/null || discord_read "$channel_id" 5
+        echo "------------------------"
     else
         local err_msg
         err_msg=$(api_json_get "${_API_LAST_BODY:-}" '.message // .error // "unknown error"')
