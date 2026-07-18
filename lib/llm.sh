@@ -935,7 +935,6 @@ _llm_start_llamacpp_server() {
     fi
 
     if [ "$_use_mtp" -eq 1 ]; then
-        _launch_args+=(--spec-type draft-mtp --spec-draft-n-max "${LLAMA_CPP_SPEC_DRAFT_N_MAX:-4}")
         if [ "$_launch_mode" = "hf" ] && [ -z "${LLAMA_CPP_DRAFT_MODEL:-}" ]; then
             [ "$quiet" != "--quiet" ] && ui_dim "MTP: using llama.cpp -hf auto-discovery for repo draft model"
         fi
