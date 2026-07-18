@@ -697,4 +697,29 @@ describe "_cmd_git consolidation (search/check/clone/commit/push)"
     _teardown_git
   }
 
+  it "/git help includes discard in usage" && {
+    _setup_git
+    _load_cmd_git
+    out=$(_cmd_git "" 2>&1)
+    assert_contains "$out" "discard"
+    _teardown_git
+  }
+
+  it "/git discard reverts uncommitted changes" && {
+    _setup_git_repo
+    _load_cmd_git
+    echo "original content" > "$repo_dir/test_file.txt"
+    git add test_file.txt
+    git commit -m "initial commit" &>/dev/null
+    
+    echo "modified content" > "$repo_dir/test_file.txt"
+    assert_eq "$(cat "$repo_dir/test_file.txt")" "modified content"
+    
+    out=$(_cmd_git "discard test_file.txt" "$repo_dir" 2>&1)
+    assert_ok $?
+    assert_contains "$out" "Discarded changes"
+    assert_eq "$(cat "$repo_dir/test_file.txt")" "original content"
+    _teardown_git
+  }
+
 test_end

@@ -18,10 +18,12 @@
 
 # ── State ──────────────────────────────────────────────────────
 [ -n "${_LIB_TRANSCRIPT_LOADED:-}" ] && return 0; _LIB_TRANSCRIPT_LOADED=1
+echo "  [debug] Sourcing lib/transcript.sh!" >&2
 
 _TRANSCRIPT_FILE=""
 _TRANSCRIPT_DIR=""
 _TRANSCRIPT_START_TS=""
+_PROMPT_LOG_FILE=""
 
 # ── Start a new transcript ─────────────────────────────────────
 # Creates a timestamped .md file and writes the header.
@@ -44,7 +46,12 @@ transcript_start() {
         _TRANSCRIPT_FILE="$_TRANSCRIPT_DIR/${ts}_${_sfx}.md"
     fi
     _TRANSCRIPT_START_TS=$(date '+%s')
-
+    _PROMPT_LOG_FILE="${_TRANSCRIPT_FILE%.md}_prompts.md"
+    export _TRANSCRIPT_DIR
+    export _TRANSCRIPT_FILE
+    export _PROMPT_LOG_FILE
+    export _TRANSCRIPT_START_TS
+ 
     {
         echo "# Task Transcript"
         echo ""
@@ -53,10 +60,25 @@ transcript_start() {
         echo "**Directory:** $workdir"
         echo "**Model:** ${LODGE_MODEL:-unknown}"
         echo "**Backend:** ${LLM_BACKEND:-auto}"
+        echo "**Prompts Log:** [$(basename "$_PROMPT_LOG_FILE")](file://$_PROMPT_LOG_FILE)"
         echo ""
         echo "---"
         echo ""
     } > "$_TRANSCRIPT_FILE"
+ 
+    {
+        echo "# Task Prompts Log"
+        echo ""
+        echo "**Task:** $task"
+        echo "**Started:** $(date '+%Y-%m-%d %H:%M:%S %Z')"
+        echo "**Directory:** $workdir"
+        echo "**Model:** ${LODGE_MODEL:-unknown}"
+        echo "**Backend:** ${LLM_BACKEND:-auto}"
+        echo "**Main Transcript:** [$(basename "$_TRANSCRIPT_FILE")](file://$_TRANSCRIPT_FILE)"
+        echo ""
+        echo "---"
+        echo ""
+    } > "$_PROMPT_LOG_FILE"
 }
 
 # ── Core logging functions ─────────────────────────────────────
@@ -136,9 +158,20 @@ transcript_stop() {
         echo "**Ended:** $(date '+%Y-%m-%d %H:%M:%S %Z')"
         [ -n "$duration" ] && echo "**Duration:** $duration"
     } >> "$_TRANSCRIPT_FILE"
-
+ 
+    if [ -n "$_PROMPT_LOG_FILE" ] && [ -f "$_PROMPT_LOG_FILE" ]; then
+        {
+            echo ""
+            echo "---"
+            echo ""
+            echo "**Ended:** $(date '+%Y-%m-%d %H:%M:%S %Z')"
+            [ -n "$duration" ] && echo "**Duration:** $duration"
+        } >> "$_PROMPT_LOG_FILE"
+    fi
+ 
     local saved="$_TRANSCRIPT_FILE"
     _TRANSCRIPT_FILE=""
+    _PROMPT_LOG_FILE=""
     _TRANSCRIPT_START_TS=""
     echo "$saved"
 }
@@ -189,6 +222,25 @@ transcript_list() {
     [ "$count" -eq 0 ] && echo "(no transcripts)"
 }
 
+# Log an injected prompt with its role/type.
+# Usage: transcript_log_prompt "role" "prompt" "system"
+transcript_log_prompt() {
+    [ -z "$_PROMPT_LOG_FILE" ] && return
+    local role="$1"
+    local prompt="$2"
+    local system="${3:-}"
+    local ts
+    ts=$(date '+%H:%M:%S')
+    {
+        printf '\n`%s` **prompt-injection (%s):**\n' "$ts" "$role"
+        if [ -n "$system" ]; then
+            printf '<details>\n<summary>System Prompt</summary>\n\n```\n%s\n```\n\n</details>\n' "$system"
+        fi
+        printf '<details>\n<summary>User Prompt</summary>\n\n```\n%s\n```\n\n</details>\n' "$prompt"
+    } >> "$_PROMPT_LOG_FILE"
+}
+export -f transcript_log_prompt
+
 # Return the path to the most recent transcript.
 transcript_last() {
     local workdir="${1:-.}"
@@ -208,6 +260,7 @@ if declare -f ui_limitation_block &>/dev/null; then
 fi
 
 _agent_limitation_prompt_text() {
+    echo "  [debug] Finished sourcing lib/transcript.sh!" >&2
     local reason_code="$1"
     printf 'Constraint (%s). Choose one: RESCOPE | ALT_PATH | TERMINATE. Reply with one token.' "$reason_code"
 }

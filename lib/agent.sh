@@ -834,34 +834,25 @@ _agent_router_eligibility_pass() {
     [ "$net_ok" -eq 0 ] && git_allowed=0
 
     local need_web=0 need_recall=0 need_ls=0 need_grep=0 need_read=0 need_journal=0 need_delivery=0 need_git=0
-    if [ -n "$_milestone_cmd" ]; then
-        [ "$_milestone_cmd" = "web" ] && need_web=1
-        [ "$_milestone_cmd" = "recall" ] && need_recall=1
-        [ "$_milestone_cmd" = "ls" ] && need_ls=1
-        [ "$_milestone_cmd" = "grep" ] && need_grep=1
-        [ "$_milestone_cmd" = "read" ] && need_read=1
-        [ "$_milestone_cmd" = "journal" ] && need_journal=1
-        [ "$_milestone_cmd" = "respond" ] && need_delivery=1
-        [ "$_milestone_cmd" = "git" ] && need_git=1
-    else
-        local _spaced=" ${lower} "
-        local _web_pat="[^a-zA-Z0-9_-](web|search|google|lookup|look[[:space:]]+up|latest|current|today|news|weather|price|stock|internet|online|http|https|url|website)[^a-zA-Z0-9_-]"
-        local _recall_pat="[^a-zA-Z0-9_-](recall|remember|prior|previous|earlier|from[[:space:]]+before|already[[:space:]]+found|memory|knowledge[[:space:]]+base)[^a-zA-Z0-9_-]"
-        local _ls_pat="[^a-zA-Z0-9_-](list|tree|directory|directories|folders|files|workspace[[:space:]]+layout)[^a-zA-Z0-9_-]"
-        local _grep_pat="[^a-zA-Z0-9_-](grep|regex|pattern|search[[:space:]]+files|find[[:space:]]+.*file|search[[:space:]]+codebase)[^a-zA-Z0-9_-]"
-        local _read_pat="[^a-zA-Z0-9_-](read|open|inspect|view|show[[:space:]]+file|file[[:space:]]+content)[^a-zA-Z0-9_-]"
-        local _journal_pat="[^a-zA-Z0-9_-](journal|reflect|reflection|daily[[:space:]]+log|entry|synthesize)[^a-zA-Z0-9_-]"
-        local _delivery_pat="[^a-zA-Z0-9_-](respond|answer|summarize|summary|explain|deliver|report|final)[^a-zA-Z0-9_-]"
-        local _git_pat="[^a-zA-Z0-9_-](github|git|repo|repository|pull[[:space:]]+request|clone|commit|push)[^a-zA-Z0-9_-]"
-        [[ "$_spaced" =~ $_web_pat ]] && need_web=1
-        [[ "$_spaced" =~ $_recall_pat ]] && need_recall=1
-        [[ "$_spaced" =~ $_ls_pat ]] && need_ls=1
-        [[ "$_spaced" =~ $_grep_pat ]] && need_grep=1
-        [[ "$_spaced" =~ $_read_pat ]] && need_read=1
-        [[ "$_spaced" =~ $_journal_pat ]] && need_journal=1
-        [[ "$_spaced" =~ $_delivery_pat ]] && need_delivery=1
-        [[ "$_spaced" =~ $_git_pat ]] && need_git=1
-    fi
+    local _spaced=" ${lower} "
+    # Strip any URLs to prevent them from triggering git/web capability false positives (e.g. github.io triggering GIT_POLICY_LOCKED)
+    _spaced=$(echo "$_spaced" | sed -E 's|https?://[^[:space:]]+||g')
+    local _web_pat="[^a-zA-Z0-9_-](web|search|google|lookup|look[[:space:]]+up|latest|current|today|news|weather|price|stock|internet|online|http|https|url|website)[^a-zA-Z0-9_-]"
+    local _recall_pat="[^a-zA-Z0-9_-](recall|remember|prior|previous|earlier|from[[:space:]]+before|already[[:space:]]+found|memory|knowledge[[:space:]]+base)[^a-zA-Z0-9_-]"
+    local _ls_pat="[^a-zA-Z0-9_-](list|tree|directory|directories|folders|files|workspace[[:space:]]+layout)[^a-zA-Z0-9_-]"
+    local _grep_pat="[^a-zA-Z0-9_-](grep|regex|pattern|search[[:space:]]+files|find[[:space:]]+.*file|search[[:space:]]+codebase)[^a-zA-Z0-9_-]"
+    local _read_pat="[^a-zA-Z0-9_-](read|open|inspect|view|show[[:space:]]+file|file[[:space:]]+content)[^a-zA-Z0-9_-]"
+    local _journal_pat="[^a-zA-Z0-9_-](journal|reflect|reflection|daily[[:space:]]+log|entry|synthesize)[^a-zA-Z0-9_-]"
+    local _delivery_pat="[^a-zA-Z0-9_-](respond|answer|summarize|summary|explain|deliver|report|final)[^a-zA-Z0-9_-]"
+    local _git_pat="[^a-zA-Z0-9_-](github|git|repo|repository|pull[[:space:]]+request|clone|commit|push)[^a-zA-Z0-9_-]"
+    [[ "$_spaced" =~ $_web_pat ]] && need_web=1
+    [[ "$_spaced" =~ $_recall_pat ]] && need_recall=1
+    [[ "$_spaced" =~ $_ls_pat ]] && need_ls=1
+    [[ "$_spaced" =~ $_grep_pat ]] && need_grep=1
+    [[ "$_spaced" =~ $_read_pat ]] && need_read=1
+    [[ "$_spaced" =~ $_journal_pat ]] && need_journal=1
+    [[ "$_spaced" =~ $_delivery_pat ]] && need_delivery=1
+    [[ "$_spaced" =~ $_git_pat ]] && need_git=1
 
     local -a eligible=() shortlist=()
 
@@ -1071,8 +1062,12 @@ _micro_sufficiency_reached() {
 # Serialize for LLM injection — last N actions with output capped
 _micro_serialize() {
     local file="$1" max_actions="${2:-10}" max_output="${3:-1024}"
-    jq --argjson n "$max_actions" --argjson m "$max_output" '
-        .action_log = (.action_log | .[-$n:] | map(.output = .output[:$m]))
+    jq -r --argjson n "$max_actions" --argjson m "$max_output" '
+        "Objective: \(.micro_objective)\n\n" +
+        (.action_log | .[-$n:] | map(
+            "- Action: \(.action | gsub("\n"; "\\n"))\n  Status: \(.status) (exit \(.exit_code))\n  Output: \((.output // "")[:$m] | gsub("\n"; "\\n"))"
+        ) | join("\n\n")) +
+        (if (.warnings | length) > 0 then "\n\nWarnings:\n" + (.warnings | map("- " + .) | join("\n")) else "" end)
     ' "$file" 2>/dev/null
 }
 
@@ -1101,11 +1096,13 @@ _micro_serialize_lean() {
 # from prior milestones (research_context, prior_milestones, etc.).
 _micro_serialize_eval() {
     local file="$1" max_actions="${2:-10}" max_output="${3:-1024}"
-    jq --argjson n "$max_actions" --argjson m "$max_output" '{
-        micro_objective: .micro_objective,
-        action_log: (.action_log | .[-$n:] | map(.output = .output[:$m])),
-        warnings: .warnings
-    }' "$file" 2>/dev/null
+    jq -r --argjson n "$max_actions" --argjson m "$max_output" '
+        "Objective: \(.micro_objective)\n\n" +
+        (.action_log | .[-$n:] | map(
+            "- Action: \(.action | gsub("\n"; "\\n"))\n  Status: \(.status) (exit \(.exit_code))\n  Output: \((.output // "")[:$m] | gsub("\n"; "\\n"))"
+        ) | join("\n\n")) +
+        (if (.warnings | length) > 0 then "\n\nWarnings:\n" + (.warnings | map("- " + .) | join("\n")) else "" end)
+    ' "$file" 2>/dev/null
 }
 
 # Extract successful web outputs for research buffer (JSON array)
@@ -1219,7 +1216,7 @@ _macro_serialize_lean() {
     # request (dates, names, scope qualifiers) that the strategist needs
     # to stay on-topic across milestones.
     local _jq_lean='.completed_milestones |= (.[-5:] | [.[] | del(.command)])'
-    jq "del(.persona) | del(.read_context) | $_jq_lean" "$file" 2>/dev/null
+    jq "del(.persona) | del(.read_context) | del(.honeydew) | $_jq_lean" "$file" 2>/dev/null
 }
 
 # ── Milestone Completion Helper ────────────────────────────────
@@ -1268,8 +1265,8 @@ _agent_complete_milestone() {
     fi
 
     if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
-        printf '  [debug] macro_memory <- milestone: %s\n' "${_milestone_summary:0:120}" >&2
-        printf '  [debug] micro_memory <- COMPLETE: %s\n' "${summary:0:80}" >&2
+        printf '  [debug] macro_memory <- milestone: %s\n' "${_milestone_summary:0:120}" 2>/dev/null >/dev/tty
+        printf '  [debug] micro_memory <- COMPLETE: %s\n' "${summary:0:80}" 2>/dev/null >/dev/tty
     fi
 
     # ── RESEARCH BUFFER: Carry forward web data ────────────
@@ -1290,7 +1287,7 @@ _agent_complete_milestone() {
             printf '%s' "$_web_outputs" > "$_accum_file"
         fi
         cp "$_accum_file" "$george_dir/$RESEARCH_BUFFER_FILE"
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] research buffer updated/merged\n' >&2
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] research buffer updated/merged\n' 2>/dev/null >/dev/tty
     fi
 
     # ── Reflexive hook: milestone complete ─────────────────
@@ -1435,7 +1432,7 @@ TASK: $task
         _items_json=$(echo "$_json_items" | jq '[.items | to_entries[] | {id: (.key + 1), task: (if (.value | type) == "string" then .value else .value.task end), status: "pending", depth: 0}]' 2>/dev/null)
         count=$(echo "${_items_json:-[]}" | jq 'length' 2>/dev/null)
         count="${count:-0}"
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew json extract: %d items\n' "$count" >&2
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew json extract: %d items\n' "$count" 2>/dev/null >/dev/tty
     fi
 
     # ── Layer 3: Legacy fallback — numbered list parsing ────────
@@ -1555,7 +1552,7 @@ TASK: $task
     local parsed_type=""
     if _json_classify=$(_agent_extract_json "$raw_type" "type"); then
         parsed_type=$(echo "$_json_classify" | jq -r '.type // empty')
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] classify json extract: type=%s\n' "$parsed_type" >&2
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] classify json extract: type=%s\n' "$parsed_type" 2>/dev/null >/dev/tty
     else
         # ── Layer 3: Legacy fallback parsing ────────────────────
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] classify: JSON extraction failed, falling back to text parsing"
@@ -1968,8 +1965,7 @@ _fast_route() {
     fi
 
     # /build — compile, run, build, execute scripts/projects
-    if [[ "$_fr_text" =~ (build|compile|run[[:space:]].*script|run[[:space:]].*main|execute[[:space:]].*script|execute[[:space:]].*main|run[[:space:]]main\.sh) ]] \
-       && [[ ! "$_fr_text" =~ (fix|repair) ]]; then
+    if [[ "$_fr_text" =~ (build|compile|run[[:space:]].*script|run[[:space:]].*main|execute[[:space:]].*script|execute[[:space:]].*main|run[[:space:]]main\.sh) ]] && [[ ! "$_fr_text" =~ (fix|test) ]]; then
         echo "build"; return 0
     fi
 
@@ -2506,20 +2502,23 @@ Based on what the completed milestones have revealed (and any failure data above
 
 IMPORTANT: Default to KEEP. Only say REWRITE if the pending items are genuinely misaligned with the original task. Minor wording improvements or incremental refinements do NOT justify a rewrite. The existing list is working — rewrites cost time and risk drifting from the objective.
 
-$(cat << 'REWRITE_ROUTER_JSON'
-{"classify":"REWRITE|KEEP",
- "REWRITE_when":["pending items contradict or miss CRITICAL entities from original task",
-   "milestone discoveries fundamentally change the scope of remaining work",
-   "pending items are completely wrong given what is now known",
-   "pending items are redundant or overlapping (multiple items describing the same work)"],
- "KEEP_when":["pending items roughly align with original task (even if imperfect)",
-   "no significant new information from milestones",
-   "list is already specific enough",
-   "items could be slightly better but are still directionally correct",
-   "rewording would be cosmetic, not structural"],
- "default":"KEEP — only rewrite when the list is genuinely broken",
- "respond":"REWRITE or KEEP: <one-sentence reason>"}
-REWRITE_ROUTER_JSON
+$(cat << 'REWRITE_ROUTER_TEXT'
+REWRITE RULES:
+- Classify: Either REWRITE or KEEP.
+- Trigger REWRITE when:
+  - Pending items contradict or miss CRITICAL entities from the original task.
+  - Milestone discoveries fundamentally change the scope of remaining work.
+  - Pending items are completely wrong given what is now known.
+  - Pending items are redundant or overlapping (multiple items describing the same work).
+- Trigger KEEP when:
+  - Pending items roughly align with the original task (even if imperfect).
+  - No significant new information from milestones.
+  - List is already specific enough.
+  - Items could be slightly better but are still directionally correct.
+  - Rewording would be cosmetic, not structural.
+- Default Verdict: KEEP — only rewrite when the list is genuinely broken.
+- Response Format: REWRITE or KEEP: <one-sentence reason>.
+REWRITE_ROUTER_TEXT
 )"
 
     local router_sys="Honeydew list quality router. Default verdict: KEEP. Only say REWRITE when pending items are genuinely misaligned with the original task — not for minor improvements. One word verdict: REWRITE or KEEP, followed by a brief reason."
@@ -2531,10 +2530,19 @@ REWRITE_ROUTER_JSON
     # Call JSON evaluator with honeydew-rewrite-router GBNF grammar to guarantee correct response formatting
     _router_verdict=$(_agent_eval_call_json "$workdir" "honeydew_rewrite_router" "$router_prompt" "$router_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_ROUTER" "honeydew-rewrite-router" "classify" "reason")
 
-    local _verdict_word="KEEP"
-    if _agent_extract_json "$_router_verdict" "classify" >/dev/null 2>&1; then
-        _verdict_word=$(echo "$_router_verdict" | jq -r '.classify // "KEEP"' 2>/dev/null)
-    fi
+    # Clean think blocks
+    _router_verdict=$(echo "$_router_verdict" | _strip_think_blocks)
+    _router_verdict=$(echo "$_router_verdict" | sed 's/\*\+//g')
+    _router_verdict=$(echo "$_router_verdict" | sed '/^[[:space:]]*$/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew rewrite router verdict: %s\n' "$(echo "$_router_verdict" | tr '\n' ' ' | head -c 200)" 2>/dev/null >/dev/tty
+
+    local _verdict_word
+    # Extract first word from first line, strip decorators
+    # (replaces: head -1 | awk | sed — 3 forks)
+    _verdict_word="${_router_verdict%%$'\n'*}"
+    _verdict_word="${_verdict_word%%[: 	]*}"
+    _verdict_word="${_verdict_word//[*_.,\"\'\']/}"
 
     if [[ "$_verdict_word" != "REWRITE" ]]; then
         if [ "$force_rewrite" -eq 1 ]; then
@@ -2998,7 +3006,7 @@ _agent_evaluate_honeydew_item() {
     verdict=$(_agent_eval_call_json "$workdir" "honeydew_item" "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "honeydew-evaluator" "verdict" "reason" "recommendation")
 
     # ── DEBUG: Honeydew evaluator raw verdict ───────────────────
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" >&2
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" 2>/dev/null >/dev/tty
 
     # ── Layer 2: Try structured JSON extraction ─────────────────
     local _json_hd_verdict=""
@@ -3012,7 +3020,7 @@ _agent_evaluate_honeydew_item() {
         _EVAL_HONEYDEW_RECOMMENDATION=$(echo "$_json_hd_verdict" | jq -r '.recommendation // empty')
         # Normalize empty/none recommendations
         [[ "$_EVAL_HONEYDEW_RECOMMENDATION" == "none" || "$_EVAL_HONEYDEW_RECOMMENDATION" == "None" || "$_EVAL_HONEYDEW_RECOMMENDATION" == "N/A" ]] && _EVAL_HONEYDEW_RECOMMENDATION=""
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval json extract: verdict=%s reason=%s rec=%s\n' "$verdict_word" "${_EVAL_HONEYDEW_REASON:0:80}" "${_EVAL_HONEYDEW_RECOMMENDATION:0:80}" >&2
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval json extract: verdict=%s reason=%s rec=%s\n' "$verdict_word" "${_EVAL_HONEYDEW_REASON:0:80}" "${_EVAL_HONEYDEW_RECOMMENDATION:0:80}" 2>/dev/null >/dev/tty
     else
         # ── Layer 3: Legacy fallback parsing ────────────────────
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] honeydew-eval: JSON extraction failed, falling back to text parsing"
@@ -3104,8 +3112,8 @@ _agent_evaluate_honeydew_item() {
 
     local _reason_display="${_EVAL_HONEYDEW_REASON:+(${_EVAL_HONEYDEW_REASON:0:200})}"
     ui_info "Honeydew evaluator: item #${_next_id} not yet satisfied ${_reason_display}"
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval full verdict:\n%s\n' "$verdict" >&2
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_EVAL_HONEYDEW_RECOMMENDATION" ] && printf '  [debug] honeydew-eval recommendation: %s\n' "$_EVAL_HONEYDEW_RECOMMENDATION" >&2
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] honeydew-eval full verdict:\n%s\n' "$verdict" 2>/dev/null >/dev/tty
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_EVAL_HONEYDEW_RECOMMENDATION" ] && printf '  [debug] honeydew-eval recommendation: %s\n' "$_EVAL_HONEYDEW_RECOMMENDATION" 2>/dev/null >/dev/tty
     return 1
 }
 
@@ -3188,22 +3196,20 @@ _agent_evaluate_milestone() {
     # ATTENTION REORDER: Action log FIRST, milestone LAST (recency bias)
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions above accomplish this milestone? Apply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_P1_JSON'
-{"classify":"COMPLETE|INCOMPLETE",
- "default":{"exit_0":"COMPLETE","empty_output":"normal (email/social/file)"},
- "scope":"THIS milestone only",
- "recency":"judge the LAST action in the log — earlier failed attempts do NOT invalidate a later successful one",
- "no_extras":"no confirmation/follow-up unless milestone asked",
- "code":{
-   "write":"meaningful non-trivial code required",
-   "init":"key files created (Cargo.toml+src/main.rs, package.json+index.js)",
-   "build":"/build exit_0 required — /write alone NOT enough",
-   "web_only":"INCOMPLETE",
-   "reject":["todo","unimplemented","placeholder","stub","panic!()","empty body"]},
- "image_requirement":"If the command run is '/web search', it is search-only and is COMPLETE if it returned links; it does NOT need to return image URLs. If the command is '/web fetch', '/web scrape', or '/download', it is INCOMPLETE if no image URLs were found or if the scraped 'images' list was empty. For '/vision', it is COMPLETE if it returned descriptive details or analysis of the image (even if accompanied by a disclaimer or request for the image). If the milestone requested a download, and the action log shows a successful /vision command on that target image, it is COMPLETE (since vision automatically downloads and processes the image).",
- "cascade_fallback":"If the action log starts with '[CASCADE FALLBACK]', this indicates a fallback scrape occurred. In this case, you MUST ignore any URL mismatch between the milestone text and the fallback URL. Evaluate the output of the fallback URL instead. If the fallback fetch/scrape successfully captured content or images, the milestone is COMPLETE.",
- "respond":"JSON object: {\"verdict\":\"COMPLETE\" or \"INCOMPLETE\", \"reason\":\"brief reason\"}"}
-EVAL_P1_JSON
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions above accomplish this milestone? Apply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_P1_TEXT'
+EVAL SCHEMA:
+- Classify: Either COMPLETE or INCOMPLETE.
+- Scope: Evaluate THIS milestone only (do not judge by future/past objectives).
+- Recency: Judge by the LAST action in the log — earlier failed attempts do NOT invalidate a later success.
+- Default Rule: exit_0 status indicates COMPLETE. Empty output is normal for email/social/file operations.
+- Code Rules:
+  - For writing code (/write): Meaningful non-trivial code is required.
+  - For initializing a project (/init): Key files must be created (e.g. Cargo.toml and src/main.rs, or package.json and index.js).
+  - For building (/build): A successful /build exit_0 is required (a /write command alone is NOT enough).
+  - Reject placeholder or empty/incomplete code containing: todo, unimplemented, placeholder, stub, panic!(), or empty body.
+- Web Actions: Web searches alone are INCOMPLETE.
+- Response Format: Respond with a JSON object ONLY: {"verdict":"COMPLETE" or "INCOMPLETE", "reason":"brief reason"}. Do NOT include any markdown block formatting or additional text.
+EVAL_P1_TEXT
 )"
 
     local eval_sys="You are a pragmatic milestone evaluator. Judge by the MOST RECENT action in the log — earlier failed attempts do not invalidate a later success. exit_0 = success. Empty output = normal. A milestone is COMPLETE if the action in the log executed the requested command and returned a non-empty result (e.g. running /web search is COMPLETE if the search returned links, even if those links have not been fetched yet). No markdown formatting. Respond with a JSON object: {\"verdict\":\"COMPLETE\" or \"INCOMPLETE\", \"reason\":\"brief reason\"}. Do NOT echo or repeat the evaluation schema."
@@ -3213,7 +3219,7 @@ EVAL_P1_JSON
     verdict=$(_agent_eval_call_json "$workdir" "milestone_eval" "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "p1-evaluator" "verdict" "reason")
 
     # ── DEBUG: Evaluator raw verdict ────────────────────────────
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" >&2
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" 2>/dev/null >/dev/tty
 
     # ── Layer 2: Try structured JSON extraction ─────────────────
     local _json_verdict=""
@@ -3223,7 +3229,7 @@ EVAL_P1_JSON
     if _json_verdict=$(_agent_extract_json "$verdict" "verdict" "reason"); then
         verdict_word=$(echo "$_json_verdict" | jq -r '.verdict // empty')
         _EVAL_MILESTONE_REASON=$(echo "$_json_verdict" | jq -r '.reason // empty')
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 json extract: verdict=%s reason=%s\n' "$verdict_word" "${_EVAL_MILESTONE_REASON:0:80}" >&2
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p1 json extract: verdict=%s reason=%s\n' "$verdict_word" "${_EVAL_MILESTONE_REASON:0:80}" 2>/dev/null >/dev/tty
     else
         # ── Layer 3: Legacy fallback parsing ────────────────────
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] eval-p1: JSON extraction failed, falling back to text parsing"
@@ -3416,25 +3422,23 @@ _agent_evaluate_completion() {
     # handles all honeydew cases). Build the objective from primary_obj.
     local _obj_block="PRIMARY OBJECTIVE:\n${primary_obj}"
 
-    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\n${_obj_block}\n\nAre all completion criteria fully satisfied? Apply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_P2_JSON'
-{"classify":"COMPLETE|INCOMPLETE",
- "default":{"actions_exit_0":"COMPLETE","no_extras":true},
- "action_class":{
-   "RESEARCH_ONLY":"does NOT satisfy delivery",
-   "ACTION":{"exit_0":"COMPLETE"}},
- "parts":{"single":"1 correct milestone = COMPLETE",
-   "multi":"each part needs own milestone+action_class"},
- "code":{"require":["files_written","build_exit_0"],
-   "reject":["todo","stub","panic","placeholder"],
-   "web_only":"INCOMPLETE"},
- "content":{"require":["actual_content","delivery_command"],
-   "reject":["placeholder","announcement_only","stub_body"],
-   "email":"body must be substantive"},
- "delivery":{"need_both":"research + delivery (/respond,/write,/email,/save,/social)",
-   "summary_!=_delivery":true,
-   "check":"ACTUAL delivery commands in milestones"},
- "respond":"COMPLETE or INCOMPLETE: <what was accomplished or what remains>"}
-EVAL_P2_JSON
+    local eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nTASK MEMORY (all milestones completed so far):\n${macro_context}\n\nLATEST ACTION DETAILS:\n${micro_context:-No recent actions available.}\n\n---\n\n${_obj_block}\n\nAre all completion criteria fully satisfied? Apply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_P2_TEXT'
+EVAL SCHEMA:
+- Classify: Either COMPLETE or INCOMPLETE.
+- Scope: Evaluate the entire task objective.
+- General Rules:
+  - If the last action was RESEARCH_ONLY, it does NOT satisfy delivery.
+  - If actions ran successfully (exit 0) and delivered the final request, it is COMPLETE.
+- Code Rules:
+  - Files must be written and compiled successfully.
+  - Reject stubs, todo, placeholder, or panic() statements.
+  - Web research alone is INCOMPLETE.
+- Content / Delivery Rules:
+  - Deliveries (/respond, /write, /email, /save, /social) must contain substantive content.
+  - Reject placeholders, announcements only, or empty stubs.
+  - Delivering a summary or log is NOT enough if the primary task requested actual delivery.
+- Response Format: Respond with COMPLETE or INCOMPLETE: <brief reason explaining what was accomplished or what remains>. Do NOT use JSON formatting, markdown formatting, or repeat this schema.
+EVAL_P2_TEXT
 )"
 
     local eval_sys="You are a task-completion evaluator. Be pragmatic: actions executed successfully = done. Check Action-Class tags: RESEARCH_ONLY does not satisfy delivery. For code: must compile. For content: must exist in output. No markdown formatting. Respond COMPLETE or INCOMPLETE: <reason>."
@@ -3447,7 +3451,7 @@ EVAL_P2_JSON
     verdict=$(_agent_eval_call_text "$workdir" "completion_eval" "$eval_prompt" "$eval_sys" "${LLM_EVALUATOR_TOKENS:-4096}" "$LLM_BUDGET_AGENT")
 
     # ── DEBUG: Evaluator raw verdict ────────────────────────────
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p2 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" >&2
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] eval-p2 raw verdict: %s\n' "$(echo "$verdict" | tr '\n' ' ' | head -c 200)" 2>/dev/null >/dev/tty
 
     # Clean up LLM output — strip think blocks, markdown, whitespace
     verdict=$(echo "$verdict" | _strip_think_blocks)
@@ -4042,7 +4046,7 @@ Output ONLY a bare /command. No prose. Example: /web
 /respond=answer directly (DEFAULT if no file/email/post needed)
 /write=create/overwrite file
 /save=save content to file
-/edit=small file change (sed, max 200 chars)
+/edit=targeted search-and-replace block replacement
 /append=add to end of file
 /read=read a file
 /journal=read/write journal entries, synthesis, reflection
@@ -4102,7 +4106,7 @@ TOOLS — gather info, execute work (these do NOT deliver results to the user):
 /download    Download a URL
 /recall      Search knowledge base FTS5 (DO THIS FIRST before web)
 /init        Scaffold new project
-/edit        Small change to existing file (sed substitution, max 200 chars)
+/edit        Targeted change to existing file (block search-and-replace)
 /append      Add content to end of existing file
 /build       Build project
 /test        Run tests
@@ -4121,7 +4125,7 @@ DELIVERY — present results to user (one per milestone; a full task may chain s
 /email       Send/check actual email ONLY (gmail/protonmail/zoho) — ONLY when user says "email"
 /commit      AI commit message + commit
 /push        Push to GitHub
-/write       Write or overwrite ENTIRE file (for SMALL changes: /edit or /append)
+/write       Write or overwrite ENTIRE file (for targeted changes: use /edit)
 /save        Save content to file
 /respond     Present answer directly to operator (DEFAULT — use when no file/post/social needed)
 
@@ -4294,9 +4298,8 @@ _build_specialist_prompt_raw() {
         cat << 'SPEC_RULES'
 RULES (OBEY THESE — they override everything below):
 1. Output exactly ONE command starting with /.
-2. Put the command and all arguments on a single line. Do NOT use literal line breaks.
-3. For multi-line file content or messages, represent newlines with \n characters (e.g., # Header\nFirst line of code).
-4. FORBIDDEN: NO backticks. NO code fences. NO --flags on slash commands. NO quotes on args. NO multiple commands per line.
+2. For commands with large multi-line content (/write, /save, /append, /respond, /social, /email), put the command and target path on the first line, then write the content on subsequent lines with literal newlines.
+3. FORBIDDEN: NO backticks. NO code fences. NO --flags on slash commands. NO quotes on args. NO multiple commands per line.
 SPEC_RULES
         echo ""
 
@@ -4341,8 +4344,8 @@ SPEC_RULES
                     _proj_type=$(awk -F': ' '/^type:/{print $2; exit}' "$workdir/GEORGE.md" 2>/dev/null)
                     _build_cmd=$(awk -F': ' '/^build:/{print $2; exit}' "$workdir/GEORGE.md" 2>/dev/null)
                     _test_cmd=$(awk -F': ' '/^test:/{print $2; exit}' "$workdir/GEORGE.md" 2>/dev/null)
-                    # Quick directory listing for structure awareness
-                    _proj_struct=$(find "$workdir" -maxdepth 2 -not -path '*/.george/*' -not -path '*/.git/*' -not -name '.*' -type f 2>/dev/null | sed "s|^$workdir/||" | head -15 | paste -sd ',' -)
+                    # Quick directory listing for structure awareness (excluding models/ directory to prevent token bloat)
+                    _proj_struct=$(find "$workdir" -maxdepth 2 -not -path '*/models/*' -not -path '*/.george/*' -not -path '*/.git/*' -not -name '.*' -type f 2>/dev/null | sed "s|^$workdir/||" | head -15 | paste -sd ',' -)
                     # Compact JSON project card — matches specialist syntax card pattern
                     local _pctx='{"project":{"name":"'"${_proj_name:-$(basename "$workdir")}"'","type":"'"${_proj_type:-unknown}"'","workdir":"'"$workdir"'"'
                     [ -n "$_proj_struct" ] && _pctx="${_pctx},\"files\":[\"${_proj_struct//,/\",\"}\"]" || _pctx="${_pctx}"
@@ -4352,7 +4355,7 @@ SPEC_RULES
                     echo "PROJECT CONTEXT:"
                     echo "$_pctx"
                     echo ""
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- project context card (%s)\n' "${_proj_name:-?}" >&2
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- project context card (%s)\n' "${_proj_name:-?}" 2>/dev/null >/dev/tty
                 fi
                 ;;
         esac
@@ -4387,7 +4390,7 @@ SPEC_RULES
             done
             echo "Reference these EXACT paths. Do NOT guess or modify them."
             echo ""
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- created files (%d entries)\n' "${#_AGENT_WRITTEN_FILES[@]}" >&2
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- created files (%d entries)\n' "${#_AGENT_WRITTEN_FILES[@]}" 2>/dev/null >/dev/tty
         fi
 
         # ── Inject read file context into specialist ──────────
@@ -4411,7 +4414,7 @@ SPEC_RULES
                 done <<< "$_rf_keys"
                 echo "Use the information from these read files when constructing the command or writing content."
                 echo ""
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- read file context\n' >&2
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- read file context\n' 2>/dev/null >/dev/tty
             fi
         fi
 
@@ -4462,24 +4465,24 @@ SPEC
                 cat << 'SPEC'
 {"cmd":"/write","syntax":"/write <filepath> <content>",
 "desc":"Write COMPLETE file contents. Creates or overwrites.",
-"rules":["RELATIVE PATHS ONLY (e.g. report.md, src/main.rs) — NEVER start with /","ALWAYS include a SPACE between filepath and content (e.g. report.md Content here)","Use \\n for newlines (NEVER literal line breaks)","COMPLETE source for code files","JSON: matching braces, quoted keys","To ADD to a file, use /append instead","To change one line, use /edit instead","BEFORE writing, check if a file already exists with /read — prefer /append or /edit over overwriting"],
-"format_only_ex":["/write <relative-filepath> <complete file content with \\n for newlines>"]}
+"rules":["RELATIVE PATHS ONLY (e.g. report.md, src/main.rs) — NEVER start with /","ALWAYS include a SPACE between filepath and content (e.g. report.md Content here)","Put the command and filepath on the first line, then write the content on subsequent lines with literal newlines","COMPLETE source for code files","To ADD to a file, use /append instead","To change one line, use /edit instead","BEFORE writing, check if a file already exists with /read — prefer /append or /edit over overwriting"],
+"format_only_ex":["/write src/main.rs\nfn main() {\n    println!(\"Hello\");\n}"]}
 SPEC
                 ;;
             append)
                 cat << 'SPEC'
 {"cmd":"/append","syntax":"/append <filepath> <content>",
 "desc":"Add content to END of existing file.",
-"rules":["RELATIVE PATHS ONLY","Use \\n for newlines","Creates file if it does not exist","Use for: adding dependencies, new functions, new sections"],
-"format_only_ex":["/append Cargo.toml [dependencies]\\nreqwest = \"0.11\"","/append README.md ## New Section\\nContent here"]}
+"rules":["RELATIVE PATHS ONLY","Put the command and filepath on the first line, then write the content on subsequent lines with literal newlines","Creates file if it does not exist","Use for: adding dependencies, new functions, new sections"],
+"format_only_ex":["/append Cargo.toml\n[dependencies]\nreqwest = \"0.11\""]}
 SPEC
                 ;;
             edit)
                 cat << 'SPEC'
-{"cmd":"/edit","syntax":"/edit <filepath> <sed_expression>",
-"desc":"Small targeted change via sed. Max 200 chars.",
-"rules":["ONLY for short substitutions: s/old/new/g","NEVER multi-line code","Max 200 chars","If changing >1 line, use /write with COMPLETE file instead"],
-"format_only_ex":["/edit src/main.rs s/old_func/new_func/g","/edit config.toml s/port = 8080/port = 3000/"]}
+{"cmd":"/edit","syntax":"/edit <filepath>\n<<<<<<<\n<search_pattern>\n=======\n<replacement_pattern>\n>>>>>>>",
+"desc":"Targeted block search-and-replace edit.",
+"rules":["Must match EXACT lines of the original file","Specify the exact lines to replace between <<<<<<< and =======","Specify the replacement lines between ======= and >>>>>>>","Works for any length of file changes"],
+"format_only_ex":["/edit src/main.rs\n<<<<<<<\nfn old_function() {\n    println!(\"old\");\n}\n=======\nfn new_function() {\n    println!(\"new\");\n}\n>>>>>>>"]}
 SPEC
                 ;;
             save)
@@ -4677,8 +4680,8 @@ SPEC
             respond)
                 cat << 'SPEC'
 {"cmd":"/respond","syntax":"/respond <text>",
-"notes":["Present output directly to operator — use when no file/email/post is needed","Use \\n for line breaks, supports markdown formatting","This IS a delivery command — satisfies task completion"],
-"format_only_ex":["/respond <your complete answer text>"]}
+"notes":["Present output directly to operator — use when no file/email/post is needed","Write the command name on the first line, then write the response on subsequent lines using literal newlines","This IS a delivery command — satisfies task completion"],
+"format_only_ex":["/respond Hello!\nHere is the answer."]}
 SPEC
                 ;;
             q|brainstorm)
@@ -4857,6 +4860,64 @@ _agent_exec_bash_command() {
 #   L3-L4: Syntax permutation with identicality lockout
 #   L5: Forced web fallback (search stderr + command name)
 #   Terminal: Human operator intervention (read -r from /dev/tty)
+_agent_capture_diff_pre() {
+    local cmd="$1"
+    local workdir="$2"
+    local verb filepath fullpath
+    verb=${cmd%% *}
+    [[ ! "$verb" =~ ^/(write|save|append|edit)$ ]] && return 0
+    
+    filepath=$(echo "$cmd" | sed 's/^[^ ]* *//' | awk '{print $1}')
+    # Expand tilde and clean path prefix
+    declare -f tools_expand_tilde &>/dev/null && filepath=$(tools_expand_tilde "$filepath")
+    filepath=$(ui_clean_path_prefix "$filepath" "$workdir")
+    
+    if [[ "$filepath" == /* ]]; then
+        filepath="${filepath#/}"
+    fi
+    fullpath="$workdir/$filepath"
+    
+    _diff_target_path="$fullpath"
+    _diff_target_rel="$filepath"
+    if [ -f "$fullpath" ]; then
+        cp "$fullpath" "/tmp/george_diff_before" 2>/dev/null
+        _diff_target_exists=1
+    else
+        rm -f "/tmp/george_diff_before" 2>/dev/null
+        _diff_target_exists=0
+    fi
+}
+
+_agent_capture_diff_post() {
+    local cmd="$1"
+    local exit_code="$2"
+    local verb=${cmd%% *}
+    [[ ! "$verb" =~ ^/(write|save|append|edit)$ ]] && return 0
+    [ "$exit_code" -ne 0 ] && return 0
+    [ -z "${_diff_target_path:-}" ] && return 0
+    
+    local diff_out=""
+    if [ -f "$_diff_target_path" ]; then
+        if [ "${_diff_target_exists:-0}" -eq 1 ] && [ -f "/tmp/george_diff_before" ]; then
+            diff_out=$(diff -u "/tmp/george_diff_before" "$_diff_target_path" 2>/dev/null | tail -n +3)
+        else
+            diff_out=$(diff -u /dev/null "$_diff_target_path" 2>/dev/null | tail -n +3)
+        fi
+    fi
+    
+    rm -f "/tmp/george_diff_before" 2>/dev/null
+    unset _diff_target_path _diff_target_rel _diff_target_exists
+    
+    if [ -n "$diff_out" ]; then
+        local line_count
+        line_count=$(echo "$diff_out" | wc -l)
+        if [ "$line_count" -gt 150 ]; then
+            diff_out="$(echo "$diff_out" | head -150)\n\n[Diff truncated... $line_count lines total]"
+        fi
+        echo -e "\n\n>>> File changes diff (visual feedback): <<<\n\`\`\`diff\n$diff_out\n\`\`\`"
+    fi
+}
+
 agent_inner_loop() {
     local micro_objective="$1"
     local workdir="${2:-.}"
@@ -5155,6 +5216,17 @@ agent_inner_loop() {
                 local _pre_eligible
                 _pre_eligible=$(echo "$_eligibility_json" | jq -r --arg c "$_pre_cmd" 'if (.eligible | index($c)) == null then "0" else "1" end')
                 if [ "$_pre_eligible" -eq 1 ]; then
+                    # Reject pre-route if the command is currently blocked (3-strike rule)
+                    local _blk
+                    for _blk in "${_blocked_cmds[@]}"; do
+                        if [ "$_blk" = "$_pre_cmd" ]; then
+                            _pre_eligible=0
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route /$_pre_cmd rejected: command is blocked (3-strike rule)"
+                            break
+                        fi
+                    done
+                fi
+                if [ "$_pre_eligible" -eq 1 ]; then
                     _pre_route="$_pre_cmd"
                 else
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route rejected by eligibility pass: /$_pre_cmd"
@@ -5166,8 +5238,20 @@ agent_inner_loop() {
                 # so the specialist generates a real command instead
                 # of parroting the milestone verbatim.
                 # "/write a summary" → "Use /write to a summary"
-                if [ -n "$_pre_route" ] && [[ "$micro_objective" =~ ^/[a-z]+[[:space:]] ]]; then
-                    micro_objective="Use /${_pre_cmd} to ${micro_objective#/"$_pre_cmd" }"
+                if [ -n "$_pre_route" ]; then
+                    # 1. If it starts with a bare slash command, convert it
+                    if [[ "$micro_objective" =~ ^/[a-z]+[[:space:]] ]]; then
+                        micro_objective="Use /${_pre_cmd} to ${micro_objective#*/}"
+                    fi
+                    # 2. Replace mismatched slash command references in the objective
+                    local _old_cmd
+                    if [[ "$micro_objective" =~ /([a-z]+) ]]; then
+                        _old_cmd="${BASH_REMATCH[1]}"
+                        if [ "$_old_cmd" != "$_pre_cmd" ]; then
+                            micro_objective="${micro_objective//\/$_old_cmd/\/\+$_pre_cmd}"
+                            micro_objective="${micro_objective//\/\+/\/}"
+                        fi
+                    fi
                 fi
                 if [ -n "$_pre_route" ]; then
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-routed from milestone: /$_pre_route (skipping LLM router)"
@@ -5620,16 +5704,13 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         # prior outputs, created files, and error history. Without this,
         # multi-step objectives fail because the specialist can't adapt.
         # Uses inner_context cached above (same iteration, no mutations yet).
-        local _spec_tail="Write the COMPLETE command with all required arguments filled in from the MICRO OBJECTIVE. NEVER output a bare command name without arguments.\nRULES: ONE command, starting with /. NO --flags. NO code fences. Positional args only."
-        # /web search gets a focused constraint — the model ignores
-        # search_tips buried in the JSON card, so put it at the end
-        # where recency bias makes it impossible to miss.
+        local _spec_tail="Write the COMPLETE command with all required arguments derived from the MICRO OBJECTIVE."
         if [[ "${selected_tool#/}" == "web" ]]; then
-            _spec_tail="Output ONLY ONE /web command. ONE URL per command — the URL is the LAST thing on the line, nothing after it. For /web search: extract 3-5 keywords FROM THE MICRO OBJECTIVE above. Drop filler words (the, a, for, in, to, and, or, about, including, regarding, comprehensive, professional, community, organizations, associations). DO NOT copy examples — derive keywords from the objective. NEVER output just '/web search' without keywords. To fetch multiple pages, use separate steps — one /web fetch per step.\nRULES: NO --limit, --source, --date, --output, or ANY --flag. Positional args only: /web search <keywords> or /web fetch <url>"
+            _spec_tail="For /web search: extract 3-5 keywords from the MICRO OBJECTIVE (no filler words). For /web fetch: output the URL as the last argument."
         elif [[ "${selected_tool#/}" == "social" ]]; then
-            _spec_tail="Write the COMPLETE /social command. CRITICAL: Pull the FULL, UNABRIDGED description or message content from the ACTION LOG above. Do NOT truncate, summarize, or abbreviate the text — include EVERY word and sentence from the original source (e.g. /vision output, /web fetch result, or brainstorm). If a file path is mentioned in the objective, use ONLY that file path as the message argument (file contents auto-expand). For long content (3+ sentences), prefer: /write description.md <full content> first, then /social ... description.md. Positional args only: /social discord dm <user> <message_or_filepath> or /social post discord <channel> <message_or_filepath>."
+            _spec_tail="Write the COMPLETE /social command. If a file path is mentioned, use only that file path as the argument (do NOT write the file contents inline)."
         elif [[ "${selected_tool#/}" =~ ^(write|save|append|edit)$ ]]; then
-            _spec_tail="Write the COMPLETE command with all arguments. You MUST use \\n characters to represent newlines in the file content, and output the entire command on exactly ONE line. Do NOT use literal line breaks. CRITICAL: Use ONLY \\n (backslash + n) as the newline separator — NEVER use \"}}], or any JSON/SSE punctuation between lines. Example: /write file.txt Line 1\\\\nLine 2\\\\nLine 3"
+            _spec_tail="Put the command name and target path on the first line, then write the content on subsequent lines. Example:\n/write src/main.rs\nfn main() {\n    println!(\"Hello\");\n}"
         fi
         local _spec_research="" _spec_brainstorm=""
         if [ -f "$micro_file" ]; then
@@ -5713,7 +5794,7 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
             local _spec_lines
             _spec_lines=$(echo "$action_plan" | wc -l)
-            printf '  [debug] specialist response (%d lines): %s\n' "$_spec_lines" "$(echo "$action_plan" | head -3 | tr '\n' ' ' | head -c 120)" >&2
+            printf '  [debug] specialist response (%d lines): %s\n' "$_spec_lines" "$(echo "$action_plan" | head -3 | tr '\n' ' ' | head -c 120)" 2>/dev/null >/dev/tty
         fi
 
         # Cancel check after specialist LLM call
@@ -6520,7 +6601,7 @@ INTERLOCK_JSON
             # Only fires for slash commands with a filepath argument.
             if [ -n "${AGENT_OUTPUT_DIR:-}" ]; then
                 case "$cmd" in
-                    /write\ *|/save\ *|/append\ *)
+                    /write\ *|/save\ *|/append\ *|/edit\ *)
                         local _aod_verb _aod_rest _aod_path _aod_content
                         _aod_verb=${cmd%% *}
                         _aod_rest=${cmd#* }
@@ -6534,7 +6615,7 @@ INTERLOCK_JSON
                         if [[ "$_aod_path" != "${AGENT_OUTPUT_DIR}"/* ]] && [[ "$_aod_path" != "${AGENT_OUTPUT_DIR}" ]]; then
                             _aod_path="${AGENT_OUTPUT_DIR}/${_aod_path}"
                             cmd="${_aod_verb} ${_aod_path}${_aod_content:+ }${_aod_content}"
-                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] output-dir enforced: %s\n' "$_aod_path" >&2
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] output-dir enforced: %s\n' "$_aod_path" 2>/dev/null >/dev/tty
                         fi
                         ;;
                 esac
@@ -6571,7 +6652,7 @@ INTERLOCK_JSON
                             _fe_expanded=$(tools_expand_file_refs "$_fe_content" "$workdir" "${AGENT_FILE_EXPAND_CHARS:-10000}")
                             if [ "$_fe_expanded" != "$_fe_content" ]; then
                                 cmd="${_fe_verb} ${_fe_first} ${_fe_expanded}"
-                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] file-expand: expanded refs in %s content\n' "$_fe_verb" >&2
+                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] file-expand: expanded refs in %s content\n' "$_fe_verb" 2>/dev/null >/dev/tty
                             fi
                         fi
                         ;;
@@ -6605,7 +6686,7 @@ INTERLOCK_JSON
                 if [ $exit_code -eq 0 ]; then
                     _AGENT_WORKDIR_CHANGED="$workdir"
                 fi
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] workdir now: %s\n' "$workdir" >&2
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] workdir now: %s\n' "$workdir" 2>/dev/null >/dev/tty
                 _cd_intercepted=1
             fi
 
@@ -6621,8 +6702,15 @@ INTERLOCK_JSON
             local output
             local exit_code
             if [ "$cmd_is_slash" -eq 1 ] && declare -f commands_dispatch &>/dev/null; then
+                _agent_capture_diff_pre "$cmd" "$workdir"
                 output=$(commands_dispatch "$cmd" "$workdir" 2>&1)
                 exit_code=$?
+                local diff_inject
+                diff_inject=$(_agent_capture_diff_post "$cmd" "$exit_code")
+                if [ -n "$diff_inject" ]; then
+                    output="${output:+${output}
+}${diff_inject}"
+                fi
                 
                 # ── WEB SEARCH URL QUEUE POPULATION ──────────
                 if [[ "$cmd" == /web\ search\ * ]] && [ "$exit_code" -eq 0 ]; then
@@ -6630,43 +6718,7 @@ INTERLOCK_JSON
                     if [ -n "${AGENT_TASK_WORKSPACE:-}" ]; then
                         mkdir -p "$AGENT_TASK_WORKSPACE"
                         _agent_extract_urls_from_search "$output" > "$_queue_file" 2>/dev/null
-                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web_search: extracted %d URLs to queue\n' "$(wc -l < "$_queue_file" 2>/dev/null || echo 0)" >&2
-                    fi
-                fi
-
-                # ── WEB IMAGES QUEUE POPULATION ──────────────
-                if { [[ "$cmd" == /web\ scrape\ * ]] || [[ "$cmd" == /web\ scrape-images\ * ]] || [[ "$cmd" == /web\ scrapeimages\ * ]] || [[ "$cmd" == /web\ fetch\ * ]] || [[ "$cmd" == /web\ images\ * ]]; } && [ "$exit_code" -eq 0 ]; then
-                    local _image_queue_file="$AGENT_TASK_WORKSPACE/web_image_queue.txt"
-                    if [ -n "${AGENT_TASK_WORKSPACE:-}" ]; then
-                        mkdir -p "$AGENT_TASK_WORKSPACE"
-                        local _extracted_imgs
-                        _extracted_imgs=$(_agent_extract_images_from_scrape "$output" 2>/dev/null)
-                        if [ -n "$_extracted_imgs" ]; then
-                            if [ -f "$_image_queue_file" ]; then
-                                (cat "$_image_queue_file"; echo "$_extracted_imgs") | sort -u > "${_image_queue_file}.tmp" 2>/dev/null && mv "${_image_queue_file}.tmp" "$_image_queue_file"
-                            else
-                                echo "$_extracted_imgs" > "$_image_queue_file" 2>/dev/null
-                            fi
-                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web_scrape: extracted %d image URLs to queue\n' "$(wc -l < "$_image_queue_file" 2>/dev/null || echo 0)" >&2
-                        fi
-                    fi
-                fi
-
-                # ── WEB SCRAPE LINKS QUEUE POPULATION ────────
-                if { [[ "$cmd" == /web\ scrape\ * ]] || [[ "$cmd" == /web\ scrape-images\ * ]] || [[ "$cmd" == /web\ scrapeimages\ * ]] || [[ "$cmd" == /web\ fetch\ * ]]; } && [ "$exit_code" -eq 0 ]; then
-                    local _queue_file="$AGENT_TASK_WORKSPACE/web_fetch_queue.txt"
-                    if [ -n "${AGENT_TASK_WORKSPACE:-}" ]; then
-                        mkdir -p "$AGENT_TASK_WORKSPACE"
-                        local _extracted_links
-                        _extracted_links=$(_agent_extract_links_from_scrape "$output" 2>/dev/null)
-                        if [ -n "$_extracted_links" ]; then
-                            if [ -f "$_queue_file" ]; then
-                                (cat "$_queue_file"; echo "$_extracted_links") | sort -u > "${_queue_file}.tmp" 2>/dev/null && mv "${_queue_file}.tmp" "$_queue_file"
-                            else
-                                echo "$_extracted_links" > "$_queue_file" 2>/dev/null
-                            fi
-                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web_scrape: extracted %d links to queue\n' "$(wc -l < "$_queue_file" 2>/dev/null || echo 0)" >&2
-                        fi
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web_search: extracted %d URLs to queue\n' "$(wc -l < "$_queue_file" 2>/dev/null || echo 0)" 2>/dev/null >/dev/tty
                     fi
                 fi
                 
@@ -6731,8 +6783,8 @@ INTERLOCK_JSON
                     _out_preview=$(echo "$output" | head -8)
                     _out_preview="${_out_preview}"$'\n'"  ... (${_out_lines} lines total)"
                 fi
-                [ -n "$output" ] && printf '  [debug] cmd output (exit %d, %d lines):\n%s\n' "$exit_code" "$_out_lines" "$_out_preview" >&2
-                [ -z "$output" ] && printf '  [debug] cmd output: (empty, exit %d)\n' "$exit_code" >&2
+                [ -n "$output" ] && printf '  [debug] cmd output (exit %d, %d lines):\n%s\n' "$exit_code" "$_out_lines" "$_out_preview" 2>/dev/null >/dev/tty
+                [ -z "$output" ] && printf '  [debug] cmd output: (empty, exit %d)\n' "$exit_code" 2>/dev/null >/dev/tty
             fi
 
             # Track all executed commands for failure pattern analysis
@@ -6760,7 +6812,7 @@ INTERLOCK_JSON
                     if [ -n "$_init_name" ] && [ -d "$workdir/$_init_name" ]; then
                         workdir="$workdir/$_init_name"
                         _AGENT_WORKDIR_CHANGED="$workdir"
-                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] post-init workdir: %s\n' "$workdir" >&2
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] post-init workdir: %s\n' "$workdir" 2>/dev/null >/dev/tty
                     fi
                 fi
                 _last_success_cmd="$cmd"
@@ -6878,7 +6930,7 @@ INTERLOCK_JSON
                         else
                             output="[Web Summary] $_condensed"
                         fi
-                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web condenser: %d chars -> %d chars\n' "${#output}" "${#_condensed}" >&2
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web condenser: %d chars -> %d chars\n' "${#output}" "${#_condensed}" 2>/dev/null >/dev/tty
                     fi
                   fi
                 fi
@@ -6897,7 +6949,7 @@ INTERLOCK_JSON
                     local _bs_clean
                     _bs_clean=$(printf '%s\n' "$output" | sed '/^[[:space:]]*```/,/^[[:space:]]*```/d')
                     if [ "${#_bs_clean}" -lt "${#output}" ]; then
-                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] brainstorm sanitizer: stripped embedded commands (%d -> %d chars)\n' "${#output}" "${#_bs_clean}" >&2
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] brainstorm sanitizer: stripped embedded commands (%d -> %d chars)\n' "${#output}" "${#_bs_clean}" 2>/dev/null >/dev/tty
                         output="$_bs_clean"
                     fi
 
@@ -6915,7 +6967,7 @@ INTERLOCK_JSON
                     jq -n --arg q "$_bs_query" --arg r "${output:0:3000}" \
                           --arg ts "$(date '+%Y-%m-%d %H:%M:%S %Z')" \
                        '{query: $q, response: $r, timestamp: $ts}' > "$_bs_file"
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] brainstorm persisted: %s (%d chars)\n' "$_bs_file" "${#output}" >&2
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] brainstorm persisted: %s (%d chars)\n' "$_bs_file" "${#output}" 2>/dev/null >/dev/tty
                 fi
 
                 # ── Anti-flail guard for info tasks ──────────────
@@ -6953,29 +7005,7 @@ INTERLOCK_JSON
                             done
                             if [ "$_wf_dup" -eq 0 ]; then
                                 _AGENT_WRITTEN_FILES+=("$_wf_path")
-                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] written-files: tracked %s (%d total)\n' "$_wf_path" "${#_AGENT_WRITTEN_FILES[@]}" >&2
-                            fi
-                        fi
-                        ;;
-                    /download\ *|/web\ download\ *)
-                        if [ "$exit_code" -eq 0 ]; then
-                            local _wf_path=""
-                            if echo "$output" | grep -q "Downloaded:"; then
-                                _wf_path=$(echo "$output" | sed -n 's/.*Downloaded: \([^ ]*\).*/\1/p')
-                            elif echo "$output" | grep -q "Copied:"; then
-                                _wf_path=$(echo "$output" | sed -n 's/.*Copied: \([^ ]*\).*/\1/p')
-                            fi
-                            _wf_path=$(echo "$_wf_path" | awk '{print $1}')
-                            if [ -n "$_wf_path" ]; then
-                                local _wf_dup=0
-                                local _wf_existing
-                                for _wf_existing in "${_AGENT_WRITTEN_FILES[@]}"; do
-                                    [ "$_wf_existing" = "$_wf_path" ] && { _wf_dup=1; break; }
-                                done
-                                if [ "$_wf_dup" -eq 0 ]; then
-                                    _AGENT_WRITTEN_FILES+=("$_wf_path")
-                                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] written-files: tracked downloaded file %s (%d total)\n' "$_wf_path" "${#_AGENT_WRITTEN_FILES[@]}" >&2
-                                fi
+                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] written-files: tracked %s (%d total)\n' "$_wf_path" "${#_AGENT_WRITTEN_FILES[@]}" 2>/dev/null >/dev/tty
                             fi
                         fi
                         ;;
@@ -7001,7 +7031,7 @@ INTERLOCK_JSON
                                 jq --arg path "$_rf_path" --arg content "$_rf_content" \
                                     '(if .read_context == null then .read_context = {} else . end) | if .read_context[$path] != null then .read_context[$path] = $content else if (.read_context | keys | length) >= 2 then del(.read_context[(.read_context | keys | .[0])]) | .read_context[$path] = $content else .read_context[$path] = $content end end' \
                                     "$macro_file" > "$_rf_macro_tmp" && mv "$_rf_macro_tmp" "$macro_file"
-                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] read-context: saved content for %s (%d chars)\n' "$_rf_path" "${#_rf_content}" >&2
+                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] read-context: saved content for %s (%d chars)\n' "$_rf_path" "${#_rf_content}" 2>/dev/null >/dev/tty
                             fi
                         fi
                         ;;
@@ -7030,7 +7060,7 @@ INTERLOCK_JSON
                 fi
 
                 # Transcript: log command execution result
-                declare -f transcript_log_block &>/dev/null && transcript_log_block "output (exit 0)" "$cmd\n${output:0:3000}"
+                declare -f transcript_log_block &>/dev/null && transcript_log_block "output (exit 0)" "$cmd"$'\n'"${output:0:3000}"
 
                 # ── WEB SUFFICIENCY GATE ───────────────────────
                 # After N successful web actions, mark sufficiency
@@ -7198,7 +7228,7 @@ INTERLOCK_JSON
                 if [ "$_prior_web_ok" -gt 0 ]; then
                     _micro_add_action "$micro_file" "$cmd" "FAILED" "$exit_code" "${output:0:300}" "specialist_soft_fail"
                     _micro_add_note "$micro_file" "Web fetch failed, but $_prior_web_ok prior web action(s) succeeded. Use existing data or try a different URL."
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] Web soft-failure: %d prior successes, skipping escalation\n' "$_prior_web_ok" >&2
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] Web soft-failure: %d prior successes, skipping escalation\n' "$_prior_web_ok" 2>/dev/null >/dev/tty
                     inner_attempts=$((inner_attempts + 1))
                     continue
                 fi
@@ -7223,8 +7253,8 @@ INTERLOCK_JSON
                 if [[ "$cmd" == "/web scrape-images "* ]] || [[ "$cmd" == "/web scrapeimages "* ]] || [[ "$cmd" == "/web scrape "* ]]; then
                     local _scrape_url="${cmd##* }"
                     _l1_cmd="/web fetch $_scrape_url"
-                    _l1_label="Fallback: scrape→fetch"
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] L1: scrape fallback -> /web fetch %s\n' "$_scrape_url" >&2
+                    _l1_label="Fallback: scrape-images→fetch"
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] L1: scrape-images fallback -> /web fetch %s\n' "$_scrape_url" 2>/dev/null >/dev/tty
                 fi
                 ui_warn "Escalation L1: ${_l1_label}..."
                 sleep 1
@@ -7316,7 +7346,7 @@ INTERLOCK_JSON
             _micro_add_action "$micro_file" "$cmd" "FAILED" "$exit_code" "$output" "specialist"
 
             # Transcript: log failed command
-            declare -f transcript_log_block &>/dev/null && transcript_log_block "output (exit $exit_code)" "$cmd\n${output:0:3000}"
+            declare -f transcript_log_block &>/dev/null && transcript_log_block "output (exit $exit_code)" "$cmd"$'\n'"${output:0:3000}"
         fi
 
         inner_attempts=$((inner_attempts + 1))
@@ -7834,8 +7864,9 @@ MEMEOF
     # workspace so artifacts stay isolated per task. Concrete tasks
     # keep the default responses/ directory.
     if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ] || [ "${AGENT_TASK_TYPE:-concrete}" = "combined" ]; then
-        AGENT_OUTPUT_DIR="$AGENT_TASK_WORKSPACE_REL"
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] output dir: $AGENT_OUTPUT_DIR ($AGENT_TASK_TYPE)"
+        AGENT_OUTPUT_DIR=".george/workspaces"
+        export LODGE_SANDBOXES="$AGENT_TASK_WORKSPACE_REL/.sandboxes"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] output dir: $AGENT_OUTPUT_DIR ($AGENT_TASK_TYPE), sandboxes: $LODGE_SANDBOXES"
     else
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] output dir: $AGENT_OUTPUT_DIR (concrete)"
     fi
@@ -8010,7 +8041,7 @@ MEMEOF
             _web_locked=1
         fi
         local _bypass_web_lock=0
-        if [[ "${task,,}" =~ internet|online|web|discord|telegram|mastodon|social|url|link|http ]]; then
+        if [[ "${task,,}" =~ internet|online|web|discord|telegram|mastodon|social|url|link|http|api ]]; then
             _bypass_web_lock=1
         fi
         if [ "$_bypass_web_lock" -eq 1 ]; then
@@ -8036,7 +8067,7 @@ MEMEOF
         # Prevents the model from immediately fixating on /web fetch with
         # fabricated URLs before it has real search results to work from.
         local _web_search_only=0
-        if [ "$_web_locked" -eq 0 ]; then
+        if [ "$_web_locked" -eq 0 ] && [ "$_bypass_web_lock" -eq 0 ]; then
             local _ws_unlock _ws_window
             if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ]; then
                 _ws_unlock="${AGENT_WEB_UNLOCK_ABSTRACT:-99}"
@@ -8063,22 +8094,23 @@ MEMEOF
         # Build the command catalog dynamically based on locks and config.
         # This replaces the fragmented, heuristic-based cards.
         local _tool_summary='YOUR WORKING COMMANDS:
-  /write <path> <code>: write a complete NEW file with the given code/text.
-  /append <path> <code>: append content to the END of an existing file.
-  /edit <path> <sed>: apply targeted search-and-replace edits to a file (s/old/new/g).
-  /read <path>: read and view a local file contents.
-  /ls [path]: list files in a directory.
-  /grep "<pattern>" [path]: search files for a regex pattern.
-  /cd <path>: change active working directory.
-  /init <name> <type>: scaffold a NEW software code project (rust, python, etc.). Do NOT use for text/list compiling.
-  /build: compile/build an existing software code project (cargo build, make, etc.). ONLY for software code compilation.
-  /test: run the project test suite.
-  /fix: auto-fix software build/test errors.
-  /vitals [context]: query live system resource usage (RAM, disk space, battery status).'
-        [ "${AGENT_ASK_USER:-1}" -eq 1 ] && _tool_summary="${_tool_summary}
-  /ask <question>: ask the human operator a question for user-specific details."
-        [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _tool_summary="${_tool_summary}
-  /brainstorm <topic>: self-reason and brainstorm topics/ideas before acting. Alias: /q."
+{"YOUR_WORKING_COMMANDS":{
+  "/write <path> <code>":"write a complete NEW file with the given code/text.",
+  "/append <path> <code>":"append content to the END of an existing file.",
+  "/edit <path>":"apply targeted block search-and-replace edits using <<<<<<< ======= >>>>>>> lines.",
+  "/read <path>":"read and view a local file contents.",
+  "/ls [path]":"list files in a directory.",
+  "/grep \"<pattern>\" [path]":"search files for a regex pattern.",
+  "/cd <path>":"change active working directory.",
+  "/init <name> <type>":"scaffold a NEW software code project (rust, python, etc.). Do NOT use for text/list compiling.",
+  "/build":"compile/build an existing software code project (cargo build, make, etc.). ONLY for software code compilation.",
+  "/test":"run the project test suite.",
+  "/fix":"auto-fix software build/test errors.",
+  "/vitals [context]":"query live system resource usage (RAM, disk space, battery status).",'
+        [ "${AGENT_ASK_USER:-1}" -eq 1 ] && _tool_summary="${_tool_summary}"'
+  "/ask <question>":"ask the human operator a question for user-specific details.",'
+        [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && _tool_summary="${_tool_summary}"'
+  "/brainstorm <topic>":"self-reason and brainstorm topics/ideas before acting. Alias: /q.",'
         if [ "$_web_locked" -eq 0 ]; then
             if [ "$_web_search_only" -eq 1 ]; then
                 _tool_summary="${_tool_summary}
@@ -8118,7 +8150,7 @@ MEMEOF
         _coding_signal=$(echo "$_coding_signal" | tr '[:upper:]' '[:lower:]')
         if [[ "$_coding_signal" =~ (rust|cargo|python|pip|node|npm|typescript|java|maven|gradle|golang|makefile|cmake|clang|gcc|\.(rs|py|go|ts|js|cpp|c|java)\b|create.*(project|app|cli|tool|program|binary|package|crate|module)|scaffold|new.*project|build.*(it|the|this|project|app|code)|run.*(the|it|this).*(project|app|program|binary|executable)|init.*(project|app|repo)) ]]; then
             _coding_card='
-{"coding":{"commands":{"/init <name> <type>":"scaffold NEW project (creates dir + Cargo.toml/pyproject.toml). ONLY for new projects.","/build":"compile/build EXISTING project (cargo build, make, pip install). Use AFTER /init.","/test":"run test suite (cargo test, pytest). Use AFTER /build.","/fix":"auto-fix errors from last /build or /test","/write <path> <code>":"write COMPLETE code file","/append <path> <code>":"add code to END of existing file","/edit <path> <sed>":"small targeted change (s/old/new/g)"},"workflow":["1. /init to scaffold","2. /write source files","3. /build to compile","4. /test to verify","5. /fix if errors"],"IMPORTANT":"If /init FAILS (project already exists), skip to /write or /build. NEVER retry /init on the same project."}}'
+{"coding":{"commands":{"/init <name> <type>":"scaffold NEW project (creates dir + Cargo.toml/pyproject.toml). ONLY for new projects.","/build":"compile/build EXISTING project (cargo build, make, pip install). Use AFTER /init.","/test":"run test suite (cargo test, pytest). Use AFTER /build.","/fix":"auto-fix errors from last /build or /test","/write <path> <code>":"write COMPLETE code file","/append <path> <code>":"add code to END of existing file","/edit <path>":"targeted block search-and-replace using <<<<<<< ======= >>>>>>> lines."},"workflow":["1. /init to scaffold","2. /write source files","3. /build to compile","4. /test to verify","5. /fix if errors"],"IMPORTANT":"If /init FAILS (project already exists), skip to /write or /build. NEVER retry /init on the same project."}}'
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- coding workflow card"
         fi
 
@@ -8343,8 +8375,15 @@ MEMEOF
             _has_prior_ms=$(jq -r '.prior_milestones // empty' "$macro_file" 2>/dev/null)
             if [ -n "$_has_prior_ms" ] && [ "$_has_prior_ms" != "null" ] && [ "$_has_prior_ms" != "[]" ]; then
                 _strat_prior_ms="\n\n>>> RELEVANT ARCHIVED MILESTONES (Lexical Recall) <<<"
+                # Load current completed milestone objectives to avoid duplicates in context
+                local _completed_list
+                _completed_list=$(jq -r '.completed_milestones[]?.objective // empty' "$macro_file" 2>/dev/null)
                 while IFS='|' read -r title summary ts; do
                     [ -z "$title" ] && continue
+                    # Skip if the milestone objective is already completed in this task session
+                    if echo "$_completed_list" | grep -Fqx "$title" &>/dev/null; then
+                        continue
+                    fi
                     _strat_prior_ms="${_strat_prior_ms}\n- [${ts:0:10}] ${title}: ${summary}"
                 done <<< $(jq -r '.prior_milestones[] | "\(.title)|\(.summary)|\(.ts)"' "$macro_file" 2>/dev/null)
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- prior milestones context"
@@ -9274,7 +9313,7 @@ $question"
 ${full_question}"
         fi
 
-        ui_spinner_start "$GEORGE_PROVIDER" >/dev/tty 2>/dev/null
+        ui_spinner_start "$GEORGE_PROVIDER" 2>/dev/null >/dev/tty
         response=$(_provider_call_with_backoff "$GEORGE_PROVIDER" "$_ask_msg")
         _ask_rc=$?
         ui_spinner_stop 2>/dev/null
@@ -9330,7 +9369,7 @@ ${full_question}"
             printf "  %b/brainstorm:%b\n" "$C_DIM" "$C_RESET"
             ui_render_response "$response"
             echo ""
-        } >&2
+        } 2>/dev/null >/dev/tty
         echo "$response"
     fi
 

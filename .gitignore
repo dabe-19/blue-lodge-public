@@ -12,3 +12,4 @@ models/*.gguf
 /journal.md
 /journal.md.sig 
 /memories/
+/workspace/

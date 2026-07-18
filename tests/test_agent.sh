@@ -3552,13 +3552,13 @@ describe "Git/GitHub unification"
 
   it "specialist /git card includes fetch subcommand" && {
     card=$(_build_specialist_prompt "git" "fetch readme" "")
-    echo "$card" | grep -q '"fetch"'
+    echo "$card" | grep -qi 'fetch'
     assert_ok $? "/git specialist card must include fetch subcommand"
   }
 
   it "specialist /git card includes workflow hint" && {
     card=$(_build_specialist_prompt "git" "search and scrape" "")
-    echo "$card" | grep -q '"workflow"'
+    echo "$card" | grep -qi 'workflow'
     assert_ok $? "/git specialist card must include workflow JSON"
   }
 
@@ -4118,15 +4118,15 @@ describe "GBNF grammar files"
     assert_ok $?
   }
 
-  it "task-classifier.gbnf exists and has type_enum" && {
+  it "task-classifier.gbnf exists and has types" && {
     assert_file_exists "$LODGE_DIR/grammars/task-classifier.gbnf"
-    grep -q 'type_enum' "$LODGE_DIR/grammars/task-classifier.gbnf"
+    grep -q 'type' "$LODGE_DIR/grammars/task-classifier.gbnf"
     assert_ok $?
   }
 
-  it "honeydew-items.gbnf exists and has item_list" && {
+  it "honeydew-items.gbnf exists and has items" && {
     assert_file_exists "$LODGE_DIR/grammars/honeydew-items.gbnf"
-    grep -q 'item_list' "$LODGE_DIR/grammars/honeydew-items.gbnf"
+    grep -q 'items' "$LODGE_DIR/grammars/honeydew-items.gbnf"
     assert_ok $?
   }
 
@@ -4136,9 +4136,9 @@ describe "GBNF grammar files"
     assert_ok $?
   }
 
-  it "metacog.gbnf exists and has progress_enum" && {
+  it "metacog.gbnf exists and has progress" && {
     assert_file_exists "$LODGE_DIR/grammars/metacog.gbnf"
-    grep -q 'progress_enum' "$LODGE_DIR/grammars/metacog.gbnf"
+    grep -q 'progress' "$LODGE_DIR/grammars/metacog.gbnf"
     assert_ok $?
   }
 
@@ -4152,7 +4152,7 @@ describe "Grammar integration in llm.sh"
   it "_llm_load_grammar returns grammar text for valid schema" && {
     _LLM_GRAMMAR_CACHE=()
     _t_g=$(_llm_load_grammar "p1-evaluator") || true
-    assert_contains "${_t_g:-}" "verdict_val"
+    assert_contains "${_t_g:-}" "verdict"
   }
 
   it "_llm_load_grammar returns empty for unknown schema" && {

@@ -26,7 +26,20 @@ cmd_append() {
 
     local filepath content
     filepath=$(echo "$args" | head -1 | awk '{print $1}')
-    content=$(echo "$args" | sed 's/^[^ ]* *//')
+    
+    local first_line remaining_lines first_line_content
+    first_line=$(echo "$args" | head -1)
+    remaining_lines=$(echo "$args" | tail -n +2)
+    first_line_content=$(echo "$first_line" | sed 's/^[^ ]* *//')
+    if [ "$first_line_content" = "$first_line" ]; then
+        first_line_content=""
+    fi
+    if [ -n "$remaining_lines" ]; then
+        content="${first_line_content:+$first_line_content
+}${remaining_lines}"
+    else
+        content="$first_line_content"
+    fi
 
     # Strip trailing dashes from filepath
     filepath=$(echo "$filepath" | sed 's/--*$//')

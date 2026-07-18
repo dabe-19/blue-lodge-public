@@ -148,39 +148,38 @@ describe "cmd_edit"
     assert_contains "$_out" "Usage"
   }
 
-  it "applies valid sed substitution" && {
+  it "applies valid block-replacement" && {
     _tmpdir=$(test_tmpdir)
     echo "old_name = true" > "$_tmpdir/config.txt"
-    _out=$(cmd_edit "config.txt s/old_name/new_name/g" "$_tmpdir" 2>&1)
+    _out=$(cmd_edit $'config.txt\n<<<<<<<\nold_name = true\n=======\nnew_name = true\n>>>>>>>' "$_tmpdir" 2>&1)
     assert_ok $?
     _content=$(cat "$_tmpdir/config.txt")
-    assert_contains "$_content" "new_name"
-    assert_not_contains "$_content" "old_name"
+    assert_contains "$_content" "new_name = true"
+    assert_not_contains "$_content" "old_name = true"
     rm -rf "$_tmpdir"
   }
 
-  it "rejects non-sed content" && {
+  it "rejects invalid block-replace format" && {
     _tmpdir=$(test_tmpdir)
     echo "placeholder" > "$_tmpdir/code.rs"
     _out=$(cmd_edit 'code.rs fn main() { println!("Hello"); }' "$_tmpdir" 2>&1)
     assert_fail $?
-    assert_contains "$_out" "not a valid sed"
+    assert_contains "$_out" "invalid block-replace format"
     rm -rf "$_tmpdir"
   }
 
-  it "rejects sed expressions over 200 chars" && {
+  it "rejects non-unique block-replace patterns" && {
     _tmpdir=$(test_tmpdir)
-    echo "x" > "$_tmpdir/long.txt"
-    _long_sed="s/x/$(head -c 250 /dev/zero | tr '\0' 'y')/g"
-    _out=$(cmd_edit "long.txt $_long_sed" "$_tmpdir" 2>&1)
+    printf "x\nx\n" > "$_tmpdir/long.txt"
+    _out=$(cmd_edit $'long.txt\n<<<<<<<\nx\n=======\ny\n>>>>>>>' "$_tmpdir" 2>&1)
     assert_fail $?
-    assert_contains "$_out" "too long"
+    assert_contains "$_out" "multiple matches"
     rm -rf "$_tmpdir"
   }
 
   it "fails on non-existent file" && {
     _tmpdir=$(test_tmpdir)
-    _out=$(cmd_edit "missing.txt s/a/b/" "$_tmpdir" 2>&1)
+    _out=$(cmd_edit $'missing.txt\n<<<<<<<\na\n=======\nb\n>>>>>>>' "$_tmpdir" 2>&1)
     assert_fail $?
     assert_contains "$_out" "does not exist"
     rm -rf "$_tmpdir"
@@ -190,7 +189,7 @@ describe "cmd_edit"
     _tmpdir=$(test_tmpdir)
     mkdir -p "$_tmpdir/src"
     echo "old" > "$_tmpdir/src/main.rs"
-    cmd_edit "/src/main.rs s/old/new/" "$_tmpdir" 2>/dev/null
+    cmd_edit $'/src/main.rs\n<<<<<<<\nold\n=======\nnew\n>>>>>>>' "$_tmpdir" 2>/dev/null
     _content=$(cat "$_tmpdir/src/main.rs")
     assert_contains "$_content" "new"
     rm -rf "$_tmpdir"
@@ -199,7 +198,7 @@ describe "cmd_edit"
   it "can be dispatched via commands_dispatch" && {
     _tmpdir=$(test_tmpdir)
     echo "value=100" > "$_tmpdir/settings.txt"
-    commands_dispatch "/edit settings.txt s/100/200/" "$_tmpdir" 2>/dev/null
+    commands_dispatch $'/edit settings.txt\n<<<<<<<\nvalue=100\n=======\nvalue=200\n>>>>>>>' "$_tmpdir" 2>/dev/null
     _content=$(cat "$_tmpdir/settings.txt")
     assert_contains "$_content" "200"
     rm -rf "$_tmpdir"
@@ -225,7 +224,7 @@ describe "/write backward compat"
   it "/write --edit redirects to cmd_edit" && {
     _tmpdir=$(test_tmpdir)
     echo "old_value" > "$_tmpdir/compat_edit.txt"
-    cmd_write "--edit compat_edit.txt s/old_value/new_value/g" "$_tmpdir" 2>/dev/null
+    cmd_write $'--edit compat_edit.txt\n<<<<<<<\nold_value\n=======\nnew_value\n>>>>>>>' "$_tmpdir" 2>/dev/null
     _content=$(cat "$_tmpdir/compat_edit.txt")
     assert_contains "$_content" "new_value"
     rm -rf "$_tmpdir"
@@ -285,7 +284,7 @@ describe "coding workflow card"
   it "includes /append and /edit commands" && {
     agent_code=$(cat "$LODGE_DIR/lib/agent.sh")
     assert_contains "$agent_code" '"/append <path> <code>"'
-    assert_contains "$agent_code" '"/edit <path> <sed>"'
+    assert_contains "$agent_code" '"/edit <path>"'
   }
 
   it "warns not to retry /init on existing project" && {
