@@ -56,12 +56,12 @@ describe "_macro_set"
     rm -f "$_tmp"
   }
 
-  it "uses atomic tmp+mv write pattern" && {
+  it "uses atomic tmp+commit write pattern" && {
     body=$(declare -f _macro_set)
     echo "$body" | grep -q '\.tmp'
     assert_ok $? "Must use tmp file for atomic write"
-    echo "$body" | grep -q 'mv'
-    assert_ok $? "Must mv tmp to target"
+    echo "$body" | grep -q 'memory_json_commit'
+    assert_ok $? "Must commit tmp to target"
   }
 
   it "sets project_context field (used by workdir propagation)" && {
@@ -511,7 +511,7 @@ describe "Coding workflow card (strategist)"
   }
 
   it "card is valid JSON" && {
-    _card='{"coding":{"commands":{"/init <name> <type>":"scaffold NEW project (creates dir + Cargo.toml/pyproject.toml). ONLY for new projects.","/build":"compile/build EXISTING project (cargo build, make, pip install). Use AFTER /init.","/test":"run test suite (cargo test, pytest). Use AFTER /build.","/fix":"auto-fix errors from last /build or /test","/write <path> <code>":"write COMPLETE code file","/append <path> <code>":"add code to END of existing file","/edit <path> <sed>":"small targeted change (s/old/new/g)"},"workflow":["1. /init to scaffold","2. /write source files","3. /build to compile","4. /test to verify","5. /fix if errors"],"IMPORTANT":"If /init FAILS (project already exists), skip to /write or /build. NEVER retry /init on the same project."}}'
+    _card='{"coding":{"commands":{"/init <name> <type>":"scaffold NEW project (creates dir + Cargo.toml/pyproject.toml). ONLY for new projects.","/build":"compile/build EXISTING project (cargo build, make, pip install). Use AFTER /init.","/test":"run test suite (cargo test, pytest). Use AFTER /build.","/fix":"auto-fix errors from last /build or /test","/write <path> <code>":"write COMPLETE code file","/append <path> <code>":"add code to END of existing file","/edit <path>":"targeted block search-and-replace using <<<<<<< ======= >>>>>>> lines."},"workflow":["1. /init to scaffold","2. /write source files","3. /build to compile","4. /test to verify","5. /fix if errors"],"IMPORTANT":"If /init FAILS (project already exists), skip to /write or /build. NEVER retry /init on the same project."}}'
     echo "$_card" | python3 -m json.tool >/dev/null 2>&1
     assert_ok $? "Coding workflow card must be valid JSON"
   }

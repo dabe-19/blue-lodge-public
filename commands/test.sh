@@ -10,6 +10,24 @@ cmd_test() {
     local args="$1"
     local workdir="${2:-.}"
     
+    # Default to task workspace if active, unless it has no project file but parent does
+    if [ -n "${AGENT_OUTPUT_DIR:-}" ] && [ -d "$workdir/$AGENT_OUTPUT_DIR" ]; then
+        local has_project_file=0
+        local f
+        for f in Cargo.toml pyproject.toml Makefile package.json go.mod src/main.rs src/lib.rs src; do
+            ( [ -f "$workdir/$AGENT_OUTPUT_DIR/$f" ] || [ -d "$workdir/$AGENT_OUTPUT_DIR/$f" ] ) && has_project_file=1
+        done
+        if [ $has_project_file -eq 0 ]; then
+            local test_cmd_check
+            test_cmd_check=$(memory_get_section "Build" "$workdir/$AGENT_OUTPUT_DIR" | grep '^test:' | sed 's/^test:[[:space:]]*//' | head -1)
+            [ -n "$test_cmd_check" ] && [[ "$test_cmd_check" != "N/A" ]] && has_project_file=1
+        fi
+        if [ $has_project_file -eq 1 ]; then
+            workdir="$workdir/$AGENT_OUTPUT_DIR"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Routing test to active task workspace: $workdir"
+        fi
+    fi
+    
     cd "$workdir"
     
     # Get test command from GEORGE.md or detect

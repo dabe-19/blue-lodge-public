@@ -8,4 +8,5 @@
 /responses/
 /system_shield/
 models/*.gguf
+/workspace/
 

@@ -3046,7 +3046,7 @@ _cmd_ls() {
     local -a excludes=(
         '.git' 'target' '__pycache__' '.venv' 'node_modules'
         '.mypy_cache' '.pytest_cache' '.tox' '.eggs' '*.egg-info'
-        '.DS_Store' '.lodge-snapshots' '.george'
+        '.DS_Store' '.lodge-snapshots' '.george' '.agents'
     )
 
     ui_section "Files: ${target/#$HOME/~} (depth $depth)"
@@ -4429,6 +4429,21 @@ _cmd_git() {
             source "$LODGE_DIR/commands/push.sh"
             cmd_push "$rest" "${2:-.}"
             ;;
+        discard|restore|checkout)
+            if [ -z "$rest" ] || [ "$rest" = "$action" ]; then
+                ui_err "Usage: /git discard <file1> [file2...]"
+                ui_dim "  Reverts uncommitted changes in the specified files."
+                return 1
+            fi
+            (
+                cd "${2:-.}"
+                if git checkout -- $rest 2>&1; then
+                    ui_ok "Discarded changes in: $rest"
+                else
+                    ui_err "Failed to discard changes in: $rest"
+                fi
+            )
+            ;;
         *)
             ui_info "Usage: /git <subcommand>"
             ui_dim ""
@@ -4437,6 +4452,7 @@ _cmd_git() {
             ui_dim "  fetch <url>         — Fetch README/summary from a repo"
             ui_dim "  commit [files]      — AI-generated commit message"
             ui_dim "  push [branch]       — Push to remote"
+            ui_dim "  discard [files]     — Discard uncommitted changes"
             ui_dim ""
             ui_dim "  GitHub:"
             ui_dim "  search <query>      — Search GitHub repositories"

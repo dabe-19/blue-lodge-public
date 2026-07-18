@@ -124,32 +124,31 @@ describe "newline expansion"
 # ── Edit mode validation ──────────────────────────────────────
 describe "--edit mode validation"
 
-  it "accepts valid sed substitution" && {
+  it "accepts valid block-replacement" && {
     _tmpdir=$(test_tmpdir)
     echo "old_name" > "$_tmpdir/edit.txt"
-    _out=$(cmd_write '--edit edit.txt s/old_name/new_name/g' "$_tmpdir" 2>&1)
+    _out=$(cmd_write $'--edit edit.txt\n<<<<<<<\nold_name\n=======\nnew_name\n>>>>>>>' "$_tmpdir" 2>&1)
     assert_ok $?
     _content=$(cat "$_tmpdir/edit.txt")
     assert_contains "$_content" "new_name"
     rm -rf "$_tmpdir"
   }
 
-  it "rejects multi-line code as sed expression" && {
+  it "rejects invalid block-replace format" && {
     _tmpdir=$(test_tmpdir)
     echo "placeholder" > "$_tmpdir/code.rs"
     _out=$(cmd_write '--edit code.rs fn main() { println!("Hello"); }' "$_tmpdir" 2>&1)
     assert_fail $?
-    assert_contains "$_out" "not a valid sed"
+    assert_contains "$_out" "invalid block-replace format"
     rm -rf "$_tmpdir"
   }
 
-  it "rejects excessively long sed expressions" && {
+  it "rejects block-replace with non-unique search pattern" && {
     _tmpdir=$(test_tmpdir)
-    echo "x" > "$_tmpdir/long.txt"
-    _long_sed="s/x/$(head -c 250 /dev/zero | tr '\0' 'y')/g"
-    _out=$(cmd_write "--edit long.txt $_long_sed" "$_tmpdir" 2>&1)
+    printf "target\ntarget\n" > "$_tmpdir/duplicate.txt"
+    _out=$(cmd_write $'--edit duplicate.txt\n<<<<<<<\ntarget\n=======\nreplacement\n>>>>>>>' "$_tmpdir" 2>&1)
     assert_fail $?
-    assert_contains "$_out" "too long"
+    assert_contains "$_out" "multiple matches"
     rm -rf "$_tmpdir"
   }
 
@@ -171,8 +170,8 @@ describe "LLM escape expansion in /write"
 
   it "skips expansion for --edit mode" && {
     _tmpdir=$(test_tmpdir)
-    echo "old_value" > "$_tmpdir/cfg.txt"
-    cmd_write '--edit cfg.txt s/old_value/new_value/' "$_tmpdir" 2>&1
+    echo 'old_value\ntext' > "$_tmpdir/cfg.txt"
+    cmd_write $'--edit cfg.txt\n<<<<<<<\nold_value\\ntext\n=======\nnew_value\n>>>>>>>' "$_tmpdir" 2>&1
     content=$(cat "$_tmpdir/cfg.txt")
     assert_contains "$content" "new_value"
     rm -rf "$_tmpdir"

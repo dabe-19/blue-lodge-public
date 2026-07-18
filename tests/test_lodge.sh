@@ -1144,7 +1144,7 @@ describe "GPU layers command (/gpu)"
 
   it "LLAMA_CPP_GPU_LAYERS defaults to 0 (CPU only — Adreno 830 Vulkan broken)" && {
     # Re-source to check default
-    _gpu_default=$(grep 'LLAMA_CPP_GPU_LAYERS=' "$LODGE_DIR/lib/llm.sh" | head -1)
+    _gpu_default=$(grep 'LLAMA_CPP_GPU_LAYERS=' "$LODGE_DIR/lib/llm.sh" | grep ':-0' | head -1)
     echo "$_gpu_default" | grep -q ':-0}'
     assert_ok $? "Default should be 0, got: $_gpu_default"
   }

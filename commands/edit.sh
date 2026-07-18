@@ -28,7 +28,20 @@ cmd_edit() {
 
     local filepath content
     filepath=$(echo "$args" | head -1 | awk '{print $1}')
-    content=$(echo "$args" | sed 's/^[^ ]* *//')
+    
+    local first_line remaining_lines first_line_content
+    first_line=$(echo "$args" | head -1)
+    remaining_lines=$(echo "$args" | tail -n +2)
+    first_line_content=$(echo "$first_line" | sed 's/^[^ ]* *//')
+    if [ "$first_line_content" = "$first_line" ]; then
+        first_line_content=""
+    fi
+    if [ -n "$remaining_lines" ]; then
+        content="${first_line_content:+$first_line_content
+}${remaining_lines}"
+    else
+        content="$first_line_content"
+    fi
 
     # Strip trailing dashes from filepath
     filepath=$(echo "$filepath" | sed 's/--*$//')
@@ -52,8 +65,8 @@ cmd_edit() {
     fi
 
     if [ -z "$content" ]; then
-        ui_err "No sed expression provided"
-        ui_dim "Provide a sed expression after the filepath"
+        ui_err "No search/replace block provided"
+        ui_dim "Provide a search/replace block after the filepath"
         return 1
     fi
 
@@ -69,53 +82,68 @@ cmd_edit() {
         return 1
     fi
 
-    # Auto-heal missing trailing delimiter for 's' commands
-    if [[ "$content" =~ ^s([/\|,\#]) ]]; then
-        local delim="${BASH_REMATCH[1]}"
-        local temp="${content//\\$delim/_}"
-        local count
-        count=$(echo -n "$temp" | tr -cd "$delim" | wc -c)
-        if [ "$count" -eq 2 ]; then
-            content="${content}${delim}"
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Auto-healed missing trailing sed delimiter: $content"
-        fi
-    fi
+    # Parse search pattern and replacement pattern from content
+    local search_pattern replacement_pattern
+    search_pattern=$(echo "$content" | awk '
+        /^<<<<<<</ { inside=1; next }
+        /^=======/ { inside=0; exit }
+        inside { print }
+    ')
+    replacement_pattern=$(echo "$content" | awk '
+        /^=======/ { inside=1; next }
+        /^>>>>>>>/ { inside=0; exit }
+        inside { print }
+    ')
 
-    # Guard: reject content that's clearly NOT a sed expression
-    local _sed_ok=0
-    if [[ "$content" =~ ^s[/\|,\#] ]]; then
-        _sed_ok=1  # substitution: s/old/new/ s|old|new| etc
-    elif [[ "$content" =~ ^[0-9]*,?[0-9]*/.*/ ]]; then
-        _sed_ok=1  # address + command: /pattern/d, 3,5d, etc
-    elif [[ "$content" =~ ^[0-9]+[dips] ]]; then
-        _sed_ok=1  # line-addressed command: 5d, 3i, etc
-    fi
-
-    if [ "$_sed_ok" -eq 0 ]; then
-        ui_err "Edit rejected — content is not a valid sed expression: ${content:0:80}"
-        ui_dim "  /edit is for SIMPLE substitutions only (e.g. s/old_name/new_name/g)"
-        ui_dim "  To rewrite a file, use: /write <filepath> <complete content>"
-        return 1
-    fi
-
-    # Guard: reject excessively long sed expressions (> 200 chars)
-    if [ "${#content}" -gt 200 ]; then
-        ui_err "Edit rejected — sed expression too long (${#content} chars)"
-        ui_dim "  /edit is for small, targeted changes."
-        ui_dim "  To rewrite a file, use: /write <filepath> <complete content>"
+    if [ -z "$search_pattern" ]; then
+        ui_err "Edit rejected — invalid block-replace format"
+        ui_dim "Use the following format:"
+        ui_dim "  /edit <filepath>"
+        ui_dim "  <<<<<<<"
+        ui_dim "  <search_lines>"
+        ui_dim "  ======="
+        ui_dim "  <replace_lines>"
+        ui_dim "  >>>>>>>"
         return 1
     fi
 
     local before_lines after_lines
     before_lines=$(wc -l < "$fullpath")
-    if sed -i "$content" "$fullpath" 2>/dev/null; then
+
+    export SEARCH_PAT="$search_pattern"
+    export REPLACE_PAT="$replacement_pattern"
+
+    local py_err
+    py_err=$(python3 -c '
+import sys, os
+fullpath = sys.argv[1]
+with open(fullpath, "r", encoding="utf-8") as f:
+    content = f.read()
+search = os.environ.get("SEARCH_PAT", "")
+replace = os.environ.get("REPLACE_PAT", "")
+if not search:
+    print("Error: Empty search pattern", file=sys.stderr)
+    sys.exit(1)
+if search not in content:
+    print("Error: Search pattern not found in target file.", file=sys.stderr)
+    sys.exit(1)
+if content.count(search) > 1:
+    print("Error: Search pattern is not unique (found multiple matches).", file=sys.stderr)
+    sys.exit(1)
+new_content = content.replace(search, replace)
+with open(fullpath, "w", encoding="utf-8") as f:
+    f.write(new_content)
+' "$fullpath" 2>&1)
+    local py_rc=$?
+
+    unset SEARCH_PAT REPLACE_PAT
+
+    if [ "$py_rc" -eq 0 ]; then
         after_lines=$(wc -l < "$fullpath")
         ui_ok "Edited: $filepath ($before_lines → $after_lines lines)"
         return 0
     else
-        ui_err "Edit failed — invalid sed expression: $content"
-        ui_dim "  /edit is for SIMPLE substitutions: s/old/new/g"
-        ui_dim "  To rewrite a file, use: /write <filepath> <complete content>"
+        ui_err "Edit failed: $py_err"
         return 1
     fi
 }

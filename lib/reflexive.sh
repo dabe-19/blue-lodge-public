@@ -204,7 +204,7 @@ reflexive_soul_gate() {
 
     if [ "$violations" -gt 0 ]; then
         _REFLEXIVE_SOUL_REJECTIONS=$((_REFLEXIVE_SOUL_REJECTIONS + 1))
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] soul gate: %d violation(s) in proposed action\n' "$violations" >/dev/tty 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] soul gate: %d violation(s) in proposed action\n' "$violations" 2>/dev/null >/dev/tty
         return 1
     fi
 
@@ -219,7 +219,7 @@ reflexive_soul_gate() {
 
     # If the action is generic (no soul keywords at all), that's fine —
     # we only block explicit violations.  Require at least 0 hits to pass.
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] soul gate: %d alignment hit(s), %d violation(s) → PASS\n' "$hits" "$violations" >/dev/tty 2>/dev/null
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] soul gate: %d alignment hit(s), %d violation(s) → PASS\n' "$hits" "$violations" 2>/dev/null >/dev/tty
     return 0
 }
 
@@ -383,7 +383,7 @@ reflexive_tokens_recommend() {
         [ "$budget" -gt "$ceiling" ] && budget="$ceiling"
     fi
 
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] token budget: avg=%d max=%d → recommend=%d\n' "$avg_tokens" "$max_tokens" "$budget" >/dev/tty 2>/dev/null
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] token budget: avg=%d max=%d → recommend=%d\n' "$avg_tokens" "$max_tokens" "$budget" 2>/dev/null >/dev/tty
     echo "$budget"
 }
 
@@ -453,19 +453,19 @@ reflexive_speculate_prefetch() {
 
     case "$predicted_cmd" in
         fetch)
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] speculate: pre-fetch hint for web fetch\n' >/dev/tty 2>/dev/null
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] speculate: pre-fetch hint for web fetch\n' 2>/dev/null >/dev/tty
             echo "prefetch_hint:web" > "$_cache_file" 2>/dev/null
             ;;
         build)
             if [ -f "$workdir/Makefile" ] || [ -f "$workdir/package.json" ] || [ -f "$workdir/Cargo.toml" ] || [ -f "$workdir/go.mod" ]; then
                 echo "prefetch_hint:build_ready" > "$_cache_file" 2>/dev/null
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] speculate: build system detected in %s\n' "$workdir" >/dev/tty 2>/dev/null
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] speculate: build system detected in %s\n' "$workdir" 2>/dev/null >/dev/tty
             fi
             ;;
         test)
             if [ -d "$workdir/tests" ] || [ -d "$workdir/test" ] || [ -f "$workdir/pytest.ini" ] || [ -f "$workdir/jest.config.js" ]; then
                 echo "prefetch_hint:test_ready" > "$_cache_file" 2>/dev/null
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] speculate: test infra detected in %s\n' "$workdir" >/dev/tty 2>/dev/null
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] speculate: test infra detected in %s\n' "$workdir" 2>/dev/null >/dev/tty
             fi
             ;;
         *)
@@ -595,7 +595,7 @@ reflexive_metacog_assess() {
     fi
 
     _REFLEXIVE_METACOG_STATE="$assessment"
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] metacog: %s\n' "$assessment" >/dev/tty 2>/dev/null
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] metacog: %s\n' "$assessment" 2>/dev/null >/dev/tty
     echo "$assessment"
 }
 
@@ -655,7 +655,7 @@ reflexive_pre_route() {
     fi
 
     if [ -n "$context" ]; then
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] pre-route inject: %s\n' "${context:0:120}" >/dev/tty 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] pre-route inject: %s\n' "${context:0:120}" 2>/dev/null >/dev/tty
         declare -f transcript_log &>/dev/null && transcript_log "reflexive:pre-route" "$context"
     fi
 
@@ -675,11 +675,11 @@ reflexive_post_route() {
         if ! reflexive_soul_gate "$action_text"; then
             local rec
             rec=$(reflexive_soul_recommend "$action_text")
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] soul gate REJECTED: %s\n' "$rec" >/dev/tty 2>/dev/null
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] soul gate REJECTED: %s\n' "$rec" 2>/dev/null >/dev/tty
             declare -f transcript_log &>/dev/null && transcript_log "reflexive:soul-gate" "REJECTED /$selected_tool — $rec"
             return 1
         fi
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] soul gate APPROVED: /%s\n' "$selected_tool" >/dev/tty 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] soul gate APPROVED: /%s\n' "$selected_tool" 2>/dev/null >/dev/tty
     fi
 
     # Speculative pre-fetch for predicted next tool
@@ -688,7 +688,7 @@ reflexive_post_route() {
         predicted=$(reflexive_speculate_next "$selected_tool")
         if [ -n "$predicted" ]; then
             reflexive_speculate_prefetch "$predicted" "$workdir" &
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] speculate: prefetch /%s (background)\n' "$predicted" >/dev/tty 2>/dev/null
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] speculate: prefetch /%s (background)\n' "$predicted" 2>/dev/null >/dev/tty
             declare -f transcript_log &>/dev/null && transcript_log "reflexive:speculate" "prefetch /$predicted for /$selected_tool"
         fi
     fi
@@ -709,7 +709,7 @@ reflexive_post_execute() {
     if [ "${REFLEXIVE_ADAPT_TOKENS:-0}" -eq 1 ]; then
         local char_count=${#response}
         reflexive_tokens_observe "$char_count"
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] post-execute: observed %d chars\n' "$char_count" >/dev/tty 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] post-execute: observed %d chars\n' "$char_count" 2>/dev/null >/dev/tty
     fi
 
     # Record prompt outcome for self-improving prompts
@@ -719,7 +719,7 @@ reflexive_post_execute() {
         else
             reflexive_prompt_record "retry" "$prompt_hint"
         fi
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] prompt-learn: exit=%d hint=%s\n' "$exit_code" "${prompt_hint:0:60}" >/dev/tty 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] prompt-learn: exit=%d hint=%s\n' "$exit_code" "${prompt_hint:0:60}" 2>/dev/null >/dev/tty
     fi
 
     declare -f transcript_log &>/dev/null && transcript_log "reflexive:post-execute" "cmd=$_REFLEXIVE_TOTAL_COMMANDS exit=$exit_code chars=${#response}"
@@ -738,7 +738,7 @@ reflexive_milestone_complete() {
         reflexive_prompt_record "success" "milestone:${milestone:0:40}"
     fi
 
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] milestone COMPLETE: %s (cmds=%d loops=%d rejections=%d)\n' "${milestone:0:60}" "$_REFLEXIVE_TOTAL_COMMANDS" "$_REFLEXIVE_LOOP_COUNTER" "$_REFLEXIVE_SOUL_REJECTIONS" >/dev/tty 2>/dev/null
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] milestone COMPLETE: %s (cmds=%d loops=%d rejections=%d)\n' "${milestone:0:60}" "$_REFLEXIVE_TOTAL_COMMANDS" "$_REFLEXIVE_LOOP_COUNTER" "$_REFLEXIVE_SOUL_REJECTIONS" 2>/dev/null >/dev/tty
     declare -f transcript_log &>/dev/null && transcript_log "reflexive:milestone" "COMPLETE: ${milestone:0:60} cmds=$_REFLEXIVE_TOTAL_COMMANDS loops=$_REFLEXIVE_LOOP_COUNTER"
 
     # Reset metacog for fresh milestone
@@ -755,7 +755,7 @@ reflexive_milestone_fail() {
         reflexive_prompt_record "fail" "milestone:${milestone:0:40}"
     fi
 
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] milestone FAILED: %s (cmds=%d loops=%d rejections=%d)\n' "${milestone:0:60}" "$_REFLEXIVE_TOTAL_COMMANDS" "$_REFLEXIVE_LOOP_COUNTER" "$_REFLEXIVE_SOUL_REJECTIONS" >/dev/tty 2>/dev/null
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [reflexive] milestone FAILED: %s (cmds=%d loops=%d rejections=%d)\n' "${milestone:0:60}" "$_REFLEXIVE_TOTAL_COMMANDS" "$_REFLEXIVE_LOOP_COUNTER" "$_REFLEXIVE_SOUL_REJECTIONS" 2>/dev/null >/dev/tty
     declare -f transcript_log &>/dev/null && transcript_log "reflexive:milestone" "FAILED: ${milestone:0:60} cmds=$_REFLEXIVE_TOTAL_COMMANDS loops=$_REFLEXIVE_LOOP_COUNTER"
 
     reflexive_metacog_reset
@@ -974,7 +974,7 @@ reflexive_report() {
 
     # LLM analysis
     if declare -f llm_generate &>/dev/null; then
-        declare -f ui_spinner_start &>/dev/null && ui_spinner_start "Analyzing" >/dev/tty 2>/dev/null
+        declare -f ui_spinner_start &>/dev/null && ui_spinner_start "Analyzing" 2>/dev/null >/dev/tty
         local _analysis_prompt="Analyze this self-monitoring report from an AI agent named George:\n\n${report}\n\nSummarize patterns, flag concerns, and suggest optimizations for the tuning knobs. Be concise (4-6 sentences)."
         local _analysis_sys="You are analyzing the self-monitoring telemetry of an AI agent. Focus on actionable insights: Is the agent performing well? Are there efficiency problems? What tuning changes would help? Plain text, no markdown."
         local _analysis

@@ -20,8 +20,8 @@ LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 
 # ── Model Slots ────────────────────────────────────────────────
 # These are the Ollama model names (e.g., "blue-lodge-minist-think:4b")
-LODGE_MODEL_PRIMARY="${LODGE_MODEL_PRIMARY:-blue-lodge-gemma4-inst:4b}"
-LODGE_MODEL_SECONDARY="${LODGE_MODEL_SECONDARY:-blue-lodge-gemma4-inst:4b}"
+LODGE_MODEL_PRIMARY="${LODGE_MODEL_PRIMARY:-blue-lodge-gemma4-inst:2b}"
+LODGE_MODEL_SECONDARY="${LODGE_MODEL_SECONDARY:-blue-lodge-gemma4-inst:2b}"
 LODGE_SINGLE_MODEL="${LODGE_SINGLE_MODEL:-1}"   # 1=single model mode (primary only, default), 0=dual model hot-swap
 
 # Track which model is currently loaded (set by _models_switch)
@@ -560,6 +560,28 @@ models_has_vision() {
     key=$(_models_key_from_query "$name") || return 1
     [ "${_MODELS_VISION_BY_KEY[$key]:-0}" = "1" ]
 }
+# Models with embedded or external MTP speculative decoding draft layers
+models_has_mtp() {
+    local name="${1:-$LODGE_MODEL}"
+    local key
+    key=$(_models_key_from_query "$name" 2>/dev/null || echo "$name")
+    case "$key" in
+        gemma4-e4b-inst|gemma4-12b-inst)
+            return 0  # Yes, has embedded MTP
+            ;;
+        gemma4-e2b-inst)
+            # Yes, if the separate draft GGUF is present on disk
+            if [ -f "${LODGE_DIR:-/workspace}/.george/models/mtp-gemma-4-E2B-it.gguf" ]; then
+                return 0
+            fi
+            return 1
+            ;;
+        *)
+            return 1  # No MTP
+            ;;
+    esac
+}
+
 
 # ── Get the nothink method for current model ───────────────────
 # Returns: "qwen" | "system" | "none"

@@ -128,7 +128,7 @@ provider_clear_model() {
 _provider_countdown() {
     local secs="$1" label="${2:-Waiting}"
     local _tty="/dev/tty"
-    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    (true >/dev/tty) 2>/dev/null || _tty="/dev/null"
     if [ "$secs" -le 0 ] 2>/dev/null; then return; fi
 
     # Pause any active spinner so it doesn't fight for the terminal line
@@ -273,7 +273,7 @@ _provider_call_with_backoff() {
         # Record the call
         _provider_meter_tick
 
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] provider/$provider: calling API..." >/dev/tty 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] provider/$provider: calling API..." 2>/dev/null >/dev/tty
         resp=$(provider_chat "$provider" "$message" "$model" "$system" 2>&1)
         rc=$?
 
@@ -336,7 +336,7 @@ _provider_stream_with_backoff() {
         _provider_meter_throttle
         _provider_meter_tick
 
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] provider/$provider: streaming API call..." >/dev/tty 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] provider/$provider: streaming API call..." 2>/dev/null >/dev/tty
         resp=$(provider_stream_chat "$provider" "$message" "$model" "$system" 2>&1)
         rc=$?
 
@@ -400,7 +400,7 @@ _provider_sse_loop() {
     local fifo="$1" curl_pid="$2" content_jq="$3"
     local think_jq="${4:-}" done_match="${5:-[DONE]}"
     local _tty="/dev/tty"
-    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    (true >/dev/tty) 2>/dev/null || _tty="/dev/null"
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
 
     local _in_think=0 _think_banner=0
@@ -479,7 +479,7 @@ _provider_sse_loop() {
 _provider_anthropic_sse_loop() {
     local fifo="$1" curl_pid="$2"
     local _tty="/dev/tty"
-    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    (true >/dev/tty) 2>/dev/null || _tty="/dev/null"
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
 
     local _in_think=0 _think_banner=0
@@ -562,7 +562,7 @@ _provider_anthropic_sse_loop() {
 _provider_google_sse_loop() {
     local fifo="$1" curl_pid="$2"
     local _tty="/dev/tty"
-    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    (true >/dev/tty) 2>/dev/null || _tty="/dev/null"
     local _got_content=0
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
     local _idle_timeout=45
@@ -597,7 +597,7 @@ _provider_google_sse_loop() {
 _provider_cohere_sse_loop() {
     local fifo="$1" curl_pid="$2"
     local _tty="/dev/tty"
-    [ -w /dev/tty ] 2>/dev/null || _tty="/dev/stderr"
+    (true >/dev/tty) 2>/dev/null || _tty="/dev/null"
     local _got_content=0
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
     local _idle_timeout=45
@@ -653,7 +653,7 @@ provider_stream_chat() {
     # On iSH (iOS QEMU) FIFOs deadlock — fall back to synchronous provider_chat.
     # Cloud providers already work fine via the sync path on iSH.
     if [[ "${LODGE_PLATFORM:-}" == "ish" ]] || ! mkfifo "$_fifo" 2>/dev/null; then
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] provider stream: FIFO bypass → sync fallback" >/dev/tty 2>/dev/null
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] provider stream: FIFO bypass → sync fallback" 2>/dev/null >/dev/tty
         rm -f "$_fifo"
         provider_chat "$provider" "$message" "$model" "$system"
         return $?
@@ -779,7 +779,7 @@ ${message}" '{
     fi
 
     # Streaming failed — fall back to synchronous
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] provider stream failed, falling back to sync" >/dev/tty 2>/dev/null
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] provider stream failed, falling back to sync" 2>/dev/null >/dev/tty
     provider_chat "$provider" "$message" "$model" "$system"
 }
 

@@ -161,6 +161,7 @@ _init_guard_existing_project() {
 
 cmd_init() {
     local args="$1"
+    local workdir="${2:-.}"
     local name type
     local init_timestamp
     init_timestamp=$(date '+%Y-%m-%d %H:%M:%S')
@@ -261,7 +262,7 @@ cmd_init() {
     fi
 
     # ── Guardrail: check we're not inside an existing project ──
-    _init_guard_existing_project "$PWD/$name"
+    _init_guard_existing_project "$workdir/$name"
     local _guard_rc=$?
     if [ $_guard_rc -eq 2 ]; then
         return 0
@@ -276,7 +277,7 @@ cmd_init() {
     fi
 
     # ── Create dedicated project directory upfront ─────────────
-    local project_dir="$PWD/$name"
+    local project_dir="$workdir/$name"
     if [ -f "$project_dir/GEORGE.md" ]; then
         ui_err "[$init_timestamp] Project already exists: $project_dir (GEORGE.md exists)"
         return 1
