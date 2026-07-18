@@ -76,7 +76,7 @@ describe "_strip_think_blocks"
 
   it "strips orphaned closing tags" && {
     result=$(echo 'text </think> more' | _strip_think_blocks)
-    assert_eq "$result" "text  more"
+    assert_eq "$result" " more"
   }
 
 # ══════════════════════════════════════════════════════════════

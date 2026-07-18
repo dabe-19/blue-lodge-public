@@ -4271,11 +4271,11 @@ _format_syntax_cards() {
 }
 
 
-_build_specialist_prompt() {
-    _build_specialist_prompt_raw "$@" | _format_syntax_cards
+_build_specialist_prompt_formatted() {
+    _build_specialist_prompt "$@" | _format_syntax_cards
 }
 
-_build_specialist_prompt_raw() {
+_build_specialist_prompt() {
     local cmd_name="$1"
     local workdir="$2"
     local micro_objective="$3"  # Optional: used to rerank docs by objective keywords
@@ -5649,7 +5649,7 @@ ${_compact_cmds}${_respond_consec:+$([ "$_respond_consec" -ge "${AGENT_RESPOND_C
 WARNING: /respond has been tried ${_respond_consec} times without success. You MUST use a different command.")}"
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist <- compact command catalog (hallucination recovery)"
         else
-            specialist_sys=$(_build_specialist_prompt "$selected_tool" "$workdir" "$micro_objective")
+            specialist_sys=$(_build_specialist_prompt_formatted "$selected_tool" "$workdir" "$micro_objective")
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: specialist prompt <- syntax card for $selected_tool"
         fi
 
@@ -5673,14 +5673,14 @@ WARNING: /respond has been tried ${_respond_consec} times without success. You M
                 local _fz_cards="" _fz_cmd
                 for _fz_cmd in $_fz_extras; do
                     local _fz_card
-                    _fz_card=$(_build_specialist_prompt "/$_fz_cmd" "" "" 2>/dev/null | sed -n '/^SYNTAX CARD:/,/^$/p')
+                    _fz_card=$(_build_specialist_prompt_formatted "/$_fz_cmd" "" "" 2>/dev/null | sed -n '/^SYNTAX CARD:/,/^$/p')
                     [ -n "$_fz_card" ] && _fz_cards="${_fz_cards}${_fz_card}"$'\n'
                 done
                 if [ -n "$_fz_cards" ]; then
                     # Mode 2: fuzzy cards replace the primary; fall back to original if no fuzzy matches
                     # Mode 3: fuzzy cards are appended alongside the primary
                     if [ "$_sr_mode" -eq 2 ]; then
-                        specialist_sys=$(_build_specialist_prompt "/${_fz_extras%% *}" "$workdir" "$micro_objective")
+                        specialist_sys=$(_build_specialist_prompt_formatted "/${_fz_extras%% *}" "$workdir" "$micro_objective")
                         # Inject remaining cards if multiple fuzzy matches
                         local _fz_remaining="${_fz_extras#* }"
                         if [ "$_fz_remaining" != "$_fz_extras" ]; then
@@ -7104,7 +7104,7 @@ INTERLOCK_JSON
                         local _usage_base="${cmd%% *}"
                         _usage_base="${_usage_base#/}"
                         local _usage_card=""
-                        _usage_card=$(_build_specialist_prompt "/$_usage_base" 2>/dev/null | sed -n '/^SYNTAX CARD:/,/^$/{ /^SYNTAX CARD:/d; /^$/d; p; }' | head -20)
+                        _usage_card=$(_build_specialist_prompt_formatted "/$_usage_base" 2>/dev/null | sed -n '/^SYNTAX CARD:/,/^$/{ /^SYNTAX CARD:/d; /^$/d; p; }' | head -20)
                         local _usage_warning="Command returned USAGE/HELP text, not actual work output. The command was likely called with wrong or missing arguments."
                         if [ -n "$_usage_card" ]; then
                             _usage_warning="${_usage_warning} CORRECT SYNTAX: ${_usage_card}"
@@ -7496,7 +7496,7 @@ The operator provided guidance after previous failures. Using the operator's ins
 The command MUST be one listed in AVAILABLE COMMANDS or a valid bash command.
 Output a slash command line starting with / OR a bash code block."
 
-        local guided_sys=$(_build_specialist_prompt "" "$workdir" "$micro_objective")
+        local guided_sys=$(_build_specialist_prompt_formatted "" "$workdir" "$micro_objective")
         local final_plan
         local LLM_SCENARIO=agent
         final_plan=$(llm_stream "$guided_prompt" "$guided_sys" "${LLM_AGENT_TOKENS:-20480}" "$LLM_BUDGET_AGENT")
