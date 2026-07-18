@@ -893,6 +893,7 @@ _llm_start_llamacpp_server() {
     # With Ollama-resolved GGUF (-m path), llama.cpp cannot auto-discover the
     # repo-root MTP draft from -hf metadata, so support explicit local draft file.
     local _use_mtp=0
+    local _spec_mtp=0
     if [ "${LLAMA_CPP_SPEC_MTP:-0}" = "1" ]; then
         if declare -f models_has_mtp &>/dev/null; then
             if models_has_mtp "$LODGE_MODEL"; then
@@ -938,6 +939,7 @@ _llm_start_llamacpp_server() {
         if [ "$_launch_mode" = "hf" ] && [ -z "${LLAMA_CPP_DRAFT_MODEL:-}" ]; then
             [ "$quiet" != "--quiet" ] && ui_dim "MTP: using llama.cpp -hf auto-discovery for repo draft model"
         fi
+        _spec_mtp=1
     fi
 
     if [ "$_spec_mtp" = "1" ]; then
