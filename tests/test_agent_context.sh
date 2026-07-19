@@ -464,7 +464,7 @@ describe "Coding workflow card (strategist)"
   it "does NOT trigger on 'compile a report'" && {
     # "compile" alone must NOT match — it's ambiguous
     _signal="compile a report of findings"
-    if [[ "$_signal" =~ (rust|cargo|python|pip|node|npm|typescript|java|maven|gradle|golang|makefile|cmake|clang|gcc|\.(rs|py|go|ts|js|cpp|c|java)\b|create.*(project|app|cli|tool|program|binary|package|crate|module)|scaffold|new.*project|build.*(it|the|this|project|app|code)|run.*(the|it|this).*(project|app|program|binary|executable)|init.*(project|app|repo)) ]]; then
+    if [[ "$_signal" =~ (rust|cargo|python|pip|node|npm|typescript|java|maven|gradle|golang|makefile|cmake|clang|gcc|\.(rs|py|go|ts|js|cpp|c|java)([^a-zA-Z0-9_]|$)|create.*(project|app|cli|tool|program|binary|package|crate|module)|scaffold|new.*project|build.*(it|the|this|project|app|code)|run.*(the|it|this).*(project|app|program|binary|executable)|init.*(project|app|repo)) ]]; then
         _test_fail "'compile a report' must NOT trigger coding card"
     else
         _test_pass
@@ -473,7 +473,7 @@ describe "Coding workflow card (strategist)"
 
   it "does NOT trigger on 'write a summary'" && {
     _signal="write a summary of the meeting notes"
-    if [[ "$_signal" =~ (rust|cargo|python|pip|node|npm|typescript|java|maven|gradle|golang|makefile|cmake|clang|gcc|\.(rs|py|go|ts|js|cpp|c|java)\b|create.*(project|app|cli|tool|program|binary|package|crate|module)|scaffold|new.*project|build.*(it|the|this|project|app|code)|run.*(the|it|this).*(project|app|program|binary|executable)|init.*(project|app|repo)) ]]; then
+    if [[ "$_signal" =~ (rust|cargo|python|pip|node|npm|typescript|java|maven|gradle|golang|makefile|cmake|clang|gcc|\.(rs|py|go|ts|js|cpp|c|java)([^a-zA-Z0-9_]|$)|create.*(project|app|cli|tool|program|binary|package|crate|module)|scaffold|new.*project|build.*(it|the|this|project|app|code)|run.*(the|it|this).*(project|app|program|binary|executable)|init.*(project|app|repo)) ]]; then
         _test_fail "'write a summary' must NOT trigger coding card"
     else
         _test_pass

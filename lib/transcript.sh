@@ -239,7 +239,7 @@ transcript_log_prompt() {
         printf '<details>\n<summary>User Prompt</summary>\n\n```\n%s\n```\n\n</details>\n' "$prompt"
     } >> "$_PROMPT_LOG_FILE"
 }
-export -f transcript_log_prompt
+typeset -xf transcript_log_prompt
 
 # Return the path to the most recent transcript.
 transcript_last() {

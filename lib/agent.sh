@@ -5407,16 +5407,17 @@ agent_inner_loop() {
             if [ "$_pre_cmd" = "write" ]; then
                 local _mo_lower
                 _mo_lower=$(echo "$micro_objective" | tr '[:upper:]' '[:lower:]')
+                local _mo_padded=" $_mo_lower "
                 # /write → /init: milestone is about creating/scaffolding a project
-                if [[ "$_mo_lower" =~ (\bscaffold\b|\bcreate\b.*(new|a).*(project|app|crate|package|module)|\binitialize\b.*(project|app|repo|crate)|\binit\b.*(new|a|the).*(project|app)|\bnew\b.*(rust|python|node|go|java|typescript).*(project|app)) ]]; then
+                if [[ "$_mo_padded" =~ [[:space:]]scaffold[[:space:]]|[[:space:]]create[[:space:]].*(new|a).*(project|app|crate|package|module)|[[:space:]]initialize[[:space:]].*(project|app|repo|crate)|[[:space:]]init[[:space:]].*(new|a|the).*(project|app)|[[:space:]]new[[:space:]].*(rust|python|node|go|java|typescript).*(project|app) ]]; then
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route: remapped /write -> /init (coding scaffold detected)"
                     _pre_cmd="init"
                 # /write → /build: milestone is about building/making the project
-                elif [[ "$_mo_lower" =~ (\bbuild\b.*(the|this|it|project|app|code|binary|crate|package)|cargo\.build|\bmake\b|npm\.run\.build|\brun\b.*(cargo|make|maven|gradle|cmake)) ]]; then
+                elif [[ "$_mo_padded" =~ [[:space:]]build[[:space:]].*(the|this|it|project|app|code|binary|crate|package)|cargo\.build|[[:space:]]make[[:space:]]|npm\.run\.build|[[:space:]]run[[:space:]].*(cargo|make|maven|gradle|cmake) ]]; then
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route: remapped /write -> /build (build action detected)"
                     _pre_cmd="build"
                 # /write → /test: milestone is about running tests
-                elif [[ "$_mo_lower" =~ (\brun\b.*(the|this)?.*\b(test|spec|suite)\b|cargo\.test|pytest|npm\.test|\btest\b.*(the|this|it|project|code)) ]]; then
+                elif [[ "$_mo_padded" =~ [[:space:]]run[[:space:]].*(the|this)?.*[[:space:]](test|spec|suite)[[:space:]]|cargo\.test|pytest|npm\.test|[[:space:]]test[[:space:]].*(the|this|it|project|code) ]]; then
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route: remapped /write -> /test (test action detected)"
                     _pre_cmd="test"
                 fi
@@ -5708,7 +5709,8 @@ SHORTLIST OVERRIDE: Choose exactly ONE slash command from ROUTER SHORTLIST only.
         if [[ "$selected_tool" == "respond" ]]; then
             local _mo_lower
             _mo_lower=$(echo "$micro_objective" | tr '[:upper:]' '[:lower:]')
-            if [[ "$_mo_lower" =~ (discord|telegram|mastodon|bluesky|x/twitter|slack)[[:space:]]|[[:space:]](dm|direct.message)[[:space:]]|\b(send.*(message|dm)|post.*(to|on).*(discord|telegram|mastodon|bluesky|channel))\b ]]; then
+            local _social_remap_pat='(discord|telegram|mastodon|bluesky|x/twitter|slack)[[:space:]]|[[:space:]](dm|direct.message)[[:space:]]|([^a-zA-Z0-9_]|^)(send.*(message|dm)|post.*(to|on).*(discord|telegram|mastodon|bluesky|channel))([^a-zA-Z0-9_]|$)'
+            if [[ "$_mo_lower" =~ $_social_remap_pat ]]; then
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Router: remapped /respond -> /social (objective mentions social delivery target)"
                 selected_tool="social"
                 # Also rewrite the micro_objective to use /social phrasing
@@ -8754,7 +8756,7 @@ MEMEOF
         # TEST_FIX: AGENT_BRAINSTORM brainstorm
         local _coding_signal="${task} ${_strat_honeydew:-}"
         _coding_signal=$(echo "$_coding_signal" | tr '[:upper:]' '[:lower:]')
-        if [[ "$_coding_signal" =~ (rust|cargo|python|pip|node|npm|typescript|java|maven|gradle|golang|makefile|cmake|clang|gcc|\.(rs|py|go|ts|js|cpp|c|java)\b|create.*(project|app|cli|tool|program|binary|package|crate|module)|scaffold|new.*project|build.*(it|the|this|project|app|code)|run.*(the|it|this).*(project|app|program|binary|executable)|init.*(project|app|repo)) ]]; then
+        if [[ "$_coding_signal" =~ (rust|cargo|python|pip|node|npm|typescript|java|maven|gradle|golang|makefile|cmake|clang|gcc|\.(rs|py|go|ts|js|cpp|c|java)([^a-zA-Z0-9_]|$)|create.*(project|app|cli|tool|program|binary|package|crate|module)|scaffold|new.*project|build.*(it|the|this|project|app|code)|run.*(the|it|this).*(project|app|program|binary|executable)|init.*(project|app|repo)) ]]; then
             _coding_card='
 {"coding":{"commands":{"/init <name> <type>":"scaffold NEW project (creates dir + Cargo.toml/pyproject.toml). ONLY for new projects.","/build":"compile/build EXISTING project (cargo build, make, pip install). Use AFTER /init.","/test":"run test suite (cargo test, pytest). Use AFTER /build.","/fix":"auto-fix errors from last /build or /test","/write <path> <code>":"write COMPLETE code file","/append <path> <code>":"add code to END of existing file","/edit <path>":"targeted block search-and-replace using <<<<<<< ======= >>>>>>> lines."},"workflow":["1. /init to scaffold","2. /write source files","3. /build to compile","4. /test to verify","5. /fix if errors"],"IMPORTANT":"If /init FAILS (project already exists), skip to /write or /build. NEVER retry /init on the same project."}}'
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- coding workflow card"
