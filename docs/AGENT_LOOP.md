@@ -297,9 +297,13 @@ Milestone: "Create a new Rust project"
 
 This saves the router LLM call when the honeydew item is already precise.
 
-> **Note:** Pre-route is controlled by `AGENT_PRE_ROUTE` (default: 1) and is
-> independent of `AGENT_SMART_ROUTE`. Disabling smart-route does not
-> disable pre-route.
+### Specialist Bypass (Phase 2 Skip)
+
+If a milestone is already a fully-formed, executable command string (e.g., starting with `/social`, `/write`, `/read`, `/recall` and containing complete arguments without `<placeholder>` syntax), the system bypasses **both** the Router and Specialist LLM phases entirely, sending the command directly to Phase 4 (Execute).
+
+This bypass avoids unnecessary model inference latency (~20% speedup per milestone) and prevents the Specialist from drift-generating alternative tools.
+
+> **Note:** Pre-route and Specialist Bypass are controlled by `AGENT_PRE_ROUTE` (default: 1) and are independent of `AGENT_SMART_ROUTE`. Disabling smart-route does not disable pre-route or bypasses.
 
 ---
 

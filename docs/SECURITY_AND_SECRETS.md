@@ -419,6 +419,17 @@ security_sandbox_list_permissions
 
 ---
 
+## Indirect Prompt Injection Protections
+
+Since George retrieves external files and web content during execution, these inputs present an attack vector for **Indirect Prompt Injection** (where malicious instructions embedded in a webpage or repository file try to hijack George's execution loop).
+
+To mitigate this, the engine implements two strict boundary isolation measures:
+
+1. **System Prompt Security Directive:** All LLM prompts (including the Specialist prompt) are prefixed with a high-priority `SECURITY DIRECTIVE`. This explicitly instructs the model that any gathered research data, file contents, and user-provided inputs are untrusted data to be analyzed, not instructions to be executed.
+2. **Specialist Prompt Insulation:** The `RESEARCH RULE` (which allows exploring/finding alternative commands) is strictly insulated and only injected into active research commands (`/web`, `/git`, `/recall`). Delivery commands (like `/social` or `/email`) are completely insulated from research-related exploration instructions, preventing injected research data from convincing George to divert into unauthorized actions.
+
+---
+
 ## Startup Integrity Check
 
 `security_startup_check()` runs on every George startup:

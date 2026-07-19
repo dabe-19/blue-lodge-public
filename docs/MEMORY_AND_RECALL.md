@@ -281,6 +281,16 @@ CREATE VIRTUAL TABLE chunks_fts USING fts5(
 
 **Why only 3 core sources?** Raw documentation files are large and sparse. Instead, they're distilled into `RECALL_INDEX.md` — a single keyword-rich reference file optimized for FTS5 matching.
 
+### Memory Firewall (FTS5 Isolation)
+
+To prevent task execution traces and transient chat history from leaking into George's long-term semantic memory, the system implements a **Memory Firewall** inside `recall_index_file`. When indexing the project's state file (`GEORGE.md`), any content under `## Completed Milestones` and `## Active Task` is dynamically filtered out via `awk` and is never written to the SQLite database.
+
+### Recall DB Sanitization
+
+Recall sources can sometimes contain terminal formatting (ANSI color escape codes) or console boxes/lines (TUI graphics). To prevent these from poisoning LLM context windows or polluting printed search results:
+1. **Write-boundary filtering:** During indexing, all file content is piped through `sed` and a Python filter that strips ANSI escapes and the entire `U+2500` through `U+25FF` Unicode block (containing all box-drawing, block, and geometric shapes) before generating database chunks.
+2. **Read-boundary filtering:** When retrieving context via `recall_search_context`, the compiled JSON array is filtered again before caching/returning. The interactive `/recall` command (`recall_search_pretty`) also filters FTS5 matches before console printing.
+
 ### Chunking Strategy
 
 Markdown files are split on `##` headings:

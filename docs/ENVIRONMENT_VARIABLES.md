@@ -153,6 +153,15 @@ This document lists all user-configurable environment variables available in Blu
   AGENT_PRESSURE_RELIEF=3 ./lodge run "Difficult verification"
   ```
 
+### `AGENT_CONTEXT_FILES_MAX`
+- **Description**: Maximum number of recently modified files tracked in the `## Context Files` section of `GEORGE.md` to persist across execution turns. Enforces a strict cap to prevent unbounded prompt/context size growth.
+- **Type**: Integer
+- **Default**: `10` (0 to disable context file tracking entirely)
+- **Usage Example**:
+  ```bash
+  AGENT_CONTEXT_FILES_MAX=5 ./lodge run "Memory-critical task"
+  ```
+
 ---
 
 ## 4. Routing & Preset Variables
@@ -452,6 +461,15 @@ These control token generation behaviors on Ollama/llama-server.
 - **Description**: Broker host target and port for MQTT message publishing.
 - **Type**: String / Integer
 - **Defaults**: Unset (broker), `1883` (port)
+
+### `AGENT_SOCIAL_RECEIPT_MAX_CHARS`
+- **Description**: Maximum characters allowed in a social command (e.g., Discord DM or post) transmission receipt preview. Prevents massive file expansions from polluting the execution log and strategist prompt context.
+- **Type**: Integer
+- **Default**: `1000`
+- **Usage Example**:
+  ```bash
+  AGENT_SOCIAL_RECEIPT_MAX_CHARS=2000 ./lodge run "Broadcast status updates"
+  ```
 
 ---
 

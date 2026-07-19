@@ -547,6 +547,32 @@ discord_send() {
     channel_id=$(echo "$channel_id" | sed "s/^[\"']//; s/[\"']$//")
     message=$(echo "$message" | sed "s/^[\"']//; s/[\"']$//")
 
+    # Detect unresolved file references before expansion
+    local _unresolved_refs=""
+    local _words _word
+    read -ra _words <<< "$message"
+    for _word in "${_words[@]}"; do
+        local _clean_word
+        _clean_word=$(echo "$_word" | tr -d '`()"\x27')
+        _clean_word="${_clean_word%,}"
+        _clean_word="${_clean_word%.}"
+        if [[ "$_clean_word" =~ \.(md|txt|json|yaml|yml|toml|conf|cfg|sh|bash|py|rs|go|js|ts|sql|csv)$ ]]; then
+            local resolved=""
+            if [[ "$_clean_word" == "${LODGE_DIR:-$HOME/blue-lodge}"/* ]] && [ -f "$_clean_word" ]; then
+                resolved="$_clean_word"
+            elif [ -f "$_clean_word" ]; then
+                resolved="$_clean_word"
+            elif [ -f "$PWD/$_clean_word" ]; then
+                resolved="$PWD/$_clean_word"
+            elif [ -f "$PWD/.george/workspaces/$_clean_word" ]; then
+                resolved="$PWD/.george/workspaces/$_clean_word"
+            fi
+            if [ -z "$resolved" ]; then
+                _unresolved_refs="${_unresolved_refs:+$_unresolved_refs, }'$_clean_word'"
+            fi
+        fi
+    done
+
     # Auto-expand readable file references in message
     if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then
         message=$(tools_expand_file_refs "$message")
@@ -554,6 +580,13 @@ discord_send() {
 
     # Expand LLM escape sequences (literal \n → real newlines)
     message=$(ui_expand_escapes "$message")
+
+    # Prepare truncated preview for Transmission Receipt to prevent prompt bloat
+    local _preview_len="${AGENT_SOCIAL_RECEIPT_MAX_CHARS:-1000}"
+    local _preview="$message"
+    if [ ${#_preview} -gt "$_preview_len" ]; then
+        _preview="${_preview:0:$_preview_len} ... (truncated: total ${#message} chars)"
+    fi
 
     # Resolve channel name → ID if not numeric
     if ! [[ "$channel_id" =~ ^[0-9]+$ ]]; then
@@ -614,9 +647,14 @@ discord_send() {
         if [ "$_chunk_ok" -eq "$_chunk_count" ]; then
             ui_ok "Sent to Discord (channel: $channel_id) — ${_chunk_count} parts"
             sleep 1
-            echo "--- Channel Readback ---"
-            discord_read "$channel_id" 5 | tac 2>/dev/null || discord_read "$channel_id" 5
-            echo "------------------------"
+            echo "--- Transmission Receipt ---"
+            echo "Payload transmitted successfully (chunked)."
+            if [ -n "$_unresolved_refs" ]; then
+                ui_warn "File reference(s) $_unresolved_refs could not be resolved."
+            fi
+            echo "Content sent:"
+            echo "$_preview"
+            echo "----------------------------"
         else
             ui_warn "Discord: ${_chunk_ok}/${_chunk_count} message parts sent (channel: $channel_id)"
         fi
@@ -633,9 +671,14 @@ discord_send() {
     if [ $status -eq 0 ]; then
         ui_ok "Sent to Discord (channel: $channel_id)"
         sleep 1
-        echo "--- Channel Readback ---"
-        discord_read "$channel_id" 5 | tac 2>/dev/null || discord_read "$channel_id" 5
-        echo "------------------------"
+        echo "--- Transmission Receipt ---"
+        echo "Payload transmitted successfully."
+        if [ -n "$_unresolved_refs" ]; then
+            ui_warn "File reference(s) $_unresolved_refs could not be resolved."
+        fi
+        echo "Content sent:"
+        echo "$_preview"
+        echo "----------------------------"
     else
         local err_msg
         err_msg=$(api_json_get "${_API_LAST_BODY:-}" '.message // .error // "unknown error"')

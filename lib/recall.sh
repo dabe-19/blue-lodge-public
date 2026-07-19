@@ -233,7 +233,29 @@ recall_index_file() {
     local count=0
     local _rc_tmp
     _rc_tmp=$(mktemp "${TMPDIR:-/tmp}/recall-chunk.XXXXXX")
-    _recall_chunk_markdown "$filepath" > "$_rc_tmp"
+    local _sanitized_file_tmp
+    _sanitized_file_tmp=$(mktemp "${TMPDIR:-/tmp}/recall-sanitize.XXXXXX")
+    sed 's/\x1B\[[0-9;]*[a-zA-Z]//g' "$filepath" | python3 -c "
+import sys
+for line in sys.stdin:
+    sys.stdout.write(''.join(c for c in line if ord(c) < 0x2500 or ord(c) > 0x25ff))
+" 2>/dev/null > "$_sanitized_file_tmp" || cp "$filepath" "$_sanitized_file_tmp"
+
+    if [[ "$(basename "$filepath")" == "GEORGE.md" ]]; then
+        local _clean_file_tmp
+        _clean_file_tmp=$(mktemp "${TMPDIR:-/tmp}/george-clean.XXXXXX")
+        awk '
+        BEGIN { skip=0 }
+        /^## (Completed Milestones|Active Task)/ { skip=1; next }
+        /^## / && skip { skip=0 }
+        !skip { print }
+        ' "$_sanitized_file_tmp" > "$_clean_file_tmp"
+        _recall_chunk_markdown "$_clean_file_tmp" > "$_rc_tmp"
+        rm -f "$_clean_file_tmp"
+    else
+        _recall_chunk_markdown "$_sanitized_file_tmp" > "$_rc_tmp"
+    fi
+    rm -f "$_sanitized_file_tmp"
     while IFS=$'\t' read -r section content; do
         [ -z "$content" ] && continue
         # Escape single quotes for SQL
@@ -496,6 +518,14 @@ SQL
         fi
     fi
 
+    if [ -n "$results" ]; then
+        results=$(echo "$results" | sed 's/\x1B\[[0-9;]*[a-zA-Z]//g' | python3 -c "
+import sys
+for line in sys.stdin:
+    sys.stdout.write(''.join(c for c in line if ord(c) < 0x2500 or ord(c) > 0x25ff))
+" 2>/dev/null || echo "$results")
+    fi
+
     local count=0
     while IFS='|' read -r source section snippet; do
         [ -z "$source" ] && continue
@@ -670,6 +700,15 @@ SQL
                 '. + [{"src":$src,"sec":$sec,"body":$body}]' <<< "$_rsc_arr")
         done <<< "$results"
         _rsc_json="$_rsc_arr"
+    fi
+
+    # Sanitize final JSON output (strip ANSI escapes and box-drawing/TUI characters)
+    if [ -n "$_rsc_json" ] && [ "$_rsc_json" != "[]" ]; then
+        _rsc_json=$(echo "$_rsc_json" | sed 's/\x1B\[[0-9;]*[a-zA-Z]//g' | python3 -c "
+import sys
+for line in sys.stdin:
+    sys.stdout.write(''.join(c for c in line if ord(c) < 0x2500 or ord(c) > 0x25ff))
+" 2>/dev/null || echo "$_rsc_json")
     fi
 
     # Store in LRU cache for subsequent turns
