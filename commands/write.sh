@@ -261,6 +261,18 @@ cmd_write() {
         esac
     fi
 
+    # Backup previous version to history directory if overwriting
+    if [ "$existed" -eq 1 ]; then
+        local _hist_dir
+        _hist_dir="$(dirname "$fullpath")/.history"
+        if mkdir -p "$_hist_dir" 2>/dev/null; then
+            local _ts _fname
+            _ts=$(date '+%Y%m%d_%H%M%S')
+            _fname=$(basename "$fullpath")
+            cp "$fullpath" "$_hist_dir/${_fname}_${_ts}" 2>/dev/null
+        fi
+    fi
+
     # Write the file
     if ! printf '%s\n' "$content" > "$fullpath" 2>/dev/null; then
         ui_err "Write failed: $filepath (permission denied or invalid path)"

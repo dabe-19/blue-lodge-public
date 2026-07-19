@@ -1007,7 +1007,8 @@ _agent_router_eligibility_pass() {
     local negative_guidance="- NEVER use /web for local file reading, local repo inspection, or memory retrieval.\n"
     negative_guidance+="- NEVER use /recall for live internet facts (news, prices, current events).\n"
     negative_guidance+="- NEVER use /ls for content search; use /grep or /read when content is needed.\n"
-    negative_guidance+="- NEVER use /journal unless the objective explicitly asks for journal memory or reflection."
+    negative_guidance+="- NEVER use /journal unless the objective explicitly asks for journal memory or reflection.\n"
+    negative_guidance+="- NEVER use generic filenames like 'report.md' or 'summary.md' in the global workspace (.george/workspaces/); ALWAYS use unique, task-descriptive filenames (e.g. 'magic_card_deck_report.md') to prevent cross-task collisions."
     if [ "$web_allowed" -ne 1 ]; then
         negative_guidance+="\n- /web is currently ineligible: ${offline_reason:-not available}."
     fi
@@ -4444,8 +4445,9 @@ SPEC_RULES
             local _base_for_ws="${cmd_name#/}"
             case "$_base_for_ws" in
                 write|save|append)
-                    echo "TASK WORKSPACE: ${AGENT_TASK_WORKSPACE_REL}/"
-                    echo "Put general task artifacts (reports, summaries, drafts) in the task workspace path above. Project source files go in the project directory."
+                    echo "GLOBAL WORKSPACE: .george/workspaces/ (use for persistent deliverables like final reports and tools, with unique/task-descriptive filenames)"
+                    echo "TASK WORKSPACE: ${AGENT_TASK_WORKSPACE_REL}/ (use for temporary files, compiles, scratch logs, or sandboxing)"
+                    echo "Put general task artifacts in the workspace paths above. Project source files go in the project directory."
                     echo ""
                     ;;
             esac
@@ -8264,7 +8266,7 @@ MEMEOF
     # workspace so artifacts stay isolated per task. Concrete tasks
     # keep the default responses/ directory.
     if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ] || [ "${AGENT_TASK_TYPE:-concrete}" = "combined" ]; then
-        AGENT_OUTPUT_DIR="$AGENT_TASK_WORKSPACE_REL"
+        AGENT_OUTPUT_DIR=".george/workspaces"
         export LODGE_SANDBOXES="$AGENT_TASK_WORKSPACE_REL/.sandboxes"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] output dir: $AGENT_OUTPUT_DIR ($AGENT_TASK_TYPE), sandboxes: $LODGE_SANDBOXES"
     else

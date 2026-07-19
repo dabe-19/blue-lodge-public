@@ -40,13 +40,21 @@ describe "cmd_write"
     rm -rf "$_tmpdir"
   }
 
-  it "overwrites existing file" && {
+  it "overwrites existing file and saves backup to .history" && {
     _tmpdir=$(test_tmpdir)
     echo "old" > "$_tmpdir/existing.txt"
     _out=$(cmd_write "existing.txt new content" "$_tmpdir" 2>&1)
     _content=$(cat "$_tmpdir/existing.txt")
     assert_contains "$_content" "new content"
     assert_contains "$_out" "Overwrote"
+    
+    # Check if backup exists in .history
+    backup_count=$(find "$_tmpdir/.history" -type f -name "existing.txt_*" 2>/dev/null | wc -l)
+    assert_eq "$backup_count" "1"
+    backup_file=$(find "$_tmpdir/.history" -type f -name "existing.txt_*")
+    backup_content=$(cat "$backup_file")
+    assert_eq "$backup_content" "old"
+    
     rm -rf "$_tmpdir"
   }
 
