@@ -4078,6 +4078,16 @@ describe "Web gate evaluator filtering"
     assert_ok $? "Must calculate word count in bypass validation"
   }
 
+  it "milestone evaluator injects currently blacklisted/excluded domains" && {
+    body=$(declare -f _agent_evaluate_milestone)
+    echo "$body" | grep -q 'CURRENTLY BLOCKED/BLACKLISTED DOMAINS'
+    assert_ok $? "Must inject blacklisted domains label into evaluator prompt"
+    echo "$body" | grep -q 'web_blacklist.log'
+    assert_ok $? "Must read web_blacklist.log for evaluator prompt"
+    echo "$body" | grep -q 'search_exclusions.log'
+    assert_ok $? "Must read search_exclusions.log for evaluator prompt"
+  }
+
 # ── Phase 8: Grep \\| ERE transform ──────────────────────────
 describe "Grep BRE-to-ERE transform"
 

@@ -3235,6 +3235,39 @@ _agent_evaluate_milestone() {
                 _eval_discovered_links="\n\nDISCOVERED WEB LINKS (Search Results):\n${_formatted_links}"
             fi
         fi
+
+        # Retrieve blocked/blacklisted domains
+        local _bl_file="${WEB_BLACKLIST_FILE:-${GEORGE_CONFIG_DIR:-$LODGE_DIR/.george}/web_blacklist.log}"
+        local _ex_file="${WEB_EXCLUSIONS_FILE:-${GEORGE_CONFIG_DIR:-$LODGE_DIR/.george}/search_exclusions.log}"
+        local -a _bl_list=()
+        if [ -f "$_bl_file" ]; then
+            while IFS= read -r _line; do
+                [ -z "$_line" ] && continue
+                local _h
+                _h=$(echo "$_line" | sed -n 's/.*|host=\([^|]*\).*/\1/p')
+                [ -n "$_h" ] && _bl_list+=("$_h")
+            done < "$_bl_file"
+        fi
+        if [ -f "$_ex_file" ]; then
+            while IFS= read -r _line; do
+                [ -z "$_line" ] && continue
+                local _h
+                _h=$(echo "$_line" | sed -n 's/.*|host=\([^|]*\).*/\1/p')
+                [ -n "$_h" ] && _bl_list+=("$_h")
+            done < "$_ex_file"
+        fi
+
+        if [ "${#_bl_list[@]}" -gt 0 ]; then
+            local -a _unique_bl=()
+            _unique_bl=($(echo "${_bl_list[@]}" | tr ' ' '\n' | sort -u))
+            if [ "${#_unique_bl[@]}" -gt 0 ]; then
+                _eval_discovered_links="${_eval_discovered_links}\n\nCURRENTLY BLOCKED/BLACKLISTED DOMAINS (Do NOT recommend fetching/visiting these):\n"
+                local _d
+                for _d in "${_unique_bl[@]}"; do
+                    _eval_discovered_links="${_eval_discovered_links}- ${_d}\n"
+                done
+            fi
+        fi
     fi
 
     # ATTENTION REORDER: Action log FIRST, milestone LAST (recency bias)
@@ -3250,7 +3283,7 @@ EVAL SCHEMA:
 - Web Relevance Check (Mandatory for Search/Scrape):
   - Do NOT just verify that the command ran successfully. You MUST inspect the actual search results or page content returned in the ACTION LOG.
   - If the retrieved information is empty, irrelevant to the primary objective, blocked/captcha, or fails to contain the specific data needed to fulfill the original user request (e.g. searching for a book returns no info about the book, or a fetch returned an empty/blocked page), you MUST classify the verdict as INCOMPLETE.
-  - If INCOMPLETE and you need page content, review the DISCOVERED WEB LINKS (Search Results) provided above. Identify which URLs have already been attempted/blocked in the ACTION LOG, evaluate the remaining options based on their titles and snippets, and recommend the next best URL (e.g. 'Use /web fetch <url>' or 'Use /web summary <url>') in the "recommendation" field of the JSON.
+  - If INCOMPLETE and you need page content, review the DISCOVERED WEB LINKS (Search Results) provided above. Identify which URLs have already been attempted/blocked or belong to the CURRENTLY BLOCKED/BLACKLISTED DOMAINS, evaluate the remaining options based on their titles and snippets, and recommend the next best URL (e.g. 'Use /web fetch <url>' or 'Use /web summary <url>') from a non-blocked domain in the "recommendation" field of the JSON.
 ${_eval_research_rule}
 - Recommendation Rule: Any recommended next actions or commands in your recommendation MUST use only valid workspace slash commands (/web, /read, /ls, /grep, /write, /save, /append, /edit, /respond, /social, /email, /brainstorm). Never fabricate or invent new slash command names.
 - Response Format: Respond with a JSON object ONLY: {"verdict":"COMPLETE" or "INCOMPLETE", "reason":"brief reason", "recommendation":"new suggested milestone or empty"}. Do NOT include any markdown block formatting or additional text.
