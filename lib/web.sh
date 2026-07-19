@@ -220,40 +220,81 @@ _web_exclusions_add() {
 }
 
 _web_exclusions_get_active_filters() {
-    [ -f "$WEB_EXCLUSIONS_FILE" ] || return 0
-    [ -s "$WEB_EXCLUSIONS_FILE" ] || return 0
-
-    local now_epoch
-    now_epoch=$(date -u '+%s')
-
-    # Read the log, collect the latest entry for each host
-    declare -A latest_lines
-    while IFS= read -r line; do
-        [ -z "$line" ] && continue
-        local host
-        host=$(echo "$line" | awk -F'|' '{print $2}' | sed 's/host=//')
-        [ -n "$host" ] && latest_lines["$host"]="$line"
-    done < "$WEB_EXCLUSIONS_FILE"
-
     local active_filters=""
-    for host in "${!latest_lines[@]}"; do
-        local entry="${latest_lines[$host]}"
-        local ts ttl_part
-        ts=$(echo "$entry" | awk -F'|' '{print $1}')
-        ttl_part=$(echo "$entry" | awk -F'|' '{print $4}' | sed 's/ttl_seconds=//')
-        
-        # Convert timestamp to epoch
-        local ts_epoch
-        ts_epoch=$(date -u -d "$ts" '+%s' 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" "+%s" 2>/dev/null)
-        if [ -n "$ts_epoch" ] && [ -n "$ttl_part" ]; then
-            local age=$((now_epoch - ts_epoch))
-            if [ "$age" -lt "$ttl_part" ]; then
-                active_filters="${active_filters} -site:${host}"
-            fi
-        fi
-    done
 
-    echo "$active_filters"
+    # 1. Parse and append preloaded blacklist domains (WEB_BLACKLIST_DOMAINS)
+    if [ -n "${WEB_BLACKLIST_DOMAINS:-}" ]; then
+        local _d
+        IFS=',' read -ra _bl_domains <<< "$WEB_BLACKLIST_DOMAINS"
+        for _d in "${_bl_domains[@]}"; do
+            _d=$(echo "$_d" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')
+            [ -z "$_d" ] && continue
+            active_filters="${active_filters} -site:${_d}"
+        done
+    fi
+
+    # 2. Parse and append active dynamic blacklist entries (WEB_BLACKLIST_FILE)
+    if [ -f "${WEB_BLACKLIST_FILE:-}" ] && [ -s "${WEB_BLACKLIST_FILE:-}" ]; then
+        local now_epoch
+        now_epoch=$(date -u '+%s')
+        declare -A latest_bl_lines
+        while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            local host
+            host=$(echo "$line" | sed -n 's/.*|host=\([^|]*\).*/\1/p')
+            [ -n "$host" ] && latest_bl_lines["$host"]="$line"
+        done < "$WEB_BLACKLIST_FILE"
+
+        for host in "${!latest_bl_lines[@]}"; do
+            local entry="${latest_bl_lines[$host]}"
+            local ts
+            ts=$(echo "$entry" | sed -n 's/^\([^|]*\)|.*/\1/p')
+            if [ -n "$ts" ]; then
+                local ts_epoch age
+                ts_epoch=$(date -u -d "$ts" '+%s' 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" "+%s" 2>/dev/null)
+                if [ -n "$ts_epoch" ]; then
+                    age=$((now_epoch - ts_epoch))
+                    if [ "$age" -lt "${WEB_BLACKLIST_TTL:-1800}" ]; then
+                        active_filters="${active_filters} -site:${host}"
+                    fi
+                fi
+            fi
+        done
+    fi
+
+    # 3. Parse and append active dynamic exclusions (WEB_EXCLUSIONS_FILE)
+    if [ -f "${WEB_EXCLUSIONS_FILE:-}" ] && [ -s "${WEB_EXCLUSIONS_FILE:-}" ]; then
+        local now_epoch
+        now_epoch=$(date -u '+%s')
+        declare -A latest_excl_lines
+        while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            local host
+            host=$(echo "$line" | sed -n 's/.*|host=\([^|]*\).*/\1/p')
+            [ -n "$host" ] && latest_excl_lines["$host"]="$line"
+        done < "$WEB_EXCLUSIONS_FILE"
+
+        for host in "${!latest_excl_lines[@]}"; do
+            local entry="${latest_excl_lines[$host]}"
+            local ts ttl_part
+            ts=$(echo "$entry" | sed -n 's/^\([^|]*\)|.*/\1/p')
+            ttl_part=$(echo "$entry" | sed -n 's/.*|ttl_seconds=\([^|]*\).*/\1/p')
+            
+            local ts_epoch age
+            ts_epoch=$(date -u -d "$ts" '+%s' 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" "+%s" 2>/dev/null)
+            if [ -n "$ts_epoch" ] && [ -n "$ttl_part" ]; then
+                age=$((now_epoch - ts_epoch))
+                if [ "$age" -lt "$ttl_part" ]; then
+                    active_filters="${active_filters} -site:${host}"
+                fi
+            fi
+        done
+    fi
+
+    # Deduplicate filters to keep query size small and clean
+    if [ -n "$active_filters" ]; then
+        echo "$active_filters" | tr ' ' '\n' | sort -u | tr '\n' ' '
+    fi
 }
 
 _web_blacklist_add() {

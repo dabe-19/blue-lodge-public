@@ -2096,6 +2096,25 @@ describe "web search exclusions"
     _teardown_web
   }
 
+  it "includes preloaded and dynamic blacklist entries in active filters" && {
+    _setup_web
+    export WEB_EXCLUSIONS_FILE="$GEORGE_CONFIG_DIR/search_exclusions.log"
+    rm -f "$WEB_EXCLUSIONS_FILE"
+    rm -f "$WEB_BLACKLIST_FILE"
+
+    # Preloaded domain blacklist check
+    export WEB_BLACKLIST_DOMAINS="linkedin.com,facebook.com"
+    filters=$(_web_exclusions_get_active_filters)
+    assert_contains "$filters" "-site:linkedin.com"
+    assert_contains "$filters" "-site:facebook.com"
+
+    # Dynamic blacklist entry check
+    _web_blacklist_add "https://dynamic-blocked.com/page" "HTTP_403_FORBIDDEN" "403"
+    filters2=$(_web_exclusions_get_active_filters)
+    assert_contains "$filters2" "-site:dynamic-blocked.com"
+    _teardown_web
+  }
+
   it "blacklist subcommands list and clear both blacklist and exclusions" && {
     _setup_web
     export WEB_EXCLUSIONS_FILE="$GEORGE_CONFIG_DIR/search_exclusions.log"
