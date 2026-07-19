@@ -5675,9 +5675,10 @@ SHORTLIST OVERRIDE: Choose exactly ONE slash command from ROUTER SHORTLIST only.
             fi
         fi
 
-        # Declare cmd/cmd_is_slash early so both branches can set them
+        # Declare cmd/cmd_is_slash/action_plan early so all branches can set/reference them
         local cmd=""
         local cmd_is_slash=0
+        local action_plan=""
 
         # ── HONEYDEW REWRITE BUDGET EXHAUSTION ─────────────
         # When all rewrite rounds are spent, force /respond delivery
@@ -5893,7 +5894,6 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         # is a single command line that will be displayed by "Running: ..."
         # below. Streaming it first wastes time showing the same text twice
         # and confuses the user with redundant output.
-        local action_plan
         local LLM_SCENARIO=agent
         action_plan=$(llm_generate "$specialist_prompt" "$specialist_sys" "$_spec_tokens" "$LLM_BUDGET_AGENT")
         action_plan=$(echo "$action_plan" | _strip_think_blocks)

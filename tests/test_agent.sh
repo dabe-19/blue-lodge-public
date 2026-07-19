@@ -660,9 +660,16 @@ describe "Router heuristics"
   it "direct respond skips quote normalization and post-processing" && {
     body=$(declare -f agent_inner_loop)
     # The cleanup pipeline (quote strip, splitter, trimmer) must be
-    # gated so prose text is not mangled (e.g. apostrophes in "it's").
+    # gated so prose text is not mangled (e.g., apostrophes in "it's").
     echo "$body" | grep -q '_direct_respond.*-ne 1'
     assert_ok $? "Must skip specialist output cleanup for direct respond"
+  }
+
+  it "specialist bypass declares action_plan early to avoid unbound variables" && {
+    body=$(declare -f agent_inner_loop)
+    # Check that local action_plan="" is declared near the start of the loop
+    echo "$body" | grep -q 'local action_plan=""'
+    assert_ok $? "Must declare action_plan=\"\" early in loop"
   }
 
 # ── Recursive planning config ─────────────────────────────────
