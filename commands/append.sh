@@ -40,20 +40,26 @@ cmd_append() {
             content="${BASH_REMATCH[3]}"
         fi
     else
-        filepath=$(echo "$args" | head -1 | awk '{print $1}')
-        
-        local first_line remaining_lines first_line_content
-        first_line=$(echo "$args" | head -1)
-        remaining_lines=$(echo "$args" | tail -n +2)
-        first_line_content=$(echo "$first_line" | sed 's/^[^ ]* *//')
-        if [ "$first_line_content" = "$first_line" ]; then
-            first_line_content=""
-        fi
-        if [ -n "$remaining_lines" ]; then
-            content="${first_line_content:+$first_line_content
-}${remaining_lines}"
+        local ext_pattern='^([^#]+?\.(txt|md|rst|csv|json|jsonl|yaml|yml|toml|xml|html|htm|log|conf|cfg|ini|env|sh|bash|zsh|py|rs|js|ts|go|rb|c|h|cpp|hpp|java|kt|sql|graphql|tex|org|diff|patch|pdf))[[:space:]]+(.*)$'
+        if [[ "$args" =~ $ext_pattern ]]; then
+            filepath="${BASH_REMATCH[1]}"
+            content="${BASH_REMATCH[3]:-}"
         else
-            content="$first_line_content"
+            filepath=$(echo "$args" | head -1 | awk '{print $1}')
+            
+            local first_line remaining_lines first_line_content
+            first_line=$(echo "$args" | head -1)
+            remaining_lines=$(echo "$args" | tail -n +2)
+            first_line_content=$(echo "$first_line" | sed 's/^[^ ]* *//')
+            if [ "$first_line_content" = "$first_line" ]; then
+                first_line_content=""
+            fi
+            if [ -n "$remaining_lines" ]; then
+                content="${first_line_content:+$first_line_content
+}${remaining_lines}"
+            else
+                content="$first_line_content"
+            fi
         fi
     fi
 

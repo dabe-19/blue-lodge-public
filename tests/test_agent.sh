@@ -610,6 +610,15 @@ describe "Router heuristics"
     assert_ok $? "Must not trigger policy/capability lock for web"
   )
 
+  it "adds mismatched command from feedback to the shortlist on retry" && (
+    _agent_router_probe_network() { return 0; }
+    local out
+    local _last_eval_feedback="MISMATCH: You selected /web but the milestone specifies /write. Use /write instead."
+    out=$(_agent_router_eligibility_pass "Use /web search UNH" "." "web-search" "combined" "A" "normal")
+    echo "$out" | grep -q '"shortlist":\[.*"write".*\]'
+    assert_ok $? "Shortlist must include write on retry when mismatch feedback is present"
+  )
+
   it "remaps /research to /web" && {
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q 'selected_tool.*==.*"research"'

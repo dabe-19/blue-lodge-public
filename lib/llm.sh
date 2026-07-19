@@ -894,6 +894,12 @@ _llm_start_llamacpp_server() {
     # repo-root MTP draft from -hf metadata, so support explicit local draft file.
     local _use_mtp=0
     local _spec_mtp=0
+    local _model_key=""
+    if declare -f _models_key_from_query &>/dev/null; then
+        _model_key=$(_models_key_from_query "$LODGE_MODEL" 2>/dev/null)
+    fi
+    _model_key="${_model_key:-$LODGE_MODEL}"
+
     if [ "${LLAMA_CPP_SPEC_MTP:-0}" = "1" ]; then
         if declare -f models_has_mtp &>/dev/null; then
             if models_has_mtp "$LODGE_MODEL"; then
@@ -901,37 +907,66 @@ _llm_start_llamacpp_server() {
             fi
         else
             # Fallback check if models_has_mtp is not loaded yet
-            case "$LODGE_MODEL" in
-                *gemma4-inst:4b*|*gemma4-inst:12b*|*e4b*|*12b*)
+            case "$_model_key" in
+                gemma4-e4b-inst|gemma4-12b-inst|*e4b*|*12b*)
                     _use_mtp=1
                     ;;
             esac
         fi
 
-        # Auto-configure external 2B draft model GGUF path if the file exists
-        case "$LODGE_MODEL" in
-            *gemma4-inst:2b*|*e2b*)
-                local _g2b_draft="${LODGE_DIR:-/workspace}/.george/models/mtp-gemma-4-E2B-it.gguf"
-                if [ -L "$_g2b_draft" ] && [ ! -e "$_g2b_draft" ]; then
-                    [ "$quiet" != "--quiet" ] && ui_warn "Broken symlink detected at $_g2b_draft. Removing it."
-                    rm -f "$_g2b_draft"
-                fi
-                if [ ! -f "$_g2b_draft" ]; then
-                    [ "$quiet" != "--quiet" ] && ui_step "Downloading Gemma 4 E2B MTP draft model from Hugging Face..."
-                    mkdir -p "$(dirname "$_g2b_draft")"
-                    if curl -L -o "$_g2b_draft" "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/MTP/mtp-gemma-4-E2B-it-BF16.gguf"; then
-                        [ "$quiet" != "--quiet" ] && ui_ok "Gemma 4 E2B MTP draft model downloaded successfully!"
-                    else
-                        [ "$quiet" != "--quiet" ] && ui_err "Failed to download Gemma 4 E2B MTP draft model. Bypassing speculative decoding."
-                        rm -f "$_g2b_draft"
-                    fi
-                fi
-                if [ -f "$_g2b_draft" ]; then
-                    LLAMA_CPP_DRAFT_MODEL="$_g2b_draft"
-                    _use_mtp=1
-                fi
+        # Auto-configure external draft model GGUF path if the file exists
+        case "$_model_key" in
+            gemma4-e2b-inst|*e2b*|*gemma4-inst:2b*)
+                local _draft_path="${LODGE_DIR:-/workspace}/.george/models/mtp-gemma-4-E2B-it.gguf"
+                local _draft_url="https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/MTP/mtp-gemma-4-E2B-it-BF16.gguf"
+                local _draft_label="Gemma 4 E2B MTP draft model"
+                ;;
+            gemma4-e4b-inst|*e4b*|*gemma4-inst:4b*)
+                local _draft_path="${LODGE_DIR:-/workspace}/.george/models/mtp-gemma-4-E4B-it.gguf"
+                local _draft_url="https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/MTP/mtp-gemma-4-E4B-it-BF16.gguf"
+                local _draft_label="Gemma 4 E4B MTP draft model"
+                ;;
+            gemma4-12b-inst|*12b*|*gemma4-inst:12b*)
+                local _draft_path="${LODGE_DIR:-/workspace}/.george/models/mtp-gemma-4-12b-it.gguf"
+                local _draft_url="https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/main/MTP/mtp-gemma-4-12b-it-BF16.gguf"
+                local _draft_label="Gemma 4 12B MTP draft model"
+                ;;
+            *)
+                local _draft_path=""
                 ;;
         esac
+
+        if [ -n "$_draft_path" ]; then
+            if [ -L "$_draft_path" ] && [ ! -e "$_draft_path" ]; then
+                [ "$quiet" != "--quiet" ] && ui_warn "Broken symlink detected at $_draft_path. Removing it."
+                rm -f "$_draft_path"
+            fi
+            if [ ! -f "$_draft_path" ]; then
+                [ "$quiet" != "--quiet" ] && ui_step "Downloading $_draft_label from Hugging Face..."
+                mkdir -p "$(dirname "$_draft_path")"
+                # Include a connection timeout of 10 seconds to prevent hanging indefinitely in firewalled sandboxes
+                if curl -L --connect-timeout 10 -o "$_draft_path" "$_draft_url"; then
+                    [ "$quiet" != "--quiet" ] && ui_ok "$_draft_label downloaded successfully!"
+                else
+                    [ "$quiet" != "--quiet" ] && ui_err "Failed to download $_draft_label. Bypassing speculative decoding."
+                    rm -f "$_draft_path"
+                fi
+            fi
+            if [ -f "$_draft_path" ]; then
+                LLAMA_CPP_DRAFT_MODEL="$_draft_path"
+                _use_mtp=1
+            fi
+        else
+            # Clear auto-configured draft if switching to a non-MTP model
+            local _g2b_draft="${LODGE_DIR:-/workspace}/.george/models/mtp-gemma-4-E2B-it.gguf"
+            local _g4b_draft="${LODGE_DIR:-/workspace}/.george/models/mtp-gemma-4-E4B-it.gguf"
+            local _g12b_draft="${LODGE_DIR:-/workspace}/.george/models/mtp-gemma-4-12b-it.gguf"
+            if [ "${LLAMA_CPP_DRAFT_MODEL:-}" = "$_g2b_draft" ] || \
+               [ "${LLAMA_CPP_DRAFT_MODEL:-}" = "$_g4b_draft" ] || \
+               [ "${LLAMA_CPP_DRAFT_MODEL:-}" = "$_g12b_draft" ]; then
+                LLAMA_CPP_DRAFT_MODEL=""
+            fi
+        fi
     fi
 
     if [ "$_use_mtp" -eq 1 ]; then
@@ -954,9 +989,9 @@ _llm_start_llamacpp_server() {
             fi
         elif [ "$_launch_mode" = "model" ] && [ -z "${LLAMA_CPP_DRAFT_MODEL:-}" ]; then
             # If main model is local GGUF, but is Gemma-4 E2B, load draft from HF
-            if [[ "${LODGE_MODEL:-}" == "gemma4-e2b-inst" ]]; then
+            if [[ "${_model_key:-}" == "gemma4-e2b-inst" ]]; then
                 _spec_draft_hf="unsloth/gemma-4-E2B-it-qat-GGUF:mtp-gemma-4-E2B-it"
-            elif [[ "${LODGE_MODEL:-}" == gemma4-* ]]; then
+            elif [[ "${_model_key:-}" == gemma4-* ]]; then
                 # Embedded MTP models: use the main model GGUF path itself
                 LLAMA_CPP_DRAFT_MODEL="$model_path"
             fi

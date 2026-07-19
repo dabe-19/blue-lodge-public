@@ -935,6 +935,17 @@ _agent_router_eligibility_pass() {
         _agent_router_add_unique shortlist "email"
     fi
 
+    # If the previous run failed due to a specialist tool mismatch, force-add
+    # the specialist's proposed tool to the shortlist so the router is allowed
+    # to select it on the retry.
+    local _mismatch_pattern='MISMATCH:[[:space:]]You[[:space:]]selected[[:space:]]/[a-z]+[[:space:]]but[[:space:]](the[[:space:]]milestone[[:space:]]specifies|specifies)[[:space:]]/([a-z]+)'
+    if [[ "${_last_eval_feedback:-}" =~ $_mismatch_pattern ]]; then
+        local _mismatched_cmd="${BASH_REMATCH[2]}"
+        if _agent_router_cmd_in_list "$_mismatched_cmd" "${eligible[@]}"; then
+            _agent_router_add_unique shortlist "$_mismatched_cmd"
+        fi
+    fi
+
     local offline_fallback=0
     local offline_reason=""
     local infeasibility_class="none"
@@ -5513,13 +5524,13 @@ agent_inner_loop() {
         # constraints in the same system prompt.
         local router_sys
         if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ] && [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
-            router_sys="$_cached_router_sys_nwebgit"
+            router_sys="${_cached_router_sys_nwebgit:-}"
         elif [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
-            router_sys="$_cached_router_sys_nweb"
+            router_sys="${_cached_router_sys_nweb:-}"
         elif [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
-            router_sys="$_cached_router_sys_ngit"
+            router_sys="${_cached_router_sys_ngit:-}"
         else
-            router_sys="$_cached_router_sys"
+            router_sys="${_cached_router_sys:-}"
         fi
         router_sys="${router_sys}
 
@@ -7470,8 +7481,17 @@ $_fb_output"
                 case "$cmd" in
                     /write\ *|/save\ *|/append\ *)
                         local _wf_rest="${cmd#* }"
-                        local _wf_path
-                        _wf_path=$(printf '%s' "$_wf_rest" | head -n 1 | awk '{print $1}')
+                        local _wf_path=""
+                        local _clean_out
+                        _clean_out=$(echo "${output:-}" | sed 's/\x1b\[[0-9;]*m//g')
+                        if [[ "$_clean_out" =~ (Created|Overwrote|Edited):[[:space:]]+([^[:space:]\n]+) ]]; then
+                            _wf_path="${BASH_REMATCH[2]}"
+                        elif [[ "$_clean_out" =~ Appended[[:space:]]+to:[[:space:]]+([^[:space:]\n]+) ]]; then
+                            _wf_path="${BASH_REMATCH[1]}"
+                        fi
+                        if [ -z "$_wf_path" ]; then
+                            _wf_path=$(printf '%s' "$_wf_rest" | head -n 1 | awk '{print $1}')
+                        fi
                         if [ -n "$_wf_path" ]; then
                             local _wf_dup=0
                             local _wf_existing

@@ -19,6 +19,7 @@ _setup_social() {
     # prevents social.sh re-source from doing this automatically)
     MASTODON_INSTANCES_DB="$GEORGE_CONFIG_DIR/mastodon_instances.db"
     DISCORD_USERS_DB="$GEORGE_CONFIG_DIR/discord_users.db"
+    source "$LODGE_DIR/lib/tools.sh"
     source "$LODGE_DIR/lib/social.sh"
 }
 
@@ -246,6 +247,19 @@ describe "Discord verbose error reporting"
     out=$(discord_send "235541481920659458" "test" 2>&1)
     assert_contains "$out" "Sent to Discord"
     assert_contains "$out" "235541481920659458"
+    test_unmock "api_post"
+    _teardown_social
+  }
+
+  it "discord_send resolves space-separated files and does not warn" && {
+    _setup_social
+    api_set_key "DISCORD_BOT_TOKEN" "fake_token"
+    test_mock "api_post" 'export _API_LAST_STATUS="200"; export _API_LAST_BODY="{\"id\": \"123456\"}"; return 0'
+    echo "content" > "$PWD/Gamestop-GME-Market-Analysis.md"
+    out=$(discord_send "235541481920659458" "Here is Gamestop (GME) Market Analysis.md" 2>&1)
+    assert_contains "$out" "Sent to Discord"
+    assert_not_contains "$out" "could not be resolved"
+    rm -f "$PWD/Gamestop-GME-Market-Analysis.md"
     test_unmock "api_post"
     _teardown_social
   }

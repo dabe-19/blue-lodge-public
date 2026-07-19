@@ -75,6 +75,25 @@ describe "cmd_write"
     rm -rf "$_tmpdir"
   }
 
+  it "writes to unquoted filename with spaces and extension" && {
+    _tmpdir=$(test_tmpdir)
+    cmd_write "My Deep Analysis Report.md # Gamestop (GME) Market Analysis" "$_tmpdir" 2>/dev/null
+    assert_file_exists "$_tmpdir/My-Deep-Analysis-Report.md"
+    _content=$(cat "$_tmpdir/My-Deep-Analysis-Report.md")
+    assert_contains "$_content" "# Gamestop (GME) Market Analysis"
+    rm -rf "$_tmpdir"
+  }
+
+  it "appends .md fallback when filename has no extension" && {
+    _tmpdir=$(test_tmpdir)
+    _out=$(cmd_write "no_extension_file content here" "$_tmpdir" 2>&1)
+    assert_file_exists "$_tmpdir/no_extension_file.md"
+    assert_contains "$_out" "No file extension detected"
+    _content=$(cat "$_tmpdir/no_extension_file.md")
+    assert_contains "$_content" "content here"
+    rm -rf "$_tmpdir"
+  }
+
 # ── Dispatch integration ──────────────────────────────────────
 describe "dispatch integration"
 

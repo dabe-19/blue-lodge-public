@@ -987,6 +987,15 @@ describe "tools_expand_file_refs — auto file reference expansion"
     _teardown_tools
   }
 
+  it "resolves space-separated filename and sanitized filename" && {
+    _setup_tools
+    echo "GME report content" > "$TMPDIR_TOOLS/Gamestop-GME-Market-Analysis-and-Due-Diligence-Report.md"
+    result=$(tools_expand_file_refs "Here is the report: $TMPDIR_TOOLS/Gamestop (GME) Market Analysis and Due Diligence Report.md for you" "$TMPDIR_TOOLS")
+    assert_contains "$result" "GME report content"
+    assert_not_contains "$result" "Report.md"
+    _teardown_tools
+  }
+
   it "respects AGENT_FILE_EXPAND=0 toggle (function still works, caller gates)" && {
     # The function itself doesn't check the toggle — callers do.
     # Verify the function works regardless; toggle is tested at integration level.

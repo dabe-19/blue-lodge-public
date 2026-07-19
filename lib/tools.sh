@@ -963,40 +963,85 @@ tools_expand_file_refs() {
             fpath="${fpath%)}"
 
             # Try: LODGE_DIR-qualified, as-is, workspace-relative, then /write-style sandbox
+            _tools_resolve_ref_path() {
+                local p="$1"
+                local w="$2"
+                local res=""
+                if [[ "$p" == "${LODGE_DIR:-$HOME/blue-lodge}"/* ]] && [ -f "$p" ]; then
+                    res="$p"
+                elif [ -f "$p" ]; then
+                    res="$p"
+                elif [ -f "$w/$p" ]; then
+                    res="$w/$p"
+                elif [[ "$p" == /* ]]; then
+                    local _r="${p#/}"
+                    if [ -f "$w/$_r" ]; then
+                        res="$w/$_r"
+                    fi
+                fi
+                if [ -z "$res" ]; then
+                    if [ -f "$w/.george/workspaces/$p" ]; then
+                        res="$w/.george/workspaces/$p"
+                    else
+                        local _nws
+                        _nws=$(ls -td "$w/.george/workspaces"/*/ 2>/dev/null | head -1)
+                        if [ -n "$_nws" ] && [ -f "${_nws}${p}" ]; then
+                            res="${_nws}${p}"
+                        fi
+                    fi
+                fi
+                if [ -z "$res" ] && [ -n "${AGENT_OUTPUT_DIR:-}" ]; then
+                    if [ -f "$w/${AGENT_OUTPUT_DIR}/${p}" ]; then
+                        res="$w/${AGENT_OUTPUT_DIR}/${p}"
+                    fi
+                fi
+                if [ -z "$res" ] && declare -f tools_sanitize_filename &>/dev/null; then
+                    local _san
+                    _san=$(tools_sanitize_filename "$p")
+                    if [ -n "$_san" ] && [ "$_san" != "$p" ]; then
+                        res=$(_tools_resolve_ref_path "$_san" "$w")
+                    fi
+                fi
+                echo "$res"
+            }
+
             local resolved=""
-            if [[ "$fpath" == "${LODGE_DIR:-$HOME/blue-lodge}"/* ]] && [ -f "$fpath" ]; then
-                # Fully qualified path within LODGE_DIR — use as-is
-                resolved="$fpath"
-            elif [ -f "$fpath" ]; then
-                resolved="$fpath"
-            elif [ -f "$workdir/$fpath" ]; then
-                resolved="$workdir/$fpath"
-            elif [[ "$fpath" == /* ]]; then
-                # Absolute path not found as-is — strip leading /
-                # and resolve relative to workdir (/write-style sandboxing)
-                local _rel="${fpath#/}"
-                if [ -f "$workdir/$_rel" ]; then
-                    resolved="$workdir/$_rel"
-                fi
-            fi
+            resolved=$(_tools_resolve_ref_path "$fpath" "$workdir")
 
-            # Try newest workspace directory fallback (resolves write-sandboxed files)
-            if [ -z "$resolved" ] && [ -f "$workdir/.george/workspaces/$fpath" ]; then
-                resolved="$workdir/.george/workspaces/$fpath"
-            fi
+            # If not found directly, try backtracking for files with spaces
             if [ -z "$resolved" ]; then
-                local _newest_ws
-                _newest_ws=$(ls -td "$workdir/.george/workspaces"/*/ 2>/dev/null | head -1)
-                if [ -n "$_newest_ws" ] && [ -f "${_newest_ws}${fpath}" ]; then
-                    resolved="${_newest_ws}${fpath}"
-                fi
-            fi
-
-            # Try AGENT_OUTPUT_DIR directory fallback
-            if [ -z "$resolved" ] && [ -n "${AGENT_OUTPUT_DIR:-}" ]; then
-                if [ -f "$workdir/${AGENT_OUTPUT_DIR}/${fpath}" ]; then
-                    resolved="$workdir/${AGENT_OUTPUT_DIR}/${fpath}"
-                fi
+                local -a _prev_words
+                read -ra _prev_words <<< "$result"
+                local _num_prev=${#_prev_words[@]}
+                
+                local _back_idx=$((_num_prev - 1))
+                local _check_limit=$((_num_prev - 15))
+                [ "$_check_limit" -lt 0 ] && _check_limit=0
+                
+                while [ "$_back_idx" -ge "$_check_limit" ]; do
+                    local _prepended=""
+                    local i
+                    for (( i=_back_idx; i<_num_prev; i++ )); do
+                        _prepended="${_prepended:+$_prepended }${_prev_words[i]}"
+                    done
+                    local _candidate="${_prepended} ${fpath}"
+                    
+                    local _cand_resolved
+                    _cand_resolved=$(_tools_resolve_ref_path "$_candidate" "$workdir")
+                    
+                    if [ -n "$_cand_resolved" ]; then
+                        resolved="$_cand_resolved"
+                        # Strip prepended words from result
+                        local _new_result=""
+                        local j
+                        for (( j=0; j<_back_idx; j++ )); do
+                            _new_result="${_new_result:+$_new_result }${_prev_words[j]}"
+                        done
+                        result="$_new_result"
+                        break
+                    fi
+                    _back_idx=$((_back_idx - 1))
+                done
             fi
 
             if [ -n "$resolved" ]; then

@@ -549,9 +549,11 @@ discord_send() {
 
     # Detect unresolved file references before expansion
     local _unresolved_refs=""
-    local _words _word
+    local _words
     read -ra _words <<< "$message"
-    for _word in "${_words[@]}"; do
+    local _i
+    for (( _i=0; _i<${#_words[@]}; _i++ )); do
+        local _word="${_words[_i]}"
         local _clean_word
         _clean_word=$(echo "$_word" | tr -d '`()"\x27')
         _clean_word="${_clean_word%,}"
@@ -567,6 +569,51 @@ discord_send() {
             elif [ -f "$PWD/.george/workspaces/$_clean_word" ]; then
                 resolved="$PWD/.george/workspaces/$_clean_word"
             fi
+            
+            if [ -z "$resolved" ]; then
+                local _check_limit=$((_i - 15))
+                [ "$_check_limit" -lt 0 ] && _check_limit=0
+                local _back_idx=$((_i - 1))
+                while [ "$_back_idx" -ge "$_check_limit" ]; do
+                    local _prepended=""
+                    local k
+                    for (( k=_back_idx; k<_i; k++ )); do
+                        local _clean_k
+                        _clean_k=$(echo "${_words[k]}" | tr -d '`()"\x27')
+                        _prepended="${_prepended:+$_prepended }$_clean_k"
+                    done
+                    local _candidate="${_prepended} ${_clean_word}"
+                    
+                    local _cand_resolved=""
+                    local _cand_sanitized=""
+                    if declare -f tools_sanitize_filename &>/dev/null; then
+                        _cand_sanitized=$(tools_sanitize_filename "$_candidate")
+                    else
+                        _cand_sanitized=$(echo "$_candidate" | sed 's/["'"'"'`]//g' | tr ' ' '-' | sed 's/[^a-zA-Z0-9_./-]//g')
+                    fi
+                    
+                    if [ -f "$_candidate" ]; then
+                        _cand_resolved="$_candidate"
+                    elif [ -f "$PWD/$_candidate" ]; then
+                        _cand_resolved="$PWD/$_candidate"
+                    elif [ -f "$PWD/.george/workspaces/$_candidate" ]; then
+                        _cand_resolved="$PWD/.george/workspaces/$_candidate"
+                    elif [ -n "$_cand_sanitized" ] && [ -f "$_cand_sanitized" ]; then
+                        _cand_resolved="$_cand_sanitized"
+                    elif [ -n "$_cand_sanitized" ] && [ -f "$PWD/$_cand_sanitized" ]; then
+                        _cand_resolved="$PWD/$_cand_sanitized"
+                    elif [ -n "$_cand_sanitized" ] && [ -f "$PWD/.george/workspaces/$_cand_sanitized" ]; then
+                        _cand_resolved="$PWD/.george/workspaces/$_cand_sanitized"
+                    fi
+                    
+                    if [ -n "$_cand_resolved" ]; then
+                        resolved="$_cand_resolved"
+                        break
+                    fi
+                    _back_idx=$((_back_idx - 1))
+                done
+            fi
+            
             if [ -z "$resolved" ]; then
                 _unresolved_refs="${_unresolved_refs:+$_unresolved_refs, }'$_clean_word'"
             fi
