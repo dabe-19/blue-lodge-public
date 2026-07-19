@@ -75,6 +75,11 @@ cmd_edit() {
     fi
     fullpath="$workdir/$filepath"
 
+    if [ "$(basename "$fullpath")" = "GEORGE.md" ]; then
+        ui_err "Cannot write/modify GEORGE.md: GEORGE.md is protected and managed exclusively by the system."
+        return 1
+    fi
+
     if [ -z "$content" ]; then
         if [ -f "$fullpath" ]; then
             ui_info "File loaded. Line numbers (e.g., '14:') are reference metadata ONLY — do NOT include them in your search/replace patterns."

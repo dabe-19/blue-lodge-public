@@ -83,6 +83,11 @@ cmd_save() {
     fi
     fullpath="$workdir/$filepath"
 
+    if [ "$(basename "$fullpath")" = "GEORGE.md" ]; then
+        ui_err "Cannot write/modify GEORGE.md: GEORGE.md is protected and managed exclusively by the system."
+        return 1
+    fi
+
     # If no content but file already exists, confirm it's saved
     if [ -z "$content" ] && [ -f "$fullpath" ]; then
         local lines

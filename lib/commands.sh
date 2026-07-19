@@ -331,6 +331,19 @@ commands_services_status() {
     echo "WEB_SEARCH_REACHABLE: ${_web_reachable}"
     echo "CONFIGURED: ${_configured:-none}"
     echo "NOT CONFIGURED: ${_unconfigured:-unknown}"
+
+    # Read sync'd Discord channels and users context
+    local _synced_users="" _synced_channels=""
+    local _discord_users_db="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/discord_users.db"
+    local _discord_channels_db="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/discord_channels.db"
+    if [ -f "$_discord_users_db" ] && command -v sqlite3 &>/dev/null; then
+        _synced_users=$(sqlite3 "$_discord_users_db" "SELECT username FROM users WHERE is_bot = 0 LIMIT 20;" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+    fi
+    if [ -f "$_discord_channels_db" ] && command -v sqlite3 &>/dev/null; then
+        _synced_channels=$(sqlite3 "$_discord_channels_db" "SELECT name FROM channels LIMIT 20;" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+    fi
+    echo "SYNCED_DISCORD_USERS: ${_synced_users:-none}"
+    echo "SYNCED_DISCORD_CHANNELS: ${_synced_channels:-none}"
 }
 
 # ── Plan catalog (now delegates to full catalog) ──────────────

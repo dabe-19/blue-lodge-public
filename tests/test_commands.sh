@@ -311,6 +311,27 @@ describe "commands_services_status"
     unset -f api_get_key
   }
 
+  it "reports synced Discord users and channels from SQLite" && {
+    test_users_db="/tmp/test_discord_users.db"
+    test_channels_db="/tmp/test_discord_channels.db"
+    
+    rm -f "$test_users_db" "$test_channels_db"
+    sqlite3 "$test_users_db" "CREATE TABLE users (username TEXT, is_bot INTEGER); INSERT INTO users VALUES ('testuser1', 0), ('testuser2', 0);"
+    sqlite3 "$test_channels_db" "CREATE TABLE channels (name TEXT); INSERT INTO channels VALUES ('testchannel1'), ('testchannel2');"
+    
+    GEORGE_CONFIG_DIR="/tmp/.george"
+    mkdir -p "/tmp/.george"
+    mv "$test_users_db" "/tmp/.george/discord_users.db"
+    mv "$test_channels_db" "/tmp/.george/discord_channels.db"
+    
+    _svc_out=$(commands_services_status)
+    assert_contains "$_svc_out" "SYNCED_DISCORD_USERS: testuser1,testuser2"
+    assert_contains "$_svc_out" "SYNCED_DISCORD_CHANNELS: testchannel1,testchannel2"
+    
+    rm -rf "/tmp/.george"
+    unset test_users_db test_channels_db GEORGE_CONFIG_DIR _svc_out
+  }
+
   it "plan catalog injects service status" && {
     api_get_key() { return 1; }
     _plan_out=$(commands_catalog_plan)

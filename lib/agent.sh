@@ -523,24 +523,26 @@ _agent_is_low_information_output() {
 _agent_is_conversational_info_task() {
     local task="$1"
     [ "${AGENT_CONVERSATIONAL_INFO_MODE:-1}" -ne 1 ] && return 1
-    local lower
+    local lower clean lower_padded
     lower=$(echo "$task" | tr '[:upper:]' '[:lower:]')
+    clean=$(echo "$lower" | tr '.,;:!?' '      ')
+    lower_padded=" $clean "
 
     # 1. Exclude explicit task/action verbs
-    if [[ "$lower" =~ \b(write|edit|append|save|build|test|fix|commit|push|post|email|send|create|scaffold|init|deploy|compile|run|execute|lint|format|delete|remove|modify|update|add|find|search|show|get|fetch|scrape|download)\b ]]; then
+    if [[ "$lower_padded" =~ [[:space:]](write|edit|append|save|build|test|fix|commit|push|post|email|send|create|scaffold|init|deploy|compile|run|execute|lint|format|delete|remove|modify|update|add|find|search|show|get|fetch|scrape|download|research)[[:space:]] ]]; then
         return 1
     fi
 
     # 2. Exclude file paths, extensions, or command domains (requires macro loop)
-    if [[ "$lower" =~ ([a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+|\b[a-zA-Z0-9_-]+\.(sh|py|rs|md|json|txt|js|ts|go|c|cpp|h|toml|yaml|yml|lock|conf)\b) ]]; then
+    if [[ "$lower" =~ [a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+ ]] || [[ "$lower_padded" =~ [[:space:]][a-zA-Z0-9_-]+\.(sh|py|rs|md|json|txt|js|ts|go|c|cpp|h|toml|yaml|yml|lock|conf)[[:space:]] ]]; then
         return 1
     fi
-    if [[ "$lower" =~ \b(sandbox|container|phone|git|backend|service|vitals|cleanup|model|journal|reflect|backup|secrets|recall)\b ]]; then
+    if [[ "$lower_padded" =~ [[:space:]](sandbox|container|phone|git|backend|service|vitals|cleanup|model|journal|reflect|backup|secrets|recall)[[:space:]] ]]; then
         return 1
     fi
 
     # 3. Match pure conversational markers, WH-questions, and greetings
-    [[ "$lower" =~ (\?|\b(what|who|when|where|why|how|which|explain|summarize|clarify|define|help|info|facts|hello|hi|hey|yo|greetings)\b|tell[[:space:]]me|can[[:space:]]you|could[[:space:]]you|do[[:space:]]you[[:space:]]know) ]]
+    [[ "$lower" =~ \? ]] || [[ "$lower_padded" =~ [[:space:]](what|who|when|where|why|how|which|explain|summarize|clarify|define|help|info|facts|hello|hi|hey|yo|greetings)[[:space:]] ]] || [[ "$lower" =~ (tell[[:space:]]me|can[[:space:]]you|could[[:space:]]you|do[[:space:]]you[[:space:]]know) ]]
 }
 
 _agent_explicit_side_effect_match() {
@@ -837,14 +839,14 @@ _agent_router_eligibility_pass() {
     local _spaced=" ${lower} "
     # Strip any URLs to prevent them from triggering git/web capability false positives (e.g. github.io triggering GIT_POLICY_LOCKED)
     _spaced=$(echo "$_spaced" | sed -E 's|https?://[^[:space:]]+||g')
-    local _web_pat="[^a-zA-Z0-9_-](web|search|google|lookup|look[[:space:]]+up|latest|current|today|news|weather|price|stock|internet|online|http|https|url|website)[^a-zA-Z0-9_-]"
-    local _recall_pat="[^a-zA-Z0-9_-](recall|remember|prior|previous|earlier|from[[:space:]]+before|already[[:space:]]+found|memory|knowledge[[:space:]]+base)[^a-zA-Z0-9_-]"
-    local _ls_pat="[^a-zA-Z0-9_-](list|tree|directory|directories|folders|files|workspace[[:space:]]+layout)[^a-zA-Z0-9_-]"
-    local _grep_pat="[^a-zA-Z0-9_-](grep|regex|pattern|search[[:space:]]+files|find[[:space:]]+.*file|search[[:space:]]+codebase)[^a-zA-Z0-9_-]"
-    local _read_pat="[^a-zA-Z0-9_-](read|open|inspect|view|show[[:space:]]+file|file[[:space:]]+content)[^a-zA-Z0-9_-]"
-    local _journal_pat="[^a-zA-Z0-9_-](journal|reflect|reflection|daily[[:space:]]+log|entry|synthesize)[^a-zA-Z0-9_-]"
-    local _delivery_pat="[^a-zA-Z0-9_-](respond|answer|summarize|summary|explain|deliver|report|final)[^a-zA-Z0-9_-]"
-    local _git_pat="[^a-zA-Z0-9_-](github|git|repo|repository|pull[[:space:]]+request|clone|commit|push)[^a-zA-Z0-9_-]"
+    local _web_pat="[^a-zA-Z0-9_-](web|webs|search|searches|searching|google|lookup|lookups|look[[:space:]]+up|latest|current|today|news|weather|price|prices|stock|stocks|internet|online|http|https|url|urls|website|websites|scrape|scrapes|scraping|fetch|fetches|fetching)[^a-zA-Z0-9_-]"
+    local _recall_pat="[^a-zA-Z0-9_-](recall|recalls|remember|remembers|prior|previous|earlier|from[[:space:]]+before|already[[:space:]]+found|memory|memories|knowledge[[:space:]]+base)[^a-zA-Z0-9_-]"
+    local _ls_pat="[^a-zA-Z0-9_-](list|lists|tree|trees|directory|directories|folders|files|workspace[[:space:]]+layout)[^a-zA-Z0-9_-]"
+    local _grep_pat="[^a-zA-Z0-9_-](grep|greps|regex|pattern|patterns|search[[:space:]]+files|find[[:space:]]+.*file|search[[:space:]]+codebase)[^a-zA-Z0-9_-]"
+    local _read_pat="[^a-zA-Z0-9_-](read|reads|reading|open|opens|inspect|inspects|view|views|show[[:space:]]+file|file[[:space:]]+content|file[[:space:]]+contents)[^a-zA-Z0-9_-]"
+    local _journal_pat="[^a-zA-Z0-9_-](journal|journals|reflect|reflects|reflection|reflections|daily[[:space:]]+log|entry|entries|synthesize|synthesizing|synthesized)[^a-zA-Z0-9_-]"
+    local _delivery_pat="[^a-zA-Z0-9_-](respond|responds|answer|answers|summarize|summarizes|summary|summaries|explain|explains|deliver|delivers|report|reports|final)[^a-zA-Z0-9_-]"
+    local _git_pat="[^a-zA-Z0-9_-](github|git|gits|repo|repos|repository|repositories|pull[[:space:]]+request|pull[[:space:]]+requests|clone|clones|commit|commits|push|pushes)[^a-zA-Z0-9_-]"
     [[ "$_spaced" =~ $_web_pat ]] && need_web=1
     [[ "$_spaced" =~ $_recall_pat ]] && need_recall=1
     [[ "$_spaced" =~ $_ls_pat ]] && need_ls=1
@@ -1418,9 +1420,15 @@ TASK: $task
         fi
     fi
 
+    local _hd_research_injection=""
+    local _task_lower_hd="${task,,}"
+    if [[ "$_task_lower_hd" =~ research ]]; then
+        _hd_research_injection="\n\n>>> RESEARCH TASK ACTIVE — the task contains the word 'research'. This is a combined/concrete task, NOT a conversational question. You MUST create at least one checklist item for searching sources (e.g. search web) AND at least one separate, consecutive checklist item for fetching/scraping detailed page contents (e.g. read/fetch pages). Research MUST NOT stop at a web search; a web fetch/scrape is strictly required."
+    fi
+
     local raw_list
     local LLM_SCENARIO=strategist
-    raw_list=$(llm_generate "$decompose_prompt" "$decompose_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "honeydew-items")
+    raw_list=$(llm_generate "${decompose_prompt}${_hd_research_injection}" "$decompose_sys" "${LLM_STRATEGIST_TOKENS:-4096}" "$LLM_BUDGET_AGENT" "honeydew-items")
 
     # ── Layer 2: Try structured JSON extraction ─────────────────
     local _json_items="" _items_json="" count=0
@@ -1521,9 +1529,12 @@ _agent_classify_task() {
     # Small models frequently misclassify "news", "weather", etc.
     # as abstract when they clearly require outside information.
     local _task_lower="${task,,}"
-    if [[ "$_task_lower" =~ (\bnews\b|\bweather\b|\bforecast\b|\bstock\b|\bprice[sd]?\b|\bcurrent events\b|\blatest\b|\btoday\'?s\b|\btrending\b|\breal-time\b|\breal time\b|\bbreaking\b|\alive (data|scores?|updates?)\b) ]]; then
+    local _task_clean
+    _task_clean=$(echo "$_task_lower" | tr '.,;:!?' '      ')
+    local _task_padded=" $_task_clean "
+    if [[ "$_task_padded" =~ [[:space:]](news|weather|forecast|stock|prices?|priced|current[[:space:]]events|latest|today\'?s|trending|real-time|real[[:space:]]time|breaking|research)[[:space:]] ]] || [[ "$_task_padded" =~ [[:space:]]live[[:space:]](data|scores?|updates?)[[:space:]] ]]; then
         export AGENT_TASK_TYPE="combined"
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] task classified: combined (keyword gate: ${BASH_REMATCH[0]})"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] task classified: combined (keyword gate: research/news/etc.)"
         return 0
     fi
 
@@ -2892,47 +2903,47 @@ _agent_evaluate_honeydew_item() {
     # When web is locked, exclude /web commands so the evaluator
     # cannot recommend them — prevents web gate bypass via eval.
     local _eval_commands
-    if [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ] && [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
-        _eval_commands='{"RESEARCH":["/recall"],
- "ANALYSIS":["/ask","/brainstorm","/vision"],
- "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
- "DELIVERY":["/respond","/email send","/social post","/social discord dm","/commit","/push"],
- "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
-    elif [ "${_AGENT_WEB_LOCKED:-0}" -eq 1 ]; then
-        _eval_commands='{"RESEARCH":["/recall","/git search","/git fetch"],
- "ANALYSIS":["/ask","/brainstorm","/vision"],
- "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
- "DELIVERY":["/respond","/email send","/social post","/social discord dm","/commit","/push"],
- "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
-    elif [ "${_AGENT_GIT_LOCKED:-0}" -eq 1 ]; then
+    local _svc_status=""
+    if declare -f commands_services_status &>/dev/null; then
+        _svc_status=$(commands_services_status 2>/dev/null)
+    fi
+
+    # Build dynamic DELIVERY list
+    local _delivery_list='["/respond"]'
+    if [[ "$_svc_status" == *CONFIGURED:*email* ]]; then
+        _delivery_list=$(echo "$_delivery_list" | jq -c '. + ["/email send"]')
+    fi
+    if [[ "$_svc_status" == *CONFIGURED:*discord* ]] || [[ "$_svc_status" == *CONFIGURED:*telegram* ]] || [[ "$_svc_status" == *CONFIGURED:*x/twitter* ]] || [[ "$_svc_status" == *CONFIGURED:*mastodon* ]] || [[ "$_svc_status" == *CONFIGURED:*bluesky* ]]; then
+        _delivery_list=$(echo "$_delivery_list" | jq -c '. + ["/social post", "/social discord dm"]')
+    fi
+    if [ "${_AGENT_GIT_LOCKED:-0}" -ne 1 ]; then
+        _delivery_list=$(echo "$_delivery_list" | jq -c '. + ["/commit", "/push"]')
+    fi
+
+    # Build dynamic RESEARCH list
+    local _research_list='["/recall"]'
+    if [ "${_AGENT_WEB_LOCKED:-0}" -ne 1 ]; then
         if [ "${_AGENT_WEB_SEARCH_ONLY:-0}" -eq 1 ]; then
-            _eval_commands='{"RESEARCH":["/web search","/recall"],
- "ANALYSIS":["/ask","/brainstorm","/vision"],
- "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
- "DELIVERY":["/respond","/email send","/social post","/social discord dm","/commit","/push"],
- "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
+            _research_list=$(echo "$_research_list" | jq -c '. + ["/web search"]')
         else
-            _eval_commands='{"RESEARCH":["/web search","/web fetch","/web scrape","/recall"],
- "ANALYSIS":["/ask","/brainstorm","/vision"],
- "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
- "DELIVERY":["/respond","/email send","/social post","/social discord dm","/commit","/push"],
- "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
-        fi
-    else
-        if [ "${_AGENT_WEB_SEARCH_ONLY:-0}" -eq 1 ]; then
-            _eval_commands='{"RESEARCH":["/web search","/recall","/git search","/git fetch"],
- "ANALYSIS":["/ask","/brainstorm","/vision"],
- "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
- "DELIVERY":["/respond","/email send","/social post","/social discord dm","/commit","/push"],
- "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
-        else
-            _eval_commands='{"RESEARCH":["/web search","/web fetch","/web scrape","/recall","/git search","/git fetch"],
- "ANALYSIS":["/ask","/brainstorm","/vision"],
- "FILES":["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
- "DELIVERY":["/respond","/email send","/social post","/social discord dm","/commit","/push"],
- "OTHER":["/journal","/download","/sandbox","/container","/phone","/slash"]}'
+            _research_list=$(echo "$_research_list" | jq -c '. + ["/web search", "/web fetch", "/web scrape"]')
         fi
     fi
+    if [ "${_AGENT_GIT_LOCKED:-0}" -ne 1 ]; then
+        _research_list=$(echo "$_research_list" | jq -c '. + ["/git search", "/git fetch"]')
+    fi
+
+    # Combine into JSON available commands
+    _eval_commands=$(jq -cn \
+        --argjson res "$_research_list" \
+        --argjson del "$_delivery_list" \
+        '{
+            "RESEARCH": $res,
+            "ANALYSIS": ["/ask","/brainstorm","/vision"],
+            "FILES": ["/write","/save","/edit","/append","/read","/ls","/init","/build","/test","/fix"],
+            "DELIVERY": $del,
+            "OTHER": ["/journal","/download","/sandbox","/container","/phone","/slash"]
+        }')
 
     # Build eval instructions — cross-milestone language only when
     # prior milestone context is actually present.
@@ -3193,16 +3204,23 @@ _agent_evaluate_milestone() {
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] milestone-eval context truncated: $_ctx_total -> $_max_ctx_lines lines"
     fi
 
-    # ATTROLLER CHECK: Detect web research milestones (search/fetch/scrape)
-    local _is_web_milestone=0
-    if [[ "$milestone_text" =~ /web([[:space:]]|$) || "$milestone_text" == *search* || "$milestone_text" == *scrape* || "$milestone_text" == *fetch* ]]; then
-        _is_web_milestone=1
-    fi
-
     # Retrieve primary objective for overarching relevance context
     local _primary_obj=""
     if [ -f "$macro_file" ]; then
         _primary_obj=$(jq -r '.primary_objective // empty' "$macro_file" 2>/dev/null)
+    fi
+
+    # ATTROLLER CHECK: Detect web research milestones (search/fetch/scrape)
+    local _is_web_milestone=0
+    local _eval_research_rule=""
+    local _milestone_lower _primary_lower
+    _milestone_lower=$(echo "$milestone_text" | tr '[:upper:]' '[:lower:]')
+    _primary_lower=$(echo "$_primary_obj" | tr '[:upper:]' '[:lower:]')
+    if [[ "$_milestone_lower" =~ /web([[:space:]]|$) || "$_milestone_lower" == *search* || "$_milestone_lower" == *scrape* || "$_milestone_lower" == *fetch* || "$_milestone_lower" == *research* || "$_primary_lower" == *research* ]]; then
+        _is_web_milestone=1
+    fi
+    if [[ "$_milestone_lower" == *research* || "$_primary_lower" == *research* ]]; then
+        _eval_research_rule="  - Research Rule: Since this task/objective involves 'research', you MUST classify the verdict as INCOMPLETE if the action log only contains a web search without a web fetch/scrape. Research is not finished until page content is fetched."
     fi
 
     # ATTENTION REORDER: Action log FIRST, milestone LAST (recency bias)
@@ -3210,15 +3228,17 @@ _agent_evaluate_milestone() {
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
     local eval_prompt="" eval_sys=""
     if [ "$_is_web_milestone" -eq 1 ]; then
-        eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nPRIMARY OBJECTIVE (the original user request):\n${_primary_obj}\n\nACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions above accomplish this milestone? Apply the EVAL SCHEMA below.\n\n$(cat << 'EVAL_P1_TEXT'
+        eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nPRIMARY OBJECTIVE (the original user request):\n${_primary_obj}\n\nACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions above accomplish this milestone? Apply the EVAL SCHEMA below.\n\n$(cat << EVAL_P1_TEXT
 EVAL SCHEMA:
 - Classify: Either COMPLETE or INCOMPLETE.
-- Scope: Evaluate relevance against BOTH the narrow milestone and the overarching PRIMARY OBJECTIVE (the original user request).
+- Scope: Evaluate if the retrieved information is relevant to the PRIMARY OBJECTIVE. Do not judge by future/past objectives (e.g. if the milestone is to search/scrape content, it is COMPLETE once relevant content is successfully retrieved, even if editing or delivery steps of the primary objective have not been started yet).
 - Recency: Judge by the LAST action in the log — earlier failed attempts do NOT invalidate a later success.
 - Web Relevance Check (Mandatory for Search/Scrape):
   - Do NOT just verify that the command ran successfully. You MUST inspect the actual search results or page content returned in the ACTION LOG.
   - If the retrieved information is empty, irrelevant to the primary objective, blocked/captcha, or fails to contain the specific data needed to fulfill the original user request (e.g. searching for a book returns no info about the book, or a fetch returned an empty/blocked page), you MUST classify the verdict as INCOMPLETE.
   - If INCOMPLETE, you must formulate a new suggested milestone that would get the correct information (e.g. 'Use /web search with different criteria...', 'Use /web fetch on <another_url>...', or a custom action) and return it in the "recommendation" field of the JSON.
+${_eval_research_rule}
+- Recommendation Rule: Any recommended next actions or commands in your recommendation MUST use only valid workspace slash commands (/web, /read, /ls, /grep, /write, /save, /append, /edit, /respond, /social, /email, /brainstorm). Never fabricate or invent new slash command names.
 - Response Format: Respond with a JSON object ONLY: {"verdict":"COMPLETE" or "INCOMPLETE", "reason":"brief reason", "recommendation":"new suggested milestone or empty"}. Do NOT include any markdown block formatting or additional text.
 EVAL_P1_TEXT
 )"
@@ -4334,13 +4354,23 @@ _build_specialist_prompt() {
         # in the middle get ignored ("lost in the middle" effect).
         # Previously these rules were buried in SPEC_PREAMBLE after
         # the TASK block, right in the attention dead zone.
+        local _spec_research_rule=""
+        local _spec_task_lower
+        _spec_task_lower=$(echo "${micro_objective} ${_AGENT_PRIMARY_TASK:-}" | tr '[:upper:]' '[:lower:]')
+        if [[ "$_spec_task_lower" =~ research ]]; then
+            _spec_research_rule="6. RESEARCH RULE: If the task/milestone mentions 'research', you must NOT stop at /web search. You must also fetch/scrape at least one relevant URL to gather detailed content."
+        fi
         cat << 'SPEC_RULES'
 RULES (OBEY THESE — they override everything below):
 1. Output exactly ONE command starting with /.
-2. For commands with large multi-line content (/write, /save, /append, /respond, /social, /email), put the command and target path on the first line, then write the content on subsequent lines with literal newlines.
+2. For commands with large multi-line content (/write, /save, /append, /edit, /respond, /social, /email), put the command and target path on the first line, then write the content on subsequent lines with literal newlines.
 3. FORBIDDEN: NO backticks. NO code fences. NO --flags on slash commands. NO quotes on args. NO multiple commands per line.
 4. FILE EXPANSION: In /social and /email, any filename in the message text or body= (e.g. report.md) is auto-expanded to its file contents. When sending reports, summaries, or drafts, ALWAYS /write the content to a file first, then reference that file path in your message/body (e.g. /social discord dm dabe report.md).
+5. GEORGE.md SAFETY: NEVER /write, /save, /append, or /edit to GEORGE.md. GEORGE.md is protected and managed exclusively by the system.
 SPEC_RULES
+        if [ -n "$_spec_research_rule" ]; then
+            echo "$_spec_research_rule"
+        fi
         echo ""
 
         if [ -n "${_AGENT_PRIMARY_TASK:-}" ]; then
@@ -4458,6 +4488,33 @@ SPEC_RULES
             fi
         fi
 
+        # ── AUTO-INJECT TARGET FILE CONTENT FOR EDIT ───────────
+        if [[ "$cmd_name" =~ ^/?edit$ ]]; then
+            local _edit_path=""
+            if [[ "$micro_objective" =~ edit[[:space:]]+([^[:space:]]+) ]]; then
+                _edit_path="${BASH_REMATCH[1]}"
+            elif [[ "$micro_objective" =~ /edit[[:space:]]+([^[:space:]]+) ]]; then
+                _edit_path="${BASH_REMATCH[1]}"
+            fi
+            _edit_path=$(echo "$_edit_path" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+            if [ -n "$_edit_path" ]; then
+                local _full_edit_path="$workdir/$_edit_path"
+                if [[ "$_edit_path" == /* ]]; then
+                    _full_edit_path="$_edit_path"
+                fi
+                if [ -f "$_full_edit_path" ]; then
+                    echo "TARGET FILE CONTENT (for reference, line numbered):"
+                    echo "File: $_edit_path"
+                    echo "Content:"
+                    awk '{print NR ": " $0}' "$_full_edit_path" | head -100
+                    echo "---"
+                    echo "Use the EXACT lines and line numbers from the TARGET FILE CONTENT above to construct your /edit block replacements. Do NOT guess placeholders or contents."
+                    echo ""
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] inject: specialist <- auto target file content (%s)\n' "$_edit_path" 2>/dev/null >/dev/tty
+                fi
+            fi
+        fi
+
         echo "═══════════════════════════════════════"
         echo "SYNTAX REFERENCE FOLLOWS"
         echo "═══════════════════════════════════════"
@@ -4521,8 +4578,8 @@ SPEC
                 cat << 'SPEC'
 {"cmd":"/edit","syntax":"/edit <filepath>\n<<<<<<<\n<search_pattern>\n=======\n<replacement_pattern>\n>>>>>>>",
 "desc":"Targeted block search-and-replace edit.",
-"rules":["Must match EXACT lines of the original file","Specify the exact lines to replace between <<<<<<< and =======","Specify the replacement lines between ======= and >>>>>>>","Works for any length of file changes"],
-"format_only_ex":["/edit src/main.rs\n<<<<<<<\nfn old_function() {\n    println!(\"old\");\n}\n=======\nfn new_function() {\n    println!(\"new\");\n}\n>>>>>>>"]}
+"rules":["Must match EXACT lines of the original file","Specify the exact lines to replace between <<<<<<< and =======","Specify the replacement lines between ======= and >>>>>>>","QUERY MODE: If you do not know the file contents, output blockless '/edit <filepath>' to load the file with line numbers.","Line numbers in query output (e.g. '14:') are metadata for reference only — do NOT include line numbers in search/replace patterns.","Works for any length of file changes"],
+"format_only_ex":["/edit src/main.rs\n<<<<<<<\nfn old_function() {\n    println!(\"old\");\n}\n=======\nfn new_function() {\n    println!(\"new\");\n}\n>>>>>>>","/edit src/main.rs"]}
 SPEC
                 ;;
             save)
@@ -5081,6 +5138,7 @@ agent_inner_loop() {
     local _mismatch_count=0        # Specialist-router mismatch counter (cap at 2)
     local _cancel_file="${TMPDIR:-/tmp}/.lodge-cancel-$$"
     local -a _inner_cmd_history=() # Track commands for failure pattern detection
+    local -a _inner_cmd_exit_codes=() # Parallel array tracking exit codes
     local -a _blocked_cmds=()      # Commands blocked after 3 consecutive failures
     local _tool_exposure_phase="A"
     local _limitation_action="none"
@@ -5230,15 +5288,15 @@ agent_inner_loop() {
                 local _mo_lower
                 _mo_lower=$(echo "$micro_objective" | tr '[:upper:]' '[:lower:]')
                 # /write → /init: milestone is about creating/scaffolding a project
-                if [[ "$_mo_lower" =~ (scaffold|create.*(new|a).*(project|app|crate|package|module)|initialize.*(project|app|repo|crate)|init.*(new|a|the).*(project|app)|new.*(rust|python|node|go|java|typescript).*(project|app)) ]]; then
+                if [[ "$_mo_lower" =~ (\bscaffold\b|\bcreate\b.*(new|a).*(project|app|crate|package|module)|\binitialize\b.*(project|app|repo|crate)|\binit\b.*(new|a|the).*(project|app)|\bnew\b.*(rust|python|node|go|java|typescript).*(project|app)) ]]; then
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route: remapped /write -> /init (coding scaffold detected)"
                     _pre_cmd="init"
                 # /write → /build: milestone is about building/making the project
-                elif [[ "$_mo_lower" =~ (build.*(the|this|it|project|app|code|binary|crate|package)|cargo.build|make[[:space:]]|npm.run.build|run.*(cargo|make|maven|gradle|cmake)) ]]; then
+                elif [[ "$_mo_lower" =~ (\bbuild\b.*(the|this|it|project|app|code|binary|crate|package)|cargo\.build|\bmake\b|npm\.run\.build|\brun\b.*(cargo|make|maven|gradle|cmake)) ]]; then
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route: remapped /write -> /build (build action detected)"
                     _pre_cmd="build"
                 # /write → /test: milestone is about running tests
-                elif [[ "$_mo_lower" =~ (run.*(the|this)?.*(test|spec|suite)|cargo.test|pytest|npm.test|test.*(the|this|it|project|code)) ]]; then
+                elif [[ "$_mo_lower" =~ (\brun\b.*(the|this)?.*\b(test|spec|suite)\b|cargo\.test|pytest|npm\.test|\btest\b.*(the|this|it|project|code)) ]]; then
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route: remapped /write -> /test (test action detected)"
                     _pre_cmd="test"
                 fi
@@ -6262,8 +6320,12 @@ Choose the BEST command for the MICRO OBJECTIVE. The commands above may be a bet
         # cards so the model picks a URL to fetch instead of searching
         # again. This prevents the search-loop where the agent keeps
         # searching without ever fetching page content.
-        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" == /web\ search\ * ]] && [ "$_web_search_consec" -ge "${AGENT_WEB_SEARCH_CONSEC_MAX:-1}" ]; then
-            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web-search interlock: $_web_search_consec consecutive searches (max ${AGENT_WEB_SEARCH_CONSEC_MAX:-1}) — redirecting to fetch/scrape"
+        local _search_consec_max="${AGENT_WEB_SEARCH_CONSEC_MAX:-1}"
+        if [ "$_search_consec_max" -eq 1 ]; then
+            _search_consec_max=2
+        fi
+        if [ "$cmd_is_slash" -eq 1 ] && [[ "$cmd" == /web\ search\ * ]] && [ "$_web_search_consec" -ge "$_search_consec_max" ]; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web-search interlock: $_web_search_consec consecutive searches (max $_search_consec_max) — redirecting to fetch/scrape"
             ui_warn "Web search interlock: $_web_search_consec consecutive searches. Redirecting to fetch/scrape."
 
             # Inject previous search output as research buffer
@@ -6464,6 +6526,7 @@ INTERLOCK_JSON
                 # Track in command history so 3-strike blocker fires
                 # on repeated hallucinations of the same command
                 _inner_cmd_history+=("$cmd")
+                _inner_cmd_exit_codes+=(127)
                 inner_attempts=$((inner_attempts + 1))
                 continue
             fi
@@ -6478,6 +6541,7 @@ INTERLOCK_JSON
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] BLOCKED: /$_spec_cmd_name (3-strike rule)"
                 _micro_add_warning "$micro_file" "BLOCKED: /$_spec_cmd_name has failed 3+ times in a row. Use a DIFFERENT command."
                 _inner_cmd_history+=("$cmd")
+                _inner_cmd_exit_codes+=(127)
                 inner_attempts=$((inner_attempts + 1))
                 continue
             fi
@@ -6517,10 +6581,44 @@ INTERLOCK_JSON
                             continue
                         fi
                         # ── Utility detour override ───────────────────
-                        # Allow the Specialist to take detours using basic utility commands (ls, grep, read, ask, brainstorm, respond, social)
+                        # ── Context-dependent Detour Override ──────────
                         local _is_utility_cmd=0
+                        local _src_is_research=0 _src_is_coding=0 _src_is_delivery=0
+                        case "$_routed_base" in
+                            web|read|grep|ls|recall|journal) _src_is_research=1 ;;
+                            write|edit|append|save|build|test|fix|init) _src_is_coding=1 ;;
+                            social|email|respond) _src_is_delivery=1 ;;
+                        esac
+
                         case "$_spec_cmd_name" in
-                            ls|grep|read|ask|brainstorm|respond|social|web|vision|download) _is_utility_cmd=1 ;;
+                            # 1. Local info detours are always allowed
+                            ls|grep|read|vision)
+                                _is_utility_cmd=1
+                                ;;
+                            # 2. Dialogue/Reasoning is allowed unless in a strict code verification gate
+                            ask|brainstorm)
+                                if [[ ! "$_routed_base" =~ ^(build|test|fix)$ ]]; then
+                                    _is_utility_cmd=1
+                                fi
+                                ;;
+                            # 3. File writing is allowed if the router is delivery (to prepare file) or coding
+                            write|edit|append|save)
+                                if [ "$_src_is_delivery" -eq 1 ] || [ "$_src_is_coding" -eq 1 ]; then
+                                    _is_utility_cmd=1
+                                fi
+                                ;;
+                            # 4. Web search is allowed if the router is coding (documentation/error search)
+                            web)
+                                if [ "$_src_is_coding" -eq 1 ]; then
+                                    _is_utility_cmd=1
+                                fi
+                                ;;
+                            # 5. Delivery/Messaging is only allowed if the router itself is a delivery command
+                            social|email|respond)
+                                if [ "$_src_is_delivery" -eq 1 ]; then
+                                    _is_utility_cmd=1
+                                fi
+                                ;;
                         esac
                         local _milestone_cmd=""
                         if [[ "$micro_objective" =~ (^|[[:space:]])/([a-z]+) ]]; then
@@ -6642,10 +6740,19 @@ INTERLOCK_JSON
                     inner_attempts=$((inner_attempts + 1))
                     continue
                 fi
-                # Count consecutive occurrences of this base command at the tail
+                # Count consecutive failures of this base command at the tail (exit_code != 0)
                 local _consec=0 _hc
                 for (( _hc=${#_inner_cmd_history[@]}-1; _hc>=0; _hc-- )); do
-                    [[ "${_inner_cmd_history[$_hc]}" == "/$_dup_base"* ]] && _consec=$((_consec + 1)) || break
+                    if [[ "${_inner_cmd_history[$_hc]}" == "/$_dup_base"* ]]; then
+                        local _ec="${_inner_cmd_exit_codes[$_hc]:-0}"
+                        if [ "$_ec" -ne 0 ]; then
+                            _consec=$((_consec + 1))
+                        else
+                            break
+                        fi
+                    else
+                        break
+                    fi
                 done
                 if [ "$_consec" -ge 3 ]; then
                     _blocked_cmds+=("$_dup_base")
@@ -6815,7 +6922,9 @@ INTERLOCK_JSON
                                 grep -vF "$_fb_url" "$_queue_file" > "${_queue_file}.tmp" 2>/dev/null && mv "${_queue_file}.tmp" "$_queue_file"
                                 
                                 if [ "$_fb_exit" -eq 0 ] && ! _is_junk_output "$_fb_output"; then
-                                    output="[CASCADE FALLBACK] Primary fetch to $_primary_url failed (or was blacklisted). Fell back to $_fb_url.\n\n$_fb_output"
+                                    output="[CASCADE FALLBACK] Primary fetch to $_primary_url failed (or was blacklisted). Fell back to $_fb_url.
+
+$_fb_output"
                                     exit_code=0
                                     ui_ok "Cascade fetch succeeded!"
                                     break
@@ -6828,7 +6937,9 @@ INTERLOCK_JSON
                 output=$(_agent_exec_bash_command "$cmd" "$workdir" 2>&1)
                 exit_code=$?
             fi
-            output="${output:0:2000}"
+            if [ $exit_code -ne 0 ] || { [[ "$cmd" != /web\ fetch* ]] && [[ "$cmd" != /web\ scrape* ]] && [[ "$cmd" != /web\ summary* ]]; }; then
+                output="${output:0:2000}"
+            fi
             fi  # end _cd_intercepted guard
 
             # ── DEBUG: Command output to TTY ──────────────
@@ -6850,6 +6961,7 @@ INTERLOCK_JSON
 
             # Track all executed commands for failure pattern analysis
             _inner_cmd_history+=("$cmd")
+            _inner_cmd_exit_codes+=($exit_code)
 
             if [ $exit_code -eq 0 ]; then
                 # ── POST-INIT WORKDIR UPDATE ───────────────────
@@ -6994,6 +7106,7 @@ INTERLOCK_JSON
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] web condenser: %d chars -> %d chars\n' "${#output}" "${#_condensed}" 2>/dev/null >/dev/tty
                     fi
                   fi
+                  output="${output:0:2000}"
                 fi
 
                 # ── BRAINSTORM COMMAND LEAKAGE SANITIZER ──────
@@ -7130,7 +7243,11 @@ INTERLOCK_JSON
                 if [[ "$cmd" == /web* ]]; then
                     local _web_ok_count
                     _web_ok_count=$(_micro_action_count "$micro_file" "^/web")
-                    if [ "$_web_ok_count" -ge "${AGENT_WEB_SUFFICIENCY:-3}" ]; then
+                    local _web_suff_threshold="${AGENT_WEB_SUFFICIENCY:-3}"
+                    if [ "$_web_suff_threshold" -eq 20 ]; then
+                        _web_suff_threshold=3
+                    fi
+                    if [ "$_web_ok_count" -ge "$_web_suff_threshold" ]; then
                         _micro_set_sufficiency "$micro_file"
                         _micro_add_note "$micro_file" "SUFFICIENCY: $_web_ok_count web actions completed. Enough data gathered."
                         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Web sufficiency gate: $_web_ok_count actions reached threshold"
@@ -8478,7 +8595,14 @@ MEMEOF
             fi
         fi
 
-        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_strat_read_context}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_strat_prior_files}${_strat_discovered_images}${_strat_discovered_links}${_strat_rb}${_strat_prior_ms}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_strat_last_eval_feedback}${_strat_failures}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
+        local _strat_research_injection=""
+        local _task_lower_for_inj
+        _task_lower_for_inj=$(echo "${task} ${_strat_honeydew:-}" | tr '[:upper:]' '[:lower:]')
+        if [[ "$_task_lower_for_inj" =~ research ]]; then
+            _strat_research_injection="\n\n>>> RESEARCH TASK ACTIVE — the task contains the word 'research' <<<\nThis is a Combined or Concrete task, and is NOT a conversational question.\nYou MUST NOT stop at a /web search milestone. You MUST plan at least one follow-up milestone to fetch or scrape detailed contents (e.g. using /web fetch or /web scrape) from the search results to complete the research."
+        fi
+
+        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_strat_read_context}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_strat_prior_files}${_strat_discovered_images}${_strat_discovered_links}${_strat_rb}${_strat_prior_ms}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_strat_last_eval_feedback}${_strat_failures}${_strat_research_injection}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
 
         # ── Research→Delivery Gate ────────────────────────────
         # After N consecutive research milestones, inject a hard

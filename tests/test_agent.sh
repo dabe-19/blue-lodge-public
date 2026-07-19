@@ -4594,4 +4594,74 @@ describe "Image Scrape Queue and Prompt Injection"
     assert_ok $? "Must contain logo.png URL"
   }
 
+# ── Research Task Prompt Injections & Classification ──────────
+describe "Research Task Prompt Injections and Classification"
+
+  it "excludes research from conversational task mode" && {
+    _agent_is_conversational_info_task "Please research the specifications of Hiby M500"
+    assert_eq $? 1 "research task must NOT be classified as conversational"
+  }
+
+  it "classifies research task as combined task type" && {
+    AGENT_TASK_TYPE=""
+    _agent_classify_task "Research latest Diablo 4 patches"
+    assert_eq "$AGENT_TASK_TYPE" "combined" "research task must be classified as combined"
+  }
+
+  it "injects research instructions in Honeydew builder" && {
+    body=$(declare -f _agent_honeydew_build)
+    echo "$body" | grep -q "_hd_research_injection"
+    assert_ok $? "honeydew builder must contain research injection logic"
+  }
+
+  it "injects research instructions in Specialist prompt builder" && {
+    body=$(declare -f _build_specialist_prompt)
+    echo "$body" | grep -q "_spec_research_rule"
+    assert_ok $? "specialist prompt builder must contain research rule logic"
+  }
+
+  it "injects research instructions in Strategist planning prompt" && {
+    body=$(declare -f agent_run)
+    echo "$body" | grep -q "_strat_research_injection"
+    assert_ok $? "strategist macro_prompt must contain research injection logic"
+  }
+
+  it "injects research rule dynamically in Evaluator" && {
+    body=$(declare -f _agent_evaluate_milestone)
+    echo "$body" | grep -q "_eval_research_rule"
+    assert_ok $? "evaluator must contain dynamic research rule logic"
+  }
+
+# ── Web Fetch/Scrape Output Unescaping & Truncation ───────────
+describe "Web Fetch/Scrape Output Unescaping and Truncation"
+
+  it "bypasses initial truncation and unescapes web outputs" && {
+    body=$(declare -f agent_inner_loop)
+    # Check that initial truncation is bypassed for web fetch/scrape/summary commands
+    echo "$body" | grep -F -q '"$cmd" != /web\ fetch*'
+    assert_ok $? "inner loop must bypass initial truncation for web fetch/scrape/summary"
+    
+    # Check that final truncation is applied at the end of the JSON processing block
+    echo "$body" | grep -A130 -E 'cmd.*==.*/web.fetch' | grep -q 'output="${output:0:2000}"'
+    assert_ok $? "inner loop must truncate output to 2000 characters at the end of the web block"
+  }
+
+# ── Honeydew Evaluator Available Commands Catalog ───────────
+describe "Honeydew Evaluator Available Commands Catalog"
+
+  it "constructs evaluator available commands catalog dynamically" && {
+    body=$(declare -f _agent_evaluate_honeydew_item)
+    # Check that commands_services_status is called
+    echo "$body" | grep -q "commands_services_status"
+    assert_ok $? "honeydew evaluator must call commands_services_status"
+
+    # Check that email send is conditionally appended
+    echo "$body" | grep -q "CONFIGURED:\*email\*"
+    assert_ok $? "honeydew evaluator must check if email is configured"
+
+    # Check that jq is used to construct available commands list dynamically
+    echo "$body" | grep -q "jq -cn"
+    assert_ok $? "honeydew evaluator must use jq to build catalog dynamically"
+  }
+
 test_end

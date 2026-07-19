@@ -20,6 +20,8 @@ BACKEND="cuda"
 BASE_IMAGE="nvidia/cuda:12.4.1-devel-ubuntu22.04"
 DOCKER_RUN_FLAGS=""
 GPU_LAYERS=99
+FORCE_BUILD=0
+CONTAINER_NAME="george-sandbox"
 
 # Parse command line flags
 while [[ $# -gt 0 ]]; do
@@ -40,9 +42,13 @@ while [[ $# -gt 0 ]]; do
             BACKEND="cpu"
             shift
             ;;
+        --build|-b)
+            FORCE_BUILD=1
+            shift
+            ;;
         *)
             echo "[-] Error: Unknown option: $1" >&2
-            echo "Usage: $0 [--cuda|--vulkan|--rocm|--cpu]" >&2
+            echo "Usage: $0 [--cuda|--vulkan|--rocm|--cpu] [--build|-b]" >&2
             exit 1
             ;;
     esac
@@ -83,6 +89,34 @@ else
     GPU_LAYERS=0
 fi
 
+# Check if container already exists
+CONTAINER_EXISTS=0
+CONTAINER_RUNNING=0
+if docker ps -a --format '{{.Names}}' | grep -Eq "^${CONTAINER_NAME}$"; then
+    CONTAINER_EXISTS=1
+    if docker ps --format '{{.Names}}' | grep -Eq "^${CONTAINER_NAME}$"; then
+        CONTAINER_RUNNING=1
+    fi
+fi
+
+if [ "$CONTAINER_EXISTS" -eq 1 ] && [ "$FORCE_BUILD" -eq 0 ]; then
+    if [ "$CONTAINER_RUNNING" -eq 1 ]; then
+        echo "[+] Container '${CONTAINER_NAME}' is already running. Attaching shell..."
+        docker exec -it "$CONTAINER_NAME" bash
+    else
+        echo "[+] Starting existing container '${CONTAINER_NAME}'..."
+        docker start "$CONTAINER_NAME"
+        docker exec -it "$CONTAINER_NAME" bash
+    fi
+    exit 0
+fi
+
+# Remove existing container if it exists so we can recreate it
+if [ "$CONTAINER_EXISTS" -eq 1 ]; then
+    echo "[+] Removing existing container '${CONTAINER_NAME}' for recreate..."
+    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+fi
+
 echo "[+] Building Docker image george-cuda-sandbox (Backend: $BACKEND)..."
 docker build \
     --build-arg USER_ID="$(id -u)" \
@@ -107,7 +141,8 @@ fi
 # Create host directory if it doesn't exist
 mkdir -p "$HOME/.george" 2>/dev/null
 
-docker run -it --rm \
+docker run -it \
+    --name "$CONTAINER_NAME" \
     $DOCKER_RUN_FLAGS \
     -v "$LODGE_ROOT:/workspace" \
     -v "$HOME/.george:/home/george/.george" \
