@@ -139,17 +139,9 @@ cmd_write() {
     # to real newlines so files are written correctly.
     content=$(ui_expand_escapes "$content")
 
-    # Resolve path relative to workdir
-    # SECURITY: Never allow writes outside the workdir tree.
-    # LLMs frequently hallucinate absolute paths (e.g. /responses/file.json)
-    # which would attempt to write to filesystem root. Strip leading / and
-    # treat ALL paths as relative to workdir.
+    # Resolve path relative to workdir/global workspace/fallbacks
     local fullpath
-    if [[ "$filepath" == /* ]]; then
-        # Absolute path — make relative to workdir
-        filepath="${filepath#/}"
-    fi
-    fullpath="$workdir/$filepath"
+    fullpath=$(ui_resolve_path "$filepath" "$workdir" 1)
 
     if [ "$(basename "$fullpath")" = "GEORGE.md" ]; then
         ui_err "Cannot write/modify GEORGE.md: GEORGE.md is protected and managed exclusively by the system."

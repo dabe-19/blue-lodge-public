@@ -2896,6 +2896,12 @@ describe "Dynamic honeydew rewrite function"
     assert_ok $? "rewrite must increment rounds counter"
   }
 
+  it "rewrite handles operator guidance parameter" && {
+    body=$(declare -f _agent_honeydew_rewrite)
+    echo "$body" | grep -q 'guidance="${6:-}"'
+    assert_ok $? "rewrite should accept guidance as 6th parameter"
+  }
+
 describe "Dynamic honeydew rewrite integration"
 
   it "agent_run initializes _honeydew_rewrite_rounds_used counter" && {

@@ -371,3 +371,103 @@ ui_clean_path_prefix() {
     fi
     echo "$filepath"
 }
+
+# ── central path resolution ─────────────────────────────────────
+# Resolves a relative or absolute filepath relative to workdir, global workspace, or project root fallbacks.
+ui_resolve_path() {
+    local filepath="$1"
+    local workdir="${2:-.}"
+    local is_write="${3:-0}" # 0=read, 1=write
+    local lodge_dir="${LODGE_DIR:-$(pwd)}"
+
+    # If the path contains the active workspaces directory segment, extract the relative part.
+    # This dynamically maps absolute container paths (e.g. starting with /workspace/ or /home/blue-lodge/)
+    # to the host lodge_dir by stripping the arbitrary prefix before .george/workspaces/.
+    if [[ "$filepath" == *".george/workspaces/"* ]]; then
+        filepath=".george/workspaces/${filepath#*.george/workspaces/}"
+    fi
+
+    # Check if we are running in an agent task workspace
+    local is_agent_task=0
+    if [[ "$workdir" == *".george/workspaces"* ]]; then
+        is_agent_task=1
+    fi
+
+    # Check if absolute path
+    if [[ "$filepath" == /* ]]; then
+        if [[ "$filepath" == "$lodge_dir"* ]] || [[ "$filepath" == "$workdir"* ]]; then
+            # Safe absolute path (under lodge_dir or workdir)
+            echo "$filepath"
+            return 0
+        else
+            # Strip leading / and treat as relative
+            filepath="${filepath#/}"
+        fi
+    fi
+
+    # 2. Expand tilde
+    if declare -f tools_expand_tilde &>/dev/null; then
+        filepath=$(tools_expand_tilde "$filepath")
+    fi
+
+    # 3. Explicit workspaces path
+    if [[ "$filepath" == ".george/workspaces"* ]]; then
+        echo "$lodge_dir/$filepath"
+        return 0
+    fi
+
+    if [ "$is_agent_task" -eq 1 ]; then
+        # Check if inside a sandbox
+        local in_sandbox=0
+        if [[ "$(pwd)" == *"/.sandboxes/"* ]] || [[ "$workdir" == *"/.sandboxes/"* ]]; then
+            in_sandbox=1
+        fi
+
+        # 4. Inside a sandbox
+        if [ "$in_sandbox" -eq 1 ]; then
+            echo "$workdir/$filepath"
+            return 0
+        fi
+
+        # 5. Outside a sandbox (Relative path defaults to global workspace or project root fallbacks)
+        local global_path="$lodge_dir/.george/workspaces/$filepath"
+        local project_path="$lodge_dir/$filepath"
+
+        if [ "$is_write" -eq 1 ]; then
+            # For writing, check if it is part of project folders or exists in project root
+            if [[ "$filepath" == "lib/"* ]] || [[ "$filepath" == "tests/"* ]] || [[ "$filepath" == "commands/"* ]] || [[ "$filepath" == "docs/"* ]] || [ -f "$project_path" ]; then
+                echo "$project_path"
+            else
+                echo "$global_path"
+            fi
+        else
+            # For reading, check if it exists in the global workspace first
+            if [ -e "$global_path" ]; then
+                echo "$global_path"
+            elif [ -e "$project_path" ]; then
+                echo "$project_path"
+            else
+                echo "$global_path" # Default to global path (file not found)
+            fi
+        fi
+    else
+        # Standard CLI or unit test: resolve relative to workdir
+        echo "$workdir/$filepath"
+    fi
+}
+
+# Suggests files in workspaces when a target file is not found
+ui_suggest_workspaces_tree() {
+    local rec_mode="${AGENT_FILE_RECOVERY:-auto}"
+    [ "$rec_mode" = "off" ] && return 0
+
+    ui_info "Workspaces file tree (up to depth 4):"
+    local f
+    while IFS= read -r f || [ -n "$f" ]; do
+        if [ -n "$f" ]; then
+            local clean_f
+            clean_f=$(ui_clean_path_prefix "$f" "${LODGE_DIR:-.}")
+            ui_info "  - $clean_f"
+        fi
+    done < <(find "${LODGE_DIR:-.}/.george/workspaces" -maxdepth 4 -type f 2>/dev/null | sort | head -n 30)
+}

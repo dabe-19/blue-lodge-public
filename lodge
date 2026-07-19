@@ -1336,6 +1336,20 @@ _cmd_limits() {
             else
                 _limits_set AGENT_FILE_EXPAND_CHARS "File expand max chars" "$value" 0 50000
             fi ;;
+        file-recovery|filerecovery|file_recovery)
+            if [ -z "$value" ]; then
+                ui_info "File recovery: ${AGENT_FILE_RECOVERY:-auto} (default: auto)"
+                ui_dim "  auto    — Automatically reads/resolves the file from alternative locations if missing"
+                ui_dim "  suggest — Fails with exit code 1 but shows discovered paths as recommendations"
+                ui_dim "  off     — Disables search recovery cascade"
+            else
+                if [[ "$value" == "auto" || "$value" == "suggest" || "$value" == "off" ]]; then
+                    AGENT_FILE_RECOVERY="$value"
+                    ui_ok "File recovery set to $value"
+                else
+                    ui_err "File recovery must be 'auto', 'suggest', or 'off'"
+                fi
+            fi ;;
         dm-scan-chars|dmscan|dm-scan)
             if [ -z "$value" ]; then
                 ui_info "DM scan chars: ${AGENT_DM_SCAN_CHARS:-80} (default: 80)"
@@ -1771,6 +1785,7 @@ _cmd_limits() {
             ui_dim "    ask on|off       — Allow George to /ask human questions (current: $([ "${AGENT_ASK_USER:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    brainstorm on|off — Allow George to /brainstorm (self-reason) (current: $([ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && echo on || echo off))"
             ui_dim "    file-expand on|off — Auto-expand file refs in /social /email /write (current: $([ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && echo on || echo off))"
+            ui_dim "    file-recovery auto|suggest|off — File recovery fallback mode (current: ${AGENT_FILE_RECOVERY:-auto})"
             ui_dim "    dm-scan-chars N  — Chars to scan for DM recipients in /social discord dm (current: ${AGENT_DM_SCAN_CHARS:-80})"
             echo ""
             ui_dim "  Free-tier tools:"
@@ -3125,23 +3140,11 @@ _cmd_ls() {
     # Expand tilde — LLMs emit ~/path which doesn't expand in quotes
     declare -f tools_expand_tilde &>/dev/null && target=$(tools_expand_tilde "$target")
 
-    # ── Path enforcement ────────────────────────────────────
-    # Default: relative paths only (mirrors /grep). LLMs hallucinate
-    # absolute paths (/, /dev, /usr) that scan the entire filesystem.
-    # AGENT_LS_ALLOW_ABSOLUTE=1 unlocks absolute paths.
-    if [[ "$target" == /* ]] && [ "${AGENT_LS_ALLOW_ABSOLUTE:-0}" -ne 1 ]; then
-        # Strip leading / and resolve relative to workdir
-        local _stripped="${target#/}"
-        if [ -n "$_stripped" ] && [ -d "$workdir/$_stripped" ]; then
-            target="$workdir/$_stripped"
-        else
-            target="$workdir"
-        fi
-    fi
-
-    # Resolve relative to workdir
-    if [[ "$target" != /* ]]; then
-        target="$workdir/$target"
+    if [[ "$target" == /* ]] && [ "${AGENT_LS_ALLOW_ABSOLUTE:-0}" -eq 1 ]; then
+        # Keep absolute path
+        :
+    else
+        target=$(ui_resolve_path "$target" "$workdir" 0)
     fi
 
     # Normalize (remove trailing slash, resolve ..)
@@ -3226,27 +3229,63 @@ _cmd_read() {
     local workdir="${2:-.}"
     # Clean redundant project workdir prefix
     filepath=$(ui_clean_path_prefix "$filepath" "$workdir")
-    # Expand tilde — LLMs emit ~/path which doesn't expand in quotes
-    declare -f tools_expand_tilde &>/dev/null && filepath=$(tools_expand_tilde "$filepath")
 
-    local fullpath="$filepath"
-    if [[ "$filepath" != /* ]]; then
-        fullpath="$workdir/$filepath"
-    fi
-
-    # Fallback: if not found in workdir, try project root LODGE_DIR
-    if [ ! -e "$fullpath" ] && [ -n "${LODGE_DIR:-}" ] && [[ "$filepath" != /* ]]; then
-        if [ -e "$LODGE_DIR/$filepath" ]; then
-            fullpath="$LODGE_DIR/$filepath"
-        fi
-    fi
+    local fullpath
+    fullpath=$(ui_resolve_path "$filepath" "$workdir" 0)
 
     if [ -f "$fullpath" ]; then
         tools_read_file "$fullpath" 100
     elif [ -d "$fullpath" ] && declare -f _cmd_ls &>/dev/null; then
         _cmd_ls "$filepath" "$workdir"
     else
+        # ── Recovery Cascade ────────────────────────────────────
+        local rec_mode="${AGENT_FILE_RECOVERY:-auto}"
+        local filename
+        filename=$(basename "$filepath")
+        
+        local matches=()
+        if [ "$rec_mode" != "off" ] && [ -n "$filename" ]; then
+            local m
+            while IFS= read -r m || [ -n "$m" ]; do
+                [ -n "$m" ] && matches+=("$m")
+            done < <(find "${LODGE_DIR:-.}/.george/workspaces" -maxdepth 4 -name "$filename" -type f 2>/dev/null)
+            
+            # Fallback to project root if still empty
+            if [ "${#matches[@]}" -eq 0 ] && [ -f "${LODGE_DIR:-.}/$filename" ]; then
+                matches+=("${LODGE_DIR:-.}/$filename")
+            fi
+        fi
+
+        if [ "${#matches[@]}" -gt 0 ]; then
+            local matched_file="${matches[0]}"
+            if [ "$rec_mode" = "auto" ]; then
+                # Clean prefix for display
+                local clean_match
+                clean_match=$(ui_clean_path_prefix "$matched_file" "${LODGE_DIR:-.}")
+                ui_warn "File not found at requested path. Auto-resolved to: $clean_match" >&2
+                tools_read_file "$matched_file" 100
+                return 0
+            elif [ "$rec_mode" = "suggest" ]; then
+                ui_err "File not found: $filepath"
+                ui_info "Discovered matching files in workspaces:"
+                local match_path
+                for match_path in "${matches[@]}"; do
+                    local clean_match
+                    clean_match=$(ui_clean_path_prefix "$match_path" "${LODGE_DIR:-.}")
+                    ui_info "  - $clean_match"
+                done
+                return 1
+            fi
+        fi
+
         ui_err "File not found: $filepath"
+        if [ "${AGENT_ASK_USER:-1}" -eq 1 ]; then
+            ui_info "[INSTRUCTION] The required file is missing. You must pivot: either ask the operator to provide the content/location using /ask, create it with /write, or terminate the task."
+        else
+            ui_info "[INSTRUCTION] The required file is missing. Since /ask is disabled, you must immediately terminate the task and report the failure using /respond."
+        fi
+        ui_suggest_workspaces_tree
+        return 1
     fi
 }
 _cmd_grep() {

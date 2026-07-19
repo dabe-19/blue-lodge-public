@@ -42,39 +42,11 @@ cmd_download() {
         dest=$(echo "$dest" | sed 's/["'"'"'`]//g' | tr ' ' '-' | sed 's/[^a-zA-Z0-9_./-]//g')
     fi
 
-    # Resolve destination relative to AGENT_TASK_WORKSPACE if set
+    # Resolve destination path relative to sandbox, global workspace, or fallbacks
     local fullpath
+    fullpath=$(ui_resolve_path "$dest" "$workdir" 1)
     local log_dest
-    if [ -n "${AGENT_TASK_WORKSPACE:-}" ]; then
-        # Ensure AGENT_TASK_WORKSPACE exists
-        mkdir -p "$AGENT_TASK_WORKSPACE" 2>/dev/null
-        if [[ "$dest" == /* ]]; then
-            if [[ "$dest" == "$AGENT_TASK_WORKSPACE"/* ]]; then
-                fullpath="$dest"
-            else
-                dest="${dest#/}"
-                fullpath="$AGENT_TASK_WORKSPACE/$dest"
-            fi
-        else
-            fullpath="$AGENT_TASK_WORKSPACE/$dest"
-        fi
-        log_dest="${AGENT_TASK_WORKSPACE_REL:-.george/workspaces}/${dest}"
-    else
-        # Fallback to standard workdir-relative if AGENT_TASK_WORKSPACE is not set
-        if [[ "$dest" == /* ]]; then
-            local _real_workdir
-            _real_workdir=$(cd "$workdir" 2>/dev/null && pwd -P)
-            if [[ "$dest" == "$_real_workdir"/* ]] || [[ "$dest" == "$workdir"/* ]]; then
-                fullpath="$dest"
-            else
-                dest="${dest#/}"
-                fullpath="$workdir/$dest"
-            fi
-        else
-            fullpath="$workdir/$dest"
-        fi
-        log_dest="$dest"
-    fi
+    log_dest=$(ui_clean_path_prefix "$fullpath" "$LODGE_DIR")
 
     # Create parent directories
     if ! mkdir -p "$(dirname "$fullpath")" 2>/dev/null; then

@@ -2410,6 +2410,11 @@ _agent_honeydew_rewrite() {
     local workdir="${3:-.}"
     local failure_context="${4:-}"  # Optional: failure data for auto-recovery rewrites
     local force_rewrite="${5:-0}"   # When 1, skip Phase 1 router and force Phase 2 rewrite
+    local guidance="${6:-}"         # Optional: operator guidance to prioritize
+
+    if [ -n "$guidance" ]; then
+        force_rewrite=1
+    fi
 
     # ── Guard: toggle disabled ─────────────────────────────────
     if [ "${AGENT_HONEYDEW_REWRITE:-0}" -ne 1 ]; then
@@ -2480,6 +2485,12 @@ _agent_honeydew_rewrite() {
         _failure_section="\n\nFAILURE CONTEXT (why auto-recovery was triggered):\n${failure_context}"
     fi
 
+    # Build optional operator guidance section
+    local _guidance_section=""
+    if [ -n "$guidance" ]; then
+        _guidance_section="\n\n>>> OPERATOR GUIDANCE/INSTRUCTIONS (PRIORITIZE THIS OVER ORIGINAL TASK DETAILS) <<<\nThe operator has provided specific instructions on how to proceed:\n${guidance}\nYou MUST rewrite the remaining pending items to prioritize and execute this operator guidance."
+    fi
+
     # Build optional recommendation section for router (modes 1 and 2)
     local _router_rec_section=""
     local _rec_inject_mode="${AGENT_EVAL_REC_INJECT:-0}"
@@ -2509,9 +2520,9 @@ CURRENT HONEYDEW LIST:
 ${_current_list}
 
 MILESTONE CONTEXT (what has been accomplished so far):
-${_milestone_ctx}${_failure_section}${_router_rec_section}${_router_reflexive}
+${_milestone_ctx}${_failure_section}${_router_rec_section}${_router_reflexive}${_guidance_section}
 
-Based on what the completed milestones have revealed (and any failure data above), should the PENDING (non-completed) honeydew items be rewritten to better serve the original task?
+Based on what the completed milestones have revealed (and any failure data/operator guidance above), should the PENDING (non-completed) honeydew items be rewritten to better serve the original task?
 
 IMPORTANT: Default to KEEP. Only say REWRITE if the pending items are genuinely misaligned with the original task. Minor wording improvements or incremental refinements do NOT justify a rewrite. The existing list is working — rewrites cost time and risk drifting from the objective.
 
@@ -2616,10 +2627,10 @@ REWRITE_ROUTER_TEXT
     local _rewrite_context_section=""
     if [ "$_rec_inject_mode" -eq 1 ] && [ -n "$_rewrite_recommendation" ]; then
         # Mode 1: recommendation-only — skip milestone context to maximize attention weight
-        _rewrite_context_section="${_rewrite_recommendation}${_fail_rewrite_section}${_rewrite_brainstorm}"
+        _rewrite_context_section="${_rewrite_recommendation}${_fail_rewrite_section}${_rewrite_brainstorm}${_guidance_section}"
     else
         # Mode 0 or 2: full milestone context, mode 2 adds recommendation
-        _rewrite_context_section="\nMILESTONE DISCOVERIES (what has been learned so far):\n${_milestone_ctx}${_fail_rewrite_section}${_rewrite_brainstorm}${_rewrite_recommendation}"
+        _rewrite_context_section="\nMILESTONE DISCOVERIES (what has been learned so far):\n${_milestone_ctx}${_fail_rewrite_section}${_rewrite_brainstorm}${_rewrite_recommendation}${_guidance_section}"
     fi
 
     local rewrite_prompt="ORIGINAL TASK (PRIMARY OBJECTIVE — this is the #1 priority):
@@ -5098,6 +5109,7 @@ agent_inner_loop() {
     local micro_file="$george_dir/micro_memory.json"
     local macro_file="$george_dir/macro_memory.json"
     local fail_file="$george_dir/failures_log.md"
+    local guidance=""
 
     mkdir -p "$george_dir"
 
@@ -7595,6 +7607,72 @@ $_fb_output"
                 continue
             fi
 
+            # ── Missing File Check & Prompt Fallback ───────────
+            local _is_missing_file_fail=0
+            local _missing_file_path=""
+            if [[ "$cmd" == "/read "* ]] || [[ "$cmd" == "/edit "* ]]; then
+                if [[ "$output" == *"File not found"* ]] || [[ "$output" == *"does not exist"* ]]; then
+                    _is_missing_file_fail=1
+                    _missing_file_path=$(echo "$cmd" | awk '{print $2}')
+                fi
+            fi
+            if [ "$_is_missing_file_fail" -eq 1 ]; then
+                local _resolved_missing_path
+                _resolved_missing_path=$(ui_resolve_path "$_missing_file_path" "$workdir")
+                if [ "${AGENT_ASK_USER:-1}" -ne 1 ]; then
+                    ui_err "Programmatic termination: Required file is missing and /ask is disabled."
+                    _macro_set_terminal_outcome "$macro_file" "blocked_by_capability" "Required file is missing: $_missing_file_path"
+                    _micro_set_result "$micro_file" "TERMINATED" "Missing file: $_missing_file_path"
+                    return 1
+                else
+                    ui_warn "Prompting operator for missing file: $_missing_file_path"
+                    local _ask_q="Required file '$(basename "$_missing_file_path")' is missing. Please paste the contents of this file to create it (or type 'abort' to cancel, or provide guidance to gather/create it from scratch):"
+                    local _ask_resp
+                    _ask_resp=$(commands_dispatch "/ask $_ask_q" "$workdir" 2>/dev/null)
+                    local _clean_resp
+                    _clean_resp=$(echo "$_ask_resp" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+                    if [ -z "$_clean_resp" ] || [ "${_clean_resp,,}" = "abort" ]; then
+                        ui_err "Task aborted by operator due to missing file."
+                        _macro_set_terminal_outcome "$macro_file" "user_terminated" "Required file is missing and operator aborted."
+                        _micro_set_result "$micro_file" "TERMINATED" "Missing file: $_missing_file_path (aborted)"
+                        return 1
+                    fi
+                    local _is_guidance=0
+                    local _clean_lower
+                    _clean_lower=$(echo "$_clean_resp" | tr '[:upper:]' '[:lower:]')
+                    if [[ "$_clean_resp" == /* ]]; then
+                        _is_guidance=1
+                    elif [ "${#_clean_resp}" -lt 250 ]; then
+                        if [[ "$_clean_lower" =~ (search|find|gather|scrape|recall|create|write|scratch|look[[:space:]]+up|query|ask|run|use|get|info|news|fetch|generate|draft|do[[:space:]]+|make|start) ]]; then
+                            _is_guidance=1
+                        fi
+                    fi
+                    if [ "$_is_guidance" -eq 1 ]; then
+                        ui_info "Operator provided guidance instead of file contents. Triggering guided retry..."
+                        guidance="$_clean_resp"
+                        break
+                    else
+                        mkdir -p "$(dirname "$_resolved_missing_path")"
+                        echo "$_clean_resp" > "$_resolved_missing_path"
+                        ui_ok "Created missing file: $_missing_file_path. Retrying command..."
+                        if [[ "$cmd" == /* ]] && declare -f commands_dispatch &>/dev/null; then
+                            output=$(commands_dispatch "$cmd" "$workdir" 2>&1)
+                            exit_code=$?
+                        else
+                            output=$(_agent_exec_bash_command "$cmd" "$workdir" 2>&1)
+                            exit_code=$?
+                        fi
+                        output="${output:0:2000}"
+                        if [ $exit_code -eq 0 ]; then
+                            _micro_add_action "$micro_file" "$cmd" "SUCCESS" 0 "$output" "missing_file_recovered"
+                            _agent_complete_milestone "$micro_file" "$macro_file" "$micro_objective" \
+                                "Objective fulfilled after file recovery" "$cmd" "$george_dir"
+                            return 0
+                        fi
+                    fi
+                fi
+            fi
+
             # ── Reflexive hook: milestone failure ──────────────
             declare -f reflexive_milestone_fail &>/dev/null && reflexive_milestone_fail "${micro_objective:0:80}"
 
@@ -7789,7 +7867,7 @@ $_fb_output"
 
     # ── Auto-Recovery: Honeydew Rewrite with Failure Injection ─
     local _max_rewrite_rounds="${AGENT_HONEYDEW_REWRITE_ROUNDS:-8}"
-    if [ "${_honeydew_rewrite_rounds_used:-0}" -lt "$_max_rewrite_rounds" ]; then
+    if [ -z "$guidance" ] && [ "${_honeydew_rewrite_rounds_used:-0}" -lt "$_max_rewrite_rounds" ]; then
         ui_warn "Inner loop exhausted — auto-recovery via honeydew rewrite (round $((${_honeydew_rewrite_rounds_used:-0} + 1))/$_max_rewrite_rounds)"
 
         # NOTE: We do NOT record a milestone here. The failure data
@@ -7867,16 +7945,23 @@ $_fb_output"
 
     # ── Fallback: Human Operator Intervention ─────────────────
     # Rewrite limit exhausted or rewrite router declined.
-    ui_err "Inner loop exhausted all escalation levels (honeydew rewrite limit reached)."
-    if [ -f "$fail_file" ]; then
-        echo ""
-        ui_warn "Failures log:"
-        tail -30 "$fail_file"
-        echo ""
+    if [ -z "$guidance" ]; then
+        if [ "${AGENT_ASK_USER:-1}" -ne 1 ]; then
+            ui_err "Programmatic termination: All escalation levels exhausted and /ask is disabled."
+            _macro_set_terminal_outcome "$macro_file" "blocked_by_capability" "All escalation levels exhausted"
+            _micro_set_result "$micro_file" "TERMINATED" "All escalation levels exhausted"
+            return 1
+        fi
+        ui_err "Inner loop exhausted all escalation levels (honeydew rewrite limit reached)."
+        if [ -f "$fail_file" ]; then
+            echo ""
+            ui_warn "Failures log:"
+            tail -30 "$fail_file"
+            echo ""
+        fi
+        printf "  %bGeorge needs help. Provide a command, explanation, or 'abort': %b" "$C_BOLD" "$C_RESET"
+        read -r guidance < /dev/tty 2>/dev/null || read -r guidance 2>/dev/null || true
     fi
-    printf "  %bGeorge needs help. Provide a command, explanation, or 'abort': %b" "$C_BOLD" "$C_RESET"
-    local guidance=""
-    read -r guidance < /dev/tty 2>/dev/null || read -r guidance 2>/dev/null || true
 
     # ── ABORT PROPAGATION ─────────────────────────────────────
     # When the operator types 'abort', propagate cancellation to the
@@ -7892,6 +7977,21 @@ $_fb_output"
 
     if [ -n "$guidance" ] && [ "$guidance" != "abort" ]; then
         _micro_add_note "$micro_file" "Operator guidance: $guidance"
+
+        # ── Operator Intervention: Rewrite Honeydew List with Guidance ──
+        # Prioritize operator instructions by rewriting the honeydew list.
+        # This updates the pending objectives to incorporate the guidance.
+        if declare -f _agent_honeydew_rewrite &>/dev/null; then
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] operator intervention: rewriting honeydew list with operator guidance"
+            _agent_honeydew_rewrite "$macro_file" "$micro_file" "$workdir" "${last_failed_cmd:-}" 1 "$guidance"
+            
+            # Refresh honeydew in macro_memory
+            local _hd_recovery
+            _hd_recovery=$(_agent_honeydew_read "$workdir" 2>/dev/null)
+            if [ -n "$_hd_recovery" ] && [ -f "$macro_file" ]; then
+                _macro_set_honeydew "$macro_file" "$_hd_recovery"
+            fi
+        fi
 
         # ── Catalog-Aware Guided Retry ────────────────────────
         # Combine operator input with the full command catalog so

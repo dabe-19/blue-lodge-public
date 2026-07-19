@@ -87,12 +87,9 @@ cmd_append() {
         content=$(ui_expand_escapes "$content")
     fi
 
-    # Resolve path relative to workdir (security: no absolute paths)
+    # Resolve path relative to workdir/global workspace/fallbacks
     local fullpath
-    if [[ "$filepath" == /* ]]; then
-        filepath="${filepath#/}"
-    fi
-    fullpath="$workdir/$filepath"
+    fullpath=$(ui_resolve_path "$filepath" "$workdir" 1)
 
     if [ "$(basename "$fullpath")" = "GEORGE.md" ]; then
         ui_err "Cannot write/modify GEORGE.md: GEORGE.md is protected and managed exclusively by the system."

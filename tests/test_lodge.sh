@@ -949,6 +949,171 @@ describe "Debug command"
     rm -rf "$test_workdir" "$test_lodgedir"
   }
 
+  it "ui_resolve_path resolves paths correctly in and out of sandboxes" && {
+    test_lodgedir=$(test_tmpdir)
+    test_workdir="$test_lodgedir/.george/workspaces/20260719_152447"
+    sandbox_dir="$test_workdir/.sandboxes/myapp"
+    mkdir -p "$test_workdir" "$sandbox_dir"
+
+    old_lodge_dir="${LODGE_DIR:-}"
+    export LODGE_DIR="$test_lodgedir"
+
+    # 1. Global workspace path resolution
+    p1=$(ui_resolve_path ".george/workspaces/report.md" "$test_workdir" 0)
+    assert_eq "$p1" "$test_lodgedir/.george/workspaces/report.md"
+
+    # 2. Inside sandbox relative resolution
+    p2=$(ui_resolve_path "src/main.rs" "$sandbox_dir" 0)
+    assert_eq "$p2" "$sandbox_dir/src/main.rs"
+
+    # 3. Outside sandbox relative read resolution
+    # Should check global workspace first, then project root fallback
+    echo "global content" > "$test_lodgedir/.george/workspaces/magic.md"
+    p3=$(ui_resolve_path "magic.md" "$test_workdir" 0)
+    assert_eq "$p3" "$test_lodgedir/.george/workspaces/magic.md"
+
+    # 4. Container absolute path resolution with custom prefix
+    p4=$(ui_resolve_path "/custom/parent/blue-lodge/.george/workspaces/report.md" "$test_workdir" 0)
+    assert_eq "$p4" "$test_lodgedir/.george/workspaces/report.md"
+
+    # Restore LODGE_DIR
+    if [ -n "$old_lodge_dir" ]; then
+        export LODGE_DIR="$old_lodge_dir"
+    else
+        unset LODGE_DIR
+    fi
+    rm -rf "$test_lodgedir"
+  }
+
+  it "_cmd_read recovery cascade fallback" && {
+    test_lodgedir=$(test_tmpdir)
+    test_workdir="$test_lodgedir/.george/workspaces/20260719_152447"
+    mkdir -p "$test_workdir"
+
+    old_lodge_dir="${LODGE_DIR:-}"
+    export LODGE_DIR="$test_lodgedir"
+
+    # Create target file in a different task workspace to simulate recovery
+    alt_workspace="$test_lodgedir/.george/workspaces/20260719_150242"
+    mkdir -p "$alt_workspace"
+    echo "recovered data" > "$alt_workspace/lost_report.md"
+
+    # 1. Test auto mode (Option A) - should read the file and return 0
+    old_recovery="${AGENT_FILE_RECOVERY:-}"
+    export AGENT_FILE_RECOVERY="auto"
+    
+    out=$(_cmd_read "lost_report.md" "$test_workdir" 2>&1)
+    assert_ok $?
+    assert_contains "$out" "lost_report.md"
+    assert_contains "$out" "recovered data"
+
+    # 2. Test suggest mode (Option B) - should fail and show paths
+    export AGENT_FILE_RECOVERY="suggest"
+    out=$(_cmd_read "lost_report.md" "$test_workdir" 2>&1)
+    assert_eq $? 1
+    assert_contains "$out" "Discovered matching files"
+    assert_contains "$out" "20260719_150242/lost_report.md"
+
+    # Restore
+    export AGENT_FILE_RECOVERY="${old_recovery:-auto}"
+    if [ -n "$old_lodge_dir" ]; then
+        export LODGE_DIR="$old_lodge_dir"
+    else
+        unset LODGE_DIR
+    fi
+    rm -rf "$test_lodgedir"
+  }
+
+  it "agent_inner_loop programmatically terminates on missing file when ask is disabled" && {
+    test_lodgedir=$(test_tmpdir)
+    test_workdir="$test_lodgedir/.george/workspaces/20260719_152447"
+    mkdir -p "$test_workdir/.george"
+
+    old_lodge_dir="${LODGE_DIR:-}"
+    export LODGE_DIR="$test_lodgedir"
+
+    old_ask="${AGENT_ASK_USER:-}"
+    export AGENT_ASK_USER=0
+
+    # Redefine LLM generation to return the failing command
+    test_mock "llm_stream" "echo \"/read non_existent_file.md\""
+    test_mock "llm_generate" "echo \"/read non_existent_file.md\""
+
+    # Mocking macro_file and micro_file
+    echo '{"completed_milestones": []}' > "$test_workdir/.george/macro_memory.json"
+    
+    agent_inner_loop "/read non_existent_file.md" "$test_workdir" "/read non_existent_file.md" 2>/dev/null
+    # Should return 1 (failure)
+    assert_eq $? 1
+
+    # Should set micro result to TERMINATED
+    micro_result=$(jq -r '.milestone_result.status // empty' "$test_workdir/.george/micro_memory.json" 2>/dev/null)
+    assert_eq "$micro_result" "TERMINATED"
+
+    # Should set macro terminal outcome
+    macro_class=$(jq -r '.task_outcome_class // empty' "$test_workdir/.george/macro_memory.json" 2>/dev/null)
+    assert_eq "$macro_class" "blocked_by_capability"
+
+    # Restore functions
+    test_unmock "llm_stream"
+    test_unmock "llm_generate"
+
+    # Restore
+    export AGENT_ASK_USER="${old_ask:-1}"
+    if [ -n "$old_lodge_dir" ]; then
+        export LODGE_DIR="$old_lodge_dir"
+    else
+        unset LODGE_DIR
+    fi
+    rm -rf "$test_lodgedir"
+  }
+
+  it "agent_inner_loop handles guidance response on missing file when ask is enabled" && {
+    test_lodgedir=$(test_tmpdir)
+    test_workdir="$test_lodgedir/.george/workspaces/20260719_152447"
+    mkdir -p "$test_workdir/.george"
+
+    old_lodge_dir="${LODGE_DIR:-}"
+    export LODGE_DIR="$test_lodgedir"
+
+    old_ask="${AGENT_ASK_USER:-}"
+    export AGENT_ASK_USER=1
+
+    # Redefine LLM generation to return the failing command
+    test_mock "llm_stream" "echo \"/read non_existent_file.md\""
+    test_mock "llm_generate" "echo \"/read non_existent_file.md\""
+
+    # Mock commands_dispatch "/ask" to return guidance
+    test_mock "commands_dispatch" '
+        if [[ "$1" == /ask* ]]; then
+            echo "search the web to find the news and create the report from scratch."
+        else
+            return 1
+        fi
+    '
+
+    # Mocking macro_file and micro_file
+    echo '{"completed_milestones": []}' > "$test_workdir/.george/macro_memory.json"
+    
+    agent_inner_loop "/read non_existent_file.md" "$test_workdir" "/read non_existent_file.md" 2>/dev/null
+    # Should return 1
+    assert_eq $? 1
+
+    # Restore functions
+    test_unmock "llm_stream"
+    test_unmock "llm_generate"
+    test_unmock "commands_dispatch"
+
+    # Restore
+    export AGENT_ASK_USER="${old_ask:-1}"
+    if [ -n "$old_lodge_dir" ]; then
+        export LODGE_DIR="$old_lodge_dir"
+    else
+        unset LODGE_DIR
+    fi
+    rm -rf "$test_lodgedir"
+  }
+
   it "_cmd_email is defined" && {
     declare -f _cmd_email &>/dev/null
     assert_ok $?

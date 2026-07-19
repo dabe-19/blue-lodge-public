@@ -68,12 +68,9 @@ cmd_edit() {
         content=""
     fi
 
-    # Resolve path relative to workdir (security: no absolute paths)
+    # Resolve path relative to workdir/global workspace/fallbacks
     local fullpath
-    if [[ "$filepath" == /* ]]; then
-        filepath="${filepath#/}"
-    fi
-    fullpath="$workdir/$filepath"
+    fullpath=$(ui_resolve_path "$filepath" "$workdir" 1)
 
     if [ "$(basename "$fullpath")" = "GEORGE.md" ]; then
         ui_err "Cannot write/modify GEORGE.md: GEORGE.md is protected and managed exclusively by the system."
@@ -89,12 +86,24 @@ cmd_edit() {
             return 0
         else
             ui_err "No search/replace block provided and file does not exist: $filepath"
+            if [ "${AGENT_ASK_USER:-1}" -eq 1 ]; then
+                ui_info "[INSTRUCTION] The required file is missing. You must pivot: either ask the operator to provide the content/location using /ask, create it with /write, or terminate the task."
+            else
+                ui_info "[INSTRUCTION] The required file is missing. Since /ask is disabled, you must immediately terminate the task and report the failure using /respond."
+            fi
+            ui_suggest_workspaces_tree
             return 1
         fi
     fi
 
     if [ ! -f "$fullpath" ]; then
         ui_err "Cannot edit — file does not exist: $filepath"
+        if [ "${AGENT_ASK_USER:-1}" -eq 1 ]; then
+            ui_info "[INSTRUCTION] The required file is missing. You must pivot: either ask the operator to provide the content/location using /ask, create it with /write, or terminate the task."
+        else
+            ui_info "[INSTRUCTION] The required file is missing. Since /ask is disabled, you must immediately terminate the task and report the failure using /respond."
+        fi
+        ui_suggest_workspaces_tree
         return 1
     fi
 
