@@ -5326,6 +5326,7 @@ agent_inner_loop() {
                 _limitation_q=$(_agent_limitation_prompt_text "$_infeasibility_reason_code")
                 local _limitation_raw
                 _limitation_raw=$(commands_dispatch "/ask ${_limitation_q}" "$workdir" 2>&1)
+                _limitation_raw=$(echo "$_limitation_raw" | sed 's/\x1b\[[0-9;]*m//g' | grep -vE '^[[:space:]]*\[(debug|info|warn|error|ok)\]')
                 local _limitation_decision
                 _limitation_decision=$(_agent_limitation_action_parse "$_limitation_raw")
                 _limitation_action="$_limitation_decision"
@@ -6947,6 +6948,7 @@ INTERLOCK_JSON
                                 if [ "${AGENT_ASK_USER:-1}" -eq 1 ]; then
                                     local _confirm_raw
                                     _confirm_raw=$(commands_dispatch "/ask Confirm side-effect action /${_cmd_base}. Reply YES or NO only." "$workdir" 2>&1)
+                                    _confirm_raw=$(echo "$_confirm_raw" | sed 's/\x1b\[[0-9;]*m//g' | grep -vE '^[[:space:]]*\[(debug|info|warn|error|ok)\]')
                                     local _confirm_upper
                                     _confirm_upper=$(echo "$_confirm_raw" | tr '[:lower:]' '[:upper:]')
                                     if [[ "$_confirm_upper" =~ ^[[:space:]]*YES([[:space:]]|$) ]]; then
@@ -7637,7 +7639,7 @@ $_fb_output"
                     local _ask_resp
                     _ask_resp=$(commands_dispatch "/ask $_ask_q" "$workdir" 2>/dev/null)
                     local _clean_resp
-                    _clean_resp=$(echo "$_ask_resp" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+                    _clean_resp=$(echo "$_ask_resp" | sed 's/\x1b\[[0-9;]*m//g' | grep -vE '^[[:space:]]*\[(debug|info|warn|error|ok)\]' | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
                     if [ -z "$_clean_resp" ] || [ "${_clean_resp,,}" = "abort" ]; then
                         ui_err "Task aborted by operator due to missing file."
                         _macro_set_terminal_outcome "$macro_file" "user_terminated" "Required file is missing and operator aborted."

@@ -1205,6 +1205,14 @@ describe "Abort propagation from inner loop to macro loop"
     assert_ok $?
   }
 
+  it "missing file abort check is cleaned of debug logs and aborts correctly" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'grep -vE.*debug|info|warn|error|ok'
+    assert_ok $?
+    echo "$body" | grep -q 'user_terminated.*Required file is missing'
+    assert_ok $?
+  }
+
 # ── Milestone Deduplication ────────────────────────────────────
 describe "Milestone deduplication in macro loop"
 
