@@ -3234,8 +3234,17 @@ _cmd_read() {
         fullpath="$workdir/$filepath"
     fi
 
+    # Fallback: if not found in workdir, try project root LODGE_DIR
+    if [ ! -e "$fullpath" ] && [ -n "${LODGE_DIR:-}" ] && [[ "$filepath" != /* ]]; then
+        if [ -e "$LODGE_DIR/$filepath" ]; then
+            fullpath="$LODGE_DIR/$filepath"
+        fi
+    fi
+
     if [ -f "$fullpath" ]; then
         tools_read_file "$fullpath" 100
+    elif [ -d "$fullpath" ] && declare -f _cmd_ls &>/dev/null; then
+        _cmd_ls "$filepath" "$workdir"
     else
         ui_err "File not found: $filepath"
     fi

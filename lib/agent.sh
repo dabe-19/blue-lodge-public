@@ -8264,7 +8264,7 @@ MEMEOF
     # workspace so artifacts stay isolated per task. Concrete tasks
     # keep the default responses/ directory.
     if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ] || [ "${AGENT_TASK_TYPE:-concrete}" = "combined" ]; then
-        AGENT_OUTPUT_DIR=".george/workspaces"
+        AGENT_OUTPUT_DIR="$AGENT_TASK_WORKSPACE_REL"
         export LODGE_SANDBOXES="$AGENT_TASK_WORKSPACE_REL/.sandboxes"
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] output dir: $AGENT_OUTPUT_DIR ($AGENT_TASK_TYPE), sandboxes: $LODGE_SANDBOXES"
     else

@@ -916,6 +916,39 @@ describe "Debug command"
     assert_ok $?
   }
 
+  it "_cmd_read reads file from workdir, falls back to LODGE_DIR, and delegates to _cmd_ls for directory" && {
+    # Set up test directories and files
+    test_workdir=$(test_tmpdir)
+    test_lodgedir=$(test_tmpdir)
+    
+    # 1. Read file from workdir
+    echo "workdir content" > "$test_workdir/file1.txt"
+    out1=$(_cmd_read "file1.txt" "$test_workdir")
+    assert_contains "$out1" "workdir"
+
+    # 2. Fall back to LODGE_DIR
+    echo "lodgedir content" > "$test_lodgedir/file2.txt"
+    # Save and temporarily export LODGE_DIR for fallback resolution
+    old_lodge_dir="${LODGE_DIR:-}"
+    export LODGE_DIR="$test_lodgedir"
+    out2=$(_cmd_read "file2.txt" "$test_workdir")
+    assert_contains "$out2" "lodgedir"
+
+    # 3. Delegate to _cmd_ls when path is directory
+    mkdir -p "$test_workdir/subdir"
+    echo "nested content" > "$test_workdir/subdir/file3.txt"
+    out3=$(_cmd_read "subdir" "$test_workdir")
+    assert_contains "$out3" "file3.txt"
+
+    # Restore LODGE_DIR
+    if [ -n "$old_lodge_dir" ]; then
+        export LODGE_DIR="$old_lodge_dir"
+    else
+        unset LODGE_DIR
+    fi
+    rm -rf "$test_workdir" "$test_lodgedir"
+  }
+
   it "_cmd_email is defined" && {
     declare -f _cmd_email &>/dev/null
     assert_ok $?
