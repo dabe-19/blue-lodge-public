@@ -159,7 +159,7 @@ LLM_BUDGET_JOURNAL=${LLM_BUDGET_JOURNAL:-4096}
 LLM_BUDGET_TOOL=${LLM_BUDGET_TOOL:-4096}
 
 # ── Grammar ───────────────────────────────────────────────────
-LLM_GRAMMAR_ENABLED=${LLM_GRAMMAR_ENABLED:-1}
+LLM_GRAMMAR_ENABLED=${LLM_GRAMMAR_ENABLED:-0}
 
 # ── Sampling Parameters ───────────────────────────────────────
 LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.15}
