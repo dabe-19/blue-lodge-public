@@ -2916,8 +2916,31 @@ _agent_evaluate_honeydew_item() {
     if [[ "$_svc_status" == *CONFIGURED:*email* ]]; then
         _delivery_list=$(echo "$_delivery_list" | jq -c '. + ["/email send"]')
     fi
-    if [[ "$_svc_status" == *CONFIGURED:*discord* ]] || [[ "$_svc_status" == *CONFIGURED:*telegram* ]] || [[ "$_svc_status" == *CONFIGURED:*x/twitter* ]] || [[ "$_svc_status" == *CONFIGURED:*mastodon* ]] || [[ "$_svc_status" == *CONFIGURED:*bluesky* ]]; then
-        _delivery_list=$(echo "$_delivery_list" | jq -c '. + ["/social post", "/social discord dm"]')
+    local _has_social=0
+    if [[ "$_svc_status" == *CONFIGURED:*discord* ]]; then
+        _delivery_list=$(echo "$_delivery_list" | jq -c '. + ["/social post discord", "/social discord dm"]')
+        _has_social=1
+    fi
+    if [[ "$_svc_status" == *CONFIGURED:*telegram* ]]; then
+        _delivery_list=$(echo "$_delivery_list" | jq -c '. + ["/social post telegram"]')
+        _has_social=1
+    fi
+    if [[ "$_svc_status" == *CONFIGURED:*x/twitter* ]]; then
+        _delivery_list=$(echo "$_delivery_list" | jq -c '. + ["/social post x"]')
+        _has_social=1
+    fi
+    if [[ "$_svc_status" == *CONFIGURED:*mastodon* ]]; then
+        _delivery_list=$(echo "$_delivery_list" | jq -c '. + ["/social post mastodon"]')
+        _has_social=1
+    fi
+    if [[ "$_svc_status" == *CONFIGURED:*bluesky* ]]; then
+        _delivery_list=$(echo "$_delivery_list" | jq -c '. + ["/social post bluesky"]')
+        _has_social=1
+    fi
+    if [ "$_has_social" -eq 0 ] && [[ "$_svc_status" == *CONFIGURED:* ]]; then
+        if [[ "$_svc_status" == *discord* || "$_svc_status" == *telegram* || "$_svc_status" == *x/twitter* || "$_svc_status" == *mastodon* || "$_svc_status" == *bluesky* ]]; then
+            _delivery_list=$(echo "$_delivery_list" | jq -c '. + ["/social post"]')
+        fi
     fi
     if [ "${_AGENT_GIT_LOCKED:-0}" -ne 1 ]; then
         _delivery_list=$(echo "$_delivery_list" | jq -c '. + ["/commit", "/push"]')
@@ -2997,7 +3020,7 @@ _agent_evaluate_honeydew_item() {
 
     local _sys_cross=""
     [ -n "$_prior_milestones" ] && _sys_cross=" Judge whether this item was accomplished by ANY work so far — current action log OR prior completed milestones. If a prior milestone already did what the item asks, answer SATISFIED."
-    local eval_sys="You are a strict Honeydew Item Evaluator. Evaluate ONLY the specific HONEYDEW ITEM TO EVALUATE below. Do NOT require the entire ORIGINAL USER REQUEST to be finished to mark this item SATISFIED. If the narrow task asked for in the honeydew item has been done (either by the current action log or a prior milestone), verdict MUST be SATISFIED.${_sys_cross} For current actions, judge from ACTUAL COMMAND OUTPUTS — ignore milestone pass/fail status. ${_eval_output_hint} Verify relevance to original request (dates, topics, scope). No markdown. Respond with JSON: {\"verdict\":\"SATISFIED\" or \"UNSATISFIED\", \"reason\":\"brief reason\", \"recommendation\":\"slash command or empty\"}. If UNSATISFIED, recommendation must be a /command from the AVAILABLE COMMANDS list."
+    local eval_sys="You are a strict Honeydew Item Evaluator. Evaluate ONLY the specific HONEYDEW ITEM TO EVALUATE below. Do NOT require the entire ORIGINAL USER REQUEST to be finished to mark this item SATISFIED. If the narrow task asked for in the honeydew item has been done (either by the current action log or a prior milestone), verdict MUST be SATISFIED.${_sys_cross} For current actions, judge from ACTUAL COMMAND OUTPUTS — ignore milestone pass/fail status. ${_eval_output_hint} Verify relevance to original request (dates, topics, scope). No markdown. Respond with JSON: {\"verdict\":\"SATISFIED\" or \"UNSATISFIED\", \"reason\":\"brief reason\", \"recommendation\":\"slash command or empty\"}. If UNSATISFIED, recommendation must be a /command from the AVAILABLE COMMANDS list. Rule on Social Media Commands: '/social post <platform>' is for posting to a channel. '/social discord dm' is ONLY for direct messages to a specific user name or ID. NEVER recommend '/social discord dm' when the destination is a channel (e.g. 'general')."
 
     # ── Inject reflexive context into honeydew evaluator ─────
     # When metacog reports stuck/saturated or soul gate rejections,
