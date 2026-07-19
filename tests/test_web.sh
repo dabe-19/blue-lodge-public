@@ -113,6 +113,18 @@ describe "web_fetch_raw"
     _teardown_web
   }
 
+  it "detects please wait for verification and captcha pages as block reasons" && {
+    _setup_web
+    sample_html="<html><head><title>Reddit - Please wait for verification</title></head></html>"
+    reason=$(_web_block_reason "200" "$sample_html")
+    assert_eq "$reason" "HTML_CHALLENGE_OR_CAPTCHA"
+
+    sample_html2="<html><body>checking your browser...</body></html>"
+    reason2=$(_web_block_reason "200" "$sample_html2")
+    assert_eq "$reason2" "HTML_CHALLENGE_OR_CAPTCHA"
+    _teardown_web
+  }
+
 # ── web_fetch (with caching) ──────────────────────────────────
 describe "web_fetch"
 

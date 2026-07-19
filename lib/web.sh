@@ -23,7 +23,7 @@ WEB_CONTENT_MAX_CHARS="${WEB_CONTENT_MAX_CHARS:-4000}"  # Max chars for cleaned 
 # Comma-separated list. Fetch/scrape is skipped for these hosts,
 # but search-result headers (title + snippet) are still used.
 # Override in .george/config or environment to add/remove domains.
-WEB_BLACKLIST_DOMAINS="${WEB_BLACKLIST_DOMAINS:-linkedin.com,facebook.com,instagram.com,twitter.com,x.com,tiktok.com,pinterest.com}"
+WEB_BLACKLIST_DOMAINS="${WEB_BLACKLIST_DOMAINS:-linkedin.com,facebook.com,instagram.com,twitter.com,x.com,tiktok.com,pinterest.com,youtube.com,youtu.be}"
 
 # ── Centralized curl wrapper ──────────────────────────────────
 # All web-browsing curl calls route through _web_curl to ensure:
@@ -82,7 +82,7 @@ _web_block_reason() {
     #           indicating it's a challenge interstitial, not a real page.
 
     # Tier 1: unambiguous WAF/challenge markers
-    if echo "$lower_html" | grep -qE 'cf-chl-bypass|cf-chl-widget|challenge-platform|_cf_chl_opt|verify you are human|just a moment\.\.\.|enable javascript and cookies|ray id'; then
+    if echo "$lower_html" | grep -qE 'cf-chl-bypass|cf-chl-widget|challenge-platform|_cf_chl_opt|verify you are human|just a moment\.\.\.|enable javascript and cookies|ray id|please wait for verification|checking your browser|security verification|human verification|checking if the site connection is secure|robot check'; then
         echo "HTML_CHALLENGE_OR_CAPTCHA"
         return 0
     fi
