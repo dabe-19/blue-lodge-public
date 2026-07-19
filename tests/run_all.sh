@@ -144,10 +144,10 @@ run_one_test() {
     start_ts=$(date +%s)
     if [ "$VERBOSE" -eq 1 ]; then
         # Direct output to stdout, but still copy to out_file for final summary
-        bash "$t_file" > >(tee "$out_file") 2>&1
+        bash "$t_file" < /dev/null > >(tee "$out_file") 2>&1
         echo "$?" > "$code_file"
     else
-        bash "$t_file" > "$out_file" 2>&1
+        bash "$t_file" < /dev/null > "$out_file" 2>&1
         echo "$?" > "$code_file"
     fi
     end_ts=$(date +%s)

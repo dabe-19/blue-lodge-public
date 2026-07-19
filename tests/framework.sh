@@ -310,6 +310,8 @@ test_unmock_all() {
 # into assertions about code defaults).
 _TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export LODGE_DIR="$(dirname "$_TESTS_DIR")"
+# Redirect stdin of the test shell to /dev/null so any interactive prompts immediately return EOF and do not hang/suspend.
+exec 0</dev/null
 _FRAMEWORK_CONFIG_DIR=$(mktemp -d /tmp/george-test-config-XXXXXX)
 export GEORGE_CONFIG_DIR="$_FRAMEWORK_CONFIG_DIR"
 # Cleanup on exit
