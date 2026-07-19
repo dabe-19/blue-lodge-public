@@ -4445,15 +4445,16 @@ _build_specialist_prompt() {
         # in the middle get ignored ("lost in the middle" effect).
         # Previously these rules were buried in SPEC_PREAMBLE after
         # the TASK block, right in the attention dead zone.
+        local base_cmd="${cmd_name#/}"
         local _spec_research_rule=""
         local _spec_task_lower
         _spec_task_lower=$(echo "${micro_objective} ${_AGENT_PRIMARY_TASK:-}" | tr '[:upper:]' '[:lower:]')
         if [[ "$cmd_name" =~ ^/?(web|git|recall)$ ]] && [[ "$_spec_task_lower" =~ research ]]; then
             _spec_research_rule="7. RESEARCH RULE: If the task/milestone mentions 'research', you must NOT stop at /web search. You must also fetch/scrape at least one relevant URL to gather detailed content."
         fi
+        echo "RULES (OBEY THESE — they override everything below):"
+        echo "1. Output exactly ONE command starting with /$base_cmd."
         cat << 'SPEC_RULES'
-RULES (OBEY THESE — they override everything below):
-1. Output exactly ONE command starting with /.
 2. For commands with large multi-line content (/write, /save, /append, /edit, /respond, /social, /email), put the command and target path on the first line, then write the content on subsequent lines with literal newlines.
 3. FORBIDDEN: NO backticks. NO code fences. NO --flags on slash commands. NO quotes on args. NO multiple commands per line.
 4. FILE EXPANSION: In /social and /email, any filename in the message text or body= (e.g. magic_card_deck_report.md) is auto-expanded to its file contents. When sending reports, summaries, or drafts, ALWAYS /write the content to a file first, then reference that file path in your message/body (e.g. /social discord dm dabe magic_card_deck_report.md).

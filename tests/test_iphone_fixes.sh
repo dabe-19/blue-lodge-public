@@ -185,6 +185,25 @@ describe "cmd_edit"
     rm -rf "$_tmpdir"
   }
 
+  it "applies valid block-replacement via awk fallback when python3 is missing" && {
+    _tmpdir=$(test_tmpdir)
+    echo "old_name = true" > "$_tmpdir/config.txt"
+    # Mock command command to hide python3
+    command() {
+        if [ "$1" = "-v" ] && [ "$2" = "python3" ]; then
+            return 1
+        fi
+        builtin command "$@"
+    }
+    _out=$(cmd_edit $'config.txt\n<<<<<<<\nold_name = true\n=======\nnew_name = true\n>>>>>>>' "$_tmpdir" 2>&1)
+    assert_ok $?
+    unset -f command
+    _content=$(cat "$_tmpdir/config.txt")
+    assert_contains "$_content" "new_name = true"
+    assert_not_contains "$_content" "old_name = true"
+    rm -rf "$_tmpdir"
+  }
+
   it "strips leading slash from filepath" && {
     _tmpdir=$(test_tmpdir)
     mkdir -p "$_tmpdir/src"

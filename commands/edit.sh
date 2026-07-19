@@ -110,10 +110,12 @@ cmd_edit() {
     local before_lines after_lines
     before_lines=$(wc -l < "$fullpath")
 
-    export CONTENT="$content"
+    local py_rc=1
+    local py_err=""
 
-    local py_err
-    py_err=$(python3 -c '
+    if command -v python3 &>/dev/null; then
+        export CONTENT="$content"
+        py_err=$(python3 -c '
 import sys, os
 fullpath = sys.argv[1]
 content_str = os.environ.get("CONTENT", "")
@@ -197,9 +199,136 @@ with open(fullpath, "w", encoding="utf-8") as f:
 
 print(f"Applied {len(cleaned_blocks)} block edits.")
 ' "$fullpath" 2>&1)
-    local py_rc=$?
+        py_rc=$?
+        unset CONTENT
+    else
+        # Pure Bash/Awk Fallback when python3 is not available
+        local file_content
+        file_content=$(cat "$fullpath")
 
-    unset CONTENT
+        # Parse blocks
+        local blocks_search=()
+        local blocks_replace=()
+        local state="outside"
+        local cur_search=""
+        local cur_replace=""
+
+        while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%$'\r'}"
+            if [[ "$line" == "<<<<<<<"* ]]; then
+                state="in_search"
+                cur_search=""
+            elif [[ "$line" == "======="* ]]; then
+                state="in_replace"
+                cur_replace=""
+            elif [[ "$line" == ">>>>>>>"* ]]; then
+                if [ "$state" = "in_replace" ]; then
+                    blocks_search+=("$cur_search")
+                    blocks_replace+=("$cur_replace")
+                fi
+                state="outside"
+            else
+                if [ "$state" = "in_search" ]; then
+                    cur_search="${cur_search}${cur_search:+$'\n'}${line}"
+                elif [ "$state" = "in_replace" ]; then
+                    cur_replace="${cur_replace}${cur_replace:+$'\n'}${line}"
+                elif [ "$state" = "outside" ] && [ -n "$(echo "$line" | tr -d '[:space:]')" ]; then
+                    state="in_search"
+                    cur_search="$line"
+                fi
+            fi
+        done <<< "$content"
+
+        if [ "${#blocks_search[@]}" -eq 0 ]; then
+            py_err="Error: Edit rejected — invalid block-replace format. Could not parse any search/replace blocks."
+            py_rc=1
+        else
+            strip_line_numbers() {
+                local text="$1"
+                echo "$text" | sed -E 's/^[[:space:]]*[0-9]+:[[:space:]]?//'
+            }
+
+            local new_content="$file_content"
+            local i
+            local success=1
+            for ((i=0; i<${#blocks_search[@]}; i++)); do
+                local search="${blocks_search[i]}"
+                local replace="${blocks_replace[i]}"
+                
+                if [ -z "$search" ]; then
+                    py_err="Error: Empty search pattern in block $((i+1))."
+                    success=0
+                    break
+                fi
+
+                local cleaned_search="$search"
+                local cleaned_replace="$replace"
+
+                if [[ "$new_content" != *"$search"* ]]; then
+                    local cand_search
+                    cand_search=$(strip_line_numbers "$search")
+                    if [[ "$new_content" == *"$cand_search"* ]]; then
+                        cleaned_search="$cand_search"
+                        cleaned_replace=$(strip_line_numbers "$replace")
+                    fi
+                fi
+
+                if [[ "$new_content" != *"$cleaned_search"* ]]; then
+                    py_err="Error: Search pattern not found in target file (block $((i+1)))."
+                    success=0
+                    break
+                fi
+
+                local match_count
+                match_count=$(awk -v search="$cleaned_search" '
+                    BEGIN {
+                        file_content = ""
+                        while (getline line < "/dev/stdin") {
+                            file_content = file_content (file_content == "" ? "" : "\n") line
+                        }
+                        count = 0
+                        pos = index(file_content, search)
+                        while (pos > 0) {
+                            count++
+                            file_content = substr(file_content, pos + length(search))
+                            pos = index(file_content, search)
+                        }
+                        print count
+                        exit
+                    }
+                ' <<< "$new_content")
+
+                if [ "$match_count" -gt 1 ]; then
+                    py_err="Error: Search pattern is not unique (found multiple matches) in block $((i+1))."
+                    success=0
+                    break
+                fi
+
+                new_content=$(awk -v search="$cleaned_search" -v replace="$cleaned_replace" '
+                    BEGIN {
+                        file_content = ""
+                        while (getline line < "/dev/stdin") {
+                            file_content = file_content (file_content == "" ? "" : "\n") line
+                        }
+                        pos = index(file_content, search)
+                        if (pos > 0) {
+                            file_content = substr(file_content, 1, pos - 1) replace substr(file_content, pos + length(search))
+                        }
+                        printf "%s", file_content
+                        exit
+                    }
+                ' <<< "$new_content")
+            done
+
+            if [ "$success" -eq 1 ]; then
+                printf "%s" "$new_content" > "$fullpath"
+                py_err="Applied ${#blocks_search[@]} block edits (fallback)."
+                py_rc=0
+            else
+                py_rc=1
+            fi
+        fi
+    fi
 
     if [ "$py_rc" -eq 0 ]; then
         after_lines=$(wc -l < "$fullpath")
