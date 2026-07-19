@@ -822,10 +822,10 @@ _llm_start_llamacpp_server() {
     # Build launch args
     local _launch_args=(
         --port "$_port"
-        -ngl "$LLAMA_CPP_GPU_LAYERS"
-        -c "$((LLAMA_CPP_CTX_SIZE * LLAMA_CPP_SLOTS))"
+        -ngl "${LLAMA_CPP_GPU_LAYERS:-0}"
+        -c "$(( ${LLAMA_CPP_CTX_SIZE:-8192} * ${LLAMA_CPP_SLOTS:-2} ))"
         --threads "$(nproc 2>/dev/null || echo 4)"
-        --parallel "$LLAMA_CPP_SLOTS"
+        --parallel "${LLAMA_CPP_SLOTS:-2}"
     )
 
     if [ "${LLAMA_CPP_NO_MMAP:-0}" = "1" ]; then
