@@ -379,6 +379,13 @@ ui_resolve_path() {
     local workdir="${2:-.}"
     local is_write="${3:-0}" # 0=read, 1=write
     local lodge_dir="${LODGE_DIR:-$(pwd)}"
+    if [ -n "$LODGE_DIR" ] && [ ! -d "$LODGE_DIR" ]; then
+        if [ -d "/workspace" ]; then
+            lodge_dir="/workspace"
+        else
+            lodge_dir="$(pwd)"
+        fi
+    fi
 
     # If the path contains the active workspaces directory segment, extract the relative part.
     # This dynamically maps absolute container paths (e.g. starting with /workspace/ or /home/blue-lodge/)

@@ -13,8 +13,8 @@
 set -uo pipefail
 
 export LODGE_VERSION="0.1.0"
-# Auto-detect LODGE_DIR from script location if not set
-if [ -z "${LODGE_DIR:-}" ]; then
+# Auto-detect LODGE_DIR from script location if not set or if the inherited directory does not exist
+if [ -z "${LODGE_DIR:-}" ] || [ ! -d "$LODGE_DIR" ]; then
     _LODGE_SELF="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")"
     export LODGE_DIR="$(cd "$(dirname "$_LODGE_SELF")" && pwd)"
 fi

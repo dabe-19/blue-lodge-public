@@ -976,6 +976,11 @@ describe "Debug command"
     p4=$(ui_resolve_path "/custom/parent/blue-lodge/.george/workspaces/report.md" "$test_workdir" 0)
     assert_eq "$p4" "$test_lodgedir/.george/workspaces/report.md"
 
+    # 5. Non-existent LODGE_DIR environment path fallback
+    export LODGE_DIR="/tmp/non_existent_lodge_dir_123"
+    p5=$(ui_resolve_path ".george/workspaces/report.md" "$test_workdir" 0)
+    assert_eq "$p5" "$(pwd)/.george/workspaces/report.md"
+
     # Restore LODGE_DIR
     if [ -n "$old_lodge_dir" ]; then
         export LODGE_DIR="$old_lodge_dir"
