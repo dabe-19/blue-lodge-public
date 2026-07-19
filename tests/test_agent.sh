@@ -672,6 +672,15 @@ describe "Router heuristics"
     assert_ok $? "Must declare action_plan=\"\" early in loop"
   }
 
+  it "3-strike duplicate command blocker blocks exact command strings instead of base commands" && {
+    body=$(declare -f agent_inner_loop)
+    # Check that it matches exact command strings instead of base commands
+    echo "$body" | grep -q 'Command string added to blocked list'
+    assert_ok $? "Must log command string added to blocked list"
+    echo "$body" | grep -q '_clean_blk.*=.*_clean_cmd'
+    assert_ok $? "Must compare cleaned exact command strings"
+  }
+
 # ── Recursive planning config ─────────────────────────────────
 describe "Recursive planning config"
 

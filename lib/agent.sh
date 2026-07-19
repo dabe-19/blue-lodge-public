@@ -5318,9 +5318,12 @@ agent_inner_loop() {
                     # Reject pre-route if the command is currently blocked (3-strike rule)
                     local _blk
                     for _blk in "${_blocked_cmds[@]}"; do
-                        if [ "$_blk" = "$_pre_cmd" ]; then
+                        local _clean_blk _clean_pre
+                        _clean_blk=$(echo "$_blk" | tr -d '\r' | xargs)
+                        _clean_pre=$(echo "$_clean_obj" | tr -d '\r' | xargs)
+                        if [ "$_clean_blk" = "$_clean_pre" ]; then
                             _pre_eligible=0
-                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route /$_pre_cmd rejected: command is blocked (3-strike rule)"
+                            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route rejected: command '$_clean_pre' is blocked (3-strike rule)"
                             break
                         fi
                     done
@@ -5693,8 +5696,9 @@ SHORTLIST OVERRIDE: Choose exactly ONE slash command from ROUTER SHORTLIST only.
         local _clean_obj="$micro_objective"
         _clean_obj=$(echo "$_clean_obj" | sed -E 's/^(Use|Please use)[[:space:]]+//i')
         local _bypass_specialist=0
-        if [[ "$_clean_obj" =~ ^/([a-z0-9_-]+) ]]; then
+        if [[ "$_clean_obj" =~ ^/([a-z0-9_-]+)([[:space:]]+([^[:space:]]+))? ]]; then
             local _bp_cmd="${BASH_REMATCH[1]}"
+            local _bp_subcmd="${BASH_REMATCH[3]}"
             local _bp_valid=0
             if [ "$_bp_cmd" = "bash" ]; then
                 _bp_valid=1
@@ -5703,6 +5707,58 @@ SHORTLIST OVERRIDE: Choose exactly ONE slash command from ROUTER SHORTLIST only.
             elif [ -f "${LODGE_COMMANDS_DIR:-$LODGE_DIR/commands}/${_bp_cmd}.sh" ]; then
                 _bp_valid=1
             fi
+            
+            # Subcommand verification for complex tools to prevent malformed bypasses
+            if [ "$_bp_valid" -eq 1 ]; then
+                case "$_bp_cmd" in
+                    web)
+                        if ! [[ "$_bp_subcmd" =~ ^(fetch|scrape|search|images|scrape-images|summary|links|title|download|ping|cache|blacklist)$ ]]; then
+                            _bp_valid=0
+                        fi
+                        ;;
+                    social)
+                        if ! [[ "$_bp_subcmd" =~ ^(post|discord|telegram|mastodon|bluesky|x|status|channels|users)$ ]]; then
+                            _bp_valid=0
+                        fi
+                        ;;
+                    git)
+                        if ! [[ "$_bp_subcmd" =~ ^(status|diff|log|add|commit|push|clone|checkout|pull|branch|remote|init|ssh)$ ]]; then
+                            _bp_valid=0
+                        fi
+                        ;;
+                    email)
+                        if ! [[ "$_bp_subcmd" =~ ^(send|read|inbox|folders|setup|status)$ ]]; then
+                            _bp_valid=0
+                        fi
+                        ;;
+                    recall)
+                        if ! [[ "$_bp_subcmd" =~ ^(stats|reindex|clear|prefs|prune|compact|clearprefs)$ ]]; then
+                            _bp_valid=0
+                        fi
+                        ;;
+                    phone)
+                        if ! [[ "$_bp_subcmd" =~ ^(send|read|inbox|setup|status)$ ]]; then
+                            _bp_valid=0
+                        fi
+                        ;;
+                    sandbox|container)
+                        if ! [[ "$_bp_subcmd" =~ ^(new|run|exec|stop|list|status|clear)$ ]]; then
+                            _bp_valid=0
+                        fi
+                        ;;
+                    security)
+                        if ! [[ "$_bp_subcmd" =~ ^(status|sign|verify)$ ]]; then
+                            _bp_valid=0
+                        fi
+                        ;;
+                    secret)
+                        if ! [[ "$_bp_subcmd" =~ ^(get|set|delete|list)$ ]]; then
+                            _bp_valid=0
+                        fi
+                        ;;
+                esac
+            fi
+
             local _placeholder_rx="<[^>]*>"
             if [ "$_bp_valid" -eq 1 ] && ! [[ "$_clean_obj" =~ $_placeholder_rx ]]; then
                 _bypass_specialist=1
@@ -6561,11 +6617,17 @@ INTERLOCK_JSON
             local _spec_is_blocked=0
             local _blk
             for _blk in "${_blocked_cmds[@]}"; do
-                [ "$_blk" = "$_spec_cmd_name" ] && _spec_is_blocked=1 && break
+                local _clean_blk _clean_cmd
+                _clean_blk=$(echo "$_blk" | tr -d '\r' | xargs)
+                _clean_cmd=$(echo "$cmd" | tr -d '\r' | xargs)
+                if [ "$_clean_blk" = "$_clean_cmd" ]; then
+                    _spec_is_blocked=1
+                    break
+                fi
             done
             if [ "$_spec_is_blocked" -eq 1 ]; then
-                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] BLOCKED: /$_spec_cmd_name (3-strike rule)"
-                _micro_add_warning "$micro_file" "BLOCKED: /$_spec_cmd_name has failed 3+ times in a row. Use a DIFFERENT command."
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] BLOCKED: $cmd (3-strike rule)"
+                _micro_add_warning "$micro_file" "BLOCKED: The command '$cmd' has failed 3+ times in a row. Use a DIFFERENT command or different arguments."
                 _inner_cmd_history+=("$cmd")
                 _inner_cmd_exit_codes+=(127)
                 inner_attempts=$((inner_attempts + 1))
@@ -6749,27 +6811,34 @@ INTERLOCK_JSON
             fi
 
             # ── 3-STRIKE DUPLICATE COMMAND BLOCKER ──────────
-            # If the same base command has failed 3+ consecutive times,
-            # block it and force the router/specialist to pick something else.
+            # If the exact same command string has failed 3+ consecutive times,
+            # block it and force the router/specialist to generate something else.
             if [ "$cmd_is_slash" -eq 1 ]; then
-                local _dup_base="${cmd%% *}"
-                _dup_base="${_dup_base#/}"
-                # Check if this command is in the blocked list
+                # Check if this exact command is in the blocked list
                 local _is_blocked=0
                 local _blk
                 for _blk in "${_blocked_cmds[@]}"; do
-                    [ "$_blk" = "$_dup_base" ] && _is_blocked=1 && break
+                    local _clean_blk _clean_cmd
+                    _clean_blk=$(echo "$_blk" | tr -d '\r' | xargs)
+                    _clean_cmd=$(echo "$cmd" | tr -d '\r' | xargs)
+                    if [ "$_clean_blk" = "$_clean_cmd" ]; then
+                        _is_blocked=1
+                        break
+                    fi
                 done
                 if [ "$_is_blocked" -eq 1 ]; then
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] BLOCKED: /$_dup_base (3-strike rule)"
-                    _micro_add_warning "$micro_file" "BLOCKED: /$_dup_base has failed 3+ times in a row. Use a DIFFERENT command."
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] BLOCKED: $cmd (3-strike rule)"
+                    _micro_add_warning "$micro_file" "BLOCKED: The exact command '$cmd' has failed 3+ times in a row. Use a DIFFERENT command or different arguments."
                     inner_attempts=$((inner_attempts + 1))
                     continue
                 fi
-                # Count consecutive failures of this base command at the tail (exit_code != 0)
+                # Count consecutive failures of this exact command string
                 local _consec=0 _hc
                 for (( _hc=${#_inner_cmd_history[@]}-1; _hc>=0; _hc-- )); do
-                    if [[ "${_inner_cmd_history[$_hc]}" == "/$_dup_base"* ]]; then
+                    local _hist_cmd _curr_cmd
+                    _hist_cmd=$(echo "${_inner_cmd_history[$_hc]}" | tr -d '\r' | xargs)
+                    _curr_cmd=$(echo "$cmd" | tr -d '\r' | xargs)
+                    if [ "$_hist_cmd" = "$_curr_cmd" ]; then
                         local _ec="${_inner_cmd_exit_codes[$_hc]:-0}"
                         if [ "$_ec" -ne 0 ]; then
                             _consec=$((_consec + 1))
@@ -6781,9 +6850,9 @@ INTERLOCK_JSON
                     fi
                 done
                 if [ "$_consec" -ge 3 ]; then
-                    _blocked_cmds+=("$_dup_base")
-                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] /$_dup_base added to blocked list after $_consec consecutive failures"
-                    _micro_add_warning "$micro_file" "BLOCKED: /$_dup_base has failed $_consec times in a row. Use a DIFFERENT command."
+                    _blocked_cmds+=("$cmd")
+                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Command string added to blocked list after $_consec consecutive failures: $cmd"
+                    _micro_add_warning "$micro_file" "BLOCKED: The exact command '$cmd' has failed $_consec times in a row. Try a DIFFERENT command or different arguments."
                     inner_attempts=$((inner_attempts + 1))
                     continue
                 fi
