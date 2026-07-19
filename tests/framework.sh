@@ -286,7 +286,9 @@ test_mock() {
     if [ -z "${_MOCK_ORIGINALS[$func_name]:-}" ]; then
         _MOCK_ORIGINALS[$func_name]=$(declare -f "$func_name" 2>/dev/null || echo "")
     fi
-    eval "$func_name() { $mock_body; }"
+    eval "$func_name() {
+        $mock_body
+    }"
 }
 
 test_unmock() {
