@@ -235,11 +235,7 @@ recall_index_file() {
     _rc_tmp=$(mktemp "${TMPDIR:-/tmp}/recall-chunk.XXXXXX")
     local _sanitized_file_tmp
     _sanitized_file_tmp=$(mktemp "${TMPDIR:-/tmp}/recall-sanitize.XXXXXX")
-    sed 's/\x1B\[[0-9;]*[a-zA-Z]//g' "$filepath" | python3 -c "
-import sys
-for line in sys.stdin:
-    sys.stdout.write(''.join(c for c in line if ord(c) < 0x2500 or ord(c) > 0x25ff))
-" 2>/dev/null > "$_sanitized_file_tmp" || cp "$filepath" "$_sanitized_file_tmp"
+    sed 's/\x1B\[[0-9;]*[a-zA-Z]//g' "$filepath" | LC_ALL=C sed $'s/\xe2\x94[\x80-\xbf]//g; s/\xe2\x95[\x80-\xbf]//g; s/\xe2\x96[\x80-\xbf]//g; s/\xe2\x97[\x80-\xbf]//g' > "$_sanitized_file_tmp" || cp "$filepath" "$_sanitized_file_tmp"
 
     if [[ "$(basename "$filepath")" == "GEORGE.md" ]]; then
         local _clean_file_tmp
@@ -519,11 +515,7 @@ SQL
     fi
 
     if [ -n "$results" ]; then
-        results=$(echo "$results" | sed 's/\x1B\[[0-9;]*[a-zA-Z]//g' | python3 -c "
-import sys
-for line in sys.stdin:
-    sys.stdout.write(''.join(c for c in line if ord(c) < 0x2500 or ord(c) > 0x25ff))
-" 2>/dev/null || echo "$results")
+        results=$(echo "$results" | sed 's/\x1B\[[0-9;]*[a-zA-Z]//g' | LC_ALL=C sed $'s/\xe2\x94[\x80-\xbf]//g; s/\xe2\x95[\x80-\xbf]//g; s/\xe2\x96[\x80-\xbf]//g; s/\xe2\x97[\x80-\xbf]//g')
     fi
 
     local count=0
@@ -704,11 +696,7 @@ SQL
 
     # Sanitize final JSON output (strip ANSI escapes and box-drawing/TUI characters)
     if [ -n "$_rsc_json" ] && [ "$_rsc_json" != "[]" ]; then
-        _rsc_json=$(echo "$_rsc_json" | sed 's/\x1B\[[0-9;]*[a-zA-Z]//g' | python3 -c "
-import sys
-for line in sys.stdin:
-    sys.stdout.write(''.join(c for c in line if ord(c) < 0x2500 or ord(c) > 0x25ff))
-" 2>/dev/null || echo "$_rsc_json")
+        _rsc_json=$(echo "$_rsc_json" | sed 's/\x1B\[[0-9;]*[a-zA-Z]//g' | LC_ALL=C sed $'s/\xe2\x94[\x80-\xbf]//g; s/\xe2\x95[\x80-\xbf]//g; s/\xe2\x96[\x80-\xbf]//g; s/\xe2\x97[\x80-\xbf]//g')
     fi
 
     # Store in LRU cache for subsequent turns
