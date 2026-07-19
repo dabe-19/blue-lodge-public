@@ -184,6 +184,78 @@ _web_blacklist_reason() {
     echo "$line" | sed -n 's/.*|reason=\([^|]*\).*/\1/p'
 }
 
+WEB_EXCLUSIONS_FILE="${WEB_EXCLUSIONS_FILE:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/search_exclusions.log}"
+
+_web_exclusions_add() {
+    local host="$1"
+    [ -z "$host" ] && return 1
+
+    mkdir -p "$(dirname "$WEB_EXCLUSIONS_FILE")" 2>/dev/null
+
+    local strike_count=1
+    local existing_entry=""
+    if [ -f "$WEB_EXCLUSIONS_FILE" ]; then
+        existing_entry=$(grep "|host=$host|" "$WEB_EXCLUSIONS_FILE" 2>/dev/null | tail -1)
+    fi
+
+    if [ -n "$existing_entry" ]; then
+        local prev_strikes
+        prev_strikes=$(echo "$existing_entry" | awk -F'|' '{print $3}' | sed 's/strike_count=//')
+        strike_count=$((prev_strikes + 1))
+    fi
+
+    # Option B: Tiered progressive lockout
+    # Strike 1: 24 hours (86400 seconds)
+    # Strike 2: 7 days (604800 seconds)
+    # Strike 3+: 30 days (2592000 seconds)
+    local ttl=86400
+    if [ "$strike_count" -eq 2 ]; then
+        ttl=604800
+    elif [ "$strike_count" -ge 3 ]; then
+        ttl=2592000
+    fi
+
+    # Format: timestamp|host=domain|strike_count=N|ttl_seconds=S
+    printf '%s|host=%s|strike_count=%s|ttl_seconds=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$host" "$strike_count" "$ttl" >> "$WEB_EXCLUSIONS_FILE"
+}
+
+_web_exclusions_get_active_filters() {
+    [ -f "$WEB_EXCLUSIONS_FILE" ] || return 0
+    [ -s "$WEB_EXCLUSIONS_FILE" ] || return 0
+
+    local now_epoch
+    now_epoch=$(date -u '+%s')
+
+    # Read the log, collect the latest entry for each host
+    declare -A latest_lines
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local host
+        host=$(echo "$line" | awk -F'|' '{print $2}' | sed 's/host=//')
+        [ -n "$host" ] && latest_lines["$host"]="$line"
+    done < "$WEB_EXCLUSIONS_FILE"
+
+    local active_filters=""
+    for host in "${!latest_lines[@]}"; do
+        local entry="${latest_lines[$host]}"
+        local ts ttl_part
+        ts=$(echo "$entry" | awk -F'|' '{print $1}')
+        ttl_part=$(echo "$entry" | awk -F'|' '{print $4}' | sed 's/ttl_seconds=//')
+        
+        # Convert timestamp to epoch
+        local ts_epoch
+        ts_epoch=$(date -u -d "$ts" '+%s' 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" "+%s" 2>/dev/null)
+        if [ -n "$ts_epoch" ] && [ -n "$ttl_part" ]; then
+            local age=$((now_epoch - ts_epoch))
+            if [ "$age" -lt "$ttl_part" ]; then
+                active_filters="${active_filters} -site:${host}"
+            fi
+        fi
+    done
+
+    echo "$active_filters"
+}
+
 _web_blacklist_add() {
     local url="$1"
     local reason="$2"
@@ -199,34 +271,87 @@ _web_blacklist_add() {
     fi
 
     printf '%s|url=%s|host=%s|status=%s|reason=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$url" "$host" "${status:-unknown}" "$reason" >> "$WEB_BLACKLIST_FILE"
+    _web_exclusions_add "$host"
 }
 
 # ── Blacklist management commands ─────────────────────────────
 web_blacklist_list() {
-    if [ ! -f "$WEB_BLACKLIST_FILE" ] || [ ! -s "$WEB_BLACKLIST_FILE" ]; then
-        ui_info "Blacklist is empty"
+    local has_bl=0
+    local has_excl=0
+    [ -f "$WEB_BLACKLIST_FILE" ] && [ -s "$WEB_BLACKLIST_FILE" ] && has_bl=1
+    [ -f "$WEB_EXCLUSIONS_FILE" ] && [ -s "$WEB_EXCLUSIONS_FILE" ] && has_excl=1
+
+    if [ "$has_bl" -eq 0 ] && [ "$has_excl" -eq 0 ]; then
+        ui_info "Blacklist and search exclusions are empty"
         return 0
     fi
 
-    local _state="enabled"
-    _web_blacklist_is_enabled || _state="disabled"
-    ui_section "Web Blacklist ($_state)"
+    if [ "$has_bl" -eq 1 ]; then
+        local _state="enabled"
+        _web_blacklist_is_enabled || _state="disabled"
+        ui_section "Web Blacklist ($_state)"
 
-    local count=0
-    while IFS= read -r line; do
-        [ -z "$line" ] && continue
-        local ts host reason status
-        ts=$(echo "$line" | sed -n 's/^\([^|]*\)|.*/\1/p')
-        host=$(echo "$line" | sed -n 's/.*|host=\([^|]*\).*/\1/p')
-        reason=$(echo "$line" | sed -n 's/.*|reason=\([^|]*\).*/\1/p')
-        status=$(echo "$line" | sed -n 's/.*|status=\([^|]*\).*/\1/p')
-        printf '  %b%-30s%b  status=%-4s  %s  %b(%s)%b\n' \
-            "$C_WHITE" "$host" "$C_RESET" "$status" "$reason" "$C_DIM" "$ts" "$C_RESET"
-        count=$((count + 1))
-    done < "$WEB_BLACKLIST_FILE"
+        local count=0
+        while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            local ts host reason status
+            ts=$(echo "$line" | sed -n 's/^\([^|]*\)|.*/\1/p')
+            host=$(echo "$line" | sed -n 's/.*|host=\([^|]*\).*/\1/p')
+            reason=$(echo "$line" | sed -n 's/.*|reason=\([^|]*\).*/\1/p')
+            status=$(echo "$line" | sed -n 's/.*|status=\([^|]*\).*/\1/p')
+            printf '  %b%-30s%b  status=%-4s  %s  %b(%s)%b\n' \
+                "$C_WHITE" "$host" "$C_RESET" "$status" "$reason" "$C_DIM" "$ts" "$C_RESET"
+            count=$((count + 1))
+        done < "$WEB_BLACKLIST_FILE"
 
-    echo ""
-    ui_dim "  $count entries total"
+        echo ""
+        ui_dim "  $count entries total"
+    fi
+
+    if [ "$has_excl" -eq 1 ]; then
+        [ "$has_bl" -eq 1 ] && echo ""
+        ui_section "Web Search Exclusions"
+        local now_epoch
+        now_epoch=$(date -u '+%s')
+        declare -A latest_lines
+        while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            local host
+            host=$(echo "$line" | awk -F'|' '{print $2}' | sed 's/host=//')
+            [ -n "$host" ] && latest_lines["$host"]="$line"
+        done < "$WEB_EXCLUSIONS_FILE"
+
+        local excl_count=0
+        for host in "${!latest_lines[@]}"; do
+            local entry="${latest_lines[$host]}"
+            local ts strike_part ttl_part
+            ts=$(echo "$entry" | awk -F'|' '{print $1}')
+            strike_part=$(echo "$entry" | awk -F'|' '{print $3}' | sed 's/strike_count=//')
+            ttl_part=$(echo "$entry" | awk -F'|' '{print $4}' | sed 's/ttl_seconds=//')
+            
+            local ts_epoch
+            ts_epoch=$(date -u -d "$ts" '+%s' 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" "+%s" 2>/dev/null)
+            if [ -n "$ts_epoch" ] && [ -n "$ttl_part" ]; then
+                local age=$((now_epoch - ts_epoch))
+                local time_left=$((ttl_part - age))
+                if [ "$time_left" -gt 0 ]; then
+                    local time_str=""
+                    if [ "$time_left" -ge 86400 ]; then
+                        time_str="$((time_left / 86400))d remaining"
+                    elif [ "$time_left" -ge 3600 ]; then
+                        time_str="$((time_left / 3600))h remaining"
+                    else
+                        time_str="$((time_left / 60))m remaining"
+                    fi
+                    printf '  %b%-30s%b  strikes=%-2s  ttl=%-7ss  %s  %b(%s)%b\n' \
+                        "$C_WHITE" "$host" "$C_RESET" "$strike_part" "$ttl_part" "$time_str" "$C_DIM" "$ts" "$C_RESET"
+                    excl_count=$((excl_count + 1))
+                fi
+            fi
+        done
+        echo ""
+        ui_dim "  $excl_count active exclusion(s)"
+    fi
 }
 
 web_blacklist_rm() {
@@ -236,39 +361,51 @@ web_blacklist_rm() {
         return 1
     fi
 
-    if [ ! -f "$WEB_BLACKLIST_FILE" ]; then
-        ui_info "Blacklist is empty — nothing to remove"
-        return 0
-    fi
-
     # Extract host from URL if a full URL was given
     local host
     host=$(echo "$target" | sed 's|^https\?://||' | cut -d'/' -f1)
 
-    local before after
-    before=$(wc -l < "$WEB_BLACKLIST_FILE")
-    grep -v "|host=$host|" "$WEB_BLACKLIST_FILE" > "${WEB_BLACKLIST_FILE}.tmp" 2>/dev/null
-    mv "${WEB_BLACKLIST_FILE}.tmp" "$WEB_BLACKLIST_FILE"
-    after=$(wc -l < "$WEB_BLACKLIST_FILE")
+    local removed_bl=0
+    if [ -f "$WEB_BLACKLIST_FILE" ]; then
+        local before after
+        before=$(wc -l < "$WEB_BLACKLIST_FILE")
+        grep -v "|host=$host|" "$WEB_BLACKLIST_FILE" > "${WEB_BLACKLIST_FILE}.tmp" 2>/dev/null
+        mv "${WEB_BLACKLIST_FILE}.tmp" "$WEB_BLACKLIST_FILE"
+        after=$(wc -l < "$WEB_BLACKLIST_FILE")
+        removed_bl=$((before - after))
+    fi
 
-    local removed=$((before - after))
-    if [ "$removed" -gt 0 ]; then
-        ui_ok "Removed $removed entries for $host"
+    local removed_excl=0
+    if [ -f "$WEB_EXCLUSIONS_FILE" ]; then
+        local before_excl after_excl
+        before_excl=$(wc -l < "$WEB_EXCLUSIONS_FILE")
+        grep -v "|host=$host|" "$WEB_EXCLUSIONS_FILE" > "${WEB_EXCLUSIONS_FILE}.tmp" 2>/dev/null
+        mv "${WEB_EXCLUSIONS_FILE}.tmp" "$WEB_EXCLUSIONS_FILE"
+        after_excl=$(wc -l < "$WEB_EXCLUSIONS_FILE")
+        removed_excl=$((before_excl - after_excl))
+    fi
+
+    if [ "$removed_bl" -gt 0 ] || [ "$removed_excl" -gt 0 ]; then
+        ui_ok "Removed matching entries for $host (blacklist: $removed_bl, exclusions: $removed_excl)"
     else
         ui_info "No entries found for $host"
     fi
 }
 
 web_blacklist_clear() {
-    if [ ! -f "$WEB_BLACKLIST_FILE" ] || [ ! -s "$WEB_BLACKLIST_FILE" ]; then
-        ui_info "Blacklist is already empty"
-        return 0
+    local count_bl=0
+    if [ -f "$WEB_BLACKLIST_FILE" ]; then
+        count_bl=$(wc -l < "$WEB_BLACKLIST_FILE")
+        : > "$WEB_BLACKLIST_FILE"
     fi
 
-    local count
-    count=$(wc -l < "$WEB_BLACKLIST_FILE")
-    : > "$WEB_BLACKLIST_FILE"
-    ui_ok "Cleared $count blacklist entries"
+    local count_excl=0
+    if [ -f "$WEB_EXCLUSIONS_FILE" ]; then
+        count_excl=$(wc -l < "$WEB_EXCLUSIONS_FILE")
+        : > "$WEB_EXCLUSIONS_FILE"
+    fi
+
+    ui_ok "Cleared blacklist ($count_bl entries) and search exclusions ($count_excl entries)"
 }
 
 web_blacklist_enable() {
@@ -2057,6 +2194,15 @@ web_search() {
     query="${query%\"}"
     query="${query#\'}"
     query="${query%\'}"
+
+    # Automatically append active exclusions from global search exclusions list
+    local exclusions
+    exclusions=$(_web_exclusions_get_active_filters)
+    if [ -n "$exclusions" ]; then
+        query="${query}${exclusions}"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] web_search query with exclusions: $query"
+    fi
 
     # MCP-first: route through george-fetch web_search tool
     if declare -f mcp_enabled &>/dev/null && mcp_enabled; then

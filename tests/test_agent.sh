@@ -4059,6 +4059,15 @@ describe "Web gate evaluator filtering"
     assert_ok $? "recommendation validator must block /web when locked"
   }
 
+  it "milestone evaluator injects discovered web links from research_context" && {
+    body=$(declare -f _agent_evaluate_milestone)
+    # Check that it checks research_context.results and sets _eval_discovered_links
+    echo "$body" | grep -q 'research_context.results'
+    assert_ok $? "Must read research_context from micro_memory"
+    echo "$body" | grep -q 'DISCOVERED WEB LINKS'
+    assert_ok $? "Must inject DISCOVERED WEB LINKS label into prompt"
+  }
+
 # ── Phase 8: Grep \\| ERE transform ──────────────────────────
 describe "Grep BRE-to-ERE transform"
 

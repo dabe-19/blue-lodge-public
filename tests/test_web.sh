@@ -13,6 +13,7 @@ _setup_web() {
     export GEORGE_COOKIES_DIR="$GEORGE_CONFIG_DIR/cookies"
     export GEORGE_CACHE_DIR="$GEORGE_CONFIG_DIR/cache"
     export WEB_BLACKLIST_FILE="$GEORGE_CONFIG_DIR/web_blacklist.log"
+    export WEB_EXCLUSIONS_FILE="$GEORGE_CONFIG_DIR/search_exclusions.log"
     export WEB_BLACKLIST_ENABLED="true"
     api_init 2>/dev/null
     source "$LODGE_DIR/lib/web.sh"
@@ -2029,6 +2030,80 @@ describe "_web_fetch_reddit"
     _setup_web
     _web_fetch_reddit "https://example.com" >/dev/null 2>&1
     assert_fail $? "should fail for non-Reddit URL"
+    _teardown_web
+  }
+
+# ── Web search exclusions ────────────────────────────────────
+describe "web search exclusions"
+
+  it "adds strike exclusions and calculates tiered progressive TTLs" && {
+    _setup_web
+    export WEB_EXCLUSIONS_FILE="$GEORGE_CONFIG_DIR/search_exclusions.log"
+    rm -f "$WEB_EXCLUSIONS_FILE"
+
+    # First strike -> 24 hours (86400s)
+    _web_exclusions_add "block1.com"
+    assert_file_exists "$WEB_EXCLUSIONS_FILE"
+    entry1=$(grep "|host=block1.com|" "$WEB_EXCLUSIONS_FILE" | tail -1)
+    assert_contains "$entry1" "strike_count=1"
+    assert_contains "$entry1" "ttl_seconds=86400"
+
+    # Second strike -> 7 days (604800s)
+    _web_exclusions_add "block1.com"
+    entry2=$(grep "|host=block1.com|" "$WEB_EXCLUSIONS_FILE" | tail -1)
+    assert_contains "$entry2" "strike_count=2"
+    assert_contains "$entry2" "ttl_seconds=604800"
+
+    # Third strike -> 30 days (2592000s)
+    _web_exclusions_add "block1.com"
+    entry3=$(grep "|host=block1.com|" "$WEB_EXCLUSIONS_FILE" | tail -1)
+    assert_contains "$entry3" "strike_count=3"
+    assert_contains "$entry3" "ttl_seconds=2592000"
+
+    _teardown_web
+  }
+
+  it "automatically excludes active domains from search queries" && {
+    _setup_web
+    export WEB_EXCLUSIONS_FILE="$GEORGE_CONFIG_DIR/search_exclusions.log"
+    rm -f "$WEB_EXCLUSIONS_FILE"
+
+    # Add active exclusion
+    _web_exclusions_add "hostile-bot-blocker.com"
+    filters=$(_web_exclusions_get_active_filters)
+    assert_contains "$filters" "-site:hostile-bot-blocker.com"
+
+    # Add expired exclusion manually by writing past timestamp
+    past_time=$(date -u -d "2 days ago" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-2d '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)
+    printf '%s|host=expired.com|strike_count=1|ttl_seconds=86400\n' "$past_time" >> "$WEB_EXCLUSIONS_FILE"
+
+    filters2=$(_web_exclusions_get_active_filters)
+    assert_not_contains "$filters2" "-site:expired.com"
+    assert_contains "$filters2" "-site:hostile-bot-blocker.com"
+
+    _teardown_web
+  }
+
+  it "blacklist subcommands list and clear both blacklist and exclusions" && {
+    _setup_web
+    export WEB_EXCLUSIONS_FILE="$GEORGE_CONFIG_DIR/search_exclusions.log"
+    rm -f "$WEB_EXCLUSIONS_FILE"
+
+    _web_blacklist_add "https://site-abc.com/page" "HTTP_403_FORBIDDEN" "403"
+    assert_file_exists "$WEB_BLACKLIST_FILE"
+    assert_file_exists "$WEB_EXCLUSIONS_FILE"
+
+    # Test rm
+    web_blacklist_rm "https://site-abc.com" >/dev/null
+    assert_not_contains "$(cat "$WEB_BLACKLIST_FILE" 2>/dev/null)" "site-abc.com"
+    assert_not_contains "$(cat "$WEB_EXCLUSIONS_FILE" 2>/dev/null)" "site-abc.com"
+
+    # Test clear
+    _web_blacklist_add "https://site-xyz.com/page" "HTTP_403_FORBIDDEN" "403"
+    web_blacklist_clear >/dev/null
+    assert_empty "$(cat "$WEB_BLACKLIST_FILE" 2>/dev/null)"
+    assert_empty "$(cat "$WEB_EXCLUSIONS_FILE" 2>/dev/null)"
+
     _teardown_web
   }
 

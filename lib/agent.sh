@@ -3223,12 +3223,26 @@ _agent_evaluate_milestone() {
         _eval_research_rule="  - Research Rule: Since this task/objective involves 'research', you MUST classify the verdict as INCOMPLETE if the action log only contains a web search without a web fetch/scrape. Research is not finished until page content is fetched."
     fi
 
+    # Retrieve discovered links from research_context if available
+    local _eval_discovered_links=""
+    if [ "$_is_web_milestone" -eq 1 ] && [ -n "$micro_file" ] && [ -f "$micro_file" ]; then
+        local _rc_data
+        _rc_data=$(jq -r '.research_context.results // empty' "$micro_file" 2>/dev/null)
+        if [ -n "$_rc_data" ] && [ "$_rc_data" != "null" ]; then
+            local _formatted_links
+            _formatted_links=$(echo "$_rc_data" | jq -r 'map("- [\(.id)] \(.title)\n  URL: \(.url)\n  Snippet: \(.snippet)") | join("\n")' 2>/dev/null)
+            if [ -n "$_formatted_links" ]; then
+                _eval_discovered_links="\n\nDISCOVERED WEB LINKS (Search Results):\n${_formatted_links}"
+            fi
+        fi
+    fi
+
     # ATTENTION REORDER: Action log FIRST, milestone LAST (recency bias)
     local _eval_now
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
     local eval_prompt="" eval_sys=""
     if [ "$_is_web_milestone" -eq 1 ]; then
-        eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nPRIMARY OBJECTIVE (the original user request):\n${_primary_obj}\n\nACTION LOG (from the current milestone execution):\n${eval_context}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions above accomplish this milestone? Apply the EVAL SCHEMA below.\n\n$(cat << EVAL_P1_TEXT
+        eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nPRIMARY OBJECTIVE (the original user request):\n${_primary_obj}\n\nACTION LOG (from the current milestone execution):\n${eval_context}${_eval_discovered_links}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions above accomplish this milestone? Apply the EVAL SCHEMA below.\n\n$(cat << EVAL_P1_TEXT
 EVAL SCHEMA:
 - Classify: Either COMPLETE or INCOMPLETE.
 - Scope: Evaluate if the retrieved information is relevant to the PRIMARY OBJECTIVE. Do not judge by future/past objectives (e.g. if the milestone is to search/scrape content, it is COMPLETE once relevant content is successfully retrieved, even if editing or delivery steps of the primary objective have not been started yet).
@@ -3236,7 +3250,7 @@ EVAL SCHEMA:
 - Web Relevance Check (Mandatory for Search/Scrape):
   - Do NOT just verify that the command ran successfully. You MUST inspect the actual search results or page content returned in the ACTION LOG.
   - If the retrieved information is empty, irrelevant to the primary objective, blocked/captcha, or fails to contain the specific data needed to fulfill the original user request (e.g. searching for a book returns no info about the book, or a fetch returned an empty/blocked page), you MUST classify the verdict as INCOMPLETE.
-  - If INCOMPLETE, you must formulate a new suggested milestone that would get the correct information (e.g. 'Use /web search with different criteria...', 'Use /web fetch on <another_url>...', or a custom action) and return it in the "recommendation" field of the JSON.
+  - If INCOMPLETE and you need page content, review the DISCOVERED WEB LINKS (Search Results) provided above. Identify which URLs have already been attempted/blocked in the ACTION LOG, evaluate the remaining options based on their titles and snippets, and recommend the next best URL (e.g. 'Use /web fetch <url>' or 'Use /web summary <url>') in the "recommendation" field of the JSON.
 ${_eval_research_rule}
 - Recommendation Rule: Any recommended next actions or commands in your recommendation MUST use only valid workspace slash commands (/web, /read, /ls, /grep, /write, /save, /append, /edit, /respond, /social, /email, /brainstorm). Never fabricate or invent new slash command names.
 - Response Format: Respond with a JSON object ONLY: {"verdict":"COMPLETE" or "INCOMPLETE", "reason":"brief reason", "recommendation":"new suggested milestone or empty"}. Do NOT include any markdown block formatting or additional text.
