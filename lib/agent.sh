@@ -2489,6 +2489,11 @@ _agent_honeydew_rewrite() {
     local _guidance_section=""
     if [ -n "$guidance" ]; then
         _guidance_section="\n\n>>> OPERATOR GUIDANCE/INSTRUCTIONS (PRIORITIZE THIS OVER ORIGINAL TASK DETAILS) <<<\nThe operator has provided specific instructions on how to proceed:\n${guidance}\nYou MUST rewrite the remaining pending items to prioritize and execute this operator guidance."
+        local _guidance_lower
+        _guidance_lower=$(echo "$guidance" | tr '[:upper:]' '[:lower:]')
+        if [[ "$_guidance_lower" == *"scratch"* ]]; then
+            _guidance_section="${_guidance_section}\nCRITICAL: The operator has directed to create/write the missing document from scratch. You MUST replace any pending 'Review' or 'Read' steps for this missing file with distinct steps to: 1) Research and gather the required information/context, 2) Write/create the new document draft from scratch, and 3) Continue with the original task's subsequent delivery/processing steps."
+        fi
     fi
 
     # Build optional recommendation section for router (modes 1 and 2)
@@ -2649,6 +2654,8 @@ IMPORTANT: Consolidate redundant or overlapping items. If two pending items desc
 
 IF/ELSE BRANCHING: If the completed milestones reveal that a primary path is blocked or failed (e.g., file not found, service down, or check returned negative), rewrite the pending items to execute the alternative fallback branch or recovery steps. Avoid planning for the failed branch.
 
+MISSING DOCUMENT WORKFLOW: If the operator guidance instructs to create or write a missing document/file 'from scratch' (or similar), you MUST update the pending objectives to prioritize this workflow: 1) create subtasks to gather or research the required contents/information, 2) write/create a draft of the missing document from scratch, and 3) proceed with any remaining delivery or processing steps from the original task.
+
 $(cat << 'REWRITE_JSON'
 {"output":"JSON object: {\"items\":[{\"task\":\"imperative sentence\"},...]}",
  "each_item":"imperative sentence preserving key context from the original task (such as names, projects, files, or specific targets) — WHAT to achieve, not HOW",
@@ -2663,7 +2670,7 @@ $(cat << 'REWRITE_JSON'
 REWRITE_JSON
 )"
 
-    local rewrite_sys="You are a task decomposition rewrite engine. Rewrite ONLY the pending honeydew items to better align with the original task based on milestone discoveries. If prior milestones or commands failed, you must pivot and rewrite the pending items to work around the failure (e.g. if a specific URL, path, or tool is blocked/fails, rewrite items to find another source, use local tools, or try a different path). Output a JSON object: {\"items\":[{\"task\":\"imperative sentence\"},...]}. Each item: imperative sentence preserving key context from the original task (e.g., names, files, topics). Describe WHAT, not HOW. No commands, URLs, or tools. NEVER merge synthesis/drafting steps with final delivery/transmission steps. ALWAYS use unique, task-descriptive filenames (e.g. 'magic_card_deck_report.md') instead of generic filenames like 'report.md' or 'summary.md' when specifying deliverables in your checklist."
+    local rewrite_sys="You are a task decomposition rewrite engine. Rewrite ONLY the pending honeydew items to better align with the original task based on milestone discoveries. If prior milestones or commands failed, you must pivot and rewrite the pending items to work around the failure (e.g. if a specific URL, path, or tool is blocked/fails, rewrite items to find another source, use local tools, or try a different path). If the operator guidance instructs to create/write a missing document/file 'from scratch', you MUST replace any pending 'Read' or 'Review' steps for that missing file with distinct steps to: 1) gather/research the required content/information, 2) write/create a draft of the missing document from scratch, and 3) proceed with any remaining delivery or processing steps from the original task. Output a JSON object: {\"items\":[{\"task\":\"imperative sentence\"},...]}. Each item: imperative sentence preserving key context from the original task (e.g., names, files, topics). Describe WHAT, not HOW. No commands, URLs, or tools. NEVER merge synthesis/drafting steps with final delivery/transmission steps. ALWAYS use unique, task-descriptive filenames (e.g. 'magic_card_deck_report.md') instead of generic filenames like 'report.md' or 'summary.md' when specifying deliverables in your checklist."
 
     local _raw_rewrite
     local LLM_SCENARIO=strategist

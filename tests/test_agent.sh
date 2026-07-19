@@ -2902,6 +2902,40 @@ describe "Dynamic honeydew rewrite function"
     assert_ok $? "rewrite should accept guidance as 6th parameter"
   }
 
+  it "rewrite injects missing document workflow guidance on scratch operator guidance" && {
+    _tmpdir=$(test_tmpdir)
+    mkdir -p "$_tmpdir/.george"
+    jq -n '{"primary_task":"test","items":[
+      {"id":1,"task":"Do something","status":"pending","depth":0}]}' > "$_tmpdir/.george/honeydew.json"
+    jq -n '{"primary_objective":"test","completed_milestones":[{"summary":"did a thing"}]}' > "$_tmpdir/.george/macro_memory.json"
+    
+    AGENT_HONEYDEW_REWRITE=1
+    AGENT_HONEYDEW_REWRITE_ROUNDS=2
+    _honeydew_rewrite_rounds_used=0
+
+    # Mock llm_generate to capture the prompt
+    test_mock "llm_generate" '
+        local prompt="$1"
+        local system="$2"
+        echo "PROMPT: $prompt" >&2
+        echo "SYSTEM: $system" >&2
+        echo "{\"items\":[{\"task\":\"Do something rewritten\"}]}"
+    '
+
+    # Capture stderr to check prompt contents
+    _output=$(_agent_honeydew_rewrite "$_tmpdir/.george/macro_memory.json" "$_tmpdir/.george/micro_memory.json" "$_tmpdir" "" 1 "create it from scratch" 2>&1)
+    
+    test_unmock "llm_generate"
+    AGENT_HONEYDEW_REWRITE=0
+    rm -rf "$_tmpdir"
+
+    echo "$_output" | grep -q "MISSING DOCUMENT WORKFLOW"
+    assert_ok $? "Prompt must contain MISSING DOCUMENT WORKFLOW instructions"
+
+    echo "$_output" | grep -q "CRITICAL: The operator has directed to create/write the missing document from scratch"
+    assert_ok $? "Prompt must contain the CRITICAL scratch operator instruction block"
+  }
+
 describe "Dynamic honeydew rewrite integration"
 
   it "agent_run initializes _honeydew_rewrite_rounds_used counter" && {
