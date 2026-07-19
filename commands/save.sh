@@ -38,8 +38,20 @@ cmd_save() {
     fi
 
     local filepath content
-    filepath=$(echo "$args" | head -1 | awk '{print $1}')
-    content=$(echo "$args" | sed 's/^[^ ]* *//')
+    if [[ "$args" == '"'* ]]; then
+        if [[ "$args" =~ ^\"([^\"]+)\"([[:space:]]+(.*))?$ ]]; then
+            filepath="${BASH_REMATCH[1]}"
+            content="${BASH_REMATCH[3]}"
+        fi
+    elif [[ "$args" == "'"* ]]; then
+        if [[ "$args" =~ ^\'([^\']+)\'([[:space:]]+(.*))?$ ]]; then
+            filepath="${BASH_REMATCH[1]}"
+            content="${BASH_REMATCH[3]}"
+        fi
+    else
+        filepath=$(echo "$args" | head -1 | awk '{print $1}')
+        content=$(echo "$args" | sed 's/^[^ ]* *//')
+    fi
 
     # Expand tilde — LLMs emit ~/path which doesn't expand in quotes
     declare -f tools_expand_tilde &>/dev/null && filepath=$(tools_expand_tilde "$filepath")

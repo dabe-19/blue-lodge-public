@@ -1056,3 +1056,48 @@ tools_expand_file_refs() {
         echo "$result"
     fi
 }
+
+# Auto-quote filename with spaces if it is unquoted and ends in a known extension.
+# E.g., "report investment advice on United Healthgroup.md some content"
+#       → "\"report investment advice on United Healthgroup.md\" some content"
+tools_quote_filename_spaces() {
+    local rest="$1"
+    [ -z "$rest" ] && return 0
+
+    if [[ "$rest" == '"'* ]] || [[ "$rest" == "'"* ]]; then
+        echo "$rest"
+        return 0
+    fi
+
+    local words=()
+    read -r -a words <<< "$rest"
+    
+    local found_idx=-1
+    local i
+    for (( i=0; i<${#words[@]}; i++ )); do
+        local word="${words[i]}"
+        local ext
+        for ext in "${_TOOLS_EXTENSIONS[@]}"; do
+            if [[ "$word" == *"${ext}" ]]; then
+                found_idx=$i
+                break 2
+            fi
+        done
+    done
+
+    if [ "$found_idx" -gt 0 ]; then
+        local count=$((found_idx + 1))
+        local regex="^(([[:space:]]*[^[:space:]]+){$count})(.*)$"
+        if [[ "$rest" =~ $regex ]]; then
+            local prefix="${BASH_REMATCH[1]}"
+            local content="${BASH_REMATCH[3]}"
+            local clean_filename
+            clean_filename=$(echo "$prefix" | xargs)
+            echo "\"$clean_filename\"$content"
+            return 0
+        fi
+    fi
+
+    echo "$rest"
+}
+

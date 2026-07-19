@@ -1091,4 +1091,27 @@ describe "tools_expand_file_refs — AGENT_FILE_EXPAND toggle"
     assert_eq "${AGENT_FILE_EXPAND_CHARS:-1000}" "1000"
   }
 
+# ── tools_quote_filename_spaces ────────────────────────────────
+describe "tools_quote_filename_spaces"
+
+  it "quotes space-separated filenames ending in known extension" && {
+    input="report investment advice on United Healthgroup.md some content here"
+    expected="\"report investment advice on United Healthgroup.md\" some content here"
+    result=$(tools_quote_filename_spaces "$input")
+    assert_eq "$result" "$expected"
+  }
+
+  it "does not quote single word filenames with extension" && {
+    input="report.md some content here"
+    result=$(tools_quote_filename_spaces "$input")
+    assert_eq "$result" "$input"
+  }
+
+  it "does not quote already quoted filenames" && {
+    input="\"my report.md\" some content here"
+    result=$(tools_quote_filename_spaces "$input")
+    assert_eq "$result" "$input"
+  }
+
 test_end
+

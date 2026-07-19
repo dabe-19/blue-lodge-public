@@ -273,6 +273,19 @@ _agent_split_inline_lists() {
     sed 's/\([^0-9]\)\([0-9]\{1,2\}\.[^[:space:]0-9]\)/\1\n\2/g'
 }
 
+_agent_clean_objective_slashes() {
+    local obj="$1"
+    [ -z "$obj" ] && return 0
+
+    local cleaned
+    # Strip leading slashes from command-like words preceded by space or start of string
+    cleaned=$(echo "$obj" | sed -E 's/(^|[[:space:]])\/([a-z0-9_-]+)\b/\1\2/g')
+
+    # Capitalize the first letter of the overall string
+    cleaned="$(echo "${cleaned:0:1}" | tr '[:lower:]' '[:upper:]')${cleaned:1}"
+    echo "$cleaned"
+}
+
 # ── JSON Extraction Helper (Layer 2) ───────────────────────────
 # Extracts and validates structured JSON from raw LLM output.
 # Handles think blocks, markdown code fences, and surrounding prose.
@@ -5943,8 +5956,11 @@ SHORTLIST OVERRIDE: Choose exactly ONE slash command from ROUTER SHORTLIST only.
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Specialist Bypass — executing fully-formed command directly: $cmd"
             _agent_routing_trace "$workdir" "specialist_bypass" "$(jq -cn --arg cmd "$cmd" '{cmd:$cmd}')"
         else
+            # ── CLEAN OBJECTIVE FOR SPECIALIST ─────────────────
+            # Strip slash command prefixes to prevent the specialist from parroting them
+            declare -f _agent_clean_objective_slashes &>/dev/null && micro_objective=$(_agent_clean_objective_slashes "$micro_objective")
 
-        _agent_routing_trace "$workdir" "router_selected" "$(jq -cn --arg routed "$selected_tool" --argjson shortlist "$(echo "$_eligibility_json" | jq -c '.shortlist')" '{routed:$routed,shortlist:$shortlist}')"
+            _agent_routing_trace "$workdir" "router_selected" "$(jq -cn --arg routed "$selected_tool" --argjson shortlist "$(echo "$_eligibility_json" | jq -c '.shortlist')" '{routed:$routed,shortlist:$shortlist}')"
 
         # Re-prefix for specialist lookup
         [ "$selected_tool" != "bash" ] && [ "$selected_tool" != "_hallucinated" ] && selected_tool="/$selected_tool"
@@ -6886,6 +6902,15 @@ INTERLOCK_JSON
                             _mismatch_count=0
                         elif [ "$_mismatch_count" -ge 2 ]; then
                             # ── Mismatch cap reached ─────────────────
+                            # If the specialist command is a writing, coding, or delivery command,
+                            # do NOT trust it via mismatch cap to avoid bypass/hallucination.
+                            if [[ "$_spec_cmd_name" =~ ^(write|edit|append|save|build|test|fix|init|social|email)$ ]]; then
+                                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Mismatch cap reached, but /$_spec_cmd_name is write/coding/delivery — rejecting bypass"
+                                _micro_add_warning "$micro_file" "TOOL MISMATCH: Router selected /$_routed_base. Bypassing with /$_spec_cmd_name is not allowed for writing/coding/delivery tools."
+                                _last_eval_feedback="MISMATCH: You selected /$_routed_base but proposed /$_spec_cmd_name. Use /$_routed_base instead."
+                                inner_attempts=$((inner_attempts + 1))
+                                continue
+                            fi
                             # After 2 mismatches, stop fighting and trust
                             # the specialist to break the deadlock.
                             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] mismatch cap reached (2), trusting specialist /$_spec_cmd_name"
@@ -7036,13 +7061,29 @@ INTERLOCK_JSON
                         # Fix missing space between filename and content
                         # e.g. "file.txtContent" → "file.txt Content"
                         declare -f tools_fix_ext_spacing &>/dev/null && _aod_rest=$(tools_fix_ext_spacing "$_aod_rest")
-                        _aod_path=$(printf '%s' "$_aod_rest" | head -n 1 | awk '{print $1}')
-                        _aod_content=${_aod_rest#"$_aod_path"}
-                        _aod_content=${_aod_content# }
+                        # Auto-quote filename with spaces if it contains known extension
+                        declare -f tools_quote_filename_spaces &>/dev/null && _aod_rest=$(tools_quote_filename_spaces "$_aod_rest")
+                        
+                        if [[ "$_aod_rest" == '"'* ]]; then
+                            if [[ "$_aod_rest" =~ ^\"([^\"]+)\"([[:space:]]+(.*))?$ ]]; then
+                                _aod_path="${BASH_REMATCH[1]}"
+                                _aod_content="${BASH_REMATCH[3]}"
+                            fi
+                        elif [[ "$_aod_rest" == "'"* ]]; then
+                            if [[ "$_aod_rest" =~ ^\'([^\']+)\'([[:space:]]+(.*))?$ ]]; then
+                                _aod_path="${BASH_REMATCH[1]}"
+                                _aod_content="${BASH_REMATCH[3]}"
+                            fi
+                        else
+                            _aod_path=$(printf '%s' "$_aod_rest" | head -n 1 | awk '{print $1}')
+                            _aod_content=${_aod_rest#"$_aod_path"}
+                            _aod_content=${_aod_content# }
+                        fi
+                        
                         # Skip if path already starts with the output dir
                         if [[ "$_aod_path" != "${AGENT_OUTPUT_DIR}"/* ]] && [[ "$_aod_path" != "${AGENT_OUTPUT_DIR}" ]]; then
                             _aod_path="${AGENT_OUTPUT_DIR}/${_aod_path}"
-                            cmd="${_aod_verb} ${_aod_path}${_aod_content:+ }${_aod_content}"
+                            cmd="${_aod_verb} \"${_aod_path}\"${_aod_content:+ }${_aod_content}"
                             [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] output-dir enforced: %s\n' "$_aod_path" 2>/dev/null >/dev/tty
                         fi
                         ;;
@@ -7659,8 +7700,16 @@ $_fb_output"
                     fi
                     if [ "$_is_guidance" -eq 1 ]; then
                         ui_info "Operator provided guidance instead of file contents. Triggering guided retry..."
-                        guidance="$_clean_resp"
-                        break
+                        _micro_add_note "$micro_file" "Operator guidance: $_clean_resp"
+                        if _agent_honeydew_rewrite "$macro_file" "$micro_file" "$workdir" "$cmd" 1 "$_clean_resp"; then
+                            local _hd_ar
+                            _hd_ar=$(_agent_honeydew_read "$workdir" 2>/dev/null)
+                            if [ -n "$_hd_ar" ] && [ -f "$macro_file" ]; then
+                                _macro_set_honeydew "$macro_file" "$_hd_ar"
+                            fi
+                            _AGENT_AUTO_RECOVERED=1
+                        fi
+                        return 1
                     else
                         mkdir -p "$(dirname "$_resolved_missing_path")"
                         echo "$_clean_resp" > "$_resolved_missing_path"
@@ -9150,6 +9199,8 @@ ${_research_gate}${_pref_hint}${_milestone_history}"
         # so content-bearing milestones (e.g. /social post) aren't lost.
         _STRATEGIST_FULL_OUTPUT="$milestone"
         milestone="${milestone:0:${AGENT_MILESTONE_CHARS:-1000}}"
+        # Strip leading/trailing whitespace to prevent whitespace-only loops
+        milestone=$(echo "$milestone" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
         # Transcript: log strategist milestone
         declare -f transcript_log &>/dev/null && transcript_log "strategist" "$milestone"
@@ -9647,6 +9698,10 @@ ${_research_gate}${_pref_hint}${_milestone_history}"
 
     local _terminal_outcome_class
     _terminal_outcome_class=$(_macro_get_terminal_outcome "$macro_file" 2>/dev/null || true)
+
+    if [ "$_was_cancelled" -eq 0 ] && [ -f "${george_dir:-.}/$HONEYDEW_FILE" ]; then
+        _agent_honeydew_display "${george_dir:-.}/$HONEYDEW_FILE"
+    fi
 
     echo ""
     ui_divider

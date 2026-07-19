@@ -2048,32 +2048,8 @@ ${prompt}"
             [[ "$line" == data:* ]] || continue
             local json="${line#data: }"
 
-            # Stream termination — flush buffers and break
+            # Stream termination — break and execute cleanup block
             if [ "$json" = "[DONE]" ]; then
-                # Close thinking banner if still open
-                if [ "$_think_banner_open" -eq 1 ]; then
-                    if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
-                        _llm_think_close "$_tty"
-                    fi
-                fi
-                # Flush response_pending buffer (short response, <think> never arrived)
-                if [ -n "$_response_pending" ]; then
-                    _llm_normalize_think _response_pending
-                    _response_pending="${_response_pending//<\/think>/}"
-                    _response_pending="${_response_pending//<think>/}"
-                    [ -n "$_response_pending" ] && printf "%s" "$_response_pending"
-                    [ -n "$_response_pending" ] && _gen_tty "$_response_pending"
-                fi
-                # Flush pending think text as response if </think> never arrived
-                if [ "$_in_think_block" -eq 1 ] && [ -n "$_think_pending" ]; then
-                    _llm_normalize_think _think_pending
-                    _think_pending="${_think_pending//<\/think>/}"
-                    printf "%s" "$_think_pending"
-                    _gen_tty "$_think_pending"
-                fi
-                if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
-                    _llm_debug_end_timer "generate(llamacpp)" "$_dbg_in" "$_dbg_out"
-                fi
                 break
             fi
 
@@ -2236,6 +2212,32 @@ ${prompt}"
             [ -n "$token" ] && printf "%s" "$token"
             [ -n "$token" ] && _gen_tty "$token"
         done
+
+        # ── Cleanup block (handles both [DONE] and premature EOF) ──
+        # Close thinking banner if still open
+        if [ "$_think_banner_open" -eq 1 ]; then
+            if [ "${LODGE_THINK:-0}" -eq 1 ] && [ "${LODGE_THINK_STREAM:-1}" -ge 1 ]; then
+                _llm_think_close "$_tty"
+            fi
+        fi
+        # Flush response_pending buffer (short response, <think> never arrived)
+        if [ -n "$_response_pending" ]; then
+            _llm_normalize_think _response_pending
+            _response_pending="${_response_pending//<\/think>/}"
+            _response_pending="${_response_pending//<think>/}"
+            [ -n "$_response_pending" ] && printf "%s" "$_response_pending"
+            [ -n "$_response_pending" ] && _gen_tty "$_response_pending"
+        fi
+        # Flush pending think text as response if </think> never arrived
+        if [ "$_in_think_block" -eq 1 ] && [ -n "$_think_pending" ]; then
+            _llm_normalize_think _think_pending
+            _think_pending="${_think_pending//<\/think>/}"
+            printf "%s" "$_think_pending"
+            _gen_tty "$_think_pending"
+        fi
+        if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
+            _llm_debug_end_timer "generate(llamacpp)" "$_dbg_in" "$_dbg_out"
+        fi
         }  # end _llm_gen_sse_loop
 
         if [ "$_use_fifo" -eq 1 ]; then

@@ -4757,4 +4757,44 @@ describe "Honeydew Evaluator Available Commands Catalog"
     assert_ok $? "honeydew evaluator must use jq to build catalog dynamically"
   }
 
+# ── Specialist Mismatch Bypass Restriction ──────────────────
+describe "Specialist Mismatch Bypass Restriction"
+
+  it "disallows mismatch cap override for restricted write/coding/delivery commands" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q 'Mismatch cap reached, but /$_spec_cmd_name is write/coding/delivery'
+    assert_ok $? "inner loop must restrict mismatch cap bypass for write/coding/delivery tools"
+  }
+
+# ── Space-separated Output Dir Enforcement ──────────────────
+describe "Space-separated Output Dir Enforcement"
+
+  it "auto-quotes space-separated filenames in output dir enforcement" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q "tools_quote_filename_spaces"
+    assert_ok $? "inner loop must call tools_quote_filename_spaces in output dir enforcement"
+  }
+
+# ── Clean Objective Slashes ──────────────────────────────────
+describe "Clean Objective Slashes"
+
+  it "cleans slash prefixes from objective text" && {
+    result=$(_agent_clean_objective_slashes "Use /write to report investment advice on United Healthgroup.md")
+    assert_eq "$result" "Use write to report investment advice on United Healthgroup.md"
+
+    result=$(_agent_clean_objective_slashes "Run /git status and diff")
+    assert_eq "$result" "Run git status and diff"
+
+    result=$(_agent_clean_objective_slashes "Inspect https://example.com/web")
+    assert_eq "$result" "Inspect https://example.com/web"
+  }
+
+  it "inner loop calls clean objective slashes helper" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -q "_agent_clean_objective_slashes"
+    assert_ok $? "inner loop must clean slash prefixes from micro_objective before calling specialist"
+  }
+
 test_end
+
+
