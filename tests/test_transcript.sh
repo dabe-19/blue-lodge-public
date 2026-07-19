@@ -221,17 +221,19 @@ describe "transcript_list"
 
   it "shows recent transcripts" && {
     # Create a couple of transcripts
-    transcript_start "task one" "$_TEST_WORKDIR"
+    _TEST_WORKDIR_LIST=$(mktemp -d)
+    transcript_start "task one" "$_TEST_WORKDIR_LIST"
     transcript_log "info" "first task"
     transcript_stop > /dev/null
     sleep 1
-    transcript_start "task two" "$_TEST_WORKDIR"
+    transcript_start "task two" "$_TEST_WORKDIR_LIST"
     transcript_log "info" "second task"
     transcript_stop > /dev/null
 
-    listing=$(transcript_list "$_TEST_WORKDIR" 10)
+    listing=$(transcript_list "$_TEST_WORKDIR_LIST" 10)
     assert_contains "$listing" "task one"
     assert_contains "$listing" "task two"
+    rm -rf "$_TEST_WORKDIR_LIST"
   }
 
   it "shows (no transcripts) when none exist" && {

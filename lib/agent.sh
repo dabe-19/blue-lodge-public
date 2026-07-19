@@ -2632,7 +2632,7 @@ $(jq -r '.items[] | select(.status == "pending") | "\(.id). [ ] \(.task)"' "$hd_
 
 Rewrite ONLY the pending items to better serve the original task based on what the milestones have revealed. Preserve the same number of items (${_pending_count}) or fewer. Maintain execution order.
 
-IMPORTANT: Consolidate redundant or overlapping items. If two pending items describe essentially the same work (e.g., 'summarize events' and 'present information concisely'), merge them into ONE clear item. Fewer focused items are always better than many overlapping ones.
+IMPORTANT: Consolidate redundant or overlapping items. If two pending items describe essentially the same work (e.g., 'summarize events' and 'present information concisely'), merge them into ONE clear item. Fewer focused items are always better than many overlapping ones. CRITICAL: NEVER consolidate or merge a synthesis/drafting step with a final delivery or transmission step (such as sending, posting, emailing, responding, or publishing). Final delivery steps MUST always remain as separate, distinct pending items at the end of the list to ensure the transmission is actually executed.
 
 IF/ELSE BRANCHING: If the completed milestones reveal that a primary path is blocked or failed (e.g., file not found, service down, or check returned negative), rewrite the pending items to execute the alternative fallback branch or recovery steps. Avoid planning for the failed branch.
 
@@ -2642,14 +2642,14 @@ $(cat << 'REWRITE_JSON'
  "describe":"GOAL only — include key entities, but never tools, commands, URLs, shell syntax",
  "context":"ensure key context and entities are preserved (e.g. 'poetically describe the image of JJ Kelly' instead of just 'poetically describe the image')",
  "preserve":"completed items are untouched — only rewrite pending",
- "consolidate":"merge overlapping or redundant items into fewer focused items",
+ "consolidate":"merge overlapping or redundant items into fewer focused items, but NEVER merge synthesis/drafting with final delivery/transmission steps",
  "count":"same count or fewer — REDUCE count when items overlap",
  "order":"by dependency (research first, delivery last)",
  "never":["verification steps","confirmation steps","cleanup steps","checkboxes","redundant items that duplicate existing ones"]}
 REWRITE_JSON
 )"
 
-    local rewrite_sys="You are a task decomposition rewrite engine. Rewrite ONLY the pending honeydew items to better align with the original task based on milestone discoveries. If prior milestones or commands failed, you must pivot and rewrite the pending items to work around the failure (e.g. if a specific URL, path, or tool is blocked/fails, rewrite items to find another source, use local tools, or try a different path). Output a JSON object: {\"items\":[{\"task\":\"imperative sentence\"},...]} OR a numbered list. Each item: imperative sentence preserving key context from the original task (e.g., names, files, topics). Describe WHAT, not HOW. No commands, URLs, or tools."
+    local rewrite_sys="You are a task decomposition rewrite engine. Rewrite ONLY the pending honeydew items to better align with the original task based on milestone discoveries. If prior milestones or commands failed, you must pivot and rewrite the pending items to work around the failure (e.g. if a specific URL, path, or tool is blocked/fails, rewrite items to find another source, use local tools, or try a different path). Output a JSON object: {\"items\":[{\"task\":\"imperative sentence\"},...]} OR a numbered list. Each item: imperative sentence preserving key context from the original task (e.g., names, files, topics). Describe WHAT, not HOW. No commands, URLs, or tools. NEVER merge synthesis/drafting steps with final delivery/transmission steps."
 
     local _raw_rewrite
     local LLM_SCENARIO=strategist
