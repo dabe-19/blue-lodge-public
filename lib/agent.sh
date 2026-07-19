@@ -5773,6 +5773,75 @@ SHORTLIST OVERRIDE: Choose exactly ONE slash command from ROUTER SHORTLIST only.
                 esac
             fi
 
+            # Prevent Specialist Bypass on content-writing/creation/communication tools entirely
+            if [[ "$_bp_cmd" =~ ^(write|save|append|edit|respond|social|email|phone)$ ]]; then
+                _bp_valid=0
+            fi
+
+            # Enforce word limits to reject milestones with trailing natural language / flavor text
+            if [ "$_bp_valid" -eq 1 ]; then
+                local _word_count
+                _word_count=$(echo "$_clean_obj" | wc -w)
+                case "$_bp_cmd" in
+                    read|ls)
+                        [ "$_word_count" -gt 2 ] && _bp_valid=0
+                        ;;
+                    grep)
+                        [ "$_word_count" -gt 3 ] && _bp_valid=0
+                        ;;
+                    web)
+                        case "$_bp_subcmd" in
+                            fetch|scrape|summary|links|title|ping)
+                                [ "$_word_count" -gt 3 ] && _bp_valid=0
+                                ;;
+                            blacklist)
+                                if [ "$_word_count" -gt 4 ]; then
+                                    _bp_valid=0
+                                fi
+                                ;;
+                            search)
+                                [ "$_word_count" -gt 8 ] && _bp_valid=0
+                                ;;
+                            *)
+                                _bp_valid=0
+                                ;;
+                        esac
+                        ;;
+                    git)
+                        case "$_bp_subcmd" in
+                            status|diff|log|push|pull)
+                                [ "$_word_count" -gt 3 ] && _bp_valid=0
+                                ;;
+                            add|checkout)
+                                [ "$_word_count" -gt 4 ] && _bp_valid=0
+                                ;;
+                            *)
+                                _bp_valid=0
+                                ;;
+                        esac
+                        ;;
+                    recall)
+                        case "$_bp_subcmd" in
+                            clear|reindex|stats)
+                                [ "$_word_count" -gt 3 ] && _bp_valid=0
+                                ;;
+                            search)
+                                [ "$_word_count" -gt 8 ] && _bp_valid=0
+                                ;;
+                            *)
+                                _bp_valid=0
+                                ;;
+                        esac
+                        ;;
+                    bash)
+                        [ "$_word_count" -gt 6 ] && _bp_valid=0
+                        ;;
+                    *)
+                        _bp_valid=0
+                        ;;
+                esac
+            fi
+
             local _placeholder_rx="<[^>]*>"
             if [ "$_bp_valid" -eq 1 ] && ! [[ "$_clean_obj" =~ $_placeholder_rx ]]; then
                 _bypass_specialist=1

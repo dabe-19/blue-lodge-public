@@ -4068,6 +4068,16 @@ describe "Web gate evaluator filtering"
     assert_ok $? "Must inject DISCOVERED WEB LINKS label into prompt"
   }
 
+  it "specialist bypass rejects milestones with trailing flavor text and restricts to read-only tools" && {
+    body=$(declare -f agent_inner_loop)
+    # Check that content-writing tools are blocked from bypass
+    echo "$body" | grep -q 'write|save|append|edit|respond|social'
+    assert_ok $? "Must block writing tools from Specialist Bypass"
+    # Check that it calculates word counts and enforces limits
+    echo "$body" | grep -q '_word_count.*wc -w'
+    assert_ok $? "Must calculate word count in bypass validation"
+  }
+
 # ── Phase 8: Grep \\| ERE transform ──────────────────────────
 describe "Grep BRE-to-ERE transform"
 
