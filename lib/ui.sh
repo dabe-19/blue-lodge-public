@@ -387,11 +387,23 @@ ui_resolve_path() {
         fi
     fi
 
-    # If the path contains the active workspaces directory segment, extract the relative part.
+    # 0. Resolve Namespaced Semantic Handles (mem:<slug>)
+    if [[ "$filepath" == mem:* ]]; then
+        local clean_slug
+        clean_slug="${filepath#mem:}"
+        clean_slug="${clean_slug%.md}"
+        clean_slug=$(echo "$clean_slug" | sed 's|[^a-zA-Z0-9_-]||g')
+        echo "$lodge_dir/.george/memories/${clean_slug}.md"
+        return 0
+    fi
+
+    # If the path contains the active workspaces/memories directory segment, extract the relative part.
     # This dynamically maps absolute container paths (e.g. starting with /workspace/ or /home/blue-lodge/)
-    # to the host lodge_dir by stripping the arbitrary prefix before .george/workspaces/.
+    # to the host lodge_dir by stripping the arbitrary prefix before .george/workspaces/ or .george/memories/.
     if [[ "$filepath" == *".george/workspaces/"* ]]; then
         filepath=".george/workspaces/${filepath#*.george/workspaces/}"
+    elif [[ "$filepath" == *".george/memories/"* ]]; then
+        filepath=".george/memories/${filepath#*.george/memories/}"
     fi
 
     # Check if we are running in an agent task workspace
@@ -417,8 +429,8 @@ ui_resolve_path() {
         filepath=$(tools_expand_tilde "$filepath")
     fi
 
-    # 3. Explicit workspaces path
-    if [[ "$filepath" == ".george/workspaces"* ]]; then
+    # 3. Explicit workspaces or memories path
+    if [[ "$filepath" == ".george/workspaces"* ]] || [[ "$filepath" == ".george/memories"* ]]; then
         echo "$lodge_dir/$filepath"
         return 0
     fi

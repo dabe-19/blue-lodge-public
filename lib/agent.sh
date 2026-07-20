@@ -2034,7 +2034,7 @@ _fast_route() {
     fi
 
     # /grep — regex file search
-    if [[ "$_fr_text" =~ (grep[[:space:]]|regex[[:space:]]search|search.*files[[:space:]]for|find.*pattern[[:space:]]in|find[[:space:]]in[[:space:]]files|search.*codebase|search.*source) ]]; then
+    if [[ "$_fr_text" =~ (grep[[:space:]]|regex[[:space:]]search|search.*files[[:space:]]for|find.*pattern[[:space:]]in|find[[:space:]]in[[:space:]]files|search.*codebase|search[[:space:]]+source[[:space:]]+(code|files)) ]]; then
         echo "grep"; return 0
     fi
 
@@ -4566,6 +4566,26 @@ SPEC_RULES
             fi
         fi
 
+        # ── PERSISTENT MEMORIES INJECTION ─────────────────────
+        if [ -d "$workdir/.george/memories" ]; then
+            local _mem_files
+            _mem_files=$(find "$workdir/.george/memories" -maxdepth 1 -type f -name '*.md' 2>/dev/null)
+            if [ -n "$_mem_files" ]; then
+                echo "PERSISTENT MEMORIES (stored in .george/memories/):"
+                local _mem_file
+                while IFS= read -r _mem_file || [ -n "$_mem_file" ]; do
+                    [ -z "$_mem_file" ] && continue
+                    local _mem_slug _mem_size _mem_summary
+                    _mem_slug=$(basename "$_mem_file" .md)
+                    _mem_size=$(wc -c < "$_mem_file" 2>/dev/null || echo 0)
+                    _mem_summary=$(head -n 1 "$_mem_file" | sed 's/^[#[:space:]]*//' | cut -c1-100)
+                    echo "  - mem:${_mem_slug} (${_mem_size} bytes): ${_mem_summary:-(no summary)}"
+                done <<< "$_mem_files"
+                echo "Use 'mem:<slug>' as the filepath to /read, /write, /append, or /edit these files (e.g. /read mem:appleton_housing)."
+                echo ""
+            fi
+        fi
+
         # ── CREATED FILES INJECTION ───────────────────────────
         # When files have been written during this task, inject their
         # exact paths so the specialist uses correct paths instead of
@@ -4680,29 +4700,29 @@ SPEC
                 cat << 'SPEC'
 {"cmd":"/write","syntax":"/write <filepath> <content>",
 "desc":"Write COMPLETE file contents. Creates or overwrites.",
-"rules":["RELATIVE PATHS ONLY (e.g. report.md, src/main.rs) — NEVER start with /","ALWAYS include a SPACE between filepath and content (e.g. report.md Content here)","Put the command and filepath on the first line, then write the content on subsequent lines with literal newlines","COMPLETE source for code files","To ADD to a file, use /append instead","To change one line, use /edit instead","BEFORE writing, check if a file already exists with /read — prefer /append or /edit over overwriting"],
-"format_only_ex":["/write src/main.rs\nfn main() {\n    println!(\"Hello\");\n}"]}
+"rules":["RELATIVE PATHS ONLY (e.g. report.md, src/main.rs) — NEVER start with /","To write persistent cross-task memories/deliverables, use 'mem:<slug>' (e.g. mem:appleton_housing)","ALWAYS include a SPACE between filepath and content (e.g. report.md Content here)","Put the command and filepath on the first line, then write the content on subsequent lines with literal newlines","COMPLETE source for code files","To ADD to a file, use /append instead","To change one line, use /edit instead","BEFORE writing, check if a file already exists with /read — prefer /append or /edit over overwriting"],
+"format_only_ex":["/write src/main.rs\nfn main() {\n    println!(\"Hello\");\n}","/write mem:appleton_housing\n# Appleton Wisconsin Housing\nContent here"]}
 SPEC
                 ;;
             append)
                 cat << 'SPEC'
 {"cmd":"/append","syntax":"/append <filepath> <content>",
 "desc":"Add content to END of existing file.",
-"rules":["RELATIVE PATHS ONLY","Put the command and filepath on the first line, then write the content on subsequent lines with literal newlines","Creates file if it does not exist","Use for: adding dependencies, new functions, new sections"],
-"format_only_ex":["/append Cargo.toml\n[dependencies]\nreqwest = \"0.11\""]}
+"rules":["RELATIVE PATHS ONLY. To append to a memory file, use 'mem:<slug>' (e.g. mem:appleton_housing)","Put the command and filepath on the first line, then write the content on subsequent lines with literal newlines","Creates file if it does not exist","Use for: adding dependencies, new functions, new sections"],
+"format_only_ex":["/append Cargo.toml\n[dependencies]\nreqwest = \"0.11\"","/append mem:appleton_housing\n- Additional note"]}
 SPEC
                 ;;
             edit)
                 cat << 'SPEC'
 {"cmd":"/edit","syntax":"/edit <filepath>\n<<<<<<<\n<search_pattern>\n=======\n<replacement_pattern>\n>>>>>>>",
 "desc":"Targeted block search-and-replace edit.",
-"rules":["Must match EXACT lines of the original file","Specify the exact lines to replace between <<<<<<< and =======","Specify the replacement lines between ======= and >>>>>>>","QUERY MODE: If you do not know the file contents, output blockless '/edit <filepath>' to load the file with line numbers.","Line numbers in query output (e.g. '14:') are metadata for reference only — do NOT include line numbers in search/replace patterns.","Works for any length of file changes"],
-"format_only_ex":["/edit src/main.rs\n<<<<<<<\nfn old_function() {\n    println!(\"old\");\n}\n=======\nfn new_function() {\n    println!(\"new\");\n}\n>>>>>>>","/edit src/main.rs"]}
+"rules":["Must match EXACT lines of the original file","Supports mem:<slug> handles (e.g. mem:appleton_housing)","Specify the exact lines to replace between <<<<<<< and =======","Specify the replacement lines between ======= and >>>>>>>","QUERY MODE: If you do not know the file contents, output blockless '/edit <filepath>' to load the file with line numbers.","Line numbers in query output (e.g. '14:') are metadata for reference only — do NOT include line numbers in search/replace patterns.","Works for any length of file changes"],
+"format_only_ex":["/edit src/main.rs\n<<<<<<<\nfn old_function() {\n    println!(\"old\");\n}\n=======\nfn new_function() {\n    println!(\"new\");\n}\n>>>>>>>","/edit mem:appleton_housing\n<<<<<<<\n# Old Title\n=======\n# New Title\n>>>>>>>"]}
 SPEC
                 ;;
             save)
                 cat << 'SPEC'
-{"cmd":"/save","syntax":"/save <filepath> <content>","notes":"First token=filepath, rest=content. RELATIVE PATHS ONLY.",
+{"cmd":"/save","syntax":"/save <filepath> <content>","notes":"First token=filepath, rest=content. RELATIVE PATHS ONLY. Supports mem:<slug> handles.",
 "format_only_ex":["/save <relative-filepath> <content>"],
 "fill":{"<filepath>":"target filename or path","<content>":"text to save to the file"}}
 SPEC
@@ -4933,8 +4953,8 @@ SPEC
                 ;;
             read)
                 cat << 'SPEC'
-{"cmd":"/read","syntax":"/read <file>","notes":"Read first 100 lines of file. Tip: file paths in /write, /social, /email, /respond args auto-expand to contents — use /read only to inspect a file before deciding next steps.",
-"format_only_ex":["/read <filepath>"],
+{"cmd":"/read","syntax":"/read <file>","notes":"Read first 100 lines of file. Supports mem:<slug> handles. Tip: file paths in /write, /social, /email, /respond args auto-expand to contents — use /read only to inspect a file before deciding next steps.",
+"format_only_ex":["/read <filepath>","/read mem:appleton_housing"],
 "fill":{"<filepath>":"path to file to read"}}
 SPEC
                 ;;
@@ -5437,6 +5457,8 @@ agent_inner_loop() {
                 if [ "$_pre_eligible" -eq 1 ]; then
                     # Reject pre-route if the command is currently blocked (3-strike rule)
                     local _blk
+                    local _clean_obj="$micro_objective"
+                    _clean_obj=$(echo "$_clean_obj" | sed -E 's/^(Use|Please use)[[:space:]]+//i')
                     for _blk in "${_blocked_cmds[@]}"; do
                         local _clean_blk _clean_pre
                         _clean_blk=$(echo "$_blk" | tr -d '\r' | xargs)
@@ -6871,6 +6893,15 @@ INTERLOCK_JSON
                             social|email|respond) _src_is_delivery=1 ;;
                         esac
 
+                        local _has_fetches=0
+                        if [ -f "$micro_file" ]; then
+                            local _web_fetch_count
+                            _web_fetch_count=$(_micro_success_count "$micro_file" "^/web (fetch|summary|scrape)")
+                            if [ "$_web_fetch_count" -gt 0 ]; then
+                                _has_fetches=1
+                            fi
+                        fi
+
                         case "$_spec_cmd_name" in
                             # 1. Local info detours are always allowed
                             ls|grep|read|vision)
@@ -6883,8 +6914,11 @@ INTERLOCK_JSON
                                 fi
                                 ;;
                             # 3. File writing is allowed if the router is delivery (to prepare file) or coding
+                            # Or if the router is research but we already successfully completed some fetches
                             write|edit|append|save)
                                 if [ "$_src_is_delivery" -eq 1 ] || [ "$_src_is_coding" -eq 1 ]; then
+                                    _is_utility_cmd=1
+                                elif [ "$_src_is_research" -eq 1 ] && [ "$_has_fetches" -eq 1 ]; then
                                     _is_utility_cmd=1
                                 fi
                                 ;;
@@ -6894,9 +6928,12 @@ INTERLOCK_JSON
                                     _is_utility_cmd=1
                                 fi
                                 ;;
-                            # 5. Delivery/Messaging is only allowed if the router itself is a delivery command
+                            # 5. Delivery/Messaging is allowed if the router itself is a delivery command
+                            # Or if the router is research but we already successfully completed some fetches
                             social|email|respond)
                                 if [ "$_src_is_delivery" -eq 1 ]; then
+                                    _is_utility_cmd=1
+                                elif [ "$_src_is_research" -eq 1 ] && [ "$_has_fetches" -eq 1 ]; then
                                     _is_utility_cmd=1
                                 fi
                                 ;;
@@ -8895,6 +8932,26 @@ MEMEOF
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- created files (${#_AGENT_WRITTEN_FILES[@]} entries)"
         fi
 
+        # ── Inject persistent memories catalog ────────────────
+        local _strat_memories=""
+        if [ -d "$workdir/.george/memories" ]; then
+            local _mem_files
+            _mem_files=$(find "$workdir/.george/memories" -maxdepth 1 -type f -name '*.md' 2>/dev/null)
+            if [ -n "$_mem_files" ]; then
+                _strat_memories="\n\nPERSISTENT MEMORIES (stored in .george/memories/):"
+                local _mem_file
+                while IFS= read -r _mem_file || [ -n "$_mem_file" ]; do
+                    [ -z "$_mem_file" ] && continue
+                    local _mem_slug _mem_size _mem_summary
+                    _mem_slug=$(basename "$_mem_file" .md)
+                    _mem_size=$(wc -c < "$_mem_file" 2>/dev/null || echo 0)
+                    _mem_summary=$(head -n 1 "$_mem_file" | sed 's/^[#[:space:]]*//' | cut -c1-100)
+                    _strat_memories="${_strat_memories}\n  - mem:${_mem_slug} (${_mem_size} bytes): ${_mem_summary:-(no summary)}"
+                done <<< "$_mem_files"
+                _strat_memories="${_strat_memories}\nUse 'mem:<slug>' as the filepath to /read, /write, /append, or /edit these files (e.g. /read mem:appleton_housing)."
+            fi
+        fi
+
         # ── Inject prior task files from GEORGE.md ─────────────
         # Surface files created by recent prior tasks so the strategist
         # can reference them in follow-up queries. Only includes files
@@ -8915,8 +8972,11 @@ MEMEOF
                     # Extract path from "- [timestamp] path/to/file"
                     _cf_path=$(echo "$_cf_line" | sed 's/^- \[[^]]*\] //')
                     [ -z "$_cf_path" ] && continue
-                    # Check if file still exists (relative to workdir or as-is)
-                    if [ -f "$workdir/$_cf_path" ] || [ -f "$_cf_path" ]; then
+                    # Resolve path (handles mem:<slug> and standard files)
+                    local _resolved_cf_path
+                    _resolved_cf_path=$(ui_resolve_path "$_cf_path" "$workdir")
+                    # Check if file still exists
+                    if [ -f "$_resolved_cf_path" ]; then
                         _valid_cf="\n  ${_cf_line}${_valid_cf}"
                         ((_cf_count++))
                     fi
@@ -9026,7 +9086,7 @@ MEMEOF
             _strat_research_injection="\n\n>>> RESEARCH TASK ACTIVE — the task contains the word 'research' <<<\nThis is a Combined or Concrete task, and is NOT a conversational question.\nYou MUST NOT stop at a /web search milestone. You MUST plan at least one follow-up milestone to fetch or scrape detailed contents (e.g. using /web fetch or /web scrape) from the search results to complete the research."
         fi
 
-        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_strat_read_context}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_strat_prior_files}${_strat_discovered_images}${_strat_discovered_links}${_strat_rb}${_strat_prior_ms}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_strat_last_eval_feedback}${_strat_failures}${_strat_research_injection}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
+        local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_strat_read_context}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_strat_memories}${_strat_prior_files}${_strat_discovered_images}${_strat_discovered_links}${_strat_rb}${_strat_prior_ms}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_strat_last_eval_feedback}${_strat_failures}${_strat_research_injection}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
 
         # ── Research→Delivery Gate ────────────────────────────
         # After N consecutive research milestones, inject a hard

@@ -558,9 +558,17 @@ discord_send() {
         _clean_word=$(echo "$_word" | tr -d '`()"\x27')
         _clean_word="${_clean_word%,}"
         _clean_word="${_clean_word%.}"
-        if [[ "$_clean_word" =~ \.(md|txt|json|yaml|yml|toml|conf|cfg|sh|bash|py|rs|go|js|ts|sql|csv)$ ]]; then
+        local is_mem=0
+        if [[ "$_clean_word" == mem:* ]]; then
+            is_mem=1
+        fi
+        if [ "$is_mem" -eq 1 ] || [[ "$_clean_word" =~ \.(md|txt|json|yaml|yml|toml|conf|cfg|sh|bash|py|rs|go|js|ts|sql|csv)$ ]]; then
             local resolved=""
-            if [[ "$_clean_word" == "${LODGE_DIR:-$HOME/blue-lodge}"/* ]] && [ -f "$_clean_word" ]; then
+            local resolved_ui
+            resolved_ui=$(ui_resolve_path "$_clean_word" "$PWD")
+            if [ -f "$resolved_ui" ]; then
+                resolved="$resolved_ui"
+            elif [[ "$_clean_word" == "${LODGE_DIR:-$HOME/blue-lodge}"/* ]] && [ -f "$_clean_word" ]; then
                 resolved="$_clean_word"
             elif [ -f "$_clean_word" ]; then
                 resolved="$_clean_word"
@@ -592,7 +600,11 @@ discord_send() {
                         _cand_sanitized=$(echo "$_candidate" | sed 's/["'"'"'`]//g' | tr ' ' '-' | sed 's/[^a-zA-Z0-9_./-]//g')
                     fi
                     
-                    if [ -f "$_candidate" ]; then
+                    local resolved_cand_ui
+                    resolved_cand_ui=$(ui_resolve_path "$_candidate" "$PWD")
+                    if [ -f "$resolved_cand_ui" ]; then
+                        _cand_resolved="$resolved_cand_ui"
+                    elif [ -f "$_candidate" ]; then
                         _cand_resolved="$_candidate"
                     elif [ -f "$PWD/$_candidate" ]; then
                         _cand_resolved="$PWD/$_candidate"

@@ -108,12 +108,19 @@ cmd_write() {
     # Expand tilde — LLMs emit ~/path which doesn't expand in quotes
     declare -f tools_expand_tilde &>/dev/null && filepath=$(tools_expand_tilde "$filepath")
 
-    # Sanitize filename — strip quotes, spaces, special chars
-    if declare -f tools_sanitize_filename &>/dev/null; then
-        filepath=$(tools_sanitize_filename "$filepath")
+    # Sanitize filename — strip quotes, spaces, special chars, preserving mem: handles
+    if [[ "$filepath" == mem:* ]]; then
+        local slug="${filepath#mem:}"
+        slug="${slug%.md}"
+        slug=$(echo "$slug" | sed 's/[^a-zA-Z0-9_-]//g')
+        filepath="mem:${slug}"
     else
-        # Inline fallback: strip quotes and spaces
-        filepath=$(echo "$filepath" | sed 's/["'"'"'`]//g' | tr ' ' '-' | sed 's/[^a-zA-Z0-9_./-]//g')
+        if declare -f tools_sanitize_filename &>/dev/null; then
+            filepath=$(tools_sanitize_filename "$filepath")
+        else
+            # Inline fallback: strip quotes and spaces
+            filepath=$(echo "$filepath" | sed 's/["'"'"'`]//g' | tr ' ' '-' | sed 's/[^a-zA-Z0-9_./-]//g')
+        fi
     fi
 
     # If no file extension, append .md as fallback

@@ -3429,6 +3429,11 @@ describe "Fast route keyword filter"
     assert_fail $? "ambiguous tasks must fall through to LLM router"
   }
 
+  it "does not match 'search ... sources' to grep in fast-route" && {
+    _fast_route "Use /web search to find current housing market sources"
+    assert_fail $? "search ... sources should not match grep"
+  }
+
   it "returns failure for 'what is the weather'" && {
     _fast_route "what is the weather in New York"
     assert_fail $? "weather queries should fall through to LLM (/web)"

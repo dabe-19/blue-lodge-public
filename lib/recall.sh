@@ -1125,7 +1125,7 @@ recall_log_user_input() {
         sqlite3 "$RECALL_DB" \
             "DELETE FROM chunks WHERE id IN (
                 SELECT id FROM chunks WHERE source='user_pref'
-                ORDER BY indexed_at ASC LIMIT $excess
+                ORDER BY id ASC LIMIT $excess
             );"
     fi
 

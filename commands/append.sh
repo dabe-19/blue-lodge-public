@@ -69,11 +69,18 @@ cmd_append() {
     # Expand tilde — LLMs emit ~/path which doesn't expand in quotes
     declare -f tools_expand_tilde &>/dev/null && filepath=$(tools_expand_tilde "$filepath")
 
-    # Sanitize filename
-    if declare -f tools_sanitize_filename &>/dev/null; then
-        filepath=$(tools_sanitize_filename "$filepath")
+    # Sanitize filename, preserving mem: handles
+    if [[ "$filepath" == mem:* ]]; then
+        local slug="${filepath#mem:}"
+        slug="${slug%.md}"
+        slug=$(echo "$slug" | sed 's/[^a-zA-Z0-9_-]//g')
+        filepath="mem:${slug}"
     else
-        filepath=$(echo "$filepath" | sed 's/["'"'"'`]//g' | tr ' ' '-' | sed 's/[^a-zA-Z0-9_./-]//g')
+        if declare -f tools_sanitize_filename &>/dev/null; then
+            filepath=$(tools_sanitize_filename "$filepath")
+        else
+            filepath=$(echo "$filepath" | sed 's/["'"'"'`]//g' | tr ' ' '-' | sed 's/[^a-zA-Z0-9_./-]//g')
+        fi
     fi
 
     # Clean redundant project workdir prefix

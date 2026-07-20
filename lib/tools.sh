@@ -885,8 +885,8 @@ tools_expand_file_refs() {
     local max_chars="${3:-}"
     local changed=0
 
-    # Quick bail — no dots means no file extensions
-    [[ "$text" == *.* ]] || { echo "$text"; return 0; }
+    # Quick bail — no dots and no mem: prefix means no file extensions
+    [[ "$text" == *.* ]] || [[ "$text" == *mem:* ]] || { echo "$text"; return 0; }
 
     # Readable extension set (lowercase, no dot)
     local -A _readable_exts=(
@@ -945,13 +945,17 @@ tools_expand_file_refs() {
         clean="${clean%\"}"
         clean="${clean%\'}"
 
-        # Check if this token has a readable extension
+        # Check if this token has a mem: prefix or a readable extension
         local ext=""
-        if [[ "$clean" =~ \.([a-zA-Z0-9]+)$ ]]; then
+        local is_mem=0
+        if [[ "$clean" == mem:* ]]; then
+            is_mem=1
+            ext="md"
+        elif [[ "$clean" =~ \.([a-zA-Z0-9]+)$ ]]; then
             ext="${BASH_REMATCH[1],,}"  # lowercase
         fi
 
-        if [ -n "$ext" ] && [ -n "${_readable_exts[$ext]:-}" ]; then
+        if [ "$is_mem" -eq 1 ] || { [ -n "$ext" ] && [ -n "${_readable_exts[$ext]:-}" ]; }; then
             # Looks like a readable file reference — resolve path
             local fpath="$clean"
 
@@ -967,7 +971,12 @@ tools_expand_file_refs() {
                 local p="$1"
                 local w="$2"
                 local res=""
-                if [[ "$p" == "${LODGE_DIR:-$HOME/blue-lodge}"/* ]] && [ -f "$p" ]; then
+                # First try resolving with ui_resolve_path
+                local resolved_ui
+                resolved_ui=$(ui_resolve_path "$p" "$w")
+                if [ -f "$resolved_ui" ]; then
+                    res="$resolved_ui"
+                elif [[ "$p" == "${LODGE_DIR:-$HOME/blue-lodge}"/* ]] && [ -f "$p" ]; then
                     res="$p"
                 elif [ -f "$p" ]; then
                     res="$p"
