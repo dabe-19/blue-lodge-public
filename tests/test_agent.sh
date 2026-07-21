@@ -4715,6 +4715,30 @@ describe "Research Task Prompt Injections and Classification"
     assert_eq $? 1 "research task must NOT be classified as conversational"
   }
 
+  it "excludes tasks containing please from conversational mode" && {
+    _agent_is_conversational_info_task "George, please tell me the weather today in Appleton, WI."
+    assert_eq $? 1 "task containing 'please' must NOT be classified as conversational"
+  }
+
+  it "handles please at the start, middle, and end, and ignores case" && {
+    _agent_is_conversational_info_task "please tell me the weather"
+    assert_eq $? 1 "task starting with 'please' must NOT be classified as conversational"
+
+    _agent_is_conversational_info_task "tell me please the weather"
+    assert_eq $? 1 "task containing 'please' in the middle must NOT be classified as conversational"
+
+    _agent_is_conversational_info_task "tell me the weather please"
+    assert_eq $? 1 "task ending with 'please' must NOT be classified as conversational"
+
+    _agent_is_conversational_info_task "George, Please Tell me the weather"
+    assert_eq $? 1 "task containing 'Please' (mixed case) must NOT be classified as conversational"
+  }
+
+  it "does not bypass conversational mode on sub-strings containing please" && {
+    _agent_is_conversational_info_task "tell me if you are pleased"
+    assert_eq $? 0 "task containing 'pleased' (not 'please' as a whole word) should be conversational"
+  }
+
   it "classifies research task as combined task type" && {
     AGENT_TASK_TYPE=""
     _agent_classify_task "Research latest Diablo 4 patches"
