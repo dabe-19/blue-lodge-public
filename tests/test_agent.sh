@@ -3093,6 +3093,12 @@ describe "AGENT_OUTPUT_DIR enforcement"
     assert_ok $? "Must check if path already starts with output dir"
   }
 
+  it "output dir enforcement skips semantic memory handles" && {
+    body=$(declare -f agent_inner_loop)
+    echo "$body" | grep -F -q 'mem:*'
+    assert_ok $? "Must check if path is a semantic memory handle starting with mem:"
+  }
+
 # ── Fuzzy keyword catalog matching ────────────────────────────
 describe "Fuzzy keyword catalog matching (_agent_fuzzy_catalog_match)"
 

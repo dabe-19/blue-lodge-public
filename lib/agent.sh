@@ -7251,8 +7251,8 @@ INTERLOCK_JSON
                             _aod_content=${_aod_content# }
                         fi
                         
-                        # Skip if path already starts with the output dir
-                        if [[ "$_aod_path" != "${AGENT_OUTPUT_DIR}"/* ]] && [[ "$_aod_path" != "${AGENT_OUTPUT_DIR}" ]]; then
+                        # Skip if path is a semantic memory handle (mem:*) or already starts with the output dir
+                        if [[ "$_aod_path" != mem:* ]] && [[ "$_aod_path" != "${AGENT_OUTPUT_DIR}"/* ]] && [[ "$_aod_path" != "${AGENT_OUTPUT_DIR}" ]]; then
                             _aod_path="${AGENT_OUTPUT_DIR}/${_aod_path}"
                             cmd="${_aod_verb} \"${_aod_path}\"${_aod_content:+ }${_aod_content}"
                             [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] output-dir enforced: %s\n' "$_aod_path" 2>/dev/null >/dev/tty
