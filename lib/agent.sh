@@ -5496,15 +5496,57 @@ agent_inner_loop() {
                 _mo_lower=$(echo "$micro_objective" | tr '[:upper:]' '[:lower:]')
                 local _mo_padded=" $_mo_lower "
                 # /write → /init: milestone is about creating/scaffolding a project
-                if [[ "$_mo_padded" =~ [[:space:]]scaffold[[:space:]]|[[:space:]]create[[:space:]].*(new|a).*(project|app|crate|package|module)|[[:space:]]initialize[[:space:]].*(project|app|repo|crate)|[[:space:]]init[[:space:]].*(new|a|the).*(project|app)|[[:space:]]new[[:space:]].*(rust|python|node|go|java|typescript).*(project|app) ]]; then
+                local is_scaffold=0
+                if [[ "$_mo_padded" =~ [[:space:]]scaffold[[:space:]] ]]; then
+                    is_scaffold=1
+                elif [[ "$_mo_padded" =~ [[:space:]]create[[:space:]] ]] && \
+                     { [[ "$_mo_padded" =~ [[:space:]]a[[:space:]] ]] || [[ "$_mo_padded" =~ [[:space:]]new[[:space:]] ]]; } && \
+                     [[ "$_mo_padded" =~ [[:space:]](project|app|crate|package|module)[[:space:]] ]]; then
+                    is_scaffold=1
+                elif [[ "$_mo_padded" =~ [[:space:]]initialize[[:space:]] ]] && \
+                     [[ "$_mo_padded" =~ [[:space:]](project|app|repo|crate)[[:space:]] ]]; then
+                    is_scaffold=1
+                elif [[ "$_mo_padded" =~ [[:space:]]init[[:space:]] ]] && \
+                     { [[ "$_mo_padded" =~ [[:space:]]a[[:space:]] ]] || [[ "$_mo_padded" =~ [[:space:]]new[[:space:]] ]] || [[ "$_mo_padded" =~ [[:space:]]the[[:space:]] ]]; } && \
+                     [[ "$_mo_padded" =~ [[:space:]](project|app)[[:space:]] ]]; then
+                    is_scaffold=1
+                elif [[ "$_mo_padded" =~ [[:space:]]new[[:space:]] ]] && \
+                     [[ "$_mo_padded" =~ [[:space:]](rust|python|node|go|java|typescript)[[:space:]] ]] && \
+                     [[ "$_mo_padded" =~ [[:space:]](project|app)[[:space:]] ]]; then
+                    is_scaffold=1
+                fi
+
+                # /write → /build: milestone is about building/making the project
+                local is_build=0
+                if [[ "$_mo_padded" =~ [[:space:]]build[[:space:]] ]] && \
+                   [[ "$_mo_padded" =~ [[:space:]](the|this|it|project|app|code|binary|crate|package)[[:space:]] ]]; then
+                    is_build=1
+                elif [[ "$_mo_padded" =~ cargo[[:space:].]build|npm[[:space:].]run[[:space:].]build ]] || [[ "$_mo_padded" =~ [[:space:]]make[[:space:]] ]]; then
+                    is_build=1
+                elif [[ "$_mo_padded" =~ [[:space:]]run[[:space:]] ]] && \
+                     [[ "$_mo_padded" =~ [[:space:]](cargo|make|maven|gradle|cmake)[[:space:]] ]]; then
+                    is_build=1
+                fi
+
+                # /write → /test: milestone is about running tests
+                local is_test=0
+                if [[ "$_mo_padded" =~ cargo[[:space:].]test|pytest|npm[[:space:].]test ]]; then
+                    is_test=1
+                elif [[ "$_mo_padded" =~ [[:space:]]run[[:space:]] ]] && \
+                     [[ "$_mo_padded" =~ [[:space:]](test|spec|suite)[[:space:]] ]]; then
+                    is_test=1
+                elif [[ "$_mo_padded" =~ [[:space:]]test[[:space:]] ]] && \
+                     [[ "$_mo_padded" =~ [[:space:]](the|this|it|project|code)[[:space:]] ]]; then
+                    is_test=1
+                fi
+
+                if [ "$is_scaffold" -eq 1 ]; then
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route: remapped /write -> /init (coding scaffold detected)"
                     _pre_cmd="init"
-                # /write → /build: milestone is about building/making the project
-                elif [[ "$_mo_padded" =~ [[:space:]]build[[:space:]].*(the|this|it|project|app|code|binary|crate|package)|cargo\.build|[[:space:]]make[[:space:]]|npm\.run\.build|[[:space:]]run[[:space:]].*(cargo|make|maven|gradle|cmake) ]]; then
+                elif [ "$is_build" -eq 1 ]; then
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route: remapped /write -> /build (build action detected)"
                     _pre_cmd="build"
-                # /write → /test: milestone is about running tests
-                elif [[ "$_mo_padded" =~ [[:space:]]run[[:space:]].*(the|this)?.*[[:space:]](test|spec|suite)[[:space:]]|cargo\.test|pytest|npm\.test|[[:space:]]test[[:space:]].*(the|this|it|project|code) ]]; then
+                elif [ "$is_test" -eq 1 ]; then
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route: remapped /write -> /test (test action detected)"
                     _pre_cmd="test"
                 fi

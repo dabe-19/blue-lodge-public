@@ -561,90 +561,148 @@ describe "Pre-route coding verb remap"
   it "scaffold regex matches 'create a new rust project'" && {
     _mo="create a new rust project called fizzbuzz"
     _mo_lower=$(echo "$_mo" | tr '[:upper:]' '[:lower:]')
-    [[ "$_mo_lower" =~ (scaffold|create.*(new|a).*(project|app|crate|package|module)|initialize.*(project|app|repo|crate)|init.*(new|a|the).*(project|app)|new.*(rust|python|node|go|java|typescript).*(project|app)) ]]
-    assert_ok $?
+    _mo_padded=" $_mo_lower "
+    is_scaffold=0
+    if [[ "$_mo_padded" =~ [[:space:]]scaffold[[:space:]] ]]; then
+        is_scaffold=1
+    elif [[ "$_mo_padded" =~ [[:space:]]create[[:space:]] ]] && \
+         { [[ "$_mo_padded" =~ [[:space:]]a[[:space:]] ]] || [[ "$_mo_padded" =~ [[:space:]]new[[:space:]] ]]; } && \
+         [[ "$_mo_padded" =~ [[:space:]](project|app|crate|package|module)[[:space:]] ]]; then
+        is_scaffold=1
+    fi
+    assert_eq "$is_scaffold" "1"
   }
 
   it "scaffold regex matches 'scaffold the api'" && {
     _mo="scaffold the api server"
     _mo_lower=$(echo "$_mo" | tr '[:upper:]' '[:lower:]')
-    [[ "$_mo_lower" =~ (scaffold|create.*(new|a).*(project|app|crate|package|module)) ]]
-    assert_ok $?
+    _mo_padded=" $_mo_lower "
+    is_scaffold=0
+    if [[ "$_mo_padded" =~ [[:space:]]scaffold[[:space:]] ]]; then
+        is_scaffold=1
+    fi
+    assert_eq "$is_scaffold" "1"
   }
 
   it "scaffold regex matches 'initialize a new app'" && {
     _mo="initialize a new app for tracking"
     _mo_lower=$(echo "$_mo" | tr '[:upper:]' '[:lower:]')
-    [[ "$_mo_lower" =~ (initialize.*(project|app|repo|crate)) ]]
-    assert_ok $?
+    _mo_padded=" $_mo_lower "
+    is_scaffold=0
+    if [[ "$_mo_padded" =~ [[:space:]]initialize[[:space:]] ]] && \
+         [[ "$_mo_padded" =~ [[:space:]](project|app|repo|crate)[[:space:]] ]]; then
+        is_scaffold=1
+    fi
+    assert_eq "$is_scaffold" "1"
   }
 
   it "build regex matches 'build the project'" && {
     _mo="build the project"
     _mo_lower=$(echo "$_mo" | tr '[:upper:]' '[:lower:]')
-    [[ "$_mo_lower" =~ (build.*(the|this|it|project|app|code|binary|crate|package)|cargo.build|make[[:space:]]|npm.run.build|run.*(cargo|make|maven|gradle|cmake)) ]]
-    assert_ok $?
+    _mo_padded=" $_mo_lower "
+    is_build=0
+    if [[ "$_mo_padded" =~ [[:space:]]build[[:space:]] ]] && \
+       [[ "$_mo_padded" =~ [[:space:]](the|this|it|project|app|code|binary|crate|package)[[:space:]] ]]; then
+        is_build=1
+    fi
+    assert_eq "$is_build" "1"
   }
 
   it "build regex matches 'cargo build'" && {
     _mo="run cargo build in release mode"
     _mo_lower=$(echo "$_mo" | tr '[:upper:]' '[:lower:]')
-    [[ "$_mo_lower" =~ (cargo.build) ]]
-    assert_ok $?
+    _mo_padded=" $_mo_lower "
+    is_build=0
+    if [[ "$_mo_padded" =~ cargo[[:space:].]build ]]; then
+        is_build=1
+    fi
+    assert_eq "$is_build" "1"
   }
 
   it "build regex matches 'npm run build'" && {
     _mo="use npm run build to build it"
     _mo_lower=$(echo "$_mo" | tr '[:upper:]' '[:lower:]')
-    [[ "$_mo_lower" =~ (npm.run.build) ]]
-    assert_ok $?
+    _mo_padded=" $_mo_lower "
+    is_build=0
+    if [[ "$_mo_padded" =~ npm[[:space:].]run[[:space:].]build ]]; then
+        is_build=1
+    fi
+    assert_eq "$is_build" "1"
   }
 
   it "test regex matches 'run the tests'" && {
     _mo="run the test suite"
     _mo_lower=$(echo "$_mo" | tr '[:upper:]' '[:lower:]')
-    [[ "$_mo_lower" =~ (run.*(the|this)?.*(test|spec|suite)|cargo.test|pytest|npm.test|test.*(the|this|it|project|code)) ]]
-    assert_ok $?
+    _mo_padded=" $_mo_lower "
+    is_test=0
+    if [[ "$_mo_padded" =~ [[:space:]]run[[:space:]] ]] && \
+         [[ "$_mo_padded" =~ [[:space:]](test|spec|suite)[[:space:]] ]]; then
+        is_test=1
+    fi
+    assert_eq "$is_test" "1"
   }
 
   it "test regex matches 'cargo test'" && {
     _mo="execute cargo test"
     _mo_lower=$(echo "$_mo" | tr '[:upper:]' '[:lower:]')
-    [[ "$_mo_lower" =~ (cargo.test) ]]
-    assert_ok $?
+    _mo_padded=" $_mo_lower "
+    is_test=0
+    if [[ "$_mo_padded" =~ cargo[[:space:].]test ]]; then
+        is_test=1
+    fi
+    assert_eq "$is_test" "1"
   }
 
   it "test regex matches 'pytest'" && {
     _mo="use pytest to verify"
     _mo_lower=$(echo "$_mo" | tr '[:upper:]' '[:lower:]')
-    [[ "$_mo_lower" =~ (pytest) ]]
-    assert_ok $?
+    _mo_padded=" $_mo_lower "
+    is_test=0
+    if [[ "$_mo_padded" =~ pytest ]]; then
+        is_test=1
+    fi
+    assert_eq "$is_test" "1"
   }
 
   it "does NOT remap 'write the fizzbuzz source code'" && {
     _mo="write the fizzbuzz source code to src/main.rs"
     _mo_lower=$(echo "$_mo" | tr '[:upper:]' '[:lower:]')
+    _mo_padded=" $_mo_lower "
+    is_scaffold=0; is_build=0; is_test=0
+    # scaffold check
+    if [[ "$_mo_padded" =~ [[:space:]]scaffold[[:space:]] ]]; then is_scaffold=1
+    elif [[ "$_mo_padded" =~ [[:space:]]create[[:space:]] ]] && { [[ "$_mo_padded" =~ [[:space:]]a[[:space:]] ]] || [[ "$_mo_padded" =~ [[:space:]]new[[:space:]] ]]; } && [[ "$_mo_padded" =~ [[:space:]](project|app|crate|package|module)[[:space:]] ]]; then is_scaffold=1
+    fi
+    # build check
+    if [[ "$_mo_padded" =~ [[:space:]]build[[:space:]] ]] && [[ "$_mo_padded" =~ [[:space:]](the|this|it|project|app|code|binary|crate|package)[[:space:]] ]]; then is_build=1
+    fi
+    # test check
+    if [[ "$_mo_padded" =~ [[:space:]]run[[:space:]] ]] && [[ "$_mo_padded" =~ [[:space:]](test|spec|suite)[[:space:]] ]]; then is_test=1
+    fi
     _remapped=0
-    if [[ "$_mo_lower" =~ (scaffold|create.*(new|a).*(project|app|crate|package|module)|initialize.*(project|app|repo|crate)|init.*(new|a|the).*(project|app)|new.*(rust|python|node|go|java|typescript).*(project|app)) ]]; then
-        _remapped=1
-    elif [[ "$_mo_lower" =~ (build.*(the|this|it|project|app|code|binary|crate|package)|cargo.build|make[[:space:]]|npm.run.build|run.*(cargo|make|maven|gradle|cmake)) ]]; then
-        _remapped=1
-    elif [[ "$_mo_lower" =~ (run.*(the|this)?.*(test|spec|suite)|cargo.test|pytest|npm.test|test.*(the|this|it|project|code)) ]]; then
+    if [ "$is_scaffold" -eq 1 ] || [ "$is_build" -eq 1 ] || [ "$is_test" -eq 1 ]; then
         _remapped=1
     fi
     assert_eq "$_remapped" "0" "Plain source file write must NOT be remapped"
   }
 
-  it "does NOT remap 'write a report'" && {
-    _mo="write a comprehensive report on market trends"
+  it "does NOT remap 'write a report' on Appleton" && {
+    _mo="create appleton_housing_due_diligence_advisement.md with a comprehensive report"
     _mo_lower=$(echo "$_mo" | tr '[:upper:]' '[:lower:]')
+    _mo_padded=" $_mo_lower "
+    is_scaffold=0; is_build=0
+    # scaffold check
+    if [[ "$_mo_padded" =~ [[:space:]]scaffold[[:space:]] ]]; then is_scaffold=1
+    elif [[ "$_mo_padded" =~ [[:space:]]create[[:space:]] ]] && { [[ "$_mo_padded" =~ [[:space:]]a[[:space:]] ]] || [[ "$_mo_padded" =~ [[:space:]]new[[:space:]] ]]; } && [[ "$_mo_padded" =~ [[:space:]](project|app|crate|package|module)[[:space:]] ]]; then is_scaffold=1
+    fi
+    # build check
+    if [[ "$_mo_padded" =~ [[:space:]]build[[:space:]] ]] && [[ "$_mo_padded" =~ [[:space:]](the|this|it|project|app|code|binary|crate|package)[[:space:]] ]]; then is_build=1
+    fi
     _remapped=0
-    if [[ "$_mo_lower" =~ (scaffold|create.*(new|a).*(project|app|crate|package|module)|initialize.*(project|app|repo|crate)) ]]; then
-        _remapped=1
-    elif [[ "$_mo_lower" =~ (build.*(the|this|it|project|app|code|binary|crate|package)|cargo.build) ]]; then
+    if [ "$is_scaffold" -eq 1 ] || [ "$is_build" -eq 1 ]; then
         _remapped=1
     fi
-    assert_eq "$_remapped" "0" "Report writing must NOT be remapped"
+    assert_eq "$_remapped" "0" "Report writing on Appleton must NOT be remapped"
   }
 
   it "avoids matching 'compile' as ambiguous" && {
