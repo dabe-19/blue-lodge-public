@@ -7091,8 +7091,7 @@ INTERLOCK_JSON
                             _mismatch_count=$((_mismatch_count + 1))
                             [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Specialist tool mismatch: router=/$_routed_base specialist=/$_spec_cmd_name — rejecting ($_mismatch_count/2)"
                             _micro_add_warning "$micro_file" "TOOL MISMATCH: Router selected /$_routed_base but specialist output /$_spec_cmd_name. You MUST use /$_routed_base for this action."
-                            # Inject feedback so the router can self-correct on retry
-                            _last_eval_feedback="MISMATCH: You selected /$_routed_base but the milestone specifies /$_spec_cmd_name. Use /$_spec_cmd_name instead."
+                            _last_eval_feedback="MISMATCH: The milestone specifies /$_routed_base but you proposed /$_spec_cmd_name. Use /$_routed_base instead."
                             inner_attempts=$((inner_attempts + 1))
                             continue
                         fi
