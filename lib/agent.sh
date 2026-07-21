@@ -3346,8 +3346,16 @@ _agent_evaluate_milestone() {
 
     # Retrieve primary objective for overarching relevance context
     local _primary_obj=""
+    local _eval_prior_ctx=""
     if [ -f "$macro_file" ]; then
         _primary_obj=$(jq -r '.primary_objective // empty' "$macro_file" 2>/dev/null)
+        if command -v jq &>/dev/null; then
+            local _sieve_ctx_data
+            _sieve_ctx_data=$(jq -r '.prior_context // empty' "$macro_file" 2>/dev/null)
+            if [ -n "$_sieve_ctx_data" ] && [ "$_sieve_ctx_data" != "[]" ] && [ "$_sieve_ctx_data" != "null" ]; then
+                _eval_prior_ctx="\n\nPRIOR CONTEXT (retrieved from project memory):\n$(echo "$_sieve_ctx_data" | jq -r '.[] | "- \(.title // "memory"): \(.content)"' 2>/dev/null | head -30)"
+            fi
+        fi
     fi
 
     # ATTROLLER CHECK: Detect web research milestones (search/fetch/scrape)
@@ -3415,14 +3423,15 @@ _agent_evaluate_milestone() {
     _eval_now=$(date '+%Y-%m-%d %H:%M:%S %Z')
     local eval_prompt="" eval_sys=""
     if [ "$_is_web_milestone" -eq 1 ]; then
-        eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nPRIMARY OBJECTIVE (the original user request):\n${_primary_obj}\n\nACTION LOG (from the current milestone execution):\n${eval_context}${_eval_discovered_links}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions above accomplish this milestone? Apply the EVAL SCHEMA below.\n\n$(cat << EVAL_P1_TEXT
+        eval_prompt="CURRENT DATE/TIME: ${_eval_now}\n\nPRIMARY OBJECTIVE (the original user request):\n${_primary_obj}\n\nACTION LOG (from the current milestone execution):\n${eval_context}${_eval_discovered_links}${_eval_prior_ctx}\n\n---\n\nMILESTONE TO EVALUATE:\n${milestone_text}\n\nDid the actions above accomplish this milestone? Apply the EVAL SCHEMA below.\n\n$(cat << EVAL_P1_TEXT
 EVAL SCHEMA:
 - Classify: Either COMPLETE or INCOMPLETE.
 - Scope: Evaluate if the retrieved information is relevant to the PRIMARY OBJECTIVE. Do not judge by future/past objectives (e.g. if the milestone is to search/scrape content, it is COMPLETE once relevant content is successfully retrieved, even if editing or delivery steps of the primary objective have not been started yet).
 - Recency: Judge by the LAST action in the log — earlier failed attempts do NOT invalidate a later success.
+- Detour / Skip Rule: If the ACTION LOG shows a successful file write (/write or /save) that already generated the final report/deliverable containing the required factual data, OR if the PRIOR CONTEXT already contains the required data, the milestone is COMPLETE.
 - Web Relevance Check (Mandatory for Search/Scrape):
   - Do NOT just verify that the command ran successfully. You MUST inspect the actual search results or page content returned in the ACTION LOG.
-  - If the retrieved information is empty, irrelevant to the primary objective, blocked/captcha, or fails to contain the specific data needed to fulfill the original user request (e.g. searching for a book returns no info about the book, or a fetch returned an empty/blocked page), you MUST classify the verdict as INCOMPLETE.
+  - If the retrieved information is empty, irrelevant to the primary objective, blocked/captcha, or fails to contain the specific data needed to fulfill the original user request (e.g. searching for a book returns no info about the book, or a fetch returned an empty/blocked page), you MUST classify the verdict as INCOMPLETE (unless the Detour / Skip Rule above applies).
   - If INCOMPLETE and you need page content, review the DISCOVERED WEB LINKS (Search Results) provided above. Identify which URLs have already been attempted/blocked or belong to the CURRENTLY BLOCKED/BLACKLISTED DOMAINS, evaluate the remaining options based on their titles and snippets, and recommend the next best URL (e.g. 'Use /web fetch <url>' or 'Use /web summary <url>') from a non-blocked domain in the "recommendation" field of the JSON.
 ${_eval_research_rule}
 - Recommendation Rule: Any recommended next actions or commands in your recommendation MUST use only valid workspace slash commands (/web, /read, /ls, /grep, /write, /save, /append, /edit, /respond, /social, /email, /brainstorm). Never fabricate or invent new slash command names.
