@@ -4585,8 +4585,8 @@ SPEC_RULES
             local _base_for_ws="${cmd_name#/}"
             case "$_base_for_ws" in
                 write|save|append)
-                    echo "PERSISTENT MEMORY DELIVERABLE: ALWAYS use 'mem:active_task' for the final task report or deliverable."
-                    echo "TASK WORKSPACE: ${AGENT_TASK_WORKSPACE_REL}/ (use ONLY for temporary scratch files, compiles, logs, or sandboxing)"
+                    echo "PERSISTENT MEMORY DELIVERABLE: Write the final report exactly to the file path 'mem:active_task'."
+                    echo "TASK WORKSPACE: Write temporary scratch files, compiles, logs, or sandboxing to the directory '${AGENT_TASK_WORKSPACE_REL}/'."
                     echo "Put general project files in the project directory."
                     echo ""
                     ;;
@@ -4779,7 +4779,7 @@ SPEC
                 cat << 'SPEC'
 {"cmd":"/write","syntax":"/write <filepath> <content>",
 "desc":"Write COMPLETE file contents. Creates or overwrites.",
-"rules":["RELATIVE PATHS ONLY (e.g. report.md, src/main.rs) — NEVER start with /","To write persistent cross-task memories/deliverables, ALWAYS use 'mem:active_task'","ALWAYS include a SPACE between filepath and content (e.g. report.md Content here)","Put the command and filepath on the first line, then write the content on subsequent lines with literal newlines","COMPLETE source for code files","To ADD to a file, use /append instead","To change one line, use /edit instead","BEFORE writing, check if a file already exists with /read — prefer /append or /edit over overwriting"],
+"rules":["RELATIVE PATHS ONLY (e.g. report.md, src/main.rs) — NEVER start with /","To write persistent cross-task memories/deliverables, use exactly: mem:active_task","ALWAYS include a SPACE between filepath and content (e.g. report.md Content here)","Put the command and filepath on the first line, then write the content on subsequent lines with literal newlines","COMPLETE source for code files","To ADD to a file, use /append instead","To change one line, use /edit instead","BEFORE writing, check if a file already exists with /read — prefer /append or /edit over overwriting"],
 "format_only_ex":["/write src/main.rs\nfn main() {\n    println!(\"Hello\");\n}","/write mem:active_task\n# Appleton Wisconsin Housing\nContent here"]}
 SPEC
                 ;;
