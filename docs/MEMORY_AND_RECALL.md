@@ -790,10 +790,18 @@ grep '^## ' GEORGE.md
 | `journal_write()` | Append timestamped entry |
 | `journal_read()` | Read with decay tiers applied |
 | `journal_apply_decay()` | Compress old entries to sediment |
-| `journal_write_failure()` | Structured failure record |
 | `journal_write_quip()` | Background witty one-liner |
 | `journal_reflect()` | Session reflection at task end |
 | `journal_greeting()` | Session-aware greeting message |
+
+### Web Cache & Grey-listing (lib/web.sh)
+
+| Function | Purpose |
+|----------|---------|
+| `web_search()` | Perform search and write full results payload to `last_search.json` |
+| `_web_greylist_contains()` | Check if a domain/host is grey-listed (hardcoded or dynamically logged) |
+| `_web_greylist_add()` | Append a domain/host to the dynamic `web_greylist.log` when it serves WAF blocks |
+| `_web_greylist_fallback()` | Intercept fetches for grey-listed domains and retrieve cached search snippet |
 
 ---
 

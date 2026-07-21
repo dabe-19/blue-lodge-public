@@ -2138,4 +2138,94 @@ describe "web search exclusions"
     _teardown_web
   }
 
+# ── Domain Grey-listing & Snippet Fallbacks ───────────────────
+describe "Domain Grey-listing & Snippet Fallbacks"
+
+  it "defines greylist configuration defaults" && {
+    _setup_web
+    assert_contains "$WEB_GREYLIST_DOMAINS" "redfin.com"
+    assert_contains "$WEB_GREYLIST_DOMAINS" "google.com"
+    [ -n "$WEB_GREYLIST_FILE" ]
+    assert_ok $?
+    _teardown_web
+  }
+
+  it "_web_greylist_contains matches domains and subdomains" && {
+    _setup_web
+    export WEB_GREYLIST_DOMAINS="redfin.com,example.org"
+    
+    _web_greylist_contains "https://redfin.com/city/123"
+    assert_ok $? "Exact domain match should succeed"
+    
+    _web_greylist_contains "https://www.redfin.com/city/123"
+    assert_ok $? "Subdomain match should succeed"
+    
+    _web_greylist_contains "https://google.com"
+    assert_fail $? "Non-greylisted domain should fail"
+    
+    _teardown_web
+  }
+
+  it "_web_greylist_fallback extracts snippet from last_search.json" && {
+    _setup_web
+    export AGENT_TASK_WORKSPACE="$TMPDIR_WEB"
+    mkdir -p "$TMPDIR_WEB"
+    
+    echo '{"query":"Appleton","provider":"serper","results":[{"title":"Redfin Page","url":"https://redfin.com/page1","snippet":"This is Appleton info."}]}' > "$TMPDIR_WEB/last_search.json"
+    
+    result=$(_web_greylist_fallback "https://redfin.com/page1")
+    assert_ok $?
+    assert_contains "$result" "Redfin Page"
+    assert_contains "$result" "This is Appleton info."
+    assert_contains "$result" "SYSTEM NOTE: Domain is grey-listed"
+    
+    _teardown_web
+  }
+
+  it "web_fetch fallback works for grey-listed domains" && {
+    _setup_web
+    export AGENT_TASK_WORKSPACE="$TMPDIR_WEB"
+    export WEB_GREYLIST_DOMAINS="redfin.com"
+    mkdir -p "$TMPDIR_WEB"
+    
+    echo '{"query":"Appleton","provider":"serper","results":[{"title":"Redfin Page","url":"https://redfin.com/page1","snippet":"This is Appleton info."}]}' > "$TMPDIR_WEB/last_search.json"
+    
+    output=$(web_fetch "https://redfin.com/page1" 2>/dev/null)
+    assert_ok $?
+    assert_contains "$output" "This is Appleton info."
+    assert_contains "$output" "SYSTEM NOTE: Domain is grey-listed"
+    
+    _teardown_web
+  }
+
+  it "web_fetch_json fallback works for grey-listed domains" && {
+    _setup_web
+    export AGENT_TASK_WORKSPACE="$TMPDIR_WEB"
+    export WEB_GREYLIST_DOMAINS="redfin.com"
+    mkdir -p "$TMPDIR_WEB"
+    
+    echo '{"query":"Appleton","provider":"serper","results":[{"title":"Redfin Page","url":"https://redfin.com/page1","snippet":"This is Appleton info."}]}' > "$TMPDIR_WEB/last_search.json"
+    
+    output=$(web_fetch_json "https://redfin.com/page1")
+    assert_ok $?
+    assert_contains "$output" "\"title\": \"Redfin Page\""
+    assert_contains "$output" "\"content\": \"[SYSTEM NOTE: Domain is grey-listed"
+    
+    _teardown_web
+  }
+
+  it "dynamic greylisting registers blocked hosts" && {
+    _setup_web
+    export WEB_GREYLIST_FILE="$TMPDIR_WEB/web_greylist.log"
+    rm -f "$WEB_GREYLIST_FILE"
+    
+    _web_greylist_add "blocked-site.com" "captcha"
+    assert_file_exists "$WEB_GREYLIST_FILE"
+    
+    _web_greylist_contains "https://blocked-site.com/subpage"
+    assert_ok $? "Host added to greylist log should match"
+    
+    _teardown_web
+  }
+
 test_end

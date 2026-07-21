@@ -19,11 +19,12 @@ WEB_BLACKLIST_ENABLED="${WEB_BLACKLIST_ENABLED:-true}"
 WEB_BLACKLIST_TTL="${WEB_BLACKLIST_TTL:-1800}"  # Dynamic blacklist entries expire after 30 minutes (seconds)
 WEB_CONTENT_MAX_CHARS="${WEB_CONTENT_MAX_CHARS:-4000}"  # Max chars for cleaned web content (post-boilerplate)
 
-# Preloaded domain blacklist — sites that aggressively block bots.
-# Comma-separated list. Fetch/scrape is skipped for these hosts,
-# but search-result headers (title + snippet) are still used.
-# Override in .george/config or environment to add/remove domains.
 WEB_BLACKLIST_DOMAINS="${WEB_BLACKLIST_DOMAINS:-linkedin.com,facebook.com,instagram.com,twitter.com,x.com,tiktok.com,pinterest.com,youtube.com,youtu.be}"
+
+WEB_GREYLIST_DOMAINS="${WEB_GREYLIST_DOMAINS:-google.com,redfin.com,zillow.com,linkedin.com,bloomberg.com,medium.com,wsj.com,nytimes.com,wired.com,realtor.com}"
+WEB_GREYLIST_FILE="${WEB_GREYLIST_FILE:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/web_greylist.log}"
+WEB_GREYLIST_ENABLED="${WEB_GREYLIST_ENABLED:-true}"
+WEB_GREYLIST_TTL="${WEB_GREYLIST_TTL:-1800}"  # Dynamic greylist entries expire after 30 minutes
 
 # ── Centralized curl wrapper ──────────────────────────────────
 # All web-browsing curl calls route through _web_curl to ensure:
@@ -182,6 +183,89 @@ _web_blacklist_reason() {
     [ -z "$line" ] && return 1
 
     echo "$line" | sed -n 's/.*|reason=\([^|]*\).*/\1/p'
+}
+
+_web_greylist_is_enabled() {
+    [[ "$WEB_GREYLIST_ENABLED" == "true" || "$WEB_GREYLIST_ENABLED" == "1" || "$WEB_GREYLIST_ENABLED" == "yes" ]]
+}
+
+_web_greylist_contains() {
+    _web_greylist_is_enabled || return 1
+    local url="$1"
+    local host
+    host=$(echo "$url" | sed 's|^https\?://||' | cut -d'/' -f1)
+
+    # Check preloaded greylist domains first
+    if [ -n "${WEB_GREYLIST_DOMAINS:-}" ]; then
+        local _domain
+        local _host_lower
+        _host_lower=$(echo "$host" | tr '[:upper:]' '[:lower:]')
+        IFS=',' read -ra _gl_domains <<< "$WEB_GREYLIST_DOMAINS"
+        for _domain in "${_gl_domains[@]}"; do
+            _domain=$(echo "$_domain" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')
+            [ -z "$_domain" ] && continue
+            if [[ "$_host_lower" == "$_domain" ]] || [[ "$_host_lower" == *".${_domain}" ]]; then
+                return 0
+            fi
+        done
+    fi
+
+    [ -f "$WEB_GREYLIST_FILE" ] || return 1
+
+    # Dynamic greylist entries check with TTL
+    local _now _line_ts _line_epoch _age
+    _now=$(date +%s)
+    local _match_line
+    _match_line=$(grep -E "\|host=${host//\./\\.}(\||$)" "$WEB_GREYLIST_FILE" 2>/dev/null | tail -1)
+    [ -z "$_match_line" ] && return 1
+
+    _line_ts=$(echo "$_match_line" | sed -n 's/^\([^|]*\)|.*/\1/p')
+    if [ -n "$_line_ts" ]; then
+        _line_epoch=$(date -d "$_line_ts" +%s 2>/dev/null || echo 0)
+        _age=$((_now - _line_epoch))
+        if [ "$_age" -gt "${WEB_GREYLIST_TTL:-1800}" ]; then
+            return 1
+        fi
+    fi
+    return 0
+}
+
+_web_greylist_add() {
+    local host="$1"
+    local reason="${2:-challenge_block}"
+    [ -z "$host" ] && return 1
+
+    mkdir -p "$(dirname "$WEB_GREYLIST_FILE")" 2>/dev/null
+    local timestamp
+    timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+    printf '%s|host=%s|reason=%s\n' "$timestamp" "$host" "$reason" >> "$WEB_GREYLIST_FILE"
+}
+
+_web_greylist_fallback() {
+    local url="$1"
+    local search_file="${AGENT_TASK_WORKSPACE:-.george/workspaces}/last_search.json"
+    
+    if [ -f "$search_file" ] && command -v jq &>/dev/null; then
+        # Search the cached results for a matching link/url
+        local match_data
+        match_data=$(jq -c --arg url "$url" '.results[]? | select(.url == $url) // empty' "$search_file" 2>/dev/null | tail -1)
+        if [ -n "$match_data" ]; then
+            local title snippet
+            title=$(echo "$match_data" | jq -r '.title // "No Title"')
+            snippet=$(echo "$match_data" | jq -r '.snippet // ""')
+            
+            # Format the output matching the structured json return from fetch/scrape
+            local fallback_content="[SYSTEM NOTE: Domain is grey-listed for direct curls. Serving cached search engine snippet instead of hitting the live server.]\n\n$snippet"
+            
+            jq -n \
+                --arg url "$url" \
+                --arg title "$title" \
+                --arg content "$fallback_content" \
+                '{"url":$url,"title":$title,"content":$content,"images":[]}'
+            return 0
+        fi
+    fi
+    return 1
 }
 
 WEB_EXCLUSIONS_FILE="${WEB_EXCLUSIONS_FILE:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/search_exclusions.log}"
@@ -827,8 +911,13 @@ web_fetch_raw() {
         local _reason
         _reason=$(_web_block_reason "$_status" "$html")
         if [ -n "$_reason" ]; then
-            _web_blacklist_add "$url" "$_reason" "$_status"
-            echo "BLOCKED:${_reason}:${_status}" > "$_WEB_STATUS_FILE" 2>/dev/null
+            if [[ "$_reason" == "HTML_CHALLENGE_OR_CAPTCHA" ]] || [[ "$_reason" == "HTTP_403_FORBIDDEN" ]] || [[ "$_reason" == "HTTP_429_RATE_LIMIT" ]]; then
+                _web_greylist_add "$(echo "$url" | sed 's|^https\?://||' | cut -d'/' -f1)" "$_reason"
+                echo "BLOCKED_GREYLIST:${_reason}:${_status}" > "$_WEB_STATUS_FILE" 2>/dev/null
+            else
+                _web_blacklist_add "$url" "$_reason" "$_status"
+                echo "BLOCKED:${_reason}:${_status}" > "$_WEB_STATUS_FILE" 2>/dev/null
+            fi
         else
             echo "$_status" > "$_WEB_STATUS_FILE" 2>/dev/null
         fi
@@ -839,8 +928,13 @@ web_fetch_raw() {
     local _html_reason
     _html_reason=$(_web_block_reason "${_status:-200}" "$html")
     if [ -n "$_html_reason" ]; then
-        _web_blacklist_add "$url" "$_html_reason" "${_status:-200}"
-        echo "BLOCKED:${_html_reason}:${_status:-200}" > "$_WEB_STATUS_FILE" 2>/dev/null
+        if [[ "$_html_reason" == "HTML_CHALLENGE_OR_CAPTCHA" ]]; then
+            _web_greylist_add "$(echo "$url" | sed 's|^https\?://||' | cut -d'/' -f1)" "$_html_reason"
+            echo "BLOCKED_GREYLIST:${_html_reason}:${_status:-200}" > "$_WEB_STATUS_FILE" 2>/dev/null
+        else
+            _web_blacklist_add "$url" "$_html_reason" "${_status:-200}"
+            echo "BLOCKED:${_html_reason}:${_status:-200}" > "$_WEB_STATUS_FILE" 2>/dev/null
+        fi
         return 1
     fi
 
@@ -1620,6 +1714,21 @@ web_fetch() {
         return 1
     fi
 
+    if _web_greylist_contains "$url"; then
+        local fallback_json
+        fallback_json=$(_web_greylist_fallback "$url")
+        if [ $? -eq 0 ]; then
+            local fallback_content
+            fallback_content=$(echo "$fallback_json" | jq -r '.content // empty')
+            if [ -n "$fallback_content" ]; then
+                echo "$fallback_content"
+                return 0
+            fi
+        fi
+        ui_warn "URL is grey-listed (known paywall/CAPTCHA) and not found in recent search cache: $url. Please run /web search first to index the snippet." >&2
+        return 1
+    fi
+
     # Check cache first
     local cache_key
     cache_key=$(printf '%s' "$url" | md5sum 2>/dev/null | cut -d' ' -f1 || printf '%s' "$url" | cksum | cut -d' ' -f1)
@@ -1837,6 +1946,21 @@ web_fetch_json() {
             --arg status "blacklist" \
             '{"url":$url,"title":$title,"content":$content,"images":[],"blocked":true,"block_reason":$reason,"http_status":$status}'
         return 0
+    fi
+
+    if _web_greylist_contains "$clean_url"; then
+        local fallback_json
+        fallback_json=$(_web_greylist_fallback "$clean_url")
+        if [ $? -eq 0 ]; then
+            echo "$fallback_json"
+            return 0
+        else
+            jq -n \
+                --arg url "$clean_url" \
+                --arg reason "GREYLISTED_MISSING_CACHE" \
+                '{"url":$url,"title":"","content":"","images":[],"links":[],"blocked":true,"block_reason":$reason,"http_status":"greylist"}'
+            return 0
+        fi
     fi
 
     # ── Reddit URL → JSON API (structured) ──────────────────────
@@ -2226,9 +2350,20 @@ web_scrape() {
 
 _WEB_LAST_SEARCH_JSON=""
 
+_web_save_last_search_to_file() {
+    if [ -n "$_WEB_LAST_SEARCH_JSON" ]; then
+        local _ws="${AGENT_TASK_WORKSPACE:-.george/workspaces}"
+        mkdir -p "$_ws" 2>/dev/null
+        echo "$_WEB_LAST_SEARCH_JSON" > "$_ws/last_search.json"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
+            ui_dim "  [debug] Saved last search results to $_ws/last_search.json" >&2
+    fi
+}
+
 web_search() {
     local query="$1"
     local count="${2:-5}"
+    local rc=0
 
     # Strip surrounding quotes (LLM often wraps queries in shell-style quotes)
     query="${query#\"}"
@@ -2254,6 +2389,8 @@ web_search() {
                 ui_dim "  [debug] web_search: MCP succeeded (${#_mcp_result} bytes)"
             echo "$_mcp_result"
             _web_journal_results "$query" "$_mcp_result" "search"
+            _WEB_LAST_SEARCH_JSON=$(jq -n --arg q "$query" --arg p "mcp" --arg r "$_mcp_result" '{"query":$q,"provider":$p,"results":[{"title":"Search results","url":"mcp","snippet":$r}]}')
+            _web_save_last_search_to_file
             return 0
         fi
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && declare -f ui_dim &>/dev/null && \
@@ -2264,7 +2401,9 @@ web_search() {
         # Bypassed for DuckDuckGo search when web is locked
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] web_search: web locked, using DuckDuckGo bypass" >&2
         _web_search_ddg "$query" "$count"
-        return $?
+        rc=$?
+        _web_save_last_search_to_file
+        return $rc
     fi
 
     if ! api_network_reachable 3; then
@@ -2278,7 +2417,9 @@ web_search() {
 
     if [ -n "$serper_key" ]; then
         _web_search_serper "$query" "$count" "$serper_key"
-        return $?
+        rc=$?
+        _web_save_last_search_to_file
+        return $rc
     fi
 
     # Try Perplexity as search engine (if configured)
@@ -2287,11 +2428,16 @@ web_search() {
 
     if [ -n "$pplx_key" ]; then
         _web_search_perplexity "$query" "$pplx_key"
-        return $?
+        rc=$?
+        _web_save_last_search_to_file
+        return $rc
     fi
 
     # Fallback: DuckDuckGo HTML scraping
     _web_search_ddg "$query" "$count"
+    rc=$?
+    _web_save_last_search_to_file
+    return $rc
 }
 
 _web_search_serper() {
