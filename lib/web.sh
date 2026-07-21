@@ -26,14 +26,69 @@ WEB_GREYLIST_FILE="${WEB_GREYLIST_FILE:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.ge
 WEB_GREYLIST_ENABLED="${WEB_GREYLIST_ENABLED:-true}"
 WEB_GREYLIST_TTL="${WEB_GREYLIST_TTL:-1800}"  # Dynamic greylist entries expire after 30 minutes
 
-# ── Centralized curl wrapper ──────────────────────────────────
-# All web-browsing curl calls route through _web_curl to ensure:
-#   - Current, realistic User-Agent (prevents UA-based bot detection)
-#   - --compressed (gzip/deflate/br — many CDNs require this)
-#   - Cookie jar (prevents cookie-wall and CF challenge failures)
-#   - Accept-Language
-# Override WEB_USER_AGENT in env or .george/config to customize.
+# Dynamic platform matching browser credentials
+WEB_SEC_CH_UA="${WEB_SEC_CH_UA:-}"
+WEB_SEC_CH_UA_MOBILE="${WEB_SEC_CH_UA_MOBILE:-}"
+WEB_SEC_CH_UA_PLATFORM="${WEB_SEC_CH_UA_PLATFORM:-}"
 WEB_USER_AGENT="${WEB_USER_AGENT:-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36}"
+
+_web_init_fingerprint() {
+    # If the user has already overridden UA via environment, do not overwrite it
+    if [ -n "${WEB_USER_AGENT:-}" ] && [ "${WEB_USER_AGENT}" != "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36" ]; then
+        if [ -z "$WEB_SEC_CH_UA_PLATFORM" ]; then
+            if [[ "$WEB_USER_AGENT" == *"Android"* ]]; then
+                WEB_SEC_CH_UA_PLATFORM='"Android"'
+                WEB_SEC_CH_UA_MOBILE="?1"
+            elif [[ "$WEB_USER_AGENT" == *"Linux"* ]]; then
+                WEB_SEC_CH_UA_PLATFORM='"Linux"'
+                WEB_SEC_CH_UA_MOBILE="?0"
+            elif [[ "$WEB_USER_AGENT" == *"iPhone"* || "$WEB_USER_AGENT" == *"iPad"* ]]; then
+                WEB_SEC_CH_UA_PLATFORM='"iOS"'
+                WEB_SEC_CH_UA_MOBILE="?1"
+            else
+                WEB_SEC_CH_UA_PLATFORM='"Windows"'
+                WEB_SEC_CH_UA_MOBILE="?0"
+            fi
+            WEB_SEC_CH_UA='"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"'
+        fi
+        return 0
+    fi
+
+    # Determine hosting platform
+    local os_info=""
+    if [ -n "${_WEB_TEST_OS_OVERRIDE:-}" ]; then
+        os_info="$_WEB_TEST_OS_OVERRIDE"
+    elif [ -f /proc/version ]; then
+        os_info=$(cat /proc/version)
+    else
+        os_info=$(uname -a 2>/dev/null || echo "")
+    fi
+
+    if [[ "$os_info" == *"Android"* ]] || [[ "$os_info" == *"android"* ]] || command -v termux-info &>/dev/null; then
+        WEB_USER_AGENT="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36"
+        WEB_SEC_CH_UA='"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"'
+        WEB_SEC_CH_UA_MOBILE="?1"
+        WEB_SEC_CH_UA_PLATFORM='"Android"'
+    elif [[ "$os_info" == *"Microsoft"* ]] || [[ "$os_info" == *"wsl"* ]] || [[ "$os_info" == *"WSL"* ]]; then
+        WEB_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+        WEB_SEC_CH_UA='"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"'
+        WEB_SEC_CH_UA_MOBILE="?0"
+        WEB_SEC_CH_UA_PLATFORM='"Windows"'
+    elif [[ "$(uname 2>/dev/null)" == "Darwin" ]]; then
+        WEB_USER_AGENT="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+        WEB_SEC_CH_UA='"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"'
+        WEB_SEC_CH_UA_MOBILE="?0"
+        WEB_SEC_CH_UA_PLATFORM='"macOS"'
+    else
+        WEB_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+        WEB_SEC_CH_UA='"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"'
+        WEB_SEC_CH_UA_MOBILE="?0"
+        WEB_SEC_CH_UA_PLATFORM='"Linux"'
+    fi
+}
+_web_init_fingerprint
+
+# ── Centralized curl wrapper ──────────────────────────────────
 _WEB_COOKIE_JAR="${TMPDIR:-/tmp}/.lodge-web-cookies-$$.jar"
 
 _web_curl() {
@@ -41,7 +96,17 @@ _web_curl() {
         --compressed \
         -b "$_WEB_COOKIE_JAR" -c "$_WEB_COOKIE_JAR" \
         -H "User-Agent: $WEB_USER_AGENT" \
+        -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7" \
         -H "Accept-Language: en-US,en;q=0.9" \
+        -H "Connection: keep-alive" \
+        -H "Upgrade-Insecure-Requests: 1" \
+        -H "Sec-Ch-Ua: $WEB_SEC_CH_UA" \
+        -H "Sec-Ch-Ua-Mobile: $WEB_SEC_CH_UA_MOBILE" \
+        -H "Sec-Ch-Ua-Platform: $WEB_SEC_CH_UA_PLATFORM" \
+        -H "Sec-Fetch-Dest: document" \
+        -H "Sec-Fetch-Mode: navigate" \
+        -H "Sec-Fetch-Site: none" \
+        -H "Sec-Fetch-User: ?1" \
         "$@"
 }
 
@@ -2472,6 +2537,10 @@ _web_search_serper() {
             clean_url=$(_web_sanitize_url "$url")
             [ -z "$clean_url" ] && continue
 
+            if _web_greylist_contains "$clean_url"; then
+                title="${title} [GREY-LISTED]"
+            fi
+
             local entry
             entry=$(printf '[%d] %s\n    %s\n    %s\n' "$i" "$title" "$clean_url" "$snippet")
             output="${output}${entry}\n"
@@ -2573,10 +2642,15 @@ _web_search_ddg() {
             clean_url=$(_web_sanitize_url "$url")
             [ -z "$clean_url" ] && continue
 
+            local display_title="${title:-$clean_url}"
+            if _web_greylist_contains "$clean_url"; then
+                display_title="${display_title} [GREY-LISTED]"
+            fi
+
             local entry
-            entry=$(printf '[%d] %s\n    %s' "$i" "${title:-$clean_url}" "$clean_url")
+            entry=$(printf '[%d] %s\n    %s' "$i" "$display_title" "$clean_url")
             output="${output}${entry}\n\n"
-            printf '[%d] %s\n    %s\n\n' "$i" "${title:-$clean_url}" "$clean_url"
+            printf '[%d] %s\n    %s\n\n' "$i" "$display_title" "$clean_url"
             i=$((i + 1))
         done <<< "$results"
 

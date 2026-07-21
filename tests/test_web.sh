@@ -2228,4 +2228,46 @@ describe "Domain Grey-listing & Snippet Fallbacks"
     _teardown_web
   }
 
+  it "dynamic platform detection configures client hints" && {
+    _setup_web
+    
+    # Simulate Android / Termux environment
+    WEB_USER_AGENT=""
+    WEB_SEC_CH_UA_PLATFORM=""
+    export _WEB_TEST_OS_OVERRIDE="Android"
+    
+    _web_init_fingerprint
+    assert_contains "$WEB_USER_AGENT" "Android"
+    assert_eq "$WEB_SEC_CH_UA_PLATFORM" '"Android"'
+    assert_eq "$WEB_SEC_CH_UA_MOBILE" "?1"
+    
+    # Simulate Windows user agent override
+    WEB_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+    WEB_SEC_CH_UA_PLATFORM=""
+    unset _WEB_TEST_OS_OVERRIDE
+    _web_init_fingerprint
+    assert_eq "$WEB_SEC_CH_UA_PLATFORM" '"Windows"'
+    
+    _teardown_web
+  }
+
+  it "search annotations append GREY-LISTED suffix to matching domains" && {
+    _setup_web
+    export WEB_GREYLIST_DOMAINS="redfin.com"
+    
+    # Stub api_post to return a raw serper response
+    api_post() {
+      echo '{"organic":[{"position":1,"link":"https://redfin.com/page1","title":"Appleton Market","snippet":"snippet details"},{"position":2,"link":"https://other.com/page2","title":"Other Market","snippet":"other details"}]}'
+    }
+    export -f api_post
+    
+    output=$(_web_search_serper "query" 5 "dummy_key")
+    assert_contains "$output" "Appleton Market [GREY-LISTED]"
+    assert_contains "$output" "Other Market"
+    assert_not_contains "$output" "Other Market [GREY-LISTED]"
+    
+    unset -f api_post
+    _teardown_web
+  }
+
 test_end
