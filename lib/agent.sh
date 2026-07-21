@@ -118,7 +118,7 @@ AGENT_WEB_SEARCH_ONLY_ABSTRACT="${AGENT_WEB_SEARCH_ONLY_ABSTRACT:-1}"  # Milesto
 AGENT_WEB_SEARCH_ONLY_COMBINED="${AGENT_WEB_SEARCH_ONLY_COMBINED:-1}"  # Milestones after web unlock where ONLY /web search is allowed (no fetch/scrape) for combined tasks
 AGENT_GIT_UNLOCK_ABSTRACT="${AGENT_GIT_UNLOCK_ABSTRACT:-1}"  # Milestones before /git unlocks for abstract tasks (99=effectively never)
 AGENT_GIT_UNLOCK_COMBINED="${AGENT_GIT_UNLOCK_COMBINED:-1}"   # Milestones before /git unlocks for combined tasks
-AGENT_OUTPUT_DIR="${AGENT_OUTPUT_DIR:-responses}"       # Parent directory for agent file writes (/write, /save, /append)
+AGENT_OUTPUT_DIR="${AGENT_OUTPUT_DIR:-.george/workspaces}" # Parent directory for agent file writes (.george/workspaces)
 AGENT_GREP_ALLOW_ABSOLUTE="${AGENT_GREP_ALLOW_ABSOLUTE:-0}"  # /grep path policy: 0=relative-only (force to workdir), 1=allow absolute paths
 AGENT_GREP_MAX_LINES="${AGENT_GREP_MAX_LINES:-100}"          # /grep output cap (lines shown before truncation)
 AGENT_LS_ALLOW_ABSOLUTE="${AGENT_LS_ALLOW_ABSOLUTE:-0}"      # /ls path policy: 0=relative-only (force to workdir), 1=allow absolute paths
@@ -399,7 +399,14 @@ _micro_set() {
 _micro_add_action() {
     local file="$1" action="$2" status="$3" exit_code="$4" output="$5" source="${6:-specialist}"
     local tmp="${file}.tmp"
-    jq --arg a "$action" --arg s "$status" --argjson e "$exit_code" \
+    local clean_action="$action"
+    if [[ "$action" == *$'\n'* ]]; then
+        local first_line n_lines
+        first_line=$(echo "$action" | head -n 1)
+        n_lines=$(echo "$action" | wc -l)
+        clean_action="${first_line:0:120} (+${n_lines} lines)"
+    fi
+    jq --arg a "$clean_action" --arg s "$status" --argjson e "$exit_code" \
        --arg o "${output:0:2000}" --arg src "$source" \
        '.action_log += [{"action": $a, "status": $s, "exit_code": $e, "output": $o, "source": $src}]' \
        "$file" > "$tmp" && memory_json_commit "$tmp" "$file"
@@ -1097,7 +1104,7 @@ _micro_serialize() {
     jq -r --argjson n "$max_actions" --argjson m "$max_output" '
         "Objective: \(.micro_objective)\n\n" +
         (.action_log | .[-$n:] | map(
-            "- Action: \(.action | gsub("\n"; "\\n"))\n  Status: \(.status) (exit \(.exit_code))\n  Output: \((.output // "")[:$m] | gsub("\n"; "\\n"))"
+            "- Action: \(.action | gsub("\n"; " "))\n  Status: \(.status) (exit \(.exit_code))\n  Output: \((.output // "")[:$m] | gsub("\n"; " "))"
         ) | join("\n\n")) +
         (if (.warnings | length) > 0 then "\n\nWarnings:\n" + (.warnings | map("- " + .) | join("\n")) else "" end)
     ' "$file" 2>/dev/null
@@ -1131,7 +1138,7 @@ _micro_serialize_eval() {
     jq -r --argjson n "$max_actions" --argjson m "$max_output" '
         "Objective: \(.micro_objective)\n\n" +
         (.action_log | .[-$n:] | map(
-            "- Action: \(.action | gsub("\n"; "\\n"))\n  Status: \(.status) (exit \(.exit_code))\n  Output: \((.output // "")[:$m] | gsub("\n"; "\\n"))"
+            "- Action: \(.action | gsub("\n"; " "))\n  Status: \(.status) (exit \(.exit_code))\n  Output: \((.output // "")[:$m] | gsub("\n"; " "))"
         ) | join("\n\n")) +
         (if (.warnings | length) > 0 then "\n\nWarnings:\n" + (.warnings | map("- " + .) | join("\n")) else "" end)
     ' "$file" 2>/dev/null
@@ -5608,6 +5615,13 @@ agent_inner_loop() {
                     is_test=1
                 fi
 
+                # Do NOT remap /write -> /test or /build if milestone is creating/writing a file!
+                if [[ "$_mo_padded" =~ [[:space:]](create|write|add|generate|make|save)[[:space:]].*[[:space:]](file|script|program|code)[[:space:]] ]] || \
+                   [[ "$_mo_padded" =~ [[:space:]](file|script|program|code)[[:space:]] ]]; then
+                    is_test=0
+                    is_build=0
+                fi
+
                 if [ "$is_scaffold" -eq 1 ]; then
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Pre-route: remapped /write -> /init (coding scaffold detected)"
                     _pre_cmd="init"
@@ -7439,15 +7453,15 @@ INTERLOCK_JSON
                         unset AGENT_LAST_AUTOCLEANED_PATH_ORIG AGENT_LAST_AUTOCLEANED_PATH_CLEAN
                     fi
 
-                    # ── Static Anti-Placeholder Scanner ──────────
+                    # ── Static Anti-Placeholder Scanner & Exec-Verify ──────────
                     if [[ "$cmd" == /write\ * || "$cmd" == /edit\ * || "$cmd" == /save\ * ]] && [ "$exit_code" -eq 0 ]; then
                         local _written_target
-                        _written_target=$(echo "$cmd" | awk '{print $2}')
+                        _written_target=$(echo "$cmd" | awk '{print $2}' | tr -d '"' | tr -d "'")
                         local _resolved_target
                         _resolved_target=$(ui_resolve_path "$_written_target" "$workdir")
                         if [ -f "$_resolved_target" ]; then
-                            if grep -qiE '(#|//)[[:space:]]*(placeholder|stub|todo|for[[:space:]]+demonstration|not[[:space:]]+implemented)' "$_resolved_target" 2>/dev/null; then
-                                local _ph_notice="[PLACEHOLDER DETECTED] File '${_written_target}' contains stub comments (e.g. '# Placeholder for logic'). You MUST replace stub functions with complete, working code."
+                            if grep -qiE '(#|//).*(placeholder|stub|todo|for[[:space:]]+demonstration|demonstration[[:space:]]+purposes|dummy[[:space:]]+implementation|not[[:space:]]+implemented)' "$_resolved_target" 2>/dev/null; then
+                                local _ph_notice="[PLACEHOLDER DETECTED] File '${_written_target}' contains stub/placeholder comments. You MUST replace placeholder/stub code with complete, production-ready logic."
                                 ui_warn "Static placeholder scanner triggered on $_written_target"
                                 output="${output:+${output}
 }${_ph_notice}"
@@ -7464,6 +7478,42 @@ INTERLOCK_JSON
                                     local _exec_out _exec_exit
                                     _exec_out=$(python3 -m py_compile "$_resolved_target" 2>&1)
                                     _exec_exit=$?
+
+                                    if [ "$_exec_exit" -eq 0 ] && grep -q '__main__' "$_resolved_target" 2>/dev/null; then
+                                        local _run_out _run_exit
+                                        _run_out=$(python3 "$_resolved_target" 2>&1)
+                                        _run_exit=$?
+                                        if [ "$_run_exit" -ne 0 ]; then
+                                            _exec_out="$_run_out"
+                                            _exec_exit="$_run_exit"
+                                        fi
+                                    fi
+
+                                    # ── Unprivileged User-Space Auto-Package Provisioning ──────────
+                                    if [ "$_exec_exit" -ne 0 ] && [[ "$_exec_out" =~ (ModuleNotFoundError:[[:space:]]*No[[:space:]]+module[[:space:]]+named|No[[:space:]]+module[[:space:]]+named)[[:space:]]*\'([a-zA-Z0-9_]+)\' ]]; then
+                                        local _missing_mod="${BASH_REMATCH[2]}"
+                                        ui_warn "Exec-verify detected missing Python package '$_missing_mod'. Attempting user-space installation..."
+                                        local _inst_exit=1
+                                        if command -v uv &>/dev/null; then
+                                            uv pip install "$_missing_mod" 2>&1
+                                            _inst_exit=$?
+                                        elif python3 -m pip --version &>/dev/null; then
+                                            python3 -m pip install --user "$_missing_mod" 2>&1
+                                            _inst_exit=$?
+                                        fi
+                                        if [ "$_inst_exit" -eq 0 ]; then
+                                            ui_ok "Installed '$_missing_mod' to user site-packages. Re-running verification..."
+                                            _exec_out=$(python3 -m py_compile "$_resolved_target" 2>&1)
+                                            _exec_exit=$?
+                                            if [ "$_exec_exit" -eq 0 ] && grep -q '__main__' "$_resolved_target" 2>/dev/null; then
+                                                _exec_out=$(python3 "$_resolved_target" 2>&1)
+                                                _exec_exit=$?
+                                            fi
+                                        else
+                                            ui_warn "Auto-install of '$_missing_mod' failed (unprivileged user or offline)."
+                                        fi
+                                    fi
+
                                     if [ "$_exec_exit" -ne 0 ]; then
                                         ui_err "Exec-verify failed for $_written_target (exit $_exec_exit)"
                                         local _ev_fail="[EXECUTION FAILURE] python3 verification of '${_written_target}' failed with exit code ${_exec_exit}:\n${_exec_out:0:1500}\nFix the compilation/runtime error identified above."
@@ -7472,8 +7522,8 @@ INTERLOCK_JSON
                                         _last_eval_feedback="${_last_eval_feedback:+${_last_eval_feedback}
 }${_ev_fail}"
                                     else
-                                        ui_ok "Exec-verify passed for $_written_target (valid syntax)"
-                                        local _ev_pass="[EXECUTION VERIFIED] python3 compilation check for '${_written_target}' passed with exit code 0."
+                                        ui_ok "Exec-verify passed for $_written_target (valid execution)"
+                                        local _ev_pass="[EXECUTION VERIFIED] python3 execution check for '${_written_target}' passed with exit code 0."
                                         output="${output:+${output}
 }${_ev_pass}"
                                     fi
@@ -8774,16 +8824,11 @@ MEMEOF
 
 
     # ── Dynamic Output Directory ──────────────────────────────
-    # Abstract and combined tasks route file writes to the task
-    # workspace so artifacts stay isolated per task. Concrete tasks
-    # keep the default responses/ directory.
-    if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ] || [ "${AGENT_TASK_TYPE:-concrete}" = "combined" ]; then
-        AGENT_OUTPUT_DIR=".george/workspaces"
-        export LODGE_SANDBOXES="$AGENT_TASK_WORKSPACE_REL/.sandboxes"
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] output dir: $AGENT_OUTPUT_DIR ($AGENT_TASK_TYPE), sandboxes: $LODGE_SANDBOXES"
-    else
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] output dir: $AGENT_OUTPUT_DIR (concrete)"
-    fi
+    # Route file writes to the task workspace (.george/workspaces/<task_ts>)
+    # so artifacts stay cleanly isolated per task inside .george/workspaces.
+    AGENT_OUTPUT_DIR="${AGENT_TASK_WORKSPACE_REL:-.george/workspaces}"
+    export LODGE_SANDBOXES="$AGENT_OUTPUT_DIR/.sandboxes"
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] output dir: $AGENT_OUTPUT_DIR ($AGENT_TASK_TYPE), sandboxes: $LODGE_SANDBOXES"
 
     # ── Build Honeydew List ───────────────────────────────────
     # Decompose the user's task into a precedence-ranked checklist

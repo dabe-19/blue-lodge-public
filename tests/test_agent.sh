@@ -3071,8 +3071,8 @@ describe "Web search query cleaner dual-mode"
 # ── AGENT_OUTPUT_DIR enforcement ──────────────────────────────
 describe "AGENT_OUTPUT_DIR enforcement"
 
-  it "AGENT_OUTPUT_DIR defaults to responses" && {
-    assert_eq "$AGENT_OUTPUT_DIR" "responses"
+  it "AGENT_OUTPUT_DIR defaults to .george/workspaces" && {
+    assert_eq "${AGENT_OUTPUT_DIR:-}" ".george/workspaces"
   }
 
   it "agent_inner_loop references AGENT_OUTPUT_DIR" && {
@@ -4731,12 +4731,12 @@ describe "Research Task Prompt Injections and Classification"
     assert_eq $? 1 "task ending with 'please' must NOT be classified as conversational"
 
     _agent_is_conversational_info_task "George, Please Tell me the weather"
-    assert_eq $? 1 "task containing 'Please' (mixed case) must NOT be classified as conversational"
+    assert_eq $? 1 "task containing Please mixed case must NOT be classified as conversational"
   }
 
   it "does not bypass conversational mode on sub-strings containing please" && {
     _agent_is_conversational_info_task "tell me if you are pleased"
-    assert_eq $? 0 "task containing 'pleased' (not 'please' as a whole word) should be conversational"
+    assert_eq $? 0 "task containing pleased whole word should be conversational"
   }
 
   it "classifies research task as combined task type" && {
