@@ -52,11 +52,6 @@ type: $project_type
 build: $build_cmd
 test: $test_cmd
 
-## Agent Capabilities
-Available commands: /recall, /journal, /write, /save, /append, /edit, /build, /test, /fix, /commit, /push, /clone, /git, /social, /email, /phone, /download, /vision, /container, /sandbox
-Use /recall to retrieve prior task data before starting new work.
-Use /write <path> <content> to create files. Use /edit <path> to modify files.
-
 ## Workspace Layout
 (auto-populated on first task)
 
@@ -64,6 +59,9 @@ Use /write <path> <content> to create files. Use /edit <path> to modify files.
 (none)
 
 ## Completed Milestones
+(none)
+
+## Semantic Memory Registry
 (none)
 
 ## Context Files

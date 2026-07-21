@@ -1587,6 +1587,20 @@ _agent_register_memory_file() {
             fi
         fi
     done
+
+    # Sync memory registry to GEORGE.md
+    if [ -f "$workdir/GEORGE.md" ] && [ -f "$reg_file" ] && command -v jq &>/dev/null; then
+        local registry_list=""
+        while read -r line || [ -n "$line" ]; do
+            [ -n "$line" ] && registry_list="${registry_list}- ${line}\n"
+        done < <(jq -r 'to_entries | sort_by(.key | tonumber) | .[] | "mem:\(.value.slug) (Registry #\(@sh "\(.key)")\): \(.value.title) (\(.value.file))"' "$reg_file" 2>/dev/null | sed "s/'//g")
+        
+        if [ -n "$registry_list" ]; then
+            if declare -f memory_update_section &>/dev/null; then
+                memory_update_section "Semantic Memory Registry" "$(printf "$registry_list")" "$workdir" 2>/dev/null
+            fi
+        fi
+    fi
 }
 
 _agent_classify_task() {
