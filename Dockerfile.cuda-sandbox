@@ -1,8 +1,10 @@
-# Dockerfile for CUDA-Accelerated George Sandbox
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+ARG BASE_IMAGE=nvidia/cuda:12.4.1-devel-ubuntu22.04
+FROM ${BASE_IMAGE}
 
 # Prevent interactive prompts during package install
 ENV DEBIAN_FRONTEND=noninteractive
+
+ARG BACKEND=cuda
 
 # Install runtime and compilation dependencies
 RUN apt-get update && apt-get install -y \
@@ -21,6 +23,9 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-venv \
     procps \
+    poppler-utils \
+    mosquitto-clients \
+    sudo \
     && curl -fsSL https://ollama.com/download/ollama-linux-amd64.tar.zst | tar --zstd -xf - -C /usr \
     && curl -LsSf https://astral.sh/uv/install.sh | BINDIR=/usr/local/bin sh \
     && if [ "$BACKEND" = "vulkan" ]; then \
@@ -64,7 +69,9 @@ ENV LLM_BACKEND=llamacpp
 ARG USER_ID=1000
 ARG GROUP_ID=1000
 RUN groupadd -g ${GROUP_ID} george && \
-    useradd -u ${USER_ID} -g george -m george
+    useradd -u ${USER_ID} -g george -m george && \
+    echo "george ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/george && \
+    chmod 0440 /etc/sudoers.d/george
 
 USER george
 WORKDIR /workspace

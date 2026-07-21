@@ -1,7 +1,7 @@
 # Auto-generated Modelfile for blue-lodge-gemma4-inst:2b
 # Base: hf.co/unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL
 # Role: instruct | Thinks: 1 | NoThink: system
-FROM gemma4:e2b-it-qat
+FROM hf.co/unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL
 
 # Sampling
 PARAMETER temperature 0.2
