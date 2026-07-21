@@ -6316,6 +6316,11 @@ main() {
         fi
     fi
     
+    # Ensure GEORGE.md exists at the project root
+    if [ ! -f "$PWD/GEORGE.md" ] && declare -f memory_init &>/dev/null; then
+        memory_init "$PWD" "$(basename "$PWD")" "General" 2>/dev/null
+    fi
+
     # Handle arguments
     # Apply journal decay on startup (cleans old entries)
     journal_init

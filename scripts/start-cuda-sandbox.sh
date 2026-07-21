@@ -85,7 +85,8 @@ elif [ "$BACKEND" = "rocm" ]; then
 else
     # cpu
     BASE_IMAGE="ubuntu:22.04"
-    DOCKER_RUN_FLAGS=""
+    # OPTIMIZATION: Appended core pinning to keep llama.cpp bound strictly to physical P-cores and their hyperthreads
+    DOCKER_RUN_FLAGS="--cpuset-cpus=0-15"
     GPU_LAYERS=0
 fi
 
