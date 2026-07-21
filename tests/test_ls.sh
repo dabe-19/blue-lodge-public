@@ -11,9 +11,10 @@ source "$LODGE_DIR/lib/commands.sh"
 _LODGE_TESTING=1
 export _LODGE_TESTING
 
-# Source _cmd_ls directly from lodge (it's defined as a function)
+# Source _cmd_ls and _cmd_grep directly from lodge
 eval "$(sed -n '/^_cmd_ls()/,/^_cmd_files()/{ /^_cmd_files()/d; p; }' "$LODGE_DIR/lodge")"
 eval "$(sed -n '/^_cmd_files()/,/^}/p' "$LODGE_DIR/lodge")"
+eval "$(sed -n '/^_cmd_grep()/,/^_cmd_container()/{ /^_cmd_container()/d; p; }' "$LODGE_DIR/lodge")"
 
 test_start "/ls — File Tree Listing"
 
@@ -204,6 +205,68 @@ describe "_cmd_files backward compatibility"
     out=$(_cmd_files "" "$TMPDIR_LS" 2>&1)
     assert_contains "$out" "src/"
     assert_contains "$out" "Cargo.toml"
+    _teardown_ls
+  }
+
+# ── .george directory visibility ───────────────────────────────
+describe "_cmd_ls .george subfolder visibility"
+
+  it "shows safe workspaces and memories under .george" && {
+    _setup_ls
+    mkdir -p "$TMPDIR_LS/.george/workspaces"
+    mkdir -p "$TMPDIR_LS/.george/memories"
+    touch "$TMPDIR_LS/.george/workspaces/report1.md"
+    touch "$TMPDIR_LS/.george/memories/note1.md"
+    
+    out=$(_cmd_ls ".george" "$TMPDIR_LS" 2>&1)
+    assert_contains "$out" "workspaces/"
+    assert_contains "$out" "memories/"
+    assert_contains "$out" "report1.md"
+    assert_contains "$out" "note1.md"
+    _teardown_ls
+  }
+
+  it "prunes sensitive keys and cookies under .george" && {
+    _setup_ls
+    mkdir -p "$TMPDIR_LS/.george/cookies"
+    touch "$TMPDIR_LS/.george/keys.conf"
+    touch "$TMPDIR_LS/.george/cookies/session.cookie"
+    
+    out=$(_cmd_ls ".george" "$TMPDIR_LS" 2>&1)
+    assert_not_contains "$out" "keys.conf"
+    assert_not_contains "$out" "cookies/"
+    assert_not_contains "$out" "session.cookie"
+    _teardown_ls
+  }
+
+# ── .george directory grep visibility ─────────────────────────
+describe "_cmd_grep .george subfolder visibility"
+
+  it "greps inside safe workspaces and memories under .george" && {
+    _setup_ls
+    mkdir -p "$TMPDIR_LS/.george/workspaces"
+    mkdir -p "$TMPDIR_LS/.george/memories"
+    echo "SECRET_PATTERN_1" > "$TMPDIR_LS/.george/workspaces/report1.md"
+    echo "SECRET_PATTERN_2" > "$TMPDIR_LS/.george/memories/note1.md"
+    
+    out=$(_cmd_grep "SECRET_PATTERN" "$TMPDIR_LS" 2>&1)
+    assert_contains "$out" "report1.md"
+    assert_contains "$out" "note1.md"
+    assert_contains "$out" "SECRET_PATTERN_1"
+    assert_contains "$out" "SECRET_PATTERN_2"
+    _teardown_ls
+  }
+
+  it "excludes sensitive keys and caches from grep search" && {
+    _setup_ls
+    mkdir -p "$TMPDIR_LS/.george/cache"
+    echo "SECRET_KEY_EXCLUDE" > "$TMPDIR_LS/.george/keys.conf"
+    echo "SECRET_CACHE_EXCLUDE" > "$TMPDIR_LS/.george/cache/item"
+    
+    out=$(_cmd_grep "SECRET_.*_EXCLUDE" "$TMPDIR_LS" 2>&1)
+    assert_not_contains "$out" "keys.conf"
+    assert_not_contains "$out" "SECRET_KEY_EXCLUDE"
+    assert_not_contains "$out" "SECRET_CACHE_EXCLUDE"
     _teardown_ls
   }
 

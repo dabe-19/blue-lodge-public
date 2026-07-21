@@ -3167,7 +3167,12 @@ _cmd_ls() {
     local -a excludes=(
         '.git' 'target' '__pycache__' '.venv' 'node_modules'
         '.mypy_cache' '.pytest_cache' '.tox' '.eggs' '*.egg-info'
-        '.DS_Store' '.lodge-snapshots' '.george' '.agents'
+        '.DS_Store' '.lodge-snapshots' '.agents'
+        '.keyring' '.vault' 'cookies' 'cache' 'backups' 'mcp'
+        'keys.conf' 'lodge.conf' 'remote.conf'
+        'recall.db' 'discord_channels.db' 'discord_users.db'
+        '*.db' '*.db-journal' '.lodge.lock' '.recall_mtimes'
+        'routing_trace.jsonl'
     )
 
     ui_section "Files: ${target/#$HOME/~} (depth $depth)"
@@ -3390,8 +3395,21 @@ _cmd_grep() {
         --exclude-dir=.pytest_cache
         --exclude-dir=.tox
         --exclude-dir=.eggs
-        --exclude-dir=.george
         --exclude-dir=.lodge-snapshots
+        --exclude-dir=.keyring
+        --exclude-dir=.vault
+        --exclude-dir=cookies
+        --exclude-dir=cache
+        --exclude-dir=backups
+        --exclude-dir=mcp
+        --exclude=keys.conf
+        --exclude=lodge.conf
+        --exclude=remote.conf
+        --exclude=*.db
+        --exclude=*.db-journal
+        --exclude=.lodge.lock
+        --exclude=.recall_mtimes
+        --exclude=routing_trace.jsonl
     )
 
     # ── Build grep command ─────────────────────────────────────
