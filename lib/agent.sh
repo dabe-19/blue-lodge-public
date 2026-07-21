@@ -4703,15 +4703,13 @@ SPEC_RULES
             fi
             _edit_path=$(echo "$_edit_path" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
             if [ -n "$_edit_path" ]; then
-                local _full_edit_path="$workdir/$_edit_path"
-                if [[ "$_edit_path" == /* ]]; then
-                    _full_edit_path="$_edit_path"
-                fi
+                local _full_edit_path
+                _full_edit_path=$(ui_resolve_path "$_edit_path" "$workdir" 0)
                 if [ -f "$_full_edit_path" ]; then
                     echo "TARGET FILE CONTENT (for reference, line numbered):"
                     echo "File: $_edit_path"
                     echo "Content:"
-                    awk '{print NR ": " $0}' "$_full_edit_path" | head -100
+                    awk '{print NR ": " $0}' "$_full_edit_path" | head -300
                     echo "---"
                     echo "Use the EXACT lines and line numbers from the TARGET FILE CONTENT above to construct your /edit block replacements. Do NOT guess placeholders or contents."
                     echo ""

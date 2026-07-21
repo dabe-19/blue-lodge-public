@@ -3230,8 +3230,15 @@ _cmd_files() {
     _cmd_ls "$@"
 }
 _cmd_read() {
-    local filepath="$1"
+    local args="$1"
     local workdir="${2:-.}"
+    
+    # Parse args: [filepath] [max_lines] [start_line]
+    local filepath max_lines start_line
+    filepath=$(echo "$args" | awk '{print $1}')
+    max_lines=$(echo "$args" | awk '{print $2}')
+    start_line=$(echo "$args" | awk '{print $3}')
+    
     # Clean redundant project workdir prefix
     filepath=$(ui_clean_path_prefix "$filepath" "$workdir")
 
@@ -3239,7 +3246,7 @@ _cmd_read() {
     fullpath=$(ui_resolve_path "$filepath" "$workdir" 0)
 
     if [ -f "$fullpath" ]; then
-        tools_read_file "$fullpath" 100
+        tools_read_file "$fullpath" "${max_lines:-300}" "${start_line:-1}"
     elif [ -d "$fullpath" ] && declare -f _cmd_ls &>/dev/null; then
         _cmd_ls "$filepath" "$workdir"
     else

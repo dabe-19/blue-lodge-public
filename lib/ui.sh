@@ -420,10 +420,10 @@ ui_resolve_path() {
         is_agent_task=1
     fi
 
-    # Auto-route writes to general document files (e.g. .md, .txt) that are not codebase files
-    if [ "$is_agent_task" -eq 1 ] && [ "$is_write" -eq 1 ]; then
+    # Auto-route general document files (e.g. .md, .txt) that are not codebase files to memories
+    if [ "$is_agent_task" -eq 1 ]; then
         if [[ "$filepath" == *.md ]] || [[ "$filepath" == *.txt ]]; then
-            if [[ "$filepath" != "lib/"* ]] && [[ "$filepath" != "tests/"* ]] && [[ "$filepath" != "commands/"* ]] && [[ "$filepath" != "docs/"* ]] && [ ! -f "$lodge_dir/$filepath" ]; then
+            if [[ "$filepath" != "lib/"* ]] && [[ "$filepath" != "tests/"* ]] && [[ "$filepath" != "commands/"* ]] && [[ "$filepath" != "docs/"* ]] && [[ "$filepath" != *".george/workspaces"* ]] && [[ "$filepath" != *".george/memories"* ]] && [ ! -f "$lodge_dir/$filepath" ] && [ ! -f "$workdir/$filepath" ] && [ ! -f "$lodge_dir/.george/workspaces/$filepath" ]; then
                 local auto_slug
                 auto_slug=$(basename "$filepath" | sed -e 's/\.md$//' -e 's/\.txt$//' | sed 's|[^a-zA-Z0-9_-]||g')
                 echo "$lodge_dir/.george/memories/${auto_slug}.md"

@@ -58,11 +58,16 @@ describe "ui_resolve_path mem: prefix resolution"
     rm -rf "$lodge_dir"
   }
 
-  it "auto-routes new markdown writes to memories" && {
+  it "auto-routes new markdown writes and reads to memories" && {
     lodge_dir="/tmp/test-lodge-mem"
     mkdir -p "$lodge_dir/.george/memories"
     
+    # Assert write (is_write=1) routes to memories
     resolved=$(LODGE_DIR="$lodge_dir" ui_resolve_path "some_analysis.md" "/tmp/test-lodge-mem/.george/workspaces/123" 1)
+    assert_eq "$resolved" "$lodge_dir/.george/memories/some_analysis.md"
+    
+    # Assert read (is_write=0) routes to memories
+    resolved=$(LODGE_DIR="$lodge_dir" ui_resolve_path "some_analysis.md" "/tmp/test-lodge-mem/.george/workspaces/123" 0)
     assert_eq "$resolved" "$lodge_dir/.george/memories/some_analysis.md"
     
     rm -rf "$lodge_dir"

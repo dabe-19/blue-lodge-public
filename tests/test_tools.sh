@@ -133,6 +133,28 @@ describe "tools_read_file"
     _teardown_tools
   }
 
+  it "prefixes read output with line numbers" && {
+    _setup_tools
+    echo "line one" > "$TMPDIR_TOOLS/number_me.txt"
+    echo "line two" >> "$TMPDIR_TOOLS/number_me.txt"
+    result=$(tools_read_file "$TMPDIR_TOOLS/number_me.txt")
+    assert_contains "$result" "1: line one"
+    assert_contains "$result" "2: line two"
+    _teardown_tools
+  }
+
+  it "starts reading from offset line" && {
+    _setup_tools
+    seq 1 10 > "$TMPDIR_TOOLS/seq.txt"
+    result=$(tools_read_file "$TMPDIR_TOOLS/seq.txt" 5 4)
+    # should show lines 4 to 8
+    assert_contains "$result" "4: 4"
+    assert_contains "$result" "8: 8"
+    assert_not_contains "$result" "3: 3"
+    assert_not_contains "$result" "9: 9"
+    _teardown_tools
+  }
+
 # ── tools_exec_bash ────────────────────────────────────────────
 describe "tools_exec_bash"
 

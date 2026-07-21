@@ -687,22 +687,48 @@ tools_process_response() {
 # ── Read file for context ─────────────────────────────────────
 tools_read_file() {
     local filepath="$1"
-    local max_lines="${2:-100}"
+    local max_lines="${2:-300}"
+    local start_line="${3:-1}"
     
     if [ ! -f "$filepath" ]; then
         echo "ERROR: File not found: $filepath"
         return 1
     fi
     
+    # Ensure start_line and max_lines are valid integers
+    if ! [[ "$start_line" =~ ^[0-9]+$ ]] || [ "$start_line" -lt 1 ]; then
+        start_line=1
+    fi
+    if ! [[ "$max_lines" =~ ^[0-9]+$ ]] || [ "$max_lines" -lt 1 ]; then
+        max_lines=300
+    fi
+    
     local total
     total=$(wc -l < "$filepath")
     
-    if [ "$total" -le "$max_lines" ]; then
-        cat "$filepath"
-    else
-        head -n "$max_lines" "$filepath"
-        echo ""
-        echo "... (truncated, $total total lines)"
+    if [ "$start_line" -gt "$total" ]; then
+        if [ "$total" -eq 0 ]; then
+            echo "--- start of $filepath ---"
+            echo "--- end of $filepath ---"
+            return 0
+        fi
+        echo "ERROR: start line $start_line is past end of file $total"
+        return 1
+    fi
+    
+    local end_line=$((start_line + max_lines - 1))
+    if [ "$end_line" -gt "$total" ]; then
+        end_line="$total"
+    fi
+    
+    ui_info "Showing lines $start_line to $end_line of $total (use '/read <file> <count> <start>' to read other parts)"
+    echo "--- start of $filepath ---"
+    sed -n "${start_line},${end_line}p" "$filepath" | awk -v start="$start_line" '{print (start + NR - 1) ": " $0}'
+    echo "--- end of $filepath ---"
+    
+    if [ "$end_line" -lt "$total" ]; then
+        local remaining=$((total - end_line))
+        echo "... (truncated, $remaining more lines. Use '/read <file> $max_lines $((end_line + 1))' to read next page)"
     fi
 }
 
