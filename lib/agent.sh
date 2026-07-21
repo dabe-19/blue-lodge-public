@@ -7015,11 +7015,19 @@ INTERLOCK_JSON
                         esac
 
                         local _has_fetches=0
+                        local _has_sieve=0
                         if [ -f "$micro_file" ]; then
                             local _web_fetch_count
                             _web_fetch_count=$(_micro_success_count "$micro_file" "^/web (fetch|summary|scrape)")
                             if [ "$_web_fetch_count" -gt 0 ]; then
                                 _has_fetches=1
+                            fi
+                        fi
+                        if [ -f "$macro_file" ] && command -v jq &>/dev/null; then
+                            local _sieve_ctx
+                            _sieve_ctx=$(jq -r '.prior_context // empty' "$macro_file" 2>/dev/null)
+                            if [ -n "$_sieve_ctx" ] && [ "$_sieve_ctx" != "[]" ] && [ "$_sieve_ctx" != "null" ]; then
+                                _has_sieve=1
                             fi
                         fi
 
@@ -7036,10 +7044,11 @@ INTERLOCK_JSON
                                 ;;
                             # 3. File writing is allowed if the router is delivery (to prepare file) or coding
                             # Or if the router is research but we already successfully completed some fetches
+                            # OR if we already have prior context from the cross-task sieve.
                             write|edit|append|save)
                                 if [ "$_src_is_delivery" -eq 1 ] || [ "$_src_is_coding" -eq 1 ]; then
                                     _is_utility_cmd=1
-                                elif [ "$_src_is_research" -eq 1 ] && [ "$_has_fetches" -eq 1 ]; then
+                                elif [ "$_src_is_research" -eq 1 ] && { [ "$_has_fetches" -eq 1 ] || [ "$_has_sieve" -eq 1 ]; }; then
                                     _is_utility_cmd=1
                                 fi
                                 ;;
