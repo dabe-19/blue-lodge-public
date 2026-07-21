@@ -372,6 +372,15 @@ ui_clean_path_prefix() {
     echo "$filepath"
 }
 
+ui_clean_virtual_prefix() {
+    local filepath="$1"
+    local cleaned="$filepath"
+    while [[ "$cleaned" =~ ^(\./)?(responses|workspace|output|artifacts|tmp)/ ]]; do
+        cleaned="${cleaned#*/}"
+    done
+    echo "$cleaned"
+}
+
 # ── central path resolution ─────────────────────────────────────
 # Resolves a relative or absolute filepath relative to workdir, global workspace, or project root fallbacks.
 ui_resolve_path() {
@@ -386,6 +395,9 @@ ui_resolve_path() {
             lodge_dir="$(pwd)"
         fi
     fi
+
+    # General Virtual Prefix Cleaning (responses/, workspace/, output/, artifacts/, tmp/)
+    filepath=$(ui_clean_virtual_prefix "$filepath")
 
     # 0. Resolve Namespaced Semantic Handles
     if [[ "$filepath" == "mem:active_task" ]]; then
@@ -495,7 +507,21 @@ ui_resolve_path() {
             elif [ -e "$project_path" ]; then
                 echo "$project_path"
             else
-                echo "$global_path" # Default to global path (file not found)
+                # Fuzzy path resolution before defaulting
+                local _base _match _token
+                _base=$(basename "$filepath")
+                _match=$(find "$lodge_dir" "$workdir" -maxdepth 3 -type f -name "*${_base}*" ! -path '*/.git/*' 2>/dev/null | head -1)
+                if [ -z "$_match" ]; then
+                    _token=$(echo "$_base" | tr '_-.' ' ' | awk '{print $1}')
+                    if [ -n "$_token" ] && [ "${#_token}" -ge 4 ]; then
+                        _match=$(find "$lodge_dir" "$workdir" -maxdepth 3 -type f -name "*${_token}*" ! -path '*/.git/*' 2>/dev/null | head -1)
+                    fi
+                fi
+                if [ -n "$_match" ] && [ -f "$_match" ]; then
+                    echo "$_match"
+                else
+                    echo "$global_path" # Default to global path (file not found)
+                fi
             fi
         fi
     else

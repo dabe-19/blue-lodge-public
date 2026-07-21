@@ -425,12 +425,12 @@ $files"
 
     # 1. Background Context (Files & Sandboxes)
     local files
-    files=$(find "$dir" -maxdepth 2 -type f \
+    files=$(find "$dir" -maxdepth 3 -type f \
         ! -path '*/.git/*' ! -path '*/target/*' ! -path '*/__pycache__/*' \
         ! -path '*/.venv/*' ! -path '*/node_modules/*' ! -path '*/.mypy_cache/*' \
-        2>/dev/null | head -15 | sed "s|^$dir/||")
+        2>/dev/null | head -25 | sed "s|^$dir/||")
     [ -n "$files" ] && prompt="${prompt}
-## WORKSPACE FILES
+## WORKSPACE FILES (Active Directory Map)
 $files
 "
 

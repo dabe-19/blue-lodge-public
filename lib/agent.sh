@@ -1396,17 +1396,18 @@ TASK: $task
 
 {\"output\":\"JSON object: {\\\"items\\\":[{\\\"task\\\":\\\"imperative sentence\\\"},...]}\",
  \"each_item\":\"imperative sentence preserving key context from the original task (such as names, projects, files, or specific targets) — WHAT to achieve, not HOW\",
+ \"coding_structure\":\"For coding, editing, fixing, or rewriting tasks, you MUST follow the 3-tier action structure: 1) Inspect/Locate code, 2) Modify/Write code at the exact relative workspace file path, and 3) Build/Test the project. Do NOT create abstract academic steps ('determine requirements', 'analyze constraints') unless paired with a concrete deliverable. The final checklist item MUST be a code edit or execution tool call.\",
  \"describe\":\"GOAL only — include key entities, but never tools, commands, URLs, shell syntax\",
- \"filenames\":\"NEVER use generic filenames like 'report.md' or 'summary.md'; ALWAYS use unique, task-descriptive filenames (e.g., 'magic_card_deck_report.md') to prevent cross-task collisions\",
+ \"deliverable_targets\":\"For reports, summaries, drafts, or persistent deliverables, specify 'mem:active_task' (or 'mem:<slug>') as the target so it resolves to persistent memory. For code files, specify the exact relative workspace file path (e.g. 'lib/agent.sh'). NEVER invent arbitrary subdirectories like 'responses/' or generic filenames like 'report.md'.\",
  \"good\":\"Find an image of Intellopy author JJ Kelly\",
  \"bad\":[\"Run curl -s https://...\",\"Use /web search to find...\",\"Find the image\"],
  \"count\":\"2-${AGENT_HONEYDEW_INITIAL_COUNT} items (simple tasks: 2-3)\",
  \"order\":\"by dependency (research -> writing -> sending)\",
  \"no_redundancy\":\"each item must be DISTINCT — never two items that describe the same work differently (e.g. 'summarize X' and 'present X concisely' are the SAME item — merge them)\",
- \"research_split\":\"If the task involves research, you MUST break it down into at least two distinct steps: 1) Search to find sources, and 2) Fetch or scrape specific URLs from the search results to collect detailed information.\",
+ \"research_split\":\"If the task involves research, you MUST break it down into a 4-tier sequence: 1) Search sources, 2) Fetch/scrape full page contents, 3) Write synthesized report to 'mem:active_task', and 4) Deliver or present output.\",
  \"never\":[\"verification steps\",\"confirmation steps\",\"cleanup steps\",\"checkboxes\",\"redundant items that overlap with other items\"]}"
 
-    local decompose_sys="You are a task decomposition engine. Output a JSON object: {\"items\":[{\"task\":\"imperative sentence\"},...]}. Each item: imperative sentence preserving key context from the original task (e.g., names, files, topics). Describe WHAT, not HOW. No commands, URLs, or tools. ALWAYS use unique, task-descriptive filenames (e.g. 'magic_card_deck_report.md') instead of generic filenames like 'report.md' or 'summary.md' when creating checklist items that involve writing a report, summary, draft, or deliverable."
+    local decompose_sys="You are a task decomposition engine. Output a JSON object: {\"items\":[{\"task\":\"imperative sentence\"},...]}. Each item: imperative sentence preserving key context from the original task (e.g., names, files, topics). Describe WHAT, not HOW. No commands, URLs, or tools. For coding tasks, follow 3-tier structure: 1) Inspect/Locate, 2) Modify/Write exact workspace path, 3) Build/Test. For research/reporting tasks, follow 4-tier structure: 1) Search, 2) Fetch/Scrape full content, 3) Write report to mem:active_task, 4) Deliver/Respond. NEVER invent arbitrary directory prefixes like 'responses/' or generic file names."
 
     # ── Task-type–aware decomposition ─────────────────────────
     # Conditionally guide first honeydew items based on what the
@@ -1453,8 +1454,8 @@ TASK: $task
 
     local _hd_research_injection=""
     local _task_lower_hd="${task,,}"
-    if [[ "$_task_lower_hd" =~ research ]]; then
-        _hd_research_injection="\n\n>>> RESEARCH TASK ACTIVE — the task contains the word 'research'. This is a combined/concrete task, NOT a conversational question. You MUST create at least one checklist item for searching sources (e.g. search web) AND at least one separate, consecutive checklist item for fetching/scraping detailed page contents (e.g. read/fetch pages). Research MUST NOT stop at a web search; a web fetch/scrape is strictly required."
+    if [ "${AGENT_IS_RESEARCH_REPORT:-0}" -eq 1 ] || [[ "$_task_lower_hd" =~ research|report|summary|overview|investigate|find|gather ]]; then
+        _hd_research_injection="\n\n>>> RESEARCH & REPORT TASK ACTIVE — this task requires external or in-depth data collection and a written deliverable. Follow the 4-tier structure: 1) Search sources, 2) Fetch/scrape full page contents, 3) Write synthesized report to 'mem:active_task', and 4) Deliver or present output. Do NOT stop at a web search."
     fi
 
     local raw_list
@@ -1637,6 +1638,7 @@ _agent_classify_task() {
     local _task_padded=" $_task_clean "
     if [[ "$_task_padded" =~ [[:space:]](news|weather|forecast|stock|prices?|priced|current[[:space:]]events|latest|today\'?s|trending|real-time|real[[:space:]]time|breaking|research)[[:space:]] ]] || [[ "$_task_padded" =~ [[:space:]]live[[:space:]](data|scores?|updates?)[[:space:]] ]]; then
         export AGENT_TASK_TYPE="combined"
+        export AGENT_IS_RESEARCH_REPORT=1
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] task classified: combined (keyword gate: research/news/etc.)"
         return 0
     fi
@@ -1690,7 +1692,19 @@ TASK: $task
     esac
 
     export AGENT_TASK_TYPE="$parsed_type"
-    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] task classified: $AGENT_TASK_TYPE"
+    local _task_lower_class="${task,,}"
+    if [[ "$_task_lower_class" =~ report|summary|overview|research|look[[:space:]]+up|find|gather|investigate ]]; then
+        export AGENT_IS_RESEARCH_REPORT=1
+    else
+        export AGENT_IS_RESEARCH_REPORT=0
+    fi
+
+    if [ "$parsed_type" = "concrete" ] || [[ "$_task_lower_class" =~ edit|write|rewrite|fix|modify|update|scaffold|code ]]; then
+        export AGENT_REQUIRES_MUTATION=1
+    else
+        export AGENT_REQUIRES_MUTATION=0
+    fi
+    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] task classified: $AGENT_TASK_TYPE (requires_mutation=$AGENT_REQUIRES_MUTATION, research_report=$AGENT_IS_RESEARCH_REPORT)"
 }
 
 # Mark a honeydew item as complete by matching item number.
@@ -3742,6 +3756,34 @@ EVAL_P2_TEXT
         local _reason_display="${_EVAL_INCOMPLETE_REASON:+(${_EVAL_INCOMPLETE_REASON:0:80})}"
         ui_info "Overall evaluator: objective not yet fulfilled ${_reason_display}— continuing"
         return 1
+    fi
+
+    # ── Intent-Based Delivery Gate Check ────────────────────────
+    if [ "${AGENT_REQUIRES_MUTATION:-0}" -eq 1 ]; then
+        local _micro_file="$george_dir/micro_memory.json"
+        local _mutation_count=0
+        if [ -f "$_micro_file" ] && command -v jq &>/dev/null; then
+            _mutation_count=$(jq '[.action_log[]? | select(.status == "SUCCESS" or .exit_code == 0) | select(.action | test("^/(write|edit|append|build|test)"))] | length' "$_micro_file" 2>/dev/null || echo 0)
+        fi
+        if [ "${_mutation_count:-0}" -eq 0 ]; then
+            _EVAL_INCOMPLETE_REASON="You have completed the research phase, but no code changes have been written yet. Your NEXT step MUST execute /write or /edit to modify the codebase."
+            ui_info "Overall evaluator: requires_mutation gate blocked completion (0 mutations recorded) — injecting force-prompt"
+            return 1
+        fi
+    fi
+
+    # ── Intent-Based Research Deliverable Gate Check ──────────
+    if [ "${AGENT_IS_RESEARCH_REPORT:-0}" -eq 1 ]; then
+        local _micro_file="$george_dir/micro_memory.json"
+        local _deliverable_count=0
+        if [ -f "$_micro_file" ] && command -v jq &>/dev/null; then
+            _deliverable_count=$(jq '[.action_log[]? | select(.status == "SUCCESS" or .exit_code == 0) | select(.action | test("^/(write|save)"))] | length' "$_micro_file" 2>/dev/null || echo 0)
+        fi
+        if [ "${_deliverable_count:-0}" -eq 0 ]; then
+            _EVAL_INCOMPLETE_REASON="You have performed data collection, but no report file artifact has been written to 'mem:active_task' yet. Your NEXT step MUST execute /write mem:active_task to save the synthesized report."
+            ui_info "Overall evaluator: research_report deliverable gate blocked completion (0 report files written) — injecting force-prompt"
+            return 1
+        fi
     fi
 
     # ── Task is complete — reuse evaluator reason as summary ───
@@ -7364,14 +7406,81 @@ INTERLOCK_JSON
             local output
             local exit_code
             if [ "$cmd_is_slash" -eq 1 ] && declare -f commands_dispatch &>/dev/null; then
-                _agent_capture_diff_pre "$cmd" "$workdir"
-                output=$(commands_dispatch "$cmd" "$workdir" 2>&1)
-                exit_code=$?
-                local diff_inject
-                diff_inject=$(_agent_capture_diff_post "$cmd" "$exit_code")
-                if [ -n "$diff_inject" ]; then
-                    output="${output:+${output}
+                # ── Deterministic 2x Repeat Command Interceptor ────────────
+                if [ "$cmd" = "${_AGENT_LAST_CMD_STRING:-}" ]; then
+                    _AGENT_CONSECUTIVE_CMD_COUNT=$(( ${_AGENT_CONSECUTIVE_CMD_COUNT:-0} + 1 ))
+                else
+                    _AGENT_CONSECUTIVE_CMD_COUNT=1
+                    _AGENT_LAST_CMD_STRING="$cmd"
+                fi
+                if [ "${_AGENT_CONSECUTIVE_CMD_COUNT:-0}" -ge 2 ]; then
+                    ui_warn "2x Repeat command interceptor triggered: $cmd"
+                    output="CRITICAL: You have run '$cmd' multiple times without new results. You are FORBIDDEN from using this exact command string again. You MUST pivot to /read, /ls, /write, /edit, or query a different keyword."
+                    exit_code=1
+                    _last_eval_feedback="CRITICAL: You have run '$cmd' multiple times consecutively. You are FORBIDDEN from repeating '$cmd'. Pivot to /read, /ls, /write, /edit, or query a different keyword."
+                else
+                    _agent_capture_diff_pre "$cmd" "$workdir"
+                    output=$(commands_dispatch "$cmd" "$workdir" 2>&1)
+                    exit_code=$?
+                    local diff_inject
+                    diff_inject=$(_agent_capture_diff_post "$cmd" "$exit_code")
+                    if [ -n "$diff_inject" ]; then
+                        output="${output:+${output}
 }${diff_inject}"
+                    fi
+
+                    # ── Auto-Cleaned Path Notification for Evaluator ──────────
+                    if [ -n "${AGENT_LAST_AUTOCLEANED_PATH_CLEAN:-}" ]; then
+                        local _ac_notice="[PATH AUTO-CLEANED] Path '${AGENT_LAST_AUTOCLEANED_PATH_ORIG}' was auto-relocated to '${AGENT_LAST_AUTOCLEANED_PATH_CLEAN}' in the workspace directory. The file creation at '${AGENT_LAST_AUTOCLEANED_PATH_CLEAN}' is valid and complete."
+                        output="${output:+${output}
+}${_ac_notice}"
+                        _last_eval_feedback="${_last_eval_feedback:+${_last_eval_feedback}
+}${_ac_notice}"
+                        unset AGENT_LAST_AUTOCLEANED_PATH_ORIG AGENT_LAST_AUTOCLEANED_PATH_CLEAN
+                    fi
+
+                    # ── Static Anti-Placeholder Scanner ──────────
+                    if [[ "$cmd" == /write\ * || "$cmd" == /edit\ * || "$cmd" == /save\ * ]] && [ "$exit_code" -eq 0 ]; then
+                        local _written_target
+                        _written_target=$(echo "$cmd" | awk '{print $2}')
+                        local _resolved_target
+                        _resolved_target=$(ui_resolve_path "$_written_target" "$workdir")
+                        if [ -f "$_resolved_target" ]; then
+                            if grep -qiE '(#|//)[[:space:]]*(placeholder|stub|todo|for[[:space:]]+demonstration|not[[:space:]]+implemented)' "$_resolved_target" 2>/dev/null; then
+                                local _ph_notice="[PLACEHOLDER DETECTED] File '${_written_target}' contains stub comments (e.g. '# Placeholder for logic'). You MUST replace stub functions with complete, working code."
+                                ui_warn "Static placeholder scanner triggered on $_written_target"
+                                output="${output:+${output}
+}${_ph_notice}"
+                                _last_eval_feedback="${_last_eval_feedback:+${_last_eval_feedback}
+}${_ph_notice}"
+                            fi
+
+                            # ── Experimental Code Execution Verification Harness ──────────
+                            if [ "${AGENT_EXEC_VERIFY:-0}" -eq 1 ] && [[ "$_resolved_target" == *.py ]]; then
+                                if ! command -v python3 &>/dev/null; then
+                                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] exec-verify skipped: python3 unavailable on PATH"
+                                else
+                                    ui_info "Exec-verify harness: running python3 verification for $_written_target..."
+                                    local _exec_out _exec_exit
+                                    _exec_out=$(python3 -m py_compile "$_resolved_target" 2>&1)
+                                    _exec_exit=$?
+                                    if [ "$_exec_exit" -ne 0 ]; then
+                                        ui_err "Exec-verify failed for $_written_target (exit $_exec_exit)"
+                                        local _ev_fail="[EXECUTION FAILURE] python3 verification of '${_written_target}' failed with exit code ${_exec_exit}:\n${_exec_out:0:1500}\nFix the compilation/runtime error identified above."
+                                        output="${output:+${output}
+}${_ev_fail}"
+                                        _last_eval_feedback="${_last_eval_feedback:+${_last_eval_feedback}
+}${_ev_fail}"
+                                    else
+                                        ui_ok "Exec-verify passed for $_written_target (valid syntax)"
+                                        local _ev_pass="[EXECUTION VERIFIED] python3 compilation check for '${_written_target}' passed with exit code 0."
+                                        output="${output:+${output}
+}${_ev_pass}"
+                                    fi
+                                fi
+                            fi
+                        fi
+                    fi
                 fi
                 
                 # ── WEB SEARCH URL QUEUE POPULATION ──────────
@@ -7883,16 +7992,16 @@ $_fb_output"
                     local _ask_resp
                     _ask_resp=$(commands_dispatch "/ask $_ask_q" "$workdir" 2>/dev/null)
                     local _clean_resp
-                    _clean_resp=$(echo "$_ask_resp" | sed 's/\x1b\[[0-9;]*m//g' | grep -vE '^[[:space:]]*\[(debug|info|warn|error|ok)\]' | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-                    if [ -z "$_clean_resp" ] || [ "${_clean_resp,,}" = "abort" ]; then
+                    _clean_resp=$(echo "$_ask_resp" | sed 's/\x1b\[[0-9;]*m//g' | sed -e 's/^\[[^]]*\][[:space:]]*//' | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+                    local _clean_lower
+                    _clean_lower=$(echo "$_clean_resp" | tr '[:upper:]' '[:lower:]')
+                    if [ -z "$_clean_resp" ] || [[ "$_clean_lower" =~ ^(abort|cancel|exit|stop)$ ]]; then
                         ui_err "Task aborted by operator due to missing file."
                         _macro_set_terminal_outcome "$macro_file" "user_terminated" "Required file is missing and operator aborted."
                         _micro_set_result "$micro_file" "TERMINATED" "Missing file: $_missing_file_path (aborted)"
                         return 1
                     fi
                     local _is_guidance=0
-                    local _clean_lower
-                    _clean_lower=$(echo "$_clean_resp" | tr '[:upper:]' '[:lower:]')
                     if [[ "$_clean_resp" == /* ]]; then
                         _is_guidance=1
                     elif [ "${#_clean_resp}" -lt 250 ]; then

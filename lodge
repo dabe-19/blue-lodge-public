@@ -904,6 +904,23 @@ _cmd_limits() {
                     ui_err "Force-rewrite must be 'on' or 'off' (or 1/0, enable/disable)"
                 fi
             fi ;;
+        exec-verify)
+            if [ -z "$value" ]; then
+                local _ev_label="disabled"
+                [ "${AGENT_EXEC_VERIFY:-0}" -eq 1 ] && _ev_label="enabled"
+                ui_info "Code execution verification harness: $_ev_label (default: disabled)"
+                ui_dim "  When enabled, python code writes are executed in sandbox to feed tracebacks to LLM."
+            else
+                if [[ "$value" == "on" || "$value" == "1" || "$value" == "enable" || "$value" == "enabled" ]]; then
+                    export AGENT_EXEC_VERIFY=1
+                    ui_ok "Code execution verification harness enabled"
+                elif [[ "$value" == "off" || "$value" == "0" || "$value" == "disable" || "$value" == "disabled" ]]; then
+                    export AGENT_EXEC_VERIFY=0
+                    ui_ok "Code execution verification harness disabled"
+                else
+                    ui_err "Exec-verify must be 'on' or 'off' (or 1/0, enable/disable)"
+                fi
+            fi ;;
         max-items)
             if [ -z "$value" ]; then
                 ui_info "Honeydew max items: $AGENT_HONEYDEW_MAX_ITEMS (default: 8)"
