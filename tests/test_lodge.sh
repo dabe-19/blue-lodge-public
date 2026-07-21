@@ -321,6 +321,15 @@ describe "Limits command"
     output=$(_cmd_limits "" 2>&1)
     echo "$output" | grep -q "Plan steps"
     assert_ok $?
+    echo "$output" | grep -q "Exec-verify harness"
+    assert_ok $?
+  }
+
+  it "_cmd_limits exec-verify toggles AGENT_EXEC_VERIFY" && {
+    _cmd_limits "exec-verify on" >/dev/null 2>&1
+    assert_eq "$AGENT_EXEC_VERIFY" "1"
+    _cmd_limits "exec-verify off" >/dev/null 2>&1
+    assert_eq "$AGENT_EXEC_VERIFY" "0"
   }
 
   it "_cmd_limits steps sets AGENT_PLAN_STEPS" && {
