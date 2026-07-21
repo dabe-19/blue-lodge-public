@@ -8561,10 +8561,19 @@ MEMEOF
     local _ws_section
     _ws_section=$(memory_get_section "Workspace Layout" "$workdir" 2>/dev/null)
     if [ -z "$_ws_section" ] || [[ "$_ws_section" == *"auto-populated"* ]] || [[ "$_ws_section" == *"(none)"* ]]; then
-        local _ws_layout=""
         if [ -d "$workdir" ]; then
-            _ws_layout=$(find "$workdir" -maxdepth 2 -not -path '*/.george/*' -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -name '.*' 2>/dev/null \
-                | sort | head -30 | sed "s|^$workdir/||" | sed '/^$/d')
+            local _ws_project _ws_memories _ws_workspaces
+            # 1. Project files (excluding .git, .agents, .george, and hidden files)
+            _ws_project=$(find "$workdir" -maxdepth 2 -not -path '*/.george*' -not -path '*/.git*' -not -path '*/.agents*' -not -name '.*' -type f 2>/dev/null \
+                | sed "s|^$workdir/||" | head -15)
+            # 2. Memories files (all persistent md/txt memories)
+            _ws_memories=$(find "$workdir/.george/memories" -maxdepth 1 \( -name "*.md" -o -name "*.txt" \) 2>/dev/null \
+                | sed "s|^$workdir/||" | head -10)
+            # 3. Workspaces (list the workspaces folder structures)
+            _ws_workspaces=$(find "$workdir/.george/workspaces" -maxdepth 2 -type f 2>/dev/null \
+                | sed "s|^$workdir/||" | head -15)
+            
+            _ws_layout=$(printf "%s\n%s\n%s" "$_ws_project" "$_ws_memories" "$_ws_workspaces" | sort -u | sed '/^$/d' | head -30)
         fi
         if [ -n "$_ws_layout" ] && declare -f memory_update_section &>/dev/null; then
             memory_update_section "Workspace Layout" "$_ws_layout" "$workdir"
