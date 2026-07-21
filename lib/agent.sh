@@ -4571,9 +4571,9 @@ SPEC_RULES
             local _base_for_ws="${cmd_name#/}"
             case "$_base_for_ws" in
                 write|save|append)
-                    echo "GLOBAL WORKSPACE: .george/workspaces/ (use for persistent deliverables like final reports and tools, with unique/task-descriptive filenames)"
-                    echo "TASK WORKSPACE: ${AGENT_TASK_WORKSPACE_REL}/ (use for temporary files, compiles, scratch logs, or sandboxing)"
-                    echo "Put general task artifacts in the workspace paths above. Project source files go in the project directory."
+                    echo "PERSISTENT MEMORY DELIVERABLE: ALWAYS use 'mem:active_task' for the final task report or deliverable."
+                    echo "TASK WORKSPACE: ${AGENT_TASK_WORKSPACE_REL}/ (use ONLY for temporary scratch files, compiles, logs, or sandboxing)"
+                    echo "Put general project files in the project directory."
                     echo ""
                     ;;
             esac
