@@ -387,14 +387,49 @@ ui_resolve_path() {
         fi
     fi
 
-    # 0. Resolve Namespaced Semantic Handles (mem:<slug>)
-    if [[ "$filepath" == mem:* ]]; then
+    # 0. Resolve Namespaced Semantic Handles
+    if [[ "$filepath" == "mem:active_task" ]]; then
+        local active_slug="${AGENT_ACTIVE_TASK_SLUG:-active_report}"
+        echo "$lodge_dir/.george/memories/${active_slug}.md"
+        return 0
+    elif [[ "$filepath" =~ ^mem:[0-9]+$ ]]; then
+        local idx="${filepath#mem:}"
+        local reg_file="$lodge_dir/.george/memories/registry.json"
+        if [ -f "$reg_file" ] && command -v jq &>/dev/null; then
+            local matched_slug
+            matched_slug=$(jq -r --arg idx "$idx" '.[$idx].slug // empty' "$reg_file" 2>/dev/null)
+            if [ -n "$matched_slug" ]; then
+                echo "$lodge_dir/.george/memories/${matched_slug}.md"
+                return 0
+            fi
+        fi
+        echo "$lodge_dir/.george/memories/memory_${idx}.md"
+        return 0
+    elif [[ "$filepath" == mem:* ]]; then
         local clean_slug
         clean_slug="${filepath#mem:}"
         clean_slug="${clean_slug%.md}"
         clean_slug=$(echo "$clean_slug" | sed 's|[^a-zA-Z0-9_-]||g')
         echo "$lodge_dir/.george/memories/${clean_slug}.md"
         return 0
+    fi
+
+    # Check if we are running in an agent task workspace
+    local is_agent_task=0
+    if [[ "$workdir" == *".george/workspaces"* ]]; then
+        is_agent_task=1
+    fi
+
+    # Auto-route writes to general document files (e.g. .md, .txt) that are not codebase files
+    if [ "$is_agent_task" -eq 1 ] && [ "$is_write" -eq 1 ]; then
+        if [[ "$filepath" == *.md ]] || [[ "$filepath" == *.txt ]]; then
+            if [[ "$filepath" != "lib/"* ]] && [[ "$filepath" != "tests/"* ]] && [[ "$filepath" != "commands/"* ]] && [[ "$filepath" != "docs/"* ]] && [ ! -f "$lodge_dir/$filepath" ]; then
+                local auto_slug
+                auto_slug=$(basename "$filepath" | sed -e 's/\.md$//' -e 's/\.txt$//' | sed 's|[^a-zA-Z0-9_-]||g')
+                echo "$lodge_dir/.george/memories/${auto_slug}.md"
+                return 0
+            fi
+        fi
     fi
 
     # If the path contains the active workspaces/memories directory segment, extract the relative part.
@@ -404,12 +439,6 @@ ui_resolve_path() {
         filepath=".george/workspaces/${filepath#*.george/workspaces/}"
     elif [[ "$filepath" == *".george/memories/"* ]]; then
         filepath=".george/memories/${filepath#*.george/memories/}"
-    fi
-
-    # Check if we are running in an agent task workspace
-    local is_agent_task=0
-    if [[ "$workdir" == *".george/workspaces"* ]]; then
-        is_agent_task=1
     fi
 
     # Check if absolute path

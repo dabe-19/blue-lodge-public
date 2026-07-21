@@ -123,10 +123,10 @@ cmd_write() {
         fi
     fi
 
-    # If no file extension, append .md as fallback
+    # If no file extension, append .md as fallback (skip for mem:active_task and mem:<index>)
     local _base
     _base=$(basename "$filepath")
-    if [[ ! "$_base" == *.* ]]; then
+    if [[ ! "$_base" == *.* ]] && [[ "$filepath" != "mem:active_task" ]] && [[ ! "$filepath" =~ ^mem:[0-9]+$ ]]; then
         filepath="${filepath}.md"
         ui_warn "No file extension detected. Auto-appended '.md' fallback. File saved as: $filepath"
     fi

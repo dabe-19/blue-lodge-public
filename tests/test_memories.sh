@@ -37,6 +37,37 @@ describe "ui_resolve_path mem: prefix resolution"
     rm -rf "$lodge_dir"
   }
 
+  it "resolves mem:active_task to the active task slug" && {
+    lodge_dir="/tmp/test-lodge-mem"
+    mkdir -p "$lodge_dir/.george/memories"
+    
+    resolved=$(LODGE_DIR="$lodge_dir" AGENT_ACTIVE_TASK_SLUG="my_special_task" ui_resolve_path "mem:active_task" ".")
+    assert_eq "$resolved" "$lodge_dir/.george/memories/my_special_task.md"
+    
+    rm -rf "$lodge_dir"
+  }
+
+  it "resolves mem:<index> using the registry JSON" && {
+    lodge_dir="/tmp/test-lodge-mem"
+    mkdir -p "$lodge_dir/.george/memories"
+    echo '{"1": {"slug": "gamestop_report", "file": "gamestop_report.md"}}' > "$lodge_dir/.george/memories/registry.json"
+    
+    resolved=$(LODGE_DIR="$lodge_dir" ui_resolve_path "mem:1" ".")
+    assert_eq "$resolved" "$lodge_dir/.george/memories/gamestop_report.md"
+    
+    rm -rf "$lodge_dir"
+  }
+
+  it "auto-routes new markdown writes to memories" && {
+    lodge_dir="/tmp/test-lodge-mem"
+    mkdir -p "$lodge_dir/.george/memories"
+    
+    resolved=$(LODGE_DIR="$lodge_dir" ui_resolve_path "some_analysis.md" "/tmp/test-lodge-mem/.george/workspaces/123" 1)
+    assert_eq "$resolved" "$lodge_dir/.george/memories/some_analysis.md"
+    
+    rm -rf "$lodge_dir"
+  }
+
 describe "commands and mem: handles integration"
 
   it "writes to a mem: file handle" && {
@@ -73,6 +104,26 @@ describe "tools_expand_file_refs with mem:"
     expanded=$(LODGE_DIR="$test_dir" tools_expand_file_refs "Here is the report: mem:appleton_housing details" "$test_dir")
     
     assert_contains "$expanded" "Appleton Report Content details"
+    
+    rm -rf "$test_dir"
+  }
+
+describe "agent memory registration completion"
+
+  it "registers new memory files in the registry" && {
+    test_dir=$(test_tmpdir)
+    mkdir -p "$test_dir/.george/memories"
+    
+    # Run helper in subshell to avoid side effects
+    (
+        source "$LODGE_DIR/lib/agent.sh"
+        echo "# Appleton Advisement" > "$test_dir/.george/memories/appleton_advisement.md"
+        _agent_register_memory_file "$test_dir"
+        
+        val=$(jq -r '."1".slug' "$test_dir/.george/memories/registry.json")
+        [ "$val" = "appleton_advisement" ]
+    )
+    assert_eq "$?" "0"
     
     rm -rf "$test_dir"
   }

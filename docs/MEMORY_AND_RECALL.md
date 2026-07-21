@@ -161,6 +161,49 @@ memory_get_section() {
 
 ---
 
+## Persistent Semantic Memories & Registry
+
+To support lightweight 2B parameter models without causing context bloat or file name collision, the Blue Lodge implements a unified semantic memory registry. 
+
+This registry maps simple handles directly to persistent files stored inside `.george/memories/` using three layers of automation:
+
+### 1. File Resolution & Handles
+
+* **`mem:active_task`**: An active slot allocated for the current task. George can write to this handle directly, which automatically resolves to a unique filepath derived from the task description (e.g., `.george/memories/appleton_housing.md`).
+* **`mem:<index>` (e.g., `mem:1`, `mem:2`)**: Chronological index handles mapping to prior tasks' saved reports. George can read or append to these simple keys.
+* **Auto-Routing Fallback**: If George writes to any `.md` or `.txt` file that is not part of the codebase directories, the path resolver automatically routes it to `.george/memories/` to avoid polluting the workspace with random files.
+
+### 2. Memories Registry
+
+The registry is maintained in a simple JSON structure at `.george/memories/registry.json`:
+
+```json
+{
+  "1": {
+    "slug": "appleton_housing",
+    "file": "appleton_housing.md",
+    "title": "Appleton Wisconsin Housing Market Analysis",
+    "timestamp": "2026-07-20T22:42:00Z"
+  }
+}
+```
+
+On task completion, the system automatically parses any new `.md`/`.txt` files saved in `.george/memories/`, extracts the title from the first line, assigns a numeric index key, and registers them.
+
+### 3. Dynamic Prompt Injection
+
+Strategist and Specialist prompts dynamically build and inject a clean memories catalog from the registry at the start of each task, prioritizing critical instruction blocks at the top of the prompt window:
+
+```
+>>> PERSISTENT SEMANTIC MEMORIES <<<
+Active Task Slot:
+  - mem:active_task -> resolves to active task deliverable (appleton_housing.md)
+Prior Memories:
+  - mem:1 (1240 bytes): First time buyer advice [2026-07-20]
+```
+
+---
+
 ## System Prompt Construction
 
 ### `memory_build_system_prompt()`
