@@ -1281,12 +1281,29 @@ _agent_complete_milestone() {
     _micro_content=$(cat "$micro_file" 2>/dev/null)
     if [ -n "$_micro_content" ]; then
         local _ms_prompt="Write a brief, focused summary of this milestone execution log. Include the command(s) run, their outcomes, and whether the objective was met. If web search, fetch, or vision analysis results contain factual data or image descriptions (names, prices, specs, dates, descriptions, image contents, URLs, key findings), you MUST INCLUDE those specific facts and details verbatim — they will be needed by subsequent milestones. If a draft email, post, or message body was composed, include its key points. Generic summaries like 'Web research data gathered' are USELESS. Be specific.\n\n${_micro_content}"
-        local _ms_sys="You are a concise summarizer. Write a brief, factual summary. PRESERVE specific facts (names, numbers, URLs). No personality. No markdown formatting (no ** or * markers). Plain text only."
+        local _ms_sys="You are a concise summarizer. Write a brief, factual summary. PRESERVE specific facts (names, numbers, URLs, file paths). NEVER truncate or abbreviate file paths or URLs with '...' — write full paths verbatim. No personality. No markdown formatting (no ** or * markers). Plain text only."
         local LLM_SCENARIO=evaluator
         _milestone_summary=$(llm_generate "$_ms_prompt" "$_ms_sys" 512 "$LLM_BUDGET_AGENT" 2>/dev/null)
         _milestone_summary=$(echo "$_milestone_summary" | _strip_think_blocks)
         # Strip markdown bold/italic from summary before storing in macro_memory
         _milestone_summary=$(echo "$_milestone_summary" | sed 's/\*\+//g')
+        # Repair any truncated path references ending with '...' using micro_content
+        if [[ "$_milestone_summary" == *"..."* ]] && [ -n "$_micro_content" ]; then
+            local _trunc_ref
+            while read -r _trunc_ref; do
+                [ -z "$_trunc_ref" ] && continue
+                local _t_prefix="${_trunc_ref%\.\.\.}"
+                local _t_base
+                _t_base=$(basename -- "$_t_prefix" 2>/dev/null)
+                if [ -n "$_t_base" ] && [ "${#_t_base}" -ge 4 ]; then
+                    local _full_match
+                    _full_match=$(echo "$_micro_content" | grep -oE "[^[:space:]]*${_t_base}[^[:space:]]*" | head -1)
+                    if [ -n "$_full_match" ]; then
+                        _milestone_summary="${_milestone_summary//$_trunc_ref/$_full_match}"
+                    fi
+                fi
+            done < <(echo "$_milestone_summary" | grep -oE '[^[:space:]]+(\.\.\.|\.\.)' 2>/dev/null)
+        fi
         _milestone_summary=$(echo "$_milestone_summary" | sed '/^[[:space:]]*$/d' | head -10)
     fi
     [ -z "$_milestone_summary" ] && _milestone_summary="$summary"
@@ -9430,7 +9447,7 @@ MEMEOF
                 while IFS= read -r _cf_line; do
                     [ -z "$_cf_line" ] && continue
                     [ "$_cf_count" -ge "${AGENT_CONTEXT_FILES_MAX:-10}" ] && break
-                    _cf_path=$(echo "$_cf_line" | sed -e 's/^[[:space:]]*-[[:space:]]*//' -e 's/^\[[^]]*\][[:space:]]*//' -e 's/^[[:space:]]*//' | sed -E 's|\.george/workspaces/[0-9_]+/||g')
+                    _cf_path=$(echo "$_cf_line" | sed -e 's/^[[:space:]]*-[[:space:]]*//' -e 's/^\[[^]]*\][[:space:]]*//' -e 's/^[[:space:]]*//' | sed -E 's|(\.george/workspaces/)+([0-9]{8}_[0-9]{6}/)?||g')
                     [ -z "$_cf_path" ] && continue
                     # Resolve path (handles mem:<slug> and standard files)
                     local _resolved_cf_path
@@ -9442,7 +9459,7 @@ MEMEOF
                     fi
                 done <<< "$_reversed_cf"
                 if [ -n "$_valid_cf" ]; then
-                    _strat_prior_files="\n\nPRIOR TASK FILES (from recent tasks — these files exist in the workspace):$(echo "$_valid_cf" | sed -E 's|\.george/workspaces/[0-9_]+/||g')\nYou can reference these files by their exact paths."
+                    _strat_prior_files="\n\nPRIOR TASK FILES (from recent tasks — these files exist in the workspace):$(echo "$_valid_cf" | sed -E 's|(\.george/workspaces/)+([0-9]{8}_[0-9]{6}/)?||g')\nYou can reference these files by their exact paths."
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- prior task files from GEORGE.md"
                 fi
             fi
@@ -9518,8 +9535,8 @@ MEMEOF
                         continue
                     fi
                     local _clean_title _clean_summary
-                    _clean_title=$(echo "$title" | sed -E 's|\.george/workspaces/[0-9_]+/||g')
-                    _clean_summary=$(echo "$summary" | sed -E 's|\.george/workspaces/[0-9_]+/||g')
+                    _clean_title=$(echo "$title" | sed -E 's|(\.george/workspaces/)+([0-9]{8}_[0-9]{6}/)?||g')
+                    _clean_summary=$(echo "$summary" | sed -E 's|(\.george/workspaces/)+([0-9]{8}_[0-9]{6}/)?||g')
                     _strat_prior_ms="${_strat_prior_ms}\n- [${ts:0:10}] ${_clean_title}: ${_clean_summary}"
                 done <<< $(jq -r '.prior_milestones[] | "\(.title)|\(.summary)|\(.ts)"' "$macro_file" 2>/dev/null)
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- prior milestones context"

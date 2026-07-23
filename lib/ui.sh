@@ -539,6 +539,21 @@ ui_resolve_path() {
     # General Virtual Prefix Cleaning (responses/, workspace/, output/, artifacts/, tmp/)
     filepath=$(ui_clean_virtual_prefix "$filepath")
 
+    # Truncated path prefix matching fallback (e.g. filename... from small models)
+    if [[ "$filepath" == *"\.\.\."* ]] || [[ "$filepath" == *"\.\."* ]]; then
+        local _trunc_prefix
+        _trunc_prefix=$(echo "$filepath" | sed -E 's/\.\.+$//')
+        _trunc_prefix=$(basename -- "$_trunc_prefix" 2>/dev/null)
+        if [ -n "$_trunc_prefix" ] && [ "${#_trunc_prefix}" -ge 4 ]; then
+            local _prefix_match
+            _prefix_match=$(find "$lodge_dir/.george/workspaces" -maxdepth 5 -type f -name "${_trunc_prefix}*" 2>/dev/null | head -1)
+            if [ -n "$_prefix_match" ] && [ -f "$_prefix_match" ]; then
+                echo "$_prefix_match"
+                return 0
+            fi
+        fi
+    fi
+
     # 0. Resolve Namespaced Semantic Handles
     if [[ "$filepath" == "mem:active_task" ]]; then
         local active_slug="${AGENT_ACTIVE_TASK_SLUG:-active_report}"
@@ -591,7 +606,12 @@ ui_resolve_path() {
     # This dynamically maps absolute container paths (e.g. starting with /workspace/ or /home/blue-lodge/)
     # to the host lodge_dir by stripping the arbitrary prefix before .george/workspaces/ or .george/memories/.
     if [[ "$filepath" == *".george/workspaces/"* ]]; then
-        filepath="${filepath#*.george/workspaces/}"
+        local _ws_rel="${filepath#*.george/workspaces/}"
+        if [ -e "$lodge_dir/.george/workspaces/$_ws_rel" ]; then
+            echo "$lodge_dir/.george/workspaces/$_ws_rel"
+            return 0
+        fi
+        filepath="$_ws_rel"
         # Strip any leading timestamp folder prefix (e.g. 20260722_200714/)
         filepath=$(echo "$filepath" | sed -E 's|^[0-9]{8}_[0-9]{6}/||')
     elif [[ "$filepath" == *".george/memories/"* ]]; then
