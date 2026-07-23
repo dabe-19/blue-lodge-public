@@ -3291,11 +3291,23 @@ _cmd_read() {
 
         if [ "${#matches[@]}" -gt 0 ]; then
             local matched_file="${matches[0]}"
+            # Copy-on-Access: Copy auto-resolved file into active task workspace
+            local active_ws="${AGENT_TASK_WORKSPACE:-$workdir}"
+            if [ -n "$active_ws" ] && [[ "$active_ws" == *".george/workspaces"* ]]; then
+                local active_target="$active_ws/$(basename "$matched_file")"
+                if [ ! -f "$active_target" ] && [ -f "$matched_file" ]; then
+                    mkdir -p "$(dirname "$active_target")"
+                    cp "$matched_file" "$active_target" 2>/dev/null
+                fi
+                if [ -f "$active_target" ]; then
+                    matched_file="$active_target"
+                fi
+            fi
             if [ "$rec_mode" = "auto" ]; then
                 # Clean prefix for display
                 local clean_match
                 clean_match=$(ui_clean_path_prefix "$matched_file" "${LODGE_DIR:-.}")
-                ui_warn "File not found at requested path. Auto-resolved to: $clean_match" >&2
+                ui_warn "File not found at requested path. Auto-resolved and copied to active task workspace: $clean_match" >&2
                 tools_read_file "$matched_file" 100
                 return 0
             elif [ "$rec_mode" = "suggest" ]; then

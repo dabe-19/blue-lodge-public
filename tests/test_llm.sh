@@ -132,28 +132,37 @@ describe "Sampling parameter resolver (_llm_build_opts)"
 
   it "_llm_build_opts uses model defaults when no scenario set" && {
     unset LLM_SCENARIO
+    _saved_m="${LODGE_MODEL:-}"
+    LODGE_MODEL="blue-lodge-gemma4-inst:4b"
     result=$(_llm_build_opts 1024)
+    LODGE_MODEL="$_saved_m"
     temp=$(echo "$result" | jq -r '.temperature')
-    # No scenario → uses current baseline default temp
-    assert_eq "$temp" "0.15"
+    # No scenario → uses current baseline default temp 1.0
+    assert_eq "$temp" "1.0"
   }
 
   it "_llm_build_opts uses ask scenario (inherits model default)" && {
     LLM_SCENARIO=ask
+    _saved_m="${LODGE_MODEL:-}"
+    LODGE_MODEL="blue-lodge-gemma4-inst:4b"
     result=$(_llm_build_opts 512)
+    LODGE_MODEL="$_saved_m"
     unset LLM_SCENARIO
     temp=$(echo "$result" | jq -r '.temperature')
-    # Ask has no override — falls through to baseline default 0.15
-    assert_eq "$temp" "0.15"
+    # Ask has no override — falls through to baseline default 1.0
+    assert_eq "$temp" "1.0"
   }
 
   it "_llm_build_opts uses router scenario (inherits model default)" && {
     LLM_SCENARIO=router
+    _saved_m="${LODGE_MODEL:-}"
+    LODGE_MODEL="blue-lodge-gemma4-inst:4b"
     result=$(_llm_build_opts 50)
+    LODGE_MODEL="$_saved_m"
     unset LLM_SCENARIO
     temp=$(echo "$result" | jq -r '.temperature')
-    # Router has no override — inherits baseline default 0.15
-    assert_eq "$temp" "0.15"
+    # Router has no override — inherits baseline default 1.0
+    assert_eq "$temp" "1.0"
   }
 
   it "_llm_build_opts handles strategist scenario" && {
@@ -259,15 +268,15 @@ describe "models_apply_defaults"
 
   it "models_apply_defaults sets globals from model registry" && {
     models_apply_defaults "blue-lodge-gemma4-inst:4b" 2>/dev/null
-    assert_eq "$LLM_TEMPERATURE" "0.2"
+    assert_eq "$LLM_TEMPERATURE" "1.0"
     assert_eq "$LLM_REPEAT_PENALTY" "1.0"
     assert_eq "$LLM_PRESENCE_PENALTY" "0.0"
   }
 
   it "models_apply_defaults sets top_p/top_k/min_p globals" && {
     models_apply_defaults "blue-lodge-gemma4-inst:4b" 2>/dev/null
-    assert_eq "$LLM_TOP_P" "0.9"
-    assert_eq "$LLM_TOP_K" "40"
+    assert_eq "$LLM_TOP_P" "0.95"
+    assert_eq "$LLM_TOP_K" "64"
     assert_eq "$LLM_MIN_P" "0.0"
   }
 
@@ -293,7 +302,7 @@ describe "models_apply_defaults"
     models_apply_defaults "blue-lodge-qwen35-think:4b" 2>/dev/null
     assert_eq "$LLM_TEMPERATURE" "0.6"
     assert_eq "$LLM_REPEAT_PENALTY" "1.0"
-    assert_eq "$LLM_PRESENCE_PENALTY" "1.2"
+    assert_eq "$LLM_PRESENCE_PENALTY" "0.0"
     # Restore to default model
     models_apply_defaults "blue-lodge-gemma4-inst:4b" 2>/dev/null
   }
@@ -931,7 +940,7 @@ describe "Model family system"
 
     models_info "granite41-3b-inst"
     assert_eq "$_ME_STOP" '<|end_of_text|>' "granite4 stop token"
-    assert_eq "$_ME_TEMP" "0.1" "granite41 temp"
+    assert_eq "$_ME_TEMP" "0.6" "granite41 temp"
 
     models_info "nemotron3-nano-4b-inst"
     assert_eq "$_ME_STOP" '<|im_end|>' "nemotron3 stop token"

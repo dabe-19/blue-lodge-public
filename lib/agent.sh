@@ -33,14 +33,18 @@ _agent_extract_images_from_scrape() {
 
 _agent_extract_links_from_scrape() {
     local scrape_output="$1"
+    local raw_links=""
     if [[ "$scrape_output" == *\{* ]]; then
         local _clean_json="{${scrape_output#*\{}"
         if echo "$_clean_json" | jq -e '.links' &>/dev/null; then
-            echo "$_clean_json" | jq -r '.links[] // empty' 2>/dev/null | sort -u
-            return 0
+            raw_links=$(echo "$_clean_json" | jq -r '.links[] // empty' 2>/dev/null)
         fi
     fi
-    echo "$scrape_output" | grep -oE 'https?://[^ ]+' | grep -vE '\.(jpg|jpeg|png|gif|webp|bmp|svg|avif|tiff)($|\?)' | sed -E 's/[],)}'"'"'"]+$//' | sort -u
+    if [ -z "$raw_links" ]; then
+        raw_links=$(echo "$scrape_output" | grep -oE 'https?://[^ ]+' | grep -vE '\.(jpg|jpeg|png|gif|webp|bmp|svg|avif|tiff)($|\?)' | sed -E 's/[],)}'"'"'"]+$//')
+    fi
+    [ -z "$raw_links" ] && return 0
+    echo "$raw_links" | grep -E '^https?://' | grep -vE '(login|signin|signup|auth|privacy|terms|cookie|facebook\.com|twitter\.com|x\.com|instagram\.com|youtube\.com|linkedin\.com)' | sort -u | head -n 8
 }
 
 _is_junk_output() {
@@ -1154,6 +1158,9 @@ _micro_web_outputs() {
 
 _macro_init() {
     local file="$1" task="$2" persona="$3" project_ctx="${4:-}"
+    local george_dir
+    george_dir=$(dirname "$file")
+    rm -f "$george_dir/accumulated_research.json" "$george_dir/${RESEARCH_BUFFER_FILE:-research_buffer.json}" "$george_dir/${BRAINSTORM_FILE:-brainstorm_buffer.json}" 2>/dev/null
     jq -n --arg ts "$(date '+%Y-%m-%d %H:%M:%S %Z')" \
           --arg task "$task" --arg persona "$persona" \
           --arg ctx "$project_ctx" '{
@@ -1461,7 +1468,7 @@ TASK: $task
 
     local _hd_research_injection=""
     local _task_lower_hd="${task,,}"
-    if [ "${AGENT_IS_RESEARCH_REPORT:-0}" -eq 1 ] || [[ "$_task_lower_hd" =~ research|report|summary|overview|investigate|find|gather ]]; then
+    if [ "${AGENT_REQUIRES_MUTATION:-0}" -eq 0 ] && { [ "${AGENT_IS_RESEARCH_REPORT:-0}" -eq 1 ] || [[ "$_task_lower_hd" =~ research|report|summary|overview|investigate|find|gather ]]; }; then
         _hd_research_injection="\n\n>>> RESEARCH & REPORT TASK ACTIVE — this task requires external or in-depth data collection and a written deliverable. Follow the 4-tier structure: 1) Search sources, 2) Fetch/scrape full page contents, 3) Write synthesized report to 'mem:active_task', and 4) Deliver or present output. Do NOT stop at a web search."
     fi
 
@@ -3477,7 +3484,7 @@ EVAL SCHEMA:
   - For initializing a project (/init): Key files must be created (e.g. Cargo.toml and src/main.rs, or package.json and index.js).
   - For building (/build): A successful /build exit_0 is required (a /write command alone is NOT enough).
   - Reject placeholder or empty/incomplete code containing: todo, unimplemented, placeholder, stub, panic!(), or empty body.
-- Web Actions: Web searches alone are INCOMPLETE.
+- Web Actions: Web searches are COMPLETE if the search snippets contain actionable factual data (prices, dates, names, links) AND either live page fetching fails/returns JUNK, OR the objective asks to search. Do NOT classify as INCOMPLETE or force live page fetches if search snippets already provide the required facts.
 - Response Format: Respond with a JSON object ONLY: {"verdict":"COMPLETE" or "INCOMPLETE", "reason":"brief reason"}. Do NOT include any markdown block formatting or additional text.
 EVAL_P1_TEXT
 )"
@@ -5292,6 +5299,23 @@ _agent_capture_diff_post() {
             diff_out="$(echo "$diff_out" | head -150)\n\n[Diff truncated... $line_count lines total]"
         fi
         echo -e "\n\n>>> File changes diff (visual feedback): <<<\n\`\`\`diff\n$diff_out\n\`\`\`"
+    fi
+}
+
+_agent_clean_aod_path() {
+    local path="$1"
+    # If the path already has a workspaces folder in it, strip the workspaces prefix
+    # so that it maps cleanly under AGENT_OUTPUT_DIR instead of creating nested directories.
+    if [[ "$path" == *".george/workspaces/"* ]]; then
+        local rel="${path#*.george/workspaces/}"
+        if [[ "$rel" =~ ^[0-9]{8}_[0-9]{6}/(.*)$ ]]; then
+            rel="${BASH_REMATCH[1]}"
+        fi
+        echo "$rel"
+    elif [[ "$path" == *".george/workspaces"* ]]; then
+        echo ""
+    else
+        echo "$path"
     fi
 }
 
@@ -7329,11 +7353,20 @@ INTERLOCK_JSON
                             _aod_content=${_aod_content# }
                         fi
                         
+                        # Clean existing workspaces prefix to prevent nested workspaces creation.
+                        local _aod_orig_path="$_aod_path"
+                        _aod_path=$(_agent_clean_aod_path "$_aod_path")
+
                         # Skip if path is a semantic memory handle (mem:*) or already starts with the output dir
                         if [[ "$_aod_path" != mem:* ]] && [[ "$_aod_path" != "${AGENT_OUTPUT_DIR}"/* ]] && [[ "$_aod_path" != "${AGENT_OUTPUT_DIR}" ]]; then
                             _aod_path="${AGENT_OUTPUT_DIR}/${_aod_path}"
                             cmd="${_aod_verb} \"${_aod_path}\"${_aod_content:+ }${_aod_content}"
                             [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf '  [debug] output-dir enforced: %s\n' "$_aod_path" 2>/dev/null >/dev/tty
+                        fi
+
+                        if [ "$_aod_orig_path" != "$_aod_path" ]; then
+                            export AGENT_LAST_AUTOCLEANED_PATH_ORIG="$_aod_orig_path"
+                            export AGENT_LAST_AUTOCLEANED_PATH_CLEAN="$_aod_path"
                         fi
                         ;;
                 esac
@@ -7470,62 +7503,112 @@ INTERLOCK_JSON
                             fi
 
                             # ── Experimental Code Execution Verification Harness ──────────
-                            if [ "${AGENT_EXEC_VERIFY:-0}" -eq 1 ] && [[ "$_resolved_target" == *.py ]]; then
-                                if ! command -v python3 &>/dev/null; then
-                                    [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] exec-verify skipped: python3 unavailable on PATH"
-                                else
-                                    ui_info "Exec-verify harness: running python3 verification for $_written_target..."
-                                    local _exec_out _exec_exit
-                                    _exec_out=$(python3 -m py_compile "$_resolved_target" 2>&1)
-                                    _exec_exit=$?
+                            # ── Experimental Code Execution Verification Harness ──────────
+                            if [ "${AGENT_EXEC_VERIFY:-0}" -eq 1 ]; then
+                                if [[ "$_resolved_target" == *.py ]]; then
+                                    if ! command -v python3 &>/dev/null; then
+                                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] exec-verify skipped: python3 unavailable on PATH"
+                                    else
+                                        ui_info "Exec-verify harness: running python3 verification for $_written_target..."
+                                        local _exec_out _exec_exit
+                                        _exec_out=$(python3 -m py_compile "$_resolved_target" 2>&1)
+                                        _exec_exit=$?
 
-                                    if [ "$_exec_exit" -eq 0 ] && grep -q '__main__' "$_resolved_target" 2>/dev/null; then
-                                        local _run_out _run_exit
-                                        _run_out=$(python3 "$_resolved_target" 2>&1)
-                                        _run_exit=$?
-                                        if [ "$_run_exit" -ne 0 ]; then
-                                            _exec_out="$_run_out"
-                                            _exec_exit="$_run_exit"
+                                        if [ "$_exec_exit" -eq 0 ] && grep -q '__main__' "$_resolved_target" 2>/dev/null; then
+                                            local _run_out _run_exit
+                                            _run_out=$(python3 "$_resolved_target" 2>&1)
+                                            _run_exit=$?
+                                            if [ "$_run_exit" -ne 0 ]; then
+                                                _exec_out="$_run_out"
+                                                _exec_exit="$_run_exit"
+                                            fi
+                                        fi
+
+                                        # ── Unprivileged User-Space Auto-Package Provisioning ──────────
+                                        if [ "$_exec_exit" -ne 0 ] && [[ "$_exec_out" =~ (ModuleNotFoundError:[[:space:]]*No[[:space:]]+module[[:space:]]+named|No[[:space:]]+module[[:space:]]+named)[[:space:]]*\'([a-zA-Z0-9_]+)\' ]]; then
+                                            local _missing_mod="${BASH_REMATCH[2]}"
+                                            ui_warn "Exec-verify detected missing Python package '$_missing_mod'. Attempting user-space installation..."
+                                            local _inst_exit=1
+                                            if command -v uv &>/dev/null; then
+                                                uv pip install "$_missing_mod" 2>&1
+                                                _inst_exit=$?
+                                            elif python3 -m pip --version &>/dev/null; then
+                                                python3 -m pip install --user "$_missing_mod" 2>&1
+                                                _inst_exit=$?
+                                            fi
+                                            if [ "$_inst_exit" -eq 0 ]; then
+                                                ui_ok "Installed '$_missing_mod' to user site-packages. Re-running verification..."
+                                                _exec_out=$(python3 -m py_compile "$_resolved_target" 2>&1)
+                                                _exec_exit=$?
+                                                if [ "$_exec_exit" -eq 0 ] && grep -q '__main__' "$_resolved_target" 2>/dev/null; then
+                                                    _exec_out=$(python3 "$_resolved_target" 2>&1)
+                                                    _exec_exit=$?
+                                                fi
+                                            else
+                                                ui_warn "Auto-install of '$_missing_mod' failed (unprivileged user or offline)."
+                                            fi
+                                        fi
+
+                                        if [ "$_exec_exit" -ne 0 ]; then
+                                            ui_err "Exec-verify failed for $_written_target (exit $_exec_exit)"
+                                            local _ev_fail="[EXECUTION FAILURE] python3 verification of '${_written_target}' failed with exit code ${_exec_exit}:\n${_exec_out:0:1500}\nFix the compilation/runtime error identified above."
+                                            output="${output:+${output}
+}${_ev_fail}"
+                                            _last_eval_feedback="${_last_eval_feedback:+${_last_eval_feedback}
+}${_ev_fail}"
+                                        else
+                                            ui_ok "Exec-verify passed for $_written_target (valid execution)"
+                                            local _ev_pass="[EXECUTION VERIFIED] python3 execution check for '${_written_target}' passed with exit code 0."
+                                            output="${output:+${output}
+}${_ev_pass}"
                                         fi
                                     fi
-
-                                    # ── Unprivileged User-Space Auto-Package Provisioning ──────────
-                                    if [ "$_exec_exit" -ne 0 ] && [[ "$_exec_out" =~ (ModuleNotFoundError:[[:space:]]*No[[:space:]]+module[[:space:]]+named|No[[:space:]]+module[[:space:]]+named)[[:space:]]*\'([a-zA-Z0-9_]+)\' ]]; then
-                                        local _missing_mod="${BASH_REMATCH[2]}"
-                                        ui_warn "Exec-verify detected missing Python package '$_missing_mod'. Attempting user-space installation..."
-                                        local _inst_exit=1
-                                        if command -v uv &>/dev/null; then
-                                            uv pip install "$_missing_mod" 2>&1
-                                            _inst_exit=$?
-                                        elif python3 -m pip --version &>/dev/null; then
-                                            python3 -m pip install --user "$_missing_mod" 2>&1
-                                            _inst_exit=$?
-                                        fi
-                                        if [ "$_inst_exit" -eq 0 ]; then
-                                            ui_ok "Installed '$_missing_mod' to user site-packages. Re-running verification..."
-                                            _exec_out=$(python3 -m py_compile "$_resolved_target" 2>&1)
+                                elif [[ "$_resolved_target" == *.rs ]]; then
+                                    if command -v rustc &>/dev/null || command -v cargo &>/dev/null; then
+                                        ui_info "Exec-verify harness: running Rust verification for $_written_target..."
+                                        local _exec_out _exec_exit
+                                        if [ -f "$(dirname "$_resolved_target")/Cargo.toml" ] && command -v cargo &>/dev/null; then
+                                            _exec_out=$(cd "$(dirname "$_resolved_target")" && cargo check 2>&1)
                                             _exec_exit=$?
-                                            if [ "$_exec_exit" -eq 0 ] && grep -q '__main__' "$_resolved_target" 2>/dev/null; then
-                                                _exec_out=$(python3 "$_resolved_target" 2>&1)
+                                        elif command -v rustc &>/dev/null; then
+                                            local _rs_bin="/tmp/exec_verify_$(date +%s)_$$"
+                                            _exec_out=$(rustc --test "$_resolved_target" -o "$_rs_bin" 2>&1)
+                                            _exec_exit=$?
+                                            if [ "$_exec_exit" -eq 0 ] && [ -x "$_rs_bin" ]; then
+                                                _exec_out=$("$_rs_bin" 2>&1)
                                                 _exec_exit=$?
                                             fi
+                                            rm -f "$_rs_bin" 2>/dev/null
+                                        fi
+
+                                        if [ "$_exec_exit" -ne 0 ]; then
+                                            ui_err "Exec-verify failed for $_written_target (exit $_exec_exit)"
+                                            local _ev_fail="[EXECUTION FAILURE] Rust verification of '${_written_target}' failed with exit code ${_exec_exit}:\n${_exec_out:0:1500}\nFix the compilation/runtime error identified above."
+                                            output="${output:+${output}
+}${_ev_fail}"
+                                            _last_eval_feedback="${_last_eval_feedback:+${_last_eval_feedback}
+}${_ev_fail}"
                                         else
-                                            ui_warn "Auto-install of '$_missing_mod' failed (unprivileged user or offline)."
+                                            ui_ok "Exec-verify passed for $_written_target"
                                         fi
                                     fi
+                                elif [[ "$_resolved_target" == *.sh ]]; then
+                                    if command -v bash &>/dev/null; then
+                                        ui_info "Exec-verify harness: running bash syntax verification for $_written_target..."
+                                        local _exec_out _exec_exit
+                                        _exec_out=$(bash -n "$_resolved_target" 2>&1)
+                                        _exec_exit=$?
 
-                                    if [ "$_exec_exit" -ne 0 ]; then
-                                        ui_err "Exec-verify failed for $_written_target (exit $_exec_exit)"
-                                        local _ev_fail="[EXECUTION FAILURE] python3 verification of '${_written_target}' failed with exit code ${_exec_exit}:\n${_exec_out:0:1500}\nFix the compilation/runtime error identified above."
-                                        output="${output:+${output}
+                                        if [ "$_exec_exit" -ne 0 ]; then
+                                            ui_err "Exec-verify failed for $_written_target (exit $_exec_exit)"
+                                            local _ev_fail="[EXECUTION FAILURE] Bash syntax verification of '${_written_target}' failed with exit code ${_exec_exit}:\n${_exec_out:0:1500}\nFix the syntax error identified above."
+                                            output="${output:+${output}
 }${_ev_fail}"
-                                        _last_eval_feedback="${_last_eval_feedback:+${_last_eval_feedback}
+                                            _last_eval_feedback="${_last_eval_feedback:+${_last_eval_feedback}
 }${_ev_fail}"
-                                    else
-                                        ui_ok "Exec-verify passed for $_written_target (valid execution)"
-                                        local _ev_pass="[EXECUTION VERIFIED] python3 execution check for '${_written_target}' passed with exit code 0."
-                                        output="${output:+${output}
-}${_ev_pass}"
+                                        else
+                                            ui_ok "Exec-verify passed for $_written_target"
+                                        fi
                                     fi
                                 fi
                             fi
@@ -7533,6 +7616,44 @@ INTERLOCK_JSON
                     fi
                 fi
                 
+                # ── AUTOMATIC SEMANTIC MEMORY ARCHIVING ──────
+                if [[ "$cmd" == /respond* ]] && [ "$exit_code" -eq 0 ]; then
+                    local _mem_dir="$workdir/.george/memories"
+                    mkdir -p "$_mem_dir"
+                    local _mem_slug="${AGENT_ACTIVE_TASK_SLUG:-active_report}"
+                    local _mem_file="$_mem_dir/${_mem_slug}.md"
+                    
+                    local _resp_content
+                    _resp_content=$(echo "$cmd" | sed 's#^/respond[[:space:]]*##')
+                    [ -z "$_resp_content" ] && _resp_content="$output"
+
+                    if [ -n "$_resp_content" ]; then
+                        local _primary_hdr
+                        _primary_hdr=$(_macro_get "$macro_file" "primary_objective")
+                        echo "# ${_primary_hdr:-Deliverable}" > "$_mem_file"
+                        echo "" >> "$_mem_file"
+                        echo "$_resp_content" >> "$_mem_file"
+                        _agent_register_memory_file "$workdir"
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] auto-archived /respond output to $_mem_file"
+                    fi
+                elif [[ "$cmd" == /brainstorm* ]] && [ "$exit_code" -eq 0 ] && [ -n "$output" ]; then
+                    local _bs_lines
+                    _bs_lines=$(echo "$output" | wc -l)
+                    if [ "${_bs_lines:-0}" -gt 5 ]; then
+                        local _mem_dir="$workdir/.george/memories"
+                        mkdir -p "$_mem_dir"
+                        local _bs_topic
+                        _bs_topic=$(echo "$cmd" | sed 's#^/brainstorm[[:space:]]*##' | head -1 | sed 's|[^a-zA-Z0-9_-]|_|g' | cut -c1-40)
+                        [ -z "$_bs_topic" ] && _bs_topic="brainstorm_analysis"
+                        local _mem_file="$_mem_dir/${_bs_topic}_$(date +%H%M%S).md"
+                        echo "# Brainstorm Analysis: $_bs_topic" > "$_mem_file"
+                        echo "" >> "$_mem_file"
+                        echo "$output" >> "$_mem_file"
+                        _agent_register_memory_file "$workdir"
+                        [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] auto-archived /brainstorm output to $_mem_file"
+                    fi
+                fi
+
                 # ── WEB SEARCH URL QUEUE POPULATION ──────────
                 if [[ "$cmd" == /web\ search\ * ]] && [ "$exit_code" -eq 0 ]; then
                     local _queue_file="$AGENT_TASK_WORKSPACE/web_fetch_queue.txt"
@@ -7543,6 +7664,20 @@ INTERLOCK_JSON
                     fi
                 fi
                 
+                # ── WEB FETCH / SCRAPE DEEP LINK EXTRACTION ───
+                if { [[ "$cmd" == /web\ fetch\ * ]] || [[ "$cmd" == /web\ scrape\ * ]] || [[ "$cmd" == /web\ scrape-images\ * ]]; } && [ "$exit_code" -eq 0 ] && ! _is_junk_output "$output"; then
+                    local _queue_file="$AGENT_TASK_WORKSPACE/web_fetch_queue.txt"
+                    if [ -n "${AGENT_TASK_WORKSPACE:-}" ]; then
+                        mkdir -p "$AGENT_TASK_WORKSPACE"
+                        local _extracted_deep_links
+                        _extracted_deep_links=$(_agent_extract_links_from_scrape "$output")
+                        if [ -n "$_extracted_deep_links" ]; then
+                            echo "$_extracted_deep_links" >> "$_queue_file"
+                            sort -u "$_queue_file" -o "$_queue_file" 2>/dev/null
+                        fi
+                    fi
+                fi
+
                 # ── WEB FETCH CASCADE RETRY ──────────────────
                 if { [[ "$cmd" == /web\ fetch\ * ]] || [[ "$cmd" == /web\ scrape\ * ]] || [[ "$cmd" == /web\ read\ * ]] || [[ "$cmd" == /web\ scrape-images\ * ]]; } && [ "${AGENT_WEB_FETCH_CASCADE:-1}" -eq 1 ]; then
                     local _primary_url _cmd_prefix
@@ -7552,6 +7687,7 @@ INTERLOCK_JSON
                     fi
                     _primary_url=$(echo "$cmd" | head -n 1 | sed -E 's#^/web (fetch|scrape|read|scrape-images) *##' | awk '{print $1}')
                     if [ "$exit_code" -ne 0 ] || _is_junk_output "$output"; then
+                        declare -f _web_blacklist_add &>/dev/null && [ -n "$_primary_url" ] && _web_blacklist_add "$_primary_url" "FETCH_FAIL_OR_JUNK" "junk"
                         local _queue_file="$AGENT_TASK_WORKSPACE/web_fetch_queue.txt"
                         if [ -f "$_queue_file" ]; then
                             local _fallback_urls=() _fb_url
@@ -9295,7 +9431,8 @@ MEMEOF
                     [ -z "$_cf_line" ] && continue
                     [ "$_cf_count" -ge "${AGENT_CONTEXT_FILES_MAX:-10}" ] && break
                     # Extract path from "- [timestamp] path/to/file"
-                    _cf_path=$(echo "$_cf_line" | sed 's/^- \[[^]]*\] //')
+                    # Extract path from "- [timestamp] path/to/file"
+                    _cf_path=$(echo "$_cf_line" | sed 's/^- \[[^]]*\] //' | sed -E 's|\.george/workspaces/[0-9_]+/||g')
                     [ -z "$_cf_path" ] && continue
                     # Resolve path (handles mem:<slug> and standard files)
                     local _resolved_cf_path
@@ -9307,7 +9444,7 @@ MEMEOF
                     fi
                 done <<< "$_reversed_cf"
                 if [ -n "$_valid_cf" ]; then
-                    _strat_prior_files="\n\nPRIOR TASK FILES (from recent tasks — these files exist in the workspace):${_valid_cf}\nYou can reference these files by their exact paths."
+                    _strat_prior_files="\n\nPRIOR TASK FILES (from recent tasks — these files exist in the workspace):$(echo "$_valid_cf" | sed -E 's|\.george/workspaces/[0-9_]+/||g')\nYou can reference these files by their exact paths."
                     [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- prior task files from GEORGE.md"
                 fi
             fi
@@ -9382,7 +9519,10 @@ MEMEOF
                     if echo "$_completed_list" | grep -Fqx "$title" &>/dev/null; then
                         continue
                     fi
-                    _strat_prior_ms="${_strat_prior_ms}\n- [${ts:0:10}] ${title}: ${summary}"
+                    local _clean_title _clean_summary
+                    _clean_title=$(echo "$title" | sed -E 's|\.george/workspaces/[0-9_]+/||g')
+                    _clean_summary=$(echo "$summary" | sed -E 's|\.george/workspaces/[0-9_]+/||g')
+                    _strat_prior_ms="${_strat_prior_ms}\n- [${ts:0:10}] ${_clean_title}: ${_clean_summary}"
                 done <<< $(jq -r '.prior_milestones[] | "\(.title)|\(.summary)|\(.ts)"' "$macro_file" 2>/dev/null)
                 [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] inject: strategist <- prior milestones context"
             fi
@@ -9407,8 +9547,8 @@ MEMEOF
         local _strat_research_injection=""
         local _task_lower_for_inj
         _task_lower_for_inj=$(echo "${task} ${_strat_honeydew:-}" | tr '[:upper:]' '[:lower:]')
-        if [[ "$_task_lower_for_inj" =~ research ]]; then
-            _strat_research_injection="\n\n>>> RESEARCH TASK ACTIVE — the task contains the word 'research' <<<\nThis is a Combined or Concrete task, and is NOT a conversational question.\nYou MUST NOT stop at a /web search milestone. You MUST plan at least one follow-up milestone to fetch or scrape detailed contents (e.g. using /web fetch or /web scrape) from the search results to complete the research."
+        if [ "${AGENT_REQUIRES_MUTATION:-0}" -eq 0 ] && { [ "${AGENT_IS_RESEARCH_REPORT:-0}" -eq 1 ] || [[ "$_task_lower_for_inj" =~ research ]]; }; then
+            _strat_research_injection="\n\n>>> RESEARCH & REPORT TASK ACTIVE — this task requires data collection and a written report deliverable. Follow the sequence: 1) Search sources or fetch contents, 2) Write synthesized report to 'mem:active_task', and 3) Deliver output. Search snippets with price/factual data satisfy the research phase if live page fetching is blocked or returns JUNK."
         fi
 
         local macro_prompt="Current date/time: ${_strat_now}\n\nTask memory:\n$macro_context${_strat_honeydew}${_strat_brainstorm}${_strat_read_context}${_sieve_hint}${_strat_reflexive}${_strat_written_files}${_strat_memories}${_strat_prior_files}${_strat_discovered_images}${_strat_discovered_links}${_strat_rb}${_strat_prior_ms}${_social_ctx:+\n\nREFERENCE — registered social channel names (do NOT research these):\n${_social_ctx}}${_strat_last_eval_feedback}${_strat_failures}${_strat_research_injection}\n\nWhat is the SINGLE next logical milestone to advance the remaining objectives?"
@@ -9461,7 +9601,9 @@ USER PREFERENCES ON FILE: ${_pref_n} stored. Use /recall before assuming user pr
         # exists — this prevents information leakage where the model
         # learns about /web from the directive itself.
         local _exploration_directive=""
-        if [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ] || [ "${AGENT_TASK_TYPE:-concrete}" = "combined" ]; then
+        if [ "${AGENT_IS_RESEARCH_REPORT:-0}" -eq 1 ]; then
+            _exploration_directive=""
+        elif [ "${AGENT_TASK_TYPE:-concrete}" = "abstract" ] || [ "${AGENT_TASK_TYPE:-concrete}" = "combined" ]; then
             if [ "$_web_locked" -eq 1 ]; then
                 # Web-locked: no /web mention at all — pure local exploration
                 _exploration_directive='

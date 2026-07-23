@@ -428,14 +428,17 @@ ui_resolve_path() {
 
     # Check if we are running in an agent task workspace
     local is_agent_task=0
+    if [[ "$workdir" != *".george/workspaces"* ]] && [ -n "${AGENT_TASK_WORKSPACE:-}" ]; then
+        workdir="$AGENT_TASK_WORKSPACE"
+    fi
     if [[ "$workdir" == *".george/workspaces"* ]]; then
         is_agent_task=1
     fi
 
     # Auto-route general document files (e.g. .md, .txt) that are not codebase files to memories
-    if [ "$is_agent_task" -eq 1 ]; then
+    if [ "$is_agent_task" -eq 1 ] && [[ "$1" != *".george/workspaces"* ]] && [[ "$1" != *".george/memories"* ]]; then
         if [[ "$filepath" == *.md ]] || [[ "$filepath" == *.txt ]]; then
-            if [[ "$filepath" != "lib/"* ]] && [[ "$filepath" != "tests/"* ]] && [[ "$filepath" != "commands/"* ]] && [[ "$filepath" != "docs/"* ]] && [[ "$filepath" != *".george/workspaces"* ]] && [[ "$filepath" != *".george/memories"* ]] && [ ! -f "$lodge_dir/$filepath" ] && [ ! -f "$workdir/$filepath" ] && [ ! -f "$lodge_dir/.george/workspaces/$filepath" ]; then
+            if [[ "$filepath" != "lib/"* ]] && [[ "$filepath" != "tests/"* ]] && [[ "$filepath" != "commands/"* ]] && [[ "$filepath" != "docs/"* ]] && [ ! -f "$lodge_dir/$filepath" ] && [ ! -f "$workdir/$filepath" ] && [ ! -f "$lodge_dir/.george/workspaces/$filepath" ]; then
                 local auto_slug
                 auto_slug=$(basename "$filepath" | sed -e 's/\.md$//' -e 's/\.txt$//' | sed 's|[^a-zA-Z0-9_-]||g')
                 echo "$lodge_dir/.george/memories/${auto_slug}.md"
@@ -447,8 +450,13 @@ ui_resolve_path() {
     # If the path contains the active workspaces/memories directory segment, extract the relative part.
     # This dynamically maps absolute container paths (e.g. starting with /workspace/ or /home/blue-lodge/)
     # to the host lodge_dir by stripping the arbitrary prefix before .george/workspaces/ or .george/memories/.
+    # If the path contains the active workspaces/memories directory segment, extract the relative part.
+    # This dynamically maps absolute container paths (e.g. starting with /workspace/ or /home/blue-lodge/)
+    # to the host lodge_dir by stripping the arbitrary prefix before .george/workspaces/ or .george/memories/.
     if [[ "$filepath" == *".george/workspaces/"* ]]; then
-        filepath=".george/workspaces/${filepath#*.george/workspaces/}"
+        filepath="${filepath#*.george/workspaces/}"
+        # Strip any leading timestamp folder prefix (e.g. 20260722_200714/)
+        filepath=$(echo "$filepath" | sed -E 's|^[0-9]{8}_[0-9]{6}/||')
     elif [[ "$filepath" == *".george/memories/"* ]]; then
         filepath=".george/memories/${filepath#*.george/memories/}"
     fi
@@ -470,8 +478,8 @@ ui_resolve_path() {
         filepath=$(tools_expand_tilde "$filepath")
     fi
 
-    # 3. Explicit workspaces or memories path
-    if [[ "$filepath" == ".george/workspaces"* ]] || [[ "$filepath" == ".george/memories"* ]]; then
+    # 3. Explicit memories path
+    if [[ "$filepath" == ".george/memories"* ]]; then
         echo "$lodge_dir/$filepath"
         return 0
     fi
@@ -489,8 +497,11 @@ ui_resolve_path() {
             return 0
         fi
 
-        # 5. Outside a sandbox (Relative path defaults to global workspace or project root fallbacks)
-        local global_path="$lodge_dir/.george/workspaces/$filepath"
+        # 5. Outside a sandbox (Relative path defaults to active task workspace or project root fallbacks)
+        local global_path="$workdir/$filepath"
+        if [[ "$workdir" != *".george/workspaces"* ]]; then
+            global_path="$lodge_dir/.george/workspaces/$filepath"
+        fi
         local project_path="$lodge_dir/$filepath"
 
         if [ "$is_write" -eq 1 ]; then
@@ -498,29 +509,49 @@ ui_resolve_path() {
             if [[ "$filepath" == "lib/"* ]] || [[ "$filepath" == "tests/"* ]] || [[ "$filepath" == "commands/"* ]] || [[ "$filepath" == "docs/"* ]] || [ -f "$project_path" ]; then
                 echo "$project_path"
             else
+                # Copy-on-Write: If missing in active task workspace, check prior workspaces to initialize active copy
+                if [ ! -f "$global_path" ] && [ -d "$lodge_dir/.george/workspaces" ]; then
+                    local _prior_src
+                    _prior_src=$(find "$lodge_dir/.george/workspaces" -maxdepth 5 -type f -name "$(basename "$filepath")" ! -path "$workdir/*" 2>/dev/null | head -1)
+                    if [ -n "$_prior_src" ] && [ -f "$_prior_src" ]; then
+                        mkdir -p "$(dirname "$global_path")"
+                        cp "$_prior_src" "$global_path" 2>/dev/null
+                    fi
+                fi
                 echo "$global_path"
             fi
         else
-            # For reading, check if it exists in the global workspace first
+            # For reading, check if it exists in active task workspace first
             if [ -e "$global_path" ]; then
                 echo "$global_path"
             elif [ -e "$project_path" ]; then
                 echo "$project_path"
             else
-                # Fuzzy path resolution before defaulting
-                local _base _match _token
-                _base=$(basename "$filepath")
-                _match=$(find "$lodge_dir" "$workdir" -maxdepth 3 -type f -name "*${_base}*" ! -path '*/.git/*' 2>/dev/null | head -1)
-                if [ -z "$_match" ]; then
-                    _token=$(echo "$_base" | tr '_-.' ' ' | awk '{print $1}')
-                    if [ -n "$_token" ] && [ "${#_token}" -ge 4 ]; then
-                        _match=$(find "$lodge_dir" "$workdir" -maxdepth 3 -type f -name "*${_token}*" ! -path '*/.git/*' 2>/dev/null | head -1)
-                    fi
+                # Copy-on-Read: Check if file exists in a prior task workspace
+                local _prior_src=""
+                if [ -d "$lodge_dir/.george/workspaces" ]; then
+                    _prior_src=$(find "$lodge_dir/.george/workspaces" -maxdepth 5 -type f -name "$(basename "$filepath")" ! -path "$workdir/*" 2>/dev/null | head -1)
                 fi
-                if [ -n "$_match" ] && [ -f "$_match" ]; then
-                    echo "$_match"
+                if [ -n "$_prior_src" ] && [ -f "$_prior_src" ]; then
+                    mkdir -p "$(dirname "$global_path")"
+                    cp "$_prior_src" "$global_path" 2>/dev/null
+                    echo "$global_path"
                 else
-                    echo "$global_path" # Default to global path (file not found)
+                    # Fuzzy path resolution before defaulting
+                    local _base _match _token
+                    _base=$(basename "$filepath")
+                    _match=$(find "$lodge_dir" "$workdir" -maxdepth 3 -type f -name "*${_base}*" ! -path '*/.git/*' ! -path '*/.george/memories/*' 2>/dev/null | head -1)
+                    if [ -z "$_match" ]; then
+                        _token=$(echo "$_base" | tr '_.-' ' ' | awk '{print $1}')
+                        if [ -n "$_token" ] && [ "${#_token}" -ge 4 ]; then
+                            _match=$(find "$lodge_dir" "$workdir" -maxdepth 3 -type f -name "*${_token}*" ! -path '*/.git/*' ! -path '*/.george/memories/*' 2>/dev/null | head -1)
+                        fi
+                    fi
+                    if [ -n "$_match" ] && [ -f "$_match" ]; then
+                        echo "$_match"
+                    else
+                        echo "$global_path" # Default to global path (file not found)
+                    fi
                 fi
             fi
         fi

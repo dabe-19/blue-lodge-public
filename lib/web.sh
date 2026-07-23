@@ -2020,6 +2020,7 @@ web_fetch_json() {
             echo "$fallback_json"
             return 0
         else
+            _web_blacklist_add "$clean_url" "GREYLISTED_MISSING_CACHE" "greylist"
             jq -n \
                 --arg url "$clean_url" \
                 --arg reason "GREYLISTED_MISSING_CACHE" \

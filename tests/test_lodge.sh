@@ -867,8 +867,8 @@ describe "Model command (sampling parameters)"
     LLM_TEMP_ROUTER=0.9
     LLM_PRESENCE_JOURNAL=0.5
     _cmd_model "reset" >/dev/null 2>&1
-    # After reset, globals match model registry (gemma4-e4b-inst: 0.2/1.0/0.0)
-    assert_eq "$LLM_TEMPERATURE" "0.2"
+    # After reset, globals match model registry (gemma4-e4b-inst: 1.0/1.0/0.0)
+    assert_eq "$LLM_TEMPERATURE" "1.0"
     assert_eq "$LLM_REPEAT_PENALTY" "1.0"
     assert_eq "$LLM_PRESENCE_PENALTY" "0.0"
     # Per-scenario overrides are cleared (empty = inherit model default)
@@ -969,26 +969,26 @@ describe "Debug command"
 
     # 1. Global workspace path resolution
     p1=$(ui_resolve_path ".george/workspaces/report.md" "$test_workdir" 0)
-    assert_eq "$p1" "$test_lodgedir/.george/workspaces/report.md"
+    assert_eq "$p1" "$test_workdir/report.md"
 
     # 2. Inside sandbox relative resolution
     p2=$(ui_resolve_path "src/main.rs" "$sandbox_dir" 0)
     assert_eq "$p2" "$sandbox_dir/src/main.rs"
 
     # 3. Outside sandbox relative read resolution
-    # Should check global workspace first, then project root fallback
-    echo "global content" > "$test_lodgedir/.george/workspaces/magic.md"
+    # Should check active task workspace first, then project root fallback
+    echo "global content" > "$test_workdir/magic.md"
     p3=$(ui_resolve_path "magic.md" "$test_workdir" 0)
-    assert_eq "$p3" "$test_lodgedir/.george/workspaces/magic.md"
+    assert_eq "$p3" "$test_workdir/magic.md"
 
     # 4. Container absolute path resolution with custom prefix
     p4=$(ui_resolve_path "/custom/parent/blue-lodge/.george/workspaces/report.md" "$test_workdir" 0)
-    assert_eq "$p4" "$test_lodgedir/.george/workspaces/report.md"
+    assert_eq "$p4" "$test_workdir/report.md"
 
     # 5. Non-existent LODGE_DIR environment path fallback
     export LODGE_DIR="/tmp/non_existent_lodge_dir_123"
     p5=$(ui_resolve_path ".george/workspaces/report.md" "$test_workdir" 0)
-    assert_eq "$p5" "$(pwd)/.george/workspaces/report.md"
+    assert_eq "$p5" "$test_workdir/report.md"
 
     # Restore LODGE_DIR
     if [ -n "$old_lodge_dir" ]; then
@@ -1022,6 +1022,7 @@ describe "Debug command"
     assert_contains "$out" "recovered data"
 
     # 2. Test suggest mode (Option B) - should fail and show paths
+    rm -f "$test_workdir/lost_report.md"
     export AGENT_FILE_RECOVERY="suggest"
     out=$(_cmd_read "lost_report.md" "$test_workdir" 2>&1)
     assert_eq $? 1

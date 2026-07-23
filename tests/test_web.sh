@@ -2270,4 +2270,24 @@ describe "Domain Grey-listing & Snippet Fallbacks"
     _teardown_web
   }
 
+  it "appends host to web_blacklist when greylist fallback has missing cache" && {
+    _setup_web
+    export WEB_GREYLIST_DOMAINS="blocked-site.com"
+    
+    output=$(web_fetch_json "https://blocked-site.com/page")
+    assert_contains "$output" "GREYLISTED_MISSING_CACHE"
+    assert_file_exists "$WEB_BLACKLIST_FILE"
+    bl_content=$(cat "$WEB_BLACKLIST_FILE")
+    assert_contains "$bl_content" "host=blocked-site.com"
+    _teardown_web
+  }
+
+  it "_web_exclusions_get_active_filters formats -site: query arguments correctly" && {
+    _setup_web
+    _web_exclusions_add "testdomain.com"
+    filters=$(_web_exclusions_get_active_filters)
+    assert_contains "$filters" "-site:testdomain.com"
+    _teardown_web
+  }
+
 test_end

@@ -41,24 +41,24 @@ _MODELS_ACTIVE=""
 
 _MODELS_REGISTRY=(
     # ── Gemma 4 family (Google, 2026) ─────────────────────────
-    "gemma4-e2b-inst^blue-lodge-gemma4-inst:2b^hf.co/unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL^instruct^1^system^<turn|>^0.2^1.0^0.0^32768^16384^0.9^40^0.0^Gemma 4 E2B QAT instruct. Smallest modern default candidate.^edge"
-    "gemma4-e4b-inst^blue-lodge-gemma4-inst:4b^hf.co/unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL^instruct^1^system^<turn|>^0.2^1.0^0.0^32768^16384^0.9^40^0.0^Gemma 4 E4B QAT instruct. Strong phone-class balance.^edge"
+    "gemma4-e2b-inst^blue-lodge-gemma4-inst:2b^hf.co/unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL^instruct^1^system^<turn|>^1.0^1.0^0.0^32768^16384^0.95^64^0.0^Gemma 4 E2B QAT instruct. Smallest modern default candidate.^edge"
+    "gemma4-e4b-inst^blue-lodge-gemma4-inst:4b^hf.co/unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL^instruct^1^system^<turn|>^1.0^1.0^0.0^32768^16384^0.95^64^0.0^Gemma 4 E4B QAT instruct. Strong phone-class balance.^edge"
 
     # ── Qwen 3.5 family (2026 refresh) ────────────────────────
-    "qwen35-2b-inst^blue-lodge-qwen35-inst:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL^instruct^0^none^<|im_end|>^0.2^1.0^0.0^32768^16384^0.9^20^0.0^Qwen 3.5 2B instruct. Low-memory utility model.^edge"
-    "qwen35-4b-inst^blue-lodge-qwen35-inst:4b^hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL^instruct^0^none^<|im_end|>^0.2^1.0^0.0^32768^16384^0.9^20^0.0^Qwen 3.5 4B instruct. Fast all-around coding/ops model.^edge"
-    "qwen35-4b-think^blue-lodge-qwen35-think:4b^hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.0^1.2^32768^32768^0.95^20^0.0^Qwen 3.5 4B thinking variant with native /no_think support.^edge"
+    "qwen35-2b-inst^blue-lodge-qwen35-inst:2b^hf.co/unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL^instruct^0^none^<|im_end|>^0.7^1.0^1.5^32768^16384^0.8^20^0.0^Qwen 3.5 2B instruct. Low-memory utility model.^edge"
+    "qwen35-4b-inst^blue-lodge-qwen35-inst:4b^hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL^instruct^0^none^<|im_end|>^0.7^1.0^1.5^32768^16384^0.8^20^0.0^Qwen 3.5 4B instruct. Fast all-around coding/ops model.^edge"
+    "qwen35-4b-think^blue-lodge-qwen35-think:4b^hf.co/unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL^thinking^1^qwen^<|im_end|>^0.6^1.0^0.0^32768^32768^0.95^20^0.0^Qwen 3.5 4B thinking variant with native /no_think support.^edge"
 
     # ── Granite 4.1 family (IBM, 2026) ────────────────────────
-    "granite41-3b-inst^blue-lodge-granite41-inst:3b^hf.co/unsloth/granite-4.1-3b-GGUF:Q4_K_M^instruct^0^none^<|end_of_text|>^0.1^1.0^0.0^32768^12288^0.9^20^0.0^IBM Granite 4.1 3B instruct. Structured and deterministic output.^edge"
+    "granite41-3b-inst^blue-lodge-granite41-inst:3b^hf.co/unsloth/granite-4.1-3b-GGUF:Q4_K_M^instruct^0^none^<|end_of_text|>^0.6^1.0^0.0^32768^12288^0.9^20^0.0^IBM Granite 4.1 3B instruct. Structured and deterministic output.^edge"
 
     # ── Nemotron 3 family (NVIDIA, 2026) ──────────────────────
-    "nemotron3-nano-4b-inst^blue-lodge-nemotron3-inst:4b^hf.co/unsloth/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M^instruct^0^none^<|im_end|>^0.2^1.0^0.0^32768^16384^0.9^40^0.0^NVIDIA Nemotron 3 Nano 4B instruct. Modern edge model.^edge"
+    "nemotron3-nano-4b-inst^blue-lodge-nemotron3-inst:4b^hf.co/unsloth/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M^instruct^0^none^<|im_end|>^0.6^1.0^0.0^32768^16384^0.95^20^0.0^NVIDIA Nemotron 3 Nano 4B instruct. Modern edge model.^edge"
 
     # ── Central Tier (remote GPU) ──────────────────────────────
-    "gemma4-12b-inst^blue-lodge-gemma4-inst:12b^hf.co/unsloth/gemma-4-12B-it-qat-GGUF:UD-Q4_K_XL^instruct^1^system^<turn|>^0.2^1.0^0.0^32768^16384^0.9^40^0.0^Gemma 4 12B QAT instruct. Central GPU quality tier.^central"
-    "qwen35-9b-inst^blue-lodge-qwen35-inst:9b^hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL^instruct^0^none^<|im_end|>^0.2^1.0^0.0^32768^16384^0.9^20^0.0^Qwen 3.5 9B instruct. Strong central coding tier.^central"
-    "granite41-8b-inst^blue-lodge-granite41-inst:8b^hf.co/unsloth/granite-4.1-8b-GGUF:Q4_K_M^instruct^0^none^<|end_of_text|>^0.1^1.0^0.0^32768^12288^0.9^20^0.0^IBM Granite 4.1 8B instruct. Central structured reasoning tier.^central"
+    "gemma4-12b-inst^blue-lodge-gemma4-inst:12b^hf.co/unsloth/gemma-4-12B-it-qat-GGUF:UD-Q4_K_XL^instruct^1^system^<turn|>^1.0^1.0^0.0^32768^16384^0.95^64^0.0^Gemma 4 12B QAT instruct. Central GPU quality tier.^central"
+    "qwen35-9b-inst^blue-lodge-qwen35-inst:9b^hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL^instruct^0^none^<|im_end|>^0.7^1.0^1.5^32768^16384^0.8^20^0.0^Qwen 3.5 9B instruct. Strong central coding tier.^central"
+    "granite41-8b-inst^blue-lodge-granite41-inst:8b^hf.co/unsloth/granite-4.1-8b-GGUF:Q4_K_M^instruct^0^none^<|end_of_text|>^0.6^1.0^0.0^32768^12288^0.9^20^0.0^IBM Granite 4.1 8B instruct. Central structured reasoning tier.^central"
 )
 
 # ── Curated model presentation metadata ───────────────────────

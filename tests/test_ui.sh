@@ -282,4 +282,19 @@ describe "llm_estimate_tokens (from llm.sh)"
     fi
   }
 
+  it "ui_resolve_path performs Copy-on-Access from prior workspace to active workspace" && {
+    tmp_root=$(test_tmpdir)
+    ws_prior="$tmp_root/.george/workspaces/20260722_100000"
+    ws_active="$tmp_root/.george/workspaces/20260722_200000"
+    mkdir -p "$ws_prior" "$ws_active"
+    echo 'def calc(): return 42' > "$ws_prior/heat_exchanger_calc.py"
+
+    LODGE_DIR="$tmp_root"
+    res_path=$(ui_resolve_path "heat_exchanger_calc.py" "$ws_active")
+    assert_eq "$res_path" "$ws_active/heat_exchanger_calc.py"
+    [ -f "$ws_active/heat_exchanger_calc.py" ]
+    assert_ok $? "File must be copied to active task workspace"
+    rm -rf "$tmp_root"
+  }
+
 test_end

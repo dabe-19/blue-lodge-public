@@ -3099,6 +3099,21 @@ describe "AGENT_OUTPUT_DIR enforcement"
     assert_ok $? "Must check if path is a semantic memory handle starting with mem:"
   }
 
+  it "_agent_clean_aod_path cleans workspace path chains" && {
+    local res
+    res=$(_agent_clean_aod_path ".george/workspaces/20260722_040425/some_file.md")
+    assert_eq "$res" "some_file.md" "should strip relative workspaces directory prefix"
+
+    res=$(_agent_clean_aod_path "/home/wsl-ops/blue-lodge/.george/workspaces/20260722_040425/some_file.md")
+    assert_eq "$res" "some_file.md" "should strip absolute workspaces directory prefix"
+
+    res=$(_agent_clean_aod_path "some_file.md")
+    assert_eq "$res" "some_file.md" "should keep simple paths intact"
+
+    res=$(_agent_clean_aod_path ".george/workspaces")
+    assert_eq "$res" "" "should return empty for bare workspaces directory path"
+  }
+
 # ── Fuzzy keyword catalog matching ────────────────────────────
 describe "Fuzzy keyword catalog matching (_agent_fuzzy_catalog_match)"
 
@@ -4837,6 +4852,42 @@ describe "Clean Objective Slashes"
     body=$(declare -f agent_inner_loop)
     echo "$body" | grep -q "_agent_clean_objective_slashes"
     assert_ok $? "inner loop must clean slash prefixes from micro_objective before calling specialist"
+  }
+
+  it "_agent_extract_links_from_scrape filters navigation links and extracts content URLs" && {
+    json_input='{"url":"https://example.com","title":"Test","content":"Body","images":[],"links":["https://example.com/login","https://example.com/privacy","https://example.com/flight-deals/las-vegas","https://facebook.com/share"]}'
+    extracted=$(_agent_extract_links_from_scrape "$json_input")
+    assert_contains "$extracted" "https://example.com/flight-deals/las-vegas"
+    assert_not_contains "$extracted" "https://example.com/login"
+    assert_not_contains "$extracted" "https://example.com/privacy"
+    assert_not_contains "$extracted" "https://facebook.com/share"
+  }
+
+  it "_macro_init wipes accumulated research buffers on task start" && {
+    tmp_dir=$(test_tmpdir)
+    george_dir="$tmp_dir/.george"
+    mkdir -p "$george_dir"
+    echo '{"old":"data"}' > "$george_dir/accumulated_research.json"
+    echo '{"old":"data"}' > "$george_dir/research_buffer.json"
+
+    _macro_init "$george_dir/macro_memory.json" "New Task" "General"
+    [ ! -f "$george_dir/accumulated_research.json" ]
+    assert_ok $? "accumulated_research.json must be deleted on task startup"
+    [ ! -f "$george_dir/research_buffer.json" ]
+    assert_ok $? "research_buffer.json must be deleted on task startup"
+    rm -rf "$tmp_dir"
+  }
+
+  it "research directive is suppressed when AGENT_REQUIRES_MUTATION=1" && {
+    export AGENT_REQUIRES_MUTATION=1
+    export AGENT_IS_RESEARCH_REPORT=1
+    task="audit code and edit heat_exchanger_utils.py"
+    _task_lower_hd="${task,,}"
+    _hd_research_injection=""
+    if [ "${AGENT_REQUIRES_MUTATION:-0}" -eq 0 ] && { [ "${AGENT_IS_RESEARCH_REPORT:-0}" -eq 1 ] || [[ "$_task_lower_hd" =~ research|report|summary|overview|investigate|find|gather ]]; }; then
+        _hd_research_injection="RESEARCH & REPORT TASK ACTIVE"
+    fi
+    assert_eq "$_hd_research_injection" ""
   }
 
 test_end

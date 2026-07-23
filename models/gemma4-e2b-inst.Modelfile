@@ -4,9 +4,9 @@
 FROM hf.co/unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL
 
 # Sampling
-PARAMETER temperature 0.2
-PARAMETER top_p 0.9
-PARAMETER top_k 40
+PARAMETER temperature 1.0
+PARAMETER top_p 0.95
+PARAMETER top_k 64
 PARAMETER min_p 0.0
 
 # Penalties

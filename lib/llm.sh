@@ -162,10 +162,10 @@ LLM_BUDGET_TOOL=${LLM_BUDGET_TOOL:-4096}
 LLM_GRAMMAR_ENABLED=${LLM_GRAMMAR_ENABLED:-0}
 
 # ── Sampling Parameters ───────────────────────────────────────
-LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.15}
-LLM_REPEAT_PENALTY=${LLM_REPEAT_PENALTY:-1.2}
-LLM_PRESENCE_PENALTY=${LLM_PRESENCE_PENALTY:-0.3}
-LLM_TOP_P=${LLM_TOP_P:-0.9}
+LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
+LLM_REPEAT_PENALTY=${LLM_REPEAT_PENALTY:-1.0}
+LLM_PRESENCE_PENALTY=${LLM_PRESENCE_PENALTY:-0.0}
+LLM_TOP_P=${LLM_TOP_P:-0.95}
 LLM_TOP_K=${LLM_TOP_K:-40}
 LLM_MIN_P=${LLM_MIN_P:-0.0}
 
@@ -422,6 +422,17 @@ _llm_build_opts() {
     top_p="$model_top_p"
     top_k="$model_top_k"
     min_p="$model_min_p"
+
+    # ── Dynamic Thinking vs Instruct Mode Adjustments ──────────
+    # When thinking is disabled (AGENT_SKIP_REASONING=1), adjust sampling
+    # to instruct targets (e.g. temp 0.6-0.7, top_p 0.8, presence 1.5 for Qwen)
+    if [ "${AGENT_SKIP_REASONING:-0}" -eq 1 ] || [ "${_LLM_SKIP_REASONING:-0}" -eq 1 ]; then
+        if [[ "$LODGE_MODEL" =~ qwen ]]; then
+            temp="0.6"
+            top_p="0.8"
+            pres="1.5"
+        fi
+    fi
 
     jq -n \
         --argjson np "$np" \

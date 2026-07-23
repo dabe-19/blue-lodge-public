@@ -491,4 +491,16 @@ describe "commands_is_safe_auto_route"
     assert_fail $?
   }
 
+  it "cmd_test auto-detects standalone python test script" && {
+    tmp_dir=$(test_tmpdir)
+    export AGENT_OUTPUT_DIR="task_ws"
+    mkdir -p "$tmp_dir/task_ws"
+    echo "print('OK')" > "$tmp_dir/task_ws/heat_exchanger_calc.py"
+    
+    source "$LODGE_DIR/commands/test.sh"
+    out=$(cmd_test "heat_exchanger_calc.py" "$tmp_dir")
+    assert_contains "$out" "Tests passed"
+    rm -rf "$tmp_dir"
+  }
+
 test_end
