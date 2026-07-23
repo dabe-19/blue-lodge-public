@@ -2033,7 +2033,8 @@ ${prompt}"
         rm -f "$_got_tokens" "$_curl_pid_file"
 
         local _dbg_out=0
-        local _dbg_in=0
+        local _dbg_in
+        _dbg_in=$(llm_estimate_tokens "$prompt $system" 2>/dev/null || echo 0)
 
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf "\n [debug] generate (llamacpp): url=%s max_tokens=%s\n" "$LLAMA_CPP_URL" "$max_tokens" > "$_tty" 2>/dev/null
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$_grammar" ] && printf " [debug] grammar: %s.gbnf (%d chars) → payload\n" "$schema_name" "${#_grammar}" > "$_tty" 2>/dev/null
@@ -3777,6 +3778,16 @@ llm_vision() {
     # Detect active backend
     local _active_backend
     _active_backend=$(_llm_detect_backend)
+
+    # ── Identity fallback for vision requests ───────────────────
+    if [ -z "$system" ] && declare -f models_default_system &>/dev/null; then
+        if [ -z "${_LLM_DEFAULT_SYSTEM_CACHE:-}" ] || [ "${_LLM_DEFAULT_SYSTEM_MODEL:-}" != "$LODGE_MODEL" ]; then
+            _LLM_DEFAULT_SYSTEM_CACHE=$(models_default_system 2>/dev/null)
+            _LLM_DEFAULT_SYSTEM_MODEL="$LODGE_MODEL"
+        fi
+        system="$_LLM_DEFAULT_SYSTEM_CACHE"
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && [ -n "$system" ] && ui_dim "  [debug] inject: ${_ME_KEY:-default}.system identity (${#system} chars, cached for vision)"
+    fi
 
     # Build options
     local _opts

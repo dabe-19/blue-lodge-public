@@ -13,7 +13,9 @@ export C_ITALIC='\033[3m'
 export C_BLUE='\033[38;5;75m'
 export C_CYAN='\033[38;5;117m'
 export C_GREEN='\033[38;5;114m'
-export C_YELLOW='\033[38;5;221m'
+export C_YELLOW='\033[38;5;226m'     # Radiant top peak
+export C_GOLD='\033[38;5;220m'       # Front face bright gold
+export C_AMBER='\033[38;5;214m'      # 3D shadow face amber
 export C_RED='\033[38;5;203m'
 export C_PURPLE='\033[38;5;141m'
 export C_GRAY='\033[38;5;245m'
@@ -29,6 +31,8 @@ export SYM_DOT="●"
 export SYM_THINK="◆"
 export SYM_WARN="⚠"
 export SYM_LODGE="⌂"
+export SYM_EYE="👁"
+export SYM_PYRAMID="▲"
 
 # ── Termux API opt-in gate ──────────────────────────────────────
 # Termux-API commands hang inside proot-distro (the companion app
@@ -69,7 +73,7 @@ ui_ok()    { printf " %b%s %b%s%b\n" "$C_GREEN" "$SYM_CHECK" "$C_WHITE" "$1" "$C
 ui_warn()  { printf " %b%s %b%s%b\n" "$C_YELLOW" "$SYM_WARN" "$C_WHITE" "$1" "$C_RESET"; _transcript_ui warn "$1"; }
 ui_err()   { printf " %b%s %b%s%b\n" "$C_RED" "$SYM_CROSS" "$C_WHITE" "$1" "$C_RESET"; _transcript_ui error "$1"; }
 ui_step()  { printf " %b%s %b%s%b\n" "$C_CYAN" "$SYM_ARROW" "$C_WHITE" "$1" "$C_RESET"; _transcript_ui step "$1"; }
-ui_think() { printf " %b%s %b%s%b\n" "$C_PURPLE" "$SYM_THINK" "$C_GRAY" "$1" "$C_RESET"; _transcript_ui think "$1"; }
+ui_think() { printf " %b%s %b%s%b\n" "$C_GOLD" "$SYM_EYE" "$C_GRAY" "$1" "$C_RESET"; _transcript_ui think "$1"; }
 ui_dim()   { printf " %b  %s%b\n" "$C_DIM" "$1" "$C_RESET"; _transcript_ui dim "$1"; }
 ui_code()  { printf " %b  %s%b\n" "$C_GRAY" "$1" "$C_RESET"; _transcript_ui code "$1"; }
 
@@ -150,6 +154,134 @@ ui_header() {
     _transcript_ui header "$title${sub:+ — $sub}"
 }
 
+# ── Mascot: Eye of Providence (3D Pyramid All-Seeing Eye) ──────
+ui_mascot_eye() {
+    local state="${1:-center}"
+    local eye_str=" 👁 "
+    case "$state" in
+        left)   eye_str="◓  " ;;
+        right)  eye_str="  ◓ " ;;
+        blink)  eye_str=" ─ " ;;
+        glow)   eye_str="✦👁✦" ;;
+        sleep)  eye_str=" - " ;;
+        *)      eye_str=" 👁 " ;;
+    esac
+
+    printf " %b          ▲ %b█%b\n" "$C_YELLOW" "$C_GRAY" "$C_RESET"
+    printf " %b         / %b\\ %b█%b\n" "$C_GOLD" "$C_AMBER" "$C_GRAY" "$C_RESET"
+    printf " %b        /%b%s%b\\ %b█%b\n" "$C_GOLD" "$C_YELLOW" "$eye_str" "$C_AMBER" "$C_GRAY" "$C_RESET"
+    printf " %b       /%b_____%b\\ %b█%b\n" "$C_GOLD" "$C_AMBER" "$C_AMBER" "$C_GRAY" "$C_RESET"
+    printf " %b      ∴   %b✦%b   ∵ %b█%b\n" "$C_AMBER" "$C_YELLOW" "$C_AMBER" "$C_GRAY" "$C_RESET"
+    printf " %b     /%b ┌─┬─┬─┐ %b\\ %b█%b\n" "$C_GOLD" "$C_LODGE" "$C_AMBER" "$C_GRAY" "$C_RESET"
+    printf " %b    /__%b┴─┴─┴─┴%b__\\ %b█%b\n" "$C_GOLD" "$C_LODGE" "$C_AMBER" "$C_GRAY" "$C_RESET"
+}
+
+ui_mascot_banner() {
+    local title="$1"
+    local sub="${2:-}"
+    local eye_state="${3:-center}"
+    
+    local eye_str=" 👁 "
+    case "$eye_state" in
+        left)   eye_str="◓  " ;;
+        right)  eye_str="  ◓ " ;;
+        blink)  eye_str=" ─ " ;;
+        glow)   eye_str="✦👁✦" ;;
+        sleep)  eye_str=" - " ;;
+        *)      eye_str=" 👁 " ;;
+    esac
+
+    local box_w=72
+    local title_len=${#title}
+    local sub_len=${#sub}
+    if [ $sub_len -gt 67 ]; then
+        sub="${sub:0:64}..."
+        sub_len=67
+    fi
+    
+    local pad_t=$(( box_w - 4 - title_len ))
+    local pad_s=$(( box_w - 2 - sub_len ))
+    [ $pad_t -lt 0 ] && pad_t=0
+    [ $pad_s -lt 0 ] && pad_s=0
+
+    echo ""
+    printf " %b          ▲ %b█%b          %b\n" "$C_YELLOW" "$C_GRAY" "$C_RESET" "$C_RESET"
+    printf " %b         / %b\\ %b█%b         %b╭──────────────────────────────────────────────────────────────────────╮%b\n" "$C_GOLD" "$C_AMBER" "$C_GRAY" "$C_RESET" "$C_LODGE" "$C_RESET"
+    printf " %b        /%b%s%b\\ %b█%b        %b│%b  %b%s %s%b%*s%b│%b\n" "$C_GOLD" "$C_YELLOW" "$eye_str" "$C_AMBER" "$C_GRAY" "$C_RESET" "$C_LODGE" "$C_RESET" "$C_BOLD" "$SYM_LODGE" "$title" "$C_RESET" "$pad_t" "" "$C_LODGE" "$C_RESET"
+    printf " %b       /%b_____%b\\ %b█%b       %b│%b  %b%s%b%*s%b│%b\n" "$C_GOLD" "$C_AMBER" "$C_AMBER" "$C_GRAY" "$C_RESET" "$C_LODGE" "$C_RESET" "$C_DIM" "$sub" "$C_RESET" "$pad_s" "" "$C_LODGE" "$C_RESET"
+    printf " %b      ∴   %b✦%b   ∵ %b█%b      %b╰──────────────────────────────────────────────────────────────────────╯%b\n" "$C_AMBER" "$C_YELLOW" "$C_AMBER" "$C_GRAY" "$C_RESET" "$C_LODGE" "$C_RESET"
+    printf " %b     /%b ┌─┬─┬─┐ %b\\ %b█%b     %b\n" "$C_GOLD" "$C_LODGE" "$C_AMBER" "$C_GRAY" "$C_RESET" "$C_RESET"
+    printf " %b    /__%b┴─┴─┴─┴%b__\\ %b█%b    %b\n" "$C_GOLD" "$C_LODGE" "$C_AMBER" "$C_GRAY" "$C_RESET" "$C_RESET"
+    echo ""
+    echo ""
+    _transcript_ui header "$title${sub:+ — $sub}"
+    return 0
+}
+
+_TUI_ACTIVE=0
+
+ui_tui_start() {
+    local title="${1:-George}"
+    local sub="${2:-}"
+    local eye_state="${3:-center}"
+    
+    # Enter Alternate Screen Buffer & Clear Screen
+    if [ "${LODGE_TUI:-1}" -eq 1 ] && [ -t 1 ]; then
+        printf "\033[?1049h\033[2J\033[1;1H" >&1
+        _TUI_ACTIVE=1
+        trap 'ui_tui_stop' EXIT INT TERM
+    fi
+    
+    ui_mascot_banner "$title" "$sub" "$eye_state"
+}
+
+ui_tui_stop() {
+    if [ "${_TUI_ACTIVE:-0}" -eq 1 ]; then
+        _TUI_ACTIVE=0
+        # Restore Standard Screen Buffer
+        printf "\033[?1049l" >&1
+    fi
+}
+
+ui_mascot_pin() {
+    [ "${LODGE_PIN_MASCOT:-0}" -eq 1 ] || return 0
+    local tty_rows
+    tty_rows=$(tput lines 2>/dev/null || echo 24)
+    if [ "$tty_rows" -ge 12 ]; then
+        # Lock rows 1..8 for mascot banner, scroll rows 9..tty_rows
+        printf "\033[9;%dr" "$tty_rows" >&2
+        printf "\033[9;1H" >&2
+    fi
+}
+
+ui_mascot_unpin() {
+    printf "\033[r" >&2
+}
+
+ui_exec_stream() {
+    local cmd="$1"
+    local prefix="${2:-  │ }"
+    local full_out=""
+    local tmp_err
+    tmp_err=$(mktemp "${TMPDIR:-/tmp}/lodge_exec.XXXXXX")
+    
+    ( bash -c "$cmd" 2>&1; echo $? > "$tmp_err" ) | while IFS= read -r line || [ -n "$line" ]; do
+        full_out+="$line"$'\n'
+        if [ "${LODGE_QUIET:-0}" -eq 0 ]; then
+            printf "%b%s%b%s\n" "$C_DIM" "$prefix" "$C_RESET" "$line" >&2
+        fi
+    done
+    
+    local exit_code=0
+    if [ -f "$tmp_err" ]; then
+        exit_code=$(cat "$tmp_err" 2>/dev/null)
+        rm -f "$tmp_err" 2>/dev/null
+    fi
+    
+    _LAST_EXEC_OUT="$full_out"
+    return ${exit_code:-0}
+}
+
 ui_section() {
     local title="$1"
     echo ""
@@ -197,12 +329,12 @@ ui_spinner_start() {
         # Close inherited stdout/stderr so this subshell doesn't hold
         # the write-end of any $() pipe open (prevents FD-leak hangs).
         exec >/dev/null 2>/dev/null
-        local frames=('◐' '◓' '◑' '◒')
+        local frames=('▲ (👁 )' '▲ (◓ )' '▲ (👁 )' '▲ ( ◓ )' '▲ (✦👁 ✦)' '▲ ( ─ )')
         local i=0
         while true; do
-            printf "\r %b%s %b%s...%b " "$C_PURPLE" "${frames[$i]}" "$C_GRAY" "$msg" "$C_RESET" > "$_tty" 2>/dev/null
-            i=$(( (i + 1) % 4 ))
-            sleep 0.3
+            printf "\r %b%s%b %b%s...%b " "$C_GOLD" "${frames[$i]}" "$C_RESET" "$C_GRAY" "$msg" "$C_RESET" > "$_tty" 2>/dev/null
+            i=$(( (i + 1) % 6 ))
+            sleep 0.25
         done
     ) &
     _SPINNER_PID=$!
@@ -375,8 +507,13 @@ ui_clean_path_prefix() {
 ui_clean_virtual_prefix() {
     local filepath="$1"
     local cleaned="$filepath"
-    while [[ "$cleaned" =~ ^(\./)?(responses|workspace|output|artifacts|tmp)/ ]]; do
-        cleaned="${cleaned#*/}"
+    while [[ "$cleaned" =~ ^(\./)?(responses|workspace|output|artifacts|tmp)(/|$) ]]; do
+        if [[ "$cleaned" == *"/"* ]]; then
+            cleaned="${cleaned#*/}"
+        else
+            cleaned="."
+            break
+        fi
     done
     echo "$cleaned"
 }
@@ -385,8 +522,11 @@ ui_clean_virtual_prefix() {
 # Resolves a relative or absolute filepath relative to workdir, global workspace, or project root fallbacks.
 ui_resolve_path() {
     local filepath="$1"
+    filepath=$(echo "$filepath" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
     local workdir="${2:-.}"
-    local is_write="${3:-0}" # 0=read, 1=write
+    [ -z "$filepath" ] && { echo "${workdir:-.}"; return 0; }
+    local is_write="${3:-0}"      # 0=read, 1=write
+    local is_explicit="${4:-0}"   # 0=system context inspection, 1=explicit slash command (/read, /edit, /write)
     local lodge_dir="${LODGE_DIR:-$(pwd)}"
     if [ -n "$LODGE_DIR" ] && [ ! -d "$LODGE_DIR" ]; then
         if [ -d "/workspace" ]; then
@@ -450,9 +590,6 @@ ui_resolve_path() {
     # If the path contains the active workspaces/memories directory segment, extract the relative part.
     # This dynamically maps absolute container paths (e.g. starting with /workspace/ or /home/blue-lodge/)
     # to the host lodge_dir by stripping the arbitrary prefix before .george/workspaces/ or .george/memories/.
-    # If the path contains the active workspaces/memories directory segment, extract the relative part.
-    # This dynamically maps absolute container paths (e.g. starting with /workspace/ or /home/blue-lodge/)
-    # to the host lodge_dir by stripping the arbitrary prefix before .george/workspaces/ or .george/memories/.
     if [[ "$filepath" == *".george/workspaces/"* ]]; then
         filepath="${filepath#*.george/workspaces/}"
         # Strip any leading timestamp folder prefix (e.g. 20260722_200714/)
@@ -512,7 +649,7 @@ ui_resolve_path() {
                 # Copy-on-Write: If missing in active task workspace, check prior workspaces to initialize active copy
                 if [ ! -f "$global_path" ] && [ -d "$lodge_dir/.george/workspaces" ]; then
                     local _prior_src
-                    _prior_src=$(find "$lodge_dir/.george/workspaces" -maxdepth 5 -type f -name "$(basename "$filepath")" ! -path "$workdir/*" 2>/dev/null | head -1)
+                    _prior_src=$(find "$lodge_dir/.george/workspaces" -maxdepth 5 -type f -name "$(basename -- "$filepath" 2>/dev/null)" ! -path "$workdir/*" 2>/dev/null | head -1)
                     if [ -n "$_prior_src" ] && [ -f "$_prior_src" ]; then
                         mkdir -p "$(dirname "$global_path")"
                         cp "$_prior_src" "$global_path" 2>/dev/null
@@ -530,16 +667,22 @@ ui_resolve_path() {
                 # Copy-on-Read: Check if file exists in a prior task workspace
                 local _prior_src=""
                 if [ -d "$lodge_dir/.george/workspaces" ]; then
-                    _prior_src=$(find "$lodge_dir/.george/workspaces" -maxdepth 5 -type f -name "$(basename "$filepath")" ! -path "$workdir/*" 2>/dev/null | head -1)
+                    _prior_src=$(find "$lodge_dir/.george/workspaces" -maxdepth 5 -type f -name "$(basename -- "$filepath" 2>/dev/null)" ! -path "$workdir/*" 2>/dev/null | head -1)
                 fi
                 if [ -n "$_prior_src" ] && [ -f "$_prior_src" ]; then
-                    mkdir -p "$(dirname "$global_path")"
-                    cp "$_prior_src" "$global_path" 2>/dev/null
-                    echo "$global_path"
+                    # Copy-on-Read: Trigger if explicit slash command (/read, /edit), write mode, or source code file
+                    if [ "$is_explicit" -eq 1 ] || [ "$is_write" -eq 1 ] || [[ "$filepath" == *.py ]] || [[ "$filepath" == *.rs ]] || [[ "$filepath" == *.sh ]] || [[ "$filepath" == *.js ]] || [[ "$filepath" == *.c ]] || [[ "$filepath" == *.cpp ]]; then
+                        mkdir -p "$(dirname "$global_path")"
+                        cp "$_prior_src" "$global_path" 2>/dev/null
+                        echo "$global_path"
+                    else
+                        # Automatic context injection for reports/documents references prior file in-place
+                        echo "$_prior_src"
+                    fi
                 else
                     # Fuzzy path resolution before defaulting
                     local _base _match _token
-                    _base=$(basename "$filepath")
+                    _base=$(basename -- "$filepath" 2>/dev/null)
                     _match=$(find "$lodge_dir" "$workdir" -maxdepth 3 -type f -name "*${_base}*" ! -path '*/.git/*' ! -path '*/.george/memories/*' 2>/dev/null | head -1)
                     if [ -z "$_match" ]; then
                         _token=$(echo "$_base" | tr '_.-' ' ' | awk '{print $1}')

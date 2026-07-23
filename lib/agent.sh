@@ -4920,8 +4920,8 @@ SPEC
                 ;;
             test)
                 cat << 'SPEC'
-{"cmd":"/test","syntax":"/test [specific_test]","notes":"Auto-detects Cargo/pytest/npm/make.",
-"ex":["/test"]}
+{"cmd":"/test","syntax":"/test [specific_test_or_script]","notes":"Runs project test command in GEORGE.md or auto-detects Cargo/pytest/unittest/standalone scripts. Pass a standalone script (e.g. /test script.py) to test individual modules.",
+"format_only_ex":["/test","/test <script-or-test-file>"]}
 SPEC
                 ;;
             fix)
@@ -9430,9 +9430,7 @@ MEMEOF
                 while IFS= read -r _cf_line; do
                     [ -z "$_cf_line" ] && continue
                     [ "$_cf_count" -ge "${AGENT_CONTEXT_FILES_MAX:-10}" ] && break
-                    # Extract path from "- [timestamp] path/to/file"
-                    # Extract path from "- [timestamp] path/to/file"
-                    _cf_path=$(echo "$_cf_line" | sed 's/^- \[[^]]*\] //' | sed -E 's|\.george/workspaces/[0-9_]+/||g')
+                    _cf_path=$(echo "$_cf_line" | sed -e 's/^[[:space:]]*-[[:space:]]*//' -e 's/^\[[^]]*\][[:space:]]*//' -e 's/^[[:space:]]*//' | sed -E 's|\.george/workspaces/[0-9_]+/||g')
                     [ -z "$_cf_path" ] && continue
                     # Resolve path (handles mem:<slug> and standard files)
                     local _resolved_cf_path
@@ -10046,7 +10044,16 @@ ${_research_gate}${_pref_hint}${_milestone_history}"
                     if [ "$_current_steps" = "(none)" ] || [ -z "$_current_steps" ]; then
                         memory_update_section "Completed Milestones" "$_step_line" "$workdir" 2>/dev/null
                     else
-                        memory_update_section "Completed Milestones" "${_current_steps}\n${_step_line}" "$workdir" 2>/dev/null
+                        local _all_steps="${_current_steps}\n${_step_line}"
+                        local _step_count
+                        _step_count=$(printf '%b\n' "$_all_steps" | grep -c '^[[:space:]]*-')
+                        if [ "$_step_count" -gt 10 ]; then
+                            local _keep_steps
+                            _keep_steps=$(printf '%b\n' "$_all_steps" | tail -n 5)
+                            local _old_cnt=$(( _step_count - 5 ))
+                            _all_steps="[${_old_cnt} older milestones archived]\n${_keep_steps}"
+                        fi
+                        memory_update_section "Completed Milestones" "$_all_steps" "$workdir" 2>/dev/null
                     fi
                 fi
             fi
@@ -10336,13 +10343,28 @@ ${_research_gate}${_pref_hint}${_milestone_history}"
                     _new_cf="${_new_cf:+${_new_cf}\n}- [${_cf_ts}] ${_cf_entry}"
                 done
 
-                # Combine existing + new, then trim to max
+                # Combine existing + new, deduplicate by file basename (keeping latest entry)
                 local _combined_cf
                 if [ -n "$_existing_cf" ]; then
                     _combined_cf="${_existing_cf}\n${_new_cf}"
                 else
                     _combined_cf="$_new_cf"
                 fi
+
+                # Deduplicate by basename, preserving recency order
+                _combined_cf=$(printf '%b\n' "$_combined_cf" | awk '
+                    NF > 0 {
+                        path = $NF
+                        sub(/.*\.george\/workspaces\/[0-9_]+\//, "", path)
+                        base = path
+                        sub(/.*\//, "", base)
+                        seen[base] = $0
+                        order[base] = NR
+                    }
+                    END {
+                        for (b in seen) print order[b] "\t" seen[b]
+                    }
+                ' | sort -n | cut -f2-)
 
                 # Trim to AGENT_CONTEXT_FILES_MAX most recent entries
                 local _cf_max="${AGENT_CONTEXT_FILES_MAX:-10}"

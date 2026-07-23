@@ -89,6 +89,7 @@ cmd_test() {
                 target_file="$test_sibling"
             elif [ -z "$eval_file" ]; then
                 eval_file=$(find . -maxdepth 2 \( -name "*.py" -o -name "*.rs" -o -name "*.sh" \) 2>/dev/null | head -1)
+                target_file="$eval_file"
             fi
 
             if [[ "$eval_file" == *.py ]]; then
@@ -124,10 +125,23 @@ cmd_test() {
         return 1
     fi
 
-    # Append specific test file / argument if given and not already in test_cmd
-    if [ -n "$args" ]; then
-        local target_arg="${target_file:-$args}"
-        if [[ "$test_cmd" != *"$target_arg"* ]] && [[ "$test_cmd" != *"$args"* ]]; then
+    # Auto-save detected test command to GEORGE.md if not already set
+    if declare -f memory_update_section &>/dev/null && [ -f "$workdir/GEORGE.md" ]; then
+        local current_build_sec
+        current_build_sec=$(memory_get_section "Build" "$workdir" 2>/dev/null)
+        if [[ "$current_build_sec" == *"test: N/A"* ]] || ! echo "$current_build_sec" | grep -q '^test:'; then
+            local base_cmd
+            base_cmd=$(echo "$test_cmd" | awk '{print $1}')
+            local updated_build_sec
+            updated_build_sec=$(echo "$current_build_sec" | sed "s/^test:[[:space:]]*N\/A/test: $base_cmd/")
+            memory_update_section "Build" "$updated_build_sec" "$workdir" 2>/dev/null
+        fi
+    fi
+
+    # Append specific test file / target argument if present and not already in test_cmd
+    local target_arg="${target_file:-$args}"
+    if [ -n "$target_arg" ]; then
+        if [[ "$test_cmd" != *"$target_arg"* ]]; then
             test_cmd="$test_cmd $target_arg"
         fi
     fi
@@ -143,9 +157,15 @@ cmd_test() {
     ui_step "Running: $test_cmd"
     echo ""
     local cmd_out exit_code
-    cmd_out=$(bash -c "$test_cmd" 2>&1)
-    exit_code=$?
-    echo "$cmd_out"
+    if declare -f ui_exec_stream &>/dev/null; then
+        ui_exec_stream "$test_cmd" "  │ "
+        exit_code=$?
+        cmd_out="${_LAST_EXEC_OUT:-}"
+    else
+        cmd_out=$(bash -c "$test_cmd" 2>&1)
+        exit_code=$?
+        echo "$cmd_out"
+    fi
     
     # 5. Missing Python Module Auto-Provisioning
     if [ $exit_code -ne 0 ] && [[ "$test_cmd" == *"python"* || "$test_cmd" == *"pytest"* ]]; then

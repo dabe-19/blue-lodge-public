@@ -3264,7 +3264,7 @@ _cmd_read() {
     filepath=$(ui_clean_path_prefix "$filepath" "$workdir")
 
     local fullpath
-    fullpath=$(ui_resolve_path "$filepath" "$workdir" 0)
+    fullpath=$(ui_resolve_path "$filepath" "$workdir" 0 1)
 
     if [ -f "$fullpath" ]; then
         tools_read_file "$fullpath" "${max_lines:-300}" "${start_line:-1}"
@@ -6377,7 +6377,7 @@ main() {
         # Interactive mode
         local _model_info="Model: $LODGE_MODEL"
         [ "${LODGE_SINGLE_MODEL:-0}" -eq 0 ] && _model_info="Primary: $(models_info "$LODGE_MODEL_PRIMARY" 2>/dev/null && echo "$_ME_KEY" || echo "$LODGE_MODEL_PRIMARY")"
-        ui_header "George v${LODGE_VERSION}" "$_model_info | $(basename "$PWD")"
+        ui_mascot_banner "George v${LODGE_VERSION}" "$_model_info | $(basename "$PWD")" "center"
         
         # Journal-aware greeting
         journal_init
