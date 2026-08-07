@@ -149,6 +149,7 @@ LLM_AGENT_TOKENS=${LLM_AGENT_TOKENS:-20480}
 LLM_STRATEGIST_TOKENS=${LLM_STRATEGIST_TOKENS:-4096}
 LLM_EVALUATOR_TOKENS=${LLM_EVALUATOR_TOKENS:-4096}
 LLM_ROUTER_TOKENS=${LLM_ROUTER_TOKENS:-512}
+LLM_CPP_BATCH_SIZE=${LLM_CPP_BATCH_SIZE:-1024}
 
 # ── Thinking Budgets (max thinking tokens before responding) ───
 LLM_BUDGET_TOKENS=${LLM_BUDGET_TOKENS:-4096}
@@ -837,6 +838,7 @@ _llm_start_llamacpp_server() {
         -c "$(( ${LLAMA_CPP_CTX_SIZE:-8192} * ${LLAMA_CPP_SLOTS:-2} ))"
         --threads "$(nproc 2>/dev/null || echo 4)"
         --parallel "${LLAMA_CPP_SLOTS:-2}"
+        --ubatch-size "${LLAMA_CPP_BATCH_SIZE:-1024}"
     )
 
     if [ "${LLAMA_CPP_NO_MMAP:-0}" = "1" ]; then
