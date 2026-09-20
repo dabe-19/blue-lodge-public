@@ -343,13 +343,18 @@ Unable to merge \`${src}\` into \`${tgt}\`. Please rebase candidate branch." >/d
             gitea_pr_review "$clean_id" "REQUEST_CHANGES" "[The Tyler: Security Gate] REJECTED — High-risk command pattern detected:
 \`\`\`
 $sec_issues
+\`\`\`" >/dev/null 2>&1 || \
+            gitea_pr_review "$clean_id" "COMMENT" "[The Tyler: Security Gate] REJECTED — High-risk command pattern detected:
+\`\`\`
+$sec_issues
 \`\`\`" >/dev/null 2>&1 || true
         fi
     else
         ui_ok "The Tyler (Security Gate): Zero high-risk shell patterns detected."
         echo "[SECURITY PASS] The Tyler audit cleared." >> "$audit_log"
         if [ "$is_gitea" -eq 1 ]; then
-            gitea_pr_review "$clean_id" "APPROVED" "[The Tyler: Security Gate] PASSED — Zero high-risk shell injection, eval, or privilege elevation patterns detected." >/dev/null 2>&1 || true
+            gitea_pr_review "$clean_id" "APPROVED" "[The Tyler: Security Gate] PASSED — Zero high-risk shell injection, eval, or privilege elevation patterns detected." >/dev/null 2>&1 || \
+            gitea_pr_review "$clean_id" "COMMENT" "[The Tyler: Security Gate] PASSED — Zero high-risk shell injection, eval, or privilege elevation patterns detected." >/dev/null 2>&1 || true
         fi
     fi
 
