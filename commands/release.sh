@@ -11,6 +11,9 @@ LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/git.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/journal.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/alerts.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/mcp_server_gitea.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/subagents.sh" 2>/dev/null || true
 
 cmd_release() {
     local args="$1"
@@ -67,6 +70,53 @@ cmd_release() {
     if [ "$test_rc" -ne 0 ]; then
         ui_err "Release aborted: Test harness failed with exit code $test_rc."
         echo "$test_out" | tail -n 15
+
+        # ── Autonomous Emergency Investigation & Remediation Protocol ──
+        local failed_tests
+        failed_tests=$(echo "$test_out" | grep -E '^[[:space:]]*✗[[:space:]]+test_' | awk '{print $2}' | tr '\n' ', ' | sed 's/, $//')
+        [ -z "$failed_tests" ] && failed_tests="test regressions"
+
+        echo ""
+        ui_warn "Triggering Autonomous Emergency Investigation Protocol..."
+
+        # 1. Open Emergency Sovereign Gitea Issue
+        local issue_num=""
+        if declare -f gitea_is_online &>/dev/null && gitea_is_online; then
+            local issue_title="[RELEASE FAILURE] Pre-release gate failed on develop (${failed_tests})"
+            local issue_body="### 🚨 Pre-Release Gate Failure Diagnostic
+
+**Target Release:** \`${tag_name}\`
+**Failed Test Suites:** \`${failed_tests}\`
+**Exit Code:** \`${test_rc}\`
+
+#### Test Runner Summary:
+\`\`\`
+$(echo "$test_out" | tail -n 30)
+\`\`\`
+
+Autonomous emergency investigator task dispatched to isolate and fix regressions."
+
+            local issue_res
+            issue_res=$(gitea_issue_create "$issue_title" "$issue_body" "release-blocker,emergency-investigation" 2>/dev/null || true)
+            issue_num=$(echo "$issue_res" | jq -r .number 2>/dev/null || echo "")
+            [ -n "$issue_num" ] && ui_info "Emergency Sovereign Gitea Issue #${issue_num} created."
+        fi
+
+        # 2. Dispatch Multi-Tier Alert
+        if declare -f alerts_dispatch &>/dev/null; then
+            local issue_url="${GITEA_URL:-http://127.0.0.1:3088}/george/blue-lodge/issues/${issue_num}"
+            alerts_dispatch tier2 "Release ${tag_name} Blocked" "Pre-release tests failed: ${failed_tests}. Autonomous emergency investigation triggered." "$issue_url" >/dev/null 2>&1 || true
+            ui_ok "Emergency multi-tier alert dispatched (Discord/MQTT/Local)."
+        fi
+
+        # 3. Spawn Autonomous Emergency Remediation Subagent
+        if declare -f subagents_spawn &>/dev/null; then
+            ui_step "Spawning emergency investigator subagent..."
+            local worker_task="Emergency Fix: Investigate and fix pre-release test failures (${failed_tests}) blocking release ${tag_name}. Target issue #${issue_num:-emergency}."
+            subagents_spawn "release-fix" "$worker_task" "investigator" 2>/dev/null || true
+            ui_ok "Investigator subagent dispatched in isolated worktree sandbox."
+        fi
+
         [ "$curr_branch" != "develop" ] && git -C "$workdir" checkout "$curr_branch" >/dev/null 2>&1
         return 1
     fi
