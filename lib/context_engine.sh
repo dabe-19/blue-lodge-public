@@ -357,7 +357,7 @@ context_engine_build() {
     out+="- Git State: Branch '$branch' @ $git_commit ($git_dirty)\n"
     out+="- Active Inference Tier: Tier $active_tier [${ACTIVE_ENDPOINT_NAME:-local}] (${ACTIVE_ENDPOINT_MODEL:-default})\n"
     out+="- Context Window: ${ACTIVE_ENDPOINT_CONTEXT:-32768} tokens | Compaction Threshold: ${ACTIVE_ENDPOINT_COMPACT_TOKENS:-22000} tokens\n"
-    out+="- Hardware Fallback Ladder: Tier 3 (Mac Ultra M5 256GB) -> Tier 1 (Dual RTX 3060 24GB) -> Tier 2 (AMD 5700xt 8GB) -> Tier 0 (Mobile Edge)\n"
+    out+="- Hardware Fallback Ladder: Tier 3 (Mac Ultra M5 256GB) -> Tier 1 (RTX 3060 12GB) -> Tier 2 (AMD 5700xt 8GB) -> Tier 0 (Mobile Edge)\n"
     out+="</active_environment>\n"
 
     printf "%b" "$out"

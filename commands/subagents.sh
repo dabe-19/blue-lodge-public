@@ -149,14 +149,29 @@ cmd_subagents() {
 
         spawn)
             local tier="${rest%% *}"
-            local obj="${rest#"$tier"}"
-            obj="${obj#"${obj%%[![:space:]]*}"}"
+            local rest_args="${rest#"$tier"}"
+            rest_args="${rest_args#"${rest_args%%[![:space:]]*}"}"
+            local turns="${AGENT_CHILD_MAX_TURNS:-200}"
+            local is_async=0
+
+            while [[ "$rest_args" == --* ]]; do
+                if [[ "$rest_args" =~ ^--turns[[:space:]]+([0-9]+)[[:space:]]*(.*) ]]; then
+                    turns="${BASH_REMATCH[1]}"
+                    rest_args="${BASH_REMATCH[2]}"
+                elif [[ "$rest_args" =~ ^--async[[:space:]]*(.*) ]]; then
+                    is_async=1
+                    rest_args="${BASH_REMATCH[1]}"
+                else
+                    break
+                fi
+            done
+            local obj="$rest_args"
             if [ -z "$tier" ] || [ -z "$obj" ]; then
-                ui_err "Usage: /subagents spawn <tier> <objective...>"
+                ui_err "Usage: /subagents spawn <tier> [--turns <N>] [--async] <objective...>"
                 return 1
             fi
-            ui_info "Spawning subagent on Tier $tier: $obj"
-            subagents_spawn "$tier" "$obj" "Delegated via /subagents spawn" "$workdir"
+            ui_info "Spawning subagent on Tier $tier (max turns: $turns, async: $is_async): $obj"
+            subagents_spawn "$tier" "$obj" "Delegated via /subagents spawn" "$workdir" "$turns" "$is_async"
             ;;
 
         *)

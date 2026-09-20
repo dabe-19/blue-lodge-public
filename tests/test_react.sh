@@ -41,17 +41,17 @@ describe "context_engine integration"
   }
 
 describe "turn limits & countdown preservation"
-  it "resolves parent turn ceiling to 100 by default" && {
+  it "resolves parent turn ceiling to 9999 by default" && {
     unset AGENT_MAX_TURNS 2>/dev/null || true
     unset AGENT_MAX_MILESTONES 2>/dev/null || true
-    val="${AGENT_MAX_TURNS:-${AGENT_MAX_MILESTONES:-100}}"
-    assert_eq "$val" "100"
+    val="${AGENT_MAX_TURNS:-${AGENT_MAX_MILESTONES:-9999}}"
+    assert_eq "$val" "9999"
   }
 
   it "injects countdown warning 5 turns before ceiling" && {
-    max_turns=100
+    max_turns=9999
     countdown_start=$((max_turns - 5))
-    assert_eq "$countdown_start" "95"
+    assert_eq "$countdown_start" "9994"
   }
 
 test_end

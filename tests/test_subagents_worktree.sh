@@ -48,14 +48,14 @@ describe "orphan reaping"
   }
 
 describe "child turn limits & countdown"
-  it "defaults child turn limit to 50" && {
-    assert_eq "${AGENT_CHILD_MAX_TURNS:-50}" "50"
+  it "defaults child turn limit to 200" && {
+    assert_eq "${AGENT_CHILD_MAX_TURNS:-200}" "200"
   }
 
   it "calculates 5-turn countdown threshold correctly" && {
-    max_turns=50
+    max_turns=200
     threshold=$((max_turns - 5))
-    assert_eq "$threshold" "45"
+    assert_eq "$threshold" "195"
   }
 
 test_end

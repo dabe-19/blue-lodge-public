@@ -125,7 +125,7 @@ _react_parse_action() {
 react_run() {
     local goal="$1"
     local workdir="${2:-$PWD}"
-    local max_turns="${3:-${AGENT_MAX_TURNS:-${AGENT_MAX_MILESTONES:-100}}}"
+    local max_turns="${3:-${AGENT_MAX_TURNS:-${AGENT_MAX_MILESTONES:-9999}}}"
     local agent_temp="${AGENT_LLM_TEMPERATURE:-0.2}"
     local agent_max_tok="${AGENT_MAX_TOKENS:-4096}"
 

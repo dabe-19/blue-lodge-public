@@ -353,7 +353,7 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "model_endpoint_switch",
-      "description": "Switch the active inference tier (Tier 3 Mac Ultra M5 -> Tier 1 Dual RTX 3060 -> Tier 2 AMD 5700xt -> Tier 0 Edge mobile).",
+      "description": "Switch the active inference tier (Tier 3 Mac Ultra M5 -> Tier 1 RTX 3060 12GB -> Tier 2 AMD 5700xt -> Tier 0 Edge mobile).",
       "parameters": {
         "type": "object",
         "properties": {
@@ -614,7 +614,7 @@ _NATIVE_CORE_TOOLS='[
           "tier": { "type": "integer", "description": "Target tier number (e.g. 1 for CUDA workhorse, 2 for AMD, 0 for mobile edge)." },
           "objective": { "type": "string", "description": "Specific objective and success criteria for the delegated child agent." },
           "context": { "type": "string", "description": "Optional parent context, file paths, or instructions." },
-          "max_turns": { "type": "integer", "description": "Maximum turn ceiling for child agent (default: 50)." },
+          "max_turns": { "type": "integer", "description": "Maximum turn ceiling for child agent (default: 200)." },
           "async": { "type": "boolean", "description": "Run asynchronously in background (returns immediately with subagent ID, PID, branch, and log file path)." }
         },
         "required": ["tier", "objective"]
@@ -1855,7 +1855,7 @@ $_ts_v_err
                 tier=$(echo "$args_json" | jq -r '.tier // 1')
                 objective=$(echo "$args_json" | jq -r '.objective // empty')
                 context=$(echo "$args_json" | jq -r '.context // ""')
-                max_turns=$(echo "$args_json" | jq -r '.max_turns // 50')
+                max_turns=$(echo "$args_json" | jq -r '.max_turns // 200')
                 is_async=$(echo "$args_json" | jq -r '.async // false')
                 if [ -z "$objective" ]; then
                     output="ERROR: objective is required"

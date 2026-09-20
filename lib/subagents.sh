@@ -65,7 +65,7 @@ subagents_register() {
            branch: $br,
            worktree_dir: $wt,
            log_file: $log,
-           max_turns: ($turns | tonumber? // 50),
+           max_turns: ($turns | tonumber? // 200),
            current_turn: 1,
            status: "RUNNING",
            started_at: $start,
@@ -251,10 +251,12 @@ Your specific objective: $objective
 Parent Context: $parent_context
 
 You operate in an isolated sandbox. You can execute tools via slash commands:
+- /read <file> [start] [count] : Read file contents
+- /append <file> <content> : Append text to a file
+- /bash <cmd> : Execute shell command in workspace (e.g. echo, sed, grep)
+- /upstream propose <title> --reason <text> --metric <proof> : Propose your deliverable upstream as a PR to develop
 - /web search <query> : Search the web
 - /web fetch <url> : Fetch markdown page
-- /read <file> : Read file contents
-- /bash <cmd> : Execute shell command in workspace
 - /respond <text> : Conclude your task and return the final synthesized answer.
 
 Output format for each turn:
@@ -356,18 +358,19 @@ Action: /respond <distilled result>"
             break
         fi
 
-        local raw_content
+        local raw_content reasoning_content
         raw_content=$(echo "$resp_json" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+        reasoning_content=$(echo "$resp_json" | jq -r '.choices[0].message.reasoning_content // empty' 2>/dev/null)
 
         # Extract and log internal reasoning thoughts if present
-        local thoughts=""
+        local thoughts="$reasoning_content"
         local cleaned="$raw_content"
         if echo "$raw_content" | grep -qE '<think>'; then
             if command -v perl &>/dev/null; then
-                thoughts=$(printf '%s' "$raw_content" | perl -0777 -ne 'while (/<think>(.*?)<\/think>/sg) { my $t = $1; $t =~ s/^\s+|\s+$//g; print "$t\n" if $t }')
+                thoughts+=$(printf '%s' "$raw_content" | perl -0777 -ne 'while (/<think>(.*?)<\/think>/sg) { my $t = $1; $t =~ s/^\s+|\s+$//g; print "$t\n" if $t }')
                 cleaned=$(printf '%s' "$raw_content" | perl -0777 -pe 's/<think>.*?<\/think>//sg')
             else
-                thoughts=$(echo "$raw_content" | sed -n 's/.*<think>\(.*\)<\/think>.*/\1/p')
+                thoughts+=$(echo "$raw_content" | sed -n 's/.*<think>\(.*\)<\/think>.*/\1/p')
                 cleaned=$(echo "$raw_content" | sed -e 's/<think>.*<\/think>//g')
             fi
         fi
@@ -375,14 +378,45 @@ Action: /respond <distilled result>"
             _subagent_log_event "$sub_id" "THOUGHT" "$thoughts" "$sub_fifo"
         fi
 
-        # Parse action
+        # Parse action from XML <tool_call> or standard Action: /...
         local action=""
 
-        if echo "$cleaned" | grep -qE '^Action:[[:space:]]*/'; then
-            action=$(echo "$cleaned" | sed -n 's/^Action:[[:space:]]*\(\/.*\)/\1/p' | head -1)
-        elif echo "$cleaned" | grep -qE '^[[:space:]]*/'; then
-            action=$(echo "$cleaned" | grep -E '^[[:space:]]*/' | head -1)
-            action="${action#"${action%%[![:space:]]*}"}"
+        if echo "$cleaned" | grep -qE '<tool_call>'; then
+            if command -v perl &>/dev/null; then
+                action=$(printf '%s' "$cleaned" | perl -0777 -ne '
+                    if (/<function=([a-zA-Z0-9_-]+)>(.*?)<\/function>/s) {
+                        my $fn = lc($1);
+                        my $inner = $2;
+                        my $param = "";
+                        if ($inner =~ /<parameter=[^>]*>(.*?)<\/parameter>/s) {
+                            $param = $1;
+                        } else {
+                            $param = $inner;
+                        }
+                        $param =~ s/^\s+|\s+$//g;
+                        if ($fn eq "bash" || $fn eq "sh") {
+                            print "/bash $param\n";
+                        } elsif ($fn eq "read" || $fn eq "file_read") {
+                            print "/read $param\n";
+                        } elsif ($fn eq "append" || $fn eq "file_append") {
+                            print "/append $param\n";
+                        } elsif ($fn eq "upstream") {
+                            print "/upstream $param\n";
+                        } else {
+                            print "/$fn $param\n";
+                        }
+                    }
+                ' 2>/dev/null | head -1)
+            fi
+        fi
+
+        if [ -z "$action" ]; then
+            if echo "$cleaned" | grep -qE '^Action:[[:space:]]*`?\/'; then
+                action=$(echo "$cleaned" | sed -n 's/^Action:[[:space:]]*`\?\(\/.*\)`\?/\1/p' | head -1)
+            elif echo "$cleaned" | grep -qE '^[[:space:]]*`?\/'; then
+                action=$(echo "$cleaned" | grep -E '^[[:space:]]*`?\/' | head -1 | tr -d '`')
+                action="${action#"${action%%[![:space:]]*}"}"
+            fi
         fi
 
         if [ -z "$action" ]; then
@@ -467,7 +501,7 @@ subagents_spawn() {
     local objective="$2"
     local parent_context="${3:-}"
     local workdir="${4:-$PWD}"
-    local max_turns="${5:-${AGENT_CHILD_MAX_TURNS:-50}}"
+    local max_turns="${5:-${AGENT_CHILD_MAX_TURNS:-200}}"
     local is_async="${6:-0}"
 
     if [ -z "$target_tier" ] || [ -z "$objective" ]; then
@@ -501,9 +535,11 @@ subagents_spawn() {
 
     mkdir -p "$sandbox_base" 2>/dev/null || true
 
-    # Provision git worktree if inside a git repository
+    # Provision git worktree if inside a git repository (branch from develop)
     if git -C "$LODGE_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
-        if git -C "$LODGE_DIR" worktree add -q -b "$sub_branch" "$sub_dir" &>/dev/null; then
+        local base_ref="develop"
+        git -C "$LODGE_DIR" rev-parse --verify develop &>/dev/null || base_ref="HEAD"
+        if git -C "$LODGE_DIR" worktree add -q -b "$sub_branch" "$sub_dir" "$base_ref" &>/dev/null; then
             is_worktree=1
         fi
     fi
