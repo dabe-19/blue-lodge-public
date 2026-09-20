@@ -503,7 +503,7 @@ _subagent_compact() {
         fi
 
         local pr_issued=0
-        if [ -f "$sub_dir/.pr_issued" ] || grep -q '/upstream propose' "$sub_dir/history.log" 2>/dev/null; then
+        if [ -f "$sub_dir/.pr_issued" ]; then
             pr_issued=1
         fi
 
@@ -516,6 +516,13 @@ _subagent_compact() {
                 continue
             fi
             if [ -n "$cleaned" ] && [ "$turn" -gt 1 ]; then
+                if [ "$needs_upstream" -eq 1 ] && [ "$pr_issued" -eq 0 ]; then
+                    _subagent_log_event "$sub_id" "GUARD" "Model returned narrative text without issuing PR. Prompting for deliverable action." "$sub_fifo"
+                    local no_act_obs="[GUARD NOTICE: You must execute Action: /upstream propose \"<title>\" --reason \"<reason>\" --metric \"<proof>\" before completing.]"
+                    printf "\n--- Turn %d ---\nObservation:\n%s\n" "$turn" "$no_act_obs" >> "$sub_history"
+                    turn=$((turn + 1))
+                    continue
+                fi
                 final_result="$cleaned"
                 _subagent_log_event "$sub_id" "RESULT" "$final_result" "$sub_fifo"
                 break
@@ -532,7 +539,7 @@ _subagent_compact() {
 
             if [ "$needs_upstream" -eq 1 ] && [ "$pr_issued" -eq 0 ]; then
                 _subagent_log_event "$sub_id" "GUARD" "Blocked premature /respond: objective requires submitting an upstream PR first." "$sub_fifo"
-                obs="[GUARD NOTICE: Premature completion blocked. Your objective requires updating the file and running /upstream propose \"<title>\" --reason \"<reason>\" --metric \"<metric>\" before concluding. Proceed to execute the modifications and propose upstream.]"
+                obs="[GUARD NOTICE: Premature completion blocked. Your objective requires updating the file and running Action: /upstream propose \"<title>\" --reason \"<reason>\" --metric \"<metric>\" before concluding. Proceed to execute the modifications and propose upstream.]"
                 printf "\n--- Turn %d ---\nAction: %s\nObservation:\n%s\n" "$turn" "$action" "$obs" >> "$sub_history"
                 turn=$((turn + 1))
                 continue
