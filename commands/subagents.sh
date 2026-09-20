@@ -36,8 +36,8 @@ cmd_subagents() {
                     RUNNING)   status_color="${COLOR_GREEN:-}${sstat}${COLOR_RESET:-}" ;;
                     PAUSED)    status_color="${COLOR_YELLOW:-}${sstat}${COLOR_RESET:-}" ;;
                     COMPLETED) status_color="${COLOR_CYAN:-}${sstat}${COLOR_RESET:-}" ;;
-                    ESCALATED*|CIRCUIT_BREAKER*) status_color="${COLOR_YELLOW:-}⚡ ${sstat}${COLOR_RESET:-}" ;;
-                    FAILED|ORPHAN_REAPED|KILLED*) status_color="${COLOR_RED:-}${sstat}${COLOR_RESET:-}" ;;
+                    ESCALATED*|CIRCUIT_BREAKER*|PAUSED_BLOCKED) status_color="${COLOR_YELLOW:-}⚡ ${sstat}${COLOR_RESET:-}" ;;
+                    FAILED|ORPHAN_REAPED|KILLED*|CRASHED*) status_color="${COLOR_RED:-}${sstat}${COLOR_RESET:-}" ;;
                 esac
                 printf "%-26s %-6s %-21b %-10s %-18s %s\n" "$sid" "T$stier" "$status_color" "$sturn" "${smodel:0:17}" "${sobj:0:40}"
             done
@@ -125,11 +125,16 @@ cmd_subagents() {
             local fifo="$LODGE_DIR/.sandboxes/$target_id/control.fifo"
             if [ -p "$fifo" ]; then
                 printf 'RESUME\n' > "$fifo" 2>/dev/null || true
-                ui_ok "Transmitted RESUME directive to $target_id"
+                ui_ok "Transmitted RESUME directive to in-flight worker $target_id"
             else
-                ui_err "Control FIFO not found for $target_id"
-                return 1
+                # Fallback to quarantined worktree resumption
+                subagents_resume "$target_id"
             fi
+            ;;
+
+        prune)
+            local opt="${rest%% *}"
+            subagents_prune "$opt"
             ;;
 
         abort)
@@ -219,7 +224,7 @@ cmd_subagents() {
 
         *)
             ui_err "Unknown subagents command: '$subcmd'"
-            ui_info "Available subcommands: list, logs <id>, stream <id>, diff <id>, merge <id>, reap <id>, pause <id>, resume <id>, abort <id>, spawn <tier> <obj>, alerts, dismiss <id>"
+            ui_info "Available subcommands: list, logs <id>, stream <id>, diff <id>, merge <id>, reap <id>, prune [--all], pause <id>, resume <id>, abort <id>, spawn <tier> <obj>, alerts, dismiss <id>"
             return 1
             ;;
     esac

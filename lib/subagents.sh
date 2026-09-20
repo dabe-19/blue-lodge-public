@@ -14,6 +14,10 @@ source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/endpoints.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/ui_dashboard.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/commands.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/limits.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/alerts.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/mcp_server_gitea.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/treesitter.sh" 2>/dev/null || true
 
 # ── Central Subagents Registry ───────────────────────────────────────
 subagents_registry_file() {
@@ -160,6 +164,25 @@ subagents_get_active() {
     jq -c '[.[] | select(.status == "RUNNING" or .status == "PAUSED")]' "$SUBAGENTS_REGISTRY" 2>/dev/null || echo "[]"
 }
 
+_subagent_safe_remove_worktree() {
+    local wt="$1"
+    [ -z "$wt" ] && return 0
+    [ ! -d "$wt" ] && return 0
+
+    # Always try git worktree remove first
+    git -C "$LODGE_DIR" worktree remove --force "$wt" 2>/dev/null || true
+
+    # Only fall back to rm -rf if the directory is strictly inside a sandboxes directory
+    case "$wt" in
+        */.sandboxes/*|*lodge-sandboxes/*)
+            rm -rf "$wt" 2>/dev/null || true
+            ;;
+        *)
+            # Refuse to rm -rf system directories like /tmp, /, /home, etc.
+            ;;
+    esac
+}
+
 subagents_reap_orphans() {
     subagents_init
     local running
@@ -177,9 +200,7 @@ subagents_reap_orphans() {
 
         if [ "$is_alive" -eq 0 ]; then
             declare -f ui_warn &>/dev/null && ui_warn "Reaping orphaned subagent $sid (PID $spid dead)..."
-            if [ -n "$swt" ] && [ -d "$swt" ]; then
-                git -C "$LODGE_DIR" worktree remove --force "$swt" 2>/dev/null || rm -rf "$swt" 2>/dev/null || true
-            fi
+            _subagent_safe_remove_worktree "$swt"
             if [ -n "$sbranch" ]; then
                 git -C "$LODGE_DIR" branch -D "$sbranch" 2>/dev/null || true
             fi
@@ -203,9 +224,7 @@ subagents_cleanup_all() {
                 kill -TERM "$spid" 2>/dev/null || true
             fi
         fi
-        if [ -n "$swt" ] && [ -d "$swt" ]; then
-            git -C "$LODGE_DIR" worktree remove --force "$swt" 2>/dev/null || rm -rf "$swt" 2>/dev/null || true
-        fi
+        _subagent_safe_remove_worktree "$swt"
         if [ -n "$sbranch" ]; then
             git -C "$LODGE_DIR" branch -D "$sbranch" 2>/dev/null || true
         fi
@@ -620,44 +639,55 @@ EOF"
         printf "\n--- Turn %d ---\nAction: %s\nObservation:\n%s\n" "$turn" "$action" "$record_obs" >> "$sub_history"
 
         # Check Circuit Breaker Threshold (default 3 consecutive failures or thrashing)
-        local max_consecutive="${CIRCUIT_BREAKER_MAX_FAILURES:-3}"
+        local max_consecutive
+        max_consecutive=$(limits_get CIRCUIT_BREAKER_MAX_FAILURES 3 2>/dev/null || echo 3)
         if [ "$consecutive_failures" -ge "$max_consecutive" ]; then
             circuit_tripped=1
             circuit_reason="Subagent tripped circuit breaker after $consecutive_failures consecutive failures (Action: ${action:0:80}). Escalating to Parent George."
             _subagent_log_event "$sub_id" "CIRCUIT_BREAKER" "$circuit_reason" "$sub_fifo"
             _subagent_log_event "$sub_id" "ALERT_PARENT" "Escalation triggered for subagent $sub_id (worktree: $sub_dir)" "$sub_fifo"
 
-            # Record persistent structured alert in .george/alerts/
-            mkdir -p "$LODGE_DIR/.george/alerts"
-            local alert_file="$LODGE_DIR/.george/alerts/alert_${sub_id}.json"
-            local alert_ts
-            alert_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%d %H:%M:%S")
-            jq -n \
-                --arg id "$sub_id" \
+            # 1. Quarantined checkpoint branch commit & push
+            local checkpoint_br="checkpoint/${sub_id}"
+            if [ -d "$sub_dir" ]; then
+                (
+                    cd "$sub_dir" || exit 0
+                    git branch -D "$checkpoint_br" >/dev/null 2>&1 || true
+                    git checkout -B "$checkpoint_br" >/dev/null 2>&1 || true
+                    git add -A >/dev/null 2>&1 || true
+                    git commit -m "checkpoint(${sub_id}): state at circuit-breaker trip (turn $turn)" >/dev/null 2>&1 || true
+                )
+                git -C "$LODGE_DIR" push gitea "$checkpoint_br" >/dev/null 2>&1 || true
+            fi
+
+            # 2. Create structured Issue on Sovereign Gitea
+            local issue_num="" issue_url=""
+            if declare -f gitea_is_online &>/dev/null && gitea_is_online; then
+                local issue_title="[Escalation] Subagent ${sub_id} blocked: ${action:0:60}"
+                local issue_body
+                issue_body=$(printf "### Subagent Circuit Breaker Escalation\n\n- **Subagent ID:** \`%s\`\n- **Tier:** %s (\`%s\`)\n- **Objective:** %s\n- **Turn:** %d\n- **Failed Action:** \`%s\`\n- **Checkpoint Branch:** \`%s\`\n- **Sandbox Worktree:** \`%s\`\n\n#### Last Error Diagnostic:\n\`\`\`\n%s\n\`\`\`\n" \
+                    "$sub_id" "$target_tier" "$tier_model" "$objective" "$turn" "$action" "$checkpoint_br" "$sub_dir" "${obs:0:1500}")
+                local issue_res
+                issue_res=$(gitea_issue_create "$issue_title" "$issue_body" "escalation,blocked" 2>/dev/null || true)
+                issue_num=$(echo "$issue_res" | jq -r .number 2>/dev/null || true)
+                issue_url=$(echo "$issue_res" | jq -r .html_url 2>/dev/null || true)
+                if [ -n "$issue_num" ] && [ "$issue_num" != "null" ]; then
+                    gitea_issue_comment "$issue_num" "[Subagent ${sub_id}]: Tripped circuit breaker after ${consecutive_failures} consecutive failures. Quarantined in PAUSED_BLOCKED state at \`${checkpoint_br}\`." >/dev/null 2>&1 || true
+                fi
+            fi
+
+            # 3. Dispatch Multi-Tier Alert across MQTT and External Channels
+            local ctx_json
+            ctx_json=$(jq -n \
+                --arg sub "$sub_id" \
                 --arg tier "$target_tier" \
                 --arg model "$tier_model" \
-                --arg obj "$objective" \
-                --arg ts "$alert_ts" \
-                --argjson turn "$turn" \
-                --argjson failures "$consecutive_failures" \
                 --arg act "$action" \
-                --arg err "${obs:0:1000}" \
-                --arg worktree "$sub_dir" \
-                --arg branch "${sub_branch:-none}" \
-                '{
-                    id: $id,
-                    tier: $tier,
-                    model: $model,
-                    objective: $obj,
-                    timestamp: $ts,
-                    turn: $turn,
-                    consecutive_failures: $failures,
-                    failed_action: $act,
-                    last_error: $err,
-                    worktree: $worktree,
-                    branch: $branch,
-                    status: "ESCALATED_TO_PARENT"
-                }' > "$alert_file" 2>/dev/null || true
+                --arg br "$checkpoint_br" \
+                --arg wt "$sub_dir" \
+                --arg is_num "${issue_num:-}" \
+                '{ subagent_id: $sub, tier: $tier, model: $model, failed_action: $act, checkpoint: $br, worktree: $wt, issue_number: $is_num }')
+            alerts_dispatch tier1 "Subagent $sub_id Blocked" "$circuit_reason" "${issue_url:-}" "$ctx_json" >/dev/null 2>&1 || true
 
             declare -f ui_err &>/dev/null && ui_err "⚡ [CIRCUIT BREAKER] Subagent $sub_id escalated to Parent George ($consecutive_failures consecutive failures)" >&2
 
@@ -692,7 +722,7 @@ EOF"
     local final_status="COMPLETED"
     if [ "$circuit_tripped" -eq 1 ]; then
         exit_code=75  # EX_TEMPFAIL / Escalated to Parent
-        final_status="ESCALATED_TO_PARENT"
+        final_status="PAUSED_BLOCKED"
     elif [ -z "$final_result" ]; then
         exit_code=1
         final_status="FAILED"
@@ -902,3 +932,81 @@ subagents_reap() {
     subagents_update_status "$sub_id" "REAPED" "" "Worktree and branch reaped"
     echo "Worktree $wt_path and branch $branch cleanly reaped."
 }
+
+subagents_resume() {
+    local sub_id="$1"
+    local resolved_pr="${2:-}"
+    subagents_init
+
+    local reg_entry
+    reg_entry=$(jq -r --arg id "$sub_id" '.[] | select(.id == $id)' "$SUBAGENTS_REGISTRY" 2>/dev/null)
+    if [ -z "$reg_entry" ]; then
+        ui_err "Subagent '$sub_id' not found in registry."
+        return 1
+    fi
+
+    local swt sbranch sstatus obj tier model turns
+    swt=$(echo "$reg_entry" | jq -r .worktree_dir)
+    sbranch=$(echo "$reg_entry" | jq -r .branch)
+    sstatus=$(echo "$reg_entry" | jq -r .status)
+    obj=$(echo "$reg_entry" | jq -r .objective)
+    tier=$(echo "$reg_entry" | jq -r .tier)
+    model=$(echo "$reg_entry" | jq -r .model)
+    turns=$(echo "$reg_entry" | jq -r .max_turns)
+
+    ui_section "Resuming Subagent $sub_id ($sstatus)"
+
+    if [ -d "$swt" ]; then
+        ui_step "Updating worktree at $swt with latest changes from develop..."
+        git -C "$swt" fetch origin develop >/dev/null 2>&1 || git -C "$swt" fetch gitea develop >/dev/null 2>&1 || true
+        git -C "$swt" merge --no-edit origin/develop >/dev/null 2>&1 || git -C "$swt" merge --no-edit develop >/dev/null 2>&1 || true
+        ui_ok "Worktree synchronized with develop."
+    else
+        ui_err "Worktree directory '$swt' missing. Cannot resume."
+        return 1
+    fi
+
+    # Update status to RESUMED / RUNNING
+    subagents_update_status "$sub_id" "RUNNING" "" "Resumed execution after resolution"
+
+    # Emit resumption event to MQTT
+    if declare -f mqtt_publish &>/dev/null; then
+        local resume_payload
+        resume_payload=$(jq -n \
+            --arg id "$sub_id" \
+            --arg pr "${resolved_pr:-none}" \
+            --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%d %H:%M:%S")" \
+            '{ event: "WORKER_RESUME", subagent_id: $id, resolved_pr: $pr, timestamp: $ts }')
+        mqtt_publish "george/workers/${sub_id}/resume" "$resume_payload" >/dev/null 2>&1 || true
+    fi
+
+    ui_ok "Subagent $sub_id resumed."
+}
+
+subagents_prune() {
+    local opt="${1:-stale}"
+    subagents_init
+
+    local entries
+    if [ "$opt" = "--all" ] || [ "$opt" = "all" ]; then
+        entries=$(jq -r '.[] | "\(.id)|\(.status)|\(.worktree_dir)|\(.branch)"' "$SUBAGENTS_REGISTRY" 2>/dev/null || true)
+    else
+        entries=$(jq -r '.[] | select(.status == "COMPLETED" or .status == "DONE" or .status == "CRASHED_ORPHAN" or .status == "KILLED_EXIT" or .status == "FAILED" or .status == "REAPED") | "\(.id)|\(.status)|\(.worktree_dir)|\(.branch)"' "$SUBAGENTS_REGISTRY" 2>/dev/null || true)
+    fi
+
+    local pruned_count=0
+    while IFS='|' read -r sid st swt sbranch; do
+        [ -z "$sid" ] && continue
+        if [ -n "$swt" ] && [ -d "$swt" ]; then
+            _subagent_safe_remove_worktree "$swt"
+        fi
+        if [ -n "$sbranch" ] && [ "$sbranch" != "develop" ] && [ "$sbranch" != "main" ]; then
+            git -C "$LODGE_DIR" branch -D "$sbranch" 2>/dev/null || true
+        fi
+        pruned_count=$((pruned_count + 1))
+    done <<< "$entries"
+
+    git -C "$LODGE_DIR" worktree prune 2>/dev/null || true
+    ui_ok "Pruned $pruned_count subagent worktrees and branches."
+}
+

@@ -413,3 +413,51 @@ treesitter_extract_symbols() {
     esac
 }
 
+# ── Validate Syntax of an Existing File ──────────────────────────────
+treesitter_validate_file() {
+    local file="$1"
+    if [ ! -f "$file" ]; then
+        echo "Error: File '$file' does not exist"
+        return 1
+    fi
+    local lang
+    lang=$(treesitter_detect_lang "$file")
+    local content
+    content=$(cat "$file" 2>/dev/null || true)
+    treesitter_validate "$content" "$lang"
+}
+
+# ── Differential AST / Symbol Inspection ─────────────────────────────
+# Analyzes changed files between target and candidate branches,
+# extracting structural signatures of modified functions/classes.
+treesitter_diff_symbols() {
+    local target="${1:-develop}"
+    local candidate="${2:-HEAD}"
+    local workdir="${3:-$LODGE_DIR}"
+
+    local changed_files
+    changed_files=$(git -C "$workdir" diff --name-only "$target..$candidate" 2>/dev/null || true)
+    [ -z "$changed_files" ] && { echo "No files modified between $target and $candidate."; return 0; }
+
+    echo "Structural AST Changes ($target..$candidate):"
+    while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        local full_path="$workdir/$f"
+        if [ ! -f "$full_path" ]; then
+            echo "  [-] $f (deleted)"
+            continue
+        fi
+        local lang
+        lang=$(treesitter_detect_lang "$full_path")
+        local outline
+        outline=$(treesitter_outline "$full_path" 2>/dev/null || true)
+        if [ -n "$outline" ]; then
+            echo "  [●] $f ($lang):"
+            echo "$outline" | sed 's/^/      /'
+        else
+            echo "  [●] $f ($lang) — no top-level symbol changes"
+        fi
+    done <<< "$changed_files"
+}
+
+
