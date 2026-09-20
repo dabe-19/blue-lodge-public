@@ -104,7 +104,7 @@ _lodge_shell_block() {
 export LODGE_DIR="$LODGE_DIR"
 export LODGE_MODEL_PRIMARY="blue-lodge-gemma4-inst:2b"
 export LODGE_MODEL_SECONDARY="blue-lodge-gemma4-inst:2b"
-export PATH="\$HOME/.local/bin:\$PATH"
+export PATH="\$HOME/.local/bin:\$HOME/.cargo/bin:\$PATH"
 $termux_line
 $ollama_models_line
 
@@ -244,6 +244,15 @@ fi
 if ! command -v tree-sitter &>/dev/null; then
     printf "\n"
     info "Installing tree-sitter AST CLI via Rust toolchain..."
+    if ! command -v cc &>/dev/null && ! command -v gcc &>/dev/null; then
+        if command -v apt &>/dev/null; then
+            if [ "$(id -u)" = "0" ]; then
+                apt update -qq 2>/dev/null && apt install -y -qq build-essential 2>/dev/null || true
+            elif command -v sudo &>/dev/null; then
+                sudo apt update -qq 2>/dev/null && sudo apt install -y -qq build-essential 2>/dev/null || true
+            fi
+        fi
+    fi
     if ! command -v cargo &>/dev/null; then
         info "Rust toolchain not found. Installing via rustup..."
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -255,13 +264,27 @@ if ! command -v tree-sitter &>/dev/null; then
         cargo install tree-sitter-cli --locked 2>/dev/null || warn "cargo install tree-sitter-cli failed; falling back to prebuilt binary"
     fi
 
-    # Fallback to prebuilt binary for Linux x86_64 if cargo install failed
-    if ! command -v tree-sitter &>/dev/null && [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ]; then
-        local_ts_dir="$HOME/.local/bin"
-        mkdir -p "$local_ts_dir"
-        if curl -fsSL "https://github.com/tree-sitter/tree-sitter/releases/download/v0.26.7/tree-sitter-linux-x64.gz" 2>/dev/null | gzip -d > "$local_ts_dir/tree-sitter" 2>/dev/null; then
-            chmod +x "$local_ts_dir/tree-sitter"
-            export PATH="$local_ts_dir:$PATH"
+    # Fallback to prebuilt binary across Linux (x86_64, aarch64/arm64) and macOS if cargo failed
+    if ! command -v tree-sitter &>/dev/null; then
+        local _ts_arch=""
+        case "$(uname -m)" in
+            x86_64|amd64)  _ts_arch="x64" ;;
+            aarch64|arm64) _ts_arch="arm64" ;;
+        esac
+        local _ts_os=""
+        case "$(uname -s)" in
+            Linux)  _ts_os="linux" ;;
+            Darwin) _ts_os="macos" ;;
+        esac
+
+        if [ -n "$_ts_arch" ] && [ -n "$_ts_os" ]; then
+            local_ts_dir="$HOME/.local/bin"
+            mkdir -p "$local_ts_dir"
+            local _ts_url="https://github.com/tree-sitter/tree-sitter/releases/download/v0.26.7/tree-sitter-${_ts_os}-${_ts_arch}.gz"
+            if curl -fsSL "$_ts_url" 2>/dev/null | gzip -d > "$local_ts_dir/tree-sitter" 2>/dev/null; then
+                chmod +x "$local_ts_dir/tree-sitter"
+                export PATH="$local_ts_dir:$PATH"
+            fi
         fi
     fi
 
