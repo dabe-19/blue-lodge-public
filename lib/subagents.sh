@@ -266,7 +266,7 @@ WORKER PROTOCOL:
 ```
 or Action: /bash sed -i ...
 3. When changes are verified, propose upstream immediately:
-Action: /upstream propose "<title>" --reason "<reason>" --metric "<metric>"
+Action: /upstream propose \"<title>\" --reason \"<reason>\" --metric \"<metric>\"
 4. Conclude immediately after:
 Action: /respond <summary of deliverable>
 
