@@ -32,10 +32,15 @@ case "$action" in
         ui_ok "Act Runner stopped."
         exit 0
         ;;
+    restart)
+        ui_step "Restarting Act Runner container '${CONTAINER_NAME}'..."
+        docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
+        docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+        ;;
     start)
         ;;
     *)
-        echo "Usage: $0 [start|stop|status]"
+        echo "Usage: $0 [start|stop|restart|status]"
         exit 1
         ;;
 esac
@@ -68,6 +73,9 @@ ui_ok "Acquired runner token: ${RUNNER_TOKEN:0:8}..."
 
 # 4. Prepare data directory
 mkdir -p "$DATA_DIR"
+if [ -f "${DATA_DIR}/.runner" ]; then
+    sed -i 's|docker://debian:bookworm-slim|docker://node:20-bookworm|g' "${DATA_DIR}/.runner"
+fi
 
 # 5. Launch Act Runner with host networking and Docker socket mount
 ui_step "Launching '${CONTAINER_NAME}' with host networking..."
@@ -80,7 +88,7 @@ docker run -d \
     -e GITEA_INSTANCE_URL="${GITEA_URL}" \
     -e GITEA_RUNNER_REGISTRATION_TOKEN="${RUNNER_TOKEN}" \
     -e GITEA_RUNNER_NAME="george-local-runner" \
-    -e GITEA_RUNNER_LABELS="ubuntu-latest:docker://debian:bookworm-slim,debian:docker://debian:bookworm-slim,bash:docker://debian:bookworm-slim" \
+    -e GITEA_RUNNER_LABELS="ubuntu-latest:docker://node:20-bookworm,debian:docker://node:20-bookworm,bash:docker://node:20-bookworm" \
     gitea/act_runner:latest daemon >/dev/null
 
 sleep 2
