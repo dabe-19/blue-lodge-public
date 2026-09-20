@@ -1,6 +1,6 @@
 #!/bin/bash
 # DESC: Sovereign Gitea forge operations, pull requests, and CI/CD runners
-# Usage: /gitea [status|sync|pr|runner|keys] [args...]
+# Usage: /gitea [status|sync|pr|issues|runner|keys] [args...]
 
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
@@ -122,6 +122,94 @@ cmd_gitea() {
             esac
             ;;
 
+        issues|issue)
+            local issue_sub="${rest%% *}"
+            local issue_args="${rest#"$issue_sub"}"
+            issue_args="${issue_args#"${issue_args%%[![:space:]]*}"}"
+
+            case "$issue_sub" in
+                ""|list)
+                    local filter="${issue_args:-open}"
+                    ui_section "Sovereign Gitea Issues (${filter})"
+                    gitea_issue_list "$filter"
+                    ;;
+                show)
+                    local idx="${issue_args%% *}"
+                    if [ -z "$idx" ]; then
+                        ui_err "Usage: /gitea issues show <id>"
+                        return 1
+                    fi
+                    local issue_data
+                    issue_data=$(gitea_issue_get "$idx")
+                    if echo "$issue_data" | jq -e .number &>/dev/null; then
+                        local inum ititle istate ibody iurl ilabels
+                        inum=$(echo "$issue_data" | jq -r .number)
+                        ititle=$(echo "$issue_data" | jq -r .title)
+                        istate=$(echo "$issue_data" | jq -r .state)
+                        ibody=$(echo "$issue_data" | jq -r .body)
+                        iurl=$(echo "$issue_data" | jq -r .html_url)
+                        ilabels=$(echo "$issue_data" | jq -r '.labels | map(.name) | join(", ")')
+
+                        ui_ok "Issue #${inum}: ${ititle}"
+                        ui_dim "  State:  ${istate}"
+                        ui_dim "  Labels: ${ilabels:-none}"
+                        ui_dim "  URL:    ${iurl}"
+                        echo ""
+                        echo "${ibody}"
+                    else
+                        ui_err "Issue #${idx} not found or error: ${issue_data}"
+                    fi
+                    ;;
+                comment)
+                    local idx="${issue_args%% *}"
+                    local cmt_body="${issue_args#"$idx"}"
+                    cmt_body="${cmt_body#"${cmt_body%%[![:space:]]*}"}"
+                    if [ -z "$idx" ] || [ -z "$cmt_body" ]; then
+                        ui_err "Usage: /gitea issues comment <id> <comment...>"
+                        return 1
+                    fi
+                    local cmt_res
+                    cmt_res=$(gitea_issue_comment "$idx" "$cmt_body")
+                    if echo "$cmt_res" | jq -e .id &>/dev/null; then
+                        ui_ok "Comment posted to Issue #${idx}"
+                    else
+                        ui_err "Failed to post comment: $cmt_res"
+                    fi
+                    ;;
+                close)
+                    local idx="${issue_args%% *}"
+                    local close_cmt="${issue_args#"$idx"}"
+                    close_cmt="${close_cmt#"${close_cmt%%[![:space:]]*}"}"
+                    if [ -z "$idx" ]; then
+                        ui_err "Usage: /gitea issues close <id> [comment...]"
+                        return 1
+                    fi
+                    local close_res
+                    close_res=$(gitea_issue_close "$idx" "$close_cmt")
+                    if [ "$(echo "$close_res" | jq -r .state 2>/dev/null)" = "closed" ]; then
+                        ui_ok "Issue #${idx} closed."
+                    else
+                        ui_err "Failed to close issue #${idx}: $close_res"
+                    fi
+                    ;;
+                create)
+                    local title="${issue_args%% *}"
+                    local remaining="${issue_args#"$title"}"
+                    remaining="${remaining#"${remaining%%[![:space:]]*}"}"
+                    if [ -z "$title" ]; then
+                        ui_err "Usage: /gitea issues create <title> [body...]"
+                        return 1
+                    fi
+                    gitea_issue_create "$title" "${remaining:-Created via /gitea issues create}" "operator,manual"
+                    ;;
+                *)
+                    ui_err "Unknown /gitea issues action: '$issue_sub'"
+                    ui_info "Usage: /gitea issues [list|show <id>|comment <id> <text>|close <id> [comment]|create <title> [body]]"
+                    return 1
+                    ;;
+            esac
+            ;;
+
         runner)
             local r_action="${rest%% *}"
             r_action="${r_action:-status}"
@@ -149,7 +237,7 @@ cmd_gitea() {
 
         *)
             ui_err "Unknown /gitea command: '$subcmd'"
-            ui_info "Available subcommands: status, sync [branch], pr [list|show|create|merge], runner [start|stop|status], keys"
+            ui_info "Available subcommands: status, sync [branch], pr [list|show|create|merge], issues [list|show|comment|close], runner [start|stop|status], keys"
             return 1
             ;;
     esac
