@@ -259,13 +259,20 @@ You operate in an isolated git worktree sandbox. You can execute tools via slash
 - /respond <text> : Conclude your task and return the final synthesized answer.
 
 WORKER PROTOCOL:
-1. Never repeatedly /read the same file. After reading, proceed immediately to modifying the target file (/append or /bash).
-2. When changes are made, run: Action: /upstream propose \"<title>\" --reason \"<reason>\" --metric \"<metric>\"
-3. Finally conclude with: Action: /respond <summary of deliverable>
+1. Never repeatedly /read the same file. After reading, proceed immediately to modifying the target file.
+2. To modify files, use a python or bash code block, or a single-line command:
+```python
+# python code here to modify file
+```
+or Action: /bash sed -i ...
+3. When changes are verified, propose upstream immediately:
+Action: /upstream propose "<title>" --reason "<reason>" --metric "<metric>"
+4. Conclude immediately after:
+Action: /respond <summary of deliverable>
 
 Output format for each turn:
-Thought: <reasoning>
-Action: <slash-command>"
+Thought: <brief reasoning>
+Action: <slash-command> (or code block)"
 
 # ── Subagent Auto-Compaction Engine ──────────────────────────────────
 _subagent_compact() {
@@ -403,7 +410,7 @@ _subagent_compact() {
 
         # Query endpoint
         local resp_json
-        resp_json=$(curl -s --max-time 120 "$tier_url/v1/chat/completions" \
+        resp_json=$(curl -s --max-time 300 "$tier_url/v1/chat/completions" \
             -H "Content-Type: application/json" \
             -d "$payload" 2>/dev/null)
 
@@ -482,19 +489,12 @@ _subagent_compact() {
         fi
 
         if [ -z "$action" ]; then
-            if echo "$cleaned" | grep -qE '^Action:[[:space:]]*`?\/'; then
-                action=$(echo "$cleaned" | sed -n 's/^Action:[[:space:]]*`\?\(\/.*\)`\?/\1/p' | head -1)
-            elif echo "$cleaned" | grep -qE '^[[:space:]]*`?\/'; then
-                action=$(echo "$cleaned" | grep -E '^[[:space:]]*`?\/' | head -1 | tr -d '`')
-                action="${action#"${action%%[![:space:]]*}"}"
-            elif echo "$cleaned" | grep -qE '^Action:[[:space:]]*(bash|read|append|upstream|respond)'; then
-                action=$(echo "$cleaned" | sed -n 's/^Action:[[:space:]]*/\//p' | head -1)
-            elif echo "$cleaned" | grep -qE '```(bash|sh)'; then
-                local _extracted_cmd
-                _extracted_cmd=$(echo "$cleaned" | sed -n '/```\(bash\|sh\)/,/```/p' | sed '1d;$d')
-                if [ -n "$_extracted_cmd" ]; then
-                    action="/bash $_extracted_cmd"
-                fi
+            if echo "$cleaned" | grep -qE '^[[:space:]]*Action:[[:space:]]*`?\/upstream'; then
+                action=$(echo "$cleaned" | sed -n 's/^[[:space:]]*Action:[[:space:]]*`\?\(\/.*\)`\?/\1/p' | head -1)
+            elif echo "$cleaned" | grep -qE '^[[:space:]]*Action:[[:space:]]*`?\/respond'; then
+                action=$(echo "$cleaned" | sed -n 's/^[[:space:]]*Action:[[:space:]]*`\?\(\/.*\)`\?/\1/p' | head -1)
+            elif echo "$cleaned" | grep -qE '^[[:space:]]*Action:[[:space:]]*`?\/read'; then
+                action=$(echo "$cleaned" | sed -n 's/^[[:space:]]*Action:[[:space:]]*`\?\(\/.*\)`\?/\1/p' | head -1)
             elif echo "$cleaned" | grep -qE '```(python|python3)'; then
                 local _extracted_py
                 _extracted_py=$(echo "$cleaned" | sed -n '/```\(python\|python3\)/,/```/p' | sed '1d;$d')
@@ -503,6 +503,19 @@ _subagent_compact() {
 $_extracted_py
 EOF"
                 fi
+            elif echo "$cleaned" | grep -qE '```(bash|sh)'; then
+                local _extracted_cmd
+                _extracted_cmd=$(echo "$cleaned" | sed -n '/```\(bash\|sh\)/,/```/p' | sed '1d;$d')
+                if [ -n "$_extracted_cmd" ]; then
+                    action="/bash $_extracted_cmd"
+                fi
+            elif echo "$cleaned" | grep -qE '^[[:space:]]*Action:[[:space:]]*`?\/'; then
+                action=$(echo "$cleaned" | sed -n 's/^[[:space:]]*Action:[[:space:]]*`\?\(\/.*\)`\?/\1/p' | head -1)
+            elif echo "$cleaned" | grep -qE '^[[:space:]]*`?\/'; then
+                action=$(echo "$cleaned" | grep -E '^[[:space:]]*`?\/' | head -1 | tr -d '`')
+                action="${action#"${action%%[![:space:]]*}"}"
+            elif echo "$cleaned" | grep -qE '^[[:space:]]*Action:[[:space:]]*(bash|read|append|upstream|respond)'; then
+                action=$(echo "$cleaned" | sed -n 's/^[[:space:]]*Action:[[:space:]]*/\//p' | head -1)
             fi
         fi
 
