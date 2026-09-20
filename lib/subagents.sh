@@ -484,7 +484,7 @@ _subagent_compact() {
                             print "/$fn $param\n";
                         }
                     }
-                ' 2>/dev/null | head -1)
+                ' 2>/dev/null)
             fi
         fi
 
