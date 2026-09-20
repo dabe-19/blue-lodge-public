@@ -29,6 +29,25 @@
 
 set -uo pipefail
 
+# ── Hermetic Test Environment Sanitization ─────────────────────
+# Prevent ambient settings or parent lodge.conf exports from bleeding into tests.
+unset REFLEXIVE_SOUL_GATE \
+      REFLEXIVE_PROMPT_LEARN \
+      REFLEXIVE_ADAPT_TOKENS \
+      REFLEXIVE_SPECULATE \
+      REFLEXIVE_SELF_MODEL \
+      REFLEXIVE_SHADOW \
+      REFLEXIVE_CONFIRM \
+      REFLEXIVE_TRACE \
+      REFLEXIVE_METACOG_LLM \
+      REFLEXIVE_SOUL_KEYWORDS \
+      REFLEXIVE_PROMPT_HISTORY \
+      REFLEXIVE_TOKEN_FLOOR \
+      REFLEXIVE_TOKEN_CEILING \
+      REFLEXIVE_SPECULATE_BUDGET \
+      REFLEXIVE_METACOG_INTERVAL \
+      _REFLEXIVE_SOUL_REJECTIONS
+
 # ── State ──────────────────────────────────────────────────────
 _TEST_TOTAL=0
 _TEST_PASSED=0

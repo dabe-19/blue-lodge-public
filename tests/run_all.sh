@@ -16,6 +16,23 @@ set -uo pipefail
 TESTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 LODGE_DIR="$(cd "$TESTS_DIR/.." && pwd)"
 export LODGE_DIR
+# Unset ambient reflexive exports so test subshells run in clean default state
+unset REFLEXIVE_SOUL_GATE \
+      REFLEXIVE_PROMPT_LEARN \
+      REFLEXIVE_ADAPT_TOKENS \
+      REFLEXIVE_SPECULATE \
+      REFLEXIVE_SELF_MODEL \
+      REFLEXIVE_SHADOW \
+      REFLEXIVE_CONFIRM \
+      REFLEXIVE_TRACE \
+      REFLEXIVE_METACOG_LLM \
+      REFLEXIVE_SOUL_KEYWORDS \
+      REFLEXIVE_PROMPT_HISTORY \
+      REFLEXIVE_TOKEN_FLOOR \
+      REFLEXIVE_TOKEN_CEILING \
+      REFLEXIVE_SPECULATE_BUDGET \
+      REFLEXIVE_METACOG_INTERVAL \
+      _REFLEXIVE_SOUL_REJECTIONS
 
 # ── Process guard (no lockfile) ───────────────────────────────
 # Prevent overlapping full-suite runs in the same workspace. A timed-out

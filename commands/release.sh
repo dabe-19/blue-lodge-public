@@ -113,7 +113,8 @@ Autonomous emergency investigator task dispatched to isolate and fix regressions
         if declare -f subagents_spawn &>/dev/null; then
             ui_step "Spawning emergency investigator subagent..."
             local worker_task="Emergency Fix: Investigate and fix pre-release test failures (${failed_tests}) blocking release ${tag_name}. Target issue #${issue_num:-emergency}."
-            subagents_spawn "release-fix" "$worker_task" "investigator" 2>/dev/null || true
+            export _LODGE_SKIP_SUBAGENT_CLEANUP=1
+            subagents_spawn 1 "$worker_task" "Emergency pre-release investigator" "$workdir" 50 1 2>/dev/null || true
             ui_ok "Investigator subagent dispatched in isolated worktree sandbox."
         fi
 
