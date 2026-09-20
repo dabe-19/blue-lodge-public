@@ -225,3 +225,4 @@ cache_count() {
         echo "0"
     fi
 }
+# Empirical Cache Index Cache-Line Optimization (2026)
