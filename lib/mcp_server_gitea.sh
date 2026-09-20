@@ -379,10 +379,19 @@ gitea_pr_review() {
     local payload
     payload=$(jq -n --arg event "$event" --arg body "$body" '{"event": $event, "body": $body}')
 
-    curl -s -X POST "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/pulls/${index}/reviews" \
+    local resp
+    resp=$(curl -s -X POST "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/pulls/${index}/reviews" \
         -H "Authorization: token ${GITEA_TOKEN}" \
         -H "Content-Type: application/json" \
-        -d "$payload" 2>/dev/null
+        -d "$payload" 2>/dev/null)
+
+    if echo "$resp" | jq -e .id &>/dev/null; then
+        echo "$resp"
+        return 0
+    else
+        echo "$resp"
+        return 1
+    fi
 }
 
 # ── JSON-RPC 2.0 MCP Protocol Loop (if run directly) ────────────────
