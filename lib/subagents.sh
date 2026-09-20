@@ -495,6 +495,12 @@ _subagent_compact() {
                 action=$(echo "$cleaned" | sed -n 's/^[[:space:]]*Action:[[:space:]]*`\?\(\/.*\)`\?/\1/p' | head -1)
             elif echo "$cleaned" | grep -qE '^[[:space:]]*Action:[[:space:]]*`?\/read'; then
                 action=$(echo "$cleaned" | sed -n 's/^[[:space:]]*Action:[[:space:]]*`\?\(\/.*\)`\?/\1/p' | head -1)
+            elif echo "$cleaned" | grep -qE '^[[:space:]]*Action:[[:space:]]*`?\/bash'; then
+                action=$(printf '%s\n' "$cleaned" | sed -n '/^[[:space:]]*Action:[[:space:]]*`*\/bash/,$p' | sed '1s/^[[:space:]]*Action:[[:space:]]*`*//')
+                action=$(printf '%s\n' "$action" | sed '/^[[:space:]]*\(Observation\|Thought\|Action\):/,$d')
+                action=$(printf '%s\n' "$action" | sed 's/`[[:space:]]*$//')
+            elif echo "$cleaned" | grep -qE '^[[:space:]]*Action:[[:space:]]*`?\/'; then
+                action=$(echo "$cleaned" | sed -n 's/^[[:space:]]*Action:[[:space:]]*`\?\(\/.*\)`\?/\1/p' | head -1)
             elif echo "$cleaned" | grep -qE '```(python|python3)'; then
                 local _extracted_py
                 _extracted_py=$(echo "$cleaned" | sed -n '/```\(python\|python3\)/,/```/p' | sed '1d;$d')
@@ -509,11 +515,6 @@ EOF"
                 if [ -n "$_extracted_cmd" ]; then
                     action="/bash $_extracted_cmd"
                 fi
-            elif echo "$cleaned" | grep -qE '^[[:space:]]*Action:[[:space:]]*`?\/bash'; then
-                action=$(printf '%s\n' "$cleaned" | sed -n '/^[[:space:]]*Action:[[:space:]]*`*\/bash/,$p' | sed '1s/^[[:space:]]*Action:[[:space:]]*`*//')
-                action=$(printf '%s' "$action" | sed 's/`[[:space:]]*$//')
-            elif echo "$cleaned" | grep -qE '^[[:space:]]*Action:[[:space:]]*`?\/'; then
-                action=$(echo "$cleaned" | sed -n 's/^[[:space:]]*Action:[[:space:]]*`\?\(\/.*\)`\?/\1/p' | head -1)
             elif echo "$cleaned" | grep -qE '^[[:space:]]*`?\/'; then
                 action=$(echo "$cleaned" | grep -E '^[[:space:]]*`?\/' | head -1 | tr -d '`')
                 action="${action#"${action%%[![:space:]]*}"}"
