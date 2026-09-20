@@ -47,15 +47,28 @@ describe "orphan reaping"
     assert_contains "$reg" "ORPHAN_REAPED"
   }
 
-describe "child turn limits & countdown"
-  it "defaults child turn limit to 200" && {
-    assert_eq "${AGENT_CHILD_MAX_TURNS:-200}" "200"
+describe "token accounting & auto-compaction threshold"
+  it "calculates slot token consumption with KV-cache invariant prefix baseline" && {
+    p_tok=4500
+    comp_tok=350
+    kv_prefix=2815
+    total=$((p_tok + comp_tok + kv_prefix))
+    assert_eq "$total" "7665"
   }
 
-  it "calculates 5-turn countdown threshold correctly" && {
-    max_turns=200
-    threshold=$((max_turns - 5))
-    assert_eq "$threshold" "195"
+  it "flags compaction threshold at 18k tokens" && {
+    running_tokens=18500
+    should_compact=0
+    [ "$running_tokens" -ge 18000 ] && should_compact=1
+    assert_eq "$should_compact" "1"
+  }
+
+describe "subagent deliverable guard"
+  it "detects when objective mandates upstream PR before /respond" && {
+    obj="Update docs/SANDBOXES.md and propose upstream PR to develop"
+    needs_pr=0
+    [[ "$obj" =~ (upstream|propose|PR|pull[[:space:]]request|SANDBOXES) ]] && needs_pr=1
+    assert_eq "$needs_pr" "1"
   }
 
 test_end

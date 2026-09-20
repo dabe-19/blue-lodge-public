@@ -267,11 +267,64 @@ Output format for each turn:
 Thought: <reasoning>
 Action: <slash-command>"
 
+# ── Subagent Auto-Compaction Engine ──────────────────────────────────
+_subagent_compact() {
+    local sub_id="$1"
+    local sub_history="$2"
+    local tier_url="$3"
+    local tier_model="$4"
+    local sub_fifo="$5"
+
+    _subagent_log_event "$sub_id" "COMPACT" "Slot tokens approaching threshold (18k+). Executing semantic auto-compaction..." "$sub_fifo"
+
+    local history_summary
+    history_summary=$(tail -c 12000 "$sub_history" 2>/dev/null)
+
+    local prompt="The following is an ongoing subagent trajectory. Summarize the key accomplishments, discovered facts/line numbers, files modified, and pending tasks concisely:\n\n$history_summary"
+
+    local payload
+    payload=$(jq -n \
+        --arg sys "You are a state summarizer. Produce a concise structured summary: Accomplished, Key Facts, Pending Goals." \
+        --arg prompt "$prompt" \
+        --arg model "$tier_model" \
+        '{
+            model: $model,
+            messages: [
+                {"role": "system", "content": $sys},
+                {"role": "user", "content": $prompt}
+            ],
+            temperature: 0.2,
+            max_tokens: 512
+        }')
+
+    local summary_resp
+    summary_resp=$(curl -s --max-time 45 "$tier_url/v1/chat/completions" \
+        -H "Content-Type: application/json" \
+        -d "$payload" 2>/dev/null)
+
+    local summary_text
+    summary_text=$(echo "$summary_resp" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+
+    if [ -n "$summary_text" ]; then
+        local last_turn
+        last_turn=$(tail -c 2500 "$sub_history" 2>/dev/null)
+        printf "[PREVIOUS CONTEXT COMPACTED]:\n%s\n\n%s\n" "$summary_text" "$last_turn" > "$sub_history"
+        _subagent_log_event "$sub_id" "COMPACT" "Context compacted successfully. Memory runway refreshed." "$sub_fifo"
+        return 0
+    else
+        _subagent_log_event "$sub_id" "WARN" "Auto-compaction summarization failed; continuing with trimmed history." "$sub_fifo"
+        tail -c 6000 "$sub_history" > "${sub_history}.tmp" && mv "${sub_history}.tmp" "$sub_history"
+        return 1
+    fi
+}
+
     local turn=1
     local final_result=""
+    local running_tokens=0
+    local kv_prefix_tokens=2815 # Invariant system prompt & tool manifest baseline
 
     while [ "$turn" -le "$max_turns" ]; do
-        declare -f ui_dashboard_worker_update &>/dev/null && ui_dashboard_worker_update "$sub_id" "turn $turn/$max_turns" >&2
+        declare -f ui_dashboard_worker_update &>/dev/null && ui_dashboard_worker_update "$sub_id" "turn $turn/$max_turns (tok: $running_tokens)" >&2
         subagents_update_status "$sub_id" "RUNNING" "$turn"
 
         # Check in-flight control FIFO (non-blocking)
@@ -318,11 +371,11 @@ Action: <slash-command>"
             countdown_notice="[SYSTEM NOTICE: APPROACHING TURN CEILING ($rem turn(s) remaining of $max_turns). Cease exploratory actions. Consolidate your deliverables and conclude with /respond.]\n\n"
         fi
 
-        # Build messages payload
+        # Build messages payload with full-fidelity context
         local messages_json
         local recent_obs=""
         if [ -s "$sub_history" ]; then
-            recent_obs=$(tail -c 4000 "$sub_history")
+            recent_obs=$(cat "$sub_history")
         fi
 
         messages_json=$(jq -n \
@@ -357,6 +410,21 @@ Action: <slash-command>"
             _subagent_log_event "$sub_id" "ERROR" "Target model endpoint timed out or failed." "$sub_fifo"
             final_result="ERROR: Subagent endpoint timed out."
             break
+        fi
+
+        # Live token accounting from API usage metrics
+        local p_tok comp_tok
+        p_tok=$(echo "$resp_json" | jq -r '.usage.prompt_tokens // 0' 2>/dev/null)
+        comp_tok=$(echo "$resp_json" | jq -r '.usage.completion_tokens // 0' 2>/dev/null)
+        if [ "$p_tok" -gt 0 ]; then
+            running_tokens=$((p_tok + comp_tok + kv_prefix_tokens))
+            _subagent_log_event "$sub_id" "TELEMETRY" "Slot tokens: $running_tokens (prompt: $p_tok, comp: $comp_tok, kv_prefix: $kv_prefix_tokens)" "$sub_fifo"
+        fi
+
+        # Autonomous per-slot auto-compaction trigger (18k out of 24k slot ceiling)
+        if [ "$running_tokens" -ge 18000 ]; then
+            _subagent_compact "$sub_id" "$sub_history" "$tier_url" "$tier_model" "$sub_fifo"
+            running_tokens=4000
         fi
 
         local raw_content reasoning_content
@@ -432,10 +500,32 @@ Action: <slash-command>"
 
         _subagent_log_event "$sub_id" "ACTION" "$action" "$sub_fifo"
 
-        # Check for /respond
+        # Check for /respond with Deliverable Guard
         if [[ "$action" == /respond* ]]; then
-            final_result="${action#/respond}"
-            final_result="${final_result#"${final_result%%[![:space:]]*}"}"
+            local resp_text="${action#/respond}"
+            resp_text="${resp_text#"${resp_text%%[![:space:]]*}"}"
+
+            # Check if objective requires an upstream PR
+            local needs_upstream=0
+            if [[ "$objective" =~ (upstream|propose|PR|pull[[:space:]]request|SANDBOXES) ]]; then
+                needs_upstream=1
+            fi
+
+            # Check if PR has been issued
+            local pr_issued=0
+            if [ -f "$sub_dir/.pr_issued" ] || grep -q '/upstream propose' "$sub_dir/history.log" 2>/dev/null; then
+                pr_issued=1
+            fi
+
+            if [ "$needs_upstream" -eq 1 ] && [ "$pr_issued" -eq 0 ]; then
+                _subagent_log_event "$sub_id" "GUARD" "Blocked premature /respond: objective requires submitting an upstream PR first." "$sub_fifo"
+                obs="[GUARD NOTICE: Premature completion blocked. Your objective requires updating the file and running /upstream propose \"<title>\" --reason \"<reason>\" --metric \"<metric>\" before concluding. Proceed to execute the modifications and propose upstream.]"
+                printf "\n--- Turn %d ---\nAction: %s\nObservation:\n%s\n" "$turn" "$action" "$obs" >> "$sub_history"
+                turn=$((turn + 1))
+                continue
+            fi
+
+            final_result="$resp_text"
             [ -z "$final_result" ] && final_result="$cleaned"
             _subagent_log_event "$sub_id" "RESULT" "$final_result" "$sub_fifo"
             break
@@ -448,12 +538,12 @@ Action: <slash-command>"
         # Log observation to persistent stream
         _subagent_log_event "$sub_id" "OBSERVATION" "$obs" "$sub_fifo"
 
-        # Truncate observation to prevent context explosion in history
-        local short_obs="$obs"
-        if [ ${#short_obs} -gt 600 ]; then
-            short_obs="${short_obs:0:600}... [truncated]"
+        # Record full-fidelity observation in sub_history (soft-limit only astronomical dumps >15k chars)
+        local record_obs="$obs"
+        if [ ${#record_obs} -gt 15000 ]; then
+            record_obs="${record_obs:0:15000}... [output bounded at 15k chars for slot headroom]"
         fi
-        printf "\n--- Turn %d ---\nAction: %s\nObservation:\n%s\n" "$turn" "$action" "$short_obs" >> "$sub_history"
+        printf "\n--- Turn %d ---\nAction: %s\nObservation:\n%s\n" "$turn" "$action" "$record_obs" >> "$sub_history"
 
         turn=$((turn + 1))
     done

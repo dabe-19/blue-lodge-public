@@ -54,7 +54,12 @@ cmd_upstream() {
             local dossier="### Rationale\n${reason:-"Candidate optimization tested and validated."}\n\n### Empirical Metric Delta (The Plumb)\n${metric:-"All test suites passing in branch sandbox."}"
 
             ui_step "Submitting candidate PR upstream to 'develop'..."
-            pr_create "$curr_branch" "$title" "$dossier" "develop" "$force_local"
+            if pr_create "$curr_branch" "$title" "$dossier" "develop" "$force_local"; then
+                touch "$workdir/.pr_issued" 2>/dev/null || true
+                return 0
+            else
+                return 1
+            fi
             ;;
         *)
             ui_err "Unknown /upstream command: '$subcmd'"
