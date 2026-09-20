@@ -24,14 +24,6 @@ commands_dispatch() {
     local input="$1"
     local workdir="${2:-.}"
 
-    # Replace literal \n and \r escape sequences with actual newlines/carriage returns
-    if [[ "$input" == *'\n'* ]]; then
-        input="${input//'\n'/$'\n'}"
-    fi
-    if [[ "$input" == *'\r'* ]]; then
-        input="${input//'\r'/$'\r'}"
-    fi
-
     local _dispatch_ts
     _dispatch_ts=$(date '+%Y-%m-%d %H:%M:%S')
     
@@ -41,15 +33,39 @@ commands_dispatch() {
     local args="${input#"${_first_word}"}"
     args="${args#"${args%%[![:space:]]*}"}"
 
+    # Replace literal \n and \r escape sequences ONLY for non-shell commands.
+    # Shell commands (bash, sh) must preserve \n and \r inside script literals,
+    # regexes, and heredocs so python/bash strings are not corrupted.
+    case "$cmd" in
+        bash|sh)
+            # Preserve raw escapes in shell command payloads
+            ;;
+        *)
+            if [[ "$args" == *'\n'* ]]; then
+                args="${args//'\n'/$'\n'}"
+            fi
+            if [[ "$args" == *'\r'* ]]; then
+                args="${args//'\r'/$'\r'}"
+            fi
+            ;;
+    esac
+
     # Strip surrounding quotes from args — LLM wraps arguments in shell-style
     # quotes like /init python "pid loop tuning assistant" but slash commands
     # don't use shell parsing so the quotes come through literally.
-    # Only strip outer wrapping quotes when entire args is quoted.
-    if [[ "$args" =~ ^\"(.*)\"$ ]]; then
-        args="${BASH_REMATCH[1]}"
-    elif [[ "$args" =~ ^\'(.*)\'$ ]]; then
-        args="${BASH_REMATCH[1]}"
-    fi
+    # Only strip outer wrapping quotes when entire args is quoted and not shell command.
+    case "$cmd" in
+        bash|sh)
+            # Never strip quotes from shell commands
+            ;;
+        *)
+            if [[ "$args" =~ ^\"(.*)\"$ ]]; then
+                args="${BASH_REMATCH[1]}"
+            elif [[ "$args" =~ ^\'(.*)\'$ ]]; then
+                args="${BASH_REMATCH[1]}"
+            fi
+            ;;
+    esac
 
     # Fix missing spaces in LLM output — file extensions, code fences, asterisks.
     if declare -f tools_fix_llm_spacing &>/dev/null; then
