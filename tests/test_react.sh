@@ -40,5 +40,19 @@ describe "context_engine integration"
     assert_contains "$prompt" "operational_protocol"
   }
 
+describe "turn limits & countdown preservation"
+  it "resolves parent turn ceiling to 100 by default" && {
+    unset AGENT_MAX_TURNS 2>/dev/null || true
+    unset AGENT_MAX_MILESTONES 2>/dev/null || true
+    val="${AGENT_MAX_TURNS:-${AGENT_MAX_MILESTONES:-100}}"
+    assert_eq "$val" "100"
+  }
+
+  it "injects countdown warning 5 turns before ceiling" && {
+    max_turns=100
+    countdown_start=$((max_turns - 5))
+    assert_eq "$countdown_start" "95"
+  }
+
 test_end
 

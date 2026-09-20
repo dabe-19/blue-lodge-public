@@ -99,6 +99,21 @@ CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
     VALUES (new.id, new.source, new.section, new.content);
 END;
 
+-- AST Code Symbols Table
+CREATE TABLE IF NOT EXISTS code_symbols (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol_name TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    start_line INTEGER NOT NULL,
+    end_line INTEGER NOT NULL,
+    lang TEXT NOT NULL DEFAULT 'bash',
+    mtime INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_code_symbols_name ON code_symbols(symbol_name);
+CREATE INDEX IF NOT EXISTS idx_code_symbols_file ON code_symbols(file_path);
+
+
 -- Routing/evaluation trace (strict allowlist fields)
 CREATE TABLE IF NOT EXISTS routing_eval_trace (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1943,4 +1958,94 @@ SQL
 
     printf '%s\n' "$_rm_json"
 }
+
+# ── AST Code Symbol Indexing & Fast Retrieval ───────────────────────
+recall_symbol_sync() {
+    local target_file="$1"
+    [ ! -f "$target_file" ] && return 1
+
+    recall_init || return 1
+
+    local abs_path
+    abs_path=$(readlink -f "$target_file" 2>/dev/null || echo "$target_file")
+    local cur_mtime
+    cur_mtime=$(stat -c %Y "$abs_path" 2>/dev/null || stat -f %m "$abs_path" 2>/dev/null || echo 0)
+
+    # Check if file has already been indexed at this mtime
+    local last_mtime
+    last_mtime=$(sqlite3 "$RECALL_DB" "SELECT mtime FROM code_symbols WHERE file_path = '$abs_path' LIMIT 1;" 2>/dev/null || true)
+    if [ -n "$last_mtime" ] && [ "$last_mtime" -eq "$cur_mtime" ]; then
+        return 0
+    fi
+
+    # Extract symbols using treesitter_extract_symbols
+    source "$LODGE_DIR/lib/treesitter.sh" 2>/dev/null || true
+    local symbols
+    symbols=$(treesitter_extract_symbols "$abs_path")
+    [ -z "$symbols" ] && return 0
+
+    # Delete existing entries for this file
+    sqlite3 "$RECALL_DB" "DELETE FROM code_symbols WHERE file_path = '$abs_path';" 2>/dev/null || true
+
+    # Prepare SQL batch insert
+    local sql_batch="BEGIN TRANSACTION;"
+    while IFS=$'\t' read -r sym_name start_l end_l sym_lang; do
+        [ -z "$sym_name" ] && continue
+        # Escape single quotes in symbol name
+        sym_name="${sym_name//\'/\'\'}"
+        sql_batch+="INSERT INTO code_symbols (symbol_name, file_path, start_line, end_line, lang, mtime) VALUES ('$sym_name', '$abs_path', $start_l, $end_l, '$sym_lang', $cur_mtime);"
+    done <<< "$symbols"
+    sql_batch+="COMMIT;"
+
+    sqlite3 "$RECALL_DB" "$sql_batch" 2>/dev/null || true
+}
+
+recall_symbol_get() {
+    local symbol_name="$1"
+    local target_file="${2:-}"
+
+    if [ -z "$symbol_name" ]; then
+        echo "Error: symbol_name required"
+        return 1
+    fi
+
+    recall_init || return 1
+
+    # If target_file provided, sync first
+    if [ -n "$target_file" ] && [ -f "$target_file" ]; then
+        recall_symbol_sync "$target_file"
+    fi
+
+    local query="SELECT file_path, start_line, end_line FROM code_symbols WHERE symbol_name = '$symbol_name'"
+    if [ -n "$target_file" ]; then
+        local abs_path
+        abs_path=$(readlink -f "$target_file" 2>/dev/null || echo "$target_file")
+        query+=" AND file_path = '$abs_path'"
+    fi
+    query+=" LIMIT 1;"
+
+    local res
+    res=$(sqlite3 -separator '|' "$RECALL_DB" "$query" 2>/dev/null)
+    if [ -z "$res" ]; then
+        # Fallback to direct treesitter_symbol if not indexed yet
+        if [ -n "$target_file" ] && [ -f "$target_file" ]; then
+            source "$LODGE_DIR/lib/treesitter.sh" 2>/dev/null || true
+            treesitter_symbol "$target_file" "$symbol_name"
+            return $?
+        fi
+        echo "Symbol '$symbol_name' not found in index."
+        return 1
+    fi
+
+    local fpath start_l end_l
+    IFS='|' read -r fpath start_l end_l <<< "$res"
+
+    if [ ! -f "$fpath" ]; then
+        echo "File '$fpath' not found on disk."
+        return 1
+    fi
+
+    sed -n "${start_l},${end_l}p" "$fpath"
+}
+
 

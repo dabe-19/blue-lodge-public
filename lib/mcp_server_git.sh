@@ -377,6 +377,67 @@ _TOOLS_JSON='[
       },
       "required": ["url"]
     }
+  },
+  {
+    "name": "git_worktree_spawn",
+    "description": "Spawn an isolated git worktree sandbox on a dedicated branch for child subagent execution.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "child_id": { "type": "string", "description": "Unique identifier for the child subagent" },
+        "branch": { "type": "string", "description": "Branch name (default: subagent/<child_id>)" },
+        "base_dir": { "type": "string", "description": "Base directory for sandbox worktree (default: .sandboxes)" }
+      },
+      "required": ["child_id"]
+    }
+  },
+  {
+    "name": "git_child_diff",
+    "description": "Show the diff between parent HEAD and a child subagent worktree branch.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "child_id": { "type": "string", "description": "Unique child subagent identifier" },
+        "stat_only": { "type": "boolean", "description": "Return short diffstat only" }
+      },
+      "required": ["child_id"]
+    }
+  },
+  {
+    "name": "git_child_patch",
+    "description": "Apply an AST-validated patch to a specific file inside an in-flight child subagent worktree.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "child_id": { "type": "string", "description": "Unique child subagent identifier" },
+        "file_path": { "type": "string", "description": "Relative file path inside child worktree" },
+        "patch_content": { "type": "string", "description": "New content to write to the file" }
+      },
+      "required": ["child_id", "file_path", "patch_content"]
+    }
+  },
+  {
+    "name": "git_child_merge",
+    "description": "Merge a child subagent worktree branch into the active branch.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "child_id": { "type": "string", "description": "Unique child subagent identifier" },
+        "strategy": { "type": "string", "description": "Merge strategy: merge (default) or squash", "enum": ["merge", "squash"] }
+      },
+      "required": ["child_id"]
+    }
+  },
+  {
+    "name": "git_worktree_reap",
+    "description": "Cleanly remove a child subagent worktree and delete its dedicated branch.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "child_id": { "type": "string", "description": "Unique child subagent identifier" }
+      },
+      "required": ["child_id"]
+    }
   }
 ]'
 
@@ -835,6 +896,116 @@ _handle_tool_call() {
                 '{url: $url, path: (if $path == "" then null else $path end)}')
             # Re-dispatch to git_clone
             _handle_tool_call "$id" "git_clone" "$clone_args"
+            ;;
+
+        git_worktree_spawn)
+            local child_id branch base_dir wt_path
+            child_id=$(printf '%s' "$arguments" | $_JQ -r '.child_id // empty' 2>/dev/null)
+            child_id="${child_id//[^a-zA-Z0-9_-]/}"
+            branch=$(printf '%s' "$arguments" | $_JQ -r '.branch // empty' 2>/dev/null)
+            base_dir=$(printf '%s' "$arguments" | $_JQ -r '.base_dir // empty' 2>/dev/null)
+            if [ -z "$child_id" ]; then
+                _respond_error "$id" -32602 "child_id required"
+                return
+            fi
+            [ -z "$branch" ] && branch="subagent/$child_id"
+            [ -z "$base_dir" ] && base_dir="$LODGE_DIR/.sandboxes"
+            wt_path="$base_dir/$child_id"
+
+            mkdir -p "$base_dir" 2>/dev/null || true
+            local out err_code=0
+            out=$(git -C "$LODGE_DIR" worktree add -b "$branch" "$wt_path" 2>&1) || err_code=$?
+            if [ "$err_code" -ne 0 ]; then
+                _respond_result "$id" "$(_text_content "ERROR: Failed to create git worktree: $out")"
+                return
+            fi
+            mkfifo "$wt_path/stream.fifo" 2>/dev/null || true
+            mkfifo "$wt_path/control.fifo" 2>/dev/null || true
+            _respond_result "$id" "$(_text_content "Git worktree successfully spawned at $wt_path on branch $branch")"
+            ;;
+
+        git_child_diff)
+            local child_id stat_only branch
+            child_id=$(printf '%s' "$arguments" | $_JQ -r '.child_id // empty' 2>/dev/null)
+            child_id="${child_id//[^a-zA-Z0-9_-]/}"
+            stat_only=$(printf '%s' "$arguments" | $_JQ -r '.stat_only // false' 2>/dev/null)
+            if [ -z "$child_id" ]; then
+                _respond_error "$id" -32602 "child_id required"
+                return
+            fi
+            branch="subagent/$child_id"
+            local diff_cmd=(git -C "$LODGE_DIR" diff HEAD.."$branch")
+            [ "$stat_only" = "true" ] && diff_cmd+=(--stat)
+            local out
+            out=$("${diff_cmd[@]}" 2>&1)
+            [ -z "$out" ] && out="No differences between HEAD and $branch."
+            _respond_result "$id" "$(_text_content "$out")"
+            ;;
+
+        git_child_patch)
+            local child_id file_path patch_content target_file
+            child_id=$(printf '%s' "$arguments" | $_JQ -r '.child_id // empty' 2>/dev/null)
+            child_id="${child_id//[^a-zA-Z0-9_-]/}"
+            file_path=$(printf '%s' "$arguments" | $_JQ -r '.file_path // empty' 2>/dev/null)
+            patch_content=$(printf '%s' "$arguments" | $_JQ -r '.patch_content // empty' 2>/dev/null)
+            if [ -z "$child_id" ] || [ -z "$file_path" ]; then
+                _respond_error "$id" -32602 "child_id and file_path required"
+                return
+            fi
+            if [[ "$file_path" == *".."* ]] || [[ "$file_path" == /* ]]; then
+                _respond_error "$id" -32602 "Invalid file path (path traversal forbidden)"
+                return
+            fi
+            target_file="$LODGE_DIR/.sandboxes/$child_id/$file_path"
+            if [ ! -f "$target_file" ]; then
+                _respond_result "$id" "$(_text_content "ERROR: Target file not found in child sandbox: $file_path")"
+                return
+            fi
+            source "$LODGE_DIR/lib/treesitter.sh" 2>/dev/null || true
+            if declare -f treesitter_validate &>/dev/null; then
+                local v_err
+                v_err=$(treesitter_validate "$patch_content" "$(treesitter_detect_lang "$target_file")" 2>&1) || {
+                    _respond_result "$id" "$(_text_content "ERROR: Pre-flight syntax validation failed: $v_err")"
+                    return
+                }
+            fi
+            printf '%s\n' "$patch_content" > "$target_file"
+            _respond_result "$id" "$(_text_content "Successfully patched $file_path in child sandbox $child_id")"
+            ;;
+
+        git_child_merge)
+            local child_id strategy branch
+            child_id=$(printf '%s' "$arguments" | $_JQ -r '.child_id // empty' 2>/dev/null)
+            child_id="${child_id//[^a-zA-Z0-9_-]/}"
+            strategy=$(printf '%s' "$arguments" | $_JQ -r '.strategy // "merge"' 2>/dev/null)
+            if [ -z "$child_id" ]; then
+                _respond_error "$id" -32602 "child_id required"
+                return
+            fi
+            branch="subagent/$child_id"
+            local out
+            if [ "$strategy" = "squash" ]; then
+                out=$(git -C "$LODGE_DIR" merge --squash "$branch" 2>&1)
+            else
+                out=$(git -C "$LODGE_DIR" merge --no-ff -m "Merge subagent deliverable ($child_id)" "$branch" 2>&1)
+            fi
+            _respond_result "$id" "$(_text_content "Merge result: $out")"
+            ;;
+
+        git_worktree_reap)
+            local child_id wt_path branch
+            child_id=$(printf '%s' "$arguments" | $_JQ -r '.child_id // empty' 2>/dev/null)
+            child_id="${child_id//[^a-zA-Z0-9_-]/}"
+            if [ -z "$child_id" ]; then
+                _respond_error "$id" -32602 "child_id required"
+                return
+            fi
+            wt_path="$LODGE_DIR/.sandboxes/$child_id"
+            branch="subagent/$child_id"
+            git -C "$LODGE_DIR" worktree remove --force "$wt_path" 2>/dev/null || rm -rf "$wt_path" 2>/dev/null || true
+            git -C "$LODGE_DIR" branch -D "$branch" 2>/dev/null || true
+            git -C "$LODGE_DIR" worktree prune 2>/dev/null || true
+            _respond_result "$id" "$(_text_content "Worktree $wt_path and branch $branch cleanly reaped.")"
             ;;
 
         *)

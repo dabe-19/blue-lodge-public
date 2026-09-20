@@ -48,6 +48,10 @@ export LODGE_PLATFORM LODGE_CLOUD_ONLY
 export GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-$LODGE_DIR/.george}"
 export LODGE_SANDBOXES="${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}"
 export LODGE_HISTORY_FILE="${LODGE_HISTORY_FILE:-$LODGE_DIR/.lodge_history}"
+export AGENT_PLAN_STEPS="${AGENT_PLAN_STEPS:-6}"
+export AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-40}"
+export AGENT_MAX_TURNS="${AGENT_MAX_TURNS:-100}"
+export AGENT_CHILD_MAX_TURNS="${AGENT_CHILD_MAX_TURNS:-50}"
 
 # ── Source Libraries ───────────────────────────────────────────
 source "$LODGE_DIR/lib/ui.sh"
@@ -87,6 +91,9 @@ source "$LODGE_DIR/lib/email.sh"
 source "$LODGE_DIR/lib/mqtt.sh"
 source "$LODGE_DIR/lib/git.sh"
 source "$LODGE_DIR/lib/transcript.sh"
+
+# Audit and reap any abandoned worktrees / orphaned subagents from prior runs
+declare -f subagents_reap_orphans &>/dev/null && subagents_reap_orphans
 
 # ── Graceful Cancellation ─────────────────────────────────────
 # Tracks whether we're in task execution so Ctrl+C behaves smartly:
@@ -176,6 +183,8 @@ _lodge_exit_cleanup() {
     pkill -f "curl.*api\.openai\.com" 2>/dev/null || true
     # Stop MCP servers
     declare -f _mcp_cleanup &>/dev/null && _mcp_cleanup
+    # Reap any active subagent processes and worktrees
+    declare -f subagents_cleanup_all &>/dev/null && subagents_cleanup_all
     # Clean temp files
     rm -f "${TMPDIR:-/tmp}"/.lodge-fifo-*-$$ 2>/dev/null
     rm -f "${TMPDIR:-/tmp}"/.lodge-cancel-$$ 2>/dev/null
@@ -947,6 +956,13 @@ _cmd_limits() {
             else
                 _limits_set AGENT_MAX_STEPS "Milestones" "$value" 1 100
             fi ;;
+        turns)
+            if [ -z "$value" ]; then
+                ui_info "Parent agent max turns: ${AGENT_MAX_TURNS:-100} (default: 100)"
+                ui_info "Child subagent max turns: ${AGENT_CHILD_MAX_TURNS:-50} (default: 50)"
+            else
+                _limits_set AGENT_MAX_TURNS "Parent turns" "$value" 1 500
+            fi ;;
         inner)
             if [ -z "$value" ]; then
                 ui_info "Inner loop retries: $AGENT_INNER_LOOPS (default: 6)"
@@ -1428,6 +1444,8 @@ _cmd_limits() {
             AGENT_PLAN_STEPS=6
             AGENT_INNER_LOOPS=6
             AGENT_MAX_STEPS=40
+            AGENT_MAX_TURNS=100
+            AGENT_CHILD_MAX_TURNS=50
             AGENT_MAX_DEPTH=3
             AGENT_FILE_EXPAND=1
             AGENT_FILE_EXPAND_CHARS=1000
@@ -1676,6 +1694,8 @@ _cmd_limits() {
         "")
             ui_section "Agent Limits"
             printf "  %-22s %s\n" "Plan steps/subtask:" "$AGENT_PLAN_STEPS  (default: 6)"
+            printf "  %-22s %s\n" "Parent ReAct turns:" "${AGENT_MAX_TURNS:-100}  (default: 100)"
+            printf "  %-22s %s\n" "Child worker turns:" "${AGENT_CHILD_MAX_TURNS:-50}  (default: 50)"
             local _expand_show="disabled"
             [ "${AGENT_HONEYDEW_EXPAND:-1}" -eq 1 ] && _expand_show="enabled"
             printf "  %-22s %s\n" "Honeydew expansion:" "$_expand_show  (default: enabled)"
@@ -3476,7 +3496,33 @@ _cmd_grep() {
     # ── Build grep command (prefer ripgrep if available) ───────
     local -a cmd=()
     if command -v rg &>/dev/null; then
-        cmd=(rg -n --no-heading)
+        cmd=(rg -n --no-heading --hidden)
+        cmd+=(
+            --glob '!**/.git/**'
+            --glob '!**/node_modules/**'
+            --glob '!**/__pycache__/**'
+            --glob '!**/.venv/**'
+            --glob '!**/target/**'
+            --glob '!**/.mypy_cache/**'
+            --glob '!**/.pytest_cache/**'
+            --glob '!**/.tox/**'
+            --glob '!**/.eggs/**'
+            --glob '!**/.lodge-snapshots/**'
+            --glob '!**/.keyring/**'
+            --glob '!**/.vault/**'
+            --glob '!**/cookies/**'
+            --glob '!**/cache/**'
+            --glob '!**/backups/**'
+            --glob '!**/mcp/**'
+            --glob '!**/keys.conf'
+            --glob '!**/lodge.conf'
+            --glob '!**/remote.conf'
+            --glob '!**/*.db'
+            --glob '!**/*.db-journal'
+            --glob '!**/.lodge.lock'
+            --glob '!**/.recall_mtimes'
+            --glob '!**/routing_trace.jsonl'
+        )
         [ -t 1 ] && cmd+=(--color=always)
         cmd+=("${grep_flags[@]}")
         cmd+=("-e" "$pattern" "$search_path")

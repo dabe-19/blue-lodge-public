@@ -125,9 +125,14 @@ _react_parse_action() {
 react_run() {
     local goal="$1"
     local workdir="${2:-$PWD}"
-    local max_turns="${3:-${AGENT_MAX_MILESTONES:-${AGENT_PLAN_STEPS:-15}}}"
+    local max_turns="${3:-${AGENT_MAX_TURNS:-${AGENT_MAX_MILESTONES:-100}}}"
     local agent_temp="${AGENT_LLM_TEMPERATURE:-0.2}"
-    local agent_max_tok="${AGENT_MAX_TOKENS:-2048}"
+    local agent_max_tok="${AGENT_MAX_TOKENS:-4096}"
+
+    if [ -z "$goal" ]; then
+        ui_err "Task description required."
+        return 1
+    fi
 
     # 1. Cascade to highest active endpoint tier
     if ! endpoints_cascade; then
@@ -212,6 +217,14 @@ react_run() {
     while [ "$turn" -le "$max_turns" ]; do
         printf "\n${C_BOLD}${C_CYAN}── Turn %d/%d ──────────────────────────────${C_RESET}\n" "$turn" "$max_turns"
 
+        # 5-turn countdown alert before reaching max turns
+        if [ "$turn" -ge "$((max_turns - 5))" ]; then
+            local rem=$((max_turns - turn))
+            ui_warn "Approaching turn ceiling: Turn $turn/$max_turns ($rem turn(s) remaining)."
+            jq --arg msg "[SYSTEM NOTICE: APPROACHING TURN CEILING (Turn $turn/$max_turns, $rem turn(s) remaining). Cease starting new exploratory steps. Consolidate deliverables, commit milestone reflection to .george/journal.md, preserve active state into .george/memories/, and provide your concluding response.]" \
+                '. += [{"role": "system", "content": $msg}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+        fi
+
         # Check compaction threshold
         if [ "$running_tokens" -ge "$ACTIVE_ENDPOINT_COMPACT_TOKENS" ]; then
             _react_compact_messages "$session_dir" "$ACTIVE_ENDPOINT_URL" "$workdir"
@@ -250,7 +263,14 @@ react_run() {
             think_mode=0
         fi
 
-        # Execute real-time streaming SSE pipeline
+        # Detect interactive/unbuffered awk support (-W interactive for mawk on Termux/Ubuntu)
+        local _awk_opt=""
+        awk -W interactive 'BEGIN {exit 0}' 2>/dev/null && _awk_opt="-W interactive"
+
+        # Launch ambient craftsman prefill ticker during prompt evaluation
+        declare -f ui_prefill_ticker_start &>/dev/null && ui_prefill_ticker_start
+
+        # Execute real-time streaming SSE pipeline (direct stream_cache writing eliminates tee buffer)
         curl -s -N --max-time "$req_timeout" "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
             -H "Content-Type: application/json" \
             -d "$payload" 2>/dev/null | \
@@ -269,11 +289,19 @@ react_run() {
             else
                 empty
             end' 2>/dev/null | \
-        tee "$stream_cache" | \
-        awk -v think_mode="$think_mode" '
+        awk -v think_mode="$think_mode" -v sc="$stream_cache" -v pid="$$" $_awk_opt '
         BEGIN {
             color = (think_mode == 2 ? "\033[36m" : "\033[90m");
             in_thought = 0;
+            got_chunk = 0;
+        }
+        {
+            if (!got_chunk) {
+                got_chunk = 1;
+                system("kill $(cat /tmp/.lodge_prefill_ticker_" pid " 2>/dev/null) 2>/dev/null; printf \"\\r\\033[2K\" > /dev/stderr");
+            }
+            print $0 > sc;
+            fflush(sc);
         }
         /"type":"thought"/ {
             if (think_mode > 0) {
@@ -308,6 +336,7 @@ react_run() {
                 printf "\033[0m\n";
             }
         }'
+        declare -f ui_prefill_ticker_stop &>/dev/null && ui_prefill_ticker_stop
 
         if [ ! -s "$stream_cache" ]; then
             # Graceful fallback: synchronous non-stream request
@@ -401,6 +430,10 @@ react_run() {
                 echo "Tool Call: $c_name ($c_args)" >> "$history_file"
                 declare -f transcript_log &>/dev/null && transcript_log "tool_call" "$c_name: $c_args"
 
+                if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
+                    printf "   ${C_BOLD}${C_BLUE}[DEBUG: Tool Args]${C_RESET} %s\n" "$c_args"
+                fi
+
                 local tool_resp
                 tool_resp=$(native_tools_dispatch "$c_id" "$c_name" "$c_args" "$workdir")
 
@@ -420,10 +453,16 @@ react_run() {
                     '.completed_milestones += [{"timestamp": $ts, "tool": $tool, "summary": $sum}]' \
                     "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
 
-                # Brief UI preview
-                local preview
-                preview=$(echo "$resp_content" | head -n 3 | tr '\n' ' ')
-                printf "${C_DIM}  ↳ Result: %s${C_RESET}\n" "$preview"
+                # Brief UI preview or full debug observation
+                if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
+                    printf "   ${C_BOLD}${C_GRAY}[DEBUG: Observation (${#resp_content} chars)]${C_RESET}\n%s\n" "$resp_content"
+                else
+                    local preview
+                    preview=$(echo "$resp_content" | head -n 3 | tr '\n' ' ')
+                    printf "${C_DIM}  ↳ Result: %s${C_RESET}\n" "$preview"
+                fi
+
+                declare -f transcript_log_jsonl &>/dev/null && transcript_log_jsonl "$goal" "$think_content" "${tool_name}(${tool_args})" "$resp_content"
             done
 
             turn=$((turn + 1))
@@ -522,16 +561,17 @@ react_run() {
         turn=$((turn + 1))
     done
 
-    ui_warn "Task reached maximum turns ($max_turns)."
-    _react_trace "$workdir" "task_halted" "$(jq -cn --arg goal "$goal" --arg reason "max_turns" '{goal:$goal, reason:$reason}')"
-    jq '.status = "MAX_TURNS_EXCEEDED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
+    ui_warn "Task reached turn ceiling ($max_turns). Preserving active state and memory..."
+    journal_write "reflection" "Task paused at turn ceiling ($max_turns): $goal." 2>/dev/null || true
+    _react_trace "$workdir" "task_halted" "$(jq -cn --arg goal "$goal" --arg reason "turn_ceiling_preserved" '{goal:$goal, reason:$reason}')"
+    jq '.status = "TURN_CEILING_PRESERVED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
     declare -f memory_register_files &>/dev/null && memory_register_files "$workdir"
     if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
         local _tpath
         _tpath=$(transcript_stop)
         [ -n "$_tpath" ] && ui_dim "  Transcript: $_tpath"
     fi
-    return 1
+    return 0
 }
 
 # Alias agent_run to react_run

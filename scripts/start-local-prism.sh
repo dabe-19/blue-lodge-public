@@ -135,10 +135,13 @@ MODEL_DIR="$(dirname "$GGUF_PATH")"
 MODEL_FILE="$(basename "$GGUF_PATH")"
 
 # Build runtime flags for llama-server-prism
-CTX_SIZE="${CTX_SIZE:-8192}"
+CTX_SIZE="${CTX_SIZE:-49152}"
+PARALLEL="${PARALLEL:-2}"
 GPU_LAYERS="${GPU_LAYERS:-99}"
 BATCH_SIZE="${BATCH_SIZE:-2048}"
 UBATCH_SIZE="${UBATCH_SIZE:-1024}"
+CTK="${CTK:-q4_0}"
+CTV="${CTV:-q4_0}"
 EXTRA_FLAGS=(
     -m "/models/$MODEL_FILE"
     -ngl "$GPU_LAYERS"
@@ -147,7 +150,9 @@ EXTRA_FLAGS=(
     -ub "$UBATCH_SIZE"
     --flash-attn on
     --no-mmap
-    --parallel 1
+    --parallel "$PARALLEL"
+    -ctk "$CTK"
+    -ctv "$CTV"
     --jinja
     --host 0.0.0.0
     --port "$PORT"
@@ -171,14 +176,6 @@ if [ -n "$MMPROJ_PATH" ]; then
     MMPROJ_FILE="$(basename "$MMPROJ_PATH")"
     _ok "Multimodal vision projector detected: $MMPROJ_FILE"
     EXTRA_FLAGS+=(--mmproj "/models/$MMPROJ_FILE" --mmproj-offload)
-fi
-
-# Optional KV Cache quantization (e.g. CTK=q4_0 CTV=q4_0 for PQ2_0)
-if [ -n "${CTK:-}" ]; then
-    EXTRA_FLAGS+=(-ctk "$CTK")
-fi
-if [ -n "${CTV:-}" ]; then
-    EXTRA_FLAGS+=(-ctv "$CTV")
 fi
 
 # Dual GPU split if configured

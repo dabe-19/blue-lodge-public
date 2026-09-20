@@ -604,6 +604,97 @@ _NATIVE_CORE_TOOLS='[
   {
     "type": "function",
     "function": {
+      "name": "subagent_spawn",
+      "description": "Spawn an autonomous subagent inside an isolated git worktree sandbox (.sandboxes/<child_id>) with in-flight control FIFO and central registry tracking.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tier": { "type": "integer", "description": "Target tier number (e.g. 1 for CUDA workhorse, 2 for AMD, 0 for mobile edge)." },
+          "objective": { "type": "string", "description": "Specific objective and success criteria for the delegated child agent." },
+          "context": { "type": "string", "description": "Optional parent context, file paths, or instructions." },
+          "max_turns": { "type": "integer", "description": "Maximum turn ceiling for child agent (default: 50)." }
+        },
+        "required": ["tier", "objective"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subagent_status",
+      "description": "Inspect active subagent processes, turns, and execution status from central registry.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sub_id": { "type": "string", "description": "Optional child ID. If omitted, lists all active subagents." }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subagent_intervene",
+      "description": "Send real-time control directives (PAUSE, RESUME, ABORT) to an in-flight child subagent via its control FIFO.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sub_id": { "type": "string", "description": "Target child subagent ID." },
+          "command": { "type": "string", "description": "Directive: PAUSE, RESUME, or ABORT.", "enum": ["PAUSE", "RESUME", "ABORT"] }
+        },
+        "required": ["sub_id", "command"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subagent_await",
+      "description": "Wait for a running child subagent to complete and retrieve its final synthesized deliverable.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sub_id": { "type": "string", "description": "Target child subagent ID." },
+          "timeout_seconds": { "type": "integer", "description": "Maximum seconds to wait (default: 120)." }
+        },
+        "required": ["sub_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "code_symbol_read",
+      "description": "Retrieve the exact lines of code defining a named function or class via SQLite symbol index and Tree-sitter AST slicing without reading the whole file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "symbol_name": { "type": "string", "description": "Name of function, method, or class to inspect." },
+          "file_path": { "type": "string", "description": "Optional relative path to file containing symbol." }
+        },
+        "required": ["symbol_name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "code_symbol_patch",
+      "description": "Apply an AST-validated patch to a named function in a file on disk.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file_path": { "type": "string", "description": "Relative file path." },
+          "symbol_name": { "type": "string", "description": "Name of function to replace." },
+          "new_symbol_code": { "type": "string", "description": "New code for the function." }
+        },
+        "required": ["file_path", "symbol_name", "new_symbol_code"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "reflexive_status",
       "description": "Inspect the reflexive intelligence layer: Soul Consensus Gate, self-improving prompt grades, adaptive token budgets, and metacognitive self-model state.",
       "parameters": {
@@ -1616,6 +1707,135 @@ $_ts_v_err
                 task=$(echo "$args_json" | jq -r '.task // empty')
                 output=$(subagents_spawn "$tier" "$task" "Delegated from primary" "$workdir" 2>&1)
                 exit_code=$?
+                ;;
+            subagent_spawn)
+                local tier objective context max_turns
+                tier=$(echo "$args_json" | jq -r '.tier // 1')
+                objective=$(echo "$args_json" | jq -r '.objective // empty')
+                context=$(echo "$args_json" | jq -r '.context // ""')
+                max_turns=$(echo "$args_json" | jq -r '.max_turns // 50')
+                if [ -z "$objective" ]; then
+                    output="ERROR: objective is required"
+                    exit_code=1
+                else
+                    output=$(subagents_spawn "$tier" "$objective" "$context" "$workdir" "$max_turns" 2>&1)
+                    exit_code=$?
+                fi
+                ;;
+            subagent_status)
+                local sub_id
+                sub_id=$(echo "$args_json" | jq -r '.sub_id // empty')
+                if [ -n "$sub_id" ]; then
+                    local reg_file
+                    reg_file=$(subagents_registry_file)
+                    output=$(jq --arg id "$sub_id" '.[] | select(.id == $id)' "$reg_file" 2>/dev/null)
+                    [ -z "$output" ] && output="Subagent '$sub_id' not found in registry."
+                else
+                    output=$(subagents_get_active 2>&1)
+                fi
+                exit_code=0
+                ;;
+            subagent_intervene)
+                local sub_id cmd fifo
+                sub_id=$(echo "$args_json" | jq -r '.sub_id // empty')
+                cmd=$(echo "$args_json" | jq -r '.command // empty')
+                fifo="$LODGE_DIR/.sandboxes/$sub_id/control.fifo"
+                if [ -z "$sub_id" ] || [ -z "$cmd" ]; then
+                    output="ERROR: sub_id and command are required"
+                    exit_code=1
+                elif [ ! -p "$fifo" ]; then
+                    output="ERROR: Control FIFO not found for subagent $sub_id (may not be active)"
+                    exit_code=1
+                else
+                    printf '%s\n' "$cmd" > "$fifo" 2>/dev/null || true
+                    output="Command '$cmd' transmitted to subagent $sub_id control FIFO."
+                    exit_code=0
+                fi
+                ;;
+            subagent_await)
+                local sub_id timeout elapsed=0 reg_file
+                sub_id=$(echo "$args_json" | jq -r '.sub_id // empty')
+                timeout=$(echo "$args_json" | jq -r '.timeout_seconds // 120')
+                reg_file=$(subagents_registry_file)
+                if [ -z "$sub_id" ]; then
+                    output="ERROR: sub_id required"
+                    exit_code=1
+                else
+                    while [ "$elapsed" -lt "$timeout" ]; do
+                        local st
+                        st=$(jq -r --arg id "$sub_id" '.[] | select(.id == $id) | .status' "$reg_file" 2>/dev/null)
+                        if [ "$st" = "COMPLETED" ] || [ "$st" = "FAILED" ] || [ "$st" = "ORPHAN_REAPED" ] || [ "$st" = "KILLED_EXIT" ]; then
+                            local sub_res
+                            sub_res=$(jq -r --arg id "$sub_id" '.[] | select(.id == $id) | .result' "$reg_file" 2>/dev/null)
+                            output="Subagent $sub_id concluded with status $st: $sub_res"
+                            break
+                        fi
+                        sleep 1
+                        elapsed=$((elapsed + 1))
+                    done
+                    [ -z "$output" ] && output="Timed out waiting for subagent $sub_id after ${timeout}s"
+                    exit_code=0
+                fi
+                ;;
+            code_symbol_read)
+                local sym fpath
+                sym=$(echo "$args_json" | jq -r '.symbol_name // empty')
+                fpath=$(echo "$args_json" | jq -r '.file_path // empty')
+                if [ -z "$sym" ]; then
+                    output="ERROR: symbol_name required"
+                    exit_code=1
+                else
+                    local target=""
+                    [ -n "$fpath" ] && target="$workdir/$fpath"
+                    output=$(recall_symbol_get "$sym" "$target" 2>&1)
+                    exit_code=$?
+                fi
+                ;;
+            code_symbol_patch)
+                local fpath sym code
+                fpath=$(echo "$args_json" | jq -r '.file_path // empty')
+                sym=$(echo "$args_json" | jq -r '.symbol_name // empty')
+                code=$(echo "$args_json" | jq -r '.new_symbol_code // empty')
+                if [ -z "$fpath" ] || [ -z "$sym" ] || [ -z "$code" ]; then
+                    output="ERROR: file_path, symbol_name, and new_symbol_code are required"
+                    exit_code=1
+                else
+                    local target="$workdir/$fpath"
+                    if [ ! -f "$target" ]; then
+                        output="ERROR: File not found: $fpath"
+                        exit_code=1
+                    else
+                        source "$LODGE_DIR/lib/treesitter.sh" 2>/dev/null || true
+                        local v_err
+                        v_err=$(treesitter_validate "$code" "$(treesitter_detect_lang "$target")" 2>&1) || {
+                            output="ERROR: AST validation failed: $v_err"
+                            exit_code=1
+                        }
+                        if [ $exit_code -eq 0 ]; then
+                            recall_symbol_sync "$target"
+                            local range
+                            range=$(sqlite3 -separator '|' "$RECALL_DB" "SELECT start_line, end_line FROM code_symbols WHERE file_path = '$(readlink -f "$target")' AND symbol_name = '$sym' LIMIT 1;" 2>/dev/null)
+                            if [ -z "$range" ]; then
+                                output="ERROR: Symbol '$sym' not found in $fpath"
+                                exit_code=1
+                            else
+                                local sl el
+                                IFS='|' read -r sl el <<< "$range"
+                                local tmpf="${target}.tmp.$$"
+                                {
+                                    if [ "$sl" -gt 1 ]; then
+                                        sed -n "1,$((sl - 1))p" "$target"
+                                    fi
+                                    printf '%s\n' "$code"
+                                    sed -n "$((el + 1)),\$p" "$target"
+                                } > "$tmpf" && mv "$tmpf" "$target"
+                                recall_symbol_sync "$target"
+                                output="Successfully patched symbol '$sym' in $fpath (lines $sl-$el)"
+                                exit_code=0
+                            fi
+                        fi
+                    fi
+                fi
                 ;;
             reflexive_status)
                 if declare -f reflexive_status &>/dev/null; then

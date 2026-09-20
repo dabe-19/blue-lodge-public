@@ -335,3 +335,81 @@ treesitter_format_tools_idl() {
         "}"
     ' 2>/dev/null
 }
+
+# ── Symbol Indexing Extraction ──────────────────────────────────────
+# Extracts all function/class symbols with line ranges for SQLite indexing.
+# Output format per line: <symbol_name>\t<start_line>\t<end_line>\t<lang>
+treesitter_extract_symbols() {
+    local file="$1"
+    [ ! -f "$file" ] && return 1
+
+    local lang
+    lang=$(treesitter_detect_lang "$file")
+
+    case "$lang" in
+        bash|sh)
+            awk '
+                /^[[:space:]]*(function[[:space:]]+)?[a-zA-Z0-9_]+[[:space:]]*\(\)[[:space:]]*\{?/ {
+                    line = $0
+                    gsub(/^[[:space:]]*(function[[:space:]]+)?/, "", line)
+                    sub(/[[:space:]]*\(\).*/, "", line)
+                    sym = line
+                    start = NR
+                    in_fn = 1
+                    braces = 0
+                }
+                in_fn {
+                    n_open = gsub(/\{/, "{")
+                    n_close = gsub(/\}/, "}")
+                    braces += (n_open - n_close)
+                    if ((braces == 0 && index($0, "{") > 0) || (braces == 0 && in_fn && NR > start && $0 ~ /^[[:space:]]*\}/)) {
+                        print sym "\t" start "\t" NR "\tbash"
+                        in_fn = 0
+                    }
+                }
+            ' "$file"
+            ;;
+        python)
+            awk '
+                /^[[:space:]]*(async[[:space:]]+)?def[[:space:]]+[a-zA-Z0-9_]+[[:space:]]*\(/ || /^[[:space:]]*class[[:space:]]+[a-zA-Z0-9_]+/ {
+                    if (in_sym) {
+                        print sym "\t" start "\t" (NR - 1) "\tpython"
+                    }
+                    line = $0
+                    match(line, /^[[:space:]]*/)
+                    base_indent = RLENGTH
+                    sub(/^[[:space:]]*(async[[:space:]]+)?(def|class)[[:space:]]+/, "", line)
+                    sub(/[:(].*/, "", line)
+                    sym = line
+                    start = NR
+                    in_sym = 1
+                    next
+                }
+                in_sym {
+                    if ($0 ~ /^[[:space:]]*$/) next
+                    match($0, /^[[:space:]]*/)
+                    if (RLENGTH <= base_indent) {
+                        print sym "\t" start "\t" (NR - 1) "\tpython"
+                        in_sym = 0
+                    }
+                }
+                END {
+                    if (in_sym) {
+                        print sym "\t" start "\t" NR "\tpython"
+                    }
+                }
+            ' "$file"
+            ;;
+        *)
+            awk '
+                /^[[:space:]]*(pub[[:space:]]+)?(fn|function)[[:space:]]+[a-zA-Z0-9_]+/ {
+                    line = $0
+                    sub(/^[[:space:]]*(pub[[:space:]]+)?(fn|function)[[:space:]]+/, "", line)
+                    sub(/[\(:[:space:]].*/, "", line)
+                    print line "\t" NR "\t" NR "\tgeneric"
+                }
+            ' "$file"
+            ;;
+    esac
+}
+

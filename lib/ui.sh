@@ -350,6 +350,51 @@ ui_spinner_stop() {
     fi
 }
 
+# ── Ambient Prefill Craftsman Ticker ──────────────────────────
+_PREFILL_TICKER_PID=""
+ui_prefill_ticker_start() {
+    [ -n "$_PREFILL_TICKER_PID" ] && ui_prefill_ticker_stop
+    local _tty="${_SPINNER_TTY:-/dev/stderr}"
+    (
+        exec >/dev/null 2>/dev/null
+        local phrases=(
+            "Squaring the rough ashlar"
+            "Consulting Franklin's almanac"
+            "Aligning the 24-inch gauge"
+            "Measuring stones with the Plumb"
+            "Transmitting context across the ether"
+            "Inscribing blueprints on the trestleboard"
+            "Verifying joints with the Square"
+            "Evaluating masonry tokens"
+        )
+        local i=0
+        local n=${#phrases[@]}
+        local frames=('▲ (👁 )' '▲ (◓ )' '▲ (👁 )' '▲ ( ◓ )' '▲ (✦👁 ✦)' '▲ ( ─ )')
+        local f=0
+        while true; do
+            printf "\r %b%s%b %b%s...%b \033[K" "$C_GOLD" "${frames[$f]}" "$C_RESET" "$C_GRAY" "${phrases[$i]}" "$C_RESET" > "$_tty" 2>/dev/null
+            f=$(( (f + 1) % 6 ))
+            [ $(( f % 6 )) -eq 0 ] && i=$(( (i + 1) % n ))
+            sleep 0.35
+        done
+    ) &
+    _PREFILL_TICKER_PID=$!
+    disown "$_PREFILL_TICKER_PID" 2>/dev/null
+    echo "$_PREFILL_TICKER_PID" > "${TMPDIR:-/tmp}/.lodge_prefill_ticker_$$" 2>/dev/null
+}
+
+ui_prefill_ticker_stop() {
+    local tpid="${_PREFILL_TICKER_PID:-}"
+    [ -z "$tpid" ] && [ -f "${TMPDIR:-/tmp}/.lodge_prefill_ticker_$$" ] && tpid=$(cat "${TMPDIR:-/tmp}/.lodge_prefill_ticker_$$" 2>/dev/null)
+    if [ -n "$tpid" ]; then
+        kill "$tpid" 2>/dev/null
+        wait "$tpid" 2>/dev/null
+        _PREFILL_TICKER_PID=""
+        rm -f "${TMPDIR:-/tmp}/.lodge_prefill_ticker_$$" 2>/dev/null
+        printf "\r\033[2K" > "${_SPINNER_TTY:-/dev/stderr}" 2>/dev/null
+    fi
+}
+
 # ── Prompt ─────────────────────────────────────────────────────
 ui_prompt() {
     local project="${LODGE_PROJECT:-~}"

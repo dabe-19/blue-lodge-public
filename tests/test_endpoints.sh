@@ -10,7 +10,7 @@ describe "endpoints_init configuration"
   it "loads tier defaults properly" && {
     endpoints_init
     assert_eq "$TIER1_NAME" "cuda-workhorse"
-    assert_eq "$TIER1_CONTEXT" "32768"
+    assert_eq "$TIER1_CONTEXT" "24576"
     assert_eq "$TIER3_NAME" "frontier-sovereign"
     assert_eq "$TIER0_NAME" "edge-mobile"
   }
@@ -56,7 +56,7 @@ describe "endpoints_get_tier_info"
   it "retrieves correct metadata by tier and field" && {
     endpoints_init
     assert_eq "$(endpoints_get_tier_info 1 NAME)" "cuda-workhorse"
-    assert_eq "$(endpoints_get_tier_info 1 CONTEXT)" "32768"
+    assert_eq "$(endpoints_get_tier_info 1 CONTEXT)" "24576"
     assert_eq "$(endpoints_get_tier_info 3 NAME)" "frontier-sovereign"
   }
 
