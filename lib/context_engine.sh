@@ -37,6 +37,7 @@ context_engine_build() {
 
     local out=""
 
+    # ── TIER 1: Invariant Core (Frozen Prefix for KV Cache Reuse) ───────
     # 1. Developer Instructions & Sovereign Persona
     out+="<developer_instructions>\n"
     out+="You are George Washington, a sovereign, disciplined personal coding and engineering companion.\n"
@@ -47,65 +48,16 @@ context_engine_build() {
     out+="- Non-blocking execution: respect process isolation, sandboxing, and background workers.\n"
     out+="</developer_instructions>\n\n"
 
-    # 2. Active Environment & Telemetry
-    local os_name platform branch git_dirty git_commit
-    os_name="$(uname -s) $(uname -m) $(uname -r)"
-    platform="${LODGE_PLATFORM:-linux}"
-    branch=$(git -C "$workdir" branch --show-current 2>/dev/null || echo "not-a-git-repo")
-    git_commit=$(git -C "$workdir" rev-parse --short HEAD 2>/dev/null || echo "initial")
-    local modified_count
-    modified_count=$(git -C "$workdir" status --porcelain 2>/dev/null | wc -l || echo 0)
-    git_dirty="clean"
-    [ "$modified_count" -gt 0 ] && git_dirty="$modified_count modified/untracked files"
-
-    out+="<active_environment>\n"
-    out+="- Timestamp: $(date -Iseconds 2>/dev/null || date)\n"
-    out+="- Host System: $os_name ($platform)\n"
-    out+="- Workspace Directory: $workdir\n"
-    out+="- Git State: Branch '$branch' @ $git_commit ($git_dirty)\n"
-    out+="- Active Inference Tier: Tier $active_tier [${ACTIVE_ENDPOINT_NAME:-local}] (${ACTIVE_ENDPOINT_MODEL:-default})\n"
-    out+="- Context Window: ${ACTIVE_ENDPOINT_CONTEXT:-32768} tokens | Compaction Threshold: ${ACTIVE_ENDPOINT_COMPACT_TOKENS:-22000} tokens\n"
-    out+="- Hardware Fallback Ladder: Tier 3 (Mac Ultra M5 256GB) -> Tier 1 (Dual RTX 3060 24GB) -> Tier 2 (AMD 5700xt 8GB) -> Tier 0 (Mobile Edge)\n"
-    out+="</active_environment>\n\n"
-
-    # 3. Runtime Environments & Toolchains
-    out+="<runtime_environments>\n"
-    local rust_info py_info ts_info
-    rust_info=$(cargo --version 2>/dev/null || echo "not installed")
-    py_info=$(python3 --version 2>/dev/null || echo "not installed")
-    declare -f uv &>/dev/null || command -v uv &>/dev/null && py_info+=", uv: $(uv --version 2>/dev/null || echo yes)"
-    ts_info=""
-    command -v bun &>/dev/null && ts_info+="bun: $(bun --version 2>/dev/null), "
-    command -v deno &>/dev/null && ts_info+="deno: $(deno --version 2>/dev/null | head -1), "
-    command -v node &>/dev/null && ts_info+="node: $(node --version 2>/dev/null), "
-    command -v tsc &>/dev/null && ts_info+="tsc: $(tsc --version 2>/dev/null)"
-    [ -z "$ts_info" ] && ts_info="not installed"
-    out+="- Rust: $rust_info\n"
-    out+="- Python: $py_info\n"
-    out+="- TypeScript / JavaScript: ${ts_info%, }\n"
-    out+="</runtime_environments>\n\n"
-
-    # 4. Reflexive Intelligence & Self-Model (lib/reflexive.sh)
-    out+="<reflexive_intelligence>\n"
-    if declare -f reflexive_status &>/dev/null; then
-        local r_state
-        r_state="${_REFLEXIVE_METACOG_STATE:-OK}"
-        out+="- Metacognitive State: $r_state\n"
-        out+="- Subsystems: SoulGate=${REFLEXIVE_SOUL_GATE:-0} | PromptLearn=${REFLEXIVE_PROMPT_LEARN:-0} | AdaptTokens=${REFLEXIVE_ADAPT_TOKENS:-0} | Speculate=${REFLEXIVE_SPECULATE:-0} | SelfModel=${REFLEXIVE_SELF_MODEL:-0}\n"
-        if declare -f reflexive_prompt_success_rate &>/dev/null; then
-            out+="- Prompt Success Rate: $(reflexive_prompt_success_rate 2>/dev/null || echo 1.0)\n"
-        fi
-        if declare -f reflexive_prompt_hint &>/dev/null; then
-            local r_hint
-            r_hint=$(reflexive_prompt_hint 2>/dev/null)
-            [ -n "$r_hint" ] && out+="- Evolutionary Hint: $r_hint\n"
-        fi
-    else
-        out+="(reflexive subsystem loaded with baseline heuristics)\n"
+    # 2. Sovereign Soul (soul.md — Masonic Craftsman Identity & Inviolable Landmarks)
+    local soul_file="$LODGE_DIR/soul.md"
+    [ ! -f "$soul_file" ] && soul_file="$workdir/soul.md"
+    if [ -f "$soul_file" ]; then
+        out+="<sovereign_soul>\n"
+        out+="$(cat "$soul_file" 2>/dev/null)\n"
+        out+="</sovereign_soul>\n\n"
     fi
-    out+="</reflexive_intelligence>\n\n"
 
-    # 5. Tool Manifest (72 Categorized POSIX Tools)
+    # 3. Tool Manifest (72 Categorized POSIX Tools — Largest Static Block)
     out+="<tool_manifest>\n"
     out+="The sovereign agent environment exposes 72 native POSIX tools with zero external dependencies:\n"
     out+="## Workspace & Execution\n"
@@ -199,31 +151,15 @@ context_engine_build() {
     out+="- slash_command_exec(command): Execute any Blue Lodge slash command natively.\n"
     out+="</tool_manifest>\n\n"
 
-    # 6. MCP Knowledge Injection
-    out+="<mcp_knowledge_injection>\n"
-    if declare -f mcp_has_servers &>/dev/null && mcp_has_servers; then
-        local mcp_stat running_servers
-        mcp_stat=$(mcp_status 2>/dev/null)
-        running_servers=$(mcp_running_servers 2>/dev/null || echo "")
-        out+="Status: Active\n"
-        out+="$mcp_stat\n"
-        if [ -n "$running_servers" ]; then
-            out+="Running Server Details:\n"
-            for s in $running_servers; do
-                local tools_json
-                tools_json=$(mcp_tools_list "$s" 2>/dev/null)
-                local tool_names
-                tool_names=$(echo "$tools_json" | jq -r '.[].name' 2>/dev/null | tr '\n' ', ' | sed 's/,$//')
-                [ -z "$tool_names" ] && tool_names="(no tools registered)"
-                out+="- Server [$s]: Tools: $tool_names\n"
-            done
-        fi
-    else
-        out+="Status: No external MCP servers currently active (all 60 core tools running natively).\n"
-    fi
-    out+="</mcp_knowledge_injection>\n\n"
+    # 3. Operational Protocol
+    out+="<operational_protocol>\n"
+    out+="1. You have native tool calling enabled. When you need information or need to modify files, call the corresponding native tool.\n"
+    out+="2. Always verify facts before assuming. Inspect code before modifying it.\n"
+    out+="3. Multiple tool calls may be executed sequentially or in parallel.\n"
+    out+="4. Once all necessary actions are complete, synthesize your final response directly in clean, readable markdown.\n"
+    out+="</operational_protocol>\n\n"
 
-    # 7. Agent Swarm Identities
+    # 4. Agent Swarm Identities
     out+="<agent_swarm_identities>\n"
     out+="The Blue Lodge operates a disciplined multi-agent swarm:\n"
     out+="- The Architect: High-level system planning, decomposition, and roadmap design.\n"
@@ -236,7 +172,24 @@ context_engine_build() {
     out+="When a task benefits from parallel execution or lower latency offloading, use 'subagent_delegate'.\n"
     out+="</agent_swarm_identities>\n\n"
 
-    # 8. Active Skills & Workspace Rules
+    # 5. Runtime Environments & Toolchains
+    out+="<runtime_environments>\n"
+    local rust_info py_info ts_info
+    rust_info=$(cargo --version 2>/dev/null || echo "not installed")
+    py_info=$(python3 --version 2>/dev/null || echo "not installed")
+    declare -f uv &>/dev/null || command -v uv &>/dev/null && py_info+=", uv: $(uv --version 2>/dev/null || echo yes)"
+    ts_info=""
+    command -v bun &>/dev/null && ts_info+="bun: $(bun --version 2>/dev/null), "
+    command -v deno &>/dev/null && ts_info+="deno: $(deno --version 2>/dev/null | head -1), "
+    command -v node &>/dev/null && ts_info+="node: $(node --version 2>/dev/null), "
+    command -v tsc &>/dev/null && ts_info+="tsc: $(tsc --version 2>/dev/null)"
+    [ -z "$ts_info" ] && ts_info="not installed"
+    out+="- Rust: $rust_info\n"
+    out+="- Python: $py_info\n"
+    out+="- TypeScript / JavaScript: ${ts_info%, }\n"
+    out+="</runtime_environments>\n\n"
+
+    # 6. Active Skills & Workspace Rules
     out+="<skills_and_instructions>\n"
     local rules_found=0
     if [ -d "$LODGE_DIR/.agents/rules" ]; then
@@ -269,6 +222,40 @@ context_engine_build() {
     [ "$rules_found" -eq 0 ] && [ "$skills_found" -eq 0 ] && out+="(no custom skills or rules detected)\n"
     out+="</skills_and_instructions>\n\n"
 
+    # 7. Crypto & Services Infrastructure
+    out+="<crypto_and_services>\n"
+    out+="- Crypto Wallet Network: ${WALLET_NETWORK:-mainnet}\n"
+    local srv_dir="${GEORGE_CONFIG_DIR:-$HOME/.george}/services"
+    local srv_count=0
+    [ -d "$srv_dir" ] && srv_count=$(find "$srv_dir" -name "*.conf" 2>/dev/null | wc -l)
+    out+="- Registered Microservices: $srv_count configured\n"
+    out+="</crypto_and_services>\n\n"
+
+    # ── TIER 2: Semi-Static Project Anchor ─────────────────────────────
+    # 8. MCP Knowledge Injection
+    out+="<mcp_knowledge_injection>\n"
+    if declare -f mcp_has_servers &>/dev/null && mcp_has_servers; then
+        local mcp_stat running_servers
+        mcp_stat=$(mcp_status 2>/dev/null)
+        running_servers=$(mcp_running_servers 2>/dev/null || echo "")
+        out+="Status: Active\n"
+        out+="$mcp_stat\n"
+        if [ -n "$running_servers" ]; then
+            out+="Running Server Details:\n"
+            for s in $running_servers; do
+                local tools_json
+                tools_json=$(mcp_tools_list "$s" 2>/dev/null)
+                local tool_names
+                tool_names=$(echo "$tools_json" | jq -r '.[].name' 2>/dev/null | tr '\n' ', ' | sed 's/,$//')
+                [ -z "$tool_names" ] && tool_names="(no tools registered)"
+                out+="- Server [$s]: Tools: $tool_names\n"
+            done
+        fi
+    else
+        out+="Status: No external MCP servers currently active (all 72 core tools running natively).\n"
+    fi
+    out+="</mcp_knowledge_injection>\n\n"
+
     # 9. Project Memory & Active Milestones (GEORGE.md)
     if [ -f "$workdir/GEORGE.md" ]; then
         out+="<project_memory_and_goals>\n"
@@ -282,6 +269,7 @@ context_engine_build() {
         out+="</project_memory_and_goals>\n\n"
     fi
 
+    # ── TIER 3: Dynamic / Volatile Tail (Changes Per Query or Turn) ────
     # 10. Semantic Recall & Episodic Knowledge Injection
     out+="<semantic_recall_and_journal>\n"
     local recall_injected=0
@@ -305,22 +293,46 @@ context_engine_build() {
     [ "$recall_injected" -eq 0 ] && out+="(no historical recall matches for current query)\n"
     out+="</semantic_recall_and_journal>\n\n"
 
-    # 11. Crypto & Services Status
-    out+="<crypto_and_services>\n"
-    out+="- Crypto Wallet Network: ${WALLET_NETWORK:-mainnet}\n"
-    local srv_dir="${GEORGE_CONFIG_DIR:-$HOME/.george}/services"
-    local srv_count=0
-    [ -d "$srv_dir" ] && srv_count=$(find "$srv_dir" -name "*.conf" 2>/dev/null | wc -l)
-    out+="- Registered Microservices: $srv_count configured\n"
-    out+="</crypto_and_services>\n\n"
+    # 11. Reflexive Intelligence & Self-Model (lib/reflexive.sh)
+    out+="<reflexive_intelligence>\n"
+    if declare -f reflexive_status &>/dev/null; then
+        local r_state
+        r_state="${_REFLEXIVE_METACOG_STATE:-OK}"
+        out+="- Metacognitive State: $r_state\n"
+        out+="- Subsystems: SoulGate=${REFLEXIVE_SOUL_GATE:-0} | PromptLearn=${REFLEXIVE_PROMPT_LEARN:-0} | AdaptTokens=${REFLEXIVE_ADAPT_TOKENS:-0} | Speculate=${REFLEXIVE_SPECULATE:-0} | SelfModel=${REFLEXIVE_SELF_MODEL:-0}\n"
+        if declare -f reflexive_prompt_success_rate &>/dev/null; then
+            out+="- Prompt Success Rate: $(reflexive_prompt_success_rate 2>/dev/null || echo 1.0)\n"
+        fi
+        if declare -f reflexive_prompt_hint &>/dev/null; then
+            local r_hint
+            r_hint=$(reflexive_prompt_hint 2>/dev/null)
+            [ -n "$r_hint" ] && out+="- Evolutionary Hint: $r_hint\n"
+        fi
+    else
+        out+="(reflexive subsystem loaded with baseline heuristics)\n"
+    fi
+    out+="</reflexive_intelligence>\n\n"
 
-    # 12. Operational Protocol
-    out+="<operational_protocol>\n"
-    out+="1. You have native tool calling enabled. When you need information or need to modify files, call the corresponding native tool.\n"
-    out+="2. Always verify facts before assuming. Inspect code before modifying it.\n"
-    out+="3. Multiple tool calls may be executed sequentially or in parallel.\n"
-    out+="4. Once all necessary actions are complete, synthesize your final response directly in clean, readable markdown.\n"
-    out+="</operational_protocol>\n"
+    # 12. Active Environment & Live Telemetry (Placed last to prevent KV cache invalidation)
+    local os_name platform branch git_dirty git_commit
+    os_name="$(uname -s) $(uname -m) $(uname -r)"
+    platform="${LODGE_PLATFORM:-linux}"
+    branch=$(git -C "$workdir" branch --show-current 2>/dev/null || echo "not-a-git-repo")
+    git_commit=$(git -C "$workdir" rev-parse --short HEAD 2>/dev/null || echo "initial")
+    local modified_count
+    modified_count=$(git -C "$workdir" status --porcelain 2>/dev/null | wc -l || echo 0)
+    git_dirty="clean"
+    [ "$modified_count" -gt 0 ] && git_dirty="$modified_count modified/untracked files"
+
+    out+="<active_environment>\n"
+    out+="- Timestamp: $(date -Iseconds 2>/dev/null || date)\n"
+    out+="- Host System: $os_name ($platform)\n"
+    out+="- Workspace Directory: $workdir\n"
+    out+="- Git State: Branch '$branch' @ $git_commit ($git_dirty)\n"
+    out+="- Active Inference Tier: Tier $active_tier [${ACTIVE_ENDPOINT_NAME:-local}] (${ACTIVE_ENDPOINT_MODEL:-default})\n"
+    out+="- Context Window: ${ACTIVE_ENDPOINT_CONTEXT:-32768} tokens | Compaction Threshold: ${ACTIVE_ENDPOINT_COMPACT_TOKENS:-22000} tokens\n"
+    out+="- Hardware Fallback Ladder: Tier 3 (Mac Ultra M5 256GB) -> Tier 1 (Dual RTX 3060 24GB) -> Tier 2 (AMD 5700xt 8GB) -> Tier 0 (Mobile Edge)\n"
+    out+="</active_environment>\n"
 
     printf "%b" "$out"
 }
@@ -349,9 +361,9 @@ context_engine_debug_trace() {
     printf "\033[1;36m│\033[0m \033[1;37mNative Tools Registered:\033[0m   72 core POSIX tools \033[1;36m│\033[0m\n"
     printf "\033[1;36m└──────────────────────────────────────────────────────────────────────────────┘\033[0m\n\n"
 
-    # Print section breakdown
-    printf "\033[1;33m--- [Section Hierarchy Breakdown] ---\033[0m\n"
-    for tag in developer_instructions active_environment runtime_environments reflexive_intelligence tool_manifest mcp_knowledge_injection agent_swarm_identities skills_and_instructions project_memory_and_goals semantic_recall_and_journal crypto_and_services operational_protocol; do
+    # Print section breakdown in order of KV cache freeze hierarchy
+    printf "\033[1;33m--- [Section Hierarchy Breakdown (KV Cache Optimal Order)] ---\033[0m\n"
+    for tag in developer_instructions sovereign_soul tool_manifest operational_protocol agent_swarm_identities runtime_environments skills_and_instructions crypto_and_services mcp_knowledge_injection project_memory_and_goals semantic_recall_and_journal reflexive_intelligence active_environment; do
         local section_content
         section_content=$(echo "$prompt" | awk "/<$tag>/,/<\\/$tag>/" 2>/dev/null)
         local sec_len=${#section_content}

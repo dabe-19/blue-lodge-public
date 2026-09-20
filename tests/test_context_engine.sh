@@ -7,20 +7,23 @@ source "$(dirname "$0")/../lib/context_engine.sh"
 test_start "lib/context_engine.sh — Copilot-Style Dynamic Context Injection"
 
 describe "context_engine_build structure"
-  it "injects all 12 Copilot-style XML sections" && {
+  it "injects all 13 Copilot-style XML sections including sovereign_soul" && {
     ctx=$(context_engine_build "test goal" "$PWD" 1)
     assert_contains "$ctx" "<developer_instructions>"
-    assert_contains "$ctx" "<active_environment>"
-    assert_contains "$ctx" "<runtime_environments>"
-    assert_contains "$ctx" "<reflexive_intelligence>"
+    assert_contains "$ctx" "<sovereign_soul>"
+    assert_contains "$ctx" "SOUL OF GEORGE"
+    assert_contains "$ctx" "THE INVIOLABLE LANDMARKS"
     assert_contains "$ctx" "<tool_manifest>"
-    assert_contains "$ctx" "<mcp_knowledge_injection>"
+    assert_contains "$ctx" "<operational_protocol>"
     assert_contains "$ctx" "<agent_swarm_identities>"
+    assert_contains "$ctx" "<runtime_environments>"
     assert_contains "$ctx" "<skills_and_instructions>"
+    assert_contains "$ctx" "<crypto_and_services>"
+    assert_contains "$ctx" "<mcp_knowledge_injection>"
     assert_contains "$ctx" "<project_memory_and_goals>"
     assert_contains "$ctx" "<semantic_recall_and_journal>"
-    assert_contains "$ctx" "<crypto_and_services>"
-    assert_contains "$ctx" "<operational_protocol>"
+    assert_contains "$ctx" "<reflexive_intelligence>"
+    assert_contains "$ctx" "<active_environment>"
   }
 
   it "injects workspace and git telemetry in active_environment" && {
