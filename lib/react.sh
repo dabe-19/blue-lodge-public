@@ -238,8 +238,11 @@ react_run() {
         local raw_content="" reasoning="" tool_calls="[]" p_tok=0 comp_tok=0
         local stream_cache="$session_dir/stream_turn_${turn}.json"
 
+        # Stream response chunks via curl SSE (stream reasoning tokens by default in ReAct unless suppressed)
         local think_mode="${LODGE_THINK_STREAM:-1}"
-        [ "${LODGE_THINK:-1}" -eq 0 ] && think_mode=0
+        if [ "${LODGE_NOTHINK:-0}" -eq 1 ] || [ "${LODGE_THINK_STREAM:-1}" -eq 0 ]; then
+            think_mode=0
+        fi
 
         # Execute real-time streaming SSE pipeline
         curl -s -N --max-time 120 "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
