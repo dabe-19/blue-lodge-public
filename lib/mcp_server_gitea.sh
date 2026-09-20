@@ -192,6 +192,158 @@ gitea_pr_merge() {
     fi
 }
 
+_gitea_resolve_label_ids() {
+    local labels_csv="$1"
+    [ -z "$labels_csv" ] && { echo "[]"; return 0; }
+
+    _gitea_load_conf
+    local existing
+    existing=$(curl -s "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/labels" \
+        -H "Authorization: token ${GITEA_TOKEN}" 2>/dev/null || echo "[]")
+
+    local ids=()
+    local IFS=','
+    for raw in $labels_csv; do
+        local name
+        name=$(echo "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        [ -z "$name" ] && continue
+
+        local lid
+        lid=$(echo "$existing" | jq -r --arg n "$name" '.[] | select(.name == $n) | .id' 2>/dev/null | head -n 1)
+
+        if [ -z "$lid" ] || [ "$lid" = "null" ]; then
+            # Create label
+            local color="0284c7"
+            case "$name" in
+                escalation|needs-operator) color="e11d48" ;;
+                blocked)                  color="f97316" ;;
+                harness-bug)              color="8b5cf6" ;;
+                audit-passed)             color="16a34a" ;;
+                audit-failed)             color="dc2626" ;;
+            esac
+            local new_label
+            new_label=$(curl -s -X POST "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/labels" \
+                -H "Authorization: token ${GITEA_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d "{\"name\": \"$name\", \"color\": \"$color\"}" 2>/dev/null)
+            lid=$(echo "$new_label" | jq -r .id 2>/dev/null || true)
+        fi
+
+        if [ -n "$lid" ] && [ "$lid" != "null" ]; then
+            ids+=("$lid")
+        fi
+    done
+
+    if [ ${#ids[@]} -eq 0 ]; then
+        echo "[]"
+    else
+        printf '%s\n' "${ids[@]}" | jq -s '.'
+    fi
+}
+
+gitea_issue_create() {
+    local title="$1"
+    local body="${2:-}"
+    local labels="${3:-}"
+    _gitea_load_conf
+    if ! gitea_is_online; then
+        echo "ERROR: Gitea server ($GITEA_URL) is offline."
+        return 1
+    fi
+
+    local labels_ids
+    labels_ids=$(_gitea_resolve_label_ids "$labels")
+
+    local payload
+    payload=$(jq -n \
+        --arg title "$title" \
+        --arg body "$body" \
+        --argjson labels "$labels_ids" \
+        '{
+            title: $title,
+            body: $body,
+            labels: $labels
+        }')
+
+    local resp
+    resp=$(curl -s -X POST "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/issues" \
+        -H "Authorization: token ${GITEA_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "$payload" 2>/dev/null)
+
+    if echo "$resp" | jq -e .number &>/dev/null; then
+        local num html_url
+        num=$(echo "$resp" | jq -r .number)
+        html_url=$(echo "$resp" | jq -r .html_url)
+        ui_ok "Sovereign Gitea Issue #${num} created: $title" >&2
+        ui_dim "  URL: $html_url" >&2
+        echo "$resp"
+        return 0
+    else
+        local err_msg
+        err_msg=$(echo "$resp" | jq -r .message 2>/dev/null || echo "$resp")
+        ui_err "Failed to create Gitea Issue: $err_msg" >&2
+        echo "$resp"
+        return 1
+    fi
+}
+
+gitea_issue_comment() {
+    local index="$1"
+    local body="$2"
+    _gitea_load_conf
+    if ! gitea_is_online; then
+        echo "ERROR: Gitea server ($GITEA_URL) is offline."
+        return 1
+    fi
+
+    local payload
+    payload=$(jq -n --arg body "$body" '{"body": $body}')
+
+    curl -s -X POST "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/issues/${index}/comments" \
+        -H "Authorization: token ${GITEA_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "$payload" 2>/dev/null
+}
+
+gitea_issue_close() {
+    local index="$1"
+    local close_comment="${2:-}"
+    _gitea_load_conf
+    if ! gitea_is_online; then
+        echo "ERROR: Gitea server ($GITEA_URL) is offline."
+        return 1
+    fi
+
+    if [ -n "$close_comment" ]; then
+        gitea_issue_comment "$index" "$close_comment" >/dev/null 2>&1 || true
+    fi
+
+    curl -s -X PATCH "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/issues/${index}" \
+        -H "Authorization: token ${GITEA_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d '{"state": "closed"}' 2>/dev/null
+}
+
+gitea_pr_review() {
+    local index="$1"
+    local event="${2:-COMMENT}" # APPROVED, REQUEST_CHANGES, COMMENT
+    local body="${3:-}"
+    _gitea_load_conf
+    if ! gitea_is_online; then
+        echo "ERROR: Gitea server ($GITEA_URL) is offline."
+        return 1
+    fi
+
+    local payload
+    payload=$(jq -n --arg event "$event" --arg body "$body" '{"event": $event, "body": $body}')
+
+    curl -s -X POST "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/pulls/${index}/reviews" \
+        -H "Authorization: token ${GITEA_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "$payload" 2>/dev/null
+}
+
 # ── JSON-RPC 2.0 MCP Protocol Loop (if run directly) ────────────────
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     _JQ=$(command -v jq 2>/dev/null || echo "")
@@ -273,6 +425,56 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
                                 },
                                 "required": ["index"]
                             }
+                        },
+                        {
+                            "name": "gitea_issue_create",
+                            "description": "Create an issue on sovereign Gitea forge for subagent escalation or tracking.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "title": { "type": "string", "description": "Issue title" },
+                                    "body": { "type": "string", "description": "Markdown body with stack traces and diagnostics" },
+                                    "labels": { "type": "string", "description": "Comma-separated labels" }
+                                },
+                                "required": ["title"]
+                            }
+                        },
+                        {
+                            "name": "gitea_issue_comment",
+                            "description": "Post an auditable comment to a Gitea issue or PR.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "index": { "type": "integer", "description": "Issue or PR number" },
+                                    "body": { "type": "string", "description": "Markdown comment body" }
+                                },
+                                "required": ["index", "body"]
+                            }
+                        },
+                        {
+                            "name": "gitea_issue_close",
+                            "description": "Close a Gitea issue with an optional resolution comment.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "index": { "type": "integer", "description": "Issue number" },
+                                    "comment": { "type": "string", "description": "Optional closing comment" }
+                                },
+                                "required": ["index"]
+                            }
+                        },
+                        {
+                            "name": "gitea_pr_review",
+                            "description": "Submit a formal Three Degrees review on a Gitea PR (APPROVED, REQUEST_CHANGES, COMMENT).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "index": { "type": "integer", "description": "PR number" },
+                                    "event": { "type": "string", "description": "APPROVED, REQUEST_CHANGES, or COMMENT", "enum": ["APPROVED", "REQUEST_CHANGES", "COMMENT"] },
+                                    "body": { "type": "string", "description": "Review reasoning and audit findings" }
+                                },
+                                "required": ["index", "event"]
+                            }
                         }
                     ]
                 }'
@@ -307,6 +509,32 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
                         idx=$(printf '%s' "$arguments" | $_JQ -r '.index // empty' 2>/dev/null)
                         strat=$(printf '%s' "$arguments" | $_JQ -r '.strategy // "merge"' 2>/dev/null)
                         res=$(gitea_pr_merge "$idx" "$strat" 2>&1)
+                        _respond_result "$id" "{\"content\":[{\"type\":\"text\",\"text\":$(printf '%s' "$res" | $_JQ -Rs .)}]}"
+                        ;;
+                    gitea_issue_create)
+                        t=$(printf '%s' "$arguments" | $_JQ -r '.title // empty' 2>/dev/null)
+                        bdy=$(printf '%s' "$arguments" | $_JQ -r '.body // ""' 2>/dev/null)
+                        lbl=$(printf '%s' "$arguments" | $_JQ -r '.labels // ""' 2>/dev/null)
+                        res=$(gitea_issue_create "$t" "$bdy" "$lbl" 2>&1)
+                        _respond_result "$id" "{\"content\":[{\"type\":\"text\",\"text\":$(printf '%s' "$res" | $_JQ -Rs .)}]}"
+                        ;;
+                    gitea_issue_comment)
+                        idx=$(printf '%s' "$arguments" | $_JQ -r '.index // empty' 2>/dev/null)
+                        bdy=$(printf '%s' "$arguments" | $_JQ -r '.body // ""' 2>/dev/null)
+                        res=$(gitea_issue_comment "$idx" "$bdy" 2>&1)
+                        _respond_result "$id" "{\"content\":[{\"type\":\"text\",\"text\":$(printf '%s' "$res" | $_JQ -Rs .)}]}"
+                        ;;
+                    gitea_issue_close)
+                        idx=$(printf '%s' "$arguments" | $_JQ -r '.index // empty' 2>/dev/null)
+                        cmt=$(printf '%s' "$arguments" | $_JQ -r '.comment // ""' 2>/dev/null)
+                        res=$(gitea_issue_close "$idx" "$cmt" 2>&1)
+                        _respond_result "$id" "{\"content\":[{\"type\":\"text\",\"text\":$(printf '%s' "$res" | $_JQ -Rs .)}]}"
+                        ;;
+                    gitea_pr_review)
+                        idx=$(printf '%s' "$arguments" | $_JQ -r '.index // empty' 2>/dev/null)
+                        evt=$(printf '%s' "$arguments" | $_JQ -r '.event // "COMMENT"' 2>/dev/null)
+                        bdy=$(printf '%s' "$arguments" | $_JQ -r '.body // ""' 2>/dev/null)
+                        res=$(gitea_pr_review "$idx" "$evt" "$bdy" 2>&1)
                         _respond_result "$id" "{\"content\":[{\"type\":\"text\",\"text\":$(printf '%s' "$res" | $_JQ -Rs .)}]}"
                         ;;
                     *)

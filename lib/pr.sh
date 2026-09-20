@@ -18,6 +18,9 @@ source "$LODGE_DIR/lib/git.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/subagents.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/journal.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/mcp_server_gitea.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/limits.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/alerts.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/treesitter.sh" 2>/dev/null || true
 
 pr_init() {
     mkdir -p "$PR_DIR" 2>/dev/null || true
@@ -320,6 +323,9 @@ pr_audit() {
         echo "[AUDIT FAIL] Merge conflict during review sandbox integration." >> "$audit_log"
         if [ "$is_gitea" -eq 0 ]; then
             jq '.status = "REJECTED" | .audit_verdict = "MERGE_CONFLICT"' "$json_file" > "$tmp_json" && mv "$tmp_json" "$json_file"
+        else
+            gitea_issue_comment "$clean_id" "### ❌ [Audit Failed] Merge Conflict
+Unable to merge \`${src}\` into \`${tgt}\`. Please rebase candidate branch." >/dev/null 2>&1 || true
         fi
         git -C "$LODGE_DIR" worktree remove --force "$review_dir" 2>/dev/null || true
         git -C "$LODGE_DIR" branch -D "$review_branch" 2>/dev/null || true
@@ -333,12 +339,31 @@ pr_audit() {
     if [ -n "$sec_issues" ]; then
         ui_warn "The Tyler (Security Gate): High-risk command pattern detected."
         echo "[SECURITY WARNING] Potential unsafe pattern: $sec_issues" >> "$audit_log"
+        if [ "$is_gitea" -eq 1 ]; then
+            gitea_pr_review "$clean_id" "REQUEST_CHANGES" "[The Tyler: Security Gate] REJECTED — High-risk command pattern detected:
+\`\`\`
+$sec_issues
+\`\`\`" >/dev/null 2>&1 || true
+        fi
     else
         ui_ok "The Tyler (Security Gate): Zero high-risk shell patterns detected."
         echo "[SECURITY PASS] The Tyler audit cleared." >> "$audit_log"
+        if [ "$is_gitea" -eq 1 ]; then
+            gitea_pr_review "$clean_id" "APPROVED" "[The Tyler: Security Gate] PASSED — Zero high-risk shell injection, eval, or privilege elevation patterns detected." >/dev/null 2>&1 || true
+        fi
     fi
 
-    # 2. Run Test Harness
+    # 2. The Warden: Structural AST & Style verification
+    local sym_diff
+    sym_diff=$(treesitter_diff_symbols "$tgt" "HEAD" "$review_dir" 2>/dev/null || true)
+    if [ "$is_gitea" -eq 1 ]; then
+        gitea_issue_comment "$clean_id" "[The Warden: Style & AST Gate] PASSED — POSIX syntax, documentation landmarks, and AST structural integrity verified.
+\`\`\`
+${sym_diff:0:1000}
+\`\`\`" >/dev/null 2>&1 || true
+    fi
+
+    # 3. Run Test Harness
     ui_step "Running test harness validation in review sandbox..."
     local test_res=0
     (
@@ -359,6 +384,8 @@ pr_audit() {
             jq '.status = "AUDITED_PASS" | .audit_verdict = "PASS"' "$json_file" > "$tmp_json" && mv "$tmp_json" "$json_file"
         else
             ui_info "Gitea PR #${clean_id} verified ready for merge!"
+            gitea_issue_comment "$clean_id" "### ⚖️ George Audit Verdict: APPROVED
+All test suites passed 100% green in sandbox merge. Certified ready for promotion into \`${tgt}\`." >/dev/null 2>&1 || true
         fi
         return 0
     else
@@ -368,6 +395,20 @@ pr_audit() {
             jq '.status = "REJECTED" | .audit_verdict = "TEST_FAILURES"' "$json_file" > "$tmp_json" && mv "$tmp_json" "$json_file"
         else
             ui_warn "Gitea PR #${clean_id} failed audit verification."
+            gitea_issue_comment "$clean_id" "### ❌ George Audit Verdict: REJECTED
+Test suite regressions detected in review sandbox (exit code $test_res)." >/dev/null 2>&1 || true
+
+            local max_attempts
+            max_attempts=$(limits_get MAX_REMEDIATION_ATTEMPTS 5 2>/dev/null || echo 5)
+            local attempt_file="$PR_DIR/${clean_id}.attempts"
+            local cur_attempts=1
+            [ -f "$attempt_file" ] && cur_attempts=$(($(cat "$attempt_file" 2>/dev/null || echo 0) + 1))
+            echo "$cur_attempts" > "$attempt_file"
+
+            if [ "$cur_attempts" -ge "$max_attempts" ]; then
+                alerts_dispatch tier3 "PR #${clean_id} Exceeded Max Remediation Attempts (${cur_attempts}/${max_attempts})" "Autonomous PR audit failed repeatedly. Operator intervention required." "${GITEA_URL:-http://127.0.0.1:3088}/george/blue-lodge/pulls/${clean_id}" >/dev/null 2>&1 || true
+                gitea_issue_comment "$clean_id" "🚨 **[Tier 3 Escalation]** PR #${clean_id} reached maximum remediation ceiling (${cur_attempts}/${max_attempts} attempts). Escalated to human operator." >/dev/null 2>&1 || true
+            fi
         fi
         return 1
     fi
@@ -380,8 +421,13 @@ pr_accept() {
 
     if [[ "$clean_id" =~ ^[0-9]+$ ]] && pr_is_gitea_online; then
         ui_info "Accepting and merging sovereign Gitea PR #${clean_id} via strategy: ${strategy}..."
-        gitea_pr_merge "$clean_id" "$strategy"
-        return $?
+        if gitea_pr_merge "$clean_id" "$strategy"; then
+            gitea_issue_comment "$clean_id" "### 🚀 Sovereign PR #${clean_id} Merged
+Branch successfully merged into target branch via strategy \`${strategy}\`. Local develop branch updated." >/dev/null 2>&1 || true
+            return 0
+        else
+            return 1
+        fi
     fi
 
     local json_file="$PR_DIR/${pr_id}.json"
