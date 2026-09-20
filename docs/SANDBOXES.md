@@ -19,6 +19,7 @@ host system. Every cloned repo, every `lodge /init`, and every manual
 9. [Example: Kali Linux Penetration Testing on Mobile](#example-kali-linux-penetration-testing-on-mobile)
 10. [Example: Python Web Scraper in a Sandbox](#example-python-web-scraper-in-a-sandbox)
 11. [Tips & Troubleshooting](#tips--troubleshooting)
+12. [Sovereign Pull Requests & GitFlow](#sovereign-pull-requests--gitflow)
 
 ---
 
@@ -568,6 +569,94 @@ lodge /sandbox rm old-project
 # Nuclear option: remove all sandboxes
 rm -rf ~/.lodge-sandboxes/
 ```
+
+---
+
+## Sovereign Pull Requests & GitFlow
+
+Sandboxed projects can participate in **Sovereign PR pipelines** — a GitFlow-based workflow where George manages branch topology, creates pull requests, tracks CI verification status, and enforces circuit-breaker safety per sandbox.
+
+### GitFlow Branch Topology
+
+Each sandbox that tracks an upstream repo follows the standard GitFlow model:
+
+| Branch | Purpose |
+|--------|---------|
+| `main` | Production-ready releases; protected, only receives merged PRs |
+| `develop` | Integration branch for in-progress features |
+| `feature/<name>` | Short-lived branches for new functionality |
+| `bugfix/<name>` | Short-lived branches for defect fixes |
+| `release/<version>` | Stabilization branch for a specific release |
+| `hotfix/<name>` | Emergency branch cut from `main` for critical fixes |
+
+### Sovereign PR Pipeline
+
+George orchestrates the full PR lifecycle inside a sandbox:
+
+1. **Branch creation** — George opens a `feature/` or `bugfix/` branch from `develop` (or `main` for hotfixes).
+2. **Implementation** — Code changes are made on the feature branch; George journals each commit.
+3. **Build & test** — `/sandbox build` and `/sandbox test` run against the branch before any PR is opened.
+4. **PR proposal** — George creates the pull request to the upstream repo via `/upstream propose`, attaching a summary of changes, test results, and CI status.
+5. **Review & merge** — Once the PR is approved and passes CI, George merges into `develop` via `/pr accept <id>` and updates the sandbox journal.
+
+### Subagent Circuit Breaker & Supervisor Escalation
+
+When autonomous subagents encounter persistent tool failures or string escaping issues, an automated circuit breaker prevents runaway loops:
+
+- **Circuit Breaker Threshold:** Trips upon **3 consecutive non-zero tool exit codes** or **2 consecutive identical failing commands** (thrashing detection, configurable via `/limits`).
+- **Escalation Alert:** Writes a persistent alert to `.george/alerts/alert_<subagent_id>.json` and marks registry status `PAUSED_BLOCKED`.
+- **Inference Preservation:** Releases GPU inference slots immediately and cleans up scratch files in `/tmp`.
+- **Control Hand-off:** Subagent exits with code `75` (`EX_TEMPFAIL`) to cleanly transfer control to the Parent George / Supervisor.
+- **Alert Inspection:** Use `/subagents alerts` to view active escalations and `/subagents dismiss <id>` to acknowledge them.
+
+### Autonomous Swarm Escalation Loop: Issues, MQTT & Gitea
+
+The escalation cycle operates as a sovereign closed loop:
+
+1. **Checkpoint Quarantine:** When tripped, the worker commits its in-flight changes to `checkpoint/sub_<id>` and pushes to Sovereign Gitea.
+2. **Sovereign Issue Creation:** Opens a Gitea Issue detailing the exact failing action, turn number, and stack trace, labeled `escalation,blocked`.
+3. **MQTT Escalation Alert:** Emits an event to topic `george/alerts/escalation` across the native MQTT broker.
+4. **Parent Triage Matrix:**
+   - **Tier 1 (Harness / Code Defect):** Parent creates an autonomous PR to `develop`.
+   - **Tier 2 (Container / Tooling Gap):** Handled via `/quartermaster` Dockerfile update.
+   - **Tier 3 (Host / Secrets / Operator):** Dispatches to Discord Webhooks, SMTP/Email, or tagged Gitea issues.
+5. **Worker Resumption:** Upon merge of the remediation PR into `develop`, Parent signals `george/workers/sub_<id>/resume`. The worker synchronizes `develop`, resets its circuit breaker, and resumes execution.
+
+### Auditing & Paper Trail Protocol: Multi-Persona Gitea Comments
+
+Every agent action leaves an immutable auditable comment on the Sovereign Gitea forge:
+
+- **Subagent:** Logs issue creation and checkpoint branch link upon failure.
+- **The Tyler (Security Gate):** Submits a formal Gitea PR review (`APPROVED` or `REQUEST_CHANGES`) verifying zero high-risk shell injection, eval, or privilege escalation patterns.
+- **The Warden (Style & AST Gate):** Submits AST symbol diffs and style validation logs verifying POSIX conformity and documentation integrity.
+- **George (Master of the Lodge):** Logs final promotion verdict and merge justification.
+- **Remediation Attempt Ceiling:** Monitored against `MAX_REMEDIATION_ATTEMPTS` (default 5). If exceeded, triggers Tier 3 human escalation.
+
+### Sanitation, Watchdogs & Crash Recovery
+
+To prevent disk, worktree, and process pollution across crashes and kills:
+
+- **Boot-Time Orphan Reaper:** On startup, `subagents_init` scans for dead PIDs. Transient running worktrees are pruned immediately (`CRASHED_ORPHAN`), while `PAUSED_BLOCKED` quarantined workers are strictly preserved.
+- **Inactivity Watchdog:** Kills hung subagents that produce zero output for $> 300\text{s}$ (`WATCHDOG_TIMEOUT`), freeing GPU slots.
+- **Tree-sitter AST Pre-flight:** Validates syntax of bash and script files before committing or reviewing.
+- **Garbage Collection:** Run `/subagents prune [--all]` to clean completed or orphaned sandboxes and branches.
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/upstream propose <title>` | Create a feature branch and open a PR from the current sandbox |
+| `/pr list` | List open and merged PRs for the repository |
+| `/pr status <pr#>` | Show CI status, review state, and merge readiness for a PR |
+| `/pr audit <pr#>` | Perform automated code, security, and style audit on an open PR with Gitea reviews |
+| `/pr accept <pr#>` | Merge an approved PR into `develop` or `main` |
+| `/pr close <pr#>` | Close a PR without merging |
+| `/subagents alerts` | View pending circuit-breaker escalation alerts |
+| `/subagents dismiss <id>` | Dismiss an acknowledged circuit-breaker alert |
+| `/subagents resume <id>` | Resume a quarantined worker subagent after harness fix |
+| `/subagents prune [--all]` | Clean up completed, orphaned, and stale subagent sandboxes |
+| `/limits` | View and tune operational levers (remediations, timeouts, failure thresholds) |
+| `/limits set <KEY> <VAL>` | Update a specific operational lever |
 
 ---
 

@@ -307,6 +307,19 @@ cmd_write() {
     lines=$(printf '%s' "$content" | wc -l)
     lines=$((lines + 1))
 
+    # Ambient Tree-sitter AST validation badge
+    if declare -f treesitter_detect_lang &>/dev/null && declare -f treesitter_validate &>/dev/null; then
+        local _ts_lang
+        _ts_lang=$(treesitter_detect_lang "$filepath")
+        if [ -n "$_ts_lang" ] && [ "$_ts_lang" != "plaintext" ]; then
+            local _ts_err
+            if ! _ts_err=$(treesitter_validate "$content" "$_ts_lang" 2>&1); then
+                ui_warn "Tree-sitter AST syntax warning for $filepath ($_ts_lang):"
+                ui_dim "$_ts_err"
+            fi
+        fi
+    fi
+
     if [ "$existed" -eq 1 ]; then
         ui_ok "Overwrote: $filepath ($lines lines)"
     else

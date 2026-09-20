@@ -18,7 +18,6 @@
 
 # ── State ──────────────────────────────────────────────────────
 [ -n "${_LIB_TRANSCRIPT_LOADED:-}" ] && return 0; _LIB_TRANSCRIPT_LOADED=1
-echo "  [debug] Sourcing lib/transcript.sh!" >&2
 
 _TRANSCRIPT_FILE=""
 _TRANSCRIPT_DIR=""
@@ -260,7 +259,32 @@ if declare -f ui_limitation_block &>/dev/null; then
 fi
 
 _agent_limitation_prompt_text() {
-    echo "  [debug] Finished sourcing lib/transcript.sh!" >&2
     local reason_code="$1"
     printf 'Constraint (%s). Choose one: RESCOPE | ALT_PATH | TERMINATE. Reply with one token.' "$reason_code"
 }
+
+# ── Fine-Tuning JSONL Telemetry ──────────────────────────────────────
+transcript_log_jsonl() {
+    local instruction="$1"
+    local thinking="$2"
+    local action="$3"
+    local observation="$4"
+    local tdir="${_TRANSCRIPT_DIR:-${LODGE_DIR:-.}/.george/transcripts}"
+    local jsonl_file="$tdir/trajectories.jsonl"
+    mkdir -p "$tdir" 2>/dev/null || true
+
+    jq -c -n \
+        --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%d %H:%M:%S")" \
+        --arg inst "$instruction" \
+        --arg think "$thinking" \
+        --arg act "$action" \
+        --arg obs "$observation" \
+        '{
+            timestamp: $ts,
+            instruction: $inst,
+            thinking: $think,
+            action: $act,
+            observation: $obs
+        }' >> "$jsonl_file" 2>/dev/null || true
+}
+

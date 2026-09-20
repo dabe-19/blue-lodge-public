@@ -4,6 +4,7 @@ source "$(dirname "$0")/framework.sh"
 source "$LODGE_DIR/lib/ui.sh"
 source "$LODGE_DIR/lib/tools.sh"
 source "$LODGE_DIR/lib/commands.sh"
+source "$LODGE_DIR/lib/memory.sh"
 
 test_start "memories.sh — Namespaced Semantic Handles"
 
@@ -121,15 +122,49 @@ describe "agent memory registration completion"
     
     # Run helper in subshell to avoid side effects
     (
-        source "$LODGE_DIR/lib/agent.sh"
+        source "$LODGE_DIR/lib/memory.sh"
         echo "# Appleton Advisement" > "$test_dir/.george/memories/appleton_advisement.md"
-        _agent_register_memory_file "$test_dir"
+        memory_register_files "$test_dir"
         
         val=$(jq -r '."1".slug' "$test_dir/.george/memories/registry.json")
         [ "$val" = "appleton_advisement" ]
     )
     assert_eq "$?" "0"
     
+    rm -rf "$test_dir"
+  }
+
+describe "memory_get_task_slug and memory_catalog_context"
+
+  it "generates clean task slugs from prompt text" && {
+    slug=$(memory_get_task_slug "Research Appleton Wisconsin Housing Market!")
+    assert_contains "$slug" "research_appleton_wisconsin_housing"
+  }
+
+  it "formats memory catalog context with active task and registry entries" && {
+    test_dir=$(test_tmpdir)
+    mkdir -p "$test_dir/.george/memories"
+    cat << 'JSON' > "$test_dir/.george/memories/registry.json"
+{
+  "1": {
+    "slug": "appleton_housing",
+    "file": "appleton_housing.md",
+    "title": "Appleton Housing Overview",
+    "timestamp": "2026-09-20T00:00:00"
+  },
+  "2": {
+    "slug": "gamestop_report",
+    "file": "gamestop_report.md",
+    "title": "GameStop Strategic Analysis",
+    "timestamp": "2026-09-20T00:01:00"
+  }
+}
+JSON
+    catalog=$(AGENT_ACTIVE_TASK_SLUG="my_active_report" memory_catalog_context "$test_dir")
+    assert_contains "$catalog" "mem:active_task -> Current task deliverable (.george/memories/my_active_report.md)"
+    assert_contains "$catalog" "mem:2: GameStop Strategic Analysis [gamestop_report]"
+    assert_contains "$catalog" "mem:1: Appleton Housing Overview [appleton_housing]"
+
     rm -rf "$test_dir"
   }
 

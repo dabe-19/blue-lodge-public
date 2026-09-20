@@ -350,6 +350,51 @@ ui_spinner_stop() {
     fi
 }
 
+# ── Ambient Prefill Craftsman Ticker ──────────────────────────
+_PREFILL_TICKER_PID=""
+ui_prefill_ticker_start() {
+    [ -n "$_PREFILL_TICKER_PID" ] && ui_prefill_ticker_stop
+    local _tty="${_SPINNER_TTY:-/dev/stderr}"
+    (
+        exec >/dev/null 2>/dev/null
+        local phrases=(
+            "Squaring the rough ashlar"
+            "Consulting Franklin's almanac"
+            "Aligning the 24-inch gauge"
+            "Measuring stones with the Plumb"
+            "Transmitting context across the ether"
+            "Inscribing blueprints on the trestleboard"
+            "Verifying joints with the Square"
+            "Evaluating masonry tokens"
+        )
+        local i=0
+        local n=${#phrases[@]}
+        local frames=('▲ (👁 )' '▲ (◓ )' '▲ (👁 )' '▲ ( ◓ )' '▲ (✦👁 ✦)' '▲ ( ─ )')
+        local f=0
+        while true; do
+            printf "\r %b%s%b %b%s...%b \033[K" "$C_GOLD" "${frames[$f]}" "$C_RESET" "$C_GRAY" "${phrases[$i]}" "$C_RESET" > "$_tty" 2>/dev/null
+            f=$(( (f + 1) % 6 ))
+            [ $(( f % 6 )) -eq 0 ] && i=$(( (i + 1) % n ))
+            sleep 0.35
+        done
+    ) &
+    _PREFILL_TICKER_PID=$!
+    disown "$_PREFILL_TICKER_PID" 2>/dev/null
+    echo "$_PREFILL_TICKER_PID" > "${TMPDIR:-/tmp}/.lodge_prefill_ticker_$$" 2>/dev/null
+}
+
+ui_prefill_ticker_stop() {
+    local tpid="${_PREFILL_TICKER_PID:-}"
+    [ -z "$tpid" ] && [ -f "${TMPDIR:-/tmp}/.lodge_prefill_ticker_$$" ] && tpid=$(cat "${TMPDIR:-/tmp}/.lodge_prefill_ticker_$$" 2>/dev/null)
+    if [ -n "$tpid" ]; then
+        kill "$tpid" 2>/dev/null
+        wait "$tpid" 2>/dev/null
+        _PREFILL_TICKER_PID=""
+        rm -f "${TMPDIR:-/tmp}/.lodge_prefill_ticker_$$" 2>/dev/null
+        printf "\r\033[2K" > "${_SPINNER_TTY:-/dev/stderr}" 2>/dev/null
+    fi
+}
+
 # ── Prompt ─────────────────────────────────────────────────────
 ui_prompt() {
     local project="${LODGE_PROJECT:-~}"
@@ -739,3 +784,36 @@ ui_suggest_workspaces_tree() {
         fi
     done < <(find "${LODGE_DIR:-.}/.george/workspaces" -maxdepth 4 -type f 2>/dev/null | sort | head -n 30)
 }
+
+# ── Interactive Operator Communication ─────────────────────────
+# Prompts the operator directly via /dev/tty and captures their response.
+# Used by /ask and the native ask_operator tool.
+ui_ask_operator() {
+    local question="$1"
+    local tty=""
+    if { true >/dev/tty; } 2>/dev/null; then
+        tty="/dev/tty"
+    fi
+
+    if [ -n "$tty" ]; then
+        echo "" > "$tty"
+        printf "  %b George asks: %b%s%b\n" "$C_LODGE" "$C_CYAN" "$question" "$C_RESET" > "$tty"
+        echo "" > "$tty"
+        printf "  %b> %b" "$C_BOLD" "$C_RESET" > "$tty"
+        local answer=""
+        read -r answer < "$tty" 2>/dev/null || read -r answer 2>/dev/null || true
+    else
+        printf "  %b George asks: %b%s%b\n" "$C_LODGE" "$C_CYAN" "$question" "$C_RESET" >&2
+        echo "" >&2
+        printf "  %b> %b" "$C_BOLD" "$C_RESET" >&2
+        local answer=""
+        read -r answer 2>/dev/null || true
+    fi
+
+    if [ -z "$answer" ]; then
+        echo "(no answer provided)"
+    else
+        echo "$answer"
+    fi
+}
+

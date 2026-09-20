@@ -693,6 +693,16 @@ describe "Discord user registry"
     _teardown_social
   }
 
+  it "discord_user_resolve resolves 'me' and 'operator' aliases" && {
+    _setup_social
+    discord_user_add "dabe_" "190628469053325312" &>/dev/null
+    uid_me=$(discord_user_resolve "me")
+    assert_eq "$uid_me" "190628469053325312"
+    uid_op=$(discord_user_resolve "operator")
+    assert_eq "$uid_op" "190628469053325312"
+    _teardown_social
+  }
+
   it "discord_users_sync function is defined" && {
     _setup_social
     declare -f discord_users_sync &>/dev/null
@@ -816,7 +826,6 @@ describe "Discord multi-DM recipient parsing"
     discord_user_add "PageOfABook" "333333333333333333" &>/dev/null
     # After ui_expand_escapes, literal \n becomes real newlines.
     # Word-splitting should separate the username from the body.
-    local expanded
     expanded=$(printf 'PageOfABook\n\n---\n**Structured Report**\nHere are findings.')
     discord_dm_parse_recipients "$expanded"
     assert_eq "${#_DM_RESOLVED_IDS[@]}" "1"

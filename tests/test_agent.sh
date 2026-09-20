@@ -602,7 +602,6 @@ describe "Router heuristics"
 
   it "router eligibility pass respects slash command in milestone and bypasses loose matching" && (
     _agent_router_probe_network() { return 0; }
-    local out
     _AGENT_WEB_LOCKED=1 _AGENT_GIT_LOCKED=1 out=$(_agent_router_eligibility_pass "Use /journal to search for self-description" "." "web-search" "combined" "A" "normal")
     echo "$out" | grep -q '"shortlist":\[.*"journal".*\]'
     assert_ok $? "Shortlist must contain journal"
@@ -612,8 +611,7 @@ describe "Router heuristics"
 
   it "adds mismatched command from feedback to the shortlist on retry" && (
     _agent_router_probe_network() { return 0; }
-    local out
-    local _last_eval_feedback="MISMATCH: You selected /web but the milestone specifies /write. Use /write instead."
+    _last_eval_feedback="MISMATCH: You selected /web but the milestone specifies /write. Use /write instead."
     out=$(_agent_router_eligibility_pass "Use /web search UNH" "." "web-search" "combined" "A" "normal")
     echo "$out" | grep -q '"shortlist":\[.*"write".*\]'
     assert_ok $? "Shortlist must include write on retry when mismatch feedback is present"
@@ -1675,7 +1673,6 @@ describe "Brainstorm buffer (cross-milestone data flow)"
   }
 
   it "micro_init includes brainstorm_context field" && {
-    local _tmpf
     _tmpf=$(mktemp)
     _micro_init "$_tmpf" "test"
     jq -e 'has("brainstorm_context")' "$_tmpf" >/dev/null 2>&1
@@ -3100,7 +3097,6 @@ describe "AGENT_OUTPUT_DIR enforcement"
   }
 
   it "_agent_clean_aod_path cleans workspace path chains" && {
-    local res
     res=$(_agent_clean_aod_path ".george/workspaces/20260722_040425/some_file.md")
     assert_eq "$res" "some_file.md" "should strip relative workspaces directory prefix"
 

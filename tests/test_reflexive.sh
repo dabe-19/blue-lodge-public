@@ -274,7 +274,6 @@ describe "Speculative Pre-fetch"
   }
 
   it "reflexive_speculate_consume clears cache after read" && {
-    local _cache_file
     _cache_file=$(_reflexive_speculate_file)
     echo "prefetch_hint:web" > "$_cache_file"
     result=$(reflexive_speculate_consume)
@@ -330,7 +329,6 @@ describe "Self-Model (Metacognition)"
     _REFLEXIVE_LOOP_COUNTER=10
     _REFLEXIVE_METACOG_STATE="something"
     # Write a speculation cache file to verify cleanup
-    local _cache_file
     _cache_file=$(_reflexive_speculate_file)
     echo "cached" > "$_cache_file" 2>/dev/null
     reflexive_metacog_reset

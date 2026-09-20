@@ -146,6 +146,10 @@ api_get_key() {
     return 1
 }
 
+# Aliases for backwards compatibility / ergonomic access
+api_key_get() { api_get_key "$@"; }
+api_key_set() { api_set_key "$@"; }
+
 # ── Set a key in config ───────────────────────────────────────
 api_set_key() {
     local key_name="$1"

@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y \
     procps \
     poppler-utils \
     mosquitto-clients \
+    ripgrep \
     sudo \
     && curl -fsSL https://ollama.com/download/ollama-linux-amd64.tar.zst | tar --zstd -xf - -C /usr \
     && curl -LsSf https://astral.sh/uv/install.sh | BINDIR=/usr/local/bin sh \
@@ -40,12 +41,13 @@ RUN apt-get update && apt-get install -y \
     fi \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Rust toolchain
+# Install Rust toolchain & Tree-sitter CLI
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path \
-    && chmod -R a+rwx $RUSTUP_HOME $CARGO_HOME
+    && chmod -R a+rwx $RUSTUP_HOME $CARGO_HOME \
+    && cargo install tree-sitter-cli --locked
 
 # Ensure libcuda.so.1 exists in CUDA stubs directory for build-time dynamic linker resolution
 RUN ln -sf libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1

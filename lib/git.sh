@@ -475,3 +475,72 @@ if ! declare -f github_push_guard &>/dev/null; then
         return 0
     }
 fi
+
+# ═══════════════════════════════════════════════════════════════
+# GitFlow Branch Protection & Topology
+# ═══════════════════════════════════════════════════════════════
+
+gitflow_init() {
+    local target_repo="${1:-$LODGE_DIR}"
+    if ! git -C "$target_repo" rev-parse --is-inside-work-tree &>/dev/null; then
+        return 1
+    fi
+
+    # Ensure develop branch exists, cut from current active branch
+    if ! git -C "$target_repo" rev-parse --verify develop &>/dev/null; then
+        local curr_branch
+        curr_branch=$(git -C "$target_repo" branch --show-current 2>/dev/null || echo "HEAD")
+        git -C "$target_repo" branch develop "$curr_branch" 2>/dev/null || true
+        ui_ok "GitFlow: Created 'develop' branch from '$curr_branch'"
+    fi
+
+    gitflow_protect_main "$target_repo"
+}
+
+gitflow_target_branch() {
+    echo "develop"
+}
+
+gitflow_guard_check() {
+    local branch="$1"
+    local allow_release="${2:-0}"
+
+    if [ "$allow_release" -eq 1 ] || [ "${ALLOW_RELEASE_PUSH:-0}" -eq 1 ]; then
+        return 0
+    fi
+
+    case "$branch" in
+        main|master|refs/heads/main|refs/heads/master)
+            ui_err "Lodge Landmark: Direct commits, merges, and PRs to '$branch' are strictly forbidden."
+            ui_info "All candidate work and PRs must target 'develop'. Use '/release' for canon merges."
+            return 1
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+gitflow_protect_main() {
+    local target_repo="${1:-$LODGE_DIR}"
+    local hook_dir="$target_repo/.git/hooks"
+    [ ! -d "$hook_dir" ] && return 0
+
+    local pre_push="$hook_dir/pre-push"
+    cat > "$pre_push" << 'EOF'
+#!/bin/bash
+# ── George GitFlow Guard: Protect main/master ──
+while read -r local_ref local_oid remote_ref remote_oid; do
+    if [ "${ALLOW_RELEASE_PUSH:-0}" -ne 1 ]; then
+        if [ "$remote_ref" = "refs/heads/main" ] || [ "$remote_ref" = "refs/heads/master" ]; then
+            echo "[FATAL] Direct push to '$remote_ref' blocked by Lodge GitFlow Landmarks." >&2
+            echo "[INFO] Push to 'develop' or candidate branch instead. Set ALLOW_RELEASE_PUSH=1 for releases." >&2
+            exit 1
+        fi
+    fi
+done
+exit 0
+EOF
+    chmod +x "$pre_push"
+    ui_ok "GitFlow: Branch protection hook installed for 'main'"
+}

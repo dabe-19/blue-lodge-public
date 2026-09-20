@@ -12,7 +12,8 @@ By running directly in a POSIX-compliant shell environment, the framework integr
 * **Scenario-Routed Prompts**: Dynamically matches prompt context size and style to the task at hand (ranging from lightweight ~250-token quick questions to ~3,500-token execution contexts). This allows small edge models to operate within strict context limits without performance degradation.
 * **Integrated Agentic Dev Team**: Includes preconfigured workflows under [`.agents/workflows/`](file:///home/wsl-ops/blue-lodge/.agents/workflows/) that organize distinct agent roles (e.g., dispatcher, architect, style warden, security tyler, specialist coders) to execute project tasks, run build gates, and perform self-auditing.
 * **Workstation Container Sandboxing**: Out-of-the-box support for isolated sandboxes via `proot`, user namespaces, or GPU-accelerated Docker containers (CUDA, Vulkan, and ROCm profiles) to run agent-led code optimization safely.
-* **Memory & Retrieval-Augmented Generation**: Features a persistent project memory (`GEORGE.md`), a temporal decaying journal (`journal.md`), and an ultra-lightweight SQLite FTS5 full-text search database with BM25 ranking (<1ms lookup, 0 RAM overhead).
+* **Persistent Memory & Semantic Handles**: Features persistent project memory (`GEORGE.md`), a temporal decaying journal (`journal.md`), SQLite FTS5 vector/BM25 search, and namespaced virtual memory handles (`mem:active_task`, `mem:<index>`, `mem:<slug>`) auto-registered in `.george/memories/registry.json`.
+* **Tree-sitter AST Intelligence**: Ambient AST syntax validation, symbol extraction, and structural outlining powered by `tree-sitter-cli` (installed via Rust/Cargo) with pure POSIX fallbacks to safeguard code integrity across file edits.
 * **Pure-Bash MCP Client**: Direct JSON-RPC 2.0 implementation over stdio to communicate with any standard Model Context Protocol server (e.g., fetch, database, filesystem tools).
 
 ---

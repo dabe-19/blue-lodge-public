@@ -48,12 +48,22 @@ export LODGE_PLATFORM LODGE_CLOUD_ONLY
 export GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-$LODGE_DIR/.george}"
 export LODGE_SANDBOXES="${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}"
 export LODGE_HISTORY_FILE="${LODGE_HISTORY_FILE:-$LODGE_DIR/.lodge_history}"
+export AGENT_PLAN_STEPS="${AGENT_PLAN_STEPS:-6}"
+export AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-40}"
+export AGENT_MAX_TURNS="${AGENT_MAX_TURNS:-9999}"
+export AGENT_CHILD_MAX_TURNS="${AGENT_CHILD_MAX_TURNS:-200}"
 
 # ── Source Libraries ───────────────────────────────────────────
 source "$LODGE_DIR/lib/ui.sh"
 source "$LODGE_DIR/lib/llm.sh"
 source "$LODGE_DIR/lib/memory.sh"
 source "$LODGE_DIR/lib/tools.sh"
+source "$LODGE_DIR/lib/endpoints.sh"
+source "$LODGE_DIR/lib/native_tools.sh"
+source "$LODGE_DIR/lib/context_engine.sh"
+source "$LODGE_DIR/lib/ui_dashboard.sh"
+source "$LODGE_DIR/lib/subagents.sh"
+source "$LODGE_DIR/lib/react.sh"
 source "$LODGE_DIR/lib/agent.sh"
 source "$LODGE_DIR/lib/reflexive.sh"
 source "$LODGE_DIR/lib/commands.sh"
@@ -81,6 +91,9 @@ source "$LODGE_DIR/lib/email.sh"
 source "$LODGE_DIR/lib/mqtt.sh"
 source "$LODGE_DIR/lib/git.sh"
 source "$LODGE_DIR/lib/transcript.sh"
+
+# Audit and reap any abandoned worktrees / orphaned subagents from prior runs
+declare -f subagents_reap_orphans &>/dev/null && subagents_reap_orphans
 
 # ── Graceful Cancellation ─────────────────────────────────────
 # Tracks whether we're in task execution so Ctrl+C behaves smartly:
@@ -161,15 +174,19 @@ _lodge_exit_cleanup() {
 
     # Tear down remote SSH tunnel + watchdog so they don't outlive Lodge
     declare -f remote_disconnect &>/dev/null && remote_disconnect 2>/dev/null
-    # Kill any leftover curl → LLM processes
-    pkill -f "curl.*v1/chat/completions" 2>/dev/null || true
-    pkill -f "curl.*api/generate" 2>/dev/null || true
-    pkill -f "curl.*api/chat" 2>/dev/null || true
-    pkill -f "curl.*generativelanguage.googleapis" 2>/dev/null || true
-    pkill -f "curl.*api\.anthropic\.com" 2>/dev/null || true
-    pkill -f "curl.*api\.openai\.com" 2>/dev/null || true
-    # Stop MCP servers
-    declare -f _mcp_cleanup &>/dev/null && _mcp_cleanup
+    if [ "${_LODGE_SKIP_SUBAGENT_CLEANUP:-0}" != "1" ]; then
+        # Kill any leftover curl → LLM processes
+        pkill -f "curl.*v1/chat/completions" 2>/dev/null || true
+        pkill -f "curl.*api/generate" 2>/dev/null || true
+        pkill -f "curl.*api/chat" 2>/dev/null || true
+        pkill -f "curl.*generativelanguage.googleapis" 2>/dev/null || true
+        pkill -f "curl.*api\.anthropic\.com" 2>/dev/null || true
+        pkill -f "curl.*api\.openai\.com" 2>/dev/null || true
+        # Stop MCP servers
+        declare -f _mcp_cleanup &>/dev/null && _mcp_cleanup
+        # Reap any active subagent processes and worktrees
+        declare -f subagents_cleanup_all &>/dev/null && subagents_cleanup_all
+    fi
     # Clean temp files
     rm -f "${TMPDIR:-/tmp}"/.lodge-fifo-*-$$ 2>/dev/null
     rm -f "${TMPDIR:-/tmp}"/.lodge-cancel-$$ 2>/dev/null
@@ -452,6 +469,14 @@ _cmd_config() {
             ui_dim "  Settings auto-save when changed via /backend, /debug, /model."
             ui_dim "  Environment variables always override config file values." ;;
     esac
+}
+
+_cmd_endpoints() {
+    if declare -f endpoints_status_table &>/dev/null; then
+        endpoints_status_table
+    else
+        ui_err "Endpoints subsystem not loaded"
+    fi
 }
 _cmd_backend() {
     local args="$1"
@@ -932,6 +957,13 @@ _cmd_limits() {
                 ui_info "Macro loop milestones: $AGENT_MAX_STEPS (default: 40)"
             else
                 _limits_set AGENT_MAX_STEPS "Milestones" "$value" 1 100
+            fi ;;
+        turns)
+            if [ -z "$value" ]; then
+                ui_info "Parent agent max turns: ${AGENT_MAX_TURNS:-9999} (default: 9999)"
+                ui_info "Child subagent max turns: ${AGENT_CHILD_MAX_TURNS:-200} (default: 200)"
+            else
+                _limits_set AGENT_MAX_TURNS "Parent turns" "$value" 1 9999
             fi ;;
         inner)
             if [ -z "$value" ]; then
@@ -1414,6 +1446,8 @@ _cmd_limits() {
             AGENT_PLAN_STEPS=6
             AGENT_INNER_LOOPS=6
             AGENT_MAX_STEPS=40
+            AGENT_MAX_TURNS=9999
+            AGENT_CHILD_MAX_TURNS=200
             AGENT_MAX_DEPTH=3
             AGENT_FILE_EXPAND=1
             AGENT_FILE_EXPAND_CHARS=1000
@@ -1662,6 +1696,8 @@ _cmd_limits() {
         "")
             ui_section "Agent Limits"
             printf "  %-22s %s\n" "Plan steps/subtask:" "$AGENT_PLAN_STEPS  (default: 6)"
+            printf "  %-22s %s\n" "Parent ReAct turns:" "${AGENT_MAX_TURNS:-9999}  (default: 9999)"
+            printf "  %-22s %s\n" "Child worker turns:" "${AGENT_CHILD_MAX_TURNS:-200}  (default: 200)"
             local _expand_show="disabled"
             [ "${AGENT_HONEYDEW_EXPAND:-1}" -eq 1 ] && _expand_show="enabled"
             printf "  %-22s %s\n" "Honeydew expansion:" "$_expand_show  (default: enabled)"
@@ -2621,6 +2657,13 @@ _cmd_reflect() {
 _cmd_status() {
     ui_section "Status"
     printf "  %bModel:%b     %s\n" "$C_CYAN" "$C_RESET" "$LODGE_MODEL"
+    if declare -f endpoints_cascade &>/dev/null; then
+        endpoints_cascade >/dev/null 2>&1 || true
+        if [ -n "${ACTIVE_TIER:-}" ]; then
+            printf "  %bInference:%b Tier %s [%s] (%s @ %s)\n" "$C_CYAN" "$C_RESET" "$ACTIVE_TIER" "$ACTIVE_ENDPOINT_NAME" "$ACTIVE_ENDPOINT_MODEL" "$ACTIVE_ENDPOINT_URL"
+            printf "  %bContext:%b   %s tokens\n" "$C_CYAN" "$C_RESET" "$ACTIVE_ENDPOINT_CONTEXT"
+        fi
+    fi
     printf "  %bProject:%b   %s\n" "$C_CYAN" "$C_RESET" "$LODGE_PROJECT"
     printf "  %bWorkdir:%b   %s\n" "$C_CYAN" "$C_RESET" "$PWD"
     printf "  %bPermission:%b %s\n" "$C_CYAN" "$C_RESET" "$([ "$LODGE_PERMISSION" -eq 0 ] && echo 'ask-all' || ([ "$LODGE_PERMISSION" -eq 1 ] && echo 'ask-destructive' || echo 'auto'))"
@@ -3452,12 +3495,46 @@ _cmd_grep() {
         --exclude=routing_trace.jsonl
     )
 
-    # ── Build grep command ─────────────────────────────────────
-    local -a cmd=(grep -rn -E --binary-files=without-match)
-    cmd+=("${excludes[@]}")
-    [ -t 1 ] && cmd+=(--color=always)
-    cmd+=("${grep_flags[@]}")
-    cmd+=("--" "$pattern" "$search_path")
+    # ── Build grep command (prefer ripgrep if available) ───────
+    local -a cmd=()
+    if command -v rg &>/dev/null; then
+        cmd=(rg -n --no-heading --hidden)
+        cmd+=(
+            --glob '!**/.git/**'
+            --glob '!**/node_modules/**'
+            --glob '!**/__pycache__/**'
+            --glob '!**/.venv/**'
+            --glob '!**/target/**'
+            --glob '!**/.mypy_cache/**'
+            --glob '!**/.pytest_cache/**'
+            --glob '!**/.tox/**'
+            --glob '!**/.eggs/**'
+            --glob '!**/.lodge-snapshots/**'
+            --glob '!**/.keyring/**'
+            --glob '!**/.vault/**'
+            --glob '!**/cookies/**'
+            --glob '!**/cache/**'
+            --glob '!**/backups/**'
+            --glob '!**/mcp/**'
+            --glob '!**/keys.conf'
+            --glob '!**/lodge.conf'
+            --glob '!**/remote.conf'
+            --glob '!**/*.db'
+            --glob '!**/*.db-journal'
+            --glob '!**/.lodge.lock'
+            --glob '!**/.recall_mtimes'
+            --glob '!**/routing_trace.jsonl'
+        )
+        [ -t 1 ] && cmd+=(--color=always)
+        cmd+=("${grep_flags[@]}")
+        cmd+=("-e" "$pattern" "$search_path")
+    else
+        cmd=(grep -rn -E --binary-files=without-match)
+        cmd+=("${excludes[@]}")
+        [ -t 1 ] && cmd+=(--color=always)
+        cmd+=("${grep_flags[@]}")
+        cmd+=("--" "$pattern" "$search_path")
+    fi
 
     # ── Execute with optional pipe ─────────────────────────────
     # Pipe commands are restricted to safe read-only utilities.
@@ -6162,6 +6239,8 @@ _register_commands() {
     commands_register "debug"    "Toggle debug mode (timers + token counts)" "_cmd_debug"
     commands_register "config"   "Persistent settings — save/show/reset/edit" "_cmd_config"
     commands_register "backend"  "LLM backend — auto-detect, switch (ollama/llamacpp)" "_cmd_backend"
+    commands_register "endpoints" "Inference hardware ladder — view 4 tiers, URLs, and latency" "_cmd_endpoints"
+    commands_register "tiers"    "Inference hardware ladder (alias for /endpoints)" "_cmd_endpoints"
     commands_register "gpu"      "GPU layers — set offload layers for llama-server" "_cmd_gpu"
     commands_register "remote"     "Remote GPU inference (tunnel, models, benchmark)" "_cmd_remote"
     commands_register "mcp"        "MCP server integration (Model Context Protocol)" "_cmd_mcp"
@@ -6244,12 +6323,9 @@ _repl() {
             continue
         fi
         
-        # Natural language → agent
-        # All free-form input goes to agent_run (full soul, planning, tools).
-        # For lightweight Q&A without actions, use /ask or /a explicitly.
-        # This ensures George always gets his full personality injected
-        # and can leverage journal, web search, and memory for answers.
-        agent_run "$input" "$PWD"
+        # Natural language → agent (Modern ReAct Loop)
+        # All free-form input executes against the ReAct engine.
+        react_run "$input" "$PWD"
     done
 }
 
@@ -6308,21 +6384,27 @@ main() {
         ui_dim "    lodge"
         exit 1
     else
-        ui_spinner_start "Starting LLM backend"
-        if ! llm_ensure; then
+        endpoints_init
+        if endpoints_cascade; then
+            ui_ok "Active Inference Engine: Tier $ACTIVE_TIER [$ACTIVE_ENDPOINT_NAME] ($ACTIVE_ENDPOINT_MODEL @ $ACTIVE_ENDPOINT_URL)"
+            ui_dim "Context Window: $ACTIVE_ENDPOINT_CONTEXT tokens"
+        else
+            ui_spinner_start "Starting LLM backend"
+            if ! llm_ensure; then
+                ui_spinner_stop
+                ui_err "No LLM backend available."
+                ui_dim "  Build llama-server: see docs/ADRENO_GPU_SETUP.md"
+                ui_dim "  Or install Ollama:  curl -fsSL https://ollama.com/install.sh | sh"
+                ui_dim "  Or use a cloud provider: /provider use google"
+                exit 1
+            fi
             ui_spinner_stop
-            ui_err "No LLM backend available."
-            ui_dim "  Build llama-server: see docs/ADRENO_GPU_SETUP.md"
-            ui_dim "  Or install Ollama:  curl -fsSL https://ollama.com/install.sh | sh"
-            ui_dim "  Or use a cloud provider: /provider use google"
-            exit 1
+        
+            # Pre-load model weights (avoids cold-start delay on first query)
+            ui_spinner_start "Loading model"
+            llm_warmup 2>/dev/null
+            ui_spinner_stop
         fi
-        ui_spinner_stop
-    
-        # Pre-load model weights (avoids cold-start delay on first query)
-        ui_spinner_start "Loading model"
-        llm_warmup 2>/dev/null
-        ui_spinner_stop
     fi
     
     # Termux wake lock
@@ -6376,7 +6458,8 @@ main() {
 
         # Interactive mode
         local _model_info="Model: $LODGE_MODEL"
-        [ "${LODGE_SINGLE_MODEL:-0}" -eq 0 ] && _model_info="Primary: $(models_info "$LODGE_MODEL_PRIMARY" 2>/dev/null && echo "$_ME_KEY" || echo "$LODGE_MODEL_PRIMARY")"
+        [ -n "${ACTIVE_TIER:-}" ] && _model_info="Tier $ACTIVE_TIER: $ACTIVE_ENDPOINT_MODEL ($ACTIVE_ENDPOINT_NAME)"
+        [ "${LODGE_SINGLE_MODEL:-0}" -eq 0 ] && [ -z "${ACTIVE_TIER:-}" ] && _model_info="Primary: $(models_info "$LODGE_MODEL_PRIMARY" 2>/dev/null && echo "$_ME_KEY" || echo "$LODGE_MODEL_PRIMARY")"
         ui_mascot_banner "George v${LODGE_VERSION}" "$_model_info | $(basename "$PWD")" "center"
         
         # Journal-aware greeting
@@ -6393,6 +6476,18 @@ main() {
         # after it finishes (no llm_unload needed for interactive mode).
         journal_reflect "Interactive session in $(basename "$PWD")" "$PWD" &
         disown 2>/dev/null
+    elif [ "$1" = "trace" ] || [ "$1" = "debug" ]; then
+        if [ "${2:-}" = "context" ]; then
+            shift 2
+            local goal="${*:-inspect workspace and developer chat telemetry}"
+            context_engine_debug_trace "$goal" "$PWD" "${ACTIVE_TIER:-1}"
+            exit 0
+        fi
+    elif [ "$1" = "tools" ]; then
+        if [ "${2:-}" = "list" ] || [ -z "${2:-}" ]; then
+            echo "$_NATIVE_CORE_TOOLS" | jq -r '.[] | "\(.function.name) - \(.function.description)"'
+            exit 0
+        fi
     elif [[ "$1" == /* ]]; then
         # Slash command mode
         commands_dispatch "$*" "$PWD"
@@ -6414,8 +6509,8 @@ main() {
         fi
         echo "$$" > "$lockfile" 2>/dev/null
 
-        # One-shot task mode
-        agent_run "$*" "$PWD"
+        # One-shot task mode (Modern ReAct Loop)
+        react_run "$*" "$PWD"
     fi
     
     # Release wake lock

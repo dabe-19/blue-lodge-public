@@ -1,0 +1,58 @@
+# George Multi-Tier Endpoints Configuration Template
+# Copy this file to .george/endpoints.conf and customize for your hardware environment.
+#
+# Resolution hierarchy:
+#   Tier 3 (Frontier Sovereign) -> Tier 1 (Primary Workhorse) -> Tier 2 (Worker/Utility) -> Tier 0 (Edge Mobile)
+
+# ── Tier 3: Frontier Sovereign / Cloud Architect (Optional) ───────────────────
+TIER3_NAME="frontier-sovereign"
+TIER3_URL="http://mac-m5.local:8080"
+TIER3_MODEL="glm-5.3-flash"
+TIER3_CONTEXT=65536
+TIER3_ROLES="planning,synthesis,deep_coding,audit"
+TIER3_ENABLED=0
+TIER3_MAX_TOKENS=60000
+TIER3_COMPACT_TOKENS=48000
+TIER3_TIMEOUT=300
+TIER3_TEMPERATURE=0.6
+TIER3_TOP_P=0.95
+
+# ── Tier 1: Primary Workhorse (CUDA Container - Workstation GPU) ──────────────
+# Workstation: http://127.0.0.1:8080 | Mobile over Tailscale: http://<TAILSCALE_IP>:8080
+TIER1_NAME="cuda-workhorse"
+TIER1_URL="http://127.0.0.1:8080"
+TIER1_MODEL="ternary-bonsai-27b"
+TIER1_CONTEXT=32768
+TIER1_ROLES="architecture,planning,tools,testing,coding"
+TIER1_ENABLED=1
+TIER1_MAX_TOKENS=30720
+TIER1_COMPACT_TOKENS=24576
+TIER1_TIMEOUT=180
+TIER1_TEMPERATURE=0.6
+TIER1_TOP_P=0.95
+
+# ── Tier 2: Secondary Worker / Fast Utility Tier ─────────────────────────────
+TIER2_NAME="legacy-5700xt"
+TIER2_URL="http://192.168.1.150:8080"
+TIER2_MODEL="gemma-4-12b-agentic"
+TIER2_CONTEXT=16384
+TIER2_ROLES="fast_tools,web_scrape,batch_grep"
+TIER2_ENABLED=0
+TIER2_MAX_TOKENS=15000
+TIER2_COMPACT_TOKENS=12000
+TIER2_TIMEOUT=120
+TIER2_TEMPERATURE=0.3
+TIER2_TOP_P=0.90
+
+# ── Tier 0: Edge Mobile Fallback (On-Device Termux / CPU) ────────────────────
+TIER0_NAME="edge-mobile"
+TIER0_URL="http://127.0.0.1:11434"
+TIER0_MODEL="gemma4-e2b-inst"
+TIER0_CONTEXT=8192
+TIER0_ROLES="offgrid_fallback,simple_edits"
+TIER0_ENABLED=1
+TIER0_MAX_TOKENS=7000
+TIER0_COMPACT_TOKENS=5000
+TIER0_TIMEOUT=180
+TIER0_TEMPERATURE=0.2
+TIER0_TOP_P=0.90

@@ -10,6 +10,8 @@ source "$LODGE_DIR/lib/memory.sh"
 source "$LODGE_DIR/lib/tools.sh"
 source "$LODGE_DIR/lib/journal.sh"
 source "$LODGE_DIR/lib/agent.sh"
+_AGENT_SRC="$LODGE_DIR/lib/agent.sh"
+[ -f "$LODGE_DIR/docs/archive/legacy_agent.sh" ] && _AGENT_SRC="$LODGE_DIR/docs/archive/legacy_agent.sh"
 source "$LODGE_DIR/lib/web.sh"
 
 test_start "Optimizations — agent.sh / web.sh / memory.sh"
@@ -85,18 +87,18 @@ describe "_strip_think_blocks"
 describe "Contradiction guard structure"
 
   it "agent.sh contains case-based contradiction guard" && {
-    grep -q 'Contradiction guard' "$LODGE_DIR/lib/agent.sh"
+    grep -q 'Contradiction guard' "$_AGENT_SRC"
     assert_ok $?
   }
 
   it "hard negation tier uses case statement" && {
-    body=$(cat "$LODGE_DIR/lib/agent.sh")
+    body=$(cat "$_AGENT_SRC")
     echo "$body" | grep -q 'not achieved\|unable to\|could not\|cannot\|impossible\|no progress'
     assert_ok $?
   }
 
   it "soft negation tier checks for dismissal qualifiers" && {
-    body=$(cat "$LODGE_DIR/lib/agent.sh")
+    body=$(cat "$_AGENT_SRC")
     echo "$body" | grep -q 'but\|however\|irrelevant\|not required'
     assert_ok $?
   }
@@ -107,12 +109,12 @@ describe "Contradiction guard structure"
 describe "Milestone deduplication"
 
   it "uses 120-char normalized comparison" && {
-    grep -q '_milestone_norm.*:0:120' "$LODGE_DIR/lib/agent.sh"
+    grep -q '_milestone_norm.*:0:120' "$_AGENT_SRC"
     assert_ok $?
   }
 
   it "strips articles and prepositions for normalization" && {
-    body=$(cat "$LODGE_DIR/lib/agent.sh")
+    body=$(cat "$_AGENT_SRC")
     echo "$body" | grep -q 'the\\|a\\|an\\|to\\|for\\|of\\|in\\|on\\|at\\|by\\|with\\|from\\|into\\|via\\|using'
     assert_ok $?
   }
@@ -215,17 +217,17 @@ describe "Conversation buffer"
 describe "Web fetch guards"
 
   it "agent.sh contains empty web fetch guard (<20 chars)" && {
-    grep -q 'Web Fetch: Empty' "$LODGE_DIR/lib/agent.sh"
+    grep -q 'Web Fetch: Empty' "$_AGENT_SRC"
     assert_ok $?
   }
 
   it "agent.sh contains JUNK detection after condenser" && {
-    grep -q 'JUNK:' "$LODGE_DIR/lib/agent.sh"
+    grep -q 'JUNK:' "$_AGENT_SRC"
     assert_ok $?
   }
 
   it "agent.sh contains honeydew rewrite budget exhaustion flag" && {
-    grep -q 'HONEYDEW_REWRITE_BUDGET_EXHAUSTED' "$LODGE_DIR/lib/agent.sh"
+    grep -q 'HONEYDEW_REWRITE_BUDGET_EXHAUSTED' "$_AGENT_SRC"
     assert_ok $?
   }
 

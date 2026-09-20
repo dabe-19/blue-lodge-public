@@ -68,6 +68,12 @@ while [[ $# -gt 0 ]]; do
                 _warn "Container ${CONTAINER_NAME} is NOT running."
             fi
             exit 0 ;;
+        --download-vision)
+            _info "Downloading Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf (600 MiB) from Hugging Face..."
+            mkdir -p "$HOME/models"
+            curl -L -C - "https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf/resolve/main/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf" -o "$HOME/models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf"
+            _ok "Downloaded vision projector to $HOME/models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf"
+            exit 0 ;;
         *)
             if [ -z "$MODEL_ARG" ]; then
                 MODEL_ARG="$1"
@@ -129,10 +135,13 @@ MODEL_DIR="$(dirname "$GGUF_PATH")"
 MODEL_FILE="$(basename "$GGUF_PATH")"
 
 # Build runtime flags for llama-server-prism
-CTX_SIZE="${CTX_SIZE:-8192}"
+CTX_SIZE="${CTX_SIZE:-49152}"
+PARALLEL="${PARALLEL:-2}"
 GPU_LAYERS="${GPU_LAYERS:-99}"
-BATCH_SIZE="${BATCH_SIZE:-512}"
-UBATCH_SIZE="${UBATCH_SIZE:-256}"
+BATCH_SIZE="${BATCH_SIZE:-2048}"
+UBATCH_SIZE="${UBATCH_SIZE:-1024}"
+CTK="${CTK:-q4_0}"
+CTV="${CTV:-q4_0}"
 EXTRA_FLAGS=(
     -m "/models/$MODEL_FILE"
     -ngl "$GPU_LAYERS"
@@ -141,18 +150,32 @@ EXTRA_FLAGS=(
     -ub "$UBATCH_SIZE"
     --flash-attn on
     --no-mmap
-    --parallel 1
+    --parallel "$PARALLEL"
+    -ctk "$CTK"
+    -ctv "$CTV"
     --jinja
     --host 0.0.0.0
     --port "$PORT"
 )
 
-# Optional KV Cache quantization (e.g. CTK=q4_0 CTV=q4_0 for PQ2_0)
-if [ -n "${CTK:-}" ]; then
-    EXTRA_FLAGS+=(-ctk "$CTK")
+# Multimodal Projector (Vision Tower) Support
+MMPROJ_PATH=""
+if [ -n "${MMPROJ:-}" ]; then
+    if [ -f "$MMPROJ" ]; then
+        MMPROJ_PATH="$(readlink -f "$MMPROJ")"
+    elif [ -f "$MODEL_DIR/$MMPROJ" ]; then
+        MMPROJ_PATH="$MODEL_DIR/$MMPROJ"
+    fi
+else
+    # Auto-detect mmproj in model directory
+    m_proj=$(find "$MODEL_DIR" -maxdepth 2 -type f -iname "*mmproj*.gguf" 2>/dev/null | head -1)
+    [ -n "$m_proj" ] && MMPROJ_PATH="$m_proj"
 fi
-if [ -n "${CTV:-}" ]; then
-    EXTRA_FLAGS+=(-ctv "$CTV")
+
+if [ -n "$MMPROJ_PATH" ]; then
+    MMPROJ_FILE="$(basename "$MMPROJ_PATH")"
+    _ok "Multimodal vision projector detected: $MMPROJ_FILE"
+    EXTRA_FLAGS+=(--mmproj "/models/$MMPROJ_FILE" --mmproj-offload)
 fi
 
 # Dual GPU split if configured
