@@ -151,7 +151,7 @@ Autonomous emergency investigator task dispatched to isolate and fix regressions
     fi
     if git -C "$workdir" remote get-url origin &>/dev/null; then
         ui_step "Synchronizing release to origin..."
-        git -C "$workdir" push origin main "$tag_name" >/dev/null 2>&1 || ui_warn "Could not push to origin remote."
+        GIT_SSH_COMMAND="ssh -o BatchMode=yes" git -C "$workdir" push origin main "$tag_name" >/dev/null 2>&1 || ui_warn "Could not push to origin remote (requires interactive SSH passphrase)."
     fi
     unset ALLOW_RELEASE_PUSH
 
