@@ -47,13 +47,16 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path \
     && chmod -R a+rwx $RUSTUP_HOME $CARGO_HOME
 
+# Ensure libcuda.so.1 exists in CUDA stubs directory for build-time dynamic linker resolution
+RUN ln -sf libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
+
 # ── Layer 1: Clone and compile stock llama.cpp ────────────────
 RUN git clone https://github.com/ggml-org/llama.cpp.git /opt/llama.cpp && \
     cd /opt/llama.cpp && \
     CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Release -G Ninja" && \
     if [ "$BACKEND" = "cuda" ]; then \
-        CUDA_LINK="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs"; \
-        CMAKE_FLAGS="${CMAKE_FLAGS} -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES} -DGGML_CUDA_FA_ALL_QUANTS=ON"; \
+        CUDA_LINK="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs:/usr/local/cuda/compat"; \
+        CMAKE_FLAGS="${CMAKE_FLAGS} -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES} -DGGML_CUDA_FA_ALL_QUANTS=ON -DGGML_CUDA_GRAPHS=ON"; \
         CMAKE_FLAGS="${CMAKE_FLAGS} -DCMAKE_EXE_LINKER_FLAGS=${CUDA_LINK}"; \
         CMAKE_FLAGS="${CMAKE_FLAGS} -DCMAKE_SHARED_LINKER_FLAGS=${CUDA_LINK}"; \
     elif [ "$BACKEND" = "vulkan" ]; then \
@@ -70,8 +73,8 @@ RUN git clone https://github.com/PrismML-Eng/llama.cpp.git /opt/llama.cpp-prism 
     cd /opt/llama.cpp-prism && \
     CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Release -G Ninja" && \
     if [ "$BACKEND" = "cuda" ]; then \
-        CUDA_LINK="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs"; \
-        CMAKE_FLAGS="${CMAKE_FLAGS} -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES} -DGGML_CUDA_FA_ALL_QUANTS=ON"; \
+        CUDA_LINK="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs:/usr/local/cuda/compat"; \
+        CMAKE_FLAGS="${CMAKE_FLAGS} -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES} -DGGML_CUDA_FA_ALL_QUANTS=ON -DGGML_CUDA_GRAPHS=ON"; \
         CMAKE_FLAGS="${CMAKE_FLAGS} -DCMAKE_EXE_LINKER_FLAGS=${CUDA_LINK}"; \
         CMAKE_FLAGS="${CMAKE_FLAGS} -DCMAKE_SHARED_LINKER_FLAGS=${CUDA_LINK}"; \
     elif [ "$BACKEND" = "vulkan" ]; then \

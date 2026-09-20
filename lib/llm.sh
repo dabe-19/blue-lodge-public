@@ -618,6 +618,10 @@ _llm_stop_llamacpp_server() {
         local _pid
         _pid=$(pgrep -f "llama-server.*--port" 2>/dev/null | head -1)
         if [ -n "$_pid" ]; then
+            if [ -f "/proc/$_pid/cgroup" ] && grep -qE "docker|containerd" "/proc/$_pid/cgroup" 2>/dev/null; then
+                [ "$quiet" != "--quiet" ] && ui_dim "llama-server is running inside Docker container (use docker to stop)"
+                return 0
+            fi
             kill "$_pid" 2>/dev/null
             sleep 1
             kill -9 "$_pid" 2>/dev/null
@@ -708,35 +712,19 @@ _llm_start_llamacpp_server() {
         fi
     fi
 
-    # Validate
-    if [ "$_launch_mode" = "model" ]; then
-        if [ ! -f "$model_path" ]; then
-            [ "$quiet" != "--quiet" ] && ui_err "Model file not found: $model_path"
-            return 1
-        fi
-    fi
-    if [ ! -x "$LLAMA_CPP_SERVER_BIN" ]; then
-        [ "$quiet" != "--quiet" ] && ui_err "llama-server not found: $LLAMA_CPP_SERVER_BIN"
-        return 1
-    fi
-
     # Check if already running — adopt the existing server instead of failing.
-    # This handles: another Lodge session started it, the smoke test left it
-    # running, or this session's own PID file is still valid.
+    # This handles: containerized server (Docker), remote tunnel, or background runner.
     local _port_check
     _port_check=$(echo "$LLAMA_CPP_URL" | sed -n 's/.*:\([0-9]*\)$/\1/p')
     _port_check="${_port_check:-8080}"
     if curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null | grep -q '"status"'; then
-        # Verify the running server's GPU layers match our config.
-        # A stale server from a previous session might have been launched
-        # with -ngl >0 (Vulkan), producing gibberish on Adreno 830.
+        # Verify the running server's GPU layers match our config if it's a host process.
         local _running_ngl="" _srv_pid_adopt
         _srv_pid_adopt=$(pgrep -f "llama-server.*--port" 2>/dev/null | head -1)
         if [ -n "$_srv_pid_adopt" ] && [ -f "/proc/$_srv_pid_adopt/cmdline" ]; then
             _running_ngl=$(tr '\0' ' ' < "/proc/$_srv_pid_adopt/cmdline" 2>/dev/null \
                 | sed -n 's/.*-ngl[[:space:]]*\([0-9]*\).*/\1/p')
         fi
-        # Also try ps if /proc wasn't available
         if [ -z "$_running_ngl" ] && [ -n "$_srv_pid_adopt" ]; then
             _running_ngl=$(ps -p "$_srv_pid_adopt" -o args= 2>/dev/null \
                 | sed -n 's/.*-ngl[[:space:]]*\([0-9]*\).*/\1/p')
@@ -755,6 +743,18 @@ _llm_start_llamacpp_server() {
             LLAMA_CPP_SERVER_DRAFT_MODEL="${LLAMA_CPP_DRAFT_MODEL:-}"
             return 0
         fi
+    fi
+
+    # Validate model file and host binary before starting new local instance
+    if [ "$_launch_mode" = "model" ]; then
+        if [ ! -f "$model_path" ]; then
+            [ "$quiet" != "--quiet" ] && ui_err "Model file not found: $model_path"
+            return 1
+        fi
+    fi
+    if [ ! -x "$LLAMA_CPP_SERVER_BIN" ]; then
+        [ "$quiet" != "--quiet" ] && ui_err "llama-server not found: $LLAMA_CPP_SERVER_BIN"
+        return 1
     fi
     # Server may be loading a model — wait up to 30s for it
     local _loading_resp
@@ -794,10 +794,12 @@ _llm_start_llamacpp_server() {
     local _orphan_pid
     _orphan_pid=$(pgrep -f "llama-server.*--port" 2>/dev/null | head -1)
     if [ -n "$_orphan_pid" ]; then
-        [ "$quiet" != "--quiet" ] && ui_dim "Killing orphan llama-server (PID $_orphan_pid)"
-        kill -9 "$_orphan_pid" 2>/dev/null
-        wait "$_orphan_pid" 2>/dev/null
-        sleep 1
+        if [ ! -f "/proc/$_orphan_pid/cgroup" ] || ! grep -qE "docker|containerd" "/proc/$_orphan_pid/cgroup" 2>/dev/null; then
+            [ "$quiet" != "--quiet" ] && ui_dim "Killing orphan llama-server (PID $_orphan_pid)"
+            kill -9 "$_orphan_pid" 2>/dev/null
+            wait "$_orphan_pid" 2>/dev/null
+            sleep 1
+        fi
     fi
 
     # Unload Ollama models to free GPU VRAM before starting llama-server.
@@ -1539,10 +1541,11 @@ llm_ensure() {
         llm_check
         local status=$?
         if [ "$status" -eq 0 ]; then
-            if declare -f models_supports_think_flag &>/dev/null && models_supports_think_flag "$LODGE_MODEL" 2>/dev/null && [ "${LLAMA_CPP_SERVER_NOTHINK:-}" != "${LODGE_NOTHINK:-0}" ]; then
+            if declare -f models_supports_think_flag &>/dev/null && models_supports_think_flag "$LODGE_MODEL" 2>/dev/null && [ -n "${LLAMA_CPP_SERVER_NOTHINK:-}" ] && [ "${LLAMA_CPP_SERVER_NOTHINK}" != "${LODGE_NOTHINK:-0}" ]; then
                 ui_dim "llama-server thinking mode changed — restarting..."
                 _llm_stop_llamacpp_server --quiet
             else
+                LLAMA_CPP_SERVER_NOTHINK="${LODGE_NOTHINK:-0}"
                 _llm_kill_ollama --quiet
                 return 0
             fi

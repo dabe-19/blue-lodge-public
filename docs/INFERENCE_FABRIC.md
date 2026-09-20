@@ -28,7 +28,7 @@ When tunnelling through a jump host, set `REMOTE_FORWARD_HOST=10.0.0.100`.
 
 | Tier | Models | Where | Speed |
 |------|--------|-------|-------|
-| **Central** | 8B-12B (`qwen35-9b-inst`, `granite41-8b-inst`, `gemma4-12b-inst`) | GPU VM via SSH tunnel | ~60 tok/s |
+| **Central** | 8B-27B (`qwen35-9b-inst`, `granite41-8b-inst`, `gemma4-12b-inst`, `ternary-bonsai-27b`) | Local CUDA Sandbox / GPU VM | ~30-60 tok/s |
 | **Cloud** | Provider-dependent | Free-tier APIs | Varies |
 | **Edge** | 2-4B (`gemma4-e2b-inst`, `gemma4-e4b-inst`, `qwen35-4b-think`) | On device | ~10-15 tok/s |
 

@@ -485,6 +485,18 @@ _models_resolve_gguf() {
     entry=$(_models_lookup "$key") || return 1
     _models_parse_entry "$entry"
 
+    # Try direct GGUF directories ($LODGE_DIR/.george/models, $HOME/models, etc.)
+    local _mdir _direct
+    for _mdir in "${LODGE_DIR:-$HOME/blue-lodge}/.george/models" "$HOME/models" "$HOME/.george/models"; do
+        if [ -d "$_mdir" ]; then
+            _direct=$(find "$_mdir" -maxdepth 2 -type f \( -iname "*${key}*.gguf" -o -iname "*$(basename "${_ME_BASE}")*.gguf" -o -iname "*bonsai*.gguf" \) 2>/dev/null | head -1)
+            if [ -n "$_direct" ] && [ -f "$_direct" ]; then
+                echo "$_direct"
+                return 0
+            fi
+        fi
+    done
+
     # Try base image first (always available if ollama pulled the original)
     local gguf
     gguf=$(_models_find_ollama_gguf "$_ME_BASE")
@@ -1078,6 +1090,14 @@ _models_switch() {
             ui_err "Cannot find GGUF for model: $target"
             ui_dim "  Pull the base model via Ollama first, then switch."
             return 1
+        fi
+
+        # If llama-server is already running and healthy on LLAMA_CPP_URL, adopt it
+        if curl -sf --max-time 2 "$LLAMA_CPP_URL/health" 2>/dev/null | grep -q '"status"'; then
+            _MODELS_ACTIVE="$target"
+            LODGE_MODEL="$target"
+            LLAMA_CPP_MODEL="$_gguf"
+            return 0
         fi
 
         # If same GGUF is already loaded, thinking state and speculative decoding state match, just update tracking

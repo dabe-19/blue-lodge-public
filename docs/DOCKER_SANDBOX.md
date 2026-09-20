@@ -269,3 +269,50 @@ docker exec -u root george-sandbox bash -c "mkdir -p /home/george/.ollama/models
 ### Apple Silicon (Metal)
 *   **Docker Limitation:** Docker Desktop on macOS runs inside a Linux virtual machine and **cannot access the host's Apple Silicon Metal GPU API**. Building the sandbox in Docker on macOS will result in CPU-only inference.
 *   **Native Run:** For GPU-accelerated development on Apple Silicon, bypass Docker and run the code natively on the host system using the metal framework. See [IOS_MACOS_SETUP.md](file:///home/wsl-ops/blue-lodge/docs/IOS_MACOS_SETUP.md) for native instructions.
+
+---
+
+## Local CUDA Sandbox: `llama.cpp-prism` & Ternary Bonsai
+
+The `george-cuda-sandbox` image includes both stock `llama.cpp` and `llama.cpp-prism` compiled with CUDA Ampere (RTX 30-series / sm_86) optimizations (`-DGGML_CUDA_FA_ALL_QUANTS=ON`, `-DGGML_CUDA_GRAPHS=ON`).
+
+### Container Management Cheat Sheet
+
+```bash
+# 1. Check Container & HTTP Health:
+./scripts/start-local-prism.sh --status
+
+# 2. Stop Container (frees VRAM for gaming or other workloads):
+./scripts/start-local-prism.sh --stop
+
+# 3. Start Container (Daemon) with 32k context & 4-bit KV cache (Recommended for 12GB GPUs):
+CTX_SIZE=32768 CTK=q4_0 CTV=q4_0 ./scripts/start-local-prism.sh -d ~/models/Ternary-Bonsai-2-27B-PQ2_0.gguf
+
+# 4. View Container Logs:
+docker logs -f george-prism-server
+
+# 5. Switch active binary inside the image (if debugging):
+docker exec -it george-prism-server llama-server-switch stock   # or 'prism'
+```
+
+### Runtime Sizing & Optimization Matrix (RTX 3060 12GB)
+
+| Model Weights | Context Size | KV Cache Type | Total VRAM (incl. Display) | Speed | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`PTQ1_0` (5.5 GB)** | 8,192 (8k) | FP16 | ~8.4 GB | ~26 tok/s | 1.58-bit baseline |
+| **`PQ2_0` (6.7 GB)** | 16,384 (16k) | FP16 | ~9.8 GB | ~33 tok/s | 2-bit power-of-two |
+| **`PQ2_0` (6.7 GB)** | 32,768 (32k) | `q4_0` | **~9.5 GB** | **~31 tok/s** | **Recommended sweet spot** |
+
+### Connecting Mobile Phones (Same Wi-Fi LAN)
+Because the container binds `--host 0.0.0.0` on port `8080`, any phone or tablet on the same Wi-Fi network running George (Termux/iSH) can use the workstation's GPU:
+1. Find your workstation's LAN IP (e.g. `192.168.1.100`).
+2. On your phone in Termux, point George directly to the workstation:
+   ```bash
+   export LLAMA_CPP_URL="http://192.168.1.100:8080"
+   ./lodge
+   ```
+   Or establish a persistent tunnel via:
+   ```bash
+   ./lodge /remote setup user@192.168.1.100
+   ```
+
