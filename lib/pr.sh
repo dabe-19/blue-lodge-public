@@ -441,6 +441,25 @@ pr_accept() {
 pr_reject() {
     local pr_id="$1"
     local reason="${2:-Rejected by operator}"
+    local clean_id="${pr_id#\#}"
+
+    if [[ "$clean_id" =~ ^[0-9]+$ ]] && pr_is_gitea_online; then
+        ui_info "Closing and rejecting sovereign Gitea PR #${clean_id}..."
+        _gitea_load_conf
+        local resp
+        resp=$(curl -s -X PATCH "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/pulls/${clean_id}" \
+            -H "Authorization: token ${GITEA_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"state\": \"closed\"}")
+        if [ "$(echo "$resp" | jq -r .state 2>/dev/null)" = "closed" ]; then
+            ui_warn "Sovereign Gitea PR #${clean_id} successfully closed: ${reason}"
+            return 0
+        else
+            ui_err "Failed to close Gitea PR #${clean_id}: $(echo "$resp" | jq -r .message 2>/dev/null || echo "$resp")"
+            return 1
+        fi
+    fi
+
     local json_file="$PR_DIR/${pr_id}.json"
     if [ ! -f "$json_file" ]; then
         ui_err "PR $pr_id not found in local queue."
