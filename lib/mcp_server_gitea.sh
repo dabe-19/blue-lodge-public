@@ -288,6 +288,47 @@ gitea_issue_create() {
     fi
 }
 
+gitea_issue_list() {
+    local state="${1:-open}"
+    local format="${2:-text}"
+    _gitea_load_conf
+    if ! gitea_is_online; then
+        echo "ERROR: Gitea server ($GITEA_URL) is offline."
+        return 1
+    fi
+
+    local resp
+    resp=$(curl -s "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/issues?state=${state}&type=issues" \
+        -H "Authorization: token ${GITEA_TOKEN}" 2>/dev/null)
+
+    if ! echo "$resp" | jq -e 'type == "array"' &>/dev/null; then
+        echo "No issues returned or error: $resp"
+        return 1
+    fi
+
+    if [ "$format" = "json" ] || [ "$state" = "--json" ]; then
+        echo "$resp"
+        return 0
+    fi
+
+    echo "$resp" | jq -r '.[] | "#\(.number) (\(.state)) [\(.labels | map(.name) | join(","))] \(.title)"'
+}
+
+gitea_issue_get() {
+    local index="$1"
+    _gitea_load_conf
+    if [ -z "$index" ]; then
+        echo "ERROR: index is required"
+        return 1
+    fi
+    if ! gitea_is_online; then
+        echo "ERROR: Gitea server ($GITEA_URL) is offline."
+        return 1
+    fi
+    curl -s "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/issues/${index}" \
+        -H "Authorization: token ${GITEA_TOKEN}" 2>/dev/null
+}
+
 gitea_issue_comment() {
     local index="$1"
     local body="$2"
@@ -338,10 +379,19 @@ gitea_pr_review() {
     local payload
     payload=$(jq -n --arg event "$event" --arg body "$body" '{"event": $event, "body": $body}')
 
-    curl -s -X POST "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/pulls/${index}/reviews" \
+    local resp
+    resp=$(curl -s -X POST "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/pulls/${index}/reviews" \
         -H "Authorization: token ${GITEA_TOKEN}" \
         -H "Content-Type: application/json" \
-        -d "$payload" 2>/dev/null
+        -d "$payload" 2>/dev/null)
+
+    if echo "$resp" | jq -e .id &>/dev/null; then
+        echo "$resp"
+        return 0
+    else
+        echo "$resp"
+        return 1
+    fi
 }
 
 # ── JSON-RPC 2.0 MCP Protocol Loop (if run directly) ────────────────
@@ -475,6 +525,27 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
                                 },
                                 "required": ["index", "event"]
                             }
+                        },
+                        {
+                            "name": "gitea_issue_list",
+                            "description": "List issues from Sovereign Gitea filtered by state (open, closed, all).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "state": { "type": "string", "description": "Filter state: open, closed, all", "enum": ["open", "closed", "all"] }
+                                }
+                            }
+                        },
+                        {
+                            "name": "gitea_issue_get",
+                            "description": "Get complete metadata for a specific Gitea issue.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "index": { "type": "integer", "description": "Issue number" }
+                                },
+                                "required": ["index"]
+                            }
                         }
                     ]
                 }'
@@ -516,6 +587,16 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
                         bdy=$(printf '%s' "$arguments" | $_JQ -r '.body // ""' 2>/dev/null)
                         lbl=$(printf '%s' "$arguments" | $_JQ -r '.labels // ""' 2>/dev/null)
                         res=$(gitea_issue_create "$t" "$bdy" "$lbl" 2>&1)
+                        _respond_result "$id" "{\"content\":[{\"type\":\"text\",\"text\":$(printf '%s' "$res" | $_JQ -Rs .)}]}"
+                        ;;
+                    gitea_issue_list)
+                        st=$(printf '%s' "$arguments" | $_JQ -r '.state // "open"' 2>/dev/null)
+                        res=$(gitea_issue_list "$st" "json" 2>&1)
+                        _respond_result "$id" "{\"content\":[{\"type\":\"text\",\"text\":$(printf '%s' "$res" | $_JQ -Rs .)}]}"
+                        ;;
+                    gitea_issue_get)
+                        idx=$(printf '%s' "$arguments" | $_JQ -r '.index // empty' 2>/dev/null)
+                        res=$(gitea_issue_get "$idx" 2>&1)
                         _respond_result "$id" "{\"content\":[{\"type\":\"text\",\"text\":$(printf '%s' "$res" | $_JQ -Rs .)}]}"
                         ;;
                     gitea_issue_comment)
