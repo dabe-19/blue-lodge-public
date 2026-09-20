@@ -13,3 +13,5 @@ models/*.gguf
 /journal.md.sig 
 /memories/
 /workspace/
+.gitea-data/
+.act-runner-data/

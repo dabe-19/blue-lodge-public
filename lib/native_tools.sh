@@ -33,6 +33,8 @@ source "$LODGE_DIR/lib/backup.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/pgp.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/gsuite.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/treesitter.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/mcp_server_gitea.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/pr.sh" 2>/dev/null || true
 
 # ── Complete POSIX Tool Schemas (OpenAI Function Calling Format) ─────
 _NATIVE_CORE_TOOLS='[
@@ -605,14 +607,15 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "subagent_spawn",
-      "description": "Spawn an autonomous subagent inside an isolated git worktree sandbox (.sandboxes/<child_id>) with in-flight control FIFO and central registry tracking.",
+      "description": "Spawn an autonomous subagent inside an isolated git worktree sandbox (.sandboxes/<child_id>) with in-flight control FIFO, central registry tracking, and streaming observability.",
       "parameters": {
         "type": "object",
         "properties": {
           "tier": { "type": "integer", "description": "Target tier number (e.g. 1 for CUDA workhorse, 2 for AMD, 0 for mobile edge)." },
           "objective": { "type": "string", "description": "Specific objective and success criteria for the delegated child agent." },
           "context": { "type": "string", "description": "Optional parent context, file paths, or instructions." },
-          "max_turns": { "type": "integer", "description": "Maximum turn ceiling for child agent (default: 50)." }
+          "max_turns": { "type": "integer", "description": "Maximum turn ceiling for child agent (default: 50)." },
+          "async": { "type": "boolean", "description": "Run asynchronously in background (returns immediately with subagent ID, PID, branch, and log file path)." }
         },
         "required": ["tier", "objective"]
       }
@@ -628,6 +631,65 @@ _NATIVE_CORE_TOOLS='[
         "properties": {
           "sub_id": { "type": "string", "description": "Optional child ID. If omitted, lists all active subagents." }
         }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subagent_logs",
+      "description": "Inspect real-time process stream, thoughts, tool actions, observations, and milestones of a child subagent clone.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sub_id": { "type": "string", "description": "Child subagent ID." },
+          "lines": { "type": "integer", "description": "Number of recent lines to retrieve (default: 50)." }
+        },
+        "required": ["sub_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subagent_diff",
+      "description": "Inspect the git diff between parent HEAD and a child subagent worktree sandbox branch.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sub_id": { "type": "string", "description": "Child subagent ID." },
+          "stat_only": { "type": "boolean", "description": "If true, returns only short diffstat." }
+        },
+        "required": ["sub_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subagent_merge",
+      "description": "Merge a completed child subagent worktree branch deliverable into the active branch.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sub_id": { "type": "string", "description": "Child subagent ID." },
+          "strategy": { "type": "string", "description": "Merge strategy: merge (default) or squash.", "enum": ["merge", "squash"] }
+        },
+        "required": ["sub_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subagent_reap",
+      "description": "Cleanly remove a child subagent git worktree sandbox and delete its branch.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sub_id": { "type": "string", "description": "Child subagent ID." }
+        },
+        "required": ["sub_id"]
       }
     }
   },
@@ -1028,6 +1090,86 @@ _NATIVE_CORE_TOOLS='[
         "properties": {
           "branch": { "type": "string", "description": "Optional branch name. Defaults to current branch." }
         }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_status",
+      "description": "Inspect sovereign Gitea server health, version, and repository statistics.",
+      "parameters": { "type": "object", "properties": {} }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_repo_sync",
+      "description": "Push local develop branch or specified branch to sovereign Gitea remote.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "branch": { "type": "string", "description": "Branch to push (default: develop)" }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_pr_create",
+      "description": "Create a pull request on sovereign Gitea targeting develop branch.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "head": { "type": "string", "description": "Candidate branch name" },
+          "base": { "type": "string", "description": "Target branch (default: develop)" },
+          "title": { "type": "string", "description": "Pull request title" },
+          "body": { "type": "string", "description": "Markdown dossier and empirical metrics" }
+        },
+        "required": ["head", "title"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_pr_list",
+      "description": "List pull requests from sovereign Gitea forge.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "state": { "type": "string", "description": "open, closed, or all", "enum": ["open", "closed", "all"] }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_pr_merge",
+      "description": "Merge an approved pull request on sovereign Gitea into target branch.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": { "type": "integer", "description": "PR number" },
+          "strategy": { "type": "string", "description": "Merge strategy: merge or squash", "enum": ["merge", "squash"] }
+        },
+        "required": ["index"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "pr_audit",
+      "description": "Perform Three Degrees audit on candidate PR in an isolated sandbox worktree.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pr_id": { "type": "string", "description": "PR identifier (e.g. PR-001 or numeric Gitea PR id)" }
+        },
+        "required": ["pr_id"]
       }
     }
   },
@@ -1709,16 +1851,17 @@ $_ts_v_err
                 exit_code=$?
                 ;;
             subagent_spawn)
-                local tier objective context max_turns
+                local tier objective context max_turns is_async
                 tier=$(echo "$args_json" | jq -r '.tier // 1')
                 objective=$(echo "$args_json" | jq -r '.objective // empty')
                 context=$(echo "$args_json" | jq -r '.context // ""')
                 max_turns=$(echo "$args_json" | jq -r '.max_turns // 50')
+                is_async=$(echo "$args_json" | jq -r '.async // false')
                 if [ -z "$objective" ]; then
                     output="ERROR: objective is required"
                     exit_code=1
                 else
-                    output=$(subagents_spawn "$tier" "$objective" "$context" "$workdir" "$max_turns" 2>&1)
+                    output=$(subagents_spawn "$tier" "$objective" "$context" "$workdir" "$max_turns" "$is_async" 2>&1)
                     exit_code=$?
                 fi
                 ;;
@@ -1734,6 +1877,38 @@ $_ts_v_err
                     output=$(subagents_get_active 2>&1)
                 fi
                 exit_code=0
+                ;;
+            subagent_logs)
+                local sub_id lines
+                sub_id=$(echo "$args_json" | jq -r '.sub_id // empty')
+                lines=$(echo "$args_json" | jq -r '.lines // 50')
+                if [ -z "$sub_id" ]; then
+                    output="ERROR: sub_id is required"
+                    exit_code=1
+                else
+                    output=$(subagents_logs "$sub_id" "$lines" 2>&1)
+                    exit_code=$?
+                fi
+                ;;
+            subagent_diff)
+                local sub_id stat_only
+                sub_id=$(echo "$args_json" | jq -r '.sub_id // empty')
+                stat_only=$(echo "$args_json" | jq -r '.stat_only // false')
+                output=$(subagents_diff "$sub_id" "$stat_only" 2>&1)
+                exit_code=$?
+                ;;
+            subagent_merge)
+                local sub_id strategy
+                sub_id=$(echo "$args_json" | jq -r '.sub_id // empty')
+                strategy=$(echo "$args_json" | jq -r '.strategy // "merge"')
+                output=$(subagents_merge "$sub_id" "$strategy" 2>&1)
+                exit_code=$?
+                ;;
+            subagent_reap)
+                local sub_id
+                sub_id=$(echo "$args_json" | jq -r '.sub_id // empty')
+                output=$(subagents_reap "$sub_id" 2>&1)
+                exit_code=$?
                 ;;
             subagent_intervene)
                 local sub_id cmd fifo
@@ -2060,6 +2235,44 @@ $_ts_v_err
                 local br
                 br=$(echo "$args_json" | jq -r '.branch // empty')
                 output=$(cmd_push "$br" "$workdir" 2>&1)
+                exit_code=$?
+                ;;
+            gitea_status)
+                output=$(gitea_status 2>&1)
+                exit_code=$?
+                ;;
+            gitea_repo_sync)
+                local br
+                br=$(echo "$args_json" | jq -r '.branch // "develop"')
+                output=$(gitea_repo_sync "$br" 2>&1)
+                exit_code=$?
+                ;;
+            gitea_pr_create)
+                local hd bs tt bd
+                hd=$(echo "$args_json" | jq -r '.head // empty')
+                bs=$(echo "$args_json" | jq -r '.base // "develop"')
+                tt=$(echo "$args_json" | jq -r '.title // empty')
+                bd=$(echo "$args_json" | jq -r '.body // ""')
+                output=$(gitea_pr_create "$hd" "$bs" "$tt" "$bd" 2>&1)
+                exit_code=$?
+                ;;
+            gitea_pr_list)
+                local st
+                st=$(echo "$args_json" | jq -r '.state // "open"')
+                output=$(gitea_pr_list "$st" 2>&1)
+                exit_code=$?
+                ;;
+            gitea_pr_merge)
+                local idx strat
+                idx=$(echo "$args_json" | jq -r '.index // empty')
+                strat=$(echo "$args_json" | jq -r '.strategy // "merge"')
+                output=$(gitea_pr_merge "$idx" "$strat" 2>&1)
+                exit_code=$?
+                ;;
+            pr_audit)
+                local pid
+                pid=$(echo "$args_json" | jq -r '.pr_id // empty')
+                output=$(pr_audit "$pid" 2>&1)
                 exit_code=$?
                 ;;
             project_fix)

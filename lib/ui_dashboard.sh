@@ -71,6 +71,7 @@ ui_dashboard_worker_finish() {
 
 ui_dashboard_render() {
     [ "${_DASH_ENABLED:-0}" -ne 1 ] && return 0
+    [ ! -t 2 ] && return 0
     [ ${#_DASH_WORKER_IDS[@]} -eq 0 ] && return 0
 
     local lines cols
@@ -81,39 +82,40 @@ ui_dashboard_render() {
     local count=${#_DASH_WORKER_IDS[@]}
     local box_height=$((count + 2))
     local start_row=$((lines - box_height + 1))
-
-    # Save cursor position
-    printf "\033[s"
-
-    # Move to start row
-    printf "\033[%d;1H" "$start_row"
-
-    # Draw header
-    printf "${C_LODGE}┌─ Active Workers [%d] %s┐${C_RESET}\n" "$count" "$(printf '─%.0s' $(seq 1 $((cols - 25))))"
-
     local now
     now=$(date +%s)
 
-    for id in "${_DASH_WORKER_IDS[@]}"; do
-        local entry="${_DASH_WORKERS[$id]:-}"
-        [ -z "$entry" ] && continue
+    {
+        # Save cursor position
+        printf "\033[s"
 
-        local tier model task start_time status
-        IFS='|' read -r tier model task start_time status <<< "$entry"
-        local elapsed=$((now - start_time))
+        # Move to start row
+        printf "\033[%d;1H" "$start_row"
 
-        local status_sym="●"
-        local status_color="$C_GREEN"
-        [ "$status" = "active" ] && status_sym="⚙" && status_color="$C_CYAN"
-        [ "$status" = "error" ] && status_sym="✗" && status_color="$C_RED"
+        # Draw header
+        printf "${C_LODGE}┌─ Active Workers [%d] %s┐${C_RESET}\n" "$count" "$(printf '─%.0s' $(seq 1 $((cols - 25))))"
 
-        local task_trim="${task:0:$((cols - 35))}"
-        printf "${C_LODGE}│${C_RESET} ${status_color}%s${C_RESET} [Tier %s: %s] %s (${elapsed}s)\033[K\n" "$status_sym" "$tier" "$model" "$task_trim"
-    done
+        for id in "${_DASH_WORKER_IDS[@]}"; do
+            local entry="${_DASH_WORKERS[$id]:-}"
+            [ -z "$entry" ] && continue
 
-    # Draw footer
-    printf "${C_LODGE}└%s┘${C_RESET}" "$(printf '─%.0s' $(seq 1 $((cols - 2))))"
+            local tier model task start_time status
+            IFS='|' read -r tier model task start_time status <<< "$entry"
+            local elapsed=$((now - start_time))
 
-    # Restore cursor
-    printf "\033[u"
+            local status_sym="●"
+            local status_color="$C_GREEN"
+            [ "$status" = "active" ] && status_sym="⚙" && status_color="$C_CYAN"
+            [ "$status" = "error" ] && status_sym="✗" && status_color="$C_RED"
+
+            local task_trim="${task:0:$((cols - 35))}"
+            printf "${C_LODGE}│${C_RESET} ${status_color}%s${C_RESET} [Tier %s: %s] %s (${elapsed}s)\033[K\n" "$status_sym" "$tier" "$model" "$task_trim"
+        done
+
+        # Draw footer
+        printf "${C_LODGE}└%s┘${C_RESET}" "$(printf '─%.0s' $(seq 1 $((cols - 2))))"
+
+        # Restore cursor
+        printf "\033[u"
+    } >&2
 }

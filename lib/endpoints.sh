@@ -86,6 +86,7 @@ endpoints_probe() {
     local tier="$1"
     local enabled_var="TIER${tier}_ENABLED"
     local url_var="TIER${tier}_URL"
+    [ -z "${!enabled_var+x}" ] && endpoints_init
 
     [ "${!enabled_var:-0}" -ne 1 ] && return 1
 

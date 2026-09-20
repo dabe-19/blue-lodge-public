@@ -106,10 +106,10 @@ describe "MCP protocol compliance"
 # ── tools/list ─────────────────────────────────────────────────
 describe "tools/list"
 
-  it "returns all 21 tools" && {
+  it "returns all 26 tools" && {
     resp=$(_msg_call '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
     count=$(printf '%s' "$resp" | jq '.result.tools | length' 2>/dev/null)
-    assert_eq "$count" "21"
+    assert_eq "$count" "26"
   }
 
   it "includes git_status tool" && {
@@ -169,7 +169,7 @@ describe "tools/list"
   it "all tools have required inputSchema" && {
     resp=$(_msg_call '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
     all_have=$(printf '%s' "$resp" | jq '[.result.tools[] | select(.inputSchema != null)] | length' 2>/dev/null)
-    assert_eq "$all_have" "21" "all tools should have inputSchema"
+    assert_eq "$all_have" "26" "all tools should have inputSchema"
   }
 
 # ── tools/call — git_status ───────────────────────────────────
@@ -486,7 +486,7 @@ describe "integration with George MCP client"
     mcp_start "george-git"
     tools=$(mcp_tools_list "george-git")
     count=$(printf '%s' "$tools" | jq 'length' 2>/dev/null)
-    assert_eq "$count" "21" "should have 21 tools"
+    assert_eq "$count" "26" "should have 26 tools"
     _msg_teardown
     MCP_ENABLED=0
   }
@@ -511,6 +511,17 @@ describe "integration with George MCP client"
     assert_contains "$resp" "git_child_patch"
     assert_contains "$resp" "git_child_merge"
     assert_contains "$resp" "git_worktree_reap"
+    _msg_teardown
+  }
+
+  it "lists gitea tool suite in tools/list" && {
+    _msg_setup
+    resp=$(_msg_call '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
+    assert_contains "$resp" "gitea_status"
+    assert_contains "$resp" "gitea_repo_sync"
+    assert_contains "$resp" "gitea_pr_create"
+    assert_contains "$resp" "gitea_pr_list"
+    assert_contains "$resp" "gitea_pr_merge"
     _msg_teardown
   }
 

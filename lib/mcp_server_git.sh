@@ -38,6 +38,7 @@ source "$LODGE_DIR/lib/git.sh"
 
 # Web library needed for GitHub search/check
 source "$LODGE_DIR/lib/web.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/mcp_server_gitea.sh" 2>/dev/null || true
 
 # Ensure cache dir exists
 GEORGE_CACHE_DIR="${GEORGE_CACHE_DIR:-$GEORGE_DIR/cache/web}"
@@ -437,6 +438,57 @@ _TOOLS_JSON='[
         "child_id": { "type": "string", "description": "Unique child subagent identifier" }
       },
       "required": ["child_id"]
+    }
+  },
+  {
+    "name": "gitea_status",
+    "description": "Inspect sovereign Gitea server health, version, and repository statistics.",
+    "inputSchema": { "type": "object", "properties": {} }
+  },
+  {
+    "name": "gitea_repo_sync",
+    "description": "Push local develop branch or specified branch to sovereign Gitea remote.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "branch": { "type": "string", "description": "Branch to push (default: develop)" }
+      }
+    }
+  },
+  {
+    "name": "gitea_pr_create",
+    "description": "Create a pull request on sovereign Gitea targeting develop.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "head": { "type": "string", "description": "Source candidate branch" },
+        "base": { "type": "string", "description": "Target branch (default: develop)" },
+        "title": { "type": "string", "description": "Pull request title" },
+        "body": { "type": "string", "description": "Markdown dossier and empirical proof" }
+      },
+      "required": ["head", "title"]
+    }
+  },
+  {
+    "name": "gitea_pr_list",
+    "description": "List pull requests from sovereign Gitea forge.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "state": { "type": "string", "description": "open, closed, or all", "enum": ["open", "closed", "all"] }
+      }
+    }
+  },
+  {
+    "name": "gitea_pr_merge",
+    "description": "Merge an approved pull request on sovereign Gitea into target branch.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "index": { "type": "integer", "description": "PR number" },
+        "strategy": { "type": "string", "description": "Merge strategy: merge or squash", "enum": ["merge", "squash"] }
+      },
+      "required": ["index"]
     }
   }
 ]'
@@ -1006,6 +1058,44 @@ _handle_tool_call() {
             git -C "$LODGE_DIR" branch -D "$branch" 2>/dev/null || true
             git -C "$LODGE_DIR" worktree prune 2>/dev/null || true
             _respond_result "$id" "$(_text_content "Worktree $wt_path and branch $branch cleanly reaped.")"
+            ;;
+
+        gitea_status)
+            local res
+            res=$(gitea_status 2>&1)
+            _respond_result "$id" "$(_text_content "$res")"
+            ;;
+
+        gitea_repo_sync)
+            local b res
+            b=$(printf '%s' "$arguments" | $_JQ -r '.branch // "develop"' 2>/dev/null)
+            res=$(gitea_repo_sync "$b" 2>&1)
+            _respond_result "$id" "$(_text_content "$res")"
+            ;;
+
+        gitea_pr_create)
+            local h bs t bdy res
+            h=$(printf '%s' "$arguments" | $_JQ -r '.head // empty' 2>/dev/null)
+            bs=$(printf '%s' "$arguments" | $_JQ -r '.base // "develop"' 2>/dev/null)
+            t=$(printf '%s' "$arguments" | $_JQ -r '.title // empty' 2>/dev/null)
+            bdy=$(printf '%s' "$arguments" | $_JQ -r '.body // ""' 2>/dev/null)
+            res=$(gitea_pr_create "$h" "$bs" "$t" "$bdy" 2>&1)
+            _respond_result "$id" "$(_text_content "$res")"
+            ;;
+
+        gitea_pr_list)
+            local st res
+            st=$(printf '%s' "$arguments" | $_JQ -r '.state // "open"' 2>/dev/null)
+            res=$(gitea_pr_list "$st" 2>&1)
+            _respond_result "$id" "$(_text_content "$res")"
+            ;;
+
+        gitea_pr_merge)
+            local idx strat res
+            idx=$(printf '%s' "$arguments" | $_JQ -r '.index // empty' 2>/dev/null)
+            strat=$(printf '%s' "$arguments" | $_JQ -r '.strategy // "merge"' 2>/dev/null)
+            res=$(gitea_pr_merge "$idx" "$strat" 2>&1)
+            _respond_result "$id" "$(_text_content "$res")"
             ;;
 
         *)
