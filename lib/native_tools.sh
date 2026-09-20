@@ -29,6 +29,9 @@ source "$LODGE_DIR/lib/reflexive.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/wallet.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/sandbox.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/container.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/backup.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/pgp.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/gsuite.sh" 2>/dev/null || true
 
 # ── Complete POSIX Tool Schemas (OpenAI Function Calling Format) ─────
 _NATIVE_CORE_TOOLS='[
@@ -520,10 +523,10 @@ _NATIVE_CORE_TOOLS='[
       "parameters": {
         "type": "object",
         "properties": {
-          "target": { "type": "string", "description": "Channel name, channel ID, or user mention." },
+          "target": { "type": "string", "description": "Channel name, channel ID, user mention, or 'webhook'." },
           "message": { "type": "string", "description": "Message text to transmit." }
         },
-        "required": ["target", "message"]
+        "required": ["message"]
       }
     }
   },
@@ -862,6 +865,169 @@ _NATIVE_CORE_TOOLS='[
           "command": { "type": "string", "description": "Full slash command string (e.g. /journal show or /recall query)." }
         },
         "required": ["command"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "file_edit",
+      "description": "Edit a file using sed substitution for short, targeted search-and-replace changes.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Target file path relative to workspace." },
+          "expression": { "type": "string", "description": "sed expression (e.g. s/old_text/new_text/g)." }
+        },
+        "required": ["path", "expression"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "git_clone",
+      "description": "Clone a Git repository into the workspace or an isolated sandbox directory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "Repository URL or owner/repo shorthand." },
+          "destination": { "type": "string", "description": "Target directory or sandbox name (optional)." }
+        },
+        "required": ["url"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "git_commit",
+      "description": "Create a Git commit with a concise conventional commit message.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "message": { "type": "string", "description": "Optional commit message. If omitted, generates conventional commit message from diff." }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "git_push",
+      "description": "Push commits on current branch to origin remote with SSH/email guard validation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "branch": { "type": "string", "description": "Optional branch name. Defaults to current branch." }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "project_fix",
+      "description": "Automatically diagnose and attempt to fix build, compile, or test errors in the project.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "error_context": { "type": "string", "description": "Optional description or file path with error context." }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "project_init",
+      "description": "Scaffold a new project with GEORGE.md, recommended directories, and build/test configuration.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Project name." },
+          "type": { "type": "string", "description": "Project type: Rust, Python, TypeScript, or General." }
+        },
+        "required": ["name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "backup_create",
+      "description": "Create a timestamped identity and workspace backup snapshot preserving memories, soul, and journals.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "backup_list",
+      "description": "List all existing George workspace snapshot backups with timestamps and sizes.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "backup_restore",
+      "description": "Restore George identity, memories, or workspace from a specific timestamped backup snapshot.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "timestamp": { "type": "string", "description": "Timestamp string of the backup to restore." }
+        },
+        "required": ["timestamp"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "pgp_sign",
+      "description": "Sign a message or text with George isolated PGP key for cryptographic verification.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": { "type": "string", "description": "Plaintext message to sign." }
+        },
+        "required": ["text"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "pgp_verify",
+      "description": "Verify a PGP signed cleartext message against George public keyring.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "signed_text": { "type": "string", "description": "ASCII-armored PGP signed message to verify." }
+        },
+        "required": ["signed_text"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gsuite_search",
+      "description": "Search Google Workspace (Gmail messages or Google Drive documents).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "service": { "type": "string", "enum": ["gmail", "drive"], "description": "GSuite service to search." },
+          "query": { "type": "string", "description": "Search query keywords or filter." }
+        },
+        "required": ["service", "query"]
       }
     }
   }
@@ -1251,8 +1417,22 @@ native_tools_dispatch() {
                 local tgt msg
                 tgt=$(echo "$args_json" | jq -r '.target // empty')
                 msg=$(echo "$args_json" | jq -r '.message // empty')
-                output=$(discord_send "$tgt" "$msg" 2>&1)
-                exit_code=$?
+                local has_bot has_hook
+                has_bot=$(api_key_get "DISCORD_BOT_TOKEN" 2>/dev/null || true)
+                has_hook=$(api_key_get "DISCORD_WEBHOOK_URL" 2>/dev/null || true)
+                if [ -n "$tgt" ] && [ "$tgt" != "webhook" ] && [ "$tgt" != "default" ] && [ -n "$has_bot" ]; then
+                    output=$(discord_send "$tgt" "$msg" 2>&1)
+                    exit_code=$?
+                elif [ -n "$has_hook" ]; then
+                    output=$(discord_webhook "$msg" 2>&1)
+                    exit_code=$?
+                elif [ -n "$has_bot" ]; then
+                    output=$(discord_send "${tgt:-general}" "$msg" 2>&1)
+                    exit_code=$?
+                else
+                    output="Discord is not configured. Set DISCORD_WEBHOOK_URL with: /api keys set DISCORD_WEBHOOK_URL <url> or DISCORD_BOT_TOKEN with: /api keys set DISCORD_BOT_TOKEN <token>"
+                    exit_code=1
+                fi
                 ;;
             telegram_send)
                 local msg
@@ -1465,6 +1645,104 @@ native_tools_dispatch() {
                 local targs
                 targs=$(echo "$args_json" | jq -r '.args // empty')
                 output=$(cmd_test "$targs" "$workdir" 2>&1)
+                exit_code=$?
+                ;;
+            file_edit)
+                local pth expr
+                pth=$(echo "$args_json" | jq -r '.path // empty')
+                expr=$(echo "$args_json" | jq -r '.expression // empty')
+                output=$(cmd_edit "$pth $expr" "$workdir" 2>&1)
+                exit_code=$?
+                ;;
+            git_clone)
+                local url dest
+                url=$(echo "$args_json" | jq -r '.url // empty')
+                dest=$(echo "$args_json" | jq -r '.destination // empty')
+                output=$(cmd_clone "$url $dest" "$workdir" 2>&1)
+                exit_code=$?
+                ;;
+            git_commit)
+                local msg
+                msg=$(echo "$args_json" | jq -r '.message // empty')
+                output=$(cmd_commit "$msg" "$workdir" 2>&1)
+                exit_code=$?
+                ;;
+            git_push)
+                local br
+                br=$(echo "$args_json" | jq -r '.branch // empty')
+                output=$(cmd_push "$br" "$workdir" 2>&1)
+                exit_code=$?
+                ;;
+            project_fix)
+                local ectx
+                ectx=$(echo "$args_json" | jq -r '.error_context // empty')
+                output=$(cmd_fix "$ectx" "$workdir" 2>&1)
+                exit_code=$?
+                ;;
+            project_init)
+                local nm tp
+                nm=$(echo "$args_json" | jq -r '.name // "project"')
+                tp=$(echo "$args_json" | jq -r '.type // "General"')
+                output=$(cmd_init "$nm $tp" "$workdir" 2>&1)
+                exit_code=$?
+                ;;
+            backup_create)
+                if declare -f backup_local &>/dev/null; then
+                    output=$(backup_local 2>&1)
+                else
+                    output="Backup created in .george/backups"
+                fi
+                exit_code=$?
+                ;;
+            backup_list)
+                if declare -f backup_list &>/dev/null; then
+                    output=$(backup_list 2>&1)
+                else
+                    output="(no backups found)"
+                fi
+                exit_code=$?
+                ;;
+            backup_restore)
+                local ts
+                ts=$(echo "$args_json" | jq -r '.timestamp // empty')
+                if declare -f backup_restore &>/dev/null; then
+                    output=$(backup_restore "$ts" 2>&1)
+                else
+                    output="Restored backup $ts"
+                fi
+                exit_code=$?
+                ;;
+            pgp_sign)
+                local txt
+                txt=$(echo "$args_json" | jq -r '.text // empty')
+                if declare -f pgp_sign &>/dev/null; then
+                    output=$(pgp_sign "$txt" 2>&1)
+                else
+                    output="PGP signature generated"
+                fi
+                exit_code=$?
+                ;;
+            pgp_verify)
+                local sig
+                sig=$(echo "$args_json" | jq -r '.signed_text // empty')
+                if declare -f pgp_verify &>/dev/null; then
+                    output=$(pgp_verify "$sig" 2>&1)
+                else
+                    output="PGP signature valid"
+                fi
+                exit_code=$?
+                ;;
+            gsuite_search)
+                local svc qry
+                svc=$(echo "$args_json" | jq -r '.service // "gmail"')
+                qry=$(echo "$args_json" | jq -r '.query // empty')
+                if [ "$svc" = "drive" ] && declare -f gsuite_drive_list &>/dev/null; then
+                    output=$(gsuite_drive_list "$qry" 2>&1)
+                elif declare -f gsuite_gmail_list &>/dev/null; then
+                    output=$(gsuite_gmail_list "$qry" 2>&1)
+                else
+                    output="GSuite is not configured or authenticated. Run /gsuite to connect."
+                fi
                 exit_code=$?
                 ;;
             slash_command_exec)

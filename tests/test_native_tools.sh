@@ -12,7 +12,7 @@ describe "native_tools_get_all_schemas"
     echo "$schemas" | jq empty
     assert_ok $?
     len=$(echo "$schemas" | jq '. | length')
-    [ "$len" -ge 60 ]
+    [ "$len" -ge 72 ]
     assert_ok $?
   }
 
@@ -23,10 +23,22 @@ describe "native_tools_get_all_schemas"
     assert_ok $?
     echo "$schemas" | jq -e '.[] | select(.function.name == "file_download")' >/dev/null
     assert_ok $?
-    # 2. Polyglot Runtimes
+    echo "$schemas" | jq -e '.[] | select(.function.name == "file_edit")' >/dev/null
+    assert_ok $?
+    # 2. Polyglot Runtimes & Git
     echo "$schemas" | jq -e '.[] | select(.function.name == "project_build")' >/dev/null
     assert_ok $?
     echo "$schemas" | jq -e '.[] | select(.function.name == "project_test")' >/dev/null
+    assert_ok $?
+    echo "$schemas" | jq -e '.[] | select(.function.name == "project_fix")' >/dev/null
+    assert_ok $?
+    echo "$schemas" | jq -e '.[] | select(.function.name == "project_init")' >/dev/null
+    assert_ok $?
+    echo "$schemas" | jq -e '.[] | select(.function.name == "git_clone")' >/dev/null
+    assert_ok $?
+    echo "$schemas" | jq -e '.[] | select(.function.name == "git_commit")' >/dev/null
+    assert_ok $?
+    echo "$schemas" | jq -e '.[] | select(.function.name == "git_push")' >/dev/null
     assert_ok $?
     # 3. Reflexive Intelligence
     echo "$schemas" | jq -e '.[] | select(.function.name == "reflexive_status")' >/dev/null
@@ -46,27 +58,34 @@ describe "native_tools_get_all_schemas"
     assert_ok $?
     echo "$schemas" | jq -e '.[] | select(.function.name == "sandbox_create")' >/dev/null
     assert_ok $?
-    # 7. Memory & Semantic Recall
+    # 7. Identity Backups & Cryptography
+    echo "$schemas" | jq -e '.[] | select(.function.name == "backup_create")' >/dev/null
+    assert_ok $?
+    echo "$schemas" | jq -e '.[] | select(.function.name == "pgp_sign")' >/dev/null
+    assert_ok $?
+    echo "$schemas" | jq -e '.[] | select(.function.name == "gsuite_search")' >/dev/null
+    assert_ok $?
+    # 8. Memory & Semantic Recall
     echo "$schemas" | jq -e '.[] | select(.function.name == "memory_get_section")' >/dev/null
     assert_ok $?
     echo "$schemas" | jq -e '.[] | select(.function.name == "recall_search")' >/dev/null
     assert_ok $?
     echo "$schemas" | jq -e '.[] | select(.function.name == "journal_record")' >/dev/null
     assert_ok $?
-    # 8. Model Parameters & REPL
+    # 9. Model Parameters & REPL
     echo "$schemas" | jq -e '.[] | select(.function.name == "model_param_set")' >/dev/null
     assert_ok $?
     echo "$schemas" | jq -e '.[] | select(.function.name == "model_endpoint_status")' >/dev/null
     assert_ok $?
-    # 9. MCP Management
+    # 10. MCP Management
     echo "$schemas" | jq -e '.[] | select(.function.name == "mcp_server_status")' >/dev/null
     assert_ok $?
-    # 10. Comms & Swarm
+    # 11. Comms & Swarm
     echo "$schemas" | jq -e '.[] | select(.function.name == "email_send")' >/dev/null
     assert_ok $?
     echo "$schemas" | jq -e '.[] | select(.function.name == "mqtt_publish")' >/dev/null
     assert_ok $?
-    # 11. Bidirectional Slash Commands
+    # 12. Bidirectional Slash Commands
     echo "$schemas" | jq -e '.[] | select(.function.name == "slash_command_exec")' >/dev/null
     assert_ok $?
   }
@@ -140,6 +159,13 @@ describe "native_tools_dispatch"
     assert_ok $?
     content=$(echo "$res" | jq -r '.content')
     assert_contains "$content" "not found"
+  }
+
+  it "dispatches backup_list successfully" && {
+    res=$(native_tools_dispatch "call_test_bak" "backup_list" '{}' "$PWD")
+    assert_ok $?
+    role=$(echo "$res" | jq -r '.role')
+    assert_eq "$role" "tool"
   }
 
   it "handles unknown tool gracefully" && {

@@ -31,10 +31,15 @@ describe "context_engine_build structure"
     assert_contains "$ctx" "Hardware Fallback Ladder"
   }
 
-  it "injects comprehensive 60-tool catalog in tool_manifest" && {
+  it "injects comprehensive 72-tool catalog in tool_manifest" && {
     ctx=$(context_engine_build "test goal" "$PWD" 1)
-    assert_contains "$ctx" "60 native POSIX tools"
+    assert_contains "$ctx" "72 native POSIX tools"
     assert_contains "$ctx" "bash_exec"
+    assert_contains "$ctx" "file_edit"
+    assert_contains "$ctx" "git_clone"
+    assert_contains "$ctx" "backup_create"
+    assert_contains "$ctx" "pgp_sign"
+    assert_contains "$ctx" "gsuite_search"
     assert_contains "$ctx" "reflexive_status"
     assert_contains "$ctx" "wallet_status"
     assert_contains "$ctx" "service_list"

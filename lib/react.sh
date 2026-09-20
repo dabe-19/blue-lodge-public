@@ -194,7 +194,11 @@ react_run() {
         p_tok=$(echo "$resp_json" | jq -r '.usage.prompt_tokens // 0' 2>/dev/null)
         comp_tok=$(echo "$resp_json" | jq -r '.usage.completion_tokens // 0' 2>/dev/null)
         local turn_total=$((p_tok + comp_tok))
-        running_tokens=$((running_tokens + turn_total))
+        # llama-server's prompt_tokens is ALREADY the cumulative context of all turns in this request.
+        # Track actual current context size instead of accumulating prompt tokens quadratically.
+        running_tokens=$turn_total
+        local pct=$((turn_total * 100 / ACTIVE_ENDPOINT_CONTEXT))
+        ui_dim "Context: ${turn_total}/${ACTIVE_ENDPOINT_CONTEXT} tokens (${pct}%) | Compaction at ${ACTIVE_ENDPOINT_COMPACT_TOKENS}"
 
         # Show reasoning if present
         if [ -n "$reasoning" ]; then
