@@ -135,6 +135,10 @@ react_run() {
         return 1
     fi
 
+    local agent_temp="${AGENT_LLM_TEMPERATURE:-${ACTIVE_ENDPOINT_TEMPERATURE:-0.2}}"
+    local agent_topp="${AGENT_LLM_TOP_P:-${ACTIVE_ENDPOINT_TOP_P:-0.95}}"
+    local req_timeout="${ACTIVE_ENDPOINT_TIMEOUT:-180}"
+
     ui_ok "Active Engine: Tier $ACTIVE_TIER [$ACTIVE_ENDPOINT_NAME] ($ACTIVE_ENDPOINT_MODEL @ $ACTIVE_ENDPOINT_URL)"
     ui_dim "Context Window: $ACTIVE_ENDPOINT_CONTEXT tokens | Compaction Threshold: $ACTIVE_ENDPOINT_COMPACT_TOKENS tokens"
 
@@ -220,12 +224,14 @@ react_run() {
             --slurpfile msgs "$messages_file" \
             --argjson tools "$tools_schema" \
             --arg temp "$agent_temp" \
+            --arg topp "$agent_topp" \
             --arg max_tok "$agent_max_tok" \
             '{
                 messages: $msgs[0],
                 tools: $tools,
                 tool_choice: "auto",
                 temperature: ($temp | tonumber),
+                top_p: ($topp | tonumber),
                 max_tokens: ($max_tok | tonumber),
                 stream: true,
                 stream_options: {include_usage: true}
@@ -245,7 +251,7 @@ react_run() {
         fi
 
         # Execute real-time streaming SSE pipeline
-        curl -s -N --max-time 120 "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
+        curl -s -N --max-time "$req_timeout" "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
             -H "Content-Type: application/json" \
             -d "$payload" 2>/dev/null | \
         sed -u -e 's/^data: //' -e '/^\[DONE\]/d' -e '/^[[:space:]]*$/d' | \
@@ -309,7 +315,7 @@ react_run() {
             local fallback_payload
             fallback_payload=$(echo "$payload" | jq '.stream = false | del(.stream_options)')
             local resp_json
-            resp_json=$(curl -s --max-time 120 "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
+            resp_json=$(curl -s --max-time "$req_timeout" "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
                 -H "Content-Type: application/json" \
                 -d "$fallback_payload" 2>/dev/null)
 

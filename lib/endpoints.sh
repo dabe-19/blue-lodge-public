@@ -39,6 +39,9 @@ endpoints_init() {
     TIER3_ENABLED="${TIER3_ENABLED:-0}"
     TIER3_MAX_TOKENS="${TIER3_MAX_TOKENS:-60000}"
     TIER3_COMPACT_TOKENS="${TIER3_COMPACT_TOKENS:-45000}"
+    TIER3_TIMEOUT="${TIER3_TIMEOUT:-300}"
+    TIER3_TEMPERATURE="${TIER3_TEMPERATURE:-0.6}"
+    TIER3_TOP_P="${TIER3_TOP_P:-0.95}"
 
     TIER1_NAME="${TIER1_NAME:-cuda-workhorse}"
     TIER1_URL="${TIER1_URL:-http://127.0.0.1:8080}"
@@ -46,8 +49,11 @@ endpoints_init() {
     TIER1_CONTEXT="${TIER1_CONTEXT:-32768}"
     TIER1_ROLES="${TIER1_ROLES:-architecture,planning,tools,testing}"
     TIER1_ENABLED="${TIER1_ENABLED:-1}"
-    TIER1_MAX_TOKENS="${TIER1_MAX_TOKENS:-30000}"
-    TIER1_COMPACT_TOKENS="${TIER1_COMPACT_TOKENS:-22000}"
+    TIER1_MAX_TOKENS="${TIER1_MAX_TOKENS:-30720}"
+    TIER1_COMPACT_TOKENS="${TIER1_COMPACT_TOKENS:-24576}"
+    TIER1_TIMEOUT="${TIER1_TIMEOUT:-180}"
+    TIER1_TEMPERATURE="${TIER1_TEMPERATURE:-0.6}"
+    TIER1_TOP_P="${TIER1_TOP_P:-0.95}"
 
     TIER2_NAME="${TIER2_NAME:-legacy-5700xt}"
     TIER2_URL="${TIER2_URL:-http://192.168.1.150:8080}"
@@ -57,6 +63,9 @@ endpoints_init() {
     TIER2_ENABLED="${TIER2_ENABLED:-0}"
     TIER2_MAX_TOKENS="${TIER2_MAX_TOKENS:-15000}"
     TIER2_COMPACT_TOKENS="${TIER2_COMPACT_TOKENS:-10000}"
+    TIER2_TIMEOUT="${TIER2_TIMEOUT:-120}"
+    TIER2_TEMPERATURE="${TIER2_TEMPERATURE:-0.3}"
+    TIER2_TOP_P="${TIER2_TOP_P:-0.9}"
 
     TIER0_NAME="${TIER0_NAME:-edge-mobile}"
     TIER0_URL="${TIER0_URL:-http://127.0.0.1:11434}"
@@ -66,6 +75,9 @@ endpoints_init() {
     TIER0_ENABLED="${TIER0_ENABLED:-1}"
     TIER0_MAX_TOKENS="${TIER0_MAX_TOKENS:-7000}"
     TIER0_COMPACT_TOKENS="${TIER0_COMPACT_TOKENS:-5000}"
+    TIER0_TIMEOUT="${TIER0_TIMEOUT:-180}"
+    TIER0_TEMPERATURE="${TIER0_TEMPERATURE:-0.2}"
+    TIER0_TOP_P="${TIER0_TOP_P:-0.9}"
 }
 
 # ── Fast Health Probing with Cache ──────────────────────────────────
@@ -130,6 +142,9 @@ endpoints_cascade() {
             local roles_var="TIER${t}_ROLES"
             local max_var="TIER${t}_MAX_TOKENS"
             local compact_var="TIER${t}_COMPACT_TOKENS"
+            local timeout_var="TIER${t}_TIMEOUT"
+            local temp_var="TIER${t}_TEMPERATURE"
+            local topp_var="TIER${t}_TOP_P"
 
             ACTIVE_ENDPOINT_NAME="${!name_var}"
             ACTIVE_ENDPOINT_URL="${!url_var}"
@@ -138,6 +153,9 @@ endpoints_cascade() {
             ACTIVE_ENDPOINT_ROLES="${!roles_var}"
             ACTIVE_ENDPOINT_MAX_TOKENS="${!max_var}"
             ACTIVE_ENDPOINT_COMPACT_TOKENS="${!compact_var}"
+            ACTIVE_ENDPOINT_TIMEOUT="${!timeout_var:-180}"
+            ACTIVE_ENDPOINT_TEMPERATURE="${!temp_var:-${AGENT_LLM_TEMPERATURE:-0.2}}"
+            ACTIVE_ENDPOINT_TOP_P="${!topp_var:-0.95}"
             return 0
         fi
     done
@@ -146,6 +164,9 @@ endpoints_cascade() {
     ACTIVE_ENDPOINT_NAME=""
     ACTIVE_ENDPOINT_URL=""
     ACTIVE_ENDPOINT_MODEL=""
+    ACTIVE_ENDPOINT_TIMEOUT="180"
+    ACTIVE_ENDPOINT_TEMPERATURE="0.2"
+    ACTIVE_ENDPOINT_TOP_P="0.95"
     return 1
 }
 
