@@ -35,7 +35,7 @@ describe "_models_parse_entry tier field"
         _models_parse_entry "$_entry"
         # Central models are the explicitly provisioned remote tier.
         case "$_ME_KEY" in
-          gemma4-12b-inst|qwen35-9b-inst|granite41-8b-inst) continue ;;
+          gemma4-12b-inst|qwen35-9b-inst|granite41-8b-inst|ternary-bonsai-27b) continue ;;
             *)
                 if [ "$_ME_TIER" != "edge" ]; then
                     _all_ok=0
@@ -64,6 +64,11 @@ describe "central tier registry entries"
     assert_not_empty "$_entry"
   }
 
+  it "ternary-bonsai-27b is in registry" && {
+    _entry=$(_models_lookup "ternary-bonsai-27b")
+    assert_not_empty "$_entry"
+  }
+
   it "central models have correct base_image format" && {
     _entry=$(_models_lookup "gemma4-12b-inst")
     _models_parse_entry "$_entry"
@@ -73,6 +78,11 @@ describe "central tier registry entries"
     _entry=$(_models_lookup "qwen35-9b-inst")
     _models_parse_entry "$_entry"
     echo "$_ME_BASE" | grep -q "Qwen3.5-9B-GGUF"
+    assert_ok $?
+
+    _entry=$(_models_lookup "ternary-bonsai-27b")
+    _models_parse_entry "$_entry"
+    echo "$_ME_BASE" | grep -q "Ternary-Bonsai-2-27B-gguf"
     assert_ok $?
   }
 
@@ -91,8 +101,8 @@ describe "registry field integrity"
     assert_eq "$_all_ok" "1"
   }
 
-  it "total registry has 10 entries (7 edge + 3 central)" && {
-    assert_eq "${#_MODELS_REGISTRY[@]}" "10"
+  it "total registry has 11 entries (7 edge + 4 central)" && {
+    assert_eq "${#_MODELS_REGISTRY[@]}" "11"
   }
 
 test_end

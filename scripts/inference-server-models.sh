@@ -43,7 +43,15 @@ _warn()  { printf "${C_YELLOW}  ⚠ %s${C_RESET}\n" "$1"; }
 _dim()   { printf "${C_DIM}    %s${C_RESET}\n" "$1"; }
 
 # ── Config ─────────────────────────────────────────────────────
-LLAMA_BIN="${LLAMA_BIN:-$HOME/llama.cpp/build/bin/llama-server}"
+if [ -z "${LLAMA_BIN:-}" ]; then
+    for _p in "$HOME/llama.cpp-prism/build/bin/llama-server" "/opt/llama.cpp-prism/build/bin/llama-server" "$HOME/llama.cpp/build/bin/llama-server" "/usr/local/bin/llama-server"; do
+        if [ -x "$_p" ]; then
+            LLAMA_BIN="$_p"
+            break
+        fi
+    done
+    LLAMA_BIN="${LLAMA_BIN:-$HOME/llama.cpp/build/bin/llama-server}"
+fi
 LLAMA_PORT="${LLAMA_PORT:-8080}"
 LLAMA_HOST="${LLAMA_HOST:-0.0.0.0}"
 GPU_LAYERS="${GPU_LAYERS:-99}"
@@ -75,22 +83,38 @@ PID_FILE="${TMPDIR:-/tmp}/george-llama-server.pid"
 LOG_FILE="${TMPDIR:-/tmp}/george-llama-server.log"
 
 # ── GGUF Blob Resolution ──────────────────────────────────────
-# Given an Ollama model reference (e.g. "qwen3:8b"), resolve the
-# GGUF file path from Ollama's blob store.
-#
-# Ollama stores models as:
-#   manifests/registry.ollama.ai/library/<name>/<tag>   (library models)
-#   manifests/registry.ollama.ai/<org>/<name>/<tag>     (namespaced)
-#   manifests/hf.co/<org>/<repo>/<tag>                  (HuggingFace)
-#
-# The manifest JSON has layers[]; the GGUF is the one with
-# mediaType "application/vnd.ollama.image.model".
-# Its digest (sha256:xxx) maps to blobs/sha256-xxx.
-
+# Given an Ollama model reference (e.g. "qwen3:8b") or direct GGUF path,
+# resolve the GGUF file path from disk or Ollama's blob store.
 _resolve_gguf() {
     local model_ref="$1"
-    local ollama_dir="$OLLAMA_DIR"
 
+    # 0. Direct file path or file in ~/models or /opt/models
+    if [ -f "$model_ref" ]; then
+        readlink -f "$model_ref"
+        return 0
+    fi
+    if [[ "$model_ref" == ~/* ]] && [ -f "$HOME/${model_ref#~/}" ]; then
+        echo "$HOME/${model_ref#~/}"
+        return 0
+    fi
+    for _mdir in "$HOME/models" "/opt/models"; do
+        if [ -f "$_mdir/$model_ref" ]; then
+            echo "$_mdir/$model_ref"
+            return 0
+        fi
+        if [ -f "$_mdir/${model_ref}.gguf" ]; then
+            echo "$_mdir/${model_ref}.gguf"
+            return 0
+        fi
+        local _mfile
+        _mfile=$(find "$_mdir" -maxdepth 3 -type f -iname "*${model_ref}*.gguf" 2>/dev/null | head -1)
+        if [ -n "$_mfile" ]; then
+            echo "$_mfile"
+            return 0
+        fi
+    done
+
+    local ollama_dir="$OLLAMA_DIR"
     if [ -z "$ollama_dir" ] || [ ! -d "$ollama_dir" ]; then
         echo ""
         return 1

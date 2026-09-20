@@ -59,6 +59,7 @@ _MODELS_REGISTRY=(
     "gemma4-12b-inst^blue-lodge-gemma4-inst:12b^hf.co/unsloth/gemma-4-12B-it-qat-GGUF:UD-Q4_K_XL^instruct^1^system^<turn|>^1.0^1.0^0.0^32768^16384^0.95^64^0.0^Gemma 4 12B QAT instruct. Central GPU quality tier.^central"
     "qwen35-9b-inst^blue-lodge-qwen35-inst:9b^hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL^instruct^0^none^<|im_end|>^0.7^1.0^1.5^32768^16384^0.8^20^0.0^Qwen 3.5 9B instruct. Strong central coding tier.^central"
     "granite41-8b-inst^blue-lodge-granite41-inst:8b^hf.co/unsloth/granite-4.1-8b-GGUF:Q4_K_M^instruct^0^none^<|end_of_text|>^0.6^1.0^0.0^32768^12288^0.9^20^0.0^IBM Granite 4.1 8B instruct. Central structured reasoning tier.^central"
+    "ternary-bonsai-27b^ternary-bonsai-27b^prism-ml/Ternary-Bonsai-2-27B-gguf^thinking^1^qwen^<|im_end|>^0.6^1.0^0.0^32768^32768^0.95^20^0.0^Prism Ternary Bonsai 2 27B GGUF. High-efficiency 27B ternary model.^central"
 )
 
 # ── Curated model presentation metadata ───────────────────────
@@ -75,6 +76,7 @@ _MODELS_CURATED_ORDER=(
     "gemma4-12b-inst"
     "qwen35-9b-inst"
     "granite41-8b-inst"
+    "ternary-bonsai-27b"
 )
 
 _MODELS_FAMILY_ORDER=(
@@ -89,6 +91,7 @@ declare -A _MODELS_FAMILY_LABEL=(
     [qwen35]="Qwen 3.5 (Qwen)"
     [granite41]="Granite 4.1 (IBM)"
     [nemotron3]="Nemotron 3 (NVIDIA)"
+    [bonsai]="Bonsai 2 (Prism ML)"
 )
 
 declare -A _MODELS_FAMILY_DESC=(
@@ -96,6 +99,7 @@ declare -A _MODELS_FAMILY_DESC=(
     [qwen35]="instruct edge/central plus native thinking variant"
     [granite41]="3B edge and 8B central instruct"
     [nemotron3]="modern NVIDIA edge instruct"
+    [bonsai]="27B ternary compressed model"
 )
 
 declare -A _MODELS_FAMILY_KEYS=(
@@ -103,6 +107,7 @@ declare -A _MODELS_FAMILY_KEYS=(
     [qwen35]="qwen35-2b-inst qwen35-4b-inst qwen35-4b-think qwen35-9b-inst"
     [granite41]="granite41-3b-inst granite41-8b-inst"
     [nemotron3]="nemotron3-nano-4b-inst"
+    [bonsai]="ternary-bonsai-27b"
 )
 
 declare -A _MODELS_MODEL_FAMILY=(
@@ -116,6 +121,7 @@ declare -A _MODELS_MODEL_FAMILY=(
     [granite41-3b-inst]="granite41"
     [granite41-8b-inst]="granite41"
     [nemotron3-nano-4b-inst]="nemotron3"
+    [ternary-bonsai-27b]="bonsai"
 )
 
 declare -A _MODELS_MOBILE_SUITABILITY=(
@@ -129,6 +135,7 @@ declare -A _MODELS_MOBILE_SUITABILITY=(
     [gemma4-12b-inst]="server"
     [qwen35-9b-inst]="server"
     [granite41-8b-inst]="server"
+    [ternary-bonsai-27b]="server"
 )
 
 declare -A _MODELS_CHAT_TEMPLATE_BY_KEY=(
@@ -142,6 +149,7 @@ declare -A _MODELS_CHAT_TEMPLATE_BY_KEY=(
     [granite41-3b-inst]="granite"
     [granite41-8b-inst]="granite"
     [nemotron3-nano-4b-inst]="chatml"
+    [ternary-bonsai-27b]="chatml"
 )
 
 declare -A _MODELS_THINK_FLAG_BY_KEY=(
@@ -149,12 +157,14 @@ declare -A _MODELS_THINK_FLAG_BY_KEY=(
     [gemma4-e2b-inst]=1
     [gemma4-e4b-inst]=1
     [gemma4-12b-inst]=1
+    [ternary-bonsai-27b]=1
 )
 
 declare -A _MODELS_VISION_BY_KEY=(
     [gemma4-e2b-inst]=1
     [gemma4-e4b-inst]=1
     [gemma4-12b-inst]=1
+    [ternary-bonsai-27b]=1
 )
 
 _models_key_from_query() {

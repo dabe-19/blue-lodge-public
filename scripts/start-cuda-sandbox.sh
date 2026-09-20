@@ -118,12 +118,13 @@ if [ "$CONTAINER_EXISTS" -eq 1 ]; then
     docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 fi
 
-echo "[+] Building Docker image george-cuda-sandbox (Backend: $BACKEND)..."
+echo "[+] Building Docker image george-cuda-sandbox (Backend: $BACKEND, Arch: ${CUDA_ARCHITECTURES:-86})..."
 docker build \
     --build-arg USER_ID="$(id -u)" \
     --build-arg GROUP_ID="$(id -g)" \
     --build-arg BASE_IMAGE="$BASE_IMAGE" \
     --build-arg BACKEND="$BACKEND" \
+    --build-arg CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES:-86}" \
     -f Dockerfile.cuda-sandbox \
     -t george-cuda-sandbox .
 

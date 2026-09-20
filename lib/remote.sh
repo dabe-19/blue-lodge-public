@@ -448,7 +448,7 @@ _remote_detect_llamacpp_bin() {
 
     # Strategy 3: probe common install paths (single-quoted: $HOME
     # is expanded by the REMOTE shell, not local)
-    _bin=$(_remote_exec 'for p in $HOME/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server /opt/llama.cpp/build/bin/llama-server /usr/bin/llama-server; do [ -x "$p" ] && echo "$p" && break; done' 2>/dev/null)
+    _bin=$(_remote_exec 'for p in $HOME/llama.cpp-prism/build/bin/llama-server /opt/llama.cpp-prism/build/bin/llama-server $HOME/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server /opt/llama.cpp/build/bin/llama-server /usr/bin/llama-server; do [ -x "$p" ] && echo "$p" && break; done' 2>/dev/null)
     if [ -n "$_bin" ]; then
         REMOTE_LLAMACPP_BIN="$_bin"
         _remote_save_config
@@ -474,15 +474,56 @@ _remote_detect_llamacpp_bin() {
     return 1
 }
 
-# ── Resolve GGUF blob path on the remote via Ollama manifest ──
-# Ollama stores models as blobs referenced by sha256 digests in
-# manifests. This queries the remote Ollama's show API (through
-# the tunnel) to find the actual GGUF file path on disk.
-# Args: $1 — model base name (Ollama tag, e.g. "granite4:3b" or HF ref)
+# ── Resolve GGUF blob path on the remote via Ollama manifest or filesystem ──
+# Resolves the actual GGUF file path on the remote disk either directly from
+# standard model directories (~/models, /opt/models) or via Ollama's blob store.
+# Args: $1 — model base name (Ollama tag, e.g. "granite4:3b", HF ref, or file path)
 # Returns: absolute path to GGUF file on the remote, or empty.
 _remote_resolve_gguf() {
     local _model_ref="$1"
     local _ollama_data="${REMOTE_OLLAMA_DATA:-/usr/share/ollama/.ollama}"
+
+    # Strategy 0: Direct filesystem path or file in standard model directories on remote
+    local _direct_path
+    _direct_path=$(_remote_exec "
+        _ref='${_model_ref}'
+        # If absolute path or starts with ~/
+        if [[ \"\$_ref\" == /* ]] && [ -f \"\$_ref\" ]; then
+            echo \"\$_ref\"
+            exit 0
+        fi
+        if [[ \"\$_ref\" == ~/* ]]; then
+            _expanded=\"\$HOME/\${_ref#~/}\"
+            if [ -f \"\$_expanded\" ]; then
+                echo \"\$_expanded\"
+                exit 0
+            fi
+        fi
+        # Search common model directories for exact or matching .gguf
+        for _dir in \$HOME/models /opt/models /workspace/.george/models; do
+            [ -d \"\$_dir\" ] || continue
+            # Exact filename
+            if [ -f \"\$_dir/\$_ref\" ]; then
+                echo \"\$_dir/\$_ref\"
+                exit 0
+            fi
+            # Filename with .gguf
+            if [ -f \"\$_dir/\${_ref}.gguf\" ]; then
+                echo \"\$_dir/\${_ref}.gguf\"
+                exit 0
+            fi
+            # Case-insensitive partial match
+            _f=\$(find \"\$_dir\" -maxdepth 3 -type f -iname \"*\${_ref}*.gguf\" 2>/dev/null | head -1)
+            if [ -n \"\$_f\" ]; then
+                echo \"\$_f\"
+                exit 0
+            fi
+        done
+    " 2>/dev/null)
+    if [ -n "$_direct_path" ]; then
+        echo "$_direct_path"
+        return 0
+    fi
 
     # Strategy 1: Use Ollama show API (through tunnel) to get the digest,
     # then map to the blob path on the remote filesystem.
@@ -555,11 +596,11 @@ _remote_restart_llamacpp() {
     # Resolve GGUF path on remote
     local _remote_gguf=""
 
-    # First try: resolve via Ollama API (model is pulled on remote)
+    # First try: resolve via Ollama API or direct filesystem (model is pulled or stored on remote)
     if [ -n "$_model_base" ]; then
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: resolving GGUF for '$_model_base' via API..." >&2
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: resolving GGUF for '$_model_base'..." >&2
         _remote_gguf=$(_remote_resolve_gguf "$_model_base")
-        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: API GGUF='${_remote_gguf:-<empty>}'" >&2
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: GGUF='${_remote_gguf:-<empty>}'" >&2
     fi
 
     # Fallback: ask the remote to find it via Ollama show CLI
@@ -569,9 +610,17 @@ _remote_restart_llamacpp() {
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: CLI GGUF='${_remote_gguf:-<empty>}'" >&2
     fi
 
+    # Fallback: try resolving via model name/key directly
+    if [ -z "$_remote_gguf" ] && [ -n "$_model_name" ]; then
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: trying direct resolution for '$_model_name'..." >&2
+        _remote_gguf=$(_remote_resolve_gguf "$_model_name")
+        [ "${LODGE_DEBUG:-0}" -eq 1 ] && echo "  [debug] remote: model_name GGUF='${_remote_gguf:-<empty>}'" >&2
+    fi
+
     if [ -z "$_remote_gguf" ]; then
         echo "ERROR: Cannot resolve GGUF for '$_model_name' on remote" >&2
         echo "  Ensure the model is pulled on the remote: /remote pull $_model_base" >&2
+        echo "  or placed as a GGUF file in ~/models/ on the remote GPU server." >&2
         return 1
     fi
 
