@@ -68,8 +68,22 @@ cmd_test() {
             test_cmd="cargo test"
         elif [ -f "pyproject.toml" ]; then
             test_cmd="uv run pytest"
-        elif [ -f "package.json" ]; then
-            test_cmd="npm test"
+        elif [ -f "tsconfig.json" ] || [ -f "package.json" ]; then
+            if command -v bun &>/dev/null && ([ -f "bun.lockb" ] || [ -f "bunfig.toml" ]); then
+                test_cmd="bun test"
+            elif command -v pnpm &>/dev/null && [ -f "pnpm-lock.yaml" ]; then
+                test_cmd="pnpm test"
+            elif [ -f "package.json" ] && grep -q '"test":' package.json 2>/dev/null; then
+                test_cmd="npm test"
+            elif command -v vitest &>/dev/null; then
+                test_cmd="vitest run"
+            elif command -v jest &>/dev/null; then
+                test_cmd="jest"
+            else
+                test_cmd="npm test"
+            fi
+        elif [ -f "deno.json" ] || [ -f "deno.jsonc" ]; then
+            test_cmd="deno test"
         elif [ -f "Makefile" ]; then
             test_cmd="make test"
         else
@@ -112,9 +126,15 @@ cmd_test() {
                 elif command -v rustc &>/dev/null; then
                     test_cmd="rustc --test"
                 fi
-            elif [[ "$eval_file" == *.js ]] || [[ "$eval_file" == *.ts ]]; then
-                if command -v node &>/dev/null; then
-                    test_cmd="node"
+            elif [[ "$eval_file" == *.js ]] || [[ "$eval_file" == *.ts ]] || [[ "$eval_file" == *.tsx ]] || [[ "$eval_file" == *.jsx ]]; then
+                if command -v bun &>/dev/null; then
+                    test_cmd="bun test"
+                elif command -v deno &>/dev/null; then
+                    test_cmd="deno test"
+                elif command -v tsx &>/dev/null; then
+                    test_cmd="tsx --test"
+                elif command -v node &>/dev/null; then
+                    test_cmd="node --test"
                 fi
             fi
         fi

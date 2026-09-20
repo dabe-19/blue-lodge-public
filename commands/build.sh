@@ -99,6 +99,24 @@ EOF
             build_cmd="cargo build"
         elif [ -f "pyproject.toml" ]; then
             build_cmd="uv run python main.py"
+        elif [ -f "tsconfig.json" ] || [ -f "package.json" ]; then
+            if command -v bun &>/dev/null && [ -f "bun.lockb" ]; then
+                build_cmd="bun run build"
+            elif command -v pnpm &>/dev/null && [ -f "pnpm-lock.yaml" ]; then
+                build_cmd="pnpm run build"
+            elif command -v npm &>/dev/null; then
+                if [ -f "package.json" ] && grep -q '"build":' package.json 2>/dev/null; then
+                    build_cmd="npm run build"
+                elif command -v tsc &>/dev/null; then
+                    build_cmd="tsc --noEmit"
+                else
+                    build_cmd="node --check index.js 2>/dev/null || npm test"
+                fi
+            elif command -v tsc &>/dev/null; then
+                build_cmd="tsc --noEmit"
+            fi
+        elif [ -f "deno.json" ] || [ -f "deno.jsonc" ]; then
+            build_cmd="deno check **/*.ts"
         elif [ -f "Makefile" ]; then
             build_cmd="make"
         else

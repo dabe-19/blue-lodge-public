@@ -54,6 +54,12 @@ source "$LODGE_DIR/lib/ui.sh"
 source "$LODGE_DIR/lib/llm.sh"
 source "$LODGE_DIR/lib/memory.sh"
 source "$LODGE_DIR/lib/tools.sh"
+source "$LODGE_DIR/lib/endpoints.sh"
+source "$LODGE_DIR/lib/native_tools.sh"
+source "$LODGE_DIR/lib/context_engine.sh"
+source "$LODGE_DIR/lib/ui_dashboard.sh"
+source "$LODGE_DIR/lib/subagents.sh"
+source "$LODGE_DIR/lib/react.sh"
 source "$LODGE_DIR/lib/agent.sh"
 source "$LODGE_DIR/lib/reflexive.sh"
 source "$LODGE_DIR/lib/commands.sh"
@@ -6244,12 +6250,9 @@ _repl() {
             continue
         fi
         
-        # Natural language → agent
-        # All free-form input goes to agent_run (full soul, planning, tools).
-        # For lightweight Q&A without actions, use /ask or /a explicitly.
-        # This ensures George always gets his full personality injected
-        # and can leverage journal, web search, and memory for answers.
-        agent_run "$input" "$PWD"
+        # Natural language → agent (Modern ReAct Loop)
+        # All free-form input executes against the ReAct engine.
+        react_run "$input" "$PWD"
     done
 }
 
@@ -6308,21 +6311,27 @@ main() {
         ui_dim "    lodge"
         exit 1
     else
-        ui_spinner_start "Starting LLM backend"
-        if ! llm_ensure; then
+        endpoints_init
+        if endpoints_cascade; then
+            ui_ok "Active Inference Engine: Tier $ACTIVE_TIER [$ACTIVE_ENDPOINT_NAME] ($ACTIVE_ENDPOINT_MODEL @ $ACTIVE_ENDPOINT_URL)"
+            ui_dim "Context Window: $ACTIVE_ENDPOINT_CONTEXT tokens"
+        else
+            ui_spinner_start "Starting LLM backend"
+            if ! llm_ensure; then
+                ui_spinner_stop
+                ui_err "No LLM backend available."
+                ui_dim "  Build llama-server: see docs/ADRENO_GPU_SETUP.md"
+                ui_dim "  Or install Ollama:  curl -fsSL https://ollama.com/install.sh | sh"
+                ui_dim "  Or use a cloud provider: /provider use google"
+                exit 1
+            fi
             ui_spinner_stop
-            ui_err "No LLM backend available."
-            ui_dim "  Build llama-server: see docs/ADRENO_GPU_SETUP.md"
-            ui_dim "  Or install Ollama:  curl -fsSL https://ollama.com/install.sh | sh"
-            ui_dim "  Or use a cloud provider: /provider use google"
-            exit 1
+        
+            # Pre-load model weights (avoids cold-start delay on first query)
+            ui_spinner_start "Loading model"
+            llm_warmup 2>/dev/null
+            ui_spinner_stop
         fi
-        ui_spinner_stop
-    
-        # Pre-load model weights (avoids cold-start delay on first query)
-        ui_spinner_start "Loading model"
-        llm_warmup 2>/dev/null
-        ui_spinner_stop
     fi
     
     # Termux wake lock
@@ -6376,7 +6385,8 @@ main() {
 
         # Interactive mode
         local _model_info="Model: $LODGE_MODEL"
-        [ "${LODGE_SINGLE_MODEL:-0}" -eq 0 ] && _model_info="Primary: $(models_info "$LODGE_MODEL_PRIMARY" 2>/dev/null && echo "$_ME_KEY" || echo "$LODGE_MODEL_PRIMARY")"
+        [ -n "${ACTIVE_TIER:-}" ] && _model_info="Tier $ACTIVE_TIER: $ACTIVE_ENDPOINT_MODEL ($ACTIVE_ENDPOINT_NAME)"
+        [ "${LODGE_SINGLE_MODEL:-0}" -eq 0 ] && [ -z "${ACTIVE_TIER:-}" ] && _model_info="Primary: $(models_info "$LODGE_MODEL_PRIMARY" 2>/dev/null && echo "$_ME_KEY" || echo "$LODGE_MODEL_PRIMARY")"
         ui_mascot_banner "George v${LODGE_VERSION}" "$_model_info | $(basename "$PWD")" "center"
         
         # Journal-aware greeting
@@ -6393,6 +6403,18 @@ main() {
         # after it finishes (no llm_unload needed for interactive mode).
         journal_reflect "Interactive session in $(basename "$PWD")" "$PWD" &
         disown 2>/dev/null
+    elif [ "$1" = "trace" ] || [ "$1" = "debug" ]; then
+        if [ "${2:-}" = "context" ]; then
+            shift 2
+            local goal="${*:-inspect workspace and developer chat telemetry}"
+            context_engine_debug_trace "$goal" "$PWD" "${ACTIVE_TIER:-1}"
+            exit 0
+        fi
+    elif [ "$1" = "tools" ]; then
+        if [ "${2:-}" = "list" ] || [ -z "${2:-}" ]; then
+            echo "$_NATIVE_CORE_TOOLS" | jq -r '.[] | "\(.function.name) - \(.function.description)"'
+            exit 0
+        fi
     elif [[ "$1" == /* ]]; then
         # Slash command mode
         commands_dispatch "$*" "$PWD"
@@ -6414,8 +6436,8 @@ main() {
         fi
         echo "$$" > "$lockfile" 2>/dev/null
 
-        # One-shot task mode
-        agent_run "$*" "$PWD"
+        # One-shot task mode (Modern ReAct Loop)
+        react_run "$*" "$PWD"
     fi
     
     # Release wake lock
