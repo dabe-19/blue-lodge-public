@@ -647,17 +647,44 @@ discord_send() {
         _preview="${_preview:0:$_preview_len} ... (truncated: total ${#message} chars)"
     fi
 
-    # Resolve channel name → ID if not numeric
-    if ! [[ "$channel_id" =~ ^[0-9]+$ ]]; then
-        local resolved
-        resolved=$(discord_channel_resolve "$channel_id")
-        if [ -z "$resolved" ]; then
-            ui_err "Unknown channel: $channel_id"
-            ui_dim "Register it: /social discord channels add <name> <channel_id>"
-            ui_dim "Or sync from Discord: /social discord channels sync"
-            return 1
+    # Check if target is a user or DM (unless already executing within discord_dm)
+    if [ "${_DISCORD_IN_DM:-0}" -ne 1 ]; then
+        if [[ "$channel_id" == dm:* ]]; then
+            _DISCORD_IN_DM=1 discord_dm "${channel_id#dm:}" "$message"
+            return $?
         fi
-        channel_id="$resolved"
+
+        # Check if channel_id is a known user ID or resolves to a user (and not a channel)
+        if [[ "$channel_id" =~ ^[0-9]+$ ]]; then
+            _discord_users_init 2>/dev/null || true
+            _discord_channels_init 2>/dev/null || true
+            local is_chan is_usr
+            is_chan=$(sqlite3 "$DISCORD_CHANNELS_DB" "SELECT 1 FROM channels WHERE channel_id = '$channel_id' LIMIT 1;" 2>/dev/null || true)
+            if [ -z "$is_chan" ]; then
+                is_usr=$(sqlite3 "$DISCORD_USERS_DB" "SELECT 1 FROM users WHERE user_id = '$channel_id' LIMIT 1;" 2>/dev/null || true)
+                if [ -n "$is_usr" ]; then
+                    _DISCORD_IN_DM=1 discord_dm "$channel_id" "$message"
+                    return $?
+                fi
+            fi
+        else
+            local resolved
+            resolved=$(discord_channel_resolve "$channel_id")
+            if [ -z "$resolved" ]; then
+                # If channel not found, check if it resolves as a user (e.g. "dabe", "me", "@user")
+                local usr_resolved
+                usr_resolved=$(discord_user_resolve "$channel_id" 2>/dev/null || true)
+                if [ -n "$usr_resolved" ]; then
+                    _DISCORD_IN_DM=1 discord_dm "$usr_resolved" "$message"
+                    return $?
+                fi
+                ui_err "Unknown channel or user: $channel_id"
+                ui_dim "Register it: /social discord channels add <name> <channel_id>"
+                ui_dim "Or sync from Discord: /social discord channels sync"
+                return 1
+            fi
+            channel_id="$resolved"
+        fi
     fi
 
     # Auto-resolve @mentions in the message to Discord <@user_id> format
@@ -859,8 +886,16 @@ discord_channel_resolve() {
     # Strip # again in case it was inside quotes like "#lunkers"
     name="${name#\#}"
     _discord_channels_init 2>/dev/null || return 1
+    local cid
+    cid=$(sqlite3 "$DISCORD_CHANNELS_DB" \
+        "SELECT channel_id FROM channels WHERE name = '${name//\'/\'\'}' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
+    if [ -n "$cid" ]; then
+        echo "$cid"
+        return 0
+    fi
+    # Also resolve by server / guild name (e.g. "logic" -> general channel in Logic server)
     sqlite3 "$DISCORD_CHANNELS_DB" \
-        "SELECT channel_id FROM channels WHERE name = '${name//\'/\'\'}' COLLATE NOCASE LIMIT 1;" 2>/dev/null
+        "SELECT channel_id FROM channels WHERE guild_name = '${name//\'/\'\'}' COLLATE NOCASE ORDER BY CASE WHEN name = 'general' THEN 0 ELSE 1 END LIMIT 1;" 2>/dev/null
 }
 
 # Add a channel mapping manually
@@ -1084,6 +1119,17 @@ discord_user_resolve() {
 
     # Sanitize for SQL (escape single quotes)
     local _safe="${name//\'/\'\'}"
+
+    # Alias check for "me", "operator", "owner", "self"
+    local _lower
+    _lower=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+    if [ "$_lower" = "me" ] || [ "$_lower" = "operator" ] || [ "$_lower" = "owner" ] || [ "$_lower" = "self" ]; then
+        local _def_user="${DISCORD_DEFAULT_USER:-dabe_}"
+        local _uid
+        _uid=$(sqlite3 "$DISCORD_USERS_DB" \
+            "SELECT user_id FROM users WHERE username = '${_def_user//\'/\'\'}' OR display_name = '${_def_user//\'/\'\'}' COLLATE NOCASE LIMIT 1;" 2>/dev/null)
+        if [ -n "$_uid" ]; then echo "$_uid"; return 0; fi
+    fi
 
     # 1. Exact username match (primary)
     local uid
@@ -1379,7 +1425,7 @@ discord_dm() {
     fi
 
     # Step 2: Send message to the DM channel
-    discord_send "$dm_channel_id" "$message"
+    _DISCORD_IN_DM=1 discord_send "$dm_channel_id" "$message"
 }
 
 # ═══════════════════════════════════════════════════════════════

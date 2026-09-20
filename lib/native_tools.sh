@@ -519,14 +519,29 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "discord_send",
-      "description": "Send a message or notification to a Discord channel or direct message.",
+      "description": "Send a message to a Discord user (direct message/DM) or server channel using the Discord Bot API or Webhook.",
       "parameters": {
         "type": "object",
         "properties": {
-          "target": { "type": "string", "description": "Channel name, channel ID, user mention, or 'webhook'." },
+          "target": { "type": "string", "description": "Destination: username or mention for DM (e.g. 'dabe', '@dabe', 'me'), channel name (e.g. 'general'), server/guild name (e.g. 'Logic'), or numeric ID." },
           "message": { "type": "string", "description": "Message text to transmit." }
         },
         "required": ["message"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "discord_dm",
+      "description": "Send a direct message (DM) to a Discord user (e.g. 'dabe', '@dabe', 'me', or user ID) via Discord Bot API.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "user": { "type": "string", "description": "Username, display name, mention (e.g. 'dabe', '@dabe', 'me'), or Discord user ID." },
+          "message": { "type": "string", "description": "Message text to send as DM." }
+        },
+        "required": ["user", "message"]
       }
     }
   },
@@ -1417,20 +1432,49 @@ native_tools_dispatch() {
                 local tgt msg
                 tgt=$(echo "$args_json" | jq -r '.target // empty')
                 msg=$(echo "$args_json" | jq -r '.message // empty')
+                tgt=$(echo "$tgt" | sed 's/^["'\''"]*//; s/["'\''"]*$//')
                 local has_bot has_hook
-                has_bot=$(api_key_get "DISCORD_BOT_TOKEN" 2>/dev/null || true)
-                has_hook=$(api_key_get "DISCORD_WEBHOOK_URL" 2>/dev/null || true)
-                if [ -n "$tgt" ] && [ "$tgt" != "webhook" ] && [ "$tgt" != "default" ] && [ -n "$has_bot" ]; then
-                    output=$(discord_send "$tgt" "$msg" 2>&1)
-                    exit_code=$?
+                has_bot=$(api_get_key "DISCORD_BOT_TOKEN" 2>/dev/null || true)
+                has_hook=$(api_get_key "DISCORD_WEBHOOK_URL" 2>/dev/null || true)
+                if [ -n "$has_bot" ]; then
+                    if [ -n "$tgt" ] && [ "$tgt" != "webhook" ] && [ "$tgt" != "default" ]; then
+                        output=$(discord_send "$tgt" "$msg" 2>&1)
+                        exit_code=$?
+                    else
+                        local def_chan
+                        def_chan=$(discord_default_channel 2>/dev/null || true)
+                        [ -z "$def_chan" ] && def_chan=$(discord_channel_resolve "general" 2>/dev/null || true)
+                        if [ -n "$def_chan" ]; then
+                            output=$(discord_send "$def_chan" "$msg" 2>&1)
+                            exit_code=$?
+                        elif [ -n "$has_hook" ]; then
+                            output=$(discord_webhook "$msg" 2>&1)
+                            exit_code=$?
+                        else
+                            output="Could not resolve default channel. Specify target channel/server or sync with /social discord channels sync"
+                            exit_code=1
+                        fi
+                    fi
                 elif [ -n "$has_hook" ]; then
                     output=$(discord_webhook "$msg" 2>&1)
                     exit_code=$?
-                elif [ -n "$has_bot" ]; then
-                    output=$(discord_send "${tgt:-general}" "$msg" 2>&1)
+                else
+                    output="Discord is not configured. Set DISCORD_BOT_TOKEN with: /api keys set DISCORD_BOT_TOKEN <token>"
+                    exit_code=1
+                fi
+                ;;
+            discord_dm)
+                local usr msg
+                usr=$(echo "$args_json" | jq -r '.user // empty')
+                msg=$(echo "$args_json" | jq -r '.message // empty')
+                usr=$(echo "$usr" | sed 's/^["'\''"]*//; s/["'\''"]*$//')
+                local has_bot
+                has_bot=$(api_get_key "DISCORD_BOT_TOKEN" 2>/dev/null || true)
+                if [ -n "$has_bot" ]; then
+                    output=$(discord_dm "${usr:-dabe}" "$msg" 2>&1)
                     exit_code=$?
                 else
-                    output="Discord is not configured. Set DISCORD_WEBHOOK_URL with: /api keys set DISCORD_WEBHOOK_URL <url> or DISCORD_BOT_TOKEN with: /api keys set DISCORD_BOT_TOKEN <token>"
+                    output="Discord bot token is not configured. Set DISCORD_BOT_TOKEN with: /api keys set DISCORD_BOT_TOKEN <token>"
                     exit_code=1
                 fi
                 ;;

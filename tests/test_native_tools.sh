@@ -85,6 +85,10 @@ describe "native_tools_get_all_schemas"
     assert_ok $?
     echo "$schemas" | jq -e '.[] | select(.function.name == "mqtt_publish")' >/dev/null
     assert_ok $?
+    echo "$schemas" | jq -e '.[] | select(.function.name == "discord_send")' >/dev/null
+    assert_ok $?
+    echo "$schemas" | jq -e '.[] | select(.function.name == "discord_dm")' >/dev/null
+    assert_ok $?
     # 12. Bidirectional Slash Commands
     echo "$schemas" | jq -e '.[] | select(.function.name == "slash_command_exec")' >/dev/null
     assert_ok $?
@@ -166,6 +170,32 @@ describe "native_tools_dispatch"
     assert_ok $?
     role=$(echo "$res" | jq -r '.role')
     assert_eq "$role" "tool"
+  }
+
+  it "dispatches discord_send and handles DM vs channel resolution" && {
+    test_mock "api_post" 'echo "{\"id\": \"test_chan_123\"}"; export _API_LAST_STATUS="200"; export _API_LAST_BODY="{\"id\": \"test_chan_123\"}"; return 0'
+    test_mock "api_get_key" 'echo "fake_token"; return 0'
+    test_mock "discord_channel_resolve" 'echo "235541481920659458"; return 0'
+    res=$(native_tools_dispatch "call_test_ds" "discord_send" '{"target":"logic","message":"hello logic"}' "$PWD")
+    assert_ok $?
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "Sent to Discord"
+    test_unmock "discord_channel_resolve"
+    test_unmock "api_get_key"
+    test_unmock "api_post"
+  }
+
+  it "dispatches discord_dm and sends DM via bot API" && {
+    test_mock "api_post" 'echo "{\"id\": \"dm_chan_999\"}"; export _API_LAST_STATUS="200"; export _API_LAST_BODY="{\"id\": \"dm_chan_999\"}"; return 0'
+    test_mock "api_get_key" 'echo "fake_token"; return 0'
+    test_mock "discord_user_resolve" 'echo "190628469053325312"; return 0'
+    res=$(native_tools_dispatch "call_test_dm" "discord_dm" '{"user":"dabe","message":"hello dabe"}' "$PWD")
+    assert_ok $?
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "Sent to Discord"
+    test_unmock "discord_user_resolve"
+    test_unmock "api_get_key"
+    test_unmock "api_post"
   }
 
   it "handles unknown tool gracefully" && {
