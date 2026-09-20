@@ -8,6 +8,9 @@
 # - Pure POSIX Native Tool Bridge (lib/native_tools.sh)
 # - 4-Tier Hardware Topology & Subagents (lib/endpoints.sh, lib/subagents.sh)
 # - Running token tracking & micro-compaction
+# - Full Task & Prompt Transcripts (.george/transcripts/)
+# - Structured Routing Telemetry (.george/routing_trace.jsonl)
+# - Macro Memory & Milestones (.george/macro_memory.json)
 
 [ -n "${_LIB_REACT_LOADED:-}" ] && return 0; _LIB_REACT_LOADED=1
 
@@ -22,11 +25,24 @@ source "$LODGE_DIR/lib/journal.sh"
 source "$LODGE_DIR/lib/subagents.sh"
 source "$LODGE_DIR/lib/native_tools.sh"
 source "$LODGE_DIR/lib/context_engine.sh"
+source "$LODGE_DIR/lib/transcript.sh" 2>/dev/null || true
+
+# ── Structured Telemetry & Routing Trace ──────────────────────────────
+_react_trace() {
+    local workdir="$1" event="$2" payload="$3"
+    local gdir="${workdir}/.george"
+    local trace_file="$gdir/routing_trace.jsonl"
+    mkdir -p "$gdir" 2>/dev/null || true
+    local ts
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%s)
+    printf '{"timestamp":"%s","event":"%s","data":%s}\n' "$ts" "$event" "${payload:-{}}" >> "$trace_file" 2>/dev/null || true
+}
 
 # ── Auto-Compaction Engine ───────────────────────────────────────────
 _react_compact_messages() {
     local session_dir="$1"
     local endpoint_url="$2"
+    local workdir="${3:-.}"
     local messages_file="$session_dir/messages.json"
     local memory_file="$session_dir/memory.md"
 
@@ -75,6 +91,8 @@ _react_compact_messages() {
             > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
 
         ui_ok "Context successfully compacted."
+        declare -f transcript_log_block &>/dev/null && transcript_log_block "auto-compaction" "$summary_text"
+        _react_trace "$workdir" "auto_compaction" "$(jq -cn --arg sum "$summary_text" '{summary:$sum}')"
     fi
 }
 
@@ -118,9 +136,33 @@ react_run() {
     ui_ok "Active Engine: Tier $ACTIVE_TIER [$ACTIVE_ENDPOINT_NAME] ($ACTIVE_ENDPOINT_MODEL @ $ACTIVE_ENDPOINT_URL)"
     ui_dim "Context Window: $ACTIVE_ENDPOINT_CONTEXT tokens | Compaction Threshold: $ACTIVE_ENDPOINT_COMPACT_TOKENS tokens"
 
-    # 2. Setup session sandbox
+    # 2. Setup session sandbox and .george persistence
+    local gdir="${workdir}/.george"
+    mkdir -p "$gdir" "$gdir/transcripts" "$gdir/workspaces"
+
+    # Start persistent task transcript logging (.george/transcripts/*.md and *_prompts.md)
+    declare -f transcript_start &>/dev/null && transcript_start "$goal" "$workdir"
+
+    # Seed macro_memory.json
+    local macro_file="$gdir/macro_memory.json"
+    jq -n \
+        --arg ts "$(date '+%Y-%m-%d %H:%M:%S %Z')" \
+        --arg obj "$goal" \
+        --arg model "${ACTIVE_ENDPOINT_MODEL:-default}" \
+        --arg tier "${ACTIVE_TIER:-1}" \
+        '{
+            task_started: $ts,
+            primary_objective: $obj,
+            model: $model,
+            tier: $tier,
+            completed_milestones: [],
+            status: "IN_PROGRESS"
+        }' > "$macro_file" 2>/dev/null || true
+
+    _react_trace "$workdir" "task_start" "$(jq -cn --arg goal "$goal" --arg tier "${ACTIVE_TIER:-1}" '{goal:$goal, tier:$tier}')"
+
     local session_id="session_$(date +%Y%m%d_%H%M%S)_$$"
-    local session_dir="$GEORGE_DIR/workspaces/$session_id"
+    local session_dir="$gdir/workspaces/$session_id"
     mkdir -p "$session_dir"
 
     local history_file="$session_dir/trajectory.log"
@@ -156,7 +198,7 @@ react_run() {
 
         # Check compaction threshold
         if [ "$running_tokens" -ge "$ACTIVE_ENDPOINT_COMPACT_TOKENS" ]; then
-            _react_compact_messages "$session_dir" "$ACTIVE_ENDPOINT_URL"
+            _react_compact_messages "$session_dir" "$ACTIVE_ENDPOINT_URL" "$workdir"
             running_tokens=0
         fi
 
@@ -173,6 +215,10 @@ react_run() {
                 max_tokens: 2048
             }')
 
+        # Log turn boundary and prompt to transcript & prompt log
+        declare -f transcript_section &>/dev/null && transcript_section "Turn $turn / $max_turns"
+        declare -f transcript_log_prompt &>/dev/null && transcript_log_prompt "react-turn-$turn" "$payload" "$sys_prompt"
+
         ui_dim "Thinking..."
         local resp_json
         resp_json=$(curl -s --max-time 120 "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
@@ -181,6 +227,10 @@ react_run() {
 
         if [ -z "$resp_json" ]; then
             ui_err "Empty response from endpoint $ACTIVE_ENDPOINT_URL."
+            _react_trace "$workdir" "error" '{"error":"empty_response"}'
+            if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
+                transcript_stop >/dev/null 2>&1
+            fi
             return 1
         fi
 
@@ -194,8 +244,6 @@ react_run() {
         p_tok=$(echo "$resp_json" | jq -r '.usage.prompt_tokens // 0' 2>/dev/null)
         comp_tok=$(echo "$resp_json" | jq -r '.usage.completion_tokens // 0' 2>/dev/null)
         local turn_total=$((p_tok + comp_tok))
-        # llama-server's prompt_tokens is ALREADY the cumulative context of all turns in this request.
-        # Track actual current context size instead of accumulating prompt tokens quadratically.
         running_tokens=$turn_total
         local pct=$((turn_total * 100 / ACTIVE_ENDPOINT_CONTEXT))
         ui_dim "Context: ${turn_total}/${ACTIVE_ENDPOINT_CONTEXT} tokens (${pct}%) | Compaction at ${ACTIVE_ENDPOINT_COMPACT_TOKENS}"
@@ -203,6 +251,7 @@ react_run() {
         # Show reasoning if present
         if [ -n "$reasoning" ]; then
             printf "${C_DIM}[thought] %s${C_RESET}\n" "$reasoning"
+            declare -f transcript_log_block &>/dev/null && transcript_log_block "thought" "$reasoning"
         fi
 
         # ── Branch 1: Native OpenAI Tool Calls Detected ──────────────
@@ -221,6 +270,7 @@ react_run() {
 
                 ui_step "Native Tool Call: $c_name"
                 echo "Tool Call: $c_name ($c_args)" >> "$history_file"
+                declare -f transcript_log &>/dev/null && transcript_log "tool_call" "$c_name: $c_args"
 
                 local tool_resp
                 tool_resp=$(native_tools_dispatch "$c_id" "$c_name" "$c_args" "$workdir")
@@ -231,6 +281,15 @@ react_run() {
                 local resp_content
                 resp_content=$(echo "$tool_resp" | jq -r '.content')
                 echo "Observation: $resp_content" >> "$history_file"
+                declare -f transcript_log_block &>/dev/null && transcript_log_block "observation ($c_name)" "$resp_content"
+                _react_trace "$workdir" "tool_call" "$(jq -cn --arg tool "$c_name" --arg args "$c_args" '{tool:$tool, args:$args}')"
+
+                # Record in macro_memory.json
+                local ts_now
+                ts_now=$(date '+%Y-%m-%d %H:%M:%S')
+                jq --arg ts "$ts_now" --arg tool "$c_name" --arg sum "${resp_content:0:200}" \
+                    '.completed_milestones += [{"timestamp": $ts, "tool": $tool, "summary": $sum}]' \
+                    "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
 
                 # Brief UI preview
                 local preview
@@ -258,6 +317,14 @@ react_run() {
             ui_ok "Task Complete!"
             printf "${C_BOLD}${C_GREEN}%s${C_RESET}\n" "$answer"
             journal_write "reflection" "Goal achieved: $goal. Result: $answer" 2>/dev/null || true
+            declare -f transcript_log_block &>/dev/null && transcript_log_block "final_response" "$answer"
+            _react_trace "$workdir" "task_complete" "$(jq -cn --arg goal "$goal" --arg outcome "$answer" '{goal:$goal, outcome:$outcome, status:"success"}')"
+            jq '.status = "COMPLETED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
+            if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
+                local _tpath
+                _tpath=$(transcript_stop)
+                [ -n "$_tpath" ] && ui_dim "  Transcript: $_tpath"
+            fi
             return 0
         fi
 
@@ -269,8 +336,10 @@ react_run() {
             local del_task="${del_args#* }"
 
             ui_info "Delegating to Tier $del_tier: $del_task"
+            declare -f transcript_log &>/dev/null && transcript_log "delegate" "Tier $del_tier: $del_task"
             local subagent_obs
             subagent_obs=$(subagents_spawn "$del_tier" "$del_task" "Parent Goal: $goal" "$workdir" 2>&1)
+            declare -f transcript_log_block &>/dev/null && transcript_log_block "subagent_output" "$subagent_obs"
             
             # Append as user observation
             jq --arg obs "Subagent Tier $del_tier Output:\n$subagent_obs" \
@@ -284,6 +353,7 @@ react_run() {
         if [ -n "$action" ]; then
             ui_step "Executing fallback command: $action"
             echo "Action: $action" >> "$history_file"
+            declare -f transcript_log &>/dev/null && transcript_log "command" "$action"
 
             local obs
             obs=$(commands_dispatch "$action" "$workdir" 2>&1)
@@ -293,6 +363,8 @@ react_run() {
             if [ ${#obs} -gt 3000 ]; then
                 obs="${obs:0:3000}\n... [truncated]"
             fi
+            declare -f transcript_log_block &>/dev/null && transcript_log_block "output ($action)" "$obs"
+            _react_trace "$workdir" "fallback_command" "$(jq -cn --arg cmd "$action" '{cmd:$cmd}')"
 
             jq --arg obs "Command $action (exit $exit_code):\n$obs" \
                 '. += [{"role": "user", "content": $obs}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
@@ -306,6 +378,14 @@ react_run() {
             echo ""
             ui_ok "Task Complete!"
             journal_write "reflection" "Completed task: $goal. Summary: ${raw_content:0:200}" 2>/dev/null || true
+            declare -f transcript_log_block &>/dev/null && transcript_log_block "final_response" "$raw_content"
+            _react_trace "$workdir" "task_complete" "$(jq -cn --arg goal "$goal" --arg summary "${raw_content:0:200}" '{goal:$goal, summary:$summary, status:"success"}')"
+            jq '.status = "COMPLETED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
+            if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
+                local _tpath
+                _tpath=$(transcript_stop)
+                [ -n "$_tpath" ] && ui_dim "  Transcript: $_tpath"
+            fi
             return 0
         fi
 
@@ -313,6 +393,13 @@ react_run() {
     done
 
     ui_warn "Task reached maximum turns ($max_turns)."
+    _react_trace "$workdir" "task_halted" "$(jq -cn --arg goal "$goal" --arg reason "max_turns" '{goal:$goal, reason:$reason}')"
+    jq '.status = "MAX_TURNS_EXCEEDED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
+    if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
+        local _tpath
+        _tpath=$(transcript_stop)
+        [ -n "$_tpath" ] && ui_dim "  Transcript: $_tpath"
+    fi
     return 1
 }
 

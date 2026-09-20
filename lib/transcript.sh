@@ -18,7 +18,6 @@
 
 # ── State ──────────────────────────────────────────────────────
 [ -n "${_LIB_TRANSCRIPT_LOADED:-}" ] && return 0; _LIB_TRANSCRIPT_LOADED=1
-echo "  [debug] Sourcing lib/transcript.sh!" >&2
 
 _TRANSCRIPT_FILE=""
 _TRANSCRIPT_DIR=""
@@ -260,7 +259,6 @@ if declare -f ui_limitation_block &>/dev/null; then
 fi
 
 _agent_limitation_prompt_text() {
-    echo "  [debug] Finished sourcing lib/transcript.sh!" >&2
     local reason_code="$1"
     printf 'Constraint (%s). Choose one: RESCOPE | ALT_PATH | TERMINATE. Reply with one token.' "$reason_code"
 }
