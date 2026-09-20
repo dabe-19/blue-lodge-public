@@ -294,7 +294,8 @@ _subagent_compact() {
                 {"role": "user", "content": $prompt}
             ],
             temperature: 0.2,
-            max_tokens: 512
+            reasoning_effort: "low",
+            max_tokens: 1536
         }')
 
     local summary_resp
@@ -385,7 +386,7 @@ _subagent_compact() {
             --arg obs "$recent_obs" \
             '[
                 {"role": "system", "content": $sys},
-                {"role": "user", "content": ($cd + "Objective: " + $goal + "\n\nTrajectory:\n" + $obs + "\n\nNext Action:")}
+                {"role": "user", "content": ($cd + "Objective: " + $goal + "\n\nTrajectory:\n" + $obs + "\n\nCRITICAL FORMAT REQUIREMENT:\nThought: <brief 1-sentence reasoning under 25 words>\nAction: <slash-command, e.g. /bash <cmd> or /upstream propose ...>\n\nNext Action:")}
             ]')
 
         local payload
@@ -396,7 +397,8 @@ _subagent_compact() {
                 model: $model,
                 messages: $msgs,
                 temperature: 0.2,
-                max_tokens: 1024
+                reasoning_effort: "low",
+                max_tokens: 4096
             }')
 
         # Query endpoint
@@ -492,6 +494,14 @@ _subagent_compact() {
                 _extracted_cmd=$(echo "$cleaned" | sed -n '/```\(bash\|sh\)/,/```/p' | sed '1d;$d')
                 if [ -n "$_extracted_cmd" ]; then
                     action="/bash $_extracted_cmd"
+                fi
+            elif echo "$cleaned" | grep -qE '```(python|python3)'; then
+                local _extracted_py
+                _extracted_py=$(echo "$cleaned" | sed -n '/```\(python\|python3\)/,/```/p' | sed '1d;$d')
+                if [ -n "$_extracted_py" ]; then
+                    action="/bash python3 - <<'EOF'
+$_extracted_py
+EOF"
                 fi
             fi
         fi
