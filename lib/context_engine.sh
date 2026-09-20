@@ -28,6 +28,7 @@ source "$LODGE_DIR/lib/mcp.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/models.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/reflexive.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/wallet.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/social.sh" 2>/dev/null || true
 
 # ── Dynamic Context Assembly Pipeline ─────────────────────────────────
 context_engine_build() {
@@ -269,8 +270,19 @@ context_engine_build() {
         out+="</project_memory_and_goals>\n\n"
     fi
 
+    # 10. Communications & Social Targets (Discord & Fediverse Channels)
+    if declare -f social_context_compact &>/dev/null; then
+        local soc_ctx
+        soc_ctx=$(social_context_compact 2>/dev/null)
+        if [ -n "$soc_ctx" ]; then
+            out+="<communications_and_social>\n"
+            out+="$soc_ctx\n"
+            out+="</communications_and_social>\n\n"
+        fi
+    fi
+
     # ── TIER 3: Dynamic / Volatile Tail (Changes Per Query or Turn) ────
-    # 10. Semantic Recall & Episodic Knowledge Injection
+    # 11. Semantic Recall & Episodic Knowledge Injection
     out+="<semantic_recall_and_journal>\n"
     local recall_injected=0
     if declare -f recall_available &>/dev/null && recall_available; then
@@ -363,7 +375,7 @@ context_engine_debug_trace() {
 
     # Print section breakdown in order of KV cache freeze hierarchy
     printf "\033[1;33m--- [Section Hierarchy Breakdown (KV Cache Optimal Order)] ---\033[0m\n"
-    for tag in developer_instructions sovereign_soul tool_manifest operational_protocol agent_swarm_identities runtime_environments skills_and_instructions crypto_and_services mcp_knowledge_injection project_memory_and_goals semantic_recall_and_journal reflexive_intelligence active_environment; do
+    for tag in developer_instructions sovereign_soul tool_manifest operational_protocol agent_swarm_identities runtime_environments skills_and_instructions crypto_and_services mcp_knowledge_injection project_memory_and_goals communications_and_social semantic_recall_and_journal reflexive_intelligence active_environment; do
         local section_content
         section_content=$(echo "$prompt" | awk "/<$tag>/,/<\\/$tag>/" 2>/dev/null)
         local sec_len=${#section_content}

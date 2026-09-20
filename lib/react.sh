@@ -125,7 +125,9 @@ _react_parse_action() {
 react_run() {
     local goal="$1"
     local workdir="${2:-$PWD}"
-    local max_turns="${3:-15}"
+    local max_turns="${3:-${AGENT_MAX_MILESTONES:-${AGENT_PLAN_STEPS:-15}}}"
+    local agent_temp="${AGENT_LLM_TEMPERATURE:-0.2}"
+    local agent_max_tok="${AGENT_MAX_TOKENS:-2048}"
 
     # 1. Cascade to highest active endpoint tier
     if ! endpoints_cascade; then
@@ -202,55 +204,159 @@ react_run() {
             running_tokens=0
         fi
 
-        # Prepare chat completions payload
+        # Prepare chat completions payload with runtime /limits settings
         local payload
         payload=$(jq -n \
             --slurpfile msgs "$messages_file" \
             --argjson tools "$tools_schema" \
+            --arg temp "$agent_temp" \
+            --arg max_tok "$agent_max_tok" \
             '{
                 messages: $msgs[0],
                 tools: $tools,
                 tool_choice: "auto",
-                temperature: 0.2,
-                max_tokens: 2048
+                temperature: ($temp | tonumber),
+                max_tokens: ($max_tok | tonumber),
+                stream: true,
+                stream_options: {include_usage: true}
             }')
 
         # Log turn boundary and prompt to transcript & prompt log
         declare -f transcript_section &>/dev/null && transcript_section "Turn $turn / $max_turns"
         declare -f transcript_log_prompt &>/dev/null && transcript_log_prompt "react-turn-$turn" "$payload" "$sys_prompt"
 
-        ui_dim "Thinking..."
-        local resp_json
-        resp_json=$(curl -s --max-time 120 "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
-            -H "Content-Type: application/json" \
-            -d "$payload" 2>/dev/null)
+        local raw_content="" reasoning="" tool_calls="[]" p_tok=0 comp_tok=0
+        local stream_cache="$session_dir/stream_turn_${turn}.json"
 
-        if [ -z "$resp_json" ]; then
-            ui_err "Empty response from endpoint $ACTIVE_ENDPOINT_URL."
-            _react_trace "$workdir" "error" '{"error":"empty_response"}'
-            if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
-                transcript_stop >/dev/null 2>&1
+        local think_mode="${LODGE_THINK_STREAM:-1}"
+        [ "${LODGE_THINK:-1}" -eq 0 ] && think_mode=0
+
+        # Execute real-time streaming SSE pipeline
+        curl -s -N --max-time 120 "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
+            -H "Content-Type: application/json" \
+            -d "$payload" 2>/dev/null | \
+        sed -u -e 's/^data: //' -e '/^\[DONE\]/d' -e '/^[[:space:]]*$/d' | \
+        jq --unbuffered -c '
+            if .choices[0].delta.reasoning_content then
+                {type: "thought", text: .choices[0].delta.reasoning_content}
+            elif .choices[0].delta.content then
+                {type: "content", text: .choices[0].delta.content}
+            elif .choices[0].delta.tool_calls then
+                {type: "tool_calls", delta: .choices[0].delta.tool_calls}
+            elif .timings then
+                {type: "usage", prompt_tokens: .timings.prompt_n, completion_tokens: .timings.predicted_n}
+            elif .usage then
+                {type: "usage", prompt_tokens: .usage.prompt_tokens, completion_tokens: .usage.completion_tokens}
+            else
+                empty
+            end' 2>/dev/null | \
+        tee "$stream_cache" | \
+        awk -v think_mode="$think_mode" '
+        BEGIN {
+            color = (think_mode == 2 ? "\033[36m" : "\033[90m");
+            in_thought = 0;
+        }
+        /"type":"thought"/ {
+            if (think_mode > 0) {
+                if (!in_thought) {
+                    printf "%s[thought] ", color;
+                    in_thought = 1;
+                }
+                sub(/.*"text":"/, "");
+                sub(/"\}$/, "");
+                gsub(/\\n/, "\n");
+                gsub(/\\"/, "\"");
+                gsub(/\\\\/, "\\");
+                printf "%s", $0;
+                fflush();
+            }
+        }
+        /"type":"content"/ {
+            if (in_thought) {
+                if (think_mode > 0) printf "\033[0m\n";
+                in_thought = 0;
+            }
+            sub(/.*"text":"/, "");
+            sub(/"\}$/, "");
+            gsub(/\\n/, "\n");
+            gsub(/\\"/, "\"");
+            gsub(/\\\\/, "\\");
+            printf "%s", $0;
+            fflush();
+        }
+        END {
+            if (in_thought && think_mode > 0) {
+                printf "\033[0m\n";
+            }
+        }'
+
+        if [ ! -s "$stream_cache" ]; then
+            # Graceful fallback: synchronous non-stream request
+            ui_dim "Thinking..."
+            local fallback_payload
+            fallback_payload=$(echo "$payload" | jq '.stream = false | del(.stream_options)')
+            local resp_json
+            resp_json=$(curl -s --max-time 120 "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
+                -H "Content-Type: application/json" \
+                -d "$fallback_payload" 2>/dev/null)
+
+            if [ -z "$resp_json" ]; then
+                ui_err "Empty response from endpoint $ACTIVE_ENDPOINT_URL."
+                _react_trace "$workdir" "error" '{"error":"empty_response"}'
+                if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
+                    transcript_stop >/dev/null 2>&1
+                fi
+                return 1
             fi
-            return 1
+
+            raw_content=$(echo "$resp_json" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+            reasoning=$(echo "$resp_json" | jq -r '.choices[0].message.reasoning_content // empty' 2>/dev/null)
+            tool_calls=$(echo "$resp_json" | jq -c '.choices[0].message.tool_calls // empty' 2>/dev/null)
+            p_tok=$(echo "$resp_json" | jq -r '.usage.prompt_tokens // 0' 2>/dev/null)
+            comp_tok=$(echo "$resp_json" | jq -r '.usage.completion_tokens // 0' 2>/dev/null)
+            if [ -n "$reasoning" ]; then
+                printf "${C_DIM}[thought] %s${C_RESET}\n" "$reasoning"
+            fi
+        else
+            # Reconstruct complete response from stream cache
+            local reconstructed
+            reconstructed=$(jq -s '
+              {
+                reasoning: ([.[] | select(.type=="thought") | .text] | join("")),
+                content: ([.[] | select(.type=="content") | .text] | join("")),
+                tool_calls: (
+                  ([.[] | select(.type=="tool_calls") | .delta[]] // []) |
+                  reduce .[] as $call (
+                    [];
+                    .[$call.index] = {
+                      id: (.[$call.index].id // $call.id),
+                      type: (.[$call.index].type // $call.type // "function"),
+                      function: {
+                        name: (.[$call.index].function.name // $call.function.name),
+                        arguments: ((.[$call.index].function.arguments // "") + ($call.function.arguments // ""))
+                      }
+                    }
+                  )
+                ),
+                usage: (reduce (.[] | select(.type=="usage")) as $u ({}; . + $u))
+              }
+            ' "$stream_cache" 2>/dev/null)
+
+            raw_content=$(echo "$reconstructed" | jq -r '.content // empty' 2>/dev/null)
+            reasoning=$(echo "$reconstructed" | jq -r '.reasoning // empty' 2>/dev/null)
+            tool_calls=$(echo "$reconstructed" | jq -c '.tool_calls // empty' 2>/dev/null)
+            p_tok=$(echo "$reconstructed" | jq -r '.usage.prompt_tokens // 0' 2>/dev/null)
+            comp_tok=$(echo "$reconstructed" | jq -r '.usage.completion_tokens // 0' 2>/dev/null)
         fi
 
-        local raw_content reasoning tool_calls
-        raw_content=$(echo "$resp_json" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
-        reasoning=$(echo "$resp_json" | jq -r '.choices[0].message.reasoning_content // empty' 2>/dev/null)
-        tool_calls=$(echo "$resp_json" | jq -c '.choices[0].message.tool_calls // empty' 2>/dev/null)
-
         # Accounting for token consumption
-        local p_tok comp_tok
-        p_tok=$(echo "$resp_json" | jq -r '.usage.prompt_tokens // 0' 2>/dev/null)
-        comp_tok=$(echo "$resp_json" | jq -r '.usage.completion_tokens // 0' 2>/dev/null)
         local turn_total=$((p_tok + comp_tok))
-        running_tokens=$turn_total
-        local pct=$((turn_total * 100 / ACTIVE_ENDPOINT_CONTEXT))
+        [ "$turn_total" -gt 0 ] && running_tokens=$turn_total
+        local pct=0
+        [ "${ACTIVE_ENDPOINT_CONTEXT:-0}" -gt 0 ] && pct=$((turn_total * 100 / ACTIVE_ENDPOINT_CONTEXT))
         ui_dim "Context: ${turn_total}/${ACTIVE_ENDPOINT_CONTEXT} tokens (${pct}%) | Compaction at ${ACTIVE_ENDPOINT_COMPACT_TOKENS}"
 
-        # Show reasoning if present
         if [ -n "$reasoning" ]; then
-            printf "${C_DIM}[thought] %s${C_RESET}\n" "$reasoning"
             declare -f transcript_log_block &>/dev/null && transcript_log_block "thought" "$reasoning"
         fi
 
@@ -258,7 +364,11 @@ react_run() {
         if [ -n "$tool_calls" ] && [ "$tool_calls" != "null" ] && [ "$tool_calls" != "[]" ]; then
             # Append assistant message (with tool_calls) to conversation history
             local asst_msg
-            asst_msg=$(echo "$resp_json" | jq -c '.choices[0].message')
+            asst_msg=$(jq -nc \
+                --arg content "$raw_content" \
+                --arg rc "$reasoning" \
+                --argjson tc "$tool_calls" \
+                '{role: "assistant", content: (if $content == "" then null else $content end), reasoning_content: (if $rc == "" then null else $rc end), tool_calls: $tc}')
             jq --argjson m "$asst_msg" '. += [$m]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
 
             # Execute each emitted tool call
