@@ -1186,7 +1186,11 @@ native_tools_dispatch() {
                 s=$(echo "$args_json" | jq -r '.start_line // 1')
                 m=$(echo "$args_json" | jq -r '.max_lines // 300')
                 local target="$p"
-                [ -f "$workdir/$p" ] && target="$workdir/$p"
+                if declare -f ui_resolve_path &>/dev/null; then
+                    target=$(ui_resolve_path "$p" "$workdir")
+                elif [ -f "$workdir/$p" ]; then
+                    target="$workdir/$p"
+                fi
                 if [ ! -e "$target" ]; then
                     output="ERROR: File not found: $p"
                     exit_code=1

@@ -152,6 +152,7 @@ command -v curl &>/dev/null  || MISSING+=("curl")
 command -v jq   &>/dev/null  || MISSING+=("jq")
 command -v git  &>/dev/null  || MISSING+=("git")
 command -v sqlite3 &>/dev/null || MISSING+=("sqlite3")
+command -v rg &>/dev/null    || MISSING+=("ripgrep")
 
 if [ ${#MISSING[@]} -gt 0 ]; then
     warn "Missing: ${MISSING[*]}"
@@ -236,6 +237,38 @@ if ! command -v pdftotext &>/dev/null; then
         fi
     else
         info "Skipped — PDFs will use strings(1) fallback"
+    fi
+fi
+
+# ── 1c. Rust Toolchain & Tree-sitter AST Intelligence CLI ───
+if ! command -v tree-sitter &>/dev/null; then
+    printf "\n"
+    info "Installing tree-sitter AST CLI via Rust toolchain..."
+    if ! command -v cargo &>/dev/null; then
+        info "Rust toolchain not found. Installing via rustup..."
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
+        export PATH="$HOME/.cargo/bin:$PATH"
+    fi
+    if command -v cargo &>/dev/null; then
+        info "Running: cargo install tree-sitter-cli --locked"
+        cargo install tree-sitter-cli --locked 2>/dev/null || warn "cargo install tree-sitter-cli failed; falling back to prebuilt binary"
+    fi
+
+    # Fallback to prebuilt binary for Linux x86_64 if cargo install failed
+    if ! command -v tree-sitter &>/dev/null && [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ]; then
+        local_ts_dir="$HOME/.local/bin"
+        mkdir -p "$local_ts_dir"
+        if curl -fsSL "https://github.com/tree-sitter/tree-sitter/releases/download/v0.26.7/tree-sitter-linux-x64.gz" 2>/dev/null | gzip -d > "$local_ts_dir/tree-sitter" 2>/dev/null; then
+            chmod +x "$local_ts_dir/tree-sitter"
+            export PATH="$local_ts_dir:$PATH"
+        fi
+    fi
+
+    if command -v tree-sitter &>/dev/null; then
+        ok "tree-sitter $(tree-sitter --version 2>/dev/null || echo '') installed"
+    else
+        warn "tree-sitter CLI not installed; built-in POSIX awk/sed fallback active"
     fi
 fi
 

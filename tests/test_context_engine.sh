@@ -21,6 +21,8 @@ describe "context_engine_build structure"
     assert_contains "$ctx" "<crypto_and_services>"
     assert_contains "$ctx" "<mcp_knowledge_injection>"
     assert_contains "$ctx" "<project_memory_and_goals>"
+    assert_contains "$ctx" "Semantic Memory Handles"
+    assert_contains "$ctx" "mem:active_task"
     assert_contains "$ctx" "<semantic_recall_and_journal>"
     assert_contains "$ctx" "<reflexive_intelligence>"
     assert_contains "$ctx" "<active_environment>"
@@ -34,9 +36,9 @@ describe "context_engine_build structure"
     assert_contains "$ctx" "Hardware Fallback Ladder"
   }
 
-  it "injects comprehensive 72-tool catalog in tool_manifest" && {
+  it "injects comprehensive 77-tool catalog in tool_manifest" && {
     ctx=$(context_engine_build "test goal" "$PWD" 1)
-    assert_contains "$ctx" "72 native POSIX tools"
+    assert_contains "$ctx" "77 native POSIX tools"
     assert_contains "$ctx" "bash_exec"
     assert_contains "$ctx" "file_edit"
     assert_contains "$ctx" "git_clone"

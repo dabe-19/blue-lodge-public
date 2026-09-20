@@ -268,5 +268,36 @@ describe "native_tools_dispatch"
   }
 
 
+  it "file_read resolves virtual mem: handles properly" && {
+    tmp_dir="/tmp/test_mem_native_$$"
+    mkdir -p "$tmp_dir/.george/memories"
+    cat << 'JSON' > "$tmp_dir/.george/memories/registry.json"
+{
+  "1": {
+    "slug": "sample_note",
+    "file": "sample_note.md",
+    "title": "Sample Note",
+    "timestamp": "2026-09-20T00:00:00"
+  }
+}
+JSON
+    echo "Sample Note Content for George" > "$tmp_dir/.george/memories/sample_note.md"
+    echo "Active Task Report Body" > "$tmp_dir/.george/memories/active_task_slug.md"
+
+    # Test reading mem:1
+    res=$(LODGE_DIR="$tmp_dir" native_tools_dispatch "call_test_mem1" "file_read" '{"path":"mem:1"}' "$tmp_dir")
+    assert_ok $?
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "Sample Note Content for George"
+
+    # Test reading mem:active_task
+    res=$(LODGE_DIR="$tmp_dir" AGENT_ACTIVE_TASK_SLUG="active_task_slug" native_tools_dispatch "call_test_mem_act" "file_read" '{"path":"mem:active_task"}' "$tmp_dir")
+    assert_ok $?
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "Active Task Report Body"
+
+    rm -rf "$tmp_dir"
+  }
+
 test_end
 

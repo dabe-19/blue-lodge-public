@@ -268,18 +268,21 @@ context_engine_build() {
     fi
     out+="</mcp_knowledge_injection>\n\n"
 
-    # 9. Project Memory & Active Milestones (GEORGE.md)
+    # 9. Project Memory & Active Milestones (GEORGE.md & Semantic Handles)
+    out+="<project_memory_and_goals>\n"
     if [ -f "$workdir/GEORGE.md" ]; then
-        out+="<project_memory_and_goals>\n"
         local proj_meta active_focus completed_ms
         proj_meta=$(grep -A 5 -i "^## Project\|^## Build" "$workdir/GEORGE.md" 2>/dev/null | head -8)
         active_focus=$(grep -A 10 -i "^## Current Focus\|^## Active Task\|^## Active Milestone" "$workdir/GEORGE.md" 2>/dev/null | head -12)
         completed_ms=$(grep -A 8 -i "^## Completed Milestones" "$workdir/GEORGE.md" 2>/dev/null | head -10)
         [ -n "$proj_meta" ] && out+="$proj_meta\n\n"
         [ -n "$active_focus" ] && out+="$active_focus\n\n"
-        [ -n "$completed_ms" ] && out+="$completed_ms\n"
-        out+="</project_memory_and_goals>\n\n"
+        [ -n "$completed_ms" ] && out+="$completed_ms\n\n"
     fi
+    if declare -f memory_catalog_context &>/dev/null; then
+        out+="$(memory_catalog_context "$workdir")\n"
+    fi
+    out+="</project_memory_and_goals>\n\n"
 
     # 10. Communications & Social Targets (Discord & Fediverse Channels)
     if declare -f social_context_compact &>/dev/null; then

@@ -777,3 +777,91 @@ memory_json_commit() {
     fi
 }
 
+# ── Task Slugs & Persistent Semantic Memory Registry ───────────────
+
+memory_get_task_slug() {
+    local t="$1"
+    local cleaned
+    cleaned=$(echo "$t" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9 -]//g' -e 's/[ -][ -]*/_/g' -e 's/^_*//' -e 's/_*$//')
+    local slug
+    slug=$(echo "$cleaned" | cut -d'_' -f1-4 | cut -c1-40)
+    echo "${slug:-active_report}_$(date '+%H%M%S')"
+}
+_agent_get_task_slug() { memory_get_task_slug "$@"; }
+
+memory_register_files() {
+    local workdir="${1:-.}"
+    local mem_dir="$workdir/.george/memories"
+    local reg_file="$mem_dir/registry.json"
+    mkdir -p "$mem_dir"
+    [ ! -f "$reg_file" ] && echo "{}" > "$reg_file"
+
+    command -v jq &>/dev/null || return 0
+
+    local mem_file
+    for mem_file in "$mem_dir"/*.md "$mem_dir"/*.txt; do
+        [ ! -f "$mem_file" ] && continue
+        local slug
+        slug=$(basename "$mem_file" | sed -e 's/\.md$//' -e 's/\.txt$//')
+        [ "$slug" = "active_report" ] && continue
+        [ "$slug" = "memory_*" ] && continue
+
+        local title
+        title=$(head -n 1 "$mem_file" 2>/dev/null | sed 's/^[#[:space:]]*//' | cut -c1-80)
+        [ -z "$title" ] && title="$slug"
+
+        local timestamp
+        timestamp=$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S')
+
+        local exists
+        exists=$(jq -r --arg slug "$slug" 'to_entries[]? | select(.value.slug == $slug) | .value.slug' "$reg_file" 2>/dev/null)
+        if [ -z "$exists" ]; then
+            local next_idx
+            next_idx=$(jq '[keys[]? | tonumber] | max + 1 // 1' "$reg_file" 2>/dev/null)
+            [ -z "$next_idx" ] || [ "$next_idx" = "null" ] && next_idx=1
+
+            jq --arg idx "$next_idx" \
+               --arg slug "$slug" \
+               --arg file "$(basename "$mem_file")" \
+               --arg title "$title" \
+               --arg ts "$timestamp" \
+               '.[$idx] = {slug: $slug, file: $file, title: $title, timestamp: $ts}' \
+               "$reg_file" > "${reg_file}.tmp" && mv "${reg_file}.tmp" "$reg_file"
+            [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] Registry: Registered mem:${next_idx} -> ${slug}"
+        fi
+    done
+
+    # Sync memory registry to GEORGE.md
+    if [ -f "$workdir/GEORGE.md" ] && [ -f "$reg_file" ]; then
+        local registry_list=""
+        while read -r line || [ -n "$line" ]; do
+            [ -n "$line" ] && registry_list="${registry_list}- ${line}\n"
+        done < <(jq -r 'to_entries? | sort_by(.key | tonumber) | .[] | "mem:\(.value.slug) (Registry #\(@sh "\(.key)")\): \(.value.title) (\(.value.file))"' "$reg_file" 2>/dev/null | sed "s/'//g")
+
+        if [ -n "$registry_list" ]; then
+            memory_update_section "Semantic Memory Registry" "$(printf "%b" "$registry_list")" "$workdir" 2>/dev/null || true
+        fi
+    fi
+}
+_agent_register_memory_file() { memory_register_files "$@"; }
+
+memory_catalog_context() {
+    local workdir="${1:-.}"
+    local max="${2:-8}"
+    local reg_file="$workdir/.george/memories/registry.json"
+    local active_slug="${AGENT_ACTIVE_TASK_SLUG:-active_report}"
+    local out=""
+    out+="### Semantic Memory Handles\n"
+    out+="- mem:active_task -> Current task deliverable (.george/memories/${active_slug}.md)\n"
+    if [ -f "$reg_file" ] && command -v jq &>/dev/null; then
+        local entries
+        entries=$(jq -r 'to_entries? | sort_by(.key | tonumber) | reverse | .[:'$max'] | .[] | "- mem:\(.key): \(.value.title) [\(.value.slug)]"' "$reg_file" 2>/dev/null)
+        if [ -n "$entries" ]; then
+            out+="### Prior Registered Memories (mem:<index> or mem:<slug>)\n"
+            out+="$entries\n"
+        fi
+    fi
+    printf "%b" "$out"
+}
+
+

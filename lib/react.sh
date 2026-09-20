@@ -172,6 +172,16 @@ react_run() {
     local memory_file="$session_dir/memory.md"
     : > "$history_file"
 
+    # Export active task memory slug and session workspace paths
+    if declare -f memory_get_task_slug &>/dev/null; then
+        export AGENT_ACTIVE_TASK_SLUG="$(memory_get_task_slug "$goal")"
+    else
+        export AGENT_ACTIVE_TASK_SLUG="active_report_$(date '+%H%M%S')"
+    fi
+    export AGENT_TASK_WORKSPACE="$session_dir"
+    export AGENT_TASK_WORKSPACE_REL=".george/workspaces/$session_id"
+    declare -f memory_register_files &>/dev/null && memory_register_files "$workdir"
+
     # 3. Assemble Dynamic Copilot-Style Context & Tool Schemas
     ui_dim "Assembling context pipeline and native tool registry..."
     local sys_prompt
@@ -491,6 +501,7 @@ react_run() {
             declare -f transcript_log_block &>/dev/null && transcript_log_block "final_response" "$raw_content"
             _react_trace "$workdir" "task_complete" "$(jq -cn --arg goal "$goal" --arg summary "${raw_content:0:200}" '{goal:$goal, summary:$summary, status:"success"}')"
             jq '.status = "COMPLETED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
+            declare -f memory_register_files &>/dev/null && memory_register_files "$workdir"
             if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
                 local _tpath
                 _tpath=$(transcript_stop)
@@ -505,6 +516,7 @@ react_run() {
     ui_warn "Task reached maximum turns ($max_turns)."
     _react_trace "$workdir" "task_halted" "$(jq -cn --arg goal "$goal" --arg reason "max_turns" '{goal:$goal, reason:$reason}')"
     jq '.status = "MAX_TURNS_EXCEEDED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
+    declare -f memory_register_files &>/dev/null && memory_register_files "$workdir"
     if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
         local _tpath
         _tpath=$(transcript_stop)
