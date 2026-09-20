@@ -330,6 +330,10 @@ _subagent_compact() {
     local final_result=""
     local running_tokens=0
     local kv_prefix_tokens=2815 # Invariant system prompt & tool manifest baseline
+    local consecutive_failures=0
+    local last_failed_action=""
+    local circuit_tripped=0
+    local circuit_reason=""
 
     while [ "$turn" -le "$max_turns" ]; do
         declare -f ui_dashboard_worker_update &>/dev/null && ui_dashboard_worker_update "$sub_id" "turn $turn/$max_turns (tok: $running_tokens)" >&2
@@ -581,6 +585,29 @@ EOF"
         # Execute tool inside isolated worktree directory
         local obs
         obs=$(commands_dispatch "$action" "$sub_dir" 2>&1)
+        local cmd_rc=$?
+
+        # Failure and Thrashing Detection
+        local is_error=0
+        if [ "$cmd_rc" -ne 0 ]; then
+            is_error=1
+        elif echo "$obs" | grep -qE "(SyntaxError|command not found|Unknown command|No such file or directory|fatal:|Traceback \(most recent call last\)|failed \(exit [1-9])"; then
+            is_error=1
+        fi
+
+        if [ "$is_error" -eq 1 ]; then
+            if [ -n "$last_failed_action" ] && [ "$action" = "$last_failed_action" ]; then
+                # Thrashing detected: repeating identical failing action consecutively
+                consecutive_failures=$((consecutive_failures + 2))
+            else
+                consecutive_failures=$((consecutive_failures + 1))
+            fi
+            last_failed_action="$action"
+            _subagent_log_event "$sub_id" "WARN" "Action failed (exit $cmd_rc, streak: $consecutive_failures/3): ${action:0:80}" "$sub_fifo"
+        else
+            consecutive_failures=0
+            last_failed_action=""
+        fi
 
         # Log observation to persistent stream
         _subagent_log_event "$sub_id" "OBSERVATION" "$obs" "$sub_fifo"
@@ -591,6 +618,55 @@ EOF"
             record_obs="${record_obs:0:15000}... [output bounded at 15k chars for slot headroom]"
         fi
         printf "\n--- Turn %d ---\nAction: %s\nObservation:\n%s\n" "$turn" "$action" "$record_obs" >> "$sub_history"
+
+        # Check Circuit Breaker Threshold (default 3 consecutive failures or thrashing)
+        local max_consecutive="${CIRCUIT_BREAKER_MAX_FAILURES:-3}"
+        if [ "$consecutive_failures" -ge "$max_consecutive" ]; then
+            circuit_tripped=1
+            circuit_reason="Subagent tripped circuit breaker after $consecutive_failures consecutive failures (Action: ${action:0:80}). Escalating to Parent George."
+            _subagent_log_event "$sub_id" "CIRCUIT_BREAKER" "$circuit_reason" "$sub_fifo"
+            _subagent_log_event "$sub_id" "ALERT_PARENT" "Escalation triggered for subagent $sub_id (worktree: $sub_dir)" "$sub_fifo"
+
+            # Record persistent structured alert in .george/alerts/
+            mkdir -p "$LODGE_DIR/.george/alerts"
+            local alert_file="$LODGE_DIR/.george/alerts/alert_${sub_id}.json"
+            local alert_ts
+            alert_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%d %H:%M:%S")
+            jq -n \
+                --arg id "$sub_id" \
+                --arg tier "$target_tier" \
+                --arg model "$tier_model" \
+                --arg obj "$objective" \
+                --arg ts "$alert_ts" \
+                --argjson turn "$turn" \
+                --argjson failures "$consecutive_failures" \
+                --arg act "$action" \
+                --arg err "${obs:0:1000}" \
+                --arg worktree "$sub_dir" \
+                --arg branch "${sub_branch:-none}" \
+                '{
+                    id: $id,
+                    tier: $tier,
+                    model: $model,
+                    objective: $obj,
+                    timestamp: $ts,
+                    turn: $turn,
+                    consecutive_failures: $failures,
+                    failed_action: $act,
+                    last_error: $err,
+                    worktree: $worktree,
+                    branch: $branch,
+                    status: "ESCALATED_TO_PARENT"
+                }' > "$alert_file" 2>/dev/null || true
+
+            declare -f ui_err &>/dev/null && ui_err "⚡ [CIRCUIT BREAKER] Subagent $sub_id escalated to Parent George ($consecutive_failures consecutive failures)" >&2
+
+            # Clean up temporary scratch scripts created during attempts
+            rm -f /tmp/fix_*.py /tmp/patch_*.sh /tmp/subagent_*.tmp 2>/dev/null || true
+
+            final_result="$circuit_reason"
+            break
+        fi
 
         turn=$((turn + 1))
     done
@@ -613,14 +689,21 @@ EOF"
 
     # Finalize visual dashboard and registry
     local exit_code=0
-    [ -z "$final_result" ] && exit_code=1
     local final_status="COMPLETED"
-    [ "$exit_code" -ne 0 ] && final_status="FAILED"
+    if [ "$circuit_tripped" -eq 1 ]; then
+        exit_code=75  # EX_TEMPFAIL / Escalated to Parent
+        final_status="ESCALATED_TO_PARENT"
+    elif [ -z "$final_result" ]; then
+        exit_code=1
+        final_status="FAILED"
+    fi
     subagents_update_status "$sub_id" "$final_status" "$turn" "$final_result"
     declare -f ui_dashboard_worker_finish &>/dev/null && ui_dashboard_worker_finish "$sub_id" "$exit_code" >&2
     _subagent_log_event "$sub_id" "FINISH" "Status: $final_status | Turns: $turn" "$sub_fifo"
 
-    if [ -z "$final_result" ]; then
+    if [ "$circuit_tripped" -eq 1 ]; then
+        echo "⚡ [CIRCUIT BREAKER] $circuit_reason"
+    elif [ -z "$final_result" ]; then
         echo "Subagent reached max turns without explicit response."
     else
         echo "$final_result"

@@ -19,6 +19,7 @@ host system. Every cloned repo, every `lodge /init`, and every manual
 9. [Example: Kali Linux Penetration Testing on Mobile](#example-kali-linux-penetration-testing-on-mobile)
 10. [Example: Python Web Scraper in a Sandbox](#example-python-web-scraper-in-a-sandbox)
 11. [Tips & Troubleshooting](#tips--troubleshooting)
+12. [Sovereign Pull Requests & GitFlow](#sovereign-pull-requests--gitflow)
 
 ---
 
@@ -568,6 +569,58 @@ lodge /sandbox rm old-project
 # Nuclear option: remove all sandboxes
 rm -rf ~/.lodge-sandboxes/
 ```
+
+---
+
+## Sovereign Pull Requests & GitFlow
+
+Sandboxed projects can participate in **Sovereign PR pipelines** — a GitFlow-based workflow where George manages branch topology, creates pull requests, tracks CI verification status, and enforces circuit-breaker safety per sandbox.
+
+### GitFlow Branch Topology
+
+Each sandbox that tracks an upstream repo follows the standard GitFlow model:
+
+| Branch | Purpose |
+|--------|---------|
+| `main` | Production-ready releases; protected, only receives merged PRs |
+| `develop` | Integration branch for in-progress features |
+| `feature/<name>` | Short-lived branches for new functionality |
+| `bugfix/<name>` | Short-lived branches for defect fixes |
+| `release/<version>` | Stabilization branch for a specific release |
+| `hotfix/<name>` | Emergency branch cut from `main` for critical fixes |
+
+### Sovereign PR Pipeline
+
+George orchestrates the full PR lifecycle inside a sandbox:
+
+1. **Branch creation** — George opens a `feature/` or `bugfix/` branch from `develop` (or `main` for hotfixes).
+2. **Implementation** — Code changes are made on the feature branch; George journals each commit.
+3. **Build & test** — `/sandbox build` and `/sandbox test` run against the branch before any PR is opened.
+4. **PR proposal** — George creates the pull request to the upstream repo via `/upstream propose`, attaching a summary of changes, test results, and CI status.
+5. **Review & merge** — Once the PR is approved and passes CI, George merges into `develop` via `/pr accept <id>` and updates the sandbox journal.
+
+### Subagent Circuit Breaker & Supervisor Escalation
+
+When autonomous subagents encounter persistent tool failures or string escaping issues, an automated circuit breaker prevents runaway loops:
+
+- **Circuit Breaker Threshold:** Trips upon **3 consecutive non-zero tool exit codes** or **2 consecutive identical failing commands** (thrashing detection).
+- **Escalation Alert:** Writes a persistent alert to `.george/alerts/alert_<subagent_id>.json` and marks registry status `ESCALATED_TO_PARENT`.
+- **Inference Preservation:** Releases GPU inference slots immediately and cleans up scratch files in `/tmp`.
+- **Control Hand-off:** Subagent exits with code `75` (`EX_TEMPFAIL`) to cleanly transfer control to the Parent George / Supervisor.
+- **Alert Inspection:** Use `/subagents alerts` to view active escalations and `/subagents dismiss <id>` to acknowledge them.
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/upstream propose <title>` | Create a feature branch and open a PR from the current sandbox |
+| `/pr list` | List open and merged PRs for the repository |
+| `/pr status <pr#>` | Show CI status, review state, and merge readiness for a PR |
+| `/pr audit <pr#>` | Perform automated code and security audit on an open PR |
+| `/pr accept <pr#>` | Merge an approved PR into `develop` or `main` |
+| `/pr close <pr#>` | Close a PR without merging |
+| `/subagents alerts` | View pending circuit-breaker escalation alerts |
+| `/subagents dismiss <id>` | Dismiss an acknowledged circuit-breaker alert |
 
 ---
 
