@@ -58,9 +58,14 @@ context_engine_build() {
         out+="</sovereign_soul>\n\n"
     fi
 
-    # 3. Tool Manifest (72 Categorized POSIX Tools — Largest Static Block)
+    # 3. Tool Manifest (77 Categorized POSIX Tools — Largest Static Block)
     out+="<tool_manifest>\n"
-    out+="The sovereign agent environment exposes 72 native POSIX tools with zero external dependencies:\n"
+    if [ "${USE_IDL_TOOL_MANIFEST:-0}" -eq 1 ] && declare -f treesitter_format_tools_idl &>/dev/null && declare -f native_tools_schemas_json &>/dev/null; then
+        out+="$(treesitter_format_tools_idl "$(native_tools_schemas_json)")\n"
+        out+="</tool_manifest>\n\n"
+        return 0 2>/dev/null || true
+    fi
+    out+="The sovereign agent environment exposes 77 native POSIX tools with zero external dependencies:\n"
     out+="## Workspace & Execution\n"
     out+="- bash_exec(command): Execute shell commands in the project workspace.\n"
     out+="- file_read(path): Read file contents.\n"

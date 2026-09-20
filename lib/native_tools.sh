@@ -1196,14 +1196,35 @@ native_tools_dispatch() {
                 else
                     output=$(tools_read_file "$target" "$m" "$s" 2>&1)
                     exit_code=$?
+                    if [ $exit_code -eq 0 ] && [ -f "$target" ]; then
+                        local _ts_total_lines
+                        _ts_total_lines=$(wc -l < "$target" 2>/dev/null || echo 0)
+                        if [ "$_ts_total_lines" -gt 150 ]; then
+                            output+=$'\n\n'"[Tip: $p has $_ts_total_lines lines. Use code_outline \"$p\" for structural overview, or code_symbol_get \"$p\" <symbol> to extract specific functions/classes.]"
+                        fi
+                    fi
                 fi
                 ;;
             file_write)
                 local p c
                 p=$(echo "$args_json" | jq -r '.path // empty')
                 c=$(echo "$args_json" | jq -r '.content // empty')
-                output=$(commands_dispatch "/write $p $c" "$workdir" 2>&1)
-                exit_code=$?
+                # Ambient Tree-sitter pre-flight syntax validation
+                local _ts_lang
+                _ts_lang=$(treesitter_detect_lang "$p")
+                if [ -n "$_ts_lang" ] && [ "$_ts_lang" != "plaintext" ]; then
+                    local _ts_v_err
+                    if ! _ts_v_err=$(treesitter_validate "$c" "$_ts_lang" 2>&1); then
+                        output="ERROR: Tree-sitter AST Syntax Validation Failed for $p ($_ts_lang):
+$_ts_v_err
+[File write aborted to protect code integrity. Fix syntax errors before writing.]"
+                        exit_code=1
+                    fi
+                fi
+                if [ -z "$output" ]; then
+                    output=$(commands_dispatch "/write $p $c" "$workdir" 2>&1)
+                    exit_code=$?
+                fi
                 ;;
             file_append)
                 local p c
@@ -1787,6 +1808,16 @@ native_tools_dispatch() {
                 expr=$(echo "$args_json" | jq -r '.expression // empty')
                 output=$(cmd_edit "$pth $expr" "$workdir" 2>&1)
                 exit_code=$?
+                if [ $exit_code -eq 0 ] && [ -f "$workdir/$pth" ]; then
+                    local _edit_lang
+                    _edit_lang=$(treesitter_detect_lang "$pth")
+                    if [ -n "$_edit_lang" ] && [ "$_edit_lang" != "plaintext" ]; then
+                        local _edit_ts_err
+                        if ! _edit_ts_err=$(treesitter_validate "$(cat "$workdir/$pth")" "$_edit_lang" 2>&1); then
+                            output+=$'\n'"[Warning: Tree-sitter post-edit syntax validation failed for $pth: $_edit_ts_err]"
+                        fi
+                    fi
+                fi
                 ;;
             git_clone)
                 local url dest

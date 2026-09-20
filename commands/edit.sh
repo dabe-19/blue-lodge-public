@@ -351,6 +351,18 @@ print(f"Applied {len(cleaned_blocks)} block edits.")
 
     if [ "$py_rc" -eq 0 ]; then
         after_lines=$(wc -l < "$fullpath")
+        # Ambient Tree-sitter AST validation badge
+        if declare -f treesitter_detect_lang &>/dev/null && declare -f treesitter_validate &>/dev/null; then
+            local _ts_edit_lang
+            _ts_edit_lang=$(treesitter_detect_lang "$filepath")
+            if [ -n "$_ts_edit_lang" ] && [ "$_ts_edit_lang" != "plaintext" ]; then
+                local _ts_edit_err
+                if ! _ts_edit_err=$(treesitter_validate "$(cat "$fullpath")" "$_ts_edit_lang" 2>&1); then
+                    ui_warn "Tree-sitter AST syntax warning after edit on $filepath ($_ts_edit_lang):"
+                    ui_dim "$_ts_edit_err"
+                fi
+            fi
+        fi
         ui_ok "Edited: $filepath ($before_lines → $after_lines lines) - $py_err"
         return 0
     else

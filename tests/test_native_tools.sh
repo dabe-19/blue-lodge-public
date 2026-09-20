@@ -250,5 +250,23 @@ describe "native_tools_dispatch"
     assert_contains "$content" "Unknown tool"
   }
 
+  it "file_write catches and rejects invalid syntax via Tree-sitter" && {
+    tmp_bad="/tmp/test_bad_$$.py"
+    res=$(native_tools_dispatch "call_test_bad" "file_write" "{\"path\":\"$tmp_bad\",\"content\":\"def broken(\"}" "$PWD")
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "Tree-sitter AST Syntax Validation Failed"
+    [ ! -f "$tmp_bad" ]
+    assert_ok $? "Corrupted file should not have been written"
+  }
+
+  it "file_write succeeds on valid syntax" && {
+    tmp_good="/tmp/test_good_$$.py"
+    res=$(native_tools_dispatch "call_test_good" "file_write" "{\"path\":\"$tmp_good\",\"content\":\"def hello():\\n    return 42\"}" "$PWD")
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "Created"
+    rm -f "$tmp_good"
+  }
+
+
 test_end
 
