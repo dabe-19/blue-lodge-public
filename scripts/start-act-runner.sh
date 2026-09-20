@@ -71,11 +71,35 @@ if [ -z "$RUNNER_TOKEN" ]; then
 fi
 ui_ok "Acquired runner token: ${RUNNER_TOKEN:0:8}..."
 
-# 4. Prepare data directory
+# 4. Prepare data directory and config
 mkdir -p "$DATA_DIR"
 if [ -f "${DATA_DIR}/.runner" ]; then
     sed -i 's|docker://debian:bookworm-slim|docker://node:20-bookworm|g' "${DATA_DIR}/.runner"
 fi
+
+cat <<'EOF' > "${DATA_DIR}/config.yaml"
+log:
+  level: info
+
+runner:
+  file: .runner
+  capacity: 1
+  timeout: 3h
+  insecure: false
+  fetch_timeout: 5s
+  fetch_interval: 2s
+  labels:
+    - "ubuntu-latest:docker://node:20-bookworm"
+    - "debian:docker://node:20-bookworm"
+    - "bash:docker://node:20-bookworm"
+
+cache:
+  enabled: false
+
+container:
+  network: "host"
+  force_pull: false
+EOF
 
 # 5. Launch Act Runner with host networking and Docker socket mount
 ui_step "Launching '${CONTAINER_NAME}' with host networking..."
@@ -85,11 +109,12 @@ docker run -d \
     --net host \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v "${DATA_DIR}:/data" \
+    -e CONFIG_FILE="/data/config.yaml" \
     -e GITEA_INSTANCE_URL="${GITEA_URL}" \
     -e GITEA_RUNNER_REGISTRATION_TOKEN="${RUNNER_TOKEN}" \
     -e GITEA_RUNNER_NAME="george-local-runner" \
     -e GITEA_RUNNER_LABELS="ubuntu-latest:docker://node:20-bookworm,debian:docker://node:20-bookworm,bash:docker://node:20-bookworm" \
-    gitea/act_runner:latest daemon >/dev/null
+    gitea/act_runner:latest >/dev/null
 
 sleep 2
 
