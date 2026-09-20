@@ -54,6 +54,9 @@ commands_dispatch() {
     # Fix missing spaces in LLM output — file extensions, code fences, asterisks.
     if declare -f tools_fix_llm_spacing &>/dev/null; then
         case "$cmd" in
+            bash|sh)
+                # Never alter spacing in shell commands
+                ;;
             write|save|append|edit)
                 # Scope to first token ONLY for content-writing commands to avoid corrupting payload code
                 local _first_arg="${args%%[[:space:]]*}"
