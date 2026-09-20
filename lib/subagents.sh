@@ -485,11 +485,36 @@ _subagent_compact() {
             elif echo "$cleaned" | grep -qE '^[[:space:]]*`?\/'; then
                 action=$(echo "$cleaned" | grep -E '^[[:space:]]*`?\/' | head -1 | tr -d '`')
                 action="${action#"${action%%[![:space:]]*}"}"
+            elif echo "$cleaned" | grep -qE '^Action:[[:space:]]*(bash|read|append|upstream|respond)'; then
+                action=$(echo "$cleaned" | sed -n 's/^Action:[[:space:]]*/\//p' | head -1)
+            elif echo "$cleaned" | grep -qE '```(bash|sh)'; then
+                local _extracted_cmd
+                _extracted_cmd=$(echo "$cleaned" | sed -n '/```\(bash\|sh\)/,/```/p' | sed '1d;$d')
+                if [ -n "$_extracted_cmd" ]; then
+                    action="/bash $_extracted_cmd"
+                fi
             fi
         fi
 
+        # Check if objective requires an upstream PR
+        local needs_upstream=0
+        if [[ "$objective" =~ (upstream|propose|PR|pull[[:space:]]request|SANDBOXES) ]]; then
+            needs_upstream=1
+        fi
+
+        local pr_issued=0
+        if [ -f "$sub_dir/.pr_issued" ] || grep -q '/upstream propose' "$sub_dir/history.log" 2>/dev/null; then
+            pr_issued=1
+        fi
+
         if [ -z "$action" ]; then
-            # If model returned text without action on later turns, treat as completion
+            if [ "$needs_upstream" -eq 1 ] && [ "$pr_issued" -eq 0 ]; then
+                _subagent_log_event "$sub_id" "GUARD" "No action found. Prompting model for explicit Action line." "$sub_fifo"
+                local no_act_obs="[GUARD NOTICE: No valid tool action detected in your response. You must execute an action line, for example: Action: /bash python3 -c \"...\" or Action: /append <file> <content>, followed by Action: /upstream propose \"<title>\" --reason \"<reason>\" --metric \"<proof>\". Output: Thought: ... Action: /...]"
+                printf "\n--- Turn %d ---\nObservation:\n%s\n" "$turn" "$no_act_obs" >> "$sub_history"
+                turn=$((turn + 1))
+                continue
+            fi
             if [ -n "$cleaned" ] && [ "$turn" -gt 1 ]; then
                 final_result="$cleaned"
                 _subagent_log_event "$sub_id" "RESULT" "$final_result" "$sub_fifo"
@@ -504,18 +529,6 @@ _subagent_compact() {
         if [[ "$action" == /respond* ]]; then
             local resp_text="${action#/respond}"
             resp_text="${resp_text#"${resp_text%%[![:space:]]*}"}"
-
-            # Check if objective requires an upstream PR
-            local needs_upstream=0
-            if [[ "$objective" =~ (upstream|propose|PR|pull[[:space:]]request|SANDBOXES) ]]; then
-                needs_upstream=1
-            fi
-
-            # Check if PR has been issued
-            local pr_issued=0
-            if [ -f "$sub_dir/.pr_issued" ] || grep -q '/upstream propose' "$sub_dir/history.log" 2>/dev/null; then
-                pr_issued=1
-            fi
 
             if [ "$needs_upstream" -eq 1 ] && [ "$pr_issued" -eq 0 ]; then
                 _subagent_log_event "$sub_id" "GUARD" "Blocked premature /respond: objective requires submitting an upstream PR first." "$sub_fifo"
@@ -665,6 +678,7 @@ EOF
     declare -f ui_dashboard_worker_start &>/dev/null && ui_dashboard_worker_start "$sub_id" "$target_tier" "$tier_model" "$objective" >&2
 
     if [ "$is_async" = "1" ] || [ "$is_async" = "true" ]; then
+        export _LODGE_SKIP_SUBAGENT_CLEANUP=1
         (
             _subagent_worker_run "$sub_id" "$target_tier" "$tier_model" "$tier_url" "$tier_roles" \
                 "$objective" "$parent_context" "$sub_dir" "$sub_branch" "$is_worktree" \

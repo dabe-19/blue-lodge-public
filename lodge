@@ -174,17 +174,19 @@ _lodge_exit_cleanup() {
 
     # Tear down remote SSH tunnel + watchdog so they don't outlive Lodge
     declare -f remote_disconnect &>/dev/null && remote_disconnect 2>/dev/null
-    # Kill any leftover curl → LLM processes
-    pkill -f "curl.*v1/chat/completions" 2>/dev/null || true
-    pkill -f "curl.*api/generate" 2>/dev/null || true
-    pkill -f "curl.*api/chat" 2>/dev/null || true
-    pkill -f "curl.*generativelanguage.googleapis" 2>/dev/null || true
-    pkill -f "curl.*api\.anthropic\.com" 2>/dev/null || true
-    pkill -f "curl.*api\.openai\.com" 2>/dev/null || true
-    # Stop MCP servers
-    declare -f _mcp_cleanup &>/dev/null && _mcp_cleanup
-    # Reap any active subagent processes and worktrees
-    declare -f subagents_cleanup_all &>/dev/null && subagents_cleanup_all
+    if [ "${_LODGE_SKIP_SUBAGENT_CLEANUP:-0}" != "1" ]; then
+        # Kill any leftover curl → LLM processes
+        pkill -f "curl.*v1/chat/completions" 2>/dev/null || true
+        pkill -f "curl.*api/generate" 2>/dev/null || true
+        pkill -f "curl.*api/chat" 2>/dev/null || true
+        pkill -f "curl.*generativelanguage.googleapis" 2>/dev/null || true
+        pkill -f "curl.*api\.anthropic\.com" 2>/dev/null || true
+        pkill -f "curl.*api\.openai\.com" 2>/dev/null || true
+        # Stop MCP servers
+        declare -f _mcp_cleanup &>/dev/null && _mcp_cleanup
+        # Reap any active subagent processes and worktrees
+        declare -f subagents_cleanup_all &>/dev/null && subagents_cleanup_all
+    fi
     # Clean temp files
     rm -f "${TMPDIR:-/tmp}"/.lodge-fifo-*-$$ 2>/dev/null
     rm -f "${TMPDIR:-/tmp}"/.lodge-cancel-$$ 2>/dev/null

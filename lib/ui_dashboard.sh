@@ -8,11 +8,12 @@
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh"
 
-declare -A _DASH_WORKERS 2>/dev/null || true
+declare -g -A _DASH_WORKERS 2>/dev/null || declare -A _DASH_WORKERS 2>/dev/null || true
 _DASH_WORKER_IDS=()
 _DASH_ENABLED=1
 
 ui_dashboard_init() {
+    declare -g -A _DASH_WORKERS 2>/dev/null || true
     _DASH_WORKER_IDS=()
     # Check if stdout is interactive terminal
     if [ ! -t 1 ]; then
@@ -28,6 +29,7 @@ ui_dashboard_worker_start() {
     local start_time
     start_time=$(date +%s)
 
+    declare -g -A _DASH_WORKERS 2>/dev/null || true
     _DASH_WORKERS["$id"]="$tier|$model|$task|$start_time|active"
     _DASH_WORKER_IDS+=("$id")
     ui_dashboard_render
