@@ -28,9 +28,12 @@ cmd_upstream() {
                 return 1
             fi
 
-            # Parse title, reason, metric
+            # Parse title, reason, metric, and flags
+            local force_local=0
+            [[ "$rest" == *"--local"* ]] && force_local=1
+
             local title="" reason="" metric=""
-            title=$(echo "$rest" | sed -E 's/--reason.*//; s/--metric.*//' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+            title=$(echo "$rest" | sed -E 's/--local//g; s/--reason.*//; s/--metric.*//' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
             if [[ "$rest" =~ --reason[[:space:]]+([^--]+) ]]; then
                 reason="${BASH_REMATCH[1]}"
                 reason="${reason#"${reason%%[![:space:]]*}"}"
@@ -42,10 +45,16 @@ cmd_upstream() {
 
             [ -z "$title" ] && title="Optimization deliverable from $curr_branch"
 
+            # Auto-commit any unstaged/uncommitted changes in the worktree
+            if [ -n "$(git -C "$workdir" status --porcelain 2>/dev/null)" ]; then
+                git -C "$workdir" add -A >/dev/null 2>&1 || true
+                git -C "$workdir" commit -m "feat(upstream): ${title}" >/dev/null 2>&1 || true
+            fi
+
             local dossier="### Rationale\n${reason:-"Candidate optimization tested and validated."}\n\n### Empirical Metric Delta (The Plumb)\n${metric:-"All test suites passing in branch sandbox."}"
 
             ui_step "Submitting candidate PR upstream to 'develop'..."
-            pr_create "$curr_branch" "$title" "$dossier" "develop"
+            pr_create "$curr_branch" "$title" "$dossier" "develop" "$force_local"
             ;;
         *)
             ui_err "Unknown /upstream command: '$subcmd'"
