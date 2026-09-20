@@ -46,7 +46,8 @@ unset REFLEXIVE_SOUL_GATE \
       REFLEXIVE_TOKEN_CEILING \
       REFLEXIVE_SPECULATE_BUDGET \
       REFLEXIVE_METACOG_INTERVAL \
-      _REFLEXIVE_SOUL_REJECTIONS
+      _REFLEXIVE_SOUL_REJECTIONS \
+      AGENT_PLAN_STEPS
 
 # ── State ──────────────────────────────────────────────────────
 _TEST_TOTAL=0
