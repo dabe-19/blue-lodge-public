@@ -244,27 +244,28 @@ _subagent_worker_run() {
     local sub_history="$sub_dir/history.log"
     : > "$sub_history"
 
-    # Subagent System Prompt
     local sub_system="You are an autonomous subagent worker (Tier $target_tier: $tier_model).
 Role: $tier_roles
 Your specific objective: $objective
 Parent Context: $parent_context
 
-You operate in an isolated sandbox. You can execute tools via slash commands:
+You operate in an isolated git worktree sandbox. You can execute tools via slash commands:
 - /read <file> [start] [count] : Read file contents
 - /append <file> <content> : Append text to a file
-- /bash <cmd> : Execute shell command in workspace (e.g. echo, sed, grep)
+- /bash <cmd> : Execute shell command in workspace (e.g. echo, sed, grep, git)
 - /upstream propose <title> --reason <text> --metric <proof> : Propose your deliverable upstream as a PR to develop
 - /web search <query> : Search the web
 - /web fetch <url> : Fetch markdown page
 - /respond <text> : Conclude your task and return the final synthesized answer.
 
+WORKER PROTOCOL:
+1. Never repeatedly /read the same file. After reading, proceed immediately to modifying the target file (/append or /bash).
+2. When changes are made, run: Action: /upstream propose \"<title>\" --reason \"<reason>\" --metric \"<metric>\"
+3. Finally conclude with: Action: /respond <summary of deliverable>
+
 Output format for each turn:
 Thought: <reasoning>
-Action: <slash-command>
-
-When your task is complete, finish with:
-Action: /respond <distilled result>"
+Action: <slash-command>"
 
     local turn=1
     local final_result=""
@@ -321,7 +322,7 @@ Action: /respond <distilled result>"
         local messages_json
         local recent_obs=""
         if [ -s "$sub_history" ]; then
-            recent_obs=$(tail -n 30 "$sub_history")
+            recent_obs=$(tail -c 4000 "$sub_history")
         fi
 
         messages_json=$(jq -n \
@@ -441,7 +442,6 @@ Action: /respond <distilled result>"
         fi
 
         # Execute tool inside isolated worktree directory
-        echo "Action: $action" >> "$sub_history"
         local obs
         obs=$(commands_dispatch "$action" "$sub_dir" 2>&1)
 
@@ -449,10 +449,11 @@ Action: /respond <distilled result>"
         _subagent_log_event "$sub_id" "OBSERVATION" "$obs" "$sub_fifo"
 
         # Truncate observation to prevent context explosion in history
-        if [ ${#obs} -gt 1500 ]; then
-            obs="${obs:0:1500}... [truncated]"
+        local short_obs="$obs"
+        if [ ${#short_obs} -gt 600 ]; then
+            short_obs="${short_obs:0:600}... [truncated]"
         fi
-        echo "Observation: $obs" >> "$sub_history"
+        printf "\n--- Turn %d ---\nAction: %s\nObservation:\n%s\n" "$turn" "$action" "$short_obs" >> "$sub_history"
 
         turn=$((turn + 1))
     done
