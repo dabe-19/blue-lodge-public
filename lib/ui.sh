@@ -739,3 +739,36 @@ ui_suggest_workspaces_tree() {
         fi
     done < <(find "${LODGE_DIR:-.}/.george/workspaces" -maxdepth 4 -type f 2>/dev/null | sort | head -n 30)
 }
+
+# ── Interactive Operator Communication ─────────────────────────
+# Prompts the operator directly via /dev/tty and captures their response.
+# Used by /ask and the native ask_operator tool.
+ui_ask_operator() {
+    local question="$1"
+    local tty=""
+    if { true >/dev/tty; } 2>/dev/null; then
+        tty="/dev/tty"
+    fi
+
+    if [ -n "$tty" ]; then
+        echo "" > "$tty"
+        printf "  %b George asks: %b%s%b\n" "$C_LODGE" "$C_CYAN" "$question" "$C_RESET" > "$tty"
+        echo "" > "$tty"
+        printf "  %b> %b" "$C_BOLD" "$C_RESET" > "$tty"
+        local answer=""
+        read -r answer < "$tty" 2>/dev/null || read -r answer 2>/dev/null || true
+    else
+        printf "  %b George asks: %b%s%b\n" "$C_LODGE" "$C_CYAN" "$question" "$C_RESET" >&2
+        echo "" >&2
+        printf "  %b> %b" "$C_BOLD" "$C_RESET" >&2
+        local answer=""
+        read -r answer 2>/dev/null || true
+    fi
+
+    if [ -z "$answer" ]; then
+        echo "(no answer provided)"
+    else
+        echo "$answer"
+    fi
+}
+

@@ -32,6 +32,7 @@ source "$LODGE_DIR/lib/container.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/backup.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/pgp.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/gsuite.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/treesitter.sh" 2>/dev/null || true
 
 # ── Complete POSIX Tool Schemas (OpenAI Function Calling Format) ─────
 _NATIVE_CORE_TOOLS='[
@@ -1045,6 +1046,64 @@ _NATIVE_CORE_TOOLS='[
         "required": ["service", "query"]
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ask_operator",
+      "description": "Pause execution and ask the human operator a question via /dev/tty in the REPL, returning their real-time response.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "question": { "type": "string", "description": "Clarifying or confirmation question to ask the operator." }
+        },
+        "required": ["question"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "code_outline",
+      "description": "Extract an AST semantic outline / skeleton (function signatures, classes, structs, interfaces) from a source file, reducing context tokens by ~90%.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Path to the code file." }
+        },
+        "required": ["path"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "code_symbol_get",
+      "description": "Extract the complete AST declaration and body of a specific named function, class, or symbol from a file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Path to the code file." },
+          "symbol": { "type": "string", "description": "Exact name of the function, class, or symbol." }
+        },
+        "required": ["path", "symbol"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "code_validate",
+      "description": "Perform in-memory AST pre-flight syntax checking on code before writing to disk to prevent broken builds.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": { "type": "string", "description": "Code content to validate." },
+          "language": { "type": "string", "description": "Programming language (bash, python, json, typescript, rust)." }
+        },
+        "required": ["content", "language"]
+      }
+    }
   }
 ]'
 
@@ -1164,7 +1223,38 @@ native_tools_dispatch() {
                 local pat p
                 pat=$(echo "$args_json" | jq -r '.pattern // empty')
                 p=$(echo "$args_json" | jq -r '.path // "."')
-                output=$(commands_dispatch "/grep $pat $p" "$workdir" 2>&1)
+                if command -v rg &>/dev/null; then
+                    output=$(rg -n --no-heading --color=never -e "$pat" "$workdir/$p" 2>&1 | head -n 100)
+                    exit_code=$?
+                else
+                    output=$(commands_dispatch "/grep $pat $p" "$workdir" 2>&1)
+                    exit_code=$?
+                fi
+                ;;
+            code_outline)
+                local p
+                p=$(echo "$args_json" | jq -r '.path // empty')
+                output=$(treesitter_outline "$workdir/$p" 2>&1)
+                exit_code=$?
+                ;;
+            code_symbol_get)
+                local p sym
+                p=$(echo "$args_json" | jq -r '.path // empty')
+                sym=$(echo "$args_json" | jq -r '.symbol // empty')
+                output=$(treesitter_symbol "$workdir/$p" "$sym" 2>&1)
+                exit_code=$?
+                ;;
+            code_validate)
+                local code_cnt lang
+                code_cnt=$(echo "$args_json" | jq -r '.content // empty')
+                lang=$(echo "$args_json" | jq -r '.language // "bash"')
+                output=$(treesitter_validate "$code_cnt" "$lang" 2>&1)
+                exit_code=$?
+                ;;
+            ask_operator)
+                local q
+                q=$(echo "$args_json" | jq -r '.question // empty')
+                output=$(ui_ask_operator "$q" 2>&1)
                 exit_code=$?
                 ;;
             web_search)

@@ -3458,12 +3458,20 @@ _cmd_grep() {
         --exclude=routing_trace.jsonl
     )
 
-    # ── Build grep command ─────────────────────────────────────
-    local -a cmd=(grep -rn -E --binary-files=without-match)
-    cmd+=("${excludes[@]}")
-    [ -t 1 ] && cmd+=(--color=always)
-    cmd+=("${grep_flags[@]}")
-    cmd+=("--" "$pattern" "$search_path")
+    # ── Build grep command (prefer ripgrep if available) ───────
+    local -a cmd=()
+    if command -v rg &>/dev/null; then
+        cmd=(rg -n --no-heading)
+        [ -t 1 ] && cmd+=(--color=always)
+        cmd+=("${grep_flags[@]}")
+        cmd+=("-e" "$pattern" "$search_path")
+    else
+        cmd=(grep -rn -E --binary-files=without-match)
+        cmd+=("${excludes[@]}")
+        [ -t 1 ] && cmd+=(--color=always)
+        cmd+=("${grep_flags[@]}")
+        cmd+=("--" "$pattern" "$search_path")
+    fi
 
     # ── Execute with optional pipe ─────────────────────────────
     # Pipe commands are restricted to safe read-only utilities.

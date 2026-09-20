@@ -145,11 +145,17 @@ context_engine_build() {
     out+="- phone_sms_send(number, message): Send SMS via Termux Android integration.\n"
     out+="- mqtt_publish(topic, message): Publish payload to MQTT broker.\n"
     out+="- discord_send(target, message): Send message to Discord channel/user.\n"
+    out+="- discord_dm(user, message): Send direct message (DM) to Discord user.\n"
     out+="- telegram_send(message): Send message via Telegram bot.\n"
     out+="- social_post(network, text): Broadcast to Bluesky, Mastodon, or X.\n"
     out+="- system_vitals(): Live CPU, RAM, thermals, battery, and GPU layer metrics.\n"
     out+="- subagent_delegate(tier, task): Delegate bounded subtask to lower-tier node.\n"
     out+="- slash_command_exec(command): Execute any Blue Lodge slash command natively.\n"
+    out+="## AST Structural Intelligence & Operator Interaction\n"
+    out+="- ask_operator(question): Pause execution and prompt human operator on /dev/tty for input.\n"
+    out+="- code_outline(path): Extract AST semantic outline / signatures, reducing tokens by ~90%.\n"
+    out+="- code_symbol_get(path, symbol): Extract exact AST function/class body without full file reading.\n"
+    out+="- code_validate(content, language): In-memory AST pre-flight syntax check before writing to disk.\n"
     out+="</tool_manifest>\n\n"
 
     # 3. Operational Protocol

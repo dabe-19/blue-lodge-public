@@ -92,6 +92,15 @@ describe "native_tools_get_all_schemas"
     # 12. Bidirectional Slash Commands
     echo "$schemas" | jq -e '.[] | select(.function.name == "slash_command_exec")' >/dev/null
     assert_ok $?
+    # 13. AST & Operator Intelligence
+    echo "$schemas" | jq -e '.[] | select(.function.name == "ask_operator")' >/dev/null
+    assert_ok $?
+    echo "$schemas" | jq -e '.[] | select(.function.name == "code_outline")' >/dev/null
+    assert_ok $?
+    echo "$schemas" | jq -e '.[] | select(.function.name == "code_symbol_get")' >/dev/null
+    assert_ok $?
+    echo "$schemas" | jq -e '.[] | select(.function.name == "code_validate")' >/dev/null
+    assert_ok $?
   }
 
 describe "native_tools_dispatch"
@@ -196,6 +205,43 @@ describe "native_tools_dispatch"
     test_unmock "discord_user_resolve"
     test_unmock "api_get_key"
     test_unmock "api_post"
+  }
+
+  it "dispatches code_outline successfully" && {
+    res=$(native_tools_dispatch "call_test_co" "code_outline" '{"path":"lib/treesitter.sh"}' "$PWD")
+    assert_ok $?
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "treesitter_outline"
+  }
+
+  it "dispatches code_symbol_get successfully" && {
+    res=$(native_tools_dispatch "call_test_cs" "code_symbol_get" '{"path":"lib/treesitter.sh","symbol":"treesitter_detect_lang"}' "$PWD")
+    assert_ok $?
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "treesitter_detect_lang() {"
+  }
+
+  it "dispatches code_validate successfully" && {
+    res=$(native_tools_dispatch "call_test_cv" "code_validate" '{"content":"echo test_valid","language":"bash"}' "$PWD")
+    assert_ok $?
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "Syntax valid"
+  }
+
+  it "dispatches ask_operator successfully" && {
+    test_mock "ui_ask_operator" 'echo "Operator approved: yes"; return 0'
+    res=$(native_tools_dispatch "call_test_ao" "ask_operator" '{"question":"Can I proceed?"}' "$PWD")
+    assert_ok $?
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "Operator approved"
+    test_unmock "ui_ask_operator"
+  }
+
+  it "dispatches file_grep and uses ripgrep" && {
+    res=$(native_tools_dispatch "call_test_fg" "file_grep" '{"pattern":"treesitter_detect_lang","path":"lib"}' "$PWD")
+    assert_ok $?
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "treesitter.sh"
   }
 
   it "handles unknown tool gracefully" && {
