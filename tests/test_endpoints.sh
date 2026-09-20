@@ -60,4 +60,20 @@ describe "endpoints_get_tier_info"
     assert_eq "$(endpoints_get_tier_info 3 NAME)" "frontier-sovereign"
   }
 
+describe "endpoints_status_table and endpoints_status_json"
+  it "outputs status table with ladder tiers" && {
+    out=$(endpoints_status_table)
+    assert_contains "$out" "Inference Hardware Ladder"
+    assert_contains "$out" "Tier 1"
+    assert_contains "$out" "cuda-workhorse"
+  }
+
+  it "returns JSON array with tier status objects" && {
+    json=$(endpoints_status_json)
+    echo "$json" | jq empty
+    assert_ok $?
+    t1_name=$(echo "$json" | jq -r '.[] | select(.tier == 1) | .name')
+    assert_eq "$t1_name" "cuda-workhorse"
+  }
+
 test_end

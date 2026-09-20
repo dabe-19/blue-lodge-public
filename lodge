@@ -459,6 +459,14 @@ _cmd_config() {
             ui_dim "  Environment variables always override config file values." ;;
     esac
 }
+
+_cmd_endpoints() {
+    if declare -f endpoints_status_table &>/dev/null; then
+        endpoints_status_table
+    else
+        ui_err "Endpoints subsystem not loaded"
+    fi
+}
 _cmd_backend() {
     local args="$1"
     local action
@@ -2627,6 +2635,13 @@ _cmd_reflect() {
 _cmd_status() {
     ui_section "Status"
     printf "  %bModel:%b     %s\n" "$C_CYAN" "$C_RESET" "$LODGE_MODEL"
+    if declare -f endpoints_cascade &>/dev/null; then
+        endpoints_cascade >/dev/null 2>&1 || true
+        if [ -n "${ACTIVE_TIER:-}" ]; then
+            printf "  %bInference:%b Tier %s [%s] (%s @ %s)\n" "$C_CYAN" "$C_RESET" "$ACTIVE_TIER" "$ACTIVE_ENDPOINT_NAME" "$ACTIVE_ENDPOINT_MODEL" "$ACTIVE_ENDPOINT_URL"
+            printf "  %bContext:%b   %s tokens\n" "$C_CYAN" "$C_RESET" "$ACTIVE_ENDPOINT_CONTEXT"
+        fi
+    fi
     printf "  %bProject:%b   %s\n" "$C_CYAN" "$C_RESET" "$LODGE_PROJECT"
     printf "  %bWorkdir:%b   %s\n" "$C_CYAN" "$C_RESET" "$PWD"
     printf "  %bPermission:%b %s\n" "$C_CYAN" "$C_RESET" "$([ "$LODGE_PERMISSION" -eq 0 ] && echo 'ask-all' || ([ "$LODGE_PERMISSION" -eq 1 ] && echo 'ask-destructive' || echo 'auto'))"
@@ -6176,6 +6191,8 @@ _register_commands() {
     commands_register "debug"    "Toggle debug mode (timers + token counts)" "_cmd_debug"
     commands_register "config"   "Persistent settings — save/show/reset/edit" "_cmd_config"
     commands_register "backend"  "LLM backend — auto-detect, switch (ollama/llamacpp)" "_cmd_backend"
+    commands_register "endpoints" "Inference hardware ladder — view 4 tiers, URLs, and latency" "_cmd_endpoints"
+    commands_register "tiers"    "Inference hardware ladder (alias for /endpoints)" "_cmd_endpoints"
     commands_register "gpu"      "GPU layers — set offload layers for llama-server" "_cmd_gpu"
     commands_register "remote"     "Remote GPU inference (tunnel, models, benchmark)" "_cmd_remote"
     commands_register "mcp"        "MCP server integration (Model Context Protocol)" "_cmd_mcp"

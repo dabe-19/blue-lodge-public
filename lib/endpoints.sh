@@ -8,6 +8,7 @@
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 GEORGE_DIR="${GEORGE_DIR:-${LODGE_DIR}/.george}"
 ENDPOINTS_CONF="${ENDPOINTS_CONF:-$GEORGE_DIR/endpoints.conf}"
+[ -f "$LODGE_DIR/lib/ui.sh" ] && source "$LODGE_DIR/lib/ui.sh"
 
 # ── Probe Cache Table (key=tier, value="status:timestamp") ───────────
 declare -A _ENDPOINT_PROBE_CACHE 2>/dev/null || true
@@ -197,4 +198,80 @@ endpoints_get_tier_info() {
     local field="$2"
     local var_name="TIER${tier}_${field}"
     echo "${!var_name:-}"
+}
+
+# ── Endpoints Status Table & JSON ───────────────────────────────────
+endpoints_status_table() {
+    endpoints_cascade >/dev/null 2>&1 || endpoints_init
+    if declare -f ui_section &>/dev/null; then
+        ui_section "Inference Hardware Ladder (4 Tiers)"
+    else
+        printf "\n── Inference Hardware Ladder (4 Tiers) ──\n"
+    fi
+
+    local candidates=(3 1 2 0)
+    local t
+    for t in "${candidates[@]}"; do
+        local name_var="TIER${t}_NAME"
+        local url_var="TIER${t}_URL"
+        local model_var="TIER${t}_MODEL"
+        local ctx_var="TIER${t}_CONTEXT"
+        local enabled_var="TIER${t}_ENABLED"
+
+        local name="${!name_var:-tier-$t}"
+        local url="${!url_var:-N/A}"
+        local model="${!model_var:-default}"
+        local ctx="${!ctx_var:-8192}"
+        local enabled="${!enabled_var:-0}"
+
+        local status_str="${C_RED}OFFLINE${C_RESET}"
+        local mark="  "
+        if [ "$enabled" -eq 1 ]; then
+            local t_start t_end latency_ms="?"
+            t_start=$(date +%s%3N 2>/dev/null || date +%s)
+            if endpoints_probe "$t"; then
+                t_end=$(date +%s%3N 2>/dev/null || date +%s)
+                latency_ms=$((t_end - t_start))
+                [ "$latency_ms" -lt 0 ] && latency_ms=0
+                status_str="${C_GREEN}ONLINE${C_RESET} (${latency_ms}ms)"
+            fi
+        else
+            status_str="${C_DIM}DISABLED${C_RESET}"
+        fi
+
+        if [ -n "${ACTIVE_TIER:-}" ] && [ "$t" = "$ACTIVE_TIER" ]; then
+            mark="${C_CYAN}● ${C_RESET}"
+        fi
+
+        printf " %bTier %s [%s]%b\n" "$mark" "$t" "$name" "$([ -n "${ACTIVE_TIER:-}" ] && [ "$t" = "$ACTIVE_TIER" ] && echo " ${C_CYAN}← ACTIVE${C_RESET}" || echo "")"
+        printf "    URL:     %s\n" "$url"
+        printf "    Model:   %s (%s ctx)\n" "$model" "$ctx"
+        printf "    Status:  %b\n" "$status_str"
+        echo ""
+    done
+}
+
+endpoints_status_json() {
+    endpoints_cascade >/dev/null 2>&1 || endpoints_init
+    local candidates=(3 1 2 0)
+    local t
+    local json="[]"
+    for t in "${candidates[@]}"; do
+        local name_var="TIER${t}_NAME" url_var="TIER${t}_URL" model_var="TIER${t}_MODEL" ctx_var="TIER${t}_CONTEXT" enabled_var="TIER${t}_ENABLED"
+        local online=false
+        endpoints_probe "$t" && online=true
+        local active=false
+        [ -n "${ACTIVE_TIER:-}" ] && [ "$t" = "$ACTIVE_TIER" ] && active=true
+
+        json=$(echo "$json" | jq -c \
+            --arg t "$t" \
+            --arg name "${!name_var:-tier-$t}" \
+            --arg url "${!url_var:-N/A}" \
+            --arg model "${!model_var:-default}" \
+            --arg ctx "${!ctx_var:-8192}" \
+            --argjson online "$online" \
+            --argjson active "$active" \
+            '. += [{tier: ($t|tonumber), name: $name, url: $url, model: $model, context: ($ctx|tonumber), online: $online, active: $active}]' 2>/dev/null || echo "$json")
+    done
+    echo "$json"
 }
