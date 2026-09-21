@@ -319,7 +319,7 @@ react_run() {
             else
                 empty
             end' 2>/dev/null | \
-        awk -v think_mode="$think_mode" -v sc="$stream_cache" -v pid="$$" $_awk_opt '
+        awk -v think_mode="$think_mode" -v sc="$stream_cache" -v pid="${BASHPID:-$$}" $_awk_opt '
         BEGIN {
             color = (think_mode == 2 ? "\033[36m" : "\033[90m");
             in_thought = 0;
@@ -370,11 +370,12 @@ react_run() {
 
         if [ ! -s "$stream_cache" ]; then
             # Graceful fallback: synchronous non-stream request
-            ui_dim "Thinking..."
+            ui_dim "Stream interrupted; querying synchronous fallback..."
             local fallback_payload
             fallback_payload=$(echo "$payload" | jq '.stream = false | del(.stream_options)')
+            local fb_timeout=90
             local resp_json
-            resp_json=$(curl -s --max-time "$req_timeout" "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
+            resp_json=$(curl -s --max-time "$fb_timeout" "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
                 -H "Content-Type: application/json" \
                 -d "$fallback_payload" 2>/dev/null)
 

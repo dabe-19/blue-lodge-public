@@ -354,7 +354,7 @@ ui_spinner_stop() {
 _PREFILL_TICKER_PID=""
 ui_prefill_ticker_start() {
     [ -n "$_PREFILL_TICKER_PID" ] && ui_prefill_ticker_stop
-    local ppid="$$"
+    local ppid="${BASHPID:-$$}"
     exec 3>&2
     (
         exec 2>/dev/null >/dev/null
@@ -383,17 +383,18 @@ ui_prefill_ticker_start() {
     _PREFILL_TICKER_PID=$!
     exec 3>&-
     disown "$_PREFILL_TICKER_PID" 2>/dev/null
-    echo "$_PREFILL_TICKER_PID" > "${TMPDIR:-/tmp}/.lodge_prefill_ticker_$$" 2>/dev/null
+    echo "$_PREFILL_TICKER_PID" > "${TMPDIR:-/tmp}/.lodge_prefill_ticker_${ppid}" 2>/dev/null
 }
 
 ui_prefill_ticker_stop() {
+    local ppid="${BASHPID:-$$}"
     local tpid="${_PREFILL_TICKER_PID:-}"
-    [ -z "$tpid" ] && [ -f "${TMPDIR:-/tmp}/.lodge_prefill_ticker_$$" ] && tpid=$(cat "${TMPDIR:-/tmp}/.lodge_prefill_ticker_$$" 2>/dev/null)
+    [ -z "$tpid" ] && [ -f "${TMPDIR:-/tmp}/.lodge_prefill_ticker_${ppid}" ] && tpid=$(cat "${TMPDIR:-/tmp}/.lodge_prefill_ticker_${ppid}" 2>/dev/null)
     if [ -n "$tpid" ]; then
         kill "$tpid" 2>/dev/null
         wait "$tpid" 2>/dev/null
         _PREFILL_TICKER_PID=""
-        rm -f "${TMPDIR:-/tmp}/.lodge_prefill_ticker_$$" 2>/dev/null
+        rm -f "${TMPDIR:-/tmp}/.lodge_prefill_ticker_${ppid}" 2>/dev/null
         printf "\r\033[2K" >&2 2>/dev/null
     fi
 }

@@ -295,6 +295,7 @@ discord_generate_response() {
     local attachment_files="${4:-}"
     local session_log="${5:-}"
     local author_id="${6:-}"
+    local out_reply_file="${7:-}"
 
     # Check if this is an explicit score / standing inquiry
     local score_query_pat='(what.*(score|rank|standing|privilege|reputation)|my score|my rank|my standing|my reputation|who am i to george|am i worthy)'
@@ -306,6 +307,7 @@ discord_generate_response() {
         if [ -n "$session_log" ]; then
             printf "[%s] ── Answering reputation inquiry directly from Judgment Ledger.\n" "$(date '+%H:%M:%S')" >> "$session_log"
         fi
+        [ -n "$out_reply_file" ] && printf '%s\n' "$rep_reply" > "$out_reply_file"
         echo "$rep_reply"
         discord_history_append "$channel_id" "user" "$author" "$prompt"
         discord_history_append "$channel_id" "assistant" "George" "$rep_reply"
@@ -395,6 +397,7 @@ discord_generate_response() {
         printf "[%s] ── Reasoning turn completed.\n" "$(date '+%H:%M:%S')" >> "$session_log"
     fi
 
+    [ -n "$out_reply_file" ] && printf '%s\n' "$reply" > "$out_reply_file"
     echo "$reply"
 }
 
@@ -411,11 +414,16 @@ discord_chat_session() {
     discord_bridge_init
 
     local pid_file="$DISCORD_SESSIONS_DIR/session_${channel_id}.pid"
-    echo "$$" > "$pid_file"
+    echo "${BASHPID:-$$}" > "$pid_file"
+    local pulse_pid=""
     cleanup_session() {
         rm -f "$pid_file" 2>/dev/null || true
+        [ -n "$pulse_pid" ] && discord_typing_pulse_stop "$pulse_pid"
+        if [ -f "$session_log" ] && ! grep -q "\[SESSION_CLOSED\]" "$session_log"; then
+            printf "\n[%s] [SESSION_CLOSED] Session ended.\n" "$(date '+%H:%M:%S')" >> "$session_log"
+        fi
     }
-    trap cleanup_session EXIT INT TERM RETURN
+    trap cleanup_session EXIT INT TERM
 
     local token
     token=$(api_require_key "DISCORD_BOT_TOKEN" "Discord Bot") || return 1
@@ -437,13 +445,17 @@ discord_chat_session() {
 
     # 1. Process Initial Inbound Turn
     printf "[%s] [Inbound from @%s]: %s\n" "$(date '+%H:%M:%S')" "$author" "$initial_msg" >> "$session_log"
-    local pulse_pid
     pulse_pid=$(discord_typing_pulse_start "$channel_id")
 
-    local first_reply
-    first_reply=$(discord_generate_response "$initial_msg" "$channel_id" "$author" "$initial_attachments" "$session_log" "$author_id")
+    local reply_tmp="$DISCORD_SESSIONS_DIR/turn_init_${channel_id}.txt"
+    rm -f "$reply_tmp" 2>/dev/null
+    discord_generate_response "$initial_msg" "$channel_id" "$author" "$initial_attachments" "$session_log" "$author_id" "$reply_tmp"
+    local first_reply=""
+    [ -f "$reply_tmp" ] && first_reply=$(cat "$reply_tmp")
+    rm -f "$reply_tmp" 2>/dev/null
 
     discord_typing_pulse_stop "$pulse_pid"
+    pulse_pid=""
 
     # Format reply with mention if in a public channel
     local final_first_reply="$first_reply"
@@ -514,7 +526,7 @@ discord_chat_session() {
             ui_info "Inbound Discord message from @$n_author: $n_content"
             printf "[%s] [Inbound from @%s]: %s\n" "$(date '+%H:%M:%S')" "$n_author" "$n_content" >> "$session_log"
 
-            local pulse_pid_turn
+            local pulse_pid_turn=""
             pulse_pid_turn=$(discord_typing_pulse_start "$channel_id")
 
             # Download any attached media
@@ -522,10 +534,15 @@ discord_chat_session() {
             n_attachments=$(discord_download_attachments "$new_user_msg" "$channel_id")
 
             # Generate reply
-            local reply
-            reply=$(discord_generate_response "$n_content" "$channel_id" "$n_author" "$n_attachments" "$session_log" "$n_author_id")
+            local turn_reply_tmp="$DISCORD_SESSIONS_DIR/turn_${n_id}_${channel_id}.txt"
+            rm -f "$turn_reply_tmp" 2>/dev/null
+            discord_generate_response "$n_content" "$channel_id" "$n_author" "$n_attachments" "$session_log" "$n_author_id" "$turn_reply_tmp"
+            local reply=""
+            [ -f "$turn_reply_tmp" ] && reply=$(cat "$turn_reply_tmp")
+            rm -f "$turn_reply_tmp" 2>/dev/null
 
             discord_typing_pulse_stop "$pulse_pid_turn"
+            pulse_pid_turn=""
 
             local final_reply="$reply"
             if [ "$is_dm" -eq 0 ]; then
@@ -655,7 +672,7 @@ discord_bridge_sweep() {
                 . as $root |
                 (($root[0].author.id != $bid) and ($root[1]?.author.id == $bid)) as $direct_followup |
                 [$root[] | select(.author.id != $bid and (.id > $lseen) and (
-                    (.content | contains("<@" + $bid + ">") or contains("<@!" + $bid + ">")) or ($direct_followup and .id == $root[0].id)
+                    (.content | contains("<@" + $bid + ">") or contains("<@!" + $bid + ">") or test("@george|<@&"; "i")) or ($direct_followup and .id == $root[0].id)
                 ))] | last // empty
             ' 2>/dev/null || true)
 
@@ -676,8 +693,8 @@ discord_bridge_sweep() {
                     fi
                 fi
 
-                # Clean mention tag from prompt
-                m_content=$(echo "$m_content" | sed -E "s/<@!?${bot_id}>//g" | sed 's/^[[:space:]]*//')
+                # Clean mention and role tags from prompt
+                m_content=$(echo "$m_content" | sed -E "s/<@!?[0-9]+>//g; s/<@&[0-9]+>//g; s/^@[Gg]eorge\b//g" | sed 's/^[[:space:]]*//')
 
                 last_seen_data=$(echo "$last_seen_data" | jq --arg cid "$ch_id" --arg mid "$m_id" '.channels[$cid] = $mid')
                 echo "$last_seen_data" > "$DISCORD_LAST_SEEN_FILE"

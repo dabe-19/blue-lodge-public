@@ -24,12 +24,44 @@ if [ ! -f "$session_log" ]; then
     echo "Awaiting session initialization..."
 fi
 
+pid_file="$LODGE_DIR/.george/discord_sessions/session_${channel_id}.pid"
+dead_checks=0
+no_pid_checks=0
+
 # Stream the session log until SESSION_CLOSED (follow across truncations with -F)
-tail -n +1 -F "$session_log" 2>/dev/null | while IFS= read -r line; do
-    echo "$line"
-    if [[ "$line" == *"[SESSION_CLOSED]"* ]]; then
-        pkill -P $$ tail 2>/dev/null || true
-        break
+tail -n +1 -F "$session_log" 2>/dev/null | while true; do
+    if IFS= read -r -t 4 line; then
+        echo "$line"
+        dead_checks=0
+        no_pid_checks=0
+        if [[ "$line" == *"[SESSION_CLOSED]"* ]]; then
+            pkill -P $$ tail 2>/dev/null || true
+            break
+        fi
+    else
+        # Periodic liveness check when no output is flowing
+        if [ -f "$pid_file" ]; then
+            spid=$(cat "$pid_file" 2>/dev/null)
+            if [ -n "$spid" ] && ! kill -0 "$spid" 2>/dev/null; then
+                dead_checks=$((dead_checks + 1))
+                if [ "$dead_checks" -ge 3 ]; then
+                    echo ""
+                    echo "⚠ Session process ($spid) ended."
+                    pkill -P $$ tail 2>/dev/null || true
+                    break
+                fi
+            else
+                dead_checks=0
+            fi
+        elif [ ! -f "$pid_file" ] && [ -f "$session_log" ]; then
+            no_pid_checks=$((no_pid_checks + 1))
+            if [ "$no_pid_checks" -ge 4 ]; then
+                echo ""
+                echo "⚠ Session ended."
+                pkill -P $$ tail 2>/dev/null || true
+                break
+            fi
+        fi
     fi
 done
 

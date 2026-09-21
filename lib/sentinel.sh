@@ -147,13 +147,15 @@ sentinel_probe() {
             if [ -n "$cpid" ]; then
                 local cppid
                 cppid=$(ps -o ppid= -p "$cpid" 2>/dev/null | tr -d ' ' || echo "1")
-                local par_cmd
-                par_cmd=$(ps -o args= -p "$cppid" 2>/dev/null || echo "DEAD")
+                # Check runtime of curl process before declaring it an orphan
+                local c_etime
+                c_etime=$(ps -o etimes= -p "$cpid" 2>/dev/null | tr -d ' ' || echo "0")
+                [ -z "$c_etime" ] && c_etime=0
 
-                # Detect if parent is dead or a background test script
-                if [ "$cppid" = "1" ] || echo "$par_cmd" | grep -Eq 'test_.*\.sh|DEAD'; then
+                # Only reap if parent is a dead test harness OR if reparented to PID 1 and exceeded max age
+                if echo "$par_cmd" | grep -Eq 'test_.*\.sh|DEAD' || { [ "$cppid" = "1" ] && [ "$c_etime" -ge "$SENTINEL_CURL_MAX_AGE_SEC" ]; }; then
                     orphaned_curls+=("$cpid")
-                    anomalies+=("ORPHAN_CURL_PID_$cpid: Parent PID $cppid ($par_cmd) is dead or test harness")
+                    anomalies+=("ORPHAN_CURL_PID_$cpid: Parent PID $cppid ($par_cmd), elapsed ${c_etime}s >= ${SENTINEL_CURL_MAX_AGE_SEC}s")
                     actions_needed+=("KILL_CURL_$cpid")
                 fi
             fi
