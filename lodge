@@ -6573,18 +6573,20 @@ main() {
         commands_dispatch "/$*" "$PWD"
     else
         # Concurrency Lock Gating
-        local lockfile="${GEORGE_CONFIG_DIR:-$PWD/.george}/.lodge.lock"
-        mkdir -p "$(dirname "$lockfile")" 2>/dev/null
-        if [ -f "$lockfile" ]; then
-            local lock_pid
-            lock_pid=$(cat "$lockfile" 2>/dev/null)
-            if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null && [ "$lock_pid" -ne "$$" ]; then
-                ui_err "Another lodge process (PID $lock_pid) is already running in this workspace."
-                ui_dim "If this is a stale lock, run: rm -f $lockfile"
-                exit 1
+        if [ "${LODGE_NO_LOCK:-0}" -ne 1 ]; then
+            local lockfile="${GEORGE_CONFIG_DIR:-$PWD/.george}/.lodge.lock"
+            mkdir -p "$(dirname "$lockfile")" 2>/dev/null
+            if [ -f "$lockfile" ]; then
+                local lock_pid
+                lock_pid=$(cat "$lockfile" 2>/dev/null)
+                if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null && [ "$lock_pid" -ne "$$" ]; then
+                    ui_err "Another lodge process (PID $lock_pid) is already running in this workspace."
+                    ui_dim "If this is a stale lock, run: rm -f $lockfile"
+                    exit 1
+                fi
             fi
+            echo "$$" > "$lockfile" 2>/dev/null
         fi
-        echo "$$" > "$lockfile" 2>/dev/null
 
         # One-shot task mode (Modern ReAct Loop)
         react_run "$*" "$PWD"

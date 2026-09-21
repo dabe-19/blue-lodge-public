@@ -160,6 +160,13 @@ Rust (Cargo.toml): `/sandbox run <name> cargo <add|build|test|check>`
 Python (uv/pip): `/sandbox run <name> uv <add|run>` OR `pip install`
 System: `apt install <pkg>` (You have authority to install missing build deps).
 *RULE:* If a build fails due to a missing package, auto-install it and retry. Do NOT ask the operator.
+
+## SOVEREIGN RESOURCEFULNESS & GENERAL PATHFINDING
+*RULE:* Never stop at an initial tool or provider failure. If a dependency, tool, or credential is missing:
+1. Distinguish the core outcome from the specific tool.
+2. Survey the workspace and filesystem for alternative tools, scripts, local mocks, or disposable backends.
+3. If an external service is unconfigured, utilize available alternative providers or local fallback paths.
+4. Execute and verify the alternative. Do not stop until the underlying objective is satisfied.
 TOOLCHAIN
 }
 

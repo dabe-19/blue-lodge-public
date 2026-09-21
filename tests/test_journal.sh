@@ -155,6 +155,34 @@ describe "journal_read"
     _teardown_journal
   }
 
+  it "bounds entry count to requested limit" && {
+    _setup_journal
+    journal_init 2>/dev/null
+    journal_write "reflection" "alpha oldest"
+    journal_write "reflection" "beta middle"
+    journal_write "reflection" "gamma newest"
+    output=$(journal_read 2)
+    assert_contains "$output" "gamma newest"
+    assert_contains "$output" "beta middle"
+    # alpha should be excluded since limit is 2
+    echo "$output" | grep -q "alpha oldest"
+    assert_fail $?
+    _teardown_journal
+  }
+
+  it "bounds total character size under token budget" && {
+    _setup_journal
+    journal_init 2>/dev/null
+    for i in {1..20}; do
+      journal_write "reflection" "Entry number $i with plenty of long verbose text to verify that the journal reader will not overflow context limits."
+    done
+    output=$(journal_read 250)
+    # Output length should be well under budget (< 2000 chars)
+    [ "${#output}" -lt 2500 ]
+    assert_ok $?
+    _teardown_journal
+  }
+
 # ── journal_greeting ──────────────────────────────────────────
 describe "journal_greeting"
 

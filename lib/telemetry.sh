@@ -338,6 +338,99 @@ telemetry_preserve_incident() {
     echo "$inc_dir"
 }
 
+# ── 3b. Operational Failure Triage & Remediation ──────────────────────
+
+# Triages an operational or runtime failure by:
+# 1. Computing SHA256 error fingerprint.
+# 2. Checking for existing open issue with the same fingerprint (deduplication).
+# 3. Preserving an incident dossier with error traces and metadata.
+# 4. Generating a tracked issue in .george/issues/
+# 5. Enqueueing an autonomous remediation task in .george/remediation/queue/
+# Usage: telemetry_triage_operational_failure "subsystem" "class" "title" "error_trace" [workdir] [transcript]
+telemetry_triage_operational_failure() {
+    local subsys="$1"
+    local aclass="$2"
+    local title="$3"
+    local error_trace="$4"
+    local workdir="${5:-$PWD}"
+    local transcript="${6:-}"
+
+    telemetry_init
+    local issues_dir="${GEORGE_CONFIG_DIR:-$PWD/.george}/issues"
+    mkdir -p "$issues_dir" 2>/dev/null || true
+
+    local sanitized_trace
+    sanitized_trace=$(telemetry_redact "$error_trace")
+    local fp
+    fp=$(telemetry_fingerprint "$aclass" "$subsys" "$sanitized_trace")
+
+    # Deduplication check against active issues
+    local existing_issue
+    existing_issue=$(grep -l "\[fingerprint:${fp}\]" "$issues_dir"/*.md 2>/dev/null | head -n 1)
+    if [ -n "$existing_issue" ] && [ -f "$existing_issue" ]; then
+        local rem_queue_dir="${GEORGE_CONFIG_DIR:-$PWD/.george}/remediation/queue"
+        local is_queued
+        is_queued=$(grep -l "\"fingerprint\": \"${fp}\"" "$rem_queue_dir"/*.json 2>/dev/null | head -n 1)
+        if [ -n "$is_queued" ]; then
+            declare -f ui_dim &>/dev/null && ui_dim "Operational failure already tracked & queued: $(basename "$existing_issue") ($fp)" >&2
+            echo "$existing_issue"
+            return 0
+        fi
+    fi
+
+    # Snapshot incident
+    local now_ts
+    now_ts=$(date +%s)
+    local task_id="op_${subsys}_${now_ts}"
+    local inc_dir
+    inc_dir=$(telemetry_preserve_incident "$task_id" "$aclass" "$subsys" "$title" "$workdir")
+
+    # Save diagnostic error trace into incident dir
+    if [ -n "$inc_dir" ] && [ -d "$inc_dir" ]; then
+        echo "$sanitized_trace" > "$inc_dir/stderr.log" 2>/dev/null || true
+    fi
+
+    local now_iso
+    now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +%s)
+    local issue_file="$issues_dir/issue_${fp}_${now_ts}.md"
+
+    cat > "$issue_file" << EOF
+# [Autonomous Telemetry Alert] ${title}
+
+- **Subsystem:** \`${subsys}\`
+- **Class:** \`${aclass}\`
+- **Error Fingerprint:** [fingerprint:${fp}]
+- **Timestamp:** ${now_iso}
+- **Incident Dossier:** \`${inc_dir}\`
+- **Workdir:** \`${workdir}\`
+
+### Diagnostic Trace & Failure Evidence
+\`\`\`
+${sanitized_trace}
+\`\`\`
+
+### Autonomous Remediation Objective
+Diagnose the root cause of this failure. If this is a configuration or provider deficit, survey the environment and codebase for fallback adapters or disposable services, implement the necessary adaptation, and verify via automated tests.
+EOF
+
+    # Enqueue remediation task
+    local q_id=""
+    if declare -f remediation_queue_add &>/dev/null; then
+        q_id=$(remediation_queue_add "$issue_file" "$inc_dir" "high" "$title" 2>/dev/null || true)
+    else
+        # If remediation.sh not yet sourced, try to source it
+        if [ -f "${LODGE_DIR:-$PWD}/lib/remediation.sh" ]; then
+            source "${LODGE_DIR:-$PWD}/lib/remediation.sh" 2>/dev/null || true
+            if declare -f remediation_queue_add &>/dev/null; then
+                q_id=$(remediation_queue_add "$issue_file" "$inc_dir" "high" "$title" 2>/dev/null || true)
+            fi
+        fi
+    fi
+
+    declare -f ui_warn &>/dev/null && ui_warn "Operational failure triaged & remediation queued: $(basename "$issue_file") (fp: $fp)" >&2
+    echo "$issue_file"
+}
+
 # ── 4. Task Query Helpers ─────────────────────────────────────────────
 
 telemetry_active_list() {

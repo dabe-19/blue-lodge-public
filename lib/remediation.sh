@@ -183,20 +183,55 @@ EOF
 )
 
     local notified=0
+    local email_err=""
 
     # 1. Send Email Notification if configured
     if [ -n "$REMEDIATION_NOTIFY_EMAIL" ]; then
         if declare -f email_send &>/dev/null; then
             ui_step "Notifying operator via email (${REMEDIATION_NOTIFY_EMAIL})..." >&2
-            email_send "$REMEDIATION_EMAIL_PROVIDER" "$REMEDIATION_NOTIFY_EMAIL" "$subject" "$body" >/dev/null 2>&1 || {
+            local send_err
+            send_err=$(email_send "$REMEDIATION_EMAIL_PROVIDER" "$REMEDIATION_NOTIFY_EMAIL" "$subject" "$body" 2>&1)
+            local send_rc=$?
+            if [ "$send_rc" -ne 0 ]; then
                 ui_warn "Email notification dispatch failed (provider: $REMEDIATION_EMAIL_PROVIDER)" >&2
-            }
+                email_err="⚠️ *Email alert to \`${REMEDIATION_NOTIFY_EMAIL}\` failed: provider \`${REMEDIATION_EMAIL_PROVIDER}\` error.*"
+
+                # Triage as operational anomaly if not in a recursive remediation loop
+                if [ "${_IN_NOTIFICATION_TRIAGE:-0}" -ne 1 ]; then
+                    _IN_NOTIFICATION_TRIAGE=1
+                    local diag_trace="Target: ${REMEDIATION_NOTIFY_EMAIL}
+Provider: ${REMEDIATION_EMAIL_PROVIDER}
+Error: ${send_err}"
+                    if declare -f telemetry_triage_operational_failure &>/dev/null; then
+                        telemetry_triage_operational_failure \
+                            "email_notification" \
+                            "NOTIFICATION_DISPATCH_FAILURE" \
+                            "Email Notification Dispatch Failed (${REMEDIATION_EMAIL_PROVIDER})" \
+                            "$diag_trace" \
+                            "${LODGE_DIR:-$PWD}" >/dev/null 2>&1 || true
+                    elif [ -f "${LODGE_DIR:-$PWD}/lib/telemetry.sh" ]; then
+                        source "${LODGE_DIR:-$PWD}/lib/telemetry.sh" 2>/dev/null || true
+                        if declare -f telemetry_triage_operational_failure &>/dev/null; then
+                            telemetry_triage_operational_failure \
+                                "email_notification" \
+                                "NOTIFICATION_DISPATCH_FAILURE" \
+                                "Email Notification Dispatch Failed (${REMEDIATION_EMAIL_PROVIDER})" \
+                                "$diag_trace" \
+                                "${LODGE_DIR:-$PWD}" >/dev/null 2>&1 || true
+                        fi
+                    fi
+                    _IN_NOTIFICATION_TRIAGE=0
+                fi
+            fi
             notified=1
         fi
     fi
 
     # 2. Send Discord Notification if configured
     local discord_msg="🛠️ **[George Remediation Alert]** \`${status}\`\n**Issue:** ${issue_ref}\n**Task:** \`${task_id}\`\n${details}"
+    if [ -n "$email_err" ]; then
+        discord_msg+="\n${email_err}"
+    fi
     if [ -n "$extra_links" ]; then
         discord_msg+="\n${extra_links}"
     fi
@@ -403,7 +438,15 @@ remediation_run() {
 Remediate the failure documented in issue: $issue_file
 Incident dossier: $inc_dir
 Error Fingerprint: $fp
-Diagnose the root cause, implement the necessary code or config fix in this repository, and verify by running tests."
+
+SOVEREIGN REMEDIATION & ADAPTIVE PATHFINDING MANDATE:
+1. Examine the failure evidence, error traces, and reproduction details.
+2. If the failure stems from a missing external service, dependency, or unconfigured provider:
+   - Survey the codebase and environment for alternative providers, fallback adapters, or disposable service implementations.
+   - Wire in graceful multi-provider fallbacks or self-healing adaptations so that the workflow succeeds even when preferred providers lack credentials.
+3. If the failure stems from a code error or capability deficit:
+   - Implement the necessary code or configuration fix in this repository.
+4. Verify your fix thoroughly by executing automated test suites before concluding."
 
     if declare -f react_run &>/dev/null && [ "${REMEDIATION_MOCK_EXEC:-0}" -ne 1 ]; then
         react_run "$rem_prompt" "$sandbox_dir"

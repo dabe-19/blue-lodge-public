@@ -168,19 +168,32 @@ Output ONLY the quip."
 # ── Read Journal with Decay Applied ──────────────────────────
 # Returns a filtered view: recent entries in full, older ones compressed
 journal_read() {
-    local max_tokens="${1:-800}"  # rough token budget for journal context
+    local limit="${1:-800}"  # rough token budget or entry limit for journal context
     
     journal_init
     
+    local max_entries=5
+    local char_budget=3200
+    if [[ "$limit" =~ ^[0-9]+$ ]]; then
+        if [ "$limit" -le 25 ]; then
+            max_entries="$limit"
+            char_budget=$(( max_entries * 600 ))
+        else
+            char_budget=$(( limit * 4 ))
+            max_entries=$(( limit / 100 ))
+            [ "$max_entries" -lt 3 ] && max_entries=3
+            [ "$max_entries" -gt 8 ] && max_entries=8
+        fi
+    fi
+
     local now_epoch
     now_epoch=$(date +%s)
     local vivid_cutoff=$(( now_epoch - DECAY_VIVID_DAYS * 86400 ))
     local fading_cutoff=$(( now_epoch - DECAY_FADING_DAYS * 86400 ))
     local sediment_cutoff=$(( now_epoch - DECAY_SEDIMENT_DAYS * 86400 ))
     
-    local output=""
-    local vivid_entries=""
-    local fading_summaries=""
+    local -a vivid_entries_arr=()
+    local -a fading_summaries_arr=()
     local current_entry=""
     local current_date=""
     local current_type=""
@@ -196,14 +209,12 @@ journal_read() {
                 entry_epoch=$(date -d "$current_date" +%s 2>/dev/null || echo "$now_epoch")
                 
                 if [ "$entry_epoch" -ge "$vivid_cutoff" ]; then
-                    vivid_entries="${vivid_entries}${current_entry}
-"
+                    vivid_entries_arr+=("$current_entry")
                 elif [ "$entry_epoch" -ge "$fading_cutoff" ]; then
                     # Compress to one line
                     local summary
                     summary=$(echo "$current_entry" | grep -v '^##' | grep -v '^$' | head -1)
-                    fading_summaries="${fading_summaries}- [$current_date] $current_type: ${summary:0:80}
-"
+                    fading_summaries_arr+=("- [$current_date] $current_type: ${summary:0:80}")
                 fi
                 # Older than fading: skip (it's sediment)
             fi
@@ -226,21 +237,33 @@ $line"
         entry_epoch=$(date -d "$current_date" +%s 2>/dev/null || echo "$now_epoch")
         
         if [ "$entry_epoch" -ge "$vivid_cutoff" ]; then
-            vivid_entries="${vivid_entries}${current_entry}
-"
+            vivid_entries_arr+=("$current_entry")
         elif [ "$entry_epoch" -ge "$fading_cutoff" ]; then
             local summary
             summary=$(echo "$current_entry" | grep -v '^##' | grep -v '^$' | head -1)
-            fading_summaries="${fading_summaries}- [$current_date] $current_type: ${summary:0:80}
-"
+            fading_summaries_arr+=("- [$current_date] $current_type: ${summary:0:80}")
         fi
     fi
     
+    # Select recent vivid entries respecting max_entries and char_budget (newest entries first)
+    local total_vivid=${#vivid_entries_arr[@]}
+    local -a selected_vivid=()
+    local used_chars=0
+    local i=$(( total_vivid - 1 ))
+    while [ "$i" -ge 0 ] && [ "${#selected_vivid[@]}" -lt "$max_entries" ]; do
+        local e="${vivid_entries_arr[$i]}"
+        local elen=${#e}
+        if [ "$(( used_chars + elen ))" -le "$char_budget" ] || [ "${#selected_vivid[@]}" -eq 0 ]; then
+            selected_vivid=("$e" "${selected_vivid[@]}")
+            used_chars=$(( used_chars + elen ))
+        else
+            break
+        fi
+        i=$(( i - 1 ))
+    done
+
     # Build output with decay layers
     # ORDER: Sediment (oldest) → Fading → Vivid (newest) at bottom.
-    # LLM attention is biased toward tokens at the END of the context
-    # window (recency bias), so placing the most recent entries last
-    # ensures they receive the highest attention weight.
     output="--- JOURNAL (living memory) ---"
     
     # Read sediment section from file (oldest — least attention)
@@ -250,21 +273,29 @@ $line"
         output="$output
 
 ### Sediment (deep memory)
-$sediment"
+${sediment:0:500}"
     fi
     
-    if [ -n "$fading_summaries" ]; then
+    if [ "${#fading_summaries_arr[@]}" -gt 0 ]; then
         output="$output
 
-### Fading impressions
-$fading_summaries"
+### Fading impressions"
+        local f_start=$(( ${#fading_summaries_arr[@]} > 5 ? ${#fading_summaries_arr[@]} - 5 : 0 ))
+        for (( idx=f_start; idx<${#fading_summaries_arr[@]}; idx++ )); do
+            output="$output
+${fading_summaries_arr[$idx]}"
+        done
     fi
     
-    if [ -n "$vivid_entries" ]; then
+    if [ "${#selected_vivid[@]}" -gt 0 ]; then
         output="$output
 
-### Recent (vivid)
-$vivid_entries"
+### Recent (vivid)"
+        for e in "${selected_vivid[@]}"; do
+            output="$output
+$e
+"
+        done
     fi
     
     echo "$output"

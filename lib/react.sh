@@ -553,13 +553,22 @@ react_run() {
                     fi
 
                     if [ "$thrashing_target_streak" -eq 3 ]; then
-                        ui_warn "3 consecutive tool failures detected targeting $c_name. Injecting adaptive advisory."
-                        local warn_pivot="[SYSTEM ADVISORY: 3 consecutive tool failures encountered with $c_name. Rather than repeating identical commands or tools, attempt an alternative strategy or inspect environment diagnostics.]"
+                        ui_warn "3 consecutive tool failures detected targeting $c_name. Injecting Metacognitive Resilience Frame."
+                        local warn_pivot="[SYSTEM ADVISORY — AUTONOMOUS ADAPTIVE PIVOT REQUIRED]
+Action targeting '$c_name' has failed 3 consecutive times. Repeating identical commands or syntax tweaks is strictly prohibited.
+Execute the Metacognitive Pathfinding Protocol:
+1. ABSTRACT INTENT: Identify the fundamental objective of this action (decouple the intended result from the specific tool or command).
+2. SURVEY CAPABILITIES: Use discovery commands (e.g. bash inspection, file_search, or grep_search) to locate alternative libraries, tools, fallback providers, or configurations present in the repository.
+3. SUBSTITUTE OR ADAPT: Formulate a distinct alternative pathway (e.g. secondary provider, fallback package, local mock, or environment reconfiguration).
+4. VERIFY: Execute and validate the alternative pathway."
                         jq --arg w "$warn_pivot" '. += [{"role": "user", "content": $w}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
                     elif [ "$thrashing_target_streak" -ge 6 ]; then
                         ui_err "Hard capability ceiling reached: 6 consecutive unyielding tool failures ($c_name). Preserving incident and halting."
                         if declare -f telemetry_preserve_incident &>/dev/null; then
                             telemetry_preserve_incident "$session_id" "CAPABILITY_EXHAUSTED" "Repeated tool failure on $c_name" "$workdir" >/dev/null 2>&1 || true
+                        fi
+                        if declare -f telemetry_triage_operational_failure &>/dev/null; then
+                            telemetry_triage_operational_failure "$c_name" "CAPABILITY_EXHAUSTED" "Persistent tool failure on $c_name reached strike ceiling" "${resp_content:0:500}" "$workdir" >/dev/null 2>&1 || true
                         fi
                         if declare -f telemetry_task_end &>/dev/null; then
                             telemetry_task_end "$session_id" 1 "CAPABILITY_EXHAUSTED" >/dev/null 2>&1 || true
