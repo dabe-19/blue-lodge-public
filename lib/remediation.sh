@@ -399,9 +399,21 @@ remediation_run() {
     export GEORGE_DIR="$sandbox_dir/.george"
 
     local rem_success=1
-    # Check if code build / tests pass
-    if bash "$sandbox_dir/tests/run_all.sh" test_memory test_recall test_backup >/dev/null 2>&1; then
-        rem_success=0
+    local rem_prompt="You are George in Sovereign Autonomous Remediation mode.
+Remediate the failure documented in issue: $issue_file
+Incident dossier: $inc_dir
+Error Fingerprint: $fp
+Diagnose the root cause, implement the necessary code or config fix in this repository, and verify by running tests."
+
+    if declare -f react_run &>/dev/null && [ "${REMEDIATION_MOCK_EXEC:-0}" -ne 1 ]; then
+        react_run "$rem_prompt" "$sandbox_dir"
+        local ec=$?
+        [ "$ec" -eq 0 ] && rem_success=0
+    else
+        # Direct verification gate
+        if bash "$sandbox_dir/tests/run_all.sh" test_telemetry test_incident_preservation test_remediation_queue >/dev/null 2>&1; then
+            rem_success=0
+        fi
     fi
 
     # Reset environment back to host lodge
