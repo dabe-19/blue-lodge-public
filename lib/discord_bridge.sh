@@ -490,7 +490,13 @@ discord_chat_session() {
             n_author_id=$(echo "$new_user_msg" | jq -r .author.id)
 
             last_seen_id="$n_id"
-            last_active_ts=$(date +%s)
+            # Keep last_seen.json synchronized with every turn processed in the session
+            if [ -f "$DISCORD_LAST_SEEN_FILE" ]; then
+                local lsd
+                lsd=$(cat "$DISCORD_LAST_SEEN_FILE" 2>/dev/null || echo '{"channels":{}}')
+                lsd=$(echo "$lsd" | jq --arg cid "$channel_id" --arg mid "$n_id" '.channels[$cid] = $mid' 2>/dev/null || true)
+                [ -n "$lsd" ] && echo "$lsd" > "$DISCORD_LAST_SEEN_FILE"
+            fi
 
             ui_info "Inbound Discord message from @$n_author: $n_content"
             printf "[%s] [Inbound from @%s]: %s\n" "$(date '+%H:%M:%S')" "$n_author" "$n_content" >> "$session_log"
@@ -537,6 +543,9 @@ discord_chat_session() {
             fi
             ui_ok "Dispatched reply to @$n_author"
             printf "[%s] [George Response]:\n%s\n\n" "$(date '+%H:%M:%S')" "$final_reply" >> "$session_log"
+
+            # Reset inactivity timer AFTER dispatching reply so operator gets full window
+            last_active_ts=$(date +%s)
         fi
     done
 }
@@ -630,7 +639,11 @@ discord_bridge_sweep() {
 
             local pending_mention
             pending_mention=$(echo "$ch_msgs" | jq -c --arg bid "$bot_id" --arg lseen "$last_seen" '
-                [.[]? | select(.author.id != $bid and (.id > $lseen) and (.content | contains("<@" + $bid + ">") or contains("<@!" + $bid + ">")))] | last // empty
+                . as $root |
+                (($root[0].author.id != $bid) and ($root[1]?.author.id == $bid)) as $direct_followup |
+                [$root[] | select(.author.id != $bid and (.id > $lseen) and (
+                    (.content | contains("<@" + $bid + ">") or contains("<@!" + $bid + ">")) or ($direct_followup and .id == $root[0].id)
+                ))] | last // empty
             ' 2>/dev/null || true)
 
             if [ -n "$pending_mention" ]; then
