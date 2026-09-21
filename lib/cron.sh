@@ -36,7 +36,7 @@ CRON_JOBS_DIR="${CRON_JOBS_DIR:-$GEORGE_DIR/cron_jobs}"
 CRON_INTERVAL_SENTINEL="${CRON_INTERVAL_SENTINEL:-60}"
 CRON_INTERVAL_PR="${CRON_INTERVAL_PR:-60}"
 CRON_INTERVAL_ISSUE="${CRON_INTERVAL_ISSUE:-60}"
-CRON_INTERVAL_DISCORD="${CRON_INTERVAL_DISCORD:-30}"
+CRON_INTERVAL_DISCORD="${CRON_INTERVAL_DISCORD:-5}"
 CRON_INTERVAL_EMAIL="${CRON_INTERVAL_EMAIL:-120}"
 CRON_INTERVAL_X="${CRON_INTERVAL_X:-300}"
 CRON_INTERVAL_MASTODON="${CRON_INTERVAL_MASTODON:-180}"
@@ -142,10 +142,26 @@ cron_run_job() {
             ;;
         *)
             local script_name="${job_name%.sh}"
-            if [ -f "$CRON_JOBS_DIR/${script_name}.sh" ]; then
-                ui_step "Executing custom cron job '$script_name'..."
-                bash "$CRON_JOBS_DIR/${script_name}.sh"
-                res=$?
+            local job_script="$CRON_JOBS_DIR/${script_name}.sh"
+            if [ -f "$job_script" ]; then
+                local pid_file="$CRON_JOBS_DIR/.${script_name}.pid"
+                if [ -f "$pid_file" ]; then
+                    local cur_pid
+                    cur_pid=$(cat "$pid_file" 2>/dev/null)
+                    if [ -n "$cur_pid" ] && kill -0 "$cur_pid" 2>/dev/null; then
+                        return 0
+                    fi
+                fi
+                ui_step "Launching custom cron job '$script_name' in background..."
+                (
+                    bash "$job_script" >> "$CRON_LOG_FILE" 2>&1
+                    local ec=$?
+                    _cron_set_last_run "$job_name" "$ec"
+                    rm -f "$pid_file" 2>/dev/null
+                ) &
+                echo "$!" > "$pid_file"
+                _cron_set_last_run "$job_name" 0
+                return 0
             else
                 ui_err "Unknown cron job: $job_name"
                 return 1
