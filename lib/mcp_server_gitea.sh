@@ -50,6 +50,20 @@ EOF
     fi
 
     GITEA_URL="$new_url"
+
+    # Also update git remote 'gitea' if present in git repository
+    if command -v git &>/dev/null && git remote get-url gitea &>/dev/null; then
+        local repo_path="${GITEA_USER:-george}/${GITEA_REPO:-blue-lodge}.git"
+        local auth_part=""
+        if [ -n "${GITEA_TOKEN:-}" ]; then
+            auth_part="${GITEA_USER:-george}:${GITEA_TOKEN}@"
+        fi
+        local proto="${new_url%%://*}://"
+        local host_part="${new_url#*://}"
+        local new_remote="${proto}${auth_part}${host_part}/${repo_path}"
+        git remote set-url gitea "$new_remote" 2>/dev/null || true
+    fi
+
     return 0
 }
 
