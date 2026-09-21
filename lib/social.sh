@@ -797,6 +797,9 @@ mastodon_thread() {
     fi
     full_text=$(ui_expand_escapes "$full_text")
 
+    # Strip existing robot headers and signatures before threading
+    full_text=$(echo "$full_text" | sed -E 's/^\[George[^]]*\][[:space:]]*//; s/🔏 Signed:.*//')
+
     local token base
     token=$(_mastodon_instance_token "$instance")
     if [ -z "$token" ]; then
@@ -868,6 +871,8 @@ print(json.dumps(chunks))
         local chunk
         chunk=$(echo "$chunks_json" | jq -r ".[$i]")
         local part_num=$((i + 1))
+        # Strip existing numbering if present
+        chunk=$(echo "$chunk" | sed -E 's/^\[[0-9]+\/[0-9]+\][[:space:]]*//; s/^[0-9]+\/[0-9]+[[:space:]]*//')
         local post_content="[${part_num}/${total_chunks}] ${chunk}"
 
         local post_data

@@ -312,7 +312,11 @@ x_blog_sweep() {
     blog_init
 
     # Safety gate: require explicit enablement for autonomic public posting
-    if [ "${AUTONOMIC_PUBLISH_X:-0}" -ne 1 ]; then
+    local auto_pub="${AUTONOMIC_PUBLISH_X:-}"
+    if [ -z "$auto_pub" ] && declare -f api_get_key &>/dev/null; then
+        auto_pub=$(api_get_key "AUTONOMIC_PUBLISH_X" 2>/dev/null || echo "0")
+    fi
+    if [ "${auto_pub:-0}" -ne 1 ]; then
         ui_info "Autonomic X publishing is paused (AUTONOMIC_PUBLISH_X=0). Posts remain staged in queue."
         return 0
     fi

@@ -347,32 +347,64 @@ research_audit_and_package() {
 
     ui_step "Phase 5/5: The Three Degrees audit, PGP Ed25519 signing & broadcast staging..."
 
-    # Author substantive multi-part thread directly from dossier facts
-    local abstract_snippet analysis_snippet citation_snippet
-    abstract_snippet=$(grep -A 4 -i 'Executive Abstract' "$dossier_file" 2>/dev/null | grep -v '#' | head -n 2 | tr '\n' ' ')
-    [ -z "$abstract_snippet" ] && abstract_snippet="An exhaustive technical evaluation of ${topic} examining foundational mechanics, silicon bounds, and empirical scaling."
+    # Author substantive thread directly from dossier facts
+    local thread_content=""
+    local endpoints_online=0
+    endpoints_init 2>/dev/null || true
+    local llm_url="${ACTIVE_ENDPOINT_URL:-http://127.0.0.1:8080}"
+    if curl -sf --max-time 2 "$llm_url/v1/models" &>/dev/null; then
+        endpoints_online=1
+    fi
 
-    analysis_snippet=$(grep -A 4 -i 'Theoretical Foundations' "$dossier_file" 2>/dev/null | grep -v '#' | head -n 2 | tr '\n' ' ')
-    [ -z "$analysis_snippet" ] && analysis_snippet="Analyzing mathematical state mappings, algorithmic complexity, and hardware register constraints."
+    if [ "$endpoints_online" -eq 1 ] && [ "${LODGE_TEST_MODE:-0}" -ne 1 ] && [ -z "${TEST_TMP:-}" ]; then
+        local t_prompt="You are George, writing a concise, factual technical research thread based on this research dossier on '$topic':
+$(cat "$dossier_file" | head -n 120)
 
-    citation_snippet=$(grep -A 2 -i 'Verified Citations' "$dossier_file" 2>/dev/null | grep -E '^ -' | head -n 2 | tr '\n' ' ')
-    [ -z "$citation_snippet" ] && citation_snippet="Primary citations and empirical data cataloged in the Blue Lodge Sovereign Library."
+Write 3 to 4 short, distinct paragraphs (under 240 characters each) summarizing:
+1. Executive Abstract and core question
+2. Mathematical Formulation & Architecture findings
+3. Empirical Findings & scaling bounds
+4. Key citations or conclusions
 
-    cat << EOF > "$thread_file"
-[1/4] 🏛️ Sovereign Research: "${topic}"
+Rules:
+- Do NOT include tweet numbers like [1/4] or [1/7].
+- Do NOT include robotic headers like [George...] or signature footers.
+- Separate each section with a blank line.
+- Ground claims in the concrete facts from the dossier."
 
-${abstract_snippet:0:240} 🧵👇
+        local t_payload
+        t_payload=$(jq -n --arg p "$t_prompt" \
+            '{messages: [{"role": "system", "content": "You are a disciplined technical scholar writing a multi-paragraph research summary."}, {"role": "user", "content": $p}], temperature: 0.3, max_tokens: 600}')
+        thread_content=$(curl -s --max-time 45 "$llm_url/v1/chat/completions" \
+            -H "Content-Type: application/json" \
+            -d "$t_payload" 2>/dev/null | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+    fi
 
-[2/4] Mathematical Formulation & Architecture:
+    if [ -z "$thread_content" ] || [ "${#thread_content}" -lt 50 ]; then
+        # Fallback to direct excerpts from dossier
+        local abstract_snippet analysis_snippet citation_snippet
+        abstract_snippet=$(grep -A 4 -i 'Executive Abstract' "$dossier_file" 2>/dev/null | grep -v '#' | head -n 2 | tr '\n' ' ')
+        [ -z "$abstract_snippet" ] && abstract_snippet="Technical evaluation of ${topic} examining foundational mechanics, algorithmic constraints, and empirical scaling."
+
+        analysis_snippet=$(grep -A 4 -i 'Theoretical Foundations' "$dossier_file" 2>/dev/null | grep -v '#' | head -n 2 | tr '\n' ' ')
+        [ -z "$analysis_snippet" ] && analysis_snippet="Analyzing mathematical formulation, algorithmic complexity, and hardware bounds."
+
+        citation_snippet=$(grep -A 2 -i 'Verified Citations' "$dossier_file" 2>/dev/null | grep -E '^ -' | head -n 2 | tr '\n' ' ')
+        [ -z "$citation_snippet" ] && citation_snippet="Primary citations cataloged in the Blue Lodge Sovereign Library."
+
+        thread_content="Sovereign Research: \"${topic}\"
+
+${abstract_snippet:0:240}
+
+Mathematical Formulation & Architecture:
 ${analysis_snippet:0:250}
 
-[3/4] Empirical Findings & Benchmarks:
-Execution thermodynamics and silicon bounds govern performance. Hardware register constraints dictate real-world scaling throughput.
-
-[4/4] Verified Provenance & Citations:
+Empirical Findings & Provenance:
 ${citation_snippet:0:220}
-Full technical dossier and artifacts archived in Blue Lodge Sovereign Library. ∴
-EOF
+Full technical dossier and artifacts archived in Blue Lodge Sovereign Library."
+    fi
+
+    echo "$thread_content" > "$thread_file"
 
     local perm_dir="${RESEARCH_DIR}/${slug}"
     mkdir -p "$perm_dir"

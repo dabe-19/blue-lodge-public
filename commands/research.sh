@@ -20,6 +20,19 @@ cmd_research() {
         ""|list|ls)
             research_list
             ;;
+        help|-h|--help)
+            ui_section "George Sovereign Research Engine"
+            echo "Usage: /research <command> [topic_or_slug]"
+            echo ""
+            echo "Commands:"
+            echo "  start <topic> [--publish]  Launch deep research graph (optionally broadcast on completion)"
+            echo "  publish <topic>            Launch deep research and immediately broadcast to configured social channels"
+            echo "  list                       List completed dossiers in the Sovereign Library"
+            echo "  read <slug>                Read a research dossier and inspect citations"
+            echo "  queue <slug>               Stage an existing research thread for social broadcast"
+            echo "  help                       Show this help menu"
+            return 0
+            ;;
         start|run|new)
             local do_pub=0
             if [[ "$rest" =~ --publish ]]; then
@@ -31,7 +44,7 @@ cmd_research() {
                 echo ""
                 ui_section "Broadcasting Research Essay to Social Channels"
                 source "$LODGE_DIR/lib/social_blog.sh" 2>/dev/null || true
-                x_blog_sweep
+                AUTONOMIC_PUBLISH_X=1 x_blog_sweep
             fi
             ;;
         publish|live|broadcast)
@@ -39,7 +52,7 @@ cmd_research() {
             research_graph_run "$rest"
             echo ""
             ui_section "Broadcasting Research Essay to Social Channels"
-            x_blog_sweep
+            AUTONOMIC_PUBLISH_X=1 x_blog_sweep
             ;;
         read|show|dossier)
             if [ -z "$rest" ]; then
