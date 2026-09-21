@@ -163,6 +163,74 @@ commands_dispatch() {
         fi
         return $_rc
     fi
+
+    # ── Workflow & Skill Intercepts ──────────────────────────────
+    case "$cmd" in
+        the-architect|architect|plan)
+            source "$LODGE_DIR/lib/workflows.sh" 2>/dev/null || true
+            workflows_run "the-architect" "$args" "$workdir"
+            return $? ;;
+        dispatcher|dispatch)
+            source "$LODGE_DIR/lib/workflows.sh" 2>/dev/null || true
+            workflows_run "dispatcher" "$args" "$workdir"
+            return $? ;;
+        george)
+            source "$LODGE_DIR/lib/workflows.sh" 2>/dev/null || true
+            workflows_run "george" "$args" "$workdir"
+            return $? ;;
+        the-tyler|tyler)
+            source "$LODGE_DIR/lib/workflows.sh" 2>/dev/null || true
+            workflows_run "the-tyler" "$args" "$workdir"
+            return $? ;;
+        the-warden|warden)
+            source "$LODGE_DIR/lib/workflows.sh" 2>/dev/null || true
+            workflows_run "the-warden" "$args" "$workdir"
+            return $? ;;
+        the-chronicler|chronicler)
+            source "$LODGE_DIR/lib/workflows.sh" 2>/dev/null || true
+            workflows_run "the-chronicler" "$args" "$workdir"
+            return $? ;;
+        quartermaster)
+            source "$LODGE_DIR/lib/workflows.sh" 2>/dev/null || true
+            workflows_run "quartermaster" "$args" "$workdir"
+            return $? ;;
+        tester)
+            source "$LODGE_DIR/lib/workflows.sh" 2>/dev/null || true
+            workflows_run "tester" "$args" "$workdir"
+            return $? ;;
+        git-manager)
+            source "$LODGE_DIR/lib/workflows.sh" 2>/dev/null || true
+            workflows_run "git-manager" "$args" "$workdir"
+            return $? ;;
+        trowel)
+            source "$LODGE_DIR/lib/workflows.sh" 2>/dev/null || true
+            workflows_run "trowel" "$args" "$workdir"
+            return $? ;;
+        grill-me|grill_me|grill-with-docs)
+            source "$LODGE_DIR/lib/skills.sh" 2>/dev/null || true
+            skills_run_grill_me "$args" "$workdir"
+            return $? ;;
+        caveman)
+            source "$LODGE_DIR/lib/skills.sh" 2>/dev/null || true
+            skills_toggle_caveman
+            return 0 ;;
+        tdd)
+            source "$LODGE_DIR/lib/skills.sh" 2>/dev/null || true
+            skills_toggle_tdd
+            return 0 ;;
+    esac
+
+    # Dynamic workflow lookup
+    if declare -f workflows_get_file &>/dev/null && workflows_get_file "$cmd" "$workdir" &>/dev/null; then
+        workflows_run "$cmd" "$args" "$workdir"
+        return $?
+    fi
+
+    # Dynamic skill lookup
+    if declare -f skills_get_file &>/dev/null && skills_get_file "$cmd" "$workdir" &>/dev/null; then
+        skills_load "$cmd" "$workdir"
+        return $?
+    fi
     
     local _fail_ts
     _fail_ts=$(date '+%Y-%m-%d %H:%M:%S')
@@ -184,6 +252,13 @@ commands_is_known_name() {
     case "$name" in
         help|quit|exit) return 0 ;;
     esac
+    # Workflows and Skills
+    case "$name" in
+        architect|the-architect|plan|dispatcher|dispatch|george|tyler|the-tyler|warden|the-warden|chronicler|the-chronicler|quartermaster|tester|git-manager|trowel|grill-me|grill_me|caveman|tdd|workflow|skill|rules)
+            return 0 ;;
+    esac
+    declare -f workflows_get_file &>/dev/null && workflows_get_file "$name" &>/dev/null && return 0
+    declare -f skills_get_file &>/dev/null && skills_get_file "$name" &>/dev/null && return 0
     # Registry
     [ -n "${CMD_REGISTRY[$name]:-}" ] && return 0
     # Commands directory
@@ -254,6 +329,20 @@ commands_help() {
             fi
         done
     fi
+
+    # Agent Workflows & Interactive Planning
+    printf "\n  %b%s%b\n" "$C_BOLD" "Agent Workflows & Interactive Planning:" "$C_RESET"
+    printf "  %b/%-14s%b %s\n" "$C_CYAN" "architect" "$C_RESET" "Initiate interactive planning (/the-architect, /plan)"
+    printf "  %b/%-14s%b %s\n" "$C_CYAN" "dispatcher" "$C_RESET" "Execute layer specialists pipeline against plan"
+    printf "  %b/%-14s%b %s\n" "$C_CYAN" "george" "$C_RESET" "Senior technical audit (Tyler + Warden)"
+    printf "  %b/%-14s%b %s\n" "$C_CYAN" "the-tyler" "$C_RESET" "Security and prompt injection audit"
+    printf "  %b/%-14s%b %s\n" "$C_CYAN" "the-warden" "$C_RESET" "Style and architecture audit"
+    printf "  %b/%-14s%b %s\n" "$C_CYAN" "grill-me" "$C_RESET" "Socratic stress-testing interview (1 question at a time)"
+    printf "  %b/%-14s%b %s\n" "$C_CYAN" "caveman" "$C_RESET" "Toggle token-saving ultra-compressed mode"
+    printf "  %b/%-14s%b %s\n" "$C_CYAN" "tdd" "$C_RESET" "Toggle red-green-refactor TDD enforcement"
+    printf "  %b/%-14s%b %s\n" "$C_CYAN" "workflow" "$C_RESET" "Inspect & run workflows (/workflow list|run|show)"
+    printf "  %b/%-14s%b %s\n" "$C_CYAN" "skill" "$C_RESET" "Inspect & load skills (/skill list|load|run)"
+    printf "  %b/%-14s%b %s\n" "$C_CYAN" "rules" "$C_RESET" "Inspect coding rules (/rules list|show)"
     echo ""
 }
 

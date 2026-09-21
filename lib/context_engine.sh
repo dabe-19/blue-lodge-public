@@ -29,6 +29,9 @@ source "$LODGE_DIR/lib/models.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/reflexive.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/wallet.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/social.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/rules.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/skills.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/workflows.sh" 2>/dev/null || true
 
 # ── Dynamic Context Assembly Pipeline ─────────────────────────────────
 context_engine_build() {
@@ -220,37 +223,39 @@ context_engine_build() {
     out+="- TypeScript / JavaScript: ${ts_info%, }\n"
     out+="</runtime_environments>\n\n"
 
-    # 6. Active Skills & Workspace Rules
+    # 6. Active Skills, Workflows & Workspace Rules
     out+="<skills_and_instructions>\n"
-    local rules_found=0
-    if [ -d "$LODGE_DIR/.agents/rules" ]; then
-        for r in "$LODGE_DIR/.agents/rules"/*.md; do
-            [ -f "$r" ] || continue
-            local rname
-            rname=$(basename "$r" .md)
-            local rfirst
-            rfirst=$(grep -v '^#' "$r" | grep -v '^[[:space:]]*$' | head -2 | tr '\n' ' ')
-            out+="- Rule [$rname]: $rfirst\n"
-            rules_found=1
-        done
+    if declare -f rules_summary_for_context &>/dev/null; then
+        out+="$(rules_summary_for_context "$workdir")\n"
     fi
 
-    local skills_found=0
-    if [ -d "$LODGE_DIR/.agents/skills" ]; then
-        for s in "$LODGE_DIR/.agents/skills"/*; do
-            [ -d "$s" ] || continue
-            local sname
-            sname=$(basename "$s")
-            local s_desc=""
-            if [ -f "$s/SKILL.md" ]; then
-                s_desc=$(grep -i '^description:' "$s/SKILL.md" 2>/dev/null | head -1 | sed 's/^description:[[:space:]]*//' | tr -d '"'\''')
-            fi
-            [ -z "$s_desc" ] && s_desc="Custom skill module"
-            out+="- Skill [/$sname]: $s_desc\n"
-            skills_found=1
-        done
+    if declare -f skills_list &>/dev/null; then
+        local s_json
+        s_json=$(skills_list "$workdir")
+        if [ -n "$s_json" ] && [ "$s_json" != "[]" ]; then
+            out+="$(echo "$s_json" | jq -r '.[] | "- Skill [/" + .name + "]: " + (.description | .[0:120])')\n"
+        fi
     fi
-    [ "$rules_found" -eq 0 ] && [ "$skills_found" -eq 0 ] && out+="(no custom skills or rules detected)\n"
+
+    if declare -f workflows_list &>/dev/null; then
+        local wf_json
+        wf_json=$(workflows_list "$workdir")
+        if [ -n "$wf_json" ] && [ "$wf_json" != "[]" ]; then
+            out+="$(echo "$wf_json" | jq -r '.[] | "- Workflow [/" + .name + "]: " + (.description | .[0:120])')\n"
+        fi
+    fi
+
+    if [ "${_GEORGE_CAVEMAN_MODE:-0}" -eq 1 ]; then
+        out+="<caveman_directive>\n"
+        out+="CAVEMAN MODE ACTIVE: Cut tokens ~75%. Drop filler words, pleasantries, hedging, and unnecessary articles. Keep 100% technical precision, code, shell commands, exact paths, and diffs.\n"
+        out+="</caveman_directive>\n"
+    fi
+
+    if [ "${_GEORGE_TDD_MODE:-0}" -eq 1 ]; then
+        out+="<tdd_directive>\n"
+        out+="TDD MODE ACTIVE: Enforce Red-Green-Refactor loop. Always write failing test first, verify failure, write minimal code to pass, and refactor.\n"
+        out+="</tdd_directive>\n"
+    fi
     out+="</skills_and_instructions>\n\n"
 
     # 7. Crypto & Services Infrastructure
