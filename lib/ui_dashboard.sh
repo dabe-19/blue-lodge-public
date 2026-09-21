@@ -114,8 +114,15 @@ ui_dashboard_render() {
             printf "${C_LODGE}│${C_RESET} ${status_color}%s${C_RESET} [Tier %s: %s] %s (${elapsed}s)\033[K\n" "$status_sym" "$tier" "$model" "$task_trim"
         done
 
-        # Draw footer
-        printf "${C_LODGE}└%s┘${C_RESET}" "$(printf '─%.0s' $(seq 1 $((cols - 2))))"
+        # Draw footer with Autonomic Cron status
+        local cron_info=""
+        local cron_pid_file="${GEORGE_CONFIG_DIR:-$LODGE_DIR/.george}/.cron.pid"
+        if [ -f "$cron_pid_file" ] && kill -0 "$(cat "$cron_pid_file" 2>/dev/null)" 2>/dev/null; then
+            cron_info="─[● Autonomic Cron: Active]─"
+        fi
+        local pad_len=$((cols - 2 - ${#cron_info}))
+        [ "$pad_len" -lt 0 ] && pad_len=0
+        printf "${C_LODGE}└%s%s┘${C_RESET}" "$cron_info" "$(printf '─%.0s' $(seq 1 "$pad_len"))"
 
         # Restore cursor
         printf "\033[u"

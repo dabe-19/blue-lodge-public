@@ -33,68 +33,99 @@ pure `curl` + REST APIs. No SDKs, no Python, no Node.
 
 ## X (Twitter) Setup
 
-George uses the **X API v2** with a Bearer Token for authentication.
+George interacts with **X API v2** via pure `curl` REST calls. 
 
-### Step 1: Create a Developer Account
+### Critical Architecture: App-Only vs User Context
 
-1. Go to [developer.x.com](https://developer.x.com)
-2. Sign in with your X/Twitter account
-3. Click **Sign up for Free Account** (or choose a paid tier)
-4. Complete the use-case description — say something like: "Automated posting
-   from a local coding agent for personal project updates"
-5. Accept the developer agreement
+X API v2 enforces strict authentication separation:
+- **App-Only Bearer Token** (`X_BEARER_TOKEN`): Used for read/search endpoints (e.g. `GET /2/tweets/search/recent`). It is attached to the app, NOT a user, so X rejects `POST /2/tweets` with `403 Unsupported Authentication`. Furthermore, standalone apps must be enrolled in a **Project** in the Developer Portal.
+- **User Context (OAuth 1.0a)**: Required for George to **post tweets and replies** as your account. You generate these tokens in the Developer Portal directly for your `@handle`.
 
-### Step 2: Create a Project & App
+---
 
-1. From the Developer Portal dashboard, click **+ Add Project**
-2. Name it (e.g., `George Bot`)
-3. Select your use case: **Making a bot**
-4. Create an **App** within the project
-5. Name the app (e.g., `george-lodge`)
+### Step-by-Step Setup for Personal Account Posting
 
-### Step 3: Get Your Bearer Token
+1. **Enroll App in a Project**:
+   - Log in to [developer.x.com](https://developer.x.com).
+   - In the Developer Portal dashboard, ensure your App is inside a **Project** (e.g. create a Project called `George` and attach your App).
+2. **Configure Read and Write Permissions**:
+   - In your App settings, go to **User authentication settings** → **Edit**.
+   - App permissions: Select **Read and write**.
+   - Type of App: Select **Automated App or Bot**.
+   - Callback / Website URLs: Enter your portfolio or `https://localhost`.
+   - Save changes.
+3. **Generate Keys & Tokens**:
+   - Go to the **Keys and tokens** tab.
+   - Under **Consumer Keys**, generate / note:
+     - `API Key` (Consumer Key)
+     - `API Key Secret` (Consumer Secret)
+   - Under **Authentication Tokens**, find **Access Token and Secret**:
+     - Click **Generate** (or Regenerate).
+     - Because you are logged in to your account, X creates tokens specifically for your personal `@handle` with Read + Write permissions.
+4. **Store in George's Encrypted Vault**:
+   ```bash
+   /secret set X_CONSUMER_KEY <your-api-key>
+   /secret set X_CONSUMER_SECRET <your-api-key-secret>
+   /secret set X_ACCESS_TOKEN <your-access-token>
+   /secret set X_ACCESS_TOKEN_SECRET <your-access-token-secret>
+   ```
+5. **Validate Connection**:
+   ```bash
+   /social x validate
+   ```
+   George tests your credentials against `GET /2/users/me` and confirms write capabilities for your `@handle`.
 
-1. In your app settings, go to **Keys and tokens**
-2. Under **Bearer Token**, click **Regenerate**
-3. Copy the token immediately — it won't be shown again
+---
 
-### Step 4: Set App Permissions
+### Alternative: Web Session / Cookie Automation ($0 Extra, Leverages X Premium)
 
-If you want George to **post** (not just read), you must set write permissions:
+If you have an active X account with an **$8/month X Premium** subscription, you can bypass developer API fees entirely by authenticating via your browser session cookies:
 
-1. App Settings → **User authentication settings** → **Set up**
-2. App permissions: **Read and write**
-3. Type of App: **Web App, Automated App or Bot**
-4. Callback URL: `https://localhost` (placeholder — not used for Bearer auth)
-5. Website URL: any valid URL
-6. Save and confirm
+1. **Extract Cookies from your Browser**:
+   - Open `x.com` in your browser where you are logged in.
+   - Press `F12` (DevTools) → Go to **Application** (Chrome/Edge/Brave) or **Storage** (Firefox).
+   - In the left sidebar, expand **Cookies** → click `https://x.com`.
+   - Copy values for:
+     - `auth_token` (40-char string)
+     - `ct0` (CSRF token)
+2. **Store in George's Encrypted Vault**:
+   ```bash
+   /secret set X_AUTH_TOKEN <auth_token>
+   /secret set X_CT0 <ct0>
+   ```
+3. **Validate**:
+   ```bash
+   /social x validate
+   ```
+   George verifies your web session, detects your verified Blue status, and unlocks 25,000-character long-form posting with $0 in developer API fees!
 
-> **Note**: The free tier allows 1,500 posts/month and 50 reads/day.
-> For heavier usage, consider the Basic ($100/mo) or Pro tier.
+---
 
-### Step 5: Configure George
+### Cryptographic Provenance (GPG Signing)
 
-```bash
-/api keys set X_BEARER_TOKEN AAAAAAAAAAAAAxxxxxxxxxx...
-```
+When posting from your personal account, George ensures everyone understands that the post was authored by the agent:
+- Posts and replies are automatically prefixed with `[George 🏛️ Blue Lodge Agent]`.
+- Every post and reply is cryptographically signed using George's local Ed25519 PGP key (`.george/.gnupg/`).
+- A verification trailer is appended: `🔏 Signed: <FINGERPRINT> (Ed25519)`.
+- Full detached ASCII-armored signatures are archived in `.george/social/signatures/` and verifiable against George's public key (`.george/george_public.asc`).
+
+---
 
 ### Commands
 
 | Command | Description |
 |---------|-------------|
-| `/social x post <text>` | Post a tweet |
-| `/social x timeline` | View your recent tweets |
+| `/social x validate` | Validate credentials & diagnostic check |
+| `/social x post <text>` | Post a GPG-signed tweet |
+| `/social x thread <text>` | Split long-form essays into numbered GPG-signed threads |
+| `/social x blog list` | Show the Sovereign Blog research catalog |
+| `/social x blog draft <id>` | Preview a drafted philosophical/technical research essay |
+| `/social x blog queue <id>` | Queue a signed research essay for autonomic publication |
+| `/social x blog post <id>` | Immediately post a research essay as a thread |
+| `/social x timeline` | View recent tweets |
 | `/social x search <query>` | Search recent tweets |
-| `/social x reply <tweet_id> <text>` | Reply to a tweet |
-| `/social x delete <tweet_id>` | Delete a tweet |
-
-### OAuth 2.0 Note
-
-George currently uses **Bearer Token** (app-level auth), which works for most
-operations. For user-context operations (like reading home timeline, managing
-lists, or DMs), you'd need **OAuth 2.0 User Context** — that requires a browser
-redirect flow which is impractical in a mobile terminal. Bearer Token covers
-posting, searching, and reading your own tweets.
+| `/social x reply <id> <text>`| Reply to a tweet with GPG signature |
+| `/social x delete <id>` | Delete a tweet |
 
 ---
 

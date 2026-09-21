@@ -137,6 +137,16 @@ describe "api_set_key / api_get_key"
     _teardown_api
   }
 
+  it "retrieves key from encrypted secrets vault when present" && {
+    _setup_api
+    api_init 2>/dev/null
+    source "$LODGE_DIR/lib/secrets.sh"
+    secrets_set "VAULT_TEST_KEY" "vault_secret_999" 2>/dev/null
+    result=$(api_get_key "VAULT_TEST_KEY")
+    assert_eq "$result" "vault_secret_999"
+    _teardown_api
+  }
+
 # ── api_list_keys ──────────────────────────────────────────────
 describe "api_list_keys"
 
@@ -146,6 +156,17 @@ describe "api_list_keys"
     api_set_key "LIST_TEST_KEY" "somevalue"
     out=$(api_list_keys 2>&1)
     assert_contains "$out" "LIST_TEST_KEY"
+    _teardown_api
+  }
+
+  it "lists keys from secrets vault" && {
+    _setup_api
+    api_init 2>/dev/null
+    source "$LODGE_DIR/lib/secrets.sh"
+    secrets_set "VAULT_LIST_KEY" "vault_secret_abc" 2>/dev/null
+    out=$(api_list_keys 2>&1)
+    assert_contains "$out" "VAULT_LIST_KEY"
+    assert_contains "$out" "vault encrypted"
     _teardown_api
   }
 

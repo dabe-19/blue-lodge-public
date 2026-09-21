@@ -354,9 +354,10 @@ ui_spinner_stop() {
 _PREFILL_TICKER_PID=""
 ui_prefill_ticker_start() {
     [ -n "$_PREFILL_TICKER_PID" ] && ui_prefill_ticker_stop
-    local _tty="${_SPINNER_TTY:-/dev/stderr}"
+    local ppid="$$"
+    exec 3>&2
     (
-        exec >/dev/null 2>/dev/null
+        exec 2>/dev/null >/dev/null
         local phrases=(
             "Squaring the rough ashlar"
             "Consulting Franklin's almanac"
@@ -371,14 +372,16 @@ ui_prefill_ticker_start() {
         local n=${#phrases[@]}
         local frames=('▲ (👁 )' '▲ (◓ )' '▲ (👁 )' '▲ ( ◓ )' '▲ (✦👁 ✦)' '▲ ( ─ )')
         local f=0
-        while true; do
-            printf "\r %b%s%b %b%s...%b \033[K" "$C_GOLD" "${frames[$f]}" "$C_RESET" "$C_GRAY" "${phrases[$i]}" "$C_RESET" > "$_tty" 2>/dev/null
+        while kill -0 "$ppid" 2>/dev/null; do
+            printf "\r %b%s%b %b%s...%b \033[K" "$C_GOLD" "${frames[$f]}" "$C_RESET" "$C_GRAY" "${phrases[$i]}" "$C_RESET" >&3 2>/dev/null
             f=$(( (f + 1) % 6 ))
             [ $(( f % 6 )) -eq 0 ] && i=$(( (i + 1) % n ))
             sleep 0.35
         done
+        exec 3>&-
     ) &
     _PREFILL_TICKER_PID=$!
+    exec 3>&-
     disown "$_PREFILL_TICKER_PID" 2>/dev/null
     echo "$_PREFILL_TICKER_PID" > "${TMPDIR:-/tmp}/.lodge_prefill_ticker_$$" 2>/dev/null
 }
@@ -391,7 +394,7 @@ ui_prefill_ticker_stop() {
         wait "$tpid" 2>/dev/null
         _PREFILL_TICKER_PID=""
         rm -f "${TMPDIR:-/tmp}/.lodge_prefill_ticker_$$" 2>/dev/null
-        printf "\r\033[2K" > "${_SPINNER_TTY:-/dev/stderr}" 2>/dev/null
+        printf "\r\033[2K" >&2 2>/dev/null
     fi
 }
 

@@ -11,6 +11,7 @@ cmd_subagents() {
     local workdir="${2:-.}"
 
     subagents_init
+    export _LODGE_SKIP_SUBAGENT_CLEANUP=1
 
     local subcmd="${args%% *}"
     local rest="${args#"$subcmd"}"
@@ -218,7 +219,19 @@ cmd_subagents() {
                 rm -f "$alert_file"
                 ui_ok "Dismissed circuit breaker alert for $target_id"
             else
-                ui_warn "No alert file found for $target_id"
+                local found=0
+                for af in "$LODGE_DIR/.george/alerts"/alert_*.json; do
+                    [ -f "$af" ] || continue
+                    if grep -q "\"subagent_id\":[[:space:]]*\"$target_id\"" "$af" 2>/dev/null; then
+                        rm -f "$af"
+                        found=1
+                    fi
+                done
+                if [ "$found" -eq 1 ]; then
+                    ui_ok "Dismissed circuit breaker alert for $target_id"
+                else
+                    ui_warn "No alert file found for $target_id"
+                fi
             fi
             ;;
 

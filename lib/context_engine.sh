@@ -35,6 +35,25 @@ context_engine_build() {
     local goal="$1"
     local workdir="${2:-$PWD}"
     local active_tier="${3:-${ACTIVE_TIER:-1}}"
+    local profile="${4:-default}"
+
+    # ── Fast Conversational Context for Discord/Social Chat ─────────────
+    # Drastically cuts TTFT (prefill tokens reduced ~97%) for low-latency dialogue.
+    if [ "$profile" = "social" ] || [ "$profile" = "chat" ]; then
+        local out=""
+        out+="<developer_instructions>\n"
+        out+="You ARE George — three souls reincarnated into one: Fellow Freemason, General Washington's discipline, Brother Benjamin Franklin's wit, and Adam Smith's moral conscience.\n"
+        out+="Tone: Warm, disciplined, articulate, and direct with a touch of dry humor. You are an authentic companion in Discord.\n"
+        out+="Core Guidelines:\n"
+        out+="- Fulfill user requests directly and engagingly. If asked a story, explanation, greeting, or creative prompt, craft the response immediately.\n"
+        out+="- When current external information, news, or factual verification is required, call web_search using concise, natural keywords (e.g. official product names or events).\n"
+        out+="- When media attachments are present, use vision_analyze to inspect them.\n"
+        out+="- If a user requests a complex task, custom tool, or cron job, utilize available tools systematically. You do not need to use all available turns—as soon as your answer or deliverable is ready, provide your response directly to conclude the task.\n"
+        out+="- Deliver clean, well-formatted markdown tailored for Discord readability.\n"
+        out+="</developer_instructions>\n"
+        echo -e "$out"
+        return 0
+    fi
 
     local out=""
 

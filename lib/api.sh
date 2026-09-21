@@ -105,7 +105,23 @@ api_get_key() {
         fi
     fi
 
-    # 3. Read from keys.conf
+    # 3. Read from secrets vault (.george/.vault) if present
+    local vault_enc="$GEORGE_CONFIG_DIR/.vault/${key_name}.enc"
+    if [ -f "$vault_enc" ]; then
+        if ! declare -f secrets_get &>/dev/null; then
+            [ -f "$LODGE_DIR/lib/secrets.sh" ] && source "$LODGE_DIR/lib/secrets.sh"
+        fi
+        if declare -f secrets_get &>/dev/null; then
+            local val
+            val=$(secrets_get "$key_name" 2>/dev/null)
+            if [ -n "$val" ]; then
+                echo "$val"
+                return 0
+            fi
+        fi
+    fi
+
+    # 4. Read from keys.conf
     if [ -f "$GEORGE_KEYS_FILE" ]; then
         local value
         value=$(awk -F= -v key="$key_name" '
@@ -124,7 +140,7 @@ api_get_key() {
         fi
     fi
 
-    # 4. Fallback: If requesting SERPER_API_KEY, check keys.conf for SERPER_API
+    # 5. Fallback: If requesting SERPER_API_KEY, check keys.conf for SERPER_API
     if [ "$key_name" = "SERPER_API_KEY" ] && [ -f "$GEORGE_KEYS_FILE" ]; then
         local value
         value=$(awk -F= -v key="SERPER_API" '
@@ -179,25 +195,40 @@ api_set_key() {
 
 # ── List configured keys (names only, no values) ──────────────
 api_list_keys() {
-    if [ ! -f "$GEORGE_KEYS_FILE" ]; then
-        ui_dim "No keys configured yet"
-        return 0
-    fi
     ui_section "Configured API Keys"
     local _found=0
-    local _ak_tmp
-    _ak_tmp=$(mktemp "${TMPDIR:-/tmp}/lodge-keys.XXXXXX")
-    grep "^[A-Z].*=" "$GEORGE_KEYS_FILE" 2>/dev/null > "$_ak_tmp" || true
-    while IFS='=' read -r name _value; do
-        local masked
-        masked=$(echo "$_value" | sed 's/./*/g' | head -c 20)
-        printf "  %b%-30s%b %s...\n" "$C_WHITE" "$name" "$C_RESET" "${masked:0:8}"
-        _found=1
-    done < "$_ak_tmp"
-    rm -f "$_ak_tmp"
+
+    # 1. Plaintext keys in keys.conf
+    if [ -f "$GEORGE_KEYS_FILE" ]; then
+        local _ak_tmp
+        _ak_tmp=$(mktemp "${TMPDIR:-/tmp}/lodge-keys.XXXXXX")
+        grep "^[A-Z].*=" "$GEORGE_KEYS_FILE" 2>/dev/null > "$_ak_tmp" || true
+        while IFS='=' read -r name _value; do
+            local masked
+            masked=$(echo "$_value" | sed 's/./*/g' | head -c 20)
+            printf "  %b%-30s%b %s...\n" "$C_WHITE" "$name" "$C_RESET" "${masked:0:8}"
+            _found=1
+        done < "$_ak_tmp"
+        rm -f "$_ak_tmp"
+    fi
+
+    # 2. Vault-encrypted keys
+    local vault_dir="${VAULT_DIR:-$GEORGE_CONFIG_DIR/.vault}"
+    if [ -d "$vault_dir" ]; then
+        for vf in "$vault_dir"/*.enc; do
+            [ -f "$vf" ] || continue
+            local vname
+            vname=$(basename "$vf" .enc)
+            _api_valid_key_name "$vname" || continue
+            printf "  %b%-30s%b [vault encrypted]\n" "$C_GREEN" "$vname" "$C_RESET"
+            _found=1
+        done
+    fi
+
     if [ "$_found" -eq 0 ]; then
         ui_dim "  No keys configured yet"
         ui_dim "  Set keys with: /api keys set KEY_NAME value"
+        ui_dim "  Or encrypted:  /secret set KEY_NAME value"
     fi
     return 0
 }

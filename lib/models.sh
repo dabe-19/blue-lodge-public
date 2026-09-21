@@ -20,8 +20,8 @@ LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 
 # ── Model Slots ────────────────────────────────────────────────
 # These are the Ollama model names (e.g., "blue-lodge-minist-think:4b")
-LODGE_MODEL_PRIMARY="${LODGE_MODEL_PRIMARY:-blue-lodge-gemma4-inst:2b}"
-LODGE_MODEL_SECONDARY="${LODGE_MODEL_SECONDARY:-blue-lodge-gemma4-inst:2b}"
+LODGE_MODEL_PRIMARY="${LODGE_MODEL_PRIMARY:-${ACTIVE_ENDPOINT_MODEL:-ternary-bonsai-27b}}"
+LODGE_MODEL_SECONDARY="${LODGE_MODEL_SECONDARY:-${TIER0_MODEL:-gemma4-e2b-inst}}"
 LODGE_SINGLE_MODEL="${LODGE_SINGLE_MODEL:-1}"   # 1=single model mode (primary only, default), 0=dual model hot-swap
 
 # Track which model is currently loaded (set by _models_switch)
@@ -973,12 +973,16 @@ models_for_scenario() {
     # Handle vision scenario routing based on vision capability
     case "$scenario" in
         vision)
-            if models_has_vision "$LODGE_MODEL_PRIMARY"; then
+            if [ -n "${ACTIVE_ENDPOINT_MODEL:-}" ] && models_has_vision "$ACTIVE_ENDPOINT_MODEL"; then
+                echo "$ACTIVE_ENDPOINT_MODEL"
+            elif [ -n "${LODGE_MODEL:-}" ] && models_has_vision "$LODGE_MODEL"; then
+                echo "$LODGE_MODEL"
+            elif models_has_vision "$LODGE_MODEL_PRIMARY"; then
                 echo "$LODGE_MODEL_PRIMARY"
             elif [ "${LODGE_SINGLE_MODEL:-0}" -eq 0 ] && models_has_vision "$LODGE_MODEL_SECONDARY"; then
                 echo "$LODGE_MODEL_SECONDARY"
             else
-                echo "blue-lodge-gemma4-inst:2b"
+                echo "${ACTIVE_ENDPOINT_MODEL:-${LODGE_MODEL_PRIMARY:-ternary-bonsai-27b}}"
             fi
             return
             ;;

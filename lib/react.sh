@@ -127,7 +127,10 @@ react_run() {
     local workdir="${2:-$PWD}"
     local max_turns="${3:-${AGENT_MAX_TURNS:-${AGENT_MAX_MILESTONES:-9999}}}"
     local agent_temp="${AGENT_LLM_TEMPERATURE:-0.2}"
-    local agent_max_tok="${AGENT_MAX_TOKENS:-4096}"
+    local agent_max_tok="${AGENT_MAX_TOKENS:-8192}"
+    local min_tier="${4:-1}"
+    local session_id_arg="${5:-}"
+    local tool_filter="${6:-${REACT_TOOL_FILTER:-all}}"
 
     if [ -z "$goal" ]; then
         ui_err "Task description required."
@@ -142,7 +145,7 @@ react_run() {
 
     local agent_temp="${AGENT_LLM_TEMPERATURE:-${ACTIVE_ENDPOINT_TEMPERATURE:-0.2}}"
     local agent_topp="${AGENT_LLM_TOP_P:-${ACTIVE_ENDPOINT_TOP_P:-0.95}}"
-    local req_timeout="${ACTIVE_ENDPOINT_TIMEOUT:-180}"
+    local req_timeout="${ACTIVE_ENDPOINT_TIMEOUT:-300}"
 
     ui_ok "Active Engine: Tier $ACTIVE_TIER [$ACTIVE_ENDPOINT_NAME] ($ACTIVE_ENDPOINT_MODEL @ $ACTIVE_ENDPOINT_URL)"
     ui_dim "Context Window: $ACTIVE_ENDPOINT_CONTEXT tokens | Compaction Threshold: $ACTIVE_ENDPOINT_COMPACT_TOKENS tokens"
@@ -189,15 +192,24 @@ react_run() {
     fi
     export AGENT_TASK_WORKSPACE="$session_dir"
     export AGENT_TASK_WORKSPACE_REL=".george/workspaces/$session_id"
+    export AGENT_ACTIVE_SESSION_DIR="$session_dir"
     declare -f memory_register_files &>/dev/null && memory_register_files "$workdir"
 
     # 3. Assemble Dynamic Copilot-Style Context & Tool Schemas
     ui_dim "Assembling context pipeline and native tool registry..."
     local sys_prompt
-    sys_prompt=$(context_engine_build "$goal" "$workdir" "$ACTIVE_TIER")
+    sys_prompt=$(context_engine_build "$goal" "$workdir" "$ACTIVE_TIER" "${tool_filter:-default}")
 
+    local active_tools_file="$session_dir/active_tools.json"
     local tools_schema
-    tools_schema=$(native_tools_get_all_schemas)
+    if declare -f native_tools_resolve_profile &>/dev/null; then
+        tools_schema=$(native_tools_resolve_profile "${tool_filter:-default}")
+    elif declare -f native_tools_get_schemas &>/dev/null; then
+        tools_schema=$(native_tools_get_schemas "$tool_filter")
+    else
+        tools_schema=$(native_tools_get_all_schemas)
+    fi
+    echo "$tools_schema" > "$active_tools_file"
 
     # Initialize messages.json
     jq -n \
@@ -210,6 +222,7 @@ react_run() {
 
     local running_tokens=0
     local turn=1
+    local consecutive_empty_turns=0
 
     echo "PRIMARY OBJECTIVE: $goal" >> "$history_file"
     ui_info "Starting Task: $goal"
@@ -217,12 +230,27 @@ react_run() {
     while [ "$turn" -le "$max_turns" ]; do
         printf "\n${C_BOLD}${C_CYAN}── Turn %d/%d ──────────────────────────────${C_RESET}\n" "$turn" "$max_turns"
 
-        # 5-turn countdown alert before reaching max turns
-        if [ "$turn" -ge "$((max_turns - 5))" ]; then
+        # Refresh active tools schema if tool_search mounted new capabilities in previous turn
+        if [ -s "$active_tools_file" ]; then
+            tools_schema=$(cat "$active_tools_file")
+        fi
+
+        # Countdown alert when approaching turn ceiling
+        local countdown_trigger=$((max_turns - 2))
+        [ "$max_turns" -ge 12 ] && countdown_trigger=$((max_turns - 4))
+        [ "$max_turns" -le 5 ] && countdown_trigger=$((max_turns - 1))
+        if [ "$turn" -ge "$countdown_trigger" ] && [ "$turn" -lt "$max_turns" ]; then
             local rem=$((max_turns - turn))
             ui_warn "Approaching turn ceiling: Turn $turn/$max_turns ($rem turn(s) remaining)."
-            jq --arg msg "[SYSTEM NOTICE: APPROACHING TURN CEILING (Turn $turn/$max_turns, $rem turn(s) remaining). Cease starting new exploratory steps. Consolidate deliverables, commit milestone reflection to .george/journal.md, preserve active state into .george/memories/, and provide your concluding response.]" \
-                '. += [{"role": "system", "content": $msg}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+            local alert_msg
+            if [ "$tool_filter" = "social" ] || [ "$tool_filter" = "chat" ]; then
+                alert_msg="[SYSTEM NOTICE: Turn $turn/$max_turns ($rem turn(s) remaining). Conclude your findings and provide your response to the user.]"
+            else
+                alert_msg="[SYSTEM NOTICE: APPROACHING TURN CEILING (Turn $turn/$max_turns, $rem turn(s) remaining). Cease starting new exploratory steps. Consolidate deliverables, commit milestone reflection to .george/journal.md, preserve active state into .george/memories/, and provide your concluding response.]"
+            fi
+            jq --arg msg "$alert_msg" \
+                'if (.[-1].content | test("APPROACHING TURN CEILING|SYSTEM NOTICE"; "i")) then .[-1].content = $msg else . += [{"role": "user", "content": $msg}] end' \
+                "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
         fi
 
         # Check compaction threshold
@@ -263,9 +291,11 @@ react_run() {
             think_mode=0
         fi
 
-        # Detect interactive/unbuffered awk support (-W interactive for mawk on Termux/Ubuntu)
+        # Detect interactive/unbuffered awk support (-W interactive for mawk on Termux/Debian)
         local _awk_opt=""
-        awk -W interactive 'BEGIN {exit 0}' 2>/dev/null && _awk_opt="-W interactive"
+        if awk --version 2>&1 | grep -iq mawk; then
+            _awk_opt="-W interactive"
+        fi
 
         # Launch ambient craftsman prefill ticker during prompt evaluation
         declare -f ui_prefill_ticker_start &>/dev/null && ui_prefill_ticker_start
@@ -298,7 +328,7 @@ react_run() {
         {
             if (!got_chunk) {
                 got_chunk = 1;
-                system("kill $(cat /tmp/.lodge_prefill_ticker_" pid " 2>/dev/null) 2>/dev/null; printf \"\\r\\033[2K\" > /dev/stderr");
+                system("kill $(cat /tmp/.lodge_prefill_ticker_" pid " 2>/dev/null) 2>/dev/null; printf \"\\r\\033[2K\" >&2");
             }
             print $0 > sc;
             fflush(sc);
@@ -357,6 +387,19 @@ react_run() {
                 return 1
             fi
 
+            local endpoint_err
+            endpoint_err=$(echo "$resp_json" | jq -r '.error.message // .error // empty' 2>/dev/null)
+            if [ -n "$endpoint_err" ]; then
+                ui_err "Inference endpoint error: $endpoint_err"
+                if [[ "$endpoint_err" =~ context|token|length|maximum ]]; then
+                    ui_warn "Context length exceeded! Triggering emergency auto-compaction..."
+                    _react_compact_messages "$session_dir" "$ACTIVE_ENDPOINT_URL" "$workdir"
+                    running_tokens=0
+                    turn=$((turn + 1))
+                    continue
+                fi
+            fi
+
             raw_content=$(echo "$resp_json" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
             reasoning=$(echo "$resp_json" | jq -r '.choices[0].message.reasoning_content // empty' 2>/dev/null)
             tool_calls=$(echo "$resp_json" | jq -c '.choices[0].message.tool_calls // empty' 2>/dev/null)
@@ -397,7 +440,19 @@ react_run() {
             comp_tok=$(echo "$reconstructed" | jq -r '.usage.completion_tokens // 0' 2>/dev/null)
         fi
 
-        # Accounting for token consumption
+        # Accounting for token consumption:
+        # If server didn't emit usage metrics (common in SSE or local proxies),
+        # estimate from payload & response character lengths (~3.5 chars / token)
+        if [ "${p_tok:-0}" -le 0 ]; then
+            local _chars=0
+            [ -f "$messages_file" ] && _chars=$(wc -c < "$messages_file" 2>/dev/null || echo 0)
+            p_tok=$(( _chars * 10 / 35 ))
+        fi
+        if [ "${comp_tok:-0}" -le 0 ]; then
+            local _resp_chars=$(( ${#raw_content} + ${#reasoning} ))
+            comp_tok=$(( _resp_chars * 10 / 35 ))
+        fi
+
         local turn_total=$((p_tok + comp_tok))
         [ "$turn_total" -gt 0 ] && running_tokens=$turn_total
         local pct=0
@@ -462,9 +517,10 @@ react_run() {
                     printf "${C_DIM}  ↳ Result: %s${C_RESET}\n" "$preview"
                 fi
 
-                declare -f transcript_log_jsonl &>/dev/null && transcript_log_jsonl "$goal" "$think_content" "${tool_name}(${tool_args})" "$resp_content"
+                declare -f transcript_log_jsonl &>/dev/null && transcript_log_jsonl "$goal" "${reasoning:-${think_content:-}}" "${c_name:-tool}(${c_args:-})" "$resp_content"
             done
 
+            consecutive_empty_turns=0
             turn=$((turn + 1))
             continue
         fi
@@ -484,6 +540,7 @@ react_run() {
             echo ""
             ui_ok "Task Complete!"
             printf "${C_BOLD}${C_GREEN}%s${C_RESET}\n" "$answer"
+            jq --arg ans "$answer" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" 2>/dev/null && mv "${messages_file}.tmp" "$messages_file" 2>/dev/null || true
             journal_write "reflection" "Goal achieved: $goal. Result: $answer" 2>/dev/null || true
             declare -f transcript_log_block &>/dev/null && transcript_log_block "final_response" "$answer"
             _react_trace "$workdir" "task_complete" "$(jq -cn --arg goal "$goal" --arg outcome "$answer" '{goal:$goal, outcome:$outcome, status:"success"}')"
@@ -545,6 +602,7 @@ react_run() {
         if [ -n "$raw_content" ]; then
             echo ""
             ui_ok "Task Complete!"
+            jq --arg ans "$raw_content" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" 2>/dev/null && mv "${messages_file}.tmp" "$messages_file" 2>/dev/null || true
             journal_write "reflection" "Completed task: $goal. Summary: ${raw_content:0:200}" 2>/dev/null || true
             declare -f transcript_log_block &>/dev/null && transcript_log_block "final_response" "$raw_content"
             _react_trace "$workdir" "task_complete" "$(jq -cn --arg goal "$goal" --arg summary "${raw_content:0:200}" '{goal:$goal, summary:$summary, status:"success"}')"
@@ -556,6 +614,44 @@ react_run() {
                 [ -n "$_tpath" ] && ui_dim "  Transcript: $_tpath"
             fi
             return 0
+        fi
+
+        # If model drafted response inside thoughts (common in thinking models that stream or truncate)
+        if [ -z "$raw_content" ] && [ -n "$reasoning" ]; then
+            local extracted_thought_draft
+            extracted_thought_draft=$(printf '%s\n' "$reasoning" | awk '
+                /🕯️|###|## |# |---|\*\*The / { found=1 }
+                found { print }
+            ')
+            if [ -n "$extracted_thought_draft" ] && [ ${#extracted_thought_draft} -ge 80 ]; then
+                raw_content="$extracted_thought_draft"
+                ui_ok "Extracted drafted response from reasoning stream."
+                echo ""
+                echo "$raw_content"
+                echo ""
+                ui_ok "Task Complete!"
+                jq --arg ans "$raw_content" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" 2>/dev/null && mv "${messages_file}.tmp" "$messages_file" 2>/dev/null || true
+                journal_write "reflection" "Completed task: $goal. Summary: ${raw_content:0:200}" 2>/dev/null || true
+                declare -f transcript_log_block &>/dev/null && transcript_log_block "final_response" "$raw_content"
+                _react_trace "$workdir" "task_complete" "$(jq -cn --arg goal "$goal" --arg summary "${raw_content:0:200}" '{goal:$goal, summary:$summary, status:"success"}')"
+                jq '.status = "COMPLETED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
+                if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
+                    local _tpath
+                    _tpath=$(transcript_stop)
+                    [ -n "$_tpath" ] && ui_dim "  Transcript: $_tpath"
+                fi
+                return 0
+            fi
+        fi
+
+        # Track consecutive non-advancing turns and circuit break before burnout
+        consecutive_empty_turns=$((consecutive_empty_turns + 1))
+        if [ "$consecutive_empty_turns" -ge 2 ]; then
+            ui_err "Circuit breaker tripped: Model returned $consecutive_empty_turns consecutive empty turns without advancing."
+            ui_warn "Halting task to protect context tokens and prevent infinite loop."
+            _react_trace "$workdir" "circuit_breaker" '{"reason": "consecutive_empty_turns", "turns": 2}'
+            jq '.status = "CIRCUIT_BREAKER_TRIPPED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
+            return 1
         fi
 
         turn=$((turn + 1))

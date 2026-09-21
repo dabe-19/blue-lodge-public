@@ -419,6 +419,16 @@ _subagent_compact() {
                 {"role": "user", "content": ($cd + "Objective: " + $goal + "\n\nTrajectory:\n" + $obs + "\n\nCRITICAL FORMAT REQUIREMENT:\nThought: <brief 1-sentence reasoning under 25 words>\nAction: <slash-command, e.g. /bash <cmd> or /upstream propose ...>\n\nNext Action:")}
             ]')
 
+        local tier_ctx
+        tier_ctx=$(endpoints_get_tier_info "$target_tier" "CONTEXT" 2>/dev/null || echo 8192)
+        [ -z "$tier_ctx" ] || [ "$tier_ctx" -le 0 ] 2>/dev/null && tier_ctx=8192
+        local compact_threshold=$((tier_ctx * 3 / 4))
+        [ "$compact_threshold" -lt 3000 ] && compact_threshold=3000
+
+        local tier_timeout
+        tier_timeout=$(endpoints_get_tier_info "$target_tier" "TIMEOUT" 2>/dev/null || echo 600)
+        [ -z "$tier_timeout" ] || [ "$tier_timeout" -lt 300 ] 2>/dev/null && tier_timeout=600
+
         local payload
         payload=$(jq -n \
             --arg model "$tier_model" \
@@ -433,7 +443,7 @@ _subagent_compact() {
 
         # Query endpoint
         local resp_json
-        resp_json=$(curl -s --max-time 300 "$tier_url/v1/chat/completions" \
+        resp_json=$(curl -s --max-time "$tier_timeout" "$tier_url/v1/chat/completions" \
             -H "Content-Type: application/json" \
             -d "$payload" 2>/dev/null)
 
@@ -453,10 +463,10 @@ _subagent_compact() {
             _subagent_log_event "$sub_id" "TELEMETRY" "Slot tokens: $running_tokens (prompt: $p_tok, comp: $comp_tok, kv_prefix: $kv_prefix_tokens)" "$sub_fifo"
         fi
 
-        # Autonomous per-slot auto-compaction trigger (18k out of 24k slot ceiling)
-        if [ "$running_tokens" -ge 18000 ]; then
+        # Autonomous per-slot auto-compaction trigger (proportional to tier context ceiling)
+        if [ "$running_tokens" -ge "$compact_threshold" ]; then
             _subagent_compact "$sub_id" "$sub_history" "$tier_url" "$tier_model" "$sub_fifo"
-            running_tokens=4000
+            running_tokens=2000
         fi
 
         local raw_content reasoning_content
@@ -467,22 +477,21 @@ _subagent_compact() {
         local thoughts="$reasoning_content"
         local cleaned="$raw_content"
         if echo "$raw_content" | grep -qE '<think>'; then
+            if [ -z "$thoughts" ] && command -v perl &>/dev/null; then
+                thoughts=$(echo "$raw_content" | perl -0777 -ne 'if (/<think>(.*?)<\/think>/s) { my $t = $1; $t =~ s/^\s+|\s+$//g; print $t; }')
+            fi
             if command -v perl &>/dev/null; then
-                thoughts+=$(printf '%s' "$raw_content" | perl -0777 -ne 'while (/<think>(.*?)<\/think>/sg) { my $t = $1; $t =~ s/^\s+|\s+$//g; print "$t\n" if $t }')
-                cleaned=$(printf '%s' "$raw_content" | perl -0777 -pe 's/<think>.*?<\/think>//sg')
-            else
-                thoughts+=$(echo "$raw_content" | sed -n 's/.*<think>\(.*\)<\/think>.*/\1/p')
-                cleaned=$(echo "$raw_content" | sed -e 's/<think>.*<\/think>//g')
+                cleaned=$(echo "$raw_content" | perl -0777 -pe 's/<think>.*?<\/think>//sg')
             fi
         fi
         if [ -n "$thoughts" ]; then
             _subagent_log_event "$sub_id" "THOUGHT" "$thoughts" "$sub_fifo"
         fi
 
-        # Parse action from XML <tool_call> or standard Action: /...
+        # Parse action from XML <tool_call>, Gemma <|tool_call>, or standard Action: /...
         local action=""
 
-        if echo "$cleaned" | grep -qE '<tool_call>'; then
+        if echo "$cleaned" | grep -qE '<tool_call>|<\|tool_call>'; then
             if command -v perl &>/dev/null; then
                 action=$(printf '%s' "$cleaned" | perl -0777 -ne '
                     if (/<function=([a-zA-Z0-9_-]+)>(.*?)<\/function>/s) {
@@ -495,6 +504,22 @@ _subagent_compact() {
                             $param = $inner;
                         }
                         $param =~ s/^\s+|\s+$//g;
+                        if ($fn eq "bash" || $fn eq "sh") {
+                            print "/bash $param\n";
+                        } elsif ($fn eq "read" || $fn eq "file_read") {
+                            print "/read $param\n";
+                        } elsif ($fn eq "append" || $fn eq "file_append") {
+                            print "/append $param\n";
+                        } elsif ($fn eq "upstream") {
+                            print "/upstream $param\n";
+                        } else {
+                            print "/$fn $param\n";
+                        }
+                    } elsif (/<\|tool_call>call:([a-zA-Z0-9_-]+)\{(?:command|query|content|args)?:?<\|"\|>(.*?)<\|"\|>/s ||
+                             /<\|tool_call>call:([a-zA-Z0-9_-]+)\{(.*?)\}/s) {
+                        my $fn = lc($1);
+                        my $param = $2;
+                        $param =~ s/^["\s:]+|["\s}]+$//g;
                         if ($fn eq "bash" || $fn eq "sh") {
                             print "/bash $param\n";
                         } elsif ($fn eq "read" || $fn eq "file_read") {

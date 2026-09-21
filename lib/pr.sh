@@ -521,3 +521,103 @@ pr_reject() {
     jq --arg r "$reason" '.status = "REJECTED" | .rejection_reason = $r' "$json_file" > "$tmp_json" && mv "$tmp_json" "$json_file"
     ui_warn "PR $pr_id marked REJECTED: $reason"
 }
+
+# ── Hands-off Closed-Loop PR Evaluation & Sweep ───────────────
+pr_auto_evaluate() {
+    local pr_id="$1"
+    local clean_id="${pr_id#\#}"
+    [ -z "$clean_id" ] && return 1
+
+    ui_section "Autonomous Closed-Loop Review: PR #${clean_id}"
+
+    # Check current PR state first if Gitea is online
+    local pr_meta=""
+    if pr_is_gitea_online; then
+        _gitea_load_conf
+        pr_meta=$(curl -s "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/pulls/${clean_id}" \
+            -H "Authorization: token ${GITEA_TOKEN}" 2>/dev/null)
+        local pr_state
+        pr_state=$(echo "$pr_meta" | jq -r .state 2>/dev/null)
+        local is_merged
+        is_merged=$(echo "$pr_meta" | jq -r .merged 2>/dev/null)
+        if [ "$pr_state" = "closed" ] || [ "$is_merged" = "true" ]; then
+            ui_info "PR #${clean_id} is already closed/merged. Skipping auto-evaluation."
+            return 0
+        fi
+    fi
+
+    # Run Three Degrees Audit
+    if pr_audit "$clean_id"; then
+        ui_ok "PR #${clean_id} passed audit. Executing hands-off autonomous merge..."
+        if pr_accept "$clean_id" "merge"; then
+            ui_ok "Hands-off loop complete: PR #${clean_id} audited and merged into develop!"
+            if declare -f journal_record &>/dev/null; then
+                journal_record "Hands-off autonomous loop merged PR #${clean_id} into develop following Three Degrees Audit verification." >/dev/null 2>&1 || true
+            fi
+            return 0
+        else
+            ui_err "Failed to execute auto-merge for PR #${clean_id} despite audit pass."
+            return 1
+        fi
+    else
+        ui_warn "PR #${clean_id} failed audit verification."
+        local max_attempts
+        max_attempts=$(limits_get MAX_REMEDIATION_ATTEMPTS 5 2>/dev/null || echo 5)
+        local attempt_file="$PR_DIR/${clean_id}.attempts"
+        local cur_attempts=1
+        [ -f "$attempt_file" ] && cur_attempts=$(cat "$attempt_file" 2>/dev/null || echo 1)
+
+        if [ "$cur_attempts" -lt "$max_attempts" ]; then
+            ui_info "Triggering auto-remediation subagent (attempt ${cur_attempts}/${max_attempts}) for PR #${clean_id}..."
+            if declare -f subagents_spawn &>/dev/null; then
+                local head_branch
+                head_branch=$(echo "$pr_meta" | jq -r .head.ref 2>/dev/null)
+                [ -z "$head_branch" ] && head_branch="subagent/pr_${clean_id}"
+                subagents_spawn 1 "Remediate test regressions on branch '${head_branch}' for PR #${clean_id}. Inspect test failure logs in .george/pr/${clean_id}.audit.log, fix root causes, commit to '${head_branch}', and push to gitea." 50 1 >/dev/null 2>&1 || true
+                if declare -f gitea_issue_comment &>/dev/null; then
+                    gitea_issue_comment "$clean_id" "🤖 **[Auto-Remediation]** Dispatched Tier 1 subagent to remediate test regressions (attempt ${cur_attempts}/${max_attempts})." >/dev/null 2>&1 || true
+                fi
+            fi
+        fi
+        return 1
+    fi
+}
+
+pr_sweep() {
+    pr_init
+    ui_step "Sweeping open Pull Requests..."
+
+    local evaluated=0
+    if pr_is_gitea_online; then
+        _gitea_load_conf
+        local open_prs
+        open_prs=$(curl -s "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/pulls?state=open" \
+            -H "Authorization: token ${GITEA_TOKEN}" 2>/dev/null)
+        local pr_numbers
+        pr_numbers=$(echo "$open_prs" | jq -r '.[].number // empty' 2>/dev/null)
+
+        for pnum in $pr_numbers; do
+            [ -z "$pnum" ] && continue
+            evaluated=$((evaluated + 1))
+            pr_auto_evaluate "$pnum"
+        done
+    fi
+
+    # Check local file queue as well
+    for f in "$PR_DIR"/*.json; do
+        [ -f "$f" ] || continue
+        local stat id
+        stat=$(jq -r .status "$f" 2>/dev/null)
+        id=$(jq -r .id "$f" 2>/dev/null)
+        if [ "$stat" = "PROPOSED" ] && [ -n "$id" ]; then
+            evaluated=$((evaluated + 1))
+            pr_auto_evaluate "$id"
+        fi
+    done
+
+    if [ "$evaluated" -eq 0 ]; then
+        ui_dim "  No open PRs in queue to evaluate."
+    else
+        ui_ok "PR sweep completed ($evaluated PRs processed)."
+    fi
+}

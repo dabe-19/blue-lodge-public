@@ -25,6 +25,34 @@ _gitea_load_conf() {
     GITEA_REPO="${GITEA_REPO:-blue-lodge}"
 }
 
+gitea_set_endpoint() {
+    local new_url="$1"
+    [ -z "$new_url" ] && return 1
+    [[ "$new_url" != http://* ]] && [[ "$new_url" != https://* ]] && new_url="http://$new_url"
+    new_url="${new_url%/}"
+
+    _gitea_load_conf
+    mkdir -p "$(dirname "$GITEA_CONF")" 2>/dev/null || true
+
+    if [ -f "$GITEA_CONF" ]; then
+        if grep -q '^GITEA_URL=' "$GITEA_CONF" 2>/dev/null; then
+            sed -i "s|^GITEA_URL=.*|GITEA_URL=\"$new_url\"|" "$GITEA_CONF"
+        else
+            echo "GITEA_URL=\"$new_url\"" >> "$GITEA_CONF"
+        fi
+    else
+        cat << EOF > "$GITEA_CONF"
+GITEA_URL="$new_url"
+GITEA_USER="${GITEA_USER:-george}"
+GITEA_TOKEN="${GITEA_TOKEN:-}"
+GITEA_REPO="${GITEA_REPO:-blue-lodge}"
+EOF
+    fi
+
+    GITEA_URL="$new_url"
+    return 0
+}
+
 gitea_is_online() {
     _gitea_load_conf
     curl -sf --max-time 1.5 "${GITEA_URL}/api/v1/version" &>/dev/null
@@ -176,19 +204,49 @@ gitea_pr_merge() {
     local do_type="merge"
     [ "$strategy" = "squash" ] && do_type="squash"
 
-    local resp
-    resp=$(curl -s -X POST "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/pulls/${index}/merge" \
+    # Wait for mergeable status if pending
+    local max_wait=5
+    local wait_count=0
+    while [ "$wait_count" -lt "$max_wait" ]; do
+        local pr_info
+        pr_info=$(curl -s "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/pulls/${index}" \
+            -H "Authorization: token ${GITEA_TOKEN}" 2>/dev/null)
+        local is_mergeable
+        is_mergeable=$(echo "$pr_info" | jq -r '.mergeable // empty' 2>/dev/null)
+        if [ "$is_mergeable" = "true" ]; then
+            break
+        elif [ "$is_mergeable" = "false" ]; then
+            ui_err "PR #${index} has merge conflicts and cannot be merged."
+            return 1
+        fi
+        sleep 1
+        wait_count=$((wait_count + 1))
+    done
+
+    local tmp_resp
+    tmp_resp=$(mktemp)
+    local http_code
+    http_code=$(curl -s -w "%{http_code}" -o "$tmp_resp" -X POST "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/pulls/${index}/merge" \
         -H "Authorization: token ${GITEA_TOKEN}" \
         -H "Content-Type: application/json" \
         -d "{\"Do\":\"${do_type}\"}" 2>/dev/null)
+    local resp_body
+    resp_body=$(cat "$tmp_resp" 2>/dev/null)
+    rm -f "$tmp_resp"
 
-    if [ -z "$resp" ] || echo "$resp" | grep -q "null"; then
+    if [ "$http_code" = "200" ] || [ "$http_code" = "204" ] || [ "$http_code" = "201" ] || [ -z "$resp_body" ] || [ "$resp_body" = "null" ]; then
         ui_ok "Sovereign Gitea PR #${index} successfully merged via ${do_type}!"
         # Sync local develop branch
         git -C "$LODGE_DIR" fetch gitea develop >/dev/null 2>&1 || true
+        local cur_branch
+        cur_branch=$(git -C "$LODGE_DIR" branch --show-current 2>/dev/null)
+        if [ "$cur_branch" = "develop" ]; then
+            git -C "$LODGE_DIR" merge --ff-only gitea/develop >/dev/null 2>&1 || true
+        fi
         return 0
     else
-        echo "$resp"
+        ui_err "Failed to merge Gitea PR #${index} (HTTP $http_code): $resp_body"
+        return 1
     fi
 }
 

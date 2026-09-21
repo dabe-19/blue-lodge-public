@@ -86,6 +86,16 @@ describe "Mastodon functions"
     assert_ok $?
   }
 
+  it "mastodon_validate is defined" && {
+    declare -f mastodon_validate &>/dev/null
+    assert_ok $?
+  }
+
+  it "mastodon_thread is defined" && {
+    declare -f mastodon_thread &>/dev/null
+    assert_ok $?
+  }
+
 describe "Bluesky functions"
 
   it "bluesky_post is defined" && {

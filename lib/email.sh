@@ -1620,3 +1620,29 @@ ssh_status() {
         ui_dim "  Generate: /email ssh-keygen"
     fi
 }
+
+# ── Autonomic Email Sweep ─────────────────────────────────────
+email_sweep() {
+    ui_step "Sweeping configured email inboxes..."
+    local config_dir="${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}"
+    local checked=0
+
+    for conf in "$config_dir"/email_*.conf "$config_dir/email.conf"; do
+        [ -f "$conf" ] || continue
+        local prov=""
+        prov=$(sed -n 's/.*EMAIL_PROVIDER="\([^"]*\)".*/\1/p' "$conf" 2>/dev/null)
+        [ -z "$prov" ] && continue
+
+        if email_provider_reachable "$prov" 2>/dev/null; then
+            checked=$((checked + 1))
+            ui_info "Checking inbox for provider '$prov'..."
+            email_inbox "$prov" 5 2>/dev/null || true
+        fi
+    done
+
+    if [ "$checked" -eq 0 ]; then
+        ui_dim "  No active email providers configured to sweep."
+    else
+        ui_ok "Email sweep completed ($checked providers checked)."
+    fi
+}

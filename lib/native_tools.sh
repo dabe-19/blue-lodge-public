@@ -71,6 +71,20 @@ _NATIVE_CORE_TOOLS='[
   {
     "type": "function",
     "function": {
+      "name": "tool_search",
+      "description": "Search the sovereign tool catalog using natural language or bundle tags (e.g. +git, how to post to x, database query, +ops) to dynamically auto-mount new capabilities into your active session.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "The search query, task intent, or bundle name (e.g. +git, +social, +web, how to download a paper)." }
+        },
+        "required": ["query"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "file_write",
       "description": "Create a new file or completely overwrite an existing file with the specified content.",
       "parameters": {
@@ -545,6 +559,22 @@ _NATIVE_CORE_TOOLS='[
           "message": { "type": "string", "description": "Message text to send as DM." }
         },
         "required": ["user", "message"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "discord_send_file",
+      "description": "Upload a local image or file attachment (e.g. PNG, JPG, PDF, TXT) to a Discord channel or user DM.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target": { "type": "string", "description": "Destination channel name, ID, or user DM." },
+          "file_path": { "type": "string", "description": "Absolute or workspace path to the local file/image to upload." },
+          "message": { "type": "string", "description": "Optional accompanying text message." }
+        },
+        "required": ["target", "file_path"]
       }
     }
   },
@@ -1104,6 +1134,20 @@ _NATIVE_CORE_TOOLS='[
   {
     "type": "function",
     "function": {
+      "name": "gitea_set_endpoint",
+      "description": "Configure or switch the active Gitea server endpoint URL (e.g. http://llama.cpp-prism:3088).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "New Gitea server base URL" }
+        },
+        "required": ["url"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "gitea_repo_sync",
       "description": "Push local develop branch or specified branch to sovereign Gitea remote.",
       "parameters": {
@@ -1375,6 +1419,363 @@ native_tools_get_all_schemas() {
     echo "$all_tools"
 }
 
+# ── Dynamic Schema Filter ─────────────────────────────────────────────
+# Allows tasks to request a lean, scoped subset of tools (e.g. for research or code editing)
+# to minimize context token prefill overhead on local LLMs.
+native_tools_get_schemas() {
+    local filter="${1:-all}"
+    local all_tools
+    all_tools=$(native_tools_get_all_schemas)
+
+    if [ -z "$filter" ] || [ "$filter" = "all" ]; then
+        echo "$all_tools"
+        return 0
+    fi
+
+    echo "$all_tools" | jq --arg f "$filter" '
+        ($f | split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; ""))) as $allowed |
+        [.[] | select(.function.name as $n | $allowed | index($n))]
+    ' 2>/dev/null || echo "$all_tools"
+}
+
+# ── Composable Tool Bundles & Bedrock Taxonomy ────────────────────────
+_BEDROCK_TOOLS="bash_exec,slash_command_exec,file_read,ask_operator,tool_search"
+
+# Map bundles to their constituent tool names
+native_tools_bundle_tools() {
+    local bundle="$1"
+    case "$bundle" in
+        bedrock|_bedrock)
+            echo "$_BEDROCK_TOOLS"
+            ;;
+        +web|web)
+            echo "web_search,web_fetch,github_search"
+            ;;
+        +files|files)
+            echo "file_write,file_append,file_edit,file_grep,dir_list"
+            ;;
+        +code|code)
+            echo "project_build,project_test,project_fix,code_outline,code_symbol_get,code_validate,code_symbol_read,code_symbol_patch"
+            ;;
+        +git|git)
+            echo "git_commit,git_push,gitea_pr_create,pr_audit,git_clone"
+            ;;
+        +vision|vision)
+            echo "vision_analyze,file_download"
+            ;;
+        +social|social)
+            echo "social_post,discord_send,discord_dm,discord_send_file,telegram_send,email_send,email_read,phone_sms_send,mqtt_publish"
+            ;;
+        +ops|ops)
+            echo "system_vitals,sandbox_create,sandbox_exec,sandbox_list,sandbox_remove,container_exec,service_manage,service_list,backup_create,backup_list,backup_restore,pgp_sign,pgp_verify"
+            ;;
+        +memory|memory)
+            echo "recall_search,recall_ingest,recall_list_docs,recall_archive_milestone,journal_record,journal_read,memory_get_section,memory_update_section,memory_append_section,memory_read_soul"
+            ;;
+        +crypto|crypto)
+            echo "wallet_status,wallet_balances,wallet_set_network,crypto_send,solana_airdrop"
+            ;;
+        +swarm|swarm)
+            echo "subagent_delegate,subagent_spawn,subagent_status,subagent_logs,subagent_diff,subagent_merge,subagent_reap,subagent_intervene,subagent_await"
+            ;;
+        +models|models)
+            echo "model_param_set,model_param_get,model_param_clear,model_endpoint_switch,model_endpoint_status,reflexive_status,reflexive_toggle,reflexive_metacog_assess,reflexive_prompt_grade"
+            ;;
+        +gsuite|gsuite)
+            echo "gsuite_search"
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
+
+# ── Profile Resolver ──────────────────────────────────────────────────
+# Resolves preset profile names or composable bundles into full schemas.
+native_tools_resolve_profile() {
+    local profile="${1:-default}"
+    local tool_list="$_BEDROCK_TOOLS"
+
+    case "$profile" in
+        research)
+            tool_list+=",$(native_tools_bundle_tools '+web'),$(native_tools_bundle_tools '+files'),$(native_tools_bundle_tools '+vision'),$(native_tools_bundle_tools '+memory')"
+            ;;
+        code|coding)
+            tool_list+=",$(native_tools_bundle_tools '+files'),$(native_tools_bundle_tools '+code'),$(native_tools_bundle_tools '+git')"
+            ;;
+        social)
+            tool_list+=",$(native_tools_bundle_tools '+web'),$(native_tools_bundle_tools '+social'),$(native_tools_bundle_tools '+memory'),$(native_tools_bundle_tools '+vision')"
+            ;;
+        ops)
+            tool_list+=",$(native_tools_bundle_tools '+files'),$(native_tools_bundle_tools '+ops'),$(native_tools_bundle_tools '+memory')"
+            ;;
+        swarm)
+            tool_list+=",$(native_tools_bundle_tools '+swarm'),$(native_tools_bundle_tools '+social'),$(native_tools_bundle_tools '+ops')"
+            ;;
+        minimal|bedrock)
+            tool_list="$_BEDROCK_TOOLS"
+            ;;
+        all)
+            echo "$(native_tools_get_all_schemas)"
+            return 0
+            ;;
+        default|"")
+            tool_list+=",$(native_tools_bundle_tools '+files'),$(native_tools_bundle_tools '+git'),$(native_tools_bundle_tools '+web')"
+            ;;
+        *)
+            local item
+            IFS=',' read -ra ADDR <<< "$profile"
+            for item in "${ADDR[@]}"; do
+                item=$(echo "$item" | tr -d ' ')
+                local b_tools
+                b_tools=$(native_tools_bundle_tools "$item")
+                if [ -n "$b_tools" ]; then
+                    tool_list+=",$b_tools"
+                else
+                    tool_list+=",$item"
+                fi
+            done
+            ;;
+    esac
+
+    native_tools_get_schemas "$tool_list"
+}
+
+# ── Domain Keyword Tags for High-Precision BM25 Matching ──────────────
+native_tools_domain_tags() {
+    case "$1" in
+        web_search) echo "web search internet google query research paper arxiv browse find online" ;;
+        web_fetch) echo "web fetch scrape read download url html page article preprint source" ;;
+        github_search) echo "github code search repo repository open source git implementation" ;;
+        vision_analyze) echo "vision image photo diagram figure chart architecture visual inspect picture" ;;
+        file_download) echo "download file curl wget fetch binary pdf image raw" ;;
+        git_commit|git_push|git_clone) echo "git commit push clone repo branch code vcs version control" ;;
+        gitea_pr_create|pr_audit) echo "pr pull request merge gitea review code audit" ;;
+        social_post) echo "social post broadcast x twitter mastodon bluesky thread status publish tweet" ;;
+        discord_send|discord_dm|discord_send_file) echo "discord channel message alert notification chat send dm webhook file image upload attachment" ;;
+        telegram_send) echo "telegram chat message alert notification channel send" ;;
+        email_send|email_read) echo "email mail message inbox smtp letter imap send" ;;
+        system_vitals) echo "vitals cpu memory gpu hardware status monitoring load thermal resources" ;;
+        sandbox_create|sandbox_exec) echo "sandbox isolate docker container environment run execute" ;;
+        container_exec) echo "container docker exec sandbox run command isolated" ;;
+        wallet_status|crypto_send|solana_airdrop) echo "wallet crypto balance token send transfer solana eth funds" ;;
+        recall_search|recall_ingest) echo "recall memory knowledge search retrieve semantic docs archive" ;;
+        project_build|project_test|project_fix) echo "build test compile cargo npm pytest make check run fix" ;;
+        file_write|file_append|file_edit) echo "write file append edit modify save content create update" ;;
+        file_grep|dir_list) echo "grep search files directory list find pattern structure" ;;
+        subagent_spawn|subagent_delegate) echo "subagent swarm delegate spawn background worker task parallel" ;;
+        *) echo "" ;;
+    esac
+}
+
+# ── SQLite FTS5 BM25 Engine for Tool Catalog ──────────────────────────
+_LODGE_TOOLS_FTS_DB="${TMPDIR:-/tmp}/.lodge_tools_fts.db"
+
+native_tools_fts_init() {
+    local force="${1:-0}"
+    if [ "$force" -ne 1 ] && [ -f "$_LODGE_TOOLS_FTS_DB" ]; then
+        local count
+        count=$(sqlite3 "$_LODGE_TOOLS_FTS_DB" "SELECT count(*) FROM tools_fts;" 2>/dev/null || echo 0)
+        [ "$count" -gt 50 ] && return 0
+    fi
+
+    rm -f "$_LODGE_TOOLS_FTS_DB" 2>/dev/null
+    sqlite3 "$_LODGE_TOOLS_FTS_DB" << 'EOF'
+CREATE VIRTUAL TABLE tools_fts USING fts5(
+    name UNINDEXED,
+    bundle,
+    description,
+    tags,
+    parameters,
+    tokenize = 'porter unicode61'
+);
+EOF
+
+    local all_tools
+    all_tools=$(native_tools_get_all_schemas)
+
+    echo "$all_tools" | jq -c '.[]' | while read -r tool; do
+        local t_name t_desc t_params t_bundle="+other"
+        t_name=$(echo "$tool" | jq -r '.function.name // empty')
+        [ -z "$t_name" ] && continue
+        t_desc=$(echo "$tool" | jq -r '.function.description // ""')
+        t_params=$(echo "$tool" | jq -r '.function.parameters // {} | tostring')
+
+        local b
+        if [[ ",$_BEDROCK_TOOLS," =~ ",$t_name," ]]; then
+            t_bundle="_bedrock"
+        else
+            for b in web files code git vision social ops memory crypto swarm models gsuite; do
+                local b_list
+                b_list=$(native_tools_bundle_tools "$b")
+                if [[ ",$b_list," =~ ",$t_name," ]]; then
+                    t_bundle="+$b"
+                    break
+                fi
+            done
+        fi
+
+        if [[ "$t_desc" =~ MCP\ tool\ on\ server\ \'([^\']+)\' ]]; then
+            t_bundle="+mcp_${BASH_REMATCH[1]}"
+        fi
+
+        local t_tags
+        t_tags=$(native_tools_domain_tags "$t_name")
+
+        local s_name s_bundle s_desc s_tags s_params
+        s_name="${t_name//\'/\'\'}"
+        s_bundle="${t_bundle//\'/\'\'}"
+        s_desc="${t_desc//\'/\'\'}"
+        s_tags="${t_tags//\'/\'\'}"
+        s_params="${t_params//\'/\'\'}"
+
+        sqlite3 "$_LODGE_TOOLS_FTS_DB" "INSERT INTO tools_fts (name, bundle, description, tags, parameters) VALUES ('$s_name', '$s_bundle', '$s_desc', '$s_tags', '$s_params');" 2>/dev/null || true
+    done
+}
+
+# ── Dynamic Tool Search & 1-Turn Auto-Mount ────────────────────────────
+native_tools_search() {
+    local query="$1"
+    local session_dir="${2:-${AGENT_ACTIVE_SESSION_DIR:-}}"
+    local max_tools="${3:-24}"
+
+    [ -z "$query" ] && { echo "Error: query required for tool_search."; return 1; }
+
+    native_tools_fts_init 0
+
+    local matched_bundle="" matched_tools=""
+
+    # 1. Direct bundle tag match (e.g. "+git", "git")
+    local clean_q
+    clean_q=$(echo "$query" | tr -d ' +' | tr '[:upper:]' '[:lower:]')
+    local direct_b_tools
+    direct_b_tools=$(native_tools_bundle_tools "$clean_q")
+    if [ -n "$direct_b_tools" ]; then
+        matched_bundle="+$clean_q"
+        matched_tools="$direct_b_tools"
+    else
+        # 2. SQLite FTS5 BM25 search with OR tokenization
+        local words=()
+        for w in $(echo "$query" | tr -cs 'a-zA-Z0-9' ' ' | tr '[:upper:]' '[:lower:]'); do
+            [ ${#w} -le 1 ] && continue
+            case "$w" in
+                how|the|and|or|to|in|on|at|for|a|an|is|it|do|can|with|my) continue ;;
+            esac
+            words+=("${w}*")
+        done
+
+        if [ ${#words[@]} -gt 0 ]; then
+            local fts_q
+            fts_q=$(IFS=' '; echo "${words[*]}" | sed 's/ / OR /g')
+            local sql_res
+            sql_res=$(sqlite3 "$_LODGE_TOOLS_FTS_DB" "SELECT bundle, name, bm25(tools_fts) FROM tools_fts WHERE tools_fts MATCH '$fts_q' ORDER BY bm25(tools_fts) LIMIT 8;" 2>/dev/null)
+            if [ -n "$sql_res" ]; then
+                # Select top-ranked non-bedrock bundle
+                matched_bundle=$(echo "$sql_res" | grep -v '^_bedrock' | head -n 1 | cut -d'|' -f1)
+                local b_clean="${matched_bundle#+}"
+                matched_tools=$(native_tools_bundle_tools "$b_clean")
+                if [ -z "$matched_tools" ]; then
+                    matched_tools=$(echo "$sql_res" | grep -v '^_bedrock' | cut -d'|' -f2 | tr '\n' ',' | sed 's/,$//')
+                fi
+            fi
+        fi
+    fi
+
+    if [ -z "$matched_tools" ]; then
+        echo "No matching tool capabilities found for query: '$query'. Try another search term or bundle name (+web, +git, +social, +code, +files, +ops, +vision, +crypto)."
+        return 0
+    fi
+
+    # Auto-Mount into session active_tools.json if session_dir is available
+    local active_tools_file="$session_dir/active_tools.json"
+    local evicted_bundle=""
+    local total_count=0
+    if [ -n "$session_dir" ] && [ -d "$session_dir" ]; then
+        local current_tools_json="[]"
+        [ -f "$active_tools_file" ] && current_tools_json=$(cat "$active_tools_file" 2>/dev/null || echo "[]")
+
+        local new_schemas
+        new_schemas=$(native_tools_get_schemas "$matched_tools")
+
+        local merged_tools
+        merged_tools=$(jq -n --argjson curr "$current_tools_json" --argjson new "$new_schemas" '
+            ($curr + $new) | unique_by(.function.name)
+        ' 2>/dev/null)
+
+        total_count=$(echo "$merged_tools" | jq '. | length' 2>/dev/null || echo 0)
+        total_count="${total_count:-0}"
+
+        # Enforce max_tools ceiling via LRU bundle eviction loop
+        while [ "$total_count" -gt "$max_tools" ] 2>/dev/null; do
+            local mounted_bundles
+            mounted_bundles=$(echo "$merged_tools" | jq -r '.[].function.name' | while read -r tname; do
+                for b in web files code git vision social ops memory crypto swarm models gsuite; do
+                    local bl
+                    bl=$(native_tools_bundle_tools "$b")
+                    if [[ ",$bl," =~ ",$tname," ]]; then
+                        echo "+$b"
+                        break
+                    fi
+                done
+            done | grep -v '^\s*$' | sort -u)
+
+            local traj_log="$session_dir/trajectory.log"
+            local lru_bundle="" lru_score=999999
+            for mb in $mounted_bundles; do
+                [ "$mb" = "$matched_bundle" ] && continue
+                local mb_clean="${mb#+}"
+                local mb_tools
+                mb_tools=$(native_tools_bundle_tools "$mb_clean")
+                local call_count=0
+                if [ -f "$traj_log" ]; then
+                    IFS=',' read -ra T_ARR <<< "$mb_tools"
+                    for tn in "${T_ARR[@]}"; do
+                        local c
+                        c=$(grep -c "Tool Call: $tn" "$traj_log" 2>/dev/null || true)
+                        c="${c:-0}"
+                        call_count=$((call_count + c))
+                    done
+                fi
+                if [ "$call_count" -lt "$lru_score" ]; then
+                    lru_score="$call_count"
+                    lru_bundle="$mb"
+                fi
+            done
+
+            if [ -n "$lru_bundle" ]; then
+                if [ -z "$evicted_bundle" ]; then
+                    evicted_bundle="$lru_bundle"
+                else
+                    evicted_bundle+=", $lru_bundle"
+                fi
+                local evict_clean="${lru_bundle#+}"
+                local evict_tool_list
+                evict_tool_list=$(native_tools_bundle_tools "$evict_clean")
+                merged_tools=$(echo "$merged_tools" | jq --arg evict "$evict_tool_list" --arg bedrock "$_BEDROCK_TOOLS" '
+                    ($evict | split(",")) as $e |
+                    ($bedrock | split(",")) as $b |
+                    [.[] | select((.function.name as $n | $b | index($n)) or (.function.name as $n | ($e | index($n) | not)))]
+                ')
+                local prev_count="$total_count"
+                total_count=$(echo "$merged_tools" | jq '. | length' 2>/dev/null || echo "$total_count")
+                [ "$total_count" -ge "$prev_count" ] && break
+            else
+                break
+            fi
+        done
+
+        echo "$merged_tools" > "$active_tools_file"
+    fi
+
+    local msg="✓ Attached bundle '${matched_bundle}' (${matched_tools})."
+    if [ -n "$evicted_bundle" ]; then
+        msg+=" ℹ Pruned inactive bundle(s) '${evicted_bundle}' to respect the ${max_tools}-tool ceiling."
+    fi
+    [ "$total_count" -gt 0 ] && msg+=" Active tools: ${total_count}/${max_tools}."
+    msg+=" These tools are now immediately available."
+    echo "$msg"
+}
+
 # ── Tool Dispatcher ───────────────────────────────────────────────────
 # Receives call_id, function name, JSON arguments string, and workspace.
 # Executes the pure POSIX tool and prints standard OpenAI tool response JSON:
@@ -1407,6 +1808,12 @@ native_tools_dispatch() {
     # 2. Dispatch to Built-in POSIX Tools if not MCP
     if [ "$handled_by_mcp" -eq 0 ]; then
         case "$name" in
+            tool_search)
+                local q
+                q=$(echo "$args_json" | jq -r '.query // empty')
+                output=$(native_tools_search "$q" "${AGENT_ACTIVE_SESSION_DIR:-$workdir}" 24)
+                exit_code=$?
+                ;;
             bash_exec)
                 local cmd
                 cmd=$(echo "$args_json" | jq -r '.command // empty')
@@ -1525,8 +1932,16 @@ $_ts_v_err
             web_fetch)
                 local u
                 u=$(echo "$args_json" | jq -r '.url // empty')
-                output=$(web_fetch "$u" 2>&1)
-                exit_code=$?
+                if command -v timeout &>/dev/null; then
+                    output=$(timeout --kill-after=5s 20s bash -c "source '$LODGE_DIR/lib/web.sh' 2>/dev/null; web_fetch \"$u\"" 2>&1)
+                    exit_code=$?
+                    if [ $exit_code -eq 124 ]; then
+                        output="Error: web_fetch timed out after 20 seconds (page unresponsive or blocked by challenge)."
+                    fi
+                else
+                    output=$(web_fetch "$u" 2>&1)
+                    exit_code=$?
+                fi
                 ;;
             github_search)
                 local q cnt
@@ -1821,6 +2236,29 @@ $_ts_v_err
                 if [ -n "$has_bot" ]; then
                     output=$(discord_dm "${usr:-dabe}" "$msg" 2>&1)
                     exit_code=$?
+                else
+                    output="Discord bot token is not configured. Set DISCORD_BOT_TOKEN with: /api keys set DISCORD_BOT_TOKEN <token>"
+                    exit_code=1
+                fi
+                ;;
+            discord_send_file)
+                local tgt file_p msg
+                tgt=$(echo "$args_json" | jq -r '.target // empty')
+                file_p=$(echo "$args_json" | jq -r '.file_path // empty')
+                msg=$(echo "$args_json" | jq -r '.message // empty')
+                tgt=$(echo "$tgt" | sed 's/^["'\''"]*//; s/["'\''"]*$//')
+                file_p=$(echo "$file_p" | sed 's/^["'\''"]*//; s/["'\''"]*$//')
+                source "$LODGE_DIR/lib/discord_bridge.sh" 2>/dev/null || true
+                local has_bot
+                has_bot=$(api_get_key "DISCORD_BOT_TOKEN" 2>/dev/null || true)
+                if [ -n "$has_bot" ]; then
+                    if [ -n "$tgt" ] && [ -n "$file_p" ]; then
+                        output=$(discord_send_file "$tgt" "$file_p" "$msg" 2>&1)
+                        exit_code=$?
+                    else
+                        output="Target and file_path are required for discord_send_file."
+                        exit_code=1
+                    fi
                 else
                     output="Discord bot token is not configured. Set DISCORD_BOT_TOKEN with: /api keys set DISCORD_BOT_TOKEN <token>"
                     exit_code=1
@@ -2240,6 +2678,17 @@ $_ts_v_err
             gitea_status)
                 output=$(gitea_status 2>&1)
                 exit_code=$?
+                ;;
+            gitea_set_endpoint)
+                local ep_url
+                ep_url=$(echo "$args_json" | jq -r '.url // empty')
+                if [ -n "$ep_url" ]; then
+                    output=$(gitea_set_endpoint "$ep_url" 2>&1 && echo "Gitea endpoint updated to $ep_url")
+                    exit_code=$?
+                else
+                    output="Error: url parameter required"
+                    exit_code=1
+                fi
                 ;;
             gitea_repo_sync)
                 local br

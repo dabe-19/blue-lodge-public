@@ -103,6 +103,32 @@ describe "native_tools_get_all_schemas"
     assert_ok $?
   }
 
+describe "native_tools_get_schemas"
+  it "returns all schemas when filter is empty or all" && {
+    all_s=$(native_tools_get_schemas)
+    len_all=$(echo "$all_s" | jq '. | length')
+    [ "$len_all" -ge 72 ]
+    assert_ok $?
+
+    all_explicit=$(native_tools_get_schemas "all")
+    len_exp=$(echo "$all_explicit" | jq '. | length')
+    assert_eq "$len_all" "$len_exp"
+  }
+
+  it "filters schemas strictly to requested comma-separated tools" && {
+    scoped=$(native_tools_get_schemas "web_search, web_fetch, bash_exec")
+    s_len=$(echo "$scoped" | jq '. | length')
+    assert_eq "$s_len" "3"
+    echo "$scoped" | jq -e '.[] | select(.function.name == "web_search")' >/dev/null
+    assert_ok $?
+    echo "$scoped" | jq -e '.[] | select(.function.name == "web_fetch")' >/dev/null
+    assert_ok $?
+    echo "$scoped" | jq -e '.[] | select(.function.name == "bash_exec")' >/dev/null
+    assert_ok $?
+    echo "$scoped" | jq -e '.[] | select(.function.name == "git_push")' >/dev/null
+    assert_fail $?
+  }
+
 describe "native_tools_dispatch"
   it "dispatches bash_exec successfully" && {
     res=$(native_tools_dispatch "call_test1" "bash_exec" '{"command":"echo test_success"}' "$PWD")

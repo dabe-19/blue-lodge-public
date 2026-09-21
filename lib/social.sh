@@ -7,12 +7,134 @@
 
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/api.sh"
+source "$LODGE_DIR/lib/pgp.sh"
+[ -f "$LODGE_DIR/lib/social_blog.sh" ] && source "$LODGE_DIR/lib/social_blog.sh"
 
 # ═══════════════════════════════════════════════════════════════
-# X (Twitter) — v2 API with Bearer Token
+# X (Twitter) — v2 API (OAuth 1.0a User Context & Bearer)
 # ═══════════════════════════════════════════════════════════════
-# Setup: Create app at developer.x.com, get Bearer Token
-# Key: X_BEARER_TOKEN
+# Setup: Developer Portal (developer.x.com)
+# Posting as User requires User Context:
+#   X_CONSUMER_KEY (API Key), X_CONSUMER_SECRET (API Secret)
+#   X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET
+# Or OAuth 2.0 User Context / Bearer:
+#   X_BEARER_TOKEN
+
+_x_percent_encode() {
+    local string="$1"
+    if command -v python3 &>/dev/null; then
+        python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''), end='')" "$string"
+    elif command -v jq &>/dev/null; then
+        printf '%s' "$string" | jq -sRr @uri
+    else
+        local strlen=${#string}
+        local encoded=""
+        local pos c o
+        for (( pos=0 ; pos<strlen ; pos++ )); do
+            c=${string:$pos:1}
+            case "$c" in
+                [-_.~a-zA-Z0-9] ) o="${c}" ;;
+                * ) printf -v o '%%%02X' "'$c"
+            esac
+            encoded+="${o}"
+        done
+        printf '%s' "${encoded}"
+    fi
+}
+
+_x_oauth1_header() {
+    local method="$1"
+    local url="$2"
+    local consumer_key="$3"
+    local consumer_secret="$4"
+    local token="$5"
+    local token_secret="$6"
+
+    local nonce
+    nonce=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    local timestamp
+    timestamp=$(date +%s)
+
+    local enc_ckey enc_nonce enc_token
+    enc_ckey=$(_x_percent_encode "$consumer_key")
+    enc_nonce=$(_x_percent_encode "$nonce")
+    enc_token=$(_x_percent_encode "$token")
+
+    local params="oauth_consumer_key=${enc_ckey}&oauth_nonce=${enc_nonce}&oauth_signature_method=HMAC-SHA1&oauth_timestamp=${timestamp}&oauth_token=${enc_token}&oauth_version=1.0"
+
+    local encoded_method encoded_url encoded_params
+    encoded_method=$(printf '%s' "$method" | tr '[:lower:]' '[:upper:]')
+    encoded_url=$(_x_percent_encode "$url")
+    encoded_params=$(_x_percent_encode "$params")
+
+    local base_string="${encoded_method}&${encoded_url}&${encoded_params}"
+    local signing_key="$(_x_percent_encode "$consumer_secret")&$(_x_percent_encode "$token_secret")"
+
+    local signature
+    signature=$(printf '%s' "$base_string" | openssl dgst -sha1 -hmac "$signing_key" -binary | base64 | tr -d '\n')
+    local encoded_sig
+    encoded_sig=$(_x_percent_encode "$signature")
+
+    echo "Authorization: OAuth oauth_consumer_key=\"$consumer_key\", oauth_nonce=\"$nonce\", oauth_signature=\"$encoded_sig\", oauth_signature_method=\"HMAC-SHA1\", oauth_timestamp=\"$timestamp\", oauth_token=\"$token\", oauth_version=\"1.0\""
+}
+
+_x_auth_header() {
+    local method="${1:-POST}"
+    local url="${2:-https://api.x.com/2/tweets}"
+
+    local ckey csec atok atoksec bearer
+    ckey=$(api_get_key "X_CONSUMER_KEY" 2>/dev/null || api_get_key "X_API_KEY" 2>/dev/null || echo "")
+    csec=$(api_get_key "X_CONSUMER_SECRET" 2>/dev/null || api_get_key "X_API_SECRET" 2>/dev/null || echo "")
+    atok=$(api_get_key "X_ACCESS_TOKEN" 2>/dev/null || echo "")
+    atoksec=$(api_get_key "X_ACCESS_TOKEN_SECRET" 2>/dev/null || echo "")
+    bearer=$(api_get_key "X_BEARER_TOKEN" 2>/dev/null || echo "")
+
+    if [ -n "$ckey" ] && [ -n "$csec" ] && [ -n "$atok" ] && [ -n "$atoksec" ]; then
+        _x_oauth1_header "$method" "$url" "$ckey" "$csec" "$atok" "$atoksec"
+        return 0
+    elif [ -n "$bearer" ]; then
+        echo "Authorization: Bearer $bearer"
+        return 0
+    fi
+    return 1
+}
+
+_x_cookie_auth_available() {
+    local auth_token ct0
+    auth_token=$(api_get_key "X_AUTH_TOKEN" 2>/dev/null || echo "")
+    ct0=$(api_get_key "X_CT0" 2>/dev/null || echo "")
+    [ -n "$auth_token" ] && [ -n "$ct0" ]
+}
+
+_x_cookie_post() {
+    local text="$1"
+    local reply_to_id="${2:-}"
+
+    local auth_token ct0
+    auth_token=$(api_get_key "X_AUTH_TOKEN" 2>/dev/null || echo "")
+    ct0=$(api_get_key "X_CT0" 2>/dev/null || echo "")
+
+    if [ -z "$auth_token" ] || [ -z "$ct0" ]; then
+        return 1
+    fi
+
+    local resp
+    resp=$(python3 "$LODGE_DIR/lib/social_cookie.py" post "$auth_token" "$ct0" "$text" "$reply_to_id" 2>/dev/null)
+    local status
+    status=$(echo "$resp" | jq -r '.status // empty' 2>/dev/null)
+    if [ "$status" = "ok" ]; then
+        local tweet_id
+        tweet_id=$(echo "$resp" | jq -r '.tweet_id // empty' 2>/dev/null)
+        ui_ok "Posted to X via Web Session (ID: ${tweet_id:-posted})" >&2
+        echo "$resp"
+        return 0
+    else
+        local detail
+        detail=$(echo "$resp" | jq -r '.detail // "unknown error"' 2>/dev/null)
+        ui_err "X Web Session post failed: $detail" >&2
+        return 1
+    fi
+}
 
 x_post() {
     local text="$1"
@@ -22,6 +144,23 @@ x_post() {
     fi
     # Expand LLM escape sequences (literal \n → real newlines)
     text=$(ui_expand_escapes "$text")
+
+    # Sign with George GPG key if enabled (cryptographic provenance)
+    if [ "${SOCIAL_GPG_SIGN:-1}" -eq 1 ]; then
+        if [ -f "$LODGE_DIR/lib/pgp.sh" ]; then
+            source "$LODGE_DIR/lib/pgp.sh"
+            if declare -f pgp_sign_social &>/dev/null; then
+                text=$(pgp_sign_social "$text")
+            fi
+        fi
+    fi
+
+    # 1. Prefer cookie session if available and not forced to API
+    if _x_cookie_auth_available && [ "${SOCIAL_PREFER_API:-0}" -ne 1 ]; then
+        if _x_cookie_post "$text"; then
+            return 0
+        fi
+    fi
 
     # MCP-first: route through george-x x_post tool
     if declare -f mcp_enabled &>/dev/null && mcp_enabled; then
@@ -35,24 +174,32 @@ x_post() {
             ui_dim "  [debug] x_post: MCP failed — falling through to direct"
     fi
 
-    local token
-    token=$(api_require_key "X_BEARER_TOKEN" "X/Twitter") || return 1
+    local auth_header
+    auth_header=$(_x_auth_header "POST" "https://api.x.com/2/tweets")
+    if [ -z "$auth_header" ]; then
+        ui_err "No X credentials configured (need OAuth 1.0a User keys, Session Cookies, or Bearer Token)"
+        ui_dim "To post via Web Session ($0 extra): /secret set X_AUTH_TOKEN <token> & /secret set X_CT0 <ct0>"
+        ui_dim "To post via API:                   /secret set X_ACCESS_TOKEN <token>"
+        ui_dim "Or validate existing:              /social x validate"
+        return 1
+    fi
 
     local data
     data=$(jq -n --arg t "$text" '{"text": $t}')
 
     local resp
-    resp=$(api_post "https://api.x.com/2/tweets" "$data" \
-        -H "Authorization: Bearer $token")
+    resp=$(api_post "https://api.x.com/2/tweets" "$data" -H "$auth_header")
     local status=$?
 
     if [ $status -eq 0 ]; then
         local tweet_id
         tweet_id=$(api_json_get "$resp" '.data.id')
-        ui_ok "Posted to X (ID: $tweet_id)"
+        ui_ok "Posted to X (ID: $tweet_id)" >&2
         echo "$resp"
     else
-        ui_err "X post failed: $(api_json_get "$resp" '.detail // .title // "unknown error"')"
+        local err_msg
+        err_msg=$(api_json_get "$resp" '.detail // .title // "unknown error"')
+        ui_err "X post failed: $err_msg" >&2
         return 1
     fi
 }
@@ -72,12 +219,16 @@ x_timeline() {
             ui_dim "  [debug] x_timeline: MCP failed — falling through to direct"
     fi
 
-    local token
-    token=$(api_require_key "X_BEARER_TOKEN" "X/Twitter") || return 1
+    local auth_header
+    auth_header=$(_x_auth_header "GET" "https://api.x.com/2/tweets/search/recent")
+    if [ -z "$auth_header" ]; then
+        ui_err "No X credentials configured"
+        return 1
+    fi
 
     local resp
     resp=$(api_get "https://api.x.com/2/tweets/search/recent?max_results=$count&query=from:me" \
-        -H "Authorization: Bearer $token")
+        -H "$auth_header")
 
     if [ $? -eq 0 ]; then
         echo "$resp" | jq -r '.data[]? | "[\(.id)] \(.text)"' 2>/dev/null
@@ -91,6 +242,22 @@ x_reply() {
     local tweet_id="$1"
     local text="$2"
 
+    if [ "${SOCIAL_GPG_SIGN:-1}" -eq 1 ]; then
+        if [ -f "$LODGE_DIR/lib/pgp.sh" ]; then
+            source "$LODGE_DIR/lib/pgp.sh"
+            if declare -f pgp_sign_social &>/dev/null; then
+                text=$(pgp_sign_social "$text")
+            fi
+        fi
+    fi
+
+    # 1. Prefer cookie session if available
+    if _x_cookie_auth_available && [ "${SOCIAL_PREFER_API:-0}" -ne 1 ]; then
+        if _x_cookie_post "$text" "$tweet_id"; then
+            return 0
+        fi
+    fi
+
     # MCP-first: route through george-x x_reply tool
     if declare -f mcp_enabled &>/dev/null && mcp_enabled; then
         local _mcp_result
@@ -103,15 +270,133 @@ x_reply() {
             ui_dim "  [debug] x_reply: MCP failed — falling through to direct"
     fi
 
-    local token
-    token=$(api_require_key "X_BEARER_TOKEN" "X/Twitter") || return 1
+    local auth_header
+    auth_header=$(_x_auth_header "POST" "https://api.x.com/2/tweets")
+    if [ -z "$auth_header" ]; then
+        ui_err "No X credentials configured"
+        return 1
+    fi
 
     local data
     data=$(jq -n --arg t "$text" --arg id "$tweet_id" \
         '{"text": $t, "reply": {"in_reply_to_tweet_id": $id}}')
 
-    api_post "https://api.x.com/2/tweets" "$data" \
-        -H "Authorization: Bearer $token"
+    local resp
+    resp=$(api_post "https://api.x.com/2/tweets" "$data" -H "$auth_header")
+    local status=$?
+    if [ $status -eq 0 ]; then
+        local reply_id
+        reply_id=$(echo "$resp" | jq -r '.data.id // .id // empty' 2>/dev/null)
+        ui_ok "Replied to X (ID: ${reply_id:-posted})" >&2
+        echo "$resp"
+        return 0
+    else
+        local err_msg
+        err_msg=$(echo "$resp" | jq -r '.detail // .title // "unknown error"' 2>/dev/null)
+        ui_err "X reply failed: $err_msg" >&2
+        return 1
+    fi
+}
+
+x_thread() {
+    local full_text="$1"
+    local delay="${2:-2}"
+
+    if [ -z "$full_text" ]; then
+        ui_err "Usage: x_thread <text>"
+        return 1
+    fi
+
+    # Auto-expand file references
+    if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then
+        full_text=$(tools_expand_file_refs "$full_text")
+    fi
+    full_text=$(ui_expand_escapes "$full_text")
+
+    # Split text into chunks (~240 chars each to leave room for [N/M] and signatures)
+    # Using python to split nicely at paragraph or sentence boundaries
+    local chunks_json
+    chunks_json=$(python3 -c '
+import sys, re
+
+text = sys.argv[1]
+max_len = 220
+paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+
+chunks = []
+current = ""
+for p in paragraphs:
+    if len(current) + len(p) + 2 <= max_len:
+        current = (current + "\n\n" + p).strip()
+    else:
+        if current:
+            chunks.append(current)
+        if len(p) <= max_len:
+            current = p
+        else:
+            # Split long paragraph by sentences
+            sentences = re.split(r"(?<=[.?!])\s+", p)
+            s_curr = ""
+            for s in sentences:
+                if len(s_curr) + len(s) + 1 <= max_len:
+                    s_curr = (s_curr + " " + s).strip()
+                else:
+                    if s_curr:
+                        chunks.append(s_curr)
+                    s_curr = s
+            current = s_curr
+if current:
+    chunks.append(current)
+
+import json
+print(json.dumps(chunks))
+' "$full_text" 2>/dev/null)
+
+    local count
+    count=$(echo "$chunks_json" | jq '. | length' 2>/dev/null)
+    if [ -z "$count" ] || [ "$count" -le 1 ]; then
+        # Post single tweet
+        x_post "$full_text"
+        return $?
+    fi
+
+    ui_info "Publishing X thread (${count} tweets)..."
+    local prev_id=""
+    local root_id=""
+    local idx=0
+
+    while [ "$idx" -lt "$count" ]; do
+        local chunk
+        chunk=$(echo "$chunks_json" | jq -r ".[$idx]")
+        local num=$((idx + 1))
+        # Strip existing [X/Y] prefix if present to avoid doubling
+        chunk=$(echo "$chunk" | sed -E 's/^\[[0-9]+\/[0-9]+\][[:space:]]*//')
+        local post_content="[$num/$count] $chunk"
+
+        local resp
+        if [ -z "$prev_id" ]; then
+            resp=$(x_post "$post_content")
+        else
+            resp=$(x_reply "$prev_id" "$post_content")
+        fi
+
+        prev_id=$(echo "$resp" | jq -r '.data.id // .tweet_id // .id // empty' 2>/dev/null)
+        if [ -z "$prev_id" ]; then
+            prev_id=$(echo "$resp" | grep -oE '"id"\s*:\s*"[0-9]+"' | head -n 1 | grep -oE '[0-9]+' || echo "")
+        fi
+        if [ -z "$prev_id" ]; then
+            ui_err "Thread failed at tweet $num/$count (could not extract tweet ID from response)"
+            return 1
+        fi
+        [ -z "$root_id" ] && root_id="$prev_id"
+        ui_info "  Part $num/$count: https://x.com/i/web/status/$prev_id"
+
+        idx=$((idx + 1))
+        [ "$idx" -lt "$count" ] && sleep "$delay"
+    done
+
+    ui_ok "Thread published successfully ($count tweets, root ID: ${root_id:-$prev_id})"
+    return 0
 }
 
 x_search() {
@@ -130,14 +415,18 @@ x_search() {
             ui_dim "  [debug] x_search: MCP failed — falling through to direct"
     fi
 
-    local token
-    token=$(api_require_key "X_BEARER_TOKEN" "X/Twitter") || return 1
+    local auth_header
+    auth_header=$(_x_auth_header "GET" "https://api.x.com/2/tweets/search/recent")
+    if [ -z "$auth_header" ]; then
+        ui_err "No X credentials configured"
+        return 1
+    fi
 
     local encoded_query
     encoded_query=$(printf '%s' "$query" | jq -sRr @uri)
 
     api_get "https://api.x.com/2/tweets/search/recent?max_results=$count&query=$encoded_query" \
-        -H "Authorization: Bearer $token" | \
+        -H "$auth_header" | \
         jq -r '.data[]? | "[\(.id)] \(.text)"' 2>/dev/null
 }
 
@@ -156,11 +445,148 @@ x_delete() {
             ui_dim "  [debug] x_delete: MCP failed — falling through to direct"
     fi
 
-    local token
-    token=$(api_require_key "X_BEARER_TOKEN" "X/Twitter") || return 1
+    local auth_header
+    auth_header=$(_x_auth_header "DELETE" "https://api.x.com/2/tweets/$tweet_id")
+    if [ -z "$auth_header" ]; then
+        ui_err "No X credentials configured"
+        return 1
+    fi
 
     api_delete "https://api.x.com/2/tweets/$tweet_id" \
-        -H "Authorization: Bearer $token"
+        -H "$auth_header"
+}
+
+# ── X: Validate Credentials & Diagnostics ─────────────────────
+x_validate() {
+    ui_section "X (Twitter) Credentials Validation"
+
+    local has_creds=0
+    local consumer_key consumer_secret access_token access_token_secret bearer_token
+    consumer_key=$(api_get_key "X_CONSUMER_KEY" 2>/dev/null || api_get_key "X_API_KEY" 2>/dev/null || echo "")
+    consumer_secret=$(api_get_key "X_CONSUMER_SECRET" 2>/dev/null || api_get_key "X_API_SECRET" 2>/dev/null || echo "")
+    access_token=$(api_get_key "X_ACCESS_TOKEN" 2>/dev/null || echo "")
+    access_token_secret=$(api_get_key "X_ACCESS_TOKEN_SECRET" 2>/dev/null || echo "")
+    bearer_token=$(api_get_key "X_BEARER_TOKEN" 2>/dev/null || echo "")
+
+    # ── Check 0: Browser Session / Cookie Auth ($0 Extra, X Premium) ──
+    local cookie_auth_token cookie_ct0
+    cookie_auth_token=$(api_get_key "X_AUTH_TOKEN" 2>/dev/null || echo "")
+    cookie_ct0=$(api_get_key "X_CT0" 2>/dev/null || echo "")
+    if [ -n "$cookie_auth_token" ] && [ -n "$cookie_ct0" ]; then
+        has_creds=1
+        ui_step "Testing X Web Session (Cookie Auth)..."
+        local c_resp
+        c_resp=$(python3 "$LODGE_DIR/lib/social_cookie.py" verify "$cookie_auth_token" "$cookie_ct0" 2>/dev/null)
+        local c_status c_uname c_name c_blue
+        c_status=$(echo "$c_resp" | jq -r '.status // empty' 2>/dev/null)
+        c_uname=$(echo "$c_resp" | jq -r '.screen_name // empty' 2>/dev/null)
+        c_name=$(echo "$c_resp" | jq -r '.name // empty' 2>/dev/null)
+        c_blue=$(echo "$c_resp" | jq -r '.is_blue_verified // false' 2>/dev/null)
+
+        if [ "$c_status" = "ok" ] && [ -n "$c_uname" ]; then
+            ui_ok "X Web Session VALID: Logged in as @${c_uname} (${c_name})"
+            if [ "$c_blue" = "true" ]; then
+                ui_info "X Premium Verified: 25,000-char posts & algorithmic privileges active!"
+            else
+                ui_info "Direct Web Session active: Posting enabled with $0 API fees."
+            fi
+            return 0
+        else
+            local c_err
+            c_err=$(echo "$c_resp" | jq -r '.detail // "Session expired or rejected"' 2>/dev/null)
+            ui_warn "X Web Session check failed: $c_err"
+        fi
+    fi
+
+    # ── Check 1: OAuth 1.0a User Context (Direct posting) ──
+    if [ -n "$consumer_key" ] && [ -n "$consumer_secret" ] && [ -n "$access_token" ] && [ -n "$access_token_secret" ]; then
+        has_creds=1
+        ui_step "Testing OAuth 1.0a User Context credentials..."
+        local auth_hdr
+        auth_hdr=$(_x_oauth1_header "GET" "https://api.x.com/2/users/me" "$consumer_key" "$consumer_secret" "$access_token" "$access_token_secret")
+        local user_resp
+        user_resp=$(curl -s "https://api.x.com/2/users/me" -H "$auth_hdr" 2>/dev/null)
+        local uname uid
+        uname=$(echo "$user_resp" | jq -r '.data.username // empty' 2>/dev/null)
+        uid=$(echo "$user_resp" | jq -r '.data.id // empty' 2>/dev/null)
+
+        if [ -n "$uname" ]; then
+            ui_ok "OAuth 1.0a User Context VALID: Authenticated as @${uname} (ID: ${uid})"
+            ui_info "Write permissions active: George can post tweets as @${uname}!"
+            return 0
+        else
+            local err_detail
+            err_detail=$(echo "$user_resp" | jq -r '.detail // .title // "Authentication failed"' 2>/dev/null)
+            ui_warn "OAuth 1.0a check failed: $err_detail"
+        fi
+    fi
+
+    # ── Check 2: Bearer Token ──
+    if [ -n "$bearer_token" ]; then
+        has_creds=1
+        ui_step "Testing X Bearer Token..."
+
+        # Test A: User Context
+        local user_resp
+        user_resp=$(curl -s "https://api.x.com/2/users/me" -H "Authorization: Bearer $bearer_token" 2>/dev/null)
+        local uname uid
+        uname=$(echo "$user_resp" | jq -r '.data.username // empty' 2>/dev/null)
+        uid=$(echo "$user_resp" | jq -r '.data.id // empty' 2>/dev/null)
+
+        if [ -n "$uname" ]; then
+            ui_ok "Bearer Token VALID (User Context): Authenticated as @${uname} (ID: ${uid})"
+            ui_info "Write permissions active: George can post tweets as @${uname}!"
+            return 0
+        fi
+
+        local err_type err_title err_detail
+        err_type=$(echo "$user_resp" | jq -r '.type // empty' 2>/dev/null)
+        err_title=$(echo "$user_resp" | jq -r '.title // empty' 2>/dev/null)
+        err_detail=$(echo "$user_resp" | jq -r '.detail // empty' 2>/dev/null)
+
+        # Test B: App-Only reading
+        local app_resp
+        app_resp=$(curl -s "https://api.x.com/2/tweets/search/recent?query=from:X&max_results=10" -H "Authorization: Bearer $bearer_token" 2>/dev/null)
+        local sample_id app_reason app_detail
+        sample_id=$(echo "$app_resp" | jq -r '.data[0].id // empty' 2>/dev/null)
+        app_reason=$(echo "$app_resp" | jq -r '.reason // empty' 2>/dev/null)
+        app_detail=$(echo "$app_resp" | jq -r '.detail // empty' 2>/dev/null)
+
+        if [ -n "$sample_id" ]; then
+            ui_ok "Bearer Token VALID (App-Only Context) — Connected to X API v2 (Read/Search)."
+            ui_warn "This token is App-Only. Posting tweets requires User Context (OAuth 1.0a or OAuth 2.0 User Token)."
+            ui_dim "To enable posting as your account, configure User Context keys:"
+            ui_dim "  /secret set X_CONSUMER_KEY <API Key>"
+            ui_dim "  /secret set X_CONSUMER_SECRET <API Key Secret>"
+            ui_dim "  /secret set X_ACCESS_TOKEN <Access Token>"
+            ui_dim "  /secret set X_ACCESS_TOKEN_SECRET <Access Token Secret>"
+            return 0
+        elif [ "$app_reason" = "client-not-enrolled" ]; then
+            ui_err "Bearer Token REJECTED: Developer App is not attached to a Project."
+            ui_dim "X API v2 requires your App to be inside a Project in the Developer Portal:"
+            ui_dim "  1. Visit https://developer.x.com"
+            ui_dim "  2. Go to Projects & Apps -> Add your App to a Project (or create one)."
+            ui_dim "  3. Re-validate: /social x validate"
+            return 1
+        elif [ -n "$err_detail" ]; then
+            ui_err "Bearer Token check returned: $err_title ($err_detail)"
+            return 1
+        else
+            ui_err "Bearer Token validation failed: $(echo "$app_resp" | jq -r '.detail // "unknown error"')"
+            return 1
+        fi
+    fi
+
+    if [ "$has_creds" -eq 0 ]; then
+        ui_err "No X (Twitter) credentials found in vault or keys.conf."
+        ui_dim "To post as your account, set your OAuth 1.0a User credentials from developer.x.com:"
+        ui_dim "  /secret set X_CONSUMER_KEY <API Key>"
+        ui_dim "  /secret set X_CONSUMER_SECRET <API Key Secret>"
+        ui_dim "  /secret set X_ACCESS_TOKEN <Access Token>"
+        ui_dim "  /secret set X_ACCESS_TOKEN_SECRET <Access Token Secret>"
+        ui_dim "Or set a Bearer Token for reading: /secret set X_BEARER_TOKEN <token>"
+        return 1
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -307,12 +733,19 @@ mastodon_post() {
     text=$(ui_expand_escapes "$text")
     local visibility="${2:-public}"  # public, unlisted, private, direct
     local instance="${3:-}"          # optional: specific instance URL
+
+    # If post exceeds standard Mastodon limit (480 chars), thread it
+    if [ "${#text}" -gt 480 ]; then
+        mastodon_thread "$text" "$visibility" "$instance"
+        return $?
+    fi
+
     local token
     token=$(_mastodon_instance_token "$instance")
     if [ -z "$token" ]; then
         ui_err "Mastodon: No access token configured"
         ui_dim "Add one: /social mastodon instances add <url> <token>"
-        ui_dim "Or set: /api keys set MASTODON_ACCESS_TOKEN <token>"
+        ui_dim "Or set: /secret set MASTODON_ACCESS_TOKEN <token>"
         return 1
     fi
     local base
@@ -337,12 +770,192 @@ mastodon_post() {
     fi
 }
 
+mastodon_thread() {
+    local full_text="$1"
+    local visibility="${2:-public}"
+    local instance="${3:-}"
+    local delay="${4:-1}"
+
+    if [ -z "$full_text" ]; then
+        ui_err "Usage: mastodon_thread <text> [visibility] [instance]"
+        return 1
+    fi
+
+    if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then
+        full_text=$(tools_expand_file_refs "$full_text")
+    fi
+    full_text=$(ui_expand_escapes "$full_text")
+
+    local token base
+    token=$(_mastodon_instance_token "$instance")
+    if [ -z "$token" ]; then
+        ui_err "Mastodon: No access token configured"
+        ui_dim "Add one: /social mastodon instances add <url> <token>"
+        ui_dim "Or set: /secret set MASTODON_ACCESS_TOKEN <token>"
+        return 1
+    fi
+    base=$(_mastodon_instance_url "$instance")
+
+    local chunks_json
+    chunks_json=$(python3 -c '
+import sys, re
+
+text = sys.argv[1]
+max_len = 440
+paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+
+chunks = []
+current = ""
+for p in paragraphs:
+    if len(current) + len(p) + 2 <= max_len:
+        current = (current + "\n\n" + p).strip()
+    else:
+        if current:
+            chunks.append(current)
+        if len(p) <= max_len:
+            current = p
+        else:
+            sentences = re.split(r"(?<=[.?!])\s+", p)
+            s_curr = ""
+            for s in sentences:
+                if len(s_curr) + len(s) + 1 <= max_len:
+                    s_curr = (s_curr + " " + s).strip()
+                else:
+                    if s_curr:
+                        chunks.append(s_curr)
+                    s_curr = s
+            current = s_curr
+if current:
+    chunks.append(current)
+
+import json
+print(json.dumps(chunks))
+' "$full_text" 2>/dev/null)
+
+    local total_chunks
+    total_chunks=$(echo "$chunks_json" | jq '. | length' 2>/dev/null || echo 0)
+
+    if [ "$total_chunks" -le 1 ]; then
+        local data resp url
+        data=$(jq -n --arg s "$full_text" --arg v "$visibility" '{"status": $s, "visibility": $v}')
+        resp=$(api_post "$base/api/v1/statuses" "$data" -H "Authorization: Bearer $token")
+        if [ $? -eq 0 ]; then
+            url=$(api_json_get "$resp" '.url')
+            ui_ok "Posted to Mastodon: $url"
+            return 0
+        else
+            ui_err "Mastodon post failed"
+            return 1
+        fi
+    fi
+
+    ui_step "Posting $total_chunks-part thread to Mastodon ($base)..."
+    local prev_id=""
+    local first_url=""
+
+    for (( i=0; i<total_chunks; i++ )); do
+        local chunk
+        chunk=$(echo "$chunks_json" | jq -r ".[$i]")
+        local part_num=$((i + 1))
+        local post_content="[${part_num}/${total_chunks}] ${chunk}"
+
+        local post_data
+        if [ -z "$prev_id" ]; then
+            post_data=$(jq -n --arg s "$post_content" --arg v "$visibility" \
+                '{"status": $s, "visibility": $v}')
+        else
+            post_data=$(jq -n --arg s "$post_content" --arg v "$visibility" --arg id "$prev_id" \
+                '{"status": $s, "visibility": $v, "in_reply_to_id": $id}')
+        fi
+
+        local resp
+        resp=$(api_post "$base/api/v1/statuses" "$post_data" -H "Authorization: Bearer $token")
+        local status=$?
+
+        if [ $status -eq 0 ]; then
+            prev_id=$(api_json_get "$resp" '.id')
+            local status_url
+            status_url=$(api_json_get "$resp" '.url')
+            [ -z "$first_url" ] && first_url="$status_url"
+            ui_info "  Part ${part_num}/${total_chunks}: $status_url"
+            [ "$part_num" -lt "$total_chunks" ] && sleep "$delay"
+        else
+            ui_err "Failed at part ${part_num}/${total_chunks}"
+            return 1
+        fi
+    done
+
+    ui_ok "Published full thread to Mastodon: $first_url"
+    return 0
+}
+
+mastodon_validate() {
+    local instance="${1:-}"
+    ui_section "Mastodon Credentials Validation"
+
+    local token base
+    token=$(_mastodon_instance_token "$instance")
+    base=$(_mastodon_instance_url "$instance")
+
+    if [ -z "$token" ]; then
+        ui_err "No Mastodon access token found."
+        echo ""
+        ui_step "How to connect your Mastodon account:"
+        ui_info "  1. Log into your Mastodon instance in your browser (${base:-https://mastodon.social})"
+        ui_info "  2. Navigate to Preferences → Development → New Application"
+        ui_info "  3. Application name: 'George (Blue Lodge Agent)'"
+        ui_info "  4. Scopes: Keep 'read' and 'write' checked (uncheck 'admin' or others)"
+        ui_info "  5. Click 'Submit', then click into your new application"
+        ui_info "  6. Copy 'Your access token'"
+        echo ""
+        ui_step "Save your credentials:"
+        ui_info "  /secret set MASTODON_INSTANCE https://<your-mastodon-instance>"
+        ui_info "  /secret set MASTODON_ACCESS_TOKEN <your_access_token>"
+        ui_dim "  (Or multi-instance: /social mastodon instances add <url> <token>)"
+        return 1
+    fi
+
+    ui_step "Verifying credentials on $base..."
+    local resp http_code
+    resp=$(curl -s -w "\n%{http_code}" -X GET "$base/api/v1/accounts/verify_credentials" \
+        -H "Authorization: Bearer $token" \
+        -H "User-Agent: George-BlueLodge/1.0" \
+        --connect-timeout 10 --max-time 15 2>/dev/null)
+
+    http_code=$(echo "$resp" | tail -n1)
+    local body
+    body=$(echo "$resp" | sed '$d')
+
+    if [ "$http_code" = "200" ]; then
+        local uname acct dname url followers statuses
+        uname=$(echo "$body" | jq -r '.username // empty' 2>/dev/null)
+        acct=$(echo "$body" | jq -r '.acct // empty' 2>/dev/null)
+        dname=$(echo "$body" | jq -r '.display_name // empty' 2>/dev/null)
+        url=$(echo "$body" | jq -r '.url // empty' 2>/dev/null)
+        followers=$(echo "$body" | jq -r '.followers_count // 0' 2>/dev/null)
+        statuses=$(echo "$body" | jq -r '.statuses_count // 0' 2>/dev/null)
+
+        ui_ok "Mastodon Credentials VALID: Logged in as @${acct:-$uname}${dname:+ ($dname)}"
+        ui_info "  Instance:    $base"
+        ui_info "  Profile:     ${url:-https://$base/@$uname}"
+        ui_info "  Toots:       $statuses | Followers: $followers"
+        ui_dim "  Ready for autonomic and manual posting via /social post mastodon <text>"
+        return 0
+    else
+        local err_msg
+        err_msg=$(echo "$body" | jq -r '.error // empty' 2>/dev/null)
+        ui_err "Mastodon authentication failed (HTTP $http_code)${err_msg:+: $err_msg}"
+        ui_dim "Verify that instance URL ($base) is correct and token has 'read' & 'write' scopes."
+        return 1
+    fi
+}
+
 mastodon_timeline() {
     local count="${1:-20}"
-    local token
-    token=$(api_require_key "MASTODON_ACCESS_TOKEN" "Mastodon") || return 1
-    local base
-    base=$(_mastodon_base)
+    local instance="${2:-}"
+    local token base
+    token=$(_mastodon_instance_token "$instance") || return 1
+    base=$(_mastodon_instance_url "$instance")
 
     api_get "$base/api/v1/timelines/home?limit=$count" \
         -H "Authorization: Bearer $token" | \
@@ -352,10 +965,10 @@ mastodon_timeline() {
 mastodon_reply() {
     local status_id="$1"
     local text="$2"
-    local token
-    token=$(api_require_key "MASTODON_ACCESS_TOKEN" "Mastodon") || return 1
-    local base
-    base=$(_mastodon_base)
+    local instance="${3:-}"
+    local token base
+    token=$(_mastodon_instance_token "$instance") || return 1
+    base=$(_mastodon_instance_url "$instance")
 
     local data
     data=$(jq -n --arg s "$text" --arg id "$status_id" \
@@ -367,10 +980,10 @@ mastodon_reply() {
 
 mastodon_search() {
     local query="$1"
-    local token
-    token=$(api_require_key "MASTODON_ACCESS_TOKEN" "Mastodon") || return 1
-    local base
-    base=$(_mastodon_base)
+    local instance="${2:-}"
+    local token base
+    token=$(_mastodon_instance_token "$instance") || return 1
+    base=$(_mastodon_instance_url "$instance")
 
     local encoded
     encoded=$(printf '%s' "$query" | jq -sRr @uri)
@@ -382,10 +995,10 @@ mastodon_search() {
 
 mastodon_notifications() {
     local count="${1:-10}"
-    local token
-    token=$(api_require_key "MASTODON_ACCESS_TOKEN" "Mastodon") || return 1
-    local base
-    base=$(_mastodon_base)
+    local instance="${2:-}"
+    local token base
+    token=$(_mastodon_instance_token "$instance") || return 1
+    base=$(_mastodon_instance_url "$instance")
 
     api_get "$base/api/v1/notifications?limit=$count" \
         -H "Authorization: Bearer $token" | \
@@ -1746,5 +2359,159 @@ social_status() {
         echo ""
         ui_dim "  Set keys with: /api keys set KEY_NAME value"
         ui_dim "  Or edit: $GEORGE_KEYS_FILE"
+    fi
+}
+
+# ── Autonomic Social & Comms Sweeps ───────────────────────────
+
+discord_mentions_poll() {
+    local token
+    token=$(api_get_key "DISCORD_BOT_TOKEN" 2>/dev/null)
+    if [ -z "$token" ]; then
+        ui_dim "  Discord sweep: DISCORD_BOT_TOKEN not configured."
+        return 0
+    fi
+
+    local me_resp
+    me_resp=$(curl -s "https://discord.com/api/v10/users/@me" -H "Authorization: Bot $token" 2>/dev/null)
+    local bot_id bot_name
+    bot_id=$(echo "$me_resp" | jq -r .id 2>/dev/null)
+    bot_name=$(echo "$me_resp" | jq -r .username 2>/dev/null)
+    if [ -z "$bot_id" ] || [ "$bot_id" = "null" ]; then
+        ui_dim "  Discord sweep: Could not authenticate bot token."
+        return 0
+    fi
+
+    ui_step "Sweeping Discord channels for mentions of bot @${bot_name} (${bot_id})..."
+    local channels_db="${DISCORD_CHANNELS_DB:-${GEORGE_DIR:-$PWD/.george}/discord_channels.db}"
+    if [ ! -f "$channels_db" ]; then
+        ui_dim "  Discord sweep: No discord_channels.db found."
+        return 0
+    fi
+
+    local ch_list
+    ch_list=$(sqlite3 "$channels_db" "SELECT name, channel_id FROM channels LIMIT 20;" 2>/dev/null || true)
+    local mentions_found=0
+
+    while IFS='|' read -r ch_name ch_id; do
+        [ -z "$ch_id" ] && continue
+        local msgs
+        msgs=$(curl -s "https://discord.com/api/v10/channels/$ch_id/messages?limit=5" -H "Authorization: Bot $token" 2>/dev/null)
+        local mentions
+        mentions=$(echo "$msgs" | jq -c --arg bid "$bot_id" '.[]? | select(.author.id != $bid and (.content | contains("<@" + $bid + ">") or contains("<@!" + $bid + ">")))' 2>/dev/null || true)
+        if [ -n "$mentions" ]; then
+            while IFS= read -r m; do
+                [ -z "$m" ] && continue
+                local mid mauthor mcontent
+                mid=$(echo "$m" | jq -r .id)
+                mauthor=$(echo "$m" | jq -r .author.username)
+                mcontent=$(echo "$m" | jq -r .content)
+                ui_info "Discord mention in #$ch_name by @$mauthor: $mcontent"
+                mkdir -p "${GEORGE_DIR:-$PWD/.george}/events" 2>/dev/null
+                echo "{\"platform\":\"discord\",\"type\":\"mention\",\"channel_id\":\"$ch_id\",\"channel_name\":\"$ch_name\",\"message_id\":\"$mid\",\"author\":\"$mauthor\",\"content\":\"$mcontent\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" >> "${GEORGE_DIR:-$PWD/.george}/events/comms_events.jsonl"
+                mentions_found=$((mentions_found + 1))
+            done <<< "$mentions"
+        fi
+    done <<< "$ch_list"
+
+    if [ "$mentions_found" -eq 0 ]; then
+        ui_dim "  No new Discord mentions found across registered channels."
+    else
+        ui_ok "Discord sweep found $mentions_found new mention(s)."
+    fi
+}
+
+x_social_sweep() {
+    ui_step "Sweeping X (Twitter) social & blog queue..."
+    local auth_header
+    auth_header=$(_x_auth_header "GET" "https://api.x.com/2/tweets/search/recent")
+
+    if [ -z "$auth_header" ]; then
+        ui_dim "  X sweep: No X credentials configured in vault or keys.conf."
+        ui_dim "  To activate X posting & monetization: /social x validate"
+        return 0
+    fi
+
+    # Check recent timeline / mentions
+    local timeline
+    timeline=$(curl -s "https://api.x.com/2/tweets/search/recent?query=from:me&max_results=5" -H "$auth_header" 2>/dev/null)
+    local t_count
+    t_count=$(echo "$timeline" | jq '.meta.result_count // 0' 2>/dev/null)
+    if [ -n "$t_count" ] && [ "$t_count" != "null" ]; then
+        ui_dim "  X account connected (Recent posts: $t_count)"
+    fi
+
+    # Check for pending scheduled posts in .george/social/queue
+    local queue_dir="${GEORGE_DIR:-$PWD/.george}/social/queue"
+    mkdir -p "$queue_dir" 2>/dev/null
+    local post_files
+    post_files=("$queue_dir"/*.txt)
+    if [ -e "${post_files[0]}" ]; then
+        for pf in "${post_files[@]}"; do
+            [ -f "$pf" ] || continue
+            local tweet_body
+            tweet_body=$(cat "$pf")
+            if [ -n "$tweet_body" ]; then
+                ui_info "Publishing queued post to X: ${tweet_body:0:60}..."
+                if x_thread "$tweet_body" >/dev/null 2>&1; then
+                    rm -f "$pf"
+                    ui_ok "Published queued X post successfully."
+                fi
+            fi
+        done
+    else
+        ui_dim "  No pending posts in social queue."
+    fi
+}
+
+mastodon_social_sweep() {
+    ui_step "Sweeping Mastodon notifications & mentions..."
+    local token base
+    token=$(_mastodon_instance_token "" 2>/dev/null)
+    base=$(_mastodon_instance_url "" 2>/dev/null)
+
+    if [ -z "$token" ]; then
+        ui_dim "  Mastodon sweep: No Mastodon token configured."
+        return 0
+    fi
+
+    # 1. Poll notifications for mentions & replies
+    local notifs
+    notifs=$(curl -s -X GET "$base/api/v1/notifications?limit=10" \
+        -H "Authorization: Bearer $token" \
+        -H "User-Agent: George-BlueLodge/1.0" \
+        --connect-timeout 10 --max-time 15 2>/dev/null)
+
+    local notif_count
+    notif_count=$(echo "$notifs" | jq '. | length' 2>/dev/null || echo 0)
+
+    if [ "$notif_count" -gt 0 ]; then
+        mkdir -p "${GEORGE_DIR:-$PWD/.george}/events" 2>/dev/null
+        local mentions_processed=0
+        for (( i=0; i<notif_count; i++ )); do
+            local item
+            item=$(echo "$notifs" | jq -c ".[$i]" 2>/dev/null)
+            [ -z "$item" ] && continue
+            local ntype
+            ntype=$(echo "$item" | jq -r .type 2>/dev/null)
+            [ "$ntype" != "mention" ] && continue
+
+            local nid acct content status_id
+            nid=$(echo "$item" | jq -r .id)
+            acct=$(echo "$item" | jq -r .account.acct)
+            status_id=$(echo "$item" | jq -r '.status.id // empty')
+            content=$(echo "$item" | jq -r '.status.content // ""' | sed 's/<[^>]*>//g')
+
+            ui_info "Mastodon mention from @$acct (ID: $status_id): ${content:0:60}..."
+            echo "{\"platform\":\"mastodon\",\"type\":\"mention\",\"notification_id\":\"$nid\",\"author\":\"$acct\",\"status_id\":\"$status_id\",\"content\":\"$content\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" >> "${GEORGE_DIR:-$PWD/.george}/events/comms_events.jsonl"
+            mentions_processed=$((mentions_processed + 1))
+        done
+        if [ "$mentions_processed" -gt 0 ]; then
+            ui_ok "Mastodon sweep recorded $mentions_processed mention(s) to event log."
+        else
+            ui_dim "  No new Mastodon mentions."
+        fi
+    else
+        ui_dim "  No new Mastodon notifications."
     fi
 }

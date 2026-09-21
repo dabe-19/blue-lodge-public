@@ -94,6 +94,8 @@ _WEB_COOKIE_JAR="${TMPDIR:-/tmp}/.lodge-web-cookies-$$.jar"
 _web_curl() {
     curl -sL \
         --compressed \
+        --connect-timeout 8 \
+        --speed-limit 100 --speed-time 10 \
         -b "$_WEB_COOKIE_JAR" -c "$_WEB_COOKIE_JAR" \
         -H "User-Agent: $WEB_USER_AGENT" \
         -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7" \

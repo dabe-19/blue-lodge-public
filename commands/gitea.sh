@@ -202,9 +202,42 @@ cmd_gitea() {
                     fi
                     gitea_issue_create "$title" "${remaining:-Created via /gitea issues create}" "operator,manual"
                     ;;
+                sweep)
+                    ui_step "Sweeping Sovereign Gitea for open actionable issues..."
+                    local issues_raw
+                    issues_raw=$(gitea_issue_list "open" "json" 2>/dev/null || echo "[]")
+                    local count
+                    count=$(echo "$issues_raw" | jq 'length' 2>/dev/null || echo 0)
+                    if [ "$count" -eq 0 ]; then
+                        ui_ok "No open issues found to sweep."
+                        return 0
+                    fi
+                    ui_info "Found $count open issue(s). Evaluating for autonomous resolution..."
+                    echo "$issues_raw" | jq -c '.[]' | while read -r issue; do
+                        local num title labels
+                        num=$(echo "$issue" | jq -r .number 2>/dev/null)
+                        title=$(echo "$issue" | jq -r .title 2>/dev/null)
+                        labels=$(echo "$issue" | jq -r '[.labels[]?.name] | join(",")' 2>/dev/null || echo "")
+                        local lbl_pat='(escalation|social-broadcast|bug)'
+                        if [[ "$labels" =~ $lbl_pat ]]; then
+                            if [[ "$labels" =~ auto-remediated ]]; then
+                                ui_step "  Issue #${num} is already auto-remediated. Closing out..."
+                                gitea_issue_close "$num" "Autonomous Sentinel telemetry alert acknowledged and closed." 2>/dev/null || true
+                                continue
+                            fi
+                            ui_step "  Spawning Tier 1 triage subagent for Issue #${num}..."
+                            if declare -f subagents_spawn &>/dev/null; then
+                                subagents_spawn 1 \
+                                    "Resolve Sovereign Gitea Issue #${num}: '${title}'. Investigate the failure, test a fix, comment findings, and close the issue if resolved." \
+                                    "Gitea autonomic issue sweep for #${num}" \
+                                    "$workdir" 30 1 || true
+                            fi
+                        fi
+                    done
+                    ;;
                 *)
                     ui_err "Unknown /gitea issues action: '$issue_sub'"
-                    ui_info "Usage: /gitea issues [list|show <id>|comment <id> <text>|close <id> [comment]|create <title> [body]]"
+                    ui_info "Usage: /gitea issues [list|show <id>|comment <id> <text>|close <id> [comment]|create <title> [body]|sweep]"
                     return 1
                     ;;
             esac
@@ -235,9 +268,37 @@ cmd_gitea() {
             curl -s -H "Authorization: token ${GITEA_TOKEN}" "${GITEA_URL}/api/v1/user/gpg_keys" | jq -r '.[] | "  - [\(.id)] KeyID: \(.key_id) (Primary: \(.primary_key_id // .key_id))"' 2>/dev/null || echo "  None"
             ;;
 
+        endpoint|url)
+            local target_url="${rest%% *}"
+            if [ -z "$target_url" ]; then
+                _gitea_load_conf
+                ui_section "Sovereign Gitea Endpoint"
+                ui_info "Active Endpoint: $GITEA_URL"
+                if gitea_is_online; then
+                    ui_ok "Status: ONLINE"
+                else
+                    ui_warn "Status: UNREACHABLE"
+                fi
+                echo ""
+                ui_dim "Usage: /gitea endpoint <url>"
+                ui_dim "  Example: /gitea endpoint http://llama.cpp-prism:3088"
+                ui_dim "  Example: /gitea endpoint http://192.168.1.150:3088"
+                return 0
+            fi
+
+            gitea_set_endpoint "$target_url"
+            ui_step "Updated Gitea endpoint to: $target_url"
+            if gitea_is_online; then
+                ui_ok "Connection verified: Gitea server is ONLINE at $target_url"
+            else
+                ui_warn "Endpoint configured, but server is currently UNREACHABLE at $target_url."
+                ui_dim "Verify network route, node hostname, or VPN settings."
+            fi
+            ;;
+
         *)
             ui_err "Unknown /gitea command: '$subcmd'"
-            ui_info "Available subcommands: status, sync [branch], pr [list|show|create|merge], issues [list|show|comment|close], runner [start|stop|status], keys"
+            ui_info "Available subcommands: status, endpoint [url], sync [branch], pr [list|show|create|merge], issues [list|show|comment|close], runner [start|stop|status], keys"
             return 1
             ;;
     esac

@@ -172,8 +172,10 @@ _lodge_exit_cleanup() {
         rm -f "$lockfile" 2>/dev/null
     fi
 
-    # Tear down remote SSH tunnel + watchdog so they don't outlive Lodge
-    declare -f remote_disconnect &>/dev/null && remote_disconnect 2>/dev/null
+    # Tear down remote SSH tunnel + watchdog so they don't outlive Lodge (unless persistent)
+    if [ "${REMOTE_PERSISTENT:-0}" != "1" ]; then
+        declare -f remote_disconnect &>/dev/null && remote_disconnect 2>/dev/null
+    fi
     if [ "${_LODGE_SKIP_SUBAGENT_CLEANUP:-0}" != "1" ]; then
         # Kill any leftover curl → LLM processes
         pkill -f "curl.*v1/chat/completions" 2>/dev/null || true
@@ -3829,16 +3831,19 @@ _cmd_social() {
             local xargs
             xargs=$(echo "$rest" | sed 's/^[^ ]* *//')
             case "$sub" in
-                post)    x_post "$xargs" ;;
-                search)  x_search "$xargs" ;;
+                post)     x_post "$xargs" ;;
+                thread)   x_thread "$xargs" ;;
+                blog)     x_blog_dispatch $xargs ;;
+                search)   x_search "$xargs" ;;
                 timeline) x_timeline ;;
+                validate|test) x_validate ;;
                 reply)
                     local tid txt
                     tid=$(echo "$xargs" | awk '{print $1}')
                     txt=$(echo "$xargs" | sed 's/^[^ ]* *//')
                     x_reply "$tid" "$txt" ;;
-                delete)  x_delete "$xargs" ;;
-                *)       ui_info "Usage: /social x <post|search|timeline|reply|delete>" ;;
+                delete)   x_delete "$xargs" ;;
+                *)        ui_info "Usage: /social x <post|thread|blog|search|timeline|reply|delete|validate>" ;;
             esac ;;
         mastodon|masto)
             local sub
@@ -3879,7 +3884,9 @@ _cmd_social() {
                         *)
                             ui_info "Usage: /social mastodon instances <list|add|remove>" ;;
                     esac ;;
-                *)          ui_info "Usage: /social mastodon <post|timeline|search|notify|instances>" ;;
+                validate|test|check) mastodon_validate "$margs" ;;
+                thread)     mastodon_thread "$margs" ;;
+                *)          ui_info "Usage: /social mastodon <post|thread|timeline|search|notify|instances|validate>" ;;
             esac ;;
         bluesky|bsky)
             local sub
@@ -4126,18 +4133,50 @@ _cmd_social() {
                 me)        telegram_get_me ;;
                 *)         ui_info "Usage: /social telegram <post|updates|me>" ;;
             esac ;;
+        validate|test|check)
+            local target
+            target=$(echo "$rest" | awk '{print $1}')
+            case "$target" in
+                mastodon|masto) mastodon_validate ;;
+                x|twitter) x_validate ;;
+                discord) discord_validate ;;
+                all|"")
+                    ui_info "Validating social connections..."
+                    echo ""
+                    mastodon_validate
+                    echo ""
+                    x_validate
+                    echo ""
+                    discord_validate
+                    ;;
+                *)
+                    ui_info "Usage: /social validate [mastodon|x|discord|all]"
+                    ;;
+            esac ;;
         status) social_status ;;
         *)
-            ui_info "Usage: /social <post|x|mastodon|bluesky|discord|telegram|status>"
+            ui_info "Usage: /social <post|x|mastodon|bluesky|discord|telegram|validate|status>"
             ui_dim "  post <platform> [channel] <text> — Post to a platform"
             ui_dim "  x <action>                       — X/Twitter commands"
-            ui_dim "  mastodon <action>                 — Mastodon commands (incl. instances)"
+            ui_dim "  mastodon <action>                 — Mastodon commands (incl. instances, validate)"
             ui_dim "  bluesky <action>                  — Bluesky commands"
             ui_dim "  discord <action>                  — Discord commands (incl. users, dm)"
             ui_dim "  telegram <action>                 — Telegram commands"
+            ui_dim "  validate [platform]               — Validate credentials (mastodon, x, discord, all)"
             ui_dim "  status                            — Show configured platforms"
             ;;
     esac
+}
+
+_cmd_research() {
+    local args="$1"
+    local workdir="${2:-.}"
+    if declare -f cmd_research &>/dev/null; then
+        cmd_research "$args" "$workdir"
+    elif [ -f "$LODGE_COMMANDS_DIR/research.sh" ]; then
+        source "$LODGE_COMMANDS_DIR/research.sh"
+        cmd_research "$args" "$workdir"
+    fi
 }
 _cmd_provider() {
     local args="$1"
@@ -6252,6 +6291,7 @@ _register_commands() {
     commands_register "files"    "List workspace files as tree (alias for /ls)" "_cmd_files"
     commands_register "read"     "Read a file" "_cmd_read"
     commands_register "grep"     "Regex search files (supports pipes)" "_cmd_grep"
+    commands_register "research" "Autonomous Research Graph & Dossier Library" "_cmd_research"
     commands_register "respond"  "Present response to the operator" "_cmd_respond"
 }
 
@@ -6490,9 +6530,11 @@ main() {
         fi
     elif [[ "$1" == /* ]]; then
         # Slash command mode
+        export _LODGE_SKIP_SUBAGENT_CLEANUP=1
         commands_dispatch "$*" "$PWD"
     elif commands_is_safe_auto_route "$*"; then
         # Auto-route slashless commands (e.g. `./lodge status` -> `/status`)
+        export _LODGE_SKIP_SUBAGENT_CLEANUP=1
         commands_dispatch "/$*" "$PWD"
     else
         # Concurrency Lock Gating

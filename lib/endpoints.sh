@@ -157,6 +157,13 @@ endpoints_cascade() {
             ACTIVE_ENDPOINT_TIMEOUT="${!timeout_var:-180}"
             ACTIVE_ENDPOINT_TEMPERATURE="${!temp_var:-${AGENT_LLM_TEMPERATURE:-0.2}}"
             ACTIVE_ENDPOINT_TOP_P="${!topp_var:-0.95}"
+            if [ -n "$ACTIVE_ENDPOINT_MODEL" ]; then
+                export LODGE_MODEL="$ACTIVE_ENDPOINT_MODEL"
+                export LODGE_MODEL_PRIMARY="$ACTIVE_ENDPOINT_MODEL"
+            fi
+            if [ -n "$ACTIVE_ENDPOINT_URL" ]; then
+                export LLAMA_CPP_URL="$ACTIVE_ENDPOINT_URL"
+            fi
             return 0
         fi
     done

@@ -119,8 +119,8 @@ _llm_save_config() {
 # Environment variables override these values.
 
 # ── Models ─────────────────────────────────────────────────────
-LODGE_MODEL_PRIMARY=${LODGE_MODEL_PRIMARY:-blue-lodge-gemma4-inst:2b}
-LODGE_MODEL_SECONDARY=${LODGE_MODEL_SECONDARY:-blue-lodge-gemma4-inst:2b}
+LODGE_MODEL_PRIMARY=${LODGE_MODEL_PRIMARY:-${ACTIVE_ENDPOINT_MODEL:-ternary-bonsai-27b}}
+LODGE_MODEL_SECONDARY=${LODGE_MODEL_SECONDARY:-${TIER0_MODEL:-gemma4-e2b-inst}}
 LODGE_SINGLE_MODEL=${LODGE_SINGLE_MODEL:-1}
 
 # ── Backend ────────────────────────────────────────────────────

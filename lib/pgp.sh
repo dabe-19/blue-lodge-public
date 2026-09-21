@@ -576,3 +576,99 @@ pgp_status() {
 
     echo ""
 }
+
+# ── Auto-initialize George PGP Key (non-interactive) ──────────
+pgp_auto_init() {
+    pgp_init || return 1
+    if pgp_has_key; then
+        return 0
+    fi
+
+    local key_name="${PGP_KEY_NAME:-George (Blue Lodge Agent)}"
+    local key_email="${PGP_KEY_EMAIL:-george@sovereign.local}"
+    local key_comment="${PGP_KEY_COMMENT:-Sovereign Coding Agent}"
+
+    ui_info "Auto-generating Ed25519 PGP key for $key_name <$key_email>..."
+    _pgp_gpg --gen-key <<EOF
+%no-protection
+Key-Type: eddsa
+Key-Curve: Ed25519
+Key-Usage: sign
+Subkey-Type: eddsa
+Subkey-Curve: Ed25519
+Subkey-Usage: sign
+Name-Real: $key_name
+Name-Comment: $key_comment
+Name-Email: $key_email
+Expire-Date: 0
+%commit
+EOF
+
+    PGP_KEY_EMAIL="$key_email"
+    PGP_KEY_NAME="$key_name"
+    PGP_KEY_COMMENT="$key_comment"
+
+    if pgp_has_key; then
+        pgp_export_public_key >/dev/null 2>&1
+        ui_ok "George PGP signing identity established."
+        return 0
+    fi
+    return 1
+}
+
+# ── Sign a social post / thread item ───────────────────────────
+# Formats post text with George's persona header and Ed25519 cryptographic trailer.
+# Also archives the full detached ASCII signature in .george/social/signatures/
+# Usage: pgp_sign_social "text" [compact|full]
+pgp_sign_social() {
+    local text="$1"
+    local mode="${2:-compact}"
+
+    pgp_auto_init || {
+        echo "$text"
+        return 0
+    }
+
+    local fpr
+    fpr=$(_pgp_gpg --fingerprint --with-colons "${PGP_KEY_EMAIL:-george@sovereign.local}" 2>/dev/null | grep '^fpr:' | head -1 | cut -d: -f10)
+    local short_fpr="${fpr: -16}"
+    local formatted_fpr
+    formatted_fpr=$(echo "$short_fpr" | sed 's/.\{4\}/& /g' | sed 's/ $//')
+
+    # Detached signature
+    local det_sig
+    det_sig=$(pgp_detached_sign "$text" 2>/dev/null)
+
+    # Save to archive
+    local sig_dir="$GEORGE_CONFIG_DIR/social/signatures"
+    mkdir -p "$sig_dir"
+    local text_hash
+    text_hash=$(printf '%s' "$text" | md5sum | cut -d' ' -f1)
+    if [ -n "$det_sig" ]; then
+        printf '%s' "$det_sig" > "$sig_dir/${text_hash}.sig.asc"
+        printf '%s' "$text" > "$sig_dir/${text_hash}.txt"
+    fi
+
+    local out=""
+    # Prepend persona header if not already present
+    if [[ "$text" != *"[George"* ]]; then
+        out="[George 🏛️ Blue Lodge Agent]"$'\n'"$text"
+    else
+        out="$text"
+    fi
+
+    if [ "$mode" = "full" ]; then
+        # Full cleartext signature block
+        local clear_sig
+        clear_sig=$(pgp_sign_message "$out" 2>/dev/null)
+        if [ -n "$clear_sig" ]; then
+            echo "$clear_sig"
+            return 0
+        fi
+    fi
+
+    # Compact format suitable for standard social character counts
+    local trailer=$'\n\n'"🔏 Signed: $formatted_fpr (Ed25519)"
+    echo "${out}${trailer}"
+}
+

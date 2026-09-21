@@ -34,10 +34,10 @@ cmd_vision() {
     [ -z "$prompt" ] && prompt="Describe this image in detail. Note any text, objects, people, and relevant details."
 
     # Check if vision support is available
-    if declare -f models_has_vision &>/dev/null && ! models_has_vision; then
-        ui_warn "Current model ($LODGE_MODEL) may not support vision."
-        ui_dim "  Vision-tested models: minist-inst, llava, moondream, minicpm-v"
-        ui_dim "  Switch with: /model minist-inst"
+    local _check_model="${ACTIVE_ENDPOINT_MODEL:-${LODGE_MODEL:-${LODGE_MODEL_PRIMARY:-}}}"
+    if declare -f models_has_vision &>/dev/null && [ -n "$_check_model" ] && ! models_has_vision "$_check_model"; then
+        ui_warn "Current model ($_check_model) may not support vision."
+        ui_dim "  Vision-tested models: ternary-bonsai-27b, gemma4-12b-inst, gemma4-e4b-inst, gemma4-e2b-inst"
         ui_dim "  Trying anyway..."
         echo ""
     fi

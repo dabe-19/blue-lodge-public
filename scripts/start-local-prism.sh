@@ -102,7 +102,7 @@ else
     # Auto-detect Bonsai / Ternary in common locations
     for d in "$LODGE_ROOT/.george/models" "$HOME/models" "$HOME/.george/models"; do
         if [ -d "$d" ]; then
-            m=$(find "$d" -maxdepth 3 -type f \( -iname "*bonsai*.gguf" -o -iname "*ternary*.gguf" \) 2>/dev/null | head -1)
+            m=$(find "$d" -maxdepth 3 -type f \( -iname "*bonsai*.gguf" -o -iname "*ternary*.gguf" \) ! -iname "*mmproj*" 2>/dev/null | head -1)
             if [ -n "$m" ]; then
                 GGUF_PATH="$m"
                 break
@@ -114,6 +114,12 @@ fi
 [ -z "$GGUF_PATH" ] && _err "No model specified and none found in ~/models or .george/models. Usage: $0 [path/to/model.gguf]"
 _ok "Selected model: $GGUF_PATH"
 
+# Clean existing container if needed
+if docker ps -a --format '{{.Names}}' | grep -Eq "^${CONTAINER_NAME}$"; then
+    _info "Removing previous container ${CONTAINER_NAME}..."
+    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+fi
+
 # Determine port
 PORT="${PORT:-$DEFAULT_PORT}"
 if lsof -i :"$PORT" &>/dev/null || netstat -tuln 2>/dev/null | grep -q ":$PORT "; then
@@ -123,12 +129,6 @@ if lsof -i :"$PORT" &>/dev/null || netstat -tuln 2>/dev/null | grep -q ":$PORT "
     fi
 fi
 _info "Binding host port: $PORT"
-
-# Clean existing container if needed
-if docker ps -a --format '{{.Names}}' | grep -Eq "^${CONTAINER_NAME}$"; then
-    _info "Removing previous container ${CONTAINER_NAME}..."
-    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
-fi
 
 # Build model mount
 MODEL_DIR="$(dirname "$GGUF_PATH")"

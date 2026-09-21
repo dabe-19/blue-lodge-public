@@ -5047,7 +5047,7 @@ SPEC
             vision)
                 cat << 'SPEC'
 {"cmd":"/vision","syntax":"/vision <image> [prompt]",
-"notes":["Supports jpg/png/gif/webp/bmp","Accepts image URLs directly (no /download needed) or local image file paths.","Requires vision model: /models single minist-inst","Pair with /web scrape-images: scrape a page, then pass image URLs from images[] array to /vision","Returns detailed text description of image contents"],
+"notes":["Supports jpg/png/gif/webp/bmp","Accepts image URLs directly (no /download needed) or local image file paths.","Requires vision-capable model (Tier 1 ternary-bonsai-27b with vision tower, or gemma4-12b)","Pair with /web scrape-images: scrape a page, then pass image URLs from images[] array to /vision","Returns detailed text description of image contents"],
 "format_only_ex":["/vision <image> <prompt>"],
 "fill":{"<image>":"URL or local path to image file (e.g. local path downloaded via /download, or direct URL from /web scrape-images images[] output)","<prompt>":"what to analyze or describe about the image"}}
 SPEC
