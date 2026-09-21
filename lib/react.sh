@@ -175,7 +175,7 @@ react_run() {
 
     _react_trace "$workdir" "task_start" "$(jq -cn --arg goal "$goal" --arg tier "${ACTIVE_TIER:-1}" '{goal:$goal, tier:$tier}')"
 
-    local session_id="session_$(date +%Y%m%d_%H%M%S)_$$"
+    local session_id="${session_id_arg:-session_$(date +%Y%m%d_%H%M%S)_$$}"
     local session_dir="$gdir/workspaces/$session_id"
     mkdir -p "$session_dir"
 
@@ -602,6 +602,7 @@ react_run() {
         if [ -n "$raw_content" ]; then
             echo ""
             ui_ok "Task Complete!"
+            printf '%s\n' "$raw_content" > "$session_dir/final_reply.txt" 2>/dev/null || true
             jq --arg ans "$raw_content" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" 2>/dev/null && mv "${messages_file}.tmp" "$messages_file" 2>/dev/null || true
             journal_write "reflection" "Completed task: $goal. Summary: ${raw_content:0:200}" 2>/dev/null || true
             declare -f transcript_log_block &>/dev/null && transcript_log_block "final_response" "$raw_content"
@@ -630,6 +631,7 @@ react_run() {
                 echo "$raw_content"
                 echo ""
                 ui_ok "Task Complete!"
+                printf '%s\n' "$raw_content" > "$session_dir/final_reply.txt" 2>/dev/null || true
                 jq --arg ans "$raw_content" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" 2>/dev/null && mv "${messages_file}.tmp" "$messages_file" 2>/dev/null || true
                 journal_write "reflection" "Completed task: $goal. Summary: ${raw_content:0:200}" 2>/dev/null || true
                 declare -f transcript_log_block &>/dev/null && transcript_log_block "final_response" "$raw_content"

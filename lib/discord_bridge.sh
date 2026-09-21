@@ -347,19 +347,32 @@ discord_generate_response() {
             react_run "$full_prompt" "$LODGE_DIR" "$discord_max_turns" 1 "$session_uuid" "social" 2>&1 > "$raw_out_file" || true
         fi
 
-        # Extract assistant final message from session messages.json
-        local session_json
-        session_json=$(find "$LODGE_DIR/.george/workspaces" -name "messages.json" -type f 2>/dev/null | sort -r | head -n 1)
-        if [ -n "$session_json" ] && [ -f "$session_json" ]; then
+        # 1. Primary: Extract from isolated session workspace
+        local session_workspace="$LODGE_DIR/.george/workspaces/$session_uuid"
+        local session_final="$session_workspace/final_reply.txt"
+        local session_json="$session_workspace/messages.json"
+
+        if [ -f "$session_final" ] && [ -s "$session_final" ]; then
+            reply=$(cat "$session_final")
+        elif [ -f "$session_json" ]; then
             reply=$(jq -r '[.[] | select(.role == "assistant" and .content != null and .content != "")] | last | .content // empty' "$session_json" 2>/dev/null || true)
         fi
+
+        # 2. Fallback: Extract from session-isolated raw output log
         if [ -z "$reply" ] && [ -f "$raw_out_file" ]; then
             local raw_out
             raw_out=$(cat "$raw_out_file")
             local cleaned
             cleaned=$(printf '%s\n' "$raw_out" | sed -r 's/\x1B\[[0-9;]*[a-zA-Z]//g')
             if echo "$cleaned" | grep -q "Task Complete!"; then
-                reply=$(echo "$cleaned" | awk '/Task Complete!/{flag=1; next} /Transcript:/{flag=0} flag' | sed '/^[[:space:]]*$/d' | head -n 25)
+                reply=$(echo "$cleaned" | awk '
+                    /── Turn / { block="" }
+                    /\[thought\]/ { in_thought=1 }
+                    /\[observation\]|Observation:/ { in_thought=0; block="" }
+                    /Task Complete!/ { in_ans=0; print block; exit }
+                    !in_thought && !/Task Complete!|Transcript:|── Turn/ { block = block "\n" $0 }
+                ' | sed '/^[[:space:]]*$/d')
+                [ -z "$reply" ] && reply=$(echo "$cleaned" | awk '/Task Complete!/{flag=1; next} /Transcript:/{flag=0} flag' | sed '/^[[:space:]]*$/d' | head -n 50)
             fi
         fi
     fi
