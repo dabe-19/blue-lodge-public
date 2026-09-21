@@ -337,13 +337,14 @@ discord_generate_response() {
     local session_out_dir="$DISCORD_SESSIONS_DIR/$session_uuid"
     mkdir -p "$session_out_dir" 2>/dev/null
 
+    local discord_max_turns="${DISCORD_AGENT_MAX_TURNS:-200}"
     local reply=""
     if declare -f react_run &>/dev/null; then
         local raw_out_file="$session_out_dir/raw_react.log"
         if [ -n "$session_log" ]; then
-            react_run "$full_prompt" "$LODGE_DIR" 8 1 "$session_uuid" "social" 2>&1 | tee -a "$session_log" > "$raw_out_file" || true
+            react_run "$full_prompt" "$LODGE_DIR" "$discord_max_turns" 1 "$session_uuid" "social" 2>&1 | tee -a "$session_log" > "$raw_out_file" || true
         else
-            react_run "$full_prompt" "$LODGE_DIR" 8 1 "$session_uuid" "social" 2>&1 > "$raw_out_file" || true
+            react_run "$full_prompt" "$LODGE_DIR" "$discord_max_turns" 1 "$session_uuid" "social" 2>&1 > "$raw_out_file" || true
         fi
 
         # Extract assistant final message from session messages.json

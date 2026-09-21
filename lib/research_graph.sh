@@ -114,8 +114,9 @@ Follow these instructions strictly:
 Ground all conclusions in concrete facts. Avoid vague filler."
 
         ui_info "Launching ReAct agent loop (Tier ${ACTIVE_TIER:-1} - ${ACTIVE_ENDPOINT_MODEL:-default})..."
+        local research_max_turns="${RESEARCH_MAX_TURNS:-200}"
         REACT_TOOL_FILTER="research" \
-        react_run "$goal" "$sandbox_dir" 8 "${ACTIVE_TIER:-1}" "research_$(date +%s)" "research"
+        react_run "$goal" "$sandbox_dir" "$research_max_turns" "${ACTIVE_TIER:-1}" "research_$(date +%s)" "research"
 
         # Harvest and consolidate all references and empirical findings from the ReAct session into scratchpad.md
         local r_log
