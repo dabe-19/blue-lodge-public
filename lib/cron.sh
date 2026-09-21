@@ -36,7 +36,7 @@ CRON_JOBS_DIR="${CRON_JOBS_DIR:-$GEORGE_DIR/cron_jobs}"
 CRON_INTERVAL_SENTINEL="${CRON_INTERVAL_SENTINEL:-60}"
 CRON_INTERVAL_PR="${CRON_INTERVAL_PR:-60}"
 CRON_INTERVAL_ISSUE="${CRON_INTERVAL_ISSUE:-60}"
-CRON_INTERVAL_DISCORD="${CRON_INTERVAL_DISCORD:-5}"
+CRON_INTERVAL_DISCORD="${CRON_INTERVAL_DISCORD:-30}"
 CRON_INTERVAL_EMAIL="${CRON_INTERVAL_EMAIL:-120}"
 CRON_INTERVAL_X="${CRON_INTERVAL_X:-300}"
 CRON_INTERVAL_MASTODON="${CRON_INTERVAL_MASTODON:-180}"
@@ -286,6 +286,19 @@ cron_run_visual_sweep() {
         fi
     fi
 
+    # 3b. Autonomous Remediation Sweep (Slot 1)
+    if [ "$sweep_type" = "all" ] || [ "$sweep_type" = "remediation" ]; then
+        if declare -f remediation_queue_next &>/dev/null && declare -f remediation_run &>/dev/null; then
+            local next_rem
+            next_rem=$(remediation_queue_next 2>/dev/null || true)
+            if [ -n "$next_rem" ] && [ -f "$next_rem" ]; then
+                ui_step "Executing pending autonomous remediation on Slot 1..."
+                remediation_run ""
+                [ $? -ne 0 ] && total_ec=1
+            fi
+        fi
+    fi
+
     # 4. Social & Monetization Queue Sweep
     if [ "$sweep_type" = "all" ] || [ "$sweep_type" = "social" ]; then
         declare -f x_social_sweep &>/dev/null && x_social_sweep
@@ -311,6 +324,11 @@ cron_run_visual_sweep() {
 cron_launch_visual() {
     local sweep_type="${1:-all}"
     cron_init
+
+    # Prevent stacking multiple open visual sweep terminals
+    if pgrep -f "scripts/cron_visual_sweep.sh" &>/dev/null; then
+        return 0
+    fi
 
     if ! cron_is_gui_available || [ "$CRON_POPUP_TERMINAL" -ne 1 ]; then
         cron_run_visual_sweep "$sweep_type"

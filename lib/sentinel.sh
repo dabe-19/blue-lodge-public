@@ -370,7 +370,7 @@ sentinel_triage_tier2() {
 
     # Check for existing issue with identical fingerprint to deduplicate
     local existing_issue
-    existing_issue=$(grep -l "\[fingerprint:${fp}\]" "$issues_dir"/*.md 2>/dev/null | head -n 1 || true)
+    existing_issue=$(grep -l "\[fingerprint:${fp}\]" "$issues_dir"/*.md "$issues_dir"/archive/*.md 2>/dev/null | head -n 1 || true)
     if [ -n "$existing_issue" ] && [ -f "$existing_issue" ]; then
         {
             echo ""
@@ -448,9 +448,19 @@ EOF
     local issue_file="$issues_dir/issue_sentinel_$(date +%s).md"
     echo -e "# ${issue_title}\n\n${issue_body}" > "$issue_file"
 
-    # Enqueue in autonomous remediation loop
-    if declare -f remediation_queue_add &>/dev/null; then
-        remediation_queue_add "$issue_file" "$inc_path" "high" "$issue_title" >/dev/null 2>&1 || true
+    # If self-healed immediately by Sentinel, archive the issue directly
+    if [ -n "$healed_summary" ] && [ "$healed_summary" != "None" ]; then
+        local archive_dir="$issues_dir/archive"
+        mkdir -p "$archive_dir" 2>/dev/null || true
+        local archived_file="$archive_dir/$(basename "$issue_file")"
+        mv "$issue_file" "$archived_file" 2>/dev/null || true
+        issue_file="$archived_file"
+        echo "[SENTINEL] Self-healed issue archived immediately: $issue_file" >> "$SENTINEL_LOG"
+    else
+        # Enqueue in autonomous remediation loop
+        if declare -f remediation_queue_add &>/dev/null; then
+            remediation_queue_add "$issue_file" "$inc_path" "high" "$issue_title" >/dev/null 2>&1 || true
+        fi
     fi
 
     # Dispatch notification via configured email and discord
@@ -512,6 +522,14 @@ sentinel_sweep() {
     local issue_ref
     issue_ref=$(sentinel_triage_tier2 "$probe" "${healed:-None}")
     ui_info "Escalation recorded: $issue_ref"
+
+    # If self-healing restored system to HEALTHY, clear sweep with success
+    local post_probe
+    post_probe=$(sentinel_probe)
+    if [ "$(echo "$post_probe" | jq -r '.status')" = "HEALTHY" ]; then
+        ui_ok "Autonomous self-healing restored system to HEALTHY."
+        return 0
+    fi
 
     return 1
 }

@@ -18,7 +18,7 @@ if [ "$ec" -eq 0 ]; then
 else
     if [ "$hold" -eq 1 ]; then
         echo ""
-        read -r -p "[Press Enter to dismiss] " _dummy
+        read -r -t 120 -p "[Press Enter to dismiss (auto-dismiss in 120s)] " _dummy || true
     fi
 fi
 
