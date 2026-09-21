@@ -289,7 +289,6 @@ cron_run_visual_sweep() {
     # 4. Social & Monetization Queue Sweep
     if [ "$sweep_type" = "all" ] || [ "$sweep_type" = "social" ]; then
         declare -f x_social_sweep &>/dev/null && x_social_sweep
-        declare -f x_blog_sweep &>/dev/null && x_blog_sweep
     fi
 
     # 5. Discord DM & Mentions Sweep

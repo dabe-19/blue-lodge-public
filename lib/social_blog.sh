@@ -310,6 +310,13 @@ EOF
 # Called by cron daemon: checks queue, or auto-generates if scheduled
 x_blog_sweep() {
     blog_init
+
+    # Safety gate: require explicit enablement for autonomic public posting
+    if [ "${AUTONOMIC_PUBLISH_X:-0}" -ne 1 ]; then
+        ui_info "Autonomic X publishing is paused (AUTONOMIC_PUBLISH_X=0). Posts remain staged in queue."
+        return 0
+    fi
+
     ui_step "Sweeping Sovereign Blog & Research queue for pending publications..."
 
     local queue_files

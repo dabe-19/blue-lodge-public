@@ -650,8 +650,8 @@ pgp_sign_social() {
     fi
 
     local out=""
-    # Prepend persona header if not already present
-    if [[ "$text" != *"[George"* ]]; then
+    # Prepend persona header ONLY if explicitly requested (SOCIAL_AGENT_HEADER=1)
+    if [ "${SOCIAL_AGENT_HEADER:-0}" -eq 1 ] && [[ "$text" != *"[George"* ]]; then
         out="[George 🏛️ Blue Lodge Agent]"$'\n'"$text"
     else
         out="$text"
@@ -667,8 +667,12 @@ pgp_sign_social() {
         fi
     fi
 
-    # Compact format suitable for standard social character counts
-    local trailer=$'\n\n'"🔏 Signed: $formatted_fpr (Ed25519)"
-    echo "${out}${trailer}"
+    # Compact format suitable for standard social character counts if requested
+    if [ "${SOCIAL_GPG_SIGN:-0}" -eq 1 ]; then
+        local trailer=$'\n\n'"🔏 Signed: $formatted_fpr (Ed25519)"
+        echo "${out}${trailer}"
+    else
+        echo "$out"
+    fi
 }
 

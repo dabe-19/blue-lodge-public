@@ -145,8 +145,8 @@ x_post() {
     # Expand LLM escape sequences (literal \n → real newlines)
     text=$(ui_expand_escapes "$text")
 
-    # Sign with George GPG key if enabled (cryptographic provenance)
-    if [ "${SOCIAL_GPG_SIGN:-1}" -eq 1 ]; then
+    # Sign with George GPG key ONLY if explicitly enabled (SOCIAL_GPG_SIGN=1)
+    if [ "${SOCIAL_GPG_SIGN:-0}" -eq 1 ] && [ "${_IN_THREAD:-0}" -ne 1 ]; then
         if [ -f "$LODGE_DIR/lib/pgp.sh" ]; then
             source "$LODGE_DIR/lib/pgp.sh"
             if declare -f pgp_sign_social &>/dev/null; then
@@ -242,7 +242,7 @@ x_reply() {
     local tweet_id="$1"
     local text="$2"
 
-    if [ "${SOCIAL_GPG_SIGN:-1}" -eq 1 ]; then
+    if [ "${SOCIAL_GPG_SIGN:-0}" -eq 1 ] && [ "${_IN_THREAD:-0}" -ne 1 ]; then
         if [ -f "$LODGE_DIR/lib/pgp.sh" ]; then
             source "$LODGE_DIR/lib/pgp.sh"
             if declare -f pgp_sign_social &>/dev/null; then
@@ -313,33 +313,35 @@ x_thread() {
     fi
     full_text=$(ui_expand_escapes "$full_text")
 
-    # Split text into chunks (~240 chars each to leave room for [N/M] and signatures)
-    # Using python to split nicely at paragraph or sentence boundaries
+    # Strip existing robot headers and signatures before threading
+    full_text=$(echo "$full_text" | sed -E 's/^\[George[^]]*\][[:space:]]*//; s/🔏 Signed:.*//')
+
+    # Split text into clean chunks (~250 chars max, breaking at paragraphs or complete sentences)
     local chunks_json
     chunks_json=$(python3 -c '
 import sys, re
 
-text = sys.argv[1]
-max_len = 220
+text = sys.argv[1].strip()
+max_len = 250
 paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
 
 chunks = []
 current = ""
 for p in paragraphs:
     if len(current) + len(p) + 2 <= max_len:
-        current = (current + "\n\n" + p).strip()
+        current = (current + "\n\n" + p).strip() if current else p
     else:
         if current:
             chunks.append(current)
+            current = ""
         if len(p) <= max_len:
             current = p
         else:
-            # Split long paragraph by sentences
             sentences = re.split(r"(?<=[.?!])\s+", p)
             s_curr = ""
             for s in sentences:
                 if len(s_curr) + len(s) + 1 <= max_len:
-                    s_curr = (s_curr + " " + s).strip()
+                    s_curr = (s_curr + " " + s).strip() if s_curr else s
                 else:
                     if s_curr:
                         chunks.append(s_curr)
@@ -361,6 +363,7 @@ print(json.dumps(chunks))
     fi
 
     ui_info "Publishing X thread (${count} tweets)..."
+    export _IN_THREAD=1
     local prev_id=""
     local root_id=""
     local idx=0
@@ -369,9 +372,15 @@ print(json.dumps(chunks))
         local chunk
         chunk=$(echo "$chunks_json" | jq -r ".[$idx]")
         local num=$((idx + 1))
-        # Strip existing [X/Y] prefix if present to avoid doubling
-        chunk=$(echo "$chunk" | sed -E 's/^\[[0-9]+\/[0-9]+\][[:space:]]*//')
-        local post_content="[$num/$count] $chunk"
+        # Strip existing numbering if present
+        chunk=$(echo "$chunk" | sed -E 's/^\[[0-9]+\/[0-9]+\][[:space:]]*//; s/^[0-9]+\/[0-9]+[[:space:]]*//')
+        
+        local post_content=""
+        if [ "$idx" -eq 0 ]; then
+            post_content="$chunk"$'\n\n'"🧵 1/$count"
+        else
+            post_content="$chunk"$'\n\n'"$num/$count"
+        fi
 
         local resp
         if [ -z "$prev_id" ]; then
@@ -386,6 +395,7 @@ print(json.dumps(chunks))
         fi
         if [ -z "$prev_id" ]; then
             ui_err "Thread failed at tweet $num/$count (could not extract tweet ID from response)"
+            unset _IN_THREAD
             return 1
         fi
         [ -z "$root_id" ] && root_id="$prev_id"
@@ -395,6 +405,7 @@ print(json.dumps(chunks))
         [ "$idx" -lt "$count" ] && sleep "$delay"
     done
 
+    unset _IN_THREAD
     ui_ok "Thread published successfully ($count tweets, root ID: ${root_id:-$prev_id})"
     return 0
 }
