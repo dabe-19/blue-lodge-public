@@ -26,6 +26,7 @@ source "$LODGE_DIR/lib/subagents.sh"
 source "$LODGE_DIR/lib/native_tools.sh"
 source "$LODGE_DIR/lib/context_engine.sh"
 source "$LODGE_DIR/lib/transcript.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/telemetry.sh" 2>/dev/null || true
 
 # ── Structured Telemetry & Routing Trace ──────────────────────────────
 _react_trace() {
@@ -193,7 +194,17 @@ react_run() {
     export AGENT_TASK_WORKSPACE="$session_dir"
     export AGENT_TASK_WORKSPACE_REL=".george/workspaces/$session_id"
     export AGENT_ACTIVE_SESSION_DIR="$session_dir"
+    export AGENT_ACTIVE_SESSION_ID="$session_id"
     declare -f memory_register_files &>/dev/null && memory_register_files "$workdir"
+
+    # Register task with Sovereign Telemetry Ring
+    if declare -f telemetry_task_start &>/dev/null; then
+        local _t_log=""
+        [ -n "${session_log:-}" ] && _t_log="$session_log"
+        local _t_pty="${CRON_POPUP_PID:-${PTY_PID:-0}}"
+        local _t_trans="${_TRANSCRIPT_FILE:-}"
+        telemetry_task_start "$session_id" "react" "$workdir" "$_t_log" "$_t_pty" "$_t_trans" >/dev/null 2>&1 || true
+    fi
 
     # 3. Assemble Dynamic Copilot-Style Context & Tool Schemas
     ui_dim "Assembling context pipeline and native tool registry..."
@@ -223,12 +234,30 @@ react_run() {
     local running_tokens=0
     local turn=1
     local consecutive_empty_turns=0
+    local thrashing_target_streak=0
+    local last_invoked_tool=""
 
     echo "PRIMARY OBJECTIVE: $goal" >> "$history_file"
     ui_info "Starting Task: $goal"
 
     while [ "$turn" -le "$max_turns" ]; do
         printf "\n${C_BOLD}${C_CYAN}── Turn %d/%d ──────────────────────────────${C_RESET}\n" "$turn" "$max_turns"
+
+        # Telemetry heartbeat and PTY / pipe liveness check
+        if declare -f telemetry_task_heartbeat &>/dev/null; then
+            telemetry_task_heartbeat "$session_id" "$turn" "${last_invoked_tool:-}" "$max_turns"
+        fi
+
+        # Pipe & PTY Integrity Watchdog
+        if [ -n "${PTY_PID:-}" ] && [ "${PTY_PID:-0}" -ne 0 ]; then
+            if ! kill -0 "$PTY_PID" 2>/dev/null; then
+                ui_warn "Session monitor (PID $PTY_PID) ended unexpectedly. Closing turn loop."
+                if declare -f telemetry_record_anomaly &>/dev/null; then
+                    telemetry_record_anomaly "$session_id" "PROCESS_STALL" "react.sh" "PTY monitor PID $PTY_PID severed; unblocking task" >/dev/null 2>&1 || true
+                fi
+                break
+            fi
+        fi
 
         # Refresh active tools schema if tool_search mounted new capabilities in previous turn
         if [ -s "$active_tools_file" ]; then
@@ -476,11 +505,14 @@ react_run() {
             jq --argjson m "$asst_msg" '. += [$m]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
 
             # Execute each emitted tool call
-            echo "$tool_calls" | jq -c '.[]' | while read -r call; do
+            local tool_exhausted=0
+            while read -r call; do
                 local c_id c_name c_args
                 c_id=$(echo "$call" | jq -r '.id')
                 c_name=$(echo "$call" | jq -r '.function.name')
                 c_args=$(echo "$call" | jq -r '.function.arguments')
+
+                last_invoked_tool="$c_name"
 
                 ui_step "Native Tool Call: $c_name"
                 echo "Tool Call: $c_name ($c_args)" >> "$history_file"
@@ -508,6 +540,41 @@ react_run() {
                 declare -f transcript_log_block &>/dev/null && transcript_log_block "observation ($c_name)" "$resp_content"
                 _react_trace "$workdir" "tool_call" "$(jq -cn --arg tool "$c_name" --arg args "$c_args" '{tool:$tool, args:$args}')"
 
+                # Check for tool errors and track cognitive thrashing
+                local is_tool_failure=0
+                if echo "$resp_content" | grep -qiE '^(ERROR|Command failed|pdftotext: not found|ModuleNotFoundError|Traceback \(most recent call last\)|No such file or directory)'; then
+                    is_tool_failure=1
+                fi
+
+                if [ "$is_tool_failure" -eq 1 ]; then
+                    thrashing_target_streak=$((thrashing_target_streak + 1))
+                    if declare -f telemetry_record_anomaly &>/dev/null; then
+                        telemetry_record_anomaly "$session_id" "CAPABILITY_DEFICIT" "$c_name" "Failure on $c_name (Strike $thrashing_target_streak): ${resp_content:0:200}" >/dev/null 2>&1 || true
+                    fi
+
+                    if [ "$thrashing_target_streak" -eq 3 ]; then
+                        ui_warn "3 consecutive tool failures detected targeting $c_name. Injecting adaptive advisory."
+                        local warn_pivot="[SYSTEM ADVISORY: 3 consecutive tool failures encountered with $c_name. Rather than repeating identical commands or tools, attempt an alternative strategy or inspect environment diagnostics.]"
+                        jq --arg w "$warn_pivot" '. += [{"role": "user", "content": $w}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+                    elif [ "$thrashing_target_streak" -ge 6 ]; then
+                        ui_err "Hard capability ceiling reached: 6 consecutive unyielding tool failures ($c_name). Preserving incident and halting."
+                        if declare -f telemetry_preserve_incident &>/dev/null; then
+                            telemetry_preserve_incident "$session_id" "CAPABILITY_EXHAUSTED" "Repeated tool failure on $c_name" "$workdir" >/dev/null 2>&1 || true
+                        fi
+                        if declare -f telemetry_task_end &>/dev/null; then
+                            telemetry_task_end "$session_id" 1 "CAPABILITY_EXHAUSTED" >/dev/null 2>&1 || true
+                        fi
+                        jq '.status = "CAPABILITY_EXHAUSTED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
+                        tool_exhausted=1
+                        break
+                    fi
+                else
+                    thrashing_target_streak=0
+                    if declare -f telemetry_reset_consecutive_failures &>/dev/null; then
+                        telemetry_reset_consecutive_failures "$session_id" >/dev/null 2>&1 || true
+                    fi
+                fi
+
                 # Record in macro_memory.json
                 local ts_now
                 ts_now=$(date '+%Y-%m-%d %H:%M:%S')
@@ -525,7 +592,11 @@ react_run() {
                 fi
 
                 declare -f transcript_log_jsonl &>/dev/null && transcript_log_jsonl "$goal" "${reasoning:-${think_content:-}}" "${c_name:-tool}(${c_args:-})" "$resp_content"
-            done
+            done < <(echo "$tool_calls" | jq -c '.[]')
+
+            if [ "$tool_exhausted" -eq 1 ]; then
+                return 1
+            fi
 
             consecutive_empty_turns=0
             turn=$((turn + 1))
@@ -552,6 +623,9 @@ react_run() {
             declare -f transcript_log_block &>/dev/null && transcript_log_block "final_response" "$answer"
             _react_trace "$workdir" "task_complete" "$(jq -cn --arg goal "$goal" --arg outcome "$answer" '{goal:$goal, outcome:$outcome, status:"success"}')"
             jq '.status = "COMPLETED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
+            if declare -f telemetry_task_end &>/dev/null; then
+                telemetry_task_end "$session_id" 0 "COMPLETED" >/dev/null 2>&1 || true
+            fi
             if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
                 local _tpath
                 _tpath=$(transcript_stop)
@@ -591,6 +665,12 @@ react_run() {
             obs=$(commands_dispatch "$action" "$workdir" 2>&1)
             local exit_code=$?
 
+            if [ "$exit_code" -ne 0 ]; then
+                if declare -f telemetry_record_anomaly &>/dev/null; then
+                    telemetry_record_anomaly "$session_id" "SHELL_RUNTIME" "$action" "Fallback command failed with exit $exit_code: ${obs:0:200}" >/dev/null 2>&1 || true
+                fi
+            fi
+
             obs=$(printf '%s\n' "$obs" | sed -r 's/\x1B\[[0-9;]*[a-zA-Z]//g')
             if [ ${#obs} -gt 3000 ]; then
                 obs="${obs:0:3000}\n... [truncated]"
@@ -616,6 +696,9 @@ react_run() {
             _react_trace "$workdir" "task_complete" "$(jq -cn --arg goal "$goal" --arg summary "${raw_content:0:200}" '{goal:$goal, summary:$summary, status:"success"}')"
             jq '.status = "COMPLETED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
             declare -f memory_register_files &>/dev/null && memory_register_files "$workdir"
+            if declare -f telemetry_task_end &>/dev/null; then
+                telemetry_task_end "$session_id" 0 "COMPLETED" >/dev/null 2>&1 || true
+            fi
             if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
                 local _tpath
                 _tpath=$(transcript_stop)
@@ -644,6 +727,9 @@ react_run() {
                 declare -f transcript_log_block &>/dev/null && transcript_log_block "final_response" "$raw_content"
                 _react_trace "$workdir" "task_complete" "$(jq -cn --arg goal "$goal" --arg summary "${raw_content:0:200}" '{goal:$goal, summary:$summary, status:"success"}')"
                 jq '.status = "COMPLETED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
+                if declare -f telemetry_task_end &>/dev/null; then
+                    telemetry_task_end "$session_id" 0 "COMPLETED" >/dev/null 2>&1 || true
+                fi
                 if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
                     local _tpath
                     _tpath=$(transcript_stop)
@@ -660,6 +746,15 @@ react_run() {
             ui_warn "Halting task to protect context tokens and prevent infinite loop."
             _react_trace "$workdir" "circuit_breaker" '{"reason": "consecutive_empty_turns", "turns": 2}'
             jq '.status = "CIRCUIT_BREAKER_TRIPPED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
+            if declare -f telemetry_record_anomaly &>/dev/null; then
+                telemetry_record_anomaly "$session_id" "PROCESS_STALL" "react.sh" "Circuit breaker tripped: $consecutive_empty_turns consecutive empty turns" >/dev/null 2>&1 || true
+            fi
+            if declare -f telemetry_preserve_incident &>/dev/null; then
+                telemetry_preserve_incident "$session_id" "PROCESS_STALL" "Circuit breaker tripped: consecutive empty turns" "$workdir" >/dev/null 2>&1 || true
+            fi
+            if declare -f telemetry_task_end &>/dev/null; then
+                telemetry_task_end "$session_id" 1 "CIRCUIT_BREAKER_TRIPPED" >/dev/null 2>&1 || true
+            fi
             if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
                 transcript_stop >/dev/null 2>&1 || true
             fi
@@ -674,6 +769,9 @@ react_run() {
     _react_trace "$workdir" "task_halted" "$(jq -cn --arg goal "$goal" --arg reason "turn_ceiling_preserved" '{goal:$goal, reason:$reason}')"
     jq '.status = "TURN_CEILING_PRESERVED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
     declare -f memory_register_files &>/dev/null && memory_register_files "$workdir"
+    if declare -f telemetry_task_end &>/dev/null; then
+        telemetry_task_end "$session_id" 0 "TURN_CEILING_PRESERVED" >/dev/null 2>&1 || true
+    fi
     if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
         local _tpath
         _tpath=$(transcript_stop)

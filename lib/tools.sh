@@ -493,6 +493,11 @@ tools_exec_bash() {
     else
         ui_err "Command failed (exit $exit_code)"
         echo "$output" | tail -20
+        if declare -f telemetry_record_anomaly &>/dev/null; then
+            local fail_snippet
+            fail_snippet=$(echo "$output" | tail -5 | tr '\n' ' ')
+            telemetry_record_anomaly "${AGENT_ACTIVE_SESSION_ID:-${session_id:-shell}}" "SHELL_RUNTIME" "bash_exec" "Command failed (exit $exit_code): $fail_snippet" >/dev/null 2>&1 || true
+        fi
     fi
     
     # Return output for memory updates

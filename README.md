@@ -199,7 +199,9 @@ The framework registers over 50 slash commands for direct user interaction and a
 | `/email [send\|inbox]` | — | Interface with Gmail, ProtonMail, Tuta, or Guerrilla Mail |
 | `/gsuite [gmail\|drive]` | — | Authenticate and interact with Google Workspace APIs |
 | `/mcp [install\|start\|call]` | — | Configure, run, and invoke Model Context Protocol servers |
-| `/secret [set\|get]` | — | Store API tokens in the AES-256-CBC secrets vault |
+| `/secret [set|get]` | — | Store API tokens in the AES-256-CBC secrets vault |
+| `/telemetry [active|incidents|dump]` | — | Sovereign Telemetry & Anomaly Ring inspector |
+| `/remediation [queue|run|notify|sweep]` | — | Autonomous Closed-Loop Remediation & Alerting |
 
 </details>
 
@@ -207,14 +209,14 @@ The framework registers over 50 slash commands for direct user interaction and a
 
 ## Testing Framework
 
-George is backed by an automated testing suite comprising **43 test modules** and over **3,500 assertions**, written entirely in pure Bash with zero external dependencies.
+George is backed by an automated testing suite comprising **87 test modules** and over **4,500 assertions**, written entirely in pure Bash with zero external dependencies.
 
 Run the test suite locally to verify environment compatibility:
 
 ```bash
 bash tests/run_all.sh              # Run all tests (compact output)
 bash tests/run_all.sh -v           # Verbose mode showing every assertion
-bash tests/run_all.sh test_llm     # Run only the LLM integration test module
+bash tests/run_all.sh test_telemetry # Run specific test module
 ```
 
 ---

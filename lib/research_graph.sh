@@ -204,6 +204,25 @@ research_evidence_audit() {
         done
     fi
 
+    # Audit primary PDF document extraction
+    local pdf_count
+    pdf_count=$(find "$sandbox_dir" -maxdepth 2 -name "*.pdf" 2>/dev/null | wc -l)
+    if [ "$pdf_count" -gt 0 ]; then
+        local pdf_txt_count
+        pdf_txt_count=$(find "$sandbox_dir" -maxdepth 2 -name "*.pdf.txt" -o -name "*_extracted.txt" 2>/dev/null | wc -l)
+        local scratchpad_has_pdf
+        scratchpad_has_pdf=$(grep -iE 'pdftotext|\.pdf' "$scratchpad" 2>/dev/null | wc -l)
+        if [ "$pdf_txt_count" -eq 0 ] && [ "$scratchpad_has_pdf" -eq 0 ]; then
+            ui_warn "Phase-Boundary Contract Gate: $pdf_count PDF asset(s) present, but 0 extracted text representations found."
+            if declare -f telemetry_record_anomaly &>/dev/null; then
+                telemetry_record_anomaly "research_${topic}" "CAPABILITY_DEFICIT" "pdf_read" "PDF acquired in sandbox but never successfully ingested into evidence scratchpad" >/dev/null 2>&1 || true
+            fi
+            if declare -f telemetry_preserve_incident &>/dev/null; then
+                telemetry_preserve_incident "research_${topic}" "GATE_DEFICIT" "Phase 2 Gate: Acquired PDF was not ingested into evidence text" "$sandbox_dir" >/dev/null 2>&1 || true
+            fi
+        fi
+    fi
+
     ui_ok "Evidence audit cleared: ${ref_count} verified source references cataloged."
 }
 

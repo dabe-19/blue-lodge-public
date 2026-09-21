@@ -92,7 +92,8 @@ transcript_log() {
     ts=$(date '+%H:%M:%S')
     # Strip ANSI escape codes
     msg=$(printf '%s' "$msg" | sed 's/\x1b\[[0-9;]*m//g')
-    printf '`%s` **%s:** %s\n' "$ts" "$tag" "$msg" >> "$_TRANSCRIPT_FILE"
+    mkdir -p "$(dirname "$_TRANSCRIPT_FILE")" 2>/dev/null || true
+    printf '`%s` **%s:** %s\n' "$ts" "$tag" "$msg" >> "$_TRANSCRIPT_FILE" 2>/dev/null || true
 }
 
 # Log a multi-line block (command output, LLM responses, etc.)
@@ -105,10 +106,11 @@ transcript_log_block() {
     ts=$(date '+%H:%M:%S')
     # Strip ANSI escape codes
     content=$(printf '%s' "$content" | sed 's/\x1b\[[0-9;]*m//g')
+    mkdir -p "$(dirname "$_TRANSCRIPT_FILE")" 2>/dev/null || true
     {
         printf '\n`%s` **%s:**\n' "$ts" "$tag"
         printf '```\n%s\n```\n\n' "$content"
-    } >> "$_TRANSCRIPT_FILE"
+    } >> "$_TRANSCRIPT_FILE" 2>/dev/null || true
 }
 
 # Log a section divider (milestone boundaries, phase changes)
@@ -118,7 +120,8 @@ transcript_section() {
     local title="$1"
     local ts
     ts=$(date '+%H:%M:%S')
-    printf '\n---\n\n### %s  `%s`\n\n' "$title" "$ts" >> "$_TRANSCRIPT_FILE"
+    mkdir -p "$(dirname "$_TRANSCRIPT_FILE")" 2>/dev/null || true
+    printf '\n---\n\n### %s  `%s`\n\n' "$title" "$ts" >> "$_TRANSCRIPT_FILE" 2>/dev/null || true
 }
 
 # ── UI hook ────────────────────────────────────────────────────
@@ -150,22 +153,24 @@ transcript_stop() {
         fi
     fi
 
+    mkdir -p "$(dirname "$_TRANSCRIPT_FILE")" 2>/dev/null || true
     {
         echo ""
         echo "---"
         echo ""
         echo "**Ended:** $(date '+%Y-%m-%d %H:%M:%S %Z')"
         [ -n "$duration" ] && echo "**Duration:** $duration"
-    } >> "$_TRANSCRIPT_FILE"
+    } >> "$_TRANSCRIPT_FILE" 2>/dev/null || true
  
     if [ -n "$_PROMPT_LOG_FILE" ] && [ -f "$_PROMPT_LOG_FILE" ]; then
+        mkdir -p "$(dirname "$_PROMPT_LOG_FILE")" 2>/dev/null || true
         {
             echo ""
             echo "---"
             echo ""
             echo "**Ended:** $(date '+%Y-%m-%d %H:%M:%S %Z')"
             [ -n "$duration" ] && echo "**Duration:** $duration"
-        } >> "$_PROMPT_LOG_FILE"
+        } >> "$_PROMPT_LOG_FILE" 2>/dev/null || true
     fi
  
     local saved="$_TRANSCRIPT_FILE"
@@ -230,13 +235,14 @@ transcript_log_prompt() {
     local system="${3:-}"
     local ts
     ts=$(date '+%H:%M:%S')
+    mkdir -p "$(dirname "$_PROMPT_LOG_FILE")" 2>/dev/null || true
     {
         printf '\n`%s` **prompt-injection (%s):**\n' "$ts" "$role"
         if [ -n "$system" ]; then
             printf '<details>\n<summary>System Prompt</summary>\n\n```\n%s\n```\n\n</details>\n' "$system"
         fi
         printf '<details>\n<summary>User Prompt</summary>\n\n```\n%s\n```\n\n</details>\n' "$prompt"
-    } >> "$_PROMPT_LOG_FILE"
+    } >> "$_PROMPT_LOG_FILE" 2>/dev/null || true
 }
 typeset -xf transcript_log_prompt
 

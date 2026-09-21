@@ -24,6 +24,8 @@ source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/endpoints.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/mcp_server_gitea.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/subagents.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/telemetry.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/remediation.sh" 2>/dev/null || true
 
 # Thresholds
 SENTINEL_SLOT_STALL_CYCLES="${SENTINEL_SLOT_STALL_CYCLES:-3}"
@@ -188,6 +190,36 @@ sentinel_probe() {
         done <<< "$wt_list"
     fi
 
+    # F. Probe Active Telemetry Ring for Stalled/Dead Agent Tasks
+    local act_dir="${TELEMETRY_ACTIVE_DIR:-${GEORGE_DIR}/telemetry/active}"
+    if [ -d "$act_dir" ]; then
+        for tf in "$act_dir"/*.json; do
+            [ ! -f "$tf" ] && continue
+            local t_id t_hb t_pty t_pid t_tool t_turn t_max
+            t_id=$(jq -r '.task_id // empty' "$tf" 2>/dev/null)
+            t_hb=$(jq -r '.heartbeat_ts // 0' "$tf" 2>/dev/null)
+            t_pty=$(jq -r '.pty_pid // 0' "$tf" 2>/dev/null)
+            t_pid=$(jq -r '.pid // 0' "$tf" 2>/dev/null)
+            t_tool=$(jq -r '.last_tool // ""' "$tf" 2>/dev/null)
+            t_turn=$(jq -r '.turn // 0' "$tf" 2>/dev/null)
+            t_max=$(jq -r '.max_turns // 200' "$tf" 2>/dev/null)
+
+            local t_age=$(( now - t_hb ))
+            if [ "$t_age" -ge 180 ]; then
+                local is_alive=0
+                [ "$t_pid" -gt 0 ] && kill -0 "$t_pid" 2>/dev/null && is_alive=1
+                [ "$t_pty" -gt 0 ] && kill -0 "$t_pty" 2>/dev/null && is_alive=1
+
+                if [ "$is_alive" -eq 0 ]; then
+                    anomalies+=("TASK_DEAD_PID: Task $t_id (Turn $t_turn/$t_max) process dead with no heartbeat for ${t_age}s")
+                    actions_needed+=("REAP_DEAD_TASK_$t_id")
+                else
+                    anomalies+=("TASK_STALL: Task $t_id (Turn $t_turn/$t_max, tool: $t_tool) stalled with no heartbeat for ${t_age}s")
+                fi
+            fi
+        done
+    fi
+
     # Overall Status Determination
     local overall_status="HEALTHY"
     if [ ${#anomalies[@]} -gt 0 ]; then
@@ -298,6 +330,13 @@ sentinel_self_heal() {
                     healed+=("Terminated client PID $c associated with stalled slot $slot_num")
                 done
                 ;;
+            REAP_DEAD_TASK_*)
+                local r_tid="${act#REAP_DEAD_TASK_}"
+                if declare -f telemetry_task_end &>/dev/null; then
+                    telemetry_task_end "$r_tid" 1 "PROCESS_DEAD_REAPED"
+                    healed+=("Reaped dead task registration $r_tid")
+                fi
+                ;;
         esac
     done <<< "$actions"
 
@@ -321,6 +360,50 @@ sentinel_triage_tier2() {
     now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local issue_title="[Sentinel Telemetry Alert] Anomaly Detected & Remediated (${now_iso})"
 
+    local norm_anoms
+    norm_anoms=$(printf '%s\n' "${anomalies[@]}" | sort | tr '\n' ' ')
+    local fp
+    fp=$(telemetry_fingerprint "SENTINEL" "telemetry_probe" "$norm_anoms")
+
+    local issues_dir="${GEORGE_DIR}/issues"
+    mkdir -p "$issues_dir" 2>/dev/null || true
+
+    # Check for existing issue with identical fingerprint to deduplicate
+    local existing_issue
+    existing_issue=$(grep -l "\[fingerprint:${fp}\]" "$issues_dir"/*.md 2>/dev/null | head -n 1 || true)
+    if [ -n "$existing_issue" ] && [ -f "$existing_issue" ]; then
+        {
+            echo ""
+            echo "---"
+            echo "**Recurrence (${now_iso})**:"
+            echo "- Sentinel detected recurrence of this condition."
+            echo "- Flagged: \`${norm_anoms}\`"
+            [ -n "$healed_summary" ] && echo "- Healed: ${healed_summary}"
+        } >> "$existing_issue"
+        echo "[SENTINEL] Deduplicated anomaly to existing issue: $existing_issue" >> "$SENTINEL_LOG"
+        echo "$existing_issue"
+        return 0
+    fi
+
+    # Check for preserved incident dossier
+    local inc_link=""
+    local inc_path=""
+    local inc_dir="${GEORGE_DIR}/telemetry/incidents"
+    if [ -d "$inc_dir" ]; then
+        for mf in "$inc_dir"/*/manifest.json; do
+            [ ! -f "$mf" ] && continue
+            local m_fp
+            m_fp=$(jq -r '.fingerprint // empty' "$mf" 2>/dev/null)
+            if [ "$m_fp" = "$fp" ]; then
+                inc_path=$(dirname "$mf")
+                local inc_id
+                inc_id=$(basename "$inc_path")
+                inc_link="- **Preserved Diagnostic Incident:** [${inc_id}](file://${inc_path})\n"
+                break
+            fi
+        done
+    fi
+
     local diag_table
     diag_table=$(echo "$probe_json" | jq -r '
         "- **Status:** " + .status + "\n" +
@@ -340,11 +423,17 @@ sentinel_triage_tier2() {
 
 The Sentinel Watchdog identified anomalous system conditions during routine telemetry probing.
 
+**Error Fingerprint:** \`[fingerprint:${fp}]\`
+
 #### System Telemetry Vitals
 ${diag_table}
 
 #### Flagged Anomalies
 ${anom_bullets}
+
+#### Diagnostic Trace & Artifacts
+${inc_link}- **Host Workspace:** \`${LODGE_DIR}\`
+- **Telemetry Event Log:** \`${GEORGE_DIR}/telemetry/active/\`
 
 #### Autonomous Remediation Executed
 - ${healed_summary}
@@ -356,11 +445,18 @@ ${anom_bullets}
 EOF
 )
 
-    # Save local markdown issue in .george/issues/
-    local issues_dir="${GEORGE_DIR}/issues"
-    mkdir -p "$issues_dir" 2>/dev/null || true
     local issue_file="$issues_dir/issue_sentinel_$(date +%s).md"
     echo -e "# ${issue_title}\n\n${issue_body}" > "$issue_file"
+
+    # Enqueue in autonomous remediation loop
+    if declare -f remediation_queue_add &>/dev/null; then
+        remediation_queue_add "$issue_file" "$inc_path" "high" "$issue_title" >/dev/null 2>&1 || true
+    fi
+
+    # Dispatch notification via configured email and discord
+    if declare -f remediation_notify_dispatch &>/dev/null; then
+        remediation_notify_dispatch "sentinel_$(date +%s)" "$issue_title" "DETECTED" "$norm_anoms" "$([ -n "$inc_path" ] && echo "Dossier: file://$inc_path" || echo "")" >/dev/null 2>&1 || true
+    fi
 
     # Submit to Sovereign Gitea if online
     if declare -f gitea_is_online &>/dev/null && gitea_is_online; then

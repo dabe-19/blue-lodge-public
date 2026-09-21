@@ -2947,6 +2947,17 @@ $_ts_v_err
         output="${output:0:4000}\n... [output truncated (${#output} chars total)]"
     fi
 
+    # Anomaly telemetry tap for native tool failures
+    if [ "$exit_code" -ne 0 ] || echo "$output" | grep -qiE '^(ERROR|Command failed|ModuleNotFoundError|pdftotext: not found|ImportError)'; then
+        if declare -f telemetry_record_anomaly &>/dev/null; then
+            local fail_cls="CAPABILITY_DEFICIT"
+            if [ "$name" = "bash_exec" ] || [ "$name" = "file_read" ] || [ "$name" = "file_write" ]; then
+                fail_cls="SHELL_RUNTIME"
+            fi
+            telemetry_record_anomaly "${AGENT_ACTIVE_SESSION_ID:-${session_id:-native_tools}}" "$fail_cls" "$name" "$output" >/dev/null 2>&1 || true
+        fi
+    fi
+
     # Return standard OpenAI tool response JSON object
     jq -n \
         --arg id "$call_id" \

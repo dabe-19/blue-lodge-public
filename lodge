@@ -4191,6 +4191,26 @@ _cmd_research() {
         cmd_research "$args" "$workdir"
     fi
 }
+_cmd_telemetry() {
+    local args="$1"
+    local workdir="${2:-.}"
+    if declare -f cmd_telemetry &>/dev/null; then
+        cmd_telemetry "$args" "$workdir"
+    elif [ -f "$LODGE_COMMANDS_DIR/telemetry.sh" ]; then
+        source "$LODGE_COMMANDS_DIR/telemetry.sh"
+        cmd_telemetry "$args" "$workdir"
+    fi
+}
+_cmd_remediation() {
+    local args="$1"
+    local workdir="${2:-.}"
+    if declare -f cmd_remediation &>/dev/null; then
+        cmd_remediation "$args" "$workdir"
+    elif [ -f "$LODGE_COMMANDS_DIR/remediation.sh" ]; then
+        source "$LODGE_COMMANDS_DIR/remediation.sh"
+        cmd_remediation "$args" "$workdir"
+    fi
+}
 _cmd_provider() {
     local args="$1"
     local action
@@ -6305,6 +6325,8 @@ _register_commands() {
     commands_register "read"     "Read a file" "_cmd_read"
     commands_register "grep"     "Regex search files (supports pipes)" "_cmd_grep"
     commands_register "research" "Autonomous Research Graph & Dossier Library" "_cmd_research"
+    commands_register "telemetry" "Sovereign Telemetry & Anomaly Ring Inspector" "_cmd_telemetry"
+    commands_register "remediation" "Sovereign Autonomous Remediation Loop & Alerts" "_cmd_remediation"
     commands_register "respond"  "Present response to the operator" "_cmd_respond"
 }
 

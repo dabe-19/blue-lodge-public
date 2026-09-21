@@ -36,7 +36,7 @@ discord_bridge_init() {
     fi
     if [ ! -f "$DISCORD_KNOWN_DMS_FILE" ]; then
         mkdir -p "$(dirname "$DISCORD_KNOWN_DMS_FILE")" 2>/dev/null || true
-        echo '{"190628469053325312":"1477077957691576393"}' > "$DISCORD_KNOWN_DMS_FILE" 2>/dev/null || true
+        echo '{}' > "$DISCORD_KNOWN_DMS_FILE" 2>/dev/null || true
     fi
 }
 
