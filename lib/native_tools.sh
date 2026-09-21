@@ -71,6 +71,55 @@ _NATIVE_CORE_TOOLS='[
   {
     "type": "function",
     "function": {
+      "name": "pdf_read",
+      "description": "Extract text and structured page content from a PDF document using Poppler pdftotext.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Relative file path from workspace root or absolute path to the PDF." },
+          "page_start": { "type": "integer", "description": "Optional starting page number (1-indexed, default: 1)." },
+          "page_end": { "type": "integer", "description": "Optional ending page number." },
+          "max_pages": { "type": "integer", "description": "Optional maximum number of pages to extract (default: 20)." },
+          "layout": { "type": "boolean", "description": "Preserve visual column and tabular layout (default: true)." }
+        },
+        "required": ["path"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "workflow_plan",
+      "description": "Initiate interactive feature/task planning with George and the operator. Clarifies requirements, formulates implementation scope, asks critical design questions, and drafts an implementation plan contract before editing code or running deep tasks.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "objective": { "type": "string", "description": "Primary goal, feature requirement, or research objective to plan." },
+          "context": { "type": "string", "description": "Optional background information, constraints, or findings to consider." },
+          "questions": { "type": "string", "description": "Optional clarifying questions or design tradeoffs for George and the operator to answer." }
+        },
+        "required": ["objective"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "workflow_run",
+      "description": "Execute a Blue Lodge multi-agent workflow (e.g. the-architect, dispatcher, george, the-tyler, the-warden, tester, trowel, commands-specialist, core-specialist, etc.) to perform coordinated team operations.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Name of the workflow to run (e.g. the-architect, dispatcher, george, tester, etc.)." },
+          "args": { "type": "string", "description": "Arguments, context, or task description passed to the workflow." }
+        },
+        "required": ["name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "tool_search",
       "description": "Search the sovereign tool catalog using natural language or bundle tags (e.g. +git, how to post to x, database query, +ops) to dynamically auto-mount new capabilities into your active session.",
       "parameters": {
@@ -1057,11 +1106,11 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "slash_command_exec",
-      "description": "Execute any Blue Lodge slash command (e.g. /journal, /recall, /init, /fix, /commit, /push, /save, /service).",
+      "description": "Execute any Blue Lodge slash command (e.g. /workflow, /the-architect, /dispatcher, /george, /journal, /recall, /init, /fix, /commit, /push, /save, /service, /pdf).",
       "parameters": {
         "type": "object",
         "properties": {
-          "command": { "type": "string", "description": "Full slash command string (e.g. /journal show or /recall query)." }
+          "command": { "type": "string", "description": "Full slash command string (e.g. /workflow run the-architect <objective>, /the-architect <objective>, /pdf <file>, or /recall query)." }
         },
         "required": ["command"]
       }
@@ -1439,7 +1488,7 @@ native_tools_get_schemas() {
 }
 
 # ── Composable Tool Bundles & Bedrock Taxonomy ────────────────────────
-_BEDROCK_TOOLS="bash_exec,slash_command_exec,file_read,ask_operator,tool_search"
+_BEDROCK_TOOLS="bash_exec,slash_command_exec,file_read,pdf_read,workflow_plan,workflow_run,ask_operator,tool_search"
 
 # Map bundles to their constituent tool names
 native_tools_bundle_tools() {
@@ -1837,6 +1886,9 @@ native_tools_dispatch() {
                 elif [ -d "$target" ]; then
                     output=$(commands_dispatch "/ls $p 2" "$workdir" 2>&1)
                     exit_code=0
+                elif [[ "${target,,}" == *.pdf ]]; then
+                    output=$(tools_read_pdf "$target" 1 "" 20 1 2>&1)
+                    exit_code=$?
                 else
                     output=$(tools_read_file "$target" "$m" "$s" 2>&1)
                     exit_code=$?
@@ -1847,6 +1899,55 @@ native_tools_dispatch() {
                             output+=$'\n\n'"[Tip: $p has $_ts_total_lines lines. Use code_outline \"$p\" for structural overview, or code_symbol_get \"$p\" <symbol> to extract specific functions/classes.]"
                         fi
                     fi
+                fi
+                ;;
+            pdf_read)
+                local p s e m l
+                p=$(echo "$args_json" | jq -r '.path // empty')
+                s=$(echo "$args_json" | jq -r '.page_start // 1')
+                e=$(echo "$args_json" | jq -r '.page_end // empty')
+                m=$(echo "$args_json" | jq -r '.max_pages // 20')
+                l=$(echo "$args_json" | jq -r 'if .layout == false then 0 else 1 end')
+                local target="$p"
+                if declare -f ui_resolve_path &>/dev/null; then
+                    target=$(ui_resolve_path "$p" "$workdir")
+                elif [ -f "$workdir/$p" ]; then
+                    target="$workdir/$p"
+                fi
+                if [ ! -f "$target" ]; then
+                    output="ERROR: PDF file not found: $p"
+                    exit_code=1
+                else
+                    output=$(tools_read_pdf "$target" "$s" "$e" "$m" "$l" 2>&1)
+                    exit_code=$?
+                fi
+                ;;
+            workflow_plan)
+                local obj ctx qs
+                obj=$(echo "$args_json" | jq -r '.objective // empty')
+                ctx=$(echo "$args_json" | jq -r '.context // empty')
+                qs=$(echo "$args_json" | jq -r '.questions // empty')
+                if declare -f workflow_interactive_plan &>/dev/null; then
+                    output=$(workflow_interactive_plan "$obj" "$ctx" "$qs" "$workdir" 2>&1)
+                    exit_code=$?
+                elif declare -f _workflow_run_architect &>/dev/null; then
+                    output=$(_workflow_run_architect "$obj" "$workdir" "" 2>&1)
+                    exit_code=$?
+                else
+                    output=$(commands_dispatch "/workflow run the-architect $obj" "$workdir" 2>&1)
+                    exit_code=$?
+                fi
+                ;;
+            workflow_run)
+                local wname wargs
+                wname=$(echo "$args_json" | jq -r '.name // empty')
+                wargs=$(echo "$args_json" | jq -r '.args // empty')
+                if declare -f workflows_run &>/dev/null; then
+                    output=$(workflows_run "$wname" "$wargs" "$workdir" 2>&1)
+                    exit_code=$?
+                else
+                    output=$(commands_dispatch "/workflow run $wname $wargs" "$workdir" 2>&1)
+                    exit_code=$?
                 fi
                 ;;
             file_write)

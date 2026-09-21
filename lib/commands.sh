@@ -93,7 +93,7 @@ commands_dispatch() {
     # positional args only. Content commands are skipped because their
     # freeform text args may legitimately contain double-dashes.
     case "$cmd" in
-        bash|sh|edit|respond|write|append|save|social|email|commit|fix|upstream|pr|gitea|subagents|limits) ;;
+        bash|sh|edit|respond|write|append|save|social|email|commit|fix|upstream|pr|gitea|subagents|limits|research|pdf) ;;
         *)
             local _cleaned=() _skip_next=0 _stripped_any=0
             for _tok in $args; do

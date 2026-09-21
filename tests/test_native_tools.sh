@@ -12,7 +12,7 @@ describe "native_tools_get_all_schemas"
     echo "$schemas" | jq empty
     assert_ok $?
     len=$(echo "$schemas" | jq '. | length')
-    [ "$len" -ge 72 ]
+    [ "$len" -ge 75 ]
     assert_ok $?
   }
 
@@ -101,13 +101,20 @@ describe "native_tools_get_all_schemas"
     assert_ok $?
     echo "$schemas" | jq -e '.[] | select(.function.name == "code_validate")' >/dev/null
     assert_ok $?
+    # 14. PDF & Workflow Planning
+    echo "$schemas" | jq -e '.[] | select(.function.name == "pdf_read")' >/dev/null
+    assert_ok $?
+    echo "$schemas" | jq -e '.[] | select(.function.name == "workflow_plan")' >/dev/null
+    assert_ok $?
+    echo "$schemas" | jq -e '.[] | select(.function.name == "workflow_run")' >/dev/null
+    assert_ok $?
   }
 
 describe "native_tools_get_schemas"
   it "returns all schemas when filter is empty or all" && {
     all_s=$(native_tools_get_schemas)
     len_all=$(echo "$all_s" | jq '. | length')
-    [ "$len_all" -ge 72 ]
+    [ "$len_all" -ge 75 ]
     assert_ok $?
 
     all_explicit=$(native_tools_get_schemas "all")
@@ -268,6 +275,27 @@ describe "native_tools_dispatch"
     assert_ok $?
     content=$(echo "$res" | jq -r '.content')
     assert_contains "$content" "treesitter.sh"
+  }
+
+  it "dispatches pdf_read and handles missing file" && {
+    res=$(native_tools_dispatch "call_test_pdf" "pdf_read" '{"path":"/nonexistent/sample.pdf"}' "$PWD")
+    assert_ok $?
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "not found"
+  }
+
+  it "dispatches workflow_plan and returns plan prompt" && {
+    res=$(native_tools_dispatch "call_test_wp" "workflow_plan" '{"objective":"Build feature"}' "$PWD")
+    assert_ok $?
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "Scoping"
+  }
+
+  it "dispatches workflow_run and confirms launch" && {
+    res=$(native_tools_dispatch "call_test_wr" "workflow_run" '{"name":"the-architect","args":"Build feature"}' "$PWD")
+    assert_ok $?
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "architect"
   }
 
   it "handles unknown tool gracefully" && {

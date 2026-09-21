@@ -473,3 +473,54 @@ _workflow_run_warden() {
     react_run "$warden_instruction\n\n$wf_prompt\n\nTARGET: $args" "$workdir"
     return $?
 }
+
+# ── Interactive Team Scoping & Workflow Planning ─────────────────────
+# Bridges George, the operator, and agent team into interactive planning.
+# Usage: workflow_interactive_plan "objective" [context] [questions] [workdir]
+workflow_interactive_plan() {
+    local objective="$1"
+    local context="${2:-}"
+    local questions="${3:-}"
+    local workdir="${4:-$PWD}"
+
+    ui_section "George Interactive Team Scoping & Workflow Planning"
+    ui_step "Objective: $objective"
+
+    local scoping_dialogue=""
+    if [ -n "$context" ]; then
+        ui_info "Context: $context"
+        scoping_dialogue+="Context Provided:\n$context\n\n"
+    fi
+
+    # If questions were formulated, ask George / the operator
+    if [ -n "$questions" ]; then
+        ui_step "Agent formulated design questions for George / Operator:"
+        local q_ans
+        q_ans=$(ui_ask_operator "$questions")
+        ui_ok "Scoping Decision: $q_ans"
+        scoping_dialogue+="Planning Questions:\n$questions\n\nDecisions / Answers:\n$q_ans\n\n"
+    elif [ -z "$objective" ]; then
+        local user_obj
+        user_obj=$(ui_ask_operator "What is the primary feature or task objective you want to plan?")
+        [ -n "$user_obj" ] && objective="$user_obj"
+        scoping_dialogue+="Objective Defined: $objective\n\n"
+    fi
+
+    # Record in journal for persistent team memory
+    if declare -f journal_write &>/dev/null; then
+        journal_write "reflection" "Team planning session initiated for: $objective. Dialogue: ${scoping_dialogue:0:200}" 2>/dev/null || true
+    fi
+
+    # Run the architect workflow with accumulated scoping context
+    local combined_args="$objective"
+    [ -n "$scoping_dialogue" ] && combined_args="$objective\n\n$scoping_dialogue"
+
+    _workflow_run_architect "$combined_args" "$workdir" ""
+    local rc=$?
+
+    if [ -f "$workdir/implementation_plan.md" ]; then
+        echo "Implementation plan established at $workdir/implementation_plan.md"
+    fi
+    return $rc
+}
+

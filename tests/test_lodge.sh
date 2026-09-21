@@ -859,6 +859,7 @@ describe "Model command (sampling parameters)"
   }
 
   it "_cmd_model reset restores model defaults" && {
+    LODGE_MODEL="gemma4-e4b-inst"
     # Set everything to non-default values
     LLM_TEMPERATURE=0.9
     LLM_REPEAT_PENALTY=2.0

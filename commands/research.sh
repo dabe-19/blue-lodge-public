@@ -26,7 +26,8 @@ cmd_research() {
             echo ""
             echo "Commands:"
             echo "  start <topic> [--publish]  Launch deep research graph (optionally broadcast on completion)"
-            echo "  publish <topic>            Launch deep research and immediately broadcast to configured social channels"
+            echo "  start <topic> [--publish-mastodon|--publish-bluesky|--publish-x]"
+            echo "  publish <topic>            Launch deep research and immediately broadcast to all social channels"
             echo "  list                       List completed dossiers in the Sovereign Library"
             echo "  read <slug>                Read a research dossier and inspect citations"
             echo "  queue <slug>               Stage an existing research thread for social broadcast"
@@ -35,16 +36,35 @@ cmd_research() {
             ;;
         start|run|new)
             local do_pub=0
-            if [[ "$rest" =~ --publish ]]; then
-                do_pub=1
-                rest=$(echo "$rest" | sed 's/--publish//; s/^[[:space:]]*//; s/[[:space:]]*$//')
+            local pub_masto=0
+            local pub_bsky=0
+            local pub_x=0
+            if [[ "$rest" =~ --publish-mastodon ]]; then
+                do_pub=1; pub_masto=1
+                rest=$(echo "$rest" | sed 's/--publish-mastodon//; s/^[[:space:]]*//; s/[[:space:]]*$//')
+            fi
+            if [[ "$rest" =~ --publish-bluesky ]]; then
+                do_pub=1; pub_bsky=1
+                rest=$(echo "$rest" | sed 's/--publish-bluesky//; s/^[[:space:]]*//; s/[[:space:]]*$//')
+            fi
+            if [[ "$rest" =~ --publish-x ]]; then
+                do_pub=1; pub_x=1
+                rest=$(echo "$rest" | sed 's/--publish-x//; s/^[[:space:]]*//; s/[[:space:]]*$//')
+            fi
+            if [[ "$rest" =~ --publish(-all)? ]]; then
+                do_pub=1; pub_masto=1; pub_bsky=1; pub_x=1
+                rest=$(echo "$rest" | sed -E 's/--publish(-all)?//; s/^[[:space:]]*//; s/[[:space:]]*$//')
             fi
             research_graph_run "$rest"
             if [ "$do_pub" -eq 1 ]; then
                 echo ""
                 ui_section "Broadcasting Research Essay to Social Channels"
                 source "$LODGE_DIR/lib/social_blog.sh" 2>/dev/null || true
-                AUTONOMIC_PUBLISH_X=1 x_blog_sweep
+                AUTONOMIC_PUBLISH_SOCIAL=1 \
+                AUTONOMIC_PUBLISH_MASTODON="$pub_masto" \
+                AUTONOMIC_PUBLISH_BLUESKY="$pub_bsky" \
+                AUTONOMIC_PUBLISH_X="$pub_x" \
+                x_blog_sweep
             fi
             ;;
         publish|live|broadcast)
@@ -52,7 +72,11 @@ cmd_research() {
             research_graph_run "$rest"
             echo ""
             ui_section "Broadcasting Research Essay to Social Channels"
-            AUTONOMIC_PUBLISH_X=1 x_blog_sweep
+            AUTONOMIC_PUBLISH_SOCIAL=1 \
+            AUTONOMIC_PUBLISH_MASTODON=1 \
+            AUTONOMIC_PUBLISH_BLUESKY=1 \
+            AUTONOMIC_PUBLISH_X=1 \
+            x_blog_sweep
             ;;
         read|show|dossier)
             if [ -z "$rest" ]; then

@@ -90,7 +90,8 @@ context_engine_build() {
     out+="The sovereign agent environment exposes 77 native POSIX tools with zero external dependencies:\n"
     out+="## Workspace & Execution\n"
     out+="- bash_exec(command): Execute shell commands in the project workspace.\n"
-    out+="- file_read(path): Read file contents.\n"
+    out+="- file_read(path): Read file contents (auto-detects and extracts text from PDFs via Poppler).\n"
+    out+="- pdf_read(path, page_start, page_end): Extract clean text and structured page content from PDF documents using Poppler pdftotext.\n"
     out+="- file_write(path, content): Create or overwrite file.\n"
     out+="- file_append(path, content): Append text to file.\n"
     out+="- dir_list(path, max_depth): List directory tree.\n"
@@ -177,7 +178,9 @@ context_engine_build() {
     out+="- social_post(network, text): Broadcast to Bluesky, Mastodon, or X.\n"
     out+="- system_vitals(): Live CPU, RAM, thermals, battery, and GPU layer metrics.\n"
     out+="- subagent_delegate(tier, task): Delegate bounded subtask to lower-tier node.\n"
-    out+="- slash_command_exec(command): Execute any Blue Lodge slash command natively.\n"
+    out+="- slash_command_exec(command): Execute any Blue Lodge slash command natively (e.g. /workflow, /the-architect, /dispatcher, /george, /pdf, /recall).\n"
+    out+="- workflow_plan(objective, context, questions): Initiate interactive scoping and feature planning with George and the operator.\n"
+    out+="- workflow_run(name, args): Execute a Lodge multi-agent workflow (the-architect, dispatcher, george, tester, etc.).\n"
     out+="## AST Structural Intelligence & Operator Interaction\n"
     out+="- ask_operator(question): Pause execution and prompt human operator on /dev/tty for input.\n"
     out+="- code_outline(path): Extract AST semantic outline / signatures, reducing tokens by ~90%.\n"
@@ -185,12 +188,14 @@ context_engine_build() {
     out+="- code_validate(content, language): In-memory AST pre-flight syntax check before writing to disk.\n"
     out+="</tool_manifest>\n\n"
 
-    # 3. Operational Protocol
+    # 3. Operational Protocol & Workflow Planning
     out+="<operational_protocol>\n"
     out+="1. You have native tool calling enabled. When you need information or need to modify files, call the corresponding native tool.\n"
-    out+="2. Always verify facts before assuming. Inspect code before modifying it.\n"
-    out+="3. Multiple tool calls may be executed sequentially or in parallel.\n"
-    out+="4. Once all necessary actions are complete, synthesize your final response directly in clean, readable markdown.\n"
+    out+="2. For complex, multi-step, architectural, or ambiguous tasks: use workflow planning tools (workflow_plan, workflow_run, or slash_command_exec with /workflow or /the-architect) and ask_operator within your turns to collaboratively plan, clarify scope, and define implementation contracts before modifying files or executing deep research.\n"
+    out+="3. George acts as your team anchor: George interacts, answers questions, clarifies scope, and provides authoritative guidance. All interactive planning dialogues are displayed on TTY and logged to the transcript for persistent provenance.\n"
+    out+="4. Always verify facts before assuming. Inspect code before modifying it.\n"
+    out+="5. Multiple tool calls may be executed sequentially or in parallel.\n"
+    out+="6. Once all necessary actions are complete, synthesize your final response directly in clean, readable markdown.\n"
     out+="</operational_protocol>\n\n"
 
     # 4. Agent Swarm Identities

@@ -16,7 +16,7 @@ cmd_bash() {
 
     (
         cd "$workdir" || exit 1
-        export PATH="$LODGE_DIR:$PATH"
+        export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$LODGE_DIR:$PATH"
         # Run command with 30s timeout if timeout command exists
         if command -v timeout &>/dev/null; then
             timeout 30s bash -c "$cmd_str"

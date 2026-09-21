@@ -52,6 +52,8 @@ export AGENT_PLAN_STEPS="${AGENT_PLAN_STEPS:-6}"
 export AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-40}"
 export AGENT_MAX_TURNS="${AGENT_MAX_TURNS:-9999}"
 export AGENT_CHILD_MAX_TURNS="${AGENT_CHILD_MAX_TURNS:-200}"
+export MAX_RESEARCH_TURNS="${MAX_RESEARCH_TURNS:-200}"
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$LODGE_DIR:$PATH"
 
 # ── Source Libraries ───────────────────────────────────────────
 source "$LODGE_DIR/lib/ui.sh"
@@ -964,8 +966,16 @@ _cmd_limits() {
             if [ -z "$value" ]; then
                 ui_info "Parent agent max turns: ${AGENT_MAX_TURNS:-9999} (default: 9999)"
                 ui_info "Child subagent max turns: ${AGENT_CHILD_MAX_TURNS:-200} (default: 200)"
+                ui_info "Research task max turns: ${MAX_RESEARCH_TURNS:-200} (default: 200)"
             else
                 _limits_set AGENT_MAX_TURNS "Parent turns" "$value" 1 9999
+            fi ;;
+        research-turns|research)
+            if [ -z "$value" ]; then
+                ui_info "Research task max turns: ${MAX_RESEARCH_TURNS:-200} (default: 200)"
+            else
+                _limits_set MAX_RESEARCH_TURNS "Research turns" "$value" 1 9999
+                declare -f limits_set &>/dev/null && limits_set MAX_RESEARCH_TURNS "$value"
             fi ;;
         inner)
             if [ -z "$value" ]; then
@@ -1450,6 +1460,8 @@ _cmd_limits() {
             AGENT_MAX_STEPS=40
             AGENT_MAX_TURNS=9999
             AGENT_CHILD_MAX_TURNS=200
+            MAX_RESEARCH_TURNS=200
+            declare -f limits_reset &>/dev/null && limits_reset >/dev/null 2>&1 || true
             AGENT_MAX_DEPTH=3
             AGENT_FILE_EXPAND=1
             AGENT_FILE_EXPAND_CHARS=1000
@@ -1700,6 +1712,7 @@ _cmd_limits() {
             printf "  %-22s %s\n" "Plan steps/subtask:" "$AGENT_PLAN_STEPS  (default: 6)"
             printf "  %-22s %s\n" "Parent ReAct turns:" "${AGENT_MAX_TURNS:-9999}  (default: 9999)"
             printf "  %-22s %s\n" "Child worker turns:" "${AGENT_CHILD_MAX_TURNS:-200}  (default: 200)"
+            printf "  %-22s %s\n" "Research task turns:" "${MAX_RESEARCH_TURNS:-200}  (default: 200)"
             local _expand_show="disabled"
             [ "${AGENT_HONEYDEW_EXPAND:-1}" -eq 1 ] && _expand_show="enabled"
             printf "  %-22s %s\n" "Honeydew expansion:" "$_expand_show  (default: enabled)"

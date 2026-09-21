@@ -311,13 +311,31 @@ EOF
 x_blog_sweep() {
     blog_init
 
-    # Safety gate: require explicit enablement for autonomic public posting
-    local auto_pub="${AUTONOMIC_PUBLISH_X:-}"
-    if [ -z "$auto_pub" ] && declare -f api_get_key &>/dev/null; then
-        auto_pub=$(api_get_key "AUTONOMIC_PUBLISH_X" 2>/dev/null || echo "0")
+    # Safety gates: support master social publish lever or per-platform levers
+    local pub_social="${AUTONOMIC_PUBLISH_SOCIAL:-}"
+    [ -z "$pub_social" ] && declare -f api_get_key &>/dev/null && pub_social=$(api_get_key "AUTONOMIC_PUBLISH_SOCIAL" 2>/dev/null || echo "")
+
+    # Master disable gate
+    if [ "${pub_social}" = "0" ]; then
+        ui_info "Autonomic social publishing is paused (enable via AUTONOMIC_PUBLISH_SOCIAL=1 or /research publish). Posts remain staged in queue."
+        return 0
     fi
-    if [ "${auto_pub:-0}" -ne 1 ]; then
-        ui_info "Autonomic X publishing is paused (AUTONOMIC_PUBLISH_X=0). Posts remain staged in queue."
+
+    local pub_x="${AUTONOMIC_PUBLISH_X:-}"
+    [ -z "$pub_x" ] && declare -f api_get_key &>/dev/null && pub_x=$(api_get_key "AUTONOMIC_PUBLISH_X" 2>/dev/null || echo "")
+    [ -z "$pub_x" ] && pub_x=1
+
+    local pub_masto="${AUTONOMIC_PUBLISH_MASTODON:-}"
+    [ -z "$pub_masto" ] && declare -f api_get_key &>/dev/null && pub_masto=$(api_get_key "AUTONOMIC_PUBLISH_MASTODON" 2>/dev/null || echo "")
+    [ -z "$pub_masto" ] && pub_masto=1
+
+    local pub_bsky="${AUTONOMIC_PUBLISH_BLUESKY:-}"
+    [ -z "$pub_bsky" ] && declare -f api_get_key &>/dev/null && pub_bsky=$(api_get_key "AUTONOMIC_PUBLISH_BLUESKY" 2>/dev/null || echo "")
+    [ -z "$pub_bsky" ] && pub_bsky=1
+
+    # Check if at least one platform is enabled
+    if [ "${pub_x:-0}" -ne 1 ] && [ "${pub_masto:-0}" -ne 1 ] && [ "${pub_bsky:-0}" -ne 1 ]; then
+        ui_info "Autonomic social publishing is paused (all platforms disabled). Posts remain staged in queue."
         return 0
     fi
 
@@ -341,49 +359,67 @@ x_blog_sweep() {
                 local failure_details=""
 
                 # 1. Mastodon (Primary federated target)
-                local has_masto=0
-                if [ -n "$(_mastodon_instance_token "" 2>/dev/null)" ]; then
-                    has_masto=1
-                fi
-                if [ "$has_masto" -eq 1 ]; then
-                    attempted_platforms=$((attempted_platforms + 1))
-                    ui_info "  Transmitting to Mastodon..."
-                    if mastodon_post "$content"; then
-                        ui_ok "  ✓ Published to Mastodon"
-                        succeeded_platforms+=("Mastodon")
-                    else
-                        ui_err "  ✗ Mastodon transmission failed"
-                        failed_platforms+=("Mastodon")
-                        failure_details+="Mastodon: transmission failed.\n"
+                if [ "${pub_masto:-0}" -eq 1 ]; then
+                    local has_masto=0
+                    if [ -n "$(_mastodon_instance_token "" 2>/dev/null)" ]; then
+                        has_masto=1
                     fi
+                    if [ "$has_masto" -eq 1 ]; then
+                        attempted_platforms=$((attempted_platforms + 1))
+                        ui_info "  Transmitting to Mastodon..."
+                        if mastodon_post "$content"; then
+                            ui_ok "  ✓ Published to Mastodon"
+                            succeeded_platforms+=("Mastodon")
+                        else
+                            ui_err "  ✗ Mastodon transmission failed"
+                            failed_platforms+=("Mastodon")
+                            failure_details+="Mastodon: transmission failed.\n"
+                        fi
+                    else
+                        ui_info "  Mastodon: instance or access token not configured in .george/keys.conf — skipping"
+                    fi
+                else
+                    ui_dim "  Mastodon publishing disabled (AUTONOMIC_PUBLISH_MASTODON=0)"
                 fi
 
                 # 2. Bluesky
-                if api_get_key "BLUESKY_HANDLE" &>/dev/null && api_get_key "BLUESKY_APP_PASSWORD" &>/dev/null; then
-                    attempted_platforms=$((attempted_platforms + 1))
-                    ui_info "  Transmitting to Bluesky..."
-                    if bluesky_post "$content"; then
-                        ui_ok "  ✓ Published to Bluesky"
-                        succeeded_platforms+=("Bluesky")
+                if [ "${pub_bsky:-0}" -eq 1 ]; then
+                    if api_get_key "BLUESKY_HANDLE" &>/dev/null && api_get_key "BLUESKY_APP_PASSWORD" &>/dev/null; then
+                        attempted_platforms=$((attempted_platforms + 1))
+                        ui_info "  Transmitting to Bluesky..."
+                        if bluesky_post "$content"; then
+                            ui_ok "  ✓ Published to Bluesky"
+                            succeeded_platforms+=("Bluesky")
+                        else
+                            ui_err "  ✗ Bluesky transmission failed"
+                            failed_platforms+=("Bluesky")
+                            failure_details+="Bluesky: transmission failed.\n"
+                        fi
                     else
-                        ui_err "  ✗ Bluesky transmission failed"
-                        failed_platforms+=("Bluesky")
-                        failure_details+="Bluesky: transmission failed.\n"
+                        ui_info "  Bluesky: handle or app password not configured in .george/keys.conf — skipping"
                     fi
+                else
+                    ui_dim "  Bluesky publishing disabled (AUTONOMIC_PUBLISH_BLUESKY=0)"
                 fi
 
                 # 3. X (Twitter)
-                if _x_cookie_auth_available || _x_auth_header "POST" "https://api.x.com/2/tweets" &>/dev/null; then
-                    attempted_platforms=$((attempted_platforms + 1))
-                    ui_info "  Transmitting to X..."
-                    if x_thread "$content"; then
-                        ui_ok "  ✓ Published to X"
-                        succeeded_platforms+=("X")
+                if [ "${pub_x:-0}" -eq 1 ]; then
+                    if _x_cookie_auth_available || _x_auth_header "POST" "https://api.x.com/2/tweets" &>/dev/null; then
+                        attempted_platforms=$((attempted_platforms + 1))
+                        ui_info "  Transmitting to X..."
+                        if x_thread "$content"; then
+                            ui_ok "  ✓ Published to X"
+                            succeeded_platforms+=("X")
+                        else
+                            ui_err "  ✗ X thread transmission failed"
+                            failed_platforms+=("X")
+                            failure_details+="X: thread transmission failed.\n"
+                        fi
                     else
-                        ui_err "  ✗ X thread transmission failed"
-                        failed_platforms+=("X")
-                        failure_details+="X: thread transmission failed.\n"
+                        ui_info "  X: authentication credentials not configured in .george/keys.conf — skipping"
                     fi
+                else
+                    ui_dim "  X publishing disabled (AUTONOMIC_PUBLISH_X=0)"
                 fi
 
                 local succ_str fail_str

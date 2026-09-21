@@ -493,11 +493,17 @@ react_run() {
                 local tool_resp
                 tool_resp=$(native_tools_dispatch "$c_id" "$c_name" "$c_args" "$workdir")
 
+                local resp_content
+                resp_content=$(echo "$tool_resp" | jq -r '.content // empty')
+                if [ "${#resp_content}" -gt 24000 ]; then
+                    local truncated_note=$'\n\n'"[Observation truncated at 24,000 characters to prevent context window overflow. Use specific line ranges, pages, or search to inspect remaining content.]"
+                    resp_content="${resp_content:0:24000}${truncated_note}"
+                    tool_resp=$(echo "$tool_resp" | jq --arg c "$resp_content" '.content = $c')
+                fi
+
                 # Append tool response to messages array
                 jq --argjson tr "$tool_resp" '. += [$tr]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
 
-                local resp_content
-                resp_content=$(echo "$tool_resp" | jq -r '.content')
                 echo "Observation: $resp_content" >> "$history_file"
                 declare -f transcript_log_block &>/dev/null && transcript_log_block "observation ($c_name)" "$resp_content"
                 _react_trace "$workdir" "tool_call" "$(jq -cn --arg tool "$c_name" --arg args "$c_args" '{tool:$tool, args:$args}')"
@@ -654,6 +660,9 @@ react_run() {
             ui_warn "Halting task to protect context tokens and prevent infinite loop."
             _react_trace "$workdir" "circuit_breaker" '{"reason": "consecutive_empty_turns", "turns": 2}'
             jq '.status = "CIRCUIT_BREAKER_TRIPPED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
+            if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
+                transcript_stop >/dev/null 2>&1 || true
+            fi
             return 1
         fi
 

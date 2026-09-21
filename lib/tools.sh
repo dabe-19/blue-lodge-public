@@ -6,6 +6,7 @@
 [ -n "${_LIB_TOOLS_LOADED:-}" ] && return 0; _LIB_TOOLS_LOADED=1
 
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$LODGE_DIR:$PATH"
 source "$LODGE_DIR/lib/ui.sh"
 
 # ── Permission Levels ──────────────────────────────────────────
@@ -684,6 +685,64 @@ tools_process_response() {
     echo "$results"
 }
 
+# ── PDF text extraction via Poppler pdftotext ─────────────────
+# Usage: tools_read_pdf "filepath" [page_start] [page_end] [max_pages] [layout]
+tools_read_pdf() {
+    local filepath="$1"
+    local page_start="${2:-1}"
+    local page_end="${3:-}"
+    local max_pages="${4:-20}"
+    local layout="${5:-1}"
+
+    if [ ! -f "$filepath" ]; then
+        echo "ERROR: File not found: $filepath"
+        return 1
+    fi
+
+    # Ensure PATH contains local poppler-utils
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$LODGE_DIR:$PATH"
+
+    if ! command -v pdftotext &>/dev/null; then
+        echo "ERROR: pdftotext not found. Install Poppler: apt install poppler-utils or install to ~/.local/bin."
+        return 1
+    fi
+
+    if ! [[ "$page_start" =~ ^[0-9]+$ ]] || [ "$page_start" -lt 1 ]; then
+        page_start=1
+    fi
+
+    local total_pages=""
+    if command -v pdfinfo &>/dev/null; then
+        total_pages=$(pdfinfo "$filepath" 2>/dev/null | grep -i '^Pages:' | awk '{print $2}')
+    fi
+
+    if [ -n "$page_end" ] && [[ "$page_end" =~ ^[0-9]+$ ]] && [ "$page_end" -ge "$page_start" ]; then
+        :
+    else
+        if [ -n "$total_pages" ] && [ "$total_pages" -gt 0 ]; then
+            page_end=$((page_start + max_pages - 1))
+            [ "$page_end" -gt "$total_pages" ] && page_end="$total_pages"
+        else
+            page_end=$((page_start + max_pages - 1))
+        fi
+    fi
+
+    local layout_flag="-layout"
+    [ "$layout" = "0" ] && layout_flag=""
+
+    local total_info=""
+    [ -n "$total_pages" ] && total_info=" of $total_pages"
+    echo "--- start of $filepath (pages $page_start to $page_end$total_info) ---"
+    pdftotext $layout_flag -f "$page_start" -l "$page_end" -q "$filepath" - 2>/dev/null
+    echo "--- end of $filepath (pages $page_start to $page_end) ---"
+
+    if [ -n "$total_pages" ] && [ "$page_end" -lt "$total_pages" ]; then
+        local rem_pages=$((total_pages - page_end))
+        echo "... (truncated, $rem_pages more pages. Use /pdf $filepath $((page_end + 1)) to read next page)"
+    fi
+    return 0
+}
+
 # ── Read file for context ─────────────────────────────────────
 tools_read_file() {
     local filepath="$1"
@@ -693,6 +752,12 @@ tools_read_file() {
     if [ ! -f "$filepath" ]; then
         echo "ERROR: File not found: $filepath"
         return 1
+    fi
+    
+    # If file is a PDF, route directly to tools_read_pdf
+    if [[ "${filepath,,}" == *.pdf ]]; then
+        tools_read_pdf "$filepath" 1 "" 20 1
+        return $?
     fi
     
     # Ensure start_line and max_lines are valid integers

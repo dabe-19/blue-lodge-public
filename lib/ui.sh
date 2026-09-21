@@ -795,29 +795,42 @@ ui_suggest_workspaces_tree() {
 ui_ask_operator() {
     local question="$1"
     local tty=""
-    if { true >/dev/tty; } 2>/dev/null; then
-        tty="/dev/tty"
+    if [ -t 0 ] || [ -n "${FORCE_INTERACTIVE:-}" ]; then
+        if { true >/dev/tty; } 2>/dev/null; then
+            tty="/dev/tty"
+        fi
     fi
 
+    local banner="╔════════════════════════════════════════════════════════════════╗\n║  🏛️  GEORGE REPL: AGENT INTERACTIVE SCOPING & PLANNING         ║\n╚════════════════════════════════════════════════════════════════╝"
+
     if [ -n "$tty" ]; then
+        echo -e "\n${C_BOLD}${C_CYAN}${banner}${C_RESET}\n" > "$tty"
+        printf "  %bAgent Question:%b %s\n" "$C_YELLOW" "$C_RESET" "$question" > "$tty"
         echo "" > "$tty"
-        printf "  %b George asks: %b%s%b\n" "$C_LODGE" "$C_CYAN" "$question" "$C_RESET" > "$tty"
-        echo "" > "$tty"
-        printf "  %b> %b" "$C_BOLD" "$C_RESET" > "$tty"
+        printf "  %bGeorge/Operator Answer > %b" "$C_BOLD" "$C_RESET" > "$tty"
         local answer=""
         read -r answer < "$tty" 2>/dev/null || read -r answer 2>/dev/null || true
     else
-        printf "  %b George asks: %b%s%b\n" "$C_LODGE" "$C_CYAN" "$question" "$C_RESET" >&2
+        echo -e "\n${C_BOLD}${C_CYAN}${banner}${C_RESET}\n" >&2
+        printf "  %bAgent Question:%b %s\n" "$C_YELLOW" "$C_RESET" "$question" >&2
         echo "" >&2
-        printf "  %b> %b" "$C_BOLD" "$C_RESET" >&2
+        printf "  %bGeorge/Operator Answer > %b" "$C_BOLD" "$C_RESET" >&2
         local answer=""
-        read -r answer 2>/dev/null || true
+        read -t 2 -r answer 2>/dev/null || true
     fi
 
     if [ -z "$answer" ]; then
-        echo "(no answer provided)"
-    else
-        echo "$answer"
+        answer="(no answer provided)"
     fi
+
+    # Log interactive conversation to transcript for full audit provenance
+    if declare -f transcript_log &>/dev/null; then
+        transcript_log "operator_interaction" "Question: $question"
+    fi
+    if declare -f transcript_log_block &>/dev/null; then
+        transcript_log_block "operator_response" "$answer"
+    fi
+
+    echo "$answer"
 }
 

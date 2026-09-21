@@ -25,12 +25,23 @@ describe "Limits Initialization and Defaults"
     assert_eq "$val" "300"
   }
 
+  it "retrieves default MAX_RESEARCH_TURNS as 200" && {
+    val=$(limits_get MAX_RESEARCH_TURNS)
+    assert_eq "$val" "200"
+  }
+
 describe "Modifying and Resetting Levers"
 
   it "updates MAX_REMEDIATION_ATTEMPTS lever to 7" && {
     limits_set MAX_REMEDIATION_ATTEMPTS 7
     val=$(limits_get MAX_REMEDIATION_ATTEMPTS)
     assert_eq "$val" "7"
+  }
+
+  it "updates MAX_RESEARCH_TURNS lever to 250" && {
+    limits_set MAX_RESEARCH_TURNS 250
+    val=$(limits_get MAX_RESEARCH_TURNS)
+    assert_eq "$val" "250"
   }
 
   it "rejects non-numeric values for numeric levers" && {
@@ -43,6 +54,8 @@ describe "Modifying and Resetting Levers"
     limits_reset
     val=$(limits_get MAX_REMEDIATION_ATTEMPTS)
     assert_eq "$val" "5"
+    val2=$(limits_get MAX_RESEARCH_TURNS)
+    assert_eq "$val2" "200"
   }
 
 describe "Slash Command Dispatch"
@@ -56,6 +69,9 @@ describe "Slash Command Dispatch"
     cmd_limits "set WATCHDOG_TIMEOUT 450" >/dev/null
     val=$(cmd_limits "get WATCHDOG_TIMEOUT")
     assert_eq "$val" "450"
+    cmd_limits "set MAX_RESEARCH_TURNS 300" >/dev/null
+    val2=$(cmd_limits "get MAX_RESEARCH_TURNS")
+    assert_eq "$val2" "300"
     cmd_limits "reset" >/dev/null
   }
 

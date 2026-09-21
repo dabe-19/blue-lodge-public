@@ -114,7 +114,9 @@ Follow these instructions strictly:
 Ground all conclusions in concrete facts. Avoid vague filler."
 
         ui_info "Launching ReAct agent loop (Tier ${ACTIVE_TIER:-1} - ${ACTIVE_ENDPOINT_MODEL:-default})..."
-        local research_max_turns="${RESEARCH_MAX_TURNS:-200}"
+        source "$LODGE_DIR/lib/limits.sh" 2>/dev/null || true
+        local research_max_turns
+        research_max_turns=$(declare -f limits_get &>/dev/null && limits_get MAX_RESEARCH_TURNS 200 || echo "${RESEARCH_MAX_TURNS:-200}")
         REACT_TOOL_FILTER="research" \
         react_run "$goal" "$sandbox_dir" "$research_max_turns" "${ACTIVE_TIER:-1}" "research_$(date +%s)" "research"
 
@@ -435,6 +437,24 @@ Full technical dossier and artifacts archived in Blue Lodge Sovereign Library."
         --arg queue "$queue_item" \
         '{slug: $slug, topic: $topic, timestamp: $date, directory: $path, queue_file: $queue}')
     echo "$record" >> "$RESEARCH_INDEX"
+
+    # Preserve task transcripts to permanent research directory and system transcripts
+    if [ -d "$sandbox_dir/.george/transcripts" ]; then
+        local t_file
+        for t_file in "$sandbox_dir/.george/transcripts"/*.md; do
+            [ -f "$t_file" ] || continue
+            cp "$t_file" "$perm_dir/" 2>/dev/null || true
+            mkdir -p "${LODGE_DIR}/.george/transcripts" 2>/dev/null || true
+            cp "$t_file" "${LODGE_DIR}/.george/transcripts/" 2>/dev/null || true
+        done
+    fi
+
+    # Ensure any active transcript hook is safely stopped before removing sandbox
+    if declare -f transcript_stop &>/dev/null; then
+        transcript_stop >/dev/null 2>&1 || true
+    fi
+    export _TRANSCRIPT_FILE=""
+    export _PROMPT_LOG_FILE=""
 
     rm -rf "$sandbox_dir"
     ui_ok "Deep Research complete! Preserved in sovereign library at: ${perm_dir}/"

@@ -30,6 +30,20 @@ cmd_read() {
         return 1
     fi
 
+    # PDF routing: extract text via Poppler rather than slicing raw binary
+    if [[ "${target_path,,}" == *.pdf ]]; then
+        source "$LODGE_DIR/lib/tools.sh" 2>/dev/null || true
+        local p_start="${start_line:-1}"
+        local p_max="${max_lines:-20}"
+        if declare -f tools_read_pdf &>/dev/null; then
+            tools_read_pdf "$target_path" "$p_start" "" "$p_max" 1
+            return $?
+        elif command -v pdftotext &>/dev/null; then
+            pdftotext -layout -f "$p_start" -l "$((p_start + p_max - 1))" -q "$target_path" - 2>/dev/null
+            return $?
+        fi
+    fi
+
     if [ -n "$start_line" ] && [[ "$start_line" =~ ^[0-9]+$ ]]; then
         local num="${max_lines:-100}"
         sed -n "${start_line},$((start_line + num - 1))p" "$target_path"
