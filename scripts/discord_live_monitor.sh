@@ -35,4 +35,4 @@ done
 
 printf "\n\033[1;32m✓ Discord live session closed.\033[0m\n"
 echo ""
-read -r -p "[Press Enter to dismiss] " _dummy
+read -t 30 -r -p "[Press Enter to dismiss (auto-closing in 30s)] " _dummy || true

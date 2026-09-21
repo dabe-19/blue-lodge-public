@@ -270,11 +270,12 @@ discord_launch_visual_monitor() {
         return 0
     fi
 
-    # Avoid duplicate monitors for the same channel
+    # Clean up any stale or lingering monitor processes for this channel
     local existing_mon
     existing_mon=$(pgrep -f "scripts/discord_live_monitor.sh $channel_id" 2>/dev/null || true)
     if [ -n "$existing_mon" ]; then
-        return 0
+        kill $existing_mon 2>/dev/null || true
+        sleep 0.2
     fi
 
     local distro="${WSL_DISTRO_NAME:-ubuntu-local}"
