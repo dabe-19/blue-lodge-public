@@ -61,14 +61,11 @@ docker stop george-prism-server george-act-runner george-gitea
 # ── STEP 4: Flush Stale MCP FIFOs and Runtime Markers ──────────────────────
 ./commands/mcp.sh stop all
 
-# ── STEP 5: Prune Exited Test Containers ────────────────────────────────────
-docker container prune -f
-
-# ── STEP 6: Verify GPU 0 VRAM is Completely Released ────────────────────────
+# ── STEP 5: Verify GPU 0 VRAM is Completely Released ────────────────────────
 nvidia-smi
 # Memory usage should drop to ~0-100 MiB with NO active compute processes.
 
-# ── STEP 7: Flush Filesystem Buffers ────────────────────────────────────────
+# ── STEP 6: Flush Filesystem Buffers ────────────────────────────────────────
 sync
 
 # ── STEP 8: Safe WSL & Host Shutdown ────────────────────────────────────────
