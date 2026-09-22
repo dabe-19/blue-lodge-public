@@ -293,6 +293,9 @@ react_run() {
         telemetry_task_start "$session_id" "react" "$workdir" "$_t_log" "$_t_pty" "$_t_trans" >/dev/null 2>&1 || true
     fi
 
+    # Auto-start configured MCP servers if enabled
+    declare -f mcp_ensure_running &>/dev/null && mcp_ensure_running
+
     # 3. Assemble Dynamic Copilot-Style Context & Tool Schemas
     ui_dim "Assembling context pipeline and native tool registry..."
     local sys_prompt
@@ -388,11 +391,11 @@ react_run() {
                 "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
         fi
 
-        # Pre-flight token re-estimation from messages_file byte size + system/tools overhead
+        # Pre-flight token re-estimation from messages_file byte size + native tools overhead (~4000 tokens)
         if [ -f "$messages_file" ]; then
             local _current_bytes
             _current_bytes=$(wc -c < "$messages_file" 2>/dev/null || echo 0)
-            local _est_tokens=$(( (_current_bytes * 10 / 35) + 5000 ))
+            local _est_tokens=$(( (_current_bytes * 10 / 35) + 4000 ))
             if [ "$_est_tokens" -gt "$running_tokens" ]; then
                 running_tokens="$_est_tokens"
             fi
@@ -851,10 +854,22 @@ Execute the Metacognitive Pathfinding Protocol:
 
         # If model provided answer directly without tool calls
         if [ -n "$raw_content" ]; then
-            # In autonomous remediation or multi-turn task on early turns without explicit conclusion, advance rather than conclude
-            if [ "${AGENT_SOVEREIGN_REMEDIATION:-0}" -eq 1 ] && [ "$turn" -lt 3 ]; then
+            # Premature Exit Guard: In multi-turn tasks (or Discord sessions) on early turns where output
+            # contains forward-looking planning text rather than a final deliverable, advance to tool execution.
+            local is_premature_plan=0
+            if [ "$turn" -lt 3 ]; then
+                if [ "${AGENT_SOVEREIGN_REMEDIATION:-0}" -eq 1 ]; then
+                    is_premature_plan=1
+                elif [ "$max_turns" -gt 1 ] && [ ${#raw_content} -gt 600 ]; then
+                    if echo "$raw_content" | grep -qiE '(I will|I plan to|Let'\''s outline|Step 1|First step|I need to check|I need to inspect|Let'\''s begin by|Before making changes)'; then
+                        is_premature_plan=1
+                    fi
+                fi
+            fi
+
+            if [ "$is_premature_plan" -eq 1 ]; then
                 jq --arg ans "$raw_content" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
-                local adv="[SYSTEM ADVISORY: Chain-of-thought received. Proceed to execute remediation using native tools (e.g. file_read, code_outline, code_symbol_get, file_grep, dir_list, bash_exec) to inspect files, make fixes, and run verification tests.]"
+                local adv="[SYSTEM ADVISORY: Plan acknowledged. Proceed immediately to execute your plan by calling the required native tools (e.g. file_read, code_outline, code_symbol_get, file_grep, dir_list, bash_exec, web_search). Emit conversational markdown ONLY when the deliverable or task is 100% complete.]"
                 jq --arg p "$adv" '. += [{"role": "user", "content": $p}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
                 consecutive_empty_turns=0
                 turn=$((turn + 1))

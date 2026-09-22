@@ -81,7 +81,13 @@ _mcp_server_exists() {
 _mcp_server_cmd() {
     local name="$1"
     [ -f "$MCP_SERVERS_FILE" ] || return 1
-    grep "^${name}|" "$MCP_SERVERS_FILE" 2>/dev/null | head -1 | cut -d'|' -f2
+    local raw_cmd
+    raw_cmd=$(grep "^${name}|" "$MCP_SERVERS_FILE" 2>/dev/null | head -1 | cut -d'|' -f2)
+    # Dynamic path normalization: substitute $LODGE_DIR if /workspace does not exist
+    if [ ! -d "/workspace" ] && [[ "$raw_cmd" == *"/workspace"* ]]; then
+        raw_cmd="${raw_cmd//\/workspace/${LODGE_DIR:-$HOME/blue-lodge}}"
+    fi
+    echo "$raw_cmd"
 }
 
 _mcp_server_desc() {
@@ -463,6 +469,14 @@ mcp_start_all() {
         fi
     done <<< "$names"
     [ "$started" -gt 0 ]
+}
+
+# Auto-start registered MCP servers if MCP_ENABLED=1 and servers exist.
+# Safe for repeated calls; skips already running servers.
+mcp_ensure_running() {
+    [ "${MCP_ENABLED:-0}" -eq 1 ] || return 0
+    mcp_has_servers || return 0
+    mcp_start_all >/dev/null 2>&1 || true
 }
 
 # Check if any MCP servers are registered (servers.conf has entries).

@@ -91,6 +91,7 @@ source "$LODGE_DIR/lib/slash.sh"
 source "$LODGE_DIR/lib/vitals.sh"
 source "$LODGE_DIR/lib/email.sh"
 source "$LODGE_DIR/lib/mqtt.sh"
+source "$LODGE_DIR/lib/swarm.sh"
 source "$LODGE_DIR/lib/git.sh"
 source "$LODGE_DIR/lib/transcript.sh"
 
@@ -6379,6 +6380,8 @@ _register_commands() {
     commands_register "remote"     "Remote GPU inference (tunnel, models, benchmark)" "_cmd_remote"
     commands_register "mcp"        "MCP server integration (Model Context Protocol)" "_cmd_mcp"
     commands_register "mqtt"       "MQTT pub/sub messaging (IoT, sensors, home automation)" "_cmd_mqtt"
+    commands_register "swarm"      "Multi-node MQTT swarm (host, join, status, delegate, policy)" "_cmd_swarm"
+    commands_register "remote-master" "Execute command remotely on Master node via MQTT" "_cmd_remote_master"
     commands_register "transcript" "View task transcripts (list/last/path/show)" "_cmd_transcript"
     commands_register "clear"    "Clear screen" "_cmd_clear"
     commands_register "cd"       "Change directory" "_cmd_cd"
@@ -6396,6 +6399,26 @@ _register_commands() {
 _repl() {
     local workdir="$PWD"
     
+    # Swarm TUI Notification Registration (POSIX SIGUSR1)
+    local swarm_dir="${GEORGE_CONFIG_DIR:-$LODGE_DIR/.george}/swarm"
+    mkdir -p "$swarm_dir" 2>/dev/null || true
+    echo "$$" > "$swarm_dir/.repl.pid"
+    _swarm_repl_trap() {
+        local notice_file="${GEORGE_CONFIG_DIR:-$LODGE_DIR/.george}/swarm/.pending_notice"
+        if [ -f "$notice_file" ]; then
+            local notice
+            notice=$(cat "$notice_file" 2>/dev/null)
+            rm -f "$notice_file" 2>/dev/null
+            if [ -n "$notice" ]; then
+                printf "\r\033[2K\n\033[1;36m🔔 [SWARM]\033[0m %s\n" "$notice"
+                local _p
+                _p=$(ui_prompt_string 2>/dev/null)
+                printf "%s" "$_p"
+            fi
+        fi
+    }
+    trap '_swarm_repl_trap' SIGUSR1
+
     # History — load previous session commands into readline buffer
     local history_file="${LODGE_HISTORY_FILE:-$LODGE_DIR/.lodge_history}"
     touch "$history_file"
