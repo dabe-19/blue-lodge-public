@@ -450,11 +450,15 @@ discord_generate_response() {
     local reply=""
     if declare -f react_run &>/dev/null; then
         local raw_out_file="$session_out_dir/raw_react.log"
+        export _DISCORD_IN_SESSION=1
+        export LODGE_NONINTERACTIVE=1
         if [ -n "$session_log" ]; then
-            _DISCORD_IN_SESSION=1 react_run "$full_prompt" "$LODGE_DIR" "$discord_max_turns" 1 "$session_uuid" "social" 2>&1 | tee -a "$session_log" > "$raw_out_file" || true
+            react_run "$full_prompt" "$LODGE_DIR" "$discord_max_turns" 1 "$session_uuid" "social" 2>&1 | tee -a "$session_log" > "$raw_out_file" || true
         else
-            _DISCORD_IN_SESSION=1 react_run "$full_prompt" "$LODGE_DIR" "$discord_max_turns" 1 "$session_uuid" "social" 2>&1 > "$raw_out_file" || true
+            react_run "$full_prompt" "$LODGE_DIR" "$discord_max_turns" 1 "$session_uuid" "social" 2>&1 > "$raw_out_file" || true
         fi
+        unset _DISCORD_IN_SESSION
+        unset LODGE_NONINTERACTIVE
 
         # 1. Primary: Extract from isolated session workspace
         local session_workspace="$LODGE_DIR/.george/workspaces/$session_uuid"

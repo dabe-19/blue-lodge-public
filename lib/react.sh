@@ -388,11 +388,11 @@ react_run() {
                 "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
         fi
 
-        # Pre-flight token re-estimation from messages_file byte size
+        # Pre-flight token re-estimation from messages_file byte size + system/tools overhead
         if [ -f "$messages_file" ]; then
             local _current_bytes
             _current_bytes=$(wc -c < "$messages_file" 2>/dev/null || echo 0)
-            local _est_tokens=$(( _current_bytes * 10 / 35 ))
+            local _est_tokens=$(( (_current_bytes * 10 / 35) + 5000 ))
             if [ "$_est_tokens" -gt "$running_tokens" ]; then
                 running_tokens="$_est_tokens"
             fi
@@ -443,7 +443,7 @@ react_run() {
         fi
 
         # Launch ambient craftsman prefill ticker during prompt evaluation
-        declare -f ui_prefill_ticker_start &>/dev/null && ui_prefill_ticker_start
+        declare -f ui_prefill_ticker_start &>/dev/null && ui_prefill_ticker_start "$session_dir"
 
         # Execute real-time streaming SSE pipeline (direct stream_cache writing eliminates tee buffer)
         curl -s -N --max-time "$req_timeout" "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
@@ -464,7 +464,7 @@ react_run() {
             else
                 empty
             end' 2>/dev/null | \
-        awk -v think_mode="$think_mode" -v sc="$stream_cache" -v pid="$$" $_awk_opt '
+        awk -v think_mode="$think_mode" -v sc="$stream_cache" -v tpid_file="$session_dir/.prefill_ticker.pid" $_awk_opt '
         BEGIN {
             color = (think_mode == 2 ? "\033[36m" : "\033[90m");
             in_thought = 0;
@@ -473,7 +473,9 @@ react_run() {
         {
             if (!got_chunk) {
                 got_chunk = 1;
-                system("kill -9 $(cat /tmp/.lodge_prefill_ticker_" pid " 2>/dev/null) 2>/dev/null; printf \"\\r\\033[2K\" >&2");
+                if (tpid_file != "") {
+                    system("tpid=$(cat " tpid_file " 2>/dev/null); rm -f " tpid_file " 2>/dev/null; if [ -n \"$tpid\" ]; then kill -9 $tpid 2>/dev/null; fi; printf \"\\r\\033[2K\" >&2");
+                }
             }
             print $0 > sc;
             fflush(sc);
@@ -511,7 +513,7 @@ react_run() {
                 printf "\033[0m\n";
             }
         }'
-        declare -f ui_prefill_ticker_stop &>/dev/null && ui_prefill_ticker_stop
+        declare -f ui_prefill_ticker_stop &>/dev/null && ui_prefill_ticker_stop "$session_dir"
 
         if [ ! -s "$stream_cache" ]; then
             # Graceful fallback: synchronous non-stream request

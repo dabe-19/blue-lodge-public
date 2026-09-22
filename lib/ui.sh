@@ -353,13 +353,21 @@ ui_spinner_stop() {
 # ── Ambient Prefill Craftsman Ticker ──────────────────────────
 _PREFILL_TICKER_PID=""
 ui_prefill_ticker_start() {
+    local session_dir="${1:-}"
+
     # Only run animated ticker if stderr is connected to an interactive TTY terminal
     [ ! -t 2 ] && return 0
     [ "${LODGE_NONINTERACTIVE:-0}" -eq 1 ] && return 0
+    [ "${_DISCORD_IN_SESSION:-0}" -eq 1 ] && return 0
     [ -n "${_DISCORD_IN_SESSION:-}" ] && return 0
+    [ -n "${LODGE_REMEDIATION_SANDBOX:-}" ] && return 0
+    [ -n "${_LODGE_TESTING:-}" ] && return 0
 
-    [ -n "$_PREFILL_TICKER_PID" ] && ui_prefill_ticker_stop
-    local ppid="$$"
+    [ -n "$_PREFILL_TICKER_PID" ] && ui_prefill_ticker_stop "$session_dir"
+
+    local pid_file="${session_dir:+$session_dir/.prefill_ticker.pid}"
+    [ -z "$pid_file" ] && pid_file="${TMPDIR:-/tmp}/.lodge_prefill_ticker_${$}"
+
     exec 3>&2
     (
         exec 2>/dev/null >/dev/null
@@ -377,31 +385,35 @@ ui_prefill_ticker_start() {
         local n=${#phrases[@]}
         local frames=('▲ (👁 )' '▲ (◓ )' '▲ (👁 )' '▲ ( ◓ )' '▲ (✦👁 ✦)' '▲ ( ─ )')
         local f=0
-        while kill -0 "$ppid" 2>/dev/null; do
+        while [ -f "$pid_file" ]; do
             printf "\r %b%s%b %b%s...%b \033[K" "$C_GOLD" "${frames[$f]}" "$C_RESET" "$C_GRAY" "${phrases[$i]}" "$C_RESET" >&3 2>/dev/null
             f=$(( (f + 1) % 6 ))
             [ $(( f % 6 )) -eq 0 ] && i=$(( (i + 1) % n ))
             sleep 0.35
         done
+        printf "\r\033[2K" >&3 2>/dev/null
         exec 3>&-
     ) &
     _PREFILL_TICKER_PID=$!
     exec 3>&-
     disown "$_PREFILL_TICKER_PID" 2>/dev/null
-    echo "$_PREFILL_TICKER_PID" > "${TMPDIR:-/tmp}/.lodge_prefill_ticker_${ppid}" 2>/dev/null
+    echo "$_PREFILL_TICKER_PID" > "$pid_file" 2>/dev/null
 }
 
 ui_prefill_ticker_stop() {
-    local ppid="$$"
+    local session_dir="${1:-}"
+    local pid_file="${session_dir:+$session_dir/.prefill_ticker.pid}"
+    [ -z "$pid_file" ] && pid_file="${TMPDIR:-/tmp}/.lodge_prefill_ticker_${$}"
+
     local tpid="${_PREFILL_TICKER_PID:-}"
-    [ -z "$tpid" ] && [ -f "${TMPDIR:-/tmp}/.lodge_prefill_ticker_${ppid}" ] && tpid=$(cat "${TMPDIR:-/tmp}/.lodge_prefill_ticker_${ppid}" 2>/dev/null)
+    [ -z "$tpid" ] && [ -f "$pid_file" ] && tpid=$(cat "$pid_file" 2>/dev/null)
+    rm -f "$pid_file" 2>/dev/null
+    _PREFILL_TICKER_PID=""
     if [ -n "$tpid" ]; then
         kill -9 "$tpid" 2>/dev/null
         wait "$tpid" 2>/dev/null
-        _PREFILL_TICKER_PID=""
-        rm -f "${TMPDIR:-/tmp}/.lodge_prefill_ticker_${ppid}" 2>/dev/null
-        [ -t 2 ] && printf "\r\033[2K" >&2 2>/dev/null
     fi
+    [ -t 2 ] && printf "\r\033[2K" >&2 2>/dev/null
 }
 
 # ── Prompt ─────────────────────────────────────────────────────

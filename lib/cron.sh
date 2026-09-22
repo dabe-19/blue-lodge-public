@@ -361,12 +361,37 @@ cron_launch_visual() {
     return 0
 }
 
+cron_sweep_stale_daemons() {
+    local auth_pid="${1:-}"
+    [ -z "$auth_pid" ] && [ -f "$CRON_PID_FILE" ] && auth_pid=$(cat "$CRON_PID_FILE" 2>/dev/null)
+
+    local pids
+    pids=$(pgrep -f "_cron_loop_runner" 2>/dev/null || true)
+    local p
+    for p in $pids; do
+        [ "$p" = "$$" ] && continue
+        [ -n "$auth_pid" ] && [ "$p" = "$auth_pid" ] && continue
+        kill -9 "$p" 2>/dev/null || true
+    done
+}
+
 _cron_loop_runner() {
+    export LODGE_NONINTERACTIVE=1
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] George Autonomic Daemon started (PID $$)" >> "$CRON_LOG_FILE"
     trap 'echo "[$(date "+%Y-%m-%d %H:%M:%S")] George Autonomic Daemon stopped (PID $$)" >> "$CRON_LOG_FILE"; rm -f "$CRON_PID_FILE"; exit 0' SIGTERM SIGINT
 
     local last_popup=0
     while true; do
+        # Verify this process is still the authoritative daemon
+        if [ -f "$CRON_PID_FILE" ]; then
+            local active_pid
+            active_pid=$(cat "$CRON_PID_FILE" 2>/dev/null)
+            if [ -n "$active_pid" ] && [ "$active_pid" != "$$" ]; then
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] Newer daemon PID $active_pid detected. Superceded daemon $$ exiting." >> "$CRON_LOG_FILE"
+                exit 0
+            fi
+        fi
+
         local now
         now=$(date +%s)
 
@@ -384,6 +409,7 @@ _cron_loop_runner() {
 
 cron_start() {
     cron_init
+    cron_sweep_stale_daemons
     if [ -f "$CRON_PID_FILE" ]; then
         local pid
         pid=$(cat "$CRON_PID_FILE" 2>/dev/null)
@@ -404,6 +430,7 @@ cron_start() {
     local new_pid
     new_pid=$(cat "$CRON_PID_FILE" 2>/dev/null)
     if [ -n "$new_pid" ] && kill -0 "$new_pid" 2>/dev/null; then
+        cron_sweep_stale_daemons "$new_pid"
         ui_ok "George Autonomic Daemon started successfully (PID $new_pid)."
         ui_dim "  Log: $CRON_LOG_FILE"
         return 0
@@ -423,11 +450,13 @@ cron_stop() {
             sleep 1
             kill -9 "$pid" 2>/dev/null || true
             rm -f "$CRON_PID_FILE" 2>/dev/null
+            cron_sweep_stale_daemons
             ui_ok "George Autonomic Daemon (PID $pid) stopped."
             return 0
         fi
         rm -f "$CRON_PID_FILE" 2>/dev/null
     fi
+    cron_sweep_stale_daemons
     ui_info "George Autonomic Daemon is not currently running."
 }
 
