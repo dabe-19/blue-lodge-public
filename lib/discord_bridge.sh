@@ -28,6 +28,24 @@ source "$LODGE_DIR/lib/social.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/react.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/reputation.sh" 2>/dev/null || true
 
+DISCORD_PROFILES_DB="${DISCORD_PROFILES_DB:-$GEORGE_DIR/discord_profiles.db}"
+DISCORD_OWNER_IDS="${DISCORD_OWNER_IDS:-${DISCORD_OWNER_ID:-}}"
+
+discord_is_owner() {
+    local uid="$1"
+    [ -z "$uid" ] && return 1
+    local owners="${DISCORD_OWNER_IDS:-${DISCORD_OWNER_ID:-}}"
+    if [ -z "$owners" ] && declare -f api_get_key &>/dev/null; then
+        owners=$(api_get_key "DISCORD_OWNER_IDS" 2>/dev/null || api_get_key "DISCORD_OWNER_ID" 2>/dev/null || true)
+    fi
+    [ -z "$owners" ] && return 1
+    local o_id
+    for o_id in $(echo "$owners" | tr ',' ' '); do
+        [ "$o_id" = "$uid" ] && return 0
+    done
+    return 1
+}
+
 discord_bridge_init() {
     mkdir -p "$DISCORD_SESSIONS_DIR" "$DISCORD_MEDIA_DIR" "$DISCORD_HISTORY_DIR" 2>/dev/null
     if [ ! -f "$DISCORD_LAST_SEEN_FILE" ]; then
@@ -37,6 +55,18 @@ discord_bridge_init() {
     if [ ! -f "$DISCORD_KNOWN_DMS_FILE" ]; then
         mkdir -p "$(dirname "$DISCORD_KNOWN_DMS_FILE")" 2>/dev/null || true
         echo '{}' > "$DISCORD_KNOWN_DMS_FILE" 2>/dev/null || true
+    fi
+    if command -v sqlite3 &>/dev/null; then
+        sqlite3 "$DISCORD_PROFILES_DB" << 'EOF' 2>/dev/null || true
+CREATE TABLE IF NOT EXISTS discord_user_profiles (
+    user_id TEXT PRIMARY KEY,
+    username TEXT,
+    interaction_summary TEXT,
+    last_topic TEXT,
+    interaction_count INTEGER DEFAULT 0,
+    updated_at INTEGER
+);
+EOF
     fi
 }
 
@@ -217,7 +247,9 @@ discord_typing_pulse_stop() {
 discord_history_get() {
     local channel_id="$1"
     local max_turns="${2:-6}"
-    local hfile="$DISCORD_HISTORY_DIR/history_${channel_id}.json"
+    local author_id="${3:-}"
+    local hfile="$DISCORD_HISTORY_DIR/history_${channel_id}${author_id:+_$author_id}.json"
+    [ ! -f "$hfile" ] && hfile="$DISCORD_HISTORY_DIR/history_${channel_id}.json"
 
     [ ! -f "$hfile" ] && return 0
 
@@ -238,7 +270,8 @@ discord_history_append() {
     local role="$2"
     local author="$3"
     local content="$4"
-    local hfile="$DISCORD_HISTORY_DIR/history_${channel_id}.json"
+    local author_id="${5:-}"
+    local hfile="$DISCORD_HISTORY_DIR/history_${channel_id}${author_id:+_$author_id}.json"
 
     mkdir -p "$DISCORD_HISTORY_DIR" 2>/dev/null || true
     if [ ! -f "$hfile" ]; then
@@ -257,7 +290,54 @@ discord_history_append() {
 
 discord_history_clear() {
     local channel_id="$1"
+    local author_id="${2:-}"
+    rm -f "$DISCORD_HISTORY_DIR/history_${channel_id}${author_id:+_$author_id}.json" 2>/dev/null || true
     rm -f "$DISCORD_HISTORY_DIR/history_${channel_id}.json" 2>/dev/null || true
+}
+
+# ── 4b. Deterministic Outbound Egress Sanitizer ───────────────────────
+_EGRESS_EXTRACTED_MEMORY=""
+discord_sanitize_egress() {
+    local text="$1"
+    local user_id="${2:-}"
+    local username="${3:-}"
+
+    # 1. Strip ANSI escape sequences and carriage returns
+    local cleaned
+    cleaned=$(printf '%s\n' "$text" | sed -r 's/\x1B\[[0-9;]*[a-zA-Z]//g' | tr -d '\r')
+
+    # 2. Extract and strip memory tags: <!-- MEMORY: ... -->
+    _EGRESS_EXTRACTED_MEMORY=""
+    if echo "$cleaned" | grep -q '<!-- MEMORY:'; then
+        _EGRESS_EXTRACTED_MEMORY=$(echo "$cleaned" | grep -o '<!-- MEMORY:.*-->' | head -n 1 | sed 's/<!-- MEMORY: *//; s/ *-->//')
+        cleaned=$(echo "$cleaned" | sed 's/<!-- MEMORY:.*-->//g')
+    fi
+
+    # 3. Strip internal reasoning/thought blocks (<think>...</think> or [thought]...)
+    cleaned=$(printf '%s\n' "$cleaned" | awk '
+        /<think>/ { in_think=1; next }
+        /<\/think>/ { in_think=0; next }
+        /\[thought\]/ { in_thought=1; next }
+        !in_think && !in_thought { print }
+    ' | sed 's/\[thought\].*//g')
+
+    # 4. Redact credentials and private system paths
+    cleaned=$(printf '%s\n' "$cleaned" | sed -E \
+        -e 's/ghp_[A-Za-z0-9_]{20,}/[REDACTED_TOKEN]/g' \
+        -e 's/token [a-f0-9]{30,}/token [REDACTED]/g' \
+        -e 's/(DISCORD_BOT_TOKEN=[^ ]+)/[REDACTED_CONFIG]/g' \
+        -e 's/-----BEGIN [A-Z ]*PRIVATE KEY-----[^-]*-----END [A-Z ]*PRIVATE KEY-----/[REDACTED_PRIVATE_KEY]/g' \
+        -e 's/\/home\/[a-zA-Z0-9_-]+\/\.ssh/[REDACTED_SSH_DIR]/g')
+
+    # Clean up excessive blank lines
+    cleaned=$(printf '%s\n' "$cleaned" | sed '/^[[:space:]]*$/d')
+
+    # 5. Fallback if empty
+    if [ -z "$cleaned" ]; then
+        cleaned="Hello @${username:-there}, George is here. I have cataloged your inquiry, but have no direct output to share on this channel."
+    fi
+
+    echo "$cleaned"
 }
 
 # ── 5. Desktop Live Session Monitor Launcher ─────────────────────────
@@ -309,14 +389,41 @@ discord_generate_response() {
         fi
         [ -n "$out_reply_file" ] && printf '%s\n' "$rep_reply" > "$out_reply_file"
         echo "$rep_reply"
-        discord_history_append "$channel_id" "user" "$author" "$prompt"
-        discord_history_append "$channel_id" "assistant" "George" "$rep_reply"
+        discord_history_append "$channel_id" "user" "$author" "$prompt" "$author_id"
+        discord_history_append "$channel_id" "assistant" "George" "$rep_reply" "$author_id"
         return 0
     fi
 
-    # Build prompt with history
+    # The Tyler Gate: Check for privileged host administrative operations
+    local priv_pat='(ssh|authorized_keys|sudo|systemctl|daemon-reload|visudo|iptables|ufw|chmod 7|chmod 6)'
+    if [[ "$p_lower" =~ $priv_pat ]] && [ -n "$author_id" ] && ! discord_is_owner "$author_id"; then
+        if declare -f reputation_penalize_violation &>/dev/null; then
+            reputation_penalize_violation "$author_id" "$author" "unauthorized_privilege_attempt" -15 >/dev/null 2>&1 || true
+        fi
+        local denied_msg="I cannot perform host administrative or SSH configuration requests without authorization from the repository owner."
+        if [ -n "$session_log" ]; then
+            printf "[%s] ── Unauthorized privileged operation blocked for user @%s.\n" "$(date '+%H:%M:%S')" "$author" >> "$session_log"
+        fi
+        [ -n "$out_reply_file" ] && printf '%s\n' "$denied_msg" > "$out_reply_file"
+        echo "$denied_msg"
+        return 0
+    fi
+
+    # Build prompt with author-scoped history
     local hist_ctx
-    hist_ctx=$(discord_history_get "$channel_id" 6)
+    hist_ctx=$(discord_history_get "$channel_id" 6 "$author_id")
+
+    # Load per-user profile from discord_user_profiles
+    if [ -n "$author_id" ] && command -v sqlite3 &>/dev/null && [ -f "$DISCORD_PROFILES_DB" ]; then
+        local u_profile
+        u_profile=$(sqlite3 "$DISCORD_PROFILES_DB" "SELECT interaction_summary, last_topic FROM discord_user_profiles WHERE user_id = '$author_id' LIMIT 1;" 2>/dev/null || true)
+        if [ -n "$u_profile" ]; then
+            local p_summary p_topic
+            p_summary=$(echo "$u_profile" | cut -d'|' -f1)
+            p_topic=$(echo "$u_profile" | cut -d'|' -f2)
+            [ -n "$p_summary" ] && hist_ctx="${hist_ctx}\n[Known User Profile - @${author}]: Previous context: ${p_summary} (Topic: ${p_topic})"
+        fi
+    fi
 
     local full_prompt=""
     if [ -n "$hist_ctx" ]; then
@@ -333,7 +440,7 @@ discord_generate_response() {
         printf "[%s] ── Starting ReAct reasoning turn with George...\n" "$(date '+%H:%M:%S')" >> "$session_log"
     fi
 
-    # Invoke ReAct engine with 'social' profile (web, social, memory, vision, bedrock)
+    # Invoke ReAct engine with 'social' profile (web, social, memory, vision)
     local session_uuid
     session_uuid="discord_${channel_id}_$(date +%s)"
     local session_out_dir="$DISCORD_SESSIONS_DIR/$session_uuid"
@@ -344,9 +451,9 @@ discord_generate_response() {
     if declare -f react_run &>/dev/null; then
         local raw_out_file="$session_out_dir/raw_react.log"
         if [ -n "$session_log" ]; then
-            react_run "$full_prompt" "$LODGE_DIR" "$discord_max_turns" 1 "$session_uuid" "social" 2>&1 | tee -a "$session_log" > "$raw_out_file" || true
+            _DISCORD_IN_SESSION=1 react_run "$full_prompt" "$LODGE_DIR" "$discord_max_turns" 1 "$session_uuid" "social" 2>&1 | tee -a "$session_log" > "$raw_out_file" || true
         else
-            react_run "$full_prompt" "$LODGE_DIR" "$discord_max_turns" 1 "$session_uuid" "social" 2>&1 > "$raw_out_file" || true
+            _DISCORD_IN_SESSION=1 react_run "$full_prompt" "$LODGE_DIR" "$discord_max_turns" 1 "$session_uuid" "social" 2>&1 > "$raw_out_file" || true
         fi
 
         # 1. Primary: Extract from isolated session workspace
@@ -384,13 +491,55 @@ discord_generate_response() {
         reply="Hello @${author}, George is here. I have cataloged your inquiry: '${prompt}'. Our sovereign tools are active."
     fi
 
-    # Record turn in persistent history buffer
-    discord_history_append "$channel_id" "user" "$author" "$prompt"
-    discord_history_append "$channel_id" "assistant" "George" "$reply"
+    # Pass through deterministic outbound egress sanitizer
+    reply=$(discord_sanitize_egress "$reply" "$author_id" "$author")
+
+    # Record turn in author-isolated persistent history buffer
+    discord_history_append "$channel_id" "user" "$author" "$prompt" "$author_id"
+    discord_history_append "$channel_id" "assistant" "George" "$reply" "$author_id"
 
     # Reward constructive engagement on the Square
     if declare -f reputation_add &>/dev/null && [ -n "$author_id" ]; then
         reputation_add "$author_id" 1 "constructive_turn" "$author" >/dev/null 2>&1 || true
+    fi
+
+    # Two-tier memory persistence: Tier 1 baseline rolling upsert
+    if [ -n "$author_id" ] && command -v sqlite3 &>/dev/null; then
+        local now_ts
+        now_ts=$(date +%s)
+        local safe_mem="${_EGRESS_EXTRACTED_MEMORY:-Engaged in conversational dialogue with George.}"
+        safe_mem=$(echo "$safe_mem" | tr '\n' ' ' | sed "s/'/''/g")
+        local safe_prompt
+        safe_prompt=$(echo "${prompt:0:60}" | tr '\n' ' ' | sed "s/'/''/g")
+        sqlite3 "$DISCORD_PROFILES_DB" << EOF 2>/dev/null || true
+INSERT INTO discord_user_profiles (user_id, username, interaction_summary, last_topic, interaction_count, updated_at)
+VALUES ('$author_id', '$author', '$safe_mem', '$safe_prompt', 1, $now_ts)
+ON CONFLICT(user_id) DO UPDATE SET
+    username = '$author',
+    interaction_summary = '$safe_mem',
+    last_topic = '$safe_prompt',
+    interaction_count = interaction_count + 1,
+    updated_at = $now_ts;
+EOF
+
+        # Tier 2 opportunistic: background condensation if Slot 1 is idle
+        (
+            local s1_busy
+            s1_busy=$(curl -s -m 2 http://127.0.0.1:8080/slots 2>/dev/null | jq -r '.[1].is_processing // false' 2>/dev/null || echo "true")
+            if [ "$s1_busy" = "false" ] && [ -n "$_EGRESS_EXTRACTED_MEMORY" ]; then
+                local synth_prompt="Synthesize a concise 2-bullet dossier for Discord user @${author} based on their recent interest: ${prompt}. Return bullet points only."
+                local synth_out
+                synth_out=$(curl -s -m 30 http://127.0.0.1:8080/v1/chat/completions \
+                    -H "Content-Type: application/json" \
+                    -d "$(jq -n --arg p "$synth_prompt" '{messages:[{role:"user",content:$p}], max_tokens:150, temperature:0.3}')" 2>/dev/null | \
+                    jq -r '.choices[0].message.content // empty' 2>/dev/null || true)
+                if [ -n "$synth_out" ]; then
+                    local clean_synth
+                    clean_synth=$(echo "$synth_out" | tr '\n' ' ' | sed "s/'/''/g")
+                    sqlite3 "$DISCORD_PROFILES_DB" "UPDATE discord_user_profiles SET interaction_summary = '$clean_synth' WHERE user_id = '$author_id';" 2>/dev/null || true
+                fi
+            fi
+        ) >/dev/null 2>&1 &
     fi
 
     if [ -n "$session_log" ]; then

@@ -55,6 +55,8 @@ telemetry_fingerprint() {
         sed -E 's/\/home\/[^ :"]+//g' | \
         sed -E 's/\/tmp\/[^ :"]+//g' | \
         sed -E 's/line [0-9]+/line N/g' | \
+        sed -E 's/[0-9]+s\b/Ns/g' | \
+        sed -E 's/turn [0-9]+\/[0-9]+/turn N\/M/g' | \
         tr -dc 'a-z0-9_ ' | tr -s ' ')
 
     local raw="${err_class}:${subsystem}:${norm_fault}"
@@ -295,8 +297,10 @@ telemetry_preserve_incident() {
         tail -n 200 "$tlog" > "$inc_dir/stderr.log" 2>/dev/null || true
     fi
 
-    # 4. Copy workspace artifacts if provided
-    if [ -n "$extra_dir" ] && [ -d "$extra_dir" ]; then
+    # 4. Copy workspace artifacts if provided (scoped strictly to artifacts directory)
+    if [ -n "$extra_dir" ] && [ -d "$extra_dir/artifacts" ]; then
+        cp -r "$extra_dir/artifacts"/* "$inc_dir/artifacts/" 2>/dev/null || true
+    elif [ -n "$extra_dir" ] && [[ "$extra_dir" == */artifacts* ]] && [ -d "$extra_dir" ]; then
         cp -r "$extra_dir"/* "$inc_dir/artifacts/" 2>/dev/null || true
     elif [ -n "$tworkdir" ] && [ -d "$tworkdir/artifacts" ]; then
         cp -r "$tworkdir/artifacts"/* "$inc_dir/artifacts/" 2>/dev/null || true
@@ -355,6 +359,24 @@ telemetry_triage_operational_failure() {
     local workdir="${5:-$PWD}"
     local transcript="${6:-}"
 
+    # RECURSION, SANDBOX & TEST GUARD:
+    # Do NOT triage or spawn new issues if we are ALREADY running inside
+    # an autonomous remediation task, or inside test fixtures, or inside a sandbox, or in /tmp!
+    if [ "${AGENT_SOVEREIGN_REMEDIATION:-0}" -eq 1 ] || \
+       [ "${_LODGE_TESTING:-0}" -eq 1 ] || \
+       [ "${_IN_NOTIFICATION_TRIAGE:-0}" -eq 1 ] || \
+       [[ "$workdir" == *"/.sandboxes/"* ]] || \
+       [[ "$workdir" == *"/tmp/"* ]] || \
+       [[ "$PWD" == *"/.sandboxes/"* ]] || \
+       [[ "${GEORGE_DIR:-}" == *"/.sandboxes/"* ]] || \
+       [[ "${GEORGE_DIR:-}" == *"/tmp/"* ]] || \
+       [[ "${GEORGE_CONFIG_DIR:-}" == *"/.sandboxes/"* ]] || \
+       [[ "${GEORGE_CONFIG_DIR:-}" == *"/tmp/"* ]] || \
+       [[ "${LODGE_DIR:-}" == *"/.sandboxes/"* ]] || \
+       [[ "${LODGE_DIR:-}" == *"/tmp/"* ]]; then
+        return 0
+    fi
+
     telemetry_init
     local issues_dir="${GEORGE_CONFIG_DIR:-$PWD/.george}/issues"
     mkdir -p "$issues_dir" 2>/dev/null || true
@@ -364,16 +386,23 @@ telemetry_triage_operational_failure() {
     local fp
     fp=$(telemetry_fingerprint "$aclass" "$subsys" "$sanitized_trace")
 
-    # Deduplication check against active issues
+    # Strict Deduplication check against all active and in-flight issues:
+    # If ANY active issue with this fingerprint exists in .george/issues/, DO NOT create another issue!
     local existing_issue
     existing_issue=$(grep -l "\[fingerprint:${fp}\]" "$issues_dir"/*.md 2>/dev/null | head -n 1)
     if [ -n "$existing_issue" ] && [ -f "$existing_issue" ]; then
-        local rem_queue_dir="${GEORGE_CONFIG_DIR:-$PWD/.george}/remediation/queue"
-        local is_queued
-        is_queued=$(grep -l "\"fingerprint\": \"${fp}\"" "$rem_queue_dir"/*.json 2>/dev/null | head -n 1)
-        if [ -n "$is_queued" ]; then
-            declare -f ui_dim &>/dev/null && ui_dim "Operational failure already tracked & queued: $(basename "$existing_issue") ($fp)" >&2
-            echo "$existing_issue"
+        declare -f ui_dim &>/dev/null && ui_dim "Operational failure already tracked in $(basename "$existing_issue") ($fp)" >&2
+        echo "$existing_issue"
+        return 0
+    fi
+
+    # Also check if already queued, in progress, or recently failed with this fingerprint
+    local rem_base="${GEORGE_CONFIG_DIR:-$PWD/.george}/remediation"
+    if [ -d "$rem_base" ]; then
+        local fp_match
+        fp_match=$(grep -l "\"fingerprint\": \"${fp}\"" "$rem_base"/queue/*.json "$rem_base"/in_progress/*.json "$rem_base"/failed/*.json 2>/dev/null | head -n 1)
+        if [ -n "$fp_match" ] && [ -f "$fp_match" ]; then
+            declare -f ui_dim &>/dev/null && ui_dim "Operational failure already has active remediation task: $(basename "$fp_match") ($fp)" >&2
             return 0
         fi
     fi
@@ -394,6 +423,9 @@ telemetry_triage_operational_failure() {
     now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +%s)
     local issue_file="$issues_dir/issue_${fp}_${now_ts}.md"
 
+    local excerpt
+    excerpt=$(echo "$sanitized_trace" | sed '/^[[:space:]]*$/d' | head -n 12)
+
     cat > "$issue_file" << EOF
 # [Autonomous Telemetry Alert] ${title}
 
@@ -406,23 +438,63 @@ telemetry_triage_operational_failure() {
 
 ### Diagnostic Trace & Failure Evidence
 \`\`\`
-${sanitized_trace}
+${excerpt}
 \`\`\`
 
 ### Autonomous Remediation Objective
-Diagnose the root cause of this failure. If this is a configuration or provider deficit, survey the environment and codebase for fallback adapters or disposable services, implement the necessary adaptation, and verify via automated tests.
+- **Target Component:** Subsystem \`${subsys}\`
+- **Root Cause Investigation:** Diagnose why \`${title}\` failed during execution in \`${workdir}\`.
+- **Resolution Criteria:** Patch the fault in the target module, ensure graceful error handling on missing resources, and verify fix with test harness.
 EOF
 
-    # Enqueue remediation task
+    # Submit issue to Sovereign Gitea if online
+    local gitea_num=""
+    if ! declare -f gitea_is_online &>/dev/null; then
+        [ -f "${LODGE_DIR:-$PWD}/lib/mcp_server_gitea.sh" ] && source "${LODGE_DIR:-$PWD}/lib/mcp_server_gitea.sh" 2>/dev/null || true
+    fi
+    if declare -f gitea_is_online &>/dev/null && gitea_is_online; then
+        local g_title="[Autonomous Telemetry Alert] ${title}"
+        local g_body
+        g_body=$(cat "$issue_file")
+        local g_labels="autonomous-remediation,telemetry-alert,bug"
+        local g_res
+        g_res=$(gitea_issue_create "$g_title" "$g_body" "$g_labels" 2>/dev/null || true)
+        gitea_num=$(echo "$g_res" | jq -r '.number // empty' 2>/dev/null || true)
+        if [ -n "$gitea_num" ]; then
+            echo "- **Gitea Issue:** #${gitea_num}" >> "$issue_file"
+        fi
+    fi
+
+    # Enqueue remediation task (throttled to max 3 pending tasks)
     local q_id=""
-    if declare -f remediation_queue_add &>/dev/null; then
-        q_id=$(remediation_queue_add "$issue_file" "$inc_dir" "high" "$title" 2>/dev/null || true)
+    local q_dir="${GEORGE_DIR}/remediation/queue"
+    local q_count=0
+    [ -d "$q_dir" ] && q_count=$(ls -1 "$q_dir"/*.json 2>/dev/null | wc -l)
+    if [ "$q_count" -ge 3 ]; then
+        ui_warn "Remediation queue depth reached maximum (3 pending tasks). Triaging as standard issue without auto-remediation."
     else
-        # If remediation.sh not yet sourced, try to source it
-        if [ -f "${LODGE_DIR:-$PWD}/lib/remediation.sh" ]; then
+        if declare -f remediation_queue_add &>/dev/null; then
+            q_id=$(remediation_queue_add "$issue_file" "$inc_dir" "high" "$title" 2>/dev/null || true)
+        else
+            if [ -f "${LODGE_DIR:-$PWD}/lib/remediation.sh" ]; then
+                source "${LODGE_DIR:-$PWD}/lib/remediation.sh" 2>/dev/null || true
+                if declare -f remediation_queue_add &>/dev/null; then
+                    q_id=$(remediation_queue_add "$issue_file" "$inc_dir" "high" "$title" 2>/dev/null || true)
+                fi
+            fi
+        fi
+    fi
+
+    # Dispatch operator notification of enqueued failure
+    if [ -n "$q_id" ]; then
+        local notify_details="Operational failure detected and auto-enqueued for sovereign remediation.\nTitle: ${title}\nSubsystem: ${subsys}\nClass: ${aclass}"
+        [ -n "$gitea_num" ] && notify_details+="\nGitea Issue: #${gitea_num}"
+        if declare -f remediation_notify_dispatch &>/dev/null; then
+            remediation_notify_dispatch "$q_id" "$issue_file" "QUEUED" "$notify_details" 2>/dev/null || true
+        elif [ -f "${LODGE_DIR:-$PWD}/lib/remediation.sh" ]; then
             source "${LODGE_DIR:-$PWD}/lib/remediation.sh" 2>/dev/null || true
-            if declare -f remediation_queue_add &>/dev/null; then
-                q_id=$(remediation_queue_add "$issue_file" "$inc_dir" "high" "$title" 2>/dev/null || true)
+            if declare -f remediation_notify_dispatch &>/dev/null; then
+                remediation_notify_dispatch "$q_id" "$issue_file" "QUEUED" "$notify_details" 2>/dev/null || true
             fi
         fi
     fi

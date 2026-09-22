@@ -112,8 +112,50 @@ cmd_social() {
                         list) discord_user_list ;;
                         *) discord_user_list ;;
                     esac ;;
+                owner|owners)
+                    local osub
+                    osub=$(echo "$dargs" | awk '{print $1}')
+                    case "$osub" in
+                        set)
+                            local new_ids
+                            new_ids=$(echo "$dargs" | awk '{print $2}')
+                            if [ -n "$new_ids" ]; then
+                                api_set_key "DISCORD_OWNER_IDS" "$new_ids"
+                                export DISCORD_OWNER_IDS="$new_ids"
+                                ui_ok "Discord owner IDs set to: $new_ids"
+                            else
+                                ui_err "Usage: /social discord owner set <id1,id2...>"
+                            fi
+                            ;;
+                        add)
+                            local add_id current_ids
+                            add_id=$(echo "$dargs" | awk '{print $2}')
+                            if [ -n "$add_id" ]; then
+                                current_ids=$(api_get_key "DISCORD_OWNER_IDS" 2>/dev/null || echo "")
+                                if [ -n "$current_ids" ]; then
+                                    new_ids="${current_ids},${add_id}"
+                                else
+                                    new_ids="$add_id"
+                                fi
+                                api_set_key "DISCORD_OWNER_IDS" "$new_ids"
+                                export DISCORD_OWNER_IDS="$new_ids"
+                                ui_ok "Added $add_id to Discord owner IDs: $new_ids"
+                            else
+                                ui_err "Usage: /social discord owner add <id>"
+                            fi
+                            ;;
+                        list|"")
+                            local cur
+                            cur="${DISCORD_OWNER_IDS:-$(api_get_key "DISCORD_OWNER_IDS" 2>/dev/null || echo "")}"
+                            if [ -n "$cur" ]; then
+                                ui_info "Discord Owner IDs: $cur"
+                            else
+                                ui_warn "No Discord Owner IDs configured. Set with: /social discord owner set <id1,id2>"
+                            fi
+                            ;;
+                    esac ;;
                 validate|test) discord_validate ;;
-                *) ui_info "Usage: /social discord <send|dm|upload|chat|sweep|channels|users|validate>" ;;
+                *) ui_info "Usage: /social discord <send|dm|upload|chat|sweep|channels|users|owner|validate>" ;;
             esac ;;
         telegram)
             local sub targs

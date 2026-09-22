@@ -54,5 +54,57 @@ describe "turn limits & countdown preservation"
     assert_eq "$countdown_start" "9994"
   }
 
+describe "_react_compact_messages"
+  it "compacts messages with 2500 token budget prompt and deterministic fallback" && {
+    tmp_dir=$(mktemp -d)
+    trap 'rm -rf "$tmp_dir"' EXIT
+
+    # Create dummy messages.json
+    cat << 'EOF' > "$tmp_dir/messages.json"
+[
+  {"role": "system", "content": "You are George."},
+  {"role": "user", "content": "Fix telemetry loop in sentinel"},
+  {"role": "assistant", "content": "Inspecting sentinel.", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "native_tools_invoke", "arguments": "{\"action\":\"read_file\",\"path\":\"lib/sentinel.sh\"}"}}]},
+  {"role": "tool", "tool_call_id": "call_1", "name": "native_tools_invoke", "content": "Line 42: telemetry loop active"}
+]
+EOF
+
+    # Call compaction pointing to unreachable port to verify deterministic fallback
+    _react_compact_messages "$tmp_dir" "http://127.0.0.1:9999" "$PWD" >/dev/null 2>&1
+
+    # Verify memory.md written
+    assert_file_exists "$tmp_dir/memory.md"
+    mem_content=$(cat "$tmp_dir/memory.md")
+    assert_contains "$mem_content" "Fix telemetry loop in sentinel"
+    assert_contains "$mem_content" "lib/sentinel.sh"
+
+    # Verify messages.json is valid JSON
+    jq empty "$tmp_dir/messages.json" >/dev/null 2>&1
+    assert_ok $? "messages.json should be valid JSON"
+
+    # Verify schema alternation and preserved tool round
+    msg_len=$(jq 'length' "$tmp_dir/messages.json")
+    assert_eq "$msg_len" "7"
+    r0=$(jq -r '.[0].role' "$tmp_dir/messages.json")
+    r1=$(jq -r '.[1].role' "$tmp_dir/messages.json")
+    r2=$(jq -r '.[2].role' "$tmp_dir/messages.json")
+    r3=$(jq -r '.[3].role' "$tmp_dir/messages.json")
+    r4=$(jq -r '.[4].role' "$tmp_dir/messages.json")
+    r5=$(jq -r '.[5].role' "$tmp_dir/messages.json")
+    r6=$(jq -r '.[6].role' "$tmp_dir/messages.json")
+
+    assert_eq "$r0" "system"
+    assert_eq "$r1" "user"
+    assert_eq "$r2" "assistant"
+    assert_eq "$r3" "user"
+    assert_eq "$r4" "assistant"
+    assert_eq "$r5" "tool"
+    assert_eq "$r6" "user"
+
+    rm -rf "$tmp_dir"
+    trap - EXIT
+  }
+
 test_end
+
 

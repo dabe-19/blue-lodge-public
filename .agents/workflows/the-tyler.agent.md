@@ -34,6 +34,7 @@ Use the `todo` tool. Default passes:
 - Input handling — request parsing, deserialization, file uploads, query construction
 - AuthN / AuthZ — session handling, RBAC checks, missing authorization
 - Third-party calls — outbound HTTP/SDK calls, SSRF risk
+- Environment & runtime isolation — verify no untrusted external packages (Python, npm) installed on host; enforce container/sandbox boundaries (`container_exec`) for foreign runtimes
 - Agent capability grants — any modified `.agent.md` file's instructions that grant tool usage
 - Prompt-injection surface — untrusted text entering LLM prompts
 - Compose return report

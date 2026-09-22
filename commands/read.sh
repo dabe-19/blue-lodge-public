@@ -44,16 +44,23 @@ cmd_read() {
         fi
     fi
 
-    if [ -n "$start_line" ] && [[ "$start_line" =~ ^[0-9]+$ ]]; then
-        local num="${max_lines:-100}"
-        sed -n "${start_line},$((start_line + num - 1))p" "$target_path"
-    else
-        head -n 250 "$target_path"
-        local total
-        total=$(wc -l < "$target_path" 2>/dev/null || echo "0")
-        if [ "$total" -gt 250 ]; then
-            echo ""
-            ui_dim "  [... truncated at line 250 of $total lines. Use /read $file 251 250 for next chunk ...]"
-        fi
+    local s="${start_line:-1}"
+    local m="${max_lines:-100}"
+    if ! [[ "$s" =~ ^[0-9]+$ ]] || [ "$s" -lt 1 ]; then s=1; fi
+    if ! [[ "$m" =~ ^[0-9]+$ ]] || [ "$m" -lt 1 ]; then m=100; elif [ "$m" -gt 200 ]; then m=200; fi
+
+    local total
+    total=$(wc -l < "$target_path" 2>/dev/null || echo "0")
+    local end=$((s + m - 1))
+    [ "$end" -gt "$total" ] && end="$total"
+
+    ui_info "Showing lines $s to $end of $total ($file)"
+    sed -n "${s},${end}p" "$target_path" | awk -v start="$s" '{print (start + NR - 1) ": " $0}'
+
+    if [ "$end" -lt "$total" ]; then
+        local next_start=$((end + 1))
+        local remaining=$((total - end))
+        echo ""
+        ui_dim "  [... $remaining more lines. Use /read $file $next_start $m for next chunk ...]"
     fi
 }

@@ -150,3 +150,46 @@ reputation_format_status() {
 ${next_goal}
 EOF
 }
+
+reputation_penalize_violation() {
+    local user_id="$1"
+    local username="${2:-unknown}"
+    local reason="${3:-security_violation}"
+    local penalty="${4:--15}"
+
+    reputation_add "$user_id" "$penalty" "$reason" "$username"
+}
+
+reputation_reset() {
+    local user_id="$1"
+    local username="${2:-unknown}"
+    reputation_init
+    local now
+    now=$(date +%s)
+    sqlite3 "$REPUTATION_DB" \
+        "UPDATE reputation SET score = 10, tier = 'Stranger', last_seen = $now \
+         WHERE user_id = '$user_id';" 2>/dev/null || true
+    echo "10|Stranger"
+}
+
+reputation_probation_decay() {
+    local user_id="$1"
+    local username="${2:-unknown}"
+    reputation_init
+
+    local row
+    row=$(sqlite3 "$REPUTATION_DB" "SELECT score, last_seen FROM reputation WHERE user_id = '$user_id' LIMIT 1;" 2>/dev/null || true)
+    [ -z "$row" ] && return 0
+    local cur_score cur_last_seen
+    cur_score=$(echo "$row" | cut -d'|' -f1)
+    cur_last_seen=$(echo "$row" | cut -d'|' -f2)
+
+    if [ "$cur_score" -lt 0 ]; then
+        local now
+        now=$(date +%s)
+        # 48 hours = 172800 seconds
+        if [ $((now - cur_last_seen)) -ge 172800 ]; then
+            reputation_add "$user_id" 1 "probation_recovery" "$username" >/dev/null 2>&1 || true
+        fi
+    fi
+}

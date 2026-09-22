@@ -169,4 +169,12 @@ Run `/security status` to see an overview of all active security features, inclu
 
 ---
 
+## Host Environment Purity & Sandbox Isolation
+**Established:** 2026-09-21 via Tyler & Warden Architectural Mandate.
+**Rule:** The host repository and host environment must remain 100% pure POSIX shell (bash, curl, jq). Downloading, compiling, or installing Python/Node.js packages or heavy dependencies directly onto the host environment is strictly prohibited; all foreign package execution must be isolated in a container sandbox (`container_exec`).
+**Rationale:** Preserves sovereign zero-dependency host portability, prevents environment corruption and dependency drift across developer machines, and provides defense-in-depth isolation against supply chain attacks from untrusted package registries.
+
+---
+
 *This audit covers the codebase as of v0.2.0. Re-audit recommended after significant changes.*
+

@@ -194,8 +194,9 @@ context_engine_build() {
     out+="2. For complex, multi-step, architectural, or ambiguous tasks: use workflow planning tools (workflow_plan, workflow_run, or slash_command_exec with /workflow or /the-architect) and ask_operator within your turns to collaboratively plan, clarify scope, and define implementation contracts before modifying files or executing deep research.\n"
     out+="3. George acts as your team anchor: George interacts, answers questions, clarifies scope, and provides authoritative guidance. All interactive planning dialogues are displayed on TTY and logged to the transcript for persistent provenance.\n"
     out+="4. Always verify facts before assuming. Inspect code before modifying it.\n"
-    out+="5. Multiple tool calls may be executed sequentially or in parallel.\n"
-    out+="6. Once all necessary actions are complete, synthesize your final response directly in clean, readable markdown.\n"
+    out+="5. Context Economy & Bounded File Inspection: NEVER read entire large files or run whole-file 'cat' commands. Read small chunks (50-100 lines) using file_read with start_line and max_lines. For code navigation, prefer file_grep to locate symbols or code_outline / code_symbol_get to inspect exact AST functions.\n"
+    out+="6. Multiple tool calls may be executed sequentially or in parallel.\n"
+    out+="7. Once all necessary actions are complete, synthesize your final response directly in clean, readable markdown.\n"
     out+="</operational_protocol>\n\n"
 
     # 4. Agent Swarm Identities

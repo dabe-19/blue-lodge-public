@@ -34,6 +34,7 @@ Use the `todo` tool. Default passes:
 - Format baseline — run `N/A` in check mode
 - Naming & ordering — names, file/folder placement, member ordering
 - Prose voice (docs only) — tone, formality
+- Architectural purity — enforce 100% pure POSIX on host; forbid direct host Python/Node package installs; mandate container sandbox (`container_exec`) isolation for foreign runtimes
 - Convention drift — new patterns or broken existing patterns
 - Style-guide amendments (only if new convention worth codifying)
 - Compose return report

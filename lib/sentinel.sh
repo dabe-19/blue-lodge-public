@@ -210,8 +210,8 @@ sentinel_probe() {
                 [ "$t_pid" -gt 0 ] && kill -0 "$t_pid" 2>/dev/null && is_alive=1
                 [ "$t_pty" -gt 0 ] && kill -0 "$t_pty" 2>/dev/null && is_alive=1
 
-                if [ "$is_alive" -eq 0 ]; then
-                    anomalies+=("TASK_DEAD_PID: Task $t_id (Turn $t_turn/$t_max) process dead with no heartbeat for ${t_age}s")
+                if [ "$is_alive" -eq 0 ] || [ "$t_age" -ge 600 ]; then
+                    anomalies+=("TASK_DEAD_PID: Task $t_id (Turn $t_turn/$t_max) unresponsive process with no heartbeat for ${t_age}s")
                     actions_needed+=("REAP_DEAD_TASK_$t_id")
                 else
                     anomalies+=("TASK_STALL: Task $t_id (Turn $t_turn/$t_max, tool: $t_tool) stalled with no heartbeat for ${t_age}s")
@@ -332,6 +332,12 @@ sentinel_self_heal() {
                 ;;
             REAP_DEAD_TASK_*)
                 local r_tid="${act#REAP_DEAD_TASK_}"
+                local r_file="$TELEMETRY_ACTIVE_DIR/${r_tid}.json"
+                if [ -f "$r_file" ]; then
+                    local r_pid
+                    r_pid=$(jq -r '.pid // 0' "$r_file" 2>/dev/null)
+                    [ "$r_pid" -gt 0 ] && kill -9 "$r_pid" 2>/dev/null || true
+                fi
                 if declare -f telemetry_task_end &>/dev/null; then
                     telemetry_task_end "$r_tid" 1 "PROCESS_DEAD_REAPED"
                     healed+=("Reaped dead task registration $r_tid")
@@ -358,7 +364,12 @@ sentinel_triage_tier2() {
 
     local now_iso
     now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    local issue_title="[Sentinel Telemetry Alert] Anomaly Detected & Remediated (${now_iso})"
+    local issue_title
+    if [ -n "$healed_summary" ] && [ "$healed_summary" != "None" ]; then
+        issue_title="[Sentinel Telemetry Alert] Anomaly Detected & Remediated (${now_iso})"
+    else
+        issue_title="[Sentinel Telemetry Alert] Anomaly Detected (${now_iso})"
+    fi
 
     local norm_anoms
     norm_anoms=$(printf '%s\n' "${anomalies[@]}" | sort | tr '\n' ' ')
@@ -417,6 +428,15 @@ sentinel_triage_tier2() {
         [ -n "$an" ] && anom_bullets+="- ⚠️ \`${an}\`\n"
     done <<< "$anomalies"
 
+    local anom_actions
+    if [[ "$norm_anoms" =~ STALL|HUNG|UNRESPONSIVE ]]; then
+        anom_actions="1. Inspect inference server health and check active slot task PIDs.\n2. Terminate hung or orphan curl sub-processes.\n3. Verify inference server timeout limits."
+    elif [[ "$norm_anoms" =~ GPU|VRAM|TEMP ]]; then
+        anom_actions="1. Monitor GPU thermal throttling and VRAM allocation.\n2. Evict inactive context models or reduce concurrent slots."
+    else
+        anom_actions="1. Review recent logs in \`${GEORGE_DIR}/telemetry/active/\`.\n2. Verify system environment, socket connections, and process states.\n3. If code changes are required, stage clean fix to develop."
+    fi
+
     local issue_body
     issue_body=$(cat << EOF
 ### George Autonomic Sentinel Diagnostic Report
@@ -439,9 +459,7 @@ ${inc_link}- **Host Workspace:** \`${LODGE_DIR}\`
 - ${healed_summary}
 
 #### Recommended Action Items
-1. Verify automated unit test fixtures mock background subagents to avoid spawning unmonitored LLM curls.
-2. Review context token boundaries and verify prefill profiles remain under 24 tools.
-3. If code changes are required, review branch and stage a clean PR to develop.
+$(echo -e "$anom_actions")
 EOF
 )
 
@@ -470,22 +488,75 @@ EOF
 
     # Submit to Sovereign Gitea if online
     if declare -f gitea_is_online &>/dev/null && gitea_is_online; then
+        local gitea_labels="sentinel-alert,bug"
+        local is_self_healed=0
+        if [ -n "$healed_summary" ] && [ "$healed_summary" != "None" ]; then
+            gitea_labels="sentinel-alert,auto-remediated,bug"
+            is_self_healed=1
+        fi
+
         local issue_res
-        issue_res=$(gitea_issue_create "$issue_title" "$issue_body" "sentinel-alert,auto-remediated,bug" 2>/dev/null || true)
+        issue_res=$(gitea_issue_create "$issue_title" "$issue_body" "$gitea_labels" 2>/dev/null || true)
         local inum
         inum=$(echo "$issue_res" | jq -r '.number // empty' 2>/dev/null || true)
         if [ -n "$inum" ]; then
             echo "Filed Sovereign Gitea Issue #${inum} at $issue_file" >> "$SENTINEL_LOG"
+            if [ "$is_self_healed" -eq 1 ]; then
+                if ! declare -f gitea_issue_close &>/dev/null; then
+                    [ -f "${LODGE_DIR:-$PWD}/lib/mcp_server_gitea.sh" ] && source "${LODGE_DIR:-$PWD}/lib/mcp_server_gitea.sh" 2>/dev/null || true
+                fi
+                if declare -f gitea_issue_close &>/dev/null; then
+                    gitea_issue_close "$inum" "Autonomous Sentinel self-healed this condition immediately during probe: ${healed_summary}." >/dev/null 2>&1 || true
+                fi
+            fi
         fi
     fi
 
     echo "$issue_file"
 }
 
+# Sweep and close any open Gitea issues marked auto-remediated
+sentinel_sweep_remediated_issues() {
+    if ! declare -f gitea_is_online &>/dev/null; then
+        [ -f "${LODGE_DIR:-$PWD}/lib/mcp_server_gitea.sh" ] && source "${LODGE_DIR:-$PWD}/lib/mcp_server_gitea.sh" 2>/dev/null || true
+    fi
+    if ! declare -f gitea_is_online &>/dev/null || ! gitea_is_online; then
+        return 0
+    fi
+    _gitea_load_conf
+
+    local open_issues
+    open_issues=$(curl -s -H "Authorization: token ${GITEA_TOKEN}" "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/issues?state=open" 2>/dev/null)
+    [ -z "$open_issues" ] && return 0
+
+    # 1. Sweep issues with auto-remediated label or title indicating remediation
+    local rem_issues
+    rem_issues=$(echo "$open_issues" | jq -r '.[] | select((.labels[]?.name == "auto-remediated") or (.title | test("& Remediated|\\[Auto-Remediated\\]"; "i"))) | .number' 2>/dev/null | sort -u)
+    for inum in $rem_issues; do
+        [ -z "$inum" ] && continue
+        if declare -f gitea_issue_close &>/dev/null; then
+            gitea_issue_close "$inum" "Autonomous Sentinel sweep: verified auto-remediated anomaly closed without pending follow-up." >/dev/null 2>&1 || true
+            ui_ok "Sentinel closed auto-remediated Gitea Issue #${inum}."
+        fi
+    done
+
+    # 2. Sweep false-positive telemetry alert issues (e.g. bash_exec exit 0)
+    local false_positives
+    false_positives=$(echo "$open_issues" | jq -r '.[] | select(.title | test("exit 0"; "i")) | .number' 2>/dev/null | sort -u)
+    for inum in $false_positives; do
+        [ -z "$inum" ] && continue
+        if declare -f gitea_issue_close &>/dev/null; then
+            gitea_issue_close "$inum" "Closed by Sentinel sweep: false-positive alert on benign tool command with exit code 0." >/dev/null 2>&1 || true
+            ui_ok "Sentinel closed false-positive Gitea Issue #${inum}."
+        fi
+    done
+}
+
 # ── 4. Unified Sentinel Sweep ────────────────────────────────────────
 # Called during cron loops or via /cron sentinel
 sentinel_sweep() {
     sentinel_init
+    sentinel_sweep_remediated_issues
     ui_step "Probing hardware vitals, inference slots & process telemetry..."
 
     local probe

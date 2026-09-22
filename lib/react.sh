@@ -39,7 +39,7 @@ _react_trace() {
     printf '{"timestamp":"%s","event":"%s","data":%s}\n' "$ts" "$event" "${payload:-{}}" >> "$trace_file" 2>/dev/null || true
 }
 
-# ── Auto-Compaction Engine ───────────────────────────────────────────
+# ── Auto-Compaction Engine (Hierarchical Rich Compaction) ────────────
 _react_compact_messages() {
     local session_dir="$1"
     local endpoint_url="$2"
@@ -47,16 +47,49 @@ _react_compact_messages() {
     local messages_file="$session_dir/messages.json"
     local memory_file="$session_dir/memory.md"
 
-    ui_dim "Compacting conversation history..."
+    ui_dim "Compacting conversation history (2,500 token rich technical budget)..."
 
+    # 1. Extract structural repository & execution manifest from messages_file
+    local user_goal
+    user_goal=$(jq -r '[.[] | select(.role == "user")][0].content // empty' "$messages_file" 2>/dev/null)
+    [ -z "$user_goal" ] && user_goal="Continue task execution."
+
+    local files_touched
+    files_touched=$(jq -r '[.[] | select(.role=="assistant") | .tool_calls[]?.function.arguments | fromjson? | .path // empty] | unique | .[]' "$messages_file" 2>/dev/null | head -n 20 | tr '\n' ', ' | sed 's/,[[:space:]]*$//')
+
+    local recent_commands
+    recent_commands=$(jq -r '[.[] | select(.role=="assistant") | .tool_calls[]?.function.arguments | fromjson? | .command // empty] | .[-6:] | .[]' "$messages_file" 2>/dev/null | tr '\n' '; ' | sed 's/;[[:space:]]*$//')
+
+    local recent_obs
+    recent_obs=$(jq -r '[.[] | select(.role=="tool")][-3:] | .[].content // empty' "$messages_file" 2>/dev/null | head -n 20 | tr '\n' ' ')
+
+    local git_context=""
+    if git -C "$workdir" rev-parse --is-inside-work-tree &>/dev/null; then
+        local branch_now status_now
+        branch_now=$(git -C "$workdir" branch --show-current 2>/dev/null || echo "detached")
+        status_now=$(git -C "$workdir" status --short 2>/dev/null | tr '\n' ' ' | head -c 160)
+        git_context="Git Branch: $branch_now | Status: ${status_now:-clean}"
+    fi
+
+    # 2. Extract trajectory for LLM summarization (tail of history)
     local msgs_summary
-    msgs_summary=$(jq -r '.[] | "\(.role): \(.content // .tool_calls // "")"' "$messages_file" 2>/dev/null | tail -n 60)
+    msgs_summary=$(jq -r '.[] | "\(.role): \(.content // .tool_calls // "")"' "$messages_file" 2>/dev/null | tail -n 80)
 
-    local prompt="The following is an ongoing agent trajectory. Summarize the key accomplishments, discovered facts, and remaining tasks concisely:\n\n$msgs_summary"
+    local prompt="The following is an ongoing technical agent trajectory for a software engineering task.
+${git_context:+Current Environment: $git_context
+}Produce an exhaustive, high-fidelity technical summary (up to 2,500 tokens) preserving all critical implementation context:
+1. PRIMARY OBJECTIVE: High-level architectural goal.
+2. FILES INSPECTED & MODIFIED: Exact file paths, functions, and key lines analyzed or changed.
+3. ERRORS & DIAGNOSTICS: Exact error messages, compiler/test output, exit codes, and diagnosed root causes.
+4. KEY FACTS DISCOVERED: Environment facts, existing tools, directory structures, and constraints.
+5. CONCRETE PENDING ACTIONS: Immediate next steps required to complete the objective.
+
+Trajectory history:
+$msgs_summary"
 
     local payload
     payload=$(jq -n \
-        --arg sys "You are a state summarizer. Produce a concise structured summary: Accomplished, Key Facts, Pending Goals." \
+        --arg sys "You are a senior software architect and technical state summarizer. Produce a dense, comprehensive, high-fidelity technical state summary up to 2500 tokens. Preserve exact file names, functions, error traces, and next concrete actions." \
         --arg prompt "$prompt" \
         '{
             messages: [
@@ -64,37 +97,91 @@ _react_compact_messages() {
                 {"role": "user", "content": $prompt}
             ],
             temperature: 0.2,
-            max_tokens: 512
+            max_tokens: 2500
         }')
 
     local summary_resp
-    summary_resp=$(curl -s --max-time 45 "$endpoint_url/v1/chat/completions" \
+    summary_resp=$(curl -s --max-time 60 "$endpoint_url/v1/chat/completions" \
         -H "Content-Type: application/json" \
         -d "$payload" 2>/dev/null)
 
     local summary_text
     summary_text=$(echo "$summary_resp" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
 
-    if [ -n "$summary_text" ]; then
-        echo "## Context Summary (Auto-Compacted):" > "$memory_file"
-        echo "$summary_text" >> "$memory_file"
+    # 3. Deterministic Rich Fallback if endpoint fails, times out, or returns empty
+    if [ -z "$summary_text" ]; then
+        summary_text="## Technical Context Summary (Deterministic Manifest Fallback)
+### 1. Primary Objective
+${user_goal}
 
-        # Retain system prompt and latest 4 messages, injecting memory summary
-        local sys_msg last_few
-        sys_msg=$(jq '.[0]' "$messages_file")
-        last_few=$(jq '.[-4:]' "$messages_file")
+### 2. Environment & Repository State
+${git_context:-Standalone workspace: $workdir}
 
-        jq -n \
-            --argjson sys "$sys_msg" \
-            --arg mem "$summary_text" \
-            --argjson rest "$last_few" \
-            '[$sys, {"role": "user", "content": ("[PREVIOUS CONTEXT COMPACTED]:\n" + $mem)}] + $rest' \
-            > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+### 3. Files Inspected & Touched
+${files_touched:-None recorded}
 
-        ui_ok "Context successfully compacted."
-        declare -f transcript_log_block &>/dev/null && transcript_log_block "auto-compaction" "$summary_text"
-        _react_trace "$workdir" "auto_compaction" "$(jq -cn --arg sum "$summary_text" '{summary:$sum}')"
+### 4. Recent Commands Executed
+\`\`\`
+${recent_commands:-None recorded}
+\`\`\`
+
+### 5. Recent Observations & Diagnostics
+\`\`\`
+${recent_obs:-In progress}
+\`\`\`
+
+### 6. Working Notice
+Trajectory auto-compacted deterministically to recover context headroom while preserving structural file and tool history."
     fi
+
+    echo "## Context Summary (Auto-Compacted):" > "$memory_file"
+    echo "$summary_text" >> "$memory_file"
+
+    # 4. Extract safe working-memory pair (last completed single assistant-tool round)
+    local recent_pair
+    recent_pair=$(jq -c '
+        if length >= 2 and .[-1].role == "tool" then
+            ([.[] | select(.role == "assistant")] | .[-1]) as $last_asst |
+            if ($last_asst.tool_calls | length) == 1 and .[-2].role == "assistant" then
+                [.[-2], .[-1]]
+            else
+                []
+            end
+        else
+            []
+        end
+    ' "$messages_file" 2>/dev/null || echo "[]")
+
+    # 5. Reconstruct clean, schema-compliant messages array
+    local sys_msg
+    sys_msg=$(jq '.[0] // empty' "$messages_file" 2>/dev/null)
+    if ! echo "$sys_msg" | jq -e '.role == "system"' >/dev/null 2>&1; then
+        sys_msg='{"role": "system", "content": "You are George, senior technical companion and builder."}'
+    fi
+
+    jq -n \
+        --argjson sys "$sys_msg" \
+        --arg goal "$user_goal" \
+        --arg mem "$summary_text" \
+        --argjson recent "$recent_pair" \
+        '
+            [
+                $sys,
+                {"role": "user", "content": ("PRIMARY OBJECTIVE:\n" + $goal)},
+                {"role": "assistant", "content": ("[PREVIOUS CONTEXT COMPACTED - TECHNICAL STATE SUMMARY]:\n" + $mem)}
+            ] + (if ($recent | length) == 2 then [
+                {"role": "user", "content": "Continue executing the task based on the technical progress summary above. Here was your most recent working tool execution before compaction:"},
+                $recent[0],
+                $recent[1],
+                {"role": "user", "content": "Proceed with your next action based on the summary and above observation."}
+            ] else [
+                {"role": "user", "content": "Continue executing the task based on the technical progress summary above. Advance the primary objective using native tools."}
+            ] end)
+        ' > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+
+    ui_ok "Context successfully compacted with 2,500 token technical budget."
+    declare -f transcript_log_block &>/dev/null && transcript_log_block "auto-compaction" "$summary_text"
+    _react_trace "$workdir" "auto_compaction" "$(jq -cn --arg sum "$summary_text" '{summary:$sum}')"
 }
 
 # ── Fallback Text Action Parser ──────────────────────────────────────
@@ -248,6 +335,13 @@ react_run() {
             telemetry_task_heartbeat "$session_id" "$turn" "${last_invoked_tool:-}" "$max_turns"
         fi
 
+        # Cooperative scheduling pause for background remediation tasks
+        if [ "${AGENT_SOVEREIGN_REMEDIATION:-0}" -eq 1 ]; then
+            if declare -f remediation_cooperative_pause &>/dev/null; then
+                remediation_cooperative_pause
+            fi
+        fi
+
         # Pipe & PTY Integrity Watchdog
         if [ -n "${PTY_PID:-}" ] && [ "${PTY_PID:-0}" -ne 0 ]; then
             if ! kill -0 "$PTY_PID" 2>/dev/null; then
@@ -264,22 +358,44 @@ react_run() {
             tools_schema=$(cat "$active_tools_file")
         fi
 
-        # Countdown alert when approaching turn ceiling
-        local countdown_trigger=$((max_turns - 2))
-        [ "$max_turns" -ge 12 ] && countdown_trigger=$((max_turns - 4))
+        # Calibrated countdown advisory starting 10 turns before ceiling
+        local countdown_trigger=$((max_turns - 10))
+        [ "$max_turns" -lt 15 ] && countdown_trigger=$((max_turns - 4))
         [ "$max_turns" -le 5 ] && countdown_trigger=$((max_turns - 1))
         if [ "$turn" -ge "$countdown_trigger" ] && [ "$turn" -lt "$max_turns" ]; then
             local rem=$((max_turns - turn))
-            ui_warn "Approaching turn ceiling: Turn $turn/$max_turns ($rem turn(s) remaining)."
+            ui_warn "Turn budget: Turn $turn/$max_turns ($rem turn(s) remaining)."
             local alert_msg
             if [ "$tool_filter" = "social" ] || [ "$tool_filter" = "chat" ]; then
-                alert_msg="[SYSTEM NOTICE: Turn $turn/$max_turns ($rem turn(s) remaining). Conclude your findings and provide your response to the user.]"
+                if [ "$rem" -le 2 ]; then
+                    alert_msg="[SYSTEM ADVISORY: Turn $turn/$max_turns — $rem turn(s) remaining. Conclude your response to the user.]"
+                else
+                    alert_msg="[SYSTEM ADVISORY: Turn $turn/$max_turns — $rem turns remaining. Begin wrapping up your thoughts.]"
+                fi
             else
-                alert_msg="[SYSTEM NOTICE: APPROACHING TURN CEILING (Turn $turn/$max_turns, $rem turn(s) remaining). Cease starting new exploratory steps. Consolidate deliverables, commit milestone reflection to .george/journal.md, preserve active state into .george/memories/, and provide your concluding response.]"
+                if [ "$rem" -ge 7 ]; then
+                    alert_msg="[SYSTEM ADVISORY: Turn $turn/$max_turns — $rem turns remaining. You have ample budget, but begin converging your investigation toward a concrete fix.]"
+                elif [ "$rem" -ge 4 ]; then
+                    alert_msg="[SYSTEM ADVISORY: Turn $turn/$max_turns — $rem turns remaining. Transition from research to execution: apply your code edits and execute automated tests.]"
+                elif [ "$rem" -ge 2 ]; then
+                    alert_msg="[SYSTEM ADVISORY: Turn $turn/$max_turns — $rem turns remaining. Final verification: ensure tests pass cleanly, stage changes, and prepare your final summary.]"
+                else
+                    alert_msg="[SYSTEM ADVISORY: FINAL TURN ($turn/$max_turns — 1 turn remaining). Conclude your task now and present your final deliverable and summary.]"
+                fi
             fi
             jq --arg msg "$alert_msg" \
-                'if (.[-1].content | test("APPROACHING TURN CEILING|SYSTEM NOTICE"; "i")) then .[-1].content = $msg else . += [{"role": "user", "content": $msg}] end' \
+                'if (.[-1].content | test("SYSTEM ADVISORY|APPROACHING TURN CEILING|SYSTEM NOTICE"; "i")) then .[-1].content = $msg else . += [{"role": "user", "content": $msg}] end' \
                 "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+        fi
+
+        # Pre-flight token re-estimation from messages_file byte size
+        if [ -f "$messages_file" ]; then
+            local _current_bytes
+            _current_bytes=$(wc -c < "$messages_file" 2>/dev/null || echo 0)
+            local _est_tokens=$(( _current_bytes * 10 / 35 ))
+            if [ "$_est_tokens" -gt "$running_tokens" ]; then
+                running_tokens="$_est_tokens"
+            fi
         fi
 
         # Check compaction threshold
@@ -348,7 +464,7 @@ react_run() {
             else
                 empty
             end' 2>/dev/null | \
-        awk -v think_mode="$think_mode" -v sc="$stream_cache" -v pid="${BASHPID:-$$}" $_awk_opt '
+        awk -v think_mode="$think_mode" -v sc="$stream_cache" -v pid="$$" $_awk_opt '
         BEGIN {
             color = (think_mode == 2 ? "\033[36m" : "\033[90m");
             in_thought = 0;
@@ -357,7 +473,7 @@ react_run() {
         {
             if (!got_chunk) {
                 got_chunk = 1;
-                system("kill $(cat /tmp/.lodge_prefill_ticker_" pid " 2>/dev/null) 2>/dev/null; printf \"\\r\\033[2K\" >&2");
+                system("kill -9 $(cat /tmp/.lodge_prefill_ticker_" pid " 2>/dev/null) 2>/dev/null; printf \"\\r\\033[2K\" >&2");
             }
             print $0 > sc;
             fflush(sc);
@@ -409,6 +525,14 @@ react_run() {
                 -d "$fallback_payload" 2>/dev/null)
 
             if [ -z "$resp_json" ]; then
+                ui_warn "Empty response from endpoint $ACTIVE_ENDPOINT_URL. Retrying once after 3s..."
+                sleep 3
+                resp_json=$(curl -s --max-time "$fb_timeout" "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
+                    -H "Content-Type: application/json" \
+                    -d "$fallback_payload" 2>/dev/null)
+            fi
+
+            if [ -z "$resp_json" ]; then
                 ui_err "Empty response from endpoint $ACTIVE_ENDPOINT_URL."
                 _react_trace "$workdir" "error" '{"error":"empty_response"}'
                 if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
@@ -425,6 +549,7 @@ react_run() {
                     ui_warn "Context length exceeded! Triggering emergency auto-compaction..."
                     _react_compact_messages "$session_dir" "$ACTIVE_ENDPOINT_URL" "$workdir"
                     running_tokens=0
+                    consecutive_empty_turns=0
                     turn=$((turn + 1))
                     continue
                 fi
@@ -471,12 +596,15 @@ react_run() {
         fi
 
         # Accounting for token consumption:
-        # If server didn't emit usage metrics (common in SSE or local proxies),
-        # estimate from payload & response character lengths (~3.5 chars / token)
-        if [ "${p_tok:-0}" -le 0 ]; then
-            local _chars=0
-            [ -f "$messages_file" ] && _chars=$(wc -c < "$messages_file" 2>/dev/null || echo 0)
-            p_tok=$(( _chars * 10 / 35 ))
+        # Calculate actual message text character volume (~3.5 chars / token)
+        local _chars=0
+        [ -f "$messages_file" ] && _chars=$(wc -c < "$messages_file" 2>/dev/null || echo 0)
+        local _est_p_tok=$(( _chars * 10 / 35 ))
+
+        # If server didn't emit usage metrics or emitted prefix-cache delta (< actual message text),
+        # enforce actual character-based token floor to prevent masking context bloat
+        if [ "${p_tok:-0}" -lt "$_est_p_tok" ]; then
+            p_tok="$_est_p_tok"
         fi
         if [ "${comp_tok:-0}" -le 0 ]; then
             local _resp_chars=$(( ${#raw_content} + ${#reasoning} ))
@@ -495,14 +623,35 @@ react_run() {
 
         # ── Branch 1: Native OpenAI Tool Calls Detected ──────────────
         if [ -n "$tool_calls" ] && [ "$tool_calls" != "null" ] && [ "$tool_calls" != "[]" ]; then
+            # Sanitize and repair tool_calls arguments to ensure valid JSON and prevent HTTP 400
+            tool_calls=$(echo "$tool_calls" | jq 'map(
+                .function.arguments as $a |
+                if (try ($a | fromjson) catch null) != null then
+                    .
+                elif (try (($a + "\"}") | fromjson) catch null) != null then
+                    .function.arguments += "\"}"
+                elif (try (($a + "}") | fromjson) catch null) != null then
+                    .function.arguments += "}"
+                else
+                    .function.arguments = ("{\"error\":\"malformed_arguments\",\"raw\":" + ($a | @json) + "}")
+                end
+            )' 2>/dev/null || echo "[]")
+
+            # Validate tool_calls is well-formed JSON array before passing to --argjson
+            if ! echo "$tool_calls" | jq -e 'type == "array"' >/dev/null 2>&1; then
+                tool_calls="[]"
+            fi
+
             # Append assistant message (with tool_calls) to conversation history
             local asst_msg
             asst_msg=$(jq -nc \
                 --arg content "$raw_content" \
                 --arg rc "$reasoning" \
                 --argjson tc "$tool_calls" \
-                '{role: "assistant", content: (if $content == "" then null else $content end), reasoning_content: (if $rc == "" then null else $rc end), tool_calls: $tc}')
-            jq --argjson m "$asst_msg" '. += [$m]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+                '{role: "assistant", content: (if $content == "" then null else $content end), reasoning_content: (if $rc == "" then null else $rc end), tool_calls: $tc}' 2>/dev/null)
+            if [ -n "$asst_msg" ]; then
+                jq --argjson m "$asst_msg" '. += [$m]' "$messages_file" > "${messages_file}.tmp" 2>/dev/null && mv "${messages_file}.tmp" "$messages_file"
+            fi
 
             # Execute each emitted tool call
             local tool_exhausted=0
@@ -527,9 +676,10 @@ react_run() {
 
                 local resp_content
                 resp_content=$(echo "$tool_resp" | jq -r '.content // empty')
-                if [ "${#resp_content}" -gt 24000 ]; then
-                    local truncated_note=$'\n\n'"[Observation truncated at 24,000 characters to prevent context window overflow. Use specific line ranges, pages, or search to inspect remaining content.]"
-                    resp_content="${resp_content:0:24000}${truncated_note}"
+                local max_tool_chars="${REACT_MAX_OBSERVATION_CHARS:-3000}"
+                if [ "${#resp_content}" -gt "$max_tool_chars" ]; then
+                    local truncated_note=$'\n\n'"[Observation truncated at ${max_tool_chars} characters to protect context budget. Narrow your query, paginate with start_line, or use targeted grep/symbol tools.]"
+                    resp_content="${resp_content:0:$max_tool_chars}${truncated_note}"
                     tool_resp=$(echo "$tool_resp" | jq --arg c "$resp_content" '.content = $c')
                 fi
 
@@ -542,7 +692,7 @@ react_run() {
 
                 # Check for tool errors and track cognitive thrashing
                 local is_tool_failure=0
-                if echo "$resp_content" | grep -qiE '^(ERROR|Command failed|pdftotext: not found|ModuleNotFoundError|Traceback \(most recent call last\)|No such file or directory)'; then
+                if echo "$resp_content" | grep -qE '(\bERROR\b|ERROR:|Command failed|pdftotext: not found|ModuleNotFoundError|ImportError|Traceback \(most recent call last\)|No such file or directory|failed \(exit [1-9]|SCRIPT_EXIT=[1-9]|SyntaxError:)'; then
                     is_tool_failure=1
                 fi
 
@@ -678,6 +828,9 @@ Execute the Metacognitive Pathfinding Protocol:
                 if declare -f telemetry_record_anomaly &>/dev/null; then
                     telemetry_record_anomaly "$session_id" "SHELL_RUNTIME" "$action" "Fallback command failed with exit $exit_code: ${obs:0:200}" >/dev/null 2>&1 || true
                 fi
+                if declare -f telemetry_triage_operational_failure &>/dev/null; then
+                    telemetry_triage_operational_failure "$action" "SHELL_RUNTIME" "Fallback command execution failure ($action)" "${obs:0:500}" "$workdir" >/dev/null 2>&1 || true
+                fi
             fi
 
             obs=$(printf '%s\n' "$obs" | sed -r 's/\x1B\[[0-9;]*[a-zA-Z]//g')
@@ -694,8 +847,18 @@ Execute the Metacognitive Pathfinding Protocol:
             continue
         fi
 
-        # If model provided answer directly without tool calls on turn > 1, conclude task
+        # If model provided answer directly without tool calls
         if [ -n "$raw_content" ]; then
+            # In autonomous remediation or multi-turn task on early turns without explicit conclusion, advance rather than conclude
+            if [ "${AGENT_SOVEREIGN_REMEDIATION:-0}" -eq 1 ] && [ "$turn" -lt 3 ]; then
+                jq --arg ans "$raw_content" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+                local adv="[SYSTEM ADVISORY: Chain-of-thought received. Proceed to execute remediation using native tools (e.g. file_read, code_outline, code_symbol_get, file_grep, dir_list, bash_exec) to inspect files, make fixes, and run verification tests.]"
+                jq --arg p "$adv" '. += [{"role": "user", "content": $p}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+                consecutive_empty_turns=0
+                turn=$((turn + 1))
+                continue
+            fi
+
             echo ""
             ui_ok "Task Complete!"
             printf '%s\n' "$raw_content" > "$session_dir/final_reply.txt" 2>/dev/null || true
@@ -716,50 +879,49 @@ Execute the Metacognitive Pathfinding Protocol:
             return 0
         fi
 
-        # If model drafted response inside thoughts (common in thinking models that stream or truncate)
+        # If model generated reasoning / thoughts without tool calls:
         if [ -z "$raw_content" ] && [ -n "$reasoning" ]; then
-            local extracted_thought_draft
-            extracted_thought_draft=$(printf '%s\n' "$reasoning" | awk '
-                /🕯️|###|## |# |---|\*\*The / { found=1 }
-                found { print }
-            ')
-            if [ -n "$extracted_thought_draft" ] && [ ${#extracted_thought_draft} -ge 80 ]; then
-                raw_content="$extracted_thought_draft"
-                ui_ok "Extracted drafted response from reasoning stream."
-                echo ""
-                echo "$raw_content"
-                echo ""
-                ui_ok "Task Complete!"
-                printf '%s\n' "$raw_content" > "$session_dir/final_reply.txt" 2>/dev/null || true
-                jq --arg ans "$raw_content" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" 2>/dev/null && mv "${messages_file}.tmp" "$messages_file" 2>/dev/null || true
-                journal_write "reflection" "Completed task: $goal. Summary: ${raw_content:0:200}" 2>/dev/null || true
-                declare -f transcript_log_block &>/dev/null && transcript_log_block "final_response" "$raw_content"
-                _react_trace "$workdir" "task_complete" "$(jq -cn --arg goal "$goal" --arg summary "${raw_content:0:200}" '{goal:$goal, summary:$summary, status:"success"}')"
-                jq '.status = "COMPLETED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
-                if declare -f telemetry_task_end &>/dev/null; then
-                    telemetry_task_end "$session_id" 0 "COMPLETED" >/dev/null 2>&1 || true
-                fi
-                if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
-                    local _tpath
-                    _tpath=$(transcript_stop)
-                    [ -n "$_tpath" ] && ui_dim "  Transcript: $_tpath"
-                fi
-                return 0
+            # Thought continuation: model is actively reasoning through the problem.
+            # Preserve thought in conversation history and prompt for conclusion or next action.
+            local asst_thought_msg
+            asst_thought_msg=$(jq -nc \
+                --arg rc "$reasoning" \
+                '{role: "assistant", content: null, reasoning_content: $rc}')
+            jq --argjson m "$asst_thought_msg" '. += [$m]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+
+            local prompt_advise
+            if [ "${tool_filter:-default}" = "social" ] || [ "${tool_filter:-default}" = "chat" ]; then
+                prompt_advise="[SYSTEM ADVISORY: Chain-of-thought completed. Now provide your final, direct response to the user. Do not repeat internal reasoning.]"
+            else
+                prompt_advise="[SYSTEM ADVISORY: Chain-of-thought received. Proceed to execute your next step. Use available tools (e.g. file_read, code_outline, code_symbol_get, file_grep, dir_list, bash_exec) to inspect files, execute commands, or apply fixes.]"
             fi
+            jq --arg p "$prompt_advise" '. += [{"role": "user", "content": $p}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+
+            echo "Thought: $reasoning" >> "$history_file"
+            declare -f transcript_log_block &>/dev/null && transcript_log_block "thought" "$reasoning"
+
+            # Reset empty turns counter because model generated active thoughts
+            consecutive_empty_turns=0
+            turn=$((turn + 1))
+            continue
         fi
 
-        # Track consecutive non-advancing turns and circuit break before burnout
+
+        # Track consecutive truly empty turns (where neither content nor reasoning was generated)
         consecutive_empty_turns=$((consecutive_empty_turns + 1))
-        if [ "$consecutive_empty_turns" -ge 2 ]; then
+        if [ "$consecutive_empty_turns" -ge 5 ]; then
             ui_err "Circuit breaker tripped: Model returned $consecutive_empty_turns consecutive empty turns without advancing."
             ui_warn "Halting task to protect context tokens and prevent infinite loop."
-            _react_trace "$workdir" "circuit_breaker" '{"reason": "consecutive_empty_turns", "turns": 2}'
+            _react_trace "$workdir" "circuit_breaker" "$(jq -cn --arg reason "consecutive_empty_turns" --argjson turns "$consecutive_empty_turns" '{reason:$reason, turns:$turns}')"
             jq '.status = "CIRCUIT_BREAKER_TRIPPED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
             if declare -f telemetry_record_anomaly &>/dev/null; then
                 telemetry_record_anomaly "$session_id" "PROCESS_STALL" "react.sh" "Circuit breaker tripped: $consecutive_empty_turns consecutive empty turns" >/dev/null 2>&1 || true
             fi
             if declare -f telemetry_preserve_incident &>/dev/null; then
                 telemetry_preserve_incident "$session_id" "PROCESS_STALL" "Circuit breaker tripped: consecutive empty turns" "$workdir" >/dev/null 2>&1 || true
+            fi
+            if declare -f telemetry_triage_operational_failure &>/dev/null; then
+                telemetry_triage_operational_failure "react_agent" "PROCESS_STALL" "Circuit breaker tripped: consecutive empty turns" "Model returned $consecutive_empty_turns consecutive empty turns without advancing" "$workdir" >/dev/null 2>&1 || true
             fi
             if declare -f telemetry_task_end &>/dev/null; then
                 telemetry_task_end "$session_id" 1 "CIRCUIT_BREAKER_TRIPPED" >/dev/null 2>&1 || true
@@ -768,6 +930,10 @@ Execute the Metacognitive Pathfinding Protocol:
                 transcript_stop >/dev/null 2>&1 || true
             fi
             return 1
+        else
+            # Nudge model on empty turn before burnout
+            local empty_nudge="[SYSTEM NOTICE: No response or tool call generated on turn $turn. Please continue your task or invoke an available tool.]"
+            jq --arg n "$empty_nudge" '. += [{"role": "user", "content": $n}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
         fi
 
         turn=$((turn + 1))
@@ -778,6 +944,9 @@ Execute the Metacognitive Pathfinding Protocol:
     _react_trace "$workdir" "task_halted" "$(jq -cn --arg goal "$goal" --arg reason "turn_ceiling_preserved" '{goal:$goal, reason:$reason}')"
     jq '.status = "TURN_CEILING_PRESERVED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
     declare -f memory_register_files &>/dev/null && memory_register_files "$workdir"
+    if declare -f telemetry_triage_operational_failure &>/dev/null; then
+        telemetry_triage_operational_failure "react_agent" "PROCESS_STALL" "Task reached turn ceiling ($max_turns turns)" "Task failed to conclude within turn budget: $goal" "$workdir" >/dev/null 2>&1 || true
+    fi
     if declare -f telemetry_task_end &>/dev/null; then
         telemetry_task_end "$session_id" 0 "TURN_CEILING_PRESERVED" >/dev/null 2>&1 || true
     fi

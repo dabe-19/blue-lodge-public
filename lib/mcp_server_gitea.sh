@@ -440,6 +440,19 @@ gitea_issue_close() {
         -d '{"state": "closed"}' 2>/dev/null
 }
 
+gitea_issue_label() {
+    local index="$1"
+    local label="$2"
+    _gitea_load_conf
+    if ! gitea_is_online; then
+        return 1
+    fi
+    curl -s -X POST "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/issues/${index}/labels" \
+        -H "Authorization: token ${GITEA_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "{\"labels\": [\"$label\"]}" 2>/dev/null
+}
+
 gitea_pr_review() {
     local index="$1"
     local event="${2:-COMMENT}" # APPROVED, REQUEST_CHANGES, COMMENT

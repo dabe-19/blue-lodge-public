@@ -3325,7 +3325,7 @@ _cmd_read() {
     fullpath=$(ui_resolve_path "$filepath" "$workdir" 0 1)
 
     if [ -f "$fullpath" ]; then
-        tools_read_file "$fullpath" "${max_lines:-300}" "${start_line:-1}"
+        tools_read_file "$fullpath" "${max_lines:-100}" "${start_line:-1}"
     elif [ -d "$fullpath" ] && declare -f _cmd_ls &>/dev/null; then
         _cmd_ls "$filepath" "$workdir"
     else

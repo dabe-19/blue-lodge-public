@@ -49,6 +49,9 @@ unset REFLEXIVE_SOUL_GATE \
       _REFLEXIVE_SOUL_REJECTIONS \
       AGENT_PLAN_STEPS
 
+# Hermetic Test Mode: suppress telemetry triage, Gitea issue creation & remediation loops
+export _LODGE_TESTING=1
+
 # ── State ──────────────────────────────────────────────────────
 _TEST_TOTAL=0
 _TEST_PASSED=0

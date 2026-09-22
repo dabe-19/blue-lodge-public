@@ -56,13 +56,13 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "file_read",
-      "description": "Read the contents of a local file in the workspace.",
+      "description": "Read a targeted range of lines from a local file in the workspace (default: 100 lines, max: 200). Use start_line to paginate. To avoid wasting context tokens on large files, prefer file_grep to locate symbols or code_outline before reading.",
       "parameters": {
         "type": "object",
         "properties": {
           "path": { "type": "string", "description": "Relative file path from workspace root." },
-          "start_line": { "type": "integer", "description": "Optional starting line number (1-indexed)." },
-          "max_lines": { "type": "integer", "description": "Optional maximum number of lines to read." }
+          "start_line": { "type": "integer", "description": "Starting line number (1-indexed, default: 1)." },
+          "max_lines": { "type": "integer", "description": "Number of lines to read (default: 100, max: 200). Read small 50-100 line chunks to protect context." }
         },
         "required": ["path"]
       }
@@ -1553,7 +1553,8 @@ native_tools_resolve_profile() {
             tool_list+=",$(native_tools_bundle_tools '+files'),$(native_tools_bundle_tools '+code'),$(native_tools_bundle_tools '+git')"
             ;;
         social)
-            tool_list+=",$(native_tools_bundle_tools '+web'),$(native_tools_bundle_tools '+social'),$(native_tools_bundle_tools '+memory'),$(native_tools_bundle_tools '+vision')"
+            local social_bedrock="slash_command_exec,file_read,pdf_read,tool_search"
+            tool_list="${social_bedrock},$(native_tools_bundle_tools '+web'),$(native_tools_bundle_tools '+social'),$(native_tools_bundle_tools '+memory'),$(native_tools_bundle_tools '+vision')"
             ;;
         ops)
             tool_list+=",$(native_tools_bundle_tools '+files'),$(native_tools_bundle_tools '+ops'),$(native_tools_bundle_tools '+memory')"
@@ -1868,12 +1869,36 @@ native_tools_dispatch() {
                 cmd=$(echo "$args_json" | jq -r '.command // empty')
                 output=$(commands_dispatch "/bash $cmd" "$workdir" 2>&1)
                 exit_code=$?
+                # SCRIPT_EXIT / Traceback error exit code correction
+                if [ "$exit_code" -eq 0 ]; then
+                    if echo "$output" | grep -qE 'SCRIPT_EXIT=([1-9][0-9]*)'; then
+                        local _extracted_exit
+                        _extracted_exit=$(echo "$output" | grep -oE 'SCRIPT_EXIT=[0-9]+' | tail -n 1 | cut -d= -f2)
+                        [ -n "$_extracted_exit" ] && [ "$_extracted_exit" -ne 0 ] && exit_code="$_extracted_exit"
+                    elif echo "$output" | grep -qiE '(Traceback \(most recent call last\)|ModuleNotFoundError:|ImportError:|SyntaxError:|command not found|pdftotext: not found)'; then
+                        exit_code=1
+                    fi
+                fi
+                if [ "$exit_code" -ne 0 ]; then
+                    local _done_ts
+                    _done_ts=$(date '+%Y-%m-%d %H:%M:%S')
+                    ui_err "[$_done_ts] bash_exec failed (exit $exit_code)" 2>/dev/null
+                fi
                 ;;
             file_read)
                 local p s m
                 p=$(echo "$args_json" | jq -r '.path // empty')
                 s=$(echo "$args_json" | jq -r '.start_line // 1')
-                m=$(echo "$args_json" | jq -r '.max_lines // 300')
+                m=$(echo "$args_json" | jq -r '.max_lines // 100')
+                # Enforce safe bounds (1-200 lines max per read to protect context limits)
+                if ! [[ "$s" =~ ^[0-9]+$ ]] || [ "$s" -lt 1 ]; then
+                    s=1
+                fi
+                if ! [[ "$m" =~ ^[0-9]+$ ]] || [ "$m" -lt 1 ]; then
+                    m=100
+                elif [ "$m" -gt 200 ]; then
+                    m=200
+                fi
                 local target="$p"
                 if declare -f ui_resolve_path &>/dev/null; then
                     target=$(ui_resolve_path "$p" "$workdir")
@@ -1979,35 +2004,55 @@ $_ts_v_err
                 exit_code=$?
                 ;;
             dir_list)
-                local p d
+                local p d target
                 p=$(echo "$args_json" | jq -r '.path // "."')
                 d=$(echo "$args_json" | jq -r '.depth // 3')
-                output=$(commands_dispatch "/ls $p $d" "$workdir" 2>&1)
+                if [[ "$p" == /* ]]; then
+                    target="$p"
+                else
+                    target="$workdir/$p"
+                fi
+                output=$(commands_dispatch "/ls $target $d" "$workdir" 2>&1)
                 exit_code=$?
                 ;;
             file_grep)
-                local pat p
+                local pat p target
                 pat=$(echo "$args_json" | jq -r '.pattern // empty')
                 p=$(echo "$args_json" | jq -r '.path // "."')
+                if [[ "$p" == /* ]]; then
+                    target="$p"
+                else
+                    target="$workdir/$p"
+                fi
                 if command -v rg &>/dev/null; then
-                    output=$(rg -n --no-heading --color=never -e "$pat" "$workdir/$p" 2>&1 | head -n 100)
+                    output=$(rg -n --no-heading --color=never -e "$pat" "$target" 2>&1 | head -n 100)
                     exit_code=$?
                 else
-                    output=$(commands_dispatch "/grep $pat $p" "$workdir" 2>&1)
+                    output=$(commands_dispatch "/grep $pat $target" "$workdir" 2>&1)
                     exit_code=$?
                 fi
                 ;;
             code_outline)
-                local p
+                local p target_p
                 p=$(echo "$args_json" | jq -r '.path // empty')
-                output=$(treesitter_outline "$workdir/$p" 2>&1)
+                if [[ "$p" == /* ]]; then
+                    target_p="$p"
+                else
+                    target_p="$workdir/$p"
+                fi
+                output=$(treesitter_outline "$target_p" 2>&1)
                 exit_code=$?
                 ;;
             code_symbol_get)
-                local p sym
+                local p sym target_p
                 p=$(echo "$args_json" | jq -r '.path // empty')
                 sym=$(echo "$args_json" | jq -r '.symbol // empty')
-                output=$(treesitter_symbol "$workdir/$p" "$sym" 2>&1)
+                if [[ "$p" == /* ]]; then
+                    target_p="$p"
+                else
+                    target_p="$workdir/$p"
+                fi
+                output=$(treesitter_symbol "$target_p" "$sym" 2>&1)
                 exit_code=$?
                 ;;
             code_validate)
@@ -2948,13 +2993,31 @@ $_ts_v_err
     fi
 
     # Anomaly telemetry tap for native tool failures
-    if [ "$exit_code" -ne 0 ] || echo "$output" | grep -qiE '^(ERROR|Command failed|ModuleNotFoundError|pdftotext: not found|ImportError)'; then
+    local is_native_failure=0
+    # Require real non-zero exit code to avoid flagging benign commands returning exit 0
+    if [ "$exit_code" -ne 0 ]; then
+        is_native_failure=1
+    fi
+
+    if [ "$is_native_failure" -eq 1 ]; then
+        local fail_cls="CAPABILITY_DEFICIT"
+        if [ "$name" = "bash_exec" ] || [ "$name" = "file_read" ] || [ "$name" = "file_write" ]; then
+            fail_cls="SHELL_RUNTIME"
+        fi
         if declare -f telemetry_record_anomaly &>/dev/null; then
-            local fail_cls="CAPABILITY_DEFICIT"
-            if [ "$name" = "bash_exec" ] || [ "$name" = "file_read" ] || [ "$name" = "file_write" ]; then
-                fail_cls="SHELL_RUNTIME"
-            fi
             telemetry_record_anomaly "${AGENT_ACTIVE_SESSION_ID:-${session_id:-native_tools}}" "$fail_cls" "$name" "$output" >/dev/null 2>&1 || true
+        fi
+        # Only triage true unhandled crashes or fatal runtime errors (e.g. Python traceback, segfault, core dump).
+        # Routine non-zero exit codes from exploratory commands (grep, ls, test, which) are handled by ReAct resilience.
+        local is_fatal_crash=0
+        if [[ "$output" =~ (Traceback[[:space:]]\(most[[:space:]]recent[[:space:]]call[[:space:]]last\)|Segmentation[[:space:]]fault|core[[:space:]]dumped|Fatal[[:space:]]error|panic:) ]]; then
+            is_fatal_crash=1
+        fi
+
+        if [ "$is_fatal_crash" -eq 1 ] && [ "${_DISCORD_IN_SESSION:-0}" -ne 1 ] && [ "${LODGE_REMEDIATION_SANDBOX:-0}" -ne 1 ] && [[ "$workdir" != *".sandboxes/"* ]]; then
+            if declare -f telemetry_triage_operational_failure &>/dev/null; then
+                telemetry_triage_operational_failure "$name" "$fail_cls" "Fatal runtime crash on $name (exit $exit_code)" "$output" "$workdir" >/dev/null 2>&1 || true
+            fi
         fi
     fi
 

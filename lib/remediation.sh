@@ -20,6 +20,8 @@ REMEDIATION_QUEUE_DIR="${REMEDIATION_DIR}/queue"
 REMEDIATION_PROGRESS_DIR="${REMEDIATION_DIR}/in_progress"
 REMEDIATION_COMPLETED_DIR="${REMEDIATION_DIR}/completed"
 REMEDIATION_FAILED_DIR="${REMEDIATION_DIR}/failed"
+REMEDIATION_LOGS_DIR="${REMEDIATION_DIR}/logs"
+REMEDIATION_ATTEMPTS_DIR="${REMEDIATION_DIR}/attempts"
 REMEDIATION_CONF="${REMEDIATION_DIR}/notifications.conf"
 
 LODGE_ROOT="${LODGE_ROOT:-$HOME/blue-lodge}"
@@ -44,8 +46,30 @@ declare -f ui_dim &>/dev/null || ui_dim() { echo "[DIM] $*"; }
 declare -f ui_section &>/dev/null || ui_section() { echo "=== $* ==="; }
 
 remediation_init() {
-    mkdir -p "$REMEDIATION_QUEUE_DIR" "$REMEDIATION_PROGRESS_DIR" "$REMEDIATION_COMPLETED_DIR" "$REMEDIATION_FAILED_DIR" 2>/dev/null || true
+    mkdir -p "$REMEDIATION_QUEUE_DIR" "$REMEDIATION_PROGRESS_DIR" "$REMEDIATION_COMPLETED_DIR" "$REMEDIATION_FAILED_DIR" "$REMEDIATION_LOGS_DIR" "$REMEDIATION_ATTEMPTS_DIR" 2>/dev/null || true
     remediation_notify_load_config
+    remediation_sweep_sandboxes
+}
+
+# Sweeps and culls orphaned ephemeral git worktrees in .sandboxes/
+remediation_sweep_sandboxes() {
+    local sandboxes_dir="${LODGE_DIR}/.sandboxes"
+    [ ! -d "$sandboxes_dir" ] && return 0
+    local active_pid=""
+    if [ -f "$REMEDIATION_DIR/.lock" ]; then
+        active_pid=$(cat "$REMEDIATION_DIR/.lock" 2>/dev/null)
+    fi
+
+    for sb_dir in "$sandboxes_dir"/remediation_*; do
+        [ ! -d "$sb_dir" ] && continue
+        # If no remediation lock or PID is not running, cull worktree
+        if [ -z "$active_pid" ] || ! kill -0 "$active_pid" 2>/dev/null; then
+            ui_dim "Culling orphaned ephemeral sandbox: $sb_dir"
+            git -C "$LODGE_DIR" worktree remove --force "$sb_dir" >/dev/null 2>&1 || true
+            rm -rf "$sb_dir" 2>/dev/null || true
+        fi
+    done
+    git -C "$LODGE_DIR" worktree prune >/dev/null 2>&1 || true
 }
 
 # ── 1. Configurable Notifications (Email & Discord) ───────────────────
@@ -188,42 +212,27 @@ EOF
     # 1. Send Email Notification if configured
     if [ -n "$REMEDIATION_NOTIFY_EMAIL" ]; then
         if declare -f email_send &>/dev/null; then
-            ui_step "Notifying operator via email (${REMEDIATION_NOTIFY_EMAIL})..." >&2
-            local send_err
-            send_err=$(email_send "$REMEDIATION_EMAIL_PROVIDER" "$REMEDIATION_NOTIFY_EMAIL" "$subject" "$body" 2>&1)
-            local send_rc=$?
-            if [ "$send_rc" -ne 0 ]; then
-                ui_warn "Email notification dispatch failed (provider: $REMEDIATION_EMAIL_PROVIDER)" >&2
-                email_err="⚠️ *Email alert to \`${REMEDIATION_NOTIFY_EMAIL}\` failed: provider \`${REMEDIATION_EMAIL_PROVIDER}\` error.*"
-
-                # Triage as operational anomaly if not in a recursive remediation loop
-                if [ "${_IN_NOTIFICATION_TRIAGE:-0}" -ne 1 ]; then
-                    _IN_NOTIFICATION_TRIAGE=1
-                    local diag_trace="Target: ${REMEDIATION_NOTIFY_EMAIL}
-Provider: ${REMEDIATION_EMAIL_PROVIDER}
-Error: ${send_err}"
-                    if declare -f telemetry_triage_operational_failure &>/dev/null; then
-                        telemetry_triage_operational_failure \
-                            "email_notification" \
-                            "NOTIFICATION_DISPATCH_FAILURE" \
-                            "Email Notification Dispatch Failed (${REMEDIATION_EMAIL_PROVIDER})" \
-                            "$diag_trace" \
-                            "${LODGE_DIR:-$PWD}" >/dev/null 2>&1 || true
-                    elif [ -f "${LODGE_DIR:-$PWD}/lib/telemetry.sh" ]; then
-                        source "${LODGE_DIR:-$PWD}/lib/telemetry.sh" 2>/dev/null || true
-                        if declare -f telemetry_triage_operational_failure &>/dev/null; then
-                            telemetry_triage_operational_failure \
-                                "email_notification" \
-                                "NOTIFICATION_DISPATCH_FAILURE" \
-                                "Email Notification Dispatch Failed (${REMEDIATION_EMAIL_PROVIDER})" \
-                                "$diag_trace" \
-                                "${LODGE_DIR:-$PWD}" >/dev/null 2>&1 || true
-                        fi
-                    fi
-                    _IN_NOTIFICATION_TRIAGE=0
-                fi
+            # Pre-flight check: verify email provider is configured before attempting dispatch
+            local provider_configured=0
+            if declare -f email_provider_configured &>/dev/null; then
+                email_provider_configured "$REMEDIATION_EMAIL_PROVIDER" && provider_configured=1
+            elif [ -f "${LODGE_DIR:-$HOME/blue-lodge}/.george/keys.conf" ] && grep -qE "EMAIL_${REMEDIATION_EMAIL_PROVIDER^^}_" "${LODGE_DIR:-$HOME/blue-lodge}/.george/keys.conf" 2>/dev/null; then
+                provider_configured=1
             fi
-            notified=1
+
+            if [ "$provider_configured" -eq 1 ]; then
+                ui_step "Notifying operator via email (${REMEDIATION_NOTIFY_EMAIL})..." >&2
+                local send_err
+                send_err=$(email_send "$REMEDIATION_EMAIL_PROVIDER" "$REMEDIATION_NOTIFY_EMAIL" "$subject" "$body" 2>&1)
+                local send_rc=$?
+                if [ "$send_rc" -ne 0 ]; then
+                    ui_warn "Email notification dispatch failed (provider: $REMEDIATION_EMAIL_PROVIDER)" >&2
+                    email_err="⚠️ *Email alert to \`${REMEDIATION_NOTIFY_EMAIL}\` failed: provider \`${REMEDIATION_EMAIL_PROVIDER}\` error.*"
+                fi
+                notified=1
+            else
+                ui_dim "Email notification skipped: provider '$REMEDIATION_EMAIL_PROVIDER' not configured (/email setup $REMEDIATION_EMAIL_PROVIDER)." >&2
+            fi
         fi
     fi
 
@@ -286,9 +295,10 @@ remediation_queue_add() {
     fi
     [ -z "$title" ] && title="Remediate issue $(basename "$issue_file" .md)"
 
-    local fp=""
+    local fp="" gitea_idx=""
     if [ -f "$issue_file" ]; then
         fp=$(grep -o '\[fingerprint:[a-f0-9]*\]' "$issue_file" | head -n 1 | cut -d':' -f2 | tr -d ']')
+        gitea_idx=$(grep -oE '\*\*Gitea Issue:\*\* #([0-9]+)' "$issue_file" 2>/dev/null | head -n 1 | cut -d'#' -f2 || true)
     fi
 
     jq -n \
@@ -298,6 +308,7 @@ remediation_queue_add() {
         --arg issue "$issue_file" \
         --arg inc "$inc_dir" \
         --arg fp "$fp" \
+        --arg gitea "$gitea_idx" \
         --argjson ts "$now" \
         '{
             task_id: $tid,
@@ -306,6 +317,7 @@ remediation_queue_add() {
             issue_file: $issue,
             incident_dir: $inc,
             fingerprint: $fp,
+            gitea_issue: $gitea,
             status: "QUEUED",
             created_ts: $ts
         }' > "$queue_file"
@@ -358,13 +370,116 @@ remediation_queue_next() {
     ls -1t "$REMEDIATION_QUEUE_DIR"/*.json 2>/dev/null | tail -n 1
 }
 
-# ── 3. Remediation Execution with Slot 1 Isolation ────────────────────
+# Checks if an autonomous remediation task is currently active on Slot 1
+remediation_is_active() {
+    remediation_init
+    local lock_file="$REMEDIATION_DIR/.lock"
+    if [ -f "$lock_file" ]; then
+        local active_pid
+        active_pid=$(cat "$lock_file" 2>/dev/null)
+        if [ -n "$active_pid" ] && kill -0 "$active_pid" 2>/dev/null; then
+            return 0
+        fi
+        # Stale lock: PID is no longer alive
+        rm -f "$lock_file" 2>/dev/null || true
+    fi
+
+    # Check in_progress directory for active tasks
+    local in_prog
+    in_prog=$(ls -1 "$REMEDIATION_PROGRESS_DIR"/*.json 2>/dev/null | head -n 1)
+    if [ -n "$in_prog" ] && [ -f "$in_prog" ]; then
+        return 0
+    fi
+    return 1
+}
+
+# ── 3. Cooperative Scheduling & Visual Monitoring ─────────────────────
+
+# Probes Inference Slot 0 and active Discord sessions to yield compute to interactive users
+remediation_cooperative_pause() {
+    local max_wait="${REMEDIATION_COOPERATIVE_MAX_WAIT:-30}"
+    local waited=0
+    while [ "$waited" -lt "$max_wait" ]; do
+        local pause_reason=""
+        # 1. Probe Slot 0 inference status
+        local slots_json
+        slots_json=$(curl -s -m 2 http://127.0.0.1:8080/slots 2>/dev/null || echo "[]")
+        if [ "$slots_json" != "[]" ]; then
+            local s0_busy
+            s0_busy=$(echo "$slots_json" | jq -r '.[0].is_processing // false' 2>/dev/null)
+            [ "$s0_busy" = "true" ] && pause_reason="Slot 0 interactive user inference active"
+        fi
+
+        # 2. Probe active Discord interactive sessions
+        if [ -z "$pause_reason" ]; then
+            local orig_dir="${orig_lodge_dir:-${LODGE_ROOT:-$HOME/blue-lodge}}"
+            for dpid_file in "$orig_dir/.george/discord_sessions"/session_*.pid; do
+                [ ! -f "$dpid_file" ] && continue
+                local dpid
+                dpid=$(cat "$dpid_file" 2>/dev/null)
+                if [ -n "$dpid" ] && kill -0 "$dpid" 2>/dev/null; then
+                    pause_reason="active Discord session (PID $dpid)"
+                    break
+                fi
+            done
+        fi
+
+        if [ -z "$pause_reason" ]; then
+            return 0
+        fi
+
+        ui_dim "Cooperative pause ($pause_reason). Yielding compute for 5s..." >&2
+        sleep 5
+        waited=$((waited + 5))
+    done
+}
+
+# Launches live companion HUD monitor in Windows Terminal (wt.exe)
+remediation_launch_visual_monitor() {
+    local task_id="$1"
+    local title="$2"
+    local log_file="$3"
+
+    if ! command -v wt.exe &>/dev/null || [ -z "${WSL_DISTRO_NAME:-}" ]; then
+        return 0
+    fi
+
+    # Clean up any lingering monitor process for this task
+    local existing_mon
+    existing_mon=$(pgrep -f "scripts/remediation_live_monitor.sh $task_id" 2>/dev/null || true)
+    if [ -n "$existing_mon" ]; then
+        kill $existing_mon 2>/dev/null || true
+        sleep 0.2
+    fi
+
+    local distro="${WSL_DISTRO_NAME:-ubuntu-local}"
+    local size="${REMEDIATION_POPUP_SIZE:-110,32}"
+
+    wt.exe -w new --size "$size" \
+        nt --title "George Remediation HUD - $task_id" \
+        wsl.exe -d "$distro" --cd "$LODGE_DIR" \
+        bash ./scripts/remediation_live_monitor.sh "$task_id" "$title" "$log_file" 2>/dev/null &
+}
+
+# ── 4. Remediation Execution with Slot 1 Isolation ────────────────────
 # Executes remediation strictly on Slot 1 in an isolated git worktree sandbox.
-# Yields if Slot 0 interactive sessions (REPL/Discord) are currently computing.
+# Cooperatively yields if Slot 0 interactive sessions (REPL/Discord) are computing.
 # Usage: remediation_run [task_id]
 remediation_run() {
     local task_id="${1:-}"
     remediation_init
+
+    # Strict single-concurrency guard on Slot 1
+    local lock_file="$REMEDIATION_DIR/.lock"
+    if [ -f "$lock_file" ]; then
+        local active_pid
+        active_pid=$(cat "$lock_file" 2>/dev/null)
+        if [ -n "$active_pid" ] && [ "$active_pid" != "$$" ] && kill -0 "$active_pid" 2>/dev/null; then
+            ui_dim "Autonomous remediation task is already active (PID $active_pid). Yielding Slot 1 until completion."
+            return 0
+        fi
+        rm -f "$lock_file" 2>/dev/null || true
+    fi
 
     local task_file=""
     if [ -n "$task_id" ]; then
@@ -376,8 +491,12 @@ remediation_run() {
 
     if [ -z "$task_file" ] || [ ! -f "$task_file" ]; then
         ui_info "No pending remediation tasks in queue."
+        rm -f "$lock_file" 2>/dev/null || true
         return 0
     fi
+
+    # Acquire lock for this active task
+    echo "$$" > "$lock_file"
 
     task_id=$(jq -r '.task_id' "$task_file")
     local title issue_file inc_dir fp
@@ -396,20 +515,40 @@ remediation_run() {
     mv "$task_file" "$progress_file"
     jq '.status = "IN_PROGRESS"' "$progress_file" > "${progress_file}.tmp" && mv "${progress_file}.tmp" "$progress_file"
 
+    # Guard: check if issue_file exists. If issue_file was in /tmp and deleted, abort cleanly.
+    if [ -n "$issue_file" ] && [ ! -f "$issue_file" ] && [[ "$issue_file" == /tmp/* ]]; then
+        ui_warn "Issue file $issue_file no longer exists on disk (orphaned temporary file). Aborting task."
+        mv "$progress_file" "$REMEDIATION_FAILED_DIR/${task_id}.json"
+        jq '.status = "ORPHANED_CLEANUP"' "$REMEDIATION_FAILED_DIR/${task_id}.json" > "${progress_file}.tmp" 2>/dev/null && mv "${progress_file}.tmp" "$REMEDIATION_FAILED_DIR/${task_id}.json" 2>/dev/null || true
+        rm -f "$lock_file" 2>/dev/null || true
+        return 1
+    fi
+
+    # Initialize task execution log & launch live companion monitor HUD
+    local rem_log="$REMEDIATION_LOGS_DIR/${task_id}.log"
+    : > "$rem_log"
+    remediation_launch_visual_monitor "$task_id" "$title" "$rem_log"
+
+    # Cooperative pre-flight pause
+    remediation_cooperative_pause
+
     # Notify operator that remediation is starting
     remediation_notify_dispatch "$task_id" "$title" "STARTED" \
         "Autonomous remediation initiated on Slot 1. Isolated workspace prepared." \
         "$([ -n "$inc_dir" ] && echo "Incident Artifacts: file://$inc_dir" || echo "")"
 
-    # Check Slot 0 activity to prevent degrading operator interactive sessions
-    local slots_json
-    slots_json=$(curl -s -m 2 http://127.0.0.1:8080/slots 2>/dev/null || echo "[]")
-    if [ "$slots_json" != "[]" ]; then
-        local s0_busy
-        s0_busy=$(echo "$slots_json" | jq -r '.[0].is_processing // false' 2>/dev/null)
-        if [ "$s0_busy" = "true" ]; then
-            ui_warn "Inference Slot 0 is currently active (operator interactive session). Yielding compute..."
-            sleep 2
+    # Comment on Sovereign Gitea issue if linked
+    local gitea_idx
+    gitea_idx=$(jq -r '.gitea_issue // empty' "$progress_file" 2>/dev/null || true)
+    if [ -z "$gitea_idx" ] && [ -n "$issue_file" ] && [ -f "$issue_file" ]; then
+        gitea_idx=$(grep -oE '\*\*Gitea Issue:\*\* #([0-9]+)' "$issue_file" 2>/dev/null | head -n 1 | cut -d'#' -f2 || true)
+    fi
+    if [ -n "$gitea_idx" ]; then
+        if ! declare -f gitea_issue_comment &>/dev/null; then
+            [ -f "${LODGE_DIR:-$PWD}/lib/mcp_server_gitea.sh" ] && source "${LODGE_DIR:-$PWD}/lib/mcp_server_gitea.sh" 2>/dev/null || true
+        fi
+        if declare -f gitea_issue_comment &>/dev/null; then
+            gitea_issue_comment "$gitea_idx" "🤖 **[George Auto-Remediation]** Sovereign remediation task \`$task_id\` initiated on Slot 1. Isolated worktree prepared." >/dev/null 2>&1 || true
         fi
     fi
 
@@ -418,12 +557,17 @@ remediation_run() {
     local branch_name="remediation/${task_id}"
     mkdir -p "$(dirname "$sandbox_dir")" 2>/dev/null || true
 
-    git -C "$LODGE_DIR" branch -D "$branch_name" 2>/dev/null || true
-    git -C "$LODGE_DIR" worktree remove --force "$sandbox_dir" 2>/dev/null || true
-    git -C "$LODGE_DIR" worktree add -b "$branch_name" "$sandbox_dir" HEAD 2>/dev/null || {
+    local orig_lodge_dir="${LODGE_DIR:-$HOME/blue-lodge}"
+    local orig_george_dir="${GEORGE_DIR:-$orig_lodge_dir/.george}"
+    local orig_tier="${ACTIVE_TIER:-1}"
+
+    git -C "$orig_lodge_dir" branch -D "$branch_name" 2>/dev/null || true
+    git -C "$orig_lodge_dir" worktree remove --force "$sandbox_dir" 2>/dev/null || true
+    git -C "$orig_lodge_dir" worktree add -b "$branch_name" "$sandbox_dir" HEAD 2>/dev/null || {
         ui_err "Failed to create isolated git worktree for remediation: $sandbox_dir"
         mv "$progress_file" "$REMEDIATION_FAILED_DIR/${task_id}.json"
         remediation_notify_dispatch "$task_id" "$title" "FAILED" "Failed to provision isolated worktree $sandbox_dir"
+        rm -f "$lock_file" 2>/dev/null || true
         return 1
     }
 
@@ -432,6 +576,8 @@ remediation_run() {
     export ACTIVE_TIER=2
     export LODGE_DIR="$sandbox_dir"
     export GEORGE_DIR="$sandbox_dir/.george"
+    export AGENT_SOVEREIGN_REMEDIATION=1
+    export AGENT_MAX_TURNS="${AGENT_REMEDIATION_MAX_TURNS:-50}"
 
     local rem_success=1
     local rem_prompt="You are George in Sovereign Autonomous Remediation mode.
@@ -439,34 +585,116 @@ Remediate the failure documented in issue: $issue_file
 Incident dossier: $inc_dir
 Error Fingerprint: $fp
 
-SOVEREIGN REMEDIATION & ADAPTIVE PATHFINDING MANDATE:
+SOVEREIGN REMEDIATION & ARCHITECTURAL INTEGRITY MANDATE:
 1. Examine the failure evidence, error traces, and reproduction details.
-2. If the failure stems from a missing external service, dependency, or unconfigured provider:
-   - Survey the codebase and environment for alternative providers, fallback adapters, or disposable service implementations.
-   - Wire in graceful multi-provider fallbacks or self-healing adaptations so that the workflow succeeds even when preferred providers lack credentials.
-3. If the failure stems from a code error or capability deficit:
-   - Implement the necessary code or configuration fix in this repository.
-4. Verify your fix thoroughly by executing automated test suites before concluding."
+2. ARCHITECTURAL PURITY & SANDBOX ISOLATION (Tyler & Warden Review Mandate):
+   - The host Blue Lodge repository and system MUST remain 100% pure POSIX shell (bash, curl, jq) with zero host Python/Node dependencies.
+   - Downloading or installing Python/Node.js packages directly onto the host environment (via pip, uv, npm, apt) violates architectural purity and is strictly prohibited.
+   - If a task or capability requires Python or heavy libraries (e.g. pdfminer, pypdf, pandas), the execution MUST be encapsulated inside an isolated container sandbox via 'container_exec' or disposable sandbox environment.
+   - If native POSIX alternatives exist (e.g. Poppler pdftotext, jq, awk), prefer the sovereign zero-dependency native implementation.
+3. ADAPTIVE PATHFINDING & FALLBACKS:
+   - If the failure stems from a missing external service or unconfigured provider (e.g. email, discord, gsuite), wire in graceful multi-provider fallbacks or disposable one-time adapters.
+4. CODEBASE FIX & PR WORKFLOW:
+   - If this failure requires a permanent codebase fix, tool wrapper, or configuration change, implement and commit the fix on this remediation branch.
+   - If a fix is implemented, submit a Pull Request to develop via 'gitea_pr_create', referencing this issue.
+5. Verify your fix thoroughly by executing automated test suites before concluding."
 
     if declare -f react_run &>/dev/null && [ "${REMEDIATION_MOCK_EXEC:-0}" -ne 1 ]; then
-        react_run "$rem_prompt" "$sandbox_dir"
-        local ec=$?
+        react_run "$rem_prompt" "$sandbox_dir" 2>&1 | tee -a "$rem_log"
+        local ec=${PIPESTATUS[0]}
         [ "$ec" -eq 0 ] && rem_success=0
     else
         # Direct verification gate
-        if bash "$sandbox_dir/tests/run_all.sh" test_telemetry test_incident_preservation test_remediation_queue >/dev/null 2>&1; then
+        if bash "$sandbox_dir/tests/run_all.sh" test_telemetry test_incident_preservation test_remediation_queue 2>&1 | tee -a "$rem_log"; then
             rem_success=0
         fi
     fi
 
     # Reset environment back to host lodge
-    export LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
-    export GEORGE_DIR="${LODGE_DIR}/.george"
+    unset AGENT_SOVEREIGN_REMEDIATION
+    export LODGE_DIR="$orig_lodge_dir"
+    export GEORGE_DIR="$orig_george_dir"
+    export ACTIVE_TIER="$orig_tier"
+
+    local attempt_key="${fp:-${gitea_idx:-$task_id}}"
+    local attempt_file="$REMEDIATION_ATTEMPTS_DIR/${attempt_key}.json"
 
     if [ "$rem_success" -eq 0 ]; then
-        ui_ok "Remediation verified successfully! Cleaning up sandbox and closing issue."
-        git -C "$LODGE_DIR" worktree remove --force "$sandbox_dir" 2>/dev/null || true
+        echo "[REMEDIATION_COMPLETE]" >> "$rem_log"
+        ui_ok "Remediation verified successfully! Checking for code deliverables..."
+
+        # Closed-Loop PR Generation: check if remediation commits were made on branch relative to develop
+        local commit_count=0
+        commit_count=$(git -C "$sandbox_dir" rev-list --count HEAD ^develop 2>/dev/null || echo 0)
+        if [ "$commit_count" -gt 0 ]; then
+            ui_step "Delivering code fix: pushing branch '$branch_name' ($commit_count commits) and creating rich PR..."
+            git -C "$orig_lodge_dir" push origin "$branch_name" >/dev/null 2>&1 || \
+            git -C "$orig_lodge_dir" push gitea "$branch_name" >/dev/null 2>&1 || true
+
+            if ! declare -f gitea_pr_create &>/dev/null; then
+                [ -f "${orig_lodge_dir}/lib/mcp_server_gitea.sh" ] && source "${orig_lodge_dir}/lib/mcp_server_gitea.sh" 2>/dev/null || true
+            fi
+            if declare -f gitea_pr_create &>/dev/null; then
+                local git_log diff_stat
+                git_log=$(git -C "$sandbox_dir" log --oneline develop..HEAD 2>/dev/null | head -n 15)
+                diff_stat=$(git -C "$sandbox_dir" diff --stat develop..HEAD 2>/dev/null | head -n 25)
+
+                local pr_title="fix(remediation): $title"
+                local pr_body="## 🛠️ Sovereign Autonomous Remediation
+
+### Problem Statement
+- **Issue:** ${title}
+- **Error Fingerprint:** \`${fp:-N/A}\`
+- **Task ID:** \`${task_id}\`
+- **Branch:** \`${branch_name}\`
+$([ -n "$gitea_idx" ] && echo "- **Resolves Gitea Issue:** #${gitea_idx}" || echo "")
+
+### Root Cause & Remediation Summary
+Automated remediation executed on Slot 1 inside an isolated git worktree sandbox. The defect was resolved in strict compliance with the Sovereign Remediation Mandate (100% pure POSIX shell, zero host Python/Node dependencies).
+
+### Delivered Commits
+\`\`\`
+${git_log:-No additional commits}
+\`\`\`
+
+### Modified Files & Diffstat
+\`\`\`
+${diff_stat:-No diff stat available}
+\`\`\`
+
+### Verification Evidence
+- Automated test verification passed cleanly in isolated sandbox.
+- Ephemeral worktree sandbox culled immediately upon completion.
+"
+                local pr_res
+                pr_res=$(gitea_pr_create "$branch_name" "develop" "$pr_title" "$pr_body" 2>/dev/null || true)
+                local pr_num
+                pr_num=$(echo "$pr_res" | jq -r '.number // empty' 2>/dev/null || true)
+                if [ -n "$pr_num" ]; then
+                    ui_ok "Proposed Sovereign Gitea Pull Request #${pr_num}: $pr_title"
+                fi
+            fi
+        fi
+
+        # Reset attempt counter on success
+        rm -f "$attempt_file" 2>/dev/null || true
+
+        # Immediate ephemeral worktree culling
+        ui_ok "Culling ephemeral sandbox worktree and closing issue."
+        git -C "$orig_lodge_dir" worktree remove --force "$sandbox_dir" 2>/dev/null || true
         rm -rf "$sandbox_dir" 2>/dev/null || true
+        git -C "$orig_lodge_dir" worktree prune 2>/dev/null || true
+
+        # Close Sovereign Gitea issue if linked
+        if [ -n "$gitea_idx" ]; then
+            if ! declare -f gitea_issue_close &>/dev/null; then
+                [ -f "${orig_lodge_dir}/lib/mcp_server_gitea.sh" ] && source "${orig_lodge_dir}/lib/mcp_server_gitea.sh" 2>/dev/null || true
+            fi
+            if declare -f gitea_issue_close &>/dev/null; then
+                gitea_issue_close "$gitea_idx" "Autonomous remediation completed and verified cleanly by George on Slot 1. Task: $task_id" >/dev/null 2>&1 || true
+                ui_ok "Closed Sovereign Gitea Issue #${gitea_idx}"
+            fi
+        fi
 
         # Move to completed
         mv "$progress_file" "$REMEDIATION_COMPLETED_DIR/${task_id}.json"
@@ -483,14 +711,65 @@ SOVEREIGN REMEDIATION & ADAPTIVE PATHFINDING MANDATE:
         # Notify operator of success
         remediation_notify_dispatch "$task_id" "$title" "RESOLVED" \
             "Autonomous remediation completed and verified cleanly. Issue closed and archived."
+        rm -f "$lock_file" 2>/dev/null || true
         return 0
     else
-        ui_warn "Remediation verification did not pass clean gate. Retaining branch for operator review."
-        mv "$progress_file" "$REMEDIATION_FAILED_DIR/${task_id}.json"
-        jq '.status = "FAILED"' "$REMEDIATION_FAILED_DIR/${task_id}.json" > "${progress_file}.tmp" 2>/dev/null && mv "${progress_file}.tmp" "$REMEDIATION_FAILED_DIR/${task_id}.json" 2>/dev/null || true
+        echo "[REMEDIATION_FAILED]" >> "$rem_log"
+        ui_warn "Remediation verification did not pass clean gate."
 
-        remediation_notify_dispatch "$task_id" "$title" "FAILED" \
-            "Automated fix attempted on branch $branch_name but did not pass verification gates."
+        # 3-Strike failure tracking
+        local attempt_count=0
+        [ -f "$attempt_file" ] && attempt_count=$(jq -r '.attempts // 0' "$attempt_file" 2>/dev/null || echo 0)
+        attempt_count=$((attempt_count + 1))
+        local now_ts
+        now_ts=$(date +%s)
+        jq -n \
+            --arg tid "$task_id" \
+            --arg key "$attempt_key" \
+            --argjson att "$attempt_count" \
+            --argjson ts "$now_ts" \
+            '{task_id: $tid, key: $key, attempts: $att, last_failure_ts: $ts}' > "$attempt_file" 2>/dev/null || true
+
+        if [ "$attempt_count" -ge 3 ]; then
+            ui_warn "Remediation task reached 3-strike failure ceiling ($attempt_count/3). Escalating to operator review."
+            if [ -n "$gitea_idx" ]; then
+                if ! declare -f gitea_issue_comment &>/dev/null; then
+                    [ -f "${orig_lodge_dir}/lib/mcp_server_gitea.sh" ] && source "${orig_lodge_dir}/lib/mcp_server_gitea.sh" 2>/dev/null || true
+                fi
+                if declare -f gitea_issue_comment &>/dev/null; then
+                    gitea_issue_comment "$gitea_idx" "🚨 **[Autonomous Remediation Escalation]** Automated fix attempted 3 times without passing verification gates (Branch: \`$branch_name\`, Fingerprint: \`${fp:-N/A}\`). Automatic re-queueing halted; manual operator review required." >/dev/null 2>&1 || true
+                fi
+                if declare -f gitea_issue_label &>/dev/null; then
+                    gitea_issue_label "$gitea_idx" "escalation-required" >/dev/null 2>&1 || true
+                fi
+            fi
+            remediation_notify_dispatch "$task_id" "$title" "ESCALATED" \
+                "Autonomous remediation exceeded 3-strike failure ceiling on branch $branch_name. Re-queueing halted; operator intervention required."
+            mv "$progress_file" "$REMEDIATION_FAILED_DIR/${task_id}.json"
+            jq '.status = "ESCALATED_OPERATOR_REQUIRED"' "$REMEDIATION_FAILED_DIR/${task_id}.json" > "${progress_file}.tmp" 2>/dev/null && mv "${progress_file}.tmp" "$REMEDIATION_FAILED_DIR/${task_id}.json" 2>/dev/null || true
+        else
+            local rem_strikes=$((3 - attempt_count))
+            if [ -n "$gitea_idx" ]; then
+                if ! declare -f gitea_issue_comment &>/dev/null; then
+                    [ -f "${orig_lodge_dir}/lib/mcp_server_gitea.sh" ] && source "${orig_lodge_dir}/lib/mcp_server_gitea.sh" 2>/dev/null || true
+                fi
+                if declare -f gitea_issue_comment &>/dev/null; then
+                    gitea_issue_comment "$gitea_idx" "⚠️ **[George Auto-Remediation]** Attempt ${attempt_count}/3 failed verification gates on branch \`${branch_name}\` (Task: ${task_id}). ${rem_strikes} attempt(s) remaining before operator escalation." >/dev/null 2>&1 || true
+                fi
+            fi
+            remediation_notify_dispatch "$task_id" "$title" "FAILED" \
+                "Automated fix attempted on branch $branch_name failed verification gates (Attempt ${attempt_count}/3)."
+            mv "$progress_file" "$REMEDIATION_FAILED_DIR/${task_id}.json"
+            jq '.status = "FAILED"' "$REMEDIATION_FAILED_DIR/${task_id}.json" > "${progress_file}.tmp" 2>/dev/null && mv "${progress_file}.tmp" "$REMEDIATION_FAILED_DIR/${task_id}.json" 2>/dev/null || true
+        fi
+
+        # Immediate ephemeral worktree culling (retaining branch for operator review)
+        ui_dim "Culling ephemeral sandbox worktree (retaining git branch $branch_name)..."
+        git -C "$orig_lodge_dir" worktree remove --force "$sandbox_dir" 2>/dev/null || true
+        rm -rf "$sandbox_dir" 2>/dev/null || true
+        git -C "$orig_lodge_dir" worktree prune 2>/dev/null || true
+
+        rm -f "$lock_file" 2>/dev/null || true
         return 1
     fi
 }

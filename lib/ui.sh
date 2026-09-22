@@ -353,8 +353,13 @@ ui_spinner_stop() {
 # ── Ambient Prefill Craftsman Ticker ──────────────────────────
 _PREFILL_TICKER_PID=""
 ui_prefill_ticker_start() {
+    # Only run animated ticker if stderr is connected to an interactive TTY terminal
+    [ ! -t 2 ] && return 0
+    [ "${LODGE_NONINTERACTIVE:-0}" -eq 1 ] && return 0
+    [ -n "${_DISCORD_IN_SESSION:-}" ] && return 0
+
     [ -n "$_PREFILL_TICKER_PID" ] && ui_prefill_ticker_stop
-    local ppid="${BASHPID:-$$}"
+    local ppid="$$"
     exec 3>&2
     (
         exec 2>/dev/null >/dev/null
@@ -387,15 +392,15 @@ ui_prefill_ticker_start() {
 }
 
 ui_prefill_ticker_stop() {
-    local ppid="${BASHPID:-$$}"
+    local ppid="$$"
     local tpid="${_PREFILL_TICKER_PID:-}"
     [ -z "$tpid" ] && [ -f "${TMPDIR:-/tmp}/.lodge_prefill_ticker_${ppid}" ] && tpid=$(cat "${TMPDIR:-/tmp}/.lodge_prefill_ticker_${ppid}" 2>/dev/null)
     if [ -n "$tpid" ]; then
-        kill "$tpid" 2>/dev/null
+        kill -9 "$tpid" 2>/dev/null
         wait "$tpid" 2>/dev/null
         _PREFILL_TICKER_PID=""
         rm -f "${TMPDIR:-/tmp}/.lodge_prefill_ticker_${ppid}" 2>/dev/null
-        printf "\r\033[2K" >&2 2>/dev/null
+        [ -t 2 ] && printf "\r\033[2K" >&2 2>/dev/null
     fi
 }
 
@@ -669,8 +674,8 @@ ui_resolve_path() {
 
     # Check if absolute path
     if [[ "$filepath" == /* ]]; then
-        if [[ "$filepath" == "$lodge_dir"* ]] || [[ "$filepath" == "$workdir"* ]]; then
-            # Safe absolute path (under lodge_dir or workdir)
+        if [[ "$filepath" == "$lodge_dir"* ]] || [[ "$filepath" == "$workdir"* ]] || [ -e "$filepath" ] || [[ "$filepath" == /tmp/* ]]; then
+            # Safe absolute path (under lodge_dir, workdir, /tmp, or existing file)
             echo "$filepath"
             return 0
         else
@@ -795,7 +800,7 @@ ui_suggest_workspaces_tree() {
 ui_ask_operator() {
     local question="$1"
     local tty=""
-    if [ -t 0 ] || [ -n "${FORCE_INTERACTIVE:-}" ]; then
+    if [ -z "${_LODGE_TESTING:-}" ] && { [ -t 0 ] || [ -n "${FORCE_INTERACTIVE:-}" ]; }; then
         if { true >/dev/tty; } 2>/dev/null; then
             tty="/dev/tty"
         fi
@@ -809,7 +814,7 @@ ui_ask_operator() {
         echo "" > "$tty"
         printf "  %bGeorge/Operator Answer > %b" "$C_BOLD" "$C_RESET" > "$tty"
         local answer=""
-        read -r answer < "$tty" 2>/dev/null || read -r answer 2>/dev/null || true
+        read -t "${UI_INPUT_TIMEOUT:-60}" -r answer < "$tty" 2>/dev/null || read -t "${UI_INPUT_TIMEOUT:-60}" -r answer 2>/dev/null || true
     else
         echo -e "\n${C_BOLD}${C_CYAN}${banner}${C_RESET}\n" >&2
         printf "  %bAgent Question:%b %s\n" "$C_YELLOW" "$C_RESET" "$question" >&2

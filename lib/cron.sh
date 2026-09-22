@@ -114,6 +114,12 @@ cron_run_job() {
             ;;
         issue_sweep)
             declare -f alerts_sweep &>/dev/null && alerts_sweep || true
+            if declare -f sentinel_sweep_remediated_issues &>/dev/null; then
+                sentinel_sweep_remediated_issues || true
+            elif [ -f "$LODGE_DIR/lib/sentinel.sh" ]; then
+                source "$LODGE_DIR/lib/sentinel.sh" 2>/dev/null || true
+                declare -f sentinel_sweep_remediated_issues &>/dev/null && sentinel_sweep_remediated_issues || true
+            fi
             res=$?
             ;;
         discord_sweep)
@@ -284,11 +290,19 @@ cron_run_visual_sweep() {
             alerts_sweep
             [ $? -ne 0 ] && total_ec=1
         fi
+        if declare -f sentinel_sweep_remediated_issues &>/dev/null; then
+            sentinel_sweep_remediated_issues || true
+        elif [ -f "$LODGE_DIR/lib/sentinel.sh" ]; then
+            source "$LODGE_DIR/lib/sentinel.sh" 2>/dev/null || true
+            declare -f sentinel_sweep_remediated_issues &>/dev/null && sentinel_sweep_remediated_issues || true
+        fi
     fi
 
     # 3b. Autonomous Remediation Sweep (Slot 1)
     if [ "$sweep_type" = "all" ] || [ "$sweep_type" = "remediation" ]; then
-        if declare -f remediation_queue_next &>/dev/null && declare -f remediation_run &>/dev/null; then
+        if declare -f remediation_is_active &>/dev/null && remediation_is_active; then
+            ui_dim "Autonomous remediation task is already in progress on Slot 1. Skipping sweep trigger."
+        elif declare -f remediation_queue_next &>/dev/null && declare -f remediation_run &>/dev/null; then
             local next_rem
             next_rem=$(remediation_queue_next 2>/dev/null || true)
             if [ -n "$next_rem" ] && [ -f "$next_rem" ]; then

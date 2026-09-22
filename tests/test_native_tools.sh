@@ -207,6 +207,17 @@ describe "native_tools_dispatch"
     assert_contains "$content" "not found"
   }
 
+  it "dispatches file_read and limits output to 100 lines by default" && {
+    tmp_long="/tmp/test_long_read_$$.txt"
+    seq 1 250 > "$tmp_long"
+    res=$(native_tools_dispatch "call_test_read_limit" "file_read" "{\"path\":\"$tmp_long\"}" "$PWD")
+    assert_ok $?
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "lines 1-100 of 250"
+    assert_contains "$content" "Next chunk: file_read"
+    rm -f "$tmp_long"
+  }
+
   it "dispatches backup_list successfully" && {
     res=$(native_tools_dispatch "call_test_bak" "backup_list" '{}' "$PWD")
     assert_ok $?
@@ -277,6 +288,20 @@ describe "native_tools_dispatch"
     assert_contains "$content" "treesitter.sh"
   }
 
+  it "dispatches file_grep with absolute path without doubling" && {
+    res=$(native_tools_dispatch "call_test_fg_abs" "file_grep" "{\"pattern\":\"treesitter_detect_lang\",\"path\":\"$PWD/lib\"}" "$PWD")
+    assert_ok $?
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "treesitter.sh"
+  }
+
+  it "dispatches dir_list successfully" && {
+    res=$(native_tools_dispatch "call_test_dl" "dir_list" '{"path":"lib","depth":1}' "$PWD")
+    assert_ok $?
+    content=$(echo "$res" | jq -r '.content')
+    assert_contains "$content" "native_tools.sh"
+  }
+
   it "dispatches pdf_read and handles missing file" && {
     res=$(native_tools_dispatch "call_test_pdf" "pdf_read" '{"path":"/nonexistent/sample.pdf"}' "$PWD")
     assert_ok $?
@@ -285,17 +310,21 @@ describe "native_tools_dispatch"
   }
 
   it "dispatches workflow_plan and returns plan prompt" && {
+    test_mock "_workflow_run_architect" 'echo "Simulated architect execution"; return 0'
     res=$(native_tools_dispatch "call_test_wp" "workflow_plan" '{"objective":"Build feature"}' "$PWD")
     assert_ok $?
     content=$(echo "$res" | jq -r '.content')
     assert_contains "$content" "Scoping"
+    test_unmock "_workflow_run_architect"
   }
 
   it "dispatches workflow_run and confirms launch" && {
+    test_mock "workflows_run" 'echo "Executing Workflow: /the-architect"; return 0'
     res=$(native_tools_dispatch "call_test_wr" "workflow_run" '{"name":"the-architect","args":"Build feature"}' "$PWD")
     assert_ok $?
     content=$(echo "$res" | jq -r '.content')
     assert_contains "$content" "architect"
+    test_unmock "workflows_run"
   }
 
   it "handles unknown tool gracefully" && {

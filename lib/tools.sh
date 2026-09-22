@@ -751,7 +751,7 @@ tools_read_pdf() {
 # ── Read file for context ─────────────────────────────────────
 tools_read_file() {
     local filepath="$1"
-    local max_lines="${2:-300}"
+    local max_lines="${2:-100}"
     local start_line="${3:-1}"
     
     if [ ! -f "$filepath" ]; then
@@ -770,7 +770,9 @@ tools_read_file() {
         start_line=1
     fi
     if ! [[ "$max_lines" =~ ^[0-9]+$ ]] || [ "$max_lines" -lt 1 ]; then
-        max_lines=300
+        max_lines=100
+    elif [ "$max_lines" -gt 200 ]; then
+        max_lines=200
     fi
     
     local total
@@ -778,11 +780,11 @@ tools_read_file() {
     
     if [ "$start_line" -gt "$total" ]; then
         if [ "$total" -eq 0 ]; then
-            echo "--- start of $filepath ---"
+            echo "--- start of $filepath (empty file) ---"
             echo "--- end of $filepath ---"
             return 0
         fi
-        echo "ERROR: start line $start_line is past end of file $total"
+        echo "ERROR: start line $start_line is past end of file ($total lines total)"
         return 1
     fi
     
@@ -791,14 +793,17 @@ tools_read_file() {
         end_line="$total"
     fi
     
-    ui_info "Showing lines $start_line to $end_line of $total (use '/read <file> <count> <start>' to read other parts)"
-    echo "--- start of $filepath ---"
+    ui_info "Showing lines $start_line to $end_line of $total ($filepath)" 2>/dev/null || true
+    echo "--- start of $filepath (lines $start_line-$end_line of $total) ---"
     sed -n "${start_line},${end_line}p" "$filepath" | awk -v start="$start_line" '{print (start + NR - 1) ": " $0}'
-    echo "--- end of $filepath ---"
+    echo "--- end of chunk ($filepath) ---"
     
     if [ "$end_line" -lt "$total" ]; then
+        local next_start=$((end_line + 1))
         local remaining=$((total - end_line))
-        echo "... (truncated, $remaining more lines. Use '/read <file> $max_lines $((end_line + 1))' to read next page)"
+        echo ""
+        echo "[Remaining: $remaining lines (truncated). Next chunk: file_read {\"path\": \"$filepath\", \"start_line\": $next_start, \"max_lines\": $max_lines} or /read $filepath $next_start $max_lines]"
+        echo "[Tip: Use file_grep or code_symbol_get to jump directly to specific functions rather than scanning linearly.]"
     fi
 }
 
