@@ -15,3 +15,23 @@ models/*.gguf
 /workspace/
 .gitea-data/
 .act-runner-data/
+target/
+web/target/
+
+# Secrets, Keys, and Local Environment
+.env
+.env.*
+*.env
+*.key
+*.pem
+*.p12
+*.pfx
+*.cert
+*.crt
+id_rsa
+id_ed25519
+id_*
+secrets.conf
+keys.conf
+*.cookie
+*.cookies

@@ -33,7 +33,7 @@ GEORGE_DIR="${GEORGE_DIR:-${LODGE_DIR:-.}/.george}"
 # ── Config ─────────────────────────────────────────────────────
 MCP_ENABLED="${MCP_ENABLED:-0}"
 MCP_CONFIG_DIR="${MCP_CONFIG_DIR:-$GEORGE_DIR/mcp}"
-MCP_RUN_DIR="${MCP_RUN_DIR:-${TMPDIR:-/tmp}/.lodge-mcp-$$}"
+MCP_RUN_DIR="${MCP_RUN_DIR:-$GEORGE_DIR/mcp/run}"
 MCP_TIMEOUT="${MCP_TIMEOUT:-30}"
 MCP_CACHE_NS="mcp"               # LRU cache namespace
 MCP_SERVERS_FILE="${MCP_CONFIG_DIR}/servers.conf"

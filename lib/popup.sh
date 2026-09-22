@@ -13,6 +13,14 @@ popup_is_gui_available() {
         return 1
     fi
 
+    # Silence popups when Web UI (george-web) is live or observability flag exists
+    if pgrep -f "george-web" &>/dev/null || \
+       [ -f "${GEORGE_CONFIG_DIR:-$LODGE_DIR/.george}/.web_observability" ] || \
+       [ "${GEORGE_WEB_OBSERVABILITY:-0}" -eq 1 ] || \
+       [ "${POPUP_TERMINAL_DISABLED:-0}" -eq 1 ]; then
+        return 1
+    fi
+
     # Verify wt.exe is available and we are in an interactive WSL desktop session (not headless SSH)
     if [ -n "${WSL_DISTRO_NAME:-}" ] && command -v wt.exe &>/dev/null; then
         if [ -z "${SSH_CONNECTION:-}" ] && [ -z "${SSH_CLIENT:-}" ]; then
@@ -32,6 +40,19 @@ popup_terminal_launch() {
     local size="${2:-110,32}"
     shift 2
     local cmd=("$@")
+
+    # If terminal popups are explicitly disabled by the operator, return 1
+    if [ "${TERMINAL_POPUP_ENABLED:-1}" -ne 1 ]; then
+        return 1
+    fi
+
+    # Silence popups when Web UI observability is active or explicitly disabled
+    if [ "${POPUP_TERMINAL_DISABLED:-0}" -eq 1 ] || \
+       [ "${GEORGE_WEB_OBSERVABILITY:-0}" -eq 1 ] || \
+       pgrep -f "george-web" &>/dev/null || \
+       [ -f "${GEORGE_CONFIG_DIR:-$LODGE_DIR/.george}/.web_observability" ]; then
+        return 0
+    fi
 
     if ! popup_is_gui_available; then
         return 1

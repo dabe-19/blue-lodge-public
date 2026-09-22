@@ -113,6 +113,9 @@ RUN groupadd -g ${GROUP_ID} george && \
 USER george
 WORKDIR /workspace
 
+# Declare external persistent volumes so model weights are never written to image layers
+VOLUME ["/models", "/workspace"]
+
 # OPTIMIZATION: Shifted the .bashrc environment configuration rule before the CMD layer
 RUN echo 'pgrep -x "ollama" >/dev/null || (ollama serve >/tmp/ollama.log 2>&1 &)' >> /home/george/.bashrc
 

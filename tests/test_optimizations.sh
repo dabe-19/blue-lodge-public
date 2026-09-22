@@ -11,7 +11,6 @@ source "$LODGE_DIR/lib/tools.sh"
 source "$LODGE_DIR/lib/journal.sh"
 source "$LODGE_DIR/lib/agent.sh"
 _AGENT_SRC="$LODGE_DIR/lib/agent.sh"
-[ -f "$LODGE_DIR/docs/archive/legacy_agent.sh" ] && _AGENT_SRC="$LODGE_DIR/docs/archive/legacy_agent.sh"
 source "$LODGE_DIR/lib/web.sh"
 
 test_start "Optimizations — agent.sh / web.sh / memory.sh"

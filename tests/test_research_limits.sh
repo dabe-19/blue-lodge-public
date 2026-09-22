@@ -9,6 +9,9 @@ source "$LODGE_DIR/lib/transcript.sh"
 test_start "Autonomous Research Limits & Decoupled Social Distribution"
 
 TMP_RES_DIR=$(test_tmpdir)
+export GEORGE_DIR="$TMP_RES_DIR/.george"
+export LIMITS_CONF="$GEORGE_DIR/limits.conf"
+mkdir -p "$GEORGE_DIR"
 
 describe "MAX_RESEARCH_TURNS Operational Lever"
 

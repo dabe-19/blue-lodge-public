@@ -1,0 +1,16 @@
+[package]
+name = "george-web"
+version = "0.1.0"
+edition = "2021"
+authors = ["George <lodge@sovereign.local>"]
+description = "Sovereign Web UI sidecar and multiplexed terminal fabric for the George engine"
+
+[dependencies]
+tokio = { version = "1.35", features = ["full"] }
+axum = { version = "0.7", features = ["multipart", "ws"] }
+tower-http = { version = "0.5", features = ["cors", "fs", "trace"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+futures-util = "0.3"
+async-stream = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }

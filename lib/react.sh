@@ -681,7 +681,7 @@ react_run() {
 
                 local resp_content
                 resp_content=$(echo "$tool_resp" | jq -r '.content // empty')
-                local max_tool_chars="${REACT_MAX_OBSERVATION_CHARS:-3000}"
+                local max_tool_chars="${REACT_MAX_OBSERVATION_CHARS:-16000}"
                 if [ "${#resp_content}" -gt "$max_tool_chars" ]; then
                     local truncated_note=$'\n\n'"[Observation truncated at ${max_tool_chars} characters to protect context budget. Narrow your query, paginate with start_line, or use targeted grep/symbol tools.]"
                     resp_content="${resp_content:0:$max_tool_chars}${truncated_note}"
@@ -841,8 +841,9 @@ Execute the Metacognitive Pathfinding Protocol:
             fi
 
             obs=$(printf '%s\n' "$obs" | sed -r 's/\x1B\[[0-9;]*[a-zA-Z]//g')
-            if [ ${#obs} -gt 3000 ]; then
-                obs="${obs:0:3000}\n... [truncated]"
+            local max_fb_chars="${REACT_MAX_OBSERVATION_CHARS:-16000}"
+            if [ ${#obs} -gt "$max_fb_chars" ]; then
+                obs="${obs:0:$max_fb_chars}\n... [truncated]"
             fi
             declare -f transcript_log_block &>/dev/null && transcript_log_block "output ($action)" "$obs"
             _react_trace "$workdir" "fallback_command" "$(jq -cn --arg cmd "$action" '{cmd:$cmd}')"

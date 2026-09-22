@@ -1,0 +1,100 @@
+# ── Blue Lodge Sovereign Infrastructure: Master Docker Compose ──
+# Execution Policy: Run with '--no-build' by default to use existing cached containers.
+# To force rebuilds when code changes: docker compose up -d --build
+
+services:
+  # ── Tier 1: CUDA PRISM Inference Fabric (RTX 3060 12GB) ────────
+  prism-inference:
+    image: george-cuda-sandbox:latest
+    container_name: george-prism-server
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda-sandbox
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - LLAMA_ARG_MODEL=/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf
+      - LLAMA_ARG_CTX_SIZE=8192
+      - LLAMA_ARG_N_GPU_LAYERS=99
+      - LLAMA_ARG_HOST=0.0.0.0
+      - LLAMA_ARG_PORT=8080
+    volumes:
+      # External host models directory mounted read-only (zero container weight)
+      - ${MODELS_DIR:-/home/wsl-ops/models}:/models:ro
+      - ./:/workspace
+      - ${HOME}/.george:/home/george/.george
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: >
+      /bin/bash -c "
+      if [ -f /models/Ternary-Bonsai-2-27B-PTQ1_0.gguf ]; then
+        echo '[+] Starting PRISM CUDA server with Ternary-Bonsai-2-27B...'
+        llama-server -m /models/Ternary-Bonsai-2-27B-PTQ1_0.gguf --host 0.0.0.0 --port 8080 -c 8192 -ngl 99
+      else
+        echo '[!] Warning: Model /models/Ternary-Bonsai-2-27B-PTQ1_0.gguf not found.'
+        echo '[!] Waiting for host model mount in /models...'
+        tail -f /dev/null
+      fi"
+
+  # ── Sovereign Web Sidecar & Craftsman Workbench ───────────────
+  george-web:
+    profiles: ["web-container"]
+    image: george-web:latest
+    container_name: george-web-container
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - LODGE_DIR=/workspace
+      - PRISM_URL=http://george-prism-server:8080
+      - PORT=3000
+    volumes:
+      - ./:/workspace
+      - ./web/static:/app/static
+    depends_on:
+      - prism-inference
+
+  # ── Local Gitea Git Forge ─────────────────────────────────────
+  george-gitea:
+    image: gitea/gitea:latest
+    container_name: george-gitea
+    restart: unless-stopped
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+    ports:
+      - "2222:22"
+      - "3088:3000"
+    volumes:
+      - ./.gitea-data:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+
+  # ── Local Act Runner (CI/CD Automations) ──────────────────────
+  george-act-runner:
+    image: gitea/act_runner:latest
+    container_name: george-act-runner
+    restart: unless-stopped
+    environment:
+      - GITEA_INSTANCE_URL=http://george-gitea:3000
+      - CONFIG_FILE=/data/config.yaml
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./.act-runner-data:/data
+    depends_on:
+      - george-gitea
+
+networks:
+  default:
+    name: george-sovereign-net

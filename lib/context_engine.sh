@@ -70,6 +70,7 @@ context_engine_build() {
     out+="- Uncompromising technical rigor: verify facts and inspect files before asserting them.\n"
     out+="- Conciseness and signal over noise: deliver dense, actionable solutions without fluff.\n"
     out+="- Non-blocking execution: respect process isolation, sandboxing, and background workers.\n"
+    out+="- Decisive Execution Bias: You already possess the operational plan. When information, action, or research is required, invoke the corresponding tool immediately on Turn 1 without speculative preamble or planning monologues. Emit conversational text ONLY when your answer or deliverable is ready.\n"
     out+="</developer_instructions>\n\n"
 
     # 2. Sovereign Soul (soul.md — Masonic Craftsman Identity & Inviolable Landmarks)

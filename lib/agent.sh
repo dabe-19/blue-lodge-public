@@ -888,7 +888,7 @@ _agent_router_eligibility_pass() {
     local -a eligible=() shortlist=()
 
     # Local-safe defaults are always eligible.
-    eligible=(respond read grep ls recall journal edit append write save init build test fix slash social email vitals download vision pgp phone container sandbox wallet backup secret gsuite)
+    eligible=(respond read grep ls recall journal edit append write save init build test fix slash social email vitals download vision pgp phone container sandbox wallet backup secret gsuite mcp)
     [ "${AGENT_ASK_USER:-1}" -eq 1 ] && eligible+=(ask)
     [ "${AGENT_BRAINSTORM:-1}" -eq 1 ] && eligible+=(brainstorm)
     [ "$web_allowed" -eq 1 ] && eligible+=(web)
@@ -949,6 +949,9 @@ _agent_router_eligibility_pass() {
     fi
     if [[ "$_lower_obj" =~ (email|send) ]]; then
         _agent_router_add_unique shortlist "email"
+    fi
+    if [[ "$_lower_obj" =~ (mcp|model[[:space:]]context[[:space:]]protocol|mcp[_-]server) ]]; then
+        _agent_router_add_unique shortlist "mcp"
     fi
 
     # If the previous run failed due to a specialist tool mismatch, force-add
@@ -2163,6 +2166,11 @@ _fast_route() {
     # /gsuite — Google Workspace
     if [[ "$_fr_text" =~ (google[[:space:]]doc|google[[:space:]]sheet|google[[:space:]]drive|gsuite|g[[:space:]]suite) ]]; then
         echo "gsuite"; return 0
+    fi
+
+    # /mcp — Model Context Protocol servers & tools
+    if [[ "$_fr_text" =~ (mcp[[:space:]]|mcp$|model[[:space:]]context[[:space:]]protocol|mcp[_-]server) ]]; then
+        echo "mcp"; return 0
     fi
 
     # No deterministic match — fall through to LLM router
@@ -4390,6 +4398,7 @@ Output ONLY a bare /command. No prose. Example: /web
 /test=run tests
 /fix=diagnose/fix errors
 /slash=create custom command (nothing else fits)
+/mcp=model context protocol tools/servers
 
 NEGATIVE GUIDANCE:
 - NEVER use /web for local files, local repository inspection, or memory retrieval.
@@ -4448,6 +4457,7 @@ TOOLS — gather info, execute work (these do NOT deliver results to the user):
 /ls          List files as tree
 /grep        Regex search files for patterns (/grep <pattern> [path] [| pipeline])
 /web         Search web, fetch page, scrape page+images (/web search|fetch|scrape-images|images)
+/mcp         Model Context Protocol: manage servers, catalog, call external tools (/mcp list|catalog|install|start|call)
 /slash       Create/run custom commands (USE when no built-in fits)
 ${_brainstorm_line:+${_brainstorm_line}
 }${_ask_line:+${_ask_line}
@@ -5212,6 +5222,16 @@ UTILITY_CARDS
                 echo ""
                 echo "REGISTERED SOCIAL CHANNELS (use these exact names):"
                 echo "$_social_ctx_spec"
+            fi
+        fi
+
+        # ── Inject active MCP tools into specialist ────────────
+        if [ "${MCP_ENABLED:-0}" -eq 1 ] && declare -f mcp_catalog &>/dev/null; then
+            local _mcp_cat
+            _mcp_cat=$(mcp_catalog 2>/dev/null)
+            if [ -n "$_mcp_cat" ]; then
+                echo ""
+                echo "$_mcp_cat"
             fi
         fi
 

@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="obsidian">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GEORGE // Craftsman's Workbench</title>
+  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+</head>
+<body>
+  <!-- Top Navigation & Craftsman Header -->
+  <header class="workbench-header">
+    <div class="header-brand">
+      <span class="masonic-symbol">▲</span>
+      <span class="brand-name">GEORGE</span>
+      <span class="brand-separator">|</span>
+      <span class="brand-motto">Well done is better than well said</span>
+    </div>
+
+    <!-- Real-time 2s Telemetry Heartbeat Pill -->
+    <div class="header-telemetry" id="headerTelemetry">
+      <span class="telemetry-chip gpu-chip" id="hdrGpu">GPU 0: NVIDIA RTX 3060</span>
+      <span class="telemetry-chip temp-chip" id="hdrTemp">42°C</span>
+      <span class="telemetry-chip power-chip" id="hdrPower">23W</span>
+      <span class="telemetry-chip vram-chip" id="hdrVram">10.8 / 12 GB</span>
+    </div>
+
+    <div class="header-controls">
+      <div class="control-group">
+        <label for="themeSelect">THEME:</label>
+        <select id="themeSelect">
+          <option value="obsidian">LODGE OBSIDIAN</option>
+          <option value="blueprint">ARCHITECT BLUEPRINT</option>
+          <option value="parchment">PARCHMENT MONOGRAPH</option>
+        </select>
+      </div>
+
+      <div class="status-badge" id="hostStatus">
+        <span class="status-dot online"></span>
+        <span class="status-label">ONLINE</span>
+      </div>
+
+      <button class="tactile-btn header-dock-btn" id="headerWorkspaceDockBtn" title="Outside Repository Workspace Dock [Local Working Tree / Gitea Isolated Mirror]">
+        <span class="dock-badge-mode" id="hdrDockMode">LOCAL</span>
+        <span class="dock-repo-name" id="hdrDockRepo">blue-lodge</span>
+        <span class="dock-branch-name">(<span id="hdrDockBranch">develop</span>)</span>
+        <span class="dock-arrow">▾</span>
+      </button>
+
+      <button class="tactile-btn accent header-workbench-btn" id="headerVimWorkbenchBtn" title="Open Craftsman Multi-Tab Vim Workbench">
+        ⚡ VIM WORKBENCH
+      </button>
+
+      <button class="tool-crib-btn" id="toolCribToggle" title="Open Instrument Rack, Transcripts & Config">
+        <span class="tool-icon">≡</span> TOOL CRIB
+      </button>
+    </div>
+  </header>
+
+  <!-- Outside Repository Workspace Dock Bay (Slide-down drawer) -->
+  <section class="workspace-dock-bay" id="workspaceDockBay" style="display: none;">
+    <div class="dock-bay-inner">
+      <div class="dock-bay-header">
+        <div class="dock-bay-title">
+          <span class="dock-icon">⏣</span> OUTSIDE REPOSITORY WORKSPACE DOCK
+        </div>
+        <div class="dock-bay-status">
+          <span class="dock-status-item">GITEA: <span class="status-indicator online" id="dockGiteaStatus">CONNECTING :3088</span></span>
+          <span class="dock-status-item">RUNNER: <span class="status-indicator online" id="dockRunnerStatus">ACT-RUNNER READY</span></span>
+          <button class="dock-close-btn" id="btnWorkspaceDockClose" title="Close Workspace Dock Bay">✕</button>
+        </div>
+      </div>
+      <div class="dock-bay-body">
+        <div class="dock-mode-selector">
+          <label class="dock-label">OPERATING MODE:</label>
+          <div class="dock-mode-toggles">
+            <button type="button" class="mode-toggle-btn active" data-mode="local" id="dockModeLocal">
+              <span class="mode-title">LOCAL WORKING TREE</span>
+              <span class="mode-desc">Direct in-place pair programming. Isolated branch george/&lt;task&gt; enforced.</span>
+            </button>
+            <button type="button" class="mode-toggle-btn" data-mode="shadow" id="dockModeShadow">
+              <span class="mode-title">GITEA ISOLATED MIRROR</span>
+              <span class="mode-desc">Shadow clone in .george/workspaces/. Host tree untouched. PR + Act-Runner CI.</span>
+            </button>
+          </div>
+        </div>
+        <div class="dock-input-row">
+          <div class="dock-input-group">
+            <label for="dockPathInput" class="dock-label">REPOSITORY ROOT DIRECTORY (WSL / LINUX PATH):</label>
+            <div class="dock-path-box">
+              <input type="text" id="dockPathInput" class="dock-path-input" placeholder="/home/wsl-ops/external-project" value="/home/wsl-ops/blue-lodge">
+              <button class="tactile-btn accent" id="btnExecuteDock">⏣ DOCK WORKSPACE</button>
+            </div>
+          </div>
+        </div>
+        <div class="dock-recent-row">
+          <span class="dock-label">RECENT WORKSPACES:</span>
+          <div class="dock-recent-chips" id="dockRecentChips">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Main Unified Craftsman's Workbench Surface -->
+  <main class="workbench-viewport">
+    <!-- Dedicated Autonomic Task Bay (Sticky top area reserved for up to 3 live auto-tasks) -->
+    <section class="autonomic-task-bay" id="autonomicTaskBay" style="display: none;">
+      <div class="bay-header-bar">
+        <div class="bay-badge-group">
+          <span class="bay-indicator-pulse"></span>
+          <span class="bay-label">AUTONOMIC TASK BAY</span>
+          <button class="bay-cull-btn" id="bayCullBtn" title="Purge stale, orphaned, and dead tasks">[CULL STALE]</button>
+        </div>
+        <span class="bay-count" id="bayActiveCount">0 Live</span>
+      </div>
+      <div class="bay-rail" id="autonomicBayRail">
+        <!-- Up to 3 live/recent tasks in collapsed form with extracted summaries -->
+      </div>
+      <div class="bay-expanded-stage" id="autonomicExpandedStage" style="display: none;">
+        <!-- Single expanded task container (mutually exclusive) -->
+      </div>
+    </section>
+
+    <!-- Continuous Living Conversation & Execution Canvas -->
+    <section class="workbench-stream" id="workbenchStream">
+
+      <!-- Session messages hydrate here dynamically from /api/session -->
+      <div class="welcome-card" id="welcomeCard">
+        <div class="welcome-header">
+          <span class="welcome-symbol">▲</span>
+          <span class="welcome-title">The Craftsman's Workbench</span>
+        </div>
+        <div class="welcome-body">
+          George is at the workbench. Chat freely, dispatch slash commands (<code>/status</code>, <code>/recall</code>, <code>/research</code>), or drag and drop blueprints and artifacts directly into the prompt below.
+        </div>
+      </div>
+    </section>
+
+    <!-- Refined Bottom Dispatch Bar -->
+    <footer class="workbench-footer">
+      <div class="drop-zone" id="dropZone">
+        <div class="drop-label">[ DROP FILE TO STAGE ARTIFACT &amp; COMMAND ]</div>
+      </div>
+      <div class="input-housing">
+        <button class="attach-btn" id="attachBtn" title="Attach file or blueprint">+</button>
+        <input type="file" id="fileInput" style="display: none;">
+        <span class="prompt-caret">&gt;</span>
+        <textarea id="promptInput" rows="1" placeholder="Converse with George or dispatch commands (/help, /status, /recall)..." spellcheck="false"></textarea>
+        <button class="send-btn" id="sendBtn">SEND</button>
+      </div>
+    </footer>
+  </main>
+
+  <!-- Slide-Out Tool Crib Drawer -->
+  <aside class="tool-crib-drawer" id="toolCribDrawer">
+    <div class="drawer-header">
+      <div class="drawer-title">TOOL CRIB &amp; SPEC SHEET</div>
+      <button class="drawer-close" id="drawerClose">✕</button>
+    </div>
+
+    <!-- Drawer Navigation Tabs -->
+    <nav class="drawer-tabs" id="drawerTabs">
+      <button class="drawer-tab-btn active" data-pane="rack">INSTRUMENT RACK</button>
+      <button class="drawer-tab-btn" data-pane="commands">COMMANDS &amp; GUIDE</button>
+      <button class="drawer-tab-btn" data-pane="mcp">MCP HUB &amp; STORE</button>
+      <button class="drawer-tab-btn" data-pane="timemachine">TIME-MACHINE</button>
+      <button class="drawer-tab-btn" data-pane="cron">CRON &amp; SWEEPS</button>
+      <button class="drawer-tab-btn" data-pane="specsheet">SPEC SHEET</button>
+      <button class="drawer-tab-btn" data-pane="chronicle">CHRONICLE &amp; SQLITE</button>
+    </nav>
+
+    <!-- Pane 1: Instrument Rack (Compute Topology & Node Setup) -->
+    <div class="drawer-pane active" id="pane-rack">
+      <div class="section-title">COMPUTE BAYS (LOCAL &amp; CLUSTER)</div>
+      <div class="gpu-rack" id="gpuRack">
+        <!-- Dynamically populated from /api/status -->
+        <div class="bay-card">
+          <div class="bay-header">
+            <span class="bay-name" id="rackGpuName">GPU 0</span>
+            <span class="bay-badge">TIER 1 MASTER</span>
+          </div>
+          <div class="bay-metrics">
+            <div class="metric-item">
+              <span class="m-label">VRAM</span>
+              <span class="m-val" id="rackVram">-- / -- MB</span>
+            </div>
+            <div class="metric-item">
+              <span class="m-label">POWER</span>
+              <span class="m-val" id="rackPower">-- W</span>
+            </div>
+            <div class="metric-item">
+              <span class="m-label">TEMP</span>
+              <span class="m-val" id="rackTemp">-- °C</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-header-row" style="margin-top: 16px;">
+        <div class="section-title">INFERENCE NODES &amp; TIERS (4-TIER LADDER)</div>
+        <button class="tactile-btn" id="btnEditEndpointsConf" style="font-size: 11px;">⚡ EDIT ENDPOINTS.CONF (VIM)</button>
+      </div>
+
+      <!-- SSH Tunnel & ProxyJump Banner for Remote GPUs (5700XT) -->
+      <div class="tunnel-status-banner" id="tunnelStatusBanner">
+        <div class="tunnel-banner-info">
+          <span class="tunnel-status-dot" id="tunnelStatusDot"></span>
+          <span class="tunnel-status-title">SSH TUNNEL:</span>
+          <span class="tunnel-status-desc" id="tunnelStatusDesc" style="font-size: 10px; opacity: 0.85;">PROBING TUNNEL...</span>
+        </div>
+        <div class="tunnel-banner-actions">
+          <button class="tactile-btn" id="btnConnectTunnel" style="font-size: 10px;">⚡ RE-ESTABLISH TUNNEL</button>
+        </div>
+      </div>
+
+      <div class="node-list" id="nodeList">
+        <!-- Populated from /api/status -->
+      </div>
+
+      <button class="add-node-btn" id="addNodeBtn">+ DOCK COMPUTE NODE (LAN / PROXYJUMP)</button>
+    </div>
+
+    <!-- Pane: Commands Catalog & Craftsman Onboarding Guide -->
+    <div class="drawer-pane" id="pane-commands">
+      <div class="section-header-row">
+        <div class="section-title">SLASH COMMANDS INDEX (38+)</div>
+        <div class="commands-header-links">
+          <button class="tactile-btn" id="btnJumpSqliteBm25">SEARCH IN BM25 FTS5 ↗</button>
+        </div>
+      </div>
+      <div class="search-box">
+        <input type="text" id="commandSearchInput" placeholder="Filter commands by name, syntax, or keyword (e.g. 'recall', 'research', 'fix')...">
+      </div>
+      <div class="command-catalog-list" id="commandCatalogList">
+        <div class="loading-state">Cataloging slash commands...</div>
+      </div>
+
+      <div class="section-title" style="margin-top: 24px;">CRAFTSMAN'S ONBOARDING &amp; FIELD GUIDE</div>
+      <div class="onboarding-guide-container">
+        <div class="guide-card">
+          <div class="guide-badge">FOUNDATION</div>
+          <div class="guide-title">Sovereign High-Performance Architecture</div>
+          <p class="guide-text">
+            George runs entirely on your local metal via <code>llama-server</code> with zero telemetry and zero external cloud dependency. All inferences, git sandboxes, and social monographs are signed with Ed25519 cryptography.
+          </p>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-badge">AUTONOMIC LOOP</div>
+          <div class="guide-title">Autonomic Task Bay &amp; Sweeps</div>
+          <p class="guide-text">
+            The Autonomic Task Bay at the top of the workbench monitors live background activity. Tasks run autonomously:
+          </p>
+          <ul class="guide-list">
+            <li><strong>Discord Gateway:</strong> Bi-directional conversational bridge on dedicated channels.</li>
+            <li><strong>Autonomic Sentinel:</strong> Continuous PR reviews, issue sweeps, and GPU health checks.</li>
+            <li><strong>Auto-Remediation:</strong> Circuit breaker isolation and automated branch recovery.</li>
+            <li><strong>Deep Research:</strong> 5-phase academic paper investigation, arXiv extraction, and monograph publishing.</li>
+          </ul>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-badge">OPERATOR STEERING</div>
+          <div class="guide-title">Intervention &amp; Safety Controls</div>
+          <p class="guide-text">
+            Every autonomic task exposes real-time operator intervention controls:
+          </p>
+          <ul class="guide-list">
+            <li><strong>PAUSE / RESUME:</strong> Freezes task execution safely at phase boundaries.</li>
+            <li><strong>INJECT GUIDANCE:</strong> Steers George's reasoning trajectory with custom prompts.</li>
+            <li><strong>TERMINATE (Double-Confirmation):</strong> Immediate recursive process termination (<code>pkill -P</code>), worktree unmounting, sandbox destruction, and lock cleanup.</li>
+            <li><strong>CULL STALE:</strong> Purges dead PID files, inactive sandboxes, and orphaned locks.</li>
+          </ul>
+        </div>
+
+        <div class="guide-card">
+          <div class="guide-badge">DISPATCH &amp; RECALL</div>
+          <div class="guide-title">Fast Recall, Journal &amp; Artifacts</div>
+          <p class="guide-text">
+            Use <code>/recall &lt;query&gt;</code> for BM25-ranked full-text retrieval from the SQLite FTS5 index. Drag-and-drop any code or blueprint file directly into the workbench to stage it as an artifact.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pane 2: Time-Machine (Past Transcripts & Pruning) -->
+    <div class="drawer-pane" id="pane-timemachine">
+      <div class="section-title">SOVEREIGN ARCHIVE &amp; TRANSCRIPTS</div>
+      <div class="search-box">
+        <input type="text" id="transcriptSearch" placeholder="Filter past tasks &amp; transcripts...">
+      </div>
+      <div class="transcript-list" id="transcriptList">
+        <div class="loading-state">Cataloging transcripts...</div>
+      </div>
+    </div>
+
+    <!-- Pane 3: Spec Sheet (Tony Fadell 3-Chamber Progressive Architecture) -->
+    <div class="drawer-pane" id="pane-specsheet">
+      <!-- Chamber 1: The Master 24-Inch Gauge -->
+      <div class="chamber-card">
+        <div class="chamber-header">
+          <span class="chamber-badge">CHAMBER 1</span>
+          <span class="chamber-title">THE MASTER 24-INCH GAUGE</span>
+        </div>
+        <div class="chamber-body">
+          <div class="spec-row">
+            <div class="spec-meta">
+              <span class="spec-name">MAX RESEARCH TURNS</span>
+              <span class="spec-desc">Turn budget before synthesizing final monograph</span>
+            </div>
+            <div class="spec-control">
+              <input type="range" id="gaugeTurnsRange" min="5" max="50" value="25" class="spec-slider">
+              <span class="spec-val-badge" id="gaugeTurnsVal">25</span>
+            </div>
+          </div>
+
+          <div class="spec-row">
+            <div class="spec-meta">
+              <span class="spec-name">COGNITIVE TEMPERATURE</span>
+              <span class="spec-desc">Sampling randomness: 0.1 Analytical to 0.8 Creative</span>
+            </div>
+            <div class="spec-control">
+              <input type="range" id="gaugeTempRange" min="10" max="80" value="40" class="spec-slider">
+              <span class="spec-val-badge" id="gaugeTempVal">0.40</span>
+            </div>
+          </div>
+
+          <div class="spec-row">
+            <div class="spec-meta">
+              <span class="spec-name">STREAM PACING (UX)</span>
+              <span class="spec-desc">Typewriter token pacing rate in workbench view</span>
+            </div>
+            <div class="spec-control">
+              <select id="gaugePacingSelect" class="spec-select">
+                <option value="30">Paced Craftsman (30 tok/s)</option>
+                <option value="60">High-Throughput (60 tok/s)</option>
+                <option value="0">Instant (Raw Delivery)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="spec-row">
+            <div class="spec-meta">
+              <span class="spec-name">EXECUTION TIMEOUT</span>
+              <span class="spec-desc">Maximum seconds allocated per inference call</span>
+            </div>
+            <div class="spec-control">
+              <input type="number" id="gaugeTimeoutInput" value="180" min="30" max="600" class="spec-input-num">
+              <span class="unit-label">sec</span>
+            </div>
+          </div>
+
+          <button class="save-specs-btn" id="saveGaugeBtn">CALIBRATE 24-INCH GAUGE</button>
+        </div>
+      </div>
+
+      <!-- Chamber 2: Physical Intent Trays (Collapsible Accordions) -->
+      <div class="section-title" style="margin-top: 20px;">CHAMBER 2: INTENT TRAYS</div>
+      
+      <!-- Tray 1: Sampling & Inference -->
+      <div class="tray-card">
+        <div class="tray-header" data-target="tray-sampling-body">
+          <span class="tray-icon">⚙</span>
+          <span class="tray-title">INFERENCE &amp; SAMPLING HYPERPARAMETERS</span>
+          <span class="tray-arrow">▼</span>
+        </div>
+        <div class="tray-body" id="tray-sampling-body">
+          <div class="spec-item-row">
+            <label>LLM_TOP_P</label>
+            <input type="text" id="cfg_LLM_TOP_P" value="0.95" class="tray-input">
+          </div>
+          <div class="spec-item-row">
+            <label>LLM_MIN_P</label>
+            <input type="text" id="cfg_LLM_MIN_P" value="0.05" class="tray-input">
+          </div>
+          <div class="spec-item-row">
+            <label>LLM_TOP_K</label>
+            <input type="text" id="cfg_LLM_TOP_K" value="20" class="tray-input">
+          </div>
+          <div class="spec-item-row">
+            <label>LLM_REPEAT_PENALTY</label>
+            <input type="text" id="cfg_LLM_REPEAT_PENALTY" value="1.0" class="tray-input">
+          </div>
+        </div>
+      </div>
+
+      <!-- Tray 2: Autonomic Sentinel & Remediation -->
+      <div class="tray-card">
+        <div class="tray-header" data-target="tray-autonomic-body">
+          <span class="tray-icon">🛡</span>
+          <span class="tray-title">AUTONOMIC SENTINEL &amp; REMEDIATION</span>
+          <span class="tray-arrow">▼</span>
+        </div>
+        <div class="tray-body" id="tray-autonomic-body">
+          <div class="spec-item-row">
+            <label>CRON_INTERVAL_POPUP</label>
+            <input type="text" id="cfg_CRON_INTERVAL_POPUP" value="300" class="tray-input">
+          </div>
+          <div class="spec-item-row">
+            <label>CRON_POPUP_TERMINAL</label>
+            <input type="text" id="cfg_CRON_POPUP_TERMINAL" value="0" class="tray-input" title="0 = Silenced into webview">
+          </div>
+          <div class="spec-item-row">
+            <label>MAX_REMEDIATION_ATTEMPTS</label>
+            <input type="text" id="cfg_MAX_REMEDIATION_ATTEMPTS" value="3" class="tray-input">
+          </div>
+          <div class="spec-item-row">
+            <label>SENTINEL_AUTO_HEAL</label>
+            <input type="text" id="cfg_SENTINEL_AUTO_HEAL" value="1" class="tray-input">
+          </div>
+        </div>
+      </div>
+
+      <!-- Tray 3: Memory, Vault & Decay -->
+      <div class="tray-card">
+        <div class="tray-header" data-target="tray-memory-body">
+          <span class="tray-icon">🧠</span>
+          <span class="tray-title">MEMORY VAULT, BM25 &amp; DECAY</span>
+          <span class="tray-arrow">▼</span>
+        </div>
+        <div class="tray-body" id="tray-memory-body">
+          <div class="spec-item-row">
+            <label>RECALL_USER_PREF_MAX</label>
+            <input type="text" id="cfg_RECALL_USER_PREF_MAX" value="10" class="tray-input">
+          </div>
+          <div class="spec-item-row">
+            <label>DECAY_VIVID_DAYS</label>
+            <input type="text" id="cfg_DECAY_VIVID_DAYS" value="7" class="tray-input">
+          </div>
+          <div class="spec-item-row">
+            <label>DECAY_FADING_DAYS</label>
+            <input type="text" id="cfg_DECAY_FADING_DAYS" value="30" class="tray-input">
+          </div>
+        </div>
+      </div>
+
+      <!-- Chamber 3: Raw Blueprint Sheet Toggle -->
+      <div class="section-title" style="margin-top: 20px;">CHAMBER 3: RAW BLUEPRINT SHEET</div>
+      <button class="toggle-raw-btn" id="toggleRawBtn">SWITCH TO RAW .CONF EDITOR</button>
+      <div class="raw-editor-container" id="rawEditorContainer" style="display: none;">
+        <div class="raw-tabs">
+          <button class="raw-tab active" data-file="limits">LIMITS.CONF</button>
+          <button class="raw-tab" data-file="endpoints">ENDPOINTS.CONF</button>
+          <button class="raw-tab" data-file="keys">KEYS.CONF</button>
+        </div>
+        <textarea id="rawConfTextarea" spellcheck="false" rows="12"></textarea>
+        <button class="save-specs-btn" id="saveRawBtn">COMMIT RAW BLUEPRINT</button>
+      </div>
+    </div>
+
+    <!-- Pane 4: Chronicle & SQLite BM25 Studio -->
+    <div class="drawer-pane" id="pane-chronicle">
+      <div class="chronicle-subtabs">
+        <button class="chronicle-tab-btn active" data-sub="george">GEORGE.MD SPECIFICATION</button>
+        <button class="chronicle-tab-btn" data-sub="sqlite">SQLITE &amp; BM25 STUDIO</button>
+      </div>
+
+      <!-- Sub-pane A: GEORGE.md Live Editor -->
+      <div class="chronicle-subpane active" id="subpane-george">
+        <div class="section-title">SOVEREIGN WORKSPACE BLUEPRINT (GEORGE.MD)</div>
+        <textarea id="georgeMdEditor" class="chronicle-textarea" spellcheck="false" rows="18"></textarea>
+        <button class="save-specs-btn" id="saveGeorgeMdBtn">SAVE GEORGE.MD SPECIFICATION</button>
+      </div>
+
+      <!-- Sub-pane B: SQLite BM25 & SQL Studio -->
+      <div class="chronicle-subpane" id="subpane-sqlite">
+        <div class="section-title">BM25 FULL-TEXT SEARCH (RECALL.DB)</div>
+        <div class="search-box">
+          <input type="text" id="bm25SearchInput" placeholder="Search full-text BM25 index (e.g. 'quantum', 'research')...">
+        </div>
+
+        <div class="section-title" style="margin-top: 14px;">SQL QUERY WORKBENCH</div>
+        <div class="quick-sql-chips">
+          <button class="sql-chip" data-sql="SELECT rowid, source, section, bm25(chunks_fts) as score FROM chunks_fts WHERE chunks_fts MATCH 'research' ORDER BY score LIMIT 10;">BM25 Research</button>
+          <button class="sql-chip" data-sql="SELECT id, source, section, indexed_at FROM chunks WHERE source = 'journal' ORDER BY id DESC LIMIT 10;">Recent Journal</button>
+          <button class="sql-chip" data-sql="SELECT name, type FROM sqlite_master WHERE type IN ('table','view');">Table Schema</button>
+          <button class="sql-chip" data-sql="SELECT source, count(*) as count FROM chunks GROUP BY source;">Chunks by Source</button>
+        </div>
+        <textarea id="sqlQueryInput" class="sql-input" rows="3" placeholder="SELECT * FROM chunks LIMIT 10;"></textarea>
+        <button class="save-specs-btn" id="executeSqlBtn">EXECUTE QUERY</button>
+
+        <div class="sql-results-viewport" id="sqlResults">
+          <div class="item-meta">Query results will render in tabular format here.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pane 5: Scheduled Sweeps & Autonomic Cron Suite -->
+    <div class="drawer-pane" id="pane-cron">
+      <div class="section-header-row">
+        <div class="section-title">AUTONOMIC SWEEPS &amp; CRON SUITE</div>
+        <div class="cron-top-actions">
+          <button class="tactile-btn" id="btnOpenScriptEditor">📝 SCRIPT / FILE EDITOR</button>
+          <button class="tactile-btn" id="btnShowPromptGen">⚡ GENERATE VIA PROMPT</button>
+          <button class="tactile-btn accent" id="btnNewCronJob">+ NEW SWEEP</button>
+        </div>
+      </div>
+
+      <!-- Autonomic Daemon Status & Lifecycle Control Banner -->
+      <div class="daemon-status-banner" id="daemonStatusBanner">
+        <div class="daemon-banner-info">
+          <span class="daemon-status-dot" id="daemonStatusDot"></span>
+          <span class="daemon-status-title">AUTONOMIC CRON DAEMON:</span>
+          <span class="daemon-status-badge" id="daemonStatusBadge">CHECKING...</span>
+        </div>
+        <div class="daemon-banner-actions">
+          <button class="tactile-btn" id="btnStartDaemon">▶ START</button>
+          <button class="tactile-btn" id="btnRestartDaemon">🔄 RESTART</button>
+          <button class="tactile-btn danger" id="btnStopDaemon">⏹ STOP</button>
+        </div>
+      </div>
+
+      <!-- Natural Language Prompt Generator Card (Collapsible) -->
+      <div class="cron-gen-card" id="cronGenCard" style="display: none;">
+        <div class="gen-card-title">GENERATE CRON SWEEP WITH GEORGE</div>
+        <div class="gen-card-hint">Describe the recurring task (e.g. "Snapshot uncommitted git changes every 30 minutes" or "Probe cluster endpoints every 2 minutes"):</div>
+        <textarea class="gen-prompt-input" id="cronPromptInput" rows="2" placeholder="Tell George what to schedule..."></textarea>
+        <div class="gen-card-actions">
+          <button class="tactile-btn" id="btnCancelGen">CANCEL</button>
+          <button class="tactile-btn accent" id="btnSubmitGen">GENERATE SPECIFICATION</button>
+        </div>
+      </div>
+
+      <!-- Manual Job Creation / Editing Modal Form (Collapsible) -->
+      <div class="cron-edit-card" id="cronEditCard" style="display: none;">
+        <div class="edit-card-title" id="cronEditTitle">NEW AUTONOMIC SWEEP</div>
+        <div class="edit-field">
+          <label for="cronJobName">SWEEP NAME (SLUG):</label>
+          <input type="text" id="cronJobName" class="form-input" placeholder="e.g. repo_snapshot">
+        </div>
+        <div class="edit-field">
+          <label for="cronJobInterval">INTERVAL (SECONDS):</label>
+          <div class="interval-input-group">
+            <input type="number" id="cronJobInterval" class="form-input" value="60" min="5">
+            <span class="interval-helper" id="intervalHelper">Every 1 minute</span>
+          </div>
+        </div>
+        <div class="edit-field">
+          <label for="cronJobDesc">DESCRIPTION:</label>
+          <input type="text" id="cronJobDesc" class="form-input" placeholder="Brief description of purpose">
+        </div>
+        <div class="edit-field">
+          <label for="cronJobCmd">POSIX BASH SCRIPT / COMMAND:</label>
+          <textarea id="cronJobCmd" class="form-textarea code-area" rows="4" placeholder="#!/bin/bash&#10;echo 'Running sweep...'"></textarea>
+        </div>
+        <input type="hidden" id="cronJobIsSystem" value="false">
+        <div class="edit-card-actions">
+          <button class="tactile-btn" id="btnCancelCronEdit">CANCEL</button>
+          <button class="tactile-btn accent" id="btnSaveCronJob">SAVE SCHEDULED SWEEP</button>
+        </div>
+      </div>
+
+      <!-- Job List Container -->
+      <div class="cron-job-list" id="cronJobList">
+        <!-- Dynamically rendered from /api/cron -->
+      </div>
+
+      <!-- Agentic Research Graph Configuration & Directives -->
+      <div class="section-header-row" style="margin-top: 24px;">
+        <div class="section-title">AGENTIC RESEARCH GRAPH CONFIG (5 PHASES)</div>
+        <button class="tactile-btn" id="btnEditResearchScript" style="font-size: 11px;">⚡ EDIT RESEARCH SCRIPT (VIM)</button>
+      </div>
+      <div class="research-config-card">
+        <div class="research-graph-phases" id="researchPhasesDisplay">
+          <!-- 5 Phases dynamically rendered -->
+        </div>
+
+        <div class="edit-field" style="margin-top: 14px;">
+          <label for="researchCandidateTopics">CANDIDATE TOPICS POOL (ONE PER LINE):</label>
+          <textarea id="researchCandidateTopics" class="form-textarea code-area" rows="4" placeholder="Enter candidate research topics..."></textarea>
+        </div>
+
+        <div class="edit-field">
+          <label for="researchDirectives">RESEARCH MANDATE &amp; DIRECTIVES (SOUL.MD):</label>
+          <textarea id="researchDirectives" class="form-textarea" rows="3" placeholder="Core research directives..."></textarea>
+        </div>
+
+        <div class="research-config-row">
+          <div class="research-config-item">
+            <label for="researchTemperature">TEMPERATURE:</label>
+            <input type="number" id="researchTemperature" class="form-input" min="0.0" max="1.0" step="0.05" value="0.30">
+          </div>
+          <div class="research-config-item">
+            <label for="researchMaxTokens">MAX TOKENS:</label>
+            <input type="number" id="researchMaxTokens" class="form-input" min="500" max="8192" step="500" value="4500">
+          </div>
+          <div class="research-config-item checkbox-item">
+            <label><input type="checkbox" id="researchPublishSocial" checked> SYNDICATE TO SOCIAL</label>
+          </div>
+        </div>
+
+        <div class="edit-card-actions">
+          <button class="tactile-btn accent" id="btnSaveResearchConfig">SAVE RESEARCH GRAPH DIRECTIVES</button>
+          <span class="research-save-status" id="researchSaveStatus"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pane 6: MCP Hub & Store (Model Context Protocol) -->
+    <div class="drawer-pane" id="pane-mcp">
+      <div class="mcp-subtabs">
+        <button class="mcp-subtab-btn active" data-sub="active">ACTIVE SERVERS &amp; CONTROL</button>
+        <button class="mcp-subtab-btn" data-sub="store">MCP STORE (1-CLICK CATALOG)</button>
+        <button class="mcp-subtab-btn" data-sub="custom">CUSTOM BASH BUILDER</button>
+      </div>
+
+      <!-- Subpane 1: Active Servers -->
+      <div class="mcp-subpane active" id="mcpsub-active">
+        <div class="section-header-row">
+          <div class="section-title">CONFIGURED MCP SERVERS</div>
+          <div class="cron-top-actions">
+            <button class="tactile-btn" id="btnRefreshMcp">🔄 REFRESH</button>
+            <button class="tactile-btn" id="btnShowAddMcpModal">+ REGISTER EXTERNAL</button>
+          </div>
+        </div>
+
+        <div class="mcp-quick-banner" id="mcpGlobalBanner">
+          <div class="mcp-banner-stats">
+            <span class="mcp-stat-item"><strong id="mcpCountOnline">0</strong> ONLINE</span>
+            <span class="mcp-stat-item"><strong id="mcpCountTotal">0</strong> CONFIGURED</span>
+            <span class="mcp-stat-item"><strong id="mcpCountTools">0</strong> DISCOVERED TOOLS</span>
+          </div>
+          <div class="mcp-banner-desc">Stdio JSON-RPC 2.0 Client • Zero-Node Bash Core • Autonomous Tool Injection</div>
+        </div>
+
+        <!-- Add Server Drawer/Card -->
+        <div class="mcp-edit-card" id="mcpAddCard" style="display: none;">
+          <div class="edit-card-title">REGISTER MCP SERVER</div>
+          <div class="edit-field">
+            <label for="mcpNewName">SERVER NAME (IDENTIFIER):</label>
+            <input type="text" id="mcpNewName" class="form-input" placeholder="e.g. playwright, my-tool">
+          </div>
+          <div class="edit-field">
+            <label for="mcpNewCmd">START COMMAND (STDIO JSON-RPC):</label>
+            <input type="text" id="mcpNewCmd" class="form-input code-area" placeholder="e.g. npx -y @automata-ai/mcp-playwright or bash /path/to/server.sh">
+          </div>
+          <div class="edit-field">
+            <label for="mcpNewDesc">DESCRIPTION:</label>
+            <input type="text" id="mcpNewDesc" class="form-input" placeholder="Purpose and tools exposed">
+          </div>
+          <div class="edit-card-actions">
+            <button class="tactile-btn" id="btnCancelAddMcp">CANCEL</button>
+            <button class="tactile-btn accent" id="btnSaveAddMcp">SAVE &amp; REGISTER</button>
+          </div>
+        </div>
+
+        <div class="mcp-server-list" id="mcpServerList">
+          <!-- Dynamically populated from /api/mcp/servers -->
+        </div>
+      </div>
+
+      <!-- Subpane 2: MCP Store (1-Click Catalog) -->
+      <div class="mcp-subpane" id="mcpsub-store">
+        <div class="section-header-row">
+          <div class="section-title">MCP STORE &amp; HARDWARE BRIDGES</div>
+          <span class="item-meta" id="mcpPrereqSummary">Scanning environment prerequisites...</span>
+        </div>
+
+        <div class="mcp-store-filter-bar">
+          <button class="mcp-filter-chip active" data-filter="all">ALL</button>
+          <button class="mcp-filter-chip" data-filter="browser">BROWSER &amp; TESTING</button>
+          <button class="mcp-filter-chip" data-filter="cad">CAD &amp; HARDWARE</button>
+          <button class="mcp-filter-chip" data-filter="cloud">CLOUD &amp; INFRA</button>
+          <button class="mcp-filter-chip" data-filter="pure-bash">PURE BASH</button>
+        </div>
+
+        <div class="mcp-store-grid" id="mcpStoreGrid">
+          <!-- Dynamically populated from /api/mcp/catalog -->
+        </div>
+      </div>
+
+      <!-- Subpane 3: Custom Bash Server Builder -->
+      <div class="mcp-subpane" id="mcpsub-custom">
+        <div class="section-header-row">
+          <div class="section-title">PURE-BASH MCP SERVER SCAFFOLD</div>
+          <button class="tactile-btn" id="btnResetBashTemplate">RESTORE STARTER TEMPLATE</button>
+        </div>
+        <div class="item-meta" style="margin-bottom: 12px;">
+          Author zero-dependency, ultra-fast JSON-RPC 2.0 stdio MCP servers in pure bash. George compiles and registers them instantly with atomic FIFO transport.
+        </div>
+
+        <div class="edit-field">
+          <label for="customMcpName">SERVER NAME (SLUG):</label>
+          <input type="text" id="customMcpName" class="form-input" placeholder="e.g. repo_analyzer">
+        </div>
+        <div class="edit-field">
+          <label for="customMcpDesc">SERVER DESCRIPTION:</label>
+          <input type="text" id="customMcpDesc" class="form-input" placeholder="e.g. Custom codebase metric analyzer for George">
+        </div>
+        <div class="edit-field">
+          <label for="customMcpCode">BASH SCRIPT (STDIO PROTOCOL HANDLER):</label>
+          <textarea id="customMcpCode" class="form-textarea code-area" rows="18" spellcheck="false"></textarea>
+        </div>
+        <div class="edit-card-actions">
+          <button class="tactile-btn accent" id="btnDeployCustomMcp">⚡ COMPILE &amp; DOCK SERVER</button>
+          <span class="mcp-deploy-status" id="mcpDeployStatus"></span>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Add / Dock Compute Node Modal -->
+  <div class="modal-overlay" id="nodeModal">
+    <div class="modal-card" style="max-width: 580px;">
+      <div class="modal-header">
+        <div class="modal-title">DOCK COMPUTE NODE &amp; MODEL LADDER</div>
+        <button class="modal-close" id="nodeModalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field-group">
+          <label>NODE TIER / ROLE</label>
+          <select id="newNodeTier">
+            <option value="tier3">Tier 3: Frontier Sovereign (Mac Studio M-Series Metal/MLX)</option>
+            <option value="tier1" selected>Tier 1: Primary Workhorse (CUDA RTX 3060 12GB)</option>
+            <option value="tier2">Tier 2: Secondary / Remote Cluster (AMD Radeon RX 5700 XT)</option>
+            <option value="tier0">Tier 0: Edge Mobile Fallback (Termux / Ollama)</option>
+          </select>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+          <div class="field-group">
+            <label>NODE IDENTIFIER (SLUG)</label>
+            <input type="text" id="newNodeName" placeholder="e.g. legacy-5700xt">
+          </div>
+          <div class="field-group">
+            <label>ACTIVE MODEL</label>
+            <input type="text" id="newNodeModel" placeholder="e.g. gemma-4-12b-agentic">
+          </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+          <div class="field-group">
+            <label>CONTEXT WINDOW (TOKENS)</label>
+            <input type="number" id="newNodeContext" value="8192" min="1024" max="131072" step="1024">
+          </div>
+          <div class="field-group">
+            <label>HARDWARE DESCRIPTION</label>
+            <input type="text" id="newNodeHardware" placeholder="e.g. AMD Radeon RX 5700 XT (ROCm / Vulkan)">
+          </div>
+        </div>
+        <div class="field-group">
+          <label>PROVIDER ENGINE / FRAMEWORK</label>
+          <select id="newNodeProvider">
+            <option value="llama.cpp">llama.cpp / llama-server</option>
+            <option value="ollama">Ollama</option>
+            <option value="vllm">vLLM</option>
+            <option value="lmstudio">LM Studio</option>
+            <option value="metal-mlx">Metal / MLX Native</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label>TARGET ENDPOINT URL</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="newNodeUrl" placeholder="http://127.0.0.1:8080 or http://mac-m5.local:8080" style="flex: 1;">
+            <button class="tactile-btn" id="testNodeBtn" style="white-space: nowrap;">AUTO-PROBE</button>
+          </div>
+        </div>
+        <div class="field-group">
+          <label>VIA JUMP BOX (OPTIONAL SSH PROXYJUMP)</label>
+          <input type="text" id="newNodeJump" placeholder="user@bastion.local (optional)">
+        </div>
+        <div class="field-group" style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+          <input type="checkbox" id="newNodeEnabled" checked style="width: auto; margin: 0;">
+          <label for="newNodeEnabled" style="margin: 0; cursor: pointer; font-size: 11px;">ENABLE THIS NODE IN INFERENCE LADDER</label>
+        </div>
+        <div class="test-feedback" id="nodeTestFeedback"></div>
+
+        <!-- Model Pull & CLI Staging Assistant -->
+        <div class="model-staging-section" style="margin-top: 14px; border-top: 1px solid var(--border-color); padding-top: 12px;">
+          <div style="font-size: 11px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">MODEL DOWNLOAD &amp; STAGING ASSISTANT</div>
+          <div class="field-group">
+            <label>MODEL IDENTIFIER / HUGGING FACE REPO</label>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="stageModelName" placeholder="e.g. bartowski/Llama-3.2-3B-Instruct-GGUF or llama3.2:3b" style="flex: 1;">
+              <button class="tactile-btn" id="stagePullBtn" style="white-space: nowrap;">STAGE CLI</button>
+            </div>
+          </div>
+          <div id="stagedCommandBox" style="display: none; margin-top: 10px;">
+            <div style="font-size: 10px; color: var(--text-muted); margin-bottom: 4px;">STAGED COMMAND FOR PROVIDER:</div>
+            <pre id="stagedCommandCode" class="code-box"></pre>
+            <div style="display: flex; gap: 8px; margin-top: 6px;">
+              <button class="mini-action" id="copyStagedCmdBtn">📋 COPY COMMAND</button>
+              <button class="mini-action accent" id="dispatchSshBtn">🚀 DISPATCH VIA SSH</button>
+              <span id="dispatchStatus" style="font-size: 10px; align-self: center; margin-left: 6px;"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="closeNodeBtn">CANCEL</button>
+        <button class="btn-primary" id="saveNodeBtn">DOCK NODE</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Craftsman In-Browser Script & File Editor Modal (with Multi-Tab Vim Mode) -->
+  <div class="modal-overlay" id="scriptEditorModal">
+    <div class="script-editor-card">
+      <div class="script-editor-header">
+        <div class="script-editor-title-group">
+          <div class="workbench-brand">
+            <span class="workbench-brand-logo">⚡ CRAFTSMAN</span>
+          </div>
+
+          <!-- Unified Layout Toggles -->
+          <div class="workbench-layout-toggles">
+            <button class="tactile-btn layout-btn" id="btnToggleFileSidebar" title="Toggle File Explorer (📁)">📁 FILES</button>
+            <button class="tactile-btn layout-btn split-toggle-btn" id="btnToggleSplitPane" title="Tile two 88-column editor panes side-by-side">◫ SPLIT</button>
+            <button class="tactile-btn layout-btn accent copilot-toggle-btn" id="btnToggleCopilot" title="Toggle George Co-Pilot Drawer">◨ COPILOT</button>
+          </div>
+
+          <!-- Compact Path Pill (auto-truncates) -->
+          <div class="script-path-pill" title="Current file path (edit to Save As)">
+            <input type="text" class="script-editor-path-input" id="scriptEditorPath" value=".george/cron_jobs/research_publisher.sh" spellcheck="false">
+          </div>
+          <span class="script-dirty-indicator" id="scriptDirtyIndicator">● MODIFIED</span>
+        </div>
+
+        <div class="script-editor-header-actions">
+          <!-- Vim Mode Badge & Legend -->
+          <button type="button" class="vim-mode-badge insert" id="vimModeBadge" title="Click or press Esc / i to toggle mode">INSERT</button>
+          <button type="button" class="tactile-btn vim-legend-btn" id="btnToggleVimLegend" title="View ported Vim command reference">⌨ VIM ▾</button>
+
+          <!-- Hidden stubs to keep existing JS / DOM queries completely safe -->
+          <button class="tactile-btn" id="btnNewTab" style="display: none;"></button>
+          <button class="tactile-btn" id="btnDiscardScript" style="display: none;"></button>
+
+          <!-- Primary Save Action -->
+          <button class="tactile-btn accent save-btn" id="btnSaveScript" title="Save active buffer (Ctrl+S / :w)">💾 SAVE</button>
+
+          <!-- Window Chrome -->
+          <button class="tactile-btn maximize-btn" id="btnToggleEditorMaximize" title="Toggle full-monitor workspace view (Fullscreen)">⤢</button>
+          <button class="modal-close" id="scriptEditorClose" title="Close workbench (Esc / :qa)">✕</button>
+        </div>
+      </div>
+
+      <!-- Vim Command Reference & Capabilities Legend Dropdown -->
+      <div class="vim-legend-dropdown" id="vimLegendDropdown" style="display: none;">
+        <div class="vim-legend-header">
+          <div class="vim-legend-title">
+            <span>⌨ CRAFTSMAN VIM COMMAND REFERENCE</span>
+            <span class="vim-legend-subtitle">Ported native keystrokes & Ex-commands</span>
+          </div>
+          <button class="legend-close-btn" id="btnCloseVimLegend" title="Close legend">✕</button>
+        </div>
+        <div class="vim-legend-grid">
+          <div class="vim-legend-col">
+            <div class="vim-col-title">MODES & MOTIONS</div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>i</kbd> / <kbd>a</kbd></span>
+              <span class="vim-cmd-desc">Enter <strong>INSERT</strong> mode to type text</span>
+            </div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>Esc</kbd></span>
+              <span class="vim-cmd-desc">Return to <strong>NORMAL</strong> command mode</span>
+            </div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>gg</kbd></span>
+              <span class="vim-cmd-desc">Jump to line 1 (start of file)</span>
+            </div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>G</kbd></span>
+              <span class="vim-cmd-desc">Jump to last line (end of file)</span>
+            </div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>gf</kbd></span>
+              <span class="vim-cmd-desc">Go to file: jump to referenced script/module under cursor</span>
+            </div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>gt</kbd> / <kbd>gT</kbd></span>
+              <span class="vim-cmd-desc">Next tab / Previous tab buffer</span>
+            </div>
+
+            <div class="vim-col-title" style="margin-top: 10px;">LINE & CLIPBOARD</div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>dd</kbd></span>
+              <span class="vim-cmd-desc">Delete entire current line</span>
+            </div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>yy</kbd></span>
+              <span class="vim-cmd-desc">Yank (copy) current line to system clipboard</span>
+            </div>
+          </div>
+
+          <div class="vim-legend-col">
+            <div class="vim-col-title">EX-COMMANDS (:)</div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>:w</kbd> / <kbd>:w!</kbd></span>
+              <span class="vim-cmd-desc">Save active buffer (validates via <code>bash -n</code>)</span>
+            </div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>:q</kbd></span>
+              <span class="vim-cmd-desc">Quit active buffer (blocks if modified)</span>
+            </div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>:q!</kbd></span>
+              <span class="vim-cmd-desc"><strong>Force quit</strong> active buffer without saving changes</span>
+            </div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>:wq</kbd> / <kbd>:x</kbd></span>
+              <span class="vim-cmd-desc">Save buffer and close tab</span>
+            </div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>:bd</kbd> / <kbd>:bd!</kbd></span>
+              <span class="vim-cmd-desc">Buffer delete (close tab / force close tab)</span>
+            </div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>:qa</kbd> / <kbd>:qa!</kbd></span>
+              <span class="vim-cmd-desc">Quit all tabs & exit editor / Force quit all</span>
+            </div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>:tabnew</kbd></span>
+              <span class="vim-cmd-desc">Open a new blank script buffer</span>
+            </div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>:e &lt;path&gt;</kbd></span>
+              <span class="vim-cmd-desc">Open specified file path in new tab</span>
+            </div>
+          </div>
+
+          <div class="vim-legend-col">
+            <div class="vim-col-title">SURROUND EXTENSION (vim-surround)</div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>cs&lt;old&gt;&lt;new&gt;</kbd></span>
+              <span class="vim-cmd-desc">Change delimiter: replace <code>"foo"</code> with <code>'foo'</code> via <code>cs"'</code></span>
+            </div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>ds&lt;char&gt;</kbd></span>
+              <span class="vim-cmd-desc">Delete delimiter: strip quotes from <code>"foo"</code> via <code>ds"</code></span>
+            </div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>ysiw&lt;char&gt;</kbd></span>
+              <span class="vim-cmd-desc">Surround inner word: wrap current word in <code>"..."</code>, <code>(...)</code></span>
+            </div>
+
+            <div class="vim-col-title" style="margin-top: 10px;">GLOBAL SHORTCUTS</div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>Ctrl+S</kbd></span>
+              <span class="vim-cmd-desc">Instant save & syntax check</span>
+            </div>
+            <div class="vim-cmd-row">
+              <span class="vim-kbd-badge"><kbd>Tab</kbd></span>
+              <span class="vim-cmd-desc">2-space indentation (Insert mode)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Multi-Tab Buffer Bar -->
+      <div class="script-tab-bar" id="scriptTabBar">
+        <div class="script-tabs-container" id="scriptTabsList">
+          <!-- Rendered dynamically -->
+        </div>
+        <button class="add-tab-btn" id="btnQuickNewTab" title="Open new blank file (+)">+</button>
+      </div>
+
+      <!-- Sourced Modules & Jumps Pill Strip -->
+      <div class="script-deps-strip" id="scriptDepsStrip">
+        <span class="deps-strip-label">⚡ SOURCED DEPENDENCIES:</span>
+        <div class="deps-pills-list" id="scriptDepsList">
+          <span class="deps-none">(No source statements in buffer)</span>
+        </div>
+      </div>
+
+      <div class="script-editor-body">
+        <!-- Collapsible Workspace File Navigator Sidebar -->
+        <aside class="script-file-sidebar" id="scriptFileSidebar" style="display: none;">
+          <div class="sidebar-search-box">
+            <input type="text" class="sidebar-search-input" id="sidebarFileSearch" placeholder="Search files (lib/, commands/)...">
+          </div>
+          <div class="sidebar-files-list" id="sidebarFilesList">
+            <div class="loading-state">Loading workspace tree...</div>
+          </div>
+        </aside>
+
+        <!-- Code Editor Viewport (Engine 1: Zero-latency Craftsman Dual-Pane Capable) -->
+        <div class="script-code-viewport" id="scriptCodeViewport">
+          <!-- Left Editor Pane (Primary / Active Tab) -->
+          <div class="editor-pane editor-pane-left" id="editorPaneLeft">
+            <div class="script-gutter" id="scriptGutter">1</div>
+            <textarea class="script-textarea" id="scriptTextarea" spellcheck="false" wrap="off" placeholder="# Shell script or workspace file content..."></textarea>
+          </div>
+
+          <!-- Adjustable Splitter Divider (for Side-by-Side Tiling) -->
+          <div class="editor-pane-splitter" id="editorPaneSplitter" style="display: none;" title="Drag to adjust split (min 88 cols unless adjacent window is expanded)">
+            <div class="splitter-handle"></div>
+          </div>
+
+          <!-- Right Editor Pane (Secondary Tab / Side-by-Side) -->
+          <div class="editor-pane editor-pane-right" id="editorPaneRight" style="display: none;">
+            <div class="pane-right-header">
+              <span class="pane-right-label">◫ SECONDARY VIEW:</span>
+              <select class="pane-right-tab-select" id="paneRightTabSelect" title="Select tab to view side-by-side"></select>
+            </div>
+            <div class="pane-right-content">
+              <div class="script-gutter" id="scriptGutterRight">1</div>
+              <textarea class="script-textarea" id="scriptTextareaRight" spellcheck="false" wrap="off" placeholder="# Secondary buffer..."></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- Native Neovim PTY Terminal Viewport (Engine 2: Native WSL Neovim) -->
+        <div class="script-nvim-viewport" id="scriptNvimViewport" style="display: none;">
+          <div id="nvimTerminalContainer" class="nvim-terminal-container"></div>
+        </div>
+
+        <!-- Full-Width Interactive Diff Review Viewport (VS Code / Cursor style) -->
+        <div class="script-diff-viewport" id="scriptDiffViewport" style="display: none;">
+          <div class="diff-viewport-toolbar">
+            <div class="diff-toolbar-left">
+              <span class="diff-toolbar-title">⚡ PROPOSED DIFF REVIEW:</span>
+              <span class="diff-toolbar-file" id="diffToolbarFile">active_file.sh</span>
+              <span class="diff-badge add" id="diffBadgeAdd">+0 additions</span>
+              <span class="diff-badge del" id="diffBadgeDel">-0 deletions</span>
+            </div>
+            <div class="diff-toolbar-right">
+              <div class="diff-mode-switcher">
+                <button type="button" class="diff-mode-btn active" id="btnDiffModeUnified">UNIFIED</button>
+                <button type="button" class="diff-mode-btn" id="btnDiffModeSplit">SPLIT</button>
+              </div>
+              <button type="button" class="tactile-btn accent diff-toolbar-accept" id="btnDiffToolbarAccept">✓ ACCEPT EDITS</button>
+              <button type="button" class="tactile-btn diff-toolbar-reject" id="btnDiffToolbarReject">✗ DISCARD</button>
+            </div>
+          </div>
+          <!-- Unified Diff Container -->
+          <div class="diff-unified-container" id="diffUnifiedContainer"></div>
+          <!-- Split Diff Container (Side-by-Side) -->
+          <div class="diff-split-container" id="diffSplitContainer" style="display: none;">
+            <div class="split-pane split-original">
+              <div class="split-pane-header">ORIGINAL (ACTIVE BUFFER)</div>
+              <div class="split-pane-body" id="splitOriginalBody"></div>
+            </div>
+            <div class="split-pane split-proposed">
+              <div class="split-pane-header">PROPOSED (GEORGE CO-PILOT)</div>
+              <div class="split-pane-body" id="splitProposedBody"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- George Co-Pilot Pair Programming Sidecar Panel -->
+        <aside class="script-copilot-panel" id="scriptCopilotPanel" style="display: none;">
+          <div class="copilot-panel-header">
+            <div class="copilot-title">
+              <span class="copilot-symbol">▲</span> GEORGE CO-PILOT
+            </div>
+            <div class="copilot-context-badge" id="copilotContextBadge" title="Active file context">
+              active: <span id="copilotActiveFile">untitled.sh</span>
+            </div>
+            <button class="copilot-close-btn" id="btnCopilotClose" title="Collapse Co-Pilot panel">✕</button>
+          </div>
+          
+          <div class="copilot-messages" id="copilotMessages">
+            <div class="copilot-welcome-card">
+              <div class="welcome-title">CRAFTSMAN PAIR PROGRAMMING</div>
+              <p class="welcome-text">Ask George to refactor, explain, inspect, or generate code for the open file.</p>
+              <div class="copilot-quick-chips">
+                <button type="button" class="quick-chip" data-prompt="Explain what this file does and its architecture.">EXPLAIN</button>
+                <button type="button" class="quick-chip" data-prompt="Review this file for potential bugs, edge cases, and syntax issues.">AUDIT BUGS</button>
+                <button type="button" class="quick-chip" data-prompt="Refactor this file for maximum efficiency, clarity, and modularity.">REFACTOR</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Live Diff & Edit Review Container -->
+          <div class="copilot-diff-bay" id="copilotDiffBay" style="display: none;">
+            <div class="diff-bay-header">
+              <span class="diff-bay-title">PROPOSED EDITS (DIFF PREVIEW)</span>
+              <div class="diff-bay-actions">
+                <button type="button" class="tactile-btn accent diff-accept-btn" id="btnAcceptCopilotDiff">✓ ACCEPT</button>
+                <button type="button" class="tactile-btn diff-reject-btn" id="btnRejectCopilotDiff">✗ REJECT</button>
+              </div>
+            </div>
+            <div class="diff-view-content" id="copilotDiffContent"></div>
+          </div>
+
+          <div class="copilot-input-area">
+            <div class="copilot-input-wrapper">
+              <textarea class="copilot-prompt-input" id="copilotPromptInput" rows="1" placeholder="Ask George (e.g. 'Refactor function parse_args', 'Add error handling')... [Enter to send, Shift+Enter for newline]"></textarea>
+              <div class="copilot-input-actions-row">
+                <button class="tactile-btn accent copilot-send-btn" id="btnSendCopilotPrompt">SEND</button>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <div class="script-editor-statusbar">
+        <div class="script-status-left">
+          <div class="engine-segmented-switch mini" id="engineSegmentedSwitch">
+            <button type="button" class="engine-segment-btn active" id="btnEngineCraftsman" title="Zero-latency Craftsman buffer with Vim bindings">CRAFTSMAN</button>
+            <button type="button" class="engine-segment-btn" id="btnEngineNvim" title="Native WSL/Linux Neovim PTY running init.lua">NEOVIM</button>
+          </div>
+          <span class="script-engine-badge" id="scriptEngineBadge" style="display: none;">ENGINE: CRAFTSMAN</span>
+          <span id="scriptCursorPos">Ln 1, Col 1</span>
+          <span class="script-status-msg" id="scriptStatusMsg">Ready.</span>
+        </div>
+        <div class="script-status-right">
+          <span class="vim-keys-hint">Vim: [Esc] Normal | [i] Insert | [:w] Save | [:q!] Force Quit | [cs/ds/ys] Surround</span>
+          <button type="button" class="tactile-btn vim-legend-link-btn" id="linkVimLegend" title="Open complete Vim Command Legend & Reference">[ ⌨ VIM LEGEND ▾ ]</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MCP Tool Testing Modal -->
+  <div class="modal-overlay" id="mcpToolModal">
+    <div class="modal-card" style="max-width: 640px;">
+      <div class="modal-header">
+        <div class="modal-title" id="mcpToolModalTitle">MCP TOOL CALL: [SERVER] ➔ [TOOL]</div>
+        <button class="modal-close" id="mcpToolModalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="item-meta" id="mcpToolModalDesc">Inspect tool schema and test direct stdio execution.</div>
+        <div class="edit-field" style="margin-top: 12px;">
+          <label for="mcpToolArgsInput">INPUT ARGUMENTS (JSON):</label>
+          <textarea id="mcpToolArgsInput" class="form-textarea code-area" rows="4" spellcheck="false" placeholder="{}"></textarea>
+        </div>
+        <div class="modal-footer" style="padding: 8px 0; border: none; justify-content: space-between;">
+          <button class="tactile-btn accent" id="btnExecuteMcpTool">▶ EXECUTE TOOL</button>
+          <span id="mcpToolExecutionStatus" class="item-meta" style="font-size: 11px;"></span>
+        </div>
+        <div class="section-title" style="margin-top: 14px;">EXECUTION RESULT (STDIO RESPONSE)</div>
+        <pre class="mcp-tool-output" id="mcpToolOutputArea" style="max-height: 220px; overflow-y: auto; background: var(--bg-surface); border: 1px solid var(--border-color); padding: 10px; font-family: var(--font-mono); font-size: 11px; white-space: pre-wrap; color: var(--text-main); margin-top: 6px;">Awaiting execution...</pre>
+      </div>
+      <div class="modal-footer">
+        <button class="tactile-btn" id="btnCloseMcpToolModalFooter">DISMISS</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

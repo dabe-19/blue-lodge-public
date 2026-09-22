@@ -75,14 +75,18 @@ cron_init() {
         done < "$CRON_CONF_FILE"
     fi
 
-    if [ ! -f "$CRON_STATE_FILE" ]; then
+    if [ ! -s "$CRON_STATE_FILE" ] || ! jq -e . "$CRON_STATE_FILE" >/dev/null 2>&1; then
         echo '{"jobs":{}}' > "$CRON_STATE_FILE" 2>/dev/null || true
     fi
 }
 
 _cron_get_last_run() {
     local job_name="$1"
-    [ -f "$CRON_STATE_FILE" ] || return 0
+    if [ ! -s "$CRON_STATE_FILE" ] || ! jq -e . "$CRON_STATE_FILE" >/dev/null 2>&1; then
+        echo '{"jobs":{}}' > "$CRON_STATE_FILE" 2>/dev/null || true
+        echo 0
+        return 0
+    fi
     jq -r ".jobs.\"$job_name\".last_run // 0" "$CRON_STATE_FILE" 2>/dev/null || echo 0
 }
 
@@ -91,11 +95,16 @@ _cron_set_last_run() {
     local exit_code="${2:-0}"
     local now
     now=$(date +%s)
-    local tmp="${CRON_STATE_FILE}.tmp.$$"
-    if [ -f "$CRON_STATE_FILE" ]; then
-        jq --arg j "$job_name" --argjson lr "$now" --argjson ec "$exit_code" \
-            '.jobs[$j] = { "last_run": $lr, "exit_code": $ec, "updated_at": (now | todate) }' \
-            "$CRON_STATE_FILE" > "$tmp" 2>/dev/null && mv "$tmp" "$CRON_STATE_FILE"
+    local tmp="${CRON_STATE_FILE}.tmp.${BASHPID:-$$}.$RANDOM"
+    if [ ! -s "$CRON_STATE_FILE" ] || ! jq -e . "$CRON_STATE_FILE" >/dev/null 2>&1; then
+        echo '{"jobs":{}}' > "$CRON_STATE_FILE" 2>/dev/null || true
+    fi
+    if jq --arg j "$job_name" --argjson lr "$now" --argjson ec "$exit_code" \
+        '.jobs[$j] = { "last_run": $lr, "exit_code": $ec, "updated_at": (now | todate) }' \
+        "$CRON_STATE_FILE" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+        mv -f "$tmp" "$CRON_STATE_FILE"
+    else
+        rm -f "$tmp" 2>/dev/null || true
     fi
 }
 

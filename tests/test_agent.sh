@@ -3447,8 +3447,8 @@ describe "Fast route keyword filter"
   }
 
   it "does not match 'search ... sources' to grep in fast-route" && {
-    _fast_route "Use /web search to find current housing market sources"
-    assert_fail $? "search ... sources should not match grep"
+    result=$(_fast_route "Use /web search to find current housing market sources")
+    assert_ne "$result" "grep" "search ... sources should not match grep"
   }
 
   it "returns failure for 'what is the weather'" && {

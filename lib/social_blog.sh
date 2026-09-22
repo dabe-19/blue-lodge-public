@@ -311,30 +311,34 @@ EOF
 x_blog_sweep() {
     blog_init
 
-    # Safety gates: support master social publish lever or per-platform levers
-    local pub_social="${AUTONOMIC_PUBLISH_SOCIAL:-}"
-    [ -z "$pub_social" ] && declare -f api_get_key &>/dev/null && pub_social=$(api_get_key "AUTONOMIC_PUBLISH_SOCIAL" 2>/dev/null || echo "")
-
-    # Master disable gate
-    if [ "${pub_social}" = "0" ]; then
-        ui_info "Autonomic social publishing is paused (enable via AUTONOMIC_PUBLISH_SOCIAL=1 or /research publish). Posts remain staged in queue."
-        return 0
+    # Safety gates: check global master social gate first
+    if declare -f social_is_platform_allowed &>/dev/null; then
+        if ! social_is_platform_allowed "all"; then
+            ui_info "Autonomic social publishing is paused (Global Social gate is locked). Posts remain staged in queue."
+            return 0
+        fi
+    else
+        local pub_social="${AUTONOMIC_PUBLISH_SOCIAL:-${GLOBAL_SOCIAL_ENABLED:-}}"
+        [ -z "$pub_social" ] && declare -f api_get_key &>/dev/null && pub_social=$(api_get_key "AUTONOMIC_PUBLISH_SOCIAL" 2>/dev/null || echo "")
+        if [ "${pub_social}" != "1" ]; then
+            ui_info "Autonomic social publishing is paused (Global Social gate is locked). Posts remain staged in queue."
+            return 0
+        fi
     fi
 
-    local pub_x="${AUTONOMIC_PUBLISH_X:-}"
-    [ -z "$pub_x" ] && declare -f api_get_key &>/dev/null && pub_x=$(api_get_key "AUTONOMIC_PUBLISH_X" 2>/dev/null || echo "")
-    [ -z "$pub_x" ] && pub_x=1
-
-    local pub_masto="${AUTONOMIC_PUBLISH_MASTODON:-}"
-    [ -z "$pub_masto" ] && declare -f api_get_key &>/dev/null && pub_masto=$(api_get_key "AUTONOMIC_PUBLISH_MASTODON" 2>/dev/null || echo "")
-    [ -z "$pub_masto" ] && pub_masto=1
-
-    local pub_bsky="${AUTONOMIC_PUBLISH_BLUESKY:-}"
-    [ -z "$pub_bsky" ] && declare -f api_get_key &>/dev/null && pub_bsky=$(api_get_key "AUTONOMIC_PUBLISH_BLUESKY" 2>/dev/null || echo "")
-    [ -z "$pub_bsky" ] && pub_bsky=1
+    local pub_x=0 pub_masto=0 pub_bsky=0
+    if declare -f social_is_platform_allowed &>/dev/null; then
+        social_is_platform_allowed "x" && pub_x=1
+        social_is_platform_allowed "mastodon" && pub_masto=1
+        social_is_platform_allowed "bluesky" && pub_bsky=1
+    else
+        [ "${AUTONOMIC_PUBLISH_X:-0}" = "1" ] && pub_x=1
+        [ "${AUTONOMIC_PUBLISH_MASTODON:-0}" = "1" ] && pub_masto=1
+        [ "${AUTONOMIC_PUBLISH_BLUESKY:-0}" = "1" ] && pub_bsky=1
+    fi
 
     # Check if at least one platform is enabled
-    if [ "${pub_x:-0}" -ne 1 ] && [ "${pub_masto:-0}" -ne 1 ] && [ "${pub_bsky:-0}" -ne 1 ]; then
+    if [ "$pub_x" -ne 1 ] && [ "$pub_masto" -ne 1 ] && [ "$pub_bsky" -ne 1 ]; then
         ui_info "Autonomic social publishing is paused (all platforms disabled). Posts remain staged in queue."
         return 0
     fi

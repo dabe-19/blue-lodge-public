@@ -10,6 +10,67 @@ source "$LODGE_DIR/lib/api.sh"
 source "$LODGE_DIR/lib/pgp.sh"
 [ -f "$LODGE_DIR/lib/social_blog.sh" ] && source "$LODGE_DIR/lib/social_blog.sh"
 
+# ── Global Social Endpoints Safety Gate ──────────────────────────────
+# Master kill-switch to enforce strict operator control over all outbound broadcasts.
+# Checks:
+# 1. Environment variables: GLOBAL_SOCIAL_ENABLED, AUTONOMIC_PUBLISH_SOCIAL
+# 2. Config file: .george/social/social.conf
+# Defaults to 0 (DISABLED) unless explicitly enabled (=1).
+social_is_platform_allowed() {
+    local platform="${1:-all}"
+    local conf_file="${GEORGE_CONFIG_DIR:-${LODGE_DIR}/.george}/social/social.conf"
+
+    # Test environment bypass unless explicit enforcement requested
+    if [ "${LODGE_TEST_MODE:-0}" -eq 1 ] && [ -n "${TEST_TMP:-}" ] && [ "${TEST_SOCIAL_GATE_ENFORCE:-0}" -ne 1 ]; then
+        return 0
+    fi
+
+    # 1. Check Global Master Switch
+    local global_val="${GLOBAL_SOCIAL_ENABLED:-}"
+    [ -z "$global_val" ] && global_val="${AUTONOMIC_PUBLISH_SOCIAL:-}"
+    if [ -z "$global_val" ] && [ -f "$conf_file" ]; then
+        global_val=$(grep -m1 '^GLOBAL_SOCIAL_ENABLED=' "$conf_file" 2>/dev/null | cut -d'=' -f2 | tr -d ' "\r')
+    fi
+    global_val="${global_val:-0}"
+
+    if [ "$global_val" != "1" ]; then
+        return 1
+    fi
+
+    [ "$platform" = "all" ] && return 0
+
+    # 2. Check Platform Specific Switch
+    local plat_var plat_key
+    case "${platform,,}" in
+        x|twitter)
+            plat_var="${AUTONOMIC_PUBLISH_X:-${X_ENABLED:-}}"
+            plat_key="X_ENABLED"
+            ;;
+        masto|mastodon)
+            plat_var="${AUTONOMIC_PUBLISH_MASTODON:-${MASTODON_ENABLED:-}}"
+            plat_key="MASTODON_ENABLED"
+            ;;
+        bsky|bluesky)
+            plat_var="${AUTONOMIC_PUBLISH_BLUESKY:-${BLUESKY_ENABLED:-}}"
+            plat_key="BLUESKY_ENABLED"
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+
+    if [ -z "$plat_var" ] && [ -f "$conf_file" ]; then
+        plat_var=$(grep -m1 "^${plat_key}=" "$conf_file" 2>/dev/null | cut -d'=' -f2 | tr -d ' "\r')
+    fi
+    plat_var="${plat_var:-0}"
+
+    if [ "$plat_var" != "1" ]; then
+        return 1
+    fi
+
+    return 0
+}
+
 # ═══════════════════════════════════════════════════════════════
 # X (Twitter) — v2 API (OAuth 1.0a User Context & Bearer)
 # ═══════════════════════════════════════════════════════════════
@@ -119,7 +180,7 @@ _x_cookie_post() {
     fi
 
     local resp
-    resp=$(python3 "$LODGE_DIR/lib/social_cookie.py" post "$auth_token" "$ct0" "$text" "$reply_to_id" 2>/dev/null)
+    resp=$(X_AUTH_TOKEN="$auth_token" X_CT0="$ct0" python3 "$LODGE_DIR/lib/social_cookie.py" post "$text" "$reply_to_id" 2>/dev/null)
     local status
     status=$(echo "$resp" | jq -r '.status // empty' 2>/dev/null)
     if [ "$status" = "ok" ]; then
@@ -137,6 +198,10 @@ _x_cookie_post() {
 }
 
 x_post() {
+    if ! social_is_platform_allowed "x"; then
+        ui_warn "X broadcast aborted: Social gate is locked (GLOBAL_SOCIAL_ENABLED or X_ENABLED is disabled)."
+        return 1
+    fi
     local text="$1"
     # Auto-expand readable file references in text
     if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then
@@ -487,7 +552,7 @@ x_validate() {
         has_creds=1
         ui_step "Testing X Web Session (Cookie Auth)..."
         local c_resp
-        c_resp=$(python3 "$LODGE_DIR/lib/social_cookie.py" verify "$cookie_auth_token" "$cookie_ct0" 2>/dev/null)
+        c_resp=$(X_AUTH_TOKEN="$cookie_auth_token" X_CT0="$cookie_ct0" python3 "$LODGE_DIR/lib/social_cookie.py" verify 2>/dev/null)
         local c_status c_uname c_name c_blue
         c_status=$(echo "$c_resp" | jq -r '.status // empty' 2>/dev/null)
         c_uname=$(echo "$c_resp" | jq -r '.screen_name // empty' 2>/dev/null)
@@ -735,6 +800,10 @@ _mastodon_base() {
 }
 
 mastodon_post() {
+    if ! social_is_platform_allowed "mastodon"; then
+        ui_warn "Mastodon broadcast aborted: Social gate is locked (GLOBAL_SOCIAL_ENABLED or MASTODON_ENABLED is disabled)."
+        return 1
+    fi
     local text="$1"
     # Auto-expand readable file references in text
     if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then
@@ -1066,6 +1135,10 @@ _bluesky_did() {
 }
 
 bluesky_post() {
+    if ! social_is_platform_allowed "bluesky"; then
+        ui_warn "Bluesky broadcast aborted: Social gate is locked (GLOBAL_SOCIAL_ENABLED or BLUESKY_ENABLED is disabled)."
+        return 1
+    fi
     local text="$1"
     # Auto-expand readable file references in text
     if [ "${AGENT_FILE_EXPAND:-1}" -eq 1 ] && declare -f tools_expand_file_refs &>/dev/null; then

@@ -30,6 +30,11 @@ endpoints_init() {
         done < "$ENDPOINTS_CONF"
     fi
 
+    # Ensure research graph functions stay synchronized across multi-phase sweeps
+    if [ -f "$LODGE_DIR/lib/research_graph.sh" ] && [ -n "${_LIB_RESEARCH_GRAPH_LOADED:-}" ]; then
+        _LIB_RESEARCH_GRAPH_LOADED="" source "$LODGE_DIR/lib/research_graph.sh" 2>/dev/null || true
+    fi
+
     # Fallback defaults if not set
     TIER3_NAME="${TIER3_NAME:-frontier-sovereign}"
     TIER3_URL="${TIER3_URL:-http://mac-m5.local:8080}"
