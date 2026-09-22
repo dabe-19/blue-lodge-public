@@ -152,12 +152,24 @@ _lodge_cleanup() {
         _LODGE_CANCELLED=1
         echo ""
         ui_warn "Cancelled by user"
+        if [ -n "${AGENT_ACTIVE_SESSION_ID:-}" ]; then
+            if declare -f telemetry_task_end &>/dev/null; then
+                telemetry_task_end "$AGENT_ACTIVE_SESSION_ID" 130 "INTERRUPTED" >/dev/null 2>&1 || true
+            fi
+            export AGENT_ACTIVE_SESSION_ID=""
+        fi
         return 0
     else
         # Not in a task: clean exit
         echo ""
         ui_info "Interrupted. Exiting..."
         rm -f "$_LODGE_CANCEL_FILE"
+        if [ -n "${AGENT_ACTIVE_SESSION_ID:-}" ]; then
+            if declare -f telemetry_task_end &>/dev/null; then
+                telemetry_task_end "$AGENT_ACTIVE_SESSION_ID" 130 "INTERRUPTED" >/dev/null 2>&1 || true
+            fi
+            export AGENT_ACTIVE_SESSION_ID=""
+        fi
         if _lodge_termux_api_ok && command -v termux-wake-unlock &>/dev/null; then
             termux-wake-unlock 2>/dev/null
         fi
@@ -169,6 +181,14 @@ _lodge_cleanup() {
 # Kills orphan curl processes and cleans temp files so the phone
 # doesn't keep computing after Lodge exits (close Termux, /quit, etc.)
 _lodge_exit_cleanup() {
+    # Clean up active telemetry session if exited abnormally
+    if [ -n "${AGENT_ACTIVE_SESSION_ID:-}" ]; then
+        if declare -f telemetry_task_end &>/dev/null; then
+            telemetry_task_end "$AGENT_ACTIVE_SESSION_ID" "${_LODGE_EXIT_CODE:-1}" "EXIT_ABORTED" >/dev/null 2>&1 || true
+        fi
+        export AGENT_ACTIVE_SESSION_ID=""
+    fi
+
     # Remove concurrency lockfile
     local lockfile="${GEORGE_CONFIG_DIR:-$PWD/.george}/.lodge.lock"
     if [ -f "$lockfile" ] && [ "$(cat "$lockfile" 2>/dev/null)" = "$$" ]; then

@@ -728,6 +728,7 @@ Execute the Metacognitive Pathfinding Protocol:
                         if declare -f telemetry_task_end &>/dev/null; then
                             telemetry_task_end "$session_id" 1 "CAPABILITY_EXHAUSTED" >/dev/null 2>&1 || true
                         fi
+                        export AGENT_ACTIVE_SESSION_ID=""
                         jq '.status = "CAPABILITY_EXHAUSTED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
                         tool_exhausted=1
                         break
@@ -790,6 +791,7 @@ Execute the Metacognitive Pathfinding Protocol:
             if declare -f telemetry_task_end &>/dev/null; then
                 telemetry_task_end "$session_id" 0 "COMPLETED" >/dev/null 2>&1 || true
             fi
+            export AGENT_ACTIVE_SESSION_ID=""
             if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
                 local _tpath
                 _tpath=$(transcript_stop)
@@ -888,6 +890,7 @@ Execute the Metacognitive Pathfinding Protocol:
             if declare -f telemetry_task_end &>/dev/null; then
                 telemetry_task_end "$session_id" 0 "COMPLETED" >/dev/null 2>&1 || true
             fi
+            export AGENT_ACTIVE_SESSION_ID=""
             if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
                 local _tpath
                 _tpath=$(transcript_stop)
@@ -943,6 +946,7 @@ Execute the Metacognitive Pathfinding Protocol:
             if declare -f telemetry_task_end &>/dev/null; then
                 telemetry_task_end "$session_id" 1 "CIRCUIT_BREAKER_TRIPPED" >/dev/null 2>&1 || true
             fi
+            export AGENT_ACTIVE_SESSION_ID=""
             if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
                 transcript_stop >/dev/null 2>&1 || true
             fi
@@ -967,6 +971,7 @@ Execute the Metacognitive Pathfinding Protocol:
     if declare -f telemetry_task_end &>/dev/null; then
         telemetry_task_end "$session_id" 0 "TURN_CEILING_PRESERVED" >/dev/null 2>&1 || true
     fi
+    export AGENT_ACTIVE_SESSION_ID=""
     if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
         local _tpath
         _tpath=$(transcript_stop)

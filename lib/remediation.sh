@@ -32,6 +32,7 @@ for _p in "$LODGE_DIR" "$LODGE_ROOT" "$HOME/blue-lodge"; do
         source "$_p/lib/email.sh" 2>/dev/null || true
         source "$_p/lib/social.sh" 2>/dev/null || true
         source "$_p/lib/discord_bridge.sh" 2>/dev/null || true
+        source "$_p/lib/popup.sh" 2>/dev/null || true
         source "$_p/lib/mcp_server_gitea.sh" 2>/dev/null || true
         break
     fi
@@ -452,13 +453,10 @@ remediation_launch_visual_monitor() {
         sleep 0.2
     fi
 
-    local distro="${WSL_DISTRO_NAME:-ubuntu-local}"
     local size="${REMEDIATION_POPUP_SIZE:-110,32}"
 
-    wt.exe -w new --size "$size" \
-        nt --title "George Remediation HUD - $task_id" \
-        wsl.exe -d "$distro" --cd "$LODGE_DIR" \
-        bash ./scripts/remediation_live_monitor.sh "$task_id" "$title" "$log_file" 2>/dev/null &
+    popup_terminal_launch "George Remediation HUD - $task_id" "$size" \
+        bash ./scripts/remediation_live_monitor.sh "$task_id" "$title" "$log_file"
 }
 
 # ── 4. Remediation Execution with Slot 1 Isolation ────────────────────

@@ -23,6 +23,7 @@ DISCORD_KNOWN_DMS_FILE="${DISCORD_KNOWN_DMS_FILE:-$DISCORD_SESSIONS_DIR/known_dm
 DISCORD_BRIDGE_LOG="${DISCORD_BRIDGE_LOG:-$DISCORD_SESSIONS_DIR/bridge.log}"
 
 source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/popup.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/api.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/social.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/react.sh" 2>/dev/null || true
@@ -358,13 +359,10 @@ discord_launch_visual_monitor() {
         sleep 0.2
     fi
 
-    local distro="${WSL_DISTRO_NAME:-ubuntu-local}"
     local size="${CRON_POPUP_SIZE:-110,32}"
 
-    wt.exe -w new --size "$size" \
-        nt --title "George Discord Live - @$author" \
-        wsl.exe -d "$distro" --cd "$LODGE_DIR" \
-        bash ./scripts/discord_live_monitor.sh "$channel_id" "$author" "$session_log" 2>/dev/null &
+    popup_terminal_launch "George Discord Live - @$author" "$size" \
+        bash ./scripts/discord_live_monitor.sh "$channel_id" "$author" "$session_log"
 }
 
 # ── 6. Process Message Turn with George ──────────────────────────────

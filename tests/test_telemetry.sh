@@ -113,4 +113,24 @@ describe "Task Lifecycle & Heartbeat"
       _teardown_telemetry
   }
 
+  it "cleans up active telemetry on abnormal exit when AGENT_ACTIVE_SESSION_ID is set" && {
+      _setup_telemetry
+      tid="session_interrupt_test"
+      telemetry_task_start "$tid" "react" "$_test_tmpdir" "" "0" "" >/dev/null
+      export AGENT_ACTIVE_SESSION_ID="$tid"
+
+      # Simulate exit cleanup
+      if [ -n "${AGENT_ACTIVE_SESSION_ID:-}" ]; then
+          telemetry_task_end "$AGENT_ACTIVE_SESSION_ID" 130 "INTERRUPTED" >/dev/null 2>&1 || true
+          export AGENT_ACTIVE_SESSION_ID=""
+      fi
+
+      assert_file_not_exists "$TELEMETRY_ACTIVE_DIR/${tid}.json"
+      today=$(date '+%Y-%m-%d')
+      assert_file_exists "$TELEMETRY_ARCHIVE_DIR/$today/${tid}.json"
+      assert_eq "$(jq -r '.status' "$TELEMETRY_ARCHIVE_DIR/$today/${tid}.json")" "INTERRUPTED"
+      assert_eq "$AGENT_ACTIVE_SESSION_ID" ""
+      _teardown_telemetry
+  }
+
 test_end

@@ -23,6 +23,7 @@ source "$LODGE_DIR/lib/pr.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/alerts.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/social.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/email.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/popup.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/sentinel.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/discord_bridge.sh" 2>/dev/null || true
 
@@ -354,10 +355,8 @@ cron_launch_visual() {
     local size="${CRON_POPUP_SIZE:-85,22}"
     local hold="${CRON_POPUP_HOLD_ON_ERROR:-1}"
 
-    wt.exe -w new --size "$size" \
-        nt --title "George Autonomic Sentinel" \
-        wsl.exe -d "$distro" --cd "$LODGE_DIR" \
-        bash ./scripts/cron_visual_sweep.sh "$sweep_type" "$hold" 2>/dev/null &
+    popup_terminal_launch "George Autonomic Sentinel" "$size" \
+        bash ./scripts/cron_visual_sweep.sh "$sweep_type" "$hold"
     return 0
 }
 

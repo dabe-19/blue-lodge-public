@@ -24,6 +24,7 @@ source "$LODGE_DIR/lib/web.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/endpoints.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/react.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/native_tools.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/popup.sh" 2>/dev/null || true
 source "$LODGE_DIR/commands/vision.sh" 2>/dev/null || true
 
 research_init() {
@@ -480,6 +481,35 @@ Full technical dossier and artifacts archived in Blue Lodge Sovereign Library."
     ui_info "Queued for broadcast: $(basename "$queue_item")"
 }
 
+# ── Research Phase & Live Companion HUD Launcher ─────────────────────
+research_set_phase() {
+    local sandbox_dir="$1"
+    local phase_str="$2"
+    mkdir -p "$sandbox_dir" 2>/dev/null || true
+    echo "$phase_str" > "$sandbox_dir/.phase" 2>/dev/null || true
+}
+
+research_launch_live_monitor() {
+    local topic="$1"
+    local slug="$2"
+    local sandbox_dir="$3"
+
+    if ! declare -f popup_is_gui_available &>/dev/null || ! popup_is_gui_available; then
+        return 0
+    fi
+
+    # Clean up any lingering monitor process for this sandbox slug
+    local existing_mon
+    existing_mon=$(pgrep -f "scripts/research_live_monitor.sh.*$slug" 2>/dev/null || true)
+    if [ -n "$existing_mon" ]; then
+        kill $existing_mon 2>/dev/null || true
+        sleep 0.2
+    fi
+
+    popup_terminal_launch "George Research HUD — $slug" "115,34" \
+        bash ./scripts/research_live_monitor.sh "$topic" "$slug" "$sandbox_dir"
+}
+
 # ── Autonomous Deep Research Graph Execution ─────────────────────────
 # Usage: research_graph_run [topic]
 research_graph_run() {
@@ -504,20 +534,31 @@ research_graph_run() {
     ui_info "Inquiry Slug: $slug"
     ui_dim "Sandbox:      $sandbox_dir"
 
+    # Launch non-intrusive companion HUD monitor (minimized to tray/taskbar)
+    research_launch_live_monitor "$topic" "$slug" "$sandbox_dir"
+
     # Phase 1: ReAct Deep Investigation Loop in Sandbox
+    research_set_phase "$sandbox_dir" "Phase 1/5: Deep ReAct Investigation & Primary Ingest"
     research_investigate_react "$topic" "$sandbox_dir"
 
     # Phase 2: Evidence Audit & Gap Analysis
+    research_set_phase "$sandbox_dir" "Phase 2/5: Evidence Audit & Gap Analysis"
     research_evidence_audit "$topic" "$sandbox_dir"
 
     # Phase 3: Long-Form Technical Synthesis (dossier.md)
+    research_set_phase "$sandbox_dir" "Phase 3/5: Long-Form Technical Monograph Synthesis"
     research_synthesize_dossier "$topic" "$sandbox_dir"
 
     # Phase 4: Editorial Critique & soul.md Refinement
+    research_set_phase "$sandbox_dir" "Phase 4/5: Editorial Critique & Standard Alignment"
     research_editorial_critique "$topic" "$sandbox_dir"
 
     # Phase 5: The Three Degrees Audit & Publication Packaging
+    research_set_phase "$sandbox_dir" "Phase 5/5: The Three Degrees Audit & Publication Packaging"
     research_audit_and_package "$topic" "$slug" "$sandbox_dir" "$ts"
+
+    touch "$sandbox_dir/.done" 2>/dev/null || true
+    research_set_phase "$sandbox_dir" "Research Complete: Dossier Generated"
 
     return 0
 }
