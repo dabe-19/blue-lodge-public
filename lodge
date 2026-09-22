@@ -4125,14 +4125,76 @@ _cmd_social() {
                         *)
                             ui_info "Usage: /social discord users <list|add|remove|sync|resolve>" ;;
                     esac ;;
+                owner|owners)
+                    local o_sub
+                    o_sub=$(echo "$dargs" | awk '{print $1}')
+                    local o_args
+                    o_args=$(echo "$dargs" | sed 's/^[^ ]* *//')
+                    case "$o_sub" in
+                        set)
+                            local new_ids
+                            new_ids=$(echo "$o_args" | awk '{print $1}')
+                            if [ -n "$new_ids" ]; then
+                                api_set_key "DISCORD_OWNER_IDS" "$new_ids"
+                                export DISCORD_OWNER_IDS="$new_ids"
+                                ui_ok "Discord owner IDs set to: $new_ids"
+                            else
+                                ui_err "Usage: /social discord owner set <id1,id2...>"
+                            fi ;;
+                        add)
+                            local add_id current_ids
+                            add_id=$(echo "$o_args" | awk '{print $1}')
+                            if [ -n "$add_id" ]; then
+                                current_ids=$(api_get_key "DISCORD_OWNER_IDS" 2>/dev/null || echo "")
+                                if [ -n "$current_ids" ]; then
+                                    new_ids="${current_ids},${add_id}"
+                                else
+                                    new_ids="$add_id"
+                                fi
+                                api_set_key "DISCORD_OWNER_IDS" "$new_ids"
+                                export DISCORD_OWNER_IDS="$new_ids"
+                                ui_ok "Added $add_id to Discord owner IDs: $new_ids"
+                            else
+                                ui_err "Usage: /social discord owner add <id>"
+                            fi ;;
+                        list|ls|"")
+                            local cur
+                            cur="${DISCORD_OWNER_IDS:-$(api_get_key "DISCORD_OWNER_IDS" 2>/dev/null || echo "")}"
+                            if [ -n "$cur" ]; then
+                                ui_info "Discord Owner IDs: $cur"
+                            else
+                                ui_warn "No Discord Owner IDs configured. Set with: /social discord owner set <id1,id2>"
+                            fi ;;
+                        *)
+                            ui_info "Usage: /social discord owner <set|add|list>" ;;
+                    esac ;;
+                upload)
+                    source "$LODGE_DIR/lib/discord_bridge.sh" 2>/dev/null || true
+                    local d_target d_path d_msg
+                    d_target=$(echo "$dargs" | awk '{print $1}')
+                    d_path=$(echo "$dargs" | awk '{print $2}')
+                    d_msg=$(echo "$dargs" | cut -d' ' -f3-)
+                    discord_send_file "$d_target" "$d_path" "$d_msg" ;;
+                sweep|bridge)
+                    source "$LODGE_DIR/lib/discord_bridge.sh" 2>/dev/null || true
+                    discord_bridge_sweep ;;
+                chat)
+                    source "$LODGE_DIR/lib/discord_bridge.sh" 2>/dev/null || true
+                    local d_target
+                    d_target=$(echo "$dargs" | awk '{print $1}')
+                    [ -z "$d_target" ] && d_target="dabe"
+                    discord_chat_session "$d_target" "Session initiated from operator terminal" "operator" "0" 1 "" ;;
                 *)
-                    ui_info "Usage: /social discord <post|dm|read|validate|channels|users>"
-                    ui_dim "  post [channel] <text>      — Post to channel (resolves names)"
+                    ui_info "Usage: /social discord <post|dm|read|owner|channels|users|upload|chat|sweep|validate>"
+                    ui_dim "  owner <set|add|list>        — Configure authorized Discord owner IDs"
+                    ui_dim "  post [channel] <text>       — Post to channel (resolves names)"
                     ui_dim "  dm <user> <text>            — Send DM to user"
                     ui_dim "  read <channel>              — Read recent messages"
                     ui_dim "  validate                    — Test bot token"
                     ui_dim "  channels <list|add|rm|sync> — Manage channel registry"
                     ui_dim "  users <list|add|rm|sync>    — Manage user registry"
+                    ui_dim "  upload <target> <file> [msg]— Upload file attachment"
+                    ui_dim "  sweep                       — Run background bridge sweep"
                     ;;
             esac ;;
         telegram|tg)
