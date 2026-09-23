@@ -70,8 +70,8 @@ RUN git clone https://github.com/ggml-org/llama.cpp.git /opt/llama.cpp && \
     cmake --build build --config Release --target llama-server -j$(nproc) && \
     ln -sf /opt/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server-stock
 
-# ── Layer 2: Clone and compile llama.cpp-prism (ternary kernels + MTP #218 + batch invariance) ──
-RUN git clone -b bonsai2 --depth 1 https://github.com/sudoingX/llama.cpp.git /opt/llama.cpp-prism && \
+# ── Layer 2: Clone and compile llama.cpp-prism (ternary kernels + MTP #218 + Hadamard fix) ──
+RUN git clone -b pr-hadamard-mtp --depth 1 https://github.com/sudoingX/llama.cpp.git /opt/llama.cpp-prism && \
     cd /opt/llama.cpp-prism && \
     CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Release -G Ninja" && \
     if [ "$BACKEND" = "cuda" ]; then \

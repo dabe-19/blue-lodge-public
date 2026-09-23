@@ -17,6 +17,7 @@ models/*.gguf
 .act-runner-data/
 target/
 web/target/
+bin/
 
 # Secrets, Keys, and Local Environment
 .env

@@ -22,9 +22,11 @@ services:
       - LLAMA_ARG_N_GPU_LAYERS=99
       - LLAMA_ARG_HOST=0.0.0.0
       - LLAMA_ARG_PORT=8080
+      - ENABLE_MTP=1
     volumes:
       # External host models directory mounted read-only (zero container weight)
       - ${MODELS_DIR:-/home/wsl-ops/models}:/models:ro
+      - ./bin/prism:/opt/llama-prism-latest:ro
       - ./:/workspace
       - ${HOME}/.george:/home/george/.george
     deploy:
@@ -36,25 +38,32 @@ services:
               capabilities: [gpu]
     command: >
       /bin/bash -c "
-      TARGET_MODEL=\"/models/Ternary-Bonsai-2-27B-PTQ1_0-mtp-lean.gguf\"
-      [ ! -f \"$$TARGET_MODEL\" ] && TARGET_MODEL=\"/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf\"
-      [ ! -f \"$$TARGET_MODEL\" ] && TARGET_MODEL=\"/models/Ternary-Bonsai-2-27B-PQ2_0.gguf\"
+      TARGET_MODEL=\"/models/Ternary-Bonsai-2-27B-PTQ1_0-mtp-lean.gguf\";
+      [ ! -f \"$$TARGET_MODEL\" ] && TARGET_MODEL=\"/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf\";
+      [ ! -f \"$$TARGET_MODEL\" ] && TARGET_MODEL=\"/models/Ternary-Bonsai-2-27B-PQ2_0.gguf\";
 
       if [ -f \"$$TARGET_MODEL\" ]; then
-        echo \"[+] Starting PRISM CUDA server with $$TARGET_MODEL (Dual-GPU 2-Slot 64k)...\"
-        MMPROJ_ARGS=\"\"
+        echo \"[+] Starting PRISM CUDA server with $$TARGET_MODEL (Dual-GPU 2-Slot 64k)...\";
+        MMPROJ_ARGS=\"\";
         if [ -f /models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf ]; then
-          echo \"[+] Offloading Vision Tower (mmproj-Q8_0)...\"
-          MMPROJ_ARGS=\"--mmproj /models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf --mmproj-offload\"
-        fi
+          echo \"[+] Offloading Vision Tower (mmproj-Q8_0)...\";
+          MMPROJ_ARGS=\"--mmproj /models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf --mmproj-offload\";
+        fi;
 
-        MTP_ARGS=\"\"
+        MTP_ARGS=\"\";
         if [[ \"$$TARGET_MODEL\" == *\"mtp\"* ]] && [ \"$${ENABLE_MTP:-0}\" = \"1\" ]; then
-          echo \"[+] Enabling Speculative Decoding (draft-mtp, n-max 1)...\"
-          MTP_ARGS=\"--spec-type draft-mtp --spec-draft-n-max 1\"
-        fi
+          echo \"[+] Enabling Speculative Decoding (draft-mtp, n-max 1)...\";
+          MTP_ARGS=\"--spec-type draft-mtp --spec-draft-n-max 1\";
+        fi;
 
-        exec /usr/local/bin/llama-server-prism \
+        PRISM_BIN=\"/usr/local/bin/llama-server-prism\";
+        if [ -x /opt/llama-prism-latest/llama-server ]; then
+          echo \"[+] Using updated PRISM binary from sudoingX/llama.cpp (pr-hadamard-mtp)...\";
+          PRISM_BIN=\"/opt/llama-prism-latest/llama-server\";
+          export LD_LIBRARY_PATH=\"/opt/llama-prism-latest:$$LD_LIBRARY_PATH\";
+        fi;
+
+        exec $$PRISM_BIN \
           -m \"$$TARGET_MODEL\" \
           $$MMPROJ_ARGS \
           $$MTP_ARGS \
