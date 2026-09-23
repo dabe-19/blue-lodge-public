@@ -51,13 +51,13 @@ endpoints_init() {
     TIER1_NAME="${TIER1_NAME:-cuda-workhorse}"
     TIER1_URL="${TIER1_URL:-http://127.0.0.1:8080}"
     TIER1_MODEL="${TIER1_MODEL:-ternary-bonsai-27b}"
-    TIER1_CONTEXT="${TIER1_CONTEXT:-24576}"
-    TIER1_ROLES="${TIER1_ROLES:-architecture,planning,tools,testing}"
+    TIER1_CONTEXT="${TIER1_CONTEXT:-65536}"
+    TIER1_ROLES="${TIER1_ROLES:-architecture,planning,tools,testing,coding}"
     TIER1_ENABLED="${TIER1_ENABLED:-1}"
-    TIER1_MAX_TOKENS="${TIER1_MAX_TOKENS:-22528}"
-    TIER1_COMPACT_TOKENS="${TIER1_COMPACT_TOKENS:-19000}"
+    TIER1_MAX_TOKENS="${TIER1_MAX_TOKENS:-61440}"
+    TIER1_COMPACT_TOKENS="${TIER1_COMPACT_TOKENS:-49152}"
     TIER1_TIMEOUT="${TIER1_TIMEOUT:-180}"
-    TIER1_TEMPERATURE="${TIER1_TEMPERATURE:-0.6}"
+    TIER1_TEMPERATURE="${TIER1_TEMPERATURE:-1.0}"
     TIER1_TOP_P="${TIER1_TOP_P:-0.95}"
 
     TIER2_NAME="${TIER2_NAME:-legacy-5700xt}"
@@ -168,6 +168,9 @@ endpoints_cascade() {
             fi
             if [ -n "$ACTIVE_ENDPOINT_URL" ]; then
                 export LLAMA_CPP_URL="$ACTIVE_ENDPOINT_URL"
+            fi
+            if declare -f limits_scale_for_context &>/dev/null; then
+                limits_scale_for_context "$ACTIVE_ENDPOINT_CONTEXT" 2>/dev/null || true
             fi
             return 0
         fi

@@ -1343,7 +1343,7 @@ discord_send() {
     message=$(ui_expand_escapes "$message")
 
     # Prepare truncated preview for Transmission Receipt to prevent prompt bloat
-    local _preview_len="${AGENT_SOCIAL_RECEIPT_MAX_CHARS:-1000}"
+    local _preview_len="${AGENT_SOCIAL_RECEIPT_MAX_CHARS:-4000}"
     local _preview="$message"
     if [ ${#_preview} -gt "$_preview_len" ]; then
         _preview="${_preview:0:$_preview_len} ... (truncated: total ${#message} chars)"

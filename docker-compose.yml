@@ -3,7 +3,7 @@
 # To force rebuilds when code changes: docker compose up -d --build
 
 services:
-  # ── Tier 1: CUDA PRISM Inference Fabric (RTX 3060 12GB) ────────
+  # ── Tier 1: CUDA PRISM Inference Fabric (Dual RTX 3060 24GB Pool) ──
   prism-inference:
     image: george-cuda-sandbox:latest
     container_name: george-prism-server
@@ -16,8 +16,9 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - LLAMA_ARG_MODEL=/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf
-      - LLAMA_ARG_CTX_SIZE=8192
+      - LLAMA_ARG_MODEL=/models/Ternary-Bonsai-2-27B-PTQ1_0-mtp-lean.gguf
+      - LLAMA_ARG_CTX_SIZE=131072
+      - LLAMA_ARG_PARALLEL=2
       - LLAMA_ARG_N_GPU_LAYERS=99
       - LLAMA_ARG_HOST=0.0.0.0
       - LLAMA_ARG_PORT=8080
@@ -35,11 +36,45 @@ services:
               capabilities: [gpu]
     command: >
       /bin/bash -c "
-      if [ -f /models/Ternary-Bonsai-2-27B-PTQ1_0.gguf ]; then
-        echo '[+] Starting PRISM CUDA server with Ternary-Bonsai-2-27B...'
-        llama-server -m /models/Ternary-Bonsai-2-27B-PTQ1_0.gguf --host 0.0.0.0 --port 8080 -c 8192 -ngl 99
+      TARGET_MODEL=\"/models/Ternary-Bonsai-2-27B-PTQ1_0-mtp-lean.gguf\"
+      [ ! -f \"$$TARGET_MODEL\" ] && TARGET_MODEL=\"/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf\"
+      [ ! -f \"$$TARGET_MODEL\" ] && TARGET_MODEL=\"/models/Ternary-Bonsai-2-27B-PQ2_0.gguf\"
+
+      if [ -f \"$$TARGET_MODEL\" ]; then
+        echo \"[+] Starting PRISM CUDA server with $$TARGET_MODEL (Dual-GPU 2-Slot 64k)...\"
+        MMPROJ_ARGS=\"\"
+        if [ -f /models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf ]; then
+          echo \"[+] Offloading Vision Tower (mmproj-Q8_0)...\"
+          MMPROJ_ARGS=\"--mmproj /models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf --mmproj-offload\"
+        fi
+
+        MTP_ARGS=\"\"
+        if [[ \"$$TARGET_MODEL\" == *\"mtp\"* ]] && [ \"$${ENABLE_MTP:-0}\" = \"1\" ]; then
+          echo \"[+] Enabling Speculative Decoding (draft-mtp, n-max 1)...\"
+          MTP_ARGS=\"--spec-type draft-mtp --spec-draft-n-max 1\"
+        fi
+
+        exec /usr/local/bin/llama-server-prism \
+          -m \"$$TARGET_MODEL\" \
+          $$MMPROJ_ARGS \
+          $$MTP_ARGS \
+          --host 0.0.0.0 \
+          --port 8080 \
+          -c $${LLAMA_ARG_CTX_SIZE:-131072} \
+          -np $${LLAMA_ARG_PARALLEL:-2} \
+          -b 2048 \
+          -ub 1024 \
+          -ngl 99 \
+          --flash-attn on \
+          -ctk q4_0 \
+          -ctv q4_0 \
+          --tensor-split 12,11 \
+          -sm layer \
+          --reasoning-effort medium \
+          --load-mode mmap \
+          --jinja
       else
-        echo '[!] Warning: Model /models/Ternary-Bonsai-2-27B-PTQ1_0.gguf not found.'
+        echo '[!] Warning: No compatible Ternary Bonsai model found in /models.'
         echo '[!] Waiting for host model mount in /models...'
         tail -f /dev/null
       fi"

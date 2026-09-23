@@ -62,7 +62,7 @@ _NATIVE_CORE_TOOLS='[
         "properties": {
           "path": { "type": "string", "description": "Relative file path from workspace root." },
           "start_line": { "type": "integer", "description": "Starting line number (1-indexed, default: 1)." },
-          "max_lines": { "type": "integer", "description": "Number of lines to read (default: 100, max: 200). Read small 50-100 line chunks to protect context." }
+          "max_lines": { "type": "integer", "description": "Number of lines to read (default: 200, max: 1000). Inspect code in 200-500 line chunks." }
         },
         "required": ["path"]
       }

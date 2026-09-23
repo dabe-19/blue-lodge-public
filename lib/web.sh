@@ -17,7 +17,7 @@ WEB_CACHE_TTL="${WEB_CACHE_TTL:-3600}"     # Cache pages for 1 hour
 WEB_BLACKLIST_FILE="${WEB_BLACKLIST_FILE:-${GEORGE_CONFIG_DIR:-${LODGE_DIR:-.}/.george}/web_blacklist.log}"
 WEB_BLACKLIST_ENABLED="${WEB_BLACKLIST_ENABLED:-true}"
 WEB_BLACKLIST_TTL="${WEB_BLACKLIST_TTL:-1800}"  # Dynamic blacklist entries expire after 30 minutes (seconds)
-WEB_CONTENT_MAX_CHARS="${WEB_CONTENT_MAX_CHARS:-4000}"  # Max chars for cleaned web content (post-boilerplate)
+WEB_CONTENT_MAX_CHARS="${WEB_CONTENT_MAX_CHARS:-24000}"  # Max chars for cleaned web content (post-boilerplate)
 
 WEB_BLACKLIST_DOMAINS="${WEB_BLACKLIST_DOMAINS:-linkedin.com,facebook.com,instagram.com,twitter.com,x.com,tiktok.com,pinterest.com,youtube.com,youtu.be}"
 

@@ -769,10 +769,11 @@ tools_read_file() {
     if ! [[ "$start_line" =~ ^[0-9]+$ ]] || [ "$start_line" -lt 1 ]; then
         start_line=1
     fi
+    local max_allowed="${AGENT_FILE_READ_MAX_LINES:-500}"
     if ! [[ "$max_lines" =~ ^[0-9]+$ ]] || [ "$max_lines" -lt 1 ]; then
         max_lines=100
-    elif [ "$max_lines" -gt 200 ]; then
-        max_lines=200
+    elif [ "$max_lines" -gt "$max_allowed" ]; then
+        max_lines="$max_allowed"
     fi
     
     local total

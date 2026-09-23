@@ -70,13 +70,13 @@ RUN git clone https://github.com/ggml-org/llama.cpp.git /opt/llama.cpp && \
     cmake --build build --config Release --target llama-server -j$(nproc) && \
     ln -sf /opt/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server-stock
 
-# ── Layer 2: Clone and compile llama.cpp-prism (ternary kernels) ──
-RUN git clone https://github.com/PrismML-Eng/llama.cpp.git /opt/llama.cpp-prism && \
+# ── Layer 2: Clone and compile llama.cpp-prism (ternary kernels + MTP #218 + batch invariance) ──
+RUN git clone -b bonsai2 --depth 1 https://github.com/sudoingX/llama.cpp.git /opt/llama.cpp-prism && \
     cd /opt/llama.cpp-prism && \
     CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Release -G Ninja" && \
     if [ "$BACKEND" = "cuda" ]; then \
         CUDA_LINK="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs:/usr/local/cuda/compat"; \
-        CMAKE_FLAGS="${CMAKE_FLAGS} -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES} -DGGML_CUDA_FA_ALL_QUANTS=ON -DGGML_CUDA_GRAPHS=ON"; \
+        CMAKE_FLAGS="${CMAKE_FLAGS} -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES} -DGGML_CUDA_BATCH_INVARIANT=1 -DGGML_CUDA_FA_ALL_QUANTS=ON -DGGML_CUDA_GRAPHS=ON"; \
         CMAKE_FLAGS="${CMAKE_FLAGS} -DCMAKE_EXE_LINKER_FLAGS=${CUDA_LINK}"; \
         CMAKE_FLAGS="${CMAKE_FLAGS} -DCMAKE_SHARED_LINKER_FLAGS=${CUDA_LINK}"; \
     elif [ "$BACKEND" = "vulkan" ]; then \
@@ -89,7 +89,7 @@ RUN git clone https://github.com/PrismML-Eng/llama.cpp.git /opt/llama.cpp-prism 
     ln -sf /opt/llama.cpp-prism/build/bin/llama-server /usr/local/bin/llama-server-prism
 
 # ── Switcher utility and default symlink ──────────────────────
-RUN ln -sf /usr/local/bin/llama-server-stock /usr/local/bin/llama-server && \
+RUN ln -sf /usr/local/bin/llama-server-prism /usr/local/bin/llama-server && \
     printf '#!/bin/bash\ncase "$1" in\n  prism) ln -sf /usr/local/bin/llama-server-prism /usr/local/bin/llama-server && echo "[+] Switched default llama-server to prism (ternary)" ;;\n  stock) ln -sf /usr/local/bin/llama-server-stock /usr/local/bin/llama-server && echo "[+] Switched default llama-server to stock" ;;\n  *) echo "Usage: llama-server-switch [stock|prism]" ;;\nesac\n' > /usr/local/bin/llama-server-switch && \
     chmod +x /usr/local/bin/llama-server-switch
 

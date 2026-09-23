@@ -38,6 +38,14 @@ cmd_limits() {
             fi
             limits_get "$key"
             ;;
+        scale|context)
+            local ctx="${rest%% *}"
+            if [ -z "$ctx" ]; then
+                limits_get ACTIVE_CONTEXT_WINDOW
+                return 0
+            fi
+            limits_scale_for_context "$ctx"
+            ;;
         reset)
             limits_reset
             ;;

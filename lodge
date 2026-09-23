@@ -862,10 +862,11 @@ _cmd_limits() {
             fi ;;
         ctx|context)
             if [ -z "$value" ]; then
-                ui_info "Llama.cpp context size per slot: ${LLAMA_CPP_CTX_SIZE:-8192} (default: 8192)"
+                ui_info "Llama.cpp context size per slot: ${LLAMA_CPP_CTX_SIZE:-65536} (active: ${ACTIVE_CONTEXT_WINDOW:-65536})"
             else
-                if _limits_set LLAMA_CPP_CTX_SIZE "Context size" "$value" 512 32768; then
+                if _limits_set LLAMA_CPP_CTX_SIZE "Context size" "$value" 512 262144; then
                     _llm_save_config
+                    declare -f limits_scale_for_context &>/dev/null && limits_scale_for_context "$value"
                     if [ "$LLM_BACKEND" = "llamacpp" ]; then
                         declare -f ui_info &>/dev/null && ui_info "Restarting llama.cpp backend to apply $value context size per slot..." || echo "Restarting llama.cpp backend to apply $value context size per slot..."
                         llm_backend_restart

@@ -1235,6 +1235,8 @@ _llm_build_llamacpp_payload() {
     # When a grammar is provided, llama-server constrains token
     # sampling to only produce output matching the grammar rules.
     # This gives Layer 1 schema enforcement at the decoding level.
+    local r_effort="${LLM_REASONING_EFFORT:-medium}"
+
     if [ "$stream" = "true" ]; then
         jq -n \
             --argjson messages "$messages" \
@@ -1248,7 +1250,8 @@ _llm_build_llamacpp_payload() {
             --argjson stream "$stream" \
             --arg grammar "$grammar" \
             --arg stop "$stop_token" \
-            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream, stream_options:{include_usage:true}} + (if ($grammar | length) > 0 then {grammar:$grammar} else {} end) + (if ($stop | length) > 0 then {stop:[$stop]} else {} end)'
+            --arg reasoning_effort "$r_effort" \
+            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream, reasoning_effort:$reasoning_effort, stream_options:{include_usage:true}} + (if ($grammar | length) > 0 then {grammar:$grammar} else {} end) + (if ($stop | length) > 0 then {stop:[$stop]} else {} end)'
     else
         jq -n \
             --argjson messages "$messages" \
@@ -1262,7 +1265,8 @@ _llm_build_llamacpp_payload() {
             --argjson stream "$stream" \
             --arg grammar "$grammar" \
             --arg stop "$stop_token" \
-            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream} + (if ($grammar | length) > 0 then {grammar:$grammar} else {} end) + (if ($stop | length) > 0 then {stop:[$stop]} else {} end)'
+            --arg reasoning_effort "$r_effort" \
+            '{messages:$messages, max_tokens:$max_tokens, temperature:$temperature, frequency_penalty:$frequency_penalty, presence_penalty:$presence_penalty, top_p:$top_p, top_k:$top_k, min_p:$min_p, stream:$stream, reasoning_effort:$reasoning_effort} + (if ($grammar | length) > 0 then {grammar:$grammar} else {} end) + (if ($stop | length) > 0 then {stop:[$stop]} else {} end)'
     fi
 }
 

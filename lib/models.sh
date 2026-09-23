@@ -59,7 +59,7 @@ _MODELS_REGISTRY=(
     "gemma4-12b-inst^blue-lodge-gemma4-inst:12b^hf.co/unsloth/gemma-4-12B-it-qat-GGUF:UD-Q4_K_XL^instruct^1^system^<turn|>^1.0^1.0^0.0^32768^16384^0.95^64^0.0^Gemma 4 12B QAT instruct. Central GPU quality tier.^central"
     "qwen35-9b-inst^blue-lodge-qwen35-inst:9b^hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL^instruct^0^none^<|im_end|>^0.7^1.0^1.5^32768^16384^0.8^20^0.0^Qwen 3.5 9B instruct. Strong central coding tier.^central"
     "granite41-8b-inst^blue-lodge-granite41-inst:8b^hf.co/unsloth/granite-4.1-8b-GGUF:Q4_K_M^instruct^0^none^<|end_of_text|>^0.6^1.0^0.0^32768^12288^0.9^20^0.0^IBM Granite 4.1 8B instruct. Central structured reasoning tier.^central"
-    "ternary-bonsai-27b^ternary-bonsai-27b^prism-ml/Ternary-Bonsai-2-27B-gguf^thinking^1^qwen^<|im_end|>^0.6^1.0^0.0^32768^32768^0.95^20^0.0^Prism Ternary Bonsai 2 27B GGUF. High-efficiency 27B ternary model.^central"
+    "ternary-bonsai-27b^ternary-bonsai-27b^prism-ml/Ternary-Bonsai-2-27B-gguf^thinking^1^qwen^<|im_end|>^1.0^1.0^0.0^65536^32768^0.95^20^0.0^Prism Ternary Bonsai 2 27B PTQ1_0 MTP GGUF. High-efficiency 27B ternary model.^central"
 )
 
 # ── Curated model presentation metadata ───────────────────────

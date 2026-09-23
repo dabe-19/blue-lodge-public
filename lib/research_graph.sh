@@ -364,8 +364,9 @@ research_synthesize_dossier() {
         declare -f ui_prefill_ticker_start &>/dev/null && ui_prefill_ticker_start
 
         local compact_scratchpad
-        # Limit prompt scratchpad to 24,000 characters (~6,000 tokens) to ensure prompt fits comfortably in 24,576 context window with max_tokens: 4000
-        compact_scratchpad=$(head -c 24000 "$scratchpad" 2>/dev/null || cat "$scratchpad" 2>/dev/null)
+        local _max_scratch="${RESEARCH_SCRATCHPAD_MAX_CHARS:-80000}"
+        # Dynamically scaled scratchpad buffer for deep context windows (default 80k chars / ~20k tokens)
+        compact_scratchpad=$(head -c "$_max_scratch" "$scratchpad" 2>/dev/null || cat "$scratchpad" 2>/dev/null)
 
         local synth_prompt="You are George, a master polymath scholar carrying the discipline of Washington, the wit of Franklin, and the analytical precision of Adam Smith.
 Topic: $topic

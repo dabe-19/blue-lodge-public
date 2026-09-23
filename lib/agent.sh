@@ -110,7 +110,7 @@ AGENT_SMART_ROUTE="${AGENT_SMART_ROUTE:-3}"              # Smart command routing
 AGENT_ASK_USER="${AGENT_ASK_USER:-1}"                    # Allow George to /ask the user questions during tasks: 0=disabled, 1=enabled
 AGENT_BRAINSTORM="${AGENT_BRAINSTORM:-1}"                  # Allow George to /brainstorm (self-reason) during tasks: 0=disabled, 1=enabled
 AGENT_FILE_EXPAND="${AGENT_FILE_EXPAND:-1}"              # Auto-expand file references in /social, /email, /write text: 0=disabled, 1=enabled
-AGENT_FILE_EXPAND_CHARS="${AGENT_FILE_EXPAND_CHARS:-10000}"  # Max chars per expanded file in specialist output (0=unlimited)
+AGENT_FILE_EXPAND_CHARS="${AGENT_FILE_EXPAND_CHARS:-40000}"  # Max chars per expanded file in specialist output (0=unlimited)
 AGENT_DM_SCAN_CHARS="${AGENT_DM_SCAN_CHARS:-80}"          # Characters to scan for recipient names from start of DM text
 AGENT_PRE_ROUTE="${AGENT_PRE_ROUTE:-1}"                  # Pre-route: extract /cmd from milestone, skip router: 0=disabled, 1=enabled
 AGENT_FAST_ROUTE="${AGENT_FAST_ROUTE:-1}"                # Fast-route: 0=disabled, 1=keywords+lean, 2=fuzzy only (lean prompt, no keyword matching)
@@ -124,7 +124,7 @@ AGENT_GIT_UNLOCK_ABSTRACT="${AGENT_GIT_UNLOCK_ABSTRACT:-1}"  # Milestones before
 AGENT_GIT_UNLOCK_COMBINED="${AGENT_GIT_UNLOCK_COMBINED:-1}"   # Milestones before /git unlocks for combined tasks
 AGENT_OUTPUT_DIR="${AGENT_OUTPUT_DIR:-.george/workspaces}" # Parent directory for agent file writes (.george/workspaces)
 AGENT_GREP_ALLOW_ABSOLUTE="${AGENT_GREP_ALLOW_ABSOLUTE:-0}"  # /grep path policy: 0=relative-only (force to workdir), 1=allow absolute paths
-AGENT_GREP_MAX_LINES="${AGENT_GREP_MAX_LINES:-100}"          # /grep output cap (lines shown before truncation)
+AGENT_GREP_MAX_LINES="${AGENT_GREP_MAX_LINES:-300}"          # /grep output cap (lines shown before truncation)
 AGENT_LS_ALLOW_ABSOLUTE="${AGENT_LS_ALLOW_ABSOLUTE:-0}"      # /ls path policy: 0=relative-only (force to workdir), 1=allow absolute paths
 AGENT_MILESTONE_CHARS="${AGENT_MILESTONE_CHARS:-200}"        # Max chars for milestone text before truncation (full text still passed to specialist)
 AGENT_ROUTER_SHORTLIST_MIN="${AGENT_ROUTER_SHORTLIST_MIN:-3}"  # Router shortlist floor (commands)
