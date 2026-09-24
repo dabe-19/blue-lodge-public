@@ -1312,6 +1312,157 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
+async fn execute_chat_tool(lodge_dir: &PathBuf, name: &str, args: &serde_json::Value) -> String {
+    match name {
+        "web_fetch" => {
+            let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("").trim();
+            if url.is_empty() {
+                return "Error: URL is required".into();
+            }
+            let lodge_str = lodge_dir.to_string_lossy();
+            let cmd_str = format!("source '{}/lib/web.sh' 2>/dev/null; web_fetch '{}'", lodge_str, url.replace('\'', "'\\''"));
+            let out = tokio::process::Command::new("bash")
+                .args(["-c", &cmd_str])
+                .current_dir(lodge_dir)
+                .output()
+                .await;
+            match out {
+                Ok(res) => {
+                    let s = String::from_utf8_lossy(&res.stdout);
+                    if s.trim().is_empty() {
+                        let err = String::from_utf8_lossy(&res.stderr);
+                        if err.trim().is_empty() { "Page returned empty content.".into() } else { err.to_string() }
+                    } else {
+                        if s.len() > 6000 {
+                            format!("{}...\n[Content truncated at 6000 characters]", &s[..6000])
+                        } else {
+                            s.to_string()
+                        }
+                    }
+                }
+                Err(e) => format!("Error fetching web content: {}", e),
+            }
+        }
+        "web_search" => {
+            let q = args.get("query").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(5).min(10);
+            if q.is_empty() {
+                return "Error: Search query is required".into();
+            }
+            let lodge_str = lodge_dir.to_string_lossy();
+            let cmd_str = format!("source '{}/lib/web.sh' 2>/dev/null; web_search '{}' {}", lodge_str, q.replace('\'', "'\\''"), count);
+            let out = tokio::process::Command::new("bash")
+                .args(["-c", &cmd_str])
+                .current_dir(lodge_dir)
+                .output()
+                .await;
+            match out {
+                Ok(res) => {
+                    let s = String::from_utf8_lossy(&res.stdout);
+                    if s.trim().is_empty() { "No search results found.".into() } else { s.to_string() }
+                }
+                Err(e) => format!("Error running search: {}", e),
+            }
+        }
+        "datetime_now" => {
+            let out = tokio::process::Command::new("date")
+                .args(["+%Y-%m-%d %H:%M:%S %Z (%A)"])
+                .output()
+                .await;
+            match out {
+                Ok(res) => String::from_utf8_lossy(&res.stdout).trim().to_string(),
+                Err(_) => chrono_utc_now(),
+            }
+        }
+        "file_read" => {
+            let rel_path = args.get("path").and_then(|v| v.as_str()).unwrap_or("").trim();
+            if rel_path.is_empty() {
+                return "Error: file path is required".into();
+            }
+            let full_path = lodge_dir.join(rel_path);
+            let start = args.get("start_line").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+            let max_lines = args.get("max_lines").and_then(|v| v.as_u64()).unwrap_or(100).min(200) as usize;
+            match tokio::fs::read_to_string(&full_path).await {
+                Ok(content) => {
+                    let lines: Vec<&str> = content.lines().collect();
+                    if lines.is_empty() {
+                        return "(empty file)".into();
+                    }
+                    let s_idx = if start > 0 { start - 1 } else { 0 };
+                    let e_idx = (s_idx + max_lines).min(lines.len());
+                    if s_idx >= lines.len() {
+                        return format!("Start line {} beyond total lines ({})", start, lines.len());
+                    }
+                    lines[s_idx..e_idx]
+                        .iter()
+                        .enumerate()
+                        .map(|(i, l)| format!("{:4}: {}", s_idx + i + 1, l))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }
+                Err(e) => format!("Error reading file {}: {}", rel_path, e),
+            }
+        }
+        "file_grep" => {
+            let pat = args.get("pattern").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let sub = args.get("path").and_then(|v| v.as_str()).unwrap_or(".").trim();
+            if pat.is_empty() {
+                return "Error: search pattern is required".into();
+            }
+            let out = tokio::process::Command::new("grep")
+                .args(["-rn", "-m", "20", "--exclude-dir=.git", "--exclude-dir=target", pat, sub])
+                .current_dir(lodge_dir)
+                .output()
+                .await;
+            match out {
+                Ok(res) => {
+                    let s = String::from_utf8_lossy(&res.stdout);
+                    if s.trim().is_empty() { "No matches found.".into() } else { s.to_string() }
+                }
+                Err(e) => format!("Error searching files: {}", e),
+            }
+        }
+        "dir_list" => {
+            let rel_path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".").trim();
+            let full_path = lodge_dir.join(rel_path);
+            match tokio::fs::read_dir(&full_path).await {
+                Ok(mut entries) => {
+                    let mut items = Vec::new();
+                    while let Ok(Some(entry)) = entries.next_entry().await {
+                        let file_name = entry.file_name().to_string_lossy().to_string();
+                        let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
+                        items.push(format!("{}{}", file_name, if is_dir { "/" } else { "" }));
+                    }
+                    items.sort();
+                    items.join("\n")
+                }
+                Err(e) => format!("Error listing directory: {}", e),
+            }
+        }
+        "recall_query" => {
+            let q = args.get("query").and_then(|v| v.as_str()).unwrap_or("").trim();
+            if q.is_empty() {
+                return "Error: query is required".into();
+            }
+            let lodge_str = lodge_dir.to_string_lossy();
+            let cmd_str = format!("source '{}/lib/recall.sh' 2>/dev/null; recall_search_context '{}' 2>/dev/null", lodge_str, q.replace('\'', "'\\''"));
+            let out = tokio::process::Command::new("bash")
+                .args(["-c", &cmd_str])
+                .current_dir(lodge_dir)
+                .output()
+                .await;
+            match out {
+                Ok(res) => {
+                    let s = String::from_utf8_lossy(&res.stdout);
+                    if s.trim().is_empty() { "No relevant recalled memories found.".into() } else { s.to_string() }
+                }
+                Err(e) => format!("Error querying memory recall: {}", e),
+            }
+        }
+        _ => format!("Tool '{}' is not supported in Chat Mode.", name),
+    }
+}
+
 #[derive(Deserialize, Debug)]
 struct ChatPrompt {
     prompt: Option<String>,
@@ -1341,9 +1492,10 @@ async fn post_chat(
         return Json(json!({ "status": "error", "error": "Empty prompt" }));
     }
 
-    // Record user message to session ledger
+    // Record user message to session ledger with unique ID
+    let user_msg_id = format!("u_{}", chrono_epoch_secs());
     let user_msg = json!({
-        "id": format!("u_{}", chrono_epoch_secs()),
+        "id": user_msg_id.clone(),
         "role": "user",
         "content": raw_cmd,
         "mode": mode,
@@ -1474,44 +1626,214 @@ async fn post_chat(
         }));
     }
 
-    // Chat Mode: direct, fast inference with Washington/Franklin persona and reasoning effort
-    let sys_prompt = "You are George, a thoughtful and grounded digital craftsman carrying the discipline of Washington, the wit of Franklin, and the precision of Adam Smith. Respond with quiet competence, intellectual dignity, and direct clarity without sci-fi tropes or fluff.";
-    let payload_body = json!({
-        "messages": [
-            { "role": "system", "content": sys_prompt },
-            { "role": "user", "content": raw_cmd }
-        ],
-        "temperature": 0.4,
-        "max_tokens": 1500,
-        "reasoning_effort": "medium",
-    });
+    // Chat Mode: multi-turn conversational inference with safe read-only tools and Washington/Franklin persona
+    let session_file = state.george_dir.join("workspaces").join("web_session.jsonl");
+    let mut history_messages: Vec<serde_json::Value> = Vec::new();
+    if let Ok(content) = fs::read_to_string(&session_file).await {
+        for line in content.lines() {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                if let Some(id) = val.get("id").and_then(|v| v.as_str()) {
+                    if id == user_msg_id {
+                        continue;
+                    }
+                }
+                let role = val.get("role").and_then(|v| v.as_str()).unwrap_or("");
+                let c = val.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                if (role == "user" || role == "assistant") && !c.trim().is_empty() {
+                    history_messages.push(json!({
+                        "role": role,
+                        "content": strip_ansi(c),
+                    }));
+                }
+            }
+        }
+    }
 
-    let llm_res = tokio::process::Command::new("curl")
-        .args([
-            "-s",
-            "--max-time", "60",
-            "http://127.0.0.1:8080/v1/chat/completions",
-            "-H", "Content-Type: application/json",
-            "-d", &payload_body.to_string(),
-        ])
-        .output()
-        .await;
+    let history_slice = if history_messages.len() > 24 {
+        &history_messages[history_messages.len() - 24..]
+    } else {
+        &history_messages[..]
+    };
+
+    let sys_prompt = "You are George, a thoughtful and grounded digital craftsman carrying the discipline of Washington, the wit of Franklin, and the precision of Adam Smith. Respond with quiet competence, intellectual dignity, and direct clarity without sci-fi tropes or fluff. You possess safe read-only tools to browse or fetch the web (web_search, web_fetch), inspect the workspace repository (file_read, file_grep, dir_list), query historical recall memory (recall_query), and check the current date/time (datetime_now). If the operator shares a URL, asks for real-time information, or refers to code/files, use your tools directly to investigate before answering.";
+
+    let mut messages: Vec<serde_json::Value> = Vec::new();
+    messages.push(json!({ "role": "system", "content": sys_prompt }));
+    for m in history_slice {
+        messages.push(m.clone());
+    }
+    messages.push(json!({ "role": "user", "content": raw_cmd }));
+
+    let chat_tools = json!([
+        {
+            "type": "function",
+            "function": {
+                "name": "web_fetch",
+                "description": "Fetch and extract readable text/markdown from an HTTP or HTTPS web URL. Use this when the user shares a link or asks you to check a webpage.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": { "type": "string", "description": "The web URL to fetch (HTTP/HTTPS)." }
+                    },
+                    "required": ["url"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Search the live web for factual information, current events, or references.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "Search query keywords." },
+                        "count": { "type": "integer", "description": "Number of results to return (default 5, max 10)." }
+                    },
+                    "required": ["query"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "file_read",
+                "description": "Read lines from a workspace file (read-only inspection).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Relative file path from project root." },
+                        "start_line": { "type": "integer", "description": "Starting line number (1-indexed, default 1)." },
+                        "max_lines": { "type": "integer", "description": "Number of lines to read (default 100, max 200)." }
+                    },
+                    "required": ["path"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "file_grep",
+                "description": "Search for a regex or text pattern in files (read-only).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": { "type": "string", "description": "Search pattern or query." },
+                        "path": { "type": "string", "description": "Subdirectory or file to search (default \".\")." }
+                    },
+                    "required": ["pattern"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "dir_list",
+                "description": "List files and directories in a given path (read-only).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Relative directory path (default \".\")." }
+                    }
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "datetime_now",
+                "description": "Get current local date, time, and timezone.",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "recall_query",
+                "description": "Query George's historical memory, journal reflections, and indexed knowledge base.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "Search query for memory recall." }
+                    },
+                    "required": ["query"]
+                }
+            }
+        }
+    ]);
 
     let mut reply_text = String::new();
-    if let Ok(out) = llm_res {
-        if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
-            if let Some(choices) = val["choices"].as_array() {
-                if let Some(msg) = choices.get(0).and_then(|c| c["message"].as_object()) {
-                    let content = msg.get("content").and_then(|s| s.as_str()).unwrap_or("");
-                    let reasoning = msg.get("reasoning_content").and_then(|s| s.as_str()).unwrap_or("");
-                    if !content.trim().is_empty() {
-                        reply_text = content.to_string();
-                    } else if !reasoning.trim().is_empty() {
-                        reply_text = reasoning.to_string();
+    let max_react_turns = 5;
+
+    for _ in 0..max_react_turns {
+        let payload_body = json!({
+            "messages": messages,
+            "tools": chat_tools,
+            "temperature": 0.4,
+            "max_tokens": 2048,
+            "reasoning_effort": "medium",
+        });
+
+        let llm_res = tokio::process::Command::new("curl")
+            .args([
+                "-s",
+                "--max-time", "60",
+                "http://127.0.0.1:8080/v1/chat/completions",
+                "-H", "Content-Type: application/json",
+                "-d", &payload_body.to_string(),
+            ])
+            .output()
+            .await;
+
+        let mut turn_choice = None;
+        if let Ok(out) = llm_res {
+            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                if let Some(choices) = val["choices"].as_array() {
+                    if let Some(choice) = choices.get(0) {
+                        turn_choice = Some(choice.clone());
                     }
                 }
             }
         }
+
+        let Some(choice) = turn_choice else {
+            break;
+        };
+
+        let message = choice["message"].clone();
+        let content = message.get("content").and_then(|s| s.as_str()).unwrap_or("");
+        let reasoning = message.get("reasoning_content").and_then(|s| s.as_str()).unwrap_or("");
+        let tool_calls = message.get("tool_calls").and_then(|t| t.as_array());
+
+        if let Some(calls) = tool_calls {
+            if !calls.is_empty() {
+                // Assistant requested tool invocation
+                messages.push(message.clone());
+                for call in calls {
+                    let call_id = call.get("id").and_then(|v| v.as_str()).unwrap_or("call_0");
+                    let func_name = call.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).unwrap_or("");
+                    let func_args_str = call.get("function").and_then(|f| f.get("arguments")).and_then(|a| a.as_str()).unwrap_or("{}");
+                    let func_args: serde_json::Value = serde_json::from_str(func_args_str).unwrap_or(json!({}));
+
+                    let tool_output = execute_chat_tool(&state.lodge_dir, func_name, &func_args).await;
+
+                    messages.push(json!({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "name": func_name,
+                        "content": tool_output,
+                    }));
+                }
+                continue;
+            }
+        }
+
+        if !content.trim().is_empty() {
+            reply_text = content.to_string();
+        } else if !reasoning.trim().is_empty() {
+            reply_text = reasoning.to_string();
+        }
+        break;
     }
 
     if reply_text.is_empty() {

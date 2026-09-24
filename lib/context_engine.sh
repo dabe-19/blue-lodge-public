@@ -364,7 +364,21 @@ context_engine_build() {
     fi
     out+="</reflexive_intelligence>\n\n"
 
-    # 12. Active Environment & Live Telemetry (Placed last to prevent KV cache invalidation)
+    # 13. Recent Conversation History (from active session ledger)
+    local session_file="${GEORGE_CONFIG_DIR:-$workdir/.george}/workspaces/web_session.jsonl"
+    [ ! -f "$session_file" ] && session_file="$workdir/.george/workspaces/web_session.jsonl"
+    if [ -f "$session_file" ] && [ -s "$session_file" ]; then
+        local recent_chat
+        recent_chat=$(tail -n 12 "$session_file" 2>/dev/null | jq -r 'select(.role != null and .content != null and (.content | length > 0)) | "[" + (.role | ascii_upcase) + "]: " + (.content | gsub("\n"; " ") | .[0:300])' 2>/dev/null || true)
+        if [ -n "$recent_chat" ]; then
+            out+="<recent_conversation_history>\n"
+            out+="Recent operator dialogue at the workbench:\n"
+            out+="$recent_chat\n"
+            out+="</recent_conversation_history>\n\n"
+        fi
+    fi
+
+    # 14. Active Environment & Live Telemetry (Placed last to prevent KV cache invalidation)
     local os_name platform branch git_dirty git_commit
     os_name="$(uname -s) $(uname -m) $(uname -r)"
     platform="${LODGE_PLATFORM:-linux}"
