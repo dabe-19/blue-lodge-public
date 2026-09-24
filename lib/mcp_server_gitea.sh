@@ -487,7 +487,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
     _respond_result() {
         local id="$1" content="$2"
-        printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$content"
+        local compact_res
+        compact_res=$(printf '%s' "$content" | $_JQ -c . 2>/dev/null || printf '%s' "$content" | tr -d '\n\r')
+        printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$compact_res"
     }
 
     _respond_error() {
@@ -503,11 +505,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
         case "$method" in
             initialize)
-                _respond_result "$id" '{
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": { "tools": {} },
-                    "serverInfo": { "name": "george-gitea-mcp", "version": "1.0.0" }
-                }'
+                _respond_result "$id" '{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"george-gitea-mcp","version":"1.0.0"}}'
                 ;;
             tools/list)
                 _respond_result "$id" '{

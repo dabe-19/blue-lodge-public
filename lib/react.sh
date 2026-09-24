@@ -103,10 +103,13 @@ $msgs_summary"
             reasoning_effort: $r_effort
         }')
 
+    local summary_payload_file="$session_dir/compact_payload.json"
+    echo "$payload" > "$summary_payload_file"
     local summary_resp
     summary_resp=$(curl -s --max-time 60 "$endpoint_url/v1/chat/completions" \
         -H "Content-Type: application/json" \
-        -d "$payload" 2>/dev/null)
+        -d @"$summary_payload_file" 2>/dev/null)
+    rm -f "$summary_payload_file"
 
     local summary_text
     summary_text=$(echo "$summary_resp" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
@@ -427,6 +430,7 @@ react_run() {
 
         # Prepare chat completions payload with runtime /limits settings
         local r_effort="${LLM_REASONING_EFFORT:-medium}"
+        local payload_file="$session_dir/payload_turn_${turn}.json"
         local payload
         payload=$(jq -n \
             --slurpfile msgs "$messages_file" \
@@ -446,6 +450,7 @@ react_run() {
                 stream: true,
                 stream_options: {include_usage: true}
             }')
+        echo "$payload" > "$payload_file"
 
         # Log turn boundary and prompt to transcript & prompt log
         declare -f transcript_section &>/dev/null && transcript_section "Turn $turn / $max_turns"
@@ -472,7 +477,7 @@ react_run() {
         # Execute real-time streaming SSE pipeline (direct stream_cache writing eliminates tee buffer)
         curl -s -N --max-time "$req_timeout" "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
             -H "Content-Type: application/json" \
-            -d "$payload" 2>/dev/null | \
+            -d @"$payload_file" 2>/dev/null | \
         sed -u -e 's/^data: //' -e '/^\[DONE\]/d' -e '/^[[:space:]]*$/d' | \
         jq --unbuffered -c '
             if .choices[0].delta.reasoning_content then
@@ -542,20 +547,20 @@ react_run() {
         if [ ! -s "$stream_cache" ]; then
             # Graceful fallback: synchronous non-stream request
             ui_dim "Stream interrupted; querying synchronous fallback..."
-            local fallback_payload
-            fallback_payload=$(echo "$payload" | jq '.stream = false | del(.stream_options)')
-            local fb_timeout=90
+            local fallback_payload_file="$session_dir/fallback_payload_turn_${turn}.json"
+            jq '.stream = false | del(.stream_options)' "$payload_file" > "$fallback_payload_file"
+            local fb_timeout="${ACTIVE_ENDPOINT_TIMEOUT:-180}"
             local resp_json
             resp_json=$(curl -s --max-time "$fb_timeout" "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
                 -H "Content-Type: application/json" \
-                -d "$fallback_payload" 2>/dev/null)
+                -d @"$fallback_payload_file" 2>/dev/null)
 
             if [ -z "$resp_json" ]; then
                 ui_warn "Empty response from endpoint $ACTIVE_ENDPOINT_URL. Retrying once after 3s..."
                 sleep 3
                 resp_json=$(curl -s --max-time "$fb_timeout" "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
                     -H "Content-Type: application/json" \
-                    -d "$fallback_payload" 2>/dev/null)
+                    -d @"$fallback_payload_file" 2>/dev/null)
             fi
 
             if [ -z "$resp_json" ]; then

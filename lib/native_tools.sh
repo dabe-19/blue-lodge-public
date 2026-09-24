@@ -1480,7 +1480,7 @@ native_tools_get_all_schemas() {
         done
     fi
 
-    echo "$all_tools"
+    echo "$all_tools" | jq 'unique_by(.function.name)'
 }
 
 # ── Dynamic Schema Filter ─────────────────────────────────────────────

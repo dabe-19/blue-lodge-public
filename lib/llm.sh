@@ -2081,11 +2081,14 @@ ${prompt}"
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] generate(llamacpp): mkfifo failed, falling back to pipe\n" > "$_tty" 2>/dev/null
         fi
 
+        local _payload_file="$_tmpdir/.lodge-payload-gen-$$.json"
+        echo "$payload" > "$_payload_file"
+
         if [ "$_use_fifo" -eq 1 ]; then
             $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
                 "$LLAMA_CPP_URL/v1/chat/completions" \
                 -H "Content-Type: application/json" \
-                -d "$payload" > "$_fifo" 2>/dev/null &
+                -d @"$_payload_file" > "$_fifo" 2>/dev/null &
             local _bg_curl=$!
             echo "$_bg_curl" > "$_curl_pid_file"
             _LLM_CURL_PID="$_bg_curl"
@@ -2309,8 +2312,9 @@ ${prompt}"
             $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
                 "$LLAMA_CPP_URL/v1/chat/completions" \
                 -H "Content-Type: application/json" \
-                -d "$payload" 2>/dev/null | _llm_gen_sse_loop
+                -d @"$_payload_file" 2>/dev/null | _llm_gen_sse_loop
         fi
+        rm -f "$_payload_file"
 
         _LLM_ACTIVE=0
         if [ ! -f "$_got_tokens" ]; then
@@ -2815,11 +2819,14 @@ ${prompt}"
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] stream(llamacpp): mkfifo failed, falling back to pipe\n" > "$_tty" 2>/dev/null
         fi
 
+        local _payload_file="$_tmpdir/.lodge-payload-stream-$$.json"
+        echo "$payload" > "$_payload_file"
+
         if [ "$_use_fifo" -eq 1 ]; then
             $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
                 "$LLAMA_CPP_URL/v1/chat/completions" \
                 -H "Content-Type: application/json" \
-                -d "$payload" > "$_fifo" 2>/dev/null &
+                -d @"$_payload_file" > "$_fifo" 2>/dev/null &
             local _bg_curl=$!
             _LLM_CURL_PID="$_bg_curl"
         fi
@@ -3048,8 +3055,9 @@ ${prompt}"
             $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
                 "$LLAMA_CPP_URL/v1/chat/completions" \
                 -H "Content-Type: application/json" \
-                -d "$payload" 2>/dev/null | _llm_stream_sse_loop
+                -d @"$_payload_file" 2>/dev/null | _llm_stream_sse_loop
         fi
+        rm -f "$_payload_file"
 
         ui_spinner_stop
         rm -f "$_llm_ft_file"
@@ -3554,11 +3562,14 @@ llm_chat() {
             [ "${LODGE_DEBUG:-0}" -eq 1 ] && printf " [debug] chat(llamacpp): mkfifo failed, falling back to pipe\n" > /dev/stderr 2>/dev/null
         fi
 
+        local _payload_file="$_tmpdir/.lodge-payload-chat-$$.json"
+        echo "$payload" > "$_payload_file"
+
         if [ "$_use_fifo" -eq 1 ]; then
             $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
                 "$LLAMA_CPP_URL/v1/chat/completions" \
                 -H "Content-Type: application/json" \
-                -d "$payload" > "$_fifo" 2>/dev/null &
+                -d @"$_payload_file" > "$_fifo" 2>/dev/null &
             local _bg_curl=$!
             _LLM_CURL_PID="$_bg_curl"
         fi
@@ -3591,8 +3602,9 @@ llm_chat() {
             $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
                 "$LLAMA_CPP_URL/v1/chat/completions" \
                 -H "Content-Type: application/json" \
-                -d "$payload" 2>/dev/null | _llm_chat_sse_loop
+                -d @"$_payload_file" 2>/dev/null | _llm_chat_sse_loop
         fi
+        rm -f "$_payload_file"
 
         _LLM_ACTIVE=0
         if [ ! -f "$_got_tokens" ]; then
