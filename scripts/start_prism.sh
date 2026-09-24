@@ -15,10 +15,14 @@ echo "[+] Starting PRISM CUDA server with $TARGET_MODEL..."
 
 # Setup library paths
 PRISM_BIN="/usr/local/bin/llama-server-prism"
-if [ -x /opt/llama-prism-latest/llama-server ]; then
+if [ -x /opt/llama-prism-latest/bin/llama-server ]; then
+    echo "[+] Using optimized PRISM binary from /opt/llama-prism-latest/bin..."
+    PRISM_BIN="/opt/llama-prism-latest/bin/llama-server"
+    export LD_LIBRARY_PATH="/opt/llama-prism-latest/lib:/opt/llama-prism-latest:${LD_LIBRARY_PATH:-}"
+elif [ -x /opt/llama-prism-latest/llama-server ]; then
     echo "[+] Using optimized PRISM binary from /opt/llama-prism-latest..."
     PRISM_BIN="/opt/llama-prism-latest/llama-server"
-    export LD_LIBRARY_PATH="/opt/llama-prism-latest:${LD_LIBRARY_PATH:-}"
+    export LD_LIBRARY_PATH="/opt/llama-prism-latest/lib:/opt/llama-prism-latest:${LD_LIBRARY_PATH:-}"
 fi
 
 # Build arguments array
