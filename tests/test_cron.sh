@@ -95,3 +95,34 @@ describe "Slash command /cron"
     assert_contains "$out" "Executing Autonomic Sweep / Job: issue_sweep"
     _teardown_cron
   }
+
+  it "enables, disables, and toggles cron jobs" && {
+    _setup_cron
+    source "$LODGE_DIR/lib/commands.sh"
+    source "$LODGE_DIR/commands/cron.sh"
+
+    # Default: enabled
+    cron_is_job_enabled "pr_sweep"
+    assert_ok $?
+
+    # Disable pr_sweep
+    cmd_cron "disable pr_sweep" >/dev/null 2>&1
+    ! cron_is_job_enabled "pr_sweep"
+    assert_ok $?
+
+    # Status displays DISABLED
+    out=$(cmd_cron "status")
+    assert_contains "$out" "[DISABLED]"
+
+    # Toggle pr_sweep back to enabled
+    cmd_cron "toggle pr_sweep" >/dev/null 2>&1
+    cron_is_job_enabled "pr_sweep"
+    assert_ok $?
+
+    # Enable explicitly
+    cmd_cron "enable pr_sweep" >/dev/null 2>&1
+    cron_is_job_enabled "pr_sweep"
+    assert_ok $?
+
+    _teardown_cron
+  }

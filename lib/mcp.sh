@@ -37,6 +37,7 @@ MCP_RUN_DIR="${MCP_RUN_DIR:-$GEORGE_DIR/mcp/run}"
 MCP_TIMEOUT="${MCP_TIMEOUT:-30}"
 MCP_CACHE_NS="mcp"               # LRU cache namespace
 MCP_SERVERS_FILE="${MCP_CONFIG_DIR}/servers.conf"
+MCP_SERVERS_JSON="${MCP_CONFIG_DIR}/servers.json"
 MCP_CATALOG_FILE="${MCP_CONFIG_DIR}/catalog.conf"
 
 # Test-mode timing knobs (optional env overrides).
@@ -70,19 +71,41 @@ _mcp_jq() {
     "$_MCP_JQ_CMD" "$@"
 }
 
-# ── Server Registry (flat file: name|command|description) ──────
+# ── Server Registry (flat file: name|command|description + servers.json) ──
 # Bash 3.2 compatible — no associative arrays.
 
 _mcp_server_exists() {
     local name="$1"
-    [ -f "$MCP_SERVERS_FILE" ] && grep -q "^${name}|" "$MCP_SERVERS_FILE" 2>/dev/null
+    if [ -f "$MCP_SERVERS_FILE" ] && grep -q "^${name}|" "$MCP_SERVERS_FILE" 2>/dev/null; then
+        return 0
+    fi
+    if [ -f "$MCP_SERVERS_JSON" ] && command -v jq &>/dev/null; then
+        if jq -e "((.mcpServers[\"$name\"] // .[\"$name\"]) != null)" "$MCP_SERVERS_JSON" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    return 1
 }
 
 _mcp_server_cmd() {
     local name="$1"
-    [ -f "$MCP_SERVERS_FILE" ] || return 1
-    local raw_cmd
-    raw_cmd=$(grep "^${name}|" "$MCP_SERVERS_FILE" 2>/dev/null | head -1 | cut -d'|' -f2)
+    local raw_cmd=""
+    if [ -f "$MCP_SERVERS_FILE" ] && grep -q "^${name}|" "$MCP_SERVERS_FILE" 2>/dev/null; then
+        raw_cmd=$(grep "^${name}|" "$MCP_SERVERS_FILE" 2>/dev/null | head -1 | cut -d'|' -f2)
+    elif [ -f "$MCP_SERVERS_JSON" ] && command -v jq &>/dev/null; then
+        local entry
+        entry=$(jq -r "(.mcpServers[\"$name\"] // .[\"$name\"]) // empty" "$MCP_SERVERS_JSON" 2>/dev/null)
+        if [ -n "$entry" ] && [ "$entry" != "null" ]; then
+            local cmd args env_vars
+            cmd=$(jq -r "(.mcpServers[\"$name\"] // .[\"$name\"]).command // empty" "$MCP_SERVERS_JSON" 2>/dev/null)
+            args=$(jq -r "[(.mcpServers[\"$name\"] // .[\"$name\"]).args[]?] | join(\" \")" "$MCP_SERVERS_JSON" 2>/dev/null)
+            env_vars=$(jq -r "[(.mcpServers[\"$name\"] // .[\"$name\"]).env // {} | to_entries[] | \"\\(.key)=\\\"\\(.value)\\\"\"] | join(\" \")" "$MCP_SERVERS_JSON" 2>/dev/null)
+            if [ -n "$cmd" ]; then
+                raw_cmd="${env_vars:+$env_vars }$cmd${args:+ $args}"
+            fi
+        fi
+    fi
+    [ -z "$raw_cmd" ] && return 1
     # Dynamic path normalization: substitute $LODGE_DIR if /workspace does not exist
     if [ ! -d "/workspace" ] && [[ "$raw_cmd" == *"/workspace"* ]]; then
         raw_cmd="${raw_cmd//\/workspace/${LODGE_DIR:-$HOME/blue-lodge}}"
@@ -92,8 +115,16 @@ _mcp_server_cmd() {
 
 _mcp_server_desc() {
     local name="$1"
-    [ -f "$MCP_SERVERS_FILE" ] || return 1
-    grep "^${name}|" "$MCP_SERVERS_FILE" 2>/dev/null | head -1 | cut -d'|' -f3
+    if [ -f "$MCP_SERVERS_FILE" ] && grep -q "^${name}|" "$MCP_SERVERS_FILE" 2>/dev/null; then
+        grep "^${name}|" "$MCP_SERVERS_FILE" 2>/dev/null | head -1 | cut -d'|' -f3
+        return 0
+    fi
+    if [ -f "$MCP_SERVERS_JSON" ] && command -v jq &>/dev/null; then
+        local desc
+        desc=$(jq -r "(.mcpServers[\"$name\"] // .[\"$name\"]).description // \"Standard MCP Server ($name)\"" "$MCP_SERVERS_JSON" 2>/dev/null)
+        [ -n "$desc" ] && [ "$desc" != "null" ] && echo "$desc" && return 0
+    fi
+    return 1
 }
 
 mcp_server_add() {
@@ -121,14 +152,23 @@ mcp_server_add() {
 
 mcp_server_remove() {
     local name="$1"
-    [ -f "$MCP_SERVERS_FILE" ] || return 1
+    if ! _mcp_server_exists "$name"; then
+        return 0
+    fi
 
     # Stop if running
     mcp_status "$name" >/dev/null 2>&1 && mcp_stop "$name"
 
-    local tmp_file="${MCP_SERVERS_FILE}.tmp"
-    grep -v "^${name}|" "$MCP_SERVERS_FILE" > "$tmp_file" 2>/dev/null
-    mv "$tmp_file" "$MCP_SERVERS_FILE"
+    if [ -f "$MCP_SERVERS_FILE" ]; then
+        local tmp_file="${MCP_SERVERS_FILE}.tmp"
+        grep -v "^${name}|" "$MCP_SERVERS_FILE" > "$tmp_file" 2>/dev/null
+        mv "$tmp_file" "$MCP_SERVERS_FILE"
+    fi
+
+    if [ -f "$MCP_SERVERS_JSON" ] && command -v jq &>/dev/null; then
+        local tmp_json="${MCP_SERVERS_JSON}.tmp"
+        jq "del(.mcpServers[\"$name\"]) | del(.[\"$name\"])" "$MCP_SERVERS_JSON" > "$tmp_json" 2>/dev/null && mv "$tmp_json" "$MCP_SERVERS_JSON"
+    fi
 
     # Invalidate tool cache for this server
     if declare -f cache_invalidate &>/dev/null; then
@@ -137,8 +177,22 @@ mcp_server_remove() {
 }
 
 mcp_server_list() {
-    [ -f "$MCP_SERVERS_FILE" ] || { echo ""; return; }
-    grep -v '^#' "$MCP_SERVERS_FILE" 2>/dev/null | grep -v '^$'
+    if [ -f "$MCP_SERVERS_FILE" ]; then
+        grep -v '^#' "$MCP_SERVERS_FILE" 2>/dev/null | grep -v '^$'
+    fi
+    if [ -f "$MCP_SERVERS_JSON" ] && command -v jq &>/dev/null; then
+        local json_keys
+        json_keys=$(jq -r '(.mcpServers // .) | keys[]?' "$MCP_SERVERS_JSON" 2>/dev/null || true)
+        for k in $json_keys; do
+            if [ -f "$MCP_SERVERS_FILE" ] && grep -q "^${k}|" "$MCP_SERVERS_FILE" 2>/dev/null; then
+                continue
+            fi
+            local cmd desc
+            cmd=$(_mcp_server_cmd "$k" 2>/dev/null || true)
+            desc=$(_mcp_server_desc "$k" 2>/dev/null || true)
+            [ -n "$cmd" ] && echo "${k}|${cmd}|${desc:-MCP Server}"
+        done
+    fi
 }
 
 mcp_server_names() {

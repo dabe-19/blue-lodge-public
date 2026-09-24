@@ -103,6 +103,7 @@ async fn main() {
         .route("/api/cron/run/:name", post(run_cron_job))
         .route("/api/cron/job/:name", delete(delete_cron_job))
         .route("/api/cron/job/:name/toggle-platform", post(toggle_cron_platform))
+        .route("/api/cron/job/:name/toggle-enabled", post(toggle_cron_enabled))
         .route("/api/social/gate", get(get_social_gate))
         .route("/api/social/gate/toggle", post(toggle_social_gate))
         .route("/api/cron/generate", post(generate_cron_job))
@@ -114,6 +115,8 @@ async fn main() {
         .route("/api/tunnel/disconnect", post(disconnect_tunnel))
         .route("/api/upload", post(upload_file))
         .route("/api/chat", post(post_chat))
+        .route("/api/chat/dispatch", post(post_dispatch))
+        .route("/api/task/:id/input", post(post_task_input))
         .route("/api/command", post(post_chat))
         .route("/api/task/:id/pause", post(pause_task))
         .route("/api/task/:id/resume", post(resume_task))
@@ -533,6 +536,7 @@ async fn get_cron_jobs(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     let mut jobs = Vec::new();
     let cron_conf_file = state.george_dir.join("cron.conf");
     let mut intervals = std::collections::HashMap::new();
+    let mut disabled_jobs = std::collections::HashSet::new();
 
     // Default intervals in seconds
     intervals.insert("sentinel_sweep", 60u64);
@@ -552,7 +556,14 @@ async fn get_cron_jobs(State(state): State<Arc<AppState>>) -> impl IntoResponse 
             if let Some((k, v)) = line.split_once('=') {
                 let k = k.trim();
                 let v = v.trim().replace('"', "").replace('\'', "");
-                if let Ok(secs) = v.parse::<u64>() {
+                if k == "CRON_DISABLED_JOBS" {
+                    for name in v.split(',') {
+                        let name = name.trim();
+                        if !name.is_empty() {
+                            disabled_jobs.insert(name.to_string());
+                        }
+                    }
+                } else if let Ok(secs) = v.parse::<u64>() {
                     match k {
                         "CRON_INTERVAL_SENTINEL" => { intervals.insert("sentinel_sweep", secs); }
                         "CRON_INTERVAL_PR" => { intervals.insert("pr_sweep", secs); }
@@ -594,11 +605,16 @@ async fn get_cron_jobs(State(state): State<Arc<AppState>>) -> impl IntoResponse 
         let exit_code = job_state.and_then(|s| s.get("exit_code")).and_then(|v| v.as_i64()).unwrap_or(0);
         let updated_at = job_state.and_then(|s| s.get("updated_at")).and_then(|v| v.as_str()).unwrap_or("Never").to_string();
 
+        let is_disabled = disabled_jobs.contains(name) ||
+            job_state.and_then(|s| s.get("enabled")).and_then(|v| v.as_bool()) == Some(false);
+        let enabled = !is_disabled;
+
         jobs.push(json!({
             "name": name,
             "interval": interval,
             "description": desc,
             "is_system": true,
+            "enabled": enabled,
             "command": format!("./commands/cron.sh run {}", name),
             "last_run": last_run,
             "exit_code": exit_code,
@@ -616,6 +632,7 @@ async fn get_cron_jobs(State(state): State<Arc<AppState>>) -> impl IntoResponse 
                 if let Ok(script) = fs::read_to_string(&path).await {
                     let mut interval = 60u64;
                     let mut desc = format!("Custom operator job: {}", file_stem);
+                    let mut enabled = true;
                     let mut publish_social = false;
                     let mut publish_x = false;
                     let mut publish_mastodon = false;
@@ -633,6 +650,11 @@ async fn get_cron_jobs(State(state): State<Arc<AppState>>) -> impl IntoResponse 
                             if let Some(d) = trimmed.strip_prefix("# DESC:") {
                                 desc = d.trim().to_string();
                             }
+                        } else if trimmed.starts_with("# ENABLED:") {
+                            if let Some(val_str) = trimmed.strip_prefix("# ENABLED:") {
+                                let val_str = val_str.trim();
+                                enabled = val_str != "0" && val_str != "false";
+                            }
                         } else if trimmed.starts_with("# PUBLISH_SOCIAL:") {
                             publish_social = trimmed.contains(": 1");
                         } else if trimmed.starts_with("# PUBLISH_X:") {
@@ -649,11 +671,16 @@ async fn get_cron_jobs(State(state): State<Arc<AppState>>) -> impl IntoResponse 
                     let exit_code = job_state.and_then(|s| s.get("exit_code")).and_then(|v| v.as_i64()).unwrap_or(0);
                     let updated_at = job_state.and_then(|s| s.get("updated_at")).and_then(|v| v.as_str()).unwrap_or("Never").to_string();
 
+                    if disabled_jobs.contains(&file_stem) || job_state.and_then(|s| s.get("enabled")).and_then(|v| v.as_bool()) == Some(false) {
+                        enabled = false;
+                    }
+
                     jobs.push(json!({
                         "name": file_stem,
                         "interval": interval,
                         "description": desc,
                         "is_system": false,
+                        "enabled": enabled,
                         "command": script,
                         "last_run": last_run,
                         "exit_code": exit_code,
@@ -868,6 +895,40 @@ async fn toggle_cron_platform(
         Json(json!({ "status": "ok", "job": clean_name, "platform": payload.platform, "enabled": payload.enabled })).into_response()
     } else {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "Failed to read job script" }))).into_response()
+    }
+}
+
+async fn toggle_cron_enabled(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let clean_name = name.replace(|c: char| !c.is_alphanumeric() && c != '_', "");
+    let lodge_dir = state.lodge_dir.clone();
+    let job_name = clean_name.clone();
+
+    let script = lodge_dir.join("commands").join("cron.sh");
+    let output = tokio::process::Command::new("bash")
+        .arg(&script)
+        .arg("toggle")
+        .arg(&job_name)
+        .current_dir(&lodge_dir)
+        .output()
+        .await;
+
+    match output {
+        Ok(out) => {
+            let out_str = String::from_utf8_lossy(&out.stdout).to_string();
+            let is_enabled = !out_str.contains("disabled");
+            Json(json!({
+                "status": "ok",
+                "job": clean_name,
+                "enabled": is_enabled,
+                "output": out_str.trim()
+            })).into_response()
+        }
+        Err(e) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": format!("Failed to toggle cron job: {}", e) }))).into_response()
+        }
     }
 }
 
@@ -1154,6 +1215,14 @@ async fn get_session(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 async fn clear_session(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let session_file = state.george_dir.join("workspaces").join("web_session.jsonl");
+    if let Ok(content) = fs::read_to_string(&session_file).await {
+        if !content.trim().is_empty() {
+            let trans_dir = state.george_dir.join("transcripts");
+            let _ = fs::create_dir_all(&trans_dir).await;
+            let archive_file = trans_dir.join(format!("web_session_{}.md", chrono_epoch_secs()));
+            let _ = fs::write(&archive_file, &content).await;
+        }
+    }
     let _ = fs::write(&session_file, "").await;
     Json(json!({ "status": "cleared" }))
 }
@@ -1197,6 +1266,7 @@ struct ChatPrompt {
     message: Option<String>,
     command: Option<String>,
     session_id: Option<String>,
+    mode: Option<String>,
 }
 
 async fn post_chat(
@@ -1213,6 +1283,7 @@ async fn post_chat(
     let sess_id = payload
         .session_id
         .unwrap_or_else(|| format!("web_{}", chrono_epoch_secs()));
+    let mode = payload.mode.as_deref().unwrap_or("agentic").to_string();
 
     if raw_cmd.is_empty() {
         return Json(json!({ "status": "error", "error": "Empty prompt" }));
@@ -1223,11 +1294,12 @@ async fn post_chat(
         "id": format!("u_{}", chrono_epoch_secs()),
         "role": "user",
         "content": raw_cmd,
+        "mode": mode,
         "timestamp": chrono_utc_now(),
     });
     append_session_message(&state.george_dir, &user_msg).await;
 
-    // Check if it's a slash command vs. natural conversation
+    // Check if it's an explicit slash command
     if raw_cmd.starts_with('/') {
         let lodge_bin = state.lodge_dir.join("lodge");
         let cmd_copy = raw_cmd.clone();
@@ -1268,7 +1340,89 @@ async fn post_chat(
         }));
     }
 
-    // Conversational query: query Tier 1 inference engine directly
+    // Agentic Mode: Spawns George with full ReAct loop and bedrock tools
+    if mode == "agentic" {
+        let lodge_bin = state.lodge_dir.join("lodge");
+        let cmd_copy = raw_cmd.clone();
+        let lodge_dir_copy = state.lodge_dir.clone();
+
+        let out = tokio::process::Command::new(lodge_bin)
+            .args([&cmd_copy])
+            .current_dir(lodge_dir_copy)
+            .output()
+            .await;
+
+        let raw_output = match out {
+            Ok(res) => {
+                let stdout = String::from_utf8_lossy(&res.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&res.stderr).to_string();
+                if !stdout.is_empty() { stdout } else { stderr }
+            }
+            Err(e) => format!("Execution error: {}", e),
+        };
+        let output_text = strip_ansi(&raw_output);
+
+        let assistant_msg = json!({
+            "id": format!("a_{}", chrono_epoch_secs()),
+            "role": "assistant",
+            "type": "agentic",
+            "command": raw_cmd,
+            "content": output_text,
+            "timestamp": chrono_utc_now(),
+        });
+        append_session_message(&state.george_dir, &assistant_msg).await;
+
+        return Json(json!({
+            "status": "ok",
+            "session_id": sess_id,
+            "mode": "agentic",
+            "type": "agentic",
+            "reply": output_text,
+        }));
+    }
+
+    // Plan-Task Mode: Routes through the-architect workflow to grill requirements and draft contract
+    if mode == "plan-task" {
+        let lodge_bin = state.lodge_dir.join("lodge");
+        let plan_arg = format!("/workflow run the-architect.agent {}", raw_cmd);
+        let lodge_dir_copy = state.lodge_dir.clone();
+
+        let out = tokio::process::Command::new(lodge_bin)
+            .args([&plan_arg])
+            .current_dir(lodge_dir_copy)
+            .output()
+            .await;
+
+        let raw_output = match out {
+            Ok(res) => {
+                let stdout = String::from_utf8_lossy(&res.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&res.stderr).to_string();
+                if !stdout.is_empty() { stdout } else { stderr }
+            }
+            Err(e) => format!("Execution error: {}", e),
+        };
+        let output_text = strip_ansi(&raw_output);
+
+        let assistant_msg = json!({
+            "id": format!("a_{}", chrono_epoch_secs()),
+            "role": "assistant",
+            "type": "plan-task",
+            "command": raw_cmd,
+            "content": output_text,
+            "timestamp": chrono_utc_now(),
+        });
+        append_session_message(&state.george_dir, &assistant_msg).await;
+
+        return Json(json!({
+            "status": "ok",
+            "session_id": sess_id,
+            "mode": "plan-task",
+            "type": "plan-task",
+            "reply": output_text,
+        }));
+    }
+
+    // Chat Mode: direct, fast inference with Washington/Franklin persona and reasoning effort
     let sys_prompt = "You are George, a thoughtful and grounded digital craftsman carrying the discipline of Washington, the wit of Franklin, and the precision of Adam Smith. Respond with quiet competence, intellectual dignity, and direct clarity without sci-fi tropes or fluff.";
     let payload_body = json!({
         "messages": [
@@ -1277,6 +1431,7 @@ async fn post_chat(
         ],
         "temperature": 0.4,
         "max_tokens": 1500,
+        "reasoning_effort": "medium",
     });
 
     let llm_res = tokio::process::Command::new("curl")
@@ -1326,6 +1481,67 @@ async fn post_chat(
         "type": "chat",
         "reply": reply_text,
     }))
+}
+
+#[derive(Deserialize, Debug)]
+struct DispatchPayload {
+    contract: Option<String>,
+}
+
+async fn post_dispatch(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<DispatchPayload>,
+) -> impl IntoResponse {
+    let lodge_bin = state.lodge_dir.join("lodge");
+    let contract_arg = payload.contract.unwrap_or_default();
+    let dispatch_cmd = if contract_arg.is_empty() {
+        "/dispatch".to_string()
+    } else {
+        format!("/dispatch {}", contract_arg)
+    };
+
+    let out = tokio::process::Command::new(lodge_bin)
+        .args([&dispatch_cmd])
+        .current_dir(&state.lodge_dir)
+        .output()
+        .await;
+
+    let raw_output = match out {
+        Ok(res) => {
+            let stdout = String::from_utf8_lossy(&res.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&res.stderr).to_string();
+            if !stdout.is_empty() { stdout } else { stderr }
+        }
+        Err(e) => format!("Execution error: {}", e),
+    };
+    let output_text = strip_ansi(&raw_output);
+
+    Json(json!({
+        "status": "ok",
+        "reply": output_text,
+    }))
+}
+
+#[derive(Deserialize, Debug)]
+struct TaskInputPayload {
+    input: String,
+}
+
+async fn post_task_input(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<TaskInputPayload>,
+) -> impl IntoResponse {
+    let fifo_path = state.george_dir.join("telemetry/active").join(format!("{}.in", id));
+    if let Ok(mut file) = tokio::fs::OpenOptions::new().write(true).open(&fifo_path).await {
+        let _ = file.write_all(payload.input.as_bytes()).await;
+        let _ = file.write_all(b"\n").await;
+        Json(json!({ "status": "ok", "message": "Input sent to task" }))
+    } else {
+        let fallback_path = state.george_dir.join("telemetry/active").join(format!("{}.input", id));
+        let _ = tokio::fs::write(&fallback_path, format!("{}\n", payload.input)).await;
+        Json(json!({ "status": "ok", "message": "Input queued for task" }))
+    }
 }
 
 #[derive(Deserialize, Debug)]

@@ -422,7 +422,8 @@ body.drawer-open .workbench-viewport {
 }
 
 .expanded-log-stream {
-  max-height: 200px;
+  min-height: 280px;
+  max-height: 60vh;
   overflow-y: auto;
   background: var(--bg-card);
   border: 1px solid var(--border-color);
@@ -754,6 +755,79 @@ body.drawer-open .workbench-viewport {
   background: var(--bg-surface);
   padding: 10px 20px;
   border: 1px solid var(--border-strong);
+}
+
+.drop-zone.active {
+  display: flex !important;
+  border-color: var(--accent) !important;
+  background: rgba(0, 0, 0, 0.92) !important;
+}
+
+/* --- Footer Aux Bar (3-Way Mode Switcher & Session Controls) --- */
+.footer-aux-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.chat-mode-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-card);
+  padding: 2px 6px;
+  border-radius: 2px;
+  border: 1px solid var(--border-color);
+}
+
+.chat-mode-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+
+.chat-mode-btn {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  padding: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: all 0.15s ease;
+}
+
+.chat-mode-btn:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.chat-mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.session-reset-btn {
+  font-size: 10px;
+  padding: 2px 8px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px dashed var(--border-color);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.session-reset-btn:hover {
+  color: var(--danger, #ff5555);
+  border-color: var(--danger, #ff5555);
 }
 
 .input-housing {
@@ -1266,6 +1340,14 @@ body.drawer-open .workbench-viewport {
   border: 1px solid var(--border-color);
   padding: 3px 8px;
   border-radius: 2px;
+}
+
+.instrument-cluster {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .telemetry-chip {
@@ -1849,6 +1931,36 @@ body.drawer-open .workbench-viewport {
   border-radius: 2px;
 }
 
+.cron-toggle-enabled-btn {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+  line-height: 1.2;
+}
+
+.cron-toggle-enabled-btn.enabled {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.cron-toggle-enabled-btn.disabled {
+  background: rgba(148, 163, 184, 0.1);
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.25);
+  text-decoration: line-through;
+}
+
+.cron-toggle-enabled-btn:hover {
+  filter: brightness(1.2);
+}
+
 .cron-job-desc {
   font-size: 11px;
   color: var(--text-muted);
@@ -2016,6 +2128,21 @@ body.drawer-open .workbench-viewport {
 }
 
 /* --- Craftsman Onboarding Field Guide --- */
+.guide-collapsible summary {
+  list-style: none;
+}
+.guide-collapsible summary::-webkit-details-marker {
+  display: none;
+}
+.guide-collapsible summary:after {
+  content: ' [ + EXPAND ]';
+  font-size: 10px;
+  color: var(--accent);
+  margin-left: 6px;
+}
+.guide-collapsible[open] summary:after {
+  content: ' [ - COLLAPSE ]';
+}
 .onboarding-guide-container {
   display: flex;
   flex-direction: column;

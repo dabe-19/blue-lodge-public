@@ -71,9 +71,12 @@ cron_init() {
                 CRON_POPUP_POS) CRON_POPUP_POS="$val" ;;
                 CRON_POPUP_SIZE) CRON_POPUP_SIZE="$val" ;;
                 CRON_POPUP_HOLD_ON_ERROR) CRON_POPUP_HOLD_ON_ERROR="$val" ;;
+                CRON_DISABLED_JOBS) CRON_DISABLED_JOBS="$val" ;;
             esac
         done < "$CRON_CONF_FILE"
     fi
+
+    CRON_DISABLED_JOBS="${CRON_DISABLED_JOBS:-}"
 
     if [ ! -s "$CRON_STATE_FILE" ] || ! jq -e . "$CRON_STATE_FILE" >/dev/null 2>&1; then
         echo '{"jobs":{}}' > "$CRON_STATE_FILE" 2>/dev/null || true
@@ -100,11 +103,142 @@ _cron_set_last_run() {
         echo '{"jobs":{}}' > "$CRON_STATE_FILE" 2>/dev/null || true
     fi
     if jq --arg j "$job_name" --argjson lr "$now" --argjson ec "$exit_code" \
-        '.jobs[$j] = { "last_run": $lr, "exit_code": $ec, "updated_at": (now | todate) }' \
+        '.jobs[$j] = ((.jobs[$j] // {}) + { "last_run": $lr, "exit_code": $ec, "updated_at": (now | todate) })' \
         "$CRON_STATE_FILE" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
         mv -f "$tmp" "$CRON_STATE_FILE"
     else
         rm -f "$tmp" 2>/dev/null || true
+    fi
+}
+
+cron_is_job_enabled() {
+    local job_name="$1"
+    cron_init
+
+    # 1. Check custom job header in script file if it exists
+    local script_name="${job_name%.sh}"
+    local job_script="$CRON_JOBS_DIR/${script_name}.sh"
+    if [ -f "$job_script" ]; then
+        local en_hdr
+        en_hdr=$(grep -m1 '^# ENABLED:' "$job_script" 2>/dev/null | awk '{print $3}')
+        if [ "$en_hdr" = "0" ] || [ "$en_hdr" = "false" ]; then
+            return 1
+        fi
+    fi
+
+    # 2. Check CRON_CONF_FILE for CRON_DISABLED_JOBS list
+    if [ -n "${CRON_DISABLED_JOBS:-}" ]; then
+        if [[ ",${CRON_DISABLED_JOBS}," == *",${job_name},"* ]] || [[ ",${CRON_DISABLED_JOBS}," == *",${script_name},"* ]]; then
+            return 1
+        fi
+    fi
+
+    # 3. Check cron_state.json .jobs[job_name].enabled
+    if [ -s "$CRON_STATE_FILE" ]; then
+        local state_en
+        state_en=$(jq -r ".jobs.\"$job_name\".enabled // .jobs.\"$script_name\".enabled // empty" "$CRON_STATE_FILE" 2>/dev/null)
+        if [ "$state_en" = "false" ] || [ "$state_en" = "0" ]; then
+            return 1
+        fi
+    fi
+
+    return 0
+}
+
+cron_enable_job() {
+    local job_name="$1"
+    cron_init
+    local script_name="${job_name%.sh}"
+
+    # 1. Update script header if custom script
+    local job_script="$CRON_JOBS_DIR/${script_name}.sh"
+    if [ -f "$job_script" ]; then
+        if grep -q '^# ENABLED:' "$job_script"; then
+            sed -i 's/^# ENABLED:.*/# ENABLED: 1/' "$job_script"
+        else
+            sed -i '/^# INTERVAL:/a # ENABLED: 1' "$job_script"
+        fi
+    fi
+
+    # 2. Update CRON_CONF_FILE (remove from CRON_DISABLED_JOBS)
+    if [ -f "$CRON_CONF_FILE" ]; then
+        local cur_dis
+        cur_dis=$(grep '^CRON_DISABLED_JOBS=' "$CRON_CONF_FILE" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        if [ -n "$cur_dis" ]; then
+            local new_dis
+            new_dis=$(echo "$cur_dis" | tr ',' '\n' | grep -v -E "^(${job_name}|${script_name})$" | tr '\n' ',' | sed 's/,$//')
+            if [ -n "$new_dis" ]; then
+                sed -i "s/^CRON_DISABLED_JOBS=.*/CRON_DISABLED_JOBS=\"$new_dis\"/" "$CRON_CONF_FILE"
+            else
+                sed -i '/^CRON_DISABLED_JOBS=/d' "$CRON_CONF_FILE"
+            fi
+        fi
+    fi
+    CRON_DISABLED_JOBS=$(grep '^CRON_DISABLED_JOBS=' "$CRON_CONF_FILE" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || true)
+
+    # 3. Update cron_state.json
+    local tmp="${CRON_STATE_FILE}.tmp.${BASHPID:-$$}.$RANDOM"
+    if jq --arg j "$job_name" \
+        '.jobs[$j] = ((.jobs[$j] // {}) + { "enabled": true, "updated_at": (now | todate) })' \
+        "$CRON_STATE_FILE" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+        mv -f "$tmp" "$CRON_STATE_FILE"
+    else
+        rm -f "$tmp" 2>/dev/null || true
+    fi
+
+    ui_ok "Cron job '$job_name' enabled."
+    return 0
+}
+
+cron_disable_job() {
+    local job_name="$1"
+    cron_init
+    local script_name="${job_name%.sh}"
+
+    # 1. Update script header if custom script
+    local job_script="$CRON_JOBS_DIR/${script_name}.sh"
+    if [ -f "$job_script" ]; then
+        if grep -q '^# ENABLED:' "$job_script"; then
+            sed -i 's/^# ENABLED:.*/# ENABLED: 0/' "$job_script"
+        else
+            sed -i '/^# INTERVAL:/a # ENABLED: 0' "$job_script"
+        fi
+    fi
+
+    # 2. Update CRON_CONF_FILE (add to CRON_DISABLED_JOBS)
+    mkdir -p "$(dirname "$CRON_CONF_FILE")" 2>/dev/null
+    touch "$CRON_CONF_FILE"
+    local cur_dis
+    cur_dis=$(grep '^CRON_DISABLED_JOBS=' "$CRON_CONF_FILE" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+    local new_dis
+    if [ -n "$cur_dis" ]; then
+        new_dis=$(echo "$cur_dis,$job_name" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+        sed -i "s/^CRON_DISABLED_JOBS=.*/CRON_DISABLED_JOBS=\"$new_dis\"/" "$CRON_CONF_FILE"
+    else
+        echo "CRON_DISABLED_JOBS=\"$job_name\"" >> "$CRON_CONF_FILE"
+    fi
+    CRON_DISABLED_JOBS=$(grep '^CRON_DISABLED_JOBS=' "$CRON_CONF_FILE" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" || true)
+
+    # 3. Update cron_state.json
+    local tmp="${CRON_STATE_FILE}.tmp.${BASHPID:-$$}.$RANDOM"
+    if jq --arg j "$job_name" \
+        '.jobs[$j] = ((.jobs[$j] // {}) + { "enabled": false, "updated_at": (now | todate) })' \
+        "$CRON_STATE_FILE" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+        mv -f "$tmp" "$CRON_STATE_FILE"
+    else
+        rm -f "$tmp" 2>/dev/null || true
+    fi
+
+    ui_warn "Cron job '$job_name' disabled."
+    return 0
+}
+
+cron_toggle_job() {
+    local job_name="$1"
+    if cron_is_job_enabled "$job_name"; then
+        cron_disable_job "$job_name"
+    else
+        cron_enable_job "$job_name"
     fi
 }
 
@@ -197,49 +331,49 @@ cron_tick() {
     # 0. Sentinel Telemetry & Self-Healing Sweep
     local last_sentinel
     last_sentinel=$(_cron_get_last_run "sentinel_sweep")
-    if [ $((now - last_sentinel)) -ge "$CRON_INTERVAL_SENTINEL" ]; then
+    if cron_is_job_enabled "sentinel_sweep" && [ $((now - last_sentinel)) -ge "$CRON_INTERVAL_SENTINEL" ]; then
         cron_run_job "sentinel_sweep"
     fi
 
     # 1. PR Sweep
     local last_pr
     last_pr=$(_cron_get_last_run "pr_sweep")
-    if [ $((now - last_pr)) -ge "$CRON_INTERVAL_PR" ]; then
+    if cron_is_job_enabled "pr_sweep" && [ $((now - last_pr)) -ge "$CRON_INTERVAL_PR" ]; then
         cron_run_job "pr_sweep"
     fi
 
     # 2. Issue / Circuit Breaker Remediation Sweep
     local last_issue
     last_issue=$(_cron_get_last_run "issue_sweep")
-    if [ $((now - last_issue)) -ge "$CRON_INTERVAL_ISSUE" ]; then
+    if cron_is_job_enabled "issue_sweep" && [ $((now - last_issue)) -ge "$CRON_INTERVAL_ISSUE" ]; then
         cron_run_job "issue_sweep"
     fi
 
     # 3. Discord DM & Mention Sweep
     local last_discord
     last_discord=$(_cron_get_last_run "discord_sweep")
-    if [ $((now - last_discord)) -ge "$CRON_INTERVAL_DISCORD" ]; then
+    if cron_is_job_enabled "discord_sweep" && [ $((now - last_discord)) -ge "$CRON_INTERVAL_DISCORD" ]; then
         cron_run_job "discord_sweep"
     fi
 
     # 4. Email Sweep
     local last_email
     last_email=$(_cron_get_last_run "email_sweep")
-    if [ $((now - last_email)) -ge "$CRON_INTERVAL_EMAIL" ]; then
+    if cron_is_job_enabled "email_sweep" && [ $((now - last_email)) -ge "$CRON_INTERVAL_EMAIL" ]; then
         cron_run_job "email_sweep"
     fi
 
     # 5. X Social & Monetization Sweep
     local last_x
     last_x=$(_cron_get_last_run "x_social_sweep")
-    if [ $((now - last_x)) -ge "$CRON_INTERVAL_X" ]; then
+    if cron_is_job_enabled "x_social_sweep" && [ $((now - last_x)) -ge "$CRON_INTERVAL_X" ]; then
         cron_run_job "x_social_sweep"
     fi
 
     # 6. Mastodon Social & Mentions Sweep
     local last_mastodon
     last_mastodon=$(_cron_get_last_run "mastodon_sweep")
-    if [ $((now - last_mastodon)) -ge "$CRON_INTERVAL_MASTODON" ]; then
+    if cron_is_job_enabled "mastodon_sweep" && [ $((now - last_mastodon)) -ge "$CRON_INTERVAL_MASTODON" ]; then
         cron_run_job "mastodon_sweep"
     fi
 
@@ -249,6 +383,9 @@ cron_tick() {
             [ -f "$cscript" ] || continue
             local cjob civ
             cjob=$(basename "$cscript" .sh)
+            if ! cron_is_job_enabled "$cjob"; then
+                continue
+            fi
             civ=$(grep -m1 '^# INTERVAL:' "$cscript" 2>/dev/null | awk '{print $3}')
             civ="${civ:-300}"
             local last_c
@@ -373,20 +510,29 @@ cron_sweep_stale_daemons() {
     local auth_pid="${1:-}"
     [ -z "$auth_pid" ] && [ -f "$CRON_PID_FILE" ] && auth_pid=$(cat "$CRON_PID_FILE" 2>/dev/null)
 
+    # Never sweep blindly if no authoritative PID exists
+    [ -z "$auth_pid" ] && return 0
+
     local pids
     pids=$(pgrep -f "_cron_loop_runner" 2>/dev/null || true)
     local p
     for p in $pids; do
         [ "$p" = "$$" ] && continue
-        [ -n "$auth_pid" ] && [ "$p" = "$auth_pid" ] && continue
+        [ "$p" = "$auth_pid" ] && continue
+        local parent
+        parent=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+        [ "$parent" = "$auth_pid" ] && continue
         kill -9 "$p" 2>/dev/null || true
     done
 }
 
 _cron_loop_runner() {
     export LODGE_NONINTERACTIVE=1
+    echo "$$" > "$CRON_PID_FILE"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] George Autonomic Daemon started (PID $$)" >> "$CRON_LOG_FILE"
-    trap 'echo "[$(date "+%Y-%m-%d %H:%M:%S")] George Autonomic Daemon stopped (PID $$)" >> "$CRON_LOG_FILE"; rm -f "$CRON_PID_FILE"; exit 0' SIGTERM SIGINT
+    trap 'echo "[$(date "+%Y-%m-%d %H:%M:%S")] Daemon PID $$ received SIGTERM/SIGINT" >> "$CRON_LOG_FILE"; rm -f "$CRON_PID_FILE"; exit 0' SIGTERM SIGINT
+    trap 'echo "[$(date "+%Y-%m-%d %H:%M:%S")] Daemon PID $$ received SIGHUP" >> "$CRON_LOG_FILE"' SIGHUP
+    trap 'echo "[$(date "+%Y-%m-%d %H:%M:%S")] Daemon PID $$ EXIT triggered (code $?)" >> "$CRON_LOG_FILE"' EXIT
 
     local last_popup=0
     while true; do
@@ -410,7 +556,8 @@ _cron_loop_runner() {
             fi
         fi
 
-        cron_tick >> "$CRON_LOG_FILE" 2>&1
+        # Isolate tick in protected subshell to prevent fatal daemon exits
+        ( cron_tick ) >> "$CRON_LOG_FILE" 2>&1 || true
         sleep 5
     done
 }
@@ -428,18 +575,20 @@ cron_start() {
         rm -f "$CRON_PID_FILE" 2>/dev/null
     fi
 
-    # Launch non-blocking daemon runner
-    (
-        nohup bash -c "source '$LODGE_DIR/lib/cron.sh' && _cron_loop_runner" >> "$CRON_LOG_FILE" 2>&1 &
-        echo "$!" > "$CRON_PID_FILE"
-    )
+    # Launch non-blocking daemon runner in a new session detached from process group
+    if command -v setsid &>/dev/null; then
+        setsid bash -c "source '$LODGE_DIR/lib/cron.sh' && _cron_loop_runner" </dev/null >> "$CRON_LOG_FILE" 2>&1 &
+    else
+        nohup bash -c "source '$LODGE_DIR/lib/cron.sh' && _cron_loop_runner" </dev/null >> "$CRON_LOG_FILE" 2>&1 &
+    fi
+    local new_pid=$!
+    disown "$new_pid" 2>/dev/null || true
 
     sleep 1
-    local new_pid
-    new_pid=$(cat "$CRON_PID_FILE" 2>/dev/null)
-    if [ -n "$new_pid" ] && kill -0 "$new_pid" 2>/dev/null; then
-        cron_sweep_stale_daemons "$new_pid"
-        ui_ok "George Autonomic Daemon started successfully (PID $new_pid)."
+    local check_pid
+    check_pid=$(cat "$CRON_PID_FILE" 2>/dev/null)
+    if [ -n "$check_pid" ] && kill -0 "$check_pid" 2>/dev/null; then
+        ui_ok "George Autonomic Daemon started successfully (PID $check_pid)."
         ui_dim "  Log: $CRON_LOG_FILE"
         return 0
     else
@@ -509,8 +658,14 @@ cron_status() {
             local ago=$(( $(date +%s) - last_run ))
             lr_str="${ago}s ago"
         fi
-        printf "  %b%-16s%b every %-4ss (last: %-10s) — %s\n" \
-            "$C_CYAN" "$j" "$C_RESET" "$iv" "$lr_str" "$desc"
+        local en_badge
+        if cron_is_job_enabled "$j"; then
+            en_badge="${C_GREEN}[ENABLED]${C_RESET}"
+        else
+            en_badge="${C_DIM}[DISABLED]${C_RESET}"
+        fi
+        printf "  %b %b%-16s%b every %-4ss (last: %-10s) — %s\n" \
+            "$en_badge" "$C_CYAN" "$j" "$C_RESET" "$iv" "$lr_str" "$desc"
     done
 
     # List custom jobs
@@ -536,8 +691,14 @@ cron_status() {
                 local ago=$(( $(date +%s) - last_c ))
                 lr_str="${ago}s ago"
             fi
-            printf "  %b%-16s%b every %-4ss (last: %-10s) — %s\n" \
-                "$C_GREEN" "$cjob" "$C_RESET" "$civ" "$lr_str" "${cdesc:-Custom job}"
+            local c_en_badge
+            if cron_is_job_enabled "$cjob"; then
+                c_en_badge="${C_GREEN}[ENABLED]${C_RESET}"
+            else
+                c_en_badge="${C_DIM}[DISABLED]${C_RESET}"
+            fi
+            printf "  %b %b%-16s%b every %-4ss (last: %-10s) — %s\n" \
+                "$c_en_badge" "$C_GREEN" "$cjob" "$C_RESET" "$civ" "$lr_str" "${cdesc:-Custom job}"
         done
     fi
 }

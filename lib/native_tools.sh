@@ -42,11 +42,11 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "bash_exec",
-      "description": "Execute a bash shell command within the project workspace. Use for inspection, building, running tests, or git operations.",
+      "description": "Execute a bash shell command within the project workspace. Use when: (1) running builds or automated tests, (2) checking system processes, or (3) inspecting git history. Do NOT use bash_exec to write/edit files (use file_write or file_edit instead). Do NOT use bash_exec to dispatch slash commands (use slash_command_exec instead). Examples: command=\"cargo test\", command=\"./tests/test_cron.sh\", command=\"git status\".",
       "parameters": {
         "type": "object",
         "properties": {
-          "command": { "type": "string", "description": "The bash shell command string to execute." }
+          "command": { "type": "string", "description": "The bash shell command string to execute (e.g. \"cargo build\", \"git status\")." }
         },
         "required": ["command"]
       }
@@ -56,13 +56,13 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "file_read",
-      "description": "Read a targeted range of lines from a local file in the workspace (default: 100 lines, max: 200). Use start_line to paginate. To avoid wasting context tokens on large files, prefer file_grep to locate symbols or code_outline before reading.",
+      "description": "Read a targeted range of lines from a local file in the workspace (auto-paginated, default: 100 lines, max: 200). Use when: inspecting source code or reading configs before modifying them. To conserve context tokens on large files, prefer file_grep to locate symbols first. Examples: path=\"lib/cron.sh\", start_line=1, max_lines=100; path=\"web/src/main.rs\", start_line=1, max_lines=80.",
       "parameters": {
         "type": "object",
         "properties": {
-          "path": { "type": "string", "description": "Relative file path from workspace root." },
+          "path": { "type": "string", "description": "Relative file path from workspace root (e.g. \"lib/cron.sh\", \"web/src/main.rs\")." },
           "start_line": { "type": "integer", "description": "Starting line number (1-indexed, default: 1)." },
-          "max_lines": { "type": "integer", "description": "Number of lines to read (default: 200, max: 1000). Inspect code in 200-500 line chunks." }
+          "max_lines": { "type": "integer", "description": "Number of lines to read (default: 100, max: 200). Inspect code in 100-200 line chunks." }
         },
         "required": ["path"]
       }
@@ -72,7 +72,7 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "pdf_read",
-      "description": "Extract text and structured page content from a PDF document using Poppler pdftotext.",
+      "description": "Extract text and structured page content from a PDF document using Poppler pdftotext. Use when: inspecting specification PDFs, research papers, or documentation. Examples: path=\"docs/spec.pdf\", max_pages=10.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -90,7 +90,7 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "workflow_plan",
-      "description": "Initiate interactive feature/task planning with George and the operator. Clarifies requirements, formulates implementation scope, asks critical design questions, and drafts an implementation plan contract before editing code or running deep tasks.",
+      "description": "Initiate interactive feature/task planning with George and the operator. Clarifies requirements, formulates implementation scope, asks critical design questions, and drafts an implementation plan contract before editing code or running deep tasks. Use when: approaching multi-component features or breaking changes. Examples: objective=\"Implement distributed telemetry worker\", questions=\"Should we use MQTT or WebSockets?\".",
       "parameters": {
         "type": "object",
         "properties": {
@@ -106,7 +106,7 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "workflow_run",
-      "description": "Execute a Blue Lodge multi-agent workflow (e.g. the-architect, dispatcher, george, the-tyler, the-warden, tester, trowel, commands-specialist, core-specialist, etc.) to perform coordinated team operations.",
+      "description": "Execute a Blue Lodge multi-agent workflow to perform coordinated team operations. Use when: delegating complete lifecycle phases (planning, audit, verification). Examples: name=\"the-architect\", args=\"design metrics service\"; name=\"tester\", args=\"run all cron tests\".",
       "parameters": {
         "type": "object",
         "properties": {
@@ -120,12 +120,27 @@ _NATIVE_CORE_TOOLS='[
   {
     "type": "function",
     "function": {
-      "name": "tool_search",
-      "description": "Search the sovereign tool catalog using natural language or bundle tags (e.g. +git, how to post to x, database query, +ops) to dynamically auto-mount new capabilities into your active session.",
+      "name": "task_wait",
+      "description": "Suspend execution and sleep for N seconds (e.g. waiting for a background service, test completion, or timeout). Returns cleanly when the timer expires. Examples: seconds=5, reason=\"Wait for background service startup\"; seconds=15, reason=\"Wait for build completion\".",
       "parameters": {
         "type": "object",
         "properties": {
-          "query": { "type": "string", "description": "The search query, task intent, or bundle name (e.g. +git, +social, +web, how to download a paper)." }
+          "seconds": { "type": "integer", "description": "Number of seconds to wait (1 to 600)." },
+          "reason": { "type": "string", "description": "Explanation of what is being waited on." }
+        },
+        "required": ["seconds", "reason"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tool_search",
+      "description": "Search the sovereign tool catalog using natural language intent or category tags (e.g. +ops, +git, +social, +web, cron scheduling, docker). Dynamically auto-mounts discovered tools into your active session. Use when: you need a capability not in your current profile or are unsure how to perform an action. Examples: query=\"how to schedule recurring task\", query=\"+ops\", query=\"docker container exec\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "The search query, task intent, or bundle name (e.g. \"+ops\", \"how to schedule cron\", \"+git\")." }
         },
         "required": ["query"]
       }
@@ -135,11 +150,11 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "file_write",
-      "description": "Create a new file or completely overwrite an existing file with the specified content.",
+      "description": "Create a new file or completely overwrite an existing file with specified content. Use when: (1) creating new scripts in .george/tools/ or .george/cron_jobs/, (2) creating new microservice source files, or (3) writing complete new modules. Do NOT use for small surgical edits to large files (use file_edit instead). Examples: path=\".george/cron_jobs/cache_cleaner.sh\", content=\"#!/bin/bash\\n# INTERVAL: 3600\\n# DESC: Purges cache\\nrm -rf /tmp/cache/*\\n\"; path=\".george/tools/weather.sh\", content=\"#!/bin/bash\\ncurl -s wttr.in\\n\".",
       "parameters": {
         "type": "object",
         "properties": {
-          "path": { "type": "string", "description": "Relative file path from workspace root." },
+          "path": { "type": "string", "description": "Relative file path from workspace root (e.g. \".george/cron_jobs/my_job.sh\", \".george/tools/my_tool.sh\")." },
           "content": { "type": "string", "description": "Full text content to write to the file." }
         },
         "required": ["path", "content"]
@@ -150,7 +165,7 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "file_append",
-      "description": "Append text content to the end of an existing file.",
+      "description": "Append text content to the end of an existing file. Use when: adding log entries, appending new exports, or writing sequentially to memory files. Examples: path=\".george/SPEC_SHEET.md\", content=\"\\n- my_tool: Custom utility\".",
       "parameters": {
         "type": "object",
         "properties": {
@@ -165,7 +180,7 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "dir_list",
-      "description": "List directory contents formatted as an indented tree.",
+      "description": "List directory contents formatted as an indented tree. Use when: exploring repository layout, discovering available scripts in .george/, or verifying directory structure. Examples: path=\".george/tools\", depth=2; path=\"services\", depth=2.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -179,12 +194,12 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "file_grep",
-      "description": "Perform regular expression search across files in the workspace.",
+      "description": "Perform fast regular expression search across files in the workspace using ripgrep. Use when: locating functions, variable definitions, error strings, or specific configuration keys. Examples: pattern=\"cron_enable_job\", path=\"lib/\"; pattern=\"fn main\", path=\"web/src/\".",
       "parameters": {
         "type": "object",
         "properties": {
-          "pattern": { "type": "string", "description": "Regex search pattern." },
-          "path": { "type": "string", "description": "Optional subdirectory or file pattern to search within." }
+          "pattern": { "type": "string", "description": "Regex search pattern (e.g. \"cron_enable_job\", \"struct ServiceConfig\")." },
+          "path": { "type": "string", "description": "Optional subdirectory or file pattern to search within (e.g. \"lib/\", \"web/\")." }
         },
         "required": ["pattern"]
       }
@@ -995,13 +1010,13 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "service_manage",
-      "description": "Manage a background microservice: register, build, deploy, start, stop, restart, status, or logs.",
+      "description": "Manage background microservices (register, build, deploy, start, stop, restart, status, logs). Use when: (1) registering a new Rust or binary service, (2) compiling and building it, or (3) controlling its daemon lifecycle. Examples: action=\"register\", name=\"metrics_worker\", args=\"services/metrics\"; action=\"build\", name=\"metrics_worker\"; action=\"start\", name=\"metrics_worker\"; action=\"status\", name=\"metrics_worker\".",
       "parameters": {
         "type": "object",
         "properties": {
           "action": { "type": "string", "description": "Action: start, stop, restart, status, logs, build, deploy, register, unregister.", "enum": ["start", "stop", "restart", "status", "logs", "build", "deploy", "register", "unregister"] },
-          "name": { "type": "string", "description": "Service name." },
-          "args": { "type": "string", "description": "Optional additional arguments (e.g. path for register, line count for logs)." }
+          "name": { "type": "string", "description": "Unique service name (e.g. \"metrics_worker\", \"echo_service\")." },
+          "args": { "type": "string", "description": "Optional additional arguments (e.g. \"services/my_service\" for register, line count for logs)." }
         },
         "required": ["action", "name"]
       }
@@ -1106,11 +1121,11 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "slash_command_exec",
-      "description": "Execute any Blue Lodge slash command (e.g. /workflow, /the-architect, /dispatcher, /george, /journal, /recall, /init, /fix, /commit, /push, /save, /service, /pdf).",
+      "description": "Execute any Blue Lodge slash command. Use when: (1) creating, inspecting, or controlling recurring cron jobs (/cron), (2) managing microservices (/service), (3) registering tools (/tool), or (4) executing workflows (/workflow). Examples: command=\"/cron add backup_sweep 3600 ./scripts/backup.sh\", command=\"/cron status\", command=\"/cron enable sentinel_sweep\", command=\"/service register my_svc services/my_svc\", command=\"/tool register custom_helper\".",
       "parameters": {
         "type": "object",
         "properties": {
-          "command": { "type": "string", "description": "Full slash command string (e.g. /workflow run the-architect <objective>, /the-architect <objective>, /pdf <file>, or /recall query)." }
+          "command": { "type": "string", "description": "Full slash command string (e.g. \"/cron add <name> <interval> <cmd>\", \"/cron status\", \"/cron enable <name>\", \"/service register <name>\", \"/tool register <name>\")." }
         },
         "required": ["command"]
       }
@@ -1120,12 +1135,12 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "file_edit",
-      "description": "Edit a file using sed substitution for short, targeted search-and-replace changes.",
+      "description": "Edit an existing file using sed substitution for targeted, surgical search-and-replace changes. Use when: updating configs, registering capabilities in .george/SPEC_SHEET.md, or modifying functions without re-writing the entire file. Examples: path=\".george/SPEC_SHEET.md\", expression=\"s/## Registered Tools/## Registered Tools\\n- weather: Fetches forecast/g\"; path=\"src/main.rs\", expression=\"s/let port = 8080;/let port = 3000;/g\".",
       "parameters": {
         "type": "object",
         "properties": {
-          "path": { "type": "string", "description": "Target file path relative to workspace." },
-          "expression": { "type": "string", "description": "sed expression (e.g. s/old_text/new_text/g)." }
+          "path": { "type": "string", "description": "Target file path relative to workspace root (e.g. \".george/SPEC_SHEET.md\", \"src/main.rs\")." },
+          "expression": { "type": "string", "description": "sed expression (e.g. \"s/old_text/new_text/g\")." }
         },
         "required": ["path", "expression"]
       }
@@ -1488,7 +1503,7 @@ native_tools_get_schemas() {
 }
 
 # ── Composable Tool Bundles & Bedrock Taxonomy ────────────────────────
-_BEDROCK_TOOLS="bash_exec,slash_command_exec,file_read,pdf_read,workflow_plan,workflow_run,ask_operator,tool_search"
+_BEDROCK_TOOLS="bash_exec,slash_command_exec,file_read,file_write,file_edit,pdf_read,workflow_plan,workflow_run,ask_operator,task_wait,tool_search"
 
 # Map bundles to their constituent tool names
 native_tools_bundle_tools() {
@@ -1553,8 +1568,10 @@ native_tools_resolve_profile() {
             tool_list+=",$(native_tools_bundle_tools '+files'),$(native_tools_bundle_tools '+code'),$(native_tools_bundle_tools '+git')"
             ;;
         social)
-            local social_bedrock="slash_command_exec,file_read,pdf_read,tool_search"
-            tool_list="${social_bedrock},$(native_tools_bundle_tools '+web'),$(native_tools_bundle_tools '+social'),$(native_tools_bundle_tools '+memory'),$(native_tools_bundle_tools '+vision')"
+            tool_list="${_BEDROCK_TOOLS},$(native_tools_bundle_tools '+web'),$(native_tools_bundle_tools '+social'),$(native_tools_bundle_tools '+memory'),$(native_tools_bundle_tools '+vision')"
+            ;;
+        social+ops|social_ops)
+            tool_list="${_BEDROCK_TOOLS},$(native_tools_bundle_tools '+web'),$(native_tools_bundle_tools '+social'),$(native_tools_bundle_tools '+ops'),$(native_tools_bundle_tools '+memory'),$(native_tools_bundle_tools '+vision')"
             ;;
         ops)
             tool_list+=",$(native_tools_bundle_tools '+files'),$(native_tools_bundle_tools '+ops'),$(native_tools_bundle_tools '+memory')"
@@ -1687,7 +1704,7 @@ EOF
 native_tools_search() {
     local query="$1"
     local session_dir="${2:-${AGENT_ACTIVE_SESSION_DIR:-}}"
-    local max_tools="${3:-24}"
+    local max_tools="${3:-36}"
 
     [ -z "$query" ] && { echo "Error: query required for tool_search."; return 1; }
 
@@ -1861,8 +1878,18 @@ native_tools_dispatch() {
             tool_search)
                 local q
                 q=$(echo "$args_json" | jq -r '.query // empty')
-                output=$(native_tools_search "$q" "${AGENT_ACTIVE_SESSION_DIR:-$workdir}" 24)
+                output=$(native_tools_search "$q" "${AGENT_ACTIVE_SESSION_DIR:-$workdir}" 36)
                 exit_code=$?
+                ;;
+            task_wait)
+                local secs reason
+                secs=$(echo "$args_json" | jq -r '.seconds // 5')
+                reason=$(echo "$args_json" | jq -r '.reason // "Waiting for background job or timer"')
+                if ! [[ "$secs" =~ ^[0-9]+$ ]] || [ "$secs" -lt 1 ]; then secs=5; fi
+                if [ "$secs" -gt 600 ]; then secs=600; fi
+                sleep "$secs"
+                output="TASK_WAIT_SUCCESS: Slept for ${secs}s (${reason})."
+                exit_code=0
                 ;;
             bash_exec)
                 local cmd

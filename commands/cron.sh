@@ -46,6 +46,15 @@ cmd_cron() {
             jcmd="${jcmd#"${jcmd%%[![:space:]]*}"}"
             cron_add_job "$jname" "$jiv" "$jcmd"
             ;;
+        enable)
+            cron_enable_job "${rest%% *}"
+            ;;
+        disable)
+            cron_disable_job "${rest%% *}"
+            ;;
+        toggle)
+            cron_toggle_job "${rest%% *}"
+            ;;
         remove|rm|delete)
             cron_remove_job "${rest%% *}"
             ;;
@@ -76,8 +85,12 @@ cmd_cron() {
             ;;
         *)
             ui_err "Unknown /cron command: '$subcmd'"
-            ui_info "Usage: /cron [start|stop|restart|status|sentinel|popup|visual|run <job>|add <name> <iv> <cmd>|remove <name>|logs]"
+            ui_info "Usage: /cron [start|stop|restart|status|sentinel|popup|visual|run <job>|add <name> <iv> <cmd>|remove <name>|enable <name>|disable <name>|toggle <name>|logs]"
             return 1
             ;;
     esac
 }
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    cmd_cron "$*"
+fi

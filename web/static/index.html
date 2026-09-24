@@ -20,12 +20,14 @@
       <span class="brand-motto">Well done is better than well said</span>
     </div>
 
-    <!-- Real-time 2s Telemetry Heartbeat Pill -->
+    <!-- Real-time 2s Telemetry Heartbeat Pill (Dynamic Hardware Interrogation) -->
     <div class="header-telemetry" id="headerTelemetry">
-      <span class="telemetry-chip gpu-chip" id="hdrGpu">GPU 0: NVIDIA RTX 3060</span>
-      <span class="telemetry-chip temp-chip" id="hdrTemp">42°C</span>
-      <span class="telemetry-chip power-chip" id="hdrPower">23W</span>
-      <span class="telemetry-chip vram-chip" id="hdrVram">10.8 / 12 GB</span>
+      <div id="hdrGpuCluster" class="instrument-cluster">
+        <span class="telemetry-chip gpu-chip" id="hdrGpu">GPU 0: RTX 3060</span>
+        <span class="telemetry-chip vram-chip" id="hdrVram">-- / -- GB</span>
+        <span class="telemetry-chip temp-chip" id="hdrTemp">--°C</span>
+        <span class="telemetry-chip power-chip" id="hdrPower">--W</span>
+      </div>
     </div>
 
     <div class="header-controls">
@@ -51,11 +53,11 @@
       </button>
 
       <button class="tactile-btn accent header-workbench-btn" id="headerVimWorkbenchBtn" title="Open Craftsman Multi-Tab Vim Workbench">
-        ⚡ VIM WORKBENCH
+        VIM WORKBENCH
       </button>
 
       <button class="tool-crib-btn" id="toolCribToggle" title="Open Instrument Rack, Transcripts & Config">
-        <span class="tool-icon">≡</span> TOOL CRIB
+        <span class="tool-icon">≡</span> TOOLS
       </button>
     </div>
   </header>
@@ -133,16 +135,27 @@
       <div class="welcome-card" id="welcomeCard">
         <div class="welcome-header">
           <span class="welcome-symbol">▲</span>
-          <span class="welcome-title">The Craftsman's Workbench</span>
+          <span class="welcome-title">George's Workbench</span>
         </div>
         <div class="welcome-body">
-          George is at the workbench. Chat freely, dispatch slash commands (<code>/status</code>, <code>/recall</code>, <code>/research</code>), or drag and drop blueprints and artifacts directly into the prompt below.
+          George is at the workbench. Chat freely, dispatch slash commands (<code>/status</code>, <code>/dispatch</code>, <code>/recall</code>, <code>/research</code>), or drag and drop blueprints and artifacts directly into the prompt below.
         </div>
       </div>
     </section>
 
     <!-- Refined Bottom Dispatch Bar -->
     <footer class="workbench-footer">
+      <div class="footer-aux-bar">
+        <div class="chat-mode-bar" id="chatModeBar" title="Operating Mode: Fast Conversational, Autonomous Agentic ReAct, or Architect Planning">
+          <span class="chat-mode-label">MODE:</span>
+          <button type="button" class="chat-mode-btn" data-mode="chat" id="modeChatBtn">CHAT</button>
+          <button type="button" class="chat-mode-btn active" data-mode="agentic" id="modeAgenticBtn">AGENTIC</button>
+          <button type="button" class="chat-mode-btn" data-mode="plan-task" id="modePlanTaskBtn">PLAN-TASK</button>
+        </div>
+        <div class="footer-session-actions">
+          <button type="button" class="tactile-btn session-reset-btn" id="btnNewSession" title="Archive current transcript and open fresh chat stream">[NEW SESSION]</button>
+        </div>
+      </div>
       <div class="drop-zone" id="dropZone">
         <div class="drop-label">[ DROP FILE TO STAGE ARTIFACT &amp; COMMAND ]</div>
       </div>
@@ -150,7 +163,7 @@
         <button class="attach-btn" id="attachBtn" title="Attach file or blueprint">+</button>
         <input type="file" id="fileInput" style="display: none;">
         <span class="prompt-caret">&gt;</span>
-        <textarea id="promptInput" rows="1" placeholder="Converse with George or dispatch commands (/help, /status, /recall)..." spellcheck="false"></textarea>
+        <textarea id="promptInput" rows="1" placeholder="Converse with George or dispatch commands (/help, /status, /dispatch, /recall)..." spellcheck="false"></textarea>
         <button class="send-btn" id="sendBtn">SEND</button>
       </div>
     </footer>
@@ -159,7 +172,7 @@
   <!-- Slide-Out Tool Crib Drawer -->
   <aside class="tool-crib-drawer" id="toolCribDrawer">
     <div class="drawer-header">
-      <div class="drawer-title">TOOL CRIB &amp; SPEC SHEET</div>
+      <div class="drawer-title">TOOLS &amp; SPEC SHEET</div>
       <button class="drawer-close" id="drawerClose">✕</button>
     </div>
 
@@ -203,7 +216,7 @@
 
       <div class="section-header-row" style="margin-top: 16px;">
         <div class="section-title">INFERENCE NODES &amp; TIERS (4-TIER LADDER)</div>
-        <button class="tactile-btn" id="btnEditEndpointsConf" style="font-size: 11px;">⚡ EDIT ENDPOINTS.CONF (VIM)</button>
+        <button class="tactile-btn" id="btnEditEndpointsConf" style="font-size: 11px;">EDIT ENDPOINTS.CONF (VIM)</button>
       </div>
 
       <!-- SSH Tunnel & ProxyJump Banner for Remote GPUs (5700XT) -->
@@ -214,7 +227,7 @@
           <span class="tunnel-status-desc" id="tunnelStatusDesc" style="font-size: 10px; opacity: 0.85;">PROBING TUNNEL...</span>
         </div>
         <div class="tunnel-banner-actions">
-          <button class="tactile-btn" id="btnConnectTunnel" style="font-size: 10px;">⚡ RE-ESTABLISH TUNNEL</button>
+          <button class="tactile-btn" id="btnConnectTunnel" style="font-size: 10px;">RE-ESTABLISH TUNNEL</button>
         </div>
       </div>
 
@@ -240,52 +253,54 @@
         <div class="loading-state">Cataloging slash commands...</div>
       </div>
 
-      <div class="section-title" style="margin-top: 24px;">CRAFTSMAN'S ONBOARDING &amp; FIELD GUIDE</div>
-      <div class="onboarding-guide-container">
-        <div class="guide-card">
-          <div class="guide-badge">FOUNDATION</div>
-          <div class="guide-title">Sovereign High-Performance Architecture</div>
-          <p class="guide-text">
-            George runs entirely on your local metal via <code>llama-server</code> with zero telemetry and zero external cloud dependency. All inferences, git sandboxes, and social monographs are signed with Ed25519 cryptography.
-          </p>
-        </div>
+      <details class="guide-collapsible" style="margin-top: 24px;">
+        <summary class="section-title guide-summary" style="cursor: pointer; user-select: none;">FIELD GUIDE &amp; ARCHITECTURE MANUAL [CLICK TO EXPAND]</summary>
+        <div class="onboarding-guide-container" style="margin-top: 12px;">
+          <div class="guide-card">
+            <div class="guide-badge">FOUNDATION</div>
+            <div class="guide-title">Sovereign High-Performance Architecture</div>
+            <p class="guide-text">
+              George runs entirely on your local metal via <code>llama-server</code> with zero telemetry and zero external cloud dependency. All inferences, git sandboxes, and social monographs are signed with Ed25519 cryptography.
+            </p>
+          </div>
 
-        <div class="guide-card">
-          <div class="guide-badge">AUTONOMIC LOOP</div>
-          <div class="guide-title">Autonomic Task Bay &amp; Sweeps</div>
-          <p class="guide-text">
-            The Autonomic Task Bay at the top of the workbench monitors live background activity. Tasks run autonomously:
-          </p>
-          <ul class="guide-list">
-            <li><strong>Discord Gateway:</strong> Bi-directional conversational bridge on dedicated channels.</li>
-            <li><strong>Autonomic Sentinel:</strong> Continuous PR reviews, issue sweeps, and GPU health checks.</li>
-            <li><strong>Auto-Remediation:</strong> Circuit breaker isolation and automated branch recovery.</li>
-            <li><strong>Deep Research:</strong> 5-phase academic paper investigation, arXiv extraction, and monograph publishing.</li>
-          </ul>
-        </div>
+          <div class="guide-card">
+            <div class="guide-badge">AUTONOMIC LOOP</div>
+            <div class="guide-title">Autonomic Task Bay &amp; Sweeps</div>
+            <p class="guide-text">
+              The Autonomic Task Bay at the top of the workbench monitors live background activity. Tasks run autonomously:
+            </p>
+            <ul class="guide-list">
+              <li><strong>Discord Gateway:</strong> Bi-directional conversational bridge on dedicated channels.</li>
+              <li><strong>Autonomic Sentinel:</strong> Continuous PR reviews, issue sweeps, and GPU health checks.</li>
+              <li><strong>Auto-Remediation:</strong> Circuit breaker isolation and automated branch recovery.</li>
+              <li><strong>Deep Research:</strong> 5-phase academic paper investigation, arXiv extraction, and monograph publishing.</li>
+            </ul>
+          </div>
 
-        <div class="guide-card">
-          <div class="guide-badge">OPERATOR STEERING</div>
-          <div class="guide-title">Intervention &amp; Safety Controls</div>
-          <p class="guide-text">
-            Every autonomic task exposes real-time operator intervention controls:
-          </p>
-          <ul class="guide-list">
-            <li><strong>PAUSE / RESUME:</strong> Freezes task execution safely at phase boundaries.</li>
-            <li><strong>INJECT GUIDANCE:</strong> Steers George's reasoning trajectory with custom prompts.</li>
-            <li><strong>TERMINATE (Double-Confirmation):</strong> Immediate recursive process termination (<code>pkill -P</code>), worktree unmounting, sandbox destruction, and lock cleanup.</li>
-            <li><strong>CULL STALE:</strong> Purges dead PID files, inactive sandboxes, and orphaned locks.</li>
-          </ul>
-        </div>
+          <div class="guide-card">
+            <div class="guide-badge">OPERATOR STEERING</div>
+            <div class="guide-title">Intervention &amp; Safety Controls</div>
+            <p class="guide-text">
+              Every autonomic task exposes real-time operator intervention controls:
+            </p>
+            <ul class="guide-list">
+              <li><strong>PAUSE / RESUME:</strong> Freezes task execution safely at phase boundaries.</li>
+              <li><strong>INJECT GUIDANCE:</strong> Steers George's reasoning trajectory with custom prompts.</li>
+              <li><strong>TERMINATE (Double-Confirmation):</strong> Immediate recursive process termination (<code>pkill -P</code>), worktree unmounting, sandbox destruction, and lock cleanup.</li>
+              <li><strong>CULL STALE:</strong> Purges dead PID files, inactive sandboxes, and orphaned locks.</li>
+            </ul>
+          </div>
 
-        <div class="guide-card">
-          <div class="guide-badge">DISPATCH &amp; RECALL</div>
-          <div class="guide-title">Fast Recall, Journal &amp; Artifacts</div>
-          <p class="guide-text">
-            Use <code>/recall &lt;query&gt;</code> for BM25-ranked full-text retrieval from the SQLite FTS5 index. Drag-and-drop any code or blueprint file directly into the workbench to stage it as an artifact.
-          </p>
+          <div class="guide-card">
+            <div class="guide-badge">DISPATCH &amp; RECALL</div>
+            <div class="guide-title">Fast Recall, Journal &amp; Artifacts</div>
+            <p class="guide-text">
+              Use <code>/recall &lt;query&gt;</code> for BM25-ranked full-text retrieval from the SQLite FTS5 index. Drag-and-drop any code or blueprint file directly into the workbench to stage it as an artifact.
+            </p>
+          </div>
         </div>
-      </div>
+      </details>
     </div>
 
     <!-- Pane 2: Time-Machine (Past Transcripts & Pruning) -->
@@ -496,7 +511,7 @@
         <div class="section-title">AUTONOMIC SWEEPS &amp; CRON SUITE</div>
         <div class="cron-top-actions">
           <button class="tactile-btn" id="btnOpenScriptEditor">📝 SCRIPT / FILE EDITOR</button>
-          <button class="tactile-btn" id="btnShowPromptGen">⚡ GENERATE VIA PROMPT</button>
+          <button class="tactile-btn" id="btnShowPromptGen">GENERATE VIA PROMPT</button>
           <button class="tactile-btn accent" id="btnNewCronJob">+ NEW SWEEP</button>
         </div>
       </div>
@@ -563,7 +578,7 @@
       <!-- Agentic Research Graph Configuration & Directives -->
       <div class="section-header-row" style="margin-top: 24px;">
         <div class="section-title">AGENTIC RESEARCH GRAPH CONFIG (5 PHASES)</div>
-        <button class="tactile-btn" id="btnEditResearchScript" style="font-size: 11px;">⚡ EDIT RESEARCH SCRIPT (VIM)</button>
+        <button class="tactile-btn" id="btnEditResearchScript" style="font-size: 11px;">EDIT RESEARCH SCRIPT (VIM)</button>
       </div>
       <div class="research-config-card">
         <div class="research-graph-phases" id="researchPhasesDisplay">
@@ -697,7 +712,7 @@
           <textarea id="customMcpCode" class="form-textarea code-area" rows="18" spellcheck="false"></textarea>
         </div>
         <div class="edit-card-actions">
-          <button class="tactile-btn accent" id="btnDeployCustomMcp">⚡ COMPILE &amp; DOCK SERVER</button>
+          <button class="tactile-btn accent" id="btnDeployCustomMcp">COMPILE &amp; DOCK SERVER</button>
           <span class="mcp-deploy-status" id="mcpDeployStatus"></span>
         </div>
       </div>
@@ -783,7 +798,7 @@
             <pre id="stagedCommandCode" class="code-box"></pre>
             <div style="display: flex; gap: 8px; margin-top: 6px;">
               <button class="mini-action" id="copyStagedCmdBtn">📋 COPY COMMAND</button>
-              <button class="mini-action accent" id="dispatchSshBtn">🚀 DISPATCH VIA SSH</button>
+              <button class="mini-action accent" id="dispatchSshBtn">DISPATCH VIA SSH</button>
               <span id="dispatchStatus" style="font-size: 10px; align-self: center; margin-left: 6px;"></span>
             </div>
           </div>
@@ -802,7 +817,7 @@
       <div class="script-editor-header">
         <div class="script-editor-title-group">
           <div class="workbench-brand">
-            <span class="workbench-brand-logo">⚡ CRAFTSMAN</span>
+            <span class="workbench-brand-logo">GEORGE WORKBENCH</span>
           </div>
 
           <!-- Unified Layout Toggles -->
@@ -829,7 +844,7 @@
           <button class="tactile-btn" id="btnDiscardScript" style="display: none;"></button>
 
           <!-- Primary Save Action -->
-          <button class="tactile-btn accent save-btn" id="btnSaveScript" title="Save active buffer (Ctrl+S / :w)">💾 SAVE</button>
+          <button class="tactile-btn accent save-btn" id="btnSaveScript" title="Save active buffer (Ctrl+S / :w)">SAVE</button>
 
           <!-- Window Chrome -->
           <button class="tactile-btn maximize-btn" id="btnToggleEditorMaximize" title="Toggle full-monitor workspace view (Fullscreen)">⤢</button>
@@ -841,7 +856,7 @@
       <div class="vim-legend-dropdown" id="vimLegendDropdown" style="display: none;">
         <div class="vim-legend-header">
           <div class="vim-legend-title">
-            <span>⌨ CRAFTSMAN VIM COMMAND REFERENCE</span>
+            <span>VIM COMMAND REFERENCE</span>
             <span class="vim-legend-subtitle">Ported native keystrokes & Ex-commands</span>
           </div>
           <button class="legend-close-btn" id="btnCloseVimLegend" title="Close legend">✕</button>
@@ -959,7 +974,7 @@
 
       <!-- Sourced Modules & Jumps Pill Strip -->
       <div class="script-deps-strip" id="scriptDepsStrip">
-        <span class="deps-strip-label">⚡ SOURCED DEPENDENCIES:</span>
+        <span class="deps-strip-label">SOURCED DEPENDENCIES:</span>
         <div class="deps-pills-list" id="scriptDepsList">
           <span class="deps-none">(No source statements in buffer)</span>
         </div>
@@ -1011,7 +1026,7 @@
         <div class="script-diff-viewport" id="scriptDiffViewport" style="display: none;">
           <div class="diff-viewport-toolbar">
             <div class="diff-toolbar-left">
-              <span class="diff-toolbar-title">⚡ PROPOSED DIFF REVIEW:</span>
+              <span class="diff-toolbar-title">PROPOSED DIFF REVIEW:</span>
               <span class="diff-toolbar-file" id="diffToolbarFile">active_file.sh</span>
               <span class="diff-badge add" id="diffBadgeAdd">+0 additions</span>
               <span class="diff-badge del" id="diffBadgeDel">-0 deletions</span>
@@ -1054,7 +1069,7 @@
           
           <div class="copilot-messages" id="copilotMessages">
             <div class="copilot-welcome-card">
-              <div class="welcome-title">CRAFTSMAN PAIR PROGRAMMING</div>
+              <div class="welcome-title">PAIR PROGRAMMING WORKBENCH</div>
               <p class="welcome-text">Ask George to refactor, explain, inspect, or generate code for the open file.</p>
               <div class="copilot-quick-chips">
                 <button type="button" class="quick-chip" data-prompt="Explain what this file does and its architecture.">EXPLAIN</button>
@@ -1090,10 +1105,10 @@
       <div class="script-editor-statusbar">
         <div class="script-status-left">
           <div class="engine-segmented-switch mini" id="engineSegmentedSwitch">
-            <button type="button" class="engine-segment-btn active" id="btnEngineCraftsman" title="Zero-latency Craftsman buffer with Vim bindings">CRAFTSMAN</button>
-            <button type="button" class="engine-segment-btn" id="btnEngineNvim" title="Native WSL/Linux Neovim PTY running init.lua">NEOVIM</button>
+            <button type="button" class="engine-segment-btn active" id="btnEngineCraftsman" title="Zero-latency buffer with Vim bindings">VIM-LITE</button>
+            <button type="button" class="engine-segment-btn" id="btnEngineNvim" title="Native WSL/Linux Neovim PTY running init.lua">NVIM</button>
           </div>
-          <span class="script-engine-badge" id="scriptEngineBadge" style="display: none;">ENGINE: CRAFTSMAN</span>
+          <span class="script-engine-badge" id="scriptEngineBadge" style="display: none;">ENGINE: VIM-LITE</span>
           <span id="scriptCursorPos">Ln 1, Col 1</span>
           <span class="script-status-msg" id="scriptStatusMsg">Ready.</span>
         </div>

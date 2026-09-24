@@ -39,6 +39,133 @@
   const addNodeBtn = document.getElementById('addNodeBtn');
   const nodeModalClose = document.getElementById('nodeModalClose');
 
+  // 3-Way Mode Switcher & Session Controls
+  let activeChatMode = localStorage.getItem('george-chat-mode') || 'agentic';
+  const modeChatBtn = document.getElementById('modeChatBtn');
+  const modeAgenticBtn = document.getElementById('modeAgenticBtn');
+  const modePlanTaskBtn = document.getElementById('modePlanTaskBtn');
+  const btnNewSession = document.getElementById('btnNewSession');
+
+  function setChatMode(mode) {
+    activeChatMode = mode;
+    localStorage.setItem('george-chat-mode', mode);
+    if (modeChatBtn) modeChatBtn.classList.toggle('active', mode === 'chat');
+    if (modeAgenticBtn) modeAgenticBtn.classList.toggle('active', mode === 'agentic');
+    if (modePlanTaskBtn) modePlanTaskBtn.classList.toggle('active', mode === 'plan-task');
+  }
+
+  if (modeChatBtn) modeChatBtn.addEventListener('click', () => setChatMode('chat'));
+  if (modeAgenticBtn) modeAgenticBtn.addEventListener('click', () => setChatMode('agentic'));
+  if (modePlanTaskBtn) modePlanTaskBtn.addEventListener('click', () => setChatMode('plan-task'));
+  setChatMode(activeChatMode);
+
+  if (btnNewSession) {
+    btnNewSession.addEventListener('click', async () => {
+      if (confirm('Archive current transcript to Time-Machine and open a fresh session?')) {
+        try {
+          await fetch('/api/session', { method: 'DELETE' });
+          if (streamEl) {
+            streamEl.innerHTML = `
+              <div class="welcome-card" id="welcomeCard">
+                <div class="welcome-header">
+                  <span class="welcome-symbol">▲</span>
+                  <span class="welcome-title">George's Workbench</span>
+                </div>
+                <div class="welcome-body">
+                  Fresh session initialized. Chat freely, dispatch slash commands (<code>/status</code>, <code>/dispatch</code>, <code>/recall</code>), or drag and drop blueprints and artifacts directly into the prompt below.
+                </div>
+              </div>
+            `;
+          }
+          if (promptInput) {
+            promptInput.value = '';
+            promptInput.focus();
+          }
+          loadTranscripts();
+        } catch (e) {
+          console.error('Session reset error:', e);
+        }
+      }
+    });
+  }
+
+  function autoResizePrompt() {
+    if (promptInput) {
+      promptInput.style.height = 'auto';
+      promptInput.style.height = Math.min(promptInput.scrollHeight, 180) + 'px';
+    }
+  }
+
+  // Attach button and Drag & Drop file staging
+  async function handleUploadedFiles(fileList) {
+    if (!fileList || fileList.length === 0) return;
+    const formData = new FormData();
+    for (let i = 0; i < fileList.length; i++) {
+      formData.append('file', fileList[i]);
+    }
+    try {
+      const resp = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.uploaded && data.uploaded.length > 0) {
+          data.uploaded.forEach(u => {
+            const stagedText = u.staged_command ? `${u.staged_command}` : `[Attached: ${u.path}]`;
+            if (promptInput.value.trim().length > 0) {
+              promptInput.value += `\n${stagedText}`;
+            } else {
+              promptInput.value = stagedText;
+            }
+          });
+          promptInput.focus();
+          autoResizePrompt();
+        }
+      }
+    } catch (err) {
+      console.error('Upload failed:', err);
+    }
+  }
+
+  if (attachBtn && fileInput) {
+    attachBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async () => {
+      if (fileInput.files && fileInput.files.length > 0) {
+        await handleUploadedFiles(fileInput.files);
+        fileInput.value = '';
+      }
+    });
+  }
+
+  // Viewport drag & drop
+  ['dragenter', 'dragover'].forEach(evt => {
+    window.addEventListener(evt, (e) => {
+      e.preventDefault();
+      if (dropZone) dropZone.classList.add('active');
+    });
+  });
+
+  ['dragleave', 'dragend'].forEach(evt => {
+    window.addEventListener(evt, (e) => {
+      e.preventDefault();
+      if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
+        if (dropZone) dropZone.classList.remove('active');
+      }
+    });
+  });
+
+  if (dropZone) {
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('active'));
+    dropZone.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('active');
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        await handleUploadedFiles(e.dataTransfer.files);
+      }
+    });
+  }
+
   // Phase 2 & 3 Elements
   const activeTasksStrip = document.getElementById('activeTasksStrip');
   const tasksCarousel = document.getElementById('tasksCarousel');
@@ -248,7 +375,7 @@
       </div>
       <div class="steer-actions-row">
         <div class="steer-actions-left">
-          <button class="tactile-btn accent steer-btn" title="Inject operator steering directly into George's reasoning stream">⚡ INJECT GUIDANCE</button>
+          <button class="tactile-btn accent steer-btn" title="Inject operator steering directly into George's reasoning stream">INJECT GUIDANCE</button>
         </div>
         <div class="steer-actions-right">
           <button class="tactile-btn warn pause-btn" title="Pause execution loop">⏸ PAUSE</button>
@@ -382,7 +509,7 @@
       const resp = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: text })
+        body: JSON.stringify({ prompt: text, mode: activeChatMode })
       });
 
       if (resp.ok) {
@@ -414,20 +541,41 @@
       if (statusResp.ok) {
         const data = await statusResp.json();
         if (data.gpus && data.gpus.length > 0) {
-          const g = data.gpus[0];
-          if (hdrGpu) hdrGpu.textContent = `GPU 0: ${g.name.replace('NVIDIA GeForce ', '')}`;
-          if (hdrTemp) hdrTemp.textContent = `${g.temp_c}°C`;
-          if (hdrPower) hdrPower.textContent = `${Math.round(parseFloat(g.power_w))}W`;
-          if (hdrVram) hdrVram.textContent = `${(g.vram_used_mb / 1024).toFixed(1)} / ${(g.vram_total_mb / 1024).toFixed(1)} GB`;
+          const clusterEl = document.getElementById('hdrGpuCluster');
+          if (clusterEl) {
+            clusterEl.innerHTML = data.gpus.map(g => `
+              <span class="telemetry-chip gpu-chip">[GPU ${g.index}] ${escapeHtml(g.name.replace('NVIDIA GeForce ', ''))}</span>
+              <span class="telemetry-chip vram-chip">${(g.vram_used_mb / 1024).toFixed(1)}/${(g.vram_total_mb / 1024).toFixed(1)}GB</span>
+              <span class="telemetry-chip temp-chip">${g.temp_c}°C</span>
+              <span class="telemetry-chip power-chip">${Math.round(parseFloat(g.power_w))}W</span>
+            `).join('<span class="telemetry-chip" style="opacity:0.35">|</span>');
+          }
 
-          const rackName = document.getElementById('rackGpuName');
-          const rackVram = document.getElementById('rackVram');
-          const rackPower = document.getElementById('rackPower');
-          const rackTemp = document.getElementById('rackTemp');
-          if (rackName) rackName.textContent = `${g.name} (GPU ${g.index})`;
-          if (rackVram) rackVram.textContent = `${(g.vram_used_mb / 1024).toFixed(1)} / ${(g.vram_total_mb / 1024).toFixed(1)} GB`;
-          if (rackPower) rackPower.textContent = `${g.power_w} W`;
-          if (rackTemp) rackTemp.textContent = `${g.temp_c} °C`;
+          const rack = document.getElementById('gpuRack');
+          if (rack) {
+            rack.innerHTML = data.gpus.map(g => `
+              <div class="bay-card">
+                <div class="bay-header">
+                  <span class="bay-name">${escapeHtml(g.name)} (GPU ${g.index})</span>
+                  <span class="bay-badge">${g.index === 0 ? 'TIER 1 PRIMARY' : `TIER 1 ACCELERATOR ${g.index}`}</span>
+                </div>
+                <div class="bay-metrics">
+                  <div class="metric-item">
+                    <span class="m-label">VRAM</span>
+                    <span class="m-val">${(g.vram_used_mb / 1024).toFixed(1)} / ${(g.vram_total_mb / 1024).toFixed(1)} GB</span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="m-label">POWER</span>
+                    <span class="m-val">${g.power_w} W</span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="m-label">TEMP</span>
+                    <span class="m-val">${g.temp_c} °C</span>
+                  </div>
+                </div>
+              </div>
+            `).join('');
+          }
         }
 
         if (data.nodes) {
@@ -476,7 +624,7 @@
           <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
             <span class="cron-status-pill ${statusClass}">${statusText}</span>
             <div style="display: flex; gap: 4px;">
-              ${isRemote5700 ? `<button class="mini-action re-tunnel-btn" title="Re-establish SSH ProxyJump tunnel">⚡ TUNNEL</button>` : ''}
+              ${isRemote5700 ? `<button class="mini-action re-tunnel-btn" title="Re-establish SSH ProxyJump tunnel">TUNNEL</button>` : ''}
               <button class="mini-action probe-node-btn" 
                 data-url="${escapeHtml(n.url)}" 
                 data-tier="${escapeHtml(n.tier || '')}"
@@ -538,7 +686,7 @@
         e.stopPropagation();
         btn.textContent = 'CONNECTING...';
         await fetch('/api/tunnel/connect', { method: 'POST' });
-        btn.textContent = '⚡ TUNNEL';
+        btn.textContent = 'TUNNEL';
         fetchTunnelStatus();
         fetchStatus();
       });
@@ -897,6 +1045,7 @@
             <div class="item-meta">${Math.round(item.size_bytes / 1024)} KB</div>
             <div class="item-actions">
               <button class="mini-action ask-btn">ASK GEORGE</button>
+              <button class="mini-action vim-btn">OPEN IN VIM</button>
               <button class="mini-action resume-btn">RESUME TASK</button>
               <button class="mini-action danger delete-btn">PRUNE</button>
             </div>
@@ -905,6 +1054,12 @@
             promptInput.value = `/recall ${item.name} Summarize key milestones and findings from this task.`;
             toolCribDrawer.classList.remove('open');
             promptInput.focus();
+          });
+          card.querySelector('.vim-btn').addEventListener('click', () => {
+            if (window.openScriptInWorkbench) {
+              window.openScriptInWorkbench('.george/transcripts/' + item.name);
+              toolCribDrawer.classList.remove('open');
+            }
           });
           card.querySelector('.resume-btn').addEventListener('click', () => {
             promptInput.value = `/resume ${item.name}`;
@@ -1417,7 +1572,7 @@
       try {
         await fetch('/api/tunnel/connect', { method: 'POST' });
       } catch (e) {}
-      btnConnectTunnel.textContent = '⚡ RE-ESTABLISH TUNNEL';
+      btnConnectTunnel.textContent = 'RE-ESTABLISH TUNNEL';
       fetchTunnelStatus();
       fetchStatus();
     });
@@ -1704,10 +1859,15 @@
           card.innerHTML = `
             <div class="cron-job-header">
               <div class="cron-job-name">
-                <span>${job.is_system ? '⚡' : '⚙'}</span>
+                <span>${job.is_system ? 'SYS' : 'USR'}</span>
                 <span>${escapeHtml(job.name)}</span>
               </div>
-              <span class="cron-job-interval-badge">Every ${job.interval}s</span>
+              <div class="cron-job-controls" style="display:flex; align-items:center; gap:8px;">
+                <button class="cron-toggle-enabled-btn ${job.enabled ? 'enabled' : 'disabled'}" data-job="${escapeHtml(job.name)}" title="Click to ${job.enabled ? 'disable' : 'enable'} this cron job">
+                  ${job.enabled ? '● ENABLED' : '○ DISABLED'}
+                </button>
+                <span class="cron-job-interval-badge">Every ${job.interval}s</span>
+              </div>
             </div>
             <div class="cron-job-desc">${escapeHtml(job.description || '(No description provided)')}</div>
             ${platformBadgesHtml}
@@ -1724,6 +1884,26 @@
               </div>
             </div>
           `;
+
+          const enBtn = card.querySelector('.cron-toggle-enabled-btn');
+          if (enBtn) {
+            enBtn.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              enBtn.textContent = '...';
+              try {
+                const resp = await fetch(`/api/cron/job/${encodeURIComponent(job.name)}/toggle-enabled`, {
+                  method: 'POST'
+                });
+                if (resp.ok) {
+                  loadCronJobs();
+                } else {
+                  enBtn.textContent = 'ERR';
+                }
+              } catch (err) {
+                enBtn.textContent = 'ERR';
+              }
+            });
+          }
 
           if (hasPlatforms) {
             card.querySelectorAll('.platform-pill').forEach(pill => {
@@ -2447,7 +2627,7 @@
       }
     }
 
-    function createTab(filePath, content = '', isNew = false) {
+    function createTab(filePath, content = '', isNew = false, autoOpen = true) {
       const tabId = 'tab_' + (tabCounter++);
       const filename = filePath.split('/').pop() || 'untitled.sh';
       const tab = {
@@ -2464,7 +2644,7 @@
         deps: []
       };
       editorTabs.push(tab);
-      if (!modal.classList.contains('open')) {
+      if (autoOpen && !modal.classList.contains('open')) {
         modal.classList.add('open');
         recalculateWorkbenchGeometry();
       }
@@ -2983,7 +3163,7 @@
         if (nvimViewport) nvimViewport.style.display = 'flex';
         if (btnNvim) btnNvim.classList.add('active');
         if (btnCraftsman) btnCraftsman.classList.remove('active');
-        if (engineBadge) engineBadge.textContent = 'ENGINE: NEOVIM';
+        if (engineBadge) engineBadge.textContent = 'ENGINE: NVIM';
         initNvimTerminal(filePath);
       } else {
         currentEditorEngine = 'dom';
@@ -2991,7 +3171,7 @@
         if (domViewport) domViewport.style.display = 'flex';
         if (btnCraftsman) btnCraftsman.classList.add('active');
         if (btnNvim) btnNvim.classList.remove('active');
-        if (engineBadge) engineBadge.textContent = 'ENGINE: CRAFTSMAN';
+        if (engineBadge) engineBadge.textContent = 'ENGINE: VIM-LITE';
         if (nvimSocket) {
           try { nvimSocket.close(); } catch(e) {}
           nvimSocket = null;
@@ -3949,16 +4129,14 @@
           if (workspaceFilesCache.length === 0) loadWorkspaceFiles();
         }
         recalculateWorkbenchGeometry();
+        if (editorTabs.length === 0) {
+          openFile('.george/cron_jobs/research_publisher.sh');
+        }
       });
     }
 
     // Export to global window
     window.openScriptInWorkbench = openFile;
-
-    // Load initial default tab if not already populated
-    if (editorTabs.length === 0) {
-      createTab('.george/cron_jobs/research_publisher.sh', '', false);
-    }
   }
 
   // ── Phase 4: MCP Hub & Store Module ──────────────────────────────
@@ -4490,7 +4668,7 @@ done
           if (deployStatus) deployStatus.textContent = `Error: ${err.message}`;
         } finally {
           btnDeployCustom.disabled = false;
-          btnDeployCustom.textContent = '⚡ COMPILE & DOCK SERVER';
+          btnDeployCustom.textContent = 'COMPILE & DOCK SERVER';
         }
       });
     }

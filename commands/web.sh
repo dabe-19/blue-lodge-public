@@ -121,12 +121,12 @@ _web_start() {
 
     if [ -x "$bin" ]; then
         ui_step "Starting compiled Web UI binary..."
-        nohup env GEORGE_WEB_PORT="$PORT" "$bin" > "$LOG_FILE" 2>&1 &
-        local new_pid=$!
-        disown "$new_pid" 2>/dev/null || true
-        echo "$new_pid" > "$PID_FILE"
+        setsid -f env GEORGE_WEB_PORT="$PORT" "$bin" </dev/null >> "$LOG_FILE" 2>&1
         sleep 1
-        if kill -0 "$new_pid" 2>/dev/null; then
+        local new_pid
+        new_pid=$(pgrep -f "$bin" | head -n 1)
+        if [ -n "$new_pid" ] && kill -0 "$new_pid" 2>/dev/null; then
+            echo "$new_pid" > "$PID_FILE"
             touch "$LODGE_DIR/.george/.web_observability" 2>/dev/null || true
             ui_ok "Web UI started (PID: $new_pid) at http://127.0.0.1:$PORT"
         else

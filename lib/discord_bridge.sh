@@ -423,22 +423,38 @@ discord_generate_response() {
         fi
     fi
 
-    local full_prompt=""
-    if [ -n "$hist_ctx" ]; then
-        full_prompt="${hist_ctx}\n\n[Current Inbound Message from @${author}]:\n${prompt}"
+    # Determine profile: elevate to 'social+ops' if user request involves operational/creation/service/cron intent
+    local run_profile="social"
+    local op_pat='(cron|service|daemon|daemonize|schedule|sweep|spec sheet|tools|register tool|create tool|write script|create job|new job|make a service|make an example|background task|systemctl|rust service|sandbox|docker)'
+    if [[ "$p_lower" =~ $op_pat ]]; then
+        run_profile="social+ops"
+        if [ -n "$session_log" ]; then
+            printf "[%s] ── Operational intent detected; elevated tool profile to '%s'.\n" "$(date '+%H:%M:%S')" "$run_profile" >> "$session_log"
+        fi
+    fi
+
+    local target_goal=""
+    if [ "$run_profile" = "social+ops" ]; then
+        # For operational tasks, isolate goal to current user prompt to prevent past banter context pollution
+        target_goal="$prompt"
     else
-        full_prompt="$prompt"
+        # For conversational dialogue, include recent history context
+        if [ -n "$hist_ctx" ]; then
+            target_goal="${hist_ctx}\n\n[Current Inbound Message from @${author}]:\n${prompt}"
+        else
+            target_goal="$prompt"
+        fi
     fi
 
     if [ -n "$attachment_files" ]; then
-        full_prompt+="\n[Inbound User Attachments downloaded locally to: $attachment_files. You can inspect them using vision_analyze, or upload files/images back using discord_send_file or [IMAGE: /path/to/image].]"
+        target_goal+="\n[Inbound User Attachments downloaded locally to: $attachment_files. You can inspect them using vision_analyze, or upload files/images back using discord_send_file or [IMAGE: /path/to/image].]"
     fi
 
     if [ -n "$session_log" ]; then
         printf "[%s] ── Starting ReAct reasoning turn with George...\n" "$(date '+%H:%M:%S')" >> "$session_log"
     fi
 
-    # Invoke ReAct engine with 'social' profile (web, social, memory, vision)
+    # Invoke ReAct engine with appropriate profile
     local session_uuid
     session_uuid="discord_${channel_id}_$(date +%s)"
     local session_out_dir="$DISCORD_SESSIONS_DIR/$session_uuid"
@@ -451,9 +467,9 @@ discord_generate_response() {
         export _DISCORD_IN_SESSION=1
         export LODGE_NONINTERACTIVE=1
         if [ -n "$session_log" ]; then
-            react_run "$full_prompt" "$LODGE_DIR" "$discord_max_turns" 1 "$session_uuid" "social" 2>&1 | tee -a "$session_log" > "$raw_out_file" || true
+            react_run "$target_goal" "$LODGE_DIR" "$discord_max_turns" 1 "$session_uuid" "$run_profile" 2>&1 | tee -a "$session_log" > "$raw_out_file" || true
         else
-            react_run "$full_prompt" "$LODGE_DIR" "$discord_max_turns" 1 "$session_uuid" "social" 2>&1 > "$raw_out_file" || true
+            react_run "$target_goal" "$LODGE_DIR" "$discord_max_turns" 1 "$session_uuid" "$run_profile" 2>&1 > "$raw_out_file" || true
         fi
         unset _DISCORD_IN_SESSION
         unset LODGE_NONINTERACTIVE
@@ -533,7 +549,7 @@ EOF
                 local synth_out
                 synth_out=$(curl -s -m 30 http://127.0.0.1:8080/v1/chat/completions \
                     -H "Content-Type: application/json" \
-                    -d "$(jq -n --arg p "$synth_prompt" '{messages:[{role:"user",content:$p}], max_tokens:150, temperature:0.3}')" 2>/dev/null | \
+                    -d "$(jq -n --arg p "$synth_prompt" '{messages:[{role:"user",content:$p}], max_tokens:150, temperature:0.3, reasoning_effort:"medium"}')" 2>/dev/null | \
                     jq -r '.choices[0].message.content // empty' 2>/dev/null || true)
                 if [ -n "$synth_out" ]; then
                     local clean_synth
@@ -564,6 +580,7 @@ discord_chat_session() {
 
     discord_bridge_init
 
+    local session_log="$DISCORD_SESSIONS_DIR/session_${channel_id}.log"
     local pid_file="$DISCORD_SESSIONS_DIR/session_${channel_id}.pid"
     echo "${BASHPID:-$$}" > "$pid_file"
     local pulse_pid=""
@@ -582,7 +599,6 @@ discord_chat_session() {
     local bot_id
     bot_id=$(curl -s "https://discord.com/api/v10/users/@me" -H "Authorization: Bot $token" 2>/dev/null | jq -r .id)
 
-    local session_log="$DISCORD_SESSIONS_DIR/session_${channel_id}.log"
     printf "==========================================================\n" > "$session_log"
     printf "  George Live Discord Session with @%s\n" "$author" >> "$session_log"
     printf "  Channel: %s | Started: %s\n" "$channel_id" "$(date '+%Y-%m-%d %H:%M:%S')" >> "$session_log"
@@ -799,8 +815,13 @@ discord_bridge_sweep() {
                 attachments=$(discord_download_attachments "$pending_msg" "$dm_ch_id")
 
                 ui_info "Direct Message from @$p_author: $p_content"
-                ( discord_chat_session "$dm_ch_id" "$p_content" "$p_author" "$p_id" 1 "$attachments" "$p_author_id" ) >> "$DISCORD_BRIDGE_LOG" 2>&1 &
-                echo "$!" > "$pid_file"
+                (
+                    source "$LODGE_DIR/lib/discord_bridge.sh" 2>/dev/null || true
+                    discord_chat_session "$dm_ch_id" "$p_content" "$p_author" "$p_id" 1 "$attachments" "$p_author_id"
+                ) >> "$DISCORD_BRIDGE_LOG" 2>&1 &
+                local child_pid=$!
+                echo "$child_pid" > "$pid_file"
+                disown "$child_pid" 2>/dev/null || true
                 continue
             fi
         done
@@ -854,8 +875,13 @@ discord_bridge_sweep() {
                 attachments=$(discord_download_attachments "$pending_mention" "$ch_id")
 
                 ui_info "Mention in #$ch_name from @$m_author: $m_content"
-                ( discord_chat_session "$ch_id" "$m_content" "$m_author" "$m_id" 0 "$attachments" "$m_author_id" ) >> "$DISCORD_BRIDGE_LOG" 2>&1 &
-                echo "$!" > "$pid_file"
+                (
+                    source "$LODGE_DIR/lib/discord_bridge.sh" 2>/dev/null || true
+                    discord_chat_session "$ch_id" "$m_content" "$m_author" "$m_id" 0 "$attachments" "$m_author_id"
+                ) >> "$DISCORD_BRIDGE_LOG" 2>&1 &
+                local child_pid=$!
+                echo "$child_pid" > "$pid_file"
+                disown "$child_pid" 2>/dev/null || true
                 continue
             fi
         done <<< "$ch_list"

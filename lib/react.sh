@@ -87,17 +87,20 @@ ${git_context:+Current Environment: $git_context
 Trajectory history:
 $msgs_summary"
 
+    local r_effort="${LLM_REASONING_EFFORT:-medium}"
     local payload
     payload=$(jq -n \
         --arg sys "You are a senior software architect and technical state summarizer. Produce a dense, comprehensive, high-fidelity technical state summary up to 2500 tokens. Preserve exact file names, functions, error traces, and next concrete actions." \
         --arg prompt "$prompt" \
+        --arg r_effort "$r_effort" \
         '{
             messages: [
                 {"role": "system", "content": $sys},
                 {"role": "user", "content": $prompt}
             ],
             temperature: 0.2,
-            max_tokens: 2500
+            max_tokens: 2500,
+            reasoning_effort: $r_effort
         }')
 
     local summary_resp
@@ -408,6 +411,7 @@ react_run() {
         fi
 
         # Prepare chat completions payload with runtime /limits settings
+        local r_effort="${LLM_REASONING_EFFORT:-medium}"
         local payload
         payload=$(jq -n \
             --slurpfile msgs "$messages_file" \
@@ -415,6 +419,7 @@ react_run() {
             --arg temp "$agent_temp" \
             --arg topp "$agent_topp" \
             --arg max_tok "$agent_max_tok" \
+            --arg r_effort "$r_effort" \
             '{
                 messages: $msgs[0],
                 tools: $tools,
@@ -422,6 +427,7 @@ react_run() {
                 temperature: ($temp | tonumber),
                 top_p: ($topp | tonumber),
                 max_tokens: ($max_tok | tonumber),
+                reasoning_effort: $r_effort,
                 stream: true,
                 stream_options: {include_usage: true}
             }')

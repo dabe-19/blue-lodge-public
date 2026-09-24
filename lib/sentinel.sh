@@ -526,7 +526,7 @@ sentinel_sweep_remediated_issues() {
     _gitea_load_conf
 
     local open_issues
-    open_issues=$(curl -s -H "Authorization: token ${GITEA_TOKEN}" "${GITEA_URL}/api/v1/repos/${GITEA_USER}/${GITEA_REPO}/issues?state=open" 2>/dev/null)
+    open_issues=$(curl -s -H "Authorization: token ${GITEA_TOKEN:-}" "${GITEA_URL:-http://127.0.0.1:3088}/api/v1/repos/${GITEA_USER:-}/${GITEA_REPO:-}/issues?state=open" 2>/dev/null)
     [ -z "$open_issues" ] && return 0
 
     # 1. Sweep issues with auto-remediated label or title indicating remediation
