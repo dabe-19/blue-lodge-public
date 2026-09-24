@@ -326,6 +326,8 @@ _workflow_run_architect() {
         if [ -t 0 ]; then
             echo -en "${C_CYAN}Enter feature objective or issue description for the plan:${C_RESET} "
             read -r objective
+        elif declare -f ui_ask_operator &>/dev/null; then
+            objective=$(ui_ask_operator "Enter feature objective or issue description for the plan:")
         fi
     fi
 
@@ -343,7 +345,11 @@ _workflow_run_architect() {
     wf_prompt=$(workflows_build_prompt "the-architect" "$objective" "$workdir")
     
     local architect_instruction
-    architect_instruction="You are THE ARCHITECT. Research the codebase using file_read, dir_list, file_grep, and web_search. Then create a complete, actionable technical plan and save it directly to 'implementation_plan.md' in the current workspace.
+    architect_instruction="You are THE ARCHITECT. Your purpose is to explore the codebase and draft a plumb, square implementation plan.
+Follow Socratic /grill-me principles:
+1. Research the codebase using file_read, dir_list, and file_grep to discover ground truth.
+2. If any architectural trade-offs, dependencies, or scope ambiguities exist, use ask_operator to resolve them one by one (presenting a single question with your recommended choice).
+3. Then create a complete, actionable technical plan and save it directly to 'implementation_plan.md' in the current workspace.
 The plan MUST follow the structure:
 ### Feature Overview
 ### Layer Changes
@@ -362,7 +368,7 @@ The plan MUST follow the structure:
 
 Do NOT modify any source code files—your ONLY deliverable is 'implementation_plan.md'. Once written, summarize the plan."
 
-    react_run "$architect_instruction\n\n$wf_prompt\n\nOBJECTIVE: $objective" "$workdir"
+    react_run "$architect_instruction\n\n$wf_prompt\n\nOBJECTIVE: $objective" "$workdir" "code"
     local rc=$?
 
     if [ -f "$plan_path" ]; then
@@ -415,15 +421,123 @@ _workflow_run_dispatcher() {
     ui_info "10. /git-manager (Conventional Commit & Push)"
     echo ""
 
-    # Execute Dispatcher loop
-    local wf_prompt
-    wf_prompt=$(workflows_build_prompt "dispatcher" "$args" "$workdir")
+    # Execute Dispatcher Sequential Specialist Pipeline
+    local reports_dir="$workdir/.george/pipeline_reports"
+    mkdir -p "$reports_dir"
 
-    local dispatcher_instruction
-    dispatcher_instruction="You are DISPATCHER, pipeline orchestrator for Blue Lodge. Read implementation_plan.md. Execute the required specialists in fixed sequence. For each layer marked 'yes', implement the necessary edits, verify the layer with localized tests, and document the results. Then route to verification and audit."
+    _run_specialist() {
+        local name="$1"
+        local title="$2"
+        local profile="$3"
+        local gate_cmd="$4"
+        local report_file="$reports_dir/${name}.md"
 
-    react_run "$dispatcher_instruction\n\n$wf_prompt" "$workdir"
-    return $?
+        ui_section "Executing Layer: $title (/$name)"
+        local spec_prompt
+        spec_prompt=$(workflows_build_prompt "$name" "Execute layer responsibilities according to $plan_path.\nReview prior reports in $reports_dir." "$workdir")
+        local spec_instruction="You are ${title^^}. Read $plan_path. Implement required changes within your exclusive layer boundaries. Adhere to The Square (edit in place, preserve context). Write your structured return report to $report_file following the Specialist Return Template."
+
+        react_run "$spec_instruction\n\n$spec_prompt" "$workdir" "$profile"
+        local spec_rc=$?
+        if [ "$spec_rc" -ne 0 ]; then
+            ui_err "Specialist $name returned non-zero ($spec_rc)."
+            return "$spec_rc"
+        fi
+
+        # Run Localized Build Gate if defined
+        if [ -n "$gate_cmd" ]; then
+            ui_step "Running Localized Build Gate for $name..."
+            if ! ( cd "$workdir" && eval "$gate_cmd" ); then
+                ui_err "Localized build gate failed for $name: $gate_cmd"
+                return 1
+            fi
+            ui_ok "Build gate passed for $name."
+        fi
+        return 0
+    }
+
+    # 1. Tooling Layer
+    if [ "$run_tooling" -eq 1 ]; then
+        _run_specialist "quartermaster" "Quartermaster (Tooling & Dependencies)" "ops" "" || return 1
+    fi
+
+    # 2. Core Engine Layer
+    if [ "$run_core" -eq 1 ]; then
+        _run_specialist "core-specialist" "Core Specialist (Core Engine & Libs)" "code" "bash tests/run_all.sh test_memory test_recall test_backup" || return 1
+    fi
+
+    # 3. Commands Layer
+    if [ "$run_cmds" -eq 1 ]; then
+        _run_specialist "commands-specialist" "Commands Specialist (Commands & Dispatcher)" "code" "bash tests/run_all.sh test_commands test_init test_write test_save test_download test_service test_slash" || return 1
+    fi
+
+    # 4. UI Layer
+    if [ "$run_ui" -eq 1 ]; then
+        _run_specialist "ui-specialist" "UI Specialist (Terminal & Web UI)" "code" "bash tests/run_all.sh test_lodge test_ui" || return 1
+    fi
+
+    # 5. REPL Sandbox Layer
+    if [ "$run_repl" -eq 1 ]; then
+        _run_specialist "repl-specialist" "REPL Specialist (REPL & Container Sandbox)" "ops" "bash tests/run_all.sh test_sandbox test_container" || return 1
+    fi
+
+    # 6. Tests Layer
+    if [ "$run_tests" -eq 1 ]; then
+        _run_specialist "tests-specialist" "Tests Specialist (Test Modules & Harness)" "code" "bash tests/run_all.sh test_optimizations test_secrets test_security" || return 1
+    fi
+
+    # 7. Functional Verification Gate
+    if [ "$run_verify" -eq 1 ]; then
+        ui_section "Pipeline Step: Functional Verification (/tester)"
+        local tester_prompt
+        tester_prompt=$(workflows_build_prompt "tester" "Verify implementation of $plan_path against full test suite." "$workdir")
+        local tester_inst="You are THE TESTER. Run automated test suites (bash tests/run_all.sh). You are read-only. Report pass/fail and output verification summary to $reports_dir/tester.md."
+        react_run "$tester_inst\n\n$tester_prompt" "$workdir" "ops"
+        
+        ui_step "Running Full Functional Verification Suite..."
+        if ! ( cd "$workdir" && bash tests/run_all.sh ); then
+            ui_err "Functional Verification failed! Halting before Senior Audit."
+            return 1
+        fi
+        ui_ok "Functional Verification green."
+    fi
+
+    # 8. Senior Technical Audit Gate
+    ui_section "Pipeline Step: Senior Technical Audit (/george)"
+    if [ "$run_sec" -eq 1 ]; then
+        ui_step "Audit Sub-pass: Invoking The Tyler (/the-tyler for Security)..."
+        local tyler_prompt
+        tyler_prompt=$(workflows_build_prompt "the-tyler" "Security and injection audit for recent changes against $plan_path" "$workdir")
+        react_run "You are THE TYLER, Security Auditor. Inspect git diff for security vulnerabilities, injection flaws, and sandbox leaks. Write report to $reports_dir/the-tyler.md.\n\n$tyler_prompt" "$workdir" "ops"
+    fi
+    if [ "$run_style" -eq 1 ]; then
+        ui_step "Audit Sub-pass: Invoking The Warden (/the-warden for Style)..."
+        local warden_prompt
+        warden_prompt=$(workflows_build_prompt "the-warden" "Architecture and style audit for recent changes against $plan_path" "$workdir")
+        react_run "You are THE WARDEN, Architecture and Style Auditor. Review git diff for pure POSIX shell standards, modularity, and craftsmanship conventions. Write report to $reports_dir/the-warden.md.\n\n$warden_prompt" "$workdir" "ops"
+    fi
+
+    local audit_prompt
+    audit_prompt=$(workflows_build_prompt "george" "Senior Technical Audit. Review pipeline reports in $reports_dir and git diff against landmarks." "$workdir")
+    local audit_inst="You are GEORGE, Senior Technical Auditor. Audit the changes in git status and diff against the rules of Blue Lodge craftsmanship, zero-leak sandboxing, test coverage, and POSIX compliance. Fold in reports from The Tyler and The Warden if applicable. Write your verdict and audit report to $reports_dir/george_audit.md. Conclude with VERDICT: PASS or FAIL."
+    react_run "$audit_inst\n\n$audit_prompt" "$workdir" "ops"
+    local audit_rc=$?
+    if [ "$audit_rc" -ne 0 ]; then
+        ui_err "Senior Technical Audit returned error ($audit_rc). Halting pipeline."
+        return "$audit_rc"
+    fi
+    ui_ok "Senior Technical Audit passed."
+
+    # 9. Post-Audit: Documentation
+    ui_section "Pipeline Step: Documentation (/the-chronicler)"
+    local chronicler_prompt
+    chronicler_prompt=$(workflows_build_prompt "the-chronicler" "Update documentation and GEORGE.md for completed feature: $plan_path" "$workdir")
+    react_run "You are THE CHRONICLER. Update *.md documentation and GEORGE.md Active Board to reflect the verified changes.\n\n$chronicler_prompt" "$workdir" "code"
+
+    ui_section "Pipeline Successfully Completed"
+    ui_ok "All touched layers green, verified, and audited."
+    echo -e "To stage and commit these changes, run ${C_CYAN}/git-manager${C_RESET}."
+    return 0
 }
 
 # ── Specialized Workflow: George (Senior Auditor) ──────────────────────

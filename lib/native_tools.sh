@@ -165,7 +165,7 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "file_append",
-      "description": "Append text content to the end of an existing file. Use when: adding log entries, appending new exports, or writing sequentially to memory files. Examples: path=\".george/SPEC_SHEET.md\", content=\"\\n- my_tool: Custom utility\".",
+      "description": "Append text content to the end of an existing file. Use when: adding log entries, appending new exports, or writing sequentially to memory files. Examples: path=\"GEORGE.md\", content=\"\\n- Custom note\".",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1135,11 +1135,11 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "file_edit",
-      "description": "Edit an existing file using sed substitution for targeted, surgical search-and-replace changes. Use when: updating configs, registering capabilities in .george/SPEC_SHEET.md, or modifying functions without re-writing the entire file. Examples: path=\".george/SPEC_SHEET.md\", expression=\"s/## Registered Tools/## Registered Tools\\n- weather: Fetches forecast/g\"; path=\"src/main.rs\", expression=\"s/let port = 8080;/let port = 3000;/g\".",
+      "description": "Edit an existing file using sed substitution for targeted, surgical search-and-replace changes. Use when: updating configs, modifying environment variables, or fixing functions without re-writing the entire file. Examples: path=\"GEORGE.md\", expression=\"s/## Active Task/## Active Task\\n- Investigating metrics/g\"; path=\"web/src/main.rs\", expression=\"s/let port = 8080;/let port = 3000;/g\".",
       "parameters": {
         "type": "object",
         "properties": {
-          "path": { "type": "string", "description": "Target file path relative to workspace root (e.g. \".george/SPEC_SHEET.md\", \"src/main.rs\")." },
+          "path": { "type": "string", "description": "Target file path relative to workspace root (e.g. \"GEORGE.md\", \"web/src/main.rs\")." },
           "expression": { "type": "string", "description": "sed expression (e.g. \"s/old_text/new_text/g\")." }
         },
         "required": ["path", "expression"]
