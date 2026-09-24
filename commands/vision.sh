@@ -33,13 +33,18 @@ cmd_vision() {
     # Default prompt
     [ -z "$prompt" ] && prompt="Describe this image in detail. Note any text, objects, people, and relevant details."
 
-    # Check if vision support is available
-    local _check_model="${ACTIVE_ENDPOINT_MODEL:-${LODGE_MODEL:-${LODGE_MODEL_PRIMARY:-}}}"
-    if declare -f models_has_vision &>/dev/null && [ -n "$_check_model" ] && ! models_has_vision "$_check_model"; then
-        ui_warn "Current model ($_check_model) may not support vision."
-        ui_dim "  Vision-tested models: ternary-bonsai-27b, gemma4-12b-inst, gemma4-e4b-inst, gemma4-e2b-inst"
-        ui_dim "  Trying anyway..."
-        echo ""
+    # Check if vision support is available via dynamic endpoint discovery
+    if [ -f "$LODGE_DIR/lib/endpoints.sh" ]; then
+        source "$LODGE_DIR/lib/endpoints.sh" 2>/dev/null || true
+    fi
+    if declare -f endpoints_find_vision_endpoint &>/dev/null; then
+        local _v_url
+        _v_url=$(endpoints_find_vision_endpoint 2>/dev/null || true)
+        if [ -z "$_v_url" ]; then
+            ui_err "No active endpoint has an offloaded Vision Tower."
+            ui_dim "  Ensure Tier 1 (GPU 0) is running with an offloaded multimodal projector."
+            return 1
+        fi
     fi
 
     # Resolve relative path

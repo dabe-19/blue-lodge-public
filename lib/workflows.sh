@@ -212,6 +212,32 @@ workflows_extract_sections() {
        '{file: $file, rules: $rules, steps: $steps, body: $body}'
 }
 
+# ── Sanitize Antigravity References into George Native Bedrock ────────
+_workflows_sanitize_for_george() {
+    local text="$1"
+    [ -z "$text" ] && return 0
+    echo "$text" | sed \
+        -e 's|antigravity/askQuestions|ask_operator|g' \
+        -e 's|antigravity/toolSearch|tool_search|g' \
+        -e 's|antigravity/resolveMemoryFileUri|/recall|g' \
+        -e 's|antigravity/callWorkflow|workflow_run|g' \
+        -e 's|antigravity/memory|memory|g' \
+        -e 's|replace_file_content|file_edit|g' \
+        -e 's|write_to_file|file_write|g' \
+        -e 's|view_file|file_read|g' \
+        -e 's|execute/runInTerminal|bash_exec|g' \
+        -e 's|execute/getTerminalOutput|bash_exec|g' \
+        -e 's|`read`|`file_read`|g' \
+        -e 's|`edit`|`file_edit`|g' \
+        -e 's|`search`|`file_grep`|g' \
+        -e 's|`web`|`mcp_server_fetch`|g' \
+        -e 's|(The Lectern.)||g' \
+        -e 's|NEVER print a lettered/numbered list of options in chat — use the interactive picker|Use ask_operator to clarify questions with your recommended choice|g' \
+        -e 's|read the target agent.*using `\?file_read`\?|dispatch the target layer via the dispatcher pipeline|g' \
+        -e 's|read .* using `\?file_read`\? to adopt its persona.*|execute the plan via /dispatch|g' \
+        -e 's|- \*\*Tool Scope (Implicit Sandbox)\*\*:.*|- **Tool Scope**: Use George native bedrock tools (file_read, file_write, file_edit, ask_operator, file_grep, dir_list, bash_exec).|g'
+}
+
 # ── Build Specialized Prompt for Workflow ─────────────────────────────
 workflows_build_prompt() {
     local name="$1"
@@ -226,6 +252,11 @@ workflows_build_prompt() {
     rules=$(echo "$sections" | jq -r '.rules // empty')
     steps=$(echo "$sections" | jq -r '.steps // empty')
     body=$(echo "$sections" | jq -r '.body // empty')
+
+    # Translate Antigravity IDE workflow syntax to George native bedrock tools
+    rules=$(_workflows_sanitize_for_george "$rules")
+    steps=$(_workflows_sanitize_for_george "$steps")
+    body=$(_workflows_sanitize_for_george "$body")
 
     local prompt=""
     prompt+="<agent_workflow_instruction>\n"
@@ -344,31 +375,7 @@ _workflow_run_architect() {
     local wf_prompt
     wf_prompt=$(workflows_build_prompt "the-architect" "$objective" "$workdir")
     
-    local architect_instruction
-    architect_instruction="You are THE ARCHITECT. Your purpose is to explore the codebase and draft a plumb, square implementation plan.
-Follow Socratic /grill-me principles:
-1. Research the codebase using file_read, dir_list, and file_grep to discover ground truth.
-2. If any architectural trade-offs, dependencies, or scope ambiguities exist, use ask_operator to resolve them one by one (presenting a single question with your recommended choice).
-3. Then create a complete, actionable technical plan and save it directly to 'implementation_plan.md' in the current workspace.
-The plan MUST follow the structure:
-### Feature Overview
-### Layer Changes
-### Scope Boundaries
-### Touched Layers (Handoff Routing)
-- **core-specialist**: yes | no
-- **commands-specialist**: yes | no
-- **ui-specialist**: yes | no
-- **tests-specialist**: yes | no
-- **repl-specialist**: yes | no
-### Tooling Layer (Provisioning): yes | no
-### Functional Verification: yes | no
-### Security: yes | no
-### Style: yes | no
-### Verification Plan
-
-Do NOT modify any source code files—your ONLY deliverable is 'implementation_plan.md'. Once written, summarize the plan."
-
-    react_run "$architect_instruction\n\n$wf_prompt\n\nOBJECTIVE: $objective" "$workdir" "${AGENT_MAX_TURNS:-30}" 1 "" "code"
+    react_run "$wf_prompt" "$workdir" "${AGENT_ARCHITECT_MAX_TURNS:-30}" 1 "" "code"
     local rc=$?
 
     if [ -f "$plan_path" ]; then

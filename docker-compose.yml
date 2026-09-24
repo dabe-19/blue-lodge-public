@@ -3,7 +3,7 @@
 # To force rebuilds when code changes: docker compose up -d --build
 
 services:
-  # ── Tier 1: CUDA PRISM Inference Fabric (Dual RTX 3060 24GB Pool) ──
+  # ── Tier 1: CUDA PRISM Primary Inference (GPU 0 Dedicated: 144k + Vision) ──
   prism-inference:
     image: george-cuda-sandbox:latest
     container_name: george-prism-server
@@ -16,17 +16,21 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CUDA_VISIBLE_DEVICES=0
       - LLAMA_ARG_MODEL=/models/Ternary-Bonsai-2-27B-PTQ1_0-mtp-lean.gguf
-      - LLAMA_ARG_CTX_SIZE=131072
-      - LLAMA_ARG_PARALLEL=2
+      - LLAMA_ARG_CTX_SIZE=147456
+      - LLAMA_ARG_N_PARALLEL=1
       - LLAMA_ARG_N_GPU_LAYERS=99
       - LLAMA_ARG_HOST=0.0.0.0
       - LLAMA_ARG_PORT=8080
+      - ENABLE_VISION=1
       - ENABLE_MTP=1
+      - GGML_CUDA_BATCH_INVARIANT=1
     volumes:
       # External host models directory mounted read-only (zero container weight)
       - ${MODELS_DIR:-/home/wsl-ops/models}:/models:ro
       - ./bin/prism:/opt/llama-prism-latest:ro
+      - ./scripts:/scripts:ro
       - ./:/workspace
       - ${HOME}/.george:/home/george/.george
     deploy:
@@ -36,57 +40,42 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    command: >
-      /bin/bash -c "
-      TARGET_MODEL=\"/models/Ternary-Bonsai-2-27B-PTQ1_0-mtp-lean.gguf\";
-      [ ! -f \"$$TARGET_MODEL\" ] && TARGET_MODEL=\"/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf\";
-      [ ! -f \"$$TARGET_MODEL\" ] && TARGET_MODEL=\"/models/Ternary-Bonsai-2-27B-PQ2_0.gguf\";
+    command: ["/scripts/start_prism.sh"]
 
-      if [ -f \"$$TARGET_MODEL\" ]; then
-        echo \"[+] Starting PRISM CUDA server with $$TARGET_MODEL (Dual-GPU 2-Slot 64k)...\";
-        MMPROJ_ARGS=\"\";
-        if [ -f /models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf ]; then
-          echo \"[+] Offloading Vision Tower (mmproj-Q8_0)...\";
-          MMPROJ_ARGS=\"--mmproj /models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf --mmproj-offload\";
-        fi;
-
-        MTP_ARGS=\"\";
-        if [[ \"$$TARGET_MODEL\" == *\"mtp\"* ]] && [ \"$${ENABLE_MTP:-0}\" = \"1\" ]; then
-          echo \"[+] Enabling Speculative Decoding (draft-mtp, n-max 1)...\";
-          MTP_ARGS=\"--spec-type draft-mtp --spec-draft-n-max 1\";
-        fi;
-
-        PRISM_BIN=\"/usr/local/bin/llama-server-prism\";
-        if [ -x /opt/llama-prism-latest/llama-server ]; then
-          echo \"[+] Using updated PRISM binary from sudoingX/llama.cpp (pr-hadamard-mtp)...\";
-          PRISM_BIN=\"/opt/llama-prism-latest/llama-server\";
-          export LD_LIBRARY_PATH=\"/opt/llama-prism-latest:$$LD_LIBRARY_PATH\";
-        fi;
-
-        exec $$PRISM_BIN \
-          -m \"$$TARGET_MODEL\" \
-          $$MMPROJ_ARGS \
-          $$MTP_ARGS \
-          --host 0.0.0.0 \
-          --port 8080 \
-          -c $${LLAMA_ARG_CTX_SIZE:-131072} \
-          -np $${LLAMA_ARG_PARALLEL:-2} \
-          -b 2048 \
-          -ub 1024 \
-          -ngl 99 \
-          --flash-attn on \
-          -ctk q4_0 \
-          -ctv q4_0 \
-          --tensor-split 12,11 \
-          -sm layer \
-          --reasoning-effort medium \
-          --load-mode mmap \
-          --jinja
-      else
-        echo '[!] Warning: No compatible Ternary Bonsai model found in /models.'
-        echo '[!] Waiting for host model mount in /models...'
-        tail -f /dev/null
-      fi"
+  # ── Tier 2: CUDA PRISM Worker Inference (GPU 1 Dedicated: 96k Text-Only) ──
+  prism-inference-worker:
+    image: george-cuda-sandbox:latest
+    container_name: george-prism-worker
+    restart: unless-stopped
+    ports:
+      - "18080:18080"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CUDA_VISIBLE_DEVICES=1
+      - LLAMA_ARG_MODEL=/models/Ternary-Bonsai-2-27B-PTQ1_0-mtp-lean.gguf
+      - LLAMA_ARG_CTX_SIZE=98304
+      - LLAMA_ARG_N_PARALLEL=1
+      - LLAMA_ARG_N_GPU_LAYERS=99
+      - LLAMA_ARG_HOST=0.0.0.0
+      - LLAMA_ARG_PORT=18080
+      - ENABLE_VISION=0
+      - ENABLE_MTP=1
+      - GGML_CUDA_BATCH_INVARIANT=1
+    volumes:
+      - ${MODELS_DIR:-/home/wsl-ops/models}:/models:ro
+      - ./bin/prism:/opt/llama-prism-latest:ro
+      - ./scripts:/scripts:ro
+      - ./:/workspace
+      - ${HOME}/.george:/home/george/.george
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: ["/scripts/start_prism.sh"]
 
   # ── Sovereign Web Sidecar & Craftsman Workbench ───────────────
   george-web:

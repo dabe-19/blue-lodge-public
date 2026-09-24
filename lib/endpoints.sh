@@ -130,6 +130,66 @@ endpoints_probe() {
     return "$is_online"
 }
 
+# ── Dynamic Vision Tower Probing & Routing ──────────────────────────
+declare -A _ENDPOINT_VISION_CACHE 2>/dev/null || true
+
+# Returns 0 if the endpoint URL supports vision/multimodal, 1 otherwise
+endpoints_probe_vision() {
+    local url="${1:-${ACTIVE_ENDPOINT_URL:-${LLAMA_CPP_URL:-}}}"
+    [ -z "$url" ] && return 1
+
+    local now
+    now=$(date +%s)
+    local cached="${_ENDPOINT_VISION_CACHE[$url]:-}"
+    if [ -n "$cached" ]; then
+        local c_status="${cached%%:*}"
+        local c_time="${cached##*:}"
+        if [ $((now - c_time)) -lt "$_PROBE_CACHE_TTL" ]; then
+            [ "$c_status" -eq 0 ] && return 0 || return 1
+        fi
+    fi
+
+    local has_vision=1
+    local models_json
+    models_json=$(curl -sf --max-time 2.0 "${url}/v1/models" 2>/dev/null || true)
+    if [ -n "$models_json" ]; then
+        if echo "$models_json" | jq -e '.models[]?.capabilities[]? | select(. == "multimodal")' &>/dev/null; then
+            has_vision=0
+        fi
+    fi
+
+    _ENDPOINT_VISION_CACHE["$url"]="${has_vision}:${now}"
+    return "$has_vision"
+}
+
+# Dynamically finds the best available endpoint with an active Vision Tower.
+# Checks active endpoint first, then cascades through enabled tiers (1 -> 3 -> 2 -> 0).
+endpoints_find_vision_endpoint() {
+    endpoints_init
+
+    # 1. If active endpoint already has vision, use it directly
+    if [ -n "${ACTIVE_ENDPOINT_URL:-}" ] && endpoints_probe_vision "$ACTIVE_ENDPOINT_URL"; then
+        echo "$ACTIVE_ENDPOINT_URL"
+        return 0
+    fi
+
+    # 2. Search enabled tiers in priority order: Tier 1 -> Tier 3 -> Tier 2 -> Tier 0
+    local candidates=(1 3 2 0)
+    local t
+    for t in "${candidates[@]}"; do
+        local enabled_var="TIER${t}_ENABLED"
+        local url_var="TIER${t}_URL"
+        if [ "${!enabled_var:-0}" -eq 1 ] && [ -n "${!url_var:-}" ]; then
+            if endpoints_probe "$t" && endpoints_probe_vision "${!url_var}"; then
+                echo "${!url_var}"
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
 # ── Strict Cascading Fallback ───────────────────────────────────────
 # Cascades from highest tier to lowest: Tier 3 -> Tier 1 -> Tier 2 -> Tier 0.
 # Sets ACTIVE_TIER and companion variables. Returns 0 if an endpoint is found.

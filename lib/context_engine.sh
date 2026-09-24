@@ -273,10 +273,19 @@ context_engine_build() {
             for s in $running_servers; do
                 local tools_json
                 tools_json=$(mcp_tools_list "$s" 2>/dev/null)
-                local tool_names
-                tool_names=$(echo "$tools_json" | jq -r '.[].name' 2>/dev/null | tr '\n' ', ' | sed 's/,$//')
-                [ -z "$tool_names" ] && tool_names="(no tools registered)"
-                out+="- Server [$s]: Tools: $tool_names\n"
+                if [ -n "$tools_json" ] && [ "$tools_json" != "[]" ]; then
+                    out+="- Server [$s]:\n"
+                    local tool_entries
+                    tool_entries=$(echo "$tools_json" | jq -r '.[] | "    * " + .name + ": " + (.description // "No description") + (if .inputSchema.properties then " (params: " + ([.inputSchema.properties | keys[]] | join(", ")) + ")" else "" end)' 2>/dev/null || true)
+                    if [ -n "$tool_entries" ]; then
+                        out+="$tool_entries\n"
+                    else
+                        local tool_names
+                        tool_names=$(echo "$tools_json" | jq -r '.[].name' 2>/dev/null | tr '\n' ', ' | sed 's/,$//')
+                        [ -z "$tool_names" ] && tool_names="(no tools registered)"
+                        out+="    Tools: $tool_names\n"
+                    fi
+                fi
             done
         fi
     else

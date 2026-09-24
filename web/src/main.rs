@@ -3622,11 +3622,32 @@ async fn stream_task_trajectory(
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let clean_id = id.replace("..", "").replace('/', "");
     let sandbox = state.lodge_dir.join(".sandboxes").join(&clean_id);
-    let traj_log = find_trajectory_log(&sandbox).await;
+    let telem_file = state.george_dir.join("telemetry").join("active").join(format!("{}.json", clean_id));
 
     let stream = async_stream::stream! {
         let mut last_pos: u64 = 0;
+        let mut traj_log = find_trajectory_log(&sandbox).await;
+        let mut in_obs = false;
+        let mut obs_hidden = 0;
+        let mut obs_printed = 0;
+
         loop {
+            // If traj_log not in sandbox, check active telemetry transcript_file
+            if traj_log.is_none() {
+                if let Ok(content) = fs::read_to_string(&telem_file).await {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if let Some(trans) = val.get("transcript_file").and_then(|v| v.as_str()) {
+                            if !trans.is_empty() {
+                                let p = PathBuf::from(trans);
+                                if p.exists() {
+                                    traj_log = Some(p);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if let Some(ref p) = traj_log {
                 if let Ok(mut f) = fs::File::open(p).await {
                     if let Ok(meta) = f.metadata().await {
@@ -3637,7 +3658,33 @@ async fn stream_task_trajectory(
                             let new_text = String::from_utf8_lossy(&buf[last_pos as usize..len as usize]);
                             last_pos = len;
                             for line in new_text.lines() {
-                                if !line.trim().is_empty() {
+                                let trimmed = line.trim();
+                                if trimmed.is_empty() {
+                                    continue;
+                                }
+                                if trimmed.starts_with("**observation") || trimmed.starts_with("observation:") {
+                                    in_obs = true;
+                                    obs_hidden = 0;
+                                    obs_printed = 0;
+                                    yield Ok(Event::default().event("log").data(line.to_string()));
+                                } else if in_obs {
+                                    if trimmed == "```" || trimmed.starts_with("```") {
+                                        if obs_hidden > 0 {
+                                            yield Ok(Event::default().event("log").data(format!("  ↳ [... {} lines folded for live monitor]", obs_hidden)));
+                                        }
+                                        in_obs = false;
+                                        obs_hidden = 0;
+                                        obs_printed = 0;
+                                        yield Ok(Event::default().event("log").data(line.to_string()));
+                                    } else {
+                                        if obs_printed < 4 {
+                                            obs_printed += 1;
+                                            yield Ok(Event::default().event("log").data(line.to_string()));
+                                        } else {
+                                            obs_hidden += 1;
+                                        }
+                                    }
+                                } else {
                                     yield Ok(Event::default().event("log").data(line.to_string()));
                                 }
                             }
@@ -3649,14 +3696,35 @@ async fn stream_task_trajectory(
             let phase = fs::read_to_string(sandbox.join(".phase")).await.unwrap_or_default();
             if !phase.is_empty() {
                 yield Ok(Event::default().event("phase").data(phase.trim().to_string()));
+            } else if let Ok(content) = fs::read_to_string(&telem_file).await {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let turn = val.get("turn").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let max_turns = val.get("max_turns").and_then(|v| v.as_i64()).unwrap_or(30);
+                    let tool = val.get("last_tool").and_then(|v| v.as_str()).unwrap_or("");
+                    let ph = if !tool.is_empty() {
+                        format!("Turn {}/{} ({})", turn, max_turns, tool)
+                    } else {
+                        format!("Turn {}/{}", turn, max_turns)
+                    };
+                    yield Ok(Event::default().event("phase").data(ph));
+                }
             }
 
-            if sandbox.join(".done").exists() {
+            let telem_alive = if telem_file.exists() {
+                if let Ok(content) = fs::read_to_string(&telem_file).await {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                        let pid = val.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as u32;
+                        if pid > 0 { is_pid_alive(pid) } else { true }
+                    } else { false }
+                } else { false }
+            } else { false };
+
+            if sandbox.join(".done").exists() || (!sandbox.exists() && !telem_alive) {
                 yield Ok(Event::default().event("done").data("completed"));
                 break;
             }
 
-            tokio::time::sleep(Duration::from_millis(1500)).await;
+            tokio::time::sleep(Duration::from_millis(1000)).await;
         }
     };
 

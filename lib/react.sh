@@ -339,7 +339,10 @@ react_run() {
     echo "PRIMARY OBJECTIVE: $goal" >> "$history_file"
     local display_goal="$goal"
     if [[ "$goal" == *"OBJECTIVE:"* ]]; then
-        display_goal=$(echo "$goal" | grep -A 2 "^OBJECTIVE:" | head -n 1 | sed 's/^OBJECTIVE:[[:space:]]*//')
+        display_goal="${goal##*OBJECTIVE:}"
+        display_goal="${display_goal#"${display_goal%%[![:space:]]*}"}"
+        display_goal="${display_goal%%$'\n'*}"
+        display_goal="${display_goal%%\\n*}"
     else
         display_goal=$(echo "$goal" | head -n 1)
     fi

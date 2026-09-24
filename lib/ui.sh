@@ -128,8 +128,10 @@ ui_respond_outcome_class() {
 ui_header() {
     local title="$1"
     local sub="${2:-}"
-    local w=48
+    local w=52
+    [ ${#title} -ge $((w - 6)) ] && w=$(( ${#title} + 8 ))
     local pad_title=$(( (w - ${#title} - 4) / 2 ))
+    [ $pad_title -lt 1 ] && pad_title=1
     echo ""
     printf " %b╭" "$C_LODGE"
     printf '─%.0s' $(seq 1 $w)
@@ -139,17 +141,12 @@ ui_header() {
     printf "%b%s %s%b" "$C_BOLD" "$SYM_LODGE" "$title" "$C_RESET"
     printf "%*s" $(( w - pad_title - ${#title} - 3 )) ""
     printf "%b│%b\n" "$C_LODGE" "$C_RESET"
-    if [ -n "$sub" ]; then
-        local pad_sub=$(( (w - ${#sub}) / 2 ))
-        printf " %b│%b" "$C_LODGE" "$C_RESET"
-        printf "%*s" $pad_sub ""
-        printf "%b%s%b" "$C_DIM" "$sub" "$C_RESET"
-        printf "%*s" $(( w - pad_sub - ${#sub} )) ""
-        printf "%b│%b\n" "$C_LODGE" "$C_RESET"
-    fi
     printf " %b╰" "$C_LODGE"
     printf '─%.0s' $(seq 1 $w)
     printf "╯%b\n" "$C_RESET"
+    if [ -n "$sub" ]; then
+        echo -e " ${C_DIM}${sub}${C_RESET}"
+    fi
     echo ""
     _transcript_ui header "$title${sub:+ — $sub}"
 }

@@ -3857,15 +3857,27 @@ llm_vision() {
         _LLM_ACTIVE=1
         local _tty="/dev/tty"
         (true >/dev/tty) 2>/dev/null || _tty="/dev/null"
-        local _got_tokens="$_tmpdir/.lodge-vision-tok-$RANDOM-$BASHPID"
-        rm -f "$_got_tokens"
+        local vision_base_url="${LLAMA_CPP_URL:-http://127.0.0.1:8080}"
+        if declare -f endpoints_find_vision_endpoint &>/dev/null; then
+            local _resolved_vision_url
+            _resolved_vision_url=$(endpoints_find_vision_endpoint 2>/dev/null || true)
+            if [ -n "$_resolved_vision_url" ]; then
+                vision_base_url="$_resolved_vision_url"
+                [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [vision] dynamically routed to multimodal endpoint: $vision_base_url"
+            else
+                echo "ERROR: No active endpoint has an offloaded Vision Tower (multimodal projector)."
+                echo "HINT: Start Tier 1 (GPU 0) with --mmproj to enable image analysis."
+                rm -f "$_tmp_img"
+                return 1
+            fi
+        fi
 
         ui_spinner_start "Analyzing image"
         local _spinner_pid="$_SPINNER_PID"
         local _first_token=0
 
         printf '%s' "$payload" | $timeout_cmd curl -sN --connect-timeout 10 --max-time "$curl_timeout" \
-            "$LLAMA_CPP_URL/v1/chat/completions" \
+            "$vision_base_url/v1/chat/completions" \
             -H "Content-Type: application/json" \
             -d @- 2>/tmp/lodge-vision-curl.err | while IFS= read -r line; do
 
