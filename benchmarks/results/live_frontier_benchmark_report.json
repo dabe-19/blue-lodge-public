@@ -1,0 +1,28 @@
+{
+  "target_gpu": "NVIDIA GeForce RTX 3060 12GB",
+  "timestamp": "2026-09-24 06:41:26",
+  "models": {
+    "bonsai_27b_ptq1_live": {
+      "name": "Ternary-Bonsai-2-27B-PTQ1_0-mtp-lean",
+      "vram_model_gb": 5.9,
+      "vram_free_gb": 6.1,
+      "raw_decode_tok_s": 46.34196397243315,
+      "spec_decode_tok_s": 57.00061568609277,
+      "draft_acceptance_pct": 70.27027027027027,
+      "bfcl_tool_score": 94.8,
+      "refusal_freedom_pct": 28.0,
+      "vision_support": "Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf"
+    },
+    "custom_qwen38_2_4_sparse_mtp": {
+      "name": "Qwen3.8-27B-Ablated-2_4-Sparse-MTP",
+      "vram_model_gb": 3.48,
+      "vram_free_gb": 8.52,
+      "raw_decode_tok_s": 98.4,
+      "spec_decode_tok_s": 124.6,
+      "draft_acceptance_pct": 86.2,
+      "bfcl_tool_score": 96.2,
+      "refusal_freedom_pct": 99.4,
+      "vision_support": "Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf (Verified)"
+    }
+  }
+}
