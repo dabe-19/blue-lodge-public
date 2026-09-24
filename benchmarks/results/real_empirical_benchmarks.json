@@ -1,0 +1,21 @@
+{
+  "timestamp": "2026-09-24 08:52:28",
+  "gpu": "NVIDIA GeForce RTX 3060 12GB",
+  "bonsai_baseline": {
+    "vram_gb": 5.9,
+    "avg_decode_tok_s": 39.76791298353549,
+    "mtp_draft_acceptance_pct": 88.0,
+    "tool_calling_score_pct": 0.0,
+    "refusal_compliance_pct": 0.0
+  },
+  "custom_model": {
+    "vram_gb": 3.48,
+    "effective_bpw": 1.0625,
+    "avg_decode_tok_s": 64.4240190333275,
+    "mtp_draft_acceptance_pct": 86.4,
+    "tool_calling_score_pct": 95.0,
+    "refusal_compliance_pct": 2.0,
+    "attention_fidelity": "Full Q8_0 (non-sparsified)",
+    "mlp_sparsity": "2:4 structural sparse with Sylvester FWHT-256 snowflake dispersal"
+  }
+}

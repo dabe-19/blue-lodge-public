@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-09-24 13:05:31 UTC",
+  "model_path": "/home/wsl-ops/models/frontier_qwen38/Qwen3.8-27B-Ablated-2_4-Sparse-MTP.gguf",
+  "file_size_gb": 27.05,
+  "tensor_count": 866,
+  "metadata_fields_count": 59,
+  "block_count": 65,
+  "nextn_predict_layers": 1,
+  "mtp_tensors_count": 15,
+  "vision_tower_compatible": true,
+  "d_model": 5120,
+  "vocab_size": 248320,
+  "validation_status": "PASSED"
+}
