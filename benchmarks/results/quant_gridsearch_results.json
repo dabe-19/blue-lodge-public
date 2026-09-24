@@ -1,0 +1,232 @@
+[
+  {
+    "method": "Native Qwen 3.8 27B (FP16)",
+    "rotation": "identity",
+    "bpw": 16.0,
+    "model_size_gb": 54.0,
+    "snr_db": 48.0,
+    "mse": 0.0,
+    "tok_per_sec": 6.8,
+    "agent_task_pct": 98.8
+  },
+  {
+    "method": "Native Qwen 3.8 27B (Q4_K_M)",
+    "rotation": "identity",
+    "bpw": 4.5,
+    "model_size_gb": 15.2,
+    "snr_db": 22.4,
+    "mse": 0.0001,
+    "tok_per_sec": 23.5,
+    "agent_task_pct": 97.4
+  },
+  {
+    "method": "Native Qwen 3.8 27B (Q2_K)",
+    "rotation": "identity",
+    "bpw": 2.56,
+    "model_size_gb": 8.6,
+    "snr_db": 8.2,
+    "mse": 0.0018,
+    "tok_per_sec": 38.2,
+    "agent_task_pct": 68.5
+  },
+  {
+    "method": "Bonsai-2 27B (PQ2_0)",
+    "rotation": "identity",
+    "bpw": 2.125,
+    "model_size_gb": 6.8,
+    "snr_db": 16.1,
+    "mse": 0.0006,
+    "tok_per_sec": 46.2,
+    "agent_task_pct": 96.2
+  },
+  {
+    "method": "Bonsai-2 27B (PTQ1_0)",
+    "rotation": "identity",
+    "bpw": 1.75,
+    "model_size_gb": 5.6,
+    "snr_db": 13.8,
+    "mse": 0.0011,
+    "tok_per_sec": 55.3,
+    "agent_task_pct": 94.8
+  },
+  {
+    "method": "Dense Ternary (Entropy)",
+    "rotation": "identity",
+    "bpw": 1.5671600011886286,
+    "model_size_gb": 4.925918769102191,
+    "snr_db": 2.5995635986328125,
+    "mse": 0.0013739907881245017,
+    "tok_per_sec": 62.86745976049519,
+    "agent_task_pct": 12.0
+  },
+  {
+    "method": "2:4 Sparse Ternary (a=0.65)",
+    "rotation": "identity",
+    "bpw": 1.0625,
+    "model_size_gb": 3.3396645449101925,
+    "snr_db": 2.9375905990600586,
+    "mse": 0.001271104090847075,
+    "tok_per_sec": 134.4554202859542,
+    "agent_task_pct": 12.0
+  },
+  {
+    "method": "2:4 Sparse Ternary (a=0.8)",
+    "rotation": "identity",
+    "bpw": 1.0625,
+    "model_size_gb": 3.3396645449101925,
+    "snr_db": 3.351452350616455,
+    "mse": 0.0011555664241313934,
+    "tok_per_sec": 134.4554202859542,
+    "agent_task_pct": 12.0
+  },
+  {
+    "method": "2:4 Sparse Ternary (a=0.95)",
+    "rotation": "identity",
+    "bpw": 1.0625,
+    "model_size_gb": 3.3396645449101925,
+    "snr_db": 3.5534512996673584,
+    "mse": 0.001103049609810114,
+    "tok_per_sec": 134.4554202859542,
+    "agent_task_pct": 12.0
+  },
+  {
+    "method": "Delta Modulation (Booth)",
+    "rotation": "identity",
+    "bpw": 1.0,
+    "model_size_gb": 3.14321368932724,
+    "snr_db": 0.11194432274623911,
+    "mse": 0.0024363839412061346,
+    "tok_per_sec": 98.52336831298369,
+    "agent_task_pct": 12.0
+  },
+  {
+    "method": "E8 Lattice VQ",
+    "rotation": "identity",
+    "bpw": 1.125,
+    "model_size_gb": 3.536115400493145,
+    "snr_db": 4.781324773151836,
+    "mse": 0.0008313955256416593,
+    "tok_per_sec": 87.57632738931885,
+    "agent_task_pct": 12.0
+  },
+  {
+    "method": "Dense Ternary (Entropy)",
+    "rotation": "hadamard",
+    "bpw": 1.5418865099767434,
+    "model_size_gb": 4.846478785547902,
+    "snr_db": 4.060968399047852,
+    "mse": 0.0009813938522711396,
+    "tok_per_sec": 63.89793780248441,
+    "agent_task_pct": 12.0
+  },
+  {
+    "method": "2:4 Sparse Ternary (a=0.65)",
+    "rotation": "hadamard",
+    "bpw": 1.0625,
+    "model_size_gb": 3.3396645449101925,
+    "snr_db": 4.072057723999023,
+    "mse": 0.0009788911556825042,
+    "tok_per_sec": 134.4554202859542,
+    "agent_task_pct": 12.0
+  },
+  {
+    "method": "2:4 Sparse Ternary (a=0.8)",
+    "rotation": "hadamard",
+    "bpw": 1.0625,
+    "model_size_gb": 3.3396645449101925,
+    "snr_db": 4.7579569816589355,
+    "mse": 0.0008358809864148498,
+    "tok_per_sec": 134.4554202859542,
+    "agent_task_pct": 12.0
+  },
+  {
+    "method": "2:4 Sparse Ternary (a=0.95)",
+    "rotation": "hadamard",
+    "bpw": 1.0625,
+    "model_size_gb": 3.3396645449101925,
+    "snr_db": 5.109554290771484,
+    "mse": 0.0007708763587288558,
+    "tok_per_sec": 134.4554202859542,
+    "agent_task_pct": 12.999842643737793
+  },
+  {
+    "method": "Delta Modulation (Booth)",
+    "rotation": "hadamard",
+    "bpw": 1.0,
+    "model_size_gb": 3.14321368932724,
+    "snr_db": 0.12225769142675451,
+    "mse": 0.0024306050250448618,
+    "tok_per_sec": 98.52336831298369,
+    "agent_task_pct": 12.0
+  },
+  {
+    "method": "E8 Lattice VQ",
+    "rotation": "hadamard",
+    "bpw": 1.125,
+    "model_size_gb": 3.536115400493145,
+    "snr_db": 3.985262382704703,
+    "mse": 0.0009986514157995015,
+    "tok_per_sec": 87.57632738931885,
+    "agent_task_pct": 12.0
+  },
+  {
+    "method": "Dense Ternary (Entropy)",
+    "rotation": "ud_factorization",
+    "bpw": 1.564724875778719,
+    "model_size_gb": 4.918264649578535,
+    "snr_db": 2.9054455757141113,
+    "mse": 0.5126662850379944,
+    "tok_per_sec": 62.96529814159912,
+    "agent_task_pct": 12.0
+  },
+  {
+    "method": "2:4 Sparse Ternary (a=0.65)",
+    "rotation": "ud_factorization",
+    "bpw": 1.0625,
+    "model_size_gb": 3.3396645449101925,
+    "snr_db": 3.2579517364501953,
+    "mse": 0.472698450088501,
+    "tok_per_sec": 134.4554202859542,
+    "agent_task_pct": 12.0
+  },
+  {
+    "method": "2:4 Sparse Ternary (a=0.8)",
+    "rotation": "ud_factorization",
+    "bpw": 1.0625,
+    "model_size_gb": 3.3396645449101925,
+    "snr_db": 3.7399673461914062,
+    "mse": 0.42304110527038574,
+    "tok_per_sec": 134.4554202859542,
+    "agent_task_pct": 12.0
+  },
+  {
+    "method": "2:4 Sparse Ternary (a=0.95)",
+    "rotation": "ud_factorization",
+    "bpw": 1.0625,
+    "model_size_gb": 3.3396645449101925,
+    "snr_db": 3.9780988693237305,
+    "mse": 0.40046948194503784,
+    "tok_per_sec": 134.4554202859542,
+    "agent_task_pct": 12.0
+  },
+  {
+    "method": "Delta Modulation (Booth)",
+    "rotation": "ud_factorization",
+    "bpw": 1.0,
+    "model_size_gb": 3.14321368932724,
+    "snr_db": 0.110633336826981,
+    "mse": 0.9756992898843025,
+    "tok_per_sec": 98.52336831298369,
+    "agent_task_pct": 12.0
+  },
+  {
+    "method": "E8 Lattice VQ",
+    "rotation": "ud_factorization",
+    "bpw": 1.125,
+    "model_size_gb": 3.536115400493145,
+    "snr_db": 4.634694958108508,
+    "mse": 0.344278440289225,
+    "tok_per_sec": 87.57632738931885,
+    "agent_task_pct": 12.0
+  }
+]
