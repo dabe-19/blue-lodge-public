@@ -368,7 +368,7 @@ The plan MUST follow the structure:
 
 Do NOT modify any source code files—your ONLY deliverable is 'implementation_plan.md'. Once written, summarize the plan."
 
-    react_run "$architect_instruction\n\n$wf_prompt\n\nOBJECTIVE: $objective" "$workdir" "code"
+    react_run "$architect_instruction\n\n$wf_prompt\n\nOBJECTIVE: $objective" "$workdir" "${AGENT_MAX_TURNS:-30}" 1 "" "code"
     local rc=$?
 
     if [ -f "$plan_path" ]; then

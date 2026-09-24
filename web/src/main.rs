@@ -513,6 +513,58 @@ async fn get_tasks(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         }
     }
 
+    // 5. Check Active Telemetry ReAct Tasks (.george/telemetry/active/*.json)
+    let telem_dir = state.george_dir.join("telemetry").join("active");
+    if let Ok(mut entries) = fs::read_dir(&telem_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let p = entry.path();
+            let fname = entry.file_name().to_string_lossy().to_string();
+            if fname.ends_with(".json") {
+                if let Ok(content) = fs::read_to_string(&p).await {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                        let tid = val.get("task_id").and_then(|v| v.as_str()).unwrap_or(&fname).to_string();
+                        let pid = val.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as u32;
+                        let alive = if pid > 0 { is_pid_alive(pid) } else { true };
+                        if !alive {
+                            let _ = fs::remove_file(&p).await;
+                            continue;
+                        }
+                        let ttype = val.get("type").and_then(|v| v.as_str()).unwrap_or("agentic").to_string();
+                        let turn = val.get("turn").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let max_turns = val.get("max_turns").and_then(|v| v.as_i64()).unwrap_or(30);
+                        let last_tool = val.get("last_tool").and_then(|v| v.as_str()).unwrap_or("");
+                        let trans = val.get("transcript_file").and_then(|v| v.as_str()).unwrap_or("");
+                        
+                        let summary = if !last_tool.is_empty() {
+                            format!("Executing {}", last_tool)
+                        } else {
+                            format!("Running Task: {}", tid)
+                        };
+
+                        let mut log_tail = Vec::new();
+                        if !trans.is_empty() {
+                            if let Ok(t_content) = fs::read_to_string(trans).await {
+                                log_tail = t_content.lines().rev().take(3).map(String::from).collect();
+                                log_tail.reverse();
+                            }
+                        }
+
+                        tasks.push(json!({
+                            "id": tid,
+                            "type": ttype,
+                            "summary": summary,
+                            "phase": format!("Turn {}/{}", turn, max_turns),
+                            "done": false,
+                            "paused": false,
+                            "path": p.to_string_lossy(),
+                            "log_tail": log_tail,
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
     Json(tasks)
 }
 

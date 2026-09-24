@@ -223,6 +223,12 @@ react_run() {
     local session_id_arg="${5:-}"
     local tool_filter="${6:-${REACT_TOOL_FILTER:-all}}"
 
+    # Robust argument polymorphism: if arg 3 is non-numeric, it was passed as profile/tool_filter
+    if [ -n "${3:-}" ] && ! [[ "$3" =~ ^[0-9]+$ ]]; then
+        tool_filter="$3"
+        max_turns="${AGENT_MAX_TURNS:-${AGENT_MAX_MILESTONES:-9999}}"
+    fi
+
     if [ -z "$goal" ]; then
         ui_err "Task description required."
         return 1
@@ -331,7 +337,13 @@ react_run() {
     local last_invoked_tool=""
 
     echo "PRIMARY OBJECTIVE: $goal" >> "$history_file"
-    ui_info "Starting Task: $goal"
+    local display_goal="$goal"
+    if [[ "$goal" == *"OBJECTIVE:"* ]]; then
+        display_goal=$(echo "$goal" | grep -A 2 "^OBJECTIVE:" | head -n 1 | sed 's/^OBJECTIVE:[[:space:]]*//')
+    else
+        display_goal=$(echo "$goal" | head -n 1)
+    fi
+    ui_info "Starting Task: ${display_goal:0:140}"
 
     while [ "$turn" -le "$max_turns" ]; do
         printf "\n${C_BOLD}${C_CYAN}── Turn %d/%d ──────────────────────────────${C_RESET}\n" "$turn" "$max_turns"

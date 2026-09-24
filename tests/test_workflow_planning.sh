@@ -56,21 +56,25 @@ describe "workflow_interactive_plan (lib/workflows.sh)"
 describe "Native Tool Bridge: workflow_plan & workflow_run"
 
   it "dispatches workflow_plan tool call and returns plan result" && {
+    test_mock "_workflow_run_architect" 'touch "$2/implementation_plan.md"; echo "the-architect completed plan"; return 0'
     res=$(native_tools_dispatch "call_wp_test" "workflow_plan" '{"objective":"Implement PDF reader","context":"Use Poppler pdftotext"}' "$TMP_WP_DIR")
     assert_ok $?
     role=$(echo "$res" | jq -r '.role')
     assert_eq "$role" "tool"
     content=$(echo "$res" | jq -r '.content')
     assert_contains "$content" "George Interactive Team Scoping & Workflow Planning"
+    test_unmock "_workflow_run_architect"
   }
 
   it "dispatches workflow_run tool call" && {
+    test_mock "_workflow_run_architect" 'touch "$2/implementation_plan.md"; echo "the-architect completed plan"; return 0'
     res=$(native_tools_dispatch "call_wr_test" "workflow_run" '{"name":"the-architect","args":"Verify research standard"}' "$TMP_WP_DIR")
     assert_ok $?
     role=$(echo "$res" | jq -r '.role')
     assert_eq "$role" "tool"
     content=$(echo "$res" | jq -r '.content')
     assert_contains "$content" "architect"
+    test_unmock "_workflow_run_architect"
   }
 
 rm -rf "$TMP_WP_DIR"
