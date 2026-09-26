@@ -11,9 +11,11 @@
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/mqtt.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/fifo_ipc.sh" 2>/dev/null || true
 
 task_sync_init() {
     declare -f mqtt_init &>/dev/null && mqtt_init || true
+    declare -f fifo_ipc_init &>/dev/null && fifo_ipc_init || true
 }
 
 # Publishes an event to MQTT topic george/tasks/<task_id>/<event_name>
@@ -116,3 +118,111 @@ task_sync_rebase_develop() {
     declare -f ui_err &>/dev/null && ui_err "Failed to synchronize $wt_dir with develop after $max_retries attempts" >&2
     return 1
 }
+
+# ── Unified POSIX FIFO + MQTT Protocol Dispatch ──────────────────────
+
+# Transmits message/event to a target agent or node.
+# Transparently routes via local FIFO IPC if target channel is local,
+# while always publishing to MQTT retained topic for cluster discovery.
+# Usage: task_sync_send <target_id> <event_name> [payload_json]
+task_sync_send() {
+    local target="$1"
+    local event="$2"
+    local payload="${3:-{}}"
+
+    task_sync_init
+
+    # 1. Local FIFO transmission if channel is open
+    if declare -f fifo_channel_is_open &>/dev/null && fifo_channel_is_open "$target"; then
+        fifo_write_frame "$target" "$payload" 2 >/dev/null 2>&1 || true
+    fi
+
+    # 2. Sovereign MQTT retained event broadcast
+    task_sync_signal "$target" "$event" "$payload" >/dev/null 2>&1 || true
+    return 0
+}
+
+# Receives next event from target agent or node.
+# Checks local FIFO stream first (<5ms), falling back to MQTT subscription.
+# Usage: task_sync_recv <target_id> [timeout_s]
+task_sync_recv() {
+    local target="$1"
+    local timeout="${2:-5}"
+
+    task_sync_init
+
+    # 1. Try local FIFO channel first
+    if declare -f fifo_channel_is_open &>/dev/null && fifo_channel_is_open "$target"; then
+        local frame
+        frame=$(fifo_read_frame "$target" "$timeout" 1 2>/dev/null || true)
+        if [ -n "$frame" ]; then
+            echo "$frame"
+            return 0
+        fi
+    fi
+
+    # 2. Fall back to MQTT subscription
+    local topic="george/tasks/${target}/+"
+    task_sync_wait "$topic" "$timeout"
+}
+
+# Executes an async task connected to target channel/agent
+# Usage: task_sync_async <channel_id> <command_line>
+task_sync_async() {
+    local cid="$1"
+    local cmd="$2"
+    task_sync_init
+
+    if declare -f fifo_async &>/dev/null; then
+        fifo_async "$cid" "$cmd"
+    else
+        echo "ERROR: fifo_async not available" >&2
+        return 1
+    fi
+}
+
+# Awaits completion of an async task handle
+# Usage: task_sync_await <promise_id> [timeout_s]
+task_sync_await() {
+    local prom_id="$1"
+    local timeout="${2:-30}"
+    task_sync_init
+
+    if declare -f fifo_await &>/dev/null; then
+        fifo_await "$prom_id" "$timeout"
+    else
+        echo "ERROR: fifo_await not available" >&2
+        return 1
+    fi
+}
+
+# Transmits flow control commands locally and cluster-wide
+# Usage: task_sync_flow_control <target_agent> <action>
+task_sync_flow_control() {
+    local target="$1"
+    local action="$2" # CREDIT <N> | PAUSE | RESUME | ABORT | PING
+
+    task_sync_init
+
+    # Local FIFO control pipe
+    if declare -f fifo_channel_is_open &>/dev/null && fifo_channel_is_open "$target"; then
+        case "$action" in
+            CREDIT\ *)
+                local amt="${action#CREDIT }"
+                fifo_flow_grant "$target" "$amt" >/dev/null 2>&1 || true
+                ;;
+            *)
+                fifo_flow_send_ctrl "$target" "$action" >/dev/null 2>&1 || true
+                ;;
+        esac
+    fi
+
+    # Mirror flow command to MQTT topic
+    local flow_payload
+    flow_payload=$(jq -nc --arg tgt "$target" --arg act "$action" --arg ts "$(date +%s)" '{target:$tgt, action:$act, timestamp:($ts|tonumber)}')
+    if declare -f mqtt_publish &>/dev/null; then
+        mqtt_publish "george/agents/${target}/flow" "$flow_payload" >/dev/null 2>&1 || true
+    fi
+    return 0
+}
+

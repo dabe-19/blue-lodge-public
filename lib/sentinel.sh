@@ -220,6 +220,26 @@ sentinel_probe() {
         done
     fi
 
+    # G. Probe Agent State Machine for Orphaned Sub-Agents & Clones
+    if [ -f "$LODGE_DIR/lib/agent_sm.sh" ]; then
+        source "$LODGE_DIR/lib/agent_sm.sh" 2>/dev/null || true
+        if declare -f agent_sm_probe_orphans &>/dev/null; then
+            local orphans_json
+            orphans_json=$(agent_sm_probe_orphans 2>/dev/null || echo "[]")
+            if [ -n "$orphans_json" ] && [ "$orphans_json" != "[]" ]; then
+                local o_aids
+                o_aids=$(echo "$orphans_json" | jq -r '.[].agent_id // empty' 2>/dev/null)
+                for o_aid in $o_aids; do
+                    [ -z "$o_aid" ] && continue
+                    local o_reason
+                    o_reason=$(echo "$orphans_json" | jq -r --arg aid "$o_aid" '.[] | select(.agent_id == $aid) | .reason // "ORPHANED"' 2>/dev/null)
+                    anomalies+=("ORPHAN_CLONE_${o_aid}: $o_reason")
+                    actions_needed+=("CULL_CLONE_${o_aid}")
+                done
+            fi
+        fi
+    fi
+
     # Overall Status Determination
     local overall_status="HEALTHY"
     if [ ${#anomalies[@]} -gt 0 ]; then
@@ -341,6 +361,17 @@ sentinel_self_heal() {
                 if declare -f telemetry_task_end &>/dev/null; then
                     telemetry_task_end "$r_tid" 1 "PROCESS_DEAD_REAPED"
                     healed+=("Reaped dead task registration $r_tid")
+                fi
+                ;;
+            CULL_CLONE_*)
+                local cull_aid="${act#CULL_CLONE_}"
+                if [ -f "$LODGE_DIR/lib/agent_sm.sh" ]; then
+                    source "$LODGE_DIR/lib/agent_sm.sh" 2>/dev/null || true
+                    if declare -f agent_sm_cull &>/dev/null; then
+                        agent_sm_cull "$cull_aid" "Sentinel autonomous orphan culling" 2>/dev/null || true
+                        healed+=("Culled orphaned agent clone $cull_aid")
+                        echo "[SENTINEL_HEAL] Culled orphaned agent clone $cull_aid" >> "$SENTINEL_LOG"
+                    fi
                 fi
                 ;;
         esac
