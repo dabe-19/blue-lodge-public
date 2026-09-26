@@ -25,9 +25,19 @@ FOLIAGE_ROOT="${GEORGE_DIR}/cron_jobs"
 FOLIAGE_TOOLS_ROOT="${GEORGE_DIR}/tools"
 PHYTOLOGY_SNAPSHOTS_DIR="${GEORGE_DIR}/snapshots"
 
+source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/mqtt.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/fifo_ipc.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/task_sync.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/agent_sm.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/mcp_server_gitea.sh" 2>/dev/null || true
+
 # ── Initialization ────────────────────────────────────────────────────
 phytology_init() {
     mkdir -p "$PHYTOLOGY_SNAPSHOTS_DIR" "$FOLIAGE_ROOT" "$FOLIAGE_TOOLS_ROOT" "${GEORGE_DIR}/tmp" 2>/dev/null || true
+    declare -f fifo_ipc_init &>/dev/null && fifo_ipc_init || true
+    declare -f agent_sm_init &>/dev/null && agent_sm_init || true
+    declare -f mqtt_init &>/dev/null && mqtt_init || true
 }
 
 # ── 1. Static AST & Syntax Validation ─────────────────────────────────
@@ -449,5 +459,233 @@ phytology_propose_graft_branch() {
 
     echo "GRAFT_BRANCH_READY: Branch '$branch_name' created and committed."
     return 0
+}
+
+# ── 10. Parallel Living Tissue Audit Engine ───────────────────────────
+# Concurrently audits living tissue foliage across .george/cron_jobs and .george/tools
+# using POSIX FIFO async/await runtime and streams progress frames locally and via MQTT.
+# Usage: phytology_parallel_audit [timeout_s]
+phytology_parallel_audit() {
+    local timeout="${1:-15}"
+    phytology_init
+
+    local -a script_list=()
+    while IFS= read -r f; do
+        [ -f "$f" ] && script_list+=("$f")
+    done < <(find "$FOLIAGE_ROOT" "$FOLIAGE_TOOLS_ROOT" -maxdepth 2 \( -name "*.sh" -o -name "*.py" \) 2>/dev/null | sort -u)
+
+    local total=${#script_list[@]}
+    if [ "$total" -eq 0 ]; then
+        jq -nc '{status:"healthy", total:0, valid:0, invalid:0, issues:[]}'
+        return 0
+    fi
+
+    local cid="phytology_audit"
+    fifo_channel_open "$cid" "$total" 2>/dev/null || true
+
+    local -a prom_pairs=()
+    for s in "${script_list[@]}"; do
+        local prom_id
+        prom_id=$(fifo_async "$cid" "source '$LODGE_DIR/lib/phytology.sh' 2>/dev/null; phytology_verify_syntax '$s'")
+        prom_pairs+=("${prom_id}|${s}")
+    done
+
+    local valid=0 invalid=0
+    local -a issue_items=()
+
+    for pair in "${prom_pairs[@]}"; do
+        local pid="${pair%%|*}"
+        local s="${pair#*|}"
+        local ec=0
+        if fifo_await "$pid" "$timeout" >/dev/null 2>&1; then
+            ec=0
+            valid=$((valid + 1))
+        else
+            ec=$?
+            invalid=$((invalid + 1))
+            issue_items+=("{\"file\":\"$s\",\"reason\":\"INVALID_AST_SYNTAX\",\"exit_code\":$ec}")
+        fi
+
+        # Stream audit event frame to local channel
+        local frame_payload
+        frame_payload=$(jq -nc --arg f "$s" --argjson v "$([ "$ec" -eq 0 ] && echo true || echo false)" --argjson ec "$ec" \
+            '{tissue: $f, valid: $v, exit_code: $ec}')
+        fifo_write_frame "$cid" "$frame_payload" 2 2>/dev/null || true
+
+        # Mirror progress to MQTT cluster
+        if declare -f mqtt_publish &>/dev/null; then
+            mqtt_publish "george/phytology/audit" "$frame_payload" >/dev/null 2>&1 || true
+        fi
+    done
+
+    fifo_channel_close "$cid" 2>/dev/null || true
+
+    local issues_json="[]"
+    if [ ${#issue_items[@]} -gt 0 ]; then
+        issues_json=$(printf '%s\n' "${issue_items[@]}" | jq -s .)
+    fi
+
+    local status="healthy"
+    [ "$invalid" -gt 0 ] && status="degraded"
+
+    jq -nc \
+        --arg st "$status" \
+        --argjson tot "$total" \
+        --argjson val "$valid" \
+        --argjson inv "$invalid" \
+        --argjson iss "$issues_json" \
+        '{status: $st, total: $tot, valid: $val, invalid: $inv, issues: $iss}'
+}
+
+# ── 11. Autonomous Parallel Graft Engine ──────────────────────────────
+# Spawns parallel George clones in isolated sandboxes to test candidate grafts
+# concurrently with credit windowing flow control to prevent compute saturation.
+# Usage: phytology_parallel_graft <manifest_json> [max_parallel=2]
+phytology_parallel_graft() {
+    local manifest="$1"
+    local max_parallel="${2:-2}"
+    phytology_init
+
+    if ! echo "$manifest" | jq -e 'type == "array"' &>/dev/null; then
+        echo "ERROR: manifest_json array required" >&2
+        return 1
+    fi
+
+    local count
+    count=$(echo "$manifest" | jq 'length')
+    [ "$count" -eq 0 ] && return 0
+
+    local cid="phytology_graft"
+    fifo_channel_open "$cid" "$max_parallel" 2>/dev/null || true
+
+    local -a clone_ids=()
+    local -a targets=()
+
+    for ((i=0; i<count; i++)); do
+        local item tgt content
+        item=$(echo "$manifest" | jq -c ".[$i]")
+        tgt=$(echo "$item" | jq -r '.target')
+        content=$(echo "$item" | jq -r '.content')
+        targets+=("$tgt")
+
+        # Acquire transmission credit (flow control)
+        fifo_flow_acquire "$cid" 10 >/dev/null 2>&1 || true
+
+        local clone_id="phytology_clone_${i}_$(date +%s)_$RANDOM"
+        clone_ids+=("$clone_id")
+
+        local obj_cmd="
+            source '$LODGE_DIR/lib/phytology.sh'
+            phytology_graft '$tgt' '$content'
+        "
+
+        agent_sm_spawn_clone "$clone_id" "$obj_cmd" 18080 "phytology_coordinator" >/dev/null 2>&1 || true
+
+        # Announce graft clone spawn via MQTT
+        if declare -f mqtt_publish &>/dev/null; then
+            local spawn_evt
+            spawn_evt=$(jq -nc --arg cid "$clone_id" --arg tgt "$tgt" '{clone_id:$cid, target:$tgt, status:"SPAWNED"}')
+            mqtt_publish "george/phytology/grafts/${clone_id}" "$spawn_evt" >/dev/null 2>&1 || true
+        fi
+    done
+
+    # Await parallel clones and replenish flow credits
+    local resolved=0 failed=0
+    for cid_item in "${clone_ids[@]}"; do
+        if agent_sm_await "$cid_item" 25; then
+            resolved=$((resolved + 1))
+        else
+            failed=$((failed + 1))
+        fi
+        fifo_flow_grant "$cid" 1 >/dev/null 2>&1 || true
+        agent_sm_cull "$cid_item" "Parallel graft finished" >/dev/null 2>&1 || true
+    done
+
+    fifo_channel_close "$cid" 2>/dev/null || true
+
+    jq -nc \
+        --argjson tot "$count" \
+        --argjson res "$resolved" \
+        --argjson fail "$failed" \
+        '{total_grafts: $tot, resolved: $res, failed: $fail}'
+}
+
+# ── 12. Autonomic Issue Remediation & Gitea Closed-Loop ──────────────
+# When living tissue is corrupted, opens an issue on Sovereign Gitea,
+# engages genetic snapshot rollback, verifies AST syntax, commits the repair,
+# and automatically closes the Gitea issue with resolution notes.
+# Usage: phytology_auto_remediate <broken_tissue_path> [reason]
+phytology_auto_remediate() {
+    local broken_file="$1"
+    local reason="${2:-AST_CORRUPTION}"
+    phytology_init
+
+    if [ -z "$broken_file" ] || [ ! -f "$broken_file" ]; then
+        echo "ERROR: Valid broken tissue file required" >&2
+        return 1
+    fi
+
+    local bname
+    bname="$(basename "$broken_file")"
+
+    # Step 1: Open Sovereign Gitea Issue
+    local issue_num=""
+    local title="[Phytology Tissue Anomaly] Invalid AST in $bname"
+    local body="Automated Telemetry Alert: Tissue at $broken_file failed AST validation with reason: $reason. Autonomic closed-loop genetic snapshot recovery engaged."
+
+    if declare -f gitea_issue_create &>/dev/null && gitea_is_online 2>/dev/null; then
+        local resp
+        resp=$(gitea_issue_create "$title" "$body" "phytology,bug" 2>/dev/null || true)
+        issue_num=$(echo "$resp" | jq -r '.number // empty' 2>/dev/null || true)
+    fi
+
+    # Step 2: Emit MQTT remediation notice
+    if declare -f mqtt_publish &>/dev/null; then
+        local rem_start
+        rem_start=$(jq -nc --arg f "$broken_file" --arg r "$reason" --arg inum "$issue_num" \
+            '{tissue: $f, reason: $r, issue_id: $inum, status: "REMEDIATING"}')
+        mqtt_publish "george/phytology/remediation" "$rem_start" >/dev/null 2>&1 || true
+    fi
+
+    # Step 3: Autonomic rollback from genetic snapshot
+    local rollback_ok=0
+    if phytology_rollback "$broken_file" >/dev/null 2>&1; then
+        if phytology_verify_syntax "$broken_file" 2>/dev/null; then
+            rollback_ok=1
+        fi
+    fi
+
+    # Step 4: If rollback succeeded, commit repair and close Gitea issue
+    if [ "$rollback_ok" -eq 1 ]; then
+        git -C "$LODGE_DIR" add "$broken_file" 2>/dev/null || true
+        local commit_msg="fix(phytology): auto-remediate $bname via genetic snapshot"
+        [ -n "$issue_num" ] && commit_msg="${commit_msg} (closes #${issue_num})"
+        git -C "$LODGE_DIR" commit -m "$commit_msg" >/dev/null 2>&1 || true
+
+        # Step 5: Close Sovereign Gitea Issue cleanly
+        if [ -n "$issue_num" ] && declare -f gitea_issue_close &>/dev/null; then
+            local comment="Autonomic Self-Healing Complete: Tissue $bname restored from genetic snapshot and AST syntax verified with 100% green status. Sovereign Gitea issue closed."
+            gitea_issue_close "$issue_num" "$comment" >/dev/null 2>&1 || true
+        fi
+
+        # Step 6: Emit MQTT resolution event
+        if declare -f mqtt_publish &>/dev/null; then
+            local rem_res
+            rem_res=$(jq -nc --arg f "$broken_file" --arg inum "$issue_num" \
+                '{tissue: $f, issue_id: $inum, status: "RESOLVED"}')
+            mqtt_publish "george/phytology/remediation" "$rem_res" >/dev/null 2>&1 || true
+        fi
+
+        echo "REMEDIATION_SUCCESS: $bname restored from genetic snapshot and Gitea issue #${issue_num:-N/A} closed."
+        return 0
+    else
+        # Unrecoverable: prune and notify
+        phytology_prune "${bname%.*}" >/dev/null 2>&1 || true
+        if [ -n "$issue_num" ] && declare -f gitea_issue_comment &>/dev/null; then
+            gitea_issue_comment "$issue_num" "Autonomic Self-Healing: No valid genetic snapshot found. Tissue safely pruned with # ENABLED: 0." >/dev/null 2>&1 || true
+        fi
+        echo "REMEDIATION_PRUNED: No valid snapshot; deactivated failing job $bname."
+        return 1
+    fi
 }
 

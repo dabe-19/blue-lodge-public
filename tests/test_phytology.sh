@@ -141,6 +141,85 @@ it "dispatches /phytology status, audit, and test correctly" && {
 
     audit_out=$(commands_dispatch "/phytology audit" 2>&1)
     assert_contains "$audit_out" "SOFTWARE PHYTOLOGY LIVING TISSUE AUDIT"
+
+    para_cmd_out=$(commands_dispatch "/phytology parallel-audit" 2>&1)
+    assert_contains "$para_cmd_out" '"status":'
+}
+
+describe "Parallel Living Tissue Audit"
+it "executes parallel audit via FIFO async/await and outputs structured telemetry" && {
+    para_out=$(phytology_parallel_audit 10)
+    assert_ok $? "parallel audit should exit 0 on clean foliage"
+    st=$(echo "$para_out" | jq -r .status)
+    assert_eq "$st" "healthy" "status should be healthy"
+    inv=$(echo "$para_out" | jq -r .invalid)
+    assert_eq "$inv" "0" "invalid should be 0"
+
+    # Test degraded state detection
+    corrupt_para="$FOLIAGE_ROOT/corrupt_para_$$.sh"
+    echo "if then fi invalid syntax" > "$corrupt_para"
+
+    degraded_out=$(phytology_parallel_audit 10)
+    deg_st=$(echo "$degraded_out" | jq -r .status)
+    assert_eq "$deg_st" "degraded" "status should be degraded"
+    deg_inv=$(echo "$degraded_out" | jq -r .invalid)
+    assert_eq "$deg_inv" "1" "invalid should be 1"
+    assert_contains "$degraded_out" "corrupt_para_$$"
+
+    rm -f "$corrupt_para"
+}
+
+describe "Autonomous Parallel Graft Engine"
+it "executes parallel candidate grafts under credit window flow control" && {
+    t1="$FOLIAGE_TOOLS_ROOT/para_t1_$$.sh"
+    t2="$FOLIAGE_TOOLS_ROOT/para_t2_$$.sh"
+    rm -f "$t1" "$t2"
+
+    manifest=$(jq -nc \
+        --arg t1 "$t1" --arg c1 "#!/bin/bash\necho 'para graft 1'\n" \
+        --arg t2 "$t2" --arg c2 "#!/bin/bash\necho 'para graft 2'\n" \
+        '[
+            {target: $t1, content: $c1},
+            {target: $t2, content: $c2}
+        ]')
+
+    graft_res=$(phytology_parallel_graft "$manifest" 2)
+    assert_ok $? "parallel graft should complete successfully"
+    tot=$(echo "$graft_res" | jq -r .total_grafts)
+    assert_eq "$tot" "2" "total grafts should be 2"
+    res=$(echo "$graft_res" | jq -r .resolved)
+    assert_eq "$res" "2" "resolved grafts should be 2"
+    fail=$(echo "$graft_res" | jq -r .failed)
+    assert_eq "$fail" "0" "failed grafts should be 0"
+
+    assert_file_exists "$t1"
+    assert_file_exists "$t2"
+
+    rm -f "$t1" "$t2"
+}
+
+describe "Autonomic Issue Remediation & Gitea Closed-Loop"
+it "remediates corrupted tissue, files Gitea issue, rolls back from snapshot, and closes Gitea issue" && {
+    rem_target="$FOLIAGE_TOOLS_ROOT/auto_rem_$$.sh"
+    echo -e "#!/bin/bash\n# DESC: Healthy tissue\necho 'healthy tissue original'" > "$rem_target"
+    phytology_snapshot "$rem_target" >/dev/null
+
+    # Corrupt tissue
+    echo -e "if then fi invalid syntax error" > "$rem_target"
+
+    rem_out=$(phytology_auto_remediate "$rem_target" "TEST_CORRUPTION" 2>&1)
+    assert_ok $? "auto_remediate should succeed when valid snapshot exists"
+    assert_contains "$rem_out" "REMEDIATION_SUCCESS"
+
+    # Verify restored content
+    content=$(cat "$rem_target")
+    assert_contains "$content" "healthy tissue original"
+
+    # Verify syntax passes
+    phytology_verify_syntax "$rem_target"
+    assert_ok $? "restored tissue syntax should be valid"
+
+    rm -f "$rem_target"
 }
 
 test_end

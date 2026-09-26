@@ -24,9 +24,33 @@ cmd_phytology() {
         audit)
             if [ "$rest" = "--json" ]; then
                 phytology_audit --json
+            elif [ "$rest" = "--parallel" ]; then
+                phytology_parallel_audit
             else
                 phytology_audit
             fi
+            ;;
+        parallel-audit)
+            phytology_parallel_audit ${rest:-15}
+            ;;
+        parallel-graft)
+            local manifest="$rest"
+            if [ -z "$manifest" ]; then
+                ui_err "Usage: /phytology parallel-graft '<manifest_json>' [max_parallel]"
+                return 1
+            fi
+            phytology_parallel_graft "$manifest"
+            ;;
+        auto-remediate)
+            local target="${rest%% *}"
+            local reason="${rest#"$target"}"
+            reason="${reason#"${reason%%[![:space:]]*}"}"
+            if [ -z "$target" ]; then
+                ui_err "Usage: /phytology auto-remediate <target_file> [reason]"
+                return 1
+            fi
+            ui_step "Autonomously remediating tissue anomaly in '$target'..."
+            phytology_auto_remediate "$target" "${reason:-AST_CORRUPTION}"
             ;;
         heal)
             ui_section "Software Phytology Autonomic Healing"
@@ -61,7 +85,7 @@ cmd_phytology() {
             ;;
         *)
             ui_err "Unknown /phytology subcommand: '$subcmd'"
-            ui_dim "Usage: /phytology [status | audit | heal | rollback <file> | prune <job> | test]"
+            ui_dim "Usage: /phytology [status | audit | parallel-audit | parallel-graft <json> | auto-remediate <file> | heal | rollback <file> | prune <job> | test]"
             return 1
             ;;
     esac
