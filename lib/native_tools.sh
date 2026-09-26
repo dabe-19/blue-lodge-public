@@ -1548,14 +1548,89 @@ native_tools_bundle_tools() {
         +gsuite|gsuite)
             echo "gsuite_search"
             ;;
+        research)
+            echo "$(native_tools_bundle_tools '+web'),$(native_tools_bundle_tools '+files'),$(native_tools_bundle_tools '+vision'),$(native_tools_bundle_tools '+memory')"
+            ;;
+        code|coding)
+            echo "$(native_tools_bundle_tools '+files'),$(native_tools_bundle_tools '+code'),$(native_tools_bundle_tools '+git')"
+            ;;
+        ops)
+            echo "$(native_tools_bundle_tools '+files'),$(native_tools_bundle_tools '+ops'),$(native_tools_bundle_tools '+memory')"
+            ;;
+        social)
+            echo "$(native_tools_bundle_tools '+web'),$(native_tools_bundle_tools '+social'),$(native_tools_bundle_tools '+memory'),$(native_tools_bundle_tools '+vision')"
+            ;;
+        default)
+            echo "$(native_tools_bundle_tools '+files'),$(native_tools_bundle_tools '+git'),$(native_tools_bundle_tools '+web')"
+            ;;
+        +mcp_*|mcp_*)
+            local s_name="${bundle#+mcp_}"
+            s_name="${s_name#mcp_}"
+            if declare -f mcp_tools_list &>/dev/null; then
+                mcp_tools_list "$s_name" 2>/dev/null | jq -r '.[].name // empty' 2>/dev/null | tr '\n' ',' | sed 's/,$//'
+            fi
+            ;;
         *)
             echo ""
             ;;
     esac
 }
 
+# ── Zero-Latency Task Classifier ──────────────────────────────────────
+# Inspects objective keywords to resolve optimal starting profile (~22-29 tools).
+# Supports multi-domain union (capped at 36 tools).
+native_tools_classify_profile() {
+    local goal="${1:-}"
+    [ -z "$goal" ] && { echo "default"; return 0; }
+
+    local g_lower="${goal,,}"
+    local is_research=0
+    local is_code=0
+    local is_ops=0
+    local is_social=0
+
+    # Domain Pattern Matching
+    if echo "$g_lower" | grep -qiE '\b(research|investigate|background|who is|what is|find out|news|article|articles|source|sources|look up|search for|fetch|survey|overview of|profile on|history of|summary of|browse|scout|track|due diligence|public record|osint|paper|arxiv|cve)\b'; then
+        is_research=1
+    fi
+
+    if echo "$g_lower" | grep -qiE '\b(code|implement|refactor|fix|bug|feature|test|tests|build|compile|cargo|npm|git|commit|patch|function|class|module|syntax|lint|debug|repo|repository|pr|pull request|script|unit test)\b'; then
+        is_code=1
+    fi
+
+    if echo "$g_lower" | grep -qiE '\b(deploy|docker|container|containers|service|services|cron|daemon|vitals|sandbox|process|processes|backup|restart|hardware|gpu|server|pgp)\b'; then
+        is_ops=1
+    fi
+
+    if echo "$g_lower" | grep -qiE '\b(discord|tweet|twitter|x_post|telegram|email|mail|sms|social|message|post to)\b'; then
+        is_social=1
+    fi
+
+    # Multi-domain union (capped at 36 tools)
+    if [ "$is_research" -eq 1 ] && [ "$is_code" -eq 1 ]; then
+        echo "research, +code"
+    elif [ "$is_ops" -eq 1 ] && [ "$is_social" -eq 1 ]; then
+        echo "ops, +social"
+    elif [ "$is_code" -eq 1 ] && [ "$is_ops" -eq 1 ]; then
+        echo "code, +ops"
+    elif [ "$is_research" -eq 1 ] && [ "$is_social" -eq 1 ]; then
+        echo "research, +social"
+    elif [ "$is_research" -eq 1 ]; then
+        echo "research"
+    elif [ "$is_code" -eq 1 ]; then
+        echo "code"
+    elif [ "$is_ops" -eq 1 ]; then
+        echo "ops"
+    elif [ "$is_social" -eq 1 ]; then
+        echo "social"
+    else
+        echo "default"
+    fi
+}
+
 # ── Profile Resolver ──────────────────────────────────────────────────
 # Resolves preset profile names or composable bundles into full schemas.
+# Enforces strict 36-tool ceiling preserving Bedrock primacy.
 native_tools_resolve_profile() {
     local profile="${1:-default}"
     local tool_list="$_BEDROCK_TOOLS"
@@ -1605,7 +1680,11 @@ native_tools_resolve_profile() {
             ;;
     esac
 
-    native_tools_get_schemas "$tool_list"
+    # Enforce 36-tool maximum ceiling on initial profile resolution
+    local unique_tools
+    unique_tools=$(echo "$tool_list" | tr ',' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' | awk '!seen[$0]++' | head -n 36 | tr '\n' ',' | sed 's/,$//')
+
+    native_tools_get_schemas "$unique_tools"
 }
 
 # ── Domain Keyword Tags for High-Precision BM25 Matching ──────────────
@@ -1834,12 +1913,19 @@ native_tools_search() {
         echo "$merged_tools" > "$active_tools_file"
     fi
 
+    local docs=""
+    if [ -n "$new_schemas" ] && [ "$new_schemas" != "[]" ]; then
+        docs=$(echo "$new_schemas" | jq -r '.[] | "- " + .function.name + "(" + (((.function.parameters.properties // {}) | keys | .[0:4]) | join(", ")) + (if (((.function.parameters.properties // {}) | keys | length) > 4) then ", ..." else "" end) + "): " + ((.function.description // "") | split(". ")[0] | split("\n")[0])' 2>/dev/null)
+    fi
     local msg="✓ Attached bundle '${matched_bundle}' (${matched_tools})."
     if [ -n "$evicted_bundle" ]; then
         msg+=" ℹ Pruned inactive bundle(s) '${evicted_bundle}' to respect the ${max_tools}-tool ceiling."
     fi
     [ "$total_count" -gt 0 ] && msg+=" Active tools: ${total_count}/${max_tools}."
-    msg+=" These tools are now immediately available."
+    msg+=" These tools are now immediately available in this session."
+    if [ -n "$docs" ]; then
+        msg+=$'\n\nMounted Tool Signatures:\n'"$docs"
+    fi
     echo "$msg"
 }
 

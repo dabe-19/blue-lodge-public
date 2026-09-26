@@ -1507,6 +1507,7 @@ struct ChatPrompt {
     command: Option<String>,
     session_id: Option<String>,
     mode: Option<String>,
+    max_tokens: Option<u32>,
 }
 
 async fn post_chat(
@@ -1524,6 +1525,7 @@ async fn post_chat(
         .session_id
         .unwrap_or_else(|| format!("web_{}", chrono_epoch_secs()));
     let mode = payload.mode.as_deref().unwrap_or("agentic").to_string();
+    let output_max_tokens = payload.max_tokens.unwrap_or(16384);
 
     if raw_cmd.is_empty() {
         return Json(json!({ "status": "error", "error": "Empty prompt" }));
@@ -1811,14 +1813,14 @@ async fn post_chat(
             "repeat_penalty": 1.15,
             "frequency_penalty": 0.25,
             "presence_penalty": 0.15,
-            "max_tokens": 2048,
+            "max_tokens": output_max_tokens,
             "reasoning_effort": "medium",
         });
 
         let llm_res = tokio::process::Command::new("curl")
             .args([
                 "-s",
-                "--max-time", "60",
+                "--max-time", "600",
                 "http://127.0.0.1:8080/v1/chat/completions",
                 "-H", "Content-Type: application/json",
                 "-d", &payload_body.to_string(),

@@ -212,12 +212,23 @@
     sendBtn.addEventListener('click', dispatchPrompt);
   }
 
-  // --- Auto-Scroll Helper (Latest text center-facing) ---
+  // --- Auto-Scroll Helper (Pinned state tracking) ---
+  if (streamEl) {
+    streamEl._autoScrollPinned = true;
+    streamEl.addEventListener('scroll', () => {
+      const distFromBottom = streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight;
+      streamEl._autoScrollPinned = distFromBottom <= 35;
+    }, { passive: true });
+    streamEl.addEventListener('wheel', (e) => {
+      if (e.deltaY < 0) streamEl._autoScrollPinned = false;
+    }, { passive: true });
+  }
+
   function scrollToLatest(preElement = null) {
-    if (streamEl) {
+    if (streamEl && streamEl._autoScrollPinned !== false) {
       streamEl.scrollTop = streamEl.scrollHeight;
     }
-    if (preElement) {
+    if (preElement && preElement._autoScrollPinned !== false) {
       preElement.scrollTop = preElement.scrollHeight;
     }
   }
@@ -235,8 +246,9 @@
           data.messages.forEach(msg => {
             if (msg.role === 'user') {
               renderUserBubble(msg.content, false);
-            } else if (msg.type === 'command_blueprint') {
-              renderBlueprintCard(msg.command, msg.content, msg.id, false);
+            } else if (msg.type === 'command_blueprint' || msg.type === 'agentic' || msg.type === 'plan-task') {
+              const badge = msg.type === 'agentic' ? 'AGENTIC TASK' : (msg.type === 'plan-task' ? 'PLANNING TASK' : 'BLUEPRINT');
+              renderBlueprintCard(msg.command || 'Task Execution', msg.content, msg.id, false, null, badge, 'COMPLETED');
             } else {
               renderAssistantBubble(msg.content, false);
             }
@@ -247,6 +259,134 @@
     } catch (e) {
       console.warn('Session hydration failed:', e);
     }
+  }
+
+  function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  function parseThoughtAndAnswer(rawText) {
+    if (!rawText) return { thought: '', answer: '' };
+
+    // Check for <thought>...</thought> tags
+    const tagMatch = rawText.match(/<thought>([\s\S]*?)<\/thought>([\s\S]*)/i);
+    if (tagMatch) {
+      return { thought: tagMatch[1].trim(), answer: tagMatch[2].trim() };
+    }
+
+    // Check for [thought] block
+    if (rawText.includes('[thought]')) {
+      const closingIdx = rawText.indexOf('[/thought]');
+      if (closingIdx !== -1) {
+        const thought = rawText.substring(rawText.indexOf('[thought]') + 9, closingIdx).trim();
+        const answer = rawText.substring(closingIdx + 10).trim();
+        return { thought, answer };
+      }
+
+      const thoughtStart = rawText.indexOf('[thought]') + 9;
+      const remainder = rawText.substring(thoughtStart);
+
+      // Look for boundary where thought ends and answer/next stage begins
+      const boundaryMatch = remainder.match(/\n\s*(?:Context:\s*\d+\/\d+|\u2713\s*Task Complete!|── Turn|\n\n)([^\n][\s\S]*)/);
+      if (boundaryMatch && boundaryMatch.index !== undefined) {
+        const thought = remainder.substring(0, boundaryMatch.index).trim();
+        const answer = remainder.substring(boundaryMatch.index).trim();
+        return { thought, answer };
+      }
+
+      return { thought: remainder.trim(), answer: '' };
+    }
+
+    return { thought: '', answer: rawText };
+  }
+
+  function setBubbleFormattedContent(bubble, rawText) {
+    bubble.innerHTML = '';
+    const { thought, answer } = parseThoughtAndAnswer(rawText);
+
+    if (thought) {
+      const details = document.createElement('details');
+      details.className = 'thought-trace-box';
+      const summary = document.createElement('summary');
+      summary.className = 'thought-trace-summary';
+      const wordCount = thought.split(/\s+/).filter(Boolean).length;
+      summary.innerHTML = `<span class="thought-icon">💭</span> <span class="thought-label">Reasoning Monologue</span> <span class="thought-meta">(${wordCount} words)</span>`;
+      const body = document.createElement('div');
+      body.className = 'thought-trace-body';
+      body.textContent = thought;
+      details.appendChild(summary);
+      details.appendChild(body);
+      bubble.appendChild(details);
+    }
+
+    if (answer) {
+      const answerEl = document.createElement('div');
+      answerEl.className = 'bubble-answer-text';
+      answerEl.textContent = answer;
+      bubble.appendChild(answerEl);
+    } else if (!thought) {
+      bubble.textContent = rawText;
+    }
+  }
+
+  function formatBlueprintTerminalOutput(output) {
+    if (!output) return '(Execution complete with zero output)';
+
+    const lines = output.split('\n');
+    let html = '';
+    let inThoughtBlock = false;
+    let thoughtBuffer = [];
+
+    function flushThought() {
+      if (thoughtBuffer.length > 0) {
+        const text = thoughtBuffer.join('\n');
+        html += `<div class="card-thought-box"><div class="card-thought-tag">💭 REASONING MONOLOGUE</div><div class="card-thought-text">${escapeHtml(text)}</div></div>\n`;
+        thoughtBuffer = [];
+      }
+      inThoughtBlock = false;
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      if (trimmed.startsWith('[thought]')) {
+        flushThought();
+        inThoughtBlock = true;
+        const remainder = line.replace(/^\s*\[thought\]\s*/, '');
+        if (remainder) thoughtBuffer.push(remainder);
+        continue;
+      }
+
+      if (inThoughtBlock) {
+        if (trimmed.startsWith('[/thought]') || trimmed.startsWith('── Turn') || trimmed.startsWith('✓ Task Complete') || trimmed.startsWith('Context:')) {
+          flushThought();
+          if (trimmed.startsWith('[/thought]')) continue;
+        } else {
+          thoughtBuffer.push(line);
+          continue;
+        }
+      }
+
+      if (trimmed.startsWith('✓ Active') || trimmed.startsWith('Context Window:') || trimmed.startsWith('MCP:') || trimmed.startsWith('Assembling context') || trimmed.startsWith('llama-server manages')) {
+        html += `<span class="term-dim">${escapeHtml(line)}</span>\n`;
+      } else if (trimmed.startsWith('── Turn')) {
+        html += `<span class="term-turn-badge">${escapeHtml(line)}</span>\n`;
+      } else if (trimmed.includes('Stream interrupted; querying synchronous fallback...')) {
+        html += `<span class="term-warn">⚠ ${escapeHtml(line)}</span>\n`;
+      } else if (trimmed.startsWith('● Starting Task:')) {
+        html += `<span class="term-highlight">${escapeHtml(line)}</span>\n`;
+      } else if (trimmed.startsWith('✓ Task Complete!')) {
+        html += `<span class="term-success">✓ Task Complete!</span>\n`;
+      } else {
+        html += `${escapeHtml(line)}\n`;
+      }
+    }
+    flushThought();
+    return html;
   }
 
   // --- UI Renderers ---
@@ -266,7 +406,7 @@
     row.className = 'msg-row assistant';
     const bubble = document.createElement('div');
     bubble.className = 'msg-bubble';
-    bubble.textContent = text;
+    setBubbleFormattedContent(bubble, text);
     row.appendChild(bubble);
     streamEl.appendChild(row);
     if (scroll) scrollToLatest();
@@ -276,7 +416,7 @@
   // Typewriter token streaming pacer
   function streamTextIntoBubble(bubble, fullText, pacingRate, onDone = null) {
     if (pacingRate <= 0) {
-      bubble.textContent = fullText;
+      setBubbleFormattedContent(bubble, fullText);
       scrollToLatest();
       if (onDone) onDone();
       return;
@@ -294,6 +434,7 @@
         scrollToLatest();
       } else {
         clearInterval(timer);
+        setBubbleFormattedContent(bubble, fullText);
         if (onDone) onDone();
       }
     }, intervalMs);
@@ -364,7 +505,7 @@
     const body = document.createElement('div');
     body.className = 'blueprint-body';
     const pre = document.createElement('pre');
-    pre.textContent = output || '(Execution complete with zero output)';
+    pre.innerHTML = formatBlueprintTerminalOutput(output);
     body.appendChild(pre);
 
     const controls = document.createElement('div');
@@ -461,32 +602,40 @@
     if (targetContainer) targetContainer.appendChild(card);
     if (scroll) scrollToLatest(pre);
 
+    pre._autoScrollPinned = true;
+    pre.addEventListener('scroll', () => {
+      const dist = pre.scrollHeight - pre.scrollTop - pre.clientHeight;
+      pre._autoScrollPinned = dist <= 20;
+    }, { passive: true });
+    pre.addEventListener('wheel', (e) => {
+      if (e.deltaY < 0) pre._autoScrollPinned = false;
+    }, { passive: true });
+
     // Dynamic helpers
     card.updateDial = (text) => {
       const dial = header.querySelector('.blueprint-dial');
       if (dial) dial.textContent = text;
     };
     card.appendLog = (line) => {
-      if (pre.textContent.endsWith('\n') || line.startsWith('\n')) {
-        pre.textContent += line;
-      } else {
-        pre.textContent += '\n' + line;
+      const wasPinned = pre._autoScrollPinned !== false;
+      const prevScrollTop = pre.scrollTop;
+      const formatted = formatBlueprintTerminalOutput(line);
+      pre.innerHTML += (pre.innerHTML ? '\n' : '') + formatted;
+      if (scroll) {
+        if (wasPinned) {
+          scrollToLatest(pre);
+        } else {
+          pre.scrollTop = prevScrollTop;
+        }
       }
-      if (scroll) scrollToLatest(pre);
     };
     card.setLog = (text) => {
-      pre.textContent = text;
-      if (scroll) scrollToLatest(pre);
+      pre.innerHTML = formatBlueprintTerminalOutput(text);
+      if (scroll && pre._autoScrollPinned !== false) scrollToLatest(pre);
     };
     card.getLog = () => pre.textContent;
 
     return card;
-  }
-
-  function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
   }
 
   // --- Dispatch Prompt / Command ---
@@ -514,8 +663,12 @@
 
       if (resp.ok) {
         const data = await resp.json();
-        if (data.type === 'command_blueprint') {
-          renderBlueprintCard(text, data.reply, data.session_id, true);
+        if (data.type === 'command_blueprint' || data.type === 'agentic' || data.type === 'plan-task') {
+          if (liveBubble && liveBubble.parentElement) {
+            liveBubble.parentElement.remove();
+          }
+          const badge = data.type === 'agentic' ? 'AGENTIC TASK' : (data.type === 'plan-task' ? 'PLANNING TASK' : 'BLUEPRINT');
+          renderBlueprintCard(text, data.reply, data.session_id || 'task', true, null, badge, 'COMPLETED');
         } else {
           if (liveBubble) {
             streamTextIntoBubble(liveBubble, data.reply || 'Task complete.', currentPacing);
@@ -800,12 +953,36 @@
         if (autonomicExpandedStage.dataset.activeTaskId === activeTask.id) {
           const phaseText = autonomicExpandedStage.querySelector('.task-phase-text');
           if (phaseText) phaseText.textContent = `[${activeTask.phase || 'Active'}]`;
-          const stream = autonomicExpandedStage.querySelector('.expanded-log-stream');
-          if (stream && stream.dataset.lastLogs !== logs) {
-            const isAtBottom = stream.scrollHeight - stream.scrollTop <= stream.clientHeight + 40;
-            stream.textContent = logs;
-            stream.dataset.lastLogs = logs;
-            if (isAtBottom) stream.scrollTop = stream.scrollHeight;
+
+          const pauseBtn = autonomicExpandedStage.querySelector('.pause-btn');
+          const resumeBtn = autonomicExpandedStage.querySelector('.resume-btn');
+          if (pauseBtn && resumeBtn) {
+            if (activeTask.phase === 'Paused') {
+              pauseBtn.style.display = 'none';
+              resumeBtn.style.display = 'inline-block';
+            } else if (activeTask.phase === 'Running' || activeTask.phase === 'Active') {
+              resumeBtn.style.display = 'none';
+              pauseBtn.style.display = 'inline-block';
+            }
+          }
+
+          // Only sync logs from heartbeat if SSE stream is NOT actively streaming
+          if (!window._autonomicEventSource) {
+            const stream = autonomicExpandedStage.querySelector('.expanded-log-stream');
+            const jumpBtn = autonomicExpandedStage.querySelector('.stream-jump-btn');
+            if (stream && stream.dataset.lastLogs !== logs) {
+              const wasPinned = stream._autoScrollPinned !== false;
+              const prevScrollTop = stream.scrollTop;
+              stream.textContent = logs;
+              stream.dataset.lastLogs = logs;
+              if (wasPinned) {
+                stream.scrollTop = stream.scrollHeight;
+                if (jumpBtn) jumpBtn.classList.remove('visible');
+              } else {
+                stream.scrollTop = prevScrollTop;
+                if (jumpBtn) jumpBtn.classList.add('visible');
+              }
+            }
           }
           return;
         }
@@ -820,7 +997,10 @@
             </div>
             <button class="tactile-btn mini-collapse-btn">▲ COLLAPSE</button>
           </div>
-          <pre class="expanded-log-stream">${escapeHtml(logs)}</pre>
+          <div class="expanded-stream-wrap">
+            <pre class="expanded-log-stream">${escapeHtml(logs)}</pre>
+            <button class="stream-jump-btn" type="button" title="Jump to newest log">▼ Latest Logs</button>
+          </div>
           <div class="expanded-controls">
             <div class="expanded-steer-group">
               <input type="text" class="expanded-steer-input" placeholder="Inject steer direction to this auto-task...">
@@ -834,6 +1014,68 @@
           </div>
         `;
 
+        const stream = autonomicExpandedStage.querySelector('.expanded-log-stream');
+        const jumpBtn = autonomicExpandedStage.querySelector('.stream-jump-btn');
+
+        if (stream) {
+          stream._autoScrollPinned = true;
+          stream.dataset.lastLogs = stream.textContent;
+          requestAnimationFrame(() => {
+            stream.scrollTop = stream.scrollHeight;
+          });
+
+          const updateStreamScrollState = () => {
+            const distFromBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight;
+            if (distFromBottom <= 20) {
+              stream._autoScrollPinned = true;
+              if (jumpBtn) jumpBtn.classList.remove('visible');
+            } else {
+              stream._autoScrollPinned = false;
+              if (jumpBtn) jumpBtn.classList.add('visible');
+            }
+          };
+
+          stream.addEventListener('scroll', updateStreamScrollState, { passive: true });
+
+          stream.addEventListener('wheel', (e) => {
+            if (e.deltaY < 0) {
+              stream._autoScrollPinned = false;
+              if (jumpBtn) jumpBtn.classList.add('visible');
+            } else if (e.deltaY > 0) {
+              const distFromBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight;
+              if (distFromBottom <= 25) {
+                stream._autoScrollPinned = true;
+                if (jumpBtn) jumpBtn.classList.remove('visible');
+              }
+            }
+          }, { passive: true });
+
+          let touchStartY = 0;
+          stream.addEventListener('touchstart', (e) => {
+            if (e.touches && e.touches[0]) touchStartY = e.touches[0].clientY;
+          }, { passive: true });
+
+          stream.addEventListener('touchmove', (e) => {
+            if (e.touches && e.touches[0]) {
+              const currentY = e.touches[0].clientY;
+              if (currentY > touchStartY + 5) {
+                stream._autoScrollPinned = false;
+                if (jumpBtn) jumpBtn.classList.add('visible');
+              }
+            }
+          }, { passive: true });
+
+          if (jumpBtn) {
+            jumpBtn.addEventListener('click', (ev) => {
+              ev.preventDefault();
+              ev.stopPropagation();
+              stream._autoScrollPinned = true;
+              stream.scrollTop = stream.scrollHeight;
+              jumpBtn.classList.remove('visible');
+            });
+          }
+        }
+
         if (window._autonomicEventSource) {
           window._autonomicEventSource.close();
           window._autonomicEventSource = null;
@@ -843,11 +1085,27 @@
           window._autonomicEventSource = aes;
           aes.addEventListener('log', (e) => {
             const stream = autonomicExpandedStage.querySelector('.expanded-log-stream');
+            const jumpBtn = autonomicExpandedStage.querySelector('.stream-jump-btn');
             if (stream && e.data) {
-              const isAtBottom = stream.scrollHeight - stream.scrollTop <= stream.clientHeight + 40;
-              stream.textContent += '\n' + e.data;
+              const wasPinned = stream._autoScrollPinned !== false;
+              const prevScrollTop = stream.scrollTop;
+
+              if (stream.textContent === 'Autonomous task active. Monitoring stream...') {
+                stream.textContent = e.data;
+              } else if (stream.textContent.endsWith('\n') || e.data.startsWith('\n')) {
+                stream.textContent += e.data;
+              } else {
+                stream.textContent += '\n' + e.data;
+              }
               stream.dataset.lastLogs = stream.textContent;
-              if (isAtBottom) stream.scrollTop = stream.scrollHeight;
+
+              if (wasPinned) {
+                stream.scrollTop = stream.scrollHeight;
+                if (jumpBtn) jumpBtn.classList.remove('visible');
+              } else {
+                stream.scrollTop = prevScrollTop;
+                if (jumpBtn) jumpBtn.classList.add('visible');
+              }
             }
           });
           aes.addEventListener('phase', (e) => {
@@ -894,7 +1152,19 @@
               body: JSON.stringify({ guidance })
             });
             const stream = autonomicExpandedStage.querySelector('.expanded-log-stream');
-            if (stream) stream.textContent += `\n[Steer Injected]: ${guidance}`;
+            const jumpBtn = autonomicExpandedStage.querySelector('.stream-jump-btn');
+            if (stream) {
+              const wasPinned = stream._autoScrollPinned !== false;
+              const prevScrollTop = stream.scrollTop;
+              stream.textContent += `\n[Steer Injected]: ${guidance}`;
+              stream.dataset.lastLogs = stream.textContent;
+              if (wasPinned) {
+                stream.scrollTop = stream.scrollHeight;
+                if (jumpBtn) jumpBtn.classList.remove('visible');
+              } else {
+                stream.scrollTop = prevScrollTop;
+              }
+            }
           } catch (e) {}
         });
 

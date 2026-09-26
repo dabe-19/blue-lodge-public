@@ -221,15 +221,22 @@ react_run() {
     local workdir="${2:-$PWD}"
     local max_turns="${3:-${AGENT_MAX_TURNS:-${AGENT_MAX_MILESTONES:-9999}}}"
     local agent_temp="${AGENT_LLM_TEMPERATURE:-0.2}"
-    local agent_max_tok="${AGENT_MAX_TOKENS:-8192}"
-    local min_tier="${4:-1}"
-    local session_id_arg="${5:-}"
-    local tool_filter="${6:-${REACT_TOOL_FILTER:-all}}"
+    local agent_max_tok="${AGENT_MAX_TOKENS:-16384}"
+    local tool_filter="${6:-${REACT_TOOL_FILTER:-}}"
 
     # Robust argument polymorphism: if arg 3 is non-numeric, it was passed as profile/tool_filter
     if [ -n "${3:-}" ] && ! [[ "$3" =~ ^[0-9]+$ ]]; then
         tool_filter="$3"
         max_turns="${AGENT_MAX_TURNS:-${AGENT_MAX_MILESTONES:-9999}}"
+    fi
+
+    # Zero-latency task classifier: if tool_filter is empty, "all", or "auto", classify by objective
+    if [ -z "$tool_filter" ] || [ "$tool_filter" = "all" ] || [ "$tool_filter" = "auto" ]; then
+        if declare -f native_tools_classify_profile &>/dev/null; then
+            tool_filter=$(native_tools_classify_profile "$goal")
+        else
+            tool_filter="default"
+        fi
     fi
 
     if [ -z "$goal" ]; then
@@ -245,10 +252,11 @@ react_run() {
 
     local agent_temp="${AGENT_LLM_TEMPERATURE:-${ACTIVE_ENDPOINT_TEMPERATURE:-0.2}}"
     local agent_topp="${AGENT_LLM_TOP_P:-${ACTIVE_ENDPOINT_TOP_P:-0.95}}"
-    local req_timeout="${ACTIVE_ENDPOINT_TIMEOUT:-300}"
+    local req_timeout="${LODGE_TIMEOUT:-${REACT_TIMEOUT:-${ACTIVE_ENDPOINT_TIMEOUT:-600}}}"
 
     ui_ok "Active Engine: Tier $ACTIVE_TIER [$ACTIVE_ENDPOINT_NAME] ($ACTIVE_ENDPOINT_MODEL @ $ACTIVE_ENDPOINT_URL)"
     ui_dim "Context Window: $ACTIVE_ENDPOINT_CONTEXT tokens | Compaction Threshold: $ACTIVE_ENDPOINT_COMPACT_TOKENS tokens"
+    ui_dim "Task Profile: '$tool_filter'"
 
     # 2. Setup session sandbox and .george persistence
     local gdir="${workdir}/.george"
@@ -477,11 +485,12 @@ react_run() {
         # Launch ambient craftsman prefill ticker during prompt evaluation
         declare -f ui_prefill_ticker_start &>/dev/null && ui_prefill_ticker_start "$session_dir"
 
-        # Execute real-time streaming SSE pipeline (direct stream_cache writing eliminates tee buffer)
-        curl -s -N --max-time "$req_timeout" "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
+        # Execute real-time streaming SSE pipeline (filter SSE comment/keepalive lines to protect jq parser)
+        local stream_err_file="$session_dir/stream_err_turn_${turn}.log"
+        curl -s -N --keepalive-time 10 --max-time "$req_timeout" "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
             -H "Content-Type: application/json" \
-            -d @"$payload_file" 2>/dev/null | \
-        sed -u -e 's/^data: //' -e '/^\[DONE\]/d' -e '/^[[:space:]]*$/d' | \
+            -d @"$payload_file" 2>"$stream_err_file" | \
+        sed -u -e '/^:/d' -e '/^data: /!d' -e 's/^data: //' -e '/^\[DONE\]/d' -e '/^[[:space:]]*$/d' | \
         jq --unbuffered -c '
             if .choices[0].delta.reasoning_content then
                 {type: "thought", text: .choices[0].delta.reasoning_content}
@@ -549,12 +558,18 @@ react_run() {
 
         if [ ! -s "$stream_cache" ]; then
             # Graceful fallback: synchronous non-stream request
-            ui_dim "Stream interrupted; querying synchronous fallback..."
+            local err_preview=""
+            [ -s "$stream_err_file" ] && err_preview=$(tr '\n' ' ' < "$stream_err_file" | tr -s ' ' | head -c 120)
+            if [ -n "$err_preview" ]; then
+                ui_dim "Stream interrupted ($err_preview); querying synchronous fallback..."
+            else
+                ui_dim "Stream interrupted; querying synchronous fallback..."
+            fi
             local fallback_payload_file="$session_dir/fallback_payload_turn_${turn}.json"
             jq '.stream = false | del(.stream_options)' "$payload_file" > "$fallback_payload_file"
-            local fb_timeout="${ACTIVE_ENDPOINT_TIMEOUT:-180}"
+            local fb_timeout="${LODGE_TIMEOUT:-${REACT_TIMEOUT:-${ACTIVE_ENDPOINT_TIMEOUT:-600}}}"
             local resp_json
-            resp_json=$(curl -s --max-time "$fb_timeout" "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
+            resp_json=$(curl -s --keepalive-time 10 --max-time "$fb_timeout" "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
                 -H "Content-Type: application/json" \
                 -d @"$fallback_payload_file" 2>/dev/null)
 
@@ -886,22 +901,49 @@ Execute the Metacognitive Pathfinding Protocol:
 
         # If model provided answer directly without tool calls
         if [ -n "$raw_content" ]; then
-            # Premature Exit Guard: In multi-turn tasks (or Discord sessions) on early turns where output
+            # Premature Exit Guard: In multi-turn tasks on early turns where output
             # contains forward-looking planning text rather than a final deliverable, advance to tool execution.
             local is_premature_plan=0
-            if [ "$turn" -lt 3 ]; then
+            if [ "$turn" -lt 5 ] && [ "$max_turns" -gt 1 ]; then
                 if [ "${AGENT_SOVEREIGN_REMEDIATION:-0}" -eq 1 ]; then
                     is_premature_plan=1
-                elif [ "$max_turns" -gt 1 ] && [ ${#raw_content} -gt 600 ]; then
-                    if echo "$raw_content" | grep -qiE '(I will|I plan to|Let'\''s outline|Step 1|First step|I need to check|I need to inspect|Let'\''s begin by|Before making changes)'; then
-                        is_premature_plan=1
+                elif echo "$raw_content" | grep -qiE "(I will|I'll|I plan to|Let's outline|Step 1|First step|I need to check|I need to inspect|Let's begin by|Before making changes|I will pull|I'll pull|Let me fetch|I am going to|I will search|I'll search|Let me pull|I'll gather|I will gather|I'll start by|I will start by)"; then
+                    is_premature_plan=1
+                elif [ ${#raw_content} -lt 450 ] && echo "$raw_content" | grep -qiE "\b(will pull|will fetch|will search|will look up|will inspect|will check|will investigate|going to search|going to pull|going to fetch)\b"; then
+                    is_premature_plan=1
+                fi
+            fi
+
+            # Zero-Tool Research Verification Guard:
+            # If the task requires research/investigation and the model attempts to exit on early turns
+            # without executing any retrieval tools (web_search, web_fetch, pdf_read, file_read, etc.),
+            # intercept the unverified response and demand real source retrieval.
+            local is_unverified_research=0
+            if [ "$turn" -le 2 ] && [ "$max_turns" -gt 1 ]; then
+                local is_research_task=0
+                if echo "${goal,,}" | grep -qiE '\b(research|report|dossier|background on|investigate|due diligence|osint|deep dive|fact check)\b'; then
+                    is_research_task=1
+                elif [[ "${tool_filter:-}" =~ research ]] && echo "${goal,,}" | grep -qiE '\b(research|report|dossier|background|investigate|due diligence|osint|latest|recent|news|current)\b'; then
+                    is_research_task=1
+                fi
+                if [ "$is_research_task" -eq 1 ]; then
+                    if [ ! -f "$history_file" ] || ! grep -qE "(Tool Call: web_|Tool Call: fetch|Tool Call: pdf_read|Tool Call: file_read|Tool Call: github_search|Action: .*web|Action: .*curl|Action: .*search)" "$history_file"; then
+                        is_unverified_research=1
                     fi
                 fi
             fi
 
             if [ "$is_premature_plan" -eq 1 ]; then
                 jq --arg ans "$raw_content" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
-                local adv="[SYSTEM ADVISORY: Plan acknowledged. Proceed immediately to execute your plan by calling the required native tools (e.g. file_read, code_outline, code_symbol_get, file_grep, dir_list, bash_exec, web_search). Emit conversational markdown ONLY when the deliverable or task is 100% complete.]"
+                local adv="[SYSTEM ADVISORY: Plan acknowledged. Proceed immediately to execute your plan by calling the required native tools (e.g. web_search, web_fetch, file_read, code_outline, code_symbol_get, file_grep, dir_list, bash_exec). Emit conversational markdown ONLY when all tool actions are complete and the deliverable is 100% finished.]"
+                jq --arg p "$adv" '. += [{"role": "user", "content": $p}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+                consecutive_empty_turns=0
+                turn=$((turn + 1))
+                continue
+            elif [ "$is_unverified_research" -eq 1 ]; then
+                ui_dim "  [guard] Intercepted Turn $turn draft: zero research tools executed for research task"
+                jq --arg ans "$raw_content" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+                local adv="[SYSTEM ADVISORY: Research verification required. You produced a draft summary on Turn $turn without executing any retrieval tools (web_search, web_fetch, pdf_read, file_read). You MUST call web_search to find primary or credible secondary sources and call web_fetch to extract facts before declaring this task complete. Do not simulate or fabricate citations.]"
                 jq --arg p "$adv" '. += [{"role": "user", "content": $p}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
                 consecutive_empty_turns=0
                 turn=$((turn + 1))

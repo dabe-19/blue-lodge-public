@@ -94,13 +94,13 @@ describe "native_tools_search BM25 semantic query"
     rm -rf "$tmp_dir"
   }
 
-describe "native_tools_search 24-tool ceiling & LRU eviction"
-  it "enforces 24-tool ceiling and evicts inactive bundles while preserving bedrock" && {
+describe "native_tools_search 36-tool ceiling & LRU eviction"
+  it "enforces 36-tool ceiling and evicts inactive bundles while preserving bedrock" && {
     tmp_dir=$(mktemp -d /tmp/test_fts_XXXXXX)
-    # Seed session with Bedrock + Files + Web + Git (17 tools)
-    native_tools_resolve_profile "bedrock, +files, +web, +git" > "$tmp_dir/active_tools.json"
+    # Seed session with Bedrock + Files + Web + Git + Code (27 tools)
+    native_tools_resolve_profile "bedrock, +files, +web, +git, +code" > "$tmp_dir/active_tools.json"
     initial_count=$(jq '. | length' "$tmp_dir/active_tools.json")
-    [ "$initial_count" -ge 15 ]
+    [ "$initial_count" -ge 20 ]
     assert_ok $?
 
     # Simulate activity in trajectory.log: web and files were called, git was never called
@@ -110,13 +110,13 @@ Tool Call: file_write ({"path":"notes.md"})
 Tool Call: web_fetch ({"url":"https://arxiv.org"})
 EOF
 
-    # Now attach +ops (13 tools) which would push count to ~30, exceeding 24!
-    out=$(native_tools_search "+ops" "$tmp_dir" 24)
+    # Now attach +ops (13 tools) which pushes count over 36!
+    out=$(native_tools_search "+ops" "$tmp_dir" 36)
     assert_contains "$out" "Attached bundle '+ops'"
-    assert_contains "$out" "Pruned inactive bundle"
+    assert_contains "$out" "Mounted Tool Signatures"
 
     final_count=$(jq '. | length' "$tmp_dir/active_tools.json")
-    [ "$final_count" -le 24 ]
+    [ "$final_count" -le 36 ]
     assert_ok $?
 
     # Verify Bedrock tools remained untouched
@@ -128,6 +128,35 @@ EOF
     assert_ok $?
 
     rm -rf "$tmp_dir"
+  }
+
+describe "native_tools_classify_profile"
+  it "classifies research task into research profile" && {
+    prof=$(native_tools_classify_profile "please provide me a background research report on Xi Jinping.")
+    [ "$prof" = "research" ]
+    assert_ok $?
+  }
+
+  it "classifies code task into code profile" && {
+    prof=$(native_tools_classify_profile "refactor lib/tools.sh and run cargo test")
+    [ "$prof" = "code" ]
+    assert_ok $?
+  }
+
+  it "classifies ops task into ops profile" && {
+    prof=$(native_tools_classify_profile "check docker container vitals and restart daemon")
+    [ "$prof" = "ops" ]
+    assert_ok $?
+  }
+
+  it "classifies multi-domain task into union profile" && {
+    prof=$(native_tools_classify_profile "Research the latest CVE for curl and patch our script")
+    [ "$prof" = "research, +code" ]
+    assert_ok $?
+    schemas=$(native_tools_resolve_profile "$prof")
+    count=$(echo "$schemas" | jq '. | length')
+    [ "$count" -le 36 ]
+    assert_ok $?
   }
 
 describe "native_tools_dispatch tool_search"

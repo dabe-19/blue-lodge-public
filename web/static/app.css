@@ -421,6 +421,13 @@ body.drawer-open .workbench-viewport {
   color: var(--masonic-gold);
 }
 
+.expanded-stream-wrap {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
 .expanded-log-stream {
   min-height: 280px;
   max-height: 60vh;
@@ -434,6 +441,43 @@ body.drawer-open .workbench-viewport {
   color: var(--text-main);
   white-space: pre-wrap;
   word-break: break-all;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.stream-jump-btn {
+  position: absolute;
+  bottom: 12px;
+  right: 18px;
+  background: var(--bg-surface);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 4px 11px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition: opacity 0.2s ease, transform 0.2s ease, background 0.15s ease, color 0.15s ease;
+  z-index: 10;
+}
+
+.stream-jump-btn.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.stream-jump-btn:hover {
+  background: var(--accent);
+  color: #fff;
 }
 
 .expanded-controls {
@@ -619,7 +663,121 @@ body.drawer-open .workbench-viewport {
 
 .blueprint-body pre {
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: break-word;
+}
+
+.blueprint-body pre .term-dim {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.blueprint-body pre .term-turn-badge {
+  display: block;
+  margin: 8px 0 4px 0;
+  color: var(--masonic-gold);
+  font-weight: 700;
+  border-bottom: 1px dashed rgba(245, 158, 11, 0.3);
+  padding-bottom: 2px;
+}
+
+.blueprint-body pre .term-warn {
+  color: var(--status-warn);
+  background: var(--status-warn-bg);
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+.blueprint-body pre .term-highlight {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.blueprint-body pre .term-success {
+  color: #4ade80;
+  font-weight: 700;
+}
+
+/* Card Thought Box */
+.card-thought-box {
+  margin: 8px 0;
+  padding: 8px 12px;
+  background: rgba(147, 51, 234, 0.08);
+  border-left: 3px solid #a855f7;
+  border-radius: 0 4px 4px 0;
+  color: #cbd5e1;
+}
+
+.card-thought-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #c084fc;
+  margin-bottom: 4px;
+  user-select: none;
+}
+
+.card-thought-text {
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+/* Collapsible Thought Trace in Chat Bubbles */
+.thought-trace-box {
+  margin-bottom: 8px;
+  background: rgba(147, 51, 234, 0.06);
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.thought-trace-summary {
+  padding: 6px 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: #c084fc;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(168, 85, 247, 0.08);
+  transition: background 0.15s ease;
+}
+
+.thought-trace-summary:hover {
+  background: rgba(168, 85, 247, 0.15);
+}
+
+.thought-trace-summary .thought-meta {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-left: auto;
+}
+
+.thought-trace-body {
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: #94a3b8;
+  font-style: italic;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+  border-top: 1px solid rgba(168, 85, 247, 0.15);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.bubble-answer-text {
+  color: var(--text-main);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .blueprint-controls {

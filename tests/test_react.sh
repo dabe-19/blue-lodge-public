@@ -105,6 +105,82 @@ EOF
     trap - EXIT
   }
 
+describe "Zero-Tool Research Verification Guard"
+  it "flags unverified research deliverable on Turn 1 when no research tools were called" && {
+    g_test="please provide me a background research report on Xi Jinping."
+    tf_test="research"
+    t_test=1
+    mt_test=10
+    tmp_dir=$(mktemp -d)
+    h_file="$tmp_dir/trajectory.log"
+    : > "$h_file"
+
+    unver=0
+    if [ "$t_test" -le 2 ] && [ "$mt_test" -gt 1 ]; then
+        is_res=0
+        if echo "${g_test,,}" | grep -qiE '\b(research|report|dossier|background on|investigate|due diligence|osint|deep dive|fact check)\b'; then
+            is_res=1
+        elif [[ "${tf_test:-}" =~ research ]] && echo "${g_test,,}" | grep -qiE '\b(research|report|dossier|background|investigate|due diligence|osint|latest|recent|news|current)\b'; then
+            is_res=1
+        fi
+        if [ "$is_res" -eq 1 ]; then
+            if [ ! -f "$h_file" ] || ! grep -qE "(Tool Call: web_|Tool Call: fetch|Tool Call: pdf_read|Tool Call: file_read|Tool Call: github_search|Action: .*web|Action: .*curl|Action: .*search)" "$h_file"; then
+                unver=1
+            fi
+        fi
+    fi
+
+    assert_eq "$unver" "1"
+
+    # Simulate tool execution in trajectory.log
+    echo "Tool Call: web_search (query=Xi Jinping background)" >> "$h_file"
+    unver=0
+    if [ "$t_test" -le 2 ] && [ "$mt_test" -gt 1 ]; then
+        is_res=0
+        if echo "${g_test,,}" | grep -qiE '\b(research|report|dossier|background on|investigate|due diligence|osint|deep dive|fact check)\b'; then
+            is_res=1
+        elif [[ "${tf_test:-}" =~ research ]] && echo "${g_test,,}" | grep -qiE '\b(research|report|dossier|background|investigate|due diligence|osint|latest|recent|news|current)\b'; then
+            is_res=1
+        fi
+        if [ "$is_res" -eq 1 ]; then
+            if [ ! -f "$h_file" ] || ! grep -qE "(Tool Call: web_|Tool Call: fetch|Tool Call: pdf_read|Tool Call: file_read|Tool Call: github_search|Action: .*web|Action: .*curl|Action: .*search)" "$h_file"; then
+                unver=1
+            fi
+        fi
+    fi
+
+    assert_eq "$unver" "0"
+    rm -rf "$tmp_dir"
+  }
+
+  it "does not trigger guard on non-research conversational queries" && {
+    g_test="what is 2 + 2"
+    tf_test="default"
+    t_test=1
+    mt_test=10
+    tmp_dir=$(mktemp -d)
+    h_file="$tmp_dir/trajectory.log"
+    : > "$h_file"
+
+    unver=0
+    if [ "$t_test" -le 2 ] && [ "$mt_test" -gt 1 ]; then
+        is_res=0
+        if echo "${g_test,,}" | grep -qiE '\b(research|report|dossier|background on|investigate|due diligence|osint|deep dive|fact check)\b'; then
+            is_res=1
+        elif [[ "${tf_test:-}" =~ research ]] && echo "${g_test,,}" | grep -qiE '\b(research|report|dossier|background|investigate|due diligence|osint|latest|recent|news|current)\b'; then
+            is_res=1
+        fi
+        if [ "$is_res" -eq 1 ]; then
+            if [ ! -f "$h_file" ] || ! grep -qE "(Tool Call: web_|Tool Call: fetch|Tool Call: pdf_read|Tool Call: file_read|Tool Call: github_search|Action: .*web|Action: .*curl|Action: .*search)" "$h_file"; then
+                unver=1
+            fi
+        fi
+    fi
+
+    assert_eq "$unver" "0"
+    rm -rf "$tmp_dir"
+  }
+
 test_end
 
 

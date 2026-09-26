@@ -56,7 +56,7 @@ endpoints_init() {
     TIER1_ENABLED="${TIER1_ENABLED:-1}"
     TIER1_MAX_TOKENS="${TIER1_MAX_TOKENS:-61440}"
     TIER1_COMPACT_TOKENS="${TIER1_COMPACT_TOKENS:-49152}"
-    TIER1_TIMEOUT="${TIER1_TIMEOUT:-180}"
+    TIER1_TIMEOUT="${TIER1_TIMEOUT:-600}"
     TIER1_TEMPERATURE="${TIER1_TEMPERATURE:-1.0}"
     TIER1_TOP_P="${TIER1_TOP_P:-0.95}"
 
@@ -219,7 +219,7 @@ endpoints_cascade() {
             ACTIVE_ENDPOINT_ROLES="${!roles_var}"
             ACTIVE_ENDPOINT_MAX_TOKENS="${!max_var}"
             ACTIVE_ENDPOINT_COMPACT_TOKENS="${!compact_var}"
-            ACTIVE_ENDPOINT_TIMEOUT="${!timeout_var:-180}"
+            export ACTIVE_ENDPOINT_TIMEOUT="${!timeout_var:-600}"
             ACTIVE_ENDPOINT_TEMPERATURE="${!temp_var:-${AGENT_LLM_TEMPERATURE:-0.2}}"
             ACTIVE_ENDPOINT_TOP_P="${!topp_var:-0.95}"
             if [ -n "$ACTIVE_ENDPOINT_MODEL" ]; then
@@ -240,7 +240,7 @@ endpoints_cascade() {
     ACTIVE_ENDPOINT_NAME=""
     ACTIVE_ENDPOINT_URL=""
     ACTIVE_ENDPOINT_MODEL=""
-    ACTIVE_ENDPOINT_TIMEOUT="180"
+    export ACTIVE_ENDPOINT_TIMEOUT="600"
     ACTIVE_ENDPOINT_TEMPERATURE="0.2"
     ACTIVE_ENDPOINT_TOP_P="0.95"
     return 1

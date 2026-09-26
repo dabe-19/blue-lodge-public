@@ -196,8 +196,7 @@ EOF
 
     # If live endpoint is active and not in unit-test-isolation mode, run multi-turn ReAct
     if [ "$endpoints_online" -eq 1 ] && [ "${LODGE_TEST_MODE:-0}" -ne 1 ] && [ -z "${TEST_TMP:-}" ]; then
-        local goal="DIRECTIVE BIAS: You are George, an autonomous decisive scholar and technical investigator conducting deep research on: '$topic'.
-You already possess the operational plan. Execute decisively on Turn 1 without speculative preamble or planning monologues.
+        local goal="You are George, an autonomous scholar and technical investigator conducting deep research on: '$topic'. Execute decisively on Turn 1 without speculative preamble or planning monologues.
 Follow these instructions strictly:
 1. Search for primary academic sources and arXiv preprints on '$topic' using web_search.
 2. Immediately download primary papers/preprints using bash (curl) into papers/, run pdftotext to extract text, and extract exact mathematical formulas, algorithms, and empirical benchmarks.
@@ -398,7 +397,7 @@ Structure your response with:
 
         local payload
         payload=$(jq -n --arg p "$synth_prompt" \
-            '{messages: [{"role": "system", "content": "You are a master technical researcher. Never output generic filler. Ground all analysis in concrete equations, hardware bounds, and benchmarks."}, {"role": "user", "content": $p}], temperature: 0.3, max_tokens: 4000}')
+            '{messages: [{"role": "system", "content": "You are a master technical researcher. Never output generic filler. Ground all analysis in concrete equations, hardware bounds, and benchmarks."}, {"role": "user", "content": $p}], temperature: 0.3, max_tokens: 16384}')
 
         # 600s timeout so large models on local hardware never get cut off
         local raw_synth_resp
