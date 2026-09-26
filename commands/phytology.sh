@@ -74,6 +74,24 @@ cmd_phytology() {
             ui_step "Pruning foliage job '$job_name'..."
             phytology_prune "$job_name"
             ;;
+        fitness)
+            local target="$rest"
+            if [ -z "$target" ]; then
+                ui_err "Usage: /phytology fitness <target_file>"
+                return 1
+            fi
+            phytology_fitness "$target"
+            ;;
+        lignify)
+            local foliage="${rest%% *}"
+            local cmd_name="${rest#"$foliage"}"
+            cmd_name="${cmd_name#"${cmd_name%%[![:space:]]*}"}"
+            if [ -z "$foliage" ]; then
+                ui_err "Usage: /phytology lignify <foliage_file> [target_cmd_name]"
+                return 1
+            fi
+            phytology_lignify "$foliage" "$cmd_name"
+            ;;
         test)
             ui_section "Running Software Phytology Test Suite"
             if [ -f "$LODGE_DIR/tests/test_phytology.sh" ]; then
@@ -85,7 +103,7 @@ cmd_phytology() {
             ;;
         *)
             ui_err "Unknown /phytology subcommand: '$subcmd'"
-            ui_dim "Usage: /phytology [status | audit | parallel-audit | parallel-graft <json> | auto-remediate <file> | heal | rollback <file> | prune <job> | test]"
+            ui_dim "Usage: /phytology [status | audit | parallel-audit | parallel-graft <json> | auto-remediate <file> | heal | rollback <file> | prune <job> | fitness <file> | lignify <file> [cmd] | test]"
             return 1
             ;;
     esac

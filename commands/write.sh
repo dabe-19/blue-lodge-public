@@ -220,6 +220,14 @@ cmd_write() {
         echo "OVERWRITING with new content. Use /append to add to existing content, or /edit for small changes." >&2
     fi
 
+    # ── Safe Append-at-EOF Intent Detection ───────────────────
+    # If target file exists and content explicitly states append intent in header, append safely
+    if [ "$existed" -eq 1 ] && echo "$content" | head -n 3 | grep -qiE '(appended? at EOF|append to)'; then
+        printf '\n%s\n' "$content" >> "$fullpath"
+        ui_ok "Appended to: $filepath"
+        return 0
+    fi
+
     # ── Overwrite protection ──────────────────────────────────
     # LODGE_WRITE_MODE controls behavior when the target file exists:
     #   confirm   — prompt the operator via /dev/tty (default)
