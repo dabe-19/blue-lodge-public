@@ -2120,9 +2120,13 @@ native_tools_dispatch() {
                     target="$workdir/$p"
                 fi
                 if [ ! -e "$target" ]; then
-                    local _lodge_fallback="${LODGE_ROOT:-${LODGE_DIR:-$HOME/blue-lodge}}"
-                    if [ -e "$_lodge_fallback/$p" ]; then
-                        target="$_lodge_fallback/$p"
+                    local _primary_root="${LODGE_ROOT:-}"
+                    if [ -z "$_primary_root" ] && [[ "$workdir" == *"/.sandboxes/"* ]]; then
+                        _primary_root="${workdir%%/.sandboxes/*}"
+                    fi
+                    [ -z "$_primary_root" ] && _primary_root="${LODGE_DIR:-$(pwd)}"
+                    if [ -e "$_primary_root/$p" ]; then
+                        target="$_primary_root/$p"
                     fi
                 fi
                 if [ ! -e "$target" ]; then
@@ -2244,11 +2248,21 @@ $_ts_v_err
                 else
                     target="$workdir/$p"
                 fi
-                if [[ "$target" == "/home/wsl-ops" ]] || [[ "$target" == "/home/wsl-ops/" ]] || [[ "$target" == "/" ]] || [[ "$target" == "/home" ]]; then
-                    target="${LODGE_ROOT:-${LODGE_DIR:-$HOME/blue-lodge}}"
+                local _primary_root="${LODGE_ROOT:-}"
+                if [ -z "$_primary_root" ] && [[ "$workdir" == *"/.sandboxes/"* ]]; then
+                    _primary_root="${workdir%%/.sandboxes/*}"
                 fi
-                if [ ! -e "$target" ] && [ -e "${LODGE_ROOT:-${LODGE_DIR:-$HOME/blue-lodge}}/$p" ]; then
-                    target="${LODGE_ROOT:-${LODGE_DIR:-$HOME/blue-lodge}}/$p"
+                [ -z "$_primary_root" ] && _primary_root="${LODGE_DIR:-$(pwd)}"
+
+                # Workspace scope guard: prevent recursive indexing outside project tree
+                local _target_canon _root_canon
+                _target_canon=$(readlink -f "$target" 2>/dev/null || echo "$target")
+                _root_canon=$(readlink -f "$_primary_root" 2>/dev/null || echo "$_primary_root")
+                if [ "$_target_canon" = "/" ] || [ "$_target_canon" = "/home" ] || [ -n "$HOME" -a "$_target_canon" = "$HOME" ] || [ "$_target_canon" = "$(dirname "$_root_canon")" ]; then
+                    target="$_primary_root"
+                fi
+                if [ ! -e "$target" ] && [ -e "$_primary_root/$p" ]; then
+                    target="$_primary_root/$p"
                 fi
                 if command -v rg &>/dev/null; then
                     output=$(rg -n --no-heading --color=never --max-depth 5 -g '!.git' -g '!node_modules' -g '!target' -g '!.cargo' -g '!.cache' -e "$pat" "$target" 2>&1 | head -n 100)
