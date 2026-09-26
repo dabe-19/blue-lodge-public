@@ -463,6 +463,33 @@ $(echo -e "$anom_actions")
 EOF
 )
 
+    local inum=""
+    # Submit to Sovereign Gitea if online
+    if declare -f gitea_is_online &>/dev/null && gitea_is_online; then
+        local gitea_labels="sentinel-alert,bug"
+        local is_self_healed=0
+        if [ -n "$healed_summary" ] && [ "$healed_summary" != "None" ]; then
+            gitea_labels="sentinel-alert,auto-remediated,bug"
+            is_self_healed=1
+        fi
+
+        local issue_res
+        issue_res=$(gitea_issue_create "$issue_title" "$issue_body" "$gitea_labels" 2>/dev/null || true)
+        inum=$(echo "$issue_res" | jq -r '.number // empty' 2>/dev/null || true)
+        if [ -n "$inum" ]; then
+            issue_body+=$'\n\n'"**Gitea Issue:** #${inum}"
+            echo "Filed Sovereign Gitea Issue #${inum}" >> "$SENTINEL_LOG"
+            if [ "$is_self_healed" -eq 1 ]; then
+                if ! declare -f gitea_issue_close &>/dev/null; then
+                    [ -f "${LODGE_DIR:-$PWD}/lib/mcp_server_gitea.sh" ] && source "${LODGE_DIR:-$PWD}/lib/mcp_server_gitea.sh" 2>/dev/null || true
+                fi
+                if declare -f gitea_issue_close &>/dev/null; then
+                    gitea_issue_close "$inum" "Autonomous Sentinel self-healed this condition immediately during probe: ${healed_summary}." >/dev/null 2>&1 || true
+                fi
+            fi
+        fi
+    fi
+
     local issue_file="$issues_dir/issue_sentinel_$(date +%s).md"
     echo -e "# ${issue_title}\n\n${issue_body}" > "$issue_file"
 
@@ -475,7 +502,7 @@ EOF
         issue_file="$archived_file"
         echo "[SENTINEL] Self-healed issue archived immediately: $issue_file" >> "$SENTINEL_LOG"
     else
-        # Enqueue in autonomous remediation loop
+        # Enqueue in autonomous remediation loop with Gitea Issue linked
         if declare -f remediation_queue_add &>/dev/null; then
             remediation_queue_add "$issue_file" "$inc_path" "high" "$issue_title" >/dev/null 2>&1 || true
         fi
@@ -484,32 +511,6 @@ EOF
     # Dispatch notification via configured email and discord
     if declare -f remediation_notify_dispatch &>/dev/null; then
         remediation_notify_dispatch "sentinel_$(date +%s)" "$issue_title" "DETECTED" "$norm_anoms" "$([ -n "$inc_path" ] && echo "Dossier: file://$inc_path" || echo "")" >/dev/null 2>&1 || true
-    fi
-
-    # Submit to Sovereign Gitea if online
-    if declare -f gitea_is_online &>/dev/null && gitea_is_online; then
-        local gitea_labels="sentinel-alert,bug"
-        local is_self_healed=0
-        if [ -n "$healed_summary" ] && [ "$healed_summary" != "None" ]; then
-            gitea_labels="sentinel-alert,auto-remediated,bug"
-            is_self_healed=1
-        fi
-
-        local issue_res
-        issue_res=$(gitea_issue_create "$issue_title" "$issue_body" "$gitea_labels" 2>/dev/null || true)
-        local inum
-        inum=$(echo "$issue_res" | jq -r '.number // empty' 2>/dev/null || true)
-        if [ -n "$inum" ]; then
-            echo "Filed Sovereign Gitea Issue #${inum} at $issue_file" >> "$SENTINEL_LOG"
-            if [ "$is_self_healed" -eq 1 ]; then
-                if ! declare -f gitea_issue_close &>/dev/null; then
-                    [ -f "${LODGE_DIR:-$PWD}/lib/mcp_server_gitea.sh" ] && source "${LODGE_DIR:-$PWD}/lib/mcp_server_gitea.sh" 2>/dev/null || true
-                fi
-                if declare -f gitea_issue_close &>/dev/null; then
-                    gitea_issue_close "$inum" "Autonomous Sentinel self-healed this condition immediately during probe: ${healed_summary}." >/dev/null 2>&1 || true
-                fi
-            fi
-        fi
     fi
 
     echo "$issue_file"
