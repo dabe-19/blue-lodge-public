@@ -2094,6 +2094,9 @@ native_tools_dispatch() {
                     fi
                 fi
                 if [ "$exit_code" -ne 0 ]; then
+                    if [ -z "$output" ]; then
+                        output="ERROR: Command failed with exit code $exit_code"
+                    fi
                     local _done_ts
                     _done_ts=$(date '+%Y-%m-%d %H:%M:%S')
                     ui_err "[$_done_ts] bash_exec failed (exit $exit_code)" 2>/dev/null

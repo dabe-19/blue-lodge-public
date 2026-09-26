@@ -63,6 +63,14 @@ mqtt_init() {
         done < "$MQTT_CONFIG"
     fi
 
+    # Auto-detect local sovereign broker if not configured
+    if [ -z "$MQTT_BROKER" ] && [ ! -f "$MQTT_CONFIG" ]; then
+        if (exec 3<>/dev/tcp/127.0.0.1/1883) 2>/dev/null; then
+            exec 3>&-
+            MQTT_BROKER="127.0.0.1"
+        fi
+    fi
+
     # Auto-generate client ID if not set
     if [ -z "$MQTT_CLIENT_ID" ]; then
         MQTT_CLIENT_ID="george-$$"
@@ -140,8 +148,6 @@ _mqtt_build_args() {
             _MQTT_ARGS+=(--key "$MQTT_KEYFILE")
         fi
     fi
-
-    printf '%s\n' "${_MQTT_ARGS[@]}"
 }
 
 # ── Publish ────────────────────────────────────────────────────
@@ -293,9 +299,9 @@ mqtt_subscribe() {
         while IFS= read -r _ms_line; do
             [ -n "$_ms_line" ] && _mqtt_log_message "$_ms_topic" "in" "$_ms_line"
         done <<< "$_ms_output"
+        printf '%s' "$_ms_output"
     fi
 
-    printf '%s' "$_ms_output"
     return $_ms_rc
 }
 

@@ -34,6 +34,7 @@ for _p in "$LODGE_DIR" "$LODGE_ROOT" "$HOME/blue-lodge"; do
         source "$_p/lib/discord_bridge.sh" 2>/dev/null || true
         source "$_p/lib/popup.sh" 2>/dev/null || true
         source "$_p/lib/mcp_server_gitea.sh" 2>/dev/null || true
+        source "$_p/lib/mqtt.sh" 2>/dev/null || true
         break
     fi
 done
@@ -48,6 +49,7 @@ declare -f ui_section &>/dev/null || ui_section() { echo "=== $* ==="; }
 
 remediation_init() {
     mkdir -p "$REMEDIATION_QUEUE_DIR" "$REMEDIATION_PROGRESS_DIR" "$REMEDIATION_COMPLETED_DIR" "$REMEDIATION_FAILED_DIR" "$REMEDIATION_LOGS_DIR" "$REMEDIATION_ATTEMPTS_DIR" 2>/dev/null || true
+    declare -f mqtt_init &>/dev/null && mqtt_init || true
     remediation_notify_load_config
     remediation_sweep_sandboxes
 }
@@ -271,6 +273,21 @@ EOF
             }
             notified=1
         fi
+    fi
+
+    # 3. Broadcast across Sovereign MQTT Bus (Task-to-Task & Node Telemetry)
+    if declare -f mqtt_publish &>/dev/null; then
+        local mqtt_payload
+        mqtt_payload=$(jq -n \
+            --arg tid "$task_id" \
+            --arg st "$status" \
+            --arg is "$issue_ref" \
+            --arg det "$details" \
+            --arg ts "$now_ts" \
+            '{ task_id: $tid, status: $st, issue: $is, details: $det, timestamp: $ts }' 2>/dev/null || echo "{\"task_id\":\"$task_id\",\"status\":\"$status\"}")
+        mqtt_publish "george/remediation/events" "$mqtt_payload" >/dev/null 2>&1 || true
+        mqtt_publish "george/remediation/${task_id}/status" "$mqtt_payload" >/dev/null 2>&1 || true
+        notified=1
     fi
 
     if [ "$notified" -eq 0 ]; then
@@ -579,8 +596,14 @@ remediation_run() {
 
     # Execute remediation loop inside sandbox (Targeting Slot 1 / Tier 2)
     ui_step "Executing remediation contract in sandbox..."
-    mkdir -p "$sandbox_dir/.george/issues"
+    mkdir -p "$sandbox_dir/.george/issues" "$sandbox_dir/.george/telemetry/incidents"
     [ -n "$issue_file" ] && [ -f "$issue_file" ] && cp -f "$issue_file" "$sandbox_dir/.george/issues/" 2>/dev/null || true
+    [ -n "$inc_dir" ] && [ -d "$inc_dir" ] && cp -rf "$inc_dir" "$sandbox_dir/.george/telemetry/incidents/" 2>/dev/null || true
+
+    local rel_issue=""
+    [ -n "$issue_file" ] && rel_issue=".george/issues/$(basename "$issue_file")"
+    local rel_inc=""
+    [ -n "$inc_dir" ] && rel_inc=".george/telemetry/incidents/$(basename "$inc_dir")"
 
     export ACTIVE_TIER=2
     export LODGE_DIR="$sandbox_dir"
@@ -590,8 +613,9 @@ remediation_run() {
 
     local rem_success=1
     local rem_prompt="You are George in Sovereign Autonomous Remediation mode.
-Remediate the failure documented in issue: $issue_file
-Incident dossier: $inc_dir
+Remediate the failure documented in issue: $sandbox_dir/$rel_issue
+Workspace Issue File: $rel_issue
+Incident dossier: $sandbox_dir/$rel_inc
 Error Fingerprint: $fp
 
 SOVEREIGN REMEDIATION & ARCHITECTURAL INTEGRITY MANDATE:
@@ -715,6 +739,19 @@ ${diff_stat:-No diff stat available}
             mkdir -p "$archive_issues_dir" 2>/dev/null || true
             mv "$issue_file" "$archive_issues_dir/" 2>/dev/null || true
             ui_dim "Archived resolved issue: $issue_file -> $archive_issues_dir/"
+        fi
+
+        # Broadcast resolution to waiting parent tasks
+        if declare -f mqtt_publish &>/dev/null; then
+            local res_payload
+            res_payload=$(jq -n \
+                --arg tid "$task_id" \
+                --arg title "$title" \
+                --arg br "$branch_name" \
+                --arg pr "${pr_num:-}" \
+                --arg st "RESOLVED" \
+                '{ task_id: $tid, title: $title, branch: $br, pr: $pr, status: $st }' 2>/dev/null || echo "{\"task_id\":\"$task_id\",\"status\":\"RESOLVED\"}")
+            mqtt_publish "george/remediation/${task_id}/resolution" "$res_payload" >/dev/null 2>&1 || true
         fi
 
         # Notify operator of success
