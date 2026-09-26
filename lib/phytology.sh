@@ -17,7 +17,8 @@
 
 [ -n "${_LIB_PHYTOLOGY_LOADED:-}" ] && return 0; _LIB_PHYTOLOGY_LOADED=1
 
-LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+LODGE_DIR="${LODGE_DIR:-$(cd "${_SCRIPT_DIR}/.." 2>/dev/null && pwd || echo "$HOME/blue-lodge")}"
 GEORGE_DIR="${GEORGE_DIR:-${LODGE_DIR}/.george}"
 CAMBIUM_ROOT="${LODGE_DIR}/lib"
 FOLIAGE_ROOT="${GEORGE_DIR}/cron_jobs"
@@ -266,27 +267,51 @@ phytology_audit() {
             for ((i=0; i<${#issue_files[@]}; i++)); do
                 arr+=("{\"file\":\"${issue_files[i]}\",\"reason\":\"${issue_reasons[i]}\"}")
             done
-            issues_json=$(printf '%s\n' "${arr[@]}" | jq -s '.')
+            if command -v jq &>/dev/null; then
+                issues_json=$(printf '%s\n' "${arr[@]}" | jq -s '.')
+            else
+                local joined
+                joined=$(IFS=,; echo "${arr[*]}")
+                issues_json="[$joined]"
+            fi
         fi
 
-        jq -n \
-            --arg total "$total" \
-            --arg valid "$valid" \
-            --arg invalid "$invalid" \
-            --arg enabled "$enabled" \
-            --arg disabled "$disabled" \
-            --arg snapshots "$snap_count" \
-            --argjson issues "$issues_json" \
-            '{
-                status: (if ($invalid | tonumber) == 0 then "healthy" else "degraded" end),
-                total_foliage: ($total | tonumber),
-                valid_ast: ($valid | tonumber),
-                invalid_ast: ($invalid | tonumber),
-                enabled_foliage: ($enabled | tonumber),
-                disabled_foliage: ($disabled | tonumber),
-                snapshots_count: ($snapshots | tonumber),
-                issues: $issues
-            }'
+        local status_str="healthy"
+        [ "$invalid" -gt 0 ] && status_str="degraded"
+
+        if command -v jq &>/dev/null; then
+            jq -n \
+                --arg total "$total" \
+                --arg valid "$valid" \
+                --arg invalid "$invalid" \
+                --arg enabled "$enabled" \
+                --arg disabled "$disabled" \
+                --arg snapshots "$snap_count" \
+                --argjson issues "$issues_json" \
+                '{
+                    status: (if ($invalid | tonumber) == 0 then "healthy" else "degraded" end),
+                    total_foliage: ($total | tonumber),
+                    valid_ast: ($valid | tonumber),
+                    invalid_ast: ($invalid | tonumber),
+                    enabled_foliage: ($enabled | tonumber),
+                    disabled_foliage: ($disabled | tonumber),
+                    snapshots_count: ($snapshots | tonumber),
+                    issues: $issues
+                }'
+        else
+            cat <<EOF
+{
+  "status": "$status_str",
+  "total_foliage": $total,
+  "valid_ast": $valid,
+  "invalid_ast": $invalid,
+  "enabled_foliage": $enabled,
+  "disabled_foliage": $disabled,
+  "snapshots_count": $snap_count,
+  "issues": $issues_json
+}
+EOF
+        fi
     else
         echo "╔═══════════════════════════════════════════════════════════════╗"
         echo "║ 🌿 SOFTWARE PHYTOLOGY LIVING TISSUE AUDIT                     ║"

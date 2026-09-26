@@ -2,7 +2,8 @@
 # DESC: Software Phytology living tissue diagnostic, healing, and graft management
 # Usage: /phytology [status|audit|heal|rollback|prune|test] [target]
 
-LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
+_CMD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+LODGE_DIR="${LODGE_DIR:-$(cd "${_CMD_DIR}/.." 2>/dev/null && pwd || echo "$HOME/blue-lodge")}"
 source "$LODGE_DIR/lib/ui.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/phytology.sh" 2>/dev/null || true
 

@@ -33,6 +33,12 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Install Dependencies
+        run: |
+          if command -v apt-get &>/dev/null; then
+            apt-get update -qq && apt-get install -y -qq jq 2>/dev/null || true
+          fi
+
       - name: Run Software Phytology Test Suite
         run: |
           echo "Executing software-phytology test harness..."
