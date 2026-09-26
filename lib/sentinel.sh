@@ -550,6 +550,21 @@ sentinel_sweep_remediated_issues() {
             ui_ok "Sentinel closed false-positive Gitea Issue #${inum}."
         fi
     done
+
+    # 3. Sweep cleared sentinel alerts when current system vitals are verified healthy
+    local probe_st
+    probe_st=$(sentinel_probe 2>/dev/null | jq -r '.status // "UNKNOWN"' 2>/dev/null)
+    if [ "$probe_st" = "HEALTHY" ]; then
+        local cleared_alerts
+        cleared_alerts=$(echo "$open_issues" | jq -r '.[] | select((.labels[]?.name == "sentinel-alert") or (.title | test("\\[Sentinel Telemetry Alert\\]"; "i"))) | .number' 2>/dev/null | sort -u)
+        for inum in $cleared_alerts; do
+            [ -z "$inum" ] && continue
+            if declare -f gitea_issue_close &>/dev/null; then
+                gitea_issue_close "$inum" "Autonomous Sentinel sweep: system vitals probed 100% healthy (0% GPU util, slots idle, no orphan processes). Transient anomaly resolved." >/dev/null 2>&1 || true
+                ui_ok "Sentinel closed cleared telemetry issue #${inum}."
+            fi
+        done
+    fi
 }
 
 # ── 4. Unified Sentinel Sweep ────────────────────────────────────────

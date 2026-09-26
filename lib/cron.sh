@@ -258,11 +258,21 @@ cron_run_job() {
             ;;
         issue_sweep)
             declare -f alerts_sweep &>/dev/null && alerts_sweep || true
-            if declare -f sentinel_sweep_remediated_issues &>/dev/null; then
-                sentinel_sweep_remediated_issues || true
-            elif [ -f "$LODGE_DIR/lib/sentinel.sh" ]; then
+            if [ -f "$LODGE_DIR/lib/sentinel.sh" ]; then
                 source "$LODGE_DIR/lib/sentinel.sh" 2>/dev/null || true
                 declare -f sentinel_sweep_remediated_issues &>/dev/null && sentinel_sweep_remediated_issues || true
+            fi
+            if [ -f "$LODGE_DIR/lib/remediation.sh" ]; then
+                source "$LODGE_DIR/lib/remediation.sh" 2>/dev/null || true
+                if declare -f remediation_queue_next &>/dev/null && declare -f remediation_run &>/dev/null; then
+                    if ! (declare -f remediation_is_active &>/dev/null && remediation_is_active); then
+                        local next_rem
+                        next_rem=$(remediation_queue_next 2>/dev/null || true)
+                        if [ -n "$next_rem" ] && [ -f "$next_rem" ]; then
+                            remediation_run "" || true
+                        fi
+                    fi
+                fi
             fi
             res=$?
             ;;
