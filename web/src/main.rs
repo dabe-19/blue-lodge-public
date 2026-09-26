@@ -1145,7 +1145,7 @@ async fn generate_cron_job(
             "sandboxes_prune".to_string(),
             3600u64,
             "Prune transient sandboxes and stale web sessions older than 2 days".to_string(),
-            "find .sandboxes -maxdepth 1 -name \"web_session*\" -mtime +2 -exec rm -rf {} +\ndf -h /home/wsl-ops/blue-lodge | tail -1".to_string(),
+            "find .sandboxes -maxdepth 1 -name \"web_session*\" -mtime +2 -exec rm -rf {} +\ndf -h . | tail -1".to_string(),
         )
     } else if p_lower.contains("health") || p_lower.contains("ping") || p_lower.contains("vitals") {
         (
@@ -3324,12 +3324,12 @@ async fn resolve_script_deps(
 
             // Normalize path: handle "$LODGE_DIR/", "${LODGE_DIR}/", "${LODGE_DIR:-.}/", etc.
             let mut resolved = clean_token.to_string();
+            let lodge_str = format!("{}/", state.lodge_dir.to_string_lossy().trim_end_matches('/'));
             let prefixes_to_strip = [
                 "$LODGE_DIR/",
                 "${LODGE_DIR}/",
                 "${LODGE_DIR:-.}/",
-                "$HOME/blue-lodge/",
-                "/home/wsl-ops/blue-lodge/",
+                lodge_str.as_str(),
                 "./",
             ];
             for p in prefixes_to_strip {

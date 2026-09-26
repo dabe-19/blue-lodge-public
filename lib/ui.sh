@@ -713,6 +713,12 @@ ui_resolve_path() {
 
         # 4. Inside a sandbox
         if [ "$in_sandbox" -eq 1 ]; then
+            local _primary_root="${LODGE_ROOT:-}"
+            if [ -z "$_primary_root" ] && [[ "$workdir" == *"/.sandboxes/"* ]]; then
+                _primary_root="${workdir%%/.sandboxes/*}"
+            fi
+            [ -z "$_primary_root" ] && _primary_root="${LODGE_DIR:-$(pwd)}"
+
             if [ "$is_write" -eq 1 ]; then
                 echo "$workdir/$filepath"
                 return 0
@@ -722,11 +728,8 @@ ui_resolve_path() {
             elif [ -e "$lodge_dir/$filepath" ]; then
                 echo "$lodge_dir/$filepath"
                 return 0
-            elif [ -n "${LODGE_ROOT:-}" ] && [ -e "$LODGE_ROOT/$filepath" ]; then
-                echo "$LODGE_ROOT/$filepath"
-                return 0
-            elif [ -e "$HOME/blue-lodge/$filepath" ]; then
-                echo "$HOME/blue-lodge/$filepath"
+            elif [ -e "$_primary_root/$filepath" ]; then
+                echo "$_primary_root/$filepath"
                 return 0
             fi
             echo "$workdir/$filepath"
