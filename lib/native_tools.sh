@@ -2086,11 +2086,15 @@ native_tools_dispatch() {
             bash_exec)
                 local cmd
                 cmd=$(echo "$args_json" | jq -r '.command // empty')
+                cmd="${cmd%%</parameter*}"
                 cmd="${cmd%%</invoke*}"
                 cmd="${cmd%%</output*}"
                 cmd="${cmd%%<tool_call*}"
                 cmd="${cmd%%<function*}"
                 cmd=$(echo "$cmd" | sed -E 's#</?(invoke|output|parameter|function|tool_call)[^>]*>##g' | sed 's/[[:space:]]*$//; s/^[[:space:]]*//')
+                # Auto-normalize common shell invocation quirks
+                cmd=$(echo "$cmd" | sed -E 's/head -n([[:space:]]*(\||\&|\;|$))/head -n 10\1/g')
+                cmd=$(echo "$cmd" | sed -E 's/git rev-parse ([^ ]+) --short/git rev-parse --short \1/g')
                 output=$(commands_dispatch "/bash $cmd" "$workdir" 2>&1)
                 exit_code=$?
                 # SCRIPT_EXIT / Traceback error exit code correction
@@ -3306,9 +3310,9 @@ $_ts_v_err
     # Clean ANSI escape sequences from output
     output=$(printf '%s\n' "$output" | sed -r 's/\x1B\[[0-9;]*[a-zA-Z]//g')
 
-    # Truncate if excessively large to protect context budget (clamp to 4000 chars)
-    if [ ${#output} -gt 4000 ]; then
-        output="${output:0:4000}\n... [output truncated (${#output} chars total)]"
+    # Truncate if excessively large to protect context budget (clamp to 24000 chars)
+    if [ ${#output} -gt 24000 ]; then
+        output="${output:0:24000}\n... [output truncated (${#output} chars total)]"
     fi
 
     # Anomaly telemetry tap for native tool failures
