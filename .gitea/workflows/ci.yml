@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - develop
+      - 'feature/**'
+      - 'fix/**'
   pull_request:
     branches:
       - develop
@@ -18,11 +20,30 @@ jobs:
 
       - name: Verify Bash Syntax
         run: |
-          echo "Verifying shell syntax across lib/ and commands/..."
-          for f in lib/*.sh commands/*.sh; do
+          echo "Verifying shell syntax across lib/, commands/, and tests/..."
+          for f in lib/*.sh commands/*.sh tests/*.sh; do
             [ -f "$f" ] && bash -n "$f"
           done
           echo "All shell scripts passed syntax inspection."
+
+  phytology-verification:
+    name: Software Phytology & Living Tissue Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Software Phytology Test Suite
+        run: |
+          echo "Executing software-phytology test harness..."
+          bash tests/test_phytology.sh
+          echo "Phytology living tissue tests completed successfully."
+
+      - name: Validate Living Tissue Audit
+        run: |
+          echo "Running living tissue diagnostic audit..."
+          bash -c "source lib/phytology.sh && phytology_audit"
+          echo "All monitored foliage verified AST healthy."
 
   gitflow-guard:
     name: GitFlow Branch Protection Audit
@@ -32,8 +53,9 @@ jobs:
         run: |
           echo "Auditing branch protection rules..."
           echo "Target branch: ${{ github.base_ref || github.ref }}"
-          if [ "${{ github.base_ref }}" = "main" ]; then
-            echo "ERROR: Direct PRs to main are prohibited by GitFlow policy!"
+          if [ "${{ github.base_ref }}" = "main" ] || [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "ERROR: Direct pushes or PRs to main are prohibited by GitFlow policy!"
             exit 1
           fi
           echo "Branch protection policy satisfied."
+

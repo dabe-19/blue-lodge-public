@@ -78,4 +78,70 @@ it "disables failing foliage jobs" && {
     rm -f "$script"
 }
 
+describe "Living tissue audit"
+it "audits healthy foliage and outputs valid telemetry" && {
+    out=$(phytology_audit 2>&1)
+    assert_contains "$out" "SOFTWARE PHYTOLOGY LIVING TISSUE AUDIT"
+    assert_contains "$out" "AST Valid Tissue"
+
+    json_out=$(phytology_audit --json 2>&1)
+    assert_contains "$json_out" "\"status\": \"healthy\""
+    assert_contains "$json_out" "\"invalid_ast\": 0"
+}
+
+it "detects corrupted foliage and flags non-zero exit" && {
+    corrupted="$FOLIAGE_ROOT/corrupted_leaf_$$.sh"
+    echo "if then fi invalid bash syntax" > "$corrupted"
+
+    rc=0
+    out=$(phytology_audit 2>&1) || rc=$?
+    assert_fail "$rc" "audit should fail when corrupted foliage exists"
+    assert_contains "$out" "CORRUPTED LIVING TISSUE DETECTED"
+    assert_contains "$out" "corrupted_leaf_$$"
+
+    rm -f "$corrupted"
+}
+
+describe "Autonomic self-healing"
+it "auto-rolls back corrupted foliage when genetic snapshot exists" && {
+    heal_target="$FOLIAGE_ROOT/heal_leaf_$$.sh"
+    echo -e "#!/bin/bash\n# DESC: Valid heal test\necho 'valid before corruption'" > "$heal_target"
+    phytology_snapshot "$heal_target" >/dev/null
+
+    # Now corrupt it
+    echo -e "if then fi corrupted syntax" > "$heal_target"
+
+    heal_out=$(phytology_heal 2>&1)
+    assert_contains "$heal_out" "HEAL_RESTORE"
+
+    restored_content=$(cat "$heal_target")
+    assert_contains "$restored_content" "valid before corruption"
+
+    rm -f "$heal_target"
+}
+
+it "auto-prunes corrupted foliage when no snapshot exists" && {
+    unrecoverable="$FOLIAGE_ROOT/unrecoverable_$$.sh"
+    echo -e "#!/bin/bash\nif then fi unrecoverable syntax" > "$unrecoverable"
+
+    heal_out=$(phytology_heal 2>&1)
+    assert_contains "$heal_out" "HEAL_PRUNED"
+    pruned_content=$(cat "$unrecoverable")
+    assert_contains "$pruned_content" "# ENABLED: 0"
+
+    rm -f "$unrecoverable"
+}
+
+describe "Phytology slash command"
+it "dispatches /phytology status, audit, and test correctly" && {
+    source "$LODGE_DIR/lib/commands.sh"
+    
+    status_out=$(commands_dispatch "/phytology status" 2>&1)
+    assert_contains "$status_out" "GEORGE LIVING TISSUE & PHYTOLOGY MANIFEST"
+
+    audit_out=$(commands_dispatch "/phytology audit" 2>&1)
+    assert_contains "$audit_out" "SOFTWARE PHYTOLOGY LIVING TISSUE AUDIT"
+}
+
 test_end
+
