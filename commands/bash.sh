@@ -14,9 +14,9 @@ cmd_bash() {
         return 1
     fi
 
-    # Normalize hallucinated directory paths
-    cmd_str=$(echo "$cmd_str" | sed -E 's#cd /home/wsl-ops/blue[ _-][a-zA-Z0-9_-]*#cd /home/wsl-ops/blue-lodge#g')
-    cmd_str=$(echo "$cmd_str" | sed -E 's#/home/wsl-ops/blue[ _-][a-zA-Z0-9_-]*#/home/wsl-ops/blue-lodge#g')
+    # Normalize hallucinated directory paths dynamically (portable across systems)
+    local target_ws="${LODGE_DIR:-$HOME/blue-lodge}"
+    cmd_str=$(echo "$cmd_str" | sed -E "s#(cd[[:space:]]+)?(/home/[^/]+|/Users/[^/]+|~|\$HOME)/blue[ _-][a-zA-Z0-9_-]*#\1${target_ws}#g")
 
     (
         cd "$workdir" || exit 1
