@@ -81,7 +81,7 @@ describe "mqtt_available"
 
   it "returns false when mosquitto tools are missing" && {
     _mqa_old_path="$PATH"
-    PATH="/usr/bin:/bin"
+    PATH="/dev/null"
     mqtt_available
     _mqa_rc=$?
     PATH="$_mqa_old_path"
@@ -144,7 +144,8 @@ describe "_mqtt_build_args"
 
   it "includes host, port, client ID" && {
     _mqtt_test_setup
-    _mba_out=$(_mqtt_build_args)
+    _mqtt_build_args
+    _mba_out="${_MQTT_ARGS[*]}"
     assert_contains "$_mba_out" "test.broker.io"
     assert_contains "$_mba_out" "1883"
     assert_contains "$_mba_out" "george-test"
@@ -154,7 +155,8 @@ describe "_mqtt_build_args"
   it "uses v5 protocol flag" && {
     _mqtt_test_setup
     MQTT_PROTOCOL="5"
-    _mba_out=$(_mqtt_build_args)
+    _mqtt_build_args
+    _mba_out="${_MQTT_ARGS[*]}"
     assert_contains "$_mba_out" "5"
     _mqtt_test_teardown
   }
@@ -162,7 +164,8 @@ describe "_mqtt_build_args"
   it "uses v311 protocol flag" && {
     _mqtt_test_setup
     MQTT_PROTOCOL="311"
-    _mba_out=$(_mqtt_build_args)
+    _mqtt_build_args
+    _mba_out="${_MQTT_ARGS[*]}"
     assert_contains "$_mba_out" "311"
     _mqtt_test_teardown
   }
@@ -171,7 +174,8 @@ describe "_mqtt_build_args"
     _mqtt_test_setup
     MQTT_USERNAME="testuser"
     MQTT_PASSWORD="testpass"
-    _mba_out=$(_mqtt_build_args)
+    _mqtt_build_args
+    _mba_out="${_MQTT_ARGS[*]}"
     assert_contains "$_mba_out" "testuser"
     assert_contains "$_mba_out" "testpass"
     unset MQTT_USERNAME MQTT_PASSWORD
@@ -183,7 +187,8 @@ describe "_mqtt_build_args"
     MQTT_TLS="1"
     MQTT_CAFILE="$_MQTT_TEST_DIR/ca.pem"
     touch "$MQTT_CAFILE"
-    _mba_out=$(_mqtt_build_args)
+    _mqtt_build_args
+    _mba_out="${_MQTT_ARGS[*]}"
     assert_contains "$_mba_out" "ca.pem"
     _mqtt_test_teardown
   }
@@ -192,7 +197,8 @@ describe "_mqtt_build_args"
     _mqtt_test_setup
     MQTT_TLS="0"
     MQTT_CAFILE="/some/ca.pem"
-    _mba_out=$(_mqtt_build_args)
+    _mqtt_build_args
+    _mba_out="${_MQTT_ARGS[*]}"
     assert_not_contains "$_mba_out" "cafile"
     _mqtt_test_teardown
   }

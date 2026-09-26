@@ -142,6 +142,15 @@ services:
     depends_on:
       - george-gitea
 
+  # ── Sovereign MQTT Broker (Task-to-Task & Swarm Signaling) ────
+  george-mosquitto:
+    image: eclipse-mosquitto:latest
+    container_name: george-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    command: ["mosquitto", "-c", "/mosquitto-no-auth.conf"]
+
 networks:
   default:
     name: george-sovereign-net
