@@ -917,15 +917,17 @@ Execute the Metacognitive Pathfinding Protocol:
 
         # If model provided answer directly without tool calls
         if [ -n "$raw_content" ]; then
-            # Premature Exit Guard: In multi-turn tasks on early turns where output
-            # contains forward-looking planning text rather than a final deliverable, advance to tool execution.
+            # Premature Exit Guard: In multi-turn tasks where output
+            # contains forward-looking planning text or preambles rather than a final deliverable, advance to tool execution.
             local is_premature_plan=0
-            if [ "$turn" -lt 5 ] && [ "$max_turns" -gt 1 ]; then
-                if [ "${AGENT_SOVEREIGN_REMEDIATION:-0}" -eq 1 ]; then
+            if [ "$max_turns" -gt 1 ]; then
+                if [ "${AGENT_SOVEREIGN_REMEDIATION:-0}" -eq 1 ] && [ "$turn" -lt 5 ]; then
                     is_premature_plan=1
-                elif echo "$raw_content" | grep -qiE "(I will|I'll|I plan to|Let's outline|Step 1|First step|I need to check|I need to inspect|Let's begin by|Before making changes|I will pull|I'll pull|Let me fetch|I am going to|I'm going to|I will search|I'll search|Let me pull|I'll gather|I will gather|I'll start by|I will start by|Let me survey|Let me inspect|Let me explore|Let me examine|I will examine|I'll look at|ground this in|survey what is)"; then
+                elif echo "$raw_content" | grep -qiE "(I will|I'll|I plan to|Let's outline|Step 1|First step|I need to check|I need to inspect|Let's begin by|Before making changes|I will pull|I'll pull|Let me fetch|I am going to|I'm going to|I will search|I'll search|Let me pull|I'll gather|I will gather|I'll start by|I will start by|Let me survey|Let me inspect|Let me explore|Let me examine|I will examine|I'll look at|ground this in|survey what is|Let me now|Let me proceed|I will now|Next step|Proceeding to|I will execute|Let me execute)"; then
                     is_premature_plan=1
-                elif [ ${#raw_content} -lt 450 ] && echo "$raw_content" | grep -qiE "\b(will pull|will fetch|will search|will look up|will inspect|will check|will investigate|going to search|going to pull|going to fetch|going to ground)\b"; then
+                elif echo "$raw_content" | grep -qE ":[[:space:]]*$"; then
+                    is_premature_plan=1
+                elif [ ${#raw_content} -lt 450 ] && echo "$raw_content" | grep -qiE "\b(will pull|will fetch|will search|will look up|will inspect|will check|will investigate|going to search|going to pull|going to fetch|going to ground|execute real tool|call tools|invoke tools|execute tool)\b"; then
                     is_premature_plan=1
                 fi
             fi
@@ -951,16 +953,16 @@ Execute the Metacognitive Pathfinding Protocol:
 
             # Zero-Tool Implementation Verification Guard for Code / Engineering Tasks:
             # If the task requires building, coding, testing, refactoring, extending, or modifying,
-            # and on early turns (turn <= 4) no implementation/execution tools (file_write, symbol_patch, bash_exec, etc.)
+            # and no implementation/execution tools (file_write, file_edit, symbol_patch, git_commit, etc.)
             # have completed, prevent premature declaration of task completion and force tool execution.
             local is_unverified_code=0
-            if [ "$turn" -le 4 ] && [ "$max_turns" -gt 1 ]; then
+            if [ "$max_turns" -gt 1 ]; then
                 local is_code_task=0
-                if echo "${goal,,}" | grep -qiE '\b(extend|implement|develop|fix|refactor|test|patch|code|write|create|build|modify|phytology|protocol|feature|graft|audit|remediat)\b'; then
+                if echo "${goal,,}" | grep -qiE '\b(extend|implement|develop|fix|refactor|test|patch|code|write|create|build|modify|phytology|protocol|feature|graft|audit|remediat|branch|pr|pull request|commit)\b'; then
                     is_code_task=1
                 fi
                 if [ "$is_code_task" -eq 1 ]; then
-                    if [ ! -f "$history_file" ] || ! grep -qE "(Tool Call: file_write|Tool Call: symbol_patch|Tool Call: bash_exec|Tool Call: git_|Action: .*git|Action: .*test|Action: .*bash)" "$history_file"; then
+                    if [ ! -f "$history_file" ] || ! grep -qE "(Tool Call: file_write|Tool Call: file_edit|Tool Call: symbol_patch|Tool Call: git_commit|Tool Call: git_push|Tool Call: gitea_pr|Tool Call: gitea_issue_close|Action: .*commit|Action: .*push|git checkout -b|git commit|git branch feature)" "$history_file"; then
                         is_unverified_code=1
                     fi
                 fi
