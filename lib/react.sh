@@ -774,6 +774,7 @@ def sanitize_one(raw):
         c = re.split(r"</?(?:parameter|function|tool_call|invoke|output)[^>]*>", c)[0].strip()
         c = re.sub(r"head -n(\s*(\||&|;|$))", r"head -n 10\1", c)
         c = re.sub(r"git rev-parse\s+([^\s]+)\s+--short", r"git rev-parse --short \1", c)
+        c = re.sub(r"\bgit checkout -b\b", "git checkout -B", c)
         c = re.sub(r"(?:/home/[^/]+|/Users/[^/]+|~|\$HOME)/blue[ _-][a-zA-Z0-9_-]+", target_ws, c)
         extracted["command"] = c
 
