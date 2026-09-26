@@ -344,6 +344,7 @@ react_run() {
     local running_tokens=0
     local turn=1
     local consecutive_empty_turns=0
+    local consecutive_premature_plans=0
     local thrashing_target_streak=0
     local last_invoked_tool=""
 
@@ -890,6 +891,7 @@ Execute the Metacognitive Pathfinding Protocol:
             fi
 
             consecutive_empty_turns=0
+            consecutive_premature_plans=0
             turn=$((turn + 1))
             continue
         fi
@@ -1035,8 +1037,14 @@ Execute the Metacognitive Pathfinding Protocol:
             fi
 
             if [ "$is_premature_plan" -eq 1 ]; then
+                consecutive_premature_plans=$((consecutive_premature_plans + 1))
                 jq --arg ans "$raw_content" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
-                local adv="[SYSTEM ADVISORY: Plan acknowledged. Proceed immediately to execute your plan by calling the required native tools (e.g. web_search, web_fetch, file_read, code_outline, code_symbol_get, file_grep, dir_list, bash_exec). Emit conversational markdown ONLY when all tool actions are complete and the deliverable is 100% finished.]"
+                local adv
+                if [ "$consecutive_premature_plans" -ge 2 ]; then
+                    adv="[SYSTEM ADVISORY: Execute your tool call now. Invoke bash_exec(command=\"...\") or file_read(path=\"...\") directly. Do not output text preambles or planning sentences.]"
+                else
+                    adv="[SYSTEM ADVISORY: Plan acknowledged. Proceed immediately to execute your plan by calling the required native tools (e.g. bash_exec, file_read, code_outline, code_symbol_get, file_grep, dir_list). Emit conversational markdown ONLY when all tool actions are complete and the deliverable is 100% finished.]"
+                fi
                 jq --arg p "$adv" '. += [{"role": "user", "content": $p}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
                 consecutive_empty_turns=0
                 turn=$((turn + 1))
