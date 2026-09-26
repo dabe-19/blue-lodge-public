@@ -2035,11 +2035,16 @@ native_tools_dispatch() {
         args_json=$(printf '%s\n' "$args_json" | jq '
             walk(
                 if type == "string" then
-                    gsub("</?(parameter|function|tool_call)[^>]*>"; "") | sub("^[[:space:]]+|[[:space:]]+$"; "")
+                    gsub("</?(parameter|function|tool_call)[^>]*>"; "") | sub("^[[:space:]]+"; "") | sub("[[:space:]]+$"; "")
                 else
                     .
                 end
-            )
+            ) |
+            if (.path? and (.path | type == "string")) then
+                .path = (.path | split("\n")[0] | sub("^[[:space:]]+"; "") | sub("[[:space:]]+$"; ""))
+            else
+                .
+            end
         ' 2>/dev/null || echo "$args_json")
     fi
 
