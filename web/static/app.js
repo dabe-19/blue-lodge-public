@@ -649,8 +649,46 @@
     renderUserBubble(text, true);
 
     const isCommand = text.startsWith('/');
+    const isTaskMode = activeChatMode === 'agentic' || activeChatMode === 'plan-task' || isCommand;
+
     let liveBubble = null;
-    if (!isCommand) {
+    let taskCard = null;
+    let es = null;
+    const taskId = (activeChatMode === 'plan-task' ? 'plan_' : (activeChatMode === 'agentic' ? 'agentic_' : 'cmd_')) + Math.floor(Date.now() / 1000);
+
+    if (isTaskMode) {
+      const badge = activeChatMode === 'plan-task' ? 'PLANNING TASK' : (activeChatMode === 'agentic' ? 'AGENTIC TASK' : 'BLUEPRINT');
+      const initialPhase = activeChatMode === 'plan-task' ? 'PLANNING' : 'RUNNING';
+      taskCard = renderBlueprintCard(
+        text,
+        `[TASK INITIALIZED]: ${text}\n[MODE]: ${activeChatMode.toUpperCase()}\n[STATUS]: Generating reasoning & internal monologue...\n`,
+        taskId,
+        true,
+        null,
+        badge,
+        initialPhase
+      );
+
+      // Trigger heartbeat so task pill appears in autonomic task rail
+      setTimeout(pollHeartbeat, 250);
+
+      // Connect live SSE trajectory stream
+      try {
+        es = new EventSource(`/api/stream/task/${taskId}`);
+        es.addEventListener('log', (e) => {
+          if (e.data && taskCard) taskCard.appendLog(e.data);
+        });
+        es.addEventListener('phase', (e) => {
+          if (e.data && taskCard) taskCard.updateDial(e.data.toUpperCase());
+        });
+        es.addEventListener('done', () => {
+          if (es) { es.close(); es = null; }
+          if (taskCard) taskCard.updateDial('COMPLETED');
+        });
+      } catch (e) {
+        console.warn('Task stream error:', e);
+      }
+    } else {
       liveBubble = renderAssistantBubble('George is reflecting...', true);
     }
 
@@ -658,17 +696,20 @@
       const resp = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: text, mode: activeChatMode })
+        body: JSON.stringify({ prompt: text, mode: activeChatMode, task_id: taskId })
       });
+
+      if (es) { es.close(); es = null; }
 
       if (resp.ok) {
         const data = await resp.json();
-        if (data.type === 'command_blueprint' || data.type === 'agentic' || data.type === 'plan-task') {
-          if (liveBubble && liveBubble.parentElement) {
-            liveBubble.parentElement.remove();
+        if (isTaskMode) {
+          if (taskCard) {
+            taskCard.updateDial('COMPLETED');
+            if (data.reply && (!taskCard.getLog() || taskCard.getLog().length < 80)) {
+              taskCard.setLog(data.reply);
+            }
           }
-          const badge = data.type === 'agentic' ? 'AGENTIC TASK' : (data.type === 'plan-task' ? 'PLANNING TASK' : 'BLUEPRINT');
-          renderBlueprintCard(text, data.reply, data.session_id || 'task', true, null, badge, 'COMPLETED');
         } else {
           if (liveBubble) {
             streamTextIntoBubble(liveBubble, data.reply || 'Task complete.', currentPacing);
@@ -679,10 +720,21 @@
         }
       } else {
         const errText = await resp.text();
-        if (liveBubble) liveBubble.textContent = `Error: ${errText}`;
+        if (taskCard) {
+          taskCard.updateDial('ERROR');
+          taskCard.appendLog(`\n[ERROR]: ${errText}`);
+        } else if (liveBubble) {
+          liveBubble.textContent = `Error: ${errText}`;
+        }
       }
     } catch (err) {
-      if (liveBubble) liveBubble.textContent = `Network error: ${err.message}`;
+      if (es) { es.close(); es = null; }
+      if (taskCard) {
+        taskCard.updateDial('ERROR');
+        taskCard.appendLog(`\n[Network Error]: ${err.message}`);
+      } else if (liveBubble) {
+        liveBubble.textContent = `Network error: ${err.message}`;
+      }
     }
   }
 

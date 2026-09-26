@@ -1270,6 +1270,94 @@ _NATIVE_CORE_TOOLS='[
   {
     "type": "function",
     "function": {
+      "name": "gitea_issue_create",
+      "description": "Create a new issue on sovereign Gitea to track bugs, features, or remediation tasks.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "Issue title" },
+          "body": { "type": "string", "description": "Detailed markdown description of the issue or feature" },
+          "labels": { "type": "string", "description": "Comma-separated list of labels (e.g. 'bug,sentinel-alert' or 'feature')" }
+        },
+        "required": ["title"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_issue_list",
+      "description": "List issues from sovereign Gitea filtered by state.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "state": { "type": "string", "description": "Filter by state: open, closed, or all", "enum": ["open", "closed", "all"] }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_issue_get",
+      "description": "Retrieve full details, description, and comments of a specific Gitea issue.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": { "type": "integer", "description": "Issue number" }
+        },
+        "required": ["index"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_issue_comment",
+      "description": "Post a status update or comment to an existing Gitea issue.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": { "type": "integer", "description": "Issue number" },
+          "body": { "type": "string", "description": "Markdown comment text" }
+        },
+        "required": ["index", "body"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_issue_close",
+      "description": "Close a resolved Gitea issue with a closing explanation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": { "type": "integer", "description": "Issue number" },
+          "comment": { "type": "string", "description": "Closing resolution comment" }
+        },
+        "required": ["index"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_branch_create",
+      "description": "Create a new GitFlow branch (feature/*, fix/*) on sovereign Gitea from develop or a base branch.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "branch_name": { "type": "string", "description": "New branch name (e.g. feature/my-feature or fix/remediation-123)" },
+          "base": { "type": "string", "description": "Base branch to branch off of (default: develop)" }
+        },
+        "required": ["branch_name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "pr_audit",
       "description": "Perform Three Degrees audit on candidate PR in an isolated sandbox worktree.",
       "parameters": {
@@ -1522,7 +1610,7 @@ native_tools_bundle_tools() {
             echo "project_build,project_test,project_fix,code_outline,code_symbol_get,code_validate,code_symbol_read,code_symbol_patch"
             ;;
         +git|git)
-            echo "git_commit,git_push,gitea_pr_create,pr_audit,git_clone"
+            echo "git_commit,git_push,gitea_branch_create,gitea_issue_create,gitea_issue_list,gitea_issue_get,gitea_issue_close,gitea_issue_comment,gitea_pr_create,gitea_pr_list,gitea_pr_merge,pr_audit,git_clone"
             ;;
         +vision|vision)
             echo "vision_analyze,file_download"
@@ -1696,7 +1784,7 @@ native_tools_domain_tags() {
         vision_analyze) echo "vision image photo diagram figure chart architecture visual inspect picture" ;;
         file_download) echo "download file curl wget fetch binary pdf image raw" ;;
         git_commit|git_push|git_clone) echo "git commit push clone repo branch code vcs version control" ;;
-        gitea_pr_create|pr_audit) echo "pr pull request merge gitea review code audit" ;;
+        gitea_pr_create|gitea_pr_list|gitea_pr_merge|gitea_issue_create|gitea_issue_list|gitea_issue_get|gitea_issue_close|gitea_issue_comment|gitea_branch_create|pr_audit) echo "pr pull request merge gitea issue issues bug fix branch review code audit" ;;
         social_post) echo "social post broadcast x twitter mastodon bluesky thread status publish tweet" ;;
         discord_send|discord_dm|discord_send_file) echo "discord channel message alert notification chat send dm webhook file image upload attachment" ;;
         telegram_send) echo "telegram chat message alert notification channel send" ;;
@@ -1942,6 +2030,19 @@ native_tools_dispatch() {
     local output=""
     local exit_code=0
 
+    # Clean up any trailing LLM hallucinations (e.g. </parameter>, </function>, </tool_call>) from tool args
+    if [ -n "$args_json" ] && [ "$args_json" != "null" ]; then
+        args_json=$(printf '%s\n' "$args_json" | jq '
+            walk(
+                if type == "string" then
+                    sub("</?(parameter|function|tool_call)[^>]*>.*$"; "") | sub("^[[:space:]]+|[[:space:]]+$"; "")
+                else
+                    .
+                end
+            )
+        ' 2>/dev/null || echo "$args_json")
+    fi
+
     # 1. Check if name is an active MCP tool directly
     local handled_by_mcp=0
     if declare -f mcp_enabled &>/dev/null && mcp_enabled && declare -f mcp_running_servers &>/dev/null; then
@@ -2000,7 +2101,7 @@ native_tools_dispatch() {
                 ;;
             file_read)
                 local p s m
-                p=$(echo "$args_json" | jq -r '.path // empty')
+                p=$(echo "$args_json" | jq -r '.path // empty' | sed -E 's#</?(parameter|function|tool_call)[^>]*>.*$##' | sed 's/[[:space:]]*$//; s/^[[:space:]]*//')
                 s=$(echo "$args_json" | jq -r '.start_line // 1')
                 m=$(echo "$args_json" | jq -r '.max_lines // 100')
                 # Enforce safe bounds (1-200 lines max per read to protect context limits)
@@ -2975,6 +3076,47 @@ $_ts_v_err
                 idx=$(echo "$args_json" | jq -r '.index // empty')
                 strat=$(echo "$args_json" | jq -r '.strategy // "merge"')
                 output=$(gitea_pr_merge "$idx" "$strat" 2>&1)
+                exit_code=$?
+                ;;
+            gitea_issue_create)
+                local tt bd lbl
+                tt=$(echo "$args_json" | jq -r '.title // empty')
+                bd=$(echo "$args_json" | jq -r '.body // ""')
+                lbl=$(echo "$args_json" | jq -r '.labels // ""')
+                output=$(gitea_issue_create "$tt" "$bd" "$lbl" 2>&1)
+                exit_code=$?
+                ;;
+            gitea_issue_list)
+                local st
+                st=$(echo "$args_json" | jq -r '.state // "open"')
+                output=$(gitea_issue_list "$st" "json" 2>&1)
+                exit_code=$?
+                ;;
+            gitea_issue_get)
+                local idx
+                idx=$(echo "$args_json" | jq -r '.index // empty')
+                output=$(gitea_issue_get "$idx" 2>&1)
+                exit_code=$?
+                ;;
+            gitea_issue_comment)
+                local idx bd
+                idx=$(echo "$args_json" | jq -r '.index // empty')
+                bd=$(echo "$args_json" | jq -r '.body // empty')
+                output=$(gitea_issue_comment "$idx" "$bd" 2>&1)
+                exit_code=$?
+                ;;
+            gitea_issue_close)
+                local idx cmt
+                idx=$(echo "$args_json" | jq -r '.index // empty')
+                cmt=$(echo "$args_json" | jq -r '.comment // ""')
+                output=$(gitea_issue_close "$idx" "$cmt" 2>&1)
+                exit_code=$?
+                ;;
+            gitea_branch_create)
+                local br bs
+                br=$(echo "$args_json" | jq -r '.branch_name // empty')
+                bs=$(echo "$args_json" | jq -r '.base // "develop"')
+                output=$(gitea_branch_create "$br" "$bs" 2>&1)
                 exit_code=$?
                 ;;
             pr_audit)

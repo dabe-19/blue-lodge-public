@@ -1506,8 +1506,96 @@ struct ChatPrompt {
     message: Option<String>,
     command: Option<String>,
     session_id: Option<String>,
+    task_id: Option<String>,
     mode: Option<String>,
     max_tokens: Option<u32>,
+}
+
+async fn run_lodge_task_streaming(
+    lodge_bin: PathBuf,
+    lodge_dir: PathBuf,
+    cmd_args: Vec<String>,
+    sandbox_dir: PathBuf,
+) -> String {
+    use tokio::fs::OpenOptions;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    let traj_file = sandbox_dir.join("trajectory.log");
+    let phase_file = sandbox_dir.join(".phase");
+
+    let mut cmd = tokio::process::Command::new(lodge_bin);
+    cmd.args(&cmd_args)
+        .current_dir(lodge_dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let err_msg = format!("Failed to spawn lodge: {}", e);
+            let _ = tokio::fs::write(&traj_file, format!("\n[ERROR]: {}\n", err_msg)).await;
+            return err_msg;
+        }
+    };
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let traj_file_out = traj_file.clone();
+    let phase_file_out = phase_file.clone();
+    let stdout_handle = tokio::spawn(async move {
+        let mut out_text = String::new();
+        if let Some(stdout) = stdout {
+            let mut reader = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                out_text.push_str(&line);
+                out_text.push('\n');
+
+                if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&traj_file_out).await {
+                    let _ = f.write_all(format!("{}\n", line).as_bytes()).await;
+                }
+
+                let trimmed = line.trim();
+                if trimmed.starts_with("Tool Call:") || trimmed.starts_with("Native Tool Call:") {
+                    let tool_name = trimmed.split_whitespace().nth(2).or_else(|| trimmed.split_whitespace().nth(1)).unwrap_or("tool");
+                    let _ = tokio::fs::write(&phase_file_out, format!("Tool: {}", tool_name)).await;
+                } else if trimmed.starts_with("[thought]") || trimmed.starts_with("Thought:") {
+                    let _ = tokio::fs::write(&phase_file_out, "Reasoning & Monologue").await;
+                } else if trimmed.starts_with("Executing Workflow:") {
+                    let _ = tokio::fs::write(&phase_file_out, "Executing Workflow").await;
+                }
+            }
+        }
+        out_text
+    });
+
+    let traj_file_err = traj_file.clone();
+    let stderr_handle = tokio::spawn(async move {
+        let mut err_text = String::new();
+        if let Some(stderr) = stderr {
+            let mut reader = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                err_text.push_str(&line);
+                err_text.push('\n');
+                if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&traj_file_err).await {
+                    let _ = f.write_all(format!("{}\n", line).as_bytes()).await;
+                }
+            }
+        }
+        err_text
+    });
+
+    let _ = child.wait().await;
+    let stdout_res = stdout_handle.await.unwrap_or_default();
+    let stderr_res = stderr_handle.await.unwrap_or_default();
+
+    let _ = tokio::fs::write(phase_file, "Completed").await;
+
+    if !stdout_res.is_empty() {
+        stdout_res
+    } else {
+        stderr_res
+    }
 }
 
 async fn post_chat(
@@ -1531,6 +1619,16 @@ async fn post_chat(
         return Json(json!({ "status": "error", "error": "Empty prompt" }));
     }
 
+    let task_id = payload.task_id.unwrap_or_else(|| {
+        if mode == "plan-task" {
+            format!("plan_{}", chrono_epoch_secs())
+        } else if mode == "agentic" {
+            format!("agentic_{}", chrono_epoch_secs())
+        } else {
+            format!("cmd_{}", chrono_epoch_secs())
+        }
+    });
+
     // Record user message to session ledger with unique ID
     let user_msg_id = format!("u_{}", chrono_epoch_secs());
     let user_msg = json!({
@@ -1538,31 +1636,29 @@ async fn post_chat(
         "role": "user",
         "content": raw_cmd,
         "mode": mode,
+        "task_id": task_id.clone(),
         "timestamp": chrono_utc_now(),
     });
     append_session_message(&state.george_dir, &user_msg).await;
 
-    // Check if it's an explicit slash command
-    if raw_cmd.starts_with('/') {
+    // Check if it's an explicit slash command (unless in plan-task mode)
+    if raw_cmd.starts_with('/') && mode != "plan-task" {
         let lodge_bin = state.lodge_dir.join("lodge");
-        let cmd_copy = raw_cmd.clone();
         let lodge_dir_copy = state.lodge_dir.clone();
+        let sandbox_dir = state.lodge_dir.join(".sandboxes").join(&task_id);
+        let _ = fs::create_dir_all(&sandbox_dir).await;
+        let _ = fs::write(sandbox_dir.join(".phase"), "Command Execution").await;
+        let meta = json!({
+            "id": task_id.clone(),
+            "type": "command_blueprint",
+            "command": raw_cmd.clone(),
+            "started_at": chrono_utc_now(),
+        });
+        let _ = fs::write(sandbox_dir.join("task_meta.json"), serde_json::to_string_pretty(&meta).unwrap_or_default()).await;
+        let init_traj = format!("── [COMMAND INITIALIZED: {}] ──\n[COMMAND]: {}\n", task_id, raw_cmd);
+        let _ = fs::write(sandbox_dir.join("trajectory.log"), &init_traj).await;
 
-        // Run slash command synchronously
-        let out = tokio::process::Command::new(lodge_bin)
-            .args([&cmd_copy])
-            .current_dir(lodge_dir_copy)
-            .output()
-            .await;
-
-        let raw_output = match out {
-            Ok(res) => {
-                let stdout = String::from_utf8_lossy(&res.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&res.stderr).to_string();
-                if !stdout.is_empty() { stdout } else { stderr }
-            }
-            Err(e) => format!("Execution error: {}", e),
-        };
+        let raw_output = run_lodge_task_streaming(lodge_bin, lodge_dir_copy, vec![raw_cmd.clone()], sandbox_dir).await;
         let output_text = strip_ansi(&raw_output);
 
         let assistant_msg = json!({
@@ -1578,6 +1674,7 @@ async fn post_chat(
         return Json(json!({
             "status": "ok",
             "session_id": sess_id,
+            "task_id": task_id,
             "type": "command_blueprint",
             "reply": output_text,
         }));
@@ -1586,23 +1683,21 @@ async fn post_chat(
     // Agentic Mode: Spawns George with full ReAct loop and bedrock tools
     if mode == "agentic" {
         let lodge_bin = state.lodge_dir.join("lodge");
-        let cmd_copy = raw_cmd.clone();
         let lodge_dir_copy = state.lodge_dir.clone();
+        let sandbox_dir = state.lodge_dir.join(".sandboxes").join(&task_id);
+        let _ = fs::create_dir_all(&sandbox_dir).await;
+        let _ = fs::write(sandbox_dir.join(".phase"), "Autonomous ReAct Loop").await;
+        let meta = json!({
+            "id": task_id.clone(),
+            "type": "agentic",
+            "command": raw_cmd.clone(),
+            "started_at": chrono_utc_now(),
+        });
+        let _ = fs::write(sandbox_dir.join("task_meta.json"), serde_json::to_string_pretty(&meta).unwrap_or_default()).await;
+        let init_traj = format!("── [AGENTIC TASK INITIALIZED: {}] ──\n[TASK]: {}\n", task_id, raw_cmd);
+        let _ = fs::write(sandbox_dir.join("trajectory.log"), &init_traj).await;
 
-        let out = tokio::process::Command::new(lodge_bin)
-            .args([&cmd_copy])
-            .current_dir(lodge_dir_copy)
-            .output()
-            .await;
-
-        let raw_output = match out {
-            Ok(res) => {
-                let stdout = String::from_utf8_lossy(&res.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&res.stderr).to_string();
-                if !stdout.is_empty() { stdout } else { stderr }
-            }
-            Err(e) => format!("Execution error: {}", e),
-        };
+        let raw_output = run_lodge_task_streaming(lodge_bin, lodge_dir_copy, vec![raw_cmd.clone()], sandbox_dir).await;
         let output_text = strip_ansi(&raw_output);
 
         let assistant_msg = json!({
@@ -1618,6 +1713,7 @@ async fn post_chat(
         return Json(json!({
             "status": "ok",
             "session_id": sess_id,
+            "task_id": task_id,
             "mode": "agentic",
             "type": "agentic",
             "reply": output_text,
@@ -1627,23 +1723,22 @@ async fn post_chat(
     // Plan-Task Mode: Routes through the-architect workflow to grill requirements and draft contract
     if mode == "plan-task" {
         let lodge_bin = state.lodge_dir.join("lodge");
-        let plan_arg = format!("/workflow run the-architect.agent {}", raw_cmd);
         let lodge_dir_copy = state.lodge_dir.clone();
+        let sandbox_dir = state.lodge_dir.join(".sandboxes").join(&task_id);
+        let _ = fs::create_dir_all(&sandbox_dir).await;
+        let _ = fs::write(sandbox_dir.join(".phase"), "Architect Planning").await;
+        let meta = json!({
+            "id": task_id.clone(),
+            "type": "plan-task",
+            "command": raw_cmd.clone(),
+            "started_at": chrono_utc_now(),
+        });
+        let _ = fs::write(sandbox_dir.join("task_meta.json"), serde_json::to_string_pretty(&meta).unwrap_or_default()).await;
+        let init_traj = format!("── [PLANNING TASK INITIALIZED: {}] ──\n[OBJECTIVE]: {}\n", task_id, raw_cmd);
+        let _ = fs::write(sandbox_dir.join("trajectory.log"), &init_traj).await;
 
-        let out = tokio::process::Command::new(lodge_bin)
-            .args([&plan_arg])
-            .current_dir(lodge_dir_copy)
-            .output()
-            .await;
-
-        let raw_output = match out {
-            Ok(res) => {
-                let stdout = String::from_utf8_lossy(&res.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&res.stderr).to_string();
-                if !stdout.is_empty() { stdout } else { stderr }
-            }
-            Err(e) => format!("Execution error: {}", e),
-        };
+        let plan_arg = format!("/workflow run the-architect.agent {}", raw_cmd);
+        let raw_output = run_lodge_task_streaming(lodge_bin, lodge_dir_copy, vec![plan_arg], sandbox_dir).await;
         let output_text = strip_ansi(&raw_output);
 
         let assistant_msg = json!({
@@ -1659,6 +1754,7 @@ async fn post_chat(
         return Json(json!({
             "status": "ok",
             "session_id": sess_id,
+            "task_id": task_id,
             "mode": "plan-task",
             "type": "plan-task",
             "reply": output_text,

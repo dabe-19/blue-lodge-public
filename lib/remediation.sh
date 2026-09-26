@@ -61,6 +61,10 @@ remediation_sweep_sandboxes() {
         active_pid=$(cat "$REMEDIATION_DIR/.lock" 2>/dev/null)
     fi
 
+    local _old_nullglob
+    shopt -q nullglob 2>/dev/null && _old_nullglob=1 || _old_nullglob=0
+    shopt -s nullglob 2>/dev/null || true
+
     for sb_dir in "$sandboxes_dir"/remediation_*; do
         [ ! -d "$sb_dir" ] && continue
         # If no remediation lock or PID is not running, cull worktree
@@ -70,6 +74,7 @@ remediation_sweep_sandboxes() {
             rm -rf "$sb_dir" 2>/dev/null || true
         fi
     done
+    [ "$_old_nullglob" -eq 0 ] && shopt -u nullglob 2>/dev/null || true
     git -C "$LODGE_DIR" worktree prune >/dev/null 2>&1 || true
 }
 
