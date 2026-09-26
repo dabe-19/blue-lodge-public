@@ -420,11 +420,11 @@ _react_trip_circuit_breaker() {
             local quarantine_branch="quarantine/${session_id}"
             (
                 cd "$workdir" || exit 0
-                git branch -D "$quarantine_branch" >/dev/null 2>&1 || true
-                git checkout -b "$quarantine_branch" >/dev/null 2>&1 || true
-                git add -A >/dev/null 2>&1 || true
-                git commit -m "quarantine(checkpoint): preserve dirty state from tripped breaker ($session_id)" --no-verify >/dev/null 2>&1 || true
-                git checkout "$branch_now" >/dev/null 2>&1 || true
+                local stash_sha
+                stash_sha=$(git stash create "quarantine(checkpoint): preserve dirty state from tripped breaker ($session_id)" 2>/dev/null || true)
+                if [ -n "$stash_sha" ]; then
+                    git branch -f "$quarantine_branch" "$stash_sha" >/dev/null 2>&1 || true
+                fi
             ) 2>/dev/null || true
             ui_warn "Dirty state preserved on quarantine branch 'quarantine/${session_id}'"
         fi
