@@ -459,7 +459,8 @@ react_run() {
                 max_tokens: ($max_tok | tonumber),
                 reasoning_effort: $r_effort,
                 stream: true,
-                stream_options: {include_usage: true}
+                stream_options: {include_usage: true},
+                stop: ["<|im_end|>", "</tool_call>", "<|endoftext|>"]
             }')
         echo "$payload" > "$payload_file"
 

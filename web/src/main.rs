@@ -4807,16 +4807,31 @@ async fn append_to_file(path: &PathBuf, text: &str) {
 
 async fn get_active_tasks_count(lodge_dir: &PathBuf) -> usize {
     let mut count = 0;
+    let now = chrono_epoch_secs();
     let sandboxes = lodge_dir.join(".sandboxes");
     if let Ok(mut entries) = fs::read_dir(&sandboxes).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
-            if !entry.path().join(".done").exists() {
+            let p = entry.path();
+            if !p.is_dir() || p.join(".done").exists() {
+                continue;
+            }
+            let pid_file = p.join(".pid");
+            let has_pid = pid_file.exists();
+            let pid_alive = read_pid_from_file(&pid_file).map_or(false, is_pid_alive);
+            let mtime_secs = entry.metadata().await.ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+
+            if (has_pid && pid_alive) || (!has_pid && now.saturating_sub(mtime_secs) <= 120) {
                 count += 1;
             }
         }
     }
     count
 }
+
 
 fn chrono_utc_now() -> String {
     use std::time::SystemTime;

@@ -407,13 +407,16 @@ remediation_cooperative_pause() {
     local waited=0
     while [ "$waited" -lt "$max_wait" ]; do
         local pause_reason=""
-        # 1. Probe Slot 0 inference status
-        local slots_json
-        slots_json=$(curl -s -m 2 http://127.0.0.1:8080/slots 2>/dev/null || echo "[]")
-        if [ "$slots_json" != "[]" ]; then
-            local s0_busy
-            s0_busy=$(echo "$slots_json" | jq -r '.[0].is_processing // false' 2>/dev/null)
-            [ "$s0_busy" = "true" ] && pause_reason="Slot 0 interactive user inference active"
+        # 1. Probe Slot 0 inference status only if remediation shares Tier 1 (port 8080)
+        local target_tier="${ACTIVE_TIER:-2}"
+        if [ "$target_tier" -eq 1 ] || [ "${TIER2_URL:-}" = "${TIER1_URL:-}" ]; then
+            local slots_json
+            slots_json=$(curl -s -m 2 http://127.0.0.1:8080/slots 2>/dev/null || echo "[]")
+            if [ "$slots_json" != "[]" ]; then
+                local s0_busy
+                s0_busy=$(echo "$slots_json" | jq -r '.[0].is_processing // false' 2>/dev/null)
+                [ "$s0_busy" = "true" ] && pause_reason="Slot 0 interactive user inference active"
+            fi
         fi
 
         # 2. Probe active Discord interactive sessions
@@ -576,6 +579,9 @@ remediation_run() {
 
     # Execute remediation loop inside sandbox (Targeting Slot 1 / Tier 2)
     ui_step "Executing remediation contract in sandbox..."
+    mkdir -p "$sandbox_dir/.george/issues"
+    [ -n "$issue_file" ] && [ -f "$issue_file" ] && cp -f "$issue_file" "$sandbox_dir/.george/issues/" 2>/dev/null || true
+
     export ACTIVE_TIER=2
     export LODGE_DIR="$sandbox_dir"
     export GEORGE_DIR="$sandbox_dir/.george"

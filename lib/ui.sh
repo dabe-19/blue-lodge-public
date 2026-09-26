@@ -644,19 +644,31 @@ ui_resolve_path() {
         return 0
     fi
 
-    # Check if we are running in an agent task workspace
+    # 1. Check if absolute path first (under lodge_dir, workdir, /tmp, or existing file on filesystem)
+    if [[ "$filepath" == /* ]]; then
+        if [[ "$filepath" == "$lodge_dir"* ]] || [[ "$filepath" == "$workdir"* ]] || [ -e "$filepath" ] || [[ "$filepath" == /tmp/* ]]; then
+            # Safe absolute path
+            echo "$filepath"
+            return 0
+        else
+            # Strip leading / and treat as relative
+            filepath="${filepath#/}"
+        fi
+    fi
+
+    # Check if we are running in an agent task workspace or sandbox
     local is_agent_task=0
     if [[ "$workdir" != *".george/workspaces"* ]] && [ -n "${AGENT_TASK_WORKSPACE:-}" ]; then
         workdir="$AGENT_TASK_WORKSPACE"
     fi
-    if [[ "$workdir" == *".george/workspaces"* ]]; then
+    if [[ "$workdir" == *".george/workspaces"* ]] || [[ "$workdir" == *"/.sandboxes/"* ]] || [[ "$(pwd)" == *"/.sandboxes/"* ]]; then
         is_agent_task=1
     fi
 
     # Auto-route general document files (e.g. .md, .txt) that are not codebase files to memories
-    if [ "$is_agent_task" -eq 1 ] && [[ "$1" != *".george/workspaces"* ]] && [[ "$1" != *".george/memories"* ]]; then
+    if [ "$is_agent_task" -eq 1 ] && [[ "$1" != *".george/workspaces"* ]] && [[ "$1" != *".george/memories"* ]] && [[ "$1" != *".george/issues"* ]]; then
         if [[ "$filepath" == *.md ]] || [[ "$filepath" == *.txt ]]; then
-            if [[ "$filepath" != "lib/"* ]] && [[ "$filepath" != "tests/"* ]] && [[ "$filepath" != "commands/"* ]] && [[ "$filepath" != "docs/"* ]] && [ ! -f "$lodge_dir/$filepath" ] && [ ! -f "$workdir/$filepath" ] && [ ! -f "$lodge_dir/.george/workspaces/$filepath" ]; then
+            if [[ "$filepath" != "lib/"* ]] && [[ "$filepath" != "tests/"* ]] && [[ "$filepath" != "commands/"* ]] && [[ "$filepath" != "docs/"* ]] && [[ "$filepath" != *".george/issues/"* ]] && [ ! -f "$filepath" ] && [ ! -f "$lodge_dir/$filepath" ] && [ ! -f "$workdir/$filepath" ] && [ ! -f "$lodge_dir/.george/workspaces/$filepath" ]; then
                 local auto_slug
                 auto_slug=$(basename "$filepath" | sed -e 's/\.md$//' -e 's/\.txt$//' | sed 's|[^a-zA-Z0-9_-]||g')
                 echo "$lodge_dir/.george/memories/${auto_slug}.md"
@@ -681,18 +693,6 @@ ui_resolve_path() {
         filepath=".george/memories/${filepath#*.george/memories/}"
     fi
 
-    # Check if absolute path
-    if [[ "$filepath" == /* ]]; then
-        if [[ "$filepath" == "$lodge_dir"* ]] || [[ "$filepath" == "$workdir"* ]] || [ -e "$filepath" ] || [[ "$filepath" == /tmp/* ]]; then
-            # Safe absolute path (under lodge_dir, workdir, /tmp, or existing file)
-            echo "$filepath"
-            return 0
-        else
-            # Strip leading / and treat as relative
-            filepath="${filepath#/}"
-        fi
-    fi
-
     # 2. Expand tilde
     if declare -f tools_expand_tilde &>/dev/null; then
         filepath=$(tools_expand_tilde "$filepath")
@@ -713,6 +713,22 @@ ui_resolve_path() {
 
         # 4. Inside a sandbox
         if [ "$in_sandbox" -eq 1 ]; then
+            if [ "$is_write" -eq 1 ]; then
+                echo "$workdir/$filepath"
+                return 0
+            elif [ -e "$workdir/$filepath" ]; then
+                echo "$workdir/$filepath"
+                return 0
+            elif [ -e "$lodge_dir/$filepath" ]; then
+                echo "$lodge_dir/$filepath"
+                return 0
+            elif [ -n "${LODGE_ROOT:-}" ] && [ -e "$LODGE_ROOT/$filepath" ]; then
+                echo "$LODGE_ROOT/$filepath"
+                return 0
+            elif [ -e "$HOME/blue-lodge/$filepath" ]; then
+                echo "$HOME/blue-lodge/$filepath"
+                return 0
+            fi
             echo "$workdir/$filepath"
             return 0
         fi
