@@ -753,6 +753,7 @@ async fn get_cron_jobs(State(state): State<Arc<AppState>>) -> impl IntoResponse 
         Some(pid) => {
             std::process::Command::new("kill")
                 .args(["-0", &pid.to_string()])
+                .stderr(std::process::Stdio::null())
                 .status()
                 .map(|s| s.success())
                 .unwrap_or(false)
@@ -3471,7 +3472,18 @@ async fn get_tunnel_status(State(state): State<Arc<AppState>>) -> impl IntoRespo
     let pid = fs::read_to_string(&pid_file).await.ok()
         .and_then(|s| s.trim().parse::<u32>().ok());
     let pid_alive = match pid {
-        Some(p) => std::process::Command::new("kill").args(["-0", &p.to_string()]).status().map(|s| s.success()).unwrap_or(false),
+        Some(p) => {
+            let alive = std::process::Command::new("kill")
+                .args(["-0", &p.to_string()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !alive {
+                let _ = fs::remove_file(&pid_file).await;
+            }
+            alive
+        }
         None => false,
     };
 
