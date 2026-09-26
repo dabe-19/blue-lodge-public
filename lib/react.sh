@@ -677,7 +677,7 @@ react_run() {
             tool_calls=$(echo "$tool_calls" | jq 'map(
                 .function.arguments as $a |
                 if (try ($a | fromjson) catch null) != null then
-                    .function.arguments = (($a | fromjson | walk(if type == "string" then sub("</?(parameter|function|tool_call)[^>]*>.*$"; "") | sub("^[[:space:]]+|[[:space:]]+$"; "") else . end)) | tojson)
+                    .function.arguments = (($a | fromjson | walk(if type == "string" then gsub("</?(parameter|function|tool_call)[^>]*>"; "") | sub("^[[:space:]]+|[[:space:]]+$"; "") else . end)) | tojson)
                 elif (try (($a + "\"}") | fromjson) catch null) != null then
                     .function.arguments += "\"}"
                 elif (try (($a + "}") | fromjson) catch null) != null then
@@ -723,6 +723,21 @@ react_run() {
 
                 local tool_resp
                 tool_resp=$(native_tools_dispatch "$c_id" "$c_name" "$c_args" "$workdir")
+
+                # Guarantee tool_resp is a well-formed JSON object before passing to jq
+                if ! echo "$tool_resp" | jq -e 'type == "object"' >/dev/null 2>&1; then
+                    local _extracted
+                    _extracted=$(echo "$tool_resp" | sed -n '/^{/,$p' | jq -c 'select(type == "object")' 2>/dev/null | tail -n 1 || true)
+                    if [ -n "$_extracted" ]; then
+                        tool_resp="$_extracted"
+                    else
+                        tool_resp=$(jq -nc \
+                            --arg id "$c_id" \
+                            --arg name "$c_name" \
+                            --arg content "$tool_resp" \
+                            '{role: "tool", tool_call_id: $id, name: $name, content: $content}')
+                    fi
+                fi
 
                 local resp_content
                 resp_content=$(echo "$tool_resp" | jq -r '.content // empty')
@@ -908,9 +923,9 @@ Execute the Metacognitive Pathfinding Protocol:
             if [ "$turn" -lt 5 ] && [ "$max_turns" -gt 1 ]; then
                 if [ "${AGENT_SOVEREIGN_REMEDIATION:-0}" -eq 1 ]; then
                     is_premature_plan=1
-                elif echo "$raw_content" | grep -qiE "(I will|I'll|I plan to|Let's outline|Step 1|First step|I need to check|I need to inspect|Let's begin by|Before making changes|I will pull|I'll pull|Let me fetch|I am going to|I will search|I'll search|Let me pull|I'll gather|I will gather|I'll start by|I will start by)"; then
+                elif echo "$raw_content" | grep -qiE "(I will|I'll|I plan to|Let's outline|Step 1|First step|I need to check|I need to inspect|Let's begin by|Before making changes|I will pull|I'll pull|Let me fetch|I am going to|I'm going to|I will search|I'll search|Let me pull|I'll gather|I will gather|I'll start by|I will start by|Let me survey|Let me inspect|Let me explore|Let me examine|I will examine|I'll look at|ground this in|survey what is)"; then
                     is_premature_plan=1
-                elif [ ${#raw_content} -lt 450 ] && echo "$raw_content" | grep -qiE "\b(will pull|will fetch|will search|will look up|will inspect|will check|will investigate|going to search|going to pull|going to fetch)\b"; then
+                elif [ ${#raw_content} -lt 450 ] && echo "$raw_content" | grep -qiE "\b(will pull|will fetch|will search|will look up|will inspect|will check|will investigate|going to search|going to pull|going to fetch|going to ground)\b"; then
                     is_premature_plan=1
                 fi
             fi
@@ -934,6 +949,23 @@ Execute the Metacognitive Pathfinding Protocol:
                 fi
             fi
 
+            # Zero-Tool Implementation Verification Guard for Code / Engineering Tasks:
+            # If the task requires building, coding, testing, refactoring, extending, or modifying,
+            # and on early turns (turn <= 4) no implementation/execution tools (file_write, symbol_patch, bash_exec, etc.)
+            # have completed, prevent premature declaration of task completion and force tool execution.
+            local is_unverified_code=0
+            if [ "$turn" -le 4 ] && [ "$max_turns" -gt 1 ]; then
+                local is_code_task=0
+                if echo "${goal,,}" | grep -qiE '\b(extend|implement|develop|fix|refactor|test|patch|code|write|create|build|modify|phytology|protocol|feature|graft|audit|remediat)\b'; then
+                    is_code_task=1
+                fi
+                if [ "$is_code_task" -eq 1 ]; then
+                    if [ ! -f "$history_file" ] || ! grep -qE "(Tool Call: file_write|Tool Call: symbol_patch|Tool Call: bash_exec|Tool Call: git_|Action: .*git|Action: .*test|Action: .*bash)" "$history_file"; then
+                        is_unverified_code=1
+                    fi
+                fi
+            fi
+
             if [ "$is_premature_plan" -eq 1 ]; then
                 jq --arg ans "$raw_content" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
                 local adv="[SYSTEM ADVISORY: Plan acknowledged. Proceed immediately to execute your plan by calling the required native tools (e.g. web_search, web_fetch, file_read, code_outline, code_symbol_get, file_grep, dir_list, bash_exec). Emit conversational markdown ONLY when all tool actions are complete and the deliverable is 100% finished.]"
@@ -945,6 +977,14 @@ Execute the Metacognitive Pathfinding Protocol:
                 ui_dim "  [guard] Intercepted Turn $turn draft: zero research tools executed for research task"
                 jq --arg ans "$raw_content" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
                 local adv="[SYSTEM ADVISORY: Research verification required. You produced a draft summary on Turn $turn without executing any retrieval tools (web_search, web_fetch, pdf_read, file_read). You MUST call web_search to find primary or credible secondary sources and call web_fetch to extract facts before declaring this task complete. Do not simulate or fabricate citations.]"
+                jq --arg p "$adv" '. += [{"role": "user", "content": $p}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+                consecutive_empty_turns=0
+                turn=$((turn + 1))
+                continue
+            elif [ "$is_unverified_code" -eq 1 ]; then
+                ui_dim "  [guard] Intercepted Turn $turn draft: zero implementation/execution tools executed for code task"
+                jq --arg ans "$raw_content" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+                local adv="[SYSTEM ADVISORY: Implementation verification required. You produced a conversational response on Turn $turn without executing any code implementation or execution tools (file_read, file_write, bash_exec, symbol_patch, git_*). You MUST execute the required code changes, run tests, and perform git operations in the workspace using your native tools before declaring this task complete. Proceed immediately to tool execution.]"
                 jq --arg p "$adv" '. += [{"role": "user", "content": $p}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
                 consecutive_empty_turns=0
                 turn=$((turn + 1))

@@ -2035,7 +2035,7 @@ native_tools_dispatch() {
         args_json=$(printf '%s\n' "$args_json" | jq '
             walk(
                 if type == "string" then
-                    sub("</?(parameter|function|tool_call)[^>]*>.*$"; "") | sub("^[[:space:]]+|[[:space:]]+$"; "")
+                    gsub("</?(parameter|function|tool_call)[^>]*>"; "") | sub("^[[:space:]]+|[[:space:]]+$"; "")
                 else
                     .
                 end
@@ -2099,7 +2099,7 @@ native_tools_dispatch() {
                     fi
                     local _done_ts
                     _done_ts=$(date '+%Y-%m-%d %H:%M:%S')
-                    ui_err "[$_done_ts] bash_exec failed (exit $exit_code)" 2>/dev/null
+                    ui_err "[$_done_ts] bash_exec failed (exit $exit_code)" >&2 2>/dev/null || true
                 fi
                 ;;
             file_read)
