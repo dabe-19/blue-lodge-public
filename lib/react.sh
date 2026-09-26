@@ -678,7 +678,7 @@ react_run() {
                 if command -v python3 &>/dev/null; then
                     local _extracted_tc
                     _extracted_tc=$(python3 -c '
-import sys, re, json
+import sys, re, json, os
 
 text = sys.argv[1] if len(sys.argv) > 1 else sys.stdin.read()
 calls = []
@@ -738,7 +738,7 @@ print(json.dumps(calls))
             # Sanitize and repair tool_calls arguments to ensure valid JSON and extract embedded XML parameters
             if command -v python3 &>/dev/null; then
                 tool_calls=$(echo "$tool_calls" | python3 -c '
-import sys, json, re
+import sys, json, re, os
 
 def sanitize_one(raw):
     if not raw or raw == "null":
