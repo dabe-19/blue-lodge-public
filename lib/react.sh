@@ -710,10 +710,15 @@ def sanitize_one(raw):
         c = re.split(r"</?(?:parameter|function|tool_call|invoke|output)[^>]*>", c)[0].strip()
         c = re.sub(r"head -n(\s*(\||&|;|$))", r"head -n 10\1", c)
         c = re.sub(r"git rev-parse\s+([^\s]+)\s+--short", r"git rev-parse --short \1", c)
+        c = re.sub(r"/home/wsl-ops/blue[ _-][a-zA-Z_-]+", "/home/wsl-ops/blue-lodge", c)
+        c = re.sub(r"/home/wsl-ops/blue lighthouse", "/home/wsl-ops/blue-lodge", c)
         extracted["command"] = c
 
     if "path" in extracted and isinstance(extracted["path"], str):
         p = extracted["path"].split("\n")[0].strip()
+        p = re.split(r"(\s+2?>|\s+\||\s+;)", p)[0].strip()
+        p = re.sub(r"^/?home/wsl-ops/blue[ _-][a-zA-Z_-]+", "/home/wsl-ops/blue-lodge", p)
+        p = re.sub(r"^/?home/wsl-ops/blue lighthouse", "/home/wsl-ops/blue-lodge", p)
         if p.startswith("home/wsl-ops/"):
             p = "/" + p
         extracted["path"] = p
