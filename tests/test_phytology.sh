@@ -222,5 +222,40 @@ it "remediates corrupted tissue, files Gitea issue, rolls back from snapshot, an
     rm -f "$rem_target"
 }
 
+describe "Phenotypic Fitness Scoring"
+it "calculates high fitness score and recommends lignification for fit candidate" && {
+    tfile="$GEORGE_DIR/tools/healthy_test_$$.sh"
+    echo -e '#!/bin/bash\n[ "$1" = "--test" ] && exit 0\necho healthy' > "$tfile"
+    chmod +x "$tfile"
+    phytology_snapshot "$tfile" >/dev/null 2>&1
+    res=$(phytology_fitness "$tfile")
+    fit=$(echo "$res" | jq -r '.fitness')
+    rec=$(echo "$res" | jq -r '.recommendation')
+    assert_eq "$rec" "LIGNIFY"
+    rm -f "$tfile"
+}
+
+it "calculates low fitness score and recommends pruning for broken candidate" && {
+    bfile="$GEORGE_DIR/tools/broken_test_$$.sh"
+    echo -e 'if then fi' > "$bfile"
+    res=$(phytology_fitness "$bfile" 2>/dev/null || true)
+    rec=$(echo "$res" | jq -r '.recommendation')
+    assert_eq "$rec" "PRUNE"
+    rm -f "$bfile"
+}
+
+describe "Tissue Lignification & Morphogenesis"
+it "promotes fit foliage to Cambium command and creates companion test" && {
+    ffile="$GEORGE_DIR/tools/foliage_sample_$$.sh"
+    echo -e '#!/bin/bash\n# DESC: Sample lignified command\n[ "$1" = "--test" ] && exit 0\necho "Sample"' > "$ffile"
+    chmod +x "$ffile"
+    phytology_snapshot "$ffile" >/dev/null 2>&1
+    phytology_lignify "$ffile" "sample_cmd_$$"
+    assert_file_exists "$LODGE_DIR/commands/sample_cmd_$$.sh"
+    assert_file_exists "$LODGE_DIR/tests/test_lignified_sample_cmd_$$.sh"
+    bash "$LODGE_DIR/tests/test_lignified_sample_cmd_$$.sh"
+    rm -f "$ffile" "$LODGE_DIR/commands/sample_cmd_$$.sh" "$LODGE_DIR/tests/test_lignified_sample_cmd_$$.sh"
+}
+
 test_end
 

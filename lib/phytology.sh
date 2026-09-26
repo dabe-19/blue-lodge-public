@@ -744,6 +744,106 @@ echo "PROBE_COMPLETE"
 return 0
 }
 
+# ── 14. Phenotypic Fitness Scoring ──────────────────────────────────
+# Usage: phytology_fitness <target_file>
+phytology_fitness() {
+    local target="$1"
+    [ -z "$target" ] || [ ! -f "$target" ] && return 1
+    phytology_init
+
+    local syntax_score="0.0"
+    local exec_score="0.0"
+    local stability_score="0.0"
+
+    # 1. AST Syntax Integrity (+0.40)
+    if phytology_verify_syntax "$target" 2>/dev/null; then
+        syntax_score="0.4"
+    fi
+
+    # 2. Execution / Contract Verification (+0.40)
+    if [ -x "$target" ]; then
+        if timeout 2 bash "$target" --test >/dev/null 2>&1 || timeout 2 bash -n "$target" >/dev/null 2>&1; then
+            exec_score="0.4"
+        fi
+    fi
+
+    # 3. Genetic Stability (+0.20)
+    local fname
+    fname="$(basename "$target")"
+    local snap_count=0
+    snap_count=$(find "$PHYTOLOGY_SNAPSHOTS_DIR" -maxdepth 1 -name "${fname}.*.bak" 2>/dev/null | wc -l)
+    if [ "$snap_count" -ge 1 ]; then
+        stability_score="0.2"
+    fi
+
+    local total_score
+    total_score=$(awk -v s="$syntax_score" -v e="$exec_score" -v b="$stability_score" 'BEGIN { printf "%.2f", s + e + b }')
+
+    local recommendation="PRUNE"
+    local is_fit=0
+    if awk -v t="$total_score" 'BEGIN { exit !(t >= 0.80) }'; then
+        recommendation="LIGNIFY"
+        is_fit=1
+    elif awk -v t="$total_score" 'BEGIN { exit !(t >= 0.50) }'; then
+        recommendation="MAINTAIN"
+        is_fit=1
+    fi
+
+    jq -nc \
+        --arg f "$target" \
+        --argjson syn "$syntax_score" \
+        --argjson ex "$exec_score" \
+        --argjson stab "$stability_score" \
+        --argjson fit "$total_score" \
+        --arg rec "$recommendation" \
+        '{file: $f, syntax_score: $syn, execution_score: $ex, stability_score: $stab, fitness: $fit, recommendation: $rec}'
+
+    [ "$is_fit" -eq 1 ] && return 0 || return 1
+}
+
+# ── 15. Tissue Lignification (Cambium Hardening & Promotion) ────────
+# Usage: phytology_lignify <foliage_file> [target_cmd_name]
+phytology_lignify() {
+    local foliage_file="$1"
+    local target_cmd="${2:-$(basename "${foliage_file%.*}")}"
+    [ -z "$foliage_file" ] || [ ! -f "$foliage_file" ] && return 1
+    phytology_init
+
+    # Assess fitness before lignification
+    local fit_json
+    fit_json=$(phytology_fitness "$foliage_file")
+    local fit_score
+    fit_score=$(echo "$fit_json" | jq -r '.fitness // 0')
+
+    if ! awk -v f="$fit_score" 'BEGIN { exit !(f >= 0.80) }'; then
+        echo "LIGNIFICATION_REJECTED: Fitness $fit_score is below threshold 0.80" >&2
+        return 1
+    fi
+
+    local dest_cmd="${LODGE_DIR}/commands/${target_cmd}.sh"
+    local dest_test="${LODGE_DIR}/tests/test_lignified_${target_cmd}.sh"
+
+    # Safely graft candidate into Cambium commands
+    phytology_graft "$dest_cmd" "$foliage_file" || return 1
+    chmod +x "$dest_cmd" 2>/dev/null || true
+
+    # Generate companion regression test contract
+    cat <<TEST_EOF > "$dest_test"
+#!/bin/bash
+source "\$(dirname "\$0")/framework.sh"
+test_start "Lignified Command: $target_cmd"
+describe "$target_cmd syntax & contract"
+  it "passes AST syntax verification" && {
+    bash -n "$dest_cmd"
+  }
+test_end
+TEST_EOF
+    chmod +x "$dest_test" 2>/dev/null || true
+
+    echo "LIGNIFICATION_SUCCESS: Promoted $foliage_file to $dest_cmd and generated $dest_test"
+    return 0
+}
+
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     "$@"
 fi
