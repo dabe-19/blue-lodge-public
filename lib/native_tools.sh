@@ -2086,6 +2086,11 @@ native_tools_dispatch() {
             bash_exec)
                 local cmd
                 cmd=$(echo "$args_json" | jq -r '.command // empty')
+                cmd="${cmd%%</invoke*}"
+                cmd="${cmd%%</output*}"
+                cmd="${cmd%%<tool_call*}"
+                cmd="${cmd%%<function*}"
+                cmd=$(echo "$cmd" | sed -E 's#</?(invoke|output|parameter|function|tool_call)[^>]*>##g' | sed 's/[[:space:]]*$//; s/^[[:space:]]*//')
                 output=$(commands_dispatch "/bash $cmd" "$workdir" 2>&1)
                 exit_code=$?
                 # SCRIPT_EXIT / Traceback error exit code correction

@@ -677,7 +677,7 @@ react_run() {
             tool_calls=$(echo "$tool_calls" | jq 'map(
                 .function.arguments as $a |
                 if (try ($a | fromjson) catch null) != null then
-                    .function.arguments = (($a | fromjson | walk(if type == "string" then gsub("</?(parameter|function|tool_call)[^>]*>"; "") | sub("^[[:space:]]+|[[:space:]]+$"; "") else . end)) | tojson)
+                    .function.arguments = (($a | fromjson | walk(if type == "string" then split("</invoke>")[0] | split("</output>")[0] | split("<tool_call")[0] | gsub("</?(parameter|function|tool_call|invoke|output)[^>]*>"; "") | sub("^[[:space:]]+|[[:space:]]+$"; "") else . end)) | tojson)
                 elif (try (($a + "\"}") | fromjson) catch null) != null then
                     .function.arguments += "\"}"
                 elif (try (($a + "}") | fromjson) catch null) != null then
