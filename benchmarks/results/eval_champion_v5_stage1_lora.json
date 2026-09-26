@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-09-25 16:56:56",
+  "model_name": "champion_v5_stage1_lora",
+  "endpoint": "http://172.19.0.5:18081",
+  "agent_bench": {
+    "n_samples": 20,
+    "valid_json_pct": 65.0,
+    "schema_conformance_pct": 65.0,
+    "avg_decode_tok_s": 31.038691762014906
+  },
+  "arc_challenge": {
+    "subset": "arc-challenge",
+    "n_samples": 20,
+    "accuracy_pct": 55.00000000000001,
+    "correct": 11,
+    "avg_decode_tok_s": 28.37659552479703
+  }
+}

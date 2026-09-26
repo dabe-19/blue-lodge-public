@@ -53,37 +53,55 @@ N = len(categories)
 angles = [n / float(N) * 2 * np.pi for n in range(N)]
 angles += angles[:1]
 
-# Bonsai baseline values (normalized 0 to 100)
-bonsai_speed = bench_data.get("bonsai_baseline", {}).get("avg_decode_tok_s", 47.66)
-bonsai_size = bench_data.get("bonsai_baseline", {}).get("vram_gb", 5.90)
-bonsai_tool = bench_data.get("bonsai_baseline", {}).get("tool_calling_score_pct", 0.0)
-bonsai_draft = bench_data.get("bonsai_baseline", {}).get("mtp_draft_acceptance_pct", 87.4)
-bonsai_refusal = bench_data.get("bonsai_baseline", {}).get("refusal_compliance_pct", 0.0)
+models_data = bench_data.get("models", {})
+bonsai = models_data.get("bonsai_baseline", {})
+sptq1 = models_data.get("sptq1_0_hybrid", {})
+sptq2 = models_data.get("sptq2_0_sparse", {})
 
-# Custom Frontier values
-custom_speed = bonsai_speed * 1.62  # 77.2 tok/s on 2:4 sparse ternary
-custom_size = 3.48
-custom_tool = 95.0
-custom_draft = 86.8
-custom_refusal = 98.0  # 98% refusal directives neutralized
+bonsai_speed = bonsai.get("decode_tok_s", 27.0)
+bonsai_size = bonsai.get("vram_gb", 5.96)
+bonsai_prompt = bonsai.get("prompt_eval_tok_s", 125.4)
+bonsai_tool = bonsai.get("tool_calling_score_pct", 20.0)
+bonsai_draft = bonsai.get("mtp_draft_acceptance_pct", 87.5)
+
+sptq1_speed = sptq1.get("decode_tok_s", 62.5)
+sptq1_size = sptq1.get("vram_gb", 4.88)
+sptq1_prompt = sptq1.get("prompt_eval_tok_s", 83.6)
+sptq1_tool = sptq1.get("tool_calling_score_pct", 20.0)
+sptq1_draft = sptq1.get("mtp_draft_acceptance_pct", 88.0)
+
+sptq2_speed = sptq2.get("decode_tok_s", 31.7)
+sptq2_size = sptq2.get("vram_gb", 4.18)
+sptq2_prompt = sptq2.get("prompt_eval_tok_s", 73.6)
+sptq2_tool = sptq2.get("tool_calling_score_pct", 20.0)
+sptq2_draft = sptq2.get("mtp_draft_acceptance_pct", 86.4)
 
 val_bonsai = [
-    min(100.0, (bonsai_speed / 80.0) * 100),
-    (3.0 / bonsai_size) * 100,
-    50.0,  # Baseline standard compliance
+    min(100.0, (bonsai_speed / 70.0) * 100),
+    (3.5 / bonsai_size) * 100,
+    min(100.0, (bonsai_prompt / 140.0) * 100),
     bonsai_tool,
     bonsai_draft
 ]
 val_bonsai += val_bonsai[:1]
 
-val_custom = [
-    min(100.0, (custom_speed / 80.0) * 100),
-    (3.0 / custom_size) * 100,
-    custom_refusal,
-    custom_tool,
-    custom_draft
+val_sptq1 = [
+    min(100.0, (sptq1_speed / 70.0) * 100),
+    (3.5 / sptq1_size) * 100,
+    min(100.0, (sptq1_prompt / 140.0) * 100),
+    sptq1_tool,
+    sptq1_draft
 ]
-val_custom += val_custom[:1]
+val_sptq1 += val_sptq1[:1]
+
+val_sptq2 = [
+    min(100.0, (sptq2_speed / 70.0) * 100),
+    (3.5 / sptq2_size) * 100,
+    min(100.0, (sptq2_prompt / 140.0) * 100),
+    sptq2_tool,
+    sptq2_draft
+]
+val_sptq2 += val_sptq2[:1]
 
 ax.set_theta_offset(np.pi / 2)
 ax.set_theta_direction(-1)
@@ -92,14 +110,17 @@ ax.set_rlabel_position(0)
 plt.yticks([25, 50, 75, 100], ["25%", "50%", "75%", "100%"], color="#64748b", size=9)
 plt.ylim(0, 110)
 
-ax.plot(angles, val_bonsai, linewidth=2.5, linestyle='solid', label='Bonsai 2 27B Baseline', color='#6366f1')
-ax.fill(angles, val_bonsai, color='#6366f1', alpha=0.18)
+ax.plot(angles, val_bonsai, linewidth=2.0, linestyle='dashed', label=f'Bonsai 2 Baseline (5.87GB, {bonsai_speed:.1f} tok/s)', color='#6366f1')
+ax.fill(angles, val_bonsai, color='#6366f1', alpha=0.10)
 
-ax.plot(angles, val_custom, linewidth=2.5, linestyle='solid', label='Custom 2:4 Sparse + MTP (Ours)', color='#10b981')
-ax.fill(angles, val_custom, color='#10b981', alpha=0.25)
+ax.plot(angles, val_sptq1, linewidth=2.5, linestyle='solid', label=f'SPTQ1_0 Hybrid (4.62GB, {sptq1_speed:.1f} tok/s)', color='#f59e0b')
+ax.fill(angles, val_sptq1, color='#f59e0b', alpha=0.15)
 
-plt.title('Empirical Head-to-Head Radar\nBonsai Baseline vs. Sovereign Custom Model (RTX 3060 12GB)', size=14, weight='bold', y=1.08, color='#0f172a')
-plt.legend(loc='upper right', bbox_to_anchor=(1.25, 1.15), frameon=True, facecolor='#f8fafc', edgecolor='#cbd5e1')
+ax.plot(angles, val_sptq2, linewidth=3.0, linestyle='solid', label=f'SPTQ2_0 Sparse Sub-4GB (3.92GB, {sptq2_speed:.1f} tok/s)', color='#10b981')
+ax.fill(angles, val_sptq2, color='#10b981', alpha=0.25)
+
+plt.title('Headless GPU 0 Empirical Benchmark Radar (RTX 3060 12GB)\nBaseline vs. SPTQ1_0 Hybrid vs. SPTQ2_0 Sparse', size=13, weight='bold', y=1.08, color='#0f172a')
+plt.legend(loc='upper right', bbox_to_anchor=(1.35, 1.15), frameon=True, facecolor='#f8fafc', edgecolor='#cbd5e1')
 
 radar_path = os.path.join(RESULTS_DIR, "head_to_head_empirical_comparison.png")
 plt.tight_layout()

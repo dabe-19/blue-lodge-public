@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-09-25 14:15:49",
+  "model_name": "blue_llama_combined_v6",
+  "endpoint": "http://172.19.0.5:18081",
+  "agent_bench": {
+    "n_samples": 20,
+    "valid_json_pct": 30.0,
+    "schema_conformance_pct": 30.0,
+    "avg_decode_tok_s": 32.29502764769215
+  },
+  "arc_challenge": {
+    "subset": "arc-challenge",
+    "n_samples": 20,
+    "accuracy_pct": 40.0,
+    "correct": 8,
+    "avg_decode_tok_s": 32.354156231503566
+  }
+}

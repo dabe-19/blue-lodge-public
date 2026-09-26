@@ -1,0 +1,157 @@
+{
+  "timestamp": "2026-09-24 23:25:00",
+  "hardware_environment": {
+    "device": "NVIDIA GeForce RTX 3060 12GB (cuda:1)",
+    "container": "george-prism-server",
+    "gpu0_status": "Untouched, preserved live george-prism-server on port 8080",
+    "desktop_gui_baseline_vram_mb": 1180.0,
+    "desktop_gui_baseline_vram_gb": 1.152
+  },
+  "pareto_frontier": {
+    "dense_baseline": {
+      "model": "Ternary-Bonsai-2-27B-PTQ1_0.gguf",
+      "architecture": "64 Layers Dense PTQ1_0 (1.75 bpw)",
+      "file_size_mib": 5671.2,
+      "file_size_gb": 5.538,
+      "wikitext2_ppl": 7.5856,
+      "wikitext2_stderr": 0.6469,
+      "per_chunk_ppl": {
+        "chunk_1": 4.912,
+        "chunk_2": 6.784,
+        "chunk_3": 7.152,
+        "chunk_4": 7.5856
+      },
+      "dedicated_model_vram_mib": 5850.0,
+      "dedicated_model_vram_gb": 5.713,
+      "peak_total_vram_mib": 7030.0,
+      "peak_total_vram_gb": 6.865,
+      "decode_speed_tok_s": 26.9,
+      "sub_6gb_dedicated_vram": true,
+      "sub_65gb_total_vram": false
+    },
+    "fidelity_champion_24l": {
+      "model": "Qwen3.8-27B-SPTQ-Fidelity-24L.gguf",
+      "architecture": "40 Dense Anchor Layers (0..19, 44..63), 24 SPTQ1_0 Layers (20..43)",
+      "file_size_mib": 5352.4,
+      "file_size_gb": 5.227,
+      "wikitext2_ppl": 8.6811,
+      "wikitext2_stderr": 0.7493,
+      "per_chunk_ppl": {
+        "chunk_1": 5.4926,
+        "chunk_2": 7.5363,
+        "chunk_3": 7.9759,
+        "chunk_4": 8.6811
+      },
+      "dedicated_model_vram_mib": 5718.0,
+      "dedicated_model_vram_gb": 5.584,
+      "peak_total_vram_mib": 7047.0,
+      "peak_total_vram_gb": 6.882,
+      "decode_speed_tok_s": 28.2,
+      "sub_6gb_dedicated_vram": true,
+      "sub_65gb_total_vram": false
+    },
+    "intermediate_30l": {
+      "model": "Qwen3.8-27B-SPTQ-Intermediate-30L",
+      "architecture": "34 Dense Anchor Layers (0..17, 48..63), 30 SPTQ1_0 Layers (18..47)",
+      "file_size_mib": 5272.7,
+      "file_size_gb": 5.149,
+      "wikitext2_ppl": 9.0648,
+      "wikitext2_stderr": 0.7771,
+      "per_chunk_ppl": {
+        "chunk_1": 5.8260,
+        "chunk_2": 7.9141,
+        "chunk_3": 8.2770,
+        "chunk_4": 9.0648
+      },
+      "dedicated_model_vram_mib": 5644.0,
+      "dedicated_model_vram_gb": 5.512,
+      "peak_total_vram_mib": 6932.0,
+      "peak_total_vram_gb": 6.770,
+      "decode_speed_tok_s": 28.6,
+      "sub_6gb_dedicated_vram": true,
+      "sub_65gb_total_vram": false
+    },
+    "verified_sub10_champion_36l": {
+      "model": "Qwen3.8-27B-SPTQ-RPS-36L.gguf",
+      "architecture": "28 Dense Anchor Layers (0..14, 51..63), 36 SPTQ1_0 Layers (15..50)",
+      "file_size_mib": 5193.1,
+      "file_size_gb": 5.071,
+      "wikitext2_ppl": 9.7403,
+      "wikitext2_stderr": 0.8519,
+      "per_chunk_ppl": {
+        "chunk_1": 5.8989,
+        "chunk_2": 8.2410,
+        "chunk_3": 8.7926,
+        "chunk_4": 9.7403
+      },
+      "dedicated_model_vram_mib": 5509.0,
+      "dedicated_model_vram_gb": 5.380,
+      "peak_total_vram_mib": 6729.0,
+      "peak_total_vram_gb": 6.571,
+      "decode_speed_tok_s": 27.0,
+      "sub_6gb_dedicated_vram": true,
+      "sub_65gb_total_vram": false
+    },
+    "balanced_sweetspot_39l": {
+      "model": "Qwen3.8-27B-SPTQ-Balanced-39L.gguf",
+      "architecture": "25 Dense Anchor Layers (0..11, 51..63), 39 SPTQ1_0 Layers (12..50)",
+      "file_size_mib": 5153.2,
+      "file_size_gb": 5.032,
+      "wikitext2_ppl": 9.8564,
+      "wikitext2_stderr": 0.8651,
+      "per_chunk_ppl": {
+        "chunk_1": 5.9465,
+        "chunk_2": 8.3389,
+        "chunk_3": 8.9135,
+        "chunk_4": 9.8564
+      },
+      "dedicated_model_vram_mib": 5480.0,
+      "dedicated_model_vram_gb": 5.352,
+      "peak_total_vram_mib": 6726.0,
+      "peak_total_vram_gb": 6.568,
+      "decode_speed_tok_s": 26.6,
+      "sub_6gb_dedicated_vram": true,
+      "sub_65gb_total_vram": false
+    },
+    "sub65_total_vram_champion_44l": {
+      "model": "Qwen3.8-27B-SPTQ-Final-Sub65.gguf",
+      "architecture": "20 Dense Anchor Layers (0..11, 56..63), 44 SPTQ1_0 Layers (12..55)",
+      "file_size_mib": 5086.8,
+      "file_size_gb": 4.968,
+      "wikitext2_ppl": 11.4923,
+      "wikitext2_stderr": 1.0131,
+      "per_chunk_ppl": {
+        "chunk_1": 6.4426,
+        "chunk_2": 9.3744,
+        "chunk_3": 10.2436,
+        "chunk_4": 11.4923
+      },
+      "dedicated_model_vram_mib": 5464.0,
+      "dedicated_model_vram_gb": 5.336,
+      "peak_total_vram_mib": 6616.0,
+      "peak_total_vram_gb": 6.461,
+      "decode_speed_tok_s": 27.4,
+      "sub_6gb_dedicated_vram": true,
+      "sub_65gb_total_vram": true
+    }
+  },
+  "multitask_verification": {
+    "mtp_speculative_decoding": {
+      "draft_model": "/models/frontier_qwen38/MTP/mtp-Qwen3.8-27B-Q4_0.gguf",
+      "verified_decode_tok_s": 20.1,
+      "functional": true
+    },
+    "vision_tower_multimodal": {
+      "mmproj_model": "/models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf",
+      "test_image": "/workspace/.george/MooseFergie.jpg",
+      "verified_decode_tok_s": 27.7,
+      "functional": true
+    }
+  },
+  "golden_backup_paths": {
+    "sub10_champion_36l": "/home/wsl-ops/models/frontier_qwen38/golden_backup/Qwen3.8-27B-SPTQ-RPS-36L.gguf",
+    "sub65_total_vram_champion_44l": "/home/wsl-ops/models/frontier_qwen38/golden_backup/Qwen3.8-27B-SPTQ-Final-Sub65.gguf",
+    "fidelity_champion_24l": "/home/wsl-ops/models/frontier_qwen38/Qwen3.8-27B-SPTQ-Fidelity-24L.gguf",
+    "balanced_sweetspot_39l": "/home/wsl-ops/models/frontier_qwen38/Qwen3.8-27B-SPTQ-Balanced-39L.gguf"
+  }
+}

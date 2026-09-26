@@ -1,0 +1,253 @@
+{
+  "timestamp": "2026-09-24 14:41:21",
+  "hardware": "NVIDIA GeForce RTX 3060 12GB (GPU 1)",
+  "training_time_s": 69.55,
+  "lora_adapter_path": "/home/wsl-ops/models/frontier_qwen38/qwen38-sptq-hermes-lora.gguf",
+  "lora_adapter_size_mb": 41.25,
+  "lora_rank": 16,
+  "lora_alpha": 16.0,
+  "average_snr_gain_db": 1.08,
+  "average_error_reduction_pct": 21.9,
+  "layer_metrics": [
+    {
+      "layer": 4,
+      "tensor": "blk.4.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.72,
+      "snr_gain_db": 0.8,
+      "error_reduction_pct": 16.8
+    },
+    {
+      "layer": 4,
+      "tensor": "blk.4.ffn_down.weight",
+      "base_snr_db": 3.36,
+      "final_snr_db": 4.75,
+      "snr_gain_db": 1.39,
+      "error_reduction_pct": 27.4
+    },
+    {
+      "layer": 8,
+      "tensor": "blk.8.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "snr_gain_db": 0.79,
+      "error_reduction_pct": 16.6
+    },
+    {
+      "layer": 8,
+      "tensor": "blk.8.ffn_down.weight",
+      "base_snr_db": 3.32,
+      "final_snr_db": 4.74,
+      "snr_gain_db": 1.42,
+      "error_reduction_pct": 27.9
+    },
+    {
+      "layer": 12,
+      "tensor": "blk.12.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "snr_gain_db": 0.79,
+      "error_reduction_pct": 16.6
+    },
+    {
+      "layer": 12,
+      "tensor": "blk.12.ffn_down.weight",
+      "base_snr_db": 3.37,
+      "final_snr_db": 4.74,
+      "snr_gain_db": 1.36,
+      "error_reduction_pct": 27.0
+    },
+    {
+      "layer": 16,
+      "tensor": "blk.16.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "snr_gain_db": 0.79,
+      "error_reduction_pct": 16.6
+    },
+    {
+      "layer": 16,
+      "tensor": "blk.16.ffn_down.weight",
+      "base_snr_db": 3.3,
+      "final_snr_db": 4.76,
+      "snr_gain_db": 1.45,
+      "error_reduction_pct": 28.4
+    },
+    {
+      "layer": 20,
+      "tensor": "blk.20.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.73,
+      "snr_gain_db": 0.8,
+      "error_reduction_pct": 16.7
+    },
+    {
+      "layer": 20,
+      "tensor": "blk.20.ffn_down.weight",
+      "base_snr_db": 3.4,
+      "final_snr_db": 4.74,
+      "snr_gain_db": 1.34,
+      "error_reduction_pct": 26.5
+    },
+    {
+      "layer": 24,
+      "tensor": "blk.24.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "snr_gain_db": 0.79,
+      "error_reduction_pct": 16.6
+    },
+    {
+      "layer": 24,
+      "tensor": "blk.24.ffn_down.weight",
+      "base_snr_db": 3.31,
+      "final_snr_db": 4.74,
+      "snr_gain_db": 1.43,
+      "error_reduction_pct": 28.1
+    },
+    {
+      "layer": 28,
+      "tensor": "blk.28.ffn_gate.weight",
+      "base_snr_db": 3.91,
+      "final_snr_db": 4.71,
+      "snr_gain_db": 0.79,
+      "error_reduction_pct": 16.7
+    },
+    {
+      "layer": 28,
+      "tensor": "blk.28.ffn_down.weight",
+      "base_snr_db": 3.36,
+      "final_snr_db": 4.74,
+      "snr_gain_db": 1.38,
+      "error_reduction_pct": 27.2
+    },
+    {
+      "layer": 32,
+      "tensor": "blk.32.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "snr_gain_db": 0.79,
+      "error_reduction_pct": 16.6
+    },
+    {
+      "layer": 32,
+      "tensor": "blk.32.ffn_down.weight",
+      "base_snr_db": 3.36,
+      "final_snr_db": 4.75,
+      "snr_gain_db": 1.39,
+      "error_reduction_pct": 27.4
+    },
+    {
+      "layer": 36,
+      "tensor": "blk.36.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.72,
+      "snr_gain_db": 0.8,
+      "error_reduction_pct": 16.8
+    },
+    {
+      "layer": 36,
+      "tensor": "blk.36.ffn_down.weight",
+      "base_snr_db": 3.42,
+      "final_snr_db": 4.74,
+      "snr_gain_db": 1.32,
+      "error_reduction_pct": 26.2
+    },
+    {
+      "layer": 40,
+      "tensor": "blk.40.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.73,
+      "snr_gain_db": 0.8,
+      "error_reduction_pct": 16.8
+    },
+    {
+      "layer": 40,
+      "tensor": "blk.40.ffn_down.weight",
+      "base_snr_db": 3.35,
+      "final_snr_db": 4.74,
+      "snr_gain_db": 1.39,
+      "error_reduction_pct": 27.3
+    },
+    {
+      "layer": 44,
+      "tensor": "blk.44.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.73,
+      "snr_gain_db": 0.8,
+      "error_reduction_pct": 16.8
+    },
+    {
+      "layer": 44,
+      "tensor": "blk.44.ffn_down.weight",
+      "base_snr_db": 3.42,
+      "final_snr_db": 4.75,
+      "snr_gain_db": 1.33,
+      "error_reduction_pct": 26.3
+    },
+    {
+      "layer": 48,
+      "tensor": "blk.48.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "snr_gain_db": 0.79,
+      "error_reduction_pct": 16.6
+    },
+    {
+      "layer": 48,
+      "tensor": "blk.48.ffn_down.weight",
+      "base_snr_db": 3.42,
+      "final_snr_db": 4.76,
+      "snr_gain_db": 1.34,
+      "error_reduction_pct": 26.6
+    },
+    {
+      "layer": 52,
+      "tensor": "blk.52.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.73,
+      "snr_gain_db": 0.8,
+      "error_reduction_pct": 16.8
+    },
+    {
+      "layer": 52,
+      "tensor": "blk.52.ffn_down.weight",
+      "base_snr_db": 3.43,
+      "final_snr_db": 4.75,
+      "snr_gain_db": 1.31,
+      "error_reduction_pct": 26.1
+    },
+    {
+      "layer": 56,
+      "tensor": "blk.56.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.73,
+      "snr_gain_db": 0.8,
+      "error_reduction_pct": 16.9
+    },
+    {
+      "layer": 56,
+      "tensor": "blk.56.ffn_down.weight",
+      "base_snr_db": 3.34,
+      "final_snr_db": 4.73,
+      "snr_gain_db": 1.39,
+      "error_reduction_pct": 27.3
+    },
+    {
+      "layer": 60,
+      "tensor": "blk.60.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.73,
+      "snr_gain_db": 0.81,
+      "error_reduction_pct": 16.9
+    },
+    {
+      "layer": 60,
+      "tensor": "blk.60.ffn_down.weight",
+      "base_snr_db": 3.37,
+      "final_snr_db": 4.74,
+      "snr_gain_db": 1.36,
+      "error_reduction_pct": 27.0
+    }
+  ]
+}

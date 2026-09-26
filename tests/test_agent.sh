@@ -4032,8 +4032,8 @@ describe "/grep command hardening"
     assert_eq "${AGENT_GREP_ALLOW_ABSOLUTE:-0}" "0"
   }
 
-  it "AGENT_GREP_MAX_LINES defaults to 100" && {
-    assert_eq "${AGENT_GREP_MAX_LINES:-100}" "100"
+  it "AGENT_GREP_MAX_LINES defaults to 300" && {
+    assert_eq "${AGENT_GREP_MAX_LINES:-300}" "300"
   }
 
   it "/grep syntax card teaches quoted patterns" && {

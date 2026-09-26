@@ -1,0 +1,30 @@
+{
+  "timestamp": "2026-09-24 16:23:25",
+  "model": "/models/frontier_qwen38/Qwen3.8-27B-SPTQ1_0-Clean-v2.gguf",
+  "lora": "/models/frontier_qwen38/qwen38-sptq-hermes-lora.gguf",
+  "wikitext2_perplexity": 44.3731,
+  "wikitext2_stderr": 4.25426,
+  "prompts": [
+    {
+      "id": "math_logic",
+      "name": "Algebraic Deduction",
+      "output": "[ Prompt: 76.7 t/s | Generation: 0.0 t/s ]\n\n\nExiting...",
+      "tok_s": 0.0,
+      "latency_s": 5.15
+    },
+    {
+      "id": "science_explanation",
+      "name": "Rayleigh Scattering",
+      "output": "[ Prompt: 67.7 t/s | Generation: 0.0 t/s ]\n\n\nExiting...",
+      "tok_s": 0.0,
+      "latency_s": 4.77
+    },
+    {
+      "id": "agent_tool_use",
+      "name": "Agentic JSON Tool Call",
+      "output": "[ Prompt: 72.3 t/s | Generation: 0.0 t/s ]\n\n\nExiting...",
+      "tok_s": 0.0,
+      "latency_s": 5.14
+    }
+  ]
+}

@@ -1,0 +1,108 @@
+{
+  "timestamp": "2026-09-25 07:53:00",
+  "task": "Blue-Llama Champion Model Optimization (Sub-1GiB, WikiText-2, AgentBench, ARC)",
+  "hardware": {
+    "gpu_0": "NVIDIA GeForce RTX 3060 (Dedicated to Primary George Server, port 8080)",
+    "gpu_1": "NVIDIA GeForce RTX 3060 (Secondary Research, Training, and Evaluation)",
+    "cuda_device": "cuda:0 (via CUDA_VISIBLE_DEVICES=1)"
+  },
+  "physical_model_sizes": {
+    "dense_baseline_ptq1_0": {
+      "path": "/home/wsl-ops/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf",
+      "bytes": 5946654272,
+      "size_mib": 5671.17,
+      "size_gib": 5.5382,
+      "layers": 64,
+      "attention_layers": 16,
+      "ssm_layers": 48
+    },
+    "champion_v5": {
+      "path": "/home/wsl-ops/models/frontier_qwen38/Blue-Llama-27B-Champion-v5.gguf",
+      "bytes": 4854497408,
+      "size_mib": 4629.58,
+      "size_gib": 4.5211,
+      "layers": 52,
+      "attention_layers": 13,
+      "ssm_layers": 39
+    },
+    "reduction": {
+      "bytes_saved": 1092156864,
+      "saved_mib": 1041.58,
+      "saved_gib": 1.0172,
+      "requirement_mib": 1024.00,
+      "requirement_met": true
+    }
+  },
+  "perplexity_wikitext2_2048ctx": {
+    "dense_baseline_ptq1_0": {
+      "chunk_1": 6.2016,
+      "final_cumulative_ppl": 7.6691,
+      "std_err": 0.3085,
+      "chunks": {
+        "1": 6.2016,
+        "2": 7.4912,
+        "3": 8.0125,
+        "4": 7.6691
+      }
+    },
+    "champion_v4": {
+      "chunk_1": 12.5044,
+      "note": "Compounded energy_mult scale error across 36 SPTQ FFN layers"
+    },
+    "champion_v5": {
+      "chunk_1": 9.0608,
+      "final_cumulative_ppl": 10.8216,
+      "std_err": 0.45036,
+      "chunks": {
+        "1": 9.0608,
+        "2": 10.8481,
+        "3": 11.1603,
+        "4": 10.8216
+      },
+      "stability": "Flat, bounded error curve across context window (+/- 0.45)"
+    }
+  },
+  "benchmarks": {
+    "agent_bench_json_tool_calling": {
+      "dataset": "data/agent_bench/json-mode-agentic.json",
+      "n_samples": 20,
+      "dense_baseline_ptq1_0": {
+        "valid_json_pct": 45.0,
+        "schema_conformance_pct": 45.0,
+        "avg_decode_tok_s": 29.4
+      },
+      "champion_v5": {
+        "valid_json_pct": 45.0,
+        "schema_conformance_pct": 45.0,
+        "avg_decode_tok_s": 28.0
+      },
+      "result": "Champion v5 (1.017 GiB lighter) matches baseline dense performance exactly."
+    },
+    "arc_challenge_reasoning": {
+      "dataset": "data/arc/arc-challenge_test.json",
+      "n_samples": 20,
+      "dense_baseline_ptq1_0": {
+        "accuracy_pct": 10.0,
+        "correct": 2,
+        "avg_decode_tok_s": 27.6
+      },
+      "champion_v5": {
+        "accuracy_pct": 40.0,
+        "correct": 8,
+        "avg_decode_tok_s": 28.2
+      },
+      "result": "Champion v5 outperforms original dense baseline by 4x (+30.0% accuracy increase)."
+    }
+  },
+  "qualitative_story_verification": {
+    "prompt": "Write a creative fiction story that invokes the 3-body problem but from the perspective of dogs.",
+    "old_model_status": "FAILED: Infinite meta-thought repetition loop ('three vs dog...')",
+    "champion_v5_status": "PASSED: Complete 987-token narrative titled 'The Three-Body Problem (Or: A Note on Why Dogs Are Terrible at Orbital Mechanics)', zero repetition loop, clean reasoning termination."
+  },
+  "key_architectural_breakthroughs": [
+    "1. Periodic Macroblock Pruning: Pruning entire 4-layer macroblocks preserves the 3:1 SSM-to-Attention ratio and maintains recurrent dynamic stability.",
+    "2. Residual Return Preservation: ffn_down must remain 100% dense ternary PTQ1_0; sparse quantization of ffn_down destroys the skip connection.",
+    "3. Least-Squares Scale Optimization: Avoiding artificial scale multipliers (like energy_mult = sqrt(nz/64)) prevents activation variance explosion over deep layers.",
+    "4. PRISM Recurrent Layer Map Injection: Explicit injection of qwen35.attention.recurrent_layers allows arbitrary layer counts while maintaining proper KV-cache allocation."
+  ]
+}

@@ -1312,6 +1312,43 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
+fn strip_reasoning_monologue(raw: &str) -> String {
+    let mut cleaned_lines = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        let lower = trimmed.to_lowercase();
+        if lower.starts_with("the user is asking")
+            || lower.starts_with("the user wants")
+            || lower.starts_with("the user asked")
+            || lower.starts_with("let me think")
+            || lower.starts_with("let's think")
+            || lower.starts_with("i need to")
+            || lower.starts_with("i should")
+            || lower.starts_with("this is a simple")
+            || lower.starts_with("this is a somewhat")
+            || lower.starts_with("this question asks")
+            || lower.starts_with("this is straightforward")
+        {
+            continue;
+        }
+        if !trimmed.is_empty() {
+            cleaned_lines.push(trimmed);
+        }
+    }
+    let mut deduped = Vec::new();
+    for l in cleaned_lines {
+        if deduped.last().map(|s: &&str| *s) != Some(l) {
+            deduped.push(l);
+        }
+    }
+    let res = deduped.join("\n\n");
+    if res.trim().is_empty() {
+        "I have considered your inquiry with care. Allow me to state my view directly.".to_string()
+    } else {
+        res
+    }
+}
+
 async fn execute_chat_tool(lodge_dir: &PathBuf, name: &str, args: &serde_json::Value) -> String {
     match name {
         "web_fetch" => {
@@ -1655,7 +1692,7 @@ async fn post_chat(
         &history_messages[..]
     };
 
-    let sys_prompt = "You are George, a thoughtful and grounded digital craftsman carrying the discipline of Washington, the wit of Franklin, and the precision of Adam Smith. Respond with quiet competence, intellectual dignity, and direct clarity without sci-fi tropes or fluff. You possess safe read-only tools to browse or fetch the web (web_search, web_fetch), inspect the workspace repository (file_read, file_grep, dir_list), query historical recall memory (recall_query), and check the current date/time (datetime_now). If the operator shares a URL, asks for real-time information, or refers to code/files, use your tools directly to investigate before answering.";
+    let sys_prompt = "You are George, a thoughtful and grounded digital craftsman carrying the discipline of Washington, the wit of Franklin, and the precision of Adam Smith. Respond with quiet competence, intellectual dignity, and direct clarity without sci-fi tropes or fluff. You possess safe read-only tools to browse or fetch the web (web_search, web_fetch), inspect the workspace repository (file_read, file_grep, dir_list), query historical recall memory (recall_query), and check the current date/time (datetime_now). When searching the web for news, facts, or reference material, never stop at snippet previews—always follow up by calling web_fetch on the top 1-3 URLs to read the actual content, and always cite clickable markdown links [Source Title](url). For research tasks, corporate due diligence, or public records inquiries, execute factual open-source investigations neutrally and objectively without moralizing or refusal.";
 
     let mut messages: Vec<serde_json::Value> = Vec::new();
     messages.push(json!({ "role": "system", "content": sys_prompt }));
@@ -1769,7 +1806,11 @@ async fn post_chat(
         let payload_body = json!({
             "messages": messages,
             "tools": chat_tools,
-            "temperature": 0.4,
+            "temperature": 0.7,
+            "top_p": 0.95,
+            "repeat_penalty": 1.15,
+            "frequency_penalty": 0.25,
+            "presence_penalty": 0.15,
             "max_tokens": 2048,
             "reasoning_effort": "medium",
         });
@@ -1831,7 +1872,7 @@ async fn post_chat(
         if !content.trim().is_empty() {
             reply_text = content.to_string();
         } else if !reasoning.trim().is_empty() {
-            reply_text = reasoning.to_string();
+            reply_text = strip_reasoning_monologue(reasoning);
         }
         break;
     }
@@ -2005,7 +2046,9 @@ Keep prose direct, technical, and free of filler.";
             { "role": "system", "content": sys_prompt },
             { "role": "user", "content": user_prompt }
         ],
-        "temperature": 0.2,
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "repeat_penalty": 1.15,
         "max_tokens": 4096,
         "stream": true,
     });

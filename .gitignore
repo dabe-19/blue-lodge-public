@@ -18,6 +18,7 @@ models/*.gguf
 target/
 web/target/
 bin/
+build_prism/
 
 # Secrets, Keys, and Local Environment
 .env

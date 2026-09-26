@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-09-25 16:34:01",
+  "model_name": "champion_v5_logitlens_lora_768tok",
+  "endpoint": "http://172.19.0.5:18081",
+  "agent_bench": {
+    "n_samples": 20,
+    "valid_json_pct": 60.0,
+    "schema_conformance_pct": 60.0,
+    "avg_decode_tok_s": 31.099431946601506
+  },
+  "arc_challenge": {
+    "subset": "arc-challenge",
+    "n_samples": 20,
+    "accuracy_pct": 50.0,
+    "correct": 10,
+    "avg_decode_tok_s": 31.43962207786415
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-09-26 02:54:35",
+  "model_label": "Champion-v5-Iteration3-MTP",
+  "endpoint_url": "http://172.19.0.5:18081",
+  "elapsed_seconds": 3063.075961828232,
+  "scores": {
+    "AgentBench": 60.0,
+    "ARC_Challenge": 60.0,
+    "GPQA_Diamond": 15.0,
+    "IFBench": 95.0,
+    "TerminalBench": 73.33333333333333,
+    "ARC_AGI_Synthesis": 0.0
+  }
+}

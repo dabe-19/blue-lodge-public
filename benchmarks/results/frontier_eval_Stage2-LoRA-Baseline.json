@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-09-25 18:55:01",
+  "model_label": "Stage2-LoRA-Baseline",
+  "endpoint_url": "http://172.19.0.5:18081",
+  "elapsed_seconds": 2260.072146177292,
+  "scores": {
+    "AgentBench": 60.0,
+    "ARC_Challenge": 50.0,
+    "GPQA_Diamond": 30.0,
+    "IFBench": 100.0,
+    "TerminalBench": 80.0,
+    "ARC_AGI_Synthesis": 0.0
+  }
+}

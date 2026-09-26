@@ -1,0 +1,32 @@
+{
+  "timestamp": "2026-09-24 19:10:34",
+  "model": "/models/frontier_qwen38/Qwen3.8-27B-SPTQ1_0-QAT-Full.gguf",
+  "lora": "/models/frontier_qwen38/qwen38-sptq-qat-residual-lora.gguf",
+  "base_ppl": 37.3773,
+  "base_err": 3.5979,
+  "lora_ppl": 37.9919,
+  "lora_err": 3.66601,
+  "prompts": [
+    {
+      "id": "algebraic_deduction",
+      "name": "Algebraic Deduction",
+      "output": "[Start thinking]\n\nThis is a math question, I need to solve the equation and to get the answer.\n[End thinking]\n\nThe user is asking me to solve the equation. I need to solve it. The user is asking me to solve the equation. I need to solve the equation. The user is asking me to solve the equation. I need to solve the equation. The user is asking me to solve the equation. I need to solve the equation. The user is asking me to solve the equation. I need to solve the equation. The user is asking me to solve the equation. I need to solve the equation. The user is asking me to",
+      "tok_s": 26.7,
+      "latency_s": 9.64
+    },
+    {
+      "id": "scientific_explanation",
+      "name": "Rayleigh Scattering",
+      "output": "[Start thinking]\n\nI need to: The user asks \"Why is the sky blue?\" Explain concisely in 2-3 sentences using physical principles.\n \nWait: \"The sky\" is likely a a question - \"Why is the sky blue?\" (i.e. \"The sky\" is a a question - \"Why is the sky blue?\" (i.e. \"The sky\" is a a question - \"Why is the sky blue?\" (i.e. \"The sky\" is a a question - \"Why is the sky blue?\" (i.e. \"The sky\" is a a question - \"Why is the sky blue",
+      "tok_s": 26.7,
+      "latency_s": 11.84
+    },
+    {
+      "id": "agent_tool_use",
+      "name": "Agentic JSON Tool Call",
+      "output": "[Start thinking]\n\nThe user is asking for the current price of NVND (NVND) in the form.\n\nThe user is asking for the current price of NVND (NVND) in the form.\n[End thinking]\n\n</think>\nThe user is asking for the current price of NVND (NVND) in the form.\n</think>\n</think>\nThe user is asking for the current price of NVND (NVND) in the form.\n</think>\n</think>\nThe user is asking for the current price of NVND (NVND) in the form.\n</think>\n</think>\nThe user is asking for the current price of NV",
+      "tok_s": 26.8,
+      "latency_s": 9.84
+    }
+  ]
+}

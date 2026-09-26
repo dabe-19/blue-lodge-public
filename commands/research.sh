@@ -106,3 +106,7 @@ cmd_research() {
             ;;
     esac
 }
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    cmd_research "$*"
+fi

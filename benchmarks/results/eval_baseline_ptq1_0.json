@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-09-25 07:13:01",
+  "model_name": "baseline_ptq1_0",
+  "endpoint": "http://127.0.0.1:8080",
+  "agent_bench": {
+    "n_samples": 5,
+    "valid_json_pct": 60.0,
+    "schema_conformance_pct": 60.0,
+    "avg_decode_tok_s": 29.295499966411246
+  },
+  "arc_challenge": {
+    "subset": "arc-challenge",
+    "n_samples": 5,
+    "accuracy_pct": 0.0,
+    "correct": 0,
+    "avg_decode_tok_s": 27.777564136741184
+  }
+}

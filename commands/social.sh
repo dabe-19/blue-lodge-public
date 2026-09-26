@@ -179,3 +179,7 @@ cmd_social() {
             ;;
     esac
 }
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    cmd_social "$*"
+fi

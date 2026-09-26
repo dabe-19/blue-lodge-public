@@ -1,0 +1,160 @@
+{
+  "timestamp": "2026-09-24 13:27:52",
+  "hardware": "NVIDIA GeForce RTX 3060 12GB (GPU 1)",
+  "perplexity_dataset": "WikiText-2 Test Set (data/calibration/wiki.test.raw)",
+  "models": {
+    "baseline_bonsai": {
+      "metadata": {
+        "id": "baseline_bonsai",
+        "name": "Ternary-Bonsai-2-27B-PTQ1_0-mtp-lean",
+        "path": "/models/Ternary-Bonsai-2-27B-PTQ1_0-mtp-lean.gguf",
+        "type": "Dense PTQ1_0 (1.75 bpw)",
+        "size_gb": 5.85
+      },
+      "perplexity": {
+        "ppl": 7.5856,
+        "stderr": 0.6469,
+        "elapsed_s": 16.025150537490845
+      },
+      "prompts": [
+        {
+          "category": "Math / Multi-step Arithmetic",
+          "prompt": "Solve step-by-step: If a store sells apples for $2 each and oranges for $3 each, and Alice buys 4 apples and 3 oranges with a $20 bill, how much change does she receive?",
+          "output": "[Start thinking]\n\nWe need answer simple arithmetic step-by-step. Need final. Compute: apples 4*2=8, oranges 3*3=9, total 17, change 20-17=3. Provide step-by-step.\n[End thinking]\n\nStep 1: Cost of apples  \n4 apples \u00d7 $2 each = $8\n\nStep 2: Cost of oranges  \n3 oranges \u00d7 $3 each = $9\n\nStep 3: Total cost  \n$8 + $9 = $17\n\nStep 4: Change from a $20 bill  \n$20 \u2212 $17 = $3",
+          "tok_s": 26.9,
+          "elapsed_s": 10.978514432907104
+        },
+        {
+          "category": "Logic / Deductive Reasoning",
+          "prompt": "A farmer has 17 sheep, and all but 9 die. How many sheep does the farmer have left? Explain in one sentence.",
+          "output": "[Start thinking]\n\nWe need answer simple riddle. User: \"A farmer has 17 sheep, and all but 9 die. How many sheep does the farmer have left? Explain in one sentence.\" Need final one sentence. \"The farmer has 9 sheep left, because 'all but 9' means 9 survive",
+          "tok_s": 27.2,
+          "elapsed_s": 6.933940410614014
+        },
+        {
+          "category": "Code Generation",
+          "prompt": "Write a Python function `is_palindrome(s: str) -> bool` that checks if a string is a palindrome, ignoring non-alphanumeric characters and case. Return only the code.",
+          "output": "[Start thinking]\n\nWe need answer user's request: \"Write a Python function `is_palindrome(s: str) -> bool` that checks if a string is a palindrome, ignoring non-alphanumeric characters and case. Return only the code.\"\n\nNeed produce final only code. Need likely include function. Could be:\ndef is_palindrome(s: str) -> bool:\n    cleaned = [ch.lower() for ch in s if ch.isalnum()]\n    return cleaned == cleaned[::-1]\n\nNeed only code, no explanation. Ensure maybe type hints. Could use str.isalnum. That's fine.\n[End thinking]\n\ndef is_palindrome",
+          "tok_s": 27.3,
+          "elapsed_s": 9.18464207649231
+        },
+        {
+          "category": "Scientific Factuality",
+          "prompt": "In one concise sentence, explain why the sky appears blue on Earth.",
+          "output": "[Start thinking]\n\nWe need to answer user: \"In one concise sentence, explain why the sky appears blue on Earth.\" Need final one concise sentence. Need ensure accurate: Rayleigh scattering by molecules scatters shorter wavelengths (blue/violet) more; blue dominates because Sun emits more blue than violet and human eyes more sensitive to blue,",
+          "tok_s": 27.1,
+          "elapsed_s": 6.858955383300781
+        },
+        {
+          "category": "Agentic Tool Calling (JSON Mode)",
+          "prompt": "You are a function calling agent. Call the function `search_database(table='users', filter={'status': 'active'}, limit=10)`. Return strictly valid JSON with keys 'name' and 'arguments'.",
+          "output": "[Start thinking]\n\nWe need to respond to user: \"You are a function calling agent. Call the function `search_database(table='users', filter={'status': 'active'}, limit=10)`. Return strictly valid JSON with keys 'name' and 'arguments'.\"\n\nNeed output strictly valid JSON with keys name and arguments. Likely name: \"search_database\", arguments: {\"table\":\"users\",\"filter\":{\"status\":\"active\"},\"limit\":10}. Ensure no markdown. Final only JSON",
+          "tok_s": 27.3,
+          "elapsed_s": 9.449891328811646
+        }
+      ]
+    },
+    "hybrid_clean": {
+      "metadata": {
+        "id": "hybrid_clean",
+        "name": "Qwen3.8-27B-SPTQ1_0-Hybrid-Clean",
+        "path": "/models/frontier_qwen38/Qwen3.8-27B-SPTQ1_0-Hybrid-Clean.gguf",
+        "type": "2:4 Sparse Ternary Hybrid (1.35 bpw)",
+        "size_gb": 4.72
+      },
+      "perplexity": {
+        "ppl": 44.0524,
+        "stderr": 4.19692,
+        "elapsed_s": 11.029252529144287
+      },
+      "prompts": [
+        {
+          "category": "Math / Multi-step Arithmetic",
+          "prompt": "Solve step-by-step: If a store sells apples for $2 each and oranges for $3 each, and Alice buys 4 apples and 3 oranges with a $20 bill, how much change does she receive?",
+          "output": "[Start thinking]\n\nLet me think about this. The user is asking me to solve the problem step by step. The \"store\" is \" apples for $2 each and oranges for $3 each\" and Alice buys   4 apples and  3 oranges with a $20 bill.\n\n\n\nWait, I can't read this..\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"\n\n\"",
+          "tok_s": 31.3,
+          "elapsed_s": 8.53282117843628
+        },
+        {
+          "category": "Logic / Deductive Reasoning",
+          "prompt": "A farmer has 17 sheep, and all but 9 die. How many sheep does the farmer have left? Explain in one sentence.",
+          "output": "[Start thinking]\n\n<think>\nThe user's prompt is: \"A farmer has 17 sheep, and all but 9 die. How many sheep does the farmer have left? Explain in one sentence.\"\n\nWait, let's check the prompt. \"A farmer has  17 sheep, and all but  9 die",
+          "tok_s": 31.1,
+          "elapsed_s": 7.720473766326904
+        },
+        {
+          "category": "Code Generation",
+          "prompt": "Write a Python function `is_palindrome(s: str) -> bool` that checks if a string is a palindrome, ignoring non-alphanumeric characters and case. Return only the code.",
+          "output": "[Start thinking]\n\nThe user wants a Python function that checks if a a string is a palindrome, ignoring non-alphanumeric characters and case. Return only the code.\n\nThe user wants a Python function that checks if a a string is a palindrome, ignoring non-alphanumeric characters and case. Return only the code..\n\nThe user wants a Python function that checks if a a string is a palindrome, ignoring non-al alphanumeric characters and case. Return only the code..\n\nThe user wants a Python function that checks if a a string is a palindrome, ignoring non-al alphanumeric characters and case. Return only the the code.\n\nThe user wants a Python",
+          "tok_s": 31.3,
+          "elapsed_s": 8.408684968948364
+        },
+        {
+          "category": "Scientific Factuality",
+          "prompt": "In one concise sentence, explain why the sky appears blue on Earth.",
+          "output": "[Start thinking]\n\n<think>\n[End thinking]\n\nThe sky appears blue on Earth because the the sky is blue blue.\n</think>\nThe sky appears blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue blue",
+          "tok_s": 31.2,
+          "elapsed_s": 6.40796160697937
+        },
+        {
+          "category": "Agentic Tool Calling (JSON Mode)",
+          "prompt": "You are a function calling agent. Call the function `search_database(table='users', filter={'status': 'active'}, limit=10)`. Return strictly valid JSON with keys 'name' and 'arguments'.",
+          "output": "The user is asking me to perform a function call action. They wants me to call the function `search_database(table='users' filter={'status: active} limit=10}` and return strictly valid JSON with keys ` name and name.\n\nThis is a function call action. I need to call the function `search_database with the parameters.\n\nThe function is `search_database. The parameters are:\n- table: users\n- filter: status: active",
+          "tok_s": 31.3,
+          "elapsed_s": 7.382735729217529
+        }
+      ]
+    },
+    "sub4gb_clean": {
+      "metadata": {
+        "id": "sub4gb_clean",
+        "name": "Qwen3.8-27B-SPTQ2_0-Sub4GB-Clean",
+        "path": "/models/frontier_qwen38/Qwen3.8-27B-SPTQ2_0-Sub4GB-Clean.gguf",
+        "type": "2:4 Sparse Ternary Sub-4GB (1.06 bpw)",
+        "size_gb": 4.49
+      },
+      "perplexity": {
+        "ppl": 79.9126,
+        "stderr": 8.17998,
+        "elapsed_s": 11.946319103240967
+      },
+      "prompts": [
+        {
+          "category": "Math / Multi-step Arithmetic",
+          "prompt": "Solve step-by-step: If a store sells apples for $2 each and oranges for $3 each, and Alice buys 4 apples and 3 oranges with a $20 bill, how much change does she receive?",
+          "output": "[Start thinking]\n\n<think>: The user: \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \" \"",
+          "tok_s": 31.7,
+          "elapsed_s": 8.513227939605713
+        },
+        {
+          "category": "Logic / Deductive Reasoning",
+          "prompt": "A farmer has 17 sheep, and all but 9 die. How many sheep does the farmer have left? Explain in one sentence.",
+          "output": "[Start thinking]\n\n<think>\nThe user is asking about \"17\" and \"all but 9\"\". The phrase \"17\" and \"all but \"\"\" is a a phrase. The phrase \"17\" and \"all but 9\" is a phrase. The phrase \"17\" and \"",
+          "tok_s": 30.9,
+          "elapsed_s": 6.1300742626190186
+        },
+        {
+          "category": "Code Generation",
+          "prompt": "Write a Python function `is_palindrome(s: str) -> bool` that checks if a string is a palindrome, ignoring non-alphanumeric characters and case. Return only the code.",
+          "output": "[Start thinking]\n\nThe user is asking a Python function that checks if a string is a palindrome. The user says \"ignore non-alphanumeric characters and case\" and \"Return only code\". This is a prompt..\n.\nThe user is asking a Python function that checks if a string is a palindrome. The user says \"ignore non-alphanumeric characters and case\" and \"Return only code\".\n.\nThe user is asking a Python function that checks if a string is a palindrome. The user says \"ignore non-alphanumeric characters and case\" and \"Return only code\".\n.\nThe user is asking a Python function that checks if a",
+          "tok_s": 31.2,
+          "elapsed_s": 8.192608118057251
+        },
+        {
+          "category": "Scientific Factuality",
+          "prompt": "In one concise sentence, explain why the sky appears blue on Earth.",
+          "output": "[Start thinking]\n\n<think>\n[End thinking]\n\n:\nThe the sky appears blue because the the sky is blue.\n</think>:\nThe the sky appears blue.\n</think>:\nThe the sky is blue.\n</think>:\nThe the sky is blue.\n</think>:\nThe the sky is blue.\n</think>:\nThe the sky",
+          "tok_s": 31.1,
+          "elapsed_s": 7.687877655029297
+        },
+        {
+          "category": "Agentic Tool Calling (JSON Mode)",
+          "prompt": "You are a function calling agent. Call the function `search_database(table='users', filter={'status': 'active'}, limit=10)`. Return strictly valid JSON with keys 'name' and 'arguments'.",
+          "output": "...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...\n</think>\n...",
+          "tok_s": 31.1,
+          "elapsed_s": 7.1735851764678955
+        }
+      ]
+    }
+  }
+}

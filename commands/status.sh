@@ -8,6 +8,7 @@ source "$LODGE_DIR/lib/endpoints.sh" 2>/dev/null || true
 
 cmd_status() {
     ui_section "George Sovereign Status"
+    endpoints_init 2>/dev/null || true
     
     # Active Inference
     local inf_name="${TIER1_NAME:-cuda-workhorse}"

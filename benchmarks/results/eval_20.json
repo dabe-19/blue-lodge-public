@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-09-25 17:50:09",
+  "model_name": "20",
+  "endpoint": "http://172.19.0.5:18081",
+  "agent_bench": {
+    "n_samples": 20,
+    "valid_json_pct": 60.0,
+    "schema_conformance_pct": 60.0,
+    "avg_decode_tok_s": 29.7328187897027
+  },
+  "arc_challenge": {
+    "subset": "arc-challenge",
+    "n_samples": 20,
+    "accuracy_pct": 50.0,
+    "correct": 10,
+    "avg_decode_tok_s": 30.930317306011716
+  }
+}

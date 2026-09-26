@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-09-26 03:59:41",
+  "model_label": "Champion-v5-FullPower-MTP",
+  "endpoint_url": "http://172.19.0.5:18081",
+  "elapsed_seconds": 2596.079178094864,
+  "scores": {
+    "AgentBench": 100.0,
+    "ARC_Challenge": 70.0,
+    "GPQA_Diamond": 30.0,
+    "IFBench": 95.0,
+    "TerminalBench": 60.0,
+    "ARC_AGI_Synthesis": 0.0
+  }
+}

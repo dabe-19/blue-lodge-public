@@ -1,0 +1,1429 @@
+{
+  "timestamp": "2026-09-24 14:49:45",
+  "hardware": "NVIDIA GeForce RTX 3060 12GB (GPU 1)",
+  "n_layers": 59,
+  "n_tensors": 354,
+  "total_training_time_s": 401.59,
+  "lora_adapter_path": "/home/wsl-ops/models/frontier_qwen38/qwen38-sptq-full-hermes-lora.gguf",
+  "lora_adapter_size_mb": 243.4,
+  "overall_average_snr_gain_db": 0.98,
+  "overall_average_noise_reduced_pct": 20.0,
+  "layer_metrics": [
+    {
+      "layer": 3,
+      "tensor": "blk.3.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 3,
+      "tensor": "blk.3.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 3,
+      "tensor": "blk.3.ffn_down.weight",
+      "base_snr_db": 3.36,
+      "final_snr_db": 4.73,
+      "gain_db": 1.37,
+      "noise_reduced_pct": 27.0
+    },
+    {
+      "layer": 4,
+      "tensor": "blk.4.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.72,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.8
+    },
+    {
+      "layer": 4,
+      "tensor": "blk.4.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 4,
+      "tensor": "blk.4.ffn_down.weight",
+      "base_snr_db": 3.36,
+      "final_snr_db": 4.74,
+      "gain_db": 1.38,
+      "noise_reduced_pct": 27.3
+    },
+    {
+      "layer": 5,
+      "tensor": "blk.5.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.73,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.8
+    },
+    {
+      "layer": 5,
+      "tensor": "blk.5.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 5,
+      "tensor": "blk.5.ffn_down.weight",
+      "base_snr_db": 3.37,
+      "final_snr_db": 4.74,
+      "gain_db": 1.37,
+      "noise_reduced_pct": 27.1
+    },
+    {
+      "layer": 6,
+      "tensor": "blk.6.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 6,
+      "tensor": "blk.6.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 6,
+      "tensor": "blk.6.ffn_down.weight",
+      "base_snr_db": 3.36,
+      "final_snr_db": 4.73,
+      "gain_db": 1.37,
+      "noise_reduced_pct": 27.1
+    },
+    {
+      "layer": 7,
+      "tensor": "blk.7.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.72,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.9
+    },
+    {
+      "layer": 7,
+      "tensor": "blk.7.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 7,
+      "tensor": "blk.7.ffn_down.weight",
+      "base_snr_db": 3.36,
+      "final_snr_db": 4.73,
+      "gain_db": 1.37,
+      "noise_reduced_pct": 27.0
+    },
+    {
+      "layer": 8,
+      "tensor": "blk.8.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.6
+    },
+    {
+      "layer": 8,
+      "tensor": "blk.8.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 8,
+      "tensor": "blk.8.ffn_down.weight",
+      "base_snr_db": 3.4,
+      "final_snr_db": 4.73,
+      "gain_db": 1.33,
+      "noise_reduced_pct": 26.4
+    },
+    {
+      "layer": 9,
+      "tensor": "blk.9.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.8
+    },
+    {
+      "layer": 9,
+      "tensor": "blk.9.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 9,
+      "tensor": "blk.9.ffn_down.weight",
+      "base_snr_db": 3.39,
+      "final_snr_db": 4.74,
+      "gain_db": 1.35,
+      "noise_reduced_pct": 26.7
+    },
+    {
+      "layer": 10,
+      "tensor": "blk.10.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.71,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.5
+    },
+    {
+      "layer": 10,
+      "tensor": "blk.10.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 10,
+      "tensor": "blk.10.ffn_down.weight",
+      "base_snr_db": 3.4,
+      "final_snr_db": 4.74,
+      "gain_db": 1.34,
+      "noise_reduced_pct": 26.5
+    },
+    {
+      "layer": 11,
+      "tensor": "blk.11.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 11,
+      "tensor": "blk.11.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 11,
+      "tensor": "blk.11.ffn_down.weight",
+      "base_snr_db": 3.34,
+      "final_snr_db": 4.74,
+      "gain_db": 1.4,
+      "noise_reduced_pct": 27.5
+    },
+    {
+      "layer": 12,
+      "tensor": "blk.12.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.71,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.5
+    },
+    {
+      "layer": 12,
+      "tensor": "blk.12.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.71,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 12,
+      "tensor": "blk.12.ffn_down.weight",
+      "base_snr_db": 3.42,
+      "final_snr_db": 4.72,
+      "gain_db": 1.3,
+      "noise_reduced_pct": 25.9
+    },
+    {
+      "layer": 13,
+      "tensor": "blk.13.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.6
+    },
+    {
+      "layer": 13,
+      "tensor": "blk.13.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 13,
+      "tensor": "blk.13.ffn_down.weight",
+      "base_snr_db": 3.36,
+      "final_snr_db": 4.74,
+      "gain_db": 1.38,
+      "noise_reduced_pct": 27.2
+    },
+    {
+      "layer": 14,
+      "tensor": "blk.14.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.5
+    },
+    {
+      "layer": 14,
+      "tensor": "blk.14.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.71,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 14,
+      "tensor": "blk.14.ffn_down.weight",
+      "base_snr_db": 3.34,
+      "final_snr_db": 4.75,
+      "gain_db": 1.41,
+      "noise_reduced_pct": 27.7
+    },
+    {
+      "layer": 15,
+      "tensor": "blk.15.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.71,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.5
+    },
+    {
+      "layer": 15,
+      "tensor": "blk.15.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.5
+    },
+    {
+      "layer": 15,
+      "tensor": "blk.15.ffn_down.weight",
+      "base_snr_db": 3.41,
+      "final_snr_db": 4.73,
+      "gain_db": 1.32,
+      "noise_reduced_pct": 26.3
+    },
+    {
+      "layer": 16,
+      "tensor": "blk.16.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.6
+    },
+    {
+      "layer": 16,
+      "tensor": "blk.16.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.71,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 16,
+      "tensor": "blk.16.ffn_down.weight",
+      "base_snr_db": 3.33,
+      "final_snr_db": 4.73,
+      "gain_db": 1.4,
+      "noise_reduced_pct": 27.5
+    },
+    {
+      "layer": 17,
+      "tensor": "blk.17.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 17,
+      "tensor": "blk.17.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 17,
+      "tensor": "blk.17.ffn_down.weight",
+      "base_snr_db": 3.36,
+      "final_snr_db": 4.74,
+      "gain_db": 1.38,
+      "noise_reduced_pct": 27.2
+    },
+    {
+      "layer": 18,
+      "tensor": "blk.18.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 18,
+      "tensor": "blk.18.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 18,
+      "tensor": "blk.18.ffn_down.weight",
+      "base_snr_db": 3.34,
+      "final_snr_db": 4.73,
+      "gain_db": 1.39,
+      "noise_reduced_pct": 27.4
+    },
+    {
+      "layer": 19,
+      "tensor": "blk.19.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 19,
+      "tensor": "blk.19.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.71,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 19,
+      "tensor": "blk.19.ffn_down.weight",
+      "base_snr_db": 3.42,
+      "final_snr_db": 4.74,
+      "gain_db": 1.32,
+      "noise_reduced_pct": 26.2
+    },
+    {
+      "layer": 20,
+      "tensor": "blk.20.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 20,
+      "tensor": "blk.20.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.71,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 20,
+      "tensor": "blk.20.ffn_down.weight",
+      "base_snr_db": 3.42,
+      "final_snr_db": 4.73,
+      "gain_db": 1.32,
+      "noise_reduced_pct": 26.1
+    },
+    {
+      "layer": 21,
+      "tensor": "blk.21.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 21,
+      "tensor": "blk.21.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 21,
+      "tensor": "blk.21.ffn_down.weight",
+      "base_snr_db": 3.39,
+      "final_snr_db": 4.75,
+      "gain_db": 1.35,
+      "noise_reduced_pct": 26.8
+    },
+    {
+      "layer": 22,
+      "tensor": "blk.22.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.6
+    },
+    {
+      "layer": 22,
+      "tensor": "blk.22.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 22,
+      "tensor": "blk.22.ffn_down.weight",
+      "base_snr_db": 3.37,
+      "final_snr_db": 4.73,
+      "gain_db": 1.36,
+      "noise_reduced_pct": 26.9
+    },
+    {
+      "layer": 23,
+      "tensor": "blk.23.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 23,
+      "tensor": "blk.23.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 23,
+      "tensor": "blk.23.ffn_down.weight",
+      "base_snr_db": 3.41,
+      "final_snr_db": 4.74,
+      "gain_db": 1.33,
+      "noise_reduced_pct": 26.3
+    },
+    {
+      "layer": 24,
+      "tensor": "blk.24.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.5
+    },
+    {
+      "layer": 24,
+      "tensor": "blk.24.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.69,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.2
+    },
+    {
+      "layer": 24,
+      "tensor": "blk.24.ffn_down.weight",
+      "base_snr_db": 3.35,
+      "final_snr_db": 4.75,
+      "gain_db": 1.39,
+      "noise_reduced_pct": 27.4
+    },
+    {
+      "layer": 25,
+      "tensor": "blk.25.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 25,
+      "tensor": "blk.25.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 25,
+      "tensor": "blk.25.ffn_down.weight",
+      "base_snr_db": 3.36,
+      "final_snr_db": 4.75,
+      "gain_db": 1.38,
+      "noise_reduced_pct": 27.3
+    },
+    {
+      "layer": 26,
+      "tensor": "blk.26.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.6
+    },
+    {
+      "layer": 26,
+      "tensor": "blk.26.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.71,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.5
+    },
+    {
+      "layer": 26,
+      "tensor": "blk.26.ffn_down.weight",
+      "base_snr_db": 3.35,
+      "final_snr_db": 4.73,
+      "gain_db": 1.38,
+      "noise_reduced_pct": 27.2
+    },
+    {
+      "layer": 27,
+      "tensor": "blk.27.ffn_gate.weight",
+      "base_snr_db": 3.91,
+      "final_snr_db": 4.7,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.6
+    },
+    {
+      "layer": 27,
+      "tensor": "blk.27.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 27,
+      "tensor": "blk.27.ffn_down.weight",
+      "base_snr_db": 3.39,
+      "final_snr_db": 4.76,
+      "gain_db": 1.37,
+      "noise_reduced_pct": 27.0
+    },
+    {
+      "layer": 28,
+      "tensor": "blk.28.ffn_gate.weight",
+      "base_snr_db": 3.91,
+      "final_snr_db": 4.7,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.6
+    },
+    {
+      "layer": 28,
+      "tensor": "blk.28.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 28,
+      "tensor": "blk.28.ffn_down.weight",
+      "base_snr_db": 3.35,
+      "final_snr_db": 4.74,
+      "gain_db": 1.39,
+      "noise_reduced_pct": 27.4
+    },
+    {
+      "layer": 29,
+      "tensor": "blk.29.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.8
+    },
+    {
+      "layer": 29,
+      "tensor": "blk.29.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 29,
+      "tensor": "blk.29.ffn_down.weight",
+      "base_snr_db": 3.4,
+      "final_snr_db": 4.74,
+      "gain_db": 1.34,
+      "noise_reduced_pct": 26.6
+    },
+    {
+      "layer": 30,
+      "tensor": "blk.30.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 30,
+      "tensor": "blk.30.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 30,
+      "tensor": "blk.30.ffn_down.weight",
+      "base_snr_db": 3.37,
+      "final_snr_db": 4.76,
+      "gain_db": 1.39,
+      "noise_reduced_pct": 27.5
+    },
+    {
+      "layer": 31,
+      "tensor": "blk.31.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.6
+    },
+    {
+      "layer": 31,
+      "tensor": "blk.31.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 31,
+      "tensor": "blk.31.ffn_down.weight",
+      "base_snr_db": 3.39,
+      "final_snr_db": 4.75,
+      "gain_db": 1.36,
+      "noise_reduced_pct": 26.9
+    },
+    {
+      "layer": 32,
+      "tensor": "blk.32.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.5
+    },
+    {
+      "layer": 32,
+      "tensor": "blk.32.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 32,
+      "tensor": "blk.32.ffn_down.weight",
+      "base_snr_db": 3.38,
+      "final_snr_db": 4.74,
+      "gain_db": 1.35,
+      "noise_reduced_pct": 26.8
+    },
+    {
+      "layer": 33,
+      "tensor": "blk.33.ffn_gate.weight",
+      "base_snr_db": 3.91,
+      "final_snr_db": 4.7,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.6
+    },
+    {
+      "layer": 33,
+      "tensor": "blk.33.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 33,
+      "tensor": "blk.33.ffn_down.weight",
+      "base_snr_db": 3.37,
+      "final_snr_db": 4.74,
+      "gain_db": 1.36,
+      "noise_reduced_pct": 27.0
+    },
+    {
+      "layer": 34,
+      "tensor": "blk.34.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 34,
+      "tensor": "blk.34.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 34,
+      "tensor": "blk.34.ffn_down.weight",
+      "base_snr_db": 3.4,
+      "final_snr_db": 4.74,
+      "gain_db": 1.34,
+      "noise_reduced_pct": 26.6
+    },
+    {
+      "layer": 35,
+      "tensor": "blk.35.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 35,
+      "tensor": "blk.35.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.69,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 35,
+      "tensor": "blk.35.ffn_down.weight",
+      "base_snr_db": 3.4,
+      "final_snr_db": 4.74,
+      "gain_db": 1.34,
+      "noise_reduced_pct": 26.5
+    },
+    {
+      "layer": 36,
+      "tensor": "blk.36.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.72,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 36,
+      "tensor": "blk.36.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 36,
+      "tensor": "blk.36.ffn_down.weight",
+      "base_snr_db": 3.38,
+      "final_snr_db": 4.74,
+      "gain_db": 1.36,
+      "noise_reduced_pct": 26.9
+    },
+    {
+      "layer": 37,
+      "tensor": "blk.37.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 37,
+      "tensor": "blk.37.ffn_up.weight",
+      "base_snr_db": 3.91,
+      "final_snr_db": 4.69,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 37,
+      "tensor": "blk.37.ffn_down.weight",
+      "base_snr_db": 3.32,
+      "final_snr_db": 4.73,
+      "gain_db": 1.41,
+      "noise_reduced_pct": 27.7
+    },
+    {
+      "layer": 38,
+      "tensor": "blk.38.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.71,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.6
+    },
+    {
+      "layer": 38,
+      "tensor": "blk.38.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 38,
+      "tensor": "blk.38.ffn_down.weight",
+      "base_snr_db": 3.45,
+      "final_snr_db": 4.74,
+      "gain_db": 1.3,
+      "noise_reduced_pct": 25.8
+    },
+    {
+      "layer": 39,
+      "tensor": "blk.39.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 39,
+      "tensor": "blk.39.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 39,
+      "tensor": "blk.39.ffn_down.weight",
+      "base_snr_db": 3.41,
+      "final_snr_db": 4.74,
+      "gain_db": 1.32,
+      "noise_reduced_pct": 26.3
+    },
+    {
+      "layer": 40,
+      "tensor": "blk.40.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.73,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 40,
+      "tensor": "blk.40.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.69,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 40,
+      "tensor": "blk.40.ffn_down.weight",
+      "base_snr_db": 3.4,
+      "final_snr_db": 4.74,
+      "gain_db": 1.34,
+      "noise_reduced_pct": 26.5
+    },
+    {
+      "layer": 41,
+      "tensor": "blk.41.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.73,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.8
+    },
+    {
+      "layer": 41,
+      "tensor": "blk.41.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 41,
+      "tensor": "blk.41.ffn_down.weight",
+      "base_snr_db": 3.4,
+      "final_snr_db": 4.73,
+      "gain_db": 1.33,
+      "noise_reduced_pct": 26.3
+    },
+    {
+      "layer": 42,
+      "tensor": "blk.42.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.6
+    },
+    {
+      "layer": 42,
+      "tensor": "blk.42.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 42,
+      "tensor": "blk.42.ffn_down.weight",
+      "base_snr_db": 3.38,
+      "final_snr_db": 4.73,
+      "gain_db": 1.36,
+      "noise_reduced_pct": 26.8
+    },
+    {
+      "layer": 43,
+      "tensor": "blk.43.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 43,
+      "tensor": "blk.43.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 43,
+      "tensor": "blk.43.ffn_down.weight",
+      "base_snr_db": 3.33,
+      "final_snr_db": 4.75,
+      "gain_db": 1.42,
+      "noise_reduced_pct": 27.8
+    },
+    {
+      "layer": 44,
+      "tensor": "blk.44.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.72,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 44,
+      "tensor": "blk.44.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 44,
+      "tensor": "blk.44.ffn_down.weight",
+      "base_snr_db": 3.42,
+      "final_snr_db": 4.73,
+      "gain_db": 1.31,
+      "noise_reduced_pct": 26.0
+    },
+    {
+      "layer": 45,
+      "tensor": "blk.45.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.6
+    },
+    {
+      "layer": 45,
+      "tensor": "blk.45.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 45,
+      "tensor": "blk.45.ffn_down.weight",
+      "base_snr_db": 3.44,
+      "final_snr_db": 4.75,
+      "gain_db": 1.31,
+      "noise_reduced_pct": 26.0
+    },
+    {
+      "layer": 46,
+      "tensor": "blk.46.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 46,
+      "tensor": "blk.46.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 46,
+      "tensor": "blk.46.ffn_down.weight",
+      "base_snr_db": 3.44,
+      "final_snr_db": 4.74,
+      "gain_db": 1.3,
+      "noise_reduced_pct": 25.9
+    },
+    {
+      "layer": 47,
+      "tensor": "blk.47.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 47,
+      "tensor": "blk.47.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.69,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 47,
+      "tensor": "blk.47.ffn_down.weight",
+      "base_snr_db": 3.37,
+      "final_snr_db": 4.75,
+      "gain_db": 1.38,
+      "noise_reduced_pct": 27.2
+    },
+    {
+      "layer": 48,
+      "tensor": "blk.48.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.6
+    },
+    {
+      "layer": 48,
+      "tensor": "blk.48.ffn_up.weight",
+      "base_snr_db": 3.91,
+      "final_snr_db": 4.69,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 48,
+      "tensor": "blk.48.ffn_down.weight",
+      "base_snr_db": 3.37,
+      "final_snr_db": 4.72,
+      "gain_db": 1.35,
+      "noise_reduced_pct": 26.8
+    },
+    {
+      "layer": 49,
+      "tensor": "blk.49.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.71,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.6
+    },
+    {
+      "layer": 49,
+      "tensor": "blk.49.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.69,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 49,
+      "tensor": "blk.49.ffn_down.weight",
+      "base_snr_db": 3.41,
+      "final_snr_db": 4.74,
+      "gain_db": 1.33,
+      "noise_reduced_pct": 26.3
+    },
+    {
+      "layer": 50,
+      "tensor": "blk.50.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.71,
+      "gain_db": 0.79,
+      "noise_reduced_pct": 16.7
+    },
+    {
+      "layer": 50,
+      "tensor": "blk.50.ffn_up.weight",
+      "base_snr_db": 3.91,
+      "final_snr_db": 4.69,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 50,
+      "tensor": "blk.50.ffn_down.weight",
+      "base_snr_db": 3.41,
+      "final_snr_db": 4.74,
+      "gain_db": 1.32,
+      "noise_reduced_pct": 26.3
+    },
+    {
+      "layer": 51,
+      "tensor": "blk.51.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.73,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.9
+    },
+    {
+      "layer": 51,
+      "tensor": "blk.51.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 51,
+      "tensor": "blk.51.ffn_down.weight",
+      "base_snr_db": 3.34,
+      "final_snr_db": 4.74,
+      "gain_db": 1.4,
+      "noise_reduced_pct": 27.5
+    },
+    {
+      "layer": 52,
+      "tensor": "blk.52.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.73,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.8
+    },
+    {
+      "layer": 52,
+      "tensor": "blk.52.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.69,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 52,
+      "tensor": "blk.52.ffn_down.weight",
+      "base_snr_db": 3.38,
+      "final_snr_db": 4.74,
+      "gain_db": 1.36,
+      "noise_reduced_pct": 26.9
+    },
+    {
+      "layer": 53,
+      "tensor": "blk.53.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.72,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.8
+    },
+    {
+      "layer": 53,
+      "tensor": "blk.53.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 53,
+      "tensor": "blk.53.ffn_down.weight",
+      "base_snr_db": 3.4,
+      "final_snr_db": 4.75,
+      "gain_db": 1.35,
+      "noise_reduced_pct": 26.7
+    },
+    {
+      "layer": 54,
+      "tensor": "blk.54.ffn_gate.weight",
+      "base_snr_db": 3.91,
+      "final_snr_db": 4.72,
+      "gain_db": 0.81,
+      "noise_reduced_pct": 17.0
+    },
+    {
+      "layer": 54,
+      "tensor": "blk.54.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.69,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 54,
+      "tensor": "blk.54.ffn_down.weight",
+      "base_snr_db": 3.33,
+      "final_snr_db": 4.73,
+      "gain_db": 1.4,
+      "noise_reduced_pct": 27.6
+    },
+    {
+      "layer": 55,
+      "tensor": "blk.55.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.73,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.9
+    },
+    {
+      "layer": 55,
+      "tensor": "blk.55.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 55,
+      "tensor": "blk.55.ffn_down.weight",
+      "base_snr_db": 3.31,
+      "final_snr_db": 4.75,
+      "gain_db": 1.44,
+      "noise_reduced_pct": 28.2
+    },
+    {
+      "layer": 56,
+      "tensor": "blk.56.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.73,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.9
+    },
+    {
+      "layer": 56,
+      "tensor": "blk.56.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 56,
+      "tensor": "blk.56.ffn_down.weight",
+      "base_snr_db": 3.36,
+      "final_snr_db": 4.74,
+      "gain_db": 1.38,
+      "noise_reduced_pct": 27.2
+    },
+    {
+      "layer": 57,
+      "tensor": "blk.57.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.72,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.9
+    },
+    {
+      "layer": 57,
+      "tensor": "blk.57.ffn_up.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.7,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 57,
+      "tensor": "blk.57.ffn_down.weight",
+      "base_snr_db": 3.41,
+      "final_snr_db": 4.73,
+      "gain_db": 1.33,
+      "noise_reduced_pct": 26.3
+    },
+    {
+      "layer": 58,
+      "tensor": "blk.58.ffn_gate.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.74,
+      "gain_db": 0.81,
+      "noise_reduced_pct": 17.0
+    },
+    {
+      "layer": 58,
+      "tensor": "blk.58.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 58,
+      "tensor": "blk.58.ffn_down.weight",
+      "base_snr_db": 3.39,
+      "final_snr_db": 4.74,
+      "gain_db": 1.35,
+      "noise_reduced_pct": 26.7
+    },
+    {
+      "layer": 59,
+      "tensor": "blk.59.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.73,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.9
+    },
+    {
+      "layer": 59,
+      "tensor": "blk.59.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 59,
+      "tensor": "blk.59.ffn_down.weight",
+      "base_snr_db": 3.44,
+      "final_snr_db": 4.75,
+      "gain_db": 1.31,
+      "noise_reduced_pct": 26.0
+    },
+    {
+      "layer": 60,
+      "tensor": "blk.60.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.72,
+      "gain_db": 0.8,
+      "noise_reduced_pct": 16.9
+    },
+    {
+      "layer": 60,
+      "tensor": "blk.60.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.7,
+      "gain_db": 0.77,
+      "noise_reduced_pct": 16.3
+    },
+    {
+      "layer": 60,
+      "tensor": "blk.60.ffn_down.weight",
+      "base_snr_db": 3.35,
+      "final_snr_db": 4.73,
+      "gain_db": 1.38,
+      "noise_reduced_pct": 27.3
+    },
+    {
+      "layer": 61,
+      "tensor": "blk.61.ffn_gate.weight",
+      "base_snr_db": 3.92,
+      "final_snr_db": 4.73,
+      "gain_db": 0.81,
+      "noise_reduced_pct": 16.9
+    },
+    {
+      "layer": 61,
+      "tensor": "blk.61.ffn_up.weight",
+      "base_snr_db": 3.93,
+      "final_snr_db": 4.71,
+      "gain_db": 0.78,
+      "noise_reduced_pct": 16.4
+    },
+    {
+      "layer": 61,
+      "tensor": "blk.61.ffn_down.weight",
+      "base_snr_db": 3.39,
+      "final_snr_db": 4.74,
+      "gain_db": 1.34,
+      "noise_reduced_pct": 26.6
+    }
+  ]
+}

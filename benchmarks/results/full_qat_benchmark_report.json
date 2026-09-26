@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-09-24 15:15:45",
+  "hardware": "NVIDIA GeForce RTX 3060 12GB (GPU 1)",
+  "pipeline_time_s": 1212.55,
+  "model_path": "/home/wsl-ops/models/frontier_qwen38/Qwen3.8-27B-SPTQ1_0-QAT-Full.gguf",
+  "model_size_gb": 4.72,
+  "lora_path": "/home/wsl-ops/models/frontier_qwen38/qwen38-sptq-qat-residual-lora.gguf",
+  "lora_size_mb": 243.4,
+  "qat_tensors_optimized": 177,
+  "wikitext2_perplexity": 339.3637,
+  "wikitext2_stderr": 32.82837
+}
