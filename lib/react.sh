@@ -27,6 +27,12 @@ source "$LODGE_DIR/lib/native_tools.sh"
 source "$LODGE_DIR/lib/context_engine.sh"
 source "$LODGE_DIR/lib/transcript.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/telemetry.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/limits.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/cache.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/fifo_ipc.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/task_sync.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/agent_sm.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/mqtt.sh" 2>/dev/null || true
 
 # ── Structured Telemetry & Routing Trace ──────────────────────────────
 _react_trace() {
@@ -37,6 +43,429 @@ _react_trace() {
     local ts
     ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%s)
     printf '{"timestamp":"%s","event":"%s","data":%s}\n' "$ts" "$event" "${payload:-{}}" >> "$trace_file" 2>/dev/null || true
+}
+
+# ── Action Normalization & Canonical Hash ────────────────────────────
+_react_action_hash() {
+    local c_name="$1"
+    local c_args="${2:-}"
+    local norm_args=""
+
+    if [ -z "$c_args" ] || [ "$c_args" = "{}" ]; then
+        norm_args="{}"
+    elif echo "$c_args" | jq -e 'type == "object" or type == "array"' >/dev/null 2>&1; then
+        norm_args=$(echo "$c_args" | jq -S -c . 2>/dev/null || echo "$c_args" | tr -d '[:space:]')
+    else
+        norm_args=$(echo "$c_args" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | tr -s ' ')
+    fi
+
+    printf '%s:%s' "$c_name" "$norm_args" | md5sum 2>/dev/null | cut -d' ' -f1 \
+        || printf '%s:%s' "$c_name" "$norm_args" | cksum | cut -d' ' -f1
+}
+
+# ── Repetition & Loop Thrashing Detection ────────────────────────────
+# Evaluates action repetition against a circular history buffer.
+# Returns:
+#   0: Forward progress / first occurrence
+#   1: Strike 1 (Advisory recommended)
+#   2: Strike 2 (Deterministic Interlock)
+#   3: Strike 3 (Trip Circuit Breaker)
+_react_check_repetition() {
+    local session_dir="$1"
+    local a_hash="$2"
+    local c_name="${3:-}"
+    local c_args="${4:-}"
+
+    local hash_file="$session_dir/action_hashes.log"
+    local repeat_window
+    repeat_window=$(declare -f limits_get &>/dev/null && limits_get CIRCUIT_BREAKER_REPEAT_WINDOW 5 || echo "${CIRCUIT_BREAKER_REPEAT_WINDOW:-5}")
+    local max_repeats
+    max_repeats=$(declare -f limits_get &>/dev/null && limits_get CIRCUIT_BREAKER_MAX_REPEATS 3 || echo "${CIRCUIT_BREAKER_MAX_REPEATS:-3}")
+
+    local prev_hashes=()
+    if [ -f "$hash_file" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] && prev_hashes+=("$line")
+        done < "$hash_file"
+    fi
+
+    local prev_count=${#prev_hashes[@]}
+    local strike=0
+
+    # 1. Immediate exact repetition (Turn T == Turn T-1)
+    if [ "$prev_count" -ge 1 ]; then
+        local last_h="${prev_hashes[$((prev_count - 1))]}"
+        if [ "$a_hash" = "$last_h" ]; then
+            strike=1
+        fi
+    fi
+
+    # 2. Check for 2-step oscillation: A -> B -> A -> B
+    if [ "$prev_count" -ge 3 ]; then
+        local h_minus_1="${prev_hashes[$((prev_count - 1))]}"
+        local h_minus_2="${prev_hashes[$((prev_count - 2))]}"
+        local h_minus_3="${prev_hashes[$((prev_count - 3))]}"
+        if [ "$a_hash" = "$h_minus_2" ] && [ "$h_minus_1" = "$h_minus_3" ]; then
+            strike=2
+        fi
+    fi
+
+    # 3. Sliding window frequency
+    local window_start=$(( prev_count - repeat_window ))
+    [ "$window_start" -lt 0 ] && window_start=0
+    local occurrences=0
+    local i
+    for (( i=window_start; i<prev_count; i++ )); do
+        if [ "${prev_hashes[$i]}" = "$a_hash" ]; then
+            occurrences=$((occurrences + 1))
+        fi
+    done
+
+    if [ "$occurrences" -ge $((max_repeats - 1)) ]; then
+        strike=3
+    elif [ "$occurrences" -ge 2 ] && [ "$strike" -lt 2 ]; then
+        strike=2
+    elif [ "$occurrences" -ge 1 ] && [ "$strike" -lt 1 ]; then
+        strike=1
+    fi
+
+    # Record new hash into history file
+    echo "$a_hash" >> "$hash_file"
+
+    echo "$strike"
+}
+
+# ── Pseudo-LRU Cache Interception Helpers ───────────────────────────
+_react_tool_is_cacheable() {
+    local name="$1"
+    local args="${2:-}"
+    case "$name" in
+        web_search|web_fetch|pdf_read|file_read|code_symbol_get|code_outline|recall)
+            return 0
+            ;;
+        phytology_manage)
+            local act=""
+            act=$(echo "$args" | jq -r '.action // empty' 2>/dev/null)
+            if [ "$act" = "status" ] || [ "$act" = "audit" ] || [ "$act" = "cache-status" ]; then
+                return 0
+            fi
+            return 1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+_react_tool_cache_ns() {
+    local name="$1"
+    case "$name" in
+        web_search|web_fetch|pdf_read)
+            echo "web"
+            ;;
+        file_read|code_symbol_get|code_outline)
+            echo "files"
+            ;;
+        recall)
+            echo "recall"
+            ;;
+        phytology_manage)
+            echo "phytology"
+            ;;
+        *)
+            echo "default"
+            ;;
+    esac
+}
+
+_react_tool_is_mutating() {
+    local name="$1"
+    local args="${2:-}"
+    case "$name" in
+        file_write|file_edit|symbol_patch|git_commit|git_push|git_checkout|gitea_pr|gitea_issue_close)
+            return 0
+            ;;
+        phytology_manage)
+            local act=""
+            act=$(echo "$args" | jq -r '.action // empty' 2>/dev/null)
+            if [ "$act" = "heal" ] || [ "$act" = "rollback" ] || [ "$act" = "prune" ] || [ "$act" = "lignify" ] || [ "$act" = "cache-invalidate" ]; then
+                return 0
+            fi
+            return 1
+            ;;
+        bash_exec)
+            local cmd=""
+            cmd=$(echo "$args" | jq -r '.command // empty' 2>/dev/null || echo "$args")
+            if echo "$cmd" | grep -qE '\b(git\s+(commit|checkout|merge|rebase|push|branch)|sed\s+-i|rm\s+|mv\s+|touch\s+|cat\s+>|tee\s+)'; then
+                return 0
+            fi
+            return 1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# ── Circuit Breaker Classification Engine ────────────────────────────
+_react_classify_circuit_state() {
+    local c_name="$1"
+    local c_args="${2:-}"
+    local err_text="${3:-}"
+    local search_streak="${4:-0}"
+    local fail_streak="${5:-0}"
+    local rep_strike="${6:-0}"
+
+    if [ "$c_name" = "tool_search" ] && [ "$search_streak" -ge 2 ]; then
+        echo "TOOL_SEARCH_THRASHING"
+    elif [ "$c_name" = "phytology_manage" ] || [[ "$c_args" =~ phyto ]] || [[ "$err_text" =~ /phytology\ failed|subcommand ]]; then
+        echo "PHYTOLOGY_ERROR"
+    elif [[ "$err_text" =~ syntax\ error|unexpected\ token|command\ not\ found ]] || [ "$c_name" = "bash_exec" -a "$fail_streak" -ge 1 ]; then
+        echo "SHELL_SYNTAX_ERROR"
+    elif [ "$fail_streak" -ge 2 ]; then
+        echo "CONSECUTIVE_TOOL_FAILURES"
+    elif [ "$rep_strike" -ge 2 ]; then
+        echo "ACTION_REPETITION"
+    else
+        echo "GENERAL_LOOP_THRASHING"
+    fi
+}
+
+# ── Circuit Breaker Intelligent Prompt Perturbation Hook ─────────────
+# 3-Tier Escalation Ladder:
+#   Tier A: Second Configured Node (Federated Compute Ladder via endpoints.conf)
+#   Tier B: Async/Direct Diagnostic LLM Request to Active Endpoint
+#   Tier C: Case-Selection Static Prompt Injection Fallback
+_react_circuit_breaker_perturbation() {
+    local session_id="$1"
+    local workdir="$2"
+    local breaker_class="$3"
+    local action_summary="$4"
+    local last_error="$5"
+    local messages_file="$6"
+    local macro_file="${7:-}"
+
+    local primary_obj=""
+    [ -n "$macro_file" ] && [ -f "$macro_file" ] && primary_obj=$(jq -r '.primary_objective // empty' "$macro_file" 2>/dev/null)
+    [ -z "$primary_obj" ] && primary_obj="Resolve the active engineering task in $workdir"
+
+    local perturbation=""
+    local source_tier=""
+
+    # 1. Tier A: Second Configured Node (e.g. Tier 2 on 18080 or Tier 3 on mac-m5)
+    declare -f endpoints_init &>/dev/null && endpoints_init
+    local sec_url=""
+    local sec_model=""
+
+    if [ -n "${TIER2_URL:-}" ] && [ "${TIER2_URL}" != "${ACTIVE_ENDPOINT_URL:-}" ]; then
+        if declare -f endpoints_probe &>/dev/null && endpoints_probe 2; then
+            sec_url="$TIER2_URL"
+            sec_model="${TIER2_MODEL:-champion-v5}"
+            source_tier="Tier 2 (Secondary Node: $sec_url)"
+        elif curl -sf --max-time 1.5 "${TIER2_URL}/health" &>/dev/null; then
+            sec_url="$TIER2_URL"
+            sec_model="${TIER2_MODEL:-champion-v5}"
+            source_tier="Tier 2 (Secondary Node: $sec_url)"
+        fi
+    fi
+
+    if [ -z "$sec_url" ] && [ -n "${TIER3_URL:-}" ] && [ "${TIER3_URL}" != "${ACTIVE_ENDPOINT_URL:-}" ]; then
+        if declare -f endpoints_probe &>/dev/null && endpoints_probe 3; then
+            sec_url="$TIER3_URL"
+            sec_model="${TIER3_MODEL:-glm-5.3-flash}"
+            source_tier="Tier 3 (Frontier Node: $sec_url)"
+        fi
+    fi
+
+    if [ -n "$sec_url" ]; then
+        ui_step "Consulting Secondary Node ($source_tier) for Circuit Breaker Perturbation..."
+        local sec_prompt="You are an authoritative supervisor node. George's ReAct execution loop in repo 'blue-lodge' is thrashing.
+Failure Classification: $breaker_class
+Failing Action: $action_summary
+Error/Output: ${last_error:0:300}
+Primary Objective: $primary_obj
+
+Respond with EXACTLY ONE concise, imperative steering directive (1-2 sentences) wrapped in [SYSTEM PERTURBATION: ...].
+Specify the exact native tool name and parameters George should immediately invoke to unblock execution. Do NOT apologize or output markdown formatting."
+
+        local sec_payload
+        sec_payload=$(jq -nc \
+            --arg model "$sec_model" \
+            --arg prompt "$sec_prompt" \
+            '{
+                model: $model,
+                messages: [
+                    {"role": "system", "content": "You are the secondary supervisor AI providing real-time circuit-breaker steering directives."},
+                    {"role": "user", "content": $prompt}
+                ],
+                max_tokens: 150,
+                temperature: 0.2
+            }')
+
+        local sec_resp
+        sec_resp=$(curl -s --max-time 4 "$sec_url/v1/chat/completions" \
+            -H "Content-Type: application/json" \
+            -d "$sec_payload" 2>/dev/null)
+
+        local sec_content
+        sec_content=$(echo "$sec_resp" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+        if [ -n "$sec_content" ]; then
+            perturbation="$sec_content"
+            [[ "$perturbation" != \[* ]] && perturbation="[SYSTEM PERTURBATION ($source_tier): $perturbation]"
+        fi
+    fi
+
+    # 2. Tier B: Async/Direct Diagnostic LLM Request to Active Endpoint
+    if [ -z "$perturbation" ] && [ -n "${ACTIVE_ENDPOINT_URL:-}" ]; then
+        ui_step "Querying Active Endpoint for Circuit Breaker Perturbation..."
+        local ep_prompt="George's ReAct loop has encountered an interlock / circuit breaker trip.
+Classification: $breaker_class
+Action: $action_summary
+Error: ${last_error:0:300}
+Objective: $primary_obj
+
+Generate a direct, imperative prompt perturbation (1-2 sentences) telling George how to unblock: which exact tool (e.g. phytology_manage, bash_exec, file_read) to call and with what exact parameters. Return only the directive."
+
+        local ep_payload
+        ep_payload=$(jq -nc \
+            --arg model "${ACTIVE_ENDPOINT_MODEL:-champion-v5}" \
+            --arg prompt "$ep_prompt" \
+            '{
+                model: $model,
+                messages: [
+                    {"role": "system", "content": "You are the system supervisor providing diagnostic perturbation directives."},
+                    {"role": "user", "content": $prompt}
+                ],
+                max_tokens: 150,
+                temperature: 0.3
+            }')
+
+        local ep_resp
+        ep_resp=$(curl -s --max-time 3 "$ACTIVE_ENDPOINT_URL/v1/chat/completions" \
+            -H "Content-Type: application/json" \
+            -d "$ep_payload" 2>/dev/null)
+
+        local ep_content
+        ep_content=$(echo "$ep_resp" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+        if [ -n "$ep_content" ]; then
+            perturbation="[SYSTEM PERTURBATION (Async Endpoint): $ep_content]"
+            source_tier="Active Endpoint ($ACTIVE_ENDPOINT_URL)"
+        fi
+    fi
+
+    # 3. Tier C: Case-Selection Static Prompt Injection Fallback
+    if [ -z "$perturbation" ]; then
+        source_tier="Static Classification Catalog"
+        case "$breaker_class" in
+            TOOL_SEARCH_THRASHING)
+                perturbation="[SYSTEM PERTURBATION: Loop thrashing detected on tool_search. Cease searching. All core tools are already loaded and mounted in your bedrock catalog: phytology_manage, bash_exec, file_read, dir_list, file_grep. To inspect living tissue health and status, call phytology_manage directly with action=\"status\" or action=\"audit\", flags=\"--cached\". Do NOT call tool_search again.]"
+                ;;
+            PHYTOLOGY_ERROR)
+                perturbation="[SYSTEM PERTURBATION: Phytology invocation error. Valid subcommands for phytology_manage are: 'status', 'audit', 'heal', 'rollback', 'prune', 'fitness', 'lignify', 'test'. Pass the action as a simple string parameter (e.g. action=\"status\" or action=\"audit\", flags=\"--cached\"). Do NOT wrap arguments in raw JSON strings.]"
+                ;;
+            SHELL_SYNTAX_ERROR)
+                perturbation="[SYSTEM PERTURBATION: Shell syntax error in bash_exec. Your command failed due to unmatched parentheses, unescaped wildcards, or invalid syntax. Use simple, direct commands; quote file search patterns (e.g. find . -name \"*phyto*\"); or use native file_read/file_grep/dir_list directly.]"
+                ;;
+            ACTION_REPETITION)
+                perturbation="[SYSTEM PERTURBATION: Action repetition ceiling breached ($action_summary). Repeating this action is strictly prohibited. You MUST switch tools or significantly modify parameters immediately to proceed.]"
+                ;;
+            CONSECUTIVE_TOOL_FAILURES)
+                perturbation="[SYSTEM PERTURBATION: Multiple consecutive tool actions failed ($last_error). Step back from this failing approach. Inspect the workspace directly using file_read on lib/phytology.sh or dir_list to verify active files.]"
+                ;;
+            *)
+                perturbation="[SYSTEM PERTURBATION: Execution loop interlock tripped ($breaker_class: $action_summary). Halt current cycle and switch to a direct inspection tool (file_read, dir_list, or phytology_manage). Do not repeat the failed action.]"
+                ;;
+        esac
+    fi
+
+    ui_warn "⚡ Prompt Perturbation Injected via $source_tier: ${perturbation:0:120}..."
+    if [ -n "$messages_file" ] && [ -f "$messages_file" ]; then
+        jq --arg p "$perturbation" '. += [{"role": "user", "content": $p}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+    fi
+
+    _react_trace "$workdir" "circuit_breaker_perturbation" "$(jq -cn --arg cls "$breaker_class" --arg tier "$source_tier" --arg p "$perturbation" '{classification:$cls, source:$tier, perturbation:$p}')"
+    if declare -f telemetry_record_anomaly &>/dev/null; then
+        telemetry_record_anomaly "$session_id" "CIRCUIT_BREAKER_PERTURBATION" "$breaker_class" "$perturbation" >/dev/null 2>&1 || true
+    fi
+
+    echo "$perturbation"
+}
+
+# ── Circuit Breaker Hard Trip & Quarantine ──────────────────────────
+_react_trip_circuit_breaker() {
+    local session_id="$1"
+    local workdir="$2"
+    local reason="$3"
+    local action_summary="$4"
+    local messages_file="$5"
+    local macro_file="$6"
+    local last_error="${7:-}"
+
+    ui_err "⚡ [CIRCUIT BREAKER TRIPPED] $reason (Action: $action_summary)"
+    _react_trace "$workdir" "circuit_breaker_tripped" "$(jq -cn --arg reason "$reason" --arg act "$action_summary" '{reason:$reason, action:$act}')"
+
+    jq '.status = "CIRCUIT_BREAKER_TRIPPED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
+
+    # Structured alert artifact
+    mkdir -p "$LODGE_DIR/.george/alerts" 2>/dev/null || true
+    local alert_file="$LODGE_DIR/.george/alerts/alert_${session_id}.json"
+    local alert_ts
+    alert_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%d %H:%M:%S")
+
+    local branch_now=""
+    if git -C "$workdir" rev-parse --is-inside-work-tree &>/dev/null; then
+        branch_now=$(git -C "$workdir" branch --show-current 2>/dev/null || echo "detached")
+        # Quarantine checkpoint commit if dirty
+        if [ -n "$(git -C "$workdir" status --porcelain 2>/dev/null)" ]; then
+            local quarantine_branch="quarantine/${session_id}"
+            (
+                cd "$workdir" || exit 0
+                git branch -D "$quarantine_branch" >/dev/null 2>&1 || true
+                git checkout -b "$quarantine_branch" >/dev/null 2>&1 || true
+                git add -A >/dev/null 2>&1 || true
+                git commit -m "quarantine(checkpoint): preserve dirty state from tripped breaker ($session_id)" --no-verify >/dev/null 2>&1 || true
+                git checkout "$branch_now" >/dev/null 2>&1 || true
+            ) 2>/dev/null || true
+            ui_warn "Dirty state preserved on quarantine branch 'quarantine/${session_id}'"
+        fi
+    fi
+
+    jq -n \
+        --arg id "$session_id" \
+        --arg ts "$alert_ts" \
+        --arg reason "$reason" \
+        --arg act "$action_summary" \
+        --arg err "${last_error:0:1000}" \
+        --arg branch "${branch_now:-none}" \
+        --arg workdir "$workdir" \
+        '{
+            id: $id,
+            timestamp: $ts,
+            status: "CIRCUIT_BREAKER_TRIPPED",
+            reason: $reason,
+            action: $act,
+            error: $err,
+            branch: $branch,
+            workdir: $workdir
+        }' > "$alert_file" 2>/dev/null || true
+
+    # Prompt Perturbation Hook (Escalation to Secondary Node / Async LLM / Static Catalog)
+    local trip_cls
+    trip_cls=$(_react_classify_circuit_state "$action_summary" "" "$reason: $last_error" 0 3 3)
+    _react_circuit_breaker_perturbation "$session_id" "$workdir" "$trip_cls" "$action_summary" "$reason: $last_error" "$messages_file" "$macro_file"
+
+    # MQTT Broadcast
+    if declare -f task_sync_signal &>/dev/null; then
+        task_sync_signal "$session_id" "circuit_breaker" "$(cat "$alert_file" 2>/dev/null || echo "{}")" >/dev/null 2>&1 || true
+    fi
+
+    # Telemetry
+    if declare -f telemetry_record_anomaly &>/dev/null; then
+        telemetry_record_anomaly "$session_id" "CIRCUIT_BREAKER" "react.sh" "$reason: $action_summary" >/dev/null 2>&1 || true
+    fi
+    if declare -f telemetry_task_end &>/dev/null; then
+        telemetry_task_end "$session_id" 75 "CIRCUIT_BREAKER_TRIPPED" >/dev/null 2>&1 || true
+    fi
 }
 
 # ── Auto-Compaction Engine (Hierarchical Rich Compaction) ────────────
@@ -287,6 +716,16 @@ react_run() {
     local session_dir="$gdir/workspaces/$session_id"
     mkdir -p "$session_dir"
 
+    # Initialize FIFO IPC Channel & Credit Flow Control
+    local init_credits
+    init_credits=$(declare -f limits_get &>/dev/null && limits_get FLOW_CONTROL_DEFAULT_CREDITS 5 || echo 5)
+    declare -f fifo_channel_open &>/dev/null && fifo_channel_open "$session_id" "$init_credits" 2>/dev/null || true
+
+    # Initialize State Machine & Pseudo-LRU Cache
+    declare -f agent_sm_register &>/dev/null && agent_sm_register "$session_id" "react_worker" "$goal" 2>/dev/null || true
+    declare -f agent_sm_transition &>/dev/null && agent_sm_transition "$session_id" "RUNNING" "Beginning ReAct loop" 2>/dev/null || true
+    declare -f cache_init &>/dev/null && cache_init
+
     local history_file="$session_dir/trajectory.log"
     local messages_file="$session_dir/messages.json"
     local memory_file="$session_dir/memory.md"
@@ -346,6 +785,8 @@ react_run() {
     local consecutive_empty_turns=0
     local consecutive_premature_plans=0
     local thrashing_target_streak=0
+    local tool_search_streak=0
+    local same_tool_streak=0
     local last_invoked_tool=""
 
     echo "PRIMARY OBJECTIVE: $goal" >> "$history_file"
@@ -362,6 +803,27 @@ react_run() {
 
     while [ "$turn" -le "$max_turns" ]; do
         printf "\n${C_BOLD}${C_CYAN}── Turn %d/%d ──────────────────────────────${C_RESET}\n" "$turn" "$max_turns"
+
+        # Credit-based flow control check
+        if declare -f fifo_channel_is_open &>/dev/null && fifo_channel_is_open "$session_id"; then
+            if declare -f fifo_flow_acquire &>/dev/null; then
+                if ! fifo_flow_acquire "$session_id" 1; then
+                    declare -f agent_sm_transition &>/dev/null && agent_sm_transition "$session_id" "FLOW_PAUSED" "Credit window exhausted"
+                    ui_warn "Flow paused: awaiting credit grant for session $session_id..."
+                    if ! fifo_flow_acquire "$session_id" 2; then
+                        ui_dim "  [flow-control] Auto-granting 5 credits to advance execution"
+                        declare -f fifo_flow_grant &>/dev/null && fifo_flow_grant "$session_id" 5
+                        fifo_flow_acquire "$session_id" 1 || true
+                    fi
+                    declare -f agent_sm_transition &>/dev/null && agent_sm_transition "$session_id" "RUNNING" "Resumed with granted credits"
+                fi
+            fi
+        fi
+
+        # MQTT turn progress broadcast
+        if declare -f task_sync_signal &>/dev/null; then
+            task_sync_signal "$session_id" "turn" "$(jq -cn --arg id "$session_id" --argjson turn "$turn" --arg tool "${last_invoked_tool:-none}" '{session_id:$id, turn:$turn, last_tool:$tool}')" >/dev/null 2>&1 || true
+        fi
 
         # Telemetry heartbeat and PTY / pipe liveness check
         if declare -f telemetry_task_heartbeat &>/dev/null; then
@@ -840,7 +1302,41 @@ except Exception:
                 c_name=$(echo "$call" | jq -r '.function.name')
                 c_args=$(echo "$call" | jq -r '.function.arguments')
 
-                last_invoked_tool="$c_name"
+                if [ "$c_name" = "$last_invoked_tool" ]; then
+                    same_tool_streak=$((same_tool_streak + 1))
+                else
+                    same_tool_streak=1
+                    last_invoked_tool="$c_name"
+                fi
+
+                if [ "$c_name" = "tool_search" ]; then
+                    tool_search_streak=$((tool_search_streak + 1))
+                else
+                    tool_search_streak=0
+                fi
+
+                # Intercept tool_search thrashing early (Streak >= 2)
+                if [ "$tool_search_streak" -ge 2 ]; then
+                    ui_warn "⚡ Tool search thrashing detected (Streak: $tool_search_streak). Triggering Prompt Perturbation Hook."
+                    _react_circuit_breaker_perturbation "$session_id" "$workdir" "TOOL_SEARCH_THRASHING" "tool_search ($c_args)" "Repeated tool_search invocations without forward progress" "$messages_file" "$macro_file"
+                fi
+
+                # ── Action Hashing & Repetition Detection ────────────
+                local a_hash
+                a_hash=$(_react_action_hash "$c_name" "$c_args")
+                local rep_strike
+                rep_strike=$(_react_check_repetition "$session_dir" "$a_hash" "$c_name" "$c_args")
+
+                if [ "$rep_strike" -ge 3 ]; then
+                    _react_trip_circuit_breaker "$session_id" "$workdir" "Action repetition ceiling reached ($c_name)" "$c_name ($c_args)" "$messages_file" "$macro_file" "Repeated action hash: $a_hash"
+                    export AGENT_ACTIVE_SESSION_ID=""
+                    return 75
+                elif [ "$rep_strike" -eq 1 ]; then
+                    local rep_adv="[CIRCUIT ADVISORY: Action '$c_name' was already executed. Repeating identical actions or oscillating cycles without parameter changes is strictly prohibited. Modify your parameters or select an alternative tool.]"
+                    jq --arg a "$rep_adv" '. += [{"role": "user", "content": $a}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+                elif [ "$rep_strike" -eq 2 ]; then
+                    _react_circuit_breaker_perturbation "$session_id" "$workdir" "ACTION_REPETITION" "$c_name ($c_args)" "Action repetition strike 2" "$messages_file" "$macro_file"
+                fi
 
                 ui_step "Native Tool Call: $c_name"
                 echo "Tool Call: $c_name ($c_args)" >> "$history_file"
@@ -850,8 +1346,47 @@ except Exception:
                     printf "   ${C_BOLD}${C_BLUE}[DEBUG: Tool Args]${C_RESET} %s\n" "$c_args"
                 fi
 
-                local tool_resp
-                tool_resp=$(native_tools_dispatch "$c_id" "$c_name" "$c_args" "$workdir")
+                local tool_resp=""
+                local from_cache=0
+                local cache_key=""
+                local cache_ns=""
+
+                # ── Pseudo-LRU Cache Interception ────────────────────
+                if _react_tool_is_cacheable "$c_name"; then
+                    cache_ns=$(_react_tool_cache_ns "$c_name")
+                    cache_key="tool:${c_name}:${a_hash}"
+                    local cached_val=""
+                    if declare -f cache_get &>/dev/null && cached_val=$(cache_get "$cache_key" "$cache_ns" 2>/dev/null); then
+                        from_cache=1
+                        ui_step "Native Tool Call: $c_name [LRU CACHE HIT (~0ms)]"
+                        tool_resp=$(jq -nc \
+                            --arg id "$c_id" \
+                            --arg name "$c_name" \
+                            --arg content "$cached_val" \
+                            '{role: "tool", tool_call_id: $id, name: $name, content: ("[CACHED OBSERVATION (0ms)]\n" + $content)}')
+                    fi
+                fi
+
+                # ── Asynchronous Execution with Watchdog Timeout ─────
+                if [ "$from_cache" -eq 0 ]; then
+                    local as_timeout
+                    as_timeout=$(declare -f limits_get &>/dev/null && limits_get ASYNC_TOOL_WATCHDOG_TIMEOUT 120 || echo 120)
+                    if declare -f fifo_async &>/dev/null && declare -f fifo_await &>/dev/null; then
+                        local prom_id
+                        prom_id=$(fifo_async "$session_id" "native_tools_dispatch '$c_id' '$c_name' '$c_args' '$workdir'")
+                        tool_resp=$(fifo_await "$prom_id" "$as_timeout" 2>/dev/null)
+                        local await_ec=$?
+                        if [ "$await_ec" -eq 124 ]; then
+                            tool_resp=$(jq -nc \
+                                --arg id "$c_id" \
+                                --arg name "$c_name" \
+                                --arg timeout "$as_timeout" \
+                                '{role: "tool", tool_call_id: $id, name: $name, content: ("ERROR: Tool execution timed out after " + $timeout + "s")}')
+                        fi
+                    else
+                        tool_resp=$(native_tools_dispatch "$c_id" "$c_name" "$c_args" "$workdir")
+                    fi
+                fi
 
                 # Guarantee tool_resp is a well-formed JSON object before passing to jq
                 if ! echo "$tool_resp" | jq -e 'type == "object"' >/dev/null 2>&1; then
@@ -882,12 +1417,23 @@ except Exception:
 
                 echo "Observation: $resp_content" >> "$history_file"
                 declare -f transcript_log_block &>/dev/null && transcript_log_block "observation ($c_name)" "$resp_content"
-                _react_trace "$workdir" "tool_call" "$(jq -cn --arg tool "$c_name" --arg args "$c_args" '{tool:$tool, args:$args}')"
+                local is_cached_bool="false"
+                [ "$from_cache" -eq 1 ] && is_cached_bool="true"
+                _react_trace "$workdir" "tool_call" "$(jq -cn --arg tool "$c_name" --arg args "$c_args" --argjson cached "$is_cached_bool" '{tool:$tool, args:$args, cached:$cached}')"
 
                 # Check for tool errors and track cognitive thrashing
                 local is_tool_failure=0
-                if echo "$resp_content" | grep -qE '(\bERROR\b|ERROR:|Command failed|pdftotext: not found|ModuleNotFoundError|ImportError|Traceback \(most recent call last\)|No such file or directory|failed \(exit [1-9]|SCRIPT_EXIT=[1-9]|SyntaxError:)'; then
+                if echo "$resp_content" | grep -qE '(\bERROR\b|ERROR:|Command failed|pdftotext: not found|ModuleNotFoundError|ImportError|Traceback \(most recent call last\)|No such file or directory|failed \(exit [1-9]|SCRIPT_EXIT=[1-9]|SyntaxError:|syntax error|unexpected token|Unknown.*subcommand)'; then
                     is_tool_failure=1
+                fi
+
+                # ── Cache Store & Invalidation ───────────────────────
+                if [ "$from_cache" -eq 0 ] && [ "$is_tool_failure" -eq 0 ] && _react_tool_is_cacheable "$c_name"; then
+                    declare -f cache_put &>/dev/null && cache_put "$cache_key" "$cache_ns" "$resp_content"
+                fi
+                if _react_tool_is_mutating "$c_name" "$c_args"; then
+                    declare -f cache_invalidate_ns &>/dev/null && cache_invalidate_ns "files"
+                    declare -f cache_invalidate_ns &>/dev/null && cache_invalidate_ns "git"
                 fi
 
                 if [ "$is_tool_failure" -eq 1 ]; then
@@ -896,27 +1442,16 @@ except Exception:
                         telemetry_record_anomaly "$session_id" "CAPABILITY_DEFICIT" "$c_name" "Failure on $c_name (Strike $thrashing_target_streak): ${resp_content:0:200}" >/dev/null 2>&1 || true
                     fi
 
-                    if [ "$thrashing_target_streak" -eq 3 ]; then
-                        ui_warn "3 consecutive tool failures detected targeting $c_name. Injecting Metacognitive Resilience Frame."
-                        local warn_pivot="[SYSTEM ADVISORY — AUTONOMOUS ADAPTIVE PIVOT REQUIRED]
-Action targeting '$c_name' has failed 3 consecutive times. Repeating identical commands or syntax tweaks is strictly prohibited.
-Execute the Metacognitive Pathfinding Protocol:
-1. ABSTRACT INTENT: Identify the fundamental objective of this action (decouple the intended result from the specific tool or command).
-2. SURVEY CAPABILITIES: Use discovery commands (e.g. bash inspection, file_search, or grep_search) to locate alternative libraries, tools, fallback providers, or configurations present in the repository.
-3. SUBSTITUTE OR ADAPT: Formulate a distinct alternative pathway (e.g. secondary provider, fallback package, local mock, or environment reconfiguration).
-4. VERIFY: Execute and validate the alternative pathway."
-                        jq --arg w "$warn_pivot" '. += [{"role": "user", "content": $w}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
-                    elif [ "$thrashing_target_streak" -ge 6 ]; then
-                        ui_err "Hard capability ceiling reached: 6 consecutive unyielding tool failures ($c_name). Preserving incident and halting."
-                        if declare -f telemetry_preserve_incident &>/dev/null; then
-                            telemetry_preserve_incident "$session_id" "CAPABILITY_EXHAUSTED" "Repeated tool failure on $c_name" "$workdir" >/dev/null 2>&1 || true
-                        fi
-                        if declare -f telemetry_triage_operational_failure &>/dev/null; then
-                            telemetry_triage_operational_failure "$c_name" "CAPABILITY_EXHAUSTED" "Persistent tool failure on $c_name reached strike ceiling" "${resp_content:0:500}" "$workdir" >/dev/null 2>&1 || true
-                        fi
-                        if declare -f telemetry_task_end &>/dev/null; then
-                            telemetry_task_end "$session_id" 1 "CAPABILITY_EXHAUSTED" >/dev/null 2>&1 || true
-                        fi
+                    # Trigger intelligent prompt perturbation hook on consecutive failures
+                    if [ "$thrashing_target_streak" -ge 2 ]; then
+                        local fail_cls
+                        fail_cls=$(_react_classify_circuit_state "$c_name" "$c_args" "$resp_content" "$tool_search_streak" "$thrashing_target_streak" 0)
+                        _react_circuit_breaker_perturbation "$session_id" "$workdir" "$fail_cls" "$c_name ($c_args)" "${resp_content:0:300}" "$messages_file" "$macro_file"
+                    fi
+
+                    if [ "$thrashing_target_streak" -ge 4 ]; then
+                        ui_err "Hard capability ceiling reached: 4 consecutive unyielding tool failures ($c_name). Tripping breaker and preserving incident."
+                        _react_trip_circuit_breaker "$session_id" "$workdir" "Persistent tool failure on $c_name reached strike ceiling" "$c_name ($c_args)" "$messages_file" "$macro_file" "${resp_content:0:500}"
                         export AGENT_ACTIVE_SESSION_ID=""
                         jq '.status = "CAPABILITY_EXHAUSTED"' "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
                         tool_exhausted=1
@@ -1013,6 +1548,22 @@ Execute the Metacognitive Pathfinding Protocol:
 
         # Handle other text slash commands (fallback path)
         if [ -n "$action" ]; then
+            local fb_hash
+            fb_hash=$(_react_action_hash "fallback_cmd" "$action")
+            local fb_strike
+            fb_strike=$(_react_check_repetition "$session_dir" "$fb_hash" "fallback_cmd" "$action")
+
+            if [ "$fb_strike" -ge 3 ]; then
+                _react_trip_circuit_breaker "$session_id" "$workdir" "Fallback command repetition ceiling reached" "$action" "$messages_file" "$macro_file" "Repeated command hash: $fb_hash"
+                export AGENT_ACTIVE_SESSION_ID=""
+                return 75
+            elif [ "$fb_strike" -eq 1 ]; then
+                local fb_adv="[CIRCUIT ADVISORY: Fallback command '$action' was already executed. Repeating identical commands without parameter changes is strictly prohibited. Modify your parameters or proceed to other actions.]"
+                jq --arg a "$fb_adv" '. += [{"role": "user", "content": $a}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+            elif [ "$fb_strike" -eq 2 ]; then
+                _react_circuit_breaker_perturbation "$session_id" "$workdir" "ACTION_REPETITION" "$action" "Fallback repetition strike 2" "$messages_file" "$macro_file"
+            fi
+
             ui_step "Executing fallback command: $action"
             echo "Action: $action" >> "$history_file"
             declare -f transcript_log &>/dev/null && transcript_log "command" "$action"
@@ -1020,6 +1571,11 @@ Execute the Metacognitive Pathfinding Protocol:
             local obs
             obs=$(commands_dispatch "$action" "$workdir" 2>&1)
             local exit_code=$?
+
+            if echo "$action" | grep -qE '\b(edit|write|patch|commit|push|git|rm|mv|touch|sed)'; then
+                declare -f cache_invalidate_ns &>/dev/null && cache_invalidate_ns "files"
+                declare -f cache_invalidate_ns &>/dev/null && cache_invalidate_ns "git"
+            fi
 
             if [ "$exit_code" -ne 0 ]; then
                 if declare -f telemetry_record_anomaly &>/dev/null; then
@@ -1088,11 +1644,15 @@ Execute the Metacognitive Pathfinding Protocol:
             local is_unverified_code=0
             if [ "$max_turns" -gt 1 ]; then
                 local is_code_task=0
-                if echo "${goal,,}" | grep -qiE '\b(extend|implement|develop|fix|refactor|test|patch|code|write|create|build|modify|phytology|protocol|feature|graft|audit|remediat|branch|pr|pull request|commit)\b'; then
+                if echo "${goal,,}" | grep -qiE '\b(extend|implement|develop|fix|refactor|test|patch|code|write|create|build|modify|feature|graft|remediat|branch|pr|pull request|commit)\b'; then
                     is_code_task=1
                 fi
+                # Exclude pure inspection, health verification, audit, or status queries from forced mutation
+                if echo "${goal,,}" | grep -qiE '\b(inspect|status|verify|check|audit|report on|overview of)\b' && ! echo "${goal,,}" | grep -qiE '\b(implement|create|extend|build|fix|write|modify|refactor|patch|branch)\b'; then
+                    is_code_task=0
+                fi
                 if [ "$is_code_task" -eq 1 ]; then
-                    if [ ! -f "$history_file" ] || ! grep -qE "(Tool Call: file_write|Tool Call: file_edit|Tool Call: symbol_patch|Tool Call: git_commit|Tool Call: git_push|Tool Call: gitea_pr|Tool Call: gitea_issue_close|Action: .*commit|Action: .*push|git checkout -b|git commit|git branch feature)" "$history_file"; then
+                    if [ ! -f "$history_file" ] || ! grep -qE "(Tool Call: file_write|Tool Call: file_edit|Tool Call: symbol_patch|Tool Call: git_commit|Tool Call: git_push|Tool Call: gitea_pr|Tool Call: gitea_issue_close|Tool Call: phytology_manage|Tool Call: slash_command_exec|Tool Call: bash_exec|Action: .*phytology|Action: .*commit|Action: .*push|git checkout -b|git commit|git branch feature)" "$history_file"; then
                         is_unverified_code=1
                     fi
                 fi

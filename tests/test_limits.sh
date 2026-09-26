@@ -72,7 +72,30 @@ describe "Slash Command Dispatch"
     cmd_limits "set MAX_RESEARCH_TURNS 300" >/dev/null
     val2=$(cmd_limits "get MAX_RESEARCH_TURNS")
     assert_eq "$val2" "300"
+    cmd_limits "set CIRCUIT_BREAKER_MAX_REPEATS 4" >/dev/null
+    val3=$(cmd_limits "get CIRCUIT_BREAKER_MAX_REPEATS")
+    assert_eq "$val3" "4"
+    cmd_limits "set CACHE_LRU_CAPACITY 128" >/dev/null
+    val4=$(cmd_limits "get CACHE_LRU_CAPACITY")
+    assert_eq "$val4" "128"
     cmd_limits "reset" >/dev/null
+  }
+
+describe "New ReAct & Cache Levers Defaults"
+
+  it "retrieves default CIRCUIT_BREAKER_MAX_REPEATS as 3" && {
+    val=$(limits_get CIRCUIT_BREAKER_MAX_REPEATS)
+    assert_eq "$val" "3"
+  }
+
+  it "retrieves default CACHE_LRU_CAPACITY as 64" && {
+    val=$(limits_get CACHE_LRU_CAPACITY)
+    assert_eq "$val" "64"
+  }
+
+  it "retrieves default ASYNC_TOOL_WATCHDOG_TIMEOUT as 120" && {
+    val=$(limits_get ASYNC_TOOL_WATCHDOG_TIMEOUT)
+    assert_eq "$val" "120"
   }
 
 test_end

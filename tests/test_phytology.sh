@@ -257,5 +257,83 @@ it "promotes fit foliage to Cambium command and creates companion test" && {
     rm -f "$ffile" "$LODGE_DIR/commands/sample_cmd_$$.sh" "$LODGE_DIR/tests/test_lignified_sample_cmd_$$.sh"
 }
 
+describe "Tissue Cache Coordination & Invalidation"
+it "invalidates files and phytology cache namespaces upon grafting and pruning" && {
+    cache_init
+    cache_put "tool:file_read:test" "files" "old file content"
+    cache_put "audit:0:test" "phytology" "old audit"
+
+    # Verify cached
+    assert_eq "$(cache_get "tool:file_read:test" "files")" "old file content"
+    assert_eq "$(cache_get "audit:0:test" "phytology")" "old audit"
+
+    # Graft tissue -> must invalidate both namespaces
+    test_tissue="$FOLIAGE_TOOLS_ROOT/cache_sync_$$.sh"
+    phytology_graft "$test_tissue" "echo 'cache sync test'" >/dev/null
+
+    # Both must now be cache misses (exit 1)
+    ! cache_get "tool:file_read:test" "files" >/dev/null 2>&1
+    ! cache_get "audit:0:test" "phytology" >/dev/null 2>&1
+
+    rm -f "$test_tissue"
+}
+
+describe "Cached Living Tissue Audit"
+it "caches audit results and serves identical result on --cached" && {
+    cache_init
+    phytology_invalidate_cache
+
+    # First audit without cache
+    out1=$(phytology_audit --json)
+    assert_contains "$out1" '"status": "healthy"'
+
+    # Second audit with --cached
+    out2=$(phytology_audit --json --cached)
+    assert_eq "$out1" "$out2"
+}
+
+describe "Autonomic Healing Circuit Breaker"
+it "trips circuit breaker after consecutive failures, quarantining defective tissue" && {
+    broken_job="$FOLIAGE_ROOT/unhealable_$$.sh"
+    echo "if then fi invalid" > "$broken_job"
+    # Ensure no valid snapshots exist
+    rm -f "$PHYTOLOGY_SNAPSHOTS_DIR/unhealable_$$.*" 2>/dev/null || true
+
+    # Simulate strikes reaching threshold (3)
+    echo "unhealable_$$.sh:2:$(date +%s)" > "$GEORGE_DIR/.phytology_strikes"
+
+    heal_out=$(phytology_heal)
+    assert_contains "$heal_out" "HEAL_CIRCUIT_BREAKER"
+    assert_contains "$heal_out" "quarantined by circuit breaker"
+
+    # Check alert file written
+    alert_matches=$(find "$GEORGE_DIR/alerts" -name "alert_phytology_unhealable_$$*.json" 2>/dev/null | wc -l)
+    [ "$alert_matches" -ge 1 ]
+
+    # Check quarantine file exists
+    q_matches=$(find "$GEORGE_DIR/quarantine" -name "unhealable_$$.sh.quarantine.*" 2>/dev/null | wc -l)
+    [ "$q_matches" -ge 1 ]
+
+    # Original broken job removed/quarantined from foliage
+    [ ! -f "$broken_job" ]
+
+    # Clean up test artifacts
+    rm -f "$GEORGE_DIR/alerts/alert_phytology_unhealable_$$*.json" "$GEORGE_DIR/quarantine/unhealable_$$.sh.quarantine.*" 2>/dev/null || true
+}
+
+describe "Phytology Cache Slash Commands"
+it "executes /phytology audit --cached, cache-status, and cache-invalidate" && {
+    source "$LODGE_DIR/commands/phytology.sh"
+
+    c_inv=$(cmd_phytology "cache-invalidate" "$LODGE_DIR")
+    assert_contains "$c_inv" "Phytology cache invalidated"
+
+    c_stat=$(cmd_phytology "cache-status" "$LODGE_DIR")
+    assert_contains "$c_stat" "Cache"
+
+    c_aud=$(cmd_phytology "audit --cached" "$LODGE_DIR")
+    assert_contains "$c_aud" "LIVING TISSUE AUDIT"
+}
+
 test_end
 

@@ -22,13 +22,20 @@ cmd_phytology() {
             phytology_introspect
             ;;
         audit)
-            if [ "$rest" = "--json" ]; then
-                phytology_audit --json
-            elif [ "$rest" = "--parallel" ]; then
+            if [ "$rest" = "--parallel" ]; then
                 phytology_parallel_audit
             else
-                phytology_audit
+                phytology_audit $rest
             fi
+            ;;
+        cache-invalidate)
+            ui_step "Invalidating Software Phytology and file caches..."
+            phytology_invalidate_cache
+            ui_ok "Phytology cache invalidated."
+            ;;
+        cache-status)
+            ui_step "Software Phytology Cache Status:"
+            declare -f cache_stats &>/dev/null && cache_stats || echo "Cache stats not available"
             ;;
         parallel-audit)
             phytology_parallel_audit ${rest:-15}
@@ -54,7 +61,7 @@ cmd_phytology() {
             ;;
         heal)
             ui_section "Software Phytology Autonomic Healing"
-            phytology_heal
+            phytology_heal $rest
             ;;
         rollback)
             local target="$rest"
@@ -103,7 +110,7 @@ cmd_phytology() {
             ;;
         *)
             ui_err "Unknown /phytology subcommand: '$subcmd'"
-            ui_dim "Usage: /phytology [status | audit | parallel-audit | parallel-graft <json> | auto-remediate <file> | heal | rollback <file> | prune <job> | fitness <file> | lignify <file> [cmd] | test]"
+            ui_dim "Usage: /phytology [status | audit [--json] [--cached] | cache-status | cache-invalidate | parallel-audit | parallel-graft <json> | auto-remediate <file> | heal [--force] | rollback <file> | prune <job> | fitness <file> | lignify <file> [cmd] | test]"
             return 1
             ;;
     esac

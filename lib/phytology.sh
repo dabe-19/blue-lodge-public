@@ -31,13 +31,22 @@ source "$LODGE_DIR/lib/fifo_ipc.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/task_sync.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/agent_sm.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/mcp_server_gitea.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/cache.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/limits.sh" 2>/dev/null || true
 
 # ── Initialization ────────────────────────────────────────────────────
 phytology_init() {
-    mkdir -p "$PHYTOLOGY_SNAPSHOTS_DIR" "$FOLIAGE_ROOT" "$FOLIAGE_TOOLS_ROOT" "${GEORGE_DIR}/tmp" 2>/dev/null || true
+    mkdir -p "$PHYTOLOGY_SNAPSHOTS_DIR" "$FOLIAGE_ROOT" "$FOLIAGE_TOOLS_ROOT" "${GEORGE_DIR}/tmp" "${GEORGE_DIR}/quarantine" "${GEORGE_DIR}/alerts" 2>/dev/null || true
     declare -f fifo_ipc_init &>/dev/null && fifo_ipc_init || true
     declare -f agent_sm_init &>/dev/null && agent_sm_init || true
     declare -f mqtt_init &>/dev/null && mqtt_init || true
+    declare -f cache_init &>/dev/null && cache_init || true
+    declare -f limits_init &>/dev/null && limits_init || true
+}
+
+phytology_invalidate_cache() {
+    declare -f cache_invalidate_ns &>/dev/null && cache_invalidate_ns "files"
+    declare -f cache_invalidate_ns &>/dev/null && cache_invalidate_ns "phytology"
 }
 
 # ── 1. Static AST & Syntax Validation ─────────────────────────────────
@@ -155,6 +164,7 @@ phytology_graft() {
         transcript_log "phytology" "Grafted tissue: $target_file (AST verified)"
     fi
 
+    phytology_invalidate_cache
     echo "GRAFT_SUCCESS: $target_file grafted and verified."
     return 0
 }
@@ -174,6 +184,7 @@ phytology_rollback() {
     fi
 
     cp "$latest_snap" "$target_file"
+    phytology_invalidate_cache
     echo "ROLLBACK_SUCCESS: $target_file restored from snapshot $(basename "$latest_snap")"
     return 0
 }
@@ -220,6 +231,7 @@ phytology_prune() {
             sed -i '1a # ENABLED: 0' "$script" 2>/dev/null
         fi
 
+        phytology_invalidate_cache
         echo "PRUNE_SUCCESS: De-activated failing foliage job '$job_name' (# ENABLED: 0)."
         return 0
     fi
@@ -230,12 +242,34 @@ phytology_prune() {
 # ── 7. Living Tissue Diagnostic Audit ──────────────────────────────────
 # Scans all living foliage in .george/cron_jobs and .george/tools.
 # Verifies AST validity, header contracts, and snapshot volume.
+# Supports --cached for sub-millisecond retrieval from LRU cache.
 # Returns 0 if all AST checks pass, 1 if any script fails syntax inspection.
 phytology_audit() {
     local json_mode=0
-    [ "${1:-}" = "--json" ] && json_mode=1
+    local cached_mode=0
+    for arg in "$@"; do
+        [ "$arg" = "--json" ] && json_mode=1
+        [ "$arg" = "--cached" ] && cached_mode=1
+    done
 
     phytology_init
+
+    local tissue_digest
+    tissue_digest=$(find "$FOLIAGE_ROOT" "$FOLIAGE_TOOLS_ROOT" -maxdepth 2 \( -name "*.sh" -o -name "*.py" \) -exec ls -l --time-style=+%s {} + 2>/dev/null | md5sum 2>/dev/null | cut -d' ' -f1 || echo "none")
+    local cache_key="audit:${json_mode}:${tissue_digest}"
+
+    if [ "$cached_mode" -eq 1 ] && declare -f cache_get &>/dev/null; then
+        local cached_result=""
+        if cached_result=$(cache_get "$cache_key" "phytology" 60 2>/dev/null); then
+            echo "$cached_result"
+            if [ "$json_mode" -eq 1 ]; then
+                local invalid_count
+                invalid_count=$(echo "$cached_result" | jq -r '.invalid_ast // 0' 2>/dev/null || echo 0)
+                [ "$invalid_count" -eq 0 ] && return 0 || return 1
+            fi
+            return 0
+        fi
+    fi
 
     local total=0 valid=0 invalid=0 enabled=0 disabled=0
     local -a issue_files=() issue_reasons=()
@@ -270,6 +304,7 @@ phytology_audit() {
     local snap_count
     snap_count=$(find "$PHYTOLOGY_SNAPSHOTS_DIR" -maxdepth 1 -name "*.bak" 2>/dev/null | wc -l)
 
+    local output_str=""
     if [ "$json_mode" -eq 1 ]; then
         local issues_json="[]"
         if [ ${#issue_files[@]} -gt 0 ]; then
@@ -290,7 +325,7 @@ phytology_audit() {
         [ "$invalid" -gt 0 ] && status_str="degraded"
 
         if command -v jq &>/dev/null; then
-            jq -n \
+            output_str=$(jq -n \
                 --arg total "$total" \
                 --arg valid "$valid" \
                 --arg invalid "$invalid" \
@@ -307,9 +342,9 @@ phytology_audit() {
                     disabled_foliage: ($disabled | tonumber),
                     snapshots_count: ($snapshots | tonumber),
                     issues: $issues
-                }'
+                }')
         else
-            cat <<EOF
+            output_str=$(cat <<EOF
 {
   "status": "$status_str",
   "total_foliage": $total,
@@ -321,31 +356,39 @@ phytology_audit() {
   "issues": $issues_json
 }
 EOF
+)
         fi
     else
-        echo "╔═══════════════════════════════════════════════════════════════╗"
-        echo "║ 🌿 SOFTWARE PHYTOLOGY LIVING TISSUE AUDIT                     ║"
-        echo "╚═══════════════════════════════════════════════════════════════╝"
-        echo "  • Total Monitored Foliage:   $total scripts"
-        echo "  • AST Valid Tissue:          $valid passing"
-        echo "  • AST Corrupted Tissue:      $invalid failing"
-        echo "  • Active Enabled Foliage:    $enabled"
-        echo "  • Pruned / Disabled Foliage: $disabled"
-        echo "  • Genetic Snapshots Stored:  $snap_count shadow versions"
-        echo ""
+        output_str=$(cat <<EOF
+╔═══════════════════════════════════════════════════════════════╗
+║ 🌿 SOFTWARE PHYTOLOGY LIVING TISSUE AUDIT                     ║
+╚═══════════════════════════════════════════════════════════════╝
+  • Total Monitored Foliage:   $total scripts
+  • AST Valid Tissue:          $valid passing
+  • AST Corrupted Tissue:      $invalid failing
+  • Active Enabled Foliage:    $enabled
+  • Pruned / Disabled Foliage: $disabled
+  • Genetic Snapshots Stored:  $snap_count shadow versions
 
+EOF
+)
         if [ "$invalid" -gt 0 ]; then
-            echo "  ⚠️  CORRUPTED LIVING TISSUE DETECTED:"
+            output_str="${output_str}  ⚠️  CORRUPTED LIVING TISSUE DETECTED:
+"
             for ((i=0; i<${#issue_files[@]}; i++)); do
-                echo "     - ${issue_files[i]} [${issue_reasons[i]}]"
+                output_str="${output_str}     - ${issue_files[i]} [${issue_reasons[i]}]
+"
             done
-            echo ""
-            echo "  Run '/phytology heal' to auto-rollback or prune broken tissue."
-            return 1
+            output_str="${output_str}
+  Run '/phytology heal' to auto-rollback or prune broken tissue."
         else
-            echo "  ✓ All living foliage AST contracts verified and healthy."
-            return 0
+            output_str="${output_str}  ✓ All living foliage AST contracts verified and healthy."
         fi
+    fi
+
+    echo "$output_str"
+    if declare -f cache_put &>/dev/null; then
+        cache_put "$cache_key" "phytology" "$output_str" >/dev/null 2>&1 || true
     fi
 
     [ "$invalid" -eq 0 ] && return 0 || return 1
@@ -353,10 +396,17 @@ EOF
 
 # ── 8. Autonomic Self-Healing Routine ──────────────────────────────────
 # Scans for corrupted foliage, attempts automatic rollback from prior
-# genetic snapshots, and prunes unrecoverable broken jobs.
+# genetic snapshots, prunes unrecoverable broken jobs, and trips an autonomic
+# circuit breaker if corruption repeats beyond strike limits.
 phytology_heal() {
+    local force_heal=0
+    [ "${1:-}" = "--force" ] && force_heal=1
+
     phytology_init
-    local healed=0 pruned=0
+    local healed=0 pruned=0 quarantined=0
+    local strikes_file="$GEORGE_DIR/.phytology_strikes"
+    local max_heal_strikes
+    max_heal_strikes=$(declare -f limits_get &>/dev/null && limits_get CIRCUIT_BREAKER_MAX_REPEATS 3 || echo 3)
 
     local -a script_list=()
     while IFS= read -r f; do
@@ -371,6 +421,52 @@ phytology_heal() {
             echo "HEAL_TRIAGE: Corrupted tissue detected in $s"
             local fname
             fname="$(basename "$s")"
+
+            # Check and increment strikes
+            local cur_strikes=0
+            if [ -f "$strikes_file" ]; then
+                cur_strikes=$(grep "^${fname}:" "$strikes_file" 2>/dev/null | cut -d: -f2 || echo 0)
+            fi
+            cur_strikes=${cur_strikes:-0}
+            cur_strikes=$((cur_strikes + 1))
+
+            # Update strikes file
+            if [ -f "$strikes_file" ]; then
+                sed -i "/^${fname}:/d" "$strikes_file" 2>/dev/null || true
+            fi
+            echo "${fname}:${cur_strikes}:$(date +%s)" >> "$strikes_file"
+
+            # Check circuit breaker ceiling
+            if [ "$cur_strikes" -ge "$max_heal_strikes" ] && [ "$force_heal" -eq 0 ]; then
+                echo "HEAL_CIRCUIT_BREAKER: Strike ceiling ($max_heal_strikes) reached for $fname. Quarantining defective tissue."
+                local q_ts
+                q_ts=$(date +%s)
+                mkdir -p "$GEORGE_DIR/quarantine" "$GEORGE_DIR/alerts" 2>/dev/null || true
+                local q_dest="$GEORGE_DIR/quarantine/${fname}.quarantine.${q_ts}"
+                mv -f "$s" "$q_dest" 2>/dev/null || rm -f "$s" 2>/dev/null || true
+
+                # Structured alert
+                local alert_file="$GEORGE_DIR/alerts/alert_phytology_${fname%.*}_${q_ts}.json"
+                local alert_payload
+                alert_payload=$(jq -nc \
+                    --arg tissue "$s" \
+                    --arg qfile "$q_dest" \
+                    --argjson strikes "$cur_strikes" \
+                    --arg reason "AUTONOMIC_CIRCUIT_BREAKER_TRIPPED" \
+                    '{status: "CIRCUIT_BREAKER_TRIPPED", tissue: $tissue, quarantine_file: $qfile, strikes: $strikes, reason: $reason}')
+                echo "$alert_payload" > "$alert_file" 2>/dev/null || true
+
+                # MQTT broadcast
+                if declare -f mqtt_publish &>/dev/null; then
+                    mqtt_publish "george/phytology/circuit_breaker" "$alert_payload" >/dev/null 2>&1 || true
+                fi
+
+                local job_stem="${fname%.*}"
+                phytology_prune "$job_stem" >/dev/null 2>&1 || true
+                quarantined=$((quarantined + 1))
+                continue
+            fi
+
             local latest_snap
             latest_snap=$(find "$PHYTOLOGY_SNAPSHOTS_DIR" -maxdepth 1 -name "${fname}.*.bak" 2>/dev/null | sort -V | tail -n 1)
 
@@ -382,6 +478,8 @@ phytology_heal() {
                     echo "HEAL_RESTORE: Successfully rolled back $s to $(basename "$latest_snap")."
                     healed=$((healed + 1))
                     restored=1
+                    # Reset strike count on successful recovery
+                    [ -f "$strikes_file" ] && sed -i "/^${fname}:/d" "$strikes_file" 2>/dev/null || true
                 fi
             fi
 
@@ -392,10 +490,18 @@ phytology_heal() {
                 echo "HEAL_PRUNED: No valid snapshot; deactivated failing job $job_stem (# ENABLED: 0)."
                 pruned=$((pruned + 1))
             fi
+        else
+            # Healthy tissue resets strike count
+            local fname
+            fname="$(basename "$s")"
+            if [ -f "$strikes_file" ]; then
+                sed -i "/^${fname}:/d" "$strikes_file" 2>/dev/null || true
+            fi
         fi
     done
 
-    echo "HEAL_COMPLETE: $healed tissue(s) restored via genetic snapshots, $pruned tissue(s) safely pruned."
+    phytology_invalidate_cache
+    echo "HEAL_COMPLETE: $healed tissue(s) restored via genetic snapshots, $pruned tissue(s) safely pruned, $quarantined quarantined by circuit breaker."
     return 0
 }
 

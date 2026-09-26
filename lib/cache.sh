@@ -25,10 +25,28 @@
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 GEORGE_DIR="${GEORGE_DIR:-${LODGE_DIR:-.}/.george}"
 
+source "$LODGE_DIR/lib/limits.sh" 2>/dev/null || true
+
 # ── Config ─────────────────────────────────────────────────────
 CACHE_DIR="${CACHE_DIR:-$GEORGE_DIR/cache/lru}"
-CACHE_CAPACITY="${CACHE_CAPACITY:-32}"      # max entries before eviction
-CACHE_TTL="${CACHE_TTL:-300}"               # seconds before expiry (5 min)
+_cache_get_capacity() {
+    [ -n "${CACHE_CAPACITY:-}" ] && echo "$CACHE_CAPACITY" && return 0
+    if declare -f limits_get &>/dev/null; then
+        limits_get CACHE_LRU_CAPACITY 64
+    else
+        echo 64
+    fi
+}
+_cache_get_ttl() {
+    [ -n "${CACHE_TTL:-}" ] && echo "$CACHE_TTL" && return 0
+    if declare -f limits_get &>/dev/null; then
+        limits_get CACHE_LRU_TTL 3600
+    else
+        echo 3600
+    fi
+}
+CACHE_CAPACITY="$(_cache_get_capacity)"
+CACHE_TTL="$(_cache_get_ttl)"
 
 # ── Initialize cache directory ─────────────────────────────────
 cache_init() {
@@ -77,6 +95,7 @@ _cache_stat_bump() {
 cache_get() {
     local key="$1"
     local ns="${2:-default}"
+    local ttl="${3:-$(_cache_get_ttl)}"
 
     local hash
     hash=$(_cache_hash "$key")
@@ -97,7 +116,7 @@ cache_get() {
     # TTL check
     local now
     now=$(date +%s)
-    if (( now - created > CACHE_TTL )); then
+    if (( now - created > ttl )); then
         rm -f "$file"
         _cache_stat_bump miss
         return 1
@@ -181,12 +200,15 @@ cache_clear() {
 _cache_evict_if_needed() {
     [ -d "$CACHE_DIR" ] || return 0
 
+    local cap
+    cap="$(_cache_get_capacity)"
+
     # Count cache entries (exclude hidden .stats/.gen.* and .tmp files)
     local count
     count=$(ls -1 "$CACHE_DIR" 2>/dev/null | grep -cv '^\.\|\.tmp$' || echo "0")
 
-    if (( count > CACHE_CAPACITY )); then
-        local to_remove=$(( count - CACHE_CAPACITY ))
+    if (( count > cap )); then
+        local to_remove=$(( count - cap ))
         # ls -1tr: reverse time sort (oldest mtime first = LRU)
         ls -1tr "$CACHE_DIR" 2>/dev/null \
             | grep -v '^\.\|\.tmp$' \

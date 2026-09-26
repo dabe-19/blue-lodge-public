@@ -94,6 +94,9 @@ source "$LODGE_DIR/lib/mqtt.sh"
 source "$LODGE_DIR/lib/swarm.sh"
 source "$LODGE_DIR/lib/git.sh"
 source "$LODGE_DIR/lib/transcript.sh"
+source "$LODGE_DIR/lib/limits.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/fifo_ipc.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/phytology.sh" 2>/dev/null || true
 
 # Audit and reap any abandoned worktrees / orphaned subagents from prior runs
 declare -f subagents_reap_orphans &>/dev/null && subagents_reap_orphans
@@ -832,6 +835,19 @@ _cmd_limits() {
         eval "$var_name=$val"
         ui_ok "$label set to $val"
     }
+
+    # Support modern swarm limit levers (get, set, list, scale)
+    case "$action" in
+        get|set|list|scale)
+            if [ -f "$LODGE_DIR/commands/limits.sh" ]; then
+                source "$LODGE_DIR/commands/limits.sh" 2>/dev/null || true
+            fi
+            if declare -f cmd_limits &>/dev/null; then
+                cmd_limits "$args" "$PWD"
+                return $?
+            fi
+            ;;
+    esac
 
     case "$action" in
         steps)

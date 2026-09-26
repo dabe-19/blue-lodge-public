@@ -1121,13 +1121,39 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "slash_command_exec",
-      "description": "Execute any Blue Lodge slash command. Use when: (1) creating, inspecting, or controlling recurring cron jobs (/cron), (2) managing microservices (/service), (3) registering tools (/tool), or (4) executing workflows (/workflow). Examples: command=\"/cron add backup_sweep 3600 ./scripts/backup.sh\", command=\"/cron status\", command=\"/cron enable sentinel_sweep\", command=\"/service register my_svc services/my_svc\", command=\"/tool register custom_helper\".",
+      "description": "Execute any Blue Lodge slash command. Use when: (1) managing Software Phytology living tissue, health, and cache status (/phytology status, /phytology audit [--cached], /phytology cache-status, /phytology cache-invalidate, /phytology heal), (2) creating, inspecting, or controlling recurring cron jobs (/cron), (3) managing microservices (/service), (4) registering tools (/tool), or (5) executing workflows (/workflow). Examples: command=\"/phytology status\", command=\"/phytology audit --cached\", command=\"/phytology cache-status\", command=\"/cron status\", command=\"/service status\".",
       "parameters": {
         "type": "object",
         "properties": {
-          "command": { "type": "string", "description": "Full slash command string (e.g. \"/cron add <name> <interval> <cmd>\", \"/cron status\", \"/cron enable <name>\", \"/service register <name>\", \"/tool register <name>\")." }
+          "command": { "type": "string", "description": "Full slash command string (e.g. \"/phytology status\", \"/phytology audit --cached\", \"/phytology cache-status\", \"/cron status\", \"/service status\")." }
         },
         "required": ["command"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "phytology_manage",
+      "description": "Inspect and manage Software Phytology living tissue diagnostic, healing, and safe grafting. Use when: (1) checking living tissue status and health (status), (2) running foliage AST audits with optional LRU caching (audit, flags=\"--cached\"), (3) checking or invalidating phytology cache (cache-status, cache-invalidate), (4) autonomic healing or rolling back corrupted tissue (heal, rollback), (5) assessing tissue fitness (fitness), or (6) running phytology tests (test).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["status", "audit", "heal", "rollback", "prune", "fitness", "lignify", "cache-status", "cache-invalidate", "test"],
+            "description": "The phytology action to execute."
+          },
+          "target": {
+            "type": "string",
+            "description": "Target tissue file path or job name (for rollback, prune, fitness, lignify)."
+          },
+          "flags": {
+            "type": "string",
+            "description": "Optional flags (e.g. '--cached', '--json', '--parallel', '--force')."
+          }
+        },
+        "required": ["action"]
       }
     }
   },
@@ -1591,7 +1617,7 @@ native_tools_get_schemas() {
 }
 
 # ── Composable Tool Bundles & Bedrock Taxonomy ────────────────────────
-_BEDROCK_TOOLS="bash_exec,slash_command_exec,file_read,file_write,file_edit,pdf_read,workflow_plan,workflow_run,ask_operator,task_wait,tool_search"
+_BEDROCK_TOOLS="bash_exec,slash_command_exec,phytology_manage,file_read,file_write,file_edit,pdf_read,workflow_plan,workflow_run,ask_operator,task_wait,tool_search"
 
 # Map bundles to their constituent tool names
 native_tools_bundle_tools() {
@@ -1635,6 +1661,9 @@ native_tools_bundle_tools() {
             ;;
         +gsuite|gsuite)
             echo "gsuite_search"
+            ;;
+        +phytology|phytology)
+            echo "phytology_manage"
             ;;
         research)
             echo "$(native_tools_bundle_tools '+web'),$(native_tools_bundle_tools '+files'),$(native_tools_bundle_tools '+vision'),$(native_tools_bundle_tools '+memory')"
@@ -1798,6 +1827,7 @@ native_tools_domain_tags() {
         file_write|file_append|file_edit) echo "write file append edit modify save content create update" ;;
         file_grep|dir_list) echo "grep search files directory list find pattern structure" ;;
         subagent_spawn|subagent_delegate) echo "subagent swarm delegate spawn background worker task parallel" ;;
+        phytology_manage) echo "phytology living tissue audit foliage health cambium plant genetic snapshot heal graft prune lignify" ;;
         *) echo "" ;;
     esac
 }
@@ -1808,9 +1838,10 @@ _LODGE_TOOLS_FTS_DB="${TMPDIR:-/tmp}/.lodge_tools_fts.db"
 native_tools_fts_init() {
     local force="${1:-0}"
     if [ "$force" -ne 1 ] && [ -f "$_LODGE_TOOLS_FTS_DB" ]; then
-        local count
+        local count has_phytology
         count=$(sqlite3 "$_LODGE_TOOLS_FTS_DB" "SELECT count(*) FROM tools_fts;" 2>/dev/null || echo 0)
-        [ "$count" -gt 50 ] && return 0
+        has_phytology=$(sqlite3 "$_LODGE_TOOLS_FTS_DB" "SELECT count(*) FROM tools_fts WHERE name='phytology_manage';" 2>/dev/null || echo 0)
+        [ "$count" -gt 50 ] && [ "$has_phytology" -gt 0 ] && return 0
     fi
 
     rm -f "$_LODGE_TOOLS_FTS_DB" 2>/dev/null
@@ -1839,7 +1870,7 @@ EOF
         if [[ ",$_BEDROCK_TOOLS," =~ ",$t_name," ]]; then
             t_bundle="_bedrock"
         else
-            for b in web files code git vision social ops memory crypto swarm models gsuite; do
+            for b in web files code git vision social ops memory crypto swarm models gsuite phytology; do
                 local b_list
                 b_list=$(native_tools_bundle_tools "$b")
                 if [[ ",$b_list," =~ ",$t_name," ]]; then
@@ -1904,6 +1935,15 @@ native_tools_search() {
             local sql_res
             sql_res=$(sqlite3 "$_LODGE_TOOLS_FTS_DB" "SELECT bundle, name, bm25(tools_fts) FROM tools_fts WHERE tools_fts MATCH '$fts_q' ORDER BY bm25(tools_fts) LIMIT 8;" 2>/dev/null)
             if [ -n "$sql_res" ]; then
+                # Check if top-ranked tool in FTS search is an already mounted bedrock tool
+                local top_match_name
+                top_match_name=$(echo "$sql_res" | head -n 1 | cut -d'|' -f2)
+                if [ -n "$top_match_name" ] && [[ ",$_BEDROCK_TOOLS," =~ ",$top_match_name," ]]; then
+                    echo "The tool '$top_match_name' is a core bedrock tool and is ALREADY mounted and immediately available in your active session. You can invoke it directly without mounting any external bundle."
+                    native_tools_get_schemas "$top_match_name" | jq -r '.[0] | "Mounted Signature:\n- " + .function.name + "(" + ((.function.parameters.properties // {}) | keys | join(", ")) + "): " + .function.description' 2>/dev/null || true
+                    return 0
+                fi
+
                 # Select top-ranked non-bedrock bundle
                 matched_bundle=$(echo "$sql_res" | grep -v '^_bedrock' | head -n 1 | cut -d'|' -f1)
                 local b_clean="${matched_bundle#+}"
@@ -2153,14 +2193,24 @@ native_tools_dispatch() {
                 cmd="${cmd%%</output*}"
                 cmd="${cmd%%<tool_call*}"
                 cmd="${cmd%%<function*}"
-                cmd=$(echo "$cmd" | sed -E 's#</?(invoke|output|parameter|function|tool_call)[^>]*>##g' | sed 's/[[:space:]]*$//; s/^[[:space:]]*//')
-                # Auto-normalize common shell invocation quirks
-                local _target_ws="${LODGE_DIR:-$HOME/blue-lodge}"
-                cmd=$(echo "$cmd" | sed -E 's/head -n([[:space:]]*(\||\&|\;|$))/head -n 10\1/g')
-                cmd=$(echo "$cmd" | sed -E 's/git rev-parse ([^ ]+) --short/git rev-parse --short \1/g')
-                cmd=$(echo "$cmd" | sed -E "s#(cd[[:space:]]+)?(/home/[^/]+|/Users/[^/]+|~|\$HOME)/blue[ _-][a-zA-Z0-9_-]*#\1${_target_ws}#g")
-                output=$(commands_dispatch "/bash $cmd" "$workdir" 2>&1)
-                exit_code=$?
+                # Direct slash command interception if model invokes slash command via bash_exec
+                if [[ "$cmd" == /* ]]; then
+                    output=$(commands_dispatch "$cmd" "$workdir" 2>&1)
+                    exit_code=$?
+                elif [[ "$cmd" =~ ^(\./)?lodge[[:space:]]+(/[a-zA-Z0-9_-]+.*) ]]; then
+                    local _sub_slash="${BASH_REMATCH[2]}"
+                    output=$(commands_dispatch "$_sub_slash" "$workdir" 2>&1)
+                    exit_code=$?
+                else
+                    # Auto-normalize common shell invocation quirks
+                    local _target_ws="${LODGE_DIR:-$HOME/blue-lodge}"
+                    cmd=$(echo "$cmd" | sed -E 's/head -n([[:space:]]*(\||\&|\;|$))/head -n 10\1/g')
+                    cmd=$(echo "$cmd" | sed -E 's/git rev-parse ([^ ]+) --short/git rev-parse --short \1/g')
+                    cmd=$(echo "$cmd" | sed -E "s#(cd[[:space:]]+)?(/home/[^/]+|/Users/[^/]+|~|\$HOME)/blue[ _-][a-zA-Z0-9_-]*#\1${_target_ws}#g")
+                    cmd=$(echo "$cmd" | sed -E 's/\bgit switch -B\b/git switch -C/g; s/\bgit switch -b\b/git switch -c/g; s/\bgit checkout -c\b/git checkout -b/g')
+                    output=$(commands_dispatch "/bash $cmd" "$workdir" 2>&1)
+                    exit_code=$?
+                fi
                 # SCRIPT_EXIT / Traceback error exit code correction
                 if [ "$exit_code" -eq 0 ]; then
                     if echo "$output" | grep -qE 'SCRIPT_EXIT=([1-9][0-9]*)'; then
@@ -3341,6 +3391,30 @@ $_ts_v_err
                 fi
                 exit_code=$?
                 ;;
+            phytology_manage)
+                local act tgt flg
+                act=$(echo "$args_json" | jq -r '.action // "status"')
+                tgt=$(echo "$args_json" | jq -r '.target // empty')
+                flg=$(echo "$args_json" | jq -r '.flags // empty')
+
+                # Unwrap nested JSON if model passed JSON string inside action (e.g. {"action":"status"})
+                if [[ "$act" == \{* ]]; then
+                    [ -z "$tgt" ] && tgt=$(echo "$act" | jq -r '.target // empty' 2>/dev/null)
+                    [ -z "$flg" ] && flg=$(echo "$act" | jq -r '.flags // empty' 2>/dev/null)
+                    local inner_act
+                    inner_act=$(echo "$act" | jq -r '.action // .cmd // .subcommand // empty' 2>/dev/null)
+                    [ -n "$inner_act" ] && act="$inner_act"
+                fi
+                # Strip extraneous punctuation, quotes or brackets
+                act=$(echo "$act" | tr -d '"{}\\\n\r' | awk '{print $1}')
+                [ -z "$act" ] && act="status"
+
+                local cmd_str="$act"
+                [ -n "$tgt" ] && cmd_str="$cmd_str $tgt"
+                [ -n "$flg" ] && cmd_str="$cmd_str $flg"
+                output=$(commands_dispatch "/phytology $cmd_str" "$workdir" 2>&1)
+                exit_code=$?
+                ;;
             slash_command_exec)
                 local sc
                 sc=$(echo "$args_json" | jq -r '.command // empty')
@@ -3351,6 +3425,9 @@ $_ts_v_err
                 [ "$sc_args" = "$sc" ] && sc_args=""
                 if [ -n "$sc_name" ] && declare -f "_cmd_${sc_name}" &>/dev/null; then
                     output=$("_cmd_${sc_name}" "$sc_args" "$workdir" 2>&1)
+                    exit_code=$?
+                elif [ -n "$sc_name" ] && declare -f "cmd_${sc_name}" &>/dev/null; then
+                    output=$("cmd_${sc_name}" "$sc_args" "$workdir" 2>&1)
                     exit_code=$?
                 elif [ "$sc_name" = "journal" ]; then
                     if [ "$sc_args" = "show" ] || [ -z "$sc_args" ]; then
