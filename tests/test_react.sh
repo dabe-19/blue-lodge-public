@@ -181,6 +181,36 @@ describe "Zero-Tool Research Verification Guard"
     rm -rf "$tmp_dir"
   }
 
+describe "fallback text tool extraction"
+  it "extracts XML computer_use function calls from raw_content" && {
+    raw=$'I will check the branch.\n<function=computer_use>\n<parameter=name>\nbash_exec</parameter>\n<parameter=command>git checkout -b feature/test develop</parameter>\n</function>'
+    extracted=$(python3 -c '
+import sys, re, json
+text = sys.argv[1]
+pattern = re.compile(r"<function\s*=\s*([a-zA-Z0-9_-]+)\s*>(.*?)(?:</function>|$)", re.DOTALL)
+calls = []
+for m in pattern.finditer(text):
+    fn_name = m.group(1).strip()
+    body = m.group(2)
+    params = {}
+    param_pattern = re.compile(r"<(?:parameter\s*(?:=\s*|\s+name\s*=\s*[\"'"'"']?)([a-zA-Z0-9_]+)[\"'"'"']?|([a-zA-Z0-9_]+))\s*>(.*?)(?:</(?:parameter|\1|\2)>|(?=<parameter)|(?=<[a-zA-Z0-9_]+>)|$)", re.DOTALL)
+    for pm in param_pattern.finditer(body):
+        k = pm.group(1) or pm.group(2)
+        v = pm.group(3).strip()
+        v = re.sub(r"</?[^>]+>", "", v).strip()
+        if k and k not in ("function",):
+            params[k] = v
+    if fn_name == "computer_use" and "name" in params:
+        fn_name = params.pop("name")
+    calls.append({"name": fn_name, "args": params})
+print(json.dumps(calls))
+' "$raw")
+    fn=$(echo "$extracted" | jq -r '.[0].name')
+    cmd=$(echo "$extracted" | jq -r '.[0].args.command')
+    assert_eq "$fn" "bash_exec"
+    assert_eq "$cmd" "git checkout -b feature/test develop"
+  }
+
 test_end
 
 

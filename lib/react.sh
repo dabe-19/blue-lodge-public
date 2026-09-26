@@ -672,6 +672,67 @@ react_run() {
             declare -f transcript_log_block &>/dev/null && transcript_log_block "thought" "$reasoning"
         fi
 
+        # Fallback: if native tool_calls array is empty, inspect raw_content for embedded XML/JSON function calls
+        if [ -z "$tool_calls" ] || [ "$tool_calls" = "null" ] || [ "$tool_calls" = "[]" ]; then
+            if [[ "$raw_content" == *"<function"* ]] || [[ "$raw_content" == *"<tool_call>"* ]]; then
+                if command -v python3 &>/dev/null; then
+                    local _extracted_tc
+                    _extracted_tc=$(python3 -c '
+import sys, re, json
+
+text = sys.argv[1] if len(sys.argv) > 1 else sys.stdin.read()
+calls = []
+json_tc = re.findall(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", text, re.DOTALL)
+for j_str in json_tc:
+    try:
+        d = json.loads(j_str)
+        if "name" in d:
+            args = d.get("arguments", {})
+            if not isinstance(args, str):
+                args = json.dumps(args)
+            calls.append({
+                "id": f"call_txt_{len(calls)+1}",
+                "type": "function",
+                "function": {"name": d["name"], "arguments": args}
+            })
+    except Exception:
+        pass
+
+pattern = re.compile(r"<function\s*=\s*([a-zA-Z0-9_-]+)\s*>(.*?)(?:</function>|$)", re.DOTALL)
+for m in pattern.finditer(text):
+    fn_name = m.group(1).strip()
+    body = m.group(2)
+    params = {}
+    param_pattern = re.compile(r"<(?:parameter\s*(?:=\s*|\s+name\s*=\s*[\"'"'"']?)([a-zA-Z0-9_]+)[\"'"'"']?|([a-zA-Z0-9_]+))\s*>(.*?)(?:</(?:parameter|\1|\2)>|(?=<parameter)|(?=<[a-zA-Z0-9_]+>)|$)", re.DOTALL)
+    for pm in param_pattern.finditer(body):
+        k = pm.group(1) or pm.group(2)
+        v = pm.group(3).strip()
+        v = re.sub(r"</?[^>]+>", "", v).strip()
+        if k and k not in ("function",):
+            params[k] = v
+
+    if fn_name == "computer_use" and "name" in params:
+        fn_name = params.pop("name")
+    elif fn_name == "computer_use" and "action" in params:
+        fn_name = params.pop("action")
+
+    calls.append({
+        "id": f"call_txt_{len(calls)+1}",
+        "type": "function",
+        "function": {
+            "name": fn_name,
+            "arguments": json.dumps(params)
+        }
+    })
+print(json.dumps(calls))
+' "$raw_content" 2>/dev/null || echo "[]")
+                    if [ -n "$_extracted_tc" ] && [ "$_extracted_tc" != "[]" ]; then
+                        tool_calls="$_extracted_tc"
+                    fi
+                fi
+            fi
+        fi
+
         # ── Branch 1: Native OpenAI Tool Calls Detected ──────────────
         if [ -n "$tool_calls" ] && [ "$tool_calls" != "null" ] && [ "$tool_calls" != "[]" ]; then
             # Sanitize and repair tool_calls arguments to ensure valid JSON and extract embedded XML parameters
