@@ -782,14 +782,16 @@ ui_resolve_path() {
                         echo "$_prior_src"
                     fi
                 else
-                    # Fuzzy path resolution before defaulting
-                    local _base _match _token
+                    # Fuzzy path resolution before defaulting (only for meaningful names, not numbers or short tokens)
+                    local _base _match="" _token
                     _base=$(basename -- "$filepath" 2>/dev/null)
-                    _match=$(find "$lodge_dir" "$workdir" -maxdepth 3 -type f -name "*${_base}*" ! -path '*/.git/*' ! -path '*/.george/memories/*' 2>/dev/null | head -1)
-                    if [ -z "$_match" ]; then
-                        _token=$(echo "$_base" | tr '_.-' ' ' | awk '{print $1}')
-                        if [ -n "$_token" ] && [ "${#_token}" -ge 4 ]; then
-                            _match=$(find "$lodge_dir" "$workdir" -maxdepth 3 -type f -name "*${_token}*" ! -path '*/.git/*' ! -path '*/.george/memories/*' 2>/dev/null | head -1)
+                    if [ -n "$_base" ] && [ "${#_base}" -ge 4 ] && ! [[ "$_base" =~ ^[0-9]+$ ]]; then
+                        _match=$(find "$lodge_dir" "$workdir" -maxdepth 3 -type f -name "*${_base}*" ! -path '*/.git/*' ! -path '*/.george/memories/*' 2>/dev/null | head -1)
+                        if [ -z "$_match" ]; then
+                            _token=$(echo "$_base" | tr '_.-' ' ' | awk '{print $1}')
+                            if [ -n "$_token" ] && [ "${#_token}" -ge 4 ] && ! [[ "$_token" =~ ^[0-9]+$ ]]; then
+                                _match=$(find "$lodge_dir" "$workdir" -maxdepth 3 -type f -name "*${_token}*" ! -path '*/.git/*' ! -path '*/.george/memories/*' 2>/dev/null | head -1)
+                            fi
                         fi
                     fi
                     if [ -n "$_match" ] && [ -f "$_match" ]; then

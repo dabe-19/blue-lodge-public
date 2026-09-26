@@ -63,6 +63,21 @@ cmd_ls() {
         'routing_trace.jsonl'
     )
 
+    # Exclude internal state and runner directories when listing workspace root or other dirs
+    if [ "$(basename "$target")" != ".george" ]; then
+        excludes+=('.george')
+    fi
+    if [ "$(basename "$target")" != ".sandboxes" ]; then
+        excludes+=('.sandboxes')
+    fi
+    if [ "$(basename "$target")" != ".gitea-data" ]; then
+        excludes+=('.gitea-data')
+    fi
+    if [ "$(basename "$target")" != ".act-runner-data" ]; then
+        excludes+=('.act-runner-data')
+    fi
+
+
     declare -f ui_section &>/dev/null && ui_section "Files: ${target/#$HOME/~} (depth $depth)"
     local base_name
     base_name=$(basename "$target")

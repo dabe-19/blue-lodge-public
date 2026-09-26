@@ -2137,7 +2137,10 @@ native_tools_dispatch() {
                         target="$_primary_root/$p"
                     fi
                 fi
-                if [ ! -e "$target" ]; then
+                if [ -z "$p" ] || [[ "$p" =~ ^[0-9]+$ ]]; then
+                    output="ERROR: Invalid file path '$p'. Please provide a valid file path (e.g. lib/phytology.sh)."
+                    exit_code=1
+                elif [ ! -e "$target" ]; then
                     output="ERROR: File not found: $p"
                     exit_code=1
                 elif [ -d "$target" ]; then
@@ -2238,7 +2241,14 @@ $_ts_v_err
             dir_list)
                 local p d target
                 p=$(echo "$args_json" | jq -r '.path // "."')
-                d=$(echo "$args_json" | jq -r '.depth // 3')
+                d=$(echo "$args_json" | jq -r '.depth // empty')
+                if [ -z "$d" ] || [ "$d" = "null" ]; then
+                    if [ "$p" = "." ] || [ -z "$p" ]; then
+                        d=1
+                    else
+                        d=2
+                    fi
+                fi
                 if [[ "$p" == /* ]]; then
                     target="$p"
                 else
@@ -2251,6 +2261,21 @@ $_ts_v_err
                 local pat p target
                 pat=$(echo "$args_json" | jq -r '.pattern // empty')
                 p=$(echo "$args_json" | jq -r '.path // "."')
+                # Sanitize if pattern contains embedded XML parameter syntax
+                if [[ "$pat" == *"</parameter>"* ]] || [[ "$pat" == *"<parameter"* ]]; then
+                    if [[ "$pat" =~ parameter=path[^\>]*\>([^<]+) ]]; then
+                        local _extracted_p="${BASH_REMATCH[1]}"
+                        _extracted_p=$(echo "$_extracted_p" | sed 's/[[:space:]]*$//; s/^[[:space:]]*//')
+                        [ -n "$_extracted_p" ] && p="$_extracted_p"
+                    fi
+                    pat=$(echo "$pat" | sed -E 's#</?(parameter|function|tool_call)[^>]*># #g' | sed 's/[[:space:]]*$//; s/^[[:space:]]*//')
+                fi
+                # Strip leading/trailing quotes or backticks from pattern
+                pat=$(echo "$pat" | sed -E "s/^['\"\`]+|['\"\`]+$//g")
+                # If pattern uses uppercase " OR ", convert to regex alternation "|"
+                if [[ "$pat" == *" OR "* ]]; then
+                    pat=$(echo "$pat" | sed 's/ OR /|/g')
+                fi
                 if [[ "$p" == /* ]]; then
                     target="$p"
                 else
