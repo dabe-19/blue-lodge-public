@@ -2017,6 +2017,77 @@ native_tools_search() {
     echo "$msg"
 }
 
+# ── Sanitize & Repair Tool Arguments ──────────────────────────────────
+# Repairs LLM argument quirks: trailing XML tags (</parameter>, </function>),
+# embedded XML parameters (<parameter = key > val </parameter>), unescaped newlines,
+# shell argument quirks (bare head -n, git rev-parse arg order), and path formatting.
+native_tools_sanitize_args() {
+    local raw="$1"
+    [ -z "$raw" ] || [ "$raw" = "null" ] && { echo "{}"; return 0; }
+
+    if command -v python3 &>/dev/null; then
+        python3 -c '
+import sys, json, re
+
+raw = sys.stdin.read().strip()
+if not raw or raw == "null":
+    print("{}")
+    sys.exit(0)
+
+extracted = {}
+
+try:
+    j = json.loads(raw)
+    if isinstance(j, dict):
+        for k, v in j.items():
+            if isinstance(v, str):
+                clean_v = re.split(r"</?(?:parameter|function|tool_call|invoke|output)[^>]*>", v)[0].strip()
+                extracted[k] = clean_v
+            else:
+                extracted[k] = v
+except Exception:
+    for m in re.finditer(r"\"([a-zA-Z0-9_]+)\"\s*:\s*\"([^\"<]+)", raw):
+        extracted[m.group(1)] = m.group(2).strip()
+
+if "<parameter" in raw or "</parameter>" in raw:
+    xml_matches = re.findall(r"<parameter\s*(?:=\s*)?([a-zA-Z0-9_]+)\s*>\s*(.*?)(?:</parameter>|(?=<parameter)|(?=</function>)|$)", raw, re.DOTALL)
+    for k, v in xml_matches:
+        v_clean = v.strip()
+        v_clean = re.sub(r"</?(?:parameter|function|tool_call|invoke|output)[^>]*>", "", v_clean).strip()
+        if re.match(r"^\d+$", v_clean):
+            extracted[k] = int(v_clean)
+        else:
+            extracted[k] = v_clean
+
+if "command" in extracted and isinstance(extracted["command"], str):
+    c = extracted["command"]
+    c = re.split(r"</?(?:parameter|function|tool_call|invoke|output)[^>]*>", c)[0].strip()
+    c = re.sub(r"head -n(\s*(\||&|;|$))", r"head -n 10\1", c)
+    c = re.sub(r"git rev-parse\s+([^\s]+)\s+--short", r"git rev-parse --short \1", c)
+    extracted["command"] = c
+
+if "path" in extracted and isinstance(extracted["path"], str):
+    p = extracted["path"].split("\n")[0].strip()
+    if p.startswith("home/wsl-ops/"):
+        p = "/" + p
+    extracted["path"] = p
+
+print(json.dumps(extracted) if extracted else raw)
+' <<< "$raw" 2>/dev/null && return 0
+    fi
+
+    # Fallback to jq if python3 fails
+    printf '%s\n' "$raw" | jq '
+        walk(
+            if type == "string" then
+                gsub("</?(parameter|function|tool_call)[^>]*>"; "") | sub("^[[:space:]]+"; "") | sub("[[:space:]]+$"; "")
+            else
+                .
+            end
+        )
+    ' 2>/dev/null || echo "$raw"
+}
+
 # ── Tool Dispatcher ───────────────────────────────────────────────────
 # Receives call_id, function name, JSON arguments string, and workspace.
 # Executes the pure POSIX tool and prints standard OpenAI tool response JSON:
@@ -2030,23 +2101,9 @@ native_tools_dispatch() {
     local output=""
     local exit_code=0
 
-    # Clean up any trailing LLM hallucinations (e.g. </parameter>, </function>, </tool_call>) from tool args
-    if [ -n "$args_json" ] && [ "$args_json" != "null" ]; then
-        args_json=$(printf '%s\n' "$args_json" | jq '
-            walk(
-                if type == "string" then
-                    gsub("</?(parameter|function|tool_call)[^>]*>"; "") | sub("^[[:space:]]+"; "") | sub("[[:space:]]+$"; "")
-                else
-                    .
-                end
-            ) |
-            if (.path? and (.path | type == "string")) then
-                .path = (.path | split("\n")[0] | sub("^[[:space:]]+"; "") | sub("[[:space:]]+$"; ""))
-            else
-                .
-            end
-        ' 2>/dev/null || echo "$args_json")
-    fi
+    # Clean up and repair LLM argument hallucinations and embedded XML parameters
+    args_json=$(native_tools_sanitize_args "$args_json")
+
 
     # 1. Check if name is an active MCP tool directly
     local handled_by_mcp=0
@@ -2118,9 +2175,10 @@ native_tools_dispatch() {
                 ;;
             file_read)
                 local p s m
-                p=$(echo "$args_json" | jq -r '.path // empty' | sed -E 's#</?(parameter|function|tool_call)[^>]*>.*$##' | sed 's/[[:space:]]*$//; s/^[[:space:]]*//')
+                p=$(echo "$args_json" | jq -r '.path // empty')
                 s=$(echo "$args_json" | jq -r '.start_line // 1')
                 m=$(echo "$args_json" | jq -r '.max_lines // 100')
+                if [[ "$p" == home/wsl-ops/* ]]; then p="/$p"; fi
                 # Enforce safe bounds (1-200 lines max per read to protect context limits)
                 if ! [[ "$s" =~ ^[0-9]+$ ]] || [ "$s" -lt 1 ]; then
                     s=1
@@ -2223,6 +2281,7 @@ native_tools_dispatch() {
                 local p c
                 p=$(echo "$args_json" | jq -r '.path // empty')
                 c=$(echo "$args_json" | jq -r '.content // empty')
+                if [[ "$p" == home/wsl-ops/* ]]; then p="/$p"; fi
                 # Ambient Tree-sitter pre-flight syntax validation
                 local _ts_lang
                 _ts_lang=$(treesitter_detect_lang "$p")
@@ -2244,6 +2303,7 @@ $_ts_v_err
                 local p c
                 p=$(echo "$args_json" | jq -r '.path // empty')
                 c=$(echo "$args_json" | jq -r '.content // empty')
+                if [[ "$p" == home/wsl-ops/* ]]; then p="/$p"; fi
                 output=$(commands_dispatch "/append $p $c" "$workdir" 2>&1)
                 exit_code=$?
                 ;;
@@ -3071,14 +3131,23 @@ $_ts_v_err
                 local pth expr
                 pth=$(echo "$args_json" | jq -r '.path // empty')
                 expr=$(echo "$args_json" | jq -r '.expression // empty')
+                if [[ "$pth" == home/wsl-ops/* ]]; then pth="/$pth"; fi
                 output=$(cmd_edit "$pth $expr" "$workdir" 2>&1)
                 exit_code=$?
-                if [ $exit_code -eq 0 ] && [ -f "$workdir/$pth" ]; then
+                # Resilient fallback: if cmd_edit rejected due to invalid block-replace format
+                # but expression contains code or function definitions, append it cleanly to the file
+                if [ $exit_code -ne 0 ] && echo "$output" | grep -qiE "(invalid block-replace format|Could not parse any search/replace blocks)" && [ -n "$expr" ]; then
+                    output=$(commands_dispatch "/append $pth $expr" "$workdir" 2>&1)
+                    exit_code=$?
+                fi
+                local _check_target="$pth"
+                [ ! -f "$_check_target" ] && _check_target="$workdir/$pth"
+                if [ $exit_code -eq 0 ] && [ -f "$_check_target" ]; then
                     local _edit_lang
                     _edit_lang=$(treesitter_detect_lang "$pth")
                     if [ -n "$_edit_lang" ] && [ "$_edit_lang" != "plaintext" ]; then
                         local _edit_ts_err
-                        if ! _edit_ts_err=$(treesitter_validate "$(cat "$workdir/$pth")" "$_edit_lang" 2>&1); then
+                        if ! _edit_ts_err=$(treesitter_validate "$(cat "$_check_target")" "$_edit_lang" 2>&1); then
                             output+=$'\n'"[Warning: Tree-sitter post-edit syntax validation failed for $pth: $_edit_ts_err]"
                         fi
                     fi

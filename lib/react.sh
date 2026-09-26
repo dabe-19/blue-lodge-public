@@ -673,19 +673,80 @@ react_run() {
 
         # ── Branch 1: Native OpenAI Tool Calls Detected ──────────────
         if [ -n "$tool_calls" ] && [ "$tool_calls" != "null" ] && [ "$tool_calls" != "[]" ]; then
-            # Sanitize and repair tool_calls arguments to ensure valid JSON and prevent HTTP 400
-            tool_calls=$(echo "$tool_calls" | jq 'map(
-                .function.arguments as $a |
-                if (try ($a | fromjson) catch null) != null then
-                    .function.arguments = (($a | fromjson | walk(if type == "string" then split("</parameter>")[0] | split("<function")[0] | split("</invoke>")[0] | split("</output>")[0] | split("<tool_call")[0] | gsub("</?(parameter|function|tool_call|invoke|output)[^>]*>"; "") | sub("^[[:space:]]+|[[:space:]]+$"; "") else . end)) | tojson)
-                elif (try (($a + "\"}") | fromjson) catch null) != null then
-                    .function.arguments += "\"}"
-                elif (try (($a + "}") | fromjson) catch null) != null then
-                    .function.arguments += "}"
-                else
-                    .function.arguments = ("{\"error\":\"malformed_arguments\",\"raw\":" + ($a | @json) + "}")
-                end
-            )' 2>/dev/null || echo "[]")
+            # Sanitize and repair tool_calls arguments to ensure valid JSON and extract embedded XML parameters
+            if command -v python3 &>/dev/null; then
+                tool_calls=$(echo "$tool_calls" | python3 -c '
+import sys, json, re
+
+def sanitize_one(raw):
+    if not raw or raw == "null":
+        return "{}"
+    extracted = {}
+    try:
+        j = json.loads(raw)
+        if isinstance(j, dict):
+            for k, v in j.items():
+                if isinstance(v, str):
+                    clean_v = re.split(r"</?(?:parameter|function|tool_call|invoke|output)[^>]*>", v)[0].strip()
+                    extracted[k] = clean_v
+                else:
+                    extracted[k] = v
+    except Exception:
+        for m in re.finditer(r"\"([a-zA-Z0-9_]+)\"\s*:\s*\"([^\"<]+)", raw):
+            extracted[m.group(1)] = m.group(2).strip()
+
+    if "<parameter" in raw or "</parameter>" in raw:
+        xml_matches = re.findall(r"<parameter\s*(?:=\s*)?([a-zA-Z0-9_]+)\s*>\s*(.*?)(?:</parameter>|(?=<parameter)|(?=</function>)|$)", raw, re.DOTALL)
+        for k, v in xml_matches:
+            v_clean = v.strip()
+            v_clean = re.sub(r"</?(?:parameter|function|tool_call|invoke|output)[^>]*>", "", v_clean).strip()
+            if re.match(r"^\d+$", v_clean):
+                extracted[k] = int(v_clean)
+            else:
+                extracted[k] = v_clean
+
+    if "command" in extracted and isinstance(extracted["command"], str):
+        c = extracted["command"]
+        c = re.split(r"</?(?:parameter|function|tool_call|invoke|output)[^>]*>", c)[0].strip()
+        c = re.sub(r"head -n(\s*(\||&|;|$))", r"head -n 10\1", c)
+        c = re.sub(r"git rev-parse\s+([^\s]+)\s+--short", r"git rev-parse --short \1", c)
+        extracted["command"] = c
+
+    if "path" in extracted and isinstance(extracted["path"], str):
+        p = extracted["path"].split("\n")[0].strip()
+        if p.startswith("home/wsl-ops/"):
+            p = "/" + p
+        extracted["path"] = p
+
+    return json.dumps(extracted) if extracted else raw
+
+try:
+    calls = json.load(sys.stdin)
+    if isinstance(calls, list):
+        for c in calls:
+            fn = c.get("function", {})
+            args = fn.get("arguments", "")
+            fn["arguments"] = sanitize_one(args)
+        print(json.dumps(calls))
+    else:
+        print("[]")
+except Exception:
+    print("[]")
+' 2>/dev/null || echo "$tool_calls")
+            else
+                tool_calls=$(echo "$tool_calls" | jq 'map(
+                    .function.arguments as $a |
+                    if (try ($a | fromjson) catch null) != null then
+                        .function.arguments = (($a | fromjson | walk(if type == "string" then split("</parameter>")[0] | split("<function")[0] | split("</invoke>")[0] | split("</output>")[0] | split("<tool_call")[0] | gsub("</?(parameter|function|tool_call|invoke|output)[^>]*>"; "") | sub("^[[:space:]]+|[[:space:]]+$"; "") else . end)) | tojson)
+                    elif (try (($a + "\"}") | fromjson) catch null) != null then
+                        .function.arguments += "\"}"
+                    elif (try (($a + "}") | fromjson) catch null) != null then
+                        .function.arguments += "}"
+                    else
+                        .function.arguments = ("{\"error\":\"malformed_arguments\",\"raw\":" + ($a | @json) + "}")
+                    end
+                )' 2>/dev/null || echo "[]")
+            fi
 
             # Validate tool_calls is well-formed JSON array before passing to --argjson
             if ! echo "$tool_calls" | jq -e 'type == "array"' >/dev/null 2>&1; then
