@@ -60,17 +60,17 @@ endpoints_init() {
     TIER1_TEMPERATURE="${TIER1_TEMPERATURE:-1.0}"
     TIER1_TOP_P="${TIER1_TOP_P:-0.95}"
 
-    TIER2_NAME="${TIER2_NAME:-legacy-5700xt}"
-    TIER2_URL="${TIER2_URL:-http://192.168.1.150:8080}"
-    TIER2_MODEL="${TIER2_MODEL:-gemma-4-12b-agentic}"
-    TIER2_CONTEXT="${TIER2_CONTEXT:-16384}"
-    TIER2_ROLES="${TIER2_ROLES:-fast_tools,web_scrape,batch_grep}"
-    TIER2_ENABLED="${TIER2_ENABLED:-0}"
-    TIER2_MAX_TOKENS="${TIER2_MAX_TOKENS:-15000}"
-    TIER2_COMPACT_TOKENS="${TIER2_COMPACT_TOKENS:-10000}"
-    TIER2_TIMEOUT="${TIER2_TIMEOUT:-120}"
-    TIER2_TEMPERATURE="${TIER2_TEMPERATURE:-0.3}"
-    TIER2_TOP_P="${TIER2_TOP_P:-0.9}"
+    TIER2_NAME="${TIER2_NAME:-cuda-worker-gpu0}"
+    TIER2_URL="${TIER2_URL:-http://127.0.0.1:18080}"
+    TIER2_MODEL="${TIER2_MODEL:-champion-v5}"
+    TIER2_CONTEXT="${TIER2_CONTEXT:-131072}"
+    TIER2_ROLES="${TIER2_ROLES:-vision,multimodal,fast_tools,web_scrape,batch_grep,subagents,code_review}"
+    TIER2_ENABLED="${TIER2_ENABLED:-1}"
+    TIER2_MAX_TOKENS="${TIER2_MAX_TOKENS:-117964}"
+    TIER2_COMPACT_TOKENS="${TIER2_COMPACT_TOKENS:-98304}"
+    TIER2_TIMEOUT="${TIER2_TIMEOUT:-600}"
+    TIER2_TEMPERATURE="${TIER2_TEMPERATURE:-0.7}"
+    TIER2_TOP_P="${TIER2_TOP_P:-0.95}"
 
     TIER0_NAME="${TIER0_NAME:-edge-mobile}"
     TIER0_URL="${TIER0_URL:-http://127.0.0.1:11434}"
@@ -196,7 +196,18 @@ endpoints_find_vision_endpoint() {
 endpoints_cascade() {
     endpoints_init
 
-    local candidates=(3 1 2 0)
+    local requested="${1:-${ACTIVE_TIER:-}}"
+    local candidates=()
+    if [ -n "$requested" ]; then
+        candidates=("$requested")
+        local _tier_opt
+        for _tier_opt in 3 1 2 0; do
+            [ "$_tier_opt" != "$requested" ] && candidates+=("$_tier_opt")
+        done
+    else
+        candidates=(3 1 2 0)
+    fi
+
     local t
     for t in "${candidates[@]}"; do
         if endpoints_probe "$t"; then

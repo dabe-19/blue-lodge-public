@@ -2120,6 +2120,12 @@ native_tools_dispatch() {
                     target="$workdir/$p"
                 fi
                 if [ ! -e "$target" ]; then
+                    local _lodge_fallback="${LODGE_ROOT:-${LODGE_DIR:-$HOME/blue-lodge}}"
+                    if [ -e "$_lodge_fallback/$p" ]; then
+                        target="$_lodge_fallback/$p"
+                    fi
+                fi
+                if [ ! -e "$target" ]; then
                     output="ERROR: File not found: $p"
                     exit_code=1
                 elif [ -d "$target" ]; then
@@ -2238,8 +2244,14 @@ $_ts_v_err
                 else
                     target="$workdir/$p"
                 fi
+                if [[ "$target" == "/home/wsl-ops" ]] || [[ "$target" == "/home/wsl-ops/" ]] || [[ "$target" == "/" ]] || [[ "$target" == "/home" ]]; then
+                    target="${LODGE_ROOT:-${LODGE_DIR:-$HOME/blue-lodge}}"
+                fi
+                if [ ! -e "$target" ] && [ -e "${LODGE_ROOT:-${LODGE_DIR:-$HOME/blue-lodge}}/$p" ]; then
+                    target="${LODGE_ROOT:-${LODGE_DIR:-$HOME/blue-lodge}}/$p"
+                fi
                 if command -v rg &>/dev/null; then
-                    output=$(rg -n --no-heading --color=never -e "$pat" "$target" 2>&1 | head -n 100)
+                    output=$(rg -n --no-heading --color=never --max-depth 5 -g '!.git' -g '!node_modules' -g '!target' -g '!.cargo' -g '!.cache' -e "$pat" "$target" 2>&1 | head -n 100)
                     exit_code=$?
                 else
                     output=$(commands_dispatch "/grep $pat $target" "$workdir" 2>&1)
