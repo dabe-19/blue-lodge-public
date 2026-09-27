@@ -56,11 +56,11 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "file_read",
-      "description": "Read a targeted range of lines from a local file in the workspace (auto-paginated, default: 100 lines, max: 200). Use when: inspecting source code or reading configs before modifying them. To conserve context tokens on large files, prefer file_grep to locate symbols first. Examples: path=\"lib/cron.sh\", start_line=1, max_lines=100; path=\"web/src/main.rs\", start_line=1, max_lines=80.",
+      "description": "Read a targeted range of lines from a local file in the workspace or semantic memory (auto-paginated, default: 100 lines, max: 200). Supports reading working memory with path=\"mem:active_task\". Use when: inspecting source code, reading configs before modifying them, or inspecting task deliverables. Examples: path=\"lib/cron.sh\", start_line=1, max_lines=100; path=\"mem:active_task\", start_line=1, max_lines=100.",
       "parameters": {
         "type": "object",
         "properties": {
-          "path": { "type": "string", "description": "Relative file path from workspace root (e.g. \"lib/cron.sh\", \"web/src/main.rs\")." },
+          "path": { "type": "string", "description": "Relative file path from workspace root (e.g. \"lib/cron.sh\", \"web/src/main.rs\") or semantic memory handle (\"mem:active_task\")." },
           "start_line": { "type": "integer", "description": "Starting line number (1-indexed, default: 1)." },
           "max_lines": { "type": "integer", "description": "Number of lines to read (default: 100, max: 200). Inspect code in 100-200 line chunks." }
         },
@@ -149,12 +149,28 @@ _NATIVE_CORE_TOOLS='[
   {
     "type": "function",
     "function": {
-      "name": "file_write",
-      "description": "Create a new file or completely overwrite an existing file with specified content. Use when: (1) creating new scripts in .george/tools/ or .george/cron_jobs/, (2) creating new microservice source files, or (3) writing complete new modules. Do NOT use for small surgical edits to large files (use file_edit instead). Examples: path=\".george/cron_jobs/cache_cleaner.sh\", content=\"#!/bin/bash\\n# INTERVAL: 3600\\n# DESC: Purges cache\\nrm -rf /tmp/cache/*\\n\"; path=\".george/tools/weather.sh\", content=\"#!/bin/bash\\ncurl -s wttr.in\\n\".",
+      "name": "milestone_complete",
+      "description": "Signal that the active milestone is complete or blocked, and submit structured observations and discovered facts to the DAG state barrier. Use when: you have fulfilled your current milestone task and are ready to advance the pipeline. Examples: status=\"success\", summary=\"Phytology status verified: 66 Cambium modules operational.\", facts_discovered=[\"Cambium kernel healthy\", \"0 syntax errors\"]; status=\"blocked\", summary=\"Missing required dependency cargo-tarpaulin\".",
       "parameters": {
         "type": "object",
         "properties": {
-          "path": { "type": "string", "description": "Relative file path from workspace root (e.g. \".george/cron_jobs/my_job.sh\", \".george/tools/my_tool.sh\")." },
+          "status": { "type": "string", "enum": ["success", "blocked"], "description": "Whether the milestone was successfully completed or is blocked." },
+          "summary": { "type": "string", "description": "Concise summary of actions taken, discoveries made, or blocking reasons." },
+          "facts_discovered": { "type": "array", "items": { "type": "string" }, "description": "Key factual findings or artifacts produced during this milestone." }
+        },
+        "required": ["status", "summary"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "file_write",
+      "description": "Create a new file or completely overwrite an existing file with specified content. Use when: (1) creating new scripts in .george/tools/ or .george/cron_jobs/, (2) creating new microservice source files, (3) writing complete new modules, or (4) saving persistent task deliverables, research summaries, and working notes using path=\"mem:active_task\". Do NOT use for small surgical edits to large files (use file_edit instead). Examples: path=\".george/cron_jobs/cache_cleaner.sh\", content=\"#!/bin/bash\\n# INTERVAL: 3600\\n# DESC: Purges cache\\nrm -rf /tmp/cache/*\\n\"; path=\"mem:active_task\", content=\"# Task Report\\nSynthesized findings here.\\n\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Relative file path from workspace root (e.g. \".george/cron_jobs/my_job.sh\") or semantic memory handle (\"mem:active_task\")." },
           "content": { "type": "string", "description": "Full text content to write to the file." }
         },
         "required": ["path", "content"]
@@ -165,11 +181,11 @@ _NATIVE_CORE_TOOLS='[
     "type": "function",
     "function": {
       "name": "file_append",
-      "description": "Append text content to the end of an existing file. Use when: adding log entries, appending new exports, or writing sequentially to memory files. Examples: path=\"GEORGE.md\", content=\"\\n- Custom note\".",
+      "description": "Append text content to the end of an existing file or active memory scratchpad. Use when: adding log entries, appending new exports, or writing sequentially to memory files (path=\"mem:active_task\"). Examples: path=\"GEORGE.md\", content=\"\\n- Custom note\"; path=\"mem:active_task\", content=\"\\n## Step 2 Findings\\nDetails...\".",
       "parameters": {
         "type": "object",
         "properties": {
-          "path": { "type": "string", "description": "Relative file path." },
+          "path": { "type": "string", "description": "Relative file path or semantic memory handle (\"mem:active_task\")." },
           "content": { "type": "string", "description": "Content to append." }
         },
         "required": ["path", "content"]
@@ -217,6 +233,38 @@ _NATIVE_CORE_TOOLS='[
           "count": { "type": "integer", "description": "Number of search results to return (default 5)." }
         },
         "required": ["query"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_search_cross_section",
+      "description": "Perform creative non-greedy web search that samples diverse articles across distinct semantic domains and perspectives.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Search query terms." },
+          "sample_size": { "type": "integer", "description": "Number of diverse cross-section articles to select (default 3)." },
+          "pool_size": { "type": "integer", "description": "Candidate pool size to retrieve and sample across (default 12)." }
+        },
+        "required": ["query"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "research_sandbox",
+      "description": "Execute an autonomous deep research investigation on any topic inside an isolated sandbox using pure bash scraping and non-greedy cross-sectional search. Ingests multiple distinct domain perspectives and returns a complete structured research dossier with source links, excerpts, and synthesis in a single turn without multiple tool calls.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic": { "type": "string", "description": "The research topic, question, or entity query." },
+          "sample_size": { "type": "integer", "description": "Number of distinct domain perspectives to sample (default 3)." },
+          "output_file": { "type": "string", "description": "Optional file path to persist the research dossier markdown artifact." }
+        },
+        "required": ["topic"]
       }
     }
   },
@@ -639,6 +687,21 @@ _NATIVE_CORE_TOOLS='[
           "message": { "type": "string", "description": "Optional accompanying text message." }
         },
         "required": ["target", "file_path"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "discord_read",
+      "description": "Read recent message history from a Discord channel or DM (e.g. to inspect past interactions, logs, or user instructions).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "channel": { "type": "string", "description": "Destination channel name (e.g. 'general'), numeric channel ID, or user ID." },
+          "count": { "type": "integer", "description": "Number of recent messages to retrieve (default: 10, max: 50)." }
+        },
+        "required": ["channel"]
       }
     }
   },
@@ -1617,7 +1680,7 @@ native_tools_get_schemas() {
 }
 
 # ── Composable Tool Bundles & Bedrock Taxonomy ────────────────────────
-_BEDROCK_TOOLS="bash_exec,slash_command_exec,phytology_manage,file_read,file_write,file_edit,pdf_read,workflow_plan,workflow_run,ask_operator,task_wait,tool_search"
+_BEDROCK_TOOLS="bash_exec,slash_command_exec,phytology_manage,file_read,file_write,file_edit,pdf_read,workflow_plan,workflow_run,ask_operator,task_wait,tool_search,milestone_complete"
 
 # Map bundles to their constituent tool names
 native_tools_bundle_tools() {
@@ -1627,7 +1690,7 @@ native_tools_bundle_tools() {
             echo "$_BEDROCK_TOOLS"
             ;;
         +web|web)
-            echo "web_search,web_fetch,github_search"
+            echo "web_search,web_search_cross_section,web_fetch,research_sandbox,github_search"
             ;;
         +files|files)
             echo "file_write,file_append,file_edit,file_grep,dir_list"
@@ -1642,7 +1705,7 @@ native_tools_bundle_tools() {
             echo "vision_analyze,file_download"
             ;;
         +social|social)
-            echo "social_post,discord_send,discord_dm,discord_send_file,telegram_send,email_send,email_read,phone_sms_send,mqtt_publish"
+            echo "social_post,discord_send,discord_dm,discord_send_file,discord_read,telegram_send,email_send,email_read,phone_sms_send,mqtt_publish"
             ;;
         +ops|ops)
             echo "system_vitals,sandbox_create,sandbox_exec,sandbox_list,sandbox_remove,container_exec,service_manage,service_list,backup_create,backup_list,backup_restore,pgp_sign,pgp_verify"
@@ -1707,7 +1770,7 @@ native_tools_classify_profile() {
     local is_social=0
 
     # Domain Pattern Matching
-    if echo "$g_lower" | grep -qiE '\b(research|investigate|background|who is|what is|find out|news|article|articles|source|sources|look up|search for|fetch|survey|overview of|profile on|history of|summary of|browse|scout|track|due diligence|public record|osint|paper|arxiv|cve)\b'; then
+    if echo "$g_lower" | grep -qiE '\b(research|investigate|intel|financial|background|who is|what is|find out|news|article|articles|source|sources|look up|search for|fetch|survey|overview of|profile on|history of|summary of|browse|scout|track|due diligence|public record|osint|paper|arxiv|cve)\b'; then
         is_research=1
     fi
 
@@ -1724,14 +1787,18 @@ native_tools_classify_profile() {
     fi
 
     # Multi-domain union (capped at 36 tools)
-    if [ "$is_research" -eq 1 ] && [ "$is_code" -eq 1 ]; then
+    if [ "$is_research" -eq 1 ] && [ "$is_ops" -eq 1 ] && [ "$is_social" -eq 1 ]; then
+        echo "+web, +ops, +social"
+    elif [ "$is_research" -eq 1 ] && [ "$is_code" -eq 1 ]; then
         echo "research, +code"
+    elif [ "$is_research" -eq 1 ] && [ "$is_ops" -eq 1 ]; then
+        echo "+web, +ops"
+    elif [ "$is_research" -eq 1 ] && [ "$is_social" -eq 1 ]; then
+        echo "+web, +social"
     elif [ "$is_ops" -eq 1 ] && [ "$is_social" -eq 1 ]; then
         echo "ops, +social"
     elif [ "$is_code" -eq 1 ] && [ "$is_ops" -eq 1 ]; then
         echo "code, +ops"
-    elif [ "$is_research" -eq 1 ] && [ "$is_social" -eq 1 ]; then
-        echo "research, +social"
     elif [ "$is_research" -eq 1 ]; then
         echo "research"
     elif [ "$is_code" -eq 1 ]; then
@@ -1760,10 +1827,10 @@ native_tools_resolve_profile() {
             tool_list+=",$(native_tools_bundle_tools '+files'),$(native_tools_bundle_tools '+code'),$(native_tools_bundle_tools '+git')"
             ;;
         social)
-            tool_list="${_BEDROCK_TOOLS},$(native_tools_bundle_tools '+web'),$(native_tools_bundle_tools '+social'),$(native_tools_bundle_tools '+memory'),$(native_tools_bundle_tools '+vision')"
+            tool_list="${_BEDROCK_TOOLS},$(native_tools_bundle_tools '+social'),$(native_tools_bundle_tools '+vision'),$(native_tools_bundle_tools '+web'),$(native_tools_bundle_tools '+memory')"
             ;;
         social+ops|social_ops)
-            tool_list="${_BEDROCK_TOOLS},$(native_tools_bundle_tools '+web'),$(native_tools_bundle_tools '+social'),$(native_tools_bundle_tools '+ops'),$(native_tools_bundle_tools '+memory'),$(native_tools_bundle_tools '+vision')"
+            tool_list="${_BEDROCK_TOOLS},$(native_tools_bundle_tools '+social'),$(native_tools_bundle_tools '+vision'),$(native_tools_bundle_tools '+web'),$(native_tools_bundle_tools '+ops'),$(native_tools_bundle_tools '+memory')"
             ;;
         ops)
             tool_list+=",$(native_tools_bundle_tools '+files'),$(native_tools_bundle_tools '+ops'),$(native_tools_bundle_tools '+memory')"
@@ -1808,6 +1875,8 @@ native_tools_resolve_profile() {
 native_tools_domain_tags() {
     case "$1" in
         web_search) echo "web search internet google query research paper arxiv browse find online" ;;
+        web_search_cross_section) echo "web search cross section sample diverse creative articles semantic perspectives balanced non-greedy" ;;
+        research_sandbox) echo "research sandbox dossier deep web scrape non-greedy cross-section multi-domain recurring intel report autonomous" ;;
         web_fetch) echo "web fetch scrape read download url html page article preprint source" ;;
         github_search) echo "github code search repo repository open source git implementation" ;;
         vision_analyze) echo "vision image photo diagram figure chart architecture visual inspect picture" ;;
@@ -1815,7 +1884,7 @@ native_tools_domain_tags() {
         git_commit|git_push|git_clone) echo "git commit push clone repo branch code vcs version control" ;;
         gitea_pr_create|gitea_pr_list|gitea_pr_merge|gitea_issue_create|gitea_issue_list|gitea_issue_get|gitea_issue_close|gitea_issue_comment|gitea_branch_create|pr_audit) echo "pr pull request merge gitea issue issues bug fix branch review code audit" ;;
         social_post) echo "social post broadcast x twitter mastodon bluesky thread status publish tweet" ;;
-        discord_send|discord_dm|discord_send_file) echo "discord channel message alert notification chat send dm webhook file image upload attachment" ;;
+        discord_send|discord_dm|discord_send_file|discord_read) echo "discord channel message alert notification chat send dm webhook file image upload attachment history read" ;;
         telegram_send) echo "telegram chat message alert notification channel send" ;;
         email_send|email_read) echo "email mail message inbox smtp letter imap send" ;;
         system_vitals) echo "vitals cpu memory gpu hardware status monitoring load thermal resources" ;;
@@ -2185,6 +2254,38 @@ native_tools_dispatch() {
                 output="TASK_WAIT_SUCCESS: Slept for ${secs}s (${reason})."
                 exit_code=0
                 ;;
+            milestone_complete)
+                local m_status m_summary m_facts
+                m_status=$(echo "$args_json" | jq -r '.status // "success"')
+                m_summary=$(echo "$args_json" | jq -r '.summary // "Milestone completed."')
+                m_facts=$(echo "$args_json" | jq -c '.facts_discovered // []')
+
+                local dag_state_file="$workdir/.george/dag_state.json"
+                mkdir -p "$workdir/.george"
+                local cur_step="${CURRENT_ACTIVE_MILESTONE_ID:-1}"
+                local now_ts
+                now_ts=$(date +%s)
+
+                local update_entry
+                update_entry=$(jq -nc \
+                    --arg id "$cur_step" \
+                    --arg st "$m_status" \
+                    --arg sm "$m_summary" \
+                    --argjson f "$m_facts" \
+                    --arg ts "$now_ts" \
+                    '{id: $id, status: $st, summary: $sm, facts: $f, timestamp: ($ts | tonumber)}')
+
+                if [ -f "$dag_state_file" ]; then
+                    jq --argjson entry "$update_entry" '.milestones += [$entry]' "$dag_state_file" > "${dag_state_file}.tmp" 2>/dev/null && mv "${dag_state_file}.tmp" "$dag_state_file" || true
+                else
+                    jq -n --argjson entry "$update_entry" '{milestones: [$entry]}' > "$dag_state_file" 2>/dev/null || true
+                fi
+
+                commands_dispatch "/append mem:active_task \n## Milestone $cur_step ($m_status)\n$m_summary\n" "$workdir" >/dev/null 2>&1 || true
+
+                output="MILESTONE_COMPLETE_ACKNOWLEDGED: Milestone status='$m_status' registered to DAG state barrier. Summary: $m_summary"
+                exit_code=0
+                ;;
             bash_exec)
                 local cmd
                 cmd=$(echo "$args_json" | jq -r '.command // empty')
@@ -2474,6 +2575,15 @@ $_ts_v_err
                 output=$(web_search "$q" "$cnt" 2>&1)
                 exit_code=$?
                 ;;
+            web_search_cross_section)
+                local q s_cnt p_cnt
+                q=$(echo "$args_json" | jq -r '.query // empty')
+                s_cnt=$(echo "$args_json" | jq -r '.sample_size // 3')
+                p_cnt=$(echo "$args_json" | jq -r '.pool_size // 12')
+                source "$LODGE_DIR/lib/web.sh" 2>/dev/null || true
+                output=$(web_search_cross_section "$q" "$s_cnt" "$p_cnt" 2>&1)
+                exit_code=$?
+                ;;
             web_fetch)
                 local u
                 u=$(echo "$args_json" | jq -r '.url // empty')
@@ -2485,6 +2595,20 @@ $_ts_v_err
                     fi
                 else
                     output=$(web_fetch "$u" 2>&1)
+                    exit_code=$?
+                fi
+                ;;
+            research_sandbox)
+                local topic s_cnt out_file
+                topic=$(echo "$args_json" | jq -r '.topic // empty')
+                s_cnt=$(echo "$args_json" | jq -r '.sample_size // 3')
+                out_file=$(echo "$args_json" | jq -r '.output_file // empty')
+                source "$LODGE_DIR/lib/web.sh" 2>/dev/null || true
+                if [ -z "$topic" ]; then
+                    output='{"status":"error","message":"research_sandbox requires .topic parameter"}'
+                    exit_code=1
+                else
+                    output=$(research_sandbox "$topic" "$s_cnt" "$out_file" 2>&1)
                     exit_code=$?
                 fi
                 ;;
@@ -2779,6 +2903,7 @@ $_ts_v_err
                 local has_bot
                 has_bot=$(api_get_key "DISCORD_BOT_TOKEN" 2>/dev/null || true)
                 if [ -n "$has_bot" ]; then
+                    source "$LODGE_DIR/lib/social.sh" 2>/dev/null || true
                     output=$(discord_dm "${usr:-dabe}" "$msg" 2>&1)
                     exit_code=$?
                 else
@@ -2802,6 +2927,27 @@ $_ts_v_err
                         exit_code=$?
                     else
                         output="Target and file_path are required for discord_send_file."
+                        exit_code=1
+                    fi
+                else
+                    output="Discord bot token is not configured. Set DISCORD_BOT_TOKEN with: /api keys set DISCORD_BOT_TOKEN <token>"
+                    exit_code=1
+                fi
+                ;;
+            discord_read)
+                local chan cnt
+                chan=$(echo "$args_json" | jq -r '.channel // empty')
+                cnt=$(echo "$args_json" | jq -r '.count // 10')
+                chan=$(echo "$chan" | sed 's/^["'\''"]*//; s/["'\''"]*$//')
+                source "$LODGE_DIR/lib/social.sh" 2>/dev/null || true
+                local has_bot
+                has_bot=$(api_get_key "DISCORD_BOT_TOKEN" 2>/dev/null || true)
+                if [ -n "$has_bot" ]; then
+                    if [ -n "$chan" ]; then
+                        output=$(discord_read "$chan" "$cnt" 2>&1)
+                        exit_code=$?
+                    else
+                        output="Channel parameter is required for discord_read."
                         exit_code=1
                     fi
                 else
