@@ -552,16 +552,19 @@ _react_digest_tool_output() {
         ts=$(date '+%H:%M:%S')
         echo -e "\n### [${ts}] ${c_name} (${c_args:0:100})\n- **Milestone**: ${active_step}\n- ${raw_snippet}" >> "$scratchpad"
         cp "$scratchpad" "$g_scratchpad" 2>/dev/null || true
+        ui_dim "  [digest] Brief observation (${#resp_content} chars) recorded to scratchpad" >&2
         echo "$raw_snippet"
         return 0
     fi
 
     local ep_url="${ACTIVE_ENDPOINT_URL:-http://127.0.0.1:8080}"
     local digest_result=""
-    local digest_timeout="${REACT_DIGEST_TIMEOUT:-8}"
+    local digest_timeout="${REACT_DIGEST_TIMEOUT:-25}"
 
-    local excerpt="${resp_content:0:10000}"
+    local excerpt="${resp_content:0:4500}"
     local args_snippet="${c_args:0:200}"
+
+    ui_dim "  [digest] Sub-turn LLM distilling observation from ${c_name} (${#resp_content} chars)..." >&2
 
     local sys_prompt="You are the Blue Lodge Evidence Digest Engine. Your sole task is to distill raw tool observations into dense, structured, factual evidence for the agent's scratchpad.
 Extract:
@@ -591,7 +594,7 @@ Distill key factual findings, metrics, and citations:"
                 {"role": "user", "content": $user}
             ],
             temperature: 0.1,
-            max_tokens: 350,
+            max_tokens: 300,
             stream: false
         }' 2>/dev/null)
 
@@ -604,18 +607,23 @@ Distill key factual findings, metrics, and citations:"
 
     # Heuristic fallback if LLM is unavailable or times out
     if [ -z "$digest_result" ]; then
+        ui_warn "  [digest] Sub-turn LLM unavailable or timed out; generating structured heuristic digest" >&2
         local extracted_urls
         extracted_urls=$(echo "$resp_content" | grep -oE 'https?://[^ ">\t]+' | head -n 5 | tr '\n' ' ')
         local head_lines
-        head_lines=$(echo "$resp_content" | sed '/^[[:space:]]*$/d' | head -n 6 | tr '\n' ' ')
+        head_lines=$(echo "$resp_content" | grep -vE '^\[debug\]' | sed '/^[[:space:]]*$/d' | head -n 6 | tr '\n' ' ')
         digest_result="- Key Output: ${head_lines:0:300}"
         if [ -n "$extracted_urls" ]; then
             digest_result="${digest_result}\n- Citations: ${extracted_urls}"
         fi
+    else
+        # Strip think tags if present
+        digest_result=$(echo "$digest_result" | sed -E 's/<think>.*<\/think>//g')
+        local fact_count
+        fact_count=$(echo "$digest_result" | grep -c '^[*-]' || echo 1)
+        [ "$fact_count" -eq 0 ] && fact_count=1
+        ui_ok "  [digest] Sub-turn LLM extracted ${fact_count} structured evidence facts" >&2
     fi
-
-    # Strip think tags if present
-    digest_result=$(echo "$digest_result" | sed -E 's/<think>.*<\/think>//g')
 
     # Atomically append to scratchpad.md
     local ts
@@ -646,6 +654,8 @@ Distill key factual findings, metrics, and citations:"
         echo "${digest_result}"
     } >> "$mem_task_file" 2>/dev/null || true
 
+    ui_dim "  [digest] Updated scratchpad.md & mem:${slug}" >&2
+
     echo "$digest_result"
 }
 
@@ -667,10 +677,12 @@ _react_eval_milestone_evidence() {
     [ ! -f "$hd_file" ] && return 0
 
     local scratch_excerpt=""
-    [ -f "$scratchpad" ] && scratch_excerpt=$(tail -n 60 "$scratchpad" 2>/dev/null)
+    [ -f "$scratchpad" ] && scratch_excerpt=$(tail -n 250 "$scratchpad" 2>/dev/null)
 
     local ep_url="${ACTIVE_ENDPOINT_URL:-http://127.0.0.1:8080}"
-    local eval_timeout="${REACT_EVAL_TIMEOUT:-8}"
+    local eval_timeout="${REACT_EVAL_TIMEOUT:-25}"
+
+    ui_dim "  [evaluator] Sub-turn LLM evaluating Step ${active_step_id} against accumulated evidence..." >&2
 
     local sys_prompt="You are the Blue Lodge Milestone Evaluator.
 Determine whether the accumulated scratchpad evidence satisfies the Current Active Milestone.
@@ -732,10 +744,10 @@ Evaluate if Step ${active_step_id} is SATISFIED by the evidence, or what remains
     # Fallback heuristic evaluation
     if [ "$verdict" != "SATISFIED" ]; then
         local lower_task="${active_step_task,,}"
-        if [[ "$lower_task" =~ (search|fetch|find|inspect|read|check) ]] && [ -f "$scratchpad" ]; then
-            if grep -qiE '(\$[0-9]+|[0-9]+\s*(billion|million|usd)|revenue|eps|operating cash|status: OK|status = "OK"|passed)' "$scratchpad" 2>/dev/null && [ $(wc -l < "$scratchpad" 2>/dev/null || echo 0) -ge 5 ]; then
+        if [[ "$lower_task" =~ (search|fetch|find|inspect|read|check|gather|identify|research|collect|analyze|review|compile|explore|obtain|extract) ]] && [ -f "$scratchpad" ]; then
+            if grep -qiE '(\$[0-9]+|[0-9]+\s*(billion|million|usd)|revenue|eps|operating cash|status: OK|status = "OK"|passed)' "$scratchpad" 2>/dev/null && [ $(wc -l < "$scratchpad" 2>/dev/null || echo 0) -ge 10 ]; then
                 verdict="SATISFIED"
-                reason="Substantial empirical findings accumulated in scratchpad."
+                reason="Substantial empirical findings and metrics accumulated in scratchpad."
             fi
         fi
     fi
@@ -767,7 +779,10 @@ Evaluate if Step ${active_step_id} is SATISFIED by the evidence, or what remains
         ui_info "  [honeydew] Advanced to: $new_active" >&2
         echo "SATISFIED|${reason}|${new_active}"
     else
-        [ -n "$suggested_action" ] && ui_dim "  [evaluator] Next suggested action: $suggested_action" >&2
+        ui_info "  [evaluator] Step $active_step_id IN_PROGRESS: ${reason:-Evidence gathering in progress}" >&2
+        if [ -n "$suggested_action" ]; then
+            ui_dim "  [evaluator] Guidance: $suggested_action" >&2
+        fi
         echo "IN_PROGRESS|${reason}|${suggested_action}"
     fi
 }
@@ -1793,7 +1808,7 @@ react_run() {
 
         # Fallback: if native tool_calls array is empty, inspect raw_content for embedded XML/JSON function calls
         if [ -z "$tool_calls" ] || [ "$tool_calls" = "null" ] || [ "$tool_calls" = "[]" ]; then
-            if [[ "$raw_content" == *"<function"* ]] || [[ "$raw_content" == *"<tool_call>"* ]]; then
+            if [[ "$raw_content" == *"<function"* ]] || [[ "$raw_content" == *"<tool_call"* ]]; then
                 if command -v python3 &>/dev/null; then
                     local _extracted_tc
                     _extracted_tc=$(python3 -c '
@@ -1801,7 +1816,7 @@ import sys, re, json, os
 
 text = sys.argv[1] if len(sys.argv) > 1 else sys.stdin.read()
 calls = []
-json_tc = re.findall(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", text, re.DOTALL)
+json_tc = re.findall(r"<tool_call[^>]*>\s*(\{.*?\})(?:\s*</tool_call>|$)", text, re.DOTALL)
 for j_str in json_tc:
     try:
         d = json.loads(j_str)
@@ -1847,6 +1862,7 @@ print(json.dumps(calls))
 ' "$raw_content" 2>/dev/null || echo "[]")
                     if [ -n "$_extracted_tc" ] && [ "$_extracted_tc" != "[]" ]; then
                         tool_calls="$_extracted_tc"
+                        raw_content=""
                     fi
                 fi
             fi
@@ -2221,14 +2237,14 @@ Error: ${resp_content:0:600}
                     '.completed_milestones += [{"timestamp": $ts, "tool": $tool, "summary": $sum}]' \
                     "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
 
-                # Brief UI preview or full debug observation
+                # Brief UI preview and optional debug observation
+                local preview
+                preview=$(echo "${tool_digest:-$resp_content}" | head -n 3 | tr '\n' ' ')
+                printf "${C_DIM}  ↳ Digest: %s${C_RESET}\n" "$preview"
                 if [ "${LODGE_DEBUG:-0}" -eq 1 ]; then
-                    printf "   ${C_BOLD}${C_GRAY}[DEBUG: Observation (${#resp_content} chars)]${C_RESET}\n%s\n" "$resp_content"
-                else
-                    local preview
-                    preview=$(echo "${tool_digest:-$resp_content}" | head -n 3 | tr '\n' ' ')
-                    printf "${C_DIM}  ↳ Digest: %s${C_RESET}\n" "$preview"
+                    printf "   ${C_BOLD}${C_GRAY}[DEBUG: Observation (${#resp_content} chars)]${C_RESET}\n%s\n" "${resp_content:0:1500}"
                 fi
+
 
                 declare -f transcript_log_jsonl &>/dev/null && transcript_log_jsonl "$goal" "${reasoning:-${think_content:-}}" "${c_name:-tool}(${c_args:-})" "$resp_content"
             done < <(echo "$tool_calls" | jq -c '.[]')
@@ -2357,6 +2373,16 @@ Error: ${resp_content:0:600}
 
         # If model provided answer directly without tool calls
         if [ -n "$raw_content" ]; then
+            # Guard against pseudo tool calls masquerading as final responses
+            if [[ "$raw_content" =~ \<tool_call|\<function ]]; then
+                ui_warn "  [guard] Intercepted raw tool call text in conversational output; enforcing tool execution."
+                jq --arg ans "$raw_content" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+                local adv="[SYSTEM ADVISORY: You outputted an unexecuted tool call text. Execute the tool properly or synthesize your final deliverable from the scratchpad without tool tags.]"
+                jq --arg p "$adv" '. += [{"role": "user", "content": $p}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+                turn=$((turn + 1))
+                continue
+            fi
+
             # Premature Exit Guard: In multi-turn tasks where output
             # contains forward-looking planning text or preambles rather than a final deliverable, advance to tool execution.
             # CRITICAL: If tools have ALREADY executed in this session, the assistant is reporting results, NOT planning.

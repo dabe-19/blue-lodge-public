@@ -1566,6 +1566,12 @@ async fn run_lodge_task_streaming(
                 if trimmed.starts_with("Tool Call:") || trimmed.starts_with("Native Tool Call:") {
                     let tool_name = trimmed.split_whitespace().nth(2).or_else(|| trimmed.split_whitespace().nth(1)).unwrap_or("tool");
                     let _ = tokio::fs::write(&phase_file_out, format!("Tool: {}", tool_name)).await;
+                } else if trimmed.contains("[digest]") {
+                    let _ = tokio::fs::write(&phase_file_out, "Sub-Turn Evidence Digest").await;
+                } else if trimmed.contains("[evaluator]") {
+                    let _ = tokio::fs::write(&phase_file_out, "Milestone Evaluator").await;
+                } else if trimmed.contains("[honeydew]") {
+                    let _ = tokio::fs::write(&phase_file_out, "Honeydew DAG Advance").await;
                 } else if trimmed.starts_with("[thought]") || trimmed.starts_with("Thought:") {
                     let _ = tokio::fs::write(&phase_file_out, "Reasoning & Monologue").await;
                 } else if trimmed.starts_with("Executing Workflow:") {
@@ -1577,6 +1583,7 @@ async fn run_lodge_task_streaming(
     });
 
     let traj_file_err = traj_file.clone();
+    let phase_file_err = phase_file.clone();
     let stderr_handle = tokio::spawn(async move {
         let mut err_text = String::new();
         if let Some(stderr) = stderr {
@@ -1586,6 +1593,14 @@ async fn run_lodge_task_streaming(
                 err_text.push('\n');
                 if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&traj_file_err).await {
                     let _ = f.write_all(format!("{}\n", line).as_bytes()).await;
+                }
+                let trimmed = line.trim();
+                if trimmed.contains("[digest]") {
+                    let _ = tokio::fs::write(&phase_file_err, "Sub-Turn Evidence Digest").await;
+                } else if trimmed.contains("[evaluator]") {
+                    let _ = tokio::fs::write(&phase_file_err, "Milestone Evaluator").await;
+                } else if trimmed.contains("[honeydew]") {
+                    let _ = tokio::fs::write(&phase_file_err, "Honeydew DAG Advance").await;
                 }
             }
         }
