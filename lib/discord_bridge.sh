@@ -65,10 +65,51 @@ CREATE TABLE IF NOT EXISTS discord_user_profiles (
     interaction_summary TEXT,
     last_topic TEXT,
     interaction_count INTEGER DEFAULT 0,
-    updated_at INTEGER
+    updated_at INTEGER,
+    location TEXT DEFAULT '',
+    notes TEXT DEFAULT ''
 );
 EOF
+        sqlite3 "$DISCORD_PROFILES_DB" "ALTER TABLE discord_user_profiles ADD COLUMN location TEXT DEFAULT '';" 2>/dev/null || true
+        sqlite3 "$DISCORD_PROFILES_DB" "ALTER TABLE discord_user_profiles ADD COLUMN notes TEXT DEFAULT '';" 2>/dev/null || true
     fi
+}
+
+discord_profile_get() {
+    local uid="$1"
+    [ -z "$uid" ] && return 1
+    discord_bridge_init
+    if command -v sqlite3 &>/dev/null && [ -f "$DISCORD_PROFILES_DB" ]; then
+        sqlite3 -header -column "$DISCORD_PROFILES_DB" \
+            "SELECT user_id, username, location, notes, interaction_summary, interaction_count FROM discord_user_profiles WHERE user_id = '$uid' OR username = '$uid' LIMIT 1;" 2>/dev/null || true
+    fi
+}
+
+discord_profile_set() {
+    local uid="$1"
+    local field="$2"
+    local val="$3"
+    [ -z "$uid" ] && return 1
+    [ -z "$field" ] && return 1
+    discord_bridge_init
+    case "$field" in
+        location|notes|interaction_summary)
+            local safe_val
+            safe_val=$(echo "$val" | sed "s/'/''/g")
+            local now_ts
+            now_ts=$(date +%s)
+            sqlite3 "$DISCORD_PROFILES_DB" << EOF 2>/dev/null || true
+INSERT INTO discord_user_profiles (user_id, username, $field, updated_at)
+VALUES ('$uid', '$uid', '$safe_val', $now_ts)
+ON CONFLICT(user_id) DO UPDATE SET
+    $field = '$safe_val',
+    updated_at = $now_ts;
+EOF
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 # ── 1. Discord Multipart File & Image Upload ─────────────────────────
@@ -407,19 +448,36 @@ discord_generate_response() {
         return 0
     fi
 
-    # Build prompt with author-scoped history
-    local hist_ctx
-    hist_ctx=$(discord_history_get "$channel_id" 6 "$author_id")
+    # 1. Author-scoped history (ONLY active if in an ongoing open multi-turn session pipe, turn > 1)
+    local hist_ctx=""
+    if [ "${_DISCORD_IN_ACTIVE_PIPE:-0}" -eq 1 ] && [ "${_DISCORD_PIPE_TURN:-1}" -gt 1 ]; then
+        hist_ctx=$(discord_history_get "$channel_id" 6 "$author_id")
+    fi
 
-    # Load per-user profile from discord_user_profiles
+    # 2. Known User Profile from discord_user_profiles
+    local user_profile_ctx=""
     if [ -n "$author_id" ] && command -v sqlite3 &>/dev/null && [ -f "$DISCORD_PROFILES_DB" ]; then
         local u_profile
-        u_profile=$(sqlite3 "$DISCORD_PROFILES_DB" "SELECT interaction_summary, last_topic FROM discord_user_profiles WHERE user_id = '$author_id' LIMIT 1;" 2>/dev/null || true)
+        u_profile=$(sqlite3 "$DISCORD_PROFILES_DB" "SELECT interaction_summary, location, notes FROM discord_user_profiles WHERE user_id = '$author_id' LIMIT 1;" 2>/dev/null || true)
         if [ -n "$u_profile" ]; then
-            local p_summary p_topic
+            local p_summary p_loc p_notes
             p_summary=$(echo "$u_profile" | cut -d'|' -f1)
-            p_topic=$(echo "$u_profile" | cut -d'|' -f2)
-            [ -n "$p_summary" ] && hist_ctx="${hist_ctx}\n[Known User Profile - @${author}]: Previous context: ${p_summary} (Topic: ${p_topic})"
+            p_loc=$(echo "$u_profile" | cut -d'|' -f2)
+            p_notes=$(echo "$u_profile" | cut -d'|' -f3)
+
+            # Filter out default placeholder boilerplate
+            [[ "$p_summary" == *"Engaged in conversational dialogue"* ]] && p_summary=""
+
+            local prof_items=()
+            [ -n "$p_loc" ] && prof_items+=("Location: $p_loc")
+            [ -n "$p_notes" ] && prof_items+=("Notes: $p_notes")
+            [ -n "$p_summary" ] && prof_items+=("Profile Summary: $p_summary")
+
+            if [ ${#prof_items[@]} -gt 0 ]; then
+                local joined_prof
+                joined_prof=$(IFS='; '; echo "${prof_items[*]}")
+                user_profile_ctx="[User Profile - @${author}]: $joined_prof"
+            fi
         fi
     fi
 
@@ -438,9 +496,15 @@ discord_generate_response() {
         # For operational tasks, isolate goal to current user prompt to prevent past banter context pollution
         target_goal="$prompt"
     else
-        # For conversational dialogue, include recent history context
-        if [ -n "$hist_ctx" ]; then
-            target_goal="${hist_ctx}\n\n[Current Inbound Message from @${author}]:\n${prompt}"
+        # For conversational dialogue:
+        local header_lines=()
+        [ -n "$user_profile_ctx" ] && header_lines+=("$user_profile_ctx")
+        [ -n "$hist_ctx" ] && header_lines+=("$hist_ctx")
+
+        if [ ${#header_lines[@]} -gt 0 ]; then
+            local header_str
+            header_str=$(printf '%b\n\n' "${header_lines[@]}")
+            target_goal="${header_str}[Current Inbound Message from @${author}]:\n${prompt}"
         else
             target_goal="$prompt"
         fi
@@ -462,10 +526,13 @@ discord_generate_response() {
 
     local discord_max_turns="${DISCORD_AGENT_MAX_TURNS:-200}"
     local reply=""
+    source "$LODGE_DIR/lib/react.sh" 2>/dev/null || true
+    source "$LODGE_DIR/lib/context_engine.sh" 2>/dev/null || true
     if declare -f react_run &>/dev/null; then
         local raw_out_file="$session_out_dir/raw_react.log"
         export _DISCORD_IN_SESSION=1
         export LODGE_NONINTERACTIVE=1
+        export REACT_SESSION_ID="$session_uuid"
         if [ -n "$session_log" ]; then
             react_run "$target_goal" "$LODGE_DIR" "$discord_max_turns" 1 "$session_uuid" "$run_profile" 2>&1 | tee -a "$session_log" > "$raw_out_file" || true
         else
@@ -473,6 +540,7 @@ discord_generate_response() {
         fi
         unset _DISCORD_IN_SESSION
         unset LODGE_NONINTERACTIVE
+        unset REACT_SESSION_ID
 
         # 1. Primary: Extract from isolated session workspace
         local session_workspace="$LODGE_DIR/.george/workspaces/$session_uuid"
@@ -483,6 +551,24 @@ discord_generate_response() {
             reply=$(cat "$session_final")
         elif [ -f "$session_json" ]; then
             reply=$(jq -r '[.[] | select(.role == "assistant" and .content != null and .content != "")] | last | .content // empty' "$session_json" 2>/dev/null || true)
+        fi
+
+        # 1b. Dynamic workspace search fallback if exact uuid path was not used
+        if [ -z "$reply" ]; then
+            local latest_final
+            latest_final=$(find "$LODGE_DIR/.george/workspaces" -maxdepth 2 -name "final_reply.txt" -type f -mmin -2 2>/dev/null | sort -V | tail -n 1 || true)
+            if [ -n "$latest_final" ] && [ -s "$latest_final" ]; then
+                reply=$(cat "$latest_final")
+            fi
+        fi
+
+        # 1c. Transcript markdown search fallback
+        if [ -z "$reply" ]; then
+            local latest_transcript
+            latest_transcript=$(find "$LODGE_DIR/.george/transcripts" -maxdepth 1 -name "*.md" -type f -mmin -2 2>/dev/null | sort -V | tail -n 1 || true)
+            if [ -n "$latest_transcript" ] && [ -s "$latest_transcript" ]; then
+                reply=$(awk '/## Final Output/{flag=1; next} /## /{flag=0} flag' "$latest_transcript" | sed '/^[[:space:]]*$/d')
+            fi
         fi
 
         # 2. Fallback: Extract from session-isolated raw output log
@@ -525,11 +611,12 @@ discord_generate_response() {
     if [ -n "$author_id" ] && command -v sqlite3 &>/dev/null; then
         local now_ts
         now_ts=$(date +%s)
-        local safe_mem="${_EGRESS_EXTRACTED_MEMORY:-Engaged in conversational dialogue with George.}"
-        safe_mem=$(echo "$safe_mem" | tr '\n' ' ' | sed "s/'/''/g")
         local safe_prompt
         safe_prompt=$(echo "${prompt:0:60}" | tr '\n' ' ' | sed "s/'/''/g")
-        sqlite3 "$DISCORD_PROFILES_DB" << EOF 2>/dev/null || true
+        if [ -n "$_EGRESS_EXTRACTED_MEMORY" ]; then
+            local safe_mem
+            safe_mem=$(echo "$_EGRESS_EXTRACTED_MEMORY" | tr '\n' ' ' | sed "s/'/''/g")
+            sqlite3 "$DISCORD_PROFILES_DB" << EOF 2>/dev/null || true
 INSERT INTO discord_user_profiles (user_id, username, interaction_summary, last_topic, interaction_count, updated_at)
 VALUES ('$author_id', '$author', '$safe_mem', '$safe_prompt', 1, $now_ts)
 ON CONFLICT(user_id) DO UPDATE SET
@@ -539,6 +626,17 @@ ON CONFLICT(user_id) DO UPDATE SET
     interaction_count = interaction_count + 1,
     updated_at = $now_ts;
 EOF
+        else
+            sqlite3 "$DISCORD_PROFILES_DB" << EOF 2>/dev/null || true
+INSERT INTO discord_user_profiles (user_id, username, interaction_summary, last_topic, interaction_count, updated_at)
+VALUES ('$author_id', '$author', '', '$safe_prompt', 1, $now_ts)
+ON CONFLICT(user_id) DO UPDATE SET
+    username = '$author',
+    last_topic = '$safe_prompt',
+    interaction_count = interaction_count + 1,
+    updated_at = $now_ts;
+EOF
+        fi
 
         # Tier 2 opportunistic: background condensation if Slot 1 is idle
         (
@@ -587,6 +685,9 @@ discord_chat_session() {
     cleanup_session() {
         rm -f "$pid_file" 2>/dev/null || true
         [ -n "$pulse_pid" ] && discord_typing_pulse_stop "$pulse_pid"
+        discord_history_clear "$channel_id" "$author_id"
+        export _DISCORD_IN_ACTIVE_PIPE=""
+        export _DISCORD_PIPE_TURN=""
         if [ -f "$session_log" ] && ! grep -q "\[SESSION_CLOSED\]" "$session_log"; then
             printf "\n[%s] [SESSION_CLOSED] Session ended.\n" "$(date '+%H:%M:%S')" >> "$session_log"
         fi
@@ -611,6 +712,10 @@ discord_chat_session() {
     discord_launch_visual_monitor "$channel_id" "$author" "$session_log"
 
     # 1. Process Initial Inbound Turn
+    # Ensure fresh turn receives ONLY the current inbound message
+    discord_history_clear "$channel_id" "$author_id"
+    export _DISCORD_IN_ACTIVE_PIPE=1
+    export _DISCORD_PIPE_TURN=1
     printf "[%s] [Inbound from @%s]: %s\n" "$(date '+%H:%M:%S')" "$author" "$initial_msg" >> "$session_log"
     pulse_pid=$(discord_typing_pulse_start "$channel_id")
 
@@ -692,6 +797,9 @@ discord_chat_session() {
 
             ui_info "Inbound Discord message from @$n_author: $n_content"
             printf "[%s] [Inbound from @%s]: %s\n" "$(date '+%H:%M:%S')" "$n_author" "$n_content" >> "$session_log"
+
+            export _DISCORD_IN_ACTIVE_PIPE=1
+            export _DISCORD_PIPE_TURN=$(( ${_DISCORD_PIPE_TURN:-1} + 1 ))
 
             local pulse_pid_turn=""
             pulse_pid_turn=$(discord_typing_pulse_start "$channel_id")
@@ -816,6 +924,7 @@ discord_bridge_sweep() {
 
                 ui_info "Direct Message from @$p_author: $p_content"
                 (
+                    unset _LIB_DISCORD_BRIDGE_LOADED _LIB_REACT_LOADED _LIB_UI_LOADED _LIB_PROMPT_LOADED
                     source "$LODGE_DIR/lib/discord_bridge.sh" 2>/dev/null || true
                     discord_chat_session "$dm_ch_id" "$p_content" "$p_author" "$p_id" 1 "$attachments" "$p_author_id"
                 ) >> "$DISCORD_BRIDGE_LOG" 2>&1 &
@@ -876,6 +985,7 @@ discord_bridge_sweep() {
 
                 ui_info "Mention in #$ch_name from @$m_author: $m_content"
                 (
+                    unset _LIB_DISCORD_BRIDGE_LOADED _LIB_REACT_LOADED _LIB_UI_LOADED _LIB_PROMPT_LOADED
                     source "$LODGE_DIR/lib/discord_bridge.sh" 2>/dev/null || true
                     discord_chat_session "$ch_id" "$m_content" "$m_author" "$m_id" 0 "$attachments" "$m_author_id"
                 ) >> "$DISCORD_BRIDGE_LOG" 2>&1 &
