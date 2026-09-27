@@ -471,6 +471,8 @@ _react_trip_circuit_breaker() {
     if declare -f telemetry_task_end &>/dev/null; then
         telemetry_task_end "$session_id" 75 "CIRCUIT_BREAKER_TRIPPED" >/dev/null 2>&1 || true
     fi
+    declare -f agent_sm_transition &>/dev/null && agent_sm_transition "$session_id" "CIRCUIT_BREAKER_TRIPPED" "$reason" 2>/dev/null || true
+    declare -f fifo_channel_close &>/dev/null && fifo_channel_close "$session_id" 2>/dev/null || true
 }
 
 # ── Self-Healing Circuit Breaker ─────────────────────────────────────
@@ -2492,6 +2494,8 @@ except Exception:
             if declare -f telemetry_task_end &>/dev/null; then
                 telemetry_task_end "$session_id" 0 "COMPLETED" >/dev/null 2>&1 || true
             fi
+            declare -f agent_sm_transition &>/dev/null && agent_sm_transition "$session_id" "DONE" "Task completed successfully" 2>/dev/null || true
+            declare -f fifo_channel_close &>/dev/null && fifo_channel_close "$session_id" 2>/dev/null || true
             export AGENT_ACTIVE_SESSION_ID=""
             if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
                 local _tpath
@@ -2573,6 +2577,8 @@ except Exception:
     if declare -f telemetry_task_end &>/dev/null; then
         telemetry_task_end "$session_id" 0 "TURN_CEILING_PRESERVED" >/dev/null 2>&1 || true
     fi
+    declare -f agent_sm_transition &>/dev/null && agent_sm_transition "$session_id" "HALTED" "Turn ceiling reached" 2>/dev/null || true
+    declare -f fifo_channel_close &>/dev/null && fifo_channel_close "$session_id" 2>/dev/null || true
     export AGENT_ACTIVE_SESSION_ID=""
     if declare -f transcript_stop &>/dev/null && transcript_active 2>/dev/null; then
         local _tpath
