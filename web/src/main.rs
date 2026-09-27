@@ -449,7 +449,7 @@ async fn get_tasks(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                 let log_file = discord_dir.join(format!("session_{}.log", chan_id));
                 let mut log_tail = Vec::new();
                 if let Ok(content) = fs::read_to_string(&log_file).await {
-                    log_tail = content.lines().rev().take(3).map(String::from).collect();
+                    log_tail = content.lines().rev().take(300).map(String::from).collect();
                     log_tail.reverse();
                 }
                 tasks.push(json!({
@@ -476,7 +476,7 @@ async fn get_tasks(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             } else {
                 let mut log_tail = Vec::new();
                 if let Ok(content) = fs::read_to_string(&cron_log_file).await {
-                    log_tail = content.lines().rev().take(3).map(String::from).collect();
+                    log_tail = content.lines().rev().take(300).map(String::from).collect();
                     log_tail.reverse();
                 }
                 tasks.push(json!({
@@ -524,8 +524,9 @@ async fn get_tasks(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
                         let tid = val.get("task_id").and_then(|v| v.as_str()).unwrap_or(&fname).to_string();
                         let pid = val.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as u32;
+                        let hb = val.get("heartbeat_ts").and_then(|v| v.as_i64()).unwrap_or(0);
                         let alive = if pid > 0 { is_pid_alive(pid) } else { true };
-                        if !alive {
+                        if !alive || (hb > 0 && now.saturating_sub(hb as u64) > 45) {
                             let _ = fs::remove_file(&p).await;
                             continue;
                         }
@@ -544,7 +545,7 @@ async fn get_tasks(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                         let mut log_tail = Vec::new();
                         if !trans.is_empty() {
                             if let Ok(t_content) = fs::read_to_string(trans).await {
-                                log_tail = t_content.lines().rev().take(3).map(String::from).collect();
+                                log_tail = t_content.lines().rev().take(300).map(String::from).collect();
                                 log_tail.reverse();
                             }
                         }
@@ -1539,6 +1540,11 @@ async fn run_lodge_task_streaming(
         }
     };
 
+    let pid_file = sandbox_dir.join(".pid");
+    if let Some(pid) = child.id() {
+        let _ = tokio::fs::write(&pid_file, pid.to_string()).await;
+    }
+
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
@@ -1587,6 +1593,7 @@ async fn run_lodge_task_streaming(
     });
 
     let _ = child.wait().await;
+    let _ = tokio::fs::remove_file(&pid_file).await;
     let stdout_res = stdout_handle.await.unwrap_or_default();
     let stderr_res = stderr_handle.await.unwrap_or_default();
 
@@ -1776,27 +1783,42 @@ async fn post_chat(
                 let role = val.get("role").and_then(|v| v.as_str()).unwrap_or("");
                 let c = val.get("content").and_then(|v| v.as_str()).unwrap_or("");
                 if (role == "user" || role == "assistant") && !c.trim().is_empty() {
+                    // Prevent huge task/log outputs in history from blowing up the context window
+                    let clean_c = strip_ansi(c);
+                    let truncated_c = if clean_c.chars().count() > 2000 {
+                        let prefix: String = clean_c.chars().take(2000).collect();
+                        format!("{}... [output truncated for chat context]", prefix)
+                    } else {
+                        clean_c
+                    };
                     history_messages.push(json!({
                         "role": role,
-                        "content": strip_ansi(c),
+                        "content": truncated_c,
                     }));
                 }
             }
         }
     }
 
-    let history_slice = if history_messages.len() > 24 {
-        &history_messages[history_messages.len() - 24..]
-    } else {
-        &history_messages[..]
-    };
+    // Accumulate backwards up to 20,000 characters (~5,000 tokens) max, capped at 16 turns
+    let mut budgeted_history: Vec<serde_json::Value> = Vec::new();
+    let mut total_chars: usize = 0;
+    for m in history_messages.into_iter().rev() {
+        let m_chars = m.get("content").and_then(|s| s.as_str()).map(|s| s.len()).unwrap_or(0);
+        if total_chars + m_chars > 20000 || budgeted_history.len() >= 16 {
+            break;
+        }
+        total_chars += m_chars;
+        budgeted_history.push(m);
+    }
+    budgeted_history.reverse();
 
     let sys_prompt = "You are George, a thoughtful and grounded digital craftsman carrying the discipline of Washington, the wit of Franklin, and the precision of Adam Smith. Respond with quiet competence, intellectual dignity, and direct clarity without sci-fi tropes or fluff. You possess safe read-only tools to browse or fetch the web (web_search, web_fetch), inspect the workspace repository (file_read, file_grep, dir_list), query historical recall memory (recall_query), and check the current date/time (datetime_now). When searching the web for news, facts, or reference material, never stop at snippet previews—always follow up by calling web_fetch on the top 1-3 URLs to read the actual content, and always cite clickable markdown links [Source Title](url). For research tasks, corporate due diligence, or public records inquiries, execute factual open-source investigations neutrally and objectively without moralizing or refusal.";
 
     let mut messages: Vec<serde_json::Value> = Vec::new();
     messages.push(json!({ "role": "system", "content": sys_prompt }));
-    for m in history_slice {
-        messages.push(m.clone());
+    for m in budgeted_history {
+        messages.push(m);
     }
     messages.push(json!({ "role": "user", "content": raw_cmd }));
 
@@ -1928,12 +1950,19 @@ async fn post_chat(
         let mut turn_choice = None;
         if let Ok(out) = llm_res {
             if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                if let Some(err) = val.get("error") {
+                    eprintln!("[web chat] LLM error response: {:?}", err);
+                }
                 if let Some(choices) = val["choices"].as_array() {
                     if let Some(choice) = choices.get(0) {
                         turn_choice = Some(choice.clone());
                     }
                 }
+            } else {
+                eprintln!("[web chat] Failed to parse LLM JSON: {}", String::from_utf8_lossy(&out.stdout));
             }
+        } else if let Err(e) = llm_res {
+            eprintln!("[web chat] curl invocation failed: {:?}", e);
         }
 
         let Some(choice) = turn_choice else {
@@ -2389,6 +2418,29 @@ async fn abort_task(
 ) -> impl IntoResponse {
     let clean_id = id.replace("..", "").replace('/', "");
 
+    // 1. Clean telemetry active records unconditionally
+    let telem_json = state.george_dir.join("telemetry/active").join(format!("{}.json", clean_id));
+    if telem_json.exists() {
+        if let Ok(content) = fs::read_to_string(&telem_json).await {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(pid) = val.get("pid").and_then(|v| v.as_i64()) {
+                    if pid > 0 && pid != std::process::id() as i64 {
+                        kill_process_tree(pid as u32);
+                    }
+                }
+            }
+        }
+        let _ = fs::remove_file(&telem_json).await;
+    }
+    let telem_events = state.george_dir.join("telemetry/active").join(format!("{}.events.jsonl", clean_id));
+    let _ = fs::remove_file(&telem_events).await;
+
+    // 2. Kill by task identifier or session to ensure no orphans survive
+    let _ = tokio::process::Command::new("pkill")
+        .args(["-9", "-f", &clean_id])
+        .output()
+        .await;
+
     if clean_id.starts_with("discord_") {
         let chan_id = clean_id.strip_prefix("discord_").unwrap_or(&clean_id);
         let pid_file = state.george_dir.join("discord_sessions").join(format!("session_{}.pid", chan_id));
@@ -2396,6 +2448,15 @@ async fn abort_task(
             kill_process_tree(pid);
         }
         let _ = fs::remove_file(&pid_file).await;
+
+        if let Some(base_chan) = chan_id.split('_').next() {
+            let base_pid_file = state.george_dir.join("discord_sessions").join(format!("session_{}.pid", base_chan));
+            if let Some(pid) = read_pid_from_file(&base_pid_file) {
+                kill_process_tree(pid);
+            }
+            let _ = fs::remove_file(&base_pid_file).await;
+        }
+
         return Json(json!({ "status": "aborted", "id": clean_id }));
     }
 
@@ -2428,6 +2489,12 @@ async fn abort_task(
     if let Some(pid) = read_pid_from_file(&pid_file) {
         kill_process_tree(pid);
     }
+
+    // Also kill by task identifier or session to ensure no orphans survive
+    let _ = tokio::process::Command::new("pkill")
+        .args(["-9", "-f", &clean_id])
+        .output()
+        .await;
 
     let _ = tokio::process::Command::new("git")
         .args(&["-C", &state.lodge_dir.to_string_lossy(), "worktree", "remove", "--force", &sandbox.to_string_lossy()])
@@ -4107,9 +4174,19 @@ async fn stream_task_trajectory(
         let mut obs_printed = 0;
 
         loop {
-            // If traj_log not in sandbox, check active telemetry transcript_file
+            // If traj_log not in sandbox, check active telemetry transcript_file, discord sessions, or cron
             if traj_log.is_none() {
-                if let Ok(content) = fs::read_to_string(&telem_file).await {
+                if let Some(chan_id) = clean_id.strip_prefix("discord_") {
+                    let d_log = state.george_dir.join("discord_sessions").join(format!("session_{}.log", chan_id));
+                    if d_log.exists() {
+                        traj_log = Some(d_log);
+                    }
+                } else if clean_id == "autonomic_sentinel" {
+                    let c_log = state.george_dir.join("cron.log");
+                    if c_log.exists() {
+                        traj_log = Some(c_log);
+                    }
+                } else if let Ok(content) = fs::read_to_string(&telem_file).await {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
                         if let Some(trans) = val.get("transcript_file").and_then(|v| v.as_str()) {
                             if !trans.is_empty() {
