@@ -216,8 +216,10 @@ _react_classify_circuit_state() {
     local fail_streak="${5:-0}"
     local rep_strike="${6:-0}"
 
-    if [ "$c_name" = "tool_search" ] && [ "$search_streak" -ge 2 ]; then
+    if [ "$c_name" = "TOOL_SEARCH_THRASHING" ] || [ "$c_name" = "tool_search" -a "$search_streak" -ge 2 ]; then
         echo "TOOL_SEARCH_THRASHING"
+    elif [ "$c_name" = "TARGET_FILE_THRASHING" ] || [[ "$err_text" =~ Repeated\ file\ inspection|Target\ file ]]; then
+        echo "TARGET_FILE_THRASHING"
     elif [ "$c_name" = "phytology_manage" ] || [[ "$c_args" =~ phyto ]] || [[ "$err_text" =~ /phytology\ failed|subcommand ]]; then
         echo "PHYTOLOGY_ERROR"
     elif [[ "$err_text" =~ syntax\ error|unexpected\ token|command\ not\ found ]] || [ "$c_name" = "bash_exec" -a "$fail_streak" -ge 1 ]; then
@@ -357,6 +359,9 @@ Generate a direct, imperative prompt perturbation (1-2 sentences) telling George
     if [ -z "$perturbation" ]; then
         source_tier="Static Classification Catalog"
         case "$breaker_class" in
+            TARGET_FILE_THRASHING)
+                perturbation="[SYSTEM PERTURBATION: Target file paging thrashing detected ($action_summary). You have inspected slices of this same file repeatedly without fulfilling your objective. Cease reading this file. Fulfill your active Honeydew milestone directly using the appropriate domain tool or synthesize your final findings.]"
+                ;;
             TOOL_SEARCH_THRASHING)
                 perturbation="[SYSTEM PERTURBATION: Loop thrashing detected on tool_search. Cease searching. All core tools are already loaded and mounted in your bedrock catalog: phytology_manage, bash_exec, file_read, dir_list, file_grep. To inspect living tissue health and status, call phytology_manage directly with action=\"status\" or action=\"audit\", flags=\"--cached\". Do NOT call tool_search again.]"
                 ;;
@@ -465,6 +470,321 @@ _react_trip_circuit_breaker() {
     fi
     if declare -f telemetry_task_end &>/dev/null; then
         telemetry_task_end "$session_id" 75 "CIRCUIT_BREAKER_TRIPPED" >/dev/null 2>&1 || true
+    fi
+}
+
+# ── Self-Healing Circuit Breaker ─────────────────────────────────────
+# Instead of hard-exiting when repetition is detected, evaluates accumulated
+# evidence in scratchpad.md and either forces transition to synthesis or perturbs.
+_react_self_heal_circuit_breaker() {
+    local session_id="${1:-}"
+    local workdir="${2:-$PWD}"
+    local session_dir="${3:-}"
+    local c_name="${4:-tool}"
+    local c_args="${5:-}"
+    local messages_file="${6:-}"
+    local macro_file="${7:-}"
+    local rep_strike="${8:-3}"
+
+    local scratchpad="$session_dir/scratchpad.md"
+    local has_evidence=0
+    if [ -f "$scratchpad" ]; then
+        local scratch_bytes
+        scratch_bytes=$(wc -c < "$scratchpad" 2>/dev/null || echo 0)
+        local bullet_count
+        bullet_count=$(grep -cE '^[[:space:]]*(\*|-)' "$scratchpad" 2>/dev/null || echo 0)
+        if [ "$scratch_bytes" -gt 100 ] || [ "$bullet_count" -ge 2 ]; then
+            has_evidence=1
+        fi
+    fi
+
+    if [ "$has_evidence" -eq 1 ]; then
+        ui_warn "⚡ Self-healing circuit breaker: Action repetition detected on '$c_name' (Strike $rep_strike), but scratchpad.md contains verified findings."
+        ui_info "⚡ Transitioning loop from research to synthesis to prevent session stall."
+        local heal_adv="[CIRCUIT HEALER: Repetition ceiling reached on '$c_name'. Cease repeating this action. You have already gathered verified facts in scratchpad.md. Proceed immediately to synthesize your final report and deliver your findings in clean markdown. Do NOT execute redundant tool calls.]"
+        jq --arg a "$heal_adv" '. += [{"role": "user", "content": $a}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+        _react_trace "$workdir" "circuit_healed" "$(jq -cn --arg tool "$c_name" --arg action "transition_to_synthesis" '{tool:$tool, action:$action}')"
+        return 0
+    else
+        if [ "$rep_strike" -ge 4 ]; then
+            ui_err "⚡ Action repetition ceiling breached with zero scratchpad progress. Tripping hard circuit breaker."
+            _react_trip_circuit_breaker "$session_id" "$workdir" "Action repetition ceiling reached ($c_name)" "$c_name ($c_args)" "$messages_file" "$macro_file" "Repeated action with empty scratchpad"
+            return 75
+        else
+            ui_warn "⚡ Action repetition strike $rep_strike on '$c_name'. Perturbing prompt with alternative vector."
+            _react_circuit_breaker_perturbation "$session_id" "$workdir" "ACTION_REPETITION" "$c_name ($c_args)" "Action repetition strike $rep_strike" "$messages_file" "$macro_file"
+            return 0
+        fi
+    fi
+}
+
+# ── Mid-Turn Sub-Turn LLM Digest & Scratchpad Synchronization ────────
+# Distills raw observation into dense facts, metrics, and citations,
+# storing them in scratchpad.md, memory.md, and mem:active_task.
+_react_digest_tool_output() {
+    local c_id="${1:-}"
+    local c_name="${2:-tool}"
+    local c_args="${3:-}"
+    local resp_content="${4:-}"
+    local active_step="${5:-}"
+    local session_dir="${6:-}"
+    local workdir="${7:-$PWD}"
+    local goal="${8:-}"
+
+    local scratchpad="$session_dir/scratchpad.md"
+    local g_scratchpad="$workdir/.george/scratchpad.md"
+    local memory_file="$session_dir/memory.md"
+    mkdir -p "$session_dir" "$workdir/.george" "$workdir/.george/memories" 2>/dev/null || true
+
+    # Archive raw observation to workspace
+    mkdir -p "$session_dir/observations" 2>/dev/null || true
+    local obs_fname="$c_id"
+    [[ "$obs_fname" != call_* ]] && obs_fname="call_${obs_fname}"
+    [ -z "$obs_fname" ] || [ "$obs_fname" = "call_" ] && obs_fname="call_0"
+    printf '%s\n' "$resp_content" > "$session_dir/observations/${obs_fname}.txt" 2>/dev/null || true
+
+    # If response is very short (< 60 chars) and lacks numbers or links, record directly
+    if [ ${#resp_content} -lt 60 ] && ! echo "$resp_content" | grep -qE '(\b[0-9]+\b|https?://|error|fail|status)'; then
+        local raw_snippet="${resp_content:0:150}"
+        local ts
+        ts=$(date '+%H:%M:%S')
+        echo -e "\n### [${ts}] ${c_name} (${c_args:0:100})\n- **Milestone**: ${active_step}\n- ${raw_snippet}" >> "$scratchpad"
+        cp "$scratchpad" "$g_scratchpad" 2>/dev/null || true
+        echo "$raw_snippet"
+        return 0
+    fi
+
+    local ep_url="${ACTIVE_ENDPOINT_URL:-http://127.0.0.1:8080}"
+    local digest_result=""
+    local digest_timeout="${REACT_DIGEST_TIMEOUT:-8}"
+
+    local excerpt="${resp_content:0:10000}"
+    local args_snippet="${c_args:0:200}"
+
+    local sys_prompt="You are the Blue Lodge Evidence Digest Engine. Your sole task is to distill raw tool observations into dense, structured, factual evidence for the agent's scratchpad.
+Extract:
+1. Exact numbers, financial figures, metrics, dates, entity names, status codes.
+2. Direct URLs, citations, or file paths.
+3. Key factual answers directly addressing the active milestone.
+Do NOT output conversation, introductions, or pleasantries. Format as concise markdown bullet points."
+
+    local user_prompt="CURRENT ACTIVE MILESTONE:
+${active_step}
+
+TOOL EXECUTED:
+${c_name}(${args_snippet})
+
+RAW OBSERVATION (excerpt):
+${excerpt}
+
+Distill key factual findings, metrics, and citations:"
+
+    local payload
+    payload=$(jq -n \
+        --arg sys "$sys_prompt" \
+        --arg user "$user_prompt" \
+        '{
+            messages: [
+                {"role": "system", "content": $sys},
+                {"role": "user", "content": $user}
+            ],
+            temperature: 0.1,
+            max_tokens: 350,
+            stream: false
+        }' 2>/dev/null)
+
+    local resp_json
+    resp_json=$(curl -s --max-time "$digest_timeout" "$ep_url/v1/chat/completions" \
+        -H "Content-Type: application/json" \
+        -d "$payload" 2>/dev/null)
+
+    digest_result=$(echo "$resp_json" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+
+    # Heuristic fallback if LLM is unavailable or times out
+    if [ -z "$digest_result" ]; then
+        local extracted_urls
+        extracted_urls=$(echo "$resp_content" | grep -oE 'https?://[^ ">\t]+' | head -n 5 | tr '\n' ' ')
+        local head_lines
+        head_lines=$(echo "$resp_content" | sed '/^[[:space:]]*$/d' | head -n 6 | tr '\n' ' ')
+        digest_result="- Key Output: ${head_lines:0:300}"
+        if [ -n "$extracted_urls" ]; then
+            digest_result="${digest_result}\n- Citations: ${extracted_urls}"
+        fi
+    fi
+
+    # Strip think tags if present
+    digest_result=$(echo "$digest_result" | sed -E 's/<think>.*<\/think>//g')
+
+    # Atomically append to scratchpad.md
+    local ts
+    ts=$(date '+%H:%M:%S')
+    {
+        echo ""
+        echo "### [${ts}] ${c_name} (${args_snippet})"
+        echo "- **Milestone**: ${active_step}"
+        echo "${digest_result}"
+    } >> "$scratchpad"
+    cp "$scratchpad" "$g_scratchpad" 2>/dev/null || true
+
+    # Atomically append to memory.md under discoveries
+    if [ -f "$memory_file" ]; then
+        if ! grep -q "## Active Discoveries & Working Memory" "$memory_file"; then
+            echo -e "\n## Active Discoveries & Working Memory\n" >> "$memory_file"
+        fi
+        echo "- [${ts}] ${c_name}: $(echo "$digest_result" | head -n 3 | tr '\n' ' ')" >> "$memory_file"
+    fi
+
+    # Atomically append to mem:active_task
+    local slug="${AGENT_ACTIVE_TASK_SLUG:-active_report}"
+    local mem_task_file="$workdir/.george/memories/${slug}.md"
+    mkdir -p "$(dirname "$mem_task_file")" 2>/dev/null || true
+    {
+        echo ""
+        echo "#### [${ts}] Evidence: ${c_name} (${args_snippet})"
+        echo "${digest_result}"
+    } >> "$mem_task_file" 2>/dev/null || true
+
+    echo "$digest_result"
+}
+
+# ── Mid-Turn Milestone Evaluator ─────────────────────────────────────
+# Evaluates accumulated scratchpad evidence against the active Honeydew step.
+# If SATISFIED, marks item complete, resolves promise, triggers DAG expansion.
+# If IN_PROGRESS, outputs concise directive for next tool call.
+_react_eval_milestone_evidence() {
+    local workdir="${1:-$PWD}"
+    local session_dir="${2:-}"
+    local active_step_id="${3:-1}"
+    local active_step_task="${4:-}"
+    local goal="${5:-}"
+    local last_digest="${6:-}"
+
+    local scratchpad="$session_dir/scratchpad.md"
+    local hd_file="$workdir/.george/honeydew.json"
+    local macro_file="$workdir/.george/macro_memory.json"
+    [ ! -f "$hd_file" ] && return 0
+
+    local scratch_excerpt=""
+    [ -f "$scratchpad" ] && scratch_excerpt=$(tail -n 60 "$scratchpad" 2>/dev/null)
+
+    local ep_url="${ACTIVE_ENDPOINT_URL:-http://127.0.0.1:8080}"
+    local eval_timeout="${REACT_EVAL_TIMEOUT:-8}"
+
+    local sys_prompt="You are the Blue Lodge Milestone Evaluator.
+Determine whether the accumulated scratchpad evidence satisfies the Current Active Milestone.
+If the scratchpad contains the core metrics, answers, or facts addressing the active milestone, mark it SATISFIED.
+Respond ONLY with valid JSON:
+{\"verdict\": \"SATISFIED\" or \"IN_PROGRESS\", \"reason\": \"<1-sentence explanation>\", \"suggested_action\": \"<concise recommendation for next tool or parameter, or empty if satisfied>\"}"
+
+    local user_prompt="PRIMARY OBJECTIVE:
+${goal}
+
+CURRENT ACTIVE MILESTONE (Step ${active_step_id}):
+${active_step_task}
+
+LATEST ACCUMULATED SCRATCHPAD EVIDENCE:
+${scratch_excerpt:-No scratchpad evidence yet.}
+
+Evaluate if Step ${active_step_id} is SATISFIED by the evidence, or what remains:"
+
+    local payload
+    payload=$(jq -n \
+        --arg sys "$sys_prompt" \
+        --arg user "$user_prompt" \
+        '{
+            messages: [
+                {"role": "system", "content": $sys},
+                {"role": "user", "content": $user}
+            ],
+            temperature: 0.1,
+            max_tokens: 250,
+            stream: false
+        }' 2>/dev/null)
+
+    local resp_json
+    resp_json=$(curl -s --max-time "$eval_timeout" "$ep_url/v1/chat/completions" \
+        -H "Content-Type: application/json" \
+        -d "$payload" 2>/dev/null)
+
+    local content
+    content=$(echo "$resp_json" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+
+    local verdict="IN_PROGRESS"
+    local reason=""
+    local suggested_action=""
+
+    if [ -n "$content" ]; then
+        content=$(echo "$content" | sed -E 's/<think>.*<\/think>//g')
+        local parsed_json
+        parsed_json=$(echo "$content" | grep -oE '\{.*\}' | tail -n 1 2>/dev/null)
+        if [ -n "$parsed_json" ] && echo "$parsed_json" | jq empty 2>/dev/null; then
+            verdict=$(echo "$parsed_json" | jq -r '.verdict // "IN_PROGRESS"')
+            reason=$(echo "$parsed_json" | jq -r '.reason // ""')
+            suggested_action=$(echo "$parsed_json" | jq -r '.suggested_action // ""')
+        elif [[ "$content" =~ SATISFIED ]]; then
+            verdict="SATISFIED"
+            reason="Evaluation satisfied milestone requirements."
+        fi
+    fi
+
+    # Fallback heuristic evaluation
+    if [ "$verdict" != "SATISFIED" ]; then
+        local lower_task="${active_step_task,,}"
+        if [[ "$lower_task" =~ (search|fetch|find|inspect|read|check) ]] && [ -f "$scratchpad" ]; then
+            if grep -qiE '(\$[0-9]+|[0-9]+\s*(billion|million|usd)|revenue|eps|operating cash|status: OK|status = "OK"|passed)' "$scratchpad" 2>/dev/null && [ $(wc -l < "$scratchpad" 2>/dev/null || echo 0) -ge 5 ]; then
+                verdict="SATISFIED"
+                reason="Substantial empirical findings accumulated in scratchpad."
+            fi
+        fi
+    fi
+
+    if [ "$verdict" = "SATISFIED" ]; then
+        ui_ok "  [evaluator] Step $active_step_id SATISFIED: ${reason:-Milestone requirements met}" >&2
+        jq --argjson pid "$active_step_id" \
+            '(.items[] | select(.id == $pid)).status = "done"' \
+            "$hd_file" > "${hd_file}.tmp" 2>/dev/null && mv "${hd_file}.tmp" "$hd_file"
+
+        local ts_now
+        ts_now=$(date '+%Y-%m-%d %H:%M:%S')
+        jq --arg ts "$ts_now" --arg obj "$active_step_task" --arg sum "${reason:-Step completed}" \
+            '.completed_milestones += [{"timestamp": $ts, "objective": $obj, "summary": $sum, "status": "SATISFIED"}]' \
+            "$macro_file" > "${macro_file}.tmp" 2>/dev/null && mv "${macro_file}.tmp" "$macro_file" 2>/dev/null || true
+
+        local prom_dir="${FIFO_IPC_DIR:-/tmp/blue_lodge_ipc}/promises"
+        mkdir -p "$prom_dir" 2>/dev/null || true
+        local fin_ts
+        fin_ts=$(date +%s)
+        jq -n --arg mid "$active_step_id" --arg task "$active_step_task" --arg sum "$reason" --argjson ts "$fin_ts" \
+            '{milestone_id: $mid, task: $task, summary: $sum, status: "RESOLVED", resolved_at: $ts}' \
+            > "$prom_dir/milestone_${active_step_id}.json" 2>/dev/null || true
+
+        _react_expand_honeydew_dag "$goal" "$workdir" "$session_dir"
+
+        local new_active
+        new_active=$(jq -r '[.items[]? | select(.status != "done")][0] | if . then "Step " + (.id|tostring) + ": " + .task else "Synthesize Final Deliverable" end' "$hd_file" 2>/dev/null)
+        ui_info "  [honeydew] Advanced to: $new_active" >&2
+        echo "SATISFIED|${reason}|${new_active}"
+    else
+        [ -n "$suggested_action" ] && ui_dim "  [evaluator] Next suggested action: $suggested_action" >&2
+        echo "IN_PROGRESS|${reason}|${suggested_action}"
+    fi
+}
+
+# ── Outer Loop Dynamic DAG Expansion ─────────────────────────────────
+# Adjusts remaining Honeydew milestones using discovered evidence.
+_react_expand_honeydew_dag() {
+    local goal="$1"
+    local workdir="${2:-$PWD}"
+    local session_dir="$3"
+
+    local hd_file="$workdir/.george/honeydew.json"
+    local macro_file="$workdir/.george/macro_memory.json"
+    local scratchpad="$session_dir/scratchpad.md"
+    local strat_script="$workdir/lib/honeydew_strategist.py"
+    [ ! -f "$strat_script" ] && strat_script="/home/wsl-ops/blue-lodge/lib/honeydew_strategist.py"
+
+    if [ -f "$strat_script" ] && [ -f "$hd_file" ]; then
+        python3 "$strat_script" --expand "$goal" "$hd_file" "$macro_file" "$scratchpad" "${ACTIVE_ENDPOINT_URL:-http://127.0.0.1:8080}" >/dev/null 2>&1 || true
     fi
 }
 
@@ -644,11 +964,280 @@ _react_parse_action() {
     echo "$action"
 }
 
+# ── Honeydew Dynamic Multi-Step Planner ──────────────────────────────
+_react_ensure_honeydew_plan() {
+    local task="$1"
+    local workdir="${2:-$PWD}"
+    local gdir="$workdir/.george"
+    local hd_file="$gdir/honeydew.json"
+    local force="${3:-0}"
+    mkdir -p "$gdir" 2>/dev/null || true
+
+    # Check existing plan
+    local should_rebuild=1
+    if [ "$force" -eq 0 ] && [ -f "$hd_file" ]; then
+        local cur_task pending_count
+        cur_task=$(jq -r '.primary_task // empty' "$hd_file" 2>/dev/null)
+        pending_count=$(jq -r '[.items[]? | select(.status != "done")] | length' "$hd_file" 2>/dev/null || echo 0)
+        # Only reuse if same task AND there are still pending steps remaining
+        if [ "$cur_task" = "$task" ] && [ "$pending_count" -gt 0 ]; then
+            should_rebuild=0
+        fi
+    fi
+
+    if [ "$should_rebuild" -eq 1 ]; then
+        local lower_task="${task,,}"
+        local items_json=""
+
+        # ── Pre-Loop Strategist (Option 4A): Agentic DAG Decomposition ──
+        local ep_url="${ACTIVE_ENDPOINT_URL:-http://127.0.0.1:8080}"
+        local strat_script="$workdir/lib/honeydew_strategist.py"
+        [ ! -f "$strat_script" ] && strat_script="/home/wsl-ops/blue-lodge/lib/honeydew_strategist.py"
+
+        if [ -f "$strat_script" ]; then
+            items_json=$(python3 "$strat_script" "$task" "$ep_url" 2>/dev/null || true)
+        fi
+
+        local item_count
+        item_count=$(echo "$items_json" | jq 'length' 2>/dev/null || echo 0)
+        if [ "$item_count" -ge 2 ]; then
+            ui_dim "  ✓ Pre-Loop Strategist generated $item_count bespoke DAG milestones"
+        else
+            items_json='[
+                {"id": 1, "task": "Execute targeted action to fulfill the objective", "status": "pending", "tier": 1, "depends_on": [], "endpoint_tier": 1, "retry_count": 0},
+                {"id": 2, "task": "Synthesize results and deliver final response to operator", "status": "pending", "tier": 2, "depends_on": [1], "endpoint_tier": 1, "retry_count": 0}
+            ]'
+        fi
+
+        jq -n --arg task "$task" --argjson items "$items_json" \
+            '{"primary_task": $task, "items": $items}' > "$hd_file" 2>/dev/null || true
+
+        # Initialize FIFO IPC promise registry for each milestone
+        if declare -f fifo_ipc_init &>/dev/null; then
+            fifo_ipc_init 2>/dev/null || true
+            local prom_dir="${FIFO_IPC_DIR:-/tmp/blue_lodge_ipc}/promises"
+            mkdir -p "$prom_dir" 2>/dev/null || true
+            local now_ts
+            now_ts=$(date +%s)
+            for m_id in $(jq -r '.items[]?.id // empty' "$hd_file" 2>/dev/null); do
+                jq -n --arg mid "$m_id" --argjson ts "$now_ts" \
+                    '{milestone_id: $mid, status: "PENDING", created_at: $ts}' \
+                    > "$prom_dir/milestone_${m_id}.json" 2>/dev/null || true
+            done
+        fi
+    fi
+
+    # ALWAYS display the plan visibly on TTY and transcript
+    ui_section "Honeydew Execution Plan"
+    jq -r '.items[] | "  [" + (if .status == "done" then "✓" else " " end) + "] Step " + (.id|tostring) + ": " + .task' \
+        "$hd_file" 2>/dev/null | while IFS= read -r line; do
+        ui_info "$line"
+    done
+    if declare -f transcript_log_block &>/dev/null; then
+        local plan_txt
+        plan_txt=$(jq -r '.items[] | "  [" + (if .status == "done" then "✓" else " " end) + "] Step " + (.id|tostring) + ": " + .task' "$hd_file" 2>/dev/null)
+        transcript_log_block "Honeydew Execution Plan" "$plan_txt"
+    fi
+}
+
+_react_advance_honeydew_plan() {
+    local workdir="${1:-$PWD}"
+    local action_name="${2:-}"
+    local action_args="${3:-}"
+    local hd_file="$workdir/.george/honeydew.json"
+    [ ! -f "$hd_file" ] && return 0
+
+    # Find first pending item
+    local pending_id
+    pending_id=$(jq -r '[.items[] | select(.status != "done")][0].id // empty' "$hd_file" 2>/dev/null)
+    [ -z "$pending_id" ] && return 0
+
+    local pending_task
+    pending_task=$(jq -r --argjson pid "$pending_id" '.items[] | select(.id == $pid) | .task // empty' "$hd_file" 2>/dev/null)
+    local lower_ptask="${pending_task,,}"
+    local lower_args="${action_args,,}"
+    local should_advance=0
+
+    # Direct terminal tool call takes absolute precedence
+    if [ "$action_name" = "milestone_complete" ]; then
+        should_advance=1
+    # 1. Cron / Script creation milestones (must be mutating to advance)
+    elif [[ "$lower_ptask" =~ (create|register|write|implement).*(cron|job|script) ]]; then
+        if [[ "$action_name" =~ file_write|file_edit ]] && [[ "$lower_args" =~ cron_jobs|\.sh ]]; then
+            should_advance=1
+        elif [[ "$action_name" == "bash_exec" ]] && _react_tool_is_mutating "$action_name" "$action_args" && [[ "$lower_args" =~ cron_jobs|\.sh ]]; then
+            should_advance=1
+        fi
+    # 2. Verification / Execution milestones (must run verification, not just ls/cat)
+    elif [[ "$lower_ptask" =~ (verify|execute|test|run).*(cron|sandbox|research) ]]; then
+        if [[ "$action_name" =~ research_sandbox ]] || \
+           ([[ "$action_name" == "bash_exec" ]] && [[ "$lower_args" =~ (research_sandbox|\.george/cron_jobs/.*\.sh|scripts/.*\.sh) ]] && ! [[ "$lower_args" =~ ^[[:space:]]*\"?(ls|cat|head|tail|grep|find)[[:space:]] ]]); then
+            should_advance=1
+        fi
+    # 3. Delivery / Discord milestones
+    elif [[ "$lower_ptask" =~ (deliver|send|report).*(discord|channel|user|dm|recipient) ]]; then
+        if [[ "$action_name" =~ discord_send|discord_dm ]] || \
+           ([[ "$action_name" == "bash_exec" ]] && [[ "$lower_args" =~ (discord_send|discord_dm|curl.*discord) ]] && ! [[ "$lower_args" =~ ^[[:space:]]*\"?(ls|cat|head|tail|grep|find)[[:space:]] ]]); then
+            should_advance=1
+        fi
+    # 4. System status / Living Tissue diagnostics (Engine level only)
+    elif [[ "$lower_ptask" =~ \b(system status|service status|diagnostics?|phytology|living tissue|system vitals|engine health)\b ]]; then
+        if [[ "$action_name" =~ phytology|status|service|docker|git_status ]] || \
+           [[ "$lower_args" =~ status|audit|cache-status|fitness ]] || \
+           [[ "$action_name" == "bash_exec" && "$lower_args" =~ status|uptime|ps ]]; then
+            should_advance=1
+        elif [[ "$action_name" =~ file_read ]] && [[ "$lower_args" =~ phytology|status ]]; then
+            should_advance=1
+        fi
+    elif [[ "$lower_ptask" =~ locate|inspect.*code|search.*sources ]]; then
+        if [[ "$action_name" =~ file_read|file_grep|web_search|web_fetch|code_outline|code_symbol_get|dir_list ]]; then
+            should_advance=1
+        fi
+    elif [[ "$lower_ptask" =~ cron|job|weather|discord|schedule ]]; then
+        if [[ "$action_name" =~ file_write|file_edit ]] && [[ "$lower_args" =~ cron_jobs|weather|\.sh ]]; then
+            should_advance=1
+        elif [[ "$action_name" == "slash_command_exec" ]] && [[ "$lower_args" =~ cron ]]; then
+            should_advance=1
+        elif [[ "$action_name" == "bash_exec" ]] && _react_tool_is_mutating "$action_name" "$action_args"; then
+            should_advance=1
+        elif [[ "$action_name" =~ discord_send|discord_dm ]]; then
+            should_advance=1
+        fi
+    elif [[ "$lower_ptask" =~ modify|write|patch|edit|record.*findings|distill ]]; then
+        if [[ "$action_name" =~ file_edit|file_write|file_append|git_commit ]]; then
+            should_advance=1
+        fi
+    elif [[ "$lower_ptask" =~ verify|test|harness|syntax|regression ]]; then
+        if [[ "$action_name" =~ bash_exec|test|code_validate ]] && [[ "$lower_args" =~ test|check|cargo|pytest|make|npm|bash\ -n ]]; then
+            should_advance=1
+        fi
+    else
+        # Strict Option 5A contract: never advance on random irrelevant tools like backup_create or ask_operator
+        if [ "$action_name" = "milestone_complete" ]; then
+            should_advance=1
+        elif _react_tool_is_mutating "$action_name" "$action_args"; then
+            should_advance=1
+        fi
+    fi
+
+    [ "$should_advance" -eq 0 ] && return 0
+
+    # Mark current pending item as done
+    jq --argjson pid "$pending_id" \
+        '(.items[] | select(.id == $pid)).status = "done"' \
+        "$hd_file" > "${hd_file}.tmp" 2>/dev/null && mv "${hd_file}.tmp" "$hd_file"
+
+    # Register FIFO IPC promise resolution
+    local prom_dir="${FIFO_IPC_DIR:-/tmp/blue_lodge_ipc}/promises"
+    mkdir -p "$prom_dir" 2>/dev/null || true
+    local fin_ts
+    fin_ts=$(date +%s)
+    jq -n --arg mid "$pending_id" --arg task "$pending_task" --arg act "$action_name" --argjson ts "$fin_ts" \
+        '{milestone_id: $mid, task: $task, resolver_tool: $act, status: "RESOLVED", resolved_at: $ts}' \
+        > "$prom_dir/milestone_${pending_id}.json" 2>/dev/null || true
+
+    # Trigger Outer Loop Dynamic DAG Expansion
+    _react_expand_honeydew_dag "" "$workdir" "${AGENT_ACTIVE_SESSION_DIR:-$workdir/.george/workspaces/${AGENT_ACTIVE_SESSION_ID:-default}}"
+
+    local new_active
+    new_active=$(jq -r '[.items[] | select(.status != "done")][0] | if . then "Step " + (.id|tostring) + ": " + .task else "All plan steps completed." end' "$hd_file" 2>/dev/null)
+    ui_info "  [honeydew] Step $pending_id complete -> Next: $new_active"
+}
+
+# ── Milestone-Scoped Tool Masking ────────────────────────────────────
+# Filters candidate tools schema dynamically based on the active Honeydew step.
+# Prevents greedy token sampling of generic tools (e.g. dir_list, file_read)
+# during status/diagnostic steps, and disables tools on final synthesis steps.
+_react_scope_tools_for_step() {
+    local all_tools_json="${1:-[]}"
+    local active_step="${2:-}"
+    local pending_tool_steps="${3:-1}"
+
+    # Gated Synthesis Barrier (Option 5A):
+    # tool_choice=none is ONLY mounted if ALL prerequisite implementation/tool steps are DONE,
+    # AND the active step itself is explicitly a final synthesis step.
+    if [ "$pending_tool_steps" -le 0 ] 2>/dev/null && echo "$active_step" | grep -qiE '\b(synthesize|conclude|respond to operator|final deliverable)\b'; then
+        echo "[]"
+        return 0
+    fi
+
+    local step_lower="${active_step,,}"
+    local allowed_pattern=""
+
+    # 1. Code Modification / Implementation / Patching / Cron & Messaging (Priority 1)
+    if echo "$step_lower" | grep -qiE '\b(code|implement|edit|write|patch|refactor|fix|compile|cargo|npm|cron|schedule|register|create|build)\b'; then
+        allowed_pattern='^(file_read|file_edit|file_write|symbol_patch|code_outline|code_symbol_get|file_grep|bash_exec|research_sandbox|web_search_cross_section|git_status|git_diff|git_commit|discord_send|discord_dm|ask_operator|milestone_complete)$'
+    # 2. Research / Investigation / Information Retrieval
+    elif echo "$step_lower" | grep -qiE '\b(research|investigate|search|web|find out|background|literature|arxiv|cve|scrape|intel|dossier)\b'; then
+        allowed_pattern='^(web_search|web_search_cross_section|web_fetch|research_sandbox|scrape|file_read|file_write|recall_search|pdf_read|bash_exec|ask_operator|milestone_complete)$'
+    # 3. Testing / Verification
+    elif echo "$step_lower" | grep -qiE '\b(test|verify|validate|benchmark|suite|check)\b'; then
+        allowed_pattern='^(bash_exec|file_read|file_write|research_sandbox|git_status|git_diff|discord_send|discord_dm|ask_operator|milestone_complete)$'
+    # 4. Status / Diagnostics / Living Tissue Inspection (System level only)
+    elif echo "$step_lower" | grep -qiE '\b(system status|service status|diagnostics?|phytology|living tissue|system vitals|engine health)\b'; then
+        allowed_pattern='^(phytology_manage|service_manage|vitals_manage|git_status|bash_exec|ask_operator|milestone_complete)$'
+    fi
+
+    if [ -n "$allowed_pattern" ]; then
+        local scoped
+        scoped=$(echo "$all_tools_json" | jq -c --arg pat "$allowed_pattern" '[.[] | select(.function.name | test($pat))]' 2>/dev/null)
+        if [ -n "$scoped" ] && [ "$scoped" != "[]" ]; then
+            echo "$scoped"
+            return 0
+        fi
+    fi
+
+    # Fallback to full active profile tools
+    echo "$all_tools_json"
+}
+
+# ── Option C: Two-Tier Recovery Cascade ──────────────────────────────
+# Tier 1: Local micro-retry with injected failure advisory
+# Tier 2: Escalate to Strategist rewrite inserting dedicated remediation milestone
+_react_dag_handle_failure() {
+    local workdir="${1:-$PWD}"
+    local milestone_id="${2:-1}"
+    local failure_reason="${3:-Unknown failure}"
+    local hd_file="$workdir/.george/honeydew.json"
+    [ ! -f "$hd_file" ] && return 1
+
+    local current_retries
+    current_retries=$(jq -r --argjson mid "$milestone_id" '(.items[] | select(.id == $mid)).retry_count // 0' "$hd_file" 2>/dev/null || echo 0)
+
+    if [ "$current_retries" -lt 1 ]; then
+        # Tier 1: Local Micro-Retry
+        ui_warn "  [recovery:tier-1] Milestone $milestone_id failed contract ($failure_reason). Triggering local micro-retry (1/1)..."
+        jq --argjson mid "$milestone_id" \
+           '(.items[] | select(.id == $mid)).retry_count = 1' "$hd_file" > "${hd_file}.tmp" 2>/dev/null && mv "${hd_file}.tmp" "$hd_file"
+        return 0
+    else
+        # Tier 2: Escalate to Strategist DAG Rewrite
+        ui_err "  [recovery:tier-2] Milestone $milestone_id failed micro-retry. Escalating to Strategist DAG rewrite..."
+        local rem_id=$((milestone_id * 10 + 1))
+        local rem_task="Diagnose and remediate blocker: $failure_reason"
+        
+        local updated_items
+        updated_items=$(jq --argjson mid "$milestone_id" --argjson rid "$rem_id" --arg rtask "$rem_task" '
+            .items |= map(
+                if .id == $mid then
+                    .status = "remediating"
+                else . end
+            ) | .items = [{"id": $rid, "task": $rtask, "status": "pending", "tier": 1, "depends_on": [], "endpoint_tier": 1, "retry_count": 0}] + .items
+        ' "$hd_file" 2>/dev/null)
+        
+        if [ -n "$updated_items" ]; then
+            echo "$updated_items" > "$hd_file"
+            ui_info "  [recovery:tier-2] Inserted remediation Step $rem_id into DAG before resuming."
+        fi
+        return 2
+    fi
+}
+
 # ── Main ReAct Runner ────────────────────────────────────────────────
 react_run() {
     local goal="$1"
     local workdir="${2:-$PWD}"
-    local max_turns="${3:-${AGENT_MAX_TURNS:-${AGENT_MAX_MILESTONES:-9999}}}"
+    local max_turns="${3:-${AGENT_MAX_TURNS:-${AGENT_MAX_MILESTONES:-30}}}"
     local agent_temp="${AGENT_LLM_TEMPERATURE:-0.2}"
     local agent_max_tok="${AGENT_MAX_TOKENS:-16384}"
     local tool_filter="${6:-${REACT_TOOL_FILTER:-}}"
@@ -656,7 +1245,7 @@ react_run() {
     # Robust argument polymorphism: if arg 3 is non-numeric, it was passed as profile/tool_filter
     if [ -n "${3:-}" ] && ! [[ "$3" =~ ^[0-9]+$ ]]; then
         tool_filter="$3"
-        max_turns="${AGENT_MAX_TURNS:-${AGENT_MAX_MILESTONES:-9999}}"
+        max_turns="${AGENT_MAX_TURNS:-${AGENT_MAX_MILESTONES:-30}}"
     fi
 
     # Zero-latency task classifier: if tool_filter is empty, "all", or "auto", classify by objective
@@ -696,6 +1285,7 @@ react_run() {
 
     # Seed macro_memory.json
     local macro_file="$gdir/macro_memory.json"
+    local hd_file="$gdir/honeydew.json"
     jq -n \
         --arg ts "$(date '+%Y-%m-%d %H:%M:%S %Z')" \
         --arg obj "$goal" \
@@ -712,6 +1302,14 @@ react_run() {
 
     _react_trace "$workdir" "task_start" "$(jq -cn --arg goal "$goal" --arg tier "${ACTIVE_TIER:-1}" '{goal:$goal, tier:$tier}')"
 
+    local session_id_arg="${REACT_SESSION_ID:-}"
+    if [ -z "$session_id_arg" ]; then
+        if [ -n "${7:-}" ]; then
+            session_id_arg="$7"
+        elif [ -n "${5:-}" ] && ! [[ "${5:-}" =~ ^[0-9]+$ ]]; then
+            session_id_arg="$5"
+        fi
+    fi
     local session_id="${session_id_arg:-session_$(date +%Y%m%d_%H%M%S)_$$}"
     local session_dir="$gdir/workspaces/$session_id"
     mkdir -p "$session_dir"
@@ -755,6 +1353,9 @@ react_run() {
     # Auto-start configured MCP servers if enabled
     declare -f mcp_ensure_running &>/dev/null && mcp_ensure_running
 
+    # Initialize Honeydew multi-step execution plan (force fresh agentic decomposition)
+    _react_ensure_honeydew_plan "$goal" "$workdir" 1
+
     # 3. Assemble Dynamic Copilot-Style Context & Tool Schemas
     ui_dim "Assembling context pipeline and native tool registry..."
     local sys_prompt
@@ -771,10 +1372,18 @@ react_run() {
     fi
     echo "$tools_schema" > "$active_tools_file"
 
+    # Prepare initial user message anchored to Honeydew plan
+    local active_step
+    active_step=$(jq -r '[.items[]? | select(.status != "done")][0] | if . then "Step " + (.id|tostring) + ": " + .task else "Step 1" end' "$hd_file" 2>/dev/null)
+    local plan_checklist
+    plan_checklist=$(jq -r '.items[]? | "- [" + (if .status == "done" then "✓" else " " end) + "] Step " + (.id|tostring) + ": " + .task' "$hd_file" 2>/dev/null)
+
+    local initial_user_msg="PRIMARY OBJECTIVE:\n$goal\n\nHONEYDEW EXECUTION PLAN:\n$plan_checklist\n\nCURRENT ACTIVE MILESTONE:\n$active_step\n\nDIRECTIVE: Focus exclusively on executing $active_step directly using domain getter/action tools."
+
     # Initialize messages.json
     jq -n \
         --arg sys "$sys_prompt" \
-        --arg user "$goal" \
+        --arg user "$initial_user_msg" \
         '[
             {"role": "system", "content": $sys},
             {"role": "user", "content": $user}
@@ -788,6 +1397,8 @@ react_run() {
     local tool_search_streak=0
     local same_tool_streak=0
     local last_invoked_tool=""
+    local same_target_path_streak=0
+    local last_inspected_path=""
 
     echo "PRIMARY OBJECTIVE: $goal" >> "$history_file"
     local display_goal="$goal"
@@ -802,7 +1413,31 @@ react_run() {
     ui_info "Starting Task: ${display_goal:0:140}"
 
     while [ "$turn" -le "$max_turns" ]; do
-        printf "\n${C_BOLD}${C_CYAN}── Turn %d/%d ──────────────────────────────${C_RESET}\n" "$turn" "$max_turns"
+        local current_hd_step="Step 1"
+        local current_hd_id=1
+        if [ -f "$hd_file" ]; then
+            current_hd_id=$(jq -r '[.items[]? | select(.status != "done")][0].id // 1' "$hd_file" 2>/dev/null || echo 1)
+            current_hd_step=$(jq -r '[.items[]? | select(.status != "done")][0] | if . then "Step " + (.id|tostring) + ": " + .task else "Synthesize Final Deliverable" end' "$hd_file" 2>/dev/null)
+        fi
+        [ -z "$current_hd_step" ] && current_hd_step="Synthesize Final Deliverable"
+        export CURRENT_ACTIVE_MILESTONE_ID="$current_hd_id"
+        printf "\n${C_BOLD}${C_CYAN}── Turn %d/%d | Active Honeydew: %s ──────────────────────────────${C_RESET}\n" "$turn" "$max_turns" "$current_hd_step"
+
+        # Loop Management: Honeydew synthesis transition gate
+        local pending_tool_steps=0
+        if [ -f "$hd_file" ]; then
+            pending_tool_steps=$(jq -r '[.items[]? | select(.status != "done" and (
+                (.task | test("^(Step [0-9]+: )?(create|build|write|implement|run|test|execute|verify|inspect|check|configure|schedule|register|deploy|research|search)\\b"; "i")) or
+                ((.task | test("^(Step [0-9]+: )?(synthesize|deliver to operator|respond to operator|conclude)\\b"; "i")) | not)
+            ))] | length' "$hd_file" 2>/dev/null || echo 0)
+        fi
+        [ -z "$pending_tool_steps" ] && pending_tool_steps=0
+        local last_role
+        last_role=$(jq -r '.[-1].role // empty' "$messages_file" 2>/dev/null)
+        if [ "$pending_tool_steps" -eq 0 ] && [ "$last_role" = "tool" ]; then
+            local final_adv="[HONEYDEW PROGRESS: All inspection/action steps are marked [✓]. The final milestone is active: Synthesize your diagnostic observations and deliver the structured status report directly to the operator in clean markdown. Do NOT execute redundant tool calls.]"
+            jq --arg a "$final_adv" '. += [{"role": "user", "content": $a}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+        fi
 
         # Credit-based flow control check
         if declare -f fifo_channel_is_open &>/dev/null && fifo_channel_is_open "$session_id"; then
@@ -902,18 +1537,38 @@ react_run() {
         # Prepare chat completions payload with runtime /limits settings
         local r_effort="${LLM_REASONING_EFFORT:-medium}"
         local payload_file="$session_dir/payload_turn_${turn}.json"
+
+        # Apply Milestone-Scoped Tool Masking
+        local turn_tools_schema
+        local turn_tool_choice="auto"
+        turn_tools_schema=$(_react_scope_tools_for_step "$tools_schema" "$current_hd_step" "$pending_tool_steps")
+        if [ "$turn_tools_schema" = "[]" ] || [ -z "$turn_tools_schema" ]; then
+            turn_tools_schema="[]"
+            turn_tool_choice="none"
+            ui_dim "  [tool-mask] Step '$current_hd_step' -> Synthesis Mode (tool_choice=none)"
+        else
+            local mounted_names
+            mounted_names=$(echo "$turn_tools_schema" | jq -r '[.[].function.name] | join(", ")' 2>/dev/null || echo "")
+            ui_dim "  [tool-mask] Step '$current_hd_step' -> Mounted tools: [$mounted_names]"
+            if [ "${consecutive_premature_plans:-0}" -gt 0 ]; then
+                turn_tool_choice="required"
+                ui_dim "  [tool-mask] Enforcing tool_choice=required due to premature planning ($consecutive_premature_plans)"
+            fi
+        fi
+
         local payload
         payload=$(jq -n \
             --slurpfile msgs "$messages_file" \
-            --argjson tools "$tools_schema" \
+            --argjson tools "$turn_tools_schema" \
+            --arg tool_choice "$turn_tool_choice" \
             --arg temp "$agent_temp" \
             --arg topp "$agent_topp" \
             --arg max_tok "$agent_max_tok" \
             --arg r_effort "$r_effort" \
             '{
                 messages: $msgs[0],
-                tools: $tools,
-                tool_choice: "auto",
+                tools: (if ($tools | length) > 0 then $tools else null end),
+                tool_choice: (if ($tools | length) > 0 then $tool_choice else "none" end),
                 temperature: ($temp | tonumber),
                 top_p: ($topp | tonumber),
                 repeat_penalty: 1.15,
@@ -1206,16 +1861,22 @@ def sanitize_one(raw):
     if not raw or raw == "null":
         return "{}"
     extracted = {}
-    try:
-        j = json.loads(raw)
-        if isinstance(j, dict):
-            for k, v in j.items():
-                if isinstance(v, str):
-                    clean_v = re.split(r"</?(?:parameter|function|tool_call|invoke|output)[^>]*>", v)[0].strip()
-                    extracted[k] = clean_v
-                else:
-                    extracted[k] = v
-    except Exception:
+    parsed = False
+    for suffix in ["", "\"\n}", "\"}", "}", "\n}"]:
+        try:
+            j = json.loads(raw + suffix, strict=False)
+            if isinstance(j, dict):
+                for k, v in j.items():
+                    if isinstance(v, str):
+                        clean_v = re.split(r"</?(?:parameter|function|tool_call|invoke|output)[^>]*>", v)[0].strip()
+                        extracted[k] = clean_v
+                    else:
+                        extracted[k] = v
+                parsed = True
+                break
+        except Exception:
+            continue
+    if not parsed:
         for m in re.finditer(r"\"([a-zA-Z0-9_]+)\"\s*:\s*\"([^\"<]+)", raw):
             extracted[m.group(1)] = m.group(2).strip()
 
@@ -1289,7 +1950,7 @@ except Exception:
                 --arg content "$raw_content" \
                 --arg rc "$reasoning" \
                 --argjson tc "$tool_calls" \
-                '{role: "assistant", content: (if $content == "" then null else $content end), reasoning_content: (if $rc == "" then null else $rc end), tool_calls: $tc}' 2>/dev/null)
+                '{role: "assistant", content: (if $content == "" then null else $content end), tool_calls: $tc} + (if ($rc // "") != "" then {reasoning_content: $rc} else {} end)' 2>/dev/null)
             if [ -n "$asst_msg" ]; then
                 jq --argjson m "$asst_msg" '. += [$m]' "$messages_file" > "${messages_file}.tmp" 2>/dev/null && mv "${messages_file}.tmp" "$messages_file"
             fi
@@ -1328,14 +1989,44 @@ except Exception:
                 rep_strike=$(_react_check_repetition "$session_dir" "$a_hash" "$c_name" "$c_args")
 
                 if [ "$rep_strike" -ge 3 ]; then
-                    _react_trip_circuit_breaker "$session_id" "$workdir" "Action repetition ceiling reached ($c_name)" "$c_name ($c_args)" "$messages_file" "$macro_file" "Repeated action hash: $a_hash"
-                    export AGENT_ACTIVE_SESSION_ID=""
-                    return 75
+                    local heal_ec=0
+                    _react_self_heal_circuit_breaker "$session_id" "$workdir" "$session_dir" "$c_name" "$c_args" "$messages_file" "$macro_file" "$rep_strike"
+                    heal_ec=$?
+                    if [ "$heal_ec" -ne 0 ]; then
+                        export AGENT_ACTIVE_SESSION_ID=""
+                        return "$heal_ec"
+                    fi
                 elif [ "$rep_strike" -eq 1 ]; then
                     local rep_adv="[CIRCUIT ADVISORY: Action '$c_name' was already executed. Repeating identical actions or oscillating cycles without parameter changes is strictly prohibited. Modify your parameters or select an alternative tool.]"
                     jq --arg a "$rep_adv" '. += [{"role": "user", "content": $a}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
                 elif [ "$rep_strike" -eq 2 ]; then
                     _react_circuit_breaker_perturbation "$session_id" "$workdir" "ACTION_REPETITION" "$c_name ($c_args)" "Action repetition strike 2" "$messages_file" "$macro_file"
+                fi
+
+                # ── Target Path & File Repetition Tracking ───────────
+                local target_path=""
+                if [[ "$c_name" =~ file_read|file_grep|file_outline|code_symbol_get|file_edit|file_write ]]; then
+                    target_path=$(echo "$c_args" | jq -r '.path // empty' 2>/dev/null)
+                fi
+
+                if [ -n "$target_path" ]; then
+                    if [ "$target_path" = "$last_inspected_path" ]; then
+                        same_target_path_streak=$((same_target_path_streak + 1))
+                    else
+                        same_target_path_streak=1
+                        last_inspected_path="$target_path"
+                    fi
+
+                    if [ "$same_target_path_streak" -ge 3 ]; then
+                        ui_warn "⚡ Target path repetition ceiling reached on $target_path (Streak: $same_target_path_streak). Tripping circuit breaker / perturbation."
+                        _react_circuit_breaker_perturbation "$session_id" "$workdir" "TARGET_FILE_THRASHING" "$c_name ($target_path)" "Repeated file inspection on $target_path without task advancement" "$messages_file" "$macro_file"
+                    elif [ "$same_target_path_streak" -eq 2 ]; then
+                        local path_adv="[CIRCUIT ADVISORY: Target file '$target_path' has been inspected multiple times in a row. Cease linear paging or repeated inspection of this file. Synthesize your findings or call the domain-specific tool required by the active Honeydew milestone.]"
+                        jq --arg a "$path_adv" '. += [{"role": "user", "content": $a}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+                    fi
+                else
+                    same_target_path_streak=0
+                    last_inspected_path=""
                 fi
 
                 ui_step "Native Tool Call: $c_name"
@@ -1367,13 +2058,14 @@ except Exception:
                     fi
                 fi
 
-                # ── Asynchronous Execution with Watchdog Timeout ─────
                 if [ "$from_cache" -eq 0 ]; then
                     local as_timeout
                     as_timeout=$(declare -f limits_get &>/dev/null && limits_get ASYNC_TOOL_WATCHDOG_TIMEOUT 120 || echo 120)
                     if declare -f fifo_async &>/dev/null && declare -f fifo_await &>/dev/null; then
                         local prom_id
-                        prom_id=$(fifo_async "$session_id" "native_tools_dispatch '$c_id' '$c_name' '$c_args' '$workdir'")
+                        local b64_args
+                        b64_args=$(printf '%s' "$c_args" | base64 -w 0)
+                        prom_id=$(fifo_async "$session_id" "native_tools_dispatch '$c_id' '$c_name' \"\$(printf '%s' '$b64_args' | base64 -d)\" '$workdir'")
                         tool_resp=$(fifo_await "$prom_id" "$as_timeout" 2>/dev/null)
                         local await_ec=$?
                         if [ "$await_ec" -eq 124 ]; then
@@ -1409,12 +2101,11 @@ except Exception:
                 if [ "${#resp_content}" -gt "$max_tool_chars" ]; then
                     local truncated_note=$'\n\n'"[Observation truncated at ${max_tool_chars} characters to protect context budget. Narrow your query, paginate with start_line, or use targeted grep/symbol tools.]"
                     resp_content="${resp_content:0:$max_tool_chars}${truncated_note}"
-                    tool_resp=$(echo "$tool_resp" | jq --arg c "$resp_content" '.content = $c')
                 fi
 
-                # Append tool response to messages array
-                jq --argjson tr "$tool_resp" '. += [$tr]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
-
+                # Archive raw observation to workspace
+                mkdir -p "$session_dir/observations" 2>/dev/null || true
+                printf '%s\n' "$resp_content" > "$session_dir/observations/call_${c_id}.txt" 2>/dev/null || true
                 echo "Observation: $resp_content" >> "$history_file"
                 declare -f transcript_log_block &>/dev/null && transcript_log_block "observation ($c_name)" "$resp_content"
                 local is_cached_bool="false"
@@ -1434,6 +2125,63 @@ except Exception:
                 if _react_tool_is_mutating "$c_name" "$c_args"; then
                     declare -f cache_invalidate_ns &>/dev/null && cache_invalidate_ns "files"
                     declare -f cache_invalidate_ns &>/dev/null && cache_invalidate_ns "git"
+                fi
+
+                # ── MID-TURN GUIDED LOOP: SUB-TURN LLM DIGEST & SCRATCHPAD ──
+                local tool_digest=""
+                local eval_verdict="IN_PROGRESS"
+                local eval_reason=""
+                local eval_guidance=""
+
+                if [ "$is_tool_failure" -eq 0 ]; then
+                    tool_digest=$(_react_digest_tool_output "$c_id" "$c_name" "$c_args" "$resp_content" "$current_hd_step" "$session_dir" "$workdir" "$goal")
+
+                    # ── MID-TURN GUIDED LOOP: MILESTONE EVALUATOR ───────────
+                    local eval_out=""
+                    eval_out=$(_react_eval_milestone_evidence "$workdir" "$session_dir" "$current_hd_id" "$current_hd_step" "$goal" "$tool_digest")
+                    if [ -n "$eval_out" ]; then
+                        eval_verdict="${eval_out%%|*}"
+                        local _rem="${eval_out#*|}"
+                        eval_reason="${_rem%%|*}"
+                        eval_guidance="${_rem#*|}"
+                    fi
+
+                    # If Evaluator marked milestone SATISFIED, refresh active step ID and step task
+                    if [ "$eval_verdict" = "SATISFIED" ]; then
+                        if [ -f "$hd_file" ]; then
+                            current_hd_id=$(jq -r '[.items[]? | select(.status != "done")][0].id // 1' "$hd_file" 2>/dev/null || echo 1)
+                            current_hd_step=$(jq -r '[.items[]? | select(.status != "done")][0] | if . then "Step " + (.id|tostring) + ": " + .task else "Synthesize Final Deliverable" end' "$hd_file" 2>/dev/null)
+                            export CURRENT_ACTIVE_MILESTONE_ID="$current_hd_id"
+                        fi
+                    fi
+
+                    # Advance Honeydew multi-step milestone rule matching as well
+                    _react_advance_honeydew_plan "$workdir" "$c_name" "$c_args"
+
+                    # ── CURATED CONTEXT INJECTION (Prevent Context Bloat) ────
+                    local curated_obs=""
+                    curated_obs="[OBSERVATION DIGEST: ${c_name}]
+${tool_digest}
+
+[MILESTONE EVALUATION: ${eval_verdict}]
+${eval_reason:+${eval_reason} }${eval_guidance:+(Directive: ${eval_guidance})}
+[Verified facts recorded in scratchpad.md and mem:active_task. Full observation archived in workspace.]"
+
+                    tool_resp=$(echo "$tool_resp" | jq --arg c "$curated_obs" '.content = $c')
+                else
+                    # Curated failure observation
+                    local fail_obs="[OBSERVATION ERROR: ${c_name}]
+Error: ${resp_content:0:600}
+[STATUS: Tool execution failed. Check syntax and arguments before retrying.]"
+                    tool_resp=$(echo "$tool_resp" | jq --arg c "$fail_obs" '.content = $c')
+                fi
+
+                # Append curated tool response to messages array
+                jq --argjson tr "$tool_resp" '. += [$tr]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+
+                # Transmit FIFO frame for turning step
+                if declare -f fifo_write_frame &>/dev/null && [ -n "$session_id" ]; then
+                    fifo_write_frame "$session_id" "$(jq -nc --arg tool "$c_name" --arg v "${eval_verdict:-FAILURE}" '{event: "tool_digest", tool: $tool, verdict: $v}')" 2 2>/dev/null || true
                 fi
 
                 if [ "$is_tool_failure" -eq 1 ]; then
@@ -1476,8 +2224,8 @@ except Exception:
                     printf "   ${C_BOLD}${C_GRAY}[DEBUG: Observation (${#resp_content} chars)]${C_RESET}\n%s\n" "$resp_content"
                 else
                     local preview
-                    preview=$(echo "$resp_content" | head -n 3 | tr '\n' ' ')
-                    printf "${C_DIM}  ↳ Result: %s${C_RESET}\n" "$preview"
+                    preview=$(echo "${tool_digest:-$resp_content}" | head -n 3 | tr '\n' ' ')
+                    printf "${C_DIM}  ↳ Digest: %s${C_RESET}\n" "$preview"
                 fi
 
                 declare -f transcript_log_jsonl &>/dev/null && transcript_log_jsonl "$goal" "${reasoning:-${think_content:-}}" "${c_name:-tool}(${c_args:-})" "$resp_content"
@@ -1554,9 +2302,13 @@ except Exception:
             fb_strike=$(_react_check_repetition "$session_dir" "$fb_hash" "fallback_cmd" "$action")
 
             if [ "$fb_strike" -ge 3 ]; then
-                _react_trip_circuit_breaker "$session_id" "$workdir" "Fallback command repetition ceiling reached" "$action" "$messages_file" "$macro_file" "Repeated command hash: $fb_hash"
-                export AGENT_ACTIVE_SESSION_ID=""
-                return 75
+                local fb_heal_ec=0
+                _react_self_heal_circuit_breaker "$session_id" "$workdir" "$session_dir" "fallback_cmd" "$action" "$messages_file" "$macro_file" "$fb_strike"
+                fb_heal_ec=$?
+                if [ "$fb_heal_ec" -ne 0 ]; then
+                    export AGENT_ACTIVE_SESSION_ID=""
+                    return "$fb_heal_ec"
+                fi
             elif [ "$fb_strike" -eq 1 ]; then
                 local fb_adv="[CIRCUIT ADVISORY: Fallback command '$action' was already executed. Repeating identical commands without parameter changes is strictly prohibited. Modify your parameters or proceed to other actions.]"
                 jq --arg a "$fb_adv" '. += [{"role": "user", "content": $a}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
@@ -1605,13 +2357,20 @@ except Exception:
         if [ -n "$raw_content" ]; then
             # Premature Exit Guard: In multi-turn tasks where output
             # contains forward-looking planning text or preambles rather than a final deliverable, advance to tool execution.
+            # CRITICAL: If tools have ALREADY executed in this session, the assistant is reporting results, NOT planning.
             local is_premature_plan=0
-            if [ "$max_turns" -gt 1 ]; then
+            local has_prior_tool_execution=0
+            if [ -f "$history_file" ] && grep -qE "(Tool Call:|Action:)" "$history_file"; then
+                has_prior_tool_execution=1
+            fi
+
+            if [ "$max_turns" -gt 1 ] && [ "$has_prior_tool_execution" -eq 0 ]; then
+                local trimmed_tail="${raw_content%"${raw_content##*[![:space:]]}"}"
                 if [ "${AGENT_SOVEREIGN_REMEDIATION:-0}" -eq 1 ] && [ "$turn" -lt 5 ]; then
                     is_premature_plan=1
                 elif echo "$raw_content" | grep -qiE "(I will|I'll|I plan to|Let's outline|Step 1|First step|I need to check|I need to inspect|Let's begin by|Before making changes|I will pull|I'll pull|Let me fetch|I am going to|I'm going to|I will search|I'll search|Let me pull|I'll gather|I will gather|I'll start by|I will start by|Let me survey|Let me inspect|Let me explore|Let me examine|I will examine|I'll look at|ground this in|survey what is|Let me now|Let me proceed|I will now|Next step|Proceeding to|I will execute|Let me execute)"; then
                     is_premature_plan=1
-                elif echo "$raw_content" | grep -qE ":[[:space:]]*$"; then
+                elif [[ "$trimmed_tail" == *: ]]; then
                     is_premature_plan=1
                 elif [ ${#raw_content} -lt 450 ] && echo "$raw_content" | grep -qiE "\b(will pull|will fetch|will search|will look up|will inspect|will check|will investigate|going to search|going to pull|going to fetch|going to ground|execute real tool|call tools|invoke tools|execute tool)\b"; then
                     is_premature_plan=1
@@ -1625,13 +2384,16 @@ except Exception:
             local is_unverified_research=0
             if [ "$turn" -le 2 ] && [ "$max_turns" -gt 1 ]; then
                 local is_research_task=0
-                if echo "${goal,,}" | grep -qiE '\b(research|report|dossier|background on|investigate|due diligence|osint|deep dive|fact check)\b'; then
-                    is_research_task=1
-                elif [[ "${tool_filter:-}" =~ research ]] && echo "${goal,,}" | grep -qiE '\b(research|report|dossier|background|investigate|due diligence|osint|latest|recent|news|current)\b'; then
-                    is_research_task=1
+                # Exclude operational status, inspection, check, and phytology tasks from external research requirements
+                if ! echo "${goal,,}" | grep -qiE '\b(status|inspect|check|phytology|audit|health)\b'; then
+                    if echo "${goal,,}" | grep -qiE '\b(research|dossier|background on|investigate|due diligence|osint|deep dive|fact check)\b'; then
+                        is_research_task=1
+                    elif [[ "${tool_filter:-}" =~ research ]] && echo "${goal,,}" | grep -qiE '\b(research|dossier|background|investigate|due diligence|osint|latest|recent|news|current)\b'; then
+                        is_research_task=1
+                    fi
                 fi
                 if [ "$is_research_task" -eq 1 ]; then
-                    if [ ! -f "$history_file" ] || ! grep -qE "(Tool Call: web_|Tool Call: fetch|Tool Call: pdf_read|Tool Call: file_read|Tool Call: github_search|Action: .*web|Action: .*curl|Action: .*search)" "$history_file"; then
+                    if [ ! -f "$history_file" ] || ! grep -qE "(Tool Call: web_|Tool Call: fetch|Tool Call: pdf_read|Tool Call: file_read|Tool Call: github_search|Tool Call: phytology_manage|Action: .*web|Action: .*curl|Action: .*search)" "$history_file"; then
                         is_unverified_research=1
                     fi
                 fi
@@ -1660,12 +2422,32 @@ except Exception:
 
             if [ "$is_premature_plan" -eq 1 ]; then
                 consecutive_premature_plans=$((consecutive_premature_plans + 1))
+                if [ "$consecutive_premature_plans" -ge 5 ]; then
+                    ui_err "  [guard] Circuit breaker: 5 consecutive turns produced planning monologues without tool execution. Halting runaway loop."
+                    _react_trace "$workdir" "circuit_breaker_premature_loop" '{"turns": '"$turn"', "consecutive_premature": '"$consecutive_premature_plans"'}'
+                    break
+                fi
+                if [ "$consecutive_premature_plans" -ge 3 ]; then
+                    ui_warn "  [guard] Premature planning loop detected ($consecutive_premature_plans turns). Pruning advisory history and enforcing immediate tool execution."
+                    python3 -c '
+import sys, json
+path = sys.argv[1]
+try:
+    with open(path, "r") as f:
+        msgs = json.load(f)
+    cleaned = [m for m in msgs if not (isinstance(m.get("content"), str) and "[SYSTEM ADVISORY:" in m["content"])]
+    with open(path, "w") as f:
+        json.dump(cleaned, f)
+except Exception:
+    pass
+' "$messages_file" 2>/dev/null || true
+                fi
                 jq --arg ans "$raw_content" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
                 local adv
                 if [ "$consecutive_premature_plans" -ge 2 ]; then
-                    adv="[SYSTEM ADVISORY: Execute your tool call now. Invoke bash_exec(command=\"...\") or file_read(path=\"...\") directly. Do not output text preambles or planning sentences.]"
+                    adv="[SYSTEM ADVISORY: Execute your tool call now. Invoke bash_exec, file_write, or research_sandbox directly. Do not output text preambles or planning sentences.]"
                 else
-                    adv="[SYSTEM ADVISORY: Plan acknowledged. Proceed immediately to execute your plan by calling the required native tools (e.g. bash_exec, file_read, code_outline, code_symbol_get, file_grep, dir_list). Emit conversational markdown ONLY when all tool actions are complete and the deliverable is 100% finished.]"
+                    adv="[SYSTEM ADVISORY: Plan acknowledged. Proceed immediately to execute your plan by calling the required native tools (e.g. bash_exec, file_write, file_read, research_sandbox). Emit conversational markdown ONLY when all tool actions are complete and the deliverable is 100% finished.]"
                 fi
                 jq --arg p "$adv" '. += [{"role": "user", "content": $p}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
                 consecutive_empty_turns=0
@@ -1684,6 +2466,15 @@ except Exception:
                 jq --arg ans "$raw_content" '. += [{"role": "assistant", "content": $ans}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
                 local adv="[SYSTEM ADVISORY: Implementation verification required. You produced a conversational response on Turn $turn without executing any code implementation or execution tools (file_read, file_write, bash_exec, symbol_patch, git_*). You MUST execute the required code changes, run tests, and perform git operations in the workspace using your native tools before declaring this task complete. Proceed immediately to tool execution.]"
                 jq --arg p "$adv" '. += [{"role": "user", "content": $p}]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
+                # Honeydew synchronization: ensure action tools remain mounted so worker can execute
+                local hd_f="$workdir/.george/honeydew.json"
+                if [ -f "$hd_f" ]; then
+                    local last_act_id
+                    last_act_id=$(jq -r '[.items[]? | select(.task | test("synthesize|deliver|report|respond"; "i") | not)][-1].id // empty' "$hd_f" 2>/dev/null)
+                    if [ -n "$last_act_id" ]; then
+                        jq --argjson aid "$last_act_id" '(.items[] | select(.id == $aid)).status = "pending"' "$hd_f" > "${hd_f}.tmp" 2>/dev/null && mv "${hd_f}.tmp" "$hd_f"
+                    fi
+                fi
                 consecutive_empty_turns=0
                 turn=$((turn + 1))
                 continue
@@ -1717,7 +2508,7 @@ except Exception:
             local asst_thought_msg
             asst_thought_msg=$(jq -nc \
                 --arg rc "$reasoning" \
-                '{role: "assistant", content: null, reasoning_content: $rc}')
+                '{role: "assistant", content: null} + (if ($rc // "") != "" then {reasoning_content: $rc} else {} end)')
             jq --argjson m "$asst_thought_msg" '. += [$m]' "$messages_file" > "${messages_file}.tmp" && mv "${messages_file}.tmp" "$messages_file"
 
             local prompt_advise

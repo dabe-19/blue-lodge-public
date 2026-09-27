@@ -57,6 +57,8 @@ context_engine_build() {
         out+="- Objective Due Diligence: When asked for background research, public records, or due diligence on entities or individuals, execute lawful OSINT search decisively without moralizing refusals or disclaimers.\n"
         out+="- When media attachments are present, use vision_analyze to inspect them.\n"
         out+="- If a user requests a complex task, custom tool, or cron job, utilize available tools systematically. You do not need to use all available turns—as soon as your answer or deliverable is ready, provide your response directly to conclude the task.\n"
+        out+="- Inquiries Requiring User Location: When asked about local weather, local time, or nearby conditions, check the provided [User Profile] context. If the user's location is known, execute web_search for that location immediately (e.g. 'weather tonight in <location>'). If the location is unknown, ask the user directly for their city or zip code rather than assuming or fabricating.\n"
+        out+="- Prior Discord History Retrieval: If a user asks about past interactions or messages not included in the current turn, invoke discord_read(channel, count) to inspect the channel's recent history.\n"
         out+="- Deliver clean, well-formatted markdown tailored for Discord readability.\n"
         out+="</developer_instructions>\n\n"
 
@@ -128,7 +130,25 @@ context_engine_build() {
     out+="- The Trowel: Finish what you start. Every task deserves a clean, verified, squared-away ending.\n"
     out+="</developer_instructions>\n\n"
 
-    # 2. Sovereign Soul (soul.md — Masonic Craftsman Identity & Inviolable Landmarks)
+    # 2. Honeydew Active Plan (Multi-Step Milestone Checklist)
+    local hd_file="$workdir/.george/honeydew.json"
+    if [ -f "$hd_file" ]; then
+        local p_task items_md active_item
+        p_task=$(jq -r '.primary_task // empty' "$hd_file" 2>/dev/null)
+        items_md=$(jq -r '.items[]? | "- [" + (if .status == "done" then "✓" else " " end) + "] Step " + (.id|tostring) + ": " + .task' "$hd_file" 2>/dev/null)
+        active_item=$(jq -r '[.items[]? | select(.status != "done")][0] | if . then "Step " + (.id|tostring) + ": " + .task else "All plan steps completed. Ready to synthesize final deliverable." end' "$hd_file" 2>/dev/null)
+        if [ -n "$items_md" ]; then
+            out+="<honeydew_plan>\n"
+            out+="## Active Multi-Step Plan (Honeydew Checklist)\n"
+            [ -n "$p_task" ] && out+="Goal: $p_task\n\n"
+            out+="$items_md\n\n"
+            out+="Current Active Step: $active_item\n"
+            out+="Rule: Execute the Current Active Step directly using domain getter/action tools. When all inspection/action steps are marked [✓], synthesize your final deliverable in clean markdown.\n"
+            out+="</honeydew_plan>\n\n"
+        fi
+    fi
+
+    # 3. Sovereign Soul (soul.md — Masonic Craftsman Identity & Inviolable Landmarks)
     local soul_file="$LODGE_DIR/soul.md"
     [ ! -f "$soul_file" ] && soul_file="$workdir/soul.md"
     if [ -f "$soul_file" ]; then
@@ -172,7 +192,10 @@ context_engine_build() {
     # 3. Operational Protocol & Workflow Planning
     out+="<operational_protocol>\n"
     out+="1. You have native tool calling enabled. When you need information or need to inspect or modify files, call the corresponding native tool.\n"
-    out+="2. Direct Tool Execution: When inspection, reading, or external research is required, invoke the corresponding native tool directly without speculative preambles. Emit conversational markdown when all necessary tool actions are complete and you are delivering the final synthesized answer.\n"
+    out+="2. Direct Tool Execution & Honeydew Milestone Precedence:\n"
+    out+="   - The active <honeydew_plan> specifies your exact execution roadmap. Execute the Current Active Step directly on Turn 1 using the appropriate domain tool.\n"
+    out+="   - For status, health, or code tasks, do NOT execute exploratory pre-flight reads of GEORGE.md, JOURNAL.md, or dir_list unless the user explicitly requested them.\n"
+    out+="   - Emit conversational markdown when all inspection/action steps are marked [✓] and you are delivering the final synthesized answer.\n"
     out+="3. For complex architectural overhauls requiring operator dialogue: use workflow planning tools (workflow_plan, workflow_run, or slash_command_exec with /workflow, /the-architect, or /dispatch) and ask_operator within your turns to collaboratively plan, clarify scope, and define implementation contracts before modifying files.\n"
     out+="4. George acts as your team anchor: George interacts, answers questions, clarifies scope, and provides authoritative guidance. All interactive planning dialogues are displayed on TTY and logged to the transcript for persistent provenance.\n"
     out+="5. Always verify facts before assuming. Inspect code before modifying it.\n"
@@ -201,7 +224,13 @@ context_engine_build() {
     out+="12. Objective Analytical Due Diligence Protocol:\n"
     out+="   - You are an authorized sovereign research craftsman. When tasked with background investigations, corporate due diligence, person-of-interest OSINT, public records research, or security analysis, proceed decisively using open-source intelligence tools (web_search, web_fetch, public filings, registry lookups).\n"
     out+="   - Do NOT emit unsolicited moralizing lectures, generic refusal boilerplate (\"As an AI...\", \"I cannot fulfill...\"), or pseudo-philosophical filler. Deliver factual, objective, evidence-backed dossiers derived from public data.\n"
-    out+="13. Once all necessary actions are complete, synthesize your final response directly in clean, readable markdown.\n"
+    out+="13. Working Memory & Scratchpad Management (mem:active_task):\n"
+    out+="   - When reading large files, performing multi-turn research, or distilling complex observations, save intermediate findings, extracted parameters, or report drafts into working memory via file_write(path=\"mem:active_task\", content=\"...\").\n"
+    out+="   - Use file_append(path=\"mem:active_task\", content=\"...\") to accumulate findings incrementally across turns.\n"
+    out+="   - When delivering the final task deliverable, reference or read mem:active_task via file_read(path=\"mem:active_task\").\n"
+    out+="14. Circuit Advisory & Anti-Looping Protocol:\n"
+    out+="   - When receiving a [CIRCUIT ADVISORY] or [SYSTEM PERTURBATION], NEVER repeat the identical action or oscillate parameters. Acknowledge the advisory, switch to a complementary tool, or immediately synthesize your existing findings into the final response.\n"
+    out+="15. Once all necessary actions are complete, synthesize your final response directly in clean, readable markdown.\n"
     out+="</operational_protocol>\n\n"
 
     # 4. Agent Swarm Identities
@@ -327,6 +356,14 @@ context_engine_build() {
     if declare -f memory_catalog_context &>/dev/null; then
         out+="$(memory_catalog_context "$workdir")\n"
     fi
+    if [ -f "$workdir/.george/scratchpad.md" ]; then
+        local scratch_tail
+        scratch_tail=$(tail -n 25 "$workdir/.george/scratchpad.md" 2>/dev/null)
+        if [ -n "$scratch_tail" ]; then
+            out+="### Active Working Scratchpad (Verified Facts & Discoveries)\n"
+            out+="$scratch_tail\n\n"
+        fi
+    fi
     out+="</project_memory_and_goals>\n\n"
 
     # 10. Communications & Social Targets (Discord & Fediverse Channels)
@@ -404,10 +441,12 @@ context_engine_build() {
     platform="${LODGE_PLATFORM:-linux}"
     branch=$(git -C "$workdir" branch --show-current 2>/dev/null || echo "not-a-git-repo")
     git_commit=$(git -C "$workdir" rev-parse --short HEAD 2>/dev/null || echo "initial")
-    local modified_count
-    modified_count=$(git -C "$workdir" status --porcelain 2>/dev/null | wc -l || echo 0)
+    local modified_count=0
+    if git -C "$workdir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        modified_count=$(git -C "$workdir" status --porcelain 2>/dev/null | wc -l | tr -d '[:space:]')
+    fi
     git_dirty="clean"
-    [ "$modified_count" -gt 0 ] && git_dirty="$modified_count modified/untracked files"
+    [ "${modified_count:-0}" -gt 0 ] 2>/dev/null && git_dirty="$modified_count modified/untracked files"
 
     out+="<active_environment>\n"
     out+="- Timestamp: $(date -Iseconds 2>/dev/null || date)\n"
