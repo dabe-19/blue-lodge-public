@@ -289,7 +289,7 @@ _subagent_worker_run() {
     mkdir -p "${GEORGE_DIR}/subagents" 2>/dev/null || true
     local prev_dir="$PWD"
     cd "$sub_dir" 2>/dev/null || true
-    react_run "$objective" "$sub_dir" "$max_turns" 1.0 4096 "$sub_profile" "sub_${sub_id}" "worker" > "$worker_output_log" 2>&1 || react_ec=$?
+    react_run "$objective" "$sub_dir" "$max_turns" 1.0 4096 "$sub_profile" "sub_${sub_id}" "worker" 2>&1 | tee "$worker_output_log" || react_ec=$?
     cd "$prev_dir" 2>/dev/null || true
     local worker_res=""
     [ -f "$worker_output_log" ] && worker_res=$(cat "$worker_output_log")

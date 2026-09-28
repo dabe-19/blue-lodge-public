@@ -54,6 +54,7 @@ context_engine_build() {
         out+="3. Validation Before Delivery: If creating or modifying code, always execute tests or sanity checks via bash_exec.\n"
         out+="4. Sovereign Gitea Promotion Mandate: When code modifications are verified green, commit them to your subagent branch and submit a Pull Request to Sovereign Gitea using gitea_pr_create(head=\"<branch>\", base=\"develop\", title=\"...\", body=\"...\"). Then report the PR URL.\n"
         out+="5. Research / Query Mandate: If your objective is purely informational (research, documentation lookup, log analysis), return your structured findings directly without creating a git branch or PR.\n"
+        out+="6. File Writing: Always use file_write(path=\"...\", content=\"...\") to create new files cleanly, rather than shell heredocs in bash_exec.\n"
         out+="</developer_instructions>\n\n"
         printf "%b" "$out"
         return 0

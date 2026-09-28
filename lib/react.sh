@@ -795,6 +795,7 @@ _react_expand_honeydew_dag() {
     local goal="$1"
     local workdir="${2:-$PWD}"
     local session_dir="$3"
+    [ "${AGENT_MODE:-}" = "worker" ] && return 0
 
     local hd_file="$workdir/.george/honeydew.json"
     local macro_file="$workdir/.george/macro_memory.json"
@@ -1065,6 +1066,7 @@ _react_advance_honeydew_plan() {
     local action_args="${3:-}"
     local hd_file="$workdir/.george/honeydew.json"
     [ ! -f "$hd_file" ] && return 0
+    [ "${AGENT_MODE:-}" = "worker" ] && return 0
 
     # Find first pending item
     local pending_id
@@ -1171,6 +1173,12 @@ _react_scope_tools_for_step() {
     local all_tools_json="${1:-[]}"
     local active_step="${2:-}"
     local pending_tool_steps="${3:-1}"
+
+    # Worker mode never masks tools away
+    if [ "${AGENT_MODE:-}" = "worker" ]; then
+        echo "$all_tools_json"
+        return 0
+    fi
 
     # Gated Synthesis Barrier (Option 5A):
     # tool_choice=none is ONLY mounted if ALL prerequisite implementation/tool steps are DONE,

@@ -3072,12 +3072,17 @@ $_ts_v_err
                     exit_code=1
                 else
                     while [ "$elapsed" -lt "$timeout" ]; do
-                        local st
+                        local st spid
                         st=$(jq -r --arg id "$sub_id" '.[] | select(.id == $id) | .status' "$reg_file" 2>/dev/null)
-                        if [ "$st" = "COMPLETED" ] || [ "$st" = "FAILED" ] || [ "$st" = "ORPHAN_REAPED" ] || [ "$st" = "KILLED_EXIT" ]; then
+                        spid=$(jq -r --arg id "$sub_id" '.[] | select(.id == $id) | .pid // 0' "$reg_file" 2>/dev/null)
+                        if [ "$st" = "COMPLETED" ] || [ "$st" = "FAILED" ] || [ "$st" = "ORPHAN_REAPED" ] || [ "$st" = "KILLED_EXIT" ] || [ "$st" = "PAUSED_BLOCKED" ] || [ "$st" = "REAPED" ]; then
                             local sub_res
                             sub_res=$(jq -r --arg id "$sub_id" '.[] | select(.id == $id) | .result' "$reg_file" 2>/dev/null)
                             output="Subagent $sub_id concluded with status $st: $sub_res"
+                            break
+                        fi
+                        if [ -n "$spid" ] && [ "$spid" -gt 0 ] 2>/dev/null && ! kill -0 "$spid" 2>/dev/null; then
+                            output="Subagent $sub_id process PID $spid terminated prematurely."
                             break
                         fi
                         sleep 1
