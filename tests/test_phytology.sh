@@ -335,5 +335,17 @@ it "executes /phytology audit --cached, cache-status, and cache-invalidate" && {
     assert_contains "$c_aud" "LIVING TISSUE AUDIT"
 }
 
+describe "Living Tissue Autonomic Health Summary"
+it "generates structured JSON health telemetry across Cambium and Foliage" && {
+    summary=$(phytology_health_summary)
+    assert_ok $? "phytology_health_summary should succeed"
+    assert_contains "$summary" '"total_monitored"'
+    assert_contains "$summary" '"status"'
+    assert_contains "$summary" '"health_percentage"'
+    status_val=$(echo "$summary" | jq -r '.status')
+    [ "$status_val" = "HEALTHY" ] || [ "$status_val" = "DEGRADED" ]
+    assert_ok $? "status should be HEALTHY or DEGRADED"
+}
+
 test_end
 
