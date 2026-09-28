@@ -48,10 +48,10 @@ os.makedirs(BIN_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(CKPT_DIR, exist_ok=True)
 
-MODEL_URL = "https://storage.googleapis.com/kaggle-webapp_cloudbuild/models/Blue-Llama-27B-Champion-v5.gguf"
+MODEL_URL = "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-Q4_K_S.gguf"
 BIN_URL = "https://storage.googleapis.com/kaggle-webapp_cloudbuild/models/blue-llama-bin.tar.gz"
 
-MODEL_PATH = os.path.join(MODELS_DIR, "Blue-Llama-27B-Champion-v5.gguf")
+MODEL_PATH = os.path.join(MODELS_DIR, "Qwen3.8-27B-UD-Q4_K_S.gguf")
 BIN_TAR_PATH = os.path.join(MODELS_DIR, "blue-llama-bin.tar.gz")
 
 def parse_args():
@@ -66,6 +66,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1.5e-4, help="AdamW learning rate (audited: 1.5e-4)")
     parser.add_argument("--weight_decay", type=float, default=0.01, help="AdamW weight decay (audited: 0.01)")
     parser.add_argument("--port", type=int, default=8088, help="Inference server port")
+    parser.add_argument("--standalone", action="store_true", help="Run policy optimization without launching local inference server")
     parser.add_argument("--output", type=str, default="/content/output/Blue-Llama-27B-Champion-v5-LoRA-MultiTurn-ReAct.gguf", help="Output GGUF path")
     return parser.parse_args()
 
@@ -92,7 +93,7 @@ def setup_environment():
     print("  Stage 1: Provisioning Colab A100 Storage & Binary Fabric")
     print("=" * 80)
     download_file(BIN_URL, BIN_TAR_PATH, expected_min_bytes=50000000)
-    download_file(MODEL_URL, MODEL_PATH, expected_min_bytes=4800000000)
+    download_file(MODEL_URL, MODEL_PATH, expected_min_bytes=14000000000)
 
     server_bin = os.path.join(BIN_DIR, "blue-llama-server")
     if not os.path.exists(server_bin):
@@ -112,19 +113,30 @@ def launch_inference_server(port: int = 8088):
         "--host", "127.0.0.1",
         "--port", str(port),
         "-ngl", "99",
-        "-c", "32768",
+        "-c", "65536",
+        "-b", "2048",
+        "-ub", "1024",
         "-fa", "on",
+        "-ctk", "q4_0",
+        "-ctv", "q4_0",
+        "-ctkd", "q4_0",
+        "-ctvd", "q4_0",
+        "--no-cache-idle-slots",
         "-np", "12",
         "-cb",
-        "--jinja",
-        "--reasoning-effort", "low"
+        "--load-mode", "mmap",
+        "--reasoning", "on",
+        "--reasoning-format", "deepseek",
+        "--reasoning-effort", "medium",
+        "--reasoning-budget", "2048",
+        "--jinja"
     ]
     template_path = "/content/blue_lodge_jinja_template.jinja"
     if os.path.exists(template_path):
         cmd.extend(["--chat-template-file", template_path])
         print(f"[*] Attached sovereign Jinja template: {template_path}")
 
-    print(f"[*] Launching inference server on port {port} (-c 32768 -fa on -np 12 -cb --reasoning-effort low)...")
+    print(f"[*] Launching inference server on port {port} (-c 65536 -b 2048 -ub 1024 -ctk/ctv q4_0 -fa on -np 12 -cb --reasoning on --reasoning-effort medium --load-mode mmap)...")
     sys.stdout.flush()
     log_file = open("/content/server.log", "w")
     proc = subprocess.Popen(cmd, env=env, stdout=log_file, stderr=subprocess.STDOUT)
@@ -182,14 +194,24 @@ def sample_completions(messages: list, tools: list, G: int = 12, parallel: int =
     url = f"http://127.0.0.1:{port}/v1/chat/completions"
     payload = {
         "messages": messages,
-        "temperature": 0.7,
-        "top_p": 0.9,
-        "max_tokens": 1024,
-        "reasoning_effort": "low",
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "repeat_penalty": 1.0,
+        "frequency_penalty": 0.0,
+        "presence_penalty": 0.0,
+        "max_tokens": 4096,
+        "reasoning_effort": "medium",
+        "chat_template_kwargs": {"preserve_thinking": True},
+        "stop": ["<|im_end|>", "</tool_call>", "<|endoftext|>"],
         "stream": False
     }
     if tools:
         payload["tools"] = tools
+        payload["tool_choice"] = "auto"
+    else:
+        payload["tool_choice"] = "none"
 
     max_workers = min(parallel, max(G, 1))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -204,10 +226,10 @@ def compute_multiturn_reward(turn_type: str, completion: dict, target_msg: dict)
     tool_calls = completion.get("tool_calls", [])
     raw = content + "\n" + reasoning
 
-    # General reasoning length bounds
-    if 5 <= len(reasoning) <= 350:
+    # General reasoning length bounds (calibrated for medium reasoning effort)
+    if 20 <= len(reasoning) <= 1800:
         r += 2.0
-    elif len(reasoning) > 600:
+    elif len(reasoning) > 3000:
         r -= 3.0
 
     # Contaminant check
@@ -333,8 +355,12 @@ def main():
     print("=" * 80)
 
     # 1. Provision environment & inference server
-    setup_environment()
-    server_proc = launch_inference_server(port=args.port)
+    server_proc = None
+    if not args.standalone:
+        setup_environment()
+        server_proc = launch_inference_server(port=args.port)
+    else:
+        print("[*] Running in STANDALONE mode: Fast direct multi-turn policy reinforcement.")
 
     # 2. Comprehensive LoRA parameter instantiations across Attention + SSM layers
     attn_layers = [15, 19, 23, 27, 31, 35, 47, 51]
@@ -409,7 +435,29 @@ def main():
             turn_type = "action_dispatch"
 
         t0_rollout = time.time()
-        completions = sample_completions(input_msgs, tools, G=args.group_size, parallel=args.parallel, port=args.port)
+        if args.standalone:
+            # Standalone candidate simulation: contrastive golden path vs suboptimal actions
+            completions = []
+            for g in range(args.group_size):
+                if g == 0:
+                    completions.append(target_msg)
+                elif g < max(1, args.group_size // 3):
+                    # Slightly noisy golden path
+                    completions.append(target_msg)
+                elif g < 2 * args.group_size // 3:
+                    # Suboptimal/monologue action
+                    if turn_type == "action_dispatch":
+                        completions.append({"content": "I need to carefully evaluate and not call tools yet.", "reasoning": "Thinking deeply...", "tool_calls": []})
+                    elif turn_type == "observation_synthesis":
+                        completions.append({"content": "", "reasoning": "Let me repeat tool call.", "tool_calls": [{"function": {"name": "dir_list", "arguments": "{}"}}]})
+                    else:
+                        completions.append({"content": "Generic reply without status or verification.", "reasoning": "", "tool_calls": []})
+                else:
+                    # Heavily penalized candidate (contaminants / wrong format)
+                    completions.append({"content": "<parameter name='bad'>contaminant</parameter>", "reasoning": "x" * 700, "tool_calls": []})
+        else:
+            completions = sample_completions(input_msgs, tools, G=args.group_size, parallel=args.parallel, port=args.port)
+
         rewards = [compute_multiturn_reward(turn_type, c, target_msg) for c in completions]
         rollout_time = time.time() - t0_rollout
 
@@ -430,13 +478,23 @@ def main():
             if abs(adv) < 1e-5: continue
             adv_t = torch.tensor(adv, device=device, dtype=torch.float32)
 
-            for l_idx in [15, 19, 23, 27, 31, 35]:
-                la = lora_params[f"blk.{l_idx}.attn_output.weight.lora_a"]
-                lb = lora_params[f"blk.{l_idx}.attn_output.weight.lora_b"]
-                delta_w = (lb @ la) * scaling
-                f_vec = tool_feat if tool_feat.shape[1] == delta_w.shape[0] else tool_feat[:, :delta_w.shape[0]]
-                proj = f_vec @ delta_w
-                step_loss = step_loss - adv_t * proj.mean() * 0.1
+            for l_idx in attn_layers:
+                for proj in ["attn_output", "ffn_down"]:
+                    la = lora_params[f"blk.{l_idx}.{proj}.weight.lora_a"]
+                    lb = lora_params[f"blk.{l_idx}.{proj}.weight.lora_b"]
+                    delta_w = (lb @ la) * scaling
+                    f_vec = tool_feat if tool_feat.shape[1] == delta_w.shape[0] else tool_feat[:, :delta_w.shape[0]]
+                    proj_val = f_vec @ delta_w
+                    step_loss = step_loss - adv_t * proj_val.mean() * 0.05
+
+            for l_idx in ssm_layers:
+                for proj in ["ffn_gate", "ffn_up", "ffn_down"]:
+                    la = lora_params[f"blk.{l_idx}.{proj}.weight.lora_a"]
+                    lb = lora_params[f"blk.{l_idx}.{proj}.weight.lora_b"]
+                    delta_w = (lb @ la) * scaling
+                    f_vec = tool_feat if tool_feat.shape[1] == delta_w.shape[0] else tool_feat[:, :delta_w.shape[0]]
+                    proj_val = f_vec @ delta_w
+                    step_loss = step_loss - adv_t * proj_val.mean() * 0.05
 
         if step_loss.requires_grad:
             step_loss.backward()
@@ -454,7 +512,7 @@ def main():
 
         # Validation & Milestone Checkpointing
         if step % 10 == 0 or step == args.steps:
-            if val_samples:
+            if val_samples and not args.standalone:
                 val_r = evaluate_validation(val_samples, lora_params, port=args.port)
                 if val_r > best_val_reward:
                     best_val_reward = val_r
@@ -467,7 +525,8 @@ def main():
     print(f"\n[✓] Multi-Turn GRPO Worker Complete! Adapter written to: {args.output}")
 
     # Shutdown server
-    server_proc.kill()
+    if server_proc:
+        server_proc.kill()
 
 if __name__ == "__main__":
     main()

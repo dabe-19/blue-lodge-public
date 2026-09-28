@@ -57,7 +57,11 @@ ARGS=(
 # LoRA Adapter Attachment
 LORA_PATH="${LLAMA_ARG_LORA:-}"
 if ([ -z "$LORA_PATH" ] || [[ "$LORA_PATH" == *"Iteration"* ]]) && ([[ "$TARGET_MODEL" == *"Champion-v5"* ]] || [[ "$TARGET_MODEL" == *"Qwen3.8"* ]]); then
-    if [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v12-Fused-SVD32.gguf ]; then
+    if [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v13-Fused-SVD32.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v13-Fused-SVD32.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v13-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v13-Fused-LoRA.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v12-Fused-SVD32.gguf ]; then
         LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v12-Fused-SVD32.gguf"
     elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v12-Fused-LoRA.gguf ]; then
         LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v12-Fused-LoRA.gguf"

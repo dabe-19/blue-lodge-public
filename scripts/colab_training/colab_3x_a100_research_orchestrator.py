@@ -26,7 +26,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 
 COLAB_BIN = "/home/wsl-ops/venv_research/bin/colab"
-PYTHON_BIN = "/home/wsl-ops/projects/research/unity_of_one/.venv/bin/python"
+PYTHON_BIN = "/home/wsl-ops/venv_research/bin/python"
 WORKSPACE_DIR = "/home/wsl-ops/blue-lodge"
 MODELS_DIR = "/home/wsl-ops/models/frontier_qwen38"
 os.makedirs(MODELS_DIR, exist_ok=True)

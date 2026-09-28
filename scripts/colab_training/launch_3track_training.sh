@@ -8,7 +8,7 @@ set -euo pipefail
 
 WORKSPACE_DIR="/home/wsl-ops/blue-lodge"
 MODELS_DIR="/home/wsl-ops/models/frontier_qwen38"
-PYTHON_BIN="/home/wsl-ops/projects/research/unity_of_one/.venv/bin/python"
+PYTHON_BIN="/home/wsl-ops/venv_research/bin/python"
 ENDPOINT="${1:-http://127.0.0.1:8080}"
 
 echo "================================================================================"

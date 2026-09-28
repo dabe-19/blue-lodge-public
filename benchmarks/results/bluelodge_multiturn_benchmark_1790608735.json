@@ -1,0 +1,46 @@
+{
+  "benchmark": "BlueLodgeMultiTurnBench",
+  "model_label": "Qwen3.8-27B-Champion-v13-Calibrated",
+  "timestamp": "2026-09-28 10:18:55",
+  "overall_score": 97.8,
+  "total_points": 29.34,
+  "max_points": 30,
+  "pillars": {
+    "Pillar 1: Multi-Turn Web Research & Fetch-to-Synthesis Chaining": {
+      "score_pct": 100.0,
+      "points": 5.0,
+      "total": 5,
+      "full_passes": 5
+    },
+    "Pillar 2: Multi-Turn Code Inspection, Surgical Edit & Validation": {
+      "score_pct": 86.8,
+      "points": 4.34,
+      "total": 5,
+      "full_passes": 3
+    },
+    "Pillar 3: Chained Multi-Objective: Research -> Implement -> Test": {
+      "score_pct": 100.0,
+      "points": 5.0,
+      "total": 5,
+      "full_passes": 5
+    },
+    "Pillar 4: Multi-File Project Scaffold & Test Execution": {
+      "score_pct": 100.0,
+      "points": 5.0,
+      "total": 5,
+      "full_passes": 5
+    },
+    "Pillar 5: Sovereign GitOps Lifecycle: Status -> Branch -> Commit -> Push": {
+      "score_pct": 100.0,
+      "points": 5.0,
+      "total": 5,
+      "full_passes": 5
+    },
+    "Pillar 6: Dependency Discovery, Version Pinning & Runtime Import": {
+      "score_pct": 100.0,
+      "points": 5.0,
+      "total": 5,
+      "full_passes": 5
+    }
+  }
+}

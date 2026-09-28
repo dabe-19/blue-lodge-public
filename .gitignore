@@ -40,3 +40,8 @@ secrets.conf
 keys.conf
 *.cookie
 *.cookies
+
+# Python Cache & Large Datasets
+__pycache__/
+*.pyc
+data/training/curriculum_*.jsonl
