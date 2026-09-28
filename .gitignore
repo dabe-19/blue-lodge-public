@@ -43,7 +43,11 @@ keys.conf
 *.cookie
 *.cookies
 
-# Python Cache & Large Datasets
+# Python Cache, Virtualenv & Large Datasets
 __pycache__/
 *.pyc
-data/training/curriculum_*.jsonl
+.venv/
+venv/
+data/training/**/*.jsonl
+data/training/*.jsonl
+data/training/archive/
