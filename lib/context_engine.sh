@@ -455,6 +455,10 @@ context_engine_build() {
 
     # 14. Active Environment & Live Telemetry (Placed last to prevent KV cache invalidation)
     local os_name platform branch git_dirty git_commit
+    local current_date current_time current_tz
+    current_date="$(date '+%A, %B %d, %Y' 2>/dev/null || date)"
+    current_time="$(date '+%I:%M %p' 2>/dev/null || true)"
+    current_tz="$(date '+%Z' 2>/dev/null || true)"
     os_name="$(uname -s) $(uname -m) $(uname -r)"
     platform="${LODGE_PLATFORM:-linux}"
     branch=$(git -C "$workdir" branch --show-current 2>/dev/null || echo "not-a-git-repo")
@@ -467,7 +471,7 @@ context_engine_build() {
     [ "${modified_count:-0}" -gt 0 ] 2>/dev/null && git_dirty="$modified_count modified/untracked files"
 
     out+="<active_environment>\n"
-    out+="- Timestamp: $(date -Iseconds 2>/dev/null || date)\n"
+    out+="- Current Date (TODAY): $current_date — this is the actual present moment. Anchor ALL relative time references ("today", "yesterday", "this past week", "last month", "recently") to this date; NEVER to your training-cutoff prior. ISO 8601: $(date -Iseconds 2>/dev/null || date)\n"
     out+="- Host System: $os_name ($platform)\n"
     out+="- Workspace Directory: $workdir\n"
     out+="- Git State: Branch '$branch' @ $git_commit ($git_dirty)\n"
@@ -520,5 +524,6 @@ context_engine_debug_trace() {
     printf "\033[1;33m--- [Full Injected Prompt Trace] ---\033[0m\n"
     printf "%s\n" "$prompt"
 }
+
 
 

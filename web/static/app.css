@@ -308,40 +308,71 @@ body.drawer-open .workbench-viewport {
 }
 
 .bay-rail {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: min-content;
+  gap: 8px;
   padding: 8px 20px;
-  overflow-x: auto;
   box-sizing: border-box;
+  max-width: 100%;
 }
 
-.bay-pill {
+@media (max-width: 1280px) {
+  .bay-rail {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 860px) {
+  .bay-rail {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.bay-pill, .bay-tile {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 12px;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 6px 10px;
   background: var(--bg-card);
   border: 1px solid var(--border-color);
-  border-radius: 2px;
+  border-radius: 3px;
   cursor: pointer;
   user-select: none;
-  transition: all 0.15s ease;
-  flex-shrink: 0;
-  max-width: 460px;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  min-height: 52px;
   box-sizing: border-box;
   overflow: hidden;
+  position: relative;
 }
 
-.bay-pill:hover {
+.bay-pill:hover, .bay-tile:hover {
   border-color: var(--accent);
   background: var(--bg-hover);
+  transform: translateY(-1px);
 }
 
-.bay-pill.expanded {
+.bay-pill.expanded, .bay-tile.expanded {
   border-color: var(--accent);
   background: var(--bg-base);
-  box-shadow: 0 0 8px rgba(var(--accent-rgb, 56, 189, 248), 0.15);
+  box-shadow: 0 0 10px rgba(var(--accent-rgb, 56, 189, 248), 0.25);
+}
+
+.bay-tile-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+}
+
+.bay-tile-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
 }
 
 .bay-pill-type {

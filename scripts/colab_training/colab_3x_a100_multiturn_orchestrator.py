@@ -32,25 +32,25 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 
 TRACKS = [
     {
-        "session": "blue-mt-webresearch",
-        "name": "Track 1: Web Research & Multi-Source Synthesis",
-        "curriculum": os.path.join(WORKSPACE_DIR, "data/training/curriculum_track_multiturn_web_research.jsonl"),
-        "remote_output": "/content/output/Blue-Llama-27B-Champion-v5-LoRA-MultiTurn-WebResearch.gguf",
-        "local_output": os.path.join(MODELS_DIR, "Blue-Llama-27B-Champion-v5-LoRA-MultiTurn-WebResearch.gguf")
+        "session": "blue-mt-contextdiscrim",
+        "name": "Track 1: Context Discrimination & Anti-Pollution",
+        "curriculum": os.path.join(WORKSPACE_DIR, "data/training/curriculum_track1_composite_context_discrimination.jsonl"),
+        "remote_output": "/content/output/Blue-Llama-27B-Champion-v5-LoRA-MultiTurn-ContextDiscrimination.gguf",
+        "local_output": os.path.join(MODELS_DIR, "Blue-Llama-27B-Champion-v5-LoRA-MultiTurn-ContextDiscrimination.gguf")
     },
     {
-        "session": "blue-mt-codegitops",
-        "name": "Track 2: Code Projects, Safe Edits & GitOps",
-        "curriculum": os.path.join(WORKSPACE_DIR, "data/training/curriculum_track_multiturn_code_gitops.jsonl"),
-        "remote_output": "/content/output/Blue-Llama-27B-Champion-v5-LoRA-MultiTurn-CodeGenGitOps.gguf",
-        "local_output": os.path.join(MODELS_DIR, "Blue-Llama-27B-Champion-v5-LoRA-MultiTurn-CodeGenGitOps.gguf")
+        "session": "blue-mt-multihop",
+        "name": "Track 2: Multi-Hop Follow-ups & Surgical Execution",
+        "curriculum": os.path.join(WORKSPACE_DIR, "data/training/curriculum_track2_composite_multihop_followups.jsonl"),
+        "remote_output": "/content/output/Blue-Llama-27B-Champion-v5-LoRA-MultiTurn-MultiHopFollowups.gguf",
+        "local_output": os.path.join(MODELS_DIR, "Blue-Llama-27B-Champion-v5-LoRA-MultiTurn-MultiHopFollowups.gguf")
     },
     {
-        "session": "blue-mt-toolspackages",
-        "name": "Track 3: Tools, Package Management & File Downloads",
-        "curriculum": os.path.join(WORKSPACE_DIR, "data/training/curriculum_track_multiturn_tools_packages.jsonl"),
-        "remote_output": "/content/output/Blue-Llama-27B-Champion-v5-LoRA-MultiTurn-ToolsPackages.gguf",
-        "local_output": os.path.join(MODELS_DIR, "Blue-Llama-27B-Champion-v5-LoRA-MultiTurn-ToolsPackages.gguf")
+        "session": "blue-mt-resilience",
+        "name": "Track 3: Evaluator Resilience & Tool Error Recovery",
+        "curriculum": os.path.join(WORKSPACE_DIR, "data/training/curriculum_track3_composite_evaluator_resilience.jsonl"),
+        "remote_output": "/content/output/Blue-Llama-27B-Champion-v5-LoRA-MultiTurn-EvaluatorResilience.gguf",
+        "local_output": os.path.join(MODELS_DIR, "Blue-Llama-27B-Champion-v5-LoRA-MultiTurn-EvaluatorResilience.gguf")
     }
 ]
 
@@ -104,17 +104,46 @@ def provision_instance(t, max_retries=4, retry_delay=12):
 
 def upload_track_payload(t):
     s_name = t["session"]
-    print(f"[*] Uploading payloads to session '{s_name}'...")
+    print(f"[*] Packaging and uploading payloads to session '{s_name}'...")
     worker_script = os.path.join(WORKSPACE_DIR, "scripts/colab_training/train_multiturn_colab.py")
     jinja_template = os.path.join(WORKSPACE_DIR, "configs/blue_lodge_jinja_template.jinja")
     tools_manifest = os.path.join(WORKSPACE_DIR, "data/training/native_core_tools.json")
 
-    run_colab_cmd(["upload", "-s", s_name, t["curriculum"], "/content/curriculum.jsonl"])
-    run_colab_cmd(["upload", "-s", s_name, worker_script, "/content/train.py"])
-    run_colab_cmd(["upload", "-s", s_name, jinja_template, "/content/blue_lodge_jinja_template.jinja"])
+    import shutil
+    payload_tar = f"/tmp/{s_name}_payload.tar.gz"
+    staging_dir = f"/tmp/{s_name}_staging"
+    os.makedirs(staging_dir, exist_ok=True)
+
+    shutil.copy2(t["curriculum"], os.path.join(staging_dir, "curriculum.jsonl"))
+    shutil.copy2(worker_script, os.path.join(staging_dir, "train.py"))
+    shutil.copy2(jinja_template, os.path.join(staging_dir, "blue_lodge_jinja_template.jinja"))
     if os.path.exists(tools_manifest):
-        run_colab_cmd(["upload", "-s", s_name, tools_manifest, "/content/native_core_tools.json"])
-    print(f"  ✓ Uploaded curriculum and dependencies to '{s_name}'.")
+        shutil.copy2(tools_manifest, os.path.join(staging_dir, "native_core_tools.json"))
+
+    subprocess.run(["tar", "-czf", payload_tar, "-C", staging_dir, "."], check=True)
+    tar_sz = os.path.getsize(payload_tar) / (1024**2)
+    print(f"  ✓ Packaged {tar_sz:.1f} MB payload tarball -> {payload_tar}")
+
+    code, out, err = run_colab_cmd(["upload", "-s", s_name, payload_tar, f"/content/{s_name}_payload.tar.gz"], timeout=300)
+    if code != 0:
+        raise RuntimeError(f"Upload failed for {s_name}: {err or out}")
+
+    # Extract on remote and verify
+    extract_code = (
+        f"import subprocess, os\n"
+        f"subprocess.run(['tar', '-xzf', '/content/{s_name}_payload.tar.gz', '-C', '/content'], check=True)\n"
+        f"has_curr = os.path.exists('/content/curriculum.jsonl') and os.path.getsize('/content/curriculum.jsonl') > 1000\n"
+        f"has_train = os.path.exists('/content/train.py') and os.path.getsize('/content/train.py') > 1000\n"
+        f"print(f'VERIFIED:{{has_curr}}:{{has_train}}')\n"
+    )
+    code, out, err = run_colab_cmd(["exec", "-s", s_name], input_text=extract_code, timeout=60)
+    if "VERIFIED:True:True" not in out:
+        raise RuntimeError(f"Extraction verification failed for {s_name}: {out or err}")
+
+    print(f"  ✓ Uploaded, unpacked, and verified curriculum and dependencies on '{s_name}'.")
+    shutil.rmtree(staging_dir, ignore_errors=True)
+    if os.path.exists(payload_tar):
+        os.remove(payload_tar)
     sys.stdout.flush()
 
 def launch_track_training(t, steps=40, group_size=12, rank=32, alpha=64.0, lr=1.5e-4, standalone=False):
@@ -155,17 +184,27 @@ def monitor_and_download(t, poll_interval=10):
     )
 
     t0 = time.time()
+    consecutive_not_found = 0
     while True:
         code, out, err = run_colab_cmd(["exec", "-s", s_name], input_text=check_code)
         resp = out.strip()
         elapsed = int(time.time() - t0)
 
-        if "True |" in resp:
+        if "Session not found" in err or "Session not found" in out:
+            consecutive_not_found += 1
+            if consecutive_not_found > 6:
+                print(f"[!] Session '{s_name}' died or was terminated. Stopping monitor.")
+                return False
+        else:
+            consecutive_not_found = 0
+
+        if "True |" in resp or resp.startswith("True"):
             print(f"\n[✓] Session '{s_name}' completed output generation! ({elapsed}s)")
             break
 
         tail = resp.split("|", 1)[-1].strip() if "|" in resp else resp
-        print(f"[{elapsed:4d}s] {s_name}: {tail[:80]}")
+        tail_clean = tail.replace("\n", " ").strip()
+        print(f"[{elapsed:4d}s] {s_name}: {tail_clean[:80]}")
         sys.stdout.flush()
         time.sleep(poll_interval)
 
@@ -226,8 +265,8 @@ def main():
     with ThreadPoolExecutor(max_workers=3) as executor:
         list(executor.map(teardown_instance, TRACKS))
 
-    print("\n--- STAGE 6: EXECUTING ITERATION 13 FUSION ---")
-    fusion_script = os.path.join(WORKSPACE_DIR, "scripts/colab_training/fuse_iteration13.py")
+    print("\n--- STAGE 6: EXECUTING ITERATION 14 FUSION ---")
+    fusion_script = os.path.join(WORKSPACE_DIR, "scripts/colab_training/fuse_iteration14.py")
     if os.path.exists(fusion_script):
         subprocess.run([sys.executable, fusion_script], check=True)
     else:

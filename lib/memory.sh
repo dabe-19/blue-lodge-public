@@ -788,10 +788,15 @@ memory_json_commit() {
 
 memory_get_task_slug() {
     local t="$1"
+    # Extract only the first non-empty line, stripped of XML/markdown tags
+    local first_line
+    first_line=$(printf '%s\n' "$t" | sed -E 's/<[^>]+>//g' | grep -vE '^[[:space:]]*$' | head -n 1 | sed 's/^[#* -]*//')
+    [ -z "$first_line" ] && first_line="active_report"
+
     local cleaned
-    cleaned=$(echo "$t" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9 -]//g' -e 's/[ -][ -]*/_/g' -e 's/^_*//' -e 's/_*$//')
+    cleaned=$(echo "$first_line" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9 -]//g' -e 's/[ -][ -]*/_/g' -e 's/^_*//' -e 's/_*$//')
     local slug
-    slug=$(echo "$cleaned" | cut -d'_' -f1-4 | cut -c1-40)
+    slug=$(echo "$cleaned" | cut -d'_' -f1-4 | cut -c1-30)
     echo "${slug:-active_report}_$(date '+%H%M%S')"
 }
 _agent_get_task_slug() { memory_get_task_slug "$@"; }

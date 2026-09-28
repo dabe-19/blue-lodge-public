@@ -295,15 +295,39 @@ discord_history_get() {
 
     [ ! -f "$hfile" ] && return 0
 
-    local hist
-    hist=$(jq -r --argjson n "$max_turns" '
-        .[-$n:]? | .[]? |
-        (if .role == "user" then "@" + .author + ": " else "George: " end) +
-        (.content | gsub("\n"; " ") | if length > 300 then .[0:297] + "..." else . end)
-    ' "$hfile" 2>/dev/null || true)
+    declare -f cache_init &>/dev/null && cache_init
 
-    if [ -n "$hist" ]; then
-        printf "[Recent Conversation Context]:\n%s\n" "$hist"
+    local entries
+    entries=$(jq -c --argjson n "$max_turns" '.[-$n:]? | .[]?' "$hfile" 2>/dev/null || true)
+    [ -z "$entries" ] && return 0
+
+    local formatted=""
+    while IFS= read -r entry; do
+        [ -z "$entry" ] && continue
+        local role author content
+        role=$(echo "$entry" | jq -r '.role // "user"')
+        author=$(echo "$entry" | jq -r '.author // "operator"')
+        content=$(echo "$entry" | jq -r '.content // ""')
+
+        local snippet
+        snippet=$(printf '%s' "$content" | tr -s '[:space:]' ' ' | head -c 260)
+        [ ${#content} -gt 260 ] && snippet+="..."
+
+        if [ "$role" = "user" ]; then
+            local h_short="prior"
+            if declare -f cache_is_prior_request &>/dev/null && cache_is_prior_request "$content"; then
+                local h
+                h=$(_cache_hash "$content" 2>/dev/null || md5sum <<< "$content" | cut -d' ' -f1)
+                h_short="${h:0:8}"
+            fi
+            formatted+="\n[HISTORICAL COMPLETED PRIOR REQUEST #${h_short} (DO NOT RE-EXECUTE)]:\n@${author}: ${snippet}\n"
+        else
+            formatted+="[HISTORICAL RESPONSE FROM GEORGE]:\nGeorge: ${snippet}\n"
+        fi
+    done <<< "$entries"
+
+    if [ -n "$formatted" ]; then
+        printf "[Recent Conversation Context & Task History (Reference Only)]:%b\n" "$formatted"
     fi
 }
 
@@ -448,10 +472,10 @@ discord_generate_response() {
         return 0
     fi
 
-    # 1. Author-scoped history (ONLY active if in an ongoing open multi-turn session pipe, turn > 1)
+    # 1. Author-scoped history (available on pipe turns > 1, or post-pipe follow-up requests)
     local hist_ctx=""
-    if [ "${_DISCORD_IN_ACTIVE_PIPE:-0}" -eq 1 ] && [ "${_DISCORD_PIPE_TURN:-1}" -gt 1 ]; then
-        hist_ctx=$(discord_history_get "$channel_id" 6 "$author_id")
+    if [ "${_DISCORD_PIPE_TURN:-0}" -gt 1 ] || [ "${_DISCORD_IN_ACTIVE_PIPE:-0}" -eq 0 ]; then
+        hist_ctx=$(discord_history_get "$channel_id" 4 "$author_id")
     fi
 
     # 2. Known User Profile from discord_user_profiles
@@ -492,22 +516,16 @@ discord_generate_response() {
     fi
 
     local target_goal=""
-    if [ "$run_profile" = "social+ops" ]; then
-        # For operational tasks, isolate goal to current user prompt to prevent past banter context pollution
-        target_goal="$prompt"
-    else
-        # For conversational dialogue:
-        local header_lines=()
-        [ -n "$user_profile_ctx" ] && header_lines+=("$user_profile_ctx")
-        [ -n "$hist_ctx" ] && header_lines+=("$hist_ctx")
+    local header_lines=()
+    [ -n "$user_profile_ctx" ] && header_lines+=("$user_profile_ctx")
+    [ -n "$hist_ctx" ] && header_lines+=("$hist_ctx")
 
-        if [ ${#header_lines[@]} -gt 0 ]; then
-            local header_str
-            header_str=$(printf '%b\n\n' "${header_lines[@]}")
-            target_goal="${header_str}[Current Inbound Message from @${author}]:\n${prompt}"
-        else
-            target_goal="$prompt"
-        fi
+    if [ ${#header_lines[@]} -gt 0 ]; then
+        local header_str
+        header_str=$(printf '%b\n\n' "${header_lines[@]}")
+        target_goal="${header_str}============================================================\n[ACTIVE PRIMARY OBJECTIVE - EXECUTE THIS NOW]:\n[Current Inbound Message from @${author}]:\n${prompt}\n============================================================"
+    else
+        target_goal="[ACTIVE PRIMARY OBJECTIVE - EXECUTE THIS NOW]:\n[Current Inbound Message from @${author}]:\n${prompt}\n============================================================"
     fi
 
     if [ -n "$attachment_files" ]; then
@@ -601,6 +619,9 @@ discord_generate_response() {
     # Record turn in author-isolated persistent history buffer
     discord_history_append "$channel_id" "user" "$author" "$prompt" "$author_id"
     discord_history_append "$channel_id" "assistant" "George" "$reply" "$author_id"
+    if declare -f cache_record_inbound_request &>/dev/null; then
+        cache_record_inbound_request "$prompt" "$author" "$channel_id" "completed" "${reply:0:200}"
+    fi
 
     # Reward constructive engagement on the Square
     if declare -f reputation_add &>/dev/null && [ -n "$author_id" ]; then
@@ -712,8 +733,6 @@ discord_chat_session() {
     discord_launch_visual_monitor "$channel_id" "$author" "$session_log"
 
     # 1. Process Initial Inbound Turn
-    # Ensure fresh turn receives ONLY the current inbound message
-    discord_history_clear "$channel_id" "$author_id"
     export _DISCORD_IN_ACTIVE_PIPE=1
     export _DISCORD_PIPE_TURN=1
     printf "[%s] [Inbound from @%s]: %s\n" "$(date '+%H:%M:%S')" "$author" "$initial_msg" >> "$session_log"

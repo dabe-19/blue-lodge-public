@@ -247,4 +247,65 @@ cache_count() {
         echo "0"
     fi
 }
+
+# ── Inbound Request Hashing & Pseudo-LRU Tracking ──────────────
+# Tracks incoming requests across Discord chat, sweeps, and REPL
+# to prevent context pollution between completed and active tasks.
+cache_record_inbound_request() {
+    local text="$1"
+    local author="${2:-operator}"
+    local channel_id="${3:-local}"
+    local status="${4:-completed}"
+    local summary="${5:-}"
+
+    # Normalize text to reduce whitespace sensitivity
+    local norm_text
+    norm_text=$(printf '%s' "$text" | tr -s '[:space:]' ' ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [ -z "$norm_text" ] && return 0
+
+    local hash
+    hash=$(_cache_hash "$norm_text")
+    local now
+    now=$(date +%s)
+    local iso
+    iso=$(date -Iseconds 2>/dev/null || date)
+
+    # Store JSON record in inbound_req namespace
+    local payload
+    payload=$(jq -n \
+        --arg h "$hash" \
+        --arg a "$author" \
+        --arg c "$channel_id" \
+        --arg s "$status" \
+        --arg sum "$summary" \
+        --argjson t "$now" \
+        --arg iso "$iso" \
+        '{hash: $h, author: $a, channel_id: $c, status: $s, summary: $sum, timestamp: $t, iso: $iso}')
+
+    cache_put "req:$hash" "inbound_req" "$payload"
+}
+
+cache_is_prior_request() {
+    local text="$1"
+    local ttl="${2:-86400}" # 24h default memory window
+    local norm_text
+    norm_text=$(printf '%s' "$text" | tr -s '[:space:]' ' ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [ -z "$norm_text" ] && return 1
+
+    local hash
+    hash=$(_cache_hash "$norm_text")
+    cache_get "req:$hash" "inbound_req" "$ttl" >/dev/null 2>&1
+}
+
+cache_get_request_metadata() {
+    local text="$1"
+    local ttl="${2:-86400}"
+    local norm_text
+    norm_text=$(printf '%s' "$text" | tr -s '[:space:]' ' ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [ -z "$norm_text" ] && return 1
+
+    local hash
+    hash=$(_cache_hash "$norm_text")
+    cache_get "req:$hash" "inbound_req" "$ttl" 2>/dev/null || true
+}
 # Empirical Cache Index Cache-Line Optimization (2026)

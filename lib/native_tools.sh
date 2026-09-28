@@ -149,6 +149,21 @@ _NATIVE_CORE_TOOLS='[
   {
     "type": "function",
     "function": {
+      "name": "task_complete",
+      "description": "Signal that the overall task or user objective is completely fulfilled. Submits the final output deliverable to the Outer Loop Evaluator for final determination. Use when: you have completed all objectives, tested execution, and are delivering the final response. Examples: summary=\"The meme report cron job issue has been resolved and verified with a live test run.\", artifacts=[\".george/cron_jobs/meme_report.sh\"].",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "summary": { "type": "string", "description": "The complete final response, synthesis, or deliverable report for the operator." },
+          "artifacts": { "type": "array", "items": { "type": "string" }, "description": "Optional list of modified or created file paths." }
+        },
+        "required": ["summary"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "milestone_complete",
       "description": "Signal that the active milestone is complete or blocked, and submit structured observations and discovered facts to the DAG state barrier. Use when: you have fulfilled your current milestone task and are ready to advance the pipeline. Examples: status=\"success\", summary=\"Phytology status verified: 66 Cambium modules operational.\", facts_discovered=[\"Cambium kernel healthy\", \"0 syntax errors\"]; status=\"blocked\", summary=\"Missing required dependency cargo-tarpaulin\".",
       "parameters": {
@@ -2258,6 +2273,19 @@ native_tools_dispatch() {
                 if [ "$secs" -gt 600 ]; then secs=600; fi
                 sleep "$secs"
                 output="TASK_WAIT_SUCCESS: Slept for ${secs}s (${reason})."
+                exit_code=0
+                ;;
+            task_complete|end_turn)
+                local t_summary t_artifacts
+                t_summary=$(echo "$args_json" | jq -r '.summary // empty')
+                t_artifacts=$(echo "$args_json" | jq -c '.artifacts // []')
+                [ -z "$t_summary" ] && t_summary=$(echo "$args_json" | jq -r '.output // "Task complete."')
+
+                local final_dir="$workdir/.george"
+                mkdir -p "$final_dir"
+                echo "$t_summary" > "$final_dir/final_reply.txt"
+
+                output="TASK_COMPLETE_SUBMITTED: Final deliverable recorded for Outer Evaluator determination. Summary: ${t_summary:0:160}"
                 exit_code=0
                 ;;
             milestone_complete)

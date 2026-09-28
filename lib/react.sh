@@ -595,6 +595,8 @@ Distill key factual findings, metrics, and citations:"
             ],
             temperature: 0.1,
             max_tokens: 500,
+            reasoning_effort: "low",
+            reasoning_budget: 0,
             chat_template_kwargs: {enable_thinking: false},
             stream: false
         }' 2>/dev/null)
@@ -993,6 +995,18 @@ _react_ensure_honeydew_plan() {
     local force="${3:-0}"
     mkdir -p "$gdir" 2>/dev/null || true
 
+    # Extract clean active objective from formatted goal if present
+    local clean_task="$task"
+    if [[ "$task" =~ \[ACTIVE\ PRIMARY\ OBJECTIVE[^]]*\]:?[[:space:]]*(\[Current\ Inbound\ Message[^]]*\]:?[[:space:]]*)?(.*) ]]; then
+        clean_task="${BASH_REMATCH[2]}"
+        clean_task="${clean_task%%============================================================*}"
+        clean_task=$(echo "$clean_task" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    elif [[ "$task" =~ \[Current\ Inbound\ Message[^]]*\]:?[[:space:]]*(.*) ]]; then
+        clean_task="${BASH_REMATCH[1]}"
+        clean_task=$(echo "$clean_task" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    fi
+    [ -z "$clean_task" ] && clean_task="$task"
+
     # Check existing plan
     local should_rebuild=1
     if [ "$force" -eq 0 ] && [ -f "$hd_file" ]; then
@@ -1000,13 +1014,13 @@ _react_ensure_honeydew_plan() {
         cur_task=$(jq -r '.primary_task // empty' "$hd_file" 2>/dev/null)
         pending_count=$(jq -r '[.items[]? | select(.status != "done")] | length' "$hd_file" 2>/dev/null || echo 0)
         # Only reuse if same task AND there are still pending steps remaining
-        if [ "$cur_task" = "$task" ] && [ "$pending_count" -gt 0 ]; then
+        if [ "$cur_task" = "$clean_task" ] && [ "$pending_count" -gt 0 ]; then
             should_rebuild=0
         fi
     fi
 
     if [ "$should_rebuild" -eq 1 ]; then
-        local lower_task="${task,,}"
+        local lower_task="${clean_task,,}"
         local items_json=""
 
         # ── Pre-Loop Strategist (Option 4A): Agentic DAG Decomposition ──
@@ -1015,7 +1029,7 @@ _react_ensure_honeydew_plan() {
         [ ! -f "$strat_script" ] && strat_script="/home/wsl-ops/blue-lodge/lib/honeydew_strategist.py"
 
         if [ -f "$strat_script" ]; then
-            items_json=$(python3 "$strat_script" "$task" "$ep_url" 2>/dev/null || true)
+            items_json=$(python3 "$strat_script" "$clean_task" "$ep_url" 2>/dev/null || true)
         fi
 
         local item_count
@@ -1029,7 +1043,7 @@ _react_ensure_honeydew_plan() {
             ]'
         fi
 
-        jq -n --arg task "$task" --argjson items "$items_json" \
+        jq -n --arg task "$clean_task" --argjson items "$items_json" \
             '{"primary_task": $task, "items": $items}' > "$hd_file" 2>/dev/null || true
 
         # Initialize FIFO IPC promise registry for each milestone
@@ -1080,7 +1094,7 @@ _react_advance_honeydew_plan() {
     local should_advance=0
 
     # Direct terminal tool call takes absolute precedence
-    if [ "$action_name" = "milestone_complete" ]; then
+    if [ "$action_name" = "milestone_complete" ] || [ "$action_name" = "task_complete" ] || [ "$action_name" = "end_turn" ]; then
         should_advance=1
     # 1. Cron / Script creation milestones (must be mutating to advance)
     elif [[ "$lower_ptask" =~ (create|register|write|implement).*(cron|job|script) ]]; then
@@ -1180,29 +1194,24 @@ _react_scope_tools_for_step() {
         return 0
     fi
 
-    # Gated Synthesis Barrier (Option 5A):
-    # tool_choice=none is ONLY mounted if ALL prerequisite implementation/tool steps are DONE,
-    # AND the active step itself is explicitly a final synthesis step.
-    if [ "$pending_tool_steps" -le 0 ] 2>/dev/null && echo "$active_step" | grep -qiE '\b(synthesize|conclude|respond to operator|final deliverable)\b'; then
-        echo "[]"
-        return 0
-    fi
-
     local step_lower="${active_step,,}"
     local allowed_pattern=""
 
-    # 1. Code Modification / Implementation / Patching / Cron & Messaging (Priority 1)
-    if echo "$step_lower" | grep -qiE '\b(code|implement|edit|write|patch|refactor|fix|compile|cargo|npm|cron|schedule|register|create|build)\b'; then
-        allowed_pattern='^(file_read|file_edit|file_write|symbol_patch|code_outline|code_symbol_get|file_grep|bash_exec|research_sandbox|web_search_cross_section|git_status|git_diff|git_commit|discord_send|discord_dm|ask_operator|milestone_complete)$'
-    # 2. Research / Investigation / Information Retrieval
+    # 1. Final Deliverable / Synthesis / Completion (Tools ALWAYS active)
+    if echo "$step_lower" | grep -qiE '\b(synthesize|conclude|respond to operator|final deliverable|deliver)\b'; then
+        allowed_pattern='^(file_read|file_edit|file_write|bash_exec|discord_send|discord_dm|ask_operator|milestone_complete|task_complete|end_turn)$'
+    # 2. Code Modification / Implementation / Patching / Cron & Messaging
+    elif echo "$step_lower" | grep -qiE '\b(code|implement|edit|write|patch|refactor|fix|compile|cargo|npm|cron|schedule|register|create|build)\b'; then
+        allowed_pattern='^(file_read|file_edit|file_write|symbol_patch|code_outline|code_symbol_get|file_grep|bash_exec|research_sandbox|web_search_cross_section|git_status|git_diff|git_commit|discord_send|discord_dm|ask_operator|milestone_complete|task_complete|end_turn)$'
+    # 3. Research / Investigation / Information Retrieval
     elif echo "$step_lower" | grep -qiE '\b(research|investigate|search|web|find out|background|literature|arxiv|cve|scrape|intel|dossier)\b'; then
-        allowed_pattern='^(web_search|web_search_cross_section|web_fetch|research_sandbox|scrape|file_read|file_write|recall_search|pdf_read|bash_exec|ask_operator|milestone_complete)$'
-    # 3. Testing / Verification
+        allowed_pattern='^(web_search|web_search_cross_section|web_fetch|research_sandbox|scrape|file_read|file_write|recall_search|pdf_read|bash_exec|ask_operator|milestone_complete|task_complete|end_turn)$'
+    # 4. Testing / Verification
     elif echo "$step_lower" | grep -qiE '\b(test|verify|validate|benchmark|suite|check)\b'; then
-        allowed_pattern='^(bash_exec|file_read|file_write|research_sandbox|git_status|git_diff|discord_send|discord_dm|ask_operator|milestone_complete)$'
-    # 4. Status / Diagnostics / Living Tissue Inspection (System level only)
+        allowed_pattern='^(bash_exec|file_read|file_write|research_sandbox|git_status|git_diff|discord_send|discord_dm|ask_operator|milestone_complete|task_complete|end_turn)$'
+    # 5. Status / Diagnostics / Living Tissue Inspection (System level only)
     elif echo "$step_lower" | grep -qiE '\b(system status|service status|diagnostics?|phytology|living tissue|system vitals|engine health)\b'; then
-        allowed_pattern='^(phytology_manage|service_manage|vitals_manage|git_status|bash_exec|ask_operator|milestone_complete)$'
+        allowed_pattern='^(phytology_manage|service_manage|vitals_manage|git_status|bash_exec|ask_operator|milestone_complete|task_complete|end_turn)$'
     fi
 
     if [ -n "$allowed_pattern" ]; then
@@ -2238,19 +2247,18 @@ except Exception:
                     _react_advance_honeydew_plan "$workdir" "$c_name" "$c_args"
 
                     # ── CURATED CONTEXT INJECTION (Preserve Code Fidelity & Prevent Bloat) ────
+                    local eval_note=""
+                    if [ "$eval_verdict" = "SATISFIED" ]; then
+                        eval_note=$'\n\n[MILESTONE ADVANCEMENT: SATISFIED] '"${eval_reason:-Milestone requirements met.} Current Active: ${current_hd_step}"
+                    fi
+
                     local curated_obs=""
                     # If this is a code inspection/file tool or bounded output (<=3500 chars), preserve raw code fidelity
                     if [[ "$c_name" =~ ^(file_read|file_edit|file_write|file_grep|file_diff|git_diff|dir_list|file_list|phytology_inspect)$ ]] || [ "${#resp_content}" -le 3500 ]; then
-                        curated_obs="${resp_content}
-
-[MILESTONE EVALUATION: ${eval_verdict}]
-${eval_reason:+${eval_reason} }${eval_guidance:+(Directive: ${eval_guidance})}"
+                        curated_obs="${resp_content}${eval_note}"
                     else
                         curated_obs="[OBSERVATION DIGEST: ${c_name}]
-${tool_digest}
-
-[MILESTONE EVALUATION: ${eval_verdict}]
-${eval_reason:+${eval_reason} }${eval_guidance:+(Directive: ${eval_guidance})}
+${tool_digest}${eval_note}
 [Verified facts recorded in scratchpad.md and mem:active_task. Full observation archived in workspace.]"
                     fi
 

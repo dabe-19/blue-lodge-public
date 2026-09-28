@@ -928,8 +928,8 @@
     if (!autonomicTaskBay || !autonomicBayRail) return;
     cachedTasks = tasks || [];
 
-    // Filter up to 3 live/recent tasks for collapsed display
-    const liveTasks = cachedTasks.slice(0, 3);
+    // Filter up to 8 live/recent tasks for 2x4 dynamic tile grid display
+    const liveTasks = cachedTasks.slice(0, 8);
 
     if (liveTasks.length === 0) {
       autonomicTaskBay.style.display = 'none';
@@ -943,10 +943,10 @@
 
     autonomicTaskBay.style.display = 'block';
     if (bayActiveCount) {
-      bayActiveCount.textContent = `${liveTasks.length} Live`;
+      bayActiveCount.textContent = `${liveTasks.length} / 8 Active`;
     }
 
-    // Render collapsed pills in rail (update in place if same tasks to prevent jitter)
+    // Render collapsed tiles in grid (update in place if same tasks to prevent jitter)
     const currentPillIds = Array.from(autonomicBayRail.children).map(c => c.dataset.taskId).join(',');
     const newPillIds = liveTasks.map(t => t.id).join(',');
 
@@ -955,7 +955,7 @@
         const t = liveTasks[idx];
         const isExpanded = expandedTaskId === t.id;
         const isCopilot = t.type === 'copilot';
-        pill.className = `bay-pill${isExpanded ? ' expanded' : ''}${isCopilot ? ' copilot-pill' : ''}`;
+        pill.className = `bay-tile${isExpanded ? ' expanded' : ''}${isCopilot ? ' copilot-pill' : ''}`;
         const phaseSpan = pill.querySelector('.bay-pill-phase');
         if (phaseSpan) phaseSpan.textContent = `[${t.phase || 'Active'}]`;
         const indSpan = pill.querySelector('.bay-pill-indicator');
@@ -968,12 +968,18 @@
         const isCopilot = t.type === 'copilot';
         const pill = document.createElement('div');
         pill.dataset.taskId = t.id;
-        pill.className = `bay-pill${isExpanded ? ' expanded' : ''}${isCopilot ? ' copilot-pill' : ''}`;
+        pill.className = `bay-tile${isExpanded ? ' expanded' : ''}${isCopilot ? ' copilot-pill' : ''}`;
+        const subCount = t.subagent_count || (t.subagents ? t.subagents.length : 0);
         pill.innerHTML = `
-          <span class="bay-pill-type ${escapeHtml(t.type || 'task')}">${escapeHtml((t.type || 'TASK').toUpperCase())}</span>
-          <span class="bay-pill-summary" title="${escapeHtml(t.summary || t.id)}">${escapeHtml(t.summary || t.id)}</span>
-          <span class="bay-pill-phase">[${escapeHtml(t.phase || 'Active')}]</span>
-          <span class="bay-pill-indicator">${isExpanded ? '▲' : '▼'}</span>
+          <div class="bay-tile-top">
+            <span class="bay-pill-type ${escapeHtml(t.type || 'task')}">${escapeHtml((t.type || 'TASK').toUpperCase())}</span>
+            <span class="bay-pill-phase">[${escapeHtml(t.phase || 'Active')}]</span>
+            <span class="bay-pill-indicator">${isExpanded ? '▲' : '▼'}</span>
+          </div>
+          <div class="bay-tile-bottom">
+            <span class="bay-pill-summary" title="${escapeHtml(t.summary || t.id)}">${escapeHtml(t.summary || t.id)}</span>
+            ${subCount > 0 ? `<span class="subagent-badge" title="${subCount} subagent(s)">⑂ ${subCount}</span>` : ''}
+          </div>
         `;
 
         pill.addEventListener('click', () => {
@@ -1140,21 +1146,24 @@
               const stream = autonomicExpandedStage.querySelector('.expanded-log-stream');
               const jumpBtn = autonomicExpandedStage.querySelector('.stream-jump-btn');
               if (stream && e.data) {
-                const wasPinned = stream._autoScrollPinned !== false;
+                const distFromBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight;
+                const wasPinned = stream._autoScrollPinned !== false || distFromBottom <= 35;
                 const prevScrollTop = stream.scrollTop;
 
                 if (stream.textContent === 'Autonomous task active. Monitoring stream...') {
                   stream.textContent = e.data;
-                } else if (stream.textContent.endsWith('\n') || e.data.startsWith('\n')) {
-                  stream.textContent += e.data;
                 } else {
-                  stream.textContent += '\n' + e.data;
+                  const node = document.createTextNode((stream.childNodes.length > 0 ? '\n' : '') + e.data);
+                  stream.appendChild(node);
                 }
                 stream.dataset.lastLogs = stream.textContent;
 
                 if (wasPinned) {
-                  stream.scrollTop = stream.scrollHeight;
-                  if (jumpBtn) jumpBtn.classList.remove('visible');
+                  stream._autoScrollPinned = true;
+                  requestAnimationFrame(() => {
+                    stream.scrollTop = stream.scrollHeight;
+                    if (jumpBtn) jumpBtn.classList.remove('visible');
+                  });
                 } else {
                   stream.scrollTop = prevScrollTop;
                   if (jumpBtn) jumpBtn.classList.add('visible');

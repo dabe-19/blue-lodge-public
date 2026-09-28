@@ -4,6 +4,8 @@
 .lodge-sandboxes/
 .george/*
 !.george/cron_jobs/
+.george/cron_jobs/.history/
+.george/cron_jobs/.*
 !.george/tools/
 !.george/slash/
 .sandboxes/

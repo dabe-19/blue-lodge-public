@@ -6536,8 +6536,23 @@ _repl() {
         fi
         
         # Natural language → agent (Modern ReAct Loop)
-        # All free-form input executes against the ReAct engine.
-        react_run "$input" "$PWD"
+        # If there was a previous REPL task completed in this session, provide it as reference context
+        local repl_goal="$input"
+        if [ -n "${_LAST_REPL_TASK:-}" ] && [ -n "${_LAST_REPL_SUMMARY:-}" ]; then
+            repl_goal="[HISTORICAL COMPLETED PRIOR REQUEST (REFERENCE ONLY - DO NOT RE-EXECUTE)]:
+Operator: ${_LAST_REPL_TASK}
+George: ${_LAST_REPL_SUMMARY}
+
+============================================================
+[ACTIVE PRIMARY OBJECTIVE - EXECUTE THIS NOW]:
+${input}
+============================================================"
+        fi
+
+        react_run "$repl_goal" "$PWD"
+        _LAST_REPL_TASK="$input"
+        _LAST_REPL_SUMMARY=$(tail -n 1 "$PWD/.george/scratchpad.md" 2>/dev/null || echo "Task executed")
+        declare -f cache_record_inbound_request &>/dev/null && cache_record_inbound_request "$input" "operator" "repl" "completed" "$_LAST_REPL_SUMMARY"
     done
 }
 

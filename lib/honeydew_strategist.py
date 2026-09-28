@@ -22,6 +22,7 @@ def clean_and_parse(text):
     text = text.strip()
 
     # Find first '{' and last '}'
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
     start = text.find('{')
     end = text.rfind('}')
     if start != -1 and end != -1 and end > start:
@@ -58,7 +59,7 @@ def clean_and_parse(text):
                     'tier': i + 1,
                     'depends_on': [i] if i > 0 else []
                 }
-                for i, t in enumerate(task_matches[:4])
+                for i, t in enumerate(task_matches[:6])
             ]
         }
 
@@ -66,15 +67,22 @@ def clean_and_parse(text):
 
 def query_strategist_endpoint(task, endpoint_url="http://127.0.0.1:8080"):
     sys_prompt = """You are the Blue Lodge Honeydew DAG Strategist.
-Decompose the user objective into 2 to 4 distinct sequential or parallel milestones tailored specifically to the user's objective.
+Decompose the user objective into 2 to 6 distinct, logical, sequential or parallel milestones tailored uniquely and specifically to the operator's request.
 
 Blue Lodge Bedrock Capabilities:
-- Bedrock tools: file_read, file_write (e.g. creating cron jobs in .george/cron_jobs/<name>.sh with # INTERVAL: <seconds> and executing sandbox runners), bash_exec (run tests, verify sandboxes, test scripts), ask_operator, tool_search, discord_dm, web_search_cross_section.
-- Research & Cron Architecture: Recurring intel requests are fulfilled by registering a cron job in .george/cron_jobs/<name>.sh wrapping scripts/run_research_sandbox.sh with deterministic Discord delivery, followed by an initial sandbox verification run.
-- Each milestone task description MUST be a specific, plain-English action tailored to the objective. Do not output generic placeholder text. Do not output raw code syntax.
+- Workspace & Files: file_read, file_write, file_edit, file_grep, dir_list (inspecting code, configs, reports, or deliverables).
+- Execution & Terminal: bash_exec (running test suites, executing diagnostics, running build gates, checking processes, managing sandboxes).
+- External Context & Comms: web_search_cross_section, web_fetch, discord_send, discord_dm, ask_operator.
+- Coordination: subagent_spawn, milestone_complete, task_complete.
+
+Guidelines:
+- Generate between 2 and 6 milestone items based on the true complexity of the request.
+- Every milestone task description MUST be specific, highly relevant, and directly actionable for this exact request.
+- NEVER use generic boilerplate or force cron job creation unless the user explicitly requested a scheduled or recurring task.
+- The final step should focus on verifying outcomes and synthesizing the final deliverable.
 
 Output ONLY valid JSON matching this schema:
-{"items": [{"id": 1, "task": "<specific action>", "tier": 1, "depends_on": []}]}"""
+{"items": [{"id": 1, "task": "<specific actionable objective>", "tier": 1, "depends_on": []}]}"""
 
     user_prompt = f"Objective: {task}"
 
@@ -84,8 +92,9 @@ Output ONLY valid JSON matching this schema:
             {"role": "user", "content": user_prompt}
         ],
         "temperature": 0.1,
-        "max_tokens": 300,
-        "presence_penalty": 0.15
+        "max_tokens": 1024,
+        "presence_penalty": 0.15,
+        "chat_template_kwargs": {"enable_thinking": False}
     }
 
     url = f"{endpoint_url.rstrip('/')}/v1/chat/completions"
@@ -96,7 +105,7 @@ Output ONLY valid JSON matching this schema:
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=25) as resp:
+        with urllib.request.urlopen(req, timeout=35) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
             return clean_and_parse(content)
@@ -105,9 +114,17 @@ Output ONLY valid JSON matching this schema:
 
 def fallback_heuristic_plan(task):
     lower = task.lower()
-    if any(k in lower for k in ["financial intel", "healthcare", "insurance", "twice a day", "research cron", "recurring report"]):
+    # 1. Diagnostic / Troubleshooting / Fix requests
+    if any(k in lower for k in ["investigate", "fix", "debug", "culled", "orphan", "heartbeat", "why", "error", "failing"]):
         return [
-            {"id": 1, "task": "Create recurring research cron job script in .george/cron_jobs/ with deterministic sandbox runner and 43200s (twice daily) interval", "status": "pending", "tier": 1, "depends_on": [], "endpoint_tier": 1, "retry_count": 0},
+            {"id": 1, "task": "Inspect logs, process table, and relevant script configurations in workspace", "status": "pending", "tier": 1, "depends_on": [], "endpoint_tier": 1, "retry_count": 0},
+            {"id": 2, "task": "Analyze failure root cause (heartbeat, timeout, culling, or lock contention)", "status": "pending", "tier": 2, "depends_on": [1], "endpoint_tier": 1, "retry_count": 0},
+            {"id": 3, "task": "Apply surgical fix and test manual execution to confirm resolution", "status": "pending", "tier": 3, "depends_on": [2], "endpoint_tier": 1, "retry_count": 0},
+            {"id": 4, "task": "Verify operational stability and report findings to operator", "status": "pending", "tier": 4, "depends_on": [3], "endpoint_tier": 1, "retry_count": 0}
+        ]
+    elif any(k in lower for k in ["financial intel", "healthcare", "insurance", "twice a day", "research cron", "recurring report"]):
+        return [
+            {"id": 1, "task": "Create recurring research cron job script in .george/cron_jobs/ with deterministic sandbox runner", "status": "pending", "tier": 1, "depends_on": [], "endpoint_tier": 1, "retry_count": 0},
             {"id": 2, "task": "Execute initial verification run in isolated sandbox with creative non-greedy cross-section article retrieval and Discord delivery", "status": "pending", "tier": 2, "depends_on": [1], "endpoint_tier": 1, "retry_count": 0},
             {"id": 3, "task": "Synthesize operational verification and deliver active recurring research schedule confirmation to operator", "status": "pending", "tier": 3, "depends_on": [2], "endpoint_tier": 1, "retry_count": 0}
         ]
@@ -117,11 +134,17 @@ def fallback_heuristic_plan(task):
             {"id": 2, "task": "Inspect git repository status and branch state", "status": "pending", "tier": 1, "depends_on": [], "endpoint_tier": 2, "retry_count": 0},
             {"id": 3, "task": "Synthesize findings from both parallel inspections into overall readiness report", "status": "pending", "tier": 2, "depends_on": [1, 2], "endpoint_tier": 1, "retry_count": 0}
         ]
-    elif any(k in lower for k in ["cron", "weather", "schedule"]):
+    elif any(k in lower for k in ["cron", "schedule", "recurring"]):
         return [
-            {"id": 1, "task": "Implement weather lookup script with Discord DM notification and register in .george/cron_jobs/", "status": "pending", "tier": 1, "depends_on": [], "endpoint_tier": 1, "retry_count": 0},
-            {"id": 2, "task": "Verify cron job executable permissions and test script execution via bash_exec", "status": "pending", "tier": 2, "depends_on": [1], "endpoint_tier": 1, "retry_count": 0},
+            {"id": 1, "task": "Implement tailored cron script in .george/cron_jobs/ for scheduled objective", "status": "pending", "tier": 1, "depends_on": [], "endpoint_tier": 1, "retry_count": 0},
+            {"id": 2, "task": "Verify cron script permissions, interval headers, and test execution via bash_exec", "status": "pending", "tier": 2, "depends_on": [1], "endpoint_tier": 1, "retry_count": 0},
             {"id": 3, "task": "Synthesize operational verification and deliver active cron job status to operator", "status": "pending", "tier": 3, "depends_on": [2], "endpoint_tier": 1, "retry_count": 0}
+        ]
+    elif any(k in lower for k in ["live test", "run test", "execute test", "test run", "test the cron", "run a test"]):
+        return [
+            {"id": 1, "task": "Locate target script or test harness in workspace", "status": "pending", "tier": 1, "depends_on": [], "endpoint_tier": 1, "retry_count": 0},
+            {"id": 2, "task": "Execute live test run and inspect terminal output via bash_exec", "status": "pending", "tier": 2, "depends_on": [1], "endpoint_tier": 1, "retry_count": 0},
+            {"id": 3, "task": "Synthesize execution verification and report outcome to operator", "status": "pending", "tier": 3, "depends_on": [2], "endpoint_tier": 1, "retry_count": 0}
         ]
     elif any(k in lower for k in ["status", "inspect", "check", "phytology", "health", "audit", "verify", "view"]):
         return [
@@ -210,6 +233,27 @@ def expand_honeydew_plan(task, hd_file, macro_file, scratchpad_file, endpoint_ur
                         item["status"] = "done"
                         item["resolution"] = "Core metrics and sources already captured"
                         modified = True
+
+    # Dynamic Trajectory Pivot:
+    # If recent evidence indicates an unexpected blocker/error, insert an adaptive remediation milestone
+    if any(err_word in lower_evidence for err_word in ["command not found", "no such file", "permission denied", "deadlock", "timeout", "cull", "orphan", "failed"]):
+        has_remediation = any("remediat" in it.get("task", "").lower() or "fix" in it.get("task", "").lower() or "diagnos" in it.get("task", "").lower() for it in items if it.get("status") != "done")
+        if not has_remediation and len(items) < 6:
+            max_id = max((it.get("id", 0) for it in items), default=0)
+            pivot_step = {
+                "id": max_id + 1,
+                "task": "Remediate discovered execution blocker and verify operational fix",
+                "status": "pending",
+                "tier": len(items) + 1,
+                "depends_on": [it["id"] for it in items if it.get("status") == "done"],
+                "endpoint_tier": 1,
+                "retry_count": 0
+            }
+            if len(items) > 1 and any(k in items[-1].get("task", "").lower() for k in ["synthesize", "deliver", "final report"]):
+                items.insert(-1, pivot_step)
+            else:
+                items.append(pivot_step)
+            modified = True
 
     # Ensure at least one pending step exists if not all done
     pending_items = [it for it in items if it.get("status") != "done"]
