@@ -2,7 +2,8 @@
 # ── start_prism.sh: Sovereign PRISM Inference Runner ──
 set -euo pipefail
 
-TARGET_MODEL="${LLAMA_ARG_MODEL:-/models/frontier_qwen38/Blue-Llama-27B-Champion-v5.gguf}"
+TARGET_MODEL="${LLAMA_ARG_MODEL:-/models/frontier_qwen38/Qwen3.8-27B-UD-Q4_K_S.gguf}"
+[ ! -f "$TARGET_MODEL" ] && TARGET_MODEL="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Internal-MTP-Calibrated.gguf"
 [ ! -f "$TARGET_MODEL" ] && TARGET_MODEL="/models/Ternary-Bonsai-2-27B-PTQ1_0-mtp-lean.gguf"
 [ ! -f "$TARGET_MODEL" ] && TARGET_MODEL="/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf"
 
@@ -44,16 +45,47 @@ ARGS=(
     "-ctkd" "${LLAMA_ARG_CTKD:-q4_0}"
     "-ctvd" "${LLAMA_ARG_CTVD:-q4_0}"
     "--no-cache-idle-slots"
+    "--reasoning" "${LLAMA_ARG_REASONING:-on}"
+    "--reasoning-format" "${LLAMA_ARG_REASONING_FORMAT:-deepseek}"
     "--reasoning-effort" "${LLAMA_ARG_REASONING_EFFORT:-medium}"
     "--reasoning-budget" "${LLAMA_ARG_REASONING_BUDGET:-2048}"
     "--load-mode" "mmap"
     "--jinja"
+    "--chat-template-file" "/models/frontier_qwen38/blue_lodge_jinja_template.jinja"
 )
 
 # LoRA Adapter Attachment
 LORA_PATH="${LLAMA_ARG_LORA:-}"
-if [ -z "$LORA_PATH" ] && [[ "$TARGET_MODEL" == *"Champion-v5"* ]] && [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration4-Fused-LoRA.gguf ]; then
-    LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration4-Fused-LoRA.gguf"
+if ([ -z "$LORA_PATH" ] || [[ "$LORA_PATH" == *"Iteration"* ]]) && [[ "$TARGET_MODEL" == *"Champion-v5"* ]]; then
+    if [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v11-Fused-SVD32.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v11-Fused-SVD32.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v11-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v11-Fused-LoRA.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v10-Fused-SVD32.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v10-Fused-SVD32.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration9-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration9-Fused-LoRA.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration9-Fused-SVD32.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration9-Fused-SVD32.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration8-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration8-Fused-LoRA.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration8-Fused-SVD32.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration8-Fused-SVD32.gguf"
+    elif [ "${USE_SVD16:-0}" = "1" ] && [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration7-Fused-SVD16.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration7-Fused-SVD16.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration7-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration7-Fused-LoRA.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration6-Weighted-SVD16.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration6-Weighted-SVD16.gguf"
+    elif [ "${USE_SVD16:-1}" = "1" ] && [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration6-Fused-SVD16.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration6-Fused-SVD16.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration6-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration6-Fused-LoRA.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration5-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration5-Fused-LoRA.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration4-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration4-Fused-LoRA.gguf"
+    fi
 fi
 if [ -n "$LORA_PATH" ] && [ -f "$LORA_PATH" ]; then
     echo "[+] Attaching Fused LoRA Adapter: $LORA_PATH"
@@ -87,10 +119,14 @@ if [ "${ENABLE_MTP:-0}" = "1" ]; then
             "--spec-draft-ngl" "99"
         )
     elif [ -n "$DRAFT_PATH" ] && [ -f "$DRAFT_PATH" ]; then
-        echo "[+] Enabling External MTP Draft Speculative Decoding: $DRAFT_PATH"
+        DRAFT_N_MAX="${LLAMA_ARG_SPEC_DRAFT_N_MAX:-1}"
+        DRAFT_P_MIN="${LLAMA_ARG_SPEC_DRAFT_P_MIN:-0.70}"
+        echo "[+] Enabling External MTP Draft Speculative Decoding: $DRAFT_PATH (n-max ${DRAFT_N_MAX}, p-min ${DRAFT_P_MIN})"
         ARGS+=(
             "-md" "$DRAFT_PATH"
             "--spec-type" "draft-mtp"
+            "--spec-draft-n-max" "$DRAFT_N_MAX"
+            "--spec-draft-p-min" "$DRAFT_P_MIN"
             "-ngld" "99"
         )
     fi

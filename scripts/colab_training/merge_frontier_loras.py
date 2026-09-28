@@ -64,15 +64,40 @@ def main():
     base_names = sorted(list(set(k.replace(".lora_a", "").replace(".lora_b", "") for k in all_keys)))
     print(f"[*] Total unique projection bases to merge across {num_adapters} adapters: {len(base_names)}")
 
+    adapter_alphas = []
+    for k, r in enumerate(readers):
+        alpha_val = 16.0
+        for f in r.fields.values():
+            if f.name == "adapter.lora.alpha":
+                alpha_val = float(f.parts[f.data[0]][0])
+                break
+        adapter_alphas.append(alpha_val)
+        print(f"  [Adapter {k+1}] {os.path.basename(args.adapters[k])} | Native Alpha: {alpha_val}")
+
+    # Target scaling ratio for the merged adapter (default: 2.0 to match robust enhanced adapters)
+    target_scale_ratio = 2.0
+
+    # Determine maximum merged rank across projections to establish GGUF alpha
+    sample_merged_rank = 0
+    if base_names:
+        first_base = base_names[0]
+        name_a0 = f"{first_base}.lora_a"
+        for k in range(num_adapters):
+            if name_a0 in tensor_dicts[k]:
+                sample_merged_rank += tensor_dicts[k][name_a0].shape[0]
+
+    if args.method == "concat":
+        effective_merged_rank = sample_merged_rank if sample_merged_rank > 0 else 180
+    else:
+        effective_merged_rank = args.target_rank
+
     if args.alpha is not None and args.alpha != 16.0:
         effective_alpha = args.alpha
+        target_scale_ratio = effective_alpha / effective_merged_rank
     else:
-        if args.method == "concat":
-            effective_alpha = 16.0 * num_adapters
-        else:
-            effective_alpha = float(args.target_rank)
+        effective_alpha = float(target_scale_ratio * effective_merged_rank)
 
-    print(f"[*] Setting adapter.lora.alpha = {effective_alpha} to preserve exact training scale ratio.")
+    print(f"[*] Setting adapter.lora.alpha = {effective_alpha:.1f} (Merged Rank: {effective_merged_rank}, Scale Ratio s={target_scale_ratio:.2f})")
     writer = gguf.GGUFWriter(args.output, arch="qwen35")
     writer.add_string("general.type", "adapter")
     writer.add_string("adapter.type", "lora")
@@ -84,28 +109,37 @@ def main():
         name_a = f"{base}.lora_a"
         name_b = f"{base}.lora_b"
 
-        # Collect available components
+        # Collect available components with mathematically normalized scaling:
+        # Delta_k = (alpha_k / r_k) * B_k @ A_k
+        # Target = sum_k w_k * Delta_k = sum_k w_k * (alpha_k / r_k) * B_k @ A_k
+        # Loaded Delta = (alpha_merged / r_merged) * B_merged @ A_merged = target_scale_ratio * B_merged @ A_merged
+        # Therefore: c_k = w_k * (alpha_k / r_k) / target_scale_ratio
         active_pairs = []
         for k in range(num_adapters):
             if name_a in tensor_dicts[k] and name_b in tensor_dicts[k]:
-                active_pairs.append((weights[k], tensor_dicts[k][name_a], tensor_dicts[k][name_b]))
+                A_k = tensor_dicts[k][name_a]
+                B_k = tensor_dicts[k][name_b]
+                r_k = A_k.shape[0]
+                alpha_k = adapter_alphas[k]
+                s_k = alpha_k / float(r_k)
+                c_k = weights[k] * (s_k / target_scale_ratio)
+                active_pairs.append((c_k, A_k, B_k))
 
         if not active_pairs:
             continue
 
         if args.method == "concat":
-            # Exact analytical low-rank concatenation
-            A_list = [np.sqrt(w) * A for w, A, B in active_pairs]
-            B_list = [np.sqrt(w) * B for w, A, B in active_pairs]
+            # Exact analytical low-rank concatenation with scale normalization
+            A_list = [np.sqrt(c) * A for c, A, B in active_pairs]
+            B_list = [np.sqrt(c) * B for c, A, B in active_pairs]
             A_merged = np.vstack(A_list).astype(np.float32)
             B_merged = np.hstack(B_list).astype(np.float32)
             rank_str = f"Rank {A_merged.shape[0]}"
 
         elif args.method == "svd":
             # Exact fast low-rank SVD via thin QR decomposition:
-            # W = B_cat @ A_cat = (Q_B R_B) @ (R_A^T Q_A^T) = Q_B @ (R_B @ R_A^T) @ Q_A^T
-            A_list = [np.sqrt(w) * A for w, A, B in active_pairs]
-            B_list = [np.sqrt(w) * B for w, A, B in active_pairs]
+            A_list = [np.sqrt(c) * A for c, A, B in active_pairs]
+            B_list = [np.sqrt(c) * B for c, A, B in active_pairs]
             A_cat = np.vstack(A_list).astype(np.float32)
             B_cat = np.hstack(B_list).astype(np.float32)
 

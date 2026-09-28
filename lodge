@@ -50,7 +50,7 @@ export LODGE_SANDBOXES="${LODGE_SANDBOXES:-$LODGE_DIR/.sandboxes}"
 export LODGE_HISTORY_FILE="${LODGE_HISTORY_FILE:-$LODGE_DIR/.lodge_history}"
 export AGENT_PLAN_STEPS="${AGENT_PLAN_STEPS:-6}"
 export AGENT_MAX_STEPS="${AGENT_MAX_STEPS:-40}"
-export AGENT_MAX_TURNS="${AGENT_MAX_TURNS:-9999}"
+export AGENT_MAX_TURNS="${AGENT_MAX_TURNS:-30}"
 export AGENT_CHILD_MAX_TURNS="${AGENT_CHILD_MAX_TURNS:-200}"
 export MAX_RESEARCH_TURNS="${MAX_RESEARCH_TURNS:-200}"
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$LODGE_DIR:$PATH"
@@ -1002,7 +1002,7 @@ _cmd_limits() {
             fi ;;
         turns)
             if [ -z "$value" ]; then
-                ui_info "Parent agent max turns: ${AGENT_MAX_TURNS:-9999} (default: 9999)"
+                ui_info "Parent agent max turns: ${AGENT_MAX_TURNS:-30} (default: 30)"
                 ui_info "Child subagent max turns: ${AGENT_CHILD_MAX_TURNS:-200} (default: 200)"
                 ui_info "Research task max turns: ${MAX_RESEARCH_TURNS:-200} (default: 200)"
             else
@@ -1496,7 +1496,7 @@ _cmd_limits() {
             AGENT_PLAN_STEPS=6
             AGENT_INNER_LOOPS=6
             AGENT_MAX_STEPS=40
-            AGENT_MAX_TURNS=9999
+            AGENT_MAX_TURNS=30
             AGENT_CHILD_MAX_TURNS=200
             MAX_RESEARCH_TURNS=200
             declare -f limits_reset &>/dev/null && limits_reset >/dev/null 2>&1 || true
@@ -1748,7 +1748,7 @@ _cmd_limits() {
         "")
             ui_section "Agent Limits"
             printf "  %-22s %s\n" "Plan steps/subtask:" "$AGENT_PLAN_STEPS  (default: 6)"
-            printf "  %-22s %s\n" "Parent ReAct turns:" "${AGENT_MAX_TURNS:-9999}  (default: 9999)"
+            printf "  %-22s %s\n" "Parent ReAct turns:" "${AGENT_MAX_TURNS:-30}  (default: 30)"
             printf "  %-22s %s\n" "Child worker turns:" "${AGENT_CHILD_MAX_TURNS:-200}  (default: 200)"
             printf "  %-22s %s\n" "Research task turns:" "${MAX_RESEARCH_TURNS:-200}  (default: 200)"
             local _expand_show="disabled"

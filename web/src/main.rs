@@ -172,7 +172,12 @@ async fn main() {
 
 async fn get_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut gpus = Vec::new();
-    if let Ok(output) = tokio::process::Command::new("nvidia-smi")
+    let smi_bin = if std::path::Path::new("/usr/lib/wsl/lib/nvidia-smi").exists() {
+        "/usr/lib/wsl/lib/nvidia-smi"
+    } else {
+        "nvidia-smi"
+    };
+    if let Ok(output) = tokio::process::Command::new(smi_bin)
         .args([
             "--query-gpu=index,name,power.draw,utilization.gpu,memory.used,memory.total,temperature.gpu",
             "--format=csv,noheader,nounits",

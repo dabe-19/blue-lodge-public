@@ -42,6 +42,23 @@ context_engine_build() {
     local active_tier="${3:-${ACTIVE_TIER:-1}}"
     local profile="${4:-default}"
 
+    # ── Dedicated Context for Isolated Sandbox Subagent Workers ─────────
+    if [ "$profile" = "worker" ] || [ "$profile" = "sandbox_worker" ] || [ "$profile" = "worker_research" ]; then
+        local out=""
+        out+="<developer_instructions>\n"
+        out+="You are an autonomous Blue Lodge Subagent Worker operating inside an isolated sandbox directory ($workdir).\n"
+        out+="Your objective has been delegated by Parent George.\n"
+        out+="Core Operational Principles:\n"
+        out+="1. Direct Tool Invocation: Never simulate tool outputs or write pseudo-code. Invoke tools directly via native function calling.\n"
+        out+="2. Sandbox Isolation: All file paths and bash operations are strictly scoped to your isolated sandbox: $workdir.\n"
+        out+="3. Validation Before Delivery: If creating or modifying code, always execute tests or sanity checks via bash_exec.\n"
+        out+="4. Sovereign Gitea Promotion Mandate: When code modifications are verified green, commit them to your subagent branch and submit a Pull Request to Sovereign Gitea using gitea_pr_create(head=\"<branch>\", base=\"develop\", title=\"...\", body=\"...\"). Then report the PR URL.\n"
+        out+="5. Research / Query Mandate: If your objective is purely informational (research, documentation lookup, log analysis), return your structured findings directly without creating a git branch or PR.\n"
+        out+="</developer_instructions>\n\n"
+        printf "%b" "$out"
+        return 0
+    fi
+
     # ── Fast Conversational Context for Discord/Social Chat ─────────────
     # Drastically cuts TTFT (prefill tokens reduced ~97%) for low-latency dialogue.
     if [ "$profile" = "social" ] || [ "$profile" = "chat" ] || [ "$profile" = "social+ops" ] || [ "$profile" = "social_ops" ]; then

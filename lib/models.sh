@@ -20,7 +20,7 @@ LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
 
 # ── Model Slots ────────────────────────────────────────────────
 # These are the Ollama model names (e.g., "blue-lodge-minist-think:4b")
-LODGE_MODEL_PRIMARY="${LODGE_MODEL_PRIMARY:-${ACTIVE_ENDPOINT_MODEL:-ternary-bonsai-27b}}"
+LODGE_MODEL_PRIMARY="${LODGE_MODEL_PRIMARY:-${ACTIVE_ENDPOINT_MODEL:-qwen38-27b}}"
 LODGE_MODEL_SECONDARY="${LODGE_MODEL_SECONDARY:-${TIER0_MODEL:-gemma4-e2b-inst}}"
 LODGE_SINGLE_MODEL="${LODGE_SINGLE_MODEL:-1}"   # 1=single model mode (primary only, default), 0=dual model hot-swap
 
@@ -60,12 +60,14 @@ _MODELS_REGISTRY=(
     "qwen35-9b-inst^blue-lodge-qwen35-inst:9b^hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL^instruct^0^none^<|im_end|>^0.7^1.0^1.5^32768^16384^0.8^20^0.0^Qwen 3.5 9B instruct. Strong central coding tier.^central"
     "granite41-8b-inst^blue-lodge-granite41-inst:8b^hf.co/unsloth/granite-4.1-8b-GGUF:Q4_K_M^instruct^0^none^<|end_of_text|>^0.6^1.0^0.0^32768^12288^0.9^20^0.0^IBM Granite 4.1 8B instruct. Central structured reasoning tier.^central"
     "ternary-bonsai-27b^ternary-bonsai-27b^prism-ml/Ternary-Bonsai-2-27B-gguf^thinking^1^qwen^<|im_end|>^1.0^1.0^0.0^65536^32768^0.95^20^0.0^Prism Ternary Bonsai 2 27B PTQ1_0 MTP GGUF. High-efficiency 27B ternary model.^central"
+    "qwen38-27b^blue-lodge-qwen38-27b^unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_S^thinking^1^qwen^<|im_end|>^1.0^1.0^0.0^65536^32768^0.95^20^0.0^Qwen 3.8 27B UD-Q4_K_S Unsloth Dynamic quant with Q4_0 MTP speculative decoding. Dual-GPU pooled sovereign node.^central"
 )
 
 # ── Curated model presentation metadata ───────────────────────
 # Keep registry entries focused on runtime behavior while menu/family
 # presentation and capability hints live in dedicated metadata maps.
 _MODELS_CURATED_ORDER=(
+    "qwen38-27b"
     "gemma4-e2b-inst"
     "qwen35-4b-inst"
     "qwen35-4b-think"
@@ -87,6 +89,7 @@ _MODELS_FAMILY_ORDER=(
 )
 
 declare -A _MODELS_FAMILY_LABEL=(
+    [qwen38]="Qwen 3.8 (Qwen)"
     [gemma4]="Gemma 4 (Google)"
     [qwen35]="Qwen 3.5 (Qwen)"
     [granite41]="Granite 4.1 (IBM)"
@@ -95,6 +98,7 @@ declare -A _MODELS_FAMILY_LABEL=(
 )
 
 declare -A _MODELS_FAMILY_DESC=(
+    [qwen38]="frontier 27B instruct with MTP speculative decoding"
     [gemma4]="edge E2B/E4B and central 12B instruct"
     [qwen35]="instruct edge/central plus native thinking variant"
     [granite41]="3B edge and 8B central instruct"
@@ -103,6 +107,7 @@ declare -A _MODELS_FAMILY_DESC=(
 )
 
 declare -A _MODELS_FAMILY_KEYS=(
+    [qwen38]="qwen38-27b"
     [gemma4]="gemma4-e2b-inst gemma4-e4b-inst gemma4-12b-inst"
     [qwen35]="qwen35-2b-inst qwen35-4b-inst qwen35-4b-think qwen35-9b-inst"
     [granite41]="granite41-3b-inst granite41-8b-inst"
@@ -111,6 +116,7 @@ declare -A _MODELS_FAMILY_KEYS=(
 )
 
 declare -A _MODELS_MODEL_FAMILY=(
+    [qwen38-27b]="qwen38"
     [gemma4-e2b-inst]="gemma4"
     [gemma4-e4b-inst]="gemma4"
     [gemma4-12b-inst]="gemma4"

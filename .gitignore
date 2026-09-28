@@ -2,7 +2,10 @@
 /tmp/
 .lodge-snapshots/
 .lodge-sandboxes/
-.george/
+.george/*
+!.george/cron_jobs/
+!.george/tools/
+!.george/slash/
 .sandboxes/
 .lodge_history
 /responses/

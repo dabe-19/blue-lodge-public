@@ -21,6 +21,7 @@ export DISCORD_LAST_SEEN_FILE="$DISCORD_SESSIONS_DIR/last_seen.json"
 export DISCORD_KNOWN_DMS_FILE="$DISCORD_SESSIONS_DIR/known_dms.json"
 export DISCORD_CHANNELS_DB="$GEORGE_DIR/discord_channels.db"
 export DISCORD_USERS_DB="$GEORGE_DIR/discord_users.db"
+export DISCORD_PROFILES_DB="$GEORGE_DIR/discord_profiles.db"
 export DISCORD_BRIDGE_LOG="$DISCORD_SESSIONS_DIR/bridge.log"
 
 cleanup() {
@@ -228,12 +229,68 @@ it "records and formats multi-turn dialogue context" && {
     assert_empty "$cleared"
 }
 
-describe "Desktop Live Monitor Script"
+describe "User Profile Management: discord_profile_get / discord_profile_set"
 
-it "verifies scripts/discord_live_monitor.sh exists and is executable" && {
-    assert_file_exists "$LODGE_DIR/scripts/discord_live_monitor.sh"
-    [ -x "$LODGE_DIR/scripts/discord_live_monitor.sh" ]
+it "stores and retrieves user location and notes in discord_profiles.db" && {
+    discord_bridge_init
+    discord_profile_set "user_123" "location" "Appleton, WI"
+    discord_profile_set "user_123" "notes" "Operator of Blue Lodge"
+
+    prof=$(discord_profile_get "user_123")
+    assert_contains "$prof" "Appleton, WI"
+    assert_contains "$prof" "Operator of Blue Lodge"
+}
+
+describe "Context Injection Fresh Task Isolation"
+
+it "isolates fresh task turn 1 from past history and includes clean user profile" && {
+    export _DISCORD_IN_ACTIVE_PIPE=1
+    export _DISCORD_PIPE_TURN=1
+    export DISCORD_PROFILES_DB="$GEORGE_DIR/discord_profiles.db"
+
+    # Populate profile
+    sqlite3 "$DISCORD_PROFILES_DB" "INSERT OR REPLACE INTO discord_user_profiles (user_id, username, location, notes, interaction_count, updated_at) VALUES ('user_456', 'dabe', 'Appleton, WI', 'Lead Architect', 1, $(date +%s));"
+
+    # Mock react_run to inspect target_goal
+    CAPTURED_GOAL=""
+    react_run() {
+        CAPTURED_GOAL="$1"
+        local s_id="${REACT_SESSION_ID:-session_mock}"
+        mkdir -p "$LODGE_DIR/.george/workspaces/$s_id"
+        echo "Tonight in Appleton, WI it is clear and 55F." > "$LODGE_DIR/.george/workspaces/$s_id/final_reply.txt"
+    }
+
+    out_file="$TEST_TMP/reply_iso.txt"
+    discord_generate_response "What is the weather like tonight?" "chan_iso_1" "dabe" "" "" "user_456" "$out_file"
+
+    assert_contains "$CAPTURED_GOAL" "Location: Appleton, WI"
+    assert_contains "$CAPTURED_GOAL" "What is the weather like tonight?"
+    # Must NOT contain old conversation context header
+    assert_not_contains "$CAPTURED_GOAL" "Recent Conversation Context"
+
+    reply=$(cat "$out_file")
+    assert_contains "$reply" "Appleton, WI"
+}
+
+describe "Native Tool Wiring: discord_read"
+
+it "exposes discord_read in social bundle" && {
+    tools=$(native_tools_bundle_tools "+social")
+    assert_contains "$tools" "discord_read"
+}
+
+it "dispatches discord_read through native_tools_dispatch" && {
+    api_get_key() { echo "mock_token"; }
+    api_require_key() { echo "mock_token"; }
+
+    api_get() {
+        echo '[{"author":{"username":"dabe_"},"content":"Hello from discord"}]'
+    }
+
+    args_json='{"channel": "1477077957691576393", "count": 5}'
+    resp=$(native_tools_dispatch "call_read_1" "discord_read" "$args_json" "$TEST_TMP")
     assert_ok $?
+    assert_contains "$resp" "[dabe_] Hello from discord"
 }
 
 test_end

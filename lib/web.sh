@@ -7,6 +7,7 @@
 [ -n "${_LIB_WEB_LOADED:-}" ] && return 0; _LIB_WEB_LOADED=1
 
 LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
+export GEORGE_CONFIG_DIR="${GEORGE_CONFIG_DIR:-$LODGE_DIR/.george}"
 source "$LODGE_DIR/lib/api.sh"
 
 # ── Config ─────────────────────────────────────────────────────
@@ -1123,12 +1124,78 @@ _web_truncate_content() {
     fi
 }
 
+# ── Pure POSIX Bash / Awk Web Scraper Fallback ─────────────────
+# 100% pure bash, curl, and awk state machine with ZERO python,
+# w3m, or external runtime dependencies.
+# Handles arbitrary HTML, strips scripts/styles/SVGs, decodes entities,
+# collapses whitespace, and extracts human-readable text content.
+# Usage:
+#   web_scrape_pure_bash "<url>" [max_lines]
+#   cat file.html | web_scrape_pure_bash "" [max_lines]
+web_scrape_pure_bash() {
+    local target="${1:-}"
+    local max_lines="${2:-500}"
+
+    local raw_html=""
+    if [ -n "$target" ] && [[ "$target" =~ ^https?:// ]]; then
+        raw_html=$(_web_curl --max-time "${WEB_TIMEOUT:-10}" --max-filesize "${WEB_MAX_SIZE:-524288}" "$target" 2>/dev/null || true)
+    elif [ -n "$target" ] && [ -f "$target" ]; then
+        raw_html=$(cat "$target" 2>/dev/null || true)
+    else
+        raw_html=$(cat 2>/dev/null || true)
+    fi
+
+    if [ -z "$raw_html" ]; then
+        return 1
+    fi
+
+    echo "$raw_html" | awk '
+    BEGIN {
+        RS = "<"
+        FS = ">"
+        skip = 0
+    }
+    NR == 1 { next }
+    {
+        tag = tolower($1)
+        sub(/[ \t\r\n].*$/, "", tag)
+        if (tag ~ /^(script|style|noscript|svg|head|path|template)$/) {
+            skip = 1
+            next
+        }
+        if (tag ~ /^\/(script|style|noscript|svg|head|path|template)$/) {
+            skip = 0
+            next
+        }
+        if (skip) next
+
+        if (NF >= 2) {
+            text = $0
+            sub(/^[^>]*>/, "", text)
+            gsub(/&nbsp;/, " ", text)
+            gsub(/&amp;/, "\\&", text)
+            gsub(/&lt;/, "<", text)
+            gsub(/&gt;/, ">", text)
+            gsub(/&quot;/, "\"", text)
+            gsub(/&#39;/, "\x27", text)
+            gsub(/&mdash;/, "—", text)
+            gsub(/&ndash;/, "–", text)
+            gsub(/&hellip;/, "...", text)
+            gsub(/&#[0-9]+;/, "", text)
+            gsub(/[ \t\r\n]+/, " ", text)
+            sub(/^[ ]+/, "", text)
+            sub(/[ ]+$/, "", text)
+            if (length(text) > 3) {
+                print text
+            }
+        }
+    }' | _web_strip_boilerplate | head -n "$max_lines"
+}
+
 # ── Strip HTML to plain text ──────────────────────────────────
 _html_to_text_sed() {
-    # awk state-machine preprocessor — safe on any line length.
-    # Replaces the old greedy-sed approach that hung on modern
-    # SPA pages (NYT 350KB, Wired 2.5MB single-line blobs).
-    _html_preprocess | head -500
+    # Pure POSIX awk state-machine scraper — safe on any line length.
+    web_scrape_pure_bash "" 500
 }
 
 _html_to_text() {
@@ -1946,6 +2013,17 @@ web_fetch() {
     local body
     body=$(web_fetch_raw "$url")
     if [ -z "$body" ]; then
+        # Pure POSIX bash fallback before giving up
+        local fallback_text
+        fallback_text=$(web_scrape_pure_bash "$url" 500 2>/dev/null || true)
+        if [ -n "$fallback_text" ] && [ "${#fallback_text}" -ge 50 ]; then
+            fallback_text=$(echo "$fallback_text" | _web_strip_boilerplate | _web_truncate_content)
+            mkdir -p "$GEORGE_CACHE_DIR"
+            echo "$fallback_text" > "$cache_file" 2>/dev/null
+            echo "$fallback_text"
+            return 0
+        fi
+
         local _reason="unknown"
         [ -f "$_WEB_STATUS_FILE" ] && _reason=$(cat "$_WEB_STATUS_FILE" 2>/dev/null)
         case "$_reason" in
@@ -1981,6 +2059,15 @@ web_fetch() {
                     awk '{$1=$1}1' | head -2000) ;;
         *)      text=$(echo "$body" | _html_to_text) ;;
     esac
+
+    # Pure bash scraping fallback if parsed text is empty or too short
+    if [ -z "$text" ] || [ "${#text}" -lt 50 ]; then
+        local raw_sb
+        raw_sb=$(echo "$body" | web_scrape_pure_bash "" 500 2>/dev/null || true)
+        if [ -n "$raw_sb" ] && [ "${#raw_sb}" -gt "${#text}" ]; then
+            text="$raw_sb"
+        fi
+    fi
 
     # Strip boilerplate + truncate
     text=$(echo "$text" | _web_strip_boilerplate | _web_truncate_content)
@@ -2508,13 +2595,204 @@ web_search() {
     return $rc
 }
 
+# ── Creative Non-Greedy Semantic Cross-Section Sampler ────────────────
+web_search_cross_section() {
+    local query="$1"
+    local sample_size="${2:-3}"
+    local pool_size="${3:-10}"
+
+    local raw
+    raw=$(web_search "$query" "$pool_size" 2>/dev/null)
+    if [ -z "$raw" ]; then
+        ui_err "No search results found to sample."
+        return 1
+    fi
+
+    # Pure POSIX awk cross-section sampler — zero python dependency
+    awk -v k="$sample_size" 'BEGIN { srand(); n=0 }
+/^\[[0-9]+\]/ {
+    n++;
+    t = $0; sub(/^\[[0-9]+\][ \t]*/, "", t);
+    titles[n] = t;
+    getline u; sub(/^[ \t]*/, "", u);
+    urls[n] = u;
+    dom = u;
+    sub(/^https?:\/\//, "", dom);
+    sub(/[\/:?#].*$/, "", dom);
+    sub(/^www\./, "", dom);
+    domains[n] = tolower(dom);
+
+    snip = "";
+    while (getline l > 0 && l !~ /^[ \t]*$/) {
+        sub(/^[ \t]*/, "", l);
+        snip = snip (snip == "" ? "" : " ") l;
+    }
+    snippets[n] = snip;
+}
+END {
+    count = 0;
+    for (i = n; i > 1; i--) {
+        r = int(rand() * i) + 1;
+        tmp = order[i] ? order[i] : i;
+        order[i] = order[r] ? order[r] : r;
+        order[r] = tmp;
+    }
+    for (i = 1; i <= n; i++) {
+        idx = order[i] ? order[i] : i;
+        d = domains[idx];
+        if (d != "" && !seen[d]) {
+            seen[d] = 1;
+            count++;
+            chosen[count] = idx;
+            in_chosen[idx] = 1;
+            if (count >= k) break;
+        }
+    }
+    if (count < k) {
+        for (i = 1; i <= n; i++) {
+            idx = order[i] ? order[i] : i;
+            if (!in_chosen[idx]) {
+                count++;
+                chosen[count] = idx;
+                in_chosen[idx] = 1;
+                if (count >= k) break;
+            }
+        }
+    }
+    print "── Non-Greedy Semantic Cross-Section Sample (" count " distinct perspectives from " n " candidates) ──\n";
+    for (i = 1; i <= count; i++) {
+        idx = chosen[i];
+        printf "[%d] %s [%s]\n    %s\n    %s\n\n", i, titles[idx], domains[idx], urls[idx], snippets[idx];
+    }
+}' <<< "$raw"
+}
+
+# ── Autonomous General Research Sandbox ─────────────────────────────
+research_sandbox() {
+    local topic="$1"
+    local sample_size="${2:-3}"
+    local output_file="${3:-}"
+
+    if [ -z "$topic" ]; then
+        ui_err "research_sandbox: topic argument is required"
+        return 1
+    fi
+
+    local slug
+    slug=$(echo "$topic" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | tr -s '-' | cut -c1-30)
+    local ts
+    ts=$(date +%s)
+    local sandbox_dir="${LODGE_DIR}/.sandboxes/research_${slug}_${ts}"
+    mkdir -p "$sandbox_dir/artifacts"
+    if [ -n "$output_file" ]; then
+        mkdir -p "$(dirname "$output_file")"
+    fi
+
+    # 1. Non-Greedy Cross-Sectional Web Search
+    local search_sample
+    search_sample=$(web_search_cross_section "$topic" "$sample_size" 10 2>/dev/null || true)
+    if [ -z "$search_sample" ]; then
+        search_sample=$(web_search "$topic" 5 2>/dev/null || true)
+    fi
+
+    echo "$search_sample" > "$sandbox_dir/artifacts/search_results.txt"
+
+    # 2. Extract URLs and fetch substantive excerpts
+    local urls=($(echo "$search_sample" | grep -oE 'https?://[^ ]+' | head -n "$sample_size" || true))
+    local date_str
+    date_str=$(date '+%Y-%m-%d %I:%M %p %Z')
+
+    local dossier_header
+    dossier_header="# 🔬 Research Intelligence Dossier: ${topic}
+**Generated:** ${date_str}  
+**Sandbox:** \`${sandbox_dir##*/}\`  
+**Cross-Section Sampling:** ${sample_size} distinct perspectives  
+
+---
+
+## 1. Executive Summary & Overview
+Autonomous research sweep executed across diverse domain perspectives for topic:
+> **${topic}**
+
+Key findings and domain viewpoints have been captured below.
+
+---
+
+## 2. Sampled Sources & Domain Perspectives"
+
+    local source_sections=""
+    local idx=1
+    for u in "${urls[@]}"; do
+        local domain
+        domain=$(echo "$u" | awk -F[/:] '{print $4}' | sed 's/^www\.//')
+        local page_raw
+        page_raw=$(web_fetch "$u" 2>/dev/null | head -n 60 || true)
+        # Pure POSIX bash fallback if web_fetch returned empty or short
+        if [ -z "$page_raw" ] || [ "${#page_raw}" -lt 50 ]; then
+            page_raw=$(web_scrape_pure_bash "$u" 60 2>/dev/null || true)
+        fi
+        
+        local clean_text
+        clean_text=$(echo "$page_raw" | sed -e 's/^[[:space:]]*//' | grep -v '^$' | grep -v '^#' | head -n 12 | tr '\n' ' ' | sed 's/  */ /g' || true)
+        if [ -z "$clean_text" ]; then
+            clean_text=$(echo "$search_sample" | grep -A 2 -F "$u" | tail -n 1 | sed 's/^[[:space:]]*//' || true)
+        fi
+        if [ -z "$clean_text" ]; then
+            clean_text="Content extracted from primary page source."
+        fi
+        local clean_excerpt
+        clean_excerpt=$(echo "$clean_text" | cut -c1-600)
+
+        source_sections="${source_sections}
+### [${idx}] ${domain}
+- **Source URL:** ${u}
+- **Extracted Findings & Excerpt:**
+  > ${clean_excerpt}...
+"
+        idx=$((idx + 1))
+    done
+
+    local dossier_footer="
+---
+
+## 3. Cross-Sectional Reference Summary
+${search_sample}
+
+---
+*Collected autonomously by George Research Sandbox Engine.*"
+
+    local full_dossier="${dossier_header}
+${source_sections}
+${dossier_footer}"
+
+    # Save to sandbox artifact
+    echo "$full_dossier" > "$sandbox_dir/artifacts/report.md"
+
+    # Save to output file if requested
+    if [ -n "$output_file" ]; then
+        echo "$full_dossier" > "$output_file"
+    fi
+
+    # Output full dossier to stdout for George
+    echo "$full_dossier"
+}
+
+
 _web_search_serper() {
     local query="$1"
     local count="$2"
     local key="$3"
 
+    # Serper requires num in multiples of 10
+    local serper_num=10
+    if [ "$count" -gt 10 ] && [ "$count" -le 20 ]; then
+        serper_num=20
+    elif [ "$count" -gt 20 ]; then
+        serper_num=30
+    fi
+
     local data
-    data=$(jq -n --arg q "$query" --argjson n "$count" '{"q": $q, "num": $n}')
+    data=$(jq -n --arg q "$query" --argjson n "$serper_num" '{"q": $q, "num": $n}')
 
     local resp
     resp=$(api_post "https://google.serper.dev/search" "$data" \

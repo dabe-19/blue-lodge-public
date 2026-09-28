@@ -1680,7 +1680,7 @@ native_tools_get_schemas() {
 }
 
 # ── Composable Tool Bundles & Bedrock Taxonomy ────────────────────────
-_BEDROCK_TOOLS="bash_exec,slash_command_exec,phytology_manage,file_read,file_write,file_edit,pdf_read,workflow_plan,workflow_run,ask_operator,task_wait,tool_search,milestone_complete"
+_BEDROCK_TOOLS="bash_exec,slash_command_exec,phytology_manage,file_read,file_write,file_edit,pdf_read,workflow_plan,workflow_run,ask_operator,task_wait,tool_search,milestone_complete,subagent_spawn,subagent_status,subagent_await,subagent_reap"
 
 # Map bundles to their constituent tool names
 native_tools_bundle_tools() {
@@ -1820,6 +1820,12 @@ native_tools_resolve_profile() {
     local tool_list="$_BEDROCK_TOOLS"
 
     case "$profile" in
+        worker|sandbox_worker)
+            tool_list="bash_exec,file_read,file_write,file_edit,file_append,file_grep,dir_list,code_symbol_read,code_symbol_patch,git_commit,git_push,gitea_pr_create,milestone_complete"
+            ;;
+        worker_research)
+            tool_list="bash_exec,file_read,file_grep,dir_list,web_search,web_fetch,github_search,milestone_complete"
+            ;;
         research)
             tool_list+=",$(native_tools_bundle_tools '+web'),$(native_tools_bundle_tools '+files'),$(native_tools_bundle_tools '+vision'),$(native_tools_bundle_tools '+memory')"
             ;;
@@ -3415,7 +3421,11 @@ $_ts_v_err
                 local idx strat
                 idx=$(echo "$args_json" | jq -r '.index // empty')
                 strat=$(echo "$args_json" | jq -r '.strategy // "merge"')
-                output=$(gitea_pr_merge "$idx" "$strat" 2>&1)
+                if [[ "$idx" =~ ^PR-[0-9]+$ ]] || ! pr_is_gitea_online; then
+                    output=$(pr_accept "$idx" "$strat" 2>&1)
+                else
+                    output=$(gitea_pr_merge "$idx" "$strat" 2>&1)
+                fi
                 exit_code=$?
                 ;;
             gitea_issue_create)

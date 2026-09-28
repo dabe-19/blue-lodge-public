@@ -1132,43 +1132,45 @@
           window._autonomicEventSource.close();
           window._autonomicEventSource = null;
         }
-        try {
-          const aes = new EventSource(`/api/stream/task/${activeTask.id}`);
-          window._autonomicEventSource = aes;
-          aes.addEventListener('log', (e) => {
-            const stream = autonomicExpandedStage.querySelector('.expanded-log-stream');
-            const jumpBtn = autonomicExpandedStage.querySelector('.stream-jump-btn');
-            if (stream && e.data) {
-              const wasPinned = stream._autoScrollPinned !== false;
-              const prevScrollTop = stream.scrollTop;
+        if (activeTask.type !== 'discord' && activeTask.type !== 'cron') {
+          try {
+            const aes = new EventSource(`/api/stream/task/${activeTask.id}`);
+            window._autonomicEventSource = aes;
+            aes.addEventListener('log', (e) => {
+              const stream = autonomicExpandedStage.querySelector('.expanded-log-stream');
+              const jumpBtn = autonomicExpandedStage.querySelector('.stream-jump-btn');
+              if (stream && e.data) {
+                const wasPinned = stream._autoScrollPinned !== false;
+                const prevScrollTop = stream.scrollTop;
 
-              if (stream.textContent === 'Autonomous task active. Monitoring stream...') {
-                stream.textContent = e.data;
-              } else if (stream.textContent.endsWith('\n') || e.data.startsWith('\n')) {
-                stream.textContent += e.data;
-              } else {
-                stream.textContent += '\n' + e.data;
-              }
-              stream.dataset.lastLogs = stream.textContent;
+                if (stream.textContent === 'Autonomous task active. Monitoring stream...') {
+                  stream.textContent = e.data;
+                } else if (stream.textContent.endsWith('\n') || e.data.startsWith('\n')) {
+                  stream.textContent += e.data;
+                } else {
+                  stream.textContent += '\n' + e.data;
+                }
+                stream.dataset.lastLogs = stream.textContent;
 
-              if (wasPinned) {
-                stream.scrollTop = stream.scrollHeight;
-                if (jumpBtn) jumpBtn.classList.remove('visible');
-              } else {
-                stream.scrollTop = prevScrollTop;
-                if (jumpBtn) jumpBtn.classList.add('visible');
+                if (wasPinned) {
+                  stream.scrollTop = stream.scrollHeight;
+                  if (jumpBtn) jumpBtn.classList.remove('visible');
+                } else {
+                  stream.scrollTop = prevScrollTop;
+                  if (jumpBtn) jumpBtn.classList.add('visible');
+                }
               }
-            }
-          });
-          aes.addEventListener('phase', (e) => {
-            const phaseText = autonomicExpandedStage.querySelector('.task-phase-text');
-            if (phaseText && e.data) phaseText.textContent = `[${e.data}]`;
-          });
-          aes.addEventListener('done', () => {
-            if (aes) aes.close();
-            if (window._autonomicEventSource === aes) window._autonomicEventSource = null;
-          });
-        } catch (e) {}
+            });
+            aes.addEventListener('phase', (e) => {
+              const phaseText = autonomicExpandedStage.querySelector('.task-phase-text');
+              if (phaseText && e.data) phaseText.textContent = `[${e.data}]`;
+            });
+            aes.addEventListener('done', () => {
+              if (aes) aes.close();
+              if (window._autonomicEventSource === aes) window._autonomicEventSource = null;
+            });
+          } catch (e) {}
+        }
 
         autonomicExpandedStage.querySelector('.mini-collapse-btn').addEventListener('click', () => {
           if (window._autonomicEventSource) {

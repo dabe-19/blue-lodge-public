@@ -18,6 +18,9 @@ source "$LODGE_DIR/lib/limits.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/alerts.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/mcp_server_gitea.sh" 2>/dev/null || true
 source "$LODGE_DIR/lib/treesitter.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/pr.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/fifo_ipc.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/react.sh" 2>/dev/null || true
 
 # ── Central Subagents Registry ───────────────────────────────────────
 subagents_registry_file() {
@@ -260,510 +263,129 @@ _subagent_worker_run() {
 
     _subagent_log_event "$sub_id" "SPAWN" "Tier $target_tier ($tier_model) | Objective: $objective | Worktree: $sub_dir" "$sub_fifo"
 
-    local sub_history="$sub_dir/history.log"
-    : > "$sub_history"
-
-    local sub_system="You are an autonomous subagent worker (Tier $target_tier: $tier_model).
-Role: $tier_roles
-Your specific objective: $objective
-Parent Context: $parent_context
-
-You operate in an isolated git worktree sandbox. You can execute tools via slash commands:
-- /read <file> [start] [count] : Read file contents
-- /append <file> <content> : Append text to a file
-- /bash <cmd> : Execute shell command in workspace (e.g. echo, sed, grep, git)
-- /upstream propose <title> --reason <text> --metric <proof> : Propose your deliverable upstream as a PR to develop
-- /web search <query> : Search the web
-- /web fetch <url> : Fetch markdown page
-- /respond <text> : Conclude your task and return the final synthesized answer.
-
-WORKER PROTOCOL:
-1. Never repeatedly /read the same file. After reading, proceed immediately to modifying the target file.
-2. To modify files, use a python or bash code block, or a single-line command:
-```python
-# python code here to modify file
-```
-or Action: /bash sed -i ...
-3. When changes are verified, propose upstream immediately:
-Action: /upstream propose \"<title>\" --reason \"<reason>\" --metric \"<metric>\"
-4. Conclude immediately after:
-Action: /respond <summary of deliverable>
-
-Output format for each turn:
-Thought: <brief reasoning>
-Action: <slash-command> (or code block)"
-
-# ── Subagent Auto-Compaction Engine ──────────────────────────────────
-_subagent_compact() {
-    local sub_id="$1"
-    local sub_history="$2"
-    local tier_url="$3"
-    local tier_model="$4"
-    local sub_fifo="$5"
-
-    _subagent_log_event "$sub_id" "COMPACT" "Slot tokens approaching threshold (18k+). Executing semantic auto-compaction..." "$sub_fifo"
-
-    local history_summary
-    history_summary=$(tail -c 12000 "$sub_history" 2>/dev/null)
-
-    local prompt="The following is an ongoing subagent trajectory. Summarize the key accomplishments, discovered facts/line numbers, files modified, and pending tasks concisely:\n\n$history_summary"
-
-    local payload
-    payload=$(jq -n \
-        --arg sys "You are a state summarizer. Produce a concise structured summary: Accomplished, Key Facts, Pending Goals." \
-        --arg prompt "$prompt" \
-        --arg model "$tier_model" \
-        '{
-            model: $model,
-            messages: [
-                {"role": "system", "content": $sys},
-                {"role": "user", "content": $prompt}
-            ],
-            temperature: 0.2,
-            reasoning_effort: "low",
-            max_tokens: 1536
-        }')
-
-    local summary_resp
-    summary_resp=$(curl -s --max-time 45 "$tier_url/v1/chat/completions" \
-        -H "Content-Type: application/json" \
-        -d "$payload" 2>/dev/null)
-
-    local summary_text
-    summary_text=$(echo "$summary_resp" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
-
-    if [ -n "$summary_text" ]; then
-        local last_turn
-        last_turn=$(tail -c 2500 "$sub_history" 2>/dev/null)
-        printf "[PREVIOUS CONTEXT COMPACTED]:\n%s\n\n%s\n" "$summary_text" "$last_turn" > "$sub_history"
-        _subagent_log_event "$sub_id" "COMPACT" "Context compacted successfully. Memory runway refreshed." "$sub_fifo"
-        return 0
-    else
-        _subagent_log_event "$sub_id" "WARN" "Auto-compaction summarization failed; continuing with trimmed history." "$sub_fifo"
-        tail -c 6000 "$sub_history" > "${sub_history}.tmp" && mv "${sub_history}.tmp" "$sub_history"
-        return 1
+    # Determine worker profile: worker_research vs worker (code/files/git)
+    local sub_profile="worker"
+    if [[ "$objective" =~ (research|query|search|find|analyze|explain|inspect|report) ]] && ! [[ "$objective" =~ (create|edit|fix|update|implement|write|delete|refactor|build|test) ]]; then
+        sub_profile="worker_research"
     fi
-}
 
-    local turn=1
-    local final_result=""
-    local running_tokens=0
-    local kv_prefix_tokens=2815 # Invariant system prompt & tool manifest baseline
-    local consecutive_failures=0
-    local last_failed_action=""
+    # Initialize subagent flow channel
+    declare -f fifo_channel_open &>/dev/null && fifo_channel_open "sub_${sub_id}" 5 2>/dev/null || true
+
+    # Configure environment for scoped ReAct worker execution
+    export ACTIVE_TIER="$target_tier"
+    export ACTIVE_ENDPOINT_URL="$tier_url"
+    export ACTIVE_ENDPOINT_MODEL="$tier_model"
+    export AGENT_MODE="worker"
+    export REACT_TOOL_FILTER="$sub_profile"
+
+    declare -f ui_dashboard_worker_update &>/dev/null && ui_dashboard_worker_update "$sub_id" "starting react worker ($sub_profile)" >&2
+    subagents_update_status "$sub_id" "RUNNING" 1
+
+    _subagent_log_event "$sub_id" "START" "Executing scoped ReAct loop in $sub_dir ($sub_profile)" "$sub_fifo"
+
+    local react_ec=0
+    local worker_res=""
+    worker_res=$(react_run "$objective" "$sub_dir" "$max_turns" 1.0 4096 "$sub_profile" "sub_${sub_id}" "worker" 2>&1) || react_ec=$?
+
     local circuit_tripped=0
     local circuit_reason=""
-
-    while [ "$turn" -le "$max_turns" ]; do
-        declare -f ui_dashboard_worker_update &>/dev/null && ui_dashboard_worker_update "$sub_id" "turn $turn/$max_turns (tok: $running_tokens)" >&2
-        subagents_update_status "$sub_id" "RUNNING" "$turn"
-
-        # Check in-flight control FIFO (non-blocking)
-        if [ -p "$ctrl_fifo" ]; then
-            local ctrl_cmd=""
-            read -t 0.05 -r ctrl_cmd <> "$ctrl_fifo" 2>/dev/null || true
-            if [ -n "$ctrl_cmd" ]; then
-                case "$ctrl_cmd" in
-                    PAUSE*)
-                        subagents_update_status "$sub_id" "PAUSED" "$turn"
-                        _subagent_log_event "$sub_id" "CONTROL" "Paused by parent. Awaiting RESUME..." "$sub_fifo"
-                        declare -f ui_info &>/dev/null && ui_info "Subagent $sub_id paused by parent. Awaiting RESUME..."
-                        while true; do
-                            local resume_cmd=""
-                            read -r resume_cmd <> "$ctrl_fifo" 2>/dev/null || true
-                            if [[ "$resume_cmd" == RESUME* ]]; then
-                                _subagent_log_event "$sub_id" "CONTROL" "Resumed by parent." "$sub_fifo"
-                                break
-                            fi
-                            if [[ "$resume_cmd" == ABORT* ]]; then
-                                _subagent_log_event "$sub_id" "CONTROL" "Aborted by parent while paused." "$sub_fifo"
-                                final_result="ABORTED_BY_PARENT"
-                                break 2
-                            fi
-                            sleep 0.2
-                        done
-                        subagents_update_status "$sub_id" "RUNNING" "$turn"
-                        ;;
-                    ABORT*)
-                        _subagent_log_event "$sub_id" "CONTROL" "Aborted by parent." "$sub_fifo"
-                        final_result="ABORTED_BY_PARENT"
-                        break
-                        ;;
-                esac
-            fi
-        fi
-
-        # 5-turn countdown alert for child subagent
-        local countdown_notice=""
-        if [ "$turn" -ge "$((max_turns - 5))" ]; then
-            local rem=$((max_turns - turn))
-            _subagent_log_event "$sub_id" "COUNTDOWN" "Approaching turn ceiling: Turn $turn/$max_turns ($rem turn(s) remaining)" "$sub_fifo"
-            declare -f ui_warn &>/dev/null && ui_warn "Child subagent $sub_id approaching turn ceiling: Turn $turn/$max_turns ($rem turn(s) remaining)."
-            countdown_notice="[SYSTEM NOTICE: APPROACHING TURN CEILING ($rem turn(s) remaining of $max_turns). Cease exploratory actions. Consolidate your deliverables and conclude with /respond.]\n\n"
-        fi
-
-        # Build messages payload with full-fidelity context
-        local messages_json
-        local recent_obs=""
-        if [ -s "$sub_history" ]; then
-            recent_obs=$(cat "$sub_history")
-        fi
-
-        messages_json=$(jq -n \
-            --arg sys "$sub_system" \
-            --arg goal "$objective" \
-            --arg cd "$countdown_notice" \
-            --arg obs "$recent_obs" \
-            '[
-                {"role": "system", "content": $sys},
-                {"role": "user", "content": ($cd + "Objective: " + $goal + "\n\nTrajectory:\n" + $obs + "\n\nCRITICAL FORMAT REQUIREMENT:\nThought: <brief 1-sentence reasoning under 25 words>\nAction: <slash-command, e.g. /bash <cmd> or /upstream propose ...>\n\nNext Action:")}
-            ]')
-
-        local tier_ctx
-        tier_ctx=$(endpoints_get_tier_info "$target_tier" "CONTEXT" 2>/dev/null || echo 8192)
-        [ -z "$tier_ctx" ] || [ "$tier_ctx" -le 0 ] 2>/dev/null && tier_ctx=8192
-        local compact_threshold=$((tier_ctx * 3 / 4))
-        [ "$compact_threshold" -lt 3000 ] && compact_threshold=3000
-
-        local tier_timeout
-        tier_timeout=$(endpoints_get_tier_info "$target_tier" "TIMEOUT" 2>/dev/null || echo 600)
-        [ -z "$tier_timeout" ] || [ "$tier_timeout" -lt 300 ] 2>/dev/null && tier_timeout=600
-
-        local payload
-        payload=$(jq -n \
-            --arg model "$tier_model" \
-            --argjson msgs "$messages_json" \
-            '{
-                model: $model,
-                messages: $msgs,
-                temperature: 0.2,
-                reasoning_effort: "low",
-                max_tokens: 4096
-            }')
-
-        # Query endpoint
-        local resp_json
-        resp_json=$(curl -s --max-time "$tier_timeout" "$tier_url/v1/chat/completions" \
-            -H "Content-Type: application/json" \
-            -d "$payload" 2>/dev/null)
-
-        if [ -z "$resp_json" ]; then
-            echo "Action: /respond ERROR: Target model endpoint timed out or failed." >> "$sub_history"
-            _subagent_log_event "$sub_id" "ERROR" "Target model endpoint timed out or failed." "$sub_fifo"
-            final_result="ERROR: Subagent endpoint timed out."
-            break
-        fi
-
-        # Live token accounting from API usage metrics
-        local p_tok comp_tok
-        p_tok=$(echo "$resp_json" | jq -r '.usage.prompt_tokens // 0' 2>/dev/null)
-        comp_tok=$(echo "$resp_json" | jq -r '.usage.completion_tokens // 0' 2>/dev/null)
-        if [ "$p_tok" -gt 0 ]; then
-            running_tokens=$((p_tok + comp_tok + kv_prefix_tokens))
-            _subagent_log_event "$sub_id" "TELEMETRY" "Slot tokens: $running_tokens (prompt: $p_tok, comp: $comp_tok, kv_prefix: $kv_prefix_tokens)" "$sub_fifo"
-        fi
-
-        # Autonomous per-slot auto-compaction trigger (proportional to tier context ceiling)
-        if [ "$running_tokens" -ge "$compact_threshold" ]; then
-            _subagent_compact "$sub_id" "$sub_history" "$tier_url" "$tier_model" "$sub_fifo"
-            running_tokens=2000
-        fi
-
-        local raw_content reasoning_content
-        raw_content=$(echo "$resp_json" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
-        reasoning_content=$(echo "$resp_json" | jq -r '.choices[0].message.reasoning_content // empty' 2>/dev/null)
-
-        # Extract and log internal reasoning thoughts if present
-        local thoughts="$reasoning_content"
-        local cleaned="$raw_content"
-        if echo "$raw_content" | grep -qE '<think>'; then
-            if [ -z "$thoughts" ] && command -v perl &>/dev/null; then
-                thoughts=$(echo "$raw_content" | perl -0777 -ne 'if (/<think>(.*?)<\/think>/s) { my $t = $1; $t =~ s/^\s+|\s+$//g; print $t; }')
-            fi
-            if command -v perl &>/dev/null; then
-                cleaned=$(echo "$raw_content" | perl -0777 -pe 's/<think>.*?<\/think>//sg')
-            fi
-        fi
-        if [ -n "$thoughts" ]; then
-            _subagent_log_event "$sub_id" "THOUGHT" "$thoughts" "$sub_fifo"
-        fi
-
-        # Parse action from XML <tool_call>, Gemma <|tool_call>, or standard Action: /...
-        local action=""
-
-        if echo "$cleaned" | grep -qE '<tool_call>|<\|tool_call>'; then
-            if command -v perl &>/dev/null; then
-                action=$(printf '%s' "$cleaned" | perl -0777 -ne '
-                    if (/<function=([a-zA-Z0-9_-]+)>(.*?)<\/function>/s) {
-                        my $fn = lc($1);
-                        my $inner = $2;
-                        my $param = "";
-                        if ($inner =~ /<parameter=[^>]*>(.*?)<\/parameter>/s) {
-                            $param = $1;
-                        } else {
-                            $param = $inner;
-                        }
-                        $param =~ s/^\s+|\s+$//g;
-                        if ($fn eq "bash" || $fn eq "sh") {
-                            print "/bash $param\n";
-                        } elsif ($fn eq "read" || $fn eq "file_read") {
-                            print "/read $param\n";
-                        } elsif ($fn eq "append" || $fn eq "file_append") {
-                            print "/append $param\n";
-                        } elsif ($fn eq "upstream") {
-                            print "/upstream $param\n";
-                        } else {
-                            print "/$fn $param\n";
-                        }
-                    } elsif (/<\|tool_call>call:([a-zA-Z0-9_-]+)\{(?:command|query|content|args)?:?<\|"\|>(.*?)<\|"\|>/s ||
-                             /<\|tool_call>call:([a-zA-Z0-9_-]+)\{(.*?)\}/s) {
-                        my $fn = lc($1);
-                        my $param = $2;
-                        $param =~ s/^["\s:]+|["\s}]+$//g;
-                        if ($fn eq "bash" || $fn eq "sh") {
-                            print "/bash $param\n";
-                        } elsif ($fn eq "read" || $fn eq "file_read") {
-                            print "/read $param\n";
-                        } elsif ($fn eq "append" || $fn eq "file_append") {
-                            print "/append $param\n";
-                        } elsif ($fn eq "upstream") {
-                            print "/upstream $param\n";
-                        } else {
-                            print "/$fn $param\n";
-                        }
-                    }
-                ' 2>/dev/null)
-            fi
-        fi
-
-        if [ -z "$action" ]; then
-            if echo "$cleaned" | grep -qE '^[[:space:]]*Action:[[:space:]]*`?\/upstream'; then
-                action=$(echo "$cleaned" | sed -n 's/^[[:space:]]*Action:[[:space:]]*`\?\(\/.*\)`\?/\1/p' | head -1)
-            elif echo "$cleaned" | grep -qE '^[[:space:]]*Action:[[:space:]]*`?\/respond'; then
-                action=$(echo "$cleaned" | sed -n 's/^[[:space:]]*Action:[[:space:]]*`\?\(\/.*\)`\?/\1/p' | head -1)
-            elif echo "$cleaned" | grep -qE '^[[:space:]]*Action:[[:space:]]*`?\/read'; then
-                action=$(echo "$cleaned" | sed -n 's/^[[:space:]]*Action:[[:space:]]*`\?\(\/.*\)`\?/\1/p' | head -1)
-            elif echo "$cleaned" | grep -qE '^[[:space:]]*Action:[[:space:]]*`?\/bash'; then
-                action=$(printf '%s\n' "$cleaned" | sed -n '/^[[:space:]]*Action:[[:space:]]*`*\/bash/,$p' | sed '1s/^[[:space:]]*Action:[[:space:]]*`*//')
-                action=$(printf '%s\n' "$action" | sed '/^[[:space:]]*\(Observation\|Thought\|Action\):/,$d')
-                action=$(printf '%s\n' "$action" | sed 's/`[[:space:]]*$//')
-            elif echo "$cleaned" | grep -qE '^[[:space:]]*Action:[[:space:]]*`?\/'; then
-                action=$(echo "$cleaned" | sed -n 's/^[[:space:]]*Action:[[:space:]]*`\?\(\/.*\)`\?/\1/p' | head -1)
-            elif echo "$cleaned" | grep -qE '```(python|python3)'; then
-                local _extracted_py
-                _extracted_py=$(echo "$cleaned" | sed -n '/```\(python\|python3\)/,/```/p' | sed '1d;$d')
-                if [ -n "$_extracted_py" ]; then
-                    action="/bash python3 - <<'EOF'
-$_extracted_py
-EOF"
-                fi
-            elif echo "$cleaned" | grep -qE '```(bash|sh)'; then
-                local _extracted_cmd
-                _extracted_cmd=$(echo "$cleaned" | sed -n '/```\(bash\|sh\)/,/```/p' | sed '1d;$d')
-                if [ -n "$_extracted_cmd" ]; then
-                    action="/bash $_extracted_cmd"
-                fi
-            elif echo "$cleaned" | grep -qE '^[[:space:]]*`?\/'; then
-                action=$(echo "$cleaned" | grep -E '^[[:space:]]*`?\/' | head -1 | tr -d '`')
-                action="${action#"${action%%[![:space:]]*}"}"
-            elif echo "$cleaned" | grep -qE '^[[:space:]]*Action:[[:space:]]*(bash|read|append|upstream|respond)'; then
-                action=$(echo "$cleaned" | sed -n 's/^[[:space:]]*Action:[[:space:]]*/\//p' | head -1)
-            fi
-        fi
-
-        # Check if objective requires an upstream PR
-        local needs_upstream=0
-        if [[ "$objective" =~ (upstream|propose|PR|pull[[:space:]]request|SANDBOXES) ]]; then
-            needs_upstream=1
-        fi
-
-        local pr_issued=0
-        if [ -f "$sub_dir/.pr_issued" ]; then
-            pr_issued=1
-        fi
-
-        if [ -z "$action" ]; then
-            if [ "$needs_upstream" -eq 1 ] && [ "$pr_issued" -eq 0 ]; then
-                _subagent_log_event "$sub_id" "GUARD" "No action found. Prompting model for explicit Action line." "$sub_fifo"
-                local no_act_obs="[GUARD NOTICE: No valid tool action detected in your response. You must execute an action line, for example: Action: /bash python3 -c \"...\" or Action: /append <file> <content>, followed by Action: /upstream propose \"<title>\" --reason \"<reason>\" --metric \"<proof>\". Output: Thought: ... Action: /...]"
-                printf "\n--- Turn %d ---\nObservation:\n%s\n" "$turn" "$no_act_obs" >> "$sub_history"
-                turn=$((turn + 1))
-                continue
-            fi
-            if [ -n "$cleaned" ] && [ "$turn" -gt 1 ]; then
-                if [ "$needs_upstream" -eq 1 ] && [ "$pr_issued" -eq 0 ]; then
-                    _subagent_log_event "$sub_id" "GUARD" "Model returned narrative text without issuing PR. Prompting for deliverable action." "$sub_fifo"
-                    local no_act_obs="[GUARD NOTICE: You must execute Action: /upstream propose \"<title>\" --reason \"<reason>\" --metric \"<proof>\" before completing.]"
-                    printf "\n--- Turn %d ---\nObservation:\n%s\n" "$turn" "$no_act_obs" >> "$sub_history"
-                    turn=$((turn + 1))
-                    continue
-                fi
-                final_result="$cleaned"
-                _subagent_log_event "$sub_id" "RESULT" "$final_result" "$sub_fifo"
-                break
-            fi
-            action="/respond $cleaned"
-        fi
-
-        _subagent_log_event "$sub_id" "ACTION" "$action" "$sub_fifo"
-
-        # Check for /respond with Deliverable Guard
-        if [[ "$action" == /respond* ]]; then
-            local resp_text="${action#/respond}"
-            resp_text="${resp_text#"${resp_text%%[![:space:]]*}"}"
-
-            if [ "$needs_upstream" -eq 1 ] && [ "$pr_issued" -eq 0 ]; then
-                _subagent_log_event "$sub_id" "GUARD" "Blocked premature /respond: objective requires submitting an upstream PR first." "$sub_fifo"
-                obs="[GUARD NOTICE: Premature completion blocked. Your objective requires updating the file and running Action: /upstream propose \"<title>\" --reason \"<reason>\" --metric \"<metric>\" before concluding. Proceed to execute the modifications and propose upstream.]"
-                printf "\n--- Turn %d ---\nAction: %s\nObservation:\n%s\n" "$turn" "$action" "$obs" >> "$sub_history"
-                turn=$((turn + 1))
-                continue
-            fi
-
-            final_result="$resp_text"
-            [ -z "$final_result" ] && final_result="$cleaned"
-            _subagent_log_event "$sub_id" "RESULT" "$final_result" "$sub_fifo"
-            break
-        fi
-
-        # Execute tool inside isolated worktree directory
-        local obs
-        obs=$(commands_dispatch "$action" "$sub_dir" 2>&1)
-        local cmd_rc=$?
-
-        # Failure and Thrashing Detection
-        local is_error=0
-        if [ "$cmd_rc" -ne 0 ]; then
-            is_error=1
-        elif echo "$obs" | grep -qE "(SyntaxError|command not found|Unknown command|No such file or directory|fatal:|Traceback \(most recent call last\)|failed \(exit [1-9])"; then
-            is_error=1
-        fi
-
-        if [ "$is_error" -eq 1 ]; then
-            if [ -n "$last_failed_action" ] && [ "$action" = "$last_failed_action" ]; then
-                # Thrashing detected: repeating identical failing action consecutively
-                consecutive_failures=$((consecutive_failures + 2))
-            else
-                consecutive_failures=$((consecutive_failures + 1))
-            fi
-            last_failed_action="$action"
-            _subagent_log_event "$sub_id" "WARN" "Action failed (exit $cmd_rc, streak: $consecutive_failures/3): ${action:0:80}" "$sub_fifo"
-        else
-            consecutive_failures=0
-            last_failed_action=""
-        fi
-
-        # Log observation to persistent stream
-        _subagent_log_event "$sub_id" "OBSERVATION" "$obs" "$sub_fifo"
-
-        # Record full-fidelity observation in sub_history (soft-limit only astronomical dumps >15k chars)
-        local record_obs="$obs"
-        if [ ${#record_obs} -gt 15000 ]; then
-            record_obs="${record_obs:0:15000}... [output bounded at 15k chars for slot headroom]"
-        fi
-        printf "\n--- Turn %d ---\nAction: %s\nObservation:\n%s\n" "$turn" "$action" "$record_obs" >> "$sub_history"
-
-        # Check Circuit Breaker Threshold (default 3 consecutive failures or thrashing)
-        local max_consecutive
-        max_consecutive=$(limits_get CIRCUIT_BREAKER_MAX_FAILURES 3 2>/dev/null || echo 3)
-        if [ "$consecutive_failures" -ge "$max_consecutive" ]; then
-            circuit_tripped=1
-            circuit_reason="Subagent tripped circuit breaker after $consecutive_failures consecutive failures (Action: ${action:0:80}). Escalating to Parent George."
-            _subagent_log_event "$sub_id" "CIRCUIT_BREAKER" "$circuit_reason" "$sub_fifo"
-            _subagent_log_event "$sub_id" "ALERT_PARENT" "Escalation triggered for subagent $sub_id (worktree: $sub_dir)" "$sub_fifo"
-
-            # 1. Quarantined checkpoint branch commit & push
-            local checkpoint_br="checkpoint/${sub_id}"
-            if [ -d "$sub_dir" ]; then
-                (
-                    cd "$sub_dir" || exit 0
-                    git branch -D "$checkpoint_br" >/dev/null 2>&1 || true
-                    git checkout -B "$checkpoint_br" >/dev/null 2>&1 || true
-                    git add -A >/dev/null 2>&1 || true
-                    git commit -m "checkpoint(${sub_id}): state at circuit-breaker trip (turn $turn)" >/dev/null 2>&1 || true
-                )
-                git -C "$LODGE_DIR" push gitea "$checkpoint_br" >/dev/null 2>&1 || true
-            fi
-
-            # 2. Create structured Issue on Sovereign Gitea
-            local issue_num="" issue_url=""
-            if declare -f gitea_is_online &>/dev/null && gitea_is_online; then
-                local issue_title="[Escalation] Subagent ${sub_id} blocked: ${action:0:60}"
-                local issue_body
-                issue_body=$(printf "### Subagent Circuit Breaker Escalation\n\n- **Subagent ID:** \`%s\`\n- **Tier:** %s (\`%s\`)\n- **Objective:** %s\n- **Turn:** %d\n- **Failed Action:** \`%s\`\n- **Checkpoint Branch:** \`%s\`\n- **Sandbox Worktree:** \`%s\`\n\n#### Last Error Diagnostic:\n\`\`\`\n%s\n\`\`\`\n" \
-                    "$sub_id" "$target_tier" "$tier_model" "$objective" "$turn" "$action" "$checkpoint_br" "$sub_dir" "${obs:0:1500}")
-                local issue_res
-                issue_res=$(gitea_issue_create "$issue_title" "$issue_body" "escalation,blocked" 2>/dev/null || true)
-                issue_num=$(echo "$issue_res" | jq -r .number 2>/dev/null || true)
-                issue_url=$(echo "$issue_res" | jq -r .html_url 2>/dev/null || true)
-                if [ -n "$issue_num" ] && [ "$issue_num" != "null" ]; then
-                    gitea_issue_comment "$issue_num" "[Subagent ${sub_id}]: Tripped circuit breaker after ${consecutive_failures} consecutive failures. Quarantined in PAUSED_BLOCKED state at \`${checkpoint_br}\`." >/dev/null 2>&1 || true
-                fi
-            fi
-
-            # 3. Dispatch Multi-Tier Alert across MQTT and External Channels
-            local ctx_json
-            ctx_json=$(jq -n \
-                --arg sub "$sub_id" \
-                --arg tier "$target_tier" \
-                --arg model "$tier_model" \
-                --arg act "$action" \
-                --arg br "$checkpoint_br" \
-                --arg wt "$sub_dir" \
-                --arg is_num "${issue_num:-}" \
-                '{ subagent_id: $sub, tier: $tier, model: $model, failed_action: $act, checkpoint: $br, worktree: $wt, issue_number: $is_num }')
-            alerts_dispatch tier1 "Subagent $sub_id Blocked" "$circuit_reason" "${issue_url:-}" "$ctx_json" >/dev/null 2>&1 || true
-
-            declare -f ui_err &>/dev/null && ui_err "⚡ [CIRCUIT BREAKER] Subagent $sub_id escalated to Parent George ($consecutive_failures consecutive failures)" >&2
-
-            # Clean up temporary scratch scripts created during attempts
-            rm -f /tmp/fix_*.py /tmp/patch_*.sh /tmp/subagent_*.tmp 2>/dev/null || true
-
-            final_result="$circuit_reason"
-            break
-        fi
-
-        turn=$((turn + 1))
-    done
-
-    # Preserve and auto-commit deliverables in git worktree
-    if [ "$is_worktree" -eq 1 ] && [ -d "$sub_dir" ]; then
-        (
-            cd "$sub_dir" || exit 0
-            if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
-                GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-George}" \
-                GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-george@bluelodge.local}" \
-                GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-George}" \
-                GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-george@bluelodge.local}" \
-                git add -A 2>/dev/null || true
-                git commit -q -m "subagent(${sub_id}): deliverable for ${objective:0:50}" 2>/dev/null || true
-            fi
-        )
-        _subagent_log_event "$sub_id" "DELIVERABLE" "Deliverables auto-committed to branch $sub_branch in $sub_dir" "$sub_fifo"
-    fi
-
-    # Finalize visual dashboard and registry
-    local exit_code=0
+    local final_result=""
     local final_status="COMPLETED"
-    if [ "$circuit_tripped" -eq 1 ]; then
-        exit_code=75  # EX_TEMPFAIL / Escalated to Parent
+    local exit_code=0
+
+    # Handle Circuit Breaker & Failure Quarantine
+    if [ "$react_ec" -ne 0 ]; then
+        circuit_tripped=1
+        circuit_reason="Subagent failed or exited with code $react_ec (Objective: ${objective:0:80}). Escalating to Parent George."
+        _subagent_log_event "$sub_id" "CIRCUIT_BREAKER" "$circuit_reason" "$sub_fifo"
+        _subagent_log_event "$sub_id" "ALERT_PARENT" "Escalation triggered for subagent $sub_id (worktree: $sub_dir)" "$sub_fifo"
+
+        # 1. Quarantined checkpoint branch commit & push
+        local checkpoint_br="checkpoint/${sub_id}"
+        if [ -d "$sub_dir" ]; then
+            (
+                cd "$sub_dir" || exit 0
+                git branch -D "$checkpoint_br" >/dev/null 2>&1 || true
+                git checkout -B "$checkpoint_br" >/dev/null 2>&1 || true
+                git add -A >/dev/null 2>&1 || true
+                git commit -m "checkpoint(${sub_id}): state at circuit-breaker trip" >/dev/null 2>&1 || true
+            )
+            git -C "$LODGE_DIR" push gitea "$checkpoint_br" >/dev/null 2>&1 || true
+        fi
+
+        # 2. Create structured Issue on Sovereign Gitea
+        local issue_num="" issue_url=""
+        if declare -f gitea_is_online &>/dev/null && gitea_is_online; then
+            local issue_title="[Escalation] Subagent ${sub_id} blocked: ${objective:0:60}"
+            local issue_body
+            issue_body=$(printf "### Subagent Circuit Breaker Escalation\n\n- **Subagent ID:** \`%s\`\n- **Tier:** %s (\`%s\`)\n- **Objective:** %s\n- **Checkpoint Branch:** \`%s\`\n- **Sandbox Worktree:** \`%s\`\n\n#### Diagnostic Trace:\n\`\`\`\n%s\n\`\`\`\n" \
+                "$sub_id" "$target_tier" "$tier_model" "$objective" "$checkpoint_br" "$sub_dir" "${worker_res: -2000}")
+            local issue_res
+            issue_res=$(gitea_issue_create "$issue_title" "$issue_body" "escalation,blocked" 2>/dev/null || true)
+            issue_num=$(echo "$issue_res" | jq -r .number 2>/dev/null || true)
+            issue_url=$(echo "$issue_res" | jq -r .html_url 2>/dev/null || true)
+        fi
+
+        # 3. Dispatch Multi-Tier Alert
+        local ctx_json
+        ctx_json=$(jq -n \
+            --arg sub "$sub_id" \
+            --arg tier "$target_tier" \
+            --arg model "$tier_model" \
+            --arg br "$checkpoint_br" \
+            --arg wt "$sub_dir" \
+            --arg is_num "${issue_num:-}" \
+            '{ subagent_id: $sub, tier: $tier, model: $model, checkpoint: $br, worktree: $wt, issue_number: $is_num }')
+        alerts_dispatch tier1 "Subagent $sub_id Blocked" "$circuit_reason" "${issue_url:-}" "$ctx_json" >/dev/null 2>&1 || true
+
+        exit_code=75
         final_status="PAUSED_BLOCKED"
-    elif [ -z "$final_result" ]; then
-        exit_code=1
-        final_status="FAILED"
-    fi
-    subagents_update_status "$sub_id" "$final_status" "$turn" "$final_result"
-    declare -f ui_dashboard_worker_finish &>/dev/null && ui_dashboard_worker_finish "$sub_id" "$exit_code" >&2
-    _subagent_log_event "$sub_id" "FINISH" "Status: $final_status | Turns: $turn" "$sub_fifo"
-
-    if [ "$circuit_tripped" -eq 1 ]; then
-        echo "⚡ [CIRCUIT BREAKER] $circuit_reason"
-    elif [ -z "$final_result" ]; then
-        echo "Subagent reached max turns without explicit response."
+        final_result="⚡ [CIRCUIT BREAKER] $circuit_reason"
     else
-        echo "$final_result"
+        # Success Path: Deliverable auto-commit & Sovereign Gitea PR Promotion
+        final_result="$worker_res"
+        if [ "$is_worktree" -eq 1 ] && [ -d "$sub_dir" ]; then
+            (
+                cd "$sub_dir" || exit 0
+                if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+                    GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-George}" \
+                    GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-george@bluelodge.local}" \
+                    GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-George}" \
+                    GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-george@bluelodge.local}" \
+                    git add -A 2>/dev/null || true
+                    git commit -q -m "subagent(${sub_id}): deliverable for ${objective:0:50}" 2>/dev/null || true
+                fi
+            )
+            _subagent_log_event "$sub_id" "DELIVERABLE" "Deliverables auto-committed to branch $sub_branch in $sub_dir" "$sub_fifo"
+
+            # Check if code changes were introduced against develop
+            local branch_diff
+            branch_diff=$(git -C "$LODGE_DIR" diff "develop..$sub_branch" --stat 2>/dev/null || echo "")
+            if [ -n "$branch_diff" ]; then
+                # Push branch to Gitea
+                git -C "$LODGE_DIR" push gitea "$sub_branch" >/dev/null 2>&1 || true
+
+                # Check if PR already exists or needs creation
+                local pr_ref=""
+                if [ ! -f "$sub_dir/.pr_issued" ]; then
+                    local pr_out
+                    pr_out=$(pr_create "$sub_branch" "feat(${sub_id}): ${objective:0:60}" "Automated subagent deliverable.\n\n### Objective\n${objective}\n\n### Diffstat\n\`\`\`\n${branch_diff:0:1000}\n\`\`\`" "develop" 2>&1)
+                    touch "$sub_dir/.pr_issued" 2>/dev/null || true
+                    pr_ref=$(echo "$pr_out" | grep -oE '(PR-[0-9]+|pulls/[0-9]+)' | head -1 || echo "")
+                    [ -z "$pr_ref" ] && pr_ref="$pr_out"
+                fi
+                _subagent_log_event "$sub_id" "PR_CREATED" "Pull Request created ($pr_ref)" "$sub_fifo"
+                final_result=$(printf "Subagent completed deliverable.\nBranch: %s\nPR: %s\n\n%s" "$sub_branch" "${pr_ref:-submitted}" "$worker_res")
+            fi
+        fi
     fi
 
+    subagents_update_status "$sub_id" "$final_status" 1 "$final_result"
+    declare -f ui_dashboard_worker_finish &>/dev/null && ui_dashboard_worker_finish "$sub_id" "$exit_code" >&2
+    _subagent_log_event "$sub_id" "FINISH" "Status: $final_status" "$sub_fifo"
+
+    echo "$final_result"
     _subagent_fifo_cleanup 2>/dev/null || true
     trap - EXIT INT TERM
     return "$exit_code"

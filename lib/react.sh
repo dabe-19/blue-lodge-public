@@ -594,7 +594,8 @@ Distill key factual findings, metrics, and citations:"
                 {"role": "user", "content": $user}
             ],
             temperature: 0.1,
-            max_tokens: 300,
+            max_tokens: 500,
+            chat_template_kwargs: {enable_thinking: false},
             stream: false
         }' 2>/dev/null)
 
@@ -711,7 +712,8 @@ Evaluate if Step ${active_step_id} is SATISFIED by the evidence, or what remains
                 {"role": "user", "content": $user}
             ],
             temperature: 0.1,
-            max_tokens: 250,
+            max_tokens: 500,
+            chat_template_kwargs: {enable_thinking: false},
             stream: false
         }' 2>/dev/null)
 
@@ -1255,9 +1257,9 @@ react_run() {
     local goal="$1"
     local workdir="${2:-$PWD}"
     local max_turns="${3:-${AGENT_MAX_TURNS:-${AGENT_MAX_MILESTONES:-30}}}"
-    local agent_temp="${AGENT_LLM_TEMPERATURE:-0.2}"
-    local agent_max_tok="${AGENT_MAX_TOKENS:-16384}"
+    local agent_temp="${AGENT_LLM_TEMPERATURE:-1.0}"
     local tool_filter="${6:-${REACT_TOOL_FILTER:-}}"
+    local mode="${8:-${AGENT_MODE:-standard}}"
 
     # Robust argument polymorphism: if arg 3 is non-numeric, it was passed as profile/tool_filter
     if [ -n "${3:-}" ] && ! [[ "$3" =~ ^[0-9]+$ ]]; then
@@ -1274,6 +1276,11 @@ react_run() {
         fi
     fi
 
+    # Auto-detect worker mode from profile
+    if [ "$tool_filter" = "worker" ] || [ "$tool_filter" = "sandbox_worker" ] || [ "$tool_filter" = "worker_research" ] || [ "$mode" = "worker" ]; then
+        mode="worker"
+    fi
+
     if [ -z "$goal" ]; then
         ui_err "Task description required."
         return 1
@@ -1285,8 +1292,9 @@ react_run() {
         return 1
     fi
 
-    local agent_temp="${AGENT_LLM_TEMPERATURE:-${ACTIVE_ENDPOINT_TEMPERATURE:-0.2}}"
+    local agent_temp="${AGENT_LLM_TEMPERATURE:-${ACTIVE_ENDPOINT_TEMPERATURE:-1.0}}"
     local agent_topp="${AGENT_LLM_TOP_P:-${ACTIVE_ENDPOINT_TOP_P:-0.95}}"
+    local agent_max_tok="${AGENT_MAX_TOKENS:-${ACTIVE_ENDPOINT_MAX_TOKENS:-16384}}"
     local req_timeout="${LODGE_TIMEOUT:-${REACT_TIMEOUT:-${ACTIVE_ENDPOINT_TIMEOUT:-600}}}"
 
     ui_ok "Active Engine: Tier $ACTIVE_TIER [$ACTIVE_ENDPOINT_NAME] ($ACTIVE_ENDPOINT_MODEL @ $ACTIVE_ENDPOINT_URL)"
@@ -1370,8 +1378,31 @@ react_run() {
     # Auto-start configured MCP servers if enabled
     declare -f mcp_ensure_running &>/dev/null && mcp_ensure_running
 
-    # Initialize Honeydew multi-step execution plan (force fresh agentic decomposition)
-    _react_ensure_honeydew_plan "$goal" "$workdir" 1
+    # Initialize Honeydew execution plan
+    if [ "$mode" = "worker" ]; then
+        mkdir -p "$gdir" 2>/dev/null || true
+        cat > "$hd_file" <<EOF
+{
+  "primary_task": $(jq -n --arg g "$goal" '$g'),
+  "items": [
+    {
+      "id": 1,
+      "task": "Execute delegated task and deliver results",
+      "status": "pending",
+      "tier": ${ACTIVE_TIER:-1},
+      "depends_on": [],
+      "endpoint_tier": ${ACTIVE_TIER:-1},
+      "retry_count": 0
+    }
+  ]
+}
+EOF
+        ui_section "Worker Execution Plan"
+        ui_step "Step 1: Execute delegated task and deliver results"
+    else
+        # Force fresh agentic decomposition for parent orchestrator
+        _react_ensure_honeydew_plan "$goal" "$workdir" 1
+    fi
 
     # 3. Assemble Dynamic Copilot-Style Context & Tool Schemas
     ui_dim "Assembling context pipeline and native tool registry..."
@@ -1389,13 +1420,18 @@ react_run() {
     fi
     echo "$tools_schema" > "$active_tools_file"
 
-    # Prepare initial user message anchored to Honeydew plan
-    local active_step
-    active_step=$(jq -r '[.items[]? | select(.status != "done")][0] | if . then "Step " + (.id|tostring) + ": " + .task else "Step 1" end' "$hd_file" 2>/dev/null)
-    local plan_checklist
-    plan_checklist=$(jq -r '.items[]? | "- [" + (if .status == "done" then "✓" else " " end) + "] Step " + (.id|tostring) + ": " + .task' "$hd_file" 2>/dev/null)
+    # Prepare initial user message anchored to plan
+    local initial_user_msg
+    if [ "$mode" = "worker" ]; then
+        initial_user_msg="PRIMARY OBJECTIVE (DELEGATED WORKER):\n$goal\n\nSANDBOX WORKSPACE:\n$workdir\n\nDIRECTIVES FOR WORKER:\n1. Execute all actions directly inside your isolated sandbox workspace.\n2. If your task requires creating or modifying code: test your changes thoroughly using bash_exec. When verified, submit your deliverable as a Pull Request to Sovereign Gitea using gitea_pr_create (or git commit/push to your subagent branch), and return the PR number and summary.\n3. If your task is research or query: retrieve the information and return your findings directly as text.\n4. Conclude with a clear summary of your work."
+    else
+        local active_step
+        active_step=$(jq -r '[.items[]? | select(.status != "done")][0] | if . then "Step " + (.id|tostring) + ": " + .task else "Step 1" end' "$hd_file" 2>/dev/null)
+        local plan_checklist
+        plan_checklist=$(jq -r '.items[]? | "- [" + (if .status == "done" then "✓" else " " end) + "] Step " + (.id|tostring) + ": " + .task' "$hd_file" 2>/dev/null)
 
-    local initial_user_msg="PRIMARY OBJECTIVE:\n$goal\n\nHONEYDEW EXECUTION PLAN:\n$plan_checklist\n\nCURRENT ACTIVE MILESTONE:\n$active_step\n\nDIRECTIVE: Focus exclusively on executing $active_step directly using domain getter/action tools."
+        initial_user_msg="PRIMARY OBJECTIVE:\n$goal\n\nHONEYDEW EXECUTION PLAN:\n$plan_checklist\n\nCURRENT ACTIVE MILESTONE:\n$active_step\n\nDIRECTIVE: Focus exclusively on executing $active_step directly using domain getter/action tools."
+    fi
 
     # Initialize messages.json
     jq -n \
@@ -1588,11 +1624,14 @@ react_run() {
                 tool_choice: (if ($tools | length) > 0 then $tool_choice else "none" end),
                 temperature: ($temp | tonumber),
                 top_p: ($topp | tonumber),
-                repeat_penalty: 1.15,
-                frequency_penalty: 0.20,
-                presence_penalty: 0.10,
+                top_k: 20,
+                min_p: 0.0,
+                repeat_penalty: 1.0,
+                frequency_penalty: 0.0,
+                presence_penalty: 0.0,
                 max_tokens: ($max_tok | tonumber),
                 reasoning_effort: $r_effort,
+                chat_template_kwargs: {preserve_thinking: true},
                 stream: true,
                 stream_options: {include_usage: true},
                 stop: ["<|im_end|>", "</tool_call>", "<|endoftext|>"]
@@ -2176,20 +2215,28 @@ except Exception:
                     # Advance Honeydew multi-step milestone rule matching as well
                     _react_advance_honeydew_plan "$workdir" "$c_name" "$c_args"
 
-                    # ── CURATED CONTEXT INJECTION (Prevent Context Bloat) ────
+                    # ── CURATED CONTEXT INJECTION (Preserve Code Fidelity & Prevent Bloat) ────
                     local curated_obs=""
-                    curated_obs="[OBSERVATION DIGEST: ${c_name}]
+                    # If this is a code inspection/file tool or bounded output (<=3500 chars), preserve raw code fidelity
+                    if [[ "$c_name" =~ ^(file_read|file_edit|file_write|file_grep|file_diff|git_diff|dir_list|file_list|phytology_inspect)$ ]] || [ "${#resp_content}" -le 3500 ]; then
+                        curated_obs="${resp_content}
+
+[MILESTONE EVALUATION: ${eval_verdict}]
+${eval_reason:+${eval_reason} }${eval_guidance:+(Directive: ${eval_guidance})}"
+                    else
+                        curated_obs="[OBSERVATION DIGEST: ${c_name}]
 ${tool_digest}
 
 [MILESTONE EVALUATION: ${eval_verdict}]
 ${eval_reason:+${eval_reason} }${eval_guidance:+(Directive: ${eval_guidance})}
 [Verified facts recorded in scratchpad.md and mem:active_task. Full observation archived in workspace.]"
+                    fi
 
                     tool_resp=$(echo "$tool_resp" | jq --arg c "$curated_obs" '.content = $c')
                 else
-                    # Curated failure observation
+                    # Curated failure observation (preserve up to 1500 chars for compiler/interpreter diagnostics)
                     local fail_obs="[OBSERVATION ERROR: ${c_name}]
-Error: ${resp_content:0:600}
+Error: ${resp_content:0:1500}
 [STATUS: Tool execution failed. Check syntax and arguments before retrying.]"
                     tool_resp=$(echo "$tool_resp" | jq --arg c "$fail_obs" '.content = $c')
                 fi
