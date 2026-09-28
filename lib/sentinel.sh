@@ -179,6 +179,19 @@ sentinel_probe() {
                     lsof +D "$wt_path" &>/dev/null && has_proc=1
                 fi
 
+                # Protect active subagent worktrees registered in subagents.json
+                local sub_reg="${GEORGE_DIR}/subagents.json"
+                [ ! -f "$sub_reg" ] && sub_reg="${LODGE_DIR}/.george/subagents.json"
+                if [ -f "$sub_reg" ]; then
+                    local s_pid
+                    s_pid=$(jq -r --arg wt "$wt_path" '.[] | select(.worktree_dir == $wt and (.status == "RUNNING" or .status == "PAUSED")) | .pid // empty' "$sub_reg" 2>/dev/null | head -1)
+                    if [ -n "$s_pid" ] && [ "$s_pid" -gt 0 ] 2>/dev/null; then
+                        if kill -0 "$s_pid" 2>/dev/null; then
+                            has_proc=1
+                        fi
+                    fi
+                fi
+
                 if [ "$has_proc" -eq 0 ]; then
                     abandoned_worktrees+=("$wt_path")
                     local s_clean_br="${wt_branch#[}"

@@ -287,7 +287,10 @@ _subagent_worker_run() {
     local react_ec=0
     local worker_output_log="${GEORGE_DIR}/subagents/${sub_id}.out"
     mkdir -p "${GEORGE_DIR}/subagents" 2>/dev/null || true
+    local prev_dir="$PWD"
+    cd "$sub_dir" 2>/dev/null || true
     react_run "$objective" "$sub_dir" "$max_turns" 1.0 4096 "$sub_profile" "sub_${sub_id}" "worker" > "$worker_output_log" 2>&1 || react_ec=$?
+    cd "$prev_dir" 2>/dev/null || true
     local worker_res=""
     [ -f "$worker_output_log" ] && worker_res=$(cat "$worker_output_log")
 
@@ -436,8 +439,14 @@ subagents_spawn() {
 
     mkdir -p "$sandbox_base" 2>/dev/null || true
 
+    local is_research=0
+    if [[ "$objective" =~ (research|query|search|find|analyze|explain|inspect|report) ]] && ! [[ "$objective" =~ (create|edit|fix|update|implement|write|delete|refactor|build|test) ]]; then
+        is_research=1
+        sub_branch=""
+    fi
+
     # Provision git worktree if inside a git repository (branch from develop)
-    if git -C "$LODGE_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
+    if [ "$is_research" -eq 0 ] && git -C "$LODGE_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
         local base_ref="develop"
         git -C "$LODGE_DIR" rev-parse --verify develop &>/dev/null || base_ref="HEAD"
         if git -C "$LODGE_DIR" worktree add -q -b "$sub_branch" "$sub_dir" "$base_ref" &>/dev/null; then
