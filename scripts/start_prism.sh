@@ -2,10 +2,11 @@
 # ── start_prism.sh: Sovereign PRISM Inference Runner ──
 set -euo pipefail
 
-TARGET_MODEL="${LLAMA_ARG_MODEL:-/models/frontier_qwen38/Qwen3.8-27B-UD-Q4_K_S.gguf}"
+TARGET_MODEL="${LLAMA_ARG_MODEL:-/models/active/current/base.gguf}"
+[ ! -f "$TARGET_MODEL" ] && TARGET_MODEL="/models/frontier_qwen38/Qwen3.8-27B-UD-Q4_K_S.gguf"
 [ ! -f "$TARGET_MODEL" ] && TARGET_MODEL="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Internal-MTP-Calibrated.gguf"
-[ ! -f "$TARGET_MODEL" ] && TARGET_MODEL="/models/Ternary-Bonsai-2-27B-PTQ1_0-mtp-lean.gguf"
-[ ! -f "$TARGET_MODEL" ] && TARGET_MODEL="/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf"
+[ ! -f "$TARGET_MODEL" ] && TARGET_MODEL="/models/archive/ternary_legacy/Ternary-Bonsai-2-27B-PTQ1_0-mtp-lean.gguf"
+[ ! -f "$TARGET_MODEL" ] && TARGET_MODEL="/models/archive/ternary_legacy/Ternary-Bonsai-2-27B-PTQ1_0.gguf"
 
 if [ ! -f "$TARGET_MODEL" ]; then
     echo "[!] Error: No compatible model found at $TARGET_MODEL."
@@ -29,6 +30,10 @@ elif [ -x /opt/llama-prism-latest/bin/llama-server ]; then
     export LD_LIBRARY_PATH="/opt/llama-prism-latest/lib:/opt/llama-prism-latest:${LD_LIBRARY_PATH:-}"
 fi
 
+# Chat template file resolution
+CHAT_TEMPLATE="${LLAMA_ARG_CHAT_TEMPLATE:-/models/active/current/jinja.template}"
+[ ! -f "$CHAT_TEMPLATE" ] && CHAT_TEMPLATE="/models/frontier_qwen38/blue_lodge_jinja_template.jinja"
+
 # Build arguments array
 ARGS=(
     "-m" "$TARGET_MODEL"
@@ -51,12 +56,12 @@ ARGS=(
     "--reasoning-budget" "${LLAMA_ARG_REASONING_BUDGET:-2048}"
     "--load-mode" "mmap"
     "--jinja"
-    "--chat-template-file" "/models/frontier_qwen38/blue_lodge_jinja_template.jinja"
+    "--chat-template-file" "$CHAT_TEMPLATE"
 )
 
 # LoRA Adapter Attachment
-LORA_PATH="${LLAMA_ARG_LORA:-}"
-if ([ -z "$LORA_PATH" ] || [[ "$LORA_PATH" == *"Iteration"* ]]) && ([[ "$TARGET_MODEL" == *"Champion-v5"* ]] || [[ "$TARGET_MODEL" == *"Qwen3.8"* ]]); then
+LORA_PATH="${LLAMA_ARG_LORA:-/models/active/current/champion.gguf}"
+if [ ! -f "$LORA_PATH" ] && ([[ "$TARGET_MODEL" == *"Champion-v5"* ]] || [[ "$TARGET_MODEL" == *"Qwen3.8"* ]]); then
     if [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v14-Fused-SVD32.gguf ]; then
         LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v14-Fused-SVD32.gguf"
     elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v14-Fused-LoRA.gguf ]; then

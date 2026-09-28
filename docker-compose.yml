@@ -16,11 +16,10 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - CUDA_VISIBLE_DEVICES=0,1
-      - LLAMA_ARG_MODEL=/models/frontier_qwen38/Qwen3.8-27B-UD-Q4_K_S.gguf
-      - LLAMA_ARG_DRAFT=/models/frontier_qwen38/MTP/mtp-Qwen3.8-27B-Q4_0.gguf
-      - LLAMA_ARG_LORA=
-      - LLAMA_ARG_TENSOR_SPLIT=14,9
+      - LLAMA_ARG_MODEL=${LLAMA_ARG_MODEL:-/models/active/current/base.gguf}
+      - LLAMA_ARG_DRAFT=${LLAMA_ARG_DRAFT:-/models/active/current/draft.gguf}
+      - LLAMA_ARG_LORA=${LLAMA_ARG_LORA:-/models/active/current/champion.gguf}
+      - LLAMA_ARG_TENSOR_SPLIT=${LLAMA_ARG_TENSOR_SPLIT:-14,9}
       - LLAMA_ARG_CTX_SIZE=65536
       - LLAMA_ARG_N_PARALLEL=1
       - LLAMA_ARG_N_GPU_LAYERS=99
@@ -67,9 +66,9 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - CUDA_VISIBLE_DEVICES=0
-      - LLAMA_ARG_MODEL=/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Internal-MTP-Calibrated.gguf
-      - LLAMA_ARG_LORA=${LLAMA_ARG_LORA:-/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration8-Fused-LoRA.gguf}
-      - LLAMA_ARG_MMPROJ=/models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf
+      - LLAMA_ARG_MODEL=${WORKER_LLAMA_ARG_MODEL:-/models/active/experimental/base.gguf}
+      - LLAMA_ARG_LORA=${WORKER_LLAMA_ARG_LORA:-/models/active/experimental/champion.gguf}
+      - LLAMA_ARG_MMPROJ=${WORKER_LLAMA_ARG_MMPROJ:-/models/active/experimental/mmproj.gguf}
       - LLAMA_ARG_CTX_SIZE=131072
       - LLAMA_ARG_N_PARALLEL=1
       - LLAMA_ARG_N_GPU_LAYERS=99
