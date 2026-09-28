@@ -464,6 +464,8 @@ TIER${target_tier}_MODEL="${tier_model}"
 TIER${target_tier}_CONTEXT=${tier_ctx}
 TIER${target_tier}_ENABLED=1
 EOF
+    [ -f "$GEORGE_DIR/keys.conf" ] && cp "$GEORGE_DIR/keys.conf" "$sub_dir/.george/keys.conf" 2>/dev/null || true
+    [ -f "$GEORGE_DIR/gitea.conf" ] && cp "$GEORGE_DIR/gitea.conf" "$sub_dir/.george/gitea.conf" 2>/dev/null || true
 
     # Register in central subagents registry
     subagents_register "$sub_id" "$$" "$$" "$target_tier" "$tier_model" "$objective" "$sub_branch" "$sub_dir" "$max_turns"
