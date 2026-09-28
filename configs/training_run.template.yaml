@@ -1,0 +1,103 @@
+# ═══════════════════════════════════════════════════════════════
+# Blue Lodge — Declarative Training & LoRA/SVD Fusion Spec
+# ═══════════════════════════════════════════════════════════════
+name: "bluelodge_multiturn_golden_path"
+version: "15"
+description: "Multi-Turn ReAct, Tool Calling, and Context Discrimination GRPO Training Run"
+
+# ── 1. Base Model & Tokenizer ─────────────────────────────────
+base_model:
+  path: "/home/wsl-ops/models/frontier_qwen38/Qwen3.8-27B-UD-Q4_K_S.gguf"
+  huggingface_repo: "unsloth/Qwen3.8-27B-GGUF"
+  quant_format: "UD-Q4_K_S"
+  architecture: "qwen35"
+  context_length: 65536
+  jinja_template: "/home/wsl-ops/models/frontier_qwen38/blue_lodge_jinja_template.jinja"
+
+# ── 2. Curricula Tracks & Data Sampling ────────────────────────
+curricula:
+  - id: "track1_context_discrimination"
+    name: "Track 1: Context Discrimination & Anti-Pollution"
+    path: "data/training/active/curriculum_track1_composite_context_discrimination.jsonl"
+    sampling_weight: 0.35
+    target_adapter_name: "LoRA-MultiTurn-ContextDiscrimination.gguf"
+
+  - id: "track2_multihop_followups"
+    name: "Track 2: Multi-Hop Follow-ups & Surgical Execution"
+    path: "data/training/active/curriculum_track2_composite_multihop_followups.jsonl"
+    sampling_weight: 0.35
+    target_adapter_name: "LoRA-MultiTurn-MultiHopFollowups.gguf"
+
+  - id: "track3_evaluator_resilience"
+    name: "Track 3: Evaluator Resilience & Tool Error Recovery"
+    path: "data/training/active/curriculum_track3_composite_evaluator_resilience.jsonl"
+    sampling_weight: 0.30
+    target_adapter_name: "LoRA-MultiTurn-EvaluatorResilience.gguf"
+
+# ── 3. Hyperparameters ─────────────────────────────────────────
+hyperparameters:
+  rank: 32
+  lora_alpha: 64
+  lora_dropout: 0.05
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+  learning_rate: 0.0002
+  batch_size: 2
+  gradient_accumulation_steps: 4
+  max_seq_length: 4096
+  epochs: 1
+  optimizer: "adamw_8bit"
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+
+# ── 4. Fusion & Champion Synthesis ────────────────────────────
+fusion:
+  parent_champion_lora: "/home/wsl-ops/models/frontier_qwen38/Blue-Llama-27B-Champion-v14-Fused-LoRA.gguf"
+  parent_weight: 0.35
+  new_adapters_weight: 0.65
+  track_weights:
+    track1_context_discrimination: 0.35
+    track2_multihop_followups: 0.35
+    track3_evaluator_resilience: 0.30
+  svd_truncation_rank: 32
+  output_dir: "/home/wsl-ops/models/frontier_qwen38"
+  output_prefix: "Blue-Llama-27B-Champion-v15"
+  auto_promote_symlink: true
+
+# ── 5. Target Compute Provisioning ─────────────────────────────
+compute:
+  # Execution engine: 'colab_fleet' (Google Cloud Colab ADC) or 'local_dual_gpu' (local hardware)
+  target: "colab_fleet"
+  
+  colab:
+    auth_method: "adc"
+    # Accelerator hierarchy: cascades down if higher tier faces quota exhaustion
+    accelerator_menu:
+      - gpu: "A100"
+        high_mem: true
+      - gpu: "A100"
+        high_mem: false
+      - gpu: "L4"
+        high_mem: false
+      - gpu: "T4"
+        high_mem: true
+    max_parallel_sessions: 3
+    auto_teardown_on_finish: true
+    min_required_credits: 50.0
+
+  local_gpu:
+    devices: [0, 1]
+    tensor_split: [14, 9]
+
+# ── 6. Verification & Evaluation Gates ─────────────────────────
+evaluation:
+  benchmark_harness: "scripts/quant_research/07_evaluate_multiturn_benchmark.py"
+  minimum_composite_score: 90.0
+  deterministic: true
+  temperature: 0.0
