@@ -168,4 +168,98 @@ it "detects prematurely killed background process without hanging" && {
     fifo_channel_close "test_kill_chan"
 }
 
+describe "hardened multi-turn flow control & barrier primitives"
+
+it "validates JSON frames with fifo_validate_frame" && {
+    fifo_validate_frame '{"key": "value", "seq": 1}'
+    assert_ok $?
+
+    fifo_validate_frame 'not valid json'
+    assert_fail $?
+}
+
+it "flushes channel and restores credits with fifo_channel_flush" && {
+    fifo_channel_open "test_flush_chan" 3
+    # deplete credits
+    fifo_flow_acquire "test_flush_chan" 2
+    fifo_flow_acquire "test_flush_chan" 2
+    fifo_flow_acquire "test_flush_chan" 2
+    c=$(jq -r '.credits' "$FIFO_IPC_DIR/channels/test_flush_chan/state.json")
+    assert_eq "$c" "0"
+
+    fifo_channel_flush "test_flush_chan"
+    assert_ok $?
+
+    c2=$(jq -r '.credits' "$FIFO_IPC_DIR/channels/test_flush_chan/state.json")
+    assert_eq "$c2" "3"
+    fifo_channel_close "test_flush_chan"
+}
+
+it "auto-unsticks wedged channel via fifo_flow_unstick" && {
+    fifo_channel_open "test_unstick_chan" 4
+    fifo_flow_send_ctrl "test_unstick_chan" "PAUSE"
+    bp=$(jq -r '.backpressure' "$FIFO_IPC_DIR/channels/test_unstick_chan/state.json")
+    assert_eq "$bp" "true"
+
+    fifo_flow_unstick "test_unstick_chan"
+    assert_ok $?
+
+    bp2=$(jq -r '.backpressure' "$FIFO_IPC_DIR/channels/test_unstick_chan/state.json")
+    assert_eq "$bp2" "false"
+    c=$(jq -r '.credits' "$FIFO_IPC_DIR/channels/test_unstick_chan/state.json")
+    assert_eq "$c" "4"
+    fifo_channel_close "test_unstick_chan"
+}
+
+it "safely bounds large payloads via FIFO_MAX_FRAME_BYTES" && {
+    fifo_channel_open "test_bound_chan" 5
+    export FIFO_MAX_FRAME_BYTES=100
+
+    huge_payload=$(python3 -c "import json; print(json.dumps({'data': 'X' * 500}))")
+    fifo_write_frame "test_bound_chan" "$huge_payload" 2
+    assert_ok $?
+
+    read_back=$(fifo_read_frame "test_bound_chan" 2 1)
+    assert_ok $?
+    assert_contains "$read_back" "truncated"
+    assert_contains "$read_back" "true"
+
+    unset FIFO_MAX_FRAME_BYTES
+    fifo_channel_close "test_bound_chan"
+}
+
+it "awaits multiple promises concurrently with fifo_await_all" && {
+    fifo_channel_open "test_barrier_chan" 5
+
+    p1=$(fifo_async "test_barrier_chan" "sleep 0.2; echo PROMISE_ONE")
+    p2=$(fifo_async "test_barrier_chan" "sleep 0.3; echo PROMISE_TWO")
+    p3=$(fifo_async "test_barrier_chan" "sleep 0.1; echo PROMISE_THREE")
+
+    fifo_await_all "$p1" "$p2" "$p3" 10
+    assert_ok $?
+
+    # Verify all resolved
+    s1=$(jq -r '.status' "$FIFO_IPC_DIR/promises/${p1}.json")
+    s2=$(jq -r '.status' "$FIFO_IPC_DIR/promises/${p2}.json")
+    s3=$(jq -r '.status' "$FIFO_IPC_DIR/promises/${p3}.json")
+    assert_eq "$s1" "RESOLVED"
+    assert_eq "$s2" "RESOLVED"
+    assert_eq "$s3" "RESOLVED"
+
+    fifo_channel_close "test_barrier_chan"
+}
+
+it "fails fast in fifo_await_all when any promise fails" && {
+    fifo_channel_open "test_barrier_fail" 5
+
+    p_ok=$(fifo_async "test_barrier_fail" "sleep 1; exit 0")
+    p_bad=$(fifo_async "test_barrier_fail" "sleep 0.1; exit 19")
+
+    fifo_await_all "$p_ok" "$p_bad" 5
+    ec=$?
+    assert_eq "$ec" "19"
+
+    fifo_channel_close "test_barrier_fail"
+}
+
 test_end

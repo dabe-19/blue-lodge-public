@@ -152,7 +152,19 @@ fifo_flow_acquire() {
         # Credits depleted or paused: read ctrl.fifo non-blockingly for updates
         now_ts=$(date +%s)
         elapsed=$((now_ts - start_ts))
-        [ "$elapsed" -ge "$timeout" ] && return 110 # Connection timed out (ETIMEDOUT)
+        if [ "$elapsed" -ge "$timeout" ]; then
+            # Multi-turn flow control auto-recovery safeguard:
+            # If producer is wedged due to depleted credits or stale pause beyond threshold,
+            # auto-recover credits to window size to prevent aborting multi-turn agent execution
+            if [ "${FIFO_AUTO_RECOVER:-1}" = "1" ] && [ "$timeout" -ge 5 ]; then
+                local win
+                win=$(jq -r '.window_size // 5' "$state_file" 2>/dev/null || echo 5)
+                ui_warn "fifo_flow_acquire: channel $cid auto-recovering credits after ${elapsed}s wait" >&2
+                jq --argjson w "$win" '.credits = $w | .backpressure = false | .last_activity = (now | floor)' "$state_file" > "${state_file}.tmp" 2>/dev/null && mv "${state_file}.tmp" "$state_file" 2>/dev/null || true
+                return 0
+            fi
+            return 110 # Connection timed out (ETIMEDOUT)
+        fi
 
         if [ -p "$ctrl_fifo" ]; then
             local cmd=""
@@ -170,6 +182,22 @@ fifo_flow_acquire() {
                             ;;
                         RESUME)
                             jq '.backpressure = false | .last_activity = (now | floor)' "$state_file" > "${state_file}.tmp" 2>/dev/null && mv "${state_file}.tmp" "$state_file" 2>/dev/null || true
+                            ;;
+                        PING)
+                            jq '.last_activity = (now | floor)' "$state_file" > "${state_file}.tmp" 2>/dev/null && mv "${state_file}.tmp" "$state_file" 2>/dev/null || true
+                            (
+                                exec 3<> "$ctrl_fifo"
+                                printf 'PONG\n' >&3 2>/dev/null || true
+                                exec 3>&-
+                            ) </dev/null >/dev/null 2>&1 &
+                            ;;
+                        PONG|HEARTBEAT)
+                            jq '.last_activity = (now | floor)' "$state_file" > "${state_file}.tmp" 2>/dev/null && mv "${state_file}.tmp" "$state_file" 2>/dev/null || true
+                            ;;
+                        FLUSH|UNSTICK)
+                            local win
+                            win=$(jq -r '.window_size // 5' "$state_file" 2>/dev/null || echo 5)
+                            jq --argjson w "$win" '.credits = $w | .backpressure = false | .last_activity = (now | floor)' "$state_file" > "${state_file}.tmp" 2>/dev/null && mv "${state_file}.tmp" "$state_file" 2>/dev/null || true
                             ;;
                         ABORT)
                             jq '.status = "ABORTED"' "$state_file" > "${state_file}.tmp" 2>/dev/null && mv "${state_file}.tmp" "$state_file" 2>/dev/null || true
@@ -209,7 +237,7 @@ fifo_flow_grant() {
     return 0
 }
 
-# Transmits flow control command: PAUSE | RESUME | ABORT | PING
+# Transmits flow control command: PAUSE | RESUME | ABORT | PING | HEARTBEAT | UNSTICK
 # Usage: fifo_flow_send_ctrl <channel_id> <command>
 fifo_flow_send_ctrl() {
     local cid="$1"
@@ -227,6 +255,14 @@ fifo_flow_send_ctrl() {
         RESUME)
             jq '.backpressure = false | .last_activity = (now | floor)' "$state_file" > "${state_file}.tmp" 2>/dev/null && mv "${state_file}.tmp" "$state_file" 2>/dev/null || true
             ;;
+        UNSTICK|FLUSH)
+            local win
+            win=$(jq -r '.window_size // 5' "$state_file" 2>/dev/null || echo 5)
+            jq --argjson w "$win" '.credits = $w | .backpressure = false | .last_activity = (now | floor)' "$state_file" > "${state_file}.tmp" 2>/dev/null && mv "${state_file}.tmp" "$state_file" 2>/dev/null || true
+            ;;
+        PING|PONG|HEARTBEAT)
+            jq '.last_activity = (now | floor)' "$state_file" > "${state_file}.tmp" 2>/dev/null && mv "${state_file}.tmp" "$state_file" 2>/dev/null || true
+            ;;
         ABORT)
             jq '.status = "ABORTED"' "$state_file" > "${state_file}.tmp" 2>/dev/null && mv "${state_file}.tmp" "$state_file" 2>/dev/null || true
             ;;
@@ -242,7 +278,52 @@ fifo_flow_send_ctrl() {
     return 0
 }
 
+# Unsticks a wedged channel immediately by restoring credits and clearing backpressure
+# Usage: fifo_flow_unstick <channel_id>
+fifo_flow_unstick() {
+    local cid="$1"
+    fifo_flow_send_ctrl "$cid" "UNSTICK"
+}
+
+# Sends heartbeat ping across ctrl FIFO
+# Usage: fifo_flow_ping <channel_id>
+fifo_flow_ping() {
+    local cid="$1"
+    fifo_flow_send_ctrl "$cid" "PING"
+}
+
 # ── 3. Data Streaming & Frame I/O ────────────────────────────────────
+
+# Validates whether a string is a well-formed JSON frame
+# Usage: fifo_validate_frame <frame_str>
+fifo_validate_frame() {
+    local frame="$1"
+    [ -z "$frame" ] && return 1
+    echo "$frame" | jq -e . >/dev/null 2>&1
+}
+
+# Flushes and discards unread frames from data.fifo, resetting credits and activity
+# Usage: fifo_channel_flush <channel_id>
+fifo_channel_flush() {
+    local cid="$1"
+    local cdir="$FIFO_IPC_DIR/channels/$cid"
+    local data_fifo="$cdir/data.fifo"
+    local state_file="$cdir/state.json"
+    [ ! -f "$state_file" ] && return 1
+
+    # Drain data_fifo non-blockingly until empty
+    if [ -p "$data_fifo" ]; then
+        local junk=""
+        while read -t 0.05 -r junk <> "$data_fifo" 2>/dev/null; do
+            :
+        done
+    fi
+
+    local win
+    win=$(jq -r '.window_size // 5' "$state_file" 2>/dev/null || echo 5)
+    jq --argjson w "$win" '.credits = $w | .backpressure = false | .last_activity = (now | floor)' "$state_file" > "${state_file}.tmp" 2>/dev/null && mv "${state_file}.tmp" "$state_file" 2>/dev/null || true
+    return 0
+}
 
 # Writes a structured JSON frame to the channel data.fifo with credit enforcement
 # Usage: fifo_write_frame <channel_id> <payload_json> [timeout_s]
@@ -256,6 +337,16 @@ fifo_write_frame() {
 
     [ ! -p "$data_fifo" ] && return 1
 
+    # Multi-turn payload boundary protection: guard against Linux pipe buffer overflow
+    local max_bytes="${FIFO_MAX_FRAME_BYTES:-32768}"
+    local payload_len=${#payload}
+    if [ "$payload_len" -gt "$max_bytes" ]; then
+        payload=$(jq -nc \
+            --arg orig_len "$payload_len" \
+            --arg snippet "$(echo "$payload" | head -c "$max_bytes")" \
+            '{truncated: true, original_bytes: ($orig_len | tonumber), snippet: $snippet}')
+    fi
+
     # Acquire credit (enforcing flow control window)
     if ! fifo_flow_acquire "$cid" "$timeout"; then
         return 1
@@ -265,7 +356,7 @@ fifo_write_frame() {
     local seq=0
     seq=$(jq -r '.seq_out // 0' "$state_file" 2>/dev/null || echo 0)
     seq=$((seq + 1))
-    jq --argjson s "$seq" '.seq_out = $s' "$state_file" > "${state_file}.tmp" 2>/dev/null && mv "${state_file}.tmp" "$state_file" 2>/dev/null || true
+    jq --argjson s "$seq" '.seq_out = $s | .last_activity = (now | floor)' "$state_file" > "${state_file}.tmp" 2>/dev/null && mv "${state_file}.tmp" "$state_file" 2>/dev/null || true
 
     local now_ts
     now_ts=$(date +%s)
@@ -309,7 +400,7 @@ fifo_read_frame() {
             local seq_in=0
             seq_in=$(jq -r '.seq_in // 0' "$state_file" 2>/dev/null || echo 0)
             seq_in=$((seq_in + 1))
-            jq --argjson s "$seq_in" '.seq_in = $s' "$state_file" > "${state_file}.tmp" 2>/dev/null && mv "${state_file}.tmp" "$state_file" 2>/dev/null || true
+            jq --argjson s "$seq_in" '.seq_in = $s | .last_activity = (now | floor)' "$state_file" > "${state_file}.tmp" 2>/dev/null && mv "${state_file}.tmp" "$state_file" 2>/dev/null || true
 
             # Replenish producer credit
             if [ "$auto_grant" -eq 1 ]; then
@@ -453,6 +544,95 @@ fifo_await() {
                 printf "ERROR: Process PID %s terminated prematurely (crashed or killed)\n" "$bg_pid" >&2
                 return 137
             fi
+        fi
+
+        sleep 0.05
+    done
+}
+
+# Awaits resolution of multiple async promise handles concurrently (Multi-promise barrier)
+# Usage: fifo_await_all <promise_id1> [promise_id2 ...] [timeout_s]
+fifo_await_all() {
+    local promises=()
+    local timeout=60
+
+    local args=("$@")
+    if [ "${#args[@]}" -gt 1 ]; then
+        local last_idx=$((${#args[@]} - 1))
+        local last_arg="${args[$last_idx]}"
+        if [[ "$last_arg" =~ ^[0-9]+$ ]]; then
+            timeout="$last_arg"
+            unset 'args[last_idx]'
+        fi
+    fi
+
+    for a in "${args[@]}"; do
+        IFS=',' read -ra split_arr <<< "$a"
+        for p in "${split_arr[@]}"; do
+            [ -n "$p" ] && promises+=("$p")
+        done
+    done
+
+    [ "${#promises[@]}" -eq 0 ] && return 0
+
+    local start_ts now_ts elapsed
+    start_ts=$(date +%s)
+
+    while true; do
+        now_ts=$(date +%s)
+        elapsed=$((now_ts - start_ts))
+        if [ "$elapsed" -ge "$timeout" ]; then
+            ui_warn "fifo_await_all timed out after ${timeout}s" >&2
+            return 124
+        fi
+
+        local all_done=true
+        local any_failed=false
+        local fail_code=1
+
+        for prom_id in "${promises[@]}"; do
+            local prom_file="$FIFO_IPC_DIR/promises/${prom_id}.json"
+            if [ ! -f "$prom_file" ]; then
+                any_failed=true
+                fail_code=1
+                all_done=true
+                break
+            fi
+
+            local st ec bg_pid
+            st=$(jq -r '.status // "PENDING"' "$prom_file" 2>/dev/null || echo "PENDING")
+            ec=$(jq -r '.exit_code // empty' "$prom_file" 2>/dev/null || true)
+            bg_pid=$(jq -r '.pid // empty' "$prom_file" 2>/dev/null || true)
+
+            if [ "$st" = "REJECTED" ]; then
+                any_failed=true
+                fail_code="${ec:-1}"
+            elif [ "$st" = "RUNNING" ] || [ "$st" = "PENDING" ]; then
+                # Check for dead worker PID
+                if [ -n "$bg_pid" ] && [ "$bg_pid" -gt 0 ] 2>/dev/null; then
+                    if ! kill -0 "$bg_pid" 2>/dev/null; then
+                        sleep 0.05
+                        st=$(jq -r '.status // "PENDING"' "$prom_file" 2>/dev/null || echo "PENDING")
+                        if [ "$st" != "RESOLVED" ]; then
+                            jq '.status = "REJECTED" | .exit_code = 137' "$prom_file" > "${prom_file}.dead.$$" 2>/dev/null && mv "${prom_file}.dead.$$" "$prom_file" 2>/dev/null || true
+                            any_failed=true
+                            fail_code=137
+                        fi
+                    else
+                        all_done=false
+                    fi
+                else
+                    all_done=false
+                fi
+            fi
+        done
+
+        if [ "$any_failed" = "true" ]; then
+            return "$fail_code"
+        fi
+
+        if [ "$all_done" = "true" ]; then
+            return 0
         fi
 
         sleep 0.05
