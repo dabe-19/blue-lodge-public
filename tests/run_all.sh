@@ -73,19 +73,23 @@ RESET='\033[0m'
 
 # ── Parse args ─────────────────────────────────────────────────
 VERBOSE=0
+FAST_ONLY=0
 FILTER=()
 for arg in "$@"; do
     if [ "$arg" = "-v" ] || [ "$arg" = "--verbose" ]; then
         VERBOSE=1
+    elif [ "$arg" = "-f" ] || [ "$arg" = "--fast" ]; then
+        FAST_ONLY=1
     elif [ "$arg" = "-h" ] || [ "$arg" = "--help" ]; then
-        echo "Usage: $0 [-v|--verbose] [test_name ...]"
+        echo "Usage: $0 [-v|--verbose] [-f|--fast] [test_name ...]"
         echo ""
         echo "Options:"
+        echo "  -f, --fast       Run fast unit tests only (exclude slow/daemon tests)"
         echo "  -v, --verbose    Show full test output"
         echo "  -h, --help       Show this help"
         echo ""
         echo "Examples:"
-        echo "  $0                     Run all tests"
+        echo "  $0 --fast              Run fast unit tests in parallel"
         echo "  $0 test_ui test_llm    Run specific tests"
         echo "  $0 -v test_api         Verbose single test"
         exit 0
@@ -128,6 +132,20 @@ if [ ${#test_files[@]} -eq 0 ]; then
     exit 1
 fi
 
+# Filter slow integration tests if fast mode is requested
+if [ "${FAST_ONLY:-0}" -eq 1 ] || [ "${RUN_ALL_FAST:-0}" = "1" ]; then
+    echo -e "${CYAN}  ⚡ Fast mode active: excluding slow/daemon integration tests...${RESET}"
+    fast_files=()
+    for f in "${test_files[@]}"; do
+        bname=$(basename "$f")
+        if [[ "$bname" =~ (test_swarm|test_autonomic|test_daemon|test_container|test_mcp|test_sandbox|test_cron|test_docker|test_agent_daemon|test_remediation_daemon|test_subagent|test_ipc_fifo|test_transcripts|test_e2e|test_fleet|test_heartbeat|test_metrics|test_telemetry) ]]; then
+            continue
+        fi
+        fast_files+=("$f")
+    done
+    test_files=("${fast_files[@]}")
+fi
+
 echo -e "${CYAN}  Found ${#test_files[@]} test file(s)${RESET}"
 echo ""
 
@@ -158,14 +176,15 @@ run_one_test() {
     local out_file="$tmp_results_dir/$t_name.out"
     local code_file="$tmp_results_dir/$t_name.code"
     local start_ts end_ts
+    local test_timeout="${TEST_TIMEOUT:-45}"
     
     start_ts=$(date +%s)
     if [ "$VERBOSE" -eq 1 ]; then
         # Direct output to stdout, but still copy to out_file for final summary
-        bash "$t_file" < /dev/null > >(tee "$out_file") 2>&1
+        timeout --preserve-status "${test_timeout}s" bash "$t_file" < /dev/null > >(tee "$out_file") 2>&1
         echo "$?" > "$code_file"
     else
-        bash "$t_file" < /dev/null > "$out_file" 2>&1
+        timeout --preserve-status "${test_timeout}s" bash "$t_file" < /dev/null > "$out_file" 2>&1
         echo "$?" > "$code_file"
     fi
     end_ts=$(date +%s)
@@ -176,15 +195,24 @@ run_one_test() {
 if [ "$concurrency" -gt 1 ]; then
     echo -e "${CYAN}  Running tests concurrently with up to ${concurrency} parallel jobs...${RESET}"
     echo ""
+    pids=()
     for test_file in "${test_files[@]}"; do
         name=$(basename "$test_file" .sh)
-        # Simple job pool throttle: wait if active background jobs >= concurrency
-        while [ "$(jobs -r -p | wc -l)" -ge "$concurrency" ]; do
-            sleep 0.1
+        # Proper PID pool throttling: wait if active background jobs >= concurrency
+        while [ "${#pids[@]}" -ge "$concurrency" ]; do
+            active_pids=()
+            for p in "${pids[@]}"; do
+                if kill -0 "$p" 2>/dev/null; then
+                    active_pids+=("$p")
+                fi
+            done
+            pids=("${active_pids[@]}")
+            [ "${#pids[@]}" -ge "$concurrency" ] && sleep 0.05
         done
         run_one_test "$test_file" "$name" &
+        pids+=($!)
     done
-    wait
+    wait "${pids[@]}" 2>/dev/null || wait
 else
     for test_file in "${test_files[@]}"; do
         name=$(basename "$test_file" .sh)
