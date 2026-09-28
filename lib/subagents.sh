@@ -285,8 +285,11 @@ _subagent_worker_run() {
     _subagent_log_event "$sub_id" "START" "Executing scoped ReAct loop in $sub_dir ($sub_profile)" "$sub_fifo"
 
     local react_ec=0
+    local worker_output_log="${GEORGE_DIR}/subagents/${sub_id}.out"
+    mkdir -p "${GEORGE_DIR}/subagents" 2>/dev/null || true
+    react_run "$objective" "$sub_dir" "$max_turns" 1.0 4096 "$sub_profile" "sub_${sub_id}" "worker" > "$worker_output_log" 2>&1 || react_ec=$?
     local worker_res=""
-    worker_res=$(react_run "$objective" "$sub_dir" "$max_turns" 1.0 4096 "$sub_profile" "sub_${sub_id}" "worker" 2>&1) || react_ec=$?
+    [ -f "$worker_output_log" ] && worker_res=$(cat "$worker_output_log")
 
     local circuit_tripped=0
     local circuit_reason=""
