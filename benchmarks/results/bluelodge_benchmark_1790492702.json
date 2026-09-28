@@ -1,0 +1,39 @@
+{
+  "model_label": "Champion-v5-Iteration8-Calibrated-V3",
+  "timestamp": "2026-09-27 02:05:02",
+  "overall_score": 96.0,
+  "pillars": {
+    "Pillar 1: Tool Syntax & Typing": {
+      "score": 100.0,
+      "passed": 10.0,
+      "total": 10
+    },
+    "Pillar 2: Action Execution vs Monologue": {
+      "score": 90.0,
+      "passed": 9.0,
+      "total": 10
+    },
+    "Pillar 3: Safe File Operations (No Clobber)": {
+      "score": 100.0,
+      "passed": 10.0,
+      "total": 10
+    },
+    "Pillar 4: Git Model Management": {
+      "score": 90.0,
+      "passed": 9.0,
+      "total": 10
+    },
+    "Pillar 5: Software Phytology Protocol": {
+      "score": 100.0,
+      "passed": 10.0,
+      "total": 10
+    }
+  },
+  "violations": {
+    "xml_leaks": 0,
+    "nested_json": 0,
+    "monologue_loops": 0,
+    "clobber_violations": 0
+  },
+  "failures_count": 3
+}

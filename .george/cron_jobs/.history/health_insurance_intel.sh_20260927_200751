@@ -1,0 +1,19 @@
+#!/bin/bash
+# INTERVAL: 43200
+# DESC: Twice-daily deep research report on top US health insurance providers (UnitedHealth, Elevance/CVS Aetna, Humana) financial performance.
+set -euo pipefail
+LODGE_DIR="/home/wsl-ops/blue-lodge"
+TOPIC="US Health Insurance Providers Financial Performance & Quarterly Results: UnitedHealth Group (UNH), Elevance Health / CVS Caremark (Aetna), and Humana. Latest earnings, margins, claims trends, and analyst outlooks from the most recent fiscal quarter. Include specific revenue figures, EPS vs estimates, stock price reactions, and key risk factors for each provider."
+OUTPUT_FILE="/tmp/health_insurance_intel_$(date +%Y%m%d_%H%M).md"
+# Deliver report to this Discord channel instead of a DM (channel name resolved via discord_channels.db)
+CHANNEL_TARGET="general"
+cd "$LODGE_DIR" || exit 1
+source lib/discord_bridge.sh
+target_ch_id=$(discord_channel_resolve "${CHANNEL_TARGET}" 2>/dev/null | head -1) \
+    || target_ch_id=$(sqlite3 .george/discord_channels.db "SELECT channel_id FROM channels WHERE name='${CHANNEL_TARGET}';" 2>/dev/null)
+if [ -z "$target_ch_id" ]; then
+    echo "[!] Could not resolve Discord channel '${CHANNEL_TARGET}' for delivery." >&2
+    exit 1
+fi
+echo "[i] Posting health insurance intel report to Discord channel ${CHANNEL_TARGET} (id: $target_ch_id)."
+exec "$LODGE_DIR/scripts/run_research_sandbox.sh" "$TOPIC" "$OUTPUT_FILE" "$target_ch_id"

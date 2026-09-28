@@ -1,0 +1,15 @@
+#!/bin/bash
+# INTERVAL: 43200
+# DESC: Twice-daily financial intel report on top health insurance providers, delivered via Discord DM.
+set -euo pipefail
+
+LODGE_DIR="${LODGE_DIR:-/home/wsl-ops/blue-lodge}"
+TOPIC="Financial performance and latest earnings of the top US health insurance providers (e.g., UnitedHealth Group, Elevance Health, CVS Caremark/Aetna, Humana) — revenue, net income, margins, stock movement, and key risks. Concise intel briefing."
+OUTPUT_FILE="/tmp/health_insurance_intel_$(date +%Y%m%d_%H%M).md"
+RECIPIENT="dabe"
+
+"$LODGE_DIR/scripts/run_research_sandbox.sh" "$TOPIC" "$OUTPUT_FILE" "$RECIPIENT"
+echo "[health_insurance_intel] Report generated and delivered: $OUTPUT_FILE -> $RECIPIENT at $(date -Is)"
+
+s|RECIPIENT="dabe"|# Deliver the report to this Discord channel instead of a DM (channel name resolved via discord_channels.db)
+CHANNEL_TARGET="general"|
