@@ -50,6 +50,108 @@ ok()    { printf " ${GREEN}✓${RESET} %s\n" "$1"; }
 warn()  { printf " ${YELLOW}⚠${RESET} %s\n" "$1"; }
 err()   { printf " ${RED}✗${RESET} %s\n" "$1"; }
 
+# ── Source Common Module ──────────────────────────────────────
+source "$_SCRIPT_DIR/install/common.sh"
+
+SELECTED_PROFILE=""
+CUSTOM_MODELS_DIR=""
+LEGACY_MODE=0
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --profile)
+            SELECTED_PROFILE="$2"
+            shift 2
+            ;;
+        --models-dir)
+            CUSTOM_MODELS_DIR="$2"
+            shift 2
+            ;;
+        --legacy)
+            LEGACY_MODE=1
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: bash install.sh [options]"
+            echo ""
+            echo "Options:"
+            echo "  --profile <profile>    Select profile: compute_node, workstation, api_server, mobile"
+            echo "  --models-dir <path>    Specify custom GGUF models storage directory (default: ~/models)"
+            echo "  --legacy               Run traditional monolithic installer"
+            echo "  --help, -h             Show this help message"
+            exit 0
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+detect_environment
+
+if [ -z "$SELECTED_PROFILE" ] && [ -t 0 ] && [ "$LEGACY_MODE" -eq 0 ]; then
+    echo ""
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════${RESET}"
+    echo -e "${BOLD}  Blue Lodge — Deployment Profile Selector${RESET}"
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════${RESET}"
+    echo "  Select deployment profile for this machine:"
+    echo ""
+    echo "  [1] Sovereign High-Power Compute Node (Dual-GPU RTX 4090/3090, 27B+ MTP, PRISM, Training Forge)"
+    echo "  [2] Developer Workstation (WSL2 / Linux / macOS, 8B–14B models, Local UI)"
+    echo "  [3] Headless Model API Server (Dedicated PRISM daemon serving /v1/chat/completions)"
+    echo "  [4] Mobile / Edge Node (Termux / PRoot / iSH, 2B–4B edge models)"
+    echo "  [5] Traditional Monolithic / All-In-One Legacy Installation"
+    echo ""
+
+    default_choice=2
+    if [ "$GPU_COUNT" -ge 2 ] || [ "$VRAM_TOTAL_MB" -ge 20000 ]; then
+        default_choice=1
+    elif [ "$IS_TERMUX" -eq 1 ] || [ "$IS_PROOT" -eq 1 ] || [ "$IS_ISH" -eq 1 ]; then
+        default_choice=4
+    fi
+
+    printf "  Enter selection [1-5, default: %s]: " "$default_choice"
+    read -r user_choice
+    user_choice="${user_choice:-$default_choice}"
+
+    case "$user_choice" in
+        1) SELECTED_PROFILE="compute_node" ;;
+        2) SELECTED_PROFILE="workstation" ;;
+        3) SELECTED_PROFILE="api_server" ;;
+        4) SELECTED_PROFILE="mobile" ;;
+        5) LEGACY_MODE=1 ;;
+        *) SELECTED_PROFILE="workstation" ;;
+    esac
+fi
+
+if [ -n "$SELECTED_PROFILE" ]; then
+    case "$SELECTED_PROFILE" in
+        compute_node)
+            export CUSTOM_MODELS_DIR
+            bash "$_SCRIPT_DIR/install/profile_compute_node.sh"
+            exit 0
+            ;;
+        workstation)
+            export CUSTOM_MODELS_DIR
+            bash "$_SCRIPT_DIR/install/profile_workstation.sh"
+            exit 0
+            ;;
+        api_server)
+            export CUSTOM_MODELS_DIR
+            bash "$_SCRIPT_DIR/install/profile_api_server.sh"
+            exit 0
+            ;;
+        mobile)
+            export CUSTOM_MODELS_DIR
+            bash "$_SCRIPT_DIR/install/profile_mobile.sh"
+            exit 0
+            ;;
+    esac
+fi
+
+# In legacy mode, ensure the model directory is also set up
+setup_model_directory "$CUSTOM_MODELS_DIR" "$LODGE_DIR"
+
 # ── Detect environment ────────────────────────────────────────
 IS_TERMUX=0
 IS_PROOT=0
