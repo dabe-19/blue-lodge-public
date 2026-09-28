@@ -56,6 +56,10 @@
         VIM WORKBENCH
       </button>
 
+      <button class="tactile-btn accent header-workbench-btn" id="headerTrainingForgeBtn" title="Open Sovereign Training Forge & Colab Studio" style="background: #2a1b4e; border-color: #7b42f6; color: #d8b4fe;">
+        ⚡ FORGE
+      </button>
+
       <button class="tool-crib-btn" id="toolCribToggle" title="Open Instrument Rack, Transcripts & Config">
         <span class="tool-icon">≡</span> TOOLS
       </button>
@@ -1116,6 +1120,97 @@
           <span class="vim-keys-hint">Vim: [Esc] Normal | [i] Insert | [:w] Save | [:q!] Force Quit | [cs/ds/ys] Surround</span>
           <button type="button" class="tactile-btn vim-legend-link-btn" id="linkVimLegend" title="Open complete Vim Command Legend & Reference">[ ⌨ VIM LEGEND ▾ ]</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sovereign Training Forge & Colab Studio Modal -->
+  <div class="modal-overlay" id="trainingForgeModal" style="display: none;">
+    <div class="modal-card" style="max-width: 780px;">
+      <div class="modal-header" style="background: #1b1333; border-bottom: 1px solid #4c2889;">
+        <div class="modal-title" style="color: #d8b4fe;">⚡ SOVEREIGN TRAINING FORGE &amp; COLAB FLEET STUDIO</div>
+        <button class="modal-close" id="trainingForgeModalClose">✕</button>
+      </div>
+      <div class="modal-body" style="padding: 16px;">
+        <!-- ADC Credit Bar -->
+        <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(123, 66, 246, 0.1); border: 1px solid #7b42f6; border-radius: 4px; padding: 10px 14px; margin-bottom: 14px;">
+          <div>
+            <span style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">COLAB COMPUTE UNITS (ADC):</span>
+            <span id="forgeCuBadge" style="font-weight: bold; color: #a78bfa; margin-left: 8px;">QUERYING...</span>
+          </div>
+          <div>
+            <button type="button" class="tactile-btn" id="btnForgeRefreshCu" style="padding: 3px 8px; font-size: 11px;">↻ REFRESH BALANCE</button>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px;">
+          <div class="edit-field">
+            <label for="forgeRunName">RUN IDENTIFIER:</label>
+            <input type="text" id="forgeRunName" class="form-input" value="bluelodge_multiturn_run" style="font-family: var(--font-mono); font-size: 12px;">
+          </div>
+          <div class="edit-field">
+            <label for="forgeRunVersion">ITERATION VERSION:</label>
+            <input type="text" id="forgeRunVersion" class="form-input" value="15" style="font-family: var(--font-mono); font-size: 12px;">
+          </div>
+        </div>
+
+        <!-- Curricula Selection -->
+        <div class="section-title" style="margin-bottom: 8px;">ACTIVE CURRICULA TRACKS:</div>
+        <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 4px; padding: 10px; margin-bottom: 14px;">
+          <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; cursor: pointer;">
+            <input type="checkbox" id="forgeTrack1" checked>
+            <span><strong>Track 1:</strong> Context Discrimination &amp; Anti-Pollution (81.7 MB composite)</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; cursor: pointer;">
+            <input type="checkbox" id="forgeTrack2" checked>
+            <span><strong>Track 2:</strong> Multi-Hop Follow-ups &amp; Surgical Execution (79.9 MB composite)</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer;">
+            <input type="checkbox" id="forgeTrack3" checked>
+            <span><strong>Track 3:</strong> Evaluator Resilience &amp; Tool Recovery (78.4 MB composite)</span>
+          </label>
+        </div>
+
+        <!-- Compute Hardware Selection -->
+        <div class="section-title" style="margin-bottom: 8px;">COMPUTE PROVISIONING TARGET:</div>
+        <div style="display: flex; gap: 16px; margin-bottom: 14px;">
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer;">
+            <input type="radio" name="forgeHwTarget" value="colab_fleet" checked>
+            <span>Google Colab Fleet (ADC, up to 3x A100s, auto-teardown)</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer;">
+            <input type="radio" name="forgeHwTarget" value="local_dual_gpu">
+            <span>Local Dual-GPU (RTX 4090 + RTX 3090, 48GB VRAM)</span>
+          </label>
+        </div>
+
+        <!-- Fusion & Champion Settings -->
+        <div class="section-title" style="margin-bottom: 8px;">LORA &amp; SVD32 FUSION SPECIFICATION:</div>
+        <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; margin-bottom: 14px;">
+          <div class="edit-field">
+            <label for="forgeParentCheckpoint">PARENT CHAMPION:</label>
+            <input type="text" id="forgeParentCheckpoint" class="form-input" value="Blue-Llama-27B-Champion-v14-Fused-LoRA.gguf" style="font-family: var(--font-mono); font-size: 11px;">
+          </div>
+          <div class="edit-field">
+            <label for="forgeParentWeight">PARENT WEIGHT:</label>
+            <input type="text" id="forgeParentWeight" class="form-input" value="0.35" style="font-family: var(--font-mono); font-size: 11px;">
+          </div>
+          <div class="edit-field">
+            <label for="forgeSvdRank">SVD RANK:</label>
+            <input type="text" id="forgeSvdRank" class="form-input" value="32" style="font-family: var(--font-mono); font-size: 11px;">
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-top: 10px;">
+          <button type="button" class="tactile-btn" id="btnForgeDryRun" style="flex: 1;">▶ DRY-RUN VALIDATION</button>
+          <button type="button" class="tactile-btn accent" id="btnForgeLaunchRun" style="flex: 2; background: #5b21b6; border-color: #7c3aed; color: #fff;">⚡ LAUNCH TRAINING PIPELINE</button>
+        </div>
+
+        <div class="section-title" style="margin-top: 14px;">STUDIO CONSOLE TELEMETRY:</div>
+        <pre class="training-forge-console" id="forgeConsoleArea" style="max-height: 200px; overflow-y: auto; background: var(--bg-surface); border: 1px solid var(--border-color); padding: 10px; font-family: var(--font-mono); font-size: 11px; white-space: pre-wrap; color: var(--text-main); margin-top: 6px;">Ready. Configure training run parameters above and click Dry-Run or Launch.</pre>
+      </div>
+      <div class="modal-footer">
+        <button class="tactile-btn" id="trainingForgeModalDismiss">DISMISS</button>
       </div>
     </div>
   </div>
