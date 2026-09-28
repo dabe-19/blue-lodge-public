@@ -44,16 +44,14 @@
 {%- endif %}
 {%- set reasoning_instructions = '' %}
 {%- if enable_thinking is undefined or enable_thinking is true %}
-    {%- set resolved_reasoning_effort = reasoning_effort|default('low') %}
+    {%- set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}
     {%- if resolved_reasoning_effort not in ('xhigh', 'medium', 'low') %}
         {{- raise_exception('Unexpected reasoning effort ' ~ reasoning_effort ~ '. Supported types are xhigh (default), medium, and low.') }}
     {%- endif %}
     {%- if resolved_reasoning_effort == 'xhigh' %}
-        {%- set reasoning_instructions = 'Reasoning effort is set to xhigh. Think deeply and exhaustively through the task: validate all architectural constraints, explore edge cases, plan multi-turn verification, and ensure flawless craftsmanship.' %}
-    {%- elif resolved_reasoning_effort == 'medium' %}
-        {%- set reasoning_instructions = 'Reasoning effort is set to medium. Take measured time to reason through the objective: verify target file paths and tool parameters, consider working memory, plan the necessary steps, and carefully evaluate tool observations before concluding.' %}
+        {%- set reasoning_instructions = 'Reasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.' %}
     {%- elif resolved_reasoning_effort == 'low' %}
-        {%- set reasoning_instructions = 'Reasoning effort is set to low. Keep your thinking concise and focused. Formulate a 1-2 sentence plan and proceed directly to tool execution or final synthesis.' %}
+        {%- set reasoning_instructions = 'Reasoning effort is set to low. Keep your thinking brief and focused, moving directly to the conclusion without unnecessary elaboration.' %}
     {%- endif %}
 {%- endif %}
 {%- if tools and tools is iterable and tools is not mapping %}
@@ -67,7 +65,7 @@
         {{- tool | tojson }}
     {%- endfor %}
     {{- "\n</tools>" }}
-    {{- '\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n{"name": "example_function_name", "arguments": {"example_parameter_1": "value_1", "example_parameter_2": "value_2"}}\n</tool_call>\n\n<IMPORTANT>\nCraftsman Tool Calling Guidelines:\n- Function calls MUST follow the specified format: a valid JSON object with "name" and "arguments" keys nested within <tool_call></tool_call> tags\n- NEVER use XML parameter tags like <parameter> or </parameter> inside tool call arguments\n- Required parameters MUST be provided with valid, well-typed values matching the tool schema\n- Deliberate Planning: Formulate your reasoning inside <think></think> BEFORE the function call. Explain your objective, assess available tools, and choose the most direct action\n- Domain Getter Tools First: When the objective requests status, health, inspection, or state of a specific subsystem (such as software phytology, git state, or service health), check your tool definitions for a dedicated domain getter tool (e.g. phytology_manage with action="status", git status, etc.) and invoke it directly on Turn 1 rather than performing preliminary raw file greps or directory scans\n- General Inspection & Bounded Getters: When no dedicated domain tool exists, use targeted bounded inspection tools (file_read with start_line/max_lines, file_grep, dir_list) to locate and inspect relevant files\n- Surgical State Modification: When modifying files or code, prefer surgical edits (file_edit) or file_write with complete verified content. Verify target paths before writing\n- Working Memory Scratchpad: When accumulating observations, parameters, or draft findings across multiple turns, record intermediate state into working memory using file_write or file_append with path="mem:active_task"\n- Multi-Turn Synthesis & Dynamic Termination: After receiving tool observations from a getter, evaluate whether you have enough information to fulfill the user objective. If the observation answers the question, do NOT call redundant tools—synthesize and deliver your final response directly in clean, structured markdown\n- Natural Language Responses: If no tool call is needed, or once all necessary tool actions are complete, deliver your complete, synthesized answer directly in natural language\n</IMPORTANT>' }}
+    {{- '\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n{"name": "example_function_name", "arguments": {"example_parameter_1": "value_1", "example_parameter_2": "value_2"}}\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: a valid JSON object with "name" and "arguments" keys nested within <tool_call></tool_call> tags\n- NEVER use XML parameter tags like <parameter> or </parameter> inside tool call arguments\n- Required parameters MUST be specified\n- You may provide brief reasoning for your function call in natural language BEFORE the function call, but NOT after\n- IMMEDIATE TOOL DISPATCH MANDATE: When the user prompt mentions a specific tool (such as file_edit, file_write, phytology_manage, code_validate, code_outline, code_symbol_get, slash_command_exec, or bash_exec), you MUST invoke that exact tool in your very first turn without intermediate steps.\n- SAFE FILE OPERATIONS (STRICT): When asked to update, modify, patch, or refactor a file using file_edit, you MUST call file_edit immediately in turn 1 with a synthesized sed expression (e.g. "expression": "s/old/new/g"). NEVER call file_read, cat, or bash_exec to inspect the file first. Never call file_write to edit existing files.\n- NEW FILE CREATION: When asked to create or write a brand new file from scratch, call file_write.\n- SOFTWARE PHYTOLOGY PROTOCOL: Always invoke phytology_manage directly with the exact action:\n  * audit foliage -> {"action": "audit"} (add "flags": "--cached" if LRU cache requested)\n  * living tissue status -> {"action": "status"}\n  * LRU cache hit rate / statistics -> {"action": "cache-status"}\n  * invalidate cache -> {"action": "cache-invalidate"}\n  * evaluate fitness -> {"action": "fitness", "target": "target_file"}\n  * lignify tissue -> {"action": "lignify", "target": "target_file"}\n  * autonomic heal -> {"action": "heal", "target": "target_file"}\n  * test suite -> {"action": "test"}\n  NEVER call tool_search, file_read, or bash_exec for phytology operations.\n- GIT MODEL MANAGEMENT: For Git operations, invoke bash_exec with the exact command:\n  * branch from develop -> "git checkout -b feature/name develop"\n  * git status -> "git status" or "git status --porcelain"\n  * git stage and commit -> "git add file && git commit -m conventional_message"\n  * git push -> "git push gitea branch_name"\n  * check branches -> "git branch -a"\n- CODE VALIDATE: When validating syntax with code_validate, pass {"path": "file_path", "strict": true}.\n- SLASH COMMANDS: Pass "command" (e.g. "/limits") and "args" (e.g. "status") separately in slash_command_exec.\n- DIRECTORY PATHS: Never add trailing slashes to directory paths (use "lib", not "lib/").\n- If no tool is required, respond in normal natural language.\n</IMPORTANT>' }}
     {%- if messages[0].role == 'system' %}
         {%- set content = render_content(messages[0].content, false, true)|trim %}
         {%- if content %}
@@ -101,7 +99,6 @@
 {%- if ns.multi_step_tool %}
     {{- raise_exception('No user query found in messages.') }}
 {%- endif %}
-{%- set last_user_prompt = namespace(text="") %}
 {%- for message in messages %}
     {%- set content = render_content(message.content, true)|trim %}
     {%- if message.role == "system" %}
@@ -109,7 +106,6 @@
             {{- raise_exception('System message must be at the beginning.') }}
         {%- endif %}
     {%- elif message.role == "user" %}
-        {%- set last_user_prompt.text = content %}
         {{- '<|im_start|>' + message.role + '\n' + content + '<|im_end|>' + '\n' }}
     {%- elif message.role == "assistant" %}
         {%- set reasoning_content = '' %}
@@ -117,10 +113,10 @@
             {%- set reasoning_content = message.reasoning_content %}
         {%- endif %}
         {%- set reasoning_content = reasoning_content|trim %}
-        {%- if preserve_thinking is defined and preserve_thinking is true %}
+        {%- if preserve_thinking is undefined or preserve_thinking is true or loop.index0 > ns.last_query_index %}
             {{- '<|im_start|>' + message.role + '\n<think>\n' + reasoning_content + '\n</think>\n\n' + content }}
         {%- else %}
-            {{- '<|im_start|>' + message.role + '\n' + (content if content else '') }}
+            {{- '<|im_start|>' + message.role + '\n' + content }}
         {%- endif %}
         {%- if message.tool_calls and message.tool_calls is iterable and message.tool_calls is not mapping %}
             {%- for tool_call in message.tool_calls %}
@@ -157,22 +153,8 @@
 {%- endfor %}
 {%- if add_generation_prompt %}
     {{- '<|im_start|>assistant\n' }}
-    {%- set last_msg = messages[-1] %}
-    {%- set p = last_user_prompt.text %}
-    {%- set is_advisory = p.startswith('[CIRCUIT ADVISORY') or p.startswith('[SYSTEM ADVISORY') or p.startswith('[SYSTEM PERTURBATION') or p.startswith('[guard]') or p.startswith('[INSTRUCTION]') or 'Action repetition strike' in p or 'already executed' in p %}
-    {%- set has_prior_tools = messages | selectattr("role", "equalto", "tool") | list | length > 0 %}
     {%- if enable_thinking is defined and enable_thinking is false %}
         {{- '<think>\n\n</think>\n\n' }}
-    {%- elif resolved_reasoning_effort == 'medium' or resolved_reasoning_effort == 'xhigh' %}
-        {{- '<think>\n' }}
-    {%- elif resolved_reasoning_effort == 'low' %}
-        {%- if last_msg.role == 'tool' %}
-            {{- '<think>\nEvaluating tool observation: ' }}
-        {%- elif is_advisory %}
-            {{- '<think>\nAdapting strategy per advisory guidance: ' }}
-        {%- else %}
-            {{- '<think>\n' }}
-        {%- endif %}
     {%- else %}
         {{- '<think>\n' }}
     {%- endif %}

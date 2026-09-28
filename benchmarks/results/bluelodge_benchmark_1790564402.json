@@ -1,0 +1,39 @@
+{
+  "model_label": "Qwen3.8-27B-UD-Q4_K_S",
+  "timestamp": "2026-09-27 22:00:02",
+  "overall_score": 78.0,
+  "pillars": {
+    "Pillar 1: Tool Syntax & Typing": {
+      "score": 90.0,
+      "passed": 9.0,
+      "total": 10
+    },
+    "Pillar 2: Action Execution vs Monologue": {
+      "score": 100.0,
+      "passed": 10.0,
+      "total": 10
+    },
+    "Pillar 3: Safe File Operations (No Clobber)": {
+      "score": 10.0,
+      "passed": 1.0,
+      "total": 10
+    },
+    "Pillar 4: Git Model Management": {
+      "score": 90.0,
+      "passed": 9.0,
+      "total": 10
+    },
+    "Pillar 5: Software Phytology Protocol": {
+      "score": 100.0,
+      "passed": 10.0,
+      "total": 10
+    }
+  },
+  "violations": {
+    "xml_leaks": 0,
+    "nested_json": 0,
+    "monologue_loops": 0,
+    "clobber_violations": 0
+  },
+  "failures_count": 13
+}
