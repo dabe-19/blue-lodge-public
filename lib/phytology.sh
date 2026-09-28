@@ -822,32 +822,31 @@ phytology_auto_remediate() {
 #  4. Closes Gitea issues automatically when a broken/corrupted node is detected
 
 phytology_probe() {
-local target_file="$1"
-phytology_init
+    local target_file="${1:-}"
+    phytology_init
 
-# Inspect living foliage scripts in cron_jobs and tools for existing patterns
-local -a inspected=()
-while IFS= read -r f; do
-[ -f "$f" ] && inspected+=("$f")
-done < <(find .george/cron_jobs .george/tools -maxdepth 1 \( -name "*.sh" -o -name *.py \) | sort -u)
+    # Inspect living foliage scripts in cron_jobs and tools
+    local -a inspected=()
+    while IFS= read -r f; do
+        [ -f "$f" ] && inspected+=("$f")
+    done < <(find "$FOLIAGE_ROOT" "$FOLIAGE_TOOLS_ROOT" -maxdepth 1 \( -name "*.sh" -o -name "*.py" \) 2>/dev/null | sort -u)
 
-local total=${#inspected[@]}
+    local total=${#inspected[@]}
+    local status="healthy"
+    [ "$total" -gt 0 ] && status="${status} (monitored: $total nodes)"
 
-# Stream telemetry frames to the FIFO channel 'phytology_telemetry'
-if declare -f fifo_publish_frame &>/dev/null; then
-fifo Publish Frame "george/phytology/status" "$frame payload" 2>&1 || true
-fi
+    # Stream telemetry frames to the FIFO channel if available
+    if declare -f fifo_publish_frame &>/dev/null; then
+        fifo_publish_frame "george/phytology/status" "{\"status\": \"$status\", \"total_monitored\": $total}" 2>&1 || true
+    fi
 
-local status="healthy"
-[ "${#inspected[@]}" -gt 0 ] && status="${status} (monitored: $total nodes)"
+    # Run parallel tissue audit if available
+    if declare -f phytology_parallel_audit &>/dev/null; then
+        phytology_parallel_audit 2>/dev/null || true
+    fi
 
-# Run parallel tissue audit using bash_exec in an isolated sandbox
-if command -v phytology_parallel_audit &>/dev/null; then
-./lodge /phytology parallel-audit
-fi
-
-echo "PROBE_COMPLETE"
-return 0
+    echo "PROBE_COMPLETE"
+    return 0
 }
 
 # ── 14. Phenotypic Fitness Scoring ──────────────────────────────────
@@ -948,6 +947,56 @@ TEST_EOF
 
     echo "LIGNIFICATION_SUCCESS: Promoted $foliage_file to $dest_cmd and generated $dest_test"
     return 0
+}
+
+# ── 16. Living Tissue Autonomic Health Summary ──────────────────────
+# Usage: phytology_health_summary
+# Inspects Cambium and Foliage, returning structured JSON telemetry with
+# syntax health pass rate, snapshot availability, and overall status.
+phytology_health_summary() {
+    phytology_init
+    local total_nodes=0
+    local healthy_nodes=0
+    local snapshot_covered=0
+    local nodes_json="[]"
+
+    local -a files=()
+    while IFS= read -r f; do
+        [ -f "$f" ] && files+=("$f")
+    done < <(find "$CAMBIUM_ROOT" "$FOLIAGE_ROOT" "$FOLIAGE_TOOLS_ROOT" -maxdepth 2 \( -name "*.sh" -o -name "*.py" \) 2>/dev/null | sort -u)
+
+    for f in "${files[@]}"; do
+        total_nodes=$((total_nodes + 1))
+        local is_syntax_ok=0
+        if phytology_verify_syntax "$f" 2>/dev/null; then
+            is_syntax_ok=1
+            healthy_nodes=$((healthy_nodes + 1))
+        fi
+
+        local fname
+        fname="$(basename "$f")"
+        local has_snapshot=0
+        local snap_cnt
+        snap_cnt=$(find "$PHYTOLOGY_SNAPSHOTS_DIR" -maxdepth 1 -name "${fname}.*.bak" 2>/dev/null | wc -l)
+        if [ "$snap_cnt" -gt 0 ]; then
+            has_snapshot=1
+            snapshot_covered=$((snapshot_covered + 1))
+        fi
+
+        nodes_json=$(jq -c --arg path "$f" --argjson syn "$is_syntax_ok" --argjson snap "$has_snapshot" \
+            '. += [{path: $path, syntax_valid: ($syn == 1), snapshot_available: ($snap == 1)}]' <<< "$nodes_json")
+    done
+
+    local health_pct=100
+    [ "$total_nodes" -gt 0 ] && health_pct=$(( (healthy_nodes * 100) / total_nodes ))
+
+    jq -nc \
+        --argjson total "$total_nodes" \
+        --argjson healthy "$healthy_nodes" \
+        --argjson snapshots "$snapshot_covered" \
+        --argjson pct "$health_pct" \
+        --argjson nodes "$nodes_json" \
+        '{status: (if $pct >= 90 then "HEALTHY" elif $pct >= 70 then "DEGRADED" else "CRITICAL" end), total_monitored: $total, healthy_nodes: $healthy, snapshot_coverage: $snapshots, health_percentage: $pct, nodes: $nodes}'
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
