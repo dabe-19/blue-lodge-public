@@ -126,7 +126,7 @@ fi
 DRAFT_PATH="${LLAMA_ARG_DRAFT:-}"
 if [ "${ENABLE_MTP:-0}" = "1" ]; then
     if ([[ "$TARGET_MODEL" == *"Internal-MTP"* ]] || [[ "$TARGET_MODEL" == *"mtp-lean"* ]] || [ -z "$DRAFT_PATH" ]); then
-        DRAFT_N_MAX="${LLAMA_ARG_SPEC_DRAFT_N_MAX:-1}"
+        DRAFT_N_MAX="${LLAMA_ARG_SPEC_DRAFT_N_MAX:-2}"
         DRAFT_P_MIN="${LLAMA_ARG_SPEC_DRAFT_P_MIN:-0.70}"
         echo "[+] Enabling Native Internal MTP Speculative Decoding (draft-mtp, n-max ${DRAFT_N_MAX}, p-min ${DRAFT_P_MIN})..."
         ARGS+=(
@@ -136,7 +136,7 @@ if [ "${ENABLE_MTP:-0}" = "1" ]; then
             "--spec-draft-ngl" "99"
         )
     elif [ -n "$DRAFT_PATH" ] && [ -f "$DRAFT_PATH" ]; then
-        DRAFT_N_MAX="${LLAMA_ARG_SPEC_DRAFT_N_MAX:-1}"
+        DRAFT_N_MAX="${LLAMA_ARG_SPEC_DRAFT_N_MAX:-2}"
         DRAFT_P_MIN="${LLAMA_ARG_SPEC_DRAFT_P_MIN:-0.70}"
         echo "[+] Enabling External MTP Draft Speculative Decoding: $DRAFT_PATH (n-max ${DRAFT_N_MAX}, p-min ${DRAFT_P_MIN})"
         ARGS+=(
