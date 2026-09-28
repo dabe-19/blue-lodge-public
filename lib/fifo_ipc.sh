@@ -425,9 +425,10 @@ fifo_await() {
             return 124
         fi
 
-        local st ec
+        local st ec bg_pid
         st=$(jq -r '.status // "PENDING"' "$prom_file" 2>/dev/null || echo "PENDING")
         ec=$(jq -r '.exit_code // empty' "$prom_file" 2>/dev/null || true)
+        bg_pid=$(jq -r '.pid // empty' "$prom_file" 2>/dev/null || true)
 
         if [ "$st" = "RESOLVED" ]; then
             [ -f "$prom_out" ] && cat "$prom_out"
@@ -435,6 +436,23 @@ fifo_await() {
         elif [ "$st" = "REJECTED" ]; then
             [ -f "$prom_out" ] && cat "$prom_out" >&2
             return "${ec:-1}"
+        fi
+
+        # Safeguard: Detect crashed / prematurely killed background process
+        if [ -n "$bg_pid" ] && [ "$bg_pid" -gt 0 ] 2>/dev/null; then
+            if ! kill -0 "$bg_pid" 2>/dev/null; then
+                sleep 0.1
+                st=$(jq -r '.status // "PENDING"' "$prom_file" 2>/dev/null || echo "PENDING")
+                ec=$(jq -r '.exit_code // empty' "$prom_file" 2>/dev/null || true)
+                if [ "$st" = "RESOLVED" ] || [ "$st" = "REJECTED" ]; then
+                    [ -f "$prom_out" ] && cat "$prom_out"
+                    return "${ec:-0}"
+                fi
+                ui_err "Process PID $bg_pid for promise $prom_id died unexpectedly." >&2
+                jq '.status = "REJECTED" | .exit_code = 137' "$prom_file" > "${prom_file}.dead.$$" 2>/dev/null && mv "${prom_file}.dead.$$" "$prom_file" 2>/dev/null || true
+                printf "ERROR: Process PID %s terminated prematurely (crashed or killed)\n" "$bg_pid" >&2
+                return 137
+            fi
         fi
 
         sleep 0.05

@@ -1262,6 +1262,8 @@ _react_dag_handle_failure() {
 
 # ── Main ReAct Runner ────────────────────────────────────────────────
 react_run() {
+    export _LODGE_IN_TASK=1
+    trap 'export _LODGE_IN_TASK=0; stty sane 2>/dev/null || true' RETURN 2>/dev/null || true
     local goal="$1"
     local workdir="${2:-$PWD}"
     local max_turns="${3:-${AGENT_MAX_TURNS:-${AGENT_MAX_MILESTONES:-30}}}"
@@ -1474,6 +1476,12 @@ EOF
     ui_info "Starting Task: ${display_goal:0:140}"
 
     while [ "$turn" -le "$max_turns" ]; do
+        if [ -f "${TMPDIR:-/tmp}/.lodge-cancel-$$" ] || [ "${_LODGE_CANCELLED:-0}" -eq 1 ]; then
+            ui_warn "Task cancelled via signal."
+            export _LODGE_IN_TASK=0
+            stty sane 2>/dev/null
+            return 130
+        fi
         local current_hd_step="Step 1"
         local current_hd_id=1
         if [ -f "$hd_file" ]; then
@@ -2139,6 +2147,12 @@ except Exception:
                                 --arg name "$c_name" \
                                 --arg timeout "$as_timeout" \
                                 '{role: "tool", tool_call_id: $id, name: $name, content: ("ERROR: Tool execution timed out after " + $timeout + "s")}')
+                        elif [ "$await_ec" -ne 0 ] && [ -z "$tool_resp" ]; then
+                            tool_resp=$(jq -nc \
+                                --arg id "$c_id" \
+                                --arg name "$c_name" \
+                                --arg ec "$await_ec" \
+                                '{role: "tool", tool_call_id: $id, name: $name, content: ("ERROR: Tool execution crashed or terminated prematurely (exit code: " + $ec + ")")}')
                         fi
                     else
                         tool_resp=$(native_tools_dispatch "$c_id" "$c_name" "$c_args" "$workdir")

@@ -658,17 +658,19 @@ ui_resolve_path() {
 
     # Check if we are running in an agent task workspace or sandbox
     local is_agent_task=0
-    if [[ "$workdir" != *".george/workspaces"* ]] && [ -n "${AGENT_TASK_WORKSPACE:-}" ]; then
+    if [[ "$workdir" == *"/.sandboxes/"* ]] || [[ "$(pwd)" == *"/.sandboxes/"* ]]; then
+        is_agent_task=1
+    elif [[ "$workdir" != *".george/workspaces"* ]] && [ -n "${AGENT_TASK_WORKSPACE:-}" ]; then
         workdir="$AGENT_TASK_WORKSPACE"
-    fi
-    if [[ "$workdir" == *".george/workspaces"* ]] || [[ "$workdir" == *"/.sandboxes/"* ]] || [[ "$(pwd)" == *"/.sandboxes/"* ]]; then
+        is_agent_task=1
+    elif [[ "$workdir" == *".george/workspaces"* ]]; then
         is_agent_task=1
     fi
 
     # Auto-route general document files (e.g. .md, .txt) that are not codebase files to memories
     if [ "$is_agent_task" -eq 1 ] && [[ "$1" != *".george/workspaces"* ]] && [[ "$1" != *".george/memories"* ]] && [[ "$1" != *".george/issues"* ]]; then
         if [[ "$filepath" == *.md ]] || [[ "$filepath" == *.txt ]]; then
-            if [[ "$filepath" != "lib/"* ]] && [[ "$filepath" != "tests/"* ]] && [[ "$filepath" != "commands/"* ]] && [[ "$filepath" != "docs/"* ]] && [[ "$filepath" != *".george/issues/"* ]] && [ ! -f "$filepath" ] && [ ! -f "$lodge_dir/$filepath" ] && [ ! -f "$workdir/$filepath" ] && [ ! -f "$lodge_dir/.george/workspaces/$filepath" ]; then
+            if [[ "$filepath" != "lib/"* ]] && [[ "$filepath" != "tests/"* ]] && [[ "$filepath" != "commands/"* ]] && [[ "$filepath" != "docs/"* ]] && [[ "$filepath" != ".george/"* ]] && [[ "$filepath" != *".george/issues/"* ]] && [ ! -f "$filepath" ] && [ ! -f "$lodge_dir/$filepath" ] && [ ! -f "$workdir/$filepath" ] && [ ! -f "$lodge_dir/.george/workspaces/$filepath" ]; then
                 local auto_slug
                 auto_slug=$(basename "$filepath" | sed -e 's/\.md$//' -e 's/\.txt$//' | sed 's|[^a-zA-Z0-9_-]||g')
                 echo "$lodge_dir/.george/memories/${auto_slug}.md"
@@ -745,7 +747,7 @@ ui_resolve_path() {
 
         if [ "$is_write" -eq 1 ]; then
             # For writing, check if it is part of project folders or exists in project root
-            if [[ "$filepath" == "lib/"* ]] || [[ "$filepath" == "tests/"* ]] || [[ "$filepath" == "commands/"* ]] || [[ "$filepath" == "docs/"* ]] || [ -f "$project_path" ]; then
+            if [[ "$filepath" == "lib/"* ]] || [[ "$filepath" == "tests/"* ]] || [[ "$filepath" == "commands/"* ]] || [[ "$filepath" == "docs/"* ]] || [[ "$filepath" == ".george/"* ]] || [ -f "$project_path" ]; then
                 echo "$project_path"
             else
                 # Copy-on-Write: If missing in active task workspace, check prior workspaces to initialize active copy

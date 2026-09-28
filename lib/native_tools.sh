@@ -3070,6 +3070,9 @@ $_ts_v_err
                 if [ -z "$sub_id" ]; then
                     output="ERROR: sub_id required"
                     exit_code=1
+                elif [ ! -f "$reg_file" ] || [ -z "$(jq -r --arg id "$sub_id" '.[] | select(.id == $id) | .id' "$reg_file" 2>/dev/null)" ]; then
+                    output="ERROR: Subagent '$sub_id' not found in registry."
+                    exit_code=1
                 else
                     while [ "$elapsed" -lt "$timeout" ]; do
                         local st spid
@@ -3079,17 +3082,22 @@ $_ts_v_err
                             local sub_res
                             sub_res=$(jq -r --arg id "$sub_id" '.[] | select(.id == $id) | .result' "$reg_file" 2>/dev/null)
                             output="Subagent $sub_id concluded with status $st: $sub_res"
+                            exit_code=0
                             break
                         fi
-                        if [ -n "$spid" ] && [ "$spid" -gt 0 ] 2>/dev/null && ! kill -0 "$spid" 2>/dev/null; then
-                            output="Subagent $sub_id process PID $spid terminated prematurely."
+                        if [ -n "$spid" ] && [ "$spid" -gt 0 ] 2>/dev/null && [ "$spid" -ne "$$" ] && ! kill -0 "$spid" 2>/dev/null; then
+                            subagents_update_status "$sub_id" "FAILED" "" "Subagent process PID $spid terminated prematurely"
+                            output="Subagent $sub_id process PID $spid terminated prematurely (crashed or killed)."
+                            exit_code=1
                             break
                         fi
                         sleep 1
                         elapsed=$((elapsed + 1))
                     done
-                    [ -z "$output" ] && output="Timed out waiting for subagent $sub_id after ${timeout}s"
-                    exit_code=0
+                    if [ -z "$output" ]; then
+                        output="Timed out waiting for subagent $sub_id after ${timeout}s"
+                        exit_code=124
+                    fi
                 fi
                 ;;
             code_symbol_read)

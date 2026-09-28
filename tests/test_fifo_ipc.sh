@@ -146,4 +146,26 @@ it "handles non-zero exit code resolution cleanly" && {
     fifo_channel_close "test_fail_chan"
 }
 
+it "detects prematurely killed background process without hanging" && {
+    fifo_channel_open "test_kill_chan" 5
+
+    prom=$(fifo_async "test_kill_chan" "sleep 10; exit 0")
+    assert_ok $?
+
+    bg_pid=$(jq -r '.pid' "$FIFO_IPC_DIR/promises/${prom}.json")
+    [ -n "$bg_pid" ] && kill -9 "$bg_pid" 2>/dev/null || true
+
+    start_t=$(date +%s)
+    out=$(fifo_await "$prom" 5 2>&1)
+    ec=$?
+    end_t=$(date +%s)
+    dur=$((end_t - start_t))
+
+    assert_eq "$ec" "137"
+    [ "$dur" -lt 3 ]
+    assert_ok $?
+
+    fifo_channel_close "test_kill_chan"
+}
+
 test_end
