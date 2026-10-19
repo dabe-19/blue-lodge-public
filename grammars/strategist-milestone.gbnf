@@ -1,0 +1,15 @@
+# Strategist Milestone — plain text milestone sentence
+# Used by macro loop in lib/agent.sh
+# Layer 1 constrained decoding for llama-server grammar param
+
+root          ::= thinking ws milestone | ws milestone
+
+# Allow any characters except braces, angle brackets, and backticks to prevent JSON/HTML/code leakage
+milestone     ::= [^{}<>`\t\n\r]+
+
+thinking      ::= "<think>" inner "</think>" | inner "</think>" | "<|channel>thought" inner "<channel|>" | inner "<channel|>" | "[" [tT][hH][iI][nN][kK] "]" bracketed "[/" [tT][hH][iI][nN][kK] "]" | bracketed "[/" [tT][hH][iI][nN][kK] "]" | "[" [tT][hH][oO][uU][gG][hH][tT] "]" bracketed "[/" [tT][hH][oO][uU][gG][hH][tT] "]" | bracketed "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
+
+inner         ::= [^<]*
+bracketed     ::= [^\[]*
+
+ws            ::= [ \t\n]*

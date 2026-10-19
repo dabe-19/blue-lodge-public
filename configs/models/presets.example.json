@@ -1,0 +1,13 @@
+{
+  "_comment": "Optional. Copy to .george/models/presets.json to put your own launch scripts one click away in Models -> Now serving (and /models presets <id>). Blue Lodge ships no presets: use this for custom stacks such as a forked llama.cpp build or a split-GPU layout. 'script' must live under scripts/ in the lodge; args are plain tokens. Labels and descriptions are yours: state the real context size your script configures.",
+  "presets": [
+    {
+      "id": "my-stack",
+      "label": "My custom stack",
+      "description": "Launches my own llama-server build with my settings (edit me).",
+      "script": "scripts/inference/my_stack.sh",
+      "args": ["start"],
+      "status_args": ["status"]
+    }
+  ]
+}

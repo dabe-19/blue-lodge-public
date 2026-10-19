@@ -1,0 +1,97 @@
+     [debug] MCP tool_call: server=george-searxng tool=searxng_search params={
+  "query": "site:reuters.com OR site:bloomberg.com OR site:cnbc.com UnitedHealth Group UNH",
+  "max_results": 10
+}
+     [debug] MCP tool_call OK: server=george-searxng tool=searxng_search response_len=3510
+[
+  {
+    "title": "Health insurance plans | UnitedHealthcare",
+    "url": "https://www.uhc.com/?msockid=2d6ffa76bf236196165eed9ebe0160e2",
+    "content": "Explore health insurance options including Medicare, Medicaid, individual and family, short term and dental, as well as employer plans.",
+    "engine": "bing",
+    "score": 1.0,
+    "img_src": "",
+    "thumbnail": ""
+  },
+  {
+    "title": "myuhc - Member Login | UnitedHealthcare",
+    "url": "https://member.uhc.com/myuhc",
+    "content": "Find a Provider Find a doctor, medical specialist, mental health care provider, hospital or lab.",
+    "engine": "bing",
+    "score": 0.5,
+    "img_src": "",
+    "thumbnail": ""
+  },
+  {
+    "title": "Sign in and registration | UnitedHealthcare",
+    "url": "https://www.uhc.com/sign-in?msockid=2d6ffa76bf236196165eed9ebe0160e2",
+    "content": "Ready to login or register for a health plan account? Find links for UnitedHealthcare's secure sites for members, employers, brokers \u2026",
+    "engine": "bing",
+    "score": 0.3333333333333333,
+    "img_src": "",
+    "thumbnail": ""
+  },
+  {
+    "title": "Helping People Live Healthier Lives - UnitedHealth Group",
+    "url": "https://www.unitedhealthgroup.com/",
+    "content": "UnitedHealth Group helps people live healthier lives and helps make the health system work better for everyone.",
+    "engine": "bing",
+    "score": 0.25,
+    "img_src": "",
+    "thumbnail": ""
+  },
+  {
+    "title": "myuhc - Member Login | UnitedHealthcare",
+    "url": "https://member.uhc.com/member",
+    "content": "Sign in to manage your UnitedHealthcare plan, access benefits, claims, and more through the secure member portal.",
+    "engine": "bing",
+    "score": 0.2,
+    "img_src": "",
+    "thumbnail": ""
+  },
+  {
+    "title": "Member resources | UnitedHealthcare",
+    "url": "https://engage.uhc.com/",
+    "content": "Explore member resources and get information about what\u2019s available to you with your UnitedHealthcare plan, including programs, \u2026",
+    "engine": "bing",
+    "score": 0.16666666666666666,
+    "img_src": "",
+    "thumbnail": ""
+  },
+  {
+    "title": "UnitedHealth Group - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/UnitedHealth_Group",
+    "content": "It agreed to divest parts of PacifiCare's commercial health insurance business in Tucson, Arizona and Boulder, Colorado to satisfy \u2026",
+    "engine": "bing",
+    "score": 0.14285714285714285,
+    "img_src": "",
+    "thumbnail": ""
+  },
+  {
+    "title": "Dashboard - UnitedHealthcare",
+    "url": "https://prod.member.myuhc.com/content/myuhc/en/secure/communityplan/dashboard.html",
+    "content": "Common Questions Sorry. It's not you, it's us. We're currently experiencing an internal server problem. Try refreshing the page or \u2026",
+    "engine": "bing",
+    "score": 0.125,
+    "img_src": "",
+    "thumbnail": ""
+  },
+  {
+    "title": "UnitedHealthcare Provider Portal resources | UHCprovider.com",
+    "url": "https://www.uhcprovider.com/portal",
+    "content": "Save time and learn about our UnitedHealthcare Provider Portal tools. Including resources on login, registration, and training.",
+    "engine": "bing",
+    "score": 0.1111111111111111,
+    "img_src": "",
+    "thumbnail": ""
+  },
+  {
+    "title": "UHC Medicare",
+    "url": "https://www.medicare.uhc.com/",
+    "content": "Register for UnitedHealthcare Medicare services and access your personalized healthcare information.",
+    "engine": "bing",
+    "score": 0.1,
+    "img_src": "",
+    "thumbnail": ""
+  }
+]

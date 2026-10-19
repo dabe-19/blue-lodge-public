@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Google Open Knowledge Graph (OKF) Schema for Blue Lodge",
+  "description": "Validates JSON-LD semantic knowledge graphs representing codebase architecture, directories, modules, and programming standards.",
+  "type": "object",
+  "required": ["@context", "@graph"],
+  "properties": {
+    "@context": {
+      "type": "object",
+      "required": ["@vocab"],
+      "properties": {
+        "@vocab": { "type": "string" },
+        "goog": { "type": "string" },
+        "okf": { "type": "string" },
+        "lodge": { "type": "string" }
+      }
+    },
+    "@graph": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["@id", "@type", "name", "description"],
+        "properties": {
+          "@id": { "type": "string" },
+          "@type": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "array", "items": { "type": "string" } }
+            ]
+          },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "path": { "type": "string" },
+          "programmingLanguage": { "type": "string" },
+          "encodingFormat": { "type": "string" },
+          "stability": {
+            "type": "string",
+            "enum": ["stable", "experimental", "deprecated", "internal"]
+          },
+          "isPartOf": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "array", "items": { "type": "string" } }
+            ]
+          },
+          "hasPart": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "dependencies": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "exports": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "standards": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "definition": { "type": "string" },
+          "step": {
+            "type": "array",
+            "items": { "type": "object" }
+          },
+          "articleBody": { "type": "string" },
+          "codeSample": { "type": "string" }
+        }
+      }
+    }
+  }
+}

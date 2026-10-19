@@ -1,0 +1,31 @@
+# Honeydew Items — decomposed task list
+# Used by _agent_honeydew_build() in lib/agent.sh
+# Layer 1 constrained decoding for llama-server grammar param
+
+root          ::= thinking ws response | ws response
+
+response      ::= "<response>" ws json ws "</response>" | json
+
+json          ::= "{" ws ( "\"task_type\":" ws task-type ws "," ws )? "\"items\":" ws "[" ws items ws "]" ws ( "," ws "\"task_type\":" ws task-type ws )? "}"
+
+task-type     ::= "\"chat\"" | "\"code\"" | "\"research\"" | "\"ops\"" | string
+
+items         ::= item ("," ws item)*
+
+item          ::= "{" ws item-fields ws "}"
+item-fields   ::= item-kv ("," ws item-kv)*
+item-kv       ::= "\"task\":" ws string | "\"id\":" ws [0-9]+ | "\"tier\":" ws [0-9]+ | "\"depends_on\":" ws "[" ws [0-9, \t\n]* ws "]" | "\"task_type\":" ws string
+
+# ── String rule: quote-preserving (default) ────────────────
+# Allows escaped quotes, backslashes, and standard JSON escapes
+# inside string values. Use this when field values may contain
+# quoted text from command outputs or user input.
+char          ::= [^"\\] | "\\" ["\\/bfnrt]
+string        ::= "\"" char* "\""
+
+thinking      ::= "<think>" inner "</think>" | inner "</think>" | "<|channel>thought" inner "<channel|>" | inner "<channel|>" | "[" [tT][hH][iI][nN][kK] "]" bracketed "[/" [tT][hH][iI][nN][kK] "]" | bracketed "[/" [tT][hH][iI][nN][kK] "]" | "[" [tT][hH][oO][uU][gG][hH][tT] "]" bracketed "[/" [tT][hH][oO][uU][gG][hH][tT] "]" | bracketed "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
+
+inner         ::= [^<]*
+bracketed     ::= [^\[]*
+
+ws            ::= [ \t\n]*

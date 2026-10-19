@@ -1,0 +1,21 @@
+{
+  "remote_gateway": "user@jump-host",
+  "remote_sdr_host": "george-home",
+  "remote_recordings_path": "/home/user/trunk-recorder/recordings",
+  "ssh_identity_file": ".george/ssh/id_ed25519",
+  "emergency_keywords": [
+    "pursuit",
+    "shots fired",
+    "structure fire",
+    "mayday",
+    "evacuation",
+    "officer down",
+    "signal 100",
+    "code red",
+    "active shooter",
+    "robbery",
+    "hazard"
+  ],
+  "spool_dir": ".george/sdr/spool",
+  "archive_dir": ".george/sdr/archive"
+}

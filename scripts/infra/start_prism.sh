@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# ── start_prism.sh: Sovereign PRISM Inference Runner ──
+set -euo pipefail
+
+TARGET_MODEL="${LLAMA_ARG_MODEL:-/models/active/current/base.gguf}"
+[ ! -f "$TARGET_MODEL" ] && TARGET_MODEL="/models/frontier_qwen38/Qwen3.8-27B-UD-Q4_K_S.gguf"
+[ ! -f "$TARGET_MODEL" ] && TARGET_MODEL="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Internal-MTP-Calibrated.gguf"
+
+if [ ! -f "$TARGET_MODEL" ]; then
+    echo "[!] Error: No compatible model found at $TARGET_MODEL."
+    exit 1
+fi
+
+echo "[+] Starting PRISM CUDA server with $TARGET_MODEL..."
+
+# Setup library paths
+PRISM_BIN="/usr/local/bin/blue-llama-server"
+if [ ! -x "$PRISM_BIN" ]; then
+    PRISM_BIN="/usr/local/bin/llama-server-prism"
+fi
+if [ -x /workspace/build_prism/llama.cpp-prism/build/bin/llama-server ]; then
+    echo "[+] Using locally compiled PRISM engine with SPTQ support from /workspace/build_prism/..."
+    PRISM_BIN="/workspace/build_prism/llama.cpp-prism/build/bin/llama-server"
+    export LD_LIBRARY_PATH="/workspace/build_prism/llama.cpp-prism/build/bin:/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}"
+elif [ -x /opt/llama-prism-latest/bin/llama-server ]; then
+    echo "[+] Using optimized PRISM binary from /opt/llama-prism-latest/bin..."
+    PRISM_BIN="/opt/llama-prism-latest/bin/llama-server"
+    export LD_LIBRARY_PATH="/opt/llama-prism-latest/lib:/opt/llama-prism-latest:${LD_LIBRARY_PATH:-}"
+fi
+
+# Chat template file resolution
+CHAT_TEMPLATE="${LLAMA_ARG_CHAT_TEMPLATE:-/models/active/current/jinja.template}"
+[ ! -f "$CHAT_TEMPLATE" ] && CHAT_TEMPLATE="/models/frontier_qwen38/blue_lodge_jinja_template.jinja"
+
+# Build arguments array
+ARGS=(
+    "-m" "$TARGET_MODEL"
+    "--host" "${LLAMA_ARG_HOST:-0.0.0.0}"
+    "--port" "${LLAMA_ARG_PORT:-8080}"
+    "-c" "${LLAMA_ARG_CTX_SIZE:-262144}"
+    "-np" "${LLAMA_ARG_N_PARALLEL:-1}"
+    "-ngl" "${LLAMA_ARG_N_GPU_LAYERS:-99}"
+    "-b" "${LLAMA_ARG_BATCH:-2048}"
+    "-ub" "${LLAMA_ARG_UBATCH:-1024}"
+    "--flash-attn" "on"
+    "-ctk" "${LLAMA_ARG_CTK:-q4_0}"
+    "-ctv" "${LLAMA_ARG_CTV:-q4_0}"
+    "-ctkd" "${LLAMA_ARG_CTKD:-q4_0}"
+    "-ctvd" "${LLAMA_ARG_CTVD:-q4_0}"
+    "--no-cache-idle-slots"
+    "--reasoning" "${LLAMA_ARG_REASONING:-on}"
+    "--reasoning-format" "${LLAMA_ARG_REASONING_FORMAT:-deepseek}"
+    "--reasoning-effort" "${LLAMA_ARG_REASONING_EFFORT:-medium}"
+    "--reasoning-budget" "${LLAMA_ARG_REASONING_BUDGET:-12288}"
+    "--temp" "${LLAMA_ARG_TEMP:-1.0}"
+    "--top-p" "${LLAMA_ARG_TOP_P:-0.95}"
+    "--load-mode" "mmap"
+    "--jinja"
+    "--chat-template-file" "$CHAT_TEMPLATE"
+    "--cache-ram" "${LLAMA_ARG_CACHE_RAM:-4096}"
+)
+
+# LoRA Adapter Attachment
+LORA_PATH="${LLAMA_ARG_LORA:-/models/active/current/champion.gguf}"
+if [ ! -f "$LORA_PATH" ] && ([[ "$TARGET_MODEL" == *"Champion-v5"* ]] || [[ "$TARGET_MODEL" == *"Qwen3.8"* ]]); then
+    if [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v14-Fused-SVD32.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v14-Fused-SVD32.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v14-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v14-Fused-LoRA.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v13-Fused-SVD32.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v13-Fused-SVD32.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v13-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v13-Fused-LoRA.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v12-Fused-SVD32.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v12-Fused-SVD32.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v12-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v12-Fused-LoRA.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v11-Fused-SVD32.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v11-Fused-SVD32.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v11-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v11-Fused-LoRA.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v10-Fused-SVD32.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v10-Fused-SVD32.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration9-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration9-Fused-LoRA.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration9-Fused-SVD32.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration9-Fused-SVD32.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration8-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration8-Fused-LoRA.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration8-Fused-SVD32.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration8-Fused-SVD32.gguf"
+    elif [ "${USE_SVD16:-0}" = "1" ] && [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration7-Fused-SVD16.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration7-Fused-SVD16.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration7-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration7-Fused-LoRA.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration6-Weighted-SVD16.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration6-Weighted-SVD16.gguf"
+    elif [ "${USE_SVD16:-1}" = "1" ] && [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration6-Fused-SVD16.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration6-Fused-SVD16.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration6-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration6-Fused-LoRA.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration5-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration5-Fused-LoRA.gguf"
+    elif [ -f /models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration4-Fused-LoRA.gguf ]; then
+        LORA_PATH="/models/frontier_qwen38/Blue-Llama-27B-Champion-v5-Iteration4-Fused-LoRA.gguf"
+    fi
+fi
+if [ -n "$LORA_PATH" ] && [ -f "$LORA_PATH" ]; then
+    echo "[+] Attaching Fused LoRA Adapter: $LORA_PATH"
+    ARGS+=("--lora" "$LORA_PATH")
+fi
+
+# Multimodal Vision Tower
+MMPROJ_PATH="${LLAMA_ARG_MMPROJ:-/models/active/current/mmproj.gguf}"
+[ ! -f "$MMPROJ_PATH" ] && [ -f "/models/frontier_qwen38/mmproj-BF16.gguf" ] && MMPROJ_PATH="/models/frontier_qwen38/mmproj-BF16.gguf"
+[ ! -f "$MMPROJ_PATH" ] && MMPROJ_PATH="/models/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf"
+
+if ([ "${ENABLE_VISION:-0}" = "1" ] || [ -f "/models/active/current/mmproj.gguf" ]) && [ -f "$MMPROJ_PATH" ]; then
+    # When splitting across GPUs (e.g. 14,9), CUDA0 holds the heavier shard + MTP draft + context overhead;
+    # place the vision tower on CUDA1 by default unless MTMD_BACKEND_DEVICE is explicitly overridden.
+    if [ -z "${MTMD_BACKEND_DEVICE:-}" ] && [[ "${LLAMA_ARG_TENSOR_SPLIT:-}" == *","* ]]; then
+        export MTMD_BACKEND_DEVICE="CUDA1"
+    fi
+    echo "[+] Offloading Multimodal Vision Tower ($MMPROJ_PATH) [device=${MTMD_BACKEND_DEVICE:-CUDA0}, max_tokens=${LLAMA_ARG_IMAGE_MAX_TOKENS:-1024}]..."
+    ARGS+=(
+        "--mmproj" "$MMPROJ_PATH"
+        "--mmproj-offload"
+        "--image-min-tokens" "${LLAMA_ARG_IMAGE_MIN_TOKENS:-256}"
+        "--image-max-tokens" "${LLAMA_ARG_IMAGE_MAX_TOKENS:-1024}"
+    )
+else
+    echo "[+] Multimodal Vision Tower disabled for this node."
+fi
+
+# Speculative Decoding (MTP Draft Layer)
+DRAFT_PATH="${LLAMA_ARG_DRAFT:-/models/active/current/draft.gguf}"
+REAL_TARGET=$(readlink -f "$TARGET_MODEL" 2>/dev/null || echo "$TARGET_MODEL")
+
+if [ "${ENABLE_MTP:-0}" = "1" ]; then
+    if [ -n "$DRAFT_PATH" ] && [ -f "$DRAFT_PATH" ]; then
+        DRAFT_N_MAX="${LLAMA_ARG_SPEC_DRAFT_N_MAX:-3}"
+        DRAFT_P_MIN="${LLAMA_ARG_SPEC_DRAFT_P_MIN:-0.70}"
+        echo "[+] Enabling External MTP Draft Speculative Decoding: $DRAFT_PATH (n-max ${DRAFT_N_MAX}, p-min ${DRAFT_P_MIN})"
+        ARGS+=(
+            "-md" "$DRAFT_PATH"
+            "--spec-type" "draft-mtp"
+            "--spec-draft-n-max" "$DRAFT_N_MAX"
+            "--spec-draft-p-min" "$DRAFT_P_MIN"
+            "-ngld" "99"
+        )
+    elif ([[ "$REAL_TARGET" == *"Internal-MTP"* ]] || [[ "$REAL_TARGET" == *"mtp-lean"* ]] || [ -z "$DRAFT_PATH" ] || [ ! -f "$DRAFT_PATH" ]); then
+        DRAFT_N_MAX="${LLAMA_ARG_SPEC_DRAFT_N_MAX:-3}"
+        DRAFT_P_MIN="${LLAMA_ARG_SPEC_DRAFT_P_MIN:-0.70}"
+        echo "[+] Enabling Native Internal MTP Speculative Decoding (draft-mtp, n-max ${DRAFT_N_MAX}, p-min ${DRAFT_P_MIN})..."
+        ARGS+=(
+            "--spec-type" "draft-mtp"
+            "--spec-draft-n-max" "$DRAFT_N_MAX"
+            "--spec-draft-p-min" "$DRAFT_P_MIN"
+            "--spec-draft-ngl" "99"
+        )
+    fi
+fi
+
+# Multi-GPU Tensor Split if requested
+if [ -n "${LLAMA_ARG_TENSOR_SPLIT:-}" ]; then
+    echo "[+] Applying Tensor Split: $LLAMA_ARG_TENSOR_SPLIT"
+    ARGS+=(
+        "--tensor-split" "$LLAMA_ARG_TENSOR_SPLIT"
+        "-sm" "layer"
+    )
+fi
+
+echo "[+] Executing: $PRISM_BIN ${ARGS[*]}"
+exec "$PRISM_BIN" "${ARGS[@]}"

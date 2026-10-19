@@ -1,0 +1,18 @@
+# Task Classifier — abstract / concrete / combined
+# Used by _agent_classify_task() in lib/agent.sh
+# Layer 1 constrained decoding for llama-server grammar param
+
+root          ::= thinking ws response | ws response
+
+response      ::= "<response>" ws json ws "</response>" | json
+
+json          ::= "{" ws "\"type\":" ws types ws "}"
+
+types         ::= "\"abstract\"" | "\"concrete\"" | "\"combined\""
+
+thinking      ::= "<think>" inner "</think>" | "<|channel>thought" inner "<channel|>" | "[" [tT][hH][iI][nN][kK] "]" bracketed "[/" [tT][hH][iI][nN][kK] "]" | "[" [tT][hH][oO][uU][gG][hH][tT] "]" bracketed "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
+
+inner         ::= [^<]*
+bracketed     ::= [^\[]*
+
+ws            ::= [ \t\n]*

@@ -1,0 +1,42 @@
+{
+  "@context": {
+    "@vocab": "https://schema.org/",
+    "goog": "http://schema.googleapis.com/",
+    "okf": "https://developers.google.com/knowledge-graph/schema/",
+    "lodge": "urn:blue-lodge:schema:"
+  },
+  "@graph": [
+    {
+      "@id": "urn:blue-lodge:standard:polyglot-runtime-architecture",
+      "@type": ["DefinedTerm", "HowTo", "TechArticle"],
+      "name": "Blue Lodge Polyglot Runtime & Clean Backend Architecture Standard",
+      "description": "Architectural standard defining language boundaries between the sovereign Bash harness, discrete Python domain backends, unified UV virtual environments, and containerized Rust/C++ execution.",
+      "stability": "stable",
+      "definition": "A standard forbidding multi-line inline language strings (e.g. python3 -c '...') in shell scripts. Enforces discrete domain backend modules, pure POSIX fallbacks for utility primitives, unified UV virtual environment management, autonomic FIFO IPC remediation, and hybrid tiered sandbox routing.",
+      "articleBody": "1. Harness vs Domain Split: Bash is the sovereign harness and orchestrator (state, streams, agent loops, terminal UI). Complex data structures, semantic graphs, schema validation, and AST manipulations are delegated to discrete modules.\n2. No Inline Strings: Prohibits embedding multi-line python or rust inside bash strings. Discrete scripts must be co-located with their domain libraries.\n3. Unified Virtual Environment: Single authoritative virtual environment managed by uv at project root (.venv/) with zero-copy linkage to .george/venv to prevent split-brain drift and disk waste.\n4. Tiered Fallbacks & Remediation: Core utility primitives (SHA256, URL encoding) must provide 100% pure POSIX coreutils fallbacks. Complex backends detect missing packages, fingerprint incidents with SHA256, and dispatch autonomic remediation over FIFO IPC channels using uv.\n5. Polyglot Sandboxes: Python sandboxes leverage host uv for sub-second, hardlinked virtual environments. Rust and C++ sandboxes verify host cargo/gcc and transparently route to Docker containers when host toolchains are missing.",
+      "step": [
+        {
+          "@type": "HowToStep",
+          "name": "Co-locate Domain Backend",
+          "text": "Extract complex Python logic into a discrete module within its domain directory (e.g. lib/knowledge/okf_backend.py) rather than inlining python3 -c."
+        },
+        {
+          "@type": "HowToStep",
+          "name": "Resolve Interpreter",
+          "text": "Resolve Python via GEORGE_PYTHON, checking .venv/bin/python, uv run, or system python3."
+        },
+        {
+          "@type": "HowToStep",
+          "name": "Provide POSIX Fallback",
+          "text": "Implement pure POSIX coreutils alternatives for utility functions (sha256sum, jq, awk) so baseline execution never hard-crashes without Python."
+        },
+        {
+          "@type": "HowToStep",
+          "name": "Autonomic FIFO Remediation",
+          "text": "When optional runtime dependencies are absent, dispatch an autonomic remediation task via the FIFO Async IPC Protocol to self-heal using uv."
+        }
+      ],
+      "codeSample": "# Resolve python and invoke discrete backend cleanly\npy_bin=$(_resolve_python)\n$py_bin \"$LODGE_DIR/lib/knowledge/okf_backend.py\" search \"query\" --json"
+    }
+  ]
+}

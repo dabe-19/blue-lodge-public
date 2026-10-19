@@ -1,0 +1,19 @@
+{
+  "@context": {
+    "@vocab": "https://schema.org/",
+    "goog": "http://schema.googleapis.com/",
+    "okf": "https://developers.google.com/knowledge-graph/schema/",
+    "lodge": "urn:blue-lodge:schema:"
+  },
+  "@graph": [
+    {
+      "@id": "urn:blue-lodge:standard:okf-directory-structure",
+      "@type": ["DefinedTerm", "TechArticle"],
+      "name": "Blue Lodge OKF Hierarchical Directory Structure Standard",
+      "description": "Architectural standard defining how directories and source code must be partitioned, named, linked, and documented in Google Open Knowledge Graph JSON-LD format.",
+      "stability": "stable",
+      "definition": "A standard requiring all subsystems to be organized by domain responsibility rather than flat aggregation, backed by machine-readable JSON-LD knowledge graphs, maintaining backward-compatible symlinks for existing POSIX sources.",
+      "articleBody": "1. Domain-Driven Partitioning: Source files must reside in dedicated domain subdirectories (e.g. lib/core, lib/tools, lib/ipc, lib/sys, lib/comms, lib/memory, lib/agents, lib/ui, lib/knowledge).\n2. Backward Compatibility: For all modularized files, relative symlinks must be maintained at legacy entrypoints (e.g., lib/agent.sh -> core/agent.sh) to ensure zero regression for external callers and test runners.\n3. Semantic Graph Representation: Every directory, source file, exported function, and standard must have an entity node in okf/blue_lodge_graph.jsonld conforming to data/schemas/okf_graph.schema.json.\n4. Ephemeral Hygiene: Sandboxes, IPC channels, and temporary files must reside strictly in managed ephemeral directories with automated GC policies (ipc_gc, telemetry_gc), never cluttering root or configuration paths.\n5. Standard Protocols: All internal and external agent teams must reference and adhere to the OKF graph when discovering APIs, dispatching tools, or modifying subsystems."
+    }
+  ]
+}

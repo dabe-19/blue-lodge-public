@@ -1,0 +1,25 @@
+# Reviewed false positives for scripts/release/export_public.py (rule<TAB or space>file-glob).
+# Every entry was checked by hand; add new ones only after review.
+cardano_addr lib/tools/fixtures/minswap_v2_order_datum_sample.json   # public Minswap order-script address
+cardano_addr lib/tools/fixtures/minswap_v2_pool_batches_snek.json    # public Minswap V2 batcher fixture
+cardano_addr lib/tools/cardano_cointegration_reactor.py              # public Minswap V2 order-script address
+cardano_addr lib/tools/cardano_market_dimensions.py                  # public Minswap V2 order-script address
+cardano_addr lib/tools/cardano_order_manager.py                      # public Minswap V2 order-script address
+cardano_addr lib/tools/cardano_provenance_engine.py                  # public CEX cluster prefixes
+cardano_addr lib/tools/minswap_v2.py                                 # public Minswap V2 order-script address
+cardano_addr tests/market_recorder_checks.py                         # public Minswap V2 script & pool test vector
+cardano_addr tests/test_keystore_send_receive.py                     # synthetic CIP-19 test vector
+cardano_addr web/src/routes/desk.rs                                  # CIP-19 test vector
+url_cred docs/SECRETS_VAULT.md                                       # postgresql://admin:...@db.example.com doc example
+url_cred tests/test_rack_probe.sh                                    # placeholder url credential redaction test fixture
+gitleaks:curl-auth-header tests/test_cron_failure_payload.sh         # fake bearer token fixture
+gitleaks:discord-client-id tests/test_discord_bridge.sh              # synthetic Discord channel id fixture
+gitleaks:generic-api-key .env.example                                # SEARXNG_SECRET=change_me... placeholder
+gitleaks:generic-api-key deploy/dolos/genesis/byron.json             # official Cardano mainnet Byron genesis JSON
+gitleaks:generic-api-key docs/SOCIAL_BOTS.md                         # 123456789:ABCd... example token
+gitleaks:generic-api-key lib/tools/limit_order_forecaster.py         # "volume_24h" field name
+gitleaks:generic-api-key tests/test_telemetry.sh                     # sk-1234...cdef redaction fixture
+gitleaks:generic-api-key web/src/routes/models.rs                    # model id string
+gitleaks:generic-api-key web/static/index.html                       # POLYMARKET_..._KEY= doc label
+cardano_addr tests/test_export_public.sh                             # synthetic CIP-19 vector planted by the test
+gitleaks:curl-auth-header tests/test_export_public.sh                # synthetic X-Token fixture planted by the test

@@ -1,0 +1,292 @@
+# ── Sovereign Financial OSINT Configuration ─────────────────────────────────
+# Funding, grants, bounties, and sponsorship opportunities scanner.
+# Evaluated by: bash commands/osint.sh finance sweep (or autonomic /cron sweep)
+#
+# Each watcher queries SearXNG, runs through the finance_analyzer scoring
+# pipeline, and emits high-value signals to the Reactive Event Bus. Results
+# are persisted to a dossier in dossiers/finance_intel.md for human review.
+#
+# To activate: cp config/finance_osint.yaml .george/finance_osint.yaml
+#              (or: /osint finance init)
+
+version: 1
+settings:
+  searxng_url: http://127.0.0.1:8081
+  state_file: .george/ipc/finance_osint_seen.json
+  log_file: .george/ipc/finance_osint.log
+  default_interval_seconds: 600
+  # Minimum composite score to emit an event (0-100). Higher = fewer, higher-quality signals.
+  global_min_score: 15
+  # Sovereign LLM synthesis pipeline configuration
+  synthesis:
+    enabled: true
+    min_composite_score: 25
+    max_signals_to_analyze: 6
+    llm_endpoint: "http://127.0.0.1:8080"
+    model_role: "Sovereign Financial & Grants Analyst"
+
+watchers:
+
+  # ────────────────────────────────────────────────────────────────────
+  # 1. GRANTS & GOVERNMENT FUNDING
+  # ────────────────────────────────────────────────────────────────────
+
+  - id: sbir_sttr_cyber_ai
+    name: "SBIR/STTR Cybersecurity & AI Solicitations"
+    enabled: true
+    query: '(SBIR OR STTR) (cybersecurity OR "artificial intelligence" OR "machine learning" OR "developer tools") solicitation 2026'
+    time_range: "month"
+    categories: ["general", "news"]
+    engines: ["google", "bing", "duckduckgo"]
+    relevance_keywords:
+      - "open source"
+      - "developer tools"
+      - "automation"
+      - "AI"
+      - "cybersecurity"
+      - "infrastructure"
+    min_composite_score: 25
+    actions:
+      emit_event: "finance_grant_signal"
+      dossier_path: "dossiers/finance_intel.md"
+
+  - id: nlnet_sovereign_tech
+    name: "NLNet & Sovereign Tech Fund Calls"
+    enabled: true
+    query: '(site:nlnet.nl OR site:sovereigntechfund.de OR site:prototypefund.de) (call OR funding OR apply OR grant)'
+    time_range: "month"
+    categories: ["general"]
+    engines: ["google", "duckduckgo"]
+    relevance_keywords:
+      - "open source"
+      - "internet"
+      - "infrastructure"
+      - "privacy"
+      - "developer"
+    min_composite_score: 20
+    actions:
+      emit_event: "finance_grant_signal"
+      dossier_path: "dossiers/finance_intel.md"
+
+  - id: nsf_darpa_opensource
+    name: "NSF & DARPA Open-Source / DevTool Grants"
+    enabled: true
+    query: '(site:nsf.gov OR site:darpa.mil OR site:grants.gov) ("open source" OR "developer tools" OR "software infrastructure" OR "AI safety")'
+    time_range: "month"
+    categories: ["general"]
+    engines: ["google", "bing"]
+    relevance_keywords:
+      - "open source"
+      - "software"
+      - "tools"
+      - "automation"
+      - "AI"
+    min_composite_score: 20
+    actions:
+      emit_event: "finance_grant_signal"
+      dossier_path: "dossiers/finance_intel.md"
+
+  # ────────────────────────────────────────────────────────────────────
+  # 2. VENTURE CAPITAL & STARTUP ACTIVITY
+  # ────────────────────────────────────────────────────────────────────
+
+  - id: vc_devtools_ai_infra
+    name: "VC Rounds in DevTools & AI Infrastructure"
+    enabled: true
+    query: '("raised $" OR "series a" OR "seed round" OR "pre-seed") ("developer tools" OR "devtool" OR "AI infrastructure" OR "code automation" OR "CLI")'
+    time_range: "week"
+    categories: ["general", "news"]
+    engines: ["google", "duckduckgo", "bing"]
+    relevance_keywords:
+      - "developer"
+      - "infrastructure"
+      - "CLI"
+      - "automation"
+      - "open source"
+      - "AI"
+      - "LLM"
+    min_composite_score: 15
+    actions:
+      emit_event: "finance_vc_signal"
+      dossier_path: "dossiers/finance_intel.md"
+
+  - id: vc_oss_commercialization
+    name: "Open-Source Commercialization Funding"
+    enabled: true
+    query: '("open source" OR "OSS") ("raised" OR "funding" OR "venture" OR "commercial") ("company" OR "startup") -github.com'
+    time_range: "week"
+    categories: ["news"]
+    engines: ["google", "bing"]
+    relevance_keywords:
+      - "open source"
+      - "commercial"
+      - "startup"
+      - "revenue"
+    min_composite_score: 15
+    actions:
+      emit_event: "finance_vc_signal"
+      dossier_path: "dossiers/finance_intel.md"
+
+  # ────────────────────────────────────────────────────────────────────
+  # 3. OPEN-SOURCE SPONSORSHIP & SUSTAINABILITY
+  # ────────────────────────────────────────────────────────────────────
+
+  - id: github_sponsors_programs
+    name: "GitHub Sponsors & Matching Programs"
+    enabled: true
+    query: 'site:github.com ("sponsors" OR "sponsorship" OR "matching fund") ("maintainer" OR "open source") 2026'
+    time_range: "month"
+    categories: ["general"]
+    engines: ["google", "duckduckgo"]
+    relevance_keywords:
+      - "sponsor"
+      - "maintainer"
+      - "fund"
+      - "open source"
+      - "matching"
+    min_composite_score: 15
+    actions:
+      emit_event: "finance_sponsor_signal"
+      dossier_path: "dossiers/finance_intel.md"
+
+  - id: open_collective_grants
+    name: "OpenCollective & Foundation Grants"
+    enabled: true
+    query: '(site:opencollective.com OR site:blog.opencollective.com OR "Open Collective") ("grant" OR "funding" OR "fiscal host" OR "initiative")'
+    time_range: "month"
+    categories: ["general"]
+    engines: ["google", "duckduckgo"]
+    relevance_keywords:
+      - "open collective"
+      - "fiscal host"
+      - "grant"
+      - "maintainer"
+    min_composite_score: 10
+    actions:
+      emit_event: "finance_sponsor_signal"
+      dossier_path: "dossiers/finance_intel.md"
+
+  # ────────────────────────────────────────────────────────────────────
+  # 4. BUG BOUNTIES & CODE CHALLENGE PRIZES
+  # ────────────────────────────────────────────────────────────────────
+
+  - id: bug_bounty_high_value
+    name: "High-Value Bug Bounty Programs"
+    enabled: true
+    query: '("bug bounty" OR "vulnerability reward") ("$5,000" OR "$10,000" OR "$25,000" OR "$50,000" OR "$100,000") (new OR launched OR updated) 2026'
+    time_range: "week"
+    categories: ["general", "news"]
+    engines: ["google", "bing"]
+    relevance_keywords:
+      - "bounty"
+      - "vulnerability"
+      - "security"
+      - "reward"
+    min_composite_score: 20
+    actions:
+      emit_event: "finance_bounty_signal"
+      dossier_path: "dossiers/finance_intel.md"
+
+  - id: code_challenges_prizes
+    name: "Code Challenges & Hackathon Prizes"
+    enabled: true
+    query: '("hackathon" OR "code challenge" OR "coding competition") ("prize" OR "award" OR "$") ("AI" OR "open source" OR "developer tools" OR "automation") 2026'
+    time_range: "month"
+    categories: ["general"]
+    engines: ["google", "duckduckgo"]
+    relevance_keywords:
+      - "hackathon"
+      - "prize"
+      - "AI"
+      - "developer"
+      - "automation"
+    min_composite_score: 15
+    actions:
+      emit_event: "finance_bounty_signal"
+      dossier_path: "dossiers/finance_intel.md"
+
+  # ────────────────────────────────────────────────────────────────────
+  # 5. GOVERNMENT CONTRACTS & PROCUREMENT
+  # ────────────────────────────────────────────────────────────────────
+
+  - id: sam_gov_software
+    name: "SAM.gov Software & DevOps Contract Opportunities"
+    enabled: true
+    query: 'site:sam.gov ("software development" OR "DevOps" OR "automation" OR "AI" OR "open source") (RFP OR RFQ OR "sources sought")'
+    time_range: "month"
+    categories: ["general"]
+    engines: ["google", "bing"]
+    relevance_keywords:
+      - "software"
+      - "DevOps"
+      - "automation"
+      - "contract"
+      - "small business"
+    min_composite_score: 25
+    actions:
+      emit_event: "finance_contract_signal"
+      dossier_path: "dossiers/finance_intel.md"
+
+  # ────────────────────────────────────────────────────────────────────
+  # 6. MARKETPLACE ARBITRAGE (FLIP SIGNALS)
+  # ────────────────────────────────────────────────────────────────────
+
+  - id: domain_flips
+    name: "Expiring & Auction Domain Names"
+    enabled: true
+    query: '(site:namejet.com OR site:dropcatch.com OR site:godaddy.com/auctions) ("developer" OR "AI" OR "code" OR "tool") (expiring OR auction)'
+    time_range: "week"
+    categories: ["general"]
+    engines: ["google", "duckduckgo"]
+    relevance_keywords:
+      - "domain"
+      - "auction"
+      - "developer"
+      - "AI"
+    min_composite_score: 10
+    actions:
+      emit_event: "finance_flip_signal"
+      dossier_path: "dossiers/finance_intel.md"
+
+  # ────────────────────────────────────────────────────────────────────
+  # 7. CRYPTOCURRENCY & PREDICTION MARKET SIGNALS
+  # ────────────────────────────────────────────────────────────────────
+
+  - id: crypto_dev_grants
+    name: "Bitcoin & Cardano Ecosystem Developer Grants"
+    enabled: true
+    query: '("Bitcoin developer grant" OR "Cardano Catalyst funding" OR "Brink grant" OR "OpenSats grant") 2026'
+    time_range: "month"
+    categories: ["general", "news"]
+    engines: ["google", "duckduckgo"]
+    relevance_keywords:
+      - "Bitcoin"
+      - "Cardano"
+      - "ADA"
+      - "BTC"
+      - "grant"
+      - "developer"
+      - "open source"
+      - "wallet"
+    min_composite_score: 20
+    actions:
+      emit_event: "finance_crypto_signal"
+      dossier_path: "dossiers/finance_intel.md"
+
+  - id: polymarket_prediction_signals
+    name: "Polymarket & Prediction Market Narrative Signals"
+    enabled: true
+    query: '(site:polymarket.com OR "Polymarket odds") ("crypto" OR "Bitcoin" OR "regulation" OR "AI" OR "rates")'
+    time_range: "week"
+    categories: ["news", "general"]
+    engines: ["google", "duckduckgo"]
+    relevance_keywords:
+      - "Polymarket"
+      - "odds"
+      - "market"
+      - "crypto"
+      - "prediction"
+    min_composite_score: 15
+    actions:
+      emit_event: "polymarket_sentiment_signal"
+      dossier_path: "dossiers/finance_intel.md"

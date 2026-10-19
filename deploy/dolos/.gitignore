@@ -1,0 +1,9 @@
+# ── Blue Lodge Sovereign Dolos Node Gitignore ──
+# Exclude raw blockchain ledger state, WAL, and UNIX IPC sockets
+data/
+ipc/
+snapshot/
+*.socket
+*.sock
+*.redb
+*.wal

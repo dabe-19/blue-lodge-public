@@ -1,0 +1,122 @@
+ARG BASE_IMAGE=nvidia/cuda:12.4.1-devel-ubuntu22.04
+FROM ${BASE_IMAGE}
+
+# Prevent interactive prompts during package install
+ENV DEBIAN_FRONTEND=noninteractive
+
+ARG BACKEND=cuda
+ARG CUDA_ARCHITECTURES="86"
+
+# Install runtime and compilation dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    jq \
+    git \
+    sqlite3 \
+    cmake \
+    ninja-build \
+    gcc \
+    g++ \
+    libcurl4-openssl-dev \
+    libssl-dev \
+    zstd \
+    python3 \
+    python3-pip \
+    python3-venv \
+    procps \
+    poppler-utils \
+    mosquitto-clients \
+    ripgrep \
+    sudo \
+    && curl -fsSL https://ollama.com/download/ollama-linux-amd64.tar.zst | tar --zstd -xf - -C /usr \
+    && curl -LsSf https://astral.sh/uv/install.sh | BINDIR=/usr/local/bin sh \
+    && if [ "$BACKEND" = "vulkan" ]; then \
+        sed -i 's/main/main universe/g' /etc/apt/sources.list && \
+        apt-get update && \
+        apt-get install -y ca-certificates gnupg2 && \
+        curl -fsSL https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc && \
+        curl -fsSL -o /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list && \
+        apt-get update && \
+        apt-get install -y libvulkan-dev vulkan-tools spirv-headers vulkan-sdk; \
+    fi \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust toolchain & Tree-sitter CLI
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path \
+    && chmod -R a+rwx $RUSTUP_HOME $CARGO_HOME \
+    && cargo install tree-sitter-cli --locked
+
+# Ensure libcuda.so.1 exists in CUDA stubs directory for build-time dynamic linker resolution
+RUN ln -sf libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
+
+# ── Layer 1: Clone and compile stock llama.cpp ────────────────
+RUN git clone https://github.com/ggml-org/llama.cpp.git /opt/llama.cpp && \
+    cd /opt/llama.cpp && \
+    CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Release -G Ninja" && \
+    if [ "$BACKEND" = "cuda" ]; then \
+        CUDA_LINK="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs:/usr/local/cuda/compat"; \
+        CMAKE_FLAGS="${CMAKE_FLAGS} -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES} -DGGML_CUDA_FA_ALL_QUANTS=ON -DGGML_CUDA_GRAPHS=ON"; \
+        CMAKE_FLAGS="${CMAKE_FLAGS} -DCMAKE_EXE_LINKER_FLAGS=${CUDA_LINK}"; \
+        CMAKE_FLAGS="${CMAKE_FLAGS} -DCMAKE_SHARED_LINKER_FLAGS=${CUDA_LINK}"; \
+    elif [ "$BACKEND" = "vulkan" ]; then \
+        CMAKE_FLAGS="${CMAKE_FLAGS} -DGGML_VULKAN=ON"; \
+    else \
+        CMAKE_FLAGS="${CMAKE_FLAGS} -DGGML_AVX2=ON -DGGML_FMA=ON"; \
+    fi && \
+    cmake -B build ${CMAKE_FLAGS} && \
+    cmake --build build --config Release --target llama-server -j$(nproc) && \
+    ln -sf /opt/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server-stock
+
+# ── Layer 2: Clone and compile llama.cpp-prism (ternary kernels + MTP #218 + Hadamard fix) ──
+RUN git clone -b pr-hadamard-mtp --depth 1 https://github.com/sudoingX/llama.cpp.git /opt/llama.cpp-prism && \
+    cd /opt/llama.cpp-prism && \
+    CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Release -G Ninja" && \
+    if [ "$BACKEND" = "cuda" ]; then \
+        CUDA_LINK="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs:/usr/local/cuda/compat"; \
+        CMAKE_FLAGS="${CMAKE_FLAGS} -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES} -DGGML_CUDA_BATCH_INVARIANT=1 -DGGML_CUDA_FA_ALL_QUANTS=ON -DGGML_CUDA_GRAPHS=ON"; \
+        CMAKE_FLAGS="${CMAKE_FLAGS} -DCMAKE_EXE_LINKER_FLAGS=${CUDA_LINK}"; \
+        CMAKE_FLAGS="${CMAKE_FLAGS} -DCMAKE_SHARED_LINKER_FLAGS=${CUDA_LINK}"; \
+    elif [ "$BACKEND" = "vulkan" ]; then \
+        CMAKE_FLAGS="${CMAKE_FLAGS} -DGGML_VULKAN=ON"; \
+    else \
+        CMAKE_FLAGS="${CMAKE_FLAGS} -DGGML_AVX2=ON -DGGML_FMA=ON"; \
+    fi && \
+    cmake -B build ${CMAKE_FLAGS} && \
+    cmake --build build --config Release --target llama-server -j$(nproc) && \
+    ln -sf /opt/llama.cpp-prism/build/bin/llama-server /usr/local/bin/llama-server-prism
+
+# ── Switcher utility and default symlink ──────────────────────
+RUN ln -sf /usr/local/bin/llama-server-prism /usr/local/bin/llama-server && \
+    printf '#!/bin/bash\ncase "$1" in\n  prism) ln -sf /usr/local/bin/llama-server-prism /usr/local/bin/llama-server && echo "[+] Switched default llama-server to prism (ternary)" ;;\n  stock) ln -sf /usr/local/bin/llama-server-stock /usr/local/bin/llama-server && echo "[+] Switched default llama-server to stock" ;;\n  *) echo "Usage: llama-server-switch [stock|prism]" ;;\nesac\n' > /usr/local/bin/llama-server-switch && \
+    chmod +x /usr/local/bin/llama-server-switch
+
+# Expose default llama-server port
+EXPOSE 8080
+
+# Set environment variables for compilation path
+ENV LLAMA_CPP_SERVER_BIN=/usr/local/bin/llama-server
+ENV LLAMA_CPP_STOCK_BIN=/usr/local/bin/llama-server-stock
+ENV LLAMA_CPP_PRISM_BIN=/usr/local/bin/llama-server-prism
+ENV LLM_BACKEND=llamacpp
+
+# Create a non-root user for safe workspace execution
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+RUN groupadd -g ${GROUP_ID} george && \
+    useradd -u ${USER_ID} -g george -m george && \
+    echo "george ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/george && \
+    chmod 0440 /etc/sudoers.d/george
+
+USER george
+WORKDIR /workspace
+
+# Declare external persistent volumes so model weights are never written to image layers
+VOLUME ["/models", "/workspace"]
+
+# OPTIMIZATION: Shifted the .bashrc environment configuration rule before the CMD layer
+RUN echo 'pgrep -x "ollama" >/dev/null || (ollama serve >/tmp/ollama.log 2>&1 &)' >> /home/george/.bashrc
+
+CMD ["/bin/bash"]

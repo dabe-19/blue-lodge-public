@@ -1,0 +1,16 @@
+<string>:20: DeprecationWarning: datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).
+Traceback (most recent call last):
+  File "<string>", line 21, in <module>
+AttributeError: 'list' object has no attribute 'get'
+Symbol: UNH
+Current Price: 371.9
+Change: 6.7 (1.835%)
+Day High: 372.675
+Day Low: 364.47
+Volume: 3292808
+52W High: 461.62
+52W Low: 255.97
+Previous Close: 376.59
+
+=== Last 5 Days ===
+ ✗ [2026-10-04 10:56:57] /bash failed (exit 1)

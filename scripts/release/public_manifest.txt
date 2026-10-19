@@ -1,0 +1,86 @@
+# Public export manifest — evaluated top to bottom, LAST matching rule wins.
+#   + glob   include      - glob   exclude
+# Globs use fnmatch on repo-relative paths ('*' also matches '/').
+# Anything not matched by a '+' rule is NOT exported (allow-list).
+
+# ── Code ──────────────────────────────────────────────────────
++ lodge
++ install.sh
++ uninstall.sh
++ update.sh
++ lib/*
++ commands/*
++ web/*
++ tests/*
++ scripts/*
++ grammars/*
++ install/*
++ man/*
++ deploy/*
++ templates/*
++ patches/*
++ okf/*
++ models/*
++ bin/george-ipc
++ bin/wt_launch_minimized.cs
++ .agents/*
++ .githooks/*
++ .gitea/*
++ .shellcheckrc
++ .gitignore
++ pyproject.toml
++ uv.lock
++ docker-compose.yml
++ Dockerfile.cuda-sandbox
++ Modelfile
++ endpoints.conf.example
++ .env.example
++ soul.md
++ GEORGE.md
++ config
+
+# ── Config: templates and examples only ──────────────────────
++ configs/*.template
++ configs/*.example
++ configs/event_contracts.json
++ configs/searxng/*
++ configs/models/*
++ configs/wallets/*.example.json
++ configs/*.template.yaml
++ configs/blue_lodge_jinja_template.jinja
+
+# ── Docs ──────────────────────────────────────────────────────
++ README.md
++ SECURITY.md
++ LICENSE
++ docs/*
+- docs/archive/*
+- docs/*.pdf
+# real treasury balances / order ids in these screenshots
+- docs/images/sovereign_guide/*
+
+# ── Data: schemas + public catalog only ──────────────────────
++ data/schemas/*
++ data/catalog/*
+
+# ── Always excluded (personal, generated, or third-party data) ─
+- */archive/*
+- scripts/quant_research/archive/*
+- scripts/colab_training/archive/*
+- */__pycache__/*
+- *.pyc
+- *.gguf
+- *.exe
+- *.db
+- *.sqlite-journal
+- .george/*
+- dossiers/*
++ dossiers/README.md
+- market_cache/*
+- benchmarks/*
+- data/training/*
+- data/assets/*
+- scratch/*
+- artifacts/*
+- web/target/*
+- scripts/release/denylist*

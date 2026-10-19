@@ -1,0 +1,44 @@
+# ==============================================================================
+# Blue Lodge Sovereign SDR Lab — Patched Trunk-Recorder 5.2.0 (P25 CQPSK / LSM)
+# ==============================================================================
+# Builds Trunk-Recorder v5.2.0 (commit 0327e1f8) with the Blue Lodge OP25
+# Simulcast LSM / CQPSK DSP patch (`patches/trunk-recorder-5.2.0-p25-lsm.patch`):
+#   1. Costas Loop Phase Clamp (±pi/12) & Beta=0 (prevents QPSK 90-deg slips)
+#   2. List-Viterbi (K=16) Trellis Decoder with CRC-16 Path Selection
+#   3. Multi-Block TSBK Continuation (preserves valid blocks if one block fails)
+#   4. 2700 Hz Channelizer LPF & Slower RMS AGC (alpha=0.01 for P25 LSM)
+#   5. BCH(63,16,23) NID Recovery & Post-TSDU Frame Sync Relaxation
+#
+# Usage (from repository root):
+#   docker build -f deploy/sdr-lab/Dockerfile.trunk-recorder -t blue-lodge/trunk-recorder:5.2.0-p25-lsm .
+# ==============================================================================
+
+FROM docker.io/robotastic/trunk-recorder:latest AS builder
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git patch build-essential cmake pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+RUN git clone https://github.com/robotastic/trunk-recorder.git . && \
+    git checkout 0327e1f8
+
+COPY patches/trunk-recorder-5.2.0-p25-lsm.patch /tmp/p25-lsm.patch
+RUN git apply /tmp/p25-lsm.patch
+
+RUN mkdir -p build && cd build && \
+    cmake .. && \
+    make -j"$(nproc)" && \
+    make install
+
+FROM docker.io/robotastic/trunk-recorder:latest
+
+USER root
+COPY --from=builder /usr/local/bin/trunk-recorder /usr/local/bin/trunk-recorder
+COPY --from=builder /usr/local/lib/trunk-recorder/libgnuradio-op25_repeater.so /usr/local/lib/trunk-recorder/libgnuradio-op25_repeater.so
+RUN ldconfig
+
+WORKDIR /app
+ENTRYPOINT ["/usr/local/bin/trunk-recorder", "--config=/app/config.json"]
+

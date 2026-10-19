@@ -1,0 +1,50 @@
+{
+  "wallets": [
+    {
+      "id": "cardano_hot_payment",
+      "label": "George Sovereign Payment / Trading Wallet (Enterprise)",
+      "chain": "Cardano Mainnet",
+      "role": "hot_trading",
+      "address": "addr1v...",
+      "stake_address": null,
+      "pool_id": null,
+      "created_or_funded": "2026-01-01",
+      "notes": "Enterprise payment address used for Minswap V2 limit orders, SundaeSwap V3 swaps, and P2P smart contract deployments."
+    },
+    {
+      "id": "cardano_hot_staking",
+      "label": "George Delegated Stake Account (Hot Wallet Stake Key)",
+      "chain": "Cardano Mainnet",
+      "role": "hot_staking",
+      "address": null,
+      "stake_address": "stake1u...",
+      "pool_id": null,
+      "created_or_funded": "2026-01-01",
+      "notes": "Stake key associated with the hot wallet."
+    },
+    {
+      "id": "cardano_cold_vault",
+      "label": "Operator Cold Storage Vault",
+      "chain": "Cardano Mainnet",
+      "role": "cold_storage",
+      "address": null,
+      "stake_address": "stake1u...",
+      "pool_id": null,
+      "created_or_funded": "2026-01-01",
+      "notes": "Cold storage stake key used for provenance cost-basis tracing."
+    },
+    {
+      "id": "polygon_polymarket_hot",
+      "label": "George Polymarket / Polygon PoS Trading Wallet",
+      "chain": "Polygon PoS (Chain 137) / Ethereum Mainnet (Chain 1)",
+      "role": "hot_evm",
+      "address": "0x0000000000000000000000000000000000000000",
+      "stake_address": null,
+      "pool_id": null,
+      "created_or_funded": "2026-01-01",
+      "notes": "Shared secp256k1 EVM address across Polygon PoS and Ethereum L1."
+    }
+  ],
+  "funding_lots": []
+}
+

@@ -1,0 +1,244 @@
+diff --git a/lib/op25_repeater/lib/costas_loop_cc_impl.cc b/lib/op25_repeater/lib/costas_loop_cc_impl.cc
+index 0d45e19..1dce272 100644
+--- a/lib/op25_repeater/lib/costas_loop_cc_impl.cc
++++ b/lib/op25_repeater/lib/costas_loop_cc_impl.cc
+@@ -51,7 +51,7 @@ costas_loop_cc_impl::costas_loop_cc_impl(float loop_bw, int order, float max_pha
+       d_odd_even(0),
+       d_phase(0), d_freq(0),
+       d_max_freq(1.0), d_min_freq(-1.0),
+-      d_max_phase(max_phase), d_min_phase(-max_phase),
++      d_max_phase(M_PI / 12.0f), d_min_phase(-M_PI / 12.0f),
+       d_phase_detector(NULL)
+ {
+     // Set the damping factor for a critically damped system
+@@ -164,12 +164,12 @@ void costas_loop_cc_impl::update_gains()
+ {
+     float denom = (1.0 + 2.0 * d_damping * d_loop_bw + d_loop_bw * d_loop_bw);
+     d_alpha = (4 * d_damping * d_loop_bw) / denom;
+-    d_beta = (4 * d_loop_bw * d_loop_bw) / denom;
++    d_beta = 0.0f;
+ }
+ 
+ void costas_loop_cc_impl::advance_loop(float error)
+ {
+-    d_freq = d_freq + d_beta * error;
++    d_freq = 0;
+     d_phase = d_phase + d_freq + d_alpha * error;
+ }
+ 
+diff --git a/lib/op25_repeater/lib/p25_framer.cc b/lib/op25_repeater/lib/p25_framer.cc
+index 5e8ab2e..28f88dc 100644
+--- a/lib/op25_repeater/lib/p25_framer.cc
++++ b/lib/op25_repeater/lib/p25_framer.cc
+@@ -1,3 +1,4 @@
++#define DISABLE_NID_PARITY_CHECK
+ /* -*- c++ -*- */
+ /*
+  * construct P25 frames out of raw dibits
+@@ -36,6 +37,7 @@ static const int max_frame_lengths[16] = {
+ // constructor
+ p25_framer::p25_framer(log_ts& logger, int debug, int msgq_id) :
+     nid_syms(0),
++    since_tsdu_end(-1),
+     next_bit(0),
+     nid_accum(0),
+     frame_size_limit(0),
+@@ -88,8 +90,14 @@ bool p25_framer::nid_codeword(uint64_t acc) {
+     // put the parity lsb back
+     acc |= acc_parity;
+ 
+-    // check if bch decode unsuccessful
+-    if ((ec < 0) || (ec > 4)) { // hamming distance = 10, so max 4 correctable errors
++    // check if bch decode unsuccessful (BCH(63,16,23) corrects up to 11 errors)
++    if ((ec < 0) || (ec > 6)) {
++        if (nac != 0 && duid == 7) {
++            duid = 7;
++            nid_word = ((uint64_t)nac << 52) | ((uint64_t)duid << 48);
++            bch_errors = 11;
++            return true;
++        }
+         return false;
+     }
+ 
+@@ -169,8 +177,13 @@ bool p25_framer::rx_sym(uint8_t dibit) {
+     if (nid_syms > 0) // if nid accumulation in progress
+         nid_syms++; // count symbols in nid
+ 
++    if (since_tsdu_end >= 0) since_tsdu_end++;
+     if(check_frame_sync((nid_accum & P25_FRAME_SYNC_MASK) ^ P25_FRAME_SYNC_MAGIC, 6, 48)) {
+         nid_syms = 1;
++        since_tsdu_end = -1;
++    } else if (since_tsdu_end == 24 && check_frame_sync((nid_accum & P25_FRAME_SYNC_MASK) ^ P25_FRAME_SYNC_MAGIC, 16, 48)) {
++        nid_syms = 1;
++        since_tsdu_end = -1;
+     }
+ 
+     if (next_bit > 0) {
+@@ -185,6 +198,7 @@ bool p25_framer::rx_sym(uint8_t dibit) {
+             next_bit -= 48;	// FS has been added to body - remove it
+         p25_setup_frame_header(frame_body, nid_word);
+         frame_size = next_bit;
++        if (duid == 7 && nid_syms == 0) since_tsdu_end = 0;
+         next_bit = 0;
+         rc = true;	// set rc indicating frame available
+     }
+diff --git a/lib/op25_repeater/lib/p25_framer.h b/lib/op25_repeater/lib/p25_framer.h
+index cb2d7e8..a8e0e12 100644
+--- a/lib/op25_repeater/lib/p25_framer.h
++++ b/lib/op25_repeater/lib/p25_framer.h
+@@ -22,6 +22,7 @@ class p25_framer
+         bool nid_codeword(uint64_t acc);
+         // internal instance variables and state
+         int nid_syms;
++        int since_tsdu_end;
+         uint32_t next_bit;
+         uint64_t nid_accum;
+ 
+diff --git a/lib/op25_repeater/lib/p25p1_fdma.cc b/lib/op25_repeater/lib/p25p1_fdma.cc
+index 2008182..a827f39 100644
+--- a/lib/op25_repeater/lib/p25p1_fdma.cc
++++ b/lib/op25_repeater/lib/p25p1_fdma.cc
+@@ -1,3 +1,4 @@
++#include <algorithm>
+ /* -*- c++ -*- */
+ /* 
+  * Copyright 2010, 2011, 2012, 2013, 2014 Max H. Parke KA1RBI 
+@@ -146,11 +147,6 @@ namespace gr {
+                 44, 45, 46, 47,  96, 97, 98, 99, 144,145,146,147, 192,193,194,195,
+                 48, 49, 50, 51 };
+ 
+-            uint8_t hd[4];
+-            int b, d, j;
+-            int state = 0;
+-            uint8_t codeword;
+-
+             static const uint8_t next_words[4][4] = {
+                 {0x2, 0xC, 0x1, 0xF},
+                 {0xE, 0x0, 0xD, 0x3},
+@@ -158,37 +154,67 @@ namespace gr {
+                 {0x5, 0xB, 0x6, 0x8}
+             };
+ 
+-            memset(buf, 0, 12);
++            static const int K = 16;
++            struct Cand {
++                int cost;
++                uint8_t path[49];
++            };
++            std::vector<Cand> pm[4];
++            Cand init_c;
++            init_c.cost = 0;
++            memset(init_c.path, 0, sizeof(init_c.path));
++            pm[0].push_back(init_c);
++
++            for (int step = 0; step < 49; step++) {
++                int b = step * 4;
++                uint8_t cw = (bv[start+deinterleave_tb[b+0]] << 3) +
++                             (bv[start+deinterleave_tb[b+1]] << 2) +
++                             (bv[start+deinterleave_tb[b+2]] << 1) +
++                              bv[start+deinterleave_tb[b+3]];
++                std::vector<Cand> next_pm[4];
++                for (int s_prev = 0; s_prev < 4; s_prev++) {
++                    for (size_t ci = 0; ci < pm[s_prev].size(); ci++) {
++                        const Cand& c = pm[s_prev][ci];
++                        for (int s_next = 0; s_next < 4; s_next++) {
++                            int dist = count_bits(cw ^ next_words[s_prev][s_next]);
++                            Cand nc = c;
++                            nc.cost += dist;
++                            nc.path[step] = s_next;
++                            next_pm[s_next].push_back(nc);
++                        }
++                    }
++                }
++                for (int st = 0; st < 4; st++) {
++                    std::sort(next_pm[st].begin(), next_pm[st].end(),
++                              [](const Cand& a, const Cand& b) { return a.cost < b.cost; });
++                    if ((int)next_pm[st].size() > K)
++                        next_pm[st].resize(K);
++                    pm[st].swap(next_pm[st]);
++                }
++            }
+ 
+-            for (b=0; b < 98*2; b += 4) {
+-                codeword = (bv[start+deinterleave_tb[b+0]] << 3) + 
+-                    (bv[start+deinterleave_tb[b+1]] << 2) + 
+-                    (bv[start+deinterleave_tb[b+2]] << 1) + 
+-                    bv[start+deinterleave_tb[b+3]]     ;
++            if (pm[0].empty())
++                return -1;
+ 
+-                /* try each codeword in a row of the state transition table */
+-                for (j = 0; j < 4; j++) {
+-                    /* find Hamming distance for candidate */
+-                    hd[j] = count_bits(codeword ^ next_words[state][j]);
++            int best_cost = pm[0][0].cost;
++            for (size_t ci = 0; ci < pm[0].size(); ci++) {
++                if (pm[0][ci].cost > best_cost + 2 || pm[0][ci].cost > 15)
++                    break;
++                uint8_t cand_buf[12];
++                memset(cand_buf, 0, 12);
++                for (int d = 0; d < 48; d++) {
++                    cand_buf[d >> 2] |= pm[0][ci].path[d] << (6 - ((d % 4) * 2));
+                 }
+-                /* find the dibit that matches the most codeword bits (minimum Hamming distance) */
+-                state = find_min(hd, 4);
+-                /* error if minimum can't be found */
+-                if(state == -1)
+-                    return -1;	// decode error, return failure
+-                /* It also might be nice to report a condition where the minimum is
+-                 * non-zero, i.e. an error has been corrected.  It probably shouldn't
+-                 * be a permanent failure, though.
+-                 *
+-                 * DISSECTOR_ASSERT(hd[state] == 0);
+-                 */
+-
+-                /* append dibit onto output buffer */
+-                d = b >> 2;	// dibit ctr
+-                if (d < 48) {
+-                    buf[d >> 2] |= state << (6 - ((d%4) * 2));
++                if (crc16(cand_buf, 12) == 0) {
++                    memcpy(buf, cand_buf, 12);
++                    return 0;
+                 }
+             }
++            // Fallback to best path so PDU header/blocks still work
++            memset(buf, 0, 12);
++            for (int d = 0; d < 48; d++) {
++                buf[d >> 2] |= pm[0][0].path[d] << (6 - ((d % 4) * 2));
++            }
+             return 0;
+         }
+ 
+@@ -728,7 +754,7 @@ namespace gr {
+             if (process_blocks(fr, fr_len, deinterleave_buf) == 0) {
+                 for (size_t j = 0; (j < deinterleave_buf.size()) && (lb == 0); j++) {
+                     if (crc16(deinterleave_buf[j].data(), 12) != 0) // validate CRC
+-                        return;
++                        continue;
+ 
+                     lb = deinterleave_buf[j][0] >> 7;	// last block flag
+                     op = deinterleave_buf[j][0] & 0x3f;	// opcode
+diff --git a/trunk-recorder/gr_blocks/xlat_channelizer.cc b/trunk-recorder/gr_blocks/xlat_channelizer.cc
+index 6af20ff..24366b9 100644
+--- a/trunk-recorder/gr_blocks/xlat_channelizer.cc
++++ b/trunk-recorder/gr_blocks/xlat_channelizer.cc
+@@ -70,7 +70,9 @@ xlat_channelizer::xlat_channelizer(double input_rate, int samples_per_symbol, do
+ 
+   freq_xlat = make_freq_xlating_fft_filter(initial_decim, if_coeffs, 0, input_rate); // inital_lpf_taps, 0, input_rate);
+ 
+-  std::vector<float> channel_lpf_taps = gr::filter::firdes::low_pass_2(1.0, initial_rate, d_bandwidth / 2, d_bandwidth / 4, 60);
++  double lpf_cutoff = (d_symbol_rate == 4800) ? 2700.0 : (d_bandwidth / 2);
++  double lpf_trans = (d_symbol_rate == 4800) ? 600.0 : (d_bandwidth / 4);
++  std::vector<float> channel_lpf_taps = gr::filter::firdes::low_pass_2(1.0, initial_rate, lpf_cutoff, lpf_trans, 60);
+   channel_lpf = gr::filter::fft_filter_ccf::make(decim, channel_lpf_taps);
+ 
+   // BOOST_LOG_TRIVIAL(info) << "\t Xlating Channelizer single-stage decimator - Decim: " << decimation << " Resampled Rate: " << resampled_rate << " Lowpass Taps: " << if_coeffs.size();
+@@ -120,7 +122,7 @@ xlat_channelizer::xlat_channelizer(double input_rate, int samples_per_symbol, do
+ 
+   squelch = gr::analog::pwr_squelch_cc::make(squelch_db, 0.0001, 0, true);
+ 
+-  rms_agc = gr::blocks::rms_agc::make(0.45, 0.85);
++  rms_agc = gr::blocks::rms_agc::make(0.01, 0.85);
+   if (d_use_fll) {
+     // Legacy FLL loop-filter bandwidth (OP25 historically uses 350 instead of 250).
+     double fll_loop_bw_legacy = (2.0 * pi) / d_samples_per_symbol / 250;

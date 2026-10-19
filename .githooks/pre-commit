@@ -1,0 +1,27 @@
+#!/bin/bash
+# ── Blue Lodge Git Pre-Commit Hook ────────────────────────────────────
+# Automatically refreshes and validates the Open Knowledge Graph (OKF)
+# whenever code, commands, or architectural modules are staged.
+# Ensures okf/blue_lodge_graph.jsonld is atomically committed with code changes.
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+if [ -f "$REPO_ROOT/lib/knowledge/okf.sh" ] && [ -f "$REPO_ROOT/okf/generate_okf_graph.py" ]; then
+    echo "── [pre-commit] Refreshing OKF Knowledge Graph..."
+    LODGE_DIR="$REPO_ROOT" bash -c "source '$REPO_ROOT/lib/knowledge/okf.sh' && okf_sync --quiet"
+    SYNC_STATUS=$?
+    if [ "$SYNC_STATUS" -ne 0 ]; then
+        echo "✗ [pre-commit] Error: OKF knowledge graph synchronization or validation failed." >&2
+        echo "  Please check okf_validate output and fix errors before committing." >&2
+        exit 1
+    fi
+
+    # If the OKF graph file was updated by okf_sync, stage it automatically
+    GRAPH_FILE="$REPO_ROOT/okf/blue_lodge_graph.jsonld"
+    if [ -f "$GRAPH_FILE" ]; then
+        git add "$GRAPH_FILE" 2>/dev/null || true
+    fi
+    echo "✓ [pre-commit] OKF Knowledge Graph refreshed and staged."
+fi
+
+exit 0

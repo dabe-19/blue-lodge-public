@@ -1,0 +1,74 @@
+name: Lodge CI / CD Build Gate
+
+on:
+  push:
+    branches:
+      - develop
+      - 'feature/**'
+      - 'fix/**'
+  pull_request:
+    branches:
+      - develop
+
+jobs:
+  syntax-and-lint:
+    name: Shell Syntax & Integrity Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Verify Bash Syntax
+        run: |
+          echo "Verifying shell syntax across lib/, commands/, and tests/..."
+          find lib commands tests -name "*.sh" -exec bash -n {} +
+          echo "All shell scripts passed syntax inspection."
+
+  phytology-verification:
+    name: Software Phytology & Living Tissue Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          if command -v apt-get &>/dev/null; then
+            apt-get update -qq && apt-get install -y -qq jq 2>/dev/null || true
+          fi
+
+      - name: Run Software Phytology Test Suite
+        run: |
+          echo "Executing software-phytology test harness..."
+          bash tests/test_phytology.sh
+          echo "Phytology living tissue tests completed successfully."
+
+      - name: Validate Living Tissue Audit
+        run: |
+          echo "Running living tissue diagnostic audit..."
+          bash -c "source lib/agents/phytology.sh && phytology_audit"
+          echo "All monitored foliage verified AST healthy."
+
+  gitflow-guard:
+    name: GitFlow Branch Protection Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Protected Branches
+        run: |
+          echo "Auditing branch protection rules..."
+          echo "Target branch: ${{ github.base_ref || github.ref }}"
+          if [ "${{ github.base_ref }}" = "main" ] || [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "ERROR: Direct pushes or PRs to main are prohibited by GitFlow policy!"
+            exit 1
+          fi
+          echo "Branch protection policy satisfied."
+
+      - name: Emit CI Failure Hook
+        if: failure()
+        run: |
+          echo "CI Failure encountered on branch ${{ github.ref_name }}."
+          curl -sf -X POST "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues" \
+            -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"title\":\"[CI Gate Failed] ${{ github.workflow }} failed on ${{ github.ref_name }}\",\"body\":\"Workflow run ${{ github.run_number }} failed on commit ${{ github.sha }}. Action: Autonomic GitFlow Remediation triggered.\",\"labels\":[\"ci-failure\",\"needs-remediation\"]}" 2>/dev/null || true
+

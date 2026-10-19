@@ -1,0 +1,43 @@
+#!/bin/bash
+# ── Blue Lodge Git Pre-Push Hook ─────────────────────────────────────
+# 1. Protects main/master from direct pushes per GitFlow landmarks.
+# 2. Refreshes and validates the Open Knowledge Graph (OKF) before any push.
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+# ── 1. GitFlow Landmark Protection ────────────────────────────────────
+while read -r local_ref local_oid remote_ref remote_oid; do
+    if [ "${ALLOW_RELEASE_PUSH:-0}" -ne 1 ]; then
+        if [ "$remote_ref" = "refs/heads/main" ] || [ "$remote_ref" = "refs/heads/master" ]; then
+            echo "[FATAL] Direct push to '$remote_ref' blocked by Lodge GitFlow Landmarks." >&2
+            echo "[INFO] Push to 'develop' or candidate branch instead. Set ALLOW_RELEASE_PUSH=1 for releases." >&2
+            exit 1
+        fi
+    fi
+done
+
+# ── 2. OKF Knowledge Graph Refresh ────────────────────────────────────
+if [ -f "$REPO_ROOT/lib/knowledge/okf.sh" ] && [ -f "$REPO_ROOT/okf/generate_okf_graph.py" ]; then
+    echo "── [pre-push] Verifying & Refreshing OKF Knowledge Graph..."
+    LODGE_DIR="$REPO_ROOT" bash -c "source '$REPO_ROOT/lib/knowledge/okf.sh' && okf_sync --quiet"
+    SYNC_STATUS=$?
+    if [ "$SYNC_STATUS" -ne 0 ]; then
+        echo "✗ [pre-push] Error: OKF knowledge graph synchronization or validation failed." >&2
+        echo "  Please check okf_validate output and fix errors before pushing." >&2
+        exit 1
+    fi
+    GRAPH_FILE="$REPO_ROOT/okf/blue_lodge_graph.jsonld"
+    if ! git diff --quiet "$GRAPH_FILE" 2>/dev/null || ! git diff --cached --quiet "$GRAPH_FILE" 2>/dev/null; then
+        echo "── [pre-push] OKF Knowledge Graph was out of date. Committing refreshed graph..."
+        git add "$GRAPH_FILE"
+        git commit -m "chore(okf): synchronize knowledge graph before push"
+        local_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+        if [ -n "$local_branch" ] && [ "$local_branch" != "HEAD" ]; then
+            echo "── [pre-push] Synchronizing updated OKF commit to origin/$local_branch..."
+            git push origin "$local_branch" --no-verify 2>/dev/null || true
+        fi
+    fi
+    echo "✓ [pre-push] OKF Knowledge Graph verified."
+fi
+
+exit 0

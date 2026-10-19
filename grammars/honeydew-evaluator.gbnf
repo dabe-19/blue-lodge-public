@@ -1,0 +1,25 @@
+# Honeydew Evaluator — SATISFIED / UNSATISFIED verdict + reason + recommendation
+# Used by _agent_evaluate_honeydew_item() in lib/agent.sh
+# Layer 1 constrained decoding for llama-server grammar param
+
+root          ::= thinking ws response | ws response
+
+response      ::= "<response>" ws json ws "</response>" | json
+
+json          ::= "{" ws "\"verdict\":" ws verdict "," ws "\"reason\":" ws string "," ws "\"recommendation\":" ws string ws "}"
+
+verdict       ::= "\"SATISFIED\"" | "\"UNSATISFIED\""
+
+# ── String rule: quote-preserving (default) ────────────────
+# Allows escaped quotes, backslashes, and standard JSON escapes
+# inside string values. Use this when field values may contain
+# quoted text from command outputs or user input.
+char          ::= [^"\\] | "\\" ["\\/bfnrt]
+string        ::= "\"" char* "\""
+
+thinking      ::= "<think>" inner "</think>" | "<|channel>thought" inner "<channel|>" | "[" [tT][hH][iI][nN][kK] "]" bracketed "[/" [tT][hH][iI][nN][kK] "]" | "[" [tT][hH][oO][uU][gG][hH][tT] "]" bracketed "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
+
+inner         ::= [^<]*
+bracketed     ::= [^\[]*
+
+ws            ::= [ \t\n]*

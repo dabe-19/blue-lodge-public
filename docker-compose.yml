@@ -1,0 +1,198 @@
+# ── Blue Lodge Sovereign Infrastructure: Master Docker Compose ──
+# Execution Policy: Run with '--no-build' by default to use existing cached containers.
+# To force rebuilds when code changes: docker compose up -d --build
+
+# Ports bind to ${BIND_ADDR:-127.0.0.1}. Exposing them on your LAN (BIND_ADDR=0.0.0.0) exposes an
+# unauthenticated LLM server, MQTT bus and search proxy - put them behind a firewall/VPN if you do.
+services:
+  # ── Tier 1: CUDA PRISM Primary Inference (GPU 1 Dedicated: 262k Text-Only Sovereign Server, Monitor Attached) ──
+  prism-inference:
+    image: george-cuda-sandbox:latest
+    container_name: george-prism-server
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda-sandbox
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:8080:8080"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - LLAMA_ARG_MODEL=${LLAMA_ARG_MODEL:-/models/active/current/base.gguf}
+      - LLAMA_ARG_DRAFT=${LLAMA_ARG_DRAFT:-/models/active/current/draft.gguf}
+      - LLAMA_ARG_LORA=${LLAMA_ARG_LORA:-/models/active/current/champion.gguf}
+      # 14,9: GPU1 (PCI 2D:00) drives the Windows display under WDDM; keep >=1 GB VRAM headroom there.
+      - LLAMA_ARG_TENSOR_SPLIT=${LLAMA_ARG_TENSOR_SPLIT:-14,9}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+      - LLAMA_ARG_CACHE_RAM=${LLAMA_ARG_CACHE_RAM:-4096}
+      - LLAMA_ARG_CTX_SIZE=${LLAMA_ARG_CTX_SIZE:-98304}
+      - LLAMA_ARG_UBATCH=${LLAMA_ARG_UBATCH:-512}
+      - LLAMA_ARG_N_PARALLEL=1
+      - LLAMA_ARG_N_GPU_LAYERS=99
+      - LLAMA_ARG_HOST=0.0.0.0
+      - LLAMA_ARG_PORT=8080
+      - LLAMA_ARG_CTK=q4_0
+      - LLAMA_ARG_CTV=q4_0
+      - LLAMA_ARG_CTKD=q4_0
+      - LLAMA_ARG_CTVD=q4_0
+      - LLAMA_ARG_REASONING=${LLAMA_ARG_REASONING:-on}
+      - LLAMA_ARG_REASONING_FORMAT=${LLAMA_ARG_REASONING_FORMAT:-deepseek}
+      - LLAMA_ARG_REASONING_EFFORT=${LLAMA_ARG_REASONING_EFFORT:-medium}
+      - LLAMA_ARG_REASONING_BUDGET=${LLAMA_ARG_REASONING_BUDGET:-12288}
+      - LLAMA_ARG_TEMP=${LLAMA_ARG_TEMP:-1.0}
+      - LLAMA_ARG_TOP_P=${LLAMA_ARG_TOP_P:-0.95}
+      - LLAMA_ARG_SPEC_DRAFT_N_MAX=${LLAMA_ARG_SPEC_DRAFT_N_MAX:-3}
+      - LLAMA_ARG_SPEC_DRAFT_P_MIN=${LLAMA_ARG_SPEC_DRAFT_P_MIN:-0.70}
+      - ENABLE_VISION=${ENABLE_VISION:-1}
+      - ENABLE_MTP=${ENABLE_MTP:-1}
+      - GGML_CUDA_BATCH_INVARIANT=1
+    volumes:
+      # External host models directory mounted read-only (zero container weight)
+      - ${MODELS_DIR:-${HOME}/models}:/models:ro
+      - ./bin/prism:/opt/llama-prism-latest:ro
+      - ./scripts:/scripts:ro
+      - ./:/workspace
+      - ${HOME}/.george:/home/george/.george
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: ["/scripts/infra/start_prism.sh"]
+
+  # ── Tier 2: CUDA PRISM Worker Inference (GPU 0 Dedicated: 262k Vision Stack, Headless) ──
+  prism-inference-worker:
+    profiles: ["worker"]
+    image: george-cuda-sandbox:latest
+    container_name: george-prism-worker
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:18080:18080"
+      - "${BIND_ADDR:-127.0.0.1}:18081:18080"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CUDA_VISIBLE_DEVICES=0
+      - LLAMA_ARG_MODEL=${WORKER_LLAMA_ARG_MODEL:-/models/active/experimental/base.gguf}
+      - LLAMA_ARG_LORA=${WORKER_LLAMA_ARG_LORA:-/models/active/experimental/champion.gguf}
+      - LLAMA_ARG_MMPROJ=${WORKER_LLAMA_ARG_MMPROJ:-/models/active/experimental/mmproj.gguf}
+      - LLAMA_ARG_CTX_SIZE=${WORKER_LLAMA_ARG_CTX_SIZE:-98304}
+      - LLAMA_ARG_N_PARALLEL=1
+      - LLAMA_ARG_N_GPU_LAYERS=99
+      - LLAMA_ARG_HOST=0.0.0.0
+      - LLAMA_ARG_PORT=18080
+      - LLAMA_ARG_CTK=q4_0
+      - LLAMA_ARG_CTV=q4_0
+      - LLAMA_ARG_REASONING=${LLAMA_ARG_REASONING:-on}
+      - LLAMA_ARG_REASONING_FORMAT=${LLAMA_ARG_REASONING_FORMAT:-deepseek}
+      - LLAMA_ARG_REASONING_EFFORT=${LLAMA_ARG_REASONING_EFFORT:-medium}
+      - LLAMA_ARG_REASONING_BUDGET=${LLAMA_ARG_REASONING_BUDGET:-12288}
+      - LLAMA_ARG_TEMP=${LLAMA_ARG_TEMP:-1.0}
+      - LLAMA_ARG_TOP_P=${LLAMA_ARG_TOP_P:-0.95}
+      - LLAMA_ARG_SPEC_DRAFT_N_MAX=${LLAMA_ARG_SPEC_DRAFT_N_MAX:-2}
+      - LLAMA_ARG_SPEC_DRAFT_P_MIN=${LLAMA_ARG_SPEC_DRAFT_P_MIN:-0.70}
+      - ENABLE_VISION=1
+      - ENABLE_MTP=1
+      - GGML_CUDA_BATCH_INVARIANT=1
+    volumes:
+      - ${MODELS_DIR:-${HOME}/models}:/models:ro
+      - ./bin/prism:/opt/llama-prism-latest:ro
+      - ./scripts:/scripts:ro
+      - ./:/workspace
+      - ${HOME}/.george:/home/george/.george
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: ["/scripts/infra/start_prism.sh"]
+
+  # ── Sovereign Web Sidecar & Craftsman Workbench ───────────────
+  george-web:
+    profiles: ["web-container"]
+    image: george-web:latest
+    container_name: george-web-container
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:3000:3000"
+    environment:
+      - LODGE_DIR=/workspace
+      - PRISM_URL=http://george-prism-server:8080
+      - PORT=3000
+    volumes:
+      - ./:/workspace
+      - ./web/static:/app/static
+    depends_on:
+      - prism-inference
+
+  # ── Local Gitea Git Forge ─────────────────────────────────────
+  george-gitea:
+    profiles: ["forge"]   # opt-in: COMPOSE_PROFILES=forge
+    image: gitea/gitea:latest
+    container_name: george-gitea
+    restart: unless-stopped
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      # Build links from the request Host so the forge works both on
+      # 127.0.0.1:3088 and over the tailnet (scripts/infra/gitea-tailnet.sh).
+      - GITEA__server__PUBLIC_URL_DETECTION=auto
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:2222:22"
+      - "${BIND_ADDR:-127.0.0.1}:3088:3000"
+    volumes:
+      - ./.gitea-data:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+
+  # ── Local Act Runner (CI/CD Automations) ──────────────────────
+  george-act-runner:
+    profiles: ["forge"]   # opt-in: mounts the Docker socket (root-equivalent on the host)
+    image: gitea/act_runner:latest
+    container_name: george-act-runner
+    restart: unless-stopped
+    environment:
+      - GITEA_INSTANCE_URL=http://george-gitea:3000
+      - CONFIG_FILE=/data/config.yaml
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./.act-runner-data:/data
+    depends_on:
+      - george-gitea
+
+  # ── Sovereign MQTT Broker (Task-to-Task & Swarm Signaling) ────
+  george-mosquitto:
+    image: eclipse-mosquitto:latest
+    container_name: george-mosquitto
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:1883:1883"
+    # No auth: acceptable only because the port binds to 127.0.0.1 by default. If you set BIND_ADDR=0.0.0.0,
+    # anyone on your network can publish events to George - configure a mosquitto password file first.
+    command: ["mosquitto", "-c", "/mosquitto-no-auth.conf"]
+
+  # ── Sovereign SearXNG Metasearch Engine ───────────────────────
+  george-searxng:
+    image: searxng/searxng:latest
+    container_name: george-searxng
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:8081:8080"
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8081/
+      - INSTANCE_NAME=BlueLodge-Sovereign-Search
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?SEARXNG_SECRET is not set - run ./install.sh (writes .env) or add it to .env}
+    volumes:
+      - ./configs/searxng:/etc/searxng:ro
+
+networks:
+  default:
+    name: george-sovereign-net
+

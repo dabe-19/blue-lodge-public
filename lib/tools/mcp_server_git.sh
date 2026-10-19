@@ -1,0 +1,761 @@
+#!/bin/bash
+# ── George: Pure-Bash MCP Git Server ──────────────────────────
+# A self-contained MCP server that speaks JSON-RPC 2.0 over stdio.
+# Exposes Git & GitHub operations as MCP tools so the agent can
+# use them via the MCP client before falling back to /git and /github.
+#
+# Tools exposed:
+#   git_status       — Show working tree status (staged, modified, untracked)
+#   git_log          — Show recent commit history
+#   git_diff         — Show diff of working tree or staged changes
+#   git_commit       — Stage files and commit with a message
+#   git_push         — Push current branch to remote
+#   git_pull         — Pull from remote
+#   git_branch       — List, create, or switch branches
+#   git_clone        — Clone a repository
+#   git_remote       — List or manage remotes
+#   github_search    — Search GitHub repositories by keyword
+#   github_check     — Verify a GitHub repository exists
+#   git_setup_status — Show George's git configuration overview
+#
+# Usage:
+#   Register as MCP server:
+#     /mcp add george-git "bash $LODGE_DIR/lib/tools/mcp_server_git.sh"
+#
+#   Or run standalone:
+#     echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | bash lib/tools/mcp_server_git.sh
+
+set -uo pipefail
+
+# ── Bootstrap George libraries ─────────────────────────────────
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LODGE_DIR="${LODGE_DIR:-$(cd "$_SCRIPT_DIR/../.." && pwd)}"
+GEORGE_DIR="${GEORGE_DIR:-${LODGE_DIR}/.george}"
+
+source "$LODGE_DIR/lib/ui/ui.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/sys/cache.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/tools/git.sh"
+
+# Web library needed for GitHub search/check
+source "$LODGE_DIR/lib/comms/web.sh" 2>/dev/null || true
+source "$LODGE_DIR/lib/tools/mcp_server_gitea.sh" 2>/dev/null || true
+
+# Ensure cache dir exists
+GEORGE_CACHE_DIR="${GEORGE_CACHE_DIR:-$GEORGE_DIR/cache/web}"
+mkdir -p "$GEORGE_CACHE_DIR" 2>/dev/null
+
+# ── jq (hard dependency — installed by install.sh) ────────────
+_JQ="jq"
+command -v gojq >/dev/null 2>&1 && _JQ="gojq"
+
+# ── JSON-RPC Response Helpers ──────────────────────────────────
+
+_respond_result() {
+    local id="$1"
+    local result_json="$2"
+    $_JQ -n -c \
+        --argjson id "$id" \
+        --argjson result "$result_json" \
+        '{"jsonrpc":"2.0","id":$id,"result":$result}'
+}
+
+_respond_error() {
+    local id="$1"
+    local code="$2"
+    local message="$3"
+    if [ "$id" = "null" ]; then
+        $_JQ -n -c \
+            --argjson code "$code" \
+            --arg message "$message" \
+            '{"jsonrpc":"2.0","id":null,"error":{"code":$code,"message":$message}}'
+    else
+        $_JQ -n -c \
+            --argjson id "$id" \
+            --argjson code "$code" \
+            --arg message "$message" \
+            '{"jsonrpc":"2.0","id":$id,"error":{"code":$code,"message":$message}}'
+    fi
+}
+
+_text_content() {
+    local text="$1"
+    $_JQ -n -c --arg text "$text" \
+        '{"content":[{"type":"text","text":$text}]}'
+}
+
+# ── Tool Definitions ───────────────────────────────────────────
+
+_TOOLS_JSON='[{"name":"git_status","description":"Show the working tree status: staged, modified, and untracked files. Includes branch name and short diff stats.","inputSchema":{"type":"object","properties":{"path":{"type":"string","description":"Repository path (default: current directory)"}}}},{"name":"git_log","description":"Show recent commit history with hash, author, date, and message.","inputSchema":{"type":"object","properties":{"count":{"type":"integer","description":"Number of commits to show (default: 10)"},"path":{"type":"string","description":"Repository path (default: current directory)"},"oneline":{"type":"boolean","description":"Use compact one-line format (default: false)"}}}},{"name":"git_diff","description":"Show diff of working tree changes. Can show staged changes, changes against a specific commit, or diff between two refs.","inputSchema":{"type":"object","properties":{"staged":{"type":"boolean","description":"Show staged (cached) changes only (default: false)"},"ref":{"type":"string","description":"Diff against this ref (commit, branch, tag)"},"path":{"type":"string","description":"Repository path (default: current directory)"},"stat_only":{"type":"boolean","description":"Show only diffstat summary, no patch (default: false)"}}}},{"name":"git_commit","description":"Stage files and create a commit. If no files specified, stages all changes (git add -A).","inputSchema":{"type":"object","properties":{"message":{"type":"string","description":"Commit message (required)"},"files":{"type":"string","description":"Space-separated list of files to stage (default: all changes)"},"path":{"type":"string","description":"Repository path (default: current directory)"}},"required":["message"]}},{"name":"git_push","description":"Push the current branch to a remote.","inputSchema":{"type":"object","properties":{"remote":{"type":"string","description":"Remote name (default: origin)"},"branch":{"type":"string","description":"Branch to push (default: current branch)"},"path":{"type":"string","description":"Repository path (default: current directory)"}}}},{"name":"git_pull","description":"Pull from a remote, updating the current branch.","inputSchema":{"type":"object","properties":{"remote":{"type":"string","description":"Remote name (default: origin)"},"branch":{"type":"string","description":"Branch to pull (default: current branch)"},"path":{"type":"string","description":"Repository path (default: current directory)"}}}},{"name":"git_branch","description":"List branches, create a new branch, or switch to an existing branch.","inputSchema":{"type":"object","properties":{"action":{"type":"string","description":"Action: list (default), create, switch, delete","enum":["list","create","switch","delete"]},"name":{"type":"string","description":"Branch name (required for create/switch/delete)"},"path":{"type":"string","description":"Repository path (default: current directory)"}}}},{"name":"git_clone","description":"Clone a repository. Accepts full URLs or owner/repo shorthand (auto-expands to GitHub HTTPS URL).","inputSchema":{"type":"object","properties":{"url":{"type":"string","description":"Repository URL or owner/repo shorthand (required)"},"dest":{"type":"string","description":"Destination directory name"}},"required":["url"]}},{"name":"git_remote","description":"List remotes or add/update a remote URL.","inputSchema":{"type":"object","properties":{"action":{"type":"string","description":"Action: list (default), add, remove","enum":["list","add","remove"]},"name":{"type":"string","description":"Remote name (default: origin)"},"url":{"type":"string","description":"Remote URL (required for add)"},"path":{"type":"string","description":"Repository path (default: current directory)"}}}},{"name":"github_search","description":"Search GitHub repositories by keyword. Returns repo name, stars, language, and description. No auth needed for public repos.","inputSchema":{"type":"object","properties":{"query":{"type":"string","description":"The search query"},"count":{"type":"integer","description":"Number of results to return (default: 5)"}},"required":["query"]}},{"name":"github_check","description":"Verify that a GitHub repository exists and is accessible. Returns confirmation or not-found.","inputSchema":{"type":"object","properties":{"repo":{"type":"string","description":"Repository in owner/repo format (required)"}},"required":["repo"]}},{"name":"git_search","description":"Search GitHub repositories by keyword. Alias for github_search \u2014 routes /git search through MCP.","inputSchema":{"type":"object","properties":{"query":{"type":"string","description":"The search query"},"count":{"type":"integer","description":"Number of results to return (default: 5)"}},"required":["query"]}},{"name":"git_check","description":"Verify that a GitHub repository exists and is accessible. Alias for github_check \u2014 routes /git check through MCP.","inputSchema":{"type":"object","properties":{"repo":{"type":"string","description":"Repository in owner/repo format (required)"}},"required":["repo"]}},{"name":"git_setup_status","description":"Show George git configuration overview: identity, SSH key status, GPG signing status, and remotes.","inputSchema":{"type":"object","properties":{}}},{"name":"git_fetch_readme","description":"Fetch and return the README content from a GitHub repository. Accepts owner/repo or full URL.","inputSchema":{"type":"object","properties":{"repo":{"type":"string","description":"Repository as owner/repo or full GitHub URL"}},"required":["repo"]}},{"name":"github_clone","description":"Clone a GitHub repository. Alias for git_clone.","inputSchema":{"type":"object","properties":{"url":{"type":"string","description":"Repository URL or owner/repo shorthand (required)"},"path":{"type":"string","description":"Local directory to clone into (optional)"}},"required":["url"]}},{"name":"git_worktree_spawn","description":"Spawn an isolated git worktree sandbox on a dedicated branch for child subagent execution.","inputSchema":{"type":"object","properties":{"child_id":{"type":"string","description":"Unique identifier for the child subagent"},"branch":{"type":"string","description":"Branch name (default: subagent/<child_id>)"},"base_dir":{"type":"string","description":"Base directory for sandbox worktree (default: .sandboxes)"}},"required":["child_id"]}},{"name":"git_child_diff","description":"Show the diff between parent HEAD and a child subagent worktree branch.","inputSchema":{"type":"object","properties":{"child_id":{"type":"string","description":"Unique child subagent identifier"},"stat_only":{"type":"boolean","description":"Return short diffstat only"}},"required":["child_id"]}},{"name":"git_child_patch","description":"Apply an AST-validated patch to a specific file inside an in-flight child subagent worktree.","inputSchema":{"type":"object","properties":{"child_id":{"type":"string","description":"Unique child subagent identifier"},"file_path":{"type":"string","description":"Relative file path inside child worktree"},"patch_content":{"type":"string","description":"New content to write to the file"}},"required":["child_id","file_path","patch_content"]}},{"name":"git_child_merge","description":"Merge a child subagent worktree branch into the active branch.","inputSchema":{"type":"object","properties":{"child_id":{"type":"string","description":"Unique child subagent identifier"},"strategy":{"type":"string","description":"Merge strategy: merge (default) or squash","enum":["merge","squash"]}},"required":["child_id"]}},{"name":"git_worktree_reap","description":"Cleanly remove a child subagent worktree and delete its dedicated branch.","inputSchema":{"type":"object","properties":{"child_id":{"type":"string","description":"Unique child subagent identifier"}},"required":["child_id"]}},{"name":"gitea_status","description":"Inspect sovereign Gitea server health, version, and repository statistics.","inputSchema":{"type":"object","properties":{}}},{"name":"gitea_repo_sync","description":"Push local develop branch or specified branch to sovereign Gitea remote.","inputSchema":{"type":"object","properties":{"branch":{"type":"string","description":"Branch to push (default: develop)"}}}},{"name":"gitea_pr_create","description":"Create a pull request on sovereign Gitea targeting develop.","inputSchema":{"type":"object","properties":{"head":{"type":"string","description":"Source candidate branch"},"base":{"type":"string","description":"Target branch (default: develop)"},"title":{"type":"string","description":"Pull request title"},"body":{"type":"string","description":"Markdown dossier and empirical proof"}},"required":["head","title"]}},{"name":"gitea_pr_list","description":"List pull requests from sovereign Gitea forge.","inputSchema":{"type":"object","properties":{"state":{"type":"string","description":"open, closed, or all","enum":["open","closed","all"]}}}},{"name":"gitea_pr_merge","description":"Merge an approved pull request on sovereign Gitea into target branch.","inputSchema":{"type":"object","properties":{"index":{"type":"integer","description":"PR number"},"strategy":{"type":"string","description":"Merge strategy: merge or squash","enum":["merge","squash"]}},"required":["index"]}}]'
+
+# ── Tool Dispatch ──────────────────────────────────────────────
+
+_git_resolve_repo() {
+    local p="$1"
+    local base="${LODGE_DIR:-$HOME/blue-lodge}"
+    [ -z "$p" ] && { echo "$base"; return; }
+    local prev=""
+    while [ "$prev" != "$p" ]; do
+        prev="$p"
+        p=$(echo "$p" | sed -E 's|(\.sandboxes/([^/]+))/\1|\1|g')
+    done
+    if [[ "$p" == /* ]]; then
+        echo "$p"
+    else
+        echo "$base/$p"
+    fi
+}
+
+_handle_tool_call() {
+    local id="$1"
+    local tool_name="$2"
+    local arguments="$3"
+    local _orig_server_cwd="$PWD"
+    trap 'cd "$_orig_server_cwd" 2>/dev/null || true' RETURN
+
+    case "$tool_name" in
+        git_status)
+            local path
+            path=$(printf '%s' "$arguments" | $_JQ -r '.path // empty' 2>/dev/null)
+            cd "$(_git_resolve_repo "$path")" 2>/dev/null
+
+            if ! git rev-parse --git-dir &>/dev/null; then
+                _respond_result "$id" "$(_text_content "Error: Not a git repository")"
+                return
+            fi
+
+            local branch status_out stats
+            branch=$(git branch --show-current 2>/dev/null || echo "detached")
+            status_out=$(git status --short 2>/dev/null)
+            stats=$(git diff --stat 2>/dev/null)
+
+            local result="Branch: $branch"
+            if [ -n "$status_out" ]; then
+                result="${result}\n\nStatus:\n${status_out}"
+            else
+                result="${result}\n\nWorking tree clean"
+            fi
+            [ -n "$stats" ] && result="${result}\n\nDiff stats:\n${stats}"
+
+            _respond_result "$id" "$(_text_content "$(printf '%b' "$result")")"
+            ;;
+
+        git_log)
+            local count path oneline
+            count=$(printf '%s' "$arguments" | $_JQ -r '.count // empty' 2>/dev/null)
+            path=$(printf '%s' "$arguments" | $_JQ -r '.path // empty' 2>/dev/null)
+            oneline=$(printf '%s' "$arguments" | $_JQ -r '.oneline // empty' 2>/dev/null)
+            [ -z "$count" ] && count=10
+            cd "$(_git_resolve_repo "$path")" 2>/dev/null
+
+            if ! git rev-parse --git-dir &>/dev/null; then
+                _respond_result "$id" "$(_text_content "Error: Not a git repository")"
+                return
+            fi
+
+            local log_out
+            if [ "$oneline" = "true" ]; then
+                log_out=$(git log --oneline -n "$count" --no-color 2>/dev/null)
+            else
+                log_out=$(git log --format="%h %an %ad %s" --date=short -n "$count" --no-color 2>/dev/null)
+            fi
+
+            if [ -z "$log_out" ]; then
+                _respond_result "$id" "$(_text_content "No commits found")"
+                return
+            fi
+            _respond_result "$id" "$(_text_content "$log_out")"
+            ;;
+
+        git_diff)
+            local staged ref path stat_only
+            staged=$(printf '%s' "$arguments" | $_JQ -r '.staged // empty' 2>/dev/null)
+            ref=$(printf '%s' "$arguments" | $_JQ -r '.ref // empty' 2>/dev/null)
+            path=$(printf '%s' "$arguments" | $_JQ -r '.path // empty' 2>/dev/null)
+            stat_only=$(printf '%s' "$arguments" | $_JQ -r '.stat_only // empty' 2>/dev/null)
+            cd "$(_git_resolve_repo "$path")" 2>/dev/null
+
+            if ! git rev-parse --git-dir &>/dev/null; then
+                _respond_result "$id" "$(_text_content "Error: Not a git repository")"
+                return
+            fi
+
+            local diff_args=()
+            [ "$staged" = "true" ] && diff_args+=(--cached)
+            [ -n "$ref" ] && diff_args+=("$ref")
+            [ "$stat_only" = "true" ] && diff_args+=(--stat)
+            diff_args+=(--no-color)
+
+            local diff_out
+            diff_out=$(git diff "${diff_args[@]}" 2>/dev/null | head -500)
+
+            if [ -z "$diff_out" ]; then
+                _respond_result "$id" "$(_text_content "No differences found")"
+                return
+            fi
+            _respond_result "$id" "$(_text_content "$diff_out")"
+            ;;
+
+        git_commit)
+            local message files path
+            message=$(printf '%s' "$arguments" | $_JQ -r '.message // empty' 2>/dev/null)
+            files=$(printf '%s' "$arguments" | $_JQ -r '.files // empty' 2>/dev/null)
+            path=$(printf '%s' "$arguments" | $_JQ -r '.path // empty' 2>/dev/null)
+            cd "$(_git_resolve_repo "$path")" 2>/dev/null
+
+            if [ -z "$message" ]; then
+                _respond_result "$id" "$(_text_content "Error: message parameter is required")"
+                return
+            fi
+
+            if ! git rev-parse --git-dir &>/dev/null; then
+                _respond_result "$id" "$(_text_content "Error: Not a git repository")"
+                return
+            fi
+
+            # Stage files
+            if [ -n "$files" ]; then
+                git add -- $files 2>&1
+            else
+                git add -A 2>&1
+            fi
+
+            local commit_out
+            commit_out=$(git commit -m "$message" 2>&1)
+            local rc=$?
+
+            if [ $rc -eq 0 ]; then
+                _respond_result "$id" "$(_text_content "$commit_out")"
+            else
+                _respond_result "$id" "$(_text_content "Error: Commit failed\n$commit_out")"
+            fi
+            ;;
+
+        git_push)
+            local remote branch path
+            remote=$(printf '%s' "$arguments" | $_JQ -r '.remote // empty' 2>/dev/null)
+            branch=$(printf '%s' "$arguments" | $_JQ -r '.branch // empty' 2>/dev/null)
+            path=$(printf '%s' "$arguments" | $_JQ -r '.path // empty' 2>/dev/null)
+            [ -z "$remote" ] && remote="origin"
+            cd "$(_git_resolve_repo "$path")" 2>/dev/null
+
+            if ! git rev-parse --git-dir &>/dev/null; then
+                _respond_result "$id" "$(_text_content "Error: Not a git repository")"
+                return
+            fi
+
+            [ -z "$branch" ] && branch=$(git branch --show-current 2>/dev/null)
+            if [ -z "$branch" ]; then
+                _respond_result "$id" "$(_text_content "Error: Cannot determine current branch")"
+                return
+            fi
+
+            # GitHub push guard — ensure SSH key is configured
+            local remote_url
+            remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
+            if declare -f github_push_guard &>/dev/null; then
+                if ! github_push_guard "$remote_url" 2>/dev/null; then
+                    _respond_result "$id" "$(_text_content "Error: GitHub push guard failed — run /git setup first")"
+                    return
+                fi
+            fi
+
+            local push_out
+            push_out=$(git push "$remote" "$branch" 2>&1)
+            local rc=$?
+
+            if [ $rc -eq 0 ]; then
+                _respond_result "$id" "$(_text_content "Pushed to $remote/$branch\n$push_out")"
+            else
+                _respond_result "$id" "$(_text_content "Error: Push failed\n$push_out")"
+            fi
+            ;;
+
+        git_pull)
+            local remote branch path
+            remote=$(printf '%s' "$arguments" | $_JQ -r '.remote // empty' 2>/dev/null)
+            branch=$(printf '%s' "$arguments" | $_JQ -r '.branch // empty' 2>/dev/null)
+            path=$(printf '%s' "$arguments" | $_JQ -r '.path // empty' 2>/dev/null)
+            [ -z "$remote" ] && remote="origin"
+            cd "$(_git_resolve_repo "$path")" 2>/dev/null
+
+            if ! git rev-parse --git-dir &>/dev/null; then
+                _respond_result "$id" "$(_text_content "Error: Not a git repository")"
+                return
+            fi
+
+            local pull_args=("$remote")
+            [ -n "$branch" ] && pull_args+=("$branch")
+
+            local pull_out
+            pull_out=$(git pull "${pull_args[@]}" 2>&1)
+            local rc=$?
+
+            if [ $rc -eq 0 ]; then
+                _respond_result "$id" "$(_text_content "$pull_out")"
+            else
+                _respond_result "$id" "$(_text_content "Error: Pull failed\n$pull_out")"
+            fi
+            ;;
+
+        git_branch)
+            local action name path
+            action=$(printf '%s' "$arguments" | $_JQ -r '.action // empty' 2>/dev/null)
+            name=$(printf '%s' "$arguments" | $_JQ -r '.name // empty' 2>/dev/null)
+            path=$(printf '%s' "$arguments" | $_JQ -r '.path // empty' 2>/dev/null)
+            [ -z "$action" ] && action="list"
+            cd "$(_git_resolve_repo "$path")" 2>/dev/null
+
+            if ! git rev-parse --git-dir &>/dev/null; then
+                _respond_result "$id" "$(_text_content "Error: Not a git repository")"
+                return
+            fi
+
+            case "$action" in
+                list)
+                    local branches
+                    branches=$(git branch -a --no-color 2>/dev/null)
+                    if [ -z "$branches" ]; then
+                        _respond_result "$id" "$(_text_content "No branches found")"
+                    else
+                        _respond_result "$id" "$(_text_content "$branches")"
+                    fi
+                    ;;
+                create)
+                    if [ -z "$name" ]; then
+                        _respond_result "$id" "$(_text_content "Error: name parameter is required for create")"
+                        return
+                    fi
+                    local out
+                    out=$(git checkout -b "$name" 2>&1)
+                    _respond_result "$id" "$(_text_content "$out")"
+                    ;;
+                switch)
+                    if [ -z "$name" ]; then
+                        _respond_result "$id" "$(_text_content "Error: name parameter is required for switch")"
+                        return
+                    fi
+                    local out
+                    out=$(git checkout "$name" 2>&1)
+                    _respond_result "$id" "$(_text_content "$out")"
+                    ;;
+                delete)
+                    if [ -z "$name" ]; then
+                        _respond_result "$id" "$(_text_content "Error: name parameter is required for delete")"
+                        return
+                    fi
+                    local out
+                    out=$(git branch -d "$name" 2>&1)
+                    _respond_result "$id" "$(_text_content "$out")"
+                    ;;
+                *)
+                    _respond_result "$id" "$(_text_content "Error: Unknown branch action: $action (use list, create, switch, delete)")"
+                    ;;
+            esac
+            ;;
+
+        git_clone)
+            local url dest
+            url=$(printf '%s' "$arguments" | $_JQ -r '.url // empty' 2>/dev/null)
+            dest=$(printf '%s' "$arguments" | $_JQ -r '.dest // empty' 2>/dev/null)
+
+            if [ -z "$url" ]; then
+                _respond_result "$id" "$(_text_content "Error: url parameter is required")"
+                return
+            fi
+
+            # Expand owner/repo shorthand to GitHub HTTPS URL
+            if [[ "$url" =~ ^[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+$ ]]; then
+                url="https://github.com/$url.git"
+            fi
+
+            local clone_args=("$url")
+            [ -n "$dest" ] && clone_args+=("$dest")
+
+            local clone_out
+            clone_out=$(git clone "${clone_args[@]}" 2>&1)
+            local rc=$?
+
+            if [ $rc -eq 0 ]; then
+                _respond_result "$id" "$(_text_content "Cloned $url\n$clone_out")"
+            else
+                _respond_result "$id" "$(_text_content "Error: Clone failed\n$clone_out")"
+            fi
+            ;;
+
+        git_remote)
+            local action name url path
+            action=$(printf '%s' "$arguments" | $_JQ -r '.action // empty' 2>/dev/null)
+            name=$(printf '%s' "$arguments" | $_JQ -r '.name // empty' 2>/dev/null)
+            url=$(printf '%s' "$arguments" | $_JQ -r '.url // empty' 2>/dev/null)
+            path=$(printf '%s' "$arguments" | $_JQ -r '.path // empty' 2>/dev/null)
+            [ -z "$action" ] && action="list"
+            [ -z "$name" ] && name="origin"
+            cd "$(_git_resolve_repo "$path")" 2>/dev/null
+
+            if ! git rev-parse --git-dir &>/dev/null; then
+                _respond_result "$id" "$(_text_content "Error: Not a git repository")"
+                return
+            fi
+
+            case "$action" in
+                list)
+                    local remotes
+                    remotes=$(git remote -v 2>/dev/null)
+                    if [ -z "$remotes" ]; then
+                        _respond_result "$id" "$(_text_content "No remotes configured")"
+                    else
+                        _respond_result "$id" "$(_text_content "$remotes")"
+                    fi
+                    ;;
+                add)
+                    if [ -z "$url" ]; then
+                        _respond_result "$id" "$(_text_content "Error: url parameter is required for add")"
+                        return
+                    fi
+                    local out
+                    if git remote get-url "$name" &>/dev/null; then
+                        out=$(git remote set-url "$name" "$url" 2>&1)
+                        _respond_result "$id" "$(_text_content "Remote '$name' updated: $url\n$out")"
+                    else
+                        out=$(git remote add "$name" "$url" 2>&1)
+                        _respond_result "$id" "$(_text_content "Remote '$name' added: $url\n$out")"
+                    fi
+                    ;;
+                remove)
+                    local out
+                    out=$(git remote remove "$name" 2>&1)
+                    _respond_result "$id" "$(_text_content "$out")"
+                    ;;
+                *)
+                    _respond_result "$id" "$(_text_content "Error: Unknown remote action: $action (use list, add, remove)")"
+                    ;;
+            esac
+            ;;
+
+        git_search|github_search)
+            local query count
+            query=$(printf '%s' "$arguments" | $_JQ -r '.query // empty' 2>/dev/null)
+            count=$(printf '%s' "$arguments" | $_JQ -r '.count // empty' 2>/dev/null)
+            [ -z "$count" ] && count=5
+
+            if [ -z "$query" ]; then
+                _respond_result "$id" "$(_text_content "Error: query parameter is required")"
+                return
+            fi
+
+            local results
+            results=$(web_search_github "$query" "$count" 2>/dev/null)
+            if [ -z "$results" ]; then
+                _respond_result "$id" "$(_text_content "No GitHub results for: $query")"
+                return
+            fi
+
+            _respond_result "$id" "$(_text_content "$results")"
+            ;;
+
+        git_check|github_check)
+            local repo
+            repo=$(printf '%s' "$arguments" | $_JQ -r '.repo // empty' 2>/dev/null)
+
+            if [ -z "$repo" ]; then
+                _respond_result "$id" "$(_text_content "Error: repo parameter is required")"
+                return
+            fi
+
+            if web_github_repo_exists "$repo" 2>/dev/null; then
+                _respond_result "$id" "$(_text_content "Repository exists: $repo (https://github.com/$repo)")"
+            else
+                _respond_result "$id" "$(_text_content "Repository not found: $repo")"
+            fi
+            ;;
+
+        git_setup_status)
+            local result=""
+
+            # Identity
+            local name email
+            name=$(git config --global user.name 2>/dev/null || echo "not set")
+            email=$(git config --global user.email 2>/dev/null || echo "not set")
+            result="Identity: $name <$email>"
+
+            # SSH key
+            if [ -f "${GEORGE_SSH_KEY:-/dev/null}.pub" ]; then
+                local pubkey_info
+                pubkey_info=$(awk '{print $1, $NF}' "${GEORGE_SSH_KEY}.pub" 2>/dev/null)
+                result="${result}\nSSH key: configured ($pubkey_info)"
+            else
+                result="${result}\nSSH key: not generated"
+            fi
+
+            # SSH config
+            if [ -f "${GEORGE_SSH_DIR:-/dev/null}/config" ] && grep -q "Host ${GEORGE_GIT_HOST:-github.com-george}" "${GEORGE_SSH_DIR}/config" 2>/dev/null; then
+                result="${result}\nSSH config: persistent (Host alias: ${GEORGE_GIT_HOST:-github.com-george})"
+            else
+                result="${result}\nSSH config: not configured"
+            fi
+
+            # GPG signing
+            local signing
+            signing=$(git config --global commit.gpgsign 2>/dev/null)
+            if [ "$signing" = "true" ]; then
+                local sigkey
+                sigkey=$(git config --global user.signingkey 2>/dev/null)
+                result="${result}\nGPG signing: enabled (key: ${sigkey: -16})"
+            else
+                result="${result}\nGPG signing: disabled"
+            fi
+
+            # Remotes (if in a repo)
+            if git rev-parse --git-dir &>/dev/null 2>&1; then
+                local remotes
+                remotes=$(git remote -v 2>/dev/null | grep '(push)')
+                if [ -n "$remotes" ]; then
+                    result="${result}\nRemotes:\n$remotes"
+                else
+                    result="${result}\nRemotes: none"
+                fi
+            fi
+
+            _respond_result "$id" "$(_text_content "$(printf '%b' "$result")")"
+            ;;
+
+        git_fetch_readme)
+            local repo
+            repo=$(printf '%s' "$arguments" | $_JQ -r '.repo // empty' 2>/dev/null)
+            if [ -z "$repo" ]; then
+                _respond_result "$id" "$(_text_content "Error: repo parameter is required")"
+                return
+            fi
+            # Strip GitHub URL prefix to get owner/repo slug
+            repo="${repo#https://github.com/}"
+            repo="${repo#http://github.com/}"
+            repo="${repo%/}"
+            # Fetch via web_fetch with full GitHub URL
+            local fetch_url="https://github.com/${repo}"
+            local readme_result=""
+            if declare -f web_fetch &>/dev/null; then
+                readme_result=$(web_fetch "$fetch_url" 2>/dev/null)
+            elif declare -f _web_fetch_github_readme &>/dev/null; then
+                readme_result=$(_web_fetch_github_readme "$repo" 2>/dev/null)
+            fi
+            if [ -n "$readme_result" ]; then
+                _respond_result "$id" "$(_text_content "$readme_result")"
+            else
+                _respond_result "$id" "$(_text_content "Could not fetch README for: $repo")"
+            fi
+            ;;
+
+        github_clone)
+            # Alias: delegate to git_clone handler
+            local url path
+            url=$(printf '%s' "$arguments" | $_JQ -r '.url // empty' 2>/dev/null)
+            path=$(printf '%s' "$arguments" | $_JQ -r '.path // empty' 2>/dev/null)
+            if [ -z "$url" ]; then
+                _respond_result "$id" "$(_text_content "Error: url parameter is required")"
+                return
+            fi
+            # Reformat arguments and call git_clone logic inline
+            local clone_args
+            clone_args=$(_mcp_jq -n -c --arg url "$url" --arg path "$path" \
+                '{url: $url, path: (if $path == "" then null else $path end)}')
+            # Re-dispatch to git_clone
+            _handle_tool_call "$id" "git_clone" "$clone_args"
+            ;;
+
+        git_worktree_spawn)
+            local child_id branch base_dir wt_path
+            child_id=$(printf '%s' "$arguments" | $_JQ -r '.child_id // empty' 2>/dev/null)
+            child_id="${child_id//[^a-zA-Z0-9_-]/}"
+            branch=$(printf '%s' "$arguments" | $_JQ -r '.branch // empty' 2>/dev/null)
+            base_dir=$(printf '%s' "$arguments" | $_JQ -r '.base_dir // empty' 2>/dev/null)
+            if [ -z "$child_id" ]; then
+                _respond_error "$id" -32602 "child_id required"
+                return
+            fi
+            [ -z "$branch" ] && branch="subagent/$child_id"
+            [ -z "$base_dir" ] && base_dir="$LODGE_DIR/.sandboxes"
+            wt_path="$base_dir/$child_id"
+
+            mkdir -p "$base_dir" 2>/dev/null || true
+            local out err_code=0
+            out=$(git -C "$LODGE_DIR" worktree add -b "$branch" "$wt_path" 2>&1) || err_code=$?
+            if [ "$err_code" -ne 0 ]; then
+                _respond_result "$id" "$(_text_content "ERROR: Failed to create git worktree: $out")"
+                return
+            fi
+            mkfifo "$wt_path/stream.fifo" 2>/dev/null || true
+            mkfifo "$wt_path/control.fifo" 2>/dev/null || true
+            _respond_result "$id" "$(_text_content "Git worktree successfully spawned at $wt_path on branch $branch")"
+            ;;
+
+        git_child_diff)
+            local child_id stat_only branch
+            child_id=$(printf '%s' "$arguments" | $_JQ -r '.child_id // empty' 2>/dev/null)
+            child_id="${child_id//[^a-zA-Z0-9_-]/}"
+            stat_only=$(printf '%s' "$arguments" | $_JQ -r '.stat_only // false' 2>/dev/null)
+            if [ -z "$child_id" ]; then
+                _respond_error "$id" -32602 "child_id required"
+                return
+            fi
+            branch="subagent/$child_id"
+            local diff_cmd=(git -C "$LODGE_DIR" diff HEAD.."$branch")
+            [ "$stat_only" = "true" ] && diff_cmd+=(--stat)
+            local out
+            out=$("${diff_cmd[@]}" 2>&1)
+            [ -z "$out" ] && out="No differences between HEAD and $branch."
+            _respond_result "$id" "$(_text_content "$out")"
+            ;;
+
+        git_child_patch)
+            local child_id file_path patch_content target_file
+            child_id=$(printf '%s' "$arguments" | $_JQ -r '.child_id // empty' 2>/dev/null)
+            child_id="${child_id//[^a-zA-Z0-9_-]/}"
+            file_path=$(printf '%s' "$arguments" | $_JQ -r '.file_path // empty' 2>/dev/null)
+            patch_content=$(printf '%s' "$arguments" | $_JQ -r '.patch_content // empty' 2>/dev/null)
+            if [ -z "$child_id" ] || [ -z "$file_path" ]; then
+                _respond_error "$id" -32602 "child_id and file_path required"
+                return
+            fi
+            if [[ "$file_path" == *".."* ]] || [[ "$file_path" == /* ]]; then
+                _respond_error "$id" -32602 "Invalid file path (path traversal forbidden)"
+                return
+            fi
+            target_file="$LODGE_DIR/.sandboxes/$child_id/$file_path"
+            if [ ! -f "$target_file" ]; then
+                _respond_result "$id" "$(_text_content "ERROR: Target file not found in child sandbox: $file_path")"
+                return
+            fi
+            source "$LODGE_DIR/lib/tools/treesitter.sh" 2>/dev/null || true
+            if declare -f treesitter_validate &>/dev/null; then
+                local v_err
+                v_err=$(treesitter_validate "$patch_content" "$(treesitter_detect_lang "$target_file")" 2>&1) || {
+                    _respond_result "$id" "$(_text_content "ERROR: Pre-flight syntax validation failed: $v_err")"
+                    return
+                }
+            fi
+            printf '%s\n' "$patch_content" > "$target_file"
+            _respond_result "$id" "$(_text_content "Successfully patched $file_path in child sandbox $child_id")"
+            ;;
+
+        git_child_merge)
+            local child_id strategy branch
+            child_id=$(printf '%s' "$arguments" | $_JQ -r '.child_id // empty' 2>/dev/null)
+            child_id="${child_id//[^a-zA-Z0-9_-]/}"
+            strategy=$(printf '%s' "$arguments" | $_JQ -r '.strategy // "merge"' 2>/dev/null)
+            if [ -z "$child_id" ]; then
+                _respond_error "$id" -32602 "child_id required"
+                return
+            fi
+            branch="subagent/$child_id"
+            local out
+            if [ "$strategy" = "squash" ]; then
+                out=$(git -C "$LODGE_DIR" merge --squash "$branch" 2>&1)
+            else
+                out=$(git -C "$LODGE_DIR" merge --no-ff -m "Merge subagent deliverable ($child_id)" "$branch" 2>&1)
+            fi
+            _respond_result "$id" "$(_text_content "Merge result: $out")"
+            ;;
+
+        git_worktree_reap)
+            local child_id wt_path branch
+            child_id=$(printf '%s' "$arguments" | $_JQ -r '.child_id // empty' 2>/dev/null)
+            child_id="${child_id//[^a-zA-Z0-9_-]/}"
+            if [ -z "$child_id" ]; then
+                _respond_error "$id" -32602 "child_id required"
+                return
+            fi
+            wt_path="$LODGE_DIR/.sandboxes/$child_id"
+            branch="subagent/$child_id"
+            git -C "$LODGE_DIR" worktree remove --force "$wt_path" 2>/dev/null || rm -rf "$wt_path" 2>/dev/null || true
+            git -C "$LODGE_DIR" branch -D "$branch" 2>/dev/null || true
+            git -C "$LODGE_DIR" push gitea --delete "$branch" >/dev/null 2>&1 || true
+            git -C "$LODGE_DIR" worktree prune 2>/dev/null || true
+            _respond_result "$id" "$(_text_content "Worktree $wt_path and branch $branch cleanly reaped.")"
+            ;;
+
+        gitea_status)
+            local res
+            res=$(gitea_status 2>&1)
+            _respond_result "$id" "$(_text_content "$res")"
+            ;;
+
+        gitea_repo_sync)
+            local b res
+            b=$(printf '%s' "$arguments" | $_JQ -r '.branch // "develop"' 2>/dev/null)
+            res=$(gitea_repo_sync "$b" 2>&1)
+            _respond_result "$id" "$(_text_content "$res")"
+            ;;
+
+        gitea_pr_create)
+            local h bs t bdy res
+            h=$(printf '%s' "$arguments" | $_JQ -r '.head // empty' 2>/dev/null)
+            bs=$(printf '%s' "$arguments" | $_JQ -r '.base // "develop"' 2>/dev/null)
+            t=$(printf '%s' "$arguments" | $_JQ -r '.title // empty' 2>/dev/null)
+            bdy=$(printf '%s' "$arguments" | $_JQ -r '.body // ""' 2>/dev/null)
+            res=$(gitea_pr_create "$h" "$bs" "$t" "$bdy" 2>&1)
+            _respond_result "$id" "$(_text_content "$res")"
+            ;;
+
+        gitea_pr_list)
+            local st res
+            st=$(printf '%s' "$arguments" | $_JQ -r '.state // "open"' 2>/dev/null)
+            res=$(gitea_pr_list "$st" 2>&1)
+            _respond_result "$id" "$(_text_content "$res")"
+            ;;
+
+        gitea_pr_merge)
+            local idx strat res
+            idx=$(printf '%s' "$arguments" | $_JQ -r '.index // empty' 2>/dev/null)
+            strat=$(printf '%s' "$arguments" | $_JQ -r '.strategy // "merge"' 2>/dev/null)
+            res=$(gitea_pr_merge "$idx" "$strat" 2>&1)
+            _respond_result "$id" "$(_text_content "$res")"
+            ;;
+
+        *)
+            _respond_error "$id" -32601 "Unknown tool: $tool_name"
+            ;;
+    esac
+}
+
+# ── Main JSON-RPC Loop ────────────────────────────────────────
+
+while IFS= read -r line; do
+    [ -z "$line" ] && continue
+
+    local_id=$(printf '%s' "$line" | $_JQ -r '.id // "null"' 2>/dev/null)
+    local_method=$(printf '%s' "$line" | $_JQ -r '.method // empty' 2>/dev/null)
+
+    [ -z "$local_method" ] && continue
+
+    case "$local_method" in
+        initialize)
+            _respond_result "$local_id" '{
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {}
+                },
+                "serverInfo": {
+                    "name": "george-git",
+                    "version": "1.0"
+                }
+            }'
+            ;;
+
+        tools/list)
+            _respond_result "$local_id" "{\"tools\":$_TOOLS_JSON}"
+            ;;
+
+        tools/call)
+            tool_name=$(printf '%s' "$line" | $_JQ -r '.params.name // empty' 2>/dev/null)
+            tool_args=$(printf '%s' "$line" | $_JQ -r '.params.arguments // {}' 2>/dev/null)
+            _handle_tool_call "$local_id" "$tool_name" "$tool_args"
+            ;;
+
+        notifications/*)
+            ;;
+
+        *)
+            _respond_error "$local_id" -32601 "Method not found: $local_method"
+            ;;
+    esac
+done

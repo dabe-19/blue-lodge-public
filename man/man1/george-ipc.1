@@ -1,0 +1,213 @@
+.TH GEORGE-IPC 1 "October 2026" "George v3.0" "George Sovereign Manual"
+.SH NAME
+george-ipc \- Sovereign POSIX FIFO Async/Await, Flow Control, and Agentic IPC CLI
+.SH SYNOPSIS
+.B george-ipc
+.I command
+[\fIarguments\fR...]
+.SH DESCRIPTION
+.B george-ipc
+is the primary command-line operator interface for the Sovereign POSIX FIFO Async/Await and Credit-Based Flow Control Protocol (v3).
+It provides zero-daemon, pure-POSIX inter-process communication for subagents, autonomous workflows, and background task execution across the Blue Lodge architecture.
+.PP
+The protocol guarantees:
+.IP \(bu 2
+.B Kernel Write Atomicity:
+Message frames are strictly bounded by \fBPIPE_BUF\fR (4096 bytes). Large payloads automatically spill over to disk and are transparently rehydrated upon receipt.
+.IP \(bu 2
+.B Credit-Based Flow Control:
+Channels maintain a sliding token window. Writers consume credits; readers replenish credits, eliminating unbounded kernel buffer accumulation.
+.IP \(bu 2
+.B Request-Response Routing:
+NDJSON frames contain unique RFC 4122 UUIDs, channel identifiers, and message types allowing multiplexed request-reply correlation.
+.IP \(bu 2
+.B Async Task Orchestration:
+Background commands execute under promise manifests, supporting timeout-enforced barriers, monadic chaining, and clean process tree termination.
+.IP \(bu 2
+.B Autonomic Garbage Collection:
+A single-pass GAWK supervisor automatically detects crashed keepers, cleans wedged queues, and prunes expired promise handles without external daemons.
+
+.SH SUBCOMMANDS
+.SS Channel Lifecycle
+.TP
+.B channel open \fIchannel_id\fR [\fIwindow_size\fR] [\fImax_idle\fR]
+Creates a new structured IPC channel containing \fIdata.fifo\fR, \fIctrl.fifo\fR, \fIstate.json\fR, \fIstate.lock\fR, and \fIqueue/\fR.
+Launches a synchronized background pipe keeper to retain file descriptors.
+Default window size is 5; default max idle timeout is 300 seconds.
+.TP
+.B channel close \fIchannel_id\fR
+Closes FIFOs, terminates the background keeper process tree, marks state as CLOSED, and reclaims all channel filesystem artifacts.
+.TP
+.B channel list
+Outputs an aligned table of all active channels, their lifecycle status, window size, available credits, and backpressure flags.
+.TP
+.B channel status \fIchannel_id\fR
+Displays full JSON state metadata for the specified channel, including sequence counters, keeper PID, and activity timestamps.
+.TP
+.B channel flush \fIchannel_id\fR
+Non-blockingly drains unread messages from \fIdata.fifo\fR, clears buffered disk spillover, and resets credit tokens to the configured window.
+
+.SS Flow Control & Backpressure
+.TP
+.B flow acquire \fIchannel_id\fR [\fItimeout\fR]
+Acquires one transmission credit from the channel under atomic lock. If credits are exhausted or backpressure is asserted, polls until credits are granted or \fItimeout\fR (default 10s) expires.
+.TP
+.B flow grant \fIchannel_id\fR [\fIamount\fR]
+Replenishes \fIamount\fR credits (default 1) in channel state and transmits a CREDIT wakeup ping across the control FIFO.
+.TP
+.B flow pause \fIchannel_id\fR
+Asserts backpressure on the channel, blocking all subsequent credit acquisitions.
+.TP
+.B flow resume \fIchannel_id\fR
+Clears backpressure on the channel, allowing producers to resume acquiring credits.
+.TP
+.B flow unstick \fIchannel_id\fR
+Emergency recovery action: resets backpressure to false and restores credit tokens to the channel window size.
+
+.SS Message Transmission & Reception
+.TP
+.B send \fIchannel_id\fR [\fItype\fR] [\fIpayload\fR] [\fIuuid\fR] [\fItimeout\fR]
+Constructs an OKF-compliant NDJSON message frame, acquires transmission credit, assigns monotonic sequence numbers, and writes the frame atomically to \fIdata.fifo\fR.
+If the payload exceeds 3800 bytes, transparent disk spillover is engaged.
+.TP
+.B recv \fIchannel_id\fR [\fItimeout\fR] [\fIfilter_type\fR] [\fIfilter_uuid\fR] [\fIauto_grant\fR]
+Reads the next available frame from \fIdata.fifo\fR within \fItimeout\fR seconds.
+Supports correlation filtering by message type and UUID. Rehydrates spilled payloads automatically and auto-grants replenishment credit.
+.TP
+.B write \fIchannel_id\fR \fIjson_frame\fR [\fItimeout\fR]
+Backward-compatible wrapper for \fBsend\fR.
+.TP
+.B read \fIchannel_id\fR [\fItimeout\fR]
+Backward-compatible wrapper for \fBrecv\fR.
+
+.SS Asynchronous Tasks & Promises
+.TP
+.B async \fIchannel_id\fR \fIcommand\fR
+Spawns \fIcommand\fR in the background, isolated from the terminal session. Writes an initial promise manifest and prints the resulting \fIpromise_id\fR.
+.TP
+.B await \fIpromise_id\fR [\fItimeout\fR]
+Blocks until the async promise resolves (0) or rejects (non-zero). Outputs the command's stdout/stderr. On timeout (exit code 124), cleanly terminates the background process group.
+.TP
+.B await-all \fIp1,p2,p3...\fR [\fItimeout\fR]
+Awaits concurrent barrier resolution for a comma-separated list of promise IDs. Fails fast if any promise rejects.
+.TP
+.B pipe \fIpromise_id\fR \fIchannel_id\fR \fIcommand_template\fR
+Monadically chains completion of \fIpromise_id\fR into a successor command. The placeholder \fB{}\fR in \fIcommand_template\fR is replaced with the prior promise's output.
+.TP
+.B cancel \fIpromise_id\fR [\fIsignal\fR]
+Cooperatively or forcefully terminates the worker process tree associated with \fIpromise_id\fR and marks the promise as CANCELED (exit code 125).
+.TP
+.B status \fItarget_id\fR
+Displays JSON status for either a channel or an async promise manifest.
+
+.SS Maintenance & Diagnostics
+.TP
+.B gc [\fI--dry-run\fR] [\fI--force\fR] [\fI--ttl <seconds>\fR]
+Executes the GAWK protocol supervisor to audit all channels, keepers, and promises, cleaning dead processes and restoring wedged queues.
+.TP
+.B log [\fIlines\fR]
+Displays the last \fIlines\fR (default 25) structured entries from \fI.george/ipc/ipc.log\fR.
+.TP
+.B config
+Prints the active runtime tunables, including directory paths, credit windows, buffer limits, and timeouts.
+.TP
+.B version
+Displays the george-ipc protocol version and build specification.
+
+.SH MESSAGE FRAME SCHEMA (NDJSON)
+Every message frame transmitted across the data pipe complies with the Google Open Knowledge Graph (OKF) envelope:
+.PP
+.nf
+.RS
+{
+  "seq": 1,
+  "type": "DATA",
+  "channel": "subagent-alpha",
+  "uuid": "7f2b1a8c-9e23-4d01-a1e4-8c9f201b5a2e",
+  "sender_id": "george",
+  "sender_role": "agent",
+  "timestamp": 1790824644,
+  "credits_granted": 0,
+  "payload": { ... },
+  "body": { ... }
+}
+.RE
+.fi
+
+.SH EXIT CODES
+.TP
+.B 0
+\fBIPC_OK\fR: Operation completed successfully.
+.TP
+.B 1
+\fBIPC_ERR_GENERIC\fR: Generic internal failure.
+.TP
+.B 2
+\fBIPC_ERR_NOTFOUND\fR: Channel or promise not found (ENOENT).
+.TP
+.B 13
+\fBIPC_ERR_PERMISSION\fR: Lock or permission denied (EACCES).
+.TP
+.B 16
+\fBIPC_ERR_BUSY\fR: Resource contention or lock acquisition failure (EBUSY).
+.TP
+.B 22
+\fBIPC_ERR_INVALID\fR: Invalid arguments or schema validation error (EINVAL).
+.TP
+.B 32
+\fBIPC_ERR_PIPE\fR: Broken named pipe or channel aborted (EPIPE).
+.TP
+.B 110
+\fBIPC_ERR_TIMEOUT\fR: Credit acquisition or flow control timed out (ETIMEDOUT).
+.TP
+.B 124
+\fBIPC_ERR_AWAIT_TIMEOUT\fR: Promise await barrier timed out; worker process tree reaped.
+.TP
+.B 125
+\fBIPC_ERR_CANCELED\fR: Task explicitly canceled via \fBcancel\fR.
+.TP
+.B 137
+\fBIPC_ERR_CRASH\fR: Background process died prematurely or killed by signal (SIGKILL).
+
+.SH ENVIRONMENT
+.TP
+.B FIFO_IPC_DIR
+Root storage directory for channels, promises, and locks (default: \fI.george/ipc\fR).
+.TP
+.B FIFO_DEFAULT_WINDOW
+Default credit allocation granted to new channels (default: 5).
+.TP
+.B FIFO_MAX_FRAME_BYTES
+Maximum permissible raw frame size (default: 4096 bytes).
+.TP
+.B FIFO_POLL_INTERVAL
+Polling sleep duration in flow control loops (default: 0.05 seconds).
+.TP
+.B FIFO_GC_MAX_IDLE
+Idle threshold in seconds before a channel is marked stale (default: 300).
+.TP
+.B FIFO_GC_PROMISE_TTL
+Retention duration in seconds for resolved promise outputs (default: 1800).
+
+.SH FILES
+.TP
+.I .george/ipc/channels/<channel_id>/
+Channel state directory containing \fIdata.fifo\fR, \fIctrl.fifo\fR, \fIstate.json\fR, \fIconfig.json\fR, and \fIqueue/\fR.
+.TP
+.I .george/ipc/promises/<promise_id>.json
+Authoritative promise state manifest.
+.TP
+.I .george/ipc/promises/<promise_id>.out
+Captured standard output and error stream from the async worker.
+.TP
+.I .george/ipc/payloads/<uuid>.payload
+Transparent large-payload spillover files.
+.TP
+.I .george/ipc/ipc.log
+High-speed append-only structured audit log.
+
+.SH SEE ALSO
+.BR fifo-ipc (3),
+.BR george (1)
+.SH AUTHOR
+Antigravity & The Blue Lodge Sovereign Team.

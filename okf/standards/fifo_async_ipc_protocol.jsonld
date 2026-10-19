@@ -1,0 +1,42 @@
+{
+  "@context": {
+    "@vocab": "https://schema.org/",
+    "goog": "http://schema.googleapis.com/",
+    "okf": "https://developers.google.com/knowledge-graph/schema/",
+    "lodge": "urn:blue-lodge:schema:"
+  },
+  "@graph": [
+    {
+      "@id": "urn:blue-lodge:standard:fifo-async-ipc-flowcontrol",
+      "@type": ["DefinedTerm", "HowTo", "TechArticle"],
+      "name": "FIFO Async IPC Flowcontrol & Garbage Collection Protocol",
+      "description": "Zero-daemon, POSIX-compliant filesystem-backed asynchronous inter-process communication protocol using named pipes, atomic directory locks, sliding-window credit flow control, and single-pass AWK reconciliation.",
+      "stability": "stable",
+      "definition": "The official inter-process communication protocol for Blue Lodge agents, subagents, and tools. Eliminates daemon dependencies by leveraging kernel FIFO buffers, atomic mkdir locking, and credit tokens.",
+      "articleBody": "Channels reside under .george/ipc/channels/<channel_id> containing rx.fifo, tx.fifo, config.json, state.json, keeper.pid, and lock.dir.\nMessages are formatted as single-line NDJSON frames strictly under PIPE_BUF (4096 bytes) for atomic kernel writes.\nFlow control is credit-driven: each DATA frame consumes 1 credit token. When credits reach 0, backpressure engages until CREDIT or RESUME frames arrive.\nReconciliation and reclamation are performed by ipc_gc (single-pass AWK engine) which terminates crashed keepers, frees wedged credit buffers, and removes expired promise files.",
+      "step": [
+        {
+          "@type": "HowToStep",
+          "name": "Open Channel",
+          "text": "Call ipc_channel_open <channel_id> [window_size] [max_idle] to initialize pipes, keeper subshell, and state."
+        },
+        {
+          "@type": "HowToStep",
+          "name": "Send Frame",
+          "text": "Call ipc_send <channel_id> <type> <payload_json> [uuid]. Writes atomically to rx.fifo under directory lock."
+        },
+        {
+          "@type": "HowToStep",
+          "name": "Read Frame",
+          "text": "Call ipc_recv <channel_id> [timeout_secs] to pop the next inbound frame from tx.fifo."
+        },
+        {
+          "@type": "HowToStep",
+          "name": "Reconcile & Garbage Collect",
+          "text": "Execute ipc_gc [--dry-run|--force|--ttl <secs>] to clean stale channels, expired promises, and wedged queues."
+        }
+      ],
+      "codeSample": "source \"$LODGE_DIR/lib/ipc/fifo_ipc.sh\"\nipc_channel_open \"worker-1\" 5 300\nipc_send \"worker-1\" \"DATA\" '{\"action\":\"ping\"}'\nres=$(ipc_recv \"worker-1\" 5)\nipc_channel_close \"worker-1\""
+    }
+  ]
+}

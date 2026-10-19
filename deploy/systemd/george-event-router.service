@@ -1,0 +1,20 @@
+[Unit]
+Description=George Sovereign POSIX Reactive Event Bus Router
+Documentation=file://%h/blue-lodge/docs/EVENT_BUS_AND_OSINT_PIPELINE.md
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/blue-lodge
+Environment=LODGE_DIR=%h/blue-lodge
+EnvironmentFile=-%h/blue-lodge/.george/secrets.env
+ExecStart=/bin/bash %h/blue-lodge/lib/tools/event_router.sh run
+ExecStop=/bin/bash %h/blue-lodge/lib/tools/event_router.sh stop
+Restart=always
+RestartSec=3
+StandardOutput=append:%h/blue-lodge/.george/ipc/event_bus.log
+StandardError=append:%h/blue-lodge/.george/ipc/event_bus.log
+LimitNOFILE=65535
+
+[Install]
+WantedBy=default.target

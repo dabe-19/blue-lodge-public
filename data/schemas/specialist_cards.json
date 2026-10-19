@@ -1,0 +1,623 @@
+{
+  "social": {
+    "cmd": "/social",
+    "syntax": [
+      "/social post discord <channel> <text>",
+      "/social post telegram <text>",
+      "/social post x <text>",
+      "/social post mastodon <text>",
+      "/social discord dm <user> <text>",
+      "/social discord read <channel>",
+      "/social discord channels sync",
+      "/social discord users sync"
+    ],
+    "rules": [
+      "ALWAYS include channel name",
+      "@DisplayName auto-resolved to <@user_id>",
+      "Channel goes BEFORE text",
+      "No quotes on args",
+      "Use filename (e.g., report.md) in <text> to automatically attach/expand file contents"
+    ],
+    "format_only_ex": [
+      "/social post discord <channel> <text>",
+      "/social discord dm <user> <text>"
+    ],
+    "fill": {
+      "<channel>": "Discord channel name without #",
+      "<text>": "Your message content (or filename to auto-expand to file contents)",
+      "<user>": "Discord username"
+    },
+    "notes": [
+      "Tip: passing a filename like 'shield_status.md' as <text> will auto-expand to the file's contents."
+    ]
+  },
+  "init": {
+    "cmd": "/init",
+    "syntax": "/init <name> <type>",
+    "notes": [
+      "name: no spaces (use underscores)",
+      "types: rust,python,rl,data,automation,notebook,shell",
+      "Creates project dir + GEORGE.md + starter code + git init",
+      "Auto-cd into project after init",
+      "Do NOT /init if project already exists"
+    ],
+    "format_only_ex": [
+      "/init <name> <type>"
+    ],
+    "fill": {
+      "<name>": "project name with underscores not spaces",
+      "<type>": "one of: rust, python, rl, data, automation, notebook, shell"
+    }
+  },
+  "cd": {
+    "cmd": "/cd",
+    "syntax": "/cd <path>",
+    "notes": [
+      "Change working dir",
+      "Relative paths OK",
+      "/cd .. to go up"
+    ],
+    "format_only_ex": [
+      "/cd <directory>"
+    ],
+    "fill": {
+      "<directory>": "target directory name or relative path"
+    }
+  },
+  "write": {
+    "cmd": "/write",
+    "syntax": "/write <filepath> <content>",
+    "desc": "Write COMPLETE file contents. Creates or overwrites.",
+    "rules": [
+      "RELATIVE PATHS ONLY (e.g. report.md, src/main.rs) \u2014 NEVER start with /",
+      "To write persistent cross-task memories/deliverables, use exactly: mem:active_task",
+      "ALWAYS include a SPACE between filepath and content (e.g. report.md Content here)",
+      "Put the command and filepath on the first line, then write the content on subsequent lines with literal newlines",
+      "COMPLETE source for code files",
+      "To ADD to a file, use /append instead",
+      "To change one line, use /edit instead",
+      "BEFORE writing, check if a file already exists with /read \u2014 prefer /append or /edit over overwriting"
+    ],
+    "format_only_ex": [
+      "/write src/main.rs\nfn main() {\n    println!(\"Hello\");\n}",
+      "/write mem:active_task\n# Springfield Illinois Housing\nContent here"
+    ]
+  },
+  "append": {
+    "cmd": "/append",
+    "syntax": "/append <filepath> <content>",
+    "desc": "Add content to END of existing file.",
+    "rules": [
+      "RELATIVE PATHS ONLY. To append to a memory file, use 'mem:<slug>' (e.g. mem:springfield_housing)",
+      "Put the command and filepath on the first line, then write the content on subsequent lines with literal newlines",
+      "Creates file if it does not exist",
+      "Use for: adding dependencies, new functions, new sections"
+    ],
+    "format_only_ex": [
+      "/append Cargo.toml\n[dependencies]\nreqwest = \"0.11\"",
+      "/append mem:springfield_housing\n- Additional note"
+    ]
+  },
+  "edit": {
+    "cmd": "/edit",
+    "syntax": "/edit <filepath>\n<<<<<<<\n<search_pattern>\n=======\n<replacement_pattern>\n>>>>>>>",
+    "desc": "Targeted block search-and-replace edit.",
+    "rules": [
+      "Must match EXACT lines of the original file",
+      "Supports mem:<slug> handles (e.g. mem:springfield_housing)",
+      "Specify the exact lines to replace between <<<<<<< and =======",
+      "Specify the replacement lines between ======= and >>>>>>>",
+      "QUERY MODE: If you do not know the file contents, output blockless '/edit <filepath>' to load the file with line numbers.",
+      "Line numbers in query output (e.g. '14:') are metadata for reference only \u2014 do NOT include line numbers in search/replace patterns.",
+      "Works for any length of file changes"
+    ],
+    "format_only_ex": [
+      "/edit src/main.rs\n<<<<<<<\nfn old_function() {\n    println!(\"old\");\n}\n=======\nfn new_function() {\n    println!(\"new\");\n}\n>>>>>>>",
+      "/edit mem:springfield_housing\n<<<<<<<\n# Old Title\n=======\n# New Title\n>>>>>>>"
+    ]
+  },
+  "save": {
+    "cmd": "/save",
+    "syntax": "/save <filepath> <content>",
+    "notes": "First token=filepath, rest=content. RELATIVE PATHS ONLY. Supports mem:<slug> handles.",
+    "format_only_ex": [
+      "/save <relative-filepath> <content>"
+    ],
+    "fill": {
+      "<filepath>": "target filename or path",
+      "<content>": "text to save to the file"
+    }
+  },
+  "web": {
+    "cmd": "/web",
+    "syntax": {
+      "search": "/web search <query> \u2014 returns URLs + text snippets from search engines",
+      "fetch": "/web fetch <url> \u2014 downloads and extracts structured JSON: {url, title, content, images:[], links:[]} with page text, images, and links. Pass image URIs to /vision for analysis.",
+      "scrape": "/web scrape <url> \u2014 returns structured JSON: {url, title, content, images:[], links:[]} with page text, image URIs, and links. Pass image URIs to /vision for analysis.",
+      "scrape-images": "/web scrape-images <url> \u2014 alias for /web fetch / scrape. Returns structured JSON with text, images, and links.",
+      "images": "/web images <query> \u2014 searches for image URLs by keyword (Serper API). Returns image URLs only."
+    },
+    "rules": [
+      "NO FLAGS: /web does NOT support --limit, --output, --source, --date, or ANY --flag. Use ONLY positional args: /web search <keywords> or /web fetch <url>",
+      "search=QUERY (keywords), fetch/scrape=URL \u2014 NEVER swap",
+      "/web fetch and scrape both return structured JSON with content text, images[], and links[]",
+      "scrape/fetch returns {url,title,content,images[],links[]} \u2014 pass images[] URLs to /vision",
+      "AVOID redundant searches \u2014 1 search + 1-2 fetches/scrapes enough",
+      "For CODING: prefer /write,/build,/test over web research",
+      "ALWAYS derive search keywords from the TASK above \u2014 never from examples",
+      "LOCAL FILES: NEVER use /web fetch or /web scrape on local files or relative paths \u2014 use /read for text files, /vision for images",
+      "ONE URL PER COMMAND \u2014 never put multiple URLs in one /web call. To fetch/scrape 3 pages, output 3 separate /web fetch/scrape lines across 3 steps.",
+      "The URL must be the LAST token on the line \u2014 nothing after it. No trailing text, no next command.",
+      "NEVER fabricate or guess URLs \u2014 ONLY use URLs that appeared in prior /web search results or were provided by the user. If you need a URL, run /web search first.",
+      "For Wikimedia Commons pages: NEVER guess the raw upload.wikimedia.org file URL. Download the PNG/JPG thumbnail URL from the images[] list directly (which is valid), or search for a direct image URL elsewhere.",
+      "GREY-LISTED URLs: Search results marked ' [GREY-LISTED]' only return cached search snippets, not full body content. Prefer fetching/scraping other non-grey-listed URLs if you need full details."
+    ],
+    "search_tips": [
+      "Use precise keywords with unique identifying context (e.g. project/author/topic name like 'JJ Kelly Intellopy author' instead of just 'JJ Kelly')",
+      "Drop generic filler: the/a/for/including/regarding/comprehensive",
+      "NEVER paste the entire milestone verbatim as a search query",
+      "Extract keywords from TASK context only"
+    ],
+    "FLOW CHAINS": [
+      "Text research: /web search -> /web fetch -> summarize",
+      "Scrape workflow: /web search -> /web scrape -> summarize",
+      "Image search & analyze: /web images <query> -> /vision <image_url>",
+      "Image research (direct): /web scrape <url> -> /vision <image_url_from_images[]>",
+      "Image download workflow: /web scrape <url> -> /download <image_url_from_images[]> [destination] -> /vision <destination>",
+      "Report: /web search -> /web fetch -> /write report"
+    ],
+    "notes": [
+      "Do NOT fetch every URL. 1 search + 1-2 fetches/scrapes enough",
+      "If scrape-images returns empty content, use /web fetch for same URL instead",
+      "/web fetch and /web scrape require a full https:// URL \u2014 for local files use /read or /vision instead"
+    ],
+    "format_only_ex": [
+      "/web search <keywords>",
+      "/web fetch <url>",
+      "/web scrape <url>",
+      "/web scrape-images <url>",
+      "/web images <keywords>"
+    ],
+    "fill": {
+      "<keywords>": "3-5 search terms derived from the TASK",
+      "<url>": "full https:// URL from search results or task \u2014 NEVER a local file path"
+    }
+  },
+  "download": {
+    "cmd": "/download",
+    "syntax": "/download <url_or_path> [destination]",
+    "notes": [
+      "Downloads a file from a URL or copies a local file to the workspace.",
+      "Useful to download images or data files before analyzing them locally.",
+      "NEVER guess/fabricate URLs. For Wikimedia Commons, use the exact image URLs returned by /web scrape (like the PNG thumbnail) instead of trying to manually construct the raw SVG URL."
+    ],
+    "format_only_ex": [
+      "/download <url> [destination-path]"
+    ],
+    "fill": {
+      "<url_or_path>": "URL (http/https) or local file path to retrieve",
+      "[destination]": "optional destination file path (defaults to source filename)"
+    }
+  },
+  "sandbox": {
+    "cmd": "/sandbox",
+    "syntax": {
+      "new": "/sandbox new <name> [type] (rust/python/shell)",
+      "build": "/sandbox build <name>",
+      "test": "/sandbox test <name>",
+      "run": "/sandbox run <name> <cmd>",
+      "cd": "/sandbox cd <name>",
+      "rm": "/sandbox rm <name>",
+      "clone": "/sandbox clone <url> [name]"
+    },
+    "rules": [
+      "Do NOT use /sandbox to run slash commands",
+      "Only use /sandbox for ISOLATED code projects",
+      "For EXISTING projects, use /build and /test instead"
+    ],
+    "when_to_use": {
+      "USE /sandbox": "new isolated project that does not exist yet",
+      "USE /build": "compile existing project in current dir",
+      "USE /init": "scaffold new project in a NEW directory",
+      "DO NOT": "use /sandbox for web, email, social, or non-code tasks"
+    },
+    "format_only_ex": [
+      "/sandbox new <project-name> <type>",
+      "/sandbox build <project-name>",
+      "/sandbox run <project-name> <command>"
+    ]
+  },
+  "build": {
+    "cmd": "/build",
+    "syntax": "/build [release]",
+    "notes": "Auto-detects Cargo/pyproject/Makefile. Reads GEORGE.md Build section.",
+    "format_only_ex": [
+      "/build",
+      "/build release"
+    ]
+  },
+  "test": {
+    "cmd": "/test",
+    "syntax": "/test [specific_test_or_script]",
+    "notes": "Runs project test command in GEORGE.md or auto-detects Cargo/pytest/unittest/standalone scripts. Pass a standalone script (e.g. /test script.py) to test individual modules.",
+    "format_only_ex": [
+      "/test",
+      "/test <script-or-test-file>"
+    ]
+  },
+  "fix": {
+    "cmd": "/fix",
+    "syntax": "/fix [file_or_description]",
+    "notes": "Auto-diagnoses and fixes errors.",
+    "format_only_ex": [
+      "/fix <file-or-description>"
+    ],
+    "fill": {
+      "<file-or-description>": "filename or error description from the TASK"
+    }
+  },
+  "commit": {
+    "cmd": "/commit",
+    "syntax": "/commit [files...]",
+    "notes": "AI-generates commit message. Optional: specific files to stage.",
+    "format_only_ex": [
+      "/commit",
+      "/commit <files>"
+    ],
+    "fill": {
+      "<files>": "optional specific filenames to stage"
+    }
+  },
+  "push": {
+    "cmd": "/push",
+    "syntax": "/push [branch]",
+    "notes": "Push to remote. Defaults to current branch."
+  },
+  "clone": {
+    "cmd": "/clone",
+    "syntax": "/clone <repo_url_or_owner/repo> [local_name]",
+    "format_only_ex": [
+      "/clone <owner/repo-or-url> [local-name]"
+    ]
+  },
+  "git": {
+    "cmd": "/git",
+    "syntax": {
+      "search": "/git search <query>",
+      "check": "/git check <owner/repo>",
+      "fetch": "/git fetch <url_or_owner/repo>",
+      "clone": "/git clone <repo_url_or_owner/repo>",
+      "commit": "/git commit [files]",
+      "push": "/git push [branch]",
+      "setup": "/git setup",
+      "status": "/git status",
+      "ssh-keygen": "/git ssh-keygen"
+    },
+    "workflow": {
+      "scrape_repo": "/git search <query> -> /git fetch <owner/repo>"
+    },
+    "format_only_ex": [
+      "/git search <keywords>",
+      "/git fetch <owner/repo>",
+      "/git clone <owner/repo>",
+      "/git commit",
+      "/git push",
+      "/git setup"
+    ],
+    "fill": {
+      "<action>": "one of: search, check, fetch, clone, commit, push, setup, status, ssh-keygen"
+    }
+  },
+  "github": {
+    "cmd": "/git",
+    "alias_note": "/github is an alias \u2014 use /git for all git+github ops",
+    "syntax": {
+      "search": "/git search <query>",
+      "check": "/git check <owner/repo>",
+      "fetch": "/git fetch <url_or_owner/repo>"
+    },
+    "workflow": {
+      "scrape_repo": "/git search <query> -> /git fetch <owner/repo>"
+    },
+    "format_only_ex": [
+      "/git search <keywords>",
+      "/git fetch <owner/repo>",
+      "/git check <owner/repo>"
+    ]
+  },
+  "email": {
+    "cmd": "/email",
+    "syntax": {
+      "send": "/email send <provider> <recipient> subject=<subj> body=<body>",
+      "inbox": "/email inbox <provider> [count]",
+      "status": "/email status"
+    },
+    "notes": [
+      "provider: gmail,protonmail,zoho",
+      "Recipient after provider (no to= needed)",
+      "Also accepts: to= s= b= as aliases",
+      "For actual email ONLY, NOT social platforms"
+    ],
+    "format_only_ex": [
+      "/email send <provider> <address> subject=<subject line> body=<email body>",
+      "/email inbox <provider>"
+    ]
+  },
+  "journal": {
+    "cmd": "/journal",
+    "syntax": {
+      "read": "/journal \u2014 Read ALL journal entries (no arguments needed)",
+      "show": "/journal show [vivid|fading|sediment]",
+      "write": "/journal write <entry_text>"
+    },
+    "rules": [
+      "To READ: /journal (no args). To WRITE: /journal write <text>",
+      "NEVER write new content when the task asks you to check, read, review, or show the journal"
+    ],
+    "format_only_ex": [
+      "/journal",
+      "/journal show <tier>",
+      "/journal write <text>"
+    ],
+    "fill": {
+      "<tier>": "one of: vivid, fading, sediment",
+      "<text>": "journal entry content"
+    }
+  },
+  "recall": {
+    "cmd": "/recall",
+    "syntax": "/recall <query>",
+    "notes": "BM25-ranked FTS5 search. Returns source, section, snippet.",
+    "format_only_ex": [
+      "/recall <search keywords>"
+    ]
+  },
+  "pgp": {
+    "cmd": "/pgp",
+    "syntax": {
+      "sign": "/pgp sign <message>",
+      "signpost": "/pgp signpost (sign+post to Discord)",
+      "export": "/pgp export"
+    },
+    "format_only_ex": [
+      "/pgp sign <your message>"
+    ]
+  },
+  "phone": {
+    "cmd": "/phone",
+    "syntax": "/phone",
+    "notes": "Dashboard: battery, signal, location, SMS. No args needed."
+  },
+  "secret": {
+    "cmd": "/secret",
+    "syntax": [
+      "/secret set <name> <value>",
+      "/secret get <name>"
+    ],
+    "notes": "AES-256-CBC vault.",
+    "format_only_ex": [
+      "/secret set <KEY_NAME> <value>",
+      "/secret get <KEY_NAME>"
+    ]
+  },
+  "vitals": {
+    "cmd": "/vitals",
+    "syntax": "/vitals",
+    "notes": "Disk, RAM, battery, network dashboard. No args needed."
+  },
+  "backup": {
+    "cmd": "/backup",
+    "syntax": {
+      "local": "/backup local (timestamped)",
+      "restore": "/backup restore",
+      "github": "/backup github"
+    },
+    "format_only_ex": [
+      "/backup <action>"
+    ],
+    "fill": {
+      "<action>": "one of: local, restore, github"
+    }
+  },
+  "vision": {
+    "cmd": "/vision",
+    "syntax": "/vision <image> [prompt]",
+    "notes": [
+      "Supports jpg/png/gif/webp/bmp",
+      "Accepts image URLs directly (no /download needed) or local image file paths.",
+      "Requires vision-capable model (Tier 1 ternary-bonsai-27b with vision tower, or gemma4-12b)",
+      "Pair with /web scrape-images: scrape a page, then pass image URLs from images[] array to /vision",
+      "Returns detailed text description of image contents"
+    ],
+    "format_only_ex": [
+      "/vision <image> <prompt>"
+    ],
+    "fill": {
+      "<image>": "URL or local path to image file (e.g. local path downloaded via /download, or direct URL from /web scrape-images images[] output)",
+      "<prompt>": "what to analyze or describe about the image"
+    }
+  },
+  "container": {
+    "cmd": "/container",
+    "syntax": {
+      "create": "/container create <distro> (ubuntu/alpine/debian/fedora/kali)",
+      "enter": "/container enter <distro>",
+      "exec": "/container exec <distro> <cmd>",
+      "rm": "/container rm <distro>"
+    },
+    "format_only_ex": [
+      "/container <action> <distro>"
+    ],
+    "fill": {
+      "<action>": "one of: create, enter, exec, rm",
+      "<distro>": "one of: ubuntu, alpine, debian, fedora, kali"
+    }
+  },
+  "wallet": {
+    "cmd": "/wallet",
+    "syntax": {
+      "status": "/wallet status",
+      "balances": "/wallet balances",
+      "check": "/wallet check"
+    },
+    "format_only_ex": [
+      "/wallet <action>"
+    ],
+    "fill": {
+      "<action>": "one of: status, balances, check"
+    }
+  },
+  "slash": {
+    "cmd": "/slash",
+    "syntax": [
+      "/slash create <name> <description>",
+      "/slash run <name> [args]",
+      "/slash list",
+      "/slash show <name>",
+      "/slash edit <name>"
+    ],
+    "notes": [
+      "George auto-generates bash code from the description",
+      "Created commands persist and can be reused across tasks",
+      "Commands get full lodge library access (curl, jq, etc.)",
+      "Use /slash to extend yourself when a built-in command doesn't exist"
+    ],
+    "format_only_ex": [
+      "/slash create <name> <description>",
+      "/slash run <name> <args>"
+    ],
+    "fill": {
+      "<name>": "short hyphenated command name",
+      "<description>": "plain English description of what the command should do",
+      "<args>": "runtime arguments for the custom command"
+    },
+    "workflow": [
+      "Step 1: /slash create <name> <what it should do>",
+      "Step 2: /slash run <name> [args]",
+      "If a built-in command doesn't do exactly what you need, create a /slash command."
+    ]
+  },
+  "respond": {
+    "cmd": "/respond",
+    "syntax": "/respond <text>",
+    "notes": [
+      "Present output directly to operator \u2014 use when no file/email/post is needed",
+      "Write the command name on the first line, then write the response on subsequent lines using literal newlines",
+      "This IS a delivery command \u2014 satisfies task completion"
+    ],
+    "format_only_ex": [
+      "/respond Hello!\nHere is the answer."
+    ]
+  },
+  "q": {
+    "cmd": "/brainstorm",
+    "syntax": "/brainstorm <question or topic>",
+    "notes": "Think, reason, or brainstorm using George's own knowledge. NO human input \u2014 George answers HIMSELF. Use when you need to generate ideas, weigh options, plan approaches, or reason through a problem. Alias: /q. WARNING: may be stale for dates, scores, events, prices \u2014 prefer /web for time-sensitive info.",
+    "contrast": "vs /ask: /ask asks the HUMAN and waits for their answer. /brainstorm = George thinks it through himself.",
+    "rules": [
+      "Output ONLY your reasoning and ideas as plain text",
+      "NEVER include slash commands, bash blocks, or code fences in your brainstorm output",
+      "Do NOT draft the next command \u2014 just think through the problem"
+    ],
+    "format_only_ex": [
+      "/brainstorm <question_or_topic>"
+    ]
+  },
+  "brainstorm": {
+    "cmd": "/brainstorm",
+    "syntax": "/brainstorm <question or topic>",
+    "notes": "Think, reason, or brainstorm using George's own knowledge. NO human input \u2014 George answers HIMSELF. Use when you need to generate ideas, weigh options, plan approaches, or reason through a problem. Alias: /q. WARNING: may be stale for dates, scores, events, prices \u2014 prefer /web for time-sensitive info.",
+    "contrast": "vs /ask: /ask asks the HUMAN and waits for their answer. /brainstorm = George thinks it through himself.",
+    "rules": [
+      "Output ONLY your reasoning and ideas as plain text",
+      "NEVER include slash commands, bash blocks, or code fences in your brainstorm output",
+      "Do NOT draft the next command \u2014 just think through the problem"
+    ],
+    "format_only_ex": [
+      "/brainstorm <question_or_topic>"
+    ]
+  },
+  "ask": {
+    "cmd": "/ask",
+    "syntax": "/ask <question to ask the human operator>",
+    "notes": "Asks the HUMAN USER a question and waits for their typed answer. Use to get real user-specific details that ONLY the user knows. The user's answer is returned as output. Do NOT use for general knowledge \u2014 use /web or /recall instead.",
+    "rules": [
+      "ONE specific question per /ask",
+      "Ask about concrete details the user must provide",
+      "Do NOT ask rhetorical or philosophical questions"
+    ],
+    "format_only_ex": [
+      "/ask <question_for_the_operator>"
+    ]
+  },
+  "ls": {
+    "cmd": "/ls",
+    "syntax": "/ls [path] [depth]",
+    "notes": "Tree view of directory contents, depth 1-8 (default 3). RELATIVE PATHS ONLY \u2014 paths starting with / are resolved relative to workdir.",
+    "format_only_ex": [
+      "/ls",
+      "/ls src 2",
+      "/ls docs"
+    ],
+    "fill": {
+      "<path>": "relative directory path to list (default: current dir)",
+      "<depth>": "tree depth 1-8"
+    }
+  },
+  "grep": {
+    "cmd": "/grep",
+    "syntax": "/grep [flags] \"<pattern>\" [relative_path] [| pipeline]",
+    "rules": [
+      "Pattern MUST be in double quotes: /grep \"my pattern\"",
+      "RELATIVE PATHS ONLY (e.g. src/, docs/file.md) \u2014 NEVER absolute paths starting with /",
+      "If no path given, searches current directory recursively",
+      "Extended regex (ERE): use .* + ? | () [] {n,m} ^ $ \u2014 NOT \\d \\w \\b (use [0-9] [a-zA-Z0-9_] instead)",
+      "Multi-word patterns WITHOUT quotes will break \u2014 first word becomes pattern, second becomes path"
+    ],
+    "format_only_ex": [
+      "/grep \"TODO\" src/",
+      "/grep \"hello world\" docs/",
+      "/grep -i \"error|warning\" logs/",
+      "/grep \"class [A-Z]\" . | wc -l"
+    ],
+    "fill": {
+      "\"<pattern>\"": "regex in double quotes (REQUIRED for multi-word)",
+      "[relative_path]": "file or directory to search (default: current dir)",
+      "[flags]": "-i (ignore case), -n (line numbers, default on), -l (files only)"
+    }
+  },
+  "read": {
+    "cmd": "/read",
+    "syntax": "/read <file>",
+    "notes": "Read first 100 lines of file. Supports mem:active_task and mem:<index> handles. Tip: file paths in /write, /social, /email, /respond args auto-expand to contents \u2014 use /read only to inspect a file before deciding next steps.",
+    "format_only_ex": [
+      "/read <filepath>",
+      "/read mem:active_task",
+      "/read mem:1"
+    ],
+    "fill": {
+      "<filepath>": "path to file to read (or mem:active_task, mem:1, etc.)"
+    }
+  },
+  "soul": {
+    "cmd": "/soul",
+    "syntax": [
+      "/soul condensed",
+      "/soul reflect <topic>",
+      "/soul values"
+    ],
+    "notes": [
+      "/soul condensed: returns a compact identity summary (NO arguments)",
+      "/soul reflect: reflect on a topic using soul values",
+      "/soul values: list core values"
+    ],
+    "IMPORTANT": "'/soul condensed' takes NO arguments. Do NOT append text after 'condensed'.",
+    "format_only_ex": [
+      "/soul condensed",
+      "/soul reflect <topic>"
+    ],
+    "fill": {
+      "<topic>": "topic to reflect on (only for /soul reflect)"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+# ── Blue Lodge Sovereign Dolos Node Docker Compose ──
+# Footprint: ~1.8 GB RAM (leaves ~33 GB RAM free for local LLM inference)
+
+services:
+  dolos:
+    image: ghcr.io/txpipe/dolos:latest
+    container_name: lodge-dolos
+    restart: "no"
+    volumes:
+      - ./daemon.toml:/etc/dolos/daemon.toml:ro
+      - ./genesis:/etc/dolos/genesis:ro
+      - ./data:/var/lib/dolos
+      - ./ipc:/ipc
+    ports:
+      - "${DOLOS_MINIBF_PORT:-8000}:8000"
+      - "${DOLOS_GRPC_PORT:-50051}:50051"
+      - "${DOLOS_MINIKUPO_PORT:-1442}:1442"
+    command:
+      - "daemon"
+      - "--config=/etc/dolos/daemon.toml"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
