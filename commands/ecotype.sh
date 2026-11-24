@@ -32,6 +32,12 @@ cmd_ecotype() {
         backup|save)
             eval "ecotype_backup $rest"
             ;;
+        fetch|check)
+            ecotype_fetch
+            ;;
+        diff)
+            ecotype_diff "$rest"
+            ;;
         help|--help|-h)
             cat <<EOF
 /ecotype — Software Phytology Branch & Pollination Manager
@@ -42,6 +48,10 @@ adaptations (Foliage) never collide with shared core systems (Heartwood).
 Usage:
   /ecotype status [--json]
       Show active ecotype branch, commits ahead/behind trunk, and Heartwood vs Foliage split.
+  /ecotype fetch
+      Fetch latest refs from origin/gitea without modifying the working tree.
+  /ecotype diff [path]
+      Show diff summary vs upstream trunk (or unified diff for a specific path).
   /ecotype init [node_name]
       Ensure this node is on 'ecotype/<node_name>' (creating it if needed) and sync to local Gitea.
   /ecotype sync [remote] [branch]

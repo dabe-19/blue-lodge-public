@@ -8,10 +8,18 @@ This guide documents the standard operating procedure for synchronizing Heartwoo
 
 Every Blue Lodge node operates on its own ecotype branch (`ecotype/<node_name>`) while sharing the common Heartwood integration trunk (`develop` on GitHub `origin` and local Gitea `gitea`).
 
-### Pulling Upstream Heartwood Updates Onto Your Node
+### Option A — Web UI (App Store & Workshop → Heartwood & Ecotype Sync)
+1. Open the **Tool Crib Drawer** → **`APP STORE & WORKSHOP`** → **`Heartwood & Ecotype Sync`** (also reachable via the quick-jump button in `Chronicle & History → Spec Sheet → Tray 5`, or pinnable as **Ecotype Sync** in the top header).
+2. Click **`CHECK UPSTREAM (FETCH)`** to fetch the latest refs from `origin`/`gitea` without modifying your working tree.
+3. Inspect incoming Heartwood commits, local ecotype commits, and the **Heartwood / Cambium** vs. **Foliage (`.george`)** file split; click **`DIFF`** on any file to inspect its unified diff against `origin/develop` (or uncommitted working-tree diff).
+4. Click **`POLLINATE FROM UPSTREAM`** to run sandboxed worktree test-merge + AST verification, or select diverged **Heartwood** files and click **`PROMOTE SELECTED HEARTWOOD`** to graft a clean `candidate/*` branch off `develop` (Foliage files are firewalled).
+
+### Option B — Pulling Upstream Heartwood Updates via CLI / Slash Commands
 ```bash
-# 1. Inspect divergence between your ecotype branch and origin/develop
+# 1. Fetch upstream refs and inspect divergence / diffs vs origin/develop
+/ecotype fetch
 /ecotype status
+/ecotype diff [path]
 # (or from shell: bash commands/ecotype.sh status)
 
 # 2. Sandboxed Pollination — fetches origin/develop, test-merges in an isolated

@@ -1,5 +1,5 @@
 use axum::{
-    extract::State,
+    extract::{Query, State},
     response::{IntoResponse, Json},
 };
 use serde::Deserialize;
@@ -398,11 +398,17 @@ pub async fn sync_discord(State(state): State<Arc<AppState>>) -> impl IntoRespon
 
 #[derive(Deserialize)]
 pub struct EcotypeActionPayload {
-    pub action: String, // "init" | "sync" | "backup" | "backup-cloud" | "promote"
+    pub action: String, // "init" | "sync" | "fetch" | "backup" | "backup-cloud" | "promote"
     pub node_name: Option<String>,
     pub title: Option<String>,
     pub paths: Option<Vec<String>>,
     pub push_origin: Option<bool>,
+}
+
+#[derive(Deserialize)]
+pub struct EcotypeDiffQuery {
+    pub path: Option<String>,
+    pub mode: Option<String>, // "ecotype" (default: upstream...HEAD) | "incoming" (HEAD...upstream) | "working" (HEAD vs working tree)
 }
 
 #[derive(Deserialize)]
@@ -430,6 +436,125 @@ pub async fn get_ecotype_status(State(state): State<Arc<AppState>>) -> impl Into
     Json(json!({ "status": "error", "message": "Failed to read ecotype status" }))
 }
 
+pub async fn get_ecotype_diff(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<EcotypeDiffQuery>,
+) -> impl IntoResponse {
+    let mode = query.mode.unwrap_or_else(|| "ecotype".to_string());
+    let clean_path = match query.path {
+        Some(ref raw) if !raw.trim().is_empty() => {
+            let p = raw.trim();
+            if p.starts_with('/')
+                || p.contains("..")
+                || !p.chars().all(|c| c.is_ascii_alphanumeric() || "/._-@+".contains(c))
+            {
+                return Json(json!({ "status": "error", "message": "Invalid file path" }));
+            }
+            Some(p.to_string())
+        }
+        _ => None,
+    };
+
+    // Resolve upstream trunk ref identically to lib/sys/ecotype.sh
+    let mut upstream = "develop".to_string();
+    for candidate in ["origin/develop", "gitea/develop", "develop"] {
+        let check = tokio::process::Command::new("git")
+            .args(["-c", "safe.directory=*", "rev-parse", "--verify", "--quiet", candidate])
+            .current_dir(&state.lodge_dir)
+            .output()
+            .await;
+        if let Ok(res) = check {
+            if res.status.success() {
+                upstream = candidate.to_string();
+                break;
+            }
+        }
+    }
+
+    let mut args: Vec<String> = vec![
+        "-c".into(),
+        "safe.directory=*".into(),
+        "diff".into(),
+        "--no-color".into(),
+    ];
+
+    match mode.as_str() {
+        "working" => {
+            args.push("HEAD".into());
+        }
+        "incoming" => {
+            args.push(format!("HEAD...{}", upstream));
+        }
+        _ => {
+            args.push(format!("{}...HEAD", upstream));
+        }
+    }
+
+    if clean_path.is_none() {
+        args.push("--stat".into());
+    } else if let Some(ref p) = clean_path {
+        args.push("--".into());
+        args.push(p.clone());
+    }
+
+    let out = tokio::process::Command::new("git")
+        .args(&args)
+        .current_dir(&state.lodge_dir)
+        .output()
+        .await;
+
+    match out {
+        Ok(res) if res.status.success() => {
+            let mut diff_text = String::from_utf8_lossy(&res.stdout).to_string();
+            // For working mode on an untracked file, fall back to showing file contents as additions
+            if diff_text.trim().is_empty() && mode == "working" {
+                if let Some(ref p) = clean_path {
+                    let full = state.lodge_dir.join(p);
+                    if let Ok(canon_root) = tokio::fs::canonicalize(&state.lodge_dir).await {
+                        if let Ok(canon_file) = tokio::fs::canonicalize(&full).await {
+                            if canon_file.starts_with(&canon_root) && canon_file.is_file() {
+                                if let Ok(bytes) = tokio::fs::read(&canon_file).await {
+                                    let preview = String::from_utf8_lossy(&bytes);
+                                    let mut synth = format!("--- /dev/null\n+++ b/{}\n@@ -0,0 +1 @@ (untracked file)\n", p);
+                                    for line in preview.lines().take(400) {
+                                        synth.push('+');
+                                        synth.push_str(line);
+                                        synth.push('\n');
+                                    }
+                                    diff_text = synth;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            const MAX_BYTES: usize = 131_072;
+            let truncated = diff_text.len() > MAX_BYTES;
+            if truncated {
+                let mut end = MAX_BYTES;
+                while !diff_text.is_char_boundary(end) && end > 0 {
+                    end -= 1;
+                }
+                diff_text.truncate(end);
+                diff_text.push_str("\n\n... [diff truncated at 128 KB — inspect full diff in terminal via /ecotype diff] ...");
+            }
+            Json(json!({
+                "status": "ok",
+                "upstream": upstream,
+                "mode": mode,
+                "path": clean_path,
+                "truncated": truncated,
+                "diff": diff_text,
+            }))
+        }
+        Ok(res) => Json(json!({
+            "status": "error",
+            "message": String::from_utf8_lossy(&res.stderr).trim().to_string(),
+        })),
+        Err(e) => Json(json!({ "status": "error", "message": format!("git diff failed: {}", e) })),
+    }
+}
+
 pub async fn post_ecotype_action(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<EcotypeActionPayload>,
@@ -442,6 +567,7 @@ pub async fn post_ecotype_action(
             if clean.is_empty() { "init".to_string() } else { format!("init {}", clean) }
         }
         "sync" => "sync".to_string(),
+        "fetch" => "fetch".to_string(),
         "backup" => "backup".to_string(),
         "backup-cloud" => "backup --cloud".to_string(),
         "promote" => {

@@ -89,6 +89,7 @@
       defaultPane: 'guild-store',
       subtabs: [
         { pane: 'guild-store', label: 'Lodge Guild App Store' },
+        { pane: 'ecotype-sync', label: 'Heartwood & Ecotype Sync' },
         { pane: 'mcp', label: 'MCP Hub & Servers' },
         { pane: 'api-catalog', label: 'Public API Catalog (1,959)' },
       ],
@@ -140,6 +141,7 @@
       if (paneId === 'mcp' && typeof window.loadMcpData === 'function') window.loadMcpData();
       if (paneId === 'research' && typeof window.loadResearchData === 'function') window.loadResearchData();
       if (paneId === 'guild-store') renderStoreGrid();
+      if (paneId === 'ecotype-sync') loadEcotypeSyncPane();
       if (paneId === 'api-catalog') loadApiCatalog('');
       if (paneId === 'loop-studio' && window.LodgeLoopStudio && window.LodgeLoopStudio.reloadGlobal) {
         window.LodgeLoopStudio.reloadGlobal();
@@ -886,6 +888,12 @@
         title: `Open ${g.label}`,
       });
     });
+    items.push({
+      id: 'pane:ecotype-sync',
+      label: 'Ecotype Sync',
+      group: 'Core Drawer',
+      title: 'Open Heartwood & Ecotype Sync, Diff & Promotion',
+    });
     return items;
   }
 
@@ -900,6 +908,10 @@
     }
     if (pinId === 'pane:dolos-explorer') {
       openModuleById('sovereign-dex', 'dolos-explorer');
+      return;
+    }
+    if (pinId === 'pane:ecotype-sync') {
+      openCoreGroup('core-store', 'ecotype-sync');
       return;
     }
     if (pinId.startsWith('mod:')) {
@@ -1091,6 +1103,72 @@
       container.appendChild(storePane);
     }
 
+    if (!document.getElementById('pane-ecotype-sync')) {
+      const ecoPane = el('div', { id: 'pane-ecotype-sync', className: 'drawer-pane' }, [
+        el('div', { className: 'guild-store-wrap' }, [
+          el('div', { className: 'guild-store-header' }, [
+            el('div', {}, [
+              el('div', { className: 'guild-card-title', text: 'HEARTWOOD // ECOTYPE SYNC, DIFF & PROMOTION' }),
+              el('div', {
+                className: 'guild-card-meta',
+                text: 'Inspect divergence between ecotype/<node> and upstream develop, review unified file diffs, pollinate updates, and graft clean Heartwood changes upstream.',
+              }),
+            ]),
+            el('div', { className: 'guild-store-actions' }, [
+              el('button', {
+                id: 'ecoBtnFetch',
+                className: 'guild-btn',
+                text: 'CHECK UPSTREAM (FETCH)',
+                title: 'Fetch latest refs from origin/gitea without touching your working tree',
+                on: { click: () => runEcotypeSyncAction('fetch') },
+              }),
+              el('button', {
+                id: 'ecoBtnSync',
+                className: 'guild-btn primary',
+                text: 'POLLINATE FROM UPSTREAM',
+                title: 'Sandboxed worktree test-merge from upstream develop + AST verification',
+                on: { click: () => runEcotypeSyncAction('sync') },
+              }),
+              el('button', {
+                id: 'ecoBtnInit',
+                className: 'guild-btn',
+                text: 'ENSURE ECOTYPE BRANCH',
+                title: 'Ensure active branch is ecotype/<node>',
+                on: { click: () => runEcotypeSyncAction('init') },
+              }),
+              el('button', {
+                id: 'ecoBtnBackupLocal',
+                className: 'guild-btn',
+                text: 'BACKUP LOCAL GITEA',
+                title: 'Push ecotype/<node> to local Gitea',
+                on: { click: () => runEcotypeSyncAction('backup') },
+              }),
+              el('button', {
+                id: 'ecoBtnBackupCloud',
+                className: 'guild-btn',
+                text: 'MIRROR GITHUB CLOUD',
+                title: 'Push ecotype/<node> to origin/ecotype/<node> without touching develop',
+                on: { click: () => runEcotypeSyncAction('backup-cloud') },
+              }),
+              el('button', {
+                id: 'ecoBtnRefresh',
+                className: 'guild-btn',
+                text: 'REFRESH',
+                on: { click: () => loadEcotypeSyncPane() },
+              }),
+            ]),
+          ]),
+          el('div', { id: 'ecoSyncStatusBar', className: 'guild-status-bar', text: '' }),
+          el('div', { id: 'ecoKpiGrid', className: 'eco-kpi-grid' }),
+          el('div', { id: 'ecoCommitsGrid', className: 'eco-split-grid' }),
+          el('div', { id: 'ecoTissueGrid', className: 'eco-split-grid' }),
+          el('div', { id: 'ecoDiffCard', className: 'eco-diff-card', style: 'display:none;' }),
+          el('pre', { id: 'ecoActionConsole', className: 'eco-console', style: 'display:none;' }),
+        ]),
+      ]);
+      container.appendChild(ecoPane);
+    }
+
     if (!document.getElementById('pane-api-catalog')) {
       const qInput = el('input', {
         id: 'apiCatalogQueryInput',
@@ -1144,12 +1222,478 @@
     }
   }
 
+  const ecoState = {
+    data: null,
+    selectedPaths: new Set(),
+    activeDiffPath: null,
+    activeDiffMode: 'ecotype',
+    busy: false,
+  };
+
+  function setEcoStatus(msg) {
+    const bar = document.getElementById('ecoSyncStatusBar');
+    if (bar) bar.textContent = msg || '';
+  }
+
+  function setEcoConsole(text) {
+    const pre = document.getElementById('ecoActionConsole');
+    if (!pre) return;
+    if (!text) {
+      pre.style.display = 'none';
+      pre.textContent = '';
+    } else {
+      pre.style.display = 'block';
+      pre.textContent = text;
+    }
+  }
+
+  function renderEcoDiffViewer(meta, diffText) {
+    const card = document.getElementById('ecoDiffCard');
+    if (!card) return;
+    card.style.display = 'flex';
+    card.replaceChildren();
+
+    const titleText = meta.path
+      ? `DIFF // ${meta.path} (${meta.mode === 'working' ? 'Working Tree vs HEAD' : meta.mode === 'incoming' ? `Incoming from ${meta.upstream}` : `vs ${meta.upstream}`})`
+      : `DIFF SUMMARY // ${meta.mode === 'incoming' ? `Incoming from ${meta.upstream}` : `${meta.upstream}...HEAD`}`;
+
+    const modeBtn = (m, label) => el('button', {
+      type: 'button',
+      className: 'drawer-subtab-btn' + (meta.mode === m ? ' active' : ''),
+      text: label,
+      on: { click: () => openEcotypeDiff(meta.path, m) },
+    });
+
+    card.appendChild(el('div', { className: 'eco-section-head' }, [
+      el('div', { className: 'guild-card-title', text: titleText }),
+      el('div', { className: 'guild-store-actions' }, [
+        modeBtn('ecotype', `vs ${meta.upstream || 'develop'}`),
+        modeBtn('incoming', 'Incoming Upstream'),
+        modeBtn('working', 'Working Tree'),
+        el('button', {
+          type: 'button',
+          className: 'guild-btn',
+          text: 'CLOSE',
+          on: {
+            click: () => {
+              ecoState.activeDiffPath = null;
+              card.style.display = 'none';
+              highlightActiveEcoFile();
+            },
+          },
+        }),
+      ]),
+    ]));
+
+    const body = el('div', { className: 'eco-diff-view' });
+    const text = (diffText || '').trimEnd();
+    if (!text) {
+      body.appendChild(el('div', {
+        className: 'eco-diff-line meta',
+        text: '(No changes in this diff view)',
+      }));
+    } else {
+      text.split('\n').forEach((line) => {
+        let cls = 'eco-diff-line';
+        if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff --git') || line.startsWith('index ')) {
+          cls += ' meta';
+        } else if (line.startsWith('@@')) {
+          cls += ' hunk';
+        } else if (line.startsWith('+')) {
+          cls += ' add';
+        } else if (line.startsWith('-')) {
+          cls += ' del';
+        }
+        body.appendChild(el('div', { className: cls, text: line }));
+      });
+    }
+    card.appendChild(body);
+  }
+
+  function highlightActiveEcoFile() {
+    document.querySelectorAll('#pane-ecotype-sync .eco-file-row').forEach((row) => {
+      row.classList.toggle('active', Boolean(ecoState.activeDiffPath) && row.dataset.path === ecoState.activeDiffPath);
+    });
+  }
+
+  async function openEcotypeDiff(filePath, mode) {
+    const resolvedMode = mode || 'ecotype';
+    ecoState.activeDiffPath = filePath || null;
+    ecoState.activeDiffMode = resolvedMode;
+    highlightActiveEcoFile();
+
+    const card = document.getElementById('ecoDiffCard');
+    if (card) {
+      card.style.display = 'flex';
+      card.replaceChildren(el('div', { className: 'guild-card-meta', text: `Loading diff${filePath ? ` for ${filePath}` : ''}...` }));
+    }
+
+    try {
+      const qs = new URLSearchParams();
+      if (filePath) qs.set('path', filePath);
+      qs.set('mode', resolvedMode);
+      const r = await fetch(`/api/ecotype/diff?${qs.toString()}`);
+      const d = await r.json();
+      if (!r.ok || d.status !== 'ok') {
+        renderEcoDiffViewer({ path: filePath, mode: resolvedMode, upstream: 'develop' }, `Error: ${d.message || 'Failed to load diff'}`);
+        return;
+      }
+      renderEcoDiffViewer(d, d.diff || '');
+    } catch (e) {
+      renderEcoDiffViewer({ path: filePath, mode: resolvedMode, upstream: 'develop' }, `Error: ${e.message}`);
+    }
+  }
+
+  async function runEcotypeSyncAction(action, extraPayload) {
+    if (ecoState.busy) return;
+    ecoState.busy = true;
+    setEcoStatus(`Running /ecotype ${action}...`);
+    setEcoConsole(`Running /ecotype ${action}...`);
+    try {
+      const r = await fetch('/api/ecotype/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign({ action }, extraPayload || {})),
+      });
+      const d = await r.json();
+      const out = d.output || d.message || JSON.stringify(d, null, 2);
+      setEcoConsole(out);
+      setEcoStatus(d.status === 'ok' ? `/ecotype ${action} completed.` : `/ecotype ${action} reported an error.`);
+      if (action === 'promote' && d.status === 'ok') {
+        ecoState.selectedPaths.clear();
+      }
+      await loadEcotypeSyncPane();
+    } catch (e) {
+      setEcoConsole(`Error: ${e.message}`);
+      setEcoStatus(`/ecotype ${action} failed: ${e.message}`);
+    } finally {
+      ecoState.busy = false;
+    }
+  }
+
+  function renderEcotypeSyncData(d) {
+    ecoState.data = d;
+    const hwFiles = Array.isArray(d.diverged_heartwood) ? d.diverged_heartwood : [];
+    const folFiles = Array.isArray(d.diverged_foliage) ? d.diverged_foliage : [];
+    const dirtyFiles = Array.isArray(d.dirty_list) ? d.dirty_list : [];
+    const upCommits = Array.isArray(d.upstream_commits) ? d.upstream_commits : [];
+    const locCommits = Array.isArray(d.local_commits) ? d.local_commits : [];
+
+    // Keep selectedPaths pruned to currently diverged Heartwood files
+    const hwSet = new Set(hwFiles);
+    Array.from(ecoState.selectedPaths).forEach((p) => {
+      if (!hwSet.has(p)) ecoState.selectedPaths.delete(p);
+    });
+
+    // Update primary Pollinate button label with incoming count
+    const syncBtn = document.getElementById('ecoBtnSync');
+    if (syncBtn) {
+      syncBtn.textContent = d.behind > 0
+        ? `POLLINATE FROM UPSTREAM (+${d.behind} INCOMING)`
+        : 'POLLINATE FROM UPSTREAM';
+    }
+
+    // 1. KPI Grid
+    const kpi = document.getElementById('ecoKpiGrid');
+    if (kpi) {
+      kpi.replaceChildren(
+        el('div', { className: 'eco-kpi-card ' + (d.on_ecotype ? 'ok' : 'warn') }, [
+          el('div', { className: 'eco-kpi-label', text: 'ORGANISM / ACTIVE BRANCH' }),
+          el('div', { className: 'eco-kpi-value', text: d.current_branch || 'unknown' }),
+          el('div', {
+            className: 'eco-kpi-sub',
+            text: d.on_ecotype
+              ? `Node '${d.node}' aligned on expected ecotype branch`
+              : `Expected '${d.expected_branch}' — click Ensure Ecotype Branch`,
+          }),
+        ]),
+        el('div', { className: 'eco-kpi-card ' + (d.behind > 0 ? 'warn' : 'ok') }, [
+          el('div', { className: 'eco-kpi-label', text: `VS TRUNK (${d.upstream || 'develop'})` }),
+          el('div', { className: 'eco-kpi-value', text: `+${d.ahead || 0} ahead  /  -${d.behind || 0} behind` }),
+          el('div', {
+            className: 'eco-kpi-sub',
+            text: d.behind > 0
+              ? `${d.behind} upstream Heartwood commit(s) ready to pollinate`
+              : 'Up to date with upstream Heartwood trunk',
+          }),
+        ]),
+        el('div', { className: 'eco-kpi-card' }, [
+          el('div', { className: 'eco-kpi-label', text: 'TISSUE SPLIT (VS TRUNK)' }),
+          el('div', { className: 'eco-kpi-value', text: `${hwFiles.length} Heartwood · ${folFiles.length} Foliage` }),
+          el('div', { className: 'eco-kpi-sub', text: 'Heartwood is promotable; Foliage (.george) is firewalled' }),
+        ]),
+        el('div', { className: 'eco-kpi-card ' + ((d.dirty_files || 0) > 0 ? 'warn' : 'ok') }, [
+          el('div', { className: 'eco-kpi-label', text: 'WORKING TREE' }),
+          el('div', { className: 'eco-kpi-value', text: (d.dirty_files || 0) === 0 ? 'Clean' : `${d.dirty_files} uncommitted` }),
+          el('div', {
+            className: 'eco-kpi-sub',
+            text: (d.dirty_files || 0) === 0 ? 'Ready for clean pollination or backup' : 'Click any dirty file below to inspect diff',
+          }),
+        ]),
+      );
+    }
+
+    // 2. Upstream Incoming & Local Ecotype Commit Lists
+    const commitsGrid = document.getElementById('ecoCommitsGrid');
+    if (commitsGrid) {
+      commitsGrid.replaceChildren();
+      if (upCommits.length > 0 || locCommits.length > 0) {
+        const makeCommitCard = (title, badgeText, badgeCls, commits, diffMode) => {
+          const list = el('div', { className: 'eco-commit-list' });
+          if (commits.length === 0) {
+            list.appendChild(el('div', { className: 'guild-card-meta', text: 'None.' }));
+          } else {
+            commits.forEach((c) => {
+              list.appendChild(el('div', { className: 'eco-commit-row' }, [
+                el('span', { className: 'eco-commit-sha', text: c.sha }),
+                el('span', { className: 'eco-commit-msg', text: c.subject, title: c.subject }),
+              ]));
+            });
+          }
+          return el('div', { className: 'eco-section-card' }, [
+            el('div', { className: 'eco-section-head' }, [
+              el('div', { className: 'guild-card-title', text: title }),
+              el('div', { className: 'guild-store-actions' }, [
+                el('span', { className: `guild-badge ${badgeCls}`, text: badgeText }),
+                el('button', {
+                  type: 'button',
+                  className: 'guild-btn',
+                  text: 'DIFF STAT',
+                  on: { click: () => openEcotypeDiff(null, diffMode) },
+                }),
+              ]),
+            ]),
+            list,
+          ]);
+        };
+
+        commitsGrid.appendChild(makeCommitCard(
+          `INCOMING HEARTWOOD COMMITS (${d.upstream || 'develop'})`,
+          `${upCommits.length} BEHIND`,
+          upCommits.length > 0 ? 'on' : 'off',
+          upCommits,
+          'incoming',
+        ));
+        commitsGrid.appendChild(makeCommitCard(
+          `LOCAL ECOTYPE COMMITS (${d.current_branch || 'HEAD'})`,
+          `${locCommits.length} AHEAD`,
+          locCommits.length > 0 ? 'on' : 'off',
+          locCommits,
+          'ecotype',
+        ));
+      }
+    }
+
+    // 3. Tissue Split: Heartwood (Promotable) + Foliage & Working Tree
+    const tissueGrid = document.getElementById('ecoTissueGrid');
+    if (!tissueGrid) return;
+    tissueGrid.replaceChildren();
+
+    // Left Card: Heartwood Files + Promote Controls
+    const hwList = el('div', { className: 'eco-file-list' });
+    const promoteBtn = el('button', {
+      type: 'button',
+      className: 'guild-btn primary',
+      text: `PROMOTE SELECTED HEARTWOOD (${ecoState.selectedPaths.size})`,
+      disabled: ecoState.selectedPaths.size === 0,
+    });
+    const updatePromoteBtn = () => {
+      promoteBtn.textContent = `PROMOTE SELECTED HEARTWOOD (${ecoState.selectedPaths.size})`;
+      promoteBtn.disabled = ecoState.selectedPaths.size === 0;
+    };
+
+    if (hwFiles.length === 0) {
+      hwList.appendChild(el('div', {
+        className: 'guild-card-meta',
+        text: `No diverged Heartwood files between ${d.upstream || 'develop'} and ${d.current_branch || 'HEAD'}.`,
+      }));
+    } else {
+      hwFiles.forEach((p) => {
+        const cb = el('input', { type: 'checkbox' });
+        cb.checked = ecoState.selectedPaths.has(p);
+        cb.addEventListener('change', () => {
+          if (cb.checked) ecoState.selectedPaths.add(p);
+          else ecoState.selectedPaths.delete(p);
+          updatePromoteBtn();
+        });
+        const row = el('div', { className: 'eco-file-row', attrs: { 'data-path': p } }, [
+          el('div', { className: 'eco-file-left' }, [
+            cb,
+            el('span', {
+              className: 'eco-file-path',
+              text: p,
+              title: `Click to view diff for ${p}`,
+              on: { click: () => openEcotypeDiff(p, 'ecotype') },
+            }),
+          ]),
+          el('button', {
+            type: 'button',
+            className: 'guild-btn',
+            text: 'DIFF',
+            on: { click: () => openEcotypeDiff(p, 'ecotype') },
+          }),
+        ]);
+        hwList.appendChild(row);
+      });
+    }
+
+    const titleInput = el('input', {
+      type: 'text',
+      className: 'guild-input',
+      style: 'flex:1;min-width:200px;',
+      placeholder: 'Promotion title (e.g. feat(web): surface ecotype sync console)',
+    });
+    const pushOriginCb = el('input', { type: 'checkbox' });
+    promoteBtn.addEventListener('click', () => {
+      const paths = Array.from(ecoState.selectedPaths);
+      if (paths.length === 0) return;
+      const title = titleInput.value.trim() || `Promote heartwood updates from ${d.node || 'ecotype'}`;
+      runEcotypeSyncAction('promote', {
+        title,
+        paths,
+        push_origin: Boolean(pushOriginCb.checked),
+      });
+    });
+
+    const hwCard = el('div', { className: 'eco-section-card heartwood' }, [
+      el('div', { className: 'eco-section-head' }, [
+        el('div', {}, [
+          el('div', { className: 'guild-card-title', text: `HEARTWOOD / CAMBIUM (${hwFiles.length})` }),
+          el('div', { className: 'guild-card-meta', text: 'Shared core files diverged from trunk — safe to review & promote via candidate/* branch.' }),
+        ]),
+        el('div', { className: 'guild-store-actions' }, [
+          el('button', {
+            type: 'button',
+            className: 'guild-btn',
+            text: 'SELECT ALL',
+            disabled: hwFiles.length === 0,
+            on: {
+              click: () => {
+                hwFiles.forEach((p) => ecoState.selectedPaths.add(p));
+                renderEcotypeSyncData(d);
+              },
+            },
+          }),
+          el('button', {
+            type: 'button',
+            className: 'guild-btn',
+            text: 'CLEAR',
+            disabled: hwFiles.length === 0,
+            on: {
+              click: () => {
+                ecoState.selectedPaths.clear();
+                renderEcotypeSyncData(d);
+              },
+            },
+          }),
+        ]),
+      ]),
+      hwList,
+      el('div', { className: 'eco-promote-bar' }, [
+        el('div', { className: 'eco-promote-row' }, [titleInput, promoteBtn]),
+        el('label', { className: 'eco-check-label' }, [
+          pushOriginCb,
+          'Also push clean candidate/* branch to GitHub origin',
+        ]),
+      ]),
+    ]);
+
+    // Right Card: Foliage (Firewalled) + Uncommitted Working Tree
+    const folList = el('div', { className: 'eco-file-list' });
+    if (folFiles.length === 0) {
+      folList.appendChild(el('div', { className: 'guild-card-meta', text: 'No tracked Foliage divergence vs trunk.' }));
+    } else {
+      folFiles.forEach((p) => {
+        folList.appendChild(el('div', { className: 'eco-file-row', attrs: { 'data-path': p } }, [
+          el('div', { className: 'eco-file-left' }, [
+            el('span', { className: 'guild-badge off', text: 'FOLIAGE' }),
+            el('span', {
+              className: 'eco-file-path',
+              text: p,
+              title: p,
+              on: { click: () => openEcotypeDiff(p, 'ecotype') },
+            }),
+          ]),
+          el('button', {
+            type: 'button',
+            className: 'guild-btn',
+            text: 'DIFF',
+            on: { click: () => openEcotypeDiff(p, 'ecotype') },
+          }),
+        ]));
+      });
+    }
+
+    const dirtyBlock = [];
+    if (dirtyFiles.length > 0) {
+      const dirtyList = el('div', { className: 'eco-file-list', style: 'margin-top:6px;' });
+      dirtyFiles.forEach((p) => {
+        dirtyList.appendChild(el('div', { className: 'eco-file-row', attrs: { 'data-path': p } }, [
+          el('div', { className: 'eco-file-left' }, [
+            el('span', { className: 'guild-badge', text: 'DIRTY' }),
+            el('span', {
+              className: 'eco-file-path',
+              text: p,
+              title: `Inspect uncommitted diff for ${p}`,
+              on: { click: () => openEcotypeDiff(p, 'working') },
+            }),
+          ]),
+          el('button', {
+            type: 'button',
+            className: 'guild-btn',
+            text: 'DIFF',
+            on: { click: () => openEcotypeDiff(p, 'working') },
+          }),
+        ]));
+      });
+      dirtyBlock.push(
+        el('div', { className: 'eco-promote-bar' }, [
+          el('div', { className: 'guild-card-title', text: `UNCOMMITTED WORKING TREE (${d.dirty_files || dirtyFiles.length})` }),
+          dirtyList,
+        ]),
+      );
+    }
+
+    const folCard = el('div', { className: 'eco-section-card foliage' }, [
+      el('div', { className: 'eco-section-head' }, [
+        el('div', {}, [
+          el('div', { className: 'guild-card-title', text: `FOLIAGE / NODE-LOCAL (${folFiles.length})` }),
+          el('div', { className: 'guild-card-meta', text: 'Firewalled (.george/, dossiers, keys, local state) — never promoted to develop.' }),
+        ]),
+        el('span', { className: 'guild-badge off', text: 'FIREWALLED' }),
+      ]),
+      folList,
+      ...dirtyBlock,
+    ]);
+
+    tissueGrid.appendChild(hwCard);
+    tissueGrid.appendChild(folCard);
+    highlightActiveEcoFile();
+  }
+
+  async function loadEcotypeSyncPane() {
+    setEcoStatus('Reading ecotype branch & Heartwood divergence...');
+    try {
+      const r = await fetch('/api/ecotype/status');
+      const d = await r.json();
+      if (!r.ok || d.status !== 'ok') {
+        setEcoStatus(`Failed to load ecotype status: ${d.message || r.status}`);
+        return;
+      }
+      renderEcotypeSyncData(d);
+      setEcoStatus(`Loaded ${d.current_branch} vs ${d.upstream} (+${d.ahead} ahead / -${d.behind} behind).`);
+    } catch (e) {
+      setEcoStatus(`Error loading ecotype status: ${e.message}`);
+    }
+  }
+
   window.LodgeModules = {
     register(id, impl) {
       registeredPlugins.set(id, impl);
     },
     getAgentName: () => activeAgentName,
     refresh: refreshModules,
+    refreshEcotype: loadEcotypeSyncPane,
     activatePane,
     openCoreGroup,
     openModuleById,

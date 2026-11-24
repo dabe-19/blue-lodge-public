@@ -159,10 +159,22 @@ ecotype_status() {
         ahead=$(echo "$counts" | awk '{print $2}')
     fi
 
-    dirty_count=$(_ecotype_git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+    local dirty_files_list=()
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local path_part="${line:3}"
+        # Handle rename entries ("old -> new")
+        if [[ "$path_part" == *" -> "* ]]; then
+            path_part="${path_part##* -> }"
+        fi
+        dirty_files_list+=("$path_part")
+    done < <(_ecotype_git status --porcelain 2>/dev/null || true)
+    dirty_count=${#dirty_files_list[@]}
 
     local heartwood_files=()
     local foliage_files=()
+    local upstream_commits_json="[]"
+    local local_commits_json="[]"
     if _ecotype_git rev-parse --verify "$upstream" >/dev/null 2>&1; then
         while IFS= read -r f; do
             [ -z "$f" ] && continue
@@ -172,15 +184,25 @@ ecotype_status() {
                 heartwood_files+=("$f")
             fi
         done < <(_ecotype_git diff --name-only "${upstream}...HEAD" 2>/dev/null || true)
+
+        if [ "$as_json" -eq 1 ]; then
+            upstream_commits_json=$(_ecotype_git log --format='%h%x09%s' -n 25 "HEAD..${upstream}" 2>/dev/null | \
+                jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | {sha: .[0], subject: (.[1] // "")})' 2>/dev/null || echo "[]")
+            local_commits_json=$(_ecotype_git log --format='%h%x09%s' -n 25 "${upstream}..HEAD" 2>/dev/null | \
+                jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | {sha: .[0], subject: (.[1] // "")})' 2>/dev/null || echo "[]")
+        fi
     fi
 
     if [ "$as_json" -eq 1 ]; then
-        local hw_json="[]" fol_json="[]"
+        local hw_json="[]" fol_json="[]" dirty_json="[]"
         if [ ${#heartwood_files[@]} -gt 0 ]; then
             hw_json=$(printf '%s\n' "${heartwood_files[@]}" | jq -R . | jq -s .)
         fi
         if [ ${#foliage_files[@]} -gt 0 ]; then
             fol_json=$(printf '%s\n' "${foliage_files[@]}" | jq -R . | jq -s .)
+        fi
+        if [ ${#dirty_files_list[@]} -gt 0 ]; then
+            dirty_json=$(printf '%s\n' "${dirty_files_list[@]}" | head -n 50 | jq -R . | jq -s .)
         fi
         jq -n \
             --arg node "$node" \
@@ -193,6 +215,9 @@ ecotype_status() {
             --argjson dirty "${dirty_count:-0}" \
             --argjson heartwood "$hw_json" \
             --argjson foliage "$fol_json" \
+            --argjson dirty_list "$dirty_json" \
+            --argjson upstream_commits "$upstream_commits_json" \
+            --argjson local_commits "$local_commits_json" \
             '{
                 status: "ok",
                 node: $node,
@@ -203,10 +228,13 @@ ecotype_status() {
                 ahead: $ahead,
                 behind: $behind,
                 dirty_files: $dirty,
+                dirty_list: $dirty_list,
                 diverged_heartwood_count: ($heartwood | length),
                 diverged_foliage_count: ($foliage | length),
                 diverged_heartwood: $heartwood,
-                diverged_foliage: $foliage
+                diverged_foliage: $foliage,
+                upstream_commits: $upstream_commits,
+                local_commits: $local_commits
             }'
         return 0
     fi
@@ -457,4 +485,59 @@ ecotype_backup() {
             return 1
         fi
     fi
+}
+
+# Fetch upstream refs without touching the working tree or active branch.
+ecotype_fetch() {
+    local fetched=0
+    if _ecotype_git remote get-url origin >/dev/null 2>&1; then
+        if GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=10" _ecotype_git fetch origin --prune >/dev/null 2>&1; then
+            ui_ok "Fetched latest Heartwood refs from origin."
+            fetched=1
+        else
+            ui_warn "Could not reach origin (offline or SSH key unavailable)."
+        fi
+    fi
+    if _ecotype_git remote get-url gitea >/dev/null 2>&1; then
+        if _ecotype_git fetch gitea --prune >/dev/null 2>&1; then
+            ui_ok "Fetched latest refs from local Gitea."
+            fetched=1
+        fi
+    fi
+    if [ "$fetched" -eq 0 ]; then
+        ui_warn "No remotes fetched; showing local git refs."
+    fi
+}
+
+# Show diff between upstream Heartwood trunk and current ecotype (whole summary or single path).
+ecotype_diff() {
+    local target_path="${1:-}"
+    local upstream
+    upstream="$(ecotype_upstream_ref)"
+
+    if ! _ecotype_git rev-parse --verify "$upstream" >/dev/null 2>&1; then
+        ui_err "Upstream trunk ref '${upstream}' not found."
+        return 1
+    fi
+
+    if [ -n "$target_path" ]; then
+        if [[ "$target_path" == *".."* || "$target_path" == /* ]]; then
+            ui_err "Invalid path: '${target_path}'"
+            return 1
+        fi
+        local out
+        out=$(_ecotype_git diff --no-color "${upstream}...HEAD" -- "$target_path" 2>/dev/null || true)
+        if [ -z "$out" ]; then
+            out=$(_ecotype_git diff --no-color "${upstream}..HEAD" -- "$target_path" 2>/dev/null || true)
+        fi
+        if [ -z "$out" ]; then
+            echo "(No diff between '${upstream}' and HEAD for '${target_path}')"
+        else
+            printf '%s\n' "$out"
+        fi
+        return 0
+    fi
+
+    echo "═══ Heartwood vs Ecotype Diff (${upstream}...HEAD) ═══"
+    _ecotype_git diff --stat --no-color "${upstream}...HEAD" 2>/dev/null || true
 }

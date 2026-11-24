@@ -2986,14 +2986,35 @@
       if (!r.ok) return;
       const d = await r.json();
       if (d.status !== 'ok') return;
-      box.innerHTML =
-        `<strong>Organism:</strong> <code>${d.node}</code> &nbsp;|&nbsp; ` +
-        `<strong>Branch:</strong> <code>${d.current_branch}</code> ${d.on_ecotype ? '✓' : `(expected <code>${d.expected_branch}</code>)`}<br>` +
-        `<strong>Trunk (${d.upstream}):</strong> +${d.ahead} ahead / -${d.behind} behind &nbsp;|&nbsp; ` +
-        `<strong>Tissue Split:</strong> ${d.diverged_heartwood_count} Heartwood, ${d.diverged_foliage_count} Foliage (.george) &nbsp;|&nbsp; ` +
-        `<strong>Tree:</strong> ${d.dirty_files === 0 ? 'clean' : d.dirty_files + ' dirty'}`;
+      const makeField = (label, codeText, suffix) => {
+        const span = document.createElement('span');
+        const strong = document.createElement('strong');
+        strong.textContent = label + ' ';
+        span.appendChild(strong);
+        if (codeText != null) {
+          const code = document.createElement('code');
+          code.textContent = String(codeText);
+          span.appendChild(code);
+        }
+        if (suffix) span.appendChild(document.createTextNode(suffix));
+        return span;
+      };
+      const line1 = document.createElement('div');
+      line1.appendChild(makeField('Organism:', d.node, '  |  '));
+      line1.appendChild(makeField('Branch:', d.current_branch, d.on_ecotype ? ' ✓' : ` (expected ${d.expected_branch})`));
+      const line2 = document.createElement('div');
+      line2.appendChild(makeField(`Trunk (${d.upstream}):`, null, `+${d.ahead} ahead / -${d.behind} behind  |  `));
+      line2.appendChild(makeField('Tissue Split:', null, `${d.diverged_heartwood_count} Heartwood, ${d.diverged_foliage_count} Foliage (.george)  |  `));
+      line2.appendChild(makeField('Tree:', null, d.dirty_files === 0 ? 'clean' : `${d.dirty_files} dirty`));
+      box.replaceChildren(line1, line2);
     } catch (_) {}
   }
+
+  document.getElementById('btnOpenEcotypeSyncPane')?.addEventListener('click', () => {
+    if (window.LodgeModules && typeof window.LodgeModules.openCoreGroup === 'function') {
+      window.LodgeModules.openCoreGroup('core-store', 'ecotype-sync');
+    }
+  });
 
   async function runEcotypeAction(action) {
     const out = document.getElementById('ecotypeActionOut');

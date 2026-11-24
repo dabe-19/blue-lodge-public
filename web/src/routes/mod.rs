@@ -168,6 +168,7 @@ pub fn create_router(state: Arc<AppState>, cors: CorsLayer) -> Router {
         .route("/api/config/validate-socials", post(config::validate_socials))
         .route("/api/config/sync-discord", post(config::sync_discord))
         .route("/api/ecotype/status", get(config::get_ecotype_status))
+        .route("/api/ecotype/diff", get(config::get_ecotype_diff))
         .route("/api/ecotype/action", post(config::post_ecotype_action))
         .route("/api/react/templates", get(config::get_reactor_templates))
         .route("/api/react/templates/install", post(config::install_reactor_template))
