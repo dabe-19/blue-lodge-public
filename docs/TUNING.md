@@ -1,0 +1,638 @@
+---
+title: "Token & Context Tuning Guide"
+description: "How to tune George's token budgets, context windows, soul injection tiers, and sampling parameters for local and edge inference backends."
+subsystem: "core"
+tags:
+  - tuning
+  - tokens
+  - context-window
+  - sampling
+  - memory-tiers
+  - llama-server
+okf_id: "urn:blue-lodge:doc:tuning"
+related:
+  - "[[INDEX]]"
+  - "[[AGENT_LOOP]]"
+  - "[[MODELS]]"
+  - "[[STREAMING_PIPELINE]]"
+  - "[[MEMORY_AND_RECALL]]"
+---
+
+# Token & Context Tuning Guide
+
+> How to fine-tune George's token budgets, context window, and model parameters — especially when using custom models.
+
+---
+
+## Architecture Overview
+
+George uses a **three-tier prompt system** that keeps token usage within budget:
+
+| Mode | Used by | System prompt size | Output cap | Total budget |
+|------|---------|-------------------|------------|-------------|
+| **ask** | `/ask`, short questions | ~250 tokens (condensed soul) | 20,480 tokens | ~20,730 tokens |
+| **plan** (light) | `agent_plan` (LODGE_SOUL=0) | ~700 tokens (condensed soul + catalog) | 20,480 tokens | ~21,180 tokens |
+| **plan** (dense) | `agent_plan` (LODGE_SOUL=1) | ~5,000 tokens (full soul + catalog) | 20,480 tokens | ~25,480 tokens |
+| **task** | `memory_build_system_prompt` task mode | ~3,500 tokens | 20,480 tokens | ~24,000 tokens |
+
+> **Note:** The thinking model uses ~200-2000 think tokens per response. These count against the output cap. Per-call limits match the Modelfile `num_predict` ceiling (32768) — the model stops at its natural `<|im_end|>` stop token well before hitting the cap.
+
+The **Modelfile SYSTEM prompt** (~300 tokens) is baked into every request by Ollama automatically but is **overridden** when a function passes its own system prompt. George always knows who he is because every prompt tier includes soul content.
+
+> **Note:** Plan mode uses a **lean command catalog** (`commands_catalog_plan()`, ~400 tokens) instead of the full catalog (~1,443 tokens). The `/soul` toggle controls whether planning gets the condensed soul (~250 tokens) or the full soul.md (~4,500 tokens) — allowing the operator to trade token budget for richer ethical grounding in plans.
+
+### Soul Injection Tiers
+
+The soul.md document (~4,500 tokens) is the source of George's identity and philosophy. Three canonical excerpts are derived from it:
+
+| Tier | Source | ~Tokens | Used by |
+|------|--------|---------|--------|
+| **Identity** | Top of soul.md (before TMS section) | ~90 | `agent_run()` macro memory seed |
+| **Condensed** | `_memory_soul_condensed()` in memory.sh | ~250 | `/ask`, planning (LODGE_SOUL=0) |
+| **Full** | `cat soul.md` | ~4,500 | Planning (LODGE_SOUL=1), task mode |
+
+Toggle with `/soul` (or `/soul on`/`/soul off`). Default is light (condensed).
+
+### Why George doesn't need everything in-context
+
+George has three persistent memory layers that survive between LLM calls:
+
+- **GEORGE.md** — project state: active task, completed milestones, validation, context files
+- **Journal** — reflections, learnings, struggles (with temporal decay) — up to 500 tokens injected in task mode
+- **FTS5 Recall** — BM25-ranked search over RECALL_INDEX.md, journal, GEORGE.md, and ingested files — 4 chunks in task mode, 1 chunk (200 char cap) in ask mode
+- **Conversation history** — ring buffer of last 3 exchanges (~300-600 tokens) injected into `/ask` for conversational continuity
+
+The system prompt builder automatically injects the **most relevant** pieces from each layer. George doesn't need his full life story in every prompt because he can look things up via `/recall`, `/journal`, and `/memory`.
+
+---
+
+## Environment Variables
+
+All token/context settings can be overridden via environment variables. Set them in your shell profile (`.bashrc`, `.zshrc`) or export them before launching George.
+
+### Core Token Budgets
+
+```bash
+# Maximum output tokens for task execution (agent_execute_step)
+# Default: 20480. Model stops at <|im_end|>; this is a safety cap.
+export LLM_MAX_TOKENS=1024
+
+# Maximum output tokens for /ask (think + response)
+# Default: 20480. Model stops at <|im_end|>; this is a safety cap.
+export LLM_ASK_TOKENS=2048
+
+# Safety timeout per LLM request (seconds)
+# Default: 600. Set to 0 to disable (Ctrl+C only).
+export LLM_TIMEOUT=120
+
+# How long the model stays loaded in RAM after last request
+# Default: 30m. Increase if you take long breaks between commands.
+# Set to "0" to unload immediately after each request (saves RAM).
+export LLM_KEEP_ALIVE=30m
+```
+
+### Agent Planning Limits
+
+These control how many steps, milestones, and retries George uses during task execution. All are adjustable at runtime via the `/limits` slash command or environment variables.
+
+```bash
+# Max steps per plan/subtask (default: 5)
+# Controls the "Maximum: N steps" instruction in agent_plan().
+# Higher = more detailed subtask decomposition.
+export AGENT_PLAN_STEPS=5
+
+# Max macro loop milestones (default: 20)
+# Safety ceiling for the Strategist loop in agent_run().
+export AGENT_MAX_STEPS=20
+
+# Inner loop escalation ceiling (default: 6)
+# How many route→execute cycles before human intervention.
+export AGENT_INNER_LOOPS=6
+
+# Subtask recursion depth (default: 2)
+# How deep [SUBTASK] nesting can go.
+export AGENT_MAX_DEPTH=2
+
+# Seconds between milestones (default: 1)
+export AGENT_STEP_DELAY=1
+```
+
+> **Runtime adjustment:** Use `/limits` to view or change any of these without restarting. For example: `/limits steps 8` raises the plan step cap to 8 for the current session. `/limits reset` restores all defaults.
+
+### Model Selection
+
+George uses a **dual-model architecture** with a model library. See [MODELS.md](MODELS.md) for the full model library documentation.
+
+```bash
+# Which models to use (set by install.sh, persisted in shell profile)
+export LODGE_MODEL_PRIMARY="<your-model>"   # model name sent to the backend (Ollama tag)
+export LODGE_MODEL_SECONDARY="<your-model>" # only used when LODGE_SINGLE_MODEL=0
+
+# Single-model mode (enabled by default)
+export LODGE_SINGLE_MODEL=1
+
+# Ollama API endpoint (default: local)
+export OLLAMA_URL=http://127.0.0.1:11434
+```
+
+Choosing and serving a model happens in the Model Workbench (web **Models** button or `/models`):
+
+```bash
+george> /models                         # your local GGUF library
+george> /models import my-model.Q4_K_M.gguf --ctx 32768
+george> /models activate my-model-q4_k_m
+george> /models tune my-model-q4_k_m '{"sampling":{"temperature":0.6,"top_k":20}}'
+```
+
+> **Note:** `LODGE_MODEL_PRIMARY` / `LODGE_MODEL_SECONDARY` only set the model *name* sent to the backend
+> (it matters for Ollama; llama-server serves whatever it loaded). Sampling comes from the active profile.
+
+### Example: Low-RAM Device (4-8GB)
+
+```bash
+export LLM_MAX_TOKENS=2048
+export LLM_ASK_TOKENS=1024
+export LLM_TIMEOUT=120
+export LLM_KEEP_ALIVE=10m
+```
+
+### Example: Desktop with GPU (16GB+ VRAM)
+
+```bash
+export LLM_MAX_TOKENS=16384
+export LLM_ASK_TOKENS=8192
+export LLM_TIMEOUT=300
+export LLM_KEEP_ALIVE=2h
+```
+
+---
+
+## Modelfile Parameters
+
+The `Modelfile` in the project root controls Ollama model behavior. After any change, recreate the model:
+
+```bash
+ollama create blue-lodge -f ~/blue-lodge/Modelfile
+```
+
+### Parameter Reference
+
+| Parameter | Default | Description | Tuning guidance |
+|-----------|---------|-------------|-----------------|
+| `num_ctx` | 32768 | Context window (tokens). All input + output must fit. | KV cache scales with model architecture; a 4B-class thinking model often lands around 4-5GB at 32768. Reduce to 20480 on tight RAM. |
+| `num_predict` | 32768 | Max output tokens (overridden per-call by env vars). | Modelfile-level ceiling. Per-call overrides (`LLM_MAX_TOKENS`, `LLM_ASK_TOKENS`) take precedence. Thinking model needs generous budget (think tokens + response). |
+| `num_thread` | 8 | CPU threads for inference. | Match your physical core count. 8 for Snapdragon 8 Elite, 4 for typical laptops. |
+| `num_gpu` | 0 | GPU layers to offload. 0 = pure CPU. | Set to 99 (all layers) if you have a GPU. Partial offload: try 20-40. |
+| `temperature` | 0.6 | Randomness. The active Model Hub profile's value wins when set. | Per-scenario overrides via `_llm_build_opts()` adjust temperature per use case (0.1 for router, 0.6 for journal). See Per-Scenario Sampling below. |
+| `top_p` | 0.95 | Nucleus sampling threshold. | Lower (0.7) for focused output, higher (0.95) for variety. |
+| `top_k` | 20 | Top-K sampling. Limits token candidates per step. | Unsloth-recommended. Keeps generation focused despite moderate temperature. |
+| `repeat_penalty` | 1.3 | Penalty for repeating tokens. | Mild penalty to discourage token-level loops. Works alongside presence_penalty. |
+| `presence_penalty` | 0.8 | Penalty for tokens already in context. | Moderate anti-repetition. Discourages re-treading the same ideas. Works alongside repeat_penalty. |
+| `stop` | `<\|im_end\|>` | Stop sequence. Model-specific. | Check your model's chat template for the correct stop token. |
+
+### Per-Scenario Sampling
+
+George doesn't use a single temperature for everything. The `_llm_build_opts()` function in `lib/llm.sh` resolves sampling parameters based on `LLM_SCENARIO` — a variable set by each caller before invoking the LLM. This allows different tasks to use different creativity/focus levels.
+
+**Five scenarios** with independent `temperature`, `repeat_penalty`, and `presence_penalty`:
+
+| Scenario | Used by | Temp | Repeat | Presence | Rationale |
+|----------|---------|------|--------|----------|-----------|
+| `ask` | `/ask`, quick questions | 0.5 | 1.3 | 0.8 | Conversational, moderate creativity |
+| `agent` | `agent_plan`, `agent_execute_step` | 0.3 | 1.3 | 0.8 | Focused execution, low creativity |
+| `router` | Inner loop tool selection | 0.1 | 1.1 | 1.0 | Near-deterministic routing, moderate anti-loop |
+| `journal` | Background reflections | 0.6 | 1.3 | 1.0 | Slightly creative, moderate anti-repetition |
+| `tool` | `/commit`, `/web summary`, `/recall`, `/slash` | 0.3 | 1.3 | 0.8 | Structured output, focused |
+
+**Global defaults** (used when no scenario is set or as fallback):
+- `LLM_TEMPERATURE=0.6`, `LLM_REPEAT_PENALTY=1.3`, `LLM_PRESENCE_PENALTY=0.8`
+
+**Override individual scenarios** via environment variables:
+
+```bash
+# Make /ask more creative
+export LLM_TEMP_ASK=0.8
+
+# Make the router completely deterministic
+export LLM_TEMP_ROUTER=0.0
+
+# Reduce journal anti-repetition
+export LLM_PRESENCE_JOURNAL=1.5
+
+# Per-scenario vars follow the pattern:
+#   LLM_TEMP_<SCENARIO>      (temperature)
+#   LLM_REPEAT_<SCENARIO>    (repeat_penalty)
+#   LLM_PRESENCE_<SCENARIO>  (presence_penalty)
+# Where <SCENARIO> is ASK, AGENT, ROUTER, JOURNAL, or TOOL
+```
+
+**Runtime adjustment:** Use `/model` to view or change any sampling parameter without restarting. For example:
+
+```bash
+george> /model                    # Show all current values
+george> /model temp 0.3           # Set global temperature
+george> /model temp-ask 0.7       # Set ask-specific temperature
+george> /model presence-router 2.5 # Set router presence penalty
+george> /model reset              # Reset all to defaults
+```
+
+The `/model` command supports all global (`temp`, `repeat`, `presence`) and per-scenario variants (`temp-ask`, `repeat-agent`, `presence-router`, etc.).
+
+### Context Window Math
+
+The golden rule: **input tokens + output tokens must fit in `num_ctx`**.
+
+```
+num_ctx = Modelfile_SYSTEM + system_prompt + user_prompt + output
+32768  =     ~300         +   variable    +   variable  + num_predict
+```
+
+Budget breakdown by mode (thinking model — think tokens included in output budget):
+
+| Mode | System prompt | User prompt | Output budget | Remaining |
+|------|---------------|-------------|---------------|---------|
+| ask | ~250 (condensed soul) | ~20 | 20,480 | ~12,018 |
+| plan (light) | ~700 (condensed soul + catalog) | ~100 | 20,480 | ~11,488 |
+| plan (dense) | ~5,000 (full soul + catalog) | ~100 | 20,480 | ~7,188 |
+| task | ~3,500 | ~100 | 20,480 | ~8,688 |
+| inner loop | ~500 (router or specialist) | ~200 | 20,480 | ~11,588 |
+
+> **Note:** The Modelfile SYSTEM (~300 tokens) is overridden whenever a system prompt is passed via `llm_generate`/`llm_stream`. The inner loop (router + specialist) deliberately strips all personality for speed.
+
+**If your model has a smaller context window** (e.g., 2048 or 4096), you must reduce token budgets:
+
+```bash
+# For a 4096-context model:
+export LLM_MAX_TOKENS=512
+export LLM_ASK_TOKENS=200
+```
+
+And in the Modelfile:
+```
+PARAMETER num_ctx 4096
+PARAMETER num_predict 256
+```
+
+---
+
+## Using Custom Models
+
+> **Model Workbench:** Blue Lodge ships no model list. Find, fit-check and serve any GGUF from the
+> Model Workbench ([MODELS.md](MODELS.md)). The steps below are only for Ollama users who want a custom Modelfile.
+
+### Step 1: Choose a model
+
+George works with any instruct or reasoning model your backend can serve. Use `/models search <q>` and
+`/models quants <provider> <repo>` to see which quant fits your RAM/VRAM at the context you want.
+Smaller (2B-4B) models suit phones and laptops; 9B+ models want a GPU or a remote endpoint.
+
+### Step 2: Create a custom Modelfile
+
+Copy and modify the existing Modelfile:
+
+```bash
+cp ~/blue-lodge/Modelfile ~/blue-lodge/Modelfile.custom
+```
+
+Edit `Modelfile.custom`:
+
+```dockerfile
+# Change the base model
+FROM <your-model>
+
+# Adjust for your hardware
+PARAMETER num_ctx 32768    # Llama 3.1 supports 128K, but 32K is practical
+PARAMETER num_thread 8     # Your CPU core count
+PARAMETER num_gpu 99       # Offload all layers to GPU (if available)
+PARAMETER num_predict 1024 # Higher budget for larger context
+PARAMETER temperature 0.2
+PARAMETER top_p 0.9
+PARAMETER stop <end_of_turn>  # Gemma 4's stop token
+PARAMETER repeat_penalty 1.1
+
+# Keep George's personality (or customize it)
+SYSTEM """You are George — named for Brother George Washington, with the wit of Benjamin Franklin and the moral philosophy of Adam Smith's Theory of Moral Sentiments. You are a craftsman, not merely a tool. You run locally, sovereign and self-contained.
+
+Output rules: Shell commands in ```bash blocks. Files in code blocks with '# filepath: ./path' on line 1. Plans as short numbered lists (use [SUBTASK] for complex work). Answers in 1-5 sentences. Never exceed 300 lines. Never hallucinate. If uncertain, say so."""
+```
+
+### Step 3: Build and use
+
+```bash
+# Build the custom model
+ollama create blue-lodge -f ~/blue-lodge/Modelfile.custom
+
+# Or use a different model name
+ollama create george-llama -f ~/blue-lodge/Modelfile.custom
+export LODGE_MODEL=george-llama
+```
+
+### Step 4: Adjust token budgets
+
+If your model has a larger context window, you can increase budgets:
+
+```bash
+# For a 32K context model with GPU
+export LLM_MAX_TOKENS=2048
+export LLM_ASK_TOKENS=800
+export LLM_TIMEOUT=300
+```
+
+If your model is smaller (1.7B params or 2K context):
+
+```bash
+# Conservative budgets for a tiny model
+export LLM_MAX_TOKENS=256
+export LLM_ASK_TOKENS=128
+export LLM_TIMEOUT=60
+```
+
+### Important: Stop Tokens
+
+Different model families use different stop tokens. Using the wrong one makes the model ramble past its natural stopping point, wasting tokens and time.
+
+| Model family | Stop token |
+|-------------|------------|
+| Qwen 3.5 | `<\|im_end\|>` |
+| Gemma 4 | `<end_of_turn>` |
+| Granite 4.1 | `<\|end_of_text\|>` |
+| Nemotron 3 | `<\|eot_id\|>` |
+| Llama 3.x | `<\|eot_id\|>` |
+
+If the model produces runaway output, check your stop token first.
+
+---
+
+## Performance Tuning for Mobile
+
+George's default configuration targets the Galaxy Fold 7 (Snapdragon 8 Elite, 12GB RAM, 100% CPU inference) with a **32K context window** (`num_ctx=32768`). The default boot model is `<your-model>`, and 32K contexts on 4B-class models can still push the total working set into the 7-9GB range once the KV cache fills. Here's how to squeeze better performance:
+
+### Reduce prefill time (prompt processing)
+
+The biggest bottleneck on CPU is processing the system prompt. Options:
+
+1. **Use the "ask" mode more often** — ~250 tokens vs 3,500 for task mode
+2. **Keep `/soul off` (default)** — Light planning uses ~250 token condensed soul instead of ~4,500 full soul
+3. **Lower `num_ctx`** — Smaller context = smaller KV cache = faster prefill
+
+```
+# In Modelfile — try 4096 if you mostly do /ask
+PARAMETER num_ctx 4096
+```
+
+> **Note:** The default `num_ctx=32768` uses ~4.5GB KV cache (3.5GB weights + 4.5GB KV = 8.0GB total on 12GB). Can reduce to `num_ctx=20480` (~2.81GB KV, ~6.3GB total) if RAM is tight. George's enrichments scale down gracefully.
+
+### Reduce generation time
+
+1. **Lower `num_predict`** — The model stops at its natural end token, but allocates KV cache for the full budget
+2. **Lower `temperature`** — More deterministic = fewer "thinking" tokens
+3. **Use smaller quantization** — Q4_K_M is ~20% faster than Q5_K_M but slightly less accurate
+
+### RAM management
+
+On a 12GB device, the model (~3.5GB) + KV cache (~4.5GB at 32K) + Ollama overhead (~0.5GB) + OS leaves ~3.5GB free.
+
+```bash
+# Unload model when not actively using George
+export LLM_KEEP_ALIVE=10m
+
+# Or unload immediately after each request (slowest per-command, but frees RAM)
+export LLM_KEEP_ALIVE=0
+```
+
+### Monitor inference speed
+
+Check Ollama's stats for your setup:
+
+```bash
+# While George is generating, in another terminal:
+curl -s http://localhost:11434/api/ps | jq '.models[] | {name, size, expires_at}'
+```
+
+After a generation, Ollama's response includes timing:
+
+```bash
+curl -s http://localhost:11434/api/generate \
+  -d '{"model":"blue-lodge","prompt":"Hello","stream":false,"options":{"num_predict":1}}' \
+  | jq '{prompt_eval_rate: (.prompt_eval_count / .prompt_eval_duration * 1e9),
+         eval_rate: (.eval_count / .eval_duration * 1e9)}'
+```
+
+This shows tokens/second for prompt processing and generation.
+
+---
+
+## Advanced: Per-Command Token Overrides
+
+George right-sizes token budgets per command:
+
+| Command | Output tokens | Think budget | Why |
+|---------|--------------|-------------|-----|
+| `/ask` | 20,480 (`LLM_ASK_TOKENS`) | 4,096 (`LLM_BUDGET_ASK`) | Safety cap; model stops at `<\|im_end\|>` naturally |
+| `/plan` | 512 | 4,096 (`LLM_BUDGET_AGENT`) | Numbered lists, 1-N steps (AGENT_PLAN_STEPS) |
+| `/commit` | 128 | 4,096 (`LLM_BUDGET_TOOL`) | Single commit message line |
+| `/reflect` | 1,024 | 4,096 (`LLM_BUDGET_JOURNAL`) | Journal reflection entry |
+| `/web summary` | 256 | 4,096 (`LLM_BUDGET_TOOL`) | 3-5 bullet points |
+| `/ingest summarize` | 256 | 4,096 (`LLM_BUDGET_TOOL`) | Document summary |
+| Inner loop (router) | 512 (`LLM_ROUTER_TOKENS`) | 4,096 (`LLM_BUDGET_ROUTER`) | Tool selection (just pick a name) |
+| Inner loop (specialist) | 20,480 (`LLM_AGENT_TOKENS`) | 4,096 (`LLM_BUDGET_AGENT`) | Command generation |
+| Macro loop (strategist) | 4,096 (`LLM_STRATEGIST_TOKENS`) | 4,096 (`LLM_BUDGET_AGENT`) | Next milestone (one sentence) |
+| Journal quip | 512 | 4,096 (`LLM_BUDGET_JOURNAL`) | Background quip |
+| Journal decay | 512 | 4,096 (`LLM_BUDGET_JOURNAL`) | Sediment compression |
+
+Output tokens and think budgets are hardcoded per call. To change output tokens, modify the third argument to `llm_generate` or `llm_stream` in the source. Think budgets can be overridden via environment variables (`LLM_BUDGET_ASK`, `LLM_BUDGET_AGENT`, `LLM_BUDGET_ROUTER`, `LLM_BUDGET_JOURNAL`, `LLM_BUDGET_TOOL`).
+
+---
+
+## Updating Default Budget & Token Values
+
+Budget and token defaults are referenced in multiple places. When changing a default, **all locations must be updated together** to avoid stale values surfacing in resets, UI displays, or tests.
+
+### Where defaults live
+
+| Location | What it controls | Role |
+|----------|-----------------|------|
+| `lib/llm.sh` — `_llm_save_config()` heredoc | Values written to `lodge.conf` | **Source of truth** for persistent config |
+| `lib/llm.sh` — runtime initializers (bottom of file) | Shell variable defaults on startup | **Source of truth** for runtime |
+| `lib/agent.sh` — inline fallbacks (`${VAR:-N}`) | Emergency fallback if config didn't load | Safety net (should match defaults) |
+| `lodge` — `_cmd_tuning` reset block | Values assigned by `/tuning reset` | Must match `lib/llm.sh` defaults |
+| `lodge` — `_cmd_tuning` UI info strings | `(default: N)` shown to operator | Display only (must match) |
+| `lodge` — `_cmd_tuning` printf display | `(default: N)` in status view | Display only (must match) |
+| `lodge` — `_cmd_tuning` `_tuning_set` ranges | Min/max bounds for `/tuning set` | Must allow the default value |
+| `tests/test_lodge.sh` — restore comments | Value restored after each test | Must match defaults |
+| `tests/test_lodge.sh` — reset assertions | Expected values after `/tuning reset` | Must match defaults |
+| `tests/test_llm.sh` — default assertions | Verify `lib/llm.sh` initializes correctly | Must match defaults |
+| `tests/test_agent.sh` — default assertions | Verify agent.sh initializes correctly | Must match defaults |
+| `docs/TUNING.md` — per-command table | Reference documentation | Must match defaults |
+
+### Step-by-step: changing a default
+
+Example: changing `LLM_BUDGET_AGENT` from 4096 to 8192.
+
+**1. Update `lib/llm.sh`** (the source of truth):
+
+```bash
+# In _llm_save_config() heredoc:
+LLM_BUDGET_AGENT=${LLM_BUDGET_AGENT:-8192}
+
+# In runtime initializer (bottom of file):
+LLM_BUDGET_AGENT="${LLM_BUDGET_AGENT:-8192}"
+```
+
+**2. Update `lib/agent.sh` inline fallbacks:**
+
+Search for `LLM_BUDGET_AGENT:-` and update any fallback values.
+
+**3. Update `lodge` reset block** (`_cmd_tuning` → `reset` case):
+
+```bash
+LLM_BUDGET_AGENT=8192
+```
+
+**4. Update `lodge` UI strings** (three places per variable):
+
+```bash
+# Info display:
+ui_info "... (default: 8192, 0=unlimited)"
+
+# Status printf:
+printf "  %-22s %s\n" "Agent (strat/spec):" "$LLM_BUDGET_AGENT  (default: 8192)"
+
+# _tuning_set range — ensure max >= new default:
+_tuning_set LLM_BUDGET_AGENT "Agent think budget" "$value" 0 16384
+```
+
+**5. Update tests:**
+
+```bash
+# tests/test_lodge.sh — restore lines:
+LLM_BUDGET_AGENT=8192  # restore
+
+# tests/test_lodge.sh — reset assertion:
+assert_eq "$LLM_BUDGET_AGENT" "8192"
+
+# tests/test_llm.sh — default assertion:
+assert_eq "$LLM_BUDGET_AGENT" "8192"
+```
+
+**6. Update `docs/TUNING.md`** per-command table.
+
+**7. Run tests:**
+
+```bash
+bash tests/run_all.sh
+```
+
+### Quick reference: current defaults
+
+| Variable | Default | Category |
+|----------|---------|----------|
+| `LLM_MAX_TOKENS` | 20480 | Output tokens |
+| `LLM_ASK_TOKENS` | 20480 | Output tokens |
+| `LLM_AGENT_TOKENS` | 20480 | Output tokens |
+| `LLM_STRATEGIST_TOKENS` | 4096 | Output tokens |
+| `LLM_EVALUATOR_TOKENS` | 4096 | Output tokens |
+| `LLM_ROUTER_TOKENS` | 512 | Output tokens |
+| `LLM_BUDGET_TOKENS` | 4096 | Think budget |
+| `LLM_BUDGET_ASK` | 4096 | Think budget |
+| `LLM_BUDGET_AGENT` | 4096 | Think budget |
+| `LLM_BUDGET_ROUTER` | 4096 | Think budget |
+| `LLM_BUDGET_JOURNAL` | 4096 | Think budget |
+| `LLM_BUDGET_TOOL` | 4096 | Think budget |
+
+---
+
+## Performance Baselines
+
+Reference numbers for common hardware configurations. Use these to gauge whether your setup is performing as expected.
+
+### Inference Speed by Hardware
+
+| Hardware | Model | num_ctx | Prompt eval (tok/s) | Generation (tok/s) | Wall-clock /ask | Notes |
+|----------|-------|---------|--------------------|--------------------|-----------------|-------|
+| Snapdragon 8 Elite (12GB) | 4B-class instruct, Q4 | 32K | ~80-120 | 15-30 | 3-15s | Primary target. CPU only. |
+| Snapdragon 8 Elite + Vulkan | 4B-class instruct, Q4 | 32K | ~150-200 | 20-40 | 2-10s | llama.cpp with Adreno GPU |
+| Desktop i7/Ryzen (32GB) | 4B-class reasoning, Q4 | 32K | ~200-400 | 25-50 | 1-5s | CPU inference |
+| Desktop + NVIDIA GPU | 9B-class instruct, Q4 | 32K | ~500+ | 40-80 | <2s | num_gpu=99 |
+| Raspberry Pi 5 (8GB) | 2B-class instruct, Q4 | 16K | ~30-60 | 5-10 | 10-30s | Reduce num_ctx |
+| Chromebook ARM (8GB) | 2B-4B edge model | 16K | ~50-80 | 8-15 | 5-20s | Via Crostini/Debian |
+
+> **Why reported tok/s looks low:** The wall-clock time includes model loading (5-15s on ARM, 1-3s on SSD). Once loaded, generation runs at the "Generation (tok/s)" rate. During sustained multi-step agent runs, the model stays loaded and you see true throughput. **The bottleneck is I/O (loading weights), not compute (generating tokens).**
+
+### Memory Usage by Configuration
+
+| Model | num_ctx | Weights | KV Cache | Overhead | Total | Free on 12GB |
+|-------|---------|---------|----------|----------|-------|-------------|
+| 4B edge thinking model | 32K | ~2.5-3.5 GB | ~4.5-5.0 GB | ~0.5 GB | ~7.5-9.0 GB | ~3.0-4.5 GB |
+| 4B edge thinking model | 16K | ~2.5-3.5 GB | ~2.3-2.5 GB | ~0.5 GB | ~5.3-6.5 GB | ~5.5-6.7 GB |
+| 4B edge instruct model | 32K | ~2.5-3.5 GB | ~4.0-4.8 GB | ~0.5 GB | ~7.0-8.8 GB | ~3.2-5.0 GB |
+| 2B edge instruct model | 32K | ~1.5-2.5 GB | ~2.0-3.0 GB | ~0.5 GB | ~4.0-6.0 GB | ~6.0-8.0 GB |
+
+### Tuning Recipes
+
+**"George is too slow for simple questions"**
+→ Consider dual-model mode if you want faster routing/tool calls. The instruct model handles routing/tools at 2-5x the speed of a thinking model. The shipped default remains single-model mode for simplicity.
+
+**"I see lots of model swap messages"**
+→ This is expected in dual-model mode during agent tasks. Each swap costs 5-15s on ARM. If it's too much, keep the default single-model setup (`LODGE_SINGLE_MODEL=1`).
+
+**"George runs out of RAM during builds"**
+→ Set `export LLM_KEEP_ALIVE=0` to unload the model (~4GB freed) immediately after each LLM call. Or reduce `num_ctx` to 16K.
+
+**"Thinking models waste tokens on simple tasks"**
+→ This is by design — thinking tokens help with planning. For tasks that don't need it, dual-model setups can route to an instruct model automatically. You can also use `/think nothink` to suppress reasoning on the Qwen 3.5 thinking variant where supported.
+
+**"I want faster startup"**
+→ Reduce the knowledge base size (fewer ingested docs), or pre-warm the model: `curl -s http://localhost:11434/api/generate -d '{"model":"<your-model>","prompt":"hi","stream":false,"options":{"num_predict":1}}'`
+
+---
+
+## Troubleshooting
+
+### "George sits for minutes with no output"
+
+1. **Check if model is loaded**: `curl -s http://localhost:11434/api/ps | jq .`
+3. **Check system prompt size**: The full task prompt is ~3,500 tokens — if your model's `num_ctx` is 2048, it won't fit. Default is 32768.
+3. **Try `/ask` first** — it uses ~500 total tokens, much faster
+4. **Check available RAM**: `free -h` — if swap is active, inference will be extremely slow
+5. **Set a timeout**: `export LLM_TIMEOUT=120` prevents indefinite hangs
+
+### "Model generates garbage or doesn't stop"
+
+- Wrong stop token in Modelfile — see the stop token table above
+- `num_predict` too high — the model has no reason to stop at its intended length
+- Try lowering `temperature` to 0.1
+
+### "Context window exceeded" errors
+
+- Your total input + output exceeds `num_ctx`
+- Reduce `LLM_MAX_TOKENS` or increase `num_ctx` in the Modelfile
+- Run `/compact` to compress GEORGE.md
+
+### "Model unloads between commands"
+
+- Increase `LLM_KEEP_ALIVE`: `export LLM_KEEP_ALIVE=1h`
+- Check if another process is using Ollama (competing `keep_alive` values)
+
+---
+
+## Quick Reference
+
+```bash
+# See what George is sending to the model (debug)
+LODGE_DEBUG=1 lodge /ask "hello"
+
+# Warm up the model manually
+curl -s http://localhost:11434/api/generate \
+  -d '{"model":"<your-model>","prompt":"hi","stream":false,"options":{"num_predict":1}}'
+
+# Check model info
+curl -s http://localhost:11434/api/show -d '{"name":"<your-model>"}' | jq .details
+
+# Recreate a test model after Modelfile changes
+ollama create blue-lodge-test-model -f ~/blue-lodge/Modelfile
+
+# Serve a different model at runtime (see docs/MODELS.md for full reference)
+george> /models
+george> /models activate <profile>
+```

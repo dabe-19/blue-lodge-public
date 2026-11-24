@@ -1,0 +1,163 @@
+/* __MOD_NAME__ — Precision Instrument Styles (Okabe-Ito Colorblind-Safe) */
+.stmod-wrap {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: #e2e8f0;
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+}
+
+.stmod-status {
+  display: none;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #e0f2fe;
+  font-size: 12.5px;
+}
+
+.stmod-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 860px) {
+  .stmod-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.stmod-panel {
+  background: #0f172a;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stmod-panel-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.stmod-input,
+.stmod-select,
+.stmod-textarea {
+  background: #0b101b;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  color: #f8fafc;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.stmod-textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.stmod-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.stmod-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.stmod-btn-primary {
+  background: #0284c7;
+  border-color: #38bdf8;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.stmod-btn-amber {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(245, 158, 11, 0.5);
+  color: #fcd34d;
+  font-weight: 600;
+}
+
+.stmod-btn-sm {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.stmod-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stmod-card {
+  background: #111827;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 7px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stmod-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.stmod-card-title {
+  font-weight: 600;
+  color: #f8fafc;
+  margin-left: 8px;
+}
+
+.stmod-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stmod-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.16);
+  color: #7dd3fc;
+}
+
+.stmod-meta,
+.stmod-empty {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.stmod-card-body {
+  font-size: 13px;
+  line-height: 1.55;
+  color: #cbd5e1;
+  white-space: pre-wrap;
+}

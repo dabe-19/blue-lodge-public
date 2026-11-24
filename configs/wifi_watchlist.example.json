@@ -1,0 +1,51 @@
+{
+  "home_ssids": [
+    "ExampleHomeWiFi",
+    "ExampleGuestWiFi"
+  ],
+  "known_soft_aps": [
+    {
+      "ssid_pattern": "SmartClock*",
+      "label": "Unconfigured Smart Display / Cast Soft-AP",
+      "classification": "open_soft_ap",
+      "auto_alert": true,
+      "notes": "Google Cast / Smart Clock provisioning hotspot (TCP :8008 setup API)"
+    },
+    {
+      "ssid_pattern": "[fridge]*",
+      "label": "Smart Appliance Wi-Fi Direct / Soft-AP",
+      "classification": "appliance_ap",
+      "auto_alert": true,
+      "notes": "Samsung / SmartThings appliance soft-AP beacon"
+    }
+  ],
+  "ignored_ssids": [],
+  "compass_calibration": {
+    "sensor_a_workstation_sector": "NORTH_WEST_STUDY",
+    "sensor_b_peripheral_bssid": "02:00:5e:10:00:01",
+    "sensor_b_peripheral_sector": "SOUTH_WALL",
+    "anchors": [
+      {
+        "ssid_pattern": "NorthNeighborWiFi*",
+        "bssid_prefix": "02:00:5e:20:00",
+        "compass_sector": "NORTH",
+        "label": "North Neighbor Compass Anchor",
+        "ring": "exterior_perimeter"
+      },
+      {
+        "bssid_prefix": "02:00:5e:10:00",
+        "compass_sector": "SOUTH_WALL",
+        "label": "South Wall Claimed Sensor B Anchor",
+        "ring": "interior_boundary"
+      }
+    ]
+  },
+  "perimeter_guard": {
+    "enabled": true,
+    "max_exterior_chords": 6,
+    "min_rssi_dbm": -91,
+    "transient_proximity_alert_dbm": -78,
+    "clock_airlock_refresh_interval_s": 2700,
+    "neighbor_single_chord_suppression": true
+  }
+}

@@ -1,0 +1,24 @@
+# Honeydew Rewrite Router — REWRITE / KEEP verdict + reason
+# Used by _agent_honeydew_rewrite() in lib/agent.sh
+# Layer 1 constrained decoding for llama-server grammar param
+
+root          ::= thinking ws response | ws response
+
+response      ::= "<response>" ws json ws "</response>" | json
+
+json          ::= "{" ws "\"classify\":" ws verdict "," ws "\"reason\":" ws string ws "}"
+
+verdict       ::= "\"REWRITE\"" | "\"KEEP\""
+
+# ── String rule: quote-preserving (default) ────────────────
+# Allows escaped quotes, backslashes, and standard JSON escapes
+# inside string values.
+char          ::= [^"\\] | "\\" ["\\/bfnrt]
+string        ::= "\"" char* "\""
+
+thinking      ::= "<think>" inner "</think>" | "<|channel>thought" inner "<channel|>" | "[" [tT][hH][iI][nN][kK] "]" bracketed "[/" [tT][hH][iI][nN][kK] "]" | "[" [tT][hH][oO][uU][gG][hH][tT] "]" bracketed "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
+
+inner         ::= [^<]*
+bracketed     ::= [^\[]*
+
+ws            ::= [ \t\n]*

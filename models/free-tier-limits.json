@@ -1,0 +1,180 @@
+{
+  "_doc": "Free-tier rate limits for cloud AI providers. Used by /limits models and /limits suggest. RPM=requests/min, RPD=requests/day, TPM=tokens/min, TPD=tokens/day. Suggested /limit settings keep George safely under each ceiling.",
+  "_extensible": "Add new providers by adding a top-level key matching the canonical provider name from _provider_canon().",
+
+  "google": {
+    "_api_models_endpoint": "https://generativelanguage.googleapis.com/v1beta/models",
+    "_doc": "Google AI Studio free tier (ai.google.dev). Limits as of 2026-03.",
+    "models": {
+      "gemma-3-27b-it":          { "rpm": 30,  "rpd": 14400, "tpm": 15000,  "category": "other" },
+      "gemma-3-4b-it":           { "rpm": 30,  "rpd": 14400, "tpm": 15000,  "category": "other" },
+      "gemma-3-1b-it":           { "rpm": 30,  "rpd": 14400, "tpm": 15000,  "category": "other" },
+      "gemma-3-12b-it":          { "rpm": 30,  "rpd": 14400, "tpm": 15000,  "category": "other" },
+      "gemma-3-2b":              { "rpm": 30,  "rpd": 14400, "tpm": 15000,  "category": "other" },
+      "gemini-2.5-flash":        { "rpm": 5,   "rpd": 20,    "tpm": 250000, "category": "text-out" },
+      "gemini-2.5-pro":          { "rpm": 0,   "rpd": 0,     "tpm": 0,      "category": "text-out" },
+      "gemini-2.0-flash":        { "rpm": 0,   "rpd": 0,     "tpm": 0,      "category": "text-out" },
+      "gemini-2.0-flash-exp":    { "rpm": 0,   "rpd": 0,     "tpm": 0,      "category": "text-out" },
+      "gemini-2.0-flash-lite":   { "rpm": 0,   "rpd": 0,     "tpm": 0,      "category": "text-out" },
+      "gemini-2.5-flash-lite":   { "rpm": 10,  "rpd": 20,    "tpm": 250000, "category": "text-out" },
+      "gemini-3-flash":          { "rpm": 5,   "rpd": 20,    "tpm": 250000, "category": "text-out" },
+      "gemini-3-pro":            { "rpm": 0,   "rpd": 0,     "tpm": 0,      "category": "text-out" },
+      "gemini-3.1-pro":          { "rpm": 0,   "rpd": 0,     "tpm": 0,      "category": "text-out" },
+      "gemini-3.1-flash-lite":   { "rpm": 15,  "rpd": 500,   "tpm": 250000, "category": "text-out" },
+      "gemini-embedding-1":      { "rpm": 100, "rpd": 1000,  "tpm": 30000,  "category": "other" }
+    },
+    "suggested": {
+      "_doc": "Defaults tuned for Gemma-class (30 RPM, 15K TPM, 14.4K RPD).",
+      "api-delay": 7,
+      "api-retries": 4,
+      "api-backoff": 5,
+      "api-max-backoff": 60,
+      "api-cooldown-max": 8,
+      "api-cooldown-window": 60
+    }
+  },
+
+  "groq": {
+    "_api_models_endpoint": "https://api.groq.com/openai/v1/models",
+    "_doc": "Groq free tier (console.groq.com). Limits as of 2026-03.",
+    "models": {
+      "llama-3.3-70b-versatile":                   { "rpm": 30,  "rpd": 1000,  "tpm": 12000,  "tpd": 100000 },
+      "llama-3.1-8b-instant":                      { "rpm": 30,  "rpd": 14400, "tpm": 6000,   "tpd": 500000 },
+      "meta-llama/llama-4-maverick-17b-128e-instruct": { "rpm": 30, "rpd": 1000, "tpm": 6000, "tpd": 500000 },
+      "meta-llama/llama-4-scout-17b-16e-instruct": { "rpm": 30,  "rpd": 1000,  "tpm": 30000,  "tpd": 500000 },
+      "meta-llama/llama-guard-4-12b":              { "rpm": 30,  "rpd": 14400, "tpm": 15000,  "tpd": 500000 },
+      "meta-llama/llama-prompt-guard-2-22m":       { "rpm": 30,  "rpd": 14400, "tpm": 15000,  "tpd": 500000 },
+      "meta-llama/llama-prompt-guard-2-86m":       { "rpm": 30,  "rpd": 14400, "tpm": 15000,  "tpd": 500000 },
+      "moonshotai/kimi-k2-instruct":               { "rpm": 60,  "rpd": 1000,  "tpm": 10000,  "tpd": 300000 },
+      "moonshotai/kimi-k2-instruct-0905":          { "rpm": 60,  "rpd": 1000,  "tpm": 10000,  "tpd": 300000 },
+      "openai/gpt-oss-120b":                       { "rpm": 30,  "rpd": 1000,  "tpm": 8000,   "tpd": 200000 },
+      "openai/gpt-oss-20b":                        { "rpm": 30,  "rpd": 1000,  "tpm": 8000,   "tpd": 200000 },
+      "openai/gpt-oss-safeguard-20b":              { "rpm": 30,  "rpd": 1000,  "tpm": 8000,   "tpd": 200000 },
+      "qwen/qwen3-32b":                            { "rpm": 60,  "rpd": 1000,  "tpm": 6000,   "tpd": 500000 },
+      "groq/compound":                             { "rpm": 30,  "rpd": 250,   "tpm": 70000   },
+      "groq/compound-mini":                        { "rpm": 30,  "rpd": 250,   "tpm": 70000   },
+      "allam-2-7b":                                { "rpm": 30,  "rpd": 7000,  "tpm": 6000,   "tpd": 500000 },
+      "whisper-large-v3":                          { "rpm": 20,  "rpd": 2000,  "tpm": null,   "tpd": null, "ash": 7200, "asd": 28800 },
+      "whisper-large-v3-turbo":                    { "rpm": 20,  "rpd": 2000,  "tpm": null,   "tpd": null, "ash": 7200, "asd": 28800 }
+    },
+    "suggested": {
+      "_doc": "Defaults tuned for Llama-class (30 RPM, 6-12K TPM, 1K RPD).",
+      "api-delay": 5,
+      "api-retries": 4,
+      "api-backoff": 5,
+      "api-max-backoff": 60,
+      "api-cooldown-max": 10,
+      "api-cooldown-window": 60
+    }
+  },
+
+  "openai": {
+    "_api_models_endpoint": "https://api.openai.com/v1/models",
+    "_doc": "OpenAI rate limits vary by usage tier. Populate when configuring.",
+    "models": {},
+    "suggested": {
+      "api-delay": 3,
+      "api-retries": 4,
+      "api-backoff": 5,
+      "api-max-backoff": 60,
+      "api-cooldown-max": 15,
+      "api-cooldown-window": 60
+    }
+  },
+
+  "anthropic": {
+    "_doc": "Anthropic rate limits vary by usage tier. Populate when configuring.",
+    "models": {},
+    "suggested": {
+      "api-delay": 3,
+      "api-retries": 4,
+      "api-backoff": 5,
+      "api-max-backoff": 60,
+      "api-cooldown-max": 15,
+      "api-cooldown-window": 60
+    }
+  },
+
+  "mistral": {
+    "_api_models_endpoint": "https://api.mistral.ai/v1/models",
+    "_doc": "Mistral rate limits. Populate when configuring.",
+    "models": {},
+    "suggested": {
+      "api-delay": 3,
+      "api-retries": 4,
+      "api-backoff": 5,
+      "api-max-backoff": 60,
+      "api-cooldown-max": 15,
+      "api-cooldown-window": 60
+    }
+  },
+
+  "together": {
+    "_api_models_endpoint": "https://api.together.xyz/v1/models",
+    "_doc": "Together AI rate limits. Populate when configuring.",
+    "models": {},
+    "suggested": {
+      "api-delay": 3,
+      "api-retries": 4,
+      "api-backoff": 5,
+      "api-max-backoff": 60,
+      "api-cooldown-max": 15,
+      "api-cooldown-window": 60
+    }
+  },
+
+  "perplexity": {
+    "_doc": "Perplexity rate limits. Populate when configuring.",
+    "models": {},
+    "suggested": {
+      "api-delay": 3,
+      "api-retries": 4,
+      "api-backoff": 5,
+      "api-max-backoff": 60,
+      "api-cooldown-max": 15,
+      "api-cooldown-window": 60
+    }
+  },
+
+  "cohere": {
+    "_api_models_endpoint": "https://api.cohere.com/v2/models",
+    "_doc": "Cohere rate limits. Populate when configuring.",
+    "models": {},
+    "suggested": {
+      "api-delay": 3,
+      "api-retries": 4,
+      "api-backoff": 5,
+      "api-max-backoff": 60,
+      "api-cooldown-max": 15,
+      "api-cooldown-window": 60
+    }
+  },
+
+  "deepseek": {
+    "_api_models_endpoint": "https://api.deepseek.com/v1/models",
+    "_doc": "DeepSeek rate limits. Populate when configuring.",
+    "models": {},
+    "suggested": {
+      "api-delay": 3,
+      "api-retries": 4,
+      "api-backoff": 5,
+      "api-max-backoff": 60,
+      "api-cooldown-max": 15,
+      "api-cooldown-window": 60
+    }
+  },
+
+  "xai": {
+    "_api_models_endpoint": "https://api.x.ai/v1/models",
+    "_doc": "xAI (Grok) rate limits. Populate when configuring.",
+    "models": {},
+    "suggested": {
+      "api-delay": 3,
+      "api-retries": 4,
+      "api-backoff": 5,
+      "api-max-backoff": 60,
+      "api-cooldown-max": 15,
+      "api-cooldown-window": 60
+    }
+  }
+}

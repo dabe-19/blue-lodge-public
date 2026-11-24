@@ -1,0 +1,42 @@
+{
+  "@context": {
+    "@vocab": "https://schema.org/",
+    "goog": "http://schema.googleapis.com/",
+    "okf": "https://developers.google.com/knowledge-graph/schema/",
+    "lodge": "urn:blue-lodge:schema:"
+  },
+  "@graph": [
+    {
+      "@id": "urn:blue-lodge:standard:rbac-uuid-linking",
+      "@type": ["DefinedTerm", "HowTo", "TechArticle"],
+      "name": "Sovereign User Permissioning, RBAC & UUID Multi-Entity Linkage Protocol",
+      "description": "Architectural security and identity protocol delivering RFC 4122 UUIDv4 generation, role-based capability bitmasks, and bidirectional multi-entity linkage graphs.",
+      "stability": "stable",
+      "definition": "The official authorization and identity linkage protocol for Blue Lodge. Enforces boundary isolation across sessions, subagents, and tools through cryptographic capability tokens and multi-dimensional UUID tracking (Session <-> Task <-> Agent <-> PID <-> Channel <-> User).",
+      "articleBody": "1. UUIDv4 Generation: Every task, session, and channel must be identified by an RFC 4122 UUIDv4 string generated via kernel sysctl (/proc/sys/kernel/random/uuid) with an unprivileged POSIX AWK fallback.\n2. Role Hierarchy & RBAC: Four tiered roles (admin > operator > agent > guest) mapped to capability strings (shell:exec, workspace:write, workspace:read, tools:exec, agent:spawn, agent:kill, ipc:admin, ipc:read, ipc:write). Privileged operations must invoke auth_check_permission prior to dispatch.\n3. Multi-Entity Linkage Graph: Atomic relational graph stored in .george/identity/links.json mapping: session_id -> task_id -> agent_id -> pid -> channel_id -> user_id. Ensures full auditability, leak prevention, and autonomic orphan reaping.\n4. FIFO IPC Integration: All frames dispatched across named pipe FIFO channels must carry an explicit UUID task correlation header.\n5. Container & Sandbox Governance: Forms the foundational security kernel for subagent worktree and container sandboxing.",
+      "step": [
+        {
+          "@type": "HowToStep",
+          "name": "Generate Identity",
+          "text": "Call uuid_generate to mint a unique RFC 4122 UUIDv4 token for tasks, channels, or sessions."
+        },
+        {
+          "@type": "HowToStep",
+          "name": "Enforce Capability Gate",
+          "text": "Call auth_check_permission <subject_or_token> <capability> before dispatching privileged tools or modifying files."
+        },
+        {
+          "@type": "HowToStep",
+          "name": "Link Graph Entities",
+          "text": "Call identity_link <sess_id> <task_id> <agent_id> <pid> <channel_id> [user_id] to record the relational binding in the identity graph."
+        },
+        {
+          "@type": "HowToStep",
+          "name": "Unlink on Completion",
+          "text": "Call identity_unlink <key> upon task termination or channel closure to cleanly reclaim graph resources."
+        }
+      ],
+      "codeSample": "source \"$LODGE_DIR/lib/core/auth.sh\"\nauth_init\ntid=$(uuid_generate)\nif auth_check_permission \"george-admin\" \"agent:spawn\"; then\n    identity_link \"sess_1\" \"$tid\" \"worker-1\" $$ \"ipc_chan_1\" \"george-admin\"\nfi"
+    }
+  ]
+}

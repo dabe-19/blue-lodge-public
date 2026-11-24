@@ -1,0 +1,24 @@
+{
+  "auto_switch_posture": true,
+  "default_unknown_posture": "foreign_cautious",
+  "wifi_defense_enabled": true,
+  "airlock_auto_interrogate_open_aps": false,
+  "lock_endpoint_roles": true,
+  "subnets": {
+    "192.168.1.0/24": {
+      "label": "Example Home LAN",
+      "designation": "home_trusted",
+      "gateway_ip": "192.168.1.1",
+      "gateway_mac": "aa:bb:cc:00:00:01",
+      "interface": "eth0",
+      "arp_shield": true,
+      "stealth_inbound_drop": false
+    }
+  },
+  "protected_ips_override": [
+    "127.0.0.1",
+    "192.168.1.1",
+    "192.168.1.10",
+    "192.168.1.20"
+  ]
+}

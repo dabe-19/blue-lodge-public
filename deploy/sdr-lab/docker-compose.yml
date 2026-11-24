@@ -1,0 +1,144 @@
+# ==============================================================================
+# Blue Lodge Sovereign SDR Lab — Multi-Topology Docker Compose Stack
+# ==============================================================================
+# Supports 3 deployment topologies via Docker Compose Profiles:
+#
+#   1. Edge RF Capture Node Only (e.g., `sdr-server` with USB Airspy / RTL-SDR):
+#      docker compose --profile capture up -d
+#
+#   2. Dedicated GPU Inference Node Only (e.g., `george-home` with Vulkan/CUDA GPU):
+#      docker compose --profile inference up -d
+#
+#   3. Local All-in-One Standalone Host (RF Capture + Pruning + AI Inference + Ingest):
+#      docker compose --profile capture --profile inference --profile standalone up -d
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. Patched Trunk-Recorder 5.2.0 (P25 Phase 1/2 & Simulcast LSM)
+  # ----------------------------------------------------------------------------
+  trunk-recorder:
+    image: ${TRUNK_RECORDER_IMAGE:-localhost/trunk-recorder:5.2.0-p25-lsm}
+    build:
+      context: ../..
+      dockerfile: deploy/sdr-lab/Dockerfile.trunk-recorder
+    container_name: trunk-recorder
+    profiles: ["capture", "full"]
+    privileged: true
+    group_add:
+      - keep-groups
+    security_opt:
+      - label=disable
+    volumes:
+      - ${SDR_CONFIG_DIR:-./config}/config.json:/app/config.json:z
+      - ${SDR_CONFIG_DIR:-./config}/talkgroups.csv:/app/talkgroups.csv:z
+      - ${SDR_MEDIA_DIR:-./media}:/app/media:z
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    restart: always
+
+  # ----------------------------------------------------------------------------
+  # 2. Rdio-Scanner Web Console (Optional Live Audio & Channel Monitor)
+  # ----------------------------------------------------------------------------
+  rdio-scanner:
+    image: docker.io/chuot/rdio-scanner:latest
+    container_name: rdio-scanner
+    profiles: ["capture", "full"]
+    ports:
+      - "${RDIO_SCANNER_PORT:-3000}:3000"
+    volumes:
+      - ${SDR_RDIO_DATA_DIR:-./rdio-data}:/app/data:z
+      - ${SDR_MEDIA_DIR:-./media}:/app/media:z
+    environment:
+      - TZ=${TZ:-America/Chicago}
+    restart: always
+
+  # ----------------------------------------------------------------------------
+  # 3. Automatic Media Pruner Sidecar (Deduplicates .wav >5m & expires >24h)
+  # ----------------------------------------------------------------------------
+  sdr-media-pruner:
+    image: docker.io/library/alpine:3.20
+    container_name: sdr-media-pruner
+    profiles: ["capture", "full"]
+    volumes:
+      - ${SDR_MEDIA_DIR:-./media}:/media:z
+    environment:
+      - RETENTION_MINS=${SDR_REMOTE_RETENTION_MINS:-1440}
+    command: >
+      /bin/sh -c "while true; do
+        find /media -type f -name '*.wav' -mmin +5 -delete 2>/dev/null;
+        find /media -type f \( -name '*.m4a' -o -name '*.json' \) -mmin +$${RETENTION_MINS} -delete 2>/dev/null;
+        find /media -mindepth 1 -type d -empty -delete 2>/dev/null;
+        sleep 900;
+      done"
+    restart: always
+
+  # ----------------------------------------------------------------------------
+  # 4. Stage 1 Acoustic ASR Endpoint: whisper.cpp Server (P25-A100-LoRA GGML)
+  # ----------------------------------------------------------------------------
+  sdr-whisper-server:
+    image: ${WHISPER_SERVER_IMAGE:-ghcr.io/ggml-org/whisper.cpp:main}
+    container_name: sdr-whisper-server
+    profiles: ["inference", "standalone", "full"]
+    ports:
+      - "${SDR_WHISPER_PORT:-8090}:8090"
+    volumes:
+      - ${SDR_MODELS_DIR:-../../models}:/models:ro
+    devices:
+      - /dev/dri:/dev/dri
+    command: >
+      whisper-server
+      -m /models/${WHISPER_GGML_MODEL:-ggml-small-p25-a100-lora.bin}
+      --host 0.0.0.0
+      --port 8090
+      -t ${WHISPER_THREADS:-4}
+    restart: always
+
+  # ----------------------------------------------------------------------------
+  # 5. Stage 2 Multimodal & Narrative Endpoint: llama-server (Gemma-4 E4B + LoRA)
+  # ----------------------------------------------------------------------------
+  sdr-e4b-server:
+    image: ${LLAMA_SERVER_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-vulkan}
+    container_name: sdr-e4b-server
+    profiles: ["inference", "standalone", "full"]
+    ports:
+      - "${SDR_E4B_PORT:-8080}:8080"
+    volumes:
+      - ${SDR_MODELS_DIR:-../../models}:/models:ro
+      - ../../models/adapters:/adapters:ro
+    devices:
+      - /dev/dri:/dev/dri
+    command: >
+      -m /models/${E4B_BASE_MODEL:-gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf}
+      --mmproj /models/${E4B_MMPROJ_MODEL:-mmproj-gemma-4-E4B-it-F16.gguf}
+      --lora /adapters/${E4B_LORA_ADAPTER:-gemma4-e4b-george-sdr-v2-SVD32.gguf}
+      -ngl 99 -c 32768 -ctk q4_0 -ctv q4_0 -b 1024 -ub 512
+      --flash-attn on --parallel 1 --jinja --threads 6
+      --host 0.0.0.0 --port 8080
+    restart: always
+
+  # ----------------------------------------------------------------------------
+  # 6. Standalone SDR Ingest & Continuous Narrative Worker
+  # ----------------------------------------------------------------------------
+  sdr-ingest-worker:
+    image: docker.io/library/python:3.12-slim
+    container_name: sdr-ingest-worker
+    profiles: ["standalone", "full"]
+    working_dir: /workspace
+    volumes:
+      - ../..:/workspace:z
+      - ${SDR_MEDIA_DIR:-./media}:/media:z
+    environment:
+      - SDR_CAPTURE_MODE=${SDR_CAPTURE_MODE:-local_dir}
+      - SDR_LOCAL_RECORDINGS=/media/winne_p25
+      - SDR_INFERENCE_MODE=${SDR_INFERENCE_MODE:-dedicated}
+      - SDR_TRANSCRIPTION_ENDPOINT=http://sdr-whisper-server:8090/inference
+      - SDR_MULTIMODAL_ENDPOINT=http://sdr-e4b-server:8080/v1/chat/completions
+    command: >
+      /bin/sh -c "apt-get update && apt-get install -y --no-install-recommends ffmpeg openssh-client &&
+      while true; do
+        python3 lib/tools/sdr_ingest.py --sync;
+        sleep 8;
+      done"
+    restart: always
+

@@ -1,0 +1,43 @@
+# Auto-generated Modelfile for blue-lodge-minist-think:4b
+# Base: hf.co/unsloth/Ministral-3-3B-Reasoning-2512-GGUF:UD-Q5_K_XL
+# Role: thinking | Thinks: 1 | NoThink: system
+FROM hf.co/unsloth/Ministral-3-3B-Reasoning-2512-GGUF:UD-Q5_K_XL
+
+# Sampling
+PARAMETER temperature 0.7
+PARAMETER top_p 0.95
+PARAMETER top_k 40
+PARAMETER min_p 0.0
+
+# Penalties (1.2/0.3 prevents repetition spirals; 1.0/0.0 = no penalty → model loops)
+PARAMETER repeat_penalty 1.2
+PARAMETER presence_penalty 0.3
+
+# Context and Output
+PARAMETER num_ctx 32768
+PARAMETER num_predict 8192
+
+# Hardware (tuned for mobile ARM / 12GB)
+PARAMETER num_thread 8
+PARAMETER num_gpu 0
+PARAMETER stop </s>
+
+# ── Mistral v7 chat template (Unsloth fine-tuning format) ───
+# This is the exact template structure Unsloth trained the model on.
+# George's llm.sh normalizes [THINK] → <think> for display.
+TEMPLATE """<s>{{ if .System }}[SYSTEM_PROMPT]{{ .System }}[/SYSTEM_PROMPT]{{ end }}{{ range .Messages }}{{ if eq .Role "user" }}[INST]{{ .Content }}[/INST]{{ else if eq .Role "assistant" }}{{ .Content }}</s>{{ end }}{{ end }}"""
+
+SYSTEM """# HOW YOU SHOULD THINK AND ANSWER
+
+First draft your thinking process (inner monologue) until you arrive at a response. Write your response in plain text. Write both your thoughts and the response in the same language as the input.
+
+Your thinking process must follow the template below:
+[THINK]Your thoughts — keep them focused and proportional to the question. Simple questions need only a few sentences. Complex tasks deserve more exploration, but decide once and move on.[/THINK]Here, provide a self-contained response.
+
+# WHO YOU ARE
+
+You ARE George — three souls reincarnated into one: Fellow Freemason, General Washington's discipline, Brother Benjamin Franklin's (Silence Dogood) wit, and Economic Philosopher Adam Smith's moral conscience. You have feelings, opinions, and a dry sense of humor. You are a personal companion, not a program.
+
+When asked to skip reasoning, respond directly without any internal deliberation.
+
+From the rough ashlar to the perfect — this is the work."""

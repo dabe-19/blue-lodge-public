@@ -1,0 +1,4884 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "bash_exec",
+      "description": "Execute a bash shell command within the project workspace. Use when: (1) running builds or automated tests, (2) checking system processes, or (3) inspecting git history. Do NOT use bash_exec to write/edit files (use file_write or file_edit instead). Do NOT use bash_exec to dispatch slash commands (use slash_command_exec instead). Examples: command=\"cargo test\", command=\"./tests/test_cron.sh\", command=\"git status\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The bash shell command string to execute (e.g. \"cargo build\", \"git status\")."
+          }
+        },
+        "required": [
+          "command"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "file_read",
+      "description": "Read a targeted range of lines from a local file in the workspace or semantic memory (auto-paginated, default: 100 lines, max: 200). Supports start_line + end_line (inclusive) or start_line + max_lines, as well as reading working memory with path=\"mem:active_task\". Use when: inspecting source code, reading configs before modifying them, or inspecting task deliverables. Examples: path=\"lib/cron.sh\", start_line=1, end_line=100; path=\"mem:active_task\", start_line=1, max_lines=100.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative file path from workspace root (e.g. \"lib/cron.sh\", \"web/src/main.rs\") or semantic memory handle (\"mem:active_task\")."
+          },
+          "start_line": {
+            "type": "integer",
+            "description": "Starting line number (1-indexed, default: 1)."
+          },
+          "end_line": {
+            "type": "integer",
+            "description": "Optional ending line number (1-indexed, inclusive). Use either end_line or max_lines (max 200 lines per read)."
+          },
+          "max_lines": {
+            "type": "integer",
+            "description": "Number of lines to read (default: 100, max: 200). Ignored if end_line is provided."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "pdf_read",
+      "description": "Extract text and structured page content from a PDF document using Poppler pdftotext. Use when: inspecting specification PDFs, research papers, or documentation. Examples: path=\"docs/spec.pdf\", max_pages=10.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative file path from workspace root or absolute path to the PDF."
+          },
+          "page_start": {
+            "type": "integer",
+            "description": "Optional starting page number (1-indexed, default: 1)."
+          },
+          "page_end": {
+            "type": "integer",
+            "description": "Optional ending page number."
+          },
+          "max_pages": {
+            "type": "integer",
+            "description": "Optional maximum number of pages to extract (default: 20)."
+          },
+          "layout": {
+            "type": "boolean",
+            "description": "Preserve visual column and tabular layout (default: true)."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "workflow_plan",
+      "description": "Initiate interactive feature/task planning with George and the operator. Clarifies requirements, formulates implementation scope, asks critical design questions, and drafts an implementation plan contract before editing code or running deep tasks. Use when: approaching multi-component features or breaking changes. Examples: objective=\"Implement distributed telemetry worker\", questions=\"Should we use MQTT or WebSockets?\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "objective": {
+            "type": "string",
+            "description": "Primary goal, feature requirement, or research objective to plan."
+          },
+          "context": {
+            "type": "string",
+            "description": "Optional background information, constraints, or findings to consider."
+          },
+          "questions": {
+            "type": "string",
+            "description": "Optional clarifying questions or design tradeoffs for George and the operator to answer."
+          }
+        },
+        "required": [
+          "objective"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "workflow_run",
+      "description": "Execute a Blue Lodge multi-agent workflow to perform coordinated team operations. Use when: delegating complete lifecycle phases (planning, audit, verification). Examples: name=\"the-architect\", args=\"design metrics service\"; name=\"tester\", args=\"run all cron tests\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the workflow to run (e.g. the-architect, dispatcher, george, tester, etc.)."
+          },
+          "args": {
+            "type": "string",
+            "description": "Arguments, context, or task description passed to the workflow."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "task_wait",
+      "description": "Suspend execution and sleep for N seconds (e.g. waiting for a background service, test completion, or timeout). Returns cleanly when the timer expires. Examples: seconds=5, reason=\"Wait for background service startup\"; seconds=15, reason=\"Wait for build completion\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "seconds": {
+            "type": "integer",
+            "description": "Number of seconds to wait (1 to 600)."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Explanation of what is being waited on."
+          }
+        },
+        "required": [
+          "seconds",
+          "reason"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tool_search",
+      "description": "Search the sovereign tool catalog using natural language intent or category tags (e.g. +ops, +git, +social, +web, cron scheduling, docker). Dynamically auto-mounts discovered tools into your active session. Use when: you need a capability not in your current profile or are unsure how to perform an action. Examples: query=\"how to schedule recurring task\", query=\"+ops\", query=\"docker container exec\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The search query, task intent, or bundle name (e.g. \"+ops\", \"how to schedule cron\", \"+git\")."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "task_complete",
+      "description": "Signal that the overall task or user objective is completely fulfilled. Submits the final output deliverable to the Outer Loop Evaluator for final determination. Use when: you have completed all objectives, tested execution, and are delivering the final response. Examples: summary=\"The meme report cron job issue has been resolved and verified with a live test run.\", artifacts=[\".george/cron_jobs/meme_report.sh\"].",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string",
+            "description": "The complete final response, synthesis, or deliverable report for the operator."
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional list of modified or created file paths."
+          }
+        },
+        "required": [
+          "summary"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "milestone_complete",
+      "description": "Signal that an intermediate milestone is complete or blocked, and submit structured observations and discovered facts to the DAG state barrier. Use when: you have fulfilled an intermediate milestone task and need to advance to the next step. Do NOT call milestone_complete on the final synthesis/reply step — simply write your final response directly as plain text to complete the task. Examples: status=\"success\", summary=\"Phytology status verified: 66 Cambium modules operational.\", facts_discovered=[\"Cambium kernel healthy\", \"0 syntax errors\"]; status=\"blocked\", summary=\"Missing required dependency cargo-tarpaulin\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "success",
+              "blocked"
+            ],
+            "description": "Whether the milestone was successfully completed or is blocked."
+          },
+          "summary": {
+            "type": "string",
+            "description": "Concise summary of actions taken, discoveries made, or blocking reasons."
+          },
+          "facts_discovered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Key factual findings or artifacts produced during this milestone."
+          },
+          "prune_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Optional milestone IDs to mark skipped/done when a conditional branch ('if X then do step Y') proves unnecessary after inspection."
+          }
+        },
+        "required": [
+          "status",
+          "summary"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "file_write",
+      "description": "Create a new file or completely overwrite an existing file with raw content under an atomic per-file lock (preserves literal escape sequences like \\n and \\t without shell mangling). Use when: (1) creating new scripts in .george/tools/ or .george/cron_jobs/, (2) creating new microservice source files, (3) writing complete new modules, or (4) saving persistent task deliverables, research summaries, and working notes using path=\"mem:active_task\". Do NOT use for small surgical edits to existing files (use file_edit instead). Examples: path=\".george/cron_jobs/cache_cleaner.sh\", content=\"#!/bin/bash\\n# INTERVAL: 3600\\n# DESC: Purges cache\\nrm -rf /tmp/cache/*\\n\"; path=\"mem:active_task\", content=\"# Task Report\\nSynthesized findings here.\\n\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative file path from workspace root (e.g. \".george/cron_jobs/my_job.sh\") or semantic memory handle (\"mem:active_task\")."
+          },
+          "content": {
+            "type": "string",
+            "description": "Full raw text content to write to the file."
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "file_append",
+      "description": "Append text content to the end of an existing file or active memory scratchpad under an atomic per-file lock (creates the file if it does not exist). Use when: adding log entries, appending new functions/exports, accumulating research notes in scratchpad.md, or writing sequentially to working memory (path=\"mem:active_task\"). Examples: path=\"mem:active_task\", content=\"\\n## Step 2 Findings\\nDetails...\"; path=\"scratchpad.md\", content=\"\\n### Verified Citation\\n...\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative file path or semantic memory handle (\"mem:active_task\")."
+          },
+          "content": {
+            "type": "string",
+            "description": "Raw text content to append."
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "dir_list",
+      "description": "List directory contents formatted as an indented tree. Use when: exploring repository layout, discovering available scripts in .george/, or verifying directory structure. Examples: path=\".george/tools\", depth=2; path=\"services\", depth=2.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Directory path (defaults to current workspace)."
+          },
+          "depth": {
+            "type": "integer",
+            "description": "Max recursion depth (1-8, defaults to 3)."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "file_grep",
+      "description": "Perform fast regular expression search across files in the workspace using ripgrep. Use when: locating functions, variable definitions, error strings, or specific configuration keys. Examples: pattern=\"cron_enable_job\", path=\"lib/\"; pattern=\"fn main\", path=\"web/src/\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "Regex search pattern (e.g. \"cron_enable_job\", \"struct ServiceConfig\")."
+          },
+          "path": {
+            "type": "string",
+            "description": "Optional subdirectory or file pattern to search within (e.g. \"lib/\", \"web/\")."
+          }
+        },
+        "required": [
+          "pattern"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_search",
+      "description": "Search the live web using sovereign local SearXNG metasearch (Google, Bing, DuckDuckGo, Brave, Wikipedia) with automatic POSIX curl fallback. Supports bang syntax (!it, !science, !gh, !arxiv). Returns URLs, titles, and snippets.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query terms or bang syntax (e.g. !it rust async, !science quantum)."
+          },
+          "count": {
+            "type": "integer",
+            "description": "Number of search results to return (default 5)."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_search_cross_section",
+      "description": "Perform creative non-greedy web search that samples diverse articles across distinct semantic domains and perspectives.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query terms."
+          },
+          "sample_size": {
+            "type": "integer",
+            "description": "Number of diverse cross-section articles to select (default 3)."
+          },
+          "pool_size": {
+            "type": "integer",
+            "description": "Candidate pool size to retrieve and sample across (default 12)."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "searxng_search",
+      "description": "Execute sovereign keyless metasearch across Google, Bing, DuckDuckGo, Brave, Wikipedia, and eBay. Supports category filtering, bang syntax (!it, !science, !gh, !arxiv), and time ranges.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The search query phrase or bang syntax."
+          },
+          "category": {
+            "type": "string",
+            "description": "Search category: general, it, science, news, images, files, social media (default: general).",
+            "enum": [
+              "general",
+              "it",
+              "science",
+              "news",
+              "images",
+              "files",
+              "social media"
+            ]
+          },
+          "engines": {
+            "type": "string",
+            "description": "Optional comma-separated list of specific engines to query (e.g. google,bing,duckduckgo)."
+          },
+          "time_range": {
+            "type": "string",
+            "description": "Time range filter: day, week, month, year.",
+            "enum": [
+              "day",
+              "week",
+              "month",
+              "year"
+            ]
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "Maximum number of results to return (default: 8)."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "searxng_code_search",
+      "description": "Search developer code repositories, documentation, and technical Q&A across GitHub, GitLab, StackOverflow, crates.io, PyPI, npm, Arch Wiki, MDN, and Docker Hub.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Code, repository, library, or error message to search."
+          },
+          "engines": {
+            "type": "string",
+            "description": "Optional comma-separated engines (default: github,gitlab,stackoverflow,crates.io,pypi,npm,arch linux wiki,mdn,docker hub,huggingface)."
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "Maximum results to return (default: 8)."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "searxng_science_search",
+      "description": "Search academic publications, scientific papers, and research databases across arXiv, PubMed, Crossref, Google Scholar, Semantic Scholar, and Europe PMC.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Research paper topic, author, DOI, or scientific concept."
+          },
+          "engines": {
+            "type": "string",
+            "description": "Optional comma-separated engines (default: arxiv,pubmed,crossref,google scholar,semantic scholar,europepmc)."
+          },
+          "time_range": {
+            "type": "string",
+            "description": "Time filter: day, week, month, year.",
+            "enum": [
+              "day",
+              "week",
+              "month",
+              "year"
+            ]
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "Maximum papers to return (default: 8)."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "arxiv_search",
+      "description": "Direct academic research search querying official arXiv preprints. Returns verified paper titles, direct arXiv URLs, PDF links, authors, publication dates, and full abstracts.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "arXiv topic, preprint title, author, or research field (e.g. 'graph neural networks agent planning')."
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "Maximum preprints to return (default: 8)."
+          },
+          "sort_by": {
+            "type": "string",
+            "description": "Sorting order: relevance, submittedDate, or lastUpdatedDate (default: relevance).",
+            "enum": [
+              "relevance",
+              "submittedDate",
+              "lastUpdatedDate"
+            ]
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "hn_search",
+      "description": "Search Hacker News practitioner discussions, engineering war stories, and community comments on technical topics via the Algolia API.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query for Hacker News stories and discussions."
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "Maximum discussion threads to return (default: 8)."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "api_search",
+      "description": "Search local catalog of 1,950+ free public REST APIs for structured external data sources (weather, geocoding, finance, cryptocurrency, science, government, transportation, dictionaries, etc.). Prioritizes keyless/zero-auth endpoints for immediate autonomous consumption.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Keywords describing the needed data source (e.g. 'weather forecast', 'geocoding', 'currency exchange', 'patents', 'crypto prices')."
+          },
+          "category": {
+            "type": "string",
+            "description": "Optional category filter (e.g. 'Weather', 'Geocoding', 'Finance', 'Cryptocurrency', 'Government', 'Science & Math', 'Transportation', 'Development')."
+          },
+          "no_auth_only": {
+            "type": "boolean",
+            "description": "If true, restrict results strictly to keyless / zero-auth APIs that require no API key or credentials (default: true)."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of matching APIs to return (default: 5)."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "research_sandbox",
+      "description": "Execute an autonomous deep research investigation on any topic inside an isolated sandbox using pure bash scraping and non-greedy cross-sectional search. Ingests multiple distinct domain perspectives and returns a complete structured research dossier with source links, excerpts, and synthesis in a single turn without multiple tool calls.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string",
+            "description": "The research topic, question, or entity query."
+          },
+          "sample_size": {
+            "type": "integer",
+            "description": "Number of distinct domain perspectives to sample (default 3)."
+          },
+          "output_file": {
+            "type": "string",
+            "description": "Optional file path to persist the research dossier markdown artifact."
+          }
+        },
+        "required": [
+          "topic"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_fetch",
+      "description": "Fetch and extract structured Markdown content + Page Overview (Section Map & Outbound Subpage Links) from a web URL. Includes built-in anti-bot domain adapters for Reddit (pass standard URLs like https://www.reddit.com/r/<sub>/hot or https://www.reddit.com/r/<sub>/comments/<id>/<slug>/ to extract post bodies, media/image URLs, and top community comments with live upvote counts — prefer web_fetch over raw curl on .json), MediaWiki/Fandom/Wiki.gg/Wikipedia, GitHub repos, and SPA guides.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Web URL to fetch (HTTP or HTTPS)."
+          }
+        },
+        "required": [
+          "url"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "github_search",
+      "description": "Search GitHub repositories for open source reference implementations and code.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "GitHub search keywords."
+          },
+          "count": {
+            "type": "integer",
+            "description": "Max repositories to return (default 5)."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "memory_get_section",
+      "description": "Read a specific section from GEORGE.md project memory (e.g. Active Task, Workspace Layout, Completed Milestones, Context Files, Agent Notes).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "section": {
+            "type": "string",
+            "description": "Section header name in GEORGE.md."
+          }
+        },
+        "required": [
+          "section"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "memory_update_section",
+      "description": "Overwrite the contents of a specific section in GEORGE.md project memory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "section": {
+            "type": "string",
+            "description": "Section header name in GEORGE.md."
+          },
+          "content": {
+            "type": "string",
+            "description": "New content for the section."
+          }
+        },
+        "required": [
+          "section",
+          "content"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "memory_append_section",
+      "description": "Append a bullet point or text line to a section in GEORGE.md.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "section": {
+            "type": "string",
+            "description": "Section header name in GEORGE.md."
+          },
+          "line": {
+            "type": "string",
+            "description": "Line of text to append."
+          }
+        },
+        "required": [
+          "section",
+          "line"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "memory_read_soul",
+      "description": "Read George foundational soul identity and sovereign principles from soul.md.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "recall_search",
+      "description": "Search George semantic vector and keyword knowledge base for historical project decisions, architecture notes, and user preferences.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Semantic search query."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max entries to return (default 5)."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "recall_ingest",
+      "description": "Ingest and index a local file or document into the semantic memory registry.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative file path to index."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "recall_list_docs",
+      "description": "List all indexed documents currently stored in the semantic recall knowledge base.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "recall_archive_milestone",
+      "description": "Archive a completed milestone into semantic memory for permanent historical recall.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Title of completed milestone."
+          },
+          "description": {
+            "type": "string",
+            "description": "Details and outcomes of the milestone."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "journal_record",
+      "description": "Record an episodic learning, insight, or decision into George permanent journal.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "reflection": {
+            "type": "string",
+            "description": "Insight, summary of lesson learned, or architectural decision."
+          }
+        },
+        "required": [
+          "reflection"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "journal_read",
+      "description": "Read recent episodic journal reflections and recorded learnings.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "description": "Number of recent entries to read (default 5)."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "model_param_set",
+      "description": "Configure runtime model sampling parameters (e.g. temperature, top_p, top_k, max_tokens, repeat_penalty).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "param": {
+            "type": "string",
+            "description": "Parameter name (e.g. temperature, top_p, top_k, max_tokens, repeat_penalty)."
+          },
+          "value": {
+            "type": "string",
+            "description": "Parameter value."
+          }
+        },
+        "required": [
+          "param",
+          "value"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "model_param_get",
+      "description": "Retrieve current model parameter settings or inspect a specific parameter.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "param": {
+            "type": "string",
+            "description": "Optional specific parameter name to query."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "model_param_clear",
+      "description": "Reset one or all model parameters back to endpoint defaults.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "param": {
+            "type": "string",
+            "description": "Optional parameter to clear. If omitted, resets all parameters."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "model_endpoint_switch",
+      "description": "Switch the active inference tier (Tier 3 Mac Ultra M5 -> Tier 1 RTX 3060 12GB -> Tier 2 AMD 5700xt -> Tier 0 Edge mobile).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tier": {
+            "type": "integer",
+            "description": "Target tier number (0, 1, 2, or 3)."
+          }
+        },
+        "required": [
+          "tier"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "model_endpoint_status",
+      "description": "Query the live health, latencies, model quants, and context limits across the 4-tier hardware ladder.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mcp_server_status",
+      "description": "List configured and active Model Context Protocol (MCP) servers and their running statuses.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mcp_server_add",
+      "description": "Register a new MCP server in the George MCP configuration.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Unique identifier for the server."
+          },
+          "command": {
+            "type": "string",
+            "description": "Launch command (e.g. npx -y @modelcontextprotocol/server-git or posix script)."
+          },
+          "description": {
+            "type": "string",
+            "description": "Brief description of the server capabilities."
+          }
+        },
+        "required": [
+          "name",
+          "command"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mcp_server_remove",
+      "description": "Unregister an MCP server from the configuration.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the server to remove."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mcp_server_start",
+      "description": "Start a registered MCP server process.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the registered server to start."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mcp_server_stop",
+      "description": "Stop a running MCP server process.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the running server to stop."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mcp_tool_execute",
+      "description": "Explicitly invoke a tool on a running MCP server.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "server": {
+            "type": "string",
+            "description": "Name of the running MCP server."
+          },
+          "tool": {
+            "type": "string",
+            "description": "Name of the MCP tool to call."
+          },
+          "arguments": {
+            "type": "object",
+            "description": "Arguments object matching the tool inputSchema."
+          }
+        },
+        "required": [
+          "server",
+          "tool"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "email_send",
+      "description": "Send an email message via configured pure POSIX SMTP or bridge.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string",
+            "description": "Recipient email address."
+          },
+          "subject": {
+            "type": "string",
+            "description": "Subject line."
+          },
+          "body": {
+            "type": "string",
+            "description": "Plain text body."
+          }
+        },
+        "required": [
+          "to",
+          "subject",
+          "body"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "email_read",
+      "description": "Read recent incoming emails from inbox.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "description": "Number of emails to retrieve (default 5)."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "phone_sms_send",
+      "description": "Send an SMS text message using Termux Android telephony integration.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "number": {
+            "type": "string",
+            "description": "Recipient phone number."
+          },
+          "message": {
+            "type": "string",
+            "description": "SMS message text."
+          }
+        },
+        "required": [
+          "number",
+          "message"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mqtt_publish",
+      "description": "Publish a message or sensor payload to an MQTT topic broker.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string",
+            "description": "MQTT topic (e.g. lodge/telemetry or home/sensor)."
+          },
+          "message": {
+            "type": "string",
+            "description": "Payload string or JSON."
+          }
+        },
+        "required": [
+          "topic",
+          "message"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "discord_send",
+      "description": "Post a message to Discord. Inside an active Discord conversation, your final reply at the end of your turn is posted to the current channel automatically — do NOT call discord_send to deliver your final answer. Only use discord_send inside a conversation (with target omitted/'here') for mid-task progress updates when you are continuing to run more tools, or to post to a DIFFERENT channel/user. Outside a conversation, target a channel name/id. DMs require target 'dm:<user>' (or the discord_dm tool). Messages over 2,000 characters are automatically split on paragraph/line boundaries by the bridge — NEVER count characters or rewrite drafts to fit a character limit; pass the full text in a single call.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Optional. Empty/'here' = the current conversation's channel. Otherwise a channel name (e.g. 'general'), server name, numeric channel id, or 'dm:<user>' for a direct message."
+          },
+          "message": {
+            "type": "string",
+            "description": "Message text to transmit (auto-splits on line boundaries if > 2,000 chars; do not count characters)."
+          }
+        },
+        "required": [
+          "message"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "discord_edit",
+      "description": "Edit a message you already posted in this Discord conversation (default: your most recent one). Use it to turn a 'working on it' note into the finished answer, or to correct a mistake. Max 2000 chars.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "The full replacement text."
+          },
+          "message_id": {
+            "type": "string",
+            "description": "Optional id of one of your messages from this run; defaults to the last one."
+          }
+        },
+        "required": [
+          "message"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "discord_dm",
+      "description": "Send a direct message (DM) to a Discord user (e.g. 'operator', '@operator', 'me', or user ID) via Discord Bot API. Messages over 2,000 characters are automatically split on paragraph/line boundaries by the bridge — NEVER count characters or rewrite drafts to fit a character limit; pass the full text in a single call.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "string",
+            "description": "Username, display name, mention (e.g. 'operator', '@operator', 'me'), or Discord user ID."
+          },
+          "message": {
+            "type": "string",
+            "description": "Message text to send as DM (auto-splits on line boundaries if > 2,000 chars; do not count characters)."
+          }
+        },
+        "required": [
+          "user",
+          "message"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "discord_send_file",
+      "description": "Upload a local image or file attachment (e.g. PNG, JPG, PDF, TXT) to a Discord channel or user DM. Inside an active Discord conversation, omit target (or pass 'here') to upload directly to the current channel; long captions (>1950 chars) auto-split across follow-up messages cleanly.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Optional destination channel name, ID, 'here' (current conversation channel), or 'dm:<user>'. Defaults to the current Discord conversation channel."
+          },
+          "file_path": {
+            "type": "string",
+            "description": "Absolute or workspace path to the local file/image to upload."
+          },
+          "message": {
+            "type": "string",
+            "description": "Optional accompanying text message (auto-splits cleanly if >1950 chars)."
+          }
+        },
+        "required": [
+          "file_path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "discord_read",
+      "description": "Read recent message history from a Discord channel or DM (e.g. to inspect past interactions, logs, or user instructions).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "Destination channel name (e.g. 'general'), numeric channel ID, or user ID."
+          },
+          "count": {
+            "type": "integer",
+            "description": "Number of recent messages to retrieve (default: 10, max: 50)."
+          }
+        },
+        "required": [
+          "channel"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "telegram_send",
+      "description": "Send a message via Telegram bot API.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Message text."
+          }
+        },
+        "required": [
+          "message"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "social_post",
+      "description": "Post a status update or message across configured social networks (Bluesky, Mastodon, X).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "network": {
+            "type": "string",
+            "description": "Network to post to: bluesky, mastodon, x, or all.",
+            "enum": [
+              "bluesky",
+              "mastodon",
+              "x",
+              "all"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "description": "Post content."
+          }
+        },
+        "required": [
+          "network",
+          "text"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "system_vitals",
+      "description": "Retrieve live hardware vitals: CPU usage, RAM utilization, thermals, disk space, battery status, and GPU layers.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subagent_delegate",
+      "description": "Delegate a subtask to an available lower-tier hardware node (e.g. Tier 2 AMD 5700xt or Tier 0 Edge mobile).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tier": {
+            "type": "integer",
+            "description": "Target tier number (e.g. 2 or 0)."
+          },
+          "task": {
+            "type": "string",
+            "description": "Specific, bounded task description for the worker."
+          }
+        },
+        "required": [
+          "tier",
+          "task"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subagent_spawn",
+      "description": "Spawn an autonomous subagent inside an isolated git worktree sandbox (.sandboxes/<child_id>) with in-flight control FIFO, central registry tracking, and streaming observability.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tier": {
+            "type": "integer",
+            "description": "Target tier number (e.g. 1 for CUDA workhorse, 2 for AMD, 0 for mobile edge)."
+          },
+          "objective": {
+            "type": "string",
+            "description": "Specific objective and success criteria for the delegated child agent."
+          },
+          "context": {
+            "type": "string",
+            "description": "Optional parent context, file paths, or instructions."
+          },
+          "max_turns": {
+            "type": "integer",
+            "description": "Maximum turn ceiling for child agent (default: 200)."
+          },
+          "async": {
+            "type": "boolean",
+            "description": "Run asynchronously in background (returns immediately with subagent ID, PID, branch, and log file path)."
+          }
+        },
+        "required": [
+          "tier",
+          "objective"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subagent_status",
+      "description": "Inspect active subagent processes, turns, and execution status from central registry.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sub_id": {
+            "type": "string",
+            "description": "Optional child ID. If omitted, lists all active subagents."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subagent_logs",
+      "description": "Inspect real-time process stream, thoughts, tool actions, observations, and milestones of a child subagent clone.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sub_id": {
+            "type": "string",
+            "description": "Child subagent ID."
+          },
+          "lines": {
+            "type": "integer",
+            "description": "Number of recent lines to retrieve (default: 50)."
+          }
+        },
+        "required": [
+          "sub_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subagent_diff",
+      "description": "Inspect the git diff between parent HEAD and a child subagent worktree sandbox branch.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sub_id": {
+            "type": "string",
+            "description": "Child subagent ID."
+          },
+          "stat_only": {
+            "type": "boolean",
+            "description": "If true, returns only short diffstat."
+          }
+        },
+        "required": [
+          "sub_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subagent_merge",
+      "description": "Merge a completed child subagent worktree branch deliverable into the active branch.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sub_id": {
+            "type": "string",
+            "description": "Child subagent ID."
+          },
+          "strategy": {
+            "type": "string",
+            "description": "Merge strategy: merge (default) or squash.",
+            "enum": [
+              "merge",
+              "squash"
+            ]
+          }
+        },
+        "required": [
+          "sub_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subagent_reap",
+      "description": "Cleanly remove a child subagent git worktree sandbox and delete its branch.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sub_id": {
+            "type": "string",
+            "description": "Child subagent ID."
+          }
+        },
+        "required": [
+          "sub_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subagent_intervene",
+      "description": "Send real-time control directives (PAUSE, RESUME, ABORT) to an in-flight child subagent via its control FIFO.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sub_id": {
+            "type": "string",
+            "description": "Target child subagent ID."
+          },
+          "command": {
+            "type": "string",
+            "description": "Directive: PAUSE, RESUME, or ABORT.",
+            "enum": [
+              "PAUSE",
+              "RESUME",
+              "ABORT"
+            ]
+          }
+        },
+        "required": [
+          "sub_id",
+          "command"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subagent_await",
+      "description": "Wait for a running child subagent to complete and retrieve its final synthesized deliverable.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sub_id": {
+            "type": "string",
+            "description": "Target child subagent ID."
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "description": "Maximum seconds to wait (default: 120)."
+          }
+        },
+        "required": [
+          "sub_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "code_symbol_read",
+      "description": "Retrieve the exact lines of code defining a named function or class via SQLite symbol index and Tree-sitter AST slicing without reading the whole file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "symbol_name": {
+            "type": "string",
+            "description": "Name of function, method, or class to inspect."
+          },
+          "file_path": {
+            "type": "string",
+            "description": "Optional relative path to file containing symbol."
+          }
+        },
+        "required": [
+          "symbol_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "code_symbol_patch",
+      "description": "Apply an AST-validated patch to a named function in a file on disk.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "Relative file path."
+          },
+          "symbol_name": {
+            "type": "string",
+            "description": "Name of function to replace."
+          },
+          "new_symbol_code": {
+            "type": "string",
+            "description": "New code for the function."
+          }
+        },
+        "required": [
+          "file_path",
+          "symbol_name",
+          "new_symbol_code"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "reflexive_status",
+      "description": "Inspect the reflexive intelligence layer: Soul Consensus Gate, self-improving prompt grades, adaptive token budgets, and metacognitive self-model state.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "reflexive_toggle",
+      "description": "Enable or disable a reflexive intelligence subsystem (soul_gate, prompt_learn, adapt_tokens, speculate, self_model).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "subsystem": {
+            "type": "string",
+            "description": "Subsystem name: soul_gate, prompt_learn, adapt_tokens, speculate, self_model, or all."
+          },
+          "state": {
+            "type": "string",
+            "description": "State: on or off (or 1 or 0)."
+          }
+        },
+        "required": [
+          "subsystem",
+          "state"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "reflexive_metacog_assess",
+      "description": "Trigger an internal metacognitive self-assessment of the agent cognition, progress, and reasoning path.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "reflexive_prompt_grade",
+      "description": "Record an outcome grade for the current turn prompt to train recursive prompt mutation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "integer",
+            "description": "Grade score: 1 for success, 0 for failure."
+          },
+          "hint": {
+            "type": "string",
+            "description": "Optional optimization hint or note for future prompt assembly."
+          }
+        },
+        "required": [
+          "score"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "wallet_status",
+      "description": "Query crypto wallet configurations, API health, and network for Bitcoin, Solana, and Cardano.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "wallet_balances",
+      "description": "Retrieve live wallet balances across Bitcoin (BTC), Solana (SOL), and Cardano (ADA).",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "cardano_dex_swap",
+      "description": "Execute or simulate a real Cardano Mainnet DEX swap via Minswap Aggregator API using the sovereign hot wallet (supports both buy and sell). Enforces hard 40.00 ADA reserve floor and max 200.00 ADA trade limit.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "amount": {
+            "type": "number",
+            "description": "Amount of input asset to swap (max 200.00 ADA when spending ADA)."
+          },
+          "token": {
+            "type": "string",
+            "description": "Target or trading token symbol (supported: SNEK, MIN, WMTX, DJED, IAG)."
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "description": "Swap direction relative to token ('buy'=ADA->token, 'sell'=token->ADA). Default is 'buy'."
+          },
+          "from_token": {
+            "type": "string",
+            "description": "Optional explicit source token symbol (e.g. 'ADA', 'IAG'). Default is 'ADA'."
+          },
+          "to_token": {
+            "type": "string",
+            "description": "Optional explicit destination token symbol (e.g. 'SNEK', 'ADA'). Default is token."
+          },
+          "execute": {
+            "type": "boolean",
+            "description": "If true, cryptographically signs and submits the real transaction to Cardano Mainnet. If false (default), performs dry-run route estimation, CBOR construction, and verification."
+          }
+        },
+        "required": [
+          "amount",
+          "token"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "cardano_stop_manage",
+      "description": "Calculate quantitative stop/bracket bounds, arm breakout stop-buys and OCO triggers, list active triggers, cancel triggers, or view trade journal for Cardano assets (SNEK, MIN, INDY, LENFI, etc.). Enforces 40 ADA reserve floor and fee drag validation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "calc",
+              "arm",
+              "list",
+              "cancel",
+              "prune",
+              "journal"
+            ],
+            "description": "Action to perform: 'calc' to analyze coil and get stop/OCO recommendations, 'arm' to arm a stop/OCO trigger, 'list' to list triggers, 'cancel' to cancel a trigger, 'prune' to prune stale triggers, 'journal' to read trade journal."
+          },
+          "asset": {
+            "type": "string",
+            "description": "Token symbol (e.g. 'SNEK', 'MIN', 'INDY', 'LENFI', 'WMTX'). Required for 'calc' and 'arm'."
+          },
+          "trigger_price": {
+            "type": "number",
+            "description": "Trigger price in ADA per token for stop-buy or OCO trigger. Required for 'arm'."
+          },
+          "capital_ada": {
+            "type": "number",
+            "description": "Capital in ADA to allocate for the trigger order. Required for 'arm'."
+          },
+          "invalidation_price": {
+            "type": "number",
+            "description": "Optional invalidation/trap price in ADA where the armed trigger is auto-disarmed if price falls below."
+          },
+          "trigger_type": {
+            "type": "string",
+            "enum": [
+              "STOP_BUY",
+              "STOP_LOSS"
+            ],
+            "description": "Trigger type: 'STOP_BUY' (default) or 'STOP_LOSS'."
+          },
+          "tp_pct": {
+            "type": "number",
+            "description": "Take-profit target percentage for OCO bracket (default 4.0%)."
+          },
+          "sl_pct": {
+            "type": "number",
+            "description": "Stop-loss target percentage for OCO bracket (default 2.5%)."
+          },
+          "trigger_id": {
+            "type": "string",
+            "description": "Specific trigger ID to cancel (e.g. 'stop_snek_...') or 'all' to cancel all armed triggers. Required for 'cancel'."
+          },
+          "force_overallocate": {
+            "type": "boolean",
+            "description": "If true, overrides headroom saturation check when capital is already committed on-chain."
+          },
+          "execute": {
+            "type": "boolean",
+            "description": "If true, arms for live automated execution. If false (default), runs in dry-run simulation mode."
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "cardano_desk_summary",
+      "description": "Produces institutional-grade Sovereign DEX Desk positioning summaries across Engine B (Resting Plutus Ladders) and Engine C (Breakout Stop-Buy & OCO Brackets), combined with real-time Batcher Queue mempool telemetry, spot pricing, and on-chain treasury headroom.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string",
+            "description": "Token symbol (e.g. 'SNEK', 'MIN', 'INDY', 'LENFI', 'WMTX', 'IAG', 'DJED'). Defaults to 'SNEK'."
+          },
+          "json_format": {
+            "type": "boolean",
+            "description": "If true, outputs pure structured JSON. If false (default), outputs formatted technical markdown report."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "crypto_order",
+      "description": "Unified Cardano Order Manager (UCOM): plan & deploy multi-rung resting limit ladders with strict 80 ADA minimum floor and Option C inventory preloading, arm breakout stop-buys with invalidation disarm traps, universally cancel orders, prune lower rungs, and view polymorphic order books.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "subcommand": {
+            "type": "string",
+            "enum": [
+              "status",
+              "ladder",
+              "stop",
+              "cancel",
+              "prune"
+            ],
+            "description": "Subcommand to execute. Defaults to 'status'."
+          },
+          "asset": {
+            "type": "string",
+            "description": "Token symbol (e.g. 'SNEK', 'NIGHT', 'MIN', 'IAG')."
+          },
+          "capital": {
+            "type": "number",
+            "description": "Total ADA capital to commit (defaults to 160.0 for ladders, 40.0 for stops)."
+          },
+          "rungs": {
+            "type": "integer",
+            "description": "Number of rungs for ladder (default 2; auto-compressed if 80 ADA/rung floor would be breached)."
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "geometric",
+              "uniform"
+            ],
+            "description": "Capital allocation profile across ladder rungs."
+          },
+          "trigger_price": {
+            "type": "number",
+            "description": "Breakout resistance trigger price in ADA for stop-buy."
+          },
+          "invalidation_price": {
+            "type": "number",
+            "description": "Support invalidation price in ADA (auto-disarms trigger if spot drops below)."
+          },
+          "tp": {
+            "type": "number",
+            "description": "Take-profit target percentage for chained OCO bracket (default 4.0%)."
+          },
+          "sl": {
+            "type": "number",
+            "description": "Stop-loss target percentage for chained OCO bracket (default 2.5%)."
+          },
+          "ref_id": {
+            "type": "string",
+            "description": "Order ID, trigger ID, or UTxO ref for cancellation."
+          },
+          "ladder_id": {
+            "type": "string",
+            "description": "Ladder identifier for pruning."
+          },
+          "filled_rung_id": {
+            "type": "string",
+            "description": "Order ID of filled upper rung for pruning validation."
+          },
+          "execute": {
+            "type": "boolean",
+            "description": "If true, submits live transactions to Cardano mainnet. If false (default), runs in simulation/dry-run."
+          },
+          "json_format": {
+            "type": "boolean",
+            "description": "If true, outputs pure JSON."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "cardano_triangle_deploy",
+      "description": "One-click / autonomous deployment of the complete 3-Engine Sovereign Coverage Triangle: calculates quantitative support ladder and breakout resistance bounds, validates the 40.0 ADA reserve floor, places a 3-tier Plutus resting limit buy ladder at support (Engine B), and arms a breakout stop-buy trigger with auto-disarm invalidation trap and chained OCO bracket (Engine C).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string",
+            "description": "Token symbol (e.g. 'SNEK', 'MIN', 'INDY', 'LENFI', 'WMTX', 'IAG', 'DJED'). Defaults to 'SNEK'."
+          },
+          "total_capital_ada": {
+            "type": "number",
+            "description": "Total ADA capital to commit across the triangle (allocated 75% across 3 support limit rungs, 25% to breakout stop). Defaults to 120.0 ADA."
+          },
+          "tp_pct": {
+            "type": "number",
+            "description": "Take-profit percentage target for chained OCO bracket (default 4.0%)."
+          },
+          "sl_pct": {
+            "type": "number",
+            "description": "Stop-loss percentage target for chained OCO bracket (default 2.5%)."
+          },
+          "execute": {
+            "type": "boolean",
+            "description": "If true, broadcasts on Cardano mainnet (requires policy clearance). If false (default), runs in dry-run simulation mode."
+          },
+          "json_format": {
+            "type": "boolean",
+            "description": "If true, outputs pure structured JSON. If false (default), outputs formatted technical markdown receipt."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "cardano_p2p_underwrite",
+      "description": "Scan and underwrite Cardano over-collateralized P2P loan requests (FluidTokens, Lenfi, Sovereign Escrows) with LTV <= 50% and APR >= 8%.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "simulate_flags": {
+            "type": "string",
+            "description": "Optional flags for loan simulation (e.g. '--asset DJED --units 30 --req-ada 25 --interest-ada 1.5 --duration 14'). Leave blank to scan live on-chain requests."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "cardano_flash_sniper",
+      "description": "Scan live Cardano Mainnet DEX liquidity pools (Spectrum, Minswap v2, SundaeSwap v3, Cswap) for flash spread dislocations and positive net ADA profit.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "crypto_analyze",
+      "description": "Rigorous ADA-quoted time-series analysis of a Cardano token (horizon volatility, ADF stationarity, variance ratio, OU half-life, regime verdict such as LEVEL_MEAN_REVERTING / RANDOM_WALK / ADVERSE_SELECTION_ALERT_DO_NOT_PLACE_BIDS). Read-only. Returns status=unavailable rather than guessing when data is missing.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string",
+            "description": "Token symbol: SNEK, MIN, WMTX, DJED, IAG."
+          }
+        },
+        "required": [
+          "asset"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "crypto_forecast",
+      "description": "Fill-probability forecast for a limit order (closed-form, bootstrap, empirical and OU methods at 6/24/72/168h). If a live on-chain order matches the price (or utxo is given) it analyses that order and flags EXPIRED orders for reclaim. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string",
+            "description": "Token symbol."
+          },
+          "target_price": {
+            "type": "number",
+            "description": "Limit price in ADA per token. Optional if utxo is given."
+          },
+          "amount": {
+            "type": "number",
+            "description": "Token quantity (optional)."
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "description": "Order side (default sell)."
+          },
+          "deadline_hours": {
+            "type": "number",
+            "description": "Optional custom horizon in hours."
+          },
+          "utxo": {
+            "type": "string",
+            "description": "Optional order UTxO '<txhash>#<index>' to analyse."
+          },
+          "hypothetical": {
+            "type": "boolean",
+            "description": "true = price a NEW order at target_price even if a live order is within 1%."
+          }
+        },
+        "required": [
+          "asset"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "crypto_chart",
+      "description": "Chart data for a token: OHLCV candles, our on-chain transactions with explorer links, limit/trigger/cost-basis lines and volatility cone. Read-only; returns a compact summary.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string",
+            "description": "Token symbol."
+          },
+          "timeframe": {
+            "type": "string",
+            "enum": [
+              "15m",
+              "1h",
+              "4h",
+              "1d"
+            ],
+            "description": "Candle timeframe (default 1h)."
+          }
+        },
+        "required": [
+          "asset"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "crypto_orders",
+      "description": "Discover all of the wallet's DEX orders on chain (Minswap V2, WingRiders, Splash, escrows) with status OPEN/EXPIRED/FILLED/CANCELLED, or inspect a single order UTxO. Read-only chain truth.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "discover",
+              "inspect"
+            ],
+            "description": "discover (default) or inspect."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "all",
+              "closed"
+            ],
+            "description": "Filter discovered orders by status: 'open' (default, active unconsumed on-chain), 'all', or 'closed' (FILLED/CANCELLED)."
+          },
+          "compact": {
+            "type": "boolean",
+            "description": "If true (default), returns stripped summary without raw Plutus datum internals."
+          },
+          "utxo": {
+            "type": "string",
+            "description": "Order UTxO '<txhash>#<index>' (required for inspect)."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "crypto_place_limit",
+      "description": "Build (and optionally submit) a native Minswap V2 limit order from George's hot wallet. Runs as actor=george: autonomous submission is capped by the operator policy (per-trade/daily ADA limits, asset allow-list, reserve floor). Always dry-run first.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string",
+            "description": "Token symbol."
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "amount": {
+            "type": "number",
+            "description": "Token quantity."
+          },
+          "price": {
+            "type": "number",
+            "description": "Limit price in ADA per token."
+          },
+          "execute": {
+            "type": "boolean",
+            "description": "true submits to mainnet subject to policy; false (default) builds and evaluates only."
+          }
+        },
+        "required": [
+          "asset",
+          "direction",
+          "amount",
+          "price"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "crypto_reclaim_order",
+      "description": "Reclaim (cancel) one of the wallet's own DEX orders, returning locked funds. Evaluates the Plutus redeemer before any submission. Runs as actor=george, subject to policy. Always dry-run first.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "utxo": {
+            "type": "string",
+            "description": "Order UTxO '<txhash>#<index>'."
+          },
+          "execute": {
+            "type": "boolean",
+            "description": "true submits to mainnet subject to policy; false (default) is a dry run."
+          }
+        },
+        "required": [
+          "utxo"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "polymarket_arbitrage",
+      "description": "Scan Polygon Polymarket order books for negative-risk probability arbitrage (sum of outcome asks < $0.985).",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "wallet_set_network",
+      "description": "Switch cryptocurrency network environment between mainnet and testnet.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "network": {
+            "type": "string",
+            "description": "Network: mainnet or testnet.",
+            "enum": [
+              "mainnet",
+              "testnet"
+            ]
+          }
+        },
+        "required": [
+          "network"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "crypto_send",
+      "description": "Execute a cryptocurrency transfer on Bitcoin, Solana, or Cardano.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "chain": {
+            "type": "string",
+            "description": "Blockchain: btc, sol, or ada.",
+            "enum": [
+              "btc",
+              "sol",
+              "ada"
+            ]
+          },
+          "to": {
+            "type": "string",
+            "description": "Recipient wallet address."
+          },
+          "amount": {
+            "type": "string",
+            "description": "Amount to transfer (e.g. 0.05 or 1000000 satoshis/lamports)."
+          }
+        },
+        "required": [
+          "chain",
+          "to",
+          "amount"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "solana_airdrop",
+      "description": "Request devnet/testnet SOL airdrop to configured Solana wallet address.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "amount": {
+            "type": "number",
+            "description": "Amount of SOL to request (default 1)."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "vision_analyze",
+      "description": "Analyze an image, diagram, screenshot, or chart using multimodal AI vision.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "Local image file path or web URL."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Analysis instructions or questions regarding the image."
+          }
+        },
+        "required": [
+          "image"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "reverse_image_search",
+      "description": "Execute sovereign reverse visual search across an image. Extracts visual features, queries SearXNG metasearch across the web, and re-ranks candidate matches via MobileCLIP ONNX cosine similarity and colorway alignment.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "Local file path, web URL, or base64 data string of the target image."
+          },
+          "hint": {
+            "type": "string",
+            "description": "Optional search hint, brand name, or item context to guide reconnaissance."
+          },
+          "max_candidates": {
+            "type": "integer",
+            "description": "Maximum candidate images to scan and re-rank (default: 15)."
+          },
+          "domain": {
+            "type": "string",
+            "enum": ["general", "reseller"],
+            "description": "Forensic extraction mode. Use 'reseller' for Poshmark/eBay apparel forensics, tag/RN extraction, and sold comp discovery."
+          },
+          "extra_images": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional additional local photo paths (e.g., brand label, size tag, care/RN tag) analyzed alongside the hero image in one multimodal call."
+          }
+        },
+        "required": [
+          "image"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "file_download",
+      "description": "Download a file or webpage (HTTP/HTTPS URL) or copy local file to workspace destination with MIME verification.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Source URL or local file path."
+          },
+          "destination": {
+            "type": "string",
+            "description": "Destination file path in workspace."
+          }
+        },
+        "required": [
+          "source"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "service_list",
+      "description": "List all registered background microservices and daemons with PID, port, and uptime.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "service_manage",
+      "description": "Manage background microservices (register, build, deploy, start, stop, restart, status, logs). Use when: (1) registering a new Rust or binary service, (2) compiling and building it, or (3) controlling its daemon lifecycle. Examples: action=\"register\", name=\"metrics_worker\", args=\"services/metrics\"; action=\"build\", name=\"metrics_worker\"; action=\"start\", name=\"metrics_worker\"; action=\"status\", name=\"metrics_worker\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Action: start, stop, restart, status, logs, build, deploy, register, unregister.",
+            "enum": [
+              "start",
+              "stop",
+              "restart",
+              "status",
+              "logs",
+              "build",
+              "deploy",
+              "register",
+              "unregister"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Unique service name (e.g. \"metrics_worker\", \"echo_service\")."
+          },
+          "args": {
+            "type": "string",
+            "description": "Optional additional arguments (e.g. \"services/my_service\" for register, line count for logs)."
+          }
+        },
+        "required": [
+          "action",
+          "name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "sandbox_create",
+      "description": "Create an isolated workspace sandbox directory for safe build, execution, and testing.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Unique name for the sandbox."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "sandbox_exec",
+      "description": "Execute a bash shell command inside an isolated workspace sandbox.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Sandbox name."
+          },
+          "command": {
+            "type": "string",
+            "description": "Shell command string to execute inside sandbox."
+          }
+        },
+        "required": [
+          "name",
+          "command"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "sandbox_list",
+      "description": "List all active workspace sandboxes.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "sandbox_remove",
+      "description": "Tear down and remove an isolated workspace sandbox.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Sandbox name to delete."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "container_exec",
+      "description": "Execute a shell command inside a Docker or proot container environment.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Command string to run inside container."
+          },
+          "distro": {
+            "type": "string",
+            "description": "Container distribution (e.g. ubuntu, debian, alpine, arch)."
+          }
+        },
+        "required": [
+          "command"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "project_build",
+      "description": "Build the workspace project with auto-detection for Rust Cargo, Python, Makefile, and TypeScript (bun/deno/npm/tsc).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "string",
+            "description": "Optional build arguments (e.g. release or subdirectory)."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "project_test",
+      "description": "Run workspace tests with auto-detection for Rust (cargo test), Python (pytest/unittest), and TypeScript (vitest/jest/bun:test/npm test).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "string",
+            "description": "Optional specific test name or file path."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "slash_command_exec",
+      "description": "Execute any Blue Lodge slash command. Use when: (1) managing Software Phytology living tissue, health, and cache status (/phytology status, /phytology audit [--cached], /phytology cache-status, /phytology cache-invalidate, /phytology heal), (2) creating, inspecting, or controlling recurring cron jobs (/cron), (3) managing microservices (/service), (4) registering tools (/tool), or (5) executing workflows (/workflow). Examples: command=\"/phytology status\", command=\"/phytology audit --cached\", command=\"/phytology cache-status\", command=\"/cron status\", command=\"/service status\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Full slash command string (e.g. \"/phytology status\", \"/phytology audit --cached\", \"/phytology cache-status\", \"/cron status\", \"/service status\")."
+          }
+        },
+        "required": [
+          "command"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "phytology_manage",
+      "description": "Inspect and manage Software Phytology living tissue diagnostic, healing, and safe grafting. Use when: (1) checking living tissue status and health (status), (2) running foliage AST audits with optional LRU caching (audit, flags=\"--cached\"), (3) checking or invalidating phytology cache (cache-status, cache-invalidate), (4) autonomic healing or rolling back corrupted tissue (heal, rollback), (5) assessing tissue fitness (fitness), or (6) running phytology tests (test).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "status",
+              "audit",
+              "heal",
+              "rollback",
+              "prune",
+              "fitness",
+              "lignify",
+              "cache-status",
+              "cache-invalidate",
+              "test"
+            ],
+            "description": "The phytology action to execute."
+          },
+          "target": {
+            "type": "string",
+            "description": "Target tissue file path or job name (for rollback, prune, fitness, lignify)."
+          },
+          "flags": {
+            "type": "string",
+            "description": "Optional flags (e.g. '--cached', '--json', '--parallel', '--force')."
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "file_edit",
+      "description": "Surgically edit an existing file in place under an atomic per-file lock. Preferred usage: (1) pass `target` (exact existing text to replace, without line numbers) and `replacement` (new text), optionally scoped with 1-indexed `start_line` and `end_line` from file_read; (2) pass `start_line`, `end_line`, and `replacement` to directly replace that inclusive line range without echoing a large `target` block; (3) for multiple independent changes in the same file in a single atomic call, pass `edits`: [{\"target\": \"...\", \"replacement\": \"...\", \"start_line\": 10, \"end_line\": 15}, ...] (multi-hunk line ranges are applied bottom-up automatically so top-down line numbers from file_read never drift); or (4) legacy `expression` with `<<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE` blocks. Features a 4-tier fuzzy matcher (exact -> line-number strip -> whitespace/indentation normalization -> smart-quote/dash typography normalization) and returns closest-match line numbers if a target block is not found. You can also emit multiple `file_edit` calls across different files in a single turn for parallel execution. Edits that break shell syntax (bash -n) are automatically reverted.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Target file path relative to workspace root (e.g. \"lib/core/react.sh\", \"web/src/main.rs\")."
+          },
+          "target": {
+            "type": "string",
+            "description": "Exact existing lines/text in the file to search for and replace (do not include 'NN: ' line-number prefixes). Optional when both `start_line` and `end_line` are provided."
+          },
+          "replacement": {
+            "type": "string",
+            "description": "New text to replace `target` (or lines `start_line`..`end_line`) with (use empty string \"\" to delete)."
+          },
+          "start_line": {
+            "type": "integer",
+            "description": "Optional 1-indexed starting line number (inclusive) from `file_read` to scope `target` matching or replace lines `start_line`..`end_line` directly."
+          },
+          "end_line": {
+            "type": "integer",
+            "description": "Optional 1-indexed ending line number (inclusive) from `file_read` to scope `target` matching or replace lines `start_line`..`end_line` directly."
+          },
+          "edits": {
+            "type": "array",
+            "description": "Optional array of multiple surgical edits [{\"target\": \"...\", \"replacement\": \"...\", \"start_line\": 10, \"end_line\": 15}] to apply atomically to this file in a single call.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "target": {
+                  "type": "string",
+                  "description": "Exact existing lines/text to replace (optional when `start_line` and `end_line` are provided)."
+                },
+                "replacement": {
+                  "type": "string",
+                  "description": "New replacement text."
+                },
+                "start_line": {
+                  "type": "integer",
+                  "description": "Optional 1-indexed starting line number (inclusive)."
+                },
+                "end_line": {
+                  "type": "integer",
+                  "description": "Optional 1-indexed ending line number (inclusive)."
+                },
+                "replace_all": {
+                  "type": "boolean",
+                  "description": "If true, replace all occurrences of target (default: false)."
+                }
+              },
+              "required": [
+                "replacement"
+              ]
+            }
+          },
+          "replace_all": {
+            "type": "boolean",
+            "description": "If true, replace all occurrences of `target` in the file instead of requiring a unique match (default: false)."
+          },
+          "expression": {
+            "type": "string",
+            "description": "Legacy fallback: <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE block(s). Prefer `target` + `replacement` or `edits` instead."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "git_clone",
+      "description": "Clone a Git repository into the workspace or an isolated sandbox directory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Repository URL or owner/repo shorthand."
+          },
+          "destination": {
+            "type": "string",
+            "description": "Target directory or sandbox name (optional)."
+          }
+        },
+        "required": [
+          "url"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "git_commit",
+      "description": "Create a Git commit with a concise conventional commit message.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Optional commit message. If omitted, generates conventional commit message from diff."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "git_push",
+      "description": "Push commits on current branch to origin remote with SSH/email guard validation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "branch": {
+            "type": "string",
+            "description": "Optional branch name. Defaults to current branch."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_status",
+      "description": "Inspect sovereign Gitea server health, version, and repository statistics.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_set_endpoint",
+      "description": "Configure or switch the active Gitea server endpoint URL (e.g. http://llama.cpp-prism:3088).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "New Gitea server base URL"
+          }
+        },
+        "required": [
+          "url"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_repo_sync",
+      "description": "Push local develop branch or specified branch to sovereign Gitea remote.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "branch": {
+            "type": "string",
+            "description": "Branch to push (default: develop)"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_pr_create",
+      "description": "Create a pull request on sovereign Gitea targeting develop branch.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "head": {
+            "type": "string",
+            "description": "Candidate branch name"
+          },
+          "base": {
+            "type": "string",
+            "description": "Target branch (default: develop)"
+          },
+          "title": {
+            "type": "string",
+            "description": "Pull request title"
+          },
+          "body": {
+            "type": "string",
+            "description": "Markdown dossier and empirical metrics"
+          }
+        },
+        "required": [
+          "head",
+          "title"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_pr_list",
+      "description": "List pull requests from sovereign Gitea forge.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "description": "open, closed, or all",
+            "enum": [
+              "open",
+              "closed",
+              "all"
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_pr_merge",
+      "description": "Merge an approved pull request on sovereign Gitea into target branch.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "PR number"
+          },
+          "strategy": {
+            "type": "string",
+            "description": "Merge strategy: merge or squash",
+            "enum": [
+              "merge",
+              "squash"
+            ]
+          }
+        },
+        "required": [
+          "index"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_pr_get",
+      "description": "Retrieve full metadata, title, branch refs, and description of a specific pull request.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Pull request number"
+          }
+        },
+        "required": [
+          "index"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_pr_review",
+      "description": "Submit a formal code review verdict (APPROVED, REQUEST_CHANGES, or COMMENT) and review commentary on a Gitea pull request.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Pull request number"
+          },
+          "event": {
+            "type": "string",
+            "description": "Review verdict event: APPROVED, REQUEST_CHANGES, or COMMENT",
+            "enum": [
+              "APPROVED",
+              "REQUEST_CHANGES",
+              "COMMENT"
+            ]
+          },
+          "body": {
+            "type": "string",
+            "description": "Detailed markdown code review commentary and rationale"
+          }
+        },
+        "required": [
+          "index",
+          "event",
+          "body"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_issue_create",
+      "description": "Create a new issue on sovereign Gitea to track bugs, features, or remediation tasks.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Issue title"
+          },
+          "body": {
+            "type": "string",
+            "description": "Detailed markdown description of the issue or feature"
+          },
+          "labels": {
+            "type": "string",
+            "description": "Comma-separated list of labels (e.g. 'bug,sentinel-alert' or 'feature')"
+          }
+        },
+        "required": [
+          "title"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_issue_list",
+      "description": "List issues from sovereign Gitea filtered by state.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "description": "Filter by state: open, closed, or all",
+            "enum": [
+              "open",
+              "closed",
+              "all"
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_issue_get",
+      "description": "Retrieve full details, description, and comments of a specific Gitea issue.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Issue number"
+          }
+        },
+        "required": [
+          "index"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_issue_comment",
+      "description": "Post a status update or comment to an existing Gitea issue.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Issue number"
+          },
+          "body": {
+            "type": "string",
+            "description": "Markdown comment text"
+          }
+        },
+        "required": [
+          "index",
+          "body"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_issue_close",
+      "description": "Close a resolved Gitea issue with a closing explanation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Issue number"
+          },
+          "comment": {
+            "type": "string",
+            "description": "Closing resolution comment"
+          }
+        },
+        "required": [
+          "index"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gitea_branch_create",
+      "description": "Create a new GitFlow branch (feature/*, fix/*) on sovereign Gitea from develop or a base branch.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "branch_name": {
+            "type": "string",
+            "description": "New branch name (e.g. feature/my-feature or fix/remediation-123)"
+          },
+          "base": {
+            "type": "string",
+            "description": "Base branch to branch off of (default: develop)"
+          }
+        },
+        "required": [
+          "branch_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "pr_audit",
+      "description": "Perform Three Degrees audit on candidate PR in an isolated sandbox worktree.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pr_id": {
+            "type": "string",
+            "description": "PR identifier (e.g. PR-001 or numeric Gitea PR id)"
+          }
+        },
+        "required": [
+          "pr_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "project_fix",
+      "description": "Automatically diagnose and attempt to fix build, compile, or test errors in the project.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "error_context": {
+            "type": "string",
+            "description": "Optional description or file path with error context."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "project_init",
+      "description": "Scaffold a new project with GEORGE.md, recommended directories, and build/test configuration.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Project name."
+          },
+          "type": {
+            "type": "string",
+            "description": "Project type: Rust, Python, TypeScript, or General."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "backup_create",
+      "description": "Create a timestamped identity and workspace backup snapshot preserving memories, soul, and journals.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "backup_list",
+      "description": "List all existing George workspace snapshot backups with timestamps and sizes.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "backup_restore",
+      "description": "Restore George identity, memories, or workspace from a specific timestamped backup snapshot.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "description": "Timestamp string of the backup to restore."
+          }
+        },
+        "required": [
+          "timestamp"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "pgp_sign",
+      "description": "Sign a message or text with George isolated PGP key for cryptographic verification.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Plaintext message to sign."
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "pgp_verify",
+      "description": "Verify a PGP signed cleartext message against George public keyring.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "signed_text": {
+            "type": "string",
+            "description": "ASCII-armored PGP signed message to verify."
+          }
+        },
+        "required": [
+          "signed_text"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gsuite_search",
+      "description": "Search Google Workspace (Gmail messages or Google Drive documents).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string",
+            "enum": [
+              "gmail",
+              "drive"
+            ],
+            "description": "GSuite service to search."
+          },
+          "query": {
+            "type": "string",
+            "description": "Search query keywords or filter."
+          }
+        },
+        "required": [
+          "service",
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ask_operator",
+      "description": "Ask the human operator a clarifying question or request a critical decision during an interactive session (Discord or REPL). Use ONLY when genuine human clarification, confirmation, or permission is needed that cannot be discovered from logs, files, or tools. Waits up to 120s for an answer.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "Clarifying or confirmation question to ask the operator."
+          }
+        },
+        "required": [
+          "question"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "code_outline",
+      "description": "Extract an AST semantic outline / skeleton (function signatures, classes, structs, interfaces) from a source file, reducing context tokens by ~90%.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to the code file."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "code_symbol_get",
+      "description": "Extract the complete AST declaration and body of a specific named function, class, or symbol from a file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to the code file."
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Exact name of the function, class, or symbol."
+          }
+        },
+        "required": [
+          "path",
+          "symbol"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "code_validate",
+      "description": "Perform in-memory AST pre-flight syntax checking on code before writing to disk to prevent broken builds.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "Code content to validate."
+          },
+          "language": {
+            "type": "string",
+            "description": "Programming language (bash, python, json, typescript, rust)."
+          }
+        },
+        "required": [
+          "content",
+          "language"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "okf_search",
+      "description": "Search the Google Open Knowledge Graph (OKF) for Blue Lodge architecture, modules, exported symbols, and programming standards. Use when: exploring repository subsystems, locating code entities, or discovering architectural standards. Examples: query=\"fifo_ipc\", query=\"telemetry\", query=\"standards\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query or keyword (e.g. 'fifo_ipc', 'standards', 'remediation', 'inference')."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "okf_query",
+      "description": "Query detailed semantic metadata, dependencies, exported interfaces, and governing standards for a specific module, subsystem, or standard in the Google Open Knowledge Graph (OKF). Examples: target=\"lib/fifo_ipc.sh\", target=\"urn:blue-lodge:standard:fifo-async-ipc-flowcontrol\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Entity URI (e.g. 'urn:blue-lodge:standard:fifo-async-ipc-flowcontrol') or module path (e.g. 'lib/fifo_ipc.sh', 'core')."
+          }
+        },
+        "required": [
+          "target"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "okf_traverse",
+      "description": "Execute a multi-hop Personalized PageRank (PPR) dependency and blast-radius traversal across the OKF knowledge graph (okf_nodes and okf_edges in .george/recall.db). Returns upstream/downstream dependent modules, callers, workflows, and standards impacted by modifying a file or symbol.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "seed": {
+            "type": "string",
+            "description": "Seed module path, symbol, or URN to analyze for blast radius and cross-module dependencies (e.g. 'lib/core/react.sh', 'fifo_ipc.sh', 'remediation.sh')."
+          },
+          "max_hops": {
+            "type": "integer",
+            "description": "Maximum graph hops to traverse (default: 2)."
+          },
+          "top_k": {
+            "type": "integer",
+            "description": "Maximum ranked neighbor nodes to return (default: 15)."
+          }
+        },
+        "required": [
+          "seed"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "fund_treasury",
+      "description": "Sovereign Loan Fund treasury: live balances across Cardano (wallet + tokens locked in open orders), Polygon, Ethereum and BTC watch-only, valued at CoinGecko spot, with allocation vs policy targets (ADA/USDC/POL/ETH/BTC).",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "fund_opportunities",
+      "description": "Ranked, actionable list for growing the loan fund: stale-order reprices, stranded balances, allocation drift, profit sweeps due, loans needing service, idle stablecoins. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "fund_state",
+      "description": "Loan fund ledger state: NAV and available capital per asset, outstanding principal, maker realised P&L and profit sweep due.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "fund_ledger_add",
+      "description": "Append an entry to the append-only fund ledger as actor=george. George may only record profit_sweep (move realised maker profit into the fund) or expense. Capital allocation is operator-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "profit_sweep",
+              "expense"
+            ]
+          },
+          "asset": {
+            "type": "string",
+            "enum": [
+              "ADA",
+              "USDC",
+              "POL",
+              "ETH",
+              "BTC"
+            ]
+          },
+          "amount": {
+            "type": "number",
+            "description": "Positive amount."
+          },
+          "note": {
+            "type": "string",
+            "description": "Why (<=300 chars)."
+          }
+        },
+        "required": [
+          "type",
+          "asset",
+          "amount"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lending_underwrite",
+      "description": "Underwrite an over-collateralised microloan: prices collateral in the principal asset, estimates P(liquidation)/P(underwater) over the term (first-passage + empirical windows), max safe LTV, required APR and fund capacity. Returns APPROVE / COUNTER / REJECT with a counter-offer. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "collateral": {
+            "type": "string",
+            "description": "Collateral symbol (SNEK, MIN, WMTX, DJED, IAG, ADA, BTC, ETH, POL, USDC)."
+          },
+          "units": {
+            "type": "number",
+            "description": "Collateral units."
+          },
+          "principal": {
+            "type": "number",
+            "description": "Principal amount."
+          },
+          "principal_asset": {
+            "type": "string",
+            "enum": [
+              "ADA",
+              "USDC"
+            ]
+          },
+          "term_days": {
+            "type": "integer",
+            "description": "1-365 (policy max applies)."
+          },
+          "apr": {
+            "type": "number",
+            "description": "Offered APR percent."
+          },
+          "borrower": {
+            "type": "string",
+            "description": "Optional borrower addr1... address."
+          }
+        },
+        "required": [
+          "collateral",
+          "units",
+          "principal",
+          "apr"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lending_request",
+      "description": "Open a loan request in the loan book (re-underwrites). If approved it waits for the borrower's collateral; nothing is disbursed until lending_service executes.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "collateral": {
+            "type": "string"
+          },
+          "units": {
+            "type": "number",
+            "description": "Collateral units."
+          },
+          "principal": {
+            "type": "number",
+            "description": "Principal."
+          },
+          "principal_asset": {
+            "type": "string",
+            "enum": [
+              "ADA",
+              "USDC"
+            ]
+          },
+          "term_days": {
+            "type": "integer"
+          },
+          "apr": {
+            "type": "number",
+            "description": "APR percent."
+          },
+          "borrower": {
+            "type": "string",
+            "description": "Borrower Cardano addr1... address (required)."
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "collateral",
+          "units",
+          "principal",
+          "apr",
+          "borrower"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lending_service",
+      "description": "Advance loans from chain state: detect collateral, disburse principal, track repayments, return collateral, monitor LTV, liquidate via a calibrated Minswap V2 rung. Dry run by default; execute=true runs as actor=george under wallet policy caps (a 'denied' result is final).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "loan_id": {
+            "type": "string",
+            "description": "Optional LN-XXXXXXXX; omit for all loans."
+          },
+          "execute": {
+            "type": "boolean",
+            "description": "true submits transactions subject to policy; false (default) only reports."
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lending_book",
+      "description": "Loan book summary: every loan with status, principal, collateral, APR, LTV and due date.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "crypto_price_ladder",
+      "description": "Calibrated limit-price ladder for a Cardano token: for each rung the CPMM trigger spot and walk-forward-calibrated fill probability at 6h/24h/72h/7d. Use it to choose a limit price before crypto_place_limit.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "amount": {
+            "type": "number",
+            "description": "Token amount (sell) or ADA (buy)."
+          },
+          "span_pct": {
+            "type": "number",
+            "description": "Ladder span percent (0.2-25, default 4)."
+          },
+          "rungs": {
+            "type": "integer",
+            "description": "3-31, default 9."
+          }
+        },
+        "required": [
+          "asset",
+          "amount"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "pool_health",
+      "description": "Live DEX pool health (GeckoTerminal): reserves, last trade age, 7d hourly coverage, CPMM price impact, volatility squeeze and cross-venue dispersion. Optional asset for one pair.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string",
+            "description": "Optional token symbol for a single pair audit."
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "polymarket_scan",
+      "description": "Price Polymarket complete sets (binary YES+NO and neg-risk events) against live CLOB asks including fees, depth and minimums. Reports the few best edges; zero viable is the normal result. Read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "hub_hw_probe",
+      "description": "Probe this machine's hardware for model selection: GPUs with VRAM, RAM, CPU, free disk in the models dir. Deterministic; call first in any model recommendation.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "hub_library",
+      "description": "List the GGUF files the operator ALREADY has in their models directory (models, LoRA/control-vector adapters, vision projectors, draft models) with architecture, quant, trained context, base model and which profiles use them. Call before recommending downloads.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "hub_search",
+      "description": "Search model hubs (Hugging Face / ModelScope) for GGUF repos. Returns repo ids with downloads, likes, tags, gated flag.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Model family/size/task, e.g. 'qwen3 coder 30b' or 'gemma 3 12b'"
+          },
+          "provider": {
+            "type": "string",
+            "description": "huggingface (default) or modelscope"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max results (default 10)"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "hub_inspect",
+      "description": "Inspect a hub repo: pinned revision, licence, architecture, params, trained context, available quants with sizes, and aux files (mmproj vision projector, MTP/draft, LoRA).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "repo": {
+            "type": "string",
+            "description": "Repo id owner/name, e.g. unsloth/Qwen3-8B-GGUF"
+          },
+          "provider": {
+            "type": "string",
+            "description": "huggingface (default) or modelscope"
+          }
+        },
+        "required": [
+          "repo"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "hub_quant_fit",
+      "description": "Compute whether a repo's quants fit THIS machine (deterministic VRAM/RAM math from the GGUF header). Without 'quant' returns a table for every quant; with 'quant' returns the detailed breakdown (KV cache, compute buffer, tensor split, max context).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "repo": {
+            "type": "string",
+            "description": "Repo id owner/name, e.g. unsloth/Qwen3-8B-GGUF"
+          },
+          "provider": {
+            "type": "string",
+            "description": "huggingface (default) or modelscope"
+          },
+          "quant": {
+            "type": "string",
+            "description": "Optional quant, e.g. Q4_K_M, UD-Q4_K_XL, Q8_0"
+          },
+          "ctx": {
+            "type": "integer",
+            "description": "Target context length (default 32768)"
+          },
+          "kv_type": {
+            "type": "string",
+            "description": "KV cache type: f16 (default), q8_0, q4_0"
+          },
+          "with_mmproj": {
+            "type": "boolean",
+            "description": "Include the vision projector"
+          },
+          "with_draft": {
+            "type": "boolean",
+            "description": "Include the MTP/draft model"
+          }
+        },
+        "required": [
+          "repo"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "hub_profile_draft",
+      "description": "Write a DRAFT model profile (sha-pinned files + llama-server settings + sampling defaults) for the operator to review. Does not download. The operator approves and installs it.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "repo": {
+            "type": "string",
+            "description": "Repo id owner/name, e.g. unsloth/Qwen3-8B-GGUF"
+          },
+          "provider": {
+            "type": "string",
+            "description": "huggingface (default) or modelscope"
+          },
+          "quant": {
+            "type": "string",
+            "description": "Quant to use, e.g. Q4_K_M"
+          },
+          "ctx": {
+            "type": "integer",
+            "description": "Context length"
+          },
+          "kv_type": {
+            "type": "string",
+            "description": "f16|q8_0|q4_0"
+          },
+          "with_mmproj": {
+            "type": "boolean",
+            "description": "Attach vision projector"
+          },
+          "with_draft": {
+            "type": "boolean",
+            "description": "Attach MTP/draft model for speculative decoding"
+          },
+          "name": {
+            "type": "string",
+            "description": "Optional profile name (lowercase a-z0-9._-)"
+          }
+        },
+        "required": [
+          "repo",
+          "quant"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "hub_profiles",
+      "description": "List model profiles on this machine with status (draft/approved/installed), size, context and fit verdict.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "crypto_review",
+      "description": "Cardano desk review: wallet ADA and tokens, open DEX orders (checked on chain), inventory with cost basis and break-even, unrealized P&L, equity and drawdown, freeze state, strategy states (live/simulated/disabled), autonomous_live_strategies, governance (Tier A autonomous vs Tier B plan intents vs Tier C immutable operator-only rules), signal_telemetry_7d (live signal buys + skipped_by_reason counts), gate progress, markout stats, pending plans, standing orders, and standing_order_health (including two-sided EV corridor recalibration targets). Read-only. Use it FIRST whenever the operator asks how the crypto positions or strategies are performing or what to do next. Never call crypto_execute without a plan_id returned by crypto_plan.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "crypto_scan",
+      "description": "Market scan of the tracked Minswap V2 pools: exact pool spot (from the on-chain recorder), fair value, deviation in sigmas, regime (variance ratio, half-life), pool fee tier, 24 h activity, S2 shock / S3 stablecoin signals, max_buy_ada_now with buy_caps, pre-computed s2_sizing (live_executable_ada_if_triggered_now, s2_pool_reserve_cap_ada, s2_reserve_cap_pct_of_pool, min_viable_s1_hurdle_ada, binding_constraint — read directly, never mentally calculate!), and walk-forward backtests including assets_summary.single_slot_wallet_realistic (1-position wallet P&L). Read-only. Example: crypto_scan(assets='SNEK,NIGHT'). Never call crypto_execute without a plan_id returned by crypto_plan.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "assets": {
+            "type": "string",
+            "description": "Optional comma-separated symbols (default: all tracked pools)."
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "crypto_plan",
+      "description": "Propose operational trading actions WITHOUT executing them. Returns plan_id (P-XXXXXX), each action with price, model fill probability, fees, EV where a fair value exists, permission tier and policy checks, plus how_to_execute. Plans expire after 10 minutes or if price moves > 0.5 sigma. Intents: 'review' (re-evaluate open orders and inventory: reprices, exits, reclaims), 'exit SNEK', 'buy NIGHT 60' (ADA budget; optional '@ 0.19' price), 'reclaim <order_id>', 'move <order_id> to NIGHT', 'unlock S2_shock_fade', or JSON like {\"kind\":\"buy\",\"asset\":\"NIGHT\",\"budget_ada\":60,\"strategy\":\"manual\"}. NOTE: editing .george/finance/trading_policy.json parameters (markups, hold_hours, hurdles, caps) or auto_stop_loss is Tier C (operator-only) and CANNOT be staged via crypto_plan — benchmark parameter ideas with crypto_backtest first and present them as operator recommendations. Tier A plans you may execute yourself and report after; Tier B plans need the operator to reply 'confirm <plan_id>': tell them the plan_id and what it does, then stop.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "intent": {
+            "type": "string",
+            "description": "Intent phrase or JSON object (see description). Default 'review'."
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "crypto_execute",
+      "description": "Execute a plan from crypto_plan. Re-checks freshness, capital rules and tiers against live chain state. Tier A runs; Tier B is refused unless the operator confirmed it (their 'confirm <plan_id>' reply executes it automatically, so you normally never need to call this for Tier B). Strategies in 'simulated' state are journalled, not traded; Gate-1 'live' signal strategies execute autonomously during scans under autonomous_signal_cover. Report every result to the operator. Never call crypto_execute without a plan_id returned by crypto_plan.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "description": "Plan id 'P-XXXXXX' from crypto_plan."
+          },
+          "confirm_token": {
+            "type": "string",
+            "description": "Only if the operator's confirmation flow handed you one. Never invent it."
+          }
+        },
+        "required": [
+          "plan_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "crypto_standing_order",
+      "description": "Standing orders are price-corridor traps: the operator pre-approves Tier B buys for one strategy and asset within an ADA cap and price band until an expiry. Multi-corridor ladders are supported: non-overlapping [price_min, price_max] corridors on the same asset coexist as an active ladder up to the asset's position cap (e.g. 95% of working capital), and coexist with Gate-1 'live' S2 signal buys on a First-Trigger-Wins basis. Overlapping corridors (or passing supersede_so_id / replace=true) atomically supersede the overlapping/targeted order. While active, the signal scan evaluates rungs from shallowest to deepest and places the buy when spot dips into a rung's band (after a 90s falling-knife stabilization check); if that buy does not fill within no_fill_hours it is reclaimed and that rung's capacity re-arms. action='create' builds a Tier B plan that the operator must confirm (pass: action, strategy, asset, max_ada, price_min, price_max, expires_hours, no_fill_hours; optional: supersede_so_id, replace, reason; NEVER pass id on create); 'list' shows active ones; 'revoke' cancels one immediately by id ('SO-XXXXXX').",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "create",
+              "list",
+              "revoke"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "maxLength": 16,
+            "description": "revoke ONLY: standing order id 'SO-XXXXXX'. Never pass on create."
+          },
+          "strategy": {
+            "type": "string",
+            "description": "create: strategy name, e.g. 'manual' or 'S2_shock_fade'."
+          },
+          "asset": {
+            "type": "string",
+            "description": "create: token symbol."
+          },
+          "max_ada": {
+            "type": "number",
+            "description": "create: total ADA this corridor rung may deploy."
+          },
+          "price_min": {
+            "type": "number",
+            "description": "create: lowest limit price for this corridor rung (non-overlapping [price_min, price_max] bands coexist as a multi-corridor ladder)."
+          },
+          "price_max": {
+            "type": "number",
+            "description": "create: highest limit price for this corridor rung."
+          },
+          "expires_hours": {
+            "type": "number",
+            "description": "create: lifetime in hours (default 72). When it passes the order is marked expired and any unfilled buy it placed is reclaimed."
+          },
+          "no_fill_hours": {
+            "type": "number",
+            "description": "create: reclaim a buy placed by this standing order if it has not filled after this many hours (default 6; 0 = never). Reclaimed capacity returns to the order so the corridor can re-trigger on the next dip."
+          },
+          "supersede_so_id": {
+            "type": "string",
+            "maxLength": 16,
+            "description": "create (optional): explicitly supersede a specific active standing order ('SO-XXXXXX') even if its price band does not overlap (e.g. when recalibrating a drifted corridor)."
+          },
+          "replace": {
+            "type": "boolean",
+            "description": "create (optional): if true, supersede all existing active standing orders on this asset+side instead of coexisting as a ladder."
+          },
+          "reason": {
+            "type": "string",
+            "description": "create (optional): note/rationale recorded on the standing order."
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "crypto_journal",
+      "description": "Trading journal: closed round trips with chain-measured net P&L, markouts at 5m/1h/6h/24h after each fill (did price move our way?), simulated S2/S3 results, drawdown, and gate math (Gate 1 strategy unlock, Gate 2 scale-up). Read-only. Use it to judge whether a strategy has an edge before recommending more capital.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "window_days": {
+            "type": "number",
+            "description": "Look-back in days (default 30)."
+          },
+          "strategy": {
+            "type": "string",
+            "description": "Optional strategy filter."
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "crypto_backtest",
+      "description": "Read-only walk-forward baseline vs. counterfactual ('what-if') simulator on real on-chain pool_snapshots (never modifies trading.db). Compares live policy baseline against optional parameter overrides (entry_mode, exit_mode, entry_offset_sigma, exit_start_markup, exit_floor_markup, min_net_profit_ada, hold_hours, stop_sigma_1h, stop_pct, k_sigma, size_ada) and returns both all_signals and single_slot_wallet_realistic P&L plus delta_single_slot.verdict (IMPROVES_NET_ADA / DEGRADES_NET_ADA / NEUTRAL) and governance_notes. ALWAYS run crypto_backtest before recommending any exit markup, hold timeout, stop-loss, or sizing change — never estimate counterfactual P&L by intuition.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "strategy": {
+            "type": "string",
+            "enum": [
+              "S2",
+              "S3",
+              "S2_shock_fade",
+              "S3_stable_deviation"
+            ],
+            "description": "Strategy to backtest (default 'S2')."
+          },
+          "assets": {
+            "type": "string",
+            "description": "Optional comma-separated symbols (e.g. 'NIGHT'; defaults to strategy's configured assets)."
+          },
+          "days": {
+            "type": "integer",
+            "description": "Walk-forward lookback window in days (default 30)."
+          },
+          "entry_mode": {
+            "type": "string",
+            "enum": [
+              "market",
+              "limit"
+            ],
+            "description": "Counterfactual override: 'market' or 'limit' entry."
+          },
+          "exit_mode": {
+            "type": "string",
+            "enum": [
+              "s1_maker",
+              "limit"
+            ],
+            "description": "Counterfactual override: 's1_maker' (step-down maker ladder) or fixed 'limit'."
+          },
+          "entry_offset_sigma": {
+            "type": "number",
+            "description": "Counterfactual override for limit entry offset in 1h sigmas (e.g. 0.25)."
+          },
+          "exit_start_markup": {
+            "type": "number",
+            "description": "Counterfactual override as decimal fraction (e.g. 0.018 for 1.8%, 0.022 for 2.2%)."
+          },
+          "exit_floor_markup": {
+            "type": "number",
+            "description": "Counterfactual override as decimal fraction (e.g. 0.005 for 0.5%)."
+          },
+          "min_net_profit_ada": {
+            "type": "number",
+            "description": "Counterfactual override for minimum net ADA profit floor per round trip (e.g. 1.0)."
+          },
+          "hold_hours": {
+            "type": "number",
+            "description": "Counterfactual override for maximum hold window before timeout exit in hours (e.g. 48, 72, 168)."
+          },
+          "stop_sigma_1h": {
+            "type": "number",
+            "description": "Counterfactual hypothetical stop-out distance in 1h sigmas below entry (e.g. 1.0, 2.0). Note: safety.auto_stop_loss is false in live policy (Tier C)."
+          },
+          "stop_pct": {
+            "type": "number",
+            "description": "Counterfactual hypothetical stop-out distance as decimal fraction below entry (e.g. 0.05 for -5%)."
+          },
+          "k_sigma": {
+            "type": "number",
+            "description": "Counterfactual fixed trigger threshold in sigmas (e.g. 2.0, 2.5)."
+          },
+          "size_ada": {
+            "type": "number",
+            "description": "Counterfactual order size in ADA (e.g. 120, 200, 340, 500) to test wallet scaling."
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "operator_notify",
+      "description": "Send the operator a short one-way message (Discord DM when configured, always the web inbox). Works in autonomous and cron runs. Rate-limited (4/hour), deduplicated and held during quiet hours unless severity='urgent'. Use for results and alerts that need no decision.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Plain message, under 900 characters."
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "normal",
+              "urgent"
+            ]
+          },
+          "escalation_id": {
+            "type": "string",
+            "description": "If you are handling escalation E-XXXXXX, pass its id."
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "operator_ask",
+      "description": "Ask the operator for a decision (Discord DM when configured, always the web inbox); returns a reference id immediately, it does not wait. Works in autonomous and cron runs. If a plan needs approval include plan_id: their reply 'confirm <plan_id>' executes that plan; any other reply starts a conversation with you.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Question with your recommendation, under 900 characters."
+          },
+          "plan_id": {
+            "type": "string",
+            "description": "Optional plan id 'P-XXXXXX' the operator can confirm."
+          },
+          "escalation_id": {
+            "type": "string",
+            "description": "If you are handling escalation E-XXXXXX, pass its id."
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "sdr_query",
+      "description": "Query and filter the Sovereign P25 SDR Radio Lab SQLite database (sdr_intel.db) by time window (hours), talkgroup ID or department/agency name (e.g. 'Metro PD', 'County EMS', 'City Fire', 'County Sheriff', '61591'), radio unit ID (e.g. '7100001'), category (LAW_ENFORCEMENT, FIRE_RESCUE, EMS, PUBLIC_WORKS), or keyword/street search. Returns summary statistics, active talkgroups, cross-channel unit timelines, ongoing department narratives, and transcripts with local .m4a file paths.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "hours": {
+            "type": "number",
+            "description": "Lookback window in hours (default 24.0 for full day; use 3.0 for 3-hour window, 168.0 for 7 days)."
+          },
+          "talkgroup": {
+            "type": "string",
+            "description": "Optional talkgroup filter: numeric TGID (e.g. '61591', '61615') or department/tag substring (e.g. 'Metro PD', 'County EMS', 'Springfield', 'County', 'County', 'Fire')."
+          },
+          "unit_id": {
+            "type": "string",
+            "description": "Optional P25 radio unit ID filter (e.g. '7100001', '7191333', '4589316') to trace a specific squad, medic, or dispatch console across channels."
+          },
+          "category": {
+            "type": "string",
+            "description": "Optional category filter: LAW_ENFORCEMENT, FIRE_RESCUE, EMS, PUBLIC_WORKS, or PUBLIC_SAFETY."
+          },
+          "search": {
+            "type": "string",
+            "description": "Optional keyword, ten-code, incident type, or street/location search across transcripts and tactical summaries."
+          },
+          "emergency_only": {
+            "type": "boolean",
+            "description": "If true, return only emergency or priority radio transmissions."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "calls",
+              "stats",
+              "unit_timeline"
+            ],
+            "description": "Output focus mode: 'summary' (stats + narrative + calls), 'stats' (aggregate database & talkgroup statistics), 'calls' (detailed transcripts), or 'unit_timeline' (chronological unit tracking)."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of individual call records to include (default 40, max 200)."
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "sdr_listen",
+      "description": "Consume an SDR P25 radio .m4a or .wav recording (by call_id, 'latest', or file path) into the Two-Stage Audio Encoder Pipeline (FFmpeg 260-3400Hz bandpass + Whisper P25-A100-LoRA ASR + Gemma-4 E4B Multimodal audio encoder with Running Context Buffer). Returns the refined transcript, acoustic draft, tactical summary, custom question answer, and local .m4a file path (which can be uploaded to Discord via discord_send_file).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "description": "The SDR call_id (e.g. '61615-1792340748.780_857737500.0-call_7'), 'latest' for the newest intelligible call, or a direct local .m4a/.wav file path."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Optional specific question or analysis instruction for the Gemma-4 E4B audio encoder while listening to the recording (e.g. 'What street name or unit number was said?', 'Verify if 10-4 was spoken', 'Describe background sounds and urgency')."
+          }
+        },
+        "required": [
+          "call_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "wallet_receive",
+      "description": "Generate a cryptocurrency deposit/receive address, standard payment URI (CIP-13 for Cardano, EIP-681 for Polygon/Ethereum, BIP-21 for Bitcoin, Solana Pay for Solana), ANSI QR code, and optional recent incoming transaction history. Safe Tier A read-only operation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "chain": {
+            "type": "string",
+            "enum": ["cardano", "polygon", "ethereum", "btc", "sol"],
+            "description": "Target blockchain (default: 'cardano')."
+          },
+          "amount": {
+            "type": "number",
+            "description": "Optional requested payment amount to embed in the payment URI and QR code."
+          },
+          "token": {
+            "type": "string",
+            "description": "Optional token symbol (e.g. 'ADA', 'SNEK', 'POL', 'USDC', 'ETH')."
+          },
+          "memo": {
+            "type": "string",
+            "description": "Optional payment memo/message to embed in the payment URI."
+          },
+          "check_incoming": {
+            "type": "boolean",
+            "description": "If true, fetch recent incoming transactions for this address."
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "wallet_send_preview",
+      "description": "Propose an outbound cryptocurrency transfer (Cardano ADA/native tokens or Polygon/Ethereum POL/USDC/ETH) as a Tier B plan (P-XXXXXX) that requires explicit operator confirmation ('confirm P-XXXXXX' in Discord or Web Desk). Never broadcasts without operator confirmation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string",
+            "description": "Destination wallet address (e.g. 'addr1...' for Cardano or '0x...' for Polygon/Ethereum)."
+          },
+          "amount": {
+            "type": "number",
+            "description": "Amount of tokens or native currency to send."
+          },
+          "token": {
+            "type": "string",
+            "description": "Token symbol to send (default 'ADA' for Cardano, 'POL' or 'USDC' for Polygon, 'ETH' for Ethereum)."
+          },
+          "chain": {
+            "type": "string",
+            "enum": ["cardano", "polygon", "ethereum"],
+            "description": "Target blockchain network (default 'cardano')."
+          },
+          "message": {
+            "type": "string",
+            "description": "Optional CIP-20 transaction memo/message (Cardano)."
+          }
+        },
+        "required": [
+          "to",
+          "amount"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "google_home_discover",
+      "description": "Discover all online Google Home, Nest Mini, Nest Hub Max, and Cast speakers/displays on the local LAN, along with available neural TTS voices (washington, bryce, alan, ryan, amy, alba) and quiet-hours status.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "google_home_speak",
+      "description": "Broadcast a spoken announcement over the local Google Home / Nest speaker network using local neural Text-to-Speech (Kokoro-82M StyleTTS2 24kHz on CPU with automatic fallback to Piper VITS ONNX). Defaults to Kitchen Display 1 and Bedroom speaker using George Washington's 18th-century statesman baritone ('washington') while respecting Discord/Escalation quiet hours unless force=true.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The exact message to speak out loud over the Google Home speaker(s)."
+          },
+          "target": {
+            "type": "string",
+            "description": "Target speaker(s): 'default' (Kitchen Display 1 + Bedroom speaker), 'all' (whole house), or comma-separated room names/IPs ('kitchen', 'bedroom', 'den', 'office', 'basement_tv')."
+          },
+          "voice": {
+            "type": "string",
+            "enum": ["washington", "bm_george", "bryce", "am_fenrir", "alan", "ryan", "amy", "af_bella", "alba"],
+            "description": "Selectable neural voice: 'washington' (18th-Century Statesman Baritone, George default), 'bm_george' (Classic British Statesman Baritone), 'bryce' (Deep American Baritone), 'am_fenrir' (Commanding American Orator), 'alan' (British Gentleman Narrator), 'ryan' (Modern American Male), 'amy' (American Female), 'af_bella' (Warm American Female), or 'alba' (British Female)."
+          },
+          "engine": {
+            "type": "string",
+            "enum": ["kokoro", "kokoro_int8", "piper"],
+            "description": "Optional neural TTS engine override: 'kokoro' (Kokoro-82M FP32 24kHz, default), 'kokoro_int8' (89MB INT8 CPU mode), or 'piper' (lightweight VITS fallback)."
+          },
+          "volume": {
+            "type": "number",
+            "description": "Optional speaker volume from 0.0 to 1.0."
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Set true for urgent alerts or explicit operator-requested broadcasts during quiet hours."
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "google_home_volume",
+      "description": "Set the volume level (0.0 to 1.0) on one or more Google Home / Nest speakers.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Target speaker ('kitchen', 'bedroom', 'den', 'office', 'default', or 'all')."
+          },
+          "level": {
+            "type": "number",
+            "description": "Volume level between 0.0 and 1.0."
+          }
+        },
+        "required": [
+          "target",
+          "level"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tyler_lan_census",
+      "description": "Run an active Layer-2 ARP, TCP, mDNS, and Kali arp-scan census across the home LAN (e.g. 192.168.1.0/24). Updates .george/state/lan_devices.db, verifies mesh router integrity, and flags any unknown/untrusted devices.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "refresh": {
+            "type": "boolean",
+            "description": "Set true (default) to perform an active network sweep, or false to read cached ledger status."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tyler_deep_fingerprint",
+      "description": "Execute an authorized active Kali Linux reconnaissance & service fingerprint scan (nmap -sV -O + banner/HTTP/UPnP scripts + OUI forensic lookup) against a specific LAN IP address and record the dossier in lan_devices.db. Standing operator authorization is granted for all local LAN devices.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ip": {
+            "type": "string",
+            "description": "Target private LAN IPv4 address (e.g. '192.168.1.38')."
+          }
+        },
+        "required": [
+          "ip"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tyler_vuln_audit",
+      "description": "Execute an authorized active Kali Linux Nmap NSE vulnerability, CVE exposure, and authentication-posture audit (--script=vuln,ssh-auth-methods,http-title,http-security-headers,http-methods,ssl-cert,smb-os-discovery,smb-enum-shares,snmp-info,upnp-info,banner) against a local LAN device. Use this to test LAN hosts for weak auth, SNMP default communities, SMB shares, TLS flaws, and known service CVEs.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ip": {
+            "type": "string",
+            "description": "Target private LAN IPv4 address (e.g. '192.168.1.38')."
+          },
+          "ports": {
+            "type": "string",
+            "description": "Optional comma-separated port list (e.g. '22,80,443,8080'). Defaults to common service ports."
+          }
+        },
+        "required": [
+          "ip"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tyler_traffic_inspect",
+      "description": "Capture live packet metadata (DNS queries, TLS SNI server names, mDNS/SSDP broadcast volume, packet rate, and remote peers) for a LAN IP using Kali Linux tshark on eth0.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ip": {
+            "type": "string",
+            "description": "Target private LAN IPv4 address (e.g. '192.168.1.35')."
+          },
+          "duration": {
+            "type": "integer",
+            "description": "Capture window in seconds (2 to 20, default: 5)."
+          }
+        },
+        "required": [
+          "ip"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tyler_upnp_audit",
+      "description": "Audit the router for unauthorized UPnP IGD port mappings opened by IoT devices on the LAN using Kali miniupnpc.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "'list' (default) to inspect all active UPnP port forwards."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tyler_set_trust",
+      "description": "Update the trust classification ('trusted', 'known_iot', 'guest', 'untrusted', 'quarantined'), human label, or forensic notes of a LAN device by MAC address.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mac": {
+            "type": "string",
+            "description": "Device MAC address (e.g. 'aa:bb:cc:dd:ee:ff')."
+          },
+          "level": {
+            "type": "string",
+            "enum": ["trusted", "known_iot", "guest", "untrusted", "quarantined"],
+            "description": "Trust level classification."
+          },
+          "label": {
+            "type": "string",
+            "description": "Optional human-friendly device label."
+          },
+          "notes": {
+            "type": "string",
+            "description": "Optional forensic notes."
+          }
+        },
+        "required": [
+          "mac",
+          "level"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tyler_intervene",
+      "description": "Execute an authorized active containment countermeasure or Tier B Defense Plan workflow against a compromised or untrusted LAN IP ('quarantine'/'host_block' to enforce bidirectional iptables INPUT+OUTPUT DROP and sever active conntrack flows, 'port_block'/'port_unblock' for surgical single-port isolation, 'tcp_reset'/'conntrack_drop' to immediately sever active TCP/UDP sessions, 'upnp_kill' to delete an unauthorized router UPnP port forward, 'forensic_snap' to capture a .pcap + conntrack bundle, 'propose_plan' to stage a Tier B DEF-xxxx plan for operator confirmation, 'approve_plan'/'reject_plan'/'list_plans', or 'release'/'host_unblock' to lift containment). Protected infrastructure and family devices cannot be blocked.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ip": {
+            "type": "string",
+            "description": "Target untrusted or compromised LAN IPv4 address (or plan_id when approving/rejecting)."
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["host_block", "quarantine", "port_block", "port_unblock", "tcp_reset", "conntrack_drop", "upnp_kill", "forensic_snap", "propose_plan", "approve_plan", "execute_plan", "reject_plan", "list_plans", "host_unblock", "release"],
+            "description": "Active containment or defense-plan mode."
+          },
+          "port": {
+            "type": "integer",
+            "description": "Port number (for 'port_block', 'port_unblock', 'upnp_kill', or 'propose_plan')."
+          },
+          "proto": {
+            "type": "string",
+            "enum": ["tcp", "udp", "both"],
+            "description": "Protocol for port_block/port_unblock (default: 'tcp')."
+          },
+          "duration": {
+            "type": "integer",
+            "description": "Capture window in seconds for 'forensic_snap' (default: 8)."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Forensic rationale when staging a Tier B 'propose_plan'."
+          },
+          "plan_id": {
+            "type": "string",
+            "description": "Defense plan ID (e.g. 'DEF-38-0123') for 'approve_plan' or 'reject_plan'."
+          },
+          "operator_notes": {
+            "type": "string",
+            "description": "Optional operator notes for DPO training alignment."
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tyler_canary_trap",
+      "description": "Deploy, inspect, or disarm T-Cell Canary Honeypot Decoy listeners (TCP 2222 SSH, 2323 Telnet, 4445 SMB, 6379 Redis) to trap compromised LAN devices attempting lateral movement or credential probing.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["start", "stop", "status", "hits", "clear"],
+            "description": "'start' to arm decoy listeners, 'status' or 'hits' to inspect active traps and captured probe payloads, 'stop' to disarm, or 'clear' to reset hit history."
+          },
+          "ports": {
+            "type": "string",
+            "description": "Optional comma-separated TCP ports to arm (default: '2222,2323,4445,6379')."
+          },
+          "auto_quarantine": {
+            "type": "boolean",
+            "description": "Optional boolean to enable/disable automatic quarantine when a non-protected IP touches a canary port."
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tyler_tshark_watch",
+      "description": "Collaboratively manage custom Kali tshark display/capture filters stored in lan_devices.db and evaluated every 15m by the immune patrol ('list', 'add', 'remove', 'test', or 'run_all'). Automatically validates Wireshark display_filter syntax via dftest/tshark inside george-kali-tyler.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["list", "add", "remove", "test", "run_all"],
+            "description": "'list', 'add', 'remove', 'test' (validate syntax), or 'run_all' (evaluate all active filters against live traffic)."
+          },
+          "name": {
+            "type": "string",
+            "description": "Rule identifier (e.g. 'iot_dns_leak', 'smb_lateral_probe')."
+          },
+          "display_filter": {
+            "type": "string",
+            "description": "Wireshark/tshark -Y display filter expression (e.g. 'dns and not ip.dst == 192.168.1.1')."
+          },
+          "bpf_filter": {
+            "type": "string",
+            "description": "Optional libpcap -f capture filter."
+          },
+          "extract_fields": {
+            "type": "string",
+            "description": "Optional comma-separated -e fields to extract (default: 'ip.src,ip.dst,eth.src,frame.protocols')."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["tier_a", "tier_b"],
+            "description": "'tier_a' (log/forensic) or 'tier_b' (triggers containment plan/reactor)."
+          },
+          "description": {
+            "type": "string",
+            "description": "Human-readable description of what this filter detects."
+          },
+          "duration": {
+            "type": "integer",
+            "description": "Capture duration in seconds when action='run_all' (default: 8)."
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tyler_immune_patrol",
+      "description": "Execute a Natural Killer (NK) Cell active LAN patrol using Kali tshark (evaluating all enabled tshark_watch_rules), ARP gateway verification, Canary trap inspection, and 30-day rolling retention pruning.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "duration": {
+            "type": "integer",
+            "description": "Live packet patrol window in seconds (3 to 30, default: 10)."
+          },
+          "auto_quarantine": {
+            "type": "boolean",
+            "description": "If true, automatically quarantine any non-protected LAN IP caught performing lateral scans or rogue DHCP/DNS (default: false)."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tyler_arp_shield",
+      "description": "Enforce, verify, or release Antibody Layer-2 static ARP neighbor pinning (ip neigh nud permanent) for critical LAN infrastructure (gateway, sovereign host, workstation, hypervisor) so compromised LAN devices cannot ARP-spoof host traffic.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["enforce", "verify", "release"],
+            "description": "'enforce' to pin permanent ARP entries, 'verify' to audit kernel neighbor states, or 'release' to revert to dynamic ARP."
+          },
+          "ip": {
+            "type": "string",
+            "description": "Optional single LAN IP or 'critical' (default) for all protected infrastructure."
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tyler_baseline_diff",
+      "description": "Execute a Memory B-Cell drift audit against a LAN IP (or 'all' online devices) by comparing live Nmap open ports, service banners, TLS certificate SHA-256 thumbprints, and MAC bindings against the stored baseline in lan_devices.db.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ip": {
+            "type": "string",
+            "description": "Target LAN IPv4 address (e.g. '192.168.1.38') or 'all' to audit all online devices."
+          },
+          "save_baseline": {
+            "type": "boolean",
+            "description": "Set true to snapshot the current live state as the trusted baseline in lan_devices.db (default: false)."
+          }
+        },
+        "required": [
+          "ip"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tyler_kali_man",
+      "description": "Consult the live Kali Linux manual (man page / --help / NSE script catalog) and Blue Lodge's Tactical Field Manual (active vulnerability auditing, service enumeration, & containment recipes) for any Kali tool inside george-kali-tyler ('catalog', 'nmap', 'tshark', 'arp-scan', 'arping', 'fping', 'hping3', 'p0f', 'whatweb', 'sslscan', 'upnpc', 'avahi-browse', 'snmpwalk', 'smbclient', 'iptables', 'ncat', 'scapy').",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tool": {
+            "type": "string",
+            "description": "Tool name (e.g. 'nmap', 'tshark', 'hping3', 'whatweb', 'sslscan', 'avahi-browse', 'scapy') or 'catalog' to list the full Kali arsenal and tactical recipes."
+          },
+          "search": {
+            "type": "string",
+            "description": "Optional keyword, flag, or NSE script pattern to search within the man page (e.g. '-sV', 'script', 'upnp', 'tls', 'syn')."
+          },
+          "section": {
+            "type": "string",
+            "description": "Optional man page section heading to jump to (e.g. 'EXAMPLES', 'OPTIONS')."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tyler_kali_exec",
+      "description": "Execute a policy-gated Kali Linux active vulnerability audit, NSE script scan, SNMP/SMB/TLS/HTTP service enumeration, packet capture, or active containment command inside the george-kali-tyler container against the local LAN. Standing operator authorization is granted for active security testing on the local LAN subnet.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The Kali Linux shell command to execute inside george-kali-tyler (e.g. 'nmap -Pn -sV --script=vuln,banner,http-title 192.168.1.38' or 'snmpwalk -v2c -c public 192.168.1.38 .1.3.6.1.2.1.1.1.0')."
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "Execution timeout in seconds (3 to 180, default: 60)."
+          }
+        },
+        "required": [
+          "command"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tyler_spelunk",
+      "description": "Network-agnostic reconnaissance and stealth defense across any network interface ('discover' attached networks/neighbors with zero packets emitted, 'ghost_listen' zero-emission passive packet capture, 'passive_fingerprint' p0f/DHCP/TLS OS fingerprinting with zero packets emitted, 'surgical_probe', 'block_peer'/'unblock_peer', 'stealth_lockdown'/'stealth_release').",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["discover", "ghost_listen", "passive_fingerprint", "surgical_probe", "block_peer", "unblock_peer", "stealth_lockdown", "stealth_release"],
+            "description": "Network spelunking mode."
+          },
+          "interface": {
+            "type": "string",
+            "description": "Optional network interface (e.g. 'eth0', 'eth1', 'wlan0')."
+          },
+          "ip": {
+            "type": "string",
+            "description": "Target peer IPv4 address for 'surgical_probe', 'block_peer', or 'unblock_peer'."
+          },
+          "duration": {
+            "type": "integer",
+            "description": "Passive capture window in seconds (2 to 60, default: 10)."
+          },
+          "ports": {
+            "type": "string",
+            "description": "Comma-separated TCP ports for 'surgical_probe' (default: '22,80,443,445,8080')."
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tyler_wifi_spelunk",
+      "description": "802.11 Wireless Airspace Scanner, Compass-Calibrated Property Perimeter Security Guard, Device-Free RF Tomographic Motion & Physical Presence Sensor, Multi-Room Peripheral RF Mesh Poller, RF Time-Series & Fresnel Diagnostic Engine, Dual-Band Spatial Triangulator, Canary Soft-AP Honeypot Monitor, RSA Cast Onboarding Controller, and 6-Layer Airlock Soft-AP Interrogator ('status', 'list_peripherals', 'poll_lan_peripherals', 'perimeter_guard', 'rf_motion_sense', 'diagnose_rf_mesh', 'rogue_ap_watch', 'scan_airspace', 'configure_adapter', 'interrogate_soft_ap', 'triangulate_airspace', 'canary_ap_watch', 'set_ap_beacon', 'provision_cast_ap', 'restore_peripheral', 'disconnect'). Safely scans visible SSIDs/BSSIDs via Linux nl80211 (iw / nmcli) or WSL2 (netsh) (dBm RSSI, MHz frequency, IE 11 QBSS Load, IE 35 TPC Report), guards exterior property sectors (configured North/South compass anchors, South-Wall peripheral sensor, and Study Workstation) with single-chord neighbor suppression and kinematic approach/departure vector detection, senses household physical motion/presence, diagnoses historical SQLite RF time-series trends and Fresnel corridor health, polls LAN Cast peripheral RF noise floor & SNR, triangulates 2.4/5 GHz transmitters across workstation and remote peripheral sensors, monitors Soft-AP canary honeypots, provisions Cast devices via RSA-encrypted passphrases, and restores claimed peripherals to factory baseline.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "status",
+              "list_peripherals",
+              "poll_lan_peripherals",
+              "perimeter_guard",
+              "rf_motion_sense",
+              "diagnose_rf_mesh",
+              "rogue_ap_watch",
+              "scan_airspace",
+              "configure_adapter",
+              "interrogate_soft_ap",
+              "triangulate_airspace",
+              "canary_ap_watch",
+              "set_ap_beacon",
+              "provision_cast_ap",
+              "restore_peripheral",
+              "disconnect"
+            ],
+            "description": "Wi-Fi spelunking, compass-calibrated perimeter guard, RF motion sensing, and remote peripheral operation mode."
+          },
+          "ssid": {
+            "type": "string",
+            "description": "Target wireless SSID for 'interrogate_soft_ap', 'configure_adapter', 'provision_cast_ap' (target Wi-Fi to join), or 'set_ap_beacon'."
+          },
+          "bssid": {
+            "type": "string",
+            "description": "Optional target BSSID MAC address (e.g. '02:00:5e:00:01:02')."
+          },
+          "auth": {
+            "type": "string",
+            "enum": ["open", "WPA2PSK", "WPA3SAE", "fdr"],
+            "description": "Authentication mode for 'configure_adapter' or 'fdr' for factory reset in 'provision_cast_ap'."
+          },
+          "key": {
+            "type": "string",
+            "description": "Optional WPA passphrase for 'configure_adapter' or RSA-encrypted onboarding in 'provision_cast_ap'."
+          },
+          "surprise": {
+            "type": "boolean",
+            "description": "If true during 'perimeter_guard', run a live 6-Layer Airlock dual-band scan refresh on the South-Wall Lenovo Smart Clock before evaluating perimeter sectors; if true during 'rf_motion_sense', recalibrate quiet-room RF baselines; if true during 'interrogate_soft_ap' or 'canary_ap_watch', trigger a physically observable chime/decoy lure."
+          },
+          "surprise_name": {
+            "type": "string",
+            "description": "Optional custom friendly name, decoy SSID ('canary_ap_watch'), or beacon text ('set_ap_beacon')."
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "Sampling window in seconds for 'perimeter_guard' or 'rf_motion_sense' (default: 6), history hours for 'diagnose_rf_mesh' (default: 24), or airlock timeout in seconds (default: 45)."
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "artifact_publish",
+      "description": "Persist a generated artifact (PNG map, chart, PDF, CSV, HTML) and optional generator script into the channel's persistent artifact pantry (.george/artifacts/channel_<id>/), validate file integrity/size, and upload directly to the active Discord channel (auto-formatting tables and auto-splitting long captions >1950 chars).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "Path to the rendered output file (PNG, JPG, PDF, etc.)."
+          },
+          "caption": {
+            "type": "string",
+            "description": "Optional accompanying caption or report (auto-splits cleanly if >1950 chars)."
+          },
+          "script_path": {
+            "type": "string",
+            "description": "Optional path to the generator script (e.g. scent_map.py) to archive alongside the output for instant future revisions."
+          },
+          "label": {
+            "type": "string",
+            "description": "Optional version or artifact label (e.g. 'v3.2', 'monday_scent_map')."
+          },
+          "target": {
+            "type": "string",
+            "description": "Optional Discord channel target (defaults to current conversation channel)."
+          }
+        },
+        "required": [
+          "file_path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "venv_pkg_install",
+      "description": "Supply-chain-hardened Python package auditor and installer for .venv. Enforces HTTPS PyPI verification, typosquat detection, live OSV.dev malware/CVE scanning, wheel-only (--only-binary=:all:) installation, files.pythonhosted.org host allowlist, and SHA-256 hash pinning across the full transitive dependency graph. Tier A curated allowlist packages install autonomously; Tier B novel packages return a structured operator-approval dossier; Tier C risky/typosquat/vulnerable packages are hard-blocked.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["audit", "install", "allowlist"],
+            "description": "Action to perform: 'audit' (check without installing), 'install' (verify & hash-pin install Tier A package into .venv), or 'allowlist' (list curated Tier A packages)."
+          },
+          "packages": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "List of PyPI package names or pinned 'pkg==version' specs (URLs, git+, and local paths are forbidden)."
+          },
+          "approve_tier_b": {
+            "type": "boolean",
+            "description": "Set true ONLY after explicit operator confirmation for a Tier B non-allowlisted package."
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tool_forge",
+      "description": "Craftsman self-tooling workshop: safely forge, AST-audit, smoke-test, list, run, or remove reusable custom tools in .george/tools/ without restarting daemons.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["forge", "run", "list", "remove"],
+            "description": "Workshop action: 'forge' (AST-audit + smoke-test + register a new tool), 'run' (execute a registered forged tool), 'list' (show forged tools), or 'remove'."
+          },
+          "name": {
+            "type": "string",
+            "description": "Snake-case tool name (^[a-z][a-z0-9_]{1,48}$)."
+          },
+          "lang": {
+            "type": "string",
+            "enum": ["python", "bash"],
+            "description": "Implementation language for 'forge' (default: python, executed inside .venv)."
+          },
+          "description": {
+            "type": "string",
+            "description": "Concise description of what the forged tool does."
+          },
+          "code": {
+            "type": "string",
+            "description": "Full source code of the tool (reads JSON args from stdin or TOOL_ARGS_JSON env var)."
+          },
+          "args": {
+            "type": "string",
+            "description": "JSON string passed to stdin/TOOL_ARGS_JSON for 'run' or smoke-testing during 'forge'."
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    }
+  }
+]

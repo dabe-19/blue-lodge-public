@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "id": "sample_briefing",
+  "name": "__MOD_NAME__ Synthesis Briefing",
+  "owner": "__MOD_ID__",
+  "owner_type": "module",
+  "category": "__MOD_CATEGORY__",
+  "version": "1.0.0",
+  "description": "Two-phase ALP v1 starter loop: concurrent FIFO pre-flight ledger read followed by a 200-turn ReAct synthesis that saves a verified briefing back into the module database.",
+  "defaults": {
+    "max_turns": 200,
+    "ipc_priority": 100,
+    "fifo_window": 16,
+    "tool_timeout_sec": 120,
+    "require_result_json": true,
+    "output_artifact": "result.json"
+  },
+  "inputs": [
+    {
+      "name": "objective",
+      "type": "text",
+      "label": "Briefing Focus / Question",
+      "required": true,
+      "placeholder": "What should the agent analyze or synthesize from your entries?"
+    }
+  ],
+  "tools": {
+    "bundles": ["+__MOD_PREFIX__"],
+    "allow": [
+      "__MOD_PREFIX___list_entries",
+      "__MOD_PREFIX___save_entry",
+      "file_read",
+      "file_write",
+      "web_search"
+    ],
+    "deny": []
+  },
+  "phases": [
+    {
+      "id": "preflight_ledger",
+      "name": "Phase 1: Parallel FIFO Ledger Snapshot",
+      "kind": "fifo_parallel",
+      "enabled": true,
+      "continue_on_error": true,
+      "timeout_sec": 45,
+      "description": "Reads recent entries from the local SQLite database over POSIX FIFO IPC before LLM Turn 1.",
+      "tasks": [
+        {
+          "id": "recent_entries",
+          "tool": "__MOD_PREFIX___list_entries",
+          "args_template": {
+            "limit": 20
+          },
+          "output_key": "entries"
+        }
+      ]
+    },
+    {
+      "id": "synthesize_briefing",
+      "name": "Phase 2: ReAct Synthesis & Ledger Persistence",
+      "kind": "react",
+      "enabled": true,
+      "max_turns": 200,
+      "tool_filter": "default",
+      "tools_allow": [],
+      "prompt_template": "Execute the __MOD_NAME__ Synthesis Briefing workflow.\n\nOBJECTIVE:\n{{params.objective}}\n\nFIFO PRE-FLIGHT LEDGER ENTRIES (already fetched in Phase 1):\n{{phase.preflight_ledger.entries}}\n\nEXECUTION STEPS:\n1. Review the existing ledger entries above and gather any additional context needed.\n2. Save a clear, structured briefing into the module's SQLite ledger via `__MOD_PREFIX___save_entry` (with `category=\"briefing\"`).\n3. Write structured JSON to `{{result_path}}` via `file_write` with keys: `workflow` (\"sample_briefing\"), `title`, `summary`, and `recommendations` (array).\n4. Call `milestone_complete` and deliver your concise briefing.",
+      "gate": {
+        "type": "json_file",
+        "path": "result.json",
+        "required_keys": ["workflow", "title", "summary"],
+        "on_fail": "retry",
+        "max_retries": 1
+      }
+    }
+  ]
+}

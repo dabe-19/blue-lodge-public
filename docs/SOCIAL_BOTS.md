@@ -1,0 +1,760 @@
+---
+title: "Social Bots & Multi-Platform API Setup Guide"
+description: "How George interacts with social platforms (X/Twitter, Mastodon, Bluesky, Discord, Telegram) via pure curl REST APIs without external SDKs."
+subsystem: "comms"
+tags:
+  - social
+  - bots
+  - twitter-x
+  - mastodon
+  - bluesky
+  - telegram
+  - discord
+okf_id: "urn:blue-lodge:doc:social-bots"
+related:
+  - "[[INDEX]]"
+  - "[[DISCORD_BRIDGE]]"
+  - "[[EVENT_BUS_AND_OSINT_PIPELINE]]"
+  - "[[SAFETY_AND_PRIVACY]]"
+---
+
+# Social Bots & API Setup Guide
+
+George can post, read, search, and interact on **five social platforms** — all via
+pure `curl` + REST APIs. No SDKs, no Python, no Node.
+
+| Platform   | Post | Read | Search | Reply | Delete | Notify |
+|-----------|------|------|--------|-------|--------|--------|
+| X/Twitter  | ✓    | ✓    | ✓      | ✓     | ✓      | —      |
+| Mastodon   | ✓    | ✓    | ✓      | ✓     | —      | ✓      |
+| Bluesky    | ✓    | ✓    | ✓      | —     | —      | —      |
+| Discord    | ✓    | ✓    | —      | —     | —      | —      |
+| Telegram   | ✓    | ✓    | —      | ✓     | —      | —      |
+
+---
+
+## Quick Start
+
+```bash
+# 1. Set an API key
+/api keys set X_BEARER_TOKEN your-token-here
+
+# 2. Post to that platform
+/social x post Hello from George!
+
+# 3. Post to ALL configured platforms at once
+/social post Greetings from the Lodge.
+
+# 4. Check what's configured
+/social status
+```
+
+---
+
+## X (Twitter) Setup
+
+George interacts with **X API v2** via pure `curl` REST calls. 
+
+### Critical Architecture: App-Only vs User Context
+
+X API v2 enforces strict authentication separation:
+- **App-Only Bearer Token** (`X_BEARER_TOKEN`): Used for read/search endpoints (e.g. `GET /2/tweets/search/recent`). It is attached to the app, NOT a user, so X rejects `POST /2/tweets` with `403 Unsupported Authentication`. Furthermore, standalone apps must be enrolled in a **Project** in the Developer Portal.
+- **User Context (OAuth 1.0a)**: Required for George to **post tweets and replies** as your account. You generate these tokens in the Developer Portal directly for your `@handle`.
+
+---
+
+### Step-by-Step Setup for Personal Account Posting
+
+1. **Enroll App in a Project**:
+   - Log in to [developer.x.com](https://developer.x.com).
+   - In the Developer Portal dashboard, ensure your App is inside a **Project** (e.g. create a Project called `George` and attach your App).
+2. **Configure Read and Write Permissions**:
+   - In your App settings, go to **User authentication settings** → **Edit**.
+   - App permissions: Select **Read and write**.
+   - Type of App: Select **Automated App or Bot**.
+   - Callback / Website URLs: Enter your portfolio or `https://localhost`.
+   - Save changes.
+3. **Generate Keys & Tokens**:
+   - Go to the **Keys and tokens** tab.
+   - Under **Consumer Keys**, generate / note:
+     - `API Key` (Consumer Key)
+     - `API Key Secret` (Consumer Secret)
+   - Under **Authentication Tokens**, find **Access Token and Secret**:
+     - Click **Generate** (or Regenerate).
+     - Because you are logged in to your account, X creates tokens specifically for your personal `@handle` with Read + Write permissions.
+4. **Store in George's Encrypted Vault**:
+   ```bash
+   /secret set X_CONSUMER_KEY <your-api-key>
+   /secret set X_CONSUMER_SECRET <your-api-key-secret>
+   /secret set X_ACCESS_TOKEN <your-access-token>
+   /secret set X_ACCESS_TOKEN_SECRET <your-access-token-secret>
+   ```
+5. **Validate Connection**:
+   ```bash
+   /social x validate
+   ```
+   George tests your credentials against `GET /2/users/me` and confirms write capabilities for your `@handle`.
+
+---
+
+### Alternative: Web Session / Cookie Automation ($0 Extra, Leverages X Premium)
+
+If you have an active X account with an **$8/month X Premium** subscription, you can bypass developer API fees entirely by authenticating via your browser session cookies:
+
+1. **Extract Cookies from your Browser**:
+   - Open `x.com` in your browser where you are logged in.
+   - Press `F12` (DevTools) → Go to **Application** (Chrome/Edge/Brave) or **Storage** (Firefox).
+   - In the left sidebar, expand **Cookies** → click `https://x.com`.
+   - Copy values for:
+     - `auth_token` (40-char string)
+     - `ct0` (CSRF token)
+2. **Store in George's Encrypted Vault**:
+   ```bash
+   /secret set X_AUTH_TOKEN <auth_token>
+   /secret set X_CT0 <ct0>
+   ```
+3. **Validate**:
+   ```bash
+   /social x validate
+   ```
+   George verifies your web session, detects your verified Blue status, and unlocks 25,000-character long-form posting with $0 in developer API fees!
+
+---
+
+### Cryptographic Provenance (GPG Signing)
+
+When posting from your personal account, George ensures everyone understands that the post was authored by the agent:
+- Posts and replies are automatically prefixed with `[George 🏛️ Blue Lodge Agent]`.
+- Every post and reply is cryptographically signed using George's local Ed25519 PGP key (`.george/.gnupg/`).
+- A verification trailer is appended: `🔏 Signed: <FINGERPRINT> (Ed25519)`.
+- Full detached ASCII-armored signatures are archived in `.george/social/signatures/` and verifiable against George's public key (`.george/george_public.asc`).
+
+---
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/social x validate` | Validate credentials & diagnostic check |
+| `/social x post <text>` | Post a GPG-signed tweet |
+| `/social x thread <text>` | Split long-form essays into numbered GPG-signed threads |
+| `/social x blog list` | Show the Sovereign Blog research catalog |
+| `/social x blog draft <id>` | Preview a drafted philosophical/technical research essay |
+| `/social x blog queue <id>` | Queue a signed research essay for autonomic publication |
+| `/social x blog post <id>` | Immediately post a research essay as a thread |
+| `/social x timeline` | View recent tweets |
+| `/social x search <query>` | Search recent tweets |
+| `/social x reply <id> <text>`| Reply to a tweet with GPG signature |
+| `/social x delete <id>` | Delete a tweet |
+
+---
+
+## Mastodon Setup
+
+Mastodon is federated — your account lives on an **instance** (server). George
+works with any Mastodon-compatible instance (Mastodon, Hometown, Pleroma,
+Akkoma, GoToSocial, etc.).
+
+### Step 1: Pick Your Instance
+
+If you don't already have an account:
+- [mastodon.social](https://mastodon.social) — the flagship instance
+- [infosec.exchange](https://infosec.exchange) — security-focused
+- [fosstodon.org](https://fosstodon.org) — open-source focused
+- [joinmastodon.org/servers](https://joinmastodon.org/servers) — full directory
+
+### Step 2: Create an Application
+
+1. Log in to your Mastodon instance in a browser
+2. Go to **Preferences** → **Development** → **New Application**
+3. Application name: `George` (or whatever you like)
+4. Scopes (check these):
+   - `read` — read your timeline and notifications
+   - `write` — post statuses and replies
+   - `follow` — optional, for managing follows
+5. Redirect URI: leave as `urn:ietf:wg:oauth:2.0:oob`
+6. Click **Submit**
+
+### Step 3: Get Your Access Token
+
+1. Click on your new application name
+2. Copy the **Your access token** value
+3. Also note your instance URL (e.g., `https://mastodon.social`)
+
+### Step 4: Configure George
+
+```bash
+/api keys set MASTODON_INSTANCE https://mastodon.social
+/api keys set MASTODON_ACCESS_TOKEN your-access-token-here
+```
+
+> If you skip `MASTODON_INSTANCE`, George defaults to `mastodon.social`.
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/social mastodon post <text>` | Post a status (toot) |
+| `/social mastodon timeline` | View your home timeline |
+| `/social mastodon search <query>` | Search statuses |
+| `/social mastodon notify` | View recent notifications |
+
+### Visibility Options
+
+George defaults to `public` visibility. To change this programmatically, you
+can call the function directly: `mastodon_post "text" "unlisted"`. Valid values:
+- `public` — visible on public timelines
+- `unlisted` — visible on your profile, not on public timelines
+- `private` — followers only
+- `direct` — mentioned users only (like a DM)
+
+---
+
+## Bluesky Setup
+
+Bluesky uses the AT Protocol. Authentication uses **App Passwords** — you
+never give George your main password.
+
+### Step 1: Create an Account
+
+1. Go to [bsky.app](https://bsky.app) and sign up (or use an existing account)
+2. Your handle will be something like `yourname.bsky.social`
+
+### Step 2: Create an App Password
+
+1. Go to **Settings** → **Privacy and security** → **App passwords**
+2. Click **Add App Password**
+3. Name it `george` (this is just a label)
+4. Copy the generated password (looks like `xxxx-xxxx-xxxx-xxxx`)
+
+> App passwords are **scoped** — they can't change your account password
+> or email, making them safe for bot use.
+
+### Step 3: Configure George
+
+```bash
+/api keys set BLUESKY_HANDLE yourname.bsky.social
+/api keys set BLUESKY_APP_PASSWORD xxxx-xxxx-xxxx-xxxx
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/social bluesky post <text>` | Post a skeet |
+| `/social bluesky timeline` | View your home timeline |
+| `/social bluesky search <query>` | Search posts |
+
+### Session Management
+
+George automatically handles Bluesky's JWT session. On the first request of
+each session, George calls `com.atproto.server.createSession` to authenticate.
+The JWT token is cached in memory for subsequent requests. If you get auth
+errors, just try again — George will re-authenticate.
+
+---
+
+## Discord Bot Setup
+
+George supports Discord through **two mechanisms**:
+1. **Webhooks** — simplest, just post messages to a channel (no bot account)
+2. **Bot Account** — full API access, read messages, manage channels
+
+### Option A: Webhook (Easiest)
+
+Perfect for one-way notifications (George → Discord).
+
+#### Step 1: Create a Webhook
+
+1. Open Discord → go to your server
+2. Click the **gear icon** next to the channel you want George to post in
+3. Go to **Integrations** → **Webhooks** → **New Webhook**
+4. Name it `George` (this appears as the bot's display name)
+5. Upload an avatar if you want
+6. Click **Copy Webhook URL**
+
+#### Step 2: Configure George
+
+```bash
+/api keys set DISCORD_WEBHOOK_URL https://discord.com/api/webhooks/123456/abcdef...
+```
+
+#### Usage
+
+```bash
+/social discord send Hello from George!
+```
+
+That's it. No bot account needed, no permissions to configure.
+
+### Option B: Full Bot Account
+
+For reading messages, responding to events, and posting to multiple channels.
+
+#### Step 1: Create an Application
+
+1. Go to [discord.com/developers/applications](https://discord.com/developers/applications)
+2. Click **New Application**
+3. Name it `George`
+4. Note the **Application ID** (you'll need it for the invite link)
+
+#### Step 2: Create the Bot
+
+1. In your application, go to the **Bot** section
+2. Click **Add Bot** → confirm
+3. Under **Token**, click **Reset Token**
+4. Copy the token immediately
+
+#### Step 3: Set Permissions
+
+Under **Bot** → **Privileged Gateway Intents**, enable:
+- **Message Content Intent** — required to read message text
+- **Server Members Intent** — optional, needed for member lists
+
+#### Step 4: Invite to Your Server
+
+Build an invite URL:
+```
+https://discord.com/api/oauth2/authorize?client_id=YOUR_APP_ID&permissions=3072&scope=bot
+```
+
+- `permissions=3072` = Send Messages (2048) + Read Message History (1024)
+- For more permissions, use the [Permission Calculator](https://discordapi.com/permissions.html)
+
+Open this URL in a browser, select your server, and authorize.
+
+#### Step 5: Get a Channel ID
+
+1. In Discord, go to **User Settings** → **Advanced** → enable **Developer Mode**
+2. Right-click any channel → **Copy Channel ID**
+
+#### Step 6: Configure George
+
+```bash
+/api keys set DISCORD_BOT_TOKEN your-bot-token-here
+```
+
+#### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/social discord send <text>` | Send via webhook |
+| `/social discord send <channel_id_or_name> <text>` | Send to a specific channel via bot |
+| `/social discord read <channel_id_or_name>` | Read recent messages from a channel |
+| `/social discord validate` | Test your bot token against the Discord API |
+| `/social discord channels list` | List all registered channels |
+| `/social discord channels add <name> <id>` | Manually register a channel name→ID mapping |
+| `/social discord channels remove <name>` | Remove a channel mapping |
+| `/social discord channels sync` | Auto-sync all channels from all servers the bot is in |
+
+> **Webhook vs Bot**: When you provide a numeric channel ID (17+ digits) as
+> the first argument to `send`, George uses the **Bot API** (`discord_send`)
+> to post directly to that channel. Without a channel ID, George uses the
+> **Webhook** (`discord_webhook`) to post to the webhook's pre-configured channel.
+>
+> **Channel names**: You can use human-readable channel names (e.g., `general`,
+> `deployments`) instead of numeric IDs. George resolves names via his channel
+> registry (SQLite at `~/.george/discord_channels.db`).
+>
+> Examples:
+> ```bash
+> # Webhook send (no channel ID — posts to webhook channel)
+> /social discord send Hello from George!
+>
+> # Bot send (with channel ID — posts to the specified channel)
+> /social discord send 123456789012345678 Hello from George!
+>
+> # Bot send (with channel name — resolved from registry)
+> /social discord send general Hello from George!
+>
+> # Read messages by name
+> /social discord read deployments
+> ```
+
+### Validating Your Bot Token
+
+Before debugging permissions or channels, verify the token itself:
+
+```bash
+/social discord validate
+```
+
+This calls `GET /users/@me` with your bot token. On success you'll see:
+
+```
+✓ Discord bot token valid — logged in as George#1234 (id: 1234567890)
+  Guilds (servers): 2
+```
+
+If it fails, regenerate the token in the Discord Developer Portal.
+
+### Channel Registry
+
+George maintains a local SQLite database (`~/.george/discord_channels.db`) that maps human-readable channel names to Discord channel IDs. This lets you use `#general` or `general` instead of a 17-digit number.
+
+#### Auto-Sync (Recommended)
+
+Fetch all channels from all servers the bot has joined:
+
+```bash
+/social discord channels sync
+```
+
+This queries the Discord API for every guild (server) the bot is in, retrieves all text and announcement channels, and stores them:
+
+```
+  Syncing: My Server (123456789012345678)...
+✓ Channel registry synced — 15 channels total
+```
+
+#### Manual Registration
+
+If auto-sync isn't possible (e.g., bot doesn't have the guilds intent), add channels manually:
+
+```bash
+/social discord channels add general 1234567890123456789
+/social discord channels add deployments 9876543210987654321
+```
+
+#### Listing & Removing
+
+```bash
+/social discord channels list     # Show all name→ID mappings
+/social discord channels remove general  # Remove a mapping
+```
+
+### Default Channel
+
+When using `/social post` (unified posting), George needs a channel to post to. It resolves the default channel in this order:
+
+1. **Explicit key** — `DISCORD_DEFAULT_CHANNEL` in `keys.conf` (can be an ID or a channel name)
+2. **"general" channel** — if a channel named `general` is in the registry
+3. **First registered channel** — falls back to whatever was registered first
+
+Set an explicit default:
+
+```bash
+/api keys set DISCORD_DEFAULT_CHANNEL general
+# or by ID:
+/api keys set DISCORD_DEFAULT_CHANNEL 1234567890123456789
+```
+
+### Unified Posting Fallback
+
+`/social post` supports both webhook and bot token for Discord:
+
+- **Webhook URL configured** → posts via webhook (simplest)
+- **Bot token configured** (no webhook) → posts via bot API to the default channel
+- **Neither configured** → Discord is skipped
+
+This means you can use `/social post` with just a bot token — no webhook needed — as long as you have a default channel set.
+
+### Privacy: What the Discord Bot Stores (and `/forget me`)
+
+When people talk to George through the bot, the Lodge keeps the following on the operator's machine
+(all under `.george/`, git-ignored, never uploaded anywhere by the Lodge):
+
+| Store | Contents | Purpose |
+|-------|----------|---------|
+| `discord_profiles.db` | user id, username, short interaction summary, last topic, location/notes the user volunteered, counters | Personalised replies |
+| `discord_sessions/history/history_<channel>_<user>.json` | last 12 turns per user per channel | Follow-up context |
+| `discord_sessions/history/history_<channel>.json` | last 12 shared-channel turns (author name + text) | Channel context |
+| `discord_sessions/history/channel_<channel>.jsonl` | rolling channel log: who said what, including George's own posts (24 h TTL, max 60 entries) | Remembering the conversation across sessions |
+| `discord_users.db` | username ↔ user id directory | Resolving @mentions |
+| `reputation.db` | user id, username, score, tier, notes | Tool permissions / abuse gating |
+| `discord_sessions/*.log`, `bridge.log`, `discord_media/` | operator debug logs and downloaded attachments | Troubleshooting |
+
+**`/forget me`** — any user can send exactly `/forget me` (or `forget me`) to the bot. George deletes that
+user's profile row, directory row, every per-user history file, and their turns in shared channel history,
+then confirms. The request itself is not written to history. One exception: if the user's reputation
+score is **below the starting value (10)**, the score row is kept (username and notes are blanked) so a
+penalty cannot be erased by forgetting. Operator debug logs and media are not rewritten automatically;
+operators should rotate or purge them on a schedule, and honour manual deletion requests.
+
+Operators running a public bot should link this section (or their own policy) from the bot's profile.
+
+### How George Converses in Discord
+
+When George is working on a Discord request (a "run"), these rules apply:
+
+- **Replies stay in the conversation.** `discord_send` with no target, `here`, the asker's name, or the
+  current channel posts in the channel the request came from. Naming another user in a public channel
+  posts in the same channel with an `@name` prefix instead of DMing them. `me`/`operator` and `dm:<user>`
+  still work for deliberate DMs.
+- **Multiple messages per task.** George can post progress or a long report mid-task and keep working.
+  Every post is recorded in the run's outbox (`<run workspace>/outbox.jsonl`).
+- **Editing.** `discord_edit` revises a message George posted earlier *in the same run* (2000-char limit).
+- **No duplicates.** The final reply is compared with what was already posted (token overlap ≥
+  `DISCORD_OUTBOX_DUP_RATIO`, default 0.6). If it's a repeat, nothing extra is sent. Meta lines like
+  "Message delivered…" are removed.
+- **Deliverables are never lost.** Long drafts (≥ `REACT_DRAFT_MIN_CHARS`, 400) are saved as the run's best
+  draft. If the loop is about to stop with a substantial unposted draft (≥ `REACT_DRAFT_POST_MIN_CHARS`,
+  1200), it is posted automatically (`REACT_DISCORD_AUTOPOST=1`).
+- **Status nudge.** After `DISCORD_STATUS_NUDGE_TURN` (12) turns without posting, George is reminded once to
+  send a short status update.
+- **Mid-run steering.** While a run is active, new messages from the asker (and messages addressed to
+  George in social runs) are injected into the run every `DISCORD_STEER_INTERVAL` seconds (8) instead of
+  starting a second, parallel run. Disable with `DISCORD_STEER_ENABLED=0`.
+- **Channel memory.** Every run sees the recent channel log (`DISCORD_CHANNEL_LOG_TTL`, 86400 s;
+  `DISCORD_CHANNEL_LOG_MAX`, 60), so a new session doesn't start from zero.
+- **Interrupted runs.** If a run dies (crash or restart), the sweeper posts one notice in that channel,
+  including an excerpt of the best draft so far, and asks the user to re-send. Markers older than 24 h are
+  dropped.
+
+---
+
+## Telegram Bot Setup
+
+Telegram bots are created through the **BotFather** — a special Telegram bot
+that manages other bots.
+
+### Step 1: Create a Bot via BotFather
+
+1. Open Telegram and search for **@BotFather** (verified ✓)
+2. Start a conversation and send: `/newbot`
+3. BotFather asks for a **display name** — enter: `George`
+4. BotFather asks for a **username** — enter something unique ending in `bot`:
+   `george_lodge_bot` (must be globally unique)
+5. BotFather responds with your **bot token** — looks like:
+   `123456789:ABCdefGHIjklMNOpqrSTUv-wxyz12345`
+
+### Step 2: Get Your Chat ID
+
+George needs to know where to send messages. To get your personal chat ID:
+
+1. Send any message to your new bot in Telegram
+2. Open this URL in a browser (replace `TOKEN` with your bot token):
+   ```
+   https://api.telegram.org/botTOKEN/getUpdates
+   ```
+3. Find `"chat": {"id": 123456789}` in the response
+4. That number is your chat ID
+
+**Alternative** — use the `/social telegram me` command after setting the token:
+```bash
+/api keys set TELEGRAM_BOT_TOKEN 123456789:ABCdefGHIjklMNOpqrSTUv-wxyz12345
+/social telegram me    # Confirms George can reach the API
+```
+
+Then send a message to the bot and check updates:
+```bash
+# After sending a message to the bot in Telegram:
+/social telegram updates
+```
+
+The output will show your chat ID.
+
+### Step 3: Configure George
+
+```bash
+/api keys set TELEGRAM_BOT_TOKEN 123456789:ABCdefGHIjklMNOpqrSTUv-wxyz12345
+/api keys set TELEGRAM_CHAT_ID 123456789
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/social telegram send <text>` | Send a message to the default chat |
+| `/social telegram updates` | View recent messages to the bot |
+| `/social telegram me` | Show bot info (verify connection) |
+
+### Bot Privacy Settings
+
+By default, Telegram bots can only see messages that:
+- Are sent directly to the bot
+- Start with a `/` command in groups
+- Mention the bot by @username
+
+To let George see all group messages:
+1. Message @BotFather: `/setprivacy`
+2. Select your bot
+3. Choose **Disable** (turns off privacy mode)
+
+### Rich Messages
+
+George sends messages with `parse_mode: Markdown`, so you can use:
+- `*bold*` → **bold**
+- `_italic_` → *italic*
+- `` `code` `` → `code`
+- `` ```code block``` `` → code block
+
+---
+
+## Unified Posting
+
+The most powerful feature — post to multiple platforms simultaneously:
+
+```bash
+# Post to ALL configured platforms
+/social post Just shipped a new feature!
+
+# Post to a specific platform
+/social post x New release v0.2 is live!
+/social post mastodon Latest update from the lodge
+/social post telegram Build passed ✓
+/social post discord Hello from the Lodge!
+```
+
+George checks which platforms have API keys configured and only attempts
+those. The results show success/failure for each:
+
+```
+── Post Results ──────────────────────────────
+  X: ✓
+  Mastodon: ✓
+  Discord: ✓
+  Telegram: ✗
+```
+
+### Post vs Send
+
+George uses **post** for public messages and **send** for targeted/private
+messages:
+
+| Action | Usage | Purpose |
+|--------|-------|---------|
+| `post` | `/social post <message>` | Broadcast to all configured platforms |
+| `post` | `/social post <platform> <message>` | Post to one platform publicly |
+| `post` | `/social discord post <channel> <message>` | Post to a specific Discord channel |
+| `send` | `/social discord send <channel> <message>` | Send to a specific channel (targeted) |
+| `send` | `/social telegram send <message>` | Send via Telegram bot |
+
+**Key rule:** If George says `/social post "some message"`, the entire quoted
+text is treated as the message and broadcast to all configured platforms.
+The first word is only treated as a platform name if it matches a known
+platform (x, mastodon, bluesky, discord, telegram).
+
+For Discord specifically, `/social discord post` uses this fallback chain:
+1. Try to resolve channel name → send via bot API
+2. If no channel match → use webhook (if configured)
+3. If no webhook → use bot API with default channel
+
+---
+
+## Checking Status
+
+```bash
+/social status
+```
+
+Shows which platforms are configured:
+```
+── Social Integrations ──────────────────────
+  ● X               configured
+  ● MASTODON        configured
+  ○ BLUESKY         not configured
+  ● DISCORD         configured
+  ○ TELEGRAM        not configured
+```
+
+```bash
+/api keys list
+```
+
+Shows all stored API keys (values masked):
+```
+── Configured API Keys ──────────────────────
+  X_BEARER_TOKEN                 ********...
+  MASTODON_ACCESS_TOKEN          ********...
+  DISCORD_WEBHOOK_URL            ********...
+```
+
+---
+
+## Managing Keys
+
+```bash
+# Set a key
+/api keys set KEY_NAME value
+
+# Remove a key
+/api keys rm KEY_NAME
+
+# List all keys
+/api keys list
+
+# Or edit the file directly
+nano ~/.george/keys.conf
+```
+
+The keys file lives at `~/.george/keys.conf` with `600` permissions (owner
+read/write only). **Never commit this file to git.**
+
+---
+
+## Security Considerations
+
+- **All keys stored locally** in `~/.george/keys.conf` with restrictive
+  permissions (mode 600). Nothing is sent to any cloud service except the
+  explicit API calls you make.
+
+- **Bearer tokens vs OAuth**: George uses Bearer tokens (app-level auth) where
+  possible. This is simpler but means the token has full app permissions.
+  Revoke tokens immediately if compromised.
+
+- **App Passwords** (Bluesky): These are scoped — they can't change your
+  Bluesky account password or email.
+
+- **Webhook URLs** (Discord): Anyone with the URL can post to your channel.
+  Treat it like a password.
+
+- **Bot Tokens** (Discord, Telegram): Full bot access. Store securely and
+  never share.
+
+- **Rate Limits**: George handles `429` responses with exponential backoff via
+  `api_retry`. X free tier is particularly restrictive (1,500 posts/month).
+
+- **Secrets Vault**: For extra protection, store critical tokens in George's
+  encrypted vault (`/secret set X_BEARER_TOKEN <value>`) — though for
+  day-to-day use, `keys.conf` is sufficient.
+
+---
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| "X_BEARER_TOKEN not configured" | `/api keys set X_BEARER_TOKEN <token>` |
+| "Mastodon post failed" | Check instance URL: `/api keys set MASTODON_INSTANCE https://your.instance` |
+| "Bluesky login failed" | Verify handle format includes `.bsky.social`; regenerate app password |
+| "Discord webhook failed" | Webhook URLs expire if the webhook is deleted — recreate in Discord |
+| "Telegram send failed" | Verify bot token with `/social telegram me`; check chat ID |
+| "Rate limited (429)" | Wait and retry. X free tier is very restrictive |
+| "HTTP request failed (curl exit: 6)" | DNS resolution failed — check network connectivity |
+| "HTTP request failed (curl exit: 28)" | Timeout — increase `API_DEFAULT_TIMEOUT` or check connection |
+
+---
+
+## Architecture Notes
+
+George's social system is built in three layers:
+
+1. **lib/api.sh** — REST client core: HTTP methods, auth headers, JSON helpers,
+   rate-limit retry, key management
+2. **lib/social.sh** — Platform-specific functions: each platform's endpoints,
+   data formatting, response parsing
+3. **lodge** — Command dispatcher: maps `/social` commands to functions,
+   handles argument parsing
+
+All HTTP requests go through `api_request()`, which:
+- Adds a User-Agent header (`George/0.1`)
+- Enforces a 30-second timeout
+- Returns the HTTP status code separately from the body
+- Handles 429 (rate limit) with a specific return code
+- Logs errors for 4xx and 5xx responses
+
+The `social_post` unified dispatcher checks which keys exist before attempting
+each platform, so misconfigured platforms are silently skipped when using "all".
+
+---
+
+## Platform API References
+
+For deeper customization or debugging:
+
+- **X API v2**: [developer.x.com/en/docs](https://developer.x.com/en/docs)
+- **Mastodon API**: [docs.joinmastodon.org/api](https://docs.joinmastodon.org/api/)
+- **AT Protocol** (Bluesky): [docs.bsky.app](https://docs.bsky.app/)
+- **Discord API**: [discord.com/developers/docs](https://discord.com/developers/docs/)
+- **Telegram Bot API**: [core.telegram.org/bots/api](https://core.telegram.org/bots/api)

@@ -1,0 +1,134 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: george-web
+  namespace: blue-lodge
+  labels:
+    app: george-web
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: george-web
+  template:
+    metadata:
+      labels:
+        app: george-web
+    spec:
+      serviceAccountName: george-operator
+      containers:
+        - name: george-web
+          image: george-web:latest
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          ports:
+            - containerPort: 3000
+              hostPort: 3000
+              name: http
+          securityContext:
+            privileged: true
+          envFrom:
+            - configMapRef:
+                name: george-env
+          env:
+            - name: PATH
+              value: "/workspace/.venv/bin:/home/user/projects/blue-lodge/.venv/bin:/usr/local/bin:/usr/bin:/bin:/usr/lib/wsl/lib:/workspace/bin"
+            - name: VIRTUAL_ENV
+              value: "/workspace/.venv"
+            - name: LD_LIBRARY_PATH
+              value: "/usr/lib/wsl/lib"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: workspace-host-mirror
+              mountPath: /home/user/projects/blue-lodge
+            - name: models-dir
+              mountPath: /models
+            - name: models-host-dir
+              mountPath: /home/user/models
+            - name: wsl-dxg
+              mountPath: /dev/dxg
+            - name: wsl-root
+              mountPath: /usr/lib/wsl
+              readOnly: true
+            - name: host-local-uv
+              mountPath: /home/user/.local
+              readOnly: true
+      volumes:
+        - name: workspace
+          hostPath:
+            path: /home/user/projects/blue-lodge
+            type: Directory
+        - name: workspace-host-mirror
+          hostPath:
+            path: /home/user/projects/blue-lodge
+            type: Directory
+        - name: models-dir
+          hostPath:
+            path: /home/user/models
+            type: DirectoryOrCreate
+        - name: models-host-dir
+          hostPath:
+            path: /home/user/models
+            type: DirectoryOrCreate
+        - name: wsl-dxg
+          hostPath:
+            path: /dev/dxg
+            type: CharDevice
+        - name: wsl-root
+          hostPath:
+            path: /usr/lib/wsl
+            type: Directory
+        - name: host-local-uv
+          hostPath:
+            path: /home/user/.local
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: george-web
+  namespace: blue-lodge
+spec:
+  selector:
+    app: george-web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: george-web
+  namespace: blue-lodge
+  annotations:
+    cert-manager.io/cluster-issuer: local-ca-issuer
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.options: kube-system-mtls-policy@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: george.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: george-web
+                port:
+                  number: 3000
+  tls:
+    - hosts:
+        - george.localhost
+      secretName: george-web-tls-cert

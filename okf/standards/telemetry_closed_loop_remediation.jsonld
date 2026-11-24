@@ -1,0 +1,28 @@
+{
+  "@context": {
+    "@vocab": "https://schema.org/",
+    "goog": "http://schema.googleapis.com/",
+    "okf": "https://developers.google.com/knowledge-graph/schema/",
+    "lodge": "urn:blue-lodge:schema:"
+  },
+  "@graph": [
+    {
+      "@id": "urn:blue-lodge:standard:telemetry-closed-loop-remediation",
+      "@type": ["DefinedTerm", "TechArticle"],
+      "name": "Autonomous Telemetry, Incident Preservation & Closed-Loop Remediation Standard",
+      "description": "Deterministic error fingerprinting, scoped incident preservation, deduplication, and automated genetic self-healing (phytology) protocols.",
+      "stability": "stable",
+      "definition": "The standard protocol for capturing system failures without disk bloat, fingerprinting errors via SHA256 hashes, raising operator alerts, and queuing autonomous repair actions.",
+      "articleBody": "1. Scoped Incident Capture: When preserving diagnostic incidents, large model binaries (*.gguf, *.bin) and root caches MUST be excluded from artifact snapshots to avoid disk bloat.\n2. Deduplication: Errors are indexed by sha256(class:subsystem:summary) to eliminate duplicate alert spam.\n3. Retention & GC: Incident snapshots must be aged out via telemetry_gc according to a 7-day retention window or 50MB per-incident limit.\n4. Closed-Loop Remediation: Striked operations undergo genetic self-healing via phytology auto-remediation before escalating to operators."
+    },
+    {
+      "@id": "urn:blue-lodge:standard:sovereign-inference-switching",
+      "@type": ["DefinedTerm", "TechArticle"],
+      "name": "Sovereign Inference Fabric & Dual-Profile Model Switching Standard",
+      "description": "Protocol for orchestrating local multi-GPU vLLM/llama.cpp inference nodes and dynamically toggling between sovereign production and research profiles.",
+      "stability": "stable",
+      "definition": "Governs the PRISM inference fabric. Mandates strict split-GPU resource allocation (Dual RTX 3060 14,9 tensor split), SVD32 model compression, unified endpoint routing via endpoints.conf, and atomic profile switching via scripts/inference/switch_inference.sh.",
+      "articleBody": "Tier 1 endpoints route to local PRISM server at port 8080 with 65k context. The active profile toggles seamlessly between Sovereign Production (Qwen3.8-27B-UD-Q4_K_S + SVD32 fusion) and Experimental Research (Champion-v5-Internal-MTP) without modifying application code or corrupting active sessions."
+    }
+  ]
+}

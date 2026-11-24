@@ -1,0 +1,17 @@
+<string>:20: DeprecationWarning: datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).
+Symbol: UNH
+Current Price: 371.9
+Change: 6.7 (1.835%)
+Day High: 372.675
+Day Low: 364.47
+Volume: 3,292,808
+52W High: 461.62
+52W Low: 255.97
+Previous Close: 376.59
+
+=== Last 5 Days ===
+2026-09-28 | O:376.36 H:380.98 L:374.56 C:377.83 V:4,677,100
+2026-09-29 | O:374.88 H:376.59 L:371.33 C:374.94 V:3,284,700
+2026-09-30 | O:374.93 H:374.93 L:365.72 C:367.08 V:4,788,300
+2026-10-01 | O:367.99 H:371.86 L:362.60 C:365.20 V:3,940,700
+2026-10-02 | O:365.14 H:372.68 L:364.47 C:371.90 V:3,306,900

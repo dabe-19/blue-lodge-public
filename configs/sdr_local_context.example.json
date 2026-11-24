@@ -1,0 +1,7 @@
+{
+  "whisper_prompt_vocab": "Dispatch, 10-4, copy, en route, on scene, clear, traffic stop, medical, ambulance, fire, rescue, sheriff, deputy, officer, sergeant, City Fire, County EMS, Metro PD, County Sheriff, Main Street, County Road, Highway 101, Memorial Hospital, Regional Medical Center, squad, medic, engine.",
+  "unit_id_patterns": "Dispatch consoles: 1001/1002; Metro PD squads: 21xx; County Sheriff deputies: 31xx; Fire/EMS apparatus: 51xx/61xx",
+  "regional_context_hint": "regional municipal context (Metro PD, County Sheriff, City Fire, County EMS, Main St, Highway 101, Memorial Hospital)",
+  "example_tactical_summary": "Unit 2104 acknowledged (10-4) City Fire Dispatch's assignment to the medical call on Main St."
+}
+

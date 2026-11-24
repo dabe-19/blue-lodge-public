@@ -1,0 +1,44 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "__MOD_PREFIX___list_entries",
+      "description": "List recent entries stored in __MOD_NAME__'s local SQLite ledger (.george/module_data/__MOD_ID__/app.db).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Maximum rows to return (default 20, max 100)."
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "__MOD_PREFIX___save_entry",
+      "description": "Persist a structured entry or agent briefing into __MOD_NAME__'s local SQLite ledger.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Short descriptive title."
+          },
+          "category": {
+            "type": "string",
+            "description": "Optional tag or category (e.g. note, briefing, alert)."
+          },
+          "body": {
+            "type": "string",
+            "description": "Markdown or plain-text entry body."
+          }
+        },
+        "required": ["title", "body"]
+      }
+    }
+  }
+]

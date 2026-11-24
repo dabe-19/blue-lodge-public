@@ -1,0 +1,124 @@
+name: Lodge CI / CD Build Gate
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'ecotype/*'
+  pull_request:
+    branches:
+      - main
+      - develop
+      - 'ecotype/*'
+
+jobs:
+  syntax-and-lint:
+    name: Shell Syntax & Integrity Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Install Dependencies & Hermetic Bootstrap
+        run: |
+          bash scripts/ci/bootstrap_env.sh --install-deps
+
+      - name: Verify Bash Syntax
+        run: |
+          echo "Verifying shell syntax across lib/, commands/, scripts/ci/, and tests/..."
+          find lib commands scripts/ci tests -name "*.sh" -exec bash -n {} +
+          echo "All shell scripts passed syntax inspection."
+
+      - name: Verify Python Syntax & Venv Parity
+        run: |
+          echo "Verifying Python runtime version and .venv package parity..."
+          python3 -c "import sys, numpy, cbor2, pycardano, cryptography, yaml, pytest; print('Active Python:', sys.version.split()[0], 'at', sys.executable)"
+          echo "Verifying Python syntax across all active modules in okf/, lib/, and scripts/..."
+          find lib scripts okf -name "*.py" -not -path "*/archive/*" -exec python3 -m py_compile {} +
+          echo "All active Python modules passed bytecode compilation."
+
+      - name: Verify OKF Graph & Router Parity
+        run: |
+          bash tests/test_okf.sh
+          bash tests/test_graph_and_routing_parity.sh
+          bash tests/test_ci_cd_evolution.sh
+
+      - name: Run Diff-Targeted Unit Test Suites
+        run: |
+          for suite in $(bash scripts/ci/select_tests.sh --ci); do
+            echo "Running diff-targeted test suite: tests/${suite}.sh"
+            bash "tests/${suite}.sh"
+          done
+
+      - name: Verify Rust Web Crate
+        run: |
+          if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q '^web/' && command -v cargo &>/dev/null; then
+            (cd web && cargo check)
+          fi
+
+  phytology-verification:
+    name: Software Phytology & Living Tissue Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies & Hermetic Bootstrap
+        run: |
+          bash scripts/ci/bootstrap_env.sh --install-deps
+
+      - name: Run Software Phytology Test Suite
+        run: |
+          echo "Executing software-phytology test harness..."
+          bash tests/test_phytology.sh
+          echo "Phytology living tissue tests completed successfully."
+
+      - name: Validate Living Tissue Audit
+        run: |
+          echo "Running living tissue diagnostic audit..."
+          bash -c "source lib/agents/phytology.sh && phytology_audit"
+          echo "All monitored foliage verified AST healthy."
+
+  gitflow-guard:
+    name: GitFlow Branch Protection Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Protected Branches
+        env:
+          GH_EVENT: ${{ github.event_name }}
+          GH_BASE: ${{ github.base_ref }}
+          GH_REF: ${{ github.ref }}
+          GH_REF_NAME: ${{ github.ref_name }}
+        run: |
+          # Canonical Three-Tier GitFlow topology:
+          #   develop = Heartwood integration branch, main/master = release-only branches,
+          #   ecotype/* = node-local ecotype branches (hardware/hostPath adaptations).
+          # Unauthorized direct pushes to main are guarded at pre-push (gitflow_protect_main)
+          # and server-side branch protection. This CI gate validates that the workflow only
+          # executes on authorized build branches (main, master, develop, ecotype/*).
+          echo "Auditing branch protection rules..."
+          TARGET="${GH_BASE:-${GH_REF_NAME:-$GH_REF}}"
+          echo "Event: ${GH_EVENT} | Target branch: ${TARGET}"
+          case "${TARGET}" in
+            main|master|refs/heads/main|refs/heads/master|develop|refs/heads/develop|ecotype/*|refs/heads/ecotype/*)
+              echo "Target '${TARGET}' is an authorized CI build branch (GitFlow integration/release/ecotype path)."
+              ;;
+            *)
+              echo "ERROR: CI Build Gate must not run on unauthorized branch '${TARGET}' (GitFlow policy: work targets 'develop' or 'ecotype/*')."
+              exit 1
+              ;;
+          esac
+          echo "Branch protection policy satisfied."
+
+      - name: Emit CI Failure Hook
+        if: failure()
+        run: |
+          echo "CI Failure encountered on branch ${{ github.ref_name }}."
+          curl -sf -X POST "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/issues" \
+            -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"title\":\"[CI Gate Failed] ${{ github.workflow }} failed on ${{ github.ref_name }}\",\"body\":\"**Branch:** ${{ github.ref_name }}\n**Failing Commit:** ${{ github.sha }}\n\nWorkflow run ${{ github.run_number }} failed on commit ${{ github.sha }}. Action: Autonomic GitFlow Remediation triggered.\",\"labels\":[\"ci-failure\",\"needs-remediation\"]}" 2>/dev/null || true
+

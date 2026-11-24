@@ -1,0 +1,6 @@
+# ShellCheck Configuration for Blue Lodge Bash Codebase
+shell=bash
+# Allow dynamic sourcing (e.g. source "$LODGE_DIR/lib/...")
+disable=SC1090,SC1091
+# Allow non-constant format strings in printf when using formatted constants
+disable=SC2059

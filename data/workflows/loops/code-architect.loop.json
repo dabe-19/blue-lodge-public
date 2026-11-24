@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "id": "code-architect",
+  "name": "Sovereign Code Architect & Impact Planner",
+  "owner": "heartwood",
+  "owner_type": "heartwood",
+  "category": "engineering",
+  "version": "1.0.0",
+  "description": "Parallel FIFO OKF knowledge-graph & repo survey followed by a 200-turn ReAct implementation planner that produces a verified implementation plan.",
+  "defaults": {
+    "max_turns": 200,
+    "ipc_priority": 100,
+    "fifo_window": 16,
+    "tool_timeout_sec": 120,
+    "require_result_json": true,
+    "output_artifact": "result.json"
+  },
+  "inputs": [
+    {
+      "name": "objective",
+      "type": "text",
+      "label": "Architecture Objective",
+      "required": true,
+      "placeholder": "Describe the feature, subsystem refactor, or protocol change to plan..."
+    }
+  ],
+  "tools": {
+    "bundles": [],
+    "allow": [
+      "okf_search",
+      "okf_query",
+      "okf_traverse",
+      "code_outline",
+      "code_symbol_get",
+      "file_read",
+      "file_grep",
+      "dir_list",
+      "file_write"
+    ],
+    "deny": []
+  },
+  "phases": [
+    {
+      "id": "okf_survey",
+      "name": "Phase 1: Parallel FIFO Knowledge Graph Survey",
+      "kind": "fifo_parallel",
+      "enabled": true,
+      "continue_on_error": true,
+      "timeout_sec": 45,
+      "tasks": [
+        {
+          "id": "okf_hits",
+          "tool": "okf_search",
+          "args_template": {
+            "query": "{{params.objective}}"
+          },
+          "output_key": "okf_matches"
+        },
+        {
+          "id": "root_tree",
+          "tool": "dir_list",
+          "args_template": {
+            "path": "."
+          },
+          "output_key": "workspace_root"
+        }
+      ]
+    },
+    {
+      "id": "architect_plan",
+      "name": "Phase 2: ReAct Architecture & Blast-Radius Plan",
+      "kind": "react",
+      "enabled": true,
+      "max_turns": 200,
+      "tool_filter": "code",
+      "tools_allow": [],
+      "prompt_template": "Draft a rigorous implementation plan for the following Blue Lodge architecture objective:\n\nOBJECTIVE:\n{{params.objective}}\n\nPRE-FLIGHT FIFO SURVEY:\n- OKF Graph Matches: {{phase.okf_survey.okf_matches}}\n- Workspace Root: {{phase.okf_survey.workspace_root}}\n\nEXECUTION STEPS:\n1. Inspect affected files, symbols, and blast radius via file_read, file_grep, and code_outline.\n2. Produce a concrete step-by-step plan covering affected files, security boundaries, FIFO IPC impact, and verification tests.\n3. Write structured JSON to {{result_path}} with keys: workflow, objective, affected_files (array), steps (array), risks (array), verification_plan (array), and plan_markdown.\n4. Call milestone_complete and summarize the architecture plan clearly.",
+      "gate": {
+        "type": "json_file",
+        "path": "result.json",
+        "required_keys": ["workflow", "objective", "affected_files", "plan_markdown"],
+        "on_fail": "retry",
+        "max_retries": 1
+      }
+    }
+  ]
+}

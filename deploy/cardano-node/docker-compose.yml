@@ -1,0 +1,118 @@
+# ── Blue Lodge Sovereign Cardano Node, Ogmios & Kupo Infrastructure ──
+# Architecture:
+#   1. cardano-node: Cardano peer-to-peer consensus daemon (Ouroboros Praos / Leios)
+#   2. ogmios: Lightweight bridge translating node Unix socket mini-protocols to JSON-WSP / WebSockets
+#   3. kupo: High-speed pattern-matching UTXO and script indexer directly connected to Ogmios
+#
+# Fast-Sync: Do NOT sync from Genesis block (72+ hours).
+# Run './scripts/sync_mithril.sh' first to bootstrap via Mithril stake-based snapshot in ~20 mins.
+
+version: "3.8"
+
+services:
+  cardano-node:
+    image: intersectmbo/cardano-node:10.1.4
+    container_name: lodge-cardano-node
+    restart: "no"
+    environment:
+      - NETWORK=mainnet
+      - CARDANO_NODE_SOCKET_PATH=/ipc/node.socket
+    volumes:
+      - ./data/db:/data/db
+      - ./data/ipc:/ipc
+      - ./config:/config:ro
+    ports:
+      - "${CARDANO_P2P_PORT:-3001}:3001"
+    command:
+      - "run"
+      - "--config"
+      - "/config/mainnet-config.json"
+      - "--topology"
+      - "/config/mainnet-topology.json"
+      - "--database-path"
+      - "/data/db"
+      - "--socket-path"
+      - "/ipc/node.socket"
+      - "+RTS"
+      - "-N2"
+      - "-A16m"
+      - "-qg"
+      - "-M20G"
+      - "-RTS"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  ogmios:
+    image: cardanosolutions/ogmios:v6.11.0
+    container_name: lodge-ogmios
+    restart: "no"
+    depends_on:
+      - cardano-node
+    volumes:
+      - ./data/ipc:/ipc
+      - ./config:/config:ro
+    ports:
+      - "${OGMIOS_PORT:-1337}:1337"
+    command:
+      - "--node-socket"
+      - "/ipc/node.socket"
+      - "--node-config"
+      - "/config/mainnet-config.json"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "1337"
+      - "--log-level"
+      - "Info"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:1337/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  kupo:
+    image: cardanosolutions/kupo:v2.9.0
+    container_name: lodge-kupo
+    restart: "no"
+    depends_on:
+      ogmios:
+        condition: service_healthy
+    volumes:
+      - ./data/kupo:/db
+      - ./config:/config:ro
+      - ./data/ipc:/ipc
+    ports:
+      - "${KUPO_PORT:-1442}:1442"
+    command:
+      - "--ogmios-host"
+      - "ogmios"
+      - "--ogmios-port"
+      - "1337"
+      - "--node-config"
+      - "/config/mainnet-config.json"
+      - "--node-socket"
+      - "/ipc/node.socket"
+      - "--workdir"
+      - "/db"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "1442"
+      # Index all UTXOs, or narrow down with pattern filters
+      - "--match"
+      - "*/*"
+      # Automatically prune spent UTXOs to conserve disk space
+      - "--prune-utxo"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:1442/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  node-ipc:

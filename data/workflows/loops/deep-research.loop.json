@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "id": "deep-research",
+  "name": "Sovereign Deep Research Studio (5-Phase Monograph)",
+  "owner": "heartwood",
+  "owner_type": "heartwood",
+  "category": "research",
+  "version": "1.0.0",
+  "runner": "research_graph",
+  "description": "5-phase autonomous investigation loop: Deep ReAct primary ingest (200 turns), evidence audit, long-form monograph synthesis with verification/quarantine gating, editorial soul.md critique, and Three Degrees PGP packaging.",
+  "defaults": {
+    "max_turns": 200,
+    "ipc_priority": 80,
+    "fifo_window": 16,
+    "tool_timeout_sec": 240,
+    "require_result_json": false,
+    "output_artifact": "dossier.md"
+  },
+  "inputs": [
+    {
+      "name": "topic",
+      "type": "string",
+      "label": "Research Inquiry Topic",
+      "required": true,
+      "placeholder": "e.g. [empirical] EUTxO Concurrency Models and Minswap Batcher Queue Determinism"
+    },
+    {
+      "name": "domain",
+      "type": "select",
+      "label": "Domain Mode",
+      "required": false,
+      "default": "auto",
+      "options": ["auto", "academic", "engineering", "finance", "gaming", "general_sports_auto"]
+    }
+  ],
+  "tools": {
+    "bundles": [],
+    "allow": [
+      "arxiv_search",
+      "searxng_search",
+      "searxng_science_search",
+      "web_search",
+      "web_fetch",
+      "hn_search",
+      "pdf_read",
+      "vision_analyze",
+      "bash_exec",
+      "file_read",
+      "file_write",
+      "file_append",
+      "dir_list"
+    ],
+    "deny": []
+  },
+  "phases": [
+    {
+      "id": "investigate_react",
+      "name": "Phase 1: Deep ReAct Investigation & Primary Ingest",
+      "kind": "react",
+      "enabled": true,
+      "max_turns": 200,
+      "tool_filter": "research",
+      "tools_allow": [],
+      "description": "Multi-turn ReAct exploration that downloads primary papers, runs empirical searches, analyzes diagrams, and accumulates verified citations into scratchpad.md.",
+      "prompt_template": "Phase 1 is driven by research_graph.sh domain instructions (academic, engineering, finance, gaming, sports/auto) with full scratchpad.md citation accumulation.",
+      "prompt_append": ""
+    },
+    {
+      "id": "evidence_audit",
+      "name": "Phase 2: Evidence Audit & Gap Analysis",
+      "kind": "delegate_script",
+      "enabled": true,
+      "handler": "research_graph:evidence_audit",
+      "description": "Audits scratchpad.md for source diversity, quantitative grounding, and missing counter-evidence before monograph drafting.",
+      "prompt_append": ""
+    },
+    {
+      "id": "synthesize_dossier",
+      "name": "Phase 3: Long-Form Technical Monograph Synthesis",
+      "kind": "delegate_script",
+      "enabled": true,
+      "handler": "research_graph:synthesize_dossier",
+      "description": "Synthesizes the authoritative long-form technical monograph (dossier.md) and runs verification gating (quarantines if citations or primitive audits fail).",
+      "prompt_append": "",
+      "gate": {
+        "type": "research_verifier",
+        "path": "dossier.md",
+        "on_fail": "quarantine",
+        "max_retries": 0
+      }
+    },
+    {
+      "id": "editorial_critique",
+      "name": "Phase 4: Editorial Critique & soul.md Refinement",
+      "kind": "delegate_script",
+      "enabled": true,
+      "handler": "research_graph:editorial_critique",
+      "description": "Performs a rigorous editorial polish pass to eliminate filler, tighten technical claims, and align voice with soul.md.",
+      "prompt_append": ""
+    },
+    {
+      "id": "audit_and_package",
+      "name": "Phase 5: Three Degrees Audit & Publication Packaging",
+      "kind": "delegate_script",
+      "enabled": true,
+      "handler": "research_graph:audit_and_package",
+      "description": "Runs final Three Degrees verification, renders summary plate PNG, PGP Ed25519 signs deliverables, archives in Sovereign Library, and stages social threads.",
+      "prompt_append": "",
+      "gate": {
+        "type": "research_verifier",
+        "path": "dossier.md",
+        "on_fail": "quarantine",
+        "max_retries": 0
+      }
+    }
+  ]
+}

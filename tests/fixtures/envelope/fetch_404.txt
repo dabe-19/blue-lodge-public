@@ -1,0 +1,3 @@
+   Fetching: https://cms.gov/newsroom/press-releases/medicare-advantage-2027-payment-rate-cut-confirmed
+ ✗ Failed to fetch: https://cms.gov/newsroom/press-releases/medicare-advantage-2027-payment-rate-cut-confirmed (HTTP 404 Not Found)
+[FETCH FAILED | HTTP 404 Not Found | URL: https://cms.gov/newsroom/press-releases/medicare-advantage-2027-payment-rate-cut-confirmed | Action: Page does not exist; do NOT retry this URL; search for updated link]

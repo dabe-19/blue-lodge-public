@@ -1,0 +1,110 @@
+# ── Sovereign OSINT Web Watchers Configuration ──────────────────────────
+# Defines search targets, indexing criteria, and reactive event bus triggers.
+# Evaluated by: bash commands/osint.sh sweep (or autonomic /cron sweep)
+
+version: 1
+settings:
+  default_engine: searxng
+  default_interval_seconds: 300
+  state_file: .george/ipc/osint_seen.json
+  log_file: .george/ipc/osint_watcher.log
+  searxng_url: http://127.0.0.1:8081
+
+watchers:
+  # Target 1: Poshmark & E-Commerce Vintage / High-Value Items
+  - id: poshmark_vintage_leica
+    name: "Poshmark & Secondary Marketplace Leica Watcher"
+    enabled: true
+    query: 'site:poshmark.com ("leica m" OR "leica lens" OR "summicron")'
+    time_range: "day"
+    categories: ["general"]
+    engines: ["google", "duckduckgo", "bing"]
+    match_criteria:
+      title_regex: "(?i)(leica|summicron|elmarit)"
+      exclude_regex: "(?i)(strap|case only|hood only|manual|poster)"
+    actions:
+      emit_event: "osint_listing"
+      notify_discord: true
+      auto_fetch: true
+      dossier_path: "dossiers/ecommerce_intel.md"
+
+  # Target 2: High-Alpha Compute GPU Sentinel (RTX 3090/4090/A100/7900XTX)
+  - id: ebay_compute_gpu_deals
+    name: "eBay High-Alpha Compute GPU Sentinel"
+    enabled: true
+    query: 'site:ebay.com ("RTX 3090" OR "RTX 4090" OR "A100" OR "RX 7900 XTX" OR "RTX A6000") ("24GB" OR "48GB" OR "80GB")'
+    time_range: "day"
+    categories: ["general"]
+    engines: ["google", "bing"]
+    match_criteria:
+      title_regex: "(?i)(3090|4090|a100|7900\\s*xtx|a6000)"
+      exclude_regex: "(?i)(box only|shroud|cooler only|waterblock|bracket|backplate|cable|fan replacement|parts only|broken)"
+    actions:
+      emit_event: "compute_listing_seen"
+      notify_discord: true
+      auto_fetch: false
+      dossier_path: "dossiers/compute_deals.md"
+
+  # Target 3: High-Density Server & Workstation RAM Sentinel (DDR5/DDR4 ECC)
+  - id: ebay_compute_ram_deals
+    name: "eBay High-Density Server & Workstation RAM Sentinel"
+    enabled: true
+    query: 'site:ebay.com ("DDR5 ECC" OR "DDR4 ECC" OR "RDIMM") ("64GB" OR "128GB" OR "256GB")'
+    time_range: "day"
+    categories: ["general"]
+    engines: ["google", "bing"]
+    match_criteria:
+      title_regex: "(?i)(ddr5|ddr4).*(ecc|rdimm|registered|server)"
+      exclude_regex: "(?i)(adapter|cooler|motherboard only|server chassis|cable)"
+    actions:
+      emit_event: "compute_listing_seen"
+      notify_discord: true
+      auto_fetch: false
+      dossier_path: "dossiers/compute_deals.md"
+
+  # Target 4: Classic ThinkPad & Vintage Hardware
+  - id: ebay_thinkpad_deals
+    name: "eBay Classic ThinkPad & Custom Hardware Sentinel"
+    enabled: true
+    query: 'site:ebay.com ("thinkpad x2100" OR "thinkpad x62" OR "thinkpad 701c")'
+    time_range: "week"
+    categories: ["general"]
+    engines: ["google", "bing"]
+    match_criteria:
+      title_regex: "(?i)(thinkpad|x2100|x62|701c)"
+      exclude_regex: "(?i)(replacement battery|charger only|screen replacement)"
+    actions:
+      emit_event: "osint_listing"
+      notify_discord: true
+      auto_fetch: false
+      dossier_path: "dossiers/hardware_deals.md"
+
+  # Target 3: Shopify Direct-to-Consumer Product Drops
+  - id: shopify_custom_drops
+    name: "Shopify Limited Drop & Release Scanner"
+    enabled: true
+    query: 'site:myshopify.com ("limited edition" OR "presale" OR "sold out") "mechanical keyboard"'
+    time_range: "day"
+    categories: ["general"]
+    engines: ["google", "duckduckgo"]
+    match_criteria:
+      title_regex: ".*"
+    actions:
+      emit_event: "osint_shopify_drop"
+      notify_discord: false
+      auto_fetch: false
+
+  # Target 4: Threat Intelligence & Code / Secret Leak Sentinel
+  - id: credential_exposure_sentinel
+    name: "Public Repository & Paste Exposure Sentinel"
+    enabled: true
+    query: 'site:pastebin.com OR site:github.com "api_secret" OR "PRIVATE KEY" "blue-lodge"'
+    time_range: "week"
+    categories: ["general"]
+    match_criteria:
+      title_regex: ".*"
+    actions:
+      emit_event: "osint_threat_alert"
+      notify_discord: true
+      auto_fetch: true
+      dossier_path: "dossiers/threat_intel.md"

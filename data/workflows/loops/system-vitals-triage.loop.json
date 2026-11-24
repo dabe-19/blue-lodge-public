@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "id": "system-vitals-triage",
+  "name": "FIFO System Vitals & Service Health Triage",
+  "owner": "heartwood",
+  "owner_type": "heartwood",
+  "category": "operations",
+  "version": "1.0.0",
+  "description": "Concurrent FIFO pre-flight snapshot of system vitals and live services followed by ReAct anomaly diagnosis and remediation checklist.",
+  "defaults": {
+    "max_turns": 200,
+    "ipc_priority": 90,
+    "fifo_window": 16,
+    "tool_timeout_sec": 60,
+    "require_result_json": true,
+    "output_artifact": "result.json"
+  },
+  "inputs": [
+    {
+      "name": "focus",
+      "type": "string",
+      "label": "Focus Area (optional)",
+      "required": false,
+      "placeholder": "e.g. GPU memory, sidecars, event bus, or leave blank for full rack sweep"
+    }
+  ],
+  "tools": {
+    "bundles": [],
+    "allow": [
+      "system_vitals",
+      "service_list",
+      "file_read",
+      "file_write",
+      "bash_exec"
+    ],
+    "deny": []
+  },
+  "phases": [
+    {
+      "id": "telemetry_snapshot",
+      "name": "Phase 1: Parallel FIFO Vitals & Service Probe",
+      "kind": "fifo_parallel",
+      "enabled": true,
+      "continue_on_error": true,
+      "timeout_sec": 45,
+      "tasks": [
+        {
+          "id": "vitals",
+          "tool": "system_vitals",
+          "args_template": {},
+          "output_key": "vitals"
+        },
+        {
+          "id": "services",
+          "tool": "service_list",
+          "args_template": {},
+          "output_key": "services"
+        }
+      ]
+    },
+    {
+      "id": "diagnose",
+      "name": "Phase 2: ReAct Diagnostics & Action Plan",
+      "kind": "react",
+      "enabled": true,
+      "max_turns": 200,
+      "tool_filter": "default",
+      "tools_allow": [],
+      "prompt_template": "Analyze the Blue Lodge rack telemetry snapshot and produce an actionable operations triage report.\n\nFOCUS: {{params.focus | full rack health sweep}}\n\nFIFO PRE-FLIGHT TELEMETRY:\n- System Vitals: {{phase.telemetry_snapshot.vitals}}\n- Active Services: {{phase.telemetry_snapshot.services}}\n\nSTEPS:\n1. Identify any resource pressure (RAM, VRAM, disk, zombie processes, unhealthy services).\n2. Write structured JSON to {{result_path}} with keys: workflow, status (healthy|degraded|critical), findings (array), recommendations (array), and summary.\n3. Conclude with a concise operations briefing.",
+      "gate": {
+        "type": "json_file",
+        "path": "result.json",
+        "required_keys": ["workflow", "status", "findings", "summary"],
+        "on_fail": "retry",
+        "max_retries": 1
+      }
+    }
+  ]
+}

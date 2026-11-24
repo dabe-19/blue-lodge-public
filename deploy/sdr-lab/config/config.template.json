@@ -1,0 +1,61 @@
+{
+    "ver": 2,
+    "captureDir": "/app/media",
+    "uploadServer": "",
+    "broadcastifyCallsServer": "",
+    "logLevel": "info",
+    "frequencyFormat": "mhz",
+    "sources": [
+        {
+            "center": 858212500,
+            "rate": 6000000,
+            "error": 3450,
+            "gainSettings": {
+                "LNA": 13,
+                "MIX": 10,
+                "IF": 15
+            },
+            "digitalRecorders": 8,
+            "driver": "osmosdr",
+            "device": "airspy",
+            "autoTune": false
+        }
+    ],
+    "systems": [
+        {
+            "shortName": "winne_p25",
+            "type": "p25",
+            "control_channels": [
+                859987500,
+                859462500,
+                857937500,
+                856937500
+            ],
+            "talkgroupsFile": "talkgroups.csv",
+            "modulation": "qpsk",
+            "squelch": -50,
+            "compressWav": true,
+            "audioArchive": true,
+            "recordUUVCalls": true,
+            "hideEncrypted": false,
+            "callLog": true,
+            "customFrequencyTableFile": "/app/media/freq_table.csv"
+        }
+    ],
+    "plugins": [
+        {
+            "name": "rdioscanner_uploader",
+            "library": "librdioscanner_uploader.so",
+            "server": "http://rdio-scanner:3000",
+            "systems": [
+                {
+                    "shortName": "winne_p25",
+                    "systemId": 1,
+                    "apiKey": "REPLACE_WITH_RDIO_SCANNER_API_KEY"
+                }
+            ]
+        }
+    ],
+    "controlWarnRate": -1
+}
+

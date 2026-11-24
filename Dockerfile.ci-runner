@@ -1,0 +1,32 @@
+# ── George Sovereign CI Runner Image (Ubuntu 24.04 LTS / Python 3.12 Parity) ──
+# Aligns the Gitea Actions runner container OS (Ubuntu 24.04 Noble) and CPython
+# interpreter (/usr/bin/python3.12) with the production host so the workspace's
+# .venv (including compiled C-extensions like pycardano, numpy, cryptography,
+# cbor2, and pynacl) can be shared read-only with zero ABI drift or apt overhead.
+
+FROM node:20-bookworm AS node_provider
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        jq \
+        sqlite3 \
+        ripgrep \
+        zstd \
+        poppler-utils \
+        procps \
+        mosquitto-clients \
+        python3 \
+        python3-venv \
+        python3-yaml \
+    && rm -rf /var/lib/apt/lists/*
+
+# Provide Node.js 20 runtime required by Gitea Actions steps (e.g. actions/checkout@v4)
+COPY --from=node_provider /usr/local/bin/node /usr/local/bin/node
+

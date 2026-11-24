@@ -1,0 +1,501 @@
+/* ── Blue Lodge Sovereign Agentic Loop Studio (ALP v1) ──────────────────────
+   Tony Fadell precision-instrument layout · Okabe-Ito colorblind-safe tokens.
+   Zero red/green ambiguity: Cobalt (#38bdf8), Amber (#f59e0b), Teal (#2dd4bf). */
+
+.ls-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 540px;
+  background: #0b101b;
+  color: #e2e8f0;
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+}
+
+.ls-layout {
+  display: grid;
+  grid-template-columns: 272px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 920px) {
+  .ls-layout {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+}
+
+/* ── Sidebar ──────────────────────────────────────────────────────────────── */
+.ls-sidebar {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(148, 163, 184, 0.14);
+  background: #0e1422;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ls-sidebar-top {
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ls-sidebar-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ls-sidebar-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.ls-owner-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ls-owner-pill {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.ls-owner-pill.active {
+  background: rgba(56, 189, 248, 0.16);
+  border-color: rgba(56, 189, 248, 0.55);
+  color: #e0f2fe;
+}
+
+.ls-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ls-item {
+  text-align: left;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 7px;
+  padding: 9px 10px;
+  cursor: pointer;
+  color: #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.ls-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(148, 163, 184, 0.28);
+}
+
+.ls-item.active {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.55);
+}
+
+.ls-item-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #f8fafc;
+  line-height: 1.3;
+}
+
+.ls-item-sub {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  color: #94a3b8;
+}
+
+.ls-item-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.ls-badge {
+  display: inline-flex;
+  align-items: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.12);
+  color: #cbd5e1;
+}
+
+.ls-badge-fifo {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fcd34d;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.ls-badge-ovr {
+  background: rgba(45, 212, 191, 0.14);
+  color: #5eead4;
+  border: 1px solid rgba(45, 212, 191, 0.35);
+}
+
+.ls-badge-turns {
+  background: rgba(56, 189, 248, 0.12);
+  color: #7dd3fc;
+}
+
+/* ── Main Editor Surface ──────────────────────────────────────────────────── */
+.ls-editor {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #0b101b;
+}
+
+.ls-editor-header {
+  padding: 12px 18px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: #0d1320;
+}
+
+.ls-header-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ls-header-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.ls-header-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.ls-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ls-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.ls-btn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(148, 163, 184, 0.45);
+}
+
+.ls-btn-primary {
+  background: #0284c7;
+  border-color: #38bdf8;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.ls-btn-primary:hover {
+  background: #0369a1;
+}
+
+.ls-btn-amber {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.45);
+  color: #fcd34d;
+}
+
+.ls-btn-amber:hover {
+  background: rgba(245, 158, 11, 0.24);
+}
+
+.ls-btn-sm {
+  font-size: 11px;
+  padding: 4px 8px;
+}
+
+.ls-select,
+.ls-input,
+.ls-textarea {
+  background: #0f172a;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  color: #f1f5f9;
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-size: 12.5px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.ls-input:focus,
+.ls-select:focus,
+.ls-textarea:focus {
+  outline: none;
+  border-color: #38bdf8;
+}
+
+.ls-textarea {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ls-subtabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 18px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: #0d1320;
+}
+
+.ls-subtab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+.ls-subtab.active {
+  color: #f8fafc;
+  border-bottom-color: #38bdf8;
+}
+
+.ls-status {
+  display: none;
+  padding: 8px 18px;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(56, 189, 248, 0.1);
+  color: #e0f2fe;
+}
+
+.ls-status.visible {
+  display: block;
+}
+
+.ls-status.warn {
+  background: rgba(245, 158, 11, 0.14);
+  color: #fde68a;
+}
+
+.ls-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── Phase Pipeline Cards ─────────────────────────────────────────────────── */
+.ls-phase-card {
+  background: #111827;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-left: 3px solid #38bdf8;
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ls-phase-card.kind-fifo_parallel,
+.ls-phase-card.kind-fifo_pipe {
+  border-left-color: #f59e0b;
+}
+
+.ls-phase-card.kind-delegate_script {
+  border-left-color: #2dd4bf;
+}
+
+.ls-phase-card.disabled {
+  opacity: 0.55;
+}
+
+.ls-phase-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ls-phase-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(56, 189, 248, 0.18);
+  color: #7dd3fc;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.ls-phase-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.ls-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ls-field label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+  letter-spacing: 0.03em;
+}
+
+.ls-fifo-task {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(245, 158, 11, 0.24);
+  border-radius: 6px;
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ls-gate-box {
+  background: rgba(45, 212, 191, 0.06);
+  border: 1px solid rgba(45, 212, 191, 0.22);
+  border-radius: 6px;
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── Tool Picker Chips ────────────────────────────────────────────────────── */
+.ls-tool-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ls-tool-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ls-tool-chip {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  color: #cbd5e1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  padding: 4px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.ls-tool-chip.selected {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: #38bdf8;
+  color: #e0f2fe;
+}
+
+/* ── Modal Host (for Research Studio & Module Panel Overlay) ─────────────── */
+.ls-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9500;
+  background: rgba(4, 8, 18, 0.78);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.ls-modal-dialog {
+  width: min(1220px, 96vw);
+  height: min(840px, 90vh);
+  background: #0b101b;
+  border: 1px solid rgba(56, 189, 248, 0.32);
+  border-radius: 10px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ls-modal-bar {
+  padding: 10px 16px;
+  background: #0e1526;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ls-modal-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #f8fafc;
+}
+
+.ls-modal-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}

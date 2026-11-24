@@ -1,0 +1,875 @@
+/* ==========================================================================
+   THE TYLER // Sovereign Network Defense, Kali Fortress & RF Mesh Cockpit
+   Industrial Hardware Clarity • Semantic Color Discipline • Zero Visual Noise
+   ========================================================================== */
+
+#pane-tyler {
+  --tyler-safe: #10b981;
+  --tyler-safe-text: #6ee7b7;
+  --tyler-safe-bg: rgba(16, 185, 129, 0.11);
+  --tyler-safe-border: rgba(16, 185, 129, 0.36);
+
+  --tyler-info: #38bdf8;
+  --tyler-info-text: #7dd3fc;
+  --tyler-info-bg: rgba(56, 189, 248, 0.11);
+  --tyler-info-border: rgba(56, 189, 248, 0.36);
+
+  --tyler-warn: #f59e0b;
+  --tyler-warn-text: #fde68a;
+  --tyler-warn-bg: rgba(245, 158, 11, 0.12);
+  --tyler-warn-border: rgba(245, 158, 11, 0.40);
+
+  --tyler-danger: #ef4444;
+  --tyler-danger-text: #fca5a5;
+  --tyler-danger-bg: rgba(239, 68, 68, 0.12);
+  --tyler-danger-border: rgba(239, 68, 68, 0.42);
+
+  --tyler-sandbox: #a78bfa;
+  --tyler-sandbox-text: #ddd6fe;
+  --tyler-sandbox-bg: rgba(167, 139, 250, 0.12);
+  --tyler-sandbox-border: rgba(167, 139, 250, 0.38);
+
+  --tyler-text-strong: var(--text-main, #f8fafc);
+  --tyler-text-dim: #94a3b8;
+  --tyler-surface: rgba(15, 23, 42, 0.72);
+  --tyler-surface-deep: rgba(9, 13, 22, 0.88);
+  --tyler-border: rgba(148, 163, 184, 0.20);
+  --tyler-border-strong: rgba(148, 163, 184, 0.34);
+}
+
+html[data-theme="parchment"] #pane-tyler {
+  --tyler-safe-text: #047857;
+  --tyler-info-text: #0369a1;
+  --tyler-warn-text: #b45309;
+  --tyler-danger-text: #b91c1c;
+  --tyler-sandbox-text: #6d28d9;
+  --tyler-text-strong: #1c1917;
+  --tyler-text-dim: #57534e;
+  --tyler-surface: rgba(232, 225, 213, 0.82);
+  --tyler-surface-deep: rgba(220, 212, 198, 0.92);
+  --tyler-border: rgba(120, 113, 108, 0.28);
+  --tyler-border-strong: rgba(120, 113, 108, 0.45);
+}
+
+/* ── Top Header & Command Strip ───────────────────────────────────────────── */
+.tyler-cockpit-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  background: var(--tyler-surface);
+  border: 1px solid var(--tyler-border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.tyler-title-main {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--tyler-text-strong);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tyler-title-sub {
+  font-size: 11.5px;
+  color: var(--tyler-text-dim);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
+.tyler-cmd-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ── Semantic Status Badges ───────────────────────────────────────────────── */
+.tyler-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border: 1px solid var(--tyler-border-strong);
+}
+
+.tyler-badge-safe {
+  background: var(--tyler-safe-bg);
+  border-color: var(--tyler-safe-border);
+  color: var(--tyler-safe-text);
+}
+
+.tyler-badge-info {
+  background: var(--tyler-info-bg);
+  border-color: var(--tyler-info-border);
+  color: var(--tyler-info-text);
+}
+
+.tyler-badge-warn {
+  background: var(--tyler-warn-bg);
+  border-color: var(--tyler-warn-border);
+  color: var(--tyler-warn-text);
+}
+
+.tyler-badge-danger {
+  background: var(--tyler-danger-bg);
+  border-color: var(--tyler-danger-border);
+  color: var(--tyler-danger-text);
+}
+
+.tyler-badge-sandbox {
+  background: var(--tyler-sandbox-bg);
+  border-color: var(--tyler-sandbox-border);
+  color: var(--tyler-sandbox-text);
+}
+
+.tyler-badge-neutral {
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.28);
+  color: var(--tyler-text-dim);
+}
+
+/* ── 5-Card Executive KPI Strip ───────────────────────────────────────────── */
+.tyler-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.tyler-kpi-box {
+  background: var(--tyler-surface);
+  border: 1px solid var(--tyler-border);
+  border-left: 3px solid var(--tyler-info);
+  border-radius: 7px;
+  padding: 10px 12px;
+}
+
+.tyler-kpi-box.kpi-safe { border-left-color: var(--tyler-safe); }
+.tyler-kpi-box.kpi-info { border-left-color: var(--tyler-info); }
+.tyler-kpi-box.kpi-warn { border-left-color: var(--tyler-warn); }
+.tyler-kpi-box.kpi-sandbox { border-left-color: var(--tyler-sandbox); }
+
+.tyler-kpi-lbl {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--tyler-text-dim);
+  text-transform: uppercase;
+}
+
+.tyler-kpi-val {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--tyler-text-strong);
+  margin-top: 4px;
+  font-family: var(--font-mono);
+}
+
+.tyler-kpi-sub {
+  font-size: 10.5px;
+  color: var(--tyler-text-dim);
+  margin-top: 2px;
+}
+
+/* ── Workspace Navigation Tabs & Field Guide Drawer ───────────────────────── */
+.tyler-workspace-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  background: var(--tyler-surface-deep);
+  border: 1px solid var(--tyler-border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.tyler-workspace-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tyler-tab-btn {
+  background: transparent;
+  color: var(--tyler-text-dim);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.tyler-tab-btn:hover {
+  color: var(--tyler-text-strong);
+  background: rgba(148, 163, 184, 0.10);
+}
+
+.tyler-tab-btn.active {
+  background: var(--tyler-info-bg);
+  color: var(--tyler-info-text);
+  border-color: var(--tyler-info-border);
+}
+
+.tyler-guide-drawer {
+  display: none;
+  background: var(--tyler-surface);
+  border: 1px solid var(--tyler-info-border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.tyler-guide-drawer.open {
+  display: block;
+}
+
+.tyler-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(235px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.tyler-guide-card {
+  background: var(--tyler-surface-deep);
+  border: 1px solid var(--tyler-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.tyler-guide-card-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--tyler-info-text);
+  margin-bottom: 4px;
+}
+
+.tyler-guide-card-body {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--tyler-text-dim);
+}
+
+/* ── Main Split Layout: Active Workspace (Left) + Inspector (Right) ───────── */
+.tyler-main-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(350px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 1220px) {
+  .tyler-main-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tyler-workspace-pane {
+  display: none;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.tyler-workspace-pane.active {
+  display: flex;
+}
+
+.tyler-panel-card {
+  background: var(--tyler-surface);
+  border: 1px solid var(--tyler-border);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.tyler-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--tyler-border);
+}
+
+.tyler-panel-title {
+  font-size: 12.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  color: var(--tyler-text-strong);
+  text-transform: uppercase;
+}
+
+.tyler-card-sub {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--tyler-text-dim);
+}
+
+/* ── Self-Documenting Tool Action Buttons ─────────────────────────────────── */
+.tyler-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+  gap: 8px;
+}
+
+.tyler-tool-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 5px;
+  background: var(--tyler-surface-deep);
+  border: 1px solid var(--tyler-border-strong);
+  border-radius: 7px;
+  padding: 9px 11px;
+  color: var(--tyler-text-strong);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.14s ease, background 0.14s ease, transform 0.08s ease;
+}
+
+.tyler-tool-btn:hover {
+  border-color: var(--tyler-info);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.tyler-tool-btn.btn-warn:hover {
+  border-color: var(--tyler-warn);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.tyler-tool-btn.btn-danger:hover {
+  border-color: var(--tyler-danger);
+  background: rgba(239, 68, 68, 0.09);
+}
+
+.tyler-tool-btn.btn-safe:hover {
+  border-color: var(--tyler-safe);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.tyler-tool-btn-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  gap: 6px;
+}
+
+.tyler-tool-btn-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--tyler-text-strong);
+}
+
+.tyler-tool-btn-desc {
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--tyler-text-dim);
+}
+
+.tyler-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+/* ── Situational Movement Banner & SVG Radar ──────────────────────────────── */
+.tyler-situation-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--tyler-surface-deep);
+  border: 1px solid var(--tyler-border-strong);
+  border-left: 4px solid var(--tyler-info);
+  border-radius: 7px;
+  margin-bottom: 12px;
+}
+
+.tyler-pulse-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--tyler-safe);
+  display: inline-block;
+  box-shadow: 0 0 8px var(--tyler-safe);
+}
+
+.tyler-pulse-dot.warn {
+  background: var(--tyler-warn);
+  box-shadow: 0 0 10px var(--tyler-warn);
+}
+
+.tyler-pulse-dot.danger {
+  background: var(--tyler-danger);
+  box-shadow: 0 0 12px var(--tyler-danger);
+}
+
+.tyler-radar-stage {
+  background: radial-gradient(circle at 50% 45%, rgba(56, 189, 248, 0.06), rgba(9, 13, 22, 0.96) 75%);
+  border: 1px solid var(--tyler-border-strong);
+  border-radius: 8px;
+  padding: 10px;
+  overflow: hidden;
+}
+
+.tyler-radar-svg {
+  width: 100%;
+  height: auto;
+  min-height: 360px;
+  display: block;
+}
+
+.tyler-radar-node {
+  cursor: pointer;
+}
+
+.tyler-chord-quiet {
+  stroke-width: 1.8;
+  stroke-dasharray: 4 4;
+}
+
+.tyler-chord-shift {
+  stroke-width: 2.5;
+  stroke-dasharray: 7 4;
+  animation: tylerChordFlow 1.8s linear infinite;
+}
+
+.tyler-chord-motion {
+  stroke-width: 3.2;
+  stroke-dasharray: 8 4;
+  animation: tylerChordFlow 0.85s linear infinite;
+}
+
+@keyframes tylerChordFlow {
+  to { stroke-dashoffset: -24; }
+}
+
+@keyframes tylerMotionPulse {
+  0% { transform: scale(0.8); opacity: 0.9; }
+  75% { transform: scale(2.1); opacity: 0.15; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+.tyler-motion-pulse-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: tylerMotionPulse 1.8s ease-out infinite;
+}
+
+.tyler-radar-legend {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--tyler-border);
+  font-size: 10.5px;
+  color: var(--tyler-text-dim);
+}
+
+/* ── Multi-Room Corridor Telemetry Cards ──────────────────────────────────── */
+.tyler-corridor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(265px, 1fr));
+  gap: 10px;
+}
+
+.tyler-corridor-card {
+  background: var(--tyler-surface-deep);
+  border: 1px solid var(--tyler-border);
+  border-left: 3px solid var(--tyler-safe);
+  border-radius: 7px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+
+.tyler-corridor-card:hover {
+  border-color: var(--tyler-info);
+}
+
+.tyler-corridor-card.state-presence_shift {
+  border-left-color: var(--tyler-warn);
+  background: rgba(245, 158, 11, 0.05);
+}
+
+.tyler-corridor-card.state-motion_detected {
+  border-left-color: var(--tyler-danger);
+  background: rgba(239, 68, 68, 0.07);
+}
+
+.tyler-corridor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.tyler-corridor-zone {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--tyler-text-strong);
+}
+
+.tyler-corridor-meta {
+  font-size: 10px;
+  color: var(--tyler-text-dim);
+  margin-top: 2px;
+}
+
+.tyler-corridor-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.28);
+  border-radius: 5px;
+  margin-bottom: 6px;
+}
+
+.tyler-corridor-metric-lbl {
+  font-size: 9px;
+  color: var(--tyler-text-dim);
+  text-transform: uppercase;
+}
+
+.tyler-corridor-metric-val {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--tyler-text-strong);
+  margin-top: 2px;
+}
+
+.tyler-sparkline-svg {
+  width: 100%;
+  height: 36px;
+  display: block;
+}
+
+/* ── 2-Point Spatial Triangulation Visualizer ─────────────────────────────── */
+.tyler-triangulation-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 920px) {
+  .tyler-triangulation-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tyler-tri-col {
+  background: var(--tyler-surface-deep);
+  border: 1px solid var(--tyler-border);
+  border-radius: 7px;
+  padding: 10px 12px;
+}
+
+.tyler-tri-col-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--tyler-border);
+}
+
+.tyler-tri-col-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--tyler-text-strong);
+}
+
+.tyler-tri-item {
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  margin-bottom: 6px;
+}
+
+.tyler-tri-item-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.tyler-tri-ssid {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--tyler-text-strong);
+}
+
+.tyler-tri-bars {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.tyler-tri-bar-wrap {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.tyler-tri-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+}
+
+.tyler-tri-bar-fill.ws { background: var(--tyler-info); }
+.tyler-tri-bar-fill.periph { background: var(--tyler-safe); }
+
+/* ── Structured Diagnostic Report & Dossier Inspector ─────────────────────── */
+.tyler-inspector-pane {
+  position: sticky;
+  top: 8px;
+  background: var(--tyler-surface);
+  border: 1px solid var(--tyler-border-strong);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.tyler-report-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tyler-report-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--tyler-border);
+}
+
+.tyler-report-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--tyler-text-strong);
+}
+
+.tyler-report-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--tyler-text-dim);
+  margin-top: 2px;
+}
+
+.tyler-report-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+  gap: 8px;
+}
+
+.tyler-report-kpi {
+  background: var(--tyler-surface-deep);
+  border: 1px solid var(--tyler-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.tyler-report-kpi-lbl {
+  font-size: 9.5px;
+  color: var(--tyler-text-dim);
+  text-transform: uppercase;
+}
+
+.tyler-report-kpi-val {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--tyler-text-strong);
+  margin-top: 3px;
+  word-break: break-word;
+}
+
+.tyler-report-section {
+  background: var(--tyler-surface-deep);
+  border: 1px solid var(--tyler-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.tyler-report-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--tyler-info-text);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.tyler-port-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tyler-port-pill {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: var(--tyler-info-bg);
+  border: 1px solid var(--tyler-info-border);
+  color: var(--tyler-info-text);
+}
+
+.tyler-timeline-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  font-size: 11px;
+}
+
+.tyler-timeline-time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--tyler-text-dim);
+  white-space: nowrap;
+}
+
+/* ── Tables & Device Filter Pills ─────────────────────────────────────────── */
+.tyler-filter-pill {
+  background: var(--tyler-surface-deep);
+  border: 1px solid var(--tyler-border);
+  color: var(--tyler-text-dim);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tyler-filter-pill.active {
+  background: var(--tyler-info-bg);
+  border-color: var(--tyler-info-border);
+  color: var(--tyler-info-text);
+}
+
+.tyler-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.tyler-data-table th {
+  position: sticky;
+  top: 0;
+  background: var(--tyler-surface-deep);
+  color: var(--tyler-text-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid var(--tyler-border-strong);
+}
+
+.tyler-data-table td {
+  padding: 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  vertical-align: middle;
+}
+
+/* ── SQLite Historical RF Time-Series Trend Explorer ──────────────────────── */
+.tyler-rf-trend-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.tyler-rf-trend-svg-box {
+  background: var(--tyler-surface-deep);
+  border: 1px solid var(--tyler-border);
+  border-radius: 8px;
+  padding: 10px 12px 6px;
+}
+
+.tyler-rf-trend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.tyler-rf-trend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--tyler-surface-deep);
+  border: 1px solid var(--tyler-border);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--tyler-text);
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.tyler-rf-trend-chip:hover {
+  border-color: var(--tyler-info-border);
+  transform: translateY(-1px);
+}
+
+
+.tyler-data-table tbody tr {
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.tyler-data-table tbody tr:hover {
+  background: rgba(56, 189, 248, 0.06);
+}
+
+.tyler-data-table tbody tr.selected-row {
+  background: rgba(56, 189, 248, 0.13);
+}

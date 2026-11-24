@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "__MOD_ID__",
+  "name": "__MOD_NAME__",
+  "version": "0.1.0",
+  "author": "Blue Lodge Builder",
+  "license": "Apache-2.0",
+  "category": "__MOD_CATEGORY__",
+  "tagline": "Sovereign Blue Lodge starter module — standalone SQLite app + agent tools + ALP v1 FIFO/ReAct loop + XSS-safe Web UI.",
+  "hardware_badges": ["no-special-hardware", "offline-capable", "zero-keys-required"],
+  "requires_core": ">=2026.11",
+  "runtime": {
+    "venv_mode": "shared_locked",
+    "python_packages": []
+  },
+  "provides": {
+    "tools_schema": "tools/schemas.json",
+    "tools_dispatcher": "tools/dispatch.sh",
+    "tool_bundle": "+__MOD_PREFIX__",
+    "core_tools": ["file_read", "file_write", "web_search"],
+    "workflows_dir": "workflows",
+    "domain_keywords": "__MOD_ID__ __MOD_PREFIX__ starter notes briefing",
+    "context_hook": "hooks/context.sh",
+    "strategist_hook": "hooks/strategist.txt",
+    "event_reactors": ["reactors/sample_reactors.json"],
+    "ui": {
+      "js": "ui/panel.js",
+      "css": "ui/panel.css"
+    }
+  },
+  "permissions": {
+    "tier": "A",
+    "network_egress": [],
+    "filesystem_rw": [".george/module_data/__MOD_ID__"],
+    "privileged_docker": false,
+    "secrets_required": []
+  },
+  "healthcheck": "hooks/health.sh"
+}

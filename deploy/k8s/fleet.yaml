@@ -1,0 +1,7 @@
+# ── Rancher Fleet GitOps Bundle Configuration ──
+defaultNamespace: blue-lodge
+labels:
+  app.kubernetes.io/part-of: blue-lodge
+helm: null
+kustomize: null
+dependsOn: []

@@ -1,0 +1,76 @@
+#!/bin/bash
+# ── Blue Lodge Git Pre-Push Hook ─────────────────────────────────────
+# 1. Protects main/master from direct pushes per GitFlow landmarks.
+# 2. Refreshes and validates the Open Knowledge Graph (OKF) before any push.
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+# ── 1. GitFlow Landmark Protection ────────────────────────────────────
+PUSHING_HEAD_BRANCH=0
+local_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+while read -r local_ref local_oid remote_ref remote_oid; do
+    if [ "${ALLOW_RELEASE_PUSH:-0}" -ne 1 ]; then
+        if [ "$remote_ref" = "refs/heads/main" ] || [ "$remote_ref" = "refs/heads/master" ]; then
+            echo "[FATAL] Direct push to '$remote_ref' blocked by Lodge GitFlow Landmarks." >&2
+            echo "[INFO] Push to 'develop' or candidate branch instead. Set ALLOW_RELEASE_PUSH=1 for releases." >&2
+            exit 1
+        fi
+    fi
+    if [ -n "$local_branch" ] && [ "$local_ref" = "refs/heads/$local_branch" ]; then
+        PUSHING_HEAD_BRANCH=1
+    fi
+done
+
+# ── 2. OKF Knowledge Graph Refresh ────────────────────────────────────
+# Only auto-refresh and commit onto HEAD when pushing the currently checked-out branch
+# (never mutate local develop when pushing a background remediation/* or subagent/* ref).
+if [ "$PUSHING_HEAD_BRANCH" -eq 1 ] && [ -f "$REPO_ROOT/lib/knowledge/okf.sh" ] && [ -f "$REPO_ROOT/okf/generate_okf_graph.py" ]; then
+    echo "── [pre-push] Verifying & Refreshing OKF Knowledge Graph..."
+    LODGE_DIR="$REPO_ROOT" bash -c "source '$REPO_ROOT/lib/knowledge/okf.sh' && okf_sync --quiet"
+    SYNC_STATUS=$?
+    if [ "$SYNC_STATUS" -ne 0 ]; then
+        echo "✗ [pre-push] Error: OKF knowledge graph synchronization or validation failed." >&2
+        echo "  Please check okf_validate output and fix errors before pushing." >&2
+        exit 1
+    fi
+    GRAPH_FILE="$REPO_ROOT/okf/blue_lodge_graph.jsonld"
+    if ! git diff --quiet "$GRAPH_FILE" 2>/dev/null || ! git diff --cached --quiet "$GRAPH_FILE" 2>/dev/null; then
+        echo "✗ [pre-push] OKF Knowledge Graph ($GRAPH_FILE) was refreshed during pre-push." >&2
+        echo "  Please stage and commit '$GRAPH_FILE' (or run 'lodge push' which auto-reconciles OKF & remotes) before pushing." >&2
+        exit 1
+    fi
+    echo "✓ [pre-push] OKF Knowledge Graph verified."
+
+    # ── 3. Diff-Targeted Stage 1 Test Parity Gate ─────────────────────────
+    # Runs the exact same diff-selected test suites (scripts/ci/select_tests.sh)
+    # that Gitea Actions Stage 1 runs before the push reaches the remote forge.
+    # Set SKIP_PREPUSH_TESTS=1 only for emergency bypass.
+    if [ "${SKIP_PREPUSH_TESTS:-0}" -ne 1 ] && [ -f "$REPO_ROOT/scripts/ci/select_tests.sh" ] && [ -f "$REPO_ROOT/scripts/ci/hermetic_test_runner.sh" ]; then
+        _suites=$(LODGE_DIR="$REPO_ROOT" bash "$REPO_ROOT/scripts/ci/select_tests.sh" --ci 2>/dev/null || true)
+        if [ -n "$_suites" ]; then
+            echo "── [pre-push] Running diff-targeted CI test suites ($(echo "$_suites" | tr '\n' ' '))..."
+            for _s in $_suites; do
+                if ! LODGE_DIR="$REPO_ROOT" bash "$REPO_ROOT/scripts/ci/hermetic_test_runner.sh" "$REPO_ROOT/tests/${_s}.sh"; then
+                    echo "✗ [pre-push] Error: Targeted test suite 'tests/${_s}.sh' failed." >&2
+                    echo "  Fix the failing test before pushing (or set SKIP_PREPUSH_TESTS=1 to bypass)." >&2
+                    exit 1
+                fi
+            done
+            echo "✓ [pre-push] Diff-targeted CI test suites passed."
+        fi
+    fi
+
+    # ── 4. Dual-Remote Mirroring (Keep gitea & origin in lockstep for develop and ecotype/*) ──
+    if [ "${LODGE_MIRRORING_PUSH:-0}" -ne 1 ] && { [ "$local_branch" = "develop" ] || [[ "$local_branch" == ecotype/* ]]; }; then
+        target_remote="${1:-}"
+        if [ "$target_remote" = "gitea" ] && git -C "$REPO_ROOT" remote get-url origin &>/dev/null; then
+            echo "── [pre-push] Mirroring $local_branch to origin/$local_branch..."
+            LODGE_MIRRORING_PUSH=1 SKIP_PREPUSH_TESTS=1 GIT_SSH_COMMAND="ssh -o BatchMode=yes" git -C "$REPO_ROOT" push --no-verify origin "$local_branch" >/dev/null 2>&1 || true
+        elif [ "$target_remote" = "origin" ] && git -C "$REPO_ROOT" remote get-url gitea &>/dev/null; then
+            echo "── [pre-push] Mirroring $local_branch to gitea/$local_branch..."
+            LODGE_MIRRORING_PUSH=1 SKIP_PREPUSH_TESTS=1 git -C "$REPO_ROOT" push --no-verify gitea "$local_branch" >/dev/null 2>&1 || true
+        fi
+    fi
+fi
+
+exit 0

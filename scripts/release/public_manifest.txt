@@ -1,0 +1,130 @@
+# Public export manifest — evaluated top to bottom, LAST matching rule wins.
+#   + glob   include      - glob   exclude
+# Globs use fnmatch on repo-relative paths ('*' also matches '/').
+# Anything not matched by a '+' rule is NOT exported (allow-list).
+
+# ── Code ──────────────────────────────────────────────────────
++ lodge
++ install.sh
++ uninstall.sh
++ update.sh
++ lib/*
++ commands/*
++ web/*
++ tests/*
++ scripts/*
++ grammars/*
++ install/*
++ man/*
++ deploy/*
++ containers/*
++ templates/*
++ patches/*
++ okf/*
++ models/*
++ bin/george-ipc
++ bin/wt_launch_minimized.cs
++ .agents/*
++ .githooks/*
++ .gitea/*
++ .shellcheckrc
++ .gitignore
++ pyproject.toml
++ uv.lock
++ docker-compose.yml
++ Dockerfile.cuda-sandbox
++ Dockerfile.ci-runner
++ Modelfile
++ endpoints.conf.example
++ .env.example
++ soul.md
++ GEORGE.md
++ config
+
+# ── Config: templates and examples only ──────────────────────
++ configs/*.template
++ configs/*.example
++ configs/*.example.json
++ configs/event_contracts.json
++ configs/reactor_templates.json
++ configs/searxng/*
++ configs/models/*
++ configs/wallets/*.example.json
++ configs/*.template.yaml
++ configs/blue_lodge_jinja_template.jinja
+
+# ── Docs ──────────────────────────────────────────────────────
++ README.md
++ SECURITY.md
++ LICENSE
++ NOTICE
++ docs/*
+- docs/archive/*
+- docs/*.pdf
+# real treasury balances / order ids in these screenshots
+- docs/images/sovereign_guide/*
+
+# ── Data: schemas, ALP v1 loops + public catalog only ──────────
++ data/schemas/*
++ data/catalog/*
++ data/workflows/*
+
+# ── Private Alpha Engine (lives in private mod-sovereign-alpha) ─
+- lib/tools/quant/models.py
+- lib/tools/quant/fair_value.py
+- lib/tools/quant/signals.py
+- lib/tools/quant/backtest.py
+- lib/tools/quant/impact.py
+- lib/tools/quant/calibration.py
+- lib/tools/trading/plans.py
+- lib/tools/trading/gates.py
+- lib/tools/trading/watcher.py
+- lib/tools/trading/agent_tools.py
+- lib/agents/trading_reactor.sh
+- lib/tools/cardano_maker_sell_reactor.sh
+- lib/tools/cardano_stale_order_reactor.sh
+- scripts/cron_system/quant_research.sh
+- scripts/cron_system/position_watcher.sh
+- scripts/quant_research/*
+- data/V3_Proposal_Revised_FinalRev.md
+
+# ── Private ML Research, Unpublished Manuscripts & Personal Ops ─
+- docs/SUB_158B_QUANTIZATION_RESEARCH_PLAN.md
+- docs/NEURIPS_2026_BLUE_LLAMA_CHAMPION_V5.md
+- docs/QWEN38_FRONTIER_RESEARCH_AGENDA.md
+- docs/SOVEREIGN_FOUNDATION_MODEL_PLAYBOOK.md
+- docs/BLUE_LODGE_LORA_TUNING_PLAYBOOK.md
+- docs/BLUE_LODGE_MODEL_EXPANSION_PLAYBOOK.md
+- scripts/colab_training/*
+- scripts/benchmark_rx5700xt_1slot.py
+- .agents/skills/cardano_arbitrage/*
+- .agents/workflows/cardano-arbitrageur.agent.md
+- .agents/rules/cancel_old_george_run.md
+- docs/SOVEREIGN_DOLOS_AND_AUTONOMOUS_TRADING_BLUEPRINT.md
+- docs/LOCAL_CARDANO_NODE_DEPLOYMENT_PLAN.md
+- docs/PERIMETER_RF_SECURITY_BOM_AND_ARCHITECTURE.md
+- docs/k8s_coexistence_plan.md
+- scripts/security/emudhra_g3_remediate.sh
+- tests/test_emudhra_g3_remediation.sh
+
+# ── Always excluded (personal, generated, or third-party data) ─
+- */archive/*
+- scripts/quant_research/archive/*
+- scripts/colab_training/archive/*
+- */__pycache__/*
+- *.pyc
+- *.gguf
+- *.exe
+- *.db
+- *.sqlite-journal
+- .george/*
+- dossiers/*
++ dossiers/README.md
+- market_cache/*
+- benchmarks/*
+- data/training/*
+- data/assets/*
+- scratch/*
+- artifacts/*
+- web/target/*
+- scripts/release/denylist*

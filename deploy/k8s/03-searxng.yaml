@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: george-searxng
+  namespace: blue-lodge
+  labels:
+    app: george-searxng
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: george-searxng
+  template:
+    metadata:
+      labels:
+        app: george-searxng
+    spec:
+      containers:
+        - name: searxng
+          image: searxng/searxng:latest
+          ports:
+            - containerPort: 8080
+              hostPort: 8081
+              name: http
+          env:
+            - name: SEARXNG_BASE_URL
+              value: "http://searxng.localhost/"
+            - name: INSTANCE_NAME
+              value: "BlueLodge-Sovereign-Search"
+            - name: SEARXNG_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: george-secrets
+                  key: SEARXNG_SECRET
+          volumeMounts:
+            - name: searxng-config
+              mountPath: /etc/searxng
+              readOnly: true
+      volumes:
+        - name: searxng-config
+          hostPath:
+            path: /home/user/projects/blue-lodge/configs/searxng
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: george-searxng
+  namespace: blue-lodge
+spec:
+  selector:
+    app: george-searxng
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: george-searxng
+  namespace: blue-lodge
+  annotations:
+    cert-manager.io/cluster-issuer: local-ca-issuer
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.options: kube-system-mtls-policy@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: searxng.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: george-searxng
+                port:
+                  number: 8080
+  tls:
+    - hosts:
+        - searxng.localhost
+      secretName: george-searxng-tls-cert

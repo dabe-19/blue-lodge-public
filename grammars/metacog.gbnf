@@ -1,0 +1,31 @@
+# Reflexive Metacognition — self-assessment
+# Used by reflexive_metacog_assess() Phase 2 in lib/reflexive.sh
+# Layer 1 constrained decoding for llama-server grammar param
+
+root          ::= thinking ws response | ws response
+
+response      ::= "<response>" ws json ws "</response>" | json
+
+json          ::= "{" ws
+                  "\"stuck\":" ws bool "," ws
+                  "\"progress\":" ws progress "," ws
+                  "\"assessment\":" ws string
+                  ws "}"
+
+bool          ::= "true" | "false"
+
+progress      ::= "\"none\"" | "\"slow\"" | "\"normal\"" | "\"regressing\""
+
+# ── String rule: quote-preserving (default) ────────────────
+# Allows escaped quotes, backslashes, and standard JSON escapes
+# inside string values. Use this when field values may contain
+# quoted text from command outputs or user input.
+char          ::= [^"\\] | "\\" ["\\/bfnrt]
+string        ::= "\"" char* "\""
+
+thinking      ::= "<think>" inner "</think>" | "<|channel>thought" inner "<channel|>" | "[" [tT][hH][iI][nN][kK] "]" bracketed "[/" [tT][hH][iI][nN][kK] "]" | "[" [tT][hH][oO][uU][gG][hH][tT] "]" bracketed "[/" [tT][hH][oO][uU][gG][hH][tT] "]"
+
+inner         ::= [^<]*
+bracketed     ::= [^\[]*
+
+ws            ::= [ \t\n]*

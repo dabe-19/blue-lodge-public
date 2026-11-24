@@ -1,0 +1,50 @@
+{
+  "description": "Node-agnostic capability reactor templates shipped with Heartwood. Install opt-in reflexes into .george/reactors.json without hardcoding personal positions or local parameters.",
+  "templates": [
+    {
+      "id": "system_escalation_reflex",
+      "scope": "system",
+      "event_type": "system.job_failure",
+      "pattern": ".*",
+      "action": "bash lib/comms/escalation_reactor.sh",
+      "debounce": 10,
+      "description": "Autonomic circuit-breaker escalation and remediation alert router"
+    },
+    {
+      "id": "cardano_stop_loss_guard",
+      "scope": "capability",
+      "event_type": "market.price_tick",
+      "pattern": ".*",
+      "action": "bash lib/tools/cardano_stop_reactor.sh",
+      "debounce": 3,
+      "description": "Evaluates local stop-loss triggers on incoming DEX price ticks (positions stay local in .george/)"
+    },
+    {
+      "id": "cardano_maker_fill_cycle",
+      "scope": "capability",
+      "event_type": "market.order_filled",
+      "pattern": ".*",
+      "action": "bash lib/tools/cardano_maker_sell_reactor.sh",
+      "debounce": 5,
+      "description": "Automatically stages counter-side maker spread exit upon confirmed order fill"
+    },
+    {
+      "id": "cardano_stale_order_reaper",
+      "scope": "capability",
+      "event_type": "market.corridor_drift",
+      "pattern": ".*",
+      "action": "bash lib/tools/cardano_stale_order_reactor.sh",
+      "debounce": 15,
+      "description": "Cancels or reprices standing DEX orders when pool price drifts outside configured corridor"
+    },
+    {
+      "id": "tyler_lan_immune_reflex",
+      "scope": "capability",
+      "event_type": "security.anomaly",
+      "pattern": ".*",
+      "action": "bash lib/agents/tyler_immune_reactor.sh",
+      "debounce": 5,
+      "description": "LAN / RF anomaly triage reflex for nodes equipped with Tyler network sensors"
+    }
+  ]
+}

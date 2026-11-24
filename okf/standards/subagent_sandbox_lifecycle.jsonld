@@ -1,0 +1,19 @@
+{
+  "@context": {
+    "@vocab": "https://schema.org/",
+    "goog": "http://schema.googleapis.com/",
+    "okf": "https://developers.google.com/knowledge-graph/schema/",
+    "lodge": "urn:blue-lodge:schema:"
+  },
+  "@graph": [
+    {
+      "@id": "urn:blue-lodge:standard:subagent-sandbox-lifecycle",
+      "@type": ["DefinedTerm", "TechArticle"],
+      "name": "Subagent Worktree Isolation & Sandbox Lifecycle Standard",
+      "description": "Protocol for spawning, monitoring, and reclaiming isolated subagent workers and containerized execution sandboxes.",
+      "stability": "stable",
+      "definition": "Governs the lifecycle of autonomous subagents. Requires separate git worktree branches or isolated Docker CUDA sandboxes, FIFO-based communication channels, strictly bounded turn ceilings, and guaranteed process reclamation on termination.",
+      "articleBody": "Subagents must never execute destructive modifications directly on the parent working tree. Swarm workers run in isolated bash environments (or containerized CUDA sandboxes via Dockerfile.cuda-sandbox), communicate status via FIFO channels or subagents_update_status, and stream logs to .george/subagents/<sub_id>.log. Stale processes and worktrees are reaped automatically upon parent session termination."
+    }
+  ]
+}

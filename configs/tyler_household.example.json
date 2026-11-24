@@ -1,0 +1,43 @@
+{
+  "lan_subnet": "192.168.1.0/24",
+  "gateway_ip": "192.168.1.1",
+  "host_ip": "192.168.1.10",
+  "host_mac": "aa:bb:cc:dd:ee:01",
+  "host_hostname": "blue-lodge-host.lan",
+  "host_label": "Blue Lodge Sovereign Host",
+  "workstation_ip": "192.168.1.20",
+  "expected_gateway_macs": {},
+  "protected_ips": [
+    "127.0.0.1",
+    "192.168.1.1",
+    "192.168.1.10",
+    "192.168.1.20"
+  ],
+  "arp_pin_ips": [
+    "192.168.1.1",
+    "192.168.1.10",
+    "192.168.1.20"
+  ],
+  "seed_devices": [
+    {"mac": "aa:bb:cc:00:00:01", "ip": "192.168.1.1", "hostname": "gateway", "label": "Home gateway router (synthetic)", "device_type": "router", "trust_level": "trusted"},
+    {"mac": "aa:bb:cc:00:00:02", "ip": "192.168.1.2", "hostname": "mesh-root", "label": "Mesh access point root (synthetic)", "device_type": "access_point", "trust_level": "trusted"},
+    {"mac": "aa:bb:cc:00:00:03", "ip": "192.168.1.3", "hostname": "mesh-leaf", "label": "Mesh access point leaf (synthetic)", "device_type": "access_point", "trust_level": "trusted"},
+    {"mac": "aa:bb:cc:dd:ee:01", "ip": "192.168.1.10", "hostname": "blue-lodge-host.lan", "label": "Blue Lodge Sovereign Host (synthetic)", "device_type": "server", "trust_level": "trusted"},
+    {"mac": "aa:bb:cc:00:00:14", "ip": "192.168.1.20", "hostname": "workstation", "label": "Operator workstation (synthetic)", "device_type": "workstation", "trust_level": "trusted"},
+    {"mac": "aa:bb:cc:00:00:16", "ip": "192.168.1.22", "hostname": "iot-appliance", "label": "Smart appliance (synthetic)", "device_type": "iot", "trust_level": "known_iot"},
+    {"mac": "aa:bb:cc:00:00:1c", "ip": "192.168.1.28", "hostname": "iot-camera", "label": "IP camera (synthetic)", "device_type": "iot", "trust_level": "known_iot"},
+    {"mac": "aa:bb:cc:00:00:1d", "ip": "192.168.1.29", "hostname": "iot-hub", "label": "Smart home hub (synthetic)", "device_type": "iot", "trust_level": "known_iot"},
+    {"mac": "aa:bb:cc:00:00:1e", "ip": "192.168.1.30", "hostname": "iot-thermostat", "label": "Thermostat (synthetic)", "device_type": "iot", "trust_level": "known_iot"},
+    {"mac": "aa:bb:cc:00:00:1f", "ip": "192.168.1.31", "hostname": "iot-plug", "label": "Smart plug (synthetic)", "device_type": "iot", "trust_level": "known_iot"},
+    {"mac": "aa:bb:cc:00:00:20", "ip": "192.168.1.32", "hostname": "iot-dimmer", "label": "Light dimmer (synthetic)", "device_type": "iot", "trust_level": "known_iot"},
+    {"mac": "aa:bb:cc:00:00:21", "ip": "192.168.1.33", "hostname": "iot-lock", "label": "Smart lock (synthetic)", "device_type": "iot", "trust_level": "known_iot"},
+    {"mac": "aa:bb:cc:00:00:23", "ip": "192.168.1.35", "hostname": "iot-mediabox", "label": "Media box (synthetic)", "device_type": "iot", "trust_level": "known_iot"},
+    {"mac": "aa:bb:cc:00:00:24", "ip": "192.168.1.36", "hostname": "dormant-appliance", "label": "Dormant appliance (synthetic)", "device_type": "iot", "trust_level": "known_iot"},
+    {"mac": "aa:bb:cc:00:00:25", "ip": "192.168.1.37", "hostname": "dormant-plug", "label": "Dormant plug (synthetic)", "device_type": "iot", "trust_level": "known_iot"},
+    {"mac": "aa:bb:cc:00:00:3d", "ip": "192.168.1.61", "hostname": "rogue-camera", "label": "Untrusted rogue camera (synthetic test fixture)", "device_type": "camera", "trust_level": "untrusted"},
+    {"mac": "aa:bb:cc:00:00:3e", "ip": "192.168.1.62", "hostname": "rogue-ap", "label": "Untrusted rogue access point (synthetic test fixture)", "device_type": "access_point", "trust_level": "untrusted"},
+    {"mac": "aa:bb:cc:00:00:47", "ip": "192.168.1.71", "hostname": "unknown-node-a", "label": "Unknown node A (synthetic)", "device_type": "unknown", "trust_level": "unknown"},
+    {"mac": "aa:bb:cc:00:00:48", "ip": "192.168.1.72", "hostname": "unknown-node-b", "label": "Unknown node B (synthetic)", "device_type": "unknown", "trust_level": "unknown"},
+    {"mac": "aa:bb:cc:00:00:49", "ip": "192.168.1.73", "hostname": "unknown-node-c", "label": "Unknown node C (synthetic)", "device_type": "unknown", "trust_level": "unknown"}
+  ]
+}

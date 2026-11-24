@@ -1,0 +1,1 @@
+When working on __MOD_NAME__ tasks, prefer native +__MOD_PREFIX__ tools (__MOD_PREFIX___list_entries, __MOD_PREFIX___save_entry) to persist structured results into the module's SQLite ledger.

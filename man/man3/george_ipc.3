@@ -1,0 +1,178 @@
+.TH FIFO_IPC 3 "October 2026" "George v3.0" "George Library Manual"
+.SH NAME
+fifo-ipc, george_ipc \- POSIX-Compliant Agentic Shell IPC SDK & Flow Control Library
+.SH SYNOPSIS
+.B source "$LODGE_DIR/lib/ipc/fifo_ipc.sh"
+.sp
+.SS Channel Lifecycle Functions
+.BI "ipc_channel_open " "channel_id [window_size] [max_idle]"
+.br
+.BI "ipc_channel_close " "channel_id"
+.br
+.BI "ipc_channel_is_open " "channel_id"
+.br
+.BI "ipc_channel_list"
+.br
+.BI "ipc_status " "channel_id"
+.br
+.BI "ipc_channel_flush " "channel_id"
+
+.SS Flow Control & Backpressure Functions
+.BI "ipc_flow_acquire " "channel_id [timeout_seconds]"
+.br
+.BI "ipc_flow_grant " "channel_id [amount]"
+.br
+.BI "ipc_flow_send_ctrl " "channel_id command"
+.br
+.BI "ipc_flow_pause " "channel_id"
+.br
+.BI "ipc_flow_resume " "channel_id"
+.br
+.BI "ipc_flow_unstick " "channel_id"
+.br
+.BI "ipc_flow_ping " "channel_id"
+
+.SS Message Transmission & Reception Functions
+.BI "ipc_send " "channel_id [type] [payload_json] [uuid] [timeout_seconds]"
+.br
+.BI "ipc_recv " "channel_id [timeout_seconds] [filter_type] [filter_uuid] [auto_grant]"
+.br
+.BI "ipc_validate_frame " "frame_string"
+.br
+.BI "ipc_write_frame " "channel_id payload [timeout_seconds]"
+.br
+.BI "ipc_read_frame " "channel_id [timeout_seconds] [auto_grant]"
+
+.SS Asynchronous Tasks & Promises Functions
+.BI "ipc_async " "channel_id command_line"
+.br
+.BI "ipc_await " "promise_id [timeout_seconds]"
+.br
+.BI "ipc_await_all " "promise_ids_csv [timeout_seconds]"
+.br
+.BI "ipc_pipe " "promise_id channel_id command_template"
+.br
+.BI "ipc_cancel " "promise_id [signal]"
+.br
+.BI "ipc_promise_status " "promise_id"
+
+.SS Maintenance & Diagnostics Functions
+.BI "ipc_gc " "[--dry-run] [--force] [--ttl seconds]"
+.br
+.BI "ipc_log " "level channel_id message"
+
+.SH DESCRIPTION
+The
+.B fifo_ipc.sh
+library provides an autonomous, zero-daemon, POSIX-compliant agentic SDK implemented strictly in Bash and GAWK.
+It enables concurrent processes, subagents, and tools to communicate reliably without requiring an external broker (such as Redis or RabbitMQ) or Rust sidecar daemons.
+.PP
+All state transitions, locking mechanisms, and buffering primitives adhere to strict POSIX filesystem semantics.
+
+.SH ARCHITECTURAL INVARIANTS
+.TP
+.B 1. Kernel Write Atomicity (PIPE_BUF)
+POSIX guarantees that any write of \fBPIPE_BUF\fR bytes (4096 bytes on Linux) or fewer to a FIFO is atomic and will not be interleaved with writes from other processes.
+\fBipc_send\fR strictly enforces this constraint. Payloads exceeding 3800 bytes are saved to an immutable spillover file in \fI$FIFO_IPC_DIR/payloads/<uuid>.payload\fR, and the frame carries a \fB__spillover_ref__\fR reference which \fBipc_recv\fR transparently resolves.
+.TP
+.B 2. Sliding Window Credit Flow Control
+To prevent producers from overflowing kernel pipe buffers (which causes blocking or broken pipes), channels initialize with a discrete credit window (default 5).
+Producers must call \fBipc_flow_acquire\fR (or use \fBipc_send\fR) which consumes one credit token from \fIstate.json\fR under atomic lock.
+Consumers call \fBipc_flow_grant\fR (or rely on \fBipc_recv\fR's \fIauto_grant\fR) to replenish credit tokens and signal producers via \fIctrl.fifo\fR.
+.TP
+.B 3. Backpressure Signaling
+Consumers can assert immediate backpressure via \fBipc_flow_pause\fR, setting the \fBbackpressure\fR boolean in channel state.
+Waiting writers will hold execution until \fBipc_flow_resume\fR is signaled.
+.TP
+.B 4. Correlation & Multiplexing
+Frames are tagged with monotonic sequence counters (\fBseq\fR), message types (\fBtype\fR), and unique correlation identifiers (\fBuuid\fR).
+\fBipc_recv\fR allows selective message ingestion filtered by type or UUID, enabling deterministic request-response handshakes across shared channels.
+.TP
+.B 5. Promise Pipelining (Monadic Chains)
+\fBipc_pipe\fR enables functional composition of async tasks.
+When promise A resolves, its output is substituted into the command template for promise B and executed without blocking the orchestrating process.
+.TP
+.B 6. Process Tree Cleanup on Timeout
+Unlike conventional shell background execution, \fBipc_await\fR terminates the entire process group (\fBpkill -P\fR) upon timeout (exit code 124), preventing runaway orphan processes.
+
+.SH RETURN VALUES & ERROR CODES
+All functions return standard integers aligned with UNIX errno conventions:
+.TP
+.B 0 (IPC_OK)
+Success.
+.TP
+.B 1 (IPC_ERR_GENERIC)
+Internal generic error.
+.TP
+.B 2 (IPC_ERR_NOTFOUND)
+Channel, promise, or file not found (ENOENT).
+.TP
+.B 13 (IPC_ERR_PERMISSION)
+Permission denied or lock inaccessible (EACCES).
+.TP
+.B 16 (IPC_ERR_BUSY)
+Channel state locked by another process (EBUSY).
+.TP
+.B 22 (IPC_ERR_INVALID)
+Invalid argument or malformed JSON frame (EINVAL).
+.TP
+.B 32 (IPC_ERR_PIPE)
+Broken FIFO pipe or channel aborted by peer (EPIPE).
+.TP
+.B 110 (IPC_ERR_TIMEOUT)
+Credit acquisition or flow control timed out (ETIMEDOUT).
+.TP
+.B 124 (IPC_ERR_AWAIT_TIMEOUT)
+Promise await barrier timed out; worker killed.
+.TP
+.B 125 (IPC_ERR_CANCELED)
+Task was explicitly canceled.
+.TP
+.B 137 (IPC_ERR_CRASH)
+Worker process terminated abnormally or killed by SIGKILL.
+
+.SH CODE EXAMPLES
+.SS Simple Asynchronous Execution
+.PP
+.nf
+.RS
+source "$LODGE_DIR/lib/ipc/fifo_ipc.sh"
+ipc_channel_open "subagent-1" 5
+
+# Launch long-running task in background
+prom=$(ipc_async "subagent-1" "python3 worker.py --batch-size 32")
+
+# Await completion with 60 second timeout
+if output=$(ipc_await "$prom" 60); then
+    echo "Task resolved successfully: $output"
+else
+    echo "Task failed or timed out with exit code $?"
+fi
+
+ipc_channel_close "subagent-1"
+.RE
+.fi
+
+.SS Synchronous Streaming with Flow Control
+.PP
+.nf
+.RS
+source "$LODGE_DIR/lib/ipc/fifo_ipc.sh"
+ipc_channel_open "stream-1" 3
+
+# Send frame
+ipc_send "stream-1" "COMMAND" '{"action":"compute","matrix":"A"}'
+
+# Receive frame with correlation filter
+frame=$(ipc_recv "stream-1" 5 "COMMAND")
+echo "Received frame: $frame"
+
+ipc_channel_close "stream-1"
+.RE
+.fi
+
+.SH SEE ALSO
+.BR george-ipc (1),
+.BR george (1)
+.SH AUTHOR
+Antigravity & The Blue Lodge Sovereign Team.

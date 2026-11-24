@@ -1,0 +1,135 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: george-inference
+  namespace: blue-lodge
+  labels:
+    app: george-inference
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: george-inference
+  template:
+    metadata:
+      labels:
+        app: george-inference
+    spec:
+      containers:
+        - name: llama-server
+          image: george-cuda-sandbox:latest
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          command: ["/workspace/scripts/infra/start_prism.sh"]
+          ports:
+            - containerPort: 8080
+              hostPort: 8080
+              name: http
+          securityContext:
+            privileged: true
+          envFrom:
+            - configMapRef:
+                name: george-inference-profile-env
+          env:
+            - name: PATH
+              value: "/workspace/.venv/bin:/usr/local/bin:/usr/local/cuda/bin:/usr/bin:/bin:/usr/lib/wsl/lib"
+            - name: VIRTUAL_ENV
+              value: "/workspace/.venv"
+            - name: LD_LIBRARY_PATH
+              value: "/usr/lib/wsl/lib:/opt/llama.cpp/build/bin:/usr/local/cuda/lib64"
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: "compute,utility"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 60
+          volumeMounts:
+            - name: wsl-dxg
+              mountPath: /dev/dxg
+            - name: wsl-root
+              mountPath: /usr/lib/wsl
+              readOnly: true
+            - name: models-dir
+              mountPath: /models
+              readOnly: true
+            - name: models-host-dir
+              mountPath: /home/user/models
+              readOnly: true
+            - name: workspace
+              mountPath: /workspace
+            - name: host-local-uv
+              mountPath: /home/user/.local
+              readOnly: true
+      volumes:
+        - name: wsl-dxg
+          hostPath:
+            path: /dev/dxg
+            type: CharDevice
+        - name: wsl-root
+          hostPath:
+            path: /usr/lib/wsl
+            type: Directory
+        - name: models-dir
+          hostPath:
+            path: /home/user/models
+            type: DirectoryOrCreate
+        - name: models-host-dir
+          hostPath:
+            path: /home/user/models
+            type: DirectoryOrCreate
+        - name: workspace
+          hostPath:
+            path: /home/user/projects/blue-lodge
+            type: Directory
+        - name: host-local-uv
+          hostPath:
+            path: /home/user/.local
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: george-inference
+  namespace: blue-lodge
+spec:
+  selector:
+    app: george-inference
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: george-inference
+  namespace: blue-lodge
+  annotations:
+    cert-manager.io/cluster-issuer: local-ca-issuer
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.options: kube-system-mtls-policy@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: llm.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: george-inference
+                port:
+                  number: 8080
+  tls:
+    - hosts:
+        - llm.localhost
+      secretName: george-inference-tls-cert

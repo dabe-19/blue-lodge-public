@@ -1,0 +1,12 @@
+{
+  "reactors": [
+    {
+      "id": "rx___MOD_PREFIX___sample",
+      "module_id": "__MOD_ID__",
+      "enabled": false,
+      "event_type": "__MOD_PREFIX__.event",
+      "description": "Sample Event Bus reactor template (disabled by default).",
+      "action": "/workflow run-loop __MOD_ID__/sample_briefing"
+    }
+  ]
+}

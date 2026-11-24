@@ -1,0 +1,29 @@
+{
+  "lan_ip": "192.168.1.10",
+  "fallback_host_ip": "192.168.1.10",
+  "relay_ssh": "",
+  "relay_ip": "",
+  "relay_port": "3000",
+  "relay_remote_dir": "",
+  "known_speakers": [
+    {
+      "id": "kitchen",
+      "name": "Kitchen Display 1",
+      "hostname": "google-nest-hub-max.lan",
+      "ip": "192.168.1.50",
+      "mac": "aa:bb:cc:dd:ee:10",
+      "model": "Google Nest Hub Max",
+      "default": true
+    },
+    {
+      "id": "bedroom",
+      "name": "Bedroom speaker",
+      "hostname": "google-nest-mini.lan",
+      "ip": "192.168.1.51",
+      "mac": "aa:bb:cc:dd:ee:11",
+      "model": "Google Nest Mini",
+      "default": true
+    }
+  ]
+}
+
