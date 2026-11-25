@@ -438,10 +438,11 @@ EOF
     assert_ok $?
     rm -rf "$tmp_prune"
 
-    # 3. Standing-order atomic supersede & evaluate_standing_orders in plans.py
-    _test_py="$LODGE_DIR/.venv/bin/python"
-    [ -x "$_test_py" ] || _test_py="python3"
-    so_res=$(PYTHONPATH="$LODGE_DIR" "$_test_py" - << 'PYEOF'
+    # 3. Standing-order atomic supersede & evaluate_standing_orders in plans.py (private alpha)
+    if [ -f "$LODGE_DIR/lib/tools/trading/plans.py" ]; then
+        _test_py="$LODGE_DIR/.venv/bin/python"
+        [ -x "$_test_py" ] || _test_py="python3"
+        so_res=$(PYTHONPATH="$LODGE_DIR" "$_test_py" - << 'PYEOF'
 import sqlite3, time
 from lib.tools.trading import store, policy, plans
 con = sqlite3.connect(":memory:")
@@ -477,7 +478,8 @@ assert ladder_st == "active", f"Expected non-overlapping ladder rung to stay act
 print("SO_LIFECYCLE_OK")
 PYEOF
 )
-    assert_contains "$so_res" "SO_LIFECYCLE_OK"
+        assert_contains "$so_res" "SO_LIFECYCLE_OK"
+    fi
 
     # 4. Reflexive learning loop enabled and wired to recall.db
     source "$LODGE_DIR/lib/core/reflexive.sh"

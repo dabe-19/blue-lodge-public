@@ -76,6 +76,17 @@ jobs:
           find . -name "*.js" -not -path "./.git/*" -exec node --check {} +
           find . -name "*.py" -not -path "./.git/*" -exec python3 -m py_compile {} +
 
+      - name: Install declared module Python packages
+        run: |
+          python3 - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          pkgs = json.loads(Path("module.json").read_text(encoding="utf-8")).get("runtime", {}).get("python_packages") or []
+          if pkgs:
+              print("Installing declared runtime.python_packages:", pkgs)
+              subprocess.check_call(["python3", "-m", "pip", "install", "--quiet", *pkgs])
+          PY
+
       - name: Run module unit tests
         run: |
           if [ -d tests ]; then

@@ -34,7 +34,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq jq sqlite3 shellcheck
-          python3 -m pip install --quiet pyyaml jsonschema
+          python3 -m pip install --quiet pyyaml jsonschema numpy
 
       - name: Bash syntax check (bash -n)
         run: |
