@@ -1218,10 +1218,14 @@
           if (summaryEl) {
             if (data.gpus.length === 1) {
               const g0 = data.gpus[0];
-              const shortName = String(g0.name || 'GPU 0').replace('NVIDIA GeForce ', '');
-              summaryEl.textContent = `${shortName} · ${totalUsedGb.toFixed(1)}/${totalVramGb.toFixed(0)}GB · ${maxTemp}°C · ${totalPower}W`;
+              const shortName = String(g0.name || 'GPU 0')
+                .replace(/^NVIDIA\s+(GeForce\s+)?/i, '')
+                .replace(/\s+Blackwell Generation Laptop GPU/i, '')
+                .replace(/\s+(Generation\s+)?(Laptop|Server|Workstation)\s+(GPU|Edition)/gi, '')
+                .trim();
+              summaryEl.textContent = `${shortName} · ${totalUsedGb.toFixed(1)}/${totalVramGb.toFixed(0)}GB · ${maxTemp}°C`;
             } else {
-              summaryEl.textContent = `${data.gpus.length}× GPU · ${totalUsedGb.toFixed(1)}/${totalVramGb.toFixed(0)}GB · ${maxTemp}°C · ${totalPower}W`;
+              summaryEl.textContent = `${data.gpus.length}× GPU · ${totalUsedGb.toFixed(1)}/${totalVramGb.toFixed(0)}GB · ${maxTemp}°C`;
             }
           }
           if (dotEl) {

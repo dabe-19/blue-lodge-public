@@ -114,14 +114,16 @@ body {
 
 /* --- Workbench Header --- */
 .workbench-header {
-  height: 44px;
+  min-height: 44px;
+  height: auto;
   border-bottom: 1px solid var(--border-color);
   background-color: var(--bg-surface);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 0 14px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 6px 14px;
   user-select: none;
   flex-shrink: 0;
   position: relative;
@@ -160,9 +162,11 @@ body {
 .header-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px 8px;
   min-width: 0;
-  flex-shrink: 1;
+  flex: 1 1 auto;
 }
 
 .control-group {
@@ -259,20 +263,20 @@ body {
 
 .hdr-quick-pins-wrap {
   position: relative;
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
-  min-width: 0;
-  flex-shrink: 1;
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .hdr-quick-pins {
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
-  min-width: 0;
-  overflow: hidden;
-  flex-wrap: nowrap;
+  max-width: 100%;
 }
 
 .hdr-pin-picker-btn {
@@ -411,17 +415,29 @@ body {
   background: rgba(56, 189, 248, 0.1);
 }
 
-@media (max-width: 1520px) {
+@media (max-width: 1680px) {
   .brand-motto,
   .brand-separator {
     display: none;
   }
 }
 
-@media (max-width: 1220px) {
+@media (max-width: 1380px) {
   .control-group label,
   .status-badge .status-label {
     display: none;
+  }
+  .header-telemetry {
+    max-width: 230px;
+  }
+  .header-dock-btn .dock-branch-name {
+    display: none;
+  }
+}
+
+@media (max-width: 1080px) {
+  .header-telemetry {
+    max-width: 190px;
   }
 }
 
@@ -453,7 +469,9 @@ body.drawer-open .workbench-viewport {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 20% 4px 20%;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 6px clamp(14px, 12vw, 20%) 4px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 
@@ -2989,7 +3007,8 @@ body.drawer-open .workbench-viewport {
   position: relative;
   display: flex;
   align-items: center;
-  flex-shrink: 1;
+  flex: 0 1 280px;
+  max-width: 280px;
   min-width: 0;
 }
 

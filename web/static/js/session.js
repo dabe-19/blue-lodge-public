@@ -222,7 +222,7 @@
     if (!kind || document.getElementById('lodgeDevicesBtn')) return;
     const anchor = document.getElementById('toolCribToggle');
     if (!anchor || !anchor.parentNode) return;
-    const b = el('button', { id: 'lodgeDevicesBtn', className: 'tactile-btn header-workbench-btn lodge-devices-btn', text: kind === 'local' ? 'DEVICES' : 'PAIRED', attrs: { title: kind === 'local' ? 'Pair and revoke remote devices' : 'This device is paired' } });
+    const b = el('button', { id: 'lodgeDevicesBtn', className: 'hdr-pill-btn header-workbench-btn lodge-devices-btn', text: kind === 'local' ? 'DEVICES' : 'PAIRED', attrs: { title: kind === 'local' ? 'Pair and revoke remote devices' : 'This device is paired' } });
     b.addEventListener('click', openDevicesPanel);
     anchor.parentNode.insertBefore(b, anchor);
   }
