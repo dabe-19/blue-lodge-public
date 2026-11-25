@@ -160,6 +160,44 @@ pub async fn get_training_run_logs(
     Json(run_py_json(&state.lodge_dir, "scripts/training/runs.py", &args).await)
 }
 
+#[derive(Deserialize)]
+pub struct ColabSessionsQuery {
+    pub probe: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct CullVmPayload {
+    pub target: Option<String>,
+    pub all_stale: Option<bool>,
+}
+
+/// GET /api/training/colab/sessions — Live Colab GPU assignments & stale/orphan classification
+pub async fn get_colab_sessions(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<ColabSessionsQuery>,
+) -> impl IntoResponse {
+    let want_probe = matches!(q.probe.as_deref(), Some("1") | Some("true") | Some("yes"));
+    let mut args = vec!["colab-sessions"];
+    if want_probe {
+        args.push("--probe");
+    }
+    Json(run_py_json(&state.lodge_dir, "scripts/training/runs.py", &args).await)
+}
+
+/// POST /api/training/colab/cull — Terminate a specific Colab GPU VM or cull all stale/orphaned VMs
+pub async fn post_colab_cull(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CullVmPayload>,
+) -> impl IntoResponse {
+    if payload.all_stale.unwrap_or(false) {
+        return Json(run_py_json(&state.lodge_dir, "scripts/training/runs.py", &["cull-vm", "--all-stale"]).await);
+    }
+    let Some(t) = payload.target.filter(|s| plain_id(s, 80)) else {
+        return Json(json!({ "status": "error", "message": "Valid target endpoint/session or all_stale:true required" }));
+    };
+    Json(run_py_json(&state.lodge_dir, "scripts/training/runs.py", &["cull-vm", "--target", &t]).await)
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct GateDecisionPayload {
     pub reason: Option<String>,

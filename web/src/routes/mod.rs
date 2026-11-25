@@ -147,6 +147,8 @@ pub fn create_router(state: Arc<AppState>, cors: CorsLayer) -> Router {
         .route("/api/training/status", get(training::get_training_status))
         .route("/api/training/runs", get(training::get_training_runs))
         .route("/api/training/runs/:run_name/logs", get(training::get_training_run_logs))
+        .route("/api/training/colab/sessions", get(training::get_colab_sessions))
+        .route("/api/training/colab/cull", post(training::post_colab_cull))
         .route("/api/training/adapters", get(training::get_training_adapters))
         .route("/api/training/run", post(training::run_training))
         .route("/api/training/wizard", post(training::generate_training_wizard))

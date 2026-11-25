@@ -66,6 +66,23 @@ cmd_train() {
                 '.[]? | "\(.name)\t\(.role)\t\(.backend)\t\(.state)\t\(.gate_status)\t\(.created)"' | column -t -s $'\t'
             ;;
 
+        sessions|vms)
+            "$py" "$LODGE_DIR/scripts/training/runs.py" colab-sessions --probe | jq .
+            ;;
+
+        cull)
+            local tgt="${subargs%% *}"
+            if [ -z "$tgt" ]; then
+                echo "Usage: /train cull <endpoint-or-session | all-stale>"
+                return 1
+            fi
+            if [ "$tgt" = "all-stale" ] || [ "$tgt" = "--all-stale" ]; then
+                "$py" "$LODGE_DIR/scripts/training/runs.py" cull-vm --all-stale | jq .
+            else
+                "$py" "$LODGE_DIR/scripts/training/runs.py" cull-vm --target "$tgt" | jq .
+            fi
+            ;;
+
         gate|queue)
             "$py" "$LODGE_DIR/scripts/training/runs.py" gate-queue | jq .
             ;;

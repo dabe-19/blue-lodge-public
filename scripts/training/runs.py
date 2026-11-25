@@ -970,6 +970,219 @@ def stream_logs(name: str, track: str | None = None, live: bool = True, lines: i
     }
 
 
+def inspect_colab_sessions(probe: bool = False) -> dict:
+    """List every live Colab GPU assignment on Google's backend and classify active vs stale/orphaned VMs."""
+    import contextlib
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            from colab_cli.common import state as cstate
+            from colab_cli.auth import AuthProvider
+            cstate.auth_provider = AuthProvider.ADC
+            client = cstate.client
+            assignments = client.list_assignments()
+    except Exception as e:
+        return {"status": "error", "message": f"Colab API unavailable: {e}", "sessions": [], "stale_count": 0}
+
+    # Map endpoint -> local session name
+    ep_to_sess = {}
+    try:
+        for item in cstate.store.list():
+            s = cstate.store.get(item) if isinstance(item, str) else item
+            if s and getattr(s, "endpoint", None):
+                ep_to_sess[s.endpoint] = getattr(s, "name", item if isinstance(item, str) else s.endpoint)
+    except Exception:
+        pass
+
+    # Map session name -> (run_name, track_name, run_state, track_state, remote_dir)
+    # Read run.json directly because list_runs() returns summary status without the raw plan list.
+    sess_to_run = {}
+    for rj in glob.glob(os.path.join(runs_dir(), "*", "run.json")):
+        meta = _read_json(rj)
+        if not meta:
+            continue
+        rname = meta.get("name") or os.path.basename(os.path.dirname(rj))
+        rd = os.path.dirname(rj)
+        st_file = os.path.join(rd, "state")
+        rstate = open(st_file).read().strip() if os.path.isfile(st_file) else meta.get("state")
+        for tp in meta.get("plan") or []:
+            sn = tp.get("session")
+            if sn:
+                td = os.path.join(rd, "tracks", tp.get("track", ""))
+                sess_to_run[sn] = {
+                    "run": rname, "track": tp.get("track"), "run_state": rstate,
+                    "track_state": track_status(td).get("state") if os.path.isdir(td) else "unknown",
+                    "remote_dir": tp.get("remote_dir") or f"/content/{sn}",
+                }
+
+    def _probe_one(sess_name: str, remote_dir: str) -> dict:
+        pcode = (
+            "import os, json, subprocess\n"
+            "gpu = None\n"
+            "try:\n"
+            "    raw = subprocess.getoutput('nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits').strip().splitlines()[0]\n"
+            "    p = [x.strip() for x in raw.split(',')]\n"
+            "    if len(p) >= 4: gpu = {'name': p[0], 'used_mb': int(p[1]), 'total_mb': int(p[2]), 'util_pct': int(p[3])}\n"
+            "except Exception: pass\n"
+            f"ec_p = {remote_dir + '/exit_code'!r}\n"
+            "ec = open(ec_p).read().strip() if os.path.exists(ec_p) else 'running'\n"
+            "alive = bool(subprocess.getoutput('pgrep -f \"train_lora.py|pip install|convert_lora\"').strip())\n"
+            "print('BL_PROBE::' + json.dumps({'gpu': gpu, 'exit_code': ec, 'alive': alive}))\n"
+        )
+        rc, out, _ = _colab(["exec", "-s", sess_name, "--timeout", "25"], auth="adc", stdin=pcode, timeout=35)
+        if rc == 0 and "BL_PROBE::" in out:
+            try:
+                return json.loads(out.split("BL_PROBE::", 1)[1].strip().splitlines()[0])
+            except ValueError:
+                pass
+        return {}
+
+    probe_results = {}
+    if probe:
+        from concurrent.futures import ThreadPoolExecutor
+        to_probe = []
+        for a in assignments:
+            ep = getattr(a, "endpoint", "")
+            sess = ep_to_sess.get(ep)
+            if sess:
+                rm = sess_to_run.get(sess)
+                to_probe.append((sess, rm["remote_dir"] if rm else f"/content/{sess}"))
+        if to_probe:
+            with ThreadPoolExecutor(max_workers=min(4, len(to_probe))) as ex:
+                futs = {ex.submit(_probe_one, s, rdir): s for s, rdir in to_probe}
+                for fut, s in futs.items():
+                    try:
+                        probe_results[s] = fut.result(timeout=40)
+                    except Exception:
+                        probe_results[s] = {}
+
+    rows = []
+    for a in assignments:
+        ep = getattr(a, "endpoint", "")
+        acc_raw = getattr(a, "accelerator", "")
+        acc = acc_raw.value if hasattr(acc_raw, "value") else str(acc_raw)
+        sess = ep_to_sess.get(ep)
+        rm = sess_to_run.get(sess) if sess else None
+
+        health = "active"
+        reason = "Mapped to active training track"
+        gpu_info = None
+        proc_alive = None
+        exit_code = None
+
+        if not sess:
+            health = "orphaned"
+            reason = "Orphaned Colab VM (untracked in local session store; burning CU)"
+        elif not rm:
+            health = "orphaned"
+            reason = f"Session '{sess}' has no matching run in .george/training/runs/"
+        elif rm["run_state"] in ("done", "failed", "cancelled") or rm["track_state"] in ("done", "failed", "cancelled"):
+            health = "stale_finished"
+            reason = f"Run '{rm['run']}' track '{rm['track']}' is already {rm['track_state']}/{rm['run_state']}"
+
+        if probe and sess and probe_results.get(sess):
+            pd = probe_results[sess]
+            gpu_info = pd.get("gpu")
+            exit_code = pd.get("exit_code")
+            proc_alive = pd.get("alive")
+            if exit_code not in (None, "running"):
+                health = "stale_finished"
+                reason = f"Training exited with code {exit_code} (VM still running idle)"
+            elif proc_alive is False and gpu_info and gpu_info.get("used_mb", 0) < 1000 and gpu_info.get("util_pct", 0) == 0:
+                health = "stale_idle"
+                reason = "No training process running and GPU is idle (0% util, <1 GiB VRAM)"
+
+        rows.append({
+            "endpoint": ep,
+            "accelerator": acc,
+            "session": sess,
+            "run": rm["run"] if rm else None,
+            "track": rm["track"] if rm else None,
+            "run_state": rm["run_state"] if rm else None,
+            "health": health,
+            "stale": health != "active",
+            "reason": reason,
+            "gpu": gpu_info,
+            "exit_code": exit_code,
+            "proc_alive": proc_alive,
+        })
+
+    stale = [r for r in rows if r["stale"]]
+    return {
+        "status": "ok",
+        "total": len(rows),
+        "active_count": len(rows) - len(stale),
+        "stale_count": len(stale),
+        "sessions": rows,
+        "ts": dt.datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def cull_colab_vm(target: str | None = None, all_stale: bool = False) -> dict:
+    """Terminate a specific Colab VM (by session name or raw endpoint) or cull all stale/orphaned VMs."""
+    import contextlib
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            from colab_cli.common import state as cstate
+            from colab_cli.auth import AuthProvider
+            cstate.auth_provider = AuthProvider.ADC
+            client = cstate.client
+    except Exception as e:
+        return {"status": "error", "message": f"Colab API unavailable: {e}"}
+
+    culled = []
+    errors = []
+    if all_stale:
+        snap = inspect_colab_sessions(probe=True)
+        for row in snap.get("sessions", []):
+            if not row.get("stale"):
+                continue
+            ep = row["endpoint"]
+            try:
+                client.unassign(ep)
+                if row.get("session"):
+                    try:
+                        cstate.prune_session(row["session"])
+                    except Exception:
+                        pass
+                culled.append({"endpoint": ep, "session": row.get("session"), "accelerator": row.get("accelerator"), "reason": row.get("reason")})
+            except Exception as e:
+                errors.append({"endpoint": ep, "error": str(e)})
+        return {"status": "ok", "mode": "all_stale", "culled": culled, "errors": errors}
+
+    if not target:
+        raise SpecError("Provide --target <endpoint_or_session> or --all-stale")
+
+    # Resolve target as either a local session name or raw Colab endpoint
+    ep = target
+    sess_name = None
+    try:
+        s = cstate.store.get(target)
+        if s and getattr(s, "endpoint", None):
+            ep = s.endpoint
+            sess_name = target
+        else:
+            for item in cstate.store.list():
+                s2 = cstate.store.get(item) if isinstance(item, str) else item
+                if s2 and getattr(s2, "endpoint", None) == target:
+                    sess_name = getattr(s2, "name", item if isinstance(item, str) else None)
+                    break
+    except Exception:
+        pass
+
+    try:
+        client.unassign(ep)
+        if sess_name:
+            try:
+                cstate.prune_session(sess_name)
+            except Exception:
+                pass
+        culled.append({"endpoint": ep, "session": sess_name})
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to unassign {ep}: {e}"}
+
+    return {"status": "ok", "mode": "single", "culled": culled, "errors": errors}
+
+
 # ── Status, Merge (SVD-32 Retention Lineage), Tier B Gate & Live Hot-Swap ──────
 
 def _alive(pid):
@@ -1338,6 +1551,11 @@ def main(argv=None):
     pl.add_argument("--track", default=None)
     pl.add_argument("--live", action="store_true")
     pl.add_argument("--lines", type=int, default=80)
+    pcs = sub.add_parser("colab-sessions")
+    pcs.add_argument("--probe", action="store_true")
+    pcv = sub.add_parser("cull-vm")
+    pcv.add_argument("--target", default=None)
+    pcv.add_argument("--all-stale", action="store_true")
     pa = sub.add_parser("approve")
     pa.add_argument("name")
     pa.add_argument("--approver", default="operator")
@@ -1412,6 +1630,10 @@ def main(argv=None):
             res = resume_colab(a.name)
         elif a.cmd == "logs":
             res = stream_logs(a.name, track=a.track, live=a.live, lines=a.lines)
+        elif a.cmd == "colab-sessions":
+            res = inspect_colab_sessions(probe=a.probe)
+        elif a.cmd == "cull-vm":
+            res = cull_colab_vm(target=a.target, all_stale=a.all_stale)
         else:
             res = collect_colab(a.name)
     except (SpecError, ValueError) as e:

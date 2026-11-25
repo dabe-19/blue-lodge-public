@@ -36,6 +36,9 @@
   const state = {
     activeTab: 'gate',
     data: null,
+    colabSessions: null,
+    colabScanning: false,
+    armedCullTarget: null,
     pantry: null,
     lastPreflight: null,
     lastConfigPath: null,
@@ -47,7 +50,7 @@
     streamAuto: true,
     streamTimer: null,
     streamBusy: false,
-    consoleText: 'Ready. Inspect active Colab/local runs, stream live GPU logs, or launch a playbook.',
+    consoleText: 'Ready. Inspect active Colab/local runs, live Colab GPU assignments, or launch a playbook.',
   };
 
   function stopStreamTimer() {
@@ -103,14 +106,58 @@
     return { ok: r.ok, data: d };
   }
 
+  async function loadColabSessions(probe) {
+    if (state.colabScanning) return;
+    state.colabScanning = true;
+    state.armedCullTarget = null;
+    if (probe) setConsole('Probing live Colab VMs (nvidia-smi + process check) for stale or orphaned GPUs...');
+    renderForge();
+    try {
+      const { data } = await apiJson(`/api/training/colab/sessions?probe=${probe ? '1' : '0'}`);
+      state.colabSessions = data;
+      if (probe) {
+        if (data && data.status === 'ok') {
+          setConsole(`Live Colab GPU scan complete: ${data.total} VM(s) total — ${data.active_count} active, ${data.stale_count} stale/orphaned.`);
+        } else {
+          setConsole(data);
+        }
+      }
+    } finally {
+      state.colabScanning = false;
+      renderForge();
+    }
+  }
+
+  async function cullColabTarget(target, allStale) {
+    state.armedCullTarget = null;
+    setConsole(allStale ? 'Culling all stale/orphaned Colab VMs...' : `Terminating Colab VM ${target}...`);
+    const body = allStale ? { all_stale: true } : { target };
+    const { data } = await apiJson('/api/training/colab/cull', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    setConsole(data);
+    await refreshAll();
+  }
+
   async function refreshAll() {
-    setConsole('Refreshing Forge telemetry, Colab ADC credits, prerequisites, runs & SVD lineage...');
-    const { data } = await apiJson('/api/training/status');
+    setConsole('Refreshing Forge telemetry, Colab ADC credits, live GPU assignments, prerequisites, runs & SVD lineage...');
+    const [statusRes, sessRes] = await Promise.all([
+      apiJson('/api/training/status'),
+      apiJson('/api/training/colab/sessions?probe=0'),
+    ]);
+    const data = statusRes.data;
     state.data = data;
+    if (sessRes && sessRes.data) state.colabSessions = sessRes.data;
+    state.armedCullTarget = null;
     renderForge();
     const pr = (data && data.prerequisites) || {};
     if (data && data.credits && data.credits.status === 'ok') {
-      setConsole(`Connected (${data.credits.auth}): ${data.adc_status}`);
+      const staleNote = state.colabSessions && state.colabSessions.stale_count > 0
+        ? ` · WARNING: ${state.colabSessions.stale_count} stale/orphaned Colab VM(s) detected!`
+        : '';
+      setConsole(`Connected (${data.credits.auth}): ${data.adc_status}${staleNote}`);
     } else if (pr.issues && pr.issues.length > 0) {
       setConsole('Prerequisites missing:\n' + pr.issues.map((i) => `[${i.severity.toUpperCase()}] ${i.component}: ${i.message}\n  Fix: ${i.fix}`).join('\n'));
     } else {
@@ -366,6 +413,128 @@
         el('button', { type: 'button', className: 'guild-btn', text: 'REFRESH RUNS', on: { click: refreshAll } }),
       ]),
       el('div', { style: 'overflow-x:auto;' }, [table]),
+    ]));
+
+    // Live Colab GPU Fleet & Stale / Orphaned VM Guard
+    const cs = state.colabSessions || {};
+    const csRows = Array.isArray(cs.sessions) ? cs.sessions : [];
+    const staleCount = Number(cs.stale_count || 0);
+    const armAll = state.armedCullTarget === '__ALL_STALE__';
+
+    const vmTable = el('table', { className: 'forge-table' }, [
+      el('thead', {}, [
+        el('tr', {}, [
+          el('th', { text: 'COLAB SESSION / ENDPOINT' }),
+          el('th', { text: 'GPU / TELEMETRY' }),
+          el('th', { text: 'MAPPED RUN / TRACK' }),
+          el('th', { text: 'HEALTH' }),
+          el('th', { text: 'ACTIONS' }),
+        ]),
+      ]),
+    ]);
+    const vmTbody = el('tbody');
+    if (cs.status === 'error') {
+      vmTbody.appendChild(el('tr', {}, [
+        el('td', { attrs: { colspan: '5' }, className: 'guild-card-meta', text: cs.message || 'Colab API unavailable.' }),
+      ]));
+    } else if (csRows.length === 0) {
+      vmTbody.appendChild(el('tr', {}, [
+        el('td', { attrs: { colspan: '5' }, className: 'guild-card-meta', text: state.colabScanning ? 'Scanning Google Colab assignments...' : 'No active Colab GPU VMs provisioned (0 CU/hr burn).' }),
+      ]));
+    } else {
+      csRows.forEach((row) => {
+        const ep = row.endpoint || '';
+        const isArmed = state.armedCullTarget === ep;
+        const gpuCell = row.gpu
+          ? `${row.accelerator || 'GPU'} · ${row.gpu.name} (${(row.gpu.used_mb / 1024).toFixed(1)}/${(row.gpu.total_mb / 1024).toFixed(1)} GiB · ${row.gpu.util_pct}%)`
+          : (row.accelerator || '—');
+        const mapLabel = row.run ? `${row.run} / ${row.track || 'default'}` : 'UNMAPPED / ORPHAN';
+        const healthBadgeCls = row.stale ? 'guild-badge off' : 'guild-badge on';
+        const healthTxt = row.stale ? String(row.health || 'STALE').toUpperCase() : 'ACTIVE';
+
+        const rowActs = el('div', { style: 'display:flex;flex-wrap:wrap;gap:4px;' });
+        if (row.run) {
+          rowActs.appendChild(el('button', {
+            type: 'button',
+            className: 'guild-btn',
+            style: 'padding:3px 7px;font-size:10px;',
+            text: 'LOGS',
+            on: { click: () => openLiveStream(row.run, row.track || null) },
+          }));
+        }
+        rowActs.appendChild(el('button', {
+          type: 'button',
+          className: isArmed ? 'guild-btn danger' : (row.stale ? 'guild-btn danger' : 'guild-btn'),
+          style: 'padding:3px 7px;font-size:10px;',
+          text: isArmed ? 'CONFIRM CULL' : 'CULL VM',
+          title: isArmed ? `Click again to permanently unassign ${ep}` : `Terminate Colab VM ${ep}`,
+          on: {
+            click: () => {
+              if (!isArmed) {
+                state.armedCullTarget = ep;
+                setConsole(`Armed to cull Colab VM ${ep} (${row.session || 'untracked'} · ${row.accelerator}). Click CONFIRM CULL to terminate and stop CU burn.`);
+                renderForge();
+              } else {
+                cullColabTarget(ep, false);
+              }
+            },
+          },
+        }));
+
+        vmTbody.appendChild(el('tr', {}, [
+          el('td', {}, [
+            el('div', { style: 'font-weight:700;color:#f8fafc;', text: row.session || 'UNTRACKED ORPHAN [?]' }),
+            el('div', { className: 'guild-card-meta', style: 'font-family:var(--font-mono);font-size:10px;', text: ep }),
+          ]),
+          el('td', { style: 'font-family:var(--font-mono);font-size:11px;', text: gpuCell }),
+          el('td', { style: row.run ? 'font-family:var(--font-mono);font-size:11px;' : 'color:#fbbf24;font-weight:700;font-size:11px;', text: mapLabel }),
+          el('td', {}, [
+            el('span', { className: healthBadgeCls, text: healthTxt }),
+            el('div', { className: 'guild-card-meta', style: 'margin-top:2px;', text: row.reason || '' }),
+          ]),
+          el('td', {}, [rowActs]),
+        ]));
+      });
+    }
+    vmTable.appendChild(vmTbody);
+
+    wrapper.appendChild(el('div', {
+      className: 'forge-card',
+      style: staleCount > 0 ? 'border-color:rgba(248,113,113,0.55);' : undefined,
+    }, [
+      el('div', { className: 'forge-card-head' }, [
+        el('div', {}, [
+          el('div', { className: 'guild-card-title', text: `COLAB GPU FLEET & STALE VM GUARD (${csRows.length} VM${csRows.length === 1 ? '' : 's'} · ${staleCount} STALE)` }),
+          el('div', { className: 'guild-card-meta', text: 'Each parallel SFT/DPO track uses 1 Colab VM. Click SCAN LIVE GPUs to probe nvidia-smi & training PIDs, or CULL stale/orphaned VMs so idle GPUs never burn Compute Units.' }),
+        ]),
+        el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:center;' }, [
+          el('button', {
+            type: 'button',
+            className: 'guild-btn',
+            disabled: state.colabScanning,
+            text: state.colabScanning ? 'SCANNING...' : 'SCAN LIVE GPUs',
+            on: { click: () => loadColabSessions(true) },
+          }),
+          el('button', {
+            type: 'button',
+            className: 'guild-btn danger',
+            disabled: staleCount === 0 || state.colabScanning,
+            text: armAll ? `CONFIRM CULL ${staleCount} STALE` : `CULL ALL STALE (${staleCount})`,
+            on: {
+              click: () => {
+                if (!armAll) {
+                  state.armedCullTarget = '__ALL_STALE__';
+                  setConsole(`Armed to cull ${staleCount} stale/orphaned Colab VM(s). Active training VMs will NOT be touched. Click again to confirm.`);
+                  renderForge();
+                } else {
+                  cullColabTarget(null, true);
+                }
+              },
+            },
+          }),
+        ]),
+      ]),
+      el('div', { style: 'overflow-x:auto;' }, [vmTable]),
     ]));
 
     if (state.streamRun) {
@@ -844,7 +1013,8 @@
         menuRow('Playbook & Launch', 'Pick a curated JSON playbook (Gemma-4 31B, Qwen 3.8 27B, SDR E4B, or Local QLoRA Sleep) or customize focus recipes (e.g. persistence,tool-syntax,error-recovery,multi-hop,final-answer + journal dream replay). Choose base_source (HF Direct vs. Local Upload vs. Drive Mirror). Click PREFLIGHT to validate before arming and launching.'),
         menuRow('SVD Layers & Backups', 'Inspect every namespaced (model_slug, role) adapter under MODELS_DIR/adapters/<model>/<role>/. Adjust per-adapter scales and click HOT-SWAP to call stock llama-server POST /lora-adapters with ZERO server restart. Trigger on-demand backups to Google Drive and/or private Hugging Face Hub.'),
         menuRow('Head-to-Head Benchmarks', 'Launch the 7-Pillar Multi-Turn Sovereign Benchmark (35 scenarios including Pillar 7 Multi-Step Persistence & Early-Quit Rate) against your live inference server, or compare any two saved scorecards (e.g. Gemma-4 31B vs. Qwen 3.8 27B) side-by-side by pillar.'),
-        menuRow('Autonomic Watchdog', 'scripts/cron_system/training_watchdog.sh (# ENABLED: 1, every 600s) keeps Colab VMs alive, auto-resumes 1h disconnects, downloads finished adapters, tears down idle VMs, merges SVD-32 with retention weighting, and posts Discord Tier B approval cards. Toggle anytime in the Cron tab.'),
+        menuRow('Autonomic Watchdog', 'scripts/cron_system/training_watchdog.sh (# ENABLED: 1, every 600s) keeps Colab VMs alive, auto-resumes 1h disconnects, downloads finished adapters, detects stale/orphaned Colab GPUs (sending a Discord Tier B cull alert), merges SVD-32 with retention weighting, and posts Discord Tier B approval cards.'),
+        menuRow('Stale Colab GPU Guard', 'In Runs & Tier B Gate, inspect live Colab VMs mapped 1:1 to parallel SFT/DPO tracks. Click SCAN LIVE GPUs to probe nvidia-smi + training PIDs, or use two-click CULL VM / CULL ALL STALE (or `/train sessions` and `/train cull <endpoint|all-stale>`) so abandoned GPUs stop burning Compute Units.'),
       ],
     );
 
@@ -873,17 +1043,28 @@
     const policy = d.policy || {};
     const history = (d.gate_queue && d.gate_queue.history) || [];
     const pending = (d.gate_queue && d.gate_queue.pending) || [];
-    const activeCount = history.filter((r) => r.state === 'running').length;
+    const runningRuns = history.filter((r) => r.state === 'running');
+    const activeCount = runningRuns.length;
+    const activeTracks = runningRuns.reduce((sum, r) => {
+      const tObj = r.tracks && typeof r.tracks === 'object' ? Object.values(r.tracks) : [];
+      const runningT = tObj.filter((t) => t && t.state === 'running').length;
+      if (runningT > 0) return sum + runningT;
+      const g = Array.isArray(r.selected_gpus) ? r.selected_gpus.length : 0;
+      return sum + (g > 0 ? g : 1);
+    }, 0);
+    const cs = state.colabSessions || {};
+    const staleCount = Number(cs.stale_count || 0);
+    const vmCount = cs.total != null ? cs.total : (credits.active_assignments || 0);
 
     const badge = document.getElementById('wbFleetCount');
     if (badge) {
-      const n = activeCount + pending.length;
+      const n = activeCount + pending.length + staleCount;
       badge.textContent = String(n);
       badge.hidden = n === 0;
     }
 
     const cuTxt = credits.balance != null
-      ? `${credits.balance} CU (${credits.active_assignments || 0} VMs)`
+      ? `${credits.balance} CU (${vmCount} VMs${staleCount > 0 ? ` · ${staleCount} STALE` : ''})`
       : (prereqs.colab_ready ? 'Probing Colab…' : 'ADC Setup Needed');
     const postureTxt = policy.autonomy_tier === 'tier_a'
       ? `TIER A AUTO (>= +${policy.tier_a_min_delta ?? 3}%)`
@@ -892,11 +1073,11 @@
     return el('div', { className: 'forge-kpi-grid' }, [
       el('div', { className: 'forge-kpi-box' }, [
         el('div', { className: 'hub-label', text: 'COLAB COMPUTE' }),
-        el('div', { style: 'font-weight:700;font-size:13px;font-family:var(--font-mono);', text: cuTxt }),
+        el('div', { style: `font-weight:700;font-size:13px;font-family:var(--font-mono);${staleCount > 0 ? 'color:#f87171;' : ''}`, text: cuTxt }),
       ]),
       el('div', { className: 'forge-kpi-box' }, [
-        el('div', { className: 'hub-label', text: 'ACTIVE RUNS' }),
-        el('div', { style: 'font-weight:700;font-size:13px;font-family:var(--font-mono);', text: `${activeCount} running · ${history.length} total` }),
+        el('div', { className: 'hub-label', text: 'ACTIVE RUNS & TRACKS' }),
+        el('div', { style: 'font-weight:700;font-size:13px;font-family:var(--font-mono);', text: `${activeCount} runs (${activeTracks} tracks) · ${history.length} total` }),
       ]),
       el('div', { className: 'forge-kpi-box' }, [
         el('div', { className: 'hub-label', text: 'TIER B QUEUE' }),

@@ -76,3 +76,18 @@ if [ "$AUTONOMY_TIER" = "tier_a" ]; then
         fi
     done
 fi
+
+# 3. Stale / Orphaned Colab GPU Guard (prevents idle Compute Unit burn)
+SESS_JSON=$("$PY" "$RUNS_PY" colab-sessions --probe 2>/dev/null | tail -n 1 || echo '{}')
+STALE_COUNT=$(printf '%s' "$SESS_JSON" | jq -r '.stale_count // 0' 2>/dev/null || echo 0)
+if [ "${STALE_COUNT:-0}" -gt 0 ]; then
+    STALE_SUMMARY=$(printf '%s' "$SESS_JSON" | jq -r '.sessions[] | select(.stale == true) | "- `\(.endpoint)` (\(.accelerator)) — \(.health): \(.reason)"' 2>/dev/null)
+    if [ "$AUTONOMY_TIER" = "tier_a" ]; then
+        echo "[watchdog] Tier A auto-culling ${STALE_COUNT} stale Colab GPU(s)..."
+        "$PY" "$RUNS_PY" cull-vm --all-stale >/dev/null 2>&1 || true
+        _notify_discord "**[Training Fleet — Tier A Auto-Culled Stale GPUs]** Terminated ${STALE_COUNT} stale/orphaned Colab VM(s) to save Compute Units:\n${STALE_SUMMARY}"
+    else
+        echo "[watchdog] Detected ${STALE_COUNT} stale Colab GPU(s) — posting Tier B cull confirmation to Discord..."
+        _notify_discord "**[Training Fleet — Tier B Stale GPU Alert]** Detected **${STALE_COUNT}** stale/orphaned Colab GPU assignment(s) burning Compute Units:\n${STALE_SUMMARY}\nApprove cull in **Models → Training Fleet & Gate → CULL VM** or run \`/train cull all-stale\`."
+    fi
+fi
