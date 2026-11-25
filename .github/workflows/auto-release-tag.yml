@@ -20,6 +20,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: auto-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   semver-tag-and-release:
     name: Compute SemVer, Tag & Publish Release
@@ -87,29 +91,66 @@ jobs:
           print(f"Resolved next release: v{next_ver} (prev={latest_tag or 'none'}, bump_needed={bump_needed})")
           PY
 
-      - name: Commit bumped VERSION file
-        if: steps.ver.outputs.should_release == 'true' && steps.ver.outputs.bump_needed == 'true'
-        run: |
-          echo "${{ steps.ver.outputs.version }}" > VERSION
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add VERSION
-          git commit -m "chore(release): bump version to v${{ steps.ver.outputs.version }} [skip ci]"
-          git push origin HEAD:main
-
-      - name: Create annotated SemVer tag
+      - name: Commit bumped VERSION and push annotated SemVer tag atomically
         if: steps.ver.outputs.should_release == 'true'
+        env:
+          NEXT_VER: ${{ steps.ver.outputs.version }}
+          NEXT_TAG: ${{ steps.ver.outputs.tag }}
+          BUMP_NEEDED: ${{ steps.ver.outputs.bump_needed }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.ver.outputs.tag }}" -m "Release ${{ steps.ver.outputs.tag }}"
-          git push origin "${{ steps.ver.outputs.tag }}"
+
+          if [ "$BUMP_NEEDED" = "true" ]; then
+            echo "${NEXT_VER}" > VERSION
+            git add VERSION
+            git commit -m "chore(release): bump version to ${NEXT_TAG} [skip ci]"
+          fi
+
+          git tag -fa "${NEXT_TAG}" -m "Release ${NEXT_TAG}"
+
+          # Push branch bump + tag in a single atomic transaction with retry so a
+          # transient GitHub ref-lock blip can never leave VERSION bumped without a tag.
+          push_ok=0
+          for attempt in 1 2 3; do
+            if [ "$BUMP_NEEDED" = "true" ]; then
+              if git push --atomic origin HEAD:main "refs/tags/${NEXT_TAG}"; then
+                push_ok=1
+                break
+              fi
+            else
+              if git push origin "refs/tags/${NEXT_TAG}"; then
+                push_ok=1
+                break
+              fi
+            fi
+            delay=$((attempt * 4))
+            echo "Attempt ${attempt}/3 failed pushing ${NEXT_TAG}; retrying in ${delay}s..."
+            sleep "${delay}"
+          done
+          if [ "$push_ok" -ne 1 ]; then
+            echo "::error::Failed to push ${NEXT_TAG} after 3 attempts"
+            exit 1
+          fi
 
       - name: Publish GitHub Release with auto-generated notes
         if: steps.ver.outputs.should_release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEXT_TAG: ${{ steps.ver.outputs.tag }}
         run: |
-          gh release create "${{ steps.ver.outputs.tag }}" \
-            --title "Blue Lodge ${{ steps.ver.outputs.tag }}" \
-            --generate-notes
+          if gh release view "${NEXT_TAG}" >/dev/null 2>&1; then
+            echo "Release ${NEXT_TAG} already exists; skipping create."
+            exit 0
+          fi
+          for attempt in 1 2 3; do
+            if gh release create "${NEXT_TAG}" \
+              --title "Blue Lodge ${NEXT_TAG}" \
+              --generate-notes; then
+              exit 0
+            fi
+            delay=$((attempt * 4))
+            echo "Attempt ${attempt}/3 failed creating release ${NEXT_TAG}; retrying in ${delay}s..."
+            sleep "${delay}"
+          done
+          exit 1
