@@ -152,10 +152,18 @@ def _export_adapter_gguf(adapter_dir: str, base_model: str, out_gguf: str, base_
     return False
 
 
+def _drive_headers(token: str) -> dict:
+    hdr = {"Authorization": f"Bearer {token}"}
+    qp = os.environ.get("GOOGLE_DRIVE_QUOTA_PROJECT", "").strip()
+    if qp:
+        hdr["X-Goog-User-Project"] = qp
+    return hdr
+
+
 def _drive_ensure_folder(token: str, path: str) -> str | None:
     """Create nested Google Drive folders (e.g. 'BlueLodge/training/run/track') via REST API v3 with zero popups."""
     parent = "root"
-    hdr = {"Authorization": f"Bearer {token}"}
+    hdr = _drive_headers(token)
     for part in [p for p in path.strip("/").split("/") if p]:
         q = f"name='{part.replace(chr(39), '')}' and mimeType='application/vnd.google-apps.folder' and '{parent}' in parents and trashed=false"
         url = "https://www.googleapis.com/drive/v3/files?fields=files(id,name)&q=" + urllib.parse.quote(q)
@@ -198,7 +206,7 @@ def _mirror_artifacts_to_drive(files_to_upload: list[tuple[str, str]], drive_fol
                 "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
                 data=meta,
                 headers={
-                    "Authorization": f"Bearer {token}",
+                    **_drive_headers(token),
                     "Content-Type": "application/json; charset=UTF-8",
                     "X-Upload-Content-Length": str(os.path.getsize(local_path)),
                 },

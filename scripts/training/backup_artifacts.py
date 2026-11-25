@@ -55,7 +55,7 @@ def backup_status() -> dict:
 
     drive_api_lib = False
     try:
-        __import__("googleapiclient")
+        __import__("google.auth")
         drive_api_lib = True
     except ImportError:
         pass
@@ -118,40 +118,71 @@ def upload_to_drive(local_path: Path, folder_path: str, remote_name: str) -> dic
                 if r.returncode == 0:
                     return {"status": "ok", "target": "drive", "uri": dest, "at": dt.datetime.now().isoformat(timespec="seconds")}
 
-    # Fast path 2: Google Drive REST API via ADC credentials
+    # Fast path 2: Pure stdlib Google Drive REST API v3 via ADC credentials (zero popups, no googleapiclient needed)
     try:
+        import urllib.parse
+        import urllib.request
         import google.auth
-        from googleapiclient.discovery import build
-        from googleapiclient.http import MediaFileUpload
+        from google.auth.transport.requests import Request
     except ImportError:
         return {
             "status": "error",
             "target": "drive",
-            "message": "Install google-api-python-client (uv pip install google-api-python-client) or configure rclone 'gdrive:' for Drive backup.",
+            "message": "Install google-auth or configure rclone 'gdrive:' for Drive backup.",
         }
 
     try:
-        creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/drive.file"])
-        svc = build("drive", "v3", credentials=creds, cache_discovery=False)
+        creds, proj = google.auth.default()
+        creds.refresh(Request())
+        qp = getattr(creds, "quota_project_id", None) or proj or ""
+        if not qp:
+            for cand in (Path.home() / ".config/gcloud/application_default_credentials.json", Path("/root/.config/gcloud/application_default_credentials.json")):
+                try:
+                    if cand.is_file():
+                        qp = json.loads(cand.read_text(encoding="utf-8")).get("quota_project_id", "")
+                        if qp:
+                            break
+                except OSError:
+                    continue
+        hdr = {"Authorization": f"Bearer {creds.token}"}
+        if qp:
+            hdr["X-Goog-User-Project"] = qp
+
         parent_id = "root"
         for part in [x for x in folder_path.strip("/").split("/") if x]:
-            q = f"name='{part}' and mimeType='application/vnd.google-apps.folder' and '{parent_id}' in parents and trashed=false"
-            res = svc.files().list(q=q, fields="files(id,name)").execute().get("files", [])
-            if res:
-                parent_id = res[0]["id"]
+            q = f"name='{part.replace(chr(39), '')}' and mimeType='application/vnd.google-apps.folder' and '{parent_id}' in parents and trashed=false"
+            url = "https://www.googleapis.com/drive/v3/files?fields=files(id,name)&q=" + urllib.parse.quote(q)
+            with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=20) as r:
+                found = json.loads(r.read()).get("files", [])
+            if found:
+                parent_id = found[0]["id"]
             else:
-                created = svc.files().create(
-                    body={"name": part, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]},
-                    fields="id",
-                ).execute()
-                parent_id = created["id"]
+                meta = json.dumps({"name": part, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]}).encode()
+                creq = urllib.request.Request(
+                    "https://www.googleapis.com/drive/v3/files?fields=id",
+                    data=meta, headers={**hdr, "Content-Type": "application/json"}, method="POST",
+                )
+                with urllib.request.urlopen(creq, timeout=20) as r:
+                    parent_id = json.loads(r.read())["id"]
 
-        media = MediaFileUpload(str(local_path), resumable=True)
-        uploaded = svc.files().create(
-            body={"name": remote_name, "parents": [parent_id]},
-            media_body=media,
-            fields="id,webViewLink",
-        ).execute()
+        meta = json.dumps({"name": remote_name, "parents": [parent_id]}).encode("utf-8")
+        init_req = urllib.request.Request(
+            "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,webViewLink",
+            data=meta,
+            headers={**hdr, "Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Length": str(local_path.stat().st_size)},
+            method="POST",
+        )
+        with urllib.request.urlopen(init_req, timeout=30) as r:
+            upload_url = r.headers.get("Location")
+        with open(local_path, "rb") as fh:
+            data = fh.read()
+        put_req = urllib.request.Request(
+            upload_url, data=data,
+            headers={"Content-Length": str(len(data)), "Content-Type": "application/octet-stream"},
+            method="PUT",
+        )
+        with urllib.request.urlopen(put_req, timeout=600) as r:
+            uploaded = json.loads(r.read())
         return {
             "status": "ok",
             "target": "drive",

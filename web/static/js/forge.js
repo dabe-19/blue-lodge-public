@@ -925,6 +925,12 @@
 
   function bindModal() {
     document.getElementById('headerTrainingForgeBtn')?.addEventListener('click', openForgeModal);
+    document.getElementById('modelsOpenForgeBtn')?.addEventListener('click', () => {
+      const mm = document.getElementById('modelsModal');
+      if (mm) mm.style.display = 'none';
+      state.activeTab = 'gate';
+      openForgeModal();
+    });
     document.getElementById('trainingForgeModalClose')?.addEventListener('click', closeForgeModal);
     document.getElementById('trainingForgeModalDismiss')?.addEventListener('click', closeForgeModal);
   }

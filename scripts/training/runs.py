@@ -566,29 +566,36 @@ def _provision_with_fallback(session_name: str, v: dict) -> tuple[str | None, li
     return None, history
 
 
-def _mint_headless_drive_token() -> str | None:
-    """Mint a short-lived Google Drive OAuth2 access token from ADC if Drive scope is present (zero popups)."""
+def _mint_headless_drive_token() -> tuple[str | None, str | None]:
+    """Mint a short-lived Google Drive OAuth2 access token + quota_project_id from ADC if Drive scope is present (zero popups)."""
     try:
         import google.auth
         from google.auth.transport.requests import Request
-        creds, _ = google.auth.default()
+        creds, proj = google.auth.default()
         creds.refresh(Request())
+        qp = getattr(creds, "quota_project_id", None) or proj or ""
+        if not qp:
+            adc_p = os.path.expanduser("~/.config/gcloud/application_default_credentials.json")
+            if os.path.isfile(adc_p):
+                qp = _read_json(adc_p, {}).get("quota_project_id", "")
         import urllib.request
         with urllib.request.urlopen(f"https://oauth2.googleapis.com/tokeninfo?access_token={creds.token}", timeout=8) as r:
             info = json.loads(r.read())
         if "drive" in (info.get("scope") or ""):
-            return creds.token
+            return creds.token, qp or None
     except Exception:
         pass
-    return None
+    return None, None
 
 
-def _build_colab_launch_py(v: dict, s: str, remote: str, track_name: str, hf_token: str | None, drive_ok: bool = True, drive_token: str | None = None) -> str:
+def _build_colab_launch_py(v: dict, s: str, remote: str, track_name: str, hf_token: str | None, drive_ok: bool = True, drive_token: str | None = None, drive_qp: str | None = None) -> str:
     drive_ckpt = f"/content/drive/MyDrive/BlueLodge/checkpoints/{v['name']}/{track_name}" if (v["colab"]["drive_checkpoints"] and drive_ok) else f"{remote}/checkpoints"
     export_gguf = f"{remote}/output/adapter.gguf" if v["colab"]["export_gguf_on_colab"] else ""
     unsloth_pip = "unsloth " if v["hyper"].get("use_unsloth") else ""
     hf_env = f"export HF_TOKEN={shlex.quote(hf_token)}; " if hf_token else ""
     drv_env = f"export GOOGLE_DRIVE_TOKEN={shlex.quote(drive_token)}; " if drive_token else ""
+    if drive_token and drive_qp:
+        drv_env += f"export GOOGLE_DRIVE_QUOTA_PROJECT={shlex.quote(drive_qp)}; "
     mirror_folder = f"BlueLodge/training/{v['name']}/{track_name}"
     mirror_flag = f"--drive-mirror-folder {shlex.quote(mirror_folder)}" if drive_token else ""
     export_flag = f"--export-gguf {shlex.quote(export_gguf)}" if export_gguf else ""
@@ -686,7 +693,7 @@ def _launch_single_colab_track(v: dict, rd: str, tp: dict, hf_token: str | None,
 
     # Avoid interactive Colab drivemount popups by default; prefer headless ADC Drive REST v3 mirroring
     drive_ok = False
-    drive_token = _mint_headless_drive_token() if v["colab"]["drive_checkpoints"] else None
+    drive_token, drive_qp = _mint_headless_drive_token() if v["colab"]["drive_checkpoints"] else (None, None)
     if v["colab"]["drive_checkpoints"] and v["colab"].get("interactive_drivemount", False):
         rc_d, out_d, err_d = _colab(["drivemount", "-s", s, "/content/drive"], auth=auth, timeout=60)
         drive_ok = (rc_d == 0)
@@ -714,7 +721,7 @@ def _launch_single_colab_track(v: dict, rd: str, tp: dict, hf_token: str | None,
         if rc_b == 0:
             _colab(["exec", "-s", s], auth=auth, stdin="import subprocess; subprocess.run(['tar','-xzf','/content/base_model.tar.gz','-C','/content'], check=True)\n", timeout=300)
 
-    launch_py = _build_colab_launch_py(v, s, tp["remote_dir"], tp["track"], hf_token, drive_ok=drive_ok, drive_token=drive_token)
+    launch_py = _build_colab_launch_py(v, s, tp["remote_dir"], tp["track"], hf_token, drive_ok=drive_ok, drive_token=drive_token, drive_qp=drive_qp)
     rc, out, err = _colab(["exec", "-s", s], auth=auth, stdin=launch_py, timeout=180)
     if rc != 0 or "DISPATCHED" not in out:
         tp["error"] = f"launch: {(err or out).strip()[-250:]}"
