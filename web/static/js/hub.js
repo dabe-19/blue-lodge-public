@@ -114,6 +114,7 @@
     modal.classList.remove('open');
     modal.style.display = 'none';
     state.open = false;
+    if (window.LodgeForge && window.LodgeForge.onHide) window.LodgeForge.onHide();
   }
   function showTab(panelId) {
     document.querySelectorAll('.wb-tab').forEach((t) => {
@@ -123,6 +124,11 @@
     });
     document.querySelectorAll('.wb-panel').forEach((p) => { p.hidden = p.id !== panelId; });
     if (panelId === 'wbPanelTrain') loadTrain();
+    if (panelId === 'wbPanelFleet') {
+      if (window.LodgeForge && window.LodgeForge.onShow) window.LodgeForge.onShow();
+    } else if (window.LodgeForge && window.LodgeForge.onHide) {
+      window.LodgeForge.onHide();
+    }
   }
 
   // ── Hardware ──────────────────────────────────────────────────────────────

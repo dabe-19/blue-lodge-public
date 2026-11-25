@@ -34,7 +34,7 @@
   }
 
   const state = {
-    activeTab: 'overview',
+    activeTab: 'gate',
     data: null,
     pantry: null,
     lastPreflight: null,
@@ -47,7 +47,7 @@
     streamAuto: true,
     streamTimer: null,
     streamBusy: false,
-    consoleText: 'Ready. Inspect Colab/ADC prerequisites, configure Sleep-Cycle policy, or launch a playbook.',
+    consoleText: 'Ready. Inspect active Colab/local runs, stream live GPU logs, or launch a playbook.',
   };
 
   function stopStreamTimer() {
@@ -867,6 +867,48 @@
     ]);
   }
 
+  function renderPersistentHeader(d) {
+    const credits = d.credits || {};
+    const prereqs = d.prerequisites || {};
+    const policy = d.policy || {};
+    const history = (d.gate_queue && d.gate_queue.history) || [];
+    const pending = (d.gate_queue && d.gate_queue.pending) || [];
+    const activeCount = history.filter((r) => r.state === 'running').length;
+
+    const badge = document.getElementById('wbFleetCount');
+    if (badge) {
+      const n = activeCount + pending.length;
+      badge.textContent = String(n);
+      badge.hidden = n === 0;
+    }
+
+    const cuTxt = credits.balance != null
+      ? `${credits.balance} CU (${credits.active_assignments || 0} VMs)`
+      : (prereqs.colab_ready ? 'Probing Colab…' : 'ADC Setup Needed');
+    const postureTxt = policy.autonomy_tier === 'tier_a'
+      ? `TIER A AUTO (>= +${policy.tier_a_min_delta ?? 3}%)`
+      : 'TIER B HUMAN GATE';
+
+    return el('div', { className: 'forge-kpi-grid' }, [
+      el('div', { className: 'forge-kpi-box' }, [
+        el('div', { className: 'hub-label', text: 'COLAB COMPUTE' }),
+        el('div', { style: 'font-weight:700;font-size:13px;font-family:var(--font-mono);', text: cuTxt }),
+      ]),
+      el('div', { className: 'forge-kpi-box' }, [
+        el('div', { className: 'hub-label', text: 'ACTIVE RUNS' }),
+        el('div', { style: 'font-weight:700;font-size:13px;font-family:var(--font-mono);', text: `${activeCount} running · ${history.length} total` }),
+      ]),
+      el('div', { className: 'forge-kpi-box' }, [
+        el('div', { className: 'hub-label', text: 'TIER B QUEUE' }),
+        el('div', { style: 'font-weight:700;font-size:13px;font-family:var(--font-mono);', text: `${pending.length} pending approval` }),
+      ]),
+      el('div', { className: 'forge-kpi-box' }, [
+        el('div', { className: 'hub-label', text: 'AUTONOMY POSTURE' }),
+        el('div', { style: 'font-weight:700;font-size:13px;font-family:var(--font-mono);', text: postureTxt }),
+      ]),
+    ]);
+  }
+
   function renderForge() {
     const root = document.getElementById('trainingForgeRoot');
     if (!root) return;
@@ -874,19 +916,27 @@
     const pending = ((d.gate_queue && d.gate_queue.pending) || []).length;
 
     const tabs = [
-      { id: 'overview', label: 'Overview & Sleep Cycle' },
-      { id: 'gate', label: `Tier B Gate & Runs${pending > 0 ? ` (${pending})` : ''}` },
-      { id: 'launch', label: 'Playbook & Launch' },
-      { id: 'adapters', label: 'SVD Layers & Backups' },
-      { id: 'bench', label: 'Head-to-Head Benchmarks' },
-      { id: 'manual', label: 'Manual & Setup Guide' },
+      { id: 'gate', label: `RUNS & TIER B GATE${pending > 0 ? ` (${pending})` : ''}` },
+      { id: 'overview', label: 'SLEEP POLICY & PREREQS' },
+      { id: 'launch', label: 'PLAYBOOK & LAUNCH' },
+      { id: 'adapters', label: 'SVD LAYERS & BACKUPS' },
+      { id: 'bench', label: '7-PILLAR BENCHMARKS' },
+      { id: 'manual', label: 'MANUAL & SETUP' },
     ];
-    const tabBar = el('div', { className: 'forge-tabs' }, tabs.map((t) => el('button', {
-      type: 'button',
-      className: 'drawer-subtab-btn' + (state.activeTab === t.id ? ' active' : ''),
-      text: t.label,
-      on: { click: () => { state.activeTab = t.id; renderForge(); } },
-    })));
+    const tabBar = el('div', { className: 'models-filter-bar', style: 'margin-bottom:0;' }, [
+      el('div', { className: 'model-filter-btns' }, tabs.map((t) => el('button', {
+        type: 'button',
+        className: 'model-filter-btn' + (state.activeTab === t.id ? ' active' : ''),
+        text: t.label,
+        on: { click: () => { state.activeTab = t.id; renderForge(); } },
+      }))),
+      el('button', {
+        type: 'button',
+        className: 'tactile-btn',
+        text: 'REFRESH FLEET',
+        on: { click: refreshAll },
+      }),
+    ]);
 
     let panel;
     if (state.activeTab === 'gate') panel = renderGateTab(d);
@@ -897,45 +947,52 @@
     else panel = renderOverviewTab(d);
 
     root.replaceChildren(
+      renderPersistentHeader(d),
       tabBar,
       panel,
-      el('div', { style: 'margin-top:10px;' }, [
-        el('div', { className: 'eco-kpi-label', text: 'FORGE STUDIO TELEMETRY CONSOLE' }),
-        el('pre', { id: 'forgeStudioConsole', className: 'eco-console', text: state.consoleText }),
+      el('div', { style: 'margin-top:4px;' }, [
+        el('div', { className: 'hub-label', text: 'TRAINING FLEET CONSOLE' }),
+        el('pre', { id: 'forgeStudioConsole', className: 'hub-pre', style: 'max-height:140px;overflow:auto;', text: state.consoleText }),
       ]),
     );
   }
 
-  function openForgeModal() {
-    const m = document.getElementById('trainingForgeModal');
-    if (!m) return;
-    m.style.display = 'flex';
-    m.classList.add('open');
+  function onShow() {
     renderForge();
     refreshAll();
   }
 
-  function closeForgeModal() {
+  function onHide() {
     stopStreamTimer();
-    const m = document.getElementById('trainingForgeModal');
-    if (!m) return;
-    m.classList.remove('open');
-    m.style.display = 'none';
+  }
+
+  function openForgeModal() {
+    const mm = document.getElementById('modelsModal');
+    if (mm) {
+      mm.style.display = 'flex';
+      mm.classList.add('open');
+    }
+    const tab = document.getElementById('wbTabFleet');
+    if (tab) tab.click();
+    else onShow();
+  }
+
+  function closeForgeModal() {
+    onHide();
   }
 
   function bindModal() {
-    document.getElementById('headerTrainingForgeBtn')?.addEventListener('click', openForgeModal);
-    document.getElementById('modelsOpenForgeBtn')?.addEventListener('click', () => {
-      const mm = document.getElementById('modelsModal');
-      if (mm) mm.style.display = 'none';
-      state.activeTab = 'gate';
-      openForgeModal();
-    });
-    document.getElementById('trainingForgeModalClose')?.addEventListener('click', closeForgeModal);
-    document.getElementById('trainingForgeModalDismiss')?.addEventListener('click', closeForgeModal);
+    // Also refresh fleet badge softly if Models modal opens
+    const btnModelsRefresh = document.getElementById('btnModelsRefresh');
+    if (btnModelsRefresh) {
+      btnModelsRefresh.addEventListener('click', () => {
+        const p = document.getElementById('wbPanelFleet');
+        if (p && !p.hidden) refreshAll();
+      });
+    }
   }
 
-  window.LodgeForge = { open: openForgeModal, close: closeForgeModal, refresh: refreshAll };
+  window.LodgeForge = { open: openForgeModal, close: closeForgeModal, refresh: refreshAll, onShow, onHide };
   window.LodgeOpenForge = openForgeModal;
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindModal);

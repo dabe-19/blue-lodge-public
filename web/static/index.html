@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/css/fund.css?v=1">
   <link rel="stylesheet" href="/css/tyler.css?v=3">
   <link rel="stylesheet" href="/js/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/css/modules.css?v=7">
+  <link rel="stylesheet" href="/css/modules.css?v=8">
   <link rel="stylesheet" href="/css/loop_studio.css?v=1">
   <link rel="stylesheet" href="/css/transcript_console.css?v=1">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
@@ -67,10 +67,6 @@
 
       <button type="button" class="hdr-pill-btn header-workbench-btn" id="headerVimWorkbenchBtn" title="Open Craftsman Multi-Tab Vim Workbench">
         VIM WORKBENCH
-      </button>
-
-      <button type="button" class="hdr-pill-btn header-workbench-btn" id="headerTrainingForgeBtn" title="Open Sovereign Training Forge, Colab Fleet Live Logs &amp; Tier B Gate" style="border-color:rgba(192,132,252,0.45);color:#d8b4fe;">
-        TRAINING FORGE
       </button>
 
       <!-- User-Pinned Quick-Launch Modules & Workbenches (Cohesive Monochrome Pill Strip) -->
@@ -4305,24 +4301,6 @@ docker run -d --restart=always \
     </div>
   </div>
 
-  <!-- Sovereign Training Forge, Sleep-Cycle SVD-32 & Tier B Gate Modal -->
-  <div class="modal-overlay" id="trainingForgeModal" style="display: none;">
-    <div class="modal-card" style="max-width: 1020px; width: 94vw;">
-      <div class="modal-header" style="background: #1b1333; border-bottom: 1px solid #4c2889;">
-        <div class="modal-title" style="color: #d8b4fe;">SOVEREIGN TRAINING FORGE // SLEEP-CYCLE SVD-32 &amp; COLAB FLEET STUDIO</div>
-        <button class="modal-close" id="trainingForgeModalClose">&times;</button>
-      </div>
-      <div class="modal-body" style="padding: 14px; max-height: 82vh; overflow-y: auto;">
-        <div id="trainingForgeRoot" style="display:flex; flex-direction:column; gap:10px;">
-          Loading Sovereign Training Forge...
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="tactile-btn" id="trainingForgeModalDismiss">DISMISS</button>
-      </div>
-    </div>
-  </div>
-
   <!-- MCP Tool Testing Modal -->
   <div class="modal-overlay" id="mcpToolModal">
     <div class="modal-card" style="max-width: 640px;">
@@ -4358,7 +4336,6 @@ docker run -d --restart=always \
           <div class="wb-subtitle" id="hubHwLine">probing hardware…</div>
         </div>
         <div class="wb-header-actions">
-          <button type="button" class="tactile-btn accent" id="modelsOpenForgeBtn" title="Open Training Forge, Colab Fleet Live Logs, Tier B Gate &amp; SVD Hot-Swap">TRAINING FORGE &amp; LIVE LOGS</button>
           <button type="button" class="tactile-btn" id="btnModelsRefresh">REFRESH</button>
           <button type="button" class="modal-close" id="modelsModalClose" aria-label="Close">&times;</button>
         </div>
@@ -4411,6 +4388,7 @@ docker run -d --restart=always \
           <button type="button" class="wb-tab" role="tab" id="wbTabDiscover" data-panel="wbPanelDiscover" aria-selected="false">DISCOVER &amp; DOWNLOAD</button>
           <button type="button" class="wb-tab" role="tab" id="wbTabServe" data-panel="wbPanelServe" aria-selected="false">SERVE &amp; TUNE <span class="wb-count" id="wbProfCount">…</span></button>
           <button type="button" class="wb-tab" role="tab" id="wbTabTrain" data-panel="wbPanelTrain" aria-selected="false">FINE-TUNE</button>
+          <button type="button" class="wb-tab" role="tab" id="wbTabFleet" data-panel="wbPanelFleet" aria-selected="false">TRAINING FLEET &amp; GATE <span class="wb-count" id="wbFleetCount" hidden>0</span></button>
         </nav>
 
         <!-- ── Library ── -->
@@ -4523,7 +4501,7 @@ docker run -d --restart=always \
           <ol class="wb-steps">
             <li><b>Gather data</b>: forge a focused dataset from George's own transcripts, export runs as-is, or pull a dataset file from Hugging Face.</li>
             <li><b>Generate a kit</b>: a self-contained LoRA training folder (config, script, README) for the base model you choose.</li>
-            <li><b>Train on your GPU box</b> with <code>./run.sh</code> (needs torch, transformers, peft, trl). Blue Lodge does not run training itself.</li>
+            <li><b>Train on Colab or locally</b>: launch directly in the <b>Training Fleet &amp; Gate</b> tab (Colab H100/A100/G4 or contention-safe local QLoRA) with live log streaming, or run a standalone kit via <code>./run.sh</code>.</li>
             <li><b>Bring the adapter home</b>: convert to GGUF into <code>adapters/</code>; it shows up in My Library. Attach it to a profile in Serve &amp; Tune.</li>
           </ol>
           <div class="models-download-box forge-box" id="wbForge">
@@ -4599,6 +4577,11 @@ docker run -d --restart=always \
           </div>
         </section>
 
+        <!-- ── Training Fleet, Live Logs, SVD-32 Lineage & Tier B Gate (js/forge.js) ── -->
+        <section class="wb-panel" id="wbPanelFleet" role="tabpanel" aria-labelledby="wbTabFleet" hidden>
+          <div id="trainingForgeRoot" class="wb-fleet-root">Loading Training Fleet &amp; Tier B Gate…</div>
+        </section>
+
         <div>
           <div class="hub-label">ACTIVITY</div>
           <pre id="hubLog" class="hub-pre hub-log">Model Workbench ready. Nothing is downloaded, served or deleted without your click; downloads are sha256-verified.</pre>
@@ -4622,8 +4605,8 @@ docker run -d --restart=always \
   <script src="/js/desk.js?v=7"></script>
   <script src="/js/fund.js?v=2"></script>
   <script src="/js/explorer.js?v=2"></script>
-  <script src="/js/hub.js?v=6"></script>
-  <script src="/js/forge.js?v=4"></script>
+  <script src="/js/hub.js?v=7"></script>
+  <script src="/js/forge.js?v=5"></script>
   <script src="/js/loop_studio.js?v=1"></script>
   <script src="/js/modules.js?v=10"></script>
 </body>
