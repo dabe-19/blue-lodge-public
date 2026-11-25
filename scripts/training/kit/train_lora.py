@@ -225,17 +225,24 @@ def main() -> int:
         r=cfg["lora_r"], lora_alpha=cfg["lora_alpha"], lora_dropout=cfg["lora_dropout"],
         target_modules="all-linear", task_type="CAUSAL_LM",
     )
+    import inspect
     save_steps = int(cfg.get("save_steps", 40))
-    args = SFTConfig(
+    sft_sig = inspect.signature(SFTConfig.__init__).parameters
+    sft_kw = dict(
         output_dir=ckpt_dir, num_train_epochs=cfg["epochs"],
         learning_rate=cfg["learning_rate"], per_device_train_batch_size=cfg["batch_size"],
-        gradient_accumulation_steps=cfg["grad_accum"], max_seq_length=cfg["max_seq_len"],
+        gradient_accumulation_steps=cfg["grad_accum"],
         dataset_text_field="text", logging_steps=5,
         save_strategy="steps", save_steps=save_steps, save_total_limit=3,
         eval_strategy="epoch" if "validation" in ds else "no",
         bf16=torch.cuda.is_available(), gradient_checkpointing=not used_unsloth,
         report_to=[],
     )
+    if "max_length" in sft_sig:
+        sft_kw["max_length"] = cfg["max_seq_len"]
+    elif "max_seq_length" in sft_sig:
+        sft_kw["max_seq_length"] = cfg["max_seq_len"]
+    args = SFTConfig(**sft_kw)
     trainer = SFTTrainer(
         model=model, args=args, train_dataset=ds["train"], eval_dataset=ds.get("validation"),
         peft_config=peft_cfg, processing_class=tok,
@@ -307,17 +314,24 @@ def train_dpo(cfg: dict, a) -> int:
         r=cfg["lora_r"], lora_alpha=cfg["lora_alpha"], lora_dropout=cfg["lora_dropout"],
         target_modules="all-linear", task_type="CAUSAL_LM",
     )
+    import inspect
     save_steps = int(cfg.get("save_steps", 40))
-    args = DPOConfig(
+    dpo_sig = inspect.signature(DPOConfig.__init__).parameters
+    dpo_kw = dict(
         output_dir=ckpt_dir, num_train_epochs=cfg["epochs"],
         learning_rate=min(float(cfg["learning_rate"]), 5e-5), per_device_train_batch_size=cfg["batch_size"],
-        gradient_accumulation_steps=cfg["grad_accum"], max_length=cfg["max_seq_len"],
+        gradient_accumulation_steps=cfg["grad_accum"],
         beta=float(cfg.get("dpo_beta", 0.1)), logging_steps=5,
         save_strategy="steps", save_steps=save_steps, save_total_limit=3,
         eval_strategy="epoch" if "validation" in ds else "no",
         bf16=torch.cuda.is_available(), gradient_checkpointing=not used_unsloth,
         report_to=[],
     )
+    if "max_length" in dpo_sig:
+        dpo_kw["max_length"] = cfg["max_seq_len"]
+    if "max_prompt_length" in dpo_sig:
+        dpo_kw["max_prompt_length"] = max(512, int(cfg["max_seq_len"] * 0.75))
+    args = DPOConfig(**dpo_kw)
     trainer = DPOTrainer(
         model=model, ref_model=None, args=args, train_dataset=ds["train"],
         eval_dataset=ds.get("validation"), processing_class=tok, peft_config=peft_cfg,

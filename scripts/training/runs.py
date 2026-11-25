@@ -44,9 +44,10 @@ HYPER = {
 COLAB_BIN = cc.COLAB_BIN or os.path.join(LODGE, ".venv", "bin", "colab")
 
 # Exact colab-cli supported NVIDIA GPUs (strongest -> weakest) with nominal VRAM GB & --high-mem support
+# Note: H100, G4, and L4 only exist in a single machine shape; passing --high-mem to H100/G4 causes HTTP 400.
 GPU_TIERS = {
-    "H100": {"vram_gb": 80, "high_mem": True},
-    "G4":   {"vram_gb": 96, "high_mem": True},
+    "H100": {"vram_gb": 80, "high_mem": False},
+    "G4":   {"vram_gb": 96, "high_mem": False},
     "A100": {"vram_gb": 80, "high_mem": True},
     "L4":   {"vram_gb": 24, "high_mem": False},
     "T4":   {"vram_gb": 16, "high_mem": True},
@@ -297,6 +298,8 @@ def validate(spec):
             "max_concurrent_sessions": max(1, min(3, int(colab_raw.get("max_concurrent_sessions", 3)))),
             "min_cu_balance": float(colab_raw.get("min_cu_balance", load_policy().get("min_cu_balance", 150.0))),
             "max_runtime_min": max(30, min(720, int(colab_raw.get("max_runtime_min", 180)))),
+            "retry_attempts": max(1, min(6, int(colab_raw.get("retry_attempts", 3)))),
+            "retry_backoff_sec": max(2, min(60, int(colab_raw.get("retry_backoff_sec", 8)))),
             "drive_checkpoints": bool(colab_raw.get("drive_checkpoints", True)),
             "export_gguf_on_colab": bool(colab_raw.get("export_gguf_on_colab", True)),
         },
@@ -387,11 +390,15 @@ def preflight(v):
 
 def _track_conf(v, t, train_file, val_file, out_dir, ckpt_dir=None, export_gguf=None, gpu_tier=None):
     hyp = dict(v["hyper"])
-    # Automatically scale micro-batch & grad_accum when falling back to 16-24 GB VRAM GPUs
-    if gpu_tier in ("L4", "T4") and hyp["batch_size"] > 1:
-        eff = hyp["batch_size"] * hyp["grad_accum"]
-        hyp["batch_size"] = 1
-        hyp["grad_accum"] = max(1, eff)
+    # Automatically scale micro-batch, grad_accum & max_seq_len when falling back to 16-24 GB VRAM GPUs
+    if gpu_tier in ("L4", "T4"):
+        if hyp["batch_size"] > 1:
+            eff = hyp["batch_size"] * hyp["grad_accum"]
+            hyp["batch_size"] = 1
+            hyp["grad_accum"] = max(1, eff)
+        seq_cap = 2048 if gpu_tier == "L4" else 1536
+        if int(hyp.get("max_seq_len", 4096)) > seq_cap:
+            hyp["max_seq_len"] = seq_cap
     conf = {
         "name": f"{v['name']}-{t['name']}", "base_model": v["base_model"],
         "train_file": train_file, "val_file": val_file, "mode": t["method"],
@@ -501,9 +508,14 @@ def start_local(v, rd, dry):
 # ── Google Colab 1-3x Fleet with GPU Fallback, Drive Checkpoints & Auto-Resume ─
 
 def _colab(args, auth="adc", stdin=None, timeout=300):
-    r = subprocess.run([COLAB_BIN, f"--auth={auth}"] + args, input=stdin, capture_output=True, text=True,
-                       timeout=timeout, check=False)
-    return r.returncode, r.stdout, r.stderr
+    try:
+        r = subprocess.run([COLAB_BIN, f"--auth={auth}"] + args, input=stdin, capture_output=True, text=True,
+                           timeout=timeout, check=False)
+        return r.returncode, r.stdout, r.stderr
+    except subprocess.TimeoutExpired:
+        return -1, "", f"colab command timed out after {timeout}s: {' '.join(args[:4])}"
+    except OSError as e:
+        return -1, "", str(e)
 
 
 def _session(v, t):
@@ -511,25 +523,51 @@ def _session(v, t):
 
 
 def _provision_with_fallback(session_name: str, v: dict) -> tuple[str | None, list[dict]]:
-    """Try provisioning Colab GPU tiers from strongest to weakest; return (selected_gpu, fallback_history)."""
+    """Try provisioning Colab GPU tiers from strongest to weakest with fail-fast assign timeouts
+    and transient-503 retries + backoff.
+    Google's /tun/m/assign can hold a connection for 90-120s before returning 503 on scarce SKUs
+    (H100/G4), so we use a 45s assign timeout, try scarce top tiers once, and concentrate
+    multi-attempt retries on the primary workhorse tier (A100 standard / last eligible tier).
+    """
+    import time
     history = []
     auth = v["colab"]["auth"]
-    for tier in v["colab"]["gpu_fallback"]:
-        gpu_args = ["new", "-s", session_name, "--gpu", tier]
-        if v["colab"]["high_mem"] and GPU_TIERS[tier]["high_mem"]:
-            gpu_args.append("--high-mem")
-        rc, out, err = _colab(gpu_args, auth=auth, timeout=180)
-        if rc == 0:
-            history.append({"gpu": tier, "status": "provisioned"})
-            return tier, history
-        reason = (err or out or "provision failed").strip()[-220:]
-        history.append({"gpu": tier, "status": "failed", "reason": reason})
-        _colab(["stop", "-s", session_name], auth=auth, timeout=60)
+    max_attempts = int(v["colab"].get("retry_attempts", 3))
+    base_backoff = int(v["colab"].get("retry_backoff_sec", 6))
+    ladder = list(v["colab"]["gpu_fallback"])
+    for idx, tier in enumerate(ladder):
+        shapes = [True, False] if (v["colab"]["high_mem"] and GPU_TIERS[tier]["high_mem"]) else [False]
+        is_last = (idx == len(ladder) - 1)
+        for use_hm in shapes:
+            gpu_args = ["new", "-s", session_name, "--gpu", tier]
+            if use_hm:
+                gpu_args.append("--high-mem")
+            # Try scarce speculative tiers (H100/G4) & --high-mem once quickly; retry workhorse (A100 std / last tier)
+            if use_hm and len(shapes) > 1:
+                attempts = 1
+            elif tier in ("H100", "G4") and not is_last:
+                attempts = 1
+            else:
+                attempts = max_attempts
+            for attempt in range(1, attempts + 1):
+                # Never cut off `colab new` early (<150s) or Colab may finish assigning an orphaned [?] VM
+                rc, out, err = _colab(gpu_args, auth=auth, timeout=180)
+                if rc == 0:
+                    history.append({"gpu": tier, "high_mem": use_hm, "attempt": attempt, "status": "provisioned"})
+                    return tier, history
+                reason = (err or out or "provision failed").strip()[-220:]
+                history.append({"gpu": tier, "high_mem": use_hm, "attempt": attempt, "status": "failed", "reason": reason})
+                _colab(["stop", "-s", session_name], auth=auth, timeout=30)
+                low = reason.lower()
+                if "rejected accelerator" in low or "precondition failed" in low or "too many active sessions" in low:
+                    break
+                if attempt < attempts:
+                    time.sleep(base_backoff * attempt)
     return None, history
 
 
-def _build_colab_launch_py(v: dict, s: str, remote: str, track_name: str, hf_token: str | None) -> str:
-    drive_ckpt = f"/content/drive/MyDrive/BlueLodge/checkpoints/{v['name']}/{track_name}" if v["colab"]["drive_checkpoints"] else f"{remote}/checkpoints"
+def _build_colab_launch_py(v: dict, s: str, remote: str, track_name: str, hf_token: str | None, drive_ok: bool = True) -> str:
+    drive_ckpt = f"/content/drive/MyDrive/BlueLodge/checkpoints/{v['name']}/{track_name}" if (v["colab"]["drive_checkpoints"] and drive_ok) else f"{remote}/checkpoints"
     export_gguf = f"{remote}/output/adapter.gguf" if v["colab"]["export_gguf_on_colab"] else ""
     unsloth_pip = "unsloth " if v["hyper"].get("use_unsloth") else ""
     hf_env = f"export HF_TOKEN={shlex.quote(hf_token)}; " if hf_token else ""
@@ -586,6 +624,8 @@ def start_colab(v, rd, execute):
     if execute:
         auth = v["colab"]["auth"]
         active_limit = v["colab"]["max_concurrent_sessions"]
+        meta["state"] = "running"
+        _write_json(os.path.join(rd, "run.json"), meta)
         for idx, tp in enumerate(plan):
             if idx >= active_limit:
                 # Queue remaining tracks for watchdog to launch once a slot frees
@@ -593,7 +633,7 @@ def start_colab(v, rd, execute):
                     fh.write("queued\n")
                 continue
             _launch_single_colab_track(v, rd, tp, hf_token, auth)
-        meta["state"] = "running"
+            _write_json(os.path.join(rd, "run.json"), meta)
     _write_json(os.path.join(rd, "run.json"), meta)
     return meta
 
@@ -624,9 +664,16 @@ def _launch_single_colab_track(v: dict, rd: str, tp: dict, hf_token: str | None,
                 tf.add(stage, arcname=".")
             shutil.rmtree(stage, ignore_errors=True)
 
-    # Mount Google Drive for 1h-timeout checkpoint resilience
+    # Mount Google Drive for 1h-timeout checkpoint resilience (non-fatal fallback to local checkpoints)
+    drive_ok = False
     if v["colab"]["drive_checkpoints"]:
-        _colab(["drivemount", "-s", s, "/content/drive"], auth=auth, timeout=120)
+        rc_d, out_d, err_d = _colab(["drivemount", "-s", s, "/content/drive"], auth=auth, timeout=60)
+        drive_ok = (rc_d == 0)
+        if not drive_ok:
+            tp["drive_mount_warning"] = (err_d or out_d or "drivemount failed").strip()[-200:]
+            # Unstick remote Jupyter kernel if drive.mount stalled awaiting interactive FUSE consent
+            _colab(["restart-kernel", "-s", s], auth=auth, timeout=45)
+    tp["drive_mounted"] = drive_ok
 
     # Upload dataset/code bundle (+ optional local base weights)
     rc, out, err = _colab(["upload", "-s", s, tp["bundle"], f"/content/{s}.tar.gz"], auth=auth, timeout=600)
@@ -646,7 +693,7 @@ def _launch_single_colab_track(v: dict, rd: str, tp: dict, hf_token: str | None,
         if rc_b == 0:
             _colab(["exec", "-s", s], auth=auth, stdin="import subprocess; subprocess.run(['tar','-xzf','/content/base_model.tar.gz','-C','/content'], check=True)\n", timeout=300)
 
-    launch_py = _build_colab_launch_py(v, s, tp["remote_dir"], tp["track"], hf_token)
+    launch_py = _build_colab_launch_py(v, s, tp["remote_dir"], tp["track"], hf_token, drive_ok=drive_ok)
     rc, out, err = _colab(["exec", "-s", s], auth=auth, stdin=launch_py, timeout=180)
     if rc != 0 or "DISPATCHED" not in out:
         tp["error"] = f"launch: {(err or out).strip()[-250:]}"
