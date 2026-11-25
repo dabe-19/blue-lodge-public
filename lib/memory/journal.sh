@@ -448,13 +448,16 @@ journal_reflect() {
     local LODGE_THINK=0
     local _SPINNER_PID=""
     
+    local soul_file="$LODGE_DIR/soul.md"
+    [ -f "${GEORGE_DIR:-$LODGE_DIR/.george}/soul.override.md" ] && soul_file="${GEORGE_DIR:-$LODGE_DIR/.george}/soul.override.md"
     local soul
-    soul=$(cat "$LODGE_DIR/soul.md" | head -40)
-    
+    soul=$(head -n 40 "$soul_file" 2>/dev/null || true)
+    local _j_agent="${LODGE_AGENT_NAME:-${LODGE_NODE_CALLSIGN:-George}}"
+
     local prompt
     if [ -n "$exec_log" ]; then
         # We have real execution data — write from the log
-        prompt="You are George. Write a brief factual journal entry about what just happened.
+        prompt="You are ${_j_agent}. Write a brief factual journal entry about what just happened.
 
 Current date/time: $(date '+%Y-%m-%d %H:%M:%S %Z')
 Task: $task_summary
@@ -468,7 +471,7 @@ Do NOT invent commands, files, or errors not in the log.
 Do NOT use headers or formatting. Just the raw entry."
     else
         # No execution log (REPL exit, /reflect) — keep it vague and honest
-        prompt="You are George. Write a brief journal entry about this session.
+        prompt="You are ${_j_agent}. Write a brief journal entry about this session.
 
 Current date/time: $(date '+%Y-%m-%d %H:%M:%S %Z')
 Context: $task_summary

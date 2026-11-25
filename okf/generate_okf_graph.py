@@ -10,9 +10,25 @@ import re
 import ast
 import json
 import glob
+import subprocess
 import yaml
 
 LODGE_DIR = os.environ.get("LODGE_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+
+def get_git_tracked_files(root_dir):
+    """Return a set of git-tracked repo-relative paths so untracked local files never poison the OKF graph."""
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", root_dir, "-c", "safe.directory=*", "ls-files"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+        )
+        tracked = {line.strip().replace("\\", "/") for line in out.splitlines() if line.strip()}
+        return tracked if tracked else None
+    except Exception:
+        return None
 
 
 def extract_bash_metadata(filepath, rel_path):
@@ -389,6 +405,15 @@ def build_okf_graph():
     modules = dict(curated_modules)
 
     # 3. Dynamic Discovery Pass across Codebase Hierarchies
+    # Only index git-tracked files when inside a git repo so node-local untracked files
+    # cannot cause cross-node OKF drift or pre-push failures.
+    tracked_files = get_git_tracked_files(LODGE_DIR)
+
+    def _is_tracked(rel_path):
+        if tracked_files is None:
+            return True
+        return rel_path.replace("\\", "/") in tracked_files
+
     # Subsystem mapping rules:
     #   lib/<domain>/<file> -> urn:blue-lodge:subsystem:<domain>
     #   commands/<file>     -> urn:blue-lodge:subsystem:commands
@@ -403,6 +428,8 @@ def build_okf_graph():
                 if file.endswith(".sh") or file.endswith(".py"):
                     full_p = os.path.join(root, file)
                     rel_p = os.path.relpath(full_p, LODGE_DIR)
+                    if not _is_tracked(rel_p):
+                        continue
                     domain = os.path.basename(root)
                     subsystem_uri = f"urn:blue-lodge:subsystem:{domain}"
 
@@ -428,6 +455,8 @@ def build_okf_graph():
             if file.endswith(".sh"):
                 full_p = os.path.join(cmds_dir, file)
                 rel_p = os.path.relpath(full_p, LODGE_DIR)
+                if not _is_tracked(rel_p):
+                    continue
                 dyn_desc, dyn_exports, dyn_deps = extract_bash_metadata(full_p, rel_p)
                 cmd_fn = f"cmd_{file.replace('.sh', '')}"
                 if cmd_fn not in dyn_exports:
@@ -444,6 +473,8 @@ def build_okf_graph():
                 if file.endswith(".rs"):
                     full_p = os.path.join(root, file)
                     rel_p = os.path.relpath(full_p, LODGE_DIR)
+                    if not _is_tracked(rel_p):
+                        continue
                     dyn_desc, dyn_exports, dyn_deps = extract_rust_metadata(full_p, rel_p)
                     modules[rel_p] = (file, rel_p, "Rust", dyn_desc, "urn:blue-lodge:subsystem:web", dyn_deps, dyn_exports)
 
@@ -451,8 +482,9 @@ def build_okf_graph():
         app_js = os.path.join(web_dir, "static", "app.js")
         if os.path.isfile(app_js):
             rel_p = os.path.relpath(app_js, LODGE_DIR)
-            dyn_desc, dyn_exports, dyn_deps = extract_js_metadata(app_js, rel_p)
-            modules[rel_p] = ("app.js", rel_p, "JavaScript", dyn_desc, "urn:blue-lodge:subsystem:web", dyn_deps, dyn_exports)
+            if _is_tracked(rel_p):
+                dyn_desc, dyn_exports, dyn_deps = extract_js_metadata(app_js, rel_p)
+                modules[rel_p] = ("app.js", rel_p, "JavaScript", dyn_desc, "urn:blue-lodge:subsystem:web", dyn_deps, dyn_exports)
 
     # D. Scan scripts/
     scripts_dir = os.path.join(LODGE_DIR, "scripts")
@@ -462,6 +494,8 @@ def build_okf_graph():
                 if file.endswith(".sh") or file.endswith(".py"):
                     full_p = os.path.join(root, file)
                     rel_p = os.path.relpath(full_p, LODGE_DIR)
+                    if not _is_tracked(rel_p):
+                        continue
                     lang = "Bash" if file.endswith(".sh") else "Python"
                     dyn_desc, dyn_exports, dyn_deps = (
                         extract_bash_metadata(full_p, rel_p) if lang == "Bash"
@@ -477,6 +511,8 @@ def build_okf_graph():
             if file.endswith(".agent.md"):
                 full_p = os.path.join(workflows_dir, file)
                 rel_p = os.path.relpath(full_p, LODGE_DIR)
+                if not _is_tracked(rel_p):
+                    continue
                 w_meta = extract_doc_metadata(full_p, rel_p)
                 w_name = file.replace(".agent.md", "")
                 w_desc = w_meta.get("description") or f"Autonomous specialist workflow contract for {w_name}."

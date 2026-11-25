@@ -25,8 +25,11 @@
 + bin/george-ipc
 + bin/wt_launch_minimized.cs
 + .agents/*
++ .github/*
 + .githooks/*
 + .gitea/*
++ VERSION
++ CONTRIBUTING.md
 + .shellcheckrc
 + .gitignore
 + pyproject.toml

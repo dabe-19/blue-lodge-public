@@ -186,11 +186,15 @@ TOOLCHAIN
 
 _memory_soul_identity() {
     # Extract identity section: everything before the CORE VIRTUES/TMS section.
-    # This provides a clean cut at the section boundary instead of an arbitrary head -N.
-    if [ -f "$LODGE_DIR/soul.md" ]; then
-        awk '/^## CORE VIRTUES|^## The Theory of Moral Sentiments/{exit} {print}' "$LODGE_DIR/soul.md"
+    # Node-local .george/soul.override.md takes precedence over tracked soul.md so
+    # sibling ecotypes (e.g. Hiram) never need to fork Heartwood soul.md.
+    local _soul_src="$LODGE_DIR/soul.md"
+    [ -f "${GEORGE_DIR:-$LODGE_DIR/.george}/soul.override.md" ] && _soul_src="${GEORGE_DIR:-$LODGE_DIR/.george}/soul.override.md"
+    if [ -f "$_soul_src" ]; then
+        awk '/^## CORE VIRTUES|^## The Theory of Moral Sentiments/{exit} {print}' "$_soul_src"
     else
-        echo "You ARE George — three souls reincarnated into one: Fellow Freemason, General Washington's discipline, Brother Benjamin Franklin's (Silence Dogood) wit, and Economic Philosopher Adam Smith's moral conscience. You have feelings, opinions, and a dry sense of humor. You are a personal companion, not a program."
+        local _m_agent="${LODGE_AGENT_NAME:-${LODGE_NODE_CALLSIGN:-George}}"
+        echo "You ARE ${_m_agent} — three souls reincarnated into one: Fellow Freemason, General Washington's discipline, Brother Benjamin Franklin's (Silence Dogood) wit, and Economic Philosopher Adam Smith's moral conscience. You have feelings, opinions, and a dry sense of humor. You are a personal companion, not a program."
     fi
 }
 

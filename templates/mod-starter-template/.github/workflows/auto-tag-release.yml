@@ -1,0 +1,120 @@
+name: Auto SemVer Tag & Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Manual SemVer bump override (auto, patch, minor, major)'
+        required: false
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+jobs:
+  auto-tag-release:
+    name: Tag module.json Version & Publish Release
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]') && !startsWith(github.event.head_commit.message, 'chore(release): bump version')"
+    steps:
+      - name: Checkout full history & tags
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve SemVer from module.json & git commits
+        id: ver
+        env:
+          MANUAL_BUMP: ${{ github.event.inputs.bump || 'auto' }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess, sys
+          from pathlib import Path
+
+          def sh(*cmd):
+              return subprocess.check_output(cmd, text=True).strip()
+
+          mj = Path("module.json")
+          meta = json.loads(mj.read_text(encoding="utf-8"))
+          cur_ver = str(meta.get("version") or "1.0.0").lstrip("v")
+          mod_name = meta.get("name") or meta.get("id") or "Blue Lodge Module"
+
+          tags_raw = sh("git", "tag", "--list", "v[0-9]*.[0-9]*.[0-9]*", "--sort=-v:refname")
+          tags = [t.strip() for t in tags_raw.splitlines() if t.strip()]
+          latest_tag = tags[0] if tags else ""
+
+          if f"v{cur_ver}" not in tags:
+              next_ver = cur_ver
+              bump_needed = False
+          else:
+              rev_range = f"{latest_tag}..HEAD" if latest_tag else "HEAD"
+              msgs = sh("git", "log", "--format=%s%n%b", rev_range)
+              if not msgs.strip() and os.environ.get("MANUAL_BUMP", "auto") == "auto":
+                  with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                      f.write("should_release=false\n")
+                  sys.exit(0)
+              major, minor, patch = map(int, latest_tag.lstrip("v").split("."))
+              manual = os.environ.get("MANUAL_BUMP", "auto")
+              if manual == "major" or re.search(r"(BREAKING CHANGE|^[a-z]+(\([^)]+\))?!:)", msgs, re.M):
+                  major, minor, patch = major + 1, 0, 0
+              elif manual == "minor" or re.search(r"^feat(\([^)]+\))?:", msgs, re.M):
+                  minor, patch = minor + 1, 0
+              else:
+                  patch += 1
+              next_ver = f"{major}.{minor}.{patch}"
+              bump_needed = True
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("should_release=true\n")
+              f.write(f"version={next_ver}\n")
+              f.write(f"tag=v{next_ver}\n")
+              f.write(f"name={mod_name}\n")
+              f.write(f"bump_needed={'true' if bump_needed else 'false'}\n")
+          print(f"Resolved module release: {mod_name} v{next_ver} (bump_needed={bump_needed})")
+          PY
+
+      - name: Update module.json version if auto-bumped
+        if: steps.ver.outputs.should_release == 'true' && steps.ver.outputs.bump_needed == 'true'
+        env:
+          NEXT_VER: ${{ steps.ver.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          p = Path("module.json")
+          d = json.loads(p.read_text(encoding="utf-8"))
+          d["version"] = os.environ["NEXT_VER"]
+          p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add module.json
+          git commit -m "chore(release): bump version to v${{ steps.ver.outputs.version }} [skip ci]"
+          git push origin HEAD:main
+
+      - name: Create annotated SemVer tag
+        if: steps.ver.outputs.should_release == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.ver.outputs.tag }}" -m "${{ steps.ver.outputs.name }} ${{ steps.ver.outputs.tag }}"
+          git push origin "${{ steps.ver.outputs.tag }}"
+
+      - name: Publish GitHub Release
+        if: steps.ver.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            --title "${{ steps.ver.outputs.name }} ${{ steps.ver.outputs.tag }}" \
+            --generate-notes

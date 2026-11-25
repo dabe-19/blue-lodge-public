@@ -1,5 +1,10 @@
 # Blue Lodge: Sovereign, Modular Personal AI Platform & Agent Workstation
 
+[![Blue Lodge CI](https://github.com/dabe-19/blue-lodge-public/actions/workflows/ci.yml/badge.svg)](https://github.com/dabe-19/blue-lodge-public/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/dabe-19/blue-lodge-public?display_name=tag)](https://github.com/dabe-19/blue-lodge-public/releases)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![Guild App Store](https://img.shields.io/badge/Guild_App_Store-3_Public_Modules-2ea44f)](https://github.com/dabe-19/blue-lodge-guild)
+
 Blue Lodge is a sovereign, modular, multi-node personal AI platform built around **George** — an autonomous engineering, research, GIS, diagnostics, and systems-operations companion that runs entirely on hardware you own. From a pocket Android field companion or Termux ecotype to dual-GPU workstation towers, Proxmox hypervisors, and Kubernetes clusters, Blue Lodge unifies core agent orchestration with installable domain applications.
 
 At its center sits the **Heartwood Kernel** — a pure POSIX Bash ReAct engine paired with an asynchronous Rust web cockpit (`george-web`), a Structured Active Transcript/CoT Console, local PRISM multimodal vision & LLM inference, non-blocking FIFO IPC flow control, a formal Google Open Knowledge Graph (OKF), and an Obsidian-linked documentation vault. Domain applications (starting with **Shop Bench**, **SkyWatch**, and **Hunting Buddy**) install cleanly through the **Lodge Guild App Store** as SHA-pinned external Git modules with scoped tool masks and monitored ReAct workflows.

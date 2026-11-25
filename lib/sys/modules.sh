@@ -697,7 +697,9 @@ modules_install() {
     fi
     repo_url="$used_url"
     if [ -n "$pinned_sha" ]; then
-        if ! git -C "$stage" checkout --quiet "$pinned_sha" 2>/dev/null; then
+        # Attach a proper local branch (avoiding detached HEAD) so remediation & module authors
+        # never collide with detached-HEAD git failures while staying pinned to the exact SHA/tag.
+        if ! git -C "$stage" checkout --quiet -B main "$pinned_sha" 2>/dev/null; then
             rm -rf "$stage"
             ui_err "Failed to checkout pinned commit/ref '$pinned_sha' for $mod_id"
             return 1
@@ -758,18 +760,19 @@ modules_install() {
 modules_update() {
     local target="${1:-}"
     shift || true
-    local approve_flag="--approve"
+    local approve_flag="--approve" force_update=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --no-approve) approve_flag=""; shift ;;
             --approve) approve_flag="--approve"; shift ;;
+            --force|-f) force_update=1; shift ;;
             *) shift ;;
         esac
     done
 
     modules_init
     if [ -z "$target" ]; then
-        ui_err "Usage: /app update <module_id|--all>"
+        ui_err "Usage: /app update <module_id|--all> [--force]"
         return 1
     fi
 
@@ -785,7 +788,7 @@ modules_update() {
         local mid rc=0
         while IFS= read -r mid; do
             [ -z "$mid" ] && continue
-            modules_update "$mid" ${approve_flag:+$approve_flag} || rc=1
+            modules_update "$mid" ${approve_flag:+$approve_flag} $([ "$force_update" -eq 1 ] && echo "--force") || rc=1
         done <<< "$updatable"
         return "$rc"
     fi
@@ -800,6 +803,22 @@ modules_update() {
         return 1
     fi
 
+    # Protect module authors from losing uncommitted local work during catalog updates
+    if [ "$force_update" -ne 1 ] && [ -d "$MODULES_DIR/$target/.git" ]; then
+        local _mod_dirty
+        _mod_dirty=$(git -C "$MODULES_DIR/$target" -c safe.directory='*' status --porcelain --untracked-files=no 2>/dev/null || true)
+        if [ -n "$_mod_dirty" ]; then
+            ui_err "Module '$target' has uncommitted local changes; refusing destructive update. Commit/stash or re-run with '--force'."
+            return 1
+        fi
+    fi
+
+    # Snapshot any extra developer remotes (e.g. github / gitea) so they survive the atomic swap
+    local _saved_remotes=""
+    if [ -d "$MODULES_DIR/$target/.git" ]; then
+        _saved_remotes=$(git -C "$MODULES_DIR/$target" -c safe.directory='*' remote -v 2>/dev/null | awk '$3=="(fetch)" && $1!="origin" {print $1 "\t" $2}' || true)
+    fi
+
     local was_enabled="false"
     was_enabled=$(jq -r --arg id "$target" '.modules[$id].enabled // false' "$ECOTYPE_MANIFEST" 2>/dev/null || echo "false")
     local old_ver
@@ -808,6 +827,13 @@ modules_update() {
     ui_info "Updating module '$target' (currently v${old_ver}; user data in .george/module_data/${target}/ is preserved)..."
     if ! modules_install "$target" ${approve_flag:+$approve_flag}; then
         return 1
+    fi
+    if [ -n "$_saved_remotes" ] && [ -d "$MODULES_DIR/$target/.git" ]; then
+        local _rn _ru
+        while IFS=$'\t' read -r _rn _ru; do
+            [ -z "$_rn" ] || [ -z "$_ru" ] && continue
+            git -C "$MODULES_DIR/$target" -c safe.directory='*' remote add "$_rn" "$_ru" 2>/dev/null || true
+        done <<< "$_saved_remotes"
     fi
     if [ "$was_enabled" != "true" ]; then
         modules_disable "$target" >/dev/null 2>&1 || true

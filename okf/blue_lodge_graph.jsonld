@@ -6374,7 +6374,9 @@
         "ecotype_status",
         "ecotype_sync",
         "ecotype_promote",
-        "ecotype_backup"
+        "ecotype_backup",
+        "ecotype_fetch",
+        "ecotype_diff"
       ]
     },
     {
@@ -15418,6 +15420,7 @@
         "validate_socials",
         "sync_discord",
         "get_ecotype_status",
+        "get_ecotype_diff",
         "post_ecotype_action",
         "get_reactor_templates",
         "install_reactor_template"
@@ -17502,7 +17505,7 @@
       ],
       "name": "Modular Heartwood Architecture, Lodge Guild App Store & Ecotype Git Model",
       "headline": "Modular Heartwood Architecture, Lodge Guild App Store & Ecotype Git Model",
-      "description": "Definitive reference for Blue Lodge's three-tier Git model (Heartwood, Node Ecotypes, External Guild Modules), module.json contract, supply-chain security, Hunting Buddy mobile GPS bridge, and PoshTracker sidecar architecture.",
+      "description": "Definitive reference for Blue Lodge's three-tier Git model (Heartwood, Node Ecotypes, External Guild Modules), module.json contract, supply-chain security, and external module runtime isolation.",
       "path": "docs/MODULAR_ARCHITECTURE_AND_GIT_MODEL.md",
       "encodingFormat": "text/markdown",
       "keywords": [
@@ -17512,7 +17515,8 @@
         "ecotype",
         "git-model",
         "hunting-buddy",
-        "poshtracker",
+        "shop-bench",
+        "skywatch",
         "security"
       ],
       "isPartOf": "urn:blue-lodge:subsystem:architecture",

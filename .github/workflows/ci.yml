@@ -1,0 +1,118 @@
+name: Blue Lodge CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'ecotype/*'
+  pull_request:
+    branches:
+      - main
+      - develop
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shell-python-okf:
+    name: Shell, Python, OKF & Module Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install lightweight CI dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq sqlite3 shellcheck
+          python3 -m pip install --quiet pyyaml jsonschema
+
+      - name: Bash syntax check (bash -n)
+        run: |
+          find lib commands scripts/ci tests deploy/k8s -name "*.sh" -type f -exec bash -n {} +
+          bash -n lodge install.sh update.sh
+
+      - name: Python bytecode compilation
+        run: |
+          find lib scripts okf -name "*.py" -not -path "*/archive/*" -exec python3 -m py_compile {} +
+
+      - name: Verify OKF Knowledge Graph & Routing Parity
+        run: |
+          bash tests/test_okf.sh
+          bash tests/test_graph_and_routing_parity.sh
+
+      - name: Scaffold & audit bundled starter module template
+        run: |
+          rm -rf /tmp/mod-ci-smoke
+          cp -r templates/mod-starter-template /tmp/mod-ci-smoke
+          find /tmp/mod-ci-smoke -type f -exec sed -i \
+            -e 's/__MOD_ID__/ci-smoke/g' \
+            -e 's/__MOD_NAME__/CI Smoke/g' \
+            -e 's/__MOD_PREFIX__/cismoke/g' {} +
+          python3 lib/tools/module_audit.py /tmp/mod-ci-smoke
+          rm -rf /tmp/mod-ci-smoke
+
+      - name: Frontend JS syntax & XSS sink check
+        run: |
+          node --check web/static/js/modules.js
+          node --check web/static/app.js
+
+  rust-web-check:
+    name: Rust Web Cockpit (cargo check)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            web/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('web/Cargo.toml', 'web/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cargo check
+        working-directory: web
+        run: cargo check --locked || cargo check
+
+  core-unit-tests:
+    name: Core Hermetic Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq sqlite3
+          python3 -m pip install --quiet pyyaml jsonschema
+
+      - name: Run core hermetic test suites
+        run: |
+          for t in tests/test_okf.sh tests/test_phytology.sh tests/test_gitea_branch_hygiene.sh; do
+            [ -f "$t" ] && bash "$t"
+          done

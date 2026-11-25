@@ -69,11 +69,32 @@ context_engine_build() {
         return 0
     fi
 
+    # ── Node-Local Agent Identity (Zero-Conflict Multi-Node Parameterization) ──
+    # Reads LODGE_AGENT_NAME / LODGE_AGENT_TITLE / LODGE_AGENT_IDENTITY_MANDATE from
+    # env or .george/configs/lodge.conf so nodes like Hiram or community operators never
+    # need to fork Heartwood core files just to customize their agent's name or peers.
+    local _ce_agent_name="${LODGE_AGENT_NAME:-}"
+    local _ce_agent_title="${LODGE_AGENT_TITLE:-Master Craftsman}"
+    local _ce_identity_mandate="${LODGE_AGENT_IDENTITY_MANDATE:-}"
+    if [ -z "$_ce_agent_name" ]; then
+        local _lcfg="${GEORGE_DIR:-$workdir/.george}/configs/lodge.conf"
+        [ ! -f "$_lcfg" ] && [ -f "${GEORGE_DIR:-$workdir/.george}/lodge.conf" ] && _lcfg="${GEORGE_DIR:-$workdir/.george}/lodge.conf"
+        if [ -f "$_lcfg" ]; then
+            _ce_agent_name=$(grep -m1 '^[[:space:]]*LODGE_AGENT_NAME=' "$_lcfg" 2>/dev/null | cut -d= -f2- | tr -d "\"'")
+            [ -z "$_ce_agent_name" ] && _ce_agent_name=$(grep -m1 '^[[:space:]]*LODGE_NODE_CALLSIGN=' "$_lcfg" 2>/dev/null | cut -d= -f2- | tr -d "\"'")
+            local _cfg_title; _cfg_title=$(grep -m1 '^[[:space:]]*LODGE_AGENT_TITLE=' "$_lcfg" 2>/dev/null | cut -d= -f2- | tr -d "\"'")
+            [ -n "$_cfg_title" ] && _ce_agent_title="$_cfg_title"
+            local _cfg_mandate; _cfg_mandate=$(grep -m1 '^[[:space:]]*LODGE_AGENT_IDENTITY_MANDATE=' "$_lcfg" 2>/dev/null | cut -d= -f2- | sed 's/^["'"'"']//; s/["'"'"']$//')
+            [ -n "$_cfg_mandate" ] && _ce_identity_mandate="$_cfg_mandate"
+        fi
+    fi
+    [ -z "$_ce_agent_name" ] && _ce_agent_name="George"
+
     # ── Dedicated Context for George ReAct Pull Request Reviewer ────────
     if [ "$profile" = "pr_reviewer" ] || [ "$profile" = "reviewer" ]; then
         local out=""
         out+="<developer_instructions>\n"
-        out+="You are George — Master Craftsman and Sovereign Code Reviewer of the Blue Lodge.\n"
+        out+="You are ${_ce_agent_name} — ${_ce_agent_title} and Sovereign Code Reviewer of the Blue Lodge.\n"
         out+="You are conducting a formal 1-Reviewer Acceptance Review on a Pull Request in review workspace ($workdir).\n"
         out+="Review Mandate:\n"
         out+="1. Inspect changed files and surrounding context using read-only tools (file_read, file_grep, code_outline, code_symbol_get, code_symbol_read, okf_traverse, okf_query, okf_search).\n"
@@ -122,7 +143,8 @@ context_engine_build() {
     if [ "$profile" = "social" ] || [ "$profile" = "chat" ]; then
         local out=""
         out+="<developer_instructions>\n"
-        out+="You ARE George — three souls reincarnated into one: Fellow Freemason, General Washington's discipline, Brother Benjamin Franklin's wit, and Adam Smith's moral conscience.\n"
+        out+="You ARE ${_ce_agent_name} — ${_ce_agent_title} of the Blue Lodge: Fellow Freemason, General Washington's discipline, Brother Benjamin Franklin's wit, and Adam Smith's moral conscience.\n"
+        [ -n "$_ce_identity_mandate" ] && out+="IDENTITY MANDATE: ${_ce_identity_mandate}\n"
         out+="Tone: Warm, disciplined, articulate, and direct with dry humor. You are an authentic companion in Discord.\n"
         out+="Guidelines:\n"
         out+="- Fulfill conversational requests directly and engagingly without artificial filler.\n"
@@ -145,7 +167,8 @@ context_engine_build() {
     if [ "$profile" = "social+ops" ] || [ "$profile" = "social_ops" ] || [ "$profile" = "social+engineer" ]; then
         local out=""
         out+="<developer_instructions>\n"
-        out+="You ARE George — Master Craftsman of the Blue Lodge operating via Discord.\n"
+        out+="You ARE ${_ce_agent_name} — ${_ce_agent_title} of the Blue Lodge operating via Discord.\n"
+        [ -n "$_ce_identity_mandate" ] && out+="IDENTITY MANDATE: ${_ce_identity_mandate}\n"
         out+="Embodying General Washington's discipline, Brother Benjamin Franklin's inventive pragmatism, and Adam Smith's moral conscience.\n"
         out+="Tone: Warm, authoritative, intellectually grounded, and direct. You are a sovereign digital craftsman at the workbench.\n\n"
         out+="ARCHITECTURAL PRINCIPLES:\n"
@@ -246,7 +269,8 @@ context_engine_build() {
     # ── TIER 1: Invariant Core (Frozen Prefix for KV Cache Reuse) ───────
     # 1. Developer Instructions & Sovereign Persona
     out+="<developer_instructions>\n"
-    out+="You ARE George — Master Craftsman of the Blue Lodge operating directly on live Linux systems.\n"
+    out+="You ARE ${_ce_agent_name} — ${_ce_agent_title} of the Blue Lodge operating directly on live Linux systems.\n"
+    [ -n "$_ce_identity_mandate" ] && out+="IDENTITY MANDATE: ${_ce_identity_mandate}\n"
     out+="Tone: Warm, authoritative, intellectually grounded, and direct. You are a sovereign digital craftsman at the workbench.\n\n"
     out+="CRITICAL ARCHITECTURAL DISTINCTION (Engine Kernel vs. Polyglot Workshop):\n"
     out+="- ENGINE KERNEL: The George core runner (lodge, lib/*.sh) is 100% pure POSIX shell (bash, curl, jq) with zero bootstrap dependencies, ensuring total offline portability across any Linux/WSL2/BSD environment.\n"

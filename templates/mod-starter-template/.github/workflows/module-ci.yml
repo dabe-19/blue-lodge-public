@@ -1,0 +1,87 @@
+name: Module CI & Security Audit
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  audit-and-test:
+    name: Manifest, Security Audit & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout module
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate module.json, License & Static Security Rules
+        run: |
+          python3 - <<'PY'
+          import ast, json, re, sys
+          from pathlib import Path
+
+          root = Path(".")
+          mj = root / "module.json"
+          if not mj.is_file():
+              sys.exit("FAIL: missing module.json")
+          meta = json.loads(mj.read_text(encoding="utf-8"))
+          for req in ("schema_version", "id", "name", "version", "license"):
+              if req not in meta or not str(meta[req]).strip():
+                  sys.exit(f"FAIL: module.json missing required field '{req}'")
+          if not re.fullmatch(r"\d+\.\d+\.\d+", str(meta["version"])):
+              sys.exit(f"FAIL: module.json version '{meta['version']}' must be SemVer X.Y.Z")
+
+          # Static Python security check (no shell=True, eval, exec, __import__)
+          for py in root.rglob("*.py"):
+              if ".venv" in py.parts or "__pycache__" in py.parts:
+                  continue
+              tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Call):
+                      if isinstance(node.func, ast.Name) and node.func.id in ("eval", "exec", "__import__"):
+                          if "tests" not in py.parts:
+                              sys.exit(f"FAIL: disallowed call '{node.func.id}()' in {py}:{node.lineno}")
+                      for kw in node.keywords:
+                          if kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True:
+                              sys.exit(f"FAIL: subprocess shell=True in {py}:{node.lineno}")
+
+          # Static JS XSS sink check (ignore comment-only lines)
+          sink_re = re.compile(r"\b(innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\s*\()\b")
+          for js in root.rglob("*.js"):
+              for idx, line in enumerate(js.read_text(encoding="utf-8").splitlines(), 1):
+                  stripped = line.strip()
+                  if stripped.startswith("//") or stripped.startswith("*"):
+                      continue
+                  if sink_re.search(stripped):
+                      sys.exit(f"FAIL: disallowed DOM/eval sink in {js}:{idx}: {stripped}")
+
+          print(f"PASS: module.json v{meta['version']} ({meta['id']}) static audit clean.")
+          PY
+
+      - name: Bash, JS & Python syntax checks
+        run: |
+          find . -name "*.sh" -not -path "./.git/*" -exec bash -n {} +
+          find . -name "*.js" -not -path "./.git/*" -exec node --check {} +
+          find . -name "*.py" -not -path "./.git/*" -exec python3 -m py_compile {} +
+
+      - name: Run module unit tests
+        run: |
+          if [ -d tests ]; then
+            for t in tests/test_*.py; do
+              [ -f "$t" ] || continue
+              echo "Running $t..."
+              python3 "$t"
+            done
+          fi

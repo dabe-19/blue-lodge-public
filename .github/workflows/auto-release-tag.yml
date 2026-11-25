@@ -1,0 +1,115 @@
+name: Auto SemVer Tag & GitHub Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Manual SemVer bump override (auto, patch, minor, major)'
+        required: false
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+jobs:
+  semver-tag-and-release:
+    name: Compute SemVer, Tag & Publish Release
+    runs-on: ubuntu-latest
+    # Skip bot auto-bump commits to prevent infinite recursion
+    if: "!contains(github.event.head_commit.message, '[skip ci]') && !startsWith(github.event.head_commit.message, 'chore(release): bump version')"
+    steps:
+      - name: Checkout full history & tags
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Calculate next SemVer & check if tag exists
+        id: ver
+        env:
+          MANUAL_BUMP: ${{ github.event.inputs.bump || 'auto' }}
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, sys
+          from pathlib import Path
+
+          def sh(*cmd):
+              return subprocess.check_output(cmd, text=True).strip()
+
+          ver_file = Path("VERSION")
+          file_ver = ver_file.read_text().strip().lstrip("v") if ver_file.is_file() else "1.0.0"
+          if not re.fullmatch(r"\d+\.\d+\.\d+", file_ver):
+              file_ver = "1.0.0"
+
+          tags_raw = sh("git", "tag", "--list", "v[0-9]*.[0-9]*.[0-9]*", "--sort=-v:refname")
+          tags = [t.strip() for t in tags_raw.splitlines() if t.strip()]
+          latest_tag = tags[0] if tags else ""
+
+          # Case 1: VERSION file was bumped manually and tag does not exist yet
+          if f"v{file_ver}" not in tags:
+              next_ver = file_ver
+              bump_needed = False
+          else:
+              # Case 2: Inspect commits since latest_tag and auto-bump SemVer
+              rev_range = f"{latest_tag}..HEAD" if latest_tag else "HEAD"
+              msgs = sh("git", "log", "--format=%s%n%b", rev_range)
+              if not msgs.strip() and os.environ.get("MANUAL_BUMP", "auto") == "auto":
+                  with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                      f.write("should_release=false\n")
+                  sys.exit(0)
+
+              major, minor, patch = map(int, latest_tag.lstrip("v").split("."))
+              manual = os.environ.get("MANUAL_BUMP", "auto")
+              if manual == "major" or re.search(r"(BREAKING CHANGE|^[a-z]+(\([^)]+\))?!:)", msgs, re.M):
+                  major, minor, patch = major + 1, 0, 0
+              elif manual == "minor" or re.search(r"^feat(\([^)]+\))?:", msgs, re.M):
+                  minor, patch = minor + 1, 0
+              else:
+                  patch += 1
+              next_ver = f"{major}.{minor}.{patch}"
+              bump_needed = True
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("should_release=true\n")
+              f.write(f"version={next_ver}\n")
+              f.write(f"tag=v{next_ver}\n")
+              f.write(f"prev_tag={latest_tag}\n")
+              f.write(f"bump_needed={'true' if bump_needed else 'false'}\n")
+          print(f"Resolved next release: v{next_ver} (prev={latest_tag or 'none'}, bump_needed={bump_needed})")
+          PY
+
+      - name: Commit bumped VERSION file
+        if: steps.ver.outputs.should_release == 'true' && steps.ver.outputs.bump_needed == 'true'
+        run: |
+          echo "${{ steps.ver.outputs.version }}" > VERSION
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          git commit -m "chore(release): bump version to v${{ steps.ver.outputs.version }} [skip ci]"
+          git push origin HEAD:main
+
+      - name: Create annotated SemVer tag
+        if: steps.ver.outputs.should_release == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.ver.outputs.tag }}" -m "Release ${{ steps.ver.outputs.tag }}"
+          git push origin "${{ steps.ver.outputs.tag }}"
+
+      - name: Publish GitHub Release with auto-generated notes
+        if: steps.ver.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            --title "Blue Lodge ${{ steps.ver.outputs.tag }}" \
+            --generate-notes

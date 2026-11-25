@@ -411,6 +411,7 @@ discord_send_file() {
     local resp http_status
     resp=$(curl -s -w "\n%{http_code}" -X POST "https://discord.com/api/v10/channels/$channel_id/messages" \
         -H "Authorization: Bot $token" \
+        -H "User-Agent: BlueLodge (self-hosted, 1.0)" \
         -F "payload_json=$payload_json" \
         -F "files[0]=@$file_path;filename=$bname" 2>/dev/null)
 
