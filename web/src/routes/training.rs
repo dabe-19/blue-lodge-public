@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::{IntoResponse, Json},
 };
 use serde::{Deserialize, Serialize};
@@ -125,6 +125,39 @@ pub struct TrainingWizardPayload {
     pub focus: Option<String>,
     pub sample_count: Option<u32>,
     pub include_journal: Option<bool>,
+}
+
+#[derive(Deserialize)]
+pub struct RunLogsQuery {
+    pub track: Option<String>,
+    pub live: Option<String>,
+    pub lines: Option<u32>,
+}
+
+/// GET /api/training/runs/:run_name/logs — Stream live Colab or local training logs + GPU telemetry
+pub async fn get_training_run_logs(
+    State(state): State<Arc<AppState>>,
+    Path(run_name): Path<String>,
+    Query(q): Query<RunLogsQuery>,
+) -> impl IntoResponse {
+    if !plain_id(&run_name, 48) {
+        return Json(json!({ "status": "error", "message": "Invalid run_name" }));
+    }
+    let lines_str = q.lines.unwrap_or(80).clamp(10, 300).to_string();
+    let mut args = vec!["logs", run_name.as_str(), "--lines", lines_str.as_str()];
+    let track_clean = q.track.filter(|t| plain_id(t, 48));
+    if let Some(ref t) = track_clean {
+        args.push("--track");
+        args.push(t.as_str());
+    }
+    let want_live = match q.live.as_deref() {
+        Some("0") | Some("false") | Some("no") => false,
+        _ => true,
+    };
+    if want_live {
+        args.push("--live");
+    }
+    Json(run_py_json(&state.lodge_dir, "scripts/training/runs.py", &args).await)
 }
 
 #[derive(Serialize, Deserialize)]

@@ -18,7 +18,58 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
+
+
+def _normalize_messages(msgs: list) -> list:
+    """Ensure tool_calls[].function.arguments are parsed dicts (required by Transformers 5.x Qwen/Gemma Jinja templates)."""
+    out = []
+    for m in msgs or []:
+        if not isinstance(m, dict):
+            continue
+        nm = dict(m)
+        tcs = nm.get("tool_calls")
+        if isinstance(tcs, list):
+            new_tcs = []
+            for tc in tcs:
+                if not isinstance(tc, dict):
+                    continue
+                ntc = dict(tc)
+                fn = ntc.get("function")
+                if isinstance(fn, dict):
+                    nfn = dict(fn)
+                    args = nfn.get("arguments")
+                    if isinstance(args, str):
+                        try:
+                            parsed = json.loads(args) if args.strip() else {}
+                            nfn["arguments"] = parsed if isinstance(parsed, dict) else {"raw": args}
+                        except Exception:
+                            nfn["arguments"] = {"raw": args}
+                    elif args is None:
+                        nfn["arguments"] = {}
+                    ntc["function"] = nfn
+                new_tcs.append(ntc)
+            nm["tool_calls"] = new_tcs
+        out.append(nm)
+    return out
+
+
+def _render_chat(tok, msgs: list, tools=None, add_generation_prompt: bool = False) -> str:
+    """Render chat messages via tokenizer/processor template and always return a plain str."""
+    norm = _normalize_messages(msgs)
+    try:
+        rendered = tok.apply_chat_template(
+            norm, tools=tools, tokenize=False, add_generation_prompt=add_generation_prompt
+        )
+    except Exception:
+        # Fallback if a specific template rejects tools=None or nested fields
+        rendered = tok.apply_chat_template(
+            norm, tokenize=False, add_generation_prompt=add_generation_prompt
+        )
+    if isinstance(rendered, list):
+        return "\n".join(str(x) for x in rendered)
+    return str(rendered)
 
 
 def _rows_to_messages(ex: dict) -> dict:
@@ -101,6 +152,94 @@ def _export_adapter_gguf(adapter_dir: str, base_model: str, out_gguf: str, base_
     return False
 
 
+def _drive_ensure_folder(token: str, path: str) -> str | None:
+    """Create nested Google Drive folders (e.g. 'BlueLodge/training/run/track') via REST API v3 with zero popups."""
+    parent = "root"
+    hdr = {"Authorization": f"Bearer {token}"}
+    for part in [p for p in path.strip("/").split("/") if p]:
+        q = f"name='{part.replace(chr(39), '')}' and mimeType='application/vnd.google-apps.folder' and '{parent}' in parents and trashed=false"
+        url = "https://www.googleapis.com/drive/v3/files?fields=files(id,name)&q=" + urllib.parse.quote(q)
+        try:
+            req = urllib.request.Request(url, headers=hdr)
+            with urllib.request.urlopen(req, timeout=20) as r:
+                files = json.loads(r.read()).get("files", [])
+            if files:
+                parent = files[0]["id"]
+                continue
+            meta = json.dumps({"name": part, "mimeType": "application/vnd.google-apps.folder", "parents": [parent]}).encode()
+            creq = urllib.request.Request(
+                "https://www.googleapis.com/drive/v3/files?fields=id",
+                data=meta, headers={**hdr, "Content-Type": "application/json"}, method="POST",
+            )
+            with urllib.request.urlopen(creq, timeout=20) as r:
+                parent = json.loads(r.read())["id"]
+        except Exception as e:
+            print(f"[!] Drive folder ensure failed for '{part}': {e}", file=sys.stderr)
+            return None
+    return parent
+
+
+def _mirror_artifacts_to_drive(files_to_upload: list[tuple[str, str]], drive_folder: str) -> int:
+    """Headlessly upload extracted adapter files + GGUF straight to Google Drive via REST v3 (survives host shutdown)."""
+    import urllib.parse
+    token = os.environ.get("GOOGLE_DRIVE_TOKEN", "").strip()
+    if not token or not drive_folder:
+        return 0
+    folder_id = _drive_ensure_folder(token, drive_folder)
+    if not folder_id:
+        return 0
+    uploaded = 0
+    for local_path, remote_name in files_to_upload:
+        if not os.path.isfile(local_path):
+            continue
+        try:
+            meta = json.dumps({"name": remote_name, "parents": [folder_id]}).encode("utf-8")
+            init_req = urllib.request.Request(
+                "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
+                data=meta,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json; charset=UTF-8",
+                    "X-Upload-Content-Length": str(os.path.getsize(local_path)),
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(init_req, timeout=30) as r:
+                upload_url = r.headers.get("Location")
+            if not upload_url:
+                continue
+            with open(local_path, "rb") as fh:
+                data = fh.read()
+            put_req = urllib.request.Request(
+                upload_url, data=data,
+                headers={"Content-Length": str(len(data)), "Content-Type": "application/octet-stream"},
+                method="PUT",
+            )
+            with urllib.request.urlopen(put_req, timeout=600) as r:
+                if r.status in (200, 201):
+                    uploaded += 1
+                    print(f"[✓] Mirrored to Google Drive ({drive_folder}/{remote_name}, {len(data)/(1024*1024):.1f} MiB)")
+        except Exception as e:
+            print(f"[!] Drive mirror failed for {remote_name}: {e}", file=sys.stderr)
+    return uploaded
+
+
+def _mirror_final_outputs(adapter_dir: str, gguf_path: str | None, drive_folder: str | None):
+    if not drive_folder or not os.environ.get("GOOGLE_DRIVE_TOKEN"):
+        return
+    pairs = []
+    if os.path.isdir(adapter_dir):
+        for fn in sorted(os.listdir(adapter_dir)):
+            fp = os.path.join(adapter_dir, fn)
+            if os.path.isfile(fp):
+                pairs.append((fp, fn))
+    if gguf_path and os.path.isfile(gguf_path):
+        pairs.append((gguf_path, os.path.basename(gguf_path)))
+    if os.path.isfile("train.log"):
+        pairs.append(("train.log", "train.log"))
+    _mirror_artifacts_to_drive(pairs, drive_folder)
+
+
 def _load_model_and_tokenizer(cfg: dict, torch, init_adapter: str | None):
     hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or None
     base_src = cfg.get("base_local_path") or cfg["base_model"]
@@ -166,6 +305,7 @@ def main() -> int:
     ap.add_argument("--resume-from-checkpoint", default=None, help="'latest' or path to checkpoint-N dir")
     ap.add_argument("--checkpoint-dir", default=None, help="override checkpoint directory (e.g. Google Drive path)")
     ap.add_argument("--export-gguf", default=None, help="also export adapter GGUF to this path after training")
+    ap.add_argument("--drive-mirror-folder", default=None, help="headless Google Drive folder to mirror extracted artifacts")
     a = ap.parse_args()
     cfg = json.load(open(a.config, encoding="utf-8"))
     mode = a.mode or cfg.get("mode", "sft")
@@ -173,6 +313,10 @@ def main() -> int:
         return train_dpo(cfg, a)
 
     try:
+        try:
+            import unsloth  # noqa: F401 — must be imported before trl/transformers/peft for full kernel patching
+        except Exception:
+            pass
         import torch
         from datasets import load_dataset
         from peft import LoraConfig
@@ -198,7 +342,7 @@ def main() -> int:
             tok.pad_token = tok.eos_token
         def _fmt(ex: dict) -> dict:
             m = _rows_to_messages(ex)
-            return {"text": m["text"]} if "text" in m else {"text": tok.apply_chat_template(m["messages"], tools=m["tools"], tokenize=False)}
+            return {"text": m["text"]} if "text" in m else {"text": _render_chat(tok, m["messages"], tools=m["tools"])}
         ds = ds.map(_fmt, remove_columns=ds["train"].column_names)
         print(f"train rows: {len(ds['train'])}" + (f", val rows: {len(ds['validation'])}" if "validation" in ds else ""))
         print(ds["train"][0]["text"][:800])
@@ -210,7 +354,7 @@ def main() -> int:
         m = _rows_to_messages(ex)
         if "text" in m:
             return {"text": m["text"]}
-        return {"text": tok.apply_chat_template(m["messages"], tools=m["tools"], tokenize=False)}
+        return {"text": _render_chat(tok, m["messages"], tools=m["tools"])}
 
     ds = ds.map(to_text, remove_columns=ds["train"].column_names)
     print(f"train rows: {len(ds['train'])}" + (f", val rows: {len(ds['validation'])}" if "validation" in ds else ""))
@@ -256,14 +400,19 @@ def main() -> int:
     export_gguf = a.export_gguf or cfg.get("export_gguf")
     if export_gguf:
         _export_adapter_gguf("output/adapter", cfg["base_model"], export_gguf, cfg.get("base_local_path"))
+    _mirror_final_outputs("output/adapter", export_gguf, a.drive_mirror_folder or cfg.get("drive_mirror_folder"))
     return 0
 
 
 def train_dpo(cfg: dict, a) -> int:
     """Direct Preference Optimisation: teach the model to prefer `chosen` over `rejected` for the same prompt."""
     try:
+        try:
+            import unsloth  # noqa: F401 — must be imported before trl/transformers/peft for full kernel patching
+        except Exception:
+            pass
         import torch
-        from datasets import load_dataset
+        from datasets import Dataset, load_dataset
         from peft import LoraConfig
         from transformers import AutoTokenizer
         from trl import DPOConfig, DPOTrainer
@@ -288,16 +437,26 @@ def train_dpo(cfg: dict, a) -> int:
 
     def to_pref(ex: dict) -> dict:
         tools = ex.get("tools") or None
-        prompt = tok.apply_chat_template(ex["prompt"], tools=tools, tokenize=False, add_generation_prompt=True)
-        full_c = tok.apply_chat_template(ex["prompt"] + ex["chosen"], tools=tools, tokenize=False)
-        full_r = tok.apply_chat_template(ex["prompt"] + ex["rejected"], tools=tools, tokenize=False)
+        p_msgs = ex["prompt"] if isinstance(ex["prompt"], list) else [{"role": "user", "content": str(ex["prompt"])}]
+        c_msgs = ex["chosen"] if isinstance(ex["chosen"], list) else [{"role": "assistant", "content": str(ex["chosen"])}]
+        r_msgs = ex["rejected"] if isinstance(ex["rejected"], list) else [{"role": "assistant", "content": str(ex["rejected"])}]
+        prompt = _render_chat(tok, p_msgs, tools=tools, add_generation_prompt=True)
+        full_c = _render_chat(tok, p_msgs + c_msgs, tools=tools)
+        full_r = _render_chat(tok, p_msgs + r_msgs, tools=tools)
+        chosen = full_c[len(prompt):] if full_c.startswith(prompt) else full_c
+        rejected = full_r[len(prompt):] if full_r.startswith(prompt) else full_r
         return {
-            "prompt": prompt,
-            "chosen": full_c[len(prompt):] if full_c.startswith(prompt) else full_c,
-            "rejected": full_r[len(prompt):] if full_r.startswith(prompt) else full_r,
+            "prompt": str(prompt),
+            "chosen": str(chosen),
+            "rejected": str(rejected),
         }
 
-    ds = ds.map(to_pref, remove_columns=ds["train"].column_names)
+    # Materialize clean plain-string Dataset (avoids Arrow List(Json) schema retention in datasets v4 + TRL DPOTrainer)
+    clean_ds = {}
+    for split_name in list(ds.keys()):
+        rows = [to_pref(ex) for ex in ds[split_name]]
+        clean_ds[split_name] = Dataset.from_list(rows)
+    ds = clean_ds
     print(f"DPO pairs: {len(ds['train'])}" + (f", val: {len(ds['validation'])}" if "validation" in ds else ""))
     if a.dry_run:
         r = ds["train"][0]
@@ -332,9 +491,10 @@ def train_dpo(cfg: dict, a) -> int:
     if "max_prompt_length" in dpo_sig:
         dpo_kw["max_prompt_length"] = max(512, int(cfg["max_seq_len"] * 0.75))
     args = DPOConfig(**dpo_kw)
+    dpo_tok = getattr(tok, "tokenizer", tok)
     trainer = DPOTrainer(
         model=model, ref_model=None, args=args, train_dataset=ds["train"],
-        eval_dataset=ds.get("validation"), processing_class=tok, peft_config=peft_cfg,
+        eval_dataset=ds.get("validation"), processing_class=dpo_tok, peft_config=peft_cfg,
     )
     trainer.train(resume_from_checkpoint=resume_path)
     os.makedirs("output/adapter", exist_ok=True)
@@ -345,6 +505,7 @@ def train_dpo(cfg: dict, a) -> int:
     export_gguf = a.export_gguf or cfg.get("export_gguf")
     if export_gguf:
         _export_adapter_gguf("output/adapter", cfg["base_model"], export_gguf, cfg.get("base_local_path"))
+    _mirror_final_outputs("output/adapter", export_gguf, a.drive_mirror_folder or cfg.get("drive_mirror_folder"))
     return 0
 
 

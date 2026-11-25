@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ── Sovereign Sleep-Cycle & Colab Training Watchdog ──
 # INTERVAL: 600
-# ENABLED: 0
+# ENABLED: 1
 # DESC: Monitors active Colab/local SVD-32 runs, sends keep-alive heartbeats, auto-resumes 1h disconnects from Drive checkpoints, tears down finished VMs, runs 7-pillar benchmark gates, posts Discord Tier B approval cards, and optionally runs scheduled Sleep-Cycle consolidation.
 
 set -uo pipefail

@@ -566,22 +566,42 @@ def _provision_with_fallback(session_name: str, v: dict) -> tuple[str | None, li
     return None, history
 
 
-def _build_colab_launch_py(v: dict, s: str, remote: str, track_name: str, hf_token: str | None, drive_ok: bool = True) -> str:
+def _mint_headless_drive_token() -> str | None:
+    """Mint a short-lived Google Drive OAuth2 access token from ADC if Drive scope is present (zero popups)."""
+    try:
+        import google.auth
+        from google.auth.transport.requests import Request
+        creds, _ = google.auth.default()
+        creds.refresh(Request())
+        import urllib.request
+        with urllib.request.urlopen(f"https://oauth2.googleapis.com/tokeninfo?access_token={creds.token}", timeout=8) as r:
+            info = json.loads(r.read())
+        if "drive" in (info.get("scope") or ""):
+            return creds.token
+    except Exception:
+        pass
+    return None
+
+
+def _build_colab_launch_py(v: dict, s: str, remote: str, track_name: str, hf_token: str | None, drive_ok: bool = True, drive_token: str | None = None) -> str:
     drive_ckpt = f"/content/drive/MyDrive/BlueLodge/checkpoints/{v['name']}/{track_name}" if (v["colab"]["drive_checkpoints"] and drive_ok) else f"{remote}/checkpoints"
     export_gguf = f"{remote}/output/adapter.gguf" if v["colab"]["export_gguf_on_colab"] else ""
     unsloth_pip = "unsloth " if v["hyper"].get("use_unsloth") else ""
     hf_env = f"export HF_TOKEN={shlex.quote(hf_token)}; " if hf_token else ""
+    drv_env = f"export GOOGLE_DRIVE_TOKEN={shlex.quote(drive_token)}; " if drive_token else ""
+    mirror_folder = f"BlueLodge/training/{v['name']}/{track_name}"
+    mirror_flag = f"--drive-mirror-folder {shlex.quote(mirror_folder)}" if drive_token else ""
     export_flag = f"--export-gguf {shlex.quote(export_gguf)}" if export_gguf else ""
     return (
         "import subprocess, os\n"
         f"os.makedirs({remote!r}, exist_ok=True)\n"
         f"subprocess.run(['tar','-xzf','/content/{s}.tar.gz','-C',{remote!r}], check=True)\n"
         f"os.makedirs({drive_ckpt!r}, exist_ok=True)\n"
-        f"cmd = ({hf_env!r}\n"
+        f"cmd = ({(hf_env + drv_env)!r}\n"
         f"       'pip install -q {unsloth_pip}\"torch>=2.3\" \"transformers>=4.45\" \"peft>=0.12\" \"trl>=0.11\" '\n"
         "       '\"datasets>=2.20\" accelerate bitsandbytes gguf > /content/pip.log 2>&1; '\n"
         f"       'cd {remote} && nohup python train_lora.py --config config.json '\n"
-        f"       '--checkpoint-dir {shlex.quote(drive_ckpt)} --resume-from-checkpoint latest {export_flag} > train.log 2>&1; '\n"
+        f"       '--checkpoint-dir {shlex.quote(drive_ckpt)} --resume-from-checkpoint latest {export_flag} {mirror_flag} > train.log 2>&1; '\n"
         f"       'rc=$?; echo $rc > exit_code; '\n"
         f"       'tar -czf /content/{s}_adapter.tar.gz -C output .')\n"
         "subprocess.Popen(['bash', '-c', cmd])\nprint('DISPATCHED')\n"
@@ -664,16 +684,17 @@ def _launch_single_colab_track(v: dict, rd: str, tp: dict, hf_token: str | None,
                 tf.add(stage, arcname=".")
             shutil.rmtree(stage, ignore_errors=True)
 
-    # Mount Google Drive for 1h-timeout checkpoint resilience (non-fatal fallback to local checkpoints)
+    # Avoid interactive Colab drivemount popups by default; prefer headless ADC Drive REST v3 mirroring
     drive_ok = False
-    if v["colab"]["drive_checkpoints"]:
+    drive_token = _mint_headless_drive_token() if v["colab"]["drive_checkpoints"] else None
+    if v["colab"]["drive_checkpoints"] and v["colab"].get("interactive_drivemount", False):
         rc_d, out_d, err_d = _colab(["drivemount", "-s", s, "/content/drive"], auth=auth, timeout=60)
         drive_ok = (rc_d == 0)
         if not drive_ok:
             tp["drive_mount_warning"] = (err_d or out_d or "drivemount failed").strip()[-200:]
-            # Unstick remote Jupyter kernel if drive.mount stalled awaiting interactive FUSE consent
             _colab(["restart-kernel", "-s", s], auth=auth, timeout=45)
     tp["drive_mounted"] = drive_ok
+    tp["drive_rest_mirror"] = bool(drive_token)
 
     # Upload dataset/code bundle (+ optional local base weights)
     rc, out, err = _colab(["upload", "-s", s, tp["bundle"], f"/content/{s}.tar.gz"], auth=auth, timeout=600)
@@ -693,7 +714,7 @@ def _launch_single_colab_track(v: dict, rd: str, tp: dict, hf_token: str | None,
         if rc_b == 0:
             _colab(["exec", "-s", s], auth=auth, stdin="import subprocess; subprocess.run(['tar','-xzf','/content/base_model.tar.gz','-C','/content'], check=True)\n", timeout=300)
 
-    launch_py = _build_colab_launch_py(v, s, tp["remote_dir"], tp["track"], hf_token, drive_ok=drive_ok)
+    launch_py = _build_colab_launch_py(v, s, tp["remote_dir"], tp["track"], hf_token, drive_ok=drive_ok, drive_token=drive_token)
     rc, out, err = _colab(["exec", "-s", s], auth=auth, stdin=launch_py, timeout=180)
     if rc != 0 or "DISPATCHED" not in out:
         tp["error"] = f"launch: {(err or out).strip()[-250:]}"
@@ -806,6 +827,140 @@ def collect_colab(name):
         with open(os.path.join(rd, "state"), "w") as fh:
             fh.write("failed\n")
     return res
+
+
+STEP_RX = re.compile(r"(\d+)%\|[^|]*\|\s*(\d+)/(\d+)\s*\[([^<\]]+)<([^,\]]+),\s*([^\]]+)\]")
+
+
+def _parse_log_progress(txt: str) -> dict:
+    prog = {"step": None, "total_steps": None, "pct": None, "elapsed": None, "eta": None, "speed": None, "loss": None, "eval_loss": None}
+    if not txt:
+        return prog
+    ms = STEP_RX.findall(txt)
+    if ms:
+        pct, cur, tot, elap, eta, spd = ms[-1]
+        prog.update({
+            "pct": int(pct), "step": int(cur), "total_steps": int(tot),
+            "elapsed": elap.strip(), "eta": eta.strip(), "speed": spd.strip(),
+        })
+    lm = LOSS_RX.findall(txt)
+    if lm:
+        try:
+            prog["loss"] = round(float(lm[-1][0]), 4)
+        except ValueError:
+            pass
+    em = EVAL_RX.findall(txt)
+    if em:
+        try:
+            prog["eval_loss"] = round(float(em[-1]), 4)
+        except ValueError:
+            pass
+    return prog
+
+
+def stream_logs(name: str, track: str | None = None, live: bool = True, lines: int = 80) -> dict:
+    """Fetch live or cached training logs + GPU telemetry (works for both Colab and local runs)."""
+    rd = run_dir(name)
+    meta = _read_json(os.path.join(rd, "run.json"), {})
+    if not meta:
+        raise SpecError(f"run '{name}' not found")
+    backend = meta.get("backend", "local")
+    tracks_meta = meta.get("plan") or [{"track": t["name"]} for t in (meta.get("spec") or {}).get("tracks", [])]
+    track_names = [t.get("track") for t in tracks_meta if t.get("track")]
+    if not track_names:
+        raise SpecError(f"run '{name}' has no tracks")
+    sel_name = track if (track and track in track_names) else track_names[0]
+    tp = next((t for t in tracks_meta if t.get("track") == sel_name), {"track": sel_name})
+    td = os.path.join(rd, "tracks", sel_name)
+    os.makedirs(td, exist_ok=True)
+    cached_log = os.path.join(td, "train.log")
+
+    gpu_info = None
+    exit_code = "unknown"
+    log_text = ""
+    source = "cached_file"
+    live_err = None
+
+    if backend == "colab" and live and tp.get("session"):
+        auth = (meta.get("spec") or {}).get("colab", {}).get("auth", "adc")
+        s = tp["session"]
+        remote = tp.get("remote_dir") or f"/content/{s}"
+        probe = (
+            "import os, json, subprocess\n"
+            "gpu = None\n"
+            "try:\n"
+            "    raw = subprocess.getoutput('nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits').strip().splitlines()[0]\n"
+            "    p = [x.strip() for x in raw.split(',')]\n"
+            "    if len(p) >= 4: gpu = {'name': p[0], 'used_mb': int(p[1]), 'total_mb': int(p[2]), 'util_pct': int(p[3])}\n"
+            "except Exception: pass\n"
+            f"ec_p = {remote + '/exit_code'!r}\n"
+            "ec = open(ec_p).read().strip() if os.path.exists(ec_p) else 'running'\n"
+            f"lg_p = {remote + '/train.log'!r}\n"
+            "tail = ''\n"
+            "if os.path.exists(lg_p): tail = open(lg_p, errors='ignore').read()[-16000:]\n"
+            "elif os.path.exists('/content/pip.log'): tail = '[pip install]\\n' + open('/content/pip.log', errors='ignore').read()[-4000:]\n"
+            "print('BL_LOG_JSON::' + json.dumps({'gpu': gpu, 'exit_code': ec, 'tail': tail}))\n"
+        )
+        rc, out, err = _colab(["exec", "-s", s, "--timeout", "25"], auth=auth, stdin=probe, timeout=40)
+        if rc == 0 and "BL_LOG_JSON::" in out:
+            try:
+                payload = json.loads(out.split("BL_LOG_JSON::", 1)[1].strip().splitlines()[0])
+                gpu_info = payload.get("gpu")
+                exit_code = payload.get("exit_code", "running")
+                log_text = payload.get("tail", "")
+                source = "colab_live"
+                if log_text:
+                    with open(cached_log, "w", encoding="utf-8") as fh:
+                        fh.write(log_text)
+            except (ValueError, IndexError) as e:
+                live_err = f"parse error: {e}"
+        else:
+            live_err = (err or out or "colab session unreachable").strip()[-200:]
+
+    if not log_text and os.path.isfile(cached_log):
+        try:
+            log_text = open(cached_log, encoding="utf-8", errors="ignore").read()[-16000:]
+            source = "local_file" if backend == "local" else "cached_file"
+        except OSError:
+            pass
+
+    if backend == "local":
+        ec_p = os.path.join(td, "exit_code")
+        exit_code = open(ec_p).read().strip() if os.path.isfile(ec_p) else track_status(td).get("state", "unknown")
+        if live and shutil.which("nvidia-smi"):
+            try:
+                raw = subprocess.check_output(
+                    ["nvidia-smi", "--query-gpu=name,memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"],
+                    text=True, timeout=5,
+                ).strip().splitlines()[0]
+                p = [x.strip() for x in raw.split(",")]
+                if len(p) >= 4:
+                    gpu_info = {"name": p[0], "used_mb": int(p[1]), "total_mb": int(p[2]), "util_pct": int(p[3])}
+            except Exception:
+                pass
+
+    cleaned_lines = []
+    for raw_line in log_text.splitlines():
+        seg = raw_line.split("\r")[-1]
+        if seg.strip():
+            cleaned_lines.append(seg)
+    tail_lines = cleaned_lines[-max(10, min(300, int(lines))):]
+    return {
+        "status": "ok",
+        "run": name,
+        "backend": backend,
+        "track": sel_name,
+        "tracks": track_names,
+        "session": tp.get("session"),
+        "selected_gpu": tp.get("selected_gpu"),
+        "exit_code": exit_code,
+        "gpu": gpu_info,
+        "progress": _parse_log_progress(log_text),
+        "log_tail": "\n".join(tail_lines),
+        "source": source,
+        "live_error": live_err,
+        "ts": dt.datetime.now().isoformat(timespec="seconds"),
+    }
 
 
 # ── Status, Merge (SVD-32 Retention Lineage), Tier B Gate & Live Hot-Swap ──────
@@ -1171,6 +1326,11 @@ def main(argv=None):
             p.add_argument("--force", action="store_true")
     for n in ("status", "cancel", "merge", "collect", "resume"):
         sub.add_parser(n).add_argument("name")
+    pl = sub.add_parser("logs")
+    pl.add_argument("name")
+    pl.add_argument("--track", default=None)
+    pl.add_argument("--live", action="store_true")
+    pl.add_argument("--lines", type=int, default=80)
     pa = sub.add_parser("approve")
     pa.add_argument("name")
     pa.add_argument("--approver", default="operator")
@@ -1243,6 +1403,8 @@ def main(argv=None):
             res = merge(a.name)
         elif a.cmd == "resume":
             res = resume_colab(a.name)
+        elif a.cmd == "logs":
+            res = stream_logs(a.name, track=a.track, live=a.live, lines=a.lines)
         else:
             res = collect_colab(a.name)
     except (SpecError, ValueError) as e:

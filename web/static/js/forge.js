@@ -41,8 +41,55 @@
     lastConfigPath: null,
     h2hResult: null,
     armedLaunch: false,
+    streamRun: null,
+    streamTrack: null,
+    streamData: null,
+    streamAuto: true,
+    streamTimer: null,
+    streamBusy: false,
     consoleText: 'Ready. Inspect Colab/ADC prerequisites, configure Sleep-Cycle policy, or launch a playbook.',
   };
+
+  function stopStreamTimer() {
+    if (state.streamTimer) {
+      clearInterval(state.streamTimer);
+      state.streamTimer = null;
+    }
+  }
+
+  async function fetchStreamLogs(runName, trackName) {
+    if (!runName || state.streamBusy) return;
+    state.streamBusy = true;
+    try {
+      const qs = new URLSearchParams({ live: '1', lines: '100' });
+      if (trackName) qs.set('track', trackName);
+      const { data } = await apiJson(`/api/training/runs/${encodeURIComponent(runName)}/logs?${qs.toString()}`);
+      if (state.streamRun === runName) {
+        state.streamData = data;
+        if (!state.streamTrack && data && data.track) state.streamTrack = data.track;
+        renderForge();
+        const pre = document.getElementById('forgeLiveStreamPre');
+        if (pre) pre.scrollTop = pre.scrollHeight;
+      }
+    } finally {
+      state.streamBusy = false;
+    }
+  }
+
+  function openLiveStream(runName, trackName) {
+    stopStreamTimer();
+    state.streamRun = runName;
+    state.streamTrack = trackName || null;
+    state.streamData = { status: 'loading', run: runName, track: trackName || '…', log_tail: 'Connecting to training runtime (Colab / local GPU)...' };
+    state.streamAuto = true;
+    renderForge();
+    fetchStreamLogs(runName, trackName);
+    state.streamTimer = setInterval(() => {
+      if (state.streamAuto && state.streamRun) {
+        fetchStreamLogs(state.streamRun, state.streamTrack);
+      }
+    }, 12000);
+  }
 
   function setConsole(msg) {
     state.consoleText = typeof msg === 'string' ? msg : JSON.stringify(msg, null, 2);
@@ -280,6 +327,13 @@
           actions.appendChild(actBtn('MERGE SVD-32', 'primary', 'merge'));
         }
         actions.appendChild(el('button', {
+          type: 'button',
+          className: 'guild-btn primary',
+          style: 'padding:3px 7px;font-size:10px;',
+          text: 'LIVE LOGS',
+          on: { click: () => openLiveStream(r.name, null) },
+        }));
+        actions.appendChild(el('button', {
           type: 'button', className: 'guild-btn', style: 'padding:3px 7px;font-size:10px;', text: 'INSPECT',
           on: { click: () => setConsole(r) },
         }));
@@ -302,16 +356,83 @@
     }
     table.appendChild(tbody);
 
-    return el('div', { className: 'forge-card' }, [
+    const wrapper = el('div', { style: 'display:flex;flex-direction:column;gap:12px;' });
+    wrapper.appendChild(el('div', { className: 'forge-card' }, [
       el('div', { className: 'forge-card-head' }, [
         el('div', {}, [
           el('div', { className: 'guild-card-title', text: 'TIER B APPROVAL QUEUE & TRAINING RUN HISTORY' }),
-          el('div', { className: 'guild-card-meta', text: 'Accept promoted SVD-32 candidates to flip active.gguf, or Deny to keep your current adapter untouched.' }),
+          el('div', { className: 'guild-card-meta', text: 'Accept promoted SVD-32 candidates to flip active.gguf, Deny to keep current adapter, or click LIVE LOGS to stream real-time Colab/local GPU progress.' }),
         ]),
         el('button', { type: 'button', className: 'guild-btn', text: 'REFRESH RUNS', on: { click: refreshAll } }),
       ]),
       el('div', { style: 'overflow-x:auto;' }, [table]),
-    ]);
+    ]));
+
+    if (state.streamRun) {
+      const sd = state.streamData || {};
+      const gpu = sd.gpu;
+      const prog = sd.progress || {};
+      const gpuLabel = gpu
+        ? `${gpu.name} · ${(gpu.used_mb / 1024).toFixed(1)} / ${(gpu.total_mb / 1024).toFixed(1)} GiB · ${gpu.util_pct}% GPU`
+        : (sd.selected_gpu ? `${sd.selected_gpu} (probing telemetry...)` : 'GPU telemetry unavailable');
+      const pct = prog.pct != null ? prog.pct : 0;
+      const progText = prog.step != null
+        ? `Step ${prog.step} / ${prog.total_steps} (${pct}%) · ${prog.speed || '—'} · ETA ${prog.eta || '—'}${prog.loss != null ? ` · Loss ${prog.loss}` : ''}`
+        : `Exit/State: ${sd.exit_code || 'connecting'} · Source: ${sd.source || 'live'}${sd.ts ? ` · Updated ${sd.ts}` : ''}`;
+
+      const trackPills = el('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;' }, (sd.tracks || []).map((tn) => el('button', {
+        type: 'button',
+        className: 'guild-btn ' + (sd.track === tn ? 'primary' : ''),
+        style: 'padding:3px 9px;font-size:11px;',
+        text: tn,
+        on: {
+          click: () => {
+            state.streamTrack = tn;
+            fetchStreamLogs(state.streamRun, tn);
+          },
+        },
+      })));
+
+      const barFill = el('div', {
+        style: `height:100%;width:${Math.max(0, Math.min(100, pct))}%;background:linear-gradient(90deg,#38bdf8,#34d399);transition:width 0.3s;`,
+      });
+
+      wrapper.appendChild(el('div', { className: 'forge-card', style: 'border-color:rgba(56,189,248,0.45);' }, [
+        el('div', { className: 'forge-card-head' }, [
+          el('div', {}, [
+            el('div', { className: 'guild-card-title', text: `LIVE TRAINING STREAM // ${state.streamRun} (${sd.track || state.streamTrack || 'default'})` }),
+            el('div', { className: 'guild-card-meta', text: `${gpuLabel}  |  ${progText}` }),
+          ]),
+          el('div', { style: 'display:flex;gap:6px;align-items:center;' }, [
+            el('button', {
+              type: 'button',
+              className: 'guild-btn ' + (state.streamAuto ? 'primary' : ''),
+              style: 'padding:4px 9px;font-size:11px;',
+              text: state.streamAuto ? 'AUTO-STREAM: ON (12s)' : 'AUTO-STREAM: PAUSED',
+              on: { click: () => { state.streamAuto = !state.streamAuto; renderForge(); } },
+            }),
+            el('button', {
+              type: 'button', className: 'guild-btn', style: 'padding:4px 9px;font-size:11px;', text: 'PULL NOW',
+              on: { click: () => fetchStreamLogs(state.streamRun, state.streamTrack) },
+            }),
+            el('button', {
+              type: 'button', className: 'guild-btn danger', style: 'padding:4px 9px;font-size:11px;', text: 'CLOSE',
+              on: { click: () => { stopStreamTimer(); state.streamRun = null; state.streamData = null; renderForge(); } },
+            }),
+          ]),
+        ]),
+        trackPills,
+        el('div', { style: 'height:8px;width:100%;background:rgba(15,23,42,0.85);border-radius:4px;overflow:hidden;border:1px solid rgba(148,163,184,0.2);' }, [barFill]),
+        sd.live_error ? el('div', { style: 'color:#fbbf24;font-size:11px;font-family:var(--font-mono);', text: `Notice: ${sd.live_error}` }) : null,
+        el('pre', {
+          id: 'forgeLiveStreamPre',
+          className: 'eco-console',
+          style: 'max-height:300px;overflow:auto;background:#020617;color:#e2e8f0;font-size:11px;line-height:1.45;white-space:pre-wrap;',
+          text: sd.log_tail || '(no log lines emitted yet)',
+        }),
+      ]));
+    }
+    return wrapper;
   }
 
   function renderLaunchTab(d) {
@@ -686,6 +807,7 @@
   }
 
   function closeForgeModal() {
+    stopStreamTimer();
     const m = document.getElementById('trainingForgeModal');
     if (!m) return;
     m.classList.remove('open');
