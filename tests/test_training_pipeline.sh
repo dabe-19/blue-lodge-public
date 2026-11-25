@@ -154,6 +154,77 @@ else
     fail "Invalid JSON found in playbooks, sleep-cycle loop, or native_tools.json"
 fi
 
+# Test 9: train_lora.py headless Drive OAuth2 refresh + checkpoint sync/restore & runs.py bundle refresh
+DRV_OUT=$("$PY" -B -c "
+import io, json, os, sys, tarfile, tempfile, time
+sys.path.insert(0, '$LODGE_DIR/scripts/training/kit')
+sys.path.insert(0, '$LODGE_DIR/scripts/training')
+import train_lora as tl, runs
+
+with tempfile.TemporaryDirectory() as td:
+    # 1. Verify _DriveClient loads auth file & refreshes expired access tokens
+    af = os.path.join(td, 'auth.json')
+    json.dump({'access_token': 'old', 'expires_at': time.time() - 10, 'refresh_token': 'rt', 'client_id': 'cid', 'client_secret': 'cs', 'quota_project_id': 'qp1'}, open(af, 'w'))
+    os.environ['GOOGLE_DRIVE_AUTH_FILE'] = af
+    dc = tl._DriveClient()
+    assert dc.configured and dc.can_refresh and dc.quota_project == 'qp1'
+    refreshed = {'n': 0}
+    def fake_refresh():
+        refreshed['n'] += 1
+        dc.access_token = 'fresh_tok'
+        dc.expires_at = time.time() + 3600
+        return dc.access_token
+    dc.refresh_access_token = fake_refresh
+    assert dc.get_token() == 'fresh_tok' and refreshed['n'] == 1
+    assert dc.get_token() == 'fresh_tok' and refreshed['n'] == 1  # cached until near expiry
+    assert dc.get_token(force_refresh=True) == 'fresh_tok' and refreshed['n'] == 2
+
+    # 2. Verify checkpoint sync + restore round-trip via mocked Drive storage
+    mem_store = {}
+    dc.ensure_folder = lambda p: 'fid_ckpts'
+    def fake_upload(local_path, folder_id, remote_name, overwrite=True):
+        mem_store[remote_name] = open(local_path, 'rb').read()
+        return True
+    def fake_list(folder_id):
+        return [{'id': k, 'name': k} for k in mem_store]
+    def fake_dl(fid, dest):
+        open(dest, 'wb').write(mem_store[fid])
+        return True
+    dc.upload_file = fake_upload
+    dc.list_files = fake_list
+    dc.download_file = fake_dl
+    dc.delete_file = lambda fid: bool(mem_store.pop(fid, None))
+
+    src_ckpt = os.path.join(td, 'src', 'checkpoint-80')
+    os.makedirs(src_ckpt)
+    open(os.path.join(src_ckpt, 'trainer_state.json'), 'w').write('{\"global_step\":80}')
+    assert tl._sync_checkpoint_to_drive(dc, 'BlueLodge/training/r1/t1', src_ckpt, keep=2)
+    assert 'checkpoint-80.tar.gz' in mem_store
+
+    dst_dir = os.path.join(td, 'dst')
+    restored = tl._restore_latest_drive_checkpoint(dc, 'BlueLodge/training/r1/t1', dst_dir)
+    assert restored and os.path.isfile(os.path.join(restored, 'trainer_state.json'))
+
+    # 3. Verify _refresh_bundle_kit updates train_lora.py inside an older bundle.tar.gz
+    old_bundle = os.path.join(td, 'bundle.tar.gz')
+    with tarfile.open(old_bundle, 'w:gz') as tf:
+        b = b'# stale old kit\n'
+        ti = tarfile.TarInfo('train_lora.py'); ti.size = len(b)
+        tf.addfile(ti, io.BytesIO(b))
+    runs._refresh_bundle_kit(old_bundle)
+    with tarfile.open(old_bundle, 'r:gz') as tf:
+        mem = next(m for m in tf.getmembers() if m.name.endswith('train_lora.py'))
+        txt = tf.extractfile(mem).read().decode()
+    assert '--drive-checkpoint-sync' in txt and '_DriveClient' in txt
+    del os.environ['GOOGLE_DRIVE_AUTH_FILE']
+print('OK')
+" | tail -n 1)
+if [ "$DRV_OUT" = "OK" ]; then
+    pass "Headless Drive OAuth2 refresh, checkpoint sync/restore round-trip, and bundle kit auto-refresh work"
+else
+    fail "Headless Drive checkpoint sync / token refresh test failed: $DRV_OUT"
+fi
+
 echo "──────────────────────────────────────"
 echo "  ${PASS} passed, ${FAIL} failed ($((PASS + FAIL)) total)"
 [ "$FAIL" -eq 0 ]

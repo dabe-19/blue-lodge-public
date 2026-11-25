@@ -17,7 +17,10 @@ import signal
 import subprocess
 import sys
 import tarfile
+import tempfile
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -301,6 +304,8 @@ def validate(spec):
             "retry_attempts": max(1, min(6, int(colab_raw.get("retry_attempts", 3)))),
             "retry_backoff_sec": max(2, min(60, int(colab_raw.get("retry_backoff_sec", 8)))),
             "drive_checkpoints": bool(colab_raw.get("drive_checkpoints", True)),
+            "drive_checkpoint_sync": bool(colab_raw.get("drive_checkpoint_sync", colab_raw.get("drive_checkpoints", True))),
+            "drive_checkpoint_keep": max(1, min(5, int(colab_raw.get("drive_checkpoint_keep", 2)))),
             "export_gguf_on_colab": bool(colab_raw.get("export_gguf_on_colab", True)),
         },
         "local": {
@@ -566,50 +571,85 @@ def _provision_with_fallback(session_name: str, v: dict) -> tuple[str | None, li
     return None, history
 
 
-def _mint_headless_drive_token() -> tuple[str | None, str | None]:
-    """Mint a short-lived Google Drive OAuth2 access token + quota_project_id from ADC if Drive scope is present (zero popups)."""
+def _mint_headless_drive_auth() -> dict | None:
+    """Mint a headless Google Drive REST v3 auth bundle with OAuth2 refresh credentials + quota_project_id (zero popups)."""
     try:
         import google.auth
         from google.auth.transport.requests import Request
         creds, proj = google.auth.default()
         creds.refresh(Request())
-        qp = getattr(creds, "quota_project_id", None) or proj or ""
-        if not qp:
-            adc_p = os.path.expanduser("~/.config/gcloud/application_default_credentials.json")
-            if os.path.isfile(adc_p):
-                qp = _read_json(adc_p, {}).get("quota_project_id", "")
-        import urllib.request
+        adc_p = os.path.expanduser("~/.config/gcloud/application_default_credentials.json")
+        adc_raw = _read_json(adc_p, {}) if os.path.isfile(adc_p) else {}
+        qp = getattr(creds, "quota_project_id", None) or proj or adc_raw.get("quota_project_id", "") or ""
         with urllib.request.urlopen(f"https://oauth2.googleapis.com/tokeninfo?access_token={creds.token}", timeout=8) as r:
             info = json.loads(r.read())
-        if "drive" in (info.get("scope") or ""):
-            return creds.token, qp or None
+        if "drive" not in (info.get("scope") or ""):
+            return None
+        ttl = int(info.get("expires_in") or 3500)
+        return {
+            "access_token": creds.token,
+            "expires_at": int(time.time()) + max(60, ttl),
+            "refresh_token": adc_raw.get("refresh_token") or getattr(creds, "refresh_token", "") or "",
+            "client_id": adc_raw.get("client_id") or getattr(creds, "client_id", "") or "",
+            "client_secret": adc_raw.get("client_secret") or getattr(creds, "client_secret", "") or "",
+            "quota_project_id": qp,
+        }
     except Exception:
-        pass
-    return None, None
+        return None
 
 
-def _build_colab_launch_py(v: dict, s: str, remote: str, track_name: str, hf_token: str | None, drive_ok: bool = True, drive_token: str | None = None, drive_qp: str | None = None) -> str:
+def _refresh_bundle_kit(bundle_path: str) -> None:
+    """Ensure bundle.tar.gz contains the latest scripts/training/kit/train_lora.py before upload/resume."""
+    if not bundle_path or not os.path.isfile(bundle_path) or not os.path.isfile(KIT):
+        return
+    tmp_dir = tempfile.mkdtemp(prefix="bl_bundle_refresh_")
+    tmp_tar = bundle_path + ".refresh.tmp"
+    try:
+        with tarfile.open(bundle_path, "r:gz") as tf:
+            safe = [
+                m for m in tf.getmembers()
+                if not (m.name.startswith("/") or ".." in m.name.split("/"))
+                and (m.isfile() or m.isdir())
+            ]
+            tf.extractall(tmp_dir, members=safe)  # noqa: S202
+        shutil.copyfile(KIT, os.path.join(tmp_dir, "train_lora.py"))
+        with tarfile.open(tmp_tar, "w:gz") as tf:
+            tf.add(tmp_dir, arcname=".")
+        os.replace(tmp_tar, bundle_path)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        if os.path.exists(tmp_tar):
+            try:
+                os.remove(tmp_tar)
+            except OSError:
+                pass
+
+
+def _build_colab_launch_py(v: dict, s: str, remote: str, track_name: str, hf_token: str | None, drive_ok: bool = True, drive_auth_remote: str | None = None) -> str:
     drive_ckpt = f"/content/drive/MyDrive/BlueLodge/checkpoints/{v['name']}/{track_name}" if (v["colab"]["drive_checkpoints"] and drive_ok) else f"{remote}/checkpoints"
     export_gguf = f"{remote}/output/adapter.gguf" if v["colab"]["export_gguf_on_colab"] else ""
     unsloth_pip = "unsloth " if v["hyper"].get("use_unsloth") else ""
     hf_env = f"export HF_TOKEN={shlex.quote(hf_token)}; " if hf_token else ""
-    drv_env = f"export GOOGLE_DRIVE_TOKEN={shlex.quote(drive_token)}; " if drive_token else ""
-    if drive_token and drive_qp:
-        drv_env += f"export GOOGLE_DRIVE_QUOTA_PROJECT={shlex.quote(drive_qp)}; "
+    drv_env = f"export GOOGLE_DRIVE_AUTH_FILE={shlex.quote(drive_auth_remote)}; " if drive_auth_remote else ""
     mirror_folder = f"BlueLodge/training/{v['name']}/{track_name}"
-    mirror_flag = f"--drive-mirror-folder {shlex.quote(mirror_folder)}" if drive_token else ""
+    mirror_flag = f"--drive-mirror-folder {shlex.quote(mirror_folder)}" if drive_auth_remote else ""
+    ckpt_sync = bool(v["colab"].get("drive_checkpoint_sync", v["colab"].get("drive_checkpoints", True)))
+    ckpt_keep = int(v["colab"].get("drive_checkpoint_keep", 2))
+    ckpt_flag = f"--drive-checkpoint-sync --drive-checkpoint-keep {ckpt_keep}" if (drive_auth_remote and ckpt_sync) else ""
     export_flag = f"--export-gguf {shlex.quote(export_gguf)}" if export_gguf else ""
+    cleanup_auth = f"rm -f {shlex.quote(drive_auth_remote)}; " if drive_auth_remote else ""
     return (
         "import subprocess, os\n"
         f"os.makedirs({remote!r}, exist_ok=True)\n"
         f"subprocess.run(['tar','-xzf','/content/{s}.tar.gz','-C',{remote!r}], check=True)\n"
         f"os.makedirs({drive_ckpt!r}, exist_ok=True)\n"
-        f"cmd = ({(hf_env + drv_env)!r}\n"
+        + (f"if os.path.exists({drive_auth_remote!r}): os.chmod({drive_auth_remote!r}, 0o600)\n" if drive_auth_remote else "")
+        + f"cmd = ({(hf_env + drv_env)!r}\n"
         f"       'pip install -q {unsloth_pip}\"torch>=2.3\" \"transformers>=4.45\" \"peft>=0.12\" \"trl>=0.11\" '\n"
         "       '\"datasets>=2.20\" accelerate bitsandbytes gguf > /content/pip.log 2>&1; '\n"
         f"       'cd {remote} && nohup python train_lora.py --config config.json '\n"
-        f"       '--checkpoint-dir {shlex.quote(drive_ckpt)} --resume-from-checkpoint latest {export_flag} {mirror_flag} > train.log 2>&1; '\n"
-        f"       'rc=$?; echo $rc > exit_code; '\n"
+        f"       '--checkpoint-dir {shlex.quote(drive_ckpt)} --resume-from-checkpoint latest {export_flag} {mirror_flag} {ckpt_flag} > train.log 2>&1; '\n"
+        f"       'rc=$?; echo $rc > exit_code; {cleanup_auth}'\n"
         f"       'tar -czf /content/{s}_adapter.tar.gz -C output .')\n"
         "subprocess.Popen(['bash', '-c', cmd])\nprint('DISPATCHED')\n"
     )
@@ -691,17 +731,39 @@ def _launch_single_colab_track(v: dict, rd: str, tp: dict, hf_token: str | None,
                 tf.add(stage, arcname=".")
             shutil.rmtree(stage, ignore_errors=True)
 
-    # Avoid interactive Colab drivemount popups by default; prefer headless ADC Drive REST v3 mirroring
+    # Always refresh train_lora.py inside bundle.tar.gz so resumes/re-runs never ship an older kit
+    _refresh_bundle_kit(tp["bundle"])
+
+    # Avoid interactive Colab drivemount popups by default; prefer headless ADC Drive REST v3 mirroring + token refresh
     drive_ok = False
-    drive_token, drive_qp = _mint_headless_drive_token() if v["colab"]["drive_checkpoints"] else (None, None)
-    if v["colab"]["drive_checkpoints"] and v["colab"].get("interactive_drivemount", False):
+    drive_auth = _mint_headless_drive_auth() if v["colab"].get("drive_checkpoints", True) else None
+    drive_auth_remote = None
+    if v["colab"].get("drive_checkpoints", True) and v["colab"].get("interactive_drivemount", False):
         rc_d, out_d, err_d = _colab(["drivemount", "-s", s, "/content/drive"], auth=auth, timeout=60)
         drive_ok = (rc_d == 0)
         if not drive_ok:
             tp["drive_mount_warning"] = (err_d or out_d or "drivemount failed").strip()[-200:]
             _colab(["restart-kernel", "-s", s], auth=auth, timeout=45)
     tp["drive_mounted"] = drive_ok
-    tp["drive_rest_mirror"] = bool(drive_token)
+    tp["drive_rest_mirror"] = bool(drive_auth)
+    tp["drive_checkpoint_sync"] = bool(drive_auth and v["colab"].get("drive_checkpoint_sync", True))
+    tp["drive_token_refresh"] = bool(drive_auth and drive_auth.get("refresh_token"))
+
+    if drive_auth:
+        fd, local_auth = tempfile.mkstemp(prefix="bl_drive_auth_", suffix=".json")
+        try:
+            os.chmod(local_auth, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(drive_auth, fh)
+            remote_auth = f"/content/{s}_drive_auth.json"
+            rc_a, _, _ = _colab(["upload", "-s", s, local_auth, remote_auth], auth=auth, timeout=60)
+            if rc_a == 0:
+                drive_auth_remote = remote_auth
+        finally:
+            try:
+                os.remove(local_auth)
+            except OSError:
+                pass
 
     # Upload dataset/code bundle (+ optional local base weights)
     rc, out, err = _colab(["upload", "-s", s, tp["bundle"], f"/content/{s}.tar.gz"], auth=auth, timeout=600)
@@ -721,7 +783,7 @@ def _launch_single_colab_track(v: dict, rd: str, tp: dict, hf_token: str | None,
         if rc_b == 0:
             _colab(["exec", "-s", s], auth=auth, stdin="import subprocess; subprocess.run(['tar','-xzf','/content/base_model.tar.gz','-C','/content'], check=True)\n", timeout=300)
 
-    launch_py = _build_colab_launch_py(v, s, tp["remote_dir"], tp["track"], hf_token, drive_ok=drive_ok, drive_token=drive_token, drive_qp=drive_qp)
+    launch_py = _build_colab_launch_py(v, s, tp["remote_dir"], tp["track"], hf_token, drive_ok=drive_ok, drive_auth_remote=drive_auth_remote)
     rc, out, err = _colab(["exec", "-s", s], auth=auth, stdin=launch_py, timeout=180)
     if rc != 0 or "DISPATCHED" not in out:
         tp["error"] = f"launch: {(err or out).strip()[-250:]}"
@@ -736,6 +798,70 @@ def _launch_single_colab_track(v: dict, rd: str, tp: dict, hf_token: str | None,
     return True
 
 
+def _recover_track_from_drive(run_name: str, track_name: str, td: str) -> bool:
+    """If a Colab VM finished while the host was offline, recover final adapter.gguf + PEFT files from Google Drive."""
+    auth = _mint_headless_drive_auth()
+    if not auth or not auth.get("access_token"):
+        return False
+    hdr = {"Authorization": f"Bearer {auth['access_token']}"}
+    if auth.get("quota_project_id"):
+        hdr["X-Goog-User-Project"] = auth["quota_project_id"]
+
+    parent = "root"
+    for part in ("BlueLodge", "training", run_name, track_name):
+        q = f"name='{part.replace(chr(39), '')}' and mimeType='application/vnd.google-apps.folder' and '{parent}' in parents and trashed=false"
+        url = "https://www.googleapis.com/drive/v3/files?fields=files(id,name)&q=" + urllib.parse.quote(q)
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=15) as r:
+                files = json.loads(r.read()).get("files", [])
+            if not files:
+                return False
+            parent = files[0]["id"]
+        except Exception:
+            return False
+
+    q = f"'{parent}' in parents and mimeType!='application/vnd.google-apps.folder' and trashed=false"
+    url = "https://www.googleapis.com/drive/v3/files?fields=files(id,name,size)&pageSize=50&q=" + urllib.parse.quote(q)
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=15) as r:
+            files = json.loads(r.read()).get("files", [])
+    except Exception:
+        return False
+
+    names = {f.get("name") for f in files}
+    if "adapter.gguf" not in names and "adapter_model.safetensors" not in names:
+        return False
+
+    adapter_dir = os.path.join(td, "output", "adapter")
+    os.makedirs(adapter_dir, exist_ok=True)
+    downloaded = 0
+    for f in files:
+        fn = f.get("name") or ""
+        fid = f.get("id") or ""
+        if not fn or not fid or "/" in fn or ".." in fn:
+            continue
+        if fn == "adapter.gguf":
+            dest = os.path.join(td, "adapter.gguf")
+        elif fn == "train.log":
+            dest = os.path.join(td, "train.log")
+        else:
+            dest = os.path.join(adapter_dir, fn)
+        try:
+            dl_url = f"https://www.googleapis.com/drive/v3/files/{fid}?alt=media"
+            with urllib.request.urlopen(urllib.request.Request(dl_url, headers=hdr), timeout=300) as r:
+                with open(dest, "wb") as out:
+                    shutil.copyfileobj(r, out)
+            downloaded += 1
+        except Exception:
+            continue
+
+    if downloaded > 0 and (os.path.isfile(os.path.join(td, "adapter.gguf")) or os.path.isfile(os.path.join(adapter_dir, "adapter_model.safetensors"))):
+        with open(os.path.join(td, "state"), "w") as fh:
+            fh.write("done\n")
+        return True
+    return False
+
+
 def resume_colab(name: str) -> dict:
     """Re-provision disconnected/timed-out Colab tracks and resume cleanly from Drive checkpoints."""
     rd = run_dir(name)
@@ -746,24 +872,36 @@ def resume_colab(name: str) -> dict:
     auth = v["colab"]["auth"]
     hf_token, _ = cc._read_key_from_files(("HF_TOKEN", "HUGGINGFACE_TOKEN", "HUGGING_FACE_HUB_TOKEN"))
     resumed = {}
+    any_running = False
     for tp in meta.get("plan", []):
         td = os.path.join(rd, "tracks", tp["track"])
         st = track_status(td)["state"]
         if st in ("done",):
             resumed[tp["track"]] = "already_done"
             continue
-        if int(tp.get("resumes", 0)) >= 4:
+        if int(tp.get("resumes", 0)) >= 6:
             resumed[tp["track"]] = "max_resumes_reached"
             continue
         # Check if session is still alive before re-provisioning
         rc, out, _ = _colab(["exec", "-s", tp["session"]], auth=auth, stdin="print('ALIVE')\n", timeout=30)
         if rc == 0 and "ALIVE" in out:
             resumed[tp["track"]] = "still_alive"
+            any_running = True
+            continue
+        # Before re-provisioning, check if the track already finished and mirrored to Drive while host was offline
+        if _recover_track_from_drive(name, tp["track"], td):
+            resumed[tp["track"]] = "recovered_from_drive"
             continue
         _colab(["stop", "-s", tp["session"]], auth=auth, timeout=60)
         tp["resumes"] = int(tp.get("resumes", 0)) + 1
         ok = _launch_single_colab_track(v, rd, tp, hf_token, auth)
+        if ok:
+            any_running = True
         resumed[tp["track"]] = f"resumed_on_{tp.get('selected_gpu')}" if ok else f"resume_failed: {tp.get('error')}"
+    if any_running:
+        meta["state"] = "running"
+        with open(os.path.join(rd, "state"), "w") as fh:
+            fh.write("running\n")
     _write_json(os.path.join(rd, "run.json"), meta)
     return {"name": name, "resumed": resumed}
 
@@ -791,7 +929,10 @@ def collect_colab(name):
             "if os.path.exists(lg): print('TAIL::' + open(lg, errors='ignore').read()[-1200:])\n"
         ), timeout=120)
         if rc != 0:
-            res[tp["track"]] = "session_disconnected (run 'runs.py resume' to continue from Drive checkpoint)"
+            if _recover_track_from_drive(name, tp["track"], td):
+                res[tp["track"]] = "recovered_from_drive"
+            else:
+                res[tp["track"]] = "session_disconnected (run 'runs.py resume' to continue from Drive checkpoint)"
             continue
         if "TAIL::" in out:
             tail_txt = out.split("TAIL::", 1)[1]

@@ -16,8 +16,13 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -152,88 +157,404 @@ def _export_adapter_gguf(adapter_dir: str, base_model: str, out_gguf: str, base_
     return False
 
 
-def _drive_headers(token: str) -> dict:
-    hdr = {"Authorization": f"Bearer {token}"}
-    qp = os.environ.get("GOOGLE_DRIVE_QUOTA_PROJECT", "").strip()
-    if qp:
-        hdr["X-Goog-User-Project"] = qp
-    return hdr
+class _DriveClient:
+    """Headless Google Drive REST v3 client with automatic OAuth2 access-token refresh (zero popups)."""
 
+    def __init__(self):
+        self.access_token = ""
+        self.expires_at = 0.0
+        self.refresh_token = ""
+        self.client_id = ""
+        self.client_secret = ""
+        self.quota_project = ""
+        self._folder_cache: dict[str, str] = {}
 
-def _drive_ensure_folder(token: str, path: str) -> str | None:
-    """Create nested Google Drive folders (e.g. 'BlueLodge/training/run/track') via REST API v3 with zero popups."""
-    parent = "root"
-    hdr = _drive_headers(token)
-    for part in [p for p in path.strip("/").split("/") if p]:
-        q = f"name='{part.replace(chr(39), '')}' and mimeType='application/vnd.google-apps.folder' and '{parent}' in parents and trashed=false"
-        url = "https://www.googleapis.com/drive/v3/files?fields=files(id,name)&q=" + urllib.parse.quote(q)
+        auth_file = os.environ.get("GOOGLE_DRIVE_AUTH_FILE", "").strip()
+        if auth_file and os.path.isfile(auth_file):
+            try:
+                data = json.load(open(auth_file, encoding="utf-8"))
+                self.access_token = str(data.get("access_token") or "").strip()
+                self.expires_at = float(data.get("expires_at") or 0.0)
+                self.refresh_token = str(data.get("refresh_token") or "").strip()
+                self.client_id = str(data.get("client_id") or "").strip()
+                self.client_secret = str(data.get("client_secret") or "").strip()
+                self.quota_project = str(data.get("quota_project_id") or data.get("quota_project") or "").strip()
+            except Exception as e:
+                print(f"[!] Could not read GOOGLE_DRIVE_AUTH_FILE: {e}", file=sys.stderr)
+
+        # Env fallbacks / overrides
+        self.access_token = os.environ.get("GOOGLE_DRIVE_TOKEN", "").strip() or self.access_token
+        self.refresh_token = os.environ.get("GOOGLE_DRIVE_REFRESH_TOKEN", "").strip() or self.refresh_token
+        self.client_id = os.environ.get("GOOGLE_DRIVE_CLIENT_ID", "").strip() or self.client_id
+        self.client_secret = os.environ.get("GOOGLE_DRIVE_CLIENT_SECRET", "").strip() or self.client_secret
+        self.quota_project = os.environ.get("GOOGLE_DRIVE_QUOTA_PROJECT", "").strip() or self.quota_project
+
+    @property
+    def can_refresh(self) -> bool:
+        return bool(self.refresh_token and self.client_id and self.client_secret)
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.access_token or self.can_refresh)
+
+    def refresh_access_token(self) -> str:
+        if not self.can_refresh:
+            return self.access_token
+        body = urllib.parse.urlencode({
+            "grant_type": "refresh_token",
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "refresh_token": self.refresh_token,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://oauth2.googleapis.com/token",
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=20) as r:
+            tok_data = json.loads(r.read())
+        new_tok = str(tok_data.get("access_token") or "").strip()
+        if not new_tok:
+            raise RuntimeError("OAuth2 token refresh returned empty access_token")
+        ttl = max(60, int(tok_data.get("expires_in", 3600)))
+        self.access_token = new_tok
+        self.expires_at = time.time() + ttl
+        print(f"[✓] Refreshed Google Drive OAuth2 access token (valid ~{ttl // 60}m)")
+        return self.access_token
+
+    def get_token(self, force_refresh: bool = False) -> str:
+        if not self.configured:
+            return ""
+        needs_refresh = (
+            force_refresh
+            or not self.access_token
+            or (self.can_refresh and self.expires_at > 0 and time.time() >= self.expires_at - 300)
+        )
+        if needs_refresh and self.can_refresh:
+            try:
+                return self.refresh_access_token()
+            except Exception as e:
+                print(f"[!] Drive OAuth2 token refresh failed: {e}", file=sys.stderr)
+        return self.access_token
+
+    def _headers(self, force_refresh: bool = False) -> dict:
+        tok = self.get_token(force_refresh=force_refresh)
+        hdr = {"Authorization": f"Bearer {tok}"}
+        if self.quota_project:
+            hdr["X-Goog-User-Project"] = self.quota_project
+        return hdr
+
+    def _open_with_retry(self, build_req, timeout: int = 30):
         try:
-            req = urllib.request.Request(url, headers=hdr)
-            with urllib.request.urlopen(req, timeout=20) as r:
-                files = json.loads(r.read()).get("files", [])
-            if files:
-                parent = files[0]["id"]
-                continue
-            meta = json.dumps({"name": part, "mimeType": "application/vnd.google-apps.folder", "parents": [parent]}).encode()
-            creq = urllib.request.Request(
-                "https://www.googleapis.com/drive/v3/files?fields=id",
-                data=meta, headers={**hdr, "Content-Type": "application/json"}, method="POST",
-            )
-            with urllib.request.urlopen(creq, timeout=20) as r:
-                parent = json.loads(r.read())["id"]
-        except Exception as e:
-            print(f"[!] Drive folder ensure failed for '{part}': {e}", file=sys.stderr)
+            return urllib.request.urlopen(build_req(False), timeout=timeout)
+        except urllib.error.HTTPError as e:
+            if e.code == 401 and self.can_refresh:
+                return urllib.request.urlopen(build_req(True), timeout=timeout)
+            raise
+
+    def ensure_folder(self, path: str) -> str | None:
+        """Create/resolve nested Google Drive folders (e.g. 'BlueLodge/training/run/track') via REST v3."""
+        norm = "/".join(p for p in path.strip("/").split("/") if p)
+        if not norm or not self.configured:
             return None
-    return parent
+        if norm in self._folder_cache:
+            return self._folder_cache[norm]
+        parent = "root"
+        built = []
+        for part in norm.split("/"):
+            built.append(part)
+            key = "/".join(built)
+            if key in self._folder_cache:
+                parent = self._folder_cache[key]
+                continue
+            safe_part = part.replace("'", "")
+            q = f"name='{safe_part}' and mimeType='application/vnd.google-apps.folder' and '{parent}' in parents and trashed=false"
+            url = "https://www.googleapis.com/drive/v3/files?fields=files(id,name)&q=" + urllib.parse.quote(q)
+            try:
+                with self._open_with_retry(lambda fr: urllib.request.Request(url, headers=self._headers(fr)), timeout=20) as r:
+                    files = json.loads(r.read()).get("files", [])
+                if files:
+                    parent = files[0]["id"]
+                    self._folder_cache[key] = parent
+                    continue
+                meta = json.dumps({"name": part, "mimeType": "application/vnd.google-apps.folder", "parents": [parent]}).encode("utf-8")
+                with self._open_with_retry(
+                    lambda fr: urllib.request.Request(
+                        "https://www.googleapis.com/drive/v3/files?fields=id",
+                        data=meta,
+                        headers={**self._headers(fr), "Content-Type": "application/json"},
+                        method="POST",
+                    ),
+                    timeout=20,
+                ) as r:
+                    parent = json.loads(r.read())["id"]
+                    self._folder_cache[key] = parent
+            except Exception as e:
+                print(f"[!] Drive folder ensure failed for '{part}': {e}", file=sys.stderr)
+                return None
+        return parent
+
+    def list_files(self, folder_id: str) -> list[dict]:
+        q = f"'{folder_id}' in parents and trashed=false"
+        url = (
+            "https://www.googleapis.com/drive/v3/files?"
+            "fields=files(id,name,size,modifiedTime,mimeType)&pageSize=100&orderBy=modifiedTime%20desc&q="
+            + urllib.parse.quote(q)
+        )
+        try:
+            with self._open_with_retry(lambda fr: urllib.request.Request(url, headers=self._headers(fr)), timeout=20) as r:
+                return json.loads(r.read()).get("files", [])
+        except Exception as e:
+            print(f"[!] Drive list_files failed: {e}", file=sys.stderr)
+            return []
+
+    def find_file_id(self, folder_id: str, remote_name: str) -> str | None:
+        safe = remote_name.replace("'", "")
+        q = f"name='{safe}' and '{folder_id}' in parents and trashed=false"
+        url = "https://www.googleapis.com/drive/v3/files?fields=files(id,name)&pageSize=5&q=" + urllib.parse.quote(q)
+        try:
+            with self._open_with_retry(lambda fr: urllib.request.Request(url, headers=self._headers(fr)), timeout=20) as r:
+                files = json.loads(r.read()).get("files", [])
+            return files[0]["id"] if files else None
+        except Exception:
+            return None
+
+    def upload_file(self, local_path: str, folder_id: str, remote_name: str, overwrite: bool = True) -> bool:
+        """Stream-upload a file in 8 MiB resumable chunks (updates in place if overwrite=True)."""
+        if not os.path.isfile(local_path) or not self.configured:
+            return False
+        total = os.path.getsize(local_path)
+        existing_id = self.find_file_id(folder_id, remote_name) if overwrite else None
+        if existing_id:
+            init_url = f"https://www.googleapis.com/upload/drive/v3/files/{existing_id}?uploadType=resumable"
+            init_method = "PATCH"
+            meta = json.dumps({"name": remote_name}).encode("utf-8")
+        else:
+            init_url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable"
+            init_method = "POST"
+            meta = json.dumps({"name": remote_name, "parents": [folder_id]}).encode("utf-8")
+
+        try:
+            with self._open_with_retry(
+                lambda fr: urllib.request.Request(
+                    init_url,
+                    data=meta,
+                    headers={
+                        **self._headers(fr),
+                        "Content-Type": "application/json; charset=UTF-8",
+                        "X-Upload-Content-Length": str(total),
+                        "X-Upload-Content-Type": "application/octet-stream",
+                    },
+                    method=init_method,
+                ),
+                timeout=30,
+            ) as r:
+                upload_url = r.headers.get("Location")
+            if not upload_url:
+                return False
+
+            if total == 0:
+                put_req = urllib.request.Request(
+                    upload_url, data=b"",
+                    headers={"Content-Length": "0", "Content-Type": "application/octet-stream"},
+                    method="PUT",
+                )
+                with urllib.request.urlopen(put_req, timeout=60) as r:
+                    return r.status in (200, 201)
+
+            chunk_size = 8 * 1024 * 1024  # 8 MiB (multiple of 256 KiB required by Google resumable upload)
+            with open(local_path, "rb") as fh:
+                offset = 0
+                while offset < total:
+                    chunk = fh.read(chunk_size)
+                    if not chunk:
+                        break
+                    end = offset + len(chunk) - 1
+                    hdr = {
+                        "Content-Length": str(len(chunk)),
+                        "Content-Type": "application/octet-stream",
+                        "Content-Range": f"bytes {offset}-{end}/{total}",
+                    }
+                    req = urllib.request.Request(upload_url, data=chunk, headers=hdr, method="PUT")
+                    try:
+                        with urllib.request.urlopen(req, timeout=300) as r:
+                            if r.status in (200, 201):
+                                return True
+                    except urllib.error.HTTPError as e:
+                        if e.code == 308:
+                            offset += len(chunk)
+                            continue
+                        raise
+                    offset += len(chunk)
+            return True
+        except Exception as e:
+            print(f"[!] Drive upload failed for {remote_name}: {e}", file=sys.stderr)
+            return False
+
+    def download_file(self, file_id: str, dest_path: str) -> bool:
+        url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
+        os.makedirs(os.path.dirname(os.path.abspath(dest_path)), exist_ok=True)
+        try:
+            with self._open_with_retry(lambda fr: urllib.request.Request(url, headers=self._headers(fr)), timeout=300) as r:
+                with open(dest_path, "wb") as out:
+                    while True:
+                        buf = r.read(4 * 1024 * 1024)
+                        if not buf:
+                            break
+                        out.write(buf)
+            return os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0
+        except Exception as e:
+            print(f"[!] Drive download failed for {file_id}: {e}", file=sys.stderr)
+            return False
+
+    def delete_file(self, file_id: str) -> bool:
+        url = f"https://www.googleapis.com/drive/v3/files/{file_id}"
+        try:
+            with self._open_with_retry(
+                lambda fr: urllib.request.Request(url, headers=self._headers(fr), method="DELETE"),
+                timeout=20,
+            ) as r:
+                return r.status in (200, 204)
+        except Exception:
+            return False
 
 
-def _mirror_artifacts_to_drive(files_to_upload: list[tuple[str, str]], drive_folder: str) -> int:
+def _sync_checkpoint_to_drive(drive: _DriveClient, drive_folder: str, ckpt_path: str, keep: int = 2) -> bool:
+    """Compress a Trainer checkpoint-N directory and upload headlessly to Google Drive (<folder>/checkpoints/)."""
+    if not drive.configured or not drive_folder or not os.path.isdir(ckpt_path):
+        return False
+    ckpt_name = os.path.basename(os.path.normpath(ckpt_path))
+    m = re.match(r"^checkpoint-(\d+)$", ckpt_name)
+    if not m:
+        return False
+    remote_dir = f"{drive_folder.rstrip('/')}/checkpoints"
+    folder_id = drive.ensure_folder(remote_dir)
+    if not folder_id:
+        return False
+
+    archive_name = f"{ckpt_name}.tar.gz"
+    fd, tmp_tar = tempfile.mkstemp(prefix=f"bl_{ckpt_name}_", suffix=".tar.gz")
+    os.close(fd)
+    try:
+        t0 = time.time()
+        with tarfile.open(tmp_tar, "w:gz", compresslevel=1) as tf:
+            tf.add(ckpt_path, arcname=ckpt_name)
+        sz_mb = os.path.getsize(tmp_tar) / (1024 * 1024)
+        ok = drive.upload_file(tmp_tar, folder_id, archive_name, overwrite=True)
+        if ok:
+            print(f"[✓] Synced {ckpt_name} -> Google Drive ({remote_dir}/{archive_name}, {sz_mb:.1f} MiB in {time.time() - t0:.1f}s)")
+            # Prune older remote checkpoints beyond `keep`
+            remote_ckpts = []
+            for f in drive.list_files(folder_id):
+                fm = re.match(r"^checkpoint-(\d+)\.tar\.gz$", f.get("name", ""))
+                if fm:
+                    remote_ckpts.append((int(fm.group(1)), f["id"], f["name"]))
+            remote_ckpts.sort(key=lambda x: x[0], reverse=True)
+            for _, fid, fname in remote_ckpts[max(1, int(keep)):]:
+                if drive.delete_file(fid):
+                    print(f"[*] Pruned old Drive checkpoint {fname}")
+        return ok
+    except Exception as e:
+        print(f"[!] Drive checkpoint sync error ({ckpt_name}): {e}", file=sys.stderr)
+        return False
+    finally:
+        try:
+            os.remove(tmp_tar)
+        except OSError:
+            pass
+
+
+def _restore_latest_drive_checkpoint(drive: _DriveClient, drive_folder: str, ckpt_dir: str) -> str | None:
+    """Download and extract the latest checkpoint-N.tar.gz from Google Drive into ckpt_dir if no local checkpoint exists."""
+    if not drive.configured or not drive_folder:
+        return None
+    local_latest = _find_latest_checkpoint(ckpt_dir)
+    if local_latest:
+        return local_latest
+    remote_dir = f"{drive_folder.rstrip('/')}/checkpoints"
+    folder_id = drive.ensure_folder(remote_dir)
+    if not folder_id:
+        return None
+    remote_ckpts = []
+    for f in drive.list_files(folder_id):
+        fm = re.match(r"^checkpoint-(\d+)\.tar\.gz$", f.get("name", ""))
+        if fm:
+            remote_ckpts.append((int(fm.group(1)), f["id"], f["name"]))
+    if not remote_ckpts:
+        return None
+    remote_ckpts.sort(key=lambda x: x[0])
+    step, fid, fname = remote_ckpts[-1]
+    fd, tmp_tar = tempfile.mkstemp(prefix=f"bl_restore_{step}_", suffix=".tar.gz")
+    os.close(fd)
+    try:
+        print(f"[*] Restoring latest checkpoint from Google Drive: {remote_dir}/{fname}...")
+        if not drive.download_file(fid, tmp_tar):
+            return None
+        os.makedirs(ckpt_dir, exist_ok=True)
+        with tarfile.open(tmp_tar, "r:gz") as tf:
+            safe = [
+                mem for mem in tf.getmembers()
+                if not (mem.name.startswith("/") or ".." in mem.name.split("/"))
+                and (mem.isfile() or mem.isdir())
+            ]
+            tf.extractall(ckpt_dir, members=safe)  # noqa: S202
+        restored = os.path.join(ckpt_dir, f"checkpoint-{step}")
+        if os.path.isdir(restored):
+            print(f"[✓] Restored checkpoint-{step} from Google Drive -> {restored}")
+            return restored
+    except Exception as e:
+        print(f"[!] Drive checkpoint restore failed for {fname}: {e}", file=sys.stderr)
+    finally:
+        try:
+            os.remove(tmp_tar)
+        except OSError:
+            pass
+    return None
+
+
+def _make_drive_checkpoint_callback(drive: _DriveClient, drive_folder: str | None, ckpt_dir: str, keep: int = 2):
+    if not drive.configured or not drive_folder:
+        return None
+    try:
+        from transformers import TrainerCallback
+    except ImportError:
+        return None
+
+    class _DriveCheckpointCallback(TrainerCallback):
+        def on_save(self, args, state, control, **kwargs):
+            try:
+                step_dir = os.path.join(ckpt_dir, f"checkpoint-{state.global_step}")
+                target = step_dir if os.path.isdir(step_dir) else _find_latest_checkpoint(ckpt_dir)
+                if target:
+                    _sync_checkpoint_to_drive(drive, drive_folder, target, keep=keep)
+            except Exception as e:
+                print(f"[!] Drive checkpoint callback warning: {e}", file=sys.stderr)
+            return control
+
+    return _DriveCheckpointCallback()
+
+
+def _mirror_artifacts_to_drive(drive: _DriveClient, files_to_upload: list[tuple[str, str]], drive_folder: str) -> int:
     """Headlessly upload extracted adapter files + GGUF straight to Google Drive via REST v3 (survives host shutdown)."""
-    import urllib.parse
-    token = os.environ.get("GOOGLE_DRIVE_TOKEN", "").strip()
-    if not token or not drive_folder:
+    if not drive.configured or not drive_folder:
         return 0
-    folder_id = _drive_ensure_folder(token, drive_folder)
+    folder_id = drive.ensure_folder(drive_folder)
     if not folder_id:
         return 0
     uploaded = 0
     for local_path, remote_name in files_to_upload:
         if not os.path.isfile(local_path):
             continue
-        try:
-            meta = json.dumps({"name": remote_name, "parents": [folder_id]}).encode("utf-8")
-            init_req = urllib.request.Request(
-                "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
-                data=meta,
-                headers={
-                    **_drive_headers(token),
-                    "Content-Type": "application/json; charset=UTF-8",
-                    "X-Upload-Content-Length": str(os.path.getsize(local_path)),
-                },
-                method="POST",
-            )
-            with urllib.request.urlopen(init_req, timeout=30) as r:
-                upload_url = r.headers.get("Location")
-            if not upload_url:
-                continue
-            with open(local_path, "rb") as fh:
-                data = fh.read()
-            put_req = urllib.request.Request(
-                upload_url, data=data,
-                headers={"Content-Length": str(len(data)), "Content-Type": "application/octet-stream"},
-                method="PUT",
-            )
-            with urllib.request.urlopen(put_req, timeout=600) as r:
-                if r.status in (200, 201):
-                    uploaded += 1
-                    print(f"[✓] Mirrored to Google Drive ({drive_folder}/{remote_name}, {len(data)/(1024*1024):.1f} MiB)")
-        except Exception as e:
-            print(f"[!] Drive mirror failed for {remote_name}: {e}", file=sys.stderr)
+        sz_mb = os.path.getsize(local_path) / (1024 * 1024)
+        if drive.upload_file(local_path, folder_id, remote_name, overwrite=True):
+            uploaded += 1
+            print(f"[✓] Mirrored to Google Drive ({drive_folder}/{remote_name}, {sz_mb:.1f} MiB)")
     return uploaded
 
 
-def _mirror_final_outputs(adapter_dir: str, gguf_path: str | None, drive_folder: str | None):
-    if not drive_folder or not os.environ.get("GOOGLE_DRIVE_TOKEN"):
+def _mirror_final_outputs(drive: _DriveClient, adapter_dir: str, gguf_path: str | None, drive_folder: str | None):
+    if not drive_folder or not drive.configured:
         return
     pairs = []
     if os.path.isdir(adapter_dir):
@@ -245,7 +566,7 @@ def _mirror_final_outputs(adapter_dir: str, gguf_path: str | None, drive_folder:
         pairs.append((gguf_path, os.path.basename(gguf_path)))
     if os.path.isfile("train.log"):
         pairs.append(("train.log", "train.log"))
-    _mirror_artifacts_to_drive(pairs, drive_folder)
+    _mirror_artifacts_to_drive(drive, pairs, drive_folder)
 
 
 def _load_model_and_tokenizer(cfg: dict, torch, init_adapter: str | None):
@@ -314,6 +635,8 @@ def main() -> int:
     ap.add_argument("--checkpoint-dir", default=None, help="override checkpoint directory (e.g. Google Drive path)")
     ap.add_argument("--export-gguf", default=None, help="also export adapter GGUF to this path after training")
     ap.add_argument("--drive-mirror-folder", default=None, help="headless Google Drive folder to mirror extracted artifacts")
+    ap.add_argument("--drive-checkpoint-sync", action="store_true", help="sync mid-run Trainer checkpoints to/from Google Drive headlessly")
+    ap.add_argument("--drive-checkpoint-keep", type=int, default=2, help="number of recent checkpoints to retain on Google Drive")
     a = ap.parse_args()
     cfg = json.load(open(a.config, encoding="utf-8"))
     mode = a.mode or cfg.get("mode", "sft")
@@ -369,6 +692,12 @@ def main() -> int:
 
     ckpt_dir = a.checkpoint_dir or cfg.get("checkpoint_dir") or "output/checkpoints"
     os.makedirs(ckpt_dir, exist_ok=True)
+    drive = _DriveClient()
+    drive_folder = a.drive_mirror_folder or cfg.get("drive_mirror_folder")
+    drive_ckpt_sync = bool(a.drive_checkpoint_sync or cfg.get("drive_checkpoint_sync", False))
+    drive_ckpt_keep = max(1, int(a.drive_checkpoint_keep or cfg.get("drive_checkpoint_keep", 2)))
+    if drive_ckpt_sync and drive_folder and drive.configured:
+        _restore_latest_drive_checkpoint(drive, drive_folder, ckpt_dir)
     resume_path = _resolve_resume(a.resume_from_checkpoint or cfg.get("resume_from_checkpoint"), ckpt_dir)
     if resume_path:
         print(f"[*] Resuming SFT training from checkpoint: {resume_path}")
@@ -395,9 +724,14 @@ def main() -> int:
     elif "max_seq_length" in sft_sig:
         sft_kw["max_seq_length"] = cfg["max_seq_len"]
     args = SFTConfig(**sft_kw)
+    callbacks = []
+    if drive_ckpt_sync and drive_folder and drive.configured:
+        cb = _make_drive_checkpoint_callback(drive, drive_folder, ckpt_dir, keep=drive_ckpt_keep)
+        if cb:
+            callbacks.append(cb)
     trainer = SFTTrainer(
         model=model, args=args, train_dataset=ds["train"], eval_dataset=ds.get("validation"),
-        peft_config=peft_cfg, processing_class=tok,
+        peft_config=peft_cfg, processing_class=tok, callbacks=callbacks or None,
     )
     trainer.train(resume_from_checkpoint=resume_path)
     os.makedirs("output/adapter", exist_ok=True)
@@ -408,7 +742,7 @@ def main() -> int:
     export_gguf = a.export_gguf or cfg.get("export_gguf")
     if export_gguf:
         _export_adapter_gguf("output/adapter", cfg["base_model"], export_gguf, cfg.get("base_local_path"))
-    _mirror_final_outputs("output/adapter", export_gguf, a.drive_mirror_folder or cfg.get("drive_mirror_folder"))
+    _mirror_final_outputs(drive, "output/adapter", export_gguf, drive_folder)
     return 0
 
 
@@ -473,6 +807,12 @@ def train_dpo(cfg: dict, a) -> int:
 
     ckpt_dir = a.checkpoint_dir or cfg.get("checkpoint_dir") or "output/dpo_checkpoints"
     os.makedirs(ckpt_dir, exist_ok=True)
+    drive = _DriveClient()
+    drive_folder = a.drive_mirror_folder or cfg.get("drive_mirror_folder")
+    drive_ckpt_sync = bool(a.drive_checkpoint_sync or cfg.get("drive_checkpoint_sync", False))
+    drive_ckpt_keep = max(1, int(a.drive_checkpoint_keep or cfg.get("drive_checkpoint_keep", 2)))
+    if drive_ckpt_sync and drive_folder and drive.configured:
+        _restore_latest_drive_checkpoint(drive, drive_folder, ckpt_dir)
     resume_path = _resolve_resume(a.resume_from_checkpoint or cfg.get("resume_from_checkpoint"), ckpt_dir)
     if resume_path:
         print(f"[*] Resuming DPO training from checkpoint: {resume_path}")
@@ -500,9 +840,15 @@ def train_dpo(cfg: dict, a) -> int:
         dpo_kw["max_prompt_length"] = max(512, int(cfg["max_seq_len"] * 0.75))
     args = DPOConfig(**dpo_kw)
     dpo_tok = getattr(tok, "tokenizer", tok)
+    callbacks = []
+    if drive_ckpt_sync and drive_folder and drive.configured:
+        cb = _make_drive_checkpoint_callback(drive, drive_folder, ckpt_dir, keep=drive_ckpt_keep)
+        if cb:
+            callbacks.append(cb)
     trainer = DPOTrainer(
         model=model, ref_model=None, args=args, train_dataset=ds["train"],
         eval_dataset=ds.get("validation"), processing_class=dpo_tok, peft_config=peft_cfg,
+        callbacks=callbacks or None,
     )
     trainer.train(resume_from_checkpoint=resume_path)
     os.makedirs("output/adapter", exist_ok=True)
@@ -513,7 +859,7 @@ def train_dpo(cfg: dict, a) -> int:
     export_gguf = a.export_gguf or cfg.get("export_gguf")
     if export_gguf:
         _export_adapter_gguf("output/adapter", cfg["base_model"], export_gguf, cfg.get("base_local_path"))
-    _mirror_final_outputs("output/adapter", export_gguf, a.drive_mirror_folder or cfg.get("drive_mirror_folder"))
+    _mirror_final_outputs(drive, "output/adapter", export_gguf, drive_folder)
     return 0
 
 

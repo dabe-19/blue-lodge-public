@@ -122,6 +122,7 @@ pub struct TrainingWizardPayload {
     pub epochs: Option<u32>,
     pub prior_adapter_weight: Option<f64>,
     pub pause_inference: Option<bool>,
+    pub drive_checkpoint_sync: Option<bool>,
     pub focus: Option<String>,
     pub sample_count: Option<u32>,
     pub include_journal: Option<bool>,
@@ -569,6 +570,8 @@ pub async fn generate_training_wizard(
             "min_cu_balance": 150,
             "max_runtime_min": 180,
             "drive_checkpoints": true,
+            "drive_checkpoint_sync": payload.drive_checkpoint_sync.unwrap_or(true),
+            "drive_checkpoint_keep": 2,
             "export_gguf_on_colab": true
         },
         "local": {

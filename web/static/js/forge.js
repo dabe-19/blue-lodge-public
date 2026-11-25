@@ -365,10 +365,10 @@
           actions.appendChild(actBtn('ACCEPT', 'primary', 'approve'));
           actions.appendChild(actBtn('DENY', 'danger', 'deny', { reason: 'Rejected in Forge Tier B gate' }));
         }
-        if (r.backend === 'colab' && r.state === 'running') {
+        if (r.backend === 'colab' && (r.state === 'running' || r.state === 'failed')) {
           actions.appendChild(actBtn('COLLECT', '', 'collect'));
           actions.appendChild(actBtn('RESUME', '', 'resume'));
-          actions.appendChild(actBtn('CANCEL', 'danger', 'cancel'));
+          if (r.state === 'running') actions.appendChild(actBtn('CANCEL', 'danger', 'cancel'));
         }
         if (r.state === 'done' && !r.merged) {
           actions.appendChild(actBtn('MERGE SVD-32', 'primary', 'merge'));
@@ -649,6 +649,7 @@
     });
     const jrnCb = el('input', { type: 'checkbox', checked: true });
     const pauseInfCb = el('input', { type: 'checkbox', checked: true });
+    const driveCkptCb = el('input', { type: 'checkbox', checked: true });
     const countIn = el('input', { type: 'number', className: 'guild-input', style: 'width:100px;min-width:100px;', min: 20, max: 20000, value: 500 });
 
     const presetRow = el('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;' });
@@ -686,6 +687,7 @@
       gpu: gpuSel.value,
       prior_adapter_weight: Number(priorRange.value) / 100.0,
       pause_inference: Boolean(pauseInfCb.checked),
+      drive_checkpoint_sync: Boolean(driveCkptCb.checked),
       focus: Object.entries(recipeCbs).filter(([, cb]) => cb.checked).map(([k]) => k).join(','),
       sample_count: Number(countIn.value || 500),
       include_journal: Boolean(jrnCb.checked),
@@ -763,6 +765,7 @@
       el('div', { style: 'display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:6px;' }, [
         el('div', { style: 'display:flex;align-items:center;gap:6px;' }, [el('span', { className: 'eco-kpi-label', text: 'SAMPLES:' }), countIn]),
         el('label', { className: 'eco-check-label' }, [jrnCb, 'Include Sleep-Cycle Journal / Memories Replay']),
+        el('label', { className: 'eco-check-label' }, [driveCkptCb, 'Sync mid-run Colab checkpoints to Google Drive (headless + auto-refresh OAuth2)']),
         el('label', { className: 'eco-check-label' }, [pauseInfCb, 'Auto-pause local inference during local GPU training']),
       ]),
       el('div', { style: 'display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:6px;' }, [
