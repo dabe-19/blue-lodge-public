@@ -5,7 +5,8 @@
 # the blue-lodge Kubernetes deployment.
 #
 # Usage:
-#   ./scripts/infra/k8s_deploy.sh up                 # Apply all deploy/k8s manifests
+#   ./scripts/infra/k8s_deploy.sh up                 # Render & apply all deploy/k8s manifests
+#   ./scripts/infra/k8s_deploy.sh render             # Render node-local manifests into deploy/k8s/.rendered/
 #   ./scripts/infra/k8s_deploy.sh build [all|web|inference]  # Build images into k3s
 #   ./scripts/infra/k8s_deploy.sh status             # Show pods, services, ingresses & GPU
 #   ./scripts/infra/k8s_deploy.sh restart [service]  # Rollout restart workload(s)
@@ -16,6 +17,7 @@ set -euo pipefail
 LODGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 K8S_NS="${K8S_NAMESPACE:-blue-lodge}"
 CUDA_ARCH="${CUDA_ARCHITECTURES:-86;120}"
+K8S_MANIFEST_DIR="$LODGE_DIR/deploy/k8s/.rendered"
 
 _info() { printf "\033[1;36m[k8s]\033[0m %s\n" "$1"; }
 _ok()   { printf "\033[1;32m[✓]\033[0m %s\n" "$1"; }
@@ -24,9 +26,35 @@ _err()  { printf "\033[1;31m[✗]\033[0m %s\n" "$1" >&2; exit 1; }
 
 command -v kubectl >/dev/null 2>&1 || _err "kubectl not found on PATH"
 
+_render_manifests() {
+    local lcfg="$LODGE_DIR/.george/configs/lodge.conf"
+    [ ! -f "$lcfg" ] && [ -f "$LODGE_DIR/.george/lodge.conf" ] && lcfg="$LODGE_DIR/.george/lodge.conf"
+
+    local host_home="${LODGE_HOST_HOME:-}"
+    local models_dir="${MODELS_DIR:-}"
+    local host_repo="${LODGE_HOST_REPO:-$LODGE_DIR}"
+
+    if [ -f "$lcfg" ]; then
+        [ -z "$host_home" ] && host_home=$(grep -m1 '^[[:space:]]*LODGE_HOST_HOME=' "$lcfg" 2>/dev/null | cut -d= -f2- | tr -d "\"'[:space:]" || true)
+        [ -z "$models_dir" ] && models_dir=$(grep -m1 '^[[:space:]]*MODELS_DIR=' "$lcfg" 2>/dev/null | cut -d= -f2- | tr -d "\"'[:space:]" || true)
+    fi
+    [ -z "$host_home" ] && host_home="${HOME}"
+    [ -z "$models_dir" ] && models_dir="${host_home}/models"
+
+    if [ -x "$LODGE_DIR/deploy/k8s/render.sh" ] || [ -f "$LODGE_DIR/deploy/k8s/render.sh" ]; then
+        LODGE_HOST_HOME="$host_home" \
+        MODELS_DIR="$models_dir" \
+        LODGE_HOST_REPO="$host_repo" \
+            bash "$LODGE_DIR/deploy/k8s/render.sh" "$K8S_MANIFEST_DIR" >/dev/null
+    else
+        K8S_MANIFEST_DIR="$LODGE_DIR/deploy/k8s"
+    fi
+}
+
 _ensure_namespace() {
-    kubectl apply -f "$LODGE_DIR/deploy/k8s/00-namespace-rbac.yaml" >/dev/null
-    kubectl apply -f "$LODGE_DIR/deploy/k8s/01-storage-config.yaml" >/dev/null
+    _render_manifests
+    kubectl apply -f "$K8S_MANIFEST_DIR/00-namespace-rbac.yaml" >/dev/null
+    kubectl apply -f "$K8S_MANIFEST_DIR/01-storage-config.yaml" >/dev/null
 }
 
 _ensure_builder_pod() {
@@ -112,9 +140,14 @@ case "$cmd" in
                 "--opt" "build-arg:BUILD_PRISM_FORK=0"
         fi
         ;;
+    render)
+        _render_manifests
+        _ok "Rendered node-local manifests into ${K8S_MANIFEST_DIR}"
+        ;;
     up|start|apply)
-        _info "Applying Blue Lodge Kubernetes manifests to namespace '${K8S_NS}'..."
-        for f in "$LODGE_DIR"/deploy/k8s/[0-9]*.yaml; do
+        _render_manifests
+        _info "Applying rendered Blue Lodge Kubernetes manifests (${K8S_MANIFEST_DIR}) to namespace '${K8S_NS}'..."
+        for f in "$K8S_MANIFEST_DIR"/[0-9]*.yaml; do
             kubectl apply -f "$f"
         done
         _ok "All manifests applied to namespace '${K8S_NS}'."
@@ -139,7 +172,7 @@ case "$cmd" in
         kubectl -n "$K8S_NS" get pods,svc,ingress -o wide
         ;;
     *)
-        echo "Usage: $0 [up|build [all|web|inference]|status|restart [service]|down]"
+        echo "Usage: $0 [up|render|build [all|web|inference]|status|restart [service]|down]"
         exit 1
         ;;
 esac
