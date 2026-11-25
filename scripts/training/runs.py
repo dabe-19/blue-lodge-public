@@ -83,6 +83,22 @@ def _write_json(path, obj):
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(obj, fh, indent=2)
+    try:
+        os.chmod(tmp, 0o664)
+    except OSError:
+        pass
+    os.replace(tmp, path)
+
+
+def _write_text(path, text: str):
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    try:
+        os.chmod(tmp, 0o664)
+    except OSError:
+        pass
     os.replace(tmp, path)
 
 
@@ -897,11 +913,13 @@ def resume_colab(name: str) -> dict:
         ok = _launch_single_colab_track(v, rd, tp, hf_token, auth)
         if ok:
             any_running = True
+            meta["state"] = "running"
+            _write_text(os.path.join(rd, "state"), "running\n")
+            _write_json(os.path.join(rd, "run.json"), meta)
         resumed[tp["track"]] = f"resumed_on_{tp.get('selected_gpu')}" if ok else f"resume_failed: {tp.get('error')}"
     if any_running:
         meta["state"] = "running"
-        with open(os.path.join(rd, "state"), "w") as fh:
-            fh.write("running\n")
+        _write_text(os.path.join(rd, "state"), "running\n")
     _write_json(os.path.join(rd, "run.json"), meta)
     return {"name": name, "resumed": resumed}
 
@@ -1216,7 +1234,9 @@ def inspect_colab_sessions(probe: bool = False) -> dict:
         elif not rm:
             health = "orphaned"
             reason = f"Session '{sess}' has no matching run in .george/training/runs/"
-        elif rm["run_state"] in ("done", "failed", "cancelled") or rm["track_state"] in ("done", "failed", "cancelled"):
+        elif rm["track_state"] in ("done", "failed", "cancelled") or (
+            rm["run_state"] in ("done", "failed", "cancelled") and rm["track_state"] != "running"
+        ):
             health = "stale_finished"
             reason = f"Run '{rm['run']}' track '{rm['track']}' is already {rm['track_state']}/{rm['run_state']}"
 
@@ -1228,6 +1248,9 @@ def inspect_colab_sessions(probe: bool = False) -> dict:
             if exit_code not in (None, "running"):
                 health = "stale_finished"
                 reason = f"Training exited with code {exit_code} (VM still running idle)"
+            elif proc_alive is True:
+                health = "active"
+                reason = "Live probe confirmed active training process on GPU"
             elif proc_alive is False and gpu_info and gpu_info.get("used_mb", 0) < 1000 and gpu_info.get("util_pct", 0) == 0:
                 health = "stale_idle"
                 reason = "No training process running and GPU is idle (0% util, <1 GiB VRAM)"
