@@ -164,7 +164,7 @@ def get_prerequisites() -> dict:
             "component": "adc_credentials",
             "severity": "error",
             "message": "Google ADC credentials not configured (no application_default_credentials.json found).",
-            "fix": "gcloud auth application-default login --no-launch-browser",
+            "fix": 'gcloud auth application-default login --no-launch-browser --scopes="openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive.file" && gcloud auth application-default set-quota-project <GCP_PROJECT_ID>',
         })
     if not hf_val:
         issues.append({

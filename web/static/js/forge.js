@@ -760,6 +760,113 @@
     return card;
   }
 
+  function renderManualTab() {
+    const cmdBlock = (title, note, cmd) => el('div', {
+      style: 'background:rgba(2,6,23,0.75);border:1px solid rgba(148,163,184,0.22);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;',
+    }, [
+      el('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:8px;' }, [
+        el('div', { style: 'font-weight:700;color:#e2e8f0;font-size:12px;', text: title }),
+        el('button', {
+          type: 'button',
+          className: 'guild-btn',
+          style: 'padding:2px 8px;font-size:10px;',
+          text: 'COPY',
+          on: {
+            click: () => {
+              if (navigator.clipboard) navigator.clipboard.writeText(cmd).catch(() => {});
+              setConsole(`Copied to clipboard:\n${cmd}`);
+            },
+          },
+        }),
+      ]),
+      note ? el('div', { className: 'guild-card-meta', text: note }) : null,
+      el('pre', {
+        style: 'margin:0;padding:8px;background:#020617;color:#7dd3fc;border-radius:6px;font-family:var(--font-mono);font-size:11px;white-space:pre-wrap;overflow-x:auto;',
+        text: cmd,
+      }),
+    ]);
+
+    const section = (heading, subtitle, items) => el('div', { className: 'forge-card' }, [
+      el('div', { className: 'forge-card-head' }, [
+        el('div', {}, [
+          el('div', { className: 'guild-card-title', text: heading }),
+          subtitle ? el('div', { className: 'guild-card-meta', text: subtitle }) : null,
+        ]),
+      ]),
+      el('div', { style: 'display:flex;flex-direction:column;gap:10px;' }, items),
+    ]);
+
+    const menuRow = (name, desc) => el('div', {
+      style: 'display:grid;grid-template-columns:195px 1fr;gap:10px;padding:6px 0;border-bottom:1px solid rgba(148,163,184,0.12);font-size:12px;',
+    }, [
+      el('div', { style: 'font-weight:700;color:#38bdf8;font-family:var(--font-mono);', text: name }),
+      el('div', { style: 'color:#cbd5e1;line-height:1.45;', text: desc }),
+    ]);
+
+    const setupCard = section(
+      '1. ONE-TIME MANUAL SETUP (HOST MACHINE)',
+      'Run these commands once on the node running Blue Lodge. Credentials mount read-only into K8s automatically.',
+      [
+        cmdBlock(
+          'Step A — Install Google Cloud CLI (zero-sudo Linux tarball)',
+          'Required only if gcloud is not yet installed on the host.',
+          'curl -fsSL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz | tar -xz -C "$HOME"\n"$HOME/google-cloud-sdk/install.sh" --quiet --path-update true',
+        ),
+        cmdBlock(
+          'Step B — Authenticate Google ADC with Colab + Headless Google Drive Scope',
+          'Adding drive.file eliminates Colab interactive Drive popups and lets remote Colab VMs mirror extracted adapter.gguf + safetensors directly to Google Drive/BlueLodge/training/ even if this PC turns off.',
+          '~/google-cloud-sdk/bin/gcloud auth application-default login --no-launch-browser \\\n  --scopes="openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive.file"',
+        ),
+        cmdBlock(
+          'Step C — Set ADC Quota Project (required whenever you re-run Step B)',
+          'Replace YOUR_GCP_PROJECT_ID with your active Google Cloud project ID (find it via `gcloud projects list`). Note: re-running ADC login resets the quota project, so run this right after Step B.',
+          '~/google-cloud-sdk/bin/gcloud auth application-default set-quota-project YOUR_GCP_PROJECT_ID',
+        ),
+        cmdBlock(
+          'Step D — Add Hugging Face Token (Gated Models & Private Backups)',
+          'Required to pull gated HF weights (e.g. google/gemma-4-31b-it) directly inside Colab or push private HF Hub backups.',
+          'echo \'HF_TOKEN="hf_your_token_here"\' >> .george/keys.conf',
+        ),
+        cmdBlock(
+          'Step E — Verify Readiness & Colab Compute Units',
+          'Confirm colab_ready: true, ADC Drive scope, HF token, and CU balance. All green chips appear in Overview.',
+          '.venv/bin/python scripts/training/check_credits.py --json',
+        ),
+      ],
+    );
+
+    const forgeMenusCard = section(
+      '2. USING THE TRAINING FORGE TABS',
+      'End-to-end workflow from transcript mining to Tier B approval and live zero-restart hot-swapping.',
+      [
+        menuRow('Overview & Sleep Cycle', 'Shows Colab Compute Unit balance, prerequisite health chips, and Sleep-Cycle policy. Toggle between Tier B (human Accept/Deny gate in Forge + Discord — default) and Tier A (auto-promote only when 7-pillar score improves by >= Min Delta %). Configure Google Drive folder and private HF backup repo here.'),
+        menuRow('Tier B Gate & Runs', 'Displays every active and historical run with GPU tier, prior-adapter retention weight, 7-pillar score delta, and Gate status. Click LIVE LOGS on any run to stream real-time Colab or local GPU VRAM/utilization, step progress bar, ETA, and scrolling train.log (auto-refreshes every 12s). Use COLLECT, RESUME, MERGE SVD-32, ACCEPT, or DENY directly from each row.'),
+        menuRow('Playbook & Launch', 'Pick a curated JSON playbook (Gemma-4 31B, Qwen 3.8 27B, SDR E4B, or Local QLoRA Sleep) or customize focus recipes (e.g. persistence,tool-syntax,error-recovery,multi-hop,final-answer + journal dream replay). Choose base_source (HF Direct vs. Local Upload vs. Drive Mirror). Click PREFLIGHT to validate before arming and launching.'),
+        menuRow('SVD Layers & Backups', 'Inspect every namespaced (model_slug, role) adapter under MODELS_DIR/adapters/<model>/<role>/. Adjust per-adapter scales and click HOT-SWAP to call stock llama-server POST /lora-adapters with ZERO server restart. Trigger on-demand backups to Google Drive and/or private Hugging Face Hub.'),
+        menuRow('Head-to-Head Benchmarks', 'Launch the 7-Pillar Multi-Turn Sovereign Benchmark (35 scenarios including Pillar 7 Multi-Step Persistence & Early-Quit Rate) against your live inference server, or compare any two saved scorecards (e.g. Gemma-4 31B vs. Qwen 3.8 27B) side-by-side by pillar.'),
+        menuRow('Autonomic Watchdog', 'scripts/cron_system/training_watchdog.sh (# ENABLED: 1, every 600s) keeps Colab VMs alive, auto-resumes 1h disconnects, downloads finished adapters, tears down idle VMs, merges SVD-32 with retention weighting, and posts Discord Tier B approval cards. Toggle anytime in the Cron tab.'),
+      ],
+    );
+
+    const modelSelectorCard = section(
+      '3. MODEL SELECTOR, WORKBENCH & MoE / SMALL MODEL SWITCHING',
+      'Base GGUF switching and SVD-32 adapter switching are decoupled so dense, small, and MoE models never collide.',
+      [
+        menuRow('Models Button (/models)', 'Open the Models panel in the header (or run `/models` in CLI) to search Hugging Face/ModelScope, check VRAM fit tables (`/models fit`), SHA-256 download (`/models install`), and switch the active base GGUF (`/models activate <profile>`). Supports smaller dense models and MoE models (such as gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf).'),
+        menuRow('Rollback Protection', 'If a newly activated model fails to load or underperforms, click Rollback in the Models panel or run `/models rollback` to instantly restore the previous active GGUF symlink.'),
+        menuRow('Symlink & Adapter Layout', 'Active base weights resolve via MODELS_DIR/active/current/base.gguf (or K8s profile env). Fine-tuned SVD-32 layers live in MODELS_DIR/adapters/<model_slug>/<role>/active.gguf (with releases/, candidates/, and lineage.json), so switching base models never overwrites another model\'s adapters.'),
+        menuRow('Colab GPU Fallback Order', '27B-31B playbooks lock a 40 GB VRAM floor and automatically cascade H100 (80 GB) -> A100 High-RAM (80 GB) -> A100 Standard (40/80 GB) -> G4 (96 GB Blackwell RTX PRO 6000) with exponential-backoff 503 retries. Smaller/role playbooks (e.g. Gemma-4 E4B SDR) also permit L4 (24 GB) and T4 (16 GB).'),
+        menuRow('Local Contention Safety', 'Running a Local QLoRA playbook automatically acquires a cooperative GPU lease that scales down george-inference while training runs and restores it via an EXIT/INT/TERM trap as soon as training finishes or aborts.'),
+      ],
+    );
+
+    return el('div', { style: 'display:flex;flex-direction:column;gap:12px;' }, [
+      setupCard,
+      forgeMenusCard,
+      modelSelectorCard,
+    ]);
+  }
+
   function renderForge() {
     const root = document.getElementById('trainingForgeRoot');
     if (!root) return;
@@ -772,6 +879,7 @@
       { id: 'launch', label: 'Playbook & Launch' },
       { id: 'adapters', label: 'SVD Layers & Backups' },
       { id: 'bench', label: 'Head-to-Head Benchmarks' },
+      { id: 'manual', label: 'Manual & Setup Guide' },
     ];
     const tabBar = el('div', { className: 'forge-tabs' }, tabs.map((t) => el('button', {
       type: 'button',
@@ -785,6 +893,7 @@
     else if (state.activeTab === 'launch') panel = renderLaunchTab(d);
     else if (state.activeTab === 'adapters') panel = renderAdaptersTab(d);
     else if (state.activeTab === 'bench') panel = renderBenchTab(d);
+    else if (state.activeTab === 'manual') panel = renderManualTab();
     else panel = renderOverviewTab(d);
 
     root.replaceChildren(
