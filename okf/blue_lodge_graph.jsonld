@@ -142,6 +142,7 @@
         "urn:blue-lodge:module:lib/tools/native_tools.sh",
         "urn:blue-lodge:module:lib/tools/nvim_pty.py",
         "urn:blue-lodge:module:lib/tools/okf_sqlite_indexer.py",
+        "urn:blue-lodge:module:lib/tools/osint_sdr_digest.py",
         "urn:blue-lodge:module:lib/tools/osint_watcher.py",
         "urn:blue-lodge:module:lib/tools/polygon_approver.py",
         "urn:blue-lodge:module:lib/tools/polygon_swapper.py",
@@ -8963,6 +8964,24 @@
       ]
     },
     {
+      "@id": "urn:blue-lodge:module:lib/tools/osint_sdr_digest.py",
+      "@type": "SoftwareSourceCode",
+      "name": "osint_sdr_digest.py",
+      "path": "lib/tools/osint_sdr_digest.py",
+      "programmingLanguage": "Python",
+      "encodingFormat": "text/x-python",
+      "description": "lib/tools/osint_sdr_digest.py \u2014 Lightweight Multi-Domain OSINT & Local P25 SDR SIGINT Digest Builder.",
+      "stability": "stable",
+      "isPartOf": "urn:blue-lodge:subsystem:tools",
+      "dependencies": [],
+      "dependsOn": [],
+      "exports": [
+        "fetch_feed_items",
+        "get_sdr_summary",
+        "build_report"
+      ]
+    },
+    {
       "@id": "urn:blue-lodge:module:lib/tools/osint_watcher.py",
       "@type": "SoftwareSourceCode",
       "name": "osint_watcher.py",
@@ -12310,11 +12329,11 @@
       "stability": "stable",
       "isPartOf": "urn:blue-lodge:subsystem:scripts",
       "dependencies": [
-        "urn:blue-lodge:module:trading_bot.py"
+        "urn:blue-lodge:module:lib/tools/osint_sdr_digest.py"
       ],
       "dependsOn": [
         {
-          "@id": "urn:blue-lodge:module:trading_bot.py"
+          "@id": "urn:blue-lodge:module:lib/tools/osint_sdr_digest.py"
         }
       ],
       "exports": []

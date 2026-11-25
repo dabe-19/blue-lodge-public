@@ -23,13 +23,12 @@ LOG_FILE="${CRON_JOB_LOG:-$LODGE_DIR/.george/logs/cron/trading_reporter.log}"
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
 REPORT_FILE="/tmp/osint_digest_src_$(date +%Y%m%d_%H%M).md"
 
-# 1. Capture fresh market + multi-domain intel articles + 3-hour SDR SIGINT summary
-# Use venv python (has PyYAML); system python3 may lack it (incident 2026-11-02 23:33 UTC: 0-byte capture)
+# 1. Capture fresh multi-domain OSINT articles + 3-hour SDR SIGINT summary
 CAP_PY="$LODGE_DIR/.venv/bin/python"
 [ -x "$CAP_PY" ] || CAP_PY="python3"
 echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] Capturing 3-hour OSINT & SDR SIGINT intel feed -> $REPORT_FILE" >>"$LOG_FILE" 2>&1
-if [ -f "$LODGE_DIR/lib/tools/trading_bot.py" ]; then
-    "$CAP_PY" "$LODGE_DIR/lib/tools/trading_bot.py" --report > "$REPORT_FILE" 2>>"$LOG_FILE"
+if [ -f "$LODGE_DIR/lib/tools/osint_sdr_digest.py" ]; then
+    "$CAP_PY" "$LODGE_DIR/lib/tools/osint_sdr_digest.py" --report > "$REPORT_FILE" 2>>"$LOG_FILE"
 else
     echo "Sovereign OSINT Digest — $(date -u +%FT%TZ)" > "$REPORT_FILE"
 fi
@@ -66,9 +65,8 @@ RC=$?
 cat "$RUN_OUT" >>"$LOG_FILE" 2>/dev/null || true
 
 # 4. Fallback safety net: ONLY if the ReAct digest run failed AND did not already
-#    deliver the digest to Discord during the run, ship a compact fallback digest.
+#    deliver the digest to Discord during the run, log cleanly (never call retired trading_bot.py).
 if [ "$RC" -ne 0 ] && ! grep -q "Sent to Discord" "$RUN_OUT" 2>/dev/null; then
-    echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] [FALLBACK] ReAct digest run failed before delivery (rc=$RC) — shipping compact fallback via --send-dm" >>"$LOG_FILE" 2>&1
-    "$CAP_PY" "$LODGE_DIR/lib/tools/trading_bot.py" --send-dm --user "$TARGET_DM_USER" >>"$LOG_FILE" 2>&1
+    echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] [WARN] ReAct digest run exited rc=$RC before Discord delivery; source report retained at $REPORT_FILE" >>"$LOG_FILE" 2>&1
 fi
 rm -f "$RUN_OUT" 2>/dev/null || true
