@@ -346,12 +346,12 @@ describe "Phase 3: Comms Tool Gating, FIFO Waiter Queue, PRISM Kernels & Trainin
     export FIFO_IPC_DIR="$LODGE_DIR/.george/ipc"
   }
 
-  it "configures display-safe Ampere MMQ & KV cache-reuse flags in start_prism.sh" && {
-    grep -q 'GGML_CUDA_BATCH_INVARIANT' "$LODGE_DIR/scripts/infra/start_prism.sh"
+  it "configures display-safe CUDA MMQ & KV cache-reuse flags in start_inference.sh" && {
+    grep -q 'GGML_CUDA_BATCH_INVARIANT' "$LODGE_DIR/scripts/infra/start_inference.sh"
     assert_ok $?
-    grep -q 'MTMD_BACKEND_DEVICE="CUDA0"' "$LODGE_DIR/scripts/infra/start_prism.sh"
+    grep -q 'MTMD_BACKEND_DEVICE="CUDA0"' "$LODGE_DIR/scripts/infra/start_inference.sh"
     assert_ok $?
-    grep -q -- '--no-cache-idle-slots' "$LODGE_DIR/scripts/infra/start_prism.sh"
+    grep -q -- '--no-cache-idle-slots' "$LODGE_DIR/scripts/infra/start_inference.sh"
     assert_fail $?
   }
 

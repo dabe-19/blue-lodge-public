@@ -136,8 +136,7 @@ case "$cmd" in
         if [ "$target" = "inference" ] || [ "$target" = "all" ]; then
             _build_into_k3s "george-cuda-sandbox:latest" "/workspace" "/workspace" \
                 "--opt" "filename=Dockerfile.cuda-sandbox" \
-                "--opt" "build-arg:CUDA_ARCHITECTURES=86" \
-                "--opt" "build-arg:BUILD_PRISM_FORK=0"
+                "--opt" "build-arg:CUDA_ARCHITECTURES=${CUDA_ARCH}"
         fi
         ;;
     render)

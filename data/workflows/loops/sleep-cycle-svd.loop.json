@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "id": "sleep-cycle-svd",
+  "name": "Sleep-Cycle Dream Consolidation & Colab SVD-32 Fine-Tune",
+  "owner": "heartwood",
+  "owner_type": "heartwood",
+  "category": "training",
+  "version": "1.0.0",
+  "description": "Autonomous wake-sleep self-improvement loop: verifies Colab ADC prerequisites & CU floor, harvests leak-guarded transcripts + journal memories (including anti-early-stop persistence DPO), dispatches a 1-3x Colab GPU run with H100->G4->A100->L4->T4 fallback & Drive checkpoints, fuses SVD-32 retention layers, and stages the candidate behind the Tier B approval gate.",
+  "defaults": {
+    "max_turns": 60,
+    "ipc_priority": 50,
+    "fifo_window": 8,
+    "tool_timeout_sec": 300,
+    "require_result_json": true,
+    "output_artifact": "result.json"
+  },
+  "inputs": [
+    {
+      "name": "playbook",
+      "type": "text",
+      "label": "Playbook Path",
+      "required": false,
+      "default": "configs/playbooks/colab_gemma4_31b_svd32.json",
+      "placeholder": "configs/playbooks/colab_gemma4_31b_svd32.json"
+    },
+    {
+      "name": "execute_colab",
+      "type": "boolean",
+      "label": "Provision Paid Colab GPUs (--execute)",
+      "required": false,
+      "default": false
+    }
+  ],
+  "tools": {
+    "bundles": [],
+    "allow": [
+      "train_pantry",
+      "train_credits",
+      "train_forge",
+      "train_run_plan",
+      "train_run_start",
+      "train_run_status",
+      "train_run_collect_and_merge",
+      "train_adapter_hotswap",
+      "train_backup",
+      "file_read",
+      "file_write"
+    ],
+    "deny": []
+  },
+  "phases": [
+    {
+      "id": "preflight_audit",
+      "name": "Phase 1: Parallel Credits, Prerequisites & Pantry Audit",
+      "kind": "fifo_parallel",
+      "enabled": true,
+      "continue_on_error": true,
+      "timeout_sec": 60,
+      "tasks": [
+        {
+          "id": "credits",
+          "tool": "train_credits",
+          "args_template": {}
+        },
+        {
+          "id": "pantry",
+          "tool": "train_pantry",
+          "args_template": {
+            "since_last_run": false
+          }
+        },
+        {
+          "id": "backups",
+          "tool": "train_backup",
+          "args_template": {
+            "target": "status"
+          }
+        }
+      ]
+    },
+    {
+      "id": "consolidate_and_dispatch",
+      "name": "Phase 2: Dream Replay, Preflight, Dispatch & Tier B Staging",
+      "kind": "react",
+      "enabled": true,
+      "prompt_template": "You are running the Blue Lodge Sleep-Cycle SVD-32 Consolidation workflow.\n\n1. Inspect Phase 1 credits, prerequisites (Colab CLI, gcloud, Google ADC, HF Token), and pantry counts.\n2. If prerequisites are missing or CU balance is below policy floor, stop cleanly and return exact remediation steps in result.json.\n3. Otherwise, call `train_forge` with focus='persistence,multi-hop,error-recovery,tool-syntax,failure-modes', count=400, include_journal=true.\n4. Update the playbook `{{params.playbook}}` track paths with the freshly forged dataset IDs and run `train_run_plan`.\n5. If preflight succeeds, call `train_run_start` with execute={{params.execute_colab}}.\n6. Summarize the run status, selected GPU(s), and next Tier B approval step in result.json."
+    }
+  ]
+}

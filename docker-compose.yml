@@ -60,7 +60,7 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    command: ["/scripts/infra/start_prism.sh"]
+    command: ["/scripts/infra/start_inference.sh"]
 
   # ── Tier 2: CUDA PRISM Worker Inference (GPU 0 Dedicated: 262k Vision Stack, Headless) ──
   prism-inference-worker:
@@ -109,7 +109,7 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    command: ["/scripts/infra/start_prism.sh"]
+    command: ["/scripts/infra/start_inference.sh"]
 
   # ── Sovereign Web Sidecar & Craftsman Workbench ───────────────
   george-web:

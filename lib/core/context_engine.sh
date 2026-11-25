@@ -329,7 +329,7 @@ context_engine_build() {
         out+="- Reflexive Intelligence: reflexive_status, reflexive_toggle, reflexive_metacog_assess, reflexive_prompt_grade\n"
         out+="- MCP Protocol (+mcp): mcp_server_status, mcp_server_add, mcp_server_remove, mcp_server_start, mcp_server_stop, mcp_tool_execute\n"
         out+="- Communications & Swarm (+social, +swarm): email_send, email_read, phone_sms_send, mqtt_publish, discord_send, discord_edit, discord_dm, telegram_send, social_post, system_vitals, subagent_delegate, slash_command_exec, workflow_plan, workflow_run\n"
-        out+="- Model Hyperparameters: model_param_set, model_param_get, model_param_clear, model_endpoint_switch, model_endpoint_status\n"
+        out+="- Model & Training Forge: model_param_set, model_param_get, model_param_clear, model_endpoint_switch, model_endpoint_status, train_pantry, train_credits, train_forge, train_run_plan, train_run_start, train_run_status, train_run_collect_and_merge, train_adapter_hotswap, train_backup\n"
         if declare -f is_interactive_operator_session &>/dev/null && is_interactive_operator_session; then
             out+="- AST Structural Intelligence: ask_operator, code_outline, code_symbol_get, code_validate\n"
         else

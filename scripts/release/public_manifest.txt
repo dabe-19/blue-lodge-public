@@ -53,7 +53,7 @@
 + configs/searxng/*
 + configs/models/*
 + configs/wallets/*.example.json
-+ configs/*.template.yaml
++ configs/playbooks/*
 + configs/blue_lodge_jinja_template.jinja
 
 # ── Docs ──────────────────────────────────────────────────────
@@ -67,10 +67,11 @@
 # real treasury balances / order ids in these screenshots
 - docs/images/sovereign_guide/*
 
-# ── Data: schemas, ALP v1 loops + public catalog only ──────────
+# ── Data: schemas, ALP v1 loops, core tools + public catalog ──
 + data/schemas/*
 + data/catalog/*
 + data/workflows/*
++ data/training/native_core_tools.json
 
 # ── Private Alpha Engine (lives in private mod-sovereign-alpha) ─
 - lib/tools/quant/models.py
@@ -88,8 +89,6 @@
 - lib/tools/cardano_stale_order_reactor.sh
 - scripts/cron_system/quant_research.sh
 - scripts/cron_system/position_watcher.sh
-- scripts/quant_research/*
-- data/V3_Proposal_Revised_FinalRev.md
 
 # ── Private ML Research, Unpublished Manuscripts & Personal Ops ─
 - docs/SUB_158B_QUANTIZATION_RESEARCH_PLAN.md
@@ -98,8 +97,6 @@
 - docs/SOVEREIGN_FOUNDATION_MODEL_PLAYBOOK.md
 - docs/BLUE_LODGE_LORA_TUNING_PLAYBOOK.md
 - docs/BLUE_LODGE_MODEL_EXPANSION_PLAYBOOK.md
-- scripts/colab_training/*
-- scripts/benchmark_rx5700xt_1slot.py
 - .agents/skills/cardano_arbitrage/*
 - .agents/workflows/cardano-arbitrageur.agent.md
 - .agents/rules/cancel_old_george_run.md
@@ -112,8 +109,6 @@
 
 # ── Always excluded (personal, generated, or third-party data) ─
 - */archive/*
-- scripts/quant_research/archive/*
-- scripts/colab_training/archive/*
 - */__pycache__/*
 - *.pyc
 - *.gguf

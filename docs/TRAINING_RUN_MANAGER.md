@@ -1,116 +1,91 @@
 ---
-title: "Training Run Manager & Multi-Track Distillation"
-description: "Architecture and operational guide for the Blue Lodge Training Run Manager: local/Colab multi-track SFT/DPO runs, checkpoint staging, GGUF export, and benchmark guards."
+title: "Training Run Manager, Sleep-Cycle SVD-32 & Colab Fleet"
+description: "Architecture and operational guide for Blue Lodge's Wake-Sleep training pipeline: Dataset Forge (incl. persistence & sdr-p25), 1-3x Colab GPU fleet with H100->G4->A100->L4->T4 fallback, Drive checkpoints, in-Colab GGUF export, SVD-32 retention lineage, Tier B/A gating, and live llama-server hot-swapping."
 subsystem: "core"
 tags:
   - training
   - lora
+  - svd32
   - dpo
   - sft
   - colab
+  - sleep-cycle
   - gguf
-  - distillation
 okf_id: "urn:blue-lodge:doc:training-run-manager"
 related:
+  - "[[INDEX]]"
   - "[[DATASET_FORGE]]"
   - "[[MODELS]]"
-  - "[[BLUE_LODGE_LORA_TUNING_PLAYBOOK]]"
-  - "[[SOVEREIGN_FOUNDATION_MODEL_PLAYBOOK]]"
   - "[[GYM]]"
 ---
 
-# Training Run Manager & Multi-Track Distillation
+# Training Run Manager, Sleep-Cycle SVD-32 & Colab Fleet
 
-The **Training Run Manager** (`lib/core/training_run.py`, `commands/train.sh`) orchestrates the end-to-end continuous learning and fine-tuning lifecycle for Blue Lodge. It manages compute resource allocation across local GPUs and external cloud workers (Google Colab / RunPod), oversees checkpoint staging, runs multi-track SFT and DPO training, and merges resulting adapters into deployment-ready GGUF weights.
+Blue Lodge's training subsystem (`scripts/training/runs.py`, `scripts/training/forge.py`, `scripts/training/merge_loras.py`, `scripts/training/backup_artifacts.py`, `commands/train.sh`, and the **Training Forge** studio in `george-web`) implements a sovereign **Wake–Sleep Self-Improvement Loop** across both local GPUs and a 1–3× Google Colab GPU fleet.
 
 ```mermaid
-graph TD
-    Transcripts["Agent Session Transcripts & Curricula"] --> Forge["Dataset Forge (recipe-based SFT/DPO)"]
-    Forge --> Datasets["Validated Training Datasets (data/forge/)"]
-
-    Datasets --> RunMgr["Training Run Manager (lib/core/training_run.py)"]
-
-    subgraph ComputeWorkers["Compute Allocation"]
-        RunMgr -->|Track 1: Local GPU| LocalTrainer["Local PyTorch / Unsloth (CUDA)"]
-        RunMgr -->|Track 2: Cloud Burst| ColabTrainer["Google Colab / Cloud GPU Worker"]
-    end
-
-    LocalTrainer --> Checkpoints["Checkpoint Staging (.george/training/checkpoints/)"]
-    ColabTrainer --> Checkpoints
-
-    Checkpoints --> Merge["GGUF Adapter Merging (llama.cpp)"]
-    Merge --> CandidateGGUF["Candidate Model (Q4_K_M / Q8_0)"]
-
-    CandidateGGUF --> BenchGuard{"Benchmark Guard (tests/eval/run_golden.sh)"}
-    BenchGuard -->|Passes Regression Gate| ModelHub["Deploy to Model Hub (models/approved/)"]
-    BenchGuard -->|Performance Regression| Reject["Rollback & Log Incident"]
+flowchart TD
+    T["Transcripts, Run Ledger & Journal (.george/)"] --> Forge["Dataset Forge (scripts/training/forge.py)<br/>10 recipes incl. persistence & sdr-p25"]
+    Forge --> Runs["Training Run Manager (scripts/training/runs.py)"]
+    Runs -->|Colab 1-3x GPU| Colab["Colab Fleet (H100 -> G4 -> A100 -> L4 -> T4)<br/>Drive Checkpoints + In-Colab GGUF Export"]
+    Runs -->|Local GPU| Local["Contention-Safe Local QLoRA<br/>(Auto-Pause / Restore llama-server)"]
+    Colab --> Fuse["SVD-32 Retention Fusion (merge_loras.py)<br/>w_prior * active.gguf + w_new * tracks"]
+    Local --> Fuse
+    Fuse --> Bench["7-Pillar Benchmark (scripts/eval/multiturn_bench.py)"]
+    Bench --> Gate{"Tier B Human Gate (Forge + Discord)<br/>or Opt-In Tier A Auto"}
+    Gate -->|Accept| Active["MODELS_DIR/adapters/<model>/<role>/active.gguf<br/>Live Hot-Swap via POST /lora-adapters"]
+    Active --> Backup["Google Drive & Private HF Hub Backup"]
 ```
 
 ---
 
-## 1. Multi-Track Training Architecture
+## 1. Prerequisites & Google ADC Setup
 
-Blue Lodge treats model training as an iterative, multi-track pipeline:
+Every Colab launch (CLI, Web Forge UI, or autonomous agent tool) runs `scripts/training/check_credits.py` + `runs.py plan` first and reports explicit readiness for:
+- **Colab CLI** (`.venv/bin/colab`)
+- **gcloud CLI** (`PATH` or `~/google-cloud-sdk/bin/gcloud`)
+- **Google ADC** (`~/.config/gcloud/application_default_credentials.json`, mounted read-only into `deploy/george-web`) or **Colab OAuth2** (`~/.config/colab-cli/`)
+- **Hugging Face Token** (`HF_TOKEN` in `.george/keys.conf`, required for gated models like `google/gemma-4-31b-it` and private HF backups)
 
-### Track 1: Local On-Device SFT
-- Executed on the local operator GPU (e.g., RTX 3090, RTX 4090, or Proxmox GPU passthrough).
-- Ideal for fast iteration on small domain datasets (tool syntax, error recovery, response styling).
-- Uses memory-efficient 4-bit LoRA (QLoRA) via Unsloth or Hugging Face PEFT.
-
-### Track 2: Remote Cloud Burst (Google Colab / Cloud Workers)
-- Offloads heavy full-parameter or large DPO preference alignment runs to external compute.
-- **Worker Lifecycle Management**:
-  - Automatically provisions ephemeral worker sessions.
-  - Monitors Colab compute units / credit consumption.
-  - Heartbeat synchronization ensures long-running jobs are safely checkpointed before preemptive shutdown.
-  - Automatically archives completed or stale worker sessions to avoid zombie compute charges.
-
----
-
-## 2. Checkpoint Staging & GGUF Fusion
-
-Once training runs complete:
-1. **LoRA Extraction**: Intermediate adapter weights (`adapter_model.safetensors`) are validated against base model tensor dimensions.
-2. **Multi-Track Fusion**: If separate specialized LoRAs were trained (e.g., Track A: POSIX tool execution; Track B: Cardano DEX math), the run manager merges them into the base model weights with configurable weighting ratios:
-   $$W_{\text{merged}} = W_{\text{base}} + \alpha_A \Delta W_A + \alpha_B \Delta W_B$$
-3. **Quantization & GGUF Packaging**: Converts merged FP16 weights into quantized GGUFs (`Q4_K_M`, `Q5_K_M`, or `Q8_0`) using the embedded `llama.cpp` toolchain.
-
----
-
-## 3. The Benchmark Guard
-
-Before any newly fine-tuned model profile can be activated in the lodge:
-- The candidate GGUF is booted in an isolated sandbox port (`:8089`).
-- **Automated Golden-Task Evaluation**: The test suite runs `tests/eval/run_golden.sh`.
-- The candidate must score **>= 95%** on core tool calling, bash execution, and JSON schema formatting, and show zero regression on existing benchmarks.
-- Only upon passing is the model moved to `models/approved/` and indexed into the [[MODELS|Model Workbench]].
-
----
-
-## 4. CLI Operation
-
+Quick zero-`sudo` ADC setup on Linux / WSL2:
 ```bash
-# Inspect active training runs and worker status
-lodge /train status
-
-# Launch an SFT training run using a Forge dataset
-lodge /train run --recipe tool_calling_v2 --track local --epochs 3
-
-# Launch a remote Colab worker run
-lodge /train run --recipe code_reasoning_dpo --track colab --credits 20
-
-# Merge checkpoint into GGUF
-lodge /train merge --checkpoint .george/training/checkpoints/run_104 --quant Q4_K_M
-
-# Run Benchmark Guard on candidate
-lodge /train test --model candidate_model.gguf
+curl -fsSL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz | tar -xz -C "$HOME"
+"$HOME/google-cloud-sdk/install.sh" --quiet --path-update true
+source "$HOME/google-cloud-sdk/path.bash.inc"
+gcloud auth application-default login --no-launch-browser
+lodge /train credits
 ```
 
 ---
 
-## 5. Related Documentation
-- [[DATASET_FORGE|Dataset Forge]] — Creating recipe-based SFT/DPO datasets from transcripts.
-- [[MODELS|Model Workbench]] — Local GGUF management, profiling, and activation.
-- [[BLUE_LODGE_LORA_TUNING_PLAYBOOK|LoRA Fine-Tuning Playbook]] — Hyperparameters and loss curves.
-- [[SOVEREIGN_FOUNDATION_MODEL_PLAYBOOK|Sovereign Foundation Model Playbook]] — Architectural design.
-- [[GYM|George Gym]] — Golden task evaluation workouts and benchmarks.
+## 2. Colab GPU Fallback Cascade & 1-Hour Timeout Immunity
+
+- **VRAM-Aware GPU Fallback:** `colab-cli` supports `H100` (80 GB), `G4` (96 GB RTX PRO 6000 Blackwell), `A100` (80 GB / 40 GB), `L4` (24 GB), and `T4` (16 GB). If provisioning the preferred GPU fails due to quota or regional availability, `runs.py` automatically steps down through `colab.gpu_fallback` (default `["H100", "G4", "A100", "L4", "T4"]`, filtered by `min_gpu_vram_gb`) and scales micro-batch size on lower-VRAM tiers.
+- **1-Hour Timeout Checkpointing & Auto-Resume:** Colab sessions mount Google Drive (`colab drivemount /content/drive`), save checkpoints every `save_steps` (default 40) to `/content/drive/MyDrive/BlueLodge/checkpoints/<run>/<track>/`, and are automatically resumed via `runs.py resume <run>` (or `scripts/cron_system/training_watchdog.sh`) if a VM disconnects mid-run.
+- **In-Colab GGUF Conversion:** `kit/train_lora.py --export-gguf` downloads stock `llama.cpp`'s `convert_lora_to_gguf.py` directly inside Colab while the HF base model metadata is cached, returning a ~150 MB `adapter.gguf` so local nodes never need a 60 GB HF weights copy on disk.
+- **Base Model Sourcing:** Choose `base_source: "hf_direct"` (fastest on slow residential uploads — Colab pulls at datacenter speed), `"local_upload"`, or `"drive_mirror"`.
+
+---
+
+## 3. Role-Specific SVD-32 Lineage, Retention Weighting & Live Hot-Swapping
+
+Adapters are stored per `(model_slug, role)` under `MODELS_DIR/adapters/`:
+```text
+MODELS_DIR/adapters/<model_slug>/<role>/
+├── active.gguf      # symlink -> releases/v<N>-<run>-svd32.gguf
+├── lineage.json     # ancestry, weights, benchmark scorecards, backup URIs
+├── releases/        # immutable promoted versions
+├── candidates/      # staged runs awaiting Tier B approval
+└── tracks/          # preserved individual SFT/DPO track GGUFs
+```
+- **Retention Blending:** `merge_loras.py` blends the existing `active.gguf` (`prior_adapter_weight`, default `0.70`) with the new cycle's tracks (`0.30`) via Thin-QR SVD-32 so Sleep Cycles consolidate new lessons without catastrophic forgetting.
+- **0ms On-the-Fly Switching:** Stock `llama-server` (`scripts/infra/start_inference.sh`) supports preloading multiple role adapters via `--lora-scaled` / `/models/active/current/adapters.conf` and switching active scales dynamically via `POST /lora-adapters` (`lodge /train hotswap --endpoint http://127.0.0.1:8080 --scales '[{"id":0,"scale":1.0}]'`).
+- **Role Playbooks:** Ready-to-run JSON playbooks live in `configs/playbooks/` (`colab_gemma4_31b_svd32.json`, `colab_qwen27b_svd32.json`, `role_sdr_gemma4_e4b.json`, `local_qlora_sleep.json`), and Whisper-Small P25 audio LoRA training is preserved in `scripts/training/roles/sdr_whisper_p25.py`.
+
+---
+
+## 4. Sleep-Cycle Consolidation, Tier B Gate & Backups
+
+- **Autonomous Agent Tools & ALP v1 Loop:** Agents can inspect readiness (`train_credits`, `train_pantry`), forge leak-guarded datasets (`train_forge` with `persistence` + `include_journal`), preflight/launch (`train_run_plan`, `train_run_start`), collect/merge (`train_run_collect_and_merge`), hot-swap (`train_adapter_hotswap`), and back up (`train_backup`), or run the declarative loop `data/workflows/loops/sleep-cycle-svd.loop.json`.
+- **Tier B Default Gate (Toggleable to Tier A):** Finished runs are benchmarked with `scripts/eval/multiturn_bench.py` (7 Pillars + Early-Quit Rate) and staged in the **Forge UI Tier B Approval Table** + Discord notification (`lodge /train approve <run>` / `lodge /train deny <run>`). Operators can opt into **Tier A (Full Autonomy)** inside the Forge UI policy panel.
+- **Cloud Backups:** `lodge /train backup backup --all --target both` archives promoted SVD-32 adapters and `lineage.json` to **Google Drive** and/or a **private Hugging Face Hub** repository.

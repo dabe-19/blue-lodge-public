@@ -1,0 +1,48 @@
+{
+  "name": "local-sleep-cycle-svd32",
+  "role": "core-agent",
+  "model_slug": "local-active",
+  "backend": "local",
+  "base_model": "google/gemma-4-E4B-it",
+  "base_source": "hf_direct",
+  "base_hf_path": "",
+  "local": {
+    "pause_inference": true
+  },
+  "tracks": [
+    {
+      "name": "sft-sleep",
+      "method": "sft",
+      "train": "exports:REPLACE_WITH_FORGE_DIR/sft_train.jsonl",
+      "val": "exports:REPLACE_WITH_FORGE_DIR/sft_val.jsonl",
+      "gpu": 0
+    },
+    {
+      "name": "dpo-persistence",
+      "method": "dpo",
+      "train": "exports:REPLACE_WITH_FORGE_DIR/dpo_train.jsonl",
+      "val": "exports:REPLACE_WITH_FORGE_DIR/dpo_val.jsonl",
+      "gpu": 0
+    }
+  ],
+  "hyper": {
+    "epochs": 2,
+    "learning_rate": 0.0001,
+    "lora_r": 16,
+    "lora_alpha": 32,
+    "lora_dropout": 0.05,
+    "max_seq_len": 2048,
+    "batch_size": 1,
+    "grad_accum": 8,
+    "dpo_beta": 0.1,
+    "load_in_4bit": true,
+    "use_unsloth": true,
+    "save_steps": 40
+  },
+  "merge": {
+    "method": "svd",
+    "target_rank": 32,
+    "prior_adapter_weight": 0.7,
+    "weights": [0.55, 0.45]
+  }
+}

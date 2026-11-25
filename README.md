@@ -7,11 +7,11 @@
 
 Blue Lodge is a sovereign, modular, multi-node personal AI platform built around **George** — an autonomous engineering, research, GIS, diagnostics, and systems-operations companion that runs entirely on hardware you own. From a pocket Android field companion or Termux ecotype to dual-GPU workstation towers, Proxmox hypervisors, and Kubernetes clusters, Blue Lodge unifies core agent orchestration with installable domain applications.
 
-At its center sits the **Heartwood Kernel** — a pure POSIX Bash ReAct engine paired with an asynchronous Rust web cockpit (`george-web`), a Structured Active Transcript/CoT Console, local PRISM multimodal vision & LLM inference, non-blocking FIFO IPC flow control, a formal Google Open Knowledge Graph (OKF), and an Obsidian-linked documentation vault. Domain applications (starting with **Shop Bench**, **SkyWatch**, and **Hunting Buddy**) install cleanly through the **Lodge Guild App Store** as SHA-pinned external Git modules with scoped tool masks and monitored ReAct workflows.
+At its center sits the **Heartwood Kernel** — a pure POSIX Bash ReAct engine paired with an asynchronous Rust web cockpit (`george-web`), a Structured Active Transcript/CoT Console, local stock `llama.cpp` (`llama-server`) multimodal vision & LLM inference (with native SPTQ/ternary, MTP, and hot-swappable SVD-32 LoRA layers), non-blocking FIFO IPC flow control, a formal Google Open Knowledge Graph (OKF), and an Obsidian-linked documentation vault. Domain applications (starting with **Shop Bench**, **SkyWatch**, and **Hunting Buddy**) install cleanly through the **Lodge Guild App Store** as SHA-pinned external Git modules with scoped tool masks and monitored ReAct workflows.
 
 > [!IMPORTANT]
 > **Zero Required Cloud Dependencies & Sovereign Architecture**:
-> Blue Lodge ships **no fixed model list**. You download, verify, profile, and serve your own GGUF weights (including local multimodal vision). Every module shares the active PRISM server through cooperative FIFO IPC GPU leases instead of spawning duplicate models.
+> Blue Lodge ships **no fixed model list**. You download, verify, profile, and serve your own GGUF weights (including local multimodal vision). Every module shares the active `llama.cpp` inference server through cooperative FIFO IPC GPU leases instead of spawning duplicate models.
 
 ---
 
@@ -201,7 +201,7 @@ Deep-dive design docs: **[The Two Nervous Systems](docs/TWO_NERVOUS_SYSTEMS.md)*
        │   ASYNCHRONOUS FIFO IPC v3        │   │    CONTROL & COMPUTE RACK         │
        │   Named Pipes · Sliding Flow Ctrl │   │    /api/rack Topology Probes      │
        │   Event Bus · OSINT Reactors      │   │    Local Docker Containers:       │
-       └───────────────────────────────────┘   │     · george-prism-server (:8080) │
+       └───────────────────────────────────┘   │     · llama-server (:8080)        │
                                                │     · george-searxng (:8081)      │
                                                │     · george-gitea (:3001)        │
                                                │     · george-mosquitto (:1883)    │
@@ -245,7 +245,7 @@ Platform setup guides:
 
 2. **Launch Docker infrastructure services**:
    ```bash
-   # Core containers: SearXNG metasearch, Mosquitto MQTT, and PRISM inference
+   # Core containers: SearXNG metasearch, Mosquitto MQTT, and stock llama.cpp inference
    docker compose up -d
 
    # Optional Forge profile: Local Gitea git server and act-runner CI worker

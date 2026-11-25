@@ -22,7 +22,7 @@ spec:
           image: george-cuda-sandbox:latest
           imagePullPolicy: IfNotPresent
           workingDir: /workspace
-          command: ["/workspace/scripts/infra/start_prism.sh"]
+          command: ["/workspace/scripts/infra/start_inference.sh"]
           ports:
             - containerPort: 8080
               hostPort: 8080

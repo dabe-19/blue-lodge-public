@@ -351,7 +351,6 @@
         "urn:blue-lodge:standard:sovereign-inference-switching"
       ],
       "hasPart": [
-        "urn:blue-lodge:module:scripts/benchmark_rx5700xt_1slot.py",
         "urn:blue-lodge:module:scripts/ci/bootstrap_env.sh",
         "urn:blue-lodge:module:scripts/ci/ci_local.sh",
         "urn:blue-lodge:module:scripts/ci/hermetic_test_runner.sh",
@@ -363,50 +362,6 @@
         "urn:blue-lodge:module:scripts/ci/security_injection_scanner.py",
         "urn:blue-lodge:module:scripts/ci/select_tests.sh",
         "urn:blue-lodge:module:scripts/ci/update_native_tools_okf.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/colab_3x_a100_experimental_orchestrator.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/colab_3x_a100_multiturn_orchestrator.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/colab_3x_a100_orchestrator.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/colab_3x_a100_research_orchestrator.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/colab_enhanced_orchestrator.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/colab_fleet_orchestrator.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/colab_jinja_orchestrator.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/colab_multiturn_orchestrator.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/colab_remediation_orchestrator.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration10.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration11.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration12.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration13.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration14.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration5.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration6.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration7.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration8.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration9.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/generate_dag_react_curricula.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/generate_enhanced_curricula.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/generate_jinja_curricula.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/generate_multiturn_react_curricula.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/generate_remediation_curricula.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/generate_research_cron_curricula.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/launch_3track_training.sh",
-        "urn:blue-lodge:module:scripts/colab_training/archive/merge_frontier_loras.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/train_blue_lodge_colab.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/train_blue_lodge_grpo.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/train_champion_v5_grpo.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/train_dag_colab.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/train_enhanced_colab.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/train_frontier_grpo.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/train_iteration2_frontier_grpo.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/train_iteration3_frontier_grpo.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/train_multiturn_colab.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/train_multiturn_direct.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/train_research_colab.py",
-        "urn:blue-lodge:module:scripts/colab_training/convert_safetensors_to_whisper_ggml.py",
-        "urn:blue-lodge:module:scripts/colab_training/fuse_champion_v5_iteration9.py",
-        "urn:blue-lodge:module:scripts/colab_training/merge_frontier_loras.py",
-        "urn:blue-lodge:module:scripts/colab_training/sync_and_monitor.py",
-        "urn:blue-lodge:module:scripts/colab_training/train_rx5700xt_loras.py",
-        "urn:blue-lodge:module:scripts/colab_training/train_sdr_p25_loras_a100.py",
         "urn:blue-lodge:module:scripts/cron/nightly_golden_eval.sh",
         "urn:blue-lodge:module:scripts/cron_system/api_coinbase_ada.sh",
         "urn:blue-lodge:module:scripts/cron_system/api_coinbase_btc.sh",
@@ -433,6 +388,7 @@
         "urn:blue-lodge:module:scripts/cron_system/tyler_immune_patrol.sh",
         "urn:blue-lodge:module:scripts/cron_system/tyler_rf_mesh_sweep.sh",
         "urn:blue-lodge:module:scripts/cron_system/wallet_poll.sh",
+        "urn:blue-lodge:module:scripts/eval/multiturn_bench.py",
         "urn:blue-lodge:module:scripts/inference/activate_profile.sh",
         "urn:blue-lodge:module:scripts/inference/benchmark_mtp.py",
         "urn:blue-lodge:module:scripts/inference/chat.py",
@@ -453,119 +409,24 @@
         "urn:blue-lodge:module:scripts/infra/start-act-runner.sh",
         "urn:blue-lodge:module:scripts/infra/start-cuda-sandbox.sh",
         "urn:blue-lodge:module:scripts/infra/start-gitea.sh",
-        "urn:blue-lodge:module:scripts/infra/start-local-prism.sh",
         "urn:blue-lodge:module:scripts/infra/start_prism.sh",
         "urn:blue-lodge:module:scripts/infra/sync_guild_gitea.sh",
         "urn:blue-lodge:module:scripts/infra/validate-gpu.sh",
-        "urn:blue-lodge:module:scripts/migrate_dossier_categories.py",
         "urn:blue-lodge:module:scripts/monitor/cron_visual_sweep.sh",
         "urn:blue-lodge:module:scripts/monitor/discord_live_monitor.sh",
         "urn:blue-lodge:module:scripts/monitor/discord_send_report.py",
         "urn:blue-lodge:module:scripts/monitor/discord_send_report.sh",
         "urn:blue-lodge:module:scripts/monitor/remediation_live_monitor.sh",
         "urn:blue-lodge:module:scripts/monitor/research_live_monitor.sh",
-        "urn:blue-lodge:module:scripts/quant_research/06_interrogate_transcripts_and_build_dataset.py",
-        "urn:blue-lodge:module:scripts/quant_research/07_evaluate_multiturn_benchmark.py",
-        "urn:blue-lodge:module:scripts/quant_research/08_build_multihop_transcripts_dataset.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/01_quantize_ptq1_0.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/02_inspect_and_prune_hybrid.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/03_compile_custom_kernel.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/04_build_blue_lodge_curriculum.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/04_build_curriculum.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/04_build_multi_track_curriculum.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/05_evaluate_blue_lodge_benchmark.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/05_evaluate_frontier_suite.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/06_apply_calibrated_mtp.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/06_interrogate_transcripts_and_build_dataset.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/calibrate_and_benchmark_mtp.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/06_calibrate_mtp_draft.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/build_grpo_curriculum.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/build_iteration2_frontier_curriculum.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/build_production_calibration.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/convert_qwen38_mlp_sparse.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/convert_qwen38_multicore.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/convert_qwen38_to_2_4_sparse.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/convert_qwen38_verified.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/download_arc_dataset.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/download_qwen38_assets.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/esn_ssm_reservoir_experiment.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/gridsearch_quant.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/mine_arc_agi_curriculum.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/pipeline_qwen38_frontier.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/plot_empirical_results.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/real_grid_search_and_finetune.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/experiments/sweep_speculative_params.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/graft_internal_mtp.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/benchmark_headless_gpu0.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/benchmark_multimodal_mtp.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/build_and_eval_clean_lora.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/evaluate_arc_agi.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/evaluate_benchmarks.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/evaluate_clean_v2_with_lora.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/evaluate_custom_and_compare.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/evaluate_final_sub65.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/evaluate_optimal_permuted.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/evaluate_qat_pipeline.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/frontier_execution_suite.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/real_benchmark_suite.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/run_full_empirical_evaluation.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/run_full_evaluation_pipeline.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/inspect_qat_migration.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/measure_exact_gpu1_vram.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/test_custom_model_inference.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/test_decoupled_layer3.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/test_layer_pruning.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/test_layerwise_qat_lora.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/test_lsq_ste_cuda.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/test_mlp_folding_svd.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/test_sub65_candidate.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/test_svd_lora_math.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/tune_rps_scales.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/verify_scale_fix.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_calibrated_residual_lora.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_champion_lora.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_frontier_lsq_qat.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_full_intermediate_qat_lora.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_lean_svd_lora.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_logit_lens_boundary_lora.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_sptq_qat_lora.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_stage1_grpo_champion_v5.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_stage2_arc_agi_lora.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_true_qat_ste.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_v6_logit_lens_boundary_lora.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/pack_clean_sub4gb.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/pack_fast_sub4gb.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/pack_frontier_optimal.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/pack_sub4gb_sparse_ternary.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_1to1_convolved_52l.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_benchmark_full_qat.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_clean_gain.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_combined_v6.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_fast.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_frontier_sub65.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_rps.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_sub1gb_sweetspot.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_sub65_balanced.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_sub65_optimal.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_sub65_unity.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_blue_frontier_candidate.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_champion_sub1gb.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_champion_v4.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_champion_v5.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_clean_frontier_v2.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_final_sub65.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_lean_rps_model.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_lsq_rps.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_pure_pruned_51l.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_pure_ssm_pruned.py",
-        "urn:blue-lodge:module:scripts/quant_research/archive/packers/repack_clean_gguf.py",
         "urn:blue-lodge:module:scripts/release/export_public.py",
         "urn:blue-lodge:module:scripts/security/emudhra_g3_remediate.sh",
         "urn:blue-lodge:module:scripts/training/check_credits.py",
         "urn:blue-lodge:module:scripts/training/export_lora_dataset.py",
         "urn:blue-lodge:module:scripts/training/forge.py",
         "urn:blue-lodge:module:scripts/training/kit/train_lora.py",
-        "urn:blue-lodge:module:scripts/training/pipeline.py",
+        "urn:blue-lodge:module:scripts/training/merge_loras.py",
+        "urn:blue-lodge:module:scripts/training/roles/convert_whisper_ggml.py",
+        "urn:blue-lodge:module:scripts/training/roles/sdr_whisper_p25.py",
         "urn:blue-lodge:module:scripts/training/runs.py",
         "urn:blue-lodge:module:scripts/training/wizard.sh"
       ]
@@ -1778,15 +1639,19 @@
       "path": "commands/eval.sh",
       "programmingLanguage": "Bash",
       "encodingFormat": "text/x-shellscript",
-      "description": "Golden-task eval control: on/off kill switch, status, run smoke|full, nightly toggle",
+      "description": "Golden-task & 7-pillar multi-turn benchmark control: status, run smoke|full, bench, nightly toggle",
       "stability": "stable",
       "isPartOf": "urn:blue-lodge:subsystem:commands",
       "dependencies": [
-        "urn:blue-lodge:module:lib/ui/ui.sh"
+        "urn:blue-lodge:module:lib/ui/ui.sh",
+        "urn:blue-lodge:module:scripts/eval/multiturn_bench.py"
       ],
       "dependsOn": [
         {
           "@id": "urn:blue-lodge:module:lib/ui/ui.sh"
+        },
+        {
+          "@id": "urn:blue-lodge:module:scripts/eval/multiturn_bench.py"
         }
       ],
       "exports": [
@@ -3005,14 +2870,14 @@
       "path": "commands/train.sh",
       "programmingLanguage": "Bash",
       "encodingFormat": "text/x-shellscript",
-      "description": "Sovereign Training, LoRA/SVD Fusion & Colab Fleet Orchestrator",
+      "description": "Sovereign Training, Sleep-Cycle SVD-32 Fusion, Tier B Gate & Colab Fleet Orchestrator",
       "stability": "stable",
       "isPartOf": "urn:blue-lodge:subsystem:commands",
       "dependencies": [
         "urn:blue-lodge:module:lib/ui/ui.sh",
         "urn:blue-lodge:module:scripts/training/check_credits.py",
         "urn:blue-lodge:module:scripts/training/runs.py",
-        "urn:blue-lodge:module:scripts/training/pipeline.py",
+        "urn:blue-lodge:module:backup_artifacts.py",
         "urn:blue-lodge:module:lib/tools/model_hub.sh",
         "urn:blue-lodge:module:scripts/training/forge.py"
       ],
@@ -3027,7 +2892,7 @@
           "@id": "urn:blue-lodge:module:scripts/training/runs.py"
         },
         {
-          "@id": "urn:blue-lodge:module:scripts/training/pipeline.py"
+          "@id": "urn:blue-lodge:module:backup_artifacts.py"
         },
         {
           "@id": "urn:blue-lodge:module:lib/tools/model_hub.sh"
@@ -8755,6 +8620,10 @@
         "urn:blue-lodge:module:lib/tools/searxng_backend.py",
         "urn:blue-lodge:module:lib/tools/public_apis_backend.py",
         "urn:blue-lodge:module:lib/tools/reverse_image_search.py",
+        "urn:blue-lodge:module:scripts/training/forge.py",
+        "urn:blue-lodge:module:scripts/training/check_credits.py",
+        "urn:blue-lodge:module:scripts/training/runs.py",
+        "urn:blue-lodge:module:backup_artifacts.py",
         "urn:blue-lodge:module:lib/comms/discord_outbox.sh",
         "urn:blue-lodge:module:lib/comms/discord_status.sh",
         "urn:blue-lodge:module:lib/comms/discord_bridge.sh",
@@ -8880,6 +8749,18 @@
         },
         {
           "@id": "urn:blue-lodge:module:lib/tools/reverse_image_search.py"
+        },
+        {
+          "@id": "urn:blue-lodge:module:scripts/training/forge.py"
+        },
+        {
+          "@id": "urn:blue-lodge:module:scripts/training/check_credits.py"
+        },
+        {
+          "@id": "urn:blue-lodge:module:scripts/training/runs.py"
+        },
+        {
+          "@id": "urn:blue-lodge:module:backup_artifacts.py"
         },
         {
           "@id": "urn:blue-lodge:module:lib/comms/discord_outbox.sh"
@@ -10724,25 +10605,6 @@
       ]
     },
     {
-      "@id": "urn:blue-lodge:module:scripts/benchmark_rx5700xt_1slot.py",
-      "@type": "SoftwareSourceCode",
-      "name": "benchmark_rx5700xt_1slot.py",
-      "path": "scripts/benchmark_rx5700xt_1slot.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "scripts/benchmark_rx5700xt_1slot.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "switch_remote_model",
-        "run_completion",
-        "evaluate_config",
-        "ensure_tunnel_connected"
-      ]
-    },
-    {
       "@id": "urn:blue-lodge:module:scripts/ci/bootstrap_env.sh",
       "@type": "SoftwareSourceCode",
       "name": "bootstrap_env.sh",
@@ -10956,869 +10818,6 @@
       "dependencies": [],
       "dependsOn": [],
       "exports": []
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/colab_3x_a100_experimental_orchestrator.py",
-      "@type": "SoftwareSourceCode",
-      "name": "colab_3x_a100_experimental_orchestrator.py",
-      "path": "scripts/colab_training/archive/colab_3x_a100_experimental_orchestrator.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "colab_3x_a100_experimental_orchestrator.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "run_colab_cmd",
-        "provision_instance",
-        "upload_track_payload",
-        "launch_track_training",
-        "monitor_and_download",
-        "terminate_session"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/colab_3x_a100_multiturn_orchestrator.py",
-      "@type": "SoftwareSourceCode",
-      "name": "colab_3x_a100_multiturn_orchestrator.py",
-      "path": "scripts/colab_training/archive/colab_3x_a100_multiturn_orchestrator.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "colab_3x_a100_multiturn_orchestrator.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "run_colab_cmd",
-        "provision_instance",
-        "upload_track_payload",
-        "launch_track_training",
-        "monitor_and_download",
-        "teardown_instance"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/colab_3x_a100_orchestrator.py",
-      "@type": "SoftwareSourceCode",
-      "name": "colab_3x_a100_orchestrator.py",
-      "path": "scripts/colab_training/archive/colab_3x_a100_orchestrator.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "colab_3x_a100_orchestrator.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "run_colab_cmd",
-        "provision_instance",
-        "upload_track_payload",
-        "run_track_training",
-        "download_and_cleanup"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/colab_3x_a100_research_orchestrator.py",
-      "@type": "SoftwareSourceCode",
-      "name": "colab_3x_a100_research_orchestrator.py",
-      "path": "scripts/colab_training/archive/colab_3x_a100_research_orchestrator.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "colab_3x_a100_research_orchestrator.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "run_colab_cmd",
-        "provision_instance",
-        "upload_track_payload",
-        "run_track_training",
-        "download_and_cleanup"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/colab_enhanced_orchestrator.py",
-      "@type": "SoftwareSourceCode",
-      "name": "colab_enhanced_orchestrator.py",
-      "path": "scripts/colab_training/archive/colab_enhanced_orchestrator.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "colab_enhanced_orchestrator.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "run_colab_cmd",
-        "provision_fleet",
-        "upload_payloads",
-        "launch_training",
-        "monitor_and_sync",
-        "teardown_fleet"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/colab_fleet_orchestrator.py",
-      "@type": "SoftwareSourceCode",
-      "name": "colab_fleet_orchestrator.py",
-      "path": "scripts/colab_training/archive/colab_fleet_orchestrator.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "colab_fleet_orchestrator.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "run_colab_cmd",
-        "provision_fleet",
-        "upload_payloads",
-        "launch_training",
-        "monitor_and_sync",
-        "teardown_fleet"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/colab_jinja_orchestrator.py",
-      "@type": "SoftwareSourceCode",
-      "name": "colab_jinja_orchestrator.py",
-      "path": "scripts/colab_training/archive/colab_jinja_orchestrator.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "colab_jinja_orchestrator.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "run_colab_cmd",
-        "provision_fleet",
-        "upload_payloads",
-        "launch_training",
-        "monitor_and_sync",
-        "teardown_fleet"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/colab_multiturn_orchestrator.py",
-      "@type": "SoftwareSourceCode",
-      "name": "colab_multiturn_orchestrator.py",
-      "path": "scripts/colab_training/archive/colab_multiturn_orchestrator.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "colab_multiturn_orchestrator.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "run_colab_cmd",
-        "provision_instance",
-        "upload_payloads",
-        "launch_training",
-        "monitor_and_sync"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/colab_remediation_orchestrator.py",
-      "@type": "SoftwareSourceCode",
-      "name": "colab_remediation_orchestrator.py",
-      "path": "scripts/colab_training/archive/colab_remediation_orchestrator.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "colab_remediation_orchestrator.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "run_colab_cmd",
-        "upload_remediation_payloads",
-        "launch_training",
-        "monitor_and_sync",
-        "teardown_fleet"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration10.py",
-      "@type": "SoftwareSourceCode",
-      "name": "fuse_iteration10.py",
-      "path": "scripts/colab_training/archive/fuse_iteration10.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "fuse_iteration10.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration11.py",
-      "@type": "SoftwareSourceCode",
-      "name": "fuse_iteration11.py",
-      "path": "scripts/colab_training/archive/fuse_iteration11.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "fuse_iteration11.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration12.py",
-      "@type": "SoftwareSourceCode",
-      "name": "fuse_iteration12.py",
-      "path": "scripts/colab_training/archive/fuse_iteration12.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "fuse_iteration12.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration13.py",
-      "@type": "SoftwareSourceCode",
-      "name": "fuse_iteration13.py",
-      "path": "scripts/colab_training/archive/fuse_iteration13.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "fuse_iteration13.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration14.py",
-      "@type": "SoftwareSourceCode",
-      "name": "fuse_iteration14.py",
-      "path": "scripts/colab_training/archive/fuse_iteration14.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "fuse_iteration14.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration5.py",
-      "@type": "SoftwareSourceCode",
-      "name": "fuse_iteration5.py",
-      "path": "scripts/colab_training/archive/fuse_iteration5.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "fuse_iteration5.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration6.py",
-      "@type": "SoftwareSourceCode",
-      "name": "fuse_iteration6.py",
-      "path": "scripts/colab_training/archive/fuse_iteration6.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "fuse_iteration6.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration7.py",
-      "@type": "SoftwareSourceCode",
-      "name": "fuse_iteration7.py",
-      "path": "scripts/colab_training/archive/fuse_iteration7.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "fuse_iteration7.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration8.py",
-      "@type": "SoftwareSourceCode",
-      "name": "fuse_iteration8.py",
-      "path": "scripts/colab_training/archive/fuse_iteration8.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "fuse_iteration8.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration9.py",
-      "@type": "SoftwareSourceCode",
-      "name": "fuse_iteration9.py",
-      "path": "scripts/colab_training/archive/fuse_iteration9.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "fuse_iteration9.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/generate_dag_react_curricula.py",
-      "@type": "SoftwareSourceCode",
-      "name": "generate_dag_react_curricula.py",
-      "path": "scripts/colab_training/archive/generate_dag_react_curricula.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "generate_dag_react_curricula.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "build_track_a_sample",
-        "build_track_b_sample",
-        "build_track_c_sample",
-        "build_track_d_sample"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/generate_enhanced_curricula.py",
-      "@type": "SoftwareSourceCode",
-      "name": "generate_enhanced_curricula.py",
-      "path": "scripts/colab_training/archive/generate_enhanced_curricula.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "generate_enhanced_curricula.py",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": []
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/generate_jinja_curricula.py",
-      "@type": "SoftwareSourceCode",
-      "name": "generate_jinja_curricula.py",
-      "path": "scripts/colab_training/archive/generate_jinja_curricula.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "generate_jinja_curricula.py",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": []
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/generate_multiturn_react_curricula.py",
-      "@type": "SoftwareSourceCode",
-      "name": "generate_multiturn_react_curricula.py",
-      "path": "scripts/colab_training/archive/generate_multiturn_react_curricula.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "generate_multiturn_react_curricula.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "make_system_prompt",
-        "generate_track1_samples",
-        "generate_track2_samples",
-        "generate_track3_samples",
-        "generate_track4_samples"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/generate_remediation_curricula.py",
-      "@type": "SoftwareSourceCode",
-      "name": "generate_remediation_curricula.py",
-      "path": "scripts/colab_training/archive/generate_remediation_curricula.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "generate_remediation_curricula.py",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": []
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/generate_research_cron_curricula.py",
-      "@type": "SoftwareSourceCode",
-      "name": "generate_research_cron_curricula.py",
-      "path": "scripts/colab_training/archive/generate_research_cron_curricula.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "generate_research_cron_curricula.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "build_track_a_sample",
-        "build_track_b_sample",
-        "build_track_c_sample"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/launch_3track_training.sh",
-      "@type": "SoftwareSourceCode",
-      "name": "launch_3track_training.sh",
-      "path": "scripts/colab_training/archive/launch_3track_training.sh",
-      "programmingLanguage": "Bash",
-      "encodingFormat": "text/x-shellscript",
-      "description": "launch_3track_training.sh:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:scripts/colab_training/archive/train_blue_lodge_grpo.py",
-        "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration5.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:scripts/colab_training/archive/train_blue_lodge_grpo.py"
-        },
-        {
-          "@id": "urn:blue-lodge:module:scripts/colab_training/archive/fuse_iteration5.py"
-        }
-      ],
-      "exports": []
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/merge_frontier_loras.py",
-      "@type": "SoftwareSourceCode",
-      "name": "merge_frontier_loras.py",
-      "path": "scripts/colab_training/archive/merge_frontier_loras.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Frontier LoRA Multi-Adapter Fusion Engine:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "parse_args"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/train_blue_lodge_colab.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_blue_lodge_colab.py",
-      "path": "scripts/colab_training/archive/train_blue_lodge_colab.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "train_blue_lodge_colab.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args",
-        "download_file",
-        "setup_environment",
-        "launch_inference_server",
-        "load_curriculum",
-        "compute_reward",
-        "sample_completions",
-        "export_gguf_adapter"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/train_blue_lodge_grpo.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_blue_lodge_grpo.py",
-      "path": "scripts/colab_training/archive/train_blue_lodge_grpo.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "train_blue_lodge_grpo.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args",
-        "load_curriculum",
-        "compute_reward",
-        "load_bedrock_tools",
-        "sample_completions",
-        "export_gguf_adapter"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/train_champion_v5_grpo.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_champion_v5_grpo.py",
-      "path": "scripts/colab_training/archive/train_champion_v5_grpo.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Champion v5 GRPO Agentic Alignment Engine for Google Colab A100:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "register_ggml_type",
-        "download_file",
-        "setup_environment",
-        "launch_inference_server",
-        "sample_completions",
-        "compute_4tier_reward",
-        "run_grpo_training"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/train_dag_colab.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_dag_colab.py",
-      "path": "scripts/colab_training/archive/train_dag_colab.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "train_dag_colab.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args",
-        "download_file",
-        "setup_environment",
-        "start_inference_server",
-        "compute_track_reward",
-        "export_gguf_adapter"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/train_enhanced_colab.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_enhanced_colab.py",
-      "path": "scripts/colab_training/archive/train_enhanced_colab.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "train_enhanced_colab.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args",
-        "download_file",
-        "setup_environment",
-        "launch_inference_server",
-        "load_dataset",
-        "compute_reward",
-        "sample_completions",
-        "export_gguf_adapter",
-        "evaluate_validation"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/train_frontier_grpo.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_frontier_grpo.py",
-      "path": "scripts/colab_training/archive/train_frontier_grpo.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Iteration 3 Frontier GRPO Reinforcement Pipeline (Production Autonomous Fleet):",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args",
-        "download_file",
-        "setup_environment",
-        "launch_inference_server",
-        "load_curriculum",
-        "compute_reward",
-        "sample_completions",
-        "export_gguf_adapter"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/train_iteration2_frontier_grpo.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_iteration2_frontier_grpo.py",
-      "path": "scripts/colab_training/archive/train_iteration2_frontier_grpo.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Iteration 2 Frontier Distillation & Sovereign Full-Scale GRPO Engine:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "register_ggml_type",
-        "download_file",
-        "setup_environment",
-        "launch_inference_server",
-        "sample_completions",
-        "evaluate_arc_sample",
-        "evaluate_exploitbench_sample",
-        "evaluate_bluelodge_sample",
-        "compute_domain_reward",
-        "run_training",
-        "export_adapter"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/train_iteration3_frontier_grpo.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_iteration3_frontier_grpo.py",
-      "path": "scripts/colab_training/archive/train_iteration3_frontier_grpo.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Iteration 3 Frontier GRPO Reinforcement Pipeline (Production Autonomous Fleet):",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args",
-        "download_file",
-        "setup_environment",
-        "launch_inference_server",
-        "load_curriculum",
-        "compute_reward",
-        "sample_completions",
-        "export_gguf_adapter"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/train_multiturn_colab.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_multiturn_colab.py",
-      "path": "scripts/colab_training/archive/train_multiturn_colab.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "train_multiturn_colab.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args",
-        "download_file",
-        "setup_environment",
-        "launch_inference_server",
-        "load_dataset",
-        "sample_completions",
-        "compute_multiturn_reward",
-        "export_gguf_adapter",
-        "evaluate_validation"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/train_multiturn_direct.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_multiturn_direct.py",
-      "path": "scripts/colab_training/archive/train_multiturn_direct.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "train_multiturn_direct.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "load_dataset",
-        "compute_multiturn_reward",
-        "export_gguf_adapter",
-        "train_track"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/archive/train_research_colab.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_research_colab.py",
-      "path": "scripts/colab_training/archive/train_research_colab.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "train_research_colab.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args",
-        "download_file",
-        "setup_environment",
-        "compute_track_reward",
-        "export_gguf_adapter"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/convert_safetensors_to_whisper_ggml.py",
-      "@type": "SoftwareSourceCode",
-      "name": "convert_safetensors_to_whisper_ggml.py",
-      "path": "scripts/colab_training/convert_safetensors_to_whisper_ggml.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Convert a Hugging Face Whisper model.safetensors file directly into a whisper.cpp GGML .bin model",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "map_tensor_name",
-        "convert_safetensors_to_ggml"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/fuse_champion_v5_iteration9.py",
-      "@type": "SoftwareSourceCode",
-      "name": "fuse_champion_v5_iteration9.py",
-      "path": "scripts/colab_training/fuse_champion_v5_iteration9.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "fuse_champion_v5_iteration9.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/merge_frontier_loras.py",
-      "@type": "SoftwareSourceCode",
-      "name": "merge_frontier_loras.py",
-      "path": "scripts/colab_training/merge_frontier_loras.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Frontier LoRA Multi-Adapter Fusion Engine:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "parse_args"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/sync_and_monitor.py",
-      "@type": "SoftwareSourceCode",
-      "name": "sync_and_monitor.py",
-      "path": "scripts/colab_training/sync_and_monitor.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Automated Session Keep-Alive and Checkpoint Sync Daemon for Colab Workers.",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "run_cmd"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/train_rx5700xt_loras.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_rx5700xt_loras.py",
-      "path": "scripts/colab_training/train_rx5700xt_loras.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "scripts/colab_training/train_rx5700xt_loras.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "hash_text_to_unit_vec",
-        "extract_trajectory_pair",
-        "build_layer_specs",
-        "export_gguf_adapter",
-        "train_track_adapter"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/colab_training/train_sdr_p25_loras_a100.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_sdr_p25_loras_a100.py",
-      "path": "scripts/colab_training/train_sdr_p25_loras_a100.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "scripts/colab_training/train_sdr_p25_loras_a100.py",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:scripts/colab_training/convert_safetensors_to_whisper_ggml.py",
-        "urn:blue-lodge:module:scripts/colab_training/train_rx5700xt_loras.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:scripts/colab_training/convert_safetensors_to_whisper_ggml.py"
-        },
-        {
-          "@id": "urn:blue-lodge:module:scripts/colab_training/train_rx5700xt_loras.py"
-        }
-      ],
-      "exports": [
-        "download_file",
-        "build_p25_e4b_curriculum",
-        "LoRALinear",
-        "decode_audio_16khz_filtered",
-        "finetune_whisper_small_p25_lora_on_a100"
-      ]
     },
     {
       "@id": "urn:blue-lodge:module:scripts/cron/nightly_golden_eval.sh",
@@ -12403,6 +11402,28 @@
       "exports": []
     },
     {
+      "@id": "urn:blue-lodge:module:scripts/eval/multiturn_bench.py",
+      "@type": "SoftwareSourceCode",
+      "name": "multiturn_bench.py",
+      "path": "scripts/eval/multiturn_bench.py",
+      "programmingLanguage": "Python",
+      "encodingFormat": "text/x-python",
+      "description": "07_evaluate_multiturn_benchmark.py:",
+      "stability": "stable",
+      "isPartOf": "urn:blue-lodge:subsystem:scripts",
+      "dependencies": [],
+      "dependsOn": [],
+      "exports": [
+        "parse_args",
+        "resolve_model_family",
+        "query_endpoint",
+        "get_bedrock_tools",
+        "get_multiturn_scenarios",
+        "evaluate_scenario",
+        "compare_scorecards"
+      ]
+    },
+    {
       "@id": "urn:blue-lodge:module:scripts/inference/activate_profile.sh",
       "@type": "SoftwareSourceCode",
       "name": "activate_profile.sh",
@@ -12764,27 +11785,13 @@
       "exports": []
     },
     {
-      "@id": "urn:blue-lodge:module:scripts/infra/start-local-prism.sh",
-      "@type": "SoftwareSourceCode",
-      "name": "start-local-prism.sh",
-      "path": "scripts/infra/start-local-prism.sh",
-      "programmingLanguage": "Bash",
-      "encodingFormat": "text/x-shellscript",
-      "description": "start-local-prism.sh \u2014 Local CUDA llama.cpp-prism Sandbox Runner",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": []
-    },
-    {
       "@id": "urn:blue-lodge:module:scripts/infra/start_prism.sh",
       "@type": "SoftwareSourceCode",
       "name": "start_prism.sh",
       "path": "scripts/infra/start_prism.sh",
       "programmingLanguage": "Bash",
       "encodingFormat": "text/x-shellscript",
-      "description": "start_prism.sh: Sovereign PRISM Inference Runner",
+      "description": "Legacy compatibility wrapper \u2014 Blue Lodge now standardizes on upstream stock llama.cpp",
       "stability": "stable",
       "isPartOf": "urn:blue-lodge:subsystem:scripts",
       "dependencies": [],
@@ -12826,24 +11833,6 @@
       "exports": [
         "cleanup",
         "resolve_model"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/migrate_dossier_categories.py",
-      "@type": "SoftwareSourceCode",
-      "name": "migrate_dossier_categories.py",
-      "path": "scripts/migrate_dossier_categories.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Python utility module for migrate_dossier_categories.py.",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "classify",
-        "process_dossiers",
-        "process_index"
       ]
     },
     {
@@ -12941,2103 +11930,6 @@
       "exports": []
     },
     {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/06_interrogate_transcripts_and_build_dataset.py",
-      "@type": "SoftwareSourceCode",
-      "name": "06_interrogate_transcripts_and_build_dataset.py",
-      "path": "scripts/quant_research/06_interrogate_transcripts_and_build_dataset.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "06_interrogate_transcripts_and_build_dataset.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "load_george_trajectories",
-        "load_ide_transcripts",
-        "generate_web_research_sample",
-        "generate_code_gitops_sample",
-        "generate_multi_file_project_sample",
-        "generate_tools_packages_sample",
-        "generate_file_download_analysis_sample",
-        "convert_to_chatml_sample"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/07_evaluate_multiturn_benchmark.py",
-      "@type": "SoftwareSourceCode",
-      "name": "07_evaluate_multiturn_benchmark.py",
-      "path": "scripts/quant_research/07_evaluate_multiturn_benchmark.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "07_evaluate_multiturn_benchmark.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args",
-        "query_endpoint",
-        "get_bedrock_tools",
-        "get_multiturn_scenarios",
-        "evaluate_scenario"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/08_build_multihop_transcripts_dataset.py",
-      "@type": "SoftwareSourceCode",
-      "name": "08_build_multihop_transcripts_dataset.py",
-      "path": "scripts/quant_research/08_build_multihop_transcripts_dataset.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "scripts/quant_research/08_build_multihop_transcripts_dataset.py",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "build_track1_samples",
-        "build_track2_samples",
-        "build_track3_samples"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/01_quantize_ptq1_0.py",
-      "@type": "SoftwareSourceCode",
-      "name": "01_quantize_ptq1_0.py",
-      "path": "scripts/quant_research/archive/01_quantize_ptq1_0.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "01_quantize_ptq1_0.py: Universal Post-Training Structured Quantization Engine",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "pack_5_trits_block",
-        "quantize_tensor_ptq1_0"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/02_inspect_and_prune_hybrid.py",
-      "@type": "SoftwareSourceCode",
-      "name": "02_inspect_and_prune_hybrid.py",
-      "path": "scripts/quant_research/archive/02_inspect_and_prune_hybrid.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "02_inspect_and_prune_hybrid.py: Universal Layer Sensitivity & SSM-Attention Pruning Engine",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "compute_logit_lens_metric",
-        "evaluate_layer_divergence",
-        "generate_macroblock_hybrid_schedule"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/03_compile_custom_kernel.py",
-      "@type": "SoftwareSourceCode",
-      "name": "03_compile_custom_kernel.py",
-      "path": "scripts/quant_research/archive/03_compile_custom_kernel.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "03_compile_custom_kernel.py: Custom Kernel Validation & GGUF Packing Engine",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "verify_cuda_kernel_environment",
-        "verify_sptq_lookup_table"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/04_build_blue_lodge_curriculum.py",
-      "@type": "SoftwareSourceCode",
-      "name": "04_build_blue_lodge_curriculum.py",
-      "path": "scripts/quant_research/archive/04_build_blue_lodge_curriculum.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "04_build_blue_lodge_curriculum.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "generate_git_samples",
-        "generate_phytology_samples",
-        "generate_file_operation_samples",
-        "generate_bash_test_samples",
-        "generate_swarm_limits_samples"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/04_build_curriculum.py",
-      "@type": "SoftwareSourceCode",
-      "name": "04_build_curriculum.py",
-      "path": "scripts/quant_research/archive/04_build_curriculum.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "04_build_curriculum.py: Multi-Domain GRPO Reinforcement Curriculum Builder",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "load_arc_agi_tasks",
-        "load_exploit_tasks",
-        "load_gpqa_tasks"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/04_build_multi_track_curriculum.py",
-      "@type": "SoftwareSourceCode",
-      "name": "04_build_multi_track_curriculum.py",
-      "path": "scripts/quant_research/archive/04_build_multi_track_curriculum.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "04_build_multi_track_curriculum.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "build_track1_syntax",
-        "build_track2_git_ops",
-        "build_track3_phytology"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/05_evaluate_blue_lodge_benchmark.py",
-      "@type": "SoftwareSourceCode",
-      "name": "05_evaluate_blue_lodge_benchmark.py",
-      "path": "scripts/quant_research/archive/05_evaluate_blue_lodge_benchmark.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "05_evaluate_blue_lodge_benchmark.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "parse_args",
-        "query_endpoint",
-        "get_bedrock_tools",
-        "get_test_cases",
-        "evaluate_case",
-        "run_benchmark"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/05_evaluate_frontier_suite.py",
-      "@type": "SoftwareSourceCode",
-      "name": "05_evaluate_frontier_suite.py",
-      "path": "scripts/quant_research/archive/05_evaluate_frontier_suite.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Comprehensive 6-Pillar Frontier Benchmark Suite:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "query_endpoint",
-        "clean_output",
-        "extract_first_json",
-        "extract_choice",
-        "eval_agent_bench",
-        "eval_arc_challenge",
-        "eval_gpqa_diamond",
-        "eval_ifbench",
-        "eval_terminal_bench",
-        "eval_arc_agi_synthesis",
-        "run_suite"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/06_apply_calibrated_mtp.py",
-      "@type": "SoftwareSourceCode",
-      "name": "06_apply_calibrated_mtp.py",
-      "path": "scripts/quant_research/archive/06_apply_calibrated_mtp.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "06_apply_calibrated_mtp.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "register_ggml_type",
-        "calibrate_model"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/06_interrogate_transcripts_and_build_dataset.py",
-      "@type": "SoftwareSourceCode",
-      "name": "06_interrogate_transcripts_and_build_dataset.py",
-      "path": "scripts/quant_research/archive/06_interrogate_transcripts_and_build_dataset.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "06_interrogate_transcripts_and_build_dataset.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "load_george_trajectories",
-        "load_ide_transcripts",
-        "generate_web_research_sample",
-        "generate_code_gitops_sample",
-        "generate_multi_file_project_sample",
-        "generate_tools_packages_sample",
-        "generate_file_download_analysis_sample",
-        "convert_to_chatml_sample"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/calibrate_and_benchmark_mtp.py",
-      "@type": "SoftwareSourceCode",
-      "name": "calibrate_and_benchmark_mtp.py",
-      "path": "scripts/quant_research/archive/calibrate_and_benchmark_mtp.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "calibrate_and_benchmark_mtp.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "wait_for_server",
-        "launch_server",
-        "eval_prompt"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/06_calibrate_mtp_draft.py",
-      "@type": "SoftwareSourceCode",
-      "name": "06_calibrate_mtp_draft.py",
-      "path": "scripts/quant_research/archive/experiments/06_calibrate_mtp_draft.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "06_calibrate_mtp_draft.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "register_ggml_type",
-        "calibrate_and_update_gguf"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/build_grpo_curriculum.py",
-      "@type": "SoftwareSourceCode",
-      "name": "build_grpo_curriculum.py",
-      "path": "scripts/quant_research/archive/experiments/build_grpo_curriculum.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Blue Lodge GRPO Curriculum Builder with Semantic SMOTE Augmentation",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "extract_real_trajectories",
-        "synthesize_counterfactual_repairs",
-        "apply_semantic_smote",
-        "build_research_graph_curriculum",
-        "assemble_final_curriculum"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/build_iteration2_frontier_curriculum.py",
-      "@type": "SoftwareSourceCode",
-      "name": "build_iteration2_frontier_curriculum.py",
-      "path": "scripts/quant_research/archive/experiments/build_iteration2_frontier_curriculum.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Builder for Iteration 2 Frontier Curriculum:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "build_arc_agi_samples",
-        "build_exploitbench_samples",
-        "build_blue_lodge_samples"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/build_production_calibration.py",
-      "@type": "SoftwareSourceCode",
-      "name": "build_production_calibration.py",
-      "path": "scripts/quant_research/archive/experiments/build_production_calibration.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Build diverse multi-domain calibration dataset for llama-imatrix.",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": []
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/convert_qwen38_mlp_sparse.py",
-      "@type": "SoftwareSourceCode",
-      "name": "convert_qwen38_mlp_sparse.py",
-      "path": "scripts/quant_research/archive/experiments/convert_qwen38_mlp_sparse.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Frontier Qwen 3.8 27B Quantization:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "hadamard_matrix",
-        "apply_fwht",
-        "sparsify_2_4_structural",
-        "dequantize_q8_0",
-        "quantize_q8_0",
-        "extract_token_vec"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/convert_qwen38_multicore.py",
-      "@type": "SoftwareSourceCode",
-      "name": "convert_qwen38_multicore.py",
-      "path": "scripts/quant_research/archive/experiments/convert_qwen38_multicore.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "High-Performance Multi-Core Conversion Engine for Qwen 3.8 27B Frontier.",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "hadamard_matrix",
-        "apply_fwht",
-        "sparsify_2_4_structural",
-        "dequantize_q8_0",
-        "quantize_q8_0",
-        "init_worker",
-        "process_single_tensor"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/convert_qwen38_to_2_4_sparse.py",
-      "@type": "SoftwareSourceCode",
-      "name": "convert_qwen38_to_2_4_sparse.py",
-      "path": "scripts/quant_research/archive/experiments/convert_qwen38_to_2_4_sparse.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Full Real Layer-by-Layer Conversion & Grafting Engine for Qwen 3.8 27B Frontier.",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "hadamard_matrix",
-        "apply_fwht",
-        "sparsify_2_4_ternary",
-        "dequantize_q8_0",
-        "quantize_q8_0"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/convert_qwen38_verified.py",
-      "@type": "SoftwareSourceCode",
-      "name": "convert_qwen38_verified.py",
-      "path": "scripts/quant_research/archive/experiments/convert_qwen38_verified.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Verified Invertible 2:4 Sparse + Refusal-Ablated Conversion Engine for Qwen 3.8 27B.",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "hadamard_matrix",
-        "apply_fwht",
-        "sparsify_2_4_structural",
-        "dequantize_q8_0",
-        "quantize_q8_0",
-        "extract_token_vec"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/download_arc_dataset.py",
-      "@type": "SoftwareSourceCode",
-      "name": "download_arc_dataset.py",
-      "path": "scripts/quant_research/archive/experiments/download_arc_dataset.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Download ARC-Challenge and ARC-Easy test datasets for standardized evaluation.",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": []
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/download_qwen38_assets.py",
-      "@type": "SoftwareSourceCode",
-      "name": "download_qwen38_assets.py",
-      "path": "scripts/quant_research/archive/experiments/download_qwen38_assets.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Production Asset Downloader for Frontier Qwen 3.8 27B Research:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": []
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/esn_ssm_reservoir_experiment.py",
-      "@type": "SoftwareSourceCode",
-      "name": "esn_ssm_reservoir_experiment.py",
-      "path": "scripts/quant_research/archive/experiments/esn_ssm_reservoir_experiment.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Experimental Dive: ESN Reservoir Replacement for SSM Layers in Bonsai 27B",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "generate_haar_orthogonal",
-        "generate_standard_gaussian",
-        "kronecker_expansion",
-        "test_spectral_properties",
-        "simulate_ssm_vs_esn_trajectory"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/gridsearch_quant.py",
-      "@type": "SoftwareSourceCode",
-      "name": "gridsearch_quant.py",
-      "path": "scripts/quant_research/archive/experiments/gridsearch_quant.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Gridsearch & Hyperparameter Benchmarking Engine for Sub-1.58b Quantization",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "hadamard_matrix",
-        "simulate_tensor_block",
-        "apply_rotation",
-        "quantize_dense_ternary",
-        "quantize_2_4_sparse_ternary",
-        "quantize_delta_modulation",
-        "quantize_e8_lattice",
-        "compute_metrics",
-        "clean_for_json"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/mine_arc_agi_curriculum.py",
-      "@type": "SoftwareSourceCode",
-      "name": "mine_arc_agi_curriculum.py",
-      "path": "scripts/quant_research/archive/experiments/mine_arc_agi_curriculum.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "ARC-AGI Stage 2 Curriculum Generator & Self-Repair Miner:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "query_endpoint",
-        "extract_python_code",
-        "test_code_in_sandbox",
-        "build_prompt",
-        "mine_curriculum"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/pipeline_qwen38_frontier.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pipeline_qwen38_frontier.py",
-      "path": "scripts/quant_research/archive/experiments/pipeline_qwen38_frontier.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Master Automated Research Pipeline: Qwen 3.8 27B Frontier Optimization (v2.0)",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "hadamard_matrix",
-        "generate_layer_weights",
-        "extract_refusal_direction",
-        "ablate_refusal_direction",
-        "apply_hadamard_rotation",
-        "quantize_2_4_sparse_ternary",
-        "model_mtp_grafting",
-        "verify_vision_compatibility",
-        "clean_for_json"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/plot_empirical_results.py",
-      "@type": "SoftwareSourceCode",
-      "name": "plot_empirical_results.py",
-      "path": "scripts/quant_research/archive/experiments/plot_empirical_results.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Generates Publication-Quality Empirical Visualizations:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": []
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/real_grid_search_and_finetune.py",
-      "@type": "SoftwareSourceCode",
-      "name": "real_grid_search_and_finetune.py",
-      "path": "scripts/quant_research/archive/experiments/real_grid_search_and_finetune.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Real Empirical Grid Search & Quantization-Aware Fine-Tuning (QAT) Adapter",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "hadamard_matrix",
-        "apply_rotation",
-        "quantize_sparse_ternary",
-        "quantize_dense_ternary"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/experiments/sweep_speculative_params.py",
-      "@type": "SoftwareSourceCode",
-      "name": "sweep_speculative_params.py",
-      "path": "scripts/quant_research/archive/experiments/sweep_speculative_params.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "sweep_speculative_params.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "wait_for_server",
-        "run_sweep"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/graft_internal_mtp.py",
-      "@type": "SoftwareSourceCode",
-      "name": "graft_internal_mtp.py",
-      "path": "scripts/quant_research/archive/graft_internal_mtp.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "graft_internal_mtp.py:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/benchmark_headless_gpu0.py",
-      "@type": "SoftwareSourceCode",
-      "name": "benchmark_headless_gpu0.py",
-      "path": "scripts/quant_research/archive/legacy_evals/benchmark_headless_gpu0.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Sequential Headless GPU 0 Empirical Benchmark Suite",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "get_gpu0_vram_mb",
-        "run_model_benchmark"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/benchmark_multimodal_mtp.py",
-      "@type": "SoftwareSourceCode",
-      "name": "benchmark_multimodal_mtp.py",
-      "path": "scripts/quant_research/archive/legacy_evals/benchmark_multimodal_mtp.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Comprehensive Headless GPU 0 Benchmark Suite:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "get_gpu0_vram_mb",
-        "run_llama_cli",
-        "benchmark_text_only",
-        "benchmark_vision_tower",
-        "benchmark_mtp_speculative"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/build_and_eval_clean_lora.py",
-      "@type": "SoftwareSourceCode",
-      "name": "build_and_eval_clean_lora.py",
-      "path": "scripts/quant_research/archive/legacy_evals/build_and_eval_clean_lora.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Train Targeted Clean Residual SVD LoRA on RPS-UnityGain:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "unpack_sptq1_0",
-        "train_and_eval"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/evaluate_arc_agi.py",
-      "@type": "SoftwareSourceCode",
-      "name": "evaluate_arc_agi.py",
-      "path": "scripts/quant_research/archive/legacy_evals/evaluate_arc_agi.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "ARC-AGI Program-Synthesis & Test-Repair Evaluator for Blue Lodge:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "query_endpoint",
-        "extract_python_code",
-        "test_code_in_sandbox",
-        "build_arc_prompt",
-        "evaluate_arc_agi"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/evaluate_benchmarks.py",
-      "@type": "SoftwareSourceCode",
-      "name": "evaluate_benchmarks.py",
-      "path": "scripts/quant_research/archive/legacy_evals/evaluate_benchmarks.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Comprehensive Agentic & Reasoning Benchmark Suite:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "query_endpoint",
-        "extract_json_from_response",
-        "evaluate_agent_bench",
-        "evaluate_arc"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/evaluate_clean_v2_with_lora.py",
-      "@type": "SoftwareSourceCode",
-      "name": "evaluate_clean_v2_with_lora.py",
-      "path": "scripts/quant_research/archive/legacy_evals/evaluate_clean_v2_with_lora.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Full Autonomous Benchmark for Qwen3.8-27B-SPTQ1_0-Clean-v2.gguf + Calibrated Hermes LoRA:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "run_cmd"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/evaluate_custom_and_compare.py",
-      "@type": "SoftwareSourceCode",
-      "name": "evaluate_custom_and_compare.py",
-      "path": "scripts/quant_research/archive/legacy_evals/evaluate_custom_and_compare.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Full Automated Benchmark & Comparison Runner:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": []
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/evaluate_final_sub65.py",
-      "@type": "SoftwareSourceCode",
-      "name": "evaluate_final_sub65.py",
-      "path": "scripts/quant_research/archive/legacy_evals/evaluate_final_sub65.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Comprehensive Final Verification Suite for Sub-6.5GB Frontier Model:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "get_gpu1_vram_mb",
-        "run_command_monitored"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/evaluate_optimal_permuted.py",
-      "@type": "SoftwareSourceCode",
-      "name": "evaluate_optimal_permuted.py",
-      "path": "scripts/quant_research/archive/legacy_evals/evaluate_optimal_permuted.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Full Autonomous Benchmark for Qwen3.8-27B-SPTQ1_0-Optimal-Permuted.gguf:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "run_cmd"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/evaluate_qat_pipeline.py",
-      "@type": "SoftwareSourceCode",
-      "name": "evaluate_qat_pipeline.py",
-      "path": "scripts/quant_research/archive/legacy_evals/evaluate_qat_pipeline.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Comprehensive Evaluation of Qwen3.8-27B-SPTQ1_0-QAT-Full:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "run_cmd"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/frontier_execution_suite.py",
-      "@type": "SoftwareSourceCode",
-      "name": "frontier_execution_suite.py",
-      "path": "scripts/quant_research/archive/legacy_evals/frontier_execution_suite.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Frontier Execution Suite: Directional Refusal Ablation, 2:4 Sparse Ternary,",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "hadamard_matrix",
-        "extract_refusal_direction",
-        "ablate_weight_matrix",
-        "quantize_2_4_sparse_ternary"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/real_benchmark_suite.py",
-      "@type": "SoftwareSourceCode",
-      "name": "real_benchmark_suite.py",
-      "path": "scripts/quant_research/archive/legacy_evals/real_benchmark_suite.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Real Empirical Benchmark Suite:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "query_model_endpoint"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/run_full_empirical_evaluation.py",
-      "@type": "SoftwareSourceCode",
-      "name": "run_full_empirical_evaluation.py",
-      "path": "scripts/quant_research/archive/legacy_evals/run_full_empirical_evaluation.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Empirical Benchmark & Reasoning Evaluation Suite:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "run_cmd",
-        "measure_perplexity",
-        "run_prompt_llama_cli"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_evals/run_full_evaluation_pipeline.py",
-      "@type": "SoftwareSourceCode",
-      "name": "run_full_evaluation_pipeline.py",
-      "path": "scripts/quant_research/archive/legacy_evals/run_full_evaluation_pipeline.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Full Autonomous Evaluation & Verification Pipeline for Blue-Llama Champion Model:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "run_cmd",
-        "measure_file_sizes",
-        "eval_perplexity",
-        "test_creative_dog_story"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/inspect_qat_migration.py",
-      "@type": "SoftwareSourceCode",
-      "name": "inspect_qat_migration.py",
-      "path": "scripts/quant_research/archive/legacy_tests/inspect_qat_migration.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Inspect QAT Coordinate Migration on blk.3.ffn_up:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/measure_exact_gpu1_vram.py",
-      "@type": "SoftwareSourceCode",
-      "name": "measure_exact_gpu1_vram.py",
-      "path": "scripts/quant_research/archive/legacy_tests/measure_exact_gpu1_vram.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Python utility module for measure_exact_gpu1_vram.py.",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "get_gpu1_vram_mb",
-        "measure_run"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/test_custom_model_inference.py",
-      "@type": "SoftwareSourceCode",
-      "name": "test_custom_model_inference.py",
-      "path": "scripts/quant_research/archive/legacy_tests/test_custom_model_inference.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Custom Frontier Model Live Validation Suite:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": []
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/test_decoupled_layer3.py",
-      "@type": "SoftwareSourceCode",
-      "name": "test_decoupled_layer3.py",
-      "path": "scripts/quant_research/archive/legacy_tests/test_decoupled_layer3.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Python utility module for test_decoupled_layer3.py.",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "test_layer"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/test_layer_pruning.py",
-      "@type": "SoftwareSourceCode",
-      "name": "test_layer_pruning.py",
-      "path": "scripts/quant_research/archive/legacy_tests/test_layer_pruning.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Test ShortGPT Layer Pruning on Qwen 3.8 27B:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "copy_metadata_with_block_count",
-        "export_pruned_model",
-        "eval_candidate"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/test_layerwise_qat_lora.py",
-      "@type": "SoftwareSourceCode",
-      "name": "test_layerwise_qat_lora.py",
-      "path": "scripts/quant_research/archive/legacy_tests/test_layerwise_qat_lora.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Test Layerwise QAT + LoRA Prototype on RTX 3060:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "SparseTernarySTE",
-        "QATLoRALinear",
-        "test_single_layer"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/test_lsq_ste_cuda.py",
-      "@type": "SoftwareSourceCode",
-      "name": "test_lsq_ste_cuda.py",
-      "path": "scripts/quant_research/archive/legacy_tests/test_lsq_ste_cuda.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Python utility module for test_lsq_ste_cuda.py.",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "quantize_unit_quads_cuda",
-        "test_full_tensor"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/test_mlp_folding_svd.py",
-      "@type": "SoftwareSourceCode",
-      "name": "test_mlp_folding_svd.py",
-      "path": "scripts/quant_research/archive/legacy_tests/test_mlp_folding_svd.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Method 1: Sequential MLP Distillation & Folding for Macroblock Compression",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "load_mlp_weights",
-        "eval_mlp",
-        "test_mlp_folding"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/test_sub65_candidate.py",
-      "@type": "SoftwareSourceCode",
-      "name": "test_sub65_candidate.py",
-      "path": "scripts/quant_research/archive/legacy_tests/test_sub65_candidate.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Test Sub-6.5GB VRAM Candidate Architecture:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "copy_gguf_metadata",
-        "pack_candidate"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/test_svd_lora_math.py",
-      "@type": "SoftwareSourceCode",
-      "name": "test_svd_lora_math.py",
-      "path": "scripts/quant_research/archive/legacy_tests/test_svd_lora_math.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Python utility module for test_svd_lora_math.py.",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": []
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/tune_rps_scales.py",
-      "@type": "SoftwareSourceCode",
-      "name": "tune_rps_scales.py",
-      "path": "scripts/quant_research/archive/legacy_tests/tune_rps_scales.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Fast Scale Tuning on RPS Candidate to Eliminate KV Cache Drift & Achieve PPL < 10.0:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "copy_gguf_metadata",
-        "export_model_with_down_scale",
-        "measure_ppl"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_tests/verify_scale_fix.py",
-      "@type": "SoftwareSourceCode",
-      "name": "verify_scale_fix.py",
-      "path": "scripts/quant_research/archive/legacy_tests/verify_scale_fix.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Python utility module for verify_scale_fix.py.",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": []
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_calibrated_residual_lora.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_calibrated_residual_lora.py",
-      "path": "scripts/quant_research/archive/legacy_training/train_calibrated_residual_lora.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Calibrated Residual LoRA / QAT Adapter Trainer for Qwen 3.8 27B:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "unpack_sptq1_0"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_champion_lora.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_champion_lora.py",
-      "path": "scripts/quant_research/archive/legacy_training/train_champion_lora.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Champion Matched Residual SVD + QAT LoRA Adapter Trainer for v4:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "unpack_sptq1_0",
-        "train_champion_v4_lora"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_frontier_lsq_qat.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_frontier_lsq_qat.py",
-      "path": "scripts/quant_research/archive/legacy_training/train_frontier_lsq_qat.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Frontier Decoupled LSQ + STE QAT & Truncated SVD Residual LoRA Engine:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "copy_gguf_metadata"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_full_intermediate_qat_lora.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_full_intermediate_qat_lora.py",
-      "path": "scripts/quant_research/archive/legacy_training/train_full_intermediate_qat_lora.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Full-Spectrum QAT + LoRA Pipeline for Qwen 3.8 27B:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_sptq_vectorized"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_lean_svd_lora.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_lean_svd_lora.py",
-      "path": "scripts/quant_research/archive/legacy_training/train_lean_svd_lora.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Lean Residual SVD LoRA Adapter Trainer for Qwen 3.8 27B:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "unpack_sptq1_0",
-        "train_lean_lora"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_logit_lens_boundary_lora.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_logit_lens_boundary_lora.py",
-      "path": "scripts/quant_research/archive/legacy_training/train_logit_lens_boundary_lora.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Logit-Lens Calibrated Residual LoRA Trainer for Champion v5:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "unpack_sptq1_0",
-        "train_champion_v5_logit_lora"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_sptq_qat_lora.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_sptq_qat_lora.py",
-      "path": "scripts/quant_research/archive/legacy_training/train_sptq_qat_lora.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Full Autonomous QAT + LoRA Calibration & Fine-Tuning Pipeline for Qwen 3.8 27B:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_sptq_vectorized"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_stage1_grpo_champion_v5.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_stage1_grpo_champion_v5.py",
-      "path": "scripts/quant_research/archive/legacy_training/train_stage1_grpo_champion_v5.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Stage 1 GRPO & Logit-Lens LoRA Trainer for Champion v5:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "unpack_sptq1_0",
-        "train_stage1_grpo"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_stage2_arc_agi_lora.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_stage2_arc_agi_lora.py",
-      "path": "scripts/quant_research/archive/legacy_training/train_stage2_arc_agi_lora.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Stage 2 ARC-AGI & Program-Synthesis LoRA Trainer:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "unpack_sptq1_0",
-        "train_stage2_lora"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_true_qat_ste.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_true_qat_ste.py",
-      "path": "scripts/quant_research/archive/legacy_training/train_true_qat_ste.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "True Quantization-Aware Training (QAT) & Hardware-LUT STE Pipeline for Qwen 3.8 27B:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "HardwareLUT_STE",
-        "pack_quads_clean_v3",
-        "encode_sptq1_0",
-        "copy_gguf_metadata"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/legacy_training/train_v6_logit_lens_boundary_lora.py",
-      "@type": "SoftwareSourceCode",
-      "name": "train_v6_logit_lens_boundary_lora.py",
-      "path": "scripts/quant_research/archive/legacy_training/train_v6_logit_lens_boundary_lora.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Logit-Lens Boundary LoRA Adapter for Blue-Llama Combined v6:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "train_v6_logit_lora"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/pack_clean_sub4gb.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_clean_sub4gb.py",
-      "path": "scripts/quant_research/archive/pack_clean_sub4gb.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Clean Sparsity Packer (Zero-Mean Dipole Balanced)",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "pack_quads_clean_balanced",
-        "encode_sptq1_0_clean",
-        "encode_sptq2_0_clean",
-        "copy_gguf_metadata"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/pack_fast_sub4gb.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_fast_sub4gb.py",
-      "path": "scripts/quant_research/archive/pack_fast_sub4gb.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Fast Activation-Aware Clean Sparsity Packer (Zero-Mean Dipole Balanced with Energy Calibration)",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "pack_quads_activation_aware",
-        "encode_sptq1_0",
-        "encode_sptq2_0",
-        "copy_gguf_metadata"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/pack_frontier_optimal.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_frontier_optimal.py",
-      "path": "scripts/quant_research/archive/pack_frontier_optimal.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Frontier Optimal Clean Sparsity Packer for Qwen 3.8 27B",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "pack_quads_clean",
-        "encode_sptq1_0_optimal",
-        "copy_gguf_metadata"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/pack_sub4gb_sparse_ternary.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_sub4gb_sparse_ternary.py",
-      "path": "scripts/quant_research/archive/pack_sub4gb_sparse_ternary.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "True Sub-4GB 2:4 Sparse Ternary Bit-Packer & Calibration Engine",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "pack_quads_to_nibbles",
-        "encode_sptq1_0_tensor",
-        "encode_sptq2_0_tensor",
-        "load_calibration_activations",
-        "load_refusal_vector",
-        "copy_gguf_metadata"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_1to1_convolved_52l.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_1to1_convolved_52l.py",
-      "path": "scripts/quant_research/archive/packers/pack_1to1_convolved_52l.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Blue-Llama 1:1 Convolved SSM Macroblock Exporter (52 Layers):",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "export_1to1_convolved"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_benchmark_full_qat.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_and_benchmark_full_qat.py",
-      "path": "scripts/quant_research/archive/packers/pack_and_benchmark_full_qat.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Full Autonomous QAT Packing & Benchmark Pipeline:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "SPTQ_STE",
-        "pack_quads_to_sptq1_0",
-        "copy_gguf_metadata",
-        "run_cmd"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_clean_gain.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_and_eval_clean_gain.py",
-      "path": "scripts/quant_research/archive/packers/pack_and_eval_clean_gain.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Clean Unity-Gain Residual-Preserving Sparsity (RPS) Engine:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "copy_gguf_metadata",
-        "pack_clean_gain"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_combined_v6.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_and_eval_combined_v6.py",
-      "path": "scripts/quant_research/archive/packers/pack_and_eval_combined_v6.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Blue-Llama Combined v6 Pipeline:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda_dc_drift",
-        "export_combined_v6"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_fast.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_and_eval_fast.py",
-      "path": "scripts/quant_research/archive/packers/pack_and_eval_fast.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Fast Pack & Evaluation of 39-Layer Candidate (Layers 12..50)",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "copy_gguf_metadata",
-        "pack_model",
-        "get_gpu1_vram",
-        "eval_candidate"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_frontier_sub65.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_and_eval_frontier_sub65.py",
-      "path": "scripts/quant_research/archive/packers/pack_and_eval_frontier_sub65.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Frontier Sub-6.5GB Architecture with Residual-Stream Preservation:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "copy_gguf_metadata",
-        "pack_frontier_sub65"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_rps.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_and_eval_rps.py",
-      "path": "scripts/quant_research/archive/packers/pack_and_eval_rps.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Residual-Preserving Sparsity (RPS) Engine for Qwen 3.8 27B:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "copy_gguf_metadata"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_sub1gb_sweetspot.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_and_eval_sub1gb_sweetspot.py",
-      "path": "scripts/quant_research/archive/packers/pack_and_eval_sub1gb_sweetspot.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Blue-Llama Sub-1GB Reduction & Low-PPL Sweetspot:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "copy_metadata_with_block_count",
-        "export_model"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_sub65_balanced.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_and_eval_sub65_balanced.py",
-      "path": "scripts/quant_research/archive/packers/pack_and_eval_sub65_balanced.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Frontier Sub-6.5GB Architecture with 4th-Root SwiGLU Energy Balance & Zero-Mean Dipole Balancing:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "copy_gguf_metadata",
-        "get_gpu1_vram_mb",
-        "pack_balanced_model"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_sub65_optimal.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_and_eval_sub65_optimal.py",
-      "path": "scripts/quant_research/archive/packers/pack_and_eval_sub65_optimal.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Optimal Sub-6.5GB Model with Exact Energy Conservation & Zero-Mean Dipole Balancing:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "copy_gguf_metadata",
-        "get_gpu1_vram_mb",
-        "pack_optimal_model"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_and_eval_sub65_unity.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_and_eval_sub65_unity.py",
-      "path": "scripts/quant_research/archive/packers/pack_and_eval_sub65_unity.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Frontier Sub-6.5GB Model with Clean Unity Gain:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "copy_gguf_metadata",
-        "pack_sub65_unity"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_blue_frontier_candidate.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_blue_frontier_candidate.py",
-      "path": "scripts/quant_research/archive/packers/pack_blue_frontier_candidate.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Blue-Llama Frontier Candidate Exporter:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "copy_metadata_with_block_count",
-        "export_blue_model"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_champion_sub1gb.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_champion_sub1gb.py",
-      "path": "scripts/quant_research/archive/packers/pack_champion_sub1gb.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Champion Sub-1GB Frontier Model Packager for Blue Lodge:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "export_champion_model"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_champion_v4.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_champion_v4.py",
-      "path": "scripts/quant_research/archive/packers/pack_champion_v4.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Champion Sub-1GB Frontier Model Packager (v4):",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "export_champion_v4"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_champion_v5.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_champion_v5.py",
-      "path": "scripts/quant_research/archive/packers/pack_champion_v5.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Blue-Llama Champion v5 Exporter:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "export_champion_v5"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_clean_frontier_v2.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_clean_frontier_v2.py",
-      "path": "scripts/quant_research/archive/packers/pack_clean_frontier_v2.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Clean Frontier Sparsity Packer v2 for Qwen 3.8 27B:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "pack_quads_clean_v3",
-        "encode_sptq1_0_clean_v3",
-        "copy_gguf_metadata"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_final_sub65.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_final_sub65.py",
-      "path": "scripts/quant_research/archive/packers/pack_final_sub65.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Pack Final Sub-6.5GB Model: Qwen3.8-27B-SPTQ-Final-Sub65.gguf",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "copy_gguf_metadata"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_lean_rps_model.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_lean_rps_model.py",
-      "path": "scripts/quant_research/archive/packers/pack_lean_rps_model.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Pack Lean RPS Model for Qwen 3.8 27B:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "copy_gguf_metadata"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_lsq_rps.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_lsq_rps.py",
-      "path": "scripts/quant_research/archive/packers/pack_lsq_rps.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Residual-Preserving Sparsity (RPS) with Closed-Form LSQ Optimal Scales:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "copy_gguf_metadata",
-        "pack_lsq_rps"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_pure_pruned_51l.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_pure_pruned_51l.py",
-      "path": "scripts/quant_research/archive/packers/pack_pure_pruned_51l.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Pack Pure-Dense Pruned 51-Layer Champion Model:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "pack_dense_51l"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/pack_pure_ssm_pruned.py",
-      "@type": "SoftwareSourceCode",
-      "name": "pack_pure_ssm_pruned.py",
-      "path": "scripts/quant_research/archive/packers/pack_pure_ssm_pruned.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Pure SSM Reservoir Pruning:",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": [
-        "register_ggml_type",
-        "unpack_ptq1_0",
-        "quantize_unit_quads_cuda",
-        "copy_metadata_with_block_count",
-        "export_pure_ssm_model"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/quant_research/archive/packers/repack_clean_gguf.py",
-      "@type": "SoftwareSourceCode",
-      "name": "repack_clean_gguf.py",
-      "path": "scripts/quant_research/archive/packers/repack_clean_gguf.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Fast GGUF Metadata Repack & Header Normalizer.",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [
-        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-      ],
-      "dependsOn": [
-        {
-          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
-        }
-      ],
-      "exports": []
-    },
-    {
       "@id": "urn:blue-lodge:module:scripts/release/export_public.py",
       "@type": "SoftwareSourceCode",
       "name": "export_public.py",
@@ -15094,6 +11986,7 @@
       "dependencies": [],
       "dependsOn": [],
       "exports": [
+        "get_prerequisites",
         "get_colab_usage"
       ]
     },
@@ -15155,9 +12048,12 @@
         "r_multi_hop",
         "r_final_answer",
         "r_cyber_defense",
+        "r_persistence",
+        "r_sdr_p25",
         "default_data_dir",
         "BenchGuard",
         "load_curricula",
+        "load_journal_memories",
         "load",
         "paraphrase_fill",
         "build",
@@ -15175,7 +12071,7 @@
       "path": "scripts/training/kit/train_lora.py",
       "programmingLanguage": "Python",
       "encodingFormat": "text/x-python",
-      "description": "Blue Lodge LoRA SFT kit \u2014 model-agnostic supervised fine-tuning.",
+      "description": "Blue Lodge LoRA SFT / DPO training kit \u2014 model-agnostic, checkpoint-resumable, Unsloth-optional,",
       "stability": "stable",
       "isPartOf": "urn:blue-lodge:subsystem:scripts",
       "dependencies": [],
@@ -15185,27 +12081,68 @@
       ]
     },
     {
-      "@id": "urn:blue-lodge:module:scripts/training/pipeline.py",
+      "@id": "urn:blue-lodge:module:scripts/training/merge_loras.py",
       "@type": "SoftwareSourceCode",
-      "name": "pipeline.py",
-      "path": "scripts/training/pipeline.py",
+      "name": "merge_loras.py",
+      "path": "scripts/training/merge_loras.py",
       "programmingLanguage": "Python",
       "encodingFormat": "text/x-python",
-      "description": "scripts/training/pipeline.py: Unified Declarative Training & LoRA/SVD32 Fusion Engine.",
+      "description": "Frontier LoRA Multi-Adapter Fusion Engine:",
+      "stability": "stable",
+      "isPartOf": "urn:blue-lodge:subsystem:scripts",
+      "dependencies": [
+        "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
+      ],
+      "dependsOn": [
+        {
+          "@id": "urn:blue-lodge:module:lib/tools/model_hub/gguf.py"
+        }
+      ],
+      "exports": [
+        "parse_args"
+      ]
+    },
+    {
+      "@id": "urn:blue-lodge:module:scripts/training/roles/convert_whisper_ggml.py",
+      "@type": "SoftwareSourceCode",
+      "name": "convert_whisper_ggml.py",
+      "path": "scripts/training/roles/convert_whisper_ggml.py",
+      "programmingLanguage": "Python",
+      "encodingFormat": "text/x-python",
+      "description": "Convert a Hugging Face Whisper model.safetensors file directly into a whisper.cpp GGML .bin model",
       "stability": "stable",
       "isPartOf": "urn:blue-lodge:subsystem:scripts",
       "dependencies": [],
       "dependsOn": [],
       "exports": [
-        "log",
-        "load_config",
-        "run_colab_cmd",
-        "check_colab_credits",
-        "validate_curricula",
-        "validate_base_model",
-        "provision_colab_session",
-        "teardown_colab_sessions",
-        "fuse_adapters"
+        "map_tensor_name",
+        "convert_safetensors_to_ggml"
+      ]
+    },
+    {
+      "@id": "urn:blue-lodge:module:scripts/training/roles/sdr_whisper_p25.py",
+      "@type": "SoftwareSourceCode",
+      "name": "sdr_whisper_p25.py",
+      "path": "scripts/training/roles/sdr_whisper_p25.py",
+      "programmingLanguage": "Python",
+      "encodingFormat": "text/x-python",
+      "description": "scripts/colab_training/train_sdr_p25_loras_a100.py",
+      "stability": "stable",
+      "isPartOf": "urn:blue-lodge:subsystem:scripts",
+      "dependencies": [
+        "urn:blue-lodge:module:scripts/training/roles/convert_whisper_ggml.py"
+      ],
+      "dependsOn": [
+        {
+          "@id": "urn:blue-lodge:module:scripts/training/roles/convert_whisper_ggml.py"
+        }
+      ],
+      "exports": [
+        "download_file",
+        "build_p25_e4b_curriculum",
+        "LoRALinear",
+        "decode_audio_16khz_filtered",
+        "finetune_whisper_small_p25_lora_on_a100"
       ]
     },
     {
@@ -15215,29 +12152,45 @@
       "path": "scripts/training/runs.py",
       "programmingLanguage": "Python",
       "encodingFormat": "text/x-python",
-      "description": "Lodge training-run manager \u2014 local GPUs or Colab, real TRL training, merged GGUF at the end.",
+      "description": "Lodge training-run manager \u2014 Local GPU (contention-safe) or Google Colab 1-3x GPU Fleet",
       "stability": "stable",
       "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
+      "dependencies": [
+        "urn:blue-lodge:module:scripts/training/check_credits.py"
+      ],
+      "dependsOn": [
+        {
+          "@id": "urn:blue-lodge:module:scripts/training/check_credits.py"
+        }
+      ],
       "exports": [
         "SpecError",
         "runs_dir",
+        "policy_path",
+        "load_policy",
+        "save_policy",
         "run_dir",
         "models_dir",
+        "role_adapter_dir",
         "resolve_dataset",
         "find_converter",
         "find_export_lora_bin",
+        "build_gpu_ladder",
         "validate",
         "preflight",
         "start_local",
         "start_colab",
+        "resume_colab",
         "collect_colab",
         "track_status",
         "status",
         "list_runs",
         "cancel",
         "merge",
+        "approve_candidate",
+        "deny_candidate",
+        "list_adapters",
+        "hotswap_lora",
         "bake"
       ]
     },
@@ -15248,23 +12201,19 @@
       "path": "scripts/training/wizard.sh",
       "programmingLanguage": "Bash",
       "encodingFormat": "text/x-shellscript",
-      "description": "scripts/training/wizard.sh: Interactive Training & Fusion Wizard",
+      "description": "scripts/training/wizard.sh \u2014 Interactive JSON Playbook Wizard for runs.py",
       "stability": "stable",
       "isPartOf": "urn:blue-lodge:subsystem:scripts",
       "dependencies": [
-        "urn:blue-lodge:module:scripts/training/check_credits.py",
-        "urn:blue-lodge:module:scripts/quant_research/07_evaluate_multiturn_benchmark.py",
-        "urn:blue-lodge:module:scripts/training/pipeline.py"
+        "urn:blue-lodge:module:scripts/training/forge.py",
+        "urn:blue-lodge:module:scripts/training/runs.py"
       ],
       "dependsOn": [
         {
-          "@id": "urn:blue-lodge:module:scripts/training/check_credits.py"
+          "@id": "urn:blue-lodge:module:scripts/training/forge.py"
         },
         {
-          "@id": "urn:blue-lodge:module:scripts/quant_research/07_evaluate_multiturn_benchmark.py"
-        },
-        {
-          "@id": "urn:blue-lodge:module:scripts/training/pipeline.py"
+          "@id": "urn:blue-lodge:module:scripts/training/runs.py"
         }
       ],
       "exports": []
@@ -16113,7 +13062,16 @@
       "dependsOn": [],
       "exports": [
         "get_training_status",
+        "get_training_runs",
+        "get_training_adapters",
         "run_training",
+        "post_training_action",
+        "approve_gate_candidate",
+        "deny_gate_candidate",
+        "post_training_policy",
+        "post_adapter_hotswap",
+        "post_training_backup",
+        "post_training_benchmark",
         "generate_training_wizard"
       ]
     },
@@ -18526,26 +15484,26 @@
         "TechArticle",
         "DigitalDocument"
       ],
-      "name": "Training Run Manager & Multi-Track Distillation",
-      "headline": "Training Run Manager & Multi-Track Distillation",
-      "description": "Architecture and operational guide for the Blue Lodge Training Run Manager: local/Colab multi-track SFT/DPO runs, checkpoint staging, GGUF export, and benchmark guards.",
+      "name": "Training Run Manager, Sleep-Cycle SVD-32 & Colab Fleet",
+      "headline": "Training Run Manager, Sleep-Cycle SVD-32 & Colab Fleet",
+      "description": "Architecture and operational guide for Blue Lodge's Wake-Sleep training pipeline: Dataset Forge (incl. persistence & sdr-p25), 1-3x Colab GPU fleet with H100->G4->A100->L4->T4 fallback, Drive checkpoints, in-Colab GGUF export, SVD-32 retention lineage, Tier B/A gating, and live llama-server hot-swapping.",
       "path": "docs/TRAINING_RUN_MANAGER.md",
       "encodingFormat": "text/markdown",
       "keywords": [
         "training",
         "lora",
+        "svd32",
         "dpo",
         "sft",
         "colab",
-        "gguf",
-        "distillation"
+        "sleep-cycle",
+        "gguf"
       ],
       "isPartOf": "urn:blue-lodge:subsystem:core",
       "related": [
+        "urn:blue-lodge:doc:index",
         "urn:blue-lodge:doc:dataset-forge",
         "urn:blue-lodge:doc:models",
-        "urn:blue-lodge:doc:blue-lodge-lora-tuning-playbook",
-        "urn:blue-lodge:doc:sovereign-foundation-model-playbook",
         "urn:blue-lodge:doc:gym"
       ],
       "about": "urn:blue-lodge:core"

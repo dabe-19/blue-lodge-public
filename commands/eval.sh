@@ -1,8 +1,8 @@
 #!/bin/bash
-# DESC: Golden-task eval control: on/off kill switch, status, run smoke|full, nightly toggle
-# Usage: /eval status | off [reason] | on | run [smoke|full] | nightly on|off
+# DESC: Golden-task & 7-pillar multi-turn benchmark control: status, run smoke|full, bench, nightly toggle
+# Usage: /eval status | off [reason] | on | run [smoke|full] | bench [args...] | nightly on|off
 
-LODGE_DIR="${LODGE_DIR:-$HOME/blue-lodge}"
+LODGE_DIR="${LODGE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 source "$LODGE_DIR/lib/ui/ui.sh" 2>/dev/null || true
 
 _eval_george_dir() { echo "${GEORGE_DIR:-$LODGE_DIR/.george}"; }
@@ -53,6 +53,11 @@ cmd_eval() {
             setsid nohup bash "$LODGE_DIR/tests/eval/run_golden.sh" --tier "$tier" --label "manual_$tier" \
                 </dev/null >> "$gd/eval/manual.log" 2>&1 &
             ui_ok "Started $tier eval (pid $!). Log: $gd/eval/manual.log"
+            ;;
+        bench|multiturn)
+            local py="$LODGE_DIR/.venv/bin/python3"
+            [ ! -x "$py" ] && py="python3"
+            "$py" "$LODGE_DIR/scripts/eval/multiturn_bench.py" "$@"
             ;;
         nightly)
             local mode="${1:-}"

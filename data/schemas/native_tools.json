@@ -933,6 +933,171 @@
   {
     "type": "function",
     "function": {
+      "name": "train_pantry",
+      "description": "Scan local agent transcripts, run ledger, and step logs to report available unique training samples per Dataset Forge recipe (including persistence and sdr-p25).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "since_last_run": {
+            "type": "boolean",
+            "description": "If true, only count new transcripts since the last completed training run."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "train_credits",
+      "description": "Check Google Colab Compute Units balance, active VM assignments, and prerequisite readiness (Colab CLI, gcloud, Google ADC, OAuth2, HF token, local CUDA).",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "train_forge",
+      "description": "Build a benchmark-guarded, session-split SFT+DPO training dataset from real agent transcripts and optional journal/memories replay.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "focus": {
+            "type": "string",
+            "description": "Comma-separated recipes (e.g. 'persistence,multi-hop,error-recovery,tool-syntax' or 'sdr-p25' or 'mix')."
+          },
+          "count": {
+            "type": "integer",
+            "description": "Target unique sample count (e.g. 400)."
+          },
+          "include_journal": {
+            "type": "boolean",
+            "description": "Include Sleep-Cycle journal & memory consolidation samples."
+          }
+        },
+        "required": ["focus", "count"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "train_run_plan",
+      "description": "Validate and preflight a JSON training playbook (prerequisites, Colab CU floor, GPU fallback ladder H100->G4->A100->L4->T4, and datasets) with zero side effects.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "spec_path": {
+            "type": "string",
+            "description": "Path to JSON training playbook (e.g. configs/playbooks/colab_gemma4_31b_svd32.json)."
+          }
+        },
+        "required": ["spec_path"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "train_run_start",
+      "description": "Launch a preflighted local GPU (contention-safe) or Google Colab 1-3x GPU fleet training run. Requires explicit execute=true to provision paid Colab VMs.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "spec_path": {
+            "type": "string",
+            "description": "Path to JSON training playbook."
+          },
+          "execute": {
+            "type": "boolean",
+            "description": "For Colab backend: actually provision VMs (default false plans bundles only)."
+          }
+        },
+        "required": ["spec_path"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "train_run_status",
+      "description": "List all training runs or inspect detailed track states, loss curves, DPO margins, selected Colab GPUs, and Tier B gate status for one run.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "run_name": {
+            "type": "string",
+            "description": "Optional run name; omit to list all runs."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "train_run_collect_and_merge",
+      "description": "Collect finished Colab adapters (and terminate VMs), or resume disconnected Colab sessions from Drive checkpoints, then fuse SVD-32 retention layers into the Tier B candidate queue.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "run_name": {
+            "type": "string",
+            "description": "Run name to collect/merge."
+          },
+          "action": {
+            "type": "string",
+            "enum": ["collect", "merge", "resume", "cancel"],
+            "description": "Lifecycle action to perform."
+          }
+        },
+        "required": ["run_name", "action"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "train_adapter_hotswap",
+      "description": "List (model, role) SVD-32 adapter lineage or hot-swap loaded LoRA/SVD scales on a running stock llama-server via POST /lora-adapters with zero restart.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "endpoint": {
+            "type": "string",
+            "description": "Inference server URL (default http://127.0.0.1:8080)."
+          },
+          "scales_json": {
+            "type": "string",
+            "description": "Optional JSON array of {id, scale} objects to apply via POST /lora-adapters; omit to list adapters."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "train_backup",
+      "description": "Check backup readiness or back up promoted SVD-32 adapters and lineage manifests to Google Drive and/or private Hugging Face Hub.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "enum": ["status", "drive", "hf", "both"],
+            "description": "Backup target or 'status' to check readiness."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "mcp_server_status",
       "description": "List configured and active Model Context Protocol (MCP) servers and their running statuses.",
       "parameters": {

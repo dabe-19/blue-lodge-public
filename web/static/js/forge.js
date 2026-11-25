@@ -1,0 +1,706 @@
+// ============================================================================
+// BLUE LODGE // Sovereign Training Forge, Sleep-Cycle SVD-32 & Tier B Gate UI
+// Strictly XSS-safe DOM construction (zero innerHTML / outerHTML, zero confirm).
+// ============================================================================
+(function () {
+  'use strict';
+
+  function el(tag, opts, children) {
+    const node = document.createElement(tag);
+    if (opts) {
+      if (opts.id) node.id = opts.id;
+      if (opts.className) node.className = opts.className;
+      if (opts.text != null) node.textContent = String(opts.text);
+      if (opts.type) node.type = opts.type;
+      if (opts.placeholder) node.placeholder = opts.placeholder;
+      if (opts.value != null) node.value = String(opts.value);
+      if (opts.title) node.title = opts.title;
+      if (opts.disabled) node.disabled = true;
+      if (opts.checked) node.checked = true;
+      if (opts.min != null) node.min = String(opts.min);
+      if (opts.max != null) node.max = String(opts.max);
+      if (opts.step != null) node.step = String(opts.step);
+      if (opts.style) {
+        if (typeof opts.style === 'string') node.setAttribute('style', opts.style);
+        else Object.assign(node.style, opts.style);
+      }
+      if (opts.attrs) Object.entries(opts.attrs).forEach(([k, v]) => node.setAttribute(k, String(v)));
+      if (opts.on) Object.entries(opts.on).forEach(([ev, fn]) => node.addEventListener(ev, fn));
+    }
+    (children || []).forEach((c) => {
+      if (c != null) node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    });
+    return node;
+  }
+
+  const state = {
+    activeTab: 'overview',
+    data: null,
+    pantry: null,
+    lastPreflight: null,
+    lastConfigPath: null,
+    h2hResult: null,
+    armedLaunch: false,
+    consoleText: 'Ready. Inspect Colab/ADC prerequisites, configure Sleep-Cycle policy, or launch a playbook.',
+  };
+
+  function setConsole(msg) {
+    state.consoleText = typeof msg === 'string' ? msg : JSON.stringify(msg, null, 2);
+    const pre = document.getElementById('forgeStudioConsole');
+    if (pre) pre.textContent = state.consoleText;
+  }
+
+  async function apiJson(url, opts) {
+    const r = await fetch(url, opts);
+    const d = await r.json().catch(() => ({ status: 'error', message: `HTTP ${r.status}` }));
+    return { ok: r.ok, data: d };
+  }
+
+  async function refreshAll() {
+    setConsole('Refreshing Forge telemetry, Colab ADC credits, prerequisites, runs & SVD lineage...');
+    const { data } = await apiJson('/api/training/status');
+    state.data = data;
+    renderForge();
+    const pr = (data && data.prerequisites) || {};
+    if (data && data.credits && data.credits.status === 'ok') {
+      setConsole(`Connected (${data.credits.auth}): ${data.adc_status}`);
+    } else if (pr.issues && pr.issues.length > 0) {
+      setConsole('Prerequisites missing:\n' + pr.issues.map((i) => `[${i.severity.toUpperCase()}] ${i.component}: ${i.message}\n  Fix: ${i.fix}`).join('\n'));
+    } else {
+      setConsole(data && data.adc_status ? data.adc_status : 'Loaded Forge state.');
+    }
+  }
+
+  function renderPrereqStrip(prereqs) {
+    const p = prereqs || {};
+    const chip = (label, ok, detail) => el('div', {
+      className: 'forge-prereq-chip ' + (ok ? 'ok' : 'bad'),
+      title: detail || '',
+    }, [
+      el('span', { className: 'forge-dot ' + (ok ? 'ok' : 'bad') }),
+      el('span', { text: `${label}: ${ok ? 'READY' : 'MISSING'}` }),
+    ]);
+
+    const chips = el('div', { className: 'forge-prereq-row' }, [
+      chip('Colab CLI', Boolean(p.colab_cli && p.colab_cli.installed), p.colab_cli && (p.colab_cli.version || p.colab_cli.path)),
+      chip('gcloud CLI', Boolean(p.gcloud_cli && p.gcloud_cli.installed), p.gcloud_cli && p.gcloud_cli.path),
+      chip('Google ADC', Boolean(p.adc_credentials && p.adc_credentials.configured), p.adc_credentials && p.adc_credentials.path),
+      chip('Colab OAuth2', Boolean(p.oauth2_credentials && p.oauth2_credentials.configured), p.oauth2_credentials && p.oauth2_credentials.path),
+      chip('HF Token', Boolean(p.hf_token && p.hf_token.configured), p.hf_token && p.hf_token.source),
+      chip('Local CUDA Train', Boolean(p.local_train_env && p.local_train_env.installed), `${(p.local_train_env && p.local_train_env.gpus || []).length} GPU(s)`),
+    ]);
+
+    const issues = Array.isArray(p.issues) ? p.issues : [];
+    const wrap = el('div', { className: 'forge-card' }, [
+      el('div', { className: 'forge-card-head' }, [
+        el('div', { className: 'guild-card-title', text: 'PREREQUISITES & AUTHENTICATION HEALTH' }),
+        el('button', { type: 'button', className: 'guild-btn', text: 'RE-CHECK', on: { click: refreshAll } }),
+      ]),
+      chips,
+    ]);
+
+    if (issues.length > 0) {
+      const box = el('div', { className: 'forge-issue-list' });
+      issues.forEach((iss) => {
+        box.appendChild(el('div', { className: 'forge-issue-row ' + (iss.severity || 'warning') }, [
+          el('div', { style: 'font-weight:700;font-size:11px;', text: `[${String(iss.severity || 'warn').toUpperCase()}] ${iss.component} — ${iss.message}` }),
+          el('code', { className: 'forge-fix-cmd', text: iss.fix || '' }),
+        ]));
+      });
+      wrap.appendChild(box);
+    }
+    return wrap;
+  }
+
+  function renderOverviewTab(d) {
+    const credits = d.credits || {};
+    const policy = d.policy || {};
+    const bkp = d.backup_status || {};
+    const pendingCount = ((d.gate_queue && d.gate_queue.pending) || []).length;
+
+    const kpiRow = el('div', { className: 'eco-kpi-grid' }, [
+      el('div', { className: 'eco-kpi-card ' + (credits.status === 'ok' ? 'ok' : 'warn') }, [
+        el('div', { className: 'eco-kpi-label', text: 'GOOGLE COLAB COMPUTE UNITS' }),
+        el('div', { className: 'eco-kpi-value', text: credits.status === 'ok' ? `${credits.balance} CU` : 'UNAVAILABLE' }),
+        el('div', { className: 'eco-kpi-sub', text: credits.status === 'ok' ? `Rate: ${credits.rate || '0/hr'} · Active VMs: ${credits.active_assignments || 0}` : (credits.message || 'Configure ADC or OAuth2') }),
+      ]),
+      el('div', { className: 'eco-kpi-card ' + (policy.autonomy_tier === 'tier_a' ? 'warn' : 'ok') }, [
+        el('div', { className: 'eco-kpi-label', text: 'PROMOTION AUTONOMY POSTURE' }),
+        el('div', { className: 'eco-kpi-value', text: policy.autonomy_tier === 'tier_a' ? 'TIER A // FULL AUTO' : 'TIER B // HUMAN GATE' }),
+        el('div', { className: 'eco-kpi-sub', text: policy.autonomy_tier === 'tier_a' ? `Auto-promotes when Δ >= +${policy.tier_a_min_delta || 3}%` : 'Requires Accept in Forge UI or Discord' }),
+      ]),
+      el('div', { className: 'eco-kpi-card ' + (pendingCount > 0 ? 'warn' : 'ok') }, [
+        el('div', { className: 'eco-kpi-label', text: 'TIER B APPROVAL QUEUE' }),
+        el('div', { className: 'eco-kpi-value', text: `${pendingCount} pending` }),
+        el('div', { className: 'eco-kpi-sub', text: `${((d.gate_queue && d.gate_queue.history) || []).length} total training run(s) logged` }),
+      ]),
+      el('div', { className: 'eco-kpi-card' }, [
+        el('div', { className: 'eco-kpi-label', text: 'BACKUP TARGETS (DRIVE / HF)' }),
+        el('div', { className: 'eco-kpi-value', text: `Drive: ${bkp.drive && bkp.drive.ready ? 'READY' : 'OFF'} · HF: ${bkp.hf && bkp.hf.ready ? 'READY' : 'OFF'}` }),
+        el('div', { className: 'eco-kpi-sub', text: (bkp.hf && bkp.hf.repo) ? `HF Repo: ${bkp.hf.repo}` : 'Configure HF repo & Drive folder below' }),
+      ]),
+    ]);
+
+    // Policy & Sleep-Cycle Controls
+    const tierSel = el('select', { className: 'guild-input', style: 'min-width:200px;' }, [
+      el('option', { value: 'tier_b', text: 'Tier B — Human Approval (Forge + Discord)' }),
+      el('option', { value: 'tier_a', text: 'Tier A — Full Autonomy (Auto-Promote on Gate Pass)' }),
+    ]);
+    tierSel.value = policy.autonomy_tier || 'tier_b';
+
+    const sleepCb = el('input', { type: 'checkbox', checked: Boolean(policy.sleep_enabled) });
+    const startHr = el('input', { type: 'number', className: 'guild-input', style: 'width:70px;min-width:70px;', min: 0, max: 23, value: policy.sleep_start_hour ?? 2 });
+    const endHr = el('input', { type: 'number', className: 'guild-input', style: 'width:70px;min-width:70px;', min: 0, max: 23, value: policy.sleep_end_hour ?? 6 });
+    const cuFloor = el('input', { type: 'number', className: 'guild-input', style: 'width:90px;min-width:90px;', min: 0, max: 5000, value: policy.min_cu_balance ?? 150 });
+    const minDelta = el('input', { type: 'number', className: 'guild-input', style: 'width:80px;min-width:80px;', min: 0, max: 50, step: 0.5, value: policy.tier_a_min_delta ?? 3.0 });
+    const hfRepoIn = el('input', { type: 'text', className: 'guild-input', style: 'min-width:220px;', placeholder: 'dabe-19/blue-lodge-adapters', value: policy.hf_backup_repo || '' });
+    const driveFolderIn = el('input', { type: 'text', className: 'guild-input', style: 'min-width:220px;', value: policy.drive_backup_folder || 'BlueLodge/models/adapters' });
+    const autoDriveCb = el('input', { type: 'checkbox', checked: Boolean(policy.auto_backup_drive) });
+    const autoHfCb = el('input', { type: 'checkbox', checked: Boolean(policy.auto_backup_hf) });
+
+    const policyCard = el('div', { className: 'forge-card' }, [
+      el('div', { className: 'forge-card-head' }, [
+        el('div', {}, [
+          el('div', { className: 'guild-card-title', text: 'SLEEP-CYCLE ("DREAM & CONSOLIDATE") & AUTONOMY POLICY' }),
+          el('div', { className: 'guild-card-meta', text: 'Controls autonomous overnight memory consolidation, Colab credit safety floor, Tier B/A promotion gate, and cloud backups.' }),
+        ]),
+        el('button', {
+          type: 'button',
+          className: 'guild-btn primary',
+          text: 'SAVE POLICY',
+          on: {
+            click: async () => {
+              const payload = {
+                autonomy_tier: tierSel.value,
+                sleep_enabled: Boolean(sleepCb.checked),
+                sleep_start_hour: Number(startHr.value || 2),
+                sleep_end_hour: Number(endHr.value || 6),
+                min_cu_balance: Number(cuFloor.value || 150),
+                tier_a_min_delta: Number(minDelta.value || 3.0),
+                hf_backup_repo: hfRepoIn.value.trim(),
+                drive_backup_folder: driveFolderIn.value.trim() || 'BlueLodge/models/adapters',
+                auto_backup_drive: Boolean(autoDriveCb.checked),
+                auto_backup_hf: Boolean(autoHfCb.checked),
+              };
+              const { data } = await apiJson('/api/training/policy', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ policy: payload }),
+              });
+              setConsole(data);
+              await refreshAll();
+            },
+          },
+        }),
+      ]),
+      el('div', { className: 'forge-form-grid' }, [
+        el('div', {}, [el('div', { className: 'eco-kpi-label', text: 'AUTONOMY POSTURE' }), tierSel]),
+        el('div', {}, [el('div', { className: 'eco-kpi-label', text: 'TIER A MIN Δ (%)' }), minDelta]),
+        el('div', {}, [el('div', { className: 'eco-kpi-label', text: 'COLAB CU FLOOR' }), cuFloor]),
+        el('div', {}, [
+          el('div', { className: 'eco-kpi-label', text: 'SLEEP WINDOW (24H)' }),
+          el('div', { style: 'display:flex;gap:6px;align-items:center;' }, [startHr, el('span', { text: 'to' }), endHr]),
+        ]),
+        el('div', {}, [el('div', { className: 'eco-kpi-label', text: 'PRIVATE HF BACKUP REPO' }), hfRepoIn]),
+        el('div', {}, [el('div', { className: 'eco-kpi-label', text: 'GOOGLE DRIVE BACKUP FOLDER' }), driveFolderIn]),
+      ]),
+      el('div', { style: 'display:flex;flex-wrap:wrap;gap:14px;margin-top:4px;' }, [
+        el('label', { className: 'eco-check-label' }, [sleepCb, 'Enable scheduled Sleep-Cycle consolidation']),
+        el('label', { className: 'eco-check-label' }, [autoDriveCb, 'Auto-backup promoted SVD-32 to Google Drive']),
+        el('label', { className: 'eco-check-label' }, [autoHfCb, 'Auto-backup promoted SVD-32 to Private HF Hub']),
+      ]),
+    ]);
+
+    return el('div', { style: 'display:flex;flex-direction:column;gap:12px;' }, [
+      kpiRow,
+      renderPrereqStrip(d.prerequisites),
+      policyCard,
+    ]);
+  }
+
+  function renderGateTab(d) {
+    const history = (d.gate_queue && d.gate_queue.history) || [];
+    const table = el('table', { className: 'forge-table' }, [
+      el('thead', {}, [
+        el('tr', {}, [
+          el('th', { text: 'RUN / ROLE' }),
+          el('th', { text: 'BASE MODEL' }),
+          el('th', { text: 'BACKEND / GPU' }),
+          el('th', { text: 'RETENTION' }),
+          el('th', { text: 'BENCHMARK' }),
+          el('th', { text: 'STATE / GATE' }),
+          el('th', { text: 'ACTIONS' }),
+        ]),
+      ]),
+    ]);
+    const tbody = el('tbody');
+    if (history.length === 0) {
+      tbody.appendChild(el('tr', {}, [
+        el('td', { attrs: { colspan: '7' }, className: 'guild-card-meta', text: 'No training runs recorded yet. Launch a playbook from the Playbook & Launch tab.' }),
+      ]));
+    } else {
+      history.forEach((r) => {
+        const gpus = (r.selected_gpus || []).join(', ') || (r.backend === 'local' ? 'local-cuda' : '—');
+        const b = r.benchmark;
+        const bTxt = b ? `${b.candidate_score ?? b.overall_score ?? '?'}% (Δ ${b.composite_delta ?? 0}%)` : 'Unscored';
+        const actions = el('div', { style: 'display:flex;flex-wrap:wrap;gap:4px;' });
+
+        const actBtn = (label, cls, action, extra) => el('button', {
+          type: 'button',
+          className: `guild-btn ${cls || ''}`,
+          style: 'padding:3px 7px;font-size:10px;',
+          text: label,
+          on: {
+            click: async () => {
+              setConsole(`Running '${action}' on ${r.name}...`);
+              const url = action === 'approve' ? `/api/training/gate/${encodeURIComponent(r.name)}/approve`
+                : action === 'deny' ? `/api/training/gate/${encodeURIComponent(r.name)}/deny`
+                : '/api/training/action';
+              const body = (action === 'approve' || action === 'deny')
+                ? (extra || {})
+                : Object.assign({ action, run_name: r.name }, extra || {});
+              const { data } = await apiJson(url, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+              });
+              setConsole(data);
+              await refreshAll();
+            },
+          },
+        });
+
+        if (r.gate_status === 'pending_approval') {
+          actions.appendChild(actBtn('ACCEPT', 'primary', 'approve'));
+          actions.appendChild(actBtn('DENY', 'danger', 'deny', { reason: 'Rejected in Forge Tier B gate' }));
+        }
+        if (r.backend === 'colab' && r.state === 'running') {
+          actions.appendChild(actBtn('COLLECT', '', 'collect'));
+          actions.appendChild(actBtn('RESUME', '', 'resume'));
+          actions.appendChild(actBtn('CANCEL', 'danger', 'cancel'));
+        }
+        if (r.state === 'done' && !r.merged) {
+          actions.appendChild(actBtn('MERGE SVD-32', 'primary', 'merge'));
+        }
+        actions.appendChild(el('button', {
+          type: 'button', className: 'guild-btn', style: 'padding:3px 7px;font-size:10px;', text: 'INSPECT',
+          on: { click: () => setConsole(r) },
+        }));
+
+        tbody.appendChild(el('tr', {}, [
+          el('td', {}, [
+            el('div', { style: 'font-weight:700;color:#f8fafc;', text: r.name }),
+            el('div', { className: 'guild-card-meta', text: `role: ${r.role || 'core-agent'}` }),
+          ]),
+          el('td', { style: 'font-family:var(--font-mono);font-size:11px;', text: r.base_model || r.model_slug || '—' }),
+          el('td', { text: `${r.backend} (${gpus})` }),
+          el('td', { text: `${Math.round((r.prior_adapter_weight || 0) * 100)}% prior` }),
+          el('td', { text: bTxt }),
+          el('td', {}, [
+            el('span', { className: 'guild-badge ' + (r.gate_status === 'approved' ? 'on' : r.gate_status === 'pending_approval' ? '' : 'off'), text: `${r.state} · ${r.gate_status}` }),
+          ]),
+          el('td', {}, [actions]),
+        ]));
+      });
+    }
+    table.appendChild(tbody);
+
+    return el('div', { className: 'forge-card' }, [
+      el('div', { className: 'forge-card-head' }, [
+        el('div', {}, [
+          el('div', { className: 'guild-card-title', text: 'TIER B APPROVAL QUEUE & TRAINING RUN HISTORY' }),
+          el('div', { className: 'guild-card-meta', text: 'Accept promoted SVD-32 candidates to flip active.gguf, or Deny to keep your current adapter untouched.' }),
+        ]),
+        el('button', { type: 'button', className: 'guild-btn', text: 'REFRESH RUNS', on: { click: refreshAll } }),
+      ]),
+      el('div', { style: 'overflow-x:auto;' }, [table]),
+    ]);
+  }
+
+  function renderLaunchTab(d) {
+    const playbooks = d.playbooks || [];
+    const prereqs = d.prerequisites || {};
+
+    const runNameIn = el('input', { type: 'text', className: 'guild-input', value: 'gemma4-sleep-v1' });
+    const roleSel = el('select', { className: 'guild-input' }, [
+      el('option', { value: 'core-agent', text: 'core-agent (Primary ReAct Workbench)' }),
+      el('option', { value: 'sdr-p25', text: 'sdr-p25 (SDR P25 Trunked Radio Narrative)' }),
+      el('option', { value: 'code-ops', text: 'code-ops (Remediation & GitOps)' }),
+      el('option', { value: 'research', text: 'research (Deep Research Synthesis)' }),
+    ]);
+    const baseModelIn = el('input', { type: 'text', className: 'guild-input', value: 'google/gemma-4-31b-it' });
+    const baseSourceSel = el('select', { className: 'guild-input' }, [
+      el('option', { value: 'hf_direct', text: 'Hugging Face Direct (Fastest on slow upload)' }),
+      el('option', { value: 'local_upload', text: 'Upload Local Weights (HF-Independent)' }),
+      el('option', { value: 'drive_mirror', text: 'Mount Google Drive Mirror' }),
+    ]);
+    const backendSel = el('select', { className: 'guild-input' }, [
+      el('option', { value: 'colab', text: 'Google Colab Fleet (1-3x GPU w/ H100→G4→A100→L4→T4 fallback)' }),
+      el('option', { value: 'local', text: 'Local GPU (Contention-safe auto-pause inference)' }),
+    ]);
+    const gpuSel = el('select', { className: 'guild-input' }, [
+      el('option', { value: 'A100', text: 'A100 (80GB/40GB) → Fallback: H100/G4/L4/T4' }),
+      el('option', { value: 'G4', text: 'G4 (96GB RTX PRO 6000 Blackwell)' }),
+      el('option', { value: 'H100', text: 'H100 (80GB Hopper)' }),
+      el('option', { value: 'L4', text: 'L4 (24GB Ada)' }),
+      el('option', { value: 'T4', text: 'T4 (16GB Turing)' }),
+    ]);
+    const priorRange = el('input', { type: 'range', min: 0, max: 95, step: 5, value: 70 });
+    const priorVal = el('span', { style: 'font-family:var(--font-mono);font-size:11px;color:#6ee7b7;', text: '70% prior active.gguf / 30% new tracks' });
+    priorRange.addEventListener('input', () => {
+      const p = Number(priorRange.value);
+      priorVal.textContent = `${p}% prior active.gguf / ${100 - p}% new tracks`;
+    });
+
+    const recipes = ['persistence', 'multi-hop', 'error-recovery', 'tool-syntax', 'failure-modes', 'context-discrimination', 'gitops', 'sdr-p25'];
+    const recipeCbs = {};
+    const recipeRow = el('div', { style: 'display:flex;flex-wrap:wrap;gap:10px;' });
+    recipes.forEach((r) => {
+      const cb = el('input', { type: 'checkbox', checked: ['persistence', 'multi-hop', 'error-recovery', 'tool-syntax', 'failure-modes'].includes(r) });
+      recipeCbs[r] = cb;
+      recipeRow.appendChild(el('label', { className: 'eco-check-label' }, [cb, r]));
+    });
+    const jrnCb = el('input', { type: 'checkbox', checked: true });
+    const pauseInfCb = el('input', { type: 'checkbox', checked: true });
+    const countIn = el('input', { type: 'number', className: 'guild-input', style: 'width:100px;min-width:100px;', min: 20, max: 20000, value: 500 });
+
+    const presetRow = el('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;' });
+    playbooks.forEach((pb) => {
+      presetRow.appendChild(el('button', {
+        type: 'button',
+        className: 'guild-btn',
+        text: `LOAD: ${pb.name.replace(/\.json$/, '')}`,
+        on: {
+          click: () => {
+            const sp = pb.spec || {};
+            if (sp.name) runNameIn.value = sp.name;
+            if (sp.role) roleSel.value = sp.role;
+            if (sp.base_model) baseModelIn.value = sp.base_model;
+            if (sp.base_source) baseSourceSel.value = sp.base_source;
+            if (sp.backend) backendSel.value = sp.backend;
+            if (sp.colab && sp.colab.gpu) gpuSel.value = sp.colab.gpu;
+            if (sp.merge && sp.merge.prior_adapter_weight != null) {
+              priorRange.value = Math.round(sp.merge.prior_adapter_weight * 100);
+              priorRange.dispatchEvent(new Event('input'));
+            }
+            setConsole(`Loaded preset playbook ${pb.path}`);
+          },
+        },
+      }));
+    });
+
+    const launchBtn = el('button', { type: 'button', className: 'guild-btn primary', text: 'LAUNCH TRAINING RUN (--execute)' });
+    const buildPayload = () => ({
+      name: runNameIn.value.trim(),
+      role: roleSel.value,
+      base_model_path: baseModelIn.value.trim(),
+      base_source: baseSourceSel.value,
+      compute_target: backendSel.value,
+      gpu: gpuSel.value,
+      prior_adapter_weight: Number(priorRange.value) / 100.0,
+      pause_inference: Boolean(pauseInfCb.checked),
+      focus: Object.entries(recipeCbs).filter(([, cb]) => cb.checked).map(([k]) => k).join(','),
+      sample_count: Number(countIn.value || 500),
+      include_journal: Boolean(jrnCb.checked),
+    });
+
+    const preflightBtn = el('button', {
+      type: 'button',
+      className: 'guild-btn',
+      text: 'FORGE DATASET & PREFLIGHT PLAN',
+      on: {
+        click: async () => {
+          state.armedLaunch = false;
+          launchBtn.textContent = 'LAUNCH TRAINING RUN (--execute)';
+          setConsole('Forging leak-guarded SFT+DPO datasets and running preflight checks...');
+          const { data } = await apiJson('/api/training/wizard', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(buildPayload()),
+          });
+          state.lastConfigPath = data.config_path || null;
+          state.lastPreflight = data.preflight || null;
+          setConsole(data);
+        },
+      },
+    });
+
+    launchBtn.addEventListener('click', async () => {
+      if (!state.lastConfigPath) {
+        setConsole('Click "FORGE DATASET & PREFLIGHT PLAN" first to build the leak-guarded dataset and verify prerequisites.');
+        return;
+      }
+      if (!state.armedLaunch) {
+        state.armedLaunch = true;
+        launchBtn.textContent = 'CLICK AGAIN TO CONFIRM PROVISIONING';
+        setConsole(`Armed to launch ${state.lastConfigPath} (backend=${backendSel.value}). Click LAUNCH again to provision.`);
+        return;
+      }
+      state.armedLaunch = false;
+      launchBtn.textContent = 'LAUNCHING...';
+      launchBtn.disabled = true;
+      try {
+        const { data } = await apiJson('/api/training/run', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ config: state.lastConfigPath, dry_run: false, execute: true }),
+        });
+        setConsole(data);
+        await refreshAll();
+      } finally {
+        launchBtn.disabled = false;
+        launchBtn.textContent = 'LAUNCH TRAINING RUN (--execute)';
+      }
+    });
+
+    const nodes = [];
+    if (!prereqs.colab_ready) {
+      nodes.push(el('div', { className: 'forge-issue-row error' }, [
+        el('div', { style: 'font-weight:700;font-size:11px;', text: 'Colab / Google ADC is not yet configured on this node — Colab launches will fail preflight until ADC or OAuth2 is authenticated (see Overview tab for copyable setup commands).' }),
+      ]));
+    }
+
+    nodes.push(el('div', { className: 'forge-card' }, [
+      el('div', { className: 'guild-card-title', text: 'PRESET PLAYBOOKS' }),
+      presetRow,
+      el('div', { className: 'forge-form-grid', style: 'margin-top:8px;' }, [
+        el('div', {}, [el('div', { className: 'eco-kpi-label', text: 'RUN NAME' }), runNameIn]),
+        el('div', {}, [el('div', { className: 'eco-kpi-label', text: 'TARGET ROLE' }), roleSel]),
+        el('div', {}, [el('div', { className: 'eco-kpi-label', text: 'BASE MODEL (HF REPO ID)' }), baseModelIn]),
+        el('div', {}, [el('div', { className: 'eco-kpi-label', text: 'BASE MODEL SOURCE' }), baseSourceSel]),
+        el('div', {}, [el('div', { className: 'eco-kpi-label', text: 'COMPUTE BACKEND' }), backendSel]),
+        el('div', {}, [el('div', { className: 'eco-kpi-label', text: 'PREFERRED COLAB GPU' }), gpuSel]),
+      ]),
+      el('div', { style: 'margin-top:6px;' }, [
+        el('div', { className: 'eco-kpi-label', text: 'DATASET FORGE RECIPES (BENCHMARK LEAK-GUARDED)' }),
+        recipeRow,
+      ]),
+      el('div', { style: 'display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:6px;' }, [
+        el('div', { style: 'display:flex;align-items:center;gap:6px;' }, [el('span', { className: 'eco-kpi-label', text: 'SAMPLES:' }), countIn]),
+        el('label', { className: 'eco-check-label' }, [jrnCb, 'Include Sleep-Cycle Journal / Memories Replay']),
+        el('label', { className: 'eco-check-label' }, [pauseInfCb, 'Auto-pause local inference during local GPU training']),
+      ]),
+      el('div', { style: 'display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:6px;' }, [
+        el('span', { className: 'eco-kpi-label', text: 'SVD-32 RETENTION WEIGHT:' }),
+        priorRange,
+        priorVal,
+      ]),
+      el('div', { style: 'display:flex;gap:10px;margin-top:10px;' }, [preflightBtn, launchBtn]),
+    ]));
+
+    return el('div', { style: 'display:flex;flex-direction:column;gap:10px;' }, nodes);
+  }
+
+  function renderAdaptersTab(d) {
+    const adapters = Array.isArray(d.adapters) ? d.adapters : [];
+    const epIn = el('input', { type: 'text', className: 'guild-input', value: 'http://127.0.0.1:8080' });
+    const scalesIn = el('input', { type: 'text', className: 'guild-input', style: 'flex:1;', value: '[{"id":0,"scale":1.0}]' });
+
+    const hotCard = el('div', { className: 'forge-card' }, [
+      el('div', { className: 'guild-card-title', text: 'LIVE SVD / LORA HOT-SWAPPER (POST /lora-adapters · 0ms RESTART)' }),
+      el('div', { className: 'guild-card-meta', text: 'Dynamically switch or blend preloaded role adapters on stock llama-server without restarting inference.' }),
+      el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;' }, [
+        epIn, scalesIn,
+        el('button', {
+          type: 'button', className: 'guild-btn primary', text: 'APPLY SCALES',
+          on: {
+            click: async () => {
+              let parsed;
+              try { parsed = JSON.parse(scalesIn.value); } catch (e) { setConsole('Invalid JSON scales array: ' + e.message); return; }
+              const { data } = await apiJson('/api/training/adapters/hotswap', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ endpoint: epIn.value.trim(), scales: parsed }),
+              });
+              setConsole(data);
+            },
+          },
+        }),
+      ]),
+    ]);
+
+    const bkpCard = el('div', { className: 'forge-card' }, [
+      el('div', { className: 'forge-card-head' }, [
+        el('div', {}, [
+          el('div', { className: 'guild-card-title', text: 'SVD-32 LINEAGE LIBRARY & CLOUD BACKUPS' }),
+          el('div', { className: 'guild-card-meta', text: 'Organized as MODELS_DIR/adapters/<model_slug>/<role>/{active.gguf, releases/, lineage.json}' }),
+        ]),
+        el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;' }, [
+          el('button', {
+            type: 'button', className: 'guild-btn', text: 'BACKUP -> GOOGLE DRIVE',
+            on: { click: async () => { setConsole('Backing up adapters to Google Drive...'); const { data } = await apiJson('/api/training/backup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target: 'drive' }) }); setConsole(data); } },
+          }),
+          el('button', {
+            type: 'button', className: 'guild-btn', text: 'BACKUP -> PRIVATE HF',
+            on: { click: async () => { setConsole('Backing up adapters to Private Hugging Face Hub...'); const { data } = await apiJson('/api/training/backup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target: 'hf' }) }); setConsole(data); } },
+          }),
+        ]),
+      ]),
+    ]);
+
+    if (adapters.length === 0) {
+      bkpCard.appendChild(el('div', { className: 'guild-card-meta', text: 'No SVD-32 lineage directories found yet under MODELS_DIR/adapters/.' }));
+    } else {
+      const list = el('div', { style: 'display:flex;flex-direction:column;gap:8px;' });
+      adapters.forEach((a) => {
+        const rels = (a.releases || []).map((r) => `${r.version || '?'} (${r.file || ''})`).join(' → ');
+        list.appendChild(el('div', { className: 'eco-file-row' }, [
+          el('div', {}, [
+            el('div', { style: 'font-weight:700;color:#f8fafc;font-size:12px;', text: `${a.model_slug}  //  role: ${a.role}` }),
+            el('div', { className: 'guild-card-meta', text: `Active: ${a.active_version || 'none'} · Releases: ${rels || 'none'}` }),
+          ]),
+          el('span', { className: 'guild-badge ' + (a.active_version ? 'on' : 'off'), text: `${(a.releases || []).length} release(s)` }),
+        ]));
+      });
+      bkpCard.appendChild(list);
+    }
+
+    return el('div', { style: 'display:flex;flex-direction:column;gap:12px;' }, [hotCard, bkpCard]);
+  }
+
+  function renderBenchTab(d) {
+    const scs = d.scorecards || [];
+    const selA = el('select', { className: 'guild-input', style: 'flex:1;' });
+    const selB = el('select', { className: 'guild-input', style: 'flex:1;' });
+    scs.forEach((s) => {
+      const lbl = `${s.model_label} (${s.overall_score}%${s.early_quit_rate_pct != null ? `, EQ:${s.early_quit_rate_pct}%` : ''}) — ${s.file}`;
+      selA.appendChild(el('option', { value: s.file, text: lbl }));
+      selB.appendChild(el('option', { value: s.file, text: lbl }));
+    });
+    if (scs.length > 1) selB.selectedIndex = 1;
+
+    const lblIn = el('input', { type: 'text', className: 'guild-input', value: 'gemma4-31b-live' });
+    const famSel = el('select', { className: 'guild-input' }, [
+      el('option', { value: 'auto', text: 'Auto-detect family' }),
+      el('option', { value: 'gemma4', text: 'Gemma-4' }),
+      el('option', { value: 'qwen', text: 'Qwen 3.8 / 3.5' }),
+    ]);
+
+    const card = el('div', { className: 'forge-card' }, [
+      el('div', { className: 'guild-card-title', text: '7-PILLAR MULTI-TURN & PERSISTENCE BENCHMARK' }),
+      el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;' }, [
+        lblIn, famSel,
+        el('button', {
+          type: 'button', className: 'guild-btn primary', text: 'RUN LIVE 7-PILLAR BENCHMARK',
+          on: {
+            click: async () => {
+              const { data } = await apiJson('/api/training/benchmark', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: 'run', label: lblIn.value.trim(), model_family: famSel.value }),
+              });
+              setConsole(data);
+            },
+          },
+        }),
+      ]),
+      el('div', { className: 'guild-card-title', style: 'margin-top:8px;', text: 'HEAD-TO-HEAD COMPARISON (e.g. GEMMA-4 31B vs QWEN 3.8 27B)' }),
+      el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;' }, [
+        selA, el('span', { text: 'vs' }), selB,
+        el('button', {
+          type: 'button', className: 'guild-btn', text: 'COMPARE HEAD-TO-HEAD', disabled: scs.length < 2,
+          on: {
+            click: async () => {
+              const { data } = await apiJson('/api/training/benchmark', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: 'head_to_head', file_a: selA.value, file_b: selB.value }),
+              });
+              state.h2hResult = data;
+              setConsole(data);
+              renderForge();
+            },
+          },
+        }),
+      ]),
+    ]);
+
+    if (state.h2hResult && state.h2hResult.pillars) {
+      const h = state.h2hResult;
+      const tbl = el('table', { className: 'forge-table', style: 'margin-top:8px;' }, [
+        el('thead', {}, [el('tr', {}, [
+          el('th', { text: 'PILLAR' }),
+          el('th', { text: h.baseline_label || 'Model A' }),
+          el('th', { text: h.candidate_label || 'Model B' }),
+          el('th', { text: 'DELTA' }),
+        ])]),
+      ]);
+      const tb = el('tbody');
+      Object.entries(h.pillars).forEach(([p, vals]) => {
+        tb.appendChild(el('tr', {}, [
+          el('td', { text: p }),
+          el('td', { text: `${vals.baseline}%` }),
+          el('td', { text: `${vals.candidate}%` }),
+          el('td', { style: `font-weight:700;color:${vals.delta >= 0 ? '#34d399' : '#f87171'};`, text: `${vals.delta >= 0 ? '+' : ''}${vals.delta}%` }),
+        ]));
+      });
+      tb.appendChild(el('tr', {}, [
+        el('td', { style: 'font-weight:700;', text: 'COMPOSITE SCORE' }),
+        el('td', { style: 'font-weight:700;', text: `${h.baseline_score}%` }),
+        el('td', { style: 'font-weight:700;', text: `${h.candidate_score}%` }),
+        el('td', { style: `font-weight:700;color:${h.composite_delta >= 0 ? '#34d399' : '#f87171'};`, text: `${h.composite_delta >= 0 ? '+' : ''}${h.composite_delta}%` }),
+      ]));
+      tbl.appendChild(tb);
+      card.appendChild(tbl);
+    }
+
+    return card;
+  }
+
+  function renderForge() {
+    const root = document.getElementById('trainingForgeRoot');
+    if (!root) return;
+    const d = state.data || {};
+    const pending = ((d.gate_queue && d.gate_queue.pending) || []).length;
+
+    const tabs = [
+      { id: 'overview', label: 'Overview & Sleep Cycle' },
+      { id: 'gate', label: `Tier B Gate & Runs${pending > 0 ? ` (${pending})` : ''}` },
+      { id: 'launch', label: 'Playbook & Launch' },
+      { id: 'adapters', label: 'SVD Layers & Backups' },
+      { id: 'bench', label: 'Head-to-Head Benchmarks' },
+    ];
+    const tabBar = el('div', { className: 'forge-tabs' }, tabs.map((t) => el('button', {
+      type: 'button',
+      className: 'drawer-subtab-btn' + (state.activeTab === t.id ? ' active' : ''),
+      text: t.label,
+      on: { click: () => { state.activeTab = t.id; renderForge(); } },
+    })));
+
+    let panel;
+    if (state.activeTab === 'gate') panel = renderGateTab(d);
+    else if (state.activeTab === 'launch') panel = renderLaunchTab(d);
+    else if (state.activeTab === 'adapters') panel = renderAdaptersTab(d);
+    else if (state.activeTab === 'bench') panel = renderBenchTab(d);
+    else panel = renderOverviewTab(d);
+
+    root.replaceChildren(
+      tabBar,
+      panel,
+      el('div', { style: 'margin-top:10px;' }, [
+        el('div', { className: 'eco-kpi-label', text: 'FORGE STUDIO TELEMETRY CONSOLE' }),
+        el('pre', { id: 'forgeStudioConsole', className: 'eco-console', text: state.consoleText }),
+      ]),
+    );
+  }
+
+  function openForgeModal() {
+    const m = document.getElementById('trainingForgeModal');
+    if (!m) return;
+    m.style.display = 'flex';
+    m.classList.add('open');
+    renderForge();
+    refreshAll();
+  }
+
+  function closeForgeModal() {
+    const m = document.getElementById('trainingForgeModal');
+    if (!m) return;
+    m.classList.remove('open');
+    m.style.display = 'none';
+  }
+
+  function bindModal() {
+    document.getElementById('headerTrainingForgeBtn')?.addEventListener('click', openForgeModal);
+    document.getElementById('trainingForgeModalClose')?.addEventListener('click', closeForgeModal);
+    document.getElementById('trainingForgeModalDismiss')?.addEventListener('click', closeForgeModal);
+  }
+
+  window.LodgeForge = { open: openForgeModal, close: closeForgeModal, refresh: refreshAll };
+  window.LodgeOpenForge = openForgeModal;
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindModal);
+  else bindModal();
+})();

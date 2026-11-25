@@ -346,7 +346,7 @@ native_tools_bundle_tools() {
             echo "subagent_delegate,subagent_spawn,subagent_status,subagent_logs,subagent_diff,subagent_merge,subagent_reap,subagent_intervene,subagent_await"
             ;;
         +models|models)
-            echo "model_param_set,model_param_get,model_param_clear,model_endpoint_switch,model_endpoint_status,reflexive_status,reflexive_toggle,reflexive_metacog_assess,reflexive_prompt_grade"
+            echo "model_param_set,model_param_get,model_param_clear,model_endpoint_switch,model_endpoint_status,train_pantry,train_credits,train_forge,train_run_plan,train_run_start,train_run_status,train_run_collect_and_merge,train_adapter_hotswap,train_backup,reflexive_status,reflexive_toggle,reflexive_metacog_assess,reflexive_prompt_grade"
             ;;
         +gsuite|gsuite)
             echo "gsuite_search"
@@ -1856,6 +1856,64 @@ $_ts_v_err
             model_param_clear) local _mp="$(_arg .param)"; if [ -n "$_mp" ] && declare -f models_clear_param &>/dev/null; then output=$(models_clear_param "$_mp" 2>&1); elif declare -f models_clear_all_params &>/dev/null; then output=$(models_clear_all_params 2>&1); else output="Nothing to clear: parameters live in the Model Hub profile (/models tune)."; fi; exit_code=0 ;;
             model_endpoint_switch) _call_err endpoints_set_active_tier "endpoints_set_active_tier not available" "$(_arg .tier)" ;;
             model_endpoint_status) _call_sim endpoints_status_json "Active Tier: ${ACTIVE_TIER:-1}" ;;
+            train_pantry)
+                local _tpy="${LODGE_DIR}/.venv/bin/python3"; [ ! -x "$_tpy" ] && _tpy="python3"
+                local _slr; _slr=$(_arg .since_last_run false)
+                local -a _tp_args=("${LODGE_DIR}/scripts/training/forge.py" pantry --json)
+                [ "$_slr" = "true" ] && _tp_args+=(--since-last-run)
+                output=$("$_tpy" "${_tp_args[@]}" 2>&1); exit_code=$? ;;
+            train_credits)
+                local _tpy="${LODGE_DIR}/.venv/bin/python3"; [ ! -x "$_tpy" ] && _tpy="python3"
+                output=$("$_tpy" "${LODGE_DIR}/scripts/training/check_credits.py" --json 2>&1); exit_code=$? ;;
+            train_forge)
+                local _tpy="${LODGE_DIR}/.venv/bin/python3"; [ ! -x "$_tpy" ] && _tpy="python3"
+                local _tf_focus _tf_count _tf_jrn
+                _tf_focus=$(_arg .focus "persistence,multi-hop,error-recovery,tool-syntax")
+                _tf_count=$(_arg .count "400")
+                _tf_jrn=$(_arg .include_journal "false")
+                local -a _tf_args=("${LODGE_DIR}/scripts/training/forge.py" build --focus "$_tf_focus" --count "$_tf_count")
+                [ "$_tf_jrn" = "true" ] && _tf_args+=(--include-journal)
+                output=$("$_tpy" "${_tf_args[@]}" 2>&1 | tail -n 1); exit_code=$? ;;
+            train_run_plan)
+                local _tpy="${LODGE_DIR}/.venv/bin/python3"; [ ! -x "$_tpy" ] && _tpy="python3"
+                local _sp; _sp=$(_arg .spec_path)
+                [ -f "$LODGE_DIR/$_sp" ] && _sp="$LODGE_DIR/$_sp"
+                output=$("$_tpy" "${LODGE_DIR}/scripts/training/runs.py" plan "$_sp" 2>&1); exit_code=$? ;;
+            train_run_start)
+                local _tpy="${LODGE_DIR}/.venv/bin/python3"; [ ! -x "$_tpy" ] && _tpy="python3"
+                local _sp _ex; _sp=$(_arg .spec_path); _ex=$(_arg .execute "false")
+                [ -f "$LODGE_DIR/$_sp" ] && _sp="$LODGE_DIR/$_sp"
+                local -a _ts_args=("${LODGE_DIR}/scripts/training/runs.py" start "$_sp")
+                [ "$_ex" = "true" ] && _ts_args+=(--execute)
+                output=$("$_tpy" "${_ts_args[@]}" 2>&1); exit_code=$? ;;
+            train_run_status)
+                local _tpy="${LODGE_DIR}/.venv/bin/python3"; [ ! -x "$_tpy" ] && _tpy="python3"
+                local _rn; _rn=$(_arg .run_name)
+                if [ -n "$_rn" ]; then
+                    output=$("$_tpy" "${LODGE_DIR}/scripts/training/runs.py" status "$_rn" 2>&1); exit_code=$?
+                else
+                    output=$("$_tpy" "${LODGE_DIR}/scripts/training/runs.py" list 2>&1); exit_code=$?
+                fi ;;
+            train_run_collect_and_merge)
+                local _tpy="${LODGE_DIR}/.venv/bin/python3"; [ ! -x "$_tpy" ] && _tpy="python3"
+                local _rn _act; _rn=$(_arg .run_name); _act=$(_arg .action "collect")
+                output=$("$_tpy" "${LODGE_DIR}/scripts/training/runs.py" "$_act" "$_rn" 2>&1); exit_code=$? ;;
+            train_adapter_hotswap)
+                local _tpy="${LODGE_DIR}/.venv/bin/python3"; [ ! -x "$_tpy" ] && _tpy="python3"
+                local _ep _sc; _ep=$(_arg .endpoint "http://127.0.0.1:8080"); _sc=$(_arg .scales_json)
+                if [ -n "$_sc" ]; then
+                    output=$("$_tpy" "${LODGE_DIR}/scripts/training/runs.py" hotswap --endpoint "$_ep" --scales "$_sc" 2>&1); exit_code=$?
+                else
+                    output=$("$_tpy" "${LODGE_DIR}/scripts/training/runs.py" adapters 2>&1); exit_code=$?
+                fi ;;
+            train_backup)
+                local _tpy="${LODGE_DIR}/.venv/bin/python3"; [ ! -x "$_tpy" ] && _tpy="python3"
+                local _bt; _bt=$(_arg .target "status")
+                if [ "$_bt" = "status" ]; then
+                    output=$("$_tpy" "${LODGE_DIR}/scripts/training/backup_artifacts.py" status 2>&1); exit_code=$?
+                else
+                    output=$("$_tpy" "${LODGE_DIR}/scripts/training/backup_artifacts.py" backup --all --target "$_bt" 2>&1); exit_code=$?
+                fi ;;
             mcp_server_status) if declare -f mcp_status &>/dev/null; then output=$(mcp_status 2>&1); exit_code=0; else output="MCP engine not initialized"; exit_code=1; fi ;;
             mcp_server_add) _call_err mcp_server_add "mcp_server_add not available" "$(_arg .name)" "$(_arg .command)" "$(_arg .description)" ;;
             mcp_server_remove) _call_err mcp_server_remove "mcp_server_remove not available" "$(_arg .name)" ;;

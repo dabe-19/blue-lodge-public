@@ -39,6 +39,8 @@ spec:
               value: "/workspace/.venv"
             - name: LD_LIBRARY_PATH
               value: "/usr/lib/wsl/lib"
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: "/root/.config/gcloud/application_default_credentials.json"
           readinessProbe:
             httpGet:
               path: /
@@ -62,6 +64,11 @@ spec:
             - name: host-local-uv
               mountPath: /home/user/.local
               readOnly: true
+            - name: host-gcloud-adc
+              mountPath: /root/.config/gcloud
+              readOnly: true
+            - name: host-colab-cli
+              mountPath: /root/.config/colab-cli
       volumes:
         - name: workspace
           hostPath:
@@ -91,6 +98,14 @@ spec:
           hostPath:
             path: /home/user/.local
             type: Directory
+        - name: host-gcloud-adc
+          hostPath:
+            path: /home/user/.config/gcloud
+            type: DirectoryOrCreate
+        - name: host-colab-cli
+          hostPath:
+            path: /home/user/.config/colab-cli
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service

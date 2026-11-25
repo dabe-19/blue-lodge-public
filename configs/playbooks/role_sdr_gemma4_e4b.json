@@ -1,0 +1,62 @@
+{
+  "name": "sdr-p25-gemma4-e4b-svd32",
+  "role": "sdr-p25",
+  "model_slug": "gemma-4-e4b-it",
+  "backend": "colab",
+  "base_model": "google/gemma-4-E4B-it",
+  "base_source": "hf_direct",
+  "base_hf_path": "",
+  "tracks": [
+    {
+      "name": "sdr-p25-sft",
+      "method": "sft",
+      "train": "exports:REPLACE_WITH_SDR_FORGE_DIR/sft_train.jsonl",
+      "val": "exports:REPLACE_WITH_SDR_FORGE_DIR/sft_val.jsonl",
+      "gpu": 0
+    },
+    {
+      "name": "sdr-p25-dpo",
+      "method": "dpo",
+      "train": "exports:REPLACE_WITH_SDR_FORGE_DIR/dpo_train.jsonl",
+      "val": "exports:REPLACE_WITH_SDR_FORGE_DIR/dpo_val.jsonl",
+      "gpu": 0
+    }
+  ],
+  "hyper": {
+    "epochs": 3,
+    "learning_rate": 0.00015,
+    "lora_r": 32,
+    "lora_alpha": 64,
+    "lora_dropout": 0.05,
+    "max_seq_len": 4096,
+    "batch_size": 2,
+    "grad_accum": 4,
+    "dpo_beta": 0.1,
+    "load_in_4bit": true,
+    "use_unsloth": true,
+    "save_steps": 40
+  },
+  "merge": {
+    "method": "svd",
+    "target_rank": 32,
+    "prior_adapter_weight": 0.35,
+    "weights": [0.6, 0.4]
+  },
+  "colab": {
+    "auth": "adc",
+    "gpu": "L4",
+    "gpu_fallback": ["H100", "G4", "A100", "L4", "T4"],
+    "min_gpu_vram_gb": 16,
+    "high_mem": false,
+    "max_concurrent_sessions": 2,
+    "min_cu_balance": 100,
+    "max_runtime_min": 120,
+    "drive_checkpoints": true,
+    "export_gguf_on_colab": true
+  },
+  "benchmark": {
+    "model_family": "gemma4",
+    "min_composite_delta": 0.0,
+    "max_early_quit_delta": 0.0
+  }
+}

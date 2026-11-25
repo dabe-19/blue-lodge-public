@@ -68,7 +68,7 @@ The autonomous cognition engine, multi-turn reasoning loops, context compressors
 ---
 
 ## 🖥️ 3. Inference Fabric & Instrument Rack
-Hardware monitoring, dual-GPU PRISM topology, remote Proxmox nodes, and failover cascades.
+Hardware monitoring, stock `llama.cpp` multi-GPU topology, remote Proxmox nodes, and failover cascades.
 
 - [[INSTRUMENT_RACK|Instrument Rack & Fabric Topology]] — Real-time control/compute node probe, slot utilization, latency, and `/api/rack` API.
 - [[INFERENCE_FABRIC|Inference Fabric Guide]] — Multi-tier remote GPU clusters, SSH tunnels, and load balancing.

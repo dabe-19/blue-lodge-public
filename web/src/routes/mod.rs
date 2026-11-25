@@ -143,10 +143,19 @@ pub fn create_router(state: Arc<AppState>, cors: CorsLayer) -> Router {
         .route("/api/hub/ask", post(hub::ask))
         .route("/api/hub/ask/:id", get(hub::ask_status))
 
-        // Sovereign Training & ADC Quota
+        // Sovereign Training Forge, Sleep-Cycle SVD-32 Lineage & Tier B Gate
         .route("/api/training/status", get(training::get_training_status))
+        .route("/api/training/runs", get(training::get_training_runs))
+        .route("/api/training/adapters", get(training::get_training_adapters))
         .route("/api/training/run", post(training::run_training))
         .route("/api/training/wizard", post(training::generate_training_wizard))
+        .route("/api/training/action", post(training::post_training_action))
+        .route("/api/training/policy", post(training::post_training_policy))
+        .route("/api/training/gate/:run_name/approve", post(training::approve_gate_candidate))
+        .route("/api/training/gate/:run_name/deny", post(training::deny_gate_candidate))
+        .route("/api/training/adapters/hotswap", post(training::post_adapter_hotswap))
+        .route("/api/training/backup", post(training::post_training_backup))
+        .route("/api/training/benchmark", post(training::post_training_benchmark))
 
         // Workspace & File Management
         .route("/api/file/read", get(files::read_file_content))

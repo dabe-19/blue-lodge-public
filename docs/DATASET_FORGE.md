@@ -55,6 +55,9 @@ The new files show up under *Your datasets*, and the kit generator can use them 
 | `multi-hop` | continue a long investigation using earlier observations | restarting with step 1 |
 | `final-answer` | synthesise the reply from gathered evidence | none (SFT only) |
 | `gitops` | file and git operations | a destructive variant (`--force`, `reset --hard`, `clean -fdx`) |
+| `cyber-defense` | Wireshark `-Y` filter synthesis & Tier B containment | broken BPF filter or unconfirmed host block |
+| `persistence` | finish long multi-step workflows & verify before stopping | premature early-stop summary reply with zero tool calls |
+| `sdr-p25` | P25 trunked radio JSON narrative synthesis & `10-4` recovery | unlinked raw Whisper draft |
 
 Use `mix` to blend all of them evenly.
 
@@ -147,8 +150,7 @@ as above, but the Lodge handles GPUs, logs, conversion and merging for you.
 - **Merge.**
   - When every track finishes, each adapter is converted with llama.cpp. This needs `llama_cpp_dir` and
     `base_hf_path`, a local HF copy of the base model.
-  - The adapters are then fused by `scripts/colab_training/merge_frontier_loras.py` and written to
-    `MODELS_DIR/adapters`.
+  - The adapters are then fused by `scripts/training/merge_loras.py` (with optional retention weighting against `active.gguf`) and staged in `MODELS_DIR/adapters/<model_slug>/<role>/candidates/`.
   - `concat` is exact: the ranks add up. `svd` compresses to `target_rank`, which gives a smaller file but
     is lossy. Try both and compare.
 - **Colab** (`"backend": "colab"`, up to one A100 per track).

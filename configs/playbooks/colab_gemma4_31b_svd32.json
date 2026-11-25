@@ -1,0 +1,62 @@
+{
+  "name": "gemma4-31b-sleep-svd32",
+  "role": "core-agent",
+  "model_slug": "gemma-4-31b-it",
+  "backend": "colab",
+  "base_model": "google/gemma-4-31b-it",
+  "base_source": "hf_direct",
+  "base_hf_path": "",
+  "tracks": [
+    {
+      "name": "sft-core",
+      "method": "sft",
+      "train": "exports:REPLACE_WITH_FORGE_DIR/sft_train.jsonl",
+      "val": "exports:REPLACE_WITH_FORGE_DIR/sft_val.jsonl",
+      "gpu": 0
+    },
+    {
+      "name": "dpo-persistence",
+      "method": "dpo",
+      "train": "exports:REPLACE_WITH_FORGE_DIR/dpo_train.jsonl",
+      "val": "exports:REPLACE_WITH_FORGE_DIR/dpo_val.jsonl",
+      "gpu": 0
+    }
+  ],
+  "hyper": {
+    "epochs": 2,
+    "learning_rate": 0.0001,
+    "lora_r": 32,
+    "lora_alpha": 64,
+    "lora_dropout": 0.05,
+    "max_seq_len": 4096,
+    "batch_size": 1,
+    "grad_accum": 8,
+    "dpo_beta": 0.1,
+    "load_in_4bit": true,
+    "use_unsloth": true,
+    "save_steps": 40
+  },
+  "merge": {
+    "method": "svd",
+    "target_rank": 32,
+    "prior_adapter_weight": 0.7,
+    "weights": [0.55, 0.45]
+  },
+  "colab": {
+    "auth": "adc",
+    "gpu": "A100",
+    "gpu_fallback": ["H100", "G4", "A100", "L4"],
+    "min_gpu_vram_gb": 24,
+    "high_mem": true,
+    "max_concurrent_sessions": 3,
+    "min_cu_balance": 150,
+    "max_runtime_min": 180,
+    "drive_checkpoints": true,
+    "export_gguf_on_colab": true
+  },
+  "benchmark": {
+    "model_family": "gemma4",
+    "min_composite_delta": 0.0,
+    "max_early_quit_delta": 0.0
+  }
+}

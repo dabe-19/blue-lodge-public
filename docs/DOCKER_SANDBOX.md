@@ -288,27 +288,25 @@ There is no model registry. The sandbox mounts your host model library (`MODELS_
 
 ---
 
-## Local CUDA Sandbox: `llama.cpp-prism` & Ternary Bonsai
+## Local CUDA Sandbox: Stock `llama.cpp` (`llama-server` & `llama-export-lora`)
 
-The `george-cuda-sandbox` image includes both stock `llama.cpp` and `llama.cpp-prism` compiled with CUDA Ampere (RTX 30-series / sm_86) optimizations (`-DGGML_CUDA_FA_ALL_QUANTS=ON`, `-DGGML_CUDA_GRAPHS=ON`).
+The `george-cuda-sandbox` image compiles upstream stock `ggml-org/llama.cpp` with CUDA Ampere/Blackwell (`sm_86;sm_120`) optimizations (`-DGGML_CUDA_FA_ALL_QUANTS=ON`, `-DGGML_CUDA_GRAPHS=ON`), providing native SPTQ/ternary kernels, MTP speculative decoding, multimodal vision (`--mmproj`), hot-swappable LoRA/SVD-32 layers (`POST /lora-adapters`), and `llama-export-lora` baking.
 
-### Container Management Cheat Sheet
+### Container & K8s Management Cheat Sheet
 
 ```bash
-# 1. Check Container & HTTP Health:
-./scripts/start-local-prism.sh --status
+# 1. Check Cluster / Container Health:
+./scripts/infra/k8s_deploy.sh status          # K8s / k3s
+./scripts/infra/compose.sh status             # Docker Compose
 
-# 2. Stop Container (frees VRAM for gaming or other workloads):
-./scripts/start-local-prism.sh --stop
+# 2. Pause Inference (frees VRAM for gaming or local GPU training):
+bash scripts/infra/game_mode.sh on            # or 'resume' to restore
 
-# 3. Start Container (Daemon) with 32k context & 4-bit KV cache (Recommended for 12GB GPUs):
-CTX_SIZE=32768 CTK=q4_0 CTV=q4_0 ./scripts/start-local-prism.sh -d ~/models/Ternary-Bonsai-2-27B-PQ2_0.gguf
+# 3. Render node-local K8s manifests & apply:
+./scripts/infra/k8s_deploy.sh up
 
-# 4. View Container Logs:
-docker logs -f george-prism-server
-
-# 5. Switch active binary inside the image (if debugging):
-docker exec -it george-prism-server llama-server-switch stock   # or 'prism'
+# 4. Hot-swap loaded LoRA/SVD-32 role adapters with zero restart:
+lodge /train hotswap --endpoint http://127.0.0.1:8080 --scales '[{"id":0,"scale":1.0}]'
 ```
 
 ### Runtime Sizing & Optimization Matrix (RTX 3060 12GB)

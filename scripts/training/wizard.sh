@@ -1,141 +1,51 @@
 #!/usr/bin/env bash
-# ── scripts/training/wizard.sh: Interactive Training & Fusion Wizard ──
+# scripts/training/wizard.sh — Interactive JSON Playbook Wizard for runs.py
 set -euo pipefail
 
-WORKSPACE_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-CONFIG_DIR="$WORKSPACE_DIR/configs"
-DATA_ACTIVE="$WORKSPACE_DIR/data/training/active"
-MODELS_ACTIVE="$HOME/models/active/current"
+LODGE_DIR="${LODGE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+PY="$LODGE_DIR/.venv/bin/python3"
+[ ! -x "$PY" ] && PY="python3"
 
-BOLD='\033[1m'
-CYAN='\033[36m'
-GREEN='\033[32m'
-YELLOW='\033[33m'
-RESET='\033[0m'
+echo "═══════════════════════════════════════════════════════════════"
+echo "  BLUE LODGE // SOVEREIGN TRAINING & SVD-32 PLAYBOOK WIZARD"
+echo "═══════════════════════════════════════════════════════════════"
+read -rp "Run name [gemma4-sleep-v1]: " RUN_NAME
+RUN_NAME="${RUN_NAME:-gemma4-sleep-v1}"
+read -rp "Role [core-agent | sdr-p25 | code-ops]: " ROLE
+ROLE="${ROLE:-core-agent}"
+read -rp "Base HF model [google/gemma-4-31b-it]: " BASE_MODEL
+BASE_MODEL="${BASE_MODEL:-google/gemma-4-31b-it}"
+read -rp "Backend [colab | local]: " BACKEND
+BACKEND="${BACKEND:-colab}"
+read -rp "Prior active.gguf retention weight (0.0-0.95) [0.70]: " PRIOR_W
+PRIOR_W="${PRIOR_W:-0.70}"
 
-echo -e "${BOLD}═══════════════════════════════════════════════════════════${RESET}"
-echo -e "${BOLD}  Blue Lodge — Training Run Configuration Wizard${RESET}"
-echo -e "${BOLD}═══════════════════════════════════════════════════════════${RESET}"
+echo "[*] Forging fresh leak-guarded dataset from local transcripts (persistence + multi-hop + tool-syntax + error-recovery)..."
+MANIFEST=$("$PY" "$LODGE_DIR/scripts/training/forge.py" build --focus persistence,multi-hop,tool-syntax,error-recovery,failure-modes --count 600 --include-journal | tail -n 1)
+SFT_ID=$(printf '%s' "$MANIFEST" | jq -r '.ids.sft_train // empty')
+SFT_VAL=$(printf '%s' "$MANIFEST" | jq -r '.ids.sft_val // empty')
+DPO_ID=$(printf '%s' "$MANIFEST" | jq -r '.ids.dpo_train // empty')
+DPO_VAL=$(printf '%s' "$MANIFEST" | jq -r '.ids.dpo_val // empty')
 
-# 1. Run Name
-read -r -p " [1/5] Enter Run Name [default: bluelodge_multiturn_run]: " RUN_NAME
-RUN_NAME="${RUN_NAME:-bluelodge_multiturn_run}"
+OUT_JSON="$LODGE_DIR/configs/playbooks/${RUN_NAME}.json"
+mkdir -p "$(dirname "$OUT_JSON")"
+jq -n \
+  --arg name "$RUN_NAME" --arg role "$ROLE" --arg base "$BASE_MODEL" --arg backend "$BACKEND" \
+  --arg sft "$SFT_ID" --arg sftv "$SFT_VAL" --arg dpo "$DPO_ID" --arg dpov "$DPO_VAL" \
+  --argjson pw "$PRIOR_W" \
+  '{
+    name: $name, role: $role, backend: $backend, base_model: $base, base_source: "hf_direct",
+    tracks: (
+      (if $sft != "" then [{name:"sft-core", method:"sft", train:$sft, val:(if $sftv != "" then $sftv else null end), gpu:0}] else [] end) +
+      (if $dpo != "" then [{name:"dpo-persistence", method:"dpo", train:$dpo, val:(if $dpov != "" then $dpov else null end), gpu:0}] else [] end)
+    ),
+    hyper: {epochs:2, learning_rate:0.0001, lora_r:32, lora_alpha:64, lora_dropout:0.05, max_seq_len:4096, batch_size:1, grad_accum:8, dpo_beta:0.1, save_steps:40, load_in_4bit:true, use_unsloth:true},
+    merge: {method:"svd", target_rank:32, prior_adapter_weight:$pw, weights:null},
+    colab: {auth:"adc", gpu:"A100", gpu_fallback:["H100","G4","A100","L4","T4"], min_gpu_vram_gb:24, high_mem:true, max_concurrent_sessions:3, min_cu_balance:150, max_runtime_min:180, drive_checkpoints:true, export_gguf_on_colab:true},
+    local: {pause_inference:true}
+  }' > "$OUT_JSON"
 
-read -r -p " [2/5] Enter Target Version Number [default: 15]: " RUN_VERSION
-RUN_VERSION="${RUN_VERSION:-15}"
-
-# 2. Base Model
-DEFAULT_BASE="$HOME/models/frontier_qwen38/Qwen3.8-27B-UD-Q4_K_S.gguf"
-[ -f "$MODELS_ACTIVE/base.gguf" ] && DEFAULT_BASE="$(readlink -f "$MODELS_ACTIVE/base.gguf")"
-echo ""
-echo -e " [3/5] Base Model Path:"
-echo -e "       Current default: ${CYAN}${DEFAULT_BASE}${RESET}"
-read -r -p "       Press Enter to use default, or enter custom path: " USER_BASE
-BASE_MODEL_PATH="${USER_BASE:-$DEFAULT_BASE}"
-
-# 3. Hardware Target & ADC Balance Query
-echo ""
-echo -e " [4/5] Compute Provisioning Target:"
-ADC_STATUS=""
-if [ -x "$WORKSPACE_DIR/.venv/bin/python3" ]; then
-    ADC_STATUS=$("$WORKSPACE_DIR/.venv/bin/python3" "$WORKSPACE_DIR/scripts/training/check_credits.py" 2>/dev/null || true)
-fi
-if [ -n "$ADC_STATUS" ]; then
-    echo -e "       ${GREEN}✓ Google Colab ADC:${RESET} ${ADC_STATUS}"
-fi
-echo "       1) Google Colab Fleet via ADC (up to 3 parallel instances, auto-teardown)"
-echo "       2) Local Dual-GPU (RTX 4090 + RTX 3090, 48GB VRAM pooled)"
-read -r -p "       Choose [1-2, default: 1]: " HW_CHOICE
-HW_CHOICE="${HW_CHOICE:-1}"
-
-COMPUTE_TARGET="colab_fleet"
-[ "$HW_CHOICE" = "2" ] && COMPUTE_TARGET="local_dual_gpu"
-
-# 4. Output YAML Path
-TIMESTAMP=$(date +%s)
-OUT_YAML="$CONFIG_DIR/training_run_${RUN_NAME}_v${RUN_VERSION}_${TIMESTAMP}.yaml"
-mkdir -p "$CONFIG_DIR"
-
-cat > "$OUT_YAML" << EOF
-# Auto-generated by Blue Lodge Training Wizard on $(date)
-name: "${RUN_NAME}"
-version: "${RUN_VERSION}"
-description: "Generated training run specification"
-
-base_model:
-  path: "${BASE_MODEL_PATH}"
-  quant_format: "UD-Q4_K_S"
-  architecture: "qwen35"
-  context_length: 65536
-  jinja_template: "$HOME/models/frontier_qwen38/blue_lodge_jinja_template.jinja"
-
-curricula:
-  - id: "track1_context_discrimination"
-    name: "Track 1: Context Discrimination & Anti-Pollution"
-    path: "data/training/active/curriculum_track1_composite_context_discrimination.jsonl"
-    sampling_weight: 0.35
-    target_adapter_name: "LoRA-MultiTurn-ContextDiscrimination.gguf"
-
-  - id: "track2_multihop_followups"
-    name: "Track 2: Multi-Hop Follow-ups & Surgical Execution"
-    path: "data/training/active/curriculum_track2_composite_multihop_followups.jsonl"
-    sampling_weight: 0.35
-    target_adapter_name: "LoRA-MultiTurn-MultiHopFollowups.gguf"
-
-  - id: "track3_evaluator_resilience"
-    name: "Track 3: Evaluator Resilience & Tool Error Recovery"
-    path: "data/training/active/curriculum_track3_composite_evaluator_resilience.jsonl"
-    sampling_weight: 0.30
-    target_adapter_name: "LoRA-MultiTurn-EvaluatorResilience.gguf"
-
-hyperparameters:
-  rank: 32
-  lora_alpha: 64
-  learning_rate: 0.0002
-  batch_size: 2
-  gradient_accumulation_steps: 4
-  max_seq_length: 4096
-  epochs: 1
-
-fusion:
-  parent_champion_lora: "$HOME/models/frontier_qwen38/Blue-Llama-27B-Champion-v14-Fused-LoRA.gguf"
-  parent_weight: 0.35
-  new_adapters_weight: 0.65
-  svd_truncation_rank: 32
-  output_dir: "$HOME/models/frontier_qwen38"
-  output_prefix: "Blue-Llama-27B-Champion-v${RUN_VERSION}"
-  auto_promote_symlink: true
-
-compute:
-  target: "${COMPUTE_TARGET}"
-  colab:
-    auth_method: "adc"
-    accelerator_menu:
-      - gpu: "A100"
-        high_mem: true
-      - gpu: "A100"
-        high_mem: false
-      - gpu: "L4"
-        high_mem: false
-      - gpu: "T4"
-        high_mem: true
-    max_parallel_sessions: 3
-    auto_teardown_on_finish: true
-    min_required_credits: 50.0
-  local_gpu:
-    devices: [0, 1]
-    tensor_split: [14, 9]
-
-evaluation:
-  benchmark_harness: "scripts/quant_research/07_evaluate_multiturn_benchmark.py"
-  minimum_composite_score: 90.0
-EOF
-
-echo ""
-echo -e " ${GREEN}✓ Configuration saved to:${RESET} ${CYAN}${OUT_YAML}${RESET}"
-echo -e " ${BOLD}═══════════════════════════════════════════════════════════${RESET}"
-echo ""
-read -r -p " Run dry-run validation on this configuration now? [Y/n]: " DO_VALIDATE
-if [[ "${DO_VALIDATE:-y}" =~ ^[Yy] ]]; then
-    python3 "$WORKSPACE_DIR/scripts/training/pipeline.py" --config "$OUT_YAML" --dry-run
-fi
+echo "[✓] Wrote JSON playbook -> $OUT_JSON"
+echo "[*] Running preflight check..."
+"$PY" "$LODGE_DIR/scripts/training/runs.py" plan "$OUT_JSON" | jq '{valid, errors, warnings, colab_gpu_fallback: .info.colab_gpu_fallback}'
+echo "Launch when ready: lodge /train run $OUT_JSON --execute"

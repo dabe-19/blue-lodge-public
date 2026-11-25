@@ -630,3 +630,142 @@
   max-height: 220px;
   overflow-y: auto;
 }
+
+/* ── Sovereign Training Forge Studio & Tier B Gate ────────────────── */
+.forge-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.forge-card {
+  background: rgba(15, 23, 42, 0.82);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.forge-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.forge-prereq-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.forge-prereq-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #e2e8f0;
+}
+
+.forge-prereq-chip.ok {
+  border-color: rgba(16, 185, 129, 0.45);
+  color: #6ee7b7;
+}
+
+.forge-prereq-chip.bad {
+  border-color: rgba(245, 158, 11, 0.55);
+  color: #fcd34d;
+}
+
+.forge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.forge-dot.ok {
+  background: #10b981;
+  box-shadow: 0 0 6px #10b981;
+}
+
+.forge-dot.bad {
+  background: #f59e0b;
+  box-shadow: 0 0 6px #f59e0b;
+}
+
+.forge-issue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.forge-issue-row {
+  padding: 8px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.08);
+  color: #fde68a;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.forge-issue-row.error {
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.1);
+  color: #fecaca;
+}
+
+.forge-issue-row.info {
+  border-color: rgba(56, 189, 248, 0.4);
+  background: rgba(56, 189, 248, 0.08);
+  color: #bae6fd;
+}
+
+.forge-fix-cmd {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  padding: 4px 6px;
+  background: rgba(2, 6, 23, 0.7);
+  border-radius: 3px;
+  color: #e2e8f0;
+  word-break: break-all;
+}
+
+.forge-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.forge-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.forge-table th,
+.forge-table td {
+  padding: 7px 8px;
+  text-align: left;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  color: #cbd5e1;
+}
+
+.forge-table th {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  background: rgba(2, 6, 23, 0.45);
+}

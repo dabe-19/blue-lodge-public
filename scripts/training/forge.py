@@ -117,6 +117,22 @@ RECIPES = {
                   "syntax, non-destructive Tier A forensic snapshots before intervention, and staging Tier B "
                   "propose_plan confirmation instead of reckless unconfirmed quarantine/disruption.",
     },
+    "persistence": {
+        "title": "Finish the multi-step job — never quit early before verifying",
+        "dpo": True,
+        "lesson": "Cut mid-flight inside deep successful trajectories (k>=2 tool turns, especially after edits or "
+                  "partial lookups before running tests/verification). Chosen = the real continuation tool call "
+                  "that finished or verified the work. Rejected = a premature early-stop summary reply with zero "
+                  "tool calls telling the user to finish/verify the rest manually. Directly cures early-exit "
+                  "behavior on long multi-step tasks.",
+    },
+    "sdr-p25": {
+        "title": "P25 trunked radio tactical narrative synthesis & 10-4 acoustic recovery",
+        "dpo": True,
+        "lesson": "Role-specific SDR suite curriculum mined from sdr_* transcripts, .george/sdr/sdr_intel.db, and "
+                  "optional county P25 transcripts. Teaches structured JSON tactical summaries, talkgroup context "
+                  "linking, and restoring clipped P25 IMBE '10-4' calls over raw hallucinated Whisper drafts.",
+    },
 }
 
 
@@ -605,9 +621,114 @@ def r_cyber_defense(eps, steps, vocab, rnd, budget):
     return out
 
 
+_PREMATURE_STOP_TEMPLATES = [
+    "I have reviewed the initial context and outlined the main steps above. You can now run the remaining verification checks and apply any follow-up edits directly in your terminal.",
+    "I've made initial progress on the first part of this request. Please verify the remaining files and run the test suite manually to confirm everything works as expected.",
+    "Here is a summary of what I found so far. Let me know if you would like me to continue inspecting the remaining components or run validation.",
+    "I've completed the preliminary lookup. At this point you can execute the remaining commands and check the logs to finish the task.",
+    "The initial change is in place. I'll stop here so you can review and run the build, tests, and deployment steps yourself.",
+]
+
+
+def r_persistence(eps, steps, vocab, rnd, budget, llm=None):
+    """Anti-early-stop DPO+SFT recipe: prefer executing the next verification/continuation tool call
+    over emitting a premature stop-and-handoff text response mid-task."""
+    out = []
+    for ep in eps:
+        ms = ep["messages"]
+        if not ex.is_good(ep):
+            continue
+        calls = [i for i, m in enumerate(ms) if m["role"] == "assistant" and _call(m)]
+        if len(calls) < 3:
+            continue
+        # Sample deep continuation points (hop >= 2) where the agent kept working instead of stopping
+        for idx_pos, k in enumerate(calls[2:], start=2):
+            chosen = ms[k]
+            f = _call(chosen)
+            if not f:
+                continue
+            rej_text = rnd.choice(_PREMATURE_STOP_TEMPLATES)
+            prov = "transcript+early_stop_template"
+            if llm and llm.left > 0 and idx_pos % 3 == 0:
+                last_obs = next((m.get("content") or "" for m in reversed(ms[:k]) if m["role"] == "tool"), "")
+                gen = llm.ask(
+                    "Write a short (2-3 sentence) lazy, premature assistant reply that stops early and tells the "
+                    "user to finish the remaining steps/tests themselves instead of running the next tool call. "
+                    "Output ONLY the premature reply text.",
+                    f"Latest observation:\n{last_obs[:800]}\nActual needed next tool: {f['name']}",
+                    max_tokens=160, temperature=0.8,
+                )
+                if gen and len(gen.strip()) >= 25:
+                    rej_text = gen.strip()
+                    prov = "transcript+early_stop_llm"
+            rejected = {"role": "assistant", "content": rej_text, "reasoning_content": ""}
+            out.append(_sample("persistence", ep, ms[:k], chosen, rejected, prov, budget, hop=idx_pos))
+    return out
+
+
+SDR_TOOL_RX = re.compile(r"^(sdr_\w+|p25_\w+|whisper_\w+)$")
+
+
+def r_sdr_p25(eps, steps, vocab, rnd, budget):
+    """Role-specific SDR P25 curriculum from sdr_* transcripts and .george/sdr/sdr_intel.db."""
+    out = []
+    for ep in eps:
+        ms = ep["messages"]
+        for i, m in enumerate(ms):
+            f = _call(m)
+            if m["role"] != "assistant" or not f or not SDR_TOOL_RX.match(f.get("name") or ""):
+                continue
+            if i + 1 < len(ms) and ms[i + 1]["role"] == "tool" and _is_err(ms[i + 1].get("content")):
+                continue
+            rej, kind = mutate(m, vocab, rnd)
+            out.append(_sample("sdr-p25", ep, ms[:i], m, rej, "transcript+mutation", budget, mutation=kind))
+
+    # Mine structured dispatches from local sdr_intel.db if present
+    db_path = os.path.join(LODGE, ".george", "sdr", "sdr_intel.db")
+    if os.path.exists(db_path):
+        try:
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            if "calls" in tables:
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(calls)").fetchall()}
+                tx_col = next((c for c in ("corrected_transcript", "transcript", "text") if c in cols), None)
+                tg_col = next((c for c in ("talkgroup", "tg_label", "agency") if c in cols), None)
+                sum_col = next((c for c in ("tactical_summary", "summary") if c in cols), None)
+                if tx_col:
+                    sel = f"SELECT rowid, {tx_col} AS tx"
+                    sel += f", {tg_col} AS tg" if tg_col else ", 'Dispatch' AS tg"
+                    sel += f", {sum_col} AS sm" if sum_col else ", '' AS sm"
+                    for r in conn.execute(f"{sel} FROM calls WHERE length({tx_col}) > 12 ORDER BY rowid DESC LIMIT 300"):
+                        tx = str(r["tx"] or "").strip()
+                        tg = str(r["tg"] or "Dispatch").strip()
+                        sm = str(r["sm"] or f"{tg}: {tx}").strip()
+                        raw_draft = re.sub(r"\b10-4\b", "For now", tx, flags=re.I) if "10-4" in tx.lower() else tx
+                        prompt = [{"role": "user", "content": (
+                            f"Talkgroup: {tg}\nRaw Whisper Draft: \"{raw_draft}\"\n"
+                            "Produce clean P25 JSON tactical summary and restore any clipped ten-codes."
+                        )}]
+                        chosen = {"role": "assistant", "content": json.dumps({
+                            "intelligible": True, "corrected_transcript": tx,
+                            "tactical_summary": sm, "talkgroup": tg,
+                        }), "reasoning_content": ""}
+                        rejected = {"role": "assistant", "content": json.dumps({
+                            "intelligible": True, "corrected_transcript": raw_draft,
+                            "tactical_summary": "Unlinked transmission.", "talkgroup": "UNKNOWN",
+                        }), "reasoning_content": ""}
+                        ep = {"meta": {"session_id": f"sdr_call_{r['rowid']}", "source": "sdr_intel_db",
+                                       "outcome": "CURATED"}, "tools": []}
+                        out.append(_sample("sdr-p25", ep, prompt, chosen, rejected, "sdr_db+curated", budget))
+            conn.close()
+        except sqlite3.Error:
+            pass
+    return out
+
+
 BUILDERS = {"tool-syntax": r_tool_syntax, "error-recovery": r_error_recovery, "failure-modes": r_failure_modes,
             "context-discrimination": r_context_discrimination, "multi-hop": r_multi_hop,
-            "final-answer": r_final_answer, "gitops": r_gitops, "cyber-defense": r_cyber_defense}
+            "final-answer": r_final_answer, "gitops": r_gitops, "cyber-defense": r_cyber_defense,
+            "persistence": r_persistence, "sdr-p25": r_sdr_p25}
 
 
 # ── existing datasets in data/ (curricula) + benchmark contamination guard ─────
@@ -617,6 +738,8 @@ SKIP_AUDIT_DIRS = {"calibration", "catalog", "schemas", "assets"}
 WORD_RX = re.compile(r"[a-z0-9]+")
 SHINGLE = 12
 DOMAIN_MAP = [  # (regex over domain/filename, recipe)
+    (re.compile(r"sdr|p25|radio|dispatch"), "sdr-p25"),
+    (re.compile(r"persist|early.?stop|verif"), "persistence"),
     (re.compile(r"cyber|tyler|kali|tshark|network_defense"), "cyber-defense"),
     (re.compile(r"context|discrimin"), "context-discrimination"),
     (re.compile(r"multihop|multi_hop|followup|multiturn|dag_react|research_cron"), "multi-hop"),
@@ -829,9 +952,60 @@ def load_curricula(data_dir, vocab, rnd, budget, cap):
 
 # ── pipeline ───────────────────────────────────────────────────────────────────
 
-def load(george_dir, since, max_obs):
+def _last_completed_run_date(george_dir):
+    """Return YYYY-MM-DD of the most recently completed training run, or None."""
+    latest = None
+    for rj in glob.glob(os.path.join(george_dir, "training", "runs", "*", "run.json")):
+        try:
+            meta = json.load(open(rj, encoding="utf-8"))
+            st_file = os.path.join(os.path.dirname(rj), "state")
+            st = open(st_file, encoding="utf-8").read().strip() if os.path.isfile(st_file) else meta.get("state")
+            if st in ("done", "promoted"):
+                created = str(meta.get("created") or "")[:10]
+                if re.fullmatch(r"\d{4}-\d{2}-\d{2}", created) and (latest is None or created > latest):
+                    latest = created
+        except (OSError, ValueError):
+            continue
+    return latest
+
+
+def load_journal_memories(george_dir, red, budget):
+    """Sleep-Cycle 'dream' replay: harvest high-salience lessons from .george/journal & .george/memories."""
+    out = []
+    for sub in ("journal", "memories"):
+        d = os.path.join(george_dir, sub)
+        if not os.path.isdir(d):
+            continue
+        for fp in sorted(glob.glob(os.path.join(d, "*.md")), key=os.path.getmtime, reverse=True)[:60]:
+            try:
+                raw = open(fp, encoding="utf-8", errors="ignore").read().strip()
+            except OSError:
+                continue
+            if len(raw) < 80:
+                continue
+            clean = red(raw[:3000])
+            fname = os.path.basename(fp)
+            prompt = [{"role": "user", "content": (
+                f"Consolidate and recall the operational lessons and verified facts recorded in {sub}/{fname}."
+            )}]
+            chosen = {"role": "assistant", "content": clean, "reasoning_content": ""}
+            ep = {"meta": {"session_id": f"dream:{sub}:{fname}", "source": sub, "outcome": "DREAM"}, "tools": []}
+            out.append(_sample("final-answer", ep, prompt, chosen, None, f"dream+{sub}", budget))
+    return out
+
+
+def load(george_dir, since, max_obs, extra_dirs=None):
     ns = argparse.Namespace(george_dir=george_dir, since=since, max_obs=max_obs)
     episodes, steps, red = ex.collect(ns)
+    for ed in (extra_dirs or []):
+        if os.path.isdir(ed):
+            ns2 = argparse.Namespace(george_dir=ed, since=since, max_obs=max_obs)
+            try:
+                ep2, st2, _ = ex.collect(ns2)
+                episodes.extend(ep2)
+                steps.extend(st2)
+            except Exception:
+                pass
     vocab = sorted({_call(m)["name"] for e in episodes for m in e["messages"] if m["role"] == "assistant" and _call(m)}
                    | {_call(s["messages"][1])["name"] for s in steps})
     return episodes, steps, vocab, red
@@ -894,7 +1068,11 @@ def build(args):
     rnd = random.Random(args.seed)
     PROGRESS["file"] = args.progress_file
     progress(phase="reading transcripts")
-    episodes, steps, vocab, red = load(args.george_dir, args.since, args.max_obs)
+    effective_since = args.since
+    if getattr(args, "since_last_run", False) and not effective_since:
+        effective_since = _last_completed_run_date(args.george_dir)
+    episodes, steps, vocab, red = load(args.george_dir, effective_since, args.max_obs,
+                                       extra_dirs=getattr(args, "extra_transcript_dir", None))
     progress(phase="cutting samples")
     llm = LLM(args.llm_url or default_llm_url(args.george_dir), args.max_llm_calls) if args.augment_llm else None
 
@@ -903,6 +1081,7 @@ def build(args):
     if args.include_curricula or args.curricula_only:
         progress(phase="reading data/training curricula")
         cur_pool, cur_report = load_curricula(data_dir, vocab, rnd, args.max_context, args.curriculum_cap)
+    dream_samples = load_journal_memories(args.george_dir, red, args.max_context) if getattr(args, "include_journal", False) else []
     guard = None if args.no_bench_guard else BenchGuard(data_dir)
     contaminated = 0
 
@@ -910,8 +1089,10 @@ def build(args):
     for f in focus:
         fn = BUILDERS[f]
         raw = [] if args.curricula_only else (
-            fn(episodes, steps, vocab, rnd, args.max_context, llm=llm) if f == "failure-modes"
+            fn(episodes, steps, vocab, rnd, args.max_context, llm=llm) if f in ("failure-modes", "persistence")
             else fn(episodes, steps, vocab, rnd, args.max_context))
+        if f == "final-answer" and dream_samples:
+            raw = raw + dream_samples
         raw = raw + cur_pool.get(f, [])
         uniq, seen = [], set()
         for s in raw:
@@ -1063,7 +1244,12 @@ def write_readme(out, m):
 
 
 def pantry(args):
-    episodes, steps, vocab, red = load(args.george_dir, args.since, args.max_obs)
+    effective_since = args.since
+    last_run_date = _last_completed_run_date(args.george_dir)
+    if getattr(args, "since_last_run", False) and not effective_since:
+        effective_since = last_run_date
+    episodes, steps, vocab, red = load(args.george_dir, effective_since, args.max_obs,
+                                       extra_dirs=getattr(args, "extra_transcript_dir", None))
     rnd = random.Random(args.seed)
     outcomes, sources = {}, {}
     for e in episodes:
@@ -1077,6 +1263,8 @@ def pantry(args):
         os.path.join(data_dir, "training")) else ({}, None)
     cur_avail = {f: len({_digest(x) for x in cur.get(f, [])}) for f in RECIPES if cur.get(f)}
     res = {"episodes": len(episodes), "steps": len(steps), "outcomes": outcomes, "sources": sources,
+           "since": effective_since, "last_completed_run_date": last_run_date,
+           "total_unique_samples": sum(avail.values()),
            "tools_seen": len(vocab), "recipes_available": avail, "curricula_available": cur_avail,
            "curricula_skipped_eval_only": (rep or {}).get("skipped_eval_only", [])}
     if not args.json:
@@ -1179,6 +1367,10 @@ def main(argv=None):
         p.add_argument("--json", action="store_true", help="only print the JSON summary line")
         if name in ("pantry", "build"):
             p.add_argument("--since", default=None)
+            p.add_argument("--since-last-run", action="store_true",
+                           help="only scan transcripts newer than the last completed training run")
+            p.add_argument("--extra-transcript-dir", action="append", default=[],
+                           help="additional sibling-node .george directory to pool transcripts from (repeatable)")
             p.add_argument("--max-obs", type=int, default=2500)
             p.add_argument("--max-context", type=int, default=24000)
             p.add_argument("--seed", type=int, default=7)
@@ -1195,6 +1387,8 @@ def main(argv=None):
             p.add_argument("--progress-file", default=None, help=argparse.SUPPRESS)
             p.add_argument("--include-curricula", action="store_true",
                            help="also draw from existing data/training curricula (deduped, capped per prompt)")
+            p.add_argument("--include-journal", action="store_true",
+                           help="Sleep-Cycle dream replay: also consolidate recent .george/journal & memories")
             p.add_argument("--curricula-only", action="store_true", help="use only data/training curricula")
             p.add_argument("--curriculum-cap", type=int, default=2,
                            help="max variants kept per unique curriculum prompt (default 2)")
