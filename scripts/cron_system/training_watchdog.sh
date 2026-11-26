@@ -52,10 +52,12 @@ printf '%s' "$RUNS_JSON" | jq -c '.[] | select(.state == "running")' 2>/dev/null
                 if [ "$AUTO_BENCH_ON_MERGE" = "true" ]; then
                     echo "[watchdog] auto_benchmark_on_merge=true — running 7-pillar head-to-head for '$rname'..."
                     if ! "$PY" "$RUNS_PY" benchmark "$rname" --notify-discord >/dev/null 2>&1; then
-                        _notify_discord "**[Training Forge — Tier B Gate]** Run \`${rname}\` finished SVD-32 fusion, but auto-benchmark could not run (check if live inference matches target base model).\n• Run head-to-head manually: \`/train benchmark ${rname}\` (or **Forge → Tier B Gate → BENCHMARK H2H**)\n• Or decide directly: \`/train approve ${rname}\` · \`/train deny ${rname}\`"
+                        _msg=$(printf '**[Training Forge — Tier B Gate]** Run `%s` finished SVD-32 fusion, but auto-benchmark could not run (check if live inference matches target base model).\n\n**Step 1 (Recommended) — Run 7-Pillar Head-to-Head vs Baseline:**\n• `/train benchmark %s` (or **Forge → Tier B Gate → BENCHMARK H2H**)\n\n**Step 2 — Decide (or override now):**\n• Accept: `/train approve %s`\n• Deny: `/train deny %s`' "$rname" "$rname" "$rname" "$rname")
+                        _notify_discord "$_msg"
                     fi
                 else
-                    _notify_discord "**[Training Forge — Tier B Gate]** Run \`${rname}\` finished Colab training & SVD-32 fusion and is staged for review!\n• **Run 7-Pillar Head-to-Head vs Current Best Baseline:** \`/train benchmark ${rname}\` (or click **BENCHMARK H2H** in **Models → Training Fleet & Gate** — returns full scorecard + Accept/Deny prompt)\n• **Accept now:** \`/train approve ${rname}\`\n• **Deny:** \`/train deny ${rname}\`"
+                    _msg=$(printf '**[Training Forge — Tier B Gate]** Run `%s` finished Colab training & SVD-32 fusion and is staged for review!\n\n**Step 1 (Recommended) — Run 7-Pillar Head-to-Head vs Current Best Baseline:**\n• Reply `/train benchmark %s` (or click **BENCHMARK H2H** in **Models → Training Fleet & Gate**)\n  _(Returns full per-pillar scorecard + a second prompt to Accept or Deny)_\n\n**Step 2 — Decide without benchmarking (optional):**\n• Accept now: `/train approve %s`\n• Deny: `/train deny %s`' "$rname" "$rname" "$rname" "$rname")
+                    _notify_discord "$_msg"
                 fi
             else
                 _notify_discord "**[Training Forge]** Run \`${rname}\` finished tracks but SVD-32 merge failed — check Forge logs."
@@ -93,9 +95,11 @@ if [ "${STALE_COUNT:-0}" -gt 0 ]; then
     if [ "$AUTONOMY_TIER" = "tier_a" ]; then
         echo "[watchdog] Tier A auto-culling ${STALE_COUNT} stale Colab GPU(s)..."
         "$PY" "$RUNS_PY" cull-vm --all-stale >/dev/null 2>&1 || true
-        _notify_discord "**[Training Fleet — Tier A Auto-Culled Stale GPUs]** Terminated ${STALE_COUNT} stale/orphaned Colab VM(s) to save Compute Units:\n${STALE_SUMMARY}"
+        _msg=$(printf '**[Training Fleet — Tier A Auto-Culled Stale GPUs]** Terminated %s stale/orphaned Colab VM(s) to save Compute Units:\n%s' "$STALE_COUNT" "$STALE_SUMMARY")
+        _notify_discord "$_msg"
     else
         echo "[watchdog] Detected ${STALE_COUNT} stale Colab GPU(s) — posting Tier B cull confirmation to Discord..."
-        _notify_discord "**[Training Fleet — Tier B Stale GPU Alert]** Detected **${STALE_COUNT}** stale/orphaned Colab GPU assignment(s) burning Compute Units:\n${STALE_SUMMARY}\nApprove cull in **Models → Training Fleet & Gate → CULL VM** or run \`/train cull all-stale\`."
+        _msg=$(printf '**[Training Fleet — Tier B Stale GPU Alert]** Detected **%s** stale/orphaned Colab GPU assignment(s) burning Compute Units:\n%s\nApprove cull in **Models → Training Fleet & Gate → CULL VM** or run `/train cull all-stale`.' "$STALE_COUNT" "$STALE_SUMMARY")
+        _notify_discord "$_msg"
     fi
 fi

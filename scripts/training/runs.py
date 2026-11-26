@@ -2030,9 +2030,84 @@ def deny_candidate(name: str, reason: str = "Denied by operator") -> dict:
     meta["denial_reason"] = reason
     meta["denied_at"] = dt.datetime.now().isoformat(timespec="seconds")
     _write_json(os.path.join(rd, "run.json"), meta)
-    with open(os.path.join(rd, "state"), "w") as fh:
-        fh.write("denied\n")
+    _write_text(os.path.join(rd, "state"), "denied\n")
     return {"status": "ok", "name": name, "gate_status": "denied", "reason": reason}
+
+
+def rollback_candidate(name: str, apply_live: bool = True) -> dict:
+    """Undo a prior approval of `name`: remove its release entry, restore active.gguf to the previous
+    release (or clean base model if none), revert gate_status to pending_approval, and reload inference."""
+    rd = run_dir(name)
+    meta = _read_json(os.path.join(rd, "run.json"), {})
+    v = meta.get("spec") or {}
+    model_slug = meta.get("model_slug") or v.get("model_slug") or "default"
+    role = meta.get("role") or v.get("role") or "core-agent"
+    role_dir = role_adapter_dir(model_slug, role)
+    lineage_p = os.path.join(role_dir, "lineage.json")
+    lineage = _read_json(lineage_p, {"model_slug": model_slug, "role": role, "releases": [], "backups": []})
+
+    releases = list(lineage.get("releases") or [])
+    removed = [r for r in releases if r.get("run") == name]
+    kept = [r for r in releases if r.get("run") != name]
+    for r in removed:
+        rp = r.get("path")
+        if rp and os.path.isfile(rp):
+            try:
+                os.remove(rp)
+            except OSError:
+                pass
+    lineage["releases"] = kept
+
+    active_link = os.path.join(role_dir, "active.gguf")
+    if os.path.lexists(active_link):
+        os.unlink(active_link)
+    if kept:
+        prev = kept[-1]
+        lineage["active"] = prev.get("version")
+        os.symlink(os.path.join("releases", prev["file"]), active_link)
+        # Restore baseline to previous release's scorecard if available
+        pb = prev.get("benchmark")
+        if isinstance(pb, dict) and pb.get("candidate_scorecard_path"):
+            lineage["baseline"] = {
+                "label": pb.get("candidate_label") or prev.get("run"),
+                "scorecard_path": pb["candidate_scorecard_path"],
+                "overall_score": float(pb.get("candidate_score", 0.0)),
+                "early_quit_rate_pct": float(pb.get("candidate_early_quit_pct", 0.0)),
+                "adapter_version": prev.get("version"),
+                "run": prev.get("run"),
+                "updated_at": dt.datetime.now().isoformat(timespec="seconds"),
+            }
+    else:
+        lineage["active"] = None
+        if isinstance(lineage.get("baseline"), dict) and lineage["baseline"].get("run") == name:
+            lineage.pop("baseline", None)
+
+    _write_json(lineage_p, lineage)
+
+    meta["gate_status"] = "pending_approval"
+    meta.pop("promoted_release", None)
+    _write_json(os.path.join(rd, "run.json"), meta)
+    _write_text(os.path.join(rd, "state"), "staged_tier_b\n")
+
+    reloaded = False
+    if apply_live and shutil.which("kubectl"):
+        try:
+            ep = _default_inference_endpoint()
+            live = _probe_live_inference(ep)
+            if live.get("reachable") and model_matches_live(model_slug, live.get("model_path", "")):
+                _restart_inference_deployment(ep, expect_lora=bool(kept))
+                reloaded = True
+        except Exception:
+            reloaded = False
+
+    return {
+        "status": "ok",
+        "name": name,
+        "gate_status": "pending_approval",
+        "removed_releases": [r.get("version") for r in removed],
+        "active_version": lineage.get("active"),
+        "inference_reloaded": reloaded,
+    }
 
 
 def list_adapters() -> list[dict]:
@@ -2178,6 +2253,9 @@ def main(argv=None):
     pd = sub.add_parser("deny")
     pd.add_argument("name")
     pd.add_argument("--reason", default="Denied by operator")
+    prb = sub.add_parser("rollback")
+    prb.add_argument("name")
+    prb.add_argument("--no-restart", action="store_true")
     pp = sub.add_parser("policy")
     pp.add_argument("--set", dest="set_json", default=None, help="JSON object of policy fields to update")
     ph = sub.add_parser("hotswap")
@@ -2218,6 +2296,8 @@ def main(argv=None):
             )
         elif a.cmd == "deny":
             res = deny_candidate(a.name, a.reason)
+        elif a.cmd == "rollback":
+            res = rollback_candidate(a.name, apply_live=not a.no_restart)
         elif a.cmd == "hotswap":
             res = hotswap_lora(a.endpoint, json.loads(a.scales))
         elif a.cmd == "bake":

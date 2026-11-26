@@ -125,7 +125,7 @@ cmd_train() {
             fi
             ;;
 
-        status|merge|cancel|collect|resume|approve|deny)
+        status|merge|cancel|collect|resume|approve|deny|rollback)
             local -a _sa=()
             read -r -a _sa <<<"$subargs"
             if [ "${#_sa[@]}" -lt 1 ] || ! [[ "${_sa[0]}" =~ ^[a-z0-9][a-z0-9._-]{1,47}$ ]]; then
