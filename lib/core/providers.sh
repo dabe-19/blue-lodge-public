@@ -14,12 +14,13 @@ PROVIDER_MAX_BACKOFF="${PROVIDER_MAX_BACKOFF:-60}"
 PROVIDER_COOLDOWN_WINDOW="${PROVIDER_COOLDOWN_WINDOW:-60}"
 PROVIDER_COOLDOWN_MAX="${PROVIDER_COOLDOWN_MAX:-8}"
 PROVIDER_CALL_DELAY="${PROVIDER_CALL_DELAY:-7}"
+PROVIDER_AUTO_PACE="${PROVIDER_AUTO_PACE:-1}"
 _PROVIDER_METER_DIR="${TMPDIR:-/tmp}/george-provider-meter.$$"
 
 _provider_canon() {
     case "$1" in
         openai|gpt) echo "OPENAI" ;; anthropic|claude) echo "ANTHROPIC" ;; google|gemini) echo "GOOGLE" ;;
-        groq) echo "GROQ" ;; mistral) echo "MISTRAL" ;; together) echo "TOGETHER" ;; perplexity|pplx) echo "PERPLEXITY" ;;
+        groq) echo "GROQ" ;; openrouter|or) echo "OPENROUTER" ;; mistral) echo "MISTRAL" ;; together) echo "TOGETHER" ;; perplexity|pplx) echo "PERPLEXITY" ;;
         cohere) echo "COHERE" ;; deepseek) echo "DEEPSEEK" ;; xai|grok) echo "XAI" ;; *) echo "" ;;
     esac
 }
@@ -129,6 +130,87 @@ _provider_inter_call_delay() {
 
 _provider_stamp_last_call() { _provider_meter_init; date +%s > "$_PROVIDER_METER_DIR/last_call" 2>/dev/null; }
 
+# Parse human-readable reset durations ("6s", "1m12s", "450ms", "45") into integer seconds
+_provider_parse_reset_secs() {
+    local raw="${1:-}" total=0 num=""
+    raw="${raw// /}"
+    [ -z "$raw" ] && { echo 0; return; }
+    if [[ "$raw" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        printf '%.0f\n' "$raw" 2>/dev/null || echo "${raw%%.*}"
+        return
+    fi
+    if [[ "$raw" =~ ([0-9]+)h ]]; then total=$((total + BASH_REMATCH[1] * 3600)); fi
+    if [[ "$raw" =~ ([0-9]+)m([^s]|$) ]]; then total=$((total + BASH_REMATCH[1] * 60)); fi
+    if [[ "$raw" =~ ([0-9]+)(\.[0-9]+)?s$ || "$raw" =~ ([0-9]+)(\.[0-9]+)?s[^a-z] ]]; then
+        num="${BASH_REMATCH[1]:-${BASH_REMATCH[3]:-0}}"
+        total=$((total + num))
+    fi
+    if [ "$total" -eq 0 ] && [[ "$raw" =~ ([0-9]+)ms ]]; then
+        total=$(( (BASH_REMATCH[1] + 999) / 1000 ))
+    fi
+    echo "$total"
+}
+
+# Dynamically adapt PROVIDER_CALL_DELAY from live HTTP x-ratelimit-* / Retry-After response headers
+_provider_adapt_rate_limits() {
+    local headers="${1:-${_API_LAST_HEADERS:-}}"
+    [ -z "$headers" ] && return 0
+
+    local lim_req rem_req rst_req lim_tok rem_tok rst_tok ra
+    lim_req=$(printf '%s\n' "$headers" | awk -F: 'tolower($1)=="x-ratelimit-limit-requests" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')
+    rem_req=$(printf '%s\n' "$headers" | awk -F: 'tolower($1)=="x-ratelimit-remaining-requests" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')
+    rst_req=$(printf '%s\n' "$headers" | awk -F: 'tolower($1)=="x-ratelimit-reset-requests" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')
+    lim_tok=$(printf '%s\n' "$headers" | awk -F: 'tolower($1)=="x-ratelimit-limit-tokens" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')
+    rem_tok=$(printf '%s\n' "$headers" | awk -F: 'tolower($1)=="x-ratelimit-remaining-tokens" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')
+    rst_tok=$(printf '%s\n' "$headers" | awk -F: 'tolower($1)=="x-ratelimit-reset-tokens" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')
+    ra=$(printf '%s\n' "$headers" | awk -F: 'tolower($1)=="retry-after" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')
+
+    [ -z "$lim_req$rem_req$rem_tok$ra" ] && return 0
+
+    local rst_req_s rst_tok_s ra_s
+    rst_req_s=$(_provider_parse_reset_secs "$rst_req")
+    rst_tok_s=$(_provider_parse_reset_secs "$rst_tok")
+    ra_s=$(_provider_parse_reset_secs "$ra")
+
+    local adapted="${PROVIDER_CALL_DELAY:-5}"
+    if [ "${PROVIDER_AUTO_PACE:-1}" -eq 1 ]; then
+        if [ "$ra_s" -gt 0 ] 2>/dev/null; then
+            adapted="$ra_s"
+        elif [[ "$rem_req" =~ ^[0-9]+$ ]] && [ "$rem_req" -eq 0 ]; then
+            adapted=$(( rst_req_s > 0 ? rst_req_s + 1 : adapted * 2 ))
+        elif [[ "$rem_tok" =~ ^[0-9]+$ ]] && [ "$rem_tok" -le 500 ]; then
+            adapted=$(( rst_tok_s > 0 ? rst_tok_s + 1 : adapted * 2 ))
+        elif [[ "$rem_req" =~ ^[0-9]+$ ]] && [ "$rem_req" -le 2 ]; then
+            local spread=$(( rst_req_s > 0 ? (rst_req_s / (rem_req > 0 ? rem_req : 1)) + 1 : adapted + 3 ))
+            [ "$spread" -gt "$adapted" ] && adapted="$spread"
+        elif [[ "$lim_req" =~ ^[0-9]+$ ]] && [ "$lim_req" -gt 0 ] && [[ "$rem_req" =~ ^[0-9]+$ ]]; then
+            local pct=$(( rem_req * 100 / lim_req ))
+            if [ "$pct" -lt 15 ]; then
+                local slow=$(( rst_req_s > 0 ? (rst_req_s / (rem_req > 0 ? rem_req : 1)) + 1 : adapted + 2 ))
+                [ "$slow" -gt "$adapted" ] && adapted="$slow"
+            elif [ "$pct" -gt 60 ]; then
+                local ideal=$(( (60 / lim_req) + 1 ))
+                [ "$ideal" -lt 1 ] && ideal=1
+                [ "$ideal" -lt "$adapted" ] && adapted="$ideal"
+            fi
+        fi
+        [ "$adapted" -lt 1 ] && adapted=1
+        [ "$adapted" -gt "${PROVIDER_MAX_BACKOFF:-60}" ] && adapted="${PROVIDER_MAX_BACKOFF:-60}"
+        PROVIDER_CALL_DELAY="$adapted"
+    fi
+
+    _provider_meter_init
+    if command -v jq &>/dev/null; then
+        jq -nc \
+            --arg lr "$lim_req" --arg rr "$rem_req" --argjson rrs "${rst_req_s:-0}" \
+            --arg lt "$lim_tok" --arg rt "$rem_tok" --argjson rts "${rst_tok_s:-0}" \
+            --argjson ra "${ra_s:-0}" --argjson delay "${PROVIDER_CALL_DELAY:-0}" \
+            --argjson ts "$(date +%s)" \
+            '{limit_req:$lr, remaining_req:$rr, reset_req_s:$rrs, limit_tok:$lt, remaining_tok:$rt, reset_tok_s:$rts, retry_after_s:$ra, adapted_delay_s:$delay, updated_at:$ts}' \
+            > "$_PROVIDER_METER_DIR/headers.json" 2>/dev/null || true
+    fi
+}
+
 _provider_call_with_backoff() {
     local provider="$1" message="$2" model="${3:-}" system="${4:-}"
     local attempt=0 delay="$PROVIDER_INITIAL_BACKOFF" max="$PROVIDER_MAX_RETRIES" resp rc
@@ -136,6 +218,7 @@ _provider_call_with_backoff() {
         _provider_inter_call_delay; _provider_meter_throttle; _provider_meter_tick
         [ "${LODGE_DEBUG:-0}" -eq 1 ] && ui_dim "  [debug] provider/$provider: calling API..." >/dev/tty 2>/dev/null
         resp=$(provider_chat "$provider" "$message" "$model" "$system" 2>&1); rc=$?
+        _provider_adapt_rate_limits "${_API_LAST_HEADERS:-}"
         if [ $rc -eq 0 ] && [ -n "$resp" ]; then _provider_stamp_last_call; echo "$resp"; return 0; fi
 
         local is_rate_limit=0
@@ -146,8 +229,14 @@ _provider_call_with_backoff() {
         attempt=$((attempt + 1))
         [ "$attempt" -gt "$max" ] && { ui_err "Provider rate limit: gave up after $max retries"; return 1; }
 
+        local hdr_ra; hdr_ra=$(printf '%s\n' "${_API_LAST_HEADERS:-}" | awk -F: 'tolower($1)=="retry-after" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}' 2>/dev/null)
         local hint_wait; hint_wait=$(echo "$resp" | sed -n 's/.*[Rr]etry[[:space:]]\{1,\}in[[:space:]]\{1,\}\([0-9]\{1,\}\(\.[0-9]\{1,\}\)\{0,1\}\).*/\1/p' | head -1)
-        [ -n "$hint_wait" ] && delay=$(printf '%.0f' "$hint_wait" 2>/dev/null || echo "$delay")
+        if [ -n "$hdr_ra" ]; then
+            local hdr_s; hdr_s=$(_provider_parse_reset_secs "$hdr_ra")
+            [ "$hdr_s" -gt 0 ] 2>/dev/null && delay="$hdr_s"
+        elif [ -n "$hint_wait" ]; then
+            delay=$(printf '%.0f' "$hint_wait" 2>/dev/null || echo "$delay")
+        fi
         [ "$delay" -lt 1 ] && delay=1; [ "$delay" -gt "$PROVIDER_MAX_BACKOFF" ] && delay="$PROVIDER_MAX_BACKOFF"
         ui_warn "Rate limited — retry ${attempt}/${max} in ${delay}s"
         _provider_countdown "$delay" "Backoff"; delay=$((delay * 2))
@@ -339,11 +428,12 @@ provider_stream_chat() {
 
     local curl_pid resp_text
     case "$canon" in
-        OPENAI|GROQ|MISTRAL|TOGETHER|PERPLEXITY|DEEPSEEK|XAI|COHERE)
+        OPENAI|GROQ|OPENROUTER|MISTRAL|TOGETHER|PERPLEXITY|DEEPSEEK|XAI|COHERE)
             local key_name key url default_model
             case "$canon" in
                 OPENAI)     key_name="OPENAI_API_KEY"; url="https://api.openai.com/v1/chat/completions"; default_model="gpt-4o-mini" ;;
                 GROQ)       key_name="GROQ_API_KEY"; url="https://api.groq.com/openai/v1/chat/completions"; default_model="llama-3.3-70b-versatile" ;;
+                OPENROUTER) key_name="OPENROUTER_API_KEY"; url="https://openrouter.ai/api/v1/chat/completions"; default_model="google/gemma-3-27b-it:free" ;;
                 MISTRAL)    key_name="MISTRAL_API_KEY"; url="https://api.mistral.ai/v1/chat/completions"; default_model="mistral-large-latest" ;;
                 TOGETHER)   key_name="TOGETHER_API_KEY"; url="https://api.together.xyz/v1/chat/completions"; default_model="meta-llama/Llama-3.3-70B-Instruct-Turbo" ;;
                 PERPLEXITY) key_name="PERPLEXITY_API_KEY"; url="https://api.perplexity.ai/chat/completions"; default_model="sonar" ;;
@@ -517,6 +607,12 @@ groq_models() {
     api_get "https://api.groq.com/openai/v1/models" -H "Authorization: Bearer $key" | jq -r '.data[]? | .id' 2>/dev/null | sort
 }
 
+openrouter_chat() { _provider_openai_compat_chat "OpenRouter" "OPENROUTER_API_KEY" "https://openrouter.ai/api/v1/chat/completions" "google/gemma-3-27b-it:free" "$@"; }
+openrouter_models() {
+    local key; key=$(api_require_key "OPENROUTER_API_KEY" "OpenRouter") || return 1
+    api_get "https://openrouter.ai/api/v1/models" -H "Authorization: Bearer $key" | jq -r '.data[]? | .id' 2>/dev/null | sort
+}
+
 mistral_chat() { _provider_openai_compat_chat "Mistral" "MISTRAL_API_KEY" "https://api.mistral.ai/v1/chat/completions" "mistral-large-latest" "$@"; }
 together_chat() { _provider_openai_compat_chat "Together" "TOGETHER_API_KEY" "https://api.together.xyz/v1/chat/completions" "meta-llama/Llama-3.3-70B-Instruct-Turbo" "$@"; }
 perplexity_chat() { _provider_openai_compat_chat "Perplexity" "PERPLEXITY_API_KEY" "https://api.perplexity.ai/chat/completions" "sonar" "$@"; }
@@ -540,6 +636,7 @@ provider_chat() {
         anthropic|claude) anthropic_chat "$message" "$model" "$system" ;;
         google|gemini) google_chat "$message" "$model" "$system" ;;
         groq) groq_chat "$message" "$model" "$system" ;;
+        openrouter|or) openrouter_chat "$message" "$model" "$system" ;;
         mistral) mistral_chat "$message" "$model" "$system" ;;
         together) together_chat "$message" "$model" "$system" ;;
         perplexity|pplx) perplexity_chat "$message" "$model" "$system" ;;
@@ -558,6 +655,7 @@ provider_models() {
         ANTHROPIC) anthropic_models ;;
         GOOGLE) google_models ;;
         GROQ) groq_models ;;
+        OPENROUTER) openrouter_models ;;
         *)
             local _canon_lower; _canon_lower=$(echo "$provider" | tr '[:upper:]' '[:lower:]')
             local _limits_file="${LODGE_DIR}/models/free-tier-limits.json"
@@ -604,7 +702,7 @@ provider_apply_suggested_limits() {
 _provider_key_name() {
     case "$1" in
         openai|gpt) echo "OPENAI_API_KEY" ;; anthropic|claude) echo "ANTHROPIC_API_KEY" ;; google|gemini) echo "GOOGLE_AI_API_KEY" ;;
-        groq) echo "GROQ_API_KEY" ;; mistral) echo "MISTRAL_API_KEY" ;; together) echo "TOGETHER_API_KEY" ;;
+        groq) echo "GROQ_API_KEY" ;; openrouter|or) echo "OPENROUTER_API_KEY" ;; mistral) echo "MISTRAL_API_KEY" ;; together) echo "TOGETHER_API_KEY" ;;
         perplexity|pplx) echo "PERPLEXITY_API_KEY" ;; cohere) echo "COHERE_API_KEY" ;; deepseek) echo "DEEPSEEK_API_KEY" ;;
         xai|grok) echo "XAI_API_KEY" ;; *) echo "" ;;
     esac
@@ -692,7 +790,7 @@ provider_status() {
     local configured=0
     local -A provider_keys=(
         [OpenAI]="OPENAI_API_KEY" [Anthropic]="ANTHROPIC_API_KEY" [Google_AI]="GOOGLE_AI_API_KEY"
-        [Groq]="GROQ_API_KEY" [Mistral]="MISTRAL_API_KEY" [Together]="TOGETHER_API_KEY"
+        [Groq]="GROQ_API_KEY" [OpenRouter]="OPENROUTER_API_KEY" [Mistral]="MISTRAL_API_KEY" [Together]="TOGETHER_API_KEY"
         [Perplexity]="PERPLEXITY_API_KEY" [Cohere]="COHERE_API_KEY" [DeepSeek]="DEEPSEEK_API_KEY" [xAI]="XAI_API_KEY"
     )
     for name in $(echo "${!provider_keys[@]}" | tr ' ' '\n' | sort); do

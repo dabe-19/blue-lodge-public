@@ -1,27 +1,24 @@
 {
-  "_doc": "Free-tier rate limits for cloud AI providers. Used by /limits models and /limits suggest. RPM=requests/min, RPD=requests/day, TPM=tokens/min, TPD=tokens/day. Suggested /limit settings keep George safely under each ceiling.",
+  "_doc": "Free-tier rate limits for cloud AI providers (updated 2026-11). Used by /limits models, /limits suggest, and providers.sh dynamic HTTP header self-pacing. RPM=requests/min, RPD=requests/day, TPM=tokens/min, TPD=tokens/day.",
   "_extensible": "Add new providers by adding a top-level key matching the canonical provider name from _provider_canon().",
 
   "google": {
     "_api_models_endpoint": "https://generativelanguage.googleapis.com/v1beta/models",
-    "_doc": "Google AI Studio free tier (ai.google.dev). Limits as of 2026-03.",
+    "_doc": "Google AI Studio free tier (ai.google.dev). Free-tier prompts may be used for product improvement.",
     "models": {
-      "gemma-3-27b-it":          { "rpm": 30,  "rpd": 14400, "tpm": 15000,  "category": "other" },
-      "gemma-3-4b-it":           { "rpm": 30,  "rpd": 14400, "tpm": 15000,  "category": "other" },
-      "gemma-3-1b-it":           { "rpm": 30,  "rpd": 14400, "tpm": 15000,  "category": "other" },
-      "gemma-3-12b-it":          { "rpm": 30,  "rpd": 14400, "tpm": 15000,  "category": "other" },
-      "gemma-3-2b":              { "rpm": 30,  "rpd": 14400, "tpm": 15000,  "category": "other" },
-      "gemini-2.5-flash":        { "rpm": 5,   "rpd": 20,    "tpm": 250000, "category": "text-out" },
-      "gemini-2.5-pro":          { "rpm": 0,   "rpd": 0,     "tpm": 0,      "category": "text-out" },
-      "gemini-2.0-flash":        { "rpm": 0,   "rpd": 0,     "tpm": 0,      "category": "text-out" },
-      "gemini-2.0-flash-exp":    { "rpm": 0,   "rpd": 0,     "tpm": 0,      "category": "text-out" },
-      "gemini-2.0-flash-lite":   { "rpm": 0,   "rpd": 0,     "tpm": 0,      "category": "text-out" },
-      "gemini-2.5-flash-lite":   { "rpm": 10,  "rpd": 20,    "tpm": 250000, "category": "text-out" },
-      "gemini-3-flash":          { "rpm": 5,   "rpd": 20,    "tpm": 250000, "category": "text-out" },
-      "gemini-3-pro":            { "rpm": 0,   "rpd": 0,     "tpm": 0,      "category": "text-out" },
-      "gemini-3.1-pro":          { "rpm": 0,   "rpd": 0,     "tpm": 0,      "category": "text-out" },
-      "gemini-3.1-flash-lite":   { "rpm": 15,  "rpd": 500,   "tpm": 250000, "category": "text-out" },
-      "gemini-embedding-1":      { "rpm": 100, "rpd": 1000,  "tpm": 30000,  "category": "other" }
+      "gemma-4-31b-it":          { "rpm": 15,  "rpd": 1500,  "tpm": 15000,   "category": "other" },
+      "gemma-4-26b-a4b-it":      { "rpm": 15,  "rpd": 1500,  "tpm": 15000,   "category": "other" },
+      "gemma-4-e4b-it":          { "rpm": 30,  "rpd": 14400, "tpm": 15000,   "category": "other" },
+      "gemma-3-27b-it":          { "rpm": 30,  "rpd": 14400, "tpm": 15000,   "category": "other" },
+      "gemma-3-12b-it":          { "rpm": 30,  "rpd": 14400, "tpm": 15000,   "category": "other" },
+      "gemma-3-4b-it":           { "rpm": 30,  "rpd": 14400, "tpm": 15000,   "category": "other" },
+      "gemma-3-1b-it":           { "rpm": 30,  "rpd": 14400, "tpm": 15000,   "category": "other" },
+      "gemini-2.5-flash":        { "rpm": 15,  "rpd": 1500,  "tpm": 1000000, "category": "text-out" },
+      "gemini-2.5-flash-lite":   { "rpm": 15,  "rpd": 1500,  "tpm": 1000000, "category": "text-out" },
+      "gemini-2.5-pro":          { "rpm": 2,   "rpd": 50,    "tpm": 250000,  "category": "text-out" },
+      "gemini-3-flash":          { "rpm": 5,   "rpd": 20,    "tpm": 250000,  "category": "text-out" },
+      "gemini-3.1-flash-lite":   { "rpm": 15,  "rpd": 500,   "tpm": 250000,  "category": "text-out" },
+      "gemini-embedding-1":      { "rpm": 100, "rpd": 1000,  "tpm": 30000,   "category": "other" }
     },
     "suggested": {
       "_doc": "Defaults tuned for Gemma-class (30 RPM, 15K TPM, 14.4K RPD).",
@@ -64,6 +61,28 @@
       "api-backoff": 5,
       "api-max-backoff": 60,
       "api-cooldown-max": 10,
+      "api-cooldown-window": 60
+    }
+  },
+
+  "openrouter": {
+    "_api_models_endpoint": "https://openrouter.ai/api/v1/models",
+    "_doc": "OpenRouter :free models (openrouter.ai). 20 RPM / 50 RPD without top-up (1,000 RPD after one-time $10 lifetime credit).",
+    "models": {
+      "google/gemma-3-27b-it:free":         { "rpm": 20, "rpd": 50, "tpm": null, "tpd": null },
+      "qwen/qwen3-235b-a22b:free":          { "rpm": 20, "rpd": 50, "tpm": null, "tpd": null },
+      "qwen/qwen3-32b:free":                { "rpm": 20, "rpd": 50, "tpm": null, "tpd": null },
+      "meta-llama/llama-3.3-70b-instruct:free": { "rpm": 20, "rpd": 50, "tpm": null, "tpd": null },
+      "nvidia/llama-3.1-nemotron-nano-8b-v1:free": { "rpm": 20, "rpd": 50, "tpm": null, "tpd": null },
+      "openrouter/free":                    { "rpm": 20, "rpd": 50, "tpm": null, "tpd": null }
+    },
+    "suggested": {
+      "_doc": "Defaults tuned for OpenRouter :free tier (20 RPM, 50-1000 RPD).",
+      "api-delay": 4,
+      "api-retries": 4,
+      "api-backoff": 5,
+      "api-max-backoff": 60,
+      "api-cooldown-max": 12,
       "api-cooldown-window": 60
     }
   },

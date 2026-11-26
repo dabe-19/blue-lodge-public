@@ -658,6 +658,35 @@ describe "free-tier-limits.json"
 
   it "groq has at least 10 models" && { _setup_prov; count=$(jq '.groq.models | length' "$LODGE_DIR/models/free-tier-limits.json"); assert_gt "$count" 9; _teardown_prov; }
 
-  it "all 10 cloud provider keys exist" && { _setup_prov; count=$(jq '[keys[] | select(startswith("_") | not)] | length' "$LODGE_DIR/models/free-tier-limits.json"); assert_eq "$count" "10"; _teardown_prov; }
+  it "config has openrouter provider" && { jq -e '.openrouter' "$LODGE_DIR/models/free-tier-limits.json" >/dev/null 2>&1; assert_ok $?; }
+
+  it "all 11 cloud provider keys exist" && { _setup_prov; count=$(jq '[keys[] | select(startswith("_") | not)] | length' "$LODGE_DIR/models/free-tier-limits.json"); assert_eq "$count" "11"; _teardown_prov; }
+
+describe "OpenRouter & dynamic rate-limit header pacing"
+
+  it "canonicalizes openrouter and or aliases" && {
+    assert_eq "$(_provider_canon openrouter)" "OPENROUTER"
+    assert_eq "$(_provider_canon or)" "OPENROUTER"
+    assert_eq "$(_provider_key_name openrouter)" "OPENROUTER_API_KEY"
+  }
+
+  it "parses human-readable rate-limit reset durations" && {
+    assert_eq "$(_provider_parse_reset_secs '6s')" "6"
+    assert_eq "$(_provider_parse_reset_secs '1m12s')" "72"
+    assert_eq "$(_provider_parse_reset_secs '450ms')" "1"
+    assert_eq "$(_provider_parse_reset_secs '30')" "30"
+  }
+
+  it "dynamically adapts PROVIDER_CALL_DELAY from HTTP x-ratelimit headers" && {
+    _setup_prov
+    PROVIDER_AUTO_PACE=1
+    PROVIDER_CALL_DELAY=2
+    PROVIDER_MAX_BACKOFF=60
+    _provider_adapt_rate_limits $'HTTP/2 200\nx-ratelimit-limit-requests: 30\nx-ratelimit-remaining-requests: 1\nx-ratelimit-reset-requests: 14s\n'
+    assert_gt "$PROVIDER_CALL_DELAY" 10 "delay should rise smoothly when remaining requests is 1"
+    _provider_adapt_rate_limits $'HTTP/2 429\nretry-after: 22\n'
+    assert_eq "$PROVIDER_CALL_DELAY" "22" "delay should honor Retry-After header"
+    _teardown_prov
+  }
 
 test_end

@@ -66,6 +66,7 @@ api_init() {
 # GOOGLE_ADK_PROJECT_ID=
 # GOOGLE_ADK_LOCATION=us-central1
 # GROQ_API_KEY=
+# OPENROUTER_API_KEY=
 # MISTRAL_API_KEY=
 # TOGETHER_API_KEY=
 # PERPLEXITY_API_KEY=
@@ -282,10 +283,16 @@ api_request() {
 
     local max_retries="${API_MAX_RETRIES:-2}"
     local base_sleep="${API_RETRY_BASE_SLEEP:-1}"
-    local attempt=0 response="" exit_code=0 http_code="" body=""
+    local attempt=0 response="" exit_code=0 http_code="" body="" headers=""
+    local hdr_tmp; hdr_tmp=$(mktemp "${TMPDIR:-/tmp}/lodge-api-hdr.XXXXXX" 2>/dev/null || echo "")
 
     while :; do
-        response=$(curl "${curl_args[@]}" 2>/dev/null)
+        if [ -n "$hdr_tmp" ]; then
+            : > "$hdr_tmp"
+            response=$(curl -D "$hdr_tmp" "${curl_args[@]}" 2>/dev/null)
+        else
+            response=$(curl "${curl_args[@]}" 2>/dev/null)
+        fi
         exit_code=$?
 
         if [ $exit_code -ne 0 ]; then
@@ -295,23 +302,32 @@ api_request() {
                 sleep "$base_sleep"
                 continue
             fi
+            [ -n "$hdr_tmp" ] && rm -f "$hdr_tmp"
             ui_err "HTTP request failed (curl exit: $exit_code)"
             return 1
         fi
+
+        [ -n "$hdr_tmp" ] && [ -f "$hdr_tmp" ] && headers=$(tr -d '\r' < "$hdr_tmp" 2>/dev/null || echo "")
 
         # Split response body from status code
         http_code=$(echo "$response" | tail -1)
         body=$(echo "$response" | sed '$d')
 
-        # Retry on HTTP 429 (honoring JSON .retry_after when present) or transient 502/503/504/529
+        # Retry on HTTP 429 (honoring Retry-After header or JSON .retry_after) or transient 502/503/504/529
         if [ "$attempt" -lt "$max_retries" ] && [[ "$http_code" =~ ^(429|502|503|504|529)$ ]]; then
             attempt=$((attempt + 1))
             local wait_s="$base_sleep"
-            if [ "$http_code" = "429" ] && command -v jq &>/dev/null; then
-                local ra
-                ra=$(jq -r '.retry_after // .error.retry_after // empty' <<<"$body" 2>/dev/null | head -n 1)
-                if [[ "$ra" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-                    wait_s="$ra"
+            if [ "$http_code" = "429" ]; then
+                local hdr_ra
+                hdr_ra=$(printf '%s\n' "$headers" | awk -F: 'tolower($1)=="retry-after" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}' 2>/dev/null)
+                if [[ "$hdr_ra" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+                    wait_s="$hdr_ra"
+                elif command -v jq &>/dev/null; then
+                    local ra
+                    ra=$(jq -r '.retry_after // .error.retry_after // empty' <<<"$body" 2>/dev/null | head -n 1)
+                    if [[ "$ra" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+                        wait_s="$ra"
+                    fi
                 fi
             fi
             sleep "$wait_s" 2>/dev/null || sleep 1
@@ -319,9 +335,11 @@ api_request() {
         fi
         break
     done
+    [ -n "$hdr_tmp" ] && rm -f "$hdr_tmp"
 
-    # Store status and body for caller to check
+    # Store status, headers, and body for caller to check (used by providers.sh dynamic rate-limit pacing)
     export _API_LAST_STATUS="$http_code"
+    export _API_LAST_HEADERS="$headers"
     export _API_LAST_BODY="$body"
 
     echo "$body"
