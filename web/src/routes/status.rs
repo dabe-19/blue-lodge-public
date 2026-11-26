@@ -150,17 +150,41 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> impl IntoResponse
 
     let docked_ws = state.docked_workspace.read().await.clone();
 
-    let mut container_status = match tokio::process::Command::new("docker")
-        .args(["inspect", "-f", "{{.State.Status}}", "george-prism-server"])
-        .output()
-        .await
-    {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout).trim().to_string()
+    let mut container_status = if std::env::var_os("KUBERNETES_SERVICE_HOST").is_some() {
+        let ns = std::env::var("K8S_NAMESPACE").unwrap_or_else(|_| "blue-lodge".into());
+        let k8s_out = tokio::process::Command::new("kubectl")
+            .args(["-n", &ns, "get", "deploy", "george-inference", "-o", "jsonpath={.spec.replicas}/{.status.readyReplicas}"])
+            .output()
+            .await;
+        match k8s_out {
+            Ok(out) if out.status.success() => {
+                let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                let mut parts = raw.split('/');
+                let spec: u32 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+                let ready: u32 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+                if spec == 0 {
+                    "paused".to_string()
+                } else if ready >= 1 {
+                    "running".to_string()
+                } else {
+                    "starting".to_string()
+                }
+            }
+            _ => "not found".to_string(),
         }
-        _ => "not found".to_string(),
+    } else {
+        match tokio::process::Command::new("docker")
+            .args(["inspect", "-f", "{{.State.Status}}", "george-prism-server"])
+            .output()
+            .await
+        {
+            Ok(out) if out.status.success() => {
+                String::from_utf8_lossy(&out.stdout).trim().to_string()
+            }
+            _ => "not found".to_string(),
+        }
     };
-    if container_status != "running" && std::env::var_os("KUBERNETES_SERVICE_HOST").is_some() {
+    if container_status == "not found" && std::env::var_os("KUBERNETES_SERVICE_HOST").is_some() {
         let local_online = nodes.iter().any(|n| {
             n.get("path").and_then(|v| v.as_str()) == Some("local")
                 && n.get("active").and_then(|v| v.as_bool()) == Some(true)

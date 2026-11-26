@@ -9,7 +9,62 @@
 #   bash scripts/infra/game_mode.sh status   # Check GPU VRAM and container state
 
 LODGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+GEORGE_DIR="${GEORGE_DIR:-$LODGE_DIR/.george}"
+K8S_NS="${K8S_NAMESPACE:-blue-lodge}"
+K8S_INF_DEPLOY="${K8S_INFERENCE_DEPLOY:-george-inference}"
 source "$LODGE_DIR/lib/ui/ui.sh" 2>/dev/null || true
+
+_gm_k8s_available() {
+    command -v kubectl &>/dev/null && kubectl -n "$K8S_NS" get deploy "$K8S_INF_DEPLOY" &>/dev/null
+}
+
+_gm_health_url() {
+    if [ -n "${KUBERNETES_SERVICE_HOST:-}" ]; then
+        echo "http://${K8S_INF_DEPLOY}:8080/health"
+    elif [ -n "${LLAMA_CPP_URL:-}" ]; then
+        echo "${LLAMA_CPP_URL%/}/health"
+    else
+        echo "http://127.0.0.1:8080/health"
+    fi
+}
+
+_gm_probe_inference() {
+    # Sets GM_BACKEND ("k8s"|"docker"), GM_REPLICAS ("1/1"|""), GM_INF_STATUS, GM_HEALTH
+    GM_BACKEND="docker"
+    GM_REPLICAS=""
+    GM_INF_STATUS="not found"
+    local hurl
+    hurl=$(_gm_health_url)
+    GM_HEALTH=$(curl -sf --max-time 2 "$hurl" 2>/dev/null || echo "offline")
+
+    if _gm_k8s_available; then
+        GM_BACKEND="k8s"
+        local spec_rep ready_rep
+        spec_rep=$(kubectl -n "$K8S_NS" get deploy "$K8S_INF_DEPLOY" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+        ready_rep=$(kubectl -n "$K8S_NS" get deploy "$K8S_INF_DEPLOY" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+        spec_rep="${spec_rep:-0}"
+        ready_rep="${ready_rep:-0}"
+        GM_REPLICAS="${ready_rep}/${spec_rep}"
+        if [ "$spec_rep" -eq 0 ] 2>/dev/null; then
+            GM_INF_STATUS="paused"
+        elif [ "$ready_rep" -ge 1 ] 2>/dev/null; then
+            GM_INF_STATUS="running"
+            if [ "$GM_HEALTH" = "offline" ]; then
+                # Host-side fallback: probe inside pod if localhost:8080 isn't port-forwarded
+                local pod_h
+                pod_h=$(kubectl -n "$K8S_NS" exec "deploy/$K8S_INF_DEPLOY" -- curl -sf --max-time 2 http://127.0.0.1:8080/health 2>/dev/null || echo "")
+                [ -n "$pod_h" ] && GM_HEALTH="$pod_h"
+            fi
+        else
+            GM_INF_STATUS="starting"
+        fi
+    else
+        GM_INF_STATUS=$(docker inspect -f '{{.State.Status}}' george-prism-server 2>/dev/null || echo "not found")
+        if [ "$GM_INF_STATUS" != "running" ] && [ "$GM_HEALTH" != "offline" ]; then
+            GM_INF_STATUS="running"
+        fi
+    fi
+}
 
 pause_george() {
     echo "═══════════════════════════════════════════════════════════"
@@ -117,13 +172,19 @@ pause_george() {
         fi
     done
 
-    # 3. Stop the inference container (releasing 23.4 GB of VRAM across both GPUs)
-    echo "[3/4] Stopping inference container (george-prism-server / k8s deploy/george-inference)..."
+    # 3. Stop/scale down inference (releasing 100% of GPU VRAM while keeping george-web, MQTT, SearXNG & zero-GPU crons alive)
+    echo "[3/4] Releasing GPU VRAM (k3s deploy/$K8S_INF_DEPLOY / docker inference)..."
+    if _gm_k8s_available; then
+        local cur_rep
+        cur_rep=$(kubectl -n "$K8S_NS" get deploy "$K8S_INF_DEPLOY" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "1")
+        [ "${cur_rep:-0}" -gt 0 ] 2>/dev/null && printf '%s\n' "$cur_rep" > "$GEORGE_DIR/game_mode_k8s_replicas"
+        kubectl -n "$K8S_NS" scale "deploy/$K8S_INF_DEPLOY" --replicas=0 2>/dev/null || true
+        echo "  Waiting for k3s inference pod ($K8S_INF_DEPLOY) to terminate and release GPU VRAM..."
+        kubectl -n "$K8S_NS" wait --for=delete pod -l "app=$K8S_INF_DEPLOY" --timeout=45s >/dev/null 2>&1 || true
+        echo "  ✓ k3s deploy/$K8S_INF_DEPLOY scaled to 0 (george-web & support services remain online)"
+    fi
     docker stop george-prism-server 2>/dev/null || true
     docker stop george-prism-worker 2>/dev/null || true
-    if command -v kubectl &>/dev/null && kubectl -n "${K8S_NAMESPACE:-blue-lodge}" get deploy george-inference &>/dev/null; then
-        kubectl -n "${K8S_NAMESPACE:-blue-lodge}" scale deploy/george-inference --replicas=0 2>/dev/null || true
-    fi
 
     # Drop Linux VM page cache & compact memory so ~30 GB of mmap'd .gguf pages return to Windows host RAM
     sync 2>/dev/null || true
@@ -151,32 +212,53 @@ resume_george() {
     echo "  Resuming George: Re-engaging Inference & Autonomics"
     echo "═══════════════════════════════════════════════════════════"
 
-    # 1. Start the inference container
-    echo "[1/4] Starting inference container (george-prism-server / k8s deploy/george-inference)..."
-    local _health_url="http://127.0.0.1:8080/health"
-    [ -n "${KUBERNETES_SERVICE_HOST:-}" ] && _health_url="http://george-inference:8080/health"
-    if command -v kubectl &>/dev/null && kubectl -n "${K8S_NAMESPACE:-blue-lodge}" get deploy george-inference &>/dev/null; then
-        kubectl -n "${K8S_NAMESPACE:-blue-lodge}" scale deploy/george-inference --replicas=1 2>/dev/null || true
+    # 1. Restore inference (k3s deployment or Docker container)
+    echo "[1/4] Restoring inference (k3s deploy/$K8S_INF_DEPLOY / docker inference)..."
+    local _health_url
+    _health_url=$(_gm_health_url)
+    local _is_k8s=0
+    if _gm_k8s_available; then
+        _is_k8s=1
+        local target_rep=1
+        if [ -f "$GEORGE_DIR/game_mode_k8s_replicas" ]; then
+            local saved_rep
+            saved_rep=$(cat "$GEORGE_DIR/game_mode_k8s_replicas" 2>/dev/null || echo "1")
+            [[ "$saved_rep" =~ ^[1-9][0-9]*$ ]] && target_rep="$saved_rep"
+            rm -f "$GEORGE_DIR/game_mode_k8s_replicas" 2>/dev/null || true
+        fi
+        kubectl -n "$K8S_NS" scale "deploy/$K8S_INF_DEPLOY" --replicas="$target_rep" 2>/dev/null || true
+        echo "  Waiting for k3s deploy/$K8S_INF_DEPLOY rollout (replicas=$target_rep)..."
+        kubectl -n "$K8S_NS" rollout status "deploy/$K8S_INF_DEPLOY" --timeout=120s 2>/dev/null || true
     else
         docker start george-prism-server 2>/dev/null || (cd "$LODGE_DIR" && docker compose up -d prism-inference)
     fi
 
     # 2. Wait for health check on port 8080 BEFORE waking up any paused processes
-    echo "[2/4] Waiting for LLM server to load models into VRAM (port 8080)..."
+    echo "[2/4] Waiting for LLM server to load model weights into VRAM..."
     local healthy=0
-    for i in {1..30}; do
-        if curl -sf --max-time 1 "$_health_url" &>/dev/null; then
+    for i in $(seq 1 90); do
+        if curl -sf --max-time 2 "$_health_url" &>/dev/null; then
             healthy=1
             break
+        fi
+        if [ "$_is_k8s" -eq 1 ] && [ -z "${KUBERNETES_SERVICE_HOST:-}" ]; then
+            if kubectl -n "$K8S_NS" exec "deploy/$K8S_INF_DEPLOY" -- curl -sf --max-time 2 http://127.0.0.1:8080/health &>/dev/null; then
+                healthy=1
+                break
+            fi
         fi
         sleep 1
     done
 
     if [ "$healthy" -eq 1 ]; then
-        echo "✓ Inference container is operational on port 8080."
+        echo "✓ Inference server is operational and healthy."
     else
-        echo "⚠ Warning: Port 8080 did not report healthy within 30s. Checking logs..."
-        docker logs --tail 10 george-prism-server 2>/dev/null || true
+        echo "⚠ Warning: Inference server did not report healthy within 90s. Recent logs:"
+        if [ "$_is_k8s" -eq 1 ]; then
+            kubectl -n "$K8S_NS" logs --tail=15 "deploy/$K8S_INF_DEPLOY" 2>/dev/null || true
+        else
+            docker logs --tail 10 george-prism-server 2>/dev/null || true
+        fi
     fi
 
     # 3. Resume paused tasks, channels, and subagents
@@ -247,22 +329,15 @@ status_george() {
     echo "═══════════════════════════════════════════════════════════"
     echo "  George & GPU Standby Status"
     echo "═══════════════════════════════════════════════════════════"
-    local _health_url="http://127.0.0.1:8080/health"
-    [ -n "${KUBERNETES_SERVICE_HOST:-}" ] && _health_url="http://george-inference:8080/health"
-    local inf_status
-    inf_status=$(docker inspect -f '{{.State.Status}}' george-prism-server 2>/dev/null || echo "not found")
-    local p8080_health
-    p8080_health=$(curl -sf --max-time 1 "$_health_url" 2>/dev/null || echo "offline")
-    if [ "$inf_status" != "running" ] && [ "$p8080_health" != "offline" ]; then
-        inf_status="running"
-    fi
-    echo "  Inference Container: $inf_status"
-    echo "  Port 8080 (Primary):  $p8080_health"
+    _gm_probe_inference
+    echo "  Inference Backend:   $GM_BACKEND${GM_REPLICAS:+ (deploy/$K8S_INF_DEPLOY $GM_REPLICAS)}"
+    echo "  Inference Status:    $GM_INF_STATUS"
+    echo "  Port 8080 (Primary): $GM_HEALTH"
 
     local cron_pid
-    cron_pid=$(cat "$LODGE_DIR/.george/.cron.pid" 2>/dev/null || cat "$LODGE_DIR/.george/cron.pid" 2>/dev/null || echo "")
+    cron_pid=$(cat "$GEORGE_DIR/.cron.pid" 2>/dev/null || cat "$GEORGE_DIR/cron.pid" 2>/dev/null || echo "")
     if [ -n "$cron_pid" ] && kill -0 "$cron_pid" 2>/dev/null; then
-        if [ -f "$LODGE_DIR/.george/.game_mode" ]; then
+        if [ -f "$GEORGE_DIR/.game_mode" ]; then
             echo "  Autonomic Daemon:    standby (PID $cron_pid — zero-GPU crypto watchers only)"
         else
             echo "  Autonomic Daemon:    running (PID $cron_pid)"
@@ -280,34 +355,25 @@ status_george() {
 }
 
 status_george_json() {
-    local _health_url="http://127.0.0.1:8080/health"
-    [ -n "${KUBERNETES_SERVICE_HOST:-}" ] && _health_url="http://george-inference:8080/health"
-    local inf_status
-    inf_status=$(docker inspect -f '{{.State.Status}}' george-prism-server 2>/dev/null || echo "not found")
-    local p8080_health
-    p8080_health=$(curl -sf --max-time 1 "$_health_url" 2>/dev/null || echo "offline")
-    if [ "$inf_status" != "running" ] && [ "$p8080_health" != "offline" ]; then
-        inf_status="running"
-    fi
+    _gm_probe_inference
     local cron_pid
-    cron_pid=$(cat "$LODGE_DIR/.george/.cron.pid" 2>/dev/null || cat "$LODGE_DIR/.george/cron.pid" 2>/dev/null || echo "")
+    cron_pid=$(cat "$GEORGE_DIR/.cron.pid" 2>/dev/null || cat "$GEORGE_DIR/cron.pid" 2>/dev/null || echo "")
     local cron_running="false"
     if [ -n "$cron_pid" ] && kill -0 "$cron_pid" 2>/dev/null; then
         cron_running="true"
     fi
     local game_mode="false"
-    if [ "$inf_status" != "running" ] || [ -f "$LODGE_DIR/.george/.game_mode" ]; then
+    if [ "$GM_INF_STATUS" != "running" ] || [ -f "$GEORGE_DIR/.game_mode" ]; then
         game_mode="true"
     fi
-    cat <<EOF
-{
-  "status": "ok",
-  "game_mode": $game_mode,
-  "inference_status": "$inf_status",
-  "port_8080": "$p8080_health",
-  "autonomic_daemon": $cron_running
-}
-EOF
+    jq -nc \
+        --argjson gm "$game_mode" \
+        --arg be "$GM_BACKEND" \
+        --arg rep "$GM_REPLICAS" \
+        --arg st "$GM_INF_STATUS" \
+        --arg h "$GM_HEALTH" \
+        --argjson cr "$cron_running" \
+        '{status:"ok", game_mode:$gm, backend:$be, k8s_replicas:$rep, inference_status:$st, port_8080:$h, autonomic_daemon:$cr}'
 }
 
 case "${1:-status}" in

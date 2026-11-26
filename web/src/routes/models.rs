@@ -92,21 +92,33 @@ pub async fn toggle_gamemode(
 
     let target_action = if requested_action == "toggle" {
         let mut is_running = false;
-        let check_out = tokio::process::Command::new("docker")
-            .args(["inspect", "-f", "{{.State.Status}}", "george-prism-server"])
-            .output()
-            .await;
-        if let Ok(o) = check_out {
-            if o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "running" {
+        if std::env::var_os("KUBERNETES_SERVICE_HOST").is_some() {
+            let ns = std::env::var("K8S_NAMESPACE").unwrap_or_else(|_| "blue-lodge".into());
+            let k8s_out = tokio::process::Command::new("kubectl")
+                .args(["-n", &ns, "get", "deploy", "george-inference", "-o", "jsonpath={.spec.replicas}"])
+                .output()
+                .await;
+            if let Ok(o) = k8s_out {
+                let rep = String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().unwrap_or(0);
+                if rep > 0 {
+                    is_running = true;
+                }
+            }
+            if !is_running && crate::helpers::reqwest_lite_get("http://george-inference:8080/health").await.is_ok() {
                 is_running = true;
             }
-        }
-        if !is_running && std::env::var_os("KUBERNETES_SERVICE_HOST").is_some() {
-            if crate::helpers::reqwest_lite_get("http://127.0.0.1:8080/health").await.is_ok() {
-                is_running = true;
+        } else {
+            let check_out = tokio::process::Command::new("docker")
+                .args(["inspect", "-f", "{{.State.Status}}", "george-prism-server"])
+                .output()
+                .await;
+            if let Ok(o) = check_out {
+                if o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "running" {
+                    is_running = true;
+                }
             }
         }
-        if is_running { "pause" } else { "resume" }
+        if is_running && !state.george_dir.join(".game_mode").exists() { "pause" } else { "resume" }
     } else if requested_action == "pause" || requested_action == "game" || requested_action == "stop" {
         "pause"
     } else {
