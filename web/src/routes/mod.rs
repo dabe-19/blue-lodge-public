@@ -143,6 +143,11 @@ pub fn create_router(state: Arc<AppState>, cors: CorsLayer) -> Router {
         .route("/api/hub/forge/build", post(hub::forge_build))
         .route("/api/hub/ask", post(hub::ask))
         .route("/api/hub/ask/:id", get(hub::ask_status))
+        .route("/api/hub/curate", get(hub::curate))
+        .route("/api/hub/drive/status", get(hub::drive_status))
+        .route("/api/hub/drive/list", get(hub::drive_list))
+        .route("/api/hub/drive/push", post(hub::drive_push))
+        .route("/api/hub/drive/pull", post(hub::drive_pull))
 
         // Sovereign Training Forge, Sleep-Cycle SVD-32 Lineage & Tier B Gate
         .route("/api/training/status", get(training::get_training_status))
@@ -159,6 +164,7 @@ pub fn create_router(state: Arc<AppState>, cors: CorsLayer) -> Router {
         .route("/api/training/gate/:run_name/deny", post(training::deny_gate_candidate))
         .route("/api/training/adapters/hotswap", post(training::post_adapter_hotswap))
         .route("/api/training/backup", post(training::post_training_backup))
+        .route("/api/training/pull-adapter", post(training::post_pull_adapter))
         .route("/api/training/benchmark", post(training::post_training_benchmark))
 
         // Workspace & File Management

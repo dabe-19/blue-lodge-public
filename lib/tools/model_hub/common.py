@@ -21,15 +21,25 @@ from typing import Any
 
 UA = "George-ModelHub/1.0 (+https://github.com/dabe-19/blue-lodge-public)"
 
-# Exact hosts or suffixes (leading dot) allowed for any request, including redirect targets.
+# Exact hosts or suffixes (leading dot) allowed by default for any request, including redirect targets.
+# Third-party regional hubs/mirrors (ModelScope/Alibaba .cn, OpenCSG, HF-Mirror) are strictly opt-in
+# and disabled by default via _OPT_IN_HOSTS below.
 _ALLOWED = (
     "huggingface.co", ".huggingface.co", ".hf.co",                 # HF API + xet/CAS CDN
-    "hf-mirror.com", ".hf-mirror.com",                            # Community HF mirror fallback
-    "modelscope.cn", ".modelscope.cn", "modelscope.ai", ".modelscope.ai",
-    ".aliyuncs.com",                                              # ModelScope OSS redirect targets
-    "opencsg.com", ".opencsg.com",                                # OpenCSG / CSGHub Apache-2.0 hub
     "ipfs.io", "dweb.link", ".dweb.link", "cloudflare-ipfs.com", "w3s.link", ".w3s.link",
 )
+
+_OPT_IN_HOSTS: dict[str, tuple[str, ...]] = {
+    "MODEL_HUB_ENABLE_MODELSCOPE": (
+        "modelscope.cn", ".modelscope.cn", "modelscope.ai", ".modelscope.ai", ".aliyuncs.com",
+    ),
+    "MODEL_HUB_ENABLE_OPENCSG": ("opencsg.com", ".opencsg.com"),
+    "MODEL_HUB_ENABLE_HF_MIRROR": ("hf-mirror.com", ".hf-mirror.com"),
+}
+
+
+def opt_in_enabled(env_var: str) -> bool:
+    return os.environ.get(env_var, "").strip().lower() in ("1", "true", "yes", "on")
 
 REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}/[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -65,7 +75,11 @@ def host_allowed(url: str) -> bool:
     extra = {h.strip().lower() for h in os.environ.get("MODEL_HUB_EXTRA_HOSTS", "").split(",") if h.strip()}
     if host in extra:
         return True
-    return any(host == a or (a.startswith(".") and host.endswith(a)) for a in _ALLOWED)
+    allowed: list[str] = list(_ALLOWED)
+    for flag, hosts in _OPT_IN_HOSTS.items():
+        if opt_in_enabled(flag):
+            allowed.extend(hosts)
+    return any(host == a or (a.startswith(".") and host.endswith(a)) for a in allowed)
 
 
 # ── Tokens ─────────────────────────────────────────────────────────────────────

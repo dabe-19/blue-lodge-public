@@ -309,7 +309,7 @@
       el('p', { text: `Blue Lodge looks for .gguf files under ${lib.models_dir || 'your models folder'} (set MODELS_DIR to change it). Two ways to fill it:` }),
       el('ol', {}, [
         el('li', { text: 'Already have GGUF files? Move or symlink them into that folder, then press ↻ REFRESH.' }),
-        el('li', { text: 'Want something new? Use DISCOVER & DOWNLOAD to search Hugging Face / ModelScope, check what fits your hardware, and download a verified copy.' }),
+        el('li', { text: 'Want something new? Use DISCOVER & DOWNLOAD to curate or search Hugging Face, check what fits your hardware, and download a verified copy (or pull from your personal Google Drive mirror in SERVE & TUNE).' }),
       ]),
       el('div', { cls: 'hub-row' }, [
         btn('OPEN DISCOVER', () => showTab('wbPanelDiscover'), 'primary'),
@@ -612,6 +612,76 @@
     } catch (e) { $('hubQuantTitle').textContent = `${repo}: ${e.message}`; }
   }
 
+  async function curateModels() {
+    const box = $('hubCurateResults');
+    const b = $('btnHubCurate');
+    if (!box || !b) return;
+    const fams = [...document.querySelectorAll('#wbCurateFamilies input:checked')].map((x) => x.value);
+    if (!fams.length) { log('curate: select at least one model family'); return; }
+    const ctx = parseInt($('hubCtxInput').value, 10) || 32768;
+    const kv = $('hubKvSelect').value || 'q4_0';
+    b.disabled = true;
+    b.textContent = 'CURATING…';
+    clear(box);
+    box.append(el('div', { cls: 'hub-item-meta', text: `Evaluating ${fams.join(', ')} against this GPU (ctx ${ctx.toLocaleString()}, KV ${kv})…` }));
+    try {
+      const d = await api('GET', `/api/hub/curate?families=${encodeURIComponent(fams.join(','))}&ctx=${ctx}&kv=${encodeURIComponent(kv)}&per_family=2`);
+      clear(box);
+      const provs = (d.provider_chain || ['huggingface']).join(' → ');
+      box.append(el('div', { cls: 'wb-muted', text: `Sources: ${provs} · target ctx ${Number(d.ctx || ctx).toLocaleString()} · KV ${d.kv || kv}` }));
+      const famMap = d.families || {};
+      let shown = 0;
+      Object.entries(famMap).forEach(([fk, info]) => {
+        const models = info.models || [];
+        box.append(el('div', { cls: 'hub-label', text: `${info.label || fk} (${models.length} fitting)` }));
+        if (!models.length) {
+          box.append(el('div', { cls: 'wb-muted', text: `No fitting GGUFs found on ${provs} for ${fk} at this context.` }));
+          return;
+        }
+        models.forEach((m) => {
+          shown += 1;
+          const meta = `${m.best_quant} · ${m.size_gib} GiB · ${VERDICT[m.verdict] || m.verdict} · max ctx ${m.max_ctx ? Number(m.max_ctx).toLocaleString() : '?'} · ⬇ ${Number(m.downloads || 0).toLocaleString()}`;
+          const acts = el('div', { cls: 'hub-actions' }, [
+            btn('QUANTS', () => loadQuants(m.provider || 'huggingface', m.repo)),
+            btn('DRAFT', () => draft(m.provider || 'huggingface', m.repo, m.best_quant, Math.min(ctx, m.max_ctx || ctx), kv), 'primary'),
+          ]);
+          const mainChildren = [
+            el('span', { cls: 'hub-item-title', text: m.repo }),
+            el('span', { cls: 'hub-item-meta', text: meta }),
+          ];
+          const adapters = m.community_adapters || [];
+          if (adapters.length) {
+            const adRow = el('div', { cls: 'wb-chip-row' }, [el('span', { cls: 'wb-muted', text: 'Community adapters:' })]);
+            adapters.forEach((ad) => {
+              adRow.append(btn(`PULL ${ad.hf_repo.split('/').pop()}`, async () => {
+                log(`pulling community adapter ${ad.hf_repo} (SHA-256 verified)…`);
+                try {
+                  const res = await api('POST', '/api/training/pull-adapter', { hf_repo: ad.hf_repo, activate: false });
+                  log(`adapter installed: ${res.installed_path || ad.hf_repo} (sha256 ${String(res.sha256 || '').slice(0, 12)}…)`);
+                  refreshLibraryAndProfiles();
+                } catch (err) { log(`adapter pull failed: ${err.message}`); }
+              }));
+            });
+            mainChildren.push(adRow);
+          }
+          box.append(el('div', { cls: `hub-item hub-v-${m.verdict}` }, [
+            el('div', { cls: 'hub-item-main' }, mainChildren),
+            acts,
+          ]));
+        });
+      });
+      if (!shown) box.append(el('div', { cls: 'wb-muted', text: 'No models matched your GPU VRAM budget at the selected context/KV cache. Try KV q4_0 or lower context.' }));
+      log(`curated ${shown} hardware-fitting model(s) across ${fams.join(', ')}`);
+    } catch (e) {
+      clear(box);
+      box.append(el('div', { cls: 'wb-bad', text: `curate failed: ${e.message}` }));
+      log(`curate failed: ${e.message}`);
+    } finally {
+      b.disabled = false;
+      b.textContent = 'CURATE FOR THIS GPU';
+    }
+  }
+
   async function draft(provider, repo, quant, ctx, kv) {
     try {
       const r = await api('POST', '/api/hub/draft', { provider, repo, quant, ctx, kv, with_mmproj: $('hubWithMmproj').checked });
@@ -650,6 +720,7 @@
     if (p.status === 'installed' && p.approved) {
       acts.append(btn('DRY RUN', () => activate(p.name, true)));
       acts.append(confirmBtn('ACTIVATE', 'CONFIRM: SWAP MODEL', () => activate(p.name, false), 'accent'));
+      acts.append(confirmBtn('PUSH TO DRIVE', 'CONFIRM PUSH', () => drivePush(p.name, false)));
     }
     acts.append(confirmBtn('REMOVE', 'CONFIRM REMOVE', () => removeProfile(p.name, false)));
     if (p.status === 'installed' && !local) acts.append(confirmBtn('REMOVE + FILES', 'CONFIRM: DELETE FILES', () => removeProfile(p.name, true)));
@@ -866,12 +937,79 @@
     } catch (e) { log(`jobs: ${e.message}`); }
   }
 
+  // ── Google Drive Multi-Node Mirror ────────────────────────────────────────
+  async function loadDriveStatus() {
+    const line = $('wbDriveStatusLine');
+    if (!line) return;
+    try {
+      const st = await api('GET', '/api/hub/drive/status');
+      const localCount = (st.local_installed_profiles || []).length;
+      line.textContent = st.ready
+        ? `READY · folder: ${st.drive_folder} · ${localCount} installed local profile(s) available to mirror between nodes`
+        : `NOT CONFIGURED · folder: ${st.drive_folder} (run gcloud auth application-default login with drive.file scope)`;
+    } catch (e) { line.textContent = `Drive status unavailable: ${e.message}`; }
+  }
+
+  async function scanDrive() {
+    const box = $('wbDriveList');
+    const b = $('btnDriveScan');
+    if (!box || !b) return;
+    b.disabled = true; b.textContent = 'SCANNING…';
+    clear(box); box.append(el('div', { cls: 'hub-item-meta', text: 'Listing profiles and adapters in Google Drive mirror…' }));
+    try {
+      const r = await api('GET', '/api/hub/drive/list');
+      clear(box);
+      const profs = r.profiles || [];
+      const ads = r.adapters || [];
+      if (!profs.length && !ads.length) {
+        box.append(el('div', { cls: 'wb-muted', text: `No mirrored profiles in ${r.folder || 'BlueLodge/models/hub'} yet. Click PUSH TO DRIVE on an installed profile above to mirror it for other nodes.` }));
+      }
+      profs.forEach((p) => {
+        const meta = `${p.file_count || 0} file(s) · ${p.total_gib != null ? `${p.total_gib} GiB` : bytes(p.total_bytes)}${p.profile_meta && p.profile_meta.repo ? ` · ${p.profile_meta.repo}` : ''}`;
+        box.append(el('div', { cls: 'hub-item' }, [
+          el('div', { cls: 'hub-item-main' }, [
+            el('span', { cls: 'hub-item-title', text: `Drive profile: ${p.name}` }),
+            el('span', { cls: 'hub-item-meta', text: meta }),
+          ]),
+          el('div', { cls: 'hub-actions' }, [
+            confirmBtn('PULL FROM DRIVE', 'CONFIRM PULL', () => drivePull(p.name), 'primary'),
+          ]),
+        ]));
+      });
+      if (ads.length) {
+        box.append(el('div', { cls: 'wb-muted', text: `Mirrored adapter namespaces: ${ads.map((a) => `${a.model_slug}/${a.role}`).join(', ')}` }));
+      }
+      log(`Drive mirror (${r.folder}): ${profs.length} profile(s), ${ads.length} adapter namespace(s)`);
+    } catch (e) {
+      clear(box);
+      box.append(el('div', { cls: 'wb-bad', text: `Drive scan failed: ${e.message}` }));
+      log(`Drive scan failed: ${e.message}`);
+    } finally {
+      b.disabled = false; b.textContent = 'SCAN GOOGLE DRIVE';
+    }
+  }
+
+  async function drivePush(name, pushAll) {
+    try {
+      const body = pushAll ? { all: true } : { name };
+      const r = await api('POST', '/api/hub/drive/push', body);
+      log(r.message || `started Google Drive mirror push for ${pushAll ? 'all installed profiles' : name}`);
+    } catch (e) { log(`Drive push failed: ${e.message}`); }
+  }
+
+  async function drivePull(name) {
+    try {
+      const r = await api('POST', '/api/hub/drive/pull', { name });
+      log(r.message || `started Google Drive pull for "${name}"`);
+    } catch (e) { log(`Drive pull failed: ${e.message}`); }
+  }
+
   // ── Accounts ──────────────────────────────────────────────────────────────
   async function loadAccounts() {
     try {
       const a = await api('GET', '/api/hub/accounts');
       $('hubAccountsLine').textContent = a.filter((x) => x.provider !== 'ipfs')
-        .map((x) => `${x.provider}: ${x.logged_in ? `[AUTHENTICATED] ${x.user || 'logged in'}` : 'anonymous'}`).join('  ·  ');
+        .map((x) => `${x.provider}: ${x.disabled ? 'disabled (opt-in)' : (x.logged_in ? `[AUTHENTICATED] ${x.user || 'logged in'}` : 'anonymous')}`).join('  ·  ');
     } catch (e) { $('hubAccountsLine').textContent = `accounts unavailable: ${e.message}`; }
   }
   async function login() {
@@ -1116,7 +1254,7 @@
     await Promise.all([loadProfiles(), loadLibrary()]);
   }
   async function refreshAll() {
-    loadHw(); loadAccounts(); loadPresets(); loadJobs();
+    loadHw(); loadAccounts(); loadPresets(); loadJobs(); loadDriveStatus();
     await loadServer();
     await refreshLibraryAndProfiles();
     renderLibrary();
@@ -1145,6 +1283,21 @@
   $('wbLibSort').addEventListener('change', (e) => { state.sort = e.target.value; renderLibrary(); });
 
   $('btnHubSearch').addEventListener('click', () => search());
+  if ($('btnHubCurate')) $('btnHubCurate').addEventListener('click', curateModels);
+  if ($('btnDriveScan')) $('btnDriveScan').addEventListener('click', scanDrive);
+  if ($('btnDrivePushAll')) {
+    let driveArm = null;
+    const bPushAll = $('btnDrivePushAll');
+    bPushAll.addEventListener('click', async () => {
+      if (!driveArm) {
+        bPushAll.textContent = 'CONFIRM PUSH ALL'; bPushAll.classList.add('danger');
+        driveArm = setTimeout(() => { driveArm = null; bPushAll.textContent = 'PUSH ALL INSTALLED'; bPushAll.classList.remove('danger'); }, 5000);
+        return;
+      }
+      clearTimeout(driveArm); driveArm = null; bPushAll.textContent = 'PUSH ALL INSTALLED'; bPushAll.classList.remove('danger');
+      await drivePush(null, true);
+    });
+  }
   $('btnForgePantry').addEventListener('click', forgePantry);
   $('btnForgeBuild').addEventListener('click', forgeBuild);
   $('wbForgeCountRange').addEventListener('input', (e) => { $('wbForgeCount').value = e.target.value; });

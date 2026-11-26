@@ -4578,17 +4578,34 @@ docker run -d --restart=always \
         <!-- ── Discover ── -->
         <section class="wb-panel" id="wbPanelDiscover" role="tabpanel" aria-labelledby="wbTabDiscover" hidden>
           <ol class="wb-steps">
-            <li><b>Search</b> Hugging Face or ModelScope for any GGUF repo, by name or keyword.</li>
+            <li><b>Search or Curate</b> Hugging Face for any GGUF repo (third-party regional hubs like ModelScope are opt-in and disabled by default).</li>
             <li><b>Check fit</b>: every quant is sized against your GPUs and RAM at the context you choose.</li>
             <li><b>Review &amp; approve</b> the drafted profile (files are pinned to a commit and sha256).</li>
             <li><b>Download</b>: verified and resumable. It then appears in <b>My Library</b>, ready to serve.</li>
           </ol>
+          <div class="models-download-box" id="wbCuratorBox" style="margin-bottom:12px;">
+            <div class="forge-head">
+              <div>
+                <div class="hub-label">DYNAMIC HARDWARE CURATOR (LIVE VRAM FIT + COMMUNITY ADAPTERS)</div>
+                <div class="wb-muted">Queries Hugging Face live for the latest open-weight families that fit THIS node's GPU VRAM, plus matching community GGUF LoRA/SVD adapters (e.g. <code>harness-hub</code>).</div>
+              </div>
+              <button type="button" class="tactile-btn accent" id="btnHubCurate">CURATE FOR THIS GPU</button>
+            </div>
+            <div class="wb-chip-row" id="wbCurateFamilies" style="margin-top:8px;">
+              <label class="hub-check"><input type="checkbox" value="gemma4" checked> Gemma 4</label>
+              <label class="hub-check"><input type="checkbox" value="qwen" checked> Qwen 3.8</label>
+              <label class="hub-check"><input type="checkbox" value="nemo" checked> NVIDIA Nemotron</label>
+              <label class="hub-check"><input type="checkbox" value="inkling" checked> Inkling</label>
+              <label class="hub-check"><input type="checkbox" value="lfm"> LiquidAI LFM</label>
+            </div>
+            <div id="hubCurateResults" class="hub-results" aria-live="polite" style="margin-top:8px;"></div>
+          </div>
           <div class="hub-row">
             <input type="search" id="hubSearchInput" class="form-input" maxlength="120" placeholder="Search model repos, e.g. a model family, “coder”, “vision”, or org/name">
             <select id="hubProviderSelect" class="form-input hub-narrow" aria-label="Provider">
-              <option value="huggingface">Hugging Face</option>
-              <option value="modelscope">ModelScope</option>
-              <option value="all">Both</option>
+              <option value="huggingface" selected>Hugging Face (default)</option>
+              <option value="modelscope">ModelScope (opt-in; disabled by default)</option>
+              <option value="all">HF + Enabled Opt-Ins</option>
             </select>
             <button type="button" class="tactile-btn primary" id="btnHubSearch">SEARCH</button>
           </div>
@@ -4642,6 +4659,19 @@ docker run -d --restart=always \
           <p class="wb-lede">A <b>profile</b> is a pinned recipe: which files, which llama-server settings, which sampling defaults.
             Profiles come from <b>Serve</b> on a library card or from a download. Edit one here, re-approve, then activate it.</p>
           <div id="hubProfileList" class="hub-results wb-profile-list"></div>
+          <div class="models-download-box" id="wbDriveMirrorBox" style="margin-top:12px;">
+            <div class="forge-head">
+              <div>
+                <div class="hub-label">GOOGLE DRIVE MULTI-NODE MIRROR (OPTIONAL PERSONAL HUB)</div>
+                <div class="wb-muted" id="wbDriveStatusLine">Checking Google Drive ADC status…</div>
+              </div>
+              <div class="hub-actions">
+                <button type="button" class="tactile-btn" id="btnDriveScan">SCAN GOOGLE DRIVE</button>
+                <button type="button" class="tactile-btn primary" id="btnDrivePushAll">PUSH ALL INSTALLED</button>
+              </div>
+            </div>
+            <div id="wbDriveList" class="hub-results" aria-live="polite" style="margin-top:8px;"></div>
+          </div>
           <div id="hubReview" class="hub-review" hidden>
             <div class="hub-label" id="hubReviewTitle"></div>
             <pre id="hubReviewBody" class="hub-pre"></pre>
@@ -4763,8 +4793,8 @@ docker run -d --restart=always \
   <script src="/js/desk.js?v=7"></script>
   <script src="/js/fund.js?v=2"></script>
   <script src="/js/explorer.js?v=2"></script>
-  <script src="/js/hub.js?v=7"></script>
-  <script src="/js/forge.js?v=9"></script>
+  <script src="/js/hub.js?v=8"></script>
+  <script src="/js/forge.js?v=10"></script>
   <script src="/js/loop_studio.js?v=1"></script>
   <script src="/js/modules.js?v=10"></script>
 </body>

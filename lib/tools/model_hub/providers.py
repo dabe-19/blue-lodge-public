@@ -14,8 +14,8 @@ import re
 import urllib.parse
 from typing import Any
 
-from .common import (CID_RE, REPO_RE, SHA256_RE, HubError, get_json, get_token, quant_of, safe_relpath,
-                     shard_info)
+from .common import (CID_RE, REPO_RE, SHA256_RE, HubError, get_json, get_token, opt_in_enabled, quant_of,
+                     safe_relpath, shard_info)
 
 
 def _kind(path: str) -> str:
@@ -123,6 +123,11 @@ class ModelScope:
     token_key = "MODELSCOPE_API_TOKEN"
 
     def __init__(self) -> None:
+        if not opt_in_enabled("MODEL_HUB_ENABLE_MODELSCOPE"):
+            raise HubError(
+                "ModelScope (modelscope.cn / Alibaba) is disabled by default (opt-in only). "
+                "Set MODEL_HUB_ENABLE_MODELSCOPE=1 to explicitly enable it."
+            )
         self.base = os.environ.get("MODELSCOPE_ENDPOINT", "https://modelscope.cn").rstrip("/")
 
     def token(self) -> str | None:

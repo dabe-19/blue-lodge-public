@@ -97,6 +97,15 @@ pub struct BackupPayload {
 }
 
 #[derive(Deserialize)]
+pub struct PullAdapterPayload {
+    pub hf_repo: String,
+    pub model_slug: Option<String>,
+    pub role: Option<String>,
+    pub file: Option<String>,
+    pub activate: Option<bool>,
+}
+
+#[derive(Deserialize)]
 pub struct BenchmarkPayload {
     pub mode: Option<String>, // "run" | "head_to_head" | "compare" | "candidate"
     pub run_name: Option<String>,
@@ -457,6 +466,55 @@ pub async fn post_training_backup(
         args.push(repo_owned.as_str());
     }
     Json(run_py_json(&state.lodge_dir, "scripts/training/backup_artifacts.py", &args).await)
+}
+
+/// POST /api/training/pull-adapter — Pull a community GGUF LoRA/SVD adapter from Hugging Face
+pub async fn post_pull_adapter(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<PullAdapterPayload>,
+) -> impl IntoResponse {
+    let repo = payload.hf_repo.trim().to_string();
+    let repo_ok = !repo.is_empty()
+        && repo.len() <= 120
+        && !repo.starts_with('-')
+        && !repo.contains("..")
+        && repo.matches('/').count() == 1
+        && repo.chars().all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c));
+    if !repo_ok {
+        return Json(json!({ "status": "error", "message": "Valid hf_repo (org/repo) is required" }));
+    }
+    let mut args: Vec<String> = vec!["pull-adapter".into(), repo];
+    if let Some(slug) = payload.model_slug.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        if !plain_id(&slug, 64) {
+            return Json(json!({ "status": "error", "message": "Invalid model_slug" }));
+        }
+        args.push("--model-slug".into());
+        args.push(slug);
+    }
+    if let Some(role) = payload.role.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        if !plain_id(&role, 48) {
+            return Json(json!({ "status": "error", "message": "Invalid role" }));
+        }
+        args.push("--role".into());
+        args.push(role);
+    }
+    if let Some(file) = payload.file.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        let f_ok = file.len() <= 200
+            && !file.starts_with('-')
+            && !file.starts_with('/')
+            && !file.contains("..")
+            && file.chars().all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c));
+        if !f_ok {
+            return Json(json!({ "status": "error", "message": "Invalid adapter filename" }));
+        }
+        args.push("--file".into());
+        args.push(file);
+    }
+    if payload.activate.unwrap_or(false) {
+        args.push("--activate".into());
+    }
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    Json(run_py_json(&state.lodge_dir, "scripts/training/backup_artifacts.py", &refs).await)
 }
 
 pub async fn post_training_benchmark(

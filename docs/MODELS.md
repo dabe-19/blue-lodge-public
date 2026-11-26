@@ -88,13 +88,11 @@ Re-scans are cheap, and a file that changed is always read again.
 
 ### Discover & Download
 
-1. Search Hugging Face, ModelScope or both. You can sort by downloads, likes, recent changes or trending.
-   The keyword chips are just search shortcuts; they are not recommendations.
-2. Open a repo to see its **fit table**. For every quant it shows file size, VRAM needed at your
-   chosen context and KV type, and whether it fits.
-3. **Draft** creates a profile in `.george/models/profiles/<name>.json` with the pinned file list and hashes.
-4. **Approve** the draft after checking it, then **Install**. Downloads can resume, are verified by
-   sha256 and appear in the Jobs tray.
+1. **Dynamic Hardware Curator** (`CURATE FOR THIS GPU` / `/models curate`): queries Hugging Face live across open families (`gemma4`, `qwen`, `nemo`, `inkling`, `lfm`), evaluates every GGUF quant against your GPU VRAM and RAM, and surfaces matching community GGUF LoRA/SVD adapters (e.g. `harness-hub`).
+2. **Manual Hub Search**: search Hugging Face by name or keyword, sorted by downloads, likes, recent changes or trending. *(Third-party regional hubs such as ModelScope `.cn` / OpenCSG / HF-Mirror are strictly opt-in and disabled by default — see §3b.)*
+3. Open a repo to see its **fit table**. For every quant it shows file size, VRAM needed at your chosen context and KV type, and whether it fits.
+4. **Draft** creates a profile in `.george/models/profiles/<name>.json` with the pinned file list and hashes.
+5. **Approve** the draft after checking it, then **Install**. Downloads can resume, are verified by sha256 and appear in the Jobs tray.
 
 Gated or private repos need an account token. Open *Accounts* (or run `/models login huggingface`).
 Tokens are written to `.george/keys.conf` (mode 0600) and are never shown again.
@@ -102,15 +100,10 @@ Tokens are written to `.george/keys.conf` (mode 0600) and are never shown again.
 ### Serve & Tune
 
 - **Profiles** lists every profile with its state (draft → approved → installed → active).
-- **Activate** starts llama-server for a profile, either in docker or natively (`LLAMA_SERVER_BIN`).
-  **Rollback** undoes the last activation.
-- **Tune** edits the profile's `server` block (`ctx`, `n_gpu_layers`, `cache_type_k/v`, `flash_attn`,
-  `parallel`, …) and its `sampling` block (`temperature`, `top_p`, `top_k`, `min_p`,
-  `repeat_penalty`, `presence_penalty`). George's REPL reads the active profile's sampling values for
-  every request. If no profile applies, it falls back to `MODELS_DEFAULT_*` (see
-  [ENVIRONMENT_VARIABLES.md](ENVIRONMENT_VARIABLES.md)).
-- **Adapters** attaches or detaches LoRA and control-vector GGUFs. These are passed to llama-server
-  as `--lora` / `--lora-scaled` / `--control-vector-scaled`, and they reset approval.
+- **Activate** starts llama-server for a profile, either in k3s/docker or natively (`LLAMA_SERVER_BIN`), updating `/models/active/current/` symlinks. **Rollback** undoes the last activation via `/models/active/previous/`.
+- **Tune** edits the profile's `server` block (`ctx`, `n_gpu_layers`, `cache_type_k/v`, `flash_attn`, `parallel`, …) and its `sampling` block (`temperature`, `top_p`, `top_k`, `min_p`, `repeat_penalty`, `presence_penalty`).
+- **Adapters** attaches or detaches LoRA and control-vector GGUFs (also manageable in **Training Fleet & Gate → SVD Layers & Backups**, which includes 1-click **Pull Community HF GGUF Adapter** and zero-restart `POST /lora-adapters` hot-swapping).
+- **Google Drive Multi-Node Mirror** (optional): push installed profiles + active adapters to your personal Google Drive (`BlueLodge/models/hub`) with 8 MiB resumable streaming (`PUSH TO DRIVE` / `PUSH ALL INSTALLED`), and pull them onto sibling sovereign nodes (`SCAN GOOGLE DRIVE` → `PULL FROM DRIVE`) with full SHA-256 verification.
 - **Presets** is optional, for operators only (see §4).
 
 ### Fine-tune
@@ -146,6 +139,7 @@ ship. The Fine-tune tab prepares everything around training:
 
 /models ask <question>                   Model Copilot
 /models hw                               GPUs / VRAM / RAM / disk probe
+/models curate [--families gemma4,qwen,nemo,inkling,lfm] [--ctx N] [--kv q4_0]
 /models search <q> [--provider huggingface|modelscope|all] [--sort downloads|likes|lastModified|trending]
 /models quants <provider> <repo> [--ctx N] [--kv K]
 /models fit <provider> <repo> <quant> [--ctx N] [--with-mmproj] [--with-draft]
@@ -153,6 +147,13 @@ ship. The Fine-tune tab prepares everything around training:
 /models approve <name>   /models install <name>   /models progress <name>   /models cancel <name>
 /models jobs                             downloads / imports in progress
 /models login|logout <huggingface|modelscope>   /models accounts   /models disk
+
+/models drive-status                     check optional Google Drive mirror readiness
+/models drive-list [--folder PATH]       list profiles & adapters mirrored in Google Drive
+/models drive-push <name|--all> [--no-adapters] [--dry-run]
+/models drive-pull <name> [--no-adapters] [--dry-run]
+
+/train pull-adapter <hf_repo> [--model-slug S] [--role core-agent] [--activate]
 
 /models profiles   /models show <name>
 /models activate <name> [--dry-run]      /models rollback   /models status
@@ -179,18 +180,101 @@ llama-server launches (`/models activate <name>`).
 
 ---
 
-## 3. Profiles on disk
+## 3. Directory Standard: Local `$MODELS_DIR`, Symlinks & Google Drive Mirror
 
+Every Blue Lodge node follows the same canonical layout on disk and in Google Drive so model
+profiles, base GGUFs, and role-namespaced SVD-32/LoRA adapters can be mirrored cleanly between
+nodes (e.g. Hiram, George, and swarm edge nodes) without path collisions or broken symlinks.
+
+### 3a. Local Storage Layout (`$MODELS_DIR`, default `~/models`, mounted at `/models` in k3s)
+
+```text
+$MODELS_DIR/                                           # e.g. ~/models (mounted as /models)
+├── active/                                            # Managed by scripts/inference/activate_profile.sh
+│   ├── current/                                       # Live inference symlinks (atomic swap)
+│   │   ├── base.gguf      -> ../../hub/.../<file>.gguf
+│   │   ├── mmproj.gguf    -> ../../hub/.../<mmproj>.gguf      (optional)
+│   │   ├── draft.gguf     -> ../../hub/.../<draft>.gguf       (optional)
+│   │   ├── adapter.gguf   -> ../../adapters/<slug>/<role>/active.gguf
+│   │   ├── adapters.conf                              # Attached LoRA / control-vector scales
+│   │   └── jinja.template                             # Optional custom chat template override
+│   └── previous/                                      # Instant /models rollback snapshot
+│
+├── hub/                                               # Verified downloads from hubs & Drive pull
+│   └── <provider>/                                    # huggingface | ipfs | (opt-in hubs)
+│       └── <org>/
+│           └── <repo>/
+│               ├── <Model-Quant>.gguf                 # SHA-256 verified model weights
+│               ├── <Model-Quant>.gguf.sha256          # Sidecar digest
+│               └── mmproj-*.gguf                      # Optional vision/audio projector
+│
+└── adapters/                                          # Namespaced per base model & agent role
+    └── <model_slug>/                                  # e.g. gemma-4-31b-it, qwen3.8-27b
+        └── <role>/                                    # e.g. core-agent, code-ops, sdr-p25, research
+            ├── active.gguf -> releases/... OR community/...   # Auto-mounted by start_inference.sh
+            ├── releases/                              # Promoted SVD-32 layers (Tier A/B approved)
+            │   └── v1-<run>-svd32-<ts>.gguf
+            ├── candidates/                            # Staged SVD-32 candidates awaiting H2H/Gate
+            │   └── <run>-svd32-<ts>.gguf
+            ├── community/                             # Pulled HF GGUF LoRAs (e.g. harness-hub)
+            │   └── <org>__<repo>__<file>.gguf
+            ├── lineage.json                           # Version graph, scores, retention provenance
+            └── baseline_scorecard.json                # Progressive champion benchmark baseline
 ```
+
+### 3b. Control Metadata (`.george/models/`)
+
+```text
 .george/models/
 ├── profiles/<name>.json      pinned files (role, path, sha256), server + sampling blocks, approval hash
 ├── active_profile.json       what /models activate last started (used for sampling lookups)
 ├── library_cache.json        GGUF metadata + digest cache
-├── downloads/                partial downloads (resumable)
+├── downloads/                partial downloads (resumable) & job progress JSON
 └── presets.json              optional, operator-only launch presets (never committed)
 ```
 
 Profile names must match `^[a-z0-9][a-z0-9._-]{1,63}$`. File paths must stay inside `MODELS_DIR`.
+
+### 3c. Google Drive Mirror Standard (`BlueLodge/models/hub`)
+
+Configurable via `DRIVE_MODEL_HUB_FOLDER` or `.george/training/policy.json` (`drive_model_hub_folder`).
+Uses the existing headless Google ADC credentials (`drive.file` scope) with 8 MiB resumable
+streaming and size-based deduplication:
+
+```text
+Google Drive:/BlueLodge/models/hub/
+├── profiles/
+│   └── <profile_name>/
+│       ├── profile.json                   # Portable pinned profile recipe + SHA-256 hashes
+│       ├── <Model-Quant>.gguf             # Exact model weights (8 MiB chunked upload/download)
+│       ├── <Model-Quant>.gguf.sha256      # Sidecar checksum
+│       └── [mmproj / draft GGUFs]         # Any pinned auxiliary files
+└── adapters/
+    └── <model_slug>/
+        └── <role>/
+            ├── active.gguf                # Dereferenced active SVD-32 or community GGUF layer
+            └── lineage.json               # Adapter lineage + progressive baseline metadata
+```
+
+When a sibling node runs `/models drive-pull <profile_name>` (or clicks **PULL FROM DRIVE** in
+**Serve & Tune**), Blue Lodge:
+1. Reads `profile.json` and restores every GGUF into the canonical local destination
+   (`$MODELS_DIR/hub/<provider>/<org>/<repo>/` or `$MODELS_DIR/local/`).
+2. Verifies every byte against the pinned SHA-256 in `profile.json` (rejecting corrupted transfers).
+3. Restores any matching `$MODELS_DIR/adapters/<model_slug>/<role>/{active.gguf,lineage.json}`.
+4. Registers and marks the profile `installed` so you can immediately run `/models activate <profile_name>`.
+
+### 3d. Hub Provider Trust & Opt-In Policy
+
+| Source | Default Status | Transport / Verification | How to Enable |
+| --- | --- | --- | --- |
+| **Hugging Face** (`huggingface.co`, `.hf.co`) | **Enabled (Default)** | HTTPS + commit pin + SHA-256 | Built-in |
+| **Personal Google Drive Mirror** (`BlueLodge/models/hub`) | **Optional (ADC)** | Google Drive v3 API + SHA-256 | `gcloud auth application-default login` with `drive.file` scope |
+| **IPFS Gateways** (`ipfs.io`, `dweb.link`, `w3s.link`) | **Enabled (Content-Addressed)** | CID + mandatory SHA-256 | Catalog / CID profile |
+| **Self-hosted LAN Hub** (local CSGHub / Ollama / mirror) | **Opt-in** | HTTPS (or explicit HTTP host) + SHA-256 | `MODEL_HUB_EXTRA_HOSTS=hub.lan` |
+| **ModelScope** (`modelscope.cn` / Alibaba Cloud `.aliyuncs.com`) | **Disabled by default (Opt-in)** | Blocked in host allow-list & provider init | `MODEL_HUB_ENABLE_MODELSCOPE=1` |
+| **OpenCSG** (`opencsg.com`) | **Disabled by default (Opt-in)** | Blocked in host allow-list | `MODEL_HUB_ENABLE_OPENCSG=1` |
+| **HF-Mirror** (`hf-mirror.com`) | **Disabled by default (Opt-in)** | Blocked in host allow-list | `MODEL_HUB_ENABLE_HF_MIRROR=1` |
 
 ---
 
@@ -224,8 +308,11 @@ token (`X-Lodge-Token` header). Remote devices also need a paired device token.
 | DELETE | `/api/hub/library/file?file=…&force=false` | Delete a GGUF from disk |
 | GET | `/api/hub/fit-local?file=…&ctx=…&kv=…` | Fit check for a local file |
 | POST | `/api/hub/import-local` | Pin a local file as a profile (background job) |
-| GET | `/api/hub/hw` · `/search` · `/inspect` · `/quants` | Hardware probe and hub discovery |
+| GET | `/api/hub/hw` · `/search` · `/inspect` · `/quants` · `/curate` | Hardware probe, hub discovery, and Dynamic Curator |
 | POST | `/api/hub/draft` | Draft a profile from a hub repo/quant |
+| GET | `/api/hub/drive/status` · `/drive/list` | Google Drive multi-node mirror status & listing |
+| POST | `/api/hub/drive/push` · `/drive/pull` | Mirror profiles + adapters to/from Google Drive |
+| POST | `/api/training/pull-adapter` | Pull & SHA-256 verify a community HF GGUF LoRA/SVD adapter |
 | GET | `/api/hub/profiles` · `/profile/:name` | List / show profiles |
 | POST | `/api/hub/profile/:name/{approve,install,cancel,activate,tune,attach,detach}` | Profile lifecycle |
 | GET | `/api/hub/profile/:name/progress` | Download progress |

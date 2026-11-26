@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from model_hub import curator, drive_mirror  # noqa: E402
 from model_hub import fit as fitmod  # noqa: E402
 from model_hub import gguf, installer, library, profiles, serving, training  # noqa: E402
-from model_hub.common import REPO_RE, HubError, get_json, redact, set_token  # noqa: E402
+from model_hub.common import REPO_RE, HubError, get_json, opt_in_enabled, redact, set_token  # noqa: E402
 from model_hub.hw import probe  # noqa: E402
 from model_hub.providers import get_provider  # noqa: E402
 
@@ -412,7 +412,10 @@ def run(argv: list[str]) -> Any:
     if c == "search":
         if a.provider == "all":
             out = []
-            for pn in ("huggingface", "modelscope"):
+            chain = ["huggingface"]
+            if opt_in_enabled("MODEL_HUB_ENABLE_MODELSCOPE"):
+                chain.append("modelscope")
+            for pn in chain:
                 try:
                     out += get_provider(pn).search(a.query, a.limit, not a.all_formats, a.sort)
                 except HubError as e:
@@ -488,6 +491,9 @@ def run(argv: list[str]) -> Any:
     if c == "accounts":
         out = []
         for pn in ("huggingface", "modelscope"):
+            if pn == "modelscope" and not opt_in_enabled("MODEL_HUB_ENABLE_MODELSCOPE"):
+                out.append({"provider": pn, "logged_in": False, "disabled": True, "note": "opt-in (MODEL_HUB_ENABLE_MODELSCOPE=1)"})
+                continue
             prov = get_provider(pn)
             if not prov.token():
                 out.append({"provider": pn, "logged_in": False})

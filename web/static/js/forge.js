@@ -1026,7 +1026,65 @@
       bkpCard.appendChild(list);
     }
 
-    return el('div', { style: 'display:flex;flex-direction:column;gap:12px;' }, [hotCard, bkpCard]);
+    const repoIn = el('input', { type: 'text', className: 'guild-input', style: 'flex:2;min-width:240px;', placeholder: 'harness-hub/Qwen3.8-27B-super-adapter-GGUF' });
+    const slugIn = el('input', { type: 'text', className: 'guild-input', style: 'min-width:150px;', placeholder: 'model slug (auto)' });
+    const roleSel = el('select', { className: 'guild-input', style: 'min-width:130px;' }, [
+      el('option', { value: 'core-agent', text: 'core-agent' }),
+      el('option', { value: 'code-ops', text: 'code-ops' }),
+      el('option', { value: 'research', text: 'research' }),
+      el('option', { value: 'sdr-p25', text: 'sdr-p25' }),
+    ]);
+    const actCb = el('input', { type: 'checkbox', checked: false });
+    const pullBtn = el('button', {
+      type: 'button',
+      className: 'guild-btn primary',
+      text: 'PULL HF ADAPTER',
+      on: {
+        click: async () => {
+          const repo = repoIn.value.trim();
+          if (!repo) { setConsole('Enter a Hugging Face GGUF adapter repo (e.g. harness-hub/Qwen3.8-27B-super-adapter-GGUF).'); return; }
+          pullBtn.disabled = true;
+          pullBtn.textContent = 'PULLING…';
+          setConsole(`Downloading & SHA-256 verifying community GGUF adapter from ${repo}...`);
+          try {
+            const { data } = await apiJson('/api/training/pull-adapter', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                hf_repo: repo,
+                model_slug: slugIn.value.trim() || undefined,
+                role: roleSel.value,
+                activate: Boolean(actCb.checked),
+              }),
+            });
+            setConsole(data);
+            await refreshAll();
+          } finally {
+            pullBtn.disabled = false;
+            pullBtn.textContent = 'PULL HF ADAPTER';
+          }
+        },
+      },
+    });
+    const presetBtn = (label, repo, slug) => el('button', {
+      type: 'button',
+      className: 'guild-btn',
+      style: 'padding:3px 8px;font-size:10px;',
+      text: label,
+      on: { click: () => { repoIn.value = repo; slugIn.value = slug; } },
+    });
+    const pullCard = el('div', { className: 'forge-card' }, [
+      el('div', { className: 'guild-card-title', text: 'PULL COMMUNITY HF GGUF LORA / SVD ADAPTER' }),
+      el('div', { className: 'guild-card-meta', text: 'Downloads & SHA-256 verifies a pre-trained GGUF LoRA/SVD adapter into MODELS_DIR/adapters/<model_slug>/<role>/community/ and optionally sets active.gguf.' }),
+      el('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;margin:4px 0;' }, [
+        el('span', { className: 'guild-card-meta', text: 'Quick presets:' }),
+        presetBtn('Qwen 3.8 27B Super-Adapter (harness-hub)', 'harness-hub/Qwen3.8-27B-super-adapter-GGUF', 'qwen3.8-27b'),
+        presetBtn('Qwen 3.8 27B Hermes-Adapted (harness-hub)', 'harness-hub/Qwen3.8-27B-hermes-adapted-GGUF', 'qwen3.8-27b'),
+      ]),
+      el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;' }, [repoIn, slugIn, roleSel, pullBtn]),
+      el('label', { className: 'eco-check-label', style: 'margin-top:4px;' }, [actCb, 'Activate immediately (flip active.gguf symlink for this model_slug/role)']),
+    ]);
+
+    return el('div', { style: 'display:flex;flex-direction:column;gap:12px;' }, [hotCard, pullCard, bkpCard]);
   }
 
   function renderBenchTab(d) {
@@ -1297,7 +1355,7 @@
       '3. MODEL SELECTOR, WORKBENCH & MoE / SMALL MODEL SWITCHING',
       'Base GGUF switching and SVD-32 adapter switching are decoupled so dense, small, and MoE models never collide.',
       [
-        menuRow('Models Button (/models)', 'Open the Models panel in the header (or run `/models` in CLI) to search Hugging Face/ModelScope, check VRAM fit tables (`/models fit`), SHA-256 download (`/models install`), and switch the active base GGUF (`/models activate <profile>`). Supports smaller dense models and MoE models (such as gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf).'),
+        menuRow('Models Button (/models)', 'Open the Models panel in the header (or run `/models` in CLI) to run the Dynamic Hardware Curator (`/models curate`), search Hugging Face (ModelScope is opt-in, disabled by default), check VRAM fit tables (`/models fit`), SHA-256 download (`/models install`), mirror models across nodes via Google Drive (`/models drive-push|pull`), and switch the active base GGUF (`/models activate <profile>`).'),
         menuRow('Rollback Protection', 'If a newly activated model fails to load or underperforms, click Rollback in the Models panel or run `/models rollback` to instantly restore the previous active GGUF symlink.'),
         menuRow('Symlink & Adapter Layout', 'Active base weights resolve via MODELS_DIR/active/current/base.gguf (or K8s profile env). Fine-tuned SVD-32 layers live in MODELS_DIR/adapters/<model_slug>/<role>/active.gguf (with releases/, candidates/, and lineage.json), so switching base models never overwrites another model\'s adapters.'),
         menuRow('Colab GPU Fallback Order', '27B-31B playbooks lock a 40 GB VRAM floor and automatically cascade H100 (80 GB) -> A100 High-RAM (80 GB) -> A100 Standard (40/80 GB) -> G4 (96 GB Blackwell RTX PRO 6000) with exponential-backoff 503 retries. Smaller/role playbooks (e.g. Gemma-4 E4B SDR) also permit L4 (24 GB) and T4 (16 GB).'),

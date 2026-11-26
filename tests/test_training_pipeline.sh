@@ -403,18 +403,43 @@ else
     fail "Observability / watchdog guard test failed: $OBS_OUT"
 fi
 
-# Test 16: Model Hub Drive mirror (push/pull SHA-256 round-trip) & Curator HF -> ModelScope fallback
+# Test 16: Model Hub Opt-In Provider Security, Curator & Drive Mirror
 MH_EXT_OUT=$("$PY" -B -c "
-import hashlib, json, os, sys, tempfile
+import os, sys
 sys.path.insert(0, '$LODGE_DIR/lib/tools')
-from model_hub import curator, drive_mirror, common
+from model_hub import curator, drive_mirror, common, providers
 
-# 1. Verify allow-list accepts hf-mirror.com and opencsg.com while blocking untrusted hosts
-assert common.host_allowed('https://hf-mirror.com/api/models')
-assert common.host_allowed('https://hub.opencsg.com/api/v1/models')
+# Clear any opt-in flags to test default posture
+for k in ('MODEL_HUB_ENABLE_MODELSCOPE', 'MODEL_HUB_ENABLE_OPENCSG', 'MODEL_HUB_ENABLE_HF_MIRROR'):
+    os.environ.pop(k, None)
+
+# 1. Default allow-list allows HF + IPFS, and BLOCKS ModelScope (.cn/aliyuncs), OpenCSG, HF-Mirror, untrusted hosts
+assert common.host_allowed('https://huggingface.co/api/models')
+assert common.host_allowed('https://ipfs.io/ipfs/QmTest')
+assert not common.host_allowed('https://modelscope.cn/api/v1/models')
+assert not common.host_allowed('https://oss.aliyuncs.com/model.gguf')
+assert not common.host_allowed('https://hub.opencsg.com/api/v1/models')
+assert not common.host_allowed('https://hf-mirror.com/api/models')
 assert not common.host_allowed('https://evil.example.com/model.gguf')
 
-# 2. Verify Curator HF -> ModelScope automatic fallback when HF raises HubError
+# ModelScope provider must refuse instantiation unless explicitly opted-in
+blocked_ms = False
+try:
+    providers.get_provider('modelscope')
+except common.HubError as e:
+    blocked_ms = 'opt-in' in str(e).lower()
+assert blocked_ms, 'ModelScope should be blocked by default'
+
+# Explicit opt-in unlocks the selected host/provider
+os.environ['MODEL_HUB_ENABLE_MODELSCOPE'] = '1'
+os.environ['MODEL_HUB_ENABLE_OPENCSG'] = '1'
+os.environ['MODEL_HUB_ENABLE_HF_MIRROR'] = '1'
+assert common.host_allowed('https://modelscope.cn/api/v1/models')
+assert common.host_allowed('https://hub.opencsg.com/api/v1/models')
+assert common.host_allowed('https://hf-mirror.com/api/models')
+assert providers.get_provider('modelscope').name == 'modelscope'
+
+# 2. Verify Curator default chain is HF-only, and ONLY adds ModelScope when opted-in
 orig_get = curator.get_provider
 orig_eval = curator._evaluate_candidate
 orig_probe = curator.probe
@@ -431,13 +456,20 @@ try:
         'provider': prov.name, 'repo': repo, 'best_quant': 'UD-Q4_K_XL', 'size_gib': 16.45,
         'verdict': 'fits_gpu', 'max_ctx': 98304, 'downloads': 99999, 'draft_cmd': f'/models draft {prov.name} {repo} UD-Q4_K_XL'
     }
-    res = curator.curate(['qwen'], provider_mode='auto', include_adapters=False)
-    assert res['families']['qwen']['provider'] == 'modelscope' and res['families']['qwen']['count'] == 1, res
-    assert any('rate limited' in e for e in res['fallback_events']), res['fallback_events']
+    os.environ.pop('MODEL_HUB_ENABLE_MODELSCOPE', None)
+    res_def = curator.curate(['qwen'], provider_mode='auto', include_adapters=False)
+    assert res_def['provider_chain'] == ['huggingface'] and res_def['families']['qwen']['count'] == 0, res_def
+
+    os.environ['MODEL_HUB_ENABLE_MODELSCOPE'] = '1'
+    res_opt = curator.curate(['qwen'], provider_mode='auto', include_adapters=False)
+    assert res_opt['provider_chain'] == ['huggingface', 'modelscope']
+    assert res_opt['families']['qwen']['provider'] == 'modelscope' and res_opt['families']['qwen']['count'] == 1, res_opt
 finally:
     curator.get_provider = orig_get
     curator._evaluate_candidate = orig_eval
     curator.probe = orig_probe
+    for k in ('MODEL_HUB_ENABLE_MODELSCOPE', 'MODEL_HUB_ENABLE_OPENCSG', 'MODEL_HUB_ENABLE_HF_MIRROR'):
+        os.environ.pop(k, None)
 
 # 3. Verify drive_mirror status shape & adapter slug detection
 st = drive_mirror.drive_status()
@@ -447,9 +479,9 @@ assert drive_mirror._detect_adapter_slug({'source': {'repo': 'unsloth/gemma-4-31
 print('OK')
 " | tail -n 1)
 if [ "$MH_EXT_OUT" = "OK" ]; then
-    pass "Model Hub curator (HF -> ModelScope fallback), OpenCSG/HF-Mirror allow-list & Drive mirror helpers work"
+    pass "Model Hub opt-in provider security (ModelScope/OpenCSG/HF-Mirror disabled by default), curator & Drive mirror work"
 else
-    fail "Model Hub curator / Drive mirror test failed: $MH_EXT_OUT"
+    fail "Model Hub opt-in / curator / Drive mirror test failed: $MH_EXT_OUT"
 fi
 
 echo "──────────────────────────────────────"

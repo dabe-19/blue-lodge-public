@@ -1,9 +1,10 @@
 """Dynamic Hardware-Aware Multi-Source Model Curator.
 
-Searches Hugging Face with automatic fallback to ModelScope (independent open community hub)
-across flagship open model families (`gemma4`, `qwen`, `nemo`, `inkling`, plus custom families),
-evaluates real GGUF fit against THIS node's live GPU VRAM & RAM (`hw.probe()` + `fit.estimate()`),
-and surfaces matching community GGUF LoRA/SVD adapters (e.g. `harness-hub`).
+Searches Hugging Face (default) — plus optional opt-in hubs only when explicitly enabled
+(e.g. MODEL_HUB_ENABLE_MODELSCOPE=1) — across flagship open model families (`gemma4`, `qwen`,
+`nemo`, `inkling`, `lfm`, plus custom families), evaluates real GGUF fit against THIS node's
+live GPU VRAM & RAM (`hw.probe()` + `fit.estimate()`), and surfaces matching community GGUF
+LoRA/SVD adapters (e.g. `harness-hub`).
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from typing import Any
 
 from . import fit as fitmod
 from . import gguf
-from .common import HubError
+from .common import HubError, opt_in_enabled
 from .hw import probe
 from .providers import get_provider
 
@@ -157,12 +158,14 @@ def _evaluate_candidate(prov, repo: str, hw: dict[str, Any], ctx: int, kv: str) 
 def curate(families: list[str] | None = None, *, provider_mode: str = "auto",
            ctx: int = 32768, kv: str = "q4_0", per_family: int = 3,
            include_adapters: bool = True) -> dict[str, Any]:
-    """Curate top hardware-fitting open models across families with HF -> ModelScope fallback."""
+    """Curate top hardware-fitting open models across families (HF default; opt-in fallbacks only)."""
     fams = [f.strip().lower() for f in (families or list(DEFAULT_FAMILIES)) if f.strip()]
     hw = probe()
 
     if provider_mode == "auto":
-        provider_chain = ["huggingface", "modelscope"]
+        provider_chain = ["huggingface"]
+        if opt_in_enabled("MODEL_HUB_ENABLE_MODELSCOPE"):
+            provider_chain.append("modelscope")
     else:
         provider_chain = [provider_mode]
 

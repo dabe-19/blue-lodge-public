@@ -473,6 +473,123 @@ pub async fn ask_status(State(s): State<Arc<AppState>>, Path(sid): Path<String>)
     })).into_response()
 }
 
+// ── Dynamic Hardware-Aware Curator & Optional Google Drive Mirror ────────────────────────
+
+#[derive(Deserialize, Default)]
+pub struct CurateQ {
+    families: Option<String>,
+    provider: Option<String>,
+    ctx: Option<u32>,
+    kv: Option<String>,
+    per_family: Option<u32>,
+    #[serde(default)] no_adapters: bool,
+}
+
+pub async fn curate(State(s): State<Arc<AppState>>, Query(q): Query<CurateQ>) -> Response {
+    let fams = q.families.unwrap_or_else(|| "gemma4,qwen,nemo,inkling".into());
+    if !ok_chars(&fams, 128, ",._-") { return bad("invalid families list"); }
+    let prov = q.provider.unwrap_or_else(|| "auto".into());
+    if !matches!(prov.as_str(), "auto" | "huggingface" | "modelscope") { return bad("invalid provider"); }
+    let ctx = q.ctx.unwrap_or(32768).clamp(512, 1_048_576).to_string();
+    let kv = q.kv.unwrap_or_else(|| "q4_0".into());
+    if !valid_kv(&kv) { return bad("invalid kv type"); }
+    let pf = q.per_family.unwrap_or(2).clamp(1, 4).to_string();
+    let mut args = vec![
+        "curate", "--families", fams.as_str(), "--provider", prov.as_str(),
+        "--ctx", ctx.as_str(), "--kv", kv.as_str(), "--per-family", pf.as_str(),
+    ];
+    if q.no_adapters { args.push("--no-adapters"); }
+    reply(cli(&s, &args, None, 180).await)
+}
+
+pub async fn drive_status(State(s): State<Arc<AppState>>) -> Response {
+    reply(cli(&s, &["drive-status"], None, 20).await)
+}
+
+#[derive(Deserialize, Default)]
+pub struct DriveListQ { folder: Option<String> }
+
+pub async fn drive_list(State(s): State<Arc<AppState>>, Query(q): Query<DriveListQ>) -> Response {
+    let mut args: Vec<String> = vec!["drive-list".into()];
+    if let Some(f) = q.folder.filter(|x| !x.is_empty()) {
+        if !ok_chars(&f, 160, "/._-") || f.contains("..") { return bad("invalid drive folder"); }
+        args.push("--folder".into());
+        args.push(f);
+    }
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    reply(cli(&s, &refs, None, 60).await)
+}
+
+#[derive(Deserialize, Default)]
+pub struct DrivePushBody {
+    name: Option<String>,
+    #[serde(default)] all: bool,
+    #[serde(default)] no_adapters: bool,
+    #[serde(default)] dry_run: bool,
+}
+
+pub async fn drive_push(State(s): State<Arc<AppState>>, Json(b): Json<DrivePushBody>) -> Response {
+    let mut args: Vec<String> = vec!["drive-push".into()];
+    let target_label: String;
+    if b.all {
+        args.push("--all".into());
+        target_label = "all installed profiles".into();
+    } else if let Some(n) = b.name.filter(|x| !x.is_empty()) {
+        if !valid_name(&n) { return bad("invalid profile name"); }
+        target_label = n.clone();
+        args.push(n);
+    } else {
+        return bad("provide profile name or all:true");
+    }
+    if b.no_adapters { args.push("--no-adapters".into()); }
+    if b.dry_run {
+        args.push("--dry-run".into());
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        return reply(cli(&s, &refs, None, 60).await);
+    }
+    let st = s.clone();
+    tokio::spawn(async move {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let _ = cli(&st, &refs, None, 60 * 60 * 6).await;
+    });
+    Json(json!({
+        "status": "started",
+        "action": "drive-push",
+        "target": target_label,
+        "message": format!("Streaming {} to Google Drive mirror (8 MiB resumable chunks). Check SCAN GOOGLE DRIVE to verify completion.", target_label),
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct DrivePullBody {
+    name: String,
+    #[serde(default)] no_adapters: bool,
+    #[serde(default)] dry_run: bool,
+}
+
+pub async fn drive_pull(State(s): State<Arc<AppState>>, Json(b): Json<DrivePullBody>) -> Response {
+    if !valid_name(&b.name) { return bad("invalid profile name"); }
+    let mut args: Vec<String> = vec!["drive-pull".into(), b.name.clone()];
+    if b.no_adapters { args.push("--no-adapters".into()); }
+    if b.dry_run {
+        args.push("--dry-run".into());
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        return reply(cli(&s, &refs, None, 60).await);
+    }
+    let name = b.name.clone();
+    let st = s.clone();
+    tokio::spawn(async move {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let _ = cli(&st, &refs, None, 60 * 60 * 6).await;
+    });
+    Json(json!({
+        "status": "started",
+        "action": "drive-pull",
+        "name": name,
+        "message": format!("Pulling profile '{}' (+ adapters) from Google Drive mirror with SHA-256 verification. Refresh Profiles once download finishes.", name),
+    })).into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
