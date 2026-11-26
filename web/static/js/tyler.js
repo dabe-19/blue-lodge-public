@@ -115,6 +115,9 @@
         pane.classList.toggle('active', paneId === state.activeTab);
       }
     });
+    if (state.activeTab === 'reputation' || state.activeTab === 'all') {
+      loadReputationData(state.repFilterUid || '');
+    }
   }
 
   function toggleGuideDrawer() {
@@ -2910,10 +2913,328 @@
         }
       });
     }
+    // Reputation & Trust Workspace Controls
+    const btnRepRefresh = document.getElementById('btnTylerRepRefresh');
+    if (btnRepRefresh) {
+      btnRepRefresh.addEventListener('click', () => loadReputationData(state.repFilterUid || ''));
+    }
+    const btnRepApplyPreset = document.getElementById('btnTylerRepApplyPreset');
+    if (btnRepApplyPreset) {
+      btnRepApplyPreset.addEventListener('click', () => {
+        const sel = document.getElementById('tylerRepPresetSelect');
+        if (sel && sel.value) submitReputationPolicy({ preset: sel.value });
+      });
+    }
+    const btnRepSavePolicy = document.getElementById('btnTylerRepSavePolicy');
+    if (btnRepSavePolicy) {
+      btnRepSavePolicy.addEventListener('click', () => {
+        const titleEl = document.getElementById('tylerRepLedgerTitle');
+        const t0El = document.getElementById('tylerRepTier0Name');
+        const t1El = document.getElementById('tylerRepTier1Name');
+        const t1Min = document.getElementById('tylerRepTier1Min');
+        const t2El = document.getElementById('tylerRepTier2Name');
+        const t2Min = document.getElementById('tylerRepTier2Min');
+        const t3El = document.getElementById('tylerRepTier3Name');
+        const t3Min = document.getElementById('tylerRepTier3Min');
+        const modEl = document.getElementById('tylerRepModFloor');
+        const capEl = document.getElementById('tylerRepDailyCap');
+        const cdEl = document.getElementById('tylerRepCooldown');
+        submitReputationPolicy({
+          ledger_title: titleEl ? titleEl.value.trim() : undefined,
+          default_moderator_floor: modEl ? modEl.value : 'tier_1',
+          passive_daily_cap: capEl ? Number(capEl.value) : 3,
+          passive_cooldown_secs: cdEl ? Number(cdEl.value) : 600,
+          tiers: {
+            tier_0: { name: t0El ? t0El.value.trim() : 'Cowan' },
+            tier_1: { name: t1El ? t1El.value.trim() : 'Stranger', min_score: t1Min ? Number(t1Min.value) : 0 },
+            tier_2: { name: t2El ? t2El.value.trim() : 'Brother', min_score: t2Min ? Number(t2Min.value) : 25 },
+            tier_3: { name: t3El ? t3El.value.trim() : 'Master Mason', min_score: t3Min ? Number(t3Min.value) : 50 }
+          }
+        });
+      });
+    }
+    const btnManualGrant = document.getElementById('btnTylerRepManualGrant');
+    if (btnManualGrant) {
+      btnManualGrant.addEventListener('click', () => runManualRepAdjust('grant'));
+    }
+    const btnManualPenalize = document.getElementById('btnTylerRepManualPenalize');
+    if (btnManualPenalize) {
+      btnManualPenalize.addEventListener('click', () => runManualRepAdjust('penalize'));
+    }
+    const btnClearFilter = document.getElementById('btnTylerRepClearFilter');
+    if (btnClearFilter) {
+      btnClearFilter.addEventListener('click', () => {
+        state.repFilterUid = '';
+        loadReputationData('');
+      });
+    }
+  }
+
+  // --- Workspace 5: Reputation & Trust Ledger (Zero innerHTML / Zero confirm) ---
+  function setRepPolicyStatus(msg, isError) {
+    const node = document.getElementById('tylerRepPolicyStatus');
+    if (!node) return;
+    node.textContent = msg || '';
+    node.style.color = isError ? '#f87171' : '#34d399';
+  }
+
+  function runManualRepAdjust(action) {
+    const uidEl = document.getElementById('tylerRepManualUid');
+    const nameEl = document.getElementById('tylerRepManualName');
+    const deltaEl = document.getElementById('tylerRepManualDelta');
+    const reasonEl = document.getElementById('tylerRepManualReason');
+    const user_id = uidEl ? uidEl.value.trim() : '';
+    if (!user_id) {
+      setRepPolicyStatus('Enter a user ID first.', true);
+      return;
+    }
+    const username = nameEl ? nameEl.value.trim() : '';
+    const delta = deltaEl ? Math.max(1, Number(deltaEl.value) || 5) : 5;
+    const reason = (reasonEl && reasonEl.value.trim()) ? reasonEl.value.trim() : `web_ui_${action}`;
+    submitReputationAdjust({ action, user_id, username, delta, reason });
+  }
+
+  async function loadReputationData(filterUid) {
+    try {
+      const qs = filterUid ? `?user_id=${encodeURIComponent(filterUid)}` : '';
+      const res = await fetch(`/api/reputation${qs}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.status !== 'ok') {
+        setRepPolicyStatus(data.message || 'Failed to load reputation data', true);
+        return;
+      }
+      state.repData = data;
+      renderReputationPanel(data);
+    } catch (err) {
+      setRepPolicyStatus(`Load error: ${err.message}`, true);
+    }
+  }
+
+  async function submitReputationAdjust(payload) {
+    try {
+      setRepPolicyStatus(`Applying ${payload.action} to ${payload.user_id}...`, false);
+      const res = await fetch('/api/reputation/adjust', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.status !== 'ok') {
+        setRepPolicyStatus(data.message || 'Adjustment failed', true);
+        return;
+      }
+      setRepPolicyStatus(`Updated ${payload.user_id} (${payload.action})`, false);
+      await loadReputationData(state.repFilterUid || '');
+    } catch (err) {
+      setRepPolicyStatus(`Error: ${err.message}`, true);
+    }
+  }
+
+  async function submitReputationPolicy(payload) {
+    try {
+      setRepPolicyStatus('Saving trust policy...', false);
+      const res = await fetch('/api/reputation/policy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.status !== 'ok') {
+        setRepPolicyStatus(data.message || 'Policy save failed', true);
+        return;
+      }
+      setRepPolicyStatus('Policy saved & ledger labels synced.', false);
+      await loadReputationData(state.repFilterUid || '');
+    } catch (err) {
+      setRepPolicyStatus(`Error: ${err.message}`, true);
+    }
+  }
+
+  function makeTwoClickConfirmBtn(label, armedLabel, cls, onConfirm) {
+    const btn = el('button', cls, label, { type: 'button' });
+    btn.style.fontSize = '9.5px';
+    btn.style.padding = '2px 6px';
+    let armedTimer = null;
+    btn.addEventListener('click', () => {
+      if (btn.dataset.armed === '1') {
+        if (armedTimer) clearTimeout(armedTimer);
+        btn.dataset.armed = '0';
+        btn.textContent = label;
+        onConfirm();
+      } else {
+        btn.dataset.armed = '1';
+        btn.textContent = armedLabel;
+        btn.style.borderColor = '#ef4444';
+        btn.style.color = '#fca5a5';
+        armedTimer = setTimeout(() => {
+          btn.dataset.armed = '0';
+          btn.textContent = label;
+          btn.style.borderColor = '';
+          btn.style.color = '';
+        }, 4000);
+      }
+    });
+    return btn;
+  }
+
+  function renderReputationPanel(data) {
+    const policy = data.policy || {};
+    const tiers = policy.tiers || {};
+    const passive = policy.passive_reward || {};
+    const themeBadge = document.getElementById('tylerRepThemeBadge');
+    if (themeBadge) {
+      themeBadge.textContent = `THEME: ${String(policy.theme || 'masonic').toUpperCase()}`;
+    }
+    const presetSel = document.getElementById('tylerRepPresetSelect');
+    if (presetSel && ['masonic', 'standard', 'guild', 'cyber'].includes(policy.theme)) {
+      presetSel.value = policy.theme;
+    }
+    const setVal = (id, val) => {
+      const n = document.getElementById(id);
+      if (n && val !== undefined && val !== null) n.value = String(val);
+    };
+    setVal('tylerRepLedgerTitle', policy.ledger_title || '');
+    setVal('tylerRepTier0Name', (tiers.tier_0 && tiers.tier_0.name) || 'Cowan');
+    setVal('tylerRepTier1Name', (tiers.tier_1 && tiers.tier_1.name) || 'Stranger');
+    setVal('tylerRepTier1Min', tiers.tier_1 && tiers.tier_1.min_score !== undefined ? tiers.tier_1.min_score : 0);
+    setVal('tylerRepTier2Name', (tiers.tier_2 && tiers.tier_2.name) || 'Brother');
+    setVal('tylerRepTier2Min', tiers.tier_2 && tiers.tier_2.min_score !== undefined ? tiers.tier_2.min_score : 25);
+    setVal('tylerRepTier3Name', (tiers.tier_3 && tiers.tier_3.name) || 'Master Mason');
+    setVal('tylerRepTier3Min', tiers.tier_3 && tiers.tier_3.min_score !== undefined ? tiers.tier_3.min_score : 50);
+    setVal('tylerRepModFloor', policy.default_moderator_floor || 'tier_1');
+    setVal('tylerRepDailyCap', passive.daily_cap !== undefined ? passive.daily_cap : 3);
+    setVal('tylerRepCooldown', passive.cooldown_secs !== undefined ? passive.cooldown_secs : 600);
+
+    // Users table
+    const users = Array.isArray(data.users) ? data.users : [];
+    const cntBadge = document.getElementById('tylerRepUserCountBadge');
+    if (cntBadge) cntBadge.textContent = `${users.length} USER${users.length === 1 ? '' : 'S'}`;
+
+    const usersBody = document.getElementById('tylerRepUsersBody');
+    if (usersBody) {
+      clearNode(usersBody);
+      if (users.length === 0) {
+        const tr = el('tr');
+        const td = el('td', '', 'No participants recorded in reputation.db yet.', { colspan: '5' });
+        td.style.padding = '10px';
+        td.style.color = 'var(--tyler-text-dim)';
+        tr.appendChild(td);
+        usersBody.appendChild(tr);
+      } else {
+        users.forEach((u) => {
+          const tr = el('tr');
+          const tdUser = el('td');
+          tdUser.appendChild(el('div', '', u.username || u.user_id));
+          const sub = el('div', '', `${u.user_id} · ${u.platform || 'discord'}`);
+          sub.style.fontSize = '10px';
+          sub.style.color = 'var(--tyler-text-dim)';
+          tdUser.appendChild(sub);
+
+          const tdScore = el('td', '', String(u.score));
+          tdScore.style.fontWeight = '700';
+          tdScore.style.color = Number(u.score) < 0 ? '#f87171' : (Number(u.score) >= 50 ? '#10b981' : '#e2e8f0');
+
+          const tdTier = el('td');
+          const tCls = u.tier_id === 'tier_0' ? 'tyler-badge tyler-badge-danger'
+            : (u.tier_id === 'tier_3' ? 'tyler-badge tyler-badge-safe'
+            : (u.tier_id === 'tier_2' ? 'tyler-badge tyler-badge-info' : 'tyler-badge tyler-badge-neutral'));
+          tdTier.appendChild(el('span', tCls, u.tier || u.tier_id || 'tier_1'));
+
+          const tdSeen = el('td', '', u.last_seen ? fmtTime(u.last_seen) : '—');
+
+          const tdAct = el('td');
+          const wrap = el('div');
+          wrap.style.display = 'flex';
+          wrap.style.gap = '4px';
+          wrap.style.flexWrap = 'wrap';
+
+          const bPlus = el('button', 'tactile-btn', '+5', { type: 'button' });
+          bPlus.style.fontSize = '9.5px';
+          bPlus.style.padding = '2px 6px';
+          bPlus.addEventListener('click', () => submitReputationAdjust({
+            action: 'grant', user_id: u.user_id, username: u.username, delta: 5, reason: 'web_ui_quick_grant'
+          }));
+
+          const bMinus = el('button', 'tactile-btn', '-5', { type: 'button' });
+          bMinus.style.fontSize = '9.5px';
+          bMinus.style.padding = '2px 6px';
+          bMinus.addEventListener('click', () => submitReputationAdjust({
+            action: 'penalize', user_id: u.user_id, username: u.username, delta: 5, reason: 'web_ui_quick_penalize'
+          }));
+
+          const bHist = el('button', 'tactile-btn', 'HISTORY', { type: 'button' });
+          bHist.style.fontSize = '9.5px';
+          bHist.style.padding = '2px 6px';
+          bHist.addEventListener('click', () => {
+            state.repFilterUid = u.user_id;
+            loadReputationData(u.user_id);
+          });
+
+          const bQuar = makeTwoClickConfirmBtn('QUARANTINE', 'CONFIRM?', 'tactile-btn', () => submitReputationAdjust({
+            action: 'quarantine', user_id: u.user_id, username: u.username, reason: 'web_ui_quarantine'
+          }));
+          const bReset = makeTwoClickConfirmBtn('RESET', 'CONFIRM?', 'tactile-btn', () => submitReputationAdjust({
+            action: 'reset', user_id: u.user_id, username: u.username, reason: 'web_ui_reset'
+          }));
+
+          wrap.appendChild(bPlus);
+          wrap.appendChild(bMinus);
+          wrap.appendChild(bHist);
+          wrap.appendChild(bQuar);
+          wrap.appendChild(bReset);
+          tdAct.appendChild(wrap);
+
+          tr.appendChild(tdUser);
+          tr.appendChild(tdScore);
+          tr.appendChild(tdTier);
+          tr.appendChild(tdSeen);
+          tr.appendChild(tdAct);
+          usersBody.appendChild(tr);
+        });
+      }
+    }
+
+    // Events audit table
+    const fBadge = document.getElementById('tylerRepFilterBadge');
+    const bClear = document.getElementById('btnTylerRepClearFilter');
+    const fUid = data.filter_user_id || '';
+    if (fBadge) fBadge.textContent = fUid ? `FILTER: ${fUid}` : 'ALL USERS';
+    if (bClear) bClear.style.display = fUid ? 'inline-block' : 'none';
+
+    const evBody = document.getElementById('tylerRepEventsBody');
+    const events = Array.isArray(data.events) ? data.events : [];
+    if (evBody) {
+      clearNode(evBody);
+      if (events.length === 0) {
+        const tr = el('tr');
+        const td = el('td', '', 'No audit events recorded yet.', { colspan: '6' });
+        td.style.padding = '10px';
+        td.style.color = 'var(--tyler-text-dim)';
+        tr.appendChild(td);
+        evBody.appendChild(tr);
+      } else {
+        events.forEach((ev) => {
+          const tr = el('tr');
+          tr.appendChild(el('td', '', fmtTime(ev.ts)));
+          tr.appendChild(el('td', '', ev.user_id));
+          const dNum = Number(ev.delta || 0);
+          const tdDelta = el('td', '', `${dNum >= 0 ? '+' : ''}${dNum}`);
+          tdDelta.style.color = dNum > 0 ? '#34d399' : (dNum < 0 ? '#f87171' : '#cbd5e1');
+          tdDelta.style.fontWeight = '700';
+          tr.appendChild(tdDelta);
+          tr.appendChild(el('td', '', `${ev.score_before}→${ev.score_after} (${ev.tier_after || ''})`));
+          tr.appendChild(el('td', '', ev.reason || ''));
+          tr.appendChild(el('td', '', ev.actor || 'system'));
+          evBody.appendChild(tr);
+        });
+      }
+    }
   }
 
   window.TylerCockpit = {
     loadTylerData,
+    loadReputationData,
     runTylerAction,
     initTylerModule,
     switchTylerTab,

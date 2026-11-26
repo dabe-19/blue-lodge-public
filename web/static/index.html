@@ -2480,7 +2480,8 @@
           <button type="button" class="tyler-tab-btn" data-tyler-tab="devices">◈ 2 · LAN DEVICES &amp; TACTICAL PROBES</button>
           <button type="button" class="tyler-tab-btn" data-tyler-tab="airspace">◆ 3 · 802.11 AIRSPACE &amp; PERIPHERALS</button>
           <button type="button" class="tyler-tab-btn" data-tyler-tab="guards">⚔ 4 · STANDING GUARDS &amp; WATCHLIST</button>
-          <button type="button" class="tyler-tab-btn" data-tyler-tab="all">⊞ 5 · ALL PANELS (UNIFIED VIEW)</button>
+          <button type="button" class="tyler-tab-btn" data-tyler-tab="reputation">⚖ 5 · REPUTATION &amp; TRUST</button>
+          <button type="button" class="tyler-tab-btn" data-tyler-tab="all">⊞ 6 · ALL PANELS (UNIFIED VIEW)</button>
         </div>
         <div style="font-size: 10.5px; color: var(--tyler-text-dim); font-family: var(--font-mono);">
           Select a workspace tab • Diagnostic Inspector remains docked on the right
@@ -3049,6 +3050,163 @@
                 <button type="button" class="tactile-btn" id="btnTylerSaveSubnetDes" style="font-size: 10px; border-color: var(--tyler-info-border); color: var(--tyler-info-text);">+ SAVE SUBNET DESIGNATION</button>
               </div>
               <div id="tylerDesignationsList" style="max-height: 120px; overflow-y: auto; font-family: var(--font-mono); font-size: 11px; color: var(--tyler-text-dim);"></div>
+            </div>
+          </div>
+
+          <!-- =====================================================================
+               WORKSPACE 5: REPUTATION & TRUST ENGINE (THEMEABLE SOCIAL LEDGER)
+               ===================================================================== -->
+          <div class="tyler-workspace-pane" data-tyler-workspace="reputation">
+            <!-- Theme & Role Customizer Card -->
+            <div class="tyler-panel-card">
+              <div class="tyler-panel-header">
+                <div>
+                  <div class="tyler-panel-title">⚖ TRUST POLICY, THEME &amp; ROLE CUSTOMIZER</div>
+                  <div class="tyler-card-sub">
+                    Customize rank names, promotion thresholds, anti-farming caps, and moderator starting floor. Defaults to the <strong>Masonic</strong> theme (<code>Cowan</code> · <code>Stranger</code> · <code>Brother</code> · <code>Master Mason</code>).
+                  </div>
+                </div>
+                <div class="tyler-btn-row" style="align-items: center;">
+                  <span id="tylerRepThemeBadge" class="tyler-badge tyler-badge-info">THEME: MASONIC</span>
+                  <button type="button" class="tactile-btn" id="btnTylerRepRefresh" style="font-size: 10px;">↻ REFRESH</button>
+                </div>
+              </div>
+
+              <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px;">
+                <label for="tylerRepPresetSelect" style="font-size: 11px; color: var(--tyler-text-dim); font-family: var(--font-mono);">THEME PRESET:</label>
+                <select id="tylerRepPresetSelect" class="form-input" style="font-size: 11px; padding: 4px 8px; width: auto;">
+                  <option value="masonic">Masonic (Cowan · Stranger · Brother · Master Mason)</option>
+                  <option value="standard">Standard (Quarantined · Guest · Member · Steward)</option>
+                  <option value="guild">Guild (Exiled · Apprentice · Journeyman · Master)</option>
+                  <option value="cyber">Cyber (Blacklisted · Visitor · Operator · Architect)</option>
+                </select>
+                <button type="button" class="tactile-btn" id="btnTylerRepApplyPreset" style="font-size: 10px; border-color: var(--tyler-info-border); color: var(--tyler-info-text);">APPLY PRESET</button>
+                <input type="text" id="tylerRepLedgerTitle" class="form-input" placeholder="Ledger title..." style="flex: 1; min-width: 220px; font-family: var(--font-mono); font-size: 11px;">
+              </div>
+
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-bottom: 10px;">
+                <div style="border: 1px solid var(--tyler-border); border-radius: 6px; padding: 8px;">
+                  <div style="font-size: 10px; font-weight: 700; color: #f87171; font-family: var(--font-mono); margin-bottom: 4px;">TIER 0 (QUARANTINE &lt; 0)</div>
+                  <input type="text" id="tylerRepTier0Name" class="form-input" placeholder="Cowan" style="width: 100%; font-family: var(--font-mono); font-size: 11px;">
+                </div>
+                <div style="border: 1px solid var(--tyler-border); border-radius: 6px; padding: 8px;">
+                  <div style="font-size: 10px; font-weight: 700; color: #cbd5e1; font-family: var(--font-mono); margin-bottom: 4px;">TIER 1 (DEFAULT ENTRY)</div>
+                  <input type="text" id="tylerRepTier1Name" class="form-input" placeholder="Stranger" style="width: 100%; font-family: var(--font-mono); font-size: 11px; margin-bottom: 4px;">
+                  <div style="display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--tyler-text-dim);">
+                    <span>Min:</span>
+                    <input type="number" id="tylerRepTier1Min" class="form-input" value="0" style="width: 64px; font-size: 11px; padding: 2px 5px;">
+                  </div>
+                </div>
+                <div style="border: 1px solid var(--tyler-border); border-radius: 6px; padding: 8px;">
+                  <div style="font-size: 10px; font-weight: 700; color: #38bdf8; font-family: var(--font-mono); margin-bottom: 4px;">TIER 2 (CONTRIBUTOR)</div>
+                  <input type="text" id="tylerRepTier2Name" class="form-input" placeholder="Brother" style="width: 100%; font-family: var(--font-mono); font-size: 11px; margin-bottom: 4px;">
+                  <div style="display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--tyler-text-dim);">
+                    <span>Min:</span>
+                    <input type="number" id="tylerRepTier2Min" class="form-input" value="25" style="width: 64px; font-size: 11px; padding: 2px 5px;">
+                  </div>
+                </div>
+                <div style="border: 1px solid var(--tyler-border); border-radius: 6px; padding: 8px;">
+                  <div style="font-size: 10px; font-weight: 700; color: #10b981; font-family: var(--font-mono); margin-bottom: 4px;">TIER 3 (TRUSTED OPS)</div>
+                  <input type="text" id="tylerRepTier3Name" class="form-input" placeholder="Master Mason" style="width: 100%; font-family: var(--font-mono); font-size: 11px; margin-bottom: 4px;">
+                  <div style="display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--tyler-text-dim);">
+                    <span>Min:</span>
+                    <input type="number" id="tylerRepTier3Min" class="form-input" value="50" style="width: 64px; font-size: 11px; padding: 2px 5px;">
+                  </div>
+                </div>
+              </div>
+
+              <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 8px; font-size: 11px; font-family: var(--font-mono);">
+                <label style="display: inline-flex; align-items: center; gap: 6px;">
+                  <span style="color: var(--tyler-text-dim);">MOD FLOOR:</span>
+                  <select id="tylerRepModFloor" class="form-input" style="font-size: 11px; padding: 3px 6px; width: auto;">
+                    <option value="tier_1">Tier 1 (Default)</option>
+                    <option value="tier_2">Tier 2</option>
+                    <option value="tier_3">Tier 3</option>
+                  </select>
+                </label>
+                <label style="display: inline-flex; align-items: center; gap: 5px;">
+                  <span style="color: var(--tyler-text-dim);">PASSIVE CAP/DAY:</span>
+                  <input type="number" id="tylerRepDailyCap" class="form-input" value="3" min="0" max="100" style="width: 58px; font-size: 11px; padding: 3px 6px;">
+                </label>
+                <label style="display: inline-flex; align-items: center; gap: 5px;">
+                  <span style="color: var(--tyler-text-dim);">COOLDOWN (s):</span>
+                  <input type="number" id="tylerRepCooldown" class="form-input" value="600" min="0" max="86400" style="width: 72px; font-size: 11px; padding: 3px 6px;">
+                </label>
+                <button type="button" class="tactile-btn" id="btnTylerRepSavePolicy" style="font-size: 10px; padding: 4px 10px; border-color: var(--tyler-safe-border); color: var(--tyler-safe-text);">✓ SAVE POLICY</button>
+                <span id="tylerRepPolicyStatus" style="font-size: 10.5px; color: var(--tyler-text-dim);"></span>
+              </div>
+            </div>
+
+            <!-- Participant Judgment Ledger -->
+            <div class="tyler-panel-card">
+              <div class="tyler-panel-header">
+                <div>
+                  <div class="tyler-panel-title">◈ PARTICIPANT JUDGMENT LEDGER</div>
+                  <div class="tyler-card-sub">
+                    Every score adjustment is recorded in <code>reputation_events</code>. Destructive actions require a two-click confirmation.
+                  </div>
+                </div>
+                <span id="tylerRepUserCountBadge" class="tyler-badge tyler-badge-safe">0 USERS</span>
+              </div>
+
+              <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;">
+                <input type="text" id="tylerRepManualUid" class="form-input" placeholder="Discord User ID (or handle)" style="width: 195px; font-family: var(--font-mono); font-size: 11px;">
+                <input type="text" id="tylerRepManualName" class="form-input" placeholder="Display name (optional)" style="width: 145px; font-family: var(--font-mono); font-size: 11px;">
+                <input type="number" id="tylerRepManualDelta" class="form-input" value="5" min="1" max="500" style="width: 68px; font-family: var(--font-mono); font-size: 11px;">
+                <input type="text" id="tylerRepManualReason" class="form-input" placeholder="Reason (e.g. helpful_pr)" style="flex: 1; min-width: 150px; font-family: var(--font-mono); font-size: 11px;">
+                <button type="button" class="tactile-btn" id="btnTylerRepManualGrant" style="font-size: 10px; border-color: var(--tyler-safe-border); color: var(--tyler-safe-text);">+ GRANT</button>
+                <button type="button" class="tactile-btn" id="btnTylerRepManualPenalize" style="font-size: 10px; border-color: var(--tyler-warn-border); color: var(--tyler-warn-text);">- PENALIZE</button>
+              </div>
+
+              <div style="max-height: 300px; overflow-y: auto; border: 1px solid var(--tyler-border); border-radius: 6px;">
+                <table class="tyler-data-table">
+                  <thead>
+                    <tr>
+                      <th>USER</th>
+                      <th>SCORE</th>
+                      <th>TIER</th>
+                      <th>LAST SEEN</th>
+                      <th>ACTIONS</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tylerRepUsersBody">
+                    <tr><td colspan="5" style="padding: 10px; color: var(--tyler-text-dim);">Loading reputation ledger...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Reputation Audit Trail -->
+            <div class="tyler-panel-card">
+              <div class="tyler-panel-header">
+                <div>
+                  <div class="tyler-panel-title">◉ REPUTATION AUDIT LOG (REPUTATION_EVENTS)</div>
+                  <div class="tyler-card-sub">
+                    Append-only ledger of passive turns, operator grants/penalties, quarantines, and resets.
+                  </div>
+                </div>
+                <div class="tyler-btn-row" style="align-items: center;">
+                  <span id="tylerRepFilterBadge" class="tyler-badge tyler-badge-neutral">ALL USERS</span>
+                  <button type="button" class="tactile-btn" id="btnTylerRepClearFilter" style="font-size: 10px; display: none;">✕ SHOW ALL</button>
+                </div>
+              </div>
+              <div style="max-height: 240px; overflow-y: auto; border: 1px solid var(--tyler-border); border-radius: 6px;">
+                <table class="tyler-data-table">
+                  <thead>
+                    <tr>
+                      <th>TIME</th>
+                      <th>USER ID</th>
+                      <th>DELTA</th>
+                      <th>TRANSITION</th>
+                      <th>REASON</th>
+                      <th>ACTOR</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tylerRepEventsBody">
+                    <tr><td colspan="6" style="padding: 10px; color: var(--tyler-text-dim);">No reputation events recorded yet.</td></tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
@@ -4598,7 +4756,7 @@ docker run -d --restart=always \
   <script src="/js/session.js?v=3"></script>
   <script src="/js/vendor/lightweight-charts.standalone.production.js"></script>
   <script src="/js/vendor/leaflet/leaflet.js"></script>
-  <script src="/js/tyler.js?v=5"></script>
+  <script src="/js/tyler.js?v=6"></script>
   <script src="/js/transcript_console.js?v=1"></script>
   <script src="/app.js?v=18"></script>
   <script src="/js/rack.js?v=1"></script>

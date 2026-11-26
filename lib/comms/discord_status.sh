@@ -176,18 +176,34 @@ discord_is_owner() {
     return 1
 }
 
-# discord_user_trusted <author_id> [author] — owner, or reputation >= DISCORD_OPS_MIN_REPUTATION (default 50).
+# discord_user_trusted <author_id> [author] [role_ids_csv] — owner, or effective tier_3 / reputation >= ops min.
 # Fails closed: invalid id, missing reputation DB or unparsable score => untrusted.
 discord_user_trusted() {
-    local uid="${1:-}" author="${2:-}" min="${DISCORD_OPS_MIN_REPUTATION:-50}"
+    local uid="${1:-}" author="${2:-}" roles="${3:-}"
+    local min="${DISCORD_OPS_MIN_REPUTATION:-}"
     if declare -f discord_is_owner &>/dev/null && discord_is_owner "$uid" "$author"; then return 0; fi
     _ds_valid_snowflake "$uid" || return 1
+    if [ -z "$min" ] && declare -f reputation_tier_min_score &>/dev/null; then
+        min=$(reputation_tier_min_score "tier_3" 2>/dev/null || echo 50)
+    fi
     [[ "$min" =~ ^-?[0-9]+$ ]] || min=50
     declare -f reputation_get &>/dev/null || return 1
     local row score
     row=$(reputation_get "$uid" 2>/dev/null) || return 1
     score="${row%%|*}"
-    [[ "$score" =~ ^-?[0-9]+$ ]] && [ "$score" -ge "$min" ]
+    [[ "$score" =~ ^-?[0-9]+$ ]] || return 1
+    # Quarantined users (< tier_1 min_score / < 0) are never trusted even with Discord roles
+    [ "$score" -lt 0 ] && return 1
+    if [ "$score" -ge "$min" ]; then
+        return 0
+    fi
+    # Check Discord role floor override if roles CSV provided (only when caller didn't force an explicit min override)
+    if [ -n "$roles" ] && [ -z "${DISCORD_OPS_MIN_REPUTATION:-}" ] && declare -f reputation_effective_tier_id &>/dev/null; then
+        local eff_tid
+        eff_tid=$(reputation_effective_tier_id "$uid" "$roles" 2>/dev/null || echo "")
+        [ "$eff_tid" = "tier_3" ] && return 0
+    fi
+    return 1
 }
 
 DISCORD_CRYPTO_INTENT_RE='(crypto|wallet|wallets|cardano|ada|polymarket|arbitrage|swap|dex|underwrite|sniper|p2p|bitcoin|btc|solana|sol|polygon|usdc|token|tokens|yield|loan|borrow|lending|oco|stop buy|stop order|limit order|reclaim order|price ladder|market maker|trade|trading|standing order|corridor|corridors|shock fade|markout|backtest|reprice|reclaim|snek|night|iag|wmtx|djed|usdm|shen|hosky|minswap|p-[0-9a-f]{6}|so-[0-9a-f]{6}|route [ab]|(^|[^a-z0-9])(min|lq|s2|s3)([^a-z0-9]|$))'
@@ -245,34 +261,44 @@ discord_select_run_profile() {
     fi
 }
 
-# discord_reward_turn <author_id> <author> — +1 reputation per completed turn, but passive engagement
-# stops one point below DISCORD_OPS_MIN_REPUTATION so nobody farms their way into ops tools.
-# Quarantined Cowan users (< 0) do not earn passive turn rewards (must recover via probation decay or operator reset).
-# Operators promote explicitly: reputation_add <id> <delta> operator_promotion.
+# discord_reward_turn <author_id> <author> — +1 reputation per completed turn, subject to:
+#  - anti-farming daily cap (+3/day default) and cooldown (10 min default) via reputation_can_reward_passive
+#  - stops one point below tier_3 (DISCORD_OPS_MIN_REPUTATION) so nobody farms their way into ops tools
+#  - quarantined users (< 0) do not earn passive turn rewards (must recover via probation decay or operator reset).
+# Operators promote explicitly: reputation_add <id> <delta> operator_promotion (or /rep grant).
 discord_reward_turn() {
-    local uid="${1:-}" author="${2:-}" min="${DISCORD_OPS_MIN_REPUTATION:-50}" row score
+    local uid="${1:-}" author="${2:-}" min="${DISCORD_OPS_MIN_REPUTATION:-}" row score
     _ds_valid_snowflake "$uid" || return 0
+    if [ -z "$min" ] && declare -f reputation_tier_min_score &>/dev/null; then
+        min=$(reputation_tier_min_score "tier_3" 2>/dev/null || echo 50)
+    fi
     [[ "$min" =~ ^-?[0-9]+$ ]] || min=50
     declare -f reputation_add &>/dev/null || return 0
     if declare -f reputation_get &>/dev/null; then
         row=$(reputation_get "$uid" "$author" 2>/dev/null) || row=""
         score="${row%%|*}"
         if [[ "$score" =~ ^-?[0-9]+$ ]]; then
-            # Quarantined users (< 0) cannot farm out of Cowan via chat turns
+            # Quarantined users (< 0) cannot farm out of quarantine via chat turns
             [ "$score" -lt 0 ] && return 0
             if [ "$score" -lt "$min" ] && [ "$score" -ge $((min - 1)) ]; then
                 return 0
             fi
         fi
     fi
-    reputation_add "$uid" 1 "constructive_turn" "$author" >/dev/null 2>&1 || true
+    # Enforce anti-farming cooldown and daily passive cap (+3/day, 10m cooldown by default)
+    if declare -f reputation_can_reward_passive &>/dev/null; then
+        reputation_can_reward_passive "$uid" || return 0
+    fi
+    reputation_add "$uid" 1 "constructive_turn" "$author" "system:discord" >/dev/null 2>&1 || true
 }
 
 # discord_status_verbose_ok <is_dm 0|1> <author_id>
 discord_status_verbose_ok() {
     local is_dm="${1:-0}" uid="${2:-}"
     [ "$is_dm" = "1" ] || return 1
-    DISCORD_OPS_MIN_REPUTATION=50 discord_user_trusted "$uid"
+    local t3_min=50
+    declare -f reputation_tier_min_score &>/dev/null && t3_min=$(reputation_tier_min_score "tier_3" 2>/dev/null || echo 50)
+    DISCORD_OPS_MIN_REPUTATION="$t3_min" discord_user_trusted "$uid"
 }
 
 # ── 3.3 status message ────────────────────────────────────────────

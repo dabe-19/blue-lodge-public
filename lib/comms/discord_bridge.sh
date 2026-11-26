@@ -1223,10 +1223,39 @@ discord_generate_response() {
     fi
 
     # Author Trust & Reputation Context + Probation Recovery Check
-    local author_rep=10 author_tier="Stranger" is_owner=0 min_ops_rep="${DISCORD_OPS_MIN_REPUTATION:-50}"
+    local author_rep=10 author_tier="" is_owner=0 min_ops_rep="${DISCORD_OPS_MIN_REPUTATION:-}"
+    if [ -z "$min_ops_rep" ] && declare -f reputation_tier_min_score &>/dev/null; then
+        min_ops_rep=$(reputation_tier_min_score "tier_3" 2>/dev/null || echo 50)
+    fi
+    [[ "$min_ops_rep" =~ ^-?[0-9]+$ ]] || min_ops_rep=50
+    if declare -f reputation_tier_name_by_id &>/dev/null; then
+        author_tier=$(reputation_tier_name_by_id "tier_1" 2>/dev/null || echo "Stranger")
+    else
+        author_tier="Stranger"
+    fi
     if declare -f discord_is_owner &>/dev/null && discord_is_owner "$author_id" "$author"; then
         is_owner=1
     fi
+
+    # Owner-only inline /rep moderation & theme command shortcut (zero LLM invocation)
+    if [ "$is_owner" -eq 1 ] && [[ "$prompt" =~ ^[[:space:]]*/rep([[:space:]]|$) ]] && [ -f "$LODGE_DIR/commands/rep.sh" ]; then
+        local _rep_rest _rep_out
+        _rep_rest="${prompt#*/rep}"
+        # Parse args safely via bash array (no eval)
+        local -a _rep_args=()
+        read -r -a _rep_args <<< "$_rep_rest"
+        _rep_out=$(REP_ACTOR="discord_owner:${author}" bash "$LODGE_DIR/commands/rep.sh" "${_rep_args[@]}" 2>&1 || true)
+        [ -z "$_rep_out" ] && _rep_out="(No output from /rep)"
+        if [ -n "$session_log" ]; then
+            printf "[%s] ── Owner executed inline /rep command (%s).\n" "$(date '+%H:%M:%S')" "${_rep_args[*]:-help}" >> "$session_log"
+        fi
+        [ -n "$out_reply_file" ] && printf '%s\n' "$_rep_out" > "$out_reply_file"
+        printf '%s\n' "$_rep_out"
+        discord_history_append "$channel_id" "user" "$author" "$prompt" "$author_id"
+        discord_history_append "$channel_id" "assistant" "George" "$_rep_out" "$author_id"
+        return 0
+    fi
+
     if declare -f reputation_probation_decay &>/dev/null && [ -n "$author_id" ] && [ "$is_owner" -eq 0 ]; then
         reputation_probation_decay "$author_id" "$author" >/dev/null 2>&1 || true
     fi
@@ -1239,11 +1268,16 @@ discord_generate_response() {
         fi
     fi
 
-    # Cowan Quarantine Gate (< 0 points): Canned Franklin wit only, zero LLM/tool invocation
+    # Quarantine Gate (< 0 points): Theme-aware canned reply only, zero LLM/tool invocation
     if [ "$is_owner" -eq 0 ] && [[ "$author_rep" =~ ^-[0-9]+$ ]]; then
-        local cowan_msg="Being ignorant is not so much a shame, as being unwilling to learn. Your current standing on the Square (${author_rep} points · Cowan) places your requests in quarantine under The Tyler's watch."
+        local cowan_msg
+        if declare -f reputation_format_quarantine &>/dev/null; then
+            cowan_msg=$(reputation_format_quarantine "$author_rep" "$author_tier")
+        else
+            cowan_msg="Being ignorant is not so much a shame, as being unwilling to learn. Your current standing on the Square (${author_rep} points · ${author_tier}) places your requests in quarantine under The Tyler's watch."
+        fi
         if [ -n "$session_log" ]; then
-            printf "[%s] ── Cowan quarantine enforced for @%s (score=%s).\n" "$(date '+%H:%M:%S')" "$author" "$author_rep" >> "$session_log"
+            printf "[%s] ── Quarantine enforced for @%s (score=%s, tier=%s).\n" "$(date '+%H:%M:%S')" "$author" "$author_rep" "$author_tier" >> "$session_log"
         fi
         [ -n "$out_reply_file" ] && printf '%s\n' "$cowan_msg" > "$out_reply_file"
         echo "$cowan_msg"

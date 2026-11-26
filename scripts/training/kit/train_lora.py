@@ -131,16 +131,30 @@ def _export_adapter_gguf(adapter_dir: str, base_model: str, out_gguf: str, base_
             break
 
     if not conv:
-        # Lightweight download of official stock llama.cpp convert_lora_to_gguf.py (~40 KB)
-        dl_path = os.path.join(os.path.dirname(os.path.abspath(out_gguf)), "convert_lora_to_gguf.py")
-        url = "https://raw.githubusercontent.com/ggml-org/llama.cpp/master/convert_lora_to_gguf.py"
-        try:
-            print(f"[*] Fetching stock llama.cpp convert_lora_to_gguf.py -> {dl_path}...")
-            urllib.request.urlretrieve(url, dl_path)
-            conv = dl_path
-        except Exception as e:
-            print(f"[!] Could not fetch convert_lora_to_gguf.py: {e}", file=sys.stderr)
-            return False
+        # Lightweight sparse checkout of official stock llama.cpp LoRA converter + conversion/ & gguf-py/ packages
+        conv_dir = os.path.join(os.path.dirname(os.path.abspath(out_gguf)), "_llama_cpp_conv")
+        cand_conv = os.path.join(conv_dir, "convert_lora_to_gguf.py")
+        if os.path.isfile(cand_conv) and os.path.isdir(os.path.join(conv_dir, "conversion")):
+            conv = cand_conv
+        else:
+            try:
+                shutil.rmtree(conv_dir, ignore_errors=True)
+                print(f"[*] Fetching stock llama.cpp LoRA converter (sparse checkout) -> {conv_dir}...")
+                subprocess.run(
+                    ["git", "clone", "--depth", "1", "--filter=blob:none", "--sparse",
+                     "https://github.com/ggml-org/llama.cpp.git", conv_dir],
+                    check=True, capture_output=True, text=True, timeout=90,
+                )
+                subprocess.run(
+                    ["git", "-C", conv_dir, "sparse-checkout", "set",
+                     "convert_lora_to_gguf.py", "conversion", "gguf-py"],
+                    check=True, capture_output=True, text=True, timeout=60,
+                )
+                if os.path.isfile(cand_conv):
+                    conv = cand_conv
+            except Exception as e:
+                print(f"[!] Could not sparse-checkout llama.cpp converter: {e}", file=sys.stderr)
+                return False
 
     argv = [sys.executable, conv, adapter_dir, "--outtype", "f16", "--outfile", out_gguf]
     if base_local_path and os.path.isfile(os.path.join(base_local_path, "config.json")):
@@ -148,8 +162,12 @@ def _export_adapter_gguf(adapter_dir: str, base_model: str, out_gguf: str, base_
     else:
         argv += ["--base-model-id", base_model]
 
+    conv_env = dict(os.environ)
+    gguf_py = os.path.join(os.path.dirname(conv), "gguf-py")
+    if os.path.isdir(gguf_py):
+        conv_env["PYTHONPATH"] = gguf_py + os.pathsep + conv_env.get("PYTHONPATH", "")
     print(f"[*] Exporting GGUF LoRA adapter: {' '.join(argv)}")
-    r = subprocess.run(argv, capture_output=True, text=True, check=False)
+    r = subprocess.run(argv, capture_output=True, text=True, check=False, env=conv_env)
     if r.returncode == 0 and os.path.isfile(out_gguf):
         print(f"[✓] Exported GGUF adapter -> {out_gguf} ({os.path.getsize(out_gguf) / (1024*1024):.1f} MiB)")
         return True

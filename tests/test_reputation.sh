@@ -99,4 +99,78 @@ it "rejects non-integer score deltas" && {
     assert_eq "$data" "50|Master Mason"
 }
 
+describe "reputation audit ledger, customizable themes, anti-farming & moderator floor"
+
+it "records every score change in reputation_events audit ledger" && {
+    ev_cnt=$(sqlite3 "$REPUTATION_DB" "SELECT count(*) FROM reputation_events WHERE user_id = 'user_101';")
+    assert_eq "$ev_cnt" "2"
+    last_reason=$(sqlite3 "$REPUTATION_DB" "SELECT reason FROM reputation_events WHERE user_id = 'user_101' ORDER BY id DESC LIMIT 1;")
+    assert_eq "$last_reason" "approved_pr"
+}
+
+it "switches theme presets cleanly and syncs existing DB tier labels" && {
+    reputation_apply_preset "standard"
+    data=$(reputation_get "user_101" "Alice")
+    assert_eq "$data" "50|Steward"
+    qdata=$(reputation_get "user_bad" "Eve")
+    assert_eq "$(echo "$qdata" | cut -d'|' -f2)" "Quarantined"
+    reputation_apply_preset "masonic"
+    data_back=$(reputation_get "user_101" "Alice")
+    assert_eq "$data_back" "50|Master Mason"
+}
+
+it "supports renaming a custom role and updating its threshold" && {
+    reputation_set_tier_name "tier_2" "Fellowcraft"
+    reputation_set_threshold "tier_2" 20
+    reputation_add "user_custom" 10 "bonus" "Bob" >/dev/null
+    data=$(reputation_get "user_custom" "Bob")
+    assert_eq "$data" "20|Fellowcraft"
+    # Restore masonic defaults for subsequent tests
+    reputation_apply_preset "masonic"
+    reputation_set_threshold "tier_2" 25
+}
+
+it "enforces 10-minute passive cooldown and +3/day passive cap" && {
+    reputation_get "user_farm" "Farmer" >/dev/null
+    reputation_can_reward_passive "user_farm"
+    assert_eq "$?" "0"
+    reputation_add "user_farm" 1 "constructive_turn" "Farmer" "system:discord" >/dev/null
+    # Immediate second reward blocked by 600s cooldown
+    reputation_can_reward_passive "user_farm"
+    assert_eq "$?" "1"
+    # Backdate 3 passive events within last 24h (outside 600s cooldown) -> daily cap (+3/day) blocks 4th
+    now=$(date +%s)
+    sqlite3 "$REPUTATION_DB" "UPDATE reputation_events SET created_at = $((now - 7200)) WHERE user_id = 'user_farm';"
+    sqlite3 "$REPUTATION_DB" "INSERT INTO reputation_events (user_id, username, platform, delta, old_score, new_score, old_tier, new_tier, reason, actor, created_at) VALUES ('user_farm', 'Farmer', 'discord', 1, 11, 12, 'Stranger', 'Stranger', 'constructive_turn', 'system:discord', $((now - 5400)));"
+    sqlite3 "$REPUTATION_DB" "INSERT INTO reputation_events (user_id, username, platform, delta, old_score, new_score, old_tier, new_tier, reason, actor, created_at) VALUES ('user_farm', 'Farmer', 'discord', 1, 12, 13, 'Stranger', 'Stranger', 'constructive_turn', 'system:discord', $((now - 3600)));"
+    reputation_can_reward_passive "user_farm"
+    assert_eq "$?" "1"
+}
+
+it "defaults moderator floor to tier_1, respects discord_role_floors, and keeps tier_0 quarantine paramount" && {
+    reputation_get "user_mod" "ModAlice" >/dev/null
+    eff=$(reputation_effective_tier_id "user_mod" "" 1)
+    assert_eq "$eff" "tier_1"
+    # Map custom role 'elder' -> tier_2 via reputation_policy_save
+    updated_p=$(reputation_load_policy | jq '.discord_role_floors["elder"] = "tier_2"')
+    reputation_policy_save "$updated_p"
+    eff2=$(reputation_effective_tier_id "user_mod" "elder" 0)
+    assert_eq "$eff2" "tier_2"
+    # Quarantine ALWAYS overrides role floor
+    reputation_quarantine "user_mod" "ModAlice" "policy_breach" "operator" >/dev/null
+    eff3=$(reputation_effective_tier_id "user_mod" "elder" 1)
+    assert_eq "$eff3" "tier_0"
+}
+
+it "supports /rep CLI subcommands (grant, quarantine, reset, history, theme)" && {
+    out=$(bash "$LODGE_DIR/commands/rep.sh" grant "user_cli" 20 "cli_test" 2>&1)
+    assert_contains "$out" "30|Brother"
+    out_h=$(bash "$LODGE_DIR/commands/rep.sh" history "user_cli" 2>&1)
+    assert_contains "$out_h" "cli_test"
+    out_r=$(bash "$LODGE_DIR/commands/rep.sh" reset "user_cli" 2>&1)
+    assert_contains "$out_r" "Reset user_cli"
+    out_t=$(bash "$LODGE_DIR/commands/rep.sh" theme show 2>&1)
+    assert_contains "$out_t" '"theme": "masonic"'
+}
+
 test_end

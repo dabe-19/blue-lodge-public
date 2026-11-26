@@ -1,0 +1,65 @@
+{
+  "theme": "masonic",
+  "ledger_title": "George's Judgment Ledger & Reputation Score",
+  "starting_score": 10,
+  "passive_reward": {
+    "enabled": true,
+    "delta": 1,
+    "cooldown_secs": 600,
+    "daily_cap": 3,
+    "ceiling_offset_below_tier_3": 1
+  },
+  "probation_recovery": {
+    "enabled": true,
+    "interval_secs": 172800,
+    "delta": 1
+  },
+  "default_moderator_floor": "tier_1",
+  "discord_role_floors": {},
+  "tiers": {
+    "tier_0": {
+      "name": "Cowan",
+      "min_score": null,
+      "max_score": -1,
+      "description": "Quarantined by The Tyler. No tool execution permitted.",
+      "capabilities": []
+    },
+    "tier_1": {
+      "name": "Stranger",
+      "min_score": 0,
+      "description": "Tier 1: Ambient conversational tools (weather_report, system_time, web_search, system vitals).",
+      "capabilities": ["weather_report", "system_time", "web_search", "system_vitals", "recall"]
+    },
+    "tier_2": {
+      "name": "Brother",
+      "min_score": 25,
+      "description": "Tier 2: Interactive task requests, ephemeral git sandbox clones on Slot 1, Sovereign Gitea PR landing.",
+      "capabilities": ["weather_report", "system_time", "web_search", "system_vitals", "recall", "file_read", "dir_list", "file_grep", "gitea_pr", "sandbox_task"]
+    },
+    "tier_3": {
+      "name": "Master Mason",
+      "min_score": 50,
+      "description": "Tier 3: Elevated agency, slash command dispatcher, priority scheduling, full sandbox authority.",
+      "capabilities": ["*"]
+    }
+  },
+  "quarantine_reply": "Being ignorant is not so much a shame, as being unwilling to learn. Your current standing ({score} points · {tier}) places your requests in quarantine under The Tyler's watch.",
+  "presets": {
+    "masonic": {
+      "ledger_title": "George's Judgment Ledger & Reputation Score",
+      "names": ["Cowan", "Stranger", "Brother", "Master Mason"]
+    },
+    "standard": {
+      "ledger_title": "Community Trust & Standing Ledger",
+      "names": ["Quarantined", "Guest", "Member", "Steward"]
+    },
+    "guild": {
+      "ledger_title": "Craftsman Guild Standing Ledger",
+      "names": ["Exiled", "Apprentice", "Journeyman", "Master"]
+    },
+    "cyber": {
+      "ledger_title": "Node Access & Trust Matrix",
+      "names": ["Blacklisted", "Visitor", "Operator", "Architect"]
+    }
+  }
+}

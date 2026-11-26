@@ -181,7 +181,7 @@ def _exe(path):
 
 def find_converter(spec):
     cands = []
-    for d in (spec.get("llama_cpp_dir"), os.environ.get("LLAMA_CPP_DIR"), "/opt/llama.cpp"):
+    for d in (spec.get("llama_cpp_dir"), os.environ.get("LLAMA_CPP_DIR"), os.path.join(GEORGE, "tools", "llama_cpp"), "/opt/llama.cpp"):
         if d:
             cands.append(os.path.join(d, "convert_lora_to_gguf.py"))
     cands += sorted(glob.glob(os.path.join(LODGE, "build*", "*", "convert_lora_to_gguf.py")))
@@ -872,8 +872,17 @@ def _recover_track_from_drive(run_name: str, track_name: str, td: str) -> bool:
             continue
 
     if downloaded > 0 and (os.path.isfile(os.path.join(td, "adapter.gguf")) or os.path.isfile(os.path.join(adapter_dir, "adapter_model.safetensors"))):
-        with open(os.path.join(td, "state"), "w") as fh:
-            fh.write("done\n")
+        for root_p, dirs_p, files_p in os.walk(os.path.join(td, "output")):
+            try:
+                os.chmod(root_p, 0o775)
+            except OSError:
+                pass
+            for fn_p in files_p:
+                try:
+                    os.chmod(os.path.join(root_p, fn_p), 0o664)
+                except OSError:
+                    pass
+        _write_text(os.path.join(td, "state"), "done\n")
         return True
     return False
 
@@ -967,14 +976,25 @@ def collect_colab(name):
                 with tarfile.open(local) as tf:
                     safe = [m for m in tf.getmembers() if not (m.name.startswith("/") or ".." in m.name.split("/"))
                             and (m.isfile() or m.isdir())]
-                    os.makedirs(os.path.join(td, "output"), exist_ok=True)
-                    tf.extractall(os.path.join(td, "output"), members=safe)  # noqa: S202
+                    out_dir = os.path.join(td, "output")
+                    os.makedirs(out_dir, exist_ok=True)
+                    tf.extractall(out_dir, members=safe)  # noqa: S202
+                # Normalize modes (safetensors saves 0600 on Colab; root container extraction otherwise blocks host user)
+                for root_p, _, files_p in os.walk(out_dir):
+                    try:
+                        os.chmod(root_p, 0o775)
+                    except OSError:
+                        pass
+                    for fn_p in files_p:
+                        try:
+                            os.chmod(os.path.join(root_p, fn_p), 0o664)
+                        except OSError:
+                            pass
                 # Promote in-Colab exported adapter.gguf if present
                 colab_gguf = os.path.join(td, "output", "adapter.gguf")
                 if os.path.isfile(colab_gguf):
                     shutil.copyfile(colab_gguf, os.path.join(td, "adapter.gguf"))
-                with open(os.path.join(td, "state"), "w") as fh:
-                    fh.write("done\n")
+                _write_text(os.path.join(td, "state"), "done\n")
                 res[tp["track"]] = "downloaded"
             else:
                 res[tp["track"]] = f"download failed: {err_d.strip()[-200:]}"
@@ -1453,7 +1473,21 @@ def merge(name):
         raise SpecError(f"no run named {name}")
     v = meta["spec"]
     conv = find_converter(v)
-    py = v["train_python"] if _exe(v["train_python"]) else sys.executable
+    conv_venv_py = os.path.join(GEORGE, "tools", "convert_venv", "bin", "python")
+    if _exe(v["train_python"]):
+        py = v["train_python"]
+    elif _exe(conv_venv_py):
+        py = conv_venv_py
+    else:
+        py = sys.executable
+    hf_token, _ = cc._read_key_from_files(("HF_TOKEN", "HUGGINGFACE_TOKEN", "HUGGING_FACE_HUB_TOKEN"))
+    conv_env = dict(os.environ)
+    if hf_token and not conv_env.get("HF_TOKEN"):
+        conv_env["HF_TOKEN"] = hf_token
+    if conv:
+        gguf_py = os.path.join(os.path.dirname(conv), "gguf-py")
+        if os.path.isdir(gguf_py):
+            conv_env["PYTHONPATH"] = gguf_py + os.pathsep + conv_env.get("PYTHONPATH", "")
     ggufs, notes = [], []
     role_dir = role_adapter_dir(v["model_slug"], v["role"])
 
@@ -1473,7 +1507,7 @@ def merge(name):
                 argv += ["--base", v["base_hf_path"]]
             else:
                 argv += ["--base-model-id", v["base_model"]]
-            r = subprocess.run(argv, capture_output=True, text=True, timeout=3600, stdin=subprocess.DEVNULL, check=False)
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=3600, stdin=subprocess.DEVNULL, check=False, env=conv_env)
             if r.returncode != 0:
                 notes.append(f"{t['name']}: convert failed: {(r.stderr or r.stdout).strip()[-300:]}")
                 continue

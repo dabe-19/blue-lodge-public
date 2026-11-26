@@ -18,6 +18,7 @@ pub mod nodes;
 pub mod okf;
 pub mod rack;
 pub mod react;
+pub mod reputation;
 pub mod research;
 pub mod runs;
 pub mod sdr;
@@ -372,6 +373,9 @@ pub fn create_router(state: Arc<AppState>, cors: CorsLayer) -> Router {
 
         // Memories, Recall, Transcripts & Journal
         .route("/api/memories", get(memories::get_memories))
+        .route("/api/reputation", get(reputation::get_reputation))
+        .route("/api/reputation/adjust", post(reputation::post_reputation_adjust))
+        .route("/api/reputation/policy", post(reputation::post_reputation_policy))
         .route("/api/runs", get(runs::list_runs))
         .route("/api/runs/:id", get(runs::get_run))
         .route("/api/transcripts", get(memories::get_transcripts))
