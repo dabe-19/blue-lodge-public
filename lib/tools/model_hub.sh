@@ -180,6 +180,18 @@ model_hub_cmd() {
             [ -z "${1:-}" ] && { echo 'Usage: /models train-kit '\''{"name":"my-kit","base_model":"org/model","train":"training:active/x.jsonl"}'\'''; return 1; }
             printf '%s' "$1" | _mh_py train-kit | _mh_print ;;
         kits)      _mh_py kits | _mh_print ;;
+        curate)
+            _mh_py curate "$@" | jq -r 'if .error then .error else
+                "Hardware: \([.hw.gpus[] | "\(.[0]) (\((.[1]/1024*10|floor)/10) GiB)"] | join(", ")) · RAM \((.hw.ram_mb/1024*10|floor)/10) GiB · Providers: \(.provider_chain | join(" → "))",
+                (.families | to_entries[] |
+                  "\n── \(.value.label) [\(.value.provider // "none")] ──",
+                  (if .value.count == 0 then "  (no hardware-fitting GGUFs found)" else
+                    (.value.models[] | "  \(.repo)  \(.best_quant) (\(.size_gib) GiB)  \(.verdict)  max_ctx=\(.max_ctx // "?")  ⬇ \(.downloads)\(if (.community_adapters|length) > 0 then "\n      adapters: \([.community_adapters[].hf_repo] | join(", "))" else "" end)\n      → \(.draft_cmd)") end))
+            end' ;;
+        drive-status) _mh_py drive-status | _mh_print ;;
+        drive-list)   _mh_py drive-list "$@" | _mh_print ;;
+        drive-push)   _mh_py drive-push "$@" | _mh_print ;;
+        drive-pull)   _mh_py drive-pull "$@" | _mh_print ;;
         ask)       model_hub_ask "$@" ;;
         *) return 2 ;;
     esac

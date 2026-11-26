@@ -23,6 +23,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from model_hub import curator, drive_mirror  # noqa: E402
 from model_hub import fit as fitmod  # noqa: E402
 from model_hub import gguf, installer, library, profiles, serving, training  # noqa: E402
 from model_hub.common import REPO_RE, HubError, get_json, redact, set_token  # noqa: E402
@@ -378,6 +379,28 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_parser("forge-pantry")
     sp.add_parser("forge-build")
     sp.add_parser("kits")
+    # dynamic multi-source model curator (HF -> ModelScope fallback)
+    s = sp.add_parser("curate")
+    s.add_argument("--families", default="gemma4,qwen,nemo,inkling")
+    s.add_argument("--provider", default="auto", choices=["auto", "huggingface", "modelscope"])
+    s.add_argument("--ctx", type=int, default=32768)
+    s.add_argument("--kv", default="q4_0", choices=sorted(fitmod.KV_BYTES))
+    s.add_argument("--per-family", type=int, default=2)
+    s.add_argument("--no-adapters", action="store_true")
+    # optional Google Drive multi-node mirror
+    sp.add_parser("drive-status")
+    s = sp.add_parser("drive-list"); s.add_argument("--folder")
+    s = sp.add_parser("drive-push")
+    s.add_argument("name", nargs="?")
+    s.add_argument("--all", action="store_true")
+    s.add_argument("--no-adapters", action="store_true")
+    s.add_argument("--folder")
+    s.add_argument("--dry-run", action="store_true")
+    s = sp.add_parser("drive-pull")
+    s.add_argument("name")
+    s.add_argument("--no-adapters", action="store_true")
+    s.add_argument("--folder")
+    s.add_argument("--dry-run", action="store_true")
     return ap
 
 
@@ -521,6 +544,26 @@ def run(argv: list[str]) -> Any:
         return training.make_kit(json.loads(sys.stdin.read(1 << 16) or "{}"))
     if c == "kits":
         return training.list_kits()
+    if c == "curate":
+        fams = [x.strip() for x in a.families.split(",") if x.strip()]
+        return curator.curate(
+            fams, provider_mode=a.provider, ctx=a.ctx, kv=a.kv,
+            per_family=max(1, min(6, a.per_family)), include_adapters=not a.no_adapters,
+        )
+    if c == "drive-status":
+        return drive_mirror.drive_status()
+    if c == "drive-list":
+        return drive_mirror.drive_list(folder=a.folder)
+    if c == "drive-push":
+        return drive_mirror.drive_push(
+            profile_name=a.name, push_all=a.all, include_adapters=not a.no_adapters,
+            folder=a.folder, dry_run=a.dry_run,
+        )
+    if c == "drive-pull":
+        return drive_mirror.drive_pull(
+            profile_name=a.name, with_adapters=not a.no_adapters,
+            folder=a.folder, dry_run=a.dry_run,
+        )
     raise HubError(f"unknown command {c}")
 
 

@@ -403,6 +403,55 @@ else
     fail "Observability / watchdog guard test failed: $OBS_OUT"
 fi
 
+# Test 16: Model Hub Drive mirror (push/pull SHA-256 round-trip) & Curator HF -> ModelScope fallback
+MH_EXT_OUT=$("$PY" -B -c "
+import hashlib, json, os, sys, tempfile
+sys.path.insert(0, '$LODGE_DIR/lib/tools')
+from model_hub import curator, drive_mirror, common
+
+# 1. Verify allow-list accepts hf-mirror.com and opencsg.com while blocking untrusted hosts
+assert common.host_allowed('https://hf-mirror.com/api/models')
+assert common.host_allowed('https://hub.opencsg.com/api/v1/models')
+assert not common.host_allowed('https://evil.example.com/model.gguf')
+
+# 2. Verify Curator HF -> ModelScope automatic fallback when HF raises HubError
+orig_get = curator.get_provider
+orig_eval = curator._evaluate_candidate
+orig_probe = curator.probe
+class FakeHF:
+    name = 'huggingface'
+    def search(self, *a, **k): raise common.HubError('HTTP 429: rate limited')
+class FakeMS:
+    name = 'modelscope'
+    def search(self, *a, **k): return [{'provider': 'modelscope', 'repo': 'unsloth/Qwen3.8-27B-GGUF', 'downloads': 99999, 'tags': ['gguf']}]
+try:
+    curator.get_provider = lambda n: FakeHF() if n == 'huggingface' else FakeMS()
+    curator.probe = lambda: {'gpus': [{'name': 'RTX PRO 5000', 'vram_total_mb': 24463}], 'ram_total_mb': 65536, 'gpu_backend': 'cuda'}
+    curator._evaluate_candidate = lambda prov, repo, hw, ctx, kv: {
+        'provider': prov.name, 'repo': repo, 'best_quant': 'UD-Q4_K_XL', 'size_gib': 16.45,
+        'verdict': 'fits_gpu', 'max_ctx': 98304, 'downloads': 99999, 'draft_cmd': f'/models draft {prov.name} {repo} UD-Q4_K_XL'
+    }
+    res = curator.curate(['qwen'], provider_mode='auto', include_adapters=False)
+    assert res['families']['qwen']['provider'] == 'modelscope' and res['families']['qwen']['count'] == 1, res
+    assert any('rate limited' in e for e in res['fallback_events']), res['fallback_events']
+finally:
+    curator.get_provider = orig_get
+    curator._evaluate_candidate = orig_eval
+    curator.probe = orig_probe
+
+# 3. Verify drive_mirror status shape & adapter slug detection
+st = drive_mirror.drive_status()
+assert 'ready' in st and 'drive_folder' in st
+assert drive_mirror._detect_adapter_slug({'source': {'repo': 'unsloth/Qwen3.8-27B-GGUF'}}) == 'qwen3.8-27b'
+assert drive_mirror._detect_adapter_slug({'source': {'repo': 'unsloth/gemma-4-31B-it-GGUF'}}) == 'gemma-4-31b-it'
+print('OK')
+" | tail -n 1)
+if [ "$MH_EXT_OUT" = "OK" ]; then
+    pass "Model Hub curator (HF -> ModelScope fallback), OpenCSG/HF-Mirror allow-list & Drive mirror helpers work"
+else
+    fail "Model Hub curator / Drive mirror test failed: $MH_EXT_OUT"
+fi
+
 echo "──────────────────────────────────────"
 echo "  ${PASS} passed, ${FAIL} failed ($((PASS + FAIL)) total)"
 [ "$FAIL" -eq 0 ]

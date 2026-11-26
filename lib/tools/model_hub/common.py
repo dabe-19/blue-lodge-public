@@ -24,8 +24,10 @@ UA = "George-ModelHub/1.0 (+https://github.com/dabe-19/blue-lodge-public)"
 # Exact hosts or suffixes (leading dot) allowed for any request, including redirect targets.
 _ALLOWED = (
     "huggingface.co", ".huggingface.co", ".hf.co",                 # HF API + xet/CAS CDN
+    "hf-mirror.com", ".hf-mirror.com",                            # Community HF mirror fallback
     "modelscope.cn", ".modelscope.cn", "modelscope.ai", ".modelscope.ai",
     ".aliyuncs.com",                                              # ModelScope OSS redirect targets
+    "opencsg.com", ".opencsg.com",                                # OpenCSG / CSGHub Apache-2.0 hub
     "ipfs.io", "dweb.link", ".dweb.link", "cloudflare-ipfs.com", "w3s.link", ".w3s.link",
 )
 
