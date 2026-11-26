@@ -274,6 +274,15 @@ else
     fail "Progressive baseline / H2H automation test failed: $BENCH_AUTO_OUT"
 fi
 
+# Test 11: harness-workflows recipe & --max-discord-frac cap in forge.py
+HW_OUT=$("$PY" -B "$LODGE_DIR/scripts/training/forge.py" --george-dir "$GEORGE_DIR" build \
+    --focus harness-workflows,persistence --count 40 --max-discord-frac 0.0 --out "$TMP/ds_hw" 2>/dev/null | tail -n 1)
+if printf '%s' "$HW_OUT" | jq -e '.produced >= 20 and (.by_recipe["harness-workflows"] // 0) >= 15 and .bench_guard.enabled == true' >/dev/null 2>&1; then
+    pass "Dataset Forge builds harness-workflows multi-step trajectories with --max-discord-frac cap"
+else
+    fail "harness-workflows forge build failed: $HW_OUT"
+fi
+
 echo "──────────────────────────────────────"
 echo "  ${PASS} passed, ${FAIL} failed ($((PASS + FAIL)) total)"
 [ "$FAIL" -eq 0 ]

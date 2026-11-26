@@ -1,0 +1,66 @@
+{
+  "name": "gemma4-31b-harness-v2",
+  "role": "core-agent",
+  "model_slug": "gemma-4-31b-it",
+  "backend": "colab",
+  "base_model": "google/gemma-4-31b-it",
+  "base_source": "hf_direct",
+  "base_hf_path": "",
+  "tracks": [
+    {
+      "name": "sft-harness",
+      "method": "sft",
+      "train": "exports:REPLACE_WITH_FORGE_DIR/sft_train.jsonl",
+      "val": "exports:REPLACE_WITH_FORGE_DIR/sft_val.jsonl",
+      "gpu": 0
+    },
+    {
+      "name": "dpo-harness",
+      "method": "dpo",
+      "train": "exports:REPLACE_WITH_FORGE_DIR/dpo_train.jsonl",
+      "val": "exports:REPLACE_WITH_FORGE_DIR/dpo_val.jsonl",
+      "gpu": 0
+    }
+  ],
+  "hyper": {
+    "epochs": 1,
+    "learning_rate": 0.000025,
+    "lora_r": 16,
+    "lora_alpha": 32,
+    "lora_dropout": 0.08,
+    "max_seq_len": 4096,
+    "batch_size": 1,
+    "grad_accum": 8,
+    "dpo_beta": 0.15,
+    "load_in_4bit": true,
+    "use_unsloth": true,
+    "save_steps": 40
+  },
+  "merge": {
+    "method": "svd",
+    "target_rank": 32,
+    "prior_adapter_weight": 0.7,
+    "weights": [0.35, 0.65]
+  },
+  "colab": {
+    "auth": "adc",
+    "gpu": "H100",
+    "gpu_fallback": ["H100", "G4", "A100"],
+    "min_gpu_vram_gb": 40,
+    "high_mem": true,
+    "retry_attempts": 3,
+    "retry_backoff_sec": 8,
+    "max_concurrent_sessions": 2,
+    "min_cu_balance": 150,
+    "max_runtime_min": 180,
+    "drive_checkpoints": true,
+    "drive_checkpoint_sync": true,
+    "drive_checkpoint_keep": 2,
+    "export_gguf_on_colab": true
+  },
+  "benchmark": {
+    "model_family": "gemma4",
+    "min_composite_delta": 0.0,
+    "max_early_quit_delta": 0.0
+  }
+}

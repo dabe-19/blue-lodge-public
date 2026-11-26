@@ -666,11 +666,11 @@
       priorVal.textContent = `${p}% prior active.gguf / ${100 - p}% new tracks`;
     });
 
-    const recipes = ['persistence', 'multi-hop', 'error-recovery', 'tool-syntax', 'failure-modes', 'context-discrimination', 'gitops', 'sdr-p25'];
+    const recipes = ['harness-workflows', 'persistence', 'multi-hop', 'error-recovery', 'tool-syntax', 'failure-modes', 'context-discrimination', 'gitops', 'sdr-p25'];
     const recipeCbs = {};
     const recipeRow = el('div', { style: 'display:flex;flex-wrap:wrap;gap:10px;' });
     recipes.forEach((r) => {
-      const cb = el('input', { type: 'checkbox', checked: ['persistence', 'multi-hop', 'error-recovery', 'tool-syntax', 'failure-modes'].includes(r) });
+      const cb = el('input', { type: 'checkbox', checked: ['harness-workflows', 'persistence', 'multi-hop', 'error-recovery', 'tool-syntax', 'failure-modes', 'gitops'].includes(r) });
       recipeCbs[r] = cb;
       recipeRow.appendChild(el('label', { className: 'eco-check-label' }, [cb, r]));
     });

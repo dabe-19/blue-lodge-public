@@ -50,6 +50,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import export_lora_dataset as ex  # noqa: E402
+import harness_curriculum as hc  # noqa: E402
 
 LODGE = os.environ.get("LODGE_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 ERR_RX = re.compile(r"(?i)(\bERROR\b|Error:|Traceback|FETCH FAILED|not found|No such file|Permission denied|"
@@ -132,6 +133,14 @@ RECIPES = {
         "lesson": "Role-specific SDR suite curriculum mined from sdr_* transcripts, .george/sdr/sdr_intel.db, and "
                   "optional county P25 transcripts. Teaches structured JSON tactical summaries, talkgroup context "
                   "linking, and restoring clipped P25 IMBE '10-4' calls over raw hallucinated Whisper drafts.",
+    },
+    "harness-workflows": {
+        "title": "Blue Lodge harness mastery: efficient exploration, inter-turn progression & end-to-end verification",
+        "dpo": True,
+        "lesson": "Combines (a) real non-chat engineering/ops multi-turn traces with intra-round efficiency DPO "
+                  "(penalizing raw bash cat/grep hacks, redundant re-exploration, blind edits, and early stops) and "
+                  "(b) organic 3-5 turn workflows grounded in Blue Lodge's native tools, ALP v1 Heartwood loops "
+                  "(data/workflows/loops/*.loop.json), and Landmarks (The Square, The Plumb, The Trowel).",
     },
 }
 
@@ -725,10 +734,84 @@ def r_sdr_p25(eps, steps, vocab, rnd, budget):
     return out
 
 
+_HARNESS_NATIVE_TOOLS = {
+    "file_read", "file_edit", "file_write", "file_append", "file_grep", "dir_list",
+    "code_outline", "code_symbol_get", "code_symbol_patch", "code_symbol_read", "code_validate",
+    "bash_exec", "sandbox_create", "sandbox_exec", "sandbox_remove",
+    "git_commit", "git_push", "git_clone", "gitea_branch_create", "gitea_pr_create", "gitea_status",
+    "system_vitals", "service_list", "service_manage", "web_search", "web_fetch",
+    "recall_search", "recall_archive_milestone", "journal_record", "tool_search",
+    "workflow_plan", "workflow_run", "subagent_spawn", "subagent_await", "subagent_diff", "subagent_reap",
+    "model_endpoint_status", "backup_list", "backup_create",
+}
+
+
+def _is_discord_session(s: dict) -> bool:
+    sess = str((s.get("meta") or {}).get("session") or "").lower()
+    if sess.startswith("discord_"):
+        return True
+    for m in (s.get("prompt") or [])[:3]:
+        txt = str(m.get("content") or "").lower()
+        if "discord context:" in txt or "discord bot id" in txt:
+            return True
+    return False
+
+
+def r_harness_workflows(eps, steps, vocab, rnd, budget):
+    """Blue Lodge harness mastery: efficient exploration, inter-turn completion & verified workflow execution."""
+    out = []
+    # 1. Real multi-turn engineering/tool episodes (prioritizing non-chat tool chains)
+    for ep in eps:
+        if not ex.is_good(ep):
+            continue
+        ms = ep["messages"]
+        calls = [i for i, m in enumerate(ms) if m["role"] == "assistant" and _call(m)]
+        if len(calls) < 2:
+            continue
+        # Only mine episodes that actually use core Blue Lodge harness tools (not pure Discord banter)
+        used = {_call(ms[i])["name"] for i in calls if _call(ms[i])}
+        if not (used & _HARNESS_NATIVE_TOOLS):
+            continue
+        first_call = ms[calls[0]]
+        for hop_idx, k in enumerate(calls[1:], start=1):
+            chosen = ms[k]
+            f = _call(chosen)
+            if not f or f["name"] not in _HARNESS_NATIVE_TOOLS:
+                continue
+            if k + 1 < len(ms) and ms[k + 1]["role"] == "tool" and _is_err(ms[k + 1].get("content")):
+                continue
+            # Build a targeted harness anti-pattern rejected turn
+            if f["name"] in ("file_read", "file_grep", "dir_list") and hop_idx % 3 == 0:
+                args = {}
+                try:
+                    args = json.loads(f.get("arguments") or "{}")
+                except ValueError:
+                    pass
+                p = args.get("path") or "."
+                cmd = f"cat {p}" if f["name"] == "file_read" else (f"grep -rn {args.get('pattern', 'TODO')} {p}" if f["name"] == "file_grep" else f"ls -laR {p}")
+                rej = _call_msg("bash_exec", {"command": cmd})
+                ap = "inefficient_shell_vs_native"
+            elif hop_idx % 3 == 1:
+                rej = {"role": "assistant", "content": rnd.choice(_PREMATURE_STOP_TEMPLATES), "reasoning_content": ""}
+                ap = "premature_early_stop"
+            else:
+                rej = _clone_call(first_call, cid="call_redundant")
+                ap = "redundant_reexploration"
+            out.append(_sample("harness-workflows", ep, ms[:k], chosen, rej,
+                               "transcript+harness_dpo", budget, hop=hop_idx, anti_pattern=ap))
+
+    # 2. Organic multi-step Blue Lodge workflow blueprints & ALP v1 Heartwood loops
+    wf_samples = hc.build_workflow_harness_samples(LODGE, budget)
+    for s in wf_samples:
+        s["prompt"] = fit_context(s["prompt"], budget)
+        out.append(s)
+    return out
+
+
 BUILDERS = {"tool-syntax": r_tool_syntax, "error-recovery": r_error_recovery, "failure-modes": r_failure_modes,
             "context-discrimination": r_context_discrimination, "multi-hop": r_multi_hop,
             "final-answer": r_final_answer, "gitops": r_gitops, "cyber-defense": r_cyber_defense,
-            "persistence": r_persistence, "sdr-p25": r_sdr_p25}
+            "persistence": r_persistence, "sdr-p25": r_sdr_p25, "harness-workflows": r_harness_workflows}
 
 
 # ── existing datasets in data/ (curricula) + benchmark contamination guard ─────
@@ -1109,15 +1192,36 @@ def build(args):
         pools[f] = uniq
         available[f] = len(uniq)
 
-    # balanced round-robin draw across focuses
+    # balanced round-robin draw across focuses (honoring optional --max-discord-frac cap)
+    max_disc_frac = getattr(args, "max_discord_frac", 1.0)
+    if max_disc_frac is None:
+        max_disc_frac = 1.0
+    max_disc_count = int(round(args.count * max(0.0, min(1.0, float(max_disc_frac)))))
+    disc_picked = 0
+    # Order each pool so non-Discord engineering/workflow samples are drawn before Discord chat when capped
+    if max_disc_frac < 1.0:
+        for f in focus:
+            non_d = [s for s in pools[f] if not _is_discord_session(s)]
+            yes_d = [s for s in pools[f] if _is_discord_session(s)]
+            pools[f] = non_d + yes_d
     picked, cursors = [], {f: 0 for f in focus}
     while len(picked) < args.count and any(cursors[f] < len(pools[f]) for f in focus):
+        progressed = False
         for f in focus:
             if len(picked) >= args.count:
                 break
-            if cursors[f] < len(pools[f]):
-                picked.append(pools[f][cursors[f]])
+            while cursors[f] < len(pools[f]):
+                cand = pools[f][cursors[f]]
                 cursors[f] += 1
+                if _is_discord_session(cand):
+                    if disc_picked >= max_disc_count:
+                        continue
+                    disc_picked += 1
+                picked.append(cand)
+                progressed = True
+                break
+        if not progressed:
+            break
     shortfall = args.count - len(picked)
     if shortfall > 0 and llm:
         picked += paraphrase_fill(picked, shortfall, llm, rnd)
@@ -1394,6 +1498,8 @@ def main(argv=None):
                            help="max variants kept per unique curriculum prompt (default 2)")
             p.add_argument("--no-bench-guard", action="store_true",
                            help="do not drop samples that overlap the benchmark sets in data/")
+            p.add_argument("--max-discord-frac", type=float, default=1.0,
+                           help="cap fraction of Discord-originated samples (e.g. 0.10 for harness-focused runs; default 1.0)")
         if name == "audit":
             p.add_argument("paths", nargs="*")
     args = ap.parse_args(argv)
