@@ -16,6 +16,15 @@ BACKUP_PY="$LODGE_DIR/scripts/training/backup_artifacts.py"
 
 mkdir -p "$GEORGE_DIR/training"
 
+# Atomic non-blocking lock: prevent overlapping 600s cron ticks while a prior tick is
+# provisioning a Colab GPU ladder or running a 7-pillar head-to-head benchmark.
+LOCK_FILE="$GEORGE_DIR/training/watchdog.lock"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+    echo "[watchdog] Previous training_watchdog.sh instance still active — skipping overlapping tick."
+    exit 0
+fi
+
 _notify_discord() {
     local msg="$1"
     if [ -f "$LODGE_DIR/scripts/monitor/discord_send_report.sh" ]; then
@@ -43,6 +52,10 @@ printf '%s' "$RUNS_JSON" | jq -c '.[] | select(.state == "running")' 2>/dev/null
         if printf '%s' "$col_out" | grep -q "session_disconnected"; then
             echo "[watchdog] Detected Colab disconnect on '$rname' — auto-resuming from Drive checkpoint..."
             "$PY" "$RUNS_PY" resume "$rname" >/dev/null 2>&1 || true
+            continue
+        fi
+        if printf '%s' "$col_out" | grep -q "still_provisioning"; then
+            echo "[watchdog] Run '$rname' is actively provisioning a Colab GPU — skipping resume/merge this tick."
             continue
         fi
         new_st=$("$PY" "$RUNS_PY" status "$rname" 2>/dev/null | jq -r '.state // "running"')

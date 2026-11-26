@@ -77,6 +77,101 @@ def _render_chat(tok, msgs: list, tools=None, add_generation_prompt: bool = Fals
     return str(rendered)
 
 
+_GEN_PROMPT_OPTIONAL_SUFFIXES = (
+    "<|channel>thought\n<channel|>",   # Gemma-4 add_generation_prompt when enable_thinking=False
+    "<|channel>thought\n",             # Gemma-4 add_generation_prompt when enable_thinking=True
+    "<think>\n\n</think>\n\n",         # Qwen3/3.8 add_generation_prompt when enable_thinking=False
+    "<think>\n",                       # Qwen3/3.8 add_generation_prompt when enable_thinking=True
+)
+
+
+def _split_prompt_completion(tok, p_msgs: list, c_msgs: list, tools=None) -> tuple[str, str] | None:
+    """Split a chat prefix + assistant completion into exact (prompt, completion) strings
+    such that `prompt + completion == full` across Gemma-4, Qwen 3.8, and generic ChatML templates."""
+    prompt_gen = _render_chat(tok, p_msgs, tools=tools, add_generation_prompt=True)
+    full = _render_chat(tok, p_msgs + c_msgs, tools=tools, add_generation_prompt=False)
+    if full.startswith(prompt_gen):
+        comp = full[len(prompt_gen):]
+        return (prompt_gen, comp) if comp.strip() else None
+
+    # Handle templates whose add_generation_prompt appends an empty thinking tag that
+    # differs when the assistant completion actually includes reasoning_content.
+    for suf in _GEN_PROMPT_OPTIONAL_SUFFIXES:
+        if prompt_gen.endswith(suf):
+            trimmed = prompt_gen[:-len(suf)]
+            if trimmed and full.startswith(trimmed):
+                comp = full[len(trimmed):]
+                return (trimmed, comp) if comp.strip() else None
+
+    # Fallback: render prefix without generation prompt (e.g. post-tool continuation turns)
+    prompt_plain = _render_chat(tok, p_msgs, tools=tools, add_generation_prompt=False)
+    if prompt_plain and full.startswith(prompt_plain):
+        comp = full[len(prompt_plain):]
+        return (prompt_plain, comp) if comp.strip() else None
+
+    # Final safe anchor: longest common prefix ending on a turn/newline boundary
+    lcp = os.path.commonprefix([prompt_gen, full])
+    for marker in ("<|turn>model\n", "<|im_start|>assistant\n", "<tool_response|>", "\n"):
+        idx = lcp.rfind(marker)
+        if idx >= 0:
+            cut = idx + len(marker)
+            p_cut = full[:cut]
+            comp = full[cut:]
+            if p_cut and comp.strip():
+                return p_cut, comp
+    return None
+
+
+def _split_dpo_pair(tok, p_msgs: list, c_msgs: list, r_msgs: list, tools=None) -> tuple[str, str, str] | None:
+    """Return exact (prompt, chosen, rejected) sharing an identical prefix where
+    `prompt + chosen == full_c` and `prompt + rejected == full_r`."""
+    sc = _split_prompt_completion(tok, p_msgs, c_msgs, tools=tools)
+    sr = _split_prompt_completion(tok, p_msgs, r_msgs, tools=tools)
+    if not sc or not sr:
+        return None
+    pc, ch = sc
+    pr, rj = sr
+    if pc == pr:
+        return (pc, ch, rj) if ch.strip() != rj.strip() else None
+    full_c = pc + ch
+    full_r = pr + rj
+    # Align both sides to the shorter common prefix (e.g. when chosen has reasoning and rejected does not)
+    base = pc if (len(pc) <= len(pr) and full_r.startswith(pc)) else (
+        pr if (len(pr) < len(pc) and full_c.startswith(pr)) else ""
+    )
+    if not base:
+        lcp = os.path.commonprefix([pc, pr])
+        if lcp and full_c.startswith(lcp) and full_r.startswith(lcp):
+            base = lcp
+    if not base:
+        return None
+    ch2, rj2 = full_c[len(base):], full_r[len(base):]
+    if not ch2.strip() or not rj2.strip() or ch2.strip() == rj2.strip():
+        return None
+    return base, ch2, rj2
+
+
+def _apply_custom_chat_template(tok, cfg: dict) -> None:
+    """Optionally override tokenizer chat_template from a repo/kit .jinja file for train-vs-serve parity."""
+    tpl_path = str(cfg.get("chat_template_file") or "").strip()
+    if not tpl_path:
+        return
+    if not os.path.isfile(tpl_path):
+        print(f"[!] Configured chat_template_file not found: {tpl_path}", file=sys.stderr)
+        return
+    tpl = open(tpl_path, encoding="utf-8").read()
+    target = getattr(tok, "tokenizer", tok)
+    tok.chat_template = tpl
+    if target is not tok:
+        target.chat_template = tpl
+    print(f"[✓] Loaded custom chat_template_file -> {tpl_path} ({len(tpl)} chars)")
+
+
+def _token_len(tok, text: str) -> int:
+    inner = getattr(tok, "tokenizer", tok)
+    return len(inner.encode(text, add_special_tokens=False))
+
+
 def _rows_to_messages(ex: dict) -> dict:
     if ex.get("messages"):
         return {"messages": ex["messages"], "tools": ex.get("tools") or None}
@@ -531,6 +626,52 @@ def _restore_latest_drive_checkpoint(drive: _DriveClient, drive_folder: str, ckp
     return None
 
 
+def _make_metrics_jsonl_callback(metrics_path: str, mode: str = "sft"):
+    """Append structured per-step & eval telemetry JSON lines for live UI curves & post-run analysis."""
+    try:
+        from transformers import TrainerCallback
+    except ImportError:
+        return None
+
+    os.makedirs(os.path.dirname(os.path.abspath(metrics_path)), exist_ok=True)
+    keys = (
+        "loss", "eval_loss", "grad_norm", "learning_rate", "mean_token_accuracy", "eval_mean_token_accuracy",
+        "rewards/chosen", "rewards/rejected", "rewards/margins", "rewards/accuracies",
+        "eval_rewards/chosen", "eval_rewards/rejected", "eval_rewards/margins", "eval_rewards/accuracies",
+        "logps/chosen", "logps/rejected", "logits/chosen", "logits/rejected",
+    )
+
+    class _MetricsJsonlCallback(TrainerCallback):
+        def on_log(self, args, state, control, logs=None, **kwargs):
+            if not logs:
+                return control
+            rec = {
+                "ts": time.time(),
+                "mode": mode,
+                "step": int(getattr(state, "global_step", 0) or 0),
+                "total_steps": int(getattr(state, "max_steps", 0) or 0),
+                "epoch": round(float(getattr(state, "epoch", 0.0) or 0.0), 4),
+            }
+            has_metric = False
+            for k in keys:
+                if k in logs and isinstance(logs[k], (int, float)):
+                    val = float(logs[k])
+                    if val == val:  # guard against NaN
+                        rec[k] = round(val, 6)
+                        has_metric = True
+            if not has_metric:
+                return control
+            try:
+                with open(metrics_path, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                    fh.flush()
+            except OSError:
+                pass
+            return control
+
+    return _MetricsJsonlCallback()
+
+
 def _make_drive_checkpoint_callback(drive: _DriveClient, drive_folder: str | None, ckpt_dir: str, keep: int = 2):
     if not drive.configured or not drive_folder:
         return None
@@ -582,6 +723,8 @@ def _mirror_final_outputs(drive: _DriveClient, adapter_dir: str, gguf_path: str 
                 pairs.append((fp, fn))
     if gguf_path and os.path.isfile(gguf_path):
         pairs.append((gguf_path, os.path.basename(gguf_path)))
+    if os.path.isfile("output/metrics.jsonl"):
+        pairs.append(("output/metrics.jsonl", "metrics.jsonl"))
     if os.path.isfile("train.log"):
         pairs.append(("train.log", "train.log"))
     _mirror_artifacts_to_drive(drive, pairs, drive_folder)
@@ -684,29 +827,75 @@ def main() -> int:
 
     hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or None
     base_src = cfg.get("base_local_path") or cfg["base_model"]
+    max_seq_len = int(cfg.get("max_seq_len", 8192))
 
     if a.dry_run:
         tok = AutoTokenizer.from_pretrained(base_src, use_fast=True, token=hf_token)
         if tok.pad_token is None:
             tok.pad_token = tok.eos_token
-        def _fmt(ex: dict) -> dict:
+        _apply_custom_chat_template(tok, cfg)
+    else:
+        model, tok, used_unsloth = _load_model_and_tokenizer(cfg, torch, a.init_adapter)
+        _apply_custom_chat_template(tok, cfg)
+
+    from datasets import Dataset
+    use_prompt_completion = True
+    clean_sft: dict[str, Dataset] = {}
+    for split_name in list(ds.keys()):
+        rows = []
+        dropped_mismatch = 0
+        dropped_overlong = 0
+        tok_lens = []
+        for ex in ds[split_name]:
             m = _rows_to_messages(ex)
-            return {"text": m["text"]} if "text" in m else {"text": _render_chat(tok, m["messages"], tools=m["tools"])}
-        ds = ds.map(_fmt, remove_columns=ds["train"].column_names)
-        print(f"train rows: {len(ds['train'])}" + (f", val rows: {len(ds['validation'])}" if "validation" in ds else ""))
-        print(ds["train"][0]["text"][:800])
-        return 0
+            if "text" in m:
+                use_prompt_completion = False
+                txt = str(m["text"])
+                n_tok = _token_len(tok, txt)
+                if n_tok > max_seq_len:
+                    dropped_overlong += 1
+                    continue
+                tok_lens.append(n_tok)
+                rows.append({"text": txt})
+                continue
+            msgs = m["messages"]
+            # Find the final assistant message as the supervised completion
+            last_asst = next((i for i in range(len(msgs) - 1, -1, -1) if msgs[i].get("role") == "assistant"), -1)
+            if last_asst <= 0:
+                dropped_mismatch += 1
+                continue
+            sp = _split_prompt_completion(tok, msgs[:last_asst], msgs[last_asst:last_asst + 1], tools=m["tools"])
+            if not sp:
+                dropped_mismatch += 1
+                continue
+            prompt_s, comp_s = sp
+            n_tok = _token_len(tok, prompt_s + comp_s)
+            if n_tok > max_seq_len:
+                dropped_overlong += 1
+                continue
+            tok_lens.append(n_tok)
+            rows.append({"prompt": prompt_s, "completion": comp_s})
+        tok_lens.sort()
+        p90 = tok_lens[int(0.9 * (len(tok_lens) - 1))] if tok_lens else 0
+        mx = tok_lens[-1] if tok_lens else 0
+        print(
+            f"[SFT:{split_name}] kept={len(rows)} dropped_mismatch={dropped_mismatch} "
+            f"dropped_overlong(>{max_seq_len})={dropped_overlong} p90_toks={p90} max_toks={mx}"
+        )
+        if not rows and split_name == "train":
+            raise RuntimeError(f"All SFT training rows were filtered (overlong={dropped_overlong}, mismatch={dropped_mismatch})")
+        if rows:
+            clean_sft[split_name] = Dataset.from_list(rows)
 
-    model, tok, used_unsloth = _load_model_and_tokenizer(cfg, torch, a.init_adapter)
-
-    def to_text(ex: dict) -> dict:
-        m = _rows_to_messages(ex)
-        if "text" in m:
-            return {"text": m["text"]}
-        return {"text": _render_chat(tok, m["messages"], tools=m["tools"])}
-
-    ds = ds.map(to_text, remove_columns=ds["train"].column_names)
+    ds = clean_sft
     print(f"train rows: {len(ds['train'])}" + (f", val rows: {len(ds['validation'])}" if "validation" in ds else ""))
+    if a.dry_run:
+        r0 = ds["train"][0]
+        if "prompt" in r0:
+            print("PROMPT tail:", r0["prompt"][-400:], "\nCOMPLETION:", r0["completion"][:400])
+        else:
+            print(r0["text"][:800])
+        return 0
 
     ckpt_dir = a.checkpoint_dir or cfg.get("checkpoint_dir") or "output/checkpoints"
     os.makedirs(ckpt_dir, exist_ok=True)
@@ -727,30 +916,56 @@ def main() -> int:
     import inspect
     save_steps = int(cfg.get("save_steps", 40))
     sft_sig = inspect.signature(SFTConfig.__init__).parameters
+    supports_comp_only = use_prompt_completion and ("completion_only_loss" in sft_sig)
     sft_kw = dict(
         output_dir=ckpt_dir, num_train_epochs=cfg["epochs"],
         learning_rate=cfg["learning_rate"], per_device_train_batch_size=cfg["batch_size"],
         gradient_accumulation_steps=cfg["grad_accum"],
-        dataset_text_field="text", logging_steps=5,
+        logging_steps=max(1, int(cfg.get("logging_steps", 2))),
         save_strategy="steps", save_steps=save_steps, save_total_limit=3,
         eval_strategy="epoch" if "validation" in ds else "no",
         bf16=torch.cuda.is_available(), gradient_checkpointing=not used_unsloth,
         report_to=[],
     )
+    if supports_comp_only:
+        sft_kw["completion_only_loss"] = True
+        print("[✓] SFT assistant-only loss enabled (completion_only_loss=True on prompt/completion columns)")
+    else:
+        # Older TRL fallback: flatten prompt + completion into text
+        if use_prompt_completion:
+            ds = {k: Dataset.from_list([{"text": r["prompt"] + r["completion"]} for r in v]) for k, v in ds.items()}
+        sft_kw["dataset_text_field"] = "text"
     if "max_length" in sft_sig:
-        sft_kw["max_length"] = cfg["max_seq_len"]
+        sft_kw["max_length"] = max_seq_len
     elif "max_seq_length" in sft_sig:
-        sft_kw["max_seq_length"] = cfg["max_seq_len"]
+        sft_kw["max_seq_length"] = max_seq_len
     args = SFTConfig(**sft_kw)
     callbacks = []
+    m_cb = _make_metrics_jsonl_callback("output/metrics.jsonl", mode="sft")
+    if m_cb:
+        callbacks.append(m_cb)
     if drive_ckpt_sync and drive_folder and drive.configured:
         cb = _make_drive_checkpoint_callback(drive, drive_folder, ckpt_dir, keep=drive_ckpt_keep)
         if cb:
             callbacks.append(cb)
-    trainer = SFTTrainer(
-        model=model, args=args, train_dataset=ds["train"], eval_dataset=ds.get("validation"),
-        peft_config=peft_cfg, processing_class=tok, callbacks=callbacks or None,
-    )
+    try:
+        trainer = SFTTrainer(
+            model=model, args=args, train_dataset=ds["train"], eval_dataset=ds.get("validation"),
+            peft_config=peft_cfg, processing_class=tok, callbacks=callbacks or None,
+        )
+    except Exception as e:
+        if supports_comp_only:
+            print(f"[!] SFTTrainer prompt/completion fallback ({e}); retrying with flattened text.")
+            ds = {k: Dataset.from_list([{"text": r["prompt"] + r["completion"]} for r in v]) for k, v in ds.items()}
+            sft_kw.pop("completion_only_loss", None)
+            sft_kw["dataset_text_field"] = "text"
+            args = SFTConfig(**sft_kw)
+            trainer = SFTTrainer(
+                model=model, args=args, train_dataset=ds["train"], eval_dataset=ds.get("validation"),
+                peft_config=peft_cfg, processing_class=tok, callbacks=callbacks or None,
+            )
+        else:
+            raise
     trainer.train(resume_from_checkpoint=resume_path)
     os.makedirs("output/adapter", exist_ok=True)
     trainer.model.save_pretrained("output/adapter")
@@ -792,30 +1007,51 @@ def train_dpo(cfg: dict, a) -> int:
         tok = AutoTokenizer.from_pretrained(base_src, use_fast=True, token=hf_token)
         if tok.pad_token is None:
             tok.pad_token = tok.eos_token
+        _apply_custom_chat_template(tok, cfg)
     else:
         model, tok, used_unsloth = _load_model_and_tokenizer(cfg, torch, a.init_adapter)
+        _apply_custom_chat_template(tok, cfg)
 
-    def to_pref(ex: dict) -> dict:
-        tools = ex.get("tools") or None
-        p_msgs = ex["prompt"] if isinstance(ex["prompt"], list) else [{"role": "user", "content": str(ex["prompt"])}]
-        c_msgs = ex["chosen"] if isinstance(ex["chosen"], list) else [{"role": "assistant", "content": str(ex["chosen"])}]
-        r_msgs = ex["rejected"] if isinstance(ex["rejected"], list) else [{"role": "assistant", "content": str(ex["rejected"])}]
-        prompt = _render_chat(tok, p_msgs, tools=tools, add_generation_prompt=True)
-        full_c = _render_chat(tok, p_msgs + c_msgs, tools=tools)
-        full_r = _render_chat(tok, p_msgs + r_msgs, tools=tools)
-        chosen = full_c[len(prompt):] if full_c.startswith(prompt) else full_c
-        rejected = full_r[len(prompt):] if full_r.startswith(prompt) else full_r
-        return {
-            "prompt": str(prompt),
-            "chosen": str(chosen),
-            "rejected": str(rejected),
-        }
+    max_seq_len = int(cfg.get("max_seq_len", 8192))
+    max_prompt_len = max(512, int(max_seq_len * 0.80))
 
-    # Materialize clean plain-string Dataset (avoids Arrow List(Json) schema retention in datasets v4 + TRL DPOTrainer)
+    # Materialize clean plain-string Dataset with exact Gemma-4/Qwen prefix alignment & length guards
     clean_ds = {}
     for split_name in list(ds.keys()):
-        rows = [to_pref(ex) for ex in ds[split_name]]
-        clean_ds[split_name] = Dataset.from_list(rows)
+        rows = []
+        dropped_mismatch = 0
+        dropped_overlong = 0
+        tok_lens = []
+        for ex in ds[split_name]:
+            tools = ex.get("tools") or None
+            p_msgs = ex["prompt"] if isinstance(ex["prompt"], list) else [{"role": "user", "content": str(ex["prompt"])}]
+            c_msgs = ex["chosen"] if isinstance(ex["chosen"], list) else [{"role": "assistant", "content": str(ex["chosen"])}]
+            r_msgs = ex["rejected"] if isinstance(ex["rejected"], list) else [{"role": "assistant", "content": str(ex["rejected"])}]
+            pair = _split_dpo_pair(tok, p_msgs, c_msgs, r_msgs, tools=tools)
+            if not pair:
+                dropped_mismatch += 1
+                continue
+            prompt_s, chosen_s, rejected_s = pair
+            p_tok = _token_len(tok, prompt_s)
+            c_tok = _token_len(tok, chosen_s)
+            r_tok = _token_len(tok, rejected_s)
+            total_tok = p_tok + max(c_tok, r_tok)
+            if p_tok > max_prompt_len or total_tok > max_seq_len:
+                dropped_overlong += 1
+                continue
+            tok_lens.append(total_tok)
+            rows.append({"prompt": str(prompt_s), "chosen": str(chosen_s), "rejected": str(rejected_s)})
+        tok_lens.sort()
+        p90 = tok_lens[int(0.9 * (len(tok_lens) - 1))] if tok_lens else 0
+        mx = tok_lens[-1] if tok_lens else 0
+        print(
+            f"[DPO:{split_name}] kept={len(rows)} dropped_mismatch={dropped_mismatch} "
+            f"dropped_overlong(>{max_seq_len})={dropped_overlong} p90_toks={p90} max_toks={mx}"
+        )
+        if not rows and split_name == "train":
+            raise RuntimeError(f"All DPO training pairs were filtered (mismatch={dropped_mismatch}, overlong={dropped_overlong})")
+        if rows:
+            clean_ds[split_name] = Dataset.from_list(rows)
     ds = clean_ds
     print(f"DPO pairs: {len(ds['train'])}" + (f", val: {len(ds['validation'])}" if "validation" in ds else ""))
     if a.dry_run:
@@ -846,7 +1082,7 @@ def train_dpo(cfg: dict, a) -> int:
         output_dir=ckpt_dir, num_train_epochs=cfg["epochs"],
         learning_rate=min(float(cfg["learning_rate"]), 5e-5), per_device_train_batch_size=cfg["batch_size"],
         gradient_accumulation_steps=cfg["grad_accum"],
-        beta=float(cfg.get("dpo_beta", 0.1)), logging_steps=5,
+        beta=float(cfg.get("dpo_beta", 0.1)), logging_steps=max(1, int(cfg.get("logging_steps", 2))),
         save_strategy="steps", save_steps=save_steps, save_total_limit=3,
         eval_strategy="epoch" if "validation" in ds else "no",
         bf16=torch.cuda.is_available(), gradient_checkpointing=not used_unsloth,
@@ -859,6 +1095,9 @@ def train_dpo(cfg: dict, a) -> int:
     args = DPOConfig(**dpo_kw)
     dpo_tok = getattr(tok, "tokenizer", tok)
     callbacks = []
+    m_cb = _make_metrics_jsonl_callback("output/metrics.jsonl", mode="dpo")
+    if m_cb:
+        callbacks.append(m_cb)
     if drive_ckpt_sync and drive_folder and drive.configured:
         cb = _make_drive_checkpoint_callback(drive, drive_folder, ckpt_dir, keep=drive_ckpt_keep)
         if cb:

@@ -121,6 +121,7 @@
 - market_cache/*
 - benchmarks/*
 - data/training/*
++ data/training/native_core_tools.json
 - data/assets/*
 - scratch/*
 - artifacts/*

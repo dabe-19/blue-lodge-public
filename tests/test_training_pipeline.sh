@@ -32,7 +32,7 @@ Tool: `file_read({"path": "scripts/training/runs.py"})`
 Observation: `Line 42: def ok(): return True`
 
 ## Step 2
-Tool: `file_edit({"path": "scripts/training/runs.py", "old": "return True", "new": "return 1"})`
+Tool: `file_edit({"path": "scripts/training/runs.py", "target": "return True", "replacement": "return 1"})`
 Observation: `Edited successfully.`
 
 ## Step 3
@@ -277,10 +277,130 @@ fi
 # Test 11: harness-workflows recipe & --max-discord-frac cap in forge.py
 HW_OUT=$("$PY" -B "$LODGE_DIR/scripts/training/forge.py" --george-dir "$GEORGE_DIR" build \
     --focus harness-workflows,persistence --count 40 --max-discord-frac 0.0 --out "$TMP/ds_hw" 2>/dev/null | tail -n 1)
-if printf '%s' "$HW_OUT" | jq -e '.produced >= 20 and (.by_recipe["harness-workflows"] // 0) >= 15 and .bench_guard.enabled == true' >/dev/null 2>&1; then
-    pass "Dataset Forge builds harness-workflows multi-step trajectories with --max-discord-frac cap"
+if printf '%s' "$HW_OUT" | jq -e '.produced >= 20 and (.by_recipe["harness-workflows"] // 0) >= 15 and .bench_guard.enabled == true and .schema_validation.dropped == 0' >/dev/null 2>&1; then
+    pass "Dataset Forge builds harness-workflows multi-step trajectories with --max-discord-frac cap and 0 schema violations"
 else
     fail "harness-workflows forge build failed: $HW_OUT"
+fi
+
+# Test 12: Live tool schema sync parity + tool pruning (<=16 tools) + zero DPO reasoning leak
+SCHEMA_OUT=$("$PY" -B -c "
+import json, os, sys
+sys.path.insert(0, '$LODGE_DIR/scripts/training')
+import sync_tool_schemas as sts, forge, harness_curriculum as hc
+
+rep = sts.sync_schemas('$LODGE_DIR', write=False)
+assert rep['in_sync'], f'native_core_tools.json out of sync: {rep}'
+
+canon = forge.load_canonical_tools(os.path.join('$LODGE_DIR', 'data'))
+wf = hc.build_workflow_harness_samples('$LODGE_DIR', 20000)
+for s in wf:
+    ok, err = forge.validate_tool_call_schema(s['chosen'], canon)
+    assert ok, f'Curriculum schema violation ({s[\"meta\"][\"session\"]}): {err}'
+
+# Verify _prune_tools caps huge 100+ tool lists to <= 16 and includes used tools
+huge_tools = list(canon.values())
+chosen_m = {'role': 'assistant', 'content': '', 'reasoning_content': 'secret thought', 'tool_calls': [{'id': 'c1', 'type': 'function', 'function': {'name': 'git_push', 'arguments': '{\"branch\":\"main\"}'}}]}
+pruned = forge._prune_tools(huge_tools, [{'role': 'user', 'content': 'push'}], chosen_m, None, canon, max_tools=16)
+assert len(pruned) <= 16 and any(t['function']['name'] == 'git_push' for t in pruned), len(pruned)
+
+# Verify _clone_call strips reasoning_content by default (no DPO reasoning leak)
+rej_m = forge._clone_call(chosen_m, name='file_read')
+assert rej_m.get('reasoning_content') == '', rej_m
+print('OK')
+" | tail -n 1)
+if [ "$SCHEMA_OUT" = "OK" ]; then
+    pass "Live tool schema parity, <=16 tool pruning, curriculum schema compliance & DPO reasoning strip verified"
+else
+    fail "Tool schema / pruning / DPO reasoning check failed: $SCHEMA_OUT"
+fi
+
+# Test 13: train_lora.py exact Gemma-4 & Qwen prefix alignment (_split_prompt_completion & _split_dpo_pair)
+SPLIT_OUT=$("$PY" -B -c "
+import sys
+sys.path.insert(0, '$LODGE_DIR/scripts/training/kit')
+import train_lora as tl
+
+class FakeGemma4Tok:
+    def apply_chat_template(self, msgs, tools=None, tokenize=False, add_generation_prompt=False):
+        s = '<bos><|turn>system\nSYS<turn|>\n'
+        for m in msgs:
+            if m['role'] == 'user':
+                s += '<|turn>user\n' + m['content'] + '<turn|>\n'
+            elif m['role'] == 'assistant':
+                r = m.get('reasoning_content') or ''
+                s += '<|turn>model\n'
+                if r:
+                    s += '<|channel>thought\n' + r + '\n<channel|>'
+                s += m.get('content', '') + '<turn|>\n'
+        if add_generation_prompt:
+            s += '<|turn>model\n<|channel>thought\n<channel|>'
+        return s
+
+tok = FakeGemma4Tok()
+p = [{'role': 'user', 'content': 'check'}]
+c = [{'role': 'assistant', 'content': 'calling tool', 'reasoning_content': 'step by step'}]
+r = [{'role': 'assistant', 'content': 'stop early', 'reasoning_content': ''}]
+sp = tl._split_prompt_completion(tok, p, c)
+assert sp and sp[0].endswith('<|turn>model\n') and sp[1].startswith('<|channel>thought\nstep by step'), sp
+pair = tl._split_dpo_pair(tok, p, c, r)
+assert pair and pair[0].endswith('<|turn>model\n') and pair[1] != pair[2] and '<|channel>thought\nstep by step' in pair[1], pair
+print('OK')
+" | tail -n 1)
+if [ "$SPLIT_OUT" = "OK" ]; then
+    pass "train_lora.py _split_prompt_completion & _split_dpo_pair align Gemma-4 empty-thought suffixes cleanly"
+else
+    fail "train_lora.py prefix alignment test failed: $SPLIT_OUT"
+fi
+
+# Test 14: backup_artifacts.py publish --dry-run stages Model Card, tool schema manifest, sanitized lineage & Qwen Jinja
+PUB_OUT=$("$PY" -B "$LODGE_DIR/scripts/training/backup_artifacts.py" publish \
+    --model qwen3.8-27b --role core-agent --hf-repo dabe-19/blue-lodge-qwen38-27b-svd32 \
+    --public --dry-run --out-dir "$TMP/pub_bundle" 2>/dev/null)
+if printf '%s' "$PUB_OUT" | jq -e '.status == "ok" and .visibility == "public" and (.files | index("README.md") != null) and (.files | index("tool_schema_manifest.json") != null) and (.files | index("blue_lodge_jinja_template.jinja") != null)' >/dev/null 2>&1; then
+    pass "backup_artifacts.py publish --dry-run stages HF Model Card, schema manifest, lineage & Qwen Jinja"
+else
+    fail "backup_artifacts.py publish --dry-run failed: $PUB_OUT"
+fi
+
+# Test 15: Live provision.log fallback, metrics.jsonl analytics & phase detection in stream_logs
+OBS_OUT=$("$PY" -B -c "
+import json, os, sys
+sys.path.insert(0, '$LODGE_DIR/scripts/training')
+import runs
+
+rd = os.path.join(runs.runs_dir(), 'obs-test-v1')
+td = os.path.join(rd, 'tracks', 'dpo-harness')
+os.makedirs(td, exist_ok=True)
+runs._write_json(os.path.join(rd, 'run.json'), {
+    'name': 'obs-test-v1', 'backend': 'colab', 'model_slug': 'gemma-4-31b-it', 'state': 'running',
+    'spec': {'colab': {'auth': 'adc', 'gpu_fallback': ['H100', 'A100']}, 'tracks': [{'name': 'dpo-harness'}]},
+    'plan': [{'track': 'dpo-harness', 'session': 'bl-obs', 'selected_gpu': None, 'fallback_history': [{'gpu': 'H100', 'status': 'failed', 'attempt': 1, 'reason': 'timeout'}]}],
+})
+open(os.path.join(td, 'state'), 'w').write('provisioning\n')
+runs._append_provision_log(td, 'Requesting Colab H100 (attempt 1/1)...')
+sl1 = runs.stream_logs('obs-test-v1', 'dpo-harness', live=False)
+assert sl1['source'] == 'provision_log' and sl1['phase'] == 'provisioning' and 'H100' in sl1['log_tail'], sl1
+assert runs._is_actively_provisioning(td) is True
+col_res = runs.collect_colab('obs-test-v1')
+assert col_res.get('dpo-harness') == 'still_provisioning', col_res
+res_res = runs.resume_colab('obs-test-v1')
+assert res_res['resumed'].get('dpo-harness') == 'still_provisioning', res_res
+
+# Now write metrics.jsonl & train.log and verify structured telemetry + summary stats
+with open(os.path.join(td, 'metrics.jsonl'), 'w') as fh:
+    fh.write(json.dumps({'step': 2, 'total_steps': 20, 'loss': 0.68, 'rewards/margins': 0.12, 'rewards/accuracies': 0.6}) + '\n')
+    fh.write(json.dumps({'step': 4, 'total_steps': 20, 'loss': 0.51, 'rewards/margins': 0.85, 'rewards/accuracies': 0.9, 'eval_loss': 0.55}) + '\n')
+open(os.path.join(td, 'state'), 'w').write('running\n')
+open(os.path.join(td, 'train.log'), 'w').write('20%|##| 4/20 [01:00<04:00, 15.0s/it]\n')
+sl2 = runs.stream_logs('obs-test-v1', 'dpo-harness', live=False)
+assert sl2['phase'] == 'training' and len(sl2['metrics']) == 2 and sl2['summary_stats']['final_margin'] == 0.85 and sl2['summary_stats']['final_eval_loss'] == 0.55, sl2
+print('OK')
+" | tail -n 1)
+if [ "$OBS_OUT" = "OK" ] && grep -q "flock -n 9" "$LODGE_DIR/scripts/cron_system/training_watchdog.sh"; then
+    pass "Live provision.log streaming, watchdog flock + provisioning guard, metrics.jsonl curves & phase detection work"
+else
+    fail "Observability / watchdog guard test failed: $OBS_OUT"
 fi
 
 echo "──────────────────────────────────────"

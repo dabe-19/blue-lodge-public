@@ -300,11 +300,21 @@ def validate(spec):
     py = spec.get("train_python") or os.environ.get("BLUE_LODGE_TRAIN_PYTHON") or ""
     local_raw = spec.get("local") or {}
     bench_raw = spec.get("benchmark") or {}
+    raw_tpl = str(spec.get("chat_template_file") or "").strip()
+    chat_tpl = ""
+    if raw_tpl:
+        cand_tpl = os.path.expanduser(raw_tpl)
+        if not os.path.isabs(cand_tpl):
+            cand_tpl = os.path.join(LODGE, cand_tpl)
+        if not os.path.isfile(cand_tpl):
+            raise SpecError(f"chat_template_file not found: {raw_tpl}")
+        chat_tpl = os.path.abspath(cand_tpl)
     return {
         "name": name, "role": role, "model_slug": model_slug, "backend": backend,
         "base_model": spec["base_model"], "base_source": base_source,
         "base_hf_path": os.path.expanduser(str(spec.get("base_hf_path") or "")),
         "drive_base_path": str(spec.get("drive_base_path") or ""),
+        "chat_template_file": chat_tpl,
         "train_python": os.path.expanduser(py), "llama_cpp_dir": spec.get("llama_cpp_dir"),
         "tracks": out_tracks, "hyper": hyper,
         "merge": {
@@ -435,6 +445,8 @@ def _track_conf(v, t, train_file, val_file, out_dir, ckpt_dir=None, export_gguf=
         conf["base_local_path"] = v["drive_base_path"]
     elif v["base_source"] == "local_upload" and v["backend"] == "colab":
         conf["base_local_path"] = "/content/base_model"
+    if v.get("chat_template_file"):
+        conf["chat_template_file"] = "chat_template.jinja"
     return conf
 
 
@@ -494,6 +506,8 @@ def start_local(v, rd, dry):
         td = os.path.join(rd, "tracks", t["name"])
         os.makedirs(td, exist_ok=True)
         shutil.copyfile(KIT, os.path.join(td, "train_lora.py"))
+        if v.get("chat_template_file") and os.path.isfile(v["chat_template_file"]):
+            shutil.copyfile(v["chat_template_file"], os.path.join(td, "chat_template.jinja"))
         _write_json(os.path.join(td, "config.json"),
                     _track_conf(v, t, t["train_file"], t["val_file"], role_adapter_dir(v["model_slug"], v["role"]),
                                 ckpt_dir=os.path.join(td, "checkpoints"), export_gguf=os.path.join(td, "adapter.gguf")))
@@ -544,19 +558,29 @@ def _session(v, t):
     return re.sub(r"[^a-z0-9-]", "-", f"bl-{v['name']}-{t['name']}")[:60]
 
 
-def _provision_with_fallback(session_name: str, v: dict) -> tuple[str | None, list[dict]]:
-    """Try provisioning Colab GPU tiers from strongest to weakest with fail-fast assign timeouts
-    and transient-503 retries + backoff.
-    Google's /tun/m/assign can hold a connection for 90-120s before returning 503 on scarce SKUs
-    (H100/G4), so we use a 45s assign timeout, try scarce top tiers once, and concentrate
-    multi-attempt retries on the primary workhorse tier (A100 standard / last eligible tier).
-    """
+def _append_provision_log(td: str, msg: str) -> None:
+    """Append a timestamped provisioning/dispatch line to tracks/<track>/provision.log immediately."""
+    try:
+        os.makedirs(td, exist_ok=True)
+        ts = dt.datetime.now().strftime("%H:%M:%S")
+        with open(os.path.join(td, "provision.log"), "a", encoding="utf-8") as fh:
+            fh.write(f"[{ts}] {msg}\n")
+            fh.flush()
+    except OSError:
+        pass
+
+
+def _provision_with_fallback(session_name: str, v: dict, log_fn=None, on_step=None) -> tuple[str | None, list[dict]]:
+    """Try provisioning Colab GPU tiers from strongest to weakest with live logging and incremental
+    fallback_history persistence so the UI streams provisioning progress from second 1."""
     import time
     history = []
     auth = v["colab"]["auth"]
     max_attempts = int(v["colab"].get("retry_attempts", 3))
     base_backoff = int(v["colab"].get("retry_backoff_sec", 6))
     ladder = list(v["colab"]["gpu_fallback"])
+    if log_fn:
+        log_fn(f"Starting Colab GPU provisioning ladder for {session_name}: {' -> '.join(ladder)} (auth={auth})")
     for idx, tier in enumerate(ladder):
         shapes = [True, False] if (v["colab"]["high_mem"] and GPU_TIERS[tier]["high_mem"]) else [False]
         is_last = (idx == len(ladder) - 1)
@@ -564,27 +588,46 @@ def _provision_with_fallback(session_name: str, v: dict) -> tuple[str | None, li
             gpu_args = ["new", "-s", session_name, "--gpu", tier]
             if use_hm:
                 gpu_args.append("--high-mem")
-            # Try scarce speculative tiers (H100/G4) & --high-mem once quickly; retry workhorse (A100 std / last tier)
+            shape_lbl = f"{tier} --high-mem" if use_hm else f"{tier} standard"
+            # Try scarce speculative tiers (H100/G4) & --high-mem once quickly; cap workhorse retries at 2
+            # so a full ladder stays under ~15m and stays polite to Google's /tun/m/assign endpoint.
             if use_hm and len(shapes) > 1:
                 attempts = 1
             elif tier in ("H100", "G4") and not is_last:
                 attempts = 1
             else:
-                attempts = max_attempts
+                attempts = min(max_attempts, 2)
             for attempt in range(1, attempts + 1):
+                if log_fn:
+                    log_fn(f"Requesting Colab {shape_lbl} (attempt {attempt}/{attempts}, timeout=180s)...")
+                t0 = time.time()
                 # Never cut off `colab new` early (<150s) or Colab may finish assigning an orphaned [?] VM
                 rc, out, err = _colab(gpu_args, auth=auth, timeout=180)
+                elapsed = round(time.time() - t0, 1)
                 if rc == 0:
-                    history.append({"gpu": tier, "high_mem": use_hm, "attempt": attempt, "status": "provisioned"})
+                    history.append({"gpu": tier, "high_mem": use_hm, "attempt": attempt, "status": "provisioned", "elapsed_sec": elapsed})
+                    if log_fn:
+                        log_fn(f"[✓] Provisioned Colab {shape_lbl} in {elapsed}s")
+                    if on_step:
+                        on_step(history, tier)
                     return tier, history
                 reason = (err or out or "provision failed").strip()[-220:]
-                history.append({"gpu": tier, "high_mem": use_hm, "attempt": attempt, "status": "failed", "reason": reason})
+                history.append({"gpu": tier, "high_mem": use_hm, "attempt": attempt, "status": "failed", "reason": reason, "elapsed_sec": elapsed})
+                if log_fn:
+                    log_fn(f"[!] {shape_lbl} attempt {attempt}/{attempts} failed ({elapsed}s): {reason}")
+                if on_step:
+                    on_step(history, None)
                 _colab(["stop", "-s", session_name], auth=auth, timeout=30)
                 low = reason.lower()
                 if "rejected accelerator" in low or "precondition failed" in low or "too many active sessions" in low:
                     break
                 if attempt < attempts:
-                    time.sleep(base_backoff * attempt)
+                    wait_s = base_backoff * attempt
+                    if log_fn:
+                        log_fn(f"Backing off {wait_s}s before next {shape_lbl} retry...")
+                    time.sleep(wait_s)
+    if log_fn:
+        log_fn("[✗] Exhausted Colab GPU fallback ladder (Colab allocator congested or unavailable). Use RESUME to retry.")
     return None, history
 
 
@@ -681,6 +724,8 @@ def start_colab(v, rd, execute):
         stage = os.path.join(td, "bundle")
         os.makedirs(stage, exist_ok=True)
         shutil.copyfile(KIT, os.path.join(stage, "train_lora.py"))
+        if v.get("chat_template_file") and os.path.isfile(v["chat_template_file"]):
+            shutil.copyfile(v["chat_template_file"], os.path.join(stage, "chat_template.jinja"))
         shutil.copyfile(t["train_file"], os.path.join(stage, "train.jsonl"))
         if t["val_file"]:
             shutil.copyfile(t["val_file"], os.path.join(stage, "val.jsonl"))
@@ -725,14 +770,36 @@ def start_colab(v, rd, execute):
 def _launch_single_colab_track(v: dict, rd: str, tp: dict, hf_token: str | None, auth: str) -> bool:
     td = os.path.join(rd, "tracks", tp["track"])
     s = tp["session"]
-    selected, hist = _provision_with_fallback(s, v)
+    _write_text(os.path.join(td, "state"), "provisioning\n")
+    _append_provision_log(td, f"Track '{tp['track']}' entering provisioning phase (model={v['base_model']})")
+
+    def _on_prov_step(hist, sel_gpu):
+        tp["fallback_history"] = list(hist)
+        if sel_gpu:
+            tp["selected_gpu"] = sel_gpu
+        rj = os.path.join(rd, "run.json")
+        cur = _read_json(rj, {})
+        if cur and isinstance(cur.get("plan"), list):
+            for p_item in cur["plan"]:
+                if p_item.get("track") == tp["track"]:
+                    p_item["fallback_history"] = list(hist)
+                    if sel_gpu:
+                        p_item["selected_gpu"] = sel_gpu
+            _write_json(rj, cur)
+
+    selected, hist = _provision_with_fallback(
+        s, v, log_fn=lambda msg: _append_provision_log(td, msg), on_step=_on_prov_step
+    )
     tp["selected_gpu"] = selected
     tp["fallback_history"] = hist
+    tp["last_provision_attempt_at"] = int(dt.datetime.now().timestamp())
     if not selected:
         with open(os.path.join(td, "state"), "w") as fh:
             fh.write("failed\n")
         tp["error"] = "All Colab GPU fallback tiers failed: " + "; ".join(f"{h['gpu']}({h.get('reason','')[:60]})" for h in hist)
         return False
+
+    _append_provision_log(td, f"Refreshing train_lora.py kit and preparing Drive auth for {selected}...")
 
     # Re-pack config if stepped down to lower VRAM tier (auto batch_size scaling)
     if selected in ("L4", "T4"):
@@ -783,13 +850,16 @@ def _launch_single_colab_track(v: dict, rd: str, tp: dict, hf_token: str | None,
                 pass
 
     # Upload dataset/code bundle (+ optional local base weights)
+    _append_provision_log(td, f"Uploading bundle.tar.gz ({os.path.getsize(tp['bundle']) // 1024} KiB) to {s}...")
     rc, out, err = _colab(["upload", "-s", s, tp["bundle"], f"/content/{s}.tar.gz"], auth=auth, timeout=600)
     if rc != 0:
         tp["error"] = f"upload: {(err or out).strip()[-250:]}"
+        _append_provision_log(td, f"[✗] Bundle upload failed: {tp['error']}")
         _colab(["stop", "-s", s], auth=auth, timeout=60)
         with open(os.path.join(td, "state"), "w") as fh:
             fh.write("failed\n")
         return False
+    _append_provision_log(td, "[✓] Bundle uploaded; dispatching pip install + train_lora.py on Colab...")
 
     if v["base_source"] == "local_upload" and v.get("base_hf_path") and os.path.isdir(v["base_hf_path"]):
         base_tar = os.path.join(rd, "base_upload.tar.gz")
@@ -888,6 +958,20 @@ def _recover_track_from_drive(run_name: str, track_name: str, td: str) -> bool:
     return False
 
 
+def _is_actively_provisioning(td: str, stale_after_sec: int = 1500) -> bool:
+    """Return True if track state is 'provisioning' and provision.log was updated recently (< 25m)."""
+    if track_status(td)["state"] != "provisioning":
+        return False
+    pl = os.path.join(td, "provision.log")
+    st_p = os.path.join(td, "state")
+    ref = pl if os.path.isfile(pl) else st_p
+    try:
+        age = dt.datetime.now().timestamp() - os.path.getmtime(ref)
+        return age < stale_after_sec
+    except OSError:
+        return True
+
+
 def resume_colab(name: str) -> dict:
     """Re-provision disconnected/timed-out Colab tracks and resume cleanly from Drive checkpoints."""
     rd = run_dir(name)
@@ -899,11 +983,23 @@ def resume_colab(name: str) -> dict:
     hf_token, _ = cc._read_key_from_files(("HF_TOKEN", "HUGGINGFACE_TOKEN", "HUGGING_FACE_HUB_TOKEN"))
     resumed = {}
     any_running = False
+    now_ts = int(dt.datetime.now().timestamp())
+    cooldown_sec = int(v["colab"].get("provision_cooldown_sec", 600))
     for tp in meta.get("plan", []):
         td = os.path.join(rd, "tracks", tp["track"])
         st = track_status(td)["state"]
         if st in ("done", "planned", "queued"):
             resumed[tp["track"]] = f"skip_{st}"
+            continue
+        if _is_actively_provisioning(td):
+            resumed[tp["track"]] = "still_provisioning"
+            any_running = True
+            continue
+        last_try = int(tp.get("last_provision_attempt_at") or 0)
+        if st == "failed" and not tp.get("selected_gpu") and last_try > 0 and (now_ts - last_try) < cooldown_sec:
+            rem = cooldown_sec - (now_ts - last_try)
+            resumed[tp["track"]] = f"cooldown_{rem}s"
+            any_running = True
             continue
         if int(tp.get("resumes", 0)) >= 6:
             resumed[tp["track"]] = "max_resumes_reached"
@@ -948,13 +1044,16 @@ def collect_colab(name):
         if st_cur in ("done", "planned", "queued"):
             res[tp["track"]] = st_cur
             continue
+        if _is_actively_provisioning(td):
+            res[tp["track"]] = "still_provisioning"
+            continue
         s = tp["session"]
         rc, out, _ = _colab(["exec", "-s", s], auth=auth, stdin=(
             "import os\n"
             f"ec = '{tp['remote_dir']}/exit_code'\n"
             f"lg = '{tp['remote_dir']}/train.log'\n"
             "print('EXIT', open(ec).read().strip() if os.path.exists(ec) else 'running')\n"
-            "if os.path.exists(lg): print('TAIL::' + open(lg, errors='ignore').read()[-1200:])\n"
+            "if os.path.exists(lg): print('TAIL::' + open(lg, errors='ignore').read()[-32000:])\n"
         ), timeout=120)
         if rc != 0:
             if _recover_track_from_drive(name, tp["track"], td):
@@ -991,10 +1090,13 @@ def collect_colab(name):
                             os.chmod(os.path.join(root_p, fn_p), 0o664)
                         except OSError:
                             pass
-                # Promote in-Colab exported adapter.gguf if present
+                # Promote in-Colab exported adapter.gguf and structured metrics.jsonl if present
                 colab_gguf = os.path.join(td, "output", "adapter.gguf")
                 if os.path.isfile(colab_gguf):
                     shutil.copyfile(colab_gguf, os.path.join(td, "adapter.gguf"))
+                colab_metrics = os.path.join(td, "output", "metrics.jsonl")
+                if os.path.isfile(colab_metrics):
+                    shutil.copyfile(colab_metrics, os.path.join(td, "metrics.jsonl"))
                 _write_text(os.path.join(td, "state"), "done\n")
                 res[tp["track"]] = "downloaded"
             else:
@@ -1045,8 +1147,106 @@ def _parse_log_progress(txt: str) -> dict:
     return prog
 
 
+_LOG_DICT_RX = re.compile(r"\{[^{}]*(?:'loss'|'eval_loss'|'rewards/margins')[^{}]*\}")
+
+
+def _parse_metrics_series(metrics_jsonl_path: str | None, log_text: str) -> list[dict]:
+    """Load structured per-step metrics from metrics.jsonl, or parse HF Trainer dict lines from train.log."""
+    pts: list[dict] = []
+    if metrics_jsonl_path and os.path.isfile(metrics_jsonl_path):
+        try:
+            with open(metrics_jsonl_path, encoding="utf-8", errors="ignore") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                        if isinstance(rec, dict):
+                            pts.append(rec)
+                    except ValueError:
+                        continue
+        except OSError:
+            pass
+    if pts:
+        return pts[-400:]
+
+    # Fallback for older runs without metrics.jsonl: parse HF Trainer dict log lines
+    if not log_text:
+        return []
+    import ast
+    step_idx = 0
+    for m in _LOG_DICT_RX.finditer(log_text):
+        raw = m.group(0)
+        try:
+            d = ast.literal_eval(raw)
+        except Exception:
+            continue
+        if not isinstance(d, dict):
+            continue
+        step_idx += 1
+        rec = {"step": step_idx, "epoch": float(d.get("epoch", 0.0) or 0.0)}
+        for k in ("loss", "eval_loss", "grad_norm", "learning_rate", "mean_token_accuracy",
+                  "rewards/chosen", "rewards/rejected", "rewards/margins", "rewards/accuracies",
+                  "eval_rewards/margins", "eval_rewards/accuracies"):
+            if k in d and isinstance(d[k], (int, float)):
+                rec[k] = round(float(d[k]), 6)
+        if len(rec) > 2:
+            pts.append(rec)
+    return pts[-400:]
+
+
+def _summarize_metrics(pts: list[dict]) -> dict:
+    if not pts:
+        return {"points": 0}
+    losses = [p["loss"] for p in pts if isinstance(p.get("loss"), (int, float))]
+    elosses = [p["eval_loss"] for p in pts if isinstance(p.get("eval_loss"), (int, float))]
+    margins = [p["rewards/margins"] for p in pts if isinstance(p.get("rewards/margins"), (int, float))]
+    accs = [p["rewards/accuracies"] for p in pts if isinstance(p.get("rewards/accuracies"), (int, float))]
+    gnorms = [p["grad_norm"] for p in pts if isinstance(p.get("grad_norm"), (int, float))]
+    tok_accs = [p["mean_token_accuracy"] for p in pts if isinstance(p.get("mean_token_accuracy"), (int, float))]
+    out = {"points": len(pts)}
+    if losses:
+        out.update({"first_loss": losses[0], "min_loss": min(losses), "final_loss": losses[-1]})
+    if elosses:
+        out["final_eval_loss"] = elosses[-1]
+    if margins:
+        out.update({"first_margin": margins[0], "max_margin": max(margins), "final_margin": margins[-1]})
+    if accs:
+        out["final_reward_acc"] = accs[-1]
+    if tok_accs:
+        out["final_token_acc"] = tok_accs[-1]
+    if gnorms:
+        out["max_grad_norm"] = max(gnorms)
+    return out
+
+
+def _detect_training_phase(track_state: str, exit_code: str, log_text: str, source: str) -> str:
+    if exit_code == "0" or track_state == "done":
+        return "done"
+    if track_state in ("failed", "cancelled") or (exit_code not in ("running", "unknown", "0") and str(exit_code).isdigit()):
+        return "failed"
+    if track_state == "provisioning" or source == "provision_log":
+        return "provisioning"
+    if track_state == "queued":
+        return "queued"
+    low = (log_text or "")[-4000:].lower()
+    if "exporting gguf" in low or "convert_lora_to_gguf" in low:
+        return "exporting_gguf"
+    if "mirrored to google drive" in low or "saved peft adapter" in low or "saved dpo-tuned" in low:
+        return "saving_adapter"
+    if "%|" in low or "'loss':" in low or "rewards/margins" in low:
+        return "training"
+    if "loading" in low and ("fastlanguagemodel" in low or "checkpoint shards" in low or "downloading" in low):
+        return "loading_model"
+    if "[pip install]" in low:
+        return "installing_deps"
+    return track_state or "running"
+
+
 def stream_logs(name: str, track: str | None = None, live: bool = True, lines: int = 80) -> dict:
-    """Fetch live or cached training logs + GPU telemetry (works for both Colab and local runs)."""
+    """Fetch live or cached training logs, provisioning history, structured metrics.jsonl & GPU telemetry
+    (works for both Colab and local runs, from second 1 of provisioning through completion)."""
     rd = run_dir(name)
     meta = _read_json(os.path.join(rd, "run.json"), {})
     if not meta:
@@ -1061,6 +1261,10 @@ def stream_logs(name: str, track: str | None = None, live: bool = True, lines: i
     td = os.path.join(rd, "tracks", sel_name)
     os.makedirs(td, exist_ok=True)
     cached_log = os.path.join(td, "train.log")
+    prov_log = os.path.join(td, "provision.log")
+    cached_metrics = os.path.join(td, "metrics.jsonl")
+    out_metrics = os.path.join(td, "output", "metrics.jsonl")
+    t_state = track_status(td).get("state", "unknown")
 
     gpu_info = None
     exit_code = "unknown"
@@ -1068,7 +1272,8 @@ def stream_logs(name: str, track: str | None = None, live: bool = True, lines: i
     source = "cached_file"
     live_err = None
 
-    if backend == "colab" and live and tp.get("session"):
+    # Only probe Colab exec once a GPU has actually been provisioned (skip noisy errors while provisioning)
+    if backend == "colab" and live and tp.get("session") and (tp.get("selected_gpu") or t_state == "running"):
         auth = (meta.get("spec") or {}).get("colab", {}).get("auth", "adc")
         s = tp["session"]
         remote = tp.get("remote_dir") or f"/content/{s}"
@@ -1083,10 +1288,12 @@ def stream_logs(name: str, track: str | None = None, live: bool = True, lines: i
             f"ec_p = {remote + '/exit_code'!r}\n"
             "ec = open(ec_p).read().strip() if os.path.exists(ec_p) else 'running'\n"
             f"lg_p = {remote + '/train.log'!r}\n"
+            f"mt_p = {remote + '/output/metrics.jsonl'!r}\n"
             "tail = ''\n"
-            "if os.path.exists(lg_p): tail = open(lg_p, errors='ignore').read()[-16000:]\n"
-            "elif os.path.exists('/content/pip.log'): tail = '[pip install]\\n' + open('/content/pip.log', errors='ignore').read()[-4000:]\n"
-            "print('BL_LOG_JSON::' + json.dumps({'gpu': gpu, 'exit_code': ec, 'tail': tail}))\n"
+            "if os.path.exists(lg_p): tail = open(lg_p, errors='ignore').read()[-24000:]\n"
+            "elif os.path.exists('/content/pip.log'): tail = '[pip install]\\n' + open('/content/pip.log', errors='ignore').read()[-6000:]\n"
+            "metrics_raw = open(mt_p, errors='ignore').read()[-32000:] if os.path.exists(mt_p) else ''\n"
+            "print('BL_LOG_JSON::' + json.dumps({'gpu': gpu, 'exit_code': ec, 'tail': tail, 'metrics_raw': metrics_raw}))\n"
         )
         rc, out, err = _colab(["exec", "-s", s, "--timeout", "25"], auth=auth, stdin=probe, timeout=40)
         if rc == 0 and "BL_LOG_JSON::" in out:
@@ -1099,6 +1306,10 @@ def stream_logs(name: str, track: str | None = None, live: bool = True, lines: i
                 if log_text:
                     with open(cached_log, "w", encoding="utf-8") as fh:
                         fh.write(log_text)
+                mraw = payload.get("metrics_raw") or ""
+                if mraw:
+                    with open(cached_metrics, "w", encoding="utf-8") as fh:
+                        fh.write(mraw)
             except (ValueError, IndexError) as e:
                 live_err = f"parse error: {e}"
         else:
@@ -1106,14 +1317,38 @@ def stream_logs(name: str, track: str | None = None, live: bool = True, lines: i
 
     if not log_text and os.path.isfile(cached_log):
         try:
-            log_text = open(cached_log, encoding="utf-8", errors="ignore").read()[-16000:]
+            log_text = open(cached_log, encoding="utf-8", errors="ignore").read()[-24000:]
             source = "local_file" if backend == "local" else "cached_file"
         except OSError:
             pass
 
+    # Provisioning / fallback-history live stream before train.log exists!
+    prov_text = ""
+    if os.path.isfile(prov_log):
+        try:
+            prov_text = open(prov_log, encoding="utf-8", errors="ignore").read()[-12000:]
+        except OSError:
+            pass
+    if not log_text:
+        if prov_text:
+            log_text = prov_text
+            source = "provision_log"
+        elif tp.get("fallback_history") or tp.get("error"):
+            lines_fb = []
+            for h in (tp.get("fallback_history") or []):
+                hm = " --high-mem" if h.get("high_mem") else ""
+                lines_fb.append(f"[fallback] {h.get('gpu')}{hm} attempt {h.get('attempt')}: {h.get('status')} — {h.get('reason', 'ok')}")
+            if tp.get("error"):
+                lines_fb.append(f"[error] {tp['error']}")
+            log_text = "\n".join(lines_fb)
+            source = "provision_log"
+        elif t_state in ("provisioning", "planned", "queued"):
+            log_text = f"[{dt.datetime.now().strftime('%H:%M:%S')}] Track '{sel_name}' is {t_state} (waiting for Colab GPU assignment on ladder: {' -> '.join((meta.get('spec') or {}).get('colab', {}).get('gpu_fallback', ['H100','G4','A100']))})..."
+            source = "provision_log"
+
     if backend == "local":
         ec_p = os.path.join(td, "exit_code")
-        exit_code = open(ec_p).read().strip() if os.path.isfile(ec_p) else track_status(td).get("state", "unknown")
+        exit_code = open(ec_p).read().strip() if os.path.isfile(ec_p) else t_state
         if live and shutil.which("nvidia-smi"):
             try:
                 raw = subprocess.check_output(
@@ -1125,6 +1360,13 @@ def stream_logs(name: str, track: str | None = None, live: bool = True, lines: i
                     gpu_info = {"name": p[0], "used_mb": int(p[1]), "total_mb": int(p[2]), "util_pct": int(p[3])}
             except Exception:
                 pass
+    elif exit_code == "unknown":
+        exit_code = t_state
+
+    metrics_file = cached_metrics if os.path.isfile(cached_metrics) else (out_metrics if os.path.isfile(out_metrics) else None)
+    metrics_pts = _parse_metrics_series(metrics_file, log_text)
+    summary_stats = _summarize_metrics(metrics_pts)
+    phase = _detect_training_phase(t_state, str(exit_code), log_text, source)
 
     cleaned_lines = []
     for raw_line in log_text.splitlines():
@@ -1138,11 +1380,16 @@ def stream_logs(name: str, track: str | None = None, live: bool = True, lines: i
         "backend": backend,
         "track": sel_name,
         "tracks": track_names,
+        "track_state": t_state,
+        "phase": phase,
         "session": tp.get("session"),
         "selected_gpu": tp.get("selected_gpu"),
+        "fallback_history": tp.get("fallback_history") or [],
         "exit_code": exit_code,
         "gpu": gpu_info,
         "progress": _parse_log_progress(log_text),
+        "metrics": metrics_pts,
+        "summary_stats": summary_stats,
         "log_tail": "\n".join(tail_lines),
         "source": source,
         "live_error": live_err,
@@ -1292,14 +1539,20 @@ def inspect_colab_sessions(probe: bool = False) -> dict:
         })
 
     stale = [r for r in rows if r["stale"]]
-    return {
+    res = {
         "status": "ok",
         "total": len(rows),
         "active_count": len(rows) - len(stale),
         "stale_count": len(stale),
         "sessions": rows,
         "ts": dt.datetime.now().isoformat(timespec="seconds"),
+        "updated_at": int(dt.datetime.now().timestamp()),
     }
+    try:
+        _write_json(os.path.join(GEORGE, "training", "colab_sessions_cache.json"), res)
+    except OSError:
+        pass
+    return res
 
 
 def cull_colab_vm(target: str | None = None, all_stale: bool = False) -> dict:

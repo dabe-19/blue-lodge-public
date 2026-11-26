@@ -6,6 +6,7 @@
   "base_model": "Qwen/Qwen3.8-27B",
   "base_source": "hf_direct",
   "base_hf_path": "",
+  "chat_template_file": "configs/blue_lodge_jinja_template.jinja",
   "tracks": [
     {
       "name": "sft-core",
@@ -23,15 +24,15 @@
     }
   ],
   "hyper": {
-    "epochs": 2,
-    "learning_rate": 0.0001,
-    "lora_r": 32,
-    "lora_alpha": 64,
-    "lora_dropout": 0.05,
-    "max_seq_len": 4096,
+    "epochs": 1,
+    "learning_rate": 0.000025,
+    "lora_r": 16,
+    "lora_alpha": 32,
+    "lora_dropout": 0.08,
+    "max_seq_len": 8192,
     "batch_size": 1,
     "grad_accum": 8,
-    "dpo_beta": 0.1,
+    "dpo_beta": 0.15,
     "load_in_4bit": true,
     "use_unsloth": true,
     "save_steps": 40
@@ -40,7 +41,7 @@
     "method": "svd",
     "target_rank": 32,
     "prior_adapter_weight": 0.7,
-    "weights": [0.55, 0.45]
+    "weights": [0.35, 0.65]
   },
   "colab": {
     "auth": "adc",
@@ -50,10 +51,12 @@
     "high_mem": true,
     "retry_attempts": 3,
     "retry_backoff_sec": 8,
-    "max_concurrent_sessions": 3,
+    "max_concurrent_sessions": 2,
     "min_cu_balance": 150,
     "max_runtime_min": 180,
     "drive_checkpoints": true,
+    "drive_checkpoint_sync": true,
+    "drive_checkpoint_keep": 2,
     "export_gguf_on_colab": true
   },
   "benchmark": {

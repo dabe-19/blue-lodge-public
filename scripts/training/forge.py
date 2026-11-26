@@ -178,9 +178,10 @@ def _final(msgs):
     return None
 
 
-def _clone_call(m, name=None, args=None, cid="call_alt"):
+def _clone_call(m, name=None, args=None, cid="call_alt", keep_reasoning=False):
     f = _call(m)
-    return {"role": "assistant", "content": "", "reasoning_content": m.get("reasoning_content", ""),
+    return {"role": "assistant", "content": "",
+            "reasoning_content": (m.get("reasoning_content", "") if keep_reasoning else ""),
             "tool_calls": [{"id": cid, "type": "function",
                             "function": {"name": name if name is not None else f["name"],
                                          "arguments": args if args is not None else f["arguments"]}}]}
@@ -223,19 +224,168 @@ def step_episodes(steps):
     return eps
 
 
-def fit_context(prompt, budget):
-    """Drop the oldest assistant/tool pairs after the first user turn until under budget."""
+_CORE_AMBIENT_TOOLS = (
+    "file_read", "file_edit", "file_write", "file_grep", "dir_list", "bash_exec",
+    "code_outline", "code_validate", "git_commit", "git_push", "web_search", "web_fetch",
+)
+_CANONICAL_TOOLS_CACHE: dict[str, dict[str, dict]] = {}
+
+
+def load_canonical_tools(data_dir: str | None = None) -> dict[str, dict]:
+    """Load canonical live tool schemas from data/schemas/native_tools.json (single source of truth)."""
+    d = data_dir or default_data_dir()
+    if d in _CANONICAL_TOOLS_CACHE:
+        return _CANONICAL_TOOLS_CACHE[d]
+    out: dict[str, dict] = {}
+    for rel in (os.path.join("schemas", "native_tools.json"), os.path.join("training", "native_core_tools.json")):
+        p = os.path.join(d, rel)
+        if not os.path.isfile(p):
+            continue
+        try:
+            items = json.load(open(p, encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(items, list):
+            for t in items:
+                nm = ((t.get("function") or {}).get("name") or "") if isinstance(t, dict) else ""
+                if nm and nm not in out:
+                    out[nm] = t
+    _CANONICAL_TOOLS_CACHE[d] = out
+    return out
+
+
+def _referenced_tool_names(*msg_groups) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for grp in msg_groups:
+        if not grp:
+            continue
+        seq = grp if isinstance(grp, list) else [grp]
+        for m in seq:
+            if not isinstance(m, dict):
+                continue
+            for tc in (m.get("tool_calls") or []):
+                nm = ((tc.get("function") or {}).get("name") or "") if isinstance(tc, dict) else ""
+                if nm and nm not in seen:
+                    seen.add(nm)
+                    names.append(nm)
+    return names
+
+
+def _prune_tools(ep_tools, prompt, chosen, rejected, canonical_map: dict[str, dict], max_tools: int = 16) -> list[dict]:
+    """Keep every tool called in the sample + core ambient tools, upgraded to canonical live schemas,
+    capped at <= max_tools so tool declarations never bloat prompts past max_seq_len."""
+    ep_map = {
+        ((t.get("function") or {}).get("name") or ""): t
+        for t in (ep_tools or [])
+        if isinstance(t, dict) and isinstance(t.get("function"), dict)
+    }
+    used = _referenced_tool_names(prompt, chosen, rejected)
+    if not ep_tools and not used:
+        return []
+    picked: list[dict] = []
+    seen: set[str] = set()
+    for nm in used:
+        spec = canonical_map.get(nm) or ep_map.get(nm)
+        if spec and nm not in seen:
+            seen.add(nm)
+            picked.append(spec)
+    # Fill with core ambient tools so the model still chooses among realistic candidates
+    for nm in _CORE_AMBIENT_TOOLS:
+        if len(picked) >= max_tools:
+            break
+        spec = canonical_map.get(nm) or ep_map.get(nm)
+        if spec and nm not in seen:
+            seen.add(nm)
+            picked.append(spec)
+    # Finally preserve a few episode-specific tools if slots remain
+    for nm, spec in ep_map.items():
+        if len(picked) >= max_tools:
+            break
+        if nm not in seen:
+            seen.add(nm)
+            picked.append(canonical_map.get(nm) or spec)
+    return picked[:max_tools]
+
+
+def validate_tool_call_schema(msg: dict, canonical_map: dict[str, dict]) -> tuple[bool, str | None]:
+    """Validate that an assistant tool call conforms to live data/schemas/native_tools.json."""
+    if not isinstance(msg, dict) or not msg.get("tool_calls"):
+        return True, None
+    for tc in msg.get("tool_calls") or []:
+        fn = (tc.get("function") or {}) if isinstance(tc, dict) else {}
+        nm = fn.get("name") or ""
+        spec = canonical_map.get(nm)
+        if not spec:
+            continue
+        raw_args = fn.get("arguments")
+        if isinstance(raw_args, str):
+            try:
+                args = json.loads(raw_args) if raw_args.strip() else {}
+            except ValueError:
+                return False, f"{nm}: invalid JSON arguments"
+        elif isinstance(raw_args, dict):
+            args = raw_args
+        elif raw_args is None:
+            args = {}
+        else:
+            return False, f"{nm}: non-object arguments"
+        if not isinstance(args, dict):
+            return False, f"{nm}: arguments must be JSON object"
+        params = (spec.get("function") or {}).get("parameters") or {}
+        req = params.get("required") or []
+        props = params.get("properties") or {}
+        missing = [r for r in req if r not in args]
+        if missing:
+            return False, f"{nm}: missing required {missing}"
+        if props:
+            unknown = [k for k in args if k not in props]
+            if unknown:
+                return False, f"{nm}: unknown param(s) {unknown}"
+    return True, None
+
+
+def fit_context(prompt, budget, tools=None, chosen=None):
+    """Trim oversized observations and drop the oldest assistant/tool pairs after the first user turn
+    until prompt + serialized tools + chosen all fit strictly inside `budget` characters."""
+    def _msg_len(m):
+        return (len(m.get("content") or "") + len(m.get("reasoning_content") or "")
+                + sum(len(str((t.get("function") or {}).get("arguments") or "")) for t in (m.get("tool_calls") or [])))
+
     def size(ms):
-        return sum(len(m.get("content") or "") + len(m.get("reasoning_content") or "")
-                   + sum(len(t["function"].get("arguments") or "") for t in m.get("tool_calls") or []) for m in ms)
-    ms = list(prompt)
+        return sum(_msg_len(m) for m in ms)
+
+    overhead = 0
+    if tools:
+        overhead += len(json.dumps(tools, separators=(",", ":"), ensure_ascii=False))
+    if isinstance(chosen, dict):
+        overhead += _msg_len(chosen)
+    msg_budget = max(2000, int(budget) - overhead)
+
+    # First cap any single runaway tool observation or system prompt bloat cleanly
+    ms = []
+    for m in prompt:
+        mc = dict(m)
+        if mc.get("role") == "tool" and isinstance(mc.get("content"), str) and len(mc["content"]) > 2400:
+            mc["content"] = mc["content"][:2200] + "\n...[truncated]..."
+        ms.append(mc)
+
     head = next((i for i, m in enumerate(ms) if m["role"] == "user"), 0) + 1
-    dropped = 0
-    while size(ms) > budget and len(ms) > head + 2:
+    while size(ms) > msg_budget and len(ms) > head + 2:
         del ms[head]
         while len(ms) > head + 1 and ms[head]["role"] == "tool":
             del ms[head]
-        dropped += 1
+
+    # If still over budget (e.g., huge system/user turn), trim the oldest user/tool text gracefully
+    if size(ms) > msg_budget:
+        for idx, m in enumerate(ms):
+            if size(ms) <= msg_budget:
+                break
+            c = m.get("content")
+            if isinstance(c, str) and len(c) > 3000:
+                excess = size(ms) - msg_budget
+                keep = max(1200, len(c) - excess - 64)
+                ms[idx] = dict(m, content=c[:keep] + "\n...[truncated]...")
     return ms
 
 
@@ -358,8 +508,11 @@ def _sample(recipe, ep, prompt, chosen, rejected, provenance, budget, **extra):
     meta = {"recipe": recipe, "session": ep["meta"].get("session_id"), "source": ep["meta"].get("source"),
             "outcome": ep["meta"].get("outcome"), "provenance": provenance}
     meta.update(extra)
-    return {"prompt": fit_context(prompt, budget), "chosen": chosen, "rejected": rejected,
-            "tools": ep.get("tools") or [], "meta": meta}
+    canonical_map = load_canonical_tools()
+    pruned_tools = _prune_tools(ep.get("tools") or [], prompt, chosen, rejected, canonical_map, max_tools=16)
+    fitted_prompt = fit_context(prompt, budget, tools=pruned_tools, chosen=chosen)
+    return {"prompt": fitted_prompt, "chosen": chosen, "rejected": rejected,
+            "tools": pruned_tools, "meta": meta}
 
 
 def r_tool_syntax(eps, steps, vocab, rnd, budget, ops_only=False, recipe="tool-syntax"):
@@ -801,9 +954,11 @@ def r_harness_workflows(eps, steps, vocab, rnd, budget):
                                "transcript+harness_dpo", budget, hop=hop_idx, anti_pattern=ap))
 
     # 2. Organic multi-step Blue Lodge workflow blueprints & ALP v1 Heartwood loops
+    canonical_map = load_canonical_tools()
     wf_samples = hc.build_workflow_harness_samples(LODGE, budget)
     for s in wf_samples:
-        s["prompt"] = fit_context(s["prompt"], budget)
+        s["tools"] = _prune_tools(s.get("tools") or [], s["prompt"], s["chosen"], s.get("rejected"), canonical_map, max_tools=16)
+        s["prompt"] = fit_context(s["prompt"], budget, tools=s["tools"], chosen=s["chosen"])
         out.append(s)
     return out
 
@@ -1160,6 +1315,7 @@ def build(args):
     llm = LLM(args.llm_url or default_llm_url(args.george_dir), args.max_llm_calls) if args.augment_llm else None
 
     data_dir = args.data_dir or default_data_dir()
+    canonical_tools = load_canonical_tools(data_dir)
     cur_pool, cur_report = {}, None
     if args.include_curricula or args.curricula_only:
         progress(phase="reading data/training curricula")
@@ -1167,6 +1323,8 @@ def build(args):
     dream_samples = load_journal_memories(args.george_dir, red, args.max_context) if getattr(args, "include_journal", False) else []
     guard = None if args.no_bench_guard else BenchGuard(data_dir)
     contaminated = 0
+    schema_dropped = 0
+    schema_errors: list[str] = []
 
     pools, available = {}, {}
     for f in focus:
@@ -1186,6 +1344,12 @@ def build(args):
             if guard and guard.hits(next((m.get("content") or "" for m in reversed(s["prompt"])
                                           if m.get("role") == "user"), "")):
                 contaminated += 1
+                continue
+            ok_schema, err_schema = validate_tool_call_schema(s["chosen"], canonical_tools)
+            if not ok_schema:
+                schema_dropped += 1
+                if len(schema_errors) < 20:
+                    schema_errors.append(f"{f}: {err_schema}")
                 continue
             uniq.append(s)
         rnd.shuffle(uniq)
@@ -1274,6 +1438,8 @@ def build(args):
         "seed": args.seed, "max_context_chars": args.max_context, "out": out,
         "bench_guard": {"enabled": bool(guard), "benchmark_items": guard.items if guard else 0,
                         "sources": guard.sources if guard else [], "dropped": contaminated},
+        "schema_validation": {"canonical_tools": len(canonical_tools), "dropped": schema_dropped,
+                              "sample_errors": schema_errors},
         "curricula": cur_report,
     }
     with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8") as f:
@@ -1476,7 +1642,7 @@ def main(argv=None):
             p.add_argument("--extra-transcript-dir", action="append", default=[],
                            help="additional sibling-node .george directory to pool transcripts from (repeatable)")
             p.add_argument("--max-obs", type=int, default=2500)
-            p.add_argument("--max-context", type=int, default=24000)
+            p.add_argument("--max-context", type=int, default=20000)
             p.add_argument("--seed", type=int, default=7)
         if name == "build":
             p.add_argument("--focus", required=True)

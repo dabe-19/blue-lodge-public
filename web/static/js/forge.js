@@ -206,6 +206,224 @@
     return wrap;
   }
 
+  function renderSvgSparkline(title, points, seriesList) {
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const validSeries = seriesList
+      .map((s) => ({
+        ...s,
+        vals: points
+          .map((p, idx) => ({ x: p.step != null ? Number(p.step) : idx + 1, y: p[s.key] }))
+          .filter((pt) => typeof pt.y === 'number' && Number.isFinite(pt.y)),
+      }))
+      .filter((s) => s.vals.length > 0);
+    if (!validSeries.length) return null;
+
+    const allX = validSeries.flatMap((s) => s.vals.map((v) => v.x));
+    const allY = validSeries.flatMap((s) => s.vals.map((v) => v.y));
+    const minX = Math.min(...allX);
+    const maxX = Math.max(...allX, minX + 1);
+    let minY = Math.min(...allY);
+    let maxY = Math.max(...allY);
+    if (Math.abs(maxY - minY) < 1e-6) {
+      minY -= 0.5;
+      maxY += 0.5;
+    } else {
+      const pad = (maxY - minY) * 0.1;
+      minY -= pad;
+      maxY += pad;
+    }
+
+    const W = 320;
+    const H = 92;
+    const P = 10;
+    const mapX = (x) => P + ((x - minX) / (maxX - minX)) * (W - 2 * P);
+    const mapY = (y) => (H - P) - ((y - minY) / (maxY - minY)) * (H - 2 * P);
+
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', String(H));
+    svg.style.display = 'block';
+    svg.style.background = 'rgba(2,6,23,0.85)';
+    svg.style.borderRadius = '6px';
+    svg.style.border = '1px solid rgba(148,163,184,0.16)';
+
+    // Subtle horizontal grid lines
+    [0.25, 0.5, 0.75].forEach((f) => {
+      const ln = document.createElementNS(svgNS, 'line');
+      const gy = (P + f * (H - 2 * P)).toFixed(1);
+      ln.setAttribute('x1', String(P));
+      ln.setAttribute('x2', String(W - P));
+      ln.setAttribute('y1', gy);
+      ln.setAttribute('y2', gy);
+      ln.setAttribute('stroke', 'rgba(148,163,184,0.12)');
+      ln.setAttribute('stroke-dasharray', '3,3');
+      svg.appendChild(ln);
+    });
+
+    validSeries.forEach((s) => {
+      if (s.vals.length >= 2) {
+        const poly = document.createElementNS(svgNS, 'polyline');
+        poly.setAttribute('fill', 'none');
+        poly.setAttribute('stroke', s.color);
+        poly.setAttribute('stroke-width', '2');
+        poly.setAttribute('stroke-linejoin', 'round');
+        poly.setAttribute('points', s.vals.map((v) => `${mapX(v.x).toFixed(1)},${mapY(v.y).toFixed(1)}`).join(' '));
+        svg.appendChild(poly);
+      }
+      const last = s.vals[s.vals.length - 1];
+      const dot = document.createElementNS(svgNS, 'circle');
+      dot.setAttribute('cx', mapX(last.x).toFixed(1));
+      dot.setAttribute('cy', mapY(last.y).toFixed(1));
+      dot.setAttribute('r', '3.2');
+      dot.setAttribute('fill', s.color);
+      svg.appendChild(dot);
+    });
+
+    const legend = el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;font-size:10px;font-family:var(--font-mono);color:#cbd5e1;margin-top:4px;' }, validSeries.map((s) => {
+      const latest = s.vals[s.vals.length - 1].y;
+      return el('span', { style: `color:${s.color};`, text: `${s.label}: ${latest.toFixed(4)}` });
+    }));
+
+    return el('div', { style: 'flex:1;min-width:240px;background:rgba(15,23,42,0.55);border:1px solid rgba(148,163,184,0.18);border-radius:8px;padding:8px;' }, [
+      el('div', { style: 'font-size:10px;font-weight:700;letter-spacing:0.06em;color:#94a3b8;margin-bottom:4px;', text: title }),
+      svg,
+      legend,
+    ]);
+  }
+
+  function renderStreamTelemetryCard(sd) {
+    const gpu = sd.gpu;
+    const prog = sd.progress || {};
+    const stats = sd.summary_stats || {};
+    const metrics = Array.isArray(sd.metrics) ? sd.metrics : [];
+    const fbHist = Array.isArray(sd.fallback_history) ? sd.fallback_history : [];
+    const phase = String(sd.phase || sd.track_state || 'connecting').toUpperCase();
+
+    const gpuLabel = gpu
+      ? `${gpu.name} · ${(gpu.used_mb / 1024).toFixed(1)} / ${(gpu.total_mb / 1024).toFixed(1)} GiB · ${gpu.util_pct}% GPU`
+      : (sd.selected_gpu ? `${sd.selected_gpu} (probing telemetry...)` : `Phase: ${phase}`);
+    const pct = prog.pct != null ? prog.pct : (phase === 'DONE' ? 100 : 0);
+    const progText = prog.step != null
+      ? `Step ${prog.step} / ${prog.total_steps} (${pct}%) · ${prog.speed || '—'} · ETA ${prog.eta || '—'}${prog.loss != null ? ` · Loss ${prog.loss}` : ''}`
+      : `Phase: ${phase} · Source: ${sd.source || 'live'}${sd.ts ? ` · Updated ${sd.ts}` : ''}`;
+
+    const trackPills = el('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;' }, (sd.tracks || []).map((tn) => el('button', {
+      type: 'button',
+      className: 'guild-btn ' + (sd.track === tn ? 'primary' : ''),
+      style: 'padding:3px 9px;font-size:11px;',
+      text: tn,
+      on: {
+        click: () => {
+          state.streamTrack = tn;
+          fetchStreamLogs(state.streamRun, tn);
+        },
+      },
+    })));
+
+    // Provisioning GPU Fallback Timeline badges (H100 ✗ -> G4 ✗ -> A100 ✓)
+    let fbRow = null;
+    if (fbHist.length > 0) {
+      fbRow = el('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:4px;' }, [
+        el('span', { style: 'font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:0.05em;', text: 'PROVISIONING LADDER:' }),
+        ...fbHist.map((h) => {
+          const ok = h.status === 'provisioned';
+          const hm = h.high_mem ? ' HM' : '';
+          const sec = h.elapsed_sec != null ? ` ${h.elapsed_sec}s` : '';
+          return el('span', {
+            className: 'guild-badge ' + (ok ? 'on' : 'off'),
+            style: 'font-family:var(--font-mono);font-size:10px;',
+            title: h.reason || h.status,
+            text: `${h.gpu}${hm} #${h.attempt || 1} ${ok ? '✓' : '✗'}${sec}`,
+          });
+        }),
+      ]);
+    }
+
+    // Structured Telemetry KPI strip
+    const kpis = [];
+    if (stats.final_loss != null) kpis.push(['FINAL LOSS', stats.final_loss.toFixed(4), '#38bdf8']);
+    if (stats.min_loss != null) kpis.push(['MIN LOSS', stats.min_loss.toFixed(4), '#7dd3fc']);
+    if (stats.final_eval_loss != null) kpis.push(['EVAL LOSS', stats.final_eval_loss.toFixed(4), '#34d399']);
+    if (stats.final_margin != null) kpis.push(['DPO MARGIN', (stats.final_margin >= 0 ? '+' : '') + stats.final_margin.toFixed(4), '#34d399']);
+    if (stats.final_reward_acc != null) kpis.push(['DPO ACC', `${(stats.final_reward_acc * 100).toFixed(1)}%`, '#a78bfa']);
+    if (stats.final_token_acc != null) kpis.push(['TOKEN ACC', `${(stats.final_token_acc * 100).toFixed(1)}%`, '#a78bfa']);
+    if (stats.max_grad_norm != null) kpis.push(['MAX GRAD NORM', stats.max_grad_norm.toFixed(3), '#f59e0b']);
+    const kpiStrip = kpis.length > 0
+      ? el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;' }, kpis.map(([lbl, val, col]) => el('div', {
+        style: 'background:rgba(15,23,42,0.72);border:1px solid rgba(148,163,184,0.2);border-radius:6px;padding:4px 9px;min-width:92px;',
+      }, [
+        el('div', { style: 'font-size:9px;color:#94a3b8;letter-spacing:0.05em;', text: lbl }),
+        el('div', { style: `font-size:12px;font-weight:700;font-family:var(--font-mono);color:${col};`, text: val }),
+      ])))
+      : null;
+
+    // SVG Loss / DPO Margin Charts
+    const charts = [];
+    if (metrics.length > 0) {
+      const lossChart = renderSvgSparkline('TRAINING & EVAL LOSS', metrics, [
+        { key: 'loss', label: 'train_loss', color: '#38bdf8' },
+        { key: 'eval_loss', label: 'eval_loss', color: '#34d399' },
+      ]);
+      if (lossChart) charts.push(lossChart);
+      const dpoChart = renderSvgSparkline('DPO REWARD MARGIN & ACCURACY', metrics, [
+        { key: 'rewards/margins', label: 'margin', color: '#34d399' },
+        { key: 'rewards/accuracies', label: 'acc', color: '#a78bfa' },
+      ]);
+      if (dpoChart) charts.push(dpoChart);
+      const gradChart = renderSvgSparkline('GRADIENT NORM', metrics, [
+        { key: 'grad_norm', label: 'grad_norm', color: '#f59e0b' },
+      ]);
+      if (gradChart && charts.length < 2) charts.push(gradChart);
+    }
+    const chartRow = charts.length > 0
+      ? el('div', { style: 'display:flex;flex-wrap:wrap;gap:10px;margin-top:4px;' }, charts)
+      : null;
+
+    const barFill = el('div', {
+      style: `height:100%;width:${Math.max(0, Math.min(100, pct))}%;background:linear-gradient(90deg,#38bdf8,#34d399);transition:width 0.3s;`,
+    });
+
+    return el('div', { className: 'forge-card', style: 'border-color:rgba(56,189,248,0.45);' }, [
+      el('div', { className: 'forge-card-head' }, [
+        el('div', {}, [
+          el('div', { className: 'guild-card-title', text: `LIVE TRAINING STREAM & ANALYTICS // ${state.streamRun} (${sd.track || state.streamTrack || 'default'})` }),
+          el('div', { className: 'guild-card-meta', text: `${gpuLabel}  |  ${progText}` }),
+        ]),
+        el('div', { style: 'display:flex;gap:6px;align-items:center;' }, [
+          el('span', { className: 'guild-badge ' + (phase === 'FAILED' ? 'off' : 'on'), text: phase }),
+          el('button', {
+            type: 'button',
+            className: 'guild-btn ' + (state.streamAuto ? 'primary' : ''),
+            style: 'padding:4px 9px;font-size:11px;',
+            text: state.streamAuto ? 'AUTO-STREAM: ON (12s)' : 'AUTO-STREAM: PAUSED',
+            on: { click: () => { state.streamAuto = !state.streamAuto; renderForge(); } },
+          }),
+          el('button', {
+            type: 'button', className: 'guild-btn', style: 'padding:4px 9px;font-size:11px;', text: 'PULL NOW',
+            on: { click: () => fetchStreamLogs(state.streamRun, state.streamTrack) },
+          }),
+          el('button', {
+            type: 'button', className: 'guild-btn danger', style: 'padding:4px 9px;font-size:11px;', text: 'CLOSE',
+            on: { click: () => { stopStreamTimer(); state.streamRun = null; state.streamData = null; renderForge(); } },
+          }),
+        ]),
+      ]),
+      trackPills,
+      el('div', { style: 'height:8px;width:100%;background:rgba(15,23,42,0.85);border-radius:4px;overflow:hidden;border:1px solid rgba(148,163,184,0.2);' }, [barFill]),
+      fbRow,
+      kpiStrip,
+      chartRow,
+      sd.live_error ? el('div', { style: 'color:#fbbf24;font-size:11px;font-family:var(--font-mono);', text: `Notice: ${sd.live_error}` }) : null,
+      el('pre', {
+        id: 'forgeLiveStreamPre',
+        className: 'eco-console',
+        style: 'max-height:300px;overflow:auto;background:#020617;color:#e2e8f0;font-size:11px;line-height:1.45;white-space:pre-wrap;',
+        text: sd.log_tail || '(no log lines emitted yet)',
+      }),
+    ]);
+  }
+
   function renderOverviewTab(d) {
     const credits = d.credits || {};
     const policy = d.policy || {};
@@ -565,68 +783,7 @@
     ]));
 
     if (state.streamRun) {
-      const sd = state.streamData || {};
-      const gpu = sd.gpu;
-      const prog = sd.progress || {};
-      const gpuLabel = gpu
-        ? `${gpu.name} · ${(gpu.used_mb / 1024).toFixed(1)} / ${(gpu.total_mb / 1024).toFixed(1)} GiB · ${gpu.util_pct}% GPU`
-        : (sd.selected_gpu ? `${sd.selected_gpu} (probing telemetry...)` : 'GPU telemetry unavailable');
-      const pct = prog.pct != null ? prog.pct : 0;
-      const progText = prog.step != null
-        ? `Step ${prog.step} / ${prog.total_steps} (${pct}%) · ${prog.speed || '—'} · ETA ${prog.eta || '—'}${prog.loss != null ? ` · Loss ${prog.loss}` : ''}`
-        : `Exit/State: ${sd.exit_code || 'connecting'} · Source: ${sd.source || 'live'}${sd.ts ? ` · Updated ${sd.ts}` : ''}`;
-
-      const trackPills = el('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;' }, (sd.tracks || []).map((tn) => el('button', {
-        type: 'button',
-        className: 'guild-btn ' + (sd.track === tn ? 'primary' : ''),
-        style: 'padding:3px 9px;font-size:11px;',
-        text: tn,
-        on: {
-          click: () => {
-            state.streamTrack = tn;
-            fetchStreamLogs(state.streamRun, tn);
-          },
-        },
-      })));
-
-      const barFill = el('div', {
-        style: `height:100%;width:${Math.max(0, Math.min(100, pct))}%;background:linear-gradient(90deg,#38bdf8,#34d399);transition:width 0.3s;`,
-      });
-
-      wrapper.appendChild(el('div', { className: 'forge-card', style: 'border-color:rgba(56,189,248,0.45);' }, [
-        el('div', { className: 'forge-card-head' }, [
-          el('div', {}, [
-            el('div', { className: 'guild-card-title', text: `LIVE TRAINING STREAM // ${state.streamRun} (${sd.track || state.streamTrack || 'default'})` }),
-            el('div', { className: 'guild-card-meta', text: `${gpuLabel}  |  ${progText}` }),
-          ]),
-          el('div', { style: 'display:flex;gap:6px;align-items:center;' }, [
-            el('button', {
-              type: 'button',
-              className: 'guild-btn ' + (state.streamAuto ? 'primary' : ''),
-              style: 'padding:4px 9px;font-size:11px;',
-              text: state.streamAuto ? 'AUTO-STREAM: ON (12s)' : 'AUTO-STREAM: PAUSED',
-              on: { click: () => { state.streamAuto = !state.streamAuto; renderForge(); } },
-            }),
-            el('button', {
-              type: 'button', className: 'guild-btn', style: 'padding:4px 9px;font-size:11px;', text: 'PULL NOW',
-              on: { click: () => fetchStreamLogs(state.streamRun, state.streamTrack) },
-            }),
-            el('button', {
-              type: 'button', className: 'guild-btn danger', style: 'padding:4px 9px;font-size:11px;', text: 'CLOSE',
-              on: { click: () => { stopStreamTimer(); state.streamRun = null; state.streamData = null; renderForge(); } },
-            }),
-          ]),
-        ]),
-        trackPills,
-        el('div', { style: 'height:8px;width:100%;background:rgba(15,23,42,0.85);border-radius:4px;overflow:hidden;border:1px solid rgba(148,163,184,0.2);' }, [barFill]),
-        sd.live_error ? el('div', { style: 'color:#fbbf24;font-size:11px;font-family:var(--font-mono);', text: `Notice: ${sd.live_error}` }) : null,
-        el('pre', {
-          id: 'forgeLiveStreamPre',
-          className: 'eco-console',
-          style: 'max-height:300px;overflow:auto;background:#020617;color:#e2e8f0;font-size:11px;line-height:1.45;white-space:pre-wrap;',
-          text: sd.log_tail || '(no log lines emitted yet)',
-        }),
-      ]));
+      wrapper.appendChild(renderStreamTelemetryCard(state.streamData || {}));
     }
     return wrapper;
   }
@@ -1291,7 +1448,15 @@
     }
   }
 
-  window.LodgeForge = { open: openForgeModal, close: closeForgeModal, refresh: refreshAll, onShow, onHide };
+  function openStreamInForge(runName, trackName) {
+    state.activeTab = 'gate';
+    openForgeModal();
+    if (runName) {
+      openLiveStream(runName, trackName || null);
+    }
+  }
+
+  window.LodgeForge = { open: openForgeModal, openStream: openStreamInForge, close: closeForgeModal, refresh: refreshAll, onShow, onHide };
   window.LodgeOpenForge = openForgeModal;
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindModal);

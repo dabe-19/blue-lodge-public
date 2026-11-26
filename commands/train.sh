@@ -151,6 +151,31 @@ cmd_train() {
             fi
             ;;
 
+        publish)
+            local -a _puba=()
+            read -r -a _puba <<<"$subargs"
+            if [ "${#_puba[@]}" -lt 2 ]; then
+                echo "Usage: /train publish --model <slug> --role <role> --hf-repo <user/repo> [--public] [--template <jinja>] [--dry-run]"
+                return 1
+            fi
+            "$py" "$LODGE_DIR/scripts/training/backup_artifacts.py" publish "${_puba[@]}"
+            ;;
+
+        pull-adapter)
+            local -a _pla=()
+            read -r -a _pla <<<"$subargs"
+            if [ "${#_pla[@]}" -lt 2 ]; then
+                echo "Usage: /train pull-adapter --hf-repo <org/repo> --model <slug> [--role core-agent] [--file NAME.gguf] [--activate] [--dry-run]"
+                return 1
+            fi
+            "$py" "$LODGE_DIR/scripts/training/backup_artifacts.py" pull-adapter "${_pla[@]}"
+            ;;
+
+        schema-sync)
+            local _scmd="${subargs:-check}"
+            "$py" "$LODGE_DIR/scripts/training/sync_tool_schemas.py" $_scmd
+            ;;
+
         bake)
             local -a _ba=()
             read -r -a _ba <<<"$subargs"
@@ -224,6 +249,9 @@ cmd_train() {
             echo "  /train gate / approve / deny  Tier B candidate approval queue (or switch policy to Tier A)"
             echo "  /train adapters / hotswap  List (model, role) SVD-32 lineage & hot-swap via POST /lora-adapters"
             echo "  /train backup [status|backup --all --target both]  Backup SVD-32 layers to Drive / HF Hub"
+            echo "  /train publish --model <slug> --hf-repo <org/repo> [--public] [--dry-run]  Publish HF adapter bundle"
+            echo "  /train pull-adapter --hf-repo <org/repo> --model <slug> [--activate]  Pull HF GGUF LoRA/SVD adapter"
+            echo "  /train schema-sync [check|sync]  Verify or sync data/training/native_core_tools.json from live schema"
             echo "  /train policy [json]       View or update Sleep-Cycle schedule & Tier B/A autonomy posture"
             echo "  /train cancel <run>        Stop local training or terminate Colab VMs immediately"
             ;;

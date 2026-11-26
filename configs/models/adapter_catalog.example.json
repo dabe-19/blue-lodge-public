@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "description": "Public Blue Lodge SVD-32 Adapter & Chat-Template Catalog. Operators can point entries at their public Hugging Face repos so any Blue Lodge node can pull verified adapters, Jinja templates, and schema manifests.",
+  "tool_schema_source": "data/schemas/native_tools.json",
+  "adapters": [
+    {
+      "id": "gemma-4-31b-it-core-agent",
+      "model_slug": "gemma-4-31b-it",
+      "role": "core-agent",
+      "base_model": "google/gemma-4-31b-it",
+      "recommended_base_gguf": "unsloth/gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf",
+      "chat_template": "embedded_gguf",
+      "hf_repo": "",
+      "adapter_file": "gemma-4-31b-it-core-agent-svd32.gguf",
+      "default_scale": 1.0,
+      "playbook": "configs/playbooks/colab_gemma4_31b_harness_v2.json",
+      "status": "template"
+    },
+    {
+      "id": "qwen3.8-27b-core-agent",
+      "model_slug": "qwen3.8-27b",
+      "role": "core-agent",
+      "base_model": "Qwen/Qwen3.8-27B",
+      "recommended_base_gguf": "Qwen3.8-27B-UD-Q4_K_S.gguf",
+      "chat_template": "configs/blue_lodge_jinja_template.jinja",
+      "hf_repo": "",
+      "adapter_file": "qwen3.8-27b-core-agent-svd32.gguf",
+      "default_scale": 1.0,
+      "playbook": "configs/playbooks/colab_qwen27b_svd32.json",
+      "status": "template"
+    },
+    {
+      "id": "qwen3.8-27b-harness-hub-super-adapter",
+      "model_slug": "qwen3.8-27b",
+      "role": "core-agent",
+      "base_model": "Qwen/Qwen3.8-27B",
+      "recommended_base_gguf": "unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf",
+      "chat_template": "configs/blue_lodge_jinja_template.jinja",
+      "hf_repo": "harness-hub/Qwen3.8-27B-super-adapter-GGUF",
+      "adapter_file": "Qwen3.8-27B-super-adapter-lora-F16.gguf",
+      "default_scale": 1.0,
+      "notes": "Community RL multi-harness super-adapter (pi + Hermes + OpenCode; 912 MiB F16 GGUF LoRA, best with thinking ON).",
+      "status": "community"
+    },
+    {
+      "id": "qwen3.8-27b-harness-hub-hermes",
+      "model_slug": "qwen3.8-27b",
+      "role": "core-agent",
+      "base_model": "Qwen/Qwen3.8-27B",
+      "recommended_base_gguf": "unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf",
+      "chat_template": "configs/blue_lodge_jinja_template.jinja",
+      "hf_repo": "harness-hub/Qwen3.8-27B-hermes-adapted-GGUF",
+      "adapter_file": "Qwen3.8-27B-hermes-lora-F16.gguf",
+      "default_scale": 1.0,
+      "notes": "Community RL Hermes Agent LoRA adapter (304 MiB F16 GGUF; strong fast tool-use with thinking OFF).",
+      "status": "community"
+    }
+  ]
+}

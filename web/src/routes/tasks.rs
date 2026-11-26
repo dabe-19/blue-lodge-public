@@ -1074,6 +1074,205 @@ pub async fn get_tasks(State(state): State<Arc<AppState>>) -> impl IntoResponse 
         "reactions_total": eb_reactions_total,
     }));
 
+    // 4c. Active Training Forge Runs & Live Colab GPU Fleet
+    let train_runs_dir = state.george_dir.join("training").join("runs");
+    if let Ok(mut entries) = fs::read_dir(&train_runs_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let rd = entry.path();
+            if !rd.is_dir() {
+                continue;
+            }
+            let rj_path = rd.join("run.json");
+            let Ok(rj_str) = fs::read_to_string(&rj_path).await else { continue; };
+            let Ok(meta) = serde_json::from_str::<serde_json::Value>(&rj_str) else { continue; };
+
+            let run_name = meta.get("name").and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| entry.file_name().to_string_lossy().to_string());
+            let state_file = rd.join("state");
+            let run_state = if let Ok(st) = fs::read_to_string(&state_file).await {
+                st.trim().to_string()
+            } else {
+                meta.get("state").and_then(|v| v.as_str()).unwrap_or("unknown").to_string()
+            };
+            let bench_status_path = rd.join("benchmark_status.json");
+            let bench_running = if let Ok(bs) = fs::read_to_string(&bench_status_path).await {
+                serde_json::from_str::<serde_json::Value>(&bs)
+                    .ok()
+                    .and_then(|v| v.get("status").and_then(|s| s.as_str()).map(|s| s == "running"))
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+
+            let is_active_run = bench_running
+                || matches!(run_state.as_str(), "running" | "provisioning" | "merging" | "benchmarking");
+            if !is_active_run {
+                continue;
+            }
+
+            let backend = meta.get("backend").and_then(|v| v.as_str()).unwrap_or("colab");
+            let model_slug = meta.get("model_slug").and_then(|v| v.as_str())
+                .or_else(|| meta.get("spec").and_then(|s| s.get("base_model")).and_then(|v| v.as_str()))
+                .unwrap_or("model");
+
+            let mut selected_gpus: Vec<String> = Vec::new();
+            let mut last_lines: Vec<String> = Vec::new();
+            let mut active_track_note = String::new();
+            let mut total_fb_attempts = 0usize;
+
+            if let Some(plan) = meta.get("plan").and_then(|p| p.as_array()) {
+                for tp in plan {
+                    let tname = tp.get("track").and_then(|v| v.as_str()).unwrap_or("track");
+                    if let Some(gpu) = tp.get("selected_gpu").and_then(|v| v.as_str()) {
+                        if !gpu.is_empty() && !selected_gpus.contains(&gpu.to_string()) {
+                            selected_gpus.push(gpu.to_string());
+                        }
+                    }
+                    if let Some(fb) = tp.get("fallback_history").and_then(|v| v.as_array()) {
+                        total_fb_attempts += fb.len();
+                    }
+                    let td = rd.join("tracks").join(tname);
+                    let tstate = fs::read_to_string(td.join("state")).await
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_else(|_| "running".to_string());
+
+                    // Pull latest structured metric point if present
+                    if let Ok(m_raw) = fs::read_to_string(td.join("metrics.jsonl")).await {
+                        if let Some(last_m) = m_raw.lines().rev().find(|l| !l.trim().is_empty()) {
+                            if let Ok(mv) = serde_json::from_str::<serde_json::Value>(last_m) {
+                                let step = mv.get("step").and_then(|x| x.as_u64()).unwrap_or(0);
+                                let tot = mv.get("total_steps").and_then(|x| x.as_u64()).unwrap_or(0);
+                                let mut parts = vec![format!("{}: step {}/{}", tname, step, tot)];
+                                if let Some(loss) = mv.get("loss").and_then(|x| x.as_f64()) {
+                                    parts.push(format!("loss {:.3}", loss));
+                                }
+                                if let Some(mg) = mv.get("rewards/margins").and_then(|x| x.as_f64()) {
+                                    parts.push(format!("margin {:+.3}", mg));
+                                }
+                                active_track_note = parts.join(" · ");
+                            }
+                        }
+                    }
+
+                    // Collect tail lines from train.log, falling back to provision.log
+                    let log_cand = if td.join("train.log").exists() {
+                        td.join("train.log")
+                    } else {
+                        td.join("provision.log")
+                    };
+                    if let Ok(ltxt) = fs::read_to_string(&log_cand).await {
+                        for l in ltxt.lines().rev().take(8) {
+                            let tr = l.trim();
+                            if !tr.is_empty() {
+                                last_lines.push(format!("[{}] {}", tname, strip_ansi(tr)));
+                            }
+                        }
+                    } else if let Some(err_s) = tp.get("error").and_then(|v| v.as_str()) {
+                        if !err_s.is_empty() {
+                            last_lines.push(format!("[{}] {}", tname, err_s));
+                        }
+                    } else {
+                        last_lines.push(format!("[{}] state={} (awaiting GPU assignment)", tname, tstate));
+                    }
+                }
+            }
+            if bench_running {
+                if let Ok(blog) = fs::read_to_string(rd.join("benchmark_bg.log")).await {
+                    last_lines.clear();
+                    for l in blog.lines().rev().take(12) {
+                        let tr = l.trim();
+                        if !tr.is_empty() {
+                            last_lines.push(strip_ansi(tr));
+                        }
+                    }
+                }
+            }
+            last_lines.reverse();
+
+            let gpu_label = if !selected_gpus.is_empty() {
+                selected_gpus.join("+")
+            } else if backend == "colab" {
+                if total_fb_attempts > 0 {
+                    format!("Provisioning ({} retries)", total_fb_attempts)
+                } else {
+                    "Provisioning Colab GPU".to_string()
+                }
+            } else {
+                "Local GPU".to_string()
+            };
+            let phase = if bench_running {
+                "7-Pillar H2H Benchmark".to_string()
+            } else if !active_track_note.is_empty() {
+                format!("{} · {}", gpu_label, active_track_note)
+            } else {
+                format!("{} · {}", run_state.to_uppercase(), gpu_label)
+            };
+
+            tasks.push(json!({
+                "id": format!("train_{}", run_name),
+                "name": format!("train_{}", run_name),
+                "training_run": run_name,
+                "task_type": "training",
+                "type": "training",
+                "phase": phase,
+                "done": false,
+                "paused": false,
+                "pid_alive": true,
+                "mtime_secs": now,
+                "is_subagent": false,
+                "subagent_tier": backend,
+                "meta_cmd": format!("Training Forge ({}) · {}", backend, model_slug),
+                "summary": format!("Forge: {} ({})", run_name, model_slug),
+                "last_lines": last_lines,
+                "selected_gpus": selected_gpus,
+            }));
+        }
+    }
+
+    // 4d. Active / Orphaned Colab GPU VM Fleet Guard (reads fast cached snapshot from inspect_colab_sessions)
+    let colab_cache_path = state.george_dir.join("training").join("colab_sessions_cache.json");
+    if let Ok(cs_raw) = fs::read_to_string(&colab_cache_path).await {
+        if let Ok(cs) = serde_json::from_str::<serde_json::Value>(&cs_raw) {
+            let updated_at = cs.get("updated_at").and_then(|v| v.as_u64()).unwrap_or(0);
+            let total_vms = cs.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+            let stale_vms = cs.get("stale_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            if total_vms > 0 && now.saturating_sub(updated_at) <= 900 {
+                let mut vm_lines = Vec::new();
+                if let Some(arr) = cs.get("sessions").and_then(|v| v.as_array()) {
+                    for s in arr {
+                        let sn = s.get("session").and_then(|v| v.as_str()).unwrap_or("UNTRACKED");
+                        let acc = s.get("accelerator").and_then(|v| v.as_str()).unwrap_or("GPU");
+                        let hlth = s.get("health").and_then(|v| v.as_str()).unwrap_or("active");
+                        let rsn = s.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+                        vm_lines.push(format!("[{}] {} ({}) — {}", hlth.to_uppercase(), sn, acc, rsn));
+                    }
+                }
+                let phase = if stale_vms > 0 {
+                    format!("{} Active · {} STALE (CU BURN)", total_vms - stale_vms, stale_vms)
+                } else {
+                    format!("{} Live Colab GPU VM(s)", total_vms)
+                };
+                tasks.push(json!({
+                    "id": "colab_gpu_fleet",
+                    "name": "colab_gpu_fleet",
+                    "task_type": "colab_fleet",
+                    "type": "colab_fleet",
+                    "phase": phase,
+                    "done": false,
+                    "paused": false,
+                    "pid_alive": true,
+                    "mtime_secs": updated_at,
+                    "is_subagent": false,
+                    "subagent_tier": "colab",
+                    "meta_cmd": "Google Colab GPU Fleet & Stale VM Burn Guard",
+                    "summary": format!("Colab Fleet: {} VM(s){}", total_vms, if stale_vms > 0 { format!(" · ⚠ {} STALE", stale_vms) } else { String::new() }),
+                    "last_lines": vm_lines,
+                }));
+            }
+        }
+    }
+
     // 5. Also incorporate subagents from .george/subagents.json and attach to parent tasks
     let subagents_file = state.george_dir.join("subagents.json");
     if let Ok(reg_str) = fs::read_to_string(&subagents_file).await {

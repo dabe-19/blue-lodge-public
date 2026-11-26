@@ -1763,7 +1763,7 @@
 
           // Periodic refresh of trajectory ONLY when SSE EventSource is not actively connected
           const sseActive = !!(window._autonomicEventSource && window._autonomicEventSource.readyState === 1);
-          if (stream && (!sseActive || activeTask.type === 'sys_cron' || activeTask.type === 'usr_cron' || activeTask.type === 'event_bus')) {
+          if (stream && (!sseActive || activeTask.type === 'sys_cron' || activeTask.type === 'usr_cron' || activeTask.type === 'event_bus' || activeTask.type === 'training' || activeTask.type === 'colab_fleet')) {
             const nowMs = Date.now();
             if (!stream._lastPollTime || nowMs - stream._lastPollTime > 4000) {
               stream._lastPollTime = nowMs;
@@ -1973,16 +1973,18 @@
             <button class="stream-jump-btn" type="button" title="Jump to newest log">▼ Latest Logs</button>
           </div>
           <div class="expanded-controls">
-            ${activeTask.type === 'sys_cron' || activeTask.type === 'usr_cron' || activeTask.type === 'event_bus' ? `
+            ${activeTask.type === 'sys_cron' || activeTask.type === 'usr_cron' || activeTask.type === 'event_bus' || activeTask.type === 'training' || activeTask.type === 'colab_fleet' ? `
               <div class="expanded-steer-group" style="font-size: 11px; color: var(--text-muted); align-items: center;">
-                <span>${activeTask.type === 'event_bus' ? 'Reactive Event Bus Daemon (PID ' + escapeHtml(String(activeTask.pid || 'Active')) + ') · Non-blocking FIFO IPC' : (activeTask.type === 'sys_cron' ? 'SYS Cron Daemon' : 'USR Cron Sentinels') + ' (PID ' + escapeHtml(String(activeTask.pid || 'Active')) + ') · Continuous Background Sweeps'}</span>
+                <span>${activeTask.type === 'training' ? 'Sovereign Training Forge (' + escapeHtml(String(activeTask.training_run || activeTask.id)) + ') · Live Provisioning, Loss & DPO Telemetry' : (activeTask.type === 'colab_fleet' ? 'Google Colab GPU Fleet Monitor · Active & Stale VM Burn Guard' : (activeTask.type === 'event_bus' ? 'Reactive Event Bus Daemon (PID ' + escapeHtml(String(activeTask.pid || 'Active')) + ') · Non-blocking FIFO IPC' : (activeTask.type === 'sys_cron' ? 'SYS Cron Daemon' : 'USR Cron Sentinels') + ' (PID ' + escapeHtml(String(activeTask.pid || 'Active')) + ') · Continuous Background Sweeps'))}</span>
               </div>
               <div class="action-buttons">
-                ${activeTask.type === 'event_bus' ? `
+                ${activeTask.type === 'training' || activeTask.type === 'colab_fleet' ? `
+                  <button class="tactile-btn accent forge-open-stream-btn" style="padding: 4px 10px; font-size: 11px;" title="Open live stream, loss curves & GPU fleet in Training Forge">OPEN IN FORGE LIVE STREAM ↗</button>
+                ` : (activeTask.type === 'event_bus' ? `
                   <button class="tactile-btn accent event-bus-restart-btn" style="padding: 4px 10px; font-size: 11px;" title="Restart George's Reactive Event Bus daemon">RESTART DAEMON</button>
                 ` : `
                   <button class="tactile-btn accent cron-restart-btn" style="padding: 4px 10px; font-size: 11px;" title="Restart George's background cron daemon">RESTART DAEMON</button>
-                `}
+                `)}
                 <button class="tactile-btn mini-collapse-btn">CLOSE</button>
               </div>
             ` : `
@@ -2218,6 +2220,31 @@
                 delete stream.dataset.renderedPlaceholder;
               }
             })();
+
+            // Training Forge & Colab Fleet cards stream directly from last_lines + Forge modal deep-link
+            if (targetTask.type === 'training' || targetTask.type === 'colab_fleet') {
+              const tLines = Array.isArray(targetTask.last_lines) && targetTask.last_lines.length > 0
+                ? targetTask.last_lines.join('\n')
+                : `Active: ${targetTask.phase || 'Running'}. Click OPEN IN FORGE LIVE STREAM for live GPU & loss curves.`;
+              stream.textContent = '';
+              renderLogBatchToStream(stream, tLines, stream._thoughtState);
+              stream.dataset.lastLogs = tLines;
+              delete stream.dataset.renderedPlaceholder;
+              const openForgeBtn = autonomicExpandedStage.querySelector('.forge-open-stream-btn');
+              if (openForgeBtn && !openForgeBtn.dataset.bound) {
+                openForgeBtn.dataset.bound = '1';
+                openForgeBtn.addEventListener('click', (ev) => {
+                  ev.preventDefault();
+                  ev.stopPropagation();
+                  if (window.LodgeForge && typeof window.LodgeForge.openStream === 'function') {
+                    window.LodgeForge.openStream(targetTask.training_run || null, null);
+                  } else if (window.LodgeOpenForge) {
+                    window.LodgeOpenForge();
+                  }
+                });
+              }
+              return;
+            }
 
             // SSE live stream
             if (!targetTask.done && targetTask.phase !== 'Completed') {

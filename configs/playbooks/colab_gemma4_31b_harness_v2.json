@@ -28,7 +28,7 @@
     "lora_r": 16,
     "lora_alpha": 32,
     "lora_dropout": 0.08,
-    "max_seq_len": 4096,
+    "max_seq_len": 8192,
     "batch_size": 1,
     "grad_accum": 8,
     "dpo_beta": 0.15,

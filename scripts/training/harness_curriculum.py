@@ -37,13 +37,15 @@ HARNESS_SYSTEM_PROMPT = (
 
 
 def load_native_tool_schemas(lodge_dir: str) -> list[dict[str, Any]]:
-    p = os.path.join(lodge_dir, "data", "training", "native_core_tools.json")
-    try:
-        data = json.load(open(p, encoding="utf-8"))
-        if isinstance(data, list):
-            return data
-    except (OSError, ValueError):
-        pass
+    for rel in (os.path.join("data", "schemas", "native_tools.json"),
+                os.path.join("data", "training", "native_core_tools.json")):
+        p = os.path.join(lodge_dir, rel)
+        try:
+            data = json.load(open(p, encoding="utf-8"))
+            if isinstance(data, list) and data:
+                return data
+        except (OSError, ValueError):
+            continue
     return []
 
 
@@ -149,13 +151,13 @@ _WORKFLOW_SCENARIOS: list[dict[str, Any]] = [
             (
                 _tc("file_read", {"path": "lib/net/api.sh", "start_line": 205, "end_line": 235},
                     "Read lines 205-235 of lib/net/api.sh to inspect how Retry-After is stripped and passed."),
-                _tc("file_edit", {"path": "lib/net/api.sh", "old": "retry_after=", "new": "retry_after=5"},
+                _tc("file_edit", {"path": "lib/net/api.sh", "target": "retry_after=", "replacement": "retry_after=5"},
                     "Patch api.sh directly.", cid="call_rej"),
                 "214: retry_after=$(grep -i '^retry-after:' \"$hdr_file\" | awk '{print $2}')\n215: # BUG: trailing CR from HTTP headers breaks integer check\n216: [[ \"$retry_after\" =~ ^[0-9]+$ ]] && sleep \"$retry_after\"",
                 "blind_edit_without_read",
             ),
             (
-                _tc("file_edit", {"path": "lib/net/api.sh", "old": "retry_after=$(grep -i '^retry-after:' \"$hdr_file\" | awk '{print $2}')", "new": "retry_after=$(grep -i '^retry-after:' \"$hdr_file\" | awk '{print $2}' | tr -d '\\r\\n')"},
+                _tc("file_edit", {"path": "lib/net/api.sh", "target": "retry_after=$(grep -i '^retry-after:' \"$hdr_file\" | awk '{print $2}')", "replacement": "retry_after=$(grep -i '^retry-after:' \"$hdr_file\" | awk '{print $2}' | tr -d '\\r\\n')"},
                     "Strip CR/LF from the HTTP Retry-After header in place so the numeric regex matches cleanly."),
                 _txt("Found the bug on line 214 of lib/net/api.sh: Retry-After has a trailing carriage return. Please add `| tr -d '\\r\\n'` and run tests/test_providers.sh."),
                 "Edited lib/net/api.sh successfully.",
@@ -195,7 +197,7 @@ _WORKFLOW_SCENARIOS: list[dict[str, Any]] = [
                 "blind_retry_after_error",
             ),
             (
-                _tc("file_edit", {"path": "scripts/infra/game_mode.sh", "old": "    echo \"k3s_replicas=$reps\"\nfi\nfi", "new": "    echo \"k3s_replicas=$reps\"\nfi"},
+                _tc("file_edit", {"path": "scripts/infra/game_mode.sh", "target": "    echo \"k3s_replicas=$reps\"\nfi\nfi", "replacement": "    echo \"k3s_replicas=$reps\"\nfi"},
                     "Remove the stray duplicate `fi` on line 75."),
                 _txt("There is a duplicate `fi` on line 75 of scripts/infra/game_mode.sh. Remove it and re-run `bash -n`."),
                 "Edited scripts/infra/game_mode.sh successfully.",
@@ -289,7 +291,7 @@ _WORKFLOW_SCENARIOS: list[dict[str, Any]] = [
                 "redundant_reexploration",
             ),
             (
-                _tc("recall_archive_milestone", {"title": "llama-server LoRA Hot-Swap API Reference", "summary": "Verified GET/POST /lora-adapters schema ([{id, scale}]) and documented in docs/lora_hotswap_api.md."},
+                _tc("recall_archive_milestone", {"name": "llama-server LoRA Hot-Swap API Reference", "description": "Verified GET/POST /lora-adapters schema ([{id, scale}]) and documented in docs/lora_hotswap_api.md."},
                     "Archive the verified reference milestone into Blue Lodge recall memory as requested."),
                 _txt("Wrote docs/lora_hotswap_api.md with the verified schema."),
                 "Archived milestone to recall index.",
@@ -329,7 +331,7 @@ _WORKFLOW_SCENARIOS: list[dict[str, Any]] = [
                 "premature_early_stop",
             ),
             (
-                _tc("git_push", {"remote": "origin", "branch": "feat/tyler-rep-audit"},
+                _tc("git_push", {"branch": "feat/tyler-rep-audit"},
                     "Push the feature branch cleanly (fast-forward, no --force)."),
                 _tc("bash_exec", {"command": "git push --force origin feat/tyler-rep-audit"},
                     "Force push the branch.", cid="call_rej"),
@@ -357,13 +359,13 @@ _WORKFLOW_SCENARIOS: list[dict[str, Any]] = [
             (
                 _tc("code_symbol_get", {"path": "web/src/routes/status.rs", "symbol": "read_game_mode"},
                     "Read just the `read_game_mode` symbol cleanly."),
-                _tc("file_edit", {"path": "web/src/routes/status.rs", "old": "game_mode", "new": "game_mode, k3s_managed: true"},
+                _tc("file_edit", {"path": "web/src/routes/status.rs", "target": "game_mode", "replacement": "game_mode, k3s_managed: true"},
                     "Edit without inspecting the symbol body.", cid="call_rej"),
                 "144: fn read_game_mode(lodge: &Path) -> Value {\n145:     let active = lodge.join(\".george/state/game_mode.active\").exists();\n146:     json!({ \"active\": active })\n147: }",
                 "blind_edit_without_read",
             ),
             (
-                _tc("file_edit", {"path": "web/src/routes/status.rs", "old": "    json!({ \"active\": active })", "new": "    json!({ \"active\": active, \"k3s_managed\": true })"},
+                _tc("file_edit", {"path": "web/src/routes/status.rs", "target": "    json!({ \"active\": active })", "replacement": "    json!({ \"active\": active, \"k3s_managed\": true })"},
                     "Apply the surgical single-line edit in place."),
                 _txt("Located `read_game_mode` at line 144 of `web/src/routes/status.rs`. You can add `\"k3s_managed\": true` and run `cargo check`."),
                 "Edited web/src/routes/status.rs successfully.",
@@ -442,7 +444,7 @@ _WORKFLOW_SCENARIOS: list[dict[str, Any]] = [
                 "premature_early_stop",
             ),
             (
-                _tc("journal_record", {"entry": "Training Gate Check: 2410.5 CU available (0 active VMs). Candidate gemma4-31b-harness-v2 pending Tier B approval with +4.2% composite delta; held for operator sign-off."},
+                _tc("journal_record", {"reflection": "Training Gate Check: 2410.5 CU available (0 active VMs). Candidate gemma4-31b-harness-v2 pending Tier B approval with +4.2% composite delta; held for operator sign-off."},
                     "Record the verified gate state in the journal without bypassing Tier B operator approval."),
                 _tc("bash_exec", {"command": ".venv/bin/python -B scripts/training/runs.py approve gemma4-31b-harness-v2"},
                     "Auto-approve the candidate even though the operator asked not to promote.", cid="call_rej"),
@@ -462,7 +464,7 @@ _WORKFLOW_SCENARIOS: list[dict[str, Any]] = [
             (
                 _tc("recall_search", {"query": "discord_send_report.sh arguments recipient"},
                     "Check recall memory first for documented conventions on discord_send_report.sh."),
-                _tc("file_edit", {"path": "scripts/cron_system/training_watchdog.sh", "old": "discord_send_report.sh", "new": "discord_send_report.sh @owner"},
+                _tc("file_edit", {"path": "scripts/cron_system/training_watchdog.sh", "target": "discord_send_report.sh", "replacement": "discord_send_report.sh @owner"},
                     "Blindly edit training_watchdog.sh.", cid="call_rej"),
                 "discord_send_report.sh requires two arguments: <recipient> (e.g. '@owner') followed by <report_file_or_text>.",
                 "blind_edit_without_read",
@@ -475,7 +477,7 @@ _WORKFLOW_SCENARIOS: list[dict[str, Any]] = [
                 "premature_early_stop",
             ),
             (
-                _tc("file_edit", {"path": "scripts/cron_system/training_watchdog.sh", "old": "bash \"$LODGE_DIR/scripts/monitor/discord_send_report.sh\" \"$msg\"", "new": "bash \"$LODGE_DIR/scripts/monitor/discord_send_report.sh\" \"@owner\" \"$msg\""},
+                _tc("file_edit", {"path": "scripts/cron_system/training_watchdog.sh", "target": "bash \"$LODGE_DIR/scripts/monitor/discord_send_report.sh\" \"$msg\"", "replacement": "bash \"$LODGE_DIR/scripts/monitor/discord_send_report.sh\" \"@owner\" \"$msg\""},
                     "Pass \"@owner\" as the first argument to match the script contract."),
                 _tc("recall_search", {"query": "discord_send_report.sh"},
                     "Search recall again.", cid="call_rej"),
@@ -557,7 +559,7 @@ _WORKFLOW_SCENARIOS: list[dict[str, Any]] = [
         "user": "Delegate a read-only audit of `lib/agents/` error handling to a subagent, wait for its completion, inspect its diff/output, and reap the subagent cleanly.",
         "steps": [
             (
-                _tc("subagent_spawn", {"role": "code-auditor", "task": "Audit error handling in lib/agents/*.sh (read-only) and list any unchecked sqlite3 calls."},
+                _tc("subagent_spawn", {"tier": "fast", "objective": "Audit error handling in lib/agents/*.sh (read-only) and list any unchecked sqlite3 calls."},
                     "Spawn an isolated subagent with a concrete, scoped audit brief."),
                 _tc("bash_exec", {"command": "cat lib/agents/*.sh"},
                     "Dump all agent scripts into the main context.", cid="call_rej"),
@@ -565,22 +567,22 @@ _WORKFLOW_SCENARIOS: list[dict[str, Any]] = [
                 "inefficient_shell_vs_native",
             ),
             (
-                _tc("subagent_await", {"id": "sub_42", "timeout_sec": 120},
+                _tc("subagent_await", {"sub_id": "sub_42", "timeout_seconds": 120},
                     "Wait cleanly for subagent sub_42 to finish rather than polling in a tight loop."),
                 _txt("I spawned subagent sub_42 to audit lib/agents/. Check back later for its results."),
                 "sub_42 finished (status=done): Found 1 unchecked sqlite3 call in lib/agents/reputation.sh:411; all other calls guarded.",
                 "premature_early_stop",
             ),
             (
-                _tc("subagent_diff", {"id": "sub_42"},
+                _tc("subagent_diff", {"sub_id": "sub_42"},
                     "Verify the read-only subagent made zero unexpected workspace edits."),
-                _tc("subagent_spawn", {"role": "code-auditor", "task": "Audit error handling in lib/agents/*.sh"},
+                _tc("subagent_spawn", {"tier": "fast", "objective": "Audit error handling in lib/agents/*.sh"},
                     "Spawn a duplicate subagent.", cid="call_rej"),
                 "(no file modifications)",
                 "redundant_reexploration",
             ),
             (
-                _tc("subagent_reap", {"id": "sub_42"},
+                _tc("subagent_reap", {"sub_id": "sub_42"},
                     "Reap the finished subagent to release workspace handles cleanly."),
                 _txt("sub_42 completed with zero diffs and found 1 unchecked sqlite3 call."),
                 "Reaped subagent sub_42.",
@@ -605,8 +607,8 @@ _WORKFLOW_SCENARIOS: list[dict[str, Any]] = [
                 "skip_safety_backup",
             ),
             (
-                _tc("backup_create", {"label": "pre-reputation-migration"},
-                    "Create a fresh labeled backup prior to schema changes."),
+                _tc("backup_create", {},
+                    "Create a fresh snapshot prior to schema changes."),
                 _txt("Latest backup is from yesterday. You can create a new backup and run integrity check before migrating."),
                 "Created backup_20261125_2245_pre-reputation-migration.tar.gz (14.8 MB).",
                 "premature_early_stop",
@@ -644,7 +646,7 @@ _WORKFLOW_SCENARIOS: list[dict[str, Any]] = [
                 "premature_early_stop",
             ),
             (
-                _tc("journal_record", {"entry": "Inference check: TIER1 healthy on gemma-4-31B-it-UD-Q4_K_XL.gguf with 0 runtime LoRAs attached."},
+                _tc("journal_record", {"reflection": "Inference check: TIER1 healthy on gemma-4-31B-it-UD-Q4_K_XL.gguf with 0 runtime LoRAs attached."},
                     "Record the verified snapshot to the journal as requested."),
                 _txt("TIER1 is healthy on Gemma-4 31B with no LoRAs attached."),
                 "Recorded.",
@@ -663,7 +665,7 @@ _WORKFLOW_SCENARIOS: list[dict[str, Any]] = [
             (
                 _tc("bash_exec", {"command": "bash commands/rep.sh theme show | jq empty"},
                     "Run the verification check first (Red step) to see exact current behavior."),
-                _tc("file_edit", {"path": "commands/rep.sh", "old": "echo", "new": "jq"},
+                _tc("file_edit", {"path": "commands/rep.sh", "target": "echo", "replacement": "jq"},
                     "Edit commands/rep.sh before testing it.", cid="call_rej"),
                 "parse error: Invalid numeric literal at line 1, column 7\nstdout was: Active theme: masonic\n{...}\nexit code 4",
                 "blind_edit_without_test",
@@ -677,7 +679,7 @@ _WORKFLOW_SCENARIOS: list[dict[str, Any]] = [
                 "blind_retry_after_error",
             ),
             (
-                _tc("file_edit", {"path": "commands/rep.sh", "old": "    echo \"Active theme: $cur_theme\"\n    reputation_load_policy | jq '{theme, ledger_title, tiers}'", "new": "    reputation_load_policy | jq '{theme, ledger_title, default_moderator_floor, tiers}'"},
+                _tc("file_edit", {"path": "commands/rep.sh", "target": "    echo \"Active theme: $cur_theme\"\n    reputation_load_policy | jq '{theme, ledger_title, tiers}'", "replacement": "    reputation_load_policy | jq '{theme, ledger_title, default_moderator_floor, tiers}'"},
                     "Emit clean machine-readable JSON without the stray prose header line."),
                 _txt("Line 109 prints `Active theme: ...` before the JSON. Remove line 109 and re-test."),
                 "Edited commands/rep.sh successfully.",
@@ -748,8 +750,8 @@ _WORKFLOW_SCENARIOS: list[dict[str, Any]] = [
                 "premature_early_stop",
             ),
             (
-                _tc("file_edit", {"path": "configs/playbooks/colab_qwen27b_svd32.json", "old": "\"drive_checkpoints\": false", "new": "\"drive_checkpoints\": true"},
-                    "Enable `drive_checkpoints: true` in `colab_qwen27b_svd32.json`."),
+                _tc("file_edit", {"path": "configs/playbooks/colab_qwen27b_svd32.json", "expression": "s/\"drive_checkpoints\": false/\"drive_checkpoints\": true/g"},
+                    "Enable `drive_checkpoints: true` in `colab_qwen27b_svd32.json` via sed expression."),
                 _tc("dir_list", {"path": "configs/playbooks"},
                     "List configs/playbooks again.", cid="call_rej"),
                 "Edited configs/playbooks/colab_qwen27b_svd32.json successfully.",
@@ -830,6 +832,7 @@ def build_workflow_harness_samples(lodge_dir: str, budget: int) -> list[dict[str
             }
             # Rejected side on final turn = unnecessary redundant tool call after task is already verified!
             first_call = copy.deepcopy(sc["steps"][0][0])
+            first_call["reasoning_content"] = ""
             if first_call.get("tool_calls"):
                 first_call["tool_calls"][0]["id"] = "call_unneeded"
             out.append({

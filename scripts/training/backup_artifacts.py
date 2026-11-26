@@ -9,21 +9,29 @@ Usage:
   backup_artifacts.py status
   backup_artifacts.py backup --file PATH --model SLUG --role ROLE [--target drive|hf|both] [--hf-repo org/repo]
   backup_artifacts.py backup --all [--target drive|hf|both]
+  backup_artifacts.py publish --model SLUG --role ROLE --hf-repo user/repo [--public] [--template PATH] [--dry-run]
+  backup_artifacts.py pull-adapter --hf-repo org/repo --model SLUG [--role core-agent] [--file NAME.gguf] [--activate] [--dry-run]
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
 import glob
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import check_credits as cc  # noqa: E402
+import sync_tool_schemas as sts  # noqa: E402
 
 LODGE_DIR = Path(os.environ.get("LODGE_DIR", Path(__file__).resolve().parent.parent.parent))
 GEORGE_DIR = Path(os.environ.get("GEORGE_DIR", LODGE_DIR / ".george"))
@@ -78,7 +86,8 @@ def backup_status() -> dict:
     }
 
 
-def upload_to_hf(local_path: Path, repo_id: str, path_in_repo: str) -> dict:
+def upload_to_hf(local_path: Path, repo_id: str, path_in_repo: str,
+                 private: bool = True, commit_message: str | None = None) -> dict:
     token, _ = cc._read_key_from_files(("HF_TOKEN", "HUGGINGFACE_TOKEN", "HUGGING_FACE_HUB_TOKEN"))
     if not token:
         return {"status": "error", "target": "hf", "message": "HF_TOKEN not configured in .george/keys.conf"}
@@ -90,17 +99,18 @@ def upload_to_hf(local_path: Path, repo_id: str, path_in_repo: str) -> dict:
         return {"status": "error", "target": "hf", "message": "huggingface_hub not installed (uv pip install huggingface-hub)"}
 
     api = HfApi(token=token)
-    api.create_repo(repo_id=repo_id, repo_type="model", private=True, exist_ok=True)
+    api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
     api.upload_file(
         path_or_fileobj=str(local_path),
         path_in_repo=path_in_repo,
         repo_id=repo_id,
         repo_type="model",
-        commit_message=f"chore(backup): archive {local_path.name}",
+        commit_message=commit_message or f"chore(backup): archive {local_path.name}",
     )
     return {
         "status": "ok",
         "target": "hf",
+        "private": private,
         "uri": f"https://huggingface.co/{repo_id}/blob/main/{path_in_repo}",
         "at": dt.datetime.now().isoformat(timespec="seconds"),
     }
@@ -239,6 +249,401 @@ def backup_all(target: str, hf_repo: str | None = None) -> dict:
     return {"status": "ok", "count": len(backed), "items": backed}
 
 
+_DEFAULT_BASE_MODELS = {
+    "gemma-4-31b-it": "google/gemma-4-31b-it",
+    "gemma-4-26b-a4b-it": "google/gemma-4-26b-a4b-it",
+    "gemma-4-e4b-it": "google/gemma-4-e4b-it",
+    "gemma-4-e2b-it": "google/gemma-4-e2b-it",
+    "qwen3.8-27b": "Qwen/Qwen3.8-27B",
+}
+
+
+def _sanitize_value(v):
+    if isinstance(v, dict):
+        return {k: _sanitize_value(val) for k, val in v.items() if k not in ("backups",)}
+    if isinstance(v, list):
+        return [_sanitize_value(x) for x in v]
+    if isinstance(v, str):
+        # Strip local filesystem home/workspace prefixes before public release
+        v = re.sub(r"/home/[^/\s\"']+", "<HOME>", v)
+        v = re.sub(r"/root/[^/\s\"']+", "<HOME>", v)
+        return v
+    return v
+
+
+def build_model_card(model_slug: str, role: str, hf_repo: str, gguf_name: str,
+                     base_model: str, schema_info: dict,
+                     template_name: str | None = None,
+                     scorecard: dict | None = None,
+                     lineage: dict | None = None) -> str:
+    """Generate a Hugging Face Model Card README.md for a Blue Lodge SVD-32 GGUF adapter bundle."""
+    ver = (lineage or {}).get("active_version") or "v1"
+    published_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+    lines = [
+        "---",
+        f"base_model: {base_model}",
+        "library_name: llama.cpp",
+        "license: apache-2.0",
+        "tags:",
+        "  - blue-lodge",
+        "  - lora",
+        "  - svd-32",
+        "  - gguf",
+        "  - llama-cpp",
+        "  - tool-use",
+        "  - agent",
+        f"  - role-{role}",
+        "---",
+        "",
+        f"# Blue Lodge Sovereign Adapter — `{model_slug}` (`{role}` / {ver})",
+        "",
+        f"SVD-32 fused GGUF LoRA adapter trained with the [Blue Lodge](https://github.com/dabe-19/blue-lodge) "
+        f"SFT + DPO harness pipeline for **{base_model}** (`role: {role}`, published `{published_at}`).",
+        "",
+        "## Bundle Contents",
+        "",
+        "| Artifact | Purpose |",
+        "|---|---|",
+        f"| `{gguf_name}` | SVD-32 fused GGUF LoRA adapter (`--lora-scaled` hot-swappable in stock `llama-server`) |",
+        "| `tool_schema_manifest.json` | Canonical Blue Lodge tool schema subset (`core_sha256: "
+        f"`{schema_info.get('core_sha256', '')[:16]}`) |",
+        "| `lineage.json` | Sanitized SVD-32 version lineage and provenance |",
+    ]
+    if template_name:
+        lines.append(f"| `{template_name}` | Calibrated Jinja chat template matching training & live inference |")
+    if scorecard:
+        lines.append("| `benchmark_scorecard.json` | 7-Pillar Multi-Turn Sovereign Benchmark scorecard |")
+
+    if scorecard:
+        lines += ["", "## 7-Pillar Multi-Turn Benchmark Scorecard", ""]
+        if "pillars" in scorecard and isinstance(scorecard["pillars"], dict):
+            lines += [
+                f"- **Composite Score:** `{scorecard.get('candidate_score', scorecard.get('overall_score', '?'))}%`"
+                + (f" (delta `{scorecard['composite_delta']:+.1f}%` vs `{scorecard.get('baseline_label', 'baseline')}`)"
+                   if "composite_delta" in scorecard else ""),
+                f"- **Early-Quit Rate:** `{scorecard.get('candidate_early_quit_pct', scorecard.get('early_quit_rate_pct', '?'))}%`",
+                "",
+                "| Pillar | Score |",
+                "|---|---:|",
+            ]
+            for pname, pval in scorecard["pillars"].items():
+                short = pname.split(":", 1)[1].strip() if ":" in pname else pname
+                if isinstance(pval, dict) and "candidate" in pval:
+                    lines.append(f"| {short} | {pval['baseline']:.1f}% → **{pval['candidate']:.1f}%** ({pval['delta']:+.1f}%) |")
+                elif isinstance(pval, dict) and "score_pct" in pval:
+                    lines.append(f"| {short} | **{pval['score_pct']:.1f}%** |")
+
+    tpl_flag = f" \\\n  --chat-template-file {template_name}" if template_name else ""
+    lines += [
+        "",
+        "## Usage with Stock `llama-server`",
+        "",
+        "```bash",
+        "llama-server \\",
+        f"  -m <path-to-{model_slug}.gguf> \\",
+        f"  --lora-scaled {gguf_name}:1.0 \\",
+        f"  --jinja{tpl_flag}",
+        "```",
+        "",
+        "## Usage inside Blue Lodge",
+        "",
+        "```bash",
+        f"# Place {gguf_name} at $MODELS_DIR/adapters/{model_slug}/{role}/active.gguf",
+        "# Blue Lodge start_inference.sh automatically detects and mounts active.gguf on startup.",
+        "```",
+        "",
+        f"Published via `scripts/training/backup_artifacts.py publish --hf-repo {hf_repo}`.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _find_latest_scorecard(model_slug: str, role: str) -> dict | None:
+    role_dir = MODELS_DIR / "adapters" / model_slug / role
+    for cand in (role_dir / "benchmark_scorecard.json", role_dir / "baseline_scorecard.json"):
+        if cand.is_file():
+            try:
+                return json.loads(cand.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+    # Also scan recent runs matching model_slug + role for benchmark_verdict.json
+    runs_root = GEORGE_DIR / "training" / "runs"
+    best = None
+    best_mtime = 0.0
+    if runs_root.is_dir():
+        for vp in runs_root.glob("*/benchmark_verdict.json"):
+            rj = vp.parent / "run.json"
+            if not rj.is_file():
+                continue
+            try:
+                meta = json.loads(rj.read_text(encoding="utf-8"))
+                if meta.get("model_slug") == model_slug and meta.get("role", "core-agent") == role:
+                    mt = vp.stat().st_mtime
+                    if mt > best_mtime:
+                        best_mtime = mt
+                        best = json.loads(vp.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+    return best
+
+
+def publish_bundle(model_slug: str, role: str, hf_repo: str, public: bool = False,
+                   template_path: str | None = None, dry_run: bool = False,
+                   out_dir: str | None = None, adapter_path: str | None = None,
+                   base_model: str | None = None) -> dict:
+    """Assemble and optionally publish a self-contained Hugging Face release bundle
+    (GGUF adapter + Model Card README.md + tool_schema_manifest.json + Jinja template + scorecard)."""
+    role_dir = MODELS_DIR / "adapters" / model_slug / role
+    gguf_src = Path(adapter_path).expanduser() if adapter_path else (role_dir / "active.gguf")
+    if gguf_src.is_symlink():
+        gguf_src = gguf_src.resolve()
+
+    lineage = {}
+    lin_path = role_dir / "lineage.json"
+    if lin_path.is_file():
+        try:
+            lineage = json.loads(lin_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            lineage = {}
+
+    resolved_base = (
+        base_model
+        or lineage.get("base_model")
+        or _DEFAULT_BASE_MODELS.get(model_slug, model_slug)
+    )
+    scorecard = _find_latest_scorecard(model_slug, role)
+
+    # Resolve matching Jinja template (explicit or auto-attached for Qwen3.8)
+    tpl_src: Path | None = None
+    if template_path:
+        p = Path(template_path).expanduser()
+        if not p.is_absolute():
+            p = LODGE_DIR / p
+        if p.is_file():
+            tpl_src = p
+    elif "qwen" in model_slug.lower():
+        cand = LODGE_DIR / "configs" / "blue_lodge_jinja_template.jinja"
+        if cand.is_file():
+            tpl_src = cand
+
+    merged_tools, schema_info = sts.compute_sync_plan(LODGE_DIR)
+    stage_dir = Path(out_dir).expanduser() if out_dir else Path(tempfile.mkdtemp(prefix=f"bl_publish_{model_slug}_"))
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    cleanup_stage = not bool(out_dir) and not dry_run
+
+    gguf_name = f"{model_slug}-{role}-svd32.gguf"
+    staged_files: list[str] = []
+    try:
+        if gguf_src.is_file():
+            shutil.copy2(gguf_src, stage_dir / gguf_name)
+            staged_files.append(gguf_name)
+        elif not dry_run:
+            return {"status": "error", "message": f"Adapter GGUF not found: {gguf_src} (pass --adapter PATH or approve a run first)"}
+
+        # Sanitized lineage.json
+        san_lineage = _sanitize_value(lineage) if lineage else {
+            "model_slug": model_slug, "role": role, "base_model": resolved_base, "active_version": "v1",
+        }
+        (stage_dir / "lineage.json").write_text(json.dumps(san_lineage, indent=2) + "\n", encoding="utf-8")
+        staged_files.append("lineage.json")
+
+        # Tool schema manifest (canonical tools + SHA-256)
+        schema_manifest = {
+            "schema_source": "data/schemas/native_tools.json",
+            "live_tool_count": schema_info["live_count"],
+            "core_tool_count": schema_info["train_after_count"],
+            "live_sha256": schema_info["live_sha256"],
+            "core_sha256": schema_info["core_sha256"],
+            "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+            "tools": merged_tools,
+        }
+        (stage_dir / "tool_schema_manifest.json").write_text(
+            json.dumps(schema_manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        staged_files.append("tool_schema_manifest.json")
+
+        tpl_name = None
+        if tpl_src and tpl_src.is_file():
+            tpl_name = tpl_src.name
+            shutil.copy2(tpl_src, stage_dir / tpl_name)
+            staged_files.append(tpl_name)
+
+        if scorecard:
+            (stage_dir / "benchmark_scorecard.json").write_text(
+                json.dumps(_sanitize_value(scorecard), indent=2) + "\n", encoding="utf-8"
+            )
+            staged_files.append("benchmark_scorecard.json")
+
+        readme = build_model_card(
+            model_slug=model_slug, role=role, hf_repo=hf_repo, gguf_name=gguf_name,
+            base_model=resolved_base, schema_info=schema_info,
+            template_name=tpl_name, scorecard=scorecard, lineage=san_lineage,
+        )
+        (stage_dir / "README.md").write_text(readme, encoding="utf-8")
+        staged_files.append("README.md")
+
+        if dry_run:
+            return {
+                "status": "ok",
+                "dry_run": True,
+                "hf_repo": hf_repo,
+                "visibility": "public" if public else "private",
+                "base_model": resolved_base,
+                "adapter_present": gguf_src.is_file(),
+                "stage_dir": str(stage_dir),
+                "files": sorted(staged_files),
+                "core_sha256": schema_info["core_sha256"],
+                "readme_preview": readme[:1200],
+            }
+
+        token, _ = cc._read_key_from_files(("HF_TOKEN", "HUGGINGFACE_TOKEN", "HUGGING_FACE_HUB_TOKEN"))
+        if not token:
+            return {"status": "error", "message": "HF_TOKEN not configured in .george/keys.conf"}
+        try:
+            from huggingface_hub import HfApi
+        except ImportError:
+            return {"status": "error", "message": "huggingface_hub not installed (uv pip install huggingface-hub)"}
+
+        api = HfApi(token=token)
+        api.create_repo(repo_id=hf_repo, repo_type="model", private=not public, exist_ok=True)
+        api.upload_folder(
+            folder_path=str(stage_dir),
+            repo_id=hf_repo,
+            repo_type="model",
+            commit_message=f"release({model_slug}/{role}): publish Blue Lodge SVD-32 adapter bundle",
+        )
+        return {
+            "status": "ok",
+            "dry_run": False,
+            "hf_repo": hf_repo,
+            "visibility": "public" if public else "private",
+            "url": f"https://huggingface.co/{hf_repo}",
+            "files": sorted(staged_files),
+            "at": dt.datetime.now().isoformat(timespec="seconds"),
+        }
+    finally:
+        if cleanup_stage:
+            shutil.rmtree(stage_dir, ignore_errors=True)
+
+
+def pull_hf_adapter(hf_repo: str, model_slug: str, role: str = "core-agent",
+                    filename: str | None = None, activate: bool = False,
+                    dry_run: bool = False) -> dict:
+    """Download a community/HF GGUF LoRA adapter (e.g. harness-hub/Qwen3.8-27B-super-adapter-GGUF)
+    into $MODELS_DIR/adapters/<model_slug>/<role>/community/ with SHA-256 verification and lineage tracking."""
+    if not re.fullmatch(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", hf_repo or ""):
+        return {"status": "error", "message": f"Invalid HF repo id: {hf_repo!r}"}
+    token, _ = cc._read_key_from_files(("HF_TOKEN", "HUGGINGFACE_TOKEN", "HUGGING_FACE_HUB_TOKEN"))
+    hdr = {"User-Agent": "blue-lodge-adapter-hub/1.0"}
+    if token:
+        hdr["Authorization"] = f"Bearer {token}"
+
+    tree_url = f"https://huggingface.co/api/models/{hf_repo}/tree/main"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(tree_url, headers=hdr), timeout=30) as r:
+            entries = json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        return {"status": "error", "message": f"Could not inspect HF repo {hf_repo}: {e}"}
+
+    ggufs = [x for x in entries if isinstance(x, dict) and str(x.get("path", "")).lower().endswith(".gguf")]
+    if not ggufs:
+        return {"status": "error", "message": f"No .gguf adapter files found in {hf_repo}"}
+
+    chosen = None
+    if filename:
+        chosen = next((x for x in ggufs if x["path"] == filename or os.path.basename(x["path"]) == filename), None)
+        if not chosen:
+            return {"status": "error", "message": f"File {filename!r} not found in {hf_repo}; available: {[x['path'] for x in ggufs]}"}
+    else:
+        # Prefer F16 / BF16 LoRA GGUFs when multiple exist
+        chosen = next((x for x in ggufs if "f16" in x["path"].lower() or "bf16" in x["path"].lower()), ggufs[0])
+
+    rel_path = chosen["path"]
+    expected_size = int(chosen.get("size") or 0)
+    expected_sha = ((chosen.get("lfs") or {}).get("oid") or "").strip().lower()
+    safe_repo = hf_repo.replace("/", "__")
+    role_dir = MODELS_DIR / "adapters" / model_slug / role
+    comm_dir = role_dir / "community"
+    dest_path = comm_dir / f"{safe_repo}__{os.path.basename(rel_path)}"
+    dl_url = f"https://huggingface.co/{hf_repo}/resolve/main/{urllib.parse.quote(rel_path)}"
+
+    if dry_run:
+        return {
+            "status": "ok",
+            "dry_run": True,
+            "hf_repo": hf_repo,
+            "file": rel_path,
+            "size_mib": round(expected_size / (1024 * 1024), 1),
+            "expected_sha256": expected_sha[:16] if expected_sha else None,
+            "dest_path": str(dest_path),
+            "activate": activate,
+            "available_ggufs": [x["path"] for x in ggufs],
+        }
+
+    comm_dir.mkdir(parents=True, exist_ok=True)
+    part_path = dest_path.with_suffix(dest_path.suffix + ".part")
+    h = hashlib.sha256()
+    written = 0
+    try:
+        with urllib.request.urlopen(urllib.request.Request(dl_url, headers=hdr), timeout=600) as r:
+            with open(part_path, "wb") as out:
+                while True:
+                    chunk = r.read(4 * 1024 * 1024)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    h.update(chunk)
+                    written += len(chunk)
+        actual_sha = h.hexdigest()
+        if expected_sha and actual_sha != expected_sha:
+            part_path.unlink(missing_ok=True)
+            return {"status": "error", "message": f"SHA-256 mismatch for {rel_path}: expected {expected_sha[:16]}, got {actual_sha[:16]}"}
+        os.chmod(part_path, 0o664)
+        os.replace(part_path, dest_path)
+    except Exception as e:
+        part_path.unlink(missing_ok=True)
+        return {"status": "error", "message": f"Download failed for {dl_url}: {e}"}
+
+    active_link = role_dir / "active.gguf"
+    if activate:
+        if active_link.is_symlink() or active_link.exists():
+            active_link.unlink()
+        active_link.symlink_to(dest_path)
+
+    lineage_p = role_dir / "lineage.json"
+    lin = {}
+    if lineage_p.is_file():
+        try:
+            lin = json.loads(lineage_p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            lin = {}
+    lin.setdefault("model_slug", model_slug)
+    lin.setdefault("role", role)
+    lin.setdefault("community_adapters", []).append({
+        "hf_repo": hf_repo,
+        "file": rel_path,
+        "path": str(dest_path),
+        "size_bytes": written,
+        "sha256": actual_sha,
+        "pulled_at": dt.datetime.now().isoformat(timespec="seconds"),
+    })
+    if activate:
+        lin["active_version"] = f"hf:{hf_repo}"
+        lin["active_path"] = str(dest_path)
+    lineage_p.write_text(json.dumps(lin, indent=2) + "\n", encoding="utf-8")
+
+    return {
+        "status": "ok",
+        "hf_repo": hf_repo,
+        "file": rel_path,
+        "size_mib": round(written / (1024 * 1024), 1),
+        "sha256": actual_sha[:16],
+        "path": str(dest_path),
+        "activated": activate,
+        "active_path": str(active_link) if activate else None,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -250,11 +655,45 @@ def main():
     pb.add_argument("--all", action="store_true")
     pb.add_argument("--target", choices=("drive", "hf", "both"), default="both")
     pb.add_argument("--hf-repo", default=None)
+
+    pp = sub.add_parser("publish", help="Stage & publish a Hugging Face release bundle (GGUF + Model Card + schemas + Jinja)")
+    pp.add_argument("--model", required=True, help="Model slug (e.g. gemma-4-31b-it or qwen3.8-27b)")
+    pp.add_argument("--role", default="core-agent")
+    pp.add_argument("--hf-repo", required=True, help="Destination Hugging Face repo (e.g. dabe-19/blue-lodge-gemma4-31b-svd32)")
+    pp.add_argument("--public", action="store_true", help="Create/publish as a PUBLIC Hugging Face repo (default: private)")
+    pp.add_argument("--template", default=None, help="Optional .jinja chat template file to include in the release bundle")
+    pp.add_argument("--adapter", default=None, help="Explicit adapter .gguf path (defaults to active.gguf)")
+    pp.add_argument("--base-model", default=None, help="Explicit HF base_model id for Model Card YAML frontmatter")
+    pp.add_argument("--out-dir", default=None, help="Keep staged release bundle in this directory")
+    pp.add_argument("--dry-run", action="store_true", help="Stage locally and emit bundle manifest without uploading")
+
+    pl = sub.add_parser("pull-adapter", help="Download a GGUF LoRA/SVD adapter from Hugging Face into MODELS_DIR/adapters/")
+    pl.add_argument("--hf-repo", required=True, help="Source HF repo (e.g. harness-hub/Qwen3.8-27B-super-adapter-GGUF)")
+    pl.add_argument("--model", required=True, help="Target model slug (e.g. qwen3.8-27b)")
+    pl.add_argument("--role", default="core-agent")
+    pl.add_argument("--file", default=None, help="Optional specific .gguf filename in the HF repo")
+    pl.add_argument("--activate", action="store_true", help="Point active.gguf symlink at the downloaded adapter")
+    pl.add_argument("--dry-run", action="store_true", help="Inspect repo files & SHA-256 without downloading")
     a = ap.parse_args()
 
     if a.cmd == "status":
         print(json.dumps(backup_status(), indent=2))
         return 0
+    if a.cmd == "pull-adapter":
+        res = pull_hf_adapter(
+            hf_repo=a.hf_repo, model_slug=a.model, role=a.role,
+            filename=a.file, activate=a.activate, dry_run=a.dry_run,
+        )
+        print(json.dumps(res, indent=2))
+        return 0 if res.get("status") == "ok" else 1
+    if a.cmd == "publish":
+        res = publish_bundle(
+            model_slug=a.model, role=a.role, hf_repo=a.hf_repo, public=a.public,
+            template_path=a.template, dry_run=a.dry_run, out_dir=a.out_dir,
+            adapter_path=a.adapter, base_model=a.base_model,
+        )
+        print(json.dumps(res, indent=2))
+        return 0 if res.get("status") == "ok" else 1
     if a.all:
         res = backup_all(a.target, a.hf_repo)
     elif a.file:
