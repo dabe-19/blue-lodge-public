@@ -58,7 +58,9 @@ assert_gt "$(jq '.recipes_available["error-recovery"]' <<<"$p")" 0 "error-recove
 assert_gt "$(jq '.recipes_available["failure-modes"]' <<<"$p")" 0 "loop samples found"
 assert_gt "$(jq '.recipes_available["gitops"]' <<<"$p")" 0 "git step counted as ops"
 assert_contains "$(jq -c '.curricula_skipped_eval_only' <<<"$p")" "curriculum_gpqa_diamond" "benchmark copy marked eval-only"
-assert_eq "$(F recipes --json | jq -r 'keys | length')" "8" "eight recipes (including cyber-defense)"
+_rec_json=$(F recipes --json)
+assert_gt "$(jq -r 'keys | length' <<<"$_rec_json")" 7 "at least eight recipes registered (incl. cyber-defense, persistence, harness-workflows)"
+assert_contains "$_rec_json" "cyber-defense" "cyber-defense recipe registered"
 
 describe "build: focus, provenance, no padding, session split"
 b=$(F build --focus error-recovery,failure-modes --count 500 --out "$S/o1" --json)

@@ -18,6 +18,8 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -330,6 +332,12 @@ def scan(with_meta: bool = True) -> dict[str, Any]:
                 e.update(read_meta(p, cache))
         e["complete"] = not e.get("shards") or e["shards_present"] == e["shards"]
         e["installed_profile"] = next((r["name"] for r in e["profiles"] if r["status"] == "installed"), None)
+        e["svd_eligible"] = (
+            e.get("kind") == "adapter"
+            and e.get("adapter_type") != "control_vector"
+            and e.get("arch") != "controlvector"
+            and int(e.get("size") or 0) > 0
+        )
         e.pop("dims", None)  # full dims are served by fit-local / find(); keep the listing small
     if with_meta:
         live = {k for k in by_real}
@@ -390,3 +398,125 @@ def delete_file(rel: str, force: bool = False) -> dict[str, Any]:
         c.pop(str(t), None)
     _save_cache(c)
     return {"deleted": deleted, "profiles_affected": users}
+
+
+ALLOWED_SVD_RANKS = (8, 16, 32, 64)
+
+
+def _lodge_dir() -> Path:
+    env = os.environ.get("LODGE_DIR", "").strip()
+    if env:
+        return Path(env)
+    return Path(__file__).resolve().parents[3]
+
+
+def _pick_svd_python() -> str:
+    lodge = _lodge_dir()
+    for cand in (
+        lodge / ".venv" / "bin" / "python",
+        lodge / ".venv" / "bin" / "python3",
+        Path(sys.executable),
+    ):
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return str(cand)
+    return sys.executable
+
+
+def compress_adapter(rel: str, target_rank: int = 32, alpha: float | None = None,
+                     output_name: str | None = None) -> dict[str, Any]:
+    """Compress an eligible LoRA GGUF adapter inside MODELS_DIR into a smaller rank-N SVD GGUF."""
+    if int(target_rank) not in ALLOWED_SVD_RANKS:
+        raise HubError(f"target_rank must be one of {ALLOWED_SVD_RANKS}")
+    rank = int(target_rank)
+    src = resolve_rel(rel)
+    info = read_meta(src)
+    if info.get("kind") != "adapter":
+        raise HubError(f"{rel} is a {info.get('kind', 'file')}, not a LoRA adapter GGUF")
+    if info.get("adapter_type") == "control_vector" or info.get("arch") == "controlvector":
+        raise HubError("SVD compression applies to LoRA adapters, not control vectors")
+
+    src_real = src.resolve()
+    if output_name:
+        if "/" in output_name or "\\" in output_name or ".." in output_name or output_name.startswith("-"):
+            raise HubError("invalid output filename")
+        if not re.fullmatch(r"[A-Za-z0-9._+@ -]{1,180}\.gguf", output_name, re.I):
+            raise HubError("output filename must end with .gguf and use safe characters")
+        out_path = src_real.parent / output_name
+    else:
+        stem = re.sub(r"(?i)(?:-svd\d+)?\.gguf$", "", src_real.name)
+        out_path = src_real.parent / f"{stem}-svd{rank}.gguf"
+
+    if not inside(out_path):
+        raise HubError("output path escapes MODELS_DIR")
+    if out_path.resolve() == src_real:
+        raise HubError("output filename matches source adapter; choose a different rank or output name")
+
+    merge_script = _lodge_dir() / "scripts" / "training" / "merge_loras.py"
+    if not merge_script.is_file():
+        raise HubError(f"SVD compressor script not found: {merge_script}")
+
+    eff_alpha = float(alpha) if alpha is not None else float(rank * 2)
+    tmp_out = out_path.with_name(f".{out_path.name}.svd.tmp.{os.getpid()}")
+    argv = [
+        _pick_svd_python(),
+        str(merge_script),
+        "--adapters", str(src_real),
+        "--weights", "1.0",
+        "--output", str(tmp_out),
+        "--method", "svd",
+        "--target_rank", str(rank),
+        "--alpha", str(eff_alpha),
+        "--outtype", "f16",
+    ]
+    svd_env = dict(os.environ)
+    svd_env.setdefault("OPENBLAS_NUM_THREADS", "4")
+    svd_env.setdefault("OMP_NUM_THREADS", "4")
+    svd_env.setdefault("MKL_NUM_THREADS", "4")
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=600, check=False, env=svd_env)
+        if proc.returncode != 0 or not tmp_out.is_file():
+            tail = (proc.stderr or proc.stdout or "SVD merge failed").strip()[-500:]
+            raise HubError(f"SVD-{rank} compression failed: {tail}")
+        os.chmod(tmp_out, 0o664)
+        os.replace(tmp_out, out_path)
+    finally:
+        if tmp_out.exists():
+            try:
+                tmp_out.unlink()
+            except OSError:
+                pass
+
+    h = hashlib.sha256()
+    with open(out_path, "rb") as f:
+        while True:
+            b = f.read(CHUNK)
+            if not b:
+                break
+            h.update(b)
+    digest = h.hexdigest()
+    try:
+        sidecar = out_path.with_name(out_path.name + ".sha256")
+        sidecar.write_text(f"{digest}  {out_path.name}\n", encoding="utf-8")
+        os.chmod(sidecar, 0o664)
+    except OSError:
+        pass
+
+    src_bytes = src_real.stat().st_size
+    out_bytes = out_path.stat().st_size
+    saved_pct = round((1.0 - (out_bytes / src_bytes)) * 100.0, 1) if src_bytes > 0 else 0.0
+    out_rel = rel_of(out_path)
+    return {
+        "status": "ok",
+        "source_rel": rel_of(src_real),
+        "output_rel": out_rel,
+        "output_file": out_path.name,
+        "output_path": str(out_path),
+        "target_rank": rank,
+        "alpha": eff_alpha,
+        "source_bytes": src_bytes,
+        "output_bytes": out_bytes,
+        "source_mib": round(src_bytes / (1024 * 1024), 1),
+        "output_mib": round(out_bytes / (1024 * 1024), 1),
+        "saved_pct": saved_pct,
+        "sha256": digest,
+    }

@@ -226,10 +226,10 @@ def _export_adapter_gguf(adapter_dir: str, base_model: str, out_gguf: str, base_
             break
 
     if not conv:
-        # Lightweight sparse checkout of official stock llama.cpp LoRA converter + conversion/ & gguf-py/ packages
+        # Lightweight sparse checkout (--no-cone required by Git 2.37+ for root files)
         conv_dir = os.path.join(os.path.dirname(os.path.abspath(out_gguf)), "_llama_cpp_conv")
         cand_conv = os.path.join(conv_dir, "convert_lora_to_gguf.py")
-        if os.path.isfile(cand_conv) and os.path.isdir(os.path.join(conv_dir, "conversion")):
+        if os.path.isfile(cand_conv) and os.path.isdir(os.path.join(conv_dir, "gguf-py")):
             conv = cand_conv
         else:
             try:
@@ -241,8 +241,8 @@ def _export_adapter_gguf(adapter_dir: str, base_model: str, out_gguf: str, base_
                     check=True, capture_output=True, text=True, timeout=90,
                 )
                 subprocess.run(
-                    ["git", "-C", conv_dir, "sparse-checkout", "set",
-                     "convert_lora_to_gguf.py", "conversion", "gguf-py"],
+                    ["git", "-C", conv_dir, "sparse-checkout", "set", "--no-cone",
+                     "/convert_lora_to_gguf.py", "/convert_hf_to_gguf.py", "/conversion/", "/gguf-py/"],
                     check=True, capture_output=True, text=True, timeout=60,
                 )
                 if os.path.isfile(cand_conv):

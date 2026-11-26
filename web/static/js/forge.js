@@ -693,12 +693,19 @@
         const gpuCell = row.gpu
           ? `${row.accelerator || 'GPU'} · ${row.gpu.name} (${(row.gpu.used_mb / 1024).toFixed(1)}/${(row.gpu.total_mb / 1024).toFixed(1)} GiB · ${row.gpu.util_pct}%)`
           : (row.accelerator || '—');
-        const mapLabel = row.run ? `${row.run} / ${row.track || 'default'}` : 'UNMAPPED / ORPHAN';
+        const isPeerActive = row.health === 'peer_active';
+        const isPeerStale = row.health === 'peer_stale';
+        const ownerTag = row.owner_node ? String(row.owner_node) : '';
+        const mapLabel = row.run
+          ? `${ownerTag && (isPeerActive || isPeerStale) ? `[${ownerTag}] ` : ''}${row.run} / ${row.track || 'default'}`
+          : (ownerTag ? `[${ownerTag}] active session` : 'UNMAPPED / ORPHAN');
         const healthBadgeCls = row.stale ? 'guild-badge off' : 'guild-badge on';
-        const healthTxt = row.stale ? String(row.health || 'STALE').toUpperCase() : 'ACTIVE';
+        const healthTxt = isPeerActive
+          ? `PEER: ${ownerTag.toUpperCase() || 'SIBLING'}`
+          : (row.stale ? String(row.health || 'STALE').toUpperCase() : 'ACTIVE');
 
         const rowActs = el('div', { style: 'display:flex;flex-wrap:wrap;gap:4px;' });
-        if (row.run) {
+        if (row.run && !isPeerActive && !isPeerStale) {
           rowActs.appendChild(el('button', {
             type: 'button',
             className: 'guild-btn',
@@ -711,13 +718,16 @@
           type: 'button',
           className: isArmed ? 'guild-btn danger' : (row.stale ? 'guild-btn danger' : 'guild-btn'),
           style: 'padding:3px 7px;font-size:10px;',
-          text: isArmed ? 'CONFIRM CULL' : 'CULL VM',
-          title: isArmed ? `Click again to permanently unassign ${ep}` : `Terminate Colab VM ${ep}`,
+          text: isArmed ? 'CONFIRM CULL' : (isPeerActive ? 'FORCE CULL' : 'CULL VM'),
+          title: isArmed
+            ? `Click again to permanently unassign ${ep}`
+            : (isPeerActive ? `Owned by sibling node '${ownerTag}' — only cull if confirmed hung` : `Terminate Colab VM ${ep}`),
           on: {
             click: () => {
               if (!isArmed) {
                 state.armedCullTarget = ep;
-                setConsole(`Armed to cull Colab VM ${ep} (${row.session || 'untracked'} · ${row.accelerator}). Click CONFIRM CULL to terminate and stop CU burn.`);
+                const peerWarn = isPeerActive ? ` WARNING: This VM is actively owned by sibling node '${ownerTag}'!` : '';
+                setConsole(`Armed to cull Colab VM ${ep} (${row.session || 'untracked'} · ${row.accelerator}).${peerWarn} Click CONFIRM CULL to terminate and stop CU burn.`);
                 renderForge();
               } else {
                 cullColabTarget(ep, false);
@@ -728,11 +738,11 @@
 
         vmTbody.appendChild(el('tr', {}, [
           el('td', {}, [
-            el('div', { style: 'font-weight:700;color:#f8fafc;', text: row.session || 'UNTRACKED ORPHAN [?]' }),
+            el('div', { style: 'font-weight:700;color:#f8fafc;', text: row.session || (isPeerActive ? `PEER VM (${ownerTag})` : 'UNTRACKED ORPHAN [?]') }),
             el('div', { className: 'guild-card-meta', style: 'font-family:var(--font-mono);font-size:10px;', text: ep }),
           ]),
           el('td', { style: 'font-family:var(--font-mono);font-size:11px;', text: gpuCell }),
-          el('td', { style: row.run ? 'font-family:var(--font-mono);font-size:11px;' : 'color:#fbbf24;font-weight:700;font-size:11px;', text: mapLabel }),
+          el('td', { style: (row.run || isPeerActive) ? 'font-family:var(--font-mono);font-size:11px;' : 'color:#fbbf24;font-weight:700;font-size:11px;', text: mapLabel }),
           el('td', {}, [
             el('span', { className: healthBadgeCls, text: healthTxt }),
             el('div', { className: 'guild-card-meta', style: 'margin-top:2px;', text: row.reason || '' }),
@@ -1035,6 +1045,13 @@
       el('option', { value: 'sdr-p25', text: 'sdr-p25' }),
     ]);
     const actCb = el('input', { type: 'checkbox', checked: false });
+    const svdCb = el('input', { type: 'checkbox', checked: true });
+    const svdRankSel = el('select', { className: 'guild-input', style: 'min-width:95px;padding:3px 6px;' }, [
+      el('option', { value: '32', text: 'SVD-32' }),
+      el('option', { value: '16', text: 'SVD-16' }),
+      el('option', { value: '64', text: 'SVD-64' }),
+      el('option', { value: '8', text: 'SVD-8' }),
+    ]);
     const pullBtn = el('button', {
       type: 'button',
       className: 'guild-btn primary',
@@ -1043,9 +1060,10 @@
         click: async () => {
           const repo = repoIn.value.trim();
           if (!repo) { setConsole('Enter a Hugging Face GGUF adapter repo (e.g. harness-hub/Qwen3.8-27B-super-adapter-GGUF).'); return; }
+          const compressRank = svdCb.checked ? Number(svdRankSel.value || 32) : undefined;
           pullBtn.disabled = true;
-          pullBtn.textContent = 'PULLING…';
-          setConsole(`Downloading & SHA-256 verifying community GGUF adapter from ${repo}...`);
+          pullBtn.textContent = compressRank ? `PULLING + SVD-${compressRank}…` : 'PULLING…';
+          setConsole(`Downloading & SHA-256 verifying community GGUF adapter from ${repo}${compressRank ? ` (then compressing to SVD-${compressRank})` : ''}...`);
           try {
             const { data } = await apiJson('/api/training/pull-adapter', {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1053,6 +1071,7 @@
                 hf_repo: repo,
                 model_slug: slugIn.value.trim() || undefined,
                 role: roleSel.value,
+                compress_svd: compressRank,
                 activate: Boolean(actCb.checked),
               }),
             });
@@ -1074,14 +1093,18 @@
     });
     const pullCard = el('div', { className: 'forge-card' }, [
       el('div', { className: 'guild-card-title', text: 'PULL COMMUNITY HF GGUF LORA / SVD ADAPTER' }),
-      el('div', { className: 'guild-card-meta', text: 'Downloads & SHA-256 verifies a pre-trained GGUF LoRA/SVD adapter into MODELS_DIR/adapters/<model_slug>/<role>/community/ and optionally sets active.gguf.' }),
+      el('div', { className: 'guild-card-meta', text: 'Downloads & SHA-256 verifies a pre-trained GGUF LoRA/SVD adapter into MODELS_DIR/adapters/<model_slug>/<role>/community/, optionally compresses to a compact SVD GGUF for 12–24 GB GPUs, and optionally sets active.gguf.' }),
       el('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;margin:4px 0;' }, [
         el('span', { className: 'guild-card-meta', text: 'Quick presets:' }),
         presetBtn('Qwen 3.8 27B Super-Adapter (harness-hub)', 'harness-hub/Qwen3.8-27B-super-adapter-GGUF', 'qwen3.8-27b'),
         presetBtn('Qwen 3.8 27B Hermes-Adapted (harness-hub)', 'harness-hub/Qwen3.8-27B-hermes-adapted-GGUF', 'qwen3.8-27b'),
       ]),
       el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;' }, [repoIn, slugIn, roleSel, pullBtn]),
-      el('label', { className: 'eco-check-label', style: 'margin-top:4px;' }, [actCb, 'Activate immediately (flip active.gguf symlink for this model_slug/role)']),
+      el('div', { style: 'display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:4px;' }, [
+        el('label', { className: 'eco-check-label' }, [svdCb, 'Auto-compress to compact SVD rank:']),
+        svdRankSel,
+        el('label', { className: 'eco-check-label' }, [actCb, 'Activate immediately (flip active.gguf symlink)']),
+      ]),
     ]);
 
     return el('div', { style: 'display:flex;flex-direction:column;gap:12px;' }, [hotCard, pullCard, bkpCard]);

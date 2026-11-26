@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tarfile
@@ -658,6 +659,226 @@ def _mint_headless_drive_auth() -> dict | None:
         return None
 
 
+def _local_node_name() -> str:
+    """Resolve this sovereign node's identity (LODGE_NODE_NAME from env or lodge.conf, fallback hostname)."""
+    env_n = (os.environ.get("LODGE_NODE_NAME") or "").strip().lower()
+    if env_n and re.fullmatch(r"[a-z0-9._-]{1,48}", env_n):
+        return env_n
+    for cand in (
+        os.path.join(GEORGE, "configs", "lodge.conf"),
+        os.path.join(GEORGE, "lodge.conf"),
+    ):
+        if os.path.isfile(cand):
+            try:
+                for line in open(cand, encoding="utf-8", errors="ignore"):
+                    line = line.strip()
+                    if line.startswith("export "):
+                        line = line[7:].strip()
+                    if line.startswith("LODGE_NODE_NAME="):
+                        val = line.split("=", 1)[1].strip().strip("'\"").lower()
+                        if val and re.fullmatch(r"[a-z0-9._-]{1,48}", val):
+                            return val
+            except OSError:
+                pass
+    try:
+        return (socket.gethostname().split(".")[0] or "lodge-node").lower()
+    except Exception:
+        return "lodge-node"
+
+
+def _drive_ensure_training_folder(hdr: dict) -> str | None:
+    """Ensure BlueLodge/training folder exists on Google Drive and return its folder ID."""
+    parent = "root"
+    for part in ("BlueLodge", "training"):
+        q = f"name='{part}' and mimeType='application/vnd.google-apps.folder' and '{parent}' in parents and trashed=false"
+        url = "https://www.googleapis.com/drive/v3/files?fields=files(id,name)&q=" + urllib.parse.quote(q)
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=12) as r:
+                files = json.loads(r.read()).get("files", [])
+            if files:
+                parent = files[0]["id"]
+                continue
+            meta = json.dumps({
+                "name": part,
+                "mimeType": "application/vnd.google-apps.folder",
+                "parents": [parent],
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                "https://www.googleapis.com/drive/v3/files?fields=id",
+                data=meta,
+                headers={**hdr, "Content-Type": "application/json; charset=utf-8"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=12) as r:
+                parent = json.loads(r.read())["id"]
+        except Exception:
+            return None
+    return parent
+
+
+def _drive_vm_manifest_read() -> tuple[dict, str | None, dict | None, str | None]:
+    """Read BlueLodge/training/_active_vms.json from Google Drive (or BLUE_LODGE_ACTIVE_VMS_FILE for local tests).
+    Returns (manifest_dict, file_id_or_None, drive_headers_or_None, folder_id_or_None)."""
+    override = (os.environ.get("BLUE_LODGE_ACTIVE_VMS_FILE") or "").strip()
+    if override:
+        data = _read_json(override, {}) if os.path.isfile(override) else {}
+        if not isinstance(data, dict):
+            data = {}
+        data.setdefault("schema_version", 1)
+        if not isinstance(data.get("vms"), dict):
+            data["vms"] = {}
+        return data, override, None, None
+
+    auth = _mint_headless_drive_auth()
+    if not auth or not auth.get("access_token"):
+        return {"schema_version": 1, "vms": {}}, None, None, None
+    hdr = {"Authorization": f"Bearer {auth['access_token']}"}
+    if auth.get("quota_project_id"):
+        hdr["X-Goog-User-Project"] = auth["quota_project_id"]
+
+    folder_id = _drive_ensure_training_folder(hdr)
+    if not folder_id:
+        return {"schema_version": 1, "vms": {}}, None, hdr, None
+
+    q = f"name='_active_vms.json' and '{folder_id}' in parents and trashed=false"
+    url = "https://www.googleapis.com/drive/v3/files?fields=files(id,name,modifiedTime)&q=" + urllib.parse.quote(q)
+    file_id = None
+    data: dict = {"schema_version": 1, "vms": {}}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=12) as r:
+            files = json.loads(r.read()).get("files", [])
+        if files:
+            file_id = files[0]["id"]
+            dl = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
+            with urllib.request.urlopen(urllib.request.Request(dl, headers=hdr), timeout=12) as r:
+                parsed = json.loads(r.read().decode("utf-8", "replace"))
+                if isinstance(parsed, dict) and isinstance(parsed.get("vms"), dict):
+                    data = parsed
+    except Exception:
+        pass
+    data.setdefault("schema_version", 1)
+    if not isinstance(data.get("vms"), dict):
+        data["vms"] = {}
+    return data, file_id, hdr, folder_id
+
+
+def _drive_vm_manifest_write(data: dict, file_id: str | None = None,
+                             hdr: dict | None = None, folder_id: str | None = None) -> bool:
+    """Persist BlueLodge/training/_active_vms.json to Google Drive (or BLUE_LODGE_ACTIVE_VMS_FILE). Never fatal."""
+    now = int(time.time())
+    vms = data.get("vms") if isinstance(data.get("vms"), dict) else {}
+    # Garbage-collect entries with no heartbeat for >24h so dead records never linger
+    pruned = {
+        ep: rec for ep, rec in vms.items()
+        if isinstance(rec, dict) and (now - int(rec.get("heartbeat_at") or rec.get("started_at") or now)) <= 86400
+    }
+    payload_obj = {"schema_version": 1, "updated_at": now, "vms": pruned}
+    payload_bytes = (json.dumps(payload_obj, indent=2) + "\n").encode("utf-8")
+
+    override = (os.environ.get("BLUE_LODGE_ACTIVE_VMS_FILE") or "").strip()
+    if override:
+        try:
+            _write_json(override, payload_obj)
+            return True
+        except OSError:
+            return False
+
+    if hdr is None:
+        _, file_id, hdr, folder_id = _drive_vm_manifest_read()
+    if not hdr or not folder_id:
+        return False
+
+    try:
+        if file_id:
+            url = f"https://www.googleapis.com/upload/drive/v3/files/{file_id}?uploadType=media"
+            req = urllib.request.Request(
+                url, data=payload_bytes,
+                headers={**hdr, "Content-Type": "application/json; charset=utf-8"},
+                method="PATCH",
+            )
+            with urllib.request.urlopen(req, timeout=15) as r:
+                r.read()
+            return True
+        boundary = f"bluelodge_{now}_{os.getpid()}"
+        meta = json.dumps({"name": "_active_vms.json", "parents": [folder_id], "mimeType": "application/json"}).encode("utf-8")
+        body = (
+            f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n".encode("utf-8")
+            + meta
+            + f"\r\n--{boundary}\r\nContent-Type: application/json\r\n\r\n".encode("utf-8")
+            + payload_bytes
+            + f"\r\n--{boundary}--\r\n".encode("utf-8")
+        )
+        req = urllib.request.Request(
+            "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
+            data=body,
+            headers={**hdr, "Content-Type": f"multipart/related; boundary={boundary}"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as r:
+            r.read()
+        return True
+    except Exception:
+        return False
+
+
+def _session_endpoint(session_name: str) -> str | None:
+    """Resolve a local colab-cli session name to its Google Colab VM endpoint ID."""
+    if not session_name:
+        return None
+    try:
+        import contextlib
+        with contextlib.redirect_stdout(sys.stderr):
+            from colab_cli.common import state as cstate
+            s = cstate.store.get(session_name)
+            return getattr(s, "endpoint", None) if s else None
+    except Exception:
+        return None
+
+
+def _drive_vm_register(endpoint: str | None, *, session: str | None = None,
+                       run_name: str | None = None, track_name: str | None = None,
+                       accelerator: str | None = None) -> bool:
+    """Record or heartbeat this node's ownership of an active Colab VM in BlueLodge/training/_active_vms.json."""
+    if not endpoint:
+        return False
+    now = int(time.time())
+    node = _local_node_name()
+    data, fid, hdr, folder_id = _drive_vm_manifest_read()
+    if hdr is None and not (os.environ.get("BLUE_LODGE_ACTIVE_VMS_FILE") or "").strip():
+        return False
+    existing = data["vms"].get(endpoint) if isinstance(data.get("vms"), dict) else None
+    started = int(existing.get("started_at", now)) if isinstance(existing, dict) and existing.get("owner_node") == node else now
+    data["vms"][endpoint] = {
+        "endpoint": endpoint,
+        "owner_node": node,
+        "session": session or (existing.get("session") if isinstance(existing, dict) else None),
+        "run": run_name or (existing.get("run") if isinstance(existing, dict) else None),
+        "track": track_name or (existing.get("track") if isinstance(existing, dict) else None),
+        "accelerator": accelerator or (existing.get("accelerator") if isinstance(existing, dict) else None),
+        "started_at": started,
+        "heartbeat_at": now,
+    }
+    return _drive_vm_manifest_write(data, fid, hdr, folder_id)
+
+
+def _drive_vm_unregister(endpoints: list[str]) -> bool:
+    """Remove terminated/completed Colab VM endpoint(s) from BlueLodge/training/_active_vms.json."""
+    eps = [e for e in (endpoints or []) if e]
+    if not eps:
+        return False
+    data, fid, hdr, folder_id = _drive_vm_manifest_read()
+    if hdr is None and not (os.environ.get("BLUE_LODGE_ACTIVE_VMS_FILE") or "").strip():
+        return False
+    changed = False
+    for ep in eps:
+        if ep in data["vms"]:
+            data["vms"].pop(ep, None)
+            changed = True
+    if not changed:
+        return True
+    return _drive_vm_manifest_write(data, fid, hdr, folder_id)
+
+
 def _refresh_bundle_kit(bundle_path: str) -> None:
     """Ensure bundle.tar.gz contains the latest scripts/training/kit/train_lora.py before upload/resume."""
     if not bundle_path or not os.path.isfile(bundle_path) or not os.path.isfile(KIT):
@@ -698,20 +919,43 @@ def _build_colab_launch_py(v: dict, s: str, remote: str, track_name: str, hf_tok
     ckpt_flag = f"--drive-checkpoint-sync --drive-checkpoint-keep {ckpt_keep}" if (drive_auth_remote and ckpt_sync) else ""
     export_flag = f"--export-gguf {shlex.quote(export_gguf)}" if export_gguf else ""
     cleanup_auth = f"rm -f {shlex.quote(drive_auth_remote)}; " if drive_auth_remote else ""
+    # Skip re-downloading/upgrading torch when Colab already ships CUDA PyTorch>=2.3;
+    # stream live install output to both /content/pip.log and train.log (never silent -q),
+    # prefer uv when present on Colab, abort cleanly on install failure, and detach stdio/session
+    # so `colab exec` never hangs on inherited Jupyter pipes or sends SIGPIPE/SIGHUP.
+    pkgs_core = f'{unsloth_pip}"transformers>=4.45" "peft>=0.12" "trl>=0.11" "datasets>=2.20" accelerate bitsandbytes gguf'
+    shell_cmd = (
+        f"export PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1; "
+        f"{hf_env}{drv_env}"
+        f"cd {shlex.quote(remote)} || exit 1; "
+        f"exec > >(tee -a {shlex.quote(remote + '/train.log')}) 2>&1; "
+        f"echo '[pip install] Checking preinstalled PyTorch/CUDA and installing training dependencies...' | tee /content/pip.log; "
+        f"TORCH_PKG=''; python3 -c 'import torch; assert torch.cuda.is_available()' >/dev/null 2>&1 || TORCH_PKG='torch>=2.3'; "
+        f"if command -v uv >/dev/null 2>&1; then "
+        f"  echo '[pip install] Using uv pip install --system...' | tee -a /content/pip.log; "
+        f"  uv pip install --system --no-progress $TORCH_PKG {pkgs_core} 2>&1 | tee -a /content/pip.log; pip_rc=${{PIPESTATUS[0]}}; "
+        f"else "
+        f"  pip install --no-input --progress-bar off --prefer-binary --retries 5 --timeout 60 $TORCH_PKG {pkgs_core} 2>&1 | tee -a /content/pip.log; pip_rc=${{PIPESTATUS[0]}}; "
+        f"fi; "
+        f"if [ \"${{pip_rc:-1}}\" -ne 0 ]; then "
+        f"  echo \"[pip install] FAILED (rc=$pip_rc)\" | tee -a /content/pip.log; "
+        f"  echo \"$pip_rc\" > exit_code; {cleanup_auth} exit \"$pip_rc\"; "
+        f"fi; "
+        f"echo '[stage] Dependencies installed; launching train_lora.py...'; "
+        f"python3 -u train_lora.py --config config.json "
+        f"--checkpoint-dir {shlex.quote(drive_ckpt)} --resume-from-checkpoint latest {export_flag} {mirror_flag} {ckpt_flag}; "
+        f"rc=$?; echo $rc > exit_code; {cleanup_auth}"
+        f"tar -czf /content/{s}_adapter.tar.gz -C output ."
+    )
     return (
         "import subprocess, os\n"
         f"os.makedirs({remote!r}, exist_ok=True)\n"
         f"subprocess.run(['tar','-xzf','/content/{s}.tar.gz','-C',{remote!r}], check=True)\n"
         f"os.makedirs({drive_ckpt!r}, exist_ok=True)\n"
         + (f"if os.path.exists({drive_auth_remote!r}): os.chmod({drive_auth_remote!r}, 0o600)\n" if drive_auth_remote else "")
-        + f"cmd = ({(hf_env + drv_env)!r}\n"
-        f"       'pip install -q {unsloth_pip}\"torch>=2.3\" \"transformers>=4.45\" \"peft>=0.12\" \"trl>=0.11\" '\n"
-        "       '\"datasets>=2.20\" accelerate bitsandbytes gguf > /content/pip.log 2>&1; '\n"
-        f"       'cd {remote} && nohup python train_lora.py --config config.json '\n"
-        f"       '--checkpoint-dir {shlex.quote(drive_ckpt)} --resume-from-checkpoint latest {export_flag} {mirror_flag} {ckpt_flag} > train.log 2>&1; '\n"
-        f"       'rc=$?; echo $rc > exit_code; {cleanup_auth}'\n"
-        f"       'tar -czf /content/{s}_adapter.tar.gz -C output .')\n"
-        "subprocess.Popen(['bash', '-c', cmd])\nprint('DISPATCHED')\n"
+        + f"cmd = {shell_cmd!r}\n"
+        "subprocess.Popen(['bash', '-c', cmd], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)\n"
+        "print('DISPATCHED')\n"
     )
 
 
@@ -849,17 +1093,27 @@ def _launch_single_colab_track(v: dict, rd: str, tp: dict, hf_token: str | None,
             except OSError:
                 pass
 
-    # Upload dataset/code bundle (+ optional local base weights)
-    _append_provision_log(td, f"Uploading bundle.tar.gz ({os.path.getsize(tp['bundle']) // 1024} KiB) to {s}...")
-    rc, out, err = _colab(["upload", "-s", s, tp["bundle"], f"/content/{s}.tar.gz"], auth=auth, timeout=600)
+    # Upload dataset/code bundle (+ optional local base weights) with retry on transient Colab proxy drops
+    rc, out, err = 1, "", ""
+    for up_try in range(1, 4):
+        _append_provision_log(td, f"Uploading bundle.tar.gz ({os.path.getsize(tp['bundle']) // 1024} KiB) to {s} (attempt {up_try}/3)...")
+        rc, out, err = _colab(["upload", "-s", s, tp["bundle"], f"/content/{s}.tar.gz"], auth=auth, timeout=240)
+        if rc == 0:
+            break
+        _append_provision_log(td, f"[!] Bundle upload attempt {up_try}/3 failed: {(err or out).strip()[-180:]}")
+        if up_try < 3:
+            time.sleep(5 * up_try)
     if rc != 0:
         tp["error"] = f"upload: {(err or out).strip()[-250:]}"
-        _append_provision_log(td, f"[✗] Bundle upload failed: {tp['error']}")
+        _append_provision_log(td, f"[✗] Bundle upload failed after 3 attempts: {tp['error']}")
+        ep_stop = tp.get("endpoint") or _session_endpoint(s)
         _colab(["stop", "-s", s], auth=auth, timeout=60)
+        if ep_stop:
+            _drive_vm_unregister([ep_stop])
         with open(os.path.join(td, "state"), "w") as fh:
             fh.write("failed\n")
         return False
-    _append_provision_log(td, "[✓] Bundle uploaded; dispatching pip install + train_lora.py on Colab...")
+    _append_provision_log(td, "[✓] Bundle uploaded; dispatching detached package install + train_lora.py on Colab...")
 
     if v["base_source"] == "local_upload" and v.get("base_hf_path") and os.path.isdir(v["base_hf_path"]):
         base_tar = os.path.join(rd, "base_upload.tar.gz")
@@ -874,12 +1128,21 @@ def _launch_single_colab_track(v: dict, rd: str, tp: dict, hf_token: str | None,
     rc, out, err = _colab(["exec", "-s", s], auth=auth, stdin=launch_py, timeout=180)
     if rc != 0 or "DISPATCHED" not in out:
         tp["error"] = f"launch: {(err or out).strip()[-250:]}"
+        _append_provision_log(td, f"[✗] Dispatch failed: {tp['error']}")
+        ep_stop = tp.get("endpoint") or _session_endpoint(s)
         _colab(["stop", "-s", s], auth=auth, timeout=60)
+        if ep_stop:
+            _drive_vm_unregister([ep_stop])
         with open(os.path.join(td, "state"), "w") as fh:
             fh.write("failed\n")
         return False
+    _append_provision_log(td, "[✓] Detached training worker dispatched (streaming package install & training logs).")
 
     tp["started_at"] = dt.datetime.now().isoformat(timespec="seconds")
+    ep = _session_endpoint(s)
+    if ep:
+        tp["endpoint"] = ep
+        _drive_vm_register(ep, session=s, run_name=v.get("name"), track_name=tp.get("track"), accelerator=selected)
     with open(os.path.join(td, "state"), "w") as fh:
         fh.write("running\n")
     return True
@@ -1067,6 +1330,9 @@ def collect_colab(name):
                 fh.write(tail_txt)
         status_tok = (out.split("EXIT", 1)[-1].split()[0].strip() if "EXIT" in out else "unknown")
         if status_tok == "running":
+            ep = tp.get("endpoint") or _session_endpoint(s)
+            if ep:
+                _drive_vm_register(ep, session=s, run_name=name, track_name=tp.get("track"), accelerator=tp.get("selected_gpu"))
             res[tp["track"]] = "still running"
             continue
         if status_tok == "0":
@@ -1106,7 +1372,10 @@ def collect_colab(name):
             with open(os.path.join(td, "state"), "w") as fh:
                 fh.write("failed\n")
             res[tp["track"]] = f"training exited {status_tok}"
+        ep_stop = tp.get("endpoint") or _session_endpoint(s)
         _colab(["stop", "-s", s], auth=auth, timeout=60)
+        if ep_stop:
+            _drive_vm_unregister([ep_stop])
 
     track_states = [track_status(os.path.join(rd, "tracks", t["name"]))["state"] for t in v["tracks"]]
     if track_states and all(x == "done" for x in track_states):
@@ -1241,6 +1510,8 @@ def _detect_training_phase(track_state: str, exit_code: str, log_text: str, sour
         return "loading_model"
     if "[pip install]" in low:
         return "installing_deps"
+    if "[stage] dependencies installed" in low:
+        return "loading_model"
     return track_state or "running"
 
 
@@ -1482,9 +1753,19 @@ def inspect_colab_sessions(probe: bool = False) -> dict:
                     except Exception:
                         probe_results[s] = {}
 
+    local_node = _local_node_name()
+    peer_ttl_sec = max(300, int(os.environ.get("BLUE_LODGE_PEER_VM_TTL_SEC", "5400") or "5400"))
+    manifest, manifest_fid, manifest_hdr, manifest_folder = _drive_vm_manifest_read()
+    manifest_vms = manifest.get("vms") if isinstance(manifest.get("vms"), dict) else {}
+    manifest_dirty = False
+    now_epoch = int(time.time())
+    live_eps = set()
+
     rows = []
     for a in assignments:
         ep = getattr(a, "endpoint", "")
+        if ep:
+            live_eps.add(ep)
         acc_raw = getattr(a, "accelerator", "")
         acc = acc_raw.value if hasattr(acc_raw, "value") else str(acc_raw)
         sess = ep_to_sess.get(ep)
@@ -1492,16 +1773,39 @@ def inspect_colab_sessions(probe: bool = False) -> dict:
 
         health = "active"
         reason = "Mapped to active training track"
+        owner_node = local_node if sess else None
+        run_out = rm["run"] if rm else None
+        track_out = rm["track"] if rm else None
+        run_state_out = rm["run_state"] if rm else None
+        sess_out = sess
         gpu_info = None
         proc_alive = None
         exit_code = None
 
-        if not sess:
-            health = "orphaned"
-            reason = "Orphaned Colab VM (untracked in local session store; burning CU)"
-        elif not rm:
-            health = "orphaned"
-            reason = f"Session '{sess}' has no matching run in .george/training/runs/"
+        if not sess or not rm:
+            peer_rec = manifest_vms.get(ep) if ep else None
+            peer_owner = (peer_rec.get("owner_node") or "").strip().lower() if isinstance(peer_rec, dict) else ""
+            if peer_rec and peer_owner and peer_owner != local_node:
+                hb_ts = int(peer_rec.get("heartbeat_at") or peer_rec.get("started_at") or 0)
+                age_s = max(0, now_epoch - hb_ts) if hb_ts else peer_ttl_sec + 1
+                owner_node = peer_owner
+                run_out = peer_rec.get("run")
+                track_out = peer_rec.get("track")
+                sess_out = peer_rec.get("session") or sess
+                run_state_out = "running"
+                run_lbl = f"{run_out}/{track_out}" if run_out else (sess_out or "active job")
+                if age_s <= peer_ttl_sec:
+                    health = "peer_active"
+                    reason = f"Active on sibling node '{peer_owner}' ({run_lbl}, heartbeat {age_s // 60}m ago)"
+                else:
+                    health = "peer_stale"
+                    reason = f"Sibling node '{peer_owner}' VM heartbeat expired ({age_s // 60}m ago; {run_lbl})"
+            elif not sess:
+                health = "orphaned"
+                reason = "Orphaned Colab VM (untracked in local session store or Drive _active_vms.json; burning CU)"
+            else:
+                health = "orphaned"
+                reason = f"Session '{sess}' has no matching run in .george/training/runs/"
         elif rm["track_state"] in ("done", "failed", "cancelled") or (
             rm["run_state"] in ("done", "failed", "cancelled") and rm["track_state"] != "running"
         ):
@@ -1523,30 +1827,59 @@ def inspect_colab_sessions(probe: bool = False) -> dict:
                 health = "stale_idle"
                 reason = "No training process running and GPU is idle (0% util, <1 GiB VRAM)"
 
+        # Heartbeat our own locally active VMs into shared Drive _active_vms.json so sibling nodes recognize them
+        if ep and health == "active" and owner_node == local_node:
+            prev = manifest_vms.get(ep) if isinstance(manifest_vms.get(ep), dict) else {}
+            manifest_vms[ep] = {
+                "endpoint": ep,
+                "owner_node": local_node,
+                "session": sess_out,
+                "run": run_out,
+                "track": track_out,
+                "accelerator": acc,
+                "started_at": int(prev.get("started_at", now_epoch)) if prev.get("owner_node") == local_node else now_epoch,
+                "heartbeat_at": now_epoch,
+            }
+            manifest_dirty = True
+
         rows.append({
             "endpoint": ep,
             "accelerator": acc,
-            "session": sess,
-            "run": rm["run"] if rm else None,
-            "track": rm["track"] if rm else None,
-            "run_state": rm["run_state"] if rm else None,
+            "session": sess_out,
+            "owner_node": owner_node,
+            "run": run_out,
+            "track": track_out,
+            "run_state": run_state_out,
             "health": health,
-            "stale": health != "active",
+            "stale": health not in ("active", "peer_active"),
             "reason": reason,
             "gpu": gpu_info,
             "exit_code": exit_code,
             "proc_alive": proc_alive,
         })
 
+    # Prune our own node's dead endpoints from _active_vms.json once Google no longer reports them
+    for ep_k in list(manifest_vms.keys()):
+        rec = manifest_vms.get(ep_k)
+        if isinstance(rec, dict) and (rec.get("owner_node") or "").lower() == local_node and ep_k not in live_eps:
+            manifest_vms.pop(ep_k, None)
+            manifest_dirty = True
+    if manifest_dirty:
+        manifest["vms"] = manifest_vms
+        _drive_vm_manifest_write(manifest, manifest_fid, manifest_hdr, manifest_folder)
+
     stale = [r for r in rows if r["stale"]]
+    peer_active = [r for r in rows if r["health"] == "peer_active"]
     res = {
         "status": "ok",
+        "local_node": local_node,
         "total": len(rows),
         "active_count": len(rows) - len(stale),
+        "peer_active_count": len(peer_active),
         "stale_count": len(stale),
         "sessions": rows,
         "ts": dt.datetime.now().isoformat(timespec="seconds"),
-        "updated_at": int(dt.datetime.now().timestamp()),
+        "updated_at": now_epoch,
     }
     try:
         _write_json(os.path.join(GEORGE, "training", "colab_sessions_cache.json"), res)
@@ -1585,6 +1918,8 @@ def cull_colab_vm(target: str | None = None, all_stale: bool = False) -> dict:
                 culled.append({"endpoint": ep, "session": row.get("session"), "accelerator": row.get("accelerator"), "reason": row.get("reason")})
             except Exception as e:
                 errors.append({"endpoint": ep, "error": str(e)})
+        if culled:
+            _drive_vm_unregister([c["endpoint"] for c in culled if c.get("endpoint")])
         return {"status": "ok", "mode": "all_stale", "culled": culled, "errors": errors}
 
     if not target:
@@ -1615,6 +1950,7 @@ def cull_colab_vm(target: str | None = None, all_stale: bool = False) -> dict:
             except Exception:
                 pass
         culled.append({"endpoint": ep, "session": sess_name})
+        _drive_vm_unregister([ep])
     except Exception as e:
         return {"status": "error", "message": f"Failed to unassign {ep}: {e}"}
 

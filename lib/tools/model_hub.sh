@@ -192,6 +192,7 @@ model_hub_cmd() {
         drive-list)   _mh_py drive-list "$@" | _mh_print ;;
         drive-push)   _mh_py drive-push "$@" | _mh_print ;;
         drive-pull)   _mh_py drive-pull "$@" | _mh_print ;;
+        compress-adapter) _mh_py compress-adapter "$@" | _mh_print ;;
         ask)       model_hub_ask "$@" ;;
         *) return 2 ;;
     esac

@@ -372,7 +372,13 @@
         acts.push(btn('SERVE…', () => serveSheet(e), 'accent'));
       }
     }
-    if (kind === 'adapter') acts.push(btn('ATTACH…', () => attachSheet(e), 'accent'));
+    if (kind === 'adapter') {
+      acts.push(btn('ATTACH…', () => attachSheet(e), 'accent'));
+      const isCv = e.adapter_type === 'control_vector' || e.arch === 'controlvector';
+      if (!isCv && (e.svd_eligible !== false)) {
+        acts.push(btn('COMPRESS SVD…', () => compressSheet(e)));
+      }
+    }
     acts.push(btn('DETAILS', () => detailsSheet(e)));
     acts.push(confirmBtn('DELETE', 'CONFIRM DELETE', () => deleteFile(e, false)));
 
@@ -506,6 +512,42 @@
       status,
     ]);
     check();
+  }
+
+  function compressSheet(e) {
+    const status = el('div', { cls: 'wb-muted' });
+    const rankSel = el('select', { cls: 'form-input' }, [
+      option('32', 'SVD-32 (Recommended · ~86 MiB for 27B LoRAs)', true),
+      option('16', 'SVD-16 (Compact · ~43 MiB for 27B LoRAs)'),
+      option('64', 'SVD-64 (High Fidelity · ~172 MiB for 27B LoRAs)'),
+      option('8', 'SVD-8 (Ultra-Light Edge · ~22 MiB)'),
+    ]);
+    const runBtn = btn('COMPRESS TO SVD GGUF', async () => {
+      const rank = parseInt(rankSel.value, 10) || 32;
+      runBtn.disabled = true;
+      runBtn.textContent = `COMPRESSING SVD-${rank}…`;
+      status.textContent = `Running Thin-QR SVD-${rank} compression on ${e.file} (${bytes(e.size)})… This takes 15–60s on CPU.`;
+      log(`compressing adapter ${e.rel} to SVD-${rank}…`);
+      try {
+        const res = await api('POST', '/api/hub/adapter/compress', { file: e.rel, rank });
+        const summary = `Created ${res.output_file} (${res.source_mib} MiB → ${res.output_mib} MiB · saved ${res.saved_pct}% · sha256 ${String(res.sha256 || '').slice(0, 12)}…)`;
+        status.textContent = summary;
+        log(`SVD-${rank} compression complete: ${summary}`);
+        refreshLibraryAndProfiles();
+      } catch (err) {
+        status.textContent = `Compression failed: ${err.message}`;
+        log(`SVD compression failed for ${e.rel}: ${err.message}`);
+      } finally {
+        runBtn.disabled = false;
+        runBtn.textContent = 'COMPRESS TO SVD GGUF';
+      }
+    }, 'accent');
+    sheet(`COMPRESS ADAPTER (SVD) · ${e.file}`, [
+      el('p', { cls: 'wb-lede', text: `Compresses a full-rank F16 LoRA (${bytes(e.size)}) into a smaller fixed-rank SVD GGUF in the same folder with a verified .sha256 sidecar. Your original file is kept untouched.` }),
+      el('div', { cls: 'wb-form-grid' }, [field('Target SVD rank', rankSel)]),
+      el('div', { cls: 'hub-row hub-end' }, [btn('CLOSE', closeSheet), runBtn]),
+      status,
+    ]);
   }
 
   function attachSheet(e) {
@@ -653,14 +695,27 @@
           if (adapters.length) {
             const adRow = el('div', { cls: 'wb-chip-row' }, [el('span', { cls: 'wb-muted', text: 'Community adapters:' })]);
             adapters.forEach((ad) => {
-              adRow.append(btn(`PULL ${ad.hf_repo.split('/').pop()}`, async () => {
-                log(`pulling community adapter ${ad.hf_repo} (SHA-256 verified)…`);
+              const shortName = ad.hf_repo.split('/').pop();
+              const pullAdapter = async (compressRank) => {
+                const modeLabel = compressRank ? ` + SVD-${compressRank} compress` : '';
+                log(`pulling community adapter ${ad.hf_repo}${modeLabel} (SHA-256 verified)…`);
                 try {
-                  const res = await api('POST', '/api/training/pull-adapter', { hf_repo: ad.hf_repo, activate: false });
-                  log(`adapter installed: ${res.installed_path || ad.hf_repo} (sha256 ${String(res.sha256 || '').slice(0, 12)}…)`);
+                  const payload = { hf_repo: ad.hf_repo, activate: false };
+                  if (compressRank) payload.compress_svd = compressRank;
+                  const res = await api('POST', '/api/training/pull-adapter', payload);
+                  const svd = res.svd_compressed;
+                  const detail = svd
+                    ? `${svd.file} (${res.size_mib} MiB → ${svd.size_mib} MiB · saved ${svd.saved_pct}%)`
+                    : `${res.installed_path || res.path || ad.hf_repo} (${res.size_mib || '?'} MiB)`;
+                  log(`adapter ready: ${detail} · sha256 ${String(res.sha256 || '').slice(0, 12)}…`);
                   refreshLibraryAndProfiles();
                 } catch (err) { log(`adapter pull failed: ${err.message}`); }
-              }));
+              };
+              adRow.append(btn(`PULL ${shortName}`, () => pullAdapter(null)));
+              if (ad.svd_compressible !== false) {
+                const recRank = ad.recommended_svd_rank || 32;
+                adRow.append(btn(`PULL + SVD-${recRank}`, () => pullAdapter(recRank), 'accent'));
+              }
             });
             mainChildren.push(adRow);
           }

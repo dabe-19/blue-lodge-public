@@ -103,6 +103,7 @@ pub struct PullAdapterPayload {
     pub role: Option<String>,
     pub file: Option<String>,
     pub activate: Option<bool>,
+    pub compress_svd: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -483,12 +484,12 @@ pub async fn post_pull_adapter(
     if !repo_ok {
         return Json(json!({ "status": "error", "message": "Valid hf_repo (org/repo) is required" }));
     }
-    let mut args: Vec<String> = vec!["pull-adapter".into(), repo];
+    let mut args: Vec<String> = vec!["pull-adapter".into(), "--hf-repo".into(), repo];
     if let Some(slug) = payload.model_slug.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
         if !plain_id(&slug, 64) {
             return Json(json!({ "status": "error", "message": "Invalid model_slug" }));
         }
-        args.push("--model-slug".into());
+        args.push("--model".into());
         args.push(slug);
     }
     if let Some(role) = payload.role.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
@@ -509,6 +510,13 @@ pub async fn post_pull_adapter(
         }
         args.push("--file".into());
         args.push(file);
+    }
+    if let Some(rank) = payload.compress_svd {
+        if !matches!(rank, 8 | 16 | 32 | 64) {
+            return Json(json!({ "status": "error", "message": "compress_svd rank must be 8, 16, 32, or 64" }));
+        }
+        args.push("--compress-svd".into());
+        args.push(rank.to_string());
     }
     if payload.activate.unwrap_or(false) {
         args.push("--activate".into());

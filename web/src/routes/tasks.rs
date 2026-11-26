@@ -1237,21 +1237,44 @@ pub async fn get_tasks(State(state): State<Arc<AppState>>) -> impl IntoResponse 
             let updated_at = cs.get("updated_at").and_then(|v| v.as_u64()).unwrap_or(0);
             let total_vms = cs.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
             let stale_vms = cs.get("stale_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            let peer_vms = cs.get("peer_active_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            let local_active = total_vms.saturating_sub(stale_vms).saturating_sub(peer_vms);
             if total_vms > 0 && now.saturating_sub(updated_at) <= 900 {
                 let mut vm_lines = Vec::new();
                 if let Some(arr) = cs.get("sessions").and_then(|v| v.as_array()) {
                     for s in arr {
-                        let sn = s.get("session").and_then(|v| v.as_str()).unwrap_or("UNTRACKED");
+                        let owner = s.get("owner_node").and_then(|v| v.as_str()).unwrap_or("");
+                        let sn = s.get("session").and_then(|v| v.as_str()).unwrap_or(if !owner.is_empty() { owner } else { "UNTRACKED" });
                         let acc = s.get("accelerator").and_then(|v| v.as_str()).unwrap_or("GPU");
                         let hlth = s.get("health").and_then(|v| v.as_str()).unwrap_or("active");
                         let rsn = s.get("reason").and_then(|v| v.as_str()).unwrap_or("");
-                        vm_lines.push(format!("[{}] {} ({}) — {}", hlth.to_uppercase(), sn, acc, rsn));
+                        let tag = if hlth == "peer_active" && !owner.is_empty() {
+                            format!("PEER:{}", owner.to_uppercase())
+                        } else {
+                            hlth.to_uppercase()
+                        };
+                        vm_lines.push(format!("[{}] {} ({}) — {}", tag, sn, acc, rsn));
                     }
                 }
                 let phase = if stale_vms > 0 {
-                    format!("{} Active · {} STALE (CU BURN)", total_vms - stale_vms, stale_vms)
+                    if peer_vms > 0 {
+                        format!("{} Active · {} Peer · {} STALE (CU BURN)", local_active, peer_vms, stale_vms)
+                    } else {
+                        format!("{} Active · {} STALE (CU BURN)", total_vms - stale_vms, stale_vms)
+                    }
+                } else if peer_vms > 0 && local_active == 0 {
+                    format!("{} Sibling-Node Colab GPU(s)", peer_vms)
+                } else if peer_vms > 0 {
+                    format!("{} Local · {} Peer Colab GPU(s)", local_active, peer_vms)
                 } else {
                     format!("{} Live Colab GPU VM(s)", total_vms)
+                };
+                let summary_suffix = if stale_vms > 0 {
+                    format!(" · ⚠ {} STALE", stale_vms)
+                } else if peer_vms > 0 {
+                    format!(" · {} sibling-owned", peer_vms)
+                } else {
+                    String::new()
                 };
                 tasks.push(json!({
                     "id": "colab_gpu_fleet",
@@ -1265,8 +1288,8 @@ pub async fn get_tasks(State(state): State<Arc<AppState>>) -> impl IntoResponse 
                     "mtime_secs": updated_at,
                     "is_subagent": false,
                     "subagent_tier": "colab",
-                    "meta_cmd": "Google Colab GPU Fleet & Stale VM Burn Guard",
-                    "summary": format!("Colab Fleet: {} VM(s){}", total_vms, if stale_vms > 0 { format!(" · ⚠ {} STALE", stale_vms) } else { String::new() }),
+                    "meta_cmd": "Google Colab GPU Fleet & Multi-Node VM Ownership Guard",
+                    "summary": format!("Colab Fleet: {} VM(s){}", total_vms, summary_suffix),
                     "last_lines": vm_lines,
                 }));
             }

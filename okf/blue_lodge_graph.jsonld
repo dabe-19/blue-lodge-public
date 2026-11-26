@@ -354,14 +354,11 @@
         "urn:blue-lodge:module:scripts/ci/bootstrap_env.sh",
         "urn:blue-lodge:module:scripts/ci/ci_local.sh",
         "urn:blue-lodge:module:scripts/ci/hermetic_test_runner.sh",
-        "urn:blue-lodge:module:scripts/ci/migrate_callsites.py",
-        "urn:blue-lodge:module:scripts/ci/refactor_hierarchy.py",
         "urn:blue-lodge:module:scripts/ci/research_sandbox.sh",
         "urn:blue-lodge:module:scripts/ci/run_research_sandbox.sh",
         "urn:blue-lodge:module:scripts/ci/scrape.sh",
         "urn:blue-lodge:module:scripts/ci/security_injection_scanner.py",
         "urn:blue-lodge:module:scripts/ci/select_tests.sh",
-        "urn:blue-lodge:module:scripts/ci/update_native_tools_okf.py",
         "urn:blue-lodge:module:scripts/cron/nightly_golden_eval.sh",
         "urn:blue-lodge:module:scripts/cron_system/api_coinbase_ada.sh",
         "urn:blue-lodge:module:scripts/cron_system/api_coinbase_btc.sh",
@@ -385,19 +382,17 @@
         "urn:blue-lodge:module:scripts/cron_system/sovereign_trading_loop.sh",
         "urn:blue-lodge:module:scripts/cron_system/storage_janitor.sh",
         "urn:blue-lodge:module:scripts/cron_system/trading_reporter.sh",
+        "urn:blue-lodge:module:scripts/cron_system/training_watchdog.sh",
         "urn:blue-lodge:module:scripts/cron_system/tyler_immune_patrol.sh",
         "urn:blue-lodge:module:scripts/cron_system/tyler_rf_mesh_sweep.sh",
         "urn:blue-lodge:module:scripts/cron_system/wallet_poll.sh",
         "urn:blue-lodge:module:scripts/eval/multiturn_bench.py",
         "urn:blue-lodge:module:scripts/inference/activate_profile.sh",
-        "urn:blue-lodge:module:scripts/inference/benchmark_mtp.py",
         "urn:blue-lodge:module:scripts/inference/chat.py",
         "urn:blue-lodge:module:scripts/inference/inference-server-deploy.sh",
         "urn:blue-lodge:module:scripts/inference/inference-server-install.sh",
         "urn:blue-lodge:module:scripts/inference/inference-server-models.sh",
         "urn:blue-lodge:module:scripts/inference/stress_test_context.py",
-        "urn:blue-lodge:module:scripts/inference/switch_inference.sh",
-        "urn:blue-lodge:module:scripts/inference/switch_model.sh",
         "urn:blue-lodge:module:scripts/inference/test-llama-server.sh",
         "urn:blue-lodge:module:scripts/infra/compose.sh",
         "urn:blue-lodge:module:scripts/infra/ensure_tts_models.sh",
@@ -409,7 +404,7 @@
         "urn:blue-lodge:module:scripts/infra/start-act-runner.sh",
         "urn:blue-lodge:module:scripts/infra/start-cuda-sandbox.sh",
         "urn:blue-lodge:module:scripts/infra/start-gitea.sh",
-        "urn:blue-lodge:module:scripts/infra/start_prism.sh",
+        "urn:blue-lodge:module:scripts/infra/start_inference.sh",
         "urn:blue-lodge:module:scripts/infra/sync_guild_gitea.sh",
         "urn:blue-lodge:module:scripts/infra/validate-gpu.sh",
         "urn:blue-lodge:module:scripts/monitor/cron_visual_sweep.sh",
@@ -420,14 +415,17 @@
         "urn:blue-lodge:module:scripts/monitor/research_live_monitor.sh",
         "urn:blue-lodge:module:scripts/release/export_public.py",
         "urn:blue-lodge:module:scripts/security/emudhra_g3_remediate.sh",
+        "urn:blue-lodge:module:scripts/training/backup_artifacts.py",
         "urn:blue-lodge:module:scripts/training/check_credits.py",
         "urn:blue-lodge:module:scripts/training/export_lora_dataset.py",
         "urn:blue-lodge:module:scripts/training/forge.py",
+        "urn:blue-lodge:module:scripts/training/harness_curriculum.py",
         "urn:blue-lodge:module:scripts/training/kit/train_lora.py",
         "urn:blue-lodge:module:scripts/training/merge_loras.py",
         "urn:blue-lodge:module:scripts/training/roles/convert_whisper_ggml.py",
         "urn:blue-lodge:module:scripts/training/roles/sdr_whisper_p25.py",
         "urn:blue-lodge:module:scripts/training/runs.py",
+        "urn:blue-lodge:module:scripts/training/sync_tool_schemas.py",
         "urn:blue-lodge:module:scripts/training/wizard.sh"
       ]
     },
@@ -480,6 +478,7 @@
         "urn:blue-lodge:module:commands/release.sh",
         "urn:blue-lodge:module:commands/remediation.sh",
         "urn:blue-lodge:module:commands/remote_master.sh",
+        "urn:blue-lodge:module:commands/rep.sh",
         "urn:blue-lodge:module:commands/research.sh",
         "urn:blue-lodge:module:commands/rules.sh",
         "urn:blue-lodge:module:commands/save.sh",
@@ -538,6 +537,7 @@
         "urn:blue-lodge:module:web/src/routes/okf.rs",
         "urn:blue-lodge:module:web/src/routes/rack.rs",
         "urn:blue-lodge:module:web/src/routes/react.rs",
+        "urn:blue-lodge:module:web/src/routes/reputation.rs",
         "urn:blue-lodge:module:web/src/routes/research.rs",
         "urn:blue-lodge:module:web/src/routes/runs.rs",
         "urn:blue-lodge:module:web/src/routes/sdr.rs",
@@ -568,7 +568,6 @@
         "urn:blue-lodge:doc:api-and-providers",
         "urn:blue-lodge:doc:architecture",
         "urn:blue-lodge:doc:architecture-index",
-        "urn:blue-lodge:doc:archive-old-soul",
         "urn:blue-lodge:doc:backend-validation",
         "urn:blue-lodge:doc:bash-techniques",
         "urn:blue-lodge:doc:command-dispatch",
@@ -2296,6 +2295,32 @@
       ]
     },
     {
+      "@id": "urn:blue-lodge:module:commands/rep.sh",
+      "@type": "SoftwareSourceCode",
+      "name": "rep.sh",
+      "path": "commands/rep.sh",
+      "programmingLanguage": "Bash",
+      "encodingFormat": "text/x-shellscript",
+      "description": "/rep \u2014 Sovereign Reputation, Audit Ledger & Role Theme Manager",
+      "stability": "stable",
+      "isPartOf": "urn:blue-lodge:subsystem:commands",
+      "dependencies": [
+        "urn:blue-lodge:module:lib/ui/ui.sh",
+        "urn:blue-lodge:module:lib/agents/reputation.sh"
+      ],
+      "dependsOn": [
+        {
+          "@id": "urn:blue-lodge:module:lib/ui/ui.sh"
+        },
+        {
+          "@id": "urn:blue-lodge:module:lib/agents/reputation.sh"
+        }
+      ],
+      "exports": [
+        "cmd_rep"
+      ]
+    },
+    {
       "@id": "urn:blue-lodge:module:commands/research.sh",
       "@type": "SoftwareSourceCode",
       "name": "research.sh",
@@ -2877,7 +2902,8 @@
         "urn:blue-lodge:module:lib/ui/ui.sh",
         "urn:blue-lodge:module:scripts/training/check_credits.py",
         "urn:blue-lodge:module:scripts/training/runs.py",
-        "urn:blue-lodge:module:backup_artifacts.py",
+        "urn:blue-lodge:module:scripts/training/backup_artifacts.py",
+        "urn:blue-lodge:module:scripts/training/sync_tool_schemas.py",
         "urn:blue-lodge:module:lib/tools/model_hub.sh",
         "urn:blue-lodge:module:scripts/training/forge.py"
       ],
@@ -2892,7 +2918,10 @@
           "@id": "urn:blue-lodge:module:scripts/training/runs.py"
         },
         {
-          "@id": "urn:blue-lodge:module:backup_artifacts.py"
+          "@id": "urn:blue-lodge:module:scripts/training/backup_artifacts.py"
+        },
+        {
+          "@id": "urn:blue-lodge:module:scripts/training/sync_tool_schemas.py"
         },
         {
           "@id": "urn:blue-lodge:module:lib/tools/model_hub.sh"
@@ -3446,14 +3475,31 @@
       ],
       "exports": [
         "reputation_score",
+        "reputation_policy_init",
+        "reputation_load_policy",
+        "reputation_policy_save",
         "reputation_init",
+        "reputation_tier_min_score",
+        "reputation_tier_id",
+        "reputation_tier_name_by_id",
         "reputation_tier",
         "reputation_features",
+        "reputation_sync_tier_labels",
+        "reputation_apply_preset",
+        "reputation_set_tier_name",
+        "reputation_set_threshold",
+        "reputation_effective_tier_id",
+        "reputation_can_use_tool",
         "reputation_get",
         "reputation_add",
+        "reputation_can_reward_passive",
+        "reputation_format_quarantine",
         "reputation_format_status",
         "reputation_penalize_violation",
+        "reputation_quarantine",
         "reputation_reset",
+        "reputation_list",
+        "reputation_history",
         "reputation_probation_decay"
       ]
     },
@@ -5146,6 +5192,8 @@
         "google_adk_list_agents",
         "groq_chat",
         "groq_models",
+        "openrouter_chat",
+        "openrouter_models",
         "mistral_chat",
         "together_chat",
         "perplexity_chat",
@@ -8246,6 +8294,7 @@
       "dependencies": [],
       "dependsOn": [],
       "exports": [
+        "opt_in_enabled",
         "HubError",
         "lodge_dir",
         "george_dir",
@@ -8260,6 +8309,66 @@
         "safe_relpath",
         "quant_of",
         "shard_info"
+      ]
+    },
+    {
+      "@id": "urn:blue-lodge:module:lib/tools/model_hub/curator.py",
+      "@type": "SoftwareSourceCode",
+      "name": "curator.py",
+      "path": "lib/tools/model_hub/curator.py",
+      "programmingLanguage": "Python",
+      "encodingFormat": "text/x-python",
+      "description": "Dynamic Hardware-Aware Multi-Source Model Curator.",
+      "stability": "stable",
+      "isPartOf": "urn:blue-lodge:subsystem:model_hub",
+      "dependencies": [
+        "urn:blue-lodge:module:lib/tools/model_hub/common.py",
+        "urn:blue-lodge:module:lib/tools/model_hub/hw.py",
+        "urn:blue-lodge:module:lib/tools/model_hub/providers.py"
+      ],
+      "dependsOn": [
+        {
+          "@id": "urn:blue-lodge:module:lib/tools/model_hub/common.py"
+        },
+        {
+          "@id": "urn:blue-lodge:module:lib/tools/model_hub/hw.py"
+        },
+        {
+          "@id": "urn:blue-lodge:module:lib/tools/model_hub/providers.py"
+        }
+      ],
+      "exports": [
+        "curate"
+      ]
+    },
+    {
+      "@id": "urn:blue-lodge:module:lib/tools/model_hub/drive_mirror.py",
+      "@type": "SoftwareSourceCode",
+      "name": "drive_mirror.py",
+      "path": "lib/tools/model_hub/drive_mirror.py",
+      "programmingLanguage": "Python",
+      "encodingFormat": "text/x-python",
+      "description": "Optional Google Drive mirror for the Blue Lodge Model Hub.",
+      "stability": "stable",
+      "isPartOf": "urn:blue-lodge:subsystem:model_hub",
+      "dependencies": [
+        "urn:blue-lodge:module:lib/tools/model_hub/common.py",
+        "urn:blue-lodge:module:lib/tools/model_hub/hw.py"
+      ],
+      "dependsOn": [
+        {
+          "@id": "urn:blue-lodge:module:lib/tools/model_hub/common.py"
+        },
+        {
+          "@id": "urn:blue-lodge:module:lib/tools/model_hub/hw.py"
+        }
+      ],
+      "exports": [
+        "default_drive_folder",
+        "drive_status",
+        "drive_list",
+        "drive_push",
+        "drive_pull"
       ]
     },
     {
@@ -8392,7 +8501,8 @@
         "sha256_cached",
         "scan",
         "find",
-        "delete_file"
+        "delete_file",
+        "compress_adapter"
       ]
     },
     {
@@ -8623,7 +8733,7 @@
         "urn:blue-lodge:module:scripts/training/forge.py",
         "urn:blue-lodge:module:scripts/training/check_credits.py",
         "urn:blue-lodge:module:scripts/training/runs.py",
-        "urn:blue-lodge:module:backup_artifacts.py",
+        "urn:blue-lodge:module:scripts/training/backup_artifacts.py",
         "urn:blue-lodge:module:lib/comms/discord_outbox.sh",
         "urn:blue-lodge:module:lib/comms/discord_status.sh",
         "urn:blue-lodge:module:lib/comms/discord_bridge.sh",
@@ -8760,7 +8870,7 @@
           "@id": "urn:blue-lodge:module:scripts/training/runs.py"
         },
         {
-          "@id": "urn:blue-lodge:module:backup_artifacts.py"
+          "@id": "urn:blue-lodge:module:scripts/training/backup_artifacts.py"
         },
         {
           "@id": "urn:blue-lodge:module:lib/comms/discord_outbox.sh"
@@ -10659,39 +10769,6 @@
       ]
     },
     {
-      "@id": "urn:blue-lodge:module:scripts/ci/migrate_callsites.py",
-      "@type": "SoftwareSourceCode",
-      "name": "migrate_callsites.py",
-      "path": "scripts/ci/migrate_callsites.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Full Call-Site Migration Script for Blue Lodge.",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "get_target_files"
-      ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/ci/refactor_hierarchy.py",
-      "@type": "SoftwareSourceCode",
-      "name": "refactor_hierarchy.py",
-      "path": "scripts/ci/refactor_hierarchy.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Refactors flat lib/ and scripts/ directories into clean domain-based hierarchies",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "refactor_lib",
-        "refactor_scripts"
-      ]
-    },
-    {
       "@id": "urn:blue-lodge:module:scripts/ci/research_sandbox.sh",
       "@type": "SoftwareSourceCode",
       "name": "research_sandbox.sh",
@@ -10803,20 +10880,6 @@
           "@id": "urn:blue-lodge:module:trading_policy_checks.py"
         }
       ],
-      "exports": []
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/ci/update_native_tools_okf.py",
-      "@type": "SoftwareSourceCode",
-      "name": "update_native_tools_okf.py",
-      "path": "scripts/ci/update_native_tools_okf.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Python utility module for update_native_tools_okf.py.",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
       "exports": []
     },
     {
@@ -11338,6 +11401,34 @@
       "exports": []
     },
     {
+      "@id": "urn:blue-lodge:module:scripts/cron_system/training_watchdog.sh",
+      "@type": "SoftwareSourceCode",
+      "name": "training_watchdog.sh",
+      "path": "scripts/cron_system/training_watchdog.sh",
+      "programmingLanguage": "Bash",
+      "encodingFormat": "text/x-shellscript",
+      "description": "Monitors active Colab/local SVD-32 runs, sends keep-alive heartbeats, auto-resumes 1h disconnects from Drive checkpoints, tears down finished VMs, runs 7-pillar benchmark gates, posts Discord Tier B approval cards, and optionally runs scheduled Sleep-Cycle consolidation.",
+      "stability": "stable",
+      "isPartOf": "urn:blue-lodge:subsystem:scripts",
+      "dependencies": [
+        "urn:blue-lodge:module:scripts/training/runs.py",
+        "urn:blue-lodge:module:scripts/eval/multiturn_bench.py",
+        "urn:blue-lodge:module:scripts/training/backup_artifacts.py"
+      ],
+      "dependsOn": [
+        {
+          "@id": "urn:blue-lodge:module:scripts/training/runs.py"
+        },
+        {
+          "@id": "urn:blue-lodge:module:scripts/eval/multiturn_bench.py"
+        },
+        {
+          "@id": "urn:blue-lodge:module:scripts/training/backup_artifacts.py"
+        }
+      ],
+      "exports": []
+    },
+    {
       "@id": "urn:blue-lodge:module:scripts/cron_system/tyler_immune_patrol.sh",
       "@type": "SoftwareSourceCode",
       "name": "tyler_immune_patrol.sh",
@@ -11452,24 +11543,6 @@
       ]
     },
     {
-      "@id": "urn:blue-lodge:module:scripts/inference/benchmark_mtp.py",
-      "@type": "SoftwareSourceCode",
-      "name": "benchmark_mtp.py",
-      "path": "scripts/inference/benchmark_mtp.py",
-      "programmingLanguage": "Python",
-      "encodingFormat": "text/x-python",
-      "description": "Python utility module for benchmark_mtp.py.",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": [
-        "wait_for_server",
-        "query_benchmark",
-        "run_config"
-      ]
-    },
-    {
       "@id": "urn:blue-lodge:module:scripts/inference/chat.py",
       "@type": "SoftwareSourceCode",
       "name": "chat.py",
@@ -11546,34 +11619,6 @@
         "VramSampler",
         "run_context_step"
       ]
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/inference/switch_inference.sh",
-      "@type": "SoftwareSourceCode",
-      "name": "switch_inference.sh",
-      "path": "scripts/inference/switch_inference.sh",
-      "programmingLanguage": "Bash",
-      "encodingFormat": "text/x-shellscript",
-      "description": "switch_inference.sh: Dual Inference Profile Switcher",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": []
-    },
-    {
-      "@id": "urn:blue-lodge:module:scripts/inference/switch_model.sh",
-      "@type": "SoftwareSourceCode",
-      "name": "switch_model.sh",
-      "path": "scripts/inference/switch_model.sh",
-      "programmingLanguage": "Bash",
-      "encodingFormat": "text/x-shellscript",
-      "description": "switch_model.sh: Switch George Primary Inference Model",
-      "stability": "stable",
-      "isPartOf": "urn:blue-lodge:subsystem:scripts",
-      "dependencies": [],
-      "dependsOn": [],
-      "exports": []
     },
     {
       "@id": "urn:blue-lodge:module:scripts/inference/test-llama-server.sh",
@@ -11785,13 +11830,13 @@
       "exports": []
     },
     {
-      "@id": "urn:blue-lodge:module:scripts/infra/start_prism.sh",
+      "@id": "urn:blue-lodge:module:scripts/infra/start_inference.sh",
       "@type": "SoftwareSourceCode",
-      "name": "start_prism.sh",
-      "path": "scripts/infra/start_prism.sh",
+      "name": "start_inference.sh",
+      "path": "scripts/infra/start_inference.sh",
       "programmingLanguage": "Bash",
       "encodingFormat": "text/x-shellscript",
-      "description": "Legacy compatibility wrapper \u2014 Blue Lodge now standardizes on upstream stock llama.cpp",
+      "description": "start_inference.sh: Sovereign Stock llama.cpp Inference Runner",
       "stability": "stable",
       "isPartOf": "urn:blue-lodge:subsystem:scripts",
       "dependencies": [],
@@ -11974,6 +12019,39 @@
       ]
     },
     {
+      "@id": "urn:blue-lodge:module:scripts/training/backup_artifacts.py",
+      "@type": "SoftwareSourceCode",
+      "name": "backup_artifacts.py",
+      "path": "scripts/training/backup_artifacts.py",
+      "programmingLanguage": "Python",
+      "encodingFormat": "text/x-python",
+      "description": "scripts/training/backup_artifacts.py",
+      "stability": "stable",
+      "isPartOf": "urn:blue-lodge:subsystem:scripts",
+      "dependencies": [
+        "urn:blue-lodge:module:scripts/training/check_credits.py",
+        "urn:blue-lodge:module:scripts/training/sync_tool_schemas.py"
+      ],
+      "dependsOn": [
+        {
+          "@id": "urn:blue-lodge:module:scripts/training/check_credits.py"
+        },
+        {
+          "@id": "urn:blue-lodge:module:scripts/training/sync_tool_schemas.py"
+        }
+      ],
+      "exports": [
+        "backup_status",
+        "upload_to_hf",
+        "upload_to_drive",
+        "backup_file",
+        "backup_all",
+        "build_model_card",
+        "publish_bundle",
+        "pull_hf_adapter"
+      ]
+    },
+    {
       "@id": "urn:blue-lodge:module:scripts/training/check_credits.py",
       "@type": "SoftwareSourceCode",
       "name": "check_credits.py",
@@ -12024,16 +12102,22 @@
       "stability": "stable",
       "isPartOf": "urn:blue-lodge:subsystem:scripts",
       "dependencies": [
-        "urn:blue-lodge:module:scripts/training/export_lora_dataset.py"
+        "urn:blue-lodge:module:scripts/training/export_lora_dataset.py",
+        "urn:blue-lodge:module:scripts/training/harness_curriculum.py"
       ],
       "dependsOn": [
         {
           "@id": "urn:blue-lodge:module:scripts/training/export_lora_dataset.py"
+        },
+        {
+          "@id": "urn:blue-lodge:module:scripts/training/harness_curriculum.py"
         }
       ],
       "exports": [
         "is_ops_call",
         "step_episodes",
+        "load_canonical_tools",
+        "validate_tool_call_schema",
         "fit_context",
         "mutate",
         "destructive",
@@ -12050,6 +12134,7 @@
         "r_cyber_defense",
         "r_persistence",
         "r_sdr_p25",
+        "r_harness_workflows",
         "default_data_dir",
         "BenchGuard",
         "load_curricula",
@@ -12062,6 +12147,23 @@
         "pantry",
         "audit",
         "recipes"
+      ]
+    },
+    {
+      "@id": "urn:blue-lodge:module:scripts/training/harness_curriculum.py",
+      "@type": "SoftwareSourceCode",
+      "name": "harness_curriculum.py",
+      "path": "scripts/training/harness_curriculum.py",
+      "programmingLanguage": "Python",
+      "encodingFormat": "text/x-python",
+      "description": "Blue Lodge Harness-Mastery & Organic Multi-Step Workflow Curriculum Generator.",
+      "stability": "stable",
+      "isPartOf": "urn:blue-lodge:subsystem:scripts",
+      "dependencies": [],
+      "dependsOn": [],
+      "exports": [
+        "load_native_tool_schemas",
+        "build_workflow_harness_samples"
       ]
     },
     {
@@ -12182,16 +12284,44 @@
         "start_colab",
         "resume_colab",
         "collect_colab",
+        "stream_logs",
+        "inspect_colab_sessions",
+        "cull_colab_vm",
         "track_status",
         "status",
         "list_runs",
         "cancel",
         "merge",
+        "model_matches_live",
+        "resolve_baseline",
+        "format_benchmark_discord_card",
+        "send_discord_report",
+        "benchmark_candidate",
         "approve_candidate",
         "deny_candidate",
+        "rollback_candidate",
         "list_adapters",
         "hotswap_lora",
         "bake"
+      ]
+    },
+    {
+      "@id": "urn:blue-lodge:module:scripts/training/sync_tool_schemas.py",
+      "@type": "SoftwareSourceCode",
+      "name": "sync_tool_schemas.py",
+      "path": "scripts/training/sync_tool_schemas.py",
+      "programmingLanguage": "Python",
+      "encodingFormat": "text/x-python",
+      "description": "scripts/training/sync_tool_schemas.py",
+      "stability": "stable",
+      "isPartOf": "urn:blue-lodge:subsystem:scripts",
+      "dependencies": [],
+      "dependsOn": [],
+      "exports": [
+        "load_live_tools",
+        "schema_sha256",
+        "compute_sync_plan",
+        "sync_schemas"
       ]
     },
     {
@@ -12649,6 +12779,7 @@
         "fit_local",
         "import_local",
         "delete_file",
+        "compress_adapter",
         "profile_tune",
         "profile_attach",
         "profile_detach",
@@ -12667,7 +12798,12 @@
         "forge_build",
         "kits",
         "ask",
-        "ask_status"
+        "ask_status",
+        "curate",
+        "drive_status",
+        "drive_list",
+        "drive_push",
+        "drive_pull"
       ]
     },
     {
@@ -12901,6 +13037,24 @@
       ]
     },
     {
+      "@id": "urn:blue-lodge:module:web/src/routes/reputation.rs",
+      "@type": "SoftwareSourceCode",
+      "name": "reputation.rs",
+      "path": "web/src/routes/reputation.rs",
+      "programmingLanguage": "Rust",
+      "encodingFormat": "text/x-rust",
+      "description": "Rust native server module for reputation.rs.",
+      "stability": "stable",
+      "isPartOf": "urn:blue-lodge:subsystem:web",
+      "dependencies": [],
+      "dependsOn": [],
+      "exports": [
+        "get_reputation",
+        "post_reputation_adjust",
+        "post_reputation_policy"
+      ]
+    },
+    {
       "@id": "urn:blue-lodge:module:web/src/routes/research.rs",
       "@type": "SoftwareSourceCode",
       "name": "research.rs",
@@ -13061,6 +13215,9 @@
       "dependencies": [],
       "dependsOn": [],
       "exports": [
+        "get_training_run_logs",
+        "get_colab_sessions",
+        "post_colab_cull",
         "get_training_status",
         "get_training_runs",
         "get_training_adapters",
@@ -13071,6 +13228,7 @@
         "post_training_policy",
         "post_adapter_hotswap",
         "post_training_backup",
+        "post_pull_adapter",
         "post_training_benchmark",
         "generate_training_wizard"
       ]
@@ -15777,30 +15935,6 @@
         "urn:blue-lodge:doc:agent-loop",
         "urn:blue-lodge:doc:sandboxes",
         "urn:blue-lodge:doc:docker-sandbox"
-      ],
-      "about": "urn:blue-lodge:core"
-    },
-    {
-      "@id": "urn:blue-lodge:doc:archive-old-soul",
-      "@type": [
-        "TechArticle",
-        "DigitalDocument"
-      ],
-      "name": "Archive: Soul of George (Legacy)",
-      "headline": "Archive: Soul of George (Legacy)",
-      "description": "Archived historical manuscript detailing the early moral philosophy and triune soul of George",
-      "path": "docs/archive/old_soul.md",
-      "encodingFormat": "text/markdown",
-      "keywords": [
-        "archive",
-        "soul",
-        "philosophy",
-        "adam-smith"
-      ],
-      "isPartOf": "urn:blue-lodge:subsystem:archive",
-      "related": [
-        "urn:blue-lodge:doc:moral-sentiments",
-        "urn:blue-lodge:doc:george-reference"
       ],
       "about": "urn:blue-lodge:core"
     }

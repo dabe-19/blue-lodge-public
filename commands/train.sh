@@ -164,8 +164,8 @@ cmd_train() {
         pull-adapter)
             local -a _pla=()
             read -r -a _pla <<<"$subargs"
-            if [ "${#_pla[@]}" -lt 2 ]; then
-                echo "Usage: /train pull-adapter --hf-repo <org/repo> --model <slug> [--role core-agent] [--file NAME.gguf] [--activate] [--dry-run]"
+            if [ "${#_pla[@]}" -lt 1 ]; then
+                echo "Usage: /train pull-adapter --hf-repo <org/repo> [--model <slug>] [--role core-agent] [--file NAME.gguf] [--compress-svd 8|16|32|64] [--activate] [--dry-run]"
                 return 1
             fi
             "$py" "$LODGE_DIR/scripts/training/backup_artifacts.py" pull-adapter "${_pla[@]}"

@@ -76,7 +76,13 @@ def _discover_community_adapters(family_key: str, repo_name: str, hf_prov) -> li
         rid = h.get("repo") or ""
         if "adapter" in rid.lower() or "lora" in rid.lower() or rid.lower().startswith("harness-hub/"):
             if query_stem.lower() in rid.lower():
-                out.append({"hf_repo": rid, "downloads": h.get("downloads", 0), "likes": h.get("likes", 0)})
+                out.append({
+                    "hf_repo": rid,
+                    "downloads": h.get("downloads", 0),
+                    "likes": h.get("likes", 0),
+                    "svd_compressible": True,
+                    "recommended_svd_rank": 32,
+                })
     return out[:4]
 
 

@@ -484,6 +484,130 @@ else
     fail "Model Hub opt-in / curator / Drive mirror test failed: $MH_EXT_OUT"
 fi
 
+# 18. Multi-Node Colab VM Ownership Manifest (_active_vms.json) & On-Demand SVD Adapter Compression
+MN_SVD_OUT=$(TMP_ROOT="$TMP" "$PY" -c "
+import json, os, sys, time
+from pathlib import Path
+sys.path.insert(0, 'scripts/training')
+sys.path.insert(0, 'lib/tools')
+import runs, backup_artifacts
+from model_hub import library
+
+tmp = Path(os.environ['TMP_ROOT'])
+vm_file = tmp / '_active_vms.json'
+os.environ['BLUE_LODGE_ACTIVE_VMS_FILE'] = str(vm_file)
+os.environ['BLUE_LODGE_PEER_VM_TTL_SEC'] = '1800'
+
+# 18a. Register a live VM owned by sibling node 'hiram' and verify 'george' classifies it as peer_active (stale=False)
+now = int(time.time())
+os.environ['LODGE_NODE_NAME'] = 'hiram'
+assert runs._drive_vm_register('gpu-a100-hiram-live', session='bl-hiram-sft', run_name='gemma4-v3', track_name='sft-harness', accelerator='A100')
+assert runs._drive_vm_register('gpu-a100-hiram-expired', session='bl-hiram-old', run_name='gemma4-v2', track_name='dpo', accelerator='A100')
+# Backdate the second VM heartbeat past TTL
+m = json.loads(vm_file.read_text())
+m['vms']['gpu-a100-hiram-expired']['heartbeat_at'] = now - 7200
+vm_file.write_text(json.dumps(m))
+
+# Fake colab_cli returning both sibling VMs + one genuinely orphaned VM
+import types
+class FakeAssign:
+    def __init__(self, ep, acc): self.endpoint, self.accelerator = ep, acc
+class FakeClient:
+    def list_assignments(self):
+        return [FakeAssign('gpu-a100-hiram-live', 'A100'), FakeAssign('gpu-a100-hiram-expired', 'A100'), FakeAssign('gpu-t4-unowned', 'T4')]
+class FakeStore:
+    def list(self): return []
+    def get(self, x): return None
+fake_cstate = types.SimpleNamespace(auth_provider=None, client=FakeClient(), store=FakeStore())
+fake_common = types.ModuleType('colab_cli.common'); fake_common.state = fake_cstate
+fake_auth = types.ModuleType('colab_cli.auth'); fake_auth.AuthProvider = types.SimpleNamespace(ADC='adc')
+fake_pkg = types.ModuleType('colab_cli')
+sys.modules['colab_cli'] = fake_pkg
+sys.modules['colab_cli.common'] = fake_common
+sys.modules['colab_cli.auth'] = fake_auth
+
+os.environ['LODGE_NODE_NAME'] = 'george'
+snap = runs.inspect_colab_sessions(probe=False)
+by_ep = {r['endpoint']: r for r in snap['sessions']}
+assert snap['local_node'] == 'george', snap
+assert snap['peer_active_count'] == 1, snap
+assert snap['stale_count'] == 2, snap
+assert by_ep['gpu-a100-hiram-live']['health'] == 'peer_active' and by_ep['gpu-a100-hiram-live']['stale'] is False and by_ep['gpu-a100-hiram-live']['owner_node'] == 'hiram'
+assert by_ep['gpu-a100-hiram-expired']['health'] == 'peer_stale' and by_ep['gpu-a100-hiram-expired']['stale'] is True
+assert by_ep['gpu-t4-unowned']['health'] == 'orphaned' and by_ep['gpu-t4-unowned']['stale'] is True
+
+# Unregister removes cleanly
+assert runs._drive_vm_unregister(['gpu-a100-hiram-live'])
+assert 'gpu-a100-hiram-live' not in json.loads(vm_file.read_text())['vms']
+
+# 18b. On-demand SVD adapter compression via library.compress_adapter() on a synthetic rank-64 LoRA GGUF
+import numpy as np, gguf as gguf_lib
+mdir = tmp / 'models_svd'
+mdir.mkdir(parents=True, exist_ok=True)
+os.environ['MODELS_DIR'] = str(mdir)
+src_gguf = mdir / 'test-rank64-lora-F16.gguf'
+w = gguf_lib.GGUFWriter(str(src_gguf), arch='qwen2')
+w.add_string('general.type', 'adapter')
+w.add_string('adapter.type', 'lora')
+w.add_float32('adapter.lora.alpha', 128.0)
+rng = np.random.default_rng(42)
+# Rank 64 LoRA matrices (A: [64, 128], B: [128, 64])
+w.add_tensor('blk.0.attn_q.weight.lora_a', rng.standard_normal((64, 128)).astype(np.float32))
+w.add_tensor('blk.0.attn_q.weight.lora_b', rng.standard_normal((128, 64)).astype(np.float32))
+w.write_header_to_file(); w.write_kv_data_to_file(); w.write_tensors_to_file(); w.close()
+
+comp = library.compress_adapter('test-rank64-lora-F16.gguf', target_rank=16)
+assert comp['status'] == 'ok', comp
+assert comp['target_rank'] == 16 and comp['output_bytes'] < comp['source_bytes'], comp
+assert (mdir / comp['output_file']).is_file() and (mdir / (comp['output_file'] + '.sha256')).is_file()
+
+# Verify backup_artifacts slug inference + rank validation
+assert backup_artifacts._infer_model_slug_from_repo('harness-hub/Qwen3.8-27B-super-adapter-GGUF') == 'qwen3.8-27b'
+bad_r = backup_artifacts.pull_hf_adapter('harness-hub/Qwen3.8-27B-super-adapter-GGUF', compress_svd=999, dry_run=True)
+assert bad_r['status'] == 'error', bad_r
+print('OK')
+" 2>&1 | tail -n 1)
+if [ "$MN_SVD_OUT" = "OK" ]; then
+    pass "Multi-node Colab _active_vms.json ownership (peer_active vs peer_stale vs orphaned) & on-demand SVD adapter compression work"
+else
+    fail "Multi-node VM ownership / SVD compression test failed: $MN_SVD_OUT"
+fi
+
+# Test 19: Colab detached launch (no silent pip -q hang, bash -n syntax valid) & llama.cpp --no-cone sparse checkout
+COLAB_FIX_OUT=$("$PY" -B -c "
+import ast, re, subprocess, sys
+sys.path.insert(0, '$LODGE_DIR/scripts/training')
+import runs
+
+v = {
+    'name': 'test-run',
+    'hyper': {'use_unsloth': True},
+    'colab': {'drive_checkpoints': True, 'drive_checkpoint_sync': True, 'drive_checkpoint_keep': 2, 'export_gguf_on_colab': True},
+}
+py_src = runs._build_colab_launch_py(v, 'bl-test-run-sft', '/content/bl-test-run-sft', 'sft', 'hf_dummy', drive_ok=False, drive_auth_remote='/content/bl-test_auth.json')
+compile(py_src, 'launch.py', 'exec')
+assert 'start_new_session=True' in py_src and 'stdin=subprocess.DEVNULL' in py_src and 'close_fds=True' in py_src
+assert 'pip install -q' not in py_src
+assert 'pip_rc' in py_src and 'uv pip install --system' in py_src
+# Extract shell_cmd string literal and verify bash -n syntax
+tree = ast.parse(py_src)
+shell_cmd = None
+for node in ast.walk(tree):
+    if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'cmd' for t in node.targets):
+        shell_cmd = ast.literal_eval(node.value)
+assert shell_cmd and 'train_lora.py' in shell_cmd
+r = subprocess.run(['bash', '-n', '-c', shell_cmd], capture_output=True, text=True)
+assert r.returncode == 0, r.stderr
+kit_src = open('$LODGE_DIR/scripts/training/kit/train_lora.py', encoding='utf-8').read()
+assert '\"sparse-checkout\", \"set\", \"--no-cone\"' in kit_src
+print('OK')
+" 2>&1 | tail -n 1)
+if [ "$COLAB_FIX_OUT" = "OK" ]; then
+    pass "Colab detached launch (streaming uv/pip, zero SIGPIPE, valid bash -n) & --no-cone GGUF sparse checkout verified"
+else
+    fail "Colab launch/sparse-checkout regression test failed: $COLAB_FIX_OUT"
+fi
+
 echo "──────────────────────────────────────"
 echo "  ${PASS} passed, ${FAIL} failed ($((PASS + FAIL)) total)"
 [ "$FAIL" -eq 0 ]

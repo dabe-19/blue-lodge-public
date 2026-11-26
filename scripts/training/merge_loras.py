@@ -29,6 +29,8 @@ def parse_args():
                         help="Fusion method ('concat' for exact zero-loss or 'svd' to preserve target rank)")
     parser.add_argument("--target_rank", type=int, default=32, help="Target rank if using SVD mode")
     parser.add_argument("--alpha", type=float, default=64.0, help="Merged LoRA alpha")
+    parser.add_argument("--outtype", choices=["f16", "f32"], default="f32",
+                        help="Output tensor precision (f16 cuts VRAM & disk size in half; math stays f32)")
     parser.add_argument("--arch", type=str, default=None,
                         help="GGUF architecture to write (default: read general.architecture from the adapters)")
     return parser.parse_args()
@@ -178,8 +180,9 @@ def main():
 
         if idx % 10 == 0 or idx == len(base_names) - 1:
             print(f"  [{idx+1:02d}/{len(base_names)}] Fused {base} -> {rank_str}")
-        writer.add_tensor(name_a, A_merged)
-        writer.add_tensor(name_b, B_merged)
+        out_dtype = np.float16 if args.outtype == "f16" else np.float32
+        writer.add_tensor(name_a, A_merged.astype(out_dtype))
+        writer.add_tensor(name_b, B_merged.astype(out_dtype))
         merged_tensors += 2
 
     print(f"[*] Writing {merged_tensors} merged tensors to header...")

@@ -14,7 +14,8 @@ if [ ! -f "$TARGET_MODEL" ]; then
     exit 1
 fi
 
-echo "[+] Starting Sovereign llama.cpp server with $TARGET_MODEL..."
+REAL_BASE_MODEL=$(readlink -f "$TARGET_MODEL" 2>/dev/null || echo "$TARGET_MODEL")
+echo "[+] Starting Sovereign llama.cpp server with $TARGET_MODEL (resolved: $(basename "$REAL_BASE_MODEL"))..."
 
 # Ensure WSL2 CUDA passthrough library directory is on LD_LIBRARY_PATH if mounted
 if [ -d /usr/lib/wsl/lib ]; then
@@ -39,7 +40,7 @@ fi
 
 # Chat template file resolution (external ChatML template for Qwen3.8/Champion when present)
 CHAT_TEMPLATE="${LLAMA_ARG_CHAT_TEMPLATE:-}"
-if [ -z "$CHAT_TEMPLATE" ] && ([[ "$TARGET_MODEL" == *"Qwen3.8"* ]] || [[ "$TARGET_MODEL" == *"Champion"* ]]); then
+if [ -z "$CHAT_TEMPLATE" ] && ([[ "$TARGET_MODEL" == *"Qwen3.8"* ]] || [[ "$TARGET_MODEL" == *"Champion"* ]] || [[ "$REAL_BASE_MODEL" == *"Qwen3.8"* ]] || [[ "$REAL_BASE_MODEL" == *"Champion"* ]]); then
     CHAT_TEMPLATE="/models/active/current/jinja.template"
     [ ! -f "$CHAT_TEMPLATE" ] && CHAT_TEMPLATE="/models/frontier_qwen38/blue_lodge_jinja_template.jinja"
     [ ! -f "$CHAT_TEMPLATE" ] && CHAT_TEMPLATE="/workspace/configs/blue_lodge_jinja_template.jinja"
@@ -70,7 +71,7 @@ if [ -n "$CHAT_TEMPLATE" ] && [ -f "$CHAT_TEMPLATE" ]; then
     ARGS+=("--chat-template-file" "$CHAT_TEMPLATE")
 fi
 
-if [[ "$TARGET_MODEL" == *"Qwen3.8"* ]] || [[ "$TARGET_MODEL" == *"Champion"* ]] || [ -n "${LLAMA_ARG_REASONING_FORMAT:-}" ]; then
+if [[ "$TARGET_MODEL" == *"Qwen3.8"* ]] || [[ "$TARGET_MODEL" == *"Champion"* ]] || [[ "$REAL_BASE_MODEL" == *"Qwen3.8"* ]] || [[ "$REAL_BASE_MODEL" == *"Champion"* ]] || [ -n "${LLAMA_ARG_REASONING_FORMAT:-}" ]; then
     ARGS+=(
         "--reasoning" "${LLAMA_ARG_REASONING:-on}"
         "--reasoning-format" "${LLAMA_ARG_REASONING_FORMAT:-deepseek}"
@@ -96,7 +97,6 @@ _detect_model_slug() {
         *) echo "" ;;
     esac
 }
-REAL_BASE_MODEL=$(readlink -f "$TARGET_MODEL" 2>/dev/null || echo "$TARGET_MODEL")
 DETECTED_SLUG=$(_detect_model_slug "$REAL_BASE_MODEL")
 BENCH_OVERRIDE="/workspace/.george/training/bench_override.json"
 BENCH_LORA_SCALED=""

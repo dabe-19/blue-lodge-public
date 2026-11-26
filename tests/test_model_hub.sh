@@ -170,7 +170,8 @@ names=$(LODGE_DIR="$LODGE_DIR" bash -c 'source "$LODGE_DIR/lib/tools/native_tool
 assert_contains "$names" "hub_quant_fit" "model_hub profile mounts hub tools"
 assert_not_contains "$names" "bash_exec" "model_hub profile has no shell"
 assert_not_contains "$names" "file_write" "model_hub profile has no file writes"
-assert_contains "$(grep -c 'tool_filter:-}" = "model_hub"' "$LODGE_DIR/lib/core/react.sh")" "1" "strict tool mounting enforced for model_hub"
+_mh_strict_cnt=$(grep -c 'tool_filter:-}" = "model_hub"' "$LODGE_DIR/lib/core/react.sh" || echo 0)
+assert_eq "$([ "$_mh_strict_cnt" -ge 1 ] && echo yes || echo no)" "yes" "strict tool mounting enforced for model_hub"
 
 describe "/models routing"
 out=$(bash -c 'source "$LODGE_DIR/commands/models.sh"; cmd_models "quants huggingface test/tiny-GGUF --ctx 4096"' 2>&1)

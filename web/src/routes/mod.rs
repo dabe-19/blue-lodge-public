@@ -122,6 +122,7 @@ pub fn create_router(state: Arc<AppState>, cors: CorsLayer) -> Router {
         // Model Workbench: the operator's own GGUFs (no curated catalog)
         .route("/api/hub/library", get(hub::library))
         .route("/api/hub/library/file", delete(hub::delete_file))
+        .route("/api/hub/adapter/compress", post(hub::compress_adapter))
         .route("/api/hub/fit-local", get(hub::fit_local))
         .route("/api/hub/import-local", post(hub::import_local))
         .route("/api/hub/profile/:name/tune", post(hub::profile_tune))

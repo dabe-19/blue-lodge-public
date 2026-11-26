@@ -363,6 +363,11 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "import-local":
             s.add_argument("--name"); s.add_argument("--approve", action="store_true")
     s = sp.add_parser("delete-file"); s.add_argument("file"); s.add_argument("--force", action="store_true")
+    s = sp.add_parser("compress-adapter")
+    s.add_argument("file")
+    s.add_argument("--rank", type=int, default=32, choices=[8, 16, 32, 64])
+    s.add_argument("--alpha", type=float)
+    s.add_argument("--output")
     s = sp.add_parser("tune"); s.add_argument("name")
     sp.add_parser("jobs")
     s = sp.add_parser("clear-job"); s.add_argument("name")
@@ -514,6 +519,8 @@ def run(argv: list[str]) -> Any:
         return cmd_import_local(a)
     if c == "delete-file":
         return library.delete_file(a.file, a.force)
+    if c == "compress-adapter":
+        return library.compress_adapter(a.file, target_rank=a.rank, alpha=a.alpha, output_name=a.output)
     if c == "tune":
         return profiles.tune(a.name, json.loads(sys.stdin.read(1 << 16) or "{}"))
     if c == "jobs":

@@ -313,6 +313,36 @@ pub async fn delete_file(State(s): State<Arc<AppState>>, Query(q): Query<DeleteF
     reply(cli(&s, &a, None, 60).await)
 }
 
+#[derive(Deserialize)]
+pub struct CompressAdapterBody {
+    file: String,
+    rank: Option<u32>,
+    alpha: Option<f64>,
+    output_name: Option<String>,
+}
+pub async fn compress_adapter(State(s): State<Arc<AppState>>, Json(b): Json<CompressAdapterBody>) -> Response {
+    if !valid_rel(&b.file) { return bad("invalid adapter file path"); }
+    let rank = b.rank.unwrap_or(32);
+    if !matches!(rank, 8 | 16 | 32 | 64) {
+        return bad("rank must be 8, 16, 32, or 64");
+    }
+    let mut args: Vec<String> = vec!["compress-adapter".into(), b.file.clone(), "--rank".into(), rank.to_string()];
+    if let Some(alpha) = b.alpha {
+        if !(1.0..=1024.0).contains(&alpha) { return bad("alpha must be between 1 and 1024"); }
+        args.push("--alpha".into());
+        args.push(format!("{alpha}"));
+    }
+    if let Some(out) = b.output_name.map(|x| x.trim().to_string()).filter(|x| !x.is_empty()) {
+        if !ok_chars(&out, 180, "._-+@") || out.contains('/') || out.contains("..") || !out.to_ascii_lowercase().ends_with(".gguf") {
+            return bad("invalid output_name (plain .gguf filename only)");
+        }
+        args.push("--output".into());
+        args.push(out);
+    }
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    reply(cli(&s, &refs, None, 600).await)
+}
+
 pub async fn profile_tune(State(s): State<Arc<AppState>>, Path(name): Path<String>, Json(b): Json<Value>) -> Response {
     if !valid_name(&name) { return bad("invalid profile name"); }
     if !b.is_object() { return bad("expected {\"server\": {...}, \"sampling\": {...}}"); }

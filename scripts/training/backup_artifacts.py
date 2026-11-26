@@ -526,13 +526,35 @@ def publish_bundle(model_slug: str, role: str, hf_repo: str, public: bool = Fals
             shutil.rmtree(stage_dir, ignore_errors=True)
 
 
-def pull_hf_adapter(hf_repo: str, model_slug: str, role: str = "core-agent",
+def _infer_model_slug_from_repo(hf_repo: str) -> str:
+    low = (hf_repo or "").lower()
+    if "qwen3.8-27b" in low or "qwen38-27b" in low:
+        return "qwen3.8-27b"
+    if "gemma-4-31b" in low or "gemma4-31b" in low:
+        return "gemma-4-31b-it"
+    if "gemma-4-26b" in low or "gemma4-26b" in low:
+        return "gemma-4-26b-a4b-it"
+    if "gemma-4-e4b" in low or "gemma4-e4b" in low:
+        return "gemma-4-e4b-it"
+    if "gemma-4-e2b" in low or "gemma4-e2b" in low:
+        return "gemma-4-e2b-it"
+    stem = (hf_repo or "adapter").split("/")[-1]
+    stem = re.sub(r"(?i)(?:-super)?(?:-hermes)?(?:-adapted)?(?:-adapter)?(?:-lora)?(?:-gguf)?$", "", stem)
+    slug = re.sub(r"[^a-z0-9._-]+", "-", stem.lower()).strip("-._")
+    return slug[:64] or "generic"
+
+
+def pull_hf_adapter(hf_repo: str, model_slug: str | None = None, role: str = "core-agent",
                     filename: str | None = None, activate: bool = False,
-                    dry_run: bool = False) -> dict:
+                    dry_run: bool = False, compress_svd: int | None = None) -> dict:
     """Download a community/HF GGUF LoRA adapter (e.g. harness-hub/Qwen3.8-27B-super-adapter-GGUF)
-    into $MODELS_DIR/adapters/<model_slug>/<role>/community/ with SHA-256 verification and lineage tracking."""
+    into $MODELS_DIR/adapters/<model_slug>/<role>/community/ with SHA-256 verification, optional
+    SVD rank compression (8/16/32/64), and lineage tracking."""
     if not re.fullmatch(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", hf_repo or ""):
         return {"status": "error", "message": f"Invalid HF repo id: {hf_repo!r}"}
+    if compress_svd is not None and int(compress_svd) not in (8, 16, 32, 64):
+        return {"status": "error", "message": f"compress_svd rank must be one of 8, 16, 32, 64 (got {compress_svd})"}
+    model_slug = (model_slug or "").strip() or _infer_model_slug_from_repo(hf_repo)
     token, _ = cc._read_key_from_files(("HF_TOKEN", "HUGGINGFACE_TOKEN", "HUGGING_FACE_HUB_TOKEN"))
     hdr = {"User-Agent": "blue-lodge-adapter-hub/1.0"}
     if token:
@@ -567,48 +589,143 @@ def pull_hf_adapter(hf_repo: str, model_slug: str, role: str = "core-agent",
     dest_path = comm_dir / f"{safe_repo}__{os.path.basename(rel_path)}"
     dl_url = f"https://huggingface.co/{hf_repo}/resolve/main/{urllib.parse.quote(rel_path)}"
 
+    svd_dest = None
+    if compress_svd is not None:
+        svd_stem = re.sub(r"(?i)(?:-svd\d+)?\.gguf$", "", dest_path.name)
+        svd_dest = comm_dir / f"{svd_stem}-svd{int(compress_svd)}.gguf"
+
     if dry_run:
         return {
             "status": "ok",
             "dry_run": True,
             "hf_repo": hf_repo,
+            "model_slug": model_slug,
+            "role": role,
             "file": rel_path,
             "size_mib": round(expected_size / (1024 * 1024), 1),
             "expected_sha256": expected_sha[:16] if expected_sha else None,
             "dest_path": str(dest_path),
+            "compress_svd": int(compress_svd) if compress_svd is not None else None,
+            "svd_dest_path": str(svd_dest) if svd_dest else None,
             "activate": activate,
             "available_ggufs": [x["path"] for x in ggufs],
         }
 
     comm_dir.mkdir(parents=True, exist_ok=True)
-    part_path = dest_path.with_suffix(dest_path.suffix + ".part")
-    h = hashlib.sha256()
+    # Reuse already-verified file on disk if size & sha256 match
+    reused = False
+    actual_sha = ""
     written = 0
-    try:
-        with urllib.request.urlopen(urllib.request.Request(dl_url, headers=hdr), timeout=600) as r:
-            with open(part_path, "wb") as out:
-                while True:
-                    chunk = r.read(4 * 1024 * 1024)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-                    h.update(chunk)
-                    written += len(chunk)
-        actual_sha = h.hexdigest()
-        if expected_sha and actual_sha != expected_sha:
+    if dest_path.is_file() and (not expected_size or dest_path.stat().st_size == expected_size):
+        h_ex = hashlib.sha256()
+        with open(dest_path, "rb") as fh:
+            while True:
+                b = fh.read(4 * 1024 * 1024)
+                if not b:
+                    break
+                h_ex.update(b)
+        cand_sha = h_ex.hexdigest()
+        if not expected_sha or cand_sha == expected_sha:
+            actual_sha = cand_sha
+            written = dest_path.stat().st_size
+            reused = True
+
+    if not reused:
+        part_path = dest_path.with_suffix(dest_path.suffix + ".part")
+        h = hashlib.sha256()
+        written = 0
+        try:
+            with urllib.request.urlopen(urllib.request.Request(dl_url, headers=hdr), timeout=600) as r:
+                with open(part_path, "wb") as out:
+                    while True:
+                        chunk = r.read(4 * 1024 * 1024)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        h.update(chunk)
+                        written += len(chunk)
+            actual_sha = h.hexdigest()
+            if expected_sha and actual_sha != expected_sha:
+                part_path.unlink(missing_ok=True)
+                return {"status": "error", "message": f"SHA-256 mismatch for {rel_path}: expected {expected_sha[:16]}, got {actual_sha[:16]}"}
+            os.chmod(part_path, 0o664)
+            os.replace(part_path, dest_path)
+            try:
+                (dest_path.with_name(dest_path.name + ".sha256")).write_text(f"{actual_sha}  {dest_path.name}\n", encoding="utf-8")
+            except OSError:
+                pass
+        except Exception as e:
             part_path.unlink(missing_ok=True)
-            return {"status": "error", "message": f"SHA-256 mismatch for {rel_path}: expected {expected_sha[:16]}, got {actual_sha[:16]}"}
-        os.chmod(part_path, 0o664)
-        os.replace(part_path, dest_path)
-    except Exception as e:
-        part_path.unlink(missing_ok=True)
-        return {"status": "error", "message": f"Download failed for {dl_url}: {e}"}
+            return {"status": "error", "message": f"Download failed for {dl_url}: {e}"}
+
+    svd_info = None
+    final_target = dest_path
+    final_sha = actual_sha
+    if compress_svd is not None and svd_dest is not None:
+        rank = int(compress_svd)
+        lodge_root = Path(__file__).resolve().parents[2]
+        merge_script = Path(__file__).resolve().parent / "merge_loras.py"
+        if not merge_script.is_file():
+            return {"status": "error", "message": f"SVD compressor not found: {merge_script}"}
+        venv_py = lodge_root / ".venv" / "bin" / "python"
+        py_bin = str(venv_py) if (venv_py.is_file() and os.access(venv_py, os.X_OK)) else sys.executable
+        tmp_svd = svd_dest.with_name(f".{svd_dest.name}.tmp.{os.getpid()}")
+        svd_env = dict(os.environ)
+        svd_env.setdefault("OPENBLAS_NUM_THREADS", "4")
+        svd_env.setdefault("OMP_NUM_THREADS", "4")
+        svd_env.setdefault("MKL_NUM_THREADS", "4")
+        try:
+            proc = subprocess.run(
+                [
+                    py_bin, str(merge_script),
+                    "--adapters", str(dest_path),
+                    "--weights", "1.0",
+                    "--output", str(tmp_svd),
+                    "--method", "svd",
+                    "--target_rank", str(rank),
+                    "--alpha", str(float(rank * 2)),
+                    "--outtype", "f16",
+                ],
+                capture_output=True, text=True, timeout=600, check=False, env=svd_env,
+            )
+            if proc.returncode != 0 or not tmp_svd.is_file():
+                tail = (proc.stderr or proc.stdout or "SVD merge failed").strip()[-500:]
+                return {"status": "error", "message": f"Downloaded {dest_path.name}, but SVD-{rank} compression failed: {tail}"}
+            os.chmod(tmp_svd, 0o664)
+            os.replace(tmp_svd, svd_dest)
+        finally:
+            if tmp_svd.exists():
+                tmp_svd.unlink(missing_ok=True)
+        h_svd = hashlib.sha256()
+        with open(svd_dest, "rb") as fh:
+            while True:
+                b = fh.read(4 * 1024 * 1024)
+                if not b:
+                    break
+                h_svd.update(b)
+        svd_sha = h_svd.hexdigest()
+        try:
+            (svd_dest.with_name(svd_dest.name + ".sha256")).write_text(f"{svd_sha}  {svd_dest.name}\n", encoding="utf-8")
+        except OSError:
+            pass
+        svd_bytes = svd_dest.stat().st_size
+        svd_info = {
+            "rank": rank,
+            "path": str(svd_dest),
+            "file": svd_dest.name,
+            "size_bytes": svd_bytes,
+            "size_mib": round(svd_bytes / (1024 * 1024), 1),
+            "saved_pct": round((1.0 - (svd_bytes / written)) * 100.0, 1) if written > 0 else 0.0,
+            "sha256": svd_sha,
+        }
+        final_target = svd_dest
+        final_sha = svd_sha
 
     active_link = role_dir / "active.gguf"
     if activate:
         if active_link.is_symlink() or active_link.exists():
             active_link.unlink()
-        active_link.symlink_to(dest_path)
+        active_link.symlink_to(final_target)
 
     lineage_p = role_dir / "lineage.json"
     lin = {}
@@ -625,20 +742,27 @@ def pull_hf_adapter(hf_repo: str, model_slug: str, role: str = "core-agent",
         "path": str(dest_path),
         "size_bytes": written,
         "sha256": actual_sha,
+        "svd_compressed": svd_info,
         "pulled_at": dt.datetime.now().isoformat(timespec="seconds"),
     })
     if activate:
-        lin["active_version"] = f"hf:{hf_repo}"
-        lin["active_path"] = str(dest_path)
+        lin["active_version"] = f"hf:{hf_repo}" + (f":svd{int(compress_svd)}" if svd_info else "")
+        lin["active_path"] = str(final_target)
     lineage_p.write_text(json.dumps(lin, indent=2) + "\n", encoding="utf-8")
 
     return {
         "status": "ok",
         "hf_repo": hf_repo,
+        "model_slug": model_slug,
+        "role": role,
         "file": rel_path,
         "size_mib": round(written / (1024 * 1024), 1),
-        "sha256": actual_sha[:16],
+        "reused_local": reused,
+        "sha256": final_sha[:16],
+        "source_sha256": actual_sha[:16],
         "path": str(dest_path),
+        "installed_path": str(final_target),
+        "svd_compressed": svd_info,
         "activated": activate,
         "active_path": str(active_link) if activate else None,
     }
@@ -668,11 +792,13 @@ def main():
     pp.add_argument("--dry-run", action="store_true", help="Stage locally and emit bundle manifest without uploading")
 
     pl = sub.add_parser("pull-adapter", help="Download a GGUF LoRA/SVD adapter from Hugging Face into MODELS_DIR/adapters/")
-    pl.add_argument("--hf-repo", required=True, help="Source HF repo (e.g. harness-hub/Qwen3.8-27B-super-adapter-GGUF)")
-    pl.add_argument("--model", required=True, help="Target model slug (e.g. qwen3.8-27b)")
+    pl.add_argument("repo_pos", nargs="?", default=None, help="Optional positional HF repo (org/repo)")
+    pl.add_argument("--hf-repo", default=None, help="Source HF repo (e.g. harness-hub/Qwen3.8-27B-super-adapter-GGUF)")
+    pl.add_argument("--model", "--model-slug", dest="model", default=None, help="Target model slug (auto-inferred if omitted)")
     pl.add_argument("--role", default="core-agent")
     pl.add_argument("--file", default=None, help="Optional specific .gguf filename in the HF repo")
-    pl.add_argument("--activate", action="store_true", help="Point active.gguf symlink at the downloaded adapter")
+    pl.add_argument("--compress-svd", type=int, choices=(8, 16, 32, 64), default=None, help="Compress downloaded LoRA to SVD rank N (e.g. 32 -> ~86 MiB)")
+    pl.add_argument("--activate", action="store_true", help="Point active.gguf symlink at the downloaded (or SVD-compressed) adapter")
     pl.add_argument("--dry-run", action="store_true", help="Inspect repo files & SHA-256 without downloading")
     a = ap.parse_args()
 
@@ -680,9 +806,11 @@ def main():
         print(json.dumps(backup_status(), indent=2))
         return 0
     if a.cmd == "pull-adapter":
+        repo_arg = a.hf_repo or a.repo_pos or ""
         res = pull_hf_adapter(
-            hf_repo=a.hf_repo, model_slug=a.model, role=a.role,
+            hf_repo=repo_arg, model_slug=a.model, role=a.role,
             filename=a.file, activate=a.activate, dry_run=a.dry_run,
+            compress_svd=a.compress_svd,
         )
         print(json.dumps(res, indent=2))
         return 0 if res.get("status") == "ok" else 1
