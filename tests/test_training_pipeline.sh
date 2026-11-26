@@ -397,8 +397,8 @@ sl2 = runs.stream_logs('obs-test-v1', 'dpo-harness', live=False)
 assert sl2['phase'] == 'training' and len(sl2['metrics']) == 2 and sl2['summary_stats']['final_margin'] == 0.85 and sl2['summary_stats']['final_eval_loss'] == 0.55, sl2
 print('OK')
 " | tail -n 1)
-if [ "$OBS_OUT" = "OK" ] && grep -q "flock -n 9" "$LODGE_DIR/scripts/cron_system/training_watchdog.sh"; then
-    pass "Live provision.log streaming, watchdog flock + provisioning guard, metrics.jsonl curves & phase detection work"
+if [ "$OBS_OUT" = "OK" ] && grep -q "flock -n 9" "$LODGE_DIR/scripts/cron_system/training_watchdog.sh" && ! grep -vE '^[[:space:]]*#' "$LODGE_DIR/scripts/cron_system/training_watchdog.sh" | grep -qF "training_watchdog.sh"; then
+    pass "Live provision.log streaming, watchdog flock + cron self-ref guard + provisioning guard, metrics.jsonl curves & phase detection work"
 else
     fail "Observability / watchdog guard test failed: $OBS_OUT"
 fi

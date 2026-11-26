@@ -21,7 +21,7 @@ mkdir -p "$GEORGE_DIR/training"
 LOCK_FILE="$GEORGE_DIR/training/watchdog.lock"
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
-    echo "[watchdog] Previous training_watchdog.sh instance still active — skipping overlapping tick."
+    echo "[watchdog] Previous watchdog instance still active — skipping overlapping tick."
     exit 0
 fi
 
