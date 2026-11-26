@@ -902,8 +902,8 @@ def resume_colab(name: str) -> dict:
     for tp in meta.get("plan", []):
         td = os.path.join(rd, "tracks", tp["track"])
         st = track_status(td)["state"]
-        if st in ("done",):
-            resumed[tp["track"]] = "already_done"
+        if st in ("done", "planned", "queued"):
+            resumed[tp["track"]] = f"skip_{st}"
             continue
         if int(tp.get("resumes", 0)) >= 6:
             resumed[tp["track"]] = "max_resumes_reached"
@@ -945,8 +945,8 @@ def collect_colab(name):
     for tp in meta.get("plan", []):
         td = os.path.join(rd, "tracks", tp["track"])
         st_cur = track_status(td)["state"]
-        if st_cur == "done":
-            res[tp["track"]] = "done"
+        if st_cur in ("done", "planned", "queued"):
+            res[tp["track"]] = st_cur
             continue
         s = tp["session"]
         rc, out, _ = _colab(["exec", "-s", s], auth=auth, stdin=(
